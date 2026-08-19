@@ -1,0 +1,413 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root directory of the software repository for the full text of the License.
+
+// PTOVmiLoopFusion cross-iteration UB-dependency guard. Two same-header
+// scf.for ops inside a pto.fusion_region may fuse ONLY if every UB they
+// exchange is a same-iteration per-iteration transfer: BOTH offsets depend on
+// the IV, BOTH are restricted injective affine (IV, IV*positive_const, +const),
+// and the two are structurally equivalent (all run IVs map to the fused IV).
+// Everything else blocks fusion (kept as 2 scf.for).
+//
+//   SAME    - producer writes UB[IV*64], consumer reads UB[IV*64] -> injective
+//             affine + equivalent -> SAME-iteration -> fuse to 1.
+//   STENCIL - producer writes UB[IV*64], consumer reads UB[(IV+1)*64] -> both
+//             injective affine but NOT equivalent -> block (2).
+//   MOD2    - producer writes UB[IV%2], consumer reads UB[IV%2] -> structurally
+//             equivalent but NOT injective affine (rem) -> block (2).
+//   ADDMOD2 - producer and consumer use UB[IV+(IV%2)]; the add has an
+//             IV-dependent non-affine side, so it is not accepted -> block (2).
+//   FIXED   - producer writes UB[0], consumer reads UB[0] -> neither carries
+//             the IV -> cross-iteration (consumer reads producer's final
+//             value) -> block (2).
+//   SCATTER - an indirect memory-effecting op is unmodeled -> block (2).
+//
+// Each loop's second-for init arg uses %seed0 (NOT the first for's result) so
+// the fused-loop builder does not produce a self-referencing init arg (an
+// unrelated pre-existing limitation); this test exercises ONLY the
+// cross-iteration guard, not init-arg threading.
+
+// RUN: pto-test-opt %s -pto-vmi-loop-fusion \
+// RUN:   | FileCheck %s --check-prefix=FUSE
+
+module {
+  // SAME: injective affine + equivalent -> fuse to 1 scf.for.
+  func.func @same_iv() -> (!pto.vmi.vreg<64xf32>) {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c1 = arith.constant 1 : index
+    %c0f = arith.constant 0.0 : f32
+    %pc = pto.pointer_cast(%c0_i64) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<128x64xf32, #pto.address_space<vec>>
+    %ub = pto.castptr %pc : memref<128x64xf32, #pto.address_space<vec>> -> !pto.ptr<f32, ub>
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %seed0 = pto.vmi.broadcast %c0f : f32 -> !pto.vmi.vreg<64xf32>
+    // FUSE-LABEL: func.func @same_iv
+    // FUSE-COUNT-1: scf.for
+    // FUSE-NOT: scf.for
+    %r = pto.fusion_region {
+      %a = scf.for %iv = %c0 to %c64 step %c1 iter_args(%acc = %seed0) -> (!pto.vmi.vreg<64xf32>) {
+        %off = arith.muli %iv, %c64 : index
+        %s = pto.vmi.vload %ub[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+        pto.vmi.vstore %s, %ub[%off], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+        scf.yield %acc : !pto.vmi.vreg<64xf32>
+      } {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      %b = scf.for %iv = %c0 to %c64 step %c1 iter_args(%acc2 = %seed0) -> (!pto.vmi.vreg<64xf32>) {
+        %off = arith.muli %iv, %c64 : index
+        %l = pto.vmi.vload %ub[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+        scf.yield %l : !pto.vmi.vreg<64xf32>
+      } {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      pto.yield(%b) : (!pto.vmi.vreg<64xf32>) -> ()
+    } : !pto.vmi.vreg<64xf32>
+    return %r : !pto.vmi.vreg<64xf32>
+  }
+
+  // STENCIL: i+1, injective affine but not equivalent -> block (2).
+  func.func @stencil_i_plus_1() -> (!pto.vmi.vreg<64xf32>) {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c1 = arith.constant 1 : index
+    %c0f = arith.constant 0.0 : f32
+    %pc = pto.pointer_cast(%c0_i64) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<128x64xf32, #pto.address_space<vec>>
+    %ub = pto.castptr %pc : memref<128x64xf32, #pto.address_space<vec>> -> !pto.ptr<f32, ub>
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %seed0 = pto.vmi.broadcast %c0f : f32 -> !pto.vmi.vreg<64xf32>
+    // FUSE-LABEL: func.func @stencil_i_plus_1
+    // FUSE-COUNT-2: scf.for
+    // FUSE-NOT: scf.for
+    %r = pto.fusion_region {
+      %a = scf.for %iv = %c0 to %c64 step %c1 iter_args(%acc = %seed0) -> (!pto.vmi.vreg<64xf32>) {
+        %off = arith.muli %iv, %c64 : index
+        %s = pto.vmi.vload %ub[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+        pto.vmi.vstore %s, %ub[%off], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+        scf.yield %acc : !pto.vmi.vreg<64xf32>
+      } {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      %b = scf.for %iv = %c0 to %c64 step %c1 iter_args(%acc2 = %seed0) -> (!pto.vmi.vreg<64xf32>) {
+        %ivp1 = arith.addi %iv, %c1 : index
+        %off = arith.muli %ivp1, %c64 : index
+        %l = pto.vmi.vload %ub[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+        scf.yield %l : !pto.vmi.vreg<64xf32>
+      } {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      pto.yield(%b) : (!pto.vmi.vreg<64xf32>) -> ()
+    } : !pto.vmi.vreg<64xf32>
+    return %r : !pto.vmi.vreg<64xf32>
+  }
+
+  // MOD2: i%2, structurally equivalent but NOT injective affine -> block (2).
+  func.func @mod2_collision() -> (!pto.vmi.vreg<64xf32>) {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c0f = arith.constant 0.0 : f32
+    %pc = pto.pointer_cast(%c0_i64) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<128x64xf32, #pto.address_space<vec>>
+    %ub = pto.castptr %pc : memref<128x64xf32, #pto.address_space<vec>> -> !pto.ptr<f32, ub>
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %seed0 = pto.vmi.broadcast %c0f : f32 -> !pto.vmi.vreg<64xf32>
+    // FUSE-LABEL: func.func @mod2_collision
+    // FUSE-COUNT-2: scf.for
+    // FUSE-NOT: scf.for
+    %r = pto.fusion_region {
+      %a = scf.for %iv = %c0 to %c64 step %c1 iter_args(%acc = %seed0) -> (!pto.vmi.vreg<64xf32>) {
+        %off = arith.remui %iv, %c2 : index
+        %s = pto.vmi.vload %ub[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+        pto.vmi.vstore %s, %ub[%off], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+        scf.yield %acc : !pto.vmi.vreg<64xf32>
+      } {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      %b = scf.for %iv = %c0 to %c64 step %c1 iter_args(%acc2 = %seed0) -> (!pto.vmi.vreg<64xf32>) {
+        %off = arith.remui %iv, %c2 : index
+        %l = pto.vmi.vload %ub[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+        scf.yield %l : !pto.vmi.vreg<64xf32>
+      } {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      pto.yield(%b) : (!pto.vmi.vreg<64xf32>) -> ()
+    } : !pto.vmi.vreg<64xf32>
+    return %r : !pto.vmi.vreg<64xf32>
+  }
+
+  // ADDMOD2: i+(i%2) must not be mistaken for affine+invariant -> block (2).
+  func.func @add_mod2_collision() -> (!pto.vmi.vreg<64xf32>) {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c0f = arith.constant 0.0 : f32
+    %pc = pto.pointer_cast(%c0_i64) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<128x64xf32, #pto.address_space<vec>>
+    %ub = pto.castptr %pc : memref<128x64xf32, #pto.address_space<vec>> -> !pto.ptr<f32, ub>
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %seed0 = pto.vmi.broadcast %c0f : f32 -> !pto.vmi.vreg<64xf32>
+    // FUSE-LABEL: func.func @add_mod2_collision
+    // FUSE-COUNT-2: scf.for
+    // FUSE-NOT: scf.for
+    %r = pto.fusion_region {
+      %a = scf.for %iv = %c0 to %c64 step %c1 iter_args(%acc = %seed0) -> (!pto.vmi.vreg<64xf32>) {
+        %rem = arith.remui %iv, %c2 : index
+        %off = arith.addi %iv, %rem : index
+        %s = pto.vmi.vload %ub[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+        pto.vmi.vstore %s, %ub[%off], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+        scf.yield %acc : !pto.vmi.vreg<64xf32>
+      } {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      %b = scf.for %iv = %c0 to %c64 step %c1 iter_args(%acc2 = %seed0) -> (!pto.vmi.vreg<64xf32>) {
+        %rem = arith.remui %iv, %c2 : index
+        %off = arith.addi %iv, %rem : index
+        %l = pto.vmi.vload %ub[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+        scf.yield %l : !pto.vmi.vreg<64xf32>
+      } {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      pto.yield(%b) : (!pto.vmi.vreg<64xf32>) -> ()
+    } : !pto.vmi.vreg<64xf32>
+    return %r : !pto.vmi.vreg<64xf32>
+  }
+
+  // FIXED: fixed offset, neither carries IV -> cross-iteration -> block (2).
+  func.func @fixed_offset_dep() -> (!pto.vmi.vreg<64xf32>) {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c1 = arith.constant 1 : index
+    %c0f = arith.constant 0.0 : f32
+    %pc = pto.pointer_cast(%c0_i64) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<128x64xf32, #pto.address_space<vec>>
+    %ub = pto.castptr %pc : memref<128x64xf32, #pto.address_space<vec>> -> !pto.ptr<f32, ub>
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %seed0 = pto.vmi.broadcast %c0f : f32 -> !pto.vmi.vreg<64xf32>
+    // FUSE-LABEL: func.func @fixed_offset_dep
+    // FUSE-COUNT-2: scf.for
+    // FUSE-NOT: scf.for
+    %r = pto.fusion_region {
+      %a = scf.for %iv = %c0 to %c64 step %c1 iter_args(%acc = %seed0) -> (!pto.vmi.vreg<64xf32>) {
+        %s = pto.vmi.vload %ub[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+        pto.vmi.vstore %s, %ub[%c0], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+        scf.yield %acc : !pto.vmi.vreg<64xf32>
+      } {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      %b = scf.for %iv = %c0 to %c64 step %c1 iter_args(%acc2 = %seed0) -> (!pto.vmi.vreg<64xf32>) {
+        %l = pto.vmi.vload %ub[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+        scf.yield %l : !pto.vmi.vreg<64xf32>
+      } {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      pto.yield(%b) : (!pto.vmi.vreg<64xf32>) -> ()
+    } : !pto.vmi.vreg<64xf32>
+    return %r : !pto.vmi.vreg<64xf32>
+  }
+
+  // SCATTER: indirect UB access is unmodeled, so the loops cannot fuse.
+  func.func @scatter_boundary() -> (!pto.vmi.vreg<64xf32>) {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c1 = arith.constant 1 : index
+    %c0i32 = arith.constant 0 : i32
+    %c0f = arith.constant 0.0 : f32
+    %pc = pto.pointer_cast(%c0_i64) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<128x64xf32, #pto.address_space<vec>>
+    %ub = pto.castptr %pc : memref<128x64xf32, #pto.address_space<vec>> -> !pto.ptr<f32, ub>
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %idxs = pto.vmi.broadcast %c0i32 : i32 -> !pto.vmi.vreg<64xi32>
+    %seed0 = pto.vmi.broadcast %c0f : f32 -> !pto.vmi.vreg<64xf32>
+    // FUSE-LABEL: func.func @scatter_boundary
+    // FUSE-COUNT-2: scf.for
+    // FUSE-NOT: scf.for
+    %r = pto.fusion_region {
+      %a = scf.for %iv = %c0 to %c64 step %c1 iter_args(%acc = %seed0) -> (!pto.vmi.vreg<64xf32>) {
+        pto.vmi.vscatter %acc, %ub, %idxs, %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.vreg<64xi32>, !pto.vmi.mask<64xpred>
+        scf.yield %acc : !pto.vmi.vreg<64xf32>
+      } {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      %b = scf.for %iv = %c0 to %c64 step %c1 iter_args(%acc2 = %seed0) -> (!pto.vmi.vreg<64xf32>) {
+        scf.yield %acc2 : !pto.vmi.vreg<64xf32>
+      } {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      pto.yield(%b) : (!pto.vmi.vreg<64xf32>) -> ()
+    } : !pto.vmi.vreg<64xf32>
+    return %r : !pto.vmi.vreg<64xf32>
+  }
+
+  // WAW stencil: loop-by-loop and interleaved execution have different final
+  // values at overlapping locations, so the loops must remain separate.
+  func.func @waw_stencil() {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %c0f = arith.constant 0.0 : f32
+    %pc = pto.pointer_cast(%c0_i64) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<128x64xf32, #pto.address_space<vec>>
+    %ub = pto.castptr %pc : memref<128x64xf32, #pto.address_space<vec>> -> !pto.ptr<f32, ub>
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %value = pto.vmi.broadcast %c0f : f32 -> !pto.vmi.vreg<64xf32>
+    // FUSE-LABEL: func.func @waw_stencil
+    // FUSE-COUNT-2: scf.for
+    // FUSE-NOT: scf.for
+    %unused = pto.fusion_region {
+      scf.for %i = %c0 to %c64 step %c1 {
+        pto.vmi.vstore %value, %ub[%i], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+      } {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      scf.for %i = %c0 to %c64 step %c1 {
+        %ip1 = arith.addi %i, %c1 : index
+        pto.vmi.vstore %value, %ub[%ip1], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+      } {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+
+  // Equal numeric UB addresses must alias even when produced by distinct
+  // arith.constant operations.  The fixed-offset transfer is cross-iteration,
+  // so the loops must remain separate.
+  func.func @same_numeric_address_distinct_ssa() -> (!pto.vmi.vreg<64xf32>) {
+    %addr0 = arith.constant 0 : i64
+    %addr0_again = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %c0f = arith.constant 0.0 : f32
+    %pc0 = pto.pointer_cast(%addr0) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<64x64xf32, #pto.address_space<vec>>
+    %pc1 = pto.pointer_cast(%addr0_again) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<64x64xf32, #pto.address_space<vec>>
+    %ub0 = pto.castptr %pc0 : memref<64x64xf32, #pto.address_space<vec>> -> !pto.ptr<f32, ub>
+    %ub1 = pto.castptr %pc1 : memref<64x64xf32, #pto.address_space<vec>> -> !pto.ptr<f32, ub>
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %seed = pto.vmi.broadcast %c0f : f32 -> !pto.vmi.vreg<64xf32>
+    // FUSE-LABEL: func.func @same_numeric_address_distinct_ssa
+    // FUSE-COUNT-2: scf.for
+    // FUSE-NOT: scf.for
+    %result = pto.fusion_region {
+      scf.for %i = %c0 to %c64 step %c1 {
+        pto.vmi.vstore %seed, %ub0[%c0], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+      } {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      %consumer = scf.for %i = %c0 to %c64 step %c1 iter_args(%acc = %seed) -> (!pto.vmi.vreg<64xf32>) {
+        %loaded = pto.vmi.vload %ub1[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+        scf.yield %loaded : !pto.vmi.vreg<64xf32>
+      } {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      pto.yield(%consumer) : (!pto.vmi.vreg<64xf32>) -> ()
+    } : !pto.vmi.vreg<64xf32>
+    return %result : !pto.vmi.vreg<64xf32>
+  }
+
+  // Different memref element types at the same byte address overlap.  Until
+  // byte-affine reinterpretation is modeled, preserve loop ordering.
+  func.func @same_address_different_view_type() -> (!pto.vmi.vreg<64xf16>) {
+    %addr0 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %zero32 = arith.constant 0.0 : f32
+    %zero16 = arith.constant 0.0 : f16
+    %pc32 = pto.pointer_cast(%addr0) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<64x64xf32, #pto.address_space<vec>>
+    %pc16 = pto.pointer_cast(%addr0) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<64x64xf16, #pto.address_space<vec>>
+    %ub32 = pto.castptr %pc32 : memref<64x64xf32, #pto.address_space<vec>> -> !pto.ptr<f32, ub>
+    %ub16 = pto.castptr %pc16 : memref<64x64xf16, #pto.address_space<vec>> -> !pto.ptr<f16, ub>
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %seed32 = pto.vmi.broadcast %zero32 : f32 -> !pto.vmi.vreg<64xf32>
+    %seed16 = pto.vmi.broadcast %zero16 : f16 -> !pto.vmi.vreg<64xf16>
+    // FUSE-LABEL: func.func @same_address_different_view_type
+    // FUSE-COUNT-2: scf.for
+    // FUSE-NOT: scf.for
+    %result = pto.fusion_region {
+      scf.for %i = %c0 to %c64 step %c1 {
+        %off = arith.muli %i, %c64 : index
+        pto.vmi.vstore %seed32, %ub32[%off], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+      } {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      %consumer = scf.for %i = %c0 to %c64 step %c1 iter_args(%acc = %seed16) -> (!pto.vmi.vreg<64xf16>) {
+        %off = arith.muli %i, %c64 : index
+        %loaded = pto.vmi.vload %ub16[%off] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<64xf16>
+        scf.yield %loaded : !pto.vmi.vreg<64xf16>
+      } {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      pto.yield(%consumer) : (!pto.vmi.vreg<64xf16>) -> ()
+    } : !pto.vmi.vreg<64xf16>
+    return %result : !pto.vmi.vreg<64xf16>
+  }
+
+  // The start address offset=i is injective, but adjacent 64xf32 accesses are
+  // only 4 bytes apart and overlap by 252 bytes.  Wide-access overlap blocks
+  // loop interleaving.
+  func.func @wide_access_overlap() -> (!pto.vmi.vreg<64xf32>) {
+    %addr0 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %zero = arith.constant 0.0 : f32
+    %pc = pto.pointer_cast(%addr0) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<64x64xf32, #pto.address_space<vec>>
+    %ub = pto.castptr %pc : memref<64x64xf32, #pto.address_space<vec>> -> !pto.ptr<f32, ub>
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %seed = pto.vmi.broadcast %zero : f32 -> !pto.vmi.vreg<64xf32>
+    // FUSE-LABEL: func.func @wide_access_overlap
+    // FUSE-COUNT-2: scf.for
+    // FUSE-NOT: scf.for
+    %result = pto.fusion_region {
+      scf.for %i = %c0 to %c64 step %c1 {
+        pto.vmi.vstore %seed, %ub[%i], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+      } {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      %consumer = scf.for %i = %c0 to %c64 step %c1 iter_args(%acc = %seed) -> (!pto.vmi.vreg<64xf32>) {
+        %loaded = pto.vmi.vload %ub[%i] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+        scf.yield %loaded : !pto.vmi.vreg<64xf32>
+      } {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      pto.yield(%consumer) : (!pto.vmi.vreg<64xf32>) -> ()
+    } : !pto.vmi.vreg<64xf32>
+    return %result : !pto.vmi.vreg<64xf32>
+  }
+
+  // A static subview and its parent view overlap at the same byte range. The
+  // two element-offset expressions are not directly comparable after view
+  // normalization, so the first legality model conservatively preserves the
+  // original loop order.
+  func.func @parent_subview_overlap() -> (!pto.vmi.vreg<64xf32>) {
+    %addr = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %c64 = arith.constant 64 : index
+    %zero = arith.constant 0.0 : f32
+    %parent = pto.pointer_cast(%addr) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<8192xf32, #pto.address_space<vec>>
+    %parent_ptr = pto.castptr %parent : memref<8192xf32, #pto.address_space<vec>> -> !pto.ptr<f32, ub>
+    %view = memref.subview %parent[%c32] [4096] [1]
+        : memref<8192xf32, #pto.address_space<vec>>
+          to memref<4096xf32, strided<[1], offset: ?>, #pto.address_space<vec>>
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %seed = pto.vmi.broadcast %zero : f32 -> !pto.vmi.vreg<64xf32>
+    // FUSE-LABEL: func.func @parent_subview_overlap
+    // FUSE-COUNT-2: scf.for
+    // FUSE-NOT: scf.for
+    %result = pto.fusion_region {
+      scf.for %i = %c0 to %c64 step %c1 {
+        %row = arith.muli %i, %c64 : index
+        %off = arith.addi %row, %c32 : index
+        pto.vmi.vstore %seed, %parent_ptr[%off], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+      } {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      %consumer = scf.for %i = %c0 to %c64 step %c1 iter_args(%acc = %seed) -> (!pto.vmi.vreg<64xf32>) {
+        %off = arith.muli %i, %c64 : index
+        %loaded = pto.vmi.vload %view[%off] : memref<4096xf32, strided<[1], offset: ?>, #pto.address_space<vec>> -> !pto.vmi.vreg<64xf32>
+        scf.yield %loaded : !pto.vmi.vreg<64xf32>
+      } {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      pto.yield(%consumer) : (!pto.vmi.vreg<64xf32>) -> ()
+    } : !pto.vmi.vreg<64xf32>
+    return %result : !pto.vmi.vreg<64xf32>
+  }
+
+  // Runtime UB pointers cannot be normalized to a static storage root. Even
+  // when the offset expressions match, loop interleaving is not legal without
+  // an external no-alias proof.
+  func.func @dynamic_base_is_unknown(%src: !pto.ptr<f32, ub>,
+                                     %dst: !pto.ptr<f32, ub>) -> (!pto.vmi.vreg<64xf32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %zero = arith.constant 0.0 : f32
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %seed = pto.vmi.broadcast %zero : f32 -> !pto.vmi.vreg<64xf32>
+    // FUSE-LABEL: func.func @dynamic_base_is_unknown
+    // FUSE-COUNT-2: scf.for
+    // FUSE-NOT: scf.for
+    %result = pto.fusion_region {
+      scf.for %i = %c0 to %c64 step %c1 {
+        %off = arith.muli %i, %c64 : index
+        pto.vmi.vstore %seed, %dst[%off], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+      } {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      %consumer = scf.for %i = %c0 to %c64 step %c1 iter_args(%acc = %seed) -> (!pto.vmi.vreg<64xf32>) {
+        %off = arith.muli %i, %c64 : index
+        %loaded = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+        scf.yield %loaded : !pto.vmi.vreg<64xf32>
+      } {pto.tilelib.impl = "vmi", pto.vmi.fusion.source = "tilelib", pto.vmi.fusion.principal_loop}
+      pto.yield(%consumer) : (!pto.vmi.vreg<64xf32>) -> ()
+    } : !pto.vmi.vreg<64xf32>
+    return %result : !pto.vmi.vreg<64xf32>
+  }
+}

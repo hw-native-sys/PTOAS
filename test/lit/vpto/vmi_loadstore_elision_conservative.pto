@@ -1,0 +1,303 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root directory of the software repository for the full text of the License.
+
+// Conservative boundaries of PTOVmiLoadStoreElision: cases where the pass MUST
+// NOT forward or erase. Each func is a minimal fusion_region; FileCheck
+// asserts the EXACT surviving vload/vstore count (CHECK-COUNT followed by
+// CHECK-NOT, scoped to the function label) — a regression that loosens the
+// legality checks would change these counts and fail here.
+//
+// Covered reviewer edges:
+//   MIXED  - a vload feeding BOTH a masked (vmuls) and a mask-free (vcvt)
+//            consumer after a store: read set unbounded -> no forward (the
+//            mask-free consumer would read beyond the store's active lanes).
+//   VSEL   - a vload feeding a vsel after a store: vsel's mask does NOT bound
+//            the vload's read set (both true/false_value are read on all
+//            lanes) -> no forward.
+//   READ-DSE - a retained vload observes the preceding store, so a later
+//            covering store must not make the observed store dead.
+//   SCATTER- a vstore -> vscatter(UB) -> vload same loc: the impure vscatter
+//            must NOT be stepped over -> vload keeps, no forward across it.
+//   UPTR   - store -> vload on a runtime (block-arg) pointer: base is not a
+//            compile-time UB identity -> flush, no forward (both kept).
+//   DINTLV - store -> dintlv vload (2 results): non-continuous shape -> flush.
+//   GROUP  - store -> group vload: non-continuous shape -> flush.
+//   BSTRIDE- store -> block-stride vstore (updated_base) -> vload: the
+//            block-stride store is unmodeled -> flush -> vload keeps.
+//   CALL   - store -> func.call(UB) -> vload: the call is NOT Pure (unknown
+//            memory effects) -> flush -> vload keeps (no forward across call).
+
+// RUN: pto-test-opt %s -pto-vmi-load-store-elision \
+// RUN:   | FileCheck %s --check-prefix=ELIDE
+
+module {
+  // MIXED: store -> vload -> (vmuls[mask] + vcvt[no-mask]).
+  // The load is consumed by a masked AND a mask-free op -> read set unbounded
+  // -> no forward. One vload survives.
+  func.func @mixed_consumers() -> (!pto.vmi.vreg<64xf32>) {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c32 = arith.constant 32 : index
+    %c1 = arith.constant 1.0 : f32
+    %pc = pto.pointer_cast(%c0_i64) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<128x64xf32, #pto.address_space<vec>>
+    %ub = pto.castptr %pc : memref<128x64xf32, #pto.address_space<vec>> -> !pto.ptr<f32, ub>
+    %mask32 = pto.vmi.create_mask %c32 : index -> !pto.vmi.mask<64xpred>
+    %seed = pto.vmi.broadcast %c1 : f32 -> !pto.vmi.vreg<64xf32>
+    // ELIDE-LABEL: func.func @mixed_consumers
+    // ELIDE-COUNT-1: pto.vmi.vload
+    // ELIDE-NOT: pto.vmi.vload
+    %r = pto.fusion_region {
+      pto.vmi.vstore %seed, %ub[%c0], %mask32 : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+      %l = pto.vmi.vload %ub[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+      %m = pto.vmi.vmuls %l, %c1, %mask32 : !pto.vmi.vreg<64xf32>, f32, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
+      %c = pto.vmi.vcvt %l {saturate = "NOSAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf16>
+      pto.yield(%m) : (!pto.vmi.vreg<64xf32>) -> ()
+    } : !pto.vmi.vreg<64xf32>
+    return %r : !pto.vmi.vreg<64xf32>
+  }
+
+  // VSEL: store -> vload -> vsel. vsel's mask does NOT predicate the vload's
+  // read (both true/false_value are read on all lanes) -> the vload's read
+  // set is unbounded -> no forward. One vload survives.
+  func.func @vsel_consumer() -> (!pto.vmi.vreg<64xf32>) {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c32 = arith.constant 32 : index
+    %c0f = arith.constant 0.0 : f32
+    %c1 = arith.constant 1.0 : f32
+    %pc = pto.pointer_cast(%c0_i64) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<128x64xf32, #pto.address_space<vec>>
+    %ub = pto.castptr %pc : memref<128x64xf32, #pto.address_space<vec>> -> !pto.ptr<f32, ub>
+    %mask32 = pto.vmi.create_mask %c32 : index -> !pto.vmi.mask<64xpred>
+    %seed = pto.vmi.broadcast %c1 : f32 -> !pto.vmi.vreg<64xf32>
+    %zero = pto.vmi.broadcast %c0f : f32 -> !pto.vmi.vreg<64xf32>
+    // ELIDE-LABEL: func.func @vsel_consumer
+    // ELIDE-COUNT-1: pto.vmi.vload
+    // ELIDE-NOT: pto.vmi.vload
+    %r = pto.fusion_region {
+      pto.vmi.vstore %seed, %ub[%c0], %mask32 : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+      %l = pto.vmi.vload %ub[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+      %sel = pto.vmi.vsel %mask32, %l, %zero : !pto.vmi.mask<64xpred>, !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf32>
+      pto.yield(%sel) : (!pto.vmi.vreg<64xf32>) -> ()
+    } : !pto.vmi.vreg<64xf32>
+    return %r : !pto.vmi.vreg<64xf32>
+  }
+
+  // READ-DSE: the vsel keeps the vload non-forwardable. The first store feeds
+  // that retained load and is therefore observable before the second store
+  // overwrites the same location. Both stores must survive.
+  func.func @retained_load_observes_old_store() -> (!pto.vmi.vreg<64xf32>) {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c0f = arith.constant 0.0 : f32
+    %c1f = arith.constant 1.0 : f32
+    %pc = pto.pointer_cast(%c0_i64) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<128x64xf32, #pto.address_space<vec>>
+    %ub = pto.castptr %pc : memref<128x64xf32, #pto.address_space<vec>> -> !pto.ptr<f32, ub>
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %first = pto.vmi.broadcast %c0f : f32 -> !pto.vmi.vreg<64xf32>
+    %second = pto.vmi.broadcast %c1f : f32 -> !pto.vmi.vreg<64xf32>
+    // ELIDE-LABEL: func.func @retained_load_observes_old_store
+    // ELIDE: pto.fusion_region {
+    // ELIDE-NEXT: pto.vmi.vstore
+    // ELIDE-NEXT: %[[OBSERVED:.*]] = pto.vmi.vload
+    // ELIDE-NEXT: pto.vmi.vsel {{.*}}, %[[OBSERVED]],
+    // ELIDE-NEXT: pto.vmi.vstore
+    // ELIDE-NEXT: pto.yield
+    %r = pto.fusion_region {
+      pto.vmi.vstore %first, %ub[%c0], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+      %load = pto.vmi.vload %ub[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+      %selected = pto.vmi.vsel %mask, %load, %second : !pto.vmi.mask<64xpred>, !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf32>
+      pto.vmi.vstore %second, %ub[%c0], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+      pto.yield(%selected) : (!pto.vmi.vreg<64xf32>) -> ()
+    } : !pto.vmi.vreg<64xf32>
+    return %r : !pto.vmi.vreg<64xf32>
+  }
+
+  // SCATTER: vstore -> vscatter(UB write) -> vload same loc. The impure
+  // vscatter is NOT stepped over (it declares a Write effect) -> the table is
+  // invalidated -> vload does NOT forward to the store. Two vloads survive
+  // (the seed read + the late read) and the store survives.
+  func.func @scatter_between() -> (!pto.vmi.vreg<64xf32>) {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c0i32 = arith.constant 0 : i32
+    %c1 = arith.constant 1.0 : f32
+    %pc = pto.pointer_cast(%c0_i64) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<128x64xf32, #pto.address_space<vec>>
+    %ub = pto.castptr %pc : memref<128x64xf32, #pto.address_space<vec>> -> !pto.ptr<f32, ub>
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %idxs = pto.vmi.broadcast %c0i32 : i32 -> !pto.vmi.vreg<64xi32>
+    // ELIDE-LABEL: func.func @scatter_between
+    // ELIDE-COUNT-2: pto.vmi.vload
+    // ELIDE-NOT: pto.vmi.vload
+    %r = pto.fusion_region {
+      %s = pto.vmi.vload %ub[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+      %scaled = pto.vmi.vmuls %s, %c1, %mask : !pto.vmi.vreg<64xf32>, f32, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
+      pto.vmi.vstore %scaled, %ub[%c0], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+      pto.vmi.vscatter %scaled, %ub, %idxs, %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.vreg<64xi32>, !pto.vmi.mask<64xpred>
+      %late = pto.vmi.vload %ub[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+      %out = pto.vmi.vmuls %late, %c1, %mask : !pto.vmi.vreg<64xf32>, f32, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
+      pto.yield(%out) : (!pto.vmi.vreg<64xf32>) -> ()
+    } : !pto.vmi.vreg<64xf32>
+    return %r : !pto.vmi.vreg<64xf32>
+  }
+
+  // UPTR: store -> vload on a runtime (block-arg) pointer. The base is not a
+  // compile-time UB identity -> flush, no forward. One vload + one store
+  // survive (both kept).
+  func.func @unknown_ptr(%arg0 : !pto.ptr<f32, ub>) -> (!pto.vmi.vreg<64xf32>) {
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c1 = arith.constant 1.0 : f32
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %seed = pto.vmi.broadcast %c1 : f32 -> !pto.vmi.vreg<64xf32>
+    // ELIDE-LABEL: func.func @unknown_ptr
+    // ELIDE-COUNT-1: pto.vmi.vstore
+    // ELIDE-NOT: pto.vmi.vstore
+    // ELIDE-COUNT-1: pto.vmi.vload
+    // ELIDE-NOT: pto.vmi.vload
+    %r = pto.fusion_region {
+      pto.vmi.vstore %seed, %arg0[%c0], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+      %late = pto.vmi.vload %arg0[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+      %out = pto.vmi.vmuls %late, %c1, %mask : !pto.vmi.vreg<64xf32>, f32, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
+      pto.yield(%out) : (!pto.vmi.vreg<64xf32>) -> ()
+    } : !pto.vmi.vreg<64xf32>
+    return %r : !pto.vmi.vreg<64xf32>
+  }
+
+  // DINTLV: store -> dintlv vload (2 results, non-continuous). The load shape
+  // is unmodeled -> flush -> the 2-result load is kept. One vload survives.
+  func.func @dintlv_load() -> (!pto.vmi.vreg<64xf16>) {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c1 = arith.constant 1.0 : f32
+    %pc = pto.pointer_cast(%c0_i64) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<128x64xf16, #pto.address_space<vec>>
+    %ub = pto.castptr %pc : memref<128x64xf16, #pto.address_space<vec>> -> !pto.ptr<f16, ub>
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %seed = pto.vmi.broadcast %c1 : f32 -> !pto.vmi.vreg<64xf32>
+    // ELIDE-LABEL: func.func @dintlv_load
+    // ELIDE-COUNT-1: pto.vmi.vload
+    // ELIDE-NOT: pto.vmi.vload
+    %r = pto.fusion_region {
+      %lo, %hi = "pto.vmi.vload"(%ub, %c0) {dist_mode = "dintlv", operandSegmentSizes = array<i32: 1, 1, 0, 0, 0>} : (!pto.ptr<f16, ub>, index) -> (!pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16>)
+      pto.yield(%lo) : (!pto.vmi.vreg<64xf16>) -> ()
+    } : !pto.vmi.vreg<64xf16>
+    return %r : !pto.vmi.vreg<64xf16>
+  }
+
+  // GROUP: store -> group vload (non-continuous shape). Unmodeled -> flush.
+  // One vload survives.
+  func.func @group_load() -> (!pto.vmi.vreg<64xf32>) {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c1 = arith.constant 1.0 : f32
+    %pc = pto.pointer_cast(%c0_i64) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<128x64xf32, #pto.address_space<vec>>
+    %ub = pto.castptr %pc : memref<128x64xf32, #pto.address_space<vec>> -> !pto.ptr<f32, ub>
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %seed = pto.vmi.broadcast %c1 : f32 -> !pto.vmi.vreg<64xf32>
+    %stride = arith.constant 64 : index
+    // ELIDE-LABEL: func.func @group_load
+    // ELIDE-COUNT-1: pto.vmi.vload
+    // ELIDE-NOT: pto.vmi.vload
+    %r = pto.fusion_region {
+      pto.vmi.vstore %seed, %ub[%c0], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+      %g = pto.vmi.vload %ub[%c0], %stride {group = 2 : i64} : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+      pto.yield(%g) : (!pto.vmi.vreg<64xf32>) -> ()
+    } : !pto.vmi.vreg<64xf32>
+    return %r : !pto.vmi.vreg<64xf32>
+  }
+
+  // BSTRIDE: store -> block-stride vstore (updated_base, unmodeled) -> vload.
+  // The block-stride store flushes the table -> vload does NOT forward to the
+  // first store. One vload + two vstores survive.
+  func.func @block_stride_store() -> (!pto.vmi.vreg<64xf32>) {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c128i16 = arith.constant 128 : i16
+    %c1i16 = arith.constant 1 : i16
+    %c1 = arith.constant 1.0 : f32
+    %pc = pto.pointer_cast(%c0_i64) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<128x64xf32, #pto.address_space<vec>>
+    %ub = pto.castptr %pc : memref<128x64xf32, #pto.address_space<vec>> -> !pto.ptr<f32, ub>
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %seed = pto.vmi.broadcast %c1 : f32 -> !pto.vmi.vreg<64xf32>
+    // ELIDE-LABEL: func.func @block_stride_store
+    // ELIDE-COUNT-2: pto.vmi.vstore
+    // ELIDE-NOT: pto.vmi.vstore
+    // ELIDE-COUNT-1: pto.vmi.vload
+    // ELIDE-NOT: pto.vmi.vload
+    %r = pto.fusion_region {
+      pto.vmi.vstore %seed, %ub[%c0], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+      %upd = pto.vmi.vstore %seed, %ub[%c0], %c128i16, %c1i16, %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred> -> !pto.ptr<f32, ub>
+      %late = pto.vmi.vload %ub[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+      %out = pto.vmi.vmuls %late, %c1, %mask : !pto.vmi.vreg<64xf32>, f32, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
+      pto.yield(%out) : (!pto.vmi.vreg<64xf32>) -> ()
+    } : !pto.vmi.vreg<64xf32>
+    return %r : !pto.vmi.vreg<64xf32>
+  }
+
+  // CALL: store -> func.call(UB) -> vload. func.call is NOT Pure (unknown
+  // memory effects, may alias the UB) -> flush -> vload keeps, no forward.
+  func.func private @side_effect(%a : !pto.ptr<f32, ub>)
+  func.func @call_between() -> (!pto.vmi.vreg<64xf32>) {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c1 = arith.constant 1.0 : f32
+    %pc = pto.pointer_cast(%c0_i64) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<128x64xf32, #pto.address_space<vec>>
+    %ub = pto.castptr %pc : memref<128x64xf32, #pto.address_space<vec>> -> !pto.ptr<f32, ub>
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %seed = pto.vmi.broadcast %c1 : f32 -> !pto.vmi.vreg<64xf32>
+    // ELIDE-LABEL: func.func @call_between
+    // ELIDE-COUNT-1: pto.vmi.vstore
+    // ELIDE-NOT: pto.vmi.vstore
+    // ELIDE-COUNT-1: pto.vmi.vload
+    // ELIDE-NOT: pto.vmi.vload
+    %r = pto.fusion_region {
+      pto.vmi.vstore %seed, %ub[%c0], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+      func.call @side_effect(%ub) : (!pto.ptr<f32, ub>) -> ()
+      %late = pto.vmi.vload %ub[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+      %out = pto.vmi.vmuls %late, %c1, %mask : !pto.vmi.vreg<64xf32>, f32, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
+      pto.yield(%out) : (!pto.vmi.vreg<64xf32>) -> ()
+    } : !pto.vmi.vreg<64xf32>
+    return %r : !pto.vmi.vreg<64xf32>
+  }
+
+  // A loop without TileLib VMI principal provenance may be user-authored or a
+  // PTODSL fallback loop. Its body is outside this pass's transformation
+  // contract even when it appears inside a loose fusion region.
+  func.func @unmarked_loop_body_is_ignored() -> (!pto.vmi.vreg<64xf32>) {
+    %addr = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c64 = arith.constant 64 : index
+    %one = arith.constant 1.0 : f32
+    %pc = pto.pointer_cast(%addr) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<128x64xf32, #pto.address_space<vec>>
+    %ub = pto.castptr %pc : memref<128x64xf32, #pto.address_space<vec>> -> !pto.ptr<f32, ub>
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %seed = pto.vmi.broadcast %one : f32 -> !pto.vmi.vreg<64xf32>
+    // ELIDE-LABEL: func.func @unmarked_loop_body_is_ignored
+    // ELIDE: scf.for
+    // ELIDE: pto.vmi.vstore
+    // ELIDE: %[[LOAD:.*]] = pto.vmi.vload
+    // ELIDE: pto.vmi.vmuls %[[LOAD]]
+    %r = pto.fusion_region {
+      %result = scf.for %i = %c0 to %c4 step %c1 iter_args(%acc = %seed) -> (!pto.vmi.vreg<64xf32>) {
+        pto.vmi.vstore %acc, %ub[%c0], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+        %load = pto.vmi.vload %ub[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+        %use = pto.vmi.vmuls %load, %one, %mask : !pto.vmi.vreg<64xf32>, f32, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
+        scf.yield %use : !pto.vmi.vreg<64xf32>
+      }
+      pto.yield(%result) : (!pto.vmi.vreg<64xf32>) -> ()
+    } : !pto.vmi.vreg<64xf32>
+    return %r : !pto.vmi.vreg<64xf32>
+  }
+}

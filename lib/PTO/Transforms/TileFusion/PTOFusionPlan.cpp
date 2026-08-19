@@ -81,11 +81,15 @@ static bool isCurrentlyPlannableOp(StringRef opName) {
   return llvm::StringSwitch<bool>(opName)
       .Cases("tmul", "tdiv", "tadd", "tsub", "tmax", "tmin", true)
       .Cases("tmuls", "tdivs", "tadds", "tsubs", "tmaxs", "tmins", true)
-      .Case("texp", true)
+      .Cases("texp", "tabs", "tneg", "trecip", "tsqrt", "trsqrt", true)
+      .Case("tmov", true)
       .Case("texpands", true)
       .Cases("trowexpandsub", "trowexpandmul", "trowexpanddiv", true)
+      .Cases("tcolexpandsub", "tcolexpandadd", "tcolexpandmul", "tcolexpanddiv",
+             true)
       .Cases("trowsum", "trowmax", "trowmin", true)
       .Cases("tcolsum", "tcolmax", "tcolmin", true)
+      .Case("tcvt", true)
       .Default(false);
 }
 
@@ -362,6 +366,11 @@ public:
     const bool directlyDependent =
         dependsOnPreviousNode(ctx.blockAnalysis, previous, candidate);
     if (!sameDomainClass || !contiguousInBlock || !directlyDependent) {
+      llvm::errs() << "DEBUG evaluateAppend: reject " << candidate.semantics.opName
+                   << " sameDomain=" << sameDomainClass
+                   << " contiguous=" << contiguousInBlock
+                   << " dependent=" << directlyDependent
+                   << " prev=" << previous.semantics.opName << "\n";
       return decision;
     }
 
@@ -565,6 +574,68 @@ public:
   }
 };
 
+// VMI F3-adjacency strategy: every plannable compute node is wrapped into a
+// loose fusion group. Pure alloc_tile resource declarations and tile subviews
+// are transparent. Hard non-plannable ops close the group. This does NOT do
+// UB-overlap checking — the resulting fusion_region is a container, not a
+// fusion mandate.
+class VMIUBDisjointStrategyEngine final : public StrategyEngine {
+public:
+  SmallVector<PlannedFusionGroup, mlir::pto::kValue8>
+  planBlock(const PlanningContext &ctx,
+            const CostModel &costModel) const override {
+    const pto::FusionBlockAnalysis &block = ctx.blockAnalysis;
+    if (block.computeNodes.empty())
+      return {};
+
+    DenseMap<unsigned, bool> precededByNonPlannable;
+    DenseMap<Operation *, unsigned> nodeIdByOp;
+    for (const pto::FusionComputeNode &n : block.computeNodes)
+      nodeIdByOp[n.op] = n.id;
+    bool sawCompute = false;
+    bool hardBoundarySinceCompute = false;
+    for (Operation &op : *block.block) {
+      auto it = nodeIdByOp.find(&op);
+      if (it != nodeIdByOp.end()) {
+        precededByNonPlannable[it->second] =
+            sawCompute && hardBoundarySinceCompute;
+        sawCompute = true;
+        hardBoundarySinceCompute = false;
+        continue;
+      }
+      if (pto::isFusionTransparentScaffold(&op))
+        continue;
+      FailureOr<pto::FusionOpSemantics> semanticsOr =
+          pto::getFusionOpSemantics(&op);
+      if (failed(semanticsOr) ||
+          semanticsOr->kind == pto::FusionOpKind::HardBoundary ||
+          (semanticsOr->kind == pto::FusionOpKind::LocalBoundary &&
+           !op.hasAttr("pto.vmi.fusion.boundary")))
+        hardBoundarySinceCompute = true;
+    }
+
+    SmallVector<PlannedFusionGroup, mlir::pto::kValue8> groups;
+    SmallVector<const pto::FusionComputeNode *, mlir::pto::kValue8> curMembers;
+    auto flushCurrent = [&]() {
+      if (curMembers.empty())
+        return;
+      PlannedFusionGroup group;
+      group.members = buildStableInGroupOrder(curMembers);
+      groups.push_back(std::move(group));
+      curMembers.clear();
+    };
+
+    for (const pto::FusionComputeNode &node : block.computeNodes) {
+      auto precIt = precededByNonPlannable.find(node.id);
+      if (precIt != precededByNonPlannable.end() && precIt->second)
+        flushCurrent();
+      curMembers.push_back(&node);
+    }
+    flushCurrent();
+    return groups;
+  }
+};
+
 static void clearPlanningAttrs(func::FuncOp func) {
   func.walk([](Operation *op) {
     op->removeAttr(kFusionGroupIdAttr);
@@ -622,12 +693,29 @@ struct FusionPlanPass : public pto::impl::FusionPlanBase<FusionPlanPass> {
     MLIRContext *ctx = &getContext();
     int64_t nextGroupId = 0;
     ConservativeDAGGreedyCostModel costModel;
-    ConservativeDAGGreedyStrategyEngine strategyEngine;
+    // Strategy selection. Only these two enumerated values are accepted.
+    // The VMI path uses VMIUBDisjoint, which groups plannable compute nodes
+    // by F3 adjacency and keeps single-node groups so every compute TileOp
+    // gets a fusion_region.
+    std::unique_ptr<StrategyEngine> strategyEngine;
+    const std::string strategyVal = strategy.getValue();
+    if (strategyVal == "conservative-dag-greedy")
+      strategyEngine =
+          std::make_unique<ConservativeDAGGreedyStrategyEngine>();
+    else if (strategyVal == "vmi-ub-disjoint")
+      strategyEngine = std::make_unique<VMIUBDisjointStrategyEngine>();
+    else {
+      emitError(getOperation()->getLoc())
+          << "unknown pto-fusion-plan --fusion-strategy='" << strategyVal
+          << "'; expected 'conservative-dag-greedy' or 'vmi-ub-disjoint'";
+      signalPassFailure();
+      return;
+    }
 
     for (const pto::FusionBlockAnalysis &blockAnalysis : analysis.blocks) {
       PlanningContext planningCtx{blockAnalysis};
       SmallVector<PlannedFusionGroup, mlir::pto::kValue8> groups =
-          strategyEngine.planBlock(planningCtx, costModel);
+          strategyEngine->planBlock(planningCtx, costModel);
       assignStableGroupMetadata(groups, ctx, nextGroupId);
     }
 

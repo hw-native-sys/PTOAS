@@ -1,0 +1,67 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root directory of the software repository for the full text of the License.
+
+// ColBroadcastBinary shape-constraint + new compute-family coverage regression.
+//
+// [P1] tcolexpandsub  src [R,C] + col_value [1,C] -> dst [R,C]  (R=8 > 1) must
+//     NOT over-constrain col_value.rows(1) == src.rows(R). With shape inference
+//     ON, the ColMax result ([1,C]) broadcast into the elementwise chain must
+//     prove a consistent [R,C] iteration domain shared with its elementwise
+//     neighbors (same domain_class), not a spurious InconsistentShape.
+// [P2]  tcvt + tcolexpandsub + tadd must all classify as compute and land in
+//     one candidate fusion_region (the new Convert / ColBroadcastBinary
+//     families enter the same group as Elementwise).
+//
+// DOMAIN checks (pre-fusion print): same domain_class across all three
+// compute nodes (colexpand, tcvt, tadd) proves the [8,64] domain with shape
+// inference on. PLAN checks (region gen): one fusion_region wraps all three.
+
+// RUN: pto-test-opt %s --pass-pipeline='builtin.module(func.func(pto-pre-fusion-analysis,pto-print-pre-fusion-analysis,pto-fusion-plan{fusion-strategy=vmi-ub-disjoint enable-shape-inference=true},pto-op-scheduling,pto-fusion-region-gen))' 2>&1 | FileCheck %s --check-prefix=DOMAIN --check-prefix=PLAN
+
+// DOMAIN: compute[0] op=tcolexpandsub family=col_broadcast_binary domain_class=[[CLASS:[0-9]+]]
+// DOMAIN: compute[1] op=tcvt family=convert domain_class=[[CLASS]]
+// DOMAIN: compute[2] op=tadd family=elementwise domain_class=[[CLASS]]
+
+// PLAN-LABEL: func.func @col_expand_chain
+// PLAN: pto.fusion_region
+// PLAN: pto.tcolexpandsub
+// PLAN: pto.tcvt
+// PLAN: pto.tadd
+// PLAN: pto.yield() : () -> ()
+// PLAN: return
+
+module {
+  func.func @col_expand_chain() {
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=64, v_row=8, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %col = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=64, v_row=8, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %cvt = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=64, v_row=8, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %out = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=64, v_row=8, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tcolexpandsub ins(%src, %col
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+         !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tcvt ins(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%cvt : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tadd ins(%cvt, %src
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+         !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%out : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}

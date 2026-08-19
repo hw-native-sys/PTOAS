@@ -1,0 +1,184 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root directory of the software repository for the full text of the License.
+
+// Affine-base + read-only-vload elision behavior for PTOVmiLoadStoreElision.
+//
+// Three behaviors under test, all mirroring the prefill_c4_softmax_pool group-10
+// shape:
+//   FWD_AFTER_UNKNOWN_LOAD — a pure vload on an untrackable (unknown) base between
+//     a store and a constant-base load must NOT invalidate the store's content:
+//     the constant load still forwards to the store. Previously the unknown load
+//     flushed the whole table.
+//   AFFINE_DEDUP — two vloads on the same loop-IV affine base (muli/addi of an
+//     induction variable) with no intervening write dedup to one load.
+//   MAY_ALIAS_STORE_INVALIDATES — an affine store that may alias a constant UB
+//     invalidates the constant entry without deleting its store; a later load
+//     from the constant UB must remain instead of forwarding stale content.
+//   UNKNOWN_STORE_STILL_FLUSHES — an untrackable STORE still invalidates tracked
+//     content (a read does not, a write does).
+//
+// All four cases now pass: the resolver traces through pto.pointer_cast for
+// constant addresses, and the affine (IV-derived) address path traces
+// pointer_cast -> castptr -> pointer_cast -> index_cast -> muli(%iv, c).
+
+// RUN: pto-test-opt %s -pto-vmi-load-store-elision \
+// RUN:   | FileCheck %s --check-prefix=ELIDE
+
+module {
+  // FWD_AFTER_UNKNOWN_LOAD: store -> unknown(runtime-ptr) vload -> constant vload.
+  // The constant vload must forward to the store (only a write invalidates content).
+  func.func @fwd_after_unknown_load(%arg0 : !pto.ptr<f32, ub>) -> (!pto.vmi.vreg<64xf32>) {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c1 = arith.constant 1.0 : f32
+    %pc = pto.pointer_cast(%c0_i64) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<128x64xf32, #pto.address_space<vec>>
+    %ub = pto.castptr %pc : memref<128x64xf32, #pto.address_space<vec>> -> !pto.ptr<f32, ub>
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %seed = pto.vmi.broadcast %c1 : f32 -> !pto.vmi.vreg<64xf32>
+    // ELIDE-LABEL: func.func @fwd_after_unknown_load
+    // The store survives; the unknown-base load survives (cannot forward).
+    // ELIDE: pto.vmi.vstore
+    // ELIDE: pto.vmi.vload %arg0
+    // The constant load forwards to the store's value: no constant vload remains.
+    // ELIDE-NOT: pto.vmi.vload %1
+    %r = pto.fusion_region {
+      pto.vmi.vstore %seed, %ub[%c0], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+      %u = pto.vmi.vload %arg0[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+      %ku = pto.vmi.vmuls %u, %c1, %mask : !pto.vmi.vreg<64xf32>, f32, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
+      %k = pto.vmi.vload %ub[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+      %m = pto.vmi.vmuls %k, %c1, %mask : !pto.vmi.vreg<64xf32>, f32, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
+      pto.yield(%m) : (!pto.vmi.vreg<64xf32>) -> ()
+    } : !pto.vmi.vreg<64xf32>
+    return %r : !pto.vmi.vreg<64xf32>
+  }
+
+  // AFFINE_DEDUP: two vloads of the same affine UB (loop-IV * 1024) with no
+  // intervening write dedup to one load.
+  func.func @affine_dedup(%iv : index) -> (!pto.vmi.vreg<64xf32>) {
+    %c1024 = arith.constant 1024 : index
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c1 = arith.constant 1.0 : f32
+    %off = arith.muli %iv, %c1024 : index
+    %addr = arith.index_cast %off : index to i64
+    %pc = pto.pointer_cast(%addr) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<128x64xf32, #pto.address_space<vec>>
+    %ub = pto.castptr %pc : memref<128x64xf32, #pto.address_space<vec>> -> !pto.ptr<f32, ub>
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    // ELIDE-LABEL: func.func @affine_dedup
+    // ELIDE: %[[L1:.*]] = pto.vmi.vload {{.*}}
+    // ELIDE-NEXT: pto.vmi.vmuls %[[L1]]
+    // ELIDE-NEXT: pto.vmi.vmuls %[[L1]]
+    // ELIDE-NOT: pto.vmi.vload
+    %r = pto.fusion_region {
+      %l1 = pto.vmi.vload %ub[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+      %l2 = pto.vmi.vload %ub[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+      %m1 = pto.vmi.vmuls %l1, %c1, %mask : !pto.vmi.vreg<64xf32>, f32, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
+      %m2 = pto.vmi.vmuls %l2, %c1, %mask : !pto.vmi.vreg<64xf32>, f32, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
+      pto.yield(%m2) : (!pto.vmi.vreg<64xf32>) -> ()
+    } : !pto.vmi.vreg<64xf32>
+    return %r : !pto.vmi.vreg<64xf32>
+  }
+
+  // OBSERVE_KEEP: known store -> unknown load -> known load -> same-loc overwrite.
+  // The first store is OBSERVED by the unknown load (may alias), so the overwrite
+  // must NOT delete it (nonErasable). Without the nonErasable dimension, the
+  // overwrite-DSE would erase store S and change what the unknown load reads.
+  func.func @observe_keep(%arg0 : !pto.ptr<f32, ub>) -> (!pto.vmi.vreg<64xf32>) {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c1 = arith.constant 1.0 : f32
+    %c2 = arith.constant 2.0 : f32
+    %pc = pto.pointer_cast(%c0_i64) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<128x64xf32, #pto.address_space<vec>>
+    %ub = pto.castptr %pc : memref<128x64xf32, #pto.address_space<vec>> -> !pto.ptr<f32, ub>
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %seed = pto.vmi.broadcast %c1 : f32 -> !pto.vmi.vreg<64xf32>
+    %seed2 = pto.vmi.broadcast %c2 : f32 -> !pto.vmi.vreg<64xf32>
+    // ELIDE-LABEL: func.func @observe_keep
+    // The first store (seed) must SURVIVE: it is observed by the unknown load.
+    // ELIDE: pto.vmi.vstore %[[SEED:.*]], %[[UB:.*]][%c0]
+    // The unknown load survives.
+    // ELIDE: pto.vmi.vload %arg0
+    // The second store (overwrite) survives.
+    // ELIDE: pto.vmi.vstore %[[SEED2:.*]], %[[UB:[0-9a-z]+]][%c0]
+    %r = pto.fusion_region {
+      pto.vmi.vstore %seed, %ub[%c0], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+      %u = pto.vmi.vload %arg0[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+      %ku = pto.vmi.vmuls %u, %c1, %mask : !pto.vmi.vreg<64xf32>, f32, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
+      pto.vmi.vstore %seed2, %ub[%c0], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+      %l = pto.vmi.vload %ub[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+      %m = pto.vmi.vmuls %l, %c1, %mask : !pto.vmi.vreg<64xf32>, f32, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
+      pto.yield(%m) : (!pto.vmi.vreg<64xf32>) -> ()
+    } : !pto.vmi.vreg<64xf32>
+    return %r : !pto.vmi.vreg<64xf32>
+  }
+
+  // MAY_ALIAS_STORE_INVALIDATES: when %iv is zero, the affine UB aliases the
+  // constant-address UB. The affine store therefore makes the constant store's
+  // forwarding entry stale even though the bases do not must-alias. The first
+  // store must also survive because may-alias alone cannot prove it dead.
+  func.func @may_alias_store_invalidates(%iv : index) -> (!pto.vmi.vreg<64xf32>) {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c1024 = arith.constant 1024 : index
+    %c1 = arith.constant 1.0 : f32
+    %c2 = arith.constant 2.0 : f32
+    %affine_off = arith.muli %iv, %c1024 : index
+    %affine_addr = arith.index_cast %affine_off : index to i64
+    %const_pc = pto.pointer_cast(%c0_i64) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<128x64xf32, #pto.address_space<vec>>
+    %affine_pc = pto.pointer_cast(%affine_addr) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<128x64xf32, #pto.address_space<vec>>
+    %const_ub = pto.castptr %const_pc : memref<128x64xf32, #pto.address_space<vec>> -> !pto.ptr<f32, ub>
+    %affine_ub = pto.castptr %affine_pc : memref<128x64xf32, #pto.address_space<vec>> -> !pto.ptr<f32, ub>
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %one = pto.vmi.broadcast %c1 : f32 -> !pto.vmi.vreg<64xf32>
+    %two = pto.vmi.broadcast %c2 : f32 -> !pto.vmi.vreg<64xf32>
+    // ELIDE-LABEL: func.func @may_alias_store_invalidates
+    // ELIDE: pto.vmi.vstore %[[ONE:.*]], %[[CONST_UB:.*]][%c0]
+    // ELIDE: pto.vmi.vstore %[[TWO:.*]], %[[AFFINE_UB:.*]][%c0]
+    // ELIDE: %[[LATE:.*]] = pto.vmi.vload %[[CONST_UB]][%c0]
+    // ELIDE: pto.vmi.vmuls %[[LATE]],
+    %r = pto.fusion_region {
+      pto.vmi.vstore %one, %const_ub[%c0], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+      pto.vmi.vstore %two, %affine_ub[%c0], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+      %late = pto.vmi.vload %const_ub[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+      %out = pto.vmi.vmuls %late, %c1, %mask : !pto.vmi.vreg<64xf32>, f32, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
+      pto.yield(%out) : (!pto.vmi.vreg<64xf32>) -> ()
+    } : !pto.vmi.vreg<64xf32>
+    return %r : !pto.vmi.vreg<64xf32>
+  }
+
+  // UNKNOWN_STORE_STILL_FLUSHES: an untrackable store between two constant vloads
+  // must still invalidate content (a write, unlike a read, kills forwardability).
+  func.func @unknown_store_flushes(%arg0 : !pto.ptr<f32, ub>) -> (!pto.vmi.vreg<64xf32>) {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c1 = arith.constant 1.0 : f32
+    %pc = pto.pointer_cast(%c0_i64) {config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>, compact=#pto.compact_mode<null>>} : memref<128x64xf32, #pto.address_space<vec>>
+    %ub = pto.castptr %pc : memref<128x64xf32, #pto.address_space<vec>> -> !pto.ptr<f32, ub>
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %seed = pto.vmi.broadcast %c1 : f32 -> !pto.vmi.vreg<64xf32>
+    // ELIDE-LABEL: func.func @unknown_store_flushes
+    // The unknown store flushes content: the second constant vload cannot forward
+    // to the first (they are separated by a write that may alias).
+    // ELIDE: %[[L1:.*]] = pto.vmi.vload {{.*}}[%c0]
+    // ELIDE: pto.vmi.vstore {{.*}}%arg0
+    // ELIDE: %[[L2:.*]] = pto.vmi.vload {{.*}}[%c0]
+    %r = pto.fusion_region {
+      %l1 = pto.vmi.vload %ub[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+      %m1 = pto.vmi.vmuls %l1, %c1, %mask : !pto.vmi.vreg<64xf32>, f32, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
+      pto.vmi.vstore %seed, %arg0[%c0], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+      %l2 = pto.vmi.vload %ub[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+      %m2 = pto.vmi.vmuls %l2, %c1, %mask : !pto.vmi.vreg<64xf32>, f32, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
+      pto.yield(%m2) : (!pto.vmi.vreg<64xf32>) -> ()
+    } : !pto.vmi.vreg<64xf32>
+    return %r : !pto.vmi.vreg<64xf32>
+  }
+}

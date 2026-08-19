@@ -9,7 +9,7 @@
 // Verify that the standard MLIR inliner runs before VMI layout assignment:
 // ordinary private helpers are inlined, while `no_inline` and `pto.simt_entry`
 // preserve explicit call boundaries.
-// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - | FileCheck %s
+// RUN: ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - | FileCheck %s
 
 module attributes {pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch = "a5"} {
   func.func private @inline_helper(%src: !pto.ptr<f32, ub>,
@@ -67,6 +67,4 @@ module attributes {pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch =
 // CHECK-LABEL: func.func private @kept_helper(
 // CHECK-SAME: attributes {no_inline}
 // CHECK-LABEL: func.func private @simt_body()
-// CHECK-SAME: attributes {
-// CHECK-SAME: no_inline
-// CHECK-SAME: pto.simt_entry
+// CHECK-SAME: attributes {no_inline, pto.simt_entry}

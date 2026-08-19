@@ -1,0 +1,79 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root directory of the software repository for the full text of the License.
+
+// Regression test for the LOOP and ELIDE stages of the VMI VF fusion passes
+// (US-005 mem2reg for the fa softmax chain ColMax -> tmuls(scale) ->
+// ColExpand-sub -> texp -> ColSum -> tcvt). Verifies:
+//   LOOP   - PTOVmiLoopFusion fuses the same-header scf.for ops inside the
+//            group region into one fused scf.for carrying both reduce
+//            accumulators (ColMax vmax + ColSum vadd) as iter_args.
+//   ELIDE  - PTOVmiLoadStoreElision forwards a vmi.vstore to a matching
+//            vmi.vload inside the fused loop body, erasing both (UB roundtrip
+//            elimination).
+// The PLAN/REGION stage (FusionPlan -> OpScheduling -> PTOFusionRegionGen
+// producing the pto.fusion_region these passes consume) is exercised end-to-end
+// by the fa sample this test compiles.
+
+// RUN: ptoas --enable-vmi --cann-output-version=9.0.0 --pto-arch=a5 --pto-backend=vpto \
+// RUN:   --tile-lib-backend=ptodsl --pto-level=level2 --enable-op-fusion \
+// RUN:   --emit-vpto %S/../../vpto/cases/vmi/fa-softmax-dn-init/kernel.pto \
+// RUN:   -o /dev/null --mlir-print-ir-after=pto-vmi-loop-fusion 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=LOOP
+// RUN: ptoas --enable-vmi --cann-output-version=9.0.0 --pto-arch=a5 --pto-backend=vpto \
+// RUN:   --tile-lib-backend=ptodsl --pto-level=level2 --enable-op-fusion \
+// RUN:   --emit-vpto %S/../../vpto/cases/vmi/fa-softmax-dn-init/kernel.pto \
+// RUN:   -o /dev/null --mlir-print-ir-after=pto-vmi-load-store-elision 2>&1 \
+// RUN:   | FileCheck %s --check-prefixes=ELIDE,ELIDEVLD
+// RUN: ptoas --enable-vmi --cann-output-version=9.0.0 --pto-arch=a5 --pto-backend=vpto \
+// RUN:   --tile-lib-backend=ptodsl --pto-level=level2 --enable-op-fusion \
+// RUN:   --emit-vpto %S/../../vpto/cases/vmi/fa-softmax-dn-init/kernel.pto \
+// RUN:   -o /dev/null --mlir-print-ir-after=pto-vmi-load-store-elision 2>&1 \
+// RUN:   | FileCheck %s --check-prefixes=ELIDE,ELIDESTO
+
+// ---- LOOP - two reduce-for's kept separate; the element-wise tail fused ----
+// The ColMax reduce is NOT fused with the ColExpand-sub loop that consumes its
+// final result: the tmuls(scale ColMax) chain between them can neither hoist
+// (reads the ColMax final UB) nor sink (its store is read by ColExpand-sub), so
+// fusion stops there. ColMax stays a separate reduce for; the rest
+// (ColExpand-sub, tmuls, texp, ColSum, tcvt, ND2NZ tmov) fuse into one for
+// carrying the ColSum accumulator and post-update destination pointer.
+//
+// ColMax uses the split-N VMI candidate (split=4): its reduce loop carries 4
+// independent VL-wide accumulators (step=4, 4 iter_args) instead of the single
+// chain of the split=1 form. split>1 also detaches it from the element-wise
+// single-loop body (step!=1 fails PTOVmiLoopFusion::sameHeader), so ColMax
+// runs as a standalone loop here.
+// LOOP: IR Dump After PTOVmiLoopFusion
+// LOOP-LABEL: func.func @fa_dn_softmax_128x64
+// LOOP: scf.for {{.*}} iter_args({{.*}}) -> (!pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>) {
+// LOOP: scf.for {{.*}} iter_args({{.*}}, {{.*}}) -> (!pto.vmi.vreg<64xf32>, !pto.ptr<bf16, ub>) {
+
+// ---- ELIDE - elision erased redundant vloads/stores -----------------------
+// After PTOVmiLoadStoreElision the function holds EXACTLY 5 surviving
+// vmi.vload and EXACTLY 5 vmi.vstore. The ColMax split-N candidate (split=4)
+// widens the reduce loop to 4 independent vloads per iteration (plus the
+// cross-accumulator merge loads); elision cannot fold these across distinct
+// accumulators. The fused tcvt and ND2NZ output keep their observable stores.
+// The CHECK-COUNT finds that many and the
+// following CHECK-NOT (bounded by the function's `return`) proves there are no
+// MORE — so a no-op pass or an over-aggressive pass both fail here.
+//
+// The vload and vstore counts are checked in two separate RUN lines because
+// FileCheck consumes its input sequentially: a single RUN holding both
+// CHECK-COUNT directives would start the vstore scan after the last vload and
+// miss the vstore that precedes it. Each RUN below re-scans from the function
+// label so its count spans the whole function body; the trailing `return`
+// ends the CHECK-NOT scope so nothing past the function can cause a false hit.
+ELIDE: IR Dump After PTOVmiLoadStoreElision
+ELIDE-LABEL: func.func @fa_dn_softmax_128x64
+ELIDEVLD-COUNT-5: pto.vmi.vload
+ELIDEVLD-NOT: pto.vmi.vload
+ELIDEVLD: return
+ELIDESTO-COUNT-5: pto.vmi.vstore
+ELIDESTO-NOT: pto.vmi.vstore
+ELIDESTO: return
