@@ -1,0 +1,14 @@
+// A5 splits the vector core into two subcores, so a kernel_kind=vector kernel
+// dispatches to both. Those are declined: measured 3 win / 3 lose, and nothing
+// static separates them, so the gate stays conservative.
+//
+// RUN: ptoas --pto-arch=a5 --enable-insert-sync --auto-bufid-single-core %s 2>&1 \
+// RUN:   | FileCheck %s
+
+module attributes {"pto.device-spec" = "Ascend910B1"} {
+  func.func @vector_dual_subcore() -> () attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    return
+  }
+}
+
+// CHECK: [auto-bufid] dispatch=dual-subcore arch=a5 decision=events (declined)

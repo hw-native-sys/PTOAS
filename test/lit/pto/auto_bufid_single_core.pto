@@ -1,0 +1,19 @@
+// Kernel-entire buffer-id routing: a single-core (cube) dispatch is converted,
+// a dual-subcore (vector) dispatch is declined and left on events.
+//
+// RUN: ptoas --pto-arch=a5 --enable-insert-sync --auto-bufid-single-core %s 2>&1 \
+// RUN:   | FileCheck --check-prefix=CUBE %s
+// RUN: ptoas --pto-arch=a3 --enable-insert-sync --auto-bufid-single-core %s 2>&1 \
+// RUN:   | FileCheck --check-prefix=A3 %s
+
+module attributes {"pto.device-spec" = "Ascend910B1"} {
+  func.func @cube_single_core() -> () attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    return
+  }
+}
+
+// A cube kernel dispatches to one core, so it is eligible.
+// CUBE: [auto-bufid] dispatch=single-core arch=a5 decision=BUFFER-ID
+
+// Buffer-id does not exist on a3: always decline, whatever the dispatch.
+// A3: [auto-bufid] dispatch=single-core arch=a3 decision=events (declined)

@@ -425,6 +425,21 @@ static llvm::cl::opt<std::string> unifiedSyncForceMechanism(
                    "router would otherwise leave alone"),
     llvm::cl::init(""), llvm::cl::Hidden);
 
+static llvm::cl::opt<bool> autoBufidSingleCore(
+    "auto-bufid-single-core",
+    llvm::cl::desc("With --enable-insert-sync on a5: convert the WHOLE kernel to "
+                   "buffer-id tokens when static dispatch is single-core, and "
+                   "leave dual-subcore vector kernels on events untouched. "
+                   "MEASURED: 12 single-core kernels, ALL 12 faster (+1.4% to "
+                   "+55.2%; 3 of the 12 are one triplicated splitk body). "
+                   "Dual-subcore is declined, and the evidence says that is "
+                   "SOUND rather than merely cautious: collapsing duplicate "
+                   "op-sequence bodies and excluding sub-microsecond deltas (no "
+                   "A5 noise floor is established, so 0.01-0.43us moves are not "
+                   "judgeable) leaves 1 WINNING shape against 4 LOSING shapes. "
+                   "OFF by default"),
+    llvm::cl::init(false), llvm::cl::Hidden);
+
 static llvm::cl::opt<bool> checkAddrReuseWar(
     "check-addr-reuse-war",
     llvm::cl::desc("List the synchronization orderings whose two endpoints are "
@@ -888,6 +903,50 @@ static LogicalResult validateReserveBufferBase(pto::ReserveBufferOp op,
   }
 
   return success();
+}
+
+/// Is this kernel dispatched to ONE core?
+///
+/// A5 splits the vector core into two subcores, so a kernel_kind=Vector kernel
+/// runs on BOTH (the trace shows core0.veccore0 AND core0.veccore1) while a Cube
+/// kernel runs on one. This reads the same attribute PTOToEmitC reads to decide
+/// whether to emit the __DAV_VEC__ guard.
+///
+/// WHY IT GATES BUFFER-ID: whole-kernel token conversion always removes event
+/// ISSUE overhead (measured: instruction-sum falls in 9 of 9 kernels), but a
+/// token's block is welded to its access and cannot be repositioned the way
+/// MoveSyncState repositions an event wait, and ids are buffer-keyed so
+/// independent orderings coalesce onto one id. Where sync issue overhead
+/// dominates the critical path that trade wins outright; where there is real
+/// concurrency to lose it does not.
+///
+/// EVIDENCE. Single-core is uniform: 12 measured, all 12 faster. Dual-subcore,
+/// deduplicated by op sequence and restricted to deltas above the sub-microsecond
+/// band, is 1 WINNING shape against 4 LOSING shapes -- so declining it is SOUND,
+/// not merely conservative.
+///
+/// Two corrections that produced that number, both worth keeping. The single
+/// dual-subcore win (+46.9us) appears in FOUR distinct kernels -- different
+/// sources, different emitted code -- that share one identical op sequence and
+/// report identical spans to 0.01us; it is one result sampled four times, not
+/// four results. And six further kernels move by only 0.01-0.43us, which cannot
+/// be called either way because no A5 noise floor has been measured (the 0.000%
+/// floor on record is A3-only).
+///
+/// This gate does forgo that one winning shape. Capturing it needs a finer
+/// predicate: whether the removed event overhead sat on the critical path is a
+/// span property needing a run, and no static signal tested separates that shape
+/// from the losers -- prelu-pto (+41.7%) and rem-pto (-1.6%) have identical
+/// static profiles and land on opposite sides.
+static bool isSingleCoreDispatch(ModuleOp module) {
+  bool anyDualSubcore = false;
+  module->walk([&](func::FuncOp fn) {
+    if (auto kk = fn->getAttrOfType<pto::FunctionKernelKindAttr>(
+            pto::FunctionKernelKindAttr::name))
+      if (kk.getKernelKind() == pto::FunctionKernelKind::Vector)
+        anyDualSubcore = true;
+  });
+  return !anyDualSubcore;
 }
 
 static bool validateReserveBufferLevelRules(ModuleOp module,
@@ -3606,7 +3665,29 @@ int mlir::pto::compilePTOASModule(
                                       unifiedSyncForceMechanism,
                                       checkAddrReuseWar));
   else if (enableInsertSync) {
-    if (emitMlirIR)
+    // KERNEL-ENTIRE routing, not per-hazard: single-core dispatch takes
+    // whole-kernel buffer-id, dual-subcore keeps events (today's behaviour,
+    // byte-for-byte). Buffer-id is a5-only, so a3 always declines.
+    const bool singleCore = isSingleCoreDispatch(*module);
+    const bool autoBufid = autoBufidSingleCore && arch == "a5" && singleCore;
+    if (autoBufidSingleCore)
+      llvm::errs() << "[auto-bufid] dispatch="
+                   << (singleCore ? "single-core" : "dual-subcore")
+                   << " arch=" << arch << " decision="
+                   << (autoBufid ? "BUFFER-ID" : "events (declined)") << "\n";
+    if (autoBufid) {
+      // Mirror the --enable-bufid_sync branch exactly, --emit-pto-ir included:
+      // routing here must be indistinguishable from asking for buffer-id
+      // directly, on every output path and not just the emitted C++.
+      if (emitMlirIR) {
+        pm.addPass(std::make_unique<SerialAutoSyncPass>(
+            SerialAutoSyncPass::Mode::Bufid, enableBufidSyncDebug, 0));
+      } else {
+        PTOBufidSyncOptions options;
+        options.enableBufidSyncDebug = enableBufidSyncDebug;
+        pm.addNestedPass<func::FuncOp>(pto::createPTOBufidSyncPass(options));
+      }
+    } else if (emitMlirIR)
       pm.addPass(std::make_unique<SerialAutoSyncPass>(
           SerialAutoSyncPass::Mode::InsertSync, false, 0));
     else
