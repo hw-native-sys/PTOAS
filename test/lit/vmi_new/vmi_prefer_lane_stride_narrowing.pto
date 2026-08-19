@@ -10,7 +10,7 @@
 
 // RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LANE
 // RUN: pto-test-opt %s -vmi-prefer-lane-stride-narrowing=false -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=COMPACT
-// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - | FileCheck %s --check-prefix=CLI
+// RUN: ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - | FileCheck %s --check-prefix=CLI
 
 module attributes {pto.target_arch = "a5"} {
   module attributes {pto.backend = "vpto", pto.kernel_kind = #pto.kernel_kind<vector>} {

@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s | FileCheck %s --implicit-check-not=pto.vdintlv --implicit-check-not=pto.vintlv --implicit-check-not=pto.vpack --implicit-check-not='part = "ODD"'
+// RUN: ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --emit-vpto %s | FileCheck %s --implicit-check-not=pto.vdintlv --implicit-check-not=pto.vintlv --implicit-check-not=pto.vpack --implicit-check-not='part = "ODD"'
 
 // This is an optimization capability guard for the VMI ComputeMropeF16 path.
 // Do not weaken the checks when the output shape regresses. The intended shape is:

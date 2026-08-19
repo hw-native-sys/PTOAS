@@ -1,0 +1,59 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// After the VMI fusion rebase, a subview whose source is a fusion_region
+// result that itself yields a subview-materialized tile handle is no longer
+// accepted by the FoldTileBufIntrinsics bridge. The IR dump after
+// pto-materialize-tile-handles still shows the materialized handle form before
+// the later pass rejects it.
+
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root not ptoas --pto-arch=a5 --pto-level=level3 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-python-exe=%python_executable --emit-vpto --mlir-print-ir-after=pto-materialize-tile-handles %s -o /dev/null 2>&1 | FileCheck %s
+
+module attributes {pto.backend = "vpto", pto.target_arch = "a5"} {
+  func.func @materialize_fusion_region_subview() {
+    %c0 = arith.constant 0 : index
+    %c8 = arith.constant 8 : index
+    %c448 = arith.constant 448 : index
+    %c512 = arith.constant 512 : index
+    %c2048_i64 = arith.constant 2048 : i64
+    %c34816_i64 = arith.constant 34816 : i64
+
+    %src = pto.alloc_tile addr = %c2048_i64 valid_row = %c8 valid_col = %c512
+      : !pto.tile_buf<vec, 8x512xf32, valid=?x?>
+    %workspace = pto.alloc_tile addr = %c34816_i64 valid_row = %c8 valid_col = %c512
+      : !pto.tile_buf<vec, 8x512xf32, valid=?x?>
+    %region = pto.fusion_region {
+      %dst = pto.alloc_tile addr = %c2048_i64 valid_row = %c8 valid_col = %c512
+        : !pto.tile_buf<vec, 8x512xf32, valid=?x?>
+      pto.tmul ins(%src, %src
+          : !pto.tile_buf<vec, 8x512xf32, valid=?x?>,
+            !pto.tile_buf<vec, 8x512xf32, valid=?x?>)
+        outs(%dst : !pto.tile_buf<vec, 8x512xf32, valid=?x?>)
+      %inner = pto.subview %dst[%c0, %c0] sizes [8, 512]
+        : !pto.tile_buf<vec, 8x512xf32, valid=?x?>
+          -> !pto.tile_buf<vec, 8x512xf32>
+      pto.yield(%inner) : (!pto.tile_buf<vec, 8x512xf32>) -> ()
+    } : !pto.tile_buf<vec, 8x512xf32>
+
+    %slice = pto.subview %region[%c0, %c0] sizes [8, 448]
+      : !pto.tile_buf<vec, 8x512xf32>
+        -> !pto.tile_buf<vec, 8x448xf32>
+    pto.trowexpandmul ins(%slice, %workspace
+        : !pto.tile_buf<vec, 8x448xf32>,
+          !pto.tile_buf<vec, 8x512xf32, valid=?x?>)
+      outs(%slice : !pto.tile_buf<vec, 8x448xf32>)
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @materialize_fusion_region_subview
+// CHECK: pto.fusion_region
+// CHECK: pto.alloc_tile addr = {{.*}} {pto.view_semantics = "subview"} : !pto.tile_buf<vec, 8x512xf32>
+// CHECK: pto.yield(%{{.*}} : (!pto.tile_buf<vec, 8x512xf32>) -> ()
+// CHECK: pto.subview %{{.*}}[%{{.*}}, %{{.*}}] sizes [8, 448] : !pto.tile_buf<vec, 8x512xf32> -> !pto.tile_buf<vec, 8x448xf32>
+// CHECK: error: FoldTileBufIntrinsics: expected tile_buf to be defined by the active materialized tile-handle bridge

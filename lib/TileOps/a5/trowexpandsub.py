@@ -18,3 +18,38 @@ template_trowexpandsub = register_row_expand_binary(
     vector_op=pto.vsub,
     dtypes=NUMERIC_SIGNATURES,
 )
+
+
+from ._vmi_common import (  # noqa: E402
+    canonical_vmi_template,
+    emit_row_expand_sub_vmi,
+    row_expand_binary_vmi_constraint,
+    sinkhorn_row_expand_vmi_constraint,
+)
+
+
+@canonical_vmi_template(
+    target="a5",
+    op="trowexpandsub",
+    name="vmi_trowexpandsub",
+    dtypes=(("f32", "f32", "f32"),),
+    constraints=(row_expand_binary_vmi_constraint,),
+    min_row_bytes=128,
+)
+def vmi_trowexpandsub(src: pto.Tile, row_values: pto.Tile, dst: pto.Tile):
+    emit_row_expand_sub_vmi(src, row_values, dst)
+
+
+@canonical_vmi_template(
+    target="a5",
+    op="trowexpandsub",
+    name="vmi_trowexpandsub_sinkhorn_row_loop",
+    dtypes=(("f32", "f32", "f32"),),
+    constraints=(sinkhorn_row_expand_vmi_constraint,),
+    requires_full_physical_row=False,
+    tags=("supports_partial_valid_shape",),
+)
+def vmi_trowexpandsub_sinkhorn_row_loop(
+    src: pto.Tile, row_values: pto.Tile, dst: pto.Tile
+):
+    emit_row_expand_sub_vmi(src, row_values, dst)

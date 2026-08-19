@@ -19,11 +19,12 @@
 // Key structural assertions:
 //  * one fusion_region with group_id = 0 carrying both the row-max and the
 //    exp tiles out via pto.yield;
-//  * three inner col loops inside the region, distinguished by their iter_args
+//  * inner col loops inside the region, distinguished by their iter_args
 //    arity:
-//      - (i32)              -> tmuls            (pure elementwise, mask only)
-//      - (i32, vreg<64xf32>)-> trowmax          (reduce accumulator across cols)
-//      - (i32, i32)         -> trowexpandsub+texp (fused epilogue, two masks)
+//      - (index)              -> tmuls            (pure elementwise, mask only)
+//      - (vreg<64xf32>, index)-> trowmax          (reduce accumulator across cols)
+//      - (index)              -> trowexpandsub    (row scalar broadcast)
+//      - (index)              -> texp             (elementwise exp)
 //  * the low-level ops vmuls/vcmax/vdup/vsub/vexp all live inside the region.
 //
 // RUN: ptoas --pto-backend=vpto --pto-arch=a5 --pto-level=level3 --enable-op-fusion --enable-shape-inference --emit-vpto %s --mlir-print-ir-after=pto-low-level-loop-fusion -o /dev/null 2>&1 | FileCheck %s
@@ -84,10 +85,12 @@ module attributes { pto.kernel_kind = #pto.kernel_kind<vector>,pto.target_arch =
 // CHECK: pto.vmax
 // CHECK: scf.yield {{.*}} : !pto.vreg<64xf32>, index
 // CHECK: }
-// Fused epilogue: trowexpandsub + texp share one col loop (two mask accumulators).
-// CHECK: scf.for {{.*}} iter_args({{.*}}, {{.*}}) -> (index, index) {
-// CHECK: pto.vdup
+// Epilogue stages stay visible for later fusion-ready analysis.
+// CHECK: scf.for {{.*}} iter_args({{.*}}) -> (index) {
+// CHECK: pto.vlds {{.*}} {dist = "BRC_B32"}
 // CHECK: pto.vsub
+// CHECK: }
+// CHECK: scf.for {{.*}} iter_args({{.*}}) -> (index) {
 // CHECK: pto.vexp
 // CHECK: }
 // Region exits, yielding both the row-max and the exp tiles, tagged group 0.

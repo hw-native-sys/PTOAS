@@ -24,7 +24,7 @@ LOW_PRECISION_LOAD_STORE_DTYPES = ("f8e4m3", "f8e5m2", "hif8", "f4e1m2x2", "f4e2
 LOAD_STORE_DTYPES = tuple(
     (dtype, dtype) for dtype in NUMERIC_DTYPES + INTEGER_LOAD_STORE_DTYPES + LOW_PRECISION_LOAD_STORE_DTYPES
 )
-MAT_LOAD_DTYPES = (("f16", "f16"), ("bf16", "bf16"), ("f32", "f32"))
+MAT_LOAD_DTYPES = (("i8", "i8"), ("f16", "f16"), ("bf16", "bf16"), ("f32", "f32"))
 ACC_STORE_DTYPES = (
     ("f32", "f32"),
     ("f32", "f16"),
@@ -112,9 +112,19 @@ def _check_store_bounds(src_shape, src_valid_shape, dst_shape, dst_strides, *, l
 def tload_nd2nd_constraint(src_kind, src_shape, src_strides, src_memory_space, dst_kind, dst_shape, dst_valid_shape, dst_memory_space, dst_config, **_):
     if src_kind != "view" or dst_kind != "tile" or src_memory_space != "gm" or dst_memory_space not in {"ub", "vec"}:
         return False
-    if _view_rank(src_shape) == 2:
+    if _view_rank(src_shape) == 1:
+        logical_rows = 1
+        logical_cols = src_shape[0]
+        stride_axis = 0
+    elif _view_rank(src_shape) == 2:
         logical_rows, logical_cols = src_shape
         stride_axis = 1
+    elif _view_rank(src_shape) == 3 and src_shape[1] == 1:
+        logical_rows = src_shape[0]
+        logical_cols = src_shape[2]
+        stride_axis = 2
+        if src_strides is not None and _is_unknown_dim(_stride_at(src_strides, 0)):
+            return False
     else:
         logical_rows = _shape_size(src_shape[:4])
         logical_cols = src_shape[4]
@@ -127,7 +137,7 @@ def tload_nd2nd_constraint(src_kind, src_shape, src_strides, src_memory_space, d
         logical_rows=logical_rows,
         logical_cols=logical_cols,
         stride_axis=stride_axis,
-        ranks=(2, 5),
+        ranks=(1, 2, 3, 5),
     )
 
 
@@ -169,9 +179,19 @@ def tload_nz2nz_constraint(src_kind, src_shape, src_memory_space, dst_kind, dst_
 def tstore_nd_constraint(src_kind, src_shape, src_valid_shape, src_memory_space, src_config, dst_kind, dst_shape, dst_strides, dst_memory_space, **_):
     if src_kind != "tile" or dst_kind != "view" or src_memory_space not in {"ub", "vec"} or dst_memory_space != "gm":
         return False
-    if _view_rank(dst_shape) == 2:
+    if _view_rank(dst_shape) == 1:
+        logical_rows = 1
+        logical_cols = dst_shape[0]
+        stride_axis = 0
+    elif _view_rank(dst_shape) == 2:
         logical_rows, logical_cols = dst_shape
         stride_axis = 1
+    elif _view_rank(dst_shape) == 3 and dst_shape[1] == 1:
+        logical_rows = dst_shape[0]
+        logical_cols = dst_shape[2]
+        stride_axis = 2
+        if dst_strides is not None and _is_unknown_dim(_stride_at(dst_strides, 0)):
+            return False
     else:
         logical_rows = _shape_size(dst_shape[:4])
         logical_cols = dst_shape[4]
@@ -184,7 +204,7 @@ def tstore_nd_constraint(src_kind, src_shape, src_valid_shape, src_memory_space,
         logical_rows=logical_rows,
         logical_cols=logical_cols,
         stride_axis=stride_axis,
-        ranks=(2, 5),
+        ranks=(1, 2, 3, 5),
     )
 
 
@@ -224,7 +244,7 @@ def tload_mat_nd2nz_constraint(src_kind, src_shape, src_strides, src_memory_spac
         return False
     if dst_config.b_layout != "col_major" or dst_config.s_layout != "row_major":
         return False
-    if dst_dtype not in {"f16", "bf16", "f32"}:
+    if dst_dtype not in {"i8", "f16", "bf16", "f32"}:
         return False
     if _view_rank(src_shape) != 5:
         return False
@@ -240,7 +260,7 @@ def tload_mat_dn2nz_constraint(src_kind, src_shape, src_strides, src_memory_spac
         return False
     if dst_config.b_layout != "col_major" or dst_config.s_layout != "row_major":
         return False
-    if dst_dtype not in {"f16", "bf16", "f32"}:
+    if dst_dtype not in {"i8", "f16", "bf16", "f32"}:
         return False
     if _view_rank(src_shape) != 5:
         return False

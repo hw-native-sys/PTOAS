@@ -23,6 +23,7 @@ MATMUL_ACC_DTYPES = [
     ("f32", "f16", "f16", "f32"),
     ("f32", "bf16", "bf16", "f32"),
     ("f32", "f32", "f32", "f32"),
+    ("i32", "i8", "i8", "i32"),
 ]
 
 MATMUL_BIAS_DTYPES = [

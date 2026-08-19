@@ -82,10 +82,12 @@ module {
 // LEVEL2-SYNC: pto.trowexpandmul
 // LEVEL2-SYNC-NEXT: pto.trowexpandmul
 // LEVEL2-SYNC-NEXT: pto.tadd
-// LEVEL2-SYNC: pto.yield(
+// LEVEL2-SYNC: pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+// LEVEL2-SYNC-NEXT: pto.yield(
 // LEVEL2-SYNC: } {pto.fusion.group_id = 0 : i64} : !pto.tile_buf<vec, 32x32xf32>
 // LEVEL2-SYNC: pto.tadd ins(
 // LEVEL2-SYNC-NEXT: pto.tmul ins(
-// LEVEL2-SYNC: pto.tstore ins(
+// LEVEL2-SYNC-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+// LEVEL2-SYNC-NEXT: pto.tstore ins(
 // LEVEL2-SYNC: pto.barrier <PIPE_ALL> {pto.auto_sync_tail_barrier}
 // LEVEL2-SYNC: return

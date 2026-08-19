@@ -1,0 +1,97 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --implicit-check-not=pto.vmi. --implicit-check-not='!pto.vmi.'
+
+module {
+  func.func @native_vmuls_1vl(
+      %src: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+      %scalar: f32)
+      -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> {
+    %mask = pto.vmi.pset "PAT_ALL"
+        : !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+    %result = pto.vmi.vmuls %src, %scalar, %mask
+        : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, f32,
+          !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return %result
+        : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @native_scalar_ops_wide(
+      %src: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>,
+      %scalar: f32)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> {
+    %mask = pto.vmi.pset "PAT_ALL"
+        : !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
+    %add = pto.vmi.vadds %src, %scalar, %mask
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>, f32,
+          !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
+        -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+    %max = pto.vmi.vmaxs %add, %scalar, %mask
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>, f32,
+          !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
+        -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+    %min = pto.vmi.vmins %max, %scalar, %mask
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>, f32,
+          !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
+        -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+    return %min
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+
+  func.func @native_integer_scalar_ops(
+      %src: !pto.vmi.vreg<128xi16, #pto.vmi.layout<contiguous>>,
+      %scalar: i16)
+      -> !pto.vmi.vreg<128xi16, #pto.vmi.layout<contiguous>> {
+    %mask = pto.vmi.pset "PAT_ALL"
+        : !pto.vmi.mask<128xb16, #pto.vmi.layout<contiguous>>
+    %max = pto.vmi.vmaxs %src, %scalar, %mask
+        : !pto.vmi.vreg<128xi16, #pto.vmi.layout<contiguous>>, i16,
+          !pto.vmi.mask<128xb16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<128xi16, #pto.vmi.layout<contiguous>>
+    %min = pto.vmi.vmins %max, %scalar, %mask
+        : !pto.vmi.vreg<128xi16, #pto.vmi.layout<contiguous>>, i16,
+          !pto.vmi.mask<128xb16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<128xi16, #pto.vmi.layout<contiguous>>
+    return %min
+        : !pto.vmi.vreg<128xi16, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @partial_mask_uses_broadcast_fallback(
+      %src: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+      %scalar: f32,
+      %mask: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> {
+    %result = pto.vmi.vmuls %src, %scalar, %mask
+        : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, f32,
+          !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return %result
+        : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+}
+
+// CHECK-LABEL: func.func @native_vmuls_1vl(
+// CHECK-NOT: pto.vdup
+// CHECK: pto.vmuls
+
+// CHECK-LABEL: func.func @native_scalar_ops_wide(
+// CHECK-NOT: pto.vdup
+// CHECK-COUNT-2: pto.vadds
+// CHECK-COUNT-2: pto.vmaxs
+// CHECK-COUNT-2: pto.vmins
+
+// CHECK-LABEL: func.func @native_integer_scalar_ops(
+// CHECK-NOT: pto.vdup
+// CHECK: pto.vmaxs
+// CHECK: pto.vmins
+
+// CHECK-LABEL: func.func @partial_mask_uses_broadcast_fallback(
+// CHECK: pto.vdup
+// CHECK: pto.vmul

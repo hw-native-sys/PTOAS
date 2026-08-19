@@ -4887,6 +4887,14 @@ ParseResult VMIvStoreOp::parse(OpAsmParser &parser, OperationState &result) {
                           {static_cast<int32_t>(nValues), 1, 1,
                            hasStride ? 1 : 0, hasBlock ? 1 : 0,
                            hasMask ? 1 : 0}));
+  // Optional `-> updated_base_type` result (block-stride post_update form).
+  // Mirrors VMIvStoreOp::print which emits ` -> type` when updated_base exists.
+  if (succeeded(parser.parseOptionalArrow())) {
+    Type updatedBaseType;
+    if (parser.parseType(updatedBaseType))
+      return failure();
+    result.types.push_back(updatedBaseType);
+  }
   return success();
 }
 
@@ -4918,9 +4926,19 @@ void VMIvStoreOp::print(OpAsmPrinter &p) {
   if (!getMask().empty()) {
     p << ", " << getMask()[0].getType();
   }
+  if (Value updatedBase = getUpdatedBase())
+    p << " -> " << updatedBase.getType();
 }
 
 LogicalResult VMIvStoreOp::verify() {
+  if (Value updatedBase = getUpdatedBase()) {
+    if (!getBlockStride())
+      return emitOpError(
+          "updated_base result requires block_stride");
+    if (updatedBase.getType() != getDestination().getType())
+      return emitOpError(
+          "updated_base result type must match destination type");
+  }
   // group and dist_mode are mutually exclusive
   if (getGroup() && getDistMode()) {
     return emitOpError("group and dist_mode are mutually exclusive");

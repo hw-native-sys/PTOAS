@@ -778,11 +778,11 @@ def VMIStrideStoreOp : VMI_Op<"stride_store", [DeclareOpInterfaceMethods<MemoryE
   let arguments = (ins VMI_VRegTypeConstraint:$value, PtrOrMemRef:$destination,
                        Index:$offset, I16:$block_stride,
                        VMI_MaskTypeConstraint:$mask);
-  let results = (outs);
+  let results = (outs Optional<PtrOrMemRef>:$updated_base);
   let hasVerifier = 1;
   let assemblyFormat = [{
     $value `,` $destination `[` $offset `]` `,` $block_stride `,` $mask attr-dict `:`
-    type($value) `,` type($destination) `,` type($block_stride) `,` type($mask)
+    type($value) `,` type($destination) `,` type($block_stride) `,` type($mask) (`->` type($updated_base)^)?
   }];
 }
 
@@ -1487,6 +1487,9 @@ def VMIvStoreOp : VMI_Op<"vstore",
     block-stride mode (mutually exclusive with dist-mode and group):
     - {block_stride = B}: block-strided masked store
 
+    The optional updated_base result is valid only in block-stride mode and
+    has the same type as destination. It represents post-update address state.
+
     pmode governs inactive lane behavior:
     - "zero" (default):  inactive lanes store 0
     - "merge":           inactive lanes skip write (needs mask)
@@ -1504,7 +1507,7 @@ def VMIvStoreOp : VMI_Op<"vstore",
     OptionalAttr<I64Attr>:$group,
     OptionalAttr<StrAttr>:$pmode
   );
-  let results = (outs);
+  let results = (outs Optional<PtrOrMemRef>:$updated_base);
   let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
 }

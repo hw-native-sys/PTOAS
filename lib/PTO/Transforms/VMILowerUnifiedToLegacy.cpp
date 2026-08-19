@@ -617,9 +617,15 @@ static LogicalResult lowerBlockStrideStore(VMIvStoreOp op,
   Value mask = op.getMask().empty()
                    ? createAllActiveMask(valueType, op.getLoc(), builder)
                    : op.getMask()[0];
-  builder.create<VMIStrideStoreOp>(
-      op.getLoc(), op.getValues()[0], op.getDestination(), op.getOffset(),
-      op.getBlockStride(), mask);
+  Type updatedBaseType = op.getUpdatedBase()
+                             ? op.getUpdatedBase().getType()
+                             : Type();
+  auto strideStore = builder.create<VMIStrideStoreOp>(
+      op.getLoc(), updatedBaseType, op.getValues()[0], op.getDestination(),
+      op.getOffset(), op.getBlockStride(), mask);
+  if (op.getUpdatedBase()) {
+    op.getUpdatedBase().replaceAllUsesWith(strideStore.getUpdatedBase());
+  }
   return success();
 }
 

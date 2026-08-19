@@ -37,3 +37,30 @@ template_tneg_1d = register_unary(
     dtypes=_DTYPES,
     traversal="1d",
 )
+
+
+from ._vmi_common import (  # noqa: E402
+    NUMERIC_DTYPES,
+    _neg as _vmi_neg,
+    canonical_vmi_template,
+    emit_elementwise_vmi,
+)
+
+
+@canonical_vmi_template(
+    target="a5",
+    op="tneg",
+    name="vmi_tneg",
+    dtypes=(
+        ("f32", "f32"),
+        ("f16", "f16"),
+        ("bf16", "bf16"),
+        ("i8", "i8"),
+        ("i16", "i16"),
+        ("i32", "i32"),
+    ),
+)
+def vmi_tneg(src: pto.Tile, dst: pto.Tile):
+    # A5 tneg ODS rejects unsigned int (only i8/i16/i32/f16/bf16/f32); unsigned
+    # tneg conservatively falls back to the ordinary PTODSL path.
+    emit_elementwise_vmi(dst, (src,), _vmi_neg, allowed_dtypes=NUMERIC_DTYPES)

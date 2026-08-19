@@ -83,3 +83,58 @@ template_tdiv_1d = _register_tdiv(
     name="template_tdiv_1d",
     traversal="1d",
 )
+
+
+from ._vmi_common import (  # noqa: E402
+    FLOAT_DTYPES,
+    _context_attr,
+    _div_high_precision,
+    _vdiv as _vmi_vdiv,
+    canonical_vmi_template,
+    emit_elementwise_vmi,
+    sinkhorn_compact_elementwise_vmi_constraint,
+)
+
+
+@canonical_vmi_template(
+    target="a5",
+    op="tdiv",
+    name="vmi_tdiv",
+    dtypes=(("f16", "f16", "f16"), ("f32", "f32", "f32")),
+    context_constraints={"precisionType": ("default", "high_precision")},
+    min_row_bytes=128,
+)
+def vmi_tdiv(src0: pto.Tile, src1: pto.Tile, dst: pto.Tile):
+    if _context_attr(src0, "precisionType", "default") == "high_precision":
+        emit_elementwise_vmi(
+            dst,
+            (src0, src1),
+            lambda values, mask: _div_high_precision(values[0], values[1], mask),
+            allowed_dtypes=FLOAT_DTYPES,
+        )
+        return
+    emit_elementwise_vmi(
+        dst,
+        (src0, src1),
+        lambda values, mask: _vmi_vdiv(values[0], values[1], mask),
+        allowed_dtypes=FLOAT_DTYPES,
+    )
+
+
+@canonical_vmi_template(
+    target="a5",
+    op="tdiv",
+    name="vmi_tdiv_sinkhorn_compact",
+    dtypes=(("f32", "f32", "f32"),),
+    context_constraints={"precisionType": ("default",)},
+    constraints=(sinkhorn_compact_elementwise_vmi_constraint,),
+    requires_full_physical_row=False,
+    tags=("supports_partial_valid_shape",),
+)
+def vmi_tdiv_sinkhorn_compact(src0: pto.Tile, src1: pto.Tile, dst: pto.Tile):
+    emit_elementwise_vmi(
+        dst,
+        (src0, src1),
+        lambda values, mask: _vmi_vdiv(values[0], values[1], mask),
+        allowed_dtypes=FLOAT_DTYPES,
+    )

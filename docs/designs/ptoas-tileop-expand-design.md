@@ -402,12 +402,12 @@ def elementwise_arithmetic(src0: pto.Tile, src1: pto.Tile, dst: pto.Tile):
 
 ### 3.1 编译流程
 
-PTOAS 编译器的输入可以是 Tile 指令、向量指令、或两者的混合。完整的编译 pipeline 如下：
+PTOAS 编译器的输入可以是 Tile 指令、向量指令、或两者的混合。TileLang/VPTO 与
+PTODSL VMI provider 在 Expand 前共享 Tile frontend，但 Expand 后进入不同的融合路径。
+PTODSL VMI 的 RFC 目标 pipeline 如下：
 
 ```
 输入：TileOp / 向量指令 / TileOp + 向量指令混合
-       ↓
-  VF Fusion Analysis        ← 在 TileOp 层分析可融合的操作组
        ↓
   PlanMemory                ← UB 内存分配规划
        ↓
@@ -417,18 +417,68 @@ PTOAS 编译器的输入可以是 Tile 指令、向量指令、或两者的混�
        ↓
   Inline                    ← 将模板函数体 inline 到调用点
        ↓
-  Fold TileBuf Intrinsics   ← 折叠 tile_buf / tensor_view intrinsic，解析到具体值
+  Fold TileBuf Intrinsics   ← 先折叠 shape family，暴露循环边界
        ↓
-  VF Fusion                 ← 合并相邻向量循环，消除中间 UB 读写
+  VMI Fusion                ← 识别 TileLib unit，保守合并兼容 VMI 循环
        ↓
-  LLVM IR
+  VMI Mem2Reg               ← 融合后消除同 location 的中间 UB store/load
+       ↓
+  Fold TileBuf Intrinsics   ← 再折叠 address family
+       ↓
+  VMI Layout / VMIToVPTO    ← 选择物理 layout 并降到 VPTO
+       ↓
+  Infer VPTO VecScope       ← emission boundary 统一推断物理 vecscope
 ```
+
+VMI Fusion 的详细设计见 [`vmi-vf-fusion-design.md`](vmi-vf-fusion-design.md)。
+现有 Tile-native `FusionPlan/FusionRegionGen` 和 VPTO `PTOLowLevelLoopFusion` 不直接
+充当 VMI Fusion pass；它们的分析思想或通用 utility 可以复用。
 
 Tile 指令到向量指令的展开由三个 pass 协作完成：
 
-1. **Expand TileOp**：核心 pass。调用 TileLang Python DSL 实例化模板库，生成以 `tile_buf` 为参数的向量实现函数，将原 Tile op 替换为对该函数的 `func.call`。
+1. **Expand TileOp**：核心 pass。调用配置的 TileOp provider 实例化模板库，生成以 `tile_buf` 为参数的实现函数，将原 Tile op 替换为对该函数的 `func.call`。
 2. **Inline**：将模板函数体 inline 到调用点，使模板函数的 `tile_buf` 形参与调用点的实际 `tile_buf` 值绑定。
 3. **Fold TileBuf Intrinsics**：折叠 inline 后留下的 tile_buf 系列（`pto.tile_buf_addr`、`pto.tile_valid_rows`、`pto.tile_valid_cols`）和 tensor_view 系列（`pto.tensor_view_addr`、`pto.get_tensor_view_dim`、`pto.get_tensor_view_stride`）intrinsic，将 `tile_buf` / `partition_tensor_view` 的属性折叠为具体的 memref、常量和 SSA 值。
+
+`ExpandTileOp` 当前支持三种 TileLib backend：
+
+| backend | 选项 | 实现来源 | 输出 IR |
+|---|---|---|---|
+| PTODSL | `--tile-lib-backend=ptodsl`（默认） | 现有 PTODSL TileLib registry/daemon | 由已注册 candidate 决定 |
+| Composite PTODSL VMI | `--tile-lib-backend=ptodsl-vmi` | `PIPE_V` 使用 `ptodsl.vmi_tilelib`；其他 Pipe 使用现有 PTODSL TileLib registry/daemon | 向量计算为 Unified VMI，搬运/Cube 边界沿用现有 PTODSL 实现 |
+| TileLang | `--tile-lib-backend=tilelang` | legacy `@pto.vkernel` 模板目录 | VPTO/MI `pto.vlds/vadd/vsts` |
+
+PTODSL VMI provider 还支持 `--ptodsl-vmi-provider-module`、`--ptodsl-pkg-path` 和
+`--ptodsl-python-exe`。它要求 VPTO backend 且 `--enable-vmi=true`。该选项是组合式
+provider：通过 `OpPipeInterface::getPipe()` 逐个选择实现，`PIPE_V` TileOp 必须匹配
+PTODSL VMI candidate，`PIPE_MTE1/MTE2/MTE3/FIX/M` 等非向量 TileOp 继续使用现有
+PTODSL TileLib daemon。该 backend 不把非向量 TileOp 回退到 TileLang。
+因此 `tload/tstore` 等 GM/UB 搬运不会要求 VMI candidate，而 UB 内部向量计算不会因
+candidate 缺失而静默回退到 MI。当前 VMI TileLib 已覆盖静态 Softmax compute harness 的
+`tadd/tadds/tsub/tmul/tmuls/tmax/tmaxs/tmins/tdivs/tmov/texp/trowmax/trowsum/`
+`trowexpandsub/tcvt`：dense f32 Tile 的 physical inner 固定为 64 lanes，每行恰好一个
+logical block；RowReduce 使用单个 row loop 和单个输入 block，`[rows,1]` compact result
+作为辅助 Tile；Convert 支持 `64xf32 -> 64xf16` 并沿用源 iteration contract。
+`tdivs` 当前只覆盖 tile/scalar 的 f32 default
+precision，通过 `vbrc + vdiv` 组合实现。
+当前仍要求静态 Shape 和静态 valid shape，尚未覆盖动态 tail mask。在新的 VMI Fusion
+pipeline 接入之前，该 provider 会拒绝 `--enable-op-fusion`，防止误入旧的 VPTO/MI
+loop-fusion pass。
+
+`test/samples/FlashAttention/flash_attention_softmax.pto` 的静态 `[64,64]xf32` 多项式计算
+路径已经可以完成 Expand、Inline 和 VMI-to-VPTO。该样例不包含标准 Softmax 的 RowReduce
+归一化，因此不能替代完整 FA/Online Softmax 验收；动态 row/column、tail mask、row-wise
+归一化和全部 Convert/高精度除法变体仍未覆盖。
+
+RFC 首期还要求每个 `(target, PIPE_V TileOp)` 恰好存在一个 canonical VMI
+implementation。该实现必须在无融合时独立正确执行。PTODSL VMI helper 不做多个模板间
+的 priority 选择，也不存在 candidate locking；多 candidate、schedule family 和
+region-aware cost model 均属于后续性能迭代。
+
+VMI provider module 必须显式暴露 `VMI_TILELIB_REGISTRY`。模板通过
+`@canonical_vmi_template` 在模块导入时注册，Expand helper 只从该 registry 按
+`(target, op)` 查询，不扫描 Python module 全局变量。VMI 使用独立 registry，避免与普通
+PTODSL TileLib 中同名的 VPTO/MI candidate 混合选择。
 
 ### 3.2 Expand TileOp Pass 的工作流程
 
@@ -449,15 +499,22 @@ Step 2: 构造 Specialization Key + 查询缓存
   查询实例化缓存：
     如果缓存命中，直接复用已实例化的函数，跳到 Step 4
 
-Step 3: 实例化模板（缓存未命中时执行）
-─────────────────────────────────────
-  调用 TileLang Python DSL，传入 op 名称和各操作数的类型信息
-  Python DSL 查找匹配的 @vkernel 模板，填入具体参数进行特化
+Step 3: 选择 backend 并实例化模板（缓存未命中时执行）
+────────────────────────────────────────────────────
+  --tile-lib-backend=tilelang：所有 TileOp 调用 legacy TileLang helper
+  --tile-lib-backend=ptodsl：所有 TileOp 调用 PTODSL TileLib daemon
+  --tile-lib-backend=ptodsl-vmi：
+    PIPE_V                         → PTODSL VMI helper
+    PIPE_MTE1/MTE2/MTE3/FIX/M... → PTODSL TileLib daemon
+  传入 op 名称、target、各操作数 schema 和静态 context attrs
+  backend 查找匹配的 @vkernel 或 TileTemplate，填入具体参数进行特化
   输出实例化后的 MLIR 函数，解析文本，克隆到目标 Module，写入缓存
 
 Step 4: 生成调用并替换原 Tile Op
 ───────────────────────────────
-  在原 Tile op 位置插入 func.call @__pto_tilelang_...(%a, %b, %c)
+  在原 Tile op 位置插入 backend-specific func.call
+    TileLang:    @__pto_tilelang_...
+    PTODSL VMI: @__pto_ptodsl_vmi_...
   - Tile 操作数：类型一致，直接传递
   - View 操作数：调用方类型为 memref，模板参数类型为 partition_tensor_view，
     插入 builtin.unrealized_conversion_cast 桥接（由后续 FoldTileBufIntrinsics 消除）

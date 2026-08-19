@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not pto-test-opt %s -split-input-file 2>&1 | FileCheck %s
+
+module {
+  func.func @continuous_result(%value: !pto.vmi.vreg<64xf32>, %dst: !pto.ptr<f32, ub>, %off: index) {
+    %updated = pto.vmi.vstore %value, %dst[%off] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
+    return
+  }
+}
+
+// CHECK: 'pto.vmi.vstore' op updated_base result requires block_stride and repeat_stride
+
+// -----
+
+module {
+  func.func @group_result(%value: !pto.vmi.vreg<64xf32>, %dst: !pto.ptr<f32, ub>, %off: index, %stride: index) {
+    %updated = pto.vmi.vstore %value, %dst[%off], %stride {group = 8} : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
+    return
+  }
+}
+
+// CHECK: 'pto.vmi.vstore' op updated_base result requires block_stride and repeat_stride
+
+// -----
+
+module {
+  func.func @wrong_result_type(%value: !pto.vmi.vreg<64xf32>, %dst: !pto.ptr<f32, ub>, %off: index, %bs: i16, %rs: i16) {
+    %updated = pto.vmi.vstore %value, %dst[%off], %bs, %rs : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub> -> !pto.ptr<f16, ub>
+    return
+  }
+}
+
+// CHECK: 'pto.vmi.vstore' op updated_base result type must match destination type

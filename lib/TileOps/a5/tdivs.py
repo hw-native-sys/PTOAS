@@ -148,3 +148,71 @@ template_tdivs_scalar_tile_1d = _register_tdivs(
     traversal="1d",
     scalar_lhs=True,
 )
+
+
+from ._vmi_common import (  # noqa: E402
+    FLOAT_DTYPES,
+    _context_attr,
+    _divide_by_scalar,
+    _divide_by_scalar_high_precision,
+    _divide_scalar_by_vector,
+    _divide_scalar_by_vector_high_precision,
+    _operand_kinds_are,
+    canonical_vmi_template,
+    emit_elementwise_vmi,
+    f32,
+)
+
+
+@canonical_vmi_template(
+    target="a5",
+    op="tdivs",
+    name="vmi_tdivs",
+    dtypes=(("f32", "f32", "f32"),),
+    context_constraints={"precisionType": ("default", "high_precision")},
+    constraints=(_operand_kinds_are(("tile", "scalar", "tile")),),
+)
+def vmi_tdivs(src: pto.Tile, scalar: f32, dst: pto.Tile):
+    if _context_attr(src, "precisionType", "default") == "high_precision":
+        emit_elementwise_vmi(
+            dst,
+            (src,),
+            lambda values, mask: _divide_by_scalar_high_precision(
+                values[0], scalar, mask
+            ),
+            allowed_dtypes=FLOAT_DTYPES,
+        )
+        return
+    emit_elementwise_vmi(
+        dst,
+        (src,),
+        lambda values, mask: _divide_by_scalar(values[0], scalar, mask),
+        allowed_dtypes=FLOAT_DTYPES,
+    )
+
+
+@canonical_vmi_template(
+    target="a5",
+    op="tdivs",
+    name="vmi_tdivs_scalar_tile",
+    dtypes=(("f32", "f32", "f32"),),
+    context_constraints={"precisionType": ("default", "high_precision")},
+    constraints=(_operand_kinds_are(("scalar", "tile", "tile")),),
+)
+def vmi_tdivs_scalar_tile(scalar: f32, src: pto.Tile, dst: pto.Tile):
+    if _context_attr(src, "precisionType", "default") == "high_precision":
+        emit_elementwise_vmi(
+            dst,
+            (src,),
+            lambda values, mask: _divide_scalar_by_vector_high_precision(
+                scalar, values[0], mask
+            ),
+            allowed_dtypes=FLOAT_DTYPES,
+        )
+        return
+    emit_elementwise_vmi(
+        dst,
+        (src,),
+        lambda values, mask: _divide_scalar_by_vector(scalar, values[0], mask),
+        allowed_dtypes=FLOAT_DTYPES,
+    )

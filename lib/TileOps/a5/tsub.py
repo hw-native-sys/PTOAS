@@ -35,3 +35,33 @@ template_tsub_1d = register_binary(
     dtypes=_DTYPES,
     traversal="1d",
 )
+
+
+from ._vmi_common import (  # noqa: E402
+    NUMERIC_DTYPES,
+    _sub as _vmi_sub,
+    canonical_vmi_template,
+    emit_elementwise_vmi,
+)
+
+
+@canonical_vmi_template(
+    target="a5",
+    op="tsub",
+    name="vmi_tsub",
+    dtypes=(
+        ("f32", "f32", "f32"),
+        ("f16", "f16", "f16"),
+        ("i8", "i8", "i8"),
+        ("i16", "i16", "i16"),
+        ("i32", "i32", "i32"),
+        ("ui8", "ui8", "ui8"),
+        ("ui16", "ui16", "ui16"),
+        ("ui32", "ui32", "ui32"),
+    ),
+    min_row_bytes=128,
+)
+def vmi_tsub(src0: pto.Tile, src1: pto.Tile, dst: pto.Tile):
+    # A5 tsub ODS rejects bf16 (only i8/i16/i32/ui8/ui16/ui32/f16/f32); bf16 tsub
+    # conservatively falls back to the ordinary PTODSL path.
+    emit_elementwise_vmi(dst, (src0, src1), _vmi_sub, allowed_dtypes=NUMERIC_DTYPES)

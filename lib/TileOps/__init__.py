@@ -76,6 +76,7 @@ _TEMPLATE_MODULES = {
         ".a5.tmov2scale",
         ".a5.tmov2vec",
         ".a5.tmov_fp",
+        ".a5.tmov_nd2nz",
     ),
     ("a5", "pto.tmul"): ".a5.tmul",
     ("a5", "pto.tmuls"): ".a5.tmuls",

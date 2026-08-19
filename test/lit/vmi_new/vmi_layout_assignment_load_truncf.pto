@@ -37,6 +37,26 @@ module {
     return %narrow : !pto.vmi.vreg<128xf16>
   }
 
+  func.func @vmi_layout_assignment_trunc_store_reextend(
+      %src: !pto.ptr<f32, ub>,
+      %narrow_dst: !pto.ptr<bf16, ub>,
+      %wide_dst: !pto.ptr<f32, ub>,
+      %offset: index) {
+    %c128 = arith.constant 128 : index
+    %wide = pto.vmi.load %src[%offset]
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
+    %narrow = pto.vmi.truncf %wide {rounding = "R", saturate = "NOSAT"}
+        : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xbf16>
+    %mask = pto.vmi.create_mask %c128 : index -> !pto.vmi.mask<128xpred>
+    pto.vmi.masked_store %narrow, %narrow_dst[%offset], %mask
+        : !pto.vmi.vreg<128xbf16>, !pto.ptr<bf16, ub>, !pto.vmi.mask<128xpred>
+    %rewide = pto.vmi.extf %narrow
+        : !pto.vmi.vreg<128xbf16> -> !pto.vmi.vreg<128xf32>
+    pto.vmi.masked_store %rewide, %wide_dst[%offset], %mask
+        : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<128xpred>
+    return
+  }
+
 }
 
 // ASSIGN-LABEL: func.func @vmi_layout_assignment_load_truncf(
@@ -80,5 +100,24 @@ module {
 // LOWER-NOT: part = "ODD"
 // LOWER-NOT: pto.vor
 // LOWER: return {{.*}}, {{.*}} : !pto.vreg<128xf16>, !pto.vreg<128xf16>
+// LOWER-NOT: pto.vmi.
+// LOWER-NOT: !pto.vmi.
+
+// ASSIGN-LABEL: func.func @vmi_layout_assignment_trunc_store_reextend(
+// ASSIGN: %[[ROUNDTRIP_WIDE:.*]] = pto.vmi.load
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[ROUNDTRIP_NARROW:.*]] = pto.vmi.truncf %[[ROUNDTRIP_WIDE]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// ASSIGN: pto.vmi.masked_store %[[ROUNDTRIP_NARROW]]
+// ASSIGN-NOT: pto.vmi.ensure_layout %[[ROUNDTRIP_NARROW]]
+// ASSIGN: %[[ROUNDTRIP_REWIDE:.*]] = pto.vmi.extf %[[ROUNDTRIP_NARROW]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: pto.vmi.masked_store %[[ROUNDTRIP_REWIDE]]
+
+// LOWER-LABEL: func.func @vmi_layout_assignment_trunc_store_reextend(
+// LOWER: pto.vcvt {{.*}} {part = "EVEN", rnd = "R", sat = "NOSAT"}
+// LOWER: pto.vsts
+// LOWER: pto.vcvt {{.*}} {part = "EVEN"}
+// LOWER: pto.vsts
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.

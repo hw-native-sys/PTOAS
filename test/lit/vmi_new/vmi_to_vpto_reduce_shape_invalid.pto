@@ -9,24 +9,6 @@
 // RUN: not pto-test-opt %s -split-input-file -vmi-lower-unified-to-legacy -vmi-to-vpto 2>&1 | FileCheck %s
 
 module {
-  func.func @vmi_to_vpto_reduce_addi_tail_invalid(
-      %source: !pto.vmi.vreg<32xi32, #pto.vmi.layout<contiguous>>,
-      %mask: !pto.vmi.mask<32xb32, #pto.vmi.layout<contiguous>>) {
-    %out = pto.vmi.vcadd %source, %mask
-        : !pto.vmi.vreg<32xi32, #pto.vmi.layout<contiguous>>,
-          !pto.vmi.mask<32xb32, #pto.vmi.layout<contiguous>>
-        -> !pto.vmi.vreg<1xi32, #pto.vmi.layout<contiguous>>
-    return
-  }
-}
-
-// CHECK: VMI{{-}}UNSUPPORTED{{:}} pto.vmi.reduce_addi lowers through pto.vcadd only
-// CHECK-SAME: requires full source physical chunks
-// CHECK-SAME: found padding lane in physical chunk
-
-// -----
-
-module {
   func.func @vmi_to_vpto_reduce_addf_deint_invalid(
       %source: !pto.vmi.vreg<64xf32, #pto.vmi.layout<deinterleaved = 2>>,
       %mask: !pto.vmi.mask<64xb32, #pto.vmi.layout<deinterleaved = 2>>) {
@@ -40,24 +22,6 @@ module {
 
 // CHECK: VMI{{-}}UNSUPPORTED{{:}} pto.vmi.reduce_addf lowers through pto.vcadd only
 // CHECK-SAME: requires contiguous source, mask, and result layouts
-
-// -----
-
-module {
-  func.func @vmi_to_vpto_reduce_minf_tail_invalid(
-      %source: !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous>>,
-      %mask: !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous>>) {
-    %out = pto.vmi.vcmin %source, %mask
-        : !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous>>,
-          !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous>>
-        -> !pto.vmi.vreg<1xf16, #pto.vmi.layout<contiguous>>
-    return
-  }
-}
-
-// CHECK: VMI{{-}}UNSUPPORTED{{:}} pto.vmi.reduce_minf lowers through pto.vcmin only
-// CHECK-SAME: requires full source physical chunks
-// CHECK-SAME: found padding lane in physical chunk
 
 // -----
 

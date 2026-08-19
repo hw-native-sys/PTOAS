@@ -85,6 +85,13 @@ module {
         : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xsi32>
     return %result : !pto.vmi.vreg<64xsi32>
   }
+
+  func.func @fptosi_trunc(%source: !pto.vmi.vreg<64xf32>)
+      -> !pto.vmi.vreg<64xsi32> {
+    %result = pto.vmi.vcvt %source {rounding = "Z", saturate = "NOSAT"}
+        : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xsi32>
+    return %result : !pto.vmi.vreg<64xsi32>
+  }
 }
 
 // CHECK-LABEL: func.func @fpnarrow_sat(
@@ -119,3 +126,8 @@ module {
 
 // CHECK-LABEL: func.func @fptosi_default(
 // CHECK: pto.vmi.fptosi {{.*}}saturate = "SAT"{{.*}} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xsi32>
+
+// CHECK-LABEL: func.func @fptosi_trunc(
+// CHECK: pto.vmi.fptosi
+// CHECK-SAME: rounding = "Z"
+// CHECK-SAME: saturate = "NOSAT"

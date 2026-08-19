@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Sequence
 
 from ptoas.mlir.dialects import pto as _pto
@@ -540,6 +541,42 @@ def _variadic_mask(mask):
     return _raw_sequence(mask)
 
 
+def _vstore_accepts_updated_base_arg(fn) -> bool:
+    try:
+        parameters = tuple(inspect.signature(fn).parameters)
+    except (TypeError, ValueError):
+        return False
+    return bool(parameters) and parameters[0] == "updated_base"
+
+
+def _emit_vstore_generated(*, updated_base, values, destination, offset, mask,
+                           stride, block_stride, dist_mode, group, pmode, loc,
+                           ip):
+    fn = _generated("vstore")
+    kwargs = {
+        "stride": None if stride is None else _coerce_index_value(stride),
+        "block_stride": _i16_value(
+            block_stride, context="pto.vmi.vstore(block_stride)"
+        ),
+        "dist_mode": dist_mode,
+        "group": group,
+        "pmode": pmode,
+        "loc": loc,
+        "ip": ip,
+    }
+    if _vstore_accepts_updated_base_arg(fn):
+        op = fn(updated_base, values, destination, offset, mask, **kwargs)
+        if updated_base is None:
+            return op
+        return _wrap_result(op)
+    if updated_base is not None:
+        raise NotImplementedError(
+            "pto.vmi.vstore(..., post_update=True) requires generated VMI "
+            "Python bindings with an updated_base result"
+        )
+    return fn(values, destination, offset, mask, **kwargs)
+
+
 def _required_mask(mask, *, context: str):
     if mask is None:
         raise TypeError(f"{context} requires a mask operand")
@@ -783,6 +820,7 @@ class _VMINamespace:
         dist_mode=None,
         group=None,
         pmode=None,
+        post_update=False,
         loc=None,
         ip=None,
     ):
@@ -802,13 +840,19 @@ class _VMINamespace:
                 raise TypeError('pto.vmi.vstore(...) with dist_mode="intlv" requires an (even, odd) pair')
         elif _is_sequence(values):
             raise TypeError("pto.vmi.vstore(...) expects a single VMI vector unless dist_mode=\"intlv\"")
-        return _generated("vstore")(
-            _raw_sequence(values),
-            _raw(destination),
-            _coerce_index_value(offset),
-            _variadic_mask(mask),
-            stride=None if stride is None else _coerce_index_value(stride),
-            block_stride=_i16_value(block_stride, context="pto.vmi.vstore(block_stride)"),
+        if post_update and block_stride is None:
+            raise ValueError(
+                "pto.vmi.vstore(..., post_update=True) requires block_stride"
+            )
+        destination = _raw(destination)
+        return _emit_vstore_generated(
+            updated_base=_type_of(destination) if post_update else None,
+            values=_raw_sequence(values),
+            destination=destination,
+            offset=_coerce_index_value(offset),
+            mask=_variadic_mask(mask),
+            stride=stride,
+            block_stride=block_stride,
             dist_mode=dist_mode,
             group=group,
             pmode=pmode,

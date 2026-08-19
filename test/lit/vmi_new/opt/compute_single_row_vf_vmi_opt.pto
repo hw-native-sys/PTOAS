@@ -7,7 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
-// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s | FileCheck %s --check-prefix=VPTO --implicit-check-not=pto.vmi. --implicit-check-not='!pto.vmi' --implicit-check-not=pto.vcgmax --implicit-check-not=pto.vselr
+// RUN: ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --emit-vpto %s | FileCheck %s --check-prefix=VPTO --implicit-check-not=pto.vmi. --implicit-check-not='!pto.vmi' --implicit-check-not=pto.vcgmax --implicit-check-not=pto.vselr
 
 // Optimization guard for the ComputeSingleRowVF block-quant path.
 // The 128xf16 input should split into two UNPK_B16 loads whose f16 -> f32
