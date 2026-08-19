@@ -10,7 +10,10 @@
 - 以可配置的 `preload_count = P` 改写 S1 内层循环；
 - preload 一个完整的 QK/softmax 前缀，而不是只提前加载 K；
 - 使用现有 `tpush` / `tpop` / `tfree` 的阻塞与 FIFO 语义完成跨核衔接，不引入 ACK；
-- 用 multi-buffer 保存跨越 pipeline cut 的 Vector 本地状态；
+- 复用 tpipe 已有 FIFO slot 抽象保存跨 C/V 传输的 payload，不对 pipe entry 再做一次
+  `alloc_multi_tile` 转换；
+- 对没有进入 tpipe、但因调度而跨迭代存活的 Cube/Vector 核内 tile 做 multi-buffer；
+- 区分 Cube 的 L1 `mat`、L0A/L0B `left/right` 和 L0C `acc`，根据实际重叠目标分别决定是否多份化；
 - 对 A3 与 A5 使用同一调度算法，同时允许目标相关 lowering 选择不同 transport；
 - 使调度算法不依赖 pipe 使用 `tile` entry 还是 `global`/`gm_slot_tensor` entry。
 
@@ -26,9 +29,15 @@
 3. 把前两个 stage 作为 pipeline prefix，把后两个 stage 作为 pipeline suffix。
 4. 在 Cube 和 Vector 各自的内层循环中，让 prefix 相对 suffix 领先 `P` 个逻辑 tile。
 5. 通信事务整体移动；调度器只识别 acquire/commit/release 边界，不检查 entry 的具体表示。
-6. A5 tile entry lower 为本地 L2L pipe；A2/A3 tile entry lower 为 raw GM buffer 的 L2G2L
+6. 跨核 payload 的多槽语义完全由 tpipe 的 `slot_num`、reserved buffer 和
+   `tpush`/`tpop`/`tfree` 表达；CV pass 不为 QK/P/PV payload 生成 local multi-buffer。
+7. 对核内 buffer 分成两类：给定 `P` 的 correctness-required buffer 和只增加 engine overlap 的
+   performance-optional buffer。前者不可静默关闭，后者可以独立回退而不取消 C/V pipeline。
+8. CV/local pipeline pass 在 PlanMemory 前只生成逻辑 slot 表达或稳定标注；PlanMemory 检查容量并分配
+   物理槽，Sync 保留 slot identity，最后由 `PTOResolveBufferSelect` 物化地址选择。
+9. A5 tile entry lower 为本地 L2L pipe；A2/A3 tile entry lower 为 raw GM buffer 的 L2G2L
    pipe；A2/A3 global entry 可 lower 为 `gm_slot_tensor` 的 global-only GM FIFO。
-7. entry/transport 合法性由已有 verifier 和目标 lowering 决定，pipeline scheduler 不为不同平台复制算法。
+10. entry/transport 合法性由已有 verifier 和目标 lowering 决定，pipeline scheduler 不为不同平台复制算法。
 
 因此，同一份 pipeline 结果可以服务以下部署策略：
 
@@ -45,6 +54,8 @@
 - `P = 0` 保留原始逐 tile 串行顺序，便于 A/B 对比与回退。
 - `P > 0` 时，QK matmul、softmax 和对应的 push 都属于 preload 范围。
 - K 与 V 仍按相同逻辑 tile `i` 配对，不改变注意力计算语义。
+- 将 C/V stage preload 与 Cube/Vector 核内 operand software pipeline 解耦；两者可以分别开关和降级。
+- 覆盖 Cube 的 GM->L1、L1->L0A/L0B、Cube->L0C/FIX 数据路径，而不是只核算 L1。
 - 调度结果不依赖 A3/A5，不依赖 entry 是 tile 还是 global。
 - 不引入跨核 phase ACK、全局 barrier 或额外的 stage handshake。
 - 对容量不足、pipe 配对失败、循环不匹配和状态无法 multi-buffer 的情况给出确定性诊断。
@@ -57,6 +68,8 @@
 - 本阶段不为任意不可规约 CFG 做软件流水；首版只处理规范化的单入口 S1 循环。
 - 本阶段不承诺“所有 P 个 prefix 已在两个核上同时完成后才启动 suffix”的全局相位语义。
   `P` 表示程序顺序上的提前距离；实际并行度由两个核的执行速度与 FIFO backpressure 决定。
+- 本阶段不承诺仅提高 `P` 就必然得到 K/V MTE2、MTE1 与 Cube 指令重叠；该收益还依赖核内
+  operand buffer、L0 生命周期与同步是否合法。
 
 ## 4. 术语与基本模型
 
@@ -165,8 +178,12 @@ prefix = { C_QK, V_P }
 suffix = { C_PV, V_O }
 ```
 
-此 cut 的直接通信边是 `pipe_p`。所有从 `V_P(i)` 活到 `V_O(i)` 的 Vector 本地 SSA 值或内存状态
-也是 cut edge，必须进行 multi-buffer 扩展。
+此 cut 的直接通信边是 `pipe_p`。QK、P、PV 等跨 C/V payload 的多槽存储已经由各自 tpipe 的 FIFO
+抽象负责，不再转换成 `alloc_multi_tile`。
+
+所有从 `V_P(i)` 活到 `V_O(i)`、且没有随 pipe payload 传输的 Vector 本地 SSA 值或内存状态，仍是
+Vector 核内的 cut edge。若 `P > 0` 使多个逻辑 tile 的这些状态同时存活，则必须进行 multi-buffer
+扩展或选择等价的传输/重算方案。
 
 ## 6. Entry 无关的逻辑 Pipe Transaction
 
@@ -380,7 +397,7 @@ for i in [N - Pe, N):
 | `N = 0` | 循环不执行，不发生 pipe transaction |
 | `0 < N < P` | `Pe = N`，先执行全部 prefix，再执行全部 suffix |
 | `P = 1` | 经典相邻 tile double-buffer 风格 |
-| `P > 1` | crossing-cut 状态通常需要 `P + 1` 个版本；静态 `N <= P` 时可按 `N` 收缩 |
+| `P > 1` | Vector 核内 crossing-cut 状态通常需要 `P + 1` 个版本；静态 `N <= P` 时可按 `N` 收缩 |
 
 ## 10. 不使用 ACK 的跨核协同
 
@@ -401,9 +418,22 @@ for i in [N - Pe, N):
 相位。如果未来要求“两个核都完成 P 个 prefix 后才允许任何 suffix”，那是额外的全局 barrier 语义，
 不属于本文的性能 pipeline，也不能仅由现有单 entry FIFO 依赖表达。
 
-## 11. Crossing-Cut 状态与 Multi-Buffer
+## 11. 核内 Multi-Buffer 与 Operand Software Pipeline
 
-### 11.1 为什么通常需要 `P + 1`
+### 11.1 与 tpipe FIFO 的职责边界
+
+multi-buffer 必须先按所有权分为两类：
+
+1. **跨 C/V payload**：QK、P、PV 等通过 tpipe 发送的数据。它们的并发 entry 数已经由
+   `slot_num`/`local_slot_num`、reserved buffer 与 `tpush`/`tpop`/`tfree` 表达，CV pass 不再为其生成
+   `alloc_multi_tile`。
+2. **核内 local tile**：没有进入 tpipe、但因跨 stage 或异步 engine 重叠而同时存活的 Cube/Vector
+   本地值。这些值才使用 tile-native multi-buffer 表达。
+
+因此，§12 的 pipe FIFO 槽和本节的 local tile 槽属于两套资源。即使它们恰好具有相同深度，也不能
+互相替代或重复计数。
+
+### 11.2 Vector 核内 crossing-cut 状态
 
 Vector steady-state 的顺序是：
 
@@ -412,32 +442,77 @@ V_P(i + Pe)
 V_O(i)
 ```
 
-当 `Pe < N` 时，在第一次执行 `V_O(0)` 前，`V_P(0 ... Pe)` 的结果可能同时存活，因此从
-`V_P(i)` 活到 `V_O(i)` 的每个本地值需要 `Pe + 1` 个版本。当 `Pe = N` 时不再执行同时间步的
-新 prefix，最多只有 `N` 个版本。静态 shape 下精确的最大 live version 数为：
+当 `Pe < N` 时，在第一次执行 `V_O(0)` 前，`V_P(0 ... Pe)` 的结果可能同时存活。因此，从
+`V_P(i)` 活到 `V_O(i)`、且没有放入 pipe payload 的每个本地值需要 `Pe + 1` 个版本。当 `Pe = N`
+时不再执行同时间步的新 prefix，最多只有 `N` 个版本。静态 shape 下精确的最大 live version 数为：
 
 ```text
-B = 1                         if Pe = 0 and N > 0
-B = min(N, Pe + 1)           if Pe > 0
+Bcv = 1                         if Pe = 0 and N > 0
+Bcv = min(N, Pe + 1)           if Pe > 0
 ```
 
-动态 `N` 或不做 shape specialization 的首版实现可以保守取 `B = P + 1`。`P = 0` 时原始单 tile
-已经足够，不生成 `alloc_multi_tile<count=1>`，因为 multi-buffer 容器只用于两个及以上物理槽。
-
-典型 crossing-cut 状态包括：
+动态 `N` 或不做 shape specialization 的首版实现可以保守取 `Bcv = P + 1`。典型状态包括：
 
 - O rescale 使用的 `alpha[i]`；
 - 当前 tile 的 normalization factor；
 - `V_O(i)` 仍会读取的 row sum、max 派生值或 mask 派生值；
 - 任何由 `V_P(i)` 写入、由 `V_O(i)` 读取的 local tile。
 
-不能只为一个名为 `alpha` 的已知变量做特判。pass 应通过 SSA use-def 与 memory dependence 计算
-完整 live-out 集合。
+这是给定 `P` 的 correctness-required multi-buffer。不能只为名为 `alpha` 的变量做特判，pass 应通过
+SSA use-def 与 memory dependence 计算完整 live-out 集合。running max/sum 等 prefix-only 递推状态仍按
+递增 `i` 更新，O accumulator 仍按 `V_O(0)..V_O(N-1)` 更新；不跨 cut 的递推状态不因 `P` 自动复制。
 
-### 11.2 显式 slot 选择
+### 11.3 Cube 本地存储层次
 
-对每个 crossing-cut local tile `state`，使用
-[`ptoas-multi-buffer-explicit-design.md`](ptoas-multi-buffer-explicit-design.md) 定义的显式表达：
+Cube operand 路径不只有 L1。PTO tile 地址空间与典型 FA 数据对应如下：
+
+| 数据层次 | PTO 地址空间 | 典型数据 |
+|---|---|---|
+| L1 | `mat` | Q、K、V，以及必要时从 pipe entry 复制出的 P tile |
+| L0A | `left` | QK 的 Q、PV 的 P |
+| L0B | `right` | QK 的 K、PV 的 V |
+| L0C | `acc` | QK/PV accumulator |
+| UB | `vec` | softmax、归一化和 O 更新的 Vector tile |
+
+local pipeline analysis 必须在 layout 和 tile op 展开后识别真实的数据搬运链，不能把
+`GM -> L1 -> L0 -> Cube -> L0C/FIX` 简化成只有一份 K/V L1 buffer。
+
+地址空间不能单独决定 buffer 所有权。A5 tile-entry 或 A2/A3 tile-entry L2G2L 中，`tpop` 返回的 P
+可能物理位于 Cube L1，QK/PV consumer entry 可能物理位于 Vector UB，但这些区域仍是 tpipe 的 local
+consumer slot/reserved buffer。除非数据在 `tfree` 前被复制到另一个 local tile，否则不能再次把它们
+转换成核内 `alloc_multi_tile`。
+
+### 11.4 不同 overlap 对 buffer 的要求
+
+是否复制某级 buffer 由目标 overlap 决定：
+
+| 目标 overlap | 需要检查或多份化的 local buffer |
+|---|---|
+| `GM->L1 K(i+1) || QK(i)` | K 的 `mat` |
+| `L1->L0B K(i+1) || QK(i)` | K 的 `right`，以及相应 MTE1/Cube 事件依赖 |
+| `tpop P(i+1) || PV(i)` | P 的 consumer local slot，由 tpipe `local_slot_num`/reserved buffer 管理 |
+| `GM->L1 V(i+1) || PV(i)` | V 的 `mat` |
+| `L1->L0A/L0B P/V(i+1) || PV(i)` | P 的 `left`、V 的 `right` |
+| `FIX(i) || Cube(i+1)` | 必要时复制或轮换 `acc`，并证明上一结果已被 drain |
+| Vector load/compute/store overlap | 不属于 pipe entry backing 的 `vec` scratch/output tile |
+
+不要求把表中所有 buffer 无条件改为双缓冲。例如，只要求隐藏 MTE2 延迟时，L1 ping-pong 可能已经
+足够；只有把下一次 MTE1 也提前到当前 Cube 计算期间时，才需要额外解决 L0A/L0B 的复用冲突。
+
+参考手写
+[`fa_performance_kernel.cpp`](https://github.com/hw-native-sys/pto-isa/blob/main/kernels/manual/common/flash_atten/fa_performance_kernel.cpp)，
+`qkPreloadNum` 负责跨 C/V 的 stage distance，而 K/P/V 使用两份 L1 `TileType::Mat`，Vector 输入、exp
+和输出也使用 ping-pong，QK/PV accumulator 则轮换两个 L0C 地址。
+`pMatTile[0]` 同时作为 P pipe 的 consumer local base，`qkVecTile[0]`/`pvVecTile[0]` 也分别作为
+QK/PV pipe 的 Vector consumer local base；这些数组中的 pipe backing 部分在 PTOAS 中应归入 tpipe
+容量和 reserved-buffer 规划，而不是再生成第二套 local multi-buffer。
+其中 L1->L0 搬运封装在 `pto_macro_matmul` 内；PTOAS 若把它展开为显式 `tmov + tmatmul`，必须得到
+等价的 L0 生命周期和事件依赖，而不是只复制 L1 后假设 overlap 自动成立。
+
+### 11.5 逻辑 slot 表达与物理地址选择
+
+对已选中的核内 local tile `state`，使用
+[`ptoas-multi-buffer-explicit-design.md`](ptoas-multi-buffer-explicit-design.md) 定义的 tile-native 表达：
 
 ```text
 state_mb = alloc_multi_tile<count = B>
@@ -445,29 +520,49 @@ producer_slot(i) = multi_tile_get state_mb[i mod B]
 consumer_slot(i) = multi_tile_get state_mb[i mod B]
 ```
 
-producer 与 consumer 必须使用相同的逻辑 `i` 计算 slot。slot 选择由 pipeline pass 显式生成，不能依赖
-后续 pass 猜测 induction variable。
+producer 与 consumer 必须使用同一逻辑迭代计算 slot。这里的 `multi_tile_get` 是逻辑槽选择，不是最终
+地址 select：
 
-### 11.3 Loop-carried reduction 状态
+1. pipeline/bufferize pass 在 PlanMemory 前生成 `alloc_multi_tile`、`multi_tile_get` 或等价的稳定标注；
+2. PlanMemory 识别 slot 数和地址空间，检查容量并写入 `pto.multi_buffer_addrs`；
+3. Sync pass 在 `multi_tile_get` 仍存在时分析每次 slot 访问；
+4. `PTOResolveBufferSelect` 最后才把动态 slot 物化为地址 `arith.select` 和 addressed `alloc_tile`。
 
-running max、running sum 等 `V_P` 内部的递推状态仍按 `i = 0..N-1` 的顺序更新；pipeline 不并行执行
-两个 `V_P`，因此这类 prefix-only loop-carried state 不需要复制。
+CV/local pipeline pass 不直接生成地址 select，PlanMemory 也不负责生成 select。
 
-O accumulator 仍按 `V_O(0)..V_O(N-1)` 的顺序更新；suffix-only accumulator 也不需要复制。
-只有跨越 `V_P -> V_O` cut 的逐 tile 值需要 multi-buffer。
+### 11.6 Hard requirement 与 performance option
 
-### 11.4 资源上限
+对给定 `P`，buffer requirement 分为：
 
-当前 multi-buffer 设计的最大槽数为 16，因此要求：
+| Requirement | 性质 | 分配失败时的行为 |
+|---|---|---|
+| `pipe_p` 等 correctness 所需 FIFO 容量 | hard | 降低 `P` 或拒绝 CV pipeline |
+| Vector `V_P(i)->V_O(i)` 核内 retained state | hard | 降低 `P`、改为传输/重算，或拒绝 CV pipeline |
+| Cube K/P/V L1/L0 operand ping-pong | soft | 关闭对应核内 overlap，C/V pipeline 可保留 |
+| Vector scratch ping-pong | soft | 关闭对应 Vector 核内 overlap，C/V pipeline 可保留 |
+| L0C/FIX ping-pong | soft，除非调度已依赖它 | 回退到串行 drain；若已提交重排则必须回滚该重排 |
+
+`alloc_multi_tile<count=N>` 表示一个已经选定的硬槽数；当前 PlanMemory 只负责分配或报告 overflow，不能
+把 N 静默降成 1。若要支持资源自适应，必须在最终调度提交前比较候选配置，或在原始 ModuleOp 的 clone
+上执行“改写 + PlanMemory”试跑后提交成功候选。不能先生成依赖 N 个槽的 schedule，再在 PlanMemory
+之后单独关闭 multi-buffer。
+
+首版显式 `P` 模式建议保持严格语义：hard requirement 分配失败时报错；soft local pipeline 可以独立
+关闭。后续 auto/fallback 模式可以按“先减少 L0、再减少 L1/UB scratch、最后减少 P”的策略搜索，但每个
+候选都必须重新完成 schedule、liveness 和 PlanMemory 验证。
+
+### 11.7 资源上限
+
+当前 tile-native multi-buffer 的最大槽数为 16，因此每个核内 local multi-buffer 都要求：
 
 ```text
-B <= 16
+2 <= B <= 16
 ```
 
-保守分配 `B = P + 1` 的实现等价于要求 `P + 1 <= 16`。超过上限时显式配置必须报错，不允许静默
-减小 `P`。未来 auto-tuning 模式可以基于资源预算选择更小值。
+`B = 1` 使用普通 `alloc_tile`。对 Vector hard crossing state，保守分配 `Bcv = P + 1` 等价于要求
+`P + 1 <= 16`；超过上限时，严格模式必须报错，不能在保持相同 schedule 的同时静默减小 `P`。
 
-## 12. Pipe 容量与资源约束
+## 12. tpipe 容量与 Reserved Buffer 约束
 
 ### 12.1 Hard constraint
 
@@ -503,7 +598,9 @@ A5 tile-entry L2L pipe 的 `slot_num` 同时决定本地 FIFO 深度与 reserved
 reserve_bytes = slot_size * effective_slot_num
 ```
 
-pipeline pass 验证已有 init/reserve 合同，不在未授权情况下扩大本地内存。
+pipeline pass 验证已有 init/reserve 合同，并把给定 `P` 所需的最小容量记录为 PlanMemory 可见的
+requirement，不在未授权情况下扩大本地内存。PlanMemory/`PTOResolveReservedBuffers` 负责确认实际
+reserved range 可分配；该 range 是 tpipe FIFO 存储，不是 K/V/P 的 L1/L0 operand buffer。
 
 ### 12.4 A2/A3 资源计算
 
@@ -515,6 +612,19 @@ A2/A3 tile-entry L2G2L pipe 中：
 - reserve 大小按 `slot_size * effective_local_slot_num` 计算。
 
 A2/A3 global-only GM FIFO 中只检查 `slot_num`，不要求 local reserve/import contract。
+
+### 12.5 与核内 multi-buffer 的联合预算
+
+PlanMemory 必须在同一目标资源模型中同时看到：
+
+- tpipe consumer reserved buffer；
+- Vector `vec` hard crossing state；
+- Cube `mat`、`left`、`right`、`acc` local buffer；
+- Vector optional scratch/output ping-pong。
+
+但它们保持不同的逻辑所有权。PlanMemory 可以让生命周期不重叠的 local buffer 复用地址，不能把 tpipe
+slot 当作任意 operand tile 的一个版本，也不能通过减小 hard slot 数来消除 overflow。PlanMemory 的输出
+是容量成功/失败与物理地址列表，不包含运行时 slot select 代码。
 
 ## 13. 正确性与无死锁条件
 
@@ -540,7 +650,8 @@ entry kind 改变事务内部形式，不改变该映射。
 
 - `V_P` 的 loop-carried state 按递增 `i` 更新；
 - `V_O` 的 O accumulator 按递增 `i` 更新；
-- crossing-cut state 使用同一个 `i mod B` 版本；
+- 没有进入 tpipe 的 Vector crossing-cut state 使用同一个 `i mod Bcv` 版本；
+- QK/P/PV payload 只使用 tpipe entry 生命周期，不额外绑定 local multi-buffer 版本；
 - `K[i]` 与 `V[i]` 的索引不因 schedule time `t` 改变。
 
 因此 pipeline 只改变不同 stage 间的重叠，不改变每条递推链的顺序。
@@ -567,36 +678,62 @@ entry kind 改变事务内部形式，不改变该映射。
 
 实现应把该证明转化为结构化 legality checks，而不是依赖运行时超时发现死锁。
 
+### 13.5 核内 engine overlap 正确性
+
+核内 software pipeline 还必须独立证明：
+
+1. 下一次 MTE2 写入的 L1 slot 不再被上一轮 MTE1 读取；
+2. 下一次 MTE1 写入的 L0A/L0B slot 不再被上一轮 Cube 指令读取；
+3. 下一次 Cube 写入的 L0C slot 已完成上一轮 FIX/pipe producer drain；
+4. Vector 下一轮写入的 UB slot 已完成上一轮 Vector/MTE3 读取；
+5. 动态 `i mod B` 无法静态判定互异时，Sync 采用保守依赖而不是假定无 alias。
+
+这些条件由 local pipeline 与 Sync pass 联合保证，不属于 tpipe backpressure。tpipe 只能保护 entry 的
+生产消费，不能保护任意 L1/L0/UB 地址的提前复用。
+
 ## 14. 编译器 Pass 设计
 
 ### 14.1 Pass 位置
 
-需要新增 ModuleOp pass，例如：
+建议把跨核调度、核内调度和物理地址选择拆成三个层次：
 
 ```text
-pto-cv-pipeline
+PTOCVPipeline          // ModuleOp：C/V stage schedule 与 hard state 标注
+PTOLocalPipeline       // FuncOp：Cube/Vector 核内 operand software pipeline
+PTOPipelineBufferize   // 逻辑 local slot 表达；不生成物理 select
 ```
 
 推荐主流程顺序：
 
 ```text
 PTOAssignDefaultFrontendPipeId
-PTOCVPipeline                         // 新增，ModuleOp
 PTOLowerFrontendPipeOps
 PTOInferValidatePipeInit
+PTOCVPipeline                         // ModuleOp，跨函数调度
 LoweringSyncToPipe
 InferPTOLayout
-...
+FusionPlan / OpScheduling
+PTORematerializeFixpipeVectorQuant
+PTOLocalPipeline                      // 最后一个可能重排 MTE/Cube/Vector 的 pass
+PTOPipelineBufferize                  // alloc_multi_tile/multi_tile_get
+PTOPlanMemory                         // 分配地址，写 multi_buffer_addrs
+PTOResolveReservedBuffers
+PTORemoveIdentityTMov
+PTOInsertSync / PTOGraphSyncSolver
+PTOResolveBufferSelect                // 最后物化地址 select
 ```
 
-现有 `SerialFrontendPipeLoweringPass` 把 default-id materialization 与 frontend pipe lowering 放在同一个
-串行 wrapper 中。实现本设计时应把 wrapper 拆成三个串行步骤，或在其中插入 ModuleOp 调度步骤，使
-pipeline pass：
+`PTOCVPipeline` 放在 frontend pipe lowering 和 init validation 之后，原因是此时已具有统一的
+`talloc`/`tpush`/`tpop`/`tfree` 与已解析 capacity，同时 lowering 必须保留 frontend id、direction、split
+和 entry kind 等配对元数据。该 pass 仍需运行在 layout、memory planning 和 sync insertion 之前，并能
+同时查看 peer C/V 函数。
 
-- 已能看到显式 pipe id；
-- 仍能看到方向明确的 frontend push/pop/free 与 entry type；
-- 运行在 layout、view-to-memref、memory planning 和 sync insertion 之前；
-- 能同时查看 peer C/V 函数。
+`PTOLocalPipeline` 必须位于最后一个可能重排 load/move/matmul/vector op 的 pass 之后，否则后续 scheduling
+可能破坏其 look-ahead 距离。它仍必须位于 PlanMemory 前，因为 PlanMemory 需要看到最终 live range、
+地址空间和逻辑 slot 数。
+
+Sync 必须位于 `PTOResolveBufferSelect` 之前，使依赖分析仍能追踪 `multi_tile_get` 的 slot identity。把动态
+slot 过早 lowering 成 N 路 `arith.select` 会丢失精确 alias 信息并产生不必要同步。
 
 ### 14.2 分析数据结构
 
@@ -615,13 +752,33 @@ CVLoopPipelinePlan {
   requested_preload
   effective_preload
   stages { C_QK, V_P, C_PV, V_O }
-  crossing_values[]
+  vector_crossing_values[]
   transactions[]
   capacity_checks[]
+  hard_buffer_requirements[]
+}
+
+LocalPipelinePlan {
+  function
+  engine_stages[]              // MTE2, MTE1, Cube, FIX, Vector, MTE3
+  buffer_requirements[]
+  schedule_rewrites[]
+}
+
+LocalBufferRequirement {
+  role                         // vector_crossing, k_l1, k_l0b, p_l0a, ...
+  memory_space                 // vec, mat, left, right, acc
+  min_count
+  preferred_count
+  slot_expr                    // logical i -> slot
+  requirement_kind             // hard or soft
+  coupled_schedule_id
 }
 ```
 
-分析与改写必须分离。只有完整 plan 通过全部 legality check 后，才能同时修改两个函数，避免只改写一侧。
+分析与改写必须分离。只有 C/V pair 的完整 plan 通过全部 legality check 后，才能同时修改两个函数，避免
+只改写一侧。每个 local buffer requirement 必须绑定产生它的 schedule；关闭一个 soft requirement 时，
+必须同时撤销对应的 look-ahead 重排，不能只把槽数改成 1。
 
 ### 14.3 Stage extraction
 
@@ -632,31 +789,86 @@ CVLoopPipelinePlan {
 3. 加入 memory dependence、layout/move 与 loop-carried dependence；
 4. 验证四个 stage 对当前逻辑迭代各出现一次；
 5. 验证 stage 间没有违反 cut 的反向 dependence；
-6. 计算 `V_P -> V_O` crossing-cut live set；
-7. 计算 pipe capacity 和 local memory 预算。
+6. 计算没有进入 tpipe 的 `V_P -> V_O` Vector crossing-cut live set；
+7. 计算 pipe capacity requirement；
+8. 为 hard crossing state 记录 `Bcv`，但不为 QK/P/PV pipe payload 生成 local multi-buffer；
+9. 给 stage 与逻辑迭代附加稳定 metadata，供后续 local pipeline 在 layout/scheduling 后恢复其来源。
 
-### 14.4 改写
+### 14.4 C/V 调度改写
 
 对每个匹配的 inner-loop pair：
 
 1. 物化 `Pe = min(P, N)`；静态 `N/P` 时常量折叠；
-2. 计算 live version 数 `B`，并在 `B >= 2` 时为 crossing-cut local tile 生成
-   `alloc_multi_tile<count=B>`；
+2. 计算 Vector hard live version 数 `Bcv`，为这些值记录 hard local buffer requirement；
 3. 克隆一个 schedule loop，范围为 `[0, N + Pe)`；
 4. 在 `t < N` 分支克隆 prefix stage，用 `i = t` 替换原 induction variable；
 5. 在 `t >= Pe` 分支克隆 suffix stage，用 `i = t - Pe` 替换原 induction variable；
-6. 将 crossing-cut use 改为相同逻辑 `i` 的 `multi_tile_get`；
+6. 保持 QK/P/PV 的 tpipe transaction 完整，不为 entry 额外创建 multi-buffer；
 7. 删除原 inner loop；
 8. 对 Cube 和 Vector 的 plan 同时 commit；任一侧失败则不修改 IR。
 
-### 14.5 Canonicalization
+### 14.5 核内 software pipeline 与 bufferize
+
+`PTOLocalPipeline` 在最终 tile layout 和 op schedule 上分析每条异步 engine 链：
+
+1. 将 Cube stage 细分为 GM->L1 load、L1->L0 move、matmul、L0C/FIX drain；
+2. 将 Vector stage 细分为 load、Vector compute、store/pipe drain；
+3. 只在存在合法 look-ahead 时生成对应 local buffer requirement；
+4. 为 `K/P/V` L1、必要的 L0A/L0B、L0C 和 Vector scratch 选择独立 depth；
+5. 插入下一逻辑迭代的 load/move，并保持同一 operand 的 tile index 不变；
+6. 为每项重排记录其 hard/soft 属性和 schedule coupling。
+
+`PTOPipelineBufferize` 消费 C/V hard state 与核内 local requirement：
+
+```text
+selected_count == 1:
+  保持 alloc_tile
+
+selected_count >= 2:
+  alloc_tile -> alloc_multi_tile<count=selected_count>
+  each use  -> multi_tile_get[logical_iteration mod selected_count]
+```
+
+该 pass 只生成逻辑 slot，不生成物理地址 select。PlanMemory 必须原生识别这些 op，在 `mat`、`left`、
+`right`、`acc`、`vec` 各自容量内分配槽并附加 `pto.multi_buffer_addrs`。
+
+### 14.6 资源可行性、回退与 PlanMemory
+
+PlanMemory 是最终物理容量权威，但不能在已提交的 schedule 下静默关闭 multi-buffer：
+
+- hard requirement 失败意味着当前 `P` 不合法；严格模式报错；
+- soft requirement 失败只允许在同时撤销对应核内 schedule 后回退；
+- `PTOResolveBufferSelect` 只消费已成功规划的地址，不参与容量决策。
+
+首版可以要求用户显式选择 local buffer depth，并让 PlanMemory 对固定配置给出确定性 overflow 诊断。若实现
+自动回退，推荐使用候选事务：
+
+```text
+for candidate in orderedCandidates(requestedP, localDepths):
+  trial = clone(originalModule)
+  rewriteCVAndLocalPipeline(trial, candidate)
+  materializeLogicalSlots(trial, candidate)
+  if PlanMemory(trial) succeeds:
+    commit(trial)
+    break
+```
+
+候选顺序通常先撤销 optional L0 look-ahead，再减少 optional L1/UB scratch，最后才降低 `P`。每次 retry
+都从未改写 IR 开始，避免复用上一候选的 schedule 或 liveness。成功候选已经具有最终 schedule 和逻辑
+槽；随后才运行正式 Sync 与 `PTOResolveBufferSelect`。
+
+另一种实现是在 PlanMemory 中加入只读 feasibility API，让 pipeline pass 在提交前查询候选。无论采用
+哪种实现，不能在 PlanMemory 后再新增会改变 live range 的 pipeline schedule；否则必须重新运行完整
+PlanMemory。
+
+### 14.7 Canonicalization
 
 后续 canonicalization 可以：
 
 - 在 `P = 0` 时消除恒真/恒假的 guard 和多余算术；
 - 在静态 `N/P` 时 peel 为 branch-free prologue/steady/epilogue；
 - 合并 `i mod 1`；
-- 删除没有 crossing value 时的 multi-buffer scaffolding。
+- 删除没有核内 crossing value 或没有选中 local overlap 时的 multi-buffer scaffolding。
 
 canonicalization 只能改变表达形式，不能改变逻辑 stage 距离。
 
@@ -669,6 +881,12 @@ canonicalization 只能改变表达形式，不能改变逻辑 stage 距离。
 ```text
 --enable-cv-pipelining
 --cv-preload-count=<non-negative integer>
+--local-pipeline-mode=<off|explicit|auto>
+--cube-l1-buffer-count=<1..16>
+--cube-l0-buffer-count=<1..16>
+--cube-acc-buffer-count=<1..16>
+--vector-scratch-buffer-count=<1..16>
+--cv-pipeline-resource-policy=<strict|fallback>
 ```
 
 默认值建议为：
@@ -676,6 +894,12 @@ canonicalization 只能改变表达形式，不能改变逻辑 stage 距离。
 - 未启用 `--enable-cv-pipelining`：不运行改写；
 - 已启用但未指定 count：`P = 1`；
 - 显式 `P = 0`：运行 legality 分析，但生成串行等价调度，便于测试。
+- `local-pipeline-mode=off`：仍允许 C/V pipeline，只关闭核内 operand/scratch look-ahead；
+- `resource-policy=strict`：显式 `P` 的 hard requirement 分配失败时报错；
+- `resource-policy=fallback`：允许基于完整候选 retry 降低 local depth，必要时再降低 `P`。
+
+`P` 与 local buffer depth 是独立参数。典型性能配置可以是 `P > 1`，而 K/P/V operand 仍只使用两份
+ping-pong；不能把 `Bcv=P+1` 无条件套到所有 Cube L1/L0 buffer。
 
 ### 15.2 IR 属性
 
@@ -685,12 +909,25 @@ canonicalization 只能改变表达形式，不能改变逻辑 stage 距离。
 attributes {pto.cv_preload_count = 2 : i64}
 ```
 
+可选的核内策略属性示例：
+
+```mlir
+attributes {
+  pto.local_pipeline = "explicit",
+  pto.cube_l1_buffer_count = 2 : i64,
+  pto.cube_l0_buffer_count = 1 : i64,
+  pto.cube_acc_buffer_count = 2 : i64,
+  pto.vector_scratch_buffer_count = 2 : i64
+}
+```
+
 规则：
 
 - pair 两侧都出现时值必须相同；
 - 只在一侧出现时，通过已验证的 peer pair 传播到另一侧；
 - 函数属性优先于命令行默认值；
-- 显式非法值报错，不静默 clamp；只有运行时 `N < P` 时使用 `Pe = min(P, N)`。
+- strict 策略下显式非法值报错，不静默 clamp；只有运行时 `N < P` 时使用 `Pe = min(P, N)`；
+- fallback 策略必须报告最终选中的 `effective_preload` 和各 local depth，不能静默改变生成配置。
 
 ### 15.3 关键诊断
 
@@ -701,8 +938,11 @@ attributes {pto.cv_preload_count = 2 : i64}
 - 每迭代 pipe transaction 数不匹配；
 - transaction 被条件分支拆分；
 - `pipe_p.slot_num` 小于静态 `Pe` 或动态最坏情况 `P`；
-- crossing-cut live version 数 `B > 16`；
+- Vector hard crossing-cut live version 数 `Bcv > 16`；
 - crossing-cut memory 无法证明 alias/last-use；
+- `mat`、`left`、`right`、`acc` 或 `vec` 的 multi-buffer 容量 overflow；
+- local buffer requirement 已被降低，但与其绑定的 look-ahead schedule 没有回滚；
+- PlanMemory 后仍有 pass 尝试改变 local buffer live range 或 slot count；
 - stage 间存在反向 dependence；
 - 目标不支持当前 entry/transport 组合。
 
@@ -711,39 +951,60 @@ attributes {pto.cv_preload_count = 2 : i64}
 ## 16. 算法伪代码
 
 ```text
-run(module, requestedP):
-  materializeDefaultFrontendPipeIds(module)
-
+analyzeCV(module, requestedP):
+  plans = []
   for pair in matchCVKernelPairs(module):
-    plans = []
-
     for loopPair in matchS1Loops(pair):
       graph = buildCrossFunctionStageGraph(loopPair)
       stages = extractFAQKPVStages(graph)
       transactions = groupLogicalPipeTransactions(stages)
-      crossing = computeCrossingCutState(stages.V_P, stages.V_O)
+      vectorState = computeLocalCrossingState(stages.V_P, stages.V_O)
 
       P = resolveRequestedPreload(pair, requestedP)
       checkNonNegative(P)
       checkEquivalentTripCounts(loopPair)
       checkTransactionBalance(transactions)
       checkCutCapacity(graph.pipe_p, maxEffectivePreload(P, tripCountKnowledge))
-      B = computeCrossingLiveVersions(P, tripCountKnowledge)
-      checkMultiBufferLimit(crossing, B)
+      Bcv = computeCrossingLiveVersions(P, tripCountKnowledge)
+      checkMultiBufferLimit(vectorState, Bcv)
       checkNoReverseDependence(graph)
 
-      plans.push(buildPlan(loopPair, stages, crossing, P))
+      addHardRequirements(vectorState, Bcv)
+      addPipeCapacityRequirements(transactions, P)
+      plans.push(buildCVPlan(loopPair, stages, transactions, P))
+  return plans
 
-    if every plan is legal:
-      rewriteCubeAndVectorAtomically(plans)
-    else:
-      emitDiagnosticAndLeavePairUnchanged()
+buildCandidate(originalModule, cvPlans, localConfig):
+  trial = clone(originalModule)
+  rewriteCubeAndVectorAtomically(trial, cvPlans)
+  localPlan = analyzeFinalEngineSchedule(trial, localConfig)
+  rewriteLocalLookAhead(trial, localPlan)
+  materializeLogicalLocalSlots(trial, collectHardRequirements(cvPlans), localPlan)
+  return trial
+
+run(module, requestedP, resourcePolicy):
+  lowerAndValidateFrontendPipes(module)
+  cvPlans = analyzeCV(module, requestedP)
+
+  for config in enumerateCandidates(cvPlans, resourcePolicy):
+    trial = buildCandidate(module, cvPlans, config)
+    if planMemory(trial) succeeds:
+      replaceModule(module, trial)
+      runSyncWithLogicalSlotIdentity(module)
+      resolveBufferSelect(module)
+      return success
+
+  emitResourceDiagnostic()
+  return failure
 ```
 
-`groupLogicalPipeTransactions` 是 entry-specific adapter 的唯一入口；`buildPlan` 和
-`rewriteCubeAndVectorAtomically` 不根据 tile/global 或 A3/A5 分支。
+`groupLogicalPipeTransactions` 是 entry-specific adapter 的唯一入口；`buildCVPlan` 和
+`rewriteCubeAndVectorAtomically` 不根据 tile/global 或 A3/A5 分支。`materializeLogicalLocalSlots` 只处理
+Cube/Vector 核内 tile，不处理 tpipe entry；`resolveBufferSelect` 只在 PlanMemory 和 Sync 成功后运行。
 
 ## 17. 示例调度
+
+### 17.1 跨 C/V stage 调度
 
 设 `N = 6`、`P = 2`，单循环时间步为 `t = 0..7`：
 
@@ -761,6 +1022,22 @@ run(module, requestedP):
 表中同一行不表示两个核必须锁步，也不表示存在 phase barrier。每个核只遵守自己的程序顺序，跨核
 ready/backpressure 完全由三条 pipe 的 push/pop/free 决定。
 
+### 17.2 Cube 核内 operand 调度
+
+假设 K/V 核内 L1 depth 为 2、P tpipe consumer local depth 为 2，且 L0 lowering 能证明相邻 operand
+slot 安全，则 steady-state 还可以形成：
+
+```text
+MTE2 K(i + 1)    || MTE1/Cube QK(i)
+TPop P(i + 1) + MTE2 V(i + 1) || MTE1/Cube PV(i)
+FIX result(i)    || Cube compute(i + 1)    // 仅当 acc ping-pong 已启用
+```
+
+若 PlanMemory 只能支持单份 K/V L1 或单个 P consumer local slot，则撤销对应 look-ahead 后，§17.1 的
+跨 C/V stage 调度仍然合法；
+它只是不能隐藏同样多的 Cube 核内 MTE 延迟。反之，若 Vector hard crossing state 或 `pipe_p` 容量无法
+支持 `P=2`，则不能保留该跨 C/V 调度。
+
 ## 18. 验证计划
 
 ### 18.1 IR 回归测试
@@ -774,7 +1051,10 @@ ready/backpressure 完全由三条 pipe 的 push/pop/free 决定。
 - A2/A3 tile-entry raw GM buffer frontend IR；
 - A2/A3 global-entry `gm_slot_tensor` frontend IR；
 - entry 不同但 schedule skeleton 相同的对比检查；
-- crossing-cut 值生成正确的 `B` 槽 multi-buffer 与 `i mod B`；
+- Vector 核内 crossing-cut 值生成正确的 `Bcv` 槽 multi-buffer 与 `i mod Bcv`；
+- QK/P/PV tpipe payload 不生成额外 `alloc_multi_tile`；
+- K/V `mat` 双缓冲、P tpipe consumer local slots 与 `left/right` 单缓冲、双缓冲的独立组合；
+- QK/PV `acc` ping-pong 与 FIX drain 回退；
 - 多 pipe id、DIR_BOTH 和显式 split；
 - capacity、trip count、transaction balance 和 reverse-dependence 负例。
 
@@ -783,6 +1063,10 @@ ready/backpressure 完全由三条 pipe 的 push/pop/free 决定。
 - A5 tile-entry 输出只含 L2L/local-buffer pipe，不含 GM tensor entry；
 - A2/A3 tile-entry 输出含 raw GM slot buffer 与 local consumer buffer，不含 global entry；
 - A2/A3 global-entry 保持 `talloc/tstore/tpush` 与 `tpop/tload/tfree` 事务顺序；
+- PlanMemory 前保留 `alloc_multi_tile/multi_tile_get`，并生成各地址空间的 `multi_buffer_addrs`；
+- Sync 在 slot resolve 前运行，最终 IR 中才出现动态地址 `arith.select`；
+- soft local buffer overflow 能撤销对应 look-ahead，但不改变 strict 模式下的 `P`；
+- hard Vector state 或 pipe capacity overflow 在 strict 模式下给出确定性诊断；
 - 生成的 C++/VPTO 可由目标工具链编译；
 - `P = 0` 与串行基线 IR/结果等价。
 
@@ -792,7 +1076,10 @@ ready/backpressure 完全由三条 pipe 的 push/pop/free 决定。
 - 比较 `P = 0` 与 `P > 0` 的数值结果；
 - 在 CA model/NPU 上确认无死锁并统计 pipe stall；
 - 分别测量 `P = 1..capacity`，验证最优值随 shape 与平台变化；
-- 检查 A5 local memory、A3 GM FIFO 与 Vector multi-buffer 资源没有超预算。
+- 检查 A5 local memory、A3 GM FIFO 与 Cube/Vector 核内 multi-buffer 资源没有超预算；
+- 从指令 trace 验证 `MTE2(i+1) || MTE1/Cube(i)`、必要的 L0/FIX overlap 和 Vector ping-pong；
+- 与手写 FA performance kernel 比较 stage distance、buffer 轮换和事件依赖；相同逻辑流水不等价于保证
+  完全相同的周期数，最终性能仍以 CA model/NPU profile 为准。
 
 ## 19. 分阶段实现建议
 
@@ -803,20 +1090,31 @@ ready/backpressure 完全由三条 pipe 的 push/pop/free 决定。
 - 只支持 tile entry；
 - A5 走 L2L local buffer，A2/A3 走 raw GM buffer L2G2L；
 - 使用单 schedule loop；
-- 加入完整 capacity/multi-buffer 诊断。
+- tpipe payload 不生成 local multi-buffer；
+- 为 Vector hard crossing state 生成 tile-native multi-buffer；
+- 使用 strict resource policy，加入 pipe capacity 和 PlanMemory 诊断。
 
-### 阶段 2：Entry 无关
+### 阶段 2：核内 Operand Software Pipeline
+
+- 识别 Cube 的 MTE2->MTE1->Cube->FIX 链；
+- 支持 K/V L1 ping-pong、P tpipe consumer local slots、必要的 L0A/L0B 和 L0C ping-pong；
+- 支持 Vector scratch/output ping-pong；
+- 在 PlanMemory 前生成逻辑 local slot，在 Sync 后生成地址 select；
+- local overlap 失败时允许独立回退，不取消可行的 C/V pipeline。
+
+### 阶段 3：Entry 无关
 
 - 接入 `LogicalPipeTransaction` adapter；
 - 支持 A2/A3 global entry；
 - 用同一组 schedule FileCheck 对比 tile/global 两种输入。
 
-### 阶段 3：通用 CV pipeline
+### 阶段 4：通用 CV pipeline 与资源搜索
 
 - 从固定四 stage 识别扩展为合法 stage graph cut；
 - 支持动态 `N` 与运行时 `Pe`；
 - 支持多个独立 inner-loop pair；
-- 加入基于资源和延迟模型的 auto `P`。
+- 加入候选 clone/feasibility 或 planner query；
+- 基于资源和延迟模型联合选择 `P`、L1/L0 depth 与 Vector scratch depth。
 
 阶段划分允许首个实现满足“不使用 GM tensor entry 的 A3/A5 统一 kernel”，同时保证算法接口不会把后续
 global entry 支持锁死。
@@ -832,6 +1130,14 @@ global entry 支持锁死。
 5. `P` 是调度距离，不是全局 phase barrier。
 6. entry transaction 不能被拆分或跨 commit/release 重排。
 7. scheduler 不根据 `gm_slot_tensor`、A3 或 A5 选择不同算法。
-8. `pipe_p.slot_num` 覆盖最大有效 preload，且 crossing-cut local state 使用精确或保守的 `B` 个版本。
-9. 两个函数必须在完整 plan 合法后原子式改写。
-10. target verifier 可以拒绝某个 entry/transport 组合，但不能改变已定义的 schedule 语义。
+8. QK/P/PV payload 的多槽存储只由 tpipe 表达，不生成重复的 local `alloc_multi_tile`。
+9. `pipe_p.slot_num` 覆盖最大有效 preload，且 Vector 核内 crossing state 使用精确或保守的 `Bcv`
+   个版本。
+10. Cube local pipeline 分别分析 L1 `mat`、L0A/L0B `left/right` 和 L0C `acc`，不能以 L1 双缓冲
+    代替全部 L0 生命周期证明。
+11. hard local buffer 失败必须降低 `P` 或拒绝调度；soft local buffer 失败可以撤销对应核内 overlap，
+    不能只把已调度代码的槽数改为 1。
+12. PlanMemory 前保留逻辑 slot，PlanMemory 只分配地址，Sync 在 slot resolve 前运行，最终 select 由
+    `PTOResolveBufferSelect` 生成。
+13. 两个函数必须在完整 plan 合法后原子式改写；资源 retry 必须从未改写 IR 开始。
+14. target verifier 可以拒绝某个 entry/transport 组合，但不能改变已定义的 schedule 语义。
