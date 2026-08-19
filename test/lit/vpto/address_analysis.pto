@@ -63,6 +63,10 @@
 // CHECK-SAME: current-offset=element:{{%.*}} delta-bytes=-1 unit1=-1
 // CHECK-SAME: unit2=unknown(inexact-unit-conversion)
 
+// CHECK-LABEL: address-analysis @cast_constant_folding
+// CHECK: op=pto.vlds {{.*}} delta-bytes=255 unit1=255
+// CHECK: op=pto.vlds {{.*}} delta-bytes=1 unit1=1
+
 module attributes {pto.target_arch = "a5"} {
   func.func @direct_index(%src: !pto.ptr<f32, ub>,
                           %dst: !pto.ptr<f32, ub>,
@@ -272,6 +276,36 @@ module attributes {pto.target_arch = "a5"} {
           : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
       %next = arith.subi %offset_i8, %c1_i8 : i8
       scf.yield %next : i8
+    }
+    return
+  }
+
+  func.func @cast_constant_folding(%src: !pto.ptr<ui8, ub>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %cm1_i8 = arith.constant -1 : i8
+    %c256_i16 = arith.constant 256 : i16
+    %extended = arith.extui %cm1_i8 : i8 to i16
+    %extended_index = arith.index_castui %extended : i16 to index
+    %truncated = arith.trunci %c256_i16 : i16 to i8
+    %truncated_index = arith.index_castui %truncated : i8 to index
+    %truncated_step = arith.addi %truncated_index, %c1 : index
+    scf.for %iv = %c0 to %c2 step %c1
+        iter_args(%ptr = %src) -> (!pto.ptr<ui8, ub>) {
+      %value = pto.vlds %ptr[%c0]
+          : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+      %next = pto.addptr %ptr, %extended_index
+          : !pto.ptr<ui8, ub> -> !pto.ptr<ui8, ub>
+      scf.yield %next : !pto.ptr<ui8, ub>
+    }
+    scf.for %iv = %c0 to %c2 step %c1
+        iter_args(%ptr = %src) -> (!pto.ptr<ui8, ub>) {
+      %value = pto.vlds %ptr[%c0]
+          : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+      %next = pto.addptr %ptr, %truncated_step
+          : !pto.ptr<ui8, ub> -> !pto.ptr<ui8, ub>
+      scf.yield %next : !pto.ptr<ui8, ub>
     }
     return
   }

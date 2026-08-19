@@ -729,6 +729,82 @@ PTOTypedExprRef mlir::pto::makePTOCastExpr(PTOCastKind kind,
   return expr;
 }
 
+static std::optional<APInt>
+getFoldedConstantBits(const PTOTypedExprRef &expr) {
+  if (!expr) {
+    return std::nullopt;
+  }
+  if (expr->kind == PTOTypedExpr::Kind::Constant) {
+    return expr->constant;
+  }
+  if (expr->kind == PTOTypedExpr::Kind::Opaque) {
+    return getConstantAPInt(expr->opaque);
+  }
+
+  unsigned width = getIntegerLikeWidth(expr->type);
+  auto value = foldPTOConstant(expr);
+  if (width == 0 || !value) {
+    return std::nullopt;
+  }
+  return APInt(width, static_cast<uint64_t>(*value), true);
+}
+
+static std::optional<APInt> applyPTOCastToBits(PTOCastKind kind,
+                                               APInt input,
+                                               unsigned resultWidth) {
+  if (resultWidth == 0) {
+    return std::nullopt;
+  }
+  switch (kind) {
+  case PTOCastKind::IndexCast:
+    return input.sextOrTrunc(resultWidth);
+  case PTOCastKind::IndexCastUI:
+    return input.zextOrTrunc(resultWidth);
+  case PTOCastKind::TruncI:
+    if (resultWidth >= input.getBitWidth()) {
+      return std::nullopt;
+    }
+    return input.trunc(resultWidth);
+  case PTOCastKind::ExtSI:
+    if (resultWidth <= input.getBitWidth()) {
+      return std::nullopt;
+    }
+    return input.sext(resultWidth);
+  case PTOCastKind::ExtUI:
+    if (resultWidth <= input.getBitWidth()) {
+      return std::nullopt;
+    }
+    return input.zext(resultWidth);
+  }
+  return std::nullopt;
+}
+
+static std::optional<int64_t>
+foldPTOCastConstant(const PTOTypedExprRef &expr) {
+  auto input = getFoldedConstantBits(expr->lhs);
+  unsigned resultWidth = getIntegerLikeWidth(expr->type);
+  if (!input) {
+    return std::nullopt;
+  }
+
+  auto result = applyPTOCastToBits(expr->castKind, *input, resultWidth);
+  if (!result) {
+    return std::nullopt;
+  }
+  if (expr->castKind == PTOCastKind::IndexCastUI ||
+      expr->castKind == PTOCastKind::ExtUI) {
+    unsigned activeBits = result->getActiveBits();
+    if (activeBits > 63) {
+      return std::nullopt;
+    }
+    return static_cast<int64_t>(result->getZExtValue());
+  }
+  if (!result->isSignedIntN(64)) {
+    return std::nullopt;
+  }
+  return result->sextOrTrunc(64).getSExtValue();
+}
+
 std::optional<int64_t>
 mlir::pto::foldPTOConstant(const PTOTypedExprRef &expr) {
   if (!expr) {
@@ -744,7 +820,7 @@ mlir::pto::foldPTOConstant(const PTOTypedExprRef &expr) {
   case PTOTypedExpr::Kind::Opaque:
     return getConstantIntValue(expr->opaque);
   case PTOTypedExpr::Kind::Cast:
-    return foldPTOConstant(expr->lhs);
+    return foldPTOCastConstant(expr);
   case PTOTypedExpr::Kind::Add:
   case PTOTypedExpr::Kind::Sub:
   case PTOTypedExpr::Kind::Mul: {
