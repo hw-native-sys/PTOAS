@@ -36,12 +36,13 @@
 8. CV/local pipeline pass 在 PlanMemory 前只生成逻辑 slot 表达或稳定标注；PlanMemory 检查容量并分配
    物理槽，Sync 保留 slot identity，最后由 `PTOResolveBufferSelect` 物化地址选择。
 9. A5 tile entry lower 为本地 L2L pipe；A2/A3 tile entry lower 为 raw GM buffer 的 L2G2L
-   pipe；A2/A3 global entry 可 lower 为 `gm_slot_tensor` 的 global-only GM FIFO。
+   pipe；A2/A3 与 A5 的 global entry 都 lower 为 `gm_slot_tensor` 的 global-only L2G2L GM FIFO。
 10. entry/transport 合法性由已有 verifier 和目标 lowering 决定，pipeline scheduler 不为不同平台复制算法。
 
 因此，同一份 pipeline 结果可以服务以下部署策略：
 
 - A5：只允许 tile entry，使用 local buffer TPipe，不出现 GM tensor entry；
+- A5：允许 global entry，使用 `gm_slot_tensor`；单向 pipe 输出 `DIR_C2V_GM`/`DIR_V2C_GM`；
 - A2/A3：只允许 tile entry，使用 `gm_slot_buffer + consumer local buffer`；
 - A2/A3：允许 global entry，使用 `gm_slot_tensor`；
 - 后续平台：增加新的 transport adapter，而不修改 preload 调度。
@@ -251,7 +252,8 @@ CV pipeline scheduler
 
 - scheduler 决定第几个逻辑 tile 的哪个 stage 先执行；
 - entry adapter 保证 allocate/load/store/push/pop/free 不被拆散；
-- transport lowering 决定数据通过 A5 local buffer、A2/A3 raw GM buffer 或 GM tensor entry 传输。
+- transport lowering 决定 A5 tile entry 使用 L2L local buffer、A2/A3 tile entry 使用 raw GM buffer，
+  或 A2/A3/A5 global entry 使用 `gm_slot_tensor` 的 L2G2L GM FIFO。
 
 ### 7.2 当前平台矩阵
 
@@ -260,10 +262,13 @@ CV pipeline scheduler
 | A5 | tile | `initialize_l2l_pipe`，consumer local reserved buffer | 统一算法 |
 | A2/A3 | tile | `initialize_l2g2l_pipe`，`gm_slot_buffer` + consumer local buffer | 统一算法 |
 | A2/A3 | global | `initialize_l2g2l_pipe`，global-only `gm_slot_tensor` | 统一算法 |
-| A5 | global | 当前不合法；A5 L2L 没有可赋给 GlobalTensor 的 GM slot | scheduler 可表达，目标 verifier 拒绝 |
+| A5 | global | `initialize_l2g2l_pipe`，global-only `gm_slot_tensor`；单向 EmitC 使用 `DIR_C2V_GM`/`DIR_V2C_GM` | 统一算法 |
 
-这意味着“设计是否支持 pipeline”与“pipe 是否使用 `gm_slot_tensor` entry”无关。具体编译目标仍可通过
-deployment policy 限制 `allowed_entry_kinds = {tile}`，从而生成完全不使用 GM tensor entry 的 A3/A5 kernel。
+frontend init 存在 `gm_slot_tensor` 时，lowering 优先选择 global-only L2G2L 路径，不会进入 A5 tile-entry
+的 L2L 分支。因此，“A5 只允许 tile entry”只能是 deployment policy，而不是 target capability。
+
+这意味着“设计是否支持 pipeline”与“pipe 是否使用 `gm_slot_tensor` entry”无关。具体部署仍可通过
+`allowed_entry_kinds = {tile}` 生成完全不使用 GM tensor entry 的 A3/A5 kernel。
 
 ### 7.3 A5 local-buffer 配置
 
@@ -611,7 +616,7 @@ A2/A3 tile-entry L2G2L pipe 中：
 - 只要每次 `tpop -> use -> tfree` 事务完整，`local_slot_num` 可以小于 `P`；
 - reserve 大小按 `slot_size * effective_local_slot_num` 计算。
 
-A2/A3 global-only GM FIFO 中只检查 `slot_num`，不要求 local reserve/import contract。
+A2/A3 和 A5 的 global-only GM FIFO 中只检查 `slot_num`，不要求 local reserve/import contract。
 
 ### 12.5 与核内 multi-buffer 的联合预算
 
@@ -947,6 +952,8 @@ attributes {
 - 目标不支持当前 entry/transport 组合。
 
 最后一类错误来自 target legality，不应被误报成 pipeline scheduler 不支持该 entry。
+A5 global entry 是已有 lowering 和 EmitC 支持的合法组合，不能作为该诊断的触发案例；该诊断只覆盖
+实际 verifier/lowering 明确拒绝的 entry、direction、shape 或 transport 组合。
 
 ## 16. 算法伪代码
 
@@ -1050,6 +1057,7 @@ FIX result(i)    || Cube compute(i + 1)    // 仅当 acc ping-pong 已启用
 - A5 tile-entry frontend IR；
 - A2/A3 tile-entry raw GM buffer frontend IR；
 - A2/A3 global-entry `gm_slot_tensor` frontend IR；
+- A5 global-entry `gm_slot_tensor` frontend IR；
 - entry 不同但 schedule skeleton 相同的对比检查；
 - Vector 核内 crossing-cut 值生成正确的 `Bcv` 槽 multi-buffer 与 `i mod Bcv`；
 - QK/P/PV tpipe payload 不生成额外 `alloc_multi_tile`；
@@ -1062,7 +1070,8 @@ FIX result(i)    || Cube compute(i + 1)    // 仅当 acc ping-pong 已启用
 
 - A5 tile-entry 输出只含 L2L/local-buffer pipe，不含 GM tensor entry；
 - A2/A3 tile-entry 输出含 raw GM slot buffer 与 local consumer buffer，不含 global entry；
-- A2/A3 global-entry 保持 `talloc/tstore/tpush` 与 `tpop/tload/tfree` 事务顺序；
+- A2/A3 与 A5 global-entry 保持 `talloc/tstore/tpush` 与 `tpop/tload/tfree` 事务顺序；
+- A5 单向 global-entry lower 为 L2G2L，并输出 `DIR_C2V_GM`/`DIR_V2C_GM`；
 - PlanMemory 前保留 `alloc_multi_tile/multi_tile_get`，并生成各地址空间的 `multi_buffer_addrs`；
 - Sync 在 slot resolve 前运行，最终 IR 中才出现动态地址 `arith.select`；
 - soft local buffer overflow 能撤销对应 look-ahead，但不改变 strict 模式下的 `P`；
@@ -1105,7 +1114,7 @@ FIX result(i)    || Cube compute(i + 1)    // 仅当 acc ping-pong 已启用
 ### 阶段 3：Entry 无关
 
 - 接入 `LogicalPipeTransaction` adapter；
-- 支持 A2/A3 global entry；
+- 支持 A2/A3 与 A5 global entry；
 - 用同一组 schedule FileCheck 对比 tile/global 两种输入。
 
 ### 阶段 4：通用 CV pipeline 与资源搜索

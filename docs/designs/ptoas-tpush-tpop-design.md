@@ -117,7 +117,7 @@ pto.aiv_initialize_pipe {id = 0, dir_mask = 1, slot_size = 1024}
 - `tile` entry：`!pto.tile_buf<...>` 或 lowering 后等价的 local memref。该路径保持既有 `TPUSH(pipe, tile)` / `TPOP(pipe, tile)` 语义。
 - `global` entry：`!pto.tensor_view<...>` 或 lowering 后等价的 GM descriptor。该路径映射到 pto-isa `GlobalTensor` 形式的 `TALLOC` / `TPUSH` / `TPOP` / `TFREE`，只计算并传递 FIFO GM slot 地址，不隐式执行 `TSTORE` 或 `TLOAD`。若要读写 entry 的子区域，先用 `pto.partition_view` 从 `tensor_view` 派生 `!pto.partition_tensor_view<...>`，再交给 `pto.tload` / `pto.tstore`。
 
-`global` entry 当前仅用于 A2/A3 的 GM FIFO 路径，即 lower 到 `pto.initialize_l2g2l_pipe` 的 pipe；A5 `initialize_l2l_pipe` 路径没有 GM slot 地址可赋给 `GlobalTensor`。
+`global` entry 支持 A2/A3 与 A5 的 GM FIFO 路径。frontend init 提供 `gm_slot_tensor` 时，lowering 优先选择 global-only `pto.initialize_l2g2l_pipe`，不进入按 arch 选择 local pipe 的分支；A5 单向 pipe 的 EmitC 对应输出 `DIR_C2V_GM` / `DIR_V2C_GM`。只有不提供 `gm_slot_tensor` 的 A5 tile-entry 路径才 lower 为 `pto.initialize_l2l_pipe` 并使用 local consumer buffer。
 
 当某条 frontend logical pipe 的数据传输 op 全部使用 `global` entry 时，该 pipe 不需要 consumer 侧 local FIFO buffer。对应的 `pto.aic_initialize_pipe` / `pto.aiv_initialize_pipe` 只携带 `gm_slot_tensor`，不携带 `c2v_consumer_buf` / `v2c_consumer_buf`，也不生成或引用 `pto.reserve_buffer` / `pto.import_reserved_buffer`。
 
