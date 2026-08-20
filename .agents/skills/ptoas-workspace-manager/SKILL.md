@@ -67,7 +67,7 @@ python3 .agents/skills/ptoas-workspace-manager/scripts/ptoas_workspace.py create
   --cann-env /usr/local/Ascend/cann/set_env.sh
 ```
 
-The command creates branch `codex/feature-a` by default, unless `--branch`
+The command creates branch `feature/feature-a` by default, unless `--branch`
 is supplied. With no explicit `--base-ref`, pass the updated local `main` as
 the base ref (for example `--base-ref main`). It writes `.ptoas-workspace.json`
 and `env.sh` inside the

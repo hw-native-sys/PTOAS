@@ -1,6 +1,6 @@
 ---
 name: ptoas-project-development
-description: Project development guidance for PTOAS. Use when Codex modifies PTOAS source, MLIR ODS dialect definitions, C++ verifiers or transforms, CLI behavior, Python bindings, docs, tests, examples, or any user-visible PTOAS behavior; keeps cross-layer updates, license headers, regression tests, and examples synchronized.
+description: Project development guidance for PTOAS. Use when modifying PTOAS source, MLIR ODS dialect definitions, C++ verifiers or transforms, CLI behavior, Python bindings, docs, tests, examples, or any user-visible PTOAS behavior; keeps cross-layer updates, license headers, regression tests, and examples synchronized.
 ---
 
 # PTOAS Project Development

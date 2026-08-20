@@ -1,6 +1,6 @@
 ---
 name: camodel-isa-verification
-description: Create, run, and analyze PTO-ISA ST tests on the CANN CA model simulator. Use when Codex needs to verify A5/Ascend PTO-ISA instruction behavior, inspect simulator instruction logs, measure vector instruction latency, or compare UB dump hex output against expected values.
+description: Create, run, and analyze PTO-ISA ST tests on the CANN CA model simulator. Use when verifying A5/Ascend PTO-ISA instruction behavior, inspecting simulator instruction logs, measuring vector instruction latency, or comparing UB dump hex output against expected values.
 ---
 
 # CA Model ISA Verification

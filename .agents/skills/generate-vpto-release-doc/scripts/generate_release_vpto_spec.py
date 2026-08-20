@@ -75,7 +75,10 @@ VERSION_NOTES = {
     MICRO_TARGET: {
         "0.1": "Doc Init",
         "0.2": "Update micro Instruction latency and throughput",
-        "0.3": "Add runtime block query and vector-interval legality notes; Normalize load/store distribution families; Update get_buf/rls_buf details",
+        "0.3": (
+            "Add runtime block query and vector-interval legality notes; "
+            "Normalize load/store distribution families; Update get_buf/rls_buf details"
+        ),
         "0.4": "Update DMA instruction docs and add PTO Tile Instruction SPEC",
         "0.5": "Add CUBE instruction docs; Rename MTE instruction and address space",
     },
@@ -85,7 +88,10 @@ VERSION_NOTES = {
     MERGED_TARGET: {
         "0.1": "Doc Init",
         "0.2": "Update micro Instruction latency and throughput",
-        "0.3": "Add runtime block query and vector-interval legality notes; Normalize load/store distribution families; Update get_buf/rls_buf details",
+        "0.3": (
+            "Add runtime block query and vector-interval legality notes; "
+            "Normalize load/store distribution families; Update get_buf/rls_buf details"
+        ),
         "0.4": "Update DMA instruction docs and add PTO Tile Instruction SPEC",
         "0.5": "Add CUBE instruction docs; Rename MTE instruction and address space",
     },

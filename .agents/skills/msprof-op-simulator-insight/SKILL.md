@@ -1,6 +1,6 @@
 ---
 name: msprof-op-simulator-insight
-description: Compile and profile PTOAS-generated kernel sources with `msprof op simulator`, then export MindStudio Insight files. Use when Codex needs to build a host runner, run A3 `dav_2201` op simulator collection, resolve mangled kernel symbols, export `trace.json` or `visualize_data.bin`, or troubleshoot simulator dump/export paths.
+description: Compile and profile PTOAS-generated kernel sources with `msprof op simulator`, then export MindStudio Insight files. Use when building a host runner, running A3 `dav_2201` op simulator collection, resolving mangled kernel symbols, exporting `trace.json` or `visualize_data.bin`, or troubleshooting simulator dump/export paths.
 ---
 
 # Msprof Op Simulator Insight

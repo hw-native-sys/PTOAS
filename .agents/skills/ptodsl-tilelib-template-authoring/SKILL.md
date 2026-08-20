@@ -1,6 +1,6 @@
 ---
 name: ptodsl-tilelib-template-authoring
-description: Use when Codex is asked to add, port, debug, review, or document PTODSL TileLib templates, template candidate/version selection, InsertTemplateAttributes handoff, ExpandTileOp specialization, or TileLang ST failures involving PTODSL templates.
+description: Add, port, debug, review, or document PTODSL TileLib templates, template candidate/version selection, InsertTemplateAttributes handoff, ExpandTileOp specialization, or TileLang ST failures involving PTODSL templates.
 ---
 
 # PTODSL TileLib Template Authoring
@@ -31,7 +31,7 @@ selection.
 2. Compare against the intended TileLib semantics before changing ST tests.
 3. Prefer a focused Python or lit regression for selection/specialization bugs.
 4. Ask the user before running heavy smoke or non-smoke ST unless they have
-   already asked Codex to run it.
+   already requested that validation.
 5. When a fix teaches a durable rule, update the design doc or developer guide
    instead of adding more scratch status notes.
 

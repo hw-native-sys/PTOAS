@@ -1,6 +1,6 @@
 ---
 name: ptoas-publish-pr
-description: Publish PTOAS changes to GitHub as a pull request. Use when Codex needs to turn intended local PTOAS edits into a branch, commit, push, and PR, especially when the worktree contains unrelated files, the repo uses `origin` as a personal fork and `upstream` as the canonical repository, or GitHub authentication may need to be checked with `gh auth status` and `gh auth login`.
+description: Publish PTOAS changes to GitHub as a pull request. Use when turning intended local PTOAS edits into a branch, commit, push, and PR, especially when the worktree contains unrelated files, the repo uses `origin` as a personal fork and `upstream` as the canonical repository, or GitHub authentication may need to be checked with `gh auth status` and `gh auth login`.
 ---
 
 # PTOAS Publish PR
@@ -50,7 +50,7 @@ If the worktree contains unrelated tracked or untracked files, do not include th
 2. If currently on `main`, create a feature branch:
 
 ```bash
-git switch -c codex/<short-description>
+git switch -c feature/<short-description>
 ```
 
 If already on a non-default branch for the task, stay on that branch.
@@ -65,7 +65,7 @@ git diff --cached --stat
 
 Use `git add -A` only when the entire worktree is intentionally part of the PR.
 
-4. Run the most relevant validation before commit. For `.codex/skills` work, validate each affected skill with `quick_validate.py`.
+4. Run the most relevant validation before commit. For `.agents/skills` work, validate each affected skill with `quick_validate.py`.
 
 5. Commit with a short message:
 
@@ -89,7 +89,7 @@ git push -u origin "$(git branch --show-current)"
 Example fallback:
 
 ```bash
-gh pr create --repo hw-native-sys/PTOAS --base main --head "$(git branch --show-current)" --draft --title "[codex] <summary>" --body-file <path-to-body>
+gh pr create --repo hw-native-sys/PTOAS --base main --head "$(git branch --show-current)" --draft --title "<summary>" --body-file <path-to-body>
 ```
 
 ## Safety Checks

@@ -1,6 +1,6 @@
 ---
 name: rewrite-kernel-with-vmi
-description: Rewrite a complete AscendC/CANN kernel into an equivalent PTODSL Python implementation that mixes VMI compute with MI/MTE/sync orchestration. Use when Codex is given AscendC kernel code or CCE-style device code and must preserve the kernel ABI, split compute from movement/synchronization, translate pure vector/SIMT compute regions into pto.vmi semantics, translate non-compute regions into PTODSL micro-instructions, and validate the result with kernel.compile().mlir_text() plus the PTOAS VMI path.
+description: Rewrite a complete AscendC/CANN kernel into an equivalent PTODSL Python implementation that mixes VMI compute with MI/MTE/sync orchestration. Use when given AscendC kernel code or CCE-style device code and preserve the kernel ABI, split compute from movement/synchronization, translate pure vector/SIMT compute regions into pto.vmi semantics, translate non-compute regions into PTODSL micro-instructions, and validate the result with kernel.compile().mlir_text() plus the PTOAS VMI path.
 ---
 
 # Rewrite Kernel With VMI

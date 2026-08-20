@@ -32,32 +32,32 @@ docs/release/vpto-spec-v<version>.md # optional legacy versioned snapshot
 Generate both repo-doc bundles (default):
 
 ```bash
-python3 .codex/skills/generate-vpto-release-doc/scripts/generate_release_vpto_spec.py --version 0.4
+python3 .agents/skills/generate-vpto-release-doc/scripts/generate_release_vpto_spec.py --version 0.4
 ```
 
 Generate just one repo-doc bundle:
 
 ```bash
-python3 .codex/skills/generate-vpto-release-doc/scripts/generate_release_vpto_spec.py --version 0.4 --target micro
-python3 .codex/skills/generate-vpto-release-doc/scripts/generate_release_vpto_spec.py --version 0.4 --target tileop
+python3 .agents/skills/generate-vpto-release-doc/scripts/generate_release_vpto_spec.py --version 0.4 --target micro
+python3 .agents/skills/generate-vpto-release-doc/scripts/generate_release_vpto_spec.py --version 0.4 --target tileop
 ```
 
 Generate only the legacy versioned snapshot:
 
 ```bash
-python3 .codex/skills/generate-vpto-release-doc/scripts/generate_release_vpto_spec.py --version 0.4 --target merged
+python3 .agents/skills/generate-vpto-release-doc/scripts/generate_release_vpto_spec.py --version 0.4 --target merged
 ```
 
 Generate downstream docs into another directory while preserving old PTO-Gym filenames:
 
 ```bash
-python3 .codex/skills/generate-vpto-release-doc/scripts/generate_release_vpto_spec.py \
+python3 .agents/skills/generate-vpto-release-doc/scripts/generate_release_vpto_spec.py \
   --version 0.4 \
   --output-dir 3rdparty/PTO-Gym/docs \
   --micro-output-name PTO-micro-Instruction-SPEC.md \
   --tileop-output-name PTO-tile-Instruction-SPEC.md
 
-python3 .codex/skills/generate-vpto-release-doc/scripts/generate_release_vpto_spec.py \
+python3 .agents/skills/generate-vpto-release-doc/scripts/generate_release_vpto_spec.py \
   --version 0.4 \
   --target merged \
   --output-dir 3rdparty/PTO-Gym/docs \
@@ -69,7 +69,7 @@ python3 .codex/skills/generate-vpto-release-doc/scripts/generate_release_vpto_sp
 Custom version-bullet text:
 
 ```bash
-python3 .codex/skills/generate-vpto-release-doc/scripts/generate_release_vpto_spec.py \
+python3 .agents/skills/generate-vpto-release-doc/scripts/generate_release_vpto_spec.py \
   --version 0.4 \
   --version-note 'Custom release note for this run'
 ```

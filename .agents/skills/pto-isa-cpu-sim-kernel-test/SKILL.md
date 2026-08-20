@@ -1,6 +1,6 @@
 ---
 name: pto-isa-cpu-sim-kernel-test
-description: Use when Codex needs to validate a `.pto` program or `ptoas`-generated C++ kernel with the local `pto-isa` CPU simulator in this repository. Covers generating `.pto` files from PTOAS samples, running `ptoas` to emit C++, grafting the emitted kernel into a testcase under `.downloads/pto-isa/tests/cpu/st/testcase/`, updating `main.cpp`, `gen_data.py`, and CMake wiring as needed, then running `tests/run_cpu.py` for functional testing and debug on Windows, WSL, or Linux.
+description: Validate a `.pto` program or `ptoas`-generated C++ kernel with the local `pto-isa` CPU simulator in this repository. Covers generating `.pto` files from PTOAS samples, running `ptoas` to emit C++, grafting the emitted kernel into a testcase under `.downloads/pto-isa/tests/cpu/st/testcase/`, updating `main.cpp`, `gen_data.py`, and CMake wiring as needed, then running `tests/run_cpu.py` for functional testing and debug on Windows, WSL, or Linux.
 ---
 
 # PTO ISA CPU Sim Kernel Test

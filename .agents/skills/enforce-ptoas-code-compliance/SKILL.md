@@ -2,7 +2,7 @@
 name: enforce-ptoas-code-compliance
 description: >-
   Enforce scoped secure-coding, build, style, and maintainability rules for PTOAS changes. Use
-  whenever Codex implements, modifies, generates, or reviews PTOAS C/C++, Python, CMake, shell,
+  whenever you implement, modify, generate, or review PTOAS C/C++, Python, CMake, shell,
   Docker, batch, Go, Java build, or CI code; when investigating code-check findings such as
   EChecker or SecK; or when preparing a PTOAS change for review.
 ---
@@ -73,7 +73,7 @@ explicit pointer-plus-size contract.
 Run from the repository root:
 
 ```bash
-python3 .codex/skills/enforce-ptoas-code-compliance/scripts/check_changed_code.py \
+python3 .agents/skills/enforce-ptoas-code-compliance/scripts/check_changed_code.py \
   --repo . \
   --base <target-branch>
 ```
