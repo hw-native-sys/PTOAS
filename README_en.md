@@ -59,9 +59,14 @@ export PTO_SOURCE_DIR=$WORKSPACE_DIR/PTOAS
 # Create the workspace directory
 mkdir -p $WORKSPACE_DIR
 
+# Clone PTOAS first: the venv lives inside the PTOAS checkout
+# ($PTO_SOURCE_DIR/.venv) to keep the workspace self-contained, so
+# $PTO_SOURCE_DIR must exist before creating it.
+cd $WORKSPACE_DIR
+git clone https://github.com/hw-native-sys/PTOAS.git PTOAS
+cd $PTO_SOURCE_DIR
+
 # Use an isolated environment. LLVM and PTOAS must use the same Python.
-# The venv lives inside the PTOAS checkout ($PTO_SOURCE_DIR/.venv) so the
-# workspace stays self-contained.
 python3 -m venv "$PTO_SOURCE_DIR/.venv"
 source "$PTO_SOURCE_DIR/.venv/bin/activate"
 export PYTHON_BIN="$(command -v python3)"
@@ -114,12 +119,11 @@ ninja -C $LLVM_BUILD_DIR
 
 ### 3.3 Step 2: Build PTOAS (Out-of-Tree)
 
-Clone the PTOAS source and build against the LLVM 19 you just compiled.
+PTOAS was already cloned in section 3.0; build it against the LLVM 19 you
+just compiled.
 
 ```bash
-# 1. Clone PTOAS
-cd $WORKSPACE_DIR
-git clone https://github.com/hw-native-sys/PTOAS.git PTOAS
+# 1. Enter the PTOAS source directory (cloned in section 3.0)
 cd $PTO_SOURCE_DIR
 
 # 2. Install into the current Python environment while keeping a persistent,
