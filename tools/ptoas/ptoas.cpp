@@ -3162,6 +3162,8 @@ static void lowerPTOToVPTOBackend(PassManager &pm, ModuleOp module) {
       kernelModulePM.addPass(mlir::createCSEPass());
       kernelModulePM.addNestedPass<mlir::func::FuncOp>(
           pto::createPTOFusionLoadStoreElisionPass());
+      // Unrolling and the cleanup passes above can expose new vsub + vexp
+      // patterns, so run vexpdif fusion again before flattening the regions.
       if (enableVexpdifFusion) {
         kernelModulePM.addNestedPass<mlir::func::FuncOp>(
             pto::createPTOVexpdifFusionPass());

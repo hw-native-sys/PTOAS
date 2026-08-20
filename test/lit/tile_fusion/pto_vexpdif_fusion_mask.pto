@@ -9,9 +9,8 @@
 
 // Negative cases for the pto-vexpdif-fusion pass. The pass fuses a f32
 // `vsub` followed by a f32 `vexp` into `vexpdif` only when both ops share the
-// same mask. These cases exercise the two `canFuse` rejection branches:
+// same mask. The negative case exercises the mask-mismatch rejection branch:
 //   - @different_masks : identical f32 types but distinct mask SSA values.
-//   - @bf16_inputs     : same mask but non-f32 element type (bf16).
 // @same_mask_f32 is a positive control that must still fuse.
 
 // RUN: pto-test-opt %s -pto-vexpdif-fusion | FileCheck %s

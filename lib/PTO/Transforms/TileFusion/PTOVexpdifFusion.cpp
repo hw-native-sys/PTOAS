@@ -48,7 +48,8 @@ static bool hasMatchingF32Types(VsubOp sub, VexpOp exp) {
 }
 
 static bool canFuse(VsubOp sub, VexpOp exp) {
-  if (!sub.getResult().hasOneUse() || sub.getResult() != exp.getInput()) {
+  // Fuse conservatively only when vexp is the sole user.
+  if (!sub.getResult().hasOneUse()) {
     return false;
   }
   if (sub.getMask() != exp.getMask()) {
@@ -57,16 +58,19 @@ static bool canFuse(VsubOp sub, VexpOp exp) {
   return hasMatchingF32Types(sub, exp);
 }
 
-static void fuseVsubVexp(FusionRegionOp fusionRegion) {
+static void fuseVsubVexp(func::FuncOp func) {
   SmallVector<VexpOp> candidates;
-  fusionRegion.walk([&](VexpOp exp) {
+  func.walk([&](VexpOp exp) {
+    if (!exp->getParentOfType<FusionRegionOp>()) {
+      return;
+    }
     auto sub = exp.getInput().getDefiningOp<VsubOp>();
     if (sub && canFuse(sub, exp)) {
       candidates.push_back(exp);
     }
   });
 
-  OpBuilder builder(fusionRegion.getContext());
+  OpBuilder builder(func.getContext());
   for (VexpOp exp : candidates) {
     auto sub = exp.getInput().getDefiningOp<VsubOp>();
     if (!sub || !canFuse(sub, exp)) {
@@ -74,8 +78,9 @@ static void fuseVsubVexp(FusionRegionOp fusionRegion) {
     }
 
     builder.setInsertionPoint(exp);
+    Location fusedLoc = builder.getFusedLoc({sub.getLoc(), exp.getLoc()});
     auto fused = builder.create<VexpdifOp>(
-        exp.getLoc(), exp.getResult().getType(), sub.getLhs(), sub.getRhs(),
+        fusedLoc, exp.getResult().getType(), sub.getLhs(), sub.getRhs(),
         exp.getMask(), builder.getStringAttr("ODD"));
     exp.getResult().replaceAllUsesWith(fused.getResult());
     exp.erase();
@@ -87,17 +92,7 @@ struct PTOVexpdifFusionPass
     : pto::impl::PTOVexpdifFusionBase<PTOVexpdifFusionPass> {
   void runOnOperation() override {
     func::FuncOp func = getOperation();
-    if (func.isExternal()) {
-      return;
-    }
-
-    SmallVector<FusionRegionOp, 8> fusionRegions;
-    func.walk<WalkOrder::PostOrder>(
-        [&](FusionRegionOp fusionRegion) { fusionRegions.push_back(fusionRegion); });
-
-    for (FusionRegionOp fusionRegion : fusionRegions) {
-      fuseVsubVexp(fusionRegion);
-    }
+    fuseVsubVexp(func);
   }
 };
 
