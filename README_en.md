@@ -60,8 +60,10 @@ export PTO_SOURCE_DIR=$WORKSPACE_DIR/PTOAS
 mkdir -p $WORKSPACE_DIR
 
 # Use an isolated environment. LLVM and PTOAS must use the same Python.
-python3 -m venv "$WORKSPACE_DIR/.venv"
-source "$WORKSPACE_DIR/.venv/bin/activate"
+# The venv lives inside the PTOAS checkout ($PTO_SOURCE_DIR/.venv) so the
+# workspace stays self-contained.
+python3 -m venv "$PTO_SOURCE_DIR/.venv"
+source "$PTO_SOURCE_DIR/.venv/bin/activate"
 export PYTHON_BIN="$(command -v python3)"
 ```
 
@@ -189,7 +191,7 @@ directory to the runtime library search path:
 
 ```bash
 # Re-export WORKSPACE_DIR, LLVM_BUILD_DIR, and the other paths from section 3.0.
-source "$WORKSPACE_DIR/.venv/bin/activate"
+source "$PTO_SOURCE_DIR/.venv/bin/activate"
 export PYTHON_BIN="$(command -v python3)"
 export LD_LIBRARY_PATH="$LLVM_BUILD_DIR/lib:${LD_LIBRARY_PATH:-}"
 
