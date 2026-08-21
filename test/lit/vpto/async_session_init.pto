@@ -1,0 +1,57 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-backend=vpto --emit-vpto --mlir-print-ir-before=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=ROUNDTRIP
+// RUN: ptoas --pto-arch=a3 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=EXPAND
+
+// A session cannot reach a kernel as an argument, so the host leaves its values
+// in GM and the kernel copies them into a struct it declares itself. Without
+// this op that copy is one load and one store per field, written out at every
+// entry point.
+
+module attributes {"pto.target_arch" = "a3", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @session_init_probe(%dst: !pto.ptr<f16, gm>,
+                                %src: !pto.ptr<f16, gm>,
+                                %tmpl: !pto.ptr<i8, gm>) attributes {pto.kernel} {
+    %nbytes = arith.constant 4096 : i64
+
+    %sess = pto.declare_struct
+      -> !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>
+
+    pto.session_init %sess, %tmpl
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>,
+        !pto.ptr<i8, gm>
+
+    // A field may still be retuned after the copy, which is what makes the
+    // template a default rather than the whole story.
+    %grp = arith.constant 2 : i32
+    pto.struct_set %sess[4], %grp
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i32
+
+    pto.sdma_gm_gm %dst, %src, %nbytes session(%sess)
+      : !pto.ptr<f16, gm>, !pto.ptr<f16, gm>, i64,
+        !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>
+
+    return
+  }
+}
+
+// ROUNDTRIP: pto.session_init %{{.*}}, %{{.*}} : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, !pto.ptr<i8, gm>
+
+// The op is gone and every field has been copied. Slots are eight bytes wide
+// regardless of field width, so the offsets run 0, 8, 16 ... and a narrow field
+// is read at the base of its slot rather than packed against its neighbour.
+// EXPAND-NOT: pto.session_init
+// EXPAND-DAG: arith.constant 8 : i64
+// EXPAND-DAG: arith.constant 16 : i64
+// EXPAND-DAG: arith.constant 96 : i64
+
+// Field 0 is 64-bit and field 2 is 32-bit; both are read with ld_dev because a
+// comm kernel is an ordinary entry function, where ldg is not available.
+// EXPAND: pto.ld_dev %{{.*}} : !pto.ptr<i64, gm> -> i64
+// EXPAND: pto.struct_set %{{.*}}[0]

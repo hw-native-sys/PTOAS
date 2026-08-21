@@ -1,0 +1,154 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-before=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=ROUNDTRIP
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=EXPAND
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=SQE-A5
+// RUN: ptoas --pto-arch=a3 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=SQE-A2A3 --implicit-check-not=pto.st_dev --implicit-check-not="arith.constant 3840 : i32"
+
+// The session config struct is built in the kernel from the pointer the host
+// passes in, because a stack-local struct cannot be a kernel argument. Only the
+// immutable scalars live here; the queue tail stays where the engine keeps it
+// so it survives across launches, and the channel record names its address.
+
+module attributes {"pto.target_arch" = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @sdma_gm_gm_probe(%dst: !pto.ptr<f16, gm>,
+                              %src: !pto.ptr<f16, gm>,
+                              %ws: !pto.ptr<i64, gm>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %nbytes = arith.constant 4096 : i64
+    // Ordinary AICore entry functions read GM scalars with ld_dev; pto.ldg is
+    // restricted to SIMT scopes.
+    %ctx = pto.ld_dev %ws[%c0] : !pto.ptr<i64, gm> -> i64
+
+    %z64 = arith.constant 0 : i64
+    %z32 = arith.constant 0 : i32
+    %one32 = arith.constant 1 : i32
+    %qos = arith.constant 6 : i32
+    %block = arith.constant 1048576 : i64
+
+    %sess = pto.declare_struct
+      -> !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>
+
+    pto.struct_set %sess[0], %ctx
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i64
+    pto.struct_set %sess[1], %z64
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i64
+    pto.struct_set %sess[2], %z32
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i32
+    pto.struct_set %sess[3], %z32
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i32
+    pto.struct_set %sess[4], %z32
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i32
+    pto.struct_set %sess[5], %one32
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i32
+    pto.struct_set %sess[6], %block
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i64
+    pto.struct_set %sess[7], %z64
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i64
+    pto.struct_set %sess[8], %z32
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i32
+    pto.struct_set %sess[9], %z32
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i32
+    pto.struct_set %sess[10], %z32
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i32
+    pto.struct_set %sess[11], %one32
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i32
+
+    // 12 qos: the service class these posts run at, fixed for the session.
+    pto.struct_set %sess[12], %qos
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i32
+
+    pto.sdma_gm_gm %dst, %src, %nbytes session(%sess)
+      : !pto.ptr<f16, gm>, !pto.ptr<f16, gm>, i64,
+        !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>
+
+    return
+  }
+}
+
+// ROUNDTRIP-LABEL: func.func @sdma_gm_gm_probe(
+// ROUNDTRIP: pto.declare_struct
+// ROUNDTRIP: pto.sdma_gm_gm %{{.*}}, %{{.*}}, %{{.*}} session(%{{.*}})
+
+// The kick disappears, replaced by channel-record reads, a split loop that
+// writes one SQE per block, a release barrier, and the doorbell store.
+//
+// The SQE words and the queue tail go out as ordinary stores on both
+// generations, matching the reference SDMA implementation. What makes them
+// visible to the engine is the cache flush and barrier that follow, so the
+// order of those three is what this pins down. This run targets A5, where the
+// doorbell is an st_dev.
+// EXPAND-LABEL: func.func @sdma_gm_gm_probe(
+// EXPAND-NOT: pto.sdma_gm_gm
+// EXPAND: pto.struct_get %{{.*}}[0]
+// EXPAND: pto.ld_dev
+// EXPAND: scf.for
+// EXPAND: pto.store
+// EXPAND: scf.yield
+// EXPAND: pto.store
+// EXPAND: pto.dcci
+// EXPAND: pto.dsb
+// EXPAND: pto.st_dev
+
+// The SQE layout is not shared across generations, so the packed word values
+// and the length position pin down which branch ran. A5 sets wrCqe in word 0,
+// carries credit 254, puts sssv..dns at bit 8, and writes the length at byte 48.
+//
+// Service class comes from the session on both generations, but lands in a
+// different word: A5 gives it a word of its own at byte 20, shifted to bit 27,
+// while A2/A3 ors it into word 4 at bit 13. Reading field 12 and shifting by
+// the generation's amount is what tells the two apart, since neither value is a
+// constant the pass can fold. These share the group above because constants are
+// hoisted to the top of the function, which leaves their relative order up to
+// the builder.
+// SQE-A5-DAG: arith.constant 2059 : i32
+// SQE-A5-DAG: arith.constant 16646144 : i32
+// SQE-A5-DAG: arith.constant 3840 : i32
+// SQE-A5-DAG: arith.constant 48 : i64
+// SQE-A5-DAG: arith.constant 27 : i32
+// SQE-A5-DAG: arith.constant 20 : i64
+// SQE-A5-DAG: pto.struct_get %{{.*}}[12]
+// SQE-A5-NOT: arith.constant 7680 : i32
+
+// A2/A3 has no wrCqe bit, uses credit 240, shifts sssv..dns up one bit to make
+// room for ie2, keeps the length at byte 28, and has to declare the post
+// unlinked because byte 48 holds a link type there. Word 4 is 7680 without the
+// service class, which is ored in on top of it.
+// SQE-A2A3-DAG: arith.constant 11 : i32
+// SQE-A2A3-DAG: arith.constant 15728640 : i32
+// SQE-A2A3-DAG: arith.constant 7680 : i32
+// SQE-A2A3-DAG: arith.constant 28 : i64
+// SQE-A2A3-DAG: arith.constant 255 : i32
+// SQE-A2A3-DAG: arith.constant 13 : i32
+// SQE-A2A3-DAG: pto.struct_get %{{.*}}[12]
+
+// The doorbell is the other thing that splits by generation, and it is the one
+// place the two do not merely differ in bit layout. sq_reg_base names a
+// register, not memory: A5 reaches it with st_dev, while A2/A3 takes it only
+// from MTE, so the tail is staged in the session's tmp_buf and moved out four
+// bytes at a time. Neither an st_dev nor a scalar store to that address works
+// on A2/A3, and the store faults the vector unit hard enough to leave the card
+// in an unrecoverable RAS state. That st_dev never appears on A2/A3, and that
+// A5's word 4 never leaks into it, is enforced for the whole output by the
+// implicit-check-not on the RUN line above.
+//
+// byte_granular is what makes those four bytes survive: the default c220 store
+// counts its length in 32-byte blocks, so a four-byte doorbell write rounds
+// down to a transfer of nothing and the engine is never told the ring moved.
+//
+// The event guarding that staging is the session's, not a fixed one, so it uses
+// the dyn form of the flag ops. A kernel that already drives MTE3 events can
+// then keep them apart from this one.
+// SQE-A2A3: pto.struct_get %{{.*}}[1]
+// SQE-A2A3: pto.struct_get %{{.*}}[3]
+// SQE-A2A3: pto.castptr %{{.*}} : i64 -> !pto.ptr<i32, ub>
+// SQE-A2A3: pto.store %{{.*}}, %{{.*}} : !pto.ptr<i32, ub>, i32
+// SQE-A2A3: pto.set_flag_dyn[<PIPE_S>, <PIPE_MTE3>
+// SQE-A2A3: pto.wait_flag_dyn[<PIPE_S>, <PIPE_MTE3>
+// SQE-A2A3: pto.copy_ubuf_to_gm {{.*}}{vpto.byte_granular}

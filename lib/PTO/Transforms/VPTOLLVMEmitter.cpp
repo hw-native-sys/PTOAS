@@ -2271,6 +2271,43 @@ packCopyUbToGmConfig1(Operation *anchor, ValueRange operands) {
   return packLoopPair(anchor, operands[6], operands[7]);
 }
 
+// Same field layout as the block-granular config below, but the length is
+// carried in bytes. Measured on c220: with nBurst at bit 4 and the length at
+// bit 16, asking for 4 bytes moves exactly 4 bytes, while the block-granular
+// form rounds anything under 32 bytes down to a transfer of nothing.
+static FailureOr<Value>
+packCopyUbToGmCfgAlignV220(Operation *anchor, ValueRange operands) {
+  if (operands.size() != 8)
+    return failure();
+
+  OpBuilder builder(anchor);
+  builder.setInsertionPoint(anchor);
+  Location loc = anchor->getLoc();
+
+  auto getI64Operand = [&](unsigned idx) -> Value {
+    return castIntegerLikeTo(anchor, operands[idx], builder.getI64Type());
+  };
+
+  Value sid = getI64Operand(2);
+  Value nBurst = getI64Operand(3);
+  Value lenBurst = getI64Operand(4);
+  if (!sid || !nBurst || !lenBurst)
+    return failure();
+
+  auto shl = [&](Value value, uint64_t amount) -> Value {
+    return builder.create<arith::ShLIOp>(loc, value,
+                                         getI64Constant(builder, loc, amount));
+  };
+  auto bitOr = [&](Value lhs, Value rhs) -> Value {
+    return builder.create<arith::OrIOp>(loc, lhs, rhs);
+  };
+
+  Value cfg = sid;
+  cfg = bitOr(cfg, shl(nBurst, 4));
+  cfg = bitOr(cfg, shl(lenBurst, 16));
+  return cfg;
+}
+
 static FailureOr<Value>
 packCopyUbToGmCfgV220(Operation *anchor, ValueRange operands) {
   if (operands.size() != 8)
@@ -5927,14 +5964,28 @@ public:
     }
 
     bool isC220 = march == "dav-c220-vec" || march == "dav-c220-cube";
+    // The ordinary c220 UB->GM path carries its length in 32-byte units, so a
+    // transfer shorter than a block rounds down to nothing at all. Callers that
+    // need a byte-granular store, such as the 4-byte SDMA doorbell write, ask
+    // for the ALIGN intrinsic instead.
+    bool byteGranular = !isGmUb && isC220 && op->hasAttr("vpto.byte_granular");
+    if (byteGranular)
+      calleeName = StringAttr::get(op.getContext(),
+                                   "llvm.hivm.MOV.UB.TO.OUT.ALIGN.b32.V220")
+                       .getValue();
+
     bool useA3NonPadded = isC220 && isGmUb && !hasPadding;
-    bool useA3UbGm = isC220 && !isGmUb;
+    bool useA3UbGm = isC220 && !isGmUb && !byteGranular;
     bool useSingleConfig = useA3NonPadded || useA3UbGm;
 
     FailureOr<Value> config0 = failure();
     FailureOr<Value> config1 = failure();
-    if (useA3NonPadded)
-    {
+    if (byteGranular) {
+      config0 = packCopyUbToGmCfgAlignV220(op, adaptor.getOperands());
+      // Only exercised with both strides at zero, which is all a single-burst
+      // store needs.
+      config1 = packCopyUbToGmConfig1(op, adaptor.getOperands());
+    } else if (useA3NonPadded) {
       config0 = packCopyGmToUbCfgV220(op, adaptor.getOperands());
     } else if (useA3UbGm) {
       config0 = packCopyUbToGmCfgV220(op, adaptor.getOperands());
@@ -13273,6 +13324,137 @@ private:
   LoweringState &state;
 };
 
+static std::string buildLdDevCalleeName(unsigned width) {
+  return "llvm.hivm.LD.DEV.u" + std::to_string(width) + ".GM";
+}
+
+static std::string buildStDevCalleeName(unsigned width) {
+  return "llvm.hivm.ST.DEV.u" + std::to_string(width);
+}
+
+class ConvertPtoLdDevOp final : public OpConversionPattern<pto::PTOLdDevOp> {
+public:
+  ConvertPtoLdDevOp(TypeConverter &typeConverter, MLIRContext *context,
+                    LoweringState &state)
+      : OpConversionPattern<pto::PTOLdDevOp>(typeConverter, context),
+        state(state) {}
+
+  LogicalResult
+  matchAndRewrite(pto::PTOLdDevOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto llvmPtrType = dyn_cast<LLVM::LLVMPointerType>(adaptor.getPtr().getType());
+    if (!llvmPtrType)
+      return rewriter.notifyMatchFailure(op, "expected LLVM pointer operand");
+
+    auto valueType = dyn_cast<IntegerType>(op.getValue().getType());
+    if (!valueType)
+      return rewriter.notifyMatchFailure(op, "expected integer result type");
+
+    Value offset = adaptor.getOffset();
+    if (offset.getType().isIndex())
+      offset = rewriter.create<arith::IndexCastUIOp>(op.getLoc(),
+                                                     rewriter.getI64Type(), offset);
+
+    Type convertedValueType =
+        getTypeConverter()->convertType(op.getValue().getType());
+    if (!convertedValueType)
+      return rewriter.notifyMatchFailure(op,
+                                         "could not convert ld_dev result type");
+
+    Value elemPtr = adaptor.getPtr();
+    if (!matchPattern(offset, m_Zero())) {
+      elemPtr = rewriter.create<LLVM::GEPOp>(
+          op.getLoc(), llvmPtrType,
+          normalizeGEPElementTypeForLLVMLowering(convertedValueType, rewriter),
+          adaptor.getPtr(), ValueRange{offset});
+    }
+
+    FailureOr<Value> gmPtr = reinterpretPointerToAddrSpace(
+        op, elemPtr, static_cast<unsigned>(pto::AddressSpace::GM));
+    if (failed(gmPtr))
+      return rewriter.notifyMatchFailure(op, "failed to map ld_dev GM pointer");
+
+    std::string calleeName = buildLdDevCalleeName(valueType.getWidth());
+    Value intrinsicOffset = getI64Constant(rewriter, op.getLoc(), 0);
+    auto funcType = rewriter.getFunctionType(
+        TypeRange{gmPtr->getType(), rewriter.getI64Type()},
+        TypeRange{rewriter.getI64Type()});
+    auto call = rewriter.create<func::CallOp>(
+        op.getLoc(), calleeName, TypeRange{rewriter.getI64Type()},
+        ValueRange{*gmPtr, intrinsicOffset});
+    state.plannedDecls.push_back(PlannedDecl{calleeName, funcType});
+
+    Value result = call.getResult(0);
+    if (valueType.getWidth() < 64)
+      result = rewriter.create<arith::TruncIOp>(op.getLoc(), convertedValueType,
+                                                result);
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+
+private:
+  LoweringState &state;
+};
+
+class ConvertPtoStDevOp final : public OpConversionPattern<pto::PTOStDevOp> {
+public:
+  ConvertPtoStDevOp(TypeConverter &typeConverter, MLIRContext *context,
+                    LoweringState &state)
+      : OpConversionPattern<pto::PTOStDevOp>(typeConverter, context),
+        state(state) {}
+
+  LogicalResult
+  matchAndRewrite(pto::PTOStDevOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto llvmPtrType = dyn_cast<LLVM::LLVMPointerType>(adaptor.getPtr().getType());
+    if (!llvmPtrType)
+      return rewriter.notifyMatchFailure(op, "expected LLVM pointer operand");
+
+    auto valueType = dyn_cast<IntegerType>(op.getValue().getType());
+    if (!valueType)
+      return rewriter.notifyMatchFailure(op, "expected integer value type");
+
+    Value offset = adaptor.getOffset();
+    if (offset.getType().isIndex())
+      offset = rewriter.create<arith::IndexCastUIOp>(op.getLoc(),
+                                                     rewriter.getI64Type(), offset);
+
+    Value elemPtr = adaptor.getPtr();
+    if (!matchPattern(offset, m_Zero())) {
+      elemPtr = rewriter.create<LLVM::GEPOp>(
+          op.getLoc(), llvmPtrType,
+          normalizeGEPElementTypeForLLVMLowering(adaptor.getValue().getType(),
+                                                 rewriter),
+          adaptor.getPtr(), ValueRange{offset});
+    }
+
+    FailureOr<Value> gmPtr = reinterpretPointerToAddrSpace(
+        op, elemPtr, static_cast<unsigned>(pto::AddressSpace::GM));
+    if (failed(gmPtr))
+      return rewriter.notifyMatchFailure(op, "failed to map st_dev GM pointer");
+
+    Value payload = adaptor.getValue();
+    if (valueType.getWidth() < 64)
+      payload = rewriter.create<arith::ExtUIOp>(op.getLoc(),
+                                                rewriter.getI64Type(), payload);
+
+    std::string calleeName = buildStDevCalleeName(valueType.getWidth());
+    Value intrinsicOffset = getI64Constant(rewriter, op.getLoc(), 0);
+    auto funcType = rewriter.getFunctionType(
+        TypeRange{rewriter.getI64Type(), gmPtr->getType(),
+                  rewriter.getI64Type()},
+        TypeRange{});
+    rewriter.create<func::CallOp>(op.getLoc(), calleeName, TypeRange{},
+                                  ValueRange{payload, *gmPtr, intrinsicOffset});
+    state.plannedDecls.push_back(PlannedDecl{calleeName, funcType});
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+private:
+  LoweringState &state;
+};
+
 class ConvertVPTOTypedCarrierOp final : public ConversionPattern {
 public:
   ConvertVPTOTypedCarrierOp(TypeConverter &typeConverter, MLIRContext *context)
@@ -13876,7 +14058,8 @@ static LogicalResult lowerVPTOTypes(ModuleOp module, llvm::raw_ostream &diagOS) 
   });
   target.addIllegalOp<pto::AddPtrOp, pto::CastPtrOp, pto::LoadScalarOp,
                       pto::StoreScalarOp, pto::PTOLoadOp, pto::PTOStoreOp,
-                      pto::PTOLdgOp, pto::PTOStgOp, pto::DeclareStructOp,
+                      pto::PTOLdgOp, pto::PTOStgOp, pto::PTOLdDevOp,
+                      pto::PTOStDevOp, pto::DeclareStructOp,
                       pto::StructGetOp, pto::StructSetOp>();
   target.addDynamicallyLegalOp<UnrealizedConversionCastOp>(
       [&](UnrealizedConversionCastOp op) {
@@ -13904,7 +14087,7 @@ static LogicalResult lowerVPTOTypes(ModuleOp module, llvm::raw_ostream &diagOS) 
                ConvertPtoStructGetOp, ConvertPtoStructSetOp,
                ConvertPtoStoreScalarOp>(typeConverter, context);
   patterns.add<ConvertPtoLoadOp, ConvertPtoStoreOp, ConvertPtoLdgOp,
-               ConvertPtoStgOp>(
+               ConvertPtoStgOp, ConvertPtoLdDevOp, ConvertPtoStDevOp>(
       typeConverter, context, state);
   patterns.add<ConvertArithSelectOp>(typeConverter, context);
   patterns.add<ConvertVPTOUnrealizedCastOp>(typeConverter, context);

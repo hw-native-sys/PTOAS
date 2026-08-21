@@ -1,0 +1,139 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=A5
+// RUN: ptoas --pto-arch=a3 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=A3
+
+// A5 cannot PUT through the engine. {soft_put} turns the kick into a
+// GM→UB→GM copy. A2/A3 ignores the attr and still posts SQEs.
+
+module attributes {"pto.target_arch" = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @sdma_gm_gm_soft_put(%dst: !pto.ptr<f16, gm>,
+                                 %src: !pto.ptr<f16, gm>,
+                                 %ws: !pto.ptr<i64, gm>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %nbytes = arith.constant 4096 : i64
+    %ctx = pto.ld_dev %ws[%c0] : !pto.ptr<i64, gm> -> i64
+
+    %z64 = arith.constant 0 : i64
+    %z32 = arith.constant 0 : i32
+    %one32 = arith.constant 1 : i32
+    %qos = arith.constant 6 : i32
+    %block = arith.constant 1048576 : i64
+
+    %sess = pto.declare_struct
+      -> !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>
+
+    pto.struct_set %sess[0], %ctx
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i64
+    pto.struct_set %sess[1], %z64
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i64
+    pto.struct_set %sess[2], %z32
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i32
+    pto.struct_set %sess[3], %z32
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i32
+    pto.struct_set %sess[4], %z32
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i32
+    pto.struct_set %sess[5], %one32
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i32
+    pto.struct_set %sess[6], %block
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i64
+    pto.struct_set %sess[7], %z64
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i64
+    pto.struct_set %sess[8], %z32
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i32
+    pto.struct_set %sess[9], %z32
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i32
+    pto.struct_set %sess[10], %z32
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i32
+    pto.struct_set %sess[11], %one32
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i32
+    pto.struct_set %sess[12], %qos
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i32
+
+    pto.sdma_gm_gm %dst, %src, %nbytes session(%sess) {soft_put}
+      : !pto.ptr<f16, gm>, !pto.ptr<f16, gm>, i64,
+        !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>
+
+    return
+  }
+
+  // Peer kernels use i8 endpoints and a runtime byte count. A same-type
+  // pto.castptr is illegal at emission, so this function is the shape that
+  // used to fail VPTO validation.
+  func.func @sdma_gm_gm_soft_put_i8(%dst: !pto.ptr<i8, gm>,
+                                    %src: !pto.ptr<i8, gm>,
+                                    %ws: !pto.ptr<i64, gm>,
+                                    %nbytes: i64) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %ctx = pto.ld_dev %ws[%c0] : !pto.ptr<i64, gm> -> i64
+
+    %z64 = arith.constant 0 : i64
+    %z32 = arith.constant 0 : i32
+    %one32 = arith.constant 1 : i32
+    %qos = arith.constant 6 : i32
+    %block = arith.constant 1048576 : i64
+
+    %sess = pto.declare_struct
+      -> !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>
+
+    pto.struct_set %sess[0], %ctx
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i64
+    pto.struct_set %sess[1], %z64
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i64
+    pto.struct_set %sess[2], %z32
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i32
+    pto.struct_set %sess[3], %z32
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i32
+    pto.struct_set %sess[4], %z32
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i32
+    pto.struct_set %sess[5], %one32
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i32
+    pto.struct_set %sess[6], %block
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i64
+    pto.struct_set %sess[7], %z64
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i64
+    pto.struct_set %sess[8], %z32
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i32
+    pto.struct_set %sess[9], %z32
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i32
+    pto.struct_set %sess[10], %z32
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i32
+    pto.struct_set %sess[11], %one32
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i32
+    pto.struct_set %sess[12], %qos
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i32
+
+    pto.sdma_gm_gm %dst, %src, %nbytes session(%sess) {soft_put}
+      : !pto.ptr<i8, gm>, !pto.ptr<i8, gm>, i64,
+        !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>
+
+    return
+  }
+}
+
+// A5-LABEL: func.func @sdma_gm_gm_soft_put(
+// A5-NOT: pto.sdma_gm_gm
+// A5: pto.copy_gm_to_ubuf
+// A5: pto.set_flag_dyn[<PIPE_MTE2>, <PIPE_MTE3>
+// A5: pto.wait_flag_dyn[<PIPE_MTE2>, <PIPE_MTE3>
+// A5: pto.copy_ubuf_to_gm
+// A5-NOT: pto.st_dev
+// A5-LABEL: func.func @sdma_gm_gm_soft_put_i8(
+// A5-NOT: pto.sdma_gm_gm
+// A5: pto.copy_gm_to_ubuf
+// A5: pto.copy_ubuf_to_gm
+
+// A3 still posts the engine path; the attr is A5-only.
+// A3-LABEL: func.func @sdma_gm_gm_soft_put(
+// A3-NOT: pto.sdma_gm_gm
+// A3: pto.store
+// A3: pto.copy_ubuf_to_gm
+// A3-LABEL: func.func @sdma_gm_gm_soft_put_i8(
+// A3-NOT: pto.sdma_gm_gm
+// A3: pto.store

@@ -9,6 +9,7 @@
 #include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
+#include "PTO/Support/AsyncSessionABI.h"
 #include "PTO/Transforms/Passes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -2077,6 +2078,545 @@ struct ExpandAtomicConfigPattern
   }
 };
 
+//===----------------------------------------------------------------------===//
+// Async SDMA post
+//===----------------------------------------------------------------------===//
+
+namespace comm_abi = mlir::pto::comm;
+
+// Materialize a GM pointer to `elementType` at `baseAddr + byteOffset`.
+//
+// Descriptor and SQE fields sit at fixed byte offsets but have mixed widths, so
+// each access folds its offset into the address and then loads or stores at
+// element index zero. That keeps the element-offset operand of ld_dev/st_dev out
+// of the picture, where a stale element size would silently move the access.
+static Value gmFieldPointer(Location loc, PatternRewriter &rewriter,
+                            Value baseAddr, int64_t byteOffset,
+                            Type elementType) {
+  Value addr = baseAddr;
+  if (byteOffset != 0) {
+    Value offset = getI64Constant(loc, rewriter, byteOffset);
+    addr = rewriter.create<arith::AddIOp>(loc, addr, offset);
+  }
+  auto ptrType = pto::PtrType::get(
+      rewriter.getContext(), elementType,
+      pto::AddressSpaceAttr::get(rewriter.getContext(), pto::AddressSpace::GM));
+  return rewriter.create<pto::CastPtrOp>(loc, ptrType, addr);
+}
+
+static Value loadDevField(Location loc, PatternRewriter &rewriter,
+                          Value baseAddr, int64_t byteOffset,
+                          Type elementType) {
+  Value ptr = gmFieldPointer(loc, rewriter, baseAddr, byteOffset, elementType);
+  Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  return rewriter.create<pto::PTOLdDevOp>(loc, elementType, ptr, zero);
+}
+
+static void storeDevField(Location loc, PatternRewriter &rewriter,
+                          Value baseAddr, int64_t byteOffset, Value value) {
+  Value ptr =
+      gmFieldPointer(loc, rewriter, baseAddr, byteOffset, value.getType());
+  Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  rewriter.create<pto::PTOStDevOp>(loc, value, ptr, zero);
+}
+
+// Descriptor and SQE writes go through an ordinary store, not st_dev.
+//
+// On 910B1 only the first handful of st_dev stores to HBM take effect and the
+// rest are dropped, with barriers making no difference; an ordinary store lands
+// every time. That is enough to disqualify st_dev here, since one post writes
+// seven words per SQE. st_dev is still what rings the doorbell, which is a real
+// device register rather than memory.
+static void storeGmField(Location loc, PatternRewriter &rewriter,
+                         Value baseAddr, int64_t byteOffset, Value value) {
+  Value ptr =
+      gmFieldPointer(loc, rewriter, baseAddr, byteOffset, value.getType());
+  Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  rewriter.create<pto::PTOStoreOp>(loc, ptr, zero, value);
+}
+
+// A2/A3 rings the doorbell through UB instead of storing to it.
+//
+// sq_reg_base names a register rather than memory, and on this generation it
+// only takes a value that arrives by MTE: st_dev has no effect there, and a
+// scalar store to it faults the vector unit hard enough to leave the card in
+// an unrecoverable RAS state. Staging the tail in UB and moving four bytes out
+// is what the reference SDMA implementation does.
+//
+// The staging slot is the session's tmp_buf, which exists for exactly this.
+static void ringDoorbellViaUb(Location loc, PatternRewriter &rewriter,
+                              Value tmpBufAddr, Value syncId32,
+                              Value doorbellAddr, int64_t byteOffset,
+                              Value tail32) {
+  MLIRContext *ctx = rewriter.getContext();
+  Type i32Type = rewriter.getI32Type();
+
+  auto ubPtrType = pto::PtrType::get(
+      ctx, i32Type, pto::AddressSpaceAttr::get(ctx, pto::AddressSpace::VEC));
+  Value ubPtr = rewriter.create<pto::CastPtrOp>(loc, ubPtrType, tmpBufAddr);
+  Value zeroIdx = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  rewriter.create<pto::PTOStoreOp>(loc, ubPtr, zeroIdx, tail32);
+
+  // The scalar unit has to be done with the slot before MTE3 picks it up. The
+  // event id comes from the session so a caller who is already using MTE3
+  // events elsewhere can keep this staging off them; a fixed id would collide
+  // silently.
+  auto pipe = [&](pto::PIPE p) { return pto::PipeAttr::get(ctx, p); };
+  Value eventId = rewriter.create<arith::IndexCastUIOp>(
+      loc, rewriter.getIndexType(), syncId32);
+  rewriter.create<pto::SetFlagDynOp>(loc, pipe(pto::PIPE::PIPE_S),
+                                     pipe(pto::PIPE::PIPE_MTE3), eventId);
+  rewriter.create<pto::WaitFlagDynOp>(loc, pipe(pto::PIPE::PIPE_S),
+                                      pipe(pto::PIPE::PIPE_MTE3), eventId);
+
+  Value dbPtr =
+      gmFieldPointer(loc, rewriter, doorbellAddr, byteOffset, i32Type);
+  Value four = getI64Constant(loc, rewriter, 4);
+  Value one = getI64Constant(loc, rewriter, 1);
+  Value zero = getI64Constant(loc, rewriter, 0);
+
+  // A doorbell takes one 32-bit write. The default c220 store carries its
+  // length in 32-byte blocks and would round these four bytes down to a
+  // transfer of nothing, leaving the engine waiting on a ring it was never
+  // told about, so this asks for the byte-granular path.
+  auto doorbellStore = rewriter.create<pto::CopyUbufToGmOp>(
+      loc, ubPtr, dbPtr, zero, one, four, zero, zero, zero);
+  doorbellStore->setAttr("vpto.byte_granular", rewriter.getUnitAttr());
+}
+
+// Those stores land in the data cache, and the engine reads memory, so the
+// cache has to be pushed out before the doorbell is rung. One flush of the
+// whole data cache covers every SQE of the post plus the descriptor, which is
+// also what the reference SDMA implementation does.
+static void writebackDataCache(Location loc, PatternRewriter &rewriter,
+                               Value addr) {
+  Value ptr = gmFieldPointer(loc, rewriter, addr, 0, rewriter.getI8Type());
+  rewriter.create<pto::DcciOp>(
+      loc, ptr,
+      pto::DcciCacheLineAttr::get(rewriter.getContext(),
+                                  pto::DcciCacheLine::ENTIRE_DATA_CACHE),
+      pto::DcciDstAttr{});
+}
+
+static Value getI32Constant(Location loc, PatternRewriter &rewriter,
+                            int64_t value) {
+  return rewriter.create<arith::ConstantIntOp>(loc, value, 32);
+}
+
+// Read one session config field and widen it to i64 for address arithmetic.
+static Value readSessionFieldI64(Location loc, PatternRewriter &rewriter,
+                                 Value session, comm_abi::SessionField field,
+                                 unsigned width) {
+  Type fieldType = rewriter.getIntegerType(width);
+  Value raw = rewriter.create<pto::StructGetOp>(
+      loc, fieldType, session,
+      rewriter.getDenseI64ArrayAttr({comm_abi::sessionFieldIndex(field)}));
+  if (width == 64)
+    return raw;
+  return rewriter.create<arith::ExtUIOp>(loc, rewriter.getI64Type(), raw);
+}
+
+// For fields that stay 32-bit all the way into an SQE word or an event id,
+// where widening to i64 would only have to be undone.
+static Value readSessionFieldI32(Location loc, PatternRewriter &rewriter,
+                                 Value session, comm_abi::SessionField field) {
+  return rewriter.create<pto::StructGetOp>(
+      loc, rewriter.getI32Type(), session,
+      rewriter.getDenseI64ArrayAttr({comm_abi::sessionFieldIndex(field)}));
+}
+
+// Expand a session fill into one load and one store per field.
+//
+// The template gives every field an 8-byte slot, so a field's address is its
+// index scaled, and a narrow field is read at the base of its slot because the
+// host wrote it into the low half.
+struct ExpandSessionInitPattern : public OpRewritePattern<pto::SessionInitOp> {
+  using OpRewritePattern<pto::SessionInitOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(pto::SessionInitOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    Value session = op.getSession();
+    auto structType = cast<pto::StructType>(session.getType());
+
+    Value templateAddr = rewriter.create<pto::CastPtrOp>(
+        loc, rewriter.getI64Type(), op.getTemplateGm());
+
+    for (unsigned i = 0; i < comm_abi::kSessionNumFields; ++i) {
+      Type fieldType = structType.getFieldTypes()[i];
+      const int64_t offset =
+          static_cast<int64_t>(i * comm_abi::session_tmpl::kSlotBytes);
+      Value value = loadDevField(loc, rewriter, templateAddr, offset, fieldType);
+      rewriter.create<pto::StructSetOp>(
+          loc, session, rewriter.getDenseI64ArrayAttr({static_cast<int64_t>(i)}),
+          value);
+    }
+
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+// Expand one asynchronous SDMA post into descriptor reads, SQE writes, a
+// release barrier, and a doorbell write.
+//
+// The transfer is split into at most `block_bytes` per SQE. Splitting runs as an
+// scf.for whose trip count is only known at runtime, mirroring how the DMA
+// wrapper ops expand their software loops.
+//
+// This version drives a single channel of the group. Spreading a post across the
+// group is a scheduling policy on top of the same sequence and is left to a
+// follow-up.
+struct ExpandSdmaGmGmPattern : public OpRewritePattern<pto::SdmaGmGmOp> {
+  ExpandSdmaGmGmPattern(MLIRContext *context, DmaArch dmaArch)
+      : OpRewritePattern<pto::SdmaGmGmOp>(context), dmaArch(dmaArch) {}
+
+  LogicalResult matchAndRewrite(pto::SdmaGmGmOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    Value session = op.getSession();
+
+    // A5's engine will not PUT to a peer. The same kick becomes a synchronous
+    // GM→UB→GM copy, which is how the reference stack writes remotely there.
+    // Other generations ignore the attr and keep posting SQEs.
+    if (dmaArch == DmaArch::A5 && op.getSoftPutAttr())
+      return expandA5SoftPut(op, rewriter);
+
+    Value contextGm = readSessionFieldI64(
+        loc, rewriter, session, comm_abi::SessionField::ContextGm, 64);
+    Value commBlockOffset = readSessionFieldI64(
+        loc, rewriter, session, comm_abi::SessionField::CommBlockOffset, 64);
+    Value channelNum = readSessionFieldI64(
+        loc, rewriter, session, comm_abi::SessionField::ChannelNum, 32);
+
+    // Service class is a session-wide property, so there is no per-post form to
+    // fall back from.
+    Value qos32 = readSessionFieldI32(loc, rewriter, session,
+                                      comm_abi::SessionField::Qos);
+
+    // A per-post override wins over the session default for both knobs.
+    Value channelIdx;
+    if (auto attr = op.getChannelIdx())
+      channelIdx = getI64Constant(loc, rewriter, *attr);
+    else
+      channelIdx = readSessionFieldI64(
+          loc, rewriter, session, comm_abi::SessionField::ChannelIdx, 32);
+
+    Value blockBytes;
+    if (auto attr = op.getBlockBytes())
+      blockBytes = getI64Constant(loc, rewriter, *attr);
+    else
+      blockBytes = readSessionFieldI64(
+          loc, rewriter, session, comm_abi::SessionField::BlockBytes, 64);
+
+    // record = contextGm + (channelIdx * channelNum) * recordBytes
+    Value recordIndex =
+        rewriter.create<arith::MulIOp>(loc, channelIdx, channelNum);
+    Value recordBytes = getI64Constant(
+        loc, rewriter,
+        static_cast<int64_t>(comm_abi::channel::kRecordBytes));
+    Value recordOffset =
+        rewriter.create<arith::MulIOp>(loc, recordIndex, recordBytes);
+    Value recordAddr =
+        rewriter.create<arith::AddIOp>(loc, contextGm, recordOffset);
+
+    Type i32Type = rewriter.getI32Type();
+    Type i64Type = rewriter.getI64Type();
+
+    Value sqBase = loadDevField(loc, rewriter, recordAddr,
+                                comm_abi::channel::kSqBaseOffset, i64Type);
+    Value doorbellAddr = loadDevField(
+        loc, rewriter, recordAddr, comm_abi::channel::kDoorbellOffset, i64Type);
+    Value slotMask32 = loadDevField(loc, rewriter, recordAddr,
+                                    comm_abi::channel::kSlotMaskOffset,
+                                    i32Type);
+    Value streamId32 = loadDevField(
+        loc, rewriter, recordAddr, comm_abi::channel::kStreamIdOffset, i32Type);
+
+    // The queue position stays where the engine keeps it, so the record hands
+    // over its address rather than a copy.
+    Value tailAddr = loadDevField(loc, rewriter, recordAddr,
+                                  comm_abi::channel::kTailAddrOffset, i64Type);
+    Value headAddr = loadDevField(loc, rewriter, recordAddr,
+                                  comm_abi::channel::kHeadAddrOffset, i64Type);
+    Value sqTail32 = loadDevField(loc, rewriter, tailAddr, 0, i32Type);
+    Value sqHead32 = loadDevField(loc, rewriter, headAddr, 0, i32Type);
+    Value sqHead = rewriter.create<arith::ExtUIOp>(loc, i64Type, sqHead32);
+
+    Value slotMask = rewriter.create<arith::ExtUIOp>(loc, i64Type, slotMask32);
+    Value initialTail = rewriter.create<arith::ExtUIOp>(loc, i64Type, sqTail32);
+
+    Value srcAddr = rewriter.create<pto::CastPtrOp>(loc, i64Type, op.getSource());
+    Value dstAddr =
+        rewriter.create<pto::CastPtrOp>(loc, i64Type, op.getDestination());
+    srcAddr = rewriter.create<arith::AddIOp>(loc, srcAddr, commBlockOffset);
+    dstAddr = rewriter.create<arith::AddIOp>(loc, dstAddr, commBlockOffset);
+
+    // iterations = ceilDiv(nbytes, blockBytes)
+    //
+    // The block size can come from the session, so it is a runtime value that
+    // nothing has checked. Clamping it away from zero keeps a bad session to a
+    // wrong transfer: the trip count stays bounded by nbytes. Dividing by it
+    // raw would stop the core instead, and a core that never finishes takes the
+    // card with it.
+    Value nbytes = op.getNbytes();
+    Value oneBlock = getI64Constant(loc, rewriter, 1);
+    blockBytes = rewriter.create<arith::MaxUIOp>(loc, blockBytes, oneBlock);
+    Value iterations =
+        rewriter.create<arith::CeilDivUIOp>(loc, nbytes, blockBytes);
+    Value iterationsIdx = rewriter.create<arith::IndexCastUIOp>(
+        loc, rewriter.getIndexType(), iterations);
+    Value zeroIdx = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    Value oneIdx = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+
+    // The tail advances once per SQE, so it is carried through the loop.
+    auto forOp = rewriter.create<scf::ForOp>(loc, zeroIdx, iterationsIdx, oneIdx,
+                                             ValueRange{initialTail});
+    {
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPointToStart(forOp.getBody());
+      Value iv = rewriter.create<arith::IndexCastUIOp>(
+          loc, i64Type, forOp.getInductionVar());
+      Value tail = forOp.getRegionIterArg(0);
+
+      Value chunkOffset = rewriter.create<arith::MulIOp>(loc, iv, blockBytes);
+      // The final chunk carries whatever is left of the transfer.
+      Value remaining =
+          rewriter.create<arith::SubIOp>(loc, nbytes, chunkOffset);
+      Value chunkBytes =
+          rewriter.create<arith::MinUIOp>(loc, blockBytes, remaining);
+
+      Value chunkSrc =
+          rewriter.create<arith::AddIOp>(loc, srcAddr, chunkOffset);
+      Value chunkDst =
+          rewriter.create<arith::AddIOp>(loc, dstAddr, chunkOffset);
+
+      Value slot = rewriter.create<arith::AndIOp>(loc, tail, slotMask);
+      Value sqeBytes = getI64Constant(
+          loc, rewriter, static_cast<int64_t>(comm_abi::sqe::kBytes));
+      Value slotOffset = rewriter.create<arith::MulIOp>(loc, slot, sqeBytes);
+      Value sqeAddr = rewriter.create<arith::AddIOp>(loc, sqBase, slotOffset);
+
+      // The engine identifies a post by how far the queue has run ahead of
+      // what it has drained, so the task id is the outstanding depth.
+      Value taskId = rewriter.create<arith::SubIOp>(loc, tail, sqHead);
+      Value taskId32 = rewriter.create<arith::TruncIOp>(loc, i32Type, taskId);
+
+      writeMemcpySqe(loc, rewriter, sqeAddr, chunkSrc, chunkDst, chunkBytes,
+                     streamId32, taskId32, qos32, dmaArch);
+
+      Value one = getI64Constant(loc, rewriter, 1);
+      Value nextTail = rewriter.create<arith::AddIOp>(loc, tail, one);
+      nextTail = rewriter.create<arith::AndIOp>(loc, nextTail, slotMask);
+      rewriter.create<scf::YieldOp>(loc, ValueRange{nextTail});
+    }
+
+    Value finalTail = forOp.getResult(0);
+    Value finalTail32 =
+        rewriter.create<arith::TruncIOp>(loc, i32Type, finalTail);
+
+    // Publish only the tail. The head belongs to the engine, which advances it
+    // as it drains the queue, so writing back a head read before the SQE stores
+    // would roll that progress back.
+    storeGmField(loc, rewriter, tailAddr, 0, finalTail32);
+
+    // Every SQE and the tail update must be visible to the engine before the
+    // doorbell tells it to look.
+    writebackDataCache(loc, rewriter, sqBase);
+    rewriter.create<pto::DsbOp>(
+        loc, pto::DsbMemAttr::get(rewriter.getContext(), pto::DsbMem::DDR));
+
+    // The doorbell is the one write that differs by generation. A5 takes it
+    // through st_dev, the device-register path it was meant for. A2/A3 accepts
+    // it only by MTE, so the tail goes out through UB there.
+    const int64_t doorbellOffset = dmaArch == DmaArch::A5
+                                       ? comm_abi::sqe::kDoorbellOffsetA5
+                                       : comm_abi::sqe::kDoorbellOffsetA2A3;
+    if (dmaArch == DmaArch::A5) {
+      storeDevField(loc, rewriter, doorbellAddr, doorbellOffset, finalTail32);
+    } else {
+      Value tmpBufAddr = readSessionFieldI64(
+          loc, rewriter, session, comm_abi::SessionField::TmpBufAddr, 64);
+      Value syncId32 = readSessionFieldI32(loc, rewriter, session,
+                                           comm_abi::SessionField::SyncId);
+      ringDoorbellViaUb(loc, rewriter, tmpBufAddr, syncId32, doorbellAddr,
+                        doorbellOffset, finalTail32);
+    }
+
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+private:
+  // A5 cannot post a remote write, so the bytes go through UB in chunks.
+  // The copy is finished when the op returns; there is no queue tail to poll.
+  static LogicalResult expandA5SoftPut(pto::SdmaGmGmOp op,
+                                       PatternRewriter &rewriter) {
+    Location loc = op.getLoc();
+    MLIRContext *ctx = rewriter.getContext();
+    Value session = op.getSession();
+
+    Value commBlockOffset = readSessionFieldI64(
+        loc, rewriter, session, comm_abi::SessionField::CommBlockOffset, 64);
+    Value syncId32 = readSessionFieldI32(loc, rewriter, session,
+                                         comm_abi::SessionField::SyncId);
+    Value tmpBufAddr = readSessionFieldI64(
+        loc, rewriter, session, comm_abi::SessionField::TmpBufAddr, 64);
+
+    // Address arithmetic stays in i64. A same-type pto.castptr is illegal at
+    // emission, so do not go through offsetPointerByBytes once the pointers
+    // are already i8.
+    Type i64Type = rewriter.getI64Type();
+    Value srcAddr =
+        rewriter.create<pto::CastPtrOp>(loc, i64Type, op.getSource());
+    Value dstAddr =
+        rewriter.create<pto::CastPtrOp>(loc, i64Type, op.getDestination());
+    srcAddr = rewriter.create<arith::AddIOp>(loc, srcAddr, commBlockOffset);
+    dstAddr = rewriter.create<arith::AddIOp>(loc, dstAddr, commBlockOffset);
+
+    auto i8Type = rewriter.getI8Type();
+    auto gmI8Type = pto::PtrType::get(
+        ctx, i8Type, pto::AddressSpaceAttr::get(ctx, pto::AddressSpace::GM));
+    auto ubType = pto::PtrType::get(
+        ctx, i8Type, pto::AddressSpaceAttr::get(ctx, pto::AddressSpace::VEC));
+    Value ub = rewriter.create<pto::CastPtrOp>(loc, ubType, tmpBufAddr);
+
+    Value nbytes = op.getNbytes();
+    Value chunkBytes = getI64Constant(loc, rewriter, 32768);
+    Value one = getI64Constant(loc, rewriter, 1);
+    chunkBytes = rewriter.create<arith::MaxUIOp>(loc, chunkBytes, one);
+    Value iterations =
+        rewriter.create<arith::CeilDivUIOp>(loc, nbytes, chunkBytes);
+    Value iterationsIdx = rewriter.create<arith::IndexCastUIOp>(
+        loc, rewriter.getIndexType(), iterations);
+    Value zeroIdx = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    Value oneIdx = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value zero64 = getI64Constant(loc, rewriter, 0);
+    Value falseBit = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getI1Type(), rewriter.getBoolAttr(false));
+    Value eventId = rewriter.create<arith::IndexCastUIOp>(
+        loc, rewriter.getIndexType(), syncId32);
+    auto pipe = [&](pto::PIPE p) { return pto::PipeAttr::get(ctx, p); };
+
+    auto forOp = rewriter.create<scf::ForOp>(loc, zeroIdx, iterationsIdx, oneIdx);
+    {
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPointToStart(forOp.getBody());
+      Value iv = rewriter.create<arith::IndexCastUIOp>(
+          loc, i64Type, forOp.getInductionVar());
+      Value chunkOffset = rewriter.create<arith::MulIOp>(loc, iv, chunkBytes);
+      Value remaining =
+          rewriter.create<arith::SubIOp>(loc, nbytes, chunkOffset);
+      Value thisBytes =
+          rewriter.create<arith::MinUIOp>(loc, chunkBytes, remaining);
+      Value chunkSrcAddr =
+          rewriter.create<arith::AddIOp>(loc, srcAddr, chunkOffset);
+      Value chunkDstAddr =
+          rewriter.create<arith::AddIOp>(loc, dstAddr, chunkOffset);
+      Value chunkSrc =
+          rewriter.create<pto::CastPtrOp>(loc, gmI8Type, chunkSrcAddr);
+      Value chunkDst =
+          rewriter.create<pto::CastPtrOp>(loc, gmI8Type, chunkDstAddr);
+
+      rewriter.create<pto::CopyGmToUbufOp>(
+          loc, chunkSrc, ub, zero64, one, thisBytes, zero64, zero64, falseBit,
+          zero64, zero64, zero64);
+      rewriter.create<pto::SetFlagDynOp>(loc, pipe(pto::PIPE::PIPE_MTE2),
+                                         pipe(pto::PIPE::PIPE_MTE3), eventId);
+      rewriter.create<pto::WaitFlagDynOp>(loc, pipe(pto::PIPE::PIPE_MTE2),
+                                          pipe(pto::PIPE::PIPE_MTE3), eventId);
+      rewriter.create<pto::CopyUbufToGmOp>(loc, ub, chunkDst, zero64, one,
+                                           thisBytes, zero64, zero64, zero64);
+      rewriter.create<pto::SetFlagDynOp>(loc, pipe(pto::PIPE::PIPE_MTE3),
+                                         pipe(pto::PIPE::PIPE_MTE2), eventId);
+      rewriter.create<pto::WaitFlagDynOp>(loc, pipe(pto::PIPE::PIPE_MTE3),
+                                          pipe(pto::PIPE::PIPE_MTE2), eventId);
+    }
+
+    rewriter.create<pto::DsbOp>(
+        loc, pto::DsbMemAttr::get(ctx, pto::DsbMem::DDR));
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+  // Write the fields a memcpy post needs. The remaining bytes of the slot keep
+  // whatever the host initialized them to.
+  static void writeMemcpySqe(Location loc, PatternRewriter &rewriter,
+                             Value sqeAddr, Value src, Value dst, Value bytes,
+                             Value streamId32, Value taskId32, Value qos32,
+                             DmaArch dmaArch) {
+    const bool isA5 = dmaArch == DmaArch::A5;
+
+    // Four bits wide on both generations, so a session value that does not fit
+    // is truncated rather than allowed to run into a neighbouring field.
+    Value qos = rewriter.create<arith::AndIOp>(
+        loc, qos32, getI32Constant(loc, rewriter, comm_abi::sqe::kQosMask));
+
+    storeGmField(loc, rewriter, sqeAddr, comm_abi::sqe::kWord0Offset,
+                 getI32Constant(loc, rewriter,
+                                isA5 ? comm_abi::sqe::a5::kWord0Memcpy
+                                     : comm_abi::sqe::a2a3::kWord0Memcpy));
+
+    // Word 1 pairs a 16-bit stream id with a 16-bit task id. Both arrive as 32
+    // bits, so mask each before packing or one would run into the other.
+    Value halfMask = getI32Constant(loc, rewriter, 0xFFFF);
+    Value rtStreamId = rewriter.create<arith::AndIOp>(loc, streamId32, halfMask);
+    Value taskId = rewriter.create<arith::AndIOp>(loc, taskId32, halfMask);
+    Value taskIdShift =
+        getI32Constant(loc, rewriter, comm_abi::sqe::kTaskIdShift);
+    Value taskIdField =
+        rewriter.create<arith::ShLIOp>(loc, taskId, taskIdShift);
+    Value word1 = rewriter.create<arith::OrIOp>(loc, rtStreamId, taskIdField);
+    storeGmField(loc, rewriter, sqeAddr, comm_abi::sqe::kWord1Offset, word1);
+
+    storeGmField(loc, rewriter, sqeAddr, comm_abi::sqe::kWord3Offset,
+                 getI32Constant(loc, rewriter,
+                                isA5 ? comm_abi::sqe::a5::kWord3Memcpy
+                                     : comm_abi::sqe::a2a3::kWord3Memcpy));
+
+    // QoS shares word 4 with the address attributes on A2/A3, but lives in
+    // word 5 on A5, so only one of the two words carries it.
+    Value word4 = getI32Constant(loc, rewriter,
+                                 isA5 ? comm_abi::sqe::a5::kWord4Memcpy
+                                      : comm_abi::sqe::a2a3::kWord4Memcpy);
+    if (!isA5) {
+      Value qosField = rewriter.create<arith::ShLIOp>(
+          loc, qos,
+          getI32Constant(loc, rewriter, comm_abi::sqe::a2a3::kQosShift));
+      word4 = rewriter.create<arith::OrIOp>(loc, word4, qosField);
+    }
+    storeGmField(loc, rewriter, sqeAddr, comm_abi::sqe::kWord4Offset, word4);
+
+    if (isA5) {
+      // Nothing else in word 5 is set for a memcpy post, so the QoS field is
+      // the whole word.
+      Value word5 = rewriter.create<arith::ShLIOp>(
+          loc, qos, getI32Constant(loc, rewriter, comm_abi::sqe::a5::kQosShift));
+      storeGmField(loc, rewriter, sqeAddr, comm_abi::sqe::a5::kWord5Offset,
+                   word5);
+    }
+
+    storeGmField(loc, rewriter, sqeAddr, comm_abi::sqe::kSrcAddrOffset, src);
+    storeGmField(loc, rewriter, sqeAddr, comm_abi::sqe::kDstAddrOffset, dst);
+
+    Value bytes32 =
+        rewriter.create<arith::TruncIOp>(loc, rewriter.getI32Type(), bytes);
+    storeGmField(loc, rewriter, sqeAddr,
+                 isA5 ? comm_abi::sqe::a5::kLengthOffset
+                      : comm_abi::sqe::a2a3::kLengthOffset,
+                 bytes32);
+
+    // A2/A3 keeps a link type where A5 puts the length; an unlinked post has to
+    // say so explicitly.
+    if (!isA5)
+      storeGmField(
+          loc, rewriter, sqeAddr, comm_abi::sqe::a2a3::kLinkTypeOffset,
+          getI32Constant(loc, rewriter, comm_abi::sqe::a2a3::kLinkTypeNone));
+  }
+
+  DmaArch dmaArch;
+};
+
 struct VPTOExpandWrapperOpsPass
     : public pto::impl::VPTOExpandWrapperOpsBase<VPTOExpandWrapperOpsPass> {
   using pto::impl::VPTOExpandWrapperOpsBase<
@@ -2098,7 +2638,9 @@ struct VPTOExpandWrapperOpsPass
     RewritePatternSet patterns(&getContext());
     patterns.add(std::make_unique<ExpandDmaLoadPattern>(&getContext(), dmaArch));
     patterns.add(std::make_unique<ExpandDmaStorePattern>(&getContext(), dmaArch));
-    patterns.add<ExpandUvldPattern,
+    patterns.add(std::make_unique<ExpandSdmaGmGmPattern>(&getContext(), dmaArch));
+    patterns.add<ExpandSessionInitPattern,
+                 ExpandUvldPattern,
                  ExpandMteUbUbPattern, ExpandMteUbL1Pattern, ExpandCubeLoadPattern,
                  ExpandCubeStorePattern, ExpandBiasLoadPattern,
                  ExpandFpLoadPattern,

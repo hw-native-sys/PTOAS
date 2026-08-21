@@ -1336,6 +1336,7 @@ This section provides a categorized overview of all PTO micro Instruction operat
 | 16 | [Cube Matrix Multiply](isa/micro-isa/16-cube-matmul.md) | GM↔L1 (`l1`/cbuf) staging, L1 raw fill and L1 (`l1`)↔UB/BT/FB side moves, L1→L0A/L0B loads, L0C (`l0c`) matmul, and FIXPIPE MTE writeback | 20 | `pto.mte_gm_l1`, `pto.raw_fill_l1`, `pto.mte_l1_ub`, `pto.mte_gm_l1_frac`, `pto.mte_l1_bt`, `pto.mte_l1_fb`, `pto.mte_l1_l0a`, `pto.mte_l1_l0b`, `pto.mte_l1_l0a_mx`, `pto.mte_l1_l0b_mx`, `pto.mad`, `pto.mad_acc`, `pto.mad_bias`, `pto.mad_mx`, `pto.mad_mx_acc`, `pto.mad_mx_bias`, `pto.mte_l0c_l1`, `pto.mte_l0c_gm`, `pto.mte_l0c_ub` |
 | 17 | [SIMT Ops](isa/micro-isa/17-simt.md) | SIMT launch, thread/lane queries, vote/shuffle/redux, scalar memory, atomics, scalar math, conversion, entry synchronization, and state preservation | ~65 | `pto.store_vfsimt_info`, `pto.simt_launch`, `pto.get_tid_x`, `pto.get_laneid`, `pto.vote_*`, `pto.shuffle_*`, `pto.redux_*`, `pto.load`, `pto.store`, `pto.atomic_*`, `pto.convert`, `pto.syncthreads`, `pto.keep`, `pto.resume`, etc. |
 | 18 | [Special Scalar Operations](isa/micro-isa/18-special-scalar.md) | PTO scalar kernel queries, typed pointer/address calculation, scalar-pipeline memory, and ordinary AICore GM L1-bypass access | 10 | `pto.get_block_idx`, `pto.get_subblock_idx`, `pto.get_block_num`, `pto.get_subblock_num`, `pto.castptr`, `pto.addptr`, `pto.load_scalar`, `pto.store_scalar`, `pto.ld_dev`, `pto.st_dev` |
+| 19 | [Async Comm](isa/micro-isa/19-async-comm.md) | Async GM↔GM SDMA copy; session filled from a host template | 2 | `pto.session_init`, `pto.sdma_gm_gm` |
 
 ---
 
@@ -1361,6 +1362,7 @@ This section provides a categorized overview of all PTO micro Instruction operat
 | Contiguous Store | 3 | `pto.vsts` with `NORM_B8` / `NORM_B16` / `NORM_B32` dist |
 | Scatter | 3 | `pto.vscatter` |
 | Scalar GM access bypassing local L1 data cache | 18 | `pto.ld_dev`, `pto.st_dev` |
+| GM→GM SDMA copy | 19 | `pto.sdma_gm_gm` |
 
 ### Compute Operations
 
@@ -1393,7 +1395,8 @@ This section provides a categorized overview of all PTO micro Instruction operat
 ### Scalar & Control Operations
 
 Group 14 covers shared MLIR scalar arithmetic. Group 18 catalogs PTO scalar
-queries, pointer/address operations, and scalar-memory operations. SIMT scalar
+queries, pointer/address operations, and scalar-memory operations. Group 19
+covers session fill and GM↔GM SDMA copies. SIMT scalar
 operations remain in Group 17, while
 shared structured-control semantics remain in Group 15.
 

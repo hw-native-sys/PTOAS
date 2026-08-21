@@ -3822,4 +3822,100 @@ def PTO_VsturOp : PTO_VectorMicroOp<"vstur", [
   }];
 }
 
+//===----------------------------------------------------------------------===//
+// Async communication
+//===----------------------------------------------------------------------===//
+//
+// Asynchronous GM->GM transfers driven by a DMA engine. The kick does not block
+// the scalar stream; ordering against the transfer is the caller's job.
+//
+// The session operand is the config half of an async session: a stack-local
+// struct whose field positions are fixed by PTO/Support/AsyncSessionABI.h. The
+// mutable half (queue rings, post ids) stays in the workspace that the session's
+// context field points at, because it must survive across kernel launches.
+
+def SessionInitOp : PTO_MicroOp<"session_init", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let summary = "Fill a session config struct from a template in GM.";
+  let description = [{
+    Copy the session the host prepared at `template_gm` into `session`, field by
+    field. The struct is written in place, so this produces no result and the
+    caller keeps using the value `pto.declare_struct` gave it.
+
+    This exists because a session cannot be handed to a kernel directly: a
+    stack-local struct may be neither a function argument nor the result of any
+    op other than `pto.declare_struct`. A kernel therefore declares its own and
+    fills it, and without this op that means spelling out one load and one store
+    per field at every entry point.
+
+    The template holds one 8-byte slot per field, indexed the same way the
+    struct is, so the host writes it through the same field enumeration the
+    expansion reads it with. Narrow fields occupy the low half of their slot.
+
+    Each core fills its own copy, so a session is per-core state even though the
+    template it came from is shared and read-only.
+  }];
+
+  let arguments = (ins
+    StructType:$session,
+    PTO_BufferType:$template_gm
+  );
+
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $session `,` $template_gm attr-dict
+      `:` qualified(type($session)) `,` type($template_gm)
+  }];
+}
+
+def SdmaGmGmOp : PTO_MicroOp<"sdma_gm_gm", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let summary = "Kick an asynchronous SDMA copy between two GM ranges.";
+  let description = [{
+    Post a transfer of `nbytes` contiguous bytes from `src` to `dst` to the SDMA
+    engine and continue without waiting. Either side may name peer memory.
+
+    There is no stride or burst model: the transfer is one contiguous range.
+    Splitting it across engine posts is driven by the session's block size, so a
+    caller that wants a specific split sets `block_bytes`.
+
+    `channel_idx` selects a channel group other than the session default, which
+    is the block index. Two cores sharing a group would corrupt each other's
+    queue rings, so an explicit index has to be chosen with that in mind.
+
+    Service class is not a per-post knob: it is fixed for the session when the
+    host builds it, since it describes how these transfers share the memory
+    system rather than what any one of them does.
+
+    The op reads the channel descriptors and advances the queue tail in the
+    workspace, then rings the engine doorbell. Completion is not observable from
+    the op itself; the caller polls the agreed synchronization word.
+  }];
+
+  let arguments = (ins
+    PTO_BufferType:$destination,
+    PTO_BufferType:$source,
+    I64:$nbytes,
+    StructType:$session,
+    OptionalAttr<I64Attr>:$block_bytes,
+    OptionalAttr<I64Attr>:$channel_idx,
+    OptionalAttr<UnitAttr>:$soft_put
+  );
+
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $destination `,` $source `,` $nbytes `session` `(` $session `)` attr-dict
+      `:` type($destination) `,` type($source) `,` type($nbytes) `,`
+      qualified(type($session))
+  }];
+}
+
 #endif // MLIR_DIALECT_PTO_IR_VPTOOPS
