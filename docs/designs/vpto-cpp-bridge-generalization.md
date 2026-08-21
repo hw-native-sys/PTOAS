@@ -235,3 +235,36 @@ include/pto/npu/a5/*.hpp`），而 PoC 脚本默认解析到 `llvm-workspace/pto
 5. ~~遗留问题（控制流下 TPOP 重绑定、split≠1、无 finish 假设）~~ **本阶段不考虑**：
    PoC 的遗留边界不随本次泛化带入。重绑定在新设计中经 `bridge_call` 的 SSA result
    实现（见决策 2），控制流覆盖等语义问题到 Phase 2/3 的测试中按需暴露、按需处理。
+
+---
+
+## 附：Phase 0 实施记录（2026-08-21）
+
+Phase 0 已完成并验收通过。与计划的偏差与实施要点：
+
+1. **构建环境切换 LLVM 19**：桥接分支原要求 LLVM 21，本机仅有 LLVM 19.1.7 构建。
+   将 main 的 `eb79e5f9 build: downgrade PTOAS to LLVM 19` cherry-pick 到本分支；
+   该提交引用的 VPTOScheduler（main 上另一个提交的产物，未随 cherry-pick 带入）
+   从 ptoas.cpp 与 lit 工具依赖中移除，lit 恢复 `pto-vfsimt-size-patcher-test`/`yaml2obj`。
+2. **通用 pass 的真实插入点**：A5 测试路径走 CANN900 的 `runPipeline`
+   （VPTOCANN900LLVMEmitter.cpp），而非 Beta1 的 runPipeline——两处都已插入
+   `pto::createVPTOBridgeLoweringPass()`。
+3. **ConversionTarget 陷阱**：MLIR 转换目标默认对未知 op 是"不合法"的——pattern
+   创建的 `func.call`/`llvm.alloca`/私有声明会被驱动拒绝并整体回滚 pattern。
+   修复：`target.markUnknownOpDynamicallyLegal([](Operation *) { return true; })`。
+4. **依赖方言必须 override**：手动 `createXPass()` 不会带出 Passes.td 的
+   `dependentDialects` 声明，需在 pass 类上 `getDependentDialects` override
+   LLVM/func 方言（否则在未加载 LLVM 方言的 context 中运行会 abort）。
+5. **重绑定实现形态**：家族 pass 中 storage 经 `bridge_call` 的 **SSA result**
+   流转（init 的 result RAUW 给 push/pop/free 的 pipe operand），TPOP 的 i64
+   result 经 `bridge_inttoptr` 物化为指针并 RAUW 给 `tile_buf_addr` 结果——
+   比 PoC 的 `popTileAddresses` 映射更显式，且全部语义留在家族 pass 内。
+6. **家族 pass 转换范围与 PoC 一致**：转换函数内**所有** `alloc_tile`/
+   `declare_tile`/`tile_buf_addr`（不限 pipe 相关）——与 PoC emitter 行为对齐；
+   Phase 1 值得收窄为"仅 pipe 家族相关的 tile 句柄"。
+7. **验收**：COMPILE_ONLY device 编译通过；CA 模拟器端到端 compare passed
+   （128 f32 与 golden 全量一致）；`tilelib_passes_skip_frontend_pipe_ops` lit
+   通过；PoC 的 `LowerPipeBridgeOpPattern`/`LowerPipeTileHandlePattern` 及
+   `popTileAddresses` 已从 emitter 删除。
+8. **未随 Phase 0 落地**：`BridgeTokenUtils`（token 构建）与 wrapper 自动生成
+   属 Phase 2，与参数泛化一起实现；白名单 `tmpl_map` 字段亦留待 Phase 2 消费。
