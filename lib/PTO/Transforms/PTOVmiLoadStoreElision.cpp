@@ -1057,20 +1057,43 @@ static bool elideOpRange(OpRange ops) {
   return changed;
 }
 
-// Run the two-pass elision over each fusion_region in two scopes:
+// Run the two-pass elision over each fusion_region in three scopes:
 //  1. the top-level ops of the region body (the prologue/between/epilogue
-//     straight-line segments separated by scf.for's) — this catches UB
-//     round trips that live OUTSIDE the fused for's, e.g. a reduce's final
-//     vstore to UB followed by a vload of the same UB for the next stage
-//     (ColMax -> tmuls -> ColExpand-sub broadcast). A scf.for in this range
-//     marks existing entries stale (its body may read/write tracked UBs).
-//  2. each scf.for body nested in the region (the fused leaf body) — this
-//     catches same-iteration UB round trips inside the loop.
+//     straight-line segments separated by scf.for's);
+//  2. the straight-line body of each vecscope nested in the region; and
+//  3. each scf.for body nested in the region (the fused leaf body).
+//
+// VecScope inference may wrap the whole fusion body in a region. The
+// fusion-region scan must remain for pre-existing unscoped VMI, but it cannot
+// see the direct vload/vstore operations inside that wrapper. Scanning each
+// vecscope body explicitly preserves the fusion-local legality assumptions
+// while allowing round trips between fused loops to be eliminated.
 static bool elideInRegion(pto::FusionRegionOp region) {
   bool changed = false;
   Block &body = region.getBody().front();
   // Top-level: walk all ops except the region's pto.yield terminator.
   changed |= elideOpRange(body.without_terminator());
+
+  // VecScope bodies are independent straight-line optimization ranges. Do
+  // not treat the vecscope operation itself as transparent: enter its body
+  // explicitly so the range scan can see VMI loads and stores.
+  region.getBody().walk([&](pto::VecScopeOp vecscope) {
+    if (vecscope->getParentOfType<pto::FusionRegionOp>() == region) {
+      Block &scopeBody = vecscope.getBody().front();
+      changed |= elideOpRange(
+          llvm::make_range(scopeBody.begin(), scopeBody.end()));
+    }
+    return WalkResult::advance();
+  });
+  region.getBody().walk([&](pto::StrictVecScopeOp vecscope) {
+    if (vecscope->getParentOfType<pto::FusionRegionOp>() == region) {
+      Block &scopeBody = vecscope.getBody().front();
+      changed |= elideOpRange(
+          llvm::make_range(scopeBody.begin(), scopeBody.end()));
+    }
+    return WalkResult::advance();
+  });
+
   // Each nested scf.for body.
   region.getBody().walk([&](scf::ForOp loop) {
     if (loop->getParentOfType<pto::FusionRegionOp>() == region &&

@@ -74,6 +74,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // PRED: // -----// IR Dump After PTOFusionPredicateElision (pto-fusion-predicate-elision) //----- //
 // PRED-LABEL: func.func @fusion_backend_lifecycle_level3(
 // PRED: %[[REGION:.*]] = pto.fusion_region {
+// PRED: pto.vecscope {
 // PRED: scf.for
 // PRED: pto.plt_b32
 // PRED: pto.vlds
@@ -95,6 +96,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // LS: // -----// IR Dump After PTOFusionLoadStoreElision (pto-fusion-load-store-elision) //----- //
 // LS-LABEL: func.func @fusion_backend_lifecycle_level3(
 // LS: %[[REGION:.*]] = pto.fusion_region {
+// LS: pto.vecscope {
 // LS: scf.for
 // LS: pto.vlds
 // LS: pto.vlds
