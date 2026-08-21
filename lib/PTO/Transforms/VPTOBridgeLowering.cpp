@@ -118,7 +118,7 @@ static LogicalResult validateAbi(Operation *op, const BridgeWhitelistEntry &entr
            << callArgs.size() << " argument(s), whitelist ABI declares "
            << entry.abi.size();
   }
-  for (auto [arg, index] : llvm::enumerate(callArgs)) {
+  for (auto [index, arg] : llvm::enumerate(callArgs)) {
     const BridgeAbiArg &abiArg = entry.abi[index];
     if (!abiTypeMatches(abiArg.type, arg.getType())) {
       return op->emitError()
@@ -246,7 +246,10 @@ struct VPTOBridgeLoweringPass final
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(VPTOBridgeLoweringPass)
 
   VPTOBridgeLoweringPass() = default;
-  VPTOBridgeLoweringPass(const VPTOBridgeLoweringPass &) = default;
+  VPTOBridgeLoweringPass(const VPTOBridgeLoweringPass &other)
+      : PassWrapper(other) {
+    copyOptionValuesFrom(&other);
+  }
 
   Option<std::string> whitelistPath{
       *this, "whitelist-path", llvm::cl::init(""),
@@ -257,6 +260,10 @@ struct VPTOBridgeLoweringPass final
 
   llvm::StringRef getDescription() const final {
     return "Lower generic bridge ops into C++ wrapper calls";
+  }
+
+  void getDependentDialects(DialectRegistry &registry) const override {
+    registry.insert<LLVM::LLVMDialect, func::FuncDialect>();
   }
 
   void runOnOperation() override {
@@ -296,11 +303,16 @@ struct VPTOBridgeLoweringPass final
     BridgeTypeConverter converter(&getContext());
     ConversionTarget target(getContext());
     target.addIllegalOp<BridgeCallOp, BridgeIntToPtrOp>();
+    // Everything the patterns create (func.call, llvm.alloca, private
+    // declarations) must be legal on the target, otherwise the conversion
+    // driver rejects the generated operations and rolls the pattern back.
+    target.markUnknownOpDynamicallyLegal(
+        [](Operation *op) { return true; });
 
     RewritePatternSet patterns(&getContext());
     BridgeLoweringState state{whitelist};
     patterns.add<LowerBridgeCallPattern>(converter, &getContext(), state);
-    patterns.add<LowerBridgeIntToPtrOp>(converter, &getContext());
+    patterns.add<LowerBridgeIntToPtrPattern>(converter, &getContext());
     if (failed(applyPartialConversion(module, target, std::move(patterns)))) {
       signalPassFailure();
     }

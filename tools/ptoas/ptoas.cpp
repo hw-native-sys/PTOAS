@@ -3236,7 +3236,7 @@ static LogicalResult runVPTOBackendPipeline(OwningOpRef<ModuleOp> &module,
   if (!hasTileOpsToExpand) {
     pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOCanonicalizeIRPass());
   }
-  pm.addPass(pto::createPTOLowerPipeFamilyOpsPass());
+  pm.addNestedPass<func::FuncOp>(pto::createPTOLowerPipeFamilyOpsPass());
   pm.addPass(pto::createVPTOSplitCVModulePass());
   pm.addPass(pto::createVPTONormalizeContainerPass());
   if (hasTileOpsToExpand) {
@@ -3356,10 +3356,6 @@ int mlir::pto::compilePTOASModule(
   }
   if (enableBufidSync && arch != "a5") {
     llvm::errs() << "Error: --enable-bufid_sync requires --pto-arch=a5.\n";
-    return 1;
-  }
-  if (vptoSchedulerMode != VPTOSchedulerCLIMode::Off && arch != "a5") {
-    llvm::errs() << "Error: --vpto-scheduler requires --pto-arch=a5.\n";
     return 1;
   }
 

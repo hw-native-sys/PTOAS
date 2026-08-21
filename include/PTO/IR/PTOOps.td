@@ -2704,7 +2704,7 @@ def BridgeCallOp : PTO_Op<"bridge_call", [
 
   let assemblyFormat = [{
     $callee
-    (`{` `storage_size_callee` `=` $storage_size_callee `}`)?
+    (`{` `storage_size_callee` `=` $storage_size_callee^ `}`)?
     (`(` $args^ `:` type($args) `)`)?
     attr-dict
     (`->` type($results)^)?

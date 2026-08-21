@@ -365,173 +365,6 @@ struct PlannedDecl {
 
 struct LoweringState {
   SmallVector<PlannedDecl> plannedDecls;
-  // FIFO slot addresses returned by TPOP, keyed by the declared tile value
-  // they rebind. tile_buf_addr lowering consults this map instead of using
-  // the placeholder address of declare_tile.
-  DenseMap<Value, Value> popTileAddresses;
-};
-
-// Pipe-bridge tile handles: alloc_tile carries the planned address, while a
-// declare_tile rebound by TPOP only materializes once the FIFO slot address
-// is known. Runs at benefit 101 so both are lowered before the pipe ops.
-class LowerPipeTileHandlePattern final : public ConversionPattern {
-public:
-  LowerPipeTileHandlePattern(TypeConverter &converter, MLIRContext *context,
-                             LoweringState &state)
-      : ConversionPattern(converter, MatchAnyOpTypeTag(), 101, context),
-        state(state) {}
-
-  LogicalResult
-  matchAndRewrite(Operation *raw, ArrayRef<Value> operands,
-                  ConversionPatternRewriter &rewriter) const override {
-    if (auto alloc = dyn_cast<pto::AllocTileOp>(raw)) {
-      if (!alloc.getAddr()) {
-        return alloc.emitError(
-            "VPTO pipe bridge requires a planned tile address");
-      }
-      rewriter.replaceOp(alloc, alloc.getAddr());
-      return success();
-    }
-    if (auto decl = dyn_cast<pto::DeclareTileOp>(raw)) {
-      Value zero = rewriter.create<arith::ConstantOp>(
-          decl.getLoc(), rewriter.getI64IntegerAttr(0));
-      rewriter.replaceOp(decl, zero);
-      return success();
-    }
-    if (auto addr = dyn_cast<pto::TileBufAddrOp>(raw)) {
-      if (operands.empty()) {
-        return failure();
-      }
-      Value replacement = operands.front();
-      if (auto it = state.popTileAddresses.find(addr.getSrc());
-          it != state.popTileAddresses.end()) {
-        replacement = it->second;
-      }
-      Type resultType =
-          getTypeConverter()->convertType(addr.getResult().getType());
-      if (!resultType) {
-        return failure();
-      }
-      if (resultType != replacement.getType()) {
-        replacement = rewriter.create<LLVM::IntToPtrOp>(
-            addr.getLoc(), resultType, replacement);
-      }
-      rewriter.replaceOp(addr, replacement);
-      return success();
-    }
-    return failure();
-  }
-
-private:
-  LoweringState &state;
-};
-
-// Lowers the four internal pipe ops to the fixed C ABI of the PTO-ISA
-// template wrapper (see test/vpto/cases/kernels/fifo-tile-data-consume/
-// vpto_bridge.cpp). ObjectEmission links the wrapper bitcode into the device
-// module before Bisheng compiles the device object.
-class LowerPipeBridgeOpPattern final : public ConversionPattern {
-public:
-  LowerPipeBridgeOpPattern(TypeConverter &converter, MLIRContext *context,
-                           LoweringState &state)
-      : ConversionPattern(converter, MatchAnyOpTypeTag(), 100, context),
-        state(state) {}
-
-  LogicalResult
-  matchAndRewrite(Operation *raw, ArrayRef<Value> operands,
-                  ConversionPatternRewriter &rewriter) const override {
-    if (!isa<pto::InitializeL2LPipeOp, pto::TPushOp, pto::TPopOp,
-             pto::TFreeOp>(raw)) {
-      return failure();
-    }
-    Location loc = raw->getLoc();
-    auto ptrTy = LLVM::LLVMPointerType::get(rewriter.getContext());
-    auto addDecl = [&](StringRef name, TypeRange inputs, TypeRange results) {
-      state.plannedDecls.push_back(
-          {name.str(), rewriter.getFunctionType(inputs, results)});
-    };
-    if (auto op = dyn_cast<pto::InitializeL2LPipeOp>(raw)) {
-      if (op.getDirMask() != 1 || op.getSlotSize() != 1024 ||
-          op.getSlotNum() != 8 || !op.getFlagBaseAttr() ||
-          op.getFlagBaseAttr().getInt() != 0 ||
-          (op.getNosplitAttr() && op.getNosplitAttr().getValue()) ||
-          op.getAccPushEpilogueAttr()) {
-        return op.emitError(
-            "VPTO pipe bridge currently supports only A5 C2V local pipe, "
-            "flag_base=0, slot_size=1024, slot_num=8, nosplit=false");
-      }
-      if (operands.empty() || !operands[0].getType().isInteger(32)) {
-        return op.emitError(
-            "VPTO pipe bridge expects an i32 local buffer address");
-      }
-      // TPipe contains FIFO, producer, and consumer state whose layout is
-      // only known to the instantiated bridge wrapper. Ask the wrapper for
-      // the exact storage size instead of hardcoding a conservative
-      // constant. Alignment stays static (LLVM alloca requires a constant
-      // alignment); alignof(TPipe) <= 8 for the A5 layout.
-      auto sizeCall = rewriter.create<func::CallOp>(
-          loc, "pto_vpto_pipe_size", rewriter.getI64Type());
-      addDecl("pto_vpto_pipe_size", {}, {rewriter.getI64Type()});
-      Value storage = rewriter.create<LLVM::AllocaOp>(
-          loc, ptrTy, rewriter.getI8Type(), sizeCall.getResult(0), 8);
-      rewriter.create<func::CallOp>(loc, "pto_vpto_pipe_init", TypeRange{},
-                                    ValueRange{storage, operands[0]});
-      addDecl("pto_vpto_pipe_init", {ptrTy, rewriter.getI32Type()}, {});
-      // No pto_vpto_pipe_finish: the TPipe destructor performs the final
-      // producer/consumer handshake, but a simulator experiment (no-op
-      // finish) confirmed single-launch FIFO data correctness does not depend
-      // on it -- freed flags are pre-set by the consumer-side TPipe
-      // constructor, so the handshake never blocks in the supported
-      // configuration. Multi-round push / cross-launch FIFO reuse is out of
-      // scope for the fixed specialization; reintroduce finish if such cases
-      // appear.
-      rewriter.replaceOp(op, storage);
-      return success();
-    }
-    if (auto op = dyn_cast<pto::TPushOp>(raw)) {
-      if (op.getSplit() != 1 || operands.size() < 2) {
-        return op.emitError("VPTO pipe bridge TPUSH requires split=1");
-      }
-      auto alloc = op.getTile().getDefiningOp<pto::AllocTileOp>();
-      if (!alloc || !alloc.getAddr()) {
-        return op.emitError(
-            "VPTO pipe bridge TPUSH requires planned alloc_tile address");
-      }
-      rewriter.create<func::CallOp>(loc, "pto_vpto_pipe_push", TypeRange{},
-                                    ValueRange{operands[1], alloc.getAddr()});
-      addDecl("pto_vpto_pipe_push", {ptrTy, rewriter.getI64Type()}, {});
-      rewriter.eraseOp(op);
-      if (alloc.use_empty()) {
-        rewriter.eraseOp(alloc);
-      }
-      return success();
-    }
-    if (auto op = dyn_cast<pto::TPopOp>(raw)) {
-      if (op.getSplit() != 1 || operands.size() < 2) {
-        return op.emitError("VPTO pipe bridge TPOP requires split=1");
-      }
-      auto popCall = rewriter.create<func::CallOp>(
-          loc, "pto_vpto_pipe_pop", rewriter.getI64Type(),
-          ValueRange{operands[1]});
-      addDecl("pto_vpto_pipe_pop", {ptrTy}, {rewriter.getI64Type()});
-      state.popTileAddresses[op.getTile()] = popCall.getResult(0);
-      rewriter.replaceAllUsesWith(operands[0], popCall.getResult(0));
-      rewriter.eraseOp(op);
-      return success();
-    }
-    auto op = cast<pto::TFreeOp>(raw);
-    if (op.getEntry() || op.getSplit() != 1 || operands.empty()) {
-      return op.emitError("VPTO pipe bridge TFREE supports tile-entry split=1");
-    }
-    rewriter.create<func::CallOp>(loc, "pto_vpto_pipe_free", TypeRange{},
-                                  ValueRange{operands.back()});
-    addDecl("pto_vpto_pipe_free", {ptrTy}, {});
-    rewriter.eraseOp(op);
-    return success();
-  }
-
-private:
-  LoweringState &state;
 };
 
 class LowerTrapOpPattern final : public OpConversionPattern<pto::TrapOp> {
@@ -11300,10 +11133,6 @@ public:
 static void populateVPTOOpLoweringPatterns(VPTOTypeConverter &typeConverter,
                                            RewritePatternSet &patterns,
                                            LoweringState &state) {
-  patterns.add<LowerPipeTileHandlePattern>(typeConverter, patterns.getContext(),
-                                           state);
-  patterns.add<LowerPipeBridgeOpPattern>(typeConverter, patterns.getContext(),
-                                         state);
   patterns.add<LowerUnaryMaskedOpPattern<pto::VabsOp>,
                LowerUnaryMaskedOpPattern<pto::VexpOp>,
                LowerUnaryMaskedOpPattern<pto::VlnOp>,
@@ -12092,6 +11921,7 @@ static LogicalResult runPipeline(ModuleOp module, llvm::raw_ostream &diagOS,
   pm.enableVerifier();
   auto &kernelModulePM = pm.nest<ModuleOp>();
   kernelModulePM.addPass(std::make_unique<PrepareVPTOLLVMLoweringPass>());
+  kernelModulePM.addPass(pto::createVPTOBridgeLoweringPass());
   kernelModulePM.addPass(std::make_unique<LowerVPTOOpsPass>());
   kernelModulePM.addPass(std::make_unique<LowerVPTOTypesPass>());
   kernelModulePM.addPass(

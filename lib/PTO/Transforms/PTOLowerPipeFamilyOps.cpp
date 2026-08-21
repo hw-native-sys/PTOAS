@@ -45,9 +45,9 @@ static constexpr llvm::StringLiteral kPipeFreeEntry = "pto_vpto_pipe_free";
 static BridgeCallOp emitVoidBridgeCall(OpBuilder &builder, Location loc,
                                        llvm::StringRef callee,
                                        ValueRange args) {
-  return builder.create<BridgeCallOp>(loc, builder.getStringAttr(callee),
-                                      /*storage_size_callee=*/nullptr, args,
-                                      TypeRange{});
+  return builder.create<BridgeCallOp>(
+      loc, /*results=*/TypeRange{}, /*callee=*/callee,
+      /*storage_size_callee=*/nullptr, /*args=*/args);
 }
 
 /// Returns the address value a tile_buf_addr operand resolves to, or nullptr
@@ -127,11 +127,14 @@ struct PTOLowerPipeFamilyOpsPass final
         continue;
       }
       builder.setInsertionPoint(init);
-      builder.create<BridgeCallOp>(
-          init.getLoc(), builder.getStringAttr(kPipeInitEntry),
-          builder.getStringAttr(kPipeSizeEntry),
-          ValueRange{init.getLocalAddr()},
-          TypeRange{init.getPipe().getType()});
+      BridgeCallOp call = builder.create<BridgeCallOp>(
+          init.getLoc(), /*results=*/TypeRange{init.getPipe().getType()},
+          /*callee=*/kPipeInitEntry,
+          /*storage_size_callee=*/builder.getStringAttr(kPipeSizeEntry),
+          /*args=*/ValueRange{init.getLocalAddr()});
+      // The bridge call result becomes the storage handle: push/pop/free
+      // consume the same SSA value instead of the erased pipe op.
+      init.getPipe().replaceAllUsesWith(call.getResults().front());
       init.erase();
     }
 
@@ -146,9 +149,9 @@ struct PTOLowerPipeFamilyOpsPass final
       }
       builder.setInsertionPoint(pop);
       BridgeCallOp call = builder.create<BridgeCallOp>(
-          pop.getLoc(), builder.getStringAttr(kPipePopEntry),
-          /*storage_size_callee=*/nullptr, ValueRange{pop.getPipeHandle()},
-          TypeRange{builder.getI64Type()});
+          pop.getLoc(), /*results=*/TypeRange{builder.getI64Type()},
+          /*callee=*/kPipePopEntry, /*storage_size_callee=*/nullptr,
+          /*args=*/ValueRange{pop.getPipeHandle()});
       popAddresses[pop.getTile()] = call.getResults().front();
       pop.erase();
     }
@@ -164,8 +167,9 @@ struct PTOLowerPipeFamilyOpsPass final
         continue;
       }
       builder.setInsertionPoint(addr);
-      builder.create<BridgeIntToPtrOp>(addr.getLoc(), addr.getDst().getType(),
-                                       address);
+      BridgeIntToPtrOp pointer = builder.create<BridgeIntToPtrOp>(
+          addr.getLoc(), addr.getDst().getType(), address);
+      addr.getDst().replaceAllUsesWith(pointer.getResult());
       addr.erase();
     }
 

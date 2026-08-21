@@ -383,17 +383,22 @@ build_one_impl() {
 
   local bridge_cube_bc=""
   local bridge_vector_bc=""
+  local bridge_whitelist=""
   if [[ -f "${case_dir}/vpto_bridge.cpp" ]]; then
     bridge_cube_bc="${out_dir}/vpto_bridge_cube.bc"
     bridge_vector_bc="${out_dir}/vpto_bridge_vector.bc"
     log "[$case_name] step 0/4: build VPTO cube/vector bridge bitcode"
     build_vpto_bridge_object "${case_dir}" cube "${bridge_cube_bc}"
     build_vpto_bridge_object "${case_dir}" vec "${bridge_vector_bc}"
+    if [[ -f "${case_dir}/vpto-bridge-whitelist.yaml" ]]; then
+      bridge_whitelist="${case_dir}/vpto-bridge-whitelist.yaml"
+    fi
   fi
 
   log "[$case_name] step 1/4: emit kernel fatobj"
   PTOAS_VPTO_CUBE_BRIDGE_BITCODE="${bridge_cube_bc}" \
   PTOAS_VPTO_VECTOR_BRIDGE_BITCODE="${bridge_vector_bc}" \
+  PTOAS_VPTO_BRIDGE_WHITELIST="${bridge_whitelist}" \
     "${PTOAS_BIN}" "${ptoas_args[@]}" \
       "${case_dir}/kernel.pto" -o "${kernel_fatobj}"
 

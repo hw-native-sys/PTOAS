@@ -15,6 +15,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/Transforms/VPTOBridgeWhitelist.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/YAMLTraits.h"
 
