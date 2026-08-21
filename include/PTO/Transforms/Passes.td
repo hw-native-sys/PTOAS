@@ -1528,9 +1528,11 @@ def PTOFusionPredicateElision
   let summary =
       "Elide redundant fusion-local VPTO plt predicate materialization";
   let description = [{
-    Scans `pto.fusion_region` bodies after VPTO post-lowering CSE and prepares
-    fusion-local redundant `pto.plt_*` predicate elimination before
-    load/store cleanup and explicit flatten.
+    Scans each `pto.vecscope` or `pto.strict_vecscope` inside a
+    `pto.fusion_region` after VPTO post-lowering CSE and eliminates redundant
+    `pto.plt_*` predicate materialization without reusing predicate state
+    across vector-scope boundaries. Unscoped fusion-local IR remains supported
+    for standalone and compatibility pipelines.
   }];
   let constructor = "mlir::pto::createPTOFusionPredicateElisionPass()";
   let dependentDialects = ["mlir::func::FuncDialect", "mlir::pto::PTODialect",

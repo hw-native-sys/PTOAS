@@ -41,8 +41,7 @@ struct PltCandidate {
   SmallVector<unsigned, mlir::pto::kValue4> dominatingCandidates;
 };
 
-struct FusionRegionPredicateContext {
-  pto::FusionRegionOp fusionRegion;
+struct PredicateScopeContext {
   SmallVector<PltCandidate, mlir::pto::kValue8> pltCandidates;
 };
 
@@ -320,14 +319,16 @@ static void populateDominatingCandidateIndices(
   }
 }
 
-static FusionRegionPredicateContext
-buildFusionRegionPredicateContext(pto::FusionRegionOp fusionRegion,
-                                  DominanceInfo &dominanceInfo) {
-  FusionRegionPredicateContext context;
-  context.fusionRegion = fusionRegion;
-
-  fusionRegion.walk([&](Operation *op) -> WalkResult {
-    if (op != fusionRegion.getOperation() && isa<pto::FusionRegionOp>(op)) {
+static PredicateScopeContext
+buildPredicateScopeContext(Operation *scope, DominanceInfo &dominanceInfo,
+                           bool skipNestedVecScopes) {
+  PredicateScopeContext context;
+  scope->walk([&](Operation *op) -> WalkResult {
+    if (op != scope && isa<pto::FusionRegionOp>(op)) {
+      return WalkResult::skip();
+    }
+    if (skipNestedVecScopes && op != scope &&
+        isa<pto::VecScopeOp, pto::StrictVecScopeOp>(op)) {
       return WalkResult::skip();
     }
 
@@ -346,7 +347,7 @@ static Value getCurrentScalarOperand(const PltCandidate &candidate) {
 }
 
 static std::optional<unsigned>
-findEquivalentDominatingCandidate(FusionRegionPredicateContext &context,
+findEquivalentDominatingCandidate(PredicateScopeContext &context,
                                   ValueEquivalenceContext &valueContext,
                                   unsigned currentIndex,
                                   const llvm::DenseSet<unsigned> &erased) {
@@ -368,7 +369,7 @@ findEquivalentDominatingCandidate(FusionRegionPredicateContext &context,
 }
 
 static bool
-elideEquivalentPltCandidates(FusionRegionPredicateContext &context) {
+elideEquivalentPltCandidates(PredicateScopeContext &context) {
   bool changed = false;
   llvm::DenseSet<unsigned> erased;
   SmallVector<Operation *, mlir::pto::kValue8> opsToErase;
@@ -416,17 +417,33 @@ struct PTOFusionPredicateElisionPass
     }
 
     DominanceInfo &dominanceInfo = getAnalysis<DominanceInfo>();
-    SmallVector<FusionRegionPredicateContext, mlir::pto::kValue4> fusionContexts;
+    SmallVector<PredicateScopeContext, mlir::pto::kValue4> scopeContexts;
     func.walk([&](pto::FusionRegionOp fusionRegion) {
-      FusionRegionPredicateContext context =
-          buildFusionRegionPredicateContext(fusionRegion, dominanceInfo);
-      if (!context.pltCandidates.empty()) {
-        fusionContexts.push_back(std::move(context));
-      }
+      auto addContext = [&](Operation *scope, bool skipNestedVecScopes) {
+        PredicateScopeContext context = buildPredicateScopeContext(
+            scope, dominanceInfo, skipNestedVecScopes);
+        if (!context.pltCandidates.empty()) {
+          scopeContexts.push_back(std::move(context));
+        }
+      };
+
+      // Preserve support for fusion-local IR that has not been scoped yet,
+      // but never mix those candidates with candidates inside vecscope.
+      addContext(fusionRegion, /*skipNestedVecScopes=*/true);
+      fusionRegion.walk([&](pto::VecScopeOp vecscope) {
+        if (vecscope->getParentOfType<pto::FusionRegionOp>() == fusionRegion) {
+          addContext(vecscope, /*skipNestedVecScopes=*/true);
+        }
+      });
+      fusionRegion.walk([&](pto::StrictVecScopeOp vecscope) {
+        if (vecscope->getParentOfType<pto::FusionRegionOp>() == fusionRegion) {
+          addContext(vecscope, /*skipNestedVecScopes=*/true);
+        }
+      });
     });
 
     bool changed = false;
-    for (FusionRegionPredicateContext &context : fusionContexts) {
+    for (PredicateScopeContext &context : scopeContexts) {
       changed |= elideEquivalentPltCandidates(context);
     }
 
