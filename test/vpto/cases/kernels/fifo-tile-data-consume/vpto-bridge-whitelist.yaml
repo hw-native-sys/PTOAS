@@ -1,0 +1,30 @@
+# VPTO C++ interface bridge whitelist for the fixed A5 C2V pipe bridge
+# (vpto_bridge.cpp). Consumed by the generic bridge lowering pass; see
+# docs/designs/vpto-cpp-bridge-generalization.md.
+bridge_ops:
+  - op: pto.initialize_l2l_pipe
+    family: pipe
+    entry: pto_vpto_pipe_init
+    abi:
+      - type: ptr    # storage, synthesized by the bridge lowering
+      - type: i32    # consumer local buffer address
+  - op: pto.tpush
+    family: pipe
+    entry: pto_vpto_pipe_push
+    abi:
+      - type: ptr    # storage
+      - type: i64    # producer tile address
+  - op: pto.tpop
+    family: pipe
+    entry: pto_vpto_pipe_pop
+    abi:
+      - type: ptr    # storage
+  - op: pto.tfree
+    family: pipe
+    entry: pto_vpto_pipe_free
+    abi:
+      - type: ptr    # storage
+  - op: internal
+    family: pipe
+    entry: pto_vpto_pipe_size
+    abi: []

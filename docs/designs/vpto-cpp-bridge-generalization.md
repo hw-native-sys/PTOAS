@@ -1,0 +1,237 @@
+# VPTO C++ 接口桥接泛化方案（初稿）
+
+## 1. 背景与目标
+
+`feature/vpto-tpush-tpop-bridge` 上的 PoC 已证明桥接机制的可行性：把 Bisheng 实例化的
+PTO-ISA C++ 模板 wrapper 编译为 device bitcode，经 `llvm-link` 与 VPTO 生成的 LLVM IR
+在 bitcode 层合并，端到端跑通了 `TPush → TPOP` FIFO 通路（`fifo-tile-data-consume`
+用例，CA 模拟器全量 compare 通过）。
+
+PoC 的局限（详见 `vpto-tpush-tpop-bridge-report.md`）：
+
+- **固定 specialization 硬编码**：emitter 里写死 `dir_mask=1, slot_size=1024,
+  slot_num=8, flag_base=0, nosplit=false`（`VPTOCANN900LLVMEmitter.cpp:428`），
+  wrapper 写死 `TPipe<0, C2V, 1024, 8, 2, false>` 与 16x16/8x16 tile；
+- **桥接逻辑与 TPipe 语义耦合**：`LowerPipeBridgeOpPattern` 一个 pattern 里既有
+  "TPipe 参数如何转换"（config 校验、storage、重绑定），又有"如何发 wrapper 调用"
+  （decl、call、i64/指针 ABI）——两者混在一起，新接口族（如 MATMUL）无法复用。
+
+本方案目标：
+
+1. **参数泛化**：TPipe 配置、tile 形状/dtype 等参数不再写死，由 op 属性 + 白名单驱动；
+2. **接口泛化**：桥接机制与 TPipe 解耦，成为所有 PTO-ISA C++ 接口可复用的通用通道，
+   第一个验证对象是 **CUBE 侧 MATMUL**（接口面与 pipe 完全不同的第二家族）；
+3. **工程化**：wrapper 自动生成、bitcode 自动合入，替代脚本 + 环境变量的手工流程。
+
+**实现原则**：PoC 的验证结论（bitcode 层桥接可行、ABI 形态可用）是本方案的前提，
+但 PoC 代码**仅作功能参照，不套用**——通用化实现从头新写（见 §3.4）。
+
+## 2. 核心决策（四条）
+
+1. **IR 白名单文本**：新增一个文本文件描述"哪些 IR op 走 C++ 接口桥接"，pass 运行时读取；
+2. **白名单解决两个问题**：
+   - **路由**：pass 不再需要静态分析"哪些接口生成 C++ 调用、哪些直接 emit LLVM IR"——
+     白名单即路由表；
+   - **类型映射**：IR 参数到目标 C++ 模板类型的映射关系在白名单中声明；
+3. **类型映射参照 EmitC 逻辑（不改动 EmitC 实现）**：以 `PTOToEmitC.cpp` 里现有的
+   "IR op 属性 → C++ 模板 token" 构建逻辑为参照，在**桥接侧自行适配实现**对应逻辑，
+   EmitC 侧代码保持不动（见 §3.3）；
+4. **分层（从头实现）**：把 TPush/TPop 的参数 API 转换做成 **TPipe 相关 pass**，
+   把 "C++ 混编" 做成独立的**通用 pass**——通用 pass 不感知 TPipe 的参数接口变化，
+   桥接能力对所有操作公用。实现上**不套用 PoC 代码**：PoC 仅作功能参照（§3.4），
+   新实现全部新写。
+
+## 3. 架构设计
+
+### 3.1 分层
+
+```text
+[家族专用 pass 层]（每个 PTO-ISA 接口家族一个）
+  示例：TPipe 专用 pass（本阶段）、MATMUL 专用 pass（下一阶段）
+  职责：理解本家族 op 的语义与参数
+  输入：pto.initialize_l2l_pipe / tpush / tpop / tfree（未来：mad/matmul）
+  输出：pto.bridge_call 内部 op（callee + operand/result）；
+        家族级语义（如 TPOP 地址重绑定）在家族 pass 内经 SSA result 完成
+  ↓
+[通用 C++ 混编 pass 层]（只实现一次，所有家族公用）
+  职责：读白名单文本；把 pto.bridge_call 机械转换为
+        LLVM 侧 func.call + 外部声明（plannedDecls）；ABI 校验（i64/ptr 约定）
+  不感知：TPipe 参数、MATMUL 参数、任何家族的语义
+  ↓
+[wrapper 生成与 bitcode 合入]
+  按白名单 + 家族 pass 收集到的 specialization 生成 wrapper 源码
+  → Bisheng 按 target 编译 bitcode → ObjectEmission 合入（现有通道泛化）
+```
+
+关键约束：**通用混编 pass 不因新增接口家族而改动**。新增家族 = 新增一个家族专用 pass
++ 白名单条目 + wrapper 模板，通用层与 ObjectEmission 通道保持不变。
+
+### 3.2 白名单文本设计（草案）
+
+文本条目（每条一个 op）暂定字段：
+
+| 字段 | 含义 | 用途 |
+|---|---|---|
+| `op` | IR op 名称（如 `pto.tpush`） | 路由：命中即桥接候选 |
+| `entry` | wrapper 入口名（如 `pto_vpto_pipe_push`） | 通用 pass 发 call 的 callee |
+| `abi` | ABI 参数描述（参数个数、i64/ptr 约定） | 调用侧校验 + decl 生成 |
+| `tmpl-map` | IR operand/attr → C++ 模板类型参数的映射规则 | wrapper 生成侧（结合家族 pass 的收集结果） |
+
+白名单解决的两个问题分别落到这两组字段：
+
+- **路由**（`op`/`entry`）：不在白名单中的 op 走原有 VPTO 发射路径；白名单中但未被
+  家族 pass 转换的 op（例如家族 pass 漏了）→ 报明确诊断，而不是静默走 LLVM IR；
+- **类型映射**（`tmpl-map`）：IR 侧只有 `slot_size=1024` 这类整数属性与 tile 类型，
+  目标 C++ 侧需要 `TPipe<0, C2V, 1024, 8, 2, false>` 这样的模板实参——映射规则描述
+  两者如何对应（复用 EmitC 的 token 构建逻辑，见 §3.3）。
+
+开放问题：白名单格式选型（TD / YAML / TOML，是否与 ODS 联动），见 §5。
+
+### 3.3 类型映射参照 EmitC 逻辑（不改动其实现）
+
+EmitC 已经实现了"IR op 属性 → C++ 模板 token"的完整逻辑，正是白名单 `tmpl-map`
+需要的参照素材（`lib/PTO/Transforms/PTOToEmitC.cpp`，**仅作参照**）：
+
+| EmitC 现有函数 | 能力 | 桥接侧用途 |
+|---|---|---|
+| `getTPipeDirectionToken`（:1142） | dirMask/arch → `DIR_C2V` 等方向 token | TPipe 模板实参 |
+| `buildTPipeToken` / `buildTPipeTokenFromInitOp`（:1158/:1170） | op 属性 → `TPipe<flagBase, dir, slotSize, slotNum, ...>` | 同上 |
+| `getPipeDataTypeToken`（:8523 调用处） | tile 类型 → `Tile<...>` token | TPUSH/TPOP 的 Tile 实参 |
+| `getTileSplitToken` | split → `TileSplitAxis::...` token | split 实参 |
+
+复用方式（**EmitC 实现不动**）：桥接侧新增自己的 utility（如 `BridgeTokenUtils`），
+**参照** EmitC 的 token 构建逻辑自行实现，两者互不引用、互不修改：
+
+- EmitC：保持现状，token 拼进输出文本 `TPUSH<pipeTok, tileTok, splitTok>(...)`；
+- 桥接：参照同样的构建规则，产出 wrapper 生成器的模板实参清单 + ABI 签名描述。
+
+代价与风险：token 构建逻辑在两个后端各有一份，存在后续漂移的可能——如果将来需要
+统一共享，另起变更评估（提取共用 utility 会动到 EmitC 侧调用点），**不在本方案
+范围内**；且 EmitC 侧 tile token 依赖**已转换的 OpaqueType 携带 tile 布局**，桥接侧
+在 VPTO 管线中取到 tile 类型信息的时点不同（当前 PoC 用 `TileBufType` 的 config
+属性），参照移植时需要先对齐"类型信息来源"（见 §5）。
+
+### 3.4 PoC 功能对照（仅参考，不套用实现）
+
+PoC 是**功能参照**：它证明了哪些能力必须存在。新实现不修改、不搬用 PoC 代码，
+按下列对照重新实现；验收通过后**删除** PoC 在 emitter 内的两个 pattern
+（`LowerPipeBridgeOpPattern` / `LowerPipeTileHandlePattern`）及其固定配置校验。
+
+| PoC 验证过的功能 | 新实现如何覆盖（全新代码） |
+|---|---|
+| 固定配置校验（emitter :428，错误信息明确） | TPipe 专用 pass；校验依据改为白名单声明 + wrapper 生成能力，不再写死 |
+| 固定 C ABI 发 call + `plannedDecls` 声明发射 | 通用混编 pass：`pto.bridge_call` → `func.call` + decl，ABI 按白名单 `abi` 字段校验 |
+| `alloc_tile`→规划地址、`declare_tile`→占位 0、`tile_buf_addr`→地址查询、TPOP 重绑定注入 | 家族 pass 负责语义（重绑定经 `bridge_call` 的 SSA result 完成）；tile 句柄 → i64/指针的机械转换进通用层 |
+| `ObjectEmission::linkDeviceLLVMBitcode` 合并通道 | 已验证的管线能力，沿用；接口泛化为 bitcode 列表/配置驱动 |
+| `VPTOSplitCVModule` 函数级 kind 拆分、`FoldTileBufIntrinsics` 保护、`TileOpExpansionUtils` 排除项 | 已验证的通用管线能力，非桥接机制本体，本次保持不动 |
+
+**分支基址**：本分支基于 `feature/vpto-tpush-tpop-bridge`（保留已验证的管线件与
+`fifo-tile-data-consume` 测试资产作为验收目标）；新实现全部为新文件/新 pass。
+若后续希望完全基于 main 重做管线件，另议。
+
+### 3.5 通用混编 pass 不感知 TPipe 的实现要点
+
+- 家族 pass 的产物是 `pto.bridge_call`（callee + operand/result），
+  不含 `!pto.pipe` / tile 类型等家族类型；家族语义（如 TPOP 重绑定）经
+  `bridge_call` 的 SSA result 在家族 pass 内完成；
+- 通用 pass 只做三件事：读白名单确认 entry 合法 → 把 `bridge_call` 降为
+  `func::CallOp` + decl → 按 `abi` 字段校验参数（i64 地址载体、不透明指针 storage）；
+- TPipe 后续任何参数接口变化（新增配置、换 storage 策略）只改 TPipe 专用 pass 与
+  wrapper，通用 pass 零改动。
+
+## 4. 改造步骤（建议顺序）
+
+**Phase 0 —— 从零搭建分层骨架（前置）**
+不重构 PoC 代码，全部新写：`pto.bridge_call` op、TPipe 专用 pass、通用混编 pass、
+`BridgeTokenUtils`（token 构建）。以 PoC 的 `fifo-tile-data-consume` 为验收目标
+（相同外部行为、全新内部实现）；验收通过后删除 PoC 的 emitter 内嵌 pattern。
+产出：分层骨架，为 Phase 1-3 提供改造点。
+
+**Phase 1 —— 白名单化**
+引入白名单文本与读取逻辑；路由决策（桥接 vs LLVM IR 发射）由白名单驱动；
+白名单命中但未转换的 op 报诊断。通用混编 pass 改为读白名单而不是内嵌 callee 名。
+
+**Phase 2 —— 参数泛化**
+TPipe 专用 pass 从 op 属性读取全部配置（dir_mask/slot_size/slot_num/flag_base/
+nosplit/dtype/tile 形状），wrapper 按收集到的 specialization 自动生成（参照 §3.3
+在桥接侧实现的 token 逻辑）并编译注入，替换固定的 `TPipe<0, C2V, 1024, 8, 2, false>`。
+补配置矩阵测试（不同 slot_size/slot_num、不同 tile 形状）。
+
+**Phase 3 —— 第二接口族：CUBE 侧 MATMUL**
+新增 MATMUL 专用 pass + 白名单条目 + MATMUL wrapper。**验收点：通用混编 pass 与
+ObjectEmission 通道零改动**。MATMUL 与 pipe 的差异在接口形态而非复杂度：tile 类型
+信息分散在 3 个 operand 的类型上（无 storage 生命周期、无地址重绑定），正好检验
+白名单 `tmpl-map` 的多来源映射描述力与分层假设。
+参考现有文档 `mad-lowering-contract-design.md` / `mad-semantic-op-design.md`。
+
+已核实的真实接口面（`~/pto-isa/include/pto/npu/a5/TMatmul.hpp`）：
+主入口调用点模板实参只有 `AccPhase` 一个显式参数，3 个 tile 类型由实参推导：
+
+```cpp
+template <AccPhase Phase = AccPhase::Unspecified,
+          typename TileRes, typename TileLeft, typename TileRight>
+PTO_INTERNAL void TMATMUL_IMPL(TileRes&, TileLeft&, TileRight&);   // :170
+```
+
+但家族内存在多个入口变体（quant 双 scale、bias、acc 原地累加等，:103/:185/:207），
+白名单条目与 wrapper 生成需要以"家族 + 变体选择"组织，而不是单个函数名——
+这正是"家族专用 pass"存在的理由：变体选择（如 quant/bias 形态）属于家族语义。
+
+**Phase 4 —— 工程化收尾**
+wrapper 生成进入 ptoas 正式通道（配置驱动，取代环境变量注入）；docs/测试同步。
+含 PTO-ISA 头文件路径的自动发现：本机 PTO-ISA 实际位于 `~/pto-isa`（`~/pto-isa/
+include/pto/npu/a5/*.hpp`），而 PoC 脚本默认解析到 `llvm-workspace/pto-isa/include`
+（不存在，当前依赖用户显式导出 `PTO_ISA_INCLUDE_DIR`）——正式通道需支持多候选路径
+探测 + 显式配置。
+
+## 5. 决策记录（原开放问题，已定案）
+
+1. **白名单格式：YAML**。
+   - 理由：本工作区 LLVM 无 `llvm::toml`（`Toml.h` 不在树），而 `llvm::yaml`
+     （YAMLParser/YAMLTraits）在树且属于 LLVMSupport、无额外链接依赖；
+     结构化 + 注释，pass 与 wrapper 生成器同为 C++ 侧，消费同一文件；
+   - **不与 ODS 联动**：白名单是"桥接路由与映射"的工具链策略配置，不属于 IR 定义；
+     与 ODS 联动会把桥接策略绑进 dialect，违背"通用通道"定位；
+   - Python 绑定侧复用暂不作为约束（需要时另议）。
+   - 条目 schema 草案（`llvm::yaml` 映射 IO 实现）：
+     ```yaml
+     # vpto-bridge-whitelist.yaml
+     bridge_ops:
+       - op: pto.tpush                # 路由：命中即桥接候选
+         family: pipe                  # 家族（决定家族 pass 与 wrapper 模板）
+         entry: pto_vpto_pipe_push     # wrapper 入口名
+         abi:
+           - arg: storage
+             type: ptr                 # ptr | i64 | i32 ...
+           - arg: tile
+             type: i64
+         tmpl_map:
+           - source: pipe.init         # 模板实参来源（op 属性 / operand 类型）
+             field: slot_size          # 抽取字段
+             target: Pipe.slotSize     # 目标模板实参
+     ```
+     完整字段集在 Phase 1 落地时细化。
+2. **中间形态：新内部 op `pto.bridge_call`**（StringAttr `callee` + 可变
+   operand/result），不用属性标注的 `func.call`。
+   - 理由：显式 op 可被 legalize 校验——白名单命中但家族 pass 未转换的 op 直接
+     illegal 报错，诊断清晰；属性标注易被通用变换丢失/忽略；
+   - **家族语义经 SSA result 完成**：如 TPOP 重绑定，由家族 pass 把后续 tile 使用
+     替换为 `bridge_call` 的 result（i64 slot 地址）——重绑定在家族 pass 内完成，
+     通用 pass 只做"op → call + decl"的机械降级，彻底不感知家族语义；
+   - 未来家族可携带结构化动作属性（如 subblock 绑定），不依赖 func.call 语义。
+3. **EmitC 参照边界（EmitC 侧零改动）**：
+   - **照搬**：与上下文无关的纯映射逻辑（dirMask→方向 token、split→
+     `TileSplitAxis` token、`TPipe<...>` 字段拼接顺序）；
+   - **桥接侧自建**：tile token 构建（来源 = `TileBufType` config 属性，
+     不复用 EmitC 对已转换 OpaqueType 的依赖）；
+   - **漂移兜底**：新增 lit 比对测试——同一组 op 输入下，EmitC 输出文本中的模板
+     token 与 `BridgeTokenUtils` 产出逐项一致。
+4. **MATMUL 多来源映射：不回退**。`tmpl-map` 以"声明 + 家族 pass 组装"为设计：
+   白名单条目声明哪些 operand 的哪些字段进入哪个模板槽位；具体收集与跨 operand
+   一致性校验（如 lhs.cols == rhs.rows）由家族 pass + `BridgeTokenUtils` 实现，
+   校验失败报家族级诊断。原"家族 pass 直接产出 wrapper 生成描述"的形态即常规路径
+   （wrapper 生成描述本就是家族 pass 的输出物），白名单负责其中的声明性部分，
+   不再作为回退分支存在。
+5. ~~遗留问题（控制流下 TPOP 重绑定、split≠1、无 finish 假设）~~ **本阶段不考虑**：
+   PoC 的遗留边界不随本次泛化带入。重绑定在新设计中经 `bridge_call` 的 SSA result
+   实现（见决策 2），控制流覆盖等语义问题到 Phase 2/3 的测试中按需暴露、按需处理。

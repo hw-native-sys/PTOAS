@@ -14203,6 +14203,7 @@ static LogicalResult runPipeline(ModuleOp module, const std::string &march,
   pm.enableVerifier();
   auto &kernelModulePM = pm.nest<ModuleOp>();
   kernelModulePM.addPass(std::make_unique<PrepareVPTOLLVMLoweringPass>());
+  kernelModulePM.addPass(pto::createVPTOBridgeLoweringPass());
   kernelModulePM.addPass(std::make_unique<LowerVPTOOpsPass>(march));
   kernelModulePM.addPass(std::make_unique<LowerVPTOTypesPass>());
   kernelModulePM.addPass(

@@ -426,6 +426,51 @@ def PTOMaterializeTileOpSections
   ];
 }
 
+def PTOLowerPipeFamilyOps : Pass<"pto-lower-pipe-family-ops", "mlir::func::FuncOp"> {
+  let summary = "Lower internal TPipe ops into generic VPTO bridge ops";
+  let description = [{
+    TPipe family pass of the VPTO C++ interface bridge. It rewrites the
+    internal pipe ops (pto.initialize_l2l_pipe / pto.tpush / pto.tpop /
+    pto.tfree) and the tile handles they consume (pto.alloc_tile /
+    pto.declare_tile / pto.tile_buf_addr) into generic pto.bridge_call /
+    pto.bridge_inttoptr ops that carry only wrapper callee names and ABI
+    values. All pipe family semantics (config validation, storage handle
+    flow, and the runtime rebinding of a declared tile to the FIFO slot
+    returned by TPOP) are resolved here so that the generic bridge lowering
+    stays family-agnostic.
+  }];
+  let constructor = "mlir::pto::createPTOLowerPipeFamilyOpsPass()";
+  let dependentDialects = [
+    "mlir::pto::PTODialect",
+    "mlir::arith::ArithDialect"
+  ];
+}
+
+def VPTOBridgeLowering : Pass<"vpto-bridge-lowering", "ModuleOp"> {
+  let summary = "Lower generic bridge ops into C++ wrapper calls";
+  let description = [{
+    Generic bridge lowering pass of the VPTO C++ interface bridge. It knows
+    nothing about individual PTO-ISA interface families: it validates each
+    pto.bridge_call against the bridge whitelist and mechanically lowers it
+    into a call to the wrapper entry, materializing the wrapper declaration
+    at module level. Entries carrying storage_size_callee additionally
+    synthesize the stateful-object pattern (size query + stack storage).
+    pto.bridge_inttoptr is lowered to llvm.inttoptr.
+  }];
+  let constructor = "mlir::pto::createVPTOBridgeLoweringPass()";
+  let options = [
+    Option<"whitelistPath", "whitelist-path", "std::string",
+           /*default=*/"\"\"",
+           "Path to the VPTO bridge whitelist YAML; falls back to the "
+           "PTOAS_VPTO_BRIDGE_WHITELIST environment variable">
+  ];
+  let dependentDialects = [
+    "mlir::pto::PTODialect",
+    "mlir::func::FuncDialect",
+    "mlir::LLVM::LLVMDialect"
+  ];
+}
+
 def VPTOSplitCVModule : Pass<"vpto-split-cv-module", "ModuleOp"> {
   let summary = "Split a VPTO module with cube/vector sections into kernel modules";
   let description = [{
