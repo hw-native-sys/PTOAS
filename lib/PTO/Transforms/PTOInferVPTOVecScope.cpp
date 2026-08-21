@@ -119,8 +119,35 @@ static bool hasVecScopeTypedOperandOrResult(Operation *op) {
   return false;
 }
 
+static bool isNestedInExplicitVectorScope(Operation *op) {
+  return op && op->getParentOfType<pto::VecScopeOp>();
+}
+
+static bool hasOnlyExplicitVectorScopeUsers(Operation *op) {
+  bool hasVectorScopeResult = false;
+  for (Value result : op->getResults()) {
+    if (!isVecScopeType(result.getType())) {
+      continue;
+    }
+    hasVectorScopeResult = true;
+    for (Operation *user : result.getUsers()) {
+      if (!isNestedInExplicitVectorScope(user)) {
+        return false;
+      }
+    }
+  }
+  return hasVectorScopeResult;
+}
+
 static bool requiresVectorScope(Operation *op) {
   if (!isPTOOperation(op)) {
+    return false;
+  }
+
+  // An explicit VecScope may capture a VMI value defined outside of it. Do not
+  // wrap that producer in a second, resultless inferred scope: its only users
+  // are already scoped, while moving it would make the value escape.
+  if (hasOnlyExplicitVectorScopeUsers(op)) {
     return false;
   }
 
