@@ -1653,7 +1653,11 @@ class _StructMemberRewriter:
             self._value_bindings.pop(n, None)
             self._type_bindings.pop(n, None)
         stmt.body = self.rewrite_block(stmt.body)
-        self._type_bindings, self._value_bindings = saved_t, saved_v
+        # The body may execute zero times, so bindings made only inside it do
+        # not survive; conversely the body may have run, so a binding it
+        # removed or changed can no longer be trusted after the loop.
+        self._type_bindings = self._restore_unchanged(saved_t, self._type_bindings)
+        self._value_bindings = self._restore_unchanged(saved_v, self._value_bindings)
         if stmt.orelse:
             stmt.orelse = self.rewrite_block(stmt.orelse)
         return stmt
@@ -1662,10 +1666,20 @@ class _StructMemberRewriter:
         stmt.test = self._rewrite_expr(stmt.test)
         saved_t, saved_v = dict(self._type_bindings), dict(self._value_bindings)
         stmt.body = self.rewrite_block(stmt.body)
-        self._type_bindings, self._value_bindings = saved_t, saved_v
+        self._type_bindings = self._restore_unchanged(saved_t, self._type_bindings)
+        self._value_bindings = self._restore_unchanged(saved_v, self._value_bindings)
         if stmt.orelse:
             stmt.orelse = self.rewrite_block(stmt.orelse)
         return stmt
+
+    @staticmethod
+    def _restore_unchanged(saved, after_body):
+        """Keep only pre-loop bindings the loop body left untouched."""
+        return {
+            name: meta
+            for name, meta in saved.items()
+            if name in after_body and after_body[name] == meta
+        }
 
     def _rewrite_with(self, stmt):
         for item in stmt.items:
@@ -1808,6 +1822,25 @@ class _StructMemberRewriter:
                 return [self._struct_set_stmt(base, path, node.value)]
         if node.value is not None:
             node.value = self._rewrite_expr(node.value)
+        if isinstance(node.target, ast.Name):
+            # Annotated declarations establish the same bindings as plain
+            # assignments: ``S: T = pto.struct({...})`` binds a struct type,
+            # ``state: T = pto.declare_struct(S)`` binds a struct value.
+            name = node.target.id
+            meta = self._eval_struct_meta(node.value) if node.value is not None else None
+            if meta is not None:
+                self._type_bindings[name] = meta
+                self._value_bindings.pop(name, None)
+                return [node]
+            if node.value is not None and _is_pto_attr_call(node.value, "declare_struct"):
+                arg = node.value.args[0] if node.value.args else None
+                arg_meta = self._resolve_struct_arg(arg)
+                if arg_meta is not None:
+                    self._value_bindings[name] = arg_meta
+                    self._type_bindings.pop(name, None)
+                    return [node]
+            if node.value is not None:
+                self._cancel_binding(node.target)
         return [node]
 
     def _rewrite_augassign(self, node):
@@ -1835,6 +1868,10 @@ class _StructMemberRewriter:
                 )
                 return [read, aug, set_stmt]
         node.value = self._rewrite_expr(node.value)
+        if isinstance(node.target, ast.Name):
+            # ``state += ...`` rebinds the name to a non-struct value, so its
+            # struct identity is cancelled (same rule as plain assignment).
+            self._cancel_binding(node.target)
         return [node]
 
     def _rewrite_delete(self, node):
@@ -1999,6 +2036,9 @@ class _StructMemberRewriter:
         if isinstance(node, ast.Attribute):
             if isinstance(node.value, ast.Name) and node.value.id == "pto":
                 return _ScalarField(node.attr)
+            if not isinstance(node.value, ast.Name):
+                # Multi-segment dotted names (e.g. a.b.c) are not resolvable.
+                return _UNRESOLVABLE_FIELD
             obj = self._static_env.get(node.value.id)
             if _duck_struct_descriptor(obj):
                 # A member of a known descriptor (e.g. a static dtype attribute)

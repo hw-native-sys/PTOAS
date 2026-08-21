@@ -164,7 +164,7 @@ class _MaskDescriptor(_DType):
 _STRUCT_RESERVED_FIELD_NAMES = frozenset({
     "value", "type", "surface_metadata", "field_descriptors", "field_names",
     "field_index", "field_descriptor_at", "resolve", "declared_value",
-    "field_map", "__getattr__", "__setattr__",
+    "field_map",
 })
 
 
@@ -704,7 +704,7 @@ def struct(fields: dict) -> _StructDescriptor:
 
     ``fields`` is an order-preserving ``dict[str, field_type]`` whose field names
     become the struct member-access surface: ``state.field`` lowers to
-    ``pto.struct_set/get(state, [index], ...)``.``
+    ``pto.struct_set/get(state, [index], ...)``.
     """
     return _StructDescriptor.from_named(fields)
 

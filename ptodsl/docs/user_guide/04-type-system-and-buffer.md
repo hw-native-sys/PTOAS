@@ -153,6 +153,16 @@ v = s.pt.y              # pto.struct_get(s, (1, 1))
 
 Field names must be valid Python identifiers that are not keywords, not start with an underscore, and not in the reserved set (`value`, `type`, `surface_metadata`, `field_*`, `resolve`, `declared_value`, `field_map`). Member access requires the AST source rewrite (the default `@pto.jit` mode); if source is unavailable or `ast_rewrite=False`, member access raises a clear error instead of silently creating a Python attribute. Use the canonical `pto.struct_get` / `pto.struct_set` with positional paths whenever member syntax is not available.
 
+Member access rules and diagnostics:
+
+- `state.field += value` (and other augmented assignments) lower to a read-modify-write sequence: `tmp = pto.struct_get(state, path)`, `tmp += value`, `pto.struct_set(state, path, tmp)`.
+- `state.field: T = value` is a write (`pto.struct_set`); the annotation must be a static dtype (e.g. `pto.i32`) matching the field type, and is not kept. `state.field: T` without a value is rejected.
+- `del state.field` is not supported; structs have no field-deletion semantics.
+- Every layer of the access chain must be named. Once the chain enters a positional `pto.struct_type(...)` layer, the whole member expression is rejected at rewrite time; rewrite it as a full canonical path to a scalar leaf, e.g. `pto.struct_get(state, (1, 0))`. Reading a nested struct member itself (`v = state.pt`) is likewise rejected — nested structs are not IR values; continue to a scalar leaf.
+- Rebinding the variable (`state = other`, `state += ...`) cancels its struct identity: later `state.field` is no longer rewritten and behaves like a plain Python attribute. Rebinding inside a loop body cancels the identity after the loop.
+- A struct type must not be bound to incompatible types in different branches of one `if`; declare it once at function entry or use the canonical path API.
+- Field names are compile-time constants: they never appear in the generated IR, and `pto.struct({...})` resolves to the same `!pto.struct<...>` as the equivalent positional `pto.struct_type(...)`.
+
 ## 4.2 Vector register type
 
 Vector registers hold a fixed 256-byte payload. `pto.vreg(dtype)` infers the element count automatically:

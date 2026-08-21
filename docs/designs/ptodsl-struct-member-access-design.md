@@ -293,23 +293,27 @@ def struct(fields: dict[str, FieldType]) -> _StructDescriptor:
 
 ### 6.3 运行时 surface 与 source-less fallback（`_surface_values.py`）
 
-不新增公开的 struct surface 类。`declare_struct` 返回值保持现有 `_SurfaceValue`
-包装。
+不新增**公开**的 struct surface 符号；`declare_struct` 返回内部
+`StructValue`（`RuntimeValue` 子类，仍属 `_SurfaceValue` 体系）。
 
 **source-less / 未重写路径的策略（明确，非静默）**：成员语法依赖 AST 源码可获取。
 当 `inspect.getsource()` 失败（exec / REPL / notebook）或 `ast_rewrite=False` 时，
-`_ast_rewrite.py` 现有逻辑返回原函数（[`_ast_rewrite.py:49`](file:///Users/jimmychou/work/ptoas/PTOAS/ptodsl/ptodsl/_ast_rewrite.py)）。
-此时 `state.field = value` 会退化为普通 Python 实例属性赋值（不会生成 `struct_set`），
-读取则得到 `AttributeError`——这比显式失败更危险。
+`_ast_rewrite.py` 现有逻辑返回原函数（见 `rewrite_jit_function` 的 source-less
+fallback）。此时 `state.field = value` 会退化为普通 Python 实例属性赋值（不会生成
+`struct_set`），读取则得到 `AttributeError`——这比显式失败更危险。
 
-因此给 `_SurfaceValue` 增加 `__getattr__` / `__setattr__`，**仅用于诊断**：
+因此实现引入 `StructValue(RuntimeValue)`（`_surface_values.py`），作为
+`declare_struct` 的返回类型；其 `__getattr__` / `__setattr__` **仅用于诊断**：
 
-- 当对象是 `declare_struct` 的返回值（通过一个私有标记 `_is_struct_value` 标识）且
-  访问了非内部属性时，抛出明确错误：内容为"struct 成员访问需要 AST 源码重写
+- 访问非内部属性时抛出明确错误：内容为"struct 成员访问需要 AST 源码重写
   （默认开启）；请保留 `@pto.jit` 的源码可获取性，或改用
   `pto.struct_get` / `pto.struct_set`"。
 - **绝不**通过这些魔术方法静默生成 IR。
 - 普通 `_SurfaceValue`（非 struct）不额外拦截，保持既有行为。
+
+> 注：v4 之前的草稿曾计划"不新增 surface 类、用 `_is_struct_value` 私有标记
+> 挂在 `_SurfaceValue` 上"；最终实现改用 `StructValue` 子类，诊断面相同、
+> 类型边界更清晰。
 
 这样三条路径都有确定行为：AST 重写成功（推荐）、明确报错（source-less /
 `ast_rewrite=False`）、显式 canonical path API（始终可用）。
