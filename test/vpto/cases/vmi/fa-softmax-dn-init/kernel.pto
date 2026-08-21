@@ -27,7 +27,7 @@
 // The streaming `not_init` variant and CAUSAL_MASK branch are omitted here
 // to keep the minimal input self-contained; they share the same TileOps.
 //
-// RUN: ptoas --pto-arch=a5 --pto-level=2 %s -o /dev/null
+// RUN: ptoas --pto-arch=a5 --pto-level=level2 %s -o /dev/null
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @fa_dn_softmax_128x64(%scores: !pto.ptr<f32, gm>,

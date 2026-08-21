@@ -145,17 +145,17 @@ static Value getUBMemoryObject(Operation *op) {
 }
 } // namespace
 
-static bool reverseReaches(Value sink, Value target,
-                           DenseSet<Operation *> &visited, unsigned depth,
+static bool reverseReaches(Value sink, Value target, DenseSet<Value> &visited,
+                           unsigned depth,
                            unsigned maxDepth) {
   if (sink == target)
     return true;
   if (depth > maxDepth)
     return false;
+  if (!visited.insert(sink).second)
+    return false;
 
   if (Operation *defOp = sink.getDefiningOp()) {
-    if (!visited.insert(defOp).second)
-      return false;
     if (auto iface = dyn_cast<MemoryEffectOpInterface>(defOp)) {
       SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>, 4> eff;
       iface.getEffects(eff);
@@ -209,7 +209,7 @@ static bool reverseReaches(Value sink, Value target,
 }
 
 bool vecscopemembar::valueDependsOn(Value sink, Value target) {
-  DenseSet<Operation *> visited;
+  DenseSet<Value> visited;
   return reverseReaches(sink, target, visited, 0, 32);
 }
 
