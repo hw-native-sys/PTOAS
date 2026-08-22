@@ -68,8 +68,14 @@ struct LogicalScopePlan {
   ResultlessScopePlan plan;
 };
 
+// A rematerialized clone is shared by all external users that live in the
+// same logical segment. The segment identity is (anchor op, user block): the
+// block distinguishes sibling regions of one region-bearing op (e.g. the
+// then/else blocks of an scf.if), each of which needs its own clone because a
+// clone placed in one block cannot dominate uses in the sibling block.
+using SegmentKey = std::pair<Operation *, Block *>;
 using SegmentRematCache =
-    llvm::DenseMap<Value, llvm::DenseMap<Operation *, Value>>;
+    llvm::DenseMap<Value, llvm::DenseMap<SegmentKey, Value>>;
 
 static VPTOInferenceOpClass classifyOperationForInference(Operation *op);
 static LogicalResult
@@ -356,7 +362,7 @@ cloneVecScopeProducerForUse(
   }
 
   if (auto cacheIt = cache.find(value); cacheIt != cache.end()) {
-    auto anchorIt = cacheIt->second.find(logicalScopeAnchor);
+    auto anchorIt = cacheIt->second.find({logicalScopeAnchor, user->getBlock()});
     if (anchorIt != cacheIt->second.end()) {
       return anchorIt->second.getDefiningOp();
     }
@@ -394,7 +400,8 @@ cloneVecScopeProducerForUse(
   rewriter.setInsertionPoint(user);
   Operation *clone = rewriter.clone(*producer, mapping);
   clones.try_emplace(producer, clone);
-  cache[value][logicalScopeAnchor] = clone->getResult(result.getResultNumber());
+  cache[value][{logicalScopeAnchor, user->getBlock()}] =
+      clone->getResult(result.getResultNumber());
   return clone;
 }
 
@@ -486,6 +493,18 @@ computeLogicalScopeAnchors(Block &block) {
       break;
     case VPTOInferenceOpClass::Boundary:
       flush();
+      // A region-bearing boundary op (e.g. an scf.for whose body holds a DMA)
+      // is its own logical segment: external vecscope-typed users nested
+      // inside it resolve to it via getAncestorInBlock, so register it as its
+      // own anchor identity. Without this, the anchor lookup in
+      // rematerializeEscapingValueForUserSegments misses and the escape
+      // remediation aborts with a hard error. The anchor is used only as a
+      // grouping/cache key, never as a clone insertion point. Flat boundary
+      // ops (barriers, terminators) have no nested users to resolve, so they
+      // are left unregistered.
+      if (op.getNumRegions() != 0) {
+        logicalScopeAnchors.insert({&op, &op});
+      }
       break;
     }
   }
@@ -503,7 +522,8 @@ static LogicalResult rematerializeEscapingValueForUserSegments(
 
   llvm::DenseMap<Operation *, Operation *> logicalScopeAnchors =
       computeLogicalScopeAnchors(block);
-  llvm::DenseMap<Operation *, SmallVector<OpOperand *, mlir::pto::kValue4>> usesBySegment;
+  llvm::DenseMap<SegmentKey, SmallVector<OpOperand *, mlir::pto::kValue4>>
+      usesBySegment;
 
   for (OpOperand &use : result.getUses()) {
     Operation *user = use.getOwner();
@@ -521,7 +541,10 @@ static LogicalResult rematerializeEscapingValueForUserSegments(
       return failure();
     }
 
-    usesBySegment[anchorIt->second].push_back(&use);
+    // Segment identity is (anchor, user block). For sibling regions of one
+    // region-bearing op (e.g. then/else of an scf.if) the blocks differ, so
+    // the uses land in separate segments and each gets its own clone.
+    usesBySegment[{anchorIt->second, user->getBlock()}].push_back(&use);
   }
 
   if (usesBySegment.empty()) {
@@ -529,11 +552,11 @@ static LogicalResult rematerializeEscapingValueForUserSegments(
   }
 
   for (auto &entry : usesBySegment) {
-    Operation *logicalScopeAnchor = entry.first;
+    Operation *logicalScopeAnchor = entry.first.first;
     SmallVectorImpl<OpOperand *> &uses = entry.second;
     Value replacement;
     if (auto cacheIt = cache.find(value); cacheIt != cache.end()) {
-      auto anchorIt = cacheIt->second.find(logicalScopeAnchor);
+      auto anchorIt = cacheIt->second.find(entry.first);
       if (anchorIt != cacheIt->second.end()) {
         replacement = anchorIt->second;
       }
@@ -544,9 +567,48 @@ static LogicalResult rematerializeEscapingValueForUserSegments(
         return failure();
       }
 
+      // Decide where to insert the cloned producer. Two cases:
+      //  - Flat users: the earliest user lives in `block` itself (its
+      //    getAncestorInBlock equals logicalScopeAnchor). Insert before the
+      //    anchor so the clone lands at the start of the segment, matching the
+      //    pre-existing behaviour (e.g. keep a CSE'd mask producer ahead of a
+      //    following vlds that does not use the mask).
+      //  - Nested users: the earliest user lives in a region of a
+      //    region-bearing boundary op (e.g. an scf.for holding a DMA). Its
+      //    getAncestorInBlock is the boundary op, not the user itself, so
+      //    inserting before the anchor would place the clone at body level
+      //    before the loop; that clone then joins the preceding body-level
+      //    cluster and its result escapes again into the loop body, looping
+      //    the repair indefinitely. Insert before the actual user op instead,
+      //    placing the clone inside the same nested region as the user.
+      Operation *insertionPoint = logicalScopeAnchor;
+      Operation *earliestNestedUser = nullptr;
+      for (OpOperand *use : uses) {
+        Operation *owner = use->getOwner();
+        if (!owner) {
+          continue;
+        }
+        if (owner->getBlock() == &block) {
+          // Flat user in `block`: keep the clone at the segment head.
+          continue;
+        }
+        // Nested user (lives in a region of a region-bearing boundary op):
+        // track the earliest one within this segment's block. Sibling regions
+        // are separate segments (distinct blocks in the segment key), so only
+        // compare within the same block.
+        if (!earliestNestedUser ||
+            (earliestNestedUser->getBlock() == owner->getBlock() &&
+             owner->isBeforeInBlock(earliestNestedUser))) {
+          earliestNestedUser = owner;
+        }
+      }
+      if (earliestNestedUser) {
+        insertionPoint = earliestNestedUser;
+      }
+
       llvm::DenseMap<Operation *, Operation *> clones;
       FailureOr<Operation *> clonedProducer =
-          cloneVecScopeProducerForUse(value, logicalScopeAnchor,
+          cloneVecScopeProducerForUse(value, insertionPoint,
                                       logicalScopeAnchor, cache, context,
                                       clones);
       if (failed(clonedProducer)) {
@@ -554,7 +616,7 @@ static LogicalResult rematerializeEscapingValueForUserSegments(
       }
 
       replacement = (*clonedProducer)->getResult(result.getResultNumber());
-      cache[value][logicalScopeAnchor] = replacement;
+      cache[value][entry.first] = replacement;
     }
 
     for (OpOperand *use : uses) {
