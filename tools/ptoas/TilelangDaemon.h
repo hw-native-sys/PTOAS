@@ -29,7 +29,7 @@ public:
                     const std::string &pkgPath,
                     const std::string &templateDir = "");
 
-  static void stop();
+  static bool stop();
 
   static bool isRunning();
 
