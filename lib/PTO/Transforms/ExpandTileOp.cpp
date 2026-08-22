@@ -1104,8 +1104,17 @@ ExpandState::invokeTileLibHelper(const SpecKey &key,
   ::close(tmpFD);
 
   std::string opName = "pto." + key.opName;
+  // Run the helper with full site initialization rather than `-S`. The
+  // editable (scikit-build redirect) install registers a meta-path finder
+  // via a site-package `.pth` file during site.py; `-S` skips site.py so the
+  // finder is never installed. Without it the source-tree `ptoas` package
+  // (a regular package with `__init__.py`) shadows the build-tree
+  // `ptoas.mlir` namespace package on PYTHONPATH, and the helper fails to
+  // import `ptoas.mlir.dialects.pto`. This mirrors the daemon launcher in
+  // TilelangDaemon.cpp; `SKBUILD_EDITABLE_SKIP=1` (set below) still prevents
+  // on-import rebuild recursion.
   SmallVector<StringRef> args = {
-      *pythonPath, "-S", "-m", daemonHelperModule,
+      *pythonPath, "-m", daemonHelperModule,
       "--socket",      daemonSocketPath,
       "--target",      key.targetArch,
       "--op",          opName,
