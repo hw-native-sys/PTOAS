@@ -1,0 +1,14 @@
+# Diagnostic fixture: a matmul-family tmpl_map row with an unknown source
+# token must be rejected by the whitelist validator.
+bridge_ops:
+  - op: pto.tmatmul
+    family: matmul
+    entry: pto_vpto_matmul
+    abi:
+      - type: i64
+      - type: i64
+      - type: i64
+    tmpl_map:
+      - source: pipe.init
+        field: tile
+        target: LeftTile

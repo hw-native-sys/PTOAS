@@ -452,6 +452,32 @@ def PTOLowerPipeFamilyOps : Pass<"pto-lower-pipe-family-ops", "mlir::func::FuncO
   ];
 }
 
+def PTOLowerMatmulFamilyOps : Pass<"pto-lower-matmul-family-ops", "mlir::func::FuncOp"> {
+  let summary = "Lower tile-world matmul ops into generic VPTO bridge ops";
+  let description = [{
+    MATMUL family pass of the VPTO C++ interface bridge. It rewrites the
+    tile-world matmul ops (pto.tmatmul / pto.tmatmul.acc) whose tile
+    operands resolve to planned alloc_tile addresses into generic
+    pto.bridge_call ops that carry only wrapper callee names and i64 tile
+    addresses. All family semantics (operand tile token collection, the
+    accumulation phase selection, and the multi-operand consistency) are
+    resolved here so that the generic bridge lowering stays family-agnostic.
+    Routing is whitelist driven: matmul ops absent from the whitelist keep
+    flowing through the regular tile-op expansion path.
+  }];
+  let constructor = "mlir::pto::createPTOLowerMatmulFamilyOpsPass()";
+  let options = [
+    Option<"whitelistPath", "whitelist-path", "std::string",
+           /*default=*/"\"\"",
+           "Path to the VPTO bridge whitelist YAML; falls back to the "
+           "PTOAS_VPTO_BRIDGE_WHITELIST environment variable">
+  ];
+  let dependentDialects = [
+    "mlir::pto::PTODialect",
+    "mlir::arith::ArithDialect"
+  ];
+}
+
 def VPTOBridgeLowering : Pass<"vpto-bridge-lowering", "ModuleOp"> {
   let summary = "Lower generic bridge ops into C++ wrapper calls";
   let description = [{

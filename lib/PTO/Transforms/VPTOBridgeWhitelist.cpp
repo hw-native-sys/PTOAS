@@ -80,6 +80,14 @@ bool isPipeTmplMapSource(StringRef source) {
   return source == "pipe.init" || source == "tile";
 }
 
+/// tmpl_map `source` tokens accepted for the matmul family. The tile types
+/// are spread over the matmul operand roles, so each role is its own
+/// source.
+bool isMatmulTmplMapSource(StringRef source) {
+  return source == "left_tile" || source == "right_tile" ||
+         source == "result_tile" || source == "acc_in_tile";
+}
+
 } // namespace
 
 FailureOr<BridgeWhitelist>
@@ -141,6 +149,15 @@ pto::parseBridgeWhitelist(llvm::StringRef path, llvm::raw_ostream &diagOS) {
                << entry.entry << "' uses unknown pipe-family source '"
                << field.source << "' in '" << path
                << "' (supported: pipe.init, tile)\n";
+        return failure();
+      }
+      if (entry.family == "matmul" &&
+          !isMatmulTmplMapSource(field.source)) {
+        diagOS << "VPTO bridge whitelist: tmpl_map row of entry '"
+               << entry.entry << "' uses unknown matmul-family source '"
+               << field.source << "' in '" << path
+               << "' (supported: left_tile, right_tile, result_tile, "
+                  "acc_in_tile)\n";
         return failure();
       }
     }

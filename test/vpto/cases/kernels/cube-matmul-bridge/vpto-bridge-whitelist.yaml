@@ -1,0 +1,35 @@
+# VPTO C++ interface bridge whitelist for the A5 MATMUL family bridge. The
+# wrapper source is generated and compiled by ptoas itself; this document
+# routes the IR ops to the wrapper entries. The tile types live on the
+# matmul operand roles, so the tmpl_map rows use the per-role sources; see
+# docs/designs/vpto-cpp-bridge-generalization.md.
+bridge_ops:
+  - op: pto.tmatmul
+    family: matmul
+    entry: pto_vpto_matmul
+    abi:
+      - type: i64    # result tile address
+      - type: i64    # left tile address
+      - type: i64    # right tile address
+    tmpl_map:
+      - source: left_tile
+        field: tile
+        target: LeftTile
+      - source: right_tile
+        field: tile
+        target: RightTile
+      - source: result_tile
+        field: tile
+        target: ResultTile
+  - op: pto.tmatmul.acc
+    family: matmul
+    entry: pto_vpto_matmul_acc
+    abi:
+      - type: i64    # result tile address
+      - type: i64    # accumulator input tile address
+      - type: i64    # left tile address
+      - type: i64    # right tile address
+    tmpl_map:
+      - source: acc_in_tile
+        field: tile
+        target: AccInTile

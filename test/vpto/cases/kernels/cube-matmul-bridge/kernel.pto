@@ -1,0 +1,74 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Phase 3 second interface family e2e: the cube-side tmatmul is routed to
+// the generated C++ bridge wrapper (TMATMUL) instead of the regular
+// tile-op expansion to pto.mad. The three operand tiles carry planned L0
+// addresses matching the MTE load/store targets; the result leaves L0C via
+// the fixpipe path. A successful compare proves the bridge path computes
+// the same result as the golden matmul.
+module attributes {pto.target_arch = "a5"} {
+  func.func @cube_matmul_bridge_kernel(%a: !pto.ptr<f16, gm>,
+                                       %b: !pto.ptr<f16, gm>,
+                                       %out: !pto.ptr<f32, gm>) attributes {pto.entry} {
+    func.call @cube_matmul_bridge_cube(%a, %b, %out)
+      : (!pto.ptr<f16, gm>, !pto.ptr<f16, gm>, !pto.ptr<f32, gm>) -> ()
+    return
+  }
+
+  func.func private @cube_matmul_bridge_cube(
+      %a: !pto.ptr<f16, gm>, %b: !pto.ptr<f16, gm>, %out: !pto.ptr<f32, gm>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %c16 = arith.constant 16 : i64
+    %c512 = arith.constant 512 : i64
+
+    %l1a = pto.castptr %c0 : i64 -> !pto.ptr<f16, l1>
+    %l1b = pto.castptr %c512 : i64 -> !pto.ptr<f16, l1>
+
+    %lhs = pto.alloc_tile
+      : !pto.tile_buf<loc=left, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    %rhs = pto.alloc_tile
+      : !pto.tile_buf<loc=right, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+    %acc = pto.alloc_tile
+      : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    %l0a = pto.tile_buf_addr %lhs
+      : !pto.tile_buf<loc=left, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+     -> !pto.ptr<f16, l0a>
+    %l0b = pto.tile_buf_addr %rhs
+      : !pto.tile_buf<loc=right, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+     -> !pto.ptr<f16, l0b>
+    %l0c = pto.tile_buf_addr %acc
+      : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+     -> !pto.ptr<f32, l0c>
+
+    pto.mte_gm_l1 %a, %l1a, %c512 nburst(%c1, %c0, %c0) loop(%c1, %c0, %c0)
+      : !pto.ptr<f16, gm>, !pto.ptr<f16, l1>, i64, i64, i64, i64, loop i64, i64, i64
+    pto.mte_gm_l1 %b, %l1b, %c512 nburst(%c1, %c0, %c0) loop(%c1, %c0, %c0)
+      : !pto.ptr<f16, gm>, !pto.ptr<f16, l1>, i64, i64, i64, i64, loop i64, i64, i64
+    pto.set_flag["PIPE_MTE2", "PIPE_MTE1", "EVENT_ID0"]
+    pto.wait_flag["PIPE_MTE2", "PIPE_MTE1", "EVENT_ID0"]
+    pto.mte_l1_l0a %l1a, %l0a, %c16, %c16, %c0, %c0
+      : !pto.ptr<f16, l1>, !pto.ptr<f16, l0a>, i64, i64, i64, i64
+    pto.mte_l1_l0b %l1b, %l0b, %c16, %c16, %c0, %c0 {transpose = true}
+      : !pto.ptr<f16, l1>, !pto.ptr<f16, l0b>, i64, i64, i64, i64
+    pto.set_flag["PIPE_MTE1", "PIPE_M", "EVENT_ID0"]
+    pto.wait_flag["PIPE_MTE1", "PIPE_M", "EVENT_ID0"]
+    pto.tmatmul ins(%lhs, %rhs
+      : !pto.tile_buf<loc=left, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>,
+        !pto.tile_buf<loc=right, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=col_major, fractal=512, pad=0>)
+      outs(%acc : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+    pto.set_flag["PIPE_M", "PIPE_FIX", "EVENT_ID1"]
+    pto.wait_flag["PIPE_M", "PIPE_FIX", "EVENT_ID1"]
+    pto.mte_l0c_gm %l0c, %out, %c16, %c16, %c16, %c16, %c0, %c0, nz2nd
+      : !pto.ptr<f32, l0c>, !pto.ptr<f32, gm>, i64, i64, i64, i64, i64, i64
+    pto.barrier #pto.pipe<PIPE_ALL>
+    return
+  }
+}

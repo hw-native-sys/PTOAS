@@ -17,7 +17,7 @@
 
 // RUN: not pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist.yaml" -pto-emit-vpto-bridge-wrapper 2>&1 | FileCheck %s
 
-// CHECK: error: VPTO pipe bridge: conflicting pipe bridge specialization across functions; the pipe configuration must be identical
+// CHECK: error: VPTO bridge: conflicting bridge specialization across functions; the family configurations must be identical
 
 module {
   func.func private @conflict_cube(%addr: i32)

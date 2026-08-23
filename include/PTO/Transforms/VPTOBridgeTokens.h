@@ -67,6 +67,19 @@ constexpr llvm::StringLiteral kBridgeSpecEntryPushKey = "entry.push";
 constexpr llvm::StringLiteral kBridgeSpecEntryPopKey = "entry.pop";
 constexpr llvm::StringLiteral kBridgeSpecEntryFreeKey = "entry.free";
 
+/// Spec DictionaryAttr keys for the matmul bridge specialization. The tile
+/// tokens come from the three (four for the accumulate form) tile operand
+/// types; the acc phase token is only collected for a non-Unspecified
+/// phase.
+constexpr llvm::StringLiteral kBridgeSpecLeftTileKey = "left_tile";
+constexpr llvm::StringLiteral kBridgeSpecRightTileKey = "right_tile";
+constexpr llvm::StringLiteral kBridgeSpecResultTileKey = "result_tile";
+constexpr llvm::StringLiteral kBridgeSpecAccInTileKey = "acc_in_tile";
+constexpr llvm::StringLiteral kBridgeSpecAccPhaseKey = "acc_phase";
+constexpr llvm::StringLiteral kBridgeSpecEntryMatmulKey = "entry.matmul";
+constexpr llvm::StringLiteral kBridgeSpecEntryMatmulAccKey =
+    "entry.matmul_acc";
+
 /// Builds the fully qualified `pto::TPipe<flagBase, Direction, slotSize,
 /// slotNum, localSlotNum, nosplit>` token from a local-to-local pipe init op.
 /// Fails when the op lacks a flag_base attribute or carries an unsupported

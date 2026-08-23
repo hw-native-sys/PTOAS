@@ -3247,6 +3247,10 @@ static LogicalResult runVPTOBackendPipeline(OwningOpRef<ModuleOp> &module,
   if (!hasTileOpsToExpand) {
     pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOCanonicalizeIRPass());
   }
+  // The matmul family pass runs before the pipe family pass: it erases the
+  // tile handles its bridged matmul ops consume, so the pipe family pass
+  // only sees the tile handles that remain in the function.
+  pm.addNestedPass<func::FuncOp>(pto::createPTOLowerMatmulFamilyOpsPass());
   pm.addNestedPass<func::FuncOp>(pto::createPTOLowerPipeFamilyOpsPass());
   // Render the bridge wrapper source from the spec the family pass collected
   // before the module is split into per-kind kernel modules.
