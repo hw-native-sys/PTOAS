@@ -300,3 +300,48 @@ Phase 1（白名单化）已完成，Phase 0 记录的遗留项“收窄 tile �
    建议在板端重跑一次 `fifo-tile-data-consume` 用例收尾**。
 8. **Phase 2 入口**：`BridgeTokenUtils`、wrapper 自动生成、白名单 `tmpl_map`
    消费与配置矩阵测试。
+
+## 附：Phase 2 实施记录（2026-08-24）
+
+Phase 2（参数泛化 + wrapper 自动生成，完全内置到 ptoas）已完成并验收通过：
+
+1. **配置校验移除**：家族 pass 不再拒绝非默认的 `slot_size`/`slot_num`/
+   `flag_base`/`nosplit`，pipe 属性原样流入收集到的桥接特化；
+   `BridgeTokenUtils`（`VPTOBridgeTokens.h/.cpp`）把特化渲染为
+   `pto::TPipe<...>`/`pto::Tile<...>`/`pto::TileSplitAxis::*` C++ 模板 token
+   （含元素类型映射，如 f16→half；NoneBox tile 省略 SLayout/SFractalSize
+   模板参数）。
+2. **并发竞态与修复**：家族 pass 是 func 级 nested pass，MLIR PassManager
+   会多线程并发执行各函数实例——最初在家族 pass 内直接 read-modify-write
+   模块 spec 属性导致字段随机丢失（lit 表现为 `producer_tile` 缺失）。
+   修复为两级：家族 pass 只写自己函数上的 `pto.vpto.bridge.func_spec`
+   DictionaryAttr；模块级 wrapper 生成 pass 单线程做
+   `mergeFuncSpecsIntoModule` 确定性合并，字段冲突（同一 key 不同值）报
+   "conflicting pipe bridge specialization" 诊断。
+3. **wrapper 生成 pass**：新增模块 pass `pto-emit-vpto-bridge-wrapper`，
+   合并后渲染 `pto.vpto.bridge.wrapper_source` StringAttr——TPipe/Tile
+   typedef + `__DAV_CUBE__`/`__DAV_VEC__` 守卫的 init/push/pop/free/size
+   入口；producer/consumer 角色按 pipe 方向（C2V/V2C）自动对调。
+4. **emission 内置编译**：ObjectEmission 读取 wrapper_source，cube/vec 两路
+   fatobj 编译各自注入。手写 `vpto_bridge.cpp` 与
+   `PTOAS_VPTO_{CUBE,VEC}_BRIDGE_BITCODE` env 通道已删除，
+   `run_host_vpto_validation.sh` 仅保留 `PTOAS_VPTO_BRIDGE_WHITELIST` 注入。
+5. **白名单 `tmpl_map`**：schema 定型为 `{source, field, target}` 行，
+   pipe 家族 source 仅允许 `pipe.init`/`tile`，缺键由 YAML 层报
+   `missing required key`，未知 source 由校验器报明确诊断；本阶段行内容
+   仅供校验消费，不改变收集字段。
+6. **lit 测试**：新增 5 个用例 + 3 个 fixture——配置矩阵（变体
+   slot_size=2048/slot_num=4/flag_base=8/nosplit=true、f16、acc 32×16 /
+   vec 4×16，双前缀查 func_spec 与 wrapper token）、C2V/V2C wrapper 源
+   FileCheck、tmpl_map 缺键/未知 source 诊断、跨函数 spec 冲突诊断。
+   泛型 op 打印的操作数类型（`: !pto.pipe, i64`）与单键字典裸键名打印
+   都需在 CHECK 模式里对齐。
+7. **验收**：生成 wrapper 与手写 `vpto_bridge.cpp` diff 结构等价（差异仅
+   typedef 命名/参数名/格式）；新增 lit 9/9 过（4 个 Phase 1 + 5 个新增），
+   全量 lit 回归 1767/1772（4 个失败为分支既有，RUN 行均不含桥接 pass）；
+   **CA 模拟器（dav_3510）端到端**：fifo 原样回归 compare passed；变体配置
+   （slot_num=4、flag_base=8、fifo 容量 4096）compare passed，fatobj 内
+   5 个 wrapper 入口符号确认注入。变体用例为一次性验证副本
+   （`build/vpto-variant-cases/`），未转正为常驻用例。
+8. **遗留**：`split != 1` 仍报诊断（对齐设计 §5）；`tmpl_map` 行目前仅校验
+   不消费，真正驱动模板参数替换留待后续阶段。
