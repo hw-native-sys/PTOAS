@@ -1,0 +1,88 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// You may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+// https://www.huawei.com/
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A
+// PARTICULAR PURPOSE.
+// See LICENSE for more details.
+
+// RUN: pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist.yaml" | FileCheck %s --check-prefix=FAMILY
+// RUN: pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist.yaml" "-vpto-bridge-lowering=whitelist-path=%S/Inputs/vpto-bridge-whitelist.yaml" | FileCheck %s --check-prefix=LOWER
+
+// FAMILY-LABEL: func.func private @bridge_cube
+// FAMILY: pto.bridge_call "pto_vpto_pipe_init"{{.*}}storage_size_callee = "pto_vpto_pipe_size"
+// FAMILY-SAME: -> !pto.pipe
+// FAMILY: pto.bridge_call "pto_vpto_pipe_push"
+// FAMILY-NOT: pto.alloc_tile
+// FAMILY-NOT: pto.tpush
+
+// FAMILY-LABEL: func.func private @bridge_vector
+// FAMILY: pto.bridge_call "pto_vpto_pipe_init"
+// FAMILY: pto.bridge_call "pto_vpto_pipe_pop"
+// FAMILY-SAME: -> i64
+// FAMILY: pto.bridge_inttoptr
+// FAMILY: pto.bridge_call "pto_vpto_pipe_free"
+// FAMILY-NOT: pto.declare_tile
+// FAMILY-NOT: pto.tpop
+// FAMILY-NOT: pto.tile_buf_addr
+// FAMILY-NOT: pto.tfree
+
+// LOWER-DAG: func.func private @pto_vpto_pipe_size() -> i64
+// LOWER-DAG: func.func private @pto_vpto_pipe_init(!llvm.ptr, i32)
+// LOWER-DAG: func.func private @pto_vpto_pipe_push(!llvm.ptr, i64)
+// LOWER-DAG: func.func private @pto_vpto_pipe_pop(!llvm.ptr) -> i64
+// LOWER-DAG: func.func private @pto_vpto_pipe_free(!llvm.ptr)
+
+// LOWER-LABEL: func.func private @bridge_cube
+// LOWER: call @pto_vpto_pipe_size() : () -> i64
+// LOWER: llvm.alloca
+// LOWER: call @pto_vpto_pipe_init
+// LOWER: call @pto_vpto_pipe_push
+// LOWER-NOT: pto.bridge_call
+
+// LOWER-LABEL: func.func private @bridge_vector
+// LOWER: call @pto_vpto_pipe_size() : () -> i64
+// LOWER: llvm.alloca
+// LOWER: call @pto_vpto_pipe_init
+// LOWER: call @pto_vpto_pipe_pop
+// LOWER: llvm.inttoptr
+// LOWER: call @pto_vpto_pipe_free
+// LOWER-NOT: pto.bridge_call
+// LOWER-NOT: pto.bridge_inttoptr
+
+module {
+  func.func private @bridge_cube(%addr: i32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : i64
+    %acc = pto.alloc_tile addr = %c0
+      : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    %pipe = pto.initialize_l2l_pipe{dir_mask = 1, slot_size = 1024, slot_num = 8, flag_base = 0, nosplit = false} (%addr : i32) -> !pto.pipe
+    pto.tpush(%acc, %pipe
+      : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=row_major, fractal=1024, pad=0>,
+        !pto.pipe) {split = 1}
+    return
+  }
+
+  func.func private @bridge_vector(%addr: i32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %pipe = pto.initialize_l2l_pipe{dir_mask = 1, slot_size = 1024, slot_num = 8, flag_base = 0, nosplit = false} (%addr : i32) -> !pto.pipe
+    %tile = pto.declare_tile
+      -> !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16,
+                       blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tpop(%tile, %pipe
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+        !pto.pipe) {split = 1}
+    %ub = pto.tile_buf_addr %tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+     -> !pto.ptr<f32, ub>
+    pto.tfree(%pipe : !pto.pipe) {split = 1}
+    return
+  }
+}

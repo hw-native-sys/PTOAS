@@ -36,9 +36,9 @@ struct BridgeAbiArg {
 /// One whitelist row: an IR op routed to a wrapper entry of a PTO-ISA
 /// interface family.
 struct BridgeWhitelistEntry {
-  /// IR op name, e.g. "pto.tpush". Routing metadata; the generic lowering
-  /// validates bridge calls by `entry`, and wrapper generation consumes the
-  /// full row.
+  /// IR op name, e.g. "pto.tpush". The whitelist is the routing table the
+  /// family passes consult; "internal" marks wrapper-internal helpers
+  /// (e.g. the size query entry) that are never routed from an IR op.
   std::string op;
   /// Interface family, e.g. "pipe". Selects the family pass and the wrapper
   /// template.
@@ -49,6 +49,10 @@ struct BridgeWhitelistEntry {
   /// Call-side ABI of the wrapper entry, including any synthesized
   /// arguments such as the storage pointer of stateful entries.
   std::vector<BridgeAbiArg> abi;
+  /// Wrapper entry returning the size of the stateful object owned by this
+  /// entry. Declared on stateful entries (e.g. the pipe init) and consumed
+  /// by the family pass as the bridge call storage_size_callee.
+  std::string storageSizeEntry;
 };
 
 /// Parsed whitelist document.
@@ -64,13 +68,34 @@ struct BridgeWhitelist {
     }
     return nullptr;
   }
+
+  /// Returns the entry routing the IR op `opName` (e.g. "pto.tpush"), or
+  /// nullptr. Wrapper-internal helpers (op == "internal") are never routed.
+  const BridgeWhitelistEntry *findOp(llvm::StringRef opName) const {
+    for (const BridgeWhitelistEntry &entry : bridgeOps) {
+      if (entry.op == opName && entry.op != kInternalOp) {
+        return &entry;
+      }
+    }
+    return nullptr;
+  }
+
+  /// Marker `op` value of wrapper-internal helper entries that no IR op
+  /// routes to (e.g. the stateful-object size query).
+  static constexpr llvm::StringLiteral kInternalOp = "internal";
 };
 
 /// Parses a whitelist YAML file. Diagnostics are written to `diagOS`.
-/// Rejects unreadable files, YAML syntax errors, duplicate wrapper entry
-/// names, and unsupported ABI type tokens.
+/// Rejects unreadable files, YAML syntax errors, empty fields, duplicate
+/// wrapper entry names, duplicate routed op names, unsupported ABI type
+/// tokens, and dangling storage_size_entry references.
 FailureOr<BridgeWhitelist> parseBridgeWhitelist(llvm::StringRef path,
                                                 llvm::raw_ostream &diagOS);
+
+/// Resolves the whitelist path from a pass `whitelist-path` option value,
+/// falling back to the PTOAS_VPTO_BRIDGE_WHITELIST environment variable.
+/// Returns an empty string when neither is configured.
+std::string resolveBridgeWhitelistPath(llvm::StringRef optionValue);
 
 } // namespace pto
 } // namespace mlir

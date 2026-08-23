@@ -1,12 +1,10 @@
-# VPTO C++ interface bridge whitelist for the fixed A5 C2V pipe bridge
-# (vpto_bridge.cpp). Consumed by the generic bridge lowering pass; see
+# VPTO C++ interface bridge whitelist used by the lit bridge tests. Mirrors
+# the fifo-tile-data-consume case whitelist; see
 # docs/designs/vpto-cpp-bridge-generalization.md.
 bridge_ops:
   - op: pto.initialize_l2l_pipe
     family: pipe
     entry: pto_vpto_pipe_init
-    # Wrapper entry returning sizeof(TPipe); the generic bridge lowering
-    # synthesizes the kernel-stack storage from it.
     storage_size_entry: pto_vpto_pipe_size
     abi:
       - type: ptr    # storage, synthesized by the bridge lowering

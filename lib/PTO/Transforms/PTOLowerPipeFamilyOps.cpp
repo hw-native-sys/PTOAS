@@ -19,9 +19,16 @@
 // TPOP) are resolved here; the generic bridge lowering pass only sees the
 // resulting bridge ops.
 //
+// Routing is whitelist driven: the wrapper callee of every converted op is
+// looked up in the bridge whitelist by IR op name, so this pass holds no
+// hardcoded wrapper entry names. Functions without pipe family ops are
+// left untouched entirely (their tile handles keep flowing through the
+// regular FoldTileBufIntrinsics path).
+//
 //===----------------------------------------------------------------------===//
 
 #include "PTO/IR/PTO.h"
+#include "PTO/Transforms/VPTOBridgeWhitelist.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
@@ -32,14 +39,6 @@
 namespace mlir {
 namespace pto {
 namespace {
-
-/// Wrapper callee names shared with the fixed pipe bridge wrapper
-/// (test/vpto/cases/kernels/fifo-tile-data-consume/vpto_bridge.cpp).
-static constexpr llvm::StringLiteral kPipeInitEntry = "pto_vpto_pipe_init";
-static constexpr llvm::StringLiteral kPipeSizeEntry = "pto_vpto_pipe_size";
-static constexpr llvm::StringLiteral kPipePushEntry = "pto_vpto_pipe_push";
-static constexpr llvm::StringLiteral kPipePopEntry = "pto_vpto_pipe_pop";
-static constexpr llvm::StringLiteral kPipeFreeEntry = "pto_vpto_pipe_free";
 
 /// Emits a bridge call with no results and no synthesized storage.
 static BridgeCallOp emitVoidBridgeCall(OpBuilder &builder, Location loc,
@@ -73,6 +72,17 @@ struct PTOLowerPipeFamilyOpsPass final
     : public PassWrapper<PTOLowerPipeFamilyOpsPass, OperationPass<func::FuncOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PTOLowerPipeFamilyOpsPass)
 
+  PTOLowerPipeFamilyOpsPass() = default;
+  PTOLowerPipeFamilyOpsPass(const PTOLowerPipeFamilyOpsPass &other)
+      : PassWrapper(other) {
+    copyOptionValuesFrom(&other);
+  }
+
+  Option<std::string> whitelistPath{
+      *this, "whitelist-path", llvm::cl::init(""),
+      llvm::cl::desc("Path to the VPTO bridge whitelist YAML; falls back to "
+                     "the PTOAS_VPTO_BRIDGE_WHITELIST environment variable")};
+
   llvm::StringRef getArgument() const final {
     return "pto-lower-pipe-family-ops";
   }
@@ -84,7 +94,7 @@ struct PTOLowerPipeFamilyOpsPass final
   void runOnOperation() override {
     func::FuncOp func = getOperation();
     OpBuilder builder(func);
-    bool failed = false;
+    bool hadError = false;
 
     // Collect first; rewriting during the walk would invalidate the walker.
     SmallVector<InitializeL2LPipeOp> inits;
@@ -112,10 +122,62 @@ struct PTOLowerPipeFamilyOpsPass final
       }
     });
 
+    // Whitelist-driven routing: the pass only acts on functions that carry
+    // pipe family ops. Tile handles of pipe-less functions keep flowing
+    // through the regular lowering (FoldTileBufIntrinsics), matching the
+    // pre-bridge behavior.
+    if (inits.empty() && pushes.empty() && pops.empty() && frees.empty()) {
+      return;
+    }
+
+    std::string path = resolveBridgeWhitelistPath(whitelistPath);
+    if (path.empty()) {
+      func.emitError()
+          << "pipe family ops present but no VPTO bridge whitelist "
+             "configured (set the whitelist-path pass option or "
+             "PTOAS_VPTO_BRIDGE_WHITELIST)";
+      signalPassFailure();
+      return;
+    }
+    FailureOr<BridgeWhitelist> whitelistOr =
+        parseBridgeWhitelist(path, llvm::errs());
+    if (failed(whitelistOr)) {
+      signalPassFailure();
+      return;
+    }
+    const BridgeWhitelist &whitelist = *whitelistOr;
+
+    // Resolves the whitelist entry routing `op`, or nullptr after emitting
+    // a diagnostic. Pipe ops have no non-bridge VPTO lowering, so a missing
+    // routing entry is a hard error rather than a silent fallback.
+    auto routeOp = [&](Operation *op) -> const BridgeWhitelistEntry * {
+      StringRef opName = op->getName().getStringRef();
+      const BridgeWhitelistEntry *entry = whitelist.findOp(opName);
+      if (!entry) {
+        op->emitError()
+            << "VPTO pipe bridge: '" << opName
+            << "' is not routed in the bridge whitelist '" << path << "'";
+        hadError = true;
+      }
+      return entry;
+    };
+
     // Phase 1: initialize_l2l_pipe -> storage-producing bridge init call.
     // The SSA pipe value becomes the bridge call result (the storage handle);
     // push/pop/free below consume that same value.
     for (InitializeL2LPipeOp init : inits) {
+      const BridgeWhitelistEntry *entry = routeOp(init);
+      if (!entry) {
+        continue;
+      }
+      if (entry->storageSizeEntry.empty()) {
+        init.emitError()
+            << "VPTO pipe bridge: whitelist entry '" << entry->entry
+            << "' must declare a storage_size_entry for the stateful pipe "
+               "storage";
+        hadError = true;
+        continue;
+      }
       if (!isSupportedPipeConfig(init) ||
           !isa<IntegerType>(init.getLocalAddr().getType()) ||
           cast<IntegerType>(init.getLocalAddr().getType()).getWidth() != 32) {
@@ -123,14 +185,15 @@ struct PTOLowerPipeFamilyOpsPass final
             "VPTO pipe bridge currently supports only A5 C2V local pipe, "
             "flag_base=0, slot_size=1024, slot_num=8, nosplit=false, with an "
             "i32 local buffer address");
-        failed = true;
+        hadError = true;
         continue;
       }
       builder.setInsertionPoint(init);
       BridgeCallOp call = builder.create<BridgeCallOp>(
           init.getLoc(), /*results=*/TypeRange{init.getPipe().getType()},
-          /*callee=*/kPipeInitEntry,
-          /*storage_size_callee=*/builder.getStringAttr(kPipeSizeEntry),
+          /*callee=*/entry->entry,
+          /*storage_size_callee=*/
+          builder.getStringAttr(entry->storageSizeEntry),
           /*args=*/ValueRange{init.getLocalAddr()});
       // The bridge call result becomes the storage handle: push/pop/free
       // consume the same SSA value instead of the erased pipe op.
@@ -142,15 +205,19 @@ struct PTOLowerPipeFamilyOpsPass final
     // address for the declared tile it rebinds.
     llvm::DenseMap<Value, Value> popAddresses;
     for (TPopOp pop : pops) {
+      const BridgeWhitelistEntry *entry = routeOp(pop);
+      if (!entry) {
+        continue;
+      }
       if (pop.getSplit() != 1) {
         pop.emitError("VPTO pipe bridge TPOP requires split=1");
-        failed = true;
+        hadError = true;
         continue;
       }
       builder.setInsertionPoint(pop);
       BridgeCallOp call = builder.create<BridgeCallOp>(
           pop.getLoc(), /*results=*/TypeRange{builder.getI64Type()},
-          /*callee=*/kPipePopEntry, /*storage_size_callee=*/nullptr,
+          /*callee=*/entry->entry, /*storage_size_callee=*/nullptr,
           /*args=*/ValueRange{pop.getPipeHandle()});
       popAddresses[pop.getTile()] = call.getResults().front();
       pop.erase();
@@ -163,7 +230,7 @@ struct PTOLowerPipeFamilyOpsPass final
         addr.emitError(
             "VPTO pipe bridge requires tile_buf_addr sources to be a planned "
             "alloc_tile or a declare_tile rebound by tpop");
-        failed = true;
+        hadError = true;
         continue;
       }
       builder.setInsertionPoint(addr);
@@ -175,29 +242,37 @@ struct PTOLowerPipeFamilyOpsPass final
 
     // Phase 4: tpush -> bridge push call on the planned alloc_tile address.
     for (TPushOp push : pushes) {
+      const BridgeWhitelistEntry *entry = routeOp(push);
+      if (!entry) {
+        continue;
+      }
       auto alloc = push.getTile().getDefiningOp<AllocTileOp>();
       if (push.getSplit() != 1 || !alloc || !alloc.getAddr()) {
         push.emitError("VPTO pipe bridge TPUSH requires split=1 and a tile "
                        "from an alloc_tile with a planned address");
-        failed = true;
+        hadError = true;
         continue;
       }
       builder.setInsertionPoint(push);
-      emitVoidBridgeCall(builder, push.getLoc(), kPipePushEntry,
+      emitVoidBridgeCall(builder, push.getLoc(), entry->entry,
                          ValueRange{push.getPipeHandle(), alloc.getAddr()});
       push.erase();
     }
 
     // Phase 5: tfree -> bridge free call.
     for (TFreeOp free : frees) {
+      const BridgeWhitelistEntry *entry = routeOp(free);
+      if (!entry) {
+        continue;
+      }
       if (free.getEntry() || free.getSplit() != 1) {
         free.emitError(
             "VPTO pipe bridge TFREE supports the tile-entry form with split=1");
-        failed = true;
+        hadError = true;
         continue;
       }
       builder.setInsertionPoint(free);
-      emitVoidBridgeCall(builder, free.getLoc(), kPipeFreeEntry,
+      emitVoidBridgeCall(builder, free.getLoc(), entry->entry,
                          ValueRange{free.getPipeHandle()});
       free.erase();
     }
@@ -207,7 +282,7 @@ struct PTOLowerPipeFamilyOpsPass final
       if (!alloc.use_empty()) {
         alloc.emitError("VPTO pipe bridge: alloc_tile still has users after "
                         "pipe family lowering");
-        failed = true;
+        hadError = true;
         continue;
       }
       alloc.erase();
@@ -216,13 +291,13 @@ struct PTOLowerPipeFamilyOpsPass final
       if (!decl.use_empty()) {
         decl.emitError("VPTO pipe bridge: declare_tile still has users after "
                        "pipe family lowering");
-        failed = true;
+        hadError = true;
         continue;
       }
       decl.erase();
     }
 
-    if (failed) {
+    if (hadError) {
       signalPassFailure();
     }
   }

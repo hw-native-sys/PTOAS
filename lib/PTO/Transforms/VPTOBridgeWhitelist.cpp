@@ -18,6 +18,7 @@
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/YAMLTraits.h"
+#include <cstdlib>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -37,6 +38,7 @@ template <> struct MappingTraits<BridgeWhitelistEntry> {
     io.mapRequired("family", entry.family);
     io.mapRequired("entry", entry.entry);
     io.mapOptional("abi", entry.abi);
+    io.mapOptional("storage_size_entry", entry.storageSizeEntry);
   }
 };
 
@@ -82,10 +84,23 @@ pto::parseBridgeWhitelist(llvm::StringRef path, llvm::raw_ostream &diagOS) {
   }
 
   llvm::StringSet<> seenEntries;
+  llvm::StringSet<> seenOps;
   for (const BridgeWhitelistEntry &entry : whitelist.bridgeOps) {
+    if (entry.op.empty() || entry.family.empty() || entry.entry.empty()) {
+      diagOS << "VPTO bridge whitelist: entry with op='" << entry.op
+             << "', family='" << entry.family << "', entry='" << entry.entry
+             << "' has an empty required field in '" << path << "'\n";
+      return failure();
+    }
     if (!seenEntries.insert(entry.entry).second) {
       diagOS << "VPTO bridge whitelist: duplicate wrapper entry '"
              << entry.entry << "' in '" << path << "'\n";
+      return failure();
+    }
+    if (entry.op != BridgeWhitelist::kInternalOp &&
+        !seenOps.insert(entry.op).second) {
+      diagOS << "VPTO bridge whitelist: duplicate routed op '" << entry.op
+             << "' in '" << path << "'\n";
       return failure();
     }
     for (const BridgeAbiArg &arg : entry.abi) {
@@ -97,5 +112,25 @@ pto::parseBridgeWhitelist(llvm::StringRef path, llvm::raw_ostream &diagOS) {
       }
     }
   }
+  for (const BridgeWhitelistEntry &entry : whitelist.bridgeOps) {
+    if (!entry.storageSizeEntry.empty() &&
+        !whitelist.findEntry(entry.storageSizeEntry)) {
+      diagOS << "VPTO bridge whitelist: entry '" << entry.entry
+             << "' declares storage_size_entry '" << entry.storageSizeEntry
+             << "' which is not a declared wrapper entry in '" << path
+             << "'\n";
+      return failure();
+    }
+  }
   return whitelist;
+}
+
+std::string pto::resolveBridgeWhitelistPath(llvm::StringRef optionValue) {
+  if (!optionValue.empty()) {
+    return std::string(optionValue);
+  }
+  if (const char *envPath = std::getenv("PTOAS_VPTO_BRIDGE_WHITELIST")) {
+    return envPath;
+  }
+  return {};
 }

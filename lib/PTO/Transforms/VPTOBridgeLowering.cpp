@@ -18,6 +18,11 @@
 // family passes can express "construct a template object on the kernel
 // stack" without emitting LLVM dialect ops themselves.
 //
+// The whitelist is also the routing check of last resort: any op still
+// present in the IR that the whitelist routes to a wrapper entry was
+// missed by its family pass, and is rejected with a diagnostic instead of
+// silently flowing into the regular LLVM emission path.
+//
 //===----------------------------------------------------------------------===//
 
 #include "PTO/IR/PTO.h"
@@ -28,8 +33,8 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
-#include <cstdlib>
 
 namespace mlir {
 namespace pto {
@@ -274,21 +279,15 @@ struct VPTOBridgeLoweringPass final
         hasBridgeOps = true;
       }
     });
-    if (!hasBridgeOps) {
-      return;
-    }
 
-    std::string path = whitelistPath;
+    std::string path = resolveBridgeWhitelistPath(whitelistPath);
     if (path.empty()) {
-      if (const char *envPath = std::getenv("PTOAS_VPTO_BRIDGE_WHITELIST")) {
-        path = envPath;
+      if (hasBridgeOps) {
+        module.emitError()
+            << "VPTO bridge ops present but no whitelist configured (set the "
+               "whitelist-path pass option or PTOAS_VPTO_BRIDGE_WHITELIST)";
+        signalPassFailure();
       }
-    }
-    if (path.empty()) {
-      module.emitError()
-          << "VPTO bridge ops present but no whitelist configured (set the "
-             "whitelist-path pass option or PTOAS_VPTO_BRIDGE_WHITELIST)";
-      signalPassFailure();
       return;
     }
 
@@ -299,6 +298,39 @@ struct VPTOBridgeLoweringPass final
       return;
     }
     BridgeWhitelist whitelist = std::move(*whitelistOr);
+
+    // Routing check: an op the whitelist routes to a wrapper entry must
+    // have been rewritten into bridge ops by its family pass. Leftovers
+    // mean the family pass was skipped or missed the op; reject them here
+    // instead of letting them flow into the regular emission path.
+    llvm::StringMap<const BridgeWhitelistEntry *> routedOps;
+    for (const BridgeWhitelistEntry &entry : whitelist.bridgeOps) {
+      if (entry.op != BridgeWhitelist::kInternalOp) {
+        routedOps[entry.op] = &entry;
+      }
+    }
+    bool leftoversFound = false;
+    module.walk([&](Operation *op) {
+      auto it = routedOps.find(op->getName().getStringRef());
+      if (it == routedOps.end()) {
+        return;
+      }
+      op->emitError()
+          << "VPTO bridge: '" << it->first()
+          << "' is routed to wrapper entry '" << it->second->entry
+          << "' by the bridge whitelist '" << path
+          << "' but was not lowered into a pto.bridge_call by its family "
+             "pass";
+      leftoversFound = true;
+    });
+    if (leftoversFound) {
+      signalPassFailure();
+      return;
+    }
+
+    if (!hasBridgeOps) {
+      return;
+    }
 
     BridgeTypeConverter converter(&getContext());
     ConversionTarget target(getContext());

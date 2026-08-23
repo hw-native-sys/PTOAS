@@ -440,6 +440,12 @@ def PTOLowerPipeFamilyOps : Pass<"pto-lower-pipe-family-ops", "mlir::func::FuncO
     stays family-agnostic.
   }];
   let constructor = "mlir::pto::createPTOLowerPipeFamilyOpsPass()";
+  let options = [
+    Option<"whitelistPath", "whitelist-path", "std::string",
+           /*default=*/"\"\"",
+           "Path to the VPTO bridge whitelist YAML; falls back to the "
+           "PTOAS_VPTO_BRIDGE_WHITELIST environment variable">
+  ];
   let dependentDialects = [
     "mlir::pto::PTODialect",
     "mlir::arith::ArithDialect"
