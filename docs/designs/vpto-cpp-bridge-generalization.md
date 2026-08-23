@@ -345,3 +345,43 @@ Phase 2（参数泛化 + wrapper 自动生成，完全内置到 ptoas）已完�
    （`build/vpto-variant-cases/`），未转正为常驻用例。
 8. **遗留**：`split != 1` 仍报诊断（对齐设计 §5）；`tmpl_map` 行目前仅校验
    不消费，真正驱动模板参数替换留待后续阶段。
+
+## 附：Phase 3 实施记录（2026-08-24）
+
+Phase 3（第二接口族：CUBE 侧 MATMUL）已完成并验收通过，**通用混编 pass
+（`VPTOBridgeLowering.cpp`）与 ObjectEmission 通道零改动**：
+
+1. **家族 pass**：新增 `PTOLowerMatmulFamilyOps`，将 `pto.tmatmul` /
+   `pto.tmatmul.acc` 降为 `pto.bridge_call`，ABI 值为规划地址 i64 序列
+   （tmatmul：dst/lhs/rhs 3 个；acc 变体：dst/accIn/lhs/rhs 4 个）。
+   与 pipe 的差异符合设计预期：无 storage 生命周期、无地址重绑定、
+   无 `storage_size_entry`；dst 必须来自带规划地址的 `alloc_tile`，
+   否则报 "the result tile must come from an alloc_tile with a planned
+   address" 诊断。
+2. **wrapper 生成扩展**：`VPTOBridgeWrapperGen` 渲染 matmul 家族入口
+   （`__DAV_CUBE__` 守卫）：`pto::TMATMUL(dst, lhs, rhs)` /
+   `pto::TMATMUL_ACC(dst, acc, lhs, rhs)`；`accPhase` 枚举属性
+   （`{accPhase = #pto<acc_phase final>}`）作为模板实参渲染。
+   注意 `acc_phase` 与其他 spec 字段一样经 `mergeFuncSpecsIntoModule`
+   模块共享——任一函数带 Final phase 会使全模块入口统一渲染
+   `TMATMUL<pto::AccPhase::Final>`；单内核共享 phase 策略，判定为合理。
+3. **白名单扩展**：`pto.tmatmul` → `pto_vpto_matmul`（3×i64）、
+   `pto.tmatmul.acc` → `pto_vpto_matmul_acc`（4×i64）；`tmpl_map` source
+   校验扩展 matmul 家族来源集：`left_tile`/`right_tile`/`result_tile`/
+   `acc_in_tile`，未知 source 报明确诊断（含文件路径与支持集）。
+4. **lit 测试**：新增 3 用例 + 2 fixture——家族 lowering 的 spec/wrapper
+   源双前缀检查、无地址 dst 诊断、白名单 matmul 未知 source 诊断；
+   9 个既有 bridge 用例全过。
+5. **验收**：全量 lit 回归 1775 测试、1770 过，仅 4 个分支既有失败
+   （与 Phase 2 基线一致，RUN 行均不含桥接 pass），证实分层假设——
+   家族差异全部封装在家族 pass + wrapper 渲染内。
+6. **模拟器端到端**：新增常驻用例 `test/vpto/cases/kernels/cube-matmul-bridge`
+   （16×16×16 f16，A=单位阵、B=0.25×arange，golden 为 f32 矩阵乘），
+   内核走 mte_gm_l1 → mte_l1_l0a/l0b{transpose} → tmatmul（经桥接 wrapper）
+   → mte_l0c_gm(nz2nd) → `barrier PIPE_ALL`；DEVICE=SIM compare passed。
+   要点：显式 `alloc_tile addr =` 仅 `--pto-level=level3` 可用，本 harness
+   默认 level 下用普通 `pto.alloc_tile`（由共享管线中先行运行的
+   PlanMemory 赋地址）+ `pto.tile_buf_addr` 取 l0a/l0b/l0c 指针。
+7. **遗留**：TMatmul.hpp 的 quant 双 scale/bias 等入口变体未接入
+   （家族 + 变体选择结构已就位）；`tmpl_map` 行仍仅校验不消费，
+   与 Phase 2 同口径，留待 Phase 4。
