@@ -268,3 +268,35 @@ Phase 0 已完成并验收通过。与计划的偏差与实施要点：
    `popTileAddresses` 已从 emitter 删除。
 8. **未随 Phase 0 落地**：`BridgeTokenUtils`（token 构建）与 wrapper 自动生成
    属 Phase 2，与参数泛化一起实现；白名单 `tmpl_map` 字段亦留待 Phase 2 消费。
+
+## 附：Phase 1 实施记录（2026-08-23）
+
+Phase 1（白名单化）已完成，Phase 0 记录的遗留项“收窄 tile 句柄转换范围”一并解决：
+
+1. **白名单驱动路由**：家族 pass 新增 `whitelist-path` option（与通用 pass 相同的
+   `PTOAS_VPTO_BRIDGE_WHITELIST` env 回退），按 IR op 名（`findOp`）查白名单取
+   wrapper entry；删除了全部硬编码的 `pto_vpto_pipe_*` 常量。pipe op 无白名单路由
+   时报明确诊断（pipe op 没有非桥接的 VPTO 降级路径，不做静默回退）。
+2. **schema 扩展**：init entry 新增 `storage_size_entry` 字段显式关联 size 查询
+   entry（取代家族 pass 硬编码）；`op: internal` 定型为 wrapper 内部辅助条目标记
+   （`BridgeWhitelist::kInternalOp`），不参与路由。
+3. **残留诊断**：通用 pass 降级前按白名单路由表走查 IR——命中白名单但未被家族
+   pass 转换的 op 报明确错误（指出 op 名、wrapper entry 与白名单路径），不再依赖
+   emitter illegal 列表的通用报错。
+4. **转换范围收窄**：函数内无 pipe 家族 op 时家族 pass 直接返回，tile 句柄保持走
+   常规 `FoldTileBufIntrinsics` 路径。修复了 Phase 0 的隐患：无 pipe 的
+   internal-IR 输入此前会误产 bridge op 并强制要求白名单。已核实 main 的 VPTO
+   emitter 本就不处理裸 tile 句柄 op，收窄不丢失任何既有能力。
+5. **共用与校验**：`resolveBridgeWhitelistPath`（option → env → 空）提取到
+   `VPTOBridgeWhitelist`，两个 pass 共用；白名单解析新增空字段、重复 `op` 名、
+   `storage_size_entry` 悬空引用校验。
+6. **lit 测试**：新增 4 个测试（`test/lit/vpto/vpto_bridge_*.pto` + fixture
+   `test/lit/vpto/Inputs/vpto-bridge-whitelist.yaml`）：两层 pass 链式降级输出、
+   无 pipe 函数跳过、白名单残留诊断、无白名单诊断。
+7. **验收**：新增 lit 全过；全量 lit 回归 1762 通过（4 个失败为分支既有，经
+   stash 对照确认与桥接无关）；ptoas CLI 三路手工验证——fifo 带白名单走到
+   emission（本机无 CANN 工具链，与 Phase 0 同口径）、fifo 无白名单报家族 pass
+   诊断、非 pipe 内核无白名单不受影响。**CA 模拟器端到端 compare 需板端环境，
+   建议在板端重跑一次 `fifo-tile-data-consume` 用例收尾**。
+8. **Phase 2 入口**：`BridgeTokenUtils`、wrapper 自动生成、白名单 `tmpl_map`
+   消费与配置矩阵测试。
