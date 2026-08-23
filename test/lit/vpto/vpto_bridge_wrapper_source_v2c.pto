@@ -1,0 +1,65 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// You may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+// https://www.huawei.com/
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A
+// PARTICULAR PURPOSE.
+// See LICENSE for more details.
+
+// Wrapper generation for a V2C pipe: the roles swap compared to C2V. The
+// vector core produces (push) and the cube core consumes (pop/free), so the
+// rendered source must place the push entry under __DAV_VEC__ and the
+// pop/free entries under __DAV_CUBE__, with the producer/consumer tile
+// typedefs bound accordingly.
+
+// RUN: pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist.yaml" -pto-emit-vpto-bridge-wrapper | FileCheck %s
+
+// CHECK: module attributes {{{.*}}pto.vpto.bridge.wrapper_source = "
+// CHECK-NOT: pto.vpto.bridge.func_spec
+// CHECK-SAME: using Pipe = pto::TPipe<0, pto::Direction::DIR_V2C, 1024, 8, 2, false>;
+// CHECK-SAME: using ProducerTile = pto::Tile<pto::TileType::Vec, float, 8, 16, pto::BLayout::RowMajor, 8, 16>;
+// CHECK-SAME: using ConsumerTile = pto::Tile<pto::TileType::Vec, float, 8, 16, pto::BLayout::RowMajor, 8, 16>;
+// CHECK-SAME: #ifdef __DAV_CUBE__
+// CHECK-SAME: pto::TPOP<Pipe, ConsumerTile, pto::TileSplitAxis::TILE_UP_DOWN>(pipe, tile);
+// CHECK-SAME: pto::TFREE<Pipe, pto::TileSplitAxis::TILE_UP_DOWN>(pipe);
+// CHECK-SAME: #endif
+// CHECK-SAME: #ifdef __DAV_VEC__
+// CHECK-SAME: pto::TPUSH<Pipe, ProducerTile, pto::TileSplitAxis::TILE_UP_DOWN>(pipe, tile);
+// CHECK-SAME: #endif
+
+module attributes {pto.target_arch = "a5"} {
+  func.func private @v2c_bridge_vector(%addr: i32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %c0
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %pipe = pto.initialize_l2l_pipe{dir_mask = 2, slot_size = 1024, slot_num = 8, flag_base = 0, nosplit = false} (%addr : i32) -> !pto.pipe
+    pto.tpush(%tile, %pipe
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+        !pto.pipe) {split = 1}
+    return
+  }
+
+  func.func private @v2c_bridge_cube(%addr: i32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %pipe = pto.initialize_l2l_pipe{dir_mask = 2, slot_size = 1024, slot_num = 8, flag_base = 0, nosplit = false} (%addr : i32) -> !pto.pipe
+    %tile = pto.declare_tile
+      -> !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16,
+                       blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tpop(%tile, %pipe
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+        !pto.pipe) {split = 1}
+    %ub = pto.tile_buf_addr %tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+     -> !pto.ptr<f32, ub>
+    pto.tfree(%pipe : !pto.pipe) {split = 1}
+    return
+  }
+}

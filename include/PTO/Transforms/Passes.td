@@ -477,6 +477,21 @@ def VPTOBridgeLowering : Pass<"vpto-bridge-lowering", "ModuleOp"> {
   ];
 }
 
+def VPTOBridgeWrapperGen : Pass<"pto-emit-vpto-bridge-wrapper", "ModuleOp"> {
+  let summary = "Render the VPTO bridge wrapper source from the collected spec";
+  let description = [{
+    Wrapper generation pass of the VPTO C++ interface bridge. It reads the
+    pipe bridge specialization collected by the family passes in the
+    `pto.vpto.bridge.spec` module attribute (TPipe/Tile/split C++ template
+    tokens plus the whitelist wrapper entry names), renders the complete
+    bridge wrapper C++ source, and stores it in the
+    `pto.vpto.bridge.wrapper_source` module attribute for object emission to
+    compile and link. The spec attribute is removed once rendered. Modules
+    without a bridge spec are left untouched.
+  }];
+  let constructor = "mlir::pto::createVPTOBridgeWrapperGenPass()";
+}
+
 def VPTOSplitCVModule : Pass<"vpto-split-cv-module", "ModuleOp"> {
   let summary = "Split a VPTO module with cube/vector sections into kernel modules";
   let description = [{

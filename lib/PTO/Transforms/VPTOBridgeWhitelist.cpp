@@ -32,6 +32,14 @@ template <> struct MappingTraits<BridgeAbiArg> {
   }
 };
 
+template <> struct MappingTraits<BridgeTmplMapField> {
+  static void mapping(IO &io, BridgeTmplMapField &field) {
+    io.mapRequired("source", field.source);
+    io.mapRequired("field", field.field);
+    io.mapRequired("target", field.target);
+  }
+};
+
 template <> struct MappingTraits<BridgeWhitelistEntry> {
   static void mapping(IO &io, BridgeWhitelistEntry &entry) {
     io.mapRequired("op", entry.op);
@@ -39,6 +47,7 @@ template <> struct MappingTraits<BridgeWhitelistEntry> {
     io.mapRequired("entry", entry.entry);
     io.mapOptional("abi", entry.abi);
     io.mapOptional("storage_size_entry", entry.storageSizeEntry);
+    io.mapOptional("tmpl_map", entry.tmplMap);
   }
 };
 
@@ -52,6 +61,7 @@ template <> struct MappingTraits<BridgeWhitelist> {
 } // namespace llvm
 
 LLVM_YAML_IS_SEQUENCE_VECTOR(BridgeAbiArg)
+LLVM_YAML_IS_SEQUENCE_VECTOR(BridgeTmplMapField)
 LLVM_YAML_IS_SEQUENCE_VECTOR(BridgeWhitelistEntry)
 
 namespace {
@@ -61,6 +71,13 @@ namespace {
 /// lowering and the future wrapper generator agree on the carriers.
 bool isSupportedAbiType(StringRef type) {
   return type == "ptr" || type == "i64" || type == "i32";
+}
+
+/// tmpl_map `source` tokens accepted for the pipe family. A source names the
+/// IR producer of a template argument: the pipe init op attributes or a tile
+/// operand's type.
+bool isPipeTmplMapSource(StringRef source) {
+  return source == "pipe.init" || source == "tile";
 }
 
 } // namespace
@@ -108,6 +125,22 @@ pto::parseBridgeWhitelist(llvm::StringRef path, llvm::raw_ostream &diagOS) {
         diagOS << "VPTO bridge whitelist: unsupported ABI type token '"
                << arg.type << "' for entry '" << entry.entry << "' in '"
                << path << "' (supported: ptr, i64, i32)\n";
+        return failure();
+      }
+    }
+    for (const BridgeTmplMapField &field : entry.tmplMap) {
+      if (field.source.empty() || field.field.empty() ||
+          field.target.empty()) {
+        diagOS << "VPTO bridge whitelist: tmpl_map row of entry '"
+               << entry.entry << "' has an empty source/field/target in '"
+               << path << "'\n";
+        return failure();
+      }
+      if (entry.family == "pipe" && !isPipeTmplMapSource(field.source)) {
+        diagOS << "VPTO bridge whitelist: tmpl_map row of entry '"
+               << entry.entry << "' uses unknown pipe-family source '"
+               << field.source << "' in '" << path
+               << "' (supported: pipe.init, tile)\n";
         return failure();
       }
     }

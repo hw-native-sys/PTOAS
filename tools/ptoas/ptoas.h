@@ -117,6 +117,7 @@ struct PTOASCompileResult {
   void reset() {
     textOutput.clear();
     vptoStubSource.clear();
+    vptoBridgeWrapperSource.clear();
     vptoCubeModule.reset();
     vptoVectorModule.reset();
     kind = PTOASCompileResultKind::Text;
@@ -125,6 +126,11 @@ struct PTOASCompileResult {
   PTOASCompileResultKind kind = PTOASCompileResultKind::Text;
   std::string textOutput;
   std::string vptoStubSource;
+  /// Rendered VPTO bridge wrapper C++ source (from the
+  /// `pto.vpto.bridge.wrapper_source` module attribute); compiled by object
+  /// emission and linked into the device modules. Empty when the kernel
+  /// uses no bridge interface.
+  std::string vptoBridgeWrapperSource;
   EmittedLLVMModule vptoCubeModule;
   EmittedLLVMModule vptoVectorModule;
 };

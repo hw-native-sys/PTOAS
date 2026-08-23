@@ -33,6 +33,17 @@ struct BridgeAbiArg {
   std::string type;
 };
 
+/// Declarative template-argument mapping row: an IR field (`source` +
+/// `field`) feeds a C++ template slot (`target`). Consumed by wrapper
+/// generation to validate that the collected specialization covers the
+/// declared slots; the authoritative token construction lives in
+/// VPTOBridgeTokens.
+struct BridgeTmplMapField {
+  std::string source;
+  std::string field;
+  std::string target;
+};
+
 /// One whitelist row: an IR op routed to a wrapper entry of a PTO-ISA
 /// interface family.
 struct BridgeWhitelistEntry {
@@ -53,6 +64,9 @@ struct BridgeWhitelistEntry {
   /// entry. Declared on stateful entries (e.g. the pipe init) and consumed
   /// by the family pass as the bridge call storage_size_callee.
   std::string storageSizeEntry;
+  /// Declarative IR-field -> C++ template-slot mappings for wrapper
+  /// generation. Optional; empty when the entry needs no template mapping.
+  std::vector<BridgeTmplMapField> tmplMap;
 };
 
 /// Parsed whitelist document.

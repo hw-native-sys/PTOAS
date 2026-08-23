@@ -1,0 +1,13 @@
+# tmpl_map diagnostic fixture: the row below lacks the mandatory 'target'
+# key, which the whitelist parser must reject. See
+# docs/designs/vpto-cpp-bridge-generalization.md.
+bridge_ops:
+  - op: pto.initialize_l2l_pipe
+    family: pipe
+    entry: pto_vpto_pipe_init
+    abi:
+      - type: ptr
+      - type: i32
+    tmpl_map:
+      - source: pipe.init
+        field: slot_size

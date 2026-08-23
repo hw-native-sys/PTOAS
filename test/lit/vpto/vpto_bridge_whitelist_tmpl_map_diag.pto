@@ -1,0 +1,32 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// You may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+// https://www.huawei.com/
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A
+// PARTICULAR PURPOSE.
+// See LICENSE for more details.
+
+// tmpl_map whitelist schema validation: incomplete rows (a mandatory key
+// missing) are rejected by the YAML mapping, rows with unknown pipe-family
+// source tokens by the whitelist validator; neither is silently ignored.
+
+// RUN: not pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-tmpl-missing-field.yaml" 2>&1 | FileCheck %s --check-prefix=MISSING
+// RUN: not pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-tmpl-unknown-source.yaml" 2>&1 | FileCheck %s --check-prefix=UNKNOWN
+
+// MISSING: missing required key 'target'
+// MISSING: VPTO bridge whitelist: cannot parse '{{.*}}vpto-bridge-whitelist-tmpl-missing-field.yaml'
+
+// UNKNOWN: VPTO bridge whitelist: tmpl_map row of entry 'pto_vpto_pipe_init' uses unknown pipe-family source 'pipe.pop'
+// UNKNOWN-SAME: (supported: pipe.init, tile)
+
+module {
+  func.func private @tmpl_map_diag(%addr: i32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %pipe = pto.initialize_l2l_pipe{dir_mask = 1, slot_size = 1024, slot_num = 8, flag_base = 0, nosplit = false} (%addr : i32) -> !pto.pipe
+    pto.tfree(%pipe : !pto.pipe) {split = 1}
+    return
+  }
+}

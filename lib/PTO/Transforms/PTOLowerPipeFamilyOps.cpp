@@ -28,6 +28,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/IR/PTO.h"
+#include "PTO/Transforms/VPTOBridgeTokens.h"
 #include "PTO/Transforms/VPTOBridgeWhitelist.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -95,6 +96,9 @@ struct PTOLowerPipeFamilyOpsPass final
     func::FuncOp func = getOperation();
     OpBuilder builder(func);
     bool hadError = false;
+    // Wrapper specialization fields collected while lowering this function;
+    // merged into the module bridge spec attribute once lowering succeeds.
+    SmallVector<std::pair<std::string, std::string>> specFields;
 
     // Collect first; rewriting during the walk would invalidate the walker.
     SmallVector<InitializeL2LPipeOp> inits;
@@ -178,16 +182,25 @@ struct PTOLowerPipeFamilyOpsPass final
         hadError = true;
         continue;
       }
-      if (!isSupportedPipeConfig(init) ||
-          !isa<IntegerType>(init.getLocalAddr().getType()) ||
-          cast<IntegerType>(init.getLocalAddr().getType()).getWidth() != 32) {
+      if (!isSupportedPipeCapability(init)) {
         init.emitError(
-            "VPTO pipe bridge currently supports only A5 C2V local pipe, "
-            "flag_base=0, slot_size=1024, slot_num=8, nosplit=false, with an "
-            "i32 local buffer address");
+            "VPTO pipe bridge supports only a local pipe with dir_mask 1 "
+            "(C2V) or 2 (V2C), no acc_push_epilogue, and an i32 local buffer "
+            "address");
         hadError = true;
         continue;
       }
+      auto pipeTokOr = buildBridgePipeToken(init);
+      if (failed(pipeTokOr)) {
+        init.emitError("VPTO pipe bridge failed to build the TPipe template "
+                       "token from the init attributes (flag_base is "
+                       "required, dir_mask must be 1, 2 or 3)");
+        hadError = true;
+        continue;
+      }
+      specFields.emplace_back(kBridgeSpecPipeKey, *pipeTokOr);
+      specFields.emplace_back(kBridgeSpecEntryInitKey, entry->entry);
+      specFields.emplace_back(kBridgeSpecEntrySizeKey, entry->storageSizeEntry);
       builder.setInsertionPoint(init);
       BridgeCallOp call = builder.create<BridgeCallOp>(
           init.getLoc(), /*results=*/TypeRange{init.getPipe().getType()},
@@ -214,6 +227,23 @@ struct PTOLowerPipeFamilyOpsPass final
         hadError = true;
         continue;
       }
+      auto consumerTileTy = dyn_cast<TileBufType>(pop.getTile().getType());
+      if (!consumerTileTy) {
+        pop.emitError("VPTO pipe bridge TPOP tile must be a tile_buf");
+        hadError = true;
+        continue;
+      }
+      auto consumerTokOr = buildBridgeTileToken(consumerTileTy);
+      auto popSplitTokOr = buildBridgeTileSplitToken(pop.getSplit());
+      if (failed(consumerTokOr) || failed(popSplitTokOr)) {
+        pop.emitError("VPTO pipe bridge failed to build the consumer tile or "
+                      "split template token for TPOP");
+        hadError = true;
+        continue;
+      }
+      specFields.emplace_back(kBridgeSpecConsumerTileKey, *consumerTokOr);
+      specFields.emplace_back(kBridgeSpecSplitKey, *popSplitTokOr);
+      specFields.emplace_back(kBridgeSpecEntryPopKey, entry->entry);
       builder.setInsertionPoint(pop);
       BridgeCallOp call = builder.create<BridgeCallOp>(
           pop.getLoc(), /*results=*/TypeRange{builder.getI64Type()},
@@ -253,6 +283,21 @@ struct PTOLowerPipeFamilyOpsPass final
         hadError = true;
         continue;
       }
+      auto producerTileTy = dyn_cast<TileBufType>(push.getTile().getType());
+      if (!producerTileTy) {
+        push.emitError("VPTO pipe bridge TPUSH tile must be a tile_buf");
+        hadError = true;
+        continue;
+      }
+      auto producerTokOr = buildBridgeTileToken(producerTileTy);
+      if (failed(producerTokOr)) {
+        push.emitError("VPTO pipe bridge failed to build the producer tile "
+                       "template token for TPUSH");
+        hadError = true;
+        continue;
+      }
+      specFields.emplace_back(kBridgeSpecProducerTileKey, *producerTokOr);
+      specFields.emplace_back(kBridgeSpecEntryPushKey, entry->entry);
       builder.setInsertionPoint(push);
       emitVoidBridgeCall(builder, push.getLoc(), entry->entry,
                          ValueRange{push.getPipeHandle(), alloc.getAddr()});
@@ -271,6 +316,7 @@ struct PTOLowerPipeFamilyOpsPass final
         hadError = true;
         continue;
       }
+      specFields.emplace_back(kBridgeSpecEntryFreeKey, entry->entry);
       builder.setInsertionPoint(free);
       emitVoidBridgeCall(builder, free.getLoc(), entry->entry,
                          ValueRange{free.getPipeHandle()});
@@ -297,20 +343,40 @@ struct PTOLowerPipeFamilyOpsPass final
       decl.erase();
     }
 
+    if (!hadError && !specFields.empty()) {
+      // Store the per-function specialization on the function itself; the
+      // module-level wrapper generation pass merges the per-function specs
+      // deterministically. The family pass instances may run concurrently,
+      // so they must not write the shared module attribute directly.
+      SmallVector<NamedAttribute> specAttrs;
+      for (const auto &field : specFields) {
+        specAttrs.push_back({StringAttr::get(func.getContext(), field.first),
+                             StringAttr::get(func.getContext(), field.second)});
+      }
+      func->setAttr(kBridgeFuncSpecAttrName,
+                    DictionaryAttr::get(func.getContext(), specAttrs));
+    }
+
     if (hadError) {
       signalPassFailure();
     }
   }
 
 private:
-  /// Phase 0 supports the same fixed specialization the bridge wrapper
-  /// instantiates; anything else is a diagnostic, never an approximation.
-  static bool isSupportedPipeConfig(InitializeL2LPipeOp init) {
-    return init.getDirMask() == 1 && init.getSlotSize() == 1024 &&
-           init.getSlotNum() == 8 && init.getFlagBaseAttr() &&
-           init.getFlagBaseAttr().getInt() == 0 &&
-           (!init.getNosplitAttr() || !init.getNosplitAttr().getValue()) &&
-           !init.getAccPushEpilogueAttr();
+  /// Capability check for the pipe bridge. The concrete configuration
+  /// (slot_size/slot_num/flag_base/nosplit) is read from the op attributes
+  /// and flows into the generated wrapper; only genuinely unsupported forms
+  /// are rejected here.
+  static bool isSupportedPipeCapability(InitializeL2LPipeOp init) {
+    int8_t dirMask = init.getDirMask();
+    if (dirMask != 1 && dirMask != 2)
+      return false;
+    if (init.getAccPushEpilogueAttr())
+      return false;
+    auto localAddrTy = dyn_cast<IntegerType>(init.getLocalAddr().getType());
+    if (!localAddrTy || localAddrTy.getWidth() != 32)
+      return false;
+    return true;
   }
 };
 
