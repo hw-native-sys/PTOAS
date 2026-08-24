@@ -82,7 +82,8 @@ struct PTOLowerPipeFamilyOpsPass final
   Option<std::string> whitelistPath{
       *this, "whitelist-path", llvm::cl::init(""),
       llvm::cl::desc("Path to the VPTO bridge whitelist YAML; falls back to "
-                     "the PTOAS_VPTO_BRIDGE_WHITELIST environment variable")};
+                     "the PTOAS_VPTO_BRIDGE_WHITELIST environment variable, "
+                     "then to the built-in default whitelist")};
 
   llvm::StringRef getArgument() const final {
     return "pto-lower-pipe-family-ops";
@@ -134,17 +135,14 @@ struct PTOLowerPipeFamilyOpsPass final
       return;
     }
 
+    // The whitelist always resolves through the formal chain (pass option,
+    // PTOAS_VPTO_BRIDGE_WHITELIST, built-in default), so routing is
+    // guaranteed; `whitelistName` is only for diagnostics.
     std::string path = resolveBridgeWhitelistPath(whitelistPath);
-    if (path.empty()) {
-      func.emitError()
-          << "pipe family ops present but no VPTO bridge whitelist "
-             "configured (set the whitelist-path pass option or "
-             "PTOAS_VPTO_BRIDGE_WHITELIST)";
-      signalPassFailure();
-      return;
-    }
+    std::string whitelistName =
+        path.empty() ? "<built-in vpto bridge whitelist>" : path;
     FailureOr<BridgeWhitelist> whitelistOr =
-        parseBridgeWhitelist(path, llvm::errs());
+        loadBridgeWhitelist(whitelistPath, llvm::errs());
     if (failed(whitelistOr)) {
       signalPassFailure();
       return;
@@ -160,7 +158,8 @@ struct PTOLowerPipeFamilyOpsPass final
       if (!entry) {
         op->emitError()
             << "VPTO pipe bridge: '" << opName
-            << "' is not routed in the bridge whitelist '" << path << "'";
+            << "' is not routed in the bridge whitelist '" << whitelistName
+            << "'";
         hadError = true;
       }
       return entry;

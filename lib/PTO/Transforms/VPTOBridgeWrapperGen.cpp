@@ -28,12 +28,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/Transforms/VPTOBridgeTokens.h"
+#include "PTO/Transforms/VPTOBridgeWhitelist.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/Support/raw_ostream.h"
 
 namespace mlir {
@@ -269,6 +271,66 @@ static LogicalResult mergeFuncSpecsIntoModule(ModuleOp module) {
   return success();
 }
 
+/// Maps a tmpl_map `source` to the spec keys that must carry a collected
+/// token for the declaration to be covered. The pipe `tile` source feeds
+/// both role tiles; unknown sources are rejected at whitelist parse time.
+static llvm::SmallVector<llvm::StringLiteral, 2>
+tmplMapSourceSpecKeys(llvm::StringRef source) {
+  if (source == "pipe.init")
+    return {kBridgeSpecPipeKey};
+  if (source == "tile")
+    return {kBridgeSpecProducerTileKey, kBridgeSpecConsumerTileKey};
+  if (source == "left_tile")
+    return {kBridgeSpecLeftTileKey};
+  if (source == "right_tile")
+    return {kBridgeSpecRightTileKey};
+  if (source == "result_tile")
+    return {kBridgeSpecResultTileKey};
+  if (source == "acc_in_tile")
+    return {kBridgeSpecAccInTileKey};
+  return {};
+}
+
+/// Validates the tmpl_map declarations of the whitelist entries used by the
+/// module: every declared template slot must be covered by a token the
+/// family pass collected into the spec. Field-level template argument
+/// construction stays authoritative in VPTOBridgeTokens (design decision 4);
+/// this check only guarantees the declarations are not silently dropped.
+static LogicalResult
+validateTmplMapCoverage(ModuleOp module, const BridgeWhitelist &whitelist,
+                        DictionaryAttr specAttr) {
+  llvm::StringSet<> usedEntries;
+  constexpr llvm::StringLiteral entryKeys[] = {
+      kBridgeSpecEntryInitKey,     kBridgeSpecEntrySizeKey,
+      kBridgeSpecEntryPushKey,     kBridgeSpecEntryPopKey,
+      kBridgeSpecEntryFreeKey,     kBridgeSpecEntryMatmulKey,
+      kBridgeSpecEntryMatmulAccKey,
+  };
+  for (llvm::StringLiteral key : entryKeys) {
+    if (auto value = specAttr.getAs<StringAttr>(key))
+      usedEntries.insert(value.getValue());
+  }
+
+  for (const BridgeWhitelistEntry &entry : whitelist.bridgeOps) {
+    if (!usedEntries.count(entry.entry))
+      continue;
+    for (const BridgeTmplMapField &row : entry.tmplMap) {
+      for (llvm::StringLiteral key : tmplMapSourceSpecKeys(row.source)) {
+        auto value = specAttr.getAs<StringAttr>(key);
+        if (value && !value.getValue().empty())
+          continue;
+        module.emitError()
+            << "VPTO bridge: whitelist entry '" << entry.entry
+            << "' declares tmpl_map target '" << row.target
+            << "' from source '" << row.source
+            << "', but no token was collected for it";
+        return failure();
+      }
+    }
+  }
+  return success();
+}
+
 struct VPTOBridgeWrapperGenPass final
     : public PassWrapper<VPTOBridgeWrapperGenPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(VPTOBridgeWrapperGenPass)
@@ -278,6 +340,12 @@ struct VPTOBridgeWrapperGenPass final
       : PassWrapper(other) {
     copyOptionValuesFrom(&other);
   }
+
+  Option<std::string> whitelistPath{
+      *this, "whitelist-path", llvm::cl::init(""),
+      llvm::cl::desc("Path to the VPTO bridge whitelist YAML; falls back to "
+                     "the PTOAS_VPTO_BRIDGE_WHITELIST environment variable, "
+                     "then to the built-in default whitelist")};
 
   llvm::StringRef getArgument() const final {
     return "pto-emit-vpto-bridge-wrapper";
@@ -303,6 +371,19 @@ struct VPTOBridgeWrapperGenPass final
         module->getAttrOfType<DictionaryAttr>(kBridgeSpecAttrName);
     if (!specAttr) {
       // No bridge specialization was collected; nothing to generate.
+      return;
+    }
+
+    // Consume the whitelist: the tmpl_map declarations of the entries this
+    // module uses must be covered by the collected specialization.
+    FailureOr<BridgeWhitelist> whitelistOr =
+        loadBridgeWhitelist(whitelistPath, llvm::errs());
+    if (failed(whitelistOr)) {
+      signalPassFailure();
+      return;
+    }
+    if (failed(validateTmplMapCoverage(module, *whitelistOr, specAttr))) {
+      signalPassFailure();
       return;
     }
 

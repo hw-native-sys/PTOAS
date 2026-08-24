@@ -70,7 +70,8 @@ struct PTOLowerMatmulFamilyOpsPass final
   Option<std::string> whitelistPath{
       *this, "whitelist-path", llvm::cl::init(""),
       llvm::cl::desc("Path to the VPTO bridge whitelist YAML; falls back to "
-                     "the PTOAS_VPTO_BRIDGE_WHITELIST environment variable")};
+                     "the PTOAS_VPTO_BRIDGE_WHITELIST environment variable, "
+                     "then to the built-in default whitelist")};
 
   llvm::StringRef getArgument() const final {
     return "pto-lower-matmul-family-ops";
@@ -98,15 +99,14 @@ struct PTOLowerMatmulFamilyOpsPass final
     }
 
     // Whitelist-driven routing. Unlike the pipe family, matmul ops have a
-    // non-bridge VPTO lowering (tile-op expansion to pto.mad), so an
-    // unconfigured whitelist or a missing routing entry simply leaves the
-    // op on the regular path instead of erroring.
-    std::string path = resolveBridgeWhitelistPath(whitelistPath);
-    if (path.empty()) {
-      return;
-    }
+    // non-bridge VPTO lowering (tile-op expansion to pto.mad), so a missing
+    // routing entry simply leaves the op on the regular path instead of
+    // erroring. The whitelist always resolves through the formal chain
+    // (pass option, PTOAS_VPTO_BRIDGE_WHITELIST, built-in default); kernels
+    // that want the mad expansion route the op out of the whitelist with an
+    // explicit whitelist file.
     FailureOr<BridgeWhitelist> whitelistOr =
-        parseBridgeWhitelist(path, llvm::errs());
+        loadBridgeWhitelist(whitelistPath, llvm::errs());
     if (failed(whitelistOr)) {
       signalPassFailure();
       return;

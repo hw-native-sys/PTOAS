@@ -8,8 +8,10 @@
 
 // Guard: TileLang cube tmatmul expansion on the dav-c310-cube VPTO path must
 // inline the template body and lower the tile op to cube MAD instructions.
-//
-// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --enable-tile-op-expand --emit-vpto %s -o - 2>/dev/null | FileCheck %s
+// The empty bridge whitelist opts this test out of the built-in default
+// routing (which would send pto.tmatmul to the TMATMUL C++ bridge).
+
+// RUN: env PTOAS_VPTO_BRIDGE_WHITELIST=%S/../Inputs/vpto-bridge-whitelist-no-routing.yaml ptoas --pto-arch=a5 --pto-backend=vpto --enable-tile-op-expand --emit-vpto %s -o - 2>/dev/null | FileCheck %s
 
 // CHECK-LABEL: func.func @TMATMUL
 // CHECK-NOT: pto.tmatmul ins

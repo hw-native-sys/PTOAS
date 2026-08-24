@@ -363,15 +363,11 @@ build_one_impl() {
   fi
 
   # The bridge wrapper source is generated and compiled by ptoas itself;
-  # the whitelist only routes the IR ops to the wrapper entries.
-  local bridge_whitelist=""
-  if [[ -f "${case_dir}/vpto-bridge-whitelist.yaml" ]]; then
-    bridge_whitelist="${case_dir}/vpto-bridge-whitelist.yaml"
-  fi
-
+  # routing uses the built-in default whitelist unless the caller exports
+  # PTOAS_VPTO_BRIDGE_WHITELIST or the case passes whitelist-path via
+  # ptoas.flags.
   log "[$case_name] step 1/4: emit kernel fatobj"
-  PTOAS_VPTO_BRIDGE_WHITELIST="${bridge_whitelist}" \
-    "${PTOAS_BIN}" "${ptoas_args[@]}" \
+  "${PTOAS_BIN}" "${ptoas_args[@]}" \
       "${case_dir}/kernel.pto" -o "${kernel_fatobj}"
 
   log "[$case_name] step 2/4: build launch object"

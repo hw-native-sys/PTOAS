@@ -106,10 +106,25 @@ struct BridgeWhitelist {
 FailureOr<BridgeWhitelist> parseBridgeWhitelist(llvm::StringRef path,
                                                 llvm::raw_ostream &diagOS);
 
+/// Parses a whitelist YAML document already in memory; `sourceName` is used
+/// in diagnostics (e.g. a file path or the built-in whitelist marker).
+FailureOr<BridgeWhitelist>
+parseBridgeWhitelistFromBuffer(llvm::StringRef content,
+                               llvm::StringRef sourceName,
+                               llvm::raw_ostream &diagOS);
+
 /// Resolves the whitelist path from a pass `whitelist-path` option value,
 /// falling back to the PTOAS_VPTO_BRIDGE_WHITELIST environment variable.
 /// Returns an empty string when neither is configured.
 std::string resolveBridgeWhitelistPath(llvm::StringRef optionValue);
+
+/// Loads the bridge whitelist through the formal resolution chain: pass
+/// `whitelist-path` option, then PTOAS_VPTO_BRIDGE_WHITELIST, then the
+/// built-in default whitelist (pipe + matmul families) shipped with ptoas.
+/// Always returns a parsed whitelist unless the explicitly configured file
+/// fails to parse.
+FailureOr<BridgeWhitelist> loadBridgeWhitelist(llvm::StringRef optionValue,
+                                               llvm::raw_ostream &diagOS);
 
 } // namespace pto
 } // namespace mlir

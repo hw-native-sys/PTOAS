@@ -1,0 +1,21 @@
+# VPTO bridge whitelist whose tmatmul entry declares a tmpl_map slot fed by
+# the accumulator-input tile (acc_in_tile) even though the routed op carries
+# no such operand. Used by the tmpl_map coverage diagnostic test: the
+# collected specialization has no acc_in_tile token, so wrapper generation
+# must reject the uncovered declaration. See
+# docs/designs/vpto-cpp-bridge-generalization.md.
+bridge_ops:
+  - op: pto.tmatmul
+    family: matmul
+    entry: pto_vpto_matmul
+    abi:
+      - type: i64    # result tile address
+      - type: i64    # left tile address
+      - type: i64    # right tile address
+    tmpl_map:
+      - source: left_tile
+        field: tile
+        target: LeftTile
+      - source: acc_in_tile
+        field: tile
+        target: AccInTile

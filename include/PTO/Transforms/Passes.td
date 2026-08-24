@@ -444,7 +444,8 @@ def PTOLowerPipeFamilyOps : Pass<"pto-lower-pipe-family-ops", "mlir::func::FuncO
     Option<"whitelistPath", "whitelist-path", "std::string",
            /*default=*/"\"\"",
            "Path to the VPTO bridge whitelist YAML; falls back to the "
-           "PTOAS_VPTO_BRIDGE_WHITELIST environment variable">
+           "PTOAS_VPTO_BRIDGE_WHITELIST environment variable, "
+           "then to the built-in default whitelist">
   ];
   let dependentDialects = [
     "mlir::pto::PTODialect",
@@ -470,7 +471,8 @@ def PTOLowerMatmulFamilyOps : Pass<"pto-lower-matmul-family-ops", "mlir::func::F
     Option<"whitelistPath", "whitelist-path", "std::string",
            /*default=*/"\"\"",
            "Path to the VPTO bridge whitelist YAML; falls back to the "
-           "PTOAS_VPTO_BRIDGE_WHITELIST environment variable">
+           "PTOAS_VPTO_BRIDGE_WHITELIST environment variable, "
+           "then to the built-in default whitelist">
   ];
   let dependentDialects = [
     "mlir::pto::PTODialect",
@@ -494,7 +496,8 @@ def VPTOBridgeLowering : Pass<"vpto-bridge-lowering", "ModuleOp"> {
     Option<"whitelistPath", "whitelist-path", "std::string",
            /*default=*/"\"\"",
            "Path to the VPTO bridge whitelist YAML; falls back to the "
-           "PTOAS_VPTO_BRIDGE_WHITELIST environment variable">
+           "PTOAS_VPTO_BRIDGE_WHITELIST environment variable, "
+           "then to the built-in default whitelist">
   ];
   let dependentDialects = [
     "mlir::pto::PTODialect",

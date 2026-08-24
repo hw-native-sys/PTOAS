@@ -91,19 +91,14 @@ bool isMatmulTmplMapSource(StringRef source) {
 } // namespace
 
 FailureOr<BridgeWhitelist>
-pto::parseBridgeWhitelist(llvm::StringRef path, llvm::raw_ostream &diagOS) {
-  auto bufferOr = llvm::MemoryBuffer::getFile(path);
-  if (!bufferOr) {
-    diagOS << "VPTO bridge whitelist: cannot read '" << path
-           << "': " << bufferOr.getError().message() << "\n";
-    return failure();
-  }
-
+pto::parseBridgeWhitelistFromBuffer(llvm::StringRef content,
+                                    llvm::StringRef sourceName,
+                                    llvm::raw_ostream &diagOS) {
   BridgeWhitelist whitelist;
-  llvm::yaml::Input input(bufferOr.get()->getBuffer());
+  llvm::yaml::Input input(content);
   input >> whitelist;
   if (std::error_code error = input.error()) {
-    diagOS << "VPTO bridge whitelist: cannot parse '" << path
+    diagOS << "VPTO bridge whitelist: cannot parse '" << sourceName
            << "': " << error.message() << "\n";
     return failure();
   }
@@ -114,25 +109,25 @@ pto::parseBridgeWhitelist(llvm::StringRef path, llvm::raw_ostream &diagOS) {
     if (entry.op.empty() || entry.family.empty() || entry.entry.empty()) {
       diagOS << "VPTO bridge whitelist: entry with op='" << entry.op
              << "', family='" << entry.family << "', entry='" << entry.entry
-             << "' has an empty required field in '" << path << "'\n";
+             << "' has an empty required field in '" << sourceName << "'\n";
       return failure();
     }
     if (!seenEntries.insert(entry.entry).second) {
       diagOS << "VPTO bridge whitelist: duplicate wrapper entry '"
-             << entry.entry << "' in '" << path << "'\n";
+             << entry.entry << "' in '" << sourceName << "'\n";
       return failure();
     }
     if (entry.op != BridgeWhitelist::kInternalOp &&
         !seenOps.insert(entry.op).second) {
       diagOS << "VPTO bridge whitelist: duplicate routed op '" << entry.op
-             << "' in '" << path << "'\n";
+             << "' in '" << sourceName << "'\n";
       return failure();
     }
     for (const BridgeAbiArg &arg : entry.abi) {
       if (!isSupportedAbiType(arg.type)) {
         diagOS << "VPTO bridge whitelist: unsupported ABI type token '"
                << arg.type << "' for entry '" << entry.entry << "' in '"
-               << path << "' (supported: ptr, i64, i32)\n";
+               << sourceName << "' (supported: ptr, i64, i32)\n";
         return failure();
       }
     }
@@ -141,13 +136,13 @@ pto::parseBridgeWhitelist(llvm::StringRef path, llvm::raw_ostream &diagOS) {
           field.target.empty()) {
         diagOS << "VPTO bridge whitelist: tmpl_map row of entry '"
                << entry.entry << "' has an empty source/field/target in '"
-               << path << "'\n";
+               << sourceName << "'\n";
         return failure();
       }
       if (entry.family == "pipe" && !isPipeTmplMapSource(field.source)) {
         diagOS << "VPTO bridge whitelist: tmpl_map row of entry '"
                << entry.entry << "' uses unknown pipe-family source '"
-               << field.source << "' in '" << path
+               << field.source << "' in '" << sourceName
                << "' (supported: pipe.init, tile)\n";
         return failure();
       }
@@ -155,7 +150,7 @@ pto::parseBridgeWhitelist(llvm::StringRef path, llvm::raw_ostream &diagOS) {
           !isMatmulTmplMapSource(field.source)) {
         diagOS << "VPTO bridge whitelist: tmpl_map row of entry '"
                << entry.entry << "' uses unknown matmul-family source '"
-               << field.source << "' in '" << path
+               << field.source << "' in '" << sourceName
                << "' (supported: left_tile, right_tile, result_tile, "
                   "acc_in_tile)\n";
         return failure();
@@ -167,13 +162,91 @@ pto::parseBridgeWhitelist(llvm::StringRef path, llvm::raw_ostream &diagOS) {
         !whitelist.findEntry(entry.storageSizeEntry)) {
       diagOS << "VPTO bridge whitelist: entry '" << entry.entry
              << "' declares storage_size_entry '" << entry.storageSizeEntry
-             << "' which is not a declared wrapper entry in '" << path
+             << "' which is not a declared wrapper entry in '" << sourceName
              << "'\n";
       return failure();
     }
   }
   return whitelist;
 }
+
+FailureOr<BridgeWhitelist>
+pto::parseBridgeWhitelist(llvm::StringRef path, llvm::raw_ostream &diagOS) {
+  auto bufferOr = llvm::MemoryBuffer::getFile(path);
+  if (!bufferOr) {
+    diagOS << "VPTO bridge whitelist: cannot read '" << path
+           << "': " << bufferOr.getError().message() << "\n";
+    return failure();
+  }
+  return parseBridgeWhitelistFromBuffer(bufferOr.get()->getBuffer(), path,
+                                        diagOS);
+}
+
+/// The built-in default whitelist covering the interface families bridged
+/// today: the pipe family (C2V/V2C fifo) and the matmul family (TMATMUL /
+/// TMATMUL_ACC). It keeps `ptoas --pto-backend=vpto` working out of the box;
+/// an explicit whitelist (pass option or PTOAS_VPTO_BRIDGE_WHITELIST) always
+/// overrides it. End-to-end cases under test/vpto/cases/kernels/ rely on
+/// this default, so adding a bridged family requires extending it here.
+static constexpr llvm::StringLiteral kDefaultBridgeWhitelistYaml = R"yaml(
+bridge_ops:
+  - op: pto.initialize_l2l_pipe
+    family: pipe
+    entry: pto_vpto_pipe_init
+    storage_size_entry: pto_vpto_pipe_size
+    abi:
+      - type: ptr    # storage, synthesized by the bridge lowering
+      - type: i32    # consumer local buffer address
+  - op: pto.tpush
+    family: pipe
+    entry: pto_vpto_pipe_push
+    abi:
+      - type: ptr    # storage
+      - type: i64    # producer tile address
+  - op: pto.tpop
+    family: pipe
+    entry: pto_vpto_pipe_pop
+    abi:
+      - type: ptr    # storage
+  - op: pto.tfree
+    family: pipe
+    entry: pto_vpto_pipe_free
+    abi:
+      - type: ptr    # storage
+  - op: internal    # wrapper-internal helper, not routed from an IR op
+    family: pipe
+    entry: pto_vpto_pipe_size
+    abi: []
+  - op: pto.tmatmul
+    family: matmul
+    entry: pto_vpto_matmul
+    abi:
+      - type: i64    # result tile address
+      - type: i64    # left tile address
+      - type: i64    # right tile address
+    tmpl_map:
+      - source: left_tile
+        field: tile
+        target: LeftTile
+      - source: right_tile
+        field: tile
+        target: RightTile
+      - source: result_tile
+        field: tile
+        target: ResultTile
+  - op: pto.tmatmul.acc
+    family: matmul
+    entry: pto_vpto_matmul_acc
+    abi:
+      - type: i64    # result tile address
+      - type: i64    # accumulator input tile address
+      - type: i64    # left tile address
+      - type: i64    # right tile address
+    tmpl_map:
+      - source: acc_in_tile
+        field: tile
+        target: AccInTile
+)yaml";
 
 std::string pto::resolveBridgeWhitelistPath(llvm::StringRef optionValue) {
   if (!optionValue.empty()) {
@@ -183,4 +256,16 @@ std::string pto::resolveBridgeWhitelistPath(llvm::StringRef optionValue) {
     return envPath;
   }
   return {};
+}
+
+FailureOr<BridgeWhitelist>
+pto::loadBridgeWhitelist(llvm::StringRef optionValue,
+                         llvm::raw_ostream &diagOS) {
+  std::string path = resolveBridgeWhitelistPath(optionValue);
+  if (!path.empty()) {
+    return parseBridgeWhitelist(path, diagOS);
+  }
+  return parseBridgeWhitelistFromBuffer(
+      kDefaultBridgeWhitelistYaml, "<built-in vpto bridge whitelist>",
+      diagOS);
 }

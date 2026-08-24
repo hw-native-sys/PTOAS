@@ -259,7 +259,8 @@ struct VPTOBridgeLoweringPass final
   Option<std::string> whitelistPath{
       *this, "whitelist-path", llvm::cl::init(""),
       llvm::cl::desc("Path to the VPTO bridge whitelist YAML; falls back to "
-                     "the PTOAS_VPTO_BRIDGE_WHITELIST environment variable")};
+                     "the PTOAS_VPTO_BRIDGE_WHITELIST environment variable, "
+                     "then to the built-in default whitelist")};
 
   llvm::StringRef getArgument() const final { return "vpto-bridge-lowering"; }
 
@@ -280,19 +281,15 @@ struct VPTOBridgeLoweringPass final
       }
     });
 
+    // The whitelist always resolves through the formal chain (pass option,
+    // PTOAS_VPTO_BRIDGE_WHITELIST, built-in default), so this pass always
+    // validates; `whitelistName` is only for diagnostics.
     std::string path = resolveBridgeWhitelistPath(whitelistPath);
-    if (path.empty()) {
-      if (hasBridgeOps) {
-        module.emitError()
-            << "VPTO bridge ops present but no whitelist configured (set the "
-               "whitelist-path pass option or PTOAS_VPTO_BRIDGE_WHITELIST)";
-        signalPassFailure();
-      }
-      return;
-    }
+    std::string whitelistName =
+        path.empty() ? "<built-in vpto bridge whitelist>" : path;
 
     FailureOr<BridgeWhitelist> whitelistOr =
-        parseBridgeWhitelist(path, llvm::errs());
+        loadBridgeWhitelist(whitelistPath, llvm::errs());
     if (failed(whitelistOr)) {
       signalPassFailure();
       return;
@@ -318,7 +315,7 @@ struct VPTOBridgeLoweringPass final
       op->emitError()
           << "VPTO bridge: '" << it->first()
           << "' is routed to wrapper entry '" << it->second->entry
-          << "' by the bridge whitelist '" << path
+          << "' by the bridge whitelist '" << whitelistName
           << "' but was not lowered into a pto.bridge_call by its family "
              "pass";
       leftoversFound = true;
