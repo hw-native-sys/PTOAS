@@ -16,6 +16,8 @@ namespace mlir::pto {
 /// Return whether an operation is a TileLib template expansion candidate.
 /// Frontend pipe/sync pseudo-ops use TileOpInterface for surface
 /// classification but must be handled by their dedicated lowering instead.
+/// TPrintOp is a debug op lowered directly by the VPTO/EmitC backend and
+/// needs no TileLib template expansion.
 inline bool isTileLibExpandableOp(Operation *op) {
   if (!op || !isa<TileOpInterface>(op)) {
     return false;
@@ -23,7 +25,7 @@ inline bool isTileLibExpandableOp(Operation *op) {
   return !isa<TReshapeOp, TSyncOp, TAllocToAivOp, TAllocToAicOp,
               TPushToAivOp, TPushToAicOp, TPopFromAicOp, TPopFromAivOp,
               TFreeFromAicOp, TFreeFromAivOp, TAllocOp, TPushOp, TPopOp,
-              TFreeOp>(op);
+              TFreeOp, TPrintOp>(op);
 }
 
 } // namespace mlir::pto
