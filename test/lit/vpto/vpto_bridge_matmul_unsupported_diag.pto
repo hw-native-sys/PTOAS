@@ -11,11 +11,12 @@
 
 // The bridge wrapper binds every tile to its planned address at runtime, so
 // a matmul operand backed by an alloc_tile without a planned address cannot
-// be bridged and must be rejected with a clear diagnostic.
+// be bridged and must be rejected with a clear diagnostic (which names the
+// whitelist abi binding: operand position, argument label and role).
 
-// RUN: not pto-test-opt %s "-pto-lower-matmul-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-matmul.yaml" 2>&1 | FileCheck %s
+// RUN: not pto-test-opt %s "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-matmul.yaml" 2>&1 | FileCheck %s
 
-// CHECK: error: VPTO matmul bridge: the result tile must come from an alloc_tile with a planned address
+// CHECK: error: VPTO declarative bridge: operand #2 ('dst', role result_tile) tile must come from an alloc_tile with a planned address
 
 module attributes {pto.target_arch = "a5"} {
   func.func private @matmul_unplanned_dst(%addr: i32)

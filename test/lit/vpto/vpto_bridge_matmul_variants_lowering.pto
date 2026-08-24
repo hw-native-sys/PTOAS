@@ -10,15 +10,16 @@
 
 // MATMUL entry variants: bias, MX, MX-accumulate and MX-bias. Each variant
 // spreads its tile types over the operand roles (left/right/result plus the
-// variant-specific bias and per-operand scale tiles); the matmul family pass
-// collects all roles into the per-function specialization and the wrapper
-// generation pass renders the tmpl_map-declared typedefs plus the variant
-// entry bodies. The MX-bias IR op carries no accumulation phase, so its
-// call renders without a Phase template argument even when the module-shared
-// phase is set by another variant.
+// variant-specific bias and per-operand scale tiles); the declarative bridge
+// pass collects all roles from the whitelist abi bindings into the
+// per-function specialization and the wrapper generation pass renders the
+// tmpl_map-declared typedefs plus the variant entry bodies. The MX-bias IR
+// op carries no accumulation phase, so its call renders without a Phase
+// template argument even when the module-shared phase is set by another
+// variant.
 
-// RUN: pto-test-opt %s "-pto-lower-matmul-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-matmul.yaml" | FileCheck %s --check-prefix=SPEC
-// RUN: pto-test-opt %s "-pto-lower-matmul-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-matmul.yaml" "-pto-emit-vpto-bridge-wrapper=whitelist-path=%S/Inputs/vpto-bridge-whitelist-matmul.yaml" | FileCheck %s --check-prefix=WRAP
+// RUN: pto-test-opt %s "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-matmul.yaml" | FileCheck %s --check-prefix=SPEC
+// RUN: pto-test-opt %s "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-matmul.yaml" "-pto-emit-vpto-bridge-wrapper=whitelist-path=%S/Inputs/vpto-bridge-whitelist-matmul.yaml" | FileCheck %s --check-prefix=WRAP
 
 // SPEC-LABEL: func.func private @matmul_bias_bridge_cube
 // SPEC-SAME: pto.vpto.bridge.func_spec = {

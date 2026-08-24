@@ -28,20 +28,34 @@ namespace mlir {
 namespace pto {
 
 /// ABI argument of a wrapper entry. `type` is one of the supported carrier
-/// tokens: "ptr", "i64", or "i32".
+/// tokens: "ptr", "i64", or "i32". Declarative entries additionally bind
+/// each argument to an IR operand position (`operand`, positional because
+/// MLIR exposes no generic ODS operand-name reflection), carry a
+/// diagnostic label (`arg`, the ODS operand name) and the template role
+/// the operand's tile token is collected under (`role`, which is also the
+/// spec key and a valid tmpl_map source).
 struct BridgeAbiArg {
   std::string type;
+  int64_t operand = -1;
+  std::string arg;
+  std::string role;
 };
 
 /// Declarative template-argument mapping row: an IR field (`source` +
 /// `field`) feeds a C++ template slot (`target`). Consumed by wrapper
 /// generation to validate that the collected specialization covers the
 /// declared slots; the authoritative token construction lives in
-/// VPTOBridgeTokens.
+/// VPTOBridgeTokens. For declarative entries the tile sources name abi
+/// roles; `source: attr` maps an enum attribute to a template slot, with
+/// `enumType` providing the qualified C++ enum spelling and `omitValue`
+/// the case that renders no template argument (e.g. an Unspecified
+/// accumulation phase).
 struct BridgeTmplMapField {
   std::string source;
   std::string field;
   std::string target;
+  std::string enumType;
+  std::string omitValue;
 };
 
 /// One whitelist row: an IR op routed to a wrapper entry of a PTO-ISA
@@ -54,6 +68,11 @@ struct BridgeWhitelistEntry {
   /// Interface family, e.g. "pipe". Selects the family pass and the wrapper
   /// template.
   std::string family;
+  /// Lowering channel: "declarative" routes the op through the generic
+  /// declarative bridge lowering (mechanical operand-adapter mapping, no
+  /// family pass); "family" (the default) requires the family pass to
+  /// rewrite the op into bridge ops.
+  std::string lowering = "family";
   /// Wrapper entry name, e.g. "pto_vpto_pipe_push". This is the callee the
   /// generic bridge lowering emits.
   std::string entry;
@@ -67,6 +86,15 @@ struct BridgeWhitelistEntry {
   /// Declarative IR-field -> C++ template-slot mappings for wrapper
   /// generation. Optional; empty when the entry needs no template mapping.
   std::vector<BridgeTmplMapField> tmplMap;
+
+  /// Returns whether the op lowers through the generic declarative channel.
+  bool isDeclarative() const { return lowering == kLoweringDeclarative; }
+
+  /// `lowering` value routing the op through the generic declarative
+  /// bridge lowering instead of a family pass.
+  static constexpr llvm::StringLiteral kLoweringDeclarative = "declarative";
+  /// `lowering` value (the default) keeping the op on a family pass.
+  static constexpr llvm::StringLiteral kLoweringFamily = "family";
 };
 
 /// Parsed whitelist document.

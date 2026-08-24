@@ -19,6 +19,7 @@
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/IR/PTOSyncUtils.h"
 #include "PTO/Transforms/MemoryConsistencyAttrs.h"
+#include "PTO/Transforms/PTOCppTokens.h"
 #include "PTO/Transforms/Passes.h"
 #include "Utils.h"
 
@@ -426,54 +427,9 @@ static bool isF8E8M0ElemType(Type elemTy) {
 }
 
 static std::string getEmitCScalarTypeToken(Type elemTy) {
-  if (pto::isPTOFloat8E4M3LikeType(elemTy)) {
-    return "float8_e4m3_t";
-  }
-  if (pto::isPTOFloat8E5M2LikeType(elemTy)) {
-    return "float8_e5m2_t";
-  }
-  if (isF8E8M0ElemType(elemTy)) {
-    return "float8_e8m0_t";
-  }
-  if (isa<pto::HiF8Type>(elemTy)) {
-    return "hifloat8_t";
-  }
-  if (isa<pto::F4E1M2x2Type>(elemTy)) {
-    return "float4_e1m2x2_t";
-  }
-  if (isa<pto::F4E2M1x2Type>(elemTy)) {
-    return "float4_e2m1x2_t";
-  }
-  if (elemTy.isF16()) {
-    return "half";
-  }
-  if (elemTy.isBF16()) {
-    return "bfloat16_t";
-  }
-  if (elemTy.isF32()) {
-    return "float";
-  }
-  if (elemTy.isF64()) {
-    return "double";
-  }
-  if (elemTy.isInteger(8)) {
-    return (elemTy.isSignlessInteger(8) || elemTy.isSignedInteger(8)) ? "int8_t"
-                                                                       : "uint8_t";
-  }
-  if (elemTy.isInteger(16)) {
-    return (elemTy.isSignlessInteger(16) || elemTy.isSignedInteger(16))
-               ? "int16_t"
-               : "uint16_t";
-  }
-  if (elemTy.isInteger(32)) {
-    return (elemTy.isSignlessInteger(32) || elemTy.isSignedInteger(32))
-               ? "int32_t"
-               : "uint32_t";
-  }
-  if (elemTy.isInteger(64)) {
-    return cast<IntegerType>(elemTy).isUnsigned() ? "uint64_t" : "int64_t";
-  }
-  return "float";
+  // The scalar spelling table is shared with the VPTO bridge wrapper
+  // generator (PTOCppTokens); the EmitC output context needs no qualifier.
+  return pto::getPTOCppElementTypeToken(elemTy);
 }
 
 static emitc::PointerType getEmitCPointerType(MLIRContext *ctx,
@@ -727,31 +683,22 @@ static const char *scalingRoleToken(Type elemTy,
   return "TileType::Scaling";
 }
 
-static const char *tileRoleToken(Attribute memorySpace,
+static std::string tileRoleToken(Attribute memorySpace,
                                  std::optional<Type> elemType = std::nullopt,
                                  std::optional<pto::TileBufConfigAttr> configAttr = std::nullopt) {
   if (auto asAttr = dyn_cast_or_null<pto::AddressSpaceAttr>(memorySpace)) {
-    switch (asAttr.getAddressSpace()) {
-    case pto::AddressSpace::VEC:
+    auto as = asAttr.getAddressSpace();
+    // The MX scale tiles refine the SCALING role by layout before the
+    // shared mapping is consulted.
+    if (as == pto::AddressSpace::SCALING && elemType && configAttr)
+      return scalingRoleToken(*elemType, *configAttr);
+    // Global-memory and default address spaces fall back to the vector
+    // role on the EmitC path; the shared mapping rejects them.
+    if (as == pto::AddressSpace::GM || as == pto::AddressSpace::Zero)
       return "TileType::Vec";
-    case pto::AddressSpace::MAT:
-      return "TileType::Mat";
-    case pto::AddressSpace::LEFT:
-      return "TileType::Left";
-    case pto::AddressSpace::RIGHT:
-      return "TileType::Right";
-    case pto::AddressSpace::ACC:
-      return "TileType::Acc";
-    case pto::AddressSpace::BIAS:
-      return "TileType::Bias";
-    case pto::AddressSpace::SCALING:
-      if (elemType && configAttr)
-        return scalingRoleToken(*elemType, *configAttr);
-      return "TileType::Scaling";
-    case pto::AddressSpace::GM:
-    case pto::AddressSpace::Zero:
-      return "TileType::Vec";
-    }
+    if (auto tok = pto::getPTOCppTileTypeToken(as, /*qualifier=*/"");
+        succeeded(tok))
+      return *tok;
   }
   return "TileType::Vec";
 }
@@ -1122,49 +1069,27 @@ static Value castSignlessIntToUnsignedSameWidth(ConversionPatternRewriter &rewri
 static bool needsA5NoSplitVectorGuard(Operation *op);
 
 static FailureOr<std::string> getTileSplitToken(int64_t split) {
-  switch (split) {
-  case 0:
-    return std::string("TileSplitAxis::TILE_NO_SPLIT");
-  case 1:
-    return std::string("TileSplitAxis::TILE_UP_DOWN");
-  case 2:
-    return std::string("TileSplitAxis::TILE_LEFT_RIGHT");
-  case 3:
-    return std::string("TileSplitAxis::TILE_UP_DOWN_ODD");
-  case 4:
-    return std::string("TileSplitAxis::TILE_LEFT_RIGHT_ODD");
-  default:
-    return failure();
-  }
+  return pto::getPTOCppTileSplitToken(split, /*qualifier=*/"");
 }
 
 static FailureOr<std::string>
 getTPipeDirectionToken(bool isL2G2L, int8_t dirMask, PTOArch targetArch) {
-  if (dirMask == 1) {
-    if (isL2G2L && targetArch == PTOArch::A5)
+  // The A5 "_GM" variants only apply to L2G2L pipes; the local pipe
+  // directions come from the shared mapping.
+  if (isL2G2L && targetArch == PTOArch::A5) {
+    if (dirMask == 1)
       return std::string("Direction::DIR_C2V_GM");
-    return std::string("Direction::DIR_C2V");
-  }
-  if (dirMask == 2) {
-    if (isL2G2L && targetArch == PTOArch::A5)
+    if (dirMask == 2)
       return std::string("Direction::DIR_V2C_GM");
-    return std::string("Direction::DIR_V2C");
   }
-  if (dirMask == 3)
-    return std::string("Direction::DIR_BOTH");
-  return failure();
+  return pto::getPTOCppDirectionToken(dirMask, /*qualifier=*/"");
 }
 
 static std::string buildTPipeToken(int32_t flagBase, llvm::StringRef dirTok,
                                    int32_t slotSize, int32_t slotNum,
                                    int32_t localSlotNum, bool nosplit) {
-  std::string token = "TPipe<" + std::to_string(flagBase) + ", " + dirTok.str() +
-                      ", " + std::to_string(slotSize) + ", " +
-                      std::to_string(slotNum);
-  token += ", " + std::to_string(localSlotNum);
-  token += nosplit ? ", true" : ", false";
-  token += ">";
-  return token;
+  return pto::renderTPipeSpelling(flagBase, dirTok, slotSize, slotNum,
+                                  localSlotNum, nosplit, /*qualifier=*/"");
 }
 
 static FailureOr<std::string> buildTPipeTokenFromInitOp(Operation *op,
@@ -4552,23 +4477,17 @@ static Value materializeGlobalTensorDataPointer(
 }
 
 static std::string tileBufBLayoutToken(pto::TileBufConfigAttr configAttr) {
-  std::string blTok = "BLayout::RowMajor";
-  if (auto blAttr = dyn_cast<BLayoutAttr>(configAttr.getBLayout())) {
-    if (static_cast<int32_t>(blAttr.getValue()) == 1)
-      blTok = "BLayout::ColMajor";
-  }
-  return blTok;
+  auto tok = pto::getPTOCppBLayoutToken(getTileBufBLayoutValue(configAttr),
+                                        /*qualifier=*/"");
+  assert(succeeded(tok) && "closed BLayout enum set");
+  return *tok;
 }
 
 static std::string tileBufSLayoutToken(pto::TileBufConfigAttr configAttr) {
-  std::string slTok = "SLayout::NoneBox";
-  if (auto slAttr = dyn_cast<SLayoutAttr>(configAttr.getSLayout())) {
-    int32_t slVal = static_cast<int32_t>(slAttr.getValue());
-    slTok = (slVal == 1) ? "SLayout::RowMajor"
-                         : (slVal == 2) ? "SLayout::ColMajor"
-                                        : "SLayout::NoneBox";
-  }
-  return slTok;
+  auto tok = pto::getPTOCppSLayoutToken(getTileBufSLayoutValue(configAttr),
+                                        /*qualifier=*/"");
+  assert(succeeded(tok) && "closed SLayout enum set");
+  return *tok;
 }
 
 static std::string tileBufPadToken(pto::TileBufConfigAttr configAttr) {

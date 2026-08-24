@@ -35,6 +35,18 @@ constexpr int32_t kCompactModeRowPlusOne =
 
 } // namespace
 
+llvm::StringRef AccPhaseAttr::getEnumCaseSymbol() const {
+  switch (getValue()) {
+  case AccPhase::Unspecified:
+    return "Unspecified";
+  case AccPhase::Partial:
+    return "Partial";
+  case AccPhase::Final:
+    return "Final";
+  }
+  llvm_unreachable("unknown PTO AccPhase case");
+}
+
 TileBufConfigAttr TileBufConfigAttr::getDefault(MLIRContext *ctx) {
   Builder b(ctx);
   BLayoutAttr bl = BLayoutAttr::get(ctx, BLayout::RowMajor);

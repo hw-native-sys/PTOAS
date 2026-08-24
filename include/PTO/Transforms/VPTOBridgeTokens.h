@@ -11,8 +11,9 @@
 //
 // Bridge-side construction of the PTO-ISA C++ template tokens used by the
 // generated VPTO bridge wrapper. These utilities are the bridge analogue of
-// EmitC's token builders: they follow the same construction rules but are
-// implemented independently so that neither backend depends on the other.
+// EmitC's token builders: the IR-fact -> C++ spelling mapping rules are
+// shared through PTOCppTokens, while the bridge assembly rules (fully
+// qualified spellings, NoneBox trailing-argument omission) live here.
 //
 // The tokens are fully qualified C++ type/constant spellings (e.g.
 // "pto::TPipe<0, pto::Direction::DIR_C2V, 1024, 8, 2, false>") suitable for

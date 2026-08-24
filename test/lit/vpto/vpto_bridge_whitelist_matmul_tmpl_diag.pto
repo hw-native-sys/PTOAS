@@ -9,13 +9,14 @@
 // PARTICULAR PURPOSE.
 // See LICENSE for more details.
 
-// Whitelist schema validation for the matmul family: a tmpl_map row whose
-// source token is not one of the matmul operand roles (left_tile,
-// right_tile, result_tile, acc_in_tile) is rejected, not silently ignored.
+// Whitelist schema validation for declarative entries: a tmpl_map row whose
+// source token is not one of the entry's abi roles is rejected at parse
+// time, not silently ignored (the role set replaced the old hardcoded
+// matmul source set).
 
-// RUN: not pto-test-opt %s "-pto-lower-matmul-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-matmul-unknown-source.yaml" 2>&1 | FileCheck %s
+// RUN: not pto-test-opt %s "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-matmul-unknown-source.yaml" 2>&1 | FileCheck %s
 
-// CHECK: VPTO bridge whitelist: tmpl_map row of entry 'pto_vpto_matmul' uses unknown matmul-family source 'pipe.init' in '{{.*}}vpto-bridge-whitelist-matmul-unknown-source.yaml' (supported: left_tile, right_tile, result_tile, acc_in_tile{{.*}})
+// CHECK: VPTO bridge whitelist: tmpl_map row of entry 'pto_vpto_matmul' uses source 'pipe.init' which is not an abi role of the declarative entry (roles: result_tile, left_tile, right_tile) in '{{.*}}vpto-bridge-whitelist-matmul-unknown-source.yaml'
 
 module attributes {pto.target_arch = "a5"} {
   func.func private @matmul_tmpl_diag(%addr: i32)

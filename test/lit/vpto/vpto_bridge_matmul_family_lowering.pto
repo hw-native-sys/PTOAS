@@ -11,15 +11,15 @@
 
 // Phase 3 second interface family: CUBE-side MATMUL. The tile type
 // information is spread over the three (four for the accumulate form)
-// operand tile types; the matmul family pass collects it from the operand
-// roles into the per-function specialization and the wrapper generation
-// pass renders the cube-guarded TMATMUL/TMATMUL_ACC entries. The
-// accumulation phase attribute flows into the template argument list; the
-// phase is module-shared (merged like every other spec field), so both
-// entries render with the merged phase.
+// operand tile types; the declarative bridge pass collects it from the
+// whitelist abi operand/role bindings into the per-function specialization
+// and the wrapper generation pass renders the cube-guarded TMATMUL/
+// TMATMUL_ACC entries. The accumulation phase attribute flows into the
+// template argument list; the phase is module-shared (merged like every
+// other spec field), so both entries render with the merged phase.
 
-// RUN: pto-test-opt %s "-pto-lower-matmul-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-matmul.yaml" | FileCheck %s --check-prefix=SPEC
-// RUN: pto-test-opt %s "-pto-lower-matmul-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-matmul.yaml" -pto-emit-vpto-bridge-wrapper | FileCheck %s --check-prefix=WRAP
+// RUN: pto-test-opt %s "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-matmul.yaml" | FileCheck %s --check-prefix=SPEC
+// RUN: pto-test-opt %s "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-matmul.yaml" -pto-emit-vpto-bridge-wrapper | FileCheck %s --check-prefix=WRAP
 
 // SPEC-LABEL: func.func private @matmul_bridge_cube
 // SPEC-SAME: pto.vpto.bridge.func_spec = {

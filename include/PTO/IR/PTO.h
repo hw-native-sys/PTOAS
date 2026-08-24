@@ -57,6 +57,8 @@
 // PTO Attributes
 //===----------------------------------------------------------------------===//
 
+#include "PTO/IR/PTOAttrInterfaces.h.inc"
+
 #define GET_ATTRDEF_CLASSES
 #include "PTO/IR/PTOAttrs.h.inc"
 

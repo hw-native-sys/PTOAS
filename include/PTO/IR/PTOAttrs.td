@@ -17,6 +17,7 @@
 #define MLIR_DIALECT_PTO_IR_PTOATTRS
 
 include "PTO/IR/PTODialect.td"
+include "PTO/IR/PTOAttrInterfaces.td"
 
 include "mlir/Dialect/LLVMIR/LLVMOpBase.td"
 include "mlir/IR/AttrTypeBase.td"
@@ -867,7 +868,8 @@ def PTO_AccPhaseEnum : PTO_I32Enum<
     I32EnumAttrCase<"Final", 3, "final">
   ]>;
 
-def PTO_AccPhaseAttr : EnumAttr<PTO_Dialect, PTO_AccPhaseEnum, "acc_phase"> {
+def PTO_AccPhaseAttr : EnumAttr<PTO_Dialect, PTO_AccPhaseEnum, "acc_phase",
+    [DeclareAttrInterfaceMethods<PTO_EnumTokenAttr>]> {
   let summary = "TMATMUL / TMATMUL_ACC accumulation phase attribute";
 }
 

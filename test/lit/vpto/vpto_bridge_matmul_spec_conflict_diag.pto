@@ -13,9 +13,9 @@
 // deduplicate; a different token for a field already collected is
 // diagnosed instead of crashing the spec DictionaryAttr assembly.
 
-// RUN: not pto-test-opt %s -pto-lower-matmul-family-ops 2>&1 | FileCheck %s
+// RUN: not pto-test-opt %s -pto-lower-declarative-bridge-ops 2>&1 | FileCheck %s
 
-// CHECK: VPTO matmul bridge spec field 'left_tile' was already collected as 'pto::Tile<pto::TileType::Left, half, 16, 16, pto::BLayout::ColMajor, 16, 16, pto::SLayout::RowMajor, 512>'; the wrapper renders one token per spec field
+// CHECK: VPTO declarative bridge spec field 'left_tile' was already collected as 'pto::Tile<pto::TileType::Left, half, 16, 16, pto::BLayout::ColMajor, 16, 16, pto::SLayout::RowMajor, 512>'; the wrapper renders one token per spec field
 
 module attributes {pto.target_arch = "a5"} {
   func.func private @matmul_conflict_cube(%addr: i32)

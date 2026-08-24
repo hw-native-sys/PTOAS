@@ -1,17 +1,21 @@
 # VPTO C++ interface bridge whitelist for the MATMUL family lit tests. The
-# tile types are spread over the matmul operand roles, so the tmpl_map rows
-# use the per-role sources (left_tile/right_tile/result_tile/acc_in_tile/
-# bias_tile/a_scale_tile/b_scale_tile). Variant entries declare
-# the full role-tile set they render; duplicate typedef targets deduplicate
-# at render time.
+# entries lower through the declarative channel: each abi row binds a
+# wrapper argument to an IR operand position (positional, with the ODS
+# operand name as the diagnostic label) and a template role; the tile types
+# are spread over the matmul operand roles, so the tmpl_map rows use the
+# per-role sources. The attr row maps the accPhase enum attribute, omitting
+# the Unspecified case (and entries whose IR op carries no phase at all).
+# Variant entries declare the full role-tile set they render; duplicate
+# typedef targets deduplicate at render time.
 bridge_ops:
   - op: pto.tmatmul
     family: matmul
+    lowering: declarative
     entry: pto_vpto_matmul
     abi:
-      - type: i64    # result tile address
-      - type: i64    # left tile address
-      - type: i64    # right tile address
+      - {operand: 2, arg: dst, type: i64, role: result_tile}
+      - {operand: 0, arg: lhs, type: i64, role: left_tile}
+      - {operand: 1, arg: rhs, type: i64, role: right_tile}
     tmpl_map:
       - source: left_tile
         field: tile
@@ -22,26 +26,38 @@ bridge_ops:
       - source: result_tile
         field: tile
         target: ResultTile
+      - source: attr
+        field: acc_phase
+        target: AccPhase
+        enum_type: pto::AccPhase
+        omit_value: Unspecified
   - op: pto.tmatmul.acc
     family: matmul
+    lowering: declarative
     entry: pto_vpto_matmul_acc
     abi:
-      - type: i64    # result tile address
-      - type: i64    # accumulator input tile address
-      - type: i64    # left tile address
-      - type: i64    # right tile address
+      - {operand: 3, arg: dst, type: i64, role: result_tile}
+      - {operand: 0, arg: acc_in, type: i64, role: acc_in_tile}
+      - {operand: 1, arg: lhs, type: i64, role: left_tile}
+      - {operand: 2, arg: rhs, type: i64, role: right_tile}
     tmpl_map:
       - source: acc_in_tile
         field: tile
         target: AccInTile
+      - source: attr
+        field: acc_phase
+        target: AccPhase
+        enum_type: pto::AccPhase
+        omit_value: Unspecified
   - op: pto.tmatmul.bias
     family: matmul
+    lowering: declarative
     entry: pto_vpto_matmul_bias
     abi:
-      - type: i64    # result tile address
-      - type: i64    # left tile address
-      - type: i64    # right tile address
-      - type: i64    # bias tile address
+      - {operand: 3, arg: dst, type: i64, role: result_tile}
+      - {operand: 0, arg: a, type: i64, role: left_tile}
+      - {operand: 1, arg: b, type: i64, role: right_tile}
+      - {operand: 2, arg: bias, type: i64, role: bias_tile}
     tmpl_map:
       - source: left_tile
         field: tile
@@ -55,15 +71,21 @@ bridge_ops:
       - source: bias_tile
         field: tile
         target: BiasTile
+      - source: attr
+        field: acc_phase
+        target: AccPhase
+        enum_type: pto::AccPhase
+        omit_value: Unspecified
   - op: pto.tmatmul.mx
     family: matmul
+    lowering: declarative
     entry: pto_vpto_matmul_mx
     abi:
-      - type: i64    # result tile address
-      - type: i64    # left tile address
-      - type: i64    # left scale tile address
-      - type: i64    # right tile address
-      - type: i64    # right scale tile address
+      - {operand: 4, arg: dst, type: i64, role: result_tile}
+      - {operand: 0, arg: a, type: i64, role: left_tile}
+      - {operand: 1, arg: a_scale, type: i64, role: a_scale_tile}
+      - {operand: 2, arg: b, type: i64, role: right_tile}
+      - {operand: 3, arg: b_scale, type: i64, role: b_scale_tile}
     tmpl_map:
       - source: left_tile
         field: tile
@@ -80,16 +102,22 @@ bridge_ops:
       - source: b_scale_tile
         field: tile
         target: BScaleTile
+      - source: attr
+        field: acc_phase
+        target: AccPhase
+        enum_type: pto::AccPhase
+        omit_value: Unspecified
   - op: pto.tmatmul.mx.acc
     family: matmul
+    lowering: declarative
     entry: pto_vpto_matmul_mx_acc
     abi:
-      - type: i64    # result tile address
-      - type: i64    # accumulator input tile address
-      - type: i64    # left tile address
-      - type: i64    # left scale tile address
-      - type: i64    # right tile address
-      - type: i64    # right scale tile address
+      - {operand: 5, arg: dst, type: i64, role: result_tile}
+      - {operand: 0, arg: c_in, type: i64, role: acc_in_tile}
+      - {operand: 1, arg: a, type: i64, role: left_tile}
+      - {operand: 2, arg: a_scale, type: i64, role: a_scale_tile}
+      - {operand: 3, arg: b, type: i64, role: right_tile}
+      - {operand: 4, arg: b_scale, type: i64, role: b_scale_tile}
     tmpl_map:
       - source: left_tile
         field: tile
@@ -109,16 +137,22 @@ bridge_ops:
       - source: b_scale_tile
         field: tile
         target: BScaleTile
+      - source: attr
+        field: acc_phase
+        target: AccPhase
+        enum_type: pto::AccPhase
+        omit_value: Unspecified
   - op: pto.tmatmul.mx.bias
     family: matmul
+    lowering: declarative
     entry: pto_vpto_matmul_mx_bias
     abi:
-      - type: i64    # result tile address
-      - type: i64    # left tile address
-      - type: i64    # left scale tile address
-      - type: i64    # right tile address
-      - type: i64    # right scale tile address
-      - type: i64    # bias tile address
+      - {operand: 5, arg: dst, type: i64, role: result_tile}
+      - {operand: 0, arg: a, type: i64, role: left_tile}
+      - {operand: 1, arg: a_scale, type: i64, role: a_scale_tile}
+      - {operand: 2, arg: b, type: i64, role: right_tile}
+      - {operand: 3, arg: b_scale, type: i64, role: b_scale_tile}
+      - {operand: 4, arg: bias, type: i64, role: bias_tile}
     tmpl_map:
       - source: left_tile
         field: tile

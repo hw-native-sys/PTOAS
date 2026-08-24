@@ -243,6 +243,8 @@ static ParseResult parseI32LiteralAttr(OpAsmParser &parser, IntegerAttr &attr);
 #define GET_ATTRDEF_CLASSES
 #include "PTO/IR/PTOAttrs.cpp.inc"
 
+#include "PTO/IR/PTOAttrInterfaces.cpp.inc"
+
 #include "PTO/IR/PTODialect.cpp.inc"
 
 [[maybe_unused]] static LogicalResult parseShapeAndElemStable(mlir::AsmParser &parser,
