@@ -39,8 +39,6 @@ namespace pto {
 using namespace mlir;
 
 namespace {
-// A hardware block is 32 bytes; block-strided ops count in these units.
-static constexpr int64_t kBlockSizeBytes = 32;
 static constexpr int64_t kSignedI8Min = -128;
 static constexpr int64_t kSignedI8Max = 127;
 
@@ -49,24 +47,8 @@ static constexpr int64_t kSignedI8Max = 127;
 // logical index offset to bytes at the target ABI boundary, `Block` ops pass a
 // packed control word straight to the intrinsic, `Alignment` ops use an
 // op-specific hardware alignment table, and `Byte` ops pass a raw byte offset.
-// See `strideUnitBytes` for the conversion.
+// Byte widths are resolved by the operation's VPTO address semantics.
 using StrideUnit = pto::VPTOAddressUnit;
-// Alignment size is op-specific and comes from the operation's attributes;
-// an unknown alignment conservatively rejects the candidate.
-static std::optional<int64_t> strideUnitBytes(Operation *op, StrideUnit unit,
-                                              int64_t elemBytes) {
-  switch (unit) {
-  case StrideUnit::Element:
-    return elemBytes;
-  case StrideUnit::Block:
-    return kBlockSizeBytes;
-  case StrideUnit::Alignment:
-    return pto::getLoadStoreVecAlignmentSize(op);
-  case StrideUnit::Byte:
-    return 1;
-  }
-  llvm_unreachable("unhandled StrideUnit");
-}
 
 static std::optional<pto::VPTOPostUpdateSemantics>
 getPostUpdateSemantics(Operation *op) {
@@ -1525,8 +1507,8 @@ static void processSequentialBlock(Block *block, DominanceInfo &dominance,
     }
     pto::PTOAddressExpr address = addresses.value->front();
     int64_t elemBytes = address.elementBytes;
-    auto unitBytes =
-        strideUnitBytes(&op, postUpdate->advanceUnit, elemBytes);
+    auto unitBytes = pto::getVPTOAddressUnitBytes(
+        &op, postUpdate->advanceUnit, postUpdate->elementTypeSource);
     if (!unitBytes) {
       continue;
     }
@@ -1744,9 +1726,8 @@ private:
         continue;
       }
       const pto::PTOAddressExpr &address = addresses.value->front();
-      auto advanceUnitBytes =
-          strideUnitBytes(&op, postUpdate->advanceUnit,
-                          address.elementBytes);
+      auto advanceUnitBytes = pto::getVPTOAddressUnitBytes(
+          &op, postUpdate->advanceUnit, postUpdate->elementTypeSource);
       if (!advanceUnitBytes) {
         continue;
       }

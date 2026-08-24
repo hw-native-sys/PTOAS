@@ -11,50 +11,12 @@
 #include "PTO/Analysis/PTOAddressAnalysis.h"
 
 #include "PTO/IR/PTO.h"
-#include "PTO/Support/CodeConstants.h"
 #include "mlir/Pass/AnalysisManager.h"
 
 using namespace mlir;
 using namespace mlir::pto;
 
 namespace {
-
-static constexpr int64_t kBlockSizeBytes = 32;
-
-static std::optional<int64_t> getElementBytes(Value pointer) {
-  Type elementType;
-  if (auto pointerType = dyn_cast<PtrType>(pointer.getType())) {
-    elementType = pointerType.getElementType();
-  } else if (auto memrefType = dyn_cast<BaseMemRefType>(pointer.getType())) {
-    elementType = memrefType.getElementType();
-  } else {
-    return std::nullopt;
-  }
-  if (!elementType || !elementType.isIntOrFloat()) {
-    return std::nullopt;
-  }
-  unsigned bitWidth = elementType.getIntOrFloatBitWidth();
-  if (bitWidth == 0 || bitWidth % mlir::pto::kValue8 != 0) {
-    return std::nullopt;
-  }
-  return static_cast<int64_t>(bitWidth / mlir::pto::kValue8);
-}
-
-static std::optional<int64_t> getUnitBytes(Operation *operation,
-                                           VPTOAddressUnit unit,
-                                           int64_t elementBytes) {
-  switch (unit) {
-  case VPTOAddressUnit::Element:
-    return elementBytes;
-  case VPTOAddressUnit::Block:
-    return kBlockSizeBytes;
-  case VPTOAddressUnit::Byte:
-    return 1;
-  case VPTOAddressUnit::Alignment:
-    return getLoadStoreVecAlignmentSize(operation);
-  }
-  return std::nullopt;
-}
 
 static PTOAnalysisResult<PTOTypedExprRef>
 scaleExpression(const PTOTypedExprRef &expression, int64_t numerator,
@@ -118,7 +80,8 @@ PTOAddressAnalysis::getAddresses(Operation *operation) {
   VPTOAddressSemantics contract = semantics.getVPTOAddressSemantics();
   for (const VPTOAddressAccess &access : contract.currentAccesses) {
     Value base = access.baseOperand->get();
-    auto elementBytes = getElementBytes(base);
+    auto elementBytes = getVPTOAddressUnitBytes(
+        operation, VPTOAddressUnit::Element, base);
     if (!elementBytes) {
       return PTOAnalysisResult<SmallVector<PTOAddressExpr>>::unknown(
           PTOAnalysisUnknownReason::UnknownElementSize);
@@ -132,7 +95,8 @@ PTOAddressAnalysis::getAddresses(Operation *operation) {
 
     while (auto addPointer =
                address.rootOrBase.getDefiningOp<AddPtrOp>()) {
-      auto parentElementBytes = getElementBytes(addPointer.getPtr());
+      auto parentElementBytes = getVPTOAddressUnitBytes(
+          operation, VPTOAddressUnit::Element, addPointer.getPtr());
       if (!parentElementBytes || *parentElementBytes != *elementBytes) {
         break;
       }
@@ -144,8 +108,8 @@ PTOAddressAnalysis::getAddresses(Operation *operation) {
     }
 
     if (access.offset) {
-      auto unitBytes =
-          getUnitBytes(operation, access.offset->unit, *elementBytes);
+      auto unitBytes = getVPTOAddressUnitBytes(
+          operation, access.offset->unit, access.offset->elementTypeSource);
       Value offset = access.offset->operand->get();
       address.offset = PTOTypedAddressOffset{
           offset, valueEvolution.getExpr(offset), access.offset->unit,

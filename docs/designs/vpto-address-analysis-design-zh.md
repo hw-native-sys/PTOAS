@@ -185,6 +185,7 @@ enum class VPTOAddressUnit {
 struct VPTOAddressOffset {
   OpOperand *operand;
   VPTOAddressUnit unit;
+  Value elementTypeSource;
 };
 
 struct VPTOAddressAccess {
@@ -198,6 +199,7 @@ struct VPTOPostUpdateSemantics {
   VPTOAddressUnit advanceUnit;
   VPTOAdvanceConstraint constraint;
   Value updatedBase; // normal form 中为 null
+  Value elementTypeSource;
 };
 
 struct VPTOAddressSemantics {
@@ -240,13 +242,18 @@ access offset。例如 `vstus` 的 current access 是 `base + 0`，而 `offset` 
 相同；不同 unit 可能正是指令有意定义的语义。没有 current offset 时，不为它臆造
 unit。
 
+对于 `Element` unit，`elementTypeSource` 进一步指定单位宽度来自哪个 SSA value。
+普通 load/store 使用 base pointer；`vlds`、`vldsx2`、`vldus` 使用结果 payload，
+`vstus` 使用待写入 value。这样当 base 是 `ptr<ui16>`、payload 是 `vreg<...xui8>`
+时，一个 Element 明确表示 1 byte，而不会被误算为 2 bytes。
+
 ### 6.2 地址单位
 
 unit 到 byte 的换算由公共 helper 根据 access 与目标信息计算：
 
 | Unit | 一个单位的字节数 |
 |------|------------------|
-| `Element` | base pointer 的 element bytes |
+| `Element` | `elementTypeSource` 的 element bytes |
 | `Block` | 32 bytes |
 | `Byte` | 1 byte |
 | `Alignment` | 由 op mode 和目标查询得到，例如现有 `getLoadStoreVecAlignmentSize` |

@@ -11,6 +11,7 @@
 #include "PTO/IR/VPTOAddressSemantics.h"
 
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/PTOTypeUtils.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 using namespace mlir;
@@ -18,9 +19,15 @@ using namespace mlir::pto;
 
 namespace {
 
+static constexpr int64_t kBlockSizeBytes = 32;
+
 static VPTOAddressAccess oneAccess(OpOperand &base, OpOperand &offset,
-                                   VPTOAddressUnit unit) {
-  return {&base, VPTOAddressOffset{&offset, unit}};
+                                   VPTOAddressUnit unit,
+                                   Value elementTypeSource = {}) {
+  if (!elementTypeSource) {
+    elementTypeSource = base.get();
+  }
+  return {&base, VPTOAddressOffset{&offset, unit, elementTypeSource}};
 }
 
 static VPTOAddressAccess baseOnly(OpOperand &base) {
@@ -29,21 +36,49 @@ static VPTOAddressAccess baseOnly(OpOperand &base) {
 
 static VPTOAddressAccess currentAccess(OpOperand &base, OpOperand &offset,
                                        VPTOAddressUnit unit,
-                                       Value updatedBase) {
+                                       Value updatedBase,
+                                       Value elementTypeSource = {}) {
   // In post-update form the offset is the after-access advance. The current
   // address has already been materialized in base by the producer/transform.
-  return updatedBase ? baseOnly(base) : oneAccess(base, offset, unit);
+  return updatedBase ? baseOnly(base)
+                     : oneAccess(base, offset, unit, elementTypeSource);
 }
 
 static VPTOPostUpdateSemantics postUpdate(
     OpOperand &base, OpOperand *advance, VPTOAddressUnit unit,
     Value updatedBase,
-    VPTOAdvanceConstraint constraint = VPTOAdvanceConstraint::Dynamic) {
-  return {&base, advance, unit, constraint, updatedBase};
+    VPTOAdvanceConstraint constraint = VPTOAdvanceConstraint::Dynamic,
+    Value elementTypeSource = {}) {
+  if (!elementTypeSource) {
+    elementTypeSource = base.get();
+  }
+  return {&base, advance, unit, constraint, updatedBase, elementTypeSource};
 }
 
 static OpOperand *getOptionalOperand(MutableOperandRange operands) {
   return operands.empty() ? nullptr : &*operands.begin();
+}
+
+static std::optional<int64_t> getElementBytes(Value source) {
+  if (!source) {
+    return std::nullopt;
+  }
+
+  Type elementType;
+  Type sourceType = source.getType();
+  if (auto pointerType = dyn_cast<PtrType>(sourceType)) {
+    elementType = pointerType.getElementType();
+  } else if (auto memrefType = dyn_cast<BaseMemRefType>(sourceType)) {
+    elementType = memrefType.getElementType();
+  } else if (auto vectorType = dyn_cast<VRegType>(sourceType)) {
+    elementType = vectorType.getElementType();
+  } else {
+    return std::nullopt;
+  }
+
+  unsigned bytes = getPTOStorageElemByteSize(elementType);
+  return bytes == 0 ? std::nullopt
+                    : std::optional<int64_t>(static_cast<int64_t>(bytes));
 }
 
 } // namespace
@@ -54,18 +89,21 @@ mlir::pto::getDefaultVPTOAddressSemantics(Operation *operation) {
       .Case<VldsOp, Vldsx2Op>([](auto op) {
         OpOperand &base = op.getSourceMutable();
         OpOperand &offset = op.getOffsetMutable();
+        Value payload = op.getOperation()->getResult(0);
         return VPTOAddressSemantics{
             {currentAccess(base, offset, VPTOAddressUnit::Element,
-                           op.getUpdatedBase())},
+                           op.getUpdatedBase(), payload)},
             postUpdate(base, &offset, VPTOAddressUnit::Element,
-                       op.getUpdatedBase())};
+                       op.getUpdatedBase(), VPTOAdvanceConstraint::Dynamic,
+                       payload)};
       })
       .Case<VldusOp>([](VldusOp op) {
         OpOperand &base = op.getSourceMutable();
         return VPTOAddressSemantics{
             {baseOnly(base)},
             postUpdate(base, getOptionalOperand(op.getIncrementMutable()),
-                       VPTOAddressUnit::Element, op.getUpdatedBase())};
+                       VPTOAddressUnit::Element, op.getUpdatedBase(),
+                       VPTOAdvanceConstraint::Dynamic, op.getResult())};
       })
       .Case<PldsOp>([](PldsOp op) {
         OpOperand &base = op.getSourceMutable();
@@ -100,7 +138,8 @@ mlir::pto::getDefaultVPTOAddressSemantics(Operation *operation) {
         return VPTOAddressSemantics{
             {baseOnly(base)},
             postUpdate(base, &op.getOffsetMutable(),
-                       VPTOAddressUnit::Element, op.getBaseOut())};
+                       VPTOAddressUnit::Element, op.getBaseOut(),
+                       VPTOAdvanceConstraint::Dynamic, op.getValue())};
       })
       .Case<PstsOp>([](PstsOp op) {
         OpOperand &base = op.getDestinationMutable();
@@ -168,6 +207,25 @@ mlir::pto::getDefaultVPTOAddressSemantics(Operation *operation) {
                        op.getUpdatedBase())};
       })
       .Default([](Operation *) { return VPTOAddressSemantics{}; });
+}
+
+std::optional<int64_t>
+mlir::pto::getVPTOAddressUnitBytes(Operation *operation, VPTOAddressUnit unit,
+                                   Value elementTypeSource) {
+  switch (unit) {
+  case VPTOAddressUnit::Element:
+    return getElementBytes(elementTypeSource);
+  case VPTOAddressUnit::Block:
+    return kBlockSizeBytes;
+  case VPTOAddressUnit::Byte:
+    return 1;
+  case VPTOAddressUnit::Alignment:
+    if (!operation) {
+      return std::nullopt;
+    }
+    return getLoadStoreVecAlignmentSize(operation);
+  }
+  return std::nullopt;
 }
 
 StringRef mlir::pto::stringifyVPTOAddressUnit(VPTOAddressUnit unit) {

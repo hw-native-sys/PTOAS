@@ -15,6 +15,7 @@
 #include "mlir/IR/Value.h"
 #include "llvm/ADT/SmallVector.h"
 
+#include <cstdint>
 #include <optional>
 
 namespace mlir::pto {
@@ -36,6 +37,9 @@ enum class VPTOAdvanceConstraint {
 struct VPTOAddressOffset {
   OpOperand *operand;
   VPTOAddressUnit unit = VPTOAddressUnit::Element;
+  /// Value whose element type defines an Element unit. This can differ from
+  /// the base pointer for payload-denominated operations.
+  Value elementTypeSource;
 };
 
 struct VPTOAddressAccess {
@@ -54,6 +58,8 @@ struct VPTOPostUpdateSemantics {
   VPTOAddressUnit advanceUnit = VPTOAddressUnit::Element;
   VPTOAdvanceConstraint constraint = VPTOAdvanceConstraint::Dynamic;
   Value updatedBase;
+  /// Value whose element type defines an Element advance unit.
+  Value elementTypeSource;
 };
 
 /// Complete VPTO addressing contract. Current accesses describe where an
@@ -68,6 +74,13 @@ struct VPTOAddressSemantics {
 
 /// Default implementation used by VPTOAddressSemanticsOpInterface.
 VPTOAddressSemantics getDefaultVPTOAddressSemantics(Operation *operation);
+
+/// Resolve the byte width of one address unit from the operation's addressing
+/// contract. For Element units, elementTypeSource may be a base pointer or a
+/// vector payload value.
+std::optional<int64_t>
+getVPTOAddressUnitBytes(Operation *operation, VPTOAddressUnit unit,
+                        Value elementTypeSource);
 
 llvm::StringRef stringifyVPTOAddressUnit(VPTOAddressUnit unit);
 llvm::StringRef stringifyVPTOAdvanceConstraint(VPTOAdvanceConstraint value);
