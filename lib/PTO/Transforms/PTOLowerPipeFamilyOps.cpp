@@ -36,6 +36,7 @@
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringSet.h"
 
 namespace mlir {
 namespace pto {
@@ -226,6 +227,13 @@ struct PTOLowerPipeFamilyOpsPass final
         hadError = true;
         continue;
       }
+      if (popAddresses.count(pop.getTile())) {
+        pop.emitError(
+            "VPTO pipe bridge supports at most one TPOP per declared tile; "
+            "sequential rebind consumption is not supported yet");
+        hadError = true;
+        continue;
+      }
       auto consumerTileTy = dyn_cast<TileBufType>(pop.getTile().getType());
       if (!consumerTileTy) {
         pop.emitError("VPTO pipe bridge TPOP tile must be a tile_buf");
@@ -347,13 +355,25 @@ struct PTOLowerPipeFamilyOpsPass final
       // module-level wrapper generation pass merges the per-function specs
       // deterministically. The family pass instances may run concurrently,
       // so they must not write the shared module attribute directly.
+      llvm::StringSet<> seenSpecKeys;
+      for (const auto &field : specFields) {
+        if (!seenSpecKeys.insert(field.first).second) {
+          func.emitError("VPTO pipe bridge detected repeated spec field '")
+              << field.first
+              << "'; only one bridged producer/consumer pair per function is "
+                 "supported";
+          hadError = true;
+          break;
+        }
+      }
       SmallVector<NamedAttribute> specAttrs;
       for (const auto &field : specFields) {
         specAttrs.push_back({StringAttr::get(func.getContext(), field.first),
                              StringAttr::get(func.getContext(), field.second)});
       }
-      func->setAttr(kBridgeFuncSpecAttrName,
-                    DictionaryAttr::get(func.getContext(), specAttrs));
+      if (!hadError)
+        func->setAttr(kBridgeFuncSpecAttrName,
+                      DictionaryAttr::get(func.getContext(), specAttrs));
     }
 
     if (hadError) {

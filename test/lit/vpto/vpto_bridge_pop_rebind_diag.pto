@@ -1,0 +1,57 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// You may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+// https://www.huawei.com/
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A
+// PARTICULAR PURPOSE.
+// See LICENSE for more details.
+
+// Sequential rebind boundary: two TPOPs rebinding the same declared tile
+// (the unrolled form of streaming consumption) are not supported by the
+// bridge yet. The family pass must reject the second pop with a diagnostic
+// instead of emitting a silently wrong address (each pop would otherwise
+// overwrite the tile's single recorded slot address) or crashing on the
+// duplicated spec fields.
+//
+// RUN: env -u PTOAS_VPTO_BRIDGE_WHITELIST not pto-test-opt %s -pto-lower-pipe-family-ops 2>&1 | FileCheck %s
+
+// CHECK: error: VPTO pipe bridge supports at most one TPOP per declared tile; sequential rebind consumption is not supported yet
+
+module {
+  func.func @probe_vector(%addr: i32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %addr0 = arith.constant 0 : i32
+    %c0 = arith.constant 0 : index
+    %pipe = pto.initialize_l2l_pipe{dir_mask = 1, slot_size = 2048, slot_num = 4,
+                                    flag_base = 8, nosplit = false} (%addr0 : i32) -> !pto.pipe
+    %tile = pto.declare_tile
+      -> !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16,
+                       blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tpop(%tile, %pipe
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+        !pto.pipe) {split = 1}
+    %ub1 = pto.tile_buf_addr %tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+     -> !pto.ptr<f32, ub>
+    %v1 = arith.constant 1.0 : f32
+    pto.store_scalar %v1, %ub1[%c0] : !pto.ptr<f32, ub>, f32
+    pto.tfree(%pipe : !pto.pipe) {split = 1}
+    pto.tpop(%tile, %pipe
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+        !pto.pipe) {split = 1}
+    %ub2 = pto.tile_buf_addr %tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+     -> !pto.ptr<f32, ub>
+    %v2 = arith.constant 2.0 : f32
+    pto.store_scalar %v2, %ub2[%c0] : !pto.ptr<f32, ub>, f32
+    pto.tfree(%pipe : !pto.pipe) {split = 1}
+    return
+  }
+}
