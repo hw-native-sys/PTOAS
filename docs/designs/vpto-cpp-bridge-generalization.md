@@ -430,3 +430,25 @@ Phase 4（工程化收尾：白名单正式通道 + tmpl_map 消费）已完成�
 7. **遗留**：TMatmul.hpp 的 quant 双 scale/bias 等入口变体未接入
    （家族 + 变体选择结构已就位，新增时需同步扩展内置默认白名单）；
    tmpl_map 行仍处于校验形态（见 2）。
+
+## 附：Phase 4 验收后补强（2026-08-24）
+
+针对验收时梳理的推迟项，补齐两项低成本防线：
+
+1. **EmitC↔桥接 token 比对测试（兑现决策 3 的漂移防护）**：新增
+   `vpto_bridge_emitc_token_parity.pto`——同一模块（变体配置
+   flag_base=8/slot_size=2048/slot_num=4，防硬编码蒙混）分别走
+   EmitC 路径（`ptoas --pto-level=level3`，产 `TPUSH<TPipe<...>, Tile<...>>`
+   文本）与桥接路径（家族 pass + wrapper 生成，产 `using Pipe =
+   pto::TPipe<...>` typedef），双前缀 FileCheck 逐项钉住两套 token
+   构建逻辑的输出；已知设计性差异（`pto::` 命名空间前缀、NoneBox
+   tile 省略尾部默认实参、split token 仅 EmitC 侧）在测试头注释中
+   声明。实现要点：桥接 TPUSH 要求 push 的 tile 来自带规划地址的
+   `alloc_tile`，而 EmitC 默认 level 拒绝显式 `addr =`，故两侧
+   统一用 `--pto-level=level3`；lit 下 `ptoas` 带 `-o` 会走完整
+   emission 非零退出，故桥接侧用 `pto-test-opt` 直接跑两层 pass。
+2. **变体配置测试转正（Phase 2 记录 7 的一次性副本转常驻）**：
+   `build/vpto-variant-cases/fifo-variant-config` 转正为
+   `test/vpto/cases/kernels/fifo-variant-config`（与原 fifo 用例仅
+   3 行差异：slot_num=4、flag_base=8、fifo 容量 4096），不带白名单
+   文件，依赖内置默认；DEVICE=SIM compare passed。
