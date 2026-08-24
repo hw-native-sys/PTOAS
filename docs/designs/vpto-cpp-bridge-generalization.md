@@ -345,6 +345,8 @@ Phase 2（参数泛化 + wrapper 自动生成，完全内置到 ptoas）已完�
    （`build/vpto-variant-cases/`），未转正为常驻用例。
 8. **遗留**：`split != 1` 仍报诊断（对齐设计 §5）；`tmpl_map` 行目前仅校验
    不消费，真正驱动模板参数替换留待后续阶段。
+   ——均已解除，见文末"TMatmul 变体接入、tmpl_map 真实驱动、split≠1
+   支持"附录。
 
 ## 附：Phase 3 实施记录（2026-08-24）
 
@@ -385,6 +387,7 @@ Phase 3（第二接口族：CUBE 侧 MATMUL）已完成并验收通过，**通�
 7. **遗留**：TMatmul.hpp 的 quant 双 scale/bias 等入口变体未接入
    （家族 + 变体选择结构已就位）；`tmpl_map` 行仍仅校验不消费，
    与 Phase 2 同口径，留待 Phase 4。
+   ——变体接入与 tmpl_map 驱动均已解除，见文末对应附录。
 
 ## 附：Phase 4 实施记录（2026-08-24）
 
@@ -430,6 +433,8 @@ Phase 4（工程化收尾：白名单正式通道 + tmpl_map 消费）已完成�
 7. **遗留**：TMatmul.hpp 的 quant 双 scale/bias 等入口变体未接入
    （家族 + 变体选择结构已就位，新增时需同步扩展内置默认白名单）；
    tmpl_map 行仍处于校验形态（见 2）。
+   ——均已解除，见文末"TMatmul 变体接入、tmpl_map 真实驱动、split≠1
+   支持"附录。
 
 ## 附：Phase 4 验收后补强（2026-08-24）
 
@@ -485,3 +490,46 @@ scf.for 内 push/pop/消费/free 的探测用例，双路径比对后得出结�
 
 回归：lit 全量 1779 用例、1774 过，4 个失败均为分支既有（RUN 行不含
 桥接 pass）；桥接相关 13 + 新增 2 全过。
+
+## 附：TMatmul 变体接入、tmpl_map 真实驱动、split≠1 支持（2026-08-24）
+
+三项遗留边界一次性解除（对应 Phase 2 记录 8、Phase 3/4 记录 7）：
+
+1. **TMatmul 变体接入**：bias/mx/mx.acc/mx.bias 四个入口变体全链路
+   接入（家族 pass 收集 spec → 白名单路由 → wrapper 渲染）。ABI 与
+   pto-isa 签名核对后定为：bias `(dst,a,b,bias)` 4×i64 →
+   `TMATMUL_BIAS<Phase>`；mx `(dst,a,aScale,b,bScale)` 5×i64 →
+   `TMATMUL_MX<Phase>`；mx.acc `(dst,cIn,a,aScale,b,bScale)` 6×i64 →
+   `TMATMUL_MX<Phase>`（accIn 重载）；mx.bias
+   `(dst,a,aScale,b,bScale,bias)` 6×i64 → `TMATMUL_MX`（IR op 无
+   accPhase，不渲染 Phase 实参）。配套：token 构建支持
+   float8/float4 标量（镜像 EmitC 的 e4m3/e5m2/e8m0/hifloat8/e1m2x2/
+   e2m1x2 分支）；内置默认白名单与 matmul fixture yaml 均新增 4 个
+   变体条目，且每个变体条目声明完整 role tile 行（left/right/result
+   + 自身特有），因变体可能独立于 base tmatmul 使用，重复 target 在
+   渲染时去重。
+2. **spec 字段去重防线**：家族 pass 的 `addSpecField` 对已收集字段
+   查重——同值保留一份，异值报显式诊断（"the wrapper renders one
+   token per spec field"）而非让 DictionaryAttr 重复 key 触发断言
+   崩溃。诊断测试：`vpto_bridge_matmul_spec_conflict_diag.pto`。
+3. **tmpl_map 转真实驱动**：wrapper 的 typedef 段不再硬编码，由
+   白名单已用条目的 tmpl_map 行按声明顺序渲染（source→spec key→
+   token 解析，target first-wins 去重）；入口体引用固定 typedef 名，
+   渲染前按入口条件做 requiredTargets 兜底校验（matmul：
+   Left/Right/ResultTile 必有，AccIn/Bias/AScale/BScale 按入口条件；
+   pipe：Pipe/ProducerTile/ConsumerTile）。pipe 条目的 `tile` source
+   按 entry op 细分（tpush→producer_tile、tpop→consumer_tile）。
+   既有 tmpl 覆盖诊断测试的 supported 列表同步更新。
+4. **split≠1 支持**：tpush/tpop/tfree 的 split 属性映射到
+   `pto::TileSplitAxis` token（split=2 → TILE_LEFT_RIGHT）；家族 pass
+   在函数首个桥接 op 固定 split token，后续 op 逐一比对，异值报诊断
+   （"one shared TileSplitAxis"）；wrapper 三入口体渲染同一 token。
+
+测试：新增 `vpto_bridge_matmul_variants_lowering.pto`（4 变体 SPEC +
+WRAP 双前缀）、`vpto_bridge_pipe_split_left_right.pto`（split=2 降级
+与 wrapper 渲染）、`vpto_bridge_pipe_split_mismatch_diag.pto`、
+`vpto_bridge_matmul_spec_conflict_diag.pto`。
+
+回归：lit 全量 1783 用例、1778 过，4 个失败均为分支既有；端到端
+`fifo-tile-data-consume`、`fifo-variant-config`、`cube-matmul-bridge`
+三用例（内置默认白名单，零 env 注入）DEVICE=SIM compare passed。
