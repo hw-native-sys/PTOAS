@@ -230,6 +230,20 @@ def lexical_section_single_sided_read_before_rebinding_probe():
 
 
 @pto.jit(target="a5", mode="explicit")
+def lexical_section_branch_merge_then_while_probe(limit: pto.i32):
+    value = pto.const(0, dtype=pto.i32)
+    one = pto.const(1, dtype=pto.i32)
+    with pto.section("cube"):
+        if pto.get_block_idx() < one:
+            value = value + one
+        index = pto.const(0, dtype=pto.i32)
+        while index < limit:
+            value = value + one
+            index = index + one
+        pto.wait_flag("S", "MTE2", event_id=value)
+
+
+@pto.jit(target="a5", mode="explicit")
 def lexical_section_uninitialized_conditional_probe():
     one = pto.const(1, dtype=pto.i32)
     with pto.section("cube"):
@@ -418,6 +432,14 @@ def main() -> None:
     )
     with make_context() as context:
         module = Module.parse(read_before_rebinding_text, context)
+        module.operation.verify()
+
+    branch_merge_then_while_text = lexical_section_branch_merge_then_while_probe.compile().mlir_text()
+    assert branch_merge_then_while_text.count("pto.section.cube {") == 1
+    assert "scf.if" in branch_merge_then_while_text
+    assert "scf.while" in branch_merge_then_while_text
+    with make_context() as context:
+        module = Module.parse(branch_merge_then_while_text, context)
         module.operation.verify()
 
     nested_conditional_text = lexical_section_nested_conditional_rebinding_probe.compile().mlir_text()

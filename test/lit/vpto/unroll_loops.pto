@@ -1,0 +1,439 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Test pto-unroll-loops pass: native unrolling and hint consumption.
+//
+// pto-unroll-loops is the only consumer of the unroll hint attributes (the
+// metadata forwarding pass was removed; unrolling is decided natively here).
+//
+// Covers:
+//   1. pto.unroll_factor=4 with a divisible constant trip count -> main loop
+//      unrolled by 4 (4 stores), no epilogue loop.
+//   2. pto.unroll_factor=4 with a non-divisible constant trip count and a
+//      loop-carried value -> main loop + epilogue loop threading the live-out
+//      value.
+//   3. pto.unroll_factor=4 with a dynamic upper bound -> main loop +
+//      epilogue.
+//   4. pto.unroll="full" with a dynamic trip count -> cannot unroll; the
+//      hint is dropped with a remark and the loop is kept.
+//   5. pto.unroll_factor=1 -> no-op; the hint is dropped with a remark.
+//   6. Nested pto.unroll="full" loops: unrolling the outer loop clones the
+//      inner one; the clones must be unrolled too (no hint survives).
+//   7. Unannotated IR is never touched: an unannotated loop and a foldable
+//      arith op survive unchanged.
+//   8. Twelve nested pto.unroll="full" loops are all consumed: the fixpoint
+//      re-walks until no round changes anything, with no round cap.
+//   9. factor unroll whose body nests an annotated scf.for, with main-loop
+//      single-iteration promotion (trip == factor): the promoted nested
+//      loops keep their own hint and are consumed by the next fixpoint
+//      round.
+//  10. Same with epilogue promotion (trip % factor == 1): the nested factor
+//      hint survives promotion and is unrolled by the next round.
+//  11. Trip count smaller than the factor: the unrolled main loop
+//      degenerates to zero iterations and the whole trip runs in the
+//      epilogue.
+//  12. Zero-trip loop (lb == ub) with a factor hint: the empty iteration
+//      space is never unrolled; the hint is dropped.
+//  13. Full unroll of a body containing a conditional and a barrier: both
+//      are cloned per iteration in program order (loopUnrollByFactor clones
+//      the body verbatim), and no loop or hint survives.
+//  14. Factor unroll with iter_args and a dynamic upper bound: the epilogue
+//      threads the live-out value.
+//  15. A statically empty range (ub <= lb) is never unrolled: upstream's
+//      unsigned trip-count arithmetic would turn a zero-trip loop into a
+//      huge one, so the hint is dropped instead.
+//  16. A dynamic upper bound is clamped with arith.maxsi(ub, lb) before the
+//      unroll, so a runtime ub < lb keeps iterating zero times instead of
+//      wrapping the negative difference into a huge unsigned trip count.
+//  17. Loops over a signless integer induction variable are left alone:
+//      loopUnrollByFactor builds index-typed arithmetic unconditionally and
+//      would emit verifier-invalid mixed-type IR.  Both hint kinds drop.
+
+// RUN: pto-test-opt --pto-unroll-loops %s 2>&1 | FileCheck %s
+
+// Remarks are emitted while the pass runs and print before the IR, so their
+// CHECK lines live here at the top.
+// CHECK:      remark: 'pto.unroll = "full"' loop has no constant trip count
+// CHECK:      remark: 'pto.unroll_factor' = 1 is a no-op; dropping the hint
+// CHECK-COUNT-2: remark: 'pto.unroll_factor' loop never iterates; dropping the hint
+// CHECK-COUNT-2: remark: loop with an unroll hint has a non-index induction variable
+
+module {
+  // Case 1: divisible constant trip count -> single unrolled loop, 4 stores.
+  // CHECK-LABEL: func.func @factor_divisible
+  // CHECK:         scf.for
+  // CHECK-COUNT-4: memref.store
+  // CHECK-NOT:     scf.for
+  // CHECK-NOT:     pto.unroll_factor
+  func.func @factor_divisible() {
+    %buf = memref.alloc() : memref<8xindex>
+    %c0 = arith.constant 0 : index
+    %c8 = arith.constant 8 : index
+    %c1 = arith.constant 1 : index
+    scf.for %i = %c0 to %c8 step %c1 {
+      %val = arith.addi %i, %i : index
+      memref.store %val, %buf[%i] : memref<8xindex>
+    } {pto.unroll_factor = 4 : i32}
+    return
+  }
+
+  // Case 2: non-divisible trip count with a loop-carried value -> main loop
+  // plus an epilogue threading the live-out value.
+  // CHECK-LABEL: func.func @factor_remainder_carry
+  // CHECK:         scf.for
+  // CHECK:         scf.for
+  // CHECK-NOT:     scf.for
+  // CHECK-NOT:     pto.unroll
+  func.func @factor_remainder_carry() -> index {
+    %buf = memref.alloc() : memref<10xindex>
+    %c0 = arith.constant 0 : index
+    %c10 = arith.constant 10 : index
+    %c1 = arith.constant 1 : index
+    %acc = scf.for %i = %c0 to %c10 step %c1 iter_args(%carry = %c0) -> (index) {
+      %val = arith.addi %i, %i : index
+      memref.store %val, %buf[%i] : memref<10xindex>
+      %next = arith.addi %carry, %val : index
+      scf.yield %next : index
+    } {pto.unroll_factor = 4 : i32}
+    return %acc : index
+  }
+
+  // Case 3: dynamic upper bound -> main loop plus epilogue.
+  // CHECK-LABEL: func.func @factor_dynamic_ub
+  // CHECK:         scf.for
+  // CHECK:         scf.for
+  // CHECK-NOT:     scf.for
+  // CHECK-NOT:     pto.unroll
+  func.func @factor_dynamic_ub(%n: index) {
+    %buf = memref.alloc() : memref<16xindex>
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    scf.for %i = %c0 to %n step %c1 {
+      %val = arith.addi %i, %i : index
+      memref.store %val, %buf[%c0] : memref<16xindex>
+    } {pto.unroll_factor = 4 : i32}
+    return
+  }
+
+  // Case 4: pto.unroll="full" on a dynamic-trip loop cannot be unrolled;
+  // the hint is dropped with a remark (CHECK line at the top of the file)
+  // and the loop is kept as-is.
+  // CHECK-LABEL: func.func @full_dynamic_trip_dropped
+  // CHECK:         scf.for
+  // CHECK-NOT:     pto.unroll
+  func.func @full_dynamic_trip_dropped(%n: index) {
+    %buf = memref.alloc() : memref<1xindex>
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    scf.for %i = %c0 to %n step %c1 {
+      %val = arith.addi %i, %i : index
+      memref.store %val, %buf[%i] : memref<1xindex>
+    } {pto.unroll = "full"}
+    return
+  }
+
+  // Case 5: factor 1 is a no-op; the hint is dropped with a remark (CHECK
+  // line at the top of the file) and the loop is kept unchanged.
+  // CHECK-LABEL: func.func @factor_one_passthrough
+  // CHECK:         scf.for
+  // CHECK-NOT:     pto.unroll
+  func.func @factor_one_passthrough() {
+    %buf = memref.alloc() : memref<1xindex>
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %c1 = arith.constant 1 : index
+    scf.for %i = %c0 to %c4 step %c1 {
+      %val = arith.addi %i, %i : index
+      memref.store %val, %buf[%c0] : memref<1xindex>
+    } {pto.unroll_factor = 1 : i32}
+    return
+  }
+
+  // Case 6: nested full-unroll hints.  Unrolling the outer loop clones the
+  // annotated inner loop; the clones must be consumed as well, so no scf.for
+  // and no hint attribute may survive.
+  // CHECK-LABEL: func.func @nested_full_unroll
+  // CHECK-NOT:     scf.for
+  // CHECK-NOT:     pto.unroll
+  // CHECK-COUNT-4: memref.store
+  // CHECK-NOT:     memref.store
+  func.func @nested_full_unroll() {
+    %buf = memref.alloc() : memref<1xindex>
+    %c0 = arith.constant 0 : index
+    %c2 = arith.constant 2 : index
+    %c1 = arith.constant 1 : index
+    scf.for %i = %c0 to %c2 step %c1 {
+      scf.for %j = %c0 to %c2 step %c1 {
+        %val = arith.addi %i, %j : index
+        memref.store %val, %buf[%c0] : memref<1xindex>
+      } {pto.unroll = "full"}
+    } {pto.unroll = "full"}
+    return
+  }
+
+  // Case 7: without any hint the pass must be a no-op, even for ops the
+  // greedy driver could fold (an unannotated loop, %arg + 0).
+  // CHECK-LABEL: func.func @unannotated_untouched
+  // CHECK-SAME:    (%[[ARG:.*]]: index
+  // CHECK:         %[[ADD:.*]] = arith.addi %[[ARG]], %{{.*}} : index
+  // CHECK:         scf.for
+  // CHECK-NOT:     pto.unroll
+  func.func @unannotated_untouched(%arg: index) {
+    %buf = memref.alloc() : memref<4xindex>
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %c1 = arith.constant 1 : index
+    %sum = arith.addi %arg, %c0 : index
+    scf.for %i = %c0 to %c4 step %c1 {
+      memref.store %sum, %buf[%i] : memref<4xindex>
+    }
+    return
+  }
+
+  // Case 8: twelve nested full-unroll hints (trip count 1 each).  Consuming
+  // them needs more rounds than any fixed round budget: each outer unroll
+  // clones the annotated inner loops, and the clones are only picked up by
+  // the next re-walk.  The fixpoint must run until no round changes anything,
+  // so no loop and no hint may survive.
+  // CHECK-LABEL: func.func @deep_nested_full_unroll
+  // CHECK-NOT:     scf.for
+  // CHECK-NOT:     pto.unroll
+  // CHECK-COUNT-1: memref.store
+  // CHECK-NOT:     memref.store
+  func.func @deep_nested_full_unroll() {
+    %buf = memref.alloc() : memref<1xindex>
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    scf.for %i00 = %c0 to %c1 step %c1 {
+      scf.for %i01 = %c0 to %c1 step %c1 {
+        scf.for %i02 = %c0 to %c1 step %c1 {
+          scf.for %i03 = %c0 to %c1 step %c1 {
+            scf.for %i04 = %c0 to %c1 step %c1 {
+              scf.for %i05 = %c0 to %c1 step %c1 {
+                scf.for %i06 = %c0 to %c1 step %c1 {
+                  scf.for %i07 = %c0 to %c1 step %c1 {
+                    scf.for %i08 = %c0 to %c1 step %c1 {
+                      scf.for %i09 = %c0 to %c1 step %c1 {
+                        scf.for %i10 = %c0 to %c1 step %c1 {
+                          scf.for %i11 = %c0 to %c1 step %c1 {
+                            memref.store %i11, %buf[%c0] : memref<1xindex>
+                          } {pto.unroll = "full"}
+                        } {pto.unroll = "full"}
+                      } {pto.unroll = "full"}
+                    } {pto.unroll = "full"}
+                  } {pto.unroll = "full"}
+                } {pto.unroll = "full"}
+              } {pto.unroll = "full"}
+            } {pto.unroll = "full"}
+          } {pto.unroll = "full"}
+        } {pto.unroll = "full"}
+      } {pto.unroll = "full"}
+    } {pto.unroll = "full"}
+    return
+  }
+
+  // Case 11: trip count (3) smaller than the factor (4).  The unrolled main
+  // loop gets a zero trip count and never executes; the entire trip runs in
+  // the epilogue.  The factor attribute is consumed regardless.
+  // CHECK-LABEL: func.func @factor_trip_smaller_than_factor
+  // CHECK:         scf.for
+  // CHECK:         scf.for
+  // CHECK-NOT:     scf.for
+  // CHECK-NOT:     pto.unroll
+  func.func @factor_trip_smaller_than_factor() {
+    %buf = memref.alloc() : memref<3xindex>
+    %c0 = arith.constant 0 : index
+    %c3 = arith.constant 3 : index
+    %c1 = arith.constant 1 : index
+    scf.for %i = %c0 to %c3 step %c1 {
+      memref.store %i, %buf[%i] : memref<3xindex>
+    } {pto.unroll_factor = 4 : i32}
+    return
+  }
+
+  // Case 12: zero-trip loop (lb == ub) with a factor hint.  Unrolling an
+  // empty iteration space is pointless and upstream's unsigned trip-count
+  // arithmetic makes it hazardous, so the hint is dropped (remark at the top
+  // of the file) and the single-store loop is kept as-is.
+  // CHECK-LABEL: func.func @factor_zero_trip
+  // CHECK:         scf.for
+  // CHECK-COUNT-1: memref.store
+  // CHECK-NOT:     memref.store
+  // CHECK-NOT:     pto.unroll
+  func.func @factor_zero_trip() {
+    %buf = memref.alloc() : memref<1xindex>
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    scf.for %i = %c0 to %c0 step %c1 {
+      memref.store %i, %buf[%c0] : memref<1xindex>
+    } {pto.unroll_factor = 4 : i32}
+    return
+  }
+
+  // Case 13: full unroll of a body containing a conditional and a barrier.
+  // The body is cloned verbatim per iteration in program order, so the
+  // barrier/scf.if sequence appears twice and no loop or hint survives.
+  // CHECK-LABEL: func.func @full_unroll_if_and_barrier
+  // CHECK-NOT:     scf.for
+  // CHECK:         pto.barrier
+  // CHECK:         scf.if
+  // CHECK:         pto.barrier
+  // CHECK:         scf.if
+  // CHECK-NOT:     pto.barrier
+  // CHECK-NOT:     scf.for
+  // CHECK-NOT:     pto.unroll
+  func.func @full_unroll_if_and_barrier() {
+    %buf = memref.alloc() : memref<2xindex>
+    %c0 = arith.constant 0 : index
+    %c2 = arith.constant 2 : index
+    %c1 = arith.constant 1 : index
+    scf.for %i = %c0 to %c2 step %c1 {
+      pto.barrier #pto.pipe<PIPE_ALL>
+      %cnd = arith.cmpi slt, %i, %c1 : index
+      scf.if %cnd {
+        memref.store %i, %buf[%i] : memref<2xindex>
+      }
+    } {pto.unroll = "full"}
+    return
+  }
+
+  // Case 14: iter_args with a dynamic upper bound.  The main loop is unrolled
+  // by 4 (4 adds per iteration) and the epilogue threads the live-out value
+  // (its iter_args init comes from the main loop result).
+  // CHECK-LABEL: func.func @factor_dynamic_ub_carry
+  // CHECK:         scf.for
+  // CHECK-COUNT-4: arith.addi
+  // CHECK:         scf.for
+  // CHECK-SAME:    iter_args
+  // CHECK-NOT:     pto.unroll
+  func.func @factor_dynamic_ub_carry(%n: index) -> index {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %acc = scf.for %i = %c0 to %n step %c1 iter_args(%carry = %c0) -> (index) {
+      %next = arith.addi %carry, %i : index
+      scf.yield %next : index
+    } {pto.unroll_factor = 4 : i32}
+    return %acc : index
+  }
+
+  // Case 9: trip == factor (4): the unrolled main loop has a single
+  // iteration and promoteIfSingleIteration splices its body - including the
+  // nested annotated loops - into the parent block.  The nested factor hints
+  // survive promotion and are unrolled by the next fixpoint round (trip 8 by
+  // 2 -> 4-iteration main loops with 2 stores each, 4 of them).
+  // CHECK-LABEL: func.func @factor_nested_hint_main_promoted
+  // CHECK-NOT:     pto.unroll
+  // CHECK-COUNT-4: scf.for
+  // CHECK-NOT:     pto.unroll
+  func.func @factor_nested_hint_main_promoted() {
+    %buf = memref.alloc() : memref<8xindex>
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %c1 = arith.constant 1 : index
+    scf.for %i = %c0 to %c4 step %c1 {
+      scf.for %j = %c0 to %c8 step %c1 {
+        memref.store %j, %buf[%j] : memref<8xindex>
+      } {pto.unroll_factor = 2 : i32}
+    } {pto.unroll_factor = 4 : i32}
+    return
+  }
+
+  // Case 10: trip % factor == 1 (5 % 4): both the single-iteration main
+  // loop and the single-iteration epilogue are promoted away, splicing two
+  // body copies (and their nested annotated loops) into the parent block.
+  // The nested factor hints survive promotion and are unrolled by the next
+  // fixpoint round (trip 4 by 2 -> 2-iteration main loops, 2 of them).
+  // CHECK-LABEL: func.func @factor_nested_hint_epilogue_promoted
+  // CHECK-COUNT-2: scf.for
+  // CHECK-NOT:     pto.unroll
+  func.func @factor_nested_hint_epilogue_promoted() {
+    %buf = memref.alloc() : memref<4xindex>
+    %c0 = arith.constant 0 : index
+    %c5 = arith.constant 5 : index
+    %c4 = arith.constant 4 : index
+    %c1 = arith.constant 1 : index
+    scf.for %i = %c0 to %c5 step %c1 {
+      scf.for %j = %c0 to %c4 step %c1 {
+        memref.store %j, %buf[%j] : memref<4xindex>
+      } {pto.unroll_factor = 2 : i32}
+    } {pto.unroll_factor = 4 : i32}
+    return
+  }
+
+  // Case 15: a statically empty range (5 -> 0).  loopUnrollByFactor computes
+  // the trip count with unsigned arithmetic, so unrolling it would produce a
+  // main loop with a wrapped-around upper bound instead of a zero-trip loop.
+  // The hint is dropped (remark at the top of the file) and the loop is kept.
+  // CHECK-LABEL: func.func @factor_empty_static_range
+  // CHECK:         scf.for %{{.*}} = %c5 to %c0 step %c1
+  // CHECK-NOT:     pto.unroll
+  func.func @factor_empty_static_range() {
+    %buf = memref.alloc() : memref<8xindex>
+    %c0 = arith.constant 0 : index
+    %c5 = arith.constant 5 : index
+    %c1 = arith.constant 1 : index
+    scf.for %i = %c5 to %c0 step %c1 {
+      memref.store %i, %buf[%c0] : memref<8xindex>
+    } {pto.unroll_factor = 4 : i32}
+    return
+  }
+
+  // Case 16: a dynamic upper bound is clamped to at least the lower bound
+  // before unrolling.  For ub >= lb the clamp is the identity; for a runtime
+  // ub < lb it keeps both the unrolled main loop and the epilogue at zero
+  // iterations instead of letting the unsigned trip-count arithmetic wrap.
+  // CHECK-LABEL: func.func @factor_dynamic_ub_clamped
+  // CHECK:         arith.maxsi
+  // CHECK:         scf.for
+  // CHECK:         scf.for
+  // CHECK-NOT:     pto.unroll
+  func.func @factor_dynamic_ub_clamped(%n: index) {
+    %buf = memref.alloc() : memref<16xindex>
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    scf.for %i = %c0 to %n step %c1 {
+      memref.store %i, %buf[%c0] : memref<16xindex>
+    } {pto.unroll_factor = 4 : i32}
+    return
+  }
+
+  // Case 17: an i16 loop with a factor hint and an i32 loop with a "full"
+  // hint.  scf.for accepts signless integer bounds, but loopUnrollByFactor
+  // materializes its step/offset arithmetic with arith::ConstantIndexOp, so
+  // unrolling these would produce arith.muli(i16, index) and an scf.for
+  // whose step type no longer matches its bounds.  Both loops keep their
+  // shape and lose the hint (remarks at the top of the file).
+  // CHECK-LABEL: func.func @non_index_factor
+  // CHECK:         scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} : i16
+  // CHECK-NOT:     pto.unroll
+  func.func @non_index_factor(%buf: memref<8xi16>) {
+    %idx0 = arith.constant 0 : index
+    %c0 = arith.constant 0 : i16
+    %c8 = arith.constant 8 : i16
+    %c1 = arith.constant 1 : i16
+    scf.for %i = %c0 to %c8 step %c1 : i16 {
+      memref.store %i, %buf[%idx0] : memref<8xi16>
+    } {pto.unroll_factor = 2 : i32}
+    return
+  }
+
+  // CHECK-LABEL: func.func @non_index_full
+  // CHECK:         scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} : i32
+  // CHECK-NOT:     pto.unroll
+  func.func @non_index_full(%buf: memref<4xi32>) {
+    %idx0 = arith.constant 0 : index
+    %c0 = arith.constant 0 : i32
+    %c4 = arith.constant 4 : i32
+    %c1 = arith.constant 1 : i32
+    scf.for %i = %c0 to %c4 step %c1 : i32 {
+      memref.store %i, %buf[%idx0] : memref<4xi32>
+    } {pto.unroll = "full"}
+    return
+  }
+}

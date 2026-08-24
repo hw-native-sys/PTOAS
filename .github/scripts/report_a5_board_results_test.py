@@ -7,11 +7,15 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
+import contextlib
 import importlib.util
+import io
+import os
 import pathlib
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 SCRIPT = pathlib.Path(__file__).with_name("report_a5_board_results.py")
@@ -77,6 +81,32 @@ class BoardResultReportTest(unittest.TestCase):
             sha="abcdef0123456789",
         )
         self.assertEqual(payload["card"]["header"]["template"], "green")
+
+    def test_invalid_webhook_does_not_mask_successful_summary(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="a5-board-report-") as temp_dir:
+            results = pathlib.Path(temp_dir) / "results.tsv"
+            results.write_text(
+                "testcase\tstatus\tstage\tinfo\nAbs/abs\tOK\trun\tpassed\n",
+                encoding="utf-8",
+            )
+            argv = [
+                str(SCRIPT),
+                "--results",
+                str(results),
+                "--conclusion",
+                "success",
+            ]
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with (
+                mock.patch.object(sys, "argv", argv),
+                mock.patch.dict(os.environ, {"A5_FEISHU_WEBHOOK_URL": "invalid"}),
+                contextlib.redirect_stdout(stdout),
+                contextlib.redirect_stderr(stderr),
+            ):
+                self.assertEqual(REPORT.main(), 0)
+            self.assertIn("Status: **PASS**", stdout.getvalue())
+            self.assertIn("WARNING: failed to send Feishu notification", stderr.getvalue())
 
 
 if __name__ == "__main__":

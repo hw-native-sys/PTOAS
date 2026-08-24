@@ -52,11 +52,13 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 
   func.func @sequential_vldus(%src: !pto.ptr<f32, ub>,
                               %dst: !pto.ptr<f32, ub>,
-                              %x: index, %y: index) attributes {pto.kernel} {
+                              %x_i32: i32, %y_i32: i32) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
     %c16 = arith.constant 16 : index
     %c32 = arith.constant 32 : index
     %c64 = arith.constant 64 : index
+    %x = arith.index_cast %x_i32 : i32 to index
+    %y = arith.index_cast %y_i32 : i32 to index
     %x16 = arith.addi %x, %c16 : index
     %y16 = arith.addi %y, %c16 : index
     %x32 = arith.addi %x, %c32 : index

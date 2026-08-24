@@ -1,0 +1,46 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// LLVM 19 can flatten a conditional subexpression into a left-associated add
+// chain and change `base + (value < zero ? zero : value)` into
+// `base + value < zero ? zero : value`. Keep both clamps as temporaries before
+// forming the GlobalTensor pointer offset.
+//
+// RUN: ptoas --pto-arch=a5 %s -o - 2>&1 | FileCheck %s
+
+module {
+  func.func @issue1317_clamped_offset(
+      %src: !pto.ptr<f32>, %subblock: index, %chunk: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %c512 = arith.constant 512 : index
+    %subblock_clamped = arith.maxsi %subblock, %c0 : index
+    %chunk_clamped = arith.maxsi %chunk, %c0 : index
+    %view = pto.make_tensor_view %src,
+      shape = [%c32, %c512], strides = [%c512, %c1]
+      {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %pview = pto.partition_view %view,
+      offsets = [%subblock_clamped, %chunk_clamped],
+      sizes = [%c16, %c16]
+      : !pto.tensor_view<?x?xf32>
+        -> !pto.partition_tensor_view<16x16xf32>
+    pto.cmo.cacheinvalid %pview single_cache_line
+      : !pto.partition_tensor_view<16x16xf32>
+    return
+  }
+}
+
+// CHECK-LABEL: AICORE void issue1317_clamped_offset(
+// CHECK-SAME: __gm__ float* [[SRC:v[0-9]+]], int64_t [[SUBBLOCK:v[0-9]+]], int64_t [[CHUNK:v[0-9]+]])
+// CHECK-DAG: const int64_t [[ZERO:v[0-9]+]] = 0;
+// CHECK: int64_t [[SUBBLOCK_CLAMP:v[0-9]+]] = [[SUBBLOCK]] < [[ZERO]] ? [[ZERO]] : [[SUBBLOCK]];
+// CHECK: int64_t [[CHUNK_CLAMP:v[0-9]+]] = [[CHUNK]] < [[ZERO]] ? [[ZERO]] : [[CHUNK]];
+// CHECK: GlobalTensor<float, {{.*}}> {{.*}} = GlobalTensor<float, {{.*}}>({{.*}}[[SRC]] + ({{.*}}[[SUBBLOCK_CLAMP]]{{.*}}[[CHUNK_CLAMP]]),

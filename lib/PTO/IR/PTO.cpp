@@ -11334,7 +11334,8 @@ mlir::LogicalResult mlir::pto::TMrgSortOp::verify() {
     for (Value src : getSrcs()) {
       Type srcTy = src.getType();
       auto srcShape = getShapeVec(srcTy);
-      if (srcShape.size() != 2) {
+      auto srcValidShape = getValidShapeVec(src);
+      if (srcShape.size() != 2 || srcValidShape.size() != 2) {
         return emitOpError() << "format2 expects src to be rank-2 tile-shaped";
       }
       if (srcShape[0] != mlir::ShapedType::kDynamic && srcShape[0] != 1) {
@@ -11343,10 +11344,10 @@ mlir::LogicalResult mlir::pto::TMrgSortOp::verify() {
       if (getElemTy(srcTy) != elemTy) {
         return emitOpError() << "format2 expects src/dst/tmp element types to match";
       }
-      if (srcShape[1] == mlir::ShapedType::kDynamic) {
+      if (srcValidShape[1] == mlir::ShapedType::kDynamic) {
         requiredTmpCols = mlir::ShapedType::kDynamic;
       } else if (requiredTmpCols != mlir::ShapedType::kDynamic) {
-        requiredTmpCols += srcShape[1];
+        requiredTmpCols += srcValidShape[1];
       }
     }
     if (tmpTy && requiredTmpCols != mlir::ShapedType::kDynamic &&
@@ -18604,11 +18605,19 @@ static LogicalResult verifyFrontendInitCommon(InitOpT op,
       return op.emitOpError(
           "'gm_slot_tensor' cannot be combined with 'gm_slot_buffer'");
     }
-    if ((hasC2vConsumerBuf || hasV2cConsumerBuf) &&
-        (dirMask != 1 || !hasC2vConsumerBuf || hasV2cConsumerBuf)) {
-      return op.emitOpError(
-          "GM-backed tile pipe init currently supports only dir_mask = 1 "
-          "with 'gm_slot_tensor' and 'c2v_consumer_buf'");
+    if (hasC2vConsumerBuf || hasV2cConsumerBuf) {
+      bool supportsC2V =
+          dirMask == 1 && hasC2vConsumerBuf && !hasV2cConsumerBuf;
+      bool supportsA2A3V2C =
+          arch != PTOArch::A5 &&
+          ((dirMask == 2 && !hasC2vConsumerBuf && hasV2cConsumerBuf) ||
+           (dirMask == 3 && hasC2vConsumerBuf && hasV2cConsumerBuf));
+      if (!supportsC2V && !supportsA2A3V2C) {
+        return op.emitOpError(
+            "GM-backed tile pipe init supports dir_mask = 1 with "
+            "'c2v_consumer_buf' on all targets and dir_mask = 2/3 with "
+            "matching consumer buffers only on a2/a3");
+      }
     }
     if (!hasC2vConsumerBuf && !hasV2cConsumerBuf) {
       if (op.getLocalSlotNumAttr()) {
@@ -19147,11 +19156,6 @@ static LogicalResult verifyFrontendSplitOp(Operation *op,
   if (!isOddSplit(split)) {
     return success();
   }
-  if (!expectC2V) {
-    return op->emitOpError(
-        "supports odd split modes (split = 3 or 4) only for C2V "
-        "GM-backed tile pipes");
-  }
 
   auto funcOp = op->getParentOfType<func::FuncOp>();
   if (!funcOp) {
@@ -19161,27 +19165,35 @@ static LogicalResult verifyFrontendSplitOp(Operation *op,
   if (failed(initOr)) {
     return failure();
   }
+  if (!expectC2V && getTargetArch(op) == PTOArch::A5) {
+    return op->emitOpError(
+        "supports odd V2C split modes (split = 3 or 4) only on a2/a3");
+  }
 
-  auto supportsOddC2V = [op](auto init) {
+  auto supportsOddDirection = [&](auto init) {
     PTOArch arch = getTargetArch(op);
     bool hasSupportedGmBacking =
         static_cast<bool>(init.getGmSlotTensor()) ||
         (arch != PTOArch::A5 && static_cast<bool>(init.getGmSlotBuffer()));
-    return init.getDirMask() == 1 && hasSupportedGmBacking &&
-           static_cast<bool>(init.getC2vConsumerBuf());
+    int8_t directionMask = expectC2V ? 1 : 2;
+    Value consumerBuffer = expectC2V ? init.getC2vConsumerBuf()
+                                     : init.getV2cConsumerBuf();
+    return (init.getDirMask() & directionMask) != 0 &&
+           hasSupportedGmBacking && static_cast<bool>(consumerBuffer);
   };
 
   bool supported = false;
   if (auto aic = dyn_cast<AicInitializePipeOp>(*initOr)) {
-    supported = supportsOddC2V(aic);
+    supported = supportsOddDirection(aic);
   } else {
-    supported = supportsOddC2V(cast<AivInitializePipeOp>(*initOr));
-}
+    supported = supportsOddDirection(cast<AivInitializePipeOp>(*initOr));
+  }
   if (!supported) {
-    return op->emitOpError(
-        "supports odd split modes (split = 3 or 4) only for a "
-        "unidirectional C2V GM-backed tile pipe with both GM slot and "
-        "C2V consumer buffers");
+    return op->emitOpError()
+           << "supports odd split modes (split = 3 or 4) only for a "
+              "GM-backed tile pipe whose dir_mask enables "
+           << (expectC2V ? "C2V" : "V2C")
+           << " and provides the matching consumer buffer";
   }
   return success();
 }
@@ -19196,8 +19208,8 @@ static LogicalResult verifyOddSplitTileEntry(Operation *op, int64_t split,
   return success();
 }
 
-static LogicalResult verifyC2VProducerSplitParity(Operation *op, int64_t split,
-                                                  Type entryTy) {
+static LogicalResult verifyFullTileSplitParity(Operation *op, int64_t split,
+                                               Type entryTy) {
   if (split == 0) {
     return success();
   }
@@ -19378,6 +19390,11 @@ static LogicalResult verifyFrontendPopOp(FrontendPopOpT op,
                                                   op.getTile().getType()))) {
     return failure();
   }
+  if (!expectC2V &&
+      failed(verifyFullTileSplitParity(op.getOperation(), op.getSplit(),
+                                       op.getTile().getType()))) {
+    return failure();
+  }
 
   bool hasValidRow = static_cast<bool>(op.getValidRow());
   bool hasValidCol = static_cast<bool>(op.getValidCol());
@@ -19385,7 +19402,7 @@ static LogicalResult verifyFrontendPopOp(FrontendPopOpT op,
     return op.emitOpError(
         "expects valid_row and valid_col operands to be provided together");
   }
-  if (isOddSplit(op.getSplit()) && !hasValidRow &&
+  if (expectC2V && isOddSplit(op.getSplit()) && !hasValidRow &&
       !isa<TensorViewType>(op.getTile().getType())) {
     return op.emitOpError(
         "expects odd C2V split tpop to provide per-sub-core valid_row and "
@@ -19719,15 +19736,28 @@ static LogicalResult verifyInternalOddSplitSupport(Operation *op,
     return success();
   }
 
-  bool isC2VSide = producerSide ? isInsideCubeKernelOrSection(op)
-                                : isInsideVectorKernelOrSection(op);
+  bool isCubeSide = isInsideCubeKernelOrSection(op);
+  bool isVectorSide = isInsideVectorKernelOrSection(op);
+  bool isC2VSide = producerSide ? isCubeSide : isVectorSide;
+  bool isV2CSide = producerSide ? isVectorSide : isCubeSide;
+  int8_t directionMask = isC2VSide ? 1 : (isV2CSide ? 2 : 0);
+  if (isV2CSide && getTargetArch(op) == PTOArch::A5) {
+    return op->emitOpError(
+        "supports odd V2C split modes (split = 3 or 4) only on a2/a3");
+  }
   auto initOp = pipeHandle.getDefiningOp<InitializeL2G2LPipeOp>();
-  if (!isC2VSide || !initOp || initOp.getDirMask() != 1 ||
-      !initOp.getLocalAddr()) {
+  Value consumerBuffer;
+  if (initOp && directionMask != 0) {
+    consumerBuffer = directionMask == 2 && initOp.getDirMask() == 3
+                         ? initOp.getPeerLocalAddr()
+                         : initOp.getLocalAddr();
+  }
+  if (!initOp || directionMask == 0 ||
+      (initOp.getDirMask() & directionMask) == 0 || !consumerBuffer) {
     return op->emitOpError(
         "supports odd split modes (split = 3 or 4) only for a "
-        "unidirectional C2V pto.initialize_l2g2l_pipe with a local "
-        "consumer buffer");
+        "pto.initialize_l2g2l_pipe whose dir_mask enables the operation "
+        "direction and provides its local consumer buffer");
   }
   return success();
 }
@@ -20550,6 +20580,10 @@ LogicalResult TAllocToAicOp::verify() {
                                            /*expectC2V=*/false))) {
     return failure();
   }
+  if (failed(verifyOddSplitTileEntry(getOperation(), getSplit(),
+                                     getEntry().getType()))) {
+    return failure();
+  }
   return verifyFrontendTensorEntryMatchesInit(getOperation(), getId(),
                                               getEntry().getType());
 }
@@ -20575,8 +20609,8 @@ LogicalResult TPushToAivOp::verify() {
                                      getTile().getType()))) {
     return failure();
   }
-  if (failed(verifyC2VProducerSplitParity(getOperation(), getSplit(),
-                                          getTile().getType()))) {
+  if (failed(verifyFullTileSplitParity(getOperation(), getSplit(),
+                                       getTile().getType()))) {
     return failure();
   }
 
@@ -20716,6 +20750,10 @@ LogicalResult TPushToAicOp::verify() {
   }
   if (failed(verifyFrontendTensorEntryMatchesInit(getOperation(), getId(),
                                                   getTile().getType()))) {
+    return failure();
+  }
+  if (failed(verifyOddSplitTileEntry(getOperation(), getSplit(),
+                                     getTile().getType()))) {
     return failure();
   }
   return verifyAivSubblockIdOperand(getOperation(), getAivSubblockid(),
@@ -21030,8 +21068,9 @@ LogicalResult TPushOp::verify() {
                                      getTile().getType()))) {
     return failure();
   }
-  if (failed(verifyC2VProducerSplitParity(getOperation(), getSplit(),
-                                          getTile().getType()))) {
+  if (isInsideCubeKernelOrSection(getOperation()) &&
+      failed(verifyFullTileSplitParity(getOperation(), getSplit(),
+                                       getTile().getType()))) {
     return failure();
   }
   if (failed(verifyAivSubblockIdOperand(getOperation(), getAivSubblockid(),
@@ -21092,6 +21131,11 @@ LogicalResult TPopOp::verify() {
   }
   if (failed(verifyOddSplitTileEntry(getOperation(), getSplit(),
                                      getTile().getType()))) {
+    return failure();
+  }
+  if (isInsideCubeKernelOrSection(getOperation()) &&
+      failed(verifyFullTileSplitParity(getOperation(), getSplit(),
+                                       getTile().getType()))) {
     return failure();
   }
   if (failed(verifyAivSubblockIdOperand(getOperation(), getAivSubblockid(),

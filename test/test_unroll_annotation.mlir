@@ -1,14 +1,16 @@
-// Test PTOUnrollSIMTFor pass: annotation-only unrolling behavior.
+// Test pto-unroll-loops pass: annotation-driven native unrolling behavior.
 //
 // Verifies three cases:
-//   1. simt_entry + pto.unroll="full"  -> fully unrolled (no scf.for)
-//   2. simt_entry + no annotation       -> loop NOT unrolled
-//   3. annotation + not simt_entry      -> loop NOT unrolled
+//   1. simt_entry + pto.unroll="full" -> fully unrolled (no scf.for)
+//   2. simt_entry + no annotation      -> loop NOT unrolled
+//   3. pto.unroll="full" outside SIMT  -> fully unrolled (the historical
+//      SIMT-only restriction of pto-unroll-simt-for has been lifted: the
+//      annotation is explicit user intent in any context)
 
-// RUN: ptoas --pto-arch=a5 --pto-backend=vpto %s -o /dev/null --mlir-print-ir-after=pto-unroll-simt-for 2>&1 | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto %s -o /dev/null --mlir-print-ir-after=pto-unroll-loops 2>&1 | FileCheck %s
 
-// There should be exactly 2 scf.for in the output (from case 2 and 3).
-// CHECK-COUNT-2: scf.for
+// There should be exactly 1 scf.for in the output (from case 2).
+// CHECK-COUNT-1: scf.for
 // CHECK-NOT:     scf.for
 
 module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
@@ -40,8 +42,8 @@ module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     return
   }
 
-  // Case 3: annotation but NOT simt_entry -> loop survives
-  func.func @not_simt_entry_skipped() {
+  // Case 3: annotation outside SIMT context -> also unrolled now
+  func.func @not_simt_entry_unrolled() {
     %buf = memref.alloc() : memref<1xindex>
     %c0 = arith.constant 0 : index
     %c4 = arith.constant 4 : index
@@ -49,7 +51,7 @@ module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     scf.for %i = %c0 to %c4 step %c1 {
       %val = arith.addi %i, %i : index
       memref.store %val, %buf[%c0] : memref<1xindex>
-    }
+    } {pto.unroll = "full"}
     return
   }
 }

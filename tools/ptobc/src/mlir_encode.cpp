@@ -99,6 +99,14 @@ static bool shouldEncodeViaGenericV0CompatibilityShim(mlir::Operation &op) {
   if (auto trowexpandadd = llvm::dyn_cast<mlir::pto::TRowExpandAddOp>(&op)) {
     return static_cast<bool>(trowexpandadd.getTmp());
   }
+  // The shipped tfree schemas have no operands. Preserve them for the legacy
+  // form and use the generic record when the optional pipe entry is present.
+  if (auto tfreeFromAic = llvm::dyn_cast<mlir::pto::TFreeFromAicOp>(&op)) {
+    return static_cast<bool>(tfreeFromAic.getEntry());
+  }
+  if (auto tfreeFromAiv = llvm::dyn_cast<mlir::pto::TFreeFromAivOp>(&op)) {
+    return static_cast<bool>(tfreeFromAiv.getEntry());
+  }
   // tquant.mx intentionally has no v0 known-op schema. Preserve its complete
   // operand and attribute dictionary through the existing generic record even
   // when PTOBC_ALLOW_GENERIC is not enabled globally.

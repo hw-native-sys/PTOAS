@@ -34,8 +34,9 @@
 // CHECK: %{{.*}} = pto.vlds [[O2]][%c0]
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
-  func.func @restart_after_zero_pair(%src: !pto.ptr<f32, ub>, %sink: !pto.ptr<f32, ub>, %step: index) attributes {pto.kernel} {
+  func.func @restart_after_zero_pair(%src: !pto.ptr<f32, ub>, %sink: !pto.ptr<f32, ub>, %step_i32: i32) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
+    %step = arith.index_cast %step_i32 : i32 to index
     %step2 = arith.addi %step, %step : index
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
@@ -51,8 +52,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     return
   }
 
-  func.func @restart_after_short_run(%src: !pto.ptr<f32, ub>, %sink: !pto.ptr<f32, ub>, %bad: index, %step: index) attributes {pto.kernel} {
+  func.func @restart_after_short_run(%src: !pto.ptr<f32, ub>, %sink: !pto.ptr<f32, ub>, %bad: index, %step_i32: i32) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
+    %step = arith.index_cast %step_i32 : i32 to index
     %step2 = arith.addi %step, %step : index
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
@@ -70,8 +72,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     return
   }
 
-  func.func @restart_after_overlapping_short_run(%src: !pto.ptr<f32, ub>, %sink: !pto.ptr<f32, ub>, %bad: index, %step: index) attributes {pto.kernel} {
+  func.func @restart_after_overlapping_short_run(%src: !pto.ptr<f32, ub>, %sink: !pto.ptr<f32, ub>, %bad: index, %step_i32: i32) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
+    %step = arith.index_cast %step_i32 : i32 to index
     %step2 = arith.addi %step, %step : index
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>

@@ -545,6 +545,23 @@ static std::optional<InferredSectionKind> classifyTileOp(Operation *op) {
   return classifyTileOpByPipe(op);
 }
 
+static std::optional<InferredSectionKind>
+classifyWholeFunctionPipeOp(Operation *op) {
+  if (isTileLikeOp(op)) {
+    return classifyTileOp(op);
+  }
+
+  auto pipeOp = dyn_cast_or_null<OpPipeInterface>(op);
+  if (!pipeOp) {
+    return std::nullopt;
+  }
+
+  // Ordinary PIPE_S and PIPE_MTE2 operations do not determine physical core
+  // ownership because both Cube and Vector cores provide those pipelines.
+  // TileOps retain their dedicated semantic classification above.
+  return classifySyncPipe(pipeOp.getPipe());
+}
+
 struct ModuleKindSummary {
   unsigned vectorCount = 0;
   unsigned cubeCount = 0;
@@ -582,7 +599,8 @@ static void inspectModuleKindOperation(Operation *op,
       summary.ambiguousOps.push_back(op);
     }
   } else if (isPipeLikeOp(op)) {
-    if (std::optional<InferredSectionKind> kind = classifyTileOp(op)) {
+    if (std::optional<InferredSectionKind> kind =
+            classifyWholeFunctionPipeOp(op)) {
       if (*kind == InferredSectionKind::Vector) {
         ++summary.vectorCount;
       } else {

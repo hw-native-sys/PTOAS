@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from . import scalar as _scalar
 from ._surface_types import Tile
+from ._tracing.control_flow import apply_unroll_hint, normalize_unroll_hint
 from ._tracing import (
     KernelModuleSpec,
     ModuleArtifact,
@@ -256,11 +257,14 @@ class _VecScopeCM:
 
 
 class _ForCM:
-    def __init__(self, trace: "_TraceBuilder", start, stop, step, iter_args, state):
+    def __init__(self, trace: "_TraceBuilder", start, stop, step, iter_args, state,
+                 unroll=None, unroll_factor=None):
         self._trace = trace
         self._start = start
         self._stop = stop
         self._step = step
+        self._unroll = unroll
+        self._unroll_factor = unroll_factor
         self._iter_args = list(iter_args) if iter_args is not None else []
         self._state = tuple(state.items()) if state is not None else ()
         self._handle: _LoopHandle | None = None
@@ -272,6 +276,8 @@ class _ForCM:
             self._step,
             self._iter_args,
             self._state,
+            unroll=self._unroll,
+            unroll_factor=self._unroll_factor,
         )
         if self._iter_args or self._state:
             return self._handle
@@ -340,7 +346,8 @@ class _TraceBuilder(TracingRuntime):
     def vecscope(self) -> _VecScopeCM:
         return _VecScopeCM(self)
 
-    def for_(self, start, stop, *, step, iter_args=None, state=None) -> _ForCM:
+    def for_(self, start, stop, *, step, iter_args=None, state=None,
+             unroll=None, unroll_factor=None) -> _ForCM:
         if iter_args is not None and state is not None:
             raise ValueError("for_() accepts either iter_args= or state=, not both")
         if state is not None:
@@ -349,7 +356,9 @@ class _TraceBuilder(TracingRuntime):
             for name in state:
                 if not isinstance(name, str) or not name:
                     raise TypeError("for_ state names must be non-empty strings")
-        return _ForCM(self, start, stop, step, iter_args, state)
+        normalize_unroll_hint(unroll, unroll_factor, context="tile-template for_(...)")
+        return _ForCM(self, start, stop, step, iter_args, state,
+                      unroll=unroll, unroll_factor=unroll_factor)
 
     def yield_(self, *vals):
         self._yield_loop_values(vals, surface="yield_", from_named_state=False)
@@ -442,7 +451,8 @@ class _TraceBuilder(TracingRuntime):
         frame["ip"].__exit__(exc_type, exc, tb)
         self._inside_vecscope = False
 
-    def _enter_for(self, start, stop, step, iter_args, state_items) -> _LoopHandle:
+    def _enter_for(self, start, stop, step, iter_args, state_items,
+                   unroll=None, unroll_factor=None) -> _LoopHandle:
         start_val = self._coerce_index(start)
         stop_val = self._coerce_index(stop)
         step_val = self._coerce_index(step)
@@ -457,6 +467,7 @@ class _TraceBuilder(TracingRuntime):
             step_val.value,
             [arg.value for arg in iter_arg_vals] if iter_arg_vals else None,
         )
+        apply_unroll_hint(for_op, unroll, unroll_factor)
         loop_ip = InsertionPoint(for_op.body)
         loop_ip.__enter__()
         iv = _Value(for_op.induction_variable)
@@ -572,9 +583,11 @@ def vecscope() -> _VecScopeCM:
     return require_active_runtime("vecscope", expected_type=_TraceBuilder).vecscope()
 
 
-def for_(start, stop, *, step, iter_args=None, state=None) -> _ForCM:
+def for_(start, stop, *, step, iter_args=None, state=None,
+         unroll=None, unroll_factor=None) -> _ForCM:
     return require_active_runtime("for_", expected_type=_TraceBuilder).for_(
-        start, stop, step=step, iter_args=iter_args, state=state
+        start, stop, step=step, iter_args=iter_args, state=state,
+        unroll=unroll, unroll_factor=unroll_factor,
     )
 
 

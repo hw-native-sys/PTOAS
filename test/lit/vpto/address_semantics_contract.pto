@@ -1,0 +1,135 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -mlir-disable-threading -pto-print-address-analysis 2>&1 | FileCheck %s
+
+// CHECK: semantics op=pto.vlds current=[base={{%.*}} offset=element:{{%.*}}] post-update={base={{%.*}} advance=element:{{%.*}} constraint=dynamic updated-base=none}
+// CHECK: semantics op=pto.vldsx2 current=[base={{%.*}} offset=element:{{%.*}}] post-update={base={{%.*}} advance=element:{{%.*}} constraint=dynamic updated-base=none}
+// CHECK: semantics op=pto.vldus current=[base={{%.*}} offset=none] post-update={base={{%.*}} advance=element:none constraint=dynamic updated-base=none}
+// CHECK: semantics op=pto.plds current=[base={{%.*}} offset=byte:{{%.*}}] post-update={base={{%.*}} advance=byte:{{%.*}} constraint=dynamic updated-base=none}
+// CHECK: semantics op=pto.pldi current=[base={{%.*}} offset=alignment:{{%.*}}] post-update={base={{%.*}} advance=alignment:{{%.*}} constraint=constant updated-base=none}
+// CHECK: semantics op=pto.vsts current=[base={{%.*}} offset=element:{{%.*}}] post-update={base={{%.*}} advance=element:{{%.*}} constraint=dynamic updated-base=none}
+// CHECK: semantics op=pto.vstus current=[base={{%.*}} offset=none] post-update={base={{%.*}} advance=element:{{%.*}} constraint=dynamic updated-base=none}
+// CHECK: semantics op=pto.psts current=[base={{%.*}} offset=byte:{{%.*}}] post-update={base={{%.*}} advance=byte:{{%.*}} constraint=dynamic updated-base=none}
+// CHECK: semantics op=pto.psti current=[base={{%.*}} offset=alignment:{{%.*}}] post-update={base={{%.*}} advance=alignment:{{%.*}} constraint=constant updated-base=none}
+// CHECK: semantics op=pto.sprsts current=[base={{%.*}} offset=byte:{{%.*}}] post-update={base={{%.*}} advance=byte:{{%.*}} constraint=dynamic updated-base=none}
+// CHECK: semantics op=pto.sprsti current=[base={{%.*}} offset=alignment:{{%.*}}] post-update={base={{%.*}} advance=alignment:{{%.*}} constraint=signed-i8 updated-base=none}
+// CHECK: semantics op=pto.vstas current=[base={{%.*}} offset=element:{{%.*}}] post-update={base={{%.*}} advance=element:{{%.*}} constraint=dynamic updated-base=none}
+// CHECK: semantics op=pto.vsldb current=[base={{%.*}} offset=block:{{%.*}}] post-update={base={{%.*}} advance=block:{{%.*}} constraint=dynamic updated-base=none}
+// CHECK: semantics op=pto.vsstb current=[base={{%.*}} offset=block:{{%.*}}] post-update={base={{%.*}} advance=block:{{%.*}} constraint=dynamic updated-base=none}
+
+// The named updated-base accessors, rather than result-count thresholds,
+// distinguish post-update forms. Their offset is only the after-access advance;
+// every current access is the already-materialized base.
+// CHECK: semantics op=pto.vlds current=[base={{%.*}} offset=none] post-update={base={{%.*}} advance=element:{{%.*}} constraint=dynamic updated-base={{%.*}}}
+// CHECK: semantics op=pto.vldsx2 current=[base={{%.*}} offset=none] post-update={base={{%.*}} advance=element:{{%.*}} constraint=dynamic updated-base={{%.*}}}
+// CHECK: semantics op=pto.vldus current=[base={{%.*}} offset=none] post-update={base={{%.*}} advance=element:{{%.*}} constraint=dynamic updated-base={{%.*}}}
+// CHECK: semantics op=pto.plds current=[base={{%.*}} offset=none] post-update={base={{%.*}} advance=byte:{{%.*}} constraint=dynamic updated-base={{%.*}}}
+// CHECK: semantics op=pto.pldi current=[base={{%.*}} offset=none] post-update={base={{%.*}} advance=alignment:{{%.*}} constraint=constant updated-base={{%.*}}}
+// CHECK: semantics op=pto.vsts current=[base={{%.*}} offset=none] post-update={base={{%.*}} advance=element:{{%.*}} constraint=dynamic updated-base={{%.*}}}
+// CHECK: semantics op=pto.vstus current=[base={{%.*}} offset=none] post-update={base={{%.*}} advance=element:{{%.*}} constraint=dynamic updated-base={{%.*}}}
+// CHECK: semantics op=pto.psts current=[base={{%.*}} offset=none] post-update={base={{%.*}} advance=byte:{{%.*}} constraint=dynamic updated-base={{%.*}}}
+// CHECK: semantics op=pto.psti current=[base={{%.*}} offset=none] post-update={base={{%.*}} advance=alignment:{{%.*}} constraint=constant updated-base={{%.*}}}
+// CHECK: semantics op=pto.sprsts current=[base={{%.*}} offset=none] post-update={base={{%.*}} advance=byte:{{%.*}} constraint=dynamic updated-base={{%.*}}}
+// CHECK: semantics op=pto.sprsti current=[base={{%.*}} offset=none] post-update={base={{%.*}} advance=alignment:{{%.*}} constraint=signed-i8 updated-base={{%.*}}}
+// CHECK: semantics op=pto.vstas current=[base={{%.*}} offset=none] post-update={base={{%.*}} advance=element:{{%.*}} constraint=dynamic updated-base={{%.*}}}
+// CHECK: semantics op=pto.vsldb current=[base={{%.*}} offset=none] post-update={base={{%.*}} advance=block:{{%.*}} constraint=dynamic updated-base={{%.*}}}
+// CHECK: semantics op=pto.vsstb current=[base={{%.*}} offset=none] post-update={base={{%.*}} advance=block:{{%.*}} constraint=dynamic updated-base={{%.*}}}
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @address_semantics_contract(
+      %src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>,
+      %spr_dst: !pto.ptr<ui32, ub>, %value: !pto.vreg<64xf32>,
+      %mask: !pto.mask<b32>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c0_i16 = arith.constant 0 : i16
+    %c1_i16 = arith.constant 1 : i16
+    %c0_i32 = arith.constant 0 : i32
+    pto.vecscope {
+      %initial_load_align = pto.vldas %src
+          : !pto.ptr<f32, ub> -> !pto.align
+      %initial_store_align = pto.init_align : !pto.align
+      %vstas_align = pto.init_align : !pto.align
+      %vlds = pto.vlds %src[%c0]
+            : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      %low, %high = pto.vldsx2 %src[%c0], "DINTLV_B32"
+            : !pto.ptr<f32, ub>, index
+              -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
+      %vldus, %load_align = pto.vldus %src, %initial_load_align
+            : !pto.ptr<f32, ub>, !pto.align
+              -> !pto.vreg<64xf32>, !pto.align
+      %plds = pto.plds %src[%c0], "NORM"
+            : !pto.ptr<f32, ub>, index -> !pto.mask<b32>
+      %pldi = pto.pldi %src[%c0], "NORM"
+            : !pto.ptr<f32, ub>, index -> !pto.mask<b32>
+      pto.vsts %value, %dst[%c0], %mask
+            : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      %store_align =
+          pto.vstus %initial_store_align, %c0_i32, %value, %dst
+            : !pto.align, i32, !pto.vreg<64xf32>, !pto.ptr<f32, ub>
+              -> !pto.align
+      pto.psts %mask, %dst[%c0], "NORM"
+            : !pto.mask<b32>, !pto.ptr<f32, ub>, index
+      pto.psti %mask, %dst[%c0], "NORM"
+            : !pto.mask<b32>, !pto.ptr<f32, ub>, index
+      pto.sprsts "AR", %spr_dst[%c0_i32] : !pto.ptr<ui32, ub>, i32
+      pto.sprsti "AR", %spr_dst[%c0_i32] : !pto.ptr<ui32, ub>, i32
+      pto.vstas %vstas_align, %dst, %c0_i32
+            : !pto.align, !pto.ptr<f32, ub>, i32
+      %vsldb = pto.vsldb %src, %c1_i16, %c0_i16, %mask
+            : !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32>
+              -> !pto.vreg<64xf32>
+      pto.vsstb %value, %dst, %c1_i16, %c0_i16, %mask
+            : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, i16, i16,
+              !pto.mask<b32>
+
+      %post_value, %post_vlds_base = pto.vlds %src[%c1]
+            : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>, !pto.ptr<f32, ub>
+      %post_low, %post_high, %post_vldsx2_base =
+            pto.vldsx2 %src[%c1], "DINTLV_B32"
+            : !pto.ptr<f32, ub>, index
+              -> !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.ptr<f32, ub>
+      %post_vldus, %post_align, %post_vldus_base =
+            pto.vldus %src, %load_align, %c1
+            : !pto.ptr<f32, ub>, !pto.align, index
+              -> !pto.vreg<64xf32>, !pto.align, !pto.ptr<f32, ub>
+      %post_plds, %post_plds_base = pto.plds %src[%c1], "NORM"
+            : !pto.ptr<f32, ub>, index -> !pto.mask<b32>, !pto.ptr<f32, ub>
+      %post_pldi, %post_pldi_base = pto.pldi %src[%c1], "NORM"
+            : !pto.ptr<f32, ub>, index -> !pto.mask<b32>, !pto.ptr<f32, ub>
+      %post_vsts_base = pto.vsts %value, %dst[%c1], %mask
+            : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+              -> !pto.ptr<f32, ub>
+      %post_store_align, %post_vstus_base =
+            pto.vstus %store_align, %c0_i32, %value, %dst
+            : !pto.align, i32, !pto.vreg<64xf32>, !pto.ptr<f32, ub>
+              -> !pto.align, !pto.ptr<f32, ub>
+      %post_psts_base = pto.psts %mask, %dst[%c1], "NORM"
+            : !pto.mask<b32>, !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+      %post_psti_base = pto.psti %mask, %dst[%c1], "NORM"
+            : !pto.mask<b32>, !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+      %post_sprsts_base = pto.sprsts "AR", %spr_dst[%c0_i32]
+            : !pto.ptr<ui32, ub>, i32 -> !pto.ptr<ui32, ub>
+      %post_sprsti_base = pto.sprsti "AR", %spr_dst[%c0_i32]
+            : !pto.ptr<ui32, ub>, i32 -> !pto.ptr<ui32, ub>
+      %post_vstas_align = pto.init_align : !pto.align
+      %post_vstas_base = pto.vstas %post_vstas_align, %dst, %c0_i32
+            : !pto.align, !pto.ptr<f32, ub>, i32 -> !pto.ptr<f32, ub>
+      %post_vsldb, %post_vsldb_base =
+            pto.vsldb %src, %c1_i16, %c1_i16, %mask
+            : !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32>
+              -> !pto.vreg<64xf32>, !pto.ptr<f32, ub>
+      %post_vsstb_base =
+            pto.vsstb %value, %dst, %c1_i16, %c1_i16, %mask
+            : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, i16, i16,
+              !pto.mask<b32> -> !pto.ptr<f32, ub>
+    }
+    return
+  }
+}

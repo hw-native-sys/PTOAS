@@ -21,6 +21,7 @@
 #include "PTO/Transforms/VPTOLLVMEmitterHelper.h"
 
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/PTOTypeUtils.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -33,6 +34,7 @@
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Target/LLVMIR/Export.h"
 #include "mlir/Transforms/DialectConversion.h"
@@ -402,7 +404,111 @@ queryDefaultTargetAttrs(const VPTOEmissionOptions &options,
   return attrs;
 }
 
+static std::optional<int64_t>
+getI32EncodedIndexOffset(Value offset, int64_t intrinsicScale) {
+  std::optional<int64_t> constant = getConstantIntValue(offset);
+  if (!constant) {
+    return std::nullopt;
+  }
+  llvm::APInt scaled =
+      llvm::APInt(64, static_cast<uint64_t>(*constant), true).sext(128);
+  scaled *= llvm::APInt(128, static_cast<uint64_t>(intrinsicScale));
+  if (!scaled.isSignedIntN(32)) {
+    return std::nullopt;
+  }
+  return scaled.getSExtValue();
+}
+
+static Value materializeFullIndexAddress(
+    Location loc, Value base, Value offset, int64_t addressUnitBytes,
+    LLVM::LLVMPointerType baseType, ConversionPatternRewriter &rewriter) {
+  Value offsetI64 = rewriter.create<arith::IndexCastOp>(
+      loc, rewriter.getI64Type(), offset);
+  Value scaleI64 =
+      rewriter.create<arith::ConstantIntOp>(loc, addressUnitBytes, 64);
+  Value byteOffset = rewriter.create<arith::MulIOp>(loc, offsetI64, scaleI64);
+  return rewriter.create<LLVM::GEPOp>(
+      loc, baseType, rewriter.getI8Type(), base, ValueRange{byteOffset});
+}
+
+static FailureOr<VPTOLoweredAddressOffset> lowerVPTOIndexOffsetForIntrinsic(
+    Operation *anchor, Value base, Value offset, int64_t addressUnitBytes,
+    int64_t intrinsicScale, bool isPostUpdate,
+    ConversionPatternRewriter &rewriter) {
+  auto baseType = dyn_cast<LLVM::LLVMPointerType>(base.getType());
+  bool hasValidTypesAndScales =
+      baseType && offset.getType().isIndex() && addressUnitBytes > 0 &&
+      intrinsicScale > 0;
+  if (!hasValidTypesAndScales) {
+    return failure();
+  }
+
+  Location loc = anchor->getLoc();
+  if (std::optional<int64_t> encoded =
+          getI32EncodedIndexOffset(offset, intrinsicScale)) {
+    Value encodedValue =
+        rewriter.create<arith::ConstantIntOp>(loc, *encoded, 32);
+    return VPTOLoweredAddressOffset{base, encodedValue, Value()};
+  }
+
+  Value adjustedBase = materializeFullIndexAddress(
+      loc, base, offset, addressUnitBytes, baseType, rewriter);
+  Value encodedZero = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
+  if (isPostUpdate) {
+    return VPTOLoweredAddressOffset{base, encodedZero, adjustedBase};
+  }
+  return VPTOLoweredAddressOffset{adjustedBase, encodedZero, Value()};
+}
+
 } // namespace
+
+FailureOr<VPTOLoweredAddressOffset>
+lowerVPTOElementOffsetForIntrinsic(
+    Operation *anchor, Value base, Value elementOffset, Type elementType,
+    bool isPostUpdate, ConversionPatternRewriter &rewriter) {
+  auto baseType = dyn_cast<LLVM::LLVMPointerType>(base.getType());
+  unsigned elementBits = getPTOStorageElemBitWidth(elementType);
+  if (!baseType || elementBits == 0 || elementBits % 8 != 0) {
+    return failure();
+  }
+
+  Location loc = anchor->getLoc();
+  int64_t elementBytes = elementBits / 8;
+  if (!elementOffset.getType().isIndex()) {
+    if (!elementOffset.getType().isInteger(32)) {
+      return failure();
+    }
+    Value scale = rewriter.create<arith::ConstantIntOp>(loc, elementBytes, 32);
+    Value encoded =
+        rewriter.create<arith::MulIOp>(loc, elementOffset, scale);
+    return VPTOLoweredAddressOffset{base, encoded, Value()};
+  }
+
+  return lowerVPTOIndexOffsetForIntrinsic(
+      anchor, base, elementOffset, elementBytes, elementBytes, isPostUpdate,
+      rewriter);
+}
+
+FailureOr<VPTOLoweredAddressOffset>
+lowerVPTOPredicateOffsetForIntrinsic(
+    Operation *anchor, Value base, Value offset, bool isPostUpdate,
+    ConversionPatternRewriter &rewriter) {
+  int64_t addressUnitBytes = 1;
+  if (isa<PldiOp, PstiOp>(anchor)) {
+    std::optional<int64_t> alignmentBytes =
+        getLoadStoreVecAlignmentSize(anchor);
+    if (!alignmentBytes) {
+      return failure();
+    }
+    addressUnitBytes = *alignmentBytes;
+  } else if (!isa<PldsOp, PstsOp>(anchor)) {
+    return failure();
+  }
+
+  return lowerVPTOIndexOffsetForIntrinsic(
+      anchor, base, offset, addressUnitBytes, /*intrinsicScale=*/1,
+      isPostUpdate, rewriter);
+}
 
 void materializeVecScopeCarrierLoops(ModuleOp module) {
   MLIRContext *ctx = module.getContext();

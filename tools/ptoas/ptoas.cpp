@@ -34,6 +34,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
@@ -175,10 +176,24 @@ struct ApplySIMTEntryNoInlinePass final
 /// generic operation folding. LLVM 19 cannot disable that folding, which can
 /// erase an expression while the EmitC pattern is rewriting it. Apply the
 /// same EmitC rewrite directly so PTOAS retains LLVM 21 expression semantics.
+///
+/// LLVM 19's C++ emitter also loses the enclosing precedence after it adds
+/// parentheses around a nested expression. Keep conditional expressions as
+/// explicit temporaries when another C expression consumes them so a ternary
+/// can never be flattened into an arithmetic expression with changed meaning.
 struct FormEmitCExpressionsCompatPass final
     : public PassWrapper<FormEmitCExpressionsCompatPass,
                          OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(FormEmitCExpressionsCompatPass)
+
+  static bool containsConditionalOperator(emitc::ExpressionOp expression) {
+    for (Operation &op : expression.getBody()->without_terminator()) {
+      if (isa<emitc::ConditionalOp>(op)) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   static bool foldExpression(emitc::ExpressionOp expression,
                              IRRewriter &rewriter) {
@@ -194,6 +209,16 @@ struct FormEmitCExpressionsCompatPass final
         if (!producer || !producer.getResult().hasOneUse() ||
             producer.hasSideEffects())
           continue;
+
+        if (producer.getDoNotInline()) {
+          continue;
+        }
+
+        if (containsConditionalOperator(producer)) {
+          producer.setDoNotInline(true);
+          changed = true;
+          continue;
+        }
 
         rewriter.setInsertionPoint(&op);
         IRMapping mapper;
@@ -551,6 +576,11 @@ static llvm::cl::opt<bool> enableTileOpExpand(
         "Deprecated compatibility flag. TileOp expansion is controlled by "
         "--pto-backend=vpto."),
     llvm::cl::init(false));
+
+static llvm::cl::opt<bool> enableVexpdifFusion(
+    "enable-vexpdif-fusion",
+    llvm::cl::desc("Enable vsub + vexp fusion into vexpdif"),
+    llvm::cl::init(true));
 
 static llvm::cl::opt<llvm::cl::boolOrDefault> enableOpFusion(
     "enable-op-fusion",
@@ -3071,7 +3101,7 @@ static void prepareVPTOForEmission(PassManager &pm) {
   kernelModulePM.addNestedPass<func::FuncOp>(
       pto::createLoweringSyncToPipePass());
   kernelModulePM.addNestedPass<func::FuncOp>(
-      pto::createPTOUnrollSIMTForPass());
+      pto::createPTOUnrollLoopsPass());
   kernelModulePM.addPass(createSCCPPass());
   kernelModulePM.addPass(createCanonicalizerPass());
   kernelModulePM.addPass(createCSEPass());
@@ -3146,6 +3176,10 @@ static void lowerPTOToVPTOBackend(PassManager &pm, ModuleOp module) {
         pto::createPTOFusionPredicateElisionPass());
     kernelModulePM.addNestedPass<mlir::func::FuncOp>(
         pto::createPTOFusionLoadStoreElisionPass());
+    if (enableVexpdifFusion) {
+      kernelModulePM.addNestedPass<mlir::func::FuncOp>(
+          pto::createPTOVexpdifFusionPass());
+    }
     if (enableUnrollAfterLoopFusion) {
       kernelModulePM.addNestedPass<mlir::func::FuncOp>(
           pto::createPTOUnrollAfterLoopFusionPass());
@@ -3153,6 +3187,12 @@ static void lowerPTOToVPTOBackend(PassManager &pm, ModuleOp module) {
       kernelModulePM.addPass(mlir::createCSEPass());
       kernelModulePM.addNestedPass<mlir::func::FuncOp>(
           pto::createPTOFusionLoadStoreElisionPass());
+      // Unrolling and the cleanup passes above can expose new vsub + vexp
+      // patterns, so run vexpdif fusion again before flattening the regions.
+      if (enableVexpdifFusion) {
+        kernelModulePM.addNestedPass<mlir::func::FuncOp>(
+            pto::createPTOVexpdifFusionPass());
+      }
     }
     kernelModulePM.addNestedPass<mlir::func::FuncOp>(
         pto::createPTOFlattenFusionRegionPass());
@@ -3279,6 +3319,7 @@ static void appendVMISemanticPipeline(OpPassManager &pm) {
   pm.addPass(createCSEPass());
   pm.addPass(pto::createVMILegalizeArithSelectPass());
   pm.addPass(pto::createVMIMaskGranularityAssignmentPass());
+  pm.addPass(pto::createVMILayoutRematerializeWeakProducersPass());
   pm.addPass(pto::createVMILayoutAssignmentPass());
   pm.addPass(createCanonicalizerPass());
   pm.addPass(createCSEPass());
@@ -3296,11 +3337,30 @@ static void appendVMISemanticPipeline(OpPassManager &pm) {
   pm.addPass(pto::createVMIToVPTOPass());
 }
 
+/// Reject statically invalid scf.for steps at the PTOAS input boundary.
+/// LLVM 19 intentionally does not follow SSA values from scf.for verifiers,
+/// so the generic MLIR verifier cannot enforce this semantic constraint.
+static LogicalResult validateSCFForConstantSteps(ModuleOp module) {
+  WalkResult result = module.walk([](scf::ForOp forOp) -> WalkResult {
+    std::optional<int64_t> step = getConstantIntValue(forOp.getStep());
+    if (!step || *step > 0)
+      return WalkResult::advance();
+
+    forOp.emitOpError("constant step operand must be positive");
+    return WalkResult::interrupt();
+  });
+  return result.wasInterrupted() ? failure() : success();
+}
+
 int mlir::pto::compilePTOASModule(
     OwningOpRef<ModuleOp> &module, PTOASContext &context,
     PTOBackend effectiveBackend, PTOASCompileResult &result,
     bool emitVPTOHostStub) {
   result.reset();
+  if (failed(validateSCFForConstantSteps(*module))) {
+    return 1;
+  }
+
   // Validate stack-local struct provenance before every output path. In
   // particular, --emit-pto-ir returns before the EmitC validation pass and
   // VPTO does not use that pass.

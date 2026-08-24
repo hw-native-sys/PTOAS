@@ -133,7 +133,7 @@ def create(args: argparse.Namespace) -> int:
     ccache_dir = Path(args.ccache_dir).expanduser().resolve() if args.ccache_dir else None
     if ccache_dir:
         ccache_dir.mkdir(parents=True, exist_ok=True)
-    branch = args.branch or f"codex/{args.name}"
+    branch = args.branch or f"feature/{args.name}"
     workspace_root.mkdir(parents=True, exist_ok=True)
     build_root.mkdir(parents=True, exist_ok=True)
 

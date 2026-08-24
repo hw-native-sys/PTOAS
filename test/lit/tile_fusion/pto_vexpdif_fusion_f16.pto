@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. THIS SOFTWARE IS PROVIDED ON AN
+// "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// Negative case for the pto-vexpdif-fusion pass over a real ptoas pipeline.
+// An f16 tsub + texp chain lowers to vsub + vexp over !pto.vreg<128xf16>.
+// canFuse only accepts f32 element types, so the chain is left as vsub + vexp
+// even though vexpdif fusion is enabled by default.
+
+// RUN: ptoas --pto-backend=vpto --pto-arch=a5 --pto-level=level2 --enable-op-fusion --enable-vexpdif-fusion --emit-vpto %s --mlir-print-ir-after=pto-vexpdif-fusion -o /dev/null 2>&1 | FileCheck %s
+
+module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @vexpdif_f16() {
+    %a = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=64, v_row=16, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %b = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=64, v_row=16, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %sub = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=64, v_row=16, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %result = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=64, v_row=16, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tsub ins(%a, %b : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=64, v_row=16, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+                          !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=64, v_row=16, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+             outs(%sub : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=64, v_row=16, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.texp ins(%sub : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=64, v_row=16, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+             outs(%result : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=64, v_row=16, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @vexpdif_f16(
+// CHECK: pto.vsub {{.*}} !pto.vreg<128xf16>
+// CHECK: pto.vexp {{.*}} !pto.vreg<128xf16>
+// CHECK-NOT: pto.vexpdif

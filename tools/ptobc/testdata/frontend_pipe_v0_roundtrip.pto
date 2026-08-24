@@ -19,7 +19,9 @@ module {
 
     %mat_tile = pto.tpop_from_aiv {id = 0, split = 0}
       -> !pto.tile_buf<loc=mat, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>
-    pto.tfree_from_aiv {id = 0, split = 0}
+    pto.tfree_from_aiv(%mat_tile : !pto.tile_buf<loc=mat, dtype=f32,
+      rows=16, cols=16, v_row=16, v_col=16, blayout=col_major,
+      slayout=row_major, fractal=512, pad=0>) {id = 0, split = 0}
     return
   }
 
@@ -43,7 +45,9 @@ module {
 
     %recv_tile = pto.tpop_from_aic {id = 0, split = 0}
       -> !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
-    pto.tfree_from_aic {id = 0, split = 0}
+    pto.tfree_from_aic(%recv_tile : !pto.tile_buf<loc=vec, dtype=f32,
+      rows=16, cols=16, v_row=16, v_col=16, blayout=row_major,
+      slayout=none_box, fractal=512, pad=0>) {id = 0, split = 0}
     return
   }
 }

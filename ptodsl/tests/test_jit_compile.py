@@ -2910,6 +2910,119 @@ def scalar_contiguous_scalar_store_probe():
     scalar.store(1.0, data_ptr, 0, contiguous=4)
 
 
+@pto.simt
+def per_element_vec_f32_simt_body(data_ptr):
+    base = pto.get_tid_x() * 2
+    v0 = scalar.load(data_ptr, base)
+    v1 = scalar.load(data_ptr, base + 1)
+    pair = pto.Vec(pto.f32, 2, init=(v0, v1))
+    scalar.store(pair, data_ptr, 16 + base)
+
+
+@pto.jit(target="a5", mode="explicit")
+def per_element_vec_f32_probe():
+    per_element_vec_f32_simt_body[1, 1, 1](
+        pto.castptr(pto.const(0, dtype=pto.ui64), pto.ptr(pto.f32, "ub"))
+    )
+    pto.pipe_barrier(pto.Pipe.ALL)
+
+
+@pto.simt
+def per_element_vec_i32_simt_body(data_ptr):
+    base = pto.get_tid_x() * 2
+    v0 = scalar.load(data_ptr, base)
+    v1 = scalar.load(data_ptr, base + 1)
+    pair = pto.Vec(pto.i32, 2, init=(v0, v1))
+    scalar.store(pair, data_ptr, 16 + base)
+
+
+@pto.jit(target="a5", mode="explicit")
+def per_element_vec_i32_probe():
+    per_element_vec_i32_simt_body[1, 1, 1](
+        pto.castptr(pto.const(0, dtype=pto.ui64), pto.ptr(pto.i32, "ub"))
+    )
+    pto.pipe_barrier(pto.Pipe.ALL)
+
+
+@pto.simt
+def per_element_vec_ui32_simt_body(data_ptr):
+    base = pto.get_tid_x() * 2
+    v0 = scalar.load(data_ptr, base)
+    v1 = scalar.load(data_ptr, base + 1)
+    pair = pto.Vec(pto.ui32, 2, init=(v0, v1))
+    scalar.store(pair, data_ptr, 16 + base)
+
+
+@pto.jit(target="a5", mode="explicit")
+def per_element_vec_ui32_probe():
+    per_element_vec_ui32_simt_body[1, 1, 1](
+        pto.castptr(pto.const(0, dtype=pto.ui64), pto.ptr(pto.ui32, "ub"))
+    )
+    pto.pipe_barrier(pto.Pipe.ALL)
+
+
+@pto.jit(target="a5")
+def vec_init_size_mismatch_probe():
+    data_tile = pto.alloc_tile(shape=[1, 16], dtype=pto.f32, valid_shape=[1, 16])
+    data_ptr = data_tile.as_ptr()
+    pair = pto.Vec(pto.f32, 2, init=(1.0, 2.0, 3.0))
+    scalar.store(pair, data_ptr, 0)
+
+
+@pto.jit(target="a5")
+def vec_init_str_probe():
+    data_tile = pto.alloc_tile(shape=[1, 16], dtype=pto.f32, valid_shape=[1, 16])
+    data_ptr = data_tile.as_ptr()
+    pair = pto.Vec(pto.f32, 2, init="ab")
+    scalar.store(pair, data_ptr, 0)
+
+
+@pto.jit(target="a5")
+def vec_init_literals_probe():
+    signed_tile = pto.alloc_tile(shape=[1, 16], dtype=pto.si32, valid_shape=[1, 16])
+    unsigned_tile = pto.alloc_tile(shape=[1, 16], dtype=pto.ui32, valid_shape=[1, 16])
+    signed_ptr = signed_tile.as_ptr()
+    unsigned_ptr = unsigned_tile.as_ptr()
+    signed_pair = pto.Vec(pto.si32, 2, init=(-1, 2))
+    unsigned_pair = pto.Vec(pto.ui32, 2, init=(-1, 2))
+    scalar.store(signed_pair, signed_ptr, 0)
+    scalar.store(unsigned_pair, unsigned_ptr, 0)
+
+
+@pto.jit(target="a5")
+def vec_init_mapping_probe():
+    data_tile = pto.alloc_tile(shape=[1, 16], dtype=pto.f32, valid_shape=[1, 16])
+    data_ptr = data_tile.as_ptr()
+    pair = pto.Vec(pto.f32, 2, init={0: 1.0, 1: 2.0})
+    scalar.store(pair, data_ptr, 0)
+
+
+@pto.jit(target="a5")
+def vec_broadcast_unsigned_probe():
+    unsigned_tile = pto.alloc_tile(shape=[1, 16], dtype=pto.ui32, valid_shape=[1, 16])
+    unsigned_ptr = unsigned_tile.as_ptr()
+    broadcast = pto.Vec(pto.ui32, 2, init=7)
+    scalar.store(broadcast, unsigned_ptr, 0)
+
+
+@pto.jit(target="a5")
+def vec_init_16b_probe():
+    f16_tile = pto.alloc_tile(shape=[1, 16], dtype=pto.f16, valid_shape=[1, 16])
+    i16_tile = pto.alloc_tile(shape=[1, 16], dtype=pto.i16, valid_shape=[1, 16])
+    ui16_tile = pto.alloc_tile(shape=[1, 16], dtype=pto.ui16, valid_shape=[1, 16])
+    f16_ptr = f16_tile.as_ptr()
+    i16_ptr = i16_tile.as_ptr()
+    ui16_ptr = ui16_tile.as_ptr()
+    pair_f16 = pto.Vec(pto.f16, 2, init=(1.5, -2.25))
+    quad_f16 = pto.Vec(pto.f16, 4, init=(1.5, -2.25, 3.0, 4.5))
+    quad_i16 = pto.Vec(pto.i16, 4, init=(-1, 2, 3, -4))
+    quad_ui16 = pto.Vec(pto.ui16, 4, init=(1, 2, 3, 4))
+    scalar.store(pair_f16, f16_ptr, 0)
+    scalar.store(quad_f16, f16_ptr, 2)
+    scalar.store(quad_i16, i16_ptr, 0)
+    scalar.store(quad_ui16, ui16_ptr, 0)
+
+
 @pto.jit(target="a5")
 def addptr_surface_probe():
     meta_tile = pto.alloc_tile(shape=[1, 8], dtype=pto.i32, valid_shape=[1, 4])
@@ -5004,6 +5117,9 @@ def main() -> None:
     scalar_pointer_offset_probe.verify()
     scalar_contiguous_vector_probe.verify()
     scalar_contiguous_vector_arith_probe.verify()
+    per_element_vec_f32_probe.verify()
+    per_element_vec_i32_probe.verify()
+    per_element_vec_ui32_probe.verify()
     addptr_surface_probe.verify()
     simt_pointer_offset_probe.verify()
     scalar_store_element_coercion_probe.verify()
@@ -7558,6 +7674,156 @@ def main() -> None:
         TypeError,
         lambda: scalar_contiguous_scalar_store_probe.compile(),
         "scalar.store(scalar, ..., contiguous=N) is not supported",
+    )
+
+    per_element_vec_text = per_element_vec_f32_probe.compile().mlir_text()
+    expect_parse_roundtrip_and_verify(per_element_vec_text, "per-element Vec init= specialization")
+    expect("vector<2xf32>" in per_element_vec_text, "pto.Vec(..., init=...) over f32 should produce vector<2xf32>")
+    # NOTE: the exact `count("llvm.insertelement" / "llvm.store") == N` assertions in this
+    # section are white-box snapshot checks of the traced MLIR. Unrelated pipeline changes
+    # (canonicalization, constant folding of the undef/insertelement chain, etc.) can shift
+    # the counts without any behavioral regression; update the expected numbers when that
+    # happens. The behavioral guards are the distinct-SSA-value check below, the absence of
+    # numeric conversion ops, and the dsl-st golden cases on A5.
+    expect(
+        per_element_vec_text.count("llvm.insertelement") == 2,
+        "pto.Vec(..., init=...) should emit exactly two llvm.insertelement ops",
+    )
+    inserted_values = re.findall(
+        r"llvm\.insertelement\s+(%[\w.\-]+)",
+        per_element_vec_text,
+    )
+    expect(
+        len(inserted_values) == 2 and inserted_values[0] != inserted_values[1],
+        "pto.Vec(..., init=(v0, v1)) should insert two distinct SSA values, not broadcast",
+    )
+    expect(
+        per_element_vec_text.count("llvm.store") == 1,
+        "scalar.store(vector, ...) built from init= should emit exactly one llvm.store",
+    )
+    expect(
+        "pto.store" not in per_element_vec_text,
+        "per-element Vec store should not lower through scalar pto.store",
+    )
+
+    per_element_vec_i32_text = per_element_vec_i32_probe.compile().mlir_text()
+    expect_parse_roundtrip_and_verify(per_element_vec_i32_text, "per-element Vec init= i32 specialization")
+    per_element_vec_ui32_text = per_element_vec_ui32_probe.compile().mlir_text()
+    expect_parse_roundtrip_and_verify(per_element_vec_ui32_text, "per-element Vec init= ui32 specialization")
+    for int_label, int_text in (("i32", per_element_vec_i32_text), ("ui32", per_element_vec_ui32_text)):
+        expect(
+            int_text.count("llvm.insertelement") == 2,
+            f"pto.Vec(pto.{int_label}, 2, init=...) should emit exactly two llvm.insertelement ops",
+        )
+        expect(
+            int_text.count("llvm.store") == 1,
+            f"pto.Vec(pto.{int_label}, 2, init=...) store should emit exactly one llvm.store",
+        )
+        expect(
+            "arith.fpext" not in int_text
+            and "arith.fptosi" not in int_text
+            and "arith.sitofp" not in int_text
+            and "arith.uitofp" not in int_text
+            and "arith.fptrunc" not in int_text,
+            f"pto.Vec(pto.{int_label}, 2, init=...) should keep element bit patterns without scalar conversions",
+        )
+    expect(
+        "vector<2xi32>" in per_element_vec_ui32_text,
+        "pto.Vec(pto.ui32, 2, init=...) should build a signless vector<2xi32> keeping the bit pattern",
+    )
+
+    vec_literals_text = vec_init_literals_probe.compile().mlir_text()
+    expect_parse_roundtrip_and_verify(vec_literals_text, "per-element Vec init= Python literal specialization")
+    expect("vector<2xi32>" in vec_literals_text, "si32/ui32 Python literals should build signless vector<2xi32>")
+    expect(
+        vec_literals_text.count("llvm.insertelement") == 4,
+        "two two-element Vec init= builders over literals should emit exactly four llvm.insertelement ops",
+    )
+    expect(
+        vec_literals_text.count("llvm.store") == 2,
+        "each literal-built vector should be stored with exactly one llvm.store",
+    )
+    expect(
+        "pto.store" not in vec_literals_text,
+        "literal-built vector stores should not lower through scalar pto.store",
+    )
+    expect(
+        "arith.constant -1" in vec_literals_text,
+        "a negative Python literal should keep the two-complement bit pattern",
+    )
+    expect(
+        "arith.fpext" not in vec_literals_text
+        and "arith.fptosi" not in vec_literals_text
+        and "arith.sitofp" not in vec_literals_text
+        and "arith.uitofp" not in vec_literals_text
+        and "arith.trunci" not in vec_literals_text
+        and "arith.extsi" not in vec_literals_text
+        and "arith.extui" not in vec_literals_text,
+        "Python literal elements should reach insertelement without any numeric widening/truncation casts",
+    )
+
+    expect_raises(
+        TypeError,
+        lambda: vec_init_mapping_probe.compile(),
+        "expects a scalar, a builtin vector, or a sequence of scalars",
+    )
+
+    vec_broadcast_unsigned_text = vec_broadcast_unsigned_probe.compile().mlir_text()
+    expect_parse_roundtrip_and_verify(
+        vec_broadcast_unsigned_text,
+        "pto.Vec ui32 init= broadcast specialization",
+    )
+    expect(
+        "vector<2xi32>" in vec_broadcast_unsigned_text,
+        "pto.Vec(pto.ui32, 2, init=scalar) should build a signless vector<2xi32> instead of failing verification",
+    )
+    expect(
+        vec_broadcast_unsigned_text.count("llvm.insertelement") == 2
+        and vec_broadcast_unsigned_text.count("llvm.store") == 1,
+        "unsigned broadcast should lower through two insertelements and one llvm.store",
+    )
+
+    vec_16b_text = vec_init_16b_probe.compile().mlir_text()
+    expect_parse_roundtrip_and_verify(vec_16b_text, "per-element Vec init= 16-bit specialization")
+    for vec_type, label in (("vector<2xf16>", "f16 x 2"), ("vector<4xf16>", "f16 x 4"), ("vector<4xi16>", "i16 x 4")):
+        expect(
+            vec_type in vec_16b_text,
+            f"pto.Vec(..., init=...) should build {vec_type} for {label} packs",
+        )
+    # Snapshot-style count (see the NOTE above the f32 probe assertions): 2+4+4+4 packed
+    # elements across the four 16-bit stores. Update if the pipeline folds the chain.
+    expect(
+        vec_16b_text.count("llvm.insertelement") == 14,
+        "16-bit packs (2+4+4+4 elements) should emit exactly fourteen llvm.insertelement ops",
+    )
+    expect(
+        vec_16b_text.count("llvm.store") == 4,
+        "each 16-bit vector should be stored with exactly one llvm.store",
+    )
+    expect(
+        "pto.store" not in vec_16b_text,
+        "16-bit vector stores should not lower through scalar pto.store",
+    )
+    expect(
+        "arith.fpext" not in vec_16b_text
+        and "arith.fptosi" not in vec_16b_text
+        and "arith.sitofp" not in vec_16b_text
+        and "arith.uitofp" not in vec_16b_text
+        and "arith.trunci" not in vec_16b_text
+        and "arith.extsi" not in vec_16b_text
+        and "arith.extui" not in vec_16b_text,
+        "16-bit literal elements should reach insertelement without any numeric widening or truncation casts",
+    )
+
+    expect_raises(
+        ValueError,
+        lambda: vec_init_size_mismatch_probe.compile(),
+        "expects exactly 2 element(s), got 3",
+    )
+    expect_raises(
+        TypeError,
+        lambda: vec_init_str_probe.compile(),
+        "expects a scalar, a builtin vector, or a sequence of scalars",
     )
 
     vec_arith_text = scalar_contiguous_vector_arith_probe.compile().mlir_text()

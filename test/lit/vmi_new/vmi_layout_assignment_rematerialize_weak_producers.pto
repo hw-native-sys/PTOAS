@@ -1,0 +1,75 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0.
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-rematerialize-weak-producers -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-rematerialize-weak-producers -vmi-layout-assignment -vmi-layout-rematerialize | FileCheck %s --check-prefix=REMAT
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-rematerialize-weak-producers -vmi-layout-assignment -vmi-layout-rematerialize -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+
+// A mask and a VCI result are shared by two independent dataflows. The group
+// reduction dataflow needs deinterleaved=2, while the dense score store is
+// naturally contiguous. Weak producer fanout must not connect these layouts.
+module {
+  func.func @vmi_layout_assignment_rematerialize_weak_producers(
+      %x: !pto.vmi.vreg<128xf32>,
+      %max: !pto.vmi.vreg<128xf32>,
+      %scale: f32,
+      %dst0: !pto.ptr<f32, ub>,
+      %dst1: !pto.ptr<f32, ub>,
+      %off: index) {
+    %mask = pto.vmi.create_mask %off : index -> !pto.vmi.mask<128xpred>
+    %index = pto.vmi.vci %scale : f32 -> !pto.vmi.vreg<128xf32>
+    %score_base = pto.vmi.vadd %index, %index
+        : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>
+          -> !pto.vmi.vreg<128xf32>
+    %score = pto.vmi.vmuls %score_base, %scale, %mask
+        : !pto.vmi.vreg<128xf32>, f32, !pto.vmi.mask<128xpred>
+          -> !pto.vmi.vreg<128xf32>
+    pto.vmi.vstore %score, %dst0[%off]
+        : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+
+    %exp = pto.vmi.vexpdif %x, %max, %mask
+        : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>,
+          !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xf32>
+    %with_index = pto.vmi.vadd %exp, %index
+        : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>
+          -> !pto.vmi.vreg<128xf32>
+    %one = arith.constant 1 : index
+    %sum = pto.vmi.vcadd %with_index, %mask {group = 8, reassoc}
+        : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred>
+          -> !pto.vmi.vreg<8xf32>
+    pto.vmi.group_store %sum, %dst1[%off], %one {num_groups = 8}
+        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+    return
+  }
+}
+
+// ASSIGN-LABEL: func.func @vmi_layout_assignment_rematerialize_weak_producers(
+// ASSIGN: %[[MASK:.*]] = pto.vmi.create_mask %{{.*}} : index -> !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: %[[INDEX:.*]] = pto.vmi.iota %{{.*}} : f32 -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: %[[INDEX_C:.*]] = pto.vmi.iota %{{.*}} : f32 -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[SCORE_BASE:.*]] = pto.vmi.addf %{{.*}}, %[[INDEX_C]]
+// ASSIGN-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[MASK_C:.*]] = pto.vmi.create_mask %{{.*}} : index -> !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
+// ASSIGN: pto.vmi.vmuls %[[SCORE_BASE]], {{.*}}, %[[MASK_C]]
+// ASSIGN-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>, f32, !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: pto.vmi.vexpdif {{.*}} !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: pto.vmi.group_reduce_addf {{.*}} !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+
+// REMAT-LABEL: func.func @vmi_layout_assignment_rematerialize_weak_producers(
+// REMAT: %[[INDEX_D2:.*]] = pto.vmi.iota %{{.*}} : f32 -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// REMAT: %[[INDEX_C:.*]] = pto.vmi.iota %{{.*}} : f32 -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// REMAT: %[[MASK_C:.*]] = pto.vmi.create_mask %{{.*}} : index -> !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
+// REMAT-NOT: pto.vmi.ensure_mask_layout
+
+// LOWER-LABEL: func.func @vmi_layout_assignment_rematerialize_weak_producers(
+// LOWER-NOT: pto.vintlv
+// LOWER-NOT: pto.pintlv_b32
+// LOWER: pto.vdintlv
+// LOWER: pto.vexpdif
+// LOWER: pto.vcgadd
+// LOWER-NOT: pto.vmi.

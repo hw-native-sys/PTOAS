@@ -193,9 +193,10 @@ def store(value, ptr_or_ref, offset=None, *, contiguous=None):
             raise ValueError(
                 f"scalar.store(..., contiguous={width}) does not match vector size {vec_value.size}"
             )
-        if vec_value.element_type != elem_type:
+        if not _vector_store_element_compatible(vec_value.element_type, elem_type):
             raise TypeError(
-                "scalar.store(vector, ...) element type must match the destination pointer element type: "
+                "scalar.store(vector, ...) element type must be bit-compatible with the "
+                "destination pointer element type: "
                 f"got {vec_value.element_type}, expected {elem_type}"
             )
         _emit_contiguous_store(raw_value, buffer_value, index_value)
@@ -250,6 +251,27 @@ def _emit_contiguous_load(buffer_value, index_value, elem_type, width: int):
     vector_type = VectorType.get([width], elem_type)
     ptr_value = _emit_llvm_byte_pointer(buffer_value, index_value, elem_type)
     return llvm.LoadOp(vector_type, ptr_value).res
+
+
+def _vector_store_element_compatible(vector_element_type, elem_type) -> bool:
+    """Return whether a vector element type and a destination element type share one bit layout.
+
+    Exact type equality always passes. Same-width integers also pass: signed / unsigned /
+    signless forms of one width store the same bits, mirroring the scalar coercion rules
+    (for example a signless ``i32`` builtin vector packed from ``si32``/``ui32`` scalars).
+
+    This relaxation is store-path only: ``scalar.load(..., contiguous=N)`` keeps the declared
+    pointer element type (e.g. a ``ui32`` pointer yields ``vector<2xui32>``), while
+    ``pto.Vec(...)`` builds signless vectors. Stores accept both because the bit layout is
+    identical; element-level APIs (extract/insert/arithmetic) may still see the type
+    mismatch and should be revisited if such APIs are added.
+    """
+    if vector_element_type == elem_type:
+        return True
+    if IntegerType.isinstance(vector_element_type) and IntegerType.isinstance(elem_type):
+        if IntegerType(vector_element_type).width == IntegerType(elem_type).width:
+            return True
+    return False
 
 
 def _emit_contiguous_store(vector_value, buffer_value, index_value):

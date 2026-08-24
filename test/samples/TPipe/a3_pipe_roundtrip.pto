@@ -1,0 +1,93 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+module {
+  func.func @a3_pipe_roundtrip(%src: !pto.ptr<f32>, %dst: !pto.ptr<f32>,
+                              %gm_slot_buffer: !pto.ptr<f32>) attributes {pto.entry} {
+    func.call @a3_pipe_roundtrip_vector(%src, %dst, %gm_slot_buffer)
+      : (!pto.ptr<f32>, !pto.ptr<f32>, !pto.ptr<f32>) -> ()
+    return
+  }
+
+  func.func private @a3_pipe_roundtrip_cube(%gm_slot_buffer: !pto.ptr<f32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %gm_slots = pto.make_tensor_view %gm_slot_buffer, shape = [%c16, %c16],
+      strides = [%c16, %c1] : !pto.tensor_view<16x16xf32>
+    pto.aic_initialize_pipe {id = 0, dir_mask = 1, slot_size = 1024}
+      (gm_slot_tensor = %gm_slots : !pto.tensor_view<16x16xf32>)
+    %send = pto.talloc_to_aiv {id = 0, split = 0} -> !pto.tensor_view<16x16xf32>
+    pto.tpush_to_aiv(%send : !pto.tensor_view<16x16xf32>) {id = 0, split = 0}
+    return
+  }
+
+  func.func private @a3_pipe_roundtrip_vector(%src: !pto.ptr<f32>,
+      %dst: !pto.ptr<f32>, %gm_slot_buffer: !pto.ptr<f32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %src_view = pto.make_tensor_view %src, shape = [%c16, %c16],
+      strides = [%c16, %c1] : !pto.tensor_view<16x16xf32>
+    %dst_view = pto.make_tensor_view %dst, shape = [%c16, %c16],
+      strides = [%c16, %c1] : !pto.tensor_view<16x16xf32>
+    %src_part = pto.partition_view %src_view, offsets = [%c0, %c0], sizes = [%c16, %c16]
+      : !pto.tensor_view<16x16xf32> -> !pto.partition_tensor_view<16x16xf32>
+    %dst_part = pto.partition_view %dst_view, offsets = [%c0, %c0], sizes = [%c16, %c16]
+      : !pto.tensor_view<16x16xf32> -> !pto.partition_tensor_view<16x16xf32>
+    %tile = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+      v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tload ins(%src_part : !pto.partition_tensor_view<16x16xf32>)
+      outs(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16,
+        v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tstore ins(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+      v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%dst_part : !pto.partition_tensor_view<16x16xf32>)
+    return
+  }
+
+  func.func private @a3_pipe_c2v_vector_coverage(%gm_slot_buffer: !pto.ptr<f32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %gm_slots = pto.make_tensor_view %gm_slot_buffer, shape = [%c16, %c16],
+      strides = [%c16, %c1] : !pto.tensor_view<16x16xf32>
+    pto.aiv_initialize_pipe {id = 0, dir_mask = 1, slot_size = 1024}
+      (gm_slot_tensor = %gm_slots : !pto.tensor_view<16x16xf32>)
+    %recv = pto.tpop_from_aic {id = 0, split = 0} -> !pto.tensor_view<16x16xf32>
+    pto.tfree_from_aic(%recv : !pto.tensor_view<16x16xf32>) {id = 0, split = 0}
+    return
+  }
+
+  func.func private @a3_pipe_v2c_vector_coverage(%gm_slot_buffer: !pto.ptr<f32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %gm_slots = pto.make_tensor_view %gm_slot_buffer, shape = [%c16, %c16],
+      strides = [%c16, %c1] : !pto.tensor_view<16x16xf32>
+    pto.aiv_initialize_pipe {id = 1, dir_mask = 2, slot_size = 1024}
+      (gm_slot_tensor = %gm_slots : !pto.tensor_view<16x16xf32>)
+    %send = pto.talloc_to_aic {id = 1, split = 0} -> !pto.tensor_view<16x16xf32>
+    pto.tpush_to_aic(%send : !pto.tensor_view<16x16xf32>) {id = 1, split = 0}
+    return
+  }
+
+  func.func private @a3_pipe_v2c_cube_coverage(%gm_slot_buffer: !pto.ptr<f32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %gm_slots = pto.make_tensor_view %gm_slot_buffer, shape = [%c16, %c16],
+      strides = [%c16, %c1] : !pto.tensor_view<16x16xf32>
+    pto.aic_initialize_pipe {id = 1, dir_mask = 2, slot_size = 1024}
+      (gm_slot_tensor = %gm_slots : !pto.tensor_view<16x16xf32>)
+    %recv = pto.tpop_from_aiv {id = 1, split = 0} -> !pto.tensor_view<16x16xf32>
+    pto.tfree_from_aiv(%recv : !pto.tensor_view<16x16xf32>) {id = 1, split = 0}
+    return
+  }
+}

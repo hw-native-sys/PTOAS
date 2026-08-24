@@ -1570,7 +1570,8 @@ def PTO_CopyMatrixCcToUbOp : PTO_MteOp<"copy_matrix_cc_to_ub"> {
 }
 
 def PTO_VldsOp : PTO_VectorMicroOp<"vlds", [
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    VPTOAddressSemanticsOpInterface
   ]> {
   let arguments = (ins
     PTO_BufferLikeType:$source,
@@ -1590,7 +1591,8 @@ def PTO_VldsOp : PTO_VectorMicroOp<"vlds", [
 }
 
 def PTO_Vldsx2Op : PTO_VectorMicroOp<"vldsx2", [
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    VPTOAddressSemanticsOpInterface
   ]> {
   let arguments = (ins
     PTO_BufferLikeType:$source,
@@ -1650,7 +1652,8 @@ def PTO_SprclrOp : PTO_VectorMicroOp<"sprclr", []> {
 }
 
 def PTO_SprstiOp : PTO_VectorMicroOp<"sprsti", [
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    VPTOAddressSemanticsOpInterface
   ]> {
   let arguments = (ins
     StrAttr:$spr,
@@ -1669,7 +1672,8 @@ def PTO_SprstiOp : PTO_VectorMicroOp<"sprsti", [
 }
 
 def PTO_SprstsOp : PTO_VectorMicroOp<"sprsts", [
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    VPTOAddressSemanticsOpInterface
   ]> {
   let arguments = (ins
     StrAttr:$spr,
@@ -1688,7 +1692,8 @@ def PTO_SprstsOp : PTO_VectorMicroOp<"sprsts", [
 }
 
 def PTO_VldusOp : PTO_VectorMicroOp<"vldus", [
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    VPTOAddressSemanticsOpInterface
   ]> {
   let arguments = (ins
     PTO_BufferType:$source,
@@ -1992,7 +1997,8 @@ def PTO_PxorOp : PTO_VectorMicroOp<"pxor", [Pure]> {
 }
 
 def PTO_PldsOp : PTO_VectorMicroOp<"plds", [
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    VPTOAddressSemanticsOpInterface
   ]> {
   let arguments = (ins
     PTO_BufferLikeType:$source,
@@ -2011,7 +2017,8 @@ def PTO_PldsOp : PTO_VectorMicroOp<"plds", [
 }
 
 def PTO_PldiOp : PTO_VectorMicroOp<"pldi", [
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    VPTOAddressSemanticsOpInterface
   ]> {
   let arguments = (ins
     PTO_BufferLikeType:$source,
@@ -2030,7 +2037,8 @@ def PTO_PldiOp : PTO_VectorMicroOp<"pldi", [
 }
 
 def PTO_PstiOp : PTO_VectorMicroOp<"psti", [
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    VPTOAddressSemanticsOpInterface
   ]> {
   let arguments = (ins
     PTO_MaskTypeConstraint:$value,
@@ -2776,7 +2784,8 @@ def PTO_VshlsOp : PTO_VecScalarMaskedOp<"vshls">;
 def PTO_VshrsOp : PTO_VecScalarMaskedOp<"vshrs">;
 
 def PTO_VstsOp : PTO_VectorMicroOp<"vsts", [
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    VPTOAddressSemanticsOpInterface
   ]> {
   let arguments = (ins
     PTO_VectorType:$value,
@@ -2816,7 +2825,8 @@ def PTO_VscatterOp : PTO_VectorMicroOp<"vscatter", [
 }
 
 def PTO_PstsOp : PTO_VectorMicroOp<"psts", [
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    VPTOAddressSemanticsOpInterface
   ]> {
   let arguments = (ins
     PTO_MaskTypeConstraint:$value,
@@ -3669,7 +3679,8 @@ def PTO_Vstsx2Op : PTO_VectorMicroOp<"vstsx2", [
 }
 
 def PTO_VsldbOp : PTO_VectorMicroOp<"vsldb", [
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    VPTOAddressSemanticsOpInterface
   ]> {
   let arguments = (ins
     PTO_BufferLikeType:$source,
@@ -3689,7 +3700,8 @@ def PTO_VsldbOp : PTO_VectorMicroOp<"vsldb", [
 }
 
 def PTO_VsstbOp : PTO_VectorMicroOp<"vsstb", [
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    VPTOAddressSemanticsOpInterface
   ]> {
   let arguments = (ins
     PTO_VectorType:$value,
@@ -3709,7 +3721,8 @@ def PTO_VsstbOp : PTO_VectorMicroOp<"vsstb", [
 }
 
 def PTO_VstasOp : PTO_VectorMicroOp<"vstas", [
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    VPTOAddressSemanticsOpInterface
   ]> {
   let arguments = (ins
     PTO_AlignTypeConstraint:$value,
@@ -3765,7 +3778,8 @@ def PTO_PstuOp : PTO_VectorMicroOp<"pstu", [
 }
 
 def PTO_VstusOp : PTO_VectorMicroOp<"vstus", [
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    VPTOAddressSemanticsOpInterface
   ]> {
   let arguments = (ins
     PTO_AlignTypeConstraint:$align_in,

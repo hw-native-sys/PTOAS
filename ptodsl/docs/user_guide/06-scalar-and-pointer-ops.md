@@ -160,6 +160,24 @@ scalar.store(x4, ptr, offset, contiguous=4)  # optional width check
 scalar values are not implicitly broadcast for vector stores. To build an
 explicit broadcast vector, use `pto.Vec(...)`; see Section 4.9.
 
+To write distinct runtime scalars as adjacent elements in one aligned vector
+store instead of several scalar stores, pack them with `pto.Vec(...,
+init=(...))` before storing; for example:
+
+```python
+pair = pto.Vec(pto.f32, 2, init=(v0, v1))
+scalar.store(pair, ptr, offset)
+```
+
+Each `pto.Vec(..., init=sequence)` entry is coerced to the destination element
+type and the whole vector is emitted as a single LLVM store; see Section 4.9.
+
+A vector store accepts a vector whose element type exactly matches the
+destination element type, or any integer element type of the same bit width
+(signless / signed / unsigned store identical bits). This matches the scalar
+coercion rules, so a signless `vector<2xi32>` packed from `si32`/`ui32` scalars
+can be stored to a `si32` or `ui32` destination without loss.
+
 ### Scalar value adaptation
 
 `scalar.store` adapts the authored `value` to the destination element type.

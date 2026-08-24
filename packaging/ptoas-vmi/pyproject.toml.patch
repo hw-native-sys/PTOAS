@@ -7,7 +7,7 @@ diff --git a/pyproject.toml b/pyproject.toml
 -dynamic = ["version"]
 -description = "PTO Assembler & Optimizer"
 +name = "ptoas-vmi"
-+version = "0.1.4"
++version = "0.1.6"
 +description = "PTO Assembler & Optimizer with VMI support"
  readme = "README.md"
  requires-python = ">=3.10"

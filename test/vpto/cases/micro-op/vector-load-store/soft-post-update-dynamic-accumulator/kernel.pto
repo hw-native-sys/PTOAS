@@ -1,0 +1,102 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// case: micro-op/vector-load-store/soft-post-update-dynamic-accumulator
+// family: vector-load-store
+// target_ops: pto.vlds, pto.vsts
+// target_pass: vpto-soft-postupdate
+// scenarios: direct-index-iv, i32-recurrence, loop-varying-accumulator-stride,
+//            post-update-result, strict-output
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @soft_post_update_dynamic_accumulator_kernel(
+      %input: !pto.ptr<f32, gm>,
+      %output: !pto.ptr<f32, gm>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %c64 = arith.constant 64 : index
+    %c512 = arith.constant 512 : index
+    %c800 = arith.constant 800 : index
+    %c0_i32 = arith.constant 0 : i32
+    %c64_i32 = arith.constant 64 : i32
+    %c0_i64 = arith.constant 0 : i64
+    %c32_i64 = arith.constant 32 : i64
+    %c128_i64 = arith.constant 128 : i64
+    %c4096_i64 = arith.constant 4096 : i64
+
+    %ub_input = pto.castptr %c0_i64 : i64 -> !pto.ptr<f32, ub>
+    %ub_output = pto.castptr %c4096_i64 : i64 -> !pto.ptr<f32, ub>
+    %ub_input_i32 = pto.addptr %ub_input, %c512
+        : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
+    %ub_output_i32 = pto.addptr %ub_output, %c512
+        : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
+    %ub_input_index = pto.addptr %ub_input, %c800
+        : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
+    %ub_output_index = pto.addptr %ub_output, %c800
+        : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
+
+    pto.mte_gm_ub %input, %ub_input, %c0_i64, %c128_i64
+      nburst(%c32_i64, %c128_i64, %c128_i64)
+      : !pto.ptr<f32, gm>, !pto.ptr<f32, ub>, i64, i64, i64, i64, i64
+    pto.mte_gm_ub %output, %ub_output, %c0_i64, %c128_i64
+      nburst(%c32_i64, %c128_i64, %c128_i64)
+      : !pto.ptr<f32, gm>, !pto.ptr<f32, ub>, i64, i64, i64, i64, i64
+
+    pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+
+    pto.vecscope {
+      %mask, %remaining = pto.plt_b32 %c64_i32
+          : i32 -> !pto.mask<b32>, i32
+      scf.for %iv = %c0 to %c4 step %c1
+          iter_args(%offset = %c0) -> (index) {
+        %value = pto.vlds %ub_input[%offset]
+            : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+        pto.vsts %value, %ub_output[%offset], %mask
+            : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+        %scaled_iv = arith.muli %iv, %c8 : index
+        %increment = arith.addi %scaled_iv, %c64 : index
+        %next_offset = arith.addi %offset, %increment : index
+        scf.yield %next_offset : index
+      }
+
+      // The source recurrence is genuinely i32. Its widening index_cast is
+      // safe for this finite range and must not require canonical i16 input.
+      scf.for %iv = %c0 to %c4 step %c1
+          iter_args(%offset_i32 = %c0_i32) -> (i32) {
+        %offset = arith.index_cast %offset_i32 : i32 to index
+        %value = pto.vlds %ub_input_i32[%offset]
+            : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+        pto.vsts %value, %ub_output_i32[%offset], %mask
+            : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+        %next_offset = arith.addi %offset_i32, %c64_i32 : i32
+        scf.yield %next_offset : i32
+      }
+
+      // No cast: a scaled index induction variable is the memory offset. The
+      // scale keeps every vector access aligned to the ISA's 32-byte boundary.
+      scf.for %iv = %c0 to %c4 step %c1 {
+        %offset = arith.muli %iv, %c8 : index
+        %value = pto.vlds %ub_input_index[%offset]
+            : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+        pto.vsts %value, %ub_output_index[%offset], %mask
+            : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      }
+    }
+
+    pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.mte_ub_gm %ub_output, %output, %c128_i64
+      nburst(%c32_i64, %c128_i64, %c128_i64)
+      : !pto.ptr<f32, ub>, !pto.ptr<f32, gm>, i64, i64, i64, i64
+    pto.barrier #pto.pipe<PIPE_ALL>
+    return
+  }
+}

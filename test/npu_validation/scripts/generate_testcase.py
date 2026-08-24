@@ -208,6 +208,9 @@ SAMPLE_CASE_INT_SCALAR_DEFAULTS = {
 # which makes determinism validation compare an unchanged input.  Pin the
 # actual PTO destination parameter for the affected sample revisions.
 SAMPLE_CASE_OUTPUT_PARAMS = {
+    "tpipe": {
+        "a3_pipe_roundtrip": ["v2"],
+    },
     "deepseekv4decodea5": {
         "kv_proj_matmul": ["v1"],
     },
@@ -298,6 +301,9 @@ CASE_POINTER_COUNT_MINIMUMS = {
 # source revision.  Scope by sample so older DeepSeek variants with the same
 # testcase names retain their already validated layouts.
 SAMPLE_CASE_POINTER_COUNT_MINIMUMS = {
+    "tpipe": {
+        "a3_pipe_roundtrip": {"v3": 2_048},
+    },
     "deepseekv4decodea3": {
         # `rope_cs` fills two 8x32 output partitions at column offsets 0 and
         # 32, and loads two 8x16 input partitions at offsets 0 and 16.  The

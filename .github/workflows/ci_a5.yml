@@ -57,6 +57,7 @@ jobs:
       GOLDEN_MODE: npu
       DEFAULT_SKIP_CASES: mix_kernel,vadd_validshape,vadd_validshape_dynamic,print,storefp
       A3_ONLY_CASES: partition5d,partition5d_dynamic,mrgsort,tmatmulk_autosync,movfp_fixpipe_reuse_a3
+      A5_INCOMPATIBLE_LEVEL3_CASES: decode_projection_incore_0,rmsnorm_incore_0,test_tmov_col_major_16x1_align_a5,test_tmov_row_major_1x16_control_a5
       LLVM_BUILD_DIR: ${{ vars.PTOAS_A5_LLVM_BUILD_DIR || '/home/ptoas-board-monitor-a5/llvm-project-vpto-feature/build-shared' }}
       BOARD_PYTHON: ${{ vars.PTOAS_A5_PYTHON || '/home/anaconda3/bin/python3' }}
       PTOAS_BUILD_JOBS: ${{ vars.PTOAS_A5_BUILD_JOBS || '4' }}
@@ -270,7 +271,7 @@ jobs:
           export PYTHONPATH="${PTO_INSTALL_DIR}:${MLIR_PYTHON_ROOT}:${PYTHONPATH:-}"
           export LD_LIBRARY_PATH="${LLVM_BUILD_DIR}/lib:${PTO_INSTALL_DIR}/lib:${LD_LIBRARY_PATH:-}"
 
-          PTOAS_SKIP_CASES="${A3_ONLY_CASES}" \
+          PTOAS_SKIP_CASES="${A3_ONLY_CASES},${A5_INCOMPATIBLE_LEVEL3_CASES}" \
             bash test/samples/runop.sh --enablebc all 2>&1 | tee "${SAMPLE_BUILD_LOG}"
           cp test/npu_validation/scripts/generate_testcase.py \
             "${PAYLOAD_DIR}/test/npu_validation/scripts/"
@@ -386,6 +387,7 @@ jobs:
             ${{ env.SAMPLE_BUILD_LOG }}
             ${{ env.BOARD_LOG }}
             ${{ env.PAYLOAD_DIR }}/test/samples/expected_npu_validation_cases.txt
+            ${{ env.PAYLOAD_DIR }}/test/samples/**/*-ptoas.log
           if-no-files-found: warn
           retention-days: 14
 

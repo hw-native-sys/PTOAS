@@ -1,0 +1,101 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-backend=vpto --pto-arch=a5 --enable-vpto-soft-postupdate \
+// RUN:   --emit-vpto %s -o - | FileCheck %s --check-prefix=POSTPASS
+// RUN: ptoas --cann-output-version=9.0.0 --pto-backend=vpto --pto-arch=a5 \
+// RUN:   --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s --check-prefix=LLVM
+// RUN: ptoas --cann-output-version=9.0.0-beta.1 --pto-backend=vpto \
+// RUN:   --pto-arch=a5 --emit-vpto-llvm-ir %s -o - 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=LLVM
+
+// POSTPASS-LABEL: func.func @soft_postupdate_dynamic_initial_offset
+// POSTPASS: %[[INITIAL:[a-zA-Z0-9_]+]] = arith.index_castui %arg1 : i16 to index
+// POSTPASS-NOT: arith.trunci
+// POSTPASS: %[[INIT:[a-zA-Z0-9_]+]] = pto.addptr %arg0, %[[INITIAL]]
+// POSTPASS: scf.for {{.*}} iter_args({{%.*}} = %[[INIT]])
+// POSTPASS: pto.vlds {{%.*}}[%c1]
+
+// LLVM-LABEL: define void @normal_full_index_offsets_mix_aiv
+// LLVM: getelementptr i8, ptr addrspace(6) {{.*}}, i64 8589934592
+// LLVM: call <64 x float> @llvm.hivm.vldsx1.v64f32(ptr addrspace(6) {{.*}}, i32 0,
+// LLVM: getelementptr i8, ptr addrspace(6) {{.*}}, i64 -8589934596
+// LLVM: call void @llvm.hivm.vstsx1.v64f32(<64 x float> {{.*}}, ptr addrspace(6) {{.*}}, i32 0,
+// LLVM: mul i64 {{.*}}, 4
+// LLVM: getelementptr i8, ptr addrspace(6) {{.*}}, i64 {{.*}}
+// LLVM: call <64 x float> @llvm.hivm.vldsx1.v64f32(ptr addrspace(6) {{.*}}, i32 0,
+
+// LLVM-LABEL: define void @post_update_full_index_advance_mix_aiv
+// LLVM: getelementptr i8, ptr addrspace(6) {{.*}}, i64 8589934592
+// LLVM: call { <64 x float>, ptr addrspace(6) } @llvm.hivm.vldsx1.post.v64f32
+// LLVM-SAME: i32 0,
+// LLVM: getelementptr i8, ptr addrspace(6) {{.*}}, i64 -8589934596
+// LLVM: call ptr addrspace(6) @llvm.hivm.vstsx1.post.v64f32
+// LLVM-SAME: i32 0,
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @soft_postupdate_dynamic_initial_offset(
+      %source: !pto.ptr<f32, ub>, %initial_i16: i16,
+      %sink: !pto.ptr<f32, ub>, %mask: !pto.mask<b32>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %initial = arith.index_castui %initial_i16 : i16 to index
+    pto.vecscope {
+      scf.for %iv = %c0 to %c4 step %c1 {
+        %offset = arith.addi %initial, %iv overflow<nsw> : index
+        %value = pto.vlds %source[%offset]
+            : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+        pto.vsts %value, %sink[%c0], %mask
+            : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      }
+    }
+    return
+  }
+
+  func.func @normal_full_index_offsets(
+      %source: !pto.ptr<f32, ub>, %destination: !pto.ptr<f32, ub>,
+      %dynamic: index) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c2147483648 = arith.constant 2147483648 : index
+    %cm2147483649 = arith.constant -2147483649 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %positive = pto.vlds %source[%c2147483648]
+          : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %positive, %destination[%cm2147483649], %mask
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      %dynamic_value = pto.vlds %source[%dynamic]
+          : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %dynamic_value, %destination[%c0], %mask
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    }
+    return
+  }
+
+  func.func @post_update_full_index_advance(
+      %source: !pto.ptr<f32, ub>, %destination: !pto.ptr<f32, ub>)
+      attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c2147483648 = arith.constant 2147483648 : index
+    %cm2147483649 = arith.constant -2147483649 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %value, %next_source = pto.vlds %source[%c2147483648]
+          : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>, !pto.ptr<f32, ub>
+      %followup = pto.vlds %next_source[%c0]
+          : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      %next_destination = pto.vsts %value, %destination[%cm2147483649], %mask
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          -> !pto.ptr<f32, ub>
+      pto.vsts %value, %next_destination[%c2147483648], %mask
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    }
+    return
+  }
+}

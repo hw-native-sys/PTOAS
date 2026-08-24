@@ -6,12 +6,15 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 //
-// Verifies that odd valid-shape split modes use the supported C2V GM-backed
-// tile path and select the matching PTO-ISA template arguments.
+// Verifies that odd valid-shape split modes use the supported C2V and A2/A3
+// V2C GM-backed tile paths and select the matching PTO-ISA template arguments.
 //
 // RUN: split-file %s %t
 // RUN: ptoas --pto-arch=a5 %t/up-down.pto 2>&1 | FileCheck %s --check-prefix=UP-DOWN
 // RUN: ptoas --pto-arch=a5 %t/left-right.pto 2>&1 | FileCheck %s --check-prefix=LEFT-RIGHT
+// RUN: ptoas --pto-arch=a3 %t/v2c-up-down.pto 2>&1 | FileCheck %s --check-prefix=V2C-UP-DOWN
+// RUN: ptoas --pto-arch=a3 %t/v2c-left-right.pto 2>&1 | FileCheck %s --check-prefix=V2C-LEFT-RIGHT
+// RUN: ptoas --pto-arch=a3 %t/bidir-v2c-up-down.pto 2>&1 | FileCheck %s --check-prefix=BIDIR-V2C-UP-DOWN
 
 //--- up-down.pto
 module {
@@ -70,6 +73,201 @@ module {
     %tile = pto.tpop_from_aic(%half_rows, %c16) {id = 3, split = 3}
       -> !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     pto.tfree_from_aic {id = 3, split = 3}
+    return
+  }
+}
+
+//--- v2c-up-down.pto
+module {
+  func.func @vector_v2c_up_down(%gm_slot_buffer: !pto.ptr<f32>,
+                                %full_rows: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i64 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c16 = arith.constant 16 : index
+    %gm_slots = pto.make_tensor_view %gm_slot_buffer,
+      shape = [%c16, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<16x16xf32>
+
+    %consumer_import = pto.import_reserved_buffer {
+      name = "v2c_up_down_fifo",
+      peer_func = @cube_v2c_up_down
+    } -> i32
+
+    pto.aiv_initialize_pipe {id = 5, dir_mask = 2, slot_size = 1024}
+      (gm_slot_tensor = %gm_slots : !pto.tensor_view<16x16xf32>,
+       v2c_consumer_buf = %consumer_import : i32)
+
+    %subblock_idx = pto.get_subblock_idx
+    %is_aiv0 = arith.cmpi eq, %subblock_idx, %c0_i64 : i64
+    %rounded_rows = arith.addi %full_rows, %c1 : index
+    %ceil_rows = arith.divui %rounded_rows, %c2 : index
+    %floor_rows = arith.divui %full_rows, %c2 : index
+    %half_rows = arith.select %is_aiv0, %ceil_rows, %floor_rows : index
+    %tile = pto.alloc_tile valid_row = %half_rows valid_col = %c16
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tpush_to_aic(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {id = 5, split = 3}
+    return
+  }
+
+  func.func @cube_v2c_up_down(%gm_slot_buffer: !pto.ptr<f32>,
+                              %full_rows: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %gm_slots = pto.make_tensor_view %gm_slot_buffer,
+      shape = [%c16, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<16x16xf32>
+
+    %consumer_local = pto.reserve_buffer {
+      name = "v2c_up_down_fifo",
+      size = 8192,
+      location = #pto.address_space<mat>,
+      auto = true
+    } -> i32
+
+    pto.aic_initialize_pipe {id = 5, dir_mask = 2, slot_size = 1024}
+      (gm_slot_tensor = %gm_slots : !pto.tensor_view<16x16xf32>,
+       v2c_consumer_buf = %consumer_local : i32)
+
+    %tile = pto.tpop_from_aiv(%full_rows, %c16) {id = 5, split = 3}
+      -> !pto.tile_buf<loc=mat, dtype=f32, rows=16, cols=16, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    pto.tfree_from_aiv {id = 5, split = 3}
+    return
+  }
+}
+
+//--- v2c-left-right.pto
+module {
+  func.func @vector_v2c_left_right(%gm_slot_buffer: !pto.ptr<f32>,
+                                   %full_cols: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i64 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c16 = arith.constant 16 : index
+    %gm_slots = pto.make_tensor_view %gm_slot_buffer,
+      shape = [%c16, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<16x16xf32>
+
+    %consumer_import = pto.import_reserved_buffer {
+      name = "v2c_left_right_fifo",
+      peer_func = @cube_v2c_left_right
+    } -> i32
+
+    pto.aiv_initialize_pipe {id = 6, dir_mask = 2, slot_size = 1024}
+      (gm_slot_tensor = %gm_slots : !pto.tensor_view<16x16xf32>,
+       v2c_consumer_buf = %consumer_import : i32)
+
+    %subblock_idx = pto.get_subblock_idx
+    %is_aiv0 = arith.cmpi eq, %subblock_idx, %c0_i64 : i64
+    %rounded_cols = arith.addi %full_cols, %c1 : index
+    %ceil_cols = arith.divui %rounded_cols, %c2 : index
+    %floor_cols = arith.divui %full_cols, %c2 : index
+    %half_cols = arith.select %is_aiv0, %ceil_cols, %floor_cols : index
+    %tile = pto.alloc_tile valid_row = %c16 valid_col = %half_cols
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tpush_to_aic(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {id = 6, split = 4}
+    return
+  }
+
+  func.func @cube_v2c_left_right(%gm_slot_buffer: !pto.ptr<f32>,
+                                 %full_cols: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %gm_slots = pto.make_tensor_view %gm_slot_buffer,
+      shape = [%c16, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<16x16xf32>
+
+    %consumer_local = pto.reserve_buffer {
+      name = "v2c_left_right_fifo",
+      size = 8192,
+      location = #pto.address_space<mat>,
+      auto = true
+    } -> i32
+
+    pto.aic_initialize_pipe {id = 6, dir_mask = 2, slot_size = 1024}
+      (gm_slot_tensor = %gm_slots : !pto.tensor_view<16x16xf32>,
+       v2c_consumer_buf = %consumer_local : i32)
+
+    %tile = pto.tpop_from_aiv(%c16, %full_cols) {id = 6, split = 4}
+      -> !pto.tile_buf<loc=mat, dtype=f32, rows=16, cols=16, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    pto.tfree_from_aiv {id = 6, split = 4}
+    return
+  }
+}
+
+//--- bidir-v2c-up-down.pto
+module {
+  func.func @vector_bidir_v2c_up_down(%gm_slot_buffer: !pto.ptr<f32>,
+                                      %full_rows: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i64 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c16 = arith.constant 16 : index
+    %gm_slots = pto.make_tensor_view %gm_slot_buffer,
+      shape = [%c16, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<16x16xf32>
+
+    %c2v_consumer_local = pto.reserve_buffer {
+      name = "bidir_c2v_fifo",
+      size = 4096,
+      location = #pto.address_space<vec>,
+      auto = true
+    } -> i32
+    %v2c_consumer_import = pto.import_reserved_buffer {
+      name = "bidir_v2c_fifo",
+      peer_func = @cube_bidir_v2c_up_down
+    } -> i32
+
+    pto.aiv_initialize_pipe {id = 7, dir_mask = 3, slot_size = 1024}
+      (gm_slot_tensor = %gm_slots : !pto.tensor_view<16x16xf32>,
+       c2v_consumer_buf = %c2v_consumer_local : i32,
+       v2c_consumer_buf = %v2c_consumer_import : i32)
+
+    %subblock_idx = pto.get_subblock_idx
+    %is_aiv0 = arith.cmpi eq, %subblock_idx, %c0_i64 : i64
+    %rounded_rows = arith.addi %full_rows, %c1 : index
+    %ceil_rows = arith.divui %rounded_rows, %c2 : index
+    %floor_rows = arith.divui %full_rows, %c2 : index
+    %half_rows = arith.select %is_aiv0, %ceil_rows, %floor_rows : index
+    %tile = pto.alloc_tile valid_row = %half_rows valid_col = %c16
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tpush_to_aic(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {id = 7, split = 3}
+    return
+  }
+
+  func.func @cube_bidir_v2c_up_down(%gm_slot_buffer: !pto.ptr<f32>,
+                                    %full_rows: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %gm_slots = pto.make_tensor_view %gm_slot_buffer,
+      shape = [%c16, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<16x16xf32>
+
+    %c2v_consumer_import = pto.import_reserved_buffer {
+      name = "bidir_c2v_fifo",
+      peer_func = @vector_bidir_v2c_up_down
+    } -> i32
+    %v2c_consumer_local = pto.reserve_buffer {
+      name = "bidir_v2c_fifo",
+      size = 4096,
+      location = #pto.address_space<mat>,
+      auto = true
+    } -> i32
+
+    pto.aic_initialize_pipe {id = 7, dir_mask = 3, slot_size = 1024}
+      (gm_slot_tensor = %gm_slots : !pto.tensor_view<16x16xf32>,
+       c2v_consumer_buf = %c2v_consumer_import : i32,
+       v2c_consumer_buf = %v2c_consumer_local : i32)
+
+    %tile = pto.tpop_from_aiv(%full_rows, %c16) {id = 7, split = 3}
+      -> !pto.tile_buf<loc=mat, dtype=f32, rows=16, cols=16, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    pto.tfree_from_aiv {id = 7, split = 3}
     return
   }
 }
@@ -152,3 +350,30 @@ module {
 // LEFT-RIGHT: TPipe<0, Direction::DIR_C2V_GM, 1024, 8, 8, false>(
 // LEFT-RIGHT: TPOP<{{.*}}TileSplitAxis::TILE_LEFT_RIGHT_ODD>(
 // LEFT-RIGHT: TFREE<{{.*}}TileSplitAxis::TILE_LEFT_RIGHT_ODD>(
+
+// V2C-UP-DOWN-LABEL: AICORE void vector_v2c_up_down(__gm__ float*
+// V2C-UP-DOWN: TPipe<0, Direction::DIR_V2C, 1024, 8, 8, false>(
+// V2C-UP-DOWN: TPUSH<{{.*}}TileSplitAxis::TILE_UP_DOWN_ODD>(
+
+// V2C-UP-DOWN-LABEL: AICORE void cube_v2c_up_down(__gm__ float*
+// V2C-UP-DOWN: TPipe<0, Direction::DIR_V2C, 1024, 8, 8, false>(
+// V2C-UP-DOWN: TPOP<{{.*}}TileSplitAxis::TILE_UP_DOWN_ODD>(
+// V2C-UP-DOWN: TFREE<{{.*}}TileSplitAxis::TILE_UP_DOWN_ODD>(
+
+// V2C-LEFT-RIGHT-LABEL: AICORE void vector_v2c_left_right(__gm__ float*
+// V2C-LEFT-RIGHT: TPipe<0, Direction::DIR_V2C, 1024, 8, 8, false>(
+// V2C-LEFT-RIGHT: TPUSH<{{.*}}TileSplitAxis::TILE_LEFT_RIGHT_ODD>(
+
+// V2C-LEFT-RIGHT-LABEL: AICORE void cube_v2c_left_right(__gm__ float*
+// V2C-LEFT-RIGHT: TPipe<0, Direction::DIR_V2C, 1024, 8, 8, false>(
+// V2C-LEFT-RIGHT: TPOP<{{.*}}TileSplitAxis::TILE_LEFT_RIGHT_ODD>(
+// V2C-LEFT-RIGHT: TFREE<{{.*}}TileSplitAxis::TILE_LEFT_RIGHT_ODD>(
+
+// BIDIR-V2C-UP-DOWN-LABEL: AICORE void vector_bidir_v2c_up_down(__gm__ float*
+// BIDIR-V2C-UP-DOWN: TPipe<0, Direction::DIR_BOTH, 1024, 4, 4, false>(
+// BIDIR-V2C-UP-DOWN: TPUSH<{{.*}}TileSplitAxis::TILE_UP_DOWN_ODD>(
+
+// BIDIR-V2C-UP-DOWN-LABEL: AICORE void cube_bidir_v2c_up_down(__gm__ float*
+// BIDIR-V2C-UP-DOWN: TPipe<0, Direction::DIR_BOTH, 1024, 4, 4, false>(
+// BIDIR-V2C-UP-DOWN: TPOP<{{.*}}TileSplitAxis::TILE_UP_DOWN_ODD>(
+// BIDIR-V2C-UP-DOWN: TFREE<{{.*}}TileSplitAxis::TILE_UP_DOWN_ODD>(

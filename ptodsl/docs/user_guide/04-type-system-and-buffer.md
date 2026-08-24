@@ -375,13 +375,13 @@ PTODSL uses builtin vector values in SIMT scalar code, including contiguous `sca
 |-----------|------|-------------|
 | `dtype` | PTO dtype | Element type, such as `pto.f32` |
 | `size` | Positive Python `int` | Number of elements in the builtin vector value |
-| `init` | Scalar value, builtin vector value, or `None` | Optional initializer; broadcastable scalar inputs: Python scalar literal, SSA scalar value, dynamic runtime scalar value |
+| `init` | Scalar value, sequence of scalar values, builtin vector value, or `None` | Optional initializer. A scalar broadcasts to every element; a sequence (tuple/list of scalars) packs one distinct element per entry in input order, with length equal to `size`; a builtin vector value passes through. Each scalar entry is coerced to the element type (Python scalar literal, SSA scalar value, or dynamic runtime scalar value) |
 
 **Returns**:
 
 | Return Value | Type | Description |
 |--------------|------|-------------|
-| `result` | Builtin vector type descriptor or `pto.Vec(dtype, size)` value | Without `init`, returns a vector type descriptor; with `init`, returns a vector value |
+| `result` | Builtin vector type descriptor or `pto.Vec(dtype, size)` value | Without `init`, returns a vector type descriptor; with `init`, returns a broadcast or per-element vector value (a scalar initializer broadcasts, a sequence initializer packs elements in input order) |
 
 **Example**:
 
@@ -392,6 +392,26 @@ rstd4 = pto.Vec(pto.f32, 4, init=rstd)
 y4 = x4 * rstd4
 scalar.store(y4, ptr, offset)
 ```
+
+Pass `init` a sequence to pack distinct runtime scalars, in order, into one
+vector for a single contiguous store:
+
+<!-- ptodsl-doc-pending: {"reason":"illustrative fragment; covered by test_jit_compile per-element Vec probes"} -->
+```python
+v0 = scalar.load(ptr, index)
+v1 = scalar.load(ptr, index + 1)
+pair = pto.Vec(pto.f32, 2, init=(v0, v1))
+scalar.store(pair, ptr, index)
+```
+
+Vectors built with `pto.Vec(..., init=sequence)` or `pto.Vec(..., init=scalar)`
+always expose LLVM-compatible element types: signed / unsigned integer dtypes
+(`siN` / `uiN`) are built as same-width signless `iN` vectors, keeping the bit
+pattern (`pto.Vec(pto.ui32, 2, init=(a, b))` is a `vector<2xi32>`). In contrast,
+`scalar.load(..., contiguous=N)` keeps the declared pointer element type (a
+`ui32` pointer yields a `vector<2xui32>`). Both store bit-compatibly to
+`siN`/`ui32` destinations, but elementwise `VecValue` arithmetic requires equal
+element types, so avoid mixing the two origins in one expression.
 
 ## 4.10 Explicit scratch buffers
 

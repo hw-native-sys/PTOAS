@@ -10,6 +10,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include "PTO/Analysis/PTOAddressAnalysis.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/Passes.h"
@@ -40,108 +41,18 @@ using namespace mlir;
 namespace {
 // A hardware block is 32 bytes; block-strided ops count in these units.
 static constexpr int64_t kBlockSizeBytes = 32;
-static constexpr unsigned kIndexBitWidth = 64;
 static constexpr int64_t kSignedI8Min = -128;
 static constexpr int64_t kSignedI8Max = 127;
 
-// Loop-varying integer addresses must be normalized to this width before this
-// pass may turn them into pointer recurrences. Other widths are left for a
-// dedicated address-normalization pass.
-static constexpr unsigned kCanonicalAddressWidth = 16;
-
 // What one unit of an op's strideOperand means, in address terms.  This is a
-// property of the op's lowering, not of the pass: `Element` ops run their
-// offset through convertElementOffsetToBytes, `Block` ops pass a packed
-// control word straight to the intrinsic, `Alignment` ops use an op-specific
-// hardware alignment table, and `Byte` ops pass a raw byte offset. See
-// `strideUnitBytes` for the conversion.
-enum class StrideUnit {
-  Element,   // vector load/store offsets and increments in pointer elements
-  Block,     // vsstb/vsldb: offset in 32-byte blocks
-  Alignment, // pldi/psti/sprsti: op-specific hardware alignment units
-  Byte,      // plds/psts/sprsts: scalar offset in bytes
-};
-
-enum class StrideConstraint {
-  Dynamic,
-  Constant,
-  SignedI8,
-};
-
-// Per-op-type descriptor: how to extract address operands and check
-// post-update. base/strideOperand indices are operand positions.
-struct PostUpdateOpInfo {
-  int baseOperandIdx;
-  // A missing stride operand models an op whose explicit address offset is
-  // zero. Its post-update increment then comes entirely from base evolution.
-  std::optional<unsigned> strideOperandIdx;
-  StrideUnit strideUnit;
-  unsigned minResultsForPost; // numResults > this means already post-update
-  StrideConstraint strideConstraint = StrideConstraint::Dynamic;
-  // Whether strideOperand contributes to the current access address. Stateful
-  // stream ops may use it only as the distance advanced after the access.
-  bool strideIsInitialOffset = true;
-};
-
-using PostUpdateTable = llvm::StringMap<PostUpdateOpInfo>;
-
-static const PostUpdateTable &getPostUpdateTable() {
-  static const PostUpdateTable table = [] {
-    PostUpdateTable t;
-    //                       base  strideOp  strideUnit             minResults
-    t["pto.vlds"] = {0, 1, StrideUnit::Element, 1};
-    t["pto.vldsx2"] = {0, 1, StrideUnit::Element, 2};
-    t["pto.vldus"] = {0, std::nullopt, StrideUnit::Element, 2};
-    t["pto.plds"] = {0, 1, StrideUnit::Byte, 1};
-    t["pto.pldi"] = {0, 1, StrideUnit::Alignment, 1,
-                     StrideConstraint::Constant};
-    t["pto.vsts"] = {1, 2, StrideUnit::Element, 0};
-    t["pto.vstus"] = {3, 1, StrideUnit::Element, 1,
-                      StrideConstraint::Dynamic, false};
-    t["pto.psts"] = {1, 2, StrideUnit::Byte, 0};
-    t["pto.psti"] = {1, 2, StrideUnit::Alignment, 0,
-                     StrideConstraint::Constant};
-    t["pto.sprsts"] = {0, 1, StrideUnit::Byte, 0};
-    t["pto.sprsti"] = {0, 1, StrideUnit::Alignment, 0,
-                       StrideConstraint::SignedI8};
-    t["pto.vstas"] = {1, 2, StrideUnit::Element, 0};
-    t["pto.vsldb"] = {0, 2, StrideUnit::Block, 1};
-    t["pto.vsstb"] = {1, 3, StrideUnit::Block, 0};
-    return t;
-  }();
-  return table;
-}
-
-// Bytes covered by one unit of `pto.addptr`'s offset on `base`.  This is the
-// size of the GEP element type the pointer lowers to, which for ordinary
-// int/float element types is just their byte width.  Packed low-precision
-// types are normalized to something else during lowering
-// (normalizeGEPElementTypeForLLVMLowering), so bail on anything that is not a
-// plain byte-sized int/float rather than guess.
-static std::optional<int64_t> addPtrUnitBytes(Value base) {
-  Type elemTy;
-  if (auto ptrTy = dyn_cast<pto::PtrType>(base.getType())) {
-    elemTy = ptrTy.getElementType();
-  }
-  else if (auto memrefTy = dyn_cast<MemRefType>(base.getType())) {
-    elemTy = memrefTy.getElementType();
-  }
-  else {
-    return std::nullopt;
-  }
-
-  if (!elemTy || !elemTy.isIntOrFloat()) {
-    return std::nullopt;
-  }
-  unsigned bits = elemTy.getIntOrFloatBitWidth();
-  if (bits == 0 || bits % mlir::pto::kValue8 != 0) {
-    return std::nullopt;
-  }
-  return static_cast<int64_t>(bits / mlir::pto::kValue8);
-}
-
-// Bytes covered by one unit of the op's strideOperand. Some units depend on
-// op attributes, so an unknown table entry conservatively rejects the op.
+// property of the op's lowering, not of the pass: `Element` ops lower their
+// logical index offset to bytes at the target ABI boundary, `Block` ops pass a
+// packed control word straight to the intrinsic, `Alignment` ops use an
+// op-specific hardware alignment table, and `Byte` ops pass a raw byte offset.
+// See `strideUnitBytes` for the conversion.
+using StrideUnit = pto::VPTOAddressUnit;
+// Alignment size is op-specific and comes from the operation's attributes;
+// an unknown alignment conservatively rejects the candidate.
 static std::optional<int64_t> strideUnitBytes(Operation *op, StrideUnit unit,
                                               int64_t elemBytes) {
   switch (unit) {
@@ -157,27 +68,13 @@ static std::optional<int64_t> strideUnitBytes(Operation *op, StrideUnit unit,
   llvm_unreachable("unhandled StrideUnit");
 }
 
-static const PostUpdateOpInfo *getPostUpdateInfo(Operation *op) {
-  auto it = getPostUpdateTable().find(op->getName().getStringRef());
-  if (it == getPostUpdateTable().end()) {
-    return nullptr;
+static std::optional<pto::VPTOPostUpdateSemantics>
+getPostUpdateSemantics(Operation *op) {
+  auto interface = dyn_cast<pto::VPTOAddressSemanticsOpInterface>(op);
+  if (!interface) {
+    return std::nullopt;
   }
-  return &it->second;
-}
-
-// Extract base and stride operand from a candidate op using table info.
-static void extractBaseAndStrideOperand(Operation *op,
-                                        const PostUpdateOpInfo &info,
-                                        Value &base, Value &strideOperand) {
-  base = op->getOperand(info.baseOperandIdx);
-  strideOperand = info.strideOperandIdx
-                      ? op->getOperand(*info.strideOperandIdx)
-                      : Value();
-}
-
-// Check if op already has an updated_base result.
-static bool isAlreadyPostUpdate(Operation *op, const PostUpdateOpInfo &info) {
-  return op->getNumResults() > info.minResultsForPost;
+  return interface.getVPTOAddressSemantics().postUpdate;
 }
 
 // Check if op is directly inside the scf.for body (not nested in scf.if etc).
@@ -319,179 +216,42 @@ static StrideExprRef makeCast(Operation *castOp, StrideExprRef a) {
   return e;
 }
 
-// A canonical affine view of StrideExpr used for exact division and symbolic
-// equality. Cast expressions are kept as typed atoms so materialization can
-// preserve them and reject a final operand type that would require narrowing.
-struct AffineTerm {
-  StrideExprRef atom;
-  int64_t coeff;
-};
-
-struct AffineForm {
-  int64_t constant = 0;
-  SmallVector<AffineTerm> terms;
-};
-
-static bool sameAffineAtom(const StrideExprRef &a, const StrideExprRef &b) {
-  if (!a || !b || a->kind != b->kind) {
-    return false;
+// Convert the public typed analysis expression into the consumer's
+// materialization tree. This is a representation-only handoff: all recurrence,
+// range, cast, and unit proofs have already been completed by the analyses.
+static StrideExprRef importTypedExpr(const pto::PTOTypedExprRef &expression) {
+  if (!expression) {
+    return nullptr;
   }
-  if (a->kind == StrideExpr::Kind::Leaf) {
-    return a->leaf == b->leaf;
+  if (expression->sourceValue) {
+    auto constant = pto::foldPTOConstant(expression);
+    return constant ? makeConst(*constant)
+                    : makeLeaf(expression->sourceValue);
   }
-  if (a->kind != StrideExpr::Kind::Cast) {
-    return false;
+  switch (expression->kind) {
+  case pto::PTOTypedExpr::Kind::Constant: {
+    auto constant = pto::foldPTOConstant(expression);
+    return constant ? makeConst(*constant) : nullptr;
   }
-  return a->castOp->getName() == b->castOp->getName() &&
-         a->castOp->getOperand(0).getType() ==
-             b->castOp->getOperand(0).getType() &&
-         a->castOp->getResult(0).getType() ==
-             b->castOp->getResult(0).getType() &&
-         sameAffineAtom(a->lhs, b->lhs);
-}
-
-static bool addAffineConstant(AffineForm &form, int64_t value) {
-  int64_t result;
-  if (llvm::AddOverflow(form.constant, value, result)) {
-    return false;
-  }
-  form.constant = result;
-  return true;
-}
-
-static bool addAffineTerm(AffineForm &form, StrideExprRef atom, int64_t coeff) {
-  if (coeff == 0) {
-    return true;
-  }
-  for (unsigned i = 0; i < form.terms.size(); ++i) {
-    if (!sameAffineAtom(form.terms[i].atom, atom)) {
-      continue;
+  case pto::PTOTypedExpr::Kind::Opaque:
+    return makeLeaf(expression->opaque);
+  case pto::PTOTypedExpr::Kind::Add:
+    return makeAdd(importTypedExpr(expression->lhs),
+                   importTypedExpr(expression->rhs));
+  case pto::PTOTypedExpr::Kind::Sub:
+    return makeSub(importTypedExpr(expression->lhs),
+                   importTypedExpr(expression->rhs));
+  case pto::PTOTypedExpr::Kind::Mul:
+    return makeMul(importTypedExpr(expression->lhs),
+                   importTypedExpr(expression->rhs));
+  case pto::PTOTypedExpr::Kind::Cast:
+    if (!expression->sourceOperation) {
+      return nullptr;
     }
-    int64_t result;
-    if (llvm::AddOverflow(form.terms[i].coeff, coeff, result)) {
-      return false;
-    }
-    if (result == 0) {
-      form.terms.erase(form.terms.begin() + i);
-    }
-    else {
-      form.terms[i].coeff = result;
-    }
-    return true;
+    return makeCast(expression->sourceOperation,
+                    importTypedExpr(expression->lhs));
   }
-  form.terms.push_back({std::move(atom), coeff});
-  return true;
-}
-
-static bool accumulateAffine(const StrideExprRef &e, int64_t scale,
-                             AffineForm &form) {
-  if (!e) {
-    return false;
-  }
-  switch (e->kind) {
-  case StrideExpr::Kind::Const: {
-    int64_t scaled;
-    return !llvm::MulOverflow(e->constant, scale, scaled) &&
-           addAffineConstant(form, scaled);
-  }
-  case StrideExpr::Kind::Leaf: {
-    if (auto c = getConstantIntValue(e->leaf)) {
-      int64_t scaled;
-      return !llvm::MulOverflow(*c, scale, scaled) &&
-             addAffineConstant(form, scaled);
-    }
-    return addAffineTerm(form, e, scale);
-  }
-  case StrideExpr::Kind::Cast:
-    if (auto c = foldConst(e)) {
-      int64_t scaled;
-      return !llvm::MulOverflow(*c, scale, scaled) &&
-             addAffineConstant(form, scaled);
-    }
-    return addAffineTerm(form, e, scale);
-  case StrideExpr::Kind::Add:
-    return accumulateAffine(e->lhs, scale, form) &&
-           accumulateAffine(e->rhs, scale, form);
-  case StrideExpr::Kind::Sub: {
-    int64_t negScale;
-    return !llvm::SubOverflow(int64_t{0}, scale, negScale) &&
-           accumulateAffine(e->lhs, scale, form) &&
-           accumulateAffine(e->rhs, negScale, form);
-  }
-  case StrideExpr::Kind::Mul: {
-    if (auto lhsConst = foldConst(e->lhs)) {
-      int64_t newScale;
-      return !llvm::MulOverflow(scale, *lhsConst, newScale) &&
-             accumulateAffine(e->rhs, newScale, form);
-    }
-    if (auto rhsConst = foldConst(e->rhs)) {
-      int64_t newScale;
-      return !llvm::MulOverflow(scale, *rhsConst, newScale) &&
-             accumulateAffine(e->lhs, newScale, form);
-    }
-    return false;
-  }
-  }
-  return false;
-}
-
-static std::optional<AffineForm> normalizeAffine(const StrideExprRef &e) {
-  AffineForm form;
-  if (!accumulateAffine(e, 1, form)) {
-    return std::nullopt;
-  }
-  return form;
-}
-
-static bool equalAffineForms(const AffineForm &a, const AffineForm &b) {
-  if (a.constant != b.constant || a.terms.size() != b.terms.size()) {
-    return false;
-  }
-  for (const AffineTerm &termA : a.terms) {
-    bool found = llvm::any_of(b.terms, [&termA](const AffineTerm &termB) {
-      return termA.coeff == termB.coeff &&
-             sameAffineAtom(termA.atom, termB.atom);
-    });
-    if (!found) {
-      return false;
-    }
-  }
-  return true;
-}
-
-static bool isZeroAffineForm(const AffineForm &form) {
-  return form.constant == 0 && form.terms.empty();
-}
-
-static bool divideAffineForm(AffineForm &form, int64_t divisor) {
-  if (divisor <= 0 || form.constant % divisor != 0) {
-    return false;
-  }
-  for (const AffineTerm &term : form.terms) {
-    if (term.coeff % divisor != 0) {
-      return false;
-    }
-  }
-  form.constant /= divisor;
-  for (AffineTerm &term : form.terms) {
-    term.coeff /= divisor;
-  }
-  return true;
-}
-
-static StrideExprRef affineFormToExpr(const AffineForm &form) {
-  StrideExprRef result;
-  if (form.constant != 0) {
-    result = makeConst(form.constant);
-  }
-  for (const AffineTerm &term : form.terms) {
-    StrideExprRef value = term.atom;
-    if (term.coeff != 1) {
-      value = makeMul(value, makeConst(term.coeff));
-    }
-    result = result ? makeAdd(result, value) : value;
-  }
-  return result ? result : makeConst(0);
+  return nullptr;
 }
 
 static void collectLeaves(const StrideExprRef &e, SmallVectorImpl<Value> &out) {
@@ -536,527 +296,6 @@ static bool exprType(const StrideExprRef &e, Type &out) {
   return false;
 }
 
-// Result of decomposing a value into blockArg * coeff + increment.
-struct LinearDecomp {
-  int64_t coeff;
-  StrideExprRef increment; // never null; zero is makeConst(0)
-};
-
-using DecompCache = DenseMap<Value, std::optional<LinearDecomp>>;
-
-static bool castPreservesLoopDelta(Operation *castOp, scf::ForOp forOp);
-
-// Decompose `v` into blockArg * coeff + increment by recursing through
-// addi/subi/muli/index_cast/addptr chains.  Pure: builds only StrideExprs.
-// `cache` is scoped to one decomposition (a single `blockArg`).
-static std::optional<LinearDecomp> decomposeLinear(Value v,
-                                                   BlockArgument blockArg,
-                                                   scf::ForOp forOp,
-                                                   DecompCache &cache) {
-  // v == blockArg → {1, 0}
-  if (v == blockArg) {
-    return LinearDecomp{1, makeConst(0)};
-  }
-
-  auto it = cache.find(v);
-  if (it != cache.end()) {
-    return it->second;
-  }
-  auto record = [&cache, &v](std::optional<LinearDecomp> r) {
-    cache[v] = r;
-    return r;
-  };
-
-  // v is other block arg (IV, different iter_arg, func arg) → {0, v}
-  Operation *defOp = v.getDefiningOp();
-  if (!defOp) {
-    return record(LinearDecomp{0, makeLeaf(v)});
-  }
-
-  // v is loop-invariant or constant → {0, v}
-  if (forOp.isDefinedOutsideOfLoop(v) ||
-      defOp->hasTrait<OpTrait::ConstantLike>()) {
-    return record(LinearDecomp{0, makeLeaf(v)});
-  }
-
-  // v = addi(a, b) → {ca + cb, ia + ib}
-  // v = subi(a, b) → {ca - cb, ia - ib}
-  if (isa<arith::AddIOp, arith::SubIOp>(defOp)) {
-    auto da = decomposeLinear(defOp->getOperand(0), blockArg, forOp, cache);
-    auto db = decomposeLinear(defOp->getOperand(1), blockArg, forOp, cache);
-    if (!da || !db) {
-      return record(std::nullopt);
-    }
-    if (da->coeff == 0 && db->coeff == 0) {
-      return record(LinearDecomp{0, makeLeaf(v)});
-    }
-    bool isSub = isa<arith::SubIOp>(defOp);
-    return record(
-        LinearDecomp{isSub ? da->coeff - db->coeff : da->coeff + db->coeff,
-                     isSub ? makeSub(da->increment, db->increment)
-                           : makeAdd(da->increment, db->increment)});
-  }
-
-  // v = muli(a, b), one side blockArg-free with constant k → {c * k, i * k}
-  if (auto mulOp = dyn_cast<arith::MulIOp>(defOp)) {
-    auto da = decomposeLinear(mulOp.getLhs(), blockArg, forOp, cache);
-    auto db = decomposeLinear(mulOp.getRhs(), blockArg, forOp, cache);
-    if (!da || !db) {
-      return record(std::nullopt);
-    }
-    if (da->coeff == 0 && db->coeff == 0) {
-      return record(LinearDecomp{0, makeLeaf(v)});
-    }
-    if (da->coeff != 0 && db->coeff != 0) {
-      return record(std::nullopt);
-    }
-    const LinearDecomp &withBA = (da->coeff != 0) ? *da : *db;
-    Value multiplier = (da->coeff != 0) ? mulOp.getRhs() : mulOp.getLhs();
-    auto constMul = getConstantIntValue(multiplier);
-    if (!constMul) {
-      return record(std::nullopt);
-    }
-    return record(
-        LinearDecomp{withBA.coeff * *constMul,
-                     makeMul(withBA.increment, makeConst(*constMul))});
-  }
-
-  // v = index_cast(a) → {ca, cast(ia)} when the cast preserves loop delta
-  if (isa<arith::IndexCastUIOp, arith::IndexCastOp>(defOp)) {
-    auto d = decomposeLinear(defOp->getOperand(0), blockArg, forOp, cache);
-    if (!d) {
-      return record(std::nullopt);
-    }
-    if (d->coeff == 0) {
-      return record(LinearDecomp{0, makeLeaf(v)});
-    }
-    if (!castPreservesLoopDelta(defOp, forOp)) {
-      return record(std::nullopt);
-    }
-    return record(LinearDecomp{d->coeff, makeCast(defOp, d->increment)});
-  }
-
-  // v = addptr(ptr, offset) → {c_ptr, i_ptr + offset}
-  if (auto addPtrOp = dyn_cast<pto::AddPtrOp>(defOp)) {
-    auto dp = decomposeLinear(addPtrOp.getPtr(), blockArg, forOp, cache);
-    if (!dp) {
-      return record(std::nullopt);
-    }
-    if (dp->coeff == 0) {
-      return record(LinearDecomp{0, makeLeaf(v)});
-    }
-    return record(LinearDecomp{
-        dp->coeff, makeAdd(dp->increment, makeLeaf(addPtrOp.getOffset()))});
-  }
-
-  // Unrecognized op → unknown
-  return record(std::nullopt);
-}
-
-// Outcome of accumulator analysis.  Distinguishing "not an iter_arg" from
-// "is an iter_arg but could not be decomposed" matters: the former falls back
-// to delta analysis, the latter must give up (treating an unknown increment as
-// zero would silently miscompile).
-enum class StrideStatus { NotIterArg, Failed, Ok };
-
-struct StrideResult {
-  StrideStatus status;
-  StrideExprRef expr; // valid only when status == Ok
-};
-
-// Trace `v` back to an iter_arg BlockArgument of `forOp`, then decompose
-// the yield expression to extract the per-iteration increment. Walks through
-// delta-preserving index_cast (type-changing), addi/subi with loop-invariant
-// offset, and addptr with loop-invariant offset. Type casts along the path are
-// applied to the increment so its type matches v's context. Pure: creates no
-// IR.
-static StrideResult getIterArgIncrement(Value v, scf::ForOp forOp) {
-  SmallVector<Operation *> casts;
-  Value current = v;
-
-  while (true) {
-    if (auto blockArg = dyn_cast<BlockArgument>(current)) {
-      if (blockArg.getOwner() != forOp.getBody() ||
-          blockArg.getArgNumber() == 0) {
-        return {StrideStatus::NotIterArg, nullptr};
-      }
-
-      unsigned idx = blockArg.getArgNumber() - 1;
-      auto yieldOp = cast<scf::YieldOp>(forOp.getBody()->getTerminator());
-      DecompCache cache;
-      auto decomp =
-          decomposeLinear(yieldOp.getOperand(idx), blockArg, forOp, cache);
-      if (!decomp || decomp->coeff != 1) {
-        return {StrideStatus::Failed, nullptr};
-      }
-
-      StrideExprRef inc = decomp->increment;
-      for (Operation *op : llvm::reverse(casts)) {
-        inc = makeCast(op, inc);
-      }
-      return {StrideStatus::Ok, inc};
-    }
-
-    Operation *defOp = current.getDefiningOp();
-    if (!defOp || forOp.isDefinedOutsideOfLoop(current) ||
-        defOp->hasTrait<OpTrait::ConstantLike>()) {
-      return {StrideStatus::NotIterArg, nullptr};
-    }
-
-    if (isa<arith::IndexCastUIOp, arith::IndexCastOp>(defOp)) {
-      if (!castPreservesLoopDelta(defOp, forOp)) {
-        return {StrideStatus::Failed, nullptr};
-      }
-      casts.push_back(defOp);
-      current = defOp->getOperand(0);
-      continue;
-    }
-
-    if (isa<arith::AddIOp>(defOp)) {
-      if (forOp.isDefinedOutsideOfLoop(defOp->getOperand(1))) {
-        current = defOp->getOperand(0);
-        continue;
-      }
-      if (forOp.isDefinedOutsideOfLoop(defOp->getOperand(0))) {
-        current = defOp->getOperand(1);
-        continue;
-      }
-    }
-
-    if (isa<arith::SubIOp>(defOp)) {
-      if (forOp.isDefinedOutsideOfLoop(defOp->getOperand(1))) {
-        current = defOp->getOperand(0);
-        continue;
-      }
-    }
-
-    if (auto addPtrOp = dyn_cast<pto::AddPtrOp>(defOp)) {
-      if (forOp.isDefinedOutsideOfLoop(addPtrOp.getOffset())) {
-        current = addPtrOp.getPtr();
-        continue;
-      }
-    }
-
-    return {StrideStatus::NotIterArg, nullptr};
-  }
-}
-
-//===----------------------------------------------------------------------===//
-// Delta Analysis
-//===----------------------------------------------------------------------===//
-
-// Cached delta results.  A cached null expr means "delta is unknown"; absence
-// from the map means "not computed yet".
-using DeltaCache = DenseMap<Value, StrideExprRef>;
-
-static unsigned integerLikeBitWidth(Type type) {
-  if (type.isIndex()) {
-    return kIndexBitWidth;
-  }
-  return cast<IntegerType>(type).getWidth();
-}
-
-static std::optional<uint64_t> getConstantTripCount(scf::ForOp forOp) {
-  auto lower = getConstantIntValue(forOp.getLowerBound());
-  auto upper = getConstantIntValue(forOp.getUpperBound());
-  auto step = getConstantIntValue(forOp.getStep());
-  if (!lower || !upper || !step || *step <= 0) {
-    return std::nullopt;
-  }
-  if (*lower >= *upper) {
-    return 0;
-  }
-
-  __int128 distance = static_cast<__int128>(*upper) - *lower;
-  __int128 count = (distance + static_cast<__int128>(*step) - 1) / *step;
-  if (count > std::numeric_limits<uint64_t>::max()) {
-    return std::nullopt;
-  }
-  return static_cast<uint64_t>(count);
-}
-
-static std::optional<APInt> getConstantAPInt(Value value) {
-  APInt constant;
-  if (!matchPattern(value, m_ConstantInt(&constant))) {
-    return std::nullopt;
-  }
-  return constant;
-}
-
-// Return the mathematical increment of a direct constant-step iter_arg
-// recurrence. Signed address casts interpret constants as signed deltas.
-// Unsigned address casts interpret an addi constant as its unsigned value,
-// matching how the same constant is widened when the stride is materialized.
-// A subtractive unsigned recurrence is rejected because widening its i16
-// two's-complement increment would produce a large positive stride instead.
-static std::optional<__int128>
-getConstantIterArgIncrement(BlockArgument iterArg, scf::ForOp forOp,
-                            bool isUnsigned) {
-  unsigned idx = iterArg.getArgNumber() - 1;
-  auto yieldOp = cast<scf::YieldOp>(forOp.getBody()->getTerminator());
-  Value yielded = yieldOp.getOperand(idx);
-  if (yielded == iterArg) {
-    return 0;
-  }
-
-  if (auto addOp = yielded.getDefiningOp<arith::AddIOp>()) {
-    Value increment;
-    if (addOp.getLhs() == iterArg) {
-      increment = addOp.getRhs();
-    }
-    else if (addOp.getRhs() == iterArg) {
-      increment = addOp.getLhs();
-    }
-    auto constant = increment ? getConstantAPInt(increment) : std::nullopt;
-    if (constant) {
-      return isUnsigned ? static_cast<__int128>(constant->getZExtValue())
-                        : static_cast<__int128>(constant->getSExtValue());
-    }
-  }
-
-  if (auto subOp = yielded.getDefiningOp<arith::SubIOp>()) {
-    if (isUnsigned || subOp.getLhs() != iterArg) {
-      return std::nullopt;
-    }
-    auto constant = getConstantAPInt(subOp.getRhs());
-    if (constant) {
-      int64_t signedConstant = constant->getSExtValue();
-      if (signedConstant ==
-          -(int64_t{1} << (kCanonicalAddressWidth - 1))) {
-        return std::nullopt;
-      }
-      return -static_cast<__int128>(signedConstant);
-    }
-  }
-  return std::nullopt;
-}
-
-// Prove that a canonical i16 source recurrence never wraps, including the
-// final backedge update. This intentionally recognizes only direct IV and
-// constant-step iter_arg recurrences. More general integer addresses must be
-// normalized and proven by an earlier pass before soft post-update consumes
-// them.
-static bool canonicalAddressRecurrenceDoesNotWrap(Value input,
-                                                  Operation *castOp,
-                                                  scf::ForOp forOp) {
-  auto inputType = dyn_cast<IntegerType>(input.getType());
-  if (!inputType || inputType.getWidth() != kCanonicalAddressWidth) {
-    return false;
-  }
-
-  auto tripCount = getConstantTripCount(forOp);
-  if (!tripCount) {
-    return false;
-  }
-  if (*tripCount == 0) {
-    return true;
-  }
-
-  bool isUnsigned = isa<arith::IndexCastUIOp>(castOp);
-  APInt initialBits;
-  __int128 increment;
-  if (input == forOp.getInductionVar()) {
-    auto lower = getConstantAPInt(forOp.getLowerBound());
-    auto step = getConstantAPInt(forOp.getStep());
-    if (!lower || !step) {
-      return false;
-    }
-    initialBits = *lower;
-    increment = static_cast<__int128>(step->getSExtValue());
-  } else {
-    auto iterArg = dyn_cast<BlockArgument>(input);
-    if (!iterArg || iterArg.getOwner() != forOp.getBody() ||
-        iterArg.getArgNumber() == 0) {
-      return false;
-    }
-    unsigned idx = iterArg.getArgNumber() - 1;
-    auto initial = getConstantAPInt(forOp.getInitArgs()[idx]);
-    auto step = getConstantIterArgIncrement(iterArg, forOp, isUnsigned);
-    if (!initial || !step) {
-      return false;
-    }
-    initialBits = *initial;
-    increment = *step;
-  }
-
-  __int128 initial = isUnsigned
-                         ? static_cast<__int128>(initialBits.getZExtValue())
-                         : static_cast<__int128>(initialBits.getSExtValue());
-  __int128 final = initial + increment * static_cast<__int128>(*tripCount);
-  __int128 minValue = std::min(initial, final);
-  __int128 maxValue = std::max(initial, final);
-  if (isUnsigned) {
-    return minValue >= 0 &&
-           maxValue <=
-               static_cast<__int128>(llvm::maxUIntN(kCanonicalAddressWidth));
-  }
-  return minValue >= -static_cast<__int128>(uint64_t{1}
-                                            << (kCanonicalAddressWidth - 1)) &&
-         maxValue <= static_cast<__int128>(
-                         (uint64_t{1} << (kCanonicalAddressWidth - 1)) - 1);
-}
-
-// An index cast commutes with loop delta only when both the cast and its source
-// recurrence preserve the mathematical address sequence. Loop-invariant casts
-// have zero delta. Loop-varying integer-to-index casts are accepted only from
-// the canonical i16 address domain with a direct, provably non-wrapping
-// recurrence. Narrowing casts retain the existing constant-IV range proof.
-static bool castPreservesLoopDelta(Operation *castOp, scf::ForOp forOp) {
-  Value input = castOp->getOperand(0);
-  if (forOp.isDefinedOutsideOfLoop(input)) {
-    return true; // Both the cast value and its delta (zero) are invariant.
-  }
-
-  if (castOp->getResult(0).getType().isIndex() &&
-      isa<IntegerType>(input.getType())) {
-    return canonicalAddressRecurrenceDoesNotWrap(input, castOp, forOp);
-  }
-
-  unsigned inputWidth = integerLikeBitWidth(input.getType());
-  unsigned resultWidth = integerLikeBitWidth(castOp->getResult(0).getType());
-  if (resultWidth >= inputWidth) {
-    return true;
-  }
-
-  if (input != forOp.getInductionVar()) {
-    return false;
-  }
-
-  auto lower = getConstantIntValue(forOp.getLowerBound());
-  auto upper = getConstantIntValue(forOp.getUpperBound());
-  auto step = getConstantIntValue(forOp.getStep());
-  if (!lower || !upper || !step || *step <= 0) {
-    return false;
-  }
-  if (*lower >= *upper) {
-    return true; // Empty loop.
-  }
-
-  int64_t maxIV = *upper - 1;
-  if (isa<arith::IndexCastUIOp>(castOp)) {
-    return *lower >= 0 &&
-           llvm::isUIntN(resultWidth, static_cast<uint64_t>(*lower)) &&
-           llvm::isUIntN(resultWidth, static_cast<uint64_t>(maxIV));
-  }
-  return llvm::isIntN(resultWidth, *lower) && llvm::isIntN(resultWidth, maxIV);
-}
-
-// Compute the per-iteration delta of value `v` within `forOp`.
-// Returns a loop-invariant symbolic delta, or null if unknown.  Pure.
-static StrideExprRef computeDelta(Value v, scf::ForOp forOp,
-                                  DeltaCache &cache) {
-  // IV: delta = step
-  if (v == forOp.getInductionVar()) {
-    return makeLeaf(forOp.getStep());
-  }
-
-  // Constant or loop-invariant: delta = 0
-  if (forOp.isDefinedOutsideOfLoop(v)) {
-    return makeConst(0);
-  }
-
-  auto it = cache.find(v);
-  if (it != cache.end()) {
-    return it->second;
-  }
-  auto record = [&cache, &v](StrideExprRef r) {
-    cache[v] = r;
-    return r;
-  };
-
-  // Block argument from iter_args: check yield = arg + c
-  if (auto blockArg = dyn_cast<BlockArgument>(v)) {
-    if (blockArg.getOwner() == forOp.getBody() && blockArg.getArgNumber() > 0) {
-      unsigned idx = blockArg.getArgNumber() - 1;
-      auto yieldOp = cast<scf::YieldOp>(forOp.getBody()->getTerminator());
-      Value yieldVal = yieldOp.getOperand(idx);
-      if (auto addOp = yieldVal.getDefiningOp<arith::AddIOp>()) {
-        Value other;
-        if (addOp.getLhs() == blockArg) {
-          other = addOp.getRhs();
-        }
-        else if (addOp.getRhs() == blockArg) {
-          other = addOp.getLhs();
-        }
-        if (other && forOp.isDefinedOutsideOfLoop(other)) {
-          return record(makeLeaf(other));
-        }
-      }
-      return record(nullptr);
-    }
-  }
-
-  Operation *defOp = v.getDefiningOp();
-  if (!defOp) {
-    return record(nullptr);
-  }
-
-  // arith.addi(a, b): delta = delta(a) + delta(b)
-  if (auto addOp = dyn_cast<arith::AddIOp>(defOp)) {
-    auto da = computeDelta(addOp.getLhs(), forOp, cache);
-    auto db = computeDelta(addOp.getRhs(), forOp, cache);
-    if (!da || !db) {
-      return record(nullptr);
-    }
-    return record(makeAdd(da, db));
-  }
-
-  // arith.subi(a, b): delta = delta(a) - delta(b)
-  if (auto subOp = dyn_cast<arith::SubIOp>(defOp)) {
-    auto da = computeDelta(subOp.getLhs(), forOp, cache);
-    auto db = computeDelta(subOp.getRhs(), forOp, cache);
-    if (!da || !db) {
-      return record(nullptr);
-    }
-    return record(makeSub(da, db));
-  }
-
-  // arith.muli(a, b) where one is loop-invariant:
-  //   delta = invariant * delta(other)
-  if (auto mulOp = dyn_cast<arith::MulIOp>(defOp)) {
-    Value lhs = mulOp.getLhs(), rhs = mulOp.getRhs();
-    for (auto [invariant, variant] :
-         {std::pair{rhs, lhs}, std::pair{lhs, rhs}}) {
-      if (forOp.isDefinedOutsideOfLoop(invariant)) {
-        auto dv = computeDelta(variant, forOp, cache);
-        if (!dv) {
-          continue;
-        }
-        return record(makeMul(makeLeaf(invariant), dv));
-      }
-    }
-    return record(nullptr);
-  }
-
-  // Preserve value-preserving casts in the symbolic delta. Narrowing casts are
-  // accepted only when castPreservesLoopDelta proves they cannot truncate.
-  if (isa<arith::IndexCastUIOp, arith::IndexCastOp>(defOp)) {
-    if (!castPreservesLoopDelta(defOp, forOp)) {
-      return record(nullptr);
-    }
-    StrideExprRef inputDelta = computeDelta(defOp->getOperand(0), forOp, cache);
-    return record(inputDelta ? makeCast(defOp, inputDelta) : nullptr);
-  }
-
-  return record(nullptr);
-}
-
-// Get the per-iteration stride of `v`: tries accumulator analysis first
-// (for iter_arg-derived values with possibly loop-varying increment),
-// falls back to delta analysis (for IV-derived values, loop-invariant result).
-// Returns null if the stride cannot be determined.
-static StrideExprRef getStride(Value v, scf::ForOp forOp, DeltaCache &cache) {
-  StrideResult r = getIterArgIncrement(v, forOp);
-  if (r.status == StrideStatus::Ok) {
-    return r.expr;
-  }
-  if (r.status == StrideStatus::Failed) {
-    return nullptr;
-  }
-  return computeDelta(v, forOp, cache);
-}
-
-//===----------------------------------------------------------------------===//
 // Rewrite: create new ForOp with additional iter_arg
 //===----------------------------------------------------------------------===//
 
@@ -1127,22 +366,27 @@ static bool canScaleInitialOffset(Value strideOperand, int64_t elemBytes,
   return constant && *constant % (elemBytes / unitBytes) == 0;
 }
 
-// Reproduce the index-to-i32 truncation performed by vlds/vsts lowering before
-// using an Element-class offset in pto.addptr.  A direct index -> i32 -> index
-// round trip is canonicalized away by arith, so route through i64 + trunci to
-// keep the narrowing explicit.  The final signed index_cast preserves negative
-// offsets in the same way as the existing lowering.
-static Value truncateElementOffsetToI32(Value offset, Location loc,
-                                        OpBuilder &builder) {
-  if (!offset.getType().isIndex()) {
-    return offset;
+// Loop-varying byte offsets may still have an exactly representable entry
+// value.  For example, a byte-denominated IV that starts at zero can initialize
+// an element pointer even though arbitrary values of that IV are not divisible
+// by the element size.  Query the public evolution model here so the legality
+// plan remains read-only and the eventual materialization cannot fail after
+// rewriting has started.
+static bool canScaleInitialOffsetAtLoopEntry(
+    Value offset, int64_t elemBytes, int64_t unitBytes, scf::ForOp forOp,
+    pto::PTOValueEvolutionAnalysis &valueEvolution) {
+  if (canScaleInitialOffset(offset, elemBytes, unitBytes)) {
+    return true;
   }
-  Value offsetI64 =
-      builder.create<arith::IndexCastOp>(loc, builder.getI64Type(), offset);
-  Value offsetI32 =
-      builder.create<arith::TruncIOp>(loc, builder.getI32Type(), offsetI64);
-  return builder.create<arith::IndexCastOp>(loc, builder.getIndexType(),
-                                            offsetI32);
+  if (!offset || elemBytes % unitBytes != 0) {
+    return false;
+  }
+  auto evolution = valueEvolution.getEvolution(offset, forOp);
+  if (!evolution) {
+    return false;
+  }
+  auto initial = pto::foldPTOConstant(evolution.value->initial);
+  return initial && *initial % (elemBytes / unitBytes) == 0;
 }
 
 // pto.addptr always consumes an index offset. Block offsets retain their
@@ -1178,10 +422,7 @@ static Value createInitialPtr(Value base, Value strideOperand,
     return nullptr;
   }
 
-  Value scaledOffset =
-      strideUnit == StrideUnit::Element
-          ? truncateElementOffsetToI32(strideOperand, loc, builder)
-          : strideOperand;
+  Value scaledOffset = strideOperand;
   if (unitBytes != elemBytes) {
     if (unitBytes % elemBytes == 0) {
       Value soIndex = strideOperand;
@@ -1228,73 +469,6 @@ static Value computeInitialPtr(Value base, Value strideOperand,
   return createInitialPtr(baseAtEntry, soAtEntry, strideUnit, elemBytes,
                           unitBytes, forOp.getLoc(), builder);
 }
-
-// Rescale a per-iteration base delta from `pto.addptr` units (elements) into
-// the op's strideOperand units.  Returns null when the conversion is not exact.
-// Expanding the byte-denominated form
-//     stride_new = (E*delta(base) + W*delta(strideOperand)) / W
-//                = (E/W)*delta(base) + delta(strideOperand)
-// shows that only delta(base) is ever rescaled; delta(strideOperand) passes
-// through untouched.  That matters: it keeps the stride symbolic, so a
-// loop-varying increment stays supported for every op class.  When E == W the
-// factor is 1 and nothing is emitted at all, so Element-class ops (vlds/vsts)
-// behave exactly as before this scaling existed.
-static StrideExprRef scaleBaseDelta(StrideExprRef deltaBase, int64_t elemBytes,
-                                    int64_t unitBytes) {
-  if (unitBytes == elemBytes) {
-    return deltaBase;
-  }
-
-  if (unitBytes % elemBytes == 0) {
-    // Coarser stride unit (e.g. 32-byte blocks over 4-byte elements): the base
-    // delta's affine coefficients must all land on a whole unit.
-    int64_t divisor = unitBytes / elemBytes;
-    auto form = normalizeAffine(deltaBase);
-    if (!form || !divideAffineForm(*form, divisor)) {
-      return nullptr;
-    }
-    return affineFormToExpr(*form);
-  }
-
-  if (elemBytes % unitBytes == 0) {
-    return makeMul(deltaBase, makeConst(elemBytes / unitBytes));
-  }
-
-  return nullptr;
-}
-
-// Combine per-operand strides into the final stride_new for the post-update op.
-// stride_new = (E/W) * deltaBase + deltaOffset, where E is the byte size of one
-// addptr unit and W the byte size of one strideOperand unit.  Returns null if
-// the stride is zero or the rescaling is inexact.  Purely symbolic: a rejected
-// candidate leaves no IR behind, and the scaling is folded rather than emitted,
-// so no `index` factor is ever multiplied against a narrower stride operand.
-static StrideExprRef combineStride(StrideExprRef deltaBase,
-                                   StrideExprRef deltaOffset, int64_t elemBytes,
-                                   int64_t unitBytes) {
-  StrideExprRef scaledBase = scaleBaseDelta(deltaBase, elemBytes, unitBytes);
-  if (!scaledBase) {
-    return nullptr;
-  }
-
-  StrideExprRef total = makeAdd(scaledBase, deltaOffset);
-  if (auto form = normalizeAffine(total)) {
-    if (isZeroAffineForm(*form)) {
-      return nullptr;
-    }
-    return affineFormToExpr(*form);
-  }
-  if (auto constTotal = foldConst(total); constTotal && *constTotal == 0) {
-    return nullptr;
-  }
-  return total;
-}
-
-//===----------------------------------------------------------------------===//
-// Materialization
-//===----------------------------------------------------------------------===//
-
-// Can `v` be made available immediately before `insertPt`, cloning a pure
 // def-chain if needed?  Pure: inspects only, never mutates the IR.
 static bool canHoistBefore(Value v, Operation *insertPt, scf::ForOp forOp,
                            DenseMap<Value, bool> &memo) {
@@ -1452,15 +626,15 @@ static bool constantsFitType(const StrideExprRef &e, Type wantType) {
 }
 
 static bool satisfiesStrideConstraint(const StrideExprRef &stride,
-                                      StrideConstraint constraint) {
-  if (constraint == StrideConstraint::Dynamic) {
+                                      pto::VPTOAdvanceConstraint constraint) {
+  if (constraint == pto::VPTOAdvanceConstraint::Dynamic) {
     return true;
   }
   std::optional<int64_t> constant = foldConst(stride);
   if (!constant) {
     return false;
   }
-  return constraint == StrideConstraint::Constant ||
+  return constraint == pto::VPTOAdvanceConstraint::Constant ||
          (*constant >= kSignedI8Min && *constant <= kSignedI8Max);
 }
 
@@ -1652,6 +826,23 @@ struct PostUpdateRewrite {
   int64_t unitBytes;   // bytes advanced by one unit of stride
 };
 
+struct PostUpdateCandidatePlan {
+  Operation *op;
+  Value base;
+  Value currentOffset;
+  StrideUnit currentUnit;
+  int64_t elementBytes;
+  int64_t currentUnitBytes;
+  int64_t advanceUnitBytes;
+  Type strideType;
+  StrideExprRef stride;
+};
+
+struct LoopPostUpdatePlan {
+  scf::ForOp loop;
+  SmallVector<PostUpdateCandidatePlan> candidates;
+};
+
 // A unique key for grouping rewrites that can share an iter_arg.
 //
 // Two ops may share an iter_arg only if they walk the same address sequence,
@@ -1677,21 +868,22 @@ static IterArgGroupKey getGroupKey(const PostUpdateRewrite &rw) {
 // Build the post-update form of an op while preserving every operand,
 // attribute, and original result. The updated base is always appended last.
 static Operation *createPostUpdateOp(Operation *op,
-                                     const PostUpdateOpInfo &info, Value base,
-                                     Value stride, OpBuilder &builder) {
+                                     const pto::VPTOPostUpdateSemantics &info,
+                                     Value base, Value stride,
+                                     OpBuilder &builder) {
   OperationState state(op->getLoc(), op->getName());
-  for (auto [i, operand] : llvm::enumerate(op->getOperands())) {
-    if (static_cast<int>(i) == info.baseOperandIdx) {
+  for (OpOperand &operand : op->getOpOperands()) {
+    if (&operand == info.baseOperand) {
       state.addOperands(base);
     }
-    else if (info.strideOperandIdx && i == *info.strideOperandIdx) {
+    else if (&operand == info.advanceOperand) {
       state.addOperands(stride);
     }
     else {
-      state.addOperands(operand);
+      state.addOperands(operand.get());
     }
   }
-  if (!info.strideOperandIdx) {
+  if (!info.advanceOperand) {
     state.addOperands(stride);
   }
   state.addTypes(op->getResultTypes());
@@ -1702,19 +894,20 @@ static Operation *createPostUpdateOp(Operation *op,
 
 // Build the normal form of an op while preserving every operand, attribute,
 // and original result. Unlike createPostUpdateOp, no updated base is appended.
-static Operation *createNormalOp(Operation *op, const PostUpdateOpInfo &info,
+static Operation *createNormalOp(Operation *op,
+                                 const pto::VPTOPostUpdateSemantics &info,
                                  Value base, Value zeroStride,
                                  OpBuilder &builder) {
   OperationState state(op->getLoc(), op->getName());
-  for (auto [i, operand] : llvm::enumerate(op->getOperands())) {
-    if (static_cast<int>(i) == info.baseOperandIdx) {
+  for (OpOperand &operand : op->getOpOperands()) {
+    if (&operand == info.baseOperand) {
       state.addOperands(base);
     }
-    else if (info.strideOperandIdx && i == *info.strideOperandIdx) {
+    else if (&operand == info.advanceOperand) {
       state.addOperands(zeroStride);
     }
     else {
-      state.addOperands(operand);
+      state.addOperands(operand.get());
     }
   }
   state.addTypes(op->getResultTypes());
@@ -1945,7 +1138,7 @@ static scf::ForOp applyPostUpdateRewrites(scf::ForOp forOp,
 
     builder.setInsertionPoint(clonedOp);
 
-    const PostUpdateOpInfo *info = getPostUpdateInfo(clonedOp);
+    auto info = getPostUpdateSemantics(clonedOp);
     if (!info) {
       continue;
     }
@@ -1961,8 +1154,8 @@ static scf::ForOp applyPostUpdateRewrites(scf::ForOp forOp,
       mapping.map(rw.op->getResult(r), newOp->getResult(r));
     }
 
-    // updated_base is the last result.
-    groupYieldPtrs[gIdx] = newOp->getResult(newOp->getNumResults() - 1);
+    groupYieldPtrs[gIdx] =
+        getPostUpdateSemantics(newOp)->updatedBase;
     clonedOp->erase();
   }
 
@@ -1992,120 +1185,68 @@ static scf::ForOp applyPostUpdateRewrites(scf::ForOp forOp,
 // Sequential Path
 //===----------------------------------------------------------------------===//
 
-using SequentialExprCache = DenseMap<Value, StrideExprRef>;
-
-// Build an affine StrideExpr for one scalar address operand. Unsupported
-// arithmetic remains an opaque leaf, so it may still cancel when the exact same
-// SSA value is reused without guessing at its semantics.
-static StrideExprRef buildSequentialExpr(Value value,
-                                         SequentialExprCache &cache) {
-  if (!value) {
-    return makeConst(0);
-  }
-  if (auto constant = getConstantIntValue(value)) {
-    return makeConst(*constant);
-  }
-  if (auto it = cache.find(value); it != cache.end()) {
-    return it->second;
-  }
-
-  Operation *defOp = value.getDefiningOp();
-  StrideExprRef result;
-  if (auto add = dyn_cast_or_null<arith::AddIOp>(defOp)) {
-    result = makeAdd(buildSequentialExpr(add.getLhs(), cache),
-                     buildSequentialExpr(add.getRhs(), cache));
-  } else if (auto sub = dyn_cast_or_null<arith::SubIOp>(defOp)) {
-    result = makeSub(buildSequentialExpr(sub.getLhs(), cache),
-                     buildSequentialExpr(sub.getRhs(), cache));
-  } else if (auto mul = dyn_cast_or_null<arith::MulIOp>(defOp)) {
-    if (auto lhsConst = getConstantIntValue(mul.getLhs())) {
-      result = makeMul(makeConst(*lhsConst),
-                       buildSequentialExpr(mul.getRhs(), cache));
-    } else if (auto rhsConst = getConstantIntValue(mul.getRhs())) {
-      result = makeMul(buildSequentialExpr(mul.getLhs(), cache),
-                       makeConst(*rhsConst));
-    } else {
-      result = makeLeaf(value);
-    }
-  } else if (isa_and_nonnull<arith::IndexCastOp, arith::IndexCastUIOp>(defOp)) {
-    result = makeCast(defOp, buildSequentialExpr(defOp->getOperand(0), cache));
-  } else {
-    result = makeLeaf(value);
-  }
-  cache[value] = result;
-  return result;
-}
-
-struct NormalizedBase {
-  Value root;
-  StrideExprRef offset; // in pto.addptr element units
-};
-
-// Strip a same-element-unit pto.addptr chain into (root, accumulated offset).
-static NormalizedBase normalizeSequentialBase(Value base, int64_t elemBytes,
-                                              SequentialExprCache &cache) {
-  Value root = base;
-  StrideExprRef offset = makeConst(0);
-  while (auto addPtr = root.getDefiningOp<pto::AddPtrOp>()) {
-    auto parentElemBytes = addPtrUnitBytes(addPtr.getPtr());
-    if (!parentElemBytes || *parentElemBytes != elemBytes) {
-      break;
-    }
-    offset = makeAdd(offset, buildSequentialExpr(addPtr.getOffset(), cache));
-    root = addPtr.getPtr();
-  }
-  return {root, offset};
-}
-
 struct SequentialCandidate {
   Operation *op;
-  const PostUpdateOpInfo *info;
+  OpOperand *advanceOperand;
+  pto::VPTOAdvanceConstraint constraint;
   Value base;
-  Value strideOperand;
+  Value currentOffset;
+  Value advanceValue;
+  pto::PTOAddressExpr address;
   Value rootBase;
-  StrideExprRef baseOffset;
-  StrideExprRef strideExpr;
   int64_t elemBytes;
-  int64_t unitBytes;
+  StrideUnit currentUnit;
+  int64_t currentUnitBytes;
+  int64_t unitBytes; // post-access advance unit bytes
 };
 
 struct SequentialBucket {
-  StringRef opName;
+  OperationName opName;
   Value rootBase;
   SmallVector<SequentialCandidate> candidates;
 };
 
 struct SequentialStep {
   StrideExprRef expr;
-  AffineForm form;
+  pto::PTOLinearExpr form;
 };
 
 static std::optional<SequentialStep>
 analyzeSequentialStep(const SequentialCandidate &previous,
-                      const SequentialCandidate &current) {
+                      const SequentialCandidate &current,
+                      pto::PTOAddressAnalysis &addressAnalysis) {
   if (previous.elemBytes != current.elemBytes ||
       previous.unitBytes != current.unitBytes) {
     return std::nullopt;
   }
 
-  StrideExprRef deltaBase = makeSub(current.baseOffset, previous.baseOffset);
-  StrideExprRef deltaStride = makeSub(current.strideExpr, previous.strideExpr);
-  StrideExprRef step = combineStride(deltaBase, deltaStride, current.elemBytes,
-                                     current.unitBytes);
+  auto deltaBytes =
+      addressAnalysis.getDifferenceBytes(previous.address, current.address);
+  if (!deltaBytes) {
+    return std::nullopt;
+  }
+  auto deltaInUnit =
+      addressAnalysis.convertDeltaToUnit(*deltaBytes.value,
+                                         current.unitBytes);
+  if (!deltaInUnit) {
+    return std::nullopt;
+  }
+  auto form = pto::normalizePTOLinearExpr(*deltaInUnit.value);
+  if (!form || pto::isZeroPTOLinearExpr(*form)) {
+    return std::nullopt;
+  }
+  StrideExprRef step = importTypedExpr(
+      pto::buildPTOTypedExpr(*form, (*deltaInUnit.value)->type));
   if (!step) {
     return std::nullopt;
   }
-  auto form = normalizeAffine(step);
-  if (!form || isZeroAffineForm(*form)) {
-    return std::nullopt;
-  }
-  return SequentialStep{affineFormToExpr(*form), std::move(*form)};
+  return SequentialStep{step, std::move(*form)};
 }
 
 struct SequentialRun {
   SmallVector<SequentialCandidate *> candidates;
   StrideExprRef step;
-  AffineForm stepForm;
+  pto::PTOLinearExpr stepForm;
   Type strideType;
   Value strideValue;
   Value zeroStride;
@@ -2119,25 +1260,22 @@ static bool validateSequentialRun(SequentialRun &run,
   }
 
   SequentialCandidate *first = run.candidates.front();
-  run.strideType = first->strideOperand
-                       ? first->strideOperand.getType()
+  run.strideType = first->advanceValue
+                       ? first->advanceValue.getType()
                        : IndexType::get(first->op->getContext());
-  Value initialOffsetOperand = first->info->strideIsInitialOffset
-                                   ? first->strideOperand
-                                   : Value();
   if (!canMaterializeAs(run.step, run.strideType) ||
       !constantsFitType(run.step, run.strideType) ||
       !satisfiesStrideConstraint(run.step,
-                                 first->info->strideConstraint) ||
-      !canScaleInitialOffset(initialOffsetOperand, first->elemBytes,
-                             first->unitBytes)) {
+                                 first->constraint) ||
+      !canScaleInitialOffset(first->currentOffset, first->elemBytes,
+                             first->currentUnitBytes)) {
     return false;
   }
 
   for (SequentialCandidate *candidate : run.candidates) {
     Type candidateStrideType =
-        candidate->strideOperand
-            ? candidate->strideOperand.getType()
+        candidate->advanceValue
+            ? candidate->advanceValue.getType()
             : IndexType::get(candidate->op->getContext());
     if (candidateStrideType != run.strideType) {
       return false;
@@ -2156,18 +1294,19 @@ static bool hasOnlyExpectedUser(Value value, Operation *expectedUser) {
   return value.hasOneUse() && *value.getUsers().begin() == expectedUser;
 }
 
-static bool isDynamicSequentialValue(Value value,
-                                     SequentialExprCache &cache) {
-  auto form = normalizeAffine(buildSequentialExpr(value, cache));
+static bool isDynamicSequentialValue(
+    Value value, pto::PTOValueEvolutionAnalysis &valueEvolution) {
+  auto form = pto::normalizePTOLinearExpr(valueEvolution.getExpr(value));
   return form && !form->terms.empty();
 }
 
 // Count only addptrs that are guaranteed to disappear after the candidates
 // following the run head are rewritten. The first candidate's base chain is
 // retained to construct the initial pointer and therefore is not a saving.
-static unsigned countDeadDynamicAddPtrs(const SequentialRun &run) {
+static unsigned countDeadDynamicAddPtrs(
+    const SequentialRun &run,
+    pto::PTOValueEvolutionAnalysis &valueEvolution) {
   DenseSet<Operation *> counted;
-  SequentialExprCache cache;
   for (SequentialCandidate *candidate : llvm::drop_begin(run.candidates)) {
     Value value = candidate->base;
     Operation *expectedUser = candidate->op;
@@ -2175,7 +1314,7 @@ static unsigned countDeadDynamicAddPtrs(const SequentialRun &run) {
       if (!hasOnlyExpectedUser(value, expectedUser)) {
         break;
       }
-      if (isDynamicSequentialValue(addPtr.getOffset(), cache)) {
+      if (isDynamicSequentialValue(addPtr.getOffset(), valueEvolution)) {
         counted.insert(addPtr);
       }
       expectedUser = addPtr;
@@ -2187,19 +1326,16 @@ static unsigned countDeadDynamicAddPtrs(const SequentialRun &run) {
 
 static unsigned initialPointerCost(const SequentialRun &run) {
   SequentialCandidate *first = run.candidates.front();
-  if (!first->info->strideIsInitialOffset || !first->strideOperand) {
+  if (!first->currentOffset) {
     return 0;
   }
-  auto initialOffset = getConstantIntValue(first->strideOperand);
+  auto initialOffset = getConstantIntValue(first->currentOffset);
   return initialOffset && *initialOffset == 0 ? 0 : 1;
 }
 
 static bool isRunStrideUse(OpOperand &use, const SequentialRun &run) {
   return llvm::any_of(run.candidates, [&use](SequentialCandidate *candidate) {
-    return candidate->info->strideOperandIdx &&
-           use.getOwner() == candidate->op &&
-           use.getOperandNumber() ==
-               *candidate->info->strideOperandIdx;
+    return candidate->advanceOperand == &use;
   });
 }
 
@@ -2232,8 +1368,8 @@ static bool cumulativeOffsetChainDefinitelyDies(
     const SequentialRun &run, DenseSet<Operation *> &deadOps) {
   for (SequentialCandidate *candidate :
        llvm::drop_begin(run.candidates, mlir::pto::kValue2)) {
-    if (candidate->strideOperand) {
-      collectCumulativeOffsetOps(candidate->strideOperand, deadOps);
+    if (candidate->currentOffset) {
+      collectCumulativeOffsetOps(candidate->currentOffset, deadOps);
     }
   }
   return !deadOps.empty() &&
@@ -2268,18 +1404,26 @@ static bool isStepMaterializationCostNeutral(
     DominanceInfo &dominance) {
   SequentialCandidate *first = run.candidates.front();
   DenseSet<Operation *> clonedOps;
-  StrideExprRef atom = run.stepForm.terms.front().atom;
-  if (atom->kind == StrideExpr::Kind::Cast) {
-    clonedOps.insert(atom->castOp);
+  pto::PTOTypedExprRef atom = run.stepForm.terms.front().atom;
+  if (atom->sourceValue) {
+    if (!collectLatePureDefinitions(atom->sourceValue, first->op, dominance,
+                                    clonedOps)) {
+      return false;
+    }
+  } else if (atom->kind == pto::PTOTypedExpr::Kind::Cast) {
+    if (!atom->sourceOperation) {
+      return false;
+    }
+    clonedOps.insert(atom->sourceOperation);
     SmallVector<Value> leaves;
-    collectLeaves(atom, leaves);
+    pto::collectPTOExprLeaves(atom, leaves);
     for (Value leaf : leaves) {
       if (!collectLatePureDefinitions(leaf, first->op, dominance, clonedOps)) {
         return false;
       }
     }
-  } else if (atom->kind == StrideExpr::Kind::Leaf &&
-             !collectLatePureDefinitions(atom->leaf, first->op, dominance,
+  } else if (atom->kind == pto::PTOTypedExpr::Kind::Opaque &&
+             !collectLatePureDefinitions(atom->opaque, first->op, dominance,
                                          clonedOps)) {
     return false;
   }
@@ -2291,12 +1435,14 @@ static bool isStepMaterializationCostNeutral(
   });
 }
 
-static bool isProfitableDynamicBaseRun(const SequentialRun &run) {
+static bool isProfitableDynamicBaseRun(
+    const SequentialRun &run,
+    pto::PTOValueEvolutionAnalysis &valueEvolution) {
   if (!run.stepForm.terms.empty()) {
     return false;
   }
   unsigned pointerCost = run.candidates.size() - 1;
-  return countDeadDynamicAddPtrs(run) >
+  return countDeadDynamicAddPtrs(run, valueEvolution) >
          pointerCost + initialPointerCost(run);
 }
 
@@ -2305,7 +1451,7 @@ static bool isProfitableDirectSymbolicLeafRun(
   // validateSequentialRun already enforces N >= 3. This class intentionally
   // has no higher length threshold, so an N3 run may be accepted.
   if (run.stepForm.constant != 0 || run.stepForm.terms.size() != 1 ||
-      run.stepForm.terms.front().coeff != 1) {
+      run.stepForm.terms.front().coefficient != 1) {
     return false;
   }
 
@@ -2316,7 +1462,7 @@ static bool isProfitableDirectSymbolicLeafRun(
       })) {
     return false;
   }
-  Value firstStrideOperand = run.candidates.front()->strideOperand;
+  Value firstStrideOperand = run.candidates.front()->currentOffset;
   auto firstOffset = firstStrideOperand
                          ? getConstantIntValue(firstStrideOperand)
                          : std::optional<int64_t>(0);
@@ -2336,8 +1482,10 @@ static bool isProfitableDirectSymbolicLeafRun(
 // post-update op: either later candidates delete enough dynamic addptr work, or
 // a direct symbolic step replaces a cumulative address chain.
 static bool isProfitableSequentialRun(const SequentialRun &run,
-                                      DominanceInfo &dominance) {
-  return isProfitableDynamicBaseRun(run) ||
+                                      DominanceInfo &dominance,
+                                      pto::PTOValueEvolutionAnalysis
+                                          &valueEvolution) {
+  return isProfitableDynamicBaseRun(run, valueEvolution) ||
          isProfitableDirectSymbolicLeafRun(run, dominance);
 }
 
@@ -2358,43 +1506,62 @@ static void collectNestedBlocks(Operation *op, pto::VecScopeOp owner,
 }
 
 static void processSequentialBlock(Block *block, DominanceInfo &dominance,
+                                   pto::PTOAddressAnalysis &addressAnalysis,
                                    OpBuilder &builder) {
   SmallVector<Operation *> originalOps;
   SmallVector<SequentialBucket> buckets;
-  SequentialExprCache exprCache;
 
   for (Operation &op : *block) {
     originalOps.push_back(&op);
-    const PostUpdateOpInfo *info = getPostUpdateInfo(&op);
-    if (!info || isAlreadyPostUpdate(&op, *info)) {
+    auto postUpdate = getPostUpdateSemantics(&op);
+    if (!postUpdate || postUpdate->updatedBase) {
       continue;
     }
 
-    Value base, strideOperand;
-    extractBaseAndStrideOperand(&op, *info, base, strideOperand);
-    auto elemBytes = addPtrUnitBytes(base);
-    if (!elemBytes) {
+    auto addresses = addressAnalysis.getAddresses(&op);
+    if (
+        !addresses || addresses.value->size() != 1) {
       continue;
     }
-    auto unitBytes = strideUnitBytes(&op, info->strideUnit, *elemBytes);
+    pto::PTOAddressExpr address = addresses.value->front();
+    int64_t elemBytes = address.elementBytes;
+    auto unitBytes =
+        strideUnitBytes(&op, postUpdate->advanceUnit, elemBytes);
     if (!unitBytes) {
       continue;
     }
-    NormalizedBase normalized =
-        normalizeSequentialBase(base, *elemBytes, exprCache);
-
-    auto bucketIt = llvm::find_if(buckets, [&op, &normalized](const SequentialBucket &bucket) {
-      return bucket.opName == op.getName().getStringRef() &&
-             bucket.rootBase == normalized.root;
-    });
+    Value currentOffset =
+        address.offset ? address.offset->sourceValue : Value();
+    StrideUnit currentUnit = address.offset ? address.offset->unit
+                                            : StrideUnit::Element;
+    int64_t currentUnitBytes =
+        address.offset && address.offset->unitBytes
+            ? *address.offset->unitBytes
+            : elemBytes;
+    auto bucketIt = llvm::find_if(
+        buckets, [&op, &address](const SequentialBucket &bucket) {
+          return bucket.opName == op.getName() &&
+                 bucket.rootBase == address.rootOrBase;
+        });
     if (bucketIt == buckets.end()) {
-      buckets.push_back({op.getName().getStringRef(), normalized.root, {}});
+      buckets.push_back({op.getName(), address.rootOrBase, {}});
       bucketIt = std::prev(buckets.end());
     }
-    bucketIt->candidates.push_back(
-        {&op, info, base, strideOperand, normalized.root, normalized.offset,
-         buildSequentialExpr(strideOperand, exprCache), *elemBytes,
-         *unitBytes});
+    bucketIt->candidates.push_back({
+        &op,
+        postUpdate->advanceOperand,
+        postUpdate->constraint,
+        address.currentBase,
+        currentOffset,
+        postUpdate->advanceOperand ? postUpdate->advanceOperand->get()
+                                   : Value(),
+        std::move(address),
+        addresses.value->front().rootOrBase,
+        elemBytes,
+        currentUnit,
+        currentUnitBytes,
+        *unitBytes,
+    });
   }
 
   SmallVector<SequentialRun> runs;
@@ -2403,7 +1570,8 @@ static void processSequentialBlock(Block *block, DominanceInfo &dominance,
     size_t start = 0;
     while (start + 1 < candidates.size()) {
       auto firstStep =
-          analyzeSequentialStep(candidates[start], candidates[start + 1]);
+          analyzeSequentialStep(candidates[start], candidates[start + 1],
+                                addressAnalysis);
       if (!firstStep) {
         ++start;
         continue;
@@ -2412,8 +1580,10 @@ static void processSequentialBlock(Block *block, DominanceInfo &dominance,
       size_t end = start + 2;
       while (end < candidates.size()) {
         auto nextStep =
-            analyzeSequentialStep(candidates[end - 1], candidates[end]);
-        if (!nextStep || !equalAffineForms(firstStep->form, nextStep->form)) {
+            analyzeSequentialStep(candidates[end - 1], candidates[end],
+                                  addressAnalysis);
+        if (!nextStep ||
+            !pto::equalPTOLinearExprs(firstStep->form, nextStep->form)) {
           break;
         }
         ++end;
@@ -2426,7 +1596,8 @@ static void processSequentialBlock(Block *block, DominanceInfo &dominance,
         run.candidates.push_back(&candidates[i]);
       }
       if (validateSequentialRun(run, dominance) &&
-          isProfitableSequentialRun(run, dominance)) {
+          isProfitableSequentialRun(
+              run, dominance, addressAnalysis.getValueEvolution())) {
         runs.push_back(std::move(run));
         // Accepted runs are deliberately non-overlapping. The candidate that
         // broke the current stride becomes the start of the next run.
@@ -2455,12 +1626,10 @@ static void processSequentialBlock(Block *block, DominanceInfo &dominance,
     run.zeroStride = materializeSequential(makeConst(0), run.strideType,
                                            first->op->getLoc(), builder);
     builder.setInsertionPoint(first->op);
-    Value initialOffsetOperand = first->info->strideIsInitialOffset
-                                     ? first->strideOperand
-                                     : Value();
     run.currentPtr = createInitialPtr(
-        first->base, initialOffsetOperand, first->info->strideUnit,
-        first->elemBytes, first->unitBytes, first->op->getLoc(), builder);
+        first->base, first->currentOffset, first->currentUnit,
+        first->elemBytes, first->currentUnitBytes, first->op->getLoc(),
+        builder);
   }
 
   DenseMap<Operation *, unsigned> opToRun;
@@ -2478,18 +1647,22 @@ static void processSequentialBlock(Block *block, DominanceInfo &dominance,
       continue;
     }
     SequentialRun &run = runs[it->second];
-    const PostUpdateOpInfo *info = getPostUpdateInfo(op);
+    auto postUpdate = getPostUpdateSemantics(op);
+    if (!postUpdate) {
+      continue;
+    }
     builder.setInsertionPoint(op);
     bool isLast = op == run.candidates.back()->op;
-    Operation *newOp = isLast ? createNormalOp(op, *info, run.currentPtr,
-                                               run.zeroStride, builder)
-                              : createPostUpdateOp(op, *info, run.currentPtr,
-                                                   run.strideValue, builder);
+    Operation *newOp =
+        isLast ? createNormalOp(op, *postUpdate, run.currentPtr,
+                                run.zeroStride, builder)
+               : createPostUpdateOp(op, *postUpdate, run.currentPtr,
+                                    run.strideValue, builder);
     for (unsigned result = 0; result < op->getNumResults(); ++result) {
       op->getResult(result).replaceAllUsesWith(newOp->getResult(result));
     }
     if (!isLast) {
-      run.currentPtr = newOp->getResult(newOp->getNumResults() - 1);
+      run.currentPtr = getPostUpdateSemantics(newOp)->updatedBase;
     }
     op->erase();
   }
@@ -2507,87 +1680,86 @@ struct VPTOSoftPostUpdatePass
   void runOnOperation() override {
     ModuleOp module = getOperation();
     OpBuilder builder(&getContext());
+    module.walk([&](func::FuncOp function) {
+      auto &addressAnalysis =
+          getAnalysisManager()
+              .getChildAnalysis<pto::PTOAddressAnalysis, func::FuncOp>(
+                  function);
 
-    module.walk(
-        [this, &builder](pto::VecScopeOp vecscope) { processVecScope(vecscope, builder); });
+      SmallVector<pto::VecScopeOp> vecscopes;
+      function.walk(
+          [&vecscopes](pto::VecScopeOp vecscope) { vecscopes.push_back(vecscope); });
+
+      // Build every loop rewrite plan in the function before the first
+      // mutation. Reusing a function analysis after rewriting an earlier
+      // vecscope would otherwise observe stale cached expressions.
+      SmallVector<LoopPostUpdatePlan> plans;
+      function.walk([&](scf::ForOp forOp) {
+        if (!forOp->getParentOfType<pto::VecScopeOp>()) {
+          return;
+        }
+        LoopPostUpdatePlan plan =
+            analyzeForOp(forOp, addressAnalysis, builder);
+        if (!plan.candidates.empty()) {
+          plans.push_back(std::move(plan));
+        }
+      });
+      for (LoopPostUpdatePlan &plan : plans) {
+        applyLoopPlan(plan, builder);
+      }
+
+      // Sequential analysis is block-local. Construct a fresh public analysis
+      // pair for each block so no cached fact survives an earlier block's
+      // mutation.
+      for (pto::VecScopeOp vecscope : vecscopes) {
+        SmallVector<Block *> blocks;
+        collectNestedBlocks(vecscope, vecscope, blocks);
+        for (Block *block : blocks) {
+          DominanceInfo dominance(vecscope->getParentOp());
+          pto::PTOValueEvolutionAnalysis freshValueAnalysis(function);
+          pto::PTOAddressAnalysis freshAddressAnalysis(function,
+                                                       freshValueAnalysis);
+          processSequentialBlock(block, dominance, freshAddressAnalysis,
+                                 builder);
+        }
+      }
+    });
   }
 
 private:
-  void processVecScope(pto::VecScopeOp vecscope, OpBuilder &builder) {
-    // Collect scf.for ops inside this vecscope.  Operation::walk defaults to
-    // post-order, so nested loops already come before the loops enclosing
-    // them.
-    SmallVector<scf::ForOp> forOps;
-    vecscope.walk([&forOps](scf::ForOp forOp) { forOps.push_back(forOp); });
-
-    // Process inner-to-outer, i.e. in collection order.  The order is load
-    // bearing: rewriting a loop erases it, which also destroys every loop
-    // nested inside it.  Visiting an enclosing loop first would leave the
-    // already-collected inner ForOp handles dangling.
-    for (scf::ForOp forOp : forOps) {
-      processForOp(forOp, builder);
-    }
-
-    // Loop rewriting rebuilds ForOps, so collect blocks only after every loop
-    // handle has been consumed. This second phase includes loop bodies and
-    // handles only candidates that remain in non-post-update form.
-    SmallVector<Block *> blocks;
-    collectNestedBlocks(vecscope, vecscope, blocks);
-    DominanceInfo dominance(vecscope->getParentOp());
-    for (Block *block : blocks) {
-      processSequentialBlock(block, dominance, builder);
-    }
-  }
-
-  void processForOp(scf::ForOp forOp, OpBuilder &builder) {
-    SmallVector<PostUpdateRewrite> rewrites;
-    // Shared across all candidates in this loop so equal strides map to one
-    // Value, which is what lets same-address ops share an iter_arg.
-    ConstCache constCache;
-
+  LoopPostUpdatePlan analyzeForOp(
+      scf::ForOp forOp, pto::PTOAddressAnalysis &addressAnalysis,
+      OpBuilder &builder) {
+    LoopPostUpdatePlan plan{forOp, {}};
     for (Operation &op : *forOp.getBody()) {
-      const PostUpdateOpInfo *info = getPostUpdateInfo(&op);
-      if (!info) {
-        continue;
-      }
-      if (isAlreadyPostUpdate(&op, *info)) {
-        continue;
-      }
-      if (!isDirectlyInForBody(&op, forOp)) {
+      auto postUpdate = getPostUpdateSemantics(&op);
+      if (!postUpdate || postUpdate->updatedBase ||
+          !isDirectlyInForBody(&op, forOp)) {
         continue;
       }
 
-      Value base, strideOperand;
-      extractBaseAndStrideOperand(&op, *info, base, strideOperand);
-
-      // Both address terms have to be expressed in the same currency before
-      // they can be combined: delta(base) is measured in pto.addptr units
-      // (elements), while the strideOperand is counted in whatever unit the
-      // op's lowering expects.  Bail on pointers whose addptr unit we cannot
-      // pin down rather than guess at the scale.
-      std::optional<int64_t> elemBytes = addPtrUnitBytes(base);
-      if (!elemBytes) {
+      auto addresses = addressAnalysis.getAddresses(&op);
+      if (
+          !addresses || addresses.value->size() != 1) {
         continue;
       }
-      auto unitBytes = strideUnitBytes(&op, info->strideUnit, *elemBytes);
-      if (!unitBytes) {
+      const pto::PTOAddressExpr &address = addresses.value->front();
+      auto advanceUnitBytes =
+          strideUnitBytes(&op, postUpdate->advanceUnit,
+                          address.elementBytes);
+      if (!advanceUnitBytes) {
         continue;
       }
-
-      // Analyze each operand independently: accumulator (iter_arg) first,
-      // delta (IV/affine) fallback. Both return a symbolic per-iteration
-      // stride; no IR is created until the candidate is known to be viable.
-      DeltaCache deltaCache;
-      StrideExprRef deltaBase = getStride(base, forOp, deltaCache);
-      StrideExprRef deltaOffset =
-          strideOperand ? getStride(strideOperand, forOp, deltaCache)
-                        : makeConst(0);
-      if (!deltaBase || !deltaOffset) {
+      auto delta = addressAnalysis.getDeltaInUnit(
+          address, forOp, *advanceUnitBytes);
+      if (!delta) {
         continue;
       }
-
-      StrideExprRef total =
-          combineStride(deltaBase, deltaOffset, *elemBytes, *unitBytes);
+      if (auto linear = pto::normalizePTOLinearExpr(*delta.value);
+          linear && pto::isZeroPTOLinearExpr(*linear)) {
+        continue;
+      }
+      StrideExprRef total = importTypedExpr(*delta.value);
       if (!total) {
         continue;
       }
@@ -2599,8 +1771,11 @@ private:
       if (!exprType(total, exprResultType)) {
         continue;
       }
-      Type strideType =
-          strideOperand ? strideOperand.getType() : builder.getIndexType();
+      Value advanceOperand = postUpdate->advanceOperand
+                                 ? postUpdate->advanceOperand->get()
+                                 : Value();
+      Type strideType = advanceOperand ? advanceOperand.getType()
+                                       : builder.getIndexType();
       if (exprResultType && exprResultType != strideType) {
         continue;
       }
@@ -2609,50 +1784,75 @@ private:
       if (!constantsFitType(total, strideType)) {
         continue;
       }
-      if (!satisfiesStrideConstraint(total, info->strideConstraint)) {
+      if (!satisfiesStrideConstraint(total, postUpdate->constraint)) {
         continue;
       }
 
-      // A stride built only from loop-invariant leaves is materialized before
-      // the loop; otherwise it goes immediately before the candidate op.
       SmallVector<Value> leaves;
       collectLeaves(total, leaves);
-      bool allInvariant = llvm::all_of(
-          leaves, [&forOp](Value l) { return forOp.isDefinedOutsideOfLoop(l); });
-
-      StrideExprRef finalExpr = total;
-      if (!allInvariant) {
-        // Every leaf must be usable at the candidate op.  Checked before any
-        // IR is created, so a rejected candidate leaves nothing behind.
-        DenseMap<Value, bool> canCache;
-        if (!llvm::all_of(leaves, [&](Value l) {
-              return canHoistBefore(l, &op, forOp, canCache);
-            })) {
-          continue;
-        }
-        DenseMap<Value, Value> hoistMemo;
-        finalExpr = makeAvailableAt(total, &op, forOp, builder, hoistMemo);
-      }
-
-      builder.setInsertionPoint(allInvariant ? forOp.getOperation() : &op);
-      Value strideNew = materialize(finalExpr, strideType, op.getLoc(), forOp,
-                                    constCache, builder);
-
-      Value initialOffsetOperand =
-          info->strideIsInitialOffset ? strideOperand : Value();
-      Value initPtr = computeInitialPtr(
-          base, initialOffsetOperand, info->strideUnit, *elemBytes, *unitBytes,
-          forOp, builder);
-      if (!initPtr) {
+      DenseMap<Value, bool> canCache;
+      if (!llvm::all_of(leaves, [&](Value leaf) {
+            return canHoistBefore(leaf, &op, forOp, canCache);
+          })) {
         continue;
       }
 
-      rewrites.push_back(
-          {&op, base, strideOperand, strideNew, initPtr, *unitBytes});
+      Value currentOffset =
+          address.offset ? address.offset->sourceValue : Value();
+      StrideUnit currentUnit = address.offset ? address.offset->unit
+                                              : StrideUnit::Element;
+      int64_t currentUnitBytes =
+          address.offset && address.offset->unitBytes
+              ? *address.offset->unitBytes
+              : address.elementBytes;
+      if (currentOffset &&
+          !canScaleInitialOffsetAtLoopEntry(
+              currentOffset, address.elementBytes, currentUnitBytes, forOp,
+              addressAnalysis.getValueEvolution())) {
+        continue;
+      }
+      plan.candidates.push_back(
+          {&op, address.currentBase, currentOffset, currentUnit,
+           address.elementBytes, currentUnitBytes, *advanceUnitBytes,
+           strideType, total});
     }
+    return plan;
+  }
 
+  void applyLoopPlan(LoopPostUpdatePlan &plan, OpBuilder &builder) {
+    SmallVector<PostUpdateRewrite> rewrites;
+    ConstCache constCache;
+    for (PostUpdateCandidatePlan &candidate : plan.candidates) {
+      SmallVector<Value> leaves;
+      collectLeaves(candidate.stride, leaves);
+      bool allInvariant = llvm::all_of(leaves, [&](Value leaf) {
+        return plan.loop.isDefinedOutsideOfLoop(leaf);
+      });
+      StrideExprRef finalExpression = candidate.stride;
+      if (!allInvariant) {
+        DenseMap<Value, Value> hoistMemo;
+        finalExpression =
+            makeAvailableAt(candidate.stride, candidate.op, plan.loop,
+                            builder, hoistMemo);
+      }
+      builder.setInsertionPoint(allInvariant ? plan.loop.getOperation()
+                                             : candidate.op);
+      Value stride = materialize(finalExpression, candidate.strideType,
+                                 candidate.op->getLoc(), plan.loop, constCache,
+                                 builder);
+      Value initialPointer = computeInitialPtr(
+          candidate.base, candidate.currentOffset, candidate.currentUnit,
+          candidate.elementBytes, candidate.currentUnitBytes, plan.loop,
+          builder);
+      if (!initialPointer) {
+        continue;
+      }
+      rewrites.push_back({candidate.op, candidate.base,
+                          candidate.currentOffset, stride, initialPointer,
+                          candidate.advanceUnitBytes});
+    }
     if (!rewrites.empty()) {
-      applyPostUpdateRewrites(forOp, rewrites, builder);
+      applyPostUpdateRewrites(plan.loop, rewrites, builder);
     }
   }
 };

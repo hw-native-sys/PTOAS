@@ -27,8 +27,10 @@
 // CHECK: %{{.*}} = pto.vlds [[P2]][%c0]
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
-  func.func @same_op_different_roots(%src0: !pto.ptr<f32, ub>, %src1: !pto.ptr<f32, ub>, %sink: !pto.ptr<f32, ub>, %step0: index, %step1: index) attributes {pto.kernel} {
+  func.func @same_op_different_roots(%src0: !pto.ptr<f32, ub>, %src1: !pto.ptr<f32, ub>, %sink: !pto.ptr<f32, ub>, %step0_i32: i32, %step1_i32: i32) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
+    %step0 = arith.index_cast %step0_i32 : i32 to index
+    %step1 = arith.index_cast %step1_i32 : i32 to index
     %step0_2 = arith.addi %step0, %step0 : index
     %step1_2 = arith.addi %step1, %step1 : index
     pto.vecscope {
@@ -49,9 +51,10 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     return
   }
 
-  func.func @already_post_does_not_break_run(%src: !pto.ptr<f32, ub>, %other: !pto.ptr<f32, ub>, %sink: !pto.ptr<f32, ub>, %step: index) attributes {pto.kernel} {
+  func.func @already_post_does_not_break_run(%src: !pto.ptr<f32, ub>, %other: !pto.ptr<f32, ub>, %sink: !pto.ptr<f32, ub>, %step_i32: i32) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
     %c4 = arith.constant 4 : index
+    %step = arith.index_cast %step_i32 : i32 to index
     %step2 = arith.addi %step, %step : index
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>

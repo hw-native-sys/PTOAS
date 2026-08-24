@@ -424,10 +424,11 @@ handle。
 - `TILE_UP_DOWN_ODD`
 - `TILE_LEFT_RIGHT_ODD`
 
-当前 odd 模式仅允许单向 C2V 的 GM-backed tile pipe。前端 initialize 必须同时提供
-`gm_slot_tensor` 和 `c2v_consumer_buf`，lowering 后对应带 local consumer buffer 的
-`pto.initialize_l2g2l_pipe`。local C2V、V2C、双向 pipe 以及 GlobalTensor entry
-暂不允许 odd 模式，因为固定版本的 pto-isa 尚未实现这些数据传输/offset 路径。
+当前 odd 模式允许 A2/A3/A5 GM-backed tile pipe 的 C2V 方向，以及 A2/A3 GM-backed
+tile pipe 的 V2C 方向；A2/A3 双向 pipe 中具有对应 consumer buffer 的 V2C 方向也支持。
+initialize 必须提供 GM slot backing，并为 C2V 提供 `c2v_consumer_buf`、为 V2C 提供
+`v2c_consumer_buf`；双向 pipe 必须同时提供两个 consumer buffer。A5 odd V2C、local-only
+pipe 与 GlobalTensor entry 仍不允许 odd 模式。
 
 在 PTOAS 设计中，`split` 的角色定义为：
 
@@ -463,9 +464,11 @@ handle。
 
 GM tile 路径中的偶数和奇数切分模式都使用运行时 valid shape 计算 offset 与
 row stride。odd 模式不会自动推导两个子核的 valid shape：前端必须根据
-`pto.get_subblock_idx` 为 AIV0 传入 `ceil` 半块、为 AIV1 传入 `floor` 半块，
-并把不同的 `valid_row` / `valid_col` operand 传给 `tpop`。描述 GM slot 的
-metadata 仍必须覆盖切分前的完整 FIFO slot。
+`pto.get_subblock_idx` 为 AIV0 计算 `ceil` 半块、为 AIV1 计算 `floor` 半块。C2V
+方向把这两个 valid shape 作为 `tpop_from_aic` 的 `valid_row` / `valid_col` operand；
+V2C 方向则在 `tpush_to_aic` 前把它们设置到两个 AIV producer tile 上，Cube 侧
+`tpop_from_aiv` 使用切分前的完整 valid shape。描述 GM slot 的 metadata 仍必须覆盖
+切分前的完整 FIFO slot。
 
 ### 4.4 `SLOT_NUM` 规则
 

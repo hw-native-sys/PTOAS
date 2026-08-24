@@ -1351,6 +1351,7 @@ LogicalResult VMILayoutPropagator::propagateFact(Value value,
     if (failed(propagateThrough(result.getDefiningOp(), value, layout))) {
       return failure();
     }
+
   }
 
   SmallVector<OpOperand *, mlir::pto::kValue8> uses;

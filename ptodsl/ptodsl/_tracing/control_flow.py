@@ -17,7 +17,60 @@ from .._types import _is_struct_type
 
 from ptoas.mlir.dialects import arith
 from ptoas.mlir.dialects import scf
-from ptoas.mlir.ir import InsertionPoint, IntegerType
+from ptoas.mlir.ir import InsertionPoint, IntegerAttr, IntegerType, StringAttr
+
+
+# ── loop-unroll hints ─────────────────────────────────────────────────────────
+
+_UNROLL_HINT_VALUES = ("full",)
+
+# pto.unroll_factor is encoded as a signless i32 attribute and read back as a
+# signed value by the backend, so the factor must fit in [1, INT32_MAX].
+_MAX_UNROLL_FACTOR = 2**31 - 1
+
+
+def normalize_unroll_hint(unroll, unroll_factor, *, context="pto.for_(...)"):
+    """Validate one loop-unroll hint pair and return it unchanged.
+
+    ``unroll`` must be "full" (the only supported value); ``unroll_factor``
+    must be a positive Python int that fits the signless i32 attribute
+    encoding (<= 2**31 - 1).  The two are mutually exclusive.
+    """
+    if unroll is not None:
+        if not isinstance(unroll, str) or unroll not in _UNROLL_HINT_VALUES:
+            raise ValueError(
+                f"{context} unroll= expects one of {_UNROLL_HINT_VALUES}, got {unroll!r}"
+            )
+    if unroll_factor is not None:
+        if unroll is not None:
+            raise ValueError(
+                f"{context} unroll= and unroll_factor= are mutually exclusive"
+            )
+        if isinstance(unroll_factor, bool) or not isinstance(unroll_factor, int):
+            raise TypeError(
+                f"{context} unroll_factor= expects a positive Python int, got "
+                f"{type(unroll_factor).__name__}; dynamic factors are not supported"
+            )
+        if unroll_factor < 1:
+            raise ValueError(
+                f"{context} unroll_factor= must be a positive integer, got {unroll_factor}"
+            )
+        if unroll_factor > _MAX_UNROLL_FACTOR:
+            raise ValueError(
+                f"{context} unroll_factor= must fit a signless i32 attribute "
+                f"(<= {_MAX_UNROLL_FACTOR}), got {unroll_factor}"
+            )
+    return unroll, unroll_factor
+
+
+def apply_unroll_hint(for_op, unroll, unroll_factor):
+    """Attach a validated unroll hint to one ``scf.for`` as discardable attrs."""
+    if unroll is not None:
+        for_op.operation.attributes["pto.unroll"] = StringAttr.get(unroll)
+    if unroll_factor is not None:
+        for_op.operation.attributes["pto.unroll_factor"] = IntegerAttr.get(
+            IntegerType.get_signless(32), unroll_factor
+        )
 
 
 @dataclass
@@ -31,7 +84,7 @@ class CarryLoopFrame:
     yielded: bool = False
 
 
-def build_carry_loop_frame(start, stop, step, state_items) -> CarryLoopFrame:
+def build_carry_loop_frame(start, stop, step, state_items, *, unroll=None, unroll_factor=None) -> CarryLoopFrame:
     """Materialize one ``scf.for`` carry loop and enter its body insertion point."""
     state_items = tuple(state_items)
     state_names = tuple(name for name, _ in state_items)
@@ -43,6 +96,7 @@ def build_carry_loop_frame(start, stop, step, state_items) -> CarryLoopFrame:
         _coerce_index(step),
         iter_args,
     )
+    apply_unroll_hint(for_op, unroll, unroll_factor)
     insertion_point = InsertionPoint(for_op.body)
     insertion_point.__enter__()
     return CarryLoopFrame(
@@ -102,7 +156,9 @@ def _materialize_carry_init(value):
 
 __all__ = [
     "CarryLoopFrame",
+    "apply_unroll_hint",
     "build_carry_loop_frame",
+    "normalize_unroll_hint",
     "yield_carry_loop_state",
     "finish_carry_loop_frame",
 ]

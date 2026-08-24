@@ -74,7 +74,6 @@ def rewrite_jit_function(
     if rewrite_control_flow:
         rewriter = _ControlFlowRewriter(
             static_env,
-            section_entry_bindings=section_rewriter.section_entry_bindings,
             section_uninitialized_aliases=section_rewriter.section_uninitialized_aliases,
             reject_bare_returns=reject_bare_returns,
         )
@@ -1071,18 +1070,44 @@ def _is_range_call(node) -> bool:
     return isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "range"
 
 
-def _range_triplet(call):
-    if not _is_range_call(call):
-        raise PTODSLAstRewriteError("ast_rewrite=True only rewrites for-loops over range(...)")
-    if call.keywords:
-        raise PTODSLAstRewriteError("ast_rewrite=True range(...) loops do not support keyword arguments")
+def _is_pto_range_call(node) -> bool:
+    return _is_pto_attr_call(node, "range")
+
+
+_UNROLL_HINT_KWARGS = ("unroll", "unroll_factor")
+
+
+def _range_triplet_and_hints(call):
+    """Return (start, stop, step, hint_keywords) for a loop iterable call.
+
+    Accepts plain ``range(...)`` (no keyword arguments, as before) and the
+    ``pto.range(...)`` marker, which additionally takes the ``unroll`` /
+    ``unroll_factor`` hint keywords forwarded to the generated ``pto.for_``.
+    """
+    if _is_range_call(call):
+        if call.keywords:
+            raise PTODSLAstRewriteError("ast_rewrite=True range(...) loops do not support keyword arguments")
+        hint_keywords = []
+    elif _is_pto_range_call(call):
+        hint_keywords = []
+        for keyword in call.keywords:
+            if keyword.arg not in _UNROLL_HINT_KWARGS:
+                raise PTODSLAstRewriteError(
+                    "ast_rewrite=True pto.range(...) loops only support the "
+                    f"'unroll' and 'unroll_factor' keyword arguments; got {keyword.arg!r}"
+                )
+            hint_keywords.append(keyword)
+    else:
+        raise PTODSLAstRewriteError(
+            "ast_rewrite=True only rewrites for-loops over range(...) or pto.range(...)"
+        )
     args = call.args
     if len(args) == 1:
-        return ast.Constant(0), args[0], ast.Constant(1)
+        return ast.Constant(0), args[0], ast.Constant(1), hint_keywords
     if len(args) == 2:
-        return args[0], args[1], ast.Constant(1)
+        return args[0], args[1], ast.Constant(1), hint_keywords
     if len(args) == 3:
-        return args[0], args[1], args[2]
+        return args[0], args[1], args[2], hint_keywords
     raise PTODSLAstRewriteError("ast_rewrite=True range(...) loops require 1 to 3 arguments")
 
 
@@ -1357,12 +1382,10 @@ class _ControlFlowRewriter:
         self,
         static_env=None,
         *,
-        section_entry_bindings=None,
         section_uninitialized_aliases=None,
         reject_bare_returns: bool = False,
     ):
         self._static_env = dict(static_env or {})
-        self._section_entry_bindings = dict(section_entry_bindings or {})
         self._section_uninitialized_aliases = set(section_uninitialized_aliases or ())
         self._counter = 0
         # Each entry names the SSA flags used to emulate Python loop control
@@ -1438,7 +1461,8 @@ class _ControlFlowRewriter:
             live_slots = live_before_slots
         return rewritten_reversed
 
-    def _guard_control_tail(self, stmt, *, control, tail, tail_assigned, tail_flags, live):
+    def _guard_control_tail(self, stmt, *, control, tail, tail_assigned, tail_flags, live,
+                            forced_merge_names=()):
         """Guard the already-rewritten tail of a break/continue statement.
 
         When ``stmt`` can stop the current iteration (a top-level break/continue,
@@ -1450,7 +1474,11 @@ class _ControlFlowRewriter:
 
         ``tail_assigned`` holds the names the tail assigns; names that are also
         live after the guard point are merged through the guard so later
-        statements and the loop ``update`` keep consistent values.  ``tail_flags``
+        statements and the loop ``update`` keep consistent values.  Loop-carried
+        names can look dead at the transfer point when their last authored read
+        is before the break/continue, so ``forced_merge_names`` keeps tail
+        assignments to those names from being trapped inside the guard region.
+        ``tail_flags``
         records whether the tail itself contains control transfers: a tail that
         assigns ``active``/``did_break`` (they are not ``ast.Assign`` stores, so
         they never appear in ``tail_assigned``) must also merge them out, or the
@@ -1481,7 +1509,12 @@ class _ControlFlowRewriter:
             flag_names.add(control["active"])
         if tail_flags["break"]:
             flag_names.add(control["did_break"])
-        merge_names = sorted((set(tail_assigned) | flag_names) & set(live))
+        forced_merge_names = set(forced_merge_names)
+        forced_or_live = set(live) | forced_merge_names
+        value_merge_names = set(tail_assigned) & forced_or_live
+        if value_merge_names:
+            flag_names.add(control["active"])
+        merge_names = sorted((value_merge_names | flag_names) & forced_or_live)
         return self._guard_block(
             _name(control["active"]),
             tail,
@@ -1489,7 +1522,8 @@ class _ControlFlowRewriter:
             assigned_names=set(tail_assigned) | flag_names,
         )
 
-    def _rewrite_loop_body(self, stmts, *, live_after, live_after_slots=None, static_iters=None, control=None, bound_on_entry=None):
+    def _rewrite_loop_body(self, stmts, *, live_after, live_after_slots=None, static_iters=None,
+                           control=None, bound_on_entry=None, forced_tail_merge_names=()):
         """Rewrite loop statements while keeping each authored statement atomic.
 
         A rewritten dynamic ``if`` may contain several setup/branch/merge
@@ -1531,6 +1565,7 @@ class _ControlFlowRewriter:
             guarded_tail = self._guard_control_tail(
                 stmt, control=control, tail=rewritten_reversed,
                 tail_assigned=tail_assigned, tail_flags=tail_flags, live=live,
+                forced_merge_names=forced_tail_merge_names,
             )
             if guarded_tail is not None:
                 # The tail now lives inside the guard: replace the
@@ -2071,7 +2106,42 @@ class _ControlFlowRewriter:
                 f"use explicit pto.for_(...) for {stmt.target.id!r}"
             )
 
-        start, stop, step = _range_triplet(stmt.iter)
+        start, stop, step, hint_keywords = _range_triplet_and_hints(stmt.iter)
+        # The plain path lowers to scf.for, whose control-flow lowering
+        # compares the induction variable with the upper bound using a signed
+        # less-than: a non-positive step would silently produce zero
+        # iterations instead of Python range's descending iteration.  Only
+        # loops with break/continue (the pto._while path) support negative
+        # steps, so reject a constant non-positive step here.  Note that a
+        # negative literal is a UnaryOp(USub, Constant), not a Constant, so
+        # use literal_eval to see through it.  bool is an int subclass:
+        # step=False (== 0) must be rejected like an explicit 0 (Python range
+        # raises ValueError for it), while step=True (== 1) is legal Python -
+        # normalize the literal to int 1 because downstream index coercion
+        # rejects bool values.
+        try:
+            step_const = ast.literal_eval(step)
+        except (ValueError, TypeError, SyntaxError):
+            step_const = None
+        if isinstance(step_const, bool):
+            if not step_const:
+                raise PTODSLAstRewriteError(
+                    "ast_rewrite=True range(...) / pto.range(...) loops require a non-zero step; "
+                    "got step=0 (Python range raises ValueError for a zero step)."
+                )
+            if isinstance(step, ast.Constant):
+                step.value = 1
+        elif isinstance(step_const, int) and step_const <= 0:
+            if step_const == 0:
+                raise PTODSLAstRewriteError(
+                    "ast_rewrite=True range(...) / pto.range(...) loops require a non-zero step; "
+                    "got step=0 (Python range raises ValueError for a zero step)."
+                )
+            raise PTODSLAstRewriteError(
+                "ast_rewrite=True range(...) / pto.range(...) loops require a positive step; "
+                f"got step={step_const}. Loops with break/continue support negative steps "
+                "via the pto._while lowering; a dynamic step must be positive at runtime."
+            )
         body_info = _name_info(stmt.body)
         body_slot_info = _slot_info(stmt.body, self._static_env, static_iters)
         if body_slot_info.invalid_stores:
@@ -2166,7 +2236,7 @@ class _ControlFlowRewriter:
                         value=ast.Call(
                             func=_pto_attr("for_"),
                             args=[start, stop],
-                            keywords=[ast.keyword(arg="step", value=step)],
+                            keywords=[ast.keyword(arg="step", value=step), *hint_keywords],
                         ),
                         attr="carry",
                         ctx=ast.Load(),
@@ -2278,7 +2348,7 @@ class _ControlFlowRewriter:
                     context_expr=ast.Call(
                         func=_pto_attr("for_"),
                         args=[start, stop],
-                        keywords=[ast.keyword(arg="step", value=step)],
+                        keywords=[ast.keyword(arg="step", value=step), *hint_keywords],
                     ),
                     optional_vars=_name(stmt.target.id, ast.Store()),
                 )
@@ -2344,7 +2414,12 @@ class _ControlFlowRewriter:
             raise PTODSLAstRewriteError(
                 "ast_rewrite=True does not support dynamic return inside runtime for"
             )
-        start, stop, step = _range_triplet(stmt.iter)
+        start, stop, step, hint_keywords = _range_triplet_and_hints(stmt.iter)
+        if hint_keywords:
+            raise PTODSLAstRewriteError(
+                "ast_rewrite=True pto.range(...) unroll hints are not supported on loops with "
+                "break/continue or else clauses (these lower through pto._while)"
+            )
         body_info = _name_info(stmt.body)
         body_slot_info = _slot_info(stmt.body, self._static_env, static_iters)
         if body_slot_info.invalid_stores:
@@ -2419,7 +2494,7 @@ class _ControlFlowRewriter:
         )
         initial_values = [
             copy.deepcopy(start),
-            *[_name(self._section_entry_bindings.get(name, name)) for name in sorted(loop_carried)],
+            *[_name(name) for name in sorted(loop_carried)],
             _flag_const(True),
             _flag_const(False),
         ]
@@ -2441,6 +2516,7 @@ class _ControlFlowRewriter:
                 control={"active": skip_name, "did_break": did_break_name},
                 static_iters=static_iters,
                 bound_on_entry=set(bound_before or ()) | set(loop_carried) | {iv_name},
+                forced_tail_merge_names=loop_carried,
             )
         finally:
             self._loop_control_stack.pop()
@@ -2610,7 +2686,7 @@ class _ControlFlowRewriter:
                         arg=name,
                         value=(_flag_const(True) if name == active_name else
                                _flag_const(False) if name == did_break_name else
-                               _name(self._section_entry_bindings.get(name, name))),
+                               _name(name)),
                     ) for name in state_names
                 ],
             ),
@@ -2630,6 +2706,7 @@ class _ControlFlowRewriter:
                 ),
                 static_iters=static_iters,
                 bound_on_entry=set(bound_before or ()) | set(carry_names),
+                forced_tail_merge_names=carry_names,
             )
         finally:
             if controlled:

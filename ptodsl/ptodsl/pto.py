@@ -160,7 +160,7 @@ from ._ops import (             # noqa: F401
 from ._control_flow import (    # noqa: F401
     section, vecscope,
     for_, while_, _while, if_, yield_,
-    static_range,
+    static_range, range,
     LoopHandle, BranchHandle,
 )
 

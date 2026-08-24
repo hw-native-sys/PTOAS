@@ -771,25 +771,69 @@ def PTOResolveBufferSelect : Pass<"pto-resolve-buffer-select", "ModuleOp"> {
   ];
 }
 
-def PTOUnrollSIMTFor : Pass<"pto-unroll-simt-for", "func::FuncOp"> {
+def PTOUnrollLoops : Pass<"pto-unroll-loops", "func::FuncOp"> {
   let summary =
-      "Unroll explicitly annotated scf.for loops in SIMT contexts";
+      "Unroll explicitly annotated scf.for loops";
   let description = [{
-    Walks functions with the `pto.simt_entry` attribute or inline
-    `pto.section.simt` regions and fully unrolls `scf.for` loops that carry the
-    `{pto.unroll = "full"}` attribute. Annotated loops outside an inline SIMT
-    section in an ordinary function are left unchanged.
+    Fully or partially unrolls `scf.for` loops that carry an explicit unroll
+    annotation, regardless of whether they are inside a SIMT context:
 
-    Only loops with constant lower bound, upper bound, and positive step are
-    unrolled.  The annotation is opt-in: loops without the attribute are
-    left unchanged regardless of trip count.
+    - `{pto.unroll = "full"}`: fully unrolled via `loopUnrollByFactor` with
+      the trip count as the factor (single-iteration promotion removes the
+      resulting loop shell).  Only loops with a constant trip count are
+      unrolled; other loops keep the loop and drop the hint with a remark.
+    - `{pto.unroll_factor = N}`: unrolled by N via `loopUnrollByFactor`,
+      which supports dynamic upper bounds and generates an epilogue
+      (remainder) loop that threads live-out loop-carried values.  Only
+      loops with a statically known positive step are unrolled; a no-op
+      factor (1), a dynamic step, or a factor above `max-unroll-factor`
+      keeps the loop and drops the hint with a remark.
+
+    Malformed hints are hard errors: an unknown `pto.unroll` value, both
+    attributes on one loop, or an out-of-contract factor (not a signless
+    i32, or non-positive).
+
+    The annotation is opt-in: loops without an attribute are left unchanged
+    regardless of trip count.
 
     Full unrolling enables subsequent canonicalize/sccp/cse to constant-fold
-    induction-variable-dependent conditionals (e.g. `scf.if i < 10`), eliminating
-    divergent branches inside SIMTVF kernels.
+    induction-variable-dependent conditionals (e.g. `scf.if i < 10`),
+    eliminating divergent branches inside SIMTVF kernels.
 
     This pass must run before `createConvertSCFToCFPass` (i.e. before LLVM
-    lowering) so that the unrolled structured control flow can be canonicalized.
+    lowering) so that the unrolled structured control flow can be
+    canonicalized.
+  }];
+  let constructor = "mlir::pto::createPTOUnrollLoopsPass()";
+  let dependentDialects = [
+    "mlir::func::FuncDialect",
+    "mlir::scf::SCFDialect",
+    "mlir::pto::PTODialect",
+    "mlir::arith::ArithDialect"
+  ];
+  let options = [
+    Option<"maxFullUnrollTripCount", "max-full-unroll-trip-count", "int64_t",
+           /*default=*/"1024",
+           "Emit a warning when fully unrolling a loop whose static trip "
+           "count exceeds this threshold.  The loop is still unrolled.">,
+    Option<"maxUnrollFactor", "max-unroll-factor", "int64_t",
+           /*default=*/"1024",
+           "Do not natively unroll by a factor larger than this; the loop "
+           "is kept and the hint is dropped with a remark instead.  "
+           "A negative value disables the cap.">,
+  ];
+}
+
+// Legacy alias for PTOUnrollLoops.  Kept so existing pipelines and tests
+// that reference "pto-unroll-simt-for" keep working; the behavior is
+// identical to "pto-unroll-loops".
+def PTOUnrollSIMTFor : Pass<"pto-unroll-simt-for", "func::FuncOp"> {
+  let summary =
+      "Alias of pto-unroll-loops kept for backward compatibility";
+  let description = [{
+    Behaves exactly like `pto-unroll-loops`.  Historically this pass only
+    unrolled `{pto.unroll = "full"}` loops inside SIMT contexts; the SIMT
+    restriction has been lifted because the annotation is always explicit.
   }];
   let constructor = "mlir::pto::createPTOUnrollSIMTForPass()";
   let dependentDialects = [
@@ -797,6 +841,17 @@ def PTOUnrollSIMTFor : Pass<"pto-unroll-simt-for", "func::FuncOp"> {
     "mlir::scf::SCFDialect",
     "mlir::pto::PTODialect",
     "mlir::arith::ArithDialect"
+  ];
+  let options = [
+    Option<"maxFullUnrollTripCount", "max-full-unroll-trip-count", "int64_t",
+           /*default=*/"1024",
+           "Emit a warning when fully unrolling a loop whose static trip "
+           "count exceeds this threshold.  The loop is still unrolled.">,
+    Option<"maxUnrollFactor", "max-unroll-factor", "int64_t",
+           /*default=*/"1024",
+           "Do not natively unroll by a factor larger than this; the loop "
+           "is kept and the hint is dropped with a remark instead.  "
+           "A negative value disables the cap.">,
   ];
 }
 
@@ -1001,6 +1056,23 @@ def VMILayoutAssignment : Pass<"vmi-layout-assignment", "ModuleOp"> {
     layouts.
   }];
   let constructor = "mlir::pto::createVMILayoutAssignmentPass()";
+  let dependentDialects = ["mlir::cf::ControlFlowDialect",
+                           "mlir::func::FuncDialect",
+                           "mlir::pto::PTODialect",
+                           "mlir::memref::MemRefDialect",
+                           "mlir::scf::SCFDialect"];
+}
+
+def VMILayoutRematerializeWeakProducers
+    : Pass<"vmi-layout-rematerialize-weak-producers", "ModuleOp"> {
+  let summary = "Rematerialize weak layout producers before layout assignment";
+  let description = [{
+    Clones pure layout-polymorphic producers at their multiple uses before
+    layout assignment. This keeps independent consumer dataflows from being
+    connected only by a shared rematerializable SSA value. Strong dataflow
+    layout propagation remains the responsibility of vmi-layout-assignment.
+  }];
+  let constructor = "mlir::pto::createVMILayoutRematerializeWeakProducersPass()";
   let dependentDialects = ["mlir::cf::ControlFlowDialect",
                            "mlir::func::FuncDialect",
                            "mlir::pto::PTODialect",
@@ -1247,22 +1319,36 @@ def VPTOSoftPostUpdate
     : Pass<"vpto-soft-postupdate", "ModuleOp"> {
   let summary = "Convert fixed-stride VPTO memory ops to post-update form";
   let description = [{
-    Identifies VPTO load/store operations (vlds, vsts, vsstb) whose effective
-    address advances by a fixed symbolic stride. Loop-carried accesses use
-    scf.for iter_args. Remaining arithmetic runs within each block, including
-    loop bodies, are rewritten only when a conservative structural
-    profitability check predicts address-computation savings. For an accepted
-    sequential run, all but the last operation form an updated_base pointer
-    chain, while the last operation uses the current pointer in normal
-    zero-offset form. Loop-varying integer addresses extended to `index` are
-    consumed only from the canonical i16 address domain, and only when a
-    direct constant recurrence proves that the source cannot wrap. Other
-    integer widths and unproven recurrences are left for a dedicated address
-    normalization pass. Loop-aware liveness removes software accumulator
-    recurrences made obsolete by new pointer chains while retaining
-    accumulators with observable uses.
+    Uses VPTOAddressSemanticsOpInterface and the function-scoped
+    PTOAddressAnalysis to identify eligible VPTO memory operations whose
+    effective address advances by an exactly representable symbolic stride.
+    Loop-carried accesses use scf.for iter_args. Typed i8, i16, i32, and index
+    recurrences are accepted only when their real signed/unsigned cast and
+    no-wrap semantics are proven; unsupported or inexact queries remain in
+    normal form. Remaining arithmetic runs within each block are rewritten
+    only when a conservative structural profitability check predicts address
+    computation savings. For an accepted sequential run, all but the last
+    operation form an updated_base pointer chain, while the last operation
+    uses the current pointer in normal zero-offset form. Loop-aware liveness
+    removes software accumulator recurrences made obsolete by new pointer
+    chains while retaining accumulators with observable uses.
   }];
   let constructor = "mlir::pto::createVPTOSoftPostUpdatePass()";
+  let dependentDialects = ["mlir::func::FuncDialect",
+                           "mlir::pto::PTODialect",
+                           "mlir::arith::ArithDialect",
+                           "mlir::scf::SCFDialect"];
+}
+
+def PTOPrintAddressAnalysis
+    : Pass<"pto-print-address-analysis", "func::FuncOp"> {
+  let summary = "Print cached PTO value-evolution and VPTO address facts";
+  let description = [{
+    Test/debug-only printer for PTOValueEvolutionAnalysis and
+    PTOAddressAnalysis. It owns no analysis logic and is not required by any
+    production pipeline.
+  }];
+  let constructor = "mlir::pto::createPTOPrintAddressAnalysisPass()";
   let dependentDialects = ["mlir::func::FuncDialect",
                            "mlir::pto::PTODialect",
                            "mlir::arith::ArithDialect",
@@ -1337,6 +1423,18 @@ def PTOFusionLoadStoreElision
   let dependentDialects = ["mlir::func::FuncDialect", "mlir::pto::PTODialect",
                            "mlir::arith::ArithDialect",
                            "mlir::scf::SCFDialect"];
+}
+
+def PTOVexpdifFusion : Pass<"pto-vexpdif-fusion", "func::FuncOp"> {
+  let summary = "Fuse VPTO vsub and vexp into vexpdif";
+  let description = [{
+    Performs fusion after TileOp expansion and fusion-local load/store
+    elimination. The pass rewrites an f32 `vsub` followed by an f32 `vexp`
+    with the same mask into `vexpdif`.
+  }];
+  let constructor = "mlir::pto::createPTOVexpdifFusionPass()";
+  let dependentDialects = ["mlir::func::FuncDialect",
+                           "mlir::pto::PTODialect"];
 }
 
 def PTOUnrollAfterLoopFusion

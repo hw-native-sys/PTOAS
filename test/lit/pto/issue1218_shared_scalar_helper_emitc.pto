@@ -1,0 +1,51 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Guard: PIPE_S is shared by Cube and Vector cores, so scalar-only helpers must
+// remain callable from a Cube kernel instead of being guarded by __DAV_VEC__.
+// RUN: pto-test-opt --pto-normalize-uncovered-tile-sections %s -o - | FileCheck %s --check-prefix=IR
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 %s -o - 2>&1 | FileCheck %s --check-prefix=EMITC
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @cube_kernel(%ctx: !pto.ptr<i64>, %peer: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %offset = func.call @CommRemoteOffset_i32(%ctx, %peer)
+        : (!pto.ptr<i64>, index) -> index
+    return
+  }
+
+  func.func private @CommRemoteOffset_i32(
+      %ctx: !pto.ptr<i64>, %peer: index) -> index {
+    %c_r = arith.constant 2 : index
+    %c_w = arith.constant 4 : index
+    %rank_pair = pto.load_scalar %ctx[%c_r] : !pto.ptr<i64> -> i64
+    %rank_i32 = arith.trunci %rank_pair : i64 to i32
+    %rank = arith.index_cast %rank_i32 : i32 to index
+    %local_offset = arith.addi %c_w, %rank : index
+    %local_base = pto.load_scalar %ctx[%local_offset]
+        : !pto.ptr<i64> -> i64
+    %peer_offset = arith.addi %c_w, %peer : index
+    %peer_base = pto.load_scalar %ctx[%peer_offset]
+        : !pto.ptr<i64> -> i64
+    %byte_offset = arith.subi %peer_base, %local_base : i64
+    %element_size = arith.constant 4 : i64
+    %element_offset_i64 = arith.divsi %byte_offset, %element_size : i64
+    %element_offset = arith.index_cast %element_offset_i64 : i64 to index
+    return %element_offset : index
+  }
+}
+
+// IR-LABEL: func.func private @CommRemoteOffset_i32(
+// IR-NOT: pto.kernel_kind
+// IR: pto.load_scalar
+
+// EMITC-LABEL: static AICORE int64_t CommRemoteOffset_i32(
+// EMITC-NOT: __DAV_VEC__
+// EMITC: return
+// EMITC-LABEL: AICORE void cube_kernel(
+// EMITC: #if defined(__DAV_CUBE__)

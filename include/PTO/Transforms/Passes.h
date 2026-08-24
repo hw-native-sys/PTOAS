@@ -93,6 +93,8 @@ std::unique_ptr<Pass> createPTOFusionRegionGenPass();
 
 LogicalResult validateIntToPtrUses(func::FuncOp func);
 
+std::unique_ptr<Pass> createPTOUnrollLoopsPass();
+/// Backward-compatible alias of createPTOUnrollLoopsPass().
 std::unique_ptr<Pass> createPTOUnrollSIMTForPass();
 std::unique_ptr<Pass> createPTONarrowVPTOLoopCountersPass();
 std::unique_ptr<Pass> createPTOAnalyzeSIMTPersistentFragmentPass();
@@ -101,11 +103,13 @@ std::unique_ptr<Pass> createPTOOutlineSIMTSectionsPass();
 std::unique_ptr<Pass> createPTOInferVPTOVecScopePass();
 std::unique_ptr<Pass> createVPTOExpandWrapperOpsPass();
 std::unique_ptr<Pass> createVPTOSoftPostUpdatePass();
+std::unique_ptr<Pass> createPTOPrintAddressAnalysisPass();
 std::unique_ptr<Pass> createPTOVPTOPtrBoundaryPass();
 std::unique_ptr<Pass>
 createPTOLowLevelLoopFusionPass(const PTOLowLevelLoopFusionOptions &options = {});
 std::unique_ptr<Pass> createPTOFusionPredicateElisionPass();
 std::unique_ptr<Pass> createPTOFusionLoadStoreElisionPass();
+std::unique_ptr<Pass> createPTOVexpdifFusionPass();
 std::unique_ptr<Pass> createPTOUnrollAfterLoopFusionPass();
 std::unique_ptr<Pass> createPTOFlattenFusionRegionPass();
 std::unique_ptr<Pass> createVPTOPtrNormalizePass();
@@ -130,6 +134,7 @@ std::unique_ptr<Pass> createPTOValidateVMIIRPass();
 std::unique_ptr<Pass> createPTOValidateVMILayoutIRPass();
 std::unique_ptr<Pass> createVMIPreAssignmentCombinePass();
 std::unique_ptr<Pass> createVMIMaskGranularityAssignmentPass();
+std::unique_ptr<Pass> createVMILayoutRematerializeWeakProducersPass();
 std::unique_ptr<Pass> createVMILayoutAssignmentPass();
 std::unique_ptr<Pass> createVMILayoutFoldPass();
 std::unique_ptr<Pass> createVMILayoutRematerializePass();

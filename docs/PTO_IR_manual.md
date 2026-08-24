@@ -8286,6 +8286,9 @@ pto.tmrgsort ins(<src0>, <src1>[, <src2>[, <src3>]], <tmp> {exhausted = <bool>} 
   - `dst` and `tmp` must both be rank-2 single-row tiles (`rows == 1` when statically known).
   - Every `src` must also be a rank-2 single-row tile.
   - `tmp.cols >= dst.cols`.
+  - `tmp.cols` must be at least the sum of the sources' effective valid column
+    extents. For a subview, this uses the subview window's valid columns, not
+    the capacity of its backing tile.
   - `excuted` must be `vector<4xi16>`.
 
 **Hardware Mapping:**
@@ -9254,15 +9257,19 @@ frontend/framework generated IR. The detailed design document is:
 - `TILE_UP_DOWN_ODD` splits an odd valid-row count so AIV0 receives
   `ceil(valid_rows / 2)` rows and AIV1 receives `floor(valid_rows / 2)` rows.
   `TILE_LEFT_RIGHT_ODD` applies the same rule to valid columns.
-- Odd split modes are currently supported only by a unidirectional C2V
-  GM-backed tile pipe. The frontend initialize op must provide both
-  `gm_slot_tensor` and `c2v_consumer_buf`; local C2V, V2C, bidirectional, and
-  GlobalTensor-entry odd splits are rejected because the pinned pto-isa does
-  not implement those transfer paths.
+- Odd split modes are supported by GM-backed tile pipes in the C2V direction
+  on A2/A3/A5 and in the V2C direction on A2/A3. A2/A3 also supports odd V2C
+  on the enabled direction of a bidirectional pipe. The initialize op must
+  provide GM slot backing and the matching direction's consumer buffer.
+  Local-only pipes, A5 odd V2C, and GlobalTensor-entry odd splits are rejected.
 - For an odd C2V tile pop, AIV0 and AIV1 must pass different
   `valid_row` / `valid_col` operands. The frontend must derive these operands
   from `pto.get_subblock_idx`: AIV0 supplies the `ceil` half and AIV1 supplies
   the `floor` half. PTO-ISA does not derive the two valid shapes automatically.
+- For an odd V2C tile push, the two AIV producers must likewise set their tile
+  valid shapes to the `ceil` and `floor` halves before `pto.tpush_to_aic`. The
+  Cube-side `pto.tpop_from_aiv` describes the complete unsplit tile and, when
+  its valid shape is dynamic, receives the full `valid_row` / `valid_col`.
 - `pto.tpop_from_aic` and `pto.tpop_from_aiv` are result-valued frontend ops.
 - Pipe entries support two forms:
   - tile entry: `!pto.tile_buf<...>` or the equivalent local memref after view
@@ -9280,18 +9287,17 @@ frontend/framework generated IR. The detailed design document is:
   and may carry `slot_num`; `gm_slot_buffer`, `c2v_consumer_buf`,
   `v2c_consumer_buf`, `local_slot_num`, `pto.reserve_buffer`, and
   `pto.import_reserved_buffer` are not used.
-- A C2V GM-backed tile pipe instead carries both `gm_slot_tensor` and
-  `c2v_consumer_buf`. The GM tensor describes the complete FIFO slot, while
-  the consumer buffer supplies the local vector-tile staging area. This mixed
-  form is currently limited to `dir_mask = 1`.
+- A GM-backed tile pipe carries GM slot backing plus the consumer buffer for
+  each enabled direction: `c2v_consumer_buf` for C2V and
+  `v2c_consumer_buf` for V2C. The GM descriptor describes the complete FIFO
+  slot, while each consumer buffer supplies its direction's local staging
+  area. `dir_mask = 3` requires both consumer buffers.
 - For global entries, the matched initialize op's `gm_slot_tensor` describes
   one FIFO slot entry, not the full multi-slot FIFO buffer. Its dtype, shape,
   stride, and layout must match the `tensor_view` returned by `talloc` /
-  `tpop` and form the pto-isa `GlobalData` template argument. `TILE_UP_DOWN`,
-  `TILE_LEFT_RIGHT`, `TILE_UP_DOWN_ODD`, and `TILE_LEFT_RIGHT_ODD` split modes
-  derive each sub-core's GM view from the single-slot descriptor and the
-  runtime tile valid shape. For odd modes, the two sub-cores' valid shapes must
-  be the explicit `ceil` and `floor` halves described above.
+  `tpop` and form the pto-isa `GlobalData` template argument. Global entries
+  support `TILE_NO_SPLIT`, `TILE_UP_DOWN`, and `TILE_LEFT_RIGHT`; odd split
+  modes are limited to tile entries.
 - If a global-entry result op does not carry explicit stride/layout metadata,
   PTOAS treats it as a row-major contiguous GM view. Non-contiguous cases must
   preserve stride/layout through the producing op metadata, the source view, or
@@ -9459,14 +9465,14 @@ pto.aic_initialize_pipe {id = 0, dir_mask = 1, slot_size = 1024, nosplit = true}
   paths that also use a local consumer FIFO buffer
 - `gm_slot_tensor`: optional single-slot entry descriptor
   (`!pto.tensor_view<...>`), required by global-only GM FIFO and by the A5
-  C2V GM-backed tile path. For a global entry, its type describes the
+  GM-backed tile paths. For a global entry, its type describes the
   `tensor_view` returned by `talloc` / `tpop`. This descriptor is retained in
   IR for entry type validation; EmitC lowers the `TPipe` constructor argument
   to only the GM FIFO start address
 - `c2v_consumer_buf`: optional C2V consumer local base address; omitted for
   global-only GM FIFO, but required when `gm_slot_tensor` backs a C2V tile pipe
 - `v2c_consumer_buf`: optional V2C consumer local base address; omitted for
-  global-only GM FIFO
+  global-only GM FIFO, but required when `gm_slot_tensor` backs a V2C tile pipe
 
 **Results:** None.
 

@@ -1,0 +1,27 @@
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+
+# RUN: rm -rf %t
+# RUN: mkdir -p %t/samples/PythonCases
+# RUN: cp %S/../../samples/runop.sh %t/samples/runop.sh
+# RUN: cp %S/../../samples/Sync/decode_projection_incore_0.py %t/samples/PythonCases/
+# RUN: cp %S/../../samples/Sync/rmsnorm_incore_0.py %t/samples/PythonCases/
+# RUN: cp %S/../../samples/Sync/test_tmov_col_major_16x1_align_a5.py %t/samples/PythonCases/
+# RUN: cp %S/../../samples/Sync/test_tmov_row_major_1x16_control_a5.py %t/samples/PythonCases/
+# RUN: env PTOAS_BIN=/usr/bin/false PYTHON_BIN=/usr/bin/true \
+# RUN:   PTOAS_OUT_DIR=%t/python-out PTOAS_FLAGS='--pto-arch a5 --enable-insert-sync' \
+# RUN:   PTOAS_SKIP_CASES='decode_projection_incore_0,rmsnorm_incore_0,test_tmov_col_major_16x1_align_a5,test_tmov_row_major_1x16_control_a5' \
+# RUN:   PTO_PTO_DIRS=PythonCases bash %t/samples/runop.sh -t PythonCases > %t/python-output
+# RUN: FileCheck %s --check-prefix=PY < %t/python-output
+
+# PY-NOT: FAIL
+# PY-DAG: PythonCases(decode_projection_incore_0.py) SKIP listed in PTOAS_SKIP_CASES
+# PY-DAG: PythonCases(rmsnorm_incore_0.py) SKIP listed in PTOAS_SKIP_CASES
+# PY-DAG: PythonCases(test_tmov_col_major_16x1_align_a5.py) SKIP listed in PTOAS_SKIP_CASES
+# PY-DAG: PythonCases(test_tmov_row_major_1x16_control_a5.py) SKIP listed in PTOAS_SKIP_CASES
+# PY-NOT: FAIL

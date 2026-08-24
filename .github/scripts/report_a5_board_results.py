@@ -210,7 +210,7 @@ def main() -> int:
         )
         try:
             send_feishu(webhook_url, payload)
-        except (OSError, urllib.error.URLError) as exc:
+        except (OSError, ValueError, urllib.error.URLError) as exc:
             print(
                 "WARNING: failed to send Feishu notification "
                 f"({type(exc).__name__})",

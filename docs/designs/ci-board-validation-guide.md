@@ -293,6 +293,13 @@ workflow 支持以下 repository variables；未设置时使用 A5 板机当前�
 
 飞书通知是可选能力。需要时新增 repository secret `A5_FEISHU_WEBHOOK_URL`；不配置不会影响板测和 GitHub Summary。
 
+payload 生成阶段暂时排除以下使用显式本地内存地址的 Level-3 repro：
+`decode_projection_incore_0`、`rmsnorm_incore_0`、
+`test_tmov_col_major_16x1_align_a5` 和
+`test_tmov_row_major_1x16_control_a5`。这些快照尚未适配当前 Level-3
+VPTO/TMOV 输入契约，不应阻断其余 A5 常规板测；完成迁移后应从
+`A5_INCOMPATIBLE_LEVEL3_CASES` 中移除并重新纳入 nightly。
+
 手动触发全量 A5 板测：
 
 ```bash

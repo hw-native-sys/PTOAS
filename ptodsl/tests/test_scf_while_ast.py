@@ -377,6 +377,20 @@ def for_break_tail_guard(limit: pto.i32):
 
 
 @pto.jit(target="a5")
+def for_break_tail_carry_merge(limit: pto.i32):
+    # The tail assignment to a loop-carried value must be merged out of the
+    # active guard even though liveness at the break point no longer sees a
+    # later read before the loop update.
+    value = pto.const(0, dtype=pto.i32)
+    for i in range(limit):
+        value = value + pto.const(1, dtype=pto.i32)
+        if i == pto.const(3, dtype=pto.i32):
+            break
+        value = value + pto.const(10, dtype=pto.i32)
+    _ = value
+
+
+@pto.jit(target="a5")
 def while_break_dead_unbound_tail(limit: pto.i32):
     # The dead tail references a name Python would never bind.  It must be
     # dropped before analysis instead of entering the carry state — before
@@ -579,6 +593,11 @@ def main():
     _assert_tail_guarded(
         for_break_tail_guard.compile().mlir_text(),
         r"arith\.addi %[\w#]+, %c1_i32")
+    for_tail_carry_text = for_break_tail_carry_merge.compile().mlir_text()
+    _assert_tail_guarded(for_tail_carry_text, r"arith\.addi %[\w#]+, %c10_i32")
+    assert re.search(r"= scf\.if %\w+(?:#\d+)? -> \(i1, i32\)", for_tail_carry_text), (
+        "for break tail guard must merge active + loop-carried value so the "
+        "loop update does not read a stale SSA value")
 
     # The continue-guard's tail contains a break: the guard must merge both
     # control flags back out (value + active + did_break).
@@ -618,6 +637,7 @@ def main():
         while_with_break_dead_tail: 3,
         while_try_break_dead_tail: 3,
         for_break_tail_guard: 4,  # iv + value + control flags
+        for_break_tail_carry_merge: 4,  # iv + value + control flags
     }
     for fn, expected_carries in tail_carry_contract.items():
         loop_text = fn.compile().mlir_text()

@@ -35,6 +35,7 @@ add_mlir_dialect_library(PTOTransforms
   TileFusion/PTOLowLevelLoopFusion.cpp
   TileFusion/PTOFusionPredicateElision.cpp
   TileFusion/PTOFusionLoadStoreElision.cpp
+  TileFusion/PTOVexpdifFusion.cpp
   TileFusion/PTOUnrollAfterLoopFusion.cpp
   TileFusion/PTOFlattenFusionRegion.cpp
   VPTOLLVMEmitter.cpp
@@ -48,6 +49,7 @@ add_mlir_dialect_library(PTOTransforms
   VPTOMaskSimplify.cpp
   VPTOExpandWrapperOps.cpp
   VPTOSoftPostUpdate.cpp
+  PTOPrintAddressAnalysis.cpp
   VPTOScheduler/VPTORegPressureTracker.cpp
   VPTOScheduler/VPTOSchedBoundary.cpp
   VPTOScheduler/VPTOSchedDAG.cpp
@@ -60,7 +62,7 @@ add_mlir_dialect_library(PTOTransforms
   VPTOBufferMaterialization.cpp
   PTOValidateVPTOIR.cpp
   PTONarrowVPTOLoopCounters.cpp
-  PTOUnrollSIMTForPass.cpp
+  PTOUnrollLoopsPass.cpp
   PTOValidateVMIIR.cpp
   VMIPreAssignmentCombine.cpp
   VMIControlFlowSupport.cpp
@@ -68,6 +70,7 @@ add_mlir_dialect_library(PTOTransforms
   VMIMaskGranularityAssignment.cpp
   VMILowerUnifiedToLegacy.cpp
   VMINormalizeSignlessIntToUnsigned.cpp
+  VMILayoutRematerializeWeakProducers.cpp
   VMILayoutAssignment.cpp
   VMILayoutFold.cpp
   VMILayoutPropagation.cpp
@@ -159,6 +162,7 @@ add_mlir_dialect_library(PTOTransforms
 
   LINK_LIBS
   PUBLIC
+  PTOAnalysis
   PTOIR
   MLIRIR
   MLIRPass

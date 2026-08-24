@@ -790,9 +790,9 @@ class TraceSession:
         call_op = func.CallOp(helper_fn, [unwrap_surface_value(arg) for arg in runtime_arg_values])
         return self._wrap_ptodsl_func_call_results(call_op.results)
 
-    def begin_carry_loop(self, start, stop, step, state_items):
+    def begin_carry_loop(self, start, stop, step, state_items, *, unroll=None, unroll_factor=None):
         """Materialize one authored ``pto.for_(...).carry(...)`` loop body."""
-        frame = build_carry_loop_frame(start, stop, step, state_items)
+        frame = build_carry_loop_frame(start, stop, step, state_items, unroll=unroll, unroll_factor=unroll_factor)
         self._carry_loop_stack.append(frame)
         return frame
 

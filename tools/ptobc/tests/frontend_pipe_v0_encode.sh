@@ -39,5 +39,5 @@ grep -F "pto.tpush_to_aiv" "${ROUNDTRIP}" >/dev/null
 grep -F "pto.tpush_to_aic" "${ROUNDTRIP}" >/dev/null
 grep -F "pto.tpop_from_aiv" "${ROUNDTRIP}" >/dev/null
 grep -F "pto.tpop_from_aic" "${ROUNDTRIP}" >/dev/null
-grep -F "pto.tfree_from_aiv" "${ROUNDTRIP}" >/dev/null
-grep -F "pto.tfree_from_aic" "${ROUNDTRIP}" >/dev/null
+grep -F "pto.tfree_from_aiv(" "${ROUNDTRIP}" >/dev/null
+grep -F "pto.tfree_from_aic(" "${ROUNDTRIP}" >/dev/null

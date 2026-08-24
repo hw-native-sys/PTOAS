@@ -156,6 +156,37 @@ with col_loop:
 
 `make_mask(dtype, n)` returns two values: the predicate mask for the current chunk and the updated remaining count. Passing the updated count back via `col_loop.update(remained=...)` feeds it into the next iteration, so each chunk correctly computes how many elements are left. If `n` is an `index`, the updated remaining count stays an `index`; PTODSL hides the hardware `i32` tail-mask bookkeeping internally.
 
+### Loop unroll hints
+
+Device-side loops accept optional unroll hints, `unroll=` or `unroll_factor=` (mutually exclusive), on every loop construction path:
+
+<!-- ptodsl-doc-test: {"mode":"compile","symbol":"unroll_hint_probe","compile":{"BLOCK":8}} -->
+```python
+@pto.jit(target="a5")
+def unroll_hint_probe(*, BLOCK: pto.const_expr = 8):
+    acc = pto.const(0, dtype=pto.i32)
+    # AST-rewrite path: pto.range marks a device loop with a hint.
+    for i in pto.range(BLOCK, unroll="full"):
+        acc = acc + pto.const(1, dtype=pto.i32)
+    # Explicit pto.for_ path (the .carry(...) form takes the same keywords).
+    with pto.for_(0, BLOCK, step=1, unroll_factor=2) as i:
+        acc = acc + pto.const(2, dtype=pto.i32)
+    _ = acc
+```
+
+| Hint | Meaning |
+|---|---|
+| `unroll="full"` | Unroll completely when the trip count is a compile-time constant; otherwise the hint is dropped with a remark. |
+| `unroll_factor=N` | Unroll by N when the step is a compile-time constant (dynamic upper bounds are supported and produce an epilogue loop); otherwise the hint is dropped with a remark. |
+
+Rules and limitations:
+
+- `unroll_factor` must be a positive Python `int` no larger than `2**31 - 1` (the hint is encoded as an i32 attribute).
+- **A hint never changes program semantics.** When the loop cannot be unrolled natively the hint is dropped with a compiler remark and the loop is compiled unchanged. This happens for: a dynamic trip count with `unroll="full"`; a dynamic step with `unroll_factor`; `unroll_factor=1` (a no-op); a factor above the `pto-unroll-loops` pass's `max-unroll-factor` (default 1024); an empty loop body; a statically empty iteration space (`stop <= start`); and a loop whose induction variable is not `index` (PTODSL loops are `index`-typed, so this only applies to hand-written IR). This is unlike `pto.static_range`, which always unrolls at trace time and requires compile-time-constant bounds.
+- Plain `range(...)` / `pto.range(...)` loops require a positive step (they lower to `scf.for`, which only supports ascending iteration); a constant non-positive step is rejected. Loops with `break` / `continue` / `else` lower through `pto._while` and cannot carry hints — using one raises an error.
+- Loops without any hint are compiled exactly as before.
+- Unroll hints are honored by the VPTO LLVM backends only (the default `pto-backend=vpto` pipelines). The EmitC backend (`PTOToEmitC`) does not consume `pto.unroll` / `pto.unroll_factor` — hints are silently dropped there.
+
 ## 5.3 `pto.if_` — device-side conditionals
 
 `pto.if_` records a device-side conditional branch. Unlike a Python `if`, the condition can be a runtime PTO scalar, and both branches are recorded into the program so the hardware can choose at runtime.

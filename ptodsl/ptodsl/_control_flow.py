@@ -16,12 +16,15 @@ Public API
 ``vecscope()``            – ``pto.vecscope { … }``
 ``for_(lo, hi, step)``
                           – ``scf.for`` with optional named carry state via ``.carry(...)``
+                          and an optional loop-unroll hint (``unroll=`` / ``unroll_factor=``)
 ``if_(cond)``             – ``scf.if`` via explicit branch handle + automatic named merge
 ``yield_(*vals)``         – ``scf.yield``
 ``static_range(...)``     – trace-time ``range(...)`` escape hatch for AST rewrite
+``range(...)``            – AST-rewrite marker carrying loop-unroll hints for native ``for``
 ``const_expr(value)``     – trace-time ``if`` escape hatch for AST rewrite
 """
 
+import builtins
 import warnings
 
 from ._diagnostics import explicit_mode_required_with_context_error
@@ -30,6 +33,7 @@ from ._scalar_adaptation import coerce_runtime_integer_to_i1
 from ._scalar_coercion import coerce_scalar_to_type
 from ._surface_types import const_expr
 from ._tracing.active import current_session, require_active_session
+from ._tracing.control_flow import apply_unroll_hint, normalize_unroll_hint
 from ._surface_values import unwrap_surface_value, wrap_like_surface_value, wrap_surface_value
 from ._types import _StructDescriptor
 
@@ -98,7 +102,41 @@ def section(kind: str) -> _SectionCM:
 
 def static_range(*args):
     """Return ``range(*args)`` for trace-time unrolling under AST rewrite."""
-    return range(*args)
+    return builtins.range(*args)
+
+
+class _PtoRangeMarker:
+    """Marker for ``for i in pto.range(...)`` loops under AST rewrite.
+
+    The AST rewriter recognizes ``pto.range(...)`` as a native-``for`` loop
+    iterable that may carry a loop-unroll hint and rewrites the whole loop to
+    ``pto.for_(..., unroll=..., unroll_factor=...)``.  The call itself is
+    never evaluated in that flow; reaching this marker at runtime means the
+    enclosing kernel was not AST-rewritten (or the marker was used outside a
+    ``for`` statement).
+    """
+
+    def __init__(self, args, kwargs):
+        self._args = args
+        self._kwargs = kwargs
+
+    def __iter__(self):
+        raise RuntimeError(
+            "pto.range(...) may only be used as the iterable of a 'for' loop "
+            "inside an AST-rewritten kernel; use 'with pto.for_(...)' for "
+            "explicitly authored loops"
+        )
+
+
+def range(*args, **kwargs):
+    """AST-rewrite marker: ``for i in pto.range(start, stop[, step], unroll=...)``.
+
+    Accepts the same positional start/stop/step arguments as the builtin
+    ``range`` plus optional ``unroll=`` / ``unroll_factor=`` hints with the
+    same semantics as ``pto.for_``.  The enclosing loop must be processed by
+    the PTODSL AST rewriter; the marker itself is not a runtime iterable.
+    """
+    return _PtoRangeMarker(args, kwargs)
 
 # ── for_ ──────────────────────────────────────────────────────────────────────
 
@@ -137,10 +175,12 @@ class LoopHandle:
 
 
 class _ForCM:
-    def __init__(self, start, stop, step, iter_args):
+    def __init__(self, start, stop, step, iter_args, unroll=None, unroll_factor=None):
         self._start = start
         self._stop = stop
         self._step = step
+        self._unroll = unroll
+        self._unroll_factor = unroll_factor
         self._iter_arg_templates = tuple(iter_args) if iter_args is not None else ()
         self._iter_args = [unwrap_surface_value(value) for value in self._iter_arg_templates]
         self._for_op = None
@@ -153,6 +193,7 @@ class _ForCM:
             _coerce_index(self._step),
             self._iter_args if self._iter_args else None,
         )
+        apply_unroll_hint(self._for_op, self._unroll, self._unroll_factor)
         self._ip = InsertionPoint(self._for_op.body)
         self._ip.__enter__()
         if not self._iter_args:
@@ -165,7 +206,7 @@ class _ForCM:
         self._ip.__exit__(*exc)
 
 
-def for_(start, stop, *, step):
+def for_(start, stop, *, step, unroll=None, unroll_factor=None):
     """
     ``scf.for`` context manager.
 
@@ -181,8 +222,21 @@ def for_(start, stop, *, step):
             cur = loop.acc
             loop.update(acc=cur)
         out = loop.final("acc")
+
+    An optional loop-unroll hint asks PTOAS to unroll the loop natively
+    before LLVM lowering::
+
+        with pto.for_(c0, c16, step=c1, unroll="full") as i:
+            ...
+
+    ``unroll="full"`` unrolls the loop completely when the trip count is a
+    compile-time constant (otherwise the hint is dropped with a remark).
+    ``unroll_factor=N`` unrolls by ``N`` (an epilogue loop handles the
+    remainder; dynamic upper bounds are supported).  The two arguments are
+    mutually exclusive.  Loops without a hint are unchanged.
     """
-    return _ForBuilder(start, stop, step)
+    normalize_unroll_hint(unroll, unroll_factor, context="pto.for_(...)")
+    return _ForBuilder(start, stop, step, unroll=unroll, unroll_factor=unroll_factor)
 
 
 class _WhileStateView:
@@ -317,13 +371,14 @@ class _CarryLoopStateView:
 
 
 class _CarryForCM(_ForCM):
-    def __init__(self, start, stop, step, state_items):
+    def __init__(self, start, stop, step, state_items, unroll=None, unroll_factor=None):
         self._state_items = tuple(state_items)
         self._state_names = tuple(name for name, _ in self._state_items)
         self._state_templates = tuple(value for _, value in self._state_items)
         self._session = None
         self._session_frame = None
-        super().__init__(start, stop, step, self._state_templates)
+        super().__init__(start, stop, step, self._state_templates,
+                         unroll=unroll, unroll_factor=unroll_factor)
         self._yield_values = None
         self._entered = False
 
@@ -335,6 +390,8 @@ class _CarryForCM(_ForCM):
                 self._stop,
                 self._step,
                 self._state_items,
+                unroll=self._unroll,
+                unroll_factor=self._unroll_factor,
             )
             self._for_op = self._session_frame.for_op
             handle = LoopHandle(self._for_op, iter_arg_templates=self._state_templates)
@@ -412,13 +469,16 @@ class _CarryForCM(_ForCM):
 
 
 class _ForBuilder:
-    def __init__(self, start, stop, step):
+    def __init__(self, start, stop, step, unroll=None, unroll_factor=None):
         self._start = start
         self._stop = stop
         self._step = step
+        self._unroll = unroll
+        self._unroll_factor = unroll_factor
 
     def __enter__(self):
-        self._cm = _ForCM(self._start, self._stop, self._step, None)
+        self._cm = _ForCM(self._start, self._stop, self._step, None,
+                          unroll=self._unroll, unroll_factor=self._unroll_factor)
         return self._cm.__enter__()
 
     def __exit__(self, *exc):
@@ -435,7 +495,8 @@ class _ForBuilder:
                     "pto.for_(...).carry(...) does not accept pto.struct_type(...) descriptors; "
                     "declare the struct outside the loop and mutate it in place inside the loop body"
                 )
-        return _CarryForCM(self._start, self._stop, self._step, tuple(kwargs.items()))
+        return _CarryForCM(self._start, self._stop, self._step, tuple(kwargs.items()),
+                           unroll=self._unroll, unroll_factor=self._unroll_factor)
 
 
 def _coerce_index(value):
@@ -852,6 +913,6 @@ def yield_(*vals):
 
 
 __all__ = [
-    "section", "vecscope", "static_range", "const_expr", "LoopHandle", "BranchHandle",
+    "section", "vecscope", "static_range", "range", "const_expr", "LoopHandle", "BranchHandle",
     "for_", "while_", "_while", "if_", "yield_",
 ]

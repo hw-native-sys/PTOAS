@@ -117,9 +117,9 @@ jobs:
       PYPTO_WORKSPACE: ${{ github.workspace }}/.work/pypto-ci
       PYPTO_RUN_WORKSPACE: ${{ github.workspace }}/.work/pypto-run-ci
       # GitHub pin containing the unified TFILLPAD API, the two-argument Soft
-      # SYNCALL ABI, and the follow-up CPU-Sim duplicate-stub fix. Keep this
-      # separate from the GitCode pins managed by update_pto_isa_pin.py.
-      PTO_ISA_COMMIT: e948507e18ec4f39037a04914b97e77f5b9d75e3
+      # SYNCALL ABI, the CPU-Sim duplicate-stub fix, and A2/A3 V2C odd-split
+      # TPUSH support. Keep this separate from the GitCode pins.
+      PTO_ISA_COMMIT: 927253b784344d4ecbed524fd44737097c2bc3e0
       PTO_ISA_ROOT: ${{ github.workspace }}/.work/pto-isa-ci
     steps:
       - name: Checkout

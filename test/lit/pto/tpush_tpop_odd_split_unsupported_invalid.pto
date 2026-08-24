@@ -8,18 +8,24 @@
 //
 // RUN: split-file %s %t
 // RUN: not ptoas --pto-arch=a5 %t/local_c2v.pto 2>&1 | FileCheck %s --check-prefix=LOCAL
-// RUN: not ptoas --pto-arch=a5 %t/v2c.pto 2>&1 | FileCheck %s --check-prefix=V2C
+// RUN: not ptoas --pto-arch=a3 %t/v2c.pto 2>&1 | FileCheck %s --check-prefix=V2C
+// RUN: not ptoas --pto-arch=a5 %t/a5_v2c.pto 2>&1 | FileCheck %s --check-prefix=A5-V2C
 // RUN: not ptoas --pto-arch=a5 %t/global_entry.pto 2>&1 | FileCheck %s --check-prefix=GLOBAL
+// RUN: not ptoas --pto-arch=a3 %t/global_v2c_entry.pto 2>&1 | FileCheck %s --check-prefix=GLOBAL-V2C
 // RUN: not ptoas --pto-arch=a5 %t/even_axis.pto 2>&1 | FileCheck %s --check-prefix=PARITY
+// RUN: not ptoas --pto-arch=a3 %t/v2c_even_axis.pto 2>&1 | FileCheck %s --check-prefix=V2C-PARITY
 // RUN: not ptoas --pto-arch=a5 %t/missing_valid_shape.pto 2>&1 | FileCheck %s --check-prefix=VALID
 // RUN: not ptoas --pto-arch=a5 %t/internal_local.pto 2>&1 | FileCheck %s --check-prefix=INTERNAL
 
-// LOCAL: supports odd split modes (split = 3 or 4) only for a unidirectional C2V GM-backed tile pipe
-// V2C: supports odd split modes (split = 3 or 4) only for C2V GM-backed tile pipes
+// LOCAL: supports odd split modes (split = 3 or 4) only for a GM-backed tile pipe whose dir_mask enables C2V and provides the matching consumer buffer
+// V2C: supports odd split modes (split = 3 or 4) only for a GM-backed tile pipe whose dir_mask enables V2C and provides the matching consumer buffer
+// A5-V2C: GM-backed tile pipe init supports dir_mask = 1 with 'c2v_consumer_buf' on all targets and dir_mask = 2/3 with matching consumer buffers only on a2/a3
 // GLOBAL: supports odd split modes (split = 3 or 4) only for tile entries
+// GLOBAL-V2C: supports odd split modes (split = 3 or 4) only for tile entries
 // PARITY: expects a statically odd valid-row count for split = 3
+// V2C-PARITY: expects a statically odd valid-row count for split = 3
 // VALID: expects odd C2V split tpop to provide per-sub-core valid_row and valid_col operands
-// INTERNAL: supports odd split modes (split = 3 or 4) only for a unidirectional C2V pto.initialize_l2g2l_pipe
+// INTERNAL: supports odd split modes (split = 3 or 4) only for a pto.initialize_l2g2l_pipe whose dir_mask enables the operation direction and provides its local consumer buffer
 
 //--- local_c2v.pto
 module {
@@ -40,6 +46,25 @@ module {
       attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     pto.aiv_initialize_pipe {id = 0, dir_mask = 2, slot_size = 1024}
       (v2c_consumer_buf = %consumer_buf : i32)
+    %tile = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tpush_to_aic(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {id = 0, split = 3}
+    return
+  }
+}
+
+//--- a5_v2c.pto
+module {
+  func.func @vector_kernel(%gm_slot_buffer: !pto.ptr<f32>, %consumer_buf: i32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %gm_slots = pto.make_tensor_view %gm_slot_buffer,
+      shape = [%c16, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<16x16xf32>
+    pto.aiv_initialize_pipe {id = 0, dir_mask = 2, slot_size = 1024}
+      (gm_slot_tensor = %gm_slots : !pto.tensor_view<16x16xf32>,
+       v2c_consumer_buf = %consumer_buf : i32)
     %tile = pto.alloc_tile
       : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     pto.tpush_to_aic(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {id = 0, split = 3}
@@ -81,6 +106,43 @@ module {
     %tile = pto.alloc_tile
       : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
     pto.tpush_to_aiv(%tile : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>) {id = 0, split = 3}
+    return
+  }
+}
+
+//--- global_v2c_entry.pto
+module {
+  func.func @vector_kernel(%gm_slot_buffer: !pto.ptr<f32>, %consumer_buf: i32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c1 = arith.constant 1 : index
+    %c15 = arith.constant 15 : index
+    %c16 = arith.constant 16 : index
+    %gm_slots = pto.make_tensor_view %gm_slot_buffer,
+      shape = [%c15, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<15x16xf32>
+    pto.aiv_initialize_pipe {id = 0, dir_mask = 2, slot_size = 960}
+      (gm_slot_tensor = %gm_slots : !pto.tensor_view<15x16xf32>,
+       v2c_consumer_buf = %consumer_buf : i32)
+    %entry = pto.talloc_to_aic {id = 0, split = 3}
+      -> !pto.tensor_view<15x16xf32>
+    return
+  }
+}
+
+//--- v2c_even_axis.pto
+module {
+  func.func @cube_kernel(%gm_slot_buffer: !pto.ptr<f32>, %consumer_buf: i32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %gm_slots = pto.make_tensor_view %gm_slot_buffer,
+      shape = [%c16, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<16x16xf32>
+    pto.aic_initialize_pipe {id = 0, dir_mask = 2, slot_size = 1024}
+      (gm_slot_tensor = %gm_slots : !pto.tensor_view<16x16xf32>,
+       v2c_consumer_buf = %consumer_buf : i32)
+    %tile = pto.tpop_from_aiv {id = 0, split = 3}
+      -> !pto.tile_buf<loc=mat, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>
     return
   }
 }
