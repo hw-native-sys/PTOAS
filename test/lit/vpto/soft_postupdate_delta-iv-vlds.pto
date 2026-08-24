@@ -1,10 +1,18 @@
-// RUN: ptoas --pto-backend=vpto --pto-arch=a5 --enable-vpto-soft-postupdate --emit-vpto %s -o - | FileCheck %s
+// RUN: ptoas --pto-backend=vpto --pto-arch=a5 --emit-vpto %s -o - | FileCheck %s
+// RUN: ptoas --pto-backend=vpto --pto-arch=a5 --enable-vpto-soft-postupdate=false --emit-vpto %s -o - | FileCheck %s --check-prefix=DISABLED
 
 // CHECK-LABEL: func.func @delta_iv_vlds
 // CHECK: scf.for
 // CHECK:   pto.vlds {{.*}} -> !pto.vreg<64xf32>, !pto.ptr<f32,
 // CHECK:   pto.vsts {{.*}} -> !pto.ptr<f32,
 // CHECK:   scf.yield
+
+// DISABLED-LABEL: func.func @delta_iv_vlds
+// DISABLED: scf.for
+// DISABLED-SAME: iter_args({{.*}}) -> (i32)
+// DISABLED: arith.index_cast
+// DISABLED: pto.vlds
+// DISABLED: pto.vsts
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @delta_iv_vlds(%input: !pto.ptr<f32, gm>, %output: !pto.ptr<f32, gm>) attributes {pto.kernel} {

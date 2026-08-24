@@ -529,6 +529,9 @@ LowerVPTOOpsPass
 
 `PTOInferVPTOVecScope` 以整 op 方式把 `scf.for` 搬入 `pto.vecscope`（`wrapCluster` 用 `splice` 移动整个 op），循环体内部结构不变，因此 4.2.5 检查 2「op 直接位于循环体内」的判定不受影响。
 
+该优化在 `ptoas` 的 VPTO pipeline 中默认开启。需要对比或回退到未优化行为时，可显式传入
+`--enable-vpto-soft-postupdate=false` 关闭。
+
 ### 5.2 Pass 注册
 
 ```tablegen

@@ -34,10 +34,10 @@
 // VPTO: pto.vsts {{.*}} {dist = "1PT_B32"}
 // VPTO: %[[RECIP_LOW:.*]] = pto.vselr {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xui16> -> !pto.vreg<128xbf16>
 // VPTO: %[[RECIP_HIGH:.*]] = pto.vselr {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xui16> -> !pto.vreg<128xbf16>
-// VPTO: %[[QUANT_0:.*]] = pto.vlds {{.*}} {dist = "UNPK_B16"}
-// VPTO: %[[QUANT_1:.*]] = pto.vlds {{.*}} {dist = "UNPK_B16"}
-// VPTO: %[[QUANT_2:.*]] = pto.vlds {{.*}} {dist = "UNPK_B16"}
-// VPTO: %[[QUANT_3:.*]] = pto.vlds {{.*}} {dist = "UNPK_B16"}
+// VPTO: %[[QUANT_0:[^,]+]], %{{.*}} = pto.vlds {{.*}} {dist = "UNPK_B16"}
+// VPTO: %[[QUANT_1:[^,]+]], %{{.*}} = pto.vlds {{.*}} {dist = "UNPK_B16"}
+// VPTO: %[[QUANT_2:[^,]+]], %{{.*}} = pto.vlds {{.*}} {dist = "UNPK_B16"}
+// VPTO: %[[QUANT_3:[^,]+]], %{{.*}} = pto.vlds {{.*}} {dist = "UNPK_B16"}
 // VPTO: %[[RECIP_LOW_BITS:.*]] = pto.vbitcast %[[RECIP_LOW]]
 // VPTO: %[[RECIP_0_WORDS:.*]] = pto.vzunpack %[[RECIP_LOW_BITS]], {{.*}}
 // VPTO: %[[RECIP_0:.*]] = pto.vbitcast %[[RECIP_0_WORDS]]

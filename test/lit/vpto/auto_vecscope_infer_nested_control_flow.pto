@@ -61,8 +61,7 @@ module attributes {pto.target_arch = "a5"} {
 // CHECK: pto.vecscope {
 // CHECK: pto.plt_b32
 // CHECK: scf.for %[[LOOP_IV:.*]] = %[[LOOP_LB]] to %[[LOOP_UB]] step %[[LOOP_STEP]]{{.*}}: i16 {
-// CHECK-NEXT: arith.index_cast %[[LOOP_IV]] : i16 to index
-// CHECK: pto.vlds
+// CHECK-NEXT: {{.*}}pto.vlds {{.*}} -> !pto.vreg<64xf32>, !pto.ptr<f32, ub>
 // CHECK: pto.vadds
 // CHECK: pto.vsts
 // CHECK: scf.if
