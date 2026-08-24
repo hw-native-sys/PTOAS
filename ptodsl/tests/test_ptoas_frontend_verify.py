@@ -240,11 +240,11 @@ def host_vec_copy(
 @pto.simt
 def simt_gm_memory_core_body(gm: pto.ptr(pto.i32, "gm")):
     tx = pto.get_tid_x()
-    src_idx = pto.index_cast(tx)
+    src_idx = tx
     loaded = pto.load(gm, src_idx)
     with_bias = loaded + tx + 1000
-    pto.store(with_bias, gm, pto.index_cast(tx + 32))
-    pto.store(tx, gm, pto.index_cast(tx + 64))
+    pto.store(with_bias, gm, tx + 32)
+    pto.store(tx, gm, tx + 64)
 
 
 @pto.jit(target="a5", mode="explicit")

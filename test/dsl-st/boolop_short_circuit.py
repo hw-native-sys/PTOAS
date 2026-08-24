@@ -107,7 +107,7 @@ def boolop_index_and_i1(
     output: pto.ptr(pto.i32, "gm"),
 ):
     for i in range(ELEMENTS):
-        index = pto.index_cast(pto.load(indices, i))
+        index = pto.cast(pto.load(indices, i), pto.index)
         value = pto.load(values, i)
         result = index and (value > 0)
         pto.store(result, output, i)

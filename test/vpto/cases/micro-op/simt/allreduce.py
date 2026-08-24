@@ -43,7 +43,7 @@ def allreduce_sum_body(
     threads: pto.const_expr,
 ):
     tid = pto.get_tid_x()
-    idx = pto.index_cast(tid)
+    idx = tid
     value = pto.load(inp, idx)
     reduced = pto.simt_allreduce_sum(
         value,
@@ -64,7 +64,7 @@ def allreduce_max_body(
     threads: pto.const_expr,
 ):
     tid = pto.get_tid_x()
-    idx = pto.index_cast(tid)
+    idx = tid
     value = pto.load(inp, idx)
     reduced = pto.simt_allreduce_max(
         value,
@@ -85,7 +85,7 @@ def allreduce_min_body(
     threads: pto.const_expr,
 ):
     tid = pto.get_tid_x()
-    idx = pto.index_cast(tid)
+    idx = tid
     value = pto.load(inp, idx)
     reduced = pto.simt_allreduce_min(
         value,

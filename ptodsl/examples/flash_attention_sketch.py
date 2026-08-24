@@ -58,8 +58,8 @@ compile-time control flow.
 
 Scalar literals and simple index/integer conversions are also written in the
 authored PTODSL surface. The current frontend lowers these through tracing
-instead of forcing authors to spell ``pto.const(...)`` or ``index_cast(...)``
-at every use site.
+instead of forcing authors to spell ``pto.const(...)`` or
+``pto.cast(..., pto.index)`` at every use site.
 """
 
 from ptodsl import pto

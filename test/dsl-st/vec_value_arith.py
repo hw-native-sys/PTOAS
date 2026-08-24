@@ -36,7 +36,7 @@ def vec_value_arith_body(
     o_ptr: pto.ptr(pto.f32, "gm"),
 ):
     tid = pto.get_tid_x()
-    idx = pto.index_cast(tid)
+    idx = tid
     base = idx * 2 * VEC
     x = pto.load(a_ptr, base, contiguous=VEC)
     y = pto.load(a_ptr, base + VEC, contiguous=VEC)

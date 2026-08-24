@@ -106,8 +106,8 @@ def _validate_specialization(*, head_dim: int, s1_tile: int, qk_preload: int, ca
 # in DSL we let the launcher choose blockDim and split inside.
 # -------------------------------------------------------------------------
 def compute_qb_range(total_q_blocks):
-    block_num = pto.index_cast(pto.get_block_num())
-    bid = pto.index_cast(pto.get_block_idx())
+    block_num = pto.get_block_num()
+    bid = pto.get_block_idx()
     floor_div = total_q_blocks // block_num
     extra = total_q_blocks % block_num
     fat_start = bid * (floor_div + 1)
@@ -253,8 +253,8 @@ def _build_flash_attention_entry(
         s0_i64: pto.i64,
         s1_i64: pto.i64,
     ):
-        s0 = pto.index_cast(s0_i64)
-        s1 = pto.index_cast(s1_i64)
+        s0 = s0_i64
+        s1 = s1_i64
         num_tiles_s1 = s1 // s1_tile
         steady_tiles = num_tiles_s1 - qk_preload
 
@@ -503,8 +503,8 @@ def _build_flash_attention_entry(
         s0: pto.i64,
         s1: pto.i64,
     ):
-        s0_index = pto.index_cast(s0)
-        s1_index = pto.index_cast(s1)
+        s0_index = s0
+        s1_index = s1
         num_tiles_s1 = s1_index // s1_tile
         steady_tiles = num_tiles_s1 - qk_preload
 
@@ -585,7 +585,7 @@ def _build_flash_attention_entry(
         ]
 
         softmax_scale = scale_value
-        sb_idx = pto.index_cast(pto.get_subblock_idx())
+        sb_idx = pto.get_subblock_idx()
         row_off_sb = sb_idx * S0_HALF
         tv_o = pto.make_tensor_view(gm_o, shape=[s0_index, head_dim], strides=[head_dim, 1])
 

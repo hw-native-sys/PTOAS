@@ -33,30 +33,30 @@ from ptodsl import pto
 def unroll_hint_body(output_ptr: pto.ptr(pto.i32, "gm")) -> None:
     full = pto.const(0, dtype=pto.i32)
     for i in pto.range(4, unroll="full"):
-        full = full + pto.index_cast(pto.i32, i)
+        full = full + pto.cast(i, pto.i32)
     pto.store(full, output_ptr, 0)
 
     fact = pto.const(0, dtype=pto.i32)
     for i in pto.range(0, 10, 1, unroll_factor=4):
-        fact = fact + pto.index_cast(pto.i32, i)
+        fact = fact + pto.cast(i, pto.i32)
     pto.store(fact, output_ptr, 1)
 
     odd = pto.const(0, dtype=pto.i32)
     for i in pto.range(8, unroll_factor=3):
-        odd = odd + pto.index_cast(pto.i32, i)
+        odd = odd + pto.cast(i, pto.i32)
     pto.store(odd, output_ptr, 2)
 
     meta = pto.const(0, dtype=pto.i32)
     for i in pto.range(8, unroll="enable"):
-        meta = meta + pto.index_cast(pto.i32, i)
+        meta = meta + pto.cast(i, pto.i32)
     pto.store(meta, output_ptr, 3)
 
     nested = pto.const(0, dtype=pto.i32)
     ten = pto.const(10, dtype=pto.i32)
     for i in pto.range(2, unroll="full"):
-        i32 = pto.index_cast(pto.i32, i)
+        i32 = pto.cast(i, pto.i32)
         for j in pto.range(3, unroll="full"):
-            nested = nested + i32 * ten + pto.index_cast(pto.i32, j)
+            nested = nested + i32 * ten + pto.cast(j, pto.i32)
     pto.store(nested, output_ptr, 4)
 
 

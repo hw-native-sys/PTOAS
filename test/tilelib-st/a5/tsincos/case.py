@@ -31,7 +31,7 @@ def _sincos_body(
     cos_out: pto.ptr(pto.f32, "gm"),
 ):
     tid = pto.get_tid_x()
-    idx = pto.index_cast(tid)
+    idx = tid
     value = pto.load(inp, idx)
     pto.store(pto.sin(value), sin_out, idx)
     pto.store(pto.cos(value), cos_out, idx)

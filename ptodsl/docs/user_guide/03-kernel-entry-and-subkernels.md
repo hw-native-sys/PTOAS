@@ -1083,7 +1083,7 @@ resource partition.
 @pto.simt(max_threads=256)
 def write_tid(dst: pto.ptr(pto.i32, "gm")):
     tid = pto.get_tid_x()
-    idx = pto.index_cast(tid)
+    idx = tid
     pto.stg(tid, dst, idx)
 
 
@@ -1128,7 +1128,7 @@ pto.simt_launch(body, *args, dims=(dim_x, dim_y, dim_z), **static_kwargs)
 @pto.simt
 def fill_tid(dst: pto.ptr(pto.i32, "gm")):
     tid = pto.get_tid_x()
-    pto.stg(tid, dst, pto.index_cast(tid))
+    pto.stg(tid, dst, tid)
 
 
 @pto.jit(target="a5")
@@ -1175,7 +1175,7 @@ with pto.simt():
 ```python
 with pto.simt(128, 1, 1):
     tid = pto.get_tid_x()
-    pto.store(tid, scratch_ub, pto.index_cast(tid))
+    pto.store(tid, scratch_ub, tid)
 ```
 
 <!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"kernel_entry.inline_cube_scope","symbol":"kernel_entry_inline_cube_scope_probe","compile":{"BLOCK_M":16,"BLOCK_K":16,"BLOCK_N":16}} -->

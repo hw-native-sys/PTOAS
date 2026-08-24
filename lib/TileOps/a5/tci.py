@@ -38,7 +38,7 @@ def template_tci(start, dst: pto.Tile):
     ptr = dst.as_ptr()
     if descending:
         for col in range(0, valid_cols, 1):
-            pto.store(pto.index_cast(cast_dtype, start - col), ptr, col)
+            pto.store(pto.cast(start - col, cast_dtype), ptr, col)
     else:
         for col in range(0, valid_cols, 1):
-            pto.store(pto.index_cast(cast_dtype, start + col), ptr, col)
+            pto.store(pto.cast(start + col, cast_dtype), ptr, col)

@@ -191,7 +191,6 @@ from ._scalar import (         # noqa: F401,E402
     cmp,
     div,
     exp,
-    index_cast,
     floordiv,
     load,
     log,

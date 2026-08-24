@@ -81,10 +81,11 @@ Use these rules when adding or classifying an interface:
   corresponding standard operation supports `index`; this includes division,
   remainder, comparison, extrema, extended multiplication, and absolute value.
   Fixed-width-only shifts and numeric conversions continue to reject `index`;
-  use `pto.index_cast` when a fixed-width integer representation is required.
+  PTODSL authors use `pto.cast` when a fixed-width integer representation is
+  required; the resulting PTO IR uses `pto.index_cast`.
 - **Keep conversions unified:** source and destination types identify the
   conversion category and width; the `signedness` attribute identifies integer
-  interpretation. The same rule applies to `pto.index_cast`.
+  interpretation. The same rule applies to index/integer forms of `pto.cast`.
 - **Target-specific controls:** keep a separate interface when rounding,
   saturation, packed ABI, execution state, or another explicit control changes
   the observable contract.
@@ -186,7 +187,7 @@ computes the mathematical absolute value; unsigned `index` is unchanged.
 | `arith.extf`, `arith.truncf` | `pto.ftof` | **Covered** | Floating format conversion supports fast-math; narrowing also supports an explicit rounding mode. |
 | `arith.sitofp`, `arith.uitofp` | `pto.itof signed/unsigned` | **Covered** | The required attribute selects integer interpretation. |
 | `arith.fptosi`, `arith.fptoui` | `pto.ftoi signed/unsigned` | **Covered** | The required attribute selects the destination integer range; conversion does not saturate. |
-| `arith.index_cast`, `arith.index_castui` | `pto.index_cast signed/unsigned` | **Covered** | One operation supports scalar and matching builtin-vector forms. |
+| `arith.index_cast`, `arith.index_castui` | `pto.index_cast signed/unsigned` | **Covered** | PTODSL authors both scalar and matching builtin-vector forms through the unified `pto.cast` surface. |
 | `arith.bitcast` | `pto.bitcast` | **Covered** | Equal-bit-width scalar and same-shape builtin-vector reinterpretation remains distinct from numeric conversion. |
 
 `arith.scaling_extf` and `arith.scaling_truncf` are not part of the LLVM 19
@@ -252,7 +253,8 @@ Completed in the scalar-surface unification implementation:
    behavior. `pto.maximum/minimum` remain the NaN-propagating variants.
 3. Kept comparison predicates type-independent and attached signedness
    separately for all integer and index comparisons.
-4. Unified signed and unsigned index conversion under `pto.index_cast` with a
+4. Unified PTODSL index/integer conversion under `pto.cast`; the frontend
+   derives signedness from the integer side and emits `pto.index_cast` with a
    required signedness attribute.
 5. Tightened all common integer carriers to signless `i*`; category conversion
    operations use signedness attributes instead of signed/unsigned carrier types.

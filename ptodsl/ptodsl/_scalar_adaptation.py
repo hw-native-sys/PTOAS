@@ -41,26 +41,18 @@ def _pto_cast(
     source_type = value.type
     source_kind = classify_runtime_scalar_type(source_type)
     target_kind = classify_runtime_scalar_type(target_type)
-    inferred_signedness = _conversion_signedness(source_type, target_type)
-    signedness = signedness or inferred_signedness
     op_attributes = dict(attributes or {})
 
-    if index:
-        source_element = _scalar_or_vector_element_type(source_type)
-        target_element = _scalar_or_vector_element_type(target_type)
-        if not (
-            (IndexType.isinstance(source_element) and
-             IntegerType.isinstance(target_element))
-            or (IntegerType.isinstance(source_element) and
-                IndexType.isinstance(target_element))
-        ):
-            raise TypeError(
-                "index cast requires exactly one integer type, got "
-                f"{source_type} -> {target_type}"
+    if index or _is_index_integer_conversion(source_type, target_type):
+        if op_attributes:
+            raise ValueError(
+                "index/integer casts do not accept numeric conversion attributes"
             )
-        mnemonic = "pto.index_cast"
-        op_attributes["signedness"] = _signedness_attr(signedness)
-    elif source_kind == "integer" and target_kind == "integer":
+        return _emit_index_cast(value, target_type, signedness=signedness)
+
+    inferred_signedness = _conversion_signedness(source_type, target_type)
+    signedness = signedness or inferred_signedness
+    if source_kind == "integer" and target_kind == "integer":
         source_width = _integer_element_type(source_type).width
         target_width = _integer_element_type(target_type).width
         if source_width < target_width:
@@ -96,6 +88,82 @@ def _pto_cast(
         results=[common_target_type],
         operands=[common_value],
         attributes=op_attributes,
+    ).results[0]
+    return _restore_authored_integer_type(result, target_type)
+
+
+def _is_index_integer_conversion(source_type, target_type):
+    source_element = _scalar_or_vector_element_type(source_type)
+    target_element = _scalar_or_vector_element_type(target_type)
+    return (
+        IndexType.isinstance(source_element)
+        and IntegerType.isinstance(target_element)
+    ) or (
+        IntegerType.isinstance(source_element)
+        and IndexType.isinstance(target_element)
+    )
+
+
+def _index_conversion_signedness(source_type, target_type):
+    source_element = _scalar_or_vector_element_type(source_type)
+    target_element = _scalar_or_vector_element_type(target_type)
+    if IndexType.isinstance(source_element) and IntegerType.isinstance(target_element):
+        return _integer_signedness(target_type) or "signed"
+    if IntegerType.isinstance(source_element) and IndexType.isinstance(target_element):
+        return _integer_signedness(source_type) or "signed"
+    raise TypeError(
+        "index cast requires exactly one index type and one integer type, got "
+        f"{source_type} -> {target_type}"
+    )
+
+
+def _validate_index_cast_types(source_type, target_type):
+    source_vector = VectorType.isinstance(source_type)
+    target_vector = VectorType.isinstance(target_type)
+    if source_vector != target_vector:
+        raise TypeError(
+            "index/integer casts require both types to be scalar or both to be "
+            f"builtin vectors, got {source_type} -> {target_type}"
+        )
+    if source_vector:
+        source_shape = VectorType(source_type)
+        target_shape = VectorType(target_type)
+        if (
+            tuple(source_shape.shape) != tuple(target_shape.shape)
+            or tuple(source_shape.scalable_dims) != tuple(target_shape.scalable_dims)
+        ):
+            raise TypeError(
+                "index/integer casts require matching builtin-vector shapes, got "
+                f"{source_type} -> {target_type}"
+            )
+    if not _is_index_integer_conversion(source_type, target_type):
+        raise TypeError(
+            "index cast requires exactly one index type and one integer type, got "
+            f"{source_type} -> {target_type}"
+        )
+
+
+def _emit_index_cast(value, target_type, *, signedness=None):
+    source_type = value.type
+    _validate_index_cast_types(source_type, target_type)
+    signedness = signedness or _index_conversion_signedness(
+        source_type, target_type
+    )
+    source = (
+        _to_common_integer_value(value)
+        if IntegerType.isinstance(_scalar_or_vector_element_type(source_type))
+        else value
+    )
+    target = (
+        _signless_integer_type(target_type)
+        if IntegerType.isinstance(_scalar_or_vector_element_type(target_type))
+        else target_type
+    )
+    result = Operation.create(
+        "pto.index_cast",
+        results=[target],
+        operands=[source],
+        attributes={"signedness": _signedness_attr(signedness)},
     ).results[0]
     return _restore_authored_integer_type(result, target_type)
 
@@ -146,14 +214,15 @@ def _signless_integer_type(type_obj):
 
 
 def _integer_signedness(type_obj):
-    if IndexType.isinstance(type_obj):
+    element_type = _scalar_or_vector_element_type(type_obj)
+    if IndexType.isinstance(element_type):
         return "signed"
-    element_type = _integer_element_type(type_obj)
-    if element_type is None:
+    integer_type = _integer_element_type(type_obj)
+    if integer_type is None:
         return None
-    if element_type.width == 1:
+    if integer_type.width == 1:
         return "unsigned"
-    if element_type.is_unsigned:
+    if integer_type.is_unsigned:
         return "unsigned"
     return "signed"
 
@@ -203,6 +272,8 @@ def classify_runtime_scalar_type(type_obj):
         return "float"
     if VectorType.isinstance(type_obj):
         element_type = VectorType(type_obj).element_type
+        if IndexType.isinstance(element_type):
+            return "index"
         if any(cls.isinstance(element_type) for cls in (BF16Type, F16Type, F32Type,
                                                         Float8E4M3FNType, Float8E5M2Type)):
             return "float"

@@ -112,7 +112,7 @@ def template_trandom(
             tail_counter_add = (valid_cols - 1) % lanes + 1
             counter_add = pto.select(
                 repeat == repeats - 1,
-                pto.index_cast(pto.i32, tail_counter_add),
+                pto.cast(tail_counter_add, pto.i32),
                 pto.const(lanes, dtype=pto.i32),
             )
             counter_add = pto.vbr(counter_add)

@@ -45,7 +45,7 @@ validation.
 | Constants and scalar types | `pto.const`, `pto.i*`, `pto.si*`, `pto.ui*`, `pto.f*`, `pto.index` | Chapter 4 and this section |
 | Arithmetic and comparison | Python `+ - * / // %`, `& | ^`, and comparisons | Section 6.3 |
 | Generic scalar helpers | `pto.max`, `pto.min`, `pto.exp`, `pto.log`, `pto.sqrt`, `pto.abs`, `pto.select` | Section 6.3 |
-| Conversion | `pto.cast`, `pto.bitcast`, `pto.index_cast` | Section 6.3 |
+| Conversion | `pto.cast`, `pto.bitcast` | Section 6.3 |
 | Ordinary memory | `pto.load`, `pto.store`, `pto.addptr`, `pto.castptr` | Sections 6.2 and 6.4 |
 | Stack-local memory | `pto.alloc_buffer` plus `pto.load/store` | Section 6.2 |
 | Target-specific numeric semantics | `pto.ceil`, `pto.floor`, `pto.rint`, `pto.round`, `pto.fma`, packed-value math | Chapter 13 |
@@ -219,7 +219,10 @@ The adaptation rules are intentionally narrow:
 | Integer types | Python `int`, runtime integer, runtime `index` |
 | Floating-point types | Python `int`/`float`, runtime float of the same format or a different width |
 
-Integer and `index` values are converted with `index_cast` where needed.
+Integer and `index` values are adapted through `pto.cast` when a fixed
+destination type is required. Index-consuming APIs such as `pto.load`,
+`pto.store`, and `pto.addptr` accept either kind of value and adapt it
+automatically.
 Integer width changes use the destination type's signedness. Floating-point
 width changes use `extf` or `truncf`.
 
@@ -488,17 +491,6 @@ Python `-x`, `a << b`, and `a >> b` use the same contracts.
 builtin vector, `cond` may be a scalar `i1` selecting the whole vector or a
 same-shape builtin vector selecting elementwise.
 
-#### `pto.index_cast(value, *, signedness=None) -> index`
-#### `pto.index_cast(dtype, value, *, signedness=None) -> ScalarType`
-
-**Description**: Converts between `index` and fixed-width integer types.
-PTODSL derives signedness from the authored integer type and defaults signless
-`i*` to signed semantics. Pass `signedness="signed"` or
-`signedness="unsigned"` when the signless carrier needs an explicit
-interpretation. Matching builtin-vector shapes are supported. The one-argument
-form produces `index`; the two-argument form uses the explicit destination
-type.
-
 #### `pto.cast(value, dtype, *, rounding=None, saturation=None, overflow=None, fastmath=None) -> ScalarType | VecValue`
 
 **Description**: Performs the ordinary numeric conversion supported by the
@@ -506,7 +498,13 @@ source and destination types. Integer width changes preserve the authored
 signedness; floating width changes extend or truncate; integer/floating-point
 cross-category conversions use the integer source or destination signedness.
 The convenience API emits category-specific PTO IR: `pto.exti`, `pto.trunci`,
-`pto.ftof`, `pto.ftoi`, or `pto.itof`.
+`pto.ftof`, `pto.ftoi`, or `pto.itof`. Conversions between
+`index` and a fixed-width integer are supported by the same API. The integer
+side supplies the signed or unsigned interpretation; numeric conversion attributes
+such as rounding, saturation, overflow, and fast-math are not accepted for this
+index/integer form. Use `pto.cast(value, pto.index)` or
+`pto.cast(value, pto.i64)` only when a reusable value of that exact type
+is needed.
 Common PTO IR uses signless integer carriers. PTODSL derives signedness from
 authored `si*`/`ui*` values and uses signed semantics for authored `i*` values.
 A builtin vector keeps its lane count when `dtype` is a scalar element type.
@@ -584,7 +582,7 @@ code is authored.
 | `pto.max/min` | `pto.maxi/mini` or `pto.maxf/minf` | float maxNum/minNum; signed/unsigned integer extrema; index compare/select |
 | `pto.exp/log/sqrt` | `pto.exp/log/sqrt` | scalar `math.exp/log/sqrt`; packed forms remain PTO-specific |
 | `pto.abs` | `pto.absi` or `pto.absf` | category-specific integer, index, or floating absolute value; index uses signed interpretation |
-| `pto.select`, `pto.index_cast`, ordinary `pto.cast`, `pto.bitcast` | corresponding `pto.*` op | standard selection, numeric conversion, and bit reinterpretation |
+| `pto.select`, `pto.cast`, `pto.bitcast` | corresponding `pto.*` op | standard selection, numeric conversion, and bit reinterpretation; index/integer `pto.cast` emits `pto.index_cast` |
 | `pto.load/store` on a PTO pointer | `pto.load/store` | backend LLVM load/store |
 | `pto.load/store` on `pto.alloc_buffer` | `llvm.load/store` | unchanged |
 

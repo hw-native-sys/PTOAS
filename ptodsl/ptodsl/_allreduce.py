@@ -190,7 +190,7 @@ def _emit_cross_warp_reduce(x, scratch, *,
     with if_(is_writer) as br:
         with br.then_:
             slot = wid * scale + lid
-            scalar.store(warp_val, scratch, scalar.index_cast(slot))
+            scalar.store(warp_val, scratch, slot)
 
     syncthreads()
 
@@ -201,7 +201,7 @@ def _emit_cross_warp_reduce(x, scratch, *,
             if scale == 1:
                 loaded = scalar.select(
                     lid < num_warps,
-                    scalar.load(scratch, scalar.index_cast(lid)),
+                    scalar.load(scratch, lid),
                     c_identity,
                 )
                 stage4_result = redux_fn(loaded)
@@ -209,7 +209,7 @@ def _emit_cross_warp_reduce(x, scratch, *,
                 total = scale * num_warps
                 loaded = scalar.select(
                     lid < total,
-                    scalar.load(scratch, scalar.index_cast(lid)),
+                    scalar.load(scratch, lid),
                     c_identity,
                 )
                 stage4_result = _emit_butterfly(
@@ -221,7 +221,7 @@ def _emit_cross_warp_reduce(x, scratch, *,
                 my_slot = lid % scale
                 for w in range(num_warps):
                     idx_val = w * scale + my_slot
-                    loaded_v = scalar.load(scratch, scalar.index_cast(idx_val))
+                    loaded_v = scalar.load(scratch, idx_val)
                     reduced = combine(reduced, loaded_v)
                 stage4_result = scalar.select(is_reducer, reduced, c_identity)
 
@@ -235,11 +235,11 @@ def _emit_cross_warp_reduce(x, scratch, *,
     is_global_leader = tx < scale
     with if_(is_global_leader) as br5:
         with br5.then_:
-            scalar.store(partial_reduced, scratch, scalar.index_cast(tx))
+            scalar.store(partial_reduced, scratch, tx)
 
     # ── broadcast ────────────────────────────────────────────────────────
     syncthreads()
-    result = scalar.load(scratch, scalar.index_cast(tx % scale))
+    result = scalar.load(scratch, tx % scale)
     syncthreads()
 
     return result
@@ -259,7 +259,7 @@ def _emit_ub_reduce(x, scratch, *,
     lane = tx % threads
 
     # ── each lane writes x → scratch[tx] ─────────────────────────────────
-    scalar.store(x, scratch, scalar.index_cast(tx))
+    scalar.store(x, scratch, tx)
     syncthreads()
 
     # ── reducers sequentially combine ────────────────────────────────────
@@ -268,7 +268,7 @@ def _emit_ub_reduce(x, scratch, *,
         with br.then_:
             group_offset = group * threads
             first_elem = group_offset + lane
-            acc = scalar.load(scratch, scalar.index_cast(first_elem))
+            acc = scalar.load(scratch, first_elem)
 
             carry_loop = for_(scale, threads, step=scale).carry(acc=acc)
             with carry_loop:
@@ -289,11 +289,11 @@ def _emit_ub_reduce(x, scratch, *,
     is_leader = scalar.cmp(lane, scale, "lt")
     with if_(is_leader) as br5:
         with br5.then_:
-            scalar.store(flag, scratch, scalar.index_cast(group * threads + lane))
+            scalar.store(flag, scratch, group * threads + lane)
 
     # ── broadcast ────────────────────────────────────────────────────────
     syncthreads()
-    result = scalar.load(scratch, scalar.index_cast(group * threads + (tx % scale)))
+    result = scalar.load(scratch, group * threads + (tx % scale))
     syncthreads()
 
     return result

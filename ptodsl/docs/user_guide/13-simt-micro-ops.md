@@ -141,7 +141,7 @@ def capture_query_state(dst: pto.ptr(pto.i32, "gm")):
         block_x + block_y + block_z +
         grid_x + grid_y + grid_z
     )
-    pto.stg(value, dst, pto.index_cast(lane))
+    pto.stg(value, dst, lane)
 
 
 @pto.jit(target="a5")
@@ -180,7 +180,7 @@ def vote_probe(dst: pto.ptr(pto.i32, "gm")):
     any_pred = pto.vote_any(pred)
     uni_pred = pto.vote_uni(pred)
     value = ballot + all_pred + any_pred + uni_pred
-    pto.stg(value, dst, pto.index_cast(lane))
+    pto.stg(value, dst, lane)
 
 
 @pto.jit(target="a5")
@@ -221,7 +221,7 @@ def shuffle_probe(dst: pto.ptr(pto.i32, "gm")):
     shifted_down = pto.shuffle_down(lane, 1, width=32)
     butterfly = pto.shuffle_bfly(lane, 1, width=32)
     value = shuffled + shifted_up + shifted_down + butterfly
-    pto.stg(value, dst, pto.index_cast(lane))
+    pto.stg(value, dst, lane)
 
 
 @pto.jit(target="a5")
@@ -271,7 +271,7 @@ def reduce_lane_value(dst: pto.ptr(pto.i32, "gm")):
     total = pto.redux_add(value)
     maximum = pto.redux_max(total, signedness="signed")
     minimum = pto.redux_min(maximum, signedness="signed")
-    pto.stg(minimum, dst, pto.index_cast(lane))
+    pto.stg(minimum, dst, lane)
 
 
 @pto.jit(target="a5")
@@ -305,9 +305,11 @@ Packed vector pointer element descriptors include `pto.f32x2`, `pto.f16x2`,
 `pto.i8x2`, `pto.i16x2`, and `pto.i32x2`.
 
 **Offset contract**: The offset is an element-level ``index``, not a byte
-offset.  For ``pto.ptr(pto.f32x2, "gm")``, offset 1 advances by 8 bytes
-(2 × sizeof(f32)).  Dynamic ``i64`` offsets must be cast to ``index`` via
-``pto.index_cast(value)``.
+offset. For ``pto.ptr(pto.f32x2, "gm")``, offset 1 advances by 8 bytes
+(2 × sizeof(f32)). Dynamic integer offsets can be passed directly; the memory
+operation adapts them to the required index type. Use
+``pto.cast(value, pto.index)`` only when an explicit reusable index value
+is needed.
 
 **Example**:
 
@@ -316,7 +318,7 @@ offset.  For ``pto.ptr(pto.f32x2, "gm")``, offset 1 advances by 8 bytes
 @pto.simt
 def ldg_stg_probe(src: pto.ptr(pto.i32, "gm"), dst: pto.ptr(pto.i32, "gm")):
     lane = pto.get_tid_x()
-    idx = pto.index_cast(lane)
+    idx = lane
     value = pto.ldg(src, idx, l1cache="cache", l2cache="nmfv")
     pto.stg(value, dst, idx, l1cache="uncache", l2cache="wtsred")
 
@@ -338,7 +340,7 @@ def gm_vector_ldst(
     dst: pto.ptr(pto.f32x2, "gm"),
     offset: pto.i64,
 ):
-    idx = pto.index_cast(offset)
+    idx = offset
     value = pto.ldg(src, idx)
     pto.stg(value, dst, idx)
 
@@ -390,7 +392,7 @@ parameter.
 @pto.simt
 def update_counter(counter: pto.ptr(pto.i32, "gm")):
     tid = pto.get_tid_x()
-    idx = pto.index_cast(tid)
+    idx = tid
     value = pto.ldg(counter, idx, l1cache="cache", l2cache="nmfv")
     old = pto.atomic_add(counter, value, l2cache="nmfv")
     pto.atomic_exch(counter, value)
@@ -440,7 +442,7 @@ def integer_math_probe(dst: pto.ptr(pto.i32, "gm")):
     high = pto.mulhi(permuted, lane, signedness="unsigned")
     wide = pto.mul_i32toi64(lane, lane, signedness="unsigned")
     _ = wide
-    pto.stg(high, dst, pto.index_cast(lane))
+    pto.stg(high, dst, lane)
 
 
 @pto.jit(target="a5")
@@ -483,7 +485,7 @@ minimum/maximum semantics, including supported packed vector forms. Use
 | Former API | Unified API |
 |------------|-------------|
 | `scalar.load` / `scalar.store` | `pto.load` / `pto.store` |
-| `scalar.cast` / `scalar.index_cast` | `pto.cast` / `pto.index_cast` |
+| `scalar.cast` / `scalar.index_cast` | `pto.cast` |
 | `pto.convert(...)` | `pto.cast(..., rounding=..., saturation=...)` |
 | `pto.fmin` / `pto.fmax` | `pto.min` / `pto.max` |
 
@@ -505,7 +507,7 @@ def float_math_probe(dst: pto.ptr(pto.f32, "gm")):
     rounded = pto.round(pto.rint(pto.floor(pto.ceil(powered))))
     bounded = pto.min(pto.max(value, root), rounded)
     accum = pto.fma(bounded, pto.exp(value), pto.log(pto.max(value, root)))
-    pto.stg(accum, dst, pto.index_cast(lane))
+    pto.stg(accum, dst, lane)
 
 
 @pto.jit(target="a5")
@@ -537,7 +539,7 @@ def sync_probe(dst: pto.ptr(pto.i32, "gm")):
     pto.syncthreads()
     pto.threadfence()
     pto.threadfence_block()
-    pto.stg(lane, dst, pto.index_cast(lane))
+    pto.stg(lane, dst, lane)
 
 
 @pto.jit(target="a5")
@@ -578,7 +580,7 @@ def use_lane_state(dst: pto.ptr(pto.i32, "gm")):
     pto.syncthreads()
     pto.threadfence()
     pto.threadfence_block()
-    pto.stg(lane, dst, pto.index_cast(lane))
+    pto.stg(lane, dst, lane)
 
 
 @pto.jit(target="a5")

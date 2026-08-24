@@ -11,7 +11,6 @@ import numpy as np
 
 from common import auto_main, golden_output_case
 from ptodsl import pto
-from ptodsl import pto
 
 
 LANES = 32
@@ -23,10 +22,10 @@ def simt_gm_memory_core_body(
     out: pto.ptr(pto.i32, "gm"),
 ):
     tid = pto.get_tid_x()
-    idx = pto.index_cast(tid)
+    idx = tid
     loaded = pto.load(inp, idx)
     pto.store(loaded + tid + 1000, out, idx)
-    pto.store(tid, out, pto.index_cast(tid + LANES))
+    pto.store(tid, out, tid + LANES)
 
 
 @pto.jit(

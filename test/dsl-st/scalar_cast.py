@@ -30,7 +30,7 @@ def scalar_cast_simt_body(
     output_ptr: pto.ptr(pto.f32, "gm"),
 ) -> None:
     tid = pto.get_tid_x()
-    idx = pto.index_cast(tid)
+    idx = tid
 
     scalar_value = pto.load(input_ptr, idx)
     narrowed_scalar = pto.cast(scalar_value, pto.f16)

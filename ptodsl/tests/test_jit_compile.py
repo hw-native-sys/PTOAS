@@ -1268,7 +1268,7 @@ def dynamic_addr_tile_surface_probe(
     tile = pto.alloc_tile(
         shape=[1, 128],
         dtype=pto.f32,
-        addr=pto.index_cast(pto.i64, pto.index_cast(rows)),
+        addr=pto.cast(rows, pto.i64),
         valid_shape=[rows, cols],
     )
     _ = tile
@@ -1461,7 +1461,7 @@ def inline_simt_launch_dims_probe(
 ):
     with pto.simt(32, 2, 1):
         tid = pto.get_tid_x()
-        pto.stg(tid, gm, pto.index_cast(tid))
+        pto.stg(tid, gm, tid)
 
 
 @pto.jit(target="a5", mode="explicit")
@@ -1571,7 +1571,7 @@ def simt_collective_math_probe():
 def simt_memory_atomic_probe(
     gm: pto.ptr(pto.i32, "gm"),
 ):
-    idx = pto.index_cast(pto.get_tid_x())
+    idx = pto.get_tid_x()
     value = pto.ldg(gm, idx, l1cache="cache", l2cache="nmfv")
     pto.stg(value, gm, idx, l1cache="uncache", l2cache="wtsred")
     pto.stg(1, gm, idx)
@@ -1598,7 +1598,7 @@ def simt_fp8_ext_ldg_stg_probe(
     gm_f8e5x4: pto.ptr(pto.f8e5m2x4, "gm"),
     gm_f8e5x8: pto.ptr(pto.f8e5m2x8, "gm"),
 ):
-    idx = pto.index_cast(pto.get_tid_x())
+    idx = pto.get_tid_x()
     v_f8e4x4 = pto.ldg(gm_f8e4x4, idx)
     v_f8e4x8 = pto.ldg(gm_f8e4x8, idx)
     v_f8e5x4 = pto.ldg(gm_f8e5x4, idx)
@@ -1637,7 +1637,7 @@ def simt_keep_stage():
 @pto.simt
 def simt_resume_stage(gm: pto.ptr(pto.i32, "gm")):
     resumed = pto.resume(pto.i32, slot=0)
-    idx = pto.index_cast(pto.get_tid_x())
+    idx = pto.get_tid_x()
     pto.store(resumed, gm, idx)
 
 
@@ -2735,7 +2735,7 @@ def runtime_scalar_operator_probe(
     lg = pto.log(e)
     rt = pto.sqrt(e)
     mag = pto.abs(z)
-    index_mag = pto.abs(pto.index_cast(rows))
+    index_mag = pto.abs(pto.cast(rows, pto.index))
     gt_zero = m > x
     eq_self = x == x
     in_range = (m >= x) & (m <= e)
@@ -5140,9 +5140,10 @@ def main() -> None:
     )
     for name in (
         "load", "store", "max", "min", "exp", "log", "sqrt", "abs",
-        "cast", "select", "index_cast",
+        "cast", "select",
     ):
         expect(hasattr(pto, name), f"pto.{name} should be exported from the unified public namespace")
+    expect(not hasattr(pto, "index_cast"), "pto.index_cast should be removed in favor of pto.cast")
     expect(not hasattr(__import__("ptodsl"), "scalar"), "ptodsl.scalar should not remain as a compatibility namespace")
 
     with make_context() as ctx, Location.unknown(ctx):
@@ -6429,15 +6430,15 @@ def main() -> None:
     dynamic_addr_tile_text = dynamic_addr_tile_surface_probe.compile().mlir_text()
     expect_parse_roundtrip_and_verify(dynamic_addr_tile_text, "dynamic alloc_tile addr specialization")
     expect(
-        "pto.index_cast %arg0 signed : i32 -> index" in dynamic_addr_tile_text,
-        "alloc_tile(addr=runtime integer metadata) should first bridge the public i32 scalar to index",
+        "pto.index_cast" in dynamic_addr_tile_text,
+        "alloc_tile runtime metadata should adapt valid-shape integers to index",
     )
     expect(
         re.search(
-            r"pto\.index_cast %[a-zA-Z0-9_]+ signed : index -> i64",
+            r"pto\.exti %[a-zA-Z0-9_]+ signed : i32 -> i64",
             dynamic_addr_tile_text,
         ) is not None,
-        "alloc_tile(addr=runtime index) should still cast the bridged index metadata to i64 before lowering",
+        "alloc_tile(addr=runtime integer metadata) should preserve the explicit fixed-width pto.cast",
     )
     expect(
         re.search(

@@ -130,27 +130,6 @@ def shr(lhs, rhs):
     return wrap_surface_value(emit_runtime_binary_op("shr", unwrap_surface_value(lhs), unwrap_surface_value(rhs)))
 
 
-def index_cast(type_or_val, val=None, *, signedness=None):
-    """
-    Frontend ``pto.index_cast``.
-
-    Two calling conventions::
-
-        index_cast(result_type, value)   # explicit result type
-        index_cast(value)                # result type = index (1-arg shorthand)
-    """
-    if val is None:
-        # 1-arg form: cast to index
-        result_type = IndexType.get()
-        raw_value = unwrap_surface_value(type_or_val)
-    else:
-        result_type = _resolve(type_or_val)
-        raw_value = unwrap_surface_value(val)
-    return wrap_surface_value(_pto_cast(
-        raw_value, result_type, index=True, signedness=signedness
-    ))
-
-
 def select(cond, true_val, false_val):
     """Frontend ``pto.select`` lowered to ``arith.select`` by PTOAS."""
     raw_true = unwrap_surface_value(true_val)
@@ -175,6 +154,10 @@ def cast(value, dtype, *, rounding=None, saturation=None, overflow=None, fastmat
     For builtin vectors, a scalar ``dtype`` denotes the destination element
     type and the source vector shape is preserved.  An explicit ``pto.Vec``
     descriptor is also accepted when its shape matches the source.
+
+    Index/integer conversions use the authored integer signedness and emit
+    ``pto.index_cast``. Numeric conversion attributes are not valid for this
+    conversion category.
     """
     raw_value = unwrap_surface_value(value)
     target_type = _resolve_shape_preserving_target(raw_value, dtype, "pto.cast")
@@ -713,10 +696,7 @@ def _emit_byte_offset(index_value, elem_type):
         "pto.muli", results=[index_type], operands=[index_value, bytewidth_const]
     ).results[0]
     i64 = IntegerType.get_signless(64)
-    return Operation.create(
-        "pto.index_cast", results=[i64], operands=[byte_index],
-        attributes={"signedness": _signedness_attr("signed")},
-    ).results[0]
+    return _pto_cast(byte_index, i64, index=True)
 
 
 def _as_pto_ptr_type(type_obj):
@@ -756,7 +736,6 @@ def _element_bytewidth(elem_type):
 
 __all__ = [
     "mul", "add", "sub", "neg", "div", "floordiv", "ceildiv", "rem", "shl", "shr",
-    "index_cast",
     "cast",
     "bitcast",
     "cmp",
