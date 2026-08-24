@@ -70,15 +70,27 @@ constexpr llvm::StringLiteral kBridgeSpecEntryFreeKey = "entry.free";
 /// Spec DictionaryAttr keys for the matmul bridge specialization. The tile
 /// tokens come from the three (four for the accumulate form) tile operand
 /// types; the acc phase token is only collected for a non-Unspecified
-/// phase.
+/// phase. The bias/MX entry variants add the bias and per-operand scale
+/// tile tokens plus their own wrapper entry keys.
 constexpr llvm::StringLiteral kBridgeSpecLeftTileKey = "left_tile";
 constexpr llvm::StringLiteral kBridgeSpecRightTileKey = "right_tile";
 constexpr llvm::StringLiteral kBridgeSpecResultTileKey = "result_tile";
 constexpr llvm::StringLiteral kBridgeSpecAccInTileKey = "acc_in_tile";
+constexpr llvm::StringLiteral kBridgeSpecBiasTileKey = "bias_tile";
+constexpr llvm::StringLiteral kBridgeSpecAScaleTileKey = "a_scale_tile";
+constexpr llvm::StringLiteral kBridgeSpecBScaleTileKey = "b_scale_tile";
 constexpr llvm::StringLiteral kBridgeSpecAccPhaseKey = "acc_phase";
 constexpr llvm::StringLiteral kBridgeSpecEntryMatmulKey = "entry.matmul";
 constexpr llvm::StringLiteral kBridgeSpecEntryMatmulAccKey =
     "entry.matmul_acc";
+constexpr llvm::StringLiteral kBridgeSpecEntryMatmulBiasKey =
+    "entry.matmul_bias";
+constexpr llvm::StringLiteral kBridgeSpecEntryMatmulMxKey =
+    "entry.matmul_mx";
+constexpr llvm::StringLiteral kBridgeSpecEntryMatmulMxAccKey =
+    "entry.matmul_mx_acc";
+constexpr llvm::StringLiteral kBridgeSpecEntryMatmulMxBiasKey =
+    "entry.matmul_mx_bias";
 
 /// Builds the fully qualified `pto::TPipe<flagBase, Direction, slotSize,
 /// slotNum, localSlotNum, nosplit>` token from a local-to-local pipe init op.

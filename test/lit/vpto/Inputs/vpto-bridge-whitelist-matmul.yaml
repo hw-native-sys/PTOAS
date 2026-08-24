@@ -1,7 +1,10 @@
 # VPTO C++ interface bridge whitelist for the MATMUL family lit tests. The
 # tile types are spread over the matmul operand roles, so the tmpl_map rows
-# use the per-role sources (left_tile/right_tile/result_tile/acc_in_tile);
-# see docs/designs/vpto-cpp-bridge-generalization.md.
+# use the per-role sources (left_tile/right_tile/result_tile/acc_in_tile/
+# bias_tile/a_scale_tile/b_scale_tile); see
+# docs/designs/vpto-cpp-bridge-generalization.md. Variant entries declare
+# the full role-tile set they render; duplicate typedef targets deduplicate
+# at render time.
 bridge_ops:
   - op: pto.tmatmul
     family: matmul
@@ -32,3 +35,107 @@ bridge_ops:
       - source: acc_in_tile
         field: tile
         target: AccInTile
+  - op: pto.tmatmul.bias
+    family: matmul
+    entry: pto_vpto_matmul_bias
+    abi:
+      - type: i64    # result tile address
+      - type: i64    # left tile address
+      - type: i64    # right tile address
+      - type: i64    # bias tile address
+    tmpl_map:
+      - source: left_tile
+        field: tile
+        target: LeftTile
+      - source: right_tile
+        field: tile
+        target: RightTile
+      - source: result_tile
+        field: tile
+        target: ResultTile
+      - source: bias_tile
+        field: tile
+        target: BiasTile
+  - op: pto.tmatmul.mx
+    family: matmul
+    entry: pto_vpto_matmul_mx
+    abi:
+      - type: i64    # result tile address
+      - type: i64    # left tile address
+      - type: i64    # left scale tile address
+      - type: i64    # right tile address
+      - type: i64    # right scale tile address
+    tmpl_map:
+      - source: left_tile
+        field: tile
+        target: LeftTile
+      - source: right_tile
+        field: tile
+        target: RightTile
+      - source: result_tile
+        field: tile
+        target: ResultTile
+      - source: a_scale_tile
+        field: tile
+        target: AScaleTile
+      - source: b_scale_tile
+        field: tile
+        target: BScaleTile
+  - op: pto.tmatmul.mx.acc
+    family: matmul
+    entry: pto_vpto_matmul_mx_acc
+    abi:
+      - type: i64    # result tile address
+      - type: i64    # accumulator input tile address
+      - type: i64    # left tile address
+      - type: i64    # left scale tile address
+      - type: i64    # right tile address
+      - type: i64    # right scale tile address
+    tmpl_map:
+      - source: left_tile
+        field: tile
+        target: LeftTile
+      - source: right_tile
+        field: tile
+        target: RightTile
+      - source: result_tile
+        field: tile
+        target: ResultTile
+      - source: acc_in_tile
+        field: tile
+        target: AccInTile
+      - source: a_scale_tile
+        field: tile
+        target: AScaleTile
+      - source: b_scale_tile
+        field: tile
+        target: BScaleTile
+  - op: pto.tmatmul.mx.bias
+    family: matmul
+    entry: pto_vpto_matmul_mx_bias
+    abi:
+      - type: i64    # result tile address
+      - type: i64    # left tile address
+      - type: i64    # left scale tile address
+      - type: i64    # right tile address
+      - type: i64    # right scale tile address
+      - type: i64    # bias tile address
+    tmpl_map:
+      - source: left_tile
+        field: tile
+        target: LeftTile
+      - source: right_tile
+        field: tile
+        target: RightTile
+      - source: result_tile
+        field: tile
+        target: ResultTile
+      - source: a_scale_tile
+        field: tile
+        target: AScaleTile
+      - source: b_scale_tile
+        field: tile
+        target: BScaleTile
+      - source: bias_tile
+        field: tile
+        target: BiasTile

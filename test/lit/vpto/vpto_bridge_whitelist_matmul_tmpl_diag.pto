@@ -15,7 +15,7 @@
 
 // RUN: not pto-test-opt %s "-pto-lower-matmul-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-matmul-unknown-source.yaml" 2>&1 | FileCheck %s
 
-// CHECK: VPTO bridge whitelist: tmpl_map row of entry 'pto_vpto_matmul' uses unknown matmul-family source 'pipe.init' in '{{.*}}vpto-bridge-whitelist-matmul-unknown-source.yaml' (supported: left_tile, right_tile, result_tile, acc_in_tile)
+// CHECK: VPTO bridge whitelist: tmpl_map row of entry 'pto_vpto_matmul' uses unknown matmul-family source 'pipe.init' in '{{.*}}vpto-bridge-whitelist-matmul-unknown-source.yaml' (supported: left_tile, right_tile, result_tile, acc_in_tile{{.*}})
 
 module attributes {pto.target_arch = "a5"} {
   func.func private @matmul_tmpl_diag(%addr: i32)

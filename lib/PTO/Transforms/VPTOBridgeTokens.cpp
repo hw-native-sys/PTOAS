@@ -18,6 +18,7 @@
 
 #include "PTO/Transforms/VPTOBridgeTokens.h"
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/PTOTypeUtils.h"
 #include "llvm/ADT/Twine.h"
 #include <string>
 
@@ -96,6 +97,20 @@ FailureOr<std::string> bridgeSLayoutToken(int32_t sLayout) {
 } // namespace
 
 std::string pto::buildBridgeElementTypeToken(Type elementType) {
+  // Narrow float types mirror EmitC's getEmitCScalarTypeToken so the bridge
+  // wrapper and the EmitC backend name the same pto-isa scalar types.
+  if (pto::isPTOFloat8E4M3LikeType(elementType))
+    return "float8_e4m3_t";
+  if (pto::isPTOFloat8E5M2LikeType(elementType))
+    return "float8_e5m2_t";
+  if (pto::isPTOF8E8M0Type(elementType))
+    return "float8_e8m0_t";
+  if (isa<pto::HiF8Type>(elementType))
+    return "hifloat8_t";
+  if (isa<pto::F4E1M2x2Type>(elementType))
+    return "float4_e1m2x2_t";
+  if (isa<pto::F4E2M1x2Type>(elementType))
+    return "float4_e2m1x2_t";
   if (elementType.isF16())
     return "half";
   if (elementType.isBF16())

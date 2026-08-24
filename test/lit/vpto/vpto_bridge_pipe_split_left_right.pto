@@ -1,0 +1,65 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// You may obtain a copy of the License at
+// https://www.huawei.com/
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A
+// PARTICULAR PURPOSE.
+// See LICENSE for more details.
+
+// Non-unit split on the pipe entries: tpush/tpop/tfree carry split = 2,
+// which maps to pto::TileSplitAxis::TILE_LEFT_RIGHT. The family pass fixes
+// the split token on the first bridged op of the function and every later
+// op checks against it; the wrapper renders the shared TileSplitAxis into
+// all three entry bodies.
+
+// RUN: pto-test-opt %s -pto-lower-pipe-family-ops | FileCheck %s --check-prefix=SPEC
+// RUN: pto-test-opt %s -pto-lower-pipe-family-ops -pto-emit-vpto-bridge-wrapper | FileCheck %s --check-prefix=WRAP
+
+// SPEC-LABEL: func.func private @bridge_cube
+// SPEC-SAME: pto.vpto.bridge.func_spec = {
+// SPEC-SAME: split = "pto::TileSplitAxis::TILE_LEFT_RIGHT"
+
+// SPEC-LABEL: func.func private @bridge_vector
+// SPEC-SAME: pto.vpto.bridge.func_spec = {
+// SPEC-SAME: split = "pto::TileSplitAxis::TILE_LEFT_RIGHT"
+
+// WRAP: module attributes {{{.*}}pto.vpto.bridge.wrapper_source = "
+// WRAP-SAME: pto::TPUSH<Pipe, ProducerTile, pto::TileSplitAxis::TILE_LEFT_RIGHT>(pipe, tile);
+// WRAP-SAME: pto::TPOP<Pipe, ConsumerTile, pto::TileSplitAxis::TILE_LEFT_RIGHT>(pipe, tile);
+// WRAP-SAME: pto::TFREE<Pipe, pto::TileSplitAxis::TILE_LEFT_RIGHT>(pipe);
+
+module {
+  func.func private @bridge_cube(%addr: i32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : i64
+    %acc = pto.alloc_tile addr = %c0
+      : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    %pipe = pto.initialize_l2l_pipe{dir_mask = 1, slot_size = 1024, slot_num = 8, flag_base = 0, nosplit = false} (%addr : i32) -> !pto.pipe
+    pto.tpush(%acc, %pipe
+      : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=row_major, fractal=1024, pad=0>,
+        !pto.pipe) {split = 2}
+    return
+  }
+
+  func.func private @bridge_vector(%addr: i32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %pipe = pto.initialize_l2l_pipe{dir_mask = 1, slot_size = 1024, slot_num = 8, flag_base = 0, nosplit = false} (%addr : i32) -> !pto.pipe
+    %tile = pto.declare_tile
+      -> !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16,
+                       blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tpop(%tile, %pipe
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+        !pto.pipe) {split = 2}
+    %ub = pto.tile_buf_addr %tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+     -> !pto.ptr<f32, ub>
+    pto.tfree(%pipe : !pto.pipe) {split = 2}
+    return
+  }
+}

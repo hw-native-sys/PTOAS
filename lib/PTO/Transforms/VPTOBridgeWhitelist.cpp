@@ -82,10 +82,12 @@ bool isPipeTmplMapSource(StringRef source) {
 
 /// tmpl_map `source` tokens accepted for the matmul family. The tile types
 /// are spread over the matmul operand roles, so each role is its own
-/// source.
+/// source; the bias/MX variants add the bias and per-operand scale roles.
 bool isMatmulTmplMapSource(StringRef source) {
   return source == "left_tile" || source == "right_tile" ||
-         source == "result_tile" || source == "acc_in_tile";
+         source == "result_tile" || source == "acc_in_tile" ||
+         source == "bias_tile" || source == "a_scale_tile" ||
+         source == "b_scale_tile";
 }
 
 } // namespace
@@ -152,7 +154,7 @@ pto::parseBridgeWhitelistFromBuffer(llvm::StringRef content,
                << entry.entry << "' uses unknown matmul-family source '"
                << field.source << "' in '" << sourceName
                << "' (supported: left_tile, right_tile, result_tile, "
-                  "acc_in_tile)\n";
+                  "acc_in_tile, bias_tile, a_scale_tile, b_scale_tile)\n";
         return failure();
       }
     }
@@ -184,10 +186,14 @@ pto::parseBridgeWhitelist(llvm::StringRef path, llvm::raw_ostream &diagOS) {
 
 /// The built-in default whitelist covering the interface families bridged
 /// today: the pipe family (C2V/V2C fifo) and the matmul family (TMATMUL /
-/// TMATMUL_ACC). It keeps `ptoas --pto-backend=vpto` working out of the box;
-/// an explicit whitelist (pass option or PTOAS_VPTO_BRIDGE_WHITELIST) always
-/// overrides it. End-to-end cases under test/vpto/cases/kernels/ rely on
-/// this default, so adding a bridged family requires extending it here.
+/// TMATMUL_ACC and the bias/MX entry variants). It keeps `ptoas
+/// --pto-backend=vpto` working out of the box; an explicit whitelist (pass
+/// option or PTOAS_VPTO_BRIDGE_WHITELIST) always overrides it. End-to-end
+/// cases under test/vpto/cases/kernels/ rely on this default, so adding a
+/// bridged family requires extending it here.
+/// Variant entries share the wrapper's one tile configuration, so every
+/// matmul entry declares the full set of role tiles it renders; duplicate
+/// targets deduplicate at render time.
 static constexpr llvm::StringLiteral kDefaultBridgeWhitelistYaml = R"yaml(
 bridge_ops:
   - op: pto.initialize_l2l_pipe
@@ -197,17 +203,29 @@ bridge_ops:
     abi:
       - type: ptr    # storage, synthesized by the bridge lowering
       - type: i32    # consumer local buffer address
+    tmpl_map:
+      - source: pipe.init
+        field: pipe
+        target: Pipe
   - op: pto.tpush
     family: pipe
     entry: pto_vpto_pipe_push
     abi:
       - type: ptr    # storage
       - type: i64    # producer tile address
+    tmpl_map:
+      - source: tile
+        field: tile
+        target: ProducerTile
   - op: pto.tpop
     family: pipe
     entry: pto_vpto_pipe_pop
     abi:
       - type: ptr    # storage
+    tmpl_map:
+      - source: tile
+        field: tile
+        target: ConsumerTile
   - op: pto.tfree
     family: pipe
     entry: pto_vpto_pipe_free
@@ -246,6 +264,110 @@ bridge_ops:
       - source: acc_in_tile
         field: tile
         target: AccInTile
+  - op: pto.tmatmul.bias
+    family: matmul
+    entry: pto_vpto_matmul_bias
+    abi:
+      - type: i64    # result tile address
+      - type: i64    # left tile address
+      - type: i64    # right tile address
+      - type: i64    # bias tile address
+    tmpl_map:
+      - source: left_tile
+        field: tile
+        target: LeftTile
+      - source: right_tile
+        field: tile
+        target: RightTile
+      - source: result_tile
+        field: tile
+        target: ResultTile
+      - source: bias_tile
+        field: tile
+        target: BiasTile
+  - op: pto.tmatmul.mx
+    family: matmul
+    entry: pto_vpto_matmul_mx
+    abi:
+      - type: i64    # result tile address
+      - type: i64    # left tile address
+      - type: i64    # left scale tile address
+      - type: i64    # right tile address
+      - type: i64    # right scale tile address
+    tmpl_map:
+      - source: left_tile
+        field: tile
+        target: LeftTile
+      - source: right_tile
+        field: tile
+        target: RightTile
+      - source: result_tile
+        field: tile
+        target: ResultTile
+      - source: a_scale_tile
+        field: tile
+        target: AScaleTile
+      - source: b_scale_tile
+        field: tile
+        target: BScaleTile
+  - op: pto.tmatmul.mx.acc
+    family: matmul
+    entry: pto_vpto_matmul_mx_acc
+    abi:
+      - type: i64    # result tile address
+      - type: i64    # accumulator input tile address
+      - type: i64    # left tile address
+      - type: i64    # left scale tile address
+      - type: i64    # right tile address
+      - type: i64    # right scale tile address
+    tmpl_map:
+      - source: left_tile
+        field: tile
+        target: LeftTile
+      - source: right_tile
+        field: tile
+        target: RightTile
+      - source: result_tile
+        field: tile
+        target: ResultTile
+      - source: acc_in_tile
+        field: tile
+        target: AccInTile
+      - source: a_scale_tile
+        field: tile
+        target: AScaleTile
+      - source: b_scale_tile
+        field: tile
+        target: BScaleTile
+  - op: pto.tmatmul.mx.bias
+    family: matmul
+    entry: pto_vpto_matmul_mx_bias
+    abi:
+      - type: i64    # result tile address
+      - type: i64    # left tile address
+      - type: i64    # left scale tile address
+      - type: i64    # right tile address
+      - type: i64    # right scale tile address
+      - type: i64    # bias tile address
+    tmpl_map:
+      - source: left_tile
+        field: tile
+        target: LeftTile
+      - source: right_tile
+        field: tile
+        target: RightTile
+      - source: result_tile
+        field: tile
+        target: ResultTile
+      - source: a_scale_tile
+        field: tile
+        target: AScaleTile
+      - source: b_scale_tile
+        field: tile
+        target: BScaleTile
+      - source: bias_tile
+        field: tile
+        target: BiasTile
 )yaml";
 
 std::string pto::resolveBridgeWhitelistPath(llvm::StringRef optionValue) {

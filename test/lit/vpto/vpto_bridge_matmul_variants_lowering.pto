@@ -1,0 +1,229 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// You may obtain a copy of the License at
+// https://www.huawei.com/
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A
+// PARTICULAR PURPOSE.
+// See LICENSE for more details.
+
+// MATMUL entry variants: bias, MX, MX-accumulate and MX-bias. Each variant
+// spreads its tile types over the operand roles (left/right/result plus the
+// variant-specific bias and per-operand scale tiles); the matmul family pass
+// collects all roles into the per-function specialization and the wrapper
+// generation pass renders the tmpl_map-declared typedefs plus the variant
+// entry bodies. The MX-bias IR op carries no accumulation phase, so its
+// call renders without a Phase template argument even when the module-shared
+// phase is set by another variant.
+
+// RUN: pto-test-opt %s "-pto-lower-matmul-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-matmul.yaml" | FileCheck %s --check-prefix=SPEC
+// RUN: pto-test-opt %s "-pto-lower-matmul-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-matmul.yaml" "-pto-emit-vpto-bridge-wrapper=whitelist-path=%S/Inputs/vpto-bridge-whitelist-matmul.yaml" | FileCheck %s --check-prefix=WRAP
+
+// SPEC-LABEL: func.func private @matmul_bias_bridge_cube
+// SPEC-SAME: pto.vpto.bridge.func_spec = {
+// SPEC-SAME: bias_tile = "pto::Tile<pto::TileType::Bias, float, 1, 16, pto::BLayout::RowMajor, 1, 16>"
+// SPEC-SAME: entry.matmul_bias = "pto_vpto_matmul_bias"
+// SPEC: pto.bridge_call "pto_vpto_matmul_bias"
+// SPEC-SAME: : i64, i64, i64, i64
+// SPEC-NOT: pto.tmatmul.bias
+
+// SPEC-LABEL: func.func private @matmul_mx_bridge_cube
+// SPEC-SAME: pto.vpto.bridge.func_spec = {
+// SPEC-SAME: a_scale_tile = "pto::Tile<pto::TileType::Scaling, half, 16, 16, pto::BLayout::RowMajor, 16, 16, pto::SLayout::RowMajor, 32>"
+// SPEC-SAME: b_scale_tile = "pto::Tile<pto::TileType::Scaling, half, 16, 16, pto::BLayout::ColMajor, 16, 16, pto::SLayout::ColMajor, 32>"
+// SPEC-SAME: entry.matmul_mx = "pto_vpto_matmul_mx"
+// SPEC: pto.bridge_call "pto_vpto_matmul_mx"
+// SPEC-SAME: : i64, i64, i64, i64, i64
+// SPEC-NOT: pto.tmatmul.mx
+
+// SPEC-LABEL: func.func private @matmul_mx_acc_bridge_cube
+// SPEC-SAME: pto.vpto.bridge.func_spec = {
+// SPEC-SAME: acc_in_tile = "pto::Tile<pto::TileType::Acc, float, 16, 16, pto::BLayout::ColMajor, 16, 16, pto::SLayout::RowMajor, 1024>"
+// SPEC-SAME: entry.matmul_mx_acc = "pto_vpto_matmul_mx_acc"
+// SPEC: pto.bridge_call "pto_vpto_matmul_mx_acc"
+// SPEC-SAME: : i64, i64, i64, i64, i64, i64
+// SPEC-NOT: pto.tmatmul.mx.acc
+
+// SPEC-LABEL: func.func private @matmul_mx_bias_bridge_cube
+// SPEC-SAME: pto.vpto.bridge.func_spec = {
+// SPEC-SAME: bias_tile = "pto::Tile<pto::TileType::Bias, float, 1, 16, pto::BLayout::RowMajor, 1, 16>"
+// SPEC-SAME: entry.matmul_mx_bias = "pto_vpto_matmul_mx_bias"
+// SPEC: pto.bridge_call "pto_vpto_matmul_mx_bias"
+// SPEC-SAME: : i64, i64, i64, i64, i64, i64
+// SPEC-NOT: pto.tmatmul.mx.bias
+
+// WRAP: module attributes {{{.*}}pto.vpto.bridge.wrapper_source = "
+// WRAP-SAME: using LeftTile = pto::Tile<pto::TileType::Left, float8_e4m3_t, 16, 512, pto::BLayout::ColMajor, 16, 512, pto::SLayout::RowMajor, 512>;
+// WRAP-SAME: using RightTile = pto::Tile<pto::TileType::Right, float8_e4m3_t, 512, 16, pto::BLayout::RowMajor, 512, 16, pto::SLayout::ColMajor, 512>;
+// WRAP-SAME: using ResultTile = pto::Tile<pto::TileType::Acc, float, 16, 16, pto::BLayout::ColMajor, 16, 16, pto::SLayout::RowMajor, 1024>;
+// WRAP-SAME: using BiasTile = pto::Tile<pto::TileType::Bias, float, 1, 16, pto::BLayout::RowMajor, 1, 16>;
+// WRAP-SAME: using AScaleTile = pto::Tile<pto::TileType::Scaling, half, 16, 16, pto::BLayout::RowMajor, 16, 16, pto::SLayout::RowMajor, 32>;
+// WRAP-SAME: using BScaleTile = pto::Tile<pto::TileType::Scaling, half, 16, 16, pto::BLayout::ColMajor, 16, 16, pto::SLayout::ColMajor, 32>;
+// WRAP-SAME: using AccInTile = pto::Tile<pto::TileType::Acc, float, 16, 16, pto::BLayout::ColMajor, 16, 16, pto::SLayout::RowMajor, 1024>;
+// WRAP-SAME: #ifdef __DAV_CUBE__
+// WRAP-SAME: pto_vpto_matmul_bias(uint64_t dstAddress, uint64_t lhsAddress, uint64_t rhsAddress, uint64_t biasAddress)
+// WRAP-SAME: pto::TMATMUL_BIAS<pto::AccPhase::Final>(dst, lhs, rhs, bias);
+// WRAP-SAME: pto_vpto_matmul_mx(uint64_t dstAddress, uint64_t lhsAddress, uint64_t aScaleAddress, uint64_t rhsAddress, uint64_t bScaleAddress)
+// WRAP-SAME: pto::TMATMUL_MX<pto::AccPhase::Final>(dst, lhs, aScale, rhs, bScale);
+// WRAP-SAME: pto_vpto_matmul_mx_acc(uint64_t dstAddress, uint64_t accInAddress, uint64_t lhsAddress, uint64_t aScaleAddress, uint64_t rhsAddress, uint64_t bScaleAddress)
+// WRAP-SAME: pto::TMATMUL_MX<pto::AccPhase::Final>(dst, accIn, lhs, aScale, rhs, bScale);
+// WRAP-SAME: pto_vpto_matmul_mx_bias(uint64_t dstAddress, uint64_t lhsAddress, uint64_t aScaleAddress, uint64_t rhsAddress, uint64_t bScaleAddress, uint64_t biasAddress)
+// WRAP-SAME: pto::TMATMUL_MX(dst, lhs, aScale, rhs, bScale, bias);
+// WRAP-SAME: #endif
+// WRAP-NOT: pto.vpto.bridge.func_spec
+
+module attributes {pto.target_arch = "a5"} {
+  func.func private @matmul_bias_bridge_cube(%addr: i32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : i64
+    %c1024 = arith.constant 1024 : i64
+    %c2048 = arith.constant 2048 : i64
+    %c4096 = arith.constant 4096 : i64
+    %lhs = pto.alloc_tile addr = %c0
+      : !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=16, cols=512, v_row=16, v_col=512,
+                      blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    %rhs = pto.alloc_tile addr = %c1024
+      : !pto.tile_buf<loc=right, dtype=f8E4M3FN, rows=512, cols=16, v_row=512, v_col=16,
+                      blayout=row_major, slayout=col_major, fractal=512, pad=0>
+    %bias = pto.alloc_tile addr = %c2048
+      : !pto.tile_buf<loc=bias, dtype=f32, rows=1, cols=16, v_row=1, v_col=16,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %acc = pto.alloc_tile addr = %c4096
+      : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    pto.tmatmul.bias ins(%lhs, %rhs, %bias
+      : !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=16, cols=512, v_row=16, v_col=512,
+                      blayout=col_major, slayout=row_major, fractal=512, pad=0>,
+        !pto.tile_buf<loc=right, dtype=f8E4M3FN, rows=512, cols=16, v_row=512, v_col=16,
+                      blayout=row_major, slayout=col_major, fractal=512, pad=0>,
+        !pto.tile_buf<loc=bias, dtype=f32, rows=1, cols=16, v_row=1, v_col=16,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%acc : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                                blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+      {accPhase = #pto<acc_phase final>}
+    return
+  }
+
+  func.func private @matmul_mx_bridge_cube(%addr: i32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : i64
+    %c1024 = arith.constant 1024 : i64
+    %c2048 = arith.constant 2048 : i64
+    %c4096 = arith.constant 4096 : i64
+    %c8192 = arith.constant 8192 : i64
+    %lhs = pto.alloc_tile addr = %c0
+      : !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=16, cols=512, v_row=16, v_col=512,
+                      blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    %a_scale = pto.alloc_tile addr = %c1024
+      : !pto.tile_buf<loc=scaling, dtype=f16, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=row_major, slayout=row_major, fractal=32, pad=0>
+    %rhs = pto.alloc_tile addr = %c2048
+      : !pto.tile_buf<loc=right, dtype=f8E4M3FN, rows=512, cols=16, v_row=512, v_col=16,
+                      blayout=row_major, slayout=col_major, fractal=512, pad=0>
+    %b_scale = pto.alloc_tile addr = %c4096
+      : !pto.tile_buf<loc=scaling, dtype=f16, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=col_major, fractal=32, pad=0>
+    %acc = pto.alloc_tile addr = %c8192
+      : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    pto.tmatmul.mx ins(%lhs, %a_scale, %rhs, %b_scale
+      : !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=16, cols=512, v_row=16, v_col=512,
+                      blayout=col_major, slayout=row_major, fractal=512, pad=0>,
+        !pto.tile_buf<loc=scaling, dtype=f16, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=row_major, slayout=row_major, fractal=32, pad=0>,
+        !pto.tile_buf<loc=right, dtype=f8E4M3FN, rows=512, cols=16, v_row=512, v_col=16,
+                      blayout=row_major, slayout=col_major, fractal=512, pad=0>,
+        !pto.tile_buf<loc=scaling, dtype=f16, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=col_major, fractal=32, pad=0>)
+      outs(%acc : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                                blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+      {accPhase = #pto<acc_phase final>}
+    return
+  }
+
+  func.func private @matmul_mx_acc_bridge_cube(%addr: i32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : i64
+    %c1024 = arith.constant 1024 : i64
+    %c2048 = arith.constant 2048 : i64
+    %c4096 = arith.constant 4096 : i64
+    %c8192 = arith.constant 8192 : i64
+    %c16384 = arith.constant 16384 : i64
+    %c_in = pto.alloc_tile addr = %c0
+      : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    %lhs = pto.alloc_tile addr = %c1024
+      : !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=16, cols=512, v_row=16, v_col=512,
+                      blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    %a_scale = pto.alloc_tile addr = %c2048
+      : !pto.tile_buf<loc=scaling, dtype=f16, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=row_major, slayout=row_major, fractal=32, pad=0>
+    %rhs = pto.alloc_tile addr = %c4096
+      : !pto.tile_buf<loc=right, dtype=f8E4M3FN, rows=512, cols=16, v_row=512, v_col=16,
+                      blayout=row_major, slayout=col_major, fractal=512, pad=0>
+    %b_scale = pto.alloc_tile addr = %c8192
+      : !pto.tile_buf<loc=scaling, dtype=f16, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=col_major, fractal=32, pad=0>
+    %acc = pto.alloc_tile addr = %c16384
+      : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    pto.tmatmul.mx.acc ins(%c_in, %lhs, %a_scale, %rhs, %b_scale
+      : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=row_major, fractal=1024, pad=0>,
+        !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=16, cols=512, v_row=16, v_col=512,
+                      blayout=col_major, slayout=row_major, fractal=512, pad=0>,
+        !pto.tile_buf<loc=scaling, dtype=f16, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=row_major, slayout=row_major, fractal=32, pad=0>,
+        !pto.tile_buf<loc=right, dtype=f8E4M3FN, rows=512, cols=16, v_row=512, v_col=16,
+                      blayout=row_major, slayout=col_major, fractal=512, pad=0>,
+        !pto.tile_buf<loc=scaling, dtype=f16, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=col_major, fractal=32, pad=0>)
+      outs(%acc : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                                blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+      {accPhase = #pto<acc_phase final>}
+    return
+  }
+
+  func.func private @matmul_mx_bias_bridge_cube(%addr: i32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : i64
+    %c1024 = arith.constant 1024 : i64
+    %c2048 = arith.constant 2048 : i64
+    %c4096 = arith.constant 4096 : i64
+    %c8192 = arith.constant 8192 : i64
+    %c16384 = arith.constant 16384 : i64
+    %lhs = pto.alloc_tile addr = %c0
+      : !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=16, cols=512, v_row=16, v_col=512,
+                      blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    %a_scale = pto.alloc_tile addr = %c1024
+      : !pto.tile_buf<loc=scaling, dtype=f16, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=row_major, slayout=row_major, fractal=32, pad=0>
+    %rhs = pto.alloc_tile addr = %c2048
+      : !pto.tile_buf<loc=right, dtype=f8E4M3FN, rows=512, cols=16, v_row=512, v_col=16,
+                      blayout=row_major, slayout=col_major, fractal=512, pad=0>
+    %b_scale = pto.alloc_tile addr = %c4096
+      : !pto.tile_buf<loc=scaling, dtype=f16, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=col_major, fractal=32, pad=0>
+    %bias = pto.alloc_tile addr = %c8192
+      : !pto.tile_buf<loc=bias, dtype=f32, rows=1, cols=16, v_row=1, v_col=16,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %acc = pto.alloc_tile addr = %c16384
+      : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    pto.tmatmul.mx.bias ins(%lhs, %a_scale, %rhs, %b_scale, %bias
+      : !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=16, cols=512, v_row=16, v_col=512,
+                      blayout=col_major, slayout=row_major, fractal=512, pad=0>,
+        !pto.tile_buf<loc=scaling, dtype=f16, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=row_major, slayout=row_major, fractal=32, pad=0>,
+        !pto.tile_buf<loc=right, dtype=f8E4M3FN, rows=512, cols=16, v_row=512, v_col=16,
+                      blayout=row_major, slayout=col_major, fractal=512, pad=0>,
+        !pto.tile_buf<loc=scaling, dtype=f16, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=col_major, fractal=32, pad=0>,
+        !pto.tile_buf<loc=bias, dtype=f32, rows=1, cols=16, v_row=1, v_col=16,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%acc : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                                blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+    return
+  }
+}

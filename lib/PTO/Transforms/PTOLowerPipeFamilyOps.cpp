@@ -217,14 +217,38 @@ struct PTOLowerPipeFamilyOpsPass final
     // Phase 2: tpop -> bridge pop call; record the returned FIFO slot
     // address for the declared tile it rebinds.
     llvm::DenseMap<Value, Value> popAddresses;
+    // The wrapper renders one shared TileSplitAxis template argument for the
+    // push/pop/free entries, so every bridged op of the function must agree
+    // on the split value. The first bridged op fixes it; later ops check
+    // against it. Cross-function mismatches surface as a spec merge conflict
+    // in the wrapper generation pass.
+    std::optional<int64_t> bridgedSplit;
+    auto checkSplitConsistency = [&](Operation *op, int64_t split,
+                                     llvm::StringRef opName) {
+      if (bridgedSplit && *bridgedSplit != split) {
+        op->emitError() << "VPTO pipe bridge " << opName << " split " << split
+                        << " does not match the split " << *bridgedSplit
+                        << " already bridged in this function; the wrapper "
+                           "renders one shared TileSplitAxis";
+        hadError = true;
+        return false;
+      }
+      if (!bridgedSplit) {
+        auto splitTokOr = buildBridgeTileSplitToken(split);
+        if (failed(splitTokOr)) {
+          op->emitError() << "VPTO pipe bridge " << opName
+                          << " carries an unsupported split value " << split;
+          hadError = true;
+          return false;
+        }
+        specFields.emplace_back(kBridgeSpecSplitKey, *splitTokOr);
+        bridgedSplit = split;
+      }
+      return true;
+    };
     for (TPopOp pop : pops) {
       const BridgeWhitelistEntry *entry = routeOp(pop);
       if (!entry) {
-        continue;
-      }
-      if (pop.getSplit() != 1) {
-        pop.emitError("VPTO pipe bridge TPOP requires split=1");
-        hadError = true;
         continue;
       }
       if (popAddresses.count(pop.getTile())) {
@@ -241,15 +265,16 @@ struct PTOLowerPipeFamilyOpsPass final
         continue;
       }
       auto consumerTokOr = buildBridgeTileToken(consumerTileTy);
-      auto popSplitTokOr = buildBridgeTileSplitToken(pop.getSplit());
-      if (failed(consumerTokOr) || failed(popSplitTokOr)) {
-        pop.emitError("VPTO pipe bridge failed to build the consumer tile or "
-                      "split template token for TPOP");
+      if (failed(consumerTokOr)) {
+        pop.emitError("VPTO pipe bridge failed to build the consumer tile "
+                      "template token for TPOP");
         hadError = true;
         continue;
       }
+      if (!checkSplitConsistency(pop, pop.getSplit(), "TPOP")) {
+        continue;
+      }
       specFields.emplace_back(kBridgeSpecConsumerTileKey, *consumerTokOr);
-      specFields.emplace_back(kBridgeSpecSplitKey, *popSplitTokOr);
       specFields.emplace_back(kBridgeSpecEntryPopKey, entry->entry);
       builder.setInsertionPoint(pop);
       BridgeCallOp call = builder.create<BridgeCallOp>(
@@ -284,9 +309,9 @@ struct PTOLowerPipeFamilyOpsPass final
         continue;
       }
       auto alloc = push.getTile().getDefiningOp<AllocTileOp>();
-      if (push.getSplit() != 1 || !alloc || !alloc.getAddr()) {
-        push.emitError("VPTO pipe bridge TPUSH requires split=1 and a tile "
-                       "from an alloc_tile with a planned address");
+      if (!alloc || !alloc.getAddr()) {
+        push.emitError("VPTO pipe bridge TPUSH requires a tile from an "
+                       "alloc_tile with a planned address");
         hadError = true;
         continue;
       }
@@ -303,6 +328,9 @@ struct PTOLowerPipeFamilyOpsPass final
         hadError = true;
         continue;
       }
+      if (!checkSplitConsistency(push, push.getSplit(), "TPUSH")) {
+        continue;
+      }
       specFields.emplace_back(kBridgeSpecProducerTileKey, *producerTokOr);
       specFields.emplace_back(kBridgeSpecEntryPushKey, entry->entry);
       builder.setInsertionPoint(push);
@@ -317,10 +345,13 @@ struct PTOLowerPipeFamilyOpsPass final
       if (!entry) {
         continue;
       }
-      if (free.getEntry() || free.getSplit() != 1) {
-        free.emitError(
-            "VPTO pipe bridge TFREE supports the tile-entry form with split=1");
+      if (free.getEntry()) {
+        free.emitError("VPTO pipe bridge TFREE supports the pipe-entry form "
+                       "without a tile operand");
         hadError = true;
+        continue;
+      }
+      if (!checkSplitConsistency(free, free.getSplit(), "TFREE")) {
         continue;
       }
       specFields.emplace_back(kBridgeSpecEntryFreeKey, entry->entry);

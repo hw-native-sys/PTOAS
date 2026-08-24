@@ -12,9 +12,10 @@
 //===----------------------------------------------------------------------===//
 //
 // MATMUL family pass of the VPTO C++ interface bridge. It understands the
-// semantics of the tile-world matmul ops (tmatmul / tmatmul.acc) and
-// rewrites them into generic pto.bridge_call ops that carry only the
-// wrapper callee name and the planned i64 addresses of the operand tiles.
+// semantics of the tile-world matmul ops (tmatmul / tmatmul.acc and the
+// bias/MX entry variants) and rewrites them into generic pto.bridge_call
+// ops that carry only the wrapper callee name and the planned i64
+// addresses of the operand tiles.
 // Unlike the pipe family there is no storage lifecycle and no address
 // rebinding: the tile type information is spread over the operand tile
 // types, and all of it is collected here into the per-function bridge
@@ -37,6 +38,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
 
 namespace mlir {
 namespace pto {
@@ -87,14 +89,27 @@ struct PTOLowerMatmulFamilyOpsPass final
     // Collect first; rewriting during the walk would invalidate the walker.
     SmallVector<TMatmulOp> matmuls;
     SmallVector<TMatmulAccOp> matmulAccs;
+    SmallVector<TMatmulBiasOp> matmulBiases;
+    SmallVector<TMatmulMxOp> matmulMxes;
+    SmallVector<TMatmulMxAccOp> matmulMxAccs;
+    SmallVector<TMatmulMxBiasOp> matmulMxBiases;
     func.walk([&](Operation *op) {
       if (auto matmul = dyn_cast<TMatmulOp>(op)) {
         matmuls.push_back(matmul);
       } else if (auto matmulAcc = dyn_cast<TMatmulAccOp>(op)) {
         matmulAccs.push_back(matmulAcc);
+      } else if (auto matmulBias = dyn_cast<TMatmulBiasOp>(op)) {
+        matmulBiases.push_back(matmulBias);
+      } else if (auto matmulMx = dyn_cast<TMatmulMxOp>(op)) {
+        matmulMxes.push_back(matmulMx);
+      } else if (auto matmulMxAcc = dyn_cast<TMatmulMxAccOp>(op)) {
+        matmulMxAccs.push_back(matmulMxAcc);
+      } else if (auto matmulMxBias = dyn_cast<TMatmulMxBiasOp>(op)) {
+        matmulMxBiases.push_back(matmulMxBias);
       }
     });
-    if (matmuls.empty() && matmulAccs.empty()) {
+    if (matmuls.empty() && matmulAccs.empty() && matmulBiases.empty() &&
+        matmulMxes.empty() && matmulMxAccs.empty() && matmulMxBiases.empty()) {
       return;
     }
 
@@ -119,6 +134,26 @@ struct PTOLowerMatmulFamilyOpsPass final
     // wrapper generation pass merges the per-function specs deterministically
     // (the family pass instances may run concurrently).
     SmallVector<std::pair<std::string, std::string>> specFields;
+    // The spec becomes a DictionaryAttr, so each key may appear at most
+    // once. Repeat writes with the same token are harmless (multiple ops
+    // sharing a tile shape or entry); a different token for a key already
+    // written is a conflict the wrapper cannot render.
+    llvm::StringMap<std::string> writtenSpecFields;
+    auto addSpecField = [&](Operation *op, llvm::StringLiteral key,
+                            std::string token) {
+      auto inserted = writtenSpecFields.try_emplace(key, token);
+      if (inserted.second) {
+        specFields.emplace_back(key, token);
+        return;
+      }
+      if (inserted.first->second != token) {
+        op->emitError() << "VPTO matmul bridge spec field '" << key
+                        << "' was already collected as '"
+                        << inserted.first->second
+                        << "'; the wrapper renders one token per spec field";
+        hadError = true;
+      }
+    };
     // Tile handles consumed by bridged matmul ops; erased once use-empty.
     SmallVector<AllocTileOp> bridgedAllocs;
 
@@ -156,7 +191,7 @@ struct PTOLowerMatmulFamilyOpsPass final
         hadError = true;
         return;
       }
-      specFields.emplace_back(specKey, *tileTokOr);
+      addSpecField(op, specKey, *tileTokOr);
       if (auto alloc = tile.getDefiningOp<AllocTileOp>()) {
         bridgedAllocs.push_back(alloc);
       }
@@ -187,9 +222,9 @@ struct PTOLowerMatmulFamilyOpsPass final
       collectTileToken(matmul, matmul.getDst(), kBridgeSpecResultTileKey,
                        "result");
       if (auto phaseTok = buildAccPhaseToken(matmul.getAccPhase())) {
-        specFields.emplace_back(kBridgeSpecAccPhaseKey, *phaseTok);
+        addSpecField(matmul, kBridgeSpecAccPhaseKey, *phaseTok);
       }
-      specFields.emplace_back(kBridgeSpecEntryMatmulKey, entry->entry);
+      addSpecField(matmul, kBridgeSpecEntryMatmulKey, entry->entry);
       OpBuilder builder(matmul);
       builder.create<BridgeCallOp>(matmul.getLoc(), /*results=*/TypeRange{},
                                    /*callee=*/entry->entry,
@@ -231,15 +266,215 @@ struct PTOLowerMatmulFamilyOpsPass final
       collectTileToken(matmulAcc, matmulAcc.getAccIn(),
                        kBridgeSpecAccInTileKey, "accumulator");
       if (auto phaseTok = buildAccPhaseToken(matmulAcc.getAccPhase())) {
-        specFields.emplace_back(kBridgeSpecAccPhaseKey, *phaseTok);
+        addSpecField(matmulAcc, kBridgeSpecAccPhaseKey, *phaseTok);
       }
-      specFields.emplace_back(kBridgeSpecEntryMatmulAccKey, entry->entry);
+      addSpecField(matmulAcc, kBridgeSpecEntryMatmulAccKey, entry->entry);
       OpBuilder builder(matmulAcc);
       builder.create<BridgeCallOp>(
           matmulAcc.getLoc(), /*results=*/TypeRange{},
           /*callee=*/entry->entry, /*storage_size_callee=*/nullptr,
           /*args=*/ValueRange{dstAddr, accInAddr, lhsAddr, rhsAddr});
       matmulAcc.erase();
+    }
+
+    for (TMatmulBiasOp matmulBias : matmulBiases) {
+      const BridgeWhitelistEntry *entry = whitelist.findOp(
+          matmulBias->getName().getStringRef());
+      if (!entry) {
+        continue;
+      }
+      Value dstAddr =
+          resolvePlannedTile(matmulBias, matmulBias.getDst(), "result");
+      Value lhsAddr = resolvePlannedTile(matmulBias, matmulBias.getA(), "left");
+      Value rhsAddr =
+          resolvePlannedTile(matmulBias, matmulBias.getB(), "right");
+      Value biasAddr =
+          resolvePlannedTile(matmulBias, matmulBias.getBias(), "bias");
+      if (!dstAddr || !lhsAddr || !rhsAddr || !biasAddr) {
+        continue;
+      }
+      if (matmulBias.getNumResults() > 0) {
+        matmulBias.emitError("VPTO matmul bridge supports the buffer form "
+                             "without a tensor result");
+        hadError = true;
+        continue;
+      }
+      collectTileToken(matmulBias, matmulBias.getA(), kBridgeSpecLeftTileKey,
+                       "left");
+      collectTileToken(matmulBias, matmulBias.getB(), kBridgeSpecRightTileKey,
+                       "right");
+      collectTileToken(matmulBias, matmulBias.getDst(),
+                       kBridgeSpecResultTileKey, "result");
+      collectTileToken(matmulBias, matmulBias.getBias(),
+                       kBridgeSpecBiasTileKey, "bias");
+      if (auto phaseTok = buildAccPhaseToken(matmulBias.getAccPhase())) {
+        addSpecField(matmulBias, kBridgeSpecAccPhaseKey, *phaseTok);
+      }
+      addSpecField(matmulBias, kBridgeSpecEntryMatmulBiasKey, entry->entry);
+      OpBuilder builder(matmulBias);
+      builder.create<BridgeCallOp>(
+          matmulBias.getLoc(), /*results=*/TypeRange{},
+          /*callee=*/entry->entry, /*storage_size_callee=*/nullptr,
+          /*args=*/ValueRange{dstAddr, lhsAddr, rhsAddr, biasAddr});
+      matmulBias.erase();
+    }
+
+    for (TMatmulMxOp matmulMx : matmulMxes) {
+      const BridgeWhitelistEntry *entry = whitelist.findOp(
+          matmulMx->getName().getStringRef());
+      if (!entry) {
+        continue;
+      }
+      Value dstAddr = resolvePlannedTile(matmulMx, matmulMx.getDst(), "result");
+      Value lhsAddr = resolvePlannedTile(matmulMx, matmulMx.getA(), "left");
+      Value aScaleAddr =
+          resolvePlannedTile(matmulMx, matmulMx.getAScale(), "left scale");
+      Value rhsAddr = resolvePlannedTile(matmulMx, matmulMx.getB(), "right");
+      Value bScaleAddr =
+          resolvePlannedTile(matmulMx, matmulMx.getBScale(), "right scale");
+      if (!dstAddr || !lhsAddr || !aScaleAddr || !rhsAddr || !bScaleAddr) {
+        continue;
+      }
+      if (matmulMx.getNumResults() > 0) {
+        matmulMx.emitError("VPTO matmul bridge supports the buffer form "
+                           "without a tensor result");
+        hadError = true;
+        continue;
+      }
+      collectTileToken(matmulMx, matmulMx.getA(), kBridgeSpecLeftTileKey,
+                       "left");
+      collectTileToken(matmulMx, matmulMx.getB(), kBridgeSpecRightTileKey,
+                       "right");
+      collectTileToken(matmulMx, matmulMx.getDst(), kBridgeSpecResultTileKey,
+                       "result");
+      collectTileToken(matmulMx, matmulMx.getAScale(),
+                       kBridgeSpecAScaleTileKey, "left scale");
+      collectTileToken(matmulMx, matmulMx.getBScale(),
+                       kBridgeSpecBScaleTileKey, "right scale");
+      if (auto phaseTok = buildAccPhaseToken(matmulMx.getAccPhase())) {
+        addSpecField(matmulMx, kBridgeSpecAccPhaseKey, *phaseTok);
+      }
+      addSpecField(matmulMx, kBridgeSpecEntryMatmulMxKey, entry->entry);
+      OpBuilder builder(matmulMx);
+      builder.create<BridgeCallOp>(
+          matmulMx.getLoc(), /*results=*/TypeRange{},
+          /*callee=*/entry->entry, /*storage_size_callee=*/nullptr,
+          /*args=*/
+          ValueRange{dstAddr, lhsAddr, aScaleAddr, rhsAddr, bScaleAddr});
+      matmulMx.erase();
+    }
+
+    for (TMatmulMxAccOp matmulMxAcc : matmulMxAccs) {
+      const BridgeWhitelistEntry *entry = whitelist.findOp(
+          matmulMxAcc->getName().getStringRef());
+      if (!entry) {
+        continue;
+      }
+      Value dstAddr =
+          resolvePlannedTile(matmulMxAcc, matmulMxAcc.getDst(), "result");
+      Value cInAddr =
+          resolvePlannedTile(matmulMxAcc, matmulMxAcc.getCIn(), "accumulator");
+      Value lhsAddr = resolvePlannedTile(matmulMxAcc, matmulMxAcc.getA(),
+                                         "left");
+      Value aScaleAddr = resolvePlannedTile(matmulMxAcc,
+                                            matmulMxAcc.getAScale(),
+                                            "left scale");
+      Value rhsAddr = resolvePlannedTile(matmulMxAcc, matmulMxAcc.getB(),
+                                         "right");
+      Value bScaleAddr = resolvePlannedTile(matmulMxAcc,
+                                            matmulMxAcc.getBScale(),
+                                            "right scale");
+      if (!dstAddr || !cInAddr || !lhsAddr || !aScaleAddr || !rhsAddr ||
+          !bScaleAddr) {
+        continue;
+      }
+      if (matmulMxAcc.getNumResults() > 0) {
+        matmulMxAcc.emitError("VPTO matmul bridge supports the buffer form "
+                              "without a tensor result");
+        hadError = true;
+        continue;
+      }
+      collectTileToken(matmulMxAcc, matmulMxAcc.getA(),
+                       kBridgeSpecLeftTileKey, "left");
+      collectTileToken(matmulMxAcc, matmulMxAcc.getB(),
+                       kBridgeSpecRightTileKey, "right");
+      collectTileToken(matmulMxAcc, matmulMxAcc.getDst(),
+                       kBridgeSpecResultTileKey, "result");
+      collectTileToken(matmulMxAcc, matmulMxAcc.getCIn(),
+                       kBridgeSpecAccInTileKey, "accumulator");
+      collectTileToken(matmulMxAcc, matmulMxAcc.getAScale(),
+                       kBridgeSpecAScaleTileKey, "left scale");
+      collectTileToken(matmulMxAcc, matmulMxAcc.getBScale(),
+                       kBridgeSpecBScaleTileKey, "right scale");
+      if (auto phaseTok = buildAccPhaseToken(matmulMxAcc.getAccPhase())) {
+        addSpecField(matmulMxAcc, kBridgeSpecAccPhaseKey, *phaseTok);
+      }
+      addSpecField(matmulMxAcc, kBridgeSpecEntryMatmulMxAccKey,
+                   entry->entry);
+      OpBuilder builder(matmulMxAcc);
+      builder.create<BridgeCallOp>(
+          matmulMxAcc.getLoc(), /*results=*/TypeRange{},
+          /*callee=*/entry->entry, /*storage_size_callee=*/nullptr,
+          /*args=*/
+          ValueRange{dstAddr, cInAddr, lhsAddr, aScaleAddr, rhsAddr,
+                     bScaleAddr});
+      matmulMxAcc.erase();
+    }
+
+    for (TMatmulMxBiasOp matmulMxBias : matmulMxBiases) {
+      const BridgeWhitelistEntry *entry = whitelist.findOp(
+          matmulMxBias->getName().getStringRef());
+      if (!entry) {
+        continue;
+      }
+      Value dstAddr =
+          resolvePlannedTile(matmulMxBias, matmulMxBias.getDst(), "result");
+      Value lhsAddr =
+          resolvePlannedTile(matmulMxBias, matmulMxBias.getA(), "left");
+      Value aScaleAddr = resolvePlannedTile(matmulMxBias,
+                                            matmulMxBias.getAScale(),
+                                            "left scale");
+      Value rhsAddr =
+          resolvePlannedTile(matmulMxBias, matmulMxBias.getB(), "right");
+      Value bScaleAddr = resolvePlannedTile(matmulMxBias,
+                                            matmulMxBias.getBScale(),
+                                            "right scale");
+      Value biasAddr =
+          resolvePlannedTile(matmulMxBias, matmulMxBias.getBias(), "bias");
+      if (!dstAddr || !lhsAddr || !aScaleAddr || !rhsAddr || !bScaleAddr ||
+          !biasAddr) {
+        continue;
+      }
+      if (matmulMxBias.getNumResults() > 0) {
+        matmulMxBias.emitError("VPTO matmul bridge supports the buffer form "
+                               "without a tensor result");
+        hadError = true;
+        continue;
+      }
+      collectTileToken(matmulMxBias, matmulMxBias.getA(),
+                       kBridgeSpecLeftTileKey, "left");
+      collectTileToken(matmulMxBias, matmulMxBias.getB(),
+                       kBridgeSpecRightTileKey, "right");
+      collectTileToken(matmulMxBias, matmulMxBias.getDst(),
+                       kBridgeSpecResultTileKey, "result");
+      collectTileToken(matmulMxBias, matmulMxBias.getAScale(),
+                       kBridgeSpecAScaleTileKey, "left scale");
+      collectTileToken(matmulMxBias, matmulMxBias.getBScale(),
+                       kBridgeSpecBScaleTileKey, "right scale");
+      collectTileToken(matmulMxBias, matmulMxBias.getBias(),
+                       kBridgeSpecBiasTileKey, "bias");
+      // The MX-bias IR op carries no accumulation phase, so its wrapper
+      // entry renders without a Phase template argument.
+      addSpecField(matmulMxBias, kBridgeSpecEntryMatmulMxBiasKey,
+                   entry->entry);
+      OpBuilder builder(matmulMxBias);
+      builder.create<BridgeCallOp>(
+          matmulMxBias.getLoc(), /*results=*/TypeRange{},
+          /*callee=*/entry->entry, /*storage_size_callee=*/nullptr,
+          /*args=*/
+          ValueRange{dstAddr, lhsAddr, aScaleAddr, rhsAddr, bScaleAddr,
+                     biasAddr});
+      matmulMxBias.erase();
     }
 
     // Erase the tile handles consumed by the bridged matmul ops. Handles
