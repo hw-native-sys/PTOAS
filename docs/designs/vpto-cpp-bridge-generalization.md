@@ -452,3 +452,36 @@ Phase 4（工程化收尾：白名单正式通道 + tmpl_map 消费）已完成�
    `test/vpto/cases/kernels/fifo-variant-config`（与原 fifo 用例仅
    3 行差异：slot_num=4、flag_base=8、fifo 容量 4096），不带白名单
    文件，依赖内置默认；DEVICE=SIM compare passed。
+
+## 附：控制流边界探测——循环内消费 fifo（2026-08-24）
+
+针对决策记录第 5 条遗留的"控制流下 TPOP 重绑定未探测"边界，构造
+scf.for 内 push/pop/消费/free 的探测用例，双路径比对后得出结论：
+
+1. **循环内消费正确**：IR 中单一 pop op 被循环反复执行时，家族 pass
+   把每次迭代的 `bridge_call "..._pop"` 结果（i64 slot 地址）作为
+   循环体内的 SSA 值喂给同区域的 `bridge_inttoptr` 与消费 op，每次
+   迭代绑定到当次迭代的 fifo slot；EmitC 参照路径的形态为循环外声明
+   tile、循环内 `TPOP(pipe, tile)` 重绑定后消费 `tile.data()`，两者
+   语义一致。该边界解除"未探测"声明，转正为
+   `vpto_bridge_pipe_loop_consume.pto`（BRIDGE/EMITC 双前缀钉住循环体
+   内的降级形态）。
+2. **同一 tile 多 pop（顺序重绑定/循环展开形态）此前会 crash**：
+   `popAddresses` 每 tile 只记一个地址（后写覆盖前者，静默错址隐患），
+   且重复 emplace 的 spec key 在 `DictionaryAttr::get` 处触发 MLIR
+   断言崩溃。已在家族 pass 加两道防线：第二次 pop 同一 tile 报显式
+   诊断（"at most one TPOP per declared tile"）；spec 写入前查重，
+   重复 key 报函数级诊断而非崩溃（兜底覆盖 push/多 tile 等其它重复
+   形态）。诊断测试：`vpto_bridge_pop_rebind_diag.pto`。
+3. **tile 级计算 op（如 tadd）直接使用 tile SSA**：维持既有显式诊断
+   （"declare_tile still has users"）——桥接消费面目前仅支持地址形态
+   （`tile_buf_addr` → 指针），与端到端用例的消费方式一致，属声明的
+   设计边界而非缺陷。
+
+另核实一处历史描述偏差：Phase 0 提交信息（098ae29c）中提及的
+`PTOLowerFifoOps.cpp`/fifo.pop 修复在本仓库并不存在（实际 IR 为
+`pto.tpush`/`pto.tpop`，重绑定经 `PTOLowerPipeFamilyOps.cpp` 的
+`popAddresses` SSA 传播实现），以本文件与代码为准。
+
+回归：lit 全量 1779 用例、1774 过，4 个失败均为分支既有（RUN 行不含
+桥接 pass）；桥接相关 13 + 新增 2 全过。
