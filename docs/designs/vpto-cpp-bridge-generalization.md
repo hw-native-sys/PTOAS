@@ -385,3 +385,48 @@ Phase 3（第二接口族：CUBE 侧 MATMUL）已完成并验收通过，**通�
 7. **遗留**：TMatmul.hpp 的 quant 双 scale/bias 等入口变体未接入
    （家族 + 变体选择结构已就位）；`tmpl_map` 行仍仅校验不消费，
    与 Phase 2 同口径，留待 Phase 4。
+
+## 附：Phase 4 实施记录（2026-08-24）
+
+Phase 4（工程化收尾：白名单正式通道 + tmpl_map 消费）已完成并验收通过：
+
+1. **白名单正式通道**：新增 `loadBridgeWhitelist` 三级解析链（pass
+   `whitelist-path` option → `PTOAS_VPTO_BRIDGE_WHITELIST` env → 内置默认
+   白名单 `kDefaultBridgeWhitelistYaml`，pipe + matmul 全条目）；
+   `parseBridgeWhitelistFromBuffer` 从文件解析中提取，诊断以
+   `<built-in vpto bridge whitelist>` 标记来源。pipe 家族 pass 与通用
+   lowering 的“无白名单配置”诊断路径删除——`ptoas --pto-backend=vpto`
+   开箱即用；matmul 家族 pass 不再跳过未配置场景，默认改走桥接，
+   需要 mad 展开的内核用显式空路由白名单退出（见 5）。
+2. **tmpl_map 消费**：wrapper 生成 pass 新增 `whitelist-path` option 与
+   `validateTmplMapCoverage`——模块实际用到的每个白名单条目，其
+   tmpl_map 声明的每个模板槽位必须有家族 pass 收集到的 spec token
+   覆盖（source → spec key 映射经 `tmplMapSourceSpecKeys`），未覆盖报
+   明确诊断而非静默丢弃。字段级模板实参构建仍以 `VPTOBridgeTokens`
+   为权威（决策 4），本阶段“消费”落在覆盖校验形态；tmpl_map 行
+   驱动渲染替换收集 token 留待引入新变体/字段时再做。
+3. **脚本与用例清理**：`run_host_vpto_validation.sh` 删除 per-case
+   白名单探测与 env 注入（用户导出的 env 自然继承）；删除
+   `fifo-tile-data-consume` / `cube-matmul-bridge` 两个与内置默认
+   功能等价的 `vpto-bridge-whitelist.yaml`，端到端用例直接依赖内置默认。
+4. **PTO-ISA 头文件自动发现**：核实已由 ObjectEmission 的
+   `discoverCppIncludeDirs` 覆盖（main 2026-05 driver 提交引入：
+   `PTO_ISA_PATH`/`PTO_ISA_ROOT` env → `~/pto-isa` →
+   `~/llvm-workspace/pto-isa` 探测）；原计划提到的
+   `PTO_ISA_INCLUDE_DIR` 随 Phase 2 的手写通道一并删除，已不存在于
+   代码，本次未新增代码，仅在此更正原 Phase 4 描述。
+5. **lit 测试**：`vpto_bridge_no_whitelist_diag` 更名为
+   `vpto_bridge_default_whitelist_lowering` 并改为内置默认下 pipe op
+   正向降级的验证（`env -u` 排除机器 env 干扰）；新增
+   `vpto_bridge_whitelist_tmpl_coverage_diag` 与 2 个 fixture
+   （matmul-uncovered-tmpl / no-routing）；
+   `expand_tile_op_tilelang_tmatmul` 改用空路由白名单退出默认桥接路由。
+   全量回归 1776 用例、1771 过，4 个失败为分支既有（与 Phase 3 基线
+   一致，RUN 行均不含桥接 pass）。
+6. **模拟器端到端（dav_3510）**：零 env 注入
+   （`env -u PTOAS_VPTO_BRIDGE_WHITELIST`）下
+   `fifo-tile-data-consume` 与 `cube-matmul-bridge` 均 compare passed，
+   wrapper 编译的 PTO-ISA 头文件经 `~/pto-isa` 候选自动命中。
+7. **遗留**：TMatmul.hpp 的 quant 双 scale/bias 等入口变体未接入
+   （家族 + 变体选择结构已就位，新增时需同步扩展内置默认白名单）；
+   tmpl_map 行仍处于校验形态（见 2）。
