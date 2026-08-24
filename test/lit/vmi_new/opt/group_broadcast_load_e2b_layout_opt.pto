@@ -1,0 +1,52 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=VPTO --implicit-check-not=pto.vmi. --implicit-check-not='!pto.vmi'
+
+// An E2B-compatible group broadcast is seeded as deinterleaved-by-four. The
+// narrow/widen cast chain then requests contiguous data explicitly in
+// assignment, leaving the conversion visible instead of hiding it in lowering.
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @group_broadcast_load_e2b_layout_opt(
+      %scale_src: !pto.ptr<f32, ub>, %value_src: !pto.ptr<f32, ub>,
+      %dst: !pto.ptr<f32, ub>, %offset: index) {
+    %one = arith.constant 1 : index
+    %scale = pto.vmi.vload %scale_src[%offset], %one
+        {dist_mode = "brc", group = 8}
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<256xf32>
+    %value = pto.vmi.vload %value_src[%offset] {dist_mode = "continuous"}
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<256xf32>
+    %full = arith.constant 256 : index
+    %mask = pto.vmi.create_mask %full : index -> !pto.vmi.mask<256xpred>
+    %scaled = pto.vmi.vmul %value, %scale, %mask
+        : !pto.vmi.vreg<256xf32>, !pto.vmi.vreg<256xf32>,
+          !pto.vmi.mask<256xpred> -> !pto.vmi.vreg<256xf32>
+    %narrow = pto.vmi.vcvt %scaled {rounding = "R", saturate = "SAT"}
+        : !pto.vmi.vreg<256xf32> -> !pto.vmi.vreg<256xf8E4M3FN>
+    %wide = pto.vmi.vcvt %narrow
+        : !pto.vmi.vreg<256xf8E4M3FN> -> !pto.vmi.vreg<256xf32>
+    pto.vmi.vstore %wide, %dst[%offset] {dist_mode = "continuous"}
+        : !pto.vmi.vreg<256xf32>, !pto.ptr<f32, ub>
+    return
+  }
+}
+
+// ASSIGN-LABEL: func.func @group_broadcast_load_e2b_layout_opt(
+// ASSIGN: pto.vmi.group_broadcast_load %{{.*}} {num_groups = 8 : i64}
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+// ASSIGN: pto.vmi.ensure_layout
+// ASSIGN-SAME: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: pto.vmi.mulf
+
+// VPTO-LABEL: func.func @group_broadcast_load_e2b_layout_opt(
+// VPTO: pto.vlds {{.*}} {dist = "E2B_B32"}
+// VPTO-NOT: pto.vselr

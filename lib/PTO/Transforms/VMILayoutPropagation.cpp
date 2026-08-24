@@ -1230,9 +1230,6 @@ bool VMILayoutPropagator::canProduceValueLayout(Value value,
   if (!layout || !isLayoutValue(value)) {
     return false;
   }
-  if (getCurrentLayout(value) == layout) {
-    return true;
-  }
   if (isa<BlockArgument>(value)) {
     return isTypeRewriteable(value);
   }
@@ -1240,10 +1237,11 @@ bool VMILayoutPropagator::canProduceValueLayout(Value value,
     Operation *definingOp = result.getDefiningOp();
     const VMILayoutTransfer *transfer = getTransfer(definingOp);
     if (!transfer) {
-      return isTypeRewriteable(value);
+      return getCurrentLayout(value) == layout || isTypeRewriteable(value);
     }
-    FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>> relations = transfer->query(
-        definingOp, value, layout, *this, /*changedOperand=*/nullptr);
+    FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>> relations =
+        transfer->query(definingOp, value, layout, *this,
+                        /*changedOperand=*/nullptr);
     if (failed(relations)) {
       return false;
     }

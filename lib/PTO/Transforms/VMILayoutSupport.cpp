@@ -762,6 +762,7 @@ static constexpr GroupBroadcastLoadLayoutPattern
     kGroupBroadcastLoadLayoutPatterns[] = {
         {gb(1, 4), bits<8, 16, 32>(), memContiguous(), ls(4)},
         {gb(1, 2), bits<8, 16, 32>(), memContiguous(), ls(2)},
+        {gb(1), bits<16, 32>(), memContiguous(), d(4)},
         {gb(1), bits<8, 16, 32>(), memContiguous(), c()},
         {gb(2), bits<8, 16, 32>(), memContiguous(), c()},
         {gb(2), bits<8, 16, 32>(), memContiguous(), d(2)},
@@ -786,7 +787,7 @@ struct GroupBroadcastLoadDirectPattern {
 static constexpr GroupBroadcastLoadDirectPattern
     kGroupBroadcastLoadDirectPatterns[] = {
         {VMIGroupBroadcastLoadDirectKind::E2B, G<8>(), gb(1), bits<16, 32>(),
-         memContiguous(), c()},
+         memContiguous(), d(4)},
         {VMIGroupBroadcastLoadDirectKind::E2B, G<8>(), gb(2), bits<16, 32>(),
          memContiguous(), d(2)},
         {VMIGroupBroadcastLoadDirectKind::E2B, G<8>(), gb(4), bits<16, 32>(),
@@ -1077,6 +1078,25 @@ static bool matchesGroupBlockPattern(GroupBlockPattern pattern,
     return false;
   }
   return key.groupSize == numerator / pattern.denominator;
+}
+
+static bool isGroupBroadcastLoadE2BCompatible(GroupLayoutKey key,
+                                              int64_t numGroups,
+                                              int64_t elementBits,
+                                              std::optional<int64_t> stride) {
+  for (const GroupBroadcastLoadDirectPattern &pattern :
+       kGroupBroadcastLoadDirectPatterns) {
+    if (pattern.kind != VMIGroupBroadcastLoadDirectKind::E2B ||
+        !matchesElementCountPattern(pattern.numGroups, numGroups) ||
+        !matchesGroupBlockPattern(pattern.block, key) ||
+        !matchesElementBitsPattern(pattern.elementBits, elementBits) ||
+        !matchesGroupBroadcastLoadMemoryPattern(pattern.memory, stride,
+                                                elementBits)) {
+      continue;
+    }
+    return true;
+  }
+  return false;
 }
 
 static bool matchesGroupStoreLayoutPattern(
@@ -1578,6 +1598,9 @@ VMILayoutSupport::getGroupBroadcastLoadLayoutFact(VMIVRegType resultType,
     return failure();
   }
 
+  bool e2bCompatible =
+      isGroupBroadcastLoadE2BCompatible(*key, numGroups, elementBits, stride);
+
   for (const GroupBroadcastLoadLayoutPattern &pattern :
        kGroupBroadcastLoadLayoutPatterns) {
     if (!matchesGroupBlockPattern(pattern.block, *key)) {
@@ -1594,6 +1617,9 @@ VMILayoutSupport::getGroupBroadcastLoadLayoutFact(VMIVRegType resultType,
     }
     if (!matchesLayoutPattern(resultType.getContext(), pattern.resultLayout,
                               resultLayout, numGroups)) {
+      continue;
+    }
+    if (e2bCompatible && resultLayout.isContiguous()) {
       continue;
     }
     return VMIGroupBroadcastLoadLayoutFact{
@@ -1653,7 +1679,6 @@ VMILayoutSupport::getGroupBroadcastLoadDirectFact(
     return failure();
   }
 
-  VMILayoutAttr existing = resultType.getLayoutAttr();
   for (const GroupBroadcastLoadDirectPattern &pattern :
        kGroupBroadcastLoadDirectPatterns) {
     if (!matchesElementCountPattern(pattern.numGroups, numGroups)) {
@@ -1671,17 +1696,11 @@ VMILayoutSupport::getGroupBroadcastLoadDirectFact(
     }
     VMILayoutAttr resultLayout = materializeLayoutPattern(
         resultType.getContext(), pattern.resultLayout, numGroups);
-    if (existing && existing != resultLayout) {
-      continue;
-    }
     return VMIGroupBroadcastLoadDirectFact{
         pattern.kind,
         VMIGroupBroadcastLoadLayoutFact{
-            getGroupBlockClassFromPattern(pattern.block),
-            resultLayout,
-            key->groupSize,
-            key->lanesPerPart,
-            key->vcgBlockElems,
+            getGroupBlockClassFromPattern(pattern.block), resultLayout,
+            key->groupSize, key->lanesPerPart, key->vcgBlockElems,
             static_cast<int64_t>(elementBits)}};
   }
 

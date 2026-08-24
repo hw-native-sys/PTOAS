@@ -62,10 +62,11 @@ enum class DataLayoutSeedPhase {
   Reduce,
   GroupSlotLoad,
   GroupBroadcast,
-  GroupBroadcastLoad,
   CompactCast,
   GroupStore,
+  GroupBroadcastLoadWidening,
   LaneStrideNarrowCast,
+  GroupBroadcastLoad,
   Cast,
   WeakReduce,
   Store,
@@ -399,10 +400,6 @@ struct LayoutSolver {
   VMILayoutAttr
   getPreferredGroupBroadcastLoadLayout(VMIGroupBroadcastLoadOp op) {
     auto type = cast<VMIVRegType>(op.getResult().getType());
-    if (VMILayoutAttr existing = type.getLayoutAttr()) {
-      return existing;
-    }
-
     VMILayoutSupport supports;
     FailureOr<VMIGroupBroadcastLoadDirectFact> fact =
         supports.getGroupBroadcastLoadDirectFact(
@@ -412,6 +409,23 @@ struct LayoutSolver {
       return {};
     }
     return fact->layout.resultLayout;
+  }
+
+  bool hasWideningCastUser(VMIGroupBroadcastLoadOp op) {
+    auto sourceType = cast<VMIVRegType>(op.getResult().getType());
+    unsigned sourceBits =
+        pto::getPTOStorageElemBitWidth(sourceType.getElementType());
+    for (Operation *user : op.getResult().getUsers()) {
+      if (!isa<VMIExtFOp, VMIExtSIOp, VMIExtUIOp>(user)) {
+        continue;
+      }
+      auto resultType = dyn_cast<VMIVRegType>(user->getResult(0).getType());
+      if (resultType && sourceBits < pto::getPTOStorageElemBitWidth(
+                                         resultType.getElementType())) {
+        return true;
+      }
+    }
+    return false;
   }
 
   VMILayoutAttr getPreferredGroupBroadcastSourceLayout(Value value,
@@ -1517,13 +1531,15 @@ struct LayoutSolver {
             load.getNumGroupsAttr().getInt() == 1;
         if (scalarBroadcast)
           return WalkResult::advance();
-        DataLayoutSeedPhase phase =
-            succeeded(directFact)
-                ? DataLayoutSeedPhase::GroupBroadcastLoad
-                : DataLayoutSeedPhase::Other;
-        if (failed(setNaturalLayout(load.getResult(),
-                                    getPreferredGroupBroadcastLoadLayout(load),
-                                    op, phase))) {
+        DataLayoutSeedPhase phase = DataLayoutSeedPhase::Other;
+        if (succeeded(directFact)) {
+          phase = hasWideningCastUser(load)
+                      ? DataLayoutSeedPhase::GroupBroadcastLoadWidening
+                      : DataLayoutSeedPhase::GroupBroadcastLoad;
+        }
+        if (failed(setPreferredLayout(
+                load.getResult(), getPreferredGroupBroadcastLoadLayout(load),
+                op, phase))) {
           return WalkResult::interrupt();
         }
         return WalkResult::advance();
