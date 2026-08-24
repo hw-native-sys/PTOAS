@@ -2681,8 +2681,8 @@ def TFreeOp : PTO_TOp<"tfree", [
 // C++ Interface Bridge Ops
 //===----------------------------------------------------------------------===//
 //
-// These internal ops form the generic VPTO C++ interface bridge (see
-// docs/designs/vpto-cpp-bridge-generalization.md). A family-specific pass
+// These internal ops form the generic VPTO C++ interface bridge. A
+// family-specific pass
 // (e.g. the TPipe family pass) rewrites its internal ops into bridge ops
 // carrying only the wrapper callee name and ABI values. The generic bridge
 // lowering pass then mechanically converts them into calls to wrapper

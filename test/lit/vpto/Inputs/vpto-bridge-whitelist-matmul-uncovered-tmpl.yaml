@@ -2,8 +2,7 @@
 # the accumulator-input tile (acc_in_tile) even though the routed op carries
 # no such operand. Used by the tmpl_map coverage diagnostic test: the
 # collected specialization has no acc_in_tile token, so wrapper generation
-# must reject the uncovered declaration. See
-# docs/designs/vpto-cpp-bridge-generalization.md.
+# must reject the uncovered declaration.
 bridge_ops:
   - op: pto.tmatmul
     family: matmul

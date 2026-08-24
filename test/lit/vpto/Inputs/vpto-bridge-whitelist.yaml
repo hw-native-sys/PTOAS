@@ -1,6 +1,5 @@
 # VPTO C++ interface bridge whitelist used by the lit bridge tests. Mirrors
-# the fifo-tile-data-consume case whitelist; see
-# docs/designs/vpto-cpp-bridge-generalization.md.
+# the fifo-tile-data-consume case whitelist.
 bridge_ops:
   - op: pto.initialize_l2l_pipe
     family: pipe

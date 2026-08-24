@@ -1,8 +1,7 @@
 # Variant VPTO pipe bridge whitelist with declarative tmpl_map rows, used by
 # the Phase 2 bridge spec/wrapper generation lit tests. The tmpl_map rows are
 # declarative IR-field -> C++-template-slot mappings validated at parse time;
-# the token construction itself lives in VPTOBridgeTokens. See
-# docs/designs/vpto-cpp-bridge-generalization.md.
+# the token construction itself lives in VPTOBridgeTokens.
 bridge_ops:
   - op: pto.initialize_l2l_pipe
     family: pipe

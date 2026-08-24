@@ -1,6 +1,5 @@
 # tmpl_map diagnostic fixture: the row below lacks the mandatory 'target'
-# key, which the whitelist parser must reject. See
-# docs/designs/vpto-cpp-bridge-generalization.md.
+# key, which the whitelist parser must reject.
 bridge_ops:
   - op: pto.initialize_l2l_pipe
     family: pipe

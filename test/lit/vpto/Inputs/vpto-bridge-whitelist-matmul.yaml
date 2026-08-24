@@ -1,8 +1,7 @@
 # VPTO C++ interface bridge whitelist for the MATMUL family lit tests. The
 # tile types are spread over the matmul operand roles, so the tmpl_map rows
 # use the per-role sources (left_tile/right_tile/result_tile/acc_in_tile/
-# bias_tile/a_scale_tile/b_scale_tile); see
-# docs/designs/vpto-cpp-bridge-generalization.md. Variant entries declare
+# bias_tile/a_scale_tile/b_scale_tile). Variant entries declare
 # the full role-tile set they render; duplicate typedef targets deduplicate
 # at render time.
 bridge_ops:
