@@ -77,8 +77,6 @@ tools = [
     'ptoas',
     'pto-test-opt',
     'pto-vpto-scheduler-tracker-test',
-    'pto-vfsimt-size-patcher-test',
-    'yaml2obj',
 ]
 
 llvm_config.add_tool_substitutions(tools, tool_dirs)

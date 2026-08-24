@@ -7,7 +7,7 @@ PTO-ISA C++ 模板 wrapper 编译为 device bitcode，经 `llvm-link` 与 VPTO �
 在 bitcode 层合并，端到端跑通了 `TPush → TPOP` FIFO 通路（`fifo-tile-data-consume`
 用例，CA 模拟器全量 compare 通过）。
 
-PoC 的局限（详见 `vpto-tpush-tpop-bridge-report.md`）：
+PoC 的局限（详见 PoC 分支的验收报告，该报告文档未随本 PR 合入）：
 
 - **固定 specialization 硬编码**：emitter 里写死 `dir_mask=1, slot_size=1024,
   slot_num=8, flag_base=0, nosplit=false`（`VPTOCANN900LLVMEmitter.cpp:428`），
@@ -457,6 +457,8 @@ Phase 4（工程化收尾：白名单正式通道 + tmpl_map 消费）已完成�
    `test/vpto/cases/kernels/fifo-variant-config`（与原 fifo 用例仅
    3 行差异：slot_num=4、flag_base=8、fifo 容量 4096），不带白名单
    文件，依赖内置默认；DEVICE=SIM compare passed。
+   ——该常驻用例已在 PR 精简阶段删除（见文末"PR 提交前精简"附录），
+   变体配置的编译器侧覆盖由 `vpto_bridge_spec_config_matrix.pto` 承担。
 
 ## 附：控制流边界探测——循环内消费 fifo（2026-08-24）
 
@@ -533,3 +535,27 @@ WRAP 双前缀）、`vpto_bridge_pipe_split_left_right.pto`（split=2 降级
 回归：lit 全量 1783 用例、1778 过，4 个失败均为分支既有；端到端
 `fifo-tile-data-consume`、`fifo-variant-config`、`cube-matmul-bridge`
 三用例（内置默认白名单，零 env 注入）DEVICE=SIM compare passed。
+
+## 附：PR 提交前精简（2026-08-24）
+
+按评审要求对 PR 变更面做减法，两处裁剪与一处更正：
+
+1. **移除 3 份 PoC 历史文档**（`vpto-cce-template-tpush-tpop-bridge-
+   research.md` / `vpto-tpush-tpop-bridge-implementation.md` /
+   `vpto-tpush-tpop-bridge-report.md`）：内容描述 PoC 分支的工作，
+   不属于本泛化 PR 范畴；本文件 §1 对报告的引用改为不指向具体文件。
+2. **删除常驻端到端用例 `fifo-variant-config`**：与
+   `fifo-tile-data-consume` 仅 3 行 kernel 配置差异，变体配置的
+   编译器侧行为由 `vpto_bridge_spec_config_matrix.pto` 配置矩阵覆盖；
+   文中涉及该用例的验收记录（Phase 2 记录 7、补强记录 2、本节前的
+   回归结论）保留为历史事实，以本条为准。
+3. **lit 配置还原 main**：`test/lit/CMakeLists.txt` 与
+   `test/lit/lit.cfg.py` 相对 main 的差异（scheduler 工具与
+   vfsimt/yaml2obj 的增删）源自已 drop 的 LLVM 19 降级 cherry-pick
+   适配，失去存在理由，整体还原；scheduler tracker 用例的构建依赖
+   与工具注册随之恢复。
+
+精简后保留的端到端用例：`fifo-tile-data-consume`、
+`cube-matmul-bridge`（均内置默认白名单、零 env 注入，DEVICE=SIM
+compare passed）；lit 全量回归 1838 用例、1837 过、0 失败
+（1 个 unsupported）。
