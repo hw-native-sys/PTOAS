@@ -59,6 +59,7 @@ class _ConfigView:
     s_layout: str
     s_fractal_size: int | None
     compact_mode: str | int | None
+    pad_value: str | None = None
 
 
 def build_context(tile_specs: dict, target: str, op: str) -> dict:
@@ -129,6 +130,7 @@ def build_context(tile_specs: dict, target: str, op: str) -> dict:
         s_layout = getattr(spec, "s_layout", "none_box")
         s_fractal_size = getattr(spec, "s_fractal_size", None)
         compact_mode = getattr(spec, "compact_mode", None)
+        pad_value = getattr(spec, "pad_value", None)
         operand_memory_spaces.append(memory_space)
         operand_sizes.append(_shape_size(shape))
         operand_b_layouts.append(b_layout)
@@ -146,6 +148,7 @@ def build_context(tile_specs: dict, target: str, op: str) -> dict:
             s_layout=s_layout,
             s_fractal_size=s_fractal_size,
             compact_mode=compact_mode,
+            pad_value=pad_value,
         )
         if len(shape) == 2:
             context[f"{name}_rows"], context[f"{name}_cols"] = shape
