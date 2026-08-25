@@ -3128,7 +3128,6 @@ def PrintOp : PTO_Op<"print", [MemoryEffects<[MemRead, MemWrite]>]> {
     `ins` `(` $format `,` $scalar `:` type($scalar) `)`
     attr-dict
   }];
-  let hasVerifier = 1;
 }
 
 def TrapOp : PTO_Op<"trap", [MicroOpInterface, SimtOpInterface]> {
