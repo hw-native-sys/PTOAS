@@ -246,6 +246,7 @@ wrapper 渲染、编译与合入，无外部脚本、无环境变量依赖。
 | 接入方式 | 零 C++ 改动：仅白名单注册（`wrappers` 段声明 TAdd include 与 vec 核守卫 + 一条 op/wrapper/call/abi 条目），`pto::TADD(dst, src0, src1)` 调用由通用渲染器渲染 |
 | ABI | 3×i64（dst/src0/src1），无模板实参（取 a5 推导友好入口，ElementsPerRepeat/validRows 内部推导） |
 | 渲染验证 | lit 覆盖 spec 收集（entry 推导 `pto_vpto_add`）与 wrapper 源码（`__DAV_VEC__` 守卫 + TADD 调用体） |
+| 端到端 | 8×16 f32 逐元素加（模拟器 DEVICE=SIM），mte 进 UB → 桥接 TADD → mte 出，compare passed |
 
 ### 4.4 机制验证结论
 
@@ -279,6 +280,7 @@ lit 侧新增/调整：
 |---|---|---|
 | `fifo-tile-data-consume` | TPush→TPOP FIFO 通路，128 f32 全量比对 | compare passed |
 | `cube-matmul-bridge` | 16×16×16 f16 矩阵乘（A=单位阵），mte 链路→tmatmul→mte 出 | compare passed（声明式重构后复跑通过） |
+| `vec-add-bridge` | 8×16 f32 逐元素加，纯白名单接入的 tadd 经桥接 wrapper（`pto_vpto_add`）计算，mte 进 UB→TADD→mte 出 | compare passed |
 
 变体配置（slot_num/flag_base/容量变化）的端到端行为由 lit 侧
 `spec_config_matrix` 配置矩阵覆盖，未单独设置模拟器用例。
