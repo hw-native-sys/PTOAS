@@ -124,6 +124,11 @@ ptoas_configure_runtime_compile_target(obj.PTOASCompilerImplementation)
 target_compile_definitions(obj.PTOASCompilerImplementation PRIVATE
   "MLIR_PYTHON_PACKAGE_PREFIX=ptoas.mlir."
   PTOAS_COMPILER_BUILDING_LIBRARY=1
+  # Source-tree default for the cce::printf wrapper TU (tools/ptoas/cce/
+  # deliberately has no CMakeLists.txt so the LLVM source-list check leaves
+  # it alone).  ptoas compiles it with bisheng and llvm-links it into the
+  # kernel module when the input uses pto.print / pto.tprint.
+  PTOAS_DEFAULT_PRINT_WRAPPER_PATH="${CMAKE_SOURCE_DIR}/tools/ptoas/cce"
 )
 target_include_directories(PTOASCompilerImplementation PRIVATE
   "${CMAKE_SOURCE_DIR}/lib/Bindings/Python"

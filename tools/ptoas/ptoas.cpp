@@ -3225,6 +3225,12 @@ static int emitVPTOBackendResult(ModuleOp module, PTOASCompileResult &result,
     module->removeAttr(pto::kBridgeWrapperSourceAttrName);
   }
 
+  // Detect whether the module uses print ops (before lowering consumes
+  // them) so object emission can link the cce::printf wrapper bitcode and
+  // the host stub compiler can switch to driver mode for DebugTunnel.
+  module.walk([&](pto::PrintOp) { result.usesPrint = true; });
+  module.walk([&](pto::TPrintOp) { result.usesPrint = true; });
+
   if (failed(
           pto::lowerVPTOModuleToLLVMModules(module, options,
                                             result.vptoCubeModule,

@@ -120,6 +120,7 @@ struct PTOASCompileResult {
     vptoBridgeWrapperSource.clear();
     vptoCubeModule.reset();
     vptoVectorModule.reset();
+    usesPrint = false;
     kind = PTOASCompileResultKind::Text;
   }
 
@@ -133,6 +134,10 @@ struct PTOASCompileResult {
   std::string vptoBridgeWrapperSource;
   EmittedLLVMModule vptoCubeModule;
   EmittedLLVMModule vptoVectorModule;
+  /// Set when the VPTO input uses pto.print / pto.tprint: object emission
+  /// then llvm-links the cce::printf wrapper bitcode into the device modules
+  /// and compiles the host stub in driver mode for DebugTunnel support.
+  bool usesPrint = false;
 };
 
 int compilePTOASModule(OwningOpRef<ModuleOp> &module,
