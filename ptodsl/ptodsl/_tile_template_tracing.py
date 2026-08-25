@@ -103,6 +103,10 @@ class TileSpec:
     valid_shape: tuple[int, int] | None = None
     # compact_mode: "normal" (default) or "row_plus_one" (UB +1 padding band).
     compact_mode: str = "normal"
+    # s_fractal_size: physical fractal granularity; 0/None defaults to 512.
+    s_fractal_size: int | None = 512
+    # pad_value: pad-value token for the tile_buf config ("Null"/"Zero"/...).
+    pad_value: str = "Null"
 
     def __post_init__(self):
         if len(self.shape) != 2:
@@ -138,6 +142,7 @@ class TileSpec:
     def mlir_type(self):
         rows, cols = self.shape
         vrow, vcol = self.effective_valid_shape
+        fractal = self.s_fractal_size if self.s_fractal_size else 512
         return _tile_buf_type(
             [rows, cols],
             _scalar_descriptor(self.dtype),
@@ -145,8 +150,8 @@ class TileSpec:
             blayout="RowMajor" if self.b_layout == "row_major" else "ColMajor",
             address_space=self.memory_space,
             slayout="NoneBox",
-            fractal_size=512,
-            pad="Null",
+            fractal_size=fractal,
+            pad=self.pad_value,
             compact_mode=self.compact_mode,
         )
 

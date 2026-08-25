@@ -117,8 +117,9 @@ def _scalar_type_token(dtype: ScalarType) -> str:
 class TileSpec:
     """Concrete specialization of one tile operand.
 
-    ``valid_shape``/``b_layout``/``s_layout``/``memory_space`` are carried for both
-    constraint evaluation (selection) and the rendered entry ``tile_buf`` type.
+    ``valid_shape``/``b_layout``/``s_layout``/``memory_space``/``s_fractal_size``/
+    ``compact_mode``/``pad_value`` are carried for both constraint evaluation
+    (selection) and the rendered entry ``tile_buf`` type.
     """
 
     shape: tuple
@@ -128,6 +129,8 @@ class TileSpec:
     b_layout: str = "row_major"
     s_layout: str = "none_box"
     pad_value: str = "Null"
+    s_fractal_size: int | None = 512
+    compact_mode: str | int | None = "normal"
 
     def __post_init__(self):
         if len(self.shape) != 2:
@@ -138,6 +141,7 @@ class TileSpec:
     def mlir_type(self):
         rows, cols = self.shape
         valid_shape = self.valid_shape if self.valid_shape is not None else self.shape
+        fractal_size = self.s_fractal_size if self.s_fractal_size else 512
         return _tile_buf_type(
             [rows, cols],
             scalar_descriptor(self.dtype),
@@ -145,8 +149,9 @@ class TileSpec:
             blayout=_layout_token(self.b_layout),
             address_space=self.memory_space,
             slayout=_layout_token(self.s_layout),
-            fractal_size=512,
+            fractal_size=fractal_size,
             pad=_pad_token(self.pad_value),
+            compact_mode=self.compact_mode,
         )
 
 

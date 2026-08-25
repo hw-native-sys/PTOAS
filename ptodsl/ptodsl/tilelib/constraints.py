@@ -59,6 +59,7 @@ class _ConfigView:
     s_layout: str
     s_fractal_size: int | None
     compact_mode: str | int | None
+    pad_value: str | None = None
 
 
 @dataclass
@@ -235,6 +236,7 @@ def _record_tile_context(name, spec, context, accumulators):
                 s_layout=s_layout,
                 s_fractal_size=s_fractal_size,
                 compact_mode=compact_mode,
+                pad_value=getattr(spec, "pad_value", None),
             ),
         }
     )
