@@ -120,12 +120,12 @@ LogicalResult emitFatobjCCE(llvm::StringRef cppSource,
 LogicalResult emitVPTOVectorDeviceObject(
     llvm::Module &module, llvm::StringRef llPath, llvm::StringRef outObjPath,
     const CANNToolchain &toolchain, llvm::StringRef bridgeBitcodePath,
-    bool usesPrint, llvm::StringRef stderrPath, llvm::raw_ostream &diagOS);
+    llvm::StringRef stderrPath, llvm::raw_ostream &diagOS);
 
 LogicalResult emitVPTOCubeDeviceObject(
     llvm::Module &module, llvm::StringRef llPath, llvm::StringRef outObjPath,
     const CANNToolchain &toolchain, llvm::StringRef bridgeBitcodePath,
-    bool usesPrint, llvm::StringRef stderrPath, llvm::raw_ostream &diagOS);
+    llvm::StringRef stderrPath, llvm::raw_ostream &diagOS);
 
 LogicalResult emitFatobjLLVM(
     llvm::Module *cubeModule, llvm::Module *vectorModule,
@@ -133,7 +133,7 @@ LogicalResult emitFatobjLLVM(
     llvm::StringRef outputPath,
     llvm::StringRef moduleId, const CANNToolchain &toolchain,
     TempFileRegistry &tempFiles, VFSIMTSizeFixMode vfsimtSizeFixMode,
-    bool usesPrint, llvm::raw_ostream &diagOS);
+    llvm::raw_ostream &diagOS);
 
 LogicalResult mergeDeviceObjects(llvm::ArrayRef<std::string> deviceObjPaths,
                                  llvm::StringRef outObjPath,

@@ -1143,8 +1143,7 @@ static LogicalResult emitVPTOLLVMFatobj(
           jobResult.vptoVectorModule.module.get(), stubSource,
           jobResult.vptoBridgeWrapperSource,
           outputPath, moduleId, *toolchain, context.getTempFiles(),
-          context.getVFSIMTSizeFixMode(), jobResult.usesPrint,
-          llvm::errs()))) {
+          context.getVFSIMTSizeFixMode(), llvm::errs()))) {
     return failure();
   }
   return success();
