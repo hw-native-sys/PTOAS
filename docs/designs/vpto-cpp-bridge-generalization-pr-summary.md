@@ -86,19 +86,21 @@ VPTO 生成的 LLVM IR 合并，端到端跑通 FIFO 通路。但 PoC 有两个�
 wrappers:                        # 每个声明式 wrapper 一条
   - name: vec_elem               # 必填：wrapper 名（生成单位与分派键）
     includes: [pto/npu/a5/TAdd.hpp]   # 必填：wrapper 源码的 include 行
-    core: vec                    # 必填：cube | vec | both（决定 __DAV_*__ 守卫）
 bridge_ops:
   - op: pto.tadd                 # 必填：路由键，IR op 名，命中即桥接候选
     wrapper: vec_elem            # 必填：渲染进哪份 wrapper 源码
-    call: pto::TADD              # 必填：C++ 调用拼写（lowering 省略 = 声明式通道）
-    abi:                         # 必填：operand 位置绑定 + 角色（type 缺省 i64）
-      - {operand: 2, arg: dst, role: result_tile}
-      - {operand: 0, arg: src0, role: left_tile}
-      - {operand: 1, arg: src1, role: right_tile}
+    abi:                         # 必填：operand 位置绑定 + 角色
+      - {operand: 2, role: result_tile}
+      - {operand: 0, role: left_tile}
+      - {operand: 1, role: right_tile}
 ```
 
 未写的字段全部走缺省：`entry` 从 op 名推导（`pto.tadd` →
-`pto_vpto_add`），abi `type` 缺省 i64（tile 地址类型擦除），无模板实参
+`pto_vpto_add`）；`call` 从 op 名推导（`pto.tadd` → `pto::TADD`），
+推导不符接口约定时显式覆盖（如 mx.acc/mx.bias 变体共享 `TMATMUL_MX`）；
+abi 形参名从 role 推导（`result_tile` → `resultTile`），`type` 缺省
+i64（tile 地址类型擦除）；`wrappers` 段的 `core` 守卫从条目 tile 种类
+推导（VEC → `__DAV_VEC__`，cube 家族 → `__DAV_CUBE__`）；无模板实参
 则不写 `tmpl_args`/`tmpl_map`（tile typedef 由 abi role 推导）。
 
 - **两档通道，缺省为声明式**：`lowering` 省略即走声明式通道——机械映射型
@@ -110,7 +112,8 @@ bridge_ops:
   1 条 `op: internal` 的 size 查询辅助条目（不参与路由），`wrapper: matmul`
   6 条路由条目（`tmatmul` 与 `.acc`/`.bias`/`.mx`/`.mx.acc`/`.mx.bias`
   变体）与 `wrapper: vec_elem` 1 条（`tadd`），均走缺省声明式通道。
-  声明式 wrapper 在顶层 `wrappers` 段声明 includes 与 core 守卫；storage 等
+  声明式 wrapper 在顶层 `wrappers` 段声明 includes 与（可选的）core
+  守卫；storage 等
   不透明指针参数以 `{type: ptr}` 行声明；init 条目经 `storage_size_entry`
   字段显式关联 size 查询入口；
 - **字段约束与结构化校验**：必填项缺失、拼写或取值非法均在解析期拒绝并
@@ -221,20 +224,18 @@ wrapper 渲染、编译与合入，无外部脚本、无环境变量依赖。
 wrappers:
   - name: vec_elem
     includes: [pto/npu/a5/TAdd.hpp]
-    core: vec
 bridge_ops:
   - op: pto.tadd
     wrapper: vec_elem
-    call: pto::TADD
     abi:
-      - {operand: 2, arg: dst, role: result_tile}
-      - {operand: 0, arg: src0, role: left_tile}
-      - {operand: 1, arg: src1, role: right_tile}
+      - {operand: 2, role: result_tile}
+      - {operand: 0, role: left_tile}
+      - {operand: 1, role: right_tile}
 ```
 
 注册完成后，内核中的 `pto.tadd` 自动经声明式通道降级为
-`pto.bridge_call "pto_vpto_add"`（entry 名由 op 名缺省推导），模块级
-通用渲染器产出 wrapper 源码并编译合入：
+`pto.bridge_call "pto_vpto_add"`（entry 名、调用拼写、形参名与核守卫均
+缺省推导），模块级通用渲染器产出 wrapper 源码并编译合入：
 
 ```cpp
 // 渲染产物（模块属性 pto.vpto.bridge.wrapper_source，节选）
@@ -243,13 +244,13 @@ using LeftTile   = pto::Tile<pto::TileType::Vec, float, 8, 16, pto::BLayout::Row
 using ResultTile = pto::Tile<pto::TileType::Vec, float, 8, 16, pto::BLayout::RowMajor, 8, 16>;
 using RightTile  = pto::Tile<pto::TileType::Vec, float, 8, 16, pto::BLayout::RowMajor, 8, 16>;
 #ifdef __DAV_VEC__
-extern "C" [aicore] void pto_vpto_add(uint64_t dstAddress, uint64_t src0Address, uint64_t src1Address)
+extern "C" [aicore] void pto_vpto_add(uint64_t resultTileAddress, uint64_t leftTileAddress, uint64_t rightTileAddress)
 {
-  ResultTile dst; LeftTile src0; RightTile src1;
-  pto::TASSIGN_IMPL(dst, dstAddress);
-  pto::TASSIGN_IMPL(src0, src0Address);
-  pto::TASSIGN_IMPL(src1, src1Address);
-  pto::TADD(dst, src0, src1);
+  ResultTile resultTile; LeftTile leftTile; RightTile rightTile;
+  pto::TASSIGN_IMPL(resultTile, resultTileAddress);
+  pto::TASSIGN_IMPL(leftTile, leftTileAddress);
+  pto::TASSIGN_IMPL(rightTile, rightTileAddress);
+  pto::TADD(resultTile, leftTile, rightTile);
 }
 #endif
 ```
@@ -262,9 +263,11 @@ ptoas --pto-arch a5 --pto-backend=vpto kernel.pto -o kernel.fatobj.o
 
 接入验证建议：lit 钉住 spec 收集与 wrapper_source 两段产物（参考
 `vpto_bridge_tadd_declarative_lowering.pto` /
-`vpto_bridge_tadd_wrapper_source.pto`）；白名单 schema 的任何拼写错误
-（缺 `call`、`tmpl_args` 无对应 attr 行、`core` 非法值等）在解析期即被
-拒绝并点名条目与文件。
+`vpto_bridge_tadd_wrapper_source.pto`，全缺省推导路径参考
+`vpto_bridge_whitelist_minimal_defaults.pto`）；白名单 schema 的任何
+拼写错误（`tmpl_args` 无对应 attr 行、`core` 非法值等）在解析期即被
+拒绝并点名条目与文件；推导出的 `call` 拼写不符接口约定时，在 wrapper
+源码编译期（ObjectEmission）报错并点名符号。
 
 携带真家族语义（storage 生命周期、地址重绑定）的 op 不在此列：需显式
 `lowering: custom`、必填 `entry`，由专用 pass 与专用渲染器承接（现仅
@@ -297,7 +300,7 @@ pipe 家族）。
 
 | 项 | 支持情况 |
 |---|---|
-| 接入方式 | 零 C++ 改动：仅白名单注册（`wrappers` 段声明 TAdd include 与 vec 核守卫 + 一条 op/wrapper/call/abi 条目），`pto::TADD(dst, src0, src1)` 调用由通用渲染器渲染 |
+| 接入方式 | 零 C++ 改动：仅白名单注册（`wrappers` 段声明 wrapper 名与 TAdd include，条目仅 op/wrapper/abi(operand+role)），调用拼写、形参名、entry 名与 vec 核守卫均缺省推导，`pto::TADD(resultTile, leftTile, rightTile)` 调用由通用渲染器渲染 |
 | ABI | 3×i64（dst/src0/src1），无模板实参（取 a5 推导友好入口，ElementsPerRepeat/validRows 内部推导） |
 | 渲染验证 | lit 覆盖 spec 收集（entry 推导 `pto_vpto_add`）与 wrapper 源码（`__DAV_VEC__` 守卫 + TADD 调用体） |
 | 端到端 | 8×16 f32 逐元素加（模拟器 DEVICE=SIM），mte 进 UB → 桥接 TADD → mte 出，compare passed |
@@ -314,7 +317,7 @@ pipe 家族）。
 
 ## 5. 测试验证
 
-lit 侧桥接相关用例共 28 个，按维度分组：
+lit 侧桥接相关用例共 29 个，按维度分组：
 
 **路由与通道**：
 
@@ -323,7 +326,7 @@ lit 侧桥接相关用例共 28 个，按维度分组：
 | `vpto_bridge_default_whitelist_lowering.pto` | 零配置开箱即用：无 option/env 时回退内置默认白名单完成桥接 |
 | `vpto_bridge_declarative_unrouted_passthrough.pto` | 白名单未路由的 op 保持常规 tile-op 展开路径（tmatmul → pto.mad），custom 条目留给家族 pass，两种透传均不过度降级 |
 | `vpto_bridge_whitelist_default_channel_diag.pto` | 缺省通道边界：漏标 `lowering: custom` 的条目解析期即被拒（诊断点名该标注）；旧拼写 `lowering: family` 不被静默重解释 |
-| `vpto_bridge_declarative_binding_diag.pto` | `-split-input-file` 逐场景验证声明式绑定诊断（缺 `operand`/`arg`/`role` 等四类错误各自独立成段，避免 FuncOp 嵌套 pass 在首个失败函数处中断分片导致诊断条数不确定） |
+| `vpto_bridge_declarative_binding_diag.pto` | `-split-input-file` 逐场景验证声明式绑定诊断（operand 越界、非 tile_buf operand、带结果 op、非枚举 attr 四类错误各自独立成段，避免 FuncOp 嵌套 pass 在首个失败函数处中断分片导致诊断条数不确定） |
 | `vpto_bridge_whitelist_residual_diag.pto` | 白名单命中但未被降级的残留 op 报诊断而非静默发射 |
 
 **pipe 家族**：
@@ -347,13 +350,14 @@ lit 侧桥接相关用例共 28 个，按维度分组：
 | `vpto_bridge_matmul_spec_conflict_diag.pto` | 同函数两条 matmul 的 role token 异值报冲突诊断 |
 | `vpto_bridge_declarative_wrapper_source.pto` | 内置白名单 matmul 走通用渲染器的 litmus：wrapper_source 的 includes、role typedef、TASSIGN 绑定与调用体逐行钉住 |
 | `vpto_bridge_tadd_declarative_lowering.pto` | tadd 零 env 声明式降级：func_spec 三个 vec tile token + `bridge_call "pto_vpto_add"` |
-| `vpto_bridge_tadd_wrapper_source.pto` | vec_elem wrapper 渲染：`__DAV_VEC__` 守卫 + role typedef + `pto::TADD` 调用体 |
+| `vpto_bridge_tadd_wrapper_source.pto` | vec_elem wrapper 渲染：调用拼写、形参名与 `__DAV_VEC__` 守卫均缺省推导，role typedef + `pto::TADD` 调用体逐行钉住 |
 
 **schema 与 spec 校验**：
 
 | 用例 | 覆盖点 |
 |---|---|
-| `vpto_bridge_whitelist_render_schema_diag.pto` | 声明式 schema 边界：缺 `call` / `tmpl_args` 无对应 attr 行 / `core` 非法值 / 声明式 wrapper 缺 `wrappers` 段 |
+| `vpto_bridge_whitelist_minimal_defaults.pto` | 全缺省推导路径：最小 schema（wrapper 仅 name/includes，条目仅 op/wrapper/abi(operand+role)）下 entry 名、调用拼写、形参名与核守卫全部推导成功 |
+| `vpto_bridge_whitelist_render_schema_diag.pto` | 声明式 schema 边界：`tmpl_args` 无对应 attr 行 / `core` 非法值 / 声明式 wrapper 缺 `wrappers` 段 |
 | `vpto_bridge_whitelist_matmul_tmpl_diag.pto` | 声明式条目 tmpl_map 的 tile 行（旧拼写）解析期即被拒，只收 `attr` 行 |
 | `vpto_bridge_whitelist_tmpl_map_diag.pto` | tmpl_map 缺键与未知 source 诊断 |
 | `vpto_bridge_whitelist_tmpl_coverage_diag.pto` | 未覆盖的 tmpl_map 声明报诊断而非静默丢弃 |
@@ -389,13 +393,13 @@ lit 侧桥接相关用例共 28 个，按维度分组：
 
 ## 附录：白名单 schema 字段速查
 
-**`wrappers` 段**（每个声明式 wrapper 一条，三项均必填）：
+**`wrappers` 段**（每个声明式 wrapper 一条）：
 
 | 字段 | 必填 | 缺省 | 说明 |
 |---|---|---|---|
 | `name` | 是 | — | wrapper 名：生成单位与渲染分派键，同名条目共享一份翻译单元 |
 | `includes` | 是 | — | wrapper 源码的 include 头文件列表 |
-| `core` | 是 | — | `cube` / `vec` / `both`，决定 entry 组的 `__DAV_*__` 编译守卫 |
+| `core` | 否 | 从条目 tile 种类推导 | `cube` / `vec` / `both`，决定 entry 组的 `__DAV_*__` 编译守卫；缺省按 lowering 收集的 tile 地址空间推导（VEC → vec，cube 家族 → cube），无 tile 可推导时必填 |
 
 **`bridge_ops` 段**（条目级）：
 
@@ -403,7 +407,7 @@ lit 侧桥接相关用例共 28 个，按维度分组：
 |---|---|---|---|
 | `op` | 是 | — | 路由键（IR op 名），命中即桥接候选；`op: internal` 为不参与路由的辅助条目 |
 | `wrapper` | 是 | — | 渲染进哪份 wrapper 源码 |
-| `call` | 声明式必填 | — | C++ 调用拼写（如 `pto::TMATMUL`）；custom 条目禁用 |
+| `call` | 否 | 从 op 名推导 | C++ 调用拼写；缺省规则 `pto.tadd` → `pto::TADD`（保留 `t` 前缀，点转下划线），推导不符接口约定时显式覆盖；custom 条目禁用 |
 | `abi` | 有 operand 时必填 | — | 参数绑定行，见下表 |
 | `lowering` | 否 | `declarative` | 设为 `custom` 退出声明式通道，须有专用渲染器承接 |
 | `entry` | 否 | 声明式自动推导 | 桥接符号名；缺省规则 `pto.tadd` → `pto_vpto_add`；custom 条目必填 |
@@ -416,8 +420,8 @@ lit 侧桥接相关用例共 28 个，按维度分组：
 | 字段 | 必填 | 缺省 | 说明 |
 |---|---|---|---|
 | `operand` | 声明式必填 | — | IR operand 位置索引，同一条目内不得重复 |
-| `arg` | 声明式必填 | — | wrapper 函数形参名 |
-| `role` | 声明式必填 | — | 语义角色（`left_tile` / `right_tile` / `result_tile` 等），推导 tile typedef 名 |
+| `arg` | 否 | 从 role 推导 | wrapper 函数形参名；缺省为 role 的 lowerCamelCase（`left_tile` → `leftTile`） |
+| `role` | 声明式必填 | — | 语义角色（`left_tile` / `right_tile` / `result_tile` 等），推导 tile typedef 名与缺省形参名 |
 | `type` | 否 | `i64` | 参数类型；`ptr` 表示不透明指针（storage 等），tile 地址一律缺省 i64 |
 
 **`tmpl_map` 行子字段**：
