@@ -1,0 +1,69 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Second declarative family e2e: the vector-side tadd is routed to the
+// generated C++ bridge wrapper (pto::TADD under __DAV_VEC__) purely via
+// the built-in whitelist registration (vec_elem wrapper), with no C++ in
+// the bridge knowing about tadd. The operand tiles are plain UB
+// alloc_tiles whose addresses are planned by the shared pipeline; the
+// result leaves UB via mte_ub_gm. A successful compare proves the bridge
+// path computes the same elementwise sum as the golden.
+module attributes {pto.target_arch = "a5"} {
+  func.func @vec_add_bridge_kernel(%a: !pto.ptr<f32, gm>,
+                                   %b: !pto.ptr<f32, gm>,
+                                   %out: !pto.ptr<f32, gm>) attributes {pto.entry} {
+    func.call @vec_add_bridge_vector(%a, %b, %out)
+      : (!pto.ptr<f32, gm>, !pto.ptr<f32, gm>, !pto.ptr<f32, gm>) -> ()
+    return
+  }
+
+  func.func private @vec_add_bridge_vector(
+      %a: !pto.ptr<f32, gm>, %b: !pto.ptr<f32, gm>, %out: !pto.ptr<f32, gm>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %c512 = arith.constant 512 : i64
+
+    %src0 = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %src1 = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %ub0 = pto.tile_buf_addr %src0
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+     -> !pto.ptr<f32, ub>
+    %ub1 = pto.tile_buf_addr %src1
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+     -> !pto.ptr<f32, ub>
+    %ubd = pto.tile_buf_addr %dst
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+     -> !pto.ptr<f32, ub>
+
+    %subblock = pto.get_subblock_idx
+    %is0 = arith.cmpi eq, %subblock, %c0 : i64
+    scf.if %is0 {
+      pto.mte_gm_ub %a, %ub0, %c0, %c512 nburst(%c1, %c0, %c0)
+        : !pto.ptr<f32, gm>, !pto.ptr<f32, ub>, i64, i64, i64, i64, i64
+      pto.mte_gm_ub %b, %ub1, %c0, %c512 nburst(%c1, %c0, %c0)
+        : !pto.ptr<f32, gm>, !pto.ptr<f32, ub>, i64, i64, i64, i64, i64
+      pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+      pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+      pto.tadd ins(%src0, %src1
+        : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+          !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+        outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID1"]
+      pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID1"]
+      pto.mte_ub_gm %ubd, %out, %c512 nburst(%c1, %c0, %c0)
+        : !pto.ptr<f32, ub>, !pto.ptr<f32, gm>, i64, i64, i64, i64
+    }
+    pto.barrier #pto.pipe<PIPE_ALL>
+    return
+  }
+}
