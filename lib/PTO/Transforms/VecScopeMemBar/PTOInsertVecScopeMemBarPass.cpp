@@ -60,13 +60,13 @@ struct PTOInsertVecScopeMemBarPass
       }
     }
 
-    // TileLib expansion may put a producer and consumer into separate sibling
-    // vecscopes. Preserve the established per-scope analysis above, then add a
-    // narrow function-level pass that retains only such cross-scope hazards.
-    if (failed(analyzeAndApply(runCrossVecScopeMemBarAnalysis(func)))) {
-      signalPassFailure();
-      return;
-    }
+    // Cross-vecscope RAW/WAW hazards between sibling vecscopes are NOT handled
+    // here. pto.mem_bar (SMEM_BAR) is an intra-vecscope primitive (see
+    // docs/vpto-spec.md, "Intra-Pipeline Memory Barriers (within __VEC_SCOPE__)"):
+    // it only orders vector ops within a single vecscope and cannot make a
+    // producer vecscope's writes visible to a later sibling vecscope, whose
+    // execution ordering/visibility must instead be managed by the host with
+    // pto.set_flag / pto.wait_flag (or pto.get_buf / pto.rls_buf).
   }
 };
 
