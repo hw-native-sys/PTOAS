@@ -68,6 +68,8 @@ def rewrite_jit_function(
     static_env.update(static_bindings or {})
     _inject_closure_defaults(function_def, closure_vars.nonlocals)
     _sanitize_signature_for_exec(function_def)
+    if rewrite_control_flow:
+        function_def = _BoolOpRewriter().visit(function_def)
     function_def = _ConditionalExpressionNormalizer().visit(function_def)
     section_rewriter = _SectionLexicalRewriter()
     function_def = section_rewriter.visit(function_def)
@@ -379,6 +381,62 @@ class _ConditionalExpressionNormalizer(ast.NodeTransformer):
             orelse=[else_stmt],
         )
         return ast.copy_location(self.generic_visit(if_stmt), stmt)
+
+
+def _zero_arg_lambda(body):
+    return ast.Lambda(
+        args=ast.arguments(
+            posonlyargs=[],
+            args=[],
+            vararg=None,
+            kwonlyargs=[],
+            kw_defaults=[],
+            kwarg=None,
+            defaults=[],
+        ),
+        body=body,
+    )
+
+
+class _BoolOpRewriter(ast.NodeTransformer):
+    """Rewrite Python ``and``/``or`` into device-side short-circuit helpers.
+
+    Python ``and``/``or`` are not overloadable operators: evaluating ``a and b``
+    forces a truth check on ``a``, which calls ``__bool__`` on a PTODSL runtime
+    value during tracing and raises.  This pass replaces every ``ast.BoolOp``
+    with a right-nested lazy helper call so the RHS is only traced inside a
+    device-side ``scf.if`` region::
+
+        a and b and c  ->  pto._short_circuit_and(a, lambda: pto._short_circuit_and(b, lambda: c))
+        a or  b or  c  ->  pto._short_circuit_or(a,  lambda: pto._short_circuit_or(b,  lambda: c))
+
+    The transformation is purely syntactic and composes with every expression
+    context: assignments, call arguments, ``return``, and ``if``/``while``
+    conditions.  Nested function bodies are rewritten as well, mirroring the
+    control-flow rewriter.  Statically-known ``bool``/``int`` operands are
+    short-circuited at trace time by the helpers themselves, so the RHS is not
+    traced at all when Python semantics would skip it.
+    """
+
+    def visit_BoolOp(self, node):
+        node = self.generic_visit(node)
+        if isinstance(node.op, ast.And):
+            helper = "_short_circuit_and"
+        elif isinstance(node.op, ast.Or):
+            helper = "_short_circuit_or"
+        else:
+            return node
+        values = list(node.values)
+        if len(values) < 2:
+            return values[0] if values else node
+        result = values[-1]
+        for value in reversed(values[:-1]):
+            result = ast.Call(
+                func=_pto_attr(helper),
+                args=[value, _zero_arg_lambda(result)],
+                keywords=[],
+            )
+        return result
 
 
 @dataclass(frozen=True)

@@ -162,6 +162,7 @@ from ._control_flow import (    # noqa: F401
     for_, while_, _while, if_, yield_,
     static_range, range,
     LoopHandle, BranchHandle,
+    _short_circuit_and, _short_circuit_or,
 )
 
 # ── All-reduce ─────────────────────────────────────────────────────────────────

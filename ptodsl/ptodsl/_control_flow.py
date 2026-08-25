@@ -22,6 +22,7 @@ Public API
 ``static_range(...)``     – trace-time ``range(...)`` escape hatch for AST rewrite
 ``range(...)``            – AST-rewrite marker carrying loop-unroll hints for native ``for``
 ``const_expr(value)``     – trace-time ``if`` escape hatch for AST rewrite
+``_short_circuit_and/or``  – internal device-side ``and``/``or`` helpers used by the AST rewriter
 """
 
 import builtins
@@ -29,7 +30,7 @@ import warnings
 
 from ._diagnostics import explicit_mode_required_with_context_error
 from ._runtime_index_ops import coerce_runtime_index
-from ._scalar_adaptation import coerce_runtime_integer_to_i1
+from ._scalar_adaptation import coerce_runtime_i1_value, coerce_runtime_integer_to_i1
 from ._scalar_coercion import coerce_scalar_to_type
 from ._surface_types import const_expr
 from ._tracing.active import current_session, require_active_session
@@ -846,6 +847,96 @@ def if_(cond) -> _IfCM:
         x = br.x
     """
     return _IfCM(cond)
+
+
+# ── short-circuit and/or (AST-rewrite targets) ──────────────────────────────
+
+def _branch_rhs_value(value, kind):
+    """Validate a short-circuit RHS evaluated inside a runtime branch.
+
+    A branch may only yield a PTO runtime value, an i1-materializable bool
+    literal, or a Python integer literal; anything else would fail later inside
+    ``br.assign`` with an opaque error.
+    """
+    if isinstance(value, (bool, int)) or hasattr(value, "type"):
+        return value
+    raise TypeError(
+        "pto short-circuit " + kind + " RHS must be a PTO runtime value or a Python "
+        "bool/int literal, got " + type(value).__name__,
+    )
+
+
+def _materialize_bool_branch_value(value, *, context):
+    """Materialize a Python ``bool`` operand to a signless ``i1`` constant.
+
+    Python ``and``/``or`` may legally return a plain ``bool`` literal from one
+    branch (``flag and True``).  Branch assignment needs a typed value when the
+    opposite branch is typed, so literals are materialized here before
+    ``br.assign``; all runtime operands pass through unchanged.
+    """
+    if isinstance(value, bool):
+        return coerce_runtime_i1_value(value, context=context)
+    return value
+
+
+def _short_circuit_and(lhs, rhs_fn):
+    """Internal device-side ``lhs and rhs()`` with Python short-circuit semantics.
+
+    Emits a result-bearing ``scf.if``: when ``lhs`` is truthy the RHS lambda is
+    traced inside the ``then`` region, otherwise the unmodified ``lhs`` operand
+    is the result.  Non-runtime operands (plain Python values) keep native
+    Python truthiness and short-circuit at trace time without tracing the RHS.
+    The branch merge reuses ``pto.if_`` existing rules: integer-like operands
+    are tested with non-zero coercion, and incompatible branch types keep their
+    existing diagnostics.  Floating-point control values are rejected.
+    """
+    if not callable(rhs_fn):
+        raise TypeError("pto._short_circuit_and expects a zero-argument callable RHS")
+    if not hasattr(lhs, "type"):
+        if isinstance(lhs, float):
+            raise TypeError(
+                "pto short-circuit and does not accept floating-point control values; "
+                "runtime float conditions are not supported",
+            )
+        return rhs_fn() if lhs else lhs
+    raw_lhs = unwrap_surface_value(lhs)
+    cond = coerce_runtime_i1_value(raw_lhs, context="pto short-circuit and condition")
+    with if_(cond) as br:
+        with br.then_:
+            br.assign(value=_materialize_bool_branch_value(
+                _branch_rhs_value(rhs_fn(), "and"), context="pto short-circuit and RHS"))
+        with br.else_:
+            br.assign(value=lhs)
+    return br.value
+
+
+def _short_circuit_or(lhs, rhs_fn):
+    """Internal device-side ``lhs or rhs()`` with Python short-circuit semantics.
+
+    When ``lhs`` is truthy the unmodified ``lhs`` operand is the result and the
+    RHS lambda is never traced; otherwise the RHS runs inside the ``else``
+    region.  Non-runtime operands (plain Python values) keep native Python
+    truthiness and short-circuit at trace time.  Floating-point control values
+    are rejected.
+    """
+    if not callable(rhs_fn):
+        raise TypeError("pto._short_circuit_or expects a zero-argument callable RHS")
+    if not hasattr(lhs, "type"):
+        if isinstance(lhs, float):
+            raise TypeError(
+                "pto short-circuit or does not accept floating-point control values; "
+                "runtime float conditions are not supported",
+            )
+        return lhs if lhs else rhs_fn()
+    raw_lhs = unwrap_surface_value(lhs)
+    cond = coerce_runtime_i1_value(raw_lhs, context="pto short-circuit or condition")
+    with if_(cond) as br:
+        with br.then_:
+            br.assign(value=lhs)
+        with br.else_:
+            br.assign(value=_materialize_bool_branch_value(
+                _branch_rhs_value(rhs_fn(), "or"), context="pto short-circuit or RHS"))
+    return br.value
 
 
 def _is_branch_assign_literal(value) -> bool:

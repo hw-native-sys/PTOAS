@@ -371,6 +371,40 @@ def ast_rewrite_side_effect_kernel():
         pto.pipe_barrier(pto.Pipe.ALL)
 ```
 
+### Short-circuit `and` / `or`
+
+Python `and` / `or` between PTODSL runtime values are not bitwise
+operations: they keep Python's short-circuit semantics, so the right-hand
+side is only evaluated on the device where Python would actually need it.
+The AST rewrite turns `a and b` / `a or b` into a result-bearing `scf.if`
+whose guarded region contains exactly the RHS:
+
+<!-- ptodsl-doc-test: {"mode":"compile","symbol":"ast_rewrite_short_circuit_kernel","compile":{}} -->
+```python
+@pto.jit(target="a5")
+def ast_rewrite_short_circuit_kernel():
+    value = pto.const(10, dtype=pto.i32)
+    divisor = pto.const(2, dtype=pto.i32)
+
+    pred = (divisor != 0) and ((value // divisor) > 0)
+    if pred:
+        pto.pipe_barrier(pto.Pipe.ALL)
+```
+
+`and` returns the left operand when it is falsy and the right operand
+otherwise; `or` returns the left operand when it is truthy and the right
+operand otherwise. Integer-typed operands are tested with non-zero
+truthiness, and when one merged branch is an `i1` the other operand is
+reconciled with the same rules as `pto.if_` branch merges (including Python
+`bool` literals, which materialize as `i1` constants). Statically-known
+`bool` / `int` operands short-circuit at trace time: `False and rhs` and
+`True or rhs` never trace the RHS at all.
+
+`and` / `or` compose with every rewritten expression context: assignments,
+call arguments, `return`, and `if` / `while` conditions. Floating-point
+values are not valid short-circuit controls and raise a clear error.
+
+
 ### Runtime loops
 
 Native `range(...)` loops become device-side loops:
@@ -638,3 +672,4 @@ do not use Python `return` as a dynamic loop exit.
 | `pto.for_` | Device-side | Dynamic bounds, runtime loop counts |
 | `pto.for_(...).carry(...)` | Device-side | Loops with accumulated state across iterations |
 | `pto.if_` | Device-side | Runtime conditions, data-dependent branching |
+| Python `and` / `or` | Device-side short-circuit `scf.if` | Runtime predicates with Python short-circuit semantics |
