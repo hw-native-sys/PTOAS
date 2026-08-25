@@ -374,6 +374,37 @@ static LogicalResult materializeExplicitKernelKindSections(ModuleOp module) {
   return success();
 }
 
+/// Wraps `module` in a fresh outer module holding one cloned child per
+/// requested kernel kind, then replaces `module`'s body and attributes with
+/// the outer module's. `functionKindInput` selects the per-function
+/// kernel-kind pruning path in cloneModuleForKind instead of the
+/// section-based one.
+static void splitIntoKindModules(ModuleOp module, bool needVector,
+                                 bool needCube, bool functionKindInput) {
+  SmallVector<NamedAttribute> outerAttrs;
+  outerAttrs.reserve(module->getAttrs().size());
+  for (NamedAttribute attr : module->getAttrs()) {
+    if (attr.getName() != SymbolTable::getSymbolAttrName()) {
+      outerAttrs.push_back(attr);
+    }
+  }
+
+  auto outer = ModuleOp::create(module.getLoc());
+  outer->setAttrs(DictionaryAttr::get(module.getContext(), outerAttrs));
+  OpBuilder builder(outer.getBody(), outer.getBody()->end());
+  if (needVector) {
+    cloneModuleForKind(module, FunctionKernelKind::Vector, builder,
+                       functionKindInput);
+  }
+  if (needCube) {
+    cloneModuleForKind(module, FunctionKernelKind::Cube, builder,
+                       functionKindInput);
+  }
+
+  module.getBodyRegion().takeBody(outer.getBodyRegion());
+  module->setAttrs(outer->getAttrs());
+}
+
 static LogicalResult splitCVModule(ModuleOp module) {
   flattenSingleUnpartitionedChild(module);
   if (hasKernelKind(module)) {
@@ -395,25 +426,8 @@ static LogicalResult splitCVModule(ModuleOp module) {
   bool hasCubeFunctions =
       hasFunctionKernelKind(module, FunctionKernelKind::Cube);
   if (hasVectorFunctions || hasCubeFunctions) {
-    SmallVector<NamedAttribute> outerAttrs;
-    for (NamedAttribute attr : module->getAttrs()) {
-      if (attr.getName() != SymbolTable::getSymbolAttrName()) {
-        outerAttrs.push_back(attr);
-      }
-    }
-    auto outer = ModuleOp::create(module.getLoc());
-    outer->setAttrs(DictionaryAttr::get(module.getContext(), outerAttrs));
-    OpBuilder builder(outer.getBody(), outer.getBody()->end());
-    if (hasVectorFunctions) {
-      cloneModuleForKind(module, FunctionKernelKind::Vector, builder,
+    splitIntoKindModules(module, hasVectorFunctions, hasCubeFunctions,
                          /*functionKindInput=*/true);
-    }
-    if (hasCubeFunctions) {
-      cloneModuleForKind(module, FunctionKernelKind::Cube, builder,
-                         /*functionKindInput=*/true);
-    }
-    module.getBodyRegion().takeBody(outer.getBodyRegion());
-    module->setAttrs(outer->getAttrs());
     return success();
   }
   if (!hasCVSections(module)) {
@@ -431,26 +445,8 @@ static LogicalResult splitCVModule(ModuleOp module) {
     return success();
   }
 
-  SmallVector<NamedAttribute> outerAttrs;
-  outerAttrs.reserve(module->getAttrs().size());
-  for (NamedAttribute attr : module->getAttrs()) {
-    if (attr.getName() != SymbolTable::getSymbolAttrName()) {
-      outerAttrs.push_back(attr);
-    }
-  }
-
-  auto outer = ModuleOp::create(module.getLoc());
-  outer->setAttrs(DictionaryAttr::get(module.getContext(), outerAttrs));
-  OpBuilder builder(outer.getBody(), outer.getBody()->end());
-  if (needVector) {
-    cloneModuleForKind(module, FunctionKernelKind::Vector, builder);
-  }
-  if (needCube) {
-    cloneModuleForKind(module, FunctionKernelKind::Cube, builder);
-  }
-
-  module.getBodyRegion().takeBody(outer.getBodyRegion());
-  module->setAttrs(outer->getAttrs());
+  splitIntoKindModules(module, needVector, needCube,
+                       /*functionKindInput=*/false);
   return success();
 }
 

@@ -4,7 +4,8 @@
 # the token construction itself lives in VPTOBridgeTokens.
 bridge_ops:
   - op: pto.initialize_l2l_pipe
-    family: pipe
+    wrapper: pipe
+    lowering: custom    # storage lifecycle: owned by the pipe family pass
     entry: pto_vpto_pipe_init
     storage_size_entry: pto_vpto_pipe_size
     abi:
@@ -21,22 +22,25 @@ bridge_ops:
         field: rows
         target: Tile::Rows
   - op: pto.tpush
-    family: pipe
+    wrapper: pipe
+    lowering: custom    # consumes the family pass storage SSA value
     entry: pto_vpto_pipe_push
     abi:
       - type: ptr    # storage
       - type: i64    # producer tile address
   - op: pto.tpop
-    family: pipe
+    wrapper: pipe
+    lowering: custom    # rebinds the tile address to the bridge call result
     entry: pto_vpto_pipe_pop
     abi:
       - type: ptr    # storage
   - op: pto.tfree
-    family: pipe
+    wrapper: pipe
+    lowering: custom    # consumes the family pass storage SSA value
     entry: pto_vpto_pipe_free
     abi:
       - type: ptr    # storage
   - op: internal    # wrapper-internal helper, not routed from an IR op
-    family: pipe
+    wrapper: pipe
     entry: pto_vpto_pipe_size
     abi: []

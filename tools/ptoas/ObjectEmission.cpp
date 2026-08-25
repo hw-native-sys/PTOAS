@@ -497,6 +497,29 @@ public:
                                          outBitcodePath, diagOS);
   }
 
+  // Compiles the generated bridge wrapper source to bitcode for each device
+  // module present, once per core kind (the wrapper guards its entries with
+  // __DAV_CUBE__ / __DAV_VEC__). An empty wrapper source compiles nothing.
+  bool compileBridgeWrappers(llvm::Module *cubeModule,
+                             llvm::Module *vectorModule,
+                             llvm::StringRef wrapperSource,
+                             const mlir::pto::CANNToolchain &toolchain,
+                             std::string &cubeBitcodePath,
+                             std::string &vectorBitcodePath,
+                             llvm::raw_ostream &diagOS) {
+    if (cubeModule &&
+        !compileBridgeWrapper(wrapperSource,
+                              mlir::pto::ObjectEmissionDeviceTarget::Cube,
+                              toolchain, cubeBitcodePath, diagOS))
+      return false;
+    if (vectorModule &&
+        !compileBridgeWrapper(wrapperSource,
+                              mlir::pto::ObjectEmissionDeviceTarget::Vector,
+                              toolchain, vectorBitcodePath, diagOS))
+      return false;
+    return true;
+  }
+
   bool mergeDeviceObjects(const mlir::pto::CANNToolchain &toolchain,
                           llvm::raw_ostream &diagOS) {
     llvm::SmallVector<std::string, mlir::pto::kValue2> deviceObjPaths;
@@ -671,6 +694,27 @@ static bool compileDeviceLLVMToObject(llvm::StringRef llPath,
   args.push_back(outObjPath.str());
   return runCommandWithStderr(bishengPath, args, stderrPath, diagOS,
                               "device LLVM compilation", llPath);
+}
+
+// Compiles the written device LLVM IR to an object, linking externally
+// compiled bridge bitcode into the IR first when provided. The linked IR is
+// materialized next to the object file and compiled instead of the original
+// IR, so the original .ll stays a faithful dump of the module.
+static bool compileDeviceLLVMToObjectWithBridgeLink(
+    llvm::StringRef llPath, llvm::StringRef bridgeBitcodePath,
+    llvm::StringRef outObjPath, llvm::StringRef targetCPU,
+    const mlir::pto::CANNToolchain &toolchain, llvm::StringRef stderrPath,
+    llvm::raw_ostream &diagOS) {
+  std::string compileInput = llPath.str();
+  if (!bridgeBitcodePath.empty()) {
+    std::string linkedPath = (outObjPath + ".linked.bc").str();
+    if (!linkDeviceLLVMBitcode(llPath, bridgeBitcodePath, linkedPath,
+                               toolchain, stderrPath, diagOS))
+      return false;
+    compileInput = linkedPath;
+  }
+  return compileDeviceLLVMToObject(compileInput, outObjPath, targetCPU,
+                                   toolchain.bishengPath, stderrPath, diagOS);
 }
 
 static bool compileCppDeviceSourceToObject(
@@ -1178,18 +1222,10 @@ mlir::LogicalResult mlir::pto::emitVPTOVectorDeviceObject(
   if (failed(writeLLVMModule(module, llPath, diagOS))) {
     return failure();
   }
-  std::string compileInput = llPath.str();
-  if (!bridgeBitcodePath.empty()) {
-    std::string linkedPath = (outObjPath + ".linked.bc").str();
-    if (!linkDeviceLLVMBitcode(llPath, bridgeBitcodePath, linkedPath,
-                               toolchain, stderrPath, diagOS))
-      return failure();
-    compileInput = linkedPath;
-  }
-  return compileDeviceLLVMToObject(
-             compileInput, outObjPath,
+  return compileDeviceLLVMToObjectWithBridgeLink(
+             llPath, bridgeBitcodePath, outObjPath,
              resolveTargetCPU(module, ObjectEmissionDeviceTarget::Vector),
-             toolchain.bishengPath, stderrPath, diagOS)
+             toolchain, stderrPath, diagOS)
              ? success()
              : failure();
 }
@@ -1207,18 +1243,10 @@ mlir::LogicalResult mlir::pto::emitVPTOCubeDeviceObject(
   if (failed(writeLLVMModule(module, llPath, diagOS))) {
     return failure();
   }
-  std::string compileInput = llPath.str();
-  if (!bridgeBitcodePath.empty()) {
-    std::string linkedPath = (outObjPath + ".linked.bc").str();
-    if (!linkDeviceLLVMBitcode(llPath, bridgeBitcodePath, linkedPath,
-                               toolchain, stderrPath, diagOS))
-      return failure();
-    compileInput = linkedPath;
-  }
-  return compileDeviceLLVMToObject(
-             compileInput, outObjPath,
+  return compileDeviceLLVMToObjectWithBridgeLink(
+             llPath, bridgeBitcodePath, outObjPath,
              resolveTargetCPU(module, ObjectEmissionDeviceTarget::Cube),
-             toolchain.bishengPath, stderrPath, diagOS)
+             toolchain, stderrPath, diagOS)
              ? success()
              : failure();
 }
@@ -1243,18 +1271,11 @@ mlir::LogicalResult mlir::pto::emitFatobjLLVM(
     return failure();
   }
   std::string cubeBridgeBitcodePath;
-  if (cubeModule &&
-      !artifacts.compileBridgeWrapper(bridgeWrapperSource,
-                                      ObjectEmissionDeviceTarget::Cube,
-                                      toolchain, cubeBridgeBitcodePath,
-                                      diagOS))
-    return failure();
   std::string vectorBridgeBitcodePath;
-  if (vectorModule &&
-      !artifacts.compileBridgeWrapper(bridgeWrapperSource,
-                                      ObjectEmissionDeviceTarget::Vector,
-                                      toolchain, vectorBridgeBitcodePath,
-                                      diagOS))
+  if (!artifacts.compileBridgeWrappers(cubeModule, vectorModule,
+                                       bridgeWrapperSource, toolchain,
+                                       cubeBridgeBitcodePath,
+                                       vectorBridgeBitcodePath, diagOS))
     return failure();
   if (!artifacts.emitCubeObject(cubeModule, toolchain, cubeBridgeBitcodePath,
                                 diagOS)) {
@@ -1335,18 +1356,11 @@ mlir::LogicalResult mlir::pto::emitFatobjLLVMWithRuntime(
   }
 
   std::string cubeBridgeBitcodePath;
-  if (cubeModule &&
-      !artifacts.compileBridgeWrapper(bridgeWrapperSource,
-                                      ObjectEmissionDeviceTarget::Cube,
-                                      *toolchain, cubeBridgeBitcodePath,
-                                      diagOS))
-    return failure();
   std::string vectorBridgeBitcodePath;
-  if (vectorModule &&
-      !artifacts.compileBridgeWrapper(bridgeWrapperSource,
-                                      ObjectEmissionDeviceTarget::Vector,
-                                      *toolchain, vectorBridgeBitcodePath,
-                                      diagOS))
+  if (!artifacts.compileBridgeWrappers(cubeModule, vectorModule,
+                                       bridgeWrapperSource, *toolchain,
+                                       cubeBridgeBitcodePath,
+                                       vectorBridgeBitcodePath, diagOS))
     return failure();
   if (!artifacts.emitCubeObject(cubeModule, *toolchain,
                                 cubeBridgeBitcodePath, diagOS)) {

@@ -31,6 +31,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/IR/PTO.h"
+#include "PTO/Transforms/VPTOBridgeSpecCollector.h"
 #include "PTO/Transforms/VPTOBridgeTokens.h"
 #include "PTO/Transforms/VPTOBridgeWhitelist.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -43,6 +44,11 @@
 
 namespace mlir {
 namespace pto {
+
+#define GEN_PASS_DECL_PTOLOWERDECLARATIVEBRIDGEOPS
+#define GEN_PASS_DEF_PTOLOWERDECLARATIVEBRIDGEOPS
+#include "PTO/Transforms/Passes.h.inc"
+
 namespace {
 
 /// Derives the wrapper entry spec key from the routed IR op name.
@@ -83,31 +89,9 @@ static std::string camelCaseFieldName(llvm::StringRef fieldName) {
 }
 
 struct PTOLowerDeclarativeBridgeOpsPass final
-    : public PassWrapper<PTOLowerDeclarativeBridgeOpsPass,
-                         OperationPass<func::FuncOp>> {
+    : public impl::PTOLowerDeclarativeBridgeOpsBase<
+          PTOLowerDeclarativeBridgeOpsPass> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PTOLowerDeclarativeBridgeOpsPass)
-
-  PTOLowerDeclarativeBridgeOpsPass() = default;
-  PTOLowerDeclarativeBridgeOpsPass(const PTOLowerDeclarativeBridgeOpsPass
-                                       &other)
-      : PassWrapper(other) {
-    copyOptionValuesFrom(&other);
-  }
-
-  Option<std::string> whitelistPath{
-      *this, "whitelist-path", llvm::cl::init(""),
-      llvm::cl::desc("Path to the VPTO bridge whitelist YAML; falls back to "
-                     "the PTOAS_VPTO_BRIDGE_WHITELIST environment variable, "
-                     "then to the built-in default whitelist")};
-
-  llvm::StringRef getArgument() const final {
-    return "pto-lower-declarative-bridge-ops";
-  }
-
-  llvm::StringRef getDescription() const final {
-    return "Lower whitelist-routed ops through the declarative VPTO bridge "
-           "channel";
-  }
 
   void runOnOperation() override {
     func::FuncOp func = getOperation();
@@ -146,27 +130,7 @@ struct PTOLowerDeclarativeBridgeOpsPass final
     // stored as a function attribute once lowering succeeds. The module-level
     // wrapper generation pass merges the per-function specs deterministically
     // (the pass instances may run concurrently).
-    SmallVector<std::pair<std::string, std::string>> specFields;
-    // The spec becomes a DictionaryAttr, so each key may appear at most
-    // once. Repeat writes with the same token are harmless (multiple ops
-    // sharing a tile shape or entry); a different token for a key already
-    // written is a conflict the wrapper cannot render.
-    llvm::StringMap<std::string> writtenSpecFields;
-    auto addSpecField = [&](Operation *op, llvm::StringRef key,
-                            std::string token) {
-      auto inserted = writtenSpecFields.try_emplace(key, token);
-      if (inserted.second) {
-        specFields.emplace_back(std::string(key), token);
-        return;
-      }
-      if (inserted.first->second != token) {
-        op->emitError() << "VPTO declarative bridge spec field '" << key
-                        << "' was already collected as '"
-                        << inserted.first->second
-                        << "'; the wrapper renders one token per spec field";
-        hadError = true;
-      }
-    };
+    BridgeSpecCollector spec;
     // Tile handles consumed by bridged ops; erased once use-empty.
     SmallVector<AllocTileOp> bridgedAllocs;
 
@@ -207,7 +171,7 @@ struct PTOLowerDeclarativeBridgeOpsPass final
         hadError = true;
         return;
       }
-      addSpecField(op, abiArg.role, *tileTokOr);
+      spec.addField(op, abiArg.role, *tileTokOr);
       if (auto alloc = tile.getDefiningOp<AllocTileOp>()) {
         bridgedAllocs.push_back(alloc);
       }
@@ -239,7 +203,7 @@ struct PTOLowerDeclarativeBridgeOpsPass final
       if (!field.omitValue.empty() && caseSymbol == field.omitValue) {
         return;
       }
-      addSpecField(op, field.field, field.enumType + "::" + caseSymbol.str());
+      spec.addField(op, field.field, field.enumType + "::" + caseSymbol.str());
     };
 
     for (auto &[op, entry] : routed) {
@@ -283,12 +247,12 @@ struct PTOLowerDeclarativeBridgeOpsPass final
         collectTileToken(op, abiArg, op->getOperand(abiArg.operand));
       }
       for (const BridgeTmplMapField &field : entry->tmplMap) {
-        if (field.source == "attr") {
+        if (field.source == kAttrTmplMapSource) {
           collectAttrToken(op, field);
         }
       }
-      addSpecField(op, deriveEntrySpecKey(op->getName().getStringRef()),
-                   entry->entry);
+      spec.addField(op, deriveEntrySpecKey(op->getName().getStringRef()),
+                    entry->entry);
       OpBuilder builder(op);
       builder.create<BridgeCallOp>(op->getLoc(), /*results=*/TypeRange{},
                                    /*callee=*/entry->entry,
@@ -306,19 +270,11 @@ struct PTOLowerDeclarativeBridgeOpsPass final
       }
     }
 
-    if (hadError) {
+    if (hadError || spec.hadError()) {
       signalPassFailure();
       return;
     }
-    if (!specFields.empty()) {
-      SmallVector<NamedAttribute> specAttrs;
-      for (const auto &field : specFields) {
-        specAttrs.push_back({StringAttr::get(func.getContext(), field.first),
-                             StringAttr::get(func.getContext(), field.second)});
-      }
-      func->setAttr(kBridgeFuncSpecAttrName,
-                    DictionaryAttr::get(func.getContext(), specAttrs));
-    }
+    spec.store(func);
   }
 };
 

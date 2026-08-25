@@ -28,6 +28,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/IR/PTO.h"
+#include "PTO/Transforms/VPTOBridgeSpecCollector.h"
 #include "PTO/Transforms/VPTOBridgeTokens.h"
 #include "PTO/Transforms/VPTOBridgeWhitelist.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -36,10 +37,14 @@
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/StringSet.h"
 
 namespace mlir {
 namespace pto {
+
+#define GEN_PASS_DECL_PTOLOWERPIPEFAMILYOPS
+#define GEN_PASS_DEF_PTOLOWERPIPEFAMILYOPS
+#include "PTO/Transforms/Passes.h.inc"
+
 namespace {
 
 /// Emits a bridge call with no results and no synthesized storage.
@@ -71,28 +76,8 @@ static Value resolveTileAddress(Value tile, OpBuilder &builder,
 }
 
 struct PTOLowerPipeFamilyOpsPass final
-    : public PassWrapper<PTOLowerPipeFamilyOpsPass, OperationPass<func::FuncOp>> {
+    : public impl::PTOLowerPipeFamilyOpsBase<PTOLowerPipeFamilyOpsPass> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PTOLowerPipeFamilyOpsPass)
-
-  PTOLowerPipeFamilyOpsPass() = default;
-  PTOLowerPipeFamilyOpsPass(const PTOLowerPipeFamilyOpsPass &other)
-      : PassWrapper(other) {
-    copyOptionValuesFrom(&other);
-  }
-
-  Option<std::string> whitelistPath{
-      *this, "whitelist-path", llvm::cl::init(""),
-      llvm::cl::desc("Path to the VPTO bridge whitelist YAML; falls back to "
-                     "the PTOAS_VPTO_BRIDGE_WHITELIST environment variable, "
-                     "then to the built-in default whitelist")};
-
-  llvm::StringRef getArgument() const final {
-    return "pto-lower-pipe-family-ops";
-  }
-
-  llvm::StringRef getDescription() const final {
-    return "Lower internal TPipe ops into generic VPTO bridge ops";
-  }
 
   void runOnOperation() override {
     func::FuncOp func = getOperation();
@@ -100,7 +85,7 @@ struct PTOLowerPipeFamilyOpsPass final
     bool hadError = false;
     // Wrapper specialization fields collected while lowering this function;
     // merged into the module bridge spec attribute once lowering succeeds.
-    SmallVector<std::pair<std::string, std::string>> specFields;
+    BridgeSpecCollector spec;
 
     // Collect first; rewriting during the walk would invalidate the walker.
     SmallVector<InitializeL2LPipeOp> inits;
@@ -139,11 +124,9 @@ struct PTOLowerPipeFamilyOpsPass final
     // The whitelist always resolves through the formal chain (pass option,
     // PTOAS_VPTO_BRIDGE_WHITELIST, built-in default), so routing is
     // guaranteed; `whitelistName` is only for diagnostics.
-    std::string path = resolveBridgeWhitelistPath(whitelistPath);
-    std::string whitelistName =
-        path.empty() ? "<built-in vpto bridge whitelist>" : path;
+    std::string whitelistName;
     FailureOr<BridgeWhitelist> whitelistOr =
-        loadBridgeWhitelist(whitelistPath, llvm::errs());
+        loadBridgeWhitelist(whitelistPath, llvm::errs(), &whitelistName);
     if (failed(whitelistOr)) {
       signalPassFailure();
       return;
@@ -198,9 +181,10 @@ struct PTOLowerPipeFamilyOpsPass final
         hadError = true;
         continue;
       }
-      specFields.emplace_back(kBridgeSpecPipeKey, *pipeTokOr);
-      specFields.emplace_back(kBridgeSpecEntryInitKey, entry->entry);
-      specFields.emplace_back(kBridgeSpecEntrySizeKey, entry->storageSizeEntry);
+      spec.addUniqueField(init, kBridgeSpecPipeKey, *pipeTokOr);
+      spec.addUniqueField(init, kBridgeSpecEntryInitKey, entry->entry);
+      spec.addUniqueField(init, kBridgeSpecEntrySizeKey,
+                          entry->storageSizeEntry);
       builder.setInsertionPoint(init);
       BridgeCallOp call = builder.create<BridgeCallOp>(
           init.getLoc(), /*results=*/TypeRange{init.getPipe().getType()},
@@ -241,7 +225,7 @@ struct PTOLowerPipeFamilyOpsPass final
           hadError = true;
           return false;
         }
-        specFields.emplace_back(kBridgeSpecSplitKey, *splitTokOr);
+        spec.addUniqueField(op, kBridgeSpecSplitKey, *splitTokOr);
         bridgedSplit = split;
       }
       return true;
@@ -274,8 +258,8 @@ struct PTOLowerPipeFamilyOpsPass final
       if (!checkSplitConsistency(pop, pop.getSplit(), "TPOP")) {
         continue;
       }
-      specFields.emplace_back(kBridgeSpecConsumerTileKey, *consumerTokOr);
-      specFields.emplace_back(kBridgeSpecEntryPopKey, entry->entry);
+      spec.addUniqueField(pop, kBridgeSpecConsumerTileKey, *consumerTokOr);
+      spec.addUniqueField(pop, kBridgeSpecEntryPopKey, entry->entry);
       builder.setInsertionPoint(pop);
       BridgeCallOp call = builder.create<BridgeCallOp>(
           pop.getLoc(), /*results=*/TypeRange{builder.getI64Type()},
@@ -331,8 +315,8 @@ struct PTOLowerPipeFamilyOpsPass final
       if (!checkSplitConsistency(push, push.getSplit(), "TPUSH")) {
         continue;
       }
-      specFields.emplace_back(kBridgeSpecProducerTileKey, *producerTokOr);
-      specFields.emplace_back(kBridgeSpecEntryPushKey, entry->entry);
+      spec.addUniqueField(push, kBridgeSpecProducerTileKey, *producerTokOr);
+      spec.addUniqueField(push, kBridgeSpecEntryPushKey, entry->entry);
       builder.setInsertionPoint(push);
       emitVoidBridgeCall(builder, push.getLoc(), entry->entry,
                          ValueRange{push.getPipeHandle(), alloc.getAddr()});
@@ -354,7 +338,7 @@ struct PTOLowerPipeFamilyOpsPass final
       if (!checkSplitConsistency(free, free.getSplit(), "TFREE")) {
         continue;
       }
-      specFields.emplace_back(kBridgeSpecEntryFreeKey, entry->entry);
+      spec.addUniqueField(free, kBridgeSpecEntryFreeKey, entry->entry);
       builder.setInsertionPoint(free);
       emitVoidBridgeCall(builder, free.getLoc(), entry->entry,
                          ValueRange{free.getPipeHandle()});
@@ -381,33 +365,15 @@ struct PTOLowerPipeFamilyOpsPass final
       decl.erase();
     }
 
-    if (!hadError && !specFields.empty()) {
-      // Store the per-function specialization on the function itself; the
-      // module-level wrapper generation pass merges the per-function specs
-      // deterministically. The family pass instances may run concurrently,
-      // so they must not write the shared module attribute directly.
-      llvm::StringSet<> seenSpecKeys;
-      for (const auto &field : specFields) {
-        if (!seenSpecKeys.insert(field.first).second) {
-          func.emitError("VPTO pipe bridge detected repeated spec field '")
-              << field.first
-              << "'; only one bridged producer/consumer pair per function is "
-                 "supported";
-          hadError = true;
-          break;
-        }
-      }
-      SmallVector<NamedAttribute> specAttrs;
-      for (const auto &field : specFields) {
-        specAttrs.push_back({StringAttr::get(func.getContext(), field.first),
-                             StringAttr::get(func.getContext(), field.second)});
-      }
-      if (!hadError)
-        func->setAttr(kBridgeFuncSpecAttrName,
-                      DictionaryAttr::get(func.getContext(), specAttrs));
+    // Store the per-function specialization on the function itself; the
+    // module-level wrapper generation pass merges the per-function specs
+    // deterministically. The family pass instances may run concurrently,
+    // so they must not write the shared module attribute directly.
+    if (!hadError && !spec.hadError()) {
+      spec.store(func);
     }
 
-    if (hadError) {
+    if (hadError || spec.hadError()) {
       signalPassFailure();
     }
   }

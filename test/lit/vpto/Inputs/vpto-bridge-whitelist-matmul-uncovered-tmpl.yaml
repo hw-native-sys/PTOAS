@@ -6,8 +6,7 @@
 # declaration this fixture carries.
 bridge_ops:
   - op: pto.tmatmul
-    family: matmul
-    lowering: declarative
+    wrapper: matmul
     entry: pto_vpto_matmul
     abi:
       - {operand: 2, arg: dst, type: i64, role: result_tile}

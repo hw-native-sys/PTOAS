@@ -38,6 +38,11 @@
 
 namespace mlir {
 namespace pto {
+
+#define GEN_PASS_DECL_VPTOBRIDGELOWERING
+#define GEN_PASS_DEF_VPTOBRIDGELOWERING
+#include "PTO/Transforms/Passes.h.inc"
+
 namespace {
 
 /// Converts the carrier types a bridge op may hold. These rules mirror the
@@ -82,20 +87,6 @@ struct BridgeLoweringState {
   llvm::StringSet<> declaredEntries;
 };
 
-/// Returns whether the ABI token describes `type` after conversion.
-static bool abiTypeMatches(StringRef token, Type type) {
-  if (token == "ptr") {
-    return isa<LLVM::LLVMPointerType>(type);
-  }
-  if (token == "i64") {
-    return type.isInteger(64);
-  }
-  if (token == "i32") {
-    return type.isInteger(32);
-  }
-  return false;
-}
-
 /// Creates the module-level private declaration of a wrapper entry the
 /// first time it is called.
 static void ensureWrapperDecl(ModuleOp module, BridgeLoweringState &state,
@@ -125,7 +116,7 @@ static LogicalResult validateAbi(Operation *op, const BridgeWhitelistEntry &entr
   }
   for (auto [index, arg] : llvm::enumerate(callArgs)) {
     const BridgeAbiArg &abiArg = entry.abi[index];
-    if (!abiTypeMatches(abiArg.type, arg.getType())) {
+    if (!bridgeAbiTypeMatches(abiArg.type, arg.getType())) {
       return op->emitError()
              << "VPTO bridge call to '" << entry.entry << "' argument #"
              << index << " has type " << arg.getType()
@@ -247,30 +238,8 @@ public:
 };
 
 struct VPTOBridgeLoweringPass final
-    : public PassWrapper<VPTOBridgeLoweringPass, OperationPass<ModuleOp>> {
+    : public impl::VPTOBridgeLoweringBase<VPTOBridgeLoweringPass> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(VPTOBridgeLoweringPass)
-
-  VPTOBridgeLoweringPass() = default;
-  VPTOBridgeLoweringPass(const VPTOBridgeLoweringPass &other)
-      : PassWrapper(other) {
-    copyOptionValuesFrom(&other);
-  }
-
-  Option<std::string> whitelistPath{
-      *this, "whitelist-path", llvm::cl::init(""),
-      llvm::cl::desc("Path to the VPTO bridge whitelist YAML; falls back to "
-                     "the PTOAS_VPTO_BRIDGE_WHITELIST environment variable, "
-                     "then to the built-in default whitelist")};
-
-  llvm::StringRef getArgument() const final { return "vpto-bridge-lowering"; }
-
-  llvm::StringRef getDescription() const final {
-    return "Lower generic bridge ops into C++ wrapper calls";
-  }
-
-  void getDependentDialects(DialectRegistry &registry) const override {
-    registry.insert<LLVM::LLVMDialect, func::FuncDialect>();
-  }
 
   void runOnOperation() override {
     ModuleOp module = getOperation();
@@ -284,12 +253,9 @@ struct VPTOBridgeLoweringPass final
     // The whitelist always resolves through the formal chain (pass option,
     // PTOAS_VPTO_BRIDGE_WHITELIST, built-in default), so this pass always
     // validates; `whitelistName` is only for diagnostics.
-    std::string path = resolveBridgeWhitelistPath(whitelistPath);
-    std::string whitelistName =
-        path.empty() ? "<built-in vpto bridge whitelist>" : path;
-
+    std::string whitelistName;
     FailureOr<BridgeWhitelist> whitelistOr =
-        loadBridgeWhitelist(whitelistPath, llvm::errs());
+        loadBridgeWhitelist(whitelistPath, llvm::errs(), &whitelistName);
     if (failed(whitelistOr)) {
       signalPassFailure();
       return;
@@ -297,9 +263,11 @@ struct VPTOBridgeLoweringPass final
     BridgeWhitelist whitelist = std::move(*whitelistOr);
 
     // Routing check: an op the whitelist routes to a wrapper entry must
-    // have been rewritten into bridge ops by its family pass. Leftovers
-    // mean the family pass was skipped or missed the op; reject them here
-    // instead of letting them flow into the regular emission path.
+    // have been rewritten into bridge ops by the pass owning its lowering
+    // channel. Leftovers mean that pass was skipped or missed the op;
+    // reject them here instead of letting them flow into the regular
+    // emission path. The diagnostic names the channel so the reader knows
+    // which pass to look at.
     llvm::StringMap<const BridgeWhitelistEntry *> routedOps;
     for (const BridgeWhitelistEntry &entry : whitelist.bridgeOps) {
       if (entry.op != BridgeWhitelist::kInternalOp) {
@@ -316,8 +284,10 @@ struct VPTOBridgeLoweringPass final
           << "VPTO bridge: '" << it->first()
           << "' is routed to wrapper entry '" << it->second->entry
           << "' by the bridge whitelist '" << whitelistName
-          << "' but was not lowered into a pto.bridge_call by its family "
-             "pass";
+          << "' but was not lowered into a pto.bridge_call by "
+          << (it->second->isDeclarative()
+                  ? "the declarative bridge lowering"
+                  : "its family pass");
       leftoversFound = true;
     });
     if (leftoversFound) {

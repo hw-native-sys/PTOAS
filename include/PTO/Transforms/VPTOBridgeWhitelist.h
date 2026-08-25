@@ -19,6 +19,7 @@
 #ifndef MLIR_DIALECT_PTO_TRANSFORMS_VPTOBRIDGEWHITELIST_H
 #define MLIR_DIALECT_PTO_TRANSFORMS_VPTOBRIDGEWHITELIST_H
 
+#include "mlir/IR/Types.h"
 #include "mlir/Support/LLVM.h"
 #include "llvm/ADT/StringRef.h"
 #include <string>
@@ -58,21 +59,38 @@ struct BridgeTmplMapField {
   std::string omitValue;
 };
 
-/// One whitelist row: an IR op routed to a wrapper entry of a PTO-ISA
-/// interface family.
+/// One whitelist row: an IR op routed to a wrapper entry of a bridged
+/// PTO-ISA C++ interface.
 struct BridgeWhitelistEntry {
   /// IR op name, e.g. "pto.tpush". The whitelist is the routing table the
   /// family passes consult; "internal" marks wrapper-internal helpers
   /// (e.g. the size query entry) that are never routed from an IR op.
   std::string op;
-  /// Interface family, e.g. "pipe". Selects the family pass and the wrapper
-  /// template.
-  std::string family;
-  /// Lowering channel: "declarative" routes the op through the generic
-  /// declarative bridge lowering (mechanical operand-adapter mapping, no
-  /// family pass); "family" (the default) requires the family pass to
-  /// rewrite the op into bridge ops.
-  std::string lowering = "family";
+  /// Wrapper source this entry is rendered into, e.g. "pipe". Entries
+  /// sharing a wrapper share one C++ translation unit, one template
+  /// specialization and one typedef set, so this is the unit of wrapper
+  /// generation rather than a taxonomy of ops: the N IR ops of the pipe
+  /// protocol (init/push/pop/free plus the internal size query) all name
+  /// wrapper "pipe" and render into a single source. Wrapper generation
+  /// dispatches on it to pick the renderer, and a module may use entries of
+  /// exactly one wrapper. It also scopes the tmpl_map source validation of
+  /// custom-channel entries.
+  std::string wrapper;
+  /// Lowering channel. "declarative" (the default) routes the op through the
+  /// generic declarative bridge lowering: a mechanical operand-adapter
+  /// mapping driven entirely by this table, needing no pass code. "custom"
+  /// opts the entry out of that channel because it carries real family
+  /// semantics (storage lifecycle, address rebinding) that only a dedicated
+  /// pass can express.
+  ///
+  /// The default is deliberately the generic channel: adding a mechanically
+  /// mapped interface family must cost zero pass code *and* zero ceremony,
+  /// while the exception stays explicit. It also makes the common mistake
+  /// self-detecting -- an entry that needs a custom pass but forgets the tag
+  /// lacks the operand/arg/role bindings the declarative channel requires,
+  /// so it is rejected at parse time with the missing field named, instead
+  /// of surviving until the post-lowering leftover check.
+  std::string lowering = "declarative";
   /// Wrapper entry name, e.g. "pto_vpto_pipe_push". This is the callee the
   /// generic bridge lowering emits.
   std::string entry;
@@ -90,11 +108,12 @@ struct BridgeWhitelistEntry {
   /// Returns whether the op lowers through the generic declarative channel.
   bool isDeclarative() const { return lowering == kLoweringDeclarative; }
 
-  /// `lowering` value routing the op through the generic declarative
-  /// bridge lowering instead of a family pass.
+  /// `lowering` value (the default) routing the op through the generic
+  /// declarative bridge lowering.
   static constexpr llvm::StringLiteral kLoweringDeclarative = "declarative";
-  /// `lowering` value (the default) keeping the op on a family pass.
-  static constexpr llvm::StringLiteral kLoweringFamily = "family";
+  /// `lowering` value opting the entry out of the declarative channel: a
+  /// dedicated family pass owns the rewrite.
+  static constexpr llvm::StringLiteral kLoweringCustom = "custom";
 };
 
 /// Parsed whitelist document.
@@ -146,13 +165,37 @@ parseBridgeWhitelistFromBuffer(llvm::StringRef content,
 /// Returns an empty string when neither is configured.
 std::string resolveBridgeWhitelistPath(llvm::StringRef optionValue);
 
+/// Source name used in diagnostics when the built-in default whitelist is
+/// in effect.
+constexpr llvm::StringLiteral kBuiltinBridgeWhitelistSource =
+    "<built-in vpto bridge whitelist>";
+
 /// Loads the bridge whitelist through the formal resolution chain: pass
 /// `whitelist-path` option, then PTOAS_VPTO_BRIDGE_WHITELIST, then the
 /// built-in default whitelist (pipe + matmul families) shipped with ptoas.
 /// Always returns a parsed whitelist unless the explicitly configured file
-/// fails to parse.
+/// fails to parse. When `sourceName` is non-null it receives the resolved
+/// source name (file path or the built-in marker) for diagnostics.
 FailureOr<BridgeWhitelist> loadBridgeWhitelist(llvm::StringRef optionValue,
-                                               llvm::raw_ostream &diagOS);
+                                               llvm::raw_ostream &diagOS,
+                                               std::string *sourceName = nullptr);
+
+/// Returns whether `token` is one of the ABI carrier tokens accepted by the
+/// generic bridge lowering ("ptr", "i64", "i32"). The set stays closed so
+/// whitelist parsing and lowering agree on the carriers.
+bool isSupportedBridgeAbiType(llvm::StringRef token);
+
+/// Returns whether the ABI carrier token describes `type` after bridge
+/// lowering conversion ("ptr" -> LLVM pointer, "i64"/"i32" -> the integer
+/// widths).
+bool bridgeAbiTypeMatches(llvm::StringRef token, Type type);
+
+/// tmpl_map `source` tokens naming IR producers of a template argument.
+constexpr llvm::StringLiteral kPipeInitTmplMapSource = "pipe.init";
+constexpr llvm::StringLiteral kTileTmplMapSource = "tile";
+/// tmpl_map `source` token mapping an enum attribute of the routed op to a
+/// template slot.
+constexpr llvm::StringLiteral kAttrTmplMapSource = "attr";
 
 } // namespace pto
 } // namespace mlir

@@ -10,14 +10,20 @@
 // See LICENSE for more details.
 
 // Declarative binding diagnostics: the whitelist-driven channel validates
-// every abi binding against the routed op. One broken op must not keep the
-// others from being diagnosed (per-op continue semantics), so each scenario
-// lives in its own function and all four diagnostics surface in one run:
-// an out-of-range operand index, a non-tile_buf operand, a result-bearing
-// op routed to the buffer-form channel, and a non-enum attribute feeding
-// an attr tmpl_map row.
+// every abi binding against the routed op. Four scenarios are covered: an
+// out-of-range operand index, a non-tile_buf operand, a result-bearing op
+// routed to the buffer-form channel, and a non-enum attribute feeding an
+// attr tmpl_map row.
+//
+// Each scenario needs its own module (-split-input-file), not just its own
+// function in a shared module. The declarative pass is a FuncOp nested
+// pass, and MLIR's async pass adaptor breaks a worker out of its chunk on
+// the first failing function -- so with all four in one module the number
+// of diagnostics that surface varied run to run (1 to 4 observed under
+// load). Splitting gives each scenario an independent pass-manager run, so
+// all four are emitted deterministically.
 
-// RUN: not pto-test-opt %s "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-declarative-binding-diag.yaml" 2>&1 | FileCheck %s
+// RUN: not pto-test-opt %s -split-input-file "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-declarative-binding-diag.yaml" 2>&1 | FileCheck %s
 
 // CHECK: error: VPTO declarative bridge: whitelist entry 'pto_vpto_matmul_oob' binds operand #7 but the op has only 3 operands
 // CHECK: error: VPTO declarative bridge: operand #1 ('pipe_handle', role pipe_slot) must be a tile_buf
@@ -48,7 +54,11 @@ module attributes {pto.target_arch = "a5"} {
                                 blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
     return
   }
+}
 
+// -----
+
+module attributes {pto.target_arch = "a5"} {
   func.func private @declarative_non_tile_operand(%addr: i32)
       attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
     %c0 = arith.constant 0 : i64
@@ -62,7 +72,11 @@ module attributes {pto.target_arch = "a5"} {
         !pto.pipe) {split = 1}
     return
   }
+}
 
+// -----
+
+module attributes {pto.target_arch = "a5"} {
   func.func private @declarative_result_op(%addr: i32)
       attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %tile = pto.declare_tile
@@ -74,7 +88,11 @@ module attributes {pto.target_arch = "a5"} {
      -> !pto.ptr<f32, ub>
     return
   }
+}
 
+// -----
+
+module attributes {pto.target_arch = "a5"} {
   func.func private @declarative_non_enum_attr(%addr: i32)
       attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
     %c0 = arith.constant 0 : i64

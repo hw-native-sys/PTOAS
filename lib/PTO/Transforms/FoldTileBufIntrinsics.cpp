@@ -223,6 +223,14 @@ static bool isSCFTileCarrier(Value value) {
          isa_and_nonnull<scf::ForOp>(blockArg.getOwner()->getParentOp());
 }
 
+/// Returns whether the declared tile is rebound by a TPOP. The VPTO pipe
+/// bridge resolves such tiles at runtime from the FIFO slot address returned
+/// by the pop, so folding their address here would break address propagation.
+static bool isDeclareTileReboundByTPop(pto::DeclareTileOp decl) {
+  return llvm::any_of(decl.getResult().getUsers(),
+                      [](Operation *user) { return isa<pto::TPopOp>(user); });
+}
+
 static std::optional<TileHandleInfo> resolveTileHandle(Value tileBuf,
                                                        Operation *user) {
   if (auto regionResult = dyn_cast<OpResult>(tileBuf)) {
@@ -258,11 +266,7 @@ static std::optional<TileHandleInfo> resolveTileHandle(Value tileBuf,
   }
 
   if (auto decl = tileBuf.getDefiningOp<pto::DeclareTileOp>()) {
-    bool reboundByPop = llvm::any_of(decl.getResult().getUsers(),
-                                     [](Operation *user) {
-                                       return isa<pto::TPopOp>(user);
-                                     });
-    if (!reboundByPop) {
+    if (!isDeclareTileReboundByTPop(decl)) {
       user->emitError("FoldTileBufIntrinsics: pto.declare_tile address requires "
                       "a matching pto.tpop rebinding");
       return std::nullopt;
@@ -831,10 +835,7 @@ struct FoldTileBufIntrinsicsPass
         // FIFO slot; folding it to the placeholder value here would break the
         // VPTO pipe bridge address propagation.
         if (auto decl = addrOp.getSrc().getDefiningOp<pto::DeclareTileOp>();
-            decl && llvm::any_of(decl.getResult().getUsers(),
-                                 [](Operation *user) {
-                                   return isa<pto::TPopOp>(user);
-                                 }))
+            decl && isDeclareTileReboundByTPop(decl))
           continue;
 
         auto handleInfo = resolveTileHandle(addrOp.getSrc(), addrOp);

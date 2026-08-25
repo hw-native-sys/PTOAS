@@ -9,8 +9,7 @@
 # typedef targets deduplicate at render time.
 bridge_ops:
   - op: pto.tmatmul
-    family: matmul
-    lowering: declarative
+    wrapper: matmul
     entry: pto_vpto_matmul
     abi:
       - {operand: 2, arg: dst, type: i64, role: result_tile}
@@ -32,8 +31,7 @@ bridge_ops:
         enum_type: pto::AccPhase
         omit_value: Unspecified
   - op: pto.tmatmul.acc
-    family: matmul
-    lowering: declarative
+    wrapper: matmul
     entry: pto_vpto_matmul_acc
     abi:
       - {operand: 3, arg: dst, type: i64, role: result_tile}
@@ -50,8 +48,7 @@ bridge_ops:
         enum_type: pto::AccPhase
         omit_value: Unspecified
   - op: pto.tmatmul.bias
-    family: matmul
-    lowering: declarative
+    wrapper: matmul
     entry: pto_vpto_matmul_bias
     abi:
       - {operand: 3, arg: dst, type: i64, role: result_tile}
@@ -77,8 +74,7 @@ bridge_ops:
         enum_type: pto::AccPhase
         omit_value: Unspecified
   - op: pto.tmatmul.mx
-    family: matmul
-    lowering: declarative
+    wrapper: matmul
     entry: pto_vpto_matmul_mx
     abi:
       - {operand: 4, arg: dst, type: i64, role: result_tile}
@@ -108,8 +104,7 @@ bridge_ops:
         enum_type: pto::AccPhase
         omit_value: Unspecified
   - op: pto.tmatmul.mx.acc
-    family: matmul
-    lowering: declarative
+    wrapper: matmul
     entry: pto_vpto_matmul_mx_acc
     abi:
       - {operand: 5, arg: dst, type: i64, role: result_tile}
@@ -143,8 +138,7 @@ bridge_ops:
         enum_type: pto::AccPhase
         omit_value: Unspecified
   - op: pto.tmatmul.mx.bias
-    family: matmul
-    lowering: declarative
+    wrapper: matmul
     entry: pto_vpto_matmul_mx_bias
     abi:
       - {operand: 5, arg: dst, type: i64, role: result_tile}

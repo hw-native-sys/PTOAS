@@ -15,6 +15,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/Transforms/VPTOBridgeWhitelist.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -49,9 +50,9 @@ template <> struct MappingTraits<BridgeTmplMapField> {
 template <> struct MappingTraits<BridgeWhitelistEntry> {
   static void mapping(IO &io, BridgeWhitelistEntry &entry) {
     io.mapRequired("op", entry.op);
-    io.mapRequired("family", entry.family);
+    io.mapRequired("wrapper", entry.wrapper);
     io.mapOptional("lowering", entry.lowering,
-                   std::string(BridgeWhitelistEntry::kLoweringFamily));
+                   std::string(BridgeWhitelistEntry::kLoweringDeclarative));
     io.mapRequired("entry", entry.entry);
     io.mapOptional("abi", entry.abi);
     io.mapOptional("storage_size_entry", entry.storageSizeEntry);
@@ -74,26 +75,31 @@ LLVM_YAML_IS_SEQUENCE_VECTOR(BridgeWhitelistEntry)
 
 namespace {
 
-/// ABI carrier tokens accepted by the generic bridge lowering. The token set
-/// is intentionally small: it must stay a closed list so that both the
-/// lowering and the future wrapper generator agree on the carriers.
-bool isSupportedAbiType(StringRef type) {
-  return type == "ptr" || type == "i64" || type == "i32";
-}
-
-/// tmpl_map `source` tokens accepted for the pipe family. A source names the
-/// IR producer of a template argument: the pipe init op attributes or a tile
-/// operand's type.
+/// tmpl_map `source` tokens accepted for the pipe wrapper. A source names
+/// the IR producer of a template argument: the pipe init op attributes or a
+/// tile operand's type.
 bool isPipeTmplMapSource(StringRef source) {
-  return source == "pipe.init" || source == "tile";
+  return source == kPipeInitTmplMapSource || source == kTileTmplMapSource;
 }
-
-/// tmpl_map `source` token mapping an enum attribute of the routed op to a
-/// template slot. The token spelling is assembled from the whitelist
-/// `enum_type` prefix and the attribute's enum case symbol.
-constexpr llvm::StringLiteral kAttrTmplMapSource = "attr";
 
 } // namespace
+
+bool pto::isSupportedBridgeAbiType(llvm::StringRef token) {
+  return token == "ptr" || token == "i64" || token == "i32";
+}
+
+bool pto::bridgeAbiTypeMatches(llvm::StringRef token, Type type) {
+  if (token == "ptr") {
+    return isa<LLVM::LLVMPointerType>(type);
+  }
+  if (token == "i64") {
+    return type.isInteger(64);
+  }
+  if (token == "i32") {
+    return type.isInteger(32);
+  }
+  return false;
+}
 
 FailureOr<BridgeWhitelist>
 pto::parseBridgeWhitelistFromBuffer(llvm::StringRef content,
@@ -111,18 +117,18 @@ pto::parseBridgeWhitelistFromBuffer(llvm::StringRef content,
   llvm::StringSet<> seenEntries;
   llvm::StringSet<> seenOps;
   for (const BridgeWhitelistEntry &entry : whitelist.bridgeOps) {
-    if (entry.op.empty() || entry.family.empty() || entry.entry.empty()) {
+    if (entry.op.empty() || entry.wrapper.empty() || entry.entry.empty()) {
       diagOS << "VPTO bridge whitelist: entry with op='" << entry.op
-             << "', family='" << entry.family << "', entry='" << entry.entry
+             << "', wrapper='" << entry.wrapper << "', entry='" << entry.entry
              << "' has an empty required field in '" << sourceName << "'\n";
       return failure();
     }
     if (entry.lowering != BridgeWhitelistEntry::kLoweringDeclarative &&
-        entry.lowering != BridgeWhitelistEntry::kLoweringFamily) {
+        entry.lowering != BridgeWhitelistEntry::kLoweringCustom) {
       diagOS << "VPTO bridge whitelist: entry '" << entry.entry
              << "' declares unsupported lowering '" << entry.lowering
              << "' in '" << sourceName << "' (supported: declarative, "
-                "family)\n";
+                "custom)\n";
       return failure();
     }
     if (!seenEntries.insert(entry.entry).second) {
@@ -138,16 +144,24 @@ pto::parseBridgeWhitelistFromBuffer(llvm::StringRef content,
     }
     // Declarative entries bind every abi argument to an IR operand position
     // and a template role; the role set is the valid source set of the
-    // entry's tmpl_map tile rows.
+    // entry's tmpl_map tile rows. Wrapper-internal helpers are never routed
+    // from an IR op, so they carry no operand bindings and the `lowering`
+    // value is meaningless for them.
+    const bool declarativeChannel =
+        entry.isDeclarative() && entry.op != BridgeWhitelist::kInternalOp;
     llvm::StringSet<> declarativeRoles;
     llvm::DenseSet<int64_t> declarativeOperands;
-    if (entry.isDeclarative()) {
+    if (declarativeChannel) {
       for (const BridgeAbiArg &arg : entry.abi) {
         if (arg.operand < 0 || arg.arg.empty() || arg.role.empty()) {
+          // The declarative channel is the default, so the likeliest cause
+          // is an entry that needs a dedicated pass but never opted out.
           diagOS << "VPTO bridge whitelist: declarative entry '" << entry.entry
                  << "' has an abi argument without operand/arg/role binding "
                     "in '"
-                 << sourceName << "'\n";
+                 << sourceName
+                 << "' (entries owned by a dedicated family pass must "
+                    "declare 'lowering: custom')\n";
           return failure();
         }
         if (!declarativeOperands.insert(arg.operand).second) {
@@ -160,7 +174,7 @@ pto::parseBridgeWhitelistFromBuffer(llvm::StringRef content,
       }
     }
     for (const BridgeAbiArg &arg : entry.abi) {
-      if (!isSupportedAbiType(arg.type)) {
+      if (!isSupportedBridgeAbiType(arg.type)) {
         diagOS << "VPTO bridge whitelist: unsupported ABI type token '"
                << arg.type << "' for entry '" << entry.entry << "' in '"
                << sourceName << "' (supported: ptr, i64, i32)\n";
@@ -175,7 +189,7 @@ pto::parseBridgeWhitelistFromBuffer(llvm::StringRef content,
                << sourceName << "'\n";
         return failure();
       }
-      if (entry.isDeclarative()) {
+      if (declarativeChannel) {
         // Declarative sources are structural: tile rows name abi roles, the
         // attr row maps an enum attribute and must declare its C++ enum.
         if (field.source == kAttrTmplMapSource) {
@@ -197,10 +211,10 @@ pto::parseBridgeWhitelistFromBuffer(llvm::StringRef content,
           diagOS << ") in '" << sourceName << "'\n";
           return failure();
         }
-      } else if (entry.family == "pipe" &&
+      } else if (entry.wrapper == "pipe" &&
                  !isPipeTmplMapSource(field.source)) {
         diagOS << "VPTO bridge whitelist: tmpl_map row of entry '"
-               << entry.entry << "' uses unknown pipe-family source '"
+               << entry.entry << "' uses unknown pipe-wrapper source '"
                << field.source << "' in '" << sourceName
                << "' (supported: pipe.init, tile)\n";
         return failure();
@@ -232,23 +246,26 @@ pto::parseBridgeWhitelist(llvm::StringRef path, llvm::raw_ostream &diagOS) {
                                         diagOS);
 }
 
-/// The built-in default whitelist covering the interface families bridged
-/// today: the pipe family (C2V/V2C fifo) and the matmul family (TMATMUL /
+/// The built-in default whitelist covering the two wrappers bridged today:
+/// the pipe wrapper (C2V/V2C fifo) and the matmul wrapper (TMATMUL /
 /// TMATMUL_ACC and the bias/MX entry variants). It keeps `ptoas
 /// --pto-backend=vpto` working out of the box; an explicit whitelist (pass
 /// option or PTOAS_VPTO_BRIDGE_WHITELIST) always overrides it. End-to-end
-/// cases under test/vpto/cases/kernels/ rely on this default, so adding a
-/// bridged family requires extending it here.
+/// cases under test/vpto/cases/kernels/ rely on this default, so bridging a
+/// new interface requires extending it here.
 /// Variant entries share the wrapper's one tile configuration, so every
 /// matmul entry declares the full set of role tiles it renders; duplicate
 /// targets deduplicate at render time.
-/// The matmul entries use the declarative lowering channel: each abi row
-/// binds a wrapper argument to an IR operand position and a tile role, and
-/// an optional attr tmpl_map row maps the accPhase enum attribute.
+/// The matmul entries ride the default declarative lowering channel: each
+/// abi row binds a wrapper argument to an IR operand position and a tile
+/// role, and an optional attr tmpl_map row maps the accPhase enum
+/// attribute. The pipe entries opt out with `lowering: custom` because the
+/// storage lifecycle and the TPOP address rebinding need a dedicated pass.
 static constexpr llvm::StringLiteral kDefaultBridgeWhitelistYaml = R"yaml(
 bridge_ops:
   - op: pto.initialize_l2l_pipe
-    family: pipe
+    wrapper: pipe
+    lowering: custom    # storage lifecycle: owned by the pipe family pass
     entry: pto_vpto_pipe_init
     storage_size_entry: pto_vpto_pipe_size
     abi:
@@ -259,7 +276,8 @@ bridge_ops:
         field: pipe
         target: Pipe
   - op: pto.tpush
-    family: pipe
+    wrapper: pipe
+    lowering: custom    # consumes the family pass storage SSA value
     entry: pto_vpto_pipe_push
     abi:
       - type: ptr    # storage
@@ -269,7 +287,8 @@ bridge_ops:
         field: tile
         target: ProducerTile
   - op: pto.tpop
-    family: pipe
+    wrapper: pipe
+    lowering: custom    # rebinds the tile address to the bridge call result
     entry: pto_vpto_pipe_pop
     abi:
       - type: ptr    # storage
@@ -278,17 +297,17 @@ bridge_ops:
         field: tile
         target: ConsumerTile
   - op: pto.tfree
-    family: pipe
+    wrapper: pipe
+    lowering: custom    # consumes the family pass storage SSA value
     entry: pto_vpto_pipe_free
     abi:
       - type: ptr    # storage
   - op: internal    # wrapper-internal helper, not routed from an IR op
-    family: pipe
+    wrapper: pipe
     entry: pto_vpto_pipe_size
     abi: []
   - op: pto.tmatmul
-    family: matmul
-    lowering: declarative
+    wrapper: matmul
     entry: pto_vpto_matmul
     abi:
       - {operand: 2, arg: dst, type: i64, role: result_tile}
@@ -310,8 +329,7 @@ bridge_ops:
         enum_type: pto::AccPhase
         omit_value: Unspecified
   - op: pto.tmatmul.acc
-    family: matmul
-    lowering: declarative
+    wrapper: matmul
     entry: pto_vpto_matmul_acc
     abi:
       - {operand: 3, arg: dst, type: i64, role: result_tile}
@@ -328,8 +346,7 @@ bridge_ops:
         enum_type: pto::AccPhase
         omit_value: Unspecified
   - op: pto.tmatmul.bias
-    family: matmul
-    lowering: declarative
+    wrapper: matmul
     entry: pto_vpto_matmul_bias
     abi:
       - {operand: 3, arg: dst, type: i64, role: result_tile}
@@ -355,8 +372,7 @@ bridge_ops:
         enum_type: pto::AccPhase
         omit_value: Unspecified
   - op: pto.tmatmul.mx
-    family: matmul
-    lowering: declarative
+    wrapper: matmul
     entry: pto_vpto_matmul_mx
     abi:
       - {operand: 4, arg: dst, type: i64, role: result_tile}
@@ -386,8 +402,7 @@ bridge_ops:
         enum_type: pto::AccPhase
         omit_value: Unspecified
   - op: pto.tmatmul.mx.acc
-    family: matmul
-    lowering: declarative
+    wrapper: matmul
     entry: pto_vpto_matmul_mx_acc
     abi:
       - {operand: 5, arg: dst, type: i64, role: result_tile}
@@ -421,8 +436,7 @@ bridge_ops:
         enum_type: pto::AccPhase
         omit_value: Unspecified
   - op: pto.tmatmul.mx.bias
-    family: matmul
-    lowering: declarative
+    wrapper: matmul
     entry: pto_vpto_matmul_mx_bias
     abi:
       - {operand: 5, arg: dst, type: i64, role: result_tile}
@@ -464,12 +478,15 @@ std::string pto::resolveBridgeWhitelistPath(llvm::StringRef optionValue) {
 
 FailureOr<BridgeWhitelist>
 pto::loadBridgeWhitelist(llvm::StringRef optionValue,
-                         llvm::raw_ostream &diagOS) {
+                         llvm::raw_ostream &diagOS, std::string *sourceName) {
   std::string path = resolveBridgeWhitelistPath(optionValue);
+  if (sourceName) {
+    *sourceName =
+        path.empty() ? kBuiltinBridgeWhitelistSource.str() : path;
+  }
   if (!path.empty()) {
     return parseBridgeWhitelist(path, diagOS);
   }
   return parseBridgeWhitelistFromBuffer(
-      kDefaultBridgeWhitelistYaml, "<built-in vpto bridge whitelist>",
-      diagOS);
+      kDefaultBridgeWhitelistYaml, kBuiltinBridgeWhitelistSource, diagOS);
 }
