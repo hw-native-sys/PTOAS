@@ -3791,7 +3791,8 @@ vmi.masked_load:
 vmi.stride_load:
   semantics:
     result lane order is contiguous VMI logical order
-    source addresses are described by the VPTO block/repeat stride operands
+    source addresses start at source + offset and advance by block_stride
+    32-byte blocks; VMI does not expose a repeat stride
     mask false lanes are inactive for the underlying block-strided load
   layout assignment:
     result natural layout is contiguous
@@ -3800,7 +3801,7 @@ vmi.stride_load:
     source must be !pto.ptr<T, ub>
     result and mask must be one contiguous physical chunk
     base = pto.addptr source, offset
-    result = pto.vsldb base, block_stride, repeat_stride, mask
+    result = pto.vsldb base, block_stride, repeat_stride=0, mask
   unsupported cases:
     multi-chunk result or mask
     non-contiguous layouts
@@ -3809,7 +3810,8 @@ vmi.stride_load:
 vmi.stride_store:
   semantics:
     value lane order is contiguous VMI logical order
-    destination addresses are described by the VPTO block/repeat stride operands
+    destination addresses start at destination + offset and advance by
+    block_stride 32-byte blocks; VMI does not expose a repeat stride
     mask false lanes do not write memory
   layout assignment:
     value use is requested as contiguous
@@ -3818,9 +3820,9 @@ vmi.stride_store:
     destination must be !pto.ptr<T, ub>
     value and mask must be one contiguous physical chunk
     base = pto.addptr destination, offset
-    updated_base = pto.vsstb value, base, block_stride, repeat_stride, mask
-      The updated base result is intentionally unused by VMI lowering, but the
-      post-update VPTO form matches CCE block-strided staging behavior.
+    pto.vsstb value, base, block_stride, repeat_stride=0, mask
+      VMI lowering uses the ordinary resultless VPTO form. The fixed zero
+      repeat stride preserves base-start addressing without post-update.
   unsupported cases:
     multi-chunk value or mask
     non-contiguous layouts

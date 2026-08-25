@@ -8425,9 +8425,8 @@ struct OneToNVMIStrideLoadOpPattern
     FailureOr<Value> blockStride = getSingleValue(
         op, adaptor.getBlockStride(),
         "stride_load block_stride must convert to one value", rewriter);
-    FailureOr<Value> repeatStride = getSingleValue(
-        op, adaptor.getRepeatStride(),
-        "stride_load repeat_stride must convert to one value", rewriter);
+    FailureOr<Value> repeatStride = Value(
+        rewriter.create<arith::ConstantIntOp>(op.getLoc(), 0, 16));
     if (failed(source) || failed(offset) || failed(blockStride) ||
         failed(repeatStride))
       return failure();
@@ -8478,9 +8477,8 @@ struct OneToNVMIStrideStoreOpPattern
     FailureOr<Value> blockStride = getSingleValue(
         op, adaptor.getBlockStride(),
         "stride_store block_stride must convert to one value", rewriter);
-    FailureOr<Value> repeatStride = getSingleValue(
-        op, adaptor.getRepeatStride(),
-        "stride_store repeat_stride must convert to one value", rewriter);
+    FailureOr<Value> repeatStride = Value(
+        rewriter.create<arith::ConstantIntOp>(op.getLoc(), 0, 16));
     if (failed(destination) || failed(offset) || failed(blockStride) ||
         failed(repeatStride))
       return failure();

@@ -691,11 +691,13 @@ def VMIGroupBroadcastLoadOp : VMI_Op<"group_broadcast_load", [DeclareOpInterface
 def VMIStrideLoadOp : VMI_Op<"stride_load", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "VMI block-strided vector load";
   let arguments = (ins PtrOrMemRef:$source, Index:$offset,
-                       I16:$block_stride, I16:$repeat_stride,
-                       VMI_MaskTypeConstraint:$mask);
+                       I16:$block_stride, VMI_MaskTypeConstraint:$mask);
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;
-  let assemblyFormat = "$source `[` $offset `]` `,` $block_stride `,` $repeat_stride `,` $mask attr-dict `:` type($source) `,` type($block_stride) `,` type($repeat_stride) `,` type($mask) `->` type($result)";
+  let assemblyFormat = [{
+    $source `[` $offset `]` `,` $block_stride `,` $mask attr-dict `:`
+    type($source) `,` type($block_stride) `,` type($mask) `->` type($result)
+  }];
 }
 
 def VMIMaskedLoadOp : VMI_Op<"masked_load", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
@@ -767,11 +769,14 @@ def VMIMaskedStoreOp : VMI_Op<"masked_store", [DeclareOpInterfaceMethods<MemoryE
 def VMIStrideStoreOp : VMI_Op<"stride_store", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "VMI block-strided vector store";
   let arguments = (ins VMI_VRegTypeConstraint:$value, PtrOrMemRef:$destination,
-                       Index:$offset, I16:$block_stride, I16:$repeat_stride,
+                       Index:$offset, I16:$block_stride,
                        VMI_MaskTypeConstraint:$mask);
   let results = (outs);
   let hasVerifier = 1;
-  let assemblyFormat = "$value `,` $destination `[` $offset `]` `,` $block_stride `,` $repeat_stride `,` $mask attr-dict `:` type($value) `,` type($destination) `,` type($block_stride) `,` type($repeat_stride) `,` type($mask)";
+  let assemblyFormat = [{
+    $value `,` $destination `[` $offset `]` `,` $block_stride `,` $mask attr-dict `:`
+    type($value) `,` type($destination) `,` type($block_stride) `,` type($mask)
+  }];
 }
 
 def VMIScatterOp : VMI_Op<"scatter", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
@@ -1437,7 +1442,7 @@ def VMIvLoadOp : VMI_Op<"vload",
     - {group = C}: grouped vector load with row stride  → 1 result
 
     block-stride mode (mutually exclusive with dist-mode and group):
-    - {block_stride = B, repeat_stride = R}: block-strided masked load → 1 result
+    - {block_stride = B}: block-strided masked load → 1 result
 
     pmode ("zero"|"merge") governs inactive-lane behavior on the result.
     vload itself has no mask operand; A5 loads are not predicable — masks
@@ -1448,7 +1453,6 @@ def VMIvLoadOp : VMI_Op<"vload",
     Index:$offset,
     Optional<Index>:$stride,
     Optional<I16>:$block_stride,
-    Optional<I16>:$repeat_stride,
     OptionalAttr<StrAttr>:$dist_mode,
     OptionalAttr<I64Attr>:$group,
     OptionalAttr<StrAttr>:$pmode
@@ -1475,7 +1479,7 @@ def VMIvStoreOp : VMI_Op<"vstore",
     - {group = C}: grouped vector store with row stride
 
     block-stride mode (mutually exclusive with dist-mode and group):
-    - {block_stride = B, repeat_stride = R}: block-strided masked store
+    - {block_stride = B}: block-strided masked store
 
     pmode governs inactive lane behavior:
     - "zero" (default):  inactive lanes store 0
@@ -1489,7 +1493,6 @@ def VMIvStoreOp : VMI_Op<"vstore",
     Index:$offset,
     Optional<Index>:$stride,
     Optional<I16>:$block_stride,
-    Optional<I16>:$repeat_stride,
     Variadic<VMI_MaskTypeConstraint>:$mask,
     OptionalAttr<StrAttr>:$dist_mode,
     OptionalAttr<I64Attr>:$group,

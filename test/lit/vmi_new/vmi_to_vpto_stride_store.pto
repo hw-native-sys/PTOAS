@@ -15,8 +15,7 @@ module {
       %mask: !pto.vmi.mask<64xpred>) {
     %c0 = arith.constant 0 : index
     %c2 = arith.constant 2 : i16
-    %c4 = arith.constant 4 : i16
-    pto.vmi.vstore %value, %dst[%c0], %c2, %c4, %mask
+    pto.vmi.vstore %value, %dst[%c0], %c2, %mask
         : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>,
           !pto.vmi.mask<64xpred>
     return
@@ -25,7 +24,7 @@ module {
 
 // CHECK-LABEL: func.func @vmi_to_vpto_stride_store(
 // CHECK: %[[BASE:.*]] = pto.addptr %arg1, %c0 : <f32, ub> -> <f32, ub>
-// CHECK: pto.vsstb %arg0, %[[BASE]], %c2{{[^,]*}}, %c4{{[^,]*}}, %arg2 : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32>{{$}}
+// CHECK: pto.vsstb %arg0, %[[BASE]], %c2{{[^,]*}}, %c0_i16, %arg2 : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32>{{$}}
 // CHECK: return
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.

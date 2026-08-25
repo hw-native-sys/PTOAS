@@ -15,8 +15,8 @@ module {
       %mask: !pto.vmi.mask<64xb8, #pto.vmi.layout<contiguous>>)
       -> !pto.vreg<256xf8E4M3FN> {
     %c1 = arith.constant 1 : i16
-    %out = pto.vmi.stride_load %src[%offset], %c1, %c1, %mask
-        : !pto.ptr<f8E4M3FN, ub>, i16, i16,
+    %out = pto.vmi.stride_load %src[%offset], %c1, %mask
+        : !pto.ptr<f8E4M3FN, ub>, i16,
           !pto.vmi.mask<64xb8, #pto.vmi.layout<contiguous>>
         -> !pto.vmi.vreg<64xf8E4M3FN, #pto.vmi.layout<contiguous>>
     %part = "pto.vmi.unpack"(%out)
@@ -28,7 +28,7 @@ module {
 
 // CHECK-LABEL: func.func @vmi_to_vpto_stride_load(
 // CHECK: %[[BASE:.*]] = pto.addptr %arg0, %arg1 : <f8E4M3FN, ub> -> <f8E4M3FN, ub>
-// CHECK: %[[LOAD:.*]] = pto.vsldb %[[BASE]], %c1{{[^,]*}}, %c1{{[^,]*}}, %arg2 : !pto.ptr<f8E4M3FN, ub>, i16, i16, !pto.mask<b8> -> !pto.vreg<256xf8E4M3FN>
+// CHECK: %[[LOAD:.*]] = pto.vsldb %[[BASE]], %c1{{[^,]*}}, %c0_i16, %arg2 : !pto.ptr<f8E4M3FN, ub>, i16, i16, !pto.mask<b8> -> !pto.vreg<256xf8E4M3FN>
 // CHECK: return %[[LOAD]] : !pto.vreg<256xf8E4M3FN>
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.

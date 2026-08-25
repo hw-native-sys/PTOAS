@@ -1,0 +1,59 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not pto-test-opt %s -split-input-file 2>&1 | FileCheck %s
+
+module {
+  func.func @unified_load_repeat_stride(
+      %src: !pto.ptr<f32, ub>, %offset: index, %block: i16, %repeat: i16) {
+    %value = pto.vmi.vload %src[%offset], %block, %repeat
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @unified_store_repeat_stride(
+      %value: !pto.vmi.vreg<64xf32>, %dst: !pto.ptr<f32, ub>,
+      %offset: index, %block: i16, %repeat: i16) {
+    pto.vmi.vstore %value, %dst[%offset], %block, %repeat
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @legacy_load_repeat_stride(
+      %src: !pto.ptr<f32, ub>, %offset: index, %block: i16,
+      %repeat: i16, %mask: !pto.vmi.mask<64xpred>) {
+    %value = pto.vmi.stride_load %src[%offset], %block, %repeat, %mask
+        : !pto.ptr<f32, ub>, i16, i16, !pto.vmi.mask<64xpred>
+        -> !pto.vmi.vreg<64xf32>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @legacy_store_repeat_stride(
+      %value: !pto.vmi.vreg<64xf32>, %dst: !pto.ptr<f32, ub>,
+      %offset: index, %block: i16, %repeat: i16,
+      %mask: !pto.vmi.mask<64xpred>) {
+    pto.vmi.stride_store %value, %dst[%offset], %block, %repeat, %mask
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, i16, i16,
+          !pto.vmi.mask<64xpred>
+    return
+  }
+}
+
+// CHECK-COUNT-4: error:

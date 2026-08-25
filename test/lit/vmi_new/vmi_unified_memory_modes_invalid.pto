@@ -37,8 +37,8 @@ module {
 
 module {
   func.func @block_stride_load_element_type_mismatch(
-      %src: !pto.ptr<f32, ub>, %offset: index, %block: i16, %repeat: i16) {
-    %value = pto.vmi.vload %src[%offset], %block, %repeat
+      %src: !pto.ptr<f32, ub>, %offset: index, %block: i16) {
+    %value = pto.vmi.vload %src[%offset], %block
         : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf16>
     return
   }
@@ -51,8 +51,8 @@ module {
 module {
   func.func @block_stride_store_element_type_mismatch(
       %value: !pto.vmi.vreg<64xf16>, %dst: !pto.ptr<f32, ub>,
-      %offset: index, %block: i16, %repeat: i16) {
-    pto.vmi.vstore %value, %dst[%offset], %block, %repeat
+      %offset: index, %block: i16) {
+    pto.vmi.vstore %value, %dst[%offset], %block
         : !pto.vmi.vreg<64xf16>, !pto.ptr<f32, ub>
     return
   }

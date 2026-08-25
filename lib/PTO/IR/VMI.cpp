@@ -4691,8 +4691,8 @@ ParseResult VMIvStoreOp::parse(OpAsmParser &parser, OperationState &result) {
                             "expected at least one value and one destination");
   }
 
-  // Optional post-bracket operands: stride, block_stride/repeat_stride, mask.
-  // Up to 3, disambiguated after parsing attrs.
+  // Optional post-bracket operands: stride, block_stride, and/or mask.
+  // Up to 2, disambiguated after parsing attrs and the type list.
   while (succeeded(parser.parseOptionalComma())) {
     OpAsmParser::UnresolvedOperand postOp;
     if (parser.parseOperand(postOp)) {
@@ -4716,12 +4716,12 @@ ParseResult VMIvStoreOp::parse(OpAsmParser &parser, OperationState &result) {
   bool hasGroup = result.attributes.get("group") != nullptr;
   bool hasStride = false;
   bool hasBlock = false;
-  bool hasRepeat = false;
   bool hasMask = false;
   int strideIdx = -1;
   int blockIdx = -1;
-  int repeatIdx = -1;
   int maskIdx = -1;
+  size_t nValues = preBracketOperands.size() - 1;
+  size_t nTypes = types.size();
 
   if (hasGroup) {
     // Group mode: post-bracket ops are stride[, mask]
@@ -4733,24 +4733,23 @@ ParseResult VMIvStoreOp::parse(OpAsmParser &parser, OperationState &result) {
       hasMask = true;
       maskIdx = 1;
     }
-  } else if (postBracketOps.size() >= mlir::pto::kValue2) {
-    // Block-stride mode: post-bracket ops are block_stride, repeat_stride[, mask]
+  } else if (postBracketOps.size() == mlir::pto::kValue2) {
+    // Block-stride mode with a mask: block_stride, mask.
     hasBlock = true;
-    hasRepeat = true;
-    blockIdx = 0;
-    repeatIdx = 1;
-    if (postBracketOps.size() >= mlir::pto::kValue3) {
-      hasMask = true;
-      maskIdx = mlir::pto::kValue2;
-    }
-  } else if (postBracketOps.size() == 1) {
-    // Single post-bracket operand without group: mask
     hasMask = true;
-    maskIdx = 0;
+    blockIdx = 0;
+    maskIdx = 1;
+  } else if (postBracketOps.size() == 1) {
+    // The type list includes mask types, but never block-stride types.
+    if (nTypes == nValues + 2) {
+      hasMask = true;
+      maskIdx = 0;
+    } else {
+      hasBlock = true;
+      blockIdx = 0;
+    }
   }
 
-  size_t nValues = preBracketOperands.size() - 1;
-  size_t nTypes = types.size();
   size_t expectedTypes = nValues + 1 + (hasMask ? 1 : 0);
 
   if (nTypes != expectedTypes) {
@@ -4790,13 +4789,6 @@ ParseResult VMIvStoreOp::parse(OpAsmParser &parser, OperationState &result) {
                             result.operands)) {
     return failure();
   }
-  if (hasRepeat &&
-      parser.resolveOperand(postBracketOps[repeatIdx],
-                            parser.getBuilder().getIntegerType(mlir::pto::kValue16),
-                            result.operands)) {
-    return failure();
-  }
-
   if (hasMask) {
     Type maskType = types.back();
     if (parser.resolveOperand(postBracketOps[maskIdx], maskType,
@@ -4809,7 +4801,7 @@ ParseResult VMIvStoreOp::parse(OpAsmParser &parser, OperationState &result) {
                       parser.getBuilder().getDenseI32ArrayAttr(
                           {static_cast<int32_t>(nValues), 1, 1,
                            hasStride ? 1 : 0, hasBlock ? 1 : 0,
-                           hasRepeat ? 1 : 0, hasMask ? 1 : 0}));
+                           hasMask ? 1 : 0}));
   return success();
 }
 
@@ -4827,8 +4819,6 @@ void VMIvStoreOp::print(OpAsmPrinter &p) {
   if (getBlockStride()) {
     p << ", ";
     p.printOperand(getBlockStride());
-    p << ", ";
-    p.printOperand(getRepeatStride());
   }
   if (!getMask().empty()) {
     p << ", ";
@@ -4874,18 +4864,15 @@ LogicalResult VMIvStoreOp::verify() {
     }
   }
 
-  // block_stride / repeat_stride: paired, mutually exclusive with
-  // dist_mode and group
+  // block_stride is mutually exclusive with dist_mode and group.
   bool hasBlock = static_cast<bool>(getBlockStride());
-  bool hasRepeat = static_cast<bool>(getRepeatStride());
-  if (hasBlock != hasRepeat) {
-    return emitOpError(
-        "block_stride and repeat_stride must both be present or absent");
-  }
   if (hasBlock) {
     if (getDistMode()) {
       return emitOpError(
           "block_stride and dist_mode are mutually exclusive");
+    }
+    if (getGroup()) {
+      return emitOpError("block_stride and group are mutually exclusive");
     }
     if (getValues().size() != 1) {
       return emitOpError("block-stride mode requires exactly 1 value");
@@ -5214,7 +5201,6 @@ ParseResult VMIvLoadOp::parse(OpAsmParser &parser, OperationState &result) {
   OpAsmParser::UnresolvedOperand offsetOperand;
   OpAsmParser::UnresolvedOperand strideOperand;
   OpAsmParser::UnresolvedOperand blockStrideOperand;
-  OpAsmParser::UnresolvedOperand repeatStrideOperand;
 
   // Parse: %source[%offset]
   if (parser.parseOperand(sourceOperand) || parser.parseLSquare() ||
@@ -5223,21 +5209,14 @@ ParseResult VMIvLoadOp::parse(OpAsmParser &parser, OperationState &result) {
   }
 
   // Optional comma-separated post-bracket operands.
-  // 1 operand  + group attr   → stride (group mode)
-  // 2 operands                → block_stride, repeat_stride (block-stride mode)
+  // 1 operand + group attr → stride; otherwise → block_stride.
   int numPostBracket = 0;
-  OpAsmParser::UnresolvedOperand postOp1, postOp2;
+  OpAsmParser::UnresolvedOperand postOp1;
   if (succeeded(parser.parseOptionalComma())) {
     if (parser.parseOperand(postOp1)) {
       return failure();
     }
     numPostBracket = 1;
-    if (succeeded(parser.parseOptionalComma())) {
-      if (parser.parseOperand(postOp2)) {
-        return failure();
-      }
-      numPostBracket = mlir::pto::kValue2;
-    }
   }
 
   if (parser.parseOptionalAttrDict(result.attributes)) {
@@ -5261,20 +5240,15 @@ ParseResult VMIvLoadOp::parse(OpAsmParser &parser, OperationState &result) {
   // Disambiguate post-bracket operands
   bool hasStride = false;
   bool hasBlock = false;
-  bool hasRepeat = false;
 
-  if (numPostBracket == mlir::pto::kValue2) {
-    // block_stride + repeat_stride pair
-    hasBlock = true;
-    hasRepeat = true;
-    blockStrideOperand = postOp1;
-    repeatStrideOperand = postOp2;
-  } else if (numPostBracket == 1) {
-    // Single post-bracket operand: only valid as group stride.
-    // block_stride without repeat_stride is invalid; verifier catches
-    // stride without group attr.
-    hasStride = true;
-    strideOperand = postOp1;
+  if (numPostBracket == 1) {
+    if (result.attributes.get("group")) {
+      hasStride = true;
+      strideOperand = postOp1;
+    } else {
+      hasBlock = true;
+      blockStrideOperand = postOp1;
+    }
   }
 
   if (parser.resolveOperand(sourceOperand, sourceType, result.operands)) {
@@ -5295,17 +5269,9 @@ ParseResult VMIvLoadOp::parse(OpAsmParser &parser, OperationState &result) {
                             result.operands)) {
     return failure();
   }
-  if (hasRepeat &&
-      parser.resolveOperand(repeatStrideOperand,
-                            parser.getBuilder().getIntegerType(mlir::pto::kValue16),
-                            result.operands)) {
-    return failure();
-  }
-
   result.addAttribute("operandSegmentSizes",
                       parser.getBuilder().getDenseI32ArrayAttr(
-                          {1, 1, hasStride ? 1 : 0, hasBlock ? 1 : 0,
-                           hasRepeat ? 1 : 0}));
+                          {1, 1, hasStride ? 1 : 0, hasBlock ? 1 : 0}));
 
   result.addTypes(resultTypes);
   return success();
@@ -5322,8 +5288,6 @@ void VMIvLoadOp::print(OpAsmPrinter &p) {
   if (getBlockStride()) {
     p << ", ";
     p.printOperand(getBlockStride());
-    p << ", ";
-    p.printOperand(getRepeatStride());
   }
   p.printOptionalAttrDict((*this)->getAttrs(), {"operandSegmentSizes"});
   p << " : " << getSource().getType() << " -> " << getResults().getTypes();
@@ -5356,18 +5320,15 @@ LogicalResult VMIvLoadOp::verify() {
     }
   }
 
-  // block_stride and repeat_stride must be paired, mutually exclusive
-  // with dist_mode and group
+  // block_stride is mutually exclusive with dist_mode and group.
   bool hasBlock = static_cast<bool>(getBlockStride());
-  bool hasRepeat = static_cast<bool>(getRepeatStride());
-  if (hasBlock != hasRepeat) {
-    return emitOpError(
-        "block_stride and repeat_stride must both be present or absent");
-  }
   if (hasBlock) {
     if (getDistMode()) {
       return emitOpError(
           "block_stride and dist_mode are mutually exclusive");
+    }
+    if (getGroup()) {
+      return emitOpError("block_stride and group are mutually exclusive");
     }
     if (getResults().size() != 1) {
       return emitOpError("block-stride mode requires exactly 1 result");

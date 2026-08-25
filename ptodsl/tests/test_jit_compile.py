@@ -9,6 +9,7 @@
 
 from dataclasses import replace
 from pathlib import Path
+import inspect
 import os
 import re
 import subprocess
@@ -4025,6 +4026,20 @@ def vmi_group_brc_vload_probe():
         group=8,
         stride=row_stride,
         dist_mode="brc",
+    )
+
+
+@pto.jit(target="a5", backend="vpto", mode="explicit")
+def vmi_block_stride_memory_probe():
+    src_tile = pto.alloc_tile(shape=[1, 64], dtype=pto.f32)
+    dst_tile = pto.alloc_tile(shape=[1, 64], dtype=pto.f32)
+    offset = pto.const(0, dtype=pto.index)
+
+    value = pto.vmi.vload(
+        src_tile.as_ptr(), offset, size=64, block_stride=pto.i16(2)
+    )
+    pto.vmi.vstore(
+        value, dst_tile.as_ptr(), offset, block_stride=pto.i16(2)
     )
 
 
@@ -8077,6 +8092,20 @@ def main() -> None:
     expect(
         'dist_mode = "brc"' in vmi_group_brc_vload_text and "group = 8" in vmi_group_brc_vload_text,
         "pto.vmi.vload should allow the grouped brc form exposed by the VMI IR contract",
+    )
+    vmi_block_stride_memory_text = vmi_block_stride_memory_probe.compile().mlir_text()
+    expect_parse_roundtrip_and_verify(
+        vmi_block_stride_memory_text, "public VMI block-stride memory specialization"
+    )
+    expect(
+        vmi_block_stride_memory_text.count("pto.vmi.vload") == 1
+        and vmi_block_stride_memory_text.count("pto.vmi.vstore") == 1,
+        "VMI block-stride memory forms should compile with block_stride alone",
+    )
+    expect(
+        "repeat_stride" not in inspect.signature(pto.vmi.vload).parameters
+        and "repeat_stride" not in inspect.signature(pto.vmi.vstore).parameters,
+        "VMI load/store Python signatures must not expose repeat_stride",
     )
     fixed_width_integer_text = fixed_width_integer_specialization_probe.compile().mlir_text()
     expect_parse_roundtrip_and_verify(fixed_width_integer_text, "fixed-width integer specialization")

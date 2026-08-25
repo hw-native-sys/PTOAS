@@ -555,7 +555,6 @@ def _validate_vmi_load_modes(
     group,
     stride,
     block_stride,
-    repeat_stride,
     allow_group_brc: bool,
     allowed_dist_modes,
 ):
@@ -566,17 +565,15 @@ def _validate_vmi_load_modes(
     if group is not None:
         if dist_mode is not None and (not allow_group_brc or dist_mode != "brc"):
             raise TypeError(f"{context} does not allow dist_mode together with group")
-        if block_stride is not None or repeat_stride is not None:
+        if block_stride is not None:
             raise TypeError(f"{context} does not allow block_stride together with group")
         if stride is None:
             raise TypeError(f"{context} with group=... requires stride")
         return
 
-    if block_stride is not None or repeat_stride is not None:
+    if block_stride is not None:
         if dist_mode is not None:
             raise TypeError(f"{context} does not allow dist_mode together with block_stride")
-        if block_stride is None or repeat_stride is None:
-            raise TypeError(f"{context} requires block_stride and repeat_stride together")
         if stride is not None:
             raise TypeError(f"{context} does not allow stride together with block_stride")
         return
@@ -704,7 +701,6 @@ class _VMINamespace:
         to_dtype=None,
         stride=None,
         block_stride=None,
-        repeat_stride=None,
         dist_mode=None,
         group=None,
         loc=None,
@@ -716,7 +712,6 @@ class _VMINamespace:
             group=group,
             stride=stride,
             block_stride=block_stride,
-            repeat_stride=repeat_stride,
             allow_group_brc=True,
             allowed_dist_modes={None, "continuous", "dintlv", "unpack", "brc"},
         )
@@ -734,7 +729,6 @@ class _VMINamespace:
             _coerce_index_value(offset),
             stride=None if stride is None else _coerce_index_value(stride),
             block_stride=_i16_value(block_stride, context="pto.vmi.vload(block_stride)"),
-            repeat_stride=_i16_value(repeat_stride, context="pto.vmi.vload(repeat_stride)"),
             dist_mode=dist_mode,
             group=group,
             loc=loc,
@@ -750,7 +744,6 @@ class _VMINamespace:
         *,
         stride=None,
         block_stride=None,
-        repeat_stride=None,
         dist_mode=None,
         group=None,
         pmode=None,
@@ -763,7 +756,6 @@ class _VMINamespace:
             group=group,
             stride=stride,
             block_stride=block_stride,
-            repeat_stride=repeat_stride,
             allow_group_brc=False,
             allowed_dist_modes={None, "continuous", "dintlv"},
         )
@@ -781,7 +773,6 @@ class _VMINamespace:
             _variadic_mask(mask),
             stride=None if stride is None else _coerce_index_value(stride),
             block_stride=_i16_value(block_stride, context="pto.vmi.vstore(block_stride)"),
-            repeat_stride=_i16_value(repeat_stride, context="pto.vmi.vstore(repeat_stride)"),
             dist_mode=dist_mode,
             group=group,
             pmode=pmode,

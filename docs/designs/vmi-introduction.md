@@ -991,9 +991,9 @@ compute:
 row-wise staging:
   for row in 0..31:
     q8_row = vmi.stride_load(nd + row * 64,
-                             block_stride=1, repeat_stride=1)
+                             block_stride=1)
     vmi.stride_store(q8_row, nz + row * 32,
-                     block_stride=33, repeat_stride=1)
+                     block_stride=33)
 
 copy-out:
   2D MTE copies two 1024B NZ planes from UB to GM
@@ -1002,12 +1002,12 @@ copy-out:
 这里 `q8_row` 的 VMI value 仍然是 contiguous `64xf8` 逻辑向量：
 
 ```mlir
-%q8_row = pto.vmi.stride_load %nd[%nd_off], %c1_i16, %c1_i16, %mask
-    : !pto.ptr<f8E4M3FN, ub>, i16, i16, !pto.vmi.mask<64xpred>
+%q8_row = pto.vmi.stride_load %nd[%nd_off], %c1_i16, %mask
+    : !pto.ptr<f8E4M3FN, ub>, i16, !pto.vmi.mask<64xpred>
     -> !pto.vmi.vreg<64xf8E4M3FN>
 
-pto.vmi.stride_store %q8_row, %nz[%nz_off], %c33_i16, %c1_i16, %mask
-    : !pto.vmi.vreg<64xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, i16, i16,
+pto.vmi.stride_store %q8_row, %nz[%nz_off], %c33_i16, %mask
+    : !pto.vmi.vreg<64xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, i16,
       !pto.vmi.mask<64xpred>
 ```
 
@@ -1024,11 +1024,10 @@ VPTO 形状：
 
 ```text
 base_in  = pto.addptr nd, nd_off
-q8_row   = pto.vsldb base_in, block_stride=1, repeat_stride=1, mask
+q8_row   = pto.vsldb base_in, block_stride=1, repeat_stride=0, mask
 
 base_out = pto.addptr nz, nz_off
-updated = pto.vsstb q8_row, base_out, block_stride=33, repeat_stride=1, mask
-          -> updated_base
+pto.vsstb q8_row, base_out, block_stride=33, repeat_stride=0, mask
 ```
 
 这个场景说明：memory layout transformation 不一定要变成 VMI data layout。

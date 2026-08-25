@@ -137,8 +137,8 @@ mode families:
 - `dist_mode`: the regular logical memory surface. This covers the default
   contiguous case plus other access patterns selected by `dist_mode`.
 - `group`: grouped row-strided load/store.
-- `block_stride`: block-strided load/store using paired
-  `block_stride` / `repeat_stride` operands.
+- `block_stride`: block-strided load/store. The VMI contract exposes only the
+  logical block stride; lowering fixes the physical repeat stride to zero.
 
 Pick exactly one family per call. Do not mix `dist_mode`, `group`, and
 `block_stride` parameters in the same `vload` / `vstore`.
@@ -149,7 +149,7 @@ Pick exactly one family per call. Do not mix `dist_mode`, `group`, and
 ### `pto.vmi.vload(source, offset, *, size, dist_mode="dintlv") -> (VRegType, VRegType)`
 ### `pto.vmi.vload(source, offset, *, size, group, stride) -> VRegType`
 ### `pto.vmi.vload(source, offset, *, size, group, stride, dist_mode="brc") -> VRegType`
-### `pto.vmi.vload(source, offset, *, size, block_stride, repeat_stride) -> VRegType`
+### `pto.vmi.vload(source, offset, *, size, block_stride) -> VRegType`
 
 **Description**: Loads a logical VMI vector from a UB pointer. The element
 type is derived from the source pointer; `size` determines the logical lane
@@ -216,7 +216,6 @@ Use this family for block-strided accesses.
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `block_stride` | `int` | 16-bit block stride operand |
-| `repeat_stride` | `int` | 16-bit repeat stride operand |
 
 **Returns**:
 
@@ -290,7 +289,6 @@ blocks = pto.vmi.vload(
     offset,
     size=64,
     block_stride=pto.i16(8),
-    repeat_stride=pto.i16(0),
 )
 ```
 
@@ -302,7 +300,6 @@ blocks = pto.vmi.vload(
   spelled as `group=...`, `stride=...`, `dist_mode="brc"`.
 - `to_dtype` is only accepted when `dist_mode="unpack"`.
 - `stride` is only accepted when `group` is provided.
-- `block_stride` and `repeat_stride` must be provided together.
 - The unpack form widens by exactly one adjacent bit-width step.
 
 ---
@@ -312,7 +309,7 @@ blocks = pto.vmi.vload(
 ### `pto.vmi.vstore(values, destination, offset, mask=None, *, dist_mode=None, pmode=None) -> None`
 ### `pto.vmi.vstore((even, odd), destination, offset, mask=None, *, dist_mode="dintlv", pmode=None) -> None`
 ### `pto.vmi.vstore(values, destination, offset, *, group, stride, pmode=None) -> None`
-### `pto.vmi.vstore(values, destination, offset, mask=None, *, block_stride, repeat_stride, pmode=None) -> None`
+### `pto.vmi.vstore(values, destination, offset, mask=None, *, block_stride, pmode=None) -> None`
 
 **Description**: Writes one logical VMI vector, or a deinterleaved pair, back
 to a UB pointer. As with `vload`, the PTODSL surface is organized into the same
@@ -365,7 +362,6 @@ group-mode store does not take a mask operand.
 |-----------|------|-------------|
 | `mask` | VMI mask or `None` | Optional store mask; omitting it means all lanes are active |
 | `block_stride` | `int` | 16-bit block stride operand |
-| `repeat_stride` | `int` | 16-bit repeat stride operand |
 
 **Returns**: None (side-effect operation).
 
@@ -398,7 +394,6 @@ pto.vmi.vstore(
     offset,
     mask,
     block_stride=pto.i16(8),
-    repeat_stride=pto.i16(0),
 )
 ```
 
@@ -408,7 +403,7 @@ pto.vmi.vstore(
   exclusive.
 - `dist_mode="dintlv"` requires `values` to be an `(even, odd)` pair.
 - Group mode requires `group` and `stride`, and does not accept `mask`.
-- `block_stride` and `repeat_stride` must be provided together.
+- Block-stride lowering fixes the physical repeat stride to zero.
 
 ---
 

@@ -503,7 +503,7 @@ static LogicalResult lowerVLoad(VMIvLoadOp op, OpBuilder &builder) {
     return success();
   }
 
-  // Block-stride mode: vload {block_stride, repeat_stride} → stride_load
+  // Block-stride mode: vload {block_stride} → stride_load
   if (op.getBlockStride()) {
     auto resultType = op.getResults().front().getType();
     // Create default all-active mask via create_mask with proper granularity
@@ -528,9 +528,8 @@ static LogicalResult lowerVLoad(VMIvLoadOp op, OpBuilder &builder) {
     auto mask = builder.create<VMICreateMaskOp>(op->getLoc(), maskType,
                                                 fullLanes.getResult());
     Value bs = op.getBlockStride();
-    Value rs = op.getRepeatStride();
     auto strideLoad = builder.create<VMIStrideLoadOp>(
-        op->getLoc(), resultType, op.getSource(), op.getOffset(), bs, rs,
+        op->getLoc(), resultType, op.getSource(), op.getOffset(), bs,
         mask.getResult());
     op.getResults().front().replaceAllUsesWith(strideLoad.getResult());
     op->erase();
@@ -617,7 +616,7 @@ static LogicalResult lowerVStore(VMIvStoreOp op, OpBuilder &builder) {
     return success();
   }
 
-  // Block-stride mode: vstore {block_stride, repeat_stride} → stride_store
+  // Block-stride mode: vstore {block_stride} → stride_store
   if (op.getBlockStride()) {
     auto valueType = cast<VMIVRegType>(op.getValues()[0].getType());
     // Use existing mask or create default all-active via create_mask
@@ -645,9 +644,8 @@ static LogicalResult lowerVStore(VMIvStoreOp op, OpBuilder &builder) {
                  .getResult();
     }
     Value bs = op.getBlockStride();
-    Value rs = op.getRepeatStride();
     builder.create<VMIStrideStoreOp>(op->getLoc(), op.getValues()[0],
-                                    op.getDestination(), op.getOffset(), bs, rs,
+                                    op.getDestination(), op.getOffset(), bs,
                                     mask);
     op->erase();
     return success();
@@ -1368,11 +1366,9 @@ void VMILowerUnifiedToLegacyPass::runOnOperation() {
       if (hasMergePmode(vop)) {
         continue;
       }
-      Value repeatStride = builder.create<arith::ConstantOp>(
-          vop.getLoc(), builder.getI16IntegerAttr(0));
       builder.create<VMIStrideStoreOp>(
           vop.getLoc(), vop.getValue(), vop.getDestination(), vop.getOffset(),
-          vop.getBlockStride(), repeatStride, vop.getMask());
+          vop.getBlockStride(), vop.getMask());
       vop->erase();
       continue;
     }
