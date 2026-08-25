@@ -85,10 +85,10 @@ module attributes {pto.target_arch = "a5"} {
 // CHECK: pto.wait_flag
 // CHECK-NEXT: pto.get_buf
 // CHECK-NEXT: pto.vecscope
-// CHECK: pto.mem_bar "VV_ALL"
+// CHECK-NOT: pto.mem_bar
 // CHECK: pto.pset_b32
 // CHECK: pto.rls_buf
 // CHECK-NEXT: pto.dsb "DDR"
 // CHECK-NEXT: pto.vecscope
-// CHECK: pto.mem_bar "VV_ALL"
+// CHECK-NOT: pto.mem_bar
 // CHECK: pto.pset_b32
