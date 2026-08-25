@@ -16,7 +16,6 @@
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/IR/PTOSyncUtils.h"
 #include "PTO/Transforms/Passes.h"
-#include "PTO/Transforms/PrintEncoding.h"
 
 #include "mlir/Conversion/Passes.h"
 #include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"
@@ -28,7 +27,6 @@
 #include "mlir/Dialect/Func/Transforms/FuncConversions.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/SCF/Transforms/Patterns.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -41,7 +39,6 @@
 #include "mlir/Target/LLVMIR/Export.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/IR/Constants.h"
@@ -394,25 +391,6 @@ struct PlannedDecl {
 
 struct LoweringState {
   SmallVector<PlannedDecl> plannedDecls;
-  // Format-string → LLVM global symbol name (populated by pre-scan before
-  // dialect conversion so AddressOfOp references resolve against existing
-  // symbols).
-  SmallVector<std::pair<std::string, std::string>> stringGlobals;
-  // Whether the module uses pto.print / pto.tprint (set by pre-scan).
-  bool usesPrint = false;
-  // Names of the CCE print wrapper function declarations (created by
-  // addDTDataParamToEntryFunctions).  The definitions live in pt_print.cpp,
-  // which ObjectEmission compiles with bisheng and llvm-links into the
-  // kernel bitcode.
-  std::string printStrFuncName;   // pto_print_str(fmt) — literal text node
-  std::string printF32FuncName;   // pto_print_f32(fmt, float)
-  std::string printI64FuncName;   // pto_print_i64(fmt, i64) — signed int
-  std::string printU64FuncName;   // pto_print_u64(fmt, u64) — unsigned int
-  std::string printInitFuncName;  // pto_print_init(dt) — OnKernelInitialize
-  std::string printFinishFuncName; // pto_print_finish(dt) — OnKernelFinish
-  // UB base derivation intrinsic; empty in VPTO (tiles are UB-placeholders,
-  // element offsets start at 0).
-  std::string sysVaBaseFuncName;
 };
 
 class LowerTrapOpPattern final : public OpConversionPattern<pto::TrapOp> {
@@ -13197,450 +13175,6 @@ public:
   }
 };
 
-// TPrintOp literal-text helpers.  The header/shape/value-format strings are
-// computed at compile time (they only depend on the tile type), shared by the
-// pre-scan below and LowerTPrintOpPattern so both derive identical content.
-static std::string tprintDtypeName(Type elemType) {
-  return elemType.isF16() ? "float16" : elemType.isF32() ? "float32" : "int32";
-}
-
-static std::string tprintHeaderText(Type elemType) {
-  return "=== [TPRINT Tile] Data Type: " + tprintDtypeName(elemType) +
-         ", Layout: ND, TileType: Vec ===\n";
-}
-
-static std::string tprintShapeText(ArrayRef<int64_t> shape) {
-  int64_t rows = shape[0], cols = shape[1];
-  return "  Shape: [" + std::to_string(rows) + ", " + std::to_string(cols) +
-         "], Valid Shape: [" + std::to_string(rows) + ", " +
-         std::to_string(cols) + "]\n";
-}
-
-static std::string tprintValueFmt(Type elemType) {
-  return isa<FloatType>(elemType) ? "%6.2f" : "%6d";
-}
-
-// Pre-scan: walk all pto::PrintOp / pto::TPrintOp, collect unique format
-// strings, create LLVM::GlobalOp for each BEFORE dialect conversion runs.
-// This way the print patterns can safely emit LLVM::AddressOfOp references
-// against already-existing symbols.
-static void
-collectAndCreatePrintfStringGlobals(ModuleOp module, LoweringState &state) {
-  llvm::StringMap<std::string> seen;
-  auto getGlobalName = [&](StringRef content) -> std::string {
-    auto it = seen.find(content);
-    if (it != seen.end())
-      return it->second;
-    std::string globalName = "_ptoas_printf_fmt_" + std::to_string(seen.size());
-    seen[content] = globalName;
-    state.stringGlobals.push_back({content.str(), globalName});
-    return globalName;
-  };
-  // Format strings from pto::PrintOp.
-  module.walk([&](pto::PrintOp printOp) {
-    StringRef fmt = printOp.getFormat();
-    if (fmt.empty()) fmt = "%f";
-    (void)getGlobalName(fmt);
-    state.usesPrint = true;
-  });
-  // TPrintOp: literal header/shape text and the per-element value format.
-  module.walk([&](pto::TPrintOp tprintOp) {
-    auto srcType = dyn_cast<pto::TileBufType>(tprintOp.getSrc().getType());
-    if (!srcType || srcType.getShape().size() != 2)
-      return;
-    (void)getGlobalName(tprintHeaderText(srcType.getElementType()));
-    (void)getGlobalName(tprintShapeText(srcType.getShape()));
-    (void)getGlobalName(tprintValueFmt(srcType.getElementType()));
-    state.usesPrint = true;
-  });
-  if (state.stringGlobals.empty()) return;
-
-  OpBuilder builder(module.getBodyRegion());
-  builder.setInsertionPointToStart(&module.getBodyRegion().front());
-  auto i8Type = IntegerType::get(module.getContext(), 8);
-  for (auto &kv : state.stringGlobals) {
-    SmallVector<char> chars(kv.first.begin(), kv.first.end());
-    chars.push_back(0); // null terminator
-    auto arrayType = LLVM::LLVMArrayType::get(i8Type, chars.size());
-    auto valueAttr = DenseElementsAttr::get(
-        RankedTensorType::get({static_cast<int64_t>(chars.size())}, i8Type),
-        ArrayRef<char>(chars));
-    auto global = builder.create<LLVM::GlobalOp>(
-        module.getLoc(), arrayType,
-        /*isConstant=*/true, LLVM::Linkage::Private, kv.second, valueAttr);
-    global.setAddrSpace(1);
-  }
-}
-
-// Add a hidden ptr addrspace(1) (DTData) parameter to every pto.entry function
-// and declare the CCE intrinsics required by print lowering.  Must run before
-// dialect conversion so the type converter can handle the new function signature.
-static LogicalResult addDTDataParamToEntryFunctions(ModuleOp module,
-                                                    LoweringState &state) {
-  if (!state.usesPrint)
-    return success();
-
-  MLIRContext *ctx = module.getContext();
-  auto llvmPtr1Type = LLVM::LLVMPointerType::get(ctx, 1);
-  auto llvmPtr0Type = LLVM::LLVMPointerType::get(ctx, 1);
-  auto i64Type = IntegerType::get(ctx, 64);
-  auto f32Type = Float32Type::get(ctx);
-  auto voidType = LLVM::LLVMVoidType::get(ctx);
-
-  auto declareFunc = [&](StringRef name, LLVM::LLVMFunctionType fty) {
-    if (module.lookupSymbol<LLVM::LLVMFuncOp>(name))
-      return;
-    OpBuilder b(module.getBodyRegion());
-    b.setInsertionPointToStart(&module.getBodyRegion().front());
-    auto func = b.create<LLVM::LLVMFuncOp>(module.getLoc(), name, fty);
-    func.setPrivate();
-  };
-
-  // Declare the CCE print wrapper functions (definitions come from
-  // pt_print.cpp, linked in at bitcode level by ObjectEmission).
-  // pto_print_str(const char *fmt) — literal text node
-  {
-    auto fty = LLVM::LLVMFunctionType::get(voidType, {llvmPtr0Type}, false);
-    declareFunc("pto_print_str", fty);
-    state.printStrFuncName = "pto_print_str";
-  }
-  // pto_print_f32(const char *fmt, float v)
-  {
-    auto fty =
-        LLVM::LLVMFunctionType::get(voidType, {llvmPtr0Type, f32Type}, false);
-    declareFunc("pto_print_f32", fty);
-    state.printF32FuncName = "pto_print_f32";
-  }
-  // pto_print_i64(const char *fmt, i64 v) / pto_print_u64(const char *fmt, u64 v)
-  {
-    auto fty =
-        LLVM::LLVMFunctionType::get(voidType, {llvmPtr0Type, i64Type}, false);
-    declareFunc("pto_print_i64", fty);
-    state.printI64FuncName = "pto_print_i64";
-    declareFunc("pto_print_u64", fty);
-    state.printU64FuncName = "pto_print_u64";
-  }
-  // pto_print_init(__gm__ void *dt) / pto_print_finish(__gm__ void *dt)
-  {
-    auto fty = LLVM::LLVMFunctionType::get(voidType, {llvmPtr1Type}, false);
-    declareFunc("pto_print_init", fty);
-    state.printInitFuncName = "pto_print_init";
-    declareFunc("pto_print_finish", fty);
-    state.printFinishFuncName = "pto_print_finish";
-  }
-
-  // Add DTData parameter to every pto.entry function.
-  SmallVector<func::FuncOp> entryFuncs;
-  module.walk([&](func::FuncOp func) {
-    if (pto::isPTOEntryFunction(func))
-      entryFuncs.push_back(func);
-  });
-
-  for (func::FuncOp func : entryFuncs) {
-    unsigned idx = func.getNumArguments();
-    (void)func.insertArgument(idx, llvmPtr1Type, {}, func.getLoc());
-    SmallVector<Type> newArgTypes(func.getArgumentTypes());
-    auto newFuncType =
-        FunctionType::get(ctx, newArgTypes, func.getResultTypes());
-    (void)func.setFunctionType(newFuncType);
-  }
-
-  return success();
-}
-
-// After dialect conversion, inject the print prologue at the beginning of
-// every entry function: call @pto_print_init(dtData) (which wraps
-// DebugTunnel::OnKernelInitialize, storing DTData into the fix-stack object
-// that cce::printf's GetKernelInstance() reads back), and @pto_print_finish
-// (OnKernelFinish) before each return.  The CCE driver normally injects this
-// via its -cce-aicore-enable-print-init-finish pass, which crashes on
-// -x ir input, so the emitter does it directly.
-static LogicalResult injectPrintPrologue(ModuleOp module,
-                                         LoweringState &state) {
-  if (!state.usesPrint)
-    return success();
-
-  MLIRContext *ctx = module.getContext();
-  auto ptr1Type = LLVM::LLVMPointerType::get(ctx, 1);
-
-  SmallVector<func::FuncOp> entryFuncs;
-  module.walk([&](func::FuncOp func) {
-    if (pto::isPTOEntryFunction(func))
-      entryFuncs.push_back(func);
-  });
-
-  auto initFunc =
-      module.lookupSymbol<LLVM::LLVMFuncOp>(state.printInitFuncName);
-  auto finishFunc =
-      module.lookupSymbol<LLVM::LLVMFuncOp>(state.printFinishFuncName);
-  if (!initFunc || !finishFunc)
-    return failure();
-
-  for (func::FuncOp func : entryFuncs) {
-    if (func.getNumArguments() == 0)
-      continue;
-    Value dtDataArg = func.getArgument(func.getNumArguments() - 1);
-    if (dtDataArg.getType() != ptr1Type)
-      continue;
-
-    Region &body = func.getBody();
-    if (body.empty())
-      continue;
-    Location loc = func.getLoc();
-
-    // Entry prologue: call pto_print_init(dtData) then fall through.
-    Block &origEntry = body.front();
-    Block *bodyBlock = origEntry.splitBlock(origEntry.begin());
-    OpBuilder builder(&origEntry, origEntry.begin());
-    builder.create<LLVM::CallOp>(loc, TypeRange{}, initFunc.getSymName(),
-                                 ValueRange{dtDataArg});
-    builder.create<LLVM::BrOp>(loc, ValueRange{}, bodyBlock);
-
-    // Epilogue: call pto_print_finish(dtData) before each return.  The funcs
-    // are still func.func at this point (the LLVM dialect conversion happens
-    // later), so walk func::ReturnOp.
-    SmallVector<func::ReturnOp> returns;
-    body.walk([&](func::ReturnOp ret) { returns.push_back(ret); });
-    for (func::ReturnOp ret : returns) {
-      OpBuilder b(ret);
-      b.create<LLVM::CallOp>(loc, TypeRange{}, finishFunc.getSymName(),
-                             ValueRange{dtDataArg});
-    }
-  }
-
-  return success();
-}
-
-// Lower pto.alloc_tile -> ZeroOp null pointer (tiles are UB-placeholders in
-// VPTO; only reached when a non-expandable consumer such as tprint keeps the
-// alloc alive past tile expansion).
-class LowerAllocTileOpPattern final : public OpConversionPattern<pto::AllocTileOp> {
-public:
-  LowerAllocTileOpPattern(TypeConverter &typeConverter, MLIRContext *context,
-                         LoweringState &state)
-      : OpConversionPattern(typeConverter, context) { (void)state; }
-
-  LogicalResult
-  matchAndRewrite(pto::AllocTileOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    auto ptr6Type = LLVM::LLVMPointerType::get(rewriter.getContext(), 6);
-    auto nullPtr = rewriter.create<LLVM::ZeroOp>(op.getLoc(), ptr6Type);
-    rewriter.replaceOp(op, nullPtr.getResult());
-    return success();
-  }
-};
-
-// Lower pto.print -> format-string global reference + typed wrapper call.
-class LowerPrintOpPattern final : public OpConversionPattern<pto::PrintOp> {
-public:
-  LowerPrintOpPattern(TypeConverter &typeConverter, MLIRContext *context,
-                      LoweringState &state)
-      : OpConversionPattern<pto::PrintOp>(typeConverter, context), state(state) {}
-
-  LogicalResult
-  matchAndRewrite(pto::PrintOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    Location loc = op.getLoc();
-    MLIRContext *ctx = rewriter.getContext();
-    auto ptr0Type = LLVM::LLVMPointerType::get(ctx, 1);
-    auto i64Type = rewriter.getI64Type();
-
-    // Look up format-string global (created by the pre-scan).
-    StringRef fmt = op.getFormat();
-    if (fmt.empty()) fmt = "%f";
-    std::string globalName;
-    for (auto &kv : state.stringGlobals) {
-      if (kv.first == fmt) { globalName = kv.second; break; }
-    }
-    if (globalName.empty())
-      return op.emitError("internal: format string not found in stringGlobals");
-    auto fmtGlobal = rewriter.create<LLVM::AddressOfOp>(loc, ptr0Type,
-                                                         globalName);
-
-    auto formatInfo = analyzePrintFormat(fmt);
-    if (failed(formatInfo))
-      return op.emitError("internal: failed to parse format string '")
-             << fmt << "'";
-
-    // Pick the wrapper by scalar type and conversion kind:
-    //   f16/bf16/f64 → f32  → pto_print_f32
-    //   i8/i16/i32   → sext/zext i64 → pto_print_i64 / pto_print_u64
-    //   i64          → as-is        → pto_print_i64 / pto_print_u64
-    Value scalar = adaptor.getScalar();
-    Type scalarType = scalar.getType();
-    ModuleOp moduleOp = op->getParentOfType<ModuleOp>();
-    auto wrapper = [&](StringRef name) -> LLVM::LLVMFuncOp {
-      return moduleOp.lookupSymbol<LLVM::LLVMFuncOp>(name);
-    };
-
-    Value arg = scalar;
-    LLVM::LLVMFuncOp callee;
-    if (auto ft = dyn_cast<FloatType>(scalarType)) {
-      auto f32Type = rewriter.getF32Type();
-      if (ft.isF16() || ft.isBF16())
-        arg = rewriter.create<LLVM::FPExtOp>(loc, f32Type, scalar);
-      else if (!ft.isF32())
-        arg = rewriter.create<LLVM::FPTruncOp>(loc, f32Type, scalar);
-      callee = wrapper(state.printF32FuncName);
-    } else if (auto it = dyn_cast<IntegerType>(scalarType)) {
-      bool isUnsigned =
-          formatInfo->conversion == PrintConversionKind::UnsignedInt;
-      if (it.getWidth() < 64) {
-        if (isUnsigned)
-          arg = rewriter.create<LLVM::ZExtOp>(loc, i64Type, scalar);
-        else
-          arg = rewriter.create<LLVM::SExtOp>(loc, i64Type, scalar);
-      }
-      callee = isUnsigned ? wrapper(state.printU64FuncName)
-                          : wrapper(state.printI64FuncName);
-    } else {
-      return op.emitError("pto.print: unsupported scalar type for print");
-    }
-    if (!callee)
-      return op.emitError("internal: print wrapper function not declared");
-
-    rewriter.create<LLVM::CallOp>(loc, TypeRange{}, callee.getSymName(),
-                                  ValueRange{fmtGlobal.getResult(), arg});
-
-    rewriter.eraseOp(op);
-    return success();
-  }
-
-private:
-  LoweringState &state;
-};
-
-// Lower pto.tprint -> literal text plus per-element wrapper calls.
-//
-// The header and shape lines are emitted as literal text via pto_print_str,
-// then each element of the tile is printed with pto_print_f32 / pto_print_i64
-// from a row/col scf::ForOp loop nest.
-class LowerTPrintOpPattern final : public OpConversionPattern<pto::TPrintOp> {
-public:
-  LowerTPrintOpPattern(TypeConverter &typeConverter, MLIRContext *context,
-                       LoweringState &state)
-      : OpConversionPattern<pto::TPrintOp>(typeConverter, context), state(state) {}
-
-  LogicalResult
-  matchAndRewrite(pto::TPrintOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    Location loc = op.getLoc();
-    MLIRContext *ctx = rewriter.getContext();
-    auto ptr0Type = LLVM::LLVMPointerType::get(ctx, 1);
-    auto i64Type = rewriter.getI64Type();
-
-    auto srcType = dyn_cast<pto::TileBufType>(op.getSrc().getType());
-    if (!srcType) return op.emitError("pto.tprint: source must be a tile_buf");
-    ArrayRef<int64_t> shape = srcType.getShape();
-    if (shape.size() != 2) return op.emitError("pto.tprint: only 2D tiles supported");
-    int64_t rows = shape[0], cols = shape[1];
-    Type elemType = srcType.getElementType();
-    int64_t elemBytes = elemType.getIntOrFloatBitWidth() / 8;
-
-    // Literal header/shape text and per-element value format (globals created
-    // by the pre-scan with identical content derivation).
-    std::string headerText = tprintHeaderText(elemType);
-    std::string shapeText = tprintShapeText(shape);
-    std::string valFmt = tprintValueFmt(elemType);
-    auto lookupGlobal = [&](const std::string &content) -> std::string {
-      for (auto &kv : state.stringGlobals)
-        if (kv.first == content) return kv.second;
-      return "";
-    };
-    std::string headerName = lookupGlobal(headerText);
-    std::string shapeName = lookupGlobal(shapeText);
-    std::string valFmtName = lookupGlobal(valFmt);
-    if (headerName.empty() || shapeName.empty() || valFmtName.empty())
-      return op.emitError("internal: tprint format strings not found in stringGlobals");
-    auto headerGlobal = rewriter.create<LLVM::AddressOfOp>(loc, ptr0Type,
-                                                            headerName);
-    auto shapeGlobal = rewriter.create<LLVM::AddressOfOp>(loc, ptr0Type,
-                                                           shapeName);
-    auto valFmtGlobal = rewriter.create<LLVM::AddressOfOp>(loc, ptr0Type,
-                                                            valFmtName);
-
-    ModuleOp moduleOp = op->getParentOfType<ModuleOp>();
-    auto wrapper = [&](StringRef name) -> LLVM::LLVMFuncOp {
-      return moduleOp.lookupSymbol<LLVM::LLVMFuncOp>(name);
-    };
-    auto strFunc = wrapper(state.printStrFuncName);
-    auto f32Func = wrapper(state.printF32FuncName);
-    auto i64Func = wrapper(state.printI64FuncName);
-    if (!strFunc || !f32Func || !i64Func)
-      return op.emitError("internal: print wrapper function not declared");
-
-    // Header and shape lines as literal text via pto_print_str.
-    rewriter.create<LLVM::CallOp>(loc, TypeRange{}, strFunc.getSymName(),
-                                  ValueRange{headerGlobal.getResult()});
-    rewriter.create<LLVM::CallOp>(loc, TypeRange{}, strFunc.getSymName(),
-                                  ValueRange{shapeGlobal.getResult()});
-
-    // Tile element addressing: the tile data lives in UB; its base is derived
-    // from the SYS.VA.BASE intrinsic when available, otherwise the tile
-    // pointer is a UB placeholder (VPTO) and offsets start at 0.
-    auto sysVaBaseFunc = moduleOp.lookupSymbol<LLVM::LLVMFuncOp>(state.sysVaBaseFuncName);
-    auto ptr6Type = LLVM::LLVMPointerType::get(ctx, 6);
-    Value ubBaseElemOffset;
-    if (sysVaBaseFunc) {
-      auto sysva = rewriter.create<LLVM::CallOp>(loc, i64Type, sysVaBaseFunc.getSymName(), ValueRange{});
-      auto ubOff = rewriter.create<LLVM::ConstantOp>(loc, i64Type, rewriter.getI64IntegerAttr(0x80000));
-      auto baseAddr = rewriter.create<LLVM::AddOp>(loc, i64Type, sysva.getResult(), ubOff);
-      auto elemSizeVal = rewriter.create<LLVM::ConstantOp>(loc, i64Type, rewriter.getI64IntegerAttr(elemBytes));
-      ubBaseElemOffset = rewriter.create<LLVM::UDivOp>(loc, i64Type, baseAddr.getResult(), elemSizeVal);
-    } else {
-      ubBaseElemOffset = getI64Constant(rewriter, loc, 0);
-    }
-    auto tileDataBase = rewriter.create<LLVM::ZeroOp>(loc, ptr6Type);
-
-    // Per-element wrapper call in a row/col loop nest.
-    auto cols64 = rewriter.create<LLVM::ConstantOp>(loc, i64Type, rewriter.getI64IntegerAttr(cols));
-    auto c0Idx = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-    auto c1Idx = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-    auto rowsIdx = rewriter.create<arith::ConstantIndexOp>(loc, rows);
-    auto colsIdx = rewriter.create<arith::ConstantIndexOp>(loc, cols);
-    auto rowLoop = rewriter.create<scf::ForOp>(loc, c0Idx, rowsIdx, c1Idx);
-    {
-      OpBuilder::InsertionGuard guard(rewriter);
-      rewriter.setInsertionPointToStart(rowLoop.getBody());
-      Value row = rowLoop.getInductionVar();
-      auto colLoop = rewriter.create<scf::ForOp>(loc, c0Idx, colsIdx, c1Idx);
-      {
-        OpBuilder::InsertionGuard guard2(rewriter);
-        rewriter.setInsertionPointToStart(colLoop.getBody());
-        Value col = colLoop.getInductionVar();
-        auto rowI64 = rewriter.create<arith::IndexCastOp>(loc, i64Type, row);
-        auto colI64 = rewriter.create<arith::IndexCastOp>(loc, i64Type, col);
-        auto rowOff = rewriter.create<LLVM::MulOp>(loc, i64Type, rowI64, cols64);
-        auto elemIdx = rewriter.create<LLVM::AddOp>(loc, i64Type, rowOff, colI64);
-        auto virtElemOff = rewriter.create<LLVM::AddOp>(loc, i64Type, ubBaseElemOffset, elemIdx);
-        auto elemPtr = rewriter.create<LLVM::GEPOp>(loc, ptr6Type, elemType, tileDataBase, ValueRange{virtElemOff.getResult()});
-        Value elemVal = rewriter.create<LLVM::LoadOp>(loc, elemType, elemPtr);
-
-        // Convert to the wrapper's argument type: floats → f32, integers →
-        // sign-extended i64 (tile elements are signed in practice).
-        Value arg = elemVal;
-        LLVM::LLVMFuncOp callee;
-        if (isa<FloatType>(elemType)) {
-          if (elemType.isF16() || elemType.isBF16())
-            arg = rewriter.create<LLVM::FPExtOp>(loc, rewriter.getF32Type(), elemVal);
-          callee = f32Func;
-        } else {
-          if (elemType.getIntOrFloatBitWidth() < 64)
-            arg = rewriter.create<LLVM::SExtOp>(loc, i64Type, elemVal);
-          callee = i64Func;
-        }
-        rewriter.create<LLVM::CallOp>(loc, TypeRange{}, callee.getSymName(),
-                                      ValueRange{valFmtGlobal.getResult(), arg});
-      }
-    }
-
-    rewriter.eraseOp(op);
-    return success();
-  }
-private:
-  LoweringState &state;
-};
-
 static void populateVPTOOpLoweringPatterns(VPTOTypeConverter &typeConverter,
                                            RewritePatternSet &patterns,
                                            LoweringState &state,
@@ -13874,9 +13408,6 @@ static void populateVPTOOpLoweringPatterns(VPTOTypeConverter &typeConverter,
                LowerCopyUbufToCbufOpPattern,
                LowerCreateCbufMatrixOpPattern>(
       typeConverter, patterns.getContext(), state);
-  patterns.add<LowerAllocTileOpPattern, LowerPrintOpPattern,
-               LowerTPrintOpPattern>(
-      typeConverter, patterns.getContext(), state);
 
   patterns.add<LowerCopyOpPattern<pto::CopyGmToUbufOp>>(
       typeConverter, patterns.getContext(), state, march);
@@ -13961,9 +13492,7 @@ static void configureVPTOOpLoweringTarget(ConversionTarget &target,
                       pto::CmoCacheInvalidOp, pto::FenceBarrierAllOp,
                       pto::DsbOp, pto::DcciOp,
                       pto::GetBufOp, pto::RlsBufOp,
-                      pto::GetBufDynOp, pto::RlsBufDynOp,
-                      pto::AllocTileOp,
-                      pto::PrintOp, pto::TPrintOp>();
+                      pto::GetBufDynOp, pto::RlsBufDynOp>();
   target.addIllegalOp<pto::GetBlockIdxOp, pto::GetSubBlockIdxOp,
                       pto::GetBlockNumOp, pto::GetSubBlockNumOp,
                       pto::GetCtrlOp, pto::GetVms4SrOp, pto::GetTidXOp,
@@ -14143,28 +13672,11 @@ static LogicalResult lowerVPTOOps(ModuleOp module,
   configureVPTOOpLoweringTarget(target, typeConverter, march);
   populateVPTOOpLoweringPatterns(typeConverter, patterns, state, march);
   patterns.add<ConvertVPTOUnrealizedCastOp>(typeConverter, context);
-  collectAndCreatePrintfStringGlobals(module, state);
-
-  // If the module uses print ops, add the DTData hidden parameter to every
-  // entry function BEFORE type conversion.
-  if (failed(addDTDataParamToEntryFunctions(module, state))) {
-    diagOS << "VPTO LLVM emission failed: DTData parameter injection failed\n";
-    return failure();
-  }
 
   if (failed(applyPartialConversion(module, target, std::move(patterns)))) {
     diagOS << "VPTO LLVM emission failed: VPTO op lowering failed\n";
     return failure();
   }
-
-  // Inject the print prologue (pto_print_init at entry, pto_print_finish
-  // before each return) AFTER dialect conversion so we can use LLVM dialect
-  // ops directly.
-  if (failed(injectPrintPrologue(module, state))) {
-    diagOS << "VPTO LLVM emission failed: print prologue injection failed\n";
-    return failure();
-  }
-
   if (failed(materializeDecls(module, state.plannedDecls, diagOS)))
   {
     return failure();
