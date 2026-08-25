@@ -45,9 +45,17 @@ def _resolve_llvm_bin_dir():
         candidates.append(os.path.join(os.path.abspath(env_build_dir), "bin"))
 
     repo_root = os.path.abspath(os.path.join(config.test_source_root, ".."))
+    # The shared LLVM build may live as a sibling of the repo (../llvm-project)
+    # or under a workspace dir (../llvm-workspace/llvm-project). Probe both.
     candidates.append(
         os.path.abspath(
             os.path.join(repo_root, "..", "llvm-project", "build-shared", "bin")
+        )
+    )
+    candidates.append(
+        os.path.abspath(
+            os.path.join(repo_root, "..", "llvm-workspace", "llvm-project",
+                         "build-shared", "bin")
         )
     )
 
