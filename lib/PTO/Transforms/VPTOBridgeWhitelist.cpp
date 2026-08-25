@@ -412,10 +412,11 @@ pto::parseBridgeWhitelist(llvm::StringRef path, llvm::raw_ostream &diagOS) {
 }
 
 /// The built-in default whitelist covering the wrappers bridged today:
-/// the pipe wrapper (C2V/V2C fifo, dedicated renderer) and the matmul
-/// wrapper (TMATMUL and the acc/bias/MX entry variants, rendered by the
-/// generic declarative renderer from its wrapper declaration plus the
-/// per-entry call spelling). It keeps `ptoas --pto-backend=vpto` working
+/// the pipe wrapper (C2V/V2C fifo, dedicated renderer), the matmul wrapper
+/// (TMATMUL and the acc/bias/MX entry variants) and the vec_elem wrapper
+/// (TADD, vector-core elementwise add), the latter two rendered by the
+/// generic declarative renderer from their wrapper declaration plus the
+/// per-entry call spelling. It keeps `ptoas --pto-backend=vpto` working
 /// out of the box; an explicit whitelist (pass option or
 /// PTOAS_VPTO_BRIDGE_WHITELIST) always overrides it. End-to-end cases
 /// under test/vpto/cases/kernels/ rely on this default, so bridging a new
@@ -425,14 +426,17 @@ pto::parseBridgeWhitelist(llvm::StringRef path, llvm::raw_ostream &diagOS) {
 /// tile role (the role also names the entry's tile typedef), and an
 /// optional attr tmpl_map row maps the accPhase enum attribute. The entry
 /// names and the i64 argument types are defaulted, so a mechanically
-/// mapped op registers with op/wrapper/call/abi only. The pipe entries opt
-/// out with `lowering: custom` because the storage lifecycle and the TPOP
-/// address rebinding need a dedicated pass.
+/// mapped op registers with op/wrapper/call/abi only (see pto.tadd). The
+/// pipe entries opt out with `lowering: custom` because the storage
+/// lifecycle and the TPOP address rebinding need a dedicated pass.
 static constexpr llvm::StringLiteral kDefaultBridgeWhitelistYaml = R"yaml(
 wrappers:
   - name: matmul
     includes: [pto/npu/a5/TMatmul.hpp]
     core: cube
+  - name: vec_elem
+    includes: [pto/npu/a5/TAdd.hpp]
+    core: vec
 bridge_ops:
   - op: pto.initialize_l2l_pipe
     wrapper: pipe
@@ -564,6 +568,13 @@ bridge_ops:
       - {operand: 2, arg: rhs, role: right_tile}
       - {operand: 3, arg: bScale, role: b_scale_tile}
       - {operand: 4, arg: bias, role: bias_tile}
+  - op: pto.tadd
+    wrapper: vec_elem
+    call: pto::TADD
+    abi:
+      - {operand: 2, arg: dst, role: result_tile}
+      - {operand: 0, arg: src0, role: left_tile}
+      - {operand: 1, arg: src1, role: right_tile}
 )yaml";
 
 std::string pto::resolveBridgeWhitelistPath(llvm::StringRef optionValue) {
