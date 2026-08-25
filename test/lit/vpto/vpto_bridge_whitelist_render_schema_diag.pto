@@ -1,0 +1,53 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// You may obtain a copy of the License at
+// https://www.huawei.com/
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A
+// PARTICULAR PURPOSE.
+// See LICENSE for more details.
+
+// Declarative whitelist schema diagnostics: the generic renderer is driven
+// entirely by the whitelist, so every fact it needs is validated up front.
+// Covered scenarios, each against its own fixture: a declarative entry
+// without a call spelling, a tmpl_args item bound to no attr tmpl_map row,
+// a wrapper declaration with an unsupported core value, and a routed
+// wrapper with no declaration in the wrappers section (the only scenario
+// that survives whitelist parsing; the wrapper generation pass rejects it).
+
+// RUN: not pto-test-opt %s "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-decl-missing-call.yaml" 2>&1 | FileCheck %s --check-prefix=MISSING-CALL
+// RUN: not pto-test-opt %s "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-decl-tmpl-args-unbound.yaml" 2>&1 | FileCheck %s --check-prefix=TMPL-ARGS
+// RUN: not pto-test-opt %s "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-decl-bad-core.yaml" 2>&1 | FileCheck %s --check-prefix=BAD-CORE
+// RUN: not pto-test-opt %s "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-decl-missing-wrappers.yaml" "-pto-emit-vpto-bridge-wrapper=whitelist-path=%S/Inputs/vpto-bridge-whitelist-decl-missing-wrappers.yaml" 2>&1 | FileCheck %s --check-prefix=NO-WRAPPERS
+
+// MISSING-CALL: VPTO bridge whitelist: declarative entry 'pto_vpto_matmul' declares no call spelling in '{{.*}}vpto-bridge-whitelist-decl-missing-call.yaml'
+// TMPL-ARGS: VPTO bridge whitelist: declarative entry 'pto_vpto_matmul' tmpl_args item 'phase' is neither a qualified literal nor an attr tmpl_map field of the entry in '{{.*}}vpto-bridge-whitelist-decl-tmpl-args-unbound.yaml'
+// BAD-CORE: VPTO bridge whitelist: wrapper 'matmul' declares unsupported core 'matrix' in '{{.*}}vpto-bridge-whitelist-decl-bad-core.yaml' (supported: cube, vec, both)
+// NO-WRAPPERS: error: VPTO bridge: wrapper 'matmul' routes declarative entries but has no declaration in the whitelist wrappers section (declare its name, includes and core there)
+
+module attributes {pto.target_arch = "a5"} {
+  func.func private @render_schema_diag_cube(%addr: i32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : i64
+    %c1024 = arith.constant 1024 : i64
+    %c2048 = arith.constant 2048 : i64
+    %lhs = pto.alloc_tile addr = %c0
+      : !pto.tile_buf<loc=left, dtype=f16, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    %rhs = pto.alloc_tile addr = %c1024
+      : !pto.tile_buf<loc=right, dtype=f16, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=row_major, slayout=col_major, fractal=512, pad=0>
+    %acc = pto.alloc_tile addr = %c2048
+      : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    pto.tmatmul ins(%lhs, %rhs
+      : !pto.tile_buf<loc=left, dtype=f16, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=row_major, fractal=512, pad=0>,
+        !pto.tile_buf<loc=right, dtype=f16, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=row_major, slayout=col_major, fractal=512, pad=0>)
+      outs(%acc : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                                blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+    return
+  }
+}

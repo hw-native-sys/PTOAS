@@ -10,16 +10,16 @@
 // See LICENSE for more details.
 
 // Phase 4 tmpl_map consumption: an uncovered tmpl_map declaration must be
-// rejected instead of being silently dropped. With the declarative channel
-// the rejection moved earlier: a declarative entry collects a token for
-// every abi role it binds, and the whitelist validator constrains tmpl_map
-// tile sources to that role set, so an uncovered declaration can no longer
-// reach wrapper generation. The fixture's AccInTile slot (no matching abi
-// role) is therefore diagnosed at whitelist parse time.
+// rejected instead of being silently dropped. With the role-driven
+// declarative schema the rejection moved earlier: tile typedefs derive
+// from the abi roles and the whitelist validator accepts only 'attr'
+// tmpl_map rows for declarative entries, so an uncovered tile declaration
+// can no longer reach wrapper generation. The fixture's AccInTile slot (no
+// matching abi role) is therefore diagnosed at whitelist parse time.
 
 // RUN: not pto-test-opt %s "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-matmul-uncovered-tmpl.yaml" 2>&1 | FileCheck %s
 
-// CHECK: VPTO bridge whitelist: tmpl_map row of entry 'pto_vpto_matmul' uses source 'acc_in_tile' which is not an abi role of the declarative entry (roles: result_tile, left_tile, right_tile) in '{{.*}}vpto-bridge-whitelist-matmul-uncovered-tmpl.yaml'
+// CHECK: VPTO bridge whitelist: tmpl_map row of entry 'pto_vpto_matmul' uses source 'acc_in_tile', but declarative entries only accept 'attr' rows (tile typedefs derive from the abi roles) in '{{.*}}vpto-bridge-whitelist-matmul-uncovered-tmpl.yaml'
 
 module attributes {pto.target_arch = "a5"} {
   func.func private @matmul_uncovered_cube(%addr: i32)

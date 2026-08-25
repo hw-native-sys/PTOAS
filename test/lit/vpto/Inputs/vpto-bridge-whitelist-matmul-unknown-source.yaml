@@ -1,10 +1,13 @@
-# Diagnostic fixture: a declarative tmpl_map row whose source is not one of
-# the entry's abi roles must be rejected by the whitelist validator (the
-# role set replaced the old hardcoded matmul source set).
+# Diagnostic fixture: a declarative tmpl_map row whose source is not the
+# 'attr' enum mapping must be rejected by the whitelist validator. Tile
+# typedefs derive from the abi roles under the role-driven renderer, so a
+# tile-sourced row is the legacy spelling and names a target the renderer
+# never emits.
 bridge_ops:
   - op: pto.tmatmul
     wrapper: matmul
     entry: pto_vpto_matmul
+    call: pto::TMATMUL
     abi:
       - {operand: 2, arg: dst, type: i64, role: result_tile}
       - {operand: 0, arg: lhs, type: i64, role: left_tile}

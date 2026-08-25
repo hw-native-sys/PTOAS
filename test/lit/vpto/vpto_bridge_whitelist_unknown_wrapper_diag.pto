@@ -10,15 +10,16 @@
 // See LICENSE for more details.
 
 // Wrapper-generator dispatch: the renderer is selected by the whitelist
-// `wrapper` field, not by sniffing which spec keys were collected. An entry
-// naming a wrapper no renderer knows must be rejected with a diagnostic
-// that names the unknown wrapper and the available set, instead of falling
-// through into another wrapper's renderer and failing on unrelated missing
-// spec fields.
+// `wrapper` field, not by sniffing which spec keys were collected. Entries
+// carrying `lowering: custom` name a wrapper that owns a dedicated
+// renderer; naming one no renderer knows must be rejected with a
+// diagnostic that names the custom wrapper and the available renderers,
+// instead of falling through into another wrapper's renderer and failing
+// on unrelated missing spec fields.
 
 // RUN: not pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-unknown-wrapper.yaml" "-pto-emit-vpto-bridge-wrapper=whitelist-path=%S/Inputs/vpto-bridge-whitelist-unknown-wrapper.yaml" 2>&1 | FileCheck %s
 
-// CHECK: error: VPTO bridge: whitelist entries name wrapper 'pipe_unfinished_port', which has no renderer in the bridge wrapper generator (available: pipe, matmul)
+// CHECK: error: VPTO bridge: whitelist entries name the custom wrapper 'pipe_unfinished_port', which has no dedicated renderer in the bridge wrapper generator (available: pipe)
 
 module {
   func.func private @unknown_wrapper(%addr: i32)

@@ -1,0 +1,16 @@
+# Diagnostic fixture: a wrapper declaration with an unsupported core value.
+# The core selects the __DAV_CUBE__/__DAV_VEC__ guard of the rendered
+# source, so the whitelist validator rejects unknown spellings at parse
+# time with the supported set listed.
+wrappers:
+  - name: matmul
+    includes: [pto/npu/a5/TMatmul.hpp]
+    core: matrix
+bridge_ops:
+  - op: pto.tmatmul
+    wrapper: matmul
+    call: pto::TMATMUL
+    abi:
+      - {operand: 2, arg: dst, role: result_tile}
+      - {operand: 0, arg: lhs, role: left_tile}
+      - {operand: 1, arg: rhs, role: right_tile}

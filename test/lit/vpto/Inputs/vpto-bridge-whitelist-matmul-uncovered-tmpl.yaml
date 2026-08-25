@@ -1,21 +1,19 @@
-# VPTO bridge whitelist whose tmatmul entry declares a tmpl_map slot fed by
-# the accumulator-input tile (acc_in_tile) even though the entry's abi binds
-# no such role. With the declarative schema this cannot reach wrapper
-# generation anymore: the whitelist validator rejects a tmpl_map source that
-# is not an abi role at parse time, which is exactly the uncovered
-# declaration this fixture carries.
+# VPTO bridge whitelist whose tmatmul entry declares a tmpl_map tile row
+# fed by the accumulator-input tile (acc_in_tile) even though the entry's
+# abi binds no such role. With the role-driven declarative schema this
+# cannot reach wrapper generation anymore: the whitelist validator rejects
+# any non-'attr' tmpl_map row of a declarative entry at parse time, which
+# is exactly the uncovered declaration this fixture carries.
 bridge_ops:
   - op: pto.tmatmul
     wrapper: matmul
     entry: pto_vpto_matmul
+    call: pto::TMATMUL
     abi:
       - {operand: 2, arg: dst, type: i64, role: result_tile}
       - {operand: 0, arg: lhs, type: i64, role: left_tile}
       - {operand: 1, arg: rhs, type: i64, role: right_tile}
     tmpl_map:
-      - source: left_tile
-        field: tile
-        target: LeftTile
       - source: acc_in_tile
         field: tile
         target: AccInTile

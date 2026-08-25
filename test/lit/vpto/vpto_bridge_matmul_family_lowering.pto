@@ -42,10 +42,11 @@
 // SPEC-NOT: pto.tmatmul.acc
 
 // WRAP: module attributes {{{.*}}pto.vpto.bridge.wrapper_source = "
-// WRAP-SAME: using LeftTile = pto::Tile<pto::TileType::Left, half, 16, 16, pto::BLayout::ColMajor, 16, 16, pto::SLayout::RowMajor, 512>;
-// WRAP-SAME: using RightTile = pto::Tile<pto::TileType::Right, half, 16, 16, pto::BLayout::RowMajor, 16, 16, pto::SLayout::ColMajor, 512>;
-// WRAP-SAME: using ResultTile = pto::Tile<pto::TileType::Acc, float, 16, 16, pto::BLayout::ColMajor, 16, 16, pto::SLayout::RowMajor, 1024>;
+// WRAP-SAME: #include <pto/npu/a5/TMatmul.hpp>
 // WRAP-SAME: using AccInTile = pto::Tile<pto::TileType::Acc, float, 16, 16, pto::BLayout::ColMajor, 16, 16, pto::SLayout::RowMajor, 1024>;
+// WRAP-SAME: using LeftTile = pto::Tile<pto::TileType::Left, half, 16, 16, pto::BLayout::ColMajor, 16, 16, pto::SLayout::RowMajor, 512>;
+// WRAP-SAME: using ResultTile = pto::Tile<pto::TileType::Acc, float, 16, 16, pto::BLayout::ColMajor, 16, 16, pto::SLayout::RowMajor, 1024>;
+// WRAP-SAME: using RightTile = pto::Tile<pto::TileType::Right, half, 16, 16, pto::BLayout::RowMajor, 16, 16, pto::SLayout::ColMajor, 512>;
 // WRAP-SAME: #ifdef __DAV_CUBE__
 // WRAP-SAME: pto_vpto_matmul(uint64_t dstAddress, uint64_t lhsAddress, uint64_t rhsAddress)
 // WRAP-SAME: pto::TMATMUL<pto::AccPhase::Final>(dst, lhs, rhs);

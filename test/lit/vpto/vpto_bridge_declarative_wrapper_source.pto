@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
 // This program is free software; you can redistribute it and/or modify it under the terms and conditions of
 // CANN Open Software License Agreement Version 2.0 (the "License").
-// You may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 // https://www.huawei.com/
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS
@@ -9,17 +8,37 @@
 // PARTICULAR PURPOSE.
 // See LICENSE for more details.
 
-// Whitelist schema validation for declarative entries: a tmpl_map row with
-// a tile source (the legacy spelling) is rejected at parse time, not
-// silently ignored -- tile typedefs derive from the abi roles under the
-// role-driven renderer, so only 'attr' rows are accepted.
+// Generic declarative renderer litmus: the built-in whitelist registers the
+// matmul wrapper in the wrappers section (includes + core guard) and its
+// entries carry only call/tmpl_args/abi, yet the rendered wrapper source is
+// semantically identical to the old hardcoded matmul renderer -- the same
+// includes, the same role-named tile typedefs (sorted by target name), the
+// same cube guard and the same TASSIGN-bound TMATMUL call with the merged
+// acc phase template argument. No C++ renderer knows 'matmul' anymore.
 
-// RUN: not pto-test-opt %s "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-matmul-unknown-source.yaml" 2>&1 | FileCheck %s
+// RUN: env -u PTOAS_VPTO_BRIDGE_WHITELIST pto-test-opt %s -pto-lower-declarative-bridge-ops -pto-emit-vpto-bridge-wrapper | FileCheck %s
 
-// CHECK: VPTO bridge whitelist: tmpl_map row of entry 'pto_vpto_matmul' uses source 'pipe.init', but declarative entries only accept 'attr' rows (tile typedefs derive from the abi roles) in '{{.*}}vpto-bridge-whitelist-matmul-unknown-source.yaml'
+// CHECK: module attributes {{{.*}}pto.vpto.bridge.wrapper_source = "
+// CHECK-SAME: #include <pto/pto-inst.hpp>
+// CHECK-SAME: #include <pto/npu/a5/TMatmul.hpp>
+// CHECK-SAME: #include <stdint.h>
+// CHECK-SAME: using LeftTile = pto::Tile<pto::TileType::Left, half, 16, 16, pto::BLayout::ColMajor, 16, 16, pto::SLayout::RowMajor, 512>;
+// CHECK-SAME: using ResultTile = pto::Tile<pto::TileType::Acc, float, 16, 16, pto::BLayout::ColMajor, 16, 16, pto::SLayout::RowMajor, 1024>;
+// CHECK-SAME: using RightTile = pto::Tile<pto::TileType::Right, half, 16, 16, pto::BLayout::RowMajor, 16, 16, pto::SLayout::ColMajor, 512>;
+// CHECK-SAME: #ifdef __DAV_CUBE__
+// CHECK-SAME: extern \22C\22 [aicore] void pto_vpto_matmul(uint64_t dstAddress, uint64_t lhsAddress, uint64_t rhsAddress)
+// CHECK-SAME: ResultTile dst;
+// CHECK-SAME: LeftTile lhs;
+// CHECK-SAME: RightTile rhs;
+// CHECK-SAME: pto::TASSIGN_IMPL(dst, dstAddress);
+// CHECK-SAME: pto::TASSIGN_IMPL(lhs, lhsAddress);
+// CHECK-SAME: pto::TASSIGN_IMPL(rhs, rhsAddress);
+// CHECK-SAME: pto::TMATMUL<pto::AccPhase::Final>(dst, lhs, rhs);
+// CHECK-SAME: #endif
+// CHECK-NOT: pto.vpto.bridge.spec
 
 module attributes {pto.target_arch = "a5"} {
-  func.func private @matmul_tmpl_diag(%addr: i32)
+  func.func private @declarative_matmul_cube(%addr: i32)
       attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
     %c0 = arith.constant 0 : i64
     %c1024 = arith.constant 1024 : i64
@@ -40,6 +59,7 @@ module attributes {pto.target_arch = "a5"} {
                       blayout=row_major, slayout=col_major, fractal=512, pad=0>)
       outs(%acc : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
                                 blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+      {accPhase = #pto<acc_phase final>}
     return
   }
 }

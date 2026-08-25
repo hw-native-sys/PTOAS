@@ -1,30 +1,26 @@
 # VPTO C++ interface bridge whitelist for the MATMUL family lit tests. The
 # entries lower through the declarative channel: each abi row binds a
 # wrapper argument to an IR operand position (positional, with the ODS
-# operand name as the diagnostic label) and a template role; the tile types
-# are spread over the matmul operand roles, so the tmpl_map rows use the
-# per-role sources. The attr row maps the accPhase enum attribute, omitting
-# the Unspecified case (and entries whose IR op carries no phase at all).
-# Variant entries declare the full role-tile set they render; duplicate
-# typedef targets deduplicate at render time.
+# operand name as the diagnostic label) and a template role; the role set
+# also names the tile typedefs the generic renderer emits. The attr row
+# maps the accPhase enum attribute, omitting the Unspecified case (and
+# entries whose IR op carries no phase at all); its spec token feeds the
+# tmpl_args slot. Variant entries share the role-named typedefs; duplicates
+# deduplicate at render time. Entry names default from the op name.
+wrappers:
+  - name: matmul
+    includes: [pto/npu/a5/TMatmul.hpp]
+    core: cube
 bridge_ops:
   - op: pto.tmatmul
     wrapper: matmul
-    entry: pto_vpto_matmul
+    call: pto::TMATMUL
+    tmpl_args: [acc_phase]
     abi:
-      - {operand: 2, arg: dst, type: i64, role: result_tile}
-      - {operand: 0, arg: lhs, type: i64, role: left_tile}
-      - {operand: 1, arg: rhs, type: i64, role: right_tile}
+      - {operand: 2, arg: dst, role: result_tile}
+      - {operand: 0, arg: lhs, role: left_tile}
+      - {operand: 1, arg: rhs, role: right_tile}
     tmpl_map:
-      - source: left_tile
-        field: tile
-        target: LeftTile
-      - source: right_tile
-        field: tile
-        target: RightTile
-      - source: result_tile
-        field: tile
-        target: ResultTile
       - source: attr
         field: acc_phase
         target: AccPhase
@@ -32,16 +28,14 @@ bridge_ops:
         omit_value: Unspecified
   - op: pto.tmatmul.acc
     wrapper: matmul
-    entry: pto_vpto_matmul_acc
+    call: pto::TMATMUL_ACC
+    tmpl_args: [acc_phase]
     abi:
-      - {operand: 3, arg: dst, type: i64, role: result_tile}
-      - {operand: 0, arg: acc_in, type: i64, role: acc_in_tile}
-      - {operand: 1, arg: lhs, type: i64, role: left_tile}
-      - {operand: 2, arg: rhs, type: i64, role: right_tile}
+      - {operand: 3, arg: dst, role: result_tile}
+      - {operand: 0, arg: accIn, role: acc_in_tile}
+      - {operand: 1, arg: lhs, role: left_tile}
+      - {operand: 2, arg: rhs, role: right_tile}
     tmpl_map:
-      - source: acc_in_tile
-        field: tile
-        target: AccInTile
       - source: attr
         field: acc_phase
         target: AccPhase
@@ -49,25 +43,14 @@ bridge_ops:
         omit_value: Unspecified
   - op: pto.tmatmul.bias
     wrapper: matmul
-    entry: pto_vpto_matmul_bias
+    call: pto::TMATMUL_BIAS
+    tmpl_args: [acc_phase]
     abi:
-      - {operand: 3, arg: dst, type: i64, role: result_tile}
-      - {operand: 0, arg: a, type: i64, role: left_tile}
-      - {operand: 1, arg: b, type: i64, role: right_tile}
-      - {operand: 2, arg: bias, type: i64, role: bias_tile}
+      - {operand: 3, arg: dst, role: result_tile}
+      - {operand: 0, arg: lhs, role: left_tile}
+      - {operand: 1, arg: rhs, role: right_tile}
+      - {operand: 2, arg: bias, role: bias_tile}
     tmpl_map:
-      - source: left_tile
-        field: tile
-        target: LeftTile
-      - source: right_tile
-        field: tile
-        target: RightTile
-      - source: result_tile
-        field: tile
-        target: ResultTile
-      - source: bias_tile
-        field: tile
-        target: BiasTile
       - source: attr
         field: acc_phase
         target: AccPhase
@@ -75,29 +58,15 @@ bridge_ops:
         omit_value: Unspecified
   - op: pto.tmatmul.mx
     wrapper: matmul
-    entry: pto_vpto_matmul_mx
+    call: pto::TMATMUL_MX
+    tmpl_args: [acc_phase]
     abi:
-      - {operand: 4, arg: dst, type: i64, role: result_tile}
-      - {operand: 0, arg: a, type: i64, role: left_tile}
-      - {operand: 1, arg: a_scale, type: i64, role: a_scale_tile}
-      - {operand: 2, arg: b, type: i64, role: right_tile}
-      - {operand: 3, arg: b_scale, type: i64, role: b_scale_tile}
+      - {operand: 4, arg: dst, role: result_tile}
+      - {operand: 0, arg: lhs, role: left_tile}
+      - {operand: 1, arg: aScale, role: a_scale_tile}
+      - {operand: 2, arg: rhs, role: right_tile}
+      - {operand: 3, arg: bScale, role: b_scale_tile}
     tmpl_map:
-      - source: left_tile
-        field: tile
-        target: LeftTile
-      - source: right_tile
-        field: tile
-        target: RightTile
-      - source: result_tile
-        field: tile
-        target: ResultTile
-      - source: a_scale_tile
-        field: tile
-        target: AScaleTile
-      - source: b_scale_tile
-        field: tile
-        target: BScaleTile
       - source: attr
         field: acc_phase
         target: AccPhase
@@ -105,33 +74,16 @@ bridge_ops:
         omit_value: Unspecified
   - op: pto.tmatmul.mx.acc
     wrapper: matmul
-    entry: pto_vpto_matmul_mx_acc
+    call: pto::TMATMUL_MX
+    tmpl_args: [acc_phase]
     abi:
-      - {operand: 5, arg: dst, type: i64, role: result_tile}
-      - {operand: 0, arg: c_in, type: i64, role: acc_in_tile}
-      - {operand: 1, arg: a, type: i64, role: left_tile}
-      - {operand: 2, arg: a_scale, type: i64, role: a_scale_tile}
-      - {operand: 3, arg: b, type: i64, role: right_tile}
-      - {operand: 4, arg: b_scale, type: i64, role: b_scale_tile}
+      - {operand: 5, arg: dst, role: result_tile}
+      - {operand: 0, arg: accIn, role: acc_in_tile}
+      - {operand: 1, arg: lhs, role: left_tile}
+      - {operand: 2, arg: aScale, role: a_scale_tile}
+      - {operand: 3, arg: rhs, role: right_tile}
+      - {operand: 4, arg: bScale, role: b_scale_tile}
     tmpl_map:
-      - source: left_tile
-        field: tile
-        target: LeftTile
-      - source: right_tile
-        field: tile
-        target: RightTile
-      - source: result_tile
-        field: tile
-        target: ResultTile
-      - source: acc_in_tile
-        field: tile
-        target: AccInTile
-      - source: a_scale_tile
-        field: tile
-        target: AScaleTile
-      - source: b_scale_tile
-        field: tile
-        target: BScaleTile
       - source: attr
         field: acc_phase
         target: AccPhase
@@ -139,30 +91,11 @@ bridge_ops:
         omit_value: Unspecified
   - op: pto.tmatmul.mx.bias
     wrapper: matmul
-    entry: pto_vpto_matmul_mx_bias
+    call: pto::TMATMUL_MX
     abi:
-      - {operand: 5, arg: dst, type: i64, role: result_tile}
-      - {operand: 0, arg: a, type: i64, role: left_tile}
-      - {operand: 1, arg: a_scale, type: i64, role: a_scale_tile}
-      - {operand: 2, arg: b, type: i64, role: right_tile}
-      - {operand: 3, arg: b_scale, type: i64, role: b_scale_tile}
-      - {operand: 4, arg: bias, type: i64, role: bias_tile}
-    tmpl_map:
-      - source: left_tile
-        field: tile
-        target: LeftTile
-      - source: right_tile
-        field: tile
-        target: RightTile
-      - source: result_tile
-        field: tile
-        target: ResultTile
-      - source: a_scale_tile
-        field: tile
-        target: AScaleTile
-      - source: b_scale_tile
-        field: tile
-        target: BScaleTile
-      - source: bias_tile
-        field: tile
-        target: BiasTile
+      - {operand: 5, arg: dst, role: result_tile}
+      - {operand: 0, arg: lhs, role: left_tile}
+      - {operand: 1, arg: aScale, role: a_scale_tile}
+      - {operand: 2, arg: rhs, role: right_tile}
+      - {operand: 3, arg: bScale, role: b_scale_tile}
+      - {operand: 4, arg: bias, role: bias_tile}
