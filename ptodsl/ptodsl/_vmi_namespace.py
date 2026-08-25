@@ -288,10 +288,14 @@ def _check_vci_group_tiles_phys_vl(elem_type, size, group, *, context: str):
     else:
         width = 32
     phys_vl = 64 if width >= 32 else (128 if width >= 16 else 256)
-    if phys_vl % group_size != 0:
+    # The backend accepts a group whose per-group lane count tiles the
+    # physical VL in either direction: a small group within one VL
+    # (group_size < phys_vl, phys_vl % group_size == 0) or a group spanning
+    # several VLs (group_size > phys_vl, group_size % phys_vl == 0).
+    if phys_vl % group_size != 0 and group_size % phys_vl != 0:
         raise ValueError(
             f"{context}: group_size {group_size} does not tile physical lanes "
-            f"({phys_vl}); size={size}, group={group}"
+            f"({phys_vl}) in either direction; size={size}, group={group}"
         )
 
 

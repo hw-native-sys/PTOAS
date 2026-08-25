@@ -160,6 +160,13 @@ def main() -> None:
             i32, 100, 1, context="pto.vmi.vci(...)"
         )
 
+        # group_size > phys_vl is legal when it is a multiple of phys_vl:
+        # i32 size=512 group=2 → group_size=256, phys_vl=64, 256%64==0.
+        # The backend verifier accepts this; the frontend must not reject it.
+        _check_vci_group_tiles_phys_vl(
+            i32, 512, 2, context="pto.vmi.vci(...)"
+        )
+
     @pto.jit(target="a5", backend="vpto", mode="explicit")
     def vmi_vci_group1_tail_probe():
         dst = pto.alloc_tile(shape=[1, 128], dtype=pto.i32)
