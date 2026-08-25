@@ -1,5 +1,17 @@
 # VPTO C++ 接口桥接泛化——技术汇报
 
+**概述**：本分支把 VPTO 后端与 PTO-ISA C++ 模板硬件接口之间的桥接构建为
+编译器内置的通用通道。核心交付：
+
+- **白名单驱动的双通道路由**：机械映射型 op 缺省走声明式通道（白名单
+  注册即接入，零 pass 代码）；真家族语义（storage 生命周期、地址重绑定）
+  以 `lowering: custom` 显式进入专用通道（现仅 pipe 家族）；
+- **通用声明式 wrapper 渲染器**：wrapper 的 includes、核守卫、entry 签名、
+  typedef 与调用体全部由白名单 schema 声明驱动渲染，新增机械映射家族
+  零 C++ 改动；
+- **三个家族端到端验证**：pipe（FIFO 通路）、matmul（cube 矩阵乘）、
+  tadd（vec 逐元素加，纯白名单接入）均在模拟器 DEVICE=SIM 下
+  compare passed。
 
 ## 1. 背景
 
@@ -44,7 +56,7 @@ VPTO 生成的 LLVM IR 合并，端到端跑通 FIFO 通路。但 PoC 有两个�
         ↓
 [wrapper 生成与 bitcode 合入]
   VPTOBridgeWrapperGen（模块级）：合并各函数收集的 spec →
-  按白名单 tmpl_map 渲染 wrapper C++ 源码（模块属性 wrapper_source）→
+  按条目通道分派渲染 wrapper C++ 源码（模块属性 wrapper_source）→
   ObjectEmission 将 wrapper 编译为 cube/vec 两路 bitcode 注入各自 fatobj
 ```
 
@@ -90,7 +102,7 @@ bridge_ops:
   - op: pto.tpush
     wrapper: pipe                # 同一 wrapper 的条目共享一份翻译单元
     lowering: custom             # 例外：家族语义需专用 pass，必须显式标注
-    entry: pto_vpto_pipe_tpush   # custom 条目必填
+    entry: pto_vpto_pipe_push    # custom 条目必填
     abi:                         # custom 条目无需 operand/role 绑定
       - {type: ptr}              # storage，由桥接降级合成
       - {type: i64}              # producer tile 地址
@@ -172,12 +184,9 @@ EmitC 与桥接两侧都调用它（限定符参数区分拼写形态：桥接�
 | tile 信息从哪来 | 读已转换的 OpaqueType 携带的 tile 布局 | 桥接时点直接读 `TileBufType` 的 config 属性 |
 | 产物去哪 | 拼进输出文本，如 `TPUSH<pipeTok, tileTok, ...>(...)` | 写入 spec，由 wrapper 生成器渲染 typedef 与模板实参 |
 
-
 因此组装层桥接侧自建：`VPTOBridgeTokens`（`buildBridgePipeToken` /
 `buildBridgeTileToken` / `buildBridgeTileSplitToken` /
 `buildBridgeElementTypeToken`）产出可直接替换进 wrapper 源码的 token。
-
-
 
 **参数完整流转链路**（收集 → 合并 → 渲染）：
 
@@ -187,7 +196,7 @@ EmitC 与桥接两侧都调用它（限定符参数区分拼写形态：桥接�
 - **合并**：模块级 wrapper 生成 pass 单线程确定性合并各函数 spec，
   同 key 异值报 "conflicting … bridge specialization" 诊断；
 - **渲染**：声明式条目的 tile typedef 由 abi role 直接推导（`left_tile` →
-  `using LeftTile = <spec token>;`），按 target 名去重后字母序输出；
+  `using LeftTile = <spec token>;`），按 target 名去重后以字节序稳定输出；
   `tmpl_map` 对声明式条目只保留 `attr` 行，其 token 喂给条目的 `tmpl_args`，
   spec 缺 token 时整个模板实参列表省略（attr token 是枚举值而非类型，
   从不渲染 typedef）；pipe 的 typedef 段由 pipe 专用渲染器自建
@@ -216,6 +225,70 @@ ObjectEmission                   读 wrapper_source，cube/vec 两路各自编�
 全流程内置于 ptoas：`ptoas --pto-backend=vpto` 一条命令完成桥接降级、
 wrapper 渲染、编译与合入，无外部脚本、无环境变量依赖。
 
+### 3.4 使用方式：接入一个机械映射型 op
+
+机械映射型 op 的接入只需白名单注册，零 C++ 改动。以 `pto.tadd` 为例，
+全部注册内容为两处声明：
+
+1. `wrappers` 段声明 wrapper 的 includes 与核守卫（每个声明式 wrapper
+   一条，已有则复用）；
+2. `bridge_ops` 段声明路由条目：`op`/`wrapper`/`call`/`abi`，`entry` 与
+   abi `type` 缺省自动推导。
+
+```yaml
+# 内置默认白名单（lib/PTO/Transforms/VPTOBridgeWhitelist.cpp）中的注册
+wrappers:
+  - name: vec_elem
+    includes: [pto/npu/a5/TAdd.hpp]
+    core: vec
+bridge_ops:
+  - op: pto.tadd
+    wrapper: vec_elem
+    call: pto::TADD
+    abi:
+      - {operand: 2, arg: dst, role: result_tile}
+      - {operand: 0, arg: src0, role: left_tile}
+      - {operand: 1, arg: src1, role: right_tile}
+```
+
+注册完成后，内核中的 `pto.tadd` 自动经声明式通道降级为
+`pto.bridge_call "pto_vpto_add"`（entry 名由 op 名缺省推导），模块级
+通用渲染器产出 wrapper 源码并编译合入：
+
+```cpp
+// 渲染产物（模块属性 pto.vpto.bridge.wrapper_source，节选）
+#include <pto/npu/a5/TAdd.hpp>
+using LeftTile   = pto::Tile<pto::TileType::Vec, float, 8, 16, pto::BLayout::RowMajor, 8, 16>;
+using ResultTile = pto::Tile<pto::TileType::Vec, float, 8, 16, pto::BLayout::RowMajor, 8, 16>;
+using RightTile  = pto::Tile<pto::TileType::Vec, float, 8, 16, pto::BLayout::RowMajor, 8, 16>;
+#ifdef __DAV_VEC__
+extern "C" [aicore] void pto_vpto_add(uint64_t dstAddress, uint64_t src0Address, uint64_t src1Address)
+{
+  ResultTile dst; LeftTile src0; RightTile src1;
+  pto::TASSIGN_IMPL(dst, dstAddress);
+  pto::TASSIGN_IMPL(src0, src0Address);
+  pto::TASSIGN_IMPL(src1, src1Address);
+  pto::TADD(dst, src0, src1);
+}
+#endif
+```
+
+宿主侧零配置编译内核模块：
+
+```bash
+ptoas --pto-arch a5 --pto-backend=vpto kernel.pto -o kernel.fatobj.o
+```
+
+接入验证建议：lit 钉住 spec 收集与 wrapper_source 两段产物（参考
+`vpto_bridge_tadd_declarative_lowering.pto` /
+`vpto_bridge_tadd_wrapper_source.pto`）；白名单 schema 的任何拼写错误
+（缺 `call`、`tmpl_args` 无对应 attr 行、`core` 非法值等）在解析期即被
+拒绝并点名条目与文件。
+
+携带真家族语义（storage 生命周期、地址重绑定）的 op 不在此列：需显式
+`lowering: custom`、必填 `entry`，由专用 pass 与专用渲染器承接（现仅
+pipe 家族）。
+
 ## 4. 已验证的能力矩阵
 
 ### 4.1 pipe wrapper（TPipe/TPUSH/TPOP/TFREE）
@@ -237,7 +310,7 @@ wrapper 渲染、编译与合入，无外部脚本、无环境变量依赖。
 | ABI | 3×i64（dst/lhs/rhs），经白名单 abi 行位置绑定与校验 |
 | dst 校验 | 必须来自带规划地址的 `alloc_tile`，否则报明确诊断 |
 | 模板实参 | tile typedef 由 abi role 推导；`tmpl_args` 声明驱动（`acc_phase` → `AccPhase::Final`，spec 缺 token 则省略整个列表） |
-| 端到端 | 16×16×16 f16 矩阵乘（A=单位阵），mte 链路→tmatmul→mte 出，compare passed（声明式重构后复跑通过） |
+| 端到端 | 16×16×16 f16 矩阵乘（A=单位阵），mte 链路→tmatmul→mte 出，compare passed |
 
 ### 4.3 vec_elem wrapper（`pto.tadd`，纯白名单接入）
 
@@ -250,41 +323,74 @@ wrapper 渲染、编译与合入，无外部脚本、无环境变量依赖。
 
 ### 4.4 机制验证结论
 
-- 接口面完全不同的第二家族（MATMUL）接入时，通用混编 pass 与
-  ObjectEmission 通道零改动，通用层与家族语义解耦的分层设计成立；
-- matmul 以声明式通道接入，无专用 pass 代码，机械映射型 op 的接入成本
-  仅为一条白名单声明——且声明式为缺省通道，该声明连 `lowering` 标注都
-  不需要写；
-- matmul 原硬编码渲染器已迁移为通用声明式渲染器（迁移 litmus：渲染输出
-  逐字节一致），并删除 matmul 专用渲染器、spec 结构与 entry key 常量；
-  tadd/vec_elem 随即**纯白名单接入**（零 C++ 改动），验证了机械映射型
-  op "白名单注册即桥接" 的目标：通用渲染器对 cube/vec 核守卫、有无模板
-  实参的调用形态均统一覆盖。
+- 接口面完全不同的两个声明式家族（cube 侧 MATMUL 与 vec 侧 TADD）均由
+  同一个通用渲染器产出 wrapper：cube/vec 核守卫、有无模板实参的调用
+  形态统一覆盖，通用层不感知任何家族差异；
+- 机械映射型 op 的接入成本仅为白名单注册：无专用 pass 代码、无生成器
+  改动，且声明式为缺省通道，连 `lowering` 标注都不需要写；
+- 新增接口家族时通用混编 pass（VPTOBridgeLowering）与 ObjectEmission
+  合入通道保持不变，通用层与家族语义解耦的分层设计成立。
 
 ## 5. 测试验证
 
-lit 侧新增/调整：
+lit 侧桥接相关用例共 28 个，按维度分组：
+
+**路由与通道**：
 
 | 用例 | 覆盖点 |
 |---|---|
-| `vpto_bridge_whitelist_default_channel_diag.pto` | 缺省通道的两条边界：漏标 `lowering: custom` 的条目在解析期即被拒（诊断点名该标注）；旧拼写 `lowering: family` 不被静默重解释 |
-| `vpto_bridge_declarative_binding_diag.pto` | 改用 `-split-input-file`：四个场景此前共处一个 module，而声明式 pass 是 FuncOp 嵌套 pass，MLIR 异步 adaptor 在首个失败函数处 break 出该 worker 的分片，导致实际产出的诊断条数在 1~4 之间随机（属既有缺陷，非本次引入） |
-| `vpto_bridge_declarative_wrapper_source.pto` | 内置白名单 matmul 走通用渲染器的迁移 litmus：wrapper_source includes/typedef/调用体与迁移前硬编码渲染输出一致 |
-| `vpto_bridge_whitelist_render_schema_diag.pto` | 新 schema 边界诊断：缺 `call` / `tmpl_args` 无对应 attr 行 / `core` 非法值 / 声明式 wrapper 缺 `wrappers` 段 |
+| `vpto_bridge_default_whitelist_lowering.pto` | 零配置开箱即用：无 option/env 时回退内置默认白名单完成桥接 |
+| `vpto_bridge_declarative_unrouted_passthrough.pto` | 白名单未路由的 op 保持常规 tile-op 展开路径（tmatmul → pto.mad），custom 条目留给家族 pass，两种透传均不过度降级 |
+| `vpto_bridge_whitelist_default_channel_diag.pto` | 缺省通道边界：漏标 `lowering: custom` 的条目解析期即被拒（诊断点名该标注）；旧拼写 `lowering: family` 不被静默重解释 |
+| `vpto_bridge_declarative_binding_diag.pto` | `-split-input-file` 逐场景验证声明式绑定诊断（缺 `operand`/`arg`/`role` 等四类错误各自独立成段，避免 FuncOp 嵌套 pass 在首个失败函数处中断分片导致诊断条数不确定） |
+| `vpto_bridge_whitelist_residual_diag.pto` | 白名单命中但未被降级的残留 op 报诊断而非静默发射 |
+
+**pipe 家族**：
+
+| 用例 | 覆盖点 |
+|---|---|
+| `vpto_bridge_pipe_family_lowering.pto` | 家族 pass init/push/pop/free 降级与 storage_size 关联 |
+| `vpto_bridge_pipe_family_skip_pipeless.pto` | 无 pipe 的函数不被家族 pass 触碰，也无需白名单 |
+| `vpto_bridge_pipe_loop_consume.pto` | 循环内 FIFO 消费：单 pop op 每迭代经 SSA result 重绑定当次 slot 地址 |
+| `vpto_bridge_pipe_split_left_right.pto` | `split=2` → `TileSplitAxis::TILE_LEFT_RIGHT`，函数内共享单一 split token 渲染进全部入口 |
+| `vpto_bridge_pipe_split_mismatch_diag.pto` | 函数内 split 异值报诊断而非静默渲染错误轴向 |
+| `vpto_bridge_pop_rebind_diag.pto` | 顺序重绑定边界：同一 declared tile 的两次 TPOP（流式消费展开形态）报明确诊断 |
+| `vpto_bridge_wrapper_source_c2v.pto` / `_v2c.pto` | C2V/V2C 两方向 wrapper 渲染：角色对调、守卫归属与 token 均取自 IR 配置 |
+
+**matmul / tadd 声明式家族**：
+
+| 用例 | 覆盖点 |
+|---|---|
+| `vpto_bridge_matmul_family_lowering.pto` / `_variants_lowering.pto` | tmatmul 及 5 变体：role token 收集、typedef 渲染与各变体入口体 |
+| `vpto_bridge_matmul_unsupported_diag.pto` | 无规划地址的 operand tile 拒绝桥接，诊断点名 abi 绑定（operand/arg/role） |
+| `vpto_bridge_matmul_spec_conflict_diag.pto` | 同函数两条 matmul 的 role token 异值报冲突诊断 |
+| `vpto_bridge_declarative_wrapper_source.pto` | 内置白名单 matmul 走通用渲染器的 litmus：wrapper_source 的 includes、role typedef、TASSIGN 绑定与调用体逐行钉住 |
 | `vpto_bridge_tadd_declarative_lowering.pto` | tadd 零 env 声明式降级：func_spec 三个 vec tile token + `bridge_call "pto_vpto_add"` |
 | `vpto_bridge_tadd_wrapper_source.pto` | vec_elem wrapper 渲染：`__DAV_VEC__` 守卫 + role typedef + `pto::TADD` 调用体 |
+
+**schema 与 spec 校验**：
+
+| 用例 | 覆盖点 |
+|---|---|
+| `vpto_bridge_whitelist_render_schema_diag.pto` | 声明式 schema 边界：缺 `call` / `tmpl_args` 无对应 attr 行 / `core` 非法值 / 声明式 wrapper 缺 `wrappers` 段 |
+| `vpto_bridge_whitelist_matmul_tmpl_diag.pto` | 声明式条目 tmpl_map 的 tile 行（旧拼写）解析期即被拒，只收 `attr` 行 |
+| `vpto_bridge_whitelist_tmpl_map_diag.pto` | tmpl_map 缺键与未知 source 诊断 |
+| `vpto_bridge_whitelist_tmpl_coverage_diag.pto` | 未覆盖的 tmpl_map 声明报诊断而非静默丢弃 |
+| `vpto_bridge_whitelist_unknown_wrapper_diag.pto` | 分派按 `wrapper` 字段选择渲染器；无专用渲染器的 custom wrapper 报诊断并列出可用集合 |
+| `vpto_bridge_spec_config_matrix.pto` | 非缺省 pipe 配置（slot_size/slot_num/flag_base/nosplit/tile 形状）逐字流入 spec |
+| `vpto_bridge_spec_conflict_diag.pto` | 跨函数 spec 合并：同配置去重，异配置报冲突诊断 |
+| `vpto_bridge_emitc_token_parity.pto` | token 一致性守卫：同一配置下桥接与 EmitC 两路渲染逐字段一致 |
 
 模拟器侧 DEVICE=SIM，内置默认白名单，零 env 注入：
 
 | 用例 | 内容 | 结果 |
 |---|---|---|
 | `fifo-tile-data-consume` | TPush→TPOP FIFO 通路，128 f32 全量比对 | compare passed |
-| `cube-matmul-bridge` | 16×16×16 f16 矩阵乘（A=单位阵），mte 链路→tmatmul→mte 出 | compare passed（声明式重构后复跑通过） |
+| `cube-matmul-bridge` | 16×16×16 f16 矩阵乘（A=单位阵），mte 链路→tmatmul→mte 出 | compare passed |
 | `vec-add-bridge` | 8×16 f32 逐元素加，纯白名单接入的 tadd 经桥接 wrapper（`pto_vpto_add`）计算，mte 进 UB→TADD→mte 出 | compare passed |
 
 变体配置（slot_num/flag_base/容量变化）的端到端行为由 lit 侧
 `spec_config_matrix` 配置矩阵覆盖，未单独设置模拟器用例。
-
 
 ## 附：变更面速览
 
