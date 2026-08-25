@@ -1,0 +1,68 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s
+
+// Verify that pto.tprint is lowered to cce::printf wrapper calls: literal
+// header/shape records via pto_print_str, then a row/col loop nest calling
+// pto_print_f32 / pto_print_i64 per element (converted to LLVM CFG at
+// emission).  No inline DebugTunnel protocol bytes are emitted.
+// Test coverage: f32 tile, f16 tile, i32 tile.
+
+// CHECK: @_ptoas_printf_fmt_0 = private addrspace(1) constant
+// CHECK-SAME: [TPRINT Tile]
+
+// CHECK: declare void @pto_print_finish(ptr addrspace(1))
+// CHECK: declare void @pto_print_init(ptr addrspace(1))
+// CHECK: declare void @pto_print_i64(ptr addrspace(1), i64)
+// CHECK: declare void @pto_print_f32(ptr addrspace(1), float)
+// CHECK: declare void @pto_print_str(ptr addrspace(1))
+
+// --- f32 tile: header + shape records, per-element f32 wrapper call ---
+// CHECK: define void @tprint_test_kernel_mix_aiv(
+// CHECK: call void @pto_print_init(ptr addrspace(1) %0)
+// CHECK: call void @pto_print_str(ptr addrspace(1) @_ptoas_printf_fmt_0)
+// CHECK: call void @pto_print_str(ptr addrspace(1) @_ptoas_printf_fmt_1)
+// CHECK: getelementptr float, ptr addrspace(6) null, i64 {{.*}}
+// CHECK: call void @pto_print_f32(ptr addrspace(1) @_ptoas_printf_fmt_2, float {{.*}})
+// CHECK: call void @pto_print_finish(ptr addrspace(1) %0)
+
+// --- f16 tile: fpext f16 -> f32 ---
+// CHECK: define void @tprint_f16_kernel_mix_aiv(
+// CHECK: fpext half {{.*}} to float
+// CHECK: call void @pto_print_f32(ptr addrspace(1) @_ptoas_printf_fmt_2, float {{.*}})
+
+// --- i32 tile: sext i32 -> i64 (INT records are 8 bytes) ---
+// CHECK: define void @tprint_i32_kernel_mix_aiv(
+// CHECK: getelementptr i32, ptr addrspace(6) null, i64 {{.*}}
+// CHECK: sext i32 {{.*}} to i64
+// CHECK: call void @pto_print_i64(ptr addrspace(1) @_ptoas_printf_fmt_6, i64 {{.*}})
+
+// CHECK: !hivm.annotations = !{
+// CHECK: !"kernel", i32 1
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  // f32 tile
+  func.func @tprint_test_kernel() attributes {pto.entry} {
+    %0 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=8, v_row=8, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tprint ins(%0 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=8, v_row=8, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+  // f16 tile
+  func.func @tprint_f16_kernel() attributes {pto.entry} {
+    %0 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tprint ins(%0 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+  // i32 tile
+  func.func @tprint_i32_kernel() attributes {pto.entry} {
+    %0 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=8, v_row=8, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tprint ins(%0 : !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=8, v_row=8, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}

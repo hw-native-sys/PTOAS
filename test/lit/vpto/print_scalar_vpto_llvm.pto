@@ -1,0 +1,93 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s
+
+// Verify that pto.print is lowered to calls of the cce::printf wrapper shims
+// (pto_print_f32 / pto_print_i64 / pto_print_u64 / pto_print_str) plus the
+// pto_print_init/finish pair around each entry.  The shims live in
+// tools/ptoas/cce/pt_print.cpp and are llvm-linked into the device module by
+// the fatobj pipeline; no inline DebugTunnel protocol is emitted here.
+// Test coverage: f32, f16, bf16, f64, i64, i32 scalar types.
+
+// CHECK: @_ptoas_printf_fmt_0 = private addrspace(1) constant [18 x i8] c"scalar = %+08.3f\0A\00"
+
+// CHECK: declare void @pto_print_finish(ptr addrspace(1))
+// CHECK: declare void @pto_print_init(ptr addrspace(1))
+// CHECK: declare void @pto_print_u64(ptr addrspace(1), i64)
+// CHECK: declare void @pto_print_i64(ptr addrspace(1), i64)
+// CHECK: declare void @pto_print_f32(ptr addrspace(1), float)
+// CHECK: declare void @pto_print_str(ptr addrspace(1))
+
+// --- f32 scalar: direct wrapper call, init at entry, finish before return ---
+// CHECK: define void @print_scalar_kernel_mix_aiv(float
+// CHECK: call void @pto_print_init(ptr addrspace(1) %1)
+// CHECK: call void @pto_print_f32(ptr addrspace(1) @_ptoas_printf_fmt_0, float %0)
+// CHECK: call void @pto_print_finish(ptr addrspace(1) %1)
+
+// --- f16 scalar: fpext f16 -> f32 ---
+// CHECK: define void @print_f16_kernel_mix_aiv(half
+// CHECK: fpext half %0 to float
+// CHECK: call void @pto_print_f32(ptr addrspace(1) @_ptoas_printf_fmt_1, float {{.*}})
+
+// --- bf16 scalar: fpext bf16 -> f32 ---
+// CHECK: define void @print_bf16_kernel_mix_aiv(bfloat
+// CHECK: fpext bfloat %0 to float
+// CHECK: call void @pto_print_f32(ptr addrspace(1) @_ptoas_printf_fmt_2, float {{.*}})
+
+// --- f64 scalar: fptrunc f64 -> f32 ---
+// CHECK: define void @print_f64_kernel_mix_aiv(double
+// CHECK: fptrunc double %0 to float
+// CHECK: call void @pto_print_f32(ptr addrspace(1) @_ptoas_printf_fmt_3, float {{.*}})
+
+// --- i64 scalar: already 64-bit, no extension ---
+// CHECK: define void @print_i64_kernel_mix_aiv(i64
+// CHECK: call void @pto_print_i64(ptr addrspace(1) @_ptoas_printf_fmt_4, i64 %0)
+
+// --- i32 scalar: sext i32 -> i64 (INT records are 8 bytes) ---
+// CHECK: define void @print_i32_kernel_mix_aiv(i32
+// CHECK: sext i32 %0 to i64
+// CHECK: call void @pto_print_i64(ptr addrspace(1) @_ptoas_printf_fmt_5, i64 {{.*}})
+
+// CHECK: !hivm.annotations = !{
+// CHECK: !"kernel", i32 1
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  // f32 scalar print
+  func.func @print_scalar_kernel(%arg0: f32) attributes {pto.entry} {
+    pto.print ins("scalar = %+08.3f\n", %arg0 : f32)
+    return
+  }
+  // f16 scalar print
+  func.func @print_f16_kernel(%arg0: f16) attributes {pto.entry} {
+    pto.print ins("f16=%f\n", %arg0 : f16)
+    return
+  }
+  // bf16 scalar print
+  func.func @print_bf16_kernel(%arg0: bf16) attributes {pto.entry} {
+    pto.print ins("bf16=%f\n", %arg0 : bf16)
+    return
+  }
+  // f64 scalar print
+  func.func @print_f64_kernel(%arg0: f64) attributes {pto.entry} {
+    pto.print ins("f64=%f\n", %arg0 : f64)
+    return
+  }
+  // i64 scalar print
+  func.func @print_i64_kernel(%arg0: i64) attributes {pto.entry} {
+    // %lld: the host decoder consumes 8 payload bytes only with a 64-bit
+    // length modifier (plain %d would truncate to the low 32 bits).
+    pto.print ins("i64=%lld\n", %arg0 : i64)
+    return
+  }
+  // i32 scalar print
+  func.func @print_i32_kernel(%arg0: i32) attributes {pto.entry} {
+    pto.print ins("i32=%d\n", %arg0 : i32)
+    return
+  }
+}
