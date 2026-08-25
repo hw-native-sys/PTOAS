@@ -955,10 +955,15 @@ def _coerce_integer_to_i1_at(value, *, block, context):
 
 
 def _coerce_i1_to_integer_at(value, *, block, target_type, context):
-    """Widen an i1 branch value to *target_type* inside *block*."""
+    """Widen an i1 branch value to *target_type* inside *block*.
+
+    Fixed-width integer targets use ``arith.extui``; ``index`` is not a valid
+    extui result type, so it widens through ``arith.index_cast`` (i1 -> index
+    zero-extends a 0/1 truth value).
+    """
     with InsertionPoint(block):
         if IndexType.isinstance(target_type):
-            return arith.ExtUIOp(IndexType.get(), value).result
+            return arith.IndexCastOp(IndexType.get(), value).result
         return coerce_integer_like(value, target_type)
 
 
@@ -998,6 +1003,18 @@ def _reconcile_branch_assignment_values(
                 context=f"br.assign(...) then branch value for '{name}'",
             )
             then_is_typed = True
+        elif then_is_typed and isinstance(else_value, int) and _is_i1_type(then_value.type):
+            raise TypeError(
+                "short-circuit merge cannot infer an integer width for the Python "
+                f"literal {else_value!r} against an i1 branch value; materialize it "
+                "explicitly with pto.const(..., dtype=...)",
+            )
+        elif else_is_typed and isinstance(then_value, int) and _is_i1_type(else_value.type):
+            raise TypeError(
+                "short-circuit merge cannot infer an integer width for the Python "
+                f"literal {then_value!r} against an i1 branch value; materialize it "
+                "explicitly with pto.const(..., dtype=...)",
+            )
 
     if then_is_typed and else_is_typed:
         then_is_i1 = _is_i1_type(then_value.type)

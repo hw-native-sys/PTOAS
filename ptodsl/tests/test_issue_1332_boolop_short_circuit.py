@@ -207,6 +207,26 @@ def issue_1332_plain_python_operands(out: pto.ptr(pto.i8, "gm")):
     scalar.store(pto.const(11, dtype=pto.i8), out, 0)
 
 
+
+
+@pto.jit(name="issue_1332_index_lhs", kernel_kind="vector", target="a5")
+def issue_1332_index_lhs(idx: pto.index, y: pto.i32, out: pto.ptr(pto.i8, "gm")):
+    pred = idx and (y > 0)
+    scalar.store(pred, out, 0)
+
+
+@pto.jit(name="issue_1332_int_literal_anchored", kernel_kind="vector", target="a5")
+def issue_1332_int_literal_anchored(x: pto.i32, out: pto.ptr(pto.i32, "gm")):
+    pred = x or 2
+    scalar.store(pred, out, 0)
+
+
+@pto.jit(name="issue_1332_int_literal_vs_i1", kernel_kind="vector", target="a5")
+def issue_1332_int_literal_vs_i1(flag: pto.i1, out: pto.ptr(pto.i8, "gm")):
+    pred = flag and 2
+    scalar.store(pred, out, 0)
+
+
 # Diagnostics: floating-point controls, incompatible branch merges, and the
 # native behavior preserved when AST rewrite is disabled.
 
@@ -302,6 +322,16 @@ def main():
     assert "arith.extui" in or_lhs and "-> (i32)" in or_lhs, or_lhs
     flag_and = issue_1332_flag_integer_rhs.compile().mlir_text()
     assert "arith.extui" in flag_and and "-> (i32)" in flag_and, flag_and
+    index_lhs = issue_1332_index_lhs.compile().mlir_text()
+    # index + i1: the index type is kept and the i1 side widens via index_cast.
+    assert "arith.index_cast" in index_lhs and "-> (index)" in index_lhs, index_lhs
+    anchored = issue_1332_int_literal_anchored.compile().mlir_text()
+    # A Python int literal anchors to the integer branch type.
+    assert "arith.constant 2 : i32" in anchored and "-> (i32)" in anchored, anchored
+    _expect_error(
+        lambda: issue_1332_int_literal_vs_i1.compile().mlir_text(),
+        "cannot infer an integer width",
+    )
     issue_1332_static_float.compile().mlir_text()
     issue_1332_static_int_operands.compile().mlir_text()
     issue_1332_func_call.compile().mlir_text()
