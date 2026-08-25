@@ -4090,12 +4090,48 @@ FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
         sourceLayout.getLaneStride(), rewriter);
   }
 
+  VMILayoutAttr contiguous =
+      VMILayoutAttr::getContiguous(rewriter.getContext());
+  bool deint2ToLaneStride =
+      sourceLayout.isDeinterleaved() && sourceLayout.getFactor() == 2 &&
+      sourceLayout.getLaneStride() == 1 && resultLayout.isContiguous() &&
+      resultLayout.getLaneStride() == 2;
+  bool laneStrideToDeint2 =
+      sourceLayout.isContiguous() && sourceLayout.getLaneStride() == 2 &&
+      resultLayout.isDeinterleaved() && resultLayout.getFactor() == 2 &&
+      resultLayout.getLaneStride() == 1;
+  bool laneStride2ToLaneStride4 =
+      sourceLayout.isContiguous() && sourceLayout.getLaneStride() == 2 &&
+      resultLayout.isContiguous() && resultLayout.getLaneStride() == 4;
+  bool laneStride4ToLaneStride2 =
+      sourceLayout.isContiguous() && sourceLayout.getLaneStride() == 4 &&
+      resultLayout.isContiguous() && resultLayout.getLaneStride() == 2;
+  if (deint2ToLaneStride || laneStrideToDeint2 ||
+      laneStride2ToLaneStride4 || laneStride4ToLaneStride2) {
+    size_t intermediateCount = sourceParts.size();
+    if (!deint2ToLaneStride) {
+      intermediateCount = (sourceParts.size() + 1) / 2;
+    }
+    if (sourceParts.empty()) {
+      return failure();
+    }
+    SmallVector<Type> intermediateTypes(intermediateCount,
+                                        sourceParts.front().getType());
+    FailureOr<SmallVector<Value>> dense = materializeDataLayoutConversion(
+        op, sourceParts, intermediateTypes, sourceLayout, contiguous,
+        sourceVMIElementType, rewriter);
+    if (failed(dense)) {
+      return failure();
+    }
+    return materializeDataLayoutConversion(
+        op, *dense, resultTypes, contiguous, resultLayout,
+        sourceVMIElementType, rewriter);
+  }
+
   if (sourceLayout.isDeinterleaved() && resultLayout.isDeinterleaved() &&
       sourceLayout.getLaneStride() == 1 && resultLayout.getLaneStride() == 1 &&
       (sourceLayout.getFactor() == 2 || sourceLayout.getFactor() == 4) &&
       (resultLayout.getFactor() == 2 || resultLayout.getFactor() == 4)) {
-    VMILayoutAttr contiguous =
-        VMILayoutAttr::getContiguous(rewriter.getContext());
     FailureOr<SmallVector<Value>> dense = materializeDataLayoutConversion(
         op, sourceParts, resultTypes, sourceLayout, contiguous,
         sourceVMIElementType, rewriter);

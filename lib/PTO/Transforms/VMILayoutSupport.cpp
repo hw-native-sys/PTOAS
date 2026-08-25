@@ -342,6 +342,10 @@ static constexpr EnsureLayoutPattern kEnsureLayoutPatterns[] = {
     {bits<8, 16>(), anyN(), ls(2), c()},
     {bits<8>(), anyN(), c(), ls(4)},
     {bits<8>(), anyN(), ls(4), c()},
+    {bits<16>(), N<256>(), d(2), ls(2)},
+    {bits<16>(), N<256>(), ls(2), d(2)},
+    {bits<8>(), anyN(), ls(2), ls(4)},
+    {bits<8>(), anyN(), ls(4), ls(2)},
 
     // Group-slot lane-stride materialization keeps num_groups and slots=8.
     // Each physical part carries at most eight row-local group values, so the
