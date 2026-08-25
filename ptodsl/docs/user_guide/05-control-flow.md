@@ -398,8 +398,13 @@ truthiness. When one merged branch yields an `i1` and the other an
 integer-like value, the integer type is kept and the `i1` side widens to its
 0/1 integer value, so the integer operand value is preserved; a merge of two
 `i1` values stays `i1`. Python `bool` literals materialize as `i1` and widen
-like any other `i1` when the opposite branch is integer-typed. Incompatible
-branch types keep the usual branch-merge diagnostics.
+like any other `i1` when the opposite branch is integer-typed. A Python
+`int` literal can join a runtime merge only when the opposite branch already
+has an integer type to anchor its width (e.g. `x or 2` with `x: pto.i32`);
+against an `i1` branch there is no width to infer, so `flag and 2` /
+`flag or 2` raise an error prompting you to anchor the type explicitly,
+e.g. `flag and pto.const(2, dtype=pto.i32)`. Incompatible branch types keep
+the usual branch-merge diagnostics.
 
 Statically known `bool` / `int` / float operands short-circuit at trace time
 with native Python truthiness: `False and rhs`, `True or rhs`, and
