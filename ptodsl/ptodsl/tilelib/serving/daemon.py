@@ -520,7 +520,11 @@ def main(argv=None):
     signal.signal(signal.SIGTERM, _request_shutdown)
     signal.signal(signal.SIGINT, _request_shutdown)
 
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever,
+        kwargs={"poll_interval": 0.05},
+        daemon=True,
+    )
     thread.start()
     if args.verbose:
         print(f"PTODSL TileLib daemon listening on {args.socket}", flush=True)
