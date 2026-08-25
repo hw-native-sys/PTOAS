@@ -10,7 +10,7 @@
 
 // CHECK: func.func @TADDS()
 // CHECK: pto.vecscope
-// CHECK: pto.addptr
+// CHECK: pto.castptr
 // CHECK: pto.vlds
 // CHECK: pto.vadds
 // CHECK: pto.vsts
