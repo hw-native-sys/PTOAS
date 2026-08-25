@@ -10,20 +10,20 @@
 
 // Declarative whitelist schema diagnostics: the generic renderer is driven
 // entirely by the whitelist, so every fact it needs is validated up front.
-// Covered scenarios, each against its own fixture: a declarative entry
-// without a call spelling, a tmpl_args item bound to no attr tmpl_map row,
-// a wrapper declaration with an unsupported core value, and a routed
-// wrapper with no declaration in the wrappers section (the only scenario
-// that survives whitelist parsing; the wrapper generation pass rejects it).
+// Covered scenarios, each against its own fixture: a tmpl_args item bound
+// to no attr tmpl_map row, a wrapper declaration with an unsupported core
+// value, and a routed wrapper with no declaration in the wrappers section
+// (the only scenario that survives whitelist parsing; the wrapper
+// generation pass rejects it). The call spelling and the parameter names
+// are no longer validated here: they default to derivations from the op
+// name and the abi roles (see vpto_bridge_whitelist_minimal_defaults.pto).
 
-// RUN: not pto-test-opt %s "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-decl-missing-call.yaml" 2>&1 | FileCheck %s --check-prefix=MISSING-CALL
 // RUN: not pto-test-opt %s "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-decl-tmpl-args-unbound.yaml" 2>&1 | FileCheck %s --check-prefix=TMPL-ARGS
 // RUN: not pto-test-opt %s "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-decl-bad-core.yaml" 2>&1 | FileCheck %s --check-prefix=BAD-CORE
 // RUN: not pto-test-opt %s "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-decl-missing-wrappers.yaml" "-pto-emit-vpto-bridge-wrapper=whitelist-path=%S/Inputs/vpto-bridge-whitelist-decl-missing-wrappers.yaml" 2>&1 | FileCheck %s --check-prefix=NO-WRAPPERS
 
-// MISSING-CALL: VPTO bridge whitelist: declarative entry 'pto_vpto_matmul' declares no call spelling in '{{.*}}vpto-bridge-whitelist-decl-missing-call.yaml'
 // TMPL-ARGS: VPTO bridge whitelist: declarative entry 'pto_vpto_matmul' tmpl_args item 'phase' is neither a qualified literal nor an attr tmpl_map field of the entry in '{{.*}}vpto-bridge-whitelist-decl-tmpl-args-unbound.yaml'
-// BAD-CORE: VPTO bridge whitelist: wrapper 'matmul' declares unsupported core 'matrix' in '{{.*}}vpto-bridge-whitelist-decl-bad-core.yaml' (supported: cube, vec, both)
+// BAD-CORE: VPTO bridge whitelist: wrapper 'matmul' declares unsupported core 'matrix' in '{{.*}}vpto-bridge-whitelist-decl-bad-core.yaml' (supported: cube, vec, both; omit it to derive the guard from the routed tile kinds)
 // NO-WRAPPERS: error: VPTO bridge: wrapper 'matmul' routes declarative entries but has no declaration in the whitelist wrappers section (declare its name, includes and core there)
 
 module attributes {pto.target_arch = "a5"} {

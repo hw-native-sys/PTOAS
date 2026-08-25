@@ -33,10 +33,12 @@ namespace pto {
 /// parser fills in the "i64" tile-address default). Declarative entries
 /// additionally bind each argument to an IR operand position (`operand`,
 /// positional because MLIR exposes no generic ODS operand-name
-/// reflection), carry a diagnostic label (`arg`, the ODS operand name) and
-/// the template role the operand's tile token is collected under (`role`,
-/// which is also the spec key and the source of the entry's tile typedef
-/// name).
+/// reflection) and the template role the operand's tile token is collected
+/// under (`role`, which is also the spec key and the source of the entry's
+/// tile typedef name). `arg` is the diagnostic label and rendered parameter
+/// name (the ODS operand name); it defaults to the lowerCamelCase of the
+/// role (see bridgeRoleParamName), so a binding registers with
+/// operand/role only.
 struct BridgeAbiArg {
   std::string type;
   int64_t operand = -1;
@@ -101,7 +103,9 @@ struct BridgeWhitelistEntry {
   /// C++ call spelling the generic declarative renderer emits for this
   /// entry, e.g. "pto::TMATMUL" or "TADD". Declarative routed entries
   /// only; the call arguments are the abi-bound tiles in declaration
-  /// order.
+  /// order. Optional: it defaults to a spelling derived from the op name
+  /// (see deriveDefaultBridgeCall); a wrong derivation fails loudly when
+  /// the generated wrapper source is compiled.
   std::string call;
   /// Template arguments rendered between the call spelling and its
   /// argument list. Each item is either the `field` of one of this
@@ -136,9 +140,13 @@ struct BridgeWhitelistEntry {
 /// the family knowledge no whitelist entry carries. `includes` lists the
 /// PTO-ISA headers the wrapper translation unit includes; `core` selects
 /// the core guard the entries render under ("cube" -> __DAV_CUBE__,
-/// "vec" -> __DAV_VEC__, "both" -> no guard). Wrappers whose entries carry
-/// `lowering: custom` own a dedicated renderer and must not be declared
-/// here.
+/// "vec" -> __DAV_VEC__, "both" -> no guard). `core` is optional: it
+/// defaults to the kind of the tile address spaces the declarative
+/// lowering collects for the wrapper (VEC tiles -> "vec", any cube-family
+/// tile -> "cube"), so a single-core wrapper registers without it; a
+/// wrapper whose used entries collected no tile declares it explicitly.
+/// Wrappers whose entries carry `lowering: custom` own a dedicated
+/// renderer and must not be declared here.
 struct BridgeWrapperDecl {
   std::string name;
   std::vector<std::string> includes;
@@ -258,6 +266,20 @@ constexpr llvm::StringLiteral kBridgeWrapperCoreBoth = "both";
 /// mnemonic lead, replace dots with underscores and prepend `pto_vpto_`
 /// (`pto.tmatmul.mx.acc` -> `pto_vpto_matmul_mx_acc`).
 std::string deriveDefaultBridgeEntry(llvm::StringRef opName);
+
+/// Derives the default C++ call spelling of a declarative routed entry
+/// from its IR op name: strip the `pto.` prefix (keeping the tile-world
+/// `t` mnemonic lead the entry name drops), uppercase the remainder,
+/// replace dots with underscores and qualify with `pto::`
+/// (`pto.tadd` -> `pto::TADD`, `pto.tmatmul.mx` -> `pto::TMATMUL_MX`).
+/// Variants whose interface call does not follow the convention declare
+/// `call` explicitly.
+std::string deriveDefaultBridgeCall(llvm::StringRef opName);
+
+/// Renders the lowerCamelCase parameter name of an abi role
+/// (`left_tile` -> `leftTile`, `a_scale_tile` -> `aScaleTile`), the
+/// default `arg` of declarative abi bindings.
+std::string bridgeRoleParamName(llvm::StringRef role);
 
 /// Renders the CamelCase typedef target name of an abi role
 /// (`left_tile` -> `LeftTile`, `a_scale_tile` -> `AScaleTile`). Tile

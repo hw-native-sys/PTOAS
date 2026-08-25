@@ -67,7 +67,7 @@ template <> struct MappingTraits<BridgeWrapperDecl> {
   static void mapping(IO &io, BridgeWrapperDecl &decl) {
     io.mapRequired("name", decl.name);
     io.mapRequired("includes", decl.includes);
-    io.mapRequired("core", decl.core);
+    io.mapOptional("core", decl.core);
   }
 };
 
@@ -122,6 +122,40 @@ std::string pto::deriveDefaultBridgeEntry(llvm::StringRef opName) {
   std::string name = ("pto_vpto_" + opName).str();
   constexpr llvm::StringLiteral kNamePrefix = "pto_vpto_";
   std::replace(name.begin() + kNamePrefix.size(), name.end(), '.', '_');
+  return name;
+}
+
+std::string pto::deriveDefaultBridgeCall(llvm::StringRef opName) {
+  // Unlike the entry name, the interface call keeps the tile-world `t`
+  // mnemonic lead (pto::TADD, pto::TMATMUL), so only the dialect prefix
+  // is stripped.
+  opName.consume_front("pto.");
+  if (opName.empty()) {
+    return {};
+  }
+  std::string name;
+  name.reserve(opName.size());
+  for (char c : opName) {
+    name.push_back(c == '.' ? '_'
+                            : static_cast<char>(llvm::toUpper(c)));
+  }
+  return "pto::" + name;
+}
+
+std::string pto::bridgeRoleParamName(llvm::StringRef role) {
+  std::string name;
+  name.reserve(role.size());
+  bool upperNext = false;
+  for (char c : role) {
+    if (c == '_') {
+      upperNext = true;
+      continue;
+    }
+    name.push_back(upperNext && c >= 'a' && c <= 'z'
+                       ? static_cast<char>(c - 'a' + 'A')
+                       : c);
+    upperNext = false;
+  }
   return name;
 }
 
@@ -210,6 +244,13 @@ pto::parseBridgeWhitelistFromBuffer(llvm::StringRef content,
       return failure();
     }
     if (declarativeChannel) {
+      // The call spelling follows the op-name convention unless declared;
+      // a derivation the interface does not follow is overridden with an
+      // explicit `call`, and a wrong one fails loudly when the generated
+      // wrapper source is compiled.
+      if (entry.call.empty()) {
+        entry.call = deriveDefaultBridgeCall(entry.op);
+      }
       if (entry.call.empty()) {
         diagOS << "VPTO bridge whitelist: declarative entry '" << entry.entry
                << "' declares no call spelling in '" << sourceName
@@ -256,16 +297,22 @@ pto::parseBridgeWhitelistFromBuffer(llvm::StringRef content,
     llvm::DenseSet<int64_t> declarativeOperands;
     if (declarativeChannel) {
       for (BridgeAbiArg &arg : entry.abi) {
-        if (arg.operand < 0 || arg.arg.empty() || arg.role.empty()) {
+        if (arg.operand < 0 || arg.role.empty()) {
           // The declarative channel is the default, so the likeliest cause
           // is an entry that needs a dedicated pass but never opted out.
           diagOS << "VPTO bridge whitelist: declarative entry '" << entry.entry
-                 << "' has an abi argument without operand/arg/role binding "
+                 << "' has an abi argument without operand/role binding "
                     "in '"
                  << sourceName
                  << "' (entries owned by a dedicated family pass must "
                     "declare 'lowering: custom')\n";
           return failure();
+        }
+        // The parameter name is a rendering concern: it defaults to the
+        // lowerCamelCase of the role, tying the wrapper parameter to its
+        // tile typedef.
+        if (arg.arg.empty()) {
+          arg.arg = bridgeRoleParamName(arg.role);
         }
         if (!declarativeOperands.insert(arg.operand).second) {
           diagOS << "VPTO bridge whitelist: declarative entry '" << entry.entry
@@ -364,12 +411,13 @@ pto::parseBridgeWhitelistFromBuffer(llvm::StringRef content,
         return failure();
       }
     }
-    if (decl.core != kBridgeWrapperCoreCube &&
+    if (!decl.core.empty() && decl.core != kBridgeWrapperCoreCube &&
         decl.core != kBridgeWrapperCoreVec &&
         decl.core != kBridgeWrapperCoreBoth) {
       diagOS << "VPTO bridge whitelist: wrapper '" << decl.name
              << "' declares unsupported core '" << decl.core << "' in '"
-             << sourceName << "' (supported: cube, vec, both)\n";
+             << sourceName << "' (supported: cube, vec, both; omit it to "
+                "derive the guard from the routed tile kinds)\n";
       return failure();
     }
     if (whitelist.wrapperHasCustomEntry(decl.name)) {
@@ -425,18 +473,21 @@ pto::parseBridgeWhitelist(llvm::StringRef path, llvm::raw_ostream &diagOS) {
 /// each abi row binds a wrapper argument to an IR operand position and a
 /// tile role (the role also names the entry's tile typedef), and an
 /// optional attr tmpl_map row maps the accPhase enum attribute. The entry
-/// names and the i64 argument types are defaulted, so a mechanically
-/// mapped op registers with op/wrapper/call/abi only (see pto.tadd). The
-/// pipe entries opt out with `lowering: custom` because the storage
-/// lifecycle and the TPOP address rebinding need a dedicated pass.
+/// name, the i64 argument types and the parameter names are defaulted, so
+/// a mechanically mapped op registers with op/wrapper/abi(operand+role)
+/// only; pto.tadd additionally rides the derived call spelling and the
+/// vec_elem wrapper the derived core guard. The matmul entries spell call
+/// and core explicitly where the convention does not apply (the mx.acc /
+/// mx.bias variants share TMATMUL_MX). The pipe entries opt out with
+/// `lowering: custom` because the storage lifecycle and the TPOP address
+/// rebinding need a dedicated pass.
 static constexpr llvm::StringLiteral kDefaultBridgeWhitelistYaml = R"yaml(
 wrappers:
   - name: matmul
     includes: [pto/npu/a5/TMatmul.hpp]
     core: cube
-  - name: vec_elem
+  - name: vec_elem      # core omitted: derived from the routed VEC tiles
     includes: [pto/npu/a5/TAdd.hpp]
-    core: vec
 bridge_ops:
   - op: pto.initialize_l2l_pipe
     wrapper: pipe
@@ -568,13 +619,12 @@ bridge_ops:
       - {operand: 2, arg: rhs, role: right_tile}
       - {operand: 3, arg: bScale, role: b_scale_tile}
       - {operand: 4, arg: bias, role: bias_tile}
-  - op: pto.tadd
+  - op: pto.tadd    # call omitted: derived as pto::TADD from the op name
     wrapper: vec_elem
-    call: pto::TADD
-    abi:
-      - {operand: 2, arg: dst, role: result_tile}
-      - {operand: 0, arg: src0, role: left_tile}
-      - {operand: 1, arg: src1, role: right_tile}
+    abi:            # arg omitted: derived from the role (resultTile, ...)
+      - {operand: 2, role: result_tile}
+      - {operand: 0, role: left_tile}
+      - {operand: 1, role: right_tile}
 )yaml";
 
 std::string pto::resolveBridgeWhitelistPath(llvm::StringRef optionValue) {

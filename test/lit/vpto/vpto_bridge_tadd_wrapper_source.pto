@@ -9,10 +9,13 @@
 // See LICENSE for more details.
 
 // Generic renderer output for the whitelist-registered tadd: the vec_elem
-// wrapper declaration supplies the TAdd include and the __DAV_VEC__ core
-// guard, and the single entry renders its role-named vec tile typedefs,
-// the TASSIGN address bindings and the template-argument-free pto::TADD
-// call. No C++ code in the wrapper generator knows vec_elem or TADD.
+// wrapper declaration supplies only the TAdd include, and the __DAV_VEC__
+// core guard derives from the collected VEC tile kinds; the single entry
+// declares no call or parameter names, so the pto::TADD call derives from
+// the op name and the parameters from the abi roles. It renders the
+// role-named vec tile typedefs, the TASSIGN address bindings and the
+// template-argument-free call. No C++ code in the wrapper generator knows
+// vec_elem or TADD.
 
 // RUN: env -u PTOAS_VPTO_BRIDGE_WHITELIST pto-test-opt %s -pto-lower-declarative-bridge-ops -pto-emit-vpto-bridge-wrapper | FileCheck %s --check-prefix=WRAP
 
@@ -25,14 +28,14 @@
 // WRAP-SAME: using ResultTile = pto::Tile<pto::TileType::Vec, float, 8, 16, pto::BLayout::RowMajor, 8, 16>;
 // WRAP-SAME: using RightTile = pto::Tile<pto::TileType::Vec, float, 8, 16, pto::BLayout::RowMajor, 8, 16>;
 // WRAP-SAME: #ifdef __DAV_VEC__
-// WRAP-SAME: extern \22C\22 [aicore] void pto_vpto_add(uint64_t dstAddress, uint64_t src0Address, uint64_t src1Address)
-// WRAP-SAME: ResultTile dst;
-// WRAP-SAME: LeftTile src0;
-// WRAP-SAME: RightTile src1;
-// WRAP-SAME: pto::TASSIGN_IMPL(dst, dstAddress);
-// WRAP-SAME: pto::TASSIGN_IMPL(src0, src0Address);
-// WRAP-SAME: pto::TASSIGN_IMPL(src1, src1Address);
-// WRAP-SAME: pto::TADD(dst, src0, src1);
+// WRAP-SAME: extern \22C\22 [aicore] void pto_vpto_add(uint64_t resultTileAddress, uint64_t leftTileAddress, uint64_t rightTileAddress)
+// WRAP-SAME: ResultTile resultTile;
+// WRAP-SAME: LeftTile leftTile;
+// WRAP-SAME: RightTile rightTile;
+// WRAP-SAME: pto::TASSIGN_IMPL(resultTile, resultTileAddress);
+// WRAP-SAME: pto::TASSIGN_IMPL(leftTile, leftTileAddress);
+// WRAP-SAME: pto::TASSIGN_IMPL(rightTile, rightTileAddress);
+// WRAP-SAME: pto::TADD(resultTile, leftTile, rightTile);
 // WRAP-SAME: #endif
 // WRAP-NOT: pto.vpto.bridge.spec
 

@@ -259,8 +259,25 @@ renderDeclarativeBridgeSource(ModuleOp module,
   }
   os << "\n";
 
-  const bool guardCube = decl.core == kBridgeWrapperCoreCube;
-  const bool guardVec = decl.core == kBridgeWrapperCoreVec;
+  // Core guard: declared in the wrappers section, or derived from the tile
+  // kinds the declarative lowering collected under the reserved
+  // `core.<wrapper>` spec key. A wrapper whose used entries collected no
+  // tile has nothing to derive from and must declare `core`.
+  llvm::StringRef core = decl.core;
+  if (core.empty()) {
+    auto coreToken = specAttr.getAs<StringAttr>("core." + decl.name);
+    if (!coreToken || coreToken.getValue().empty()) {
+      module.emitError()
+          << "VPTO bridge: wrapper '" << decl.name
+          << "' declares no core and the declarative lowering collected "
+             "no tile kind for it; declare 'core: cube|vec|both' in the "
+             "wrappers section";
+      return failure();
+    }
+    core = coreToken.getValue();
+  }
+  const bool guardCube = core == kBridgeWrapperCoreCube;
+  const bool guardVec = core == kBridgeWrapperCoreVec;
   if (guardCube)
     os << "#ifdef __DAV_CUBE__\n";
   else if (guardVec)

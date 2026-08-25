@@ -26,7 +26,7 @@
 // RUN: not pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-missing-custom-tag.yaml" 2>&1 | FileCheck %s --check-prefix=MISSING
 // RUN: not pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-legacy-family-lowering.yaml" 2>&1 | FileCheck %s --check-prefix=LEGACY
 
-// MISSING: VPTO bridge whitelist: declarative entry 'pto_vpto_pipe_init' has an abi argument without operand/arg/role binding
+// MISSING: VPTO bridge whitelist: declarative entry 'pto_vpto_pipe_init' has an abi argument without operand/role binding
 // MISSING-SAME: vpto-bridge-whitelist-missing-custom-tag.yaml
 // MISSING-SAME: (entries owned by a dedicated family pass must declare 'lowering: custom')
 

@@ -25,8 +25,10 @@
 //
 // The collected spec keys deliberately match the constants consumed by the
 // wrapper generation pass: the role name is the tile spec key, the attr
-// row `field` is the enum spec key, and the entry spec key is derived
-// from the op name (`pto.tmatmul.mx.acc` -> `entry.matmul_mx_acc`).
+// row `field` is the enum spec key, the entry spec key is derived
+// from the op name (`pto.tmatmul.mx.acc` -> `entry.matmul_mx_acc`), and
+// the reserved `core.<wrapper>` key carries the derived core guard of a
+// wrapper declaration that omits `core`.
 //
 //===----------------------------------------------------------------------===//
 
@@ -84,6 +86,21 @@ static std::string camelCaseFieldName(llvm::StringRef fieldName) {
     upperNext = false;
   }
   return camel;
+}
+
+/// Maps a bridged tile to the core kind its wrapper renders under when the
+/// wrapper declaration omits `core`: VEC tiles run on the vector core, the
+/// cube-family tile spaces (mat/left/right/acc/bias/scaling) on the cube
+/// core. Tiles without a supported address space fail earlier in
+/// buildBridgeTileToken, so the cube default here is unreachable for a
+/// successfully collected tile.
+static llvm::StringLiteral bridgeCoreKindForTile(Value tile) {
+  auto tileTy = cast<TileBufType>(tile.getType());
+  auto spaceAttr =
+      dyn_cast_or_null<AddressSpaceAttr>(tileTy.getMemorySpace());
+  if (spaceAttr && spaceAttr.getAddressSpace() == AddressSpace::VEC)
+    return kBridgeWrapperCoreVec;
+  return kBridgeWrapperCoreCube;
 }
 
 struct PTOLowerDeclarativeBridgeOpsPass final
@@ -158,9 +175,13 @@ struct PTOLowerDeclarativeBridgeOpsPass final
     };
 
     // Collects the tile template token of one abi-bound operand into the
-    // spec under the operand's role.
+    // spec under the operand's role, plus the core kind of the wrapper the
+    // entry routes into: a wrapper declaration may omit `core`, in which
+    // case the renderer picks the guard up from the reserved
+    // `core.<wrapper>` spec key collected here.
     auto collectTileToken = [&](Operation *op, const BridgeAbiArg &abiArg,
-                                Value tile) {
+                                Value tile,
+                                const BridgeWhitelistEntry &entry) {
       auto tileTokOr = buildBridgeTileToken(cast<TileBufType>(tile.getType()));
       if (failed(tileTokOr)) {
         op->emitError() << "VPTO declarative bridge failed to build the "
@@ -170,6 +191,8 @@ struct PTOLowerDeclarativeBridgeOpsPass final
         return;
       }
       spec.addField(op, abiArg.role, *tileTokOr);
+      spec.addField(op, "core." + entry.wrapper,
+                    bridgeCoreKindForTile(tile));
       if (auto alloc = tile.getDefiningOp<AllocTileOp>()) {
         bridgedAllocs.push_back(alloc);
       }
@@ -242,7 +265,7 @@ struct PTOLowerDeclarativeBridgeOpsPass final
       // Template specialization: one tile token per abi role, then the
       // enum attribute rows, then the wrapper entry name.
       for (const BridgeAbiArg &abiArg : entry->abi) {
-        collectTileToken(op, abiArg, op->getOperand(abiArg.operand));
+        collectTileToken(op, abiArg, op->getOperand(abiArg.operand), *entry);
       }
       for (const BridgeTmplMapField &field : entry->tmplMap) {
         if (field.source == kAttrTmplMapSource) {

@@ -1,0 +1,15 @@
+# Minimal whitelist exercising the convention defaults: the wrapper
+# declares only name/includes (the core guard derives from the routed VEC
+# tiles) and the entry only op/wrapper/abi(operand+role); the entry name,
+# the call spelling and the parameter names all derive from the op name
+# and the abi roles.
+wrappers:
+  - name: vec_elem_min
+    includes: [pto/npu/a5/TAdd.hpp]
+bridge_ops:
+  - op: pto.tadd
+    wrapper: vec_elem_min
+    abi:
+      - {operand: 2, role: result_tile}
+      - {operand: 0, role: left_tile}
+      - {operand: 1, role: right_tile}
