@@ -10,7 +10,7 @@ See LICENSE in the root of the software repository for the full text of the Lice
 
 # PTODSL Struct 成员访问表层设计
 
-**状态：** 设计稿 v4（Issue #1129，已按三轮 Codex review 修订）
+**状态：** 设计稿 v5（Issue #1129，已按三轮 Codex review + 一轮 maintainer review 修订）
 
 > 修订说明：v2 将字段名→位置 path 的解析**完全移到 AST 重写期**并直接发射
 > canonical `struct_get` / `struct_set`，消除运行时私有 helper、descriptor→value
@@ -35,6 +35,28 @@ See LICENSE in the root of the software repository for the full text of the Lice
 >   `struct_type` 字段规则一致）；选项门控统一为公开的 `ast_rewrite` /
 >   `frontend_options["ast_rewrite"]`，并明确 `rewrite_part` 只接受
 >   `{"control_flow"}`；补 `AnnAssign` 注解的丢弃 / 一致性校验 / 重写期错误。
+>
+> v5（本轮，针对 maintainer review）：
+> - **新增 `@pto.struct` class 声明形式**（supersede §5.2 的拒绝决定）：构造
+>   `Point(...)` 走运行时 `__call__`（trace 时执行 declare + 逐字段 struct_set，
+>   无需 AST 重写），成员访问仍走 AST 重写；§5.2 当初的顾虑（与运行时
+>   `_SurfaceValue` 语义耦合）因这一分工不成立。类体仅允许裸注解：默认值、
+>   方法、继承在装饰期拒绝。
+> - **健全性修复**：`for`/`while` 循环体内删除或改动的 struct 绑定不再泄漏到
+>   循环之后；`state += ...` 取消 struct 身份；AnnAssign 声明
+>   （`S: T = pto.struct({...})`）与赋值建立相同绑定；多段点名字段类型
+>   （`a.b.c`）不再使重写器抛出内部 AttributeError（按不可解析处理）。
+>
+> v6（本轮，PR review 自查）：
+> - **全 Name 多目标赋值传播绑定**：`a = b = Point(...)` / `a = b =
+>   pto.declare_struct(S)` / `A = B = S` 此前仅单目标赋值建立 struct 类型/值
+>   绑定，链式赋值后成员访问未被重写、并误报"需要 AST 重写"；现按 RHS 分类
+>   （`_classify_struct_binding`）将绑定传播到每个 Name 目标。本地名字优先于
+>   `static_env` 中的同名 descriptor。
+> - **补 PEP 563 回归测试**：`rewrite_jit_function` 的 future-flag 修复
+>   （`dont_inherit=True` + 保留 kernel 自身的 future flags）此前无回归覆盖；
+>   新增 kernel 内局部 dtype 别名注解（`T = pto.i32; v: T`）用例锁定该行为，
+>   以及字符串注解经 `from_class` 在定义模块命名空间解析的用例。
 
 **范围：** PTODSL Python 前端（`_types.py` / `_ops.py` / `_surface_values.py`）、
 AST 重写、用户手册与回归测试
@@ -228,20 +250,40 @@ def kernel():
 - 非标识符 dict 键（如 `"a-b"`）在声明期即报错，避免产生无法通过 `state.a-b`
   访问的名字。
 
-### 5.2 Python class 声明方式（备选，均不采用）
+### 5.2 Python class 声明方式（v5 起采用，见下）
 
-被拒绝的备选：
+**v5 更新：maintainer review 明确要求 class 形式，本节原拒绝决定被 supersede。**
+关键认识变化：构造 `Point(...)` 走**运行时 `__call__`**（trace 时执行
+`declare_struct` + 逐字段 `struct_set`），不需要 AST 重写；只有成员访问需要 AST
+重写。当初担心的"class 语句创建真正的 Python 类型、与 `_SurfaceValue` 运行时语义
+耦合"因此不成立——装饰器返回的是 `_StructDescriptor` 实例而不是类型对象，类体被
+限制为纯注解声明（无默认值 / 方法 / 继承），dict 保序问题由 `__annotations__`
+的插入序（Python 3.7+）解决。
 
-- **`class` + `__annotations__`**：PTODSL 的 dtype descriptor 用作注解类型并非
-  真正的 Python 类型，`__annotations__` 在 `@pto.jit` 前即可读取，但 `class` 语句
-  会创建真正的 Python 类型对象，与运行时 `_SurfaceValue` 语义耦合，且 dict 保序
-  与继承/`__slots__` 语义带来额外复杂度。本设计不引入新的 Python 类型层次。
+现采用的形式：
+
+```python
+@pto.struct
+class Point:
+    x: pto.i32
+    y: pto.f32
+
+state = Point(x, y)   # declare + 全字段初始化（all-or-none）
+state = Point()       # 仅声明
+```
+
+- `pto.struct` 按参数类型双用法分发：`dict` → 既有 dict 形式；`type` → 类装饰。
+- `__call__` 实现于 `_StructDescriptor`：named descriptor 均可调用（dict 形式构造的
+  描述符同样可调用，行为一致）；positional 描述符调用即报错。
+- PEP 563 字符串注解在定义模块的命名空间内解析（与 dataclasses 同一惯例）。
+- dict 形式保留为程序化构造途径（字段集合由代码计算而非字面写出时）。
+
+仍被拒绝的备选：
+
 - **dataclass**：引入 dataclass + 字段映射的完整对象模型，超出"薄、无损"目标。
 - **`pto.struct_type` + 独立 names 参数**：`struct_type(pto.i32, pto.f32,
   names=("n","sum"))` 可用，但把名字与位置分离，嵌套时容易错位；`pto.struct({...})`
   把名字与类型绑在一起，更不易错。
-
-因此选择 `pto.struct({...})` 这种"名字与类型同处"的声明式 dict 形式。
 
 ## 6. 前端实现
 
@@ -377,6 +419,11 @@ AST 重写发生在函数执行前，此时局部 `S` **尚未构造**，重写�
 
 - `type_bindings: var_name -> _DescriptorMetadata`（来自 `S = pto.struct(...)`）。
 - `value_bindings: var_name -> _DescriptorMetadata`（来自 `state = declare_struct(S)`）。
+
+全 Name 多目标赋值（`a = b = rhs`）按 `_classify_struct_binding(rhs)` 的分类把
+类型/值绑定传播到**每个**目标（RHS 只求值一次，两个名字别名同一个 descriptor /
+struct 值）；含成员写目标的混合链式赋值（如 `state.x = a = rhs`）不在此列，走
+成员写路径。
 
 `declare_struct(...)` 的实参既可以是直接 `S`，也可以是内联
 `pto.declare_struct(pto.struct({...}))`（后者建立 `state -> 内联 metadata` 绑定）。

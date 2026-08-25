@@ -117,7 +117,25 @@ Structs cannot be used as `@pto.jit`, `@pto.tileop`, or `@pto.simt` parameters, 
 
 ### Named fields and member access
 
-`pto.struct({...})` describes the same `!pto.struct<...>` as `pto.struct_type(...)`, but with named fields. Field names are compile-time constants that let you read and write members with Python attribute syntax; the member access lowers losslessly to the canonical `pto.struct_get` / `pto.struct_set` positional-path operations.
+`@pto.struct` describes the same `!pto.struct<...>` as `pto.struct_type(...)`, but with named fields. Field names are compile-time constants that let you read and write members with Python attribute syntax; the member access lowers losslessly to the canonical `pto.struct_get` / `pto.struct_set` positional-path operations.
+
+The idiomatic declaration is a class whose body only lists field annotations:
+
+<!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"type_system.struct_member","symbol":"type_system_struct_member_probe","compile":{}} -->
+```python
+@pto.struct
+class Point:
+    x: pto.i32
+    y: pto.f32
+
+state = Point(1, 2.5)   # declare + initialize all fields
+count = state.x         # pto.struct_get(state, [0])
+state.y = 3.5           # pto.struct_set(state, [1], 3.5)
+```
+
+`Point(...)` runs at trace time: it is `pto.declare_struct(Point)` plus one `pto.struct_set` per given field, in declaration order. Fields may be given positionally (declaration order) or by name, all-or-none — `Point()` declares without initializing, partial initialization is rejected. The decorated class body may only contain `name: field_type` annotations: default values, methods, and base classes are rejected at decoration time. `declare_struct(Point)` remains available when no initialization is wanted.
+
+The equivalent programmatic spelling takes an order-preserving dict — useful when the field set is computed rather than written literally:
 
 ```python
 pto.struct(fields: dict[str, FieldType]) -> StructTypeDescriptor
@@ -139,7 +157,7 @@ count = state.x
 scale = state.y
 ```
 
-Nested named structs are accessed with chained members:
+Nested named structs are accessed with chained members — both spellings nest (`inner: ClassInner` in class form, `"inner": pto.struct({...})` in dict form):
 
 ```python
 Nested = pto.struct({
@@ -156,6 +174,7 @@ Field names must be valid Python identifiers that are not keywords, not start wi
 Member access rules and diagnostics:
 
 - `state.field += value` (and other augmented assignments) lower to a read-modify-write sequence: `tmp = pto.struct_get(state, path)`, `tmp += value`, `pto.struct_set(state, path, tmp)`.
+- Chained assignment binds every name: `a = b = Point(...)` / `a = b = pto.declare_struct(S)` evaluates the right-hand side once, so both names alias the same struct value and both support member access.
 - `state.field: T = value` is a write (`pto.struct_set`); the annotation must be a static dtype (e.g. `pto.i32`) matching the field type, and is not kept. `state.field: T` without a value is rejected.
 - `del state.field` is not supported; structs have no field-deletion semantics.
 - Every layer of the access chain must be named. Once the chain enters a positional `pto.struct_type(...)` layer, the whole member expression is rejected at rewrite time; rewrite it as a full canonical path to a scalar leaf, e.g. `pto.struct_get(state, (1, 0))`. Reading a nested struct member itself (`v = state.pt`) is likewise rejected — nested structs are not IR values; continue to a scalar leaf.

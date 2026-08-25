@@ -20,6 +20,16 @@ class PTODSLAstRewriteError(SyntaxError):
     """Raised when AST rewrite sees unsupported Python control flow."""
 
 
+# Future flags worth preserving when recompiling the rewritten tree.  Without
+# this, compile() would inherit the flags of *this* module — which sets
+# ``from __future__ import annotations`` — and class-body annotations inside
+# rewritten kernels (e.g. ``@pto.struct`` classes) would be stringified.
+_PRESERVED_FUTURE_FLAGS = 0
+for _flag_name in ("CO_FUTURE_ANNOTATIONS", "CO_FUTURE_GENERATOR_STOP"):
+    _PRESERVED_FUTURE_FLAGS |= getattr(inspect, _flag_name, 0)
+del _flag_name
+
+
 def rewrite_jit_function(
     fn,
     *,
@@ -103,7 +113,13 @@ def rewrite_jit_function(
         source_file = inspect.getsourcefile(fn)
     except (OSError, TypeError):
         source_file = None
-    code = compile(tree, source_file or "<ptodsl-ast-rewrite>", "exec")
+    code = compile(
+        tree,
+        source_file or "<ptodsl-ast-rewrite>",
+        "exec",
+        flags=fn.__code__.co_flags & _PRESERVED_FUTURE_FLAGS,
+        dont_inherit=True,
+    )
     globals_ns = fn.__globals__
     restored_globals = _temporarily_bind_globals(globals_ns, closure_vars.nonlocals)
     try:
@@ -1614,9 +1630,18 @@ class _StructMemberRewriter:
             return [self._rewrite_try(stmt)]
         if hasattr(ast, "TryStar") and isinstance(stmt, ast.TryStar):
             return [self._rewrite_try(stmt)]
+        if isinstance(stmt, ast.ClassDef):
+            # An ``@pto.struct`` class declaration binds its struct type for
+            # later member-access resolution; the statement itself stays so
+            # the decorator still runs at trace time.
+            meta = self._eval_struct_class_meta(stmt)
+            if meta is not None:
+                self._type_bindings[stmt.name] = meta
+                self._value_bindings.pop(stmt.name, None)
+            return [stmt]
         if isinstance(
             stmt,
-            (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef),
+            (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda),
         ):
             return [stmt]
         self._rewrite_expr_in_stmt(stmt)
@@ -1718,37 +1743,69 @@ class _StructMemberRewriter:
                 )
         return merged
 
+    def _classify_struct_binding(self, value):
+        """Classify an (already rewritten) assignment RHS for binding purposes.
+
+        Returns ``("type", meta)`` for struct *type* expressions — a
+        ``pto.struct({...})`` / ``pto.struct_type(...)`` literal or a name
+        bound to one (a local alias can be reused as a nested field type) —
+        and ``("value", meta)`` for struct *value* expressions —
+        ``pto.declare_struct(...)`` / ``Point(...)`` construction calls or a
+        name bound to one.  ``None`` means the RHS carries no struct binding.
+        Locally bound names shadow same-named descriptors in ``static_env``.
+        """
+        if isinstance(value, ast.Name):
+            local_type = self._type_bindings.get(value.id)
+            if local_type is not None:
+                return "type", local_type
+            local_value = self._value_bindings.get(value.id)
+            if local_value is not None:
+                return "value", local_value
+            static_meta = self._eval_struct_meta(value)
+            if static_meta is not None:
+                return "type", static_meta
+            return None
+        meta = self._eval_struct_meta(value)
+        if meta is not None:
+            return "type", meta
+        if isinstance(value, ast.Call):
+            if _is_pto_attr_call(value, "declare_struct"):
+                arg = value.args[0] if value.args else None
+                arg_meta = self._resolve_struct_arg(arg)
+                if arg_meta is not None:
+                    return "value", arg_meta
+                return None
+            # Struct construction: state = Point(...) where Point is a known
+            # @pto.struct class / named descriptor.  The call stays: at trace
+            # time the descriptor's __call__ emits declare_struct plus one
+            # struct_set per initialized field.
+            ctor_meta = self._resolve_struct_constructor(value.func)
+            if ctor_meta is not None:
+                return "value", ctor_meta
+        return None
+
     def _rewrite_assign(self, node):
         node.value = self._rewrite_expr(node.value)
 
-        if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
-            name = node.targets[0].id
-            meta = self._eval_struct_meta(node.value)
-            if meta is not None:
-                self._type_bindings[name] = meta
-                self._value_bindings.pop(name, None)
+        if all(isinstance(t, ast.Name) for t in node.targets):
+            # A plain name assignment — single or chained (``a = b = rhs``) —
+            # evaluates the RHS once, so every target aliases the same struct
+            # type descriptor / struct value; establish the binding for all
+            # of them, not only the single-target form.
+            classified = self._classify_struct_binding(node.value)
+            if classified is not None:
+                kind, meta = classified
+                for t in node.targets:
+                    if kind == "type":
+                        self._type_bindings[t.id] = meta
+                        self._value_bindings.pop(t.id, None)
+                    else:
+                        self._value_bindings[t.id] = meta
+                        self._type_bindings.pop(t.id, None)
                 return [node]
-            # Assignment-form local type alias: Alias = Inner where Inner is a
-            # locally-bound struct type.  The alias inherits the descriptor so
-            # it can be reused in a nested pto.struct({...}) field.
-            if isinstance(node.value, ast.Name) and node.value.id in self._type_bindings:
-                self._type_bindings[name] = self._type_bindings[node.value.id]
-                self._value_bindings.pop(name, None)
-                return [node]
-            if _is_pto_attr_call(node.value, "declare_struct"):
-                arg = node.value.args[0] if node.value.args else None
-                arg_meta = self._resolve_struct_arg(arg)
-                if arg_meta is not None:
-                    self._value_bindings[name] = arg_meta
-                    return [node]
-                self._value_bindings.pop(name, None)
-                self._type_bindings.pop(name, None)
-                return [node]
-            if isinstance(node.value, ast.Name) and node.value.id in self._value_bindings:
-                self._value_bindings[name] = self._value_bindings[node.value.id]
-                return [node]
-            self._value_bindings.pop(name, None)
-            self._type_bindings.pop(name, None)
+            for t in node.targets:
+                self._cancel_binding(t)
+            return [node]
 
         member_targets = [
             self._resolve_member(t) if isinstance(t, ast.Attribute) else None
@@ -1837,6 +1894,12 @@ class _StructMemberRewriter:
                 arg_meta = self._resolve_struct_arg(arg)
                 if arg_meta is not None:
                     self._value_bindings[name] = arg_meta
+                    self._type_bindings.pop(name, None)
+                    return [node]
+            if isinstance(node.value, ast.Call):
+                ctor_meta = self._resolve_struct_constructor(node.value.func)
+                if ctor_meta is not None:
+                    self._value_bindings[name] = ctor_meta
                     self._type_bindings.pop(name, None)
                     return [node]
             if node.value is not None:
@@ -1987,6 +2050,54 @@ class _StructMemberRewriter:
             if _duck_struct_descriptor(obj):
                 return self._meta_from_descriptor(obj)
         return None
+
+    def _resolve_struct_constructor(self, func):
+        """Resolve ``Point`` in a ``Point(...)`` call to struct metadata."""
+        if not isinstance(func, ast.Name):
+            return None
+        meta = self._type_bindings.get(func.id)
+        if meta is not None:
+            return meta
+        obj = self._static_env.get(func.id)
+        if _duck_struct_descriptor(obj):
+            return self._meta_from_descriptor(obj)
+        return None
+
+    def _eval_struct_class_meta(self, stmt):
+        """Statically evaluate an ``@pto.struct`` class declaration.
+
+        Returns ``_StructTypeMeta`` when the class body is a pure annotation
+        list (the only supported form; the runtime decorator rejects anything
+        else), or ``None`` when the class is not a struct declaration.
+        """
+        if len(stmt.decorator_list) != 1:
+            return None
+        decorator = stmt.decorator_list[0]
+        if not (
+            isinstance(decorator, ast.Attribute)
+            and decorator.attr == "struct"
+            and isinstance(decorator.value, ast.Name)
+            and decorator.value.id == "pto"
+        ):
+            return None
+        names, types = [], []
+        for sub in stmt.body:
+            if isinstance(sub, ast.Expr) and isinstance(sub.value, ast.Constant):
+                continue  # docstring
+            if not (
+                isinstance(sub, ast.AnnAssign)
+                and sub.value is None
+                and isinstance(sub.target, ast.Name)
+            ):
+                return None
+            field_type = self._eval_field_type(sub.annotation)
+            if field_type is _UNRESOLVABLE_FIELD:
+                return None
+            names.append(sub.target.id)
+            types.append(field_type)
+        if not names:
+            return None
+        return _StructTypeMeta(tuple(names), tuple(types))
 
     def _eval_struct_meta(self, node):
         if isinstance(node, ast.Call):

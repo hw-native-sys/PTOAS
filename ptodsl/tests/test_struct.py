@@ -292,6 +292,25 @@ def named_static_loop_rebind_kernel(x: pto.i32):
 
 
 @pto.jit(target="a5")
+def named_multi_target_kernel(x: pto.i32, y: pto.f32):
+    a = b = pto.declare_struct(NAMED_STRUCT)
+    a.n = x
+    b.sum = y
+    _ = a.n
+    _ = b.sum
+
+
+@pto.jit(target="a5")
+def named_multi_target_alias_kernel():
+    Inner = pto.struct({"x": pto.i32})
+    A = B = Inner
+    s = pto.declare_struct(A)
+    s.x = 1
+    t = pto.declare_struct(B)
+    t.x = 2
+
+
+@pto.jit(target="a5")
 def named_annassign_decl_kernel():
     S: object = pto.struct({"x": pto.i32, "y": pto.f32})
     state = pto.declare_struct(S)
@@ -304,6 +323,96 @@ def named_annassign_decl_kernel():
 def named_member_no_rewrite_kernel():
     state = pto.declare_struct(NAMED_STRUCT)
     state.n = 1
+
+
+@pto.struct
+class ClassPoint:
+    x: pto.i32
+    y: pto.f32
+
+
+@pto.struct
+class ClassInner:
+    x: pto.i32
+    y: pto.f32
+
+
+@pto.struct
+class ClassOuter:
+    id: pto.i32
+    inner: ClassInner
+
+
+@pto.jit(target="a5")
+def class_member_kernel(x: pto.i32, y: pto.f32):
+    state = ClassPoint(x, y)
+    count = state.x
+    total = state.y
+    _ = count
+    _ = total
+
+
+@pto.jit(target="a5")
+def class_kwargs_kernel(x: pto.i32):
+    state = ClassPoint(y=2.5, x=x)
+    _ = state.x
+
+
+@pto.jit(target="a5")
+def class_declare_only_kernel():
+    state = ClassPoint()
+    state.x = 1
+    _ = state.x
+
+
+@pto.jit(target="a5")
+def class_nested_kernel():
+    s = ClassOuter()
+    s.inner.x = 1
+    v = s.inner.y
+    _ = v
+
+
+@pto.jit(target="a5")
+def class_local_kernel(x: pto.i32):
+    @pto.struct
+    class Local:
+        x: pto.i32
+        y: pto.f32
+
+    s = Local(x, 2.5)
+    v = s.y
+    _ = v
+
+
+@pto.jit(target="a5")
+def class_multi_target_kernel(x: pto.i32, y: pto.f32):
+    a = b = ClassPoint(x, y)
+    _ = a.x
+    b.y = y
+
+
+# Regression for the future-flag fix in rewrite_jit_function: the rewritten
+# module must compile with the kernel's own future flags (dont_inherit=True).
+# If compile() inherited ``from __future__ import annotations`` from
+# _ast_rewrite, ``v: T`` below would stringify and from_class could not
+# resolve the kernel-local name ``T`` in module globals.
+@pto.jit(target="a5")
+def class_local_dtype_alias_kernel(x: pto.i32):
+    T = pto.i32
+
+    @pto.struct
+    class Local:
+        v: T
+
+    s = Local(x)
+    _ = s.v
+
+
+@pto.jit(target="a5", ast_rewrite=False)
+def class_no_rewrite_kernel(x: pto.i32, y: pto.f32):
+    state = ClassPoint(x, y)
+    state.x = 1
 
 
 class NamedStructMemberAccessTest(unittest.TestCase):
@@ -426,6 +535,23 @@ class NamedStructMemberAccessTest(unittest.TestCase):
         self.assertIn("pto.struct_set", text)
         self.assertIn("pto.struct_get", text)
 
+    def test_multi_target_assignment_binds_all_names(self):
+        # ``a = b = declare_struct(...)`` evaluates the RHS once; both names
+        # alias the same struct value and their member access is rewritten.
+        text = named_multi_target_kernel.compile().mlir_text()
+        self.assertEqual(text.count("pto.declare_struct"), 1)
+        self.assertIn("pto.struct_set", text)
+        self.assertIn("pto.struct_get", text)
+        self.assertIn("[0]", text)
+        self.assertIn("[1]", text)
+
+    def test_multi_target_assignment_binds_type_aliases(self):
+        # ``A = B = Inner`` binds the struct type on both names so each can
+        # back a declare_struct(...) call.
+        text = named_multi_target_alias_kernel.compile().mlir_text()
+        self.assertEqual(text.count("pto.declare_struct"), 2)
+        self.assertEqual(text.count("pto.struct_set"), 2)
+
     def test_ast_rewrite_disabled_member_access_diagnostic(self):
         with self.assertRaisesRegex(AttributeError, "AST rewriting"):
             named_member_no_rewrite_kernel.compile()
@@ -446,6 +572,139 @@ class NamedStructMemberAccessTest(unittest.TestCase):
         # Unresolvable field types must leave the statements unrewritten
         # instead of crashing with a raw AttributeError.
         rewriter.rewrite_block(fn.body)
+
+
+class StructClassFormTest(unittest.TestCase):
+    def test_class_form_resolves_same_type_as_dict(self):
+        with make_context() as ctx, Location.unknown(ctx):
+            self.assertEqual(
+                str(ClassPoint.resolve()),
+                str(pto.struct({"x": pto.i32, "y": pto.f32}).resolve()),
+            )
+
+    def test_class_form_field_metadata(self):
+        self.assertEqual(ClassPoint.field_names, ("x", "y"))
+        self.assertTrue(ClassPoint.is_named)
+        self.assertEqual(ClassPoint.field_index("y"), 1)
+        self.assertEqual(ClassPoint.field_descriptor_at(0)[0], "x")
+
+    def test_class_form_ctor_validation(self):
+        with self.assertRaisesRegex(TypeError, "positional"):
+            ClassPoint(1, 2, 3)
+        with self.assertRaisesRegex(TypeError, "unexpected field"):
+            ClassPoint(x=1, z=2)
+        with self.assertRaisesRegex(TypeError, "multiple values"):
+            ClassPoint(1, x=2)
+        with self.assertRaisesRegex(TypeError, "missing"):
+            ClassPoint(1)
+
+    def test_class_form_declaration_errors(self):
+        with self.assertRaisesRegex(TypeError, "default value"):
+            @pto.struct
+            class _WithDefault:
+                x: pto.i32 = 0
+
+        with self.assertRaisesRegex(TypeError, "unsupported class attribute"):
+            @pto.struct
+            class _WithMethod:
+                x: pto.i32
+
+                def foo(self):
+                    pass
+
+        with self.assertRaisesRegex(ValueError, "underscore"):
+            @pto.struct
+            class _WithUnderscore:
+                _x: pto.i32
+
+        with self.assertRaisesRegex(ValueError, "at least one"):
+            @pto.struct
+            class _Empty:
+                pass
+
+    def test_class_form_rejects_inheritance(self):
+        class _PlainBase:
+            pass
+
+        with self.assertRaisesRegex(TypeError, "inheritance"):
+            @pto.struct
+            class _Sub(_PlainBase):
+                x: pto.i32
+
+    def test_positional_descriptor_not_callable(self):
+        with self.assertRaisesRegex(TypeError, "not callable"):
+            pto.struct_type(pto.i32, pto.f32)(1, 2)
+
+    def test_class_member_access_rewrites_to_canonical_ops(self):
+        text = class_member_kernel.compile().mlir_text()
+        self.assertIn("pto.declare_struct", text)
+        # Constructor initializes both fields; reads become struct_get.
+        self.assertEqual(text.count("pto.struct_set"), 2)
+        self.assertEqual(text.count("pto.struct_get"), 2)
+        self.assertNotIn("ClassPoint", text)
+
+    def test_class_kwargs_ctor(self):
+        text = class_kwargs_kernel.compile().mlir_text()
+        self.assertEqual(text.count("pto.struct_set"), 2)
+        self.assertIn("pto.struct_get", text)
+
+    def test_class_declare_only_ctor(self):
+        text = class_declare_only_kernel.compile().mlir_text()
+        # Point() declares without initializing; only the explicit member
+        # write produces struct_set.
+        self.assertEqual(text.count("pto.struct_set"), 1)
+        self.assertIn("pto.struct_get", text)
+
+    def test_class_nested_member_access(self):
+        text = class_nested_kernel.compile().mlir_text()
+        self.assertIn("[1, 0]", text)
+        self.assertIn("[1, 1]", text)
+
+    def test_class_form_function_local(self):
+        text = class_local_kernel.compile().mlir_text()
+        self.assertEqual(text.count("pto.struct_set"), 2)
+        self.assertIn("pto.struct_get", text)
+
+    def test_class_form_construction_without_ast_rewrite(self):
+        # Construction itself needs no AST rewrite (the descriptor __call__
+        # emits declare+set at trace time); only member access does.
+        with self.assertRaisesRegex(AttributeError, "AST rewriting"):
+            class_no_rewrite_kernel.compile()
+
+    def test_class_multi_target_assignment_binds_all_names(self):
+        # ``a = b = ClassPoint(...)`` evaluates the constructor once; both
+        # names alias the same struct value and support member access.  The
+        # constructor initializes both fields (2 struct_set) and the explicit
+        # member write adds a third.
+        text = class_multi_target_kernel.compile().mlir_text()
+        self.assertEqual(text.count("pto.declare_struct"), 1)
+        self.assertEqual(text.count("pto.struct_set"), 3)
+        self.assertIn("pto.struct_get", text)
+
+    def test_class_form_local_dtype_alias_annotation(self):
+        # Regression for the future-flag fix in rewrite_jit_function: the
+        # rewritten module must compile with the kernel's own future flags.
+        # If compile() inherited ``from __future__ import annotations`` from
+        # _ast_rewrite, ``v: T`` would stringify and from_class could not
+        # resolve the kernel-local name ``T`` in module globals.
+        text = class_local_dtype_alias_kernel.compile().mlir_text()
+        self.assertIn("pto.declare_struct", text)
+        self.assertIn("pto.struct_set", text)
+        self.assertIn("pto.struct_get", text)
+
+    def test_class_form_resolves_string_annotations(self):
+        # PEP 563 stringifies class-body annotations; from_class resolves
+        # them in the defining module's namespace (here this test module).
+        @pto.struct
+        class _StringAnnotated:
+            x: "pto.i32"
+            y: "pto.f32"
+
+        with make_context() as ctx, Location.unknown(ctx):
+            self.assertEqual(
+                str(_StringAnnotated.resolve()),
+                str(pto.struct({"x": pto.i32, "y": pto.f32}).resolve()),
+            )
 
 
 if __name__ == "__main__":

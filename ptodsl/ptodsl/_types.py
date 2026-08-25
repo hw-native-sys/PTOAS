@@ -20,6 +20,7 @@ the actual type is materialised later by the ``@pto.jit`` decorator.
 """
 
 import keyword
+import sys
 
 from ptoas.mlir.dialects import pto as _pto
 from ptoas.mlir.dialects import arith
@@ -197,13 +198,19 @@ class _StructDescriptor(_DType):
 
     - positional (``pto.struct_type(...)``): ``field_descriptors`` is order-
       preserving, ``field_names`` is ``None``.
-    - named (``pto.struct({...})``): ``field_names`` holds the field names, and
-      ``field_index(name)`` maps a member name to its integer position.  The
-      resolved ``!pto.struct<...>`` is identical to the positional form.
+    - named (``pto.struct({...})`` or ``@pto.struct`` on a class):
+      ``field_names`` holds the field names, and ``field_index(name)`` maps a
+      member name to its integer position.  The resolved ``!pto.struct<...>``
+      is identical to the positional form.
+
+    A named descriptor is also *callable*: ``Point(x, y)`` declares a struct
+    value at trace time and initializes the given fields (all-or-none);
+    ``Point()`` declares without initializing.
     """
 
     def __init__(self, field_descriptors, field_names=None):
         self._field_descriptors = tuple(field_descriptors)
+        self._class_qualname = None
         if field_names is None:
             self._field_names = None
             self._name_to_index = None
@@ -229,6 +236,110 @@ class _StructDescriptor(_DType):
             _validate_struct_field_name(name, context="pto.struct(...)")
             names.append(name)
         return cls(tuple(fields.values()), field_names=tuple(names))
+
+    # Class-body attributes every plain class carries; anything else must be a
+    # field annotation.
+    _CLASS_NOISE_ATTRS = frozenset({
+        "__module__", "__qualname__", "__annotations__", "__dict__",
+        "__weakref__", "__doc__",
+    })
+
+    @classmethod
+    def from_class(cls, py_cls) -> "_StructDescriptor":
+        """Build a named struct descriptor from an ``@pto.struct`` class.
+
+        The class body may only contain ``name: field_type`` annotations
+        (plus an optional docstring); default values, methods, and non-object
+        bases are rejected so the class stays a pure field declaration.
+        Field-type legality is validated lazily by ``resolve()``, exactly
+        like the dict form.
+        """
+        display = f"@pto.struct class {getattr(py_cls, '__qualname__', py_cls)}"
+        if py_cls.__bases__ != (object,):
+            raise TypeError(
+                f"{display}: struct classes do not support inheritance; "
+                "declare fields without base classes"
+            )
+        annotations = dict(getattr(py_cls, "__annotations__", None) or {})
+        if not annotations:
+            raise ValueError(
+                f"{display}: declare at least one 'name: pto.<dtype>' field"
+            )
+        for attr_name in vars(py_cls):
+            if attr_name in cls._CLASS_NOISE_ATTRS:
+                continue
+            if attr_name in annotations:
+                raise TypeError(
+                    f"{display}: field {attr_name!r} has a default value; struct "
+                    "fields do not support defaults, pass values to the "
+                    "constructor instead"
+                )
+            raise TypeError(
+                f"{display}: unsupported class attribute {attr_name!r}; struct "
+                "classes may only contain 'name: pto.<dtype>' annotations "
+                "(no methods or defaults)"
+            )
+        module = sys.modules.get(py_cls.__module__)
+        module_globals = vars(module) if module is not None else {}
+        names, fields = [], []
+        for name, ann in annotations.items():
+            _validate_struct_field_name(name, context=display)
+            if isinstance(ann, str):
+                # PEP 563 (from __future__ import annotations): resolve the
+                # stringified annotation in the defining module's namespace.
+                try:
+                    ann = eval(ann, dict(module_globals))
+                except Exception as exc:
+                    raise TypeError(
+                        f"{display}: cannot resolve annotation {ann!r} for field "
+                        f"{name!r}; annotate with pto.* dtypes or struct "
+                        "descriptors"
+                    ) from exc
+            names.append(name)
+            fields.append(ann)
+        descriptor = cls(tuple(fields), field_names=tuple(names))
+        descriptor._class_qualname = getattr(py_cls, "__qualname__", None)
+        return descriptor
+
+    def __call__(self, *args, **kwargs):
+        """Declare and initialize a struct value at trace time.
+
+        ``Point(x, y)`` is sugar for ``declare_struct`` plus one
+        ``struct_set`` per field, in declaration order; ``Point()`` declares
+        without initializing.  Fields may be given positionally (declaration
+        order) or by name, all-or-none.
+        """
+        display = self._class_qualname or "pto.struct(...)"
+        if self._field_names is None:
+            raise TypeError(
+                "positional pto.struct_type(...) descriptors are not callable; "
+                "use pto.declare_struct(...)"
+            )
+        if len(args) > len(self._field_names):
+            raise TypeError(
+                f"{display}(...) takes at most {len(self._field_names)} "
+                f"positional field values ({len(args)} given)"
+            )
+        values = dict(zip(self._field_names, args))
+        for key, val in kwargs.items():
+            if key not in self._name_to_index:
+                raise TypeError(f"{display}(...) got an unexpected field name {key!r}")
+            if key in values:
+                raise TypeError(f"{display}(...) got multiple values for field {key!r}")
+            values[key] = val
+        missing = [n for n in self._field_names if n not in values]
+        if values and missing:
+            raise TypeError(
+                f"{display}(...) missing field values for {missing}; "
+                "pass all fields or none"
+            )
+        from . import _ops  # lazy: _ops imports _types
+
+        state = _ops.declare_struct(self)
+        for name in self._field_names:
+            if name in values:
+                _ops.struct_set(state, [self.field_index(name)], values[name])
+        return state
 
     @property
     def field_descriptors(self):
@@ -699,13 +810,22 @@ def struct_type(*field_types) -> _StructDescriptor:
     return _StructDescriptor(field_types)
 
 
-def struct(fields: dict) -> _StructDescriptor:
+def struct(fields) -> _StructDescriptor:
     """Return a named lazy descriptor for ``!pto.struct<...>``.
 
-    ``fields`` is an order-preserving ``dict[str, field_type]`` whose field names
-    become the struct member-access surface: ``state.field`` lowers to
-    ``pto.struct_set/get(state, [index], ...)``.
+    Two spellings dispatch on the argument type:
+
+    - ``pto.struct({"x": pto.i32, ...})`` — an order-preserving
+      ``dict[str, field_type]``;
+    - ``@pto.struct class Point: ...`` — a class whose body only contains
+      ``name: field_type`` annotations.
+
+    The field names become the struct member-access surface: ``state.field``
+    lowers to ``pto.struct_set/get(state, [index], ...)``.  A named descriptor
+    is callable: ``Point(x, y)`` declares and initializes a struct value.
     """
+    if isinstance(fields, type):
+        return _StructDescriptor.from_class(fields)
     return _StructDescriptor.from_named(fields)
 
 

@@ -348,6 +348,17 @@ def struct_member_frontend_verify_probe():
     _ = state.x
 
 
+@pto.jit(target="a5", backend="emitc")
+def struct_class_frontend_verify_probe():
+    @pto.struct
+    class Point:
+        x: pto.i32
+        y: pto.f32
+
+    state = Point(1, 3.5)
+    _ = state.x
+
+
 @pto.jit(target="a5", backend="vpto", mode="explicit", kernel_kind="vector")
 def struct_member_vpto_probe(x: pto.i32):
     Inner = pto.struct({"x": pto.i32, "y": pto.f32})
@@ -482,6 +493,39 @@ def main() -> None:
     expect(
         ".f0" in joined_struct_member_emitc_cpp,
         "EmitC should lower named-member writes/reads to positional field access",
+    )
+
+    # @pto.struct class form: declaration + Point(...) construction + member
+    # access must reach the same canonical ops and EmitC field access.
+    struct_class_text = struct_class_frontend_verify_probe.compile().mlir_text()
+    expect(
+        "pto.declare_struct" in struct_class_text
+        and "pto.struct_set" in struct_class_text
+        and "pto.struct_get" in struct_class_text,
+        "struct_class probe source MLIR should contain the canonical struct ops after AST rewrite",
+    )
+    struct_class_frontend_texts = run_ptoas_frontend_verify(
+        ptoas_bin,
+        struct_class_text,
+        "struct_class_frontend_verify_probe PTODSL artifact",
+    )
+    expect(
+        len(struct_class_frontend_texts) == 1,
+        "struct_class probe should lower to exactly one backend child module",
+    )
+    struct_class_emitc_cpp_texts = run_ptoas_emitc(
+        ptoas_bin,
+        struct_class_text,
+        "struct_class_frontend_verify_probe PTODSL EmitC artifact",
+    )
+    expect(
+        len(struct_class_emitc_cpp_texts) == 1,
+        "struct_class probe should materialize one EmitC module",
+    )
+    joined_struct_class_emitc_cpp = "\n".join(struct_class_emitc_cpp_texts)
+    expect(
+        ".f0" in joined_struct_class_emitc_cpp,
+        "EmitC should lower class-form construction/member access to positional field access",
     )
 
     # Default (VPTO) backend named-member surface: local descriptor alias,
