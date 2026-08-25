@@ -651,13 +651,10 @@ def tile_buf_type(shape, dtype, valid_shape=None, *,
 def _normalize_compact_mode(value: str | int):
     if isinstance(value, int):
         return value
-    if value is None:
-        return "Null"
     aliases = {
         "null": "Null",
         "normal": "Normal",
         "row_plus_one": "RowPlusOne",
-        "None": "Null",
         "Null": "Null",
         "Normal": "Normal",
         "RowPlusOne": "RowPlusOne",

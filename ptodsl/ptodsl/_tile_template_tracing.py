@@ -839,7 +839,7 @@ def _coerce_parameter_spec(spec):
         if dtype is None:
             raise ValueError(f"unsupported VMI tile-template dtype {spec.dtype!r}")
         s_layout = getattr(spec, "s_layout", "none_box")
-        compact_mode = getattr(spec, "compact_mode", "normal")
+        compact_mode = getattr(spec, "compact_mode", "normal") or "normal"
         is_nd2nz_layout = (
             s_layout == "row_major"
             and getattr(spec, "b_layout", "row_major") == "col_major"
