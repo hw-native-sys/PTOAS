@@ -1175,6 +1175,21 @@ def _default_resource_vector_values(op: str) -> int:
     return 2
 
 
+_vmi_candidate_id_counters: dict[str, int] = {}
+
+
+def _next_vmi_candidate_id(qualified_op: str) -> int:
+    """Return the next per-op auto-incremented candidate id.
+
+    The first VMI candidate for an op gets id 1000 (matching the historical
+    default); subsequent ones get 1001, 1002, etc. so they never collide.
+    Templates that pass an explicit ``candidate_id=`` are left alone.
+    """
+    value = _vmi_candidate_id_counters.get(qualified_op, 1000)
+    _vmi_candidate_id_counters[qualified_op] = value + 1
+    return value
+
+
 def canonical_vmi_template(
     *,
     target: str = "a5",
@@ -1185,7 +1200,7 @@ def canonical_vmi_template(
     constraints: tuple[object, ...] | list[object] = (),
     tags: tuple[str, ...] | list[str] = (),
     priority: int = 100,
-    candidate_id: int = 1000,
+    candidate_id: int | None = None,
     single_logical_row_loop: bool = True,
     requires_full_physical_row: bool = True,
     min_row_bytes: int = 256,
@@ -1211,6 +1226,9 @@ def canonical_vmi_template(
                 row_constraint,
                 *effective_constraints,
             )
+        effective_id = candidate_id
+        if effective_id is None:
+            effective_id = _next_vmi_candidate_id(qualified_op)
         descriptor = _trace_tile_template(
             target=target,
             op=qualified_op,
@@ -1221,7 +1239,7 @@ def canonical_vmi_template(
             constraints=effective_constraints,
             tags=tuple(tags),
             priority=priority,
-            candidate_id=candidate_id,
+            candidate_id=effective_id,
             single_logical_row_loop=single_logical_row_loop,
             resource_scope=resource_scope,
             resource_vector_values=(

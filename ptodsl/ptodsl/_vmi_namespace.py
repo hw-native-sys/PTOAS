@@ -235,14 +235,21 @@ def _validate_vmi_vcvt_bf16x2_pair(source_type, result_type, *, context: str) ->
     return False
 
 
-def _normalize_vmi_vcvt_rounding(mode, *, context: str, allowed=None):
+def _is_packed_vmi_element_type(type_obj) -> bool:
+    return any(
+        _isinstance_pto_type(type_obj, name)
+        for name in ("BF16x2Type", "HiF8x2Type", "F4E1M2x2Type", "F4E2M1x2Type")
+    )
+
+
+def _normalize_vmi_vcvt_rounding(mode, *, context: str, allowed=None, packed_pair=False):
     token = mode
     if not isinstance(token, str):
         token = str(token)
         if "." in token:
             token = token.rsplit(".", 1)[-1]
     normalized = token.strip().upper()
-    allowed_modes = set(allowed or {"R", "A", "H", "Z"})
+    allowed_modes = set(allowed or ({"R", "A", "F", "C", "Z"} if packed_pair else {"R", "A", "H", "Z"}))
     if normalized not in allowed_modes:
         expected = ", ".join(sorted(allowed_modes))
         raise ValueError(
