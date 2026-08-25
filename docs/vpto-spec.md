@@ -290,6 +290,11 @@ Pipeline synchronization can be achieved through two mechanisms:
 
 Within the vector execution scope, the hardware does not track UB address aliasing between reg↔UB accesses. When UB addresses overlap or alias between vector load/store operations, explicit memory barriers are required:
 
+`pto.mem_bar` is scoped to one `vecscope` launch. It does not order or make
+memory visible across sibling `vecscope` launches; cross-vecscope visibility
+must be established by the surrounding host/control sequence with
+`pto.set_flag`/`pto.wait_flag` or `pto.get_buf`/`pto.rls_buf`.
+
 ```c
 pto.mem_bar "VV_ALL"      // All prior vector ops complete before subsequent
 pto.mem_bar "VST_VLD"     // All prior vector stores visible before subsequent loads

@@ -19,6 +19,7 @@
 #include "mlir/Support/LLVM.h"
 #include "llvm/ADT/APInt.h"
 
+#include <algorithm>
 #include <cstdint>
 
 using namespace mlir;
@@ -417,6 +418,78 @@ static void fillContiguous(VecMemoryAccessDescriptor &desc, Value base,
     desc.conservativeByteSize = (*bytes) * (*elemCount);
 }
 
+static std::optional<uint64_t> parseMaskPatternLaneCount(StringRef pattern,
+                                                          uint64_t fullCount) {
+  if (pattern == "PAT_ALL") {
+    return fullCount;
+  }
+  if (!pattern.starts_with("PAT_VL")) {
+    return std::nullopt;
+  }
+
+  uint64_t activeCount = 0;
+  if (pattern.drop_front(6).getAsInteger(10, activeCount)) {
+    return std::nullopt;
+  }
+  return std::min(activeCount, fullCount);
+}
+
+static std::optional<uint64_t> getMaskPatternLaneCount(Value mask,
+                                                        uint64_t fullCount) {
+  StringRef pattern;
+  if (auto op = mask.getDefiningOp<pto::PsetB8Op>()) {
+    pattern = op.getPattern();
+  } else if (auto op = mask.getDefiningOp<pto::PsetB16Op>()) {
+    pattern = op.getPattern();
+  } else if (auto op = mask.getDefiningOp<pto::PsetB32Op>()) {
+    pattern = op.getPattern();
+  } else if (auto op = mask.getDefiningOp<pto::PgeB8Op>()) {
+    pattern = op.getPattern();
+  } else if (auto op = mask.getDefiningOp<pto::PgeB16Op>()) {
+    pattern = op.getPattern();
+  } else if (auto op = mask.getDefiningOp<pto::PgeB32Op>()) {
+    pattern = op.getPattern();
+  } else if (auto op = mask.getDefiningOp<pto::PltB8Op>()) {
+    APInt value;
+    bool isConstant = matchPattern(op.getScalar(), m_ConstantInt(&value));
+    if (!isConstant || value.isNegative()) {
+      return std::nullopt;
+    }
+    return std::min(value.getZExtValue(), fullCount);
+  } else if (auto op = mask.getDefiningOp<pto::PltB16Op>()) {
+    APInt value;
+    bool isConstant = matchPattern(op.getScalar(), m_ConstantInt(&value));
+    if (!isConstant || value.isNegative()) {
+      return std::nullopt;
+    }
+    return std::min(value.getZExtValue(), fullCount);
+  } else if (auto op = mask.getDefiningOp<pto::PltB32Op>()) {
+    APInt value;
+    bool isConstant = matchPattern(op.getScalar(), m_ConstantInt(&value));
+    if (!isConstant || value.isNegative()) {
+      return std::nullopt;
+    }
+    return std::min(value.getZExtValue(), fullCount);
+  }
+
+  if (pattern.empty()) {
+    return std::nullopt;
+  }
+  return parseMaskPatternLaneCount(pattern, fullCount);
+}
+
+static std::optional<uint64_t>
+maskedStoredElementCount(Value mask, std::optional<uint64_t> unmaskedCount) {
+  if (!unmaskedCount) {
+    return std::nullopt;
+  }
+  auto activeCount = getMaskPatternLaneCount(mask, *unmaskedCount);
+  if (!activeCount) {
+    return unmaskedCount;
+  }
+  return activeCount;
+}
+
 // Return the number of contiguous destination elements written by `vsts`.
 // Pack distributions write only the packed payload, not the full source-vreg
 // storage width. Round up so unusual lane counts remain conservative.
@@ -456,9 +529,11 @@ vecscopemembar::buildAccessDescriptor(Operation *op, ArrayRef<Value> ivs) {
   }
   if (auto vsts = dyn_cast<pto::VstsOp>(op)) {
     desc.kind = VecScopeAccessKind::Store;
+    auto elemCount =
+        maskedStoredElementCount(vsts.getMask(), vstsStoredElementCount(vsts));
     fillContiguous(desc, vsts.getDestination(), vsts.getOffset(),
                    elementByteSize(vsts.getDestination().getType()),
-                   vstsStoredElementCount(vsts), ivs);
+                   elemCount, ivs);
     return desc;
   }
   if (auto vldsx2 = dyn_cast<pto::Vldsx2Op>(op)) {
@@ -481,6 +556,7 @@ vecscopemembar::buildAccessDescriptor(Operation *op, ArrayRef<Value> ivs) {
     std::optional<uint64_t> total;
     if (lo && hi)
       total = *lo + *hi;
+    total = maskedStoredElementCount(vstsx2.getMask(), total);
     fillContiguous(desc, dst, vstsx2.getOffset(),
                    elementByteSize(dst.getType()), total, ivs);
     return desc;
