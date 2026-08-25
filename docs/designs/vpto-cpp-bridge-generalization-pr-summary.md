@@ -78,37 +78,28 @@ VPTO 生成的 LLVM IR 合并，端到端跑通 FIFO 通路。但 PoC 有两个�
 
 白名单同时承担**路由**与**类型映射声明**两个职责：
 
+示例只展示**必填字段**——接入一个机械映射型 op 的全部注册内容（以
+`pto.tadd` 为例；可选字段与缺省规则见文末《附录：白名单 schema 字段
+速查》）：
+
 ```yaml
-wrappers:                        # 声明式 wrapper 的生成声明（每个纯声明式 wrapper 一条）
-  - name: matmul
-    includes: [pto/npu/a5/TMatmul.hpp]   # wrapper 源码的 include 行
-    core: cube                   # cube | vec | both（决定 __DAV_*__ 守卫）
+wrappers:                        # 每个声明式 wrapper 一条
+  - name: vec_elem               # 必填：wrapper 名（生成单位与分派键）
+    includes: [pto/npu/a5/TAdd.hpp]   # 必填：wrapper 源码的 include 行
+    core: vec                    # 必填：cube | vec | both（决定 __DAV_*__ 守卫）
 bridge_ops:
-  - op: pto.tmatmul              # 路由键：IR op 名，命中即桥接候选
-    wrapper: matmul              # 渲染进哪份 wrapper 源码（生成单位）
-                                 # lowering 省略 = 声明式（缺省通道）
-    call: pto::TMATMUL           # 调用拼写（声明式条目必填）
-    tmpl_args: [acc_phase]       # 可选模板实参：本条目 attr 行 field 或含 :: 字面量
-    abi:                         # operand 位置绑定 + 角色（调用侧校验 + decl 生成）
-      - {operand: 2, arg: dst, role: result_tile}   # type 缺省 i64
-      - {operand: 0, arg: lhs, role: left_tile}
-      - {operand: 1, arg: rhs, role: right_tile}
-    tmpl_map:                    # 声明式条目只收 attr 行（tile typedef 由 role 推导）
-      - source: attr
-        field: acc_phase
-        target: AccPhase
-        enum_type: pto::AccPhase
-        omit_value: Unspecified
-  - op: pto.tpush
-    wrapper: pipe                # 同一 wrapper 的条目共享一份翻译单元
-    lowering: custom             # 例外：家族语义需专用 pass，必须显式标注
-    entry: pto_vpto_pipe_push    # custom 条目必填
-    abi:                         # custom 条目无需 operand/role 绑定
-      - {type: ptr}              # storage，由桥接降级合成
-      - {type: i64}              # producer tile 地址
-    tmpl_map:
-      - {source: tile, field: tile, target: ProducerTile}
+  - op: pto.tadd                 # 必填：路由键，IR op 名，命中即桥接候选
+    wrapper: vec_elem            # 必填：渲染进哪份 wrapper 源码
+    call: pto::TADD              # 必填：C++ 调用拼写（lowering 省略 = 声明式通道）
+    abi:                         # 必填：operand 位置绑定 + 角色（type 缺省 i64）
+      - {operand: 2, arg: dst, role: result_tile}
+      - {operand: 0, arg: src0, role: left_tile}
+      - {operand: 1, arg: src1, role: right_tile}
 ```
+
+未写的字段全部走缺省：`entry` 从 op 名推导（`pto.tadd` →
+`pto_vpto_add`），abi `type` 缺省 i64（tile 地址类型擦除），无模板实参
+则不写 `tmpl_args`/`tmpl_map`（tile typedef 由 abi role 推导）。
 
 - **两档通道，缺省为声明式**：`lowering` 省略即走声明式通道——机械映射型
   op 经白名单声明即接入，无需任何 pass 代码。只有携带真家族语义（storage
@@ -122,19 +113,13 @@ bridge_ops:
   声明式 wrapper 在顶层 `wrappers` 段声明 includes 与 core 守卫；storage 等
   不透明指针参数以 `{type: ptr}` 行声明；init 条目经 `storage_size_entry`
   字段显式关联 size 查询入口；
-- **声明式条目的字段约束**：`call` 必填（调用拼写）；`tmpl_args` 每项必须
-  是本条目 `tmpl_map` attr field 或含 `::` 的字面量；`tmpl_map` 只收
-  `source: attr` 行（tile typedef 唯一来源是 abi role，解析期拒绝 tile 行）；
-  `entry` 可省略，缺省从 op 名推导（`pto.tadd` → `pto_vpto_add`），
-  custom 条目必填且禁用 `call`/`tmpl_args`；
-- **声明式条目的结构化校验**：abi 行必须带 `operand`/`arg`/`role`，operand
-  索引不重复；`attr` source 必须声明 `enum_type`。`op: internal` 条目从不被
-  路由，豁免上述通道校验；
+- **字段约束与结构化校验**：必填项缺失、拼写或取值非法均在解析期拒绝并
+  点名条目与文件（空字段、未知 `lowering` 值、重复 `op`/`entry` 名、
+  `tmpl_args` 无对应 attr 行、`tmpl_map` 缺键与未知 source、
+  `storage_size_entry` 悬空引用等）；逐字段的必填/缺省/约束规则见文末
+  《附录：白名单 schema 字段速查》；
 - **三级解析链**：pass `whitelist-path` option → `PTOAS_VPTO_BRIDGE_WHITELIST`
-  环境变量 → 内置默认白名单；
-- **解析期校验**：空字段、未知 `lowering` 值、重复 `op` 名、
-  `storage_size_entry` 悬空引用、`tmpl_map` 缺键与未知 source 均报诊断
-  （含文件路径与支持集）。
+  环境变量 → 内置默认白名单。
 
 > `wrapper` 是**生成单位**，也是 wrapper 生成器的分派键：同名条目共享一份
 > C++ 翻译单元与一套 typedef，每个 module 最多一个。分派只看 wrapper 内
@@ -228,12 +213,8 @@ wrapper 渲染、编译与合入，无外部脚本、无环境变量依赖。
 ### 3.4 使用方式：接入一个机械映射型 op
 
 机械映射型 op 的接入只需白名单注册，零 C++ 改动。以 `pto.tadd` 为例，
-全部注册内容为两处声明：
-
-1. `wrappers` 段声明 wrapper 的 includes 与核守卫（每个声明式 wrapper
-   一条，已有则复用）；
-2. `bridge_ops` 段声明路由条目：`op`/`wrapper`/`call`/`abi`，`entry` 与
-   abi `type` 缺省自动推导。
+全部注册内容即下方**必填字段**两处声明（可选字段与缺省规则见文末
+《附录：白名单 schema 字段速查》）：
 
 ```yaml
 # 内置默认白名单（lib/PTO/Transforms/VPTOBridgeWhitelist.cpp）中的注册
@@ -405,4 +386,47 @@ lit 侧桥接相关用例共 28 个，按维度分组：
 | wrapper 生成 | `VPTOBridgeWrapperGen.cpp` |
 | 合入通道 | `tools/ptoas/ObjectEmission.cpp`（wrapper 编译 + bitcode 链接） |
 | IR | `pto.bridge_call` / `pto.bridge_inttoptr` 内部 op |
+
+## 附录：白名单 schema 字段速查
+
+**`wrappers` 段**（每个声明式 wrapper 一条，三项均必填）：
+
+| 字段 | 必填 | 缺省 | 说明 |
+|---|---|---|---|
+| `name` | 是 | — | wrapper 名：生成单位与渲染分派键，同名条目共享一份翻译单元 |
+| `includes` | 是 | — | wrapper 源码的 include 头文件列表 |
+| `core` | 是 | — | `cube` / `vec` / `both`，决定 entry 组的 `__DAV_*__` 编译守卫 |
+
+**`bridge_ops` 段**（条目级）：
+
+| 字段 | 必填 | 缺省 | 说明 |
+|---|---|---|---|
+| `op` | 是 | — | 路由键（IR op 名），命中即桥接候选；`op: internal` 为不参与路由的辅助条目 |
+| `wrapper` | 是 | — | 渲染进哪份 wrapper 源码 |
+| `call` | 声明式必填 | — | C++ 调用拼写（如 `pto::TMATMUL`）；custom 条目禁用 |
+| `abi` | 有 operand 时必填 | — | 参数绑定行，见下表 |
+| `lowering` | 否 | `declarative` | 设为 `custom` 退出声明式通道，须有专用渲染器承接 |
+| `entry` | 否 | 声明式自动推导 | 桥接符号名；缺省规则 `pto.tadd` → `pto_vpto_add`；custom 条目必填 |
+| `tmpl_args` | 否 | 无模板实参 | 模板实参顺序；每项须为本条目 `tmpl_map` attr field 或含 `::` 的字面量；custom 条目禁用 |
+| `tmpl_map` | 否 | — | 模板实参取值来源；声明式条目只收 `source: attr` 行（tile typedef 由 abi role 推导） |
+| `storage_size_entry` | 否 | — | init 条目显式关联 size 查询入口（pipe 家族） |
+
+**`abi` 行子字段**：
+
+| 字段 | 必填 | 缺省 | 说明 |
+|---|---|---|---|
+| `operand` | 声明式必填 | — | IR operand 位置索引，同一条目内不得重复 |
+| `arg` | 声明式必填 | — | wrapper 函数形参名 |
+| `role` | 声明式必填 | — | 语义角色（`left_tile` / `right_tile` / `result_tile` 等），推导 tile typedef 名 |
+| `type` | 否 | `i64` | 参数类型；`ptr` 表示不透明指针（storage 等），tile 地址一律缺省 i64 |
+
+**`tmpl_map` 行子字段**：
+
+| 字段 | 必填 | 缺省 | 说明 |
+|---|---|---|---|
+| `source` | 是 | — | 声明式条目仅支持 `attr`（custom 条目另有 `tile`） |
+| `field` | 是 | — | op 属性名（与 ODS 属性对应，解析按原名与 camelCase 双拼写尝试） |
+| `target` | 是 | — | C++ 模板实参渲染名 |
+| `enum_type` | attr 行必填 | — | 全限定枚举类型名（如 `pto::AccPhase`） |
+| `omit_value` | 否 | — | attr 值等于该枚举成员时省略该模板实参，由 C++ 模板缺省参数兜底 |
 
