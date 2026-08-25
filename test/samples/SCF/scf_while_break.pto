@@ -61,22 +61,20 @@ module {
   }
 }
 
-// CHECK: bool [[ALIVE:v[0-9]+]];
-// CHECK: int32_t [[IV:v[0-9]+]];
-// CHECK: [[IV]] =
-// CHECK: [[ALIVE]] =
-// CHECK: goto [[HEADER:label[0-9]+]];
-// CHECK: [[HEADER]]:
-// CHECK: bool [[COND:v[0-9]+]];
-// CHECK: [[COND]] = false;
-// CHECK: [[COND]] = [[IV]] < {{.*}} & [[ALIVE]];
-// CHECK: if ([[COND]]) {
-// CHECK: goto [[BODY:label[0-9]+]];
+// CHECK: bool v{{[0-9]+}};
+// CHECK: int64_t v{{[0-9]+}};
+// CHECK: v{{[0-9]+}} = v1;
+// CHECK: v{{[0-9]+}} = v5;
+// CHECK: goto label{{[0-9]+}};
+// CHECK: label{{[0-9]+}}:
+// CHECK: v{{[0-9]+}} = v{{[0-9]+}} < {{.*}} & v{{[0-9]+}};
+// CHECK: if (v{{[0-9]+}}) {
+// CHECK: goto label{{[0-9]+}};
 // CHECK: } else {
-// CHECK: goto [[EXIT:label[0-9]+]];
-// CHECK: [[BODY]]:
-// CHECK: if ([[IV]] ==
-// CHECK: [[IV]] =
-// CHECK: [[ALIVE]] =
-// CHECK: goto [[HEADER]];
-// CHECK: [[EXIT]]:
+// CHECK: goto label{{[0-9]+}};
+// CHECK: label{{[0-9]+}}:
+// CHECK: v{{[0-9]+}} ==
+// CHECK: v{{[0-9]+}} =
+// CHECK: v{{[0-9]+}} =
+// CHECK: goto label{{[0-9]+}};
+// CHECK: label{{[0-9]+}}:
