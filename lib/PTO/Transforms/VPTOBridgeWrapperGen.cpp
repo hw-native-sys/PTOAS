@@ -19,18 +19,16 @@
 // __DAV_CUBE__/__DAV_VEC__ guards) and links the bitcode into the device
 // modules, replacing the former hand-written wrapper translation unit.
 //
-// Two wrappers render today: the pipe wrapper (Pipe/Tile typedefs, a
+// Rendering dispatches on the wrapper the module used. A wrapper whose
+// entries carry `lowering: custom` owns a dedicated renderer that knows
+// its family semantics (today only pipe: Pipe/Tile typedefs, a
 // placement-new init entry, a sizeof size entry, and the producer/consumer
-// entries placed on the cores implied by the pipe direction) and the matmul
-// family (tile typedefs plus the TMATMUL/TMATMUL_ACC/bias/MX entries, all
-// cube-side).
-//
-// The typedef sections are whitelist driven: each wrapper entry declares
-// its template slots in tmpl_map rows (source = spec token key, target =
-// typedef name) and this pass renders exactly the declared rows. The entry
-// call bodies stay family specific and reference the typedef names, so the
-// required typedef targets are checked against the declarations before
-// rendering.
+// entries placed on the cores implied by the pipe direction). Every other
+// wrapper renders through the generic declarative renderer, driven
+// entirely by the whitelist: the wrappers section supplies the includes
+// and the core guard, and each used entry its call spelling, template
+// arguments and abi-role tile typedefs. Adding a mechanically mapped
+// interface therefore needs only a whitelist registration.
 //
 //===----------------------------------------------------------------------===//
 
@@ -46,6 +44,8 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/raw_ostream.h"
+#include <map>
+#include <string>
 
 namespace mlir {
 namespace pto {
@@ -56,15 +56,16 @@ namespace pto {
 
 namespace {
 
-/// `wrapper` whitelist values the bridge wrapper generator renders today.
-/// Each names one renderer producing one wrapper translation unit; a
-/// whitelist entry carries it and dispatch below selects the renderer by it.
+/// `wrapper` whitelist values owning a dedicated renderer: entries of such
+/// a wrapper carry `lowering: custom` and their family semantics (storage
+/// lifecycle, address rebinding) are rendered by hand-written code below
+/// instead of the generic declarative renderer. Every other wrapper is
+/// whitelist declared and renders generically.
 constexpr llvm::StringLiteral kPipeWrapper = "pipe";
-constexpr llvm::StringLiteral kMatmulWrapper = "matmul";
 
 /// The pipe bridge specialization fields read from the spec DictionaryAttr.
-/// The tile typedefs are not read here: they come from the tmpl_map-driven
-/// typedef declarations.
+/// The tile typedefs are not read here: they come from the pipe entries'
+/// tmpl_map declarations.
 struct BridgePipeSpec {
   StringRef pipe;
   StringRef split;
@@ -75,26 +76,10 @@ struct BridgePipeSpec {
   StringRef entryFree;
 };
 
-/// One `using <target> = <token>;` typedef rendered into the wrapper,
-/// driven by a whitelist tmpl_map row.
+/// One `using <target> = <token>;` typedef rendered into the wrapper.
 struct BridgeTypedefDecl {
   std::string target;
   std::string token;
-};
-
-/// The matmul bridge specialization fields read from the spec
-/// DictionaryAttr. The acc phase is empty when the calls render without a
-/// template argument; the entry fields are only present when the module
-/// carries the corresponding tmatmul variant. The tile typedefs are not
-/// read here: they come from the tmpl_map-driven typedef declarations.
-struct BridgeMatmulSpec {
-  StringRef accPhase;
-  StringRef entryMatmul;
-  StringRef entryMatmulAcc;
-  StringRef entryMatmulBias;
-  StringRef entryMatmulMx;
-  StringRef entryMatmulMxAcc;
-  StringRef entryMatmulMxBias;
 };
 
 /// A {spec key -> spec struct field} row used to fill the family spec
@@ -204,154 +189,134 @@ renderPipeBridgeSource(const BridgePipeSpec &spec,
   return source;
 }
 
-/// Renders the complete bridge wrapper source for the matmul specialization.
-/// Matmul is cube-only, so every entry lives under the __DAV_CUBE__ guard;
-/// the vec half of the wrapper compiles empty. Each tile is bound to its
-/// planned address with TASSIGN before the call. The typedef section is
-/// rendered from the tmpl_map-driven declarations.
+/// Returns the C++ parameter spelling of an abi carrier type.
+static llvm::StringLiteral bridgeAbiParamType(llvm::StringRef type) {
+  if (type == "i64")
+    return "uint64_t";
+  if (type == "i32")
+    return "uint32_t";
+  return "void *";
+}
+
+/// Renders the complete bridge wrapper source of a wrapper declared in the
+/// whitelist wrappers section: the declaration supplies the includes and
+/// the core guard, and every used declarative entry its abi-bound tile
+/// typedefs (named by the CamelCase of the role), the TASSIGN bindings and
+/// the declared call. Tile typedef targets sort by name so the rendered
+/// source is stable under whitelist reordering; the merged spec guarantees
+/// one token per role. A tmpl_args item either is a qualified literal or
+/// names an attr spec key, and the whole template argument list is omitted
+/// when the spec carries no token for one (e.g. an Unspecified phase).
 FailureOr<std::string>
-renderMatmulBridgeSource(const BridgeMatmulSpec &spec,
-                         ArrayRef<BridgeTypedefDecl> typedefs) {
+renderDeclarativeBridgeSource(ModuleOp module,
+                              const BridgeWhitelist &whitelist,
+                              const BridgeWrapperDecl &decl,
+                              DictionaryAttr specAttr,
+                              const llvm::StringSet<> &usedEntries) {
+  // Tile typedefs: one per abi role the used entries bind. A role token
+  // missing from the spec means the declarative lowering never routed the
+  // op; say so instead of rendering an undefined typedef.
+  std::map<std::string, std::string> typedefTokens;
+  for (const BridgeWhitelistEntry &entry : whitelist.bridgeOps) {
+    if (entry.wrapper != decl.name || !entry.isDeclarative() ||
+        !usedEntries.count(entry.entry))
+      continue;
+    for (const BridgeAbiArg &arg : entry.abi) {
+      std::string target = bridgeRoleTypedefTarget(arg.role);
+      if (typedefTokens.count(target))
+        continue;
+      auto value = specAttr.getAs<StringAttr>(arg.role);
+      if (!value || value.getValue().empty()) {
+        module.emitError()
+            << "VPTO bridge: whitelist entry '" << entry.entry
+            << "' binds the role '" << arg.role
+            << "', but no tile token was collected for it; the declarative "
+               "bridge lowering must run before wrapper generation";
+        return failure();
+      }
+      typedefTokens.emplace(target, value.getValue().str());
+    }
+  }
+  // Attribute tmpl_map rows never render a typedef: their spec tokens are
+  // constant values (e.g. an AccPhase enumerator), not types; they feed the
+  // entry's tmpl_args instead. A missing spec token omits the whole
+  // template argument list at call render time below.
+
   std::string source;
   llvm::raw_string_ostream os(source);
 
-  std::string phaseTmpl;
-  if (!spec.accPhase.empty()) {
-    phaseTmpl = ("<" + spec.accPhase + ">").str();
-  }
-
   os << "// Generated by ptoas (pto-emit-vpto-bridge-wrapper). Do not edit.\n"
-     << "// VPTO matmul bridge wrapper.\n"
-     << "#include <pto/pto-inst.hpp>\n"
-     << "#include <pto/npu/a5/TMatmul.hpp>\n"
-     << "#include <stdint.h>\n"
-     << "\n";
-  for (const BridgeTypedefDecl &decl : typedefs) {
-    os << "using " << decl.target << " = " << decl.token << ";\n";
+     << "// VPTO bridge wrapper for '" << decl.name << "'.\n"
+     << "#include <pto/pto-inst.hpp>\n";
+  for (const std::string &include : decl.includes) {
+    os << "#include <" << include << ">\n";
   }
-  os << "\n"
-     << "#ifdef __DAV_CUBE__\n";
+  os << "#include <stdint.h>\n"
+     << "\n";
+  for (const auto &typedefToken : typedefTokens) {
+    os << "using " << typedefToken.first << " = " << typedefToken.second
+       << ";\n";
+  }
+  os << "\n";
+
+  const bool guardCube = decl.core == kBridgeWrapperCoreCube;
+  const bool guardVec = decl.core == kBridgeWrapperCoreVec;
+  if (guardCube)
+    os << "#ifdef __DAV_CUBE__\n";
+  else if (guardVec)
+    os << "#ifdef __DAV_VEC__\n";
 
   bool firstEntry = true;
-  auto entrySeparator = [&]() {
+  for (const BridgeWhitelistEntry &entry : whitelist.bridgeOps) {
+    if (entry.wrapper != decl.name || !entry.isDeclarative() ||
+        !usedEntries.count(entry.entry))
+      continue;
     if (!firstEntry)
       os << "\n";
     firstEntry = false;
-  };
-
-  if (!spec.entryMatmul.empty()) {
-    entrySeparator();
-    os << "extern \"C\" [aicore] void " << spec.entryMatmul
-       << "(uint64_t dstAddress, uint64_t lhsAddress, uint64_t rhsAddress) "
-          "{\n"
-       << "  ResultTile dst;\n"
-       << "  LeftTile lhs;\n"
-       << "  RightTile rhs;\n"
-       << "  pto::TASSIGN_IMPL(dst, dstAddress);\n"
-       << "  pto::TASSIGN_IMPL(lhs, lhsAddress);\n"
-       << "  pto::TASSIGN_IMPL(rhs, rhsAddress);\n"
-       << "  pto::TMATMUL" << phaseTmpl << "(dst, lhs, rhs);\n"
+    os << "extern \"C\" [aicore] void " << entry.entry << "(";
+    llvm::interleaveComma(entry.abi, os, [&](const BridgeAbiArg &arg) {
+      os << bridgeAbiParamType(arg.type) << " " << arg.arg << "Address";
+    });
+    os << ") {\n";
+    for (const BridgeAbiArg &arg : entry.abi) {
+      os << "  " << bridgeRoleTypedefTarget(arg.role) << " " << arg.arg
+         << ";\n";
+    }
+    for (const BridgeAbiArg &arg : entry.abi) {
+      os << "  pto::TASSIGN_IMPL(" << arg.arg << ", " << arg.arg
+         << "Address);\n";
+    }
+    // Template arguments: literals render as declared; spec-backed items
+    // drop the whole list when their token was omitted.
+    llvm::SmallVector<llvm::StringRef, 2> tmplTokens;
+    bool renderTmplArgs = true;
+    for (const std::string &item : entry.tmplArgs) {
+      if (llvm::StringRef(item).contains("::")) {
+        tmplTokens.push_back(item);
+        continue;
+      }
+      auto value = specAttr.getAs<StringAttr>(item);
+      if (!value || value.getValue().empty()) {
+        renderTmplArgs = false;
+        break;
+      }
+      tmplTokens.push_back(value.getValue());
+    }
+    os << "  " << entry.call;
+    if (renderTmplArgs && !tmplTokens.empty()) {
+      os << "<";
+      llvm::interleaveComma(tmplTokens, os);
+      os << ">";
+    }
+    os << "(";
+    llvm::interleaveComma(entry.abi, os,
+                          [&](const BridgeAbiArg &arg) { os << arg.arg; });
+    os << ");\n"
        << "}\n";
   }
-  if (!spec.entryMatmulAcc.empty()) {
-    entrySeparator();
-    os << "extern \"C\" [aicore] void " << spec.entryMatmulAcc
-       << "(uint64_t dstAddress, uint64_t accInAddress, uint64_t lhsAddress, "
-          "uint64_t rhsAddress) {\n"
-       << "  ResultTile dst;\n"
-       << "  AccInTile accIn;\n"
-       << "  LeftTile lhs;\n"
-       << "  RightTile rhs;\n"
-       << "  pto::TASSIGN_IMPL(dst, dstAddress);\n"
-       << "  pto::TASSIGN_IMPL(accIn, accInAddress);\n"
-       << "  pto::TASSIGN_IMPL(lhs, lhsAddress);\n"
-       << "  pto::TASSIGN_IMPL(rhs, rhsAddress);\n"
-       << "  pto::TMATMUL_ACC" << phaseTmpl << "(dst, accIn, lhs, rhs);\n"
-       << "}\n";
-  }
-  if (!spec.entryMatmulBias.empty()) {
-    entrySeparator();
-    os << "extern \"C\" [aicore] void " << spec.entryMatmulBias
-       << "(uint64_t dstAddress, uint64_t lhsAddress, uint64_t rhsAddress, "
-          "uint64_t biasAddress) {\n"
-       << "  ResultTile dst;\n"
-       << "  LeftTile lhs;\n"
-       << "  RightTile rhs;\n"
-       << "  BiasTile bias;\n"
-       << "  pto::TASSIGN_IMPL(dst, dstAddress);\n"
-       << "  pto::TASSIGN_IMPL(lhs, lhsAddress);\n"
-       << "  pto::TASSIGN_IMPL(rhs, rhsAddress);\n"
-       << "  pto::TASSIGN_IMPL(bias, biasAddress);\n"
-       << "  pto::TMATMUL_BIAS" << phaseTmpl
-       << "(dst, lhs, rhs, bias);\n"
-       << "}\n";
-  }
-  if (!spec.entryMatmulMx.empty()) {
-    entrySeparator();
-    os << "extern \"C\" [aicore] void " << spec.entryMatmulMx
-       << "(uint64_t dstAddress, uint64_t lhsAddress, "
-          "uint64_t aScaleAddress, uint64_t rhsAddress, "
-          "uint64_t bScaleAddress) {\n"
-       << "  ResultTile dst;\n"
-       << "  LeftTile lhs;\n"
-       << "  AScaleTile aScale;\n"
-       << "  RightTile rhs;\n"
-       << "  BScaleTile bScale;\n"
-       << "  pto::TASSIGN_IMPL(dst, dstAddress);\n"
-       << "  pto::TASSIGN_IMPL(lhs, lhsAddress);\n"
-       << "  pto::TASSIGN_IMPL(aScale, aScaleAddress);\n"
-       << "  pto::TASSIGN_IMPL(rhs, rhsAddress);\n"
-       << "  pto::TASSIGN_IMPL(bScale, bScaleAddress);\n"
-       << "  pto::TMATMUL_MX" << phaseTmpl
-       << "(dst, lhs, aScale, rhs, bScale);\n"
-       << "}\n";
-  }
-  if (!spec.entryMatmulMxAcc.empty()) {
-    entrySeparator();
-    os << "extern \"C\" [aicore] void " << spec.entryMatmulMxAcc
-       << "(uint64_t dstAddress, uint64_t accInAddress, uint64_t lhsAddress, "
-          "uint64_t aScaleAddress, uint64_t rhsAddress, "
-          "uint64_t bScaleAddress) {\n"
-       << "  ResultTile dst;\n"
-       << "  AccInTile accIn;\n"
-       << "  LeftTile lhs;\n"
-       << "  AScaleTile aScale;\n"
-       << "  RightTile rhs;\n"
-       << "  BScaleTile bScale;\n"
-       << "  pto::TASSIGN_IMPL(dst, dstAddress);\n"
-       << "  pto::TASSIGN_IMPL(accIn, accInAddress);\n"
-       << "  pto::TASSIGN_IMPL(lhs, lhsAddress);\n"
-       << "  pto::TASSIGN_IMPL(aScale, aScaleAddress);\n"
-       << "  pto::TASSIGN_IMPL(rhs, rhsAddress);\n"
-       << "  pto::TASSIGN_IMPL(bScale, bScaleAddress);\n"
-       << "  pto::TMATMUL_MX" << phaseTmpl
-       << "(dst, accIn, lhs, aScale, rhs, bScale);\n"
-       << "}\n";
-  }
-  if (!spec.entryMatmulMxBias.empty()) {
-    entrySeparator();
-    // The MX-bias IR op carries no accumulation phase, so the call renders
-    // without a Phase template argument regardless of spec.accPhase.
-    os << "extern \"C\" [aicore] void " << spec.entryMatmulMxBias
-       << "(uint64_t dstAddress, uint64_t lhsAddress, "
-          "uint64_t aScaleAddress, uint64_t rhsAddress, "
-          "uint64_t bScaleAddress, uint64_t biasAddress) {\n"
-       << "  ResultTile dst;\n"
-       << "  LeftTile lhs;\n"
-       << "  AScaleTile aScale;\n"
-       << "  RightTile rhs;\n"
-       << "  BScaleTile bScale;\n"
-       << "  BiasTile bias;\n"
-       << "  pto::TASSIGN_IMPL(dst, dstAddress);\n"
-       << "  pto::TASSIGN_IMPL(lhs, lhsAddress);\n"
-       << "  pto::TASSIGN_IMPL(aScale, aScaleAddress);\n"
-       << "  pto::TASSIGN_IMPL(rhs, rhsAddress);\n"
-       << "  pto::TASSIGN_IMPL(bScale, bScaleAddress);\n"
-       << "  pto::TASSIGN_IMPL(bias, biasAddress);\n"
-       << "  pto::TMATMUL_MX(dst, lhs, aScale, rhs, bScale, bias);\n"
-       << "}\n";
-  }
-  os << "#endif\n";
+  if (guardCube || guardVec)
+    os << "#endif\n";
 
   os.flush();
   return source;
@@ -398,10 +363,12 @@ static LogicalResult mergeFuncSpecsIntoModule(ModuleOp module) {
   return success();
 }
 
-/// Maps a tmpl_map `source` to the spec keys that carry its collected
-/// token. The pipe `tile` source is split by the routed op: a push entry
-/// binds the producer tile, a pop entry the consumer tile. Unknown sources
-/// are rejected at whitelist parse time.
+/// Maps a tmpl_map `source` of a custom-channel entry to the spec keys
+/// carrying its collected token. The pipe `tile` source is split by the
+/// routed op: a push entry binds the producer tile, a pop entry the
+/// consumer tile. Unknown sources are rejected at whitelist parse time.
+/// Declarative wrappers never reach here: their tile typedefs derive from
+/// the abi roles.
 static llvm::SmallVector<llvm::StringLiteral, 2>
 tmplMapSourceSpecKeys(const BridgeWhitelistEntry &entry,
                       llvm::StringRef source) {
@@ -414,20 +381,6 @@ tmplMapSourceSpecKeys(const BridgeWhitelistEntry &entry,
       return {kBridgeSpecConsumerTileKey};
     return {kBridgeSpecProducerTileKey, kBridgeSpecConsumerTileKey};
   }
-  if (source == kBridgeSpecLeftTileKey)
-    return {kBridgeSpecLeftTileKey};
-  if (source == kBridgeSpecRightTileKey)
-    return {kBridgeSpecRightTileKey};
-  if (source == kBridgeSpecResultTileKey)
-    return {kBridgeSpecResultTileKey};
-  if (source == kBridgeSpecAccInTileKey)
-    return {kBridgeSpecAccInTileKey};
-  if (source == kBridgeSpecBiasTileKey)
-    return {kBridgeSpecBiasTileKey};
-  if (source == kBridgeSpecAScaleTileKey)
-    return {kBridgeSpecAScaleTileKey};
-  if (source == kBridgeSpecBScaleTileKey)
-    return {kBridgeSpecBScaleTileKey};
   return {};
 }
 
@@ -446,23 +399,20 @@ static llvm::StringSet<> collectUsedEntries(DictionaryAttr specAttr) {
   return usedEntries;
 }
 
-/// Builds the typedef declarations rendered into the wrapper from the
+/// Builds the typedef declarations of a custom-channel wrapper from the
 /// tmpl_map rows of the entries the module uses, in whitelist order, and
 /// validates that every declared template slot is covered by a token the
 /// family pass collected into the spec. A target may be declared by several
-/// entries (both MX variants declare AScaleTile); the first declaration wins
-/// and the merged spec guarantees the tokens are identical. Field-level
-/// template argument construction stays authoritative in VPTOBridgeTokens
-/// (design decision 4); this check only guarantees the declarations are not
-/// silently dropped.
+/// entries; the first declaration wins and the merged spec guarantees the
+/// tokens are identical.
 static FailureOr<SmallVector<BridgeTypedefDecl>>
-buildTypedefDecls(ModuleOp module, const BridgeWhitelist &whitelist,
-                  DictionaryAttr specAttr,
-                  const llvm::StringSet<> &usedEntries) {
+buildCustomTypedefDecls(ModuleOp module, const BridgeWhitelist &whitelist,
+                        llvm::StringRef wrapper, DictionaryAttr specAttr,
+                        const llvm::StringSet<> &usedEntries) {
   SmallVector<BridgeTypedefDecl> decls;
   llvm::StringSet<> seenTargets;
   for (const BridgeWhitelistEntry &entry : whitelist.bridgeOps) {
-    if (!usedEntries.count(entry.entry))
+    if (entry.wrapper != wrapper || !usedEntries.count(entry.entry))
       continue;
     for (const BridgeTmplMapField &row : entry.tmplMap) {
       for (llvm::StringLiteral key : tmplMapSourceSpecKeys(entry, row.source)) {
@@ -516,21 +466,14 @@ struct VPTOBridgeWrapperGenPass final
       return;
     }
     llvm::StringSet<> usedEntries = collectUsedEntries(specAttr);
-    FailureOr<SmallVector<BridgeTypedefDecl>> typedefsOr =
-        buildTypedefDecls(module, *whitelistOr, specAttr, usedEntries);
-    if (failed(typedefsOr)) {
-      signalPassFailure();
-      return;
-    }
-    SmallVector<BridgeTypedefDecl> typedefs = std::move(*typedefsOr);
 
     // Which wrapper source to render is a whitelist fact, not something to
     // infer from which spec keys happen to be present: every entry the
     // module used names its wrapper, and entries sharing a wrapper render
     // into one translation unit. Deriving the set here means a newly
-    // bridged interface needs no edit to this dispatch -- only its own
-    // renderer -- and the diagnostics below name whatever wrappers the
-    // whitelist actually declares instead of a hardcoded pair.
+    // bridged declarative interface needs no edit to this pass at all, and
+    // the diagnostics below name whatever wrappers the whitelist actually
+    // declares.
     SmallVector<StringRef> usedWrappers;
     for (const BridgeWhitelistEntry &entry : whitelistOr->bridgeOps) {
       if (!usedEntries.count(entry.entry))
@@ -557,145 +500,110 @@ struct VPTOBridgeWrapperGenPass final
     }
     StringRef usedWrapper = usedWrappers.front();
 
-    // The entry bodies reference fixed typedef names, so every name they
-    // use must be rendered by a tmpl_map declaration.
-    llvm::StringSet<> declTargets;
-    for (const BridgeTypedefDecl &decl : typedefs)
-      declTargets.insert(decl.target);
-    auto requireTypedefTargets = [&](ArrayRef<StringRef> targets) {
-      bool ok = true;
-      for (StringRef target : targets) {
-        if (declTargets.count(target))
-          continue;
-        module.emitError()
-            << "VPTO bridge: no tmpl_map row renders the '" << target
-            << "' typedef the wrapper entry bodies need; declare it in the "
-               "whitelist entry";
-        ok = false;
-      }
-      return ok;
-    };
-
     FailureOr<std::string> source = failure();
-    if (usedWrapper == kMatmulWrapper) {
-      BridgeMatmulSpec spec;
-      BridgeSpecField fields[] = {
-          {kBridgeSpecAccPhaseKey, &spec.accPhase},
-          {kBridgeSpecEntryMatmulKey, &spec.entryMatmul},
-          {kBridgeSpecEntryMatmulAccKey, &spec.entryMatmulAcc},
-          {kBridgeSpecEntryMatmulBiasKey, &spec.entryMatmulBias},
-          {kBridgeSpecEntryMatmulMxKey, &spec.entryMatmulMx},
-          {kBridgeSpecEntryMatmulMxAccKey, &spec.entryMatmulMxAcc},
-          {kBridgeSpecEntryMatmulMxBiasKey, &spec.entryMatmulMxBias},
-      };
-      bool ok = true;
-      // The tile typedefs are rendered from the tmpl_map declarations; the
-      // renderer only needs to know the tokens were collected.
-      for (llvm::StringLiteral key :
-           {kBridgeSpecLeftTileKey, kBridgeSpecRightTileKey,
-            kBridgeSpecResultTileKey}) {
-        auto value = specAttr.getAs<StringAttr>(key);
-        if (!value || value.getValue().empty()) {
-          module.emitError()
-              << "VPTO matmul bridge spec is missing the '" << key
-              << "' field; the matmul family pass must collect it before "
-                 "wrapper generation";
-          ok = false;
+    if (whitelistOr->wrapperHasCustomEntry(usedWrapper)) {
+      if (usedWrapper == kPipeWrapper) {
+        FailureOr<SmallVector<BridgeTypedefDecl>> typedefsOr =
+            buildCustomTypedefDecls(module, *whitelistOr, usedWrapper,
+                                    specAttr, usedEntries);
+        if (failed(typedefsOr)) {
+          signalPassFailure();
+          return;
         }
-      }
-      for (const auto &field : fields) {
-        auto value = specAttr.getAs<StringAttr>(field.key);
-        if (value)
-          *field.field = value.getValue();
-      }
-      if (ok && spec.entryMatmul.empty() && spec.entryMatmulAcc.empty() &&
-          spec.entryMatmulBias.empty() && spec.entryMatmulMx.empty() &&
-          spec.entryMatmulMxAcc.empty() && spec.entryMatmulMxBias.empty()) {
-        module.emitError()
-            << "VPTO matmul bridge spec carries no wrapper entry; the "
-               "matmul family pass must collect an entry.matmul* field "
-               "before wrapper generation";
-        ok = false;
-      }
-      if (ok) {
-        SmallVector<StringRef> requiredTargets = {"LeftTile", "RightTile",
-                                                  "ResultTile"};
-        if (!spec.entryMatmulAcc.empty() || !spec.entryMatmulMxAcc.empty())
-          requiredTargets.push_back("AccInTile");
-        if (!spec.entryMatmulBias.empty() || !spec.entryMatmulMxBias.empty())
-          requiredTargets.push_back("BiasTile");
-        if (!spec.entryMatmulMx.empty() || !spec.entryMatmulMxAcc.empty() ||
-            !spec.entryMatmulMxBias.empty()) {
-          requiredTargets.push_back("AScaleTile");
-          requiredTargets.push_back("BScaleTile");
-        }
-        if (!requireTypedefTargets(requiredTargets))
-          ok = false;
-      }
-      if (ok)
-        source = renderMatmulBridgeSource(spec, typedefs);
-    } else if (usedWrapper == kPipeWrapper) {
-      // All pipe spec fields are mandatory: a pipe bridge kernel always
-      // carries the full init/size/push/pop/free entry set with a single
-      // pipe and tile pair configuration.
-      BridgePipeSpec spec;
-      BridgeSpecField fields[] = {
-          {kBridgeSpecPipeKey, &spec.pipe},
-          {kBridgeSpecSplitKey, &spec.split},
-          {kBridgeSpecEntryInitKey, &spec.entryInit},
-          {kBridgeSpecEntrySizeKey, &spec.entrySize},
-          {kBridgeSpecEntryPushKey, &spec.entryPush},
-          {kBridgeSpecEntryPopKey, &spec.entryPop},
-          {kBridgeSpecEntryFreeKey, &spec.entryFree},
-      };
-      bool ok = true;
-      // The tile typedefs are rendered from the tmpl_map declarations; the
-      // renderer only needs to know the tokens were collected.
-      for (llvm::StringLiteral key :
-           {kBridgeSpecProducerTileKey, kBridgeSpecConsumerTileKey}) {
-        auto value = specAttr.getAs<StringAttr>(key);
-        if (!value || value.getValue().empty()) {
-          module.emitError()
-              << "VPTO pipe bridge spec is missing the '" << key
-              << "' field; the pipe family pass must collect it before "
-                 "wrapper generation";
-          ok = false;
-          break;
-        }
-      }
-      if (ok) {
-        for (const auto &field : fields) {
-          auto value = specAttr.getAs<StringAttr>(field.key);
+        SmallVector<BridgeTypedefDecl> typedefs = std::move(*typedefsOr);
+        // The pipe entry bodies reference fixed typedef names, so every
+        // name they use must be rendered by a tmpl_map declaration.
+        llvm::StringSet<> declTargets;
+        for (const BridgeTypedefDecl &decl : typedefs)
+          declTargets.insert(decl.target);
+        auto requireTypedefTargets = [&](ArrayRef<StringRef> targets) {
+          bool ok = true;
+          for (StringRef target : targets) {
+            if (declTargets.count(target))
+              continue;
+            module.emitError()
+                << "VPTO bridge: no tmpl_map row renders the '" << target
+                << "' typedef the wrapper entry bodies need; declare it in "
+                   "the whitelist entry";
+            ok = false;
+          }
+          return ok;
+        };
+        // All pipe spec fields are mandatory: a pipe bridge kernel always
+        // carries the full init/size/push/pop/free entry set with a single
+        // pipe and tile pair configuration.
+        BridgePipeSpec spec;
+        BridgeSpecField fields[] = {
+            {kBridgeSpecPipeKey, &spec.pipe},
+            {kBridgeSpecSplitKey, &spec.split},
+            {kBridgeSpecEntryInitKey, &spec.entryInit},
+            {kBridgeSpecEntrySizeKey, &spec.entrySize},
+            {kBridgeSpecEntryPushKey, &spec.entryPush},
+            {kBridgeSpecEntryPopKey, &spec.entryPop},
+            {kBridgeSpecEntryFreeKey, &spec.entryFree},
+        };
+        bool ok = true;
+        // The tile typedefs are rendered from the tmpl_map declarations;
+        // the renderer only needs to know the tokens were collected.
+        for (llvm::StringLiteral key :
+             {kBridgeSpecProducerTileKey, kBridgeSpecConsumerTileKey}) {
+          auto value = specAttr.getAs<StringAttr>(key);
           if (!value || value.getValue().empty()) {
             module.emitError()
-                << "VPTO pipe bridge spec is missing the '" << field.key
+                << "VPTO pipe bridge spec is missing the '" << key
                 << "' field; the pipe family pass must collect it before "
                    "wrapper generation";
             ok = false;
             break;
           }
-          *field.field = value.getValue();
         }
-      }
-      if (ok)
-        ok = requireTypedefTargets({"Pipe", "ProducerTile", "ConsumerTile"});
-      if (ok) {
-        source = renderPipeBridgeSource(spec, typedefs);
-        if (failed(source)) {
-          module.emitError()
-              << "VPTO pipe bridge: cannot render the wrapper source; the "
-                 "pipe token must carry a C2V or V2C direction";
+        if (ok) {
+          for (const auto &field : fields) {
+            auto value = specAttr.getAs<StringAttr>(field.key);
+            if (!value || value.getValue().empty()) {
+              module.emitError()
+                  << "VPTO pipe bridge spec is missing the '" << field.key
+                  << "' field; the pipe family pass must collect it before "
+                     "wrapper generation";
+              ok = false;
+              break;
+            }
+            *field.field = value.getValue();
+          }
         }
+        if (ok)
+          ok = requireTypedefTargets({"Pipe", "ProducerTile", "ConsumerTile"});
+        if (ok) {
+          source = renderPipeBridgeSource(spec, typedefs);
+          if (failed(source)) {
+            module.emitError()
+                << "VPTO pipe bridge: cannot render the wrapper source; the "
+                   "pipe token must carry a C2V or V2C direction";
+          }
+        }
+      } else {
+        // The whitelist routed these ops into a custom wrapper this pass
+        // has no dedicated renderer for. Say so instead of falling through
+        // to the generic renderer, which cannot express family semantics.
+        module.emitError()
+            << "VPTO bridge: whitelist entries name the custom wrapper '"
+            << usedWrapper
+            << "', which has no dedicated renderer in the bridge wrapper "
+               "generator (available: "
+            << kPipeWrapper << ")";
       }
     } else {
-      // The whitelist routed these ops to a wrapper this pass has no
-      // renderer for. Say so instead of falling through to some other
-      // wrapper's renderer and failing on its missing spec fields.
-      module.emitError()
-          << "VPTO bridge: whitelist entries name wrapper '" << usedWrapper
-          << "', which has no renderer in the bridge wrapper generator "
-             "(available: "
-          << kPipeWrapper << ", " << kMatmulWrapper << ")";
+      const BridgeWrapperDecl *decl = whitelistOr->findWrapper(usedWrapper);
+      if (!decl) {
+        module.emitError()
+            << "VPTO bridge: wrapper '" << usedWrapper
+            << "' routes declarative entries but has no declaration in the "
+               "whitelist wrappers section (declare its name, includes and "
+               "core there)";
+      } else {
+        source = renderDeclarativeBridgeSource(module, *whitelistOr, *decl,
+                                               specAttr, usedEntries);
+      }
     }
     if (failed(source)) {
       signalPassFailure();

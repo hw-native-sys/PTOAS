@@ -53,9 +53,7 @@ namespace {
 
 /// Derives the wrapper entry spec key from the routed IR op name.
 /// Tile-world ops carry the `pto.t` mnemonic prefix, which is not part of
-/// the wrapper's entry naming (`pto.tmatmul.mx.acc` -> `entry.matmul_mx_acc`);
-/// the derived keys must reproduce the kBridgeSpecEntryMatmul*Key constants
-/// the wrapper generation pass consumes.
+/// the wrapper's entry naming (`pto.tmatmul.mx.acc` -> `entry.matmul_mx_acc`).
 static std::string deriveEntrySpecKey(llvm::StringRef opName) {
   constexpr llvm::StringLiteral kTileWorldOpPrefix = "pto.t";
   if (!opName.consume_front(kTileWorldOpPrefix)) {

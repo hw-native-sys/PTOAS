@@ -29,12 +29,14 @@ namespace mlir {
 namespace pto {
 
 /// ABI argument of a wrapper entry. `type` is one of the supported carrier
-/// tokens: "ptr", "i64", or "i32". Declarative entries additionally bind
-/// each argument to an IR operand position (`operand`, positional because
-/// MLIR exposes no generic ODS operand-name reflection), carry a
-/// diagnostic label (`arg`, the ODS operand name) and the template role
-/// the operand's tile token is collected under (`role`, which is also the
-/// spec key and a valid tmpl_map source).
+/// tokens: "ptr", "i64", or "i32" (declarative entries may omit it, the
+/// parser fills in the "i64" tile-address default). Declarative entries
+/// additionally bind each argument to an IR operand position (`operand`,
+/// positional because MLIR exposes no generic ODS operand-name
+/// reflection), carry a diagnostic label (`arg`, the ODS operand name) and
+/// the template role the operand's tile token is collected under (`role`,
+/// which is also the spec key and the source of the entry's tile typedef
+/// name).
 struct BridgeAbiArg {
   std::string type;
   int64_t operand = -1;
@@ -46,11 +48,11 @@ struct BridgeAbiArg {
 /// `field`) feeds a C++ template slot (`target`). Consumed by wrapper
 /// generation to validate that the collected specialization covers the
 /// declared slots; the authoritative token construction lives in
-/// VPTOBridgeTokens. For declarative entries the tile sources name abi
-/// roles; `source: attr` maps an enum attribute to a template slot, with
-/// `enumType` providing the qualified C++ enum spelling and `omitValue`
-/// the case that renders no template argument (e.g. an Unspecified
-/// accumulation phase).
+/// VPTOBridgeTokens. Declarative entries carry only `source: attr` rows
+/// (an enum attribute mapped to a template slot, with `enumType` providing
+/// the qualified C++ enum spelling and `omitValue` the case that renders
+/// no template argument); their tile typedefs derive from the abi roles,
+/// so tile rows are rejected at parse time.
 struct BridgeTmplMapField {
   std::string source;
   std::string field;
@@ -91,9 +93,23 @@ struct BridgeWhitelistEntry {
   /// so it is rejected at parse time with the missing field named, instead
   /// of surviving until the post-lowering leftover check.
   std::string lowering = "declarative";
-  /// Wrapper entry name, e.g. "pto_vpto_pipe_push". This is the callee the
-  /// generic bridge lowering emits.
+  /// Wrapper entry name, e.g. "pto_vpto_pipe_push". This is the callee
+  /// the generic bridge lowering emits. Optional for declarative routed
+  /// entries, which default to a name derived from the op name (see
+  /// deriveDefaultBridgeEntry); custom entries must declare it.
   std::string entry;
+  /// C++ call spelling the generic declarative renderer emits for this
+  /// entry, e.g. "pto::TMATMUL" or "TADD". Declarative routed entries
+  /// only; the call arguments are the abi-bound tiles in declaration
+  /// order.
+  std::string call;
+  /// Template arguments rendered between the call spelling and its
+  /// argument list. Each item is either the `field` of one of this
+  /// entry's attr tmpl_map rows (rendered as the spec token collected
+  /// for that field; the whole template argument list is omitted when
+  /// the spec carries no token) or a literal qualified C++ spelling
+  /// (contains "::"). Declarative routed entries only.
+  std::vector<std::string> tmplArgs;
   /// Call-side ABI of the wrapper entry, including any synthesized
   /// arguments such as the storage pointer of stateful entries.
   std::vector<BridgeAbiArg> abi;
@@ -116,9 +132,44 @@ struct BridgeWhitelistEntry {
   static constexpr llvm::StringLiteral kLoweringCustom = "custom";
 };
 
+/// Declaration of a wrapper rendered by the generic declarative renderer:
+/// the family knowledge no whitelist entry carries. `includes` lists the
+/// PTO-ISA headers the wrapper translation unit includes; `core` selects
+/// the core guard the entries render under ("cube" -> __DAV_CUBE__,
+/// "vec" -> __DAV_VEC__, "both" -> no guard). Wrappers whose entries carry
+/// `lowering: custom` own a dedicated renderer and must not be declared
+/// here.
+struct BridgeWrapperDecl {
+  std::string name;
+  std::vector<std::string> includes;
+  std::string core;
+};
+
 /// Parsed whitelist document.
 struct BridgeWhitelist {
   std::vector<BridgeWhitelistEntry> bridgeOps;
+  std::vector<BridgeWrapperDecl> wrappers;
+
+  /// Returns the wrapper declaration named `name`, or nullptr.
+  const BridgeWrapperDecl *findWrapper(llvm::StringRef name) const {
+    for (const BridgeWrapperDecl &decl : wrappers) {
+      if (decl.name == name) {
+        return &decl;
+      }
+    }
+    return nullptr;
+  }
+
+  /// Returns whether any entry routing into the wrapper `name` carries
+  /// `lowering: custom` (and thus needs a dedicated renderer).
+  bool wrapperHasCustomEntry(llvm::StringRef name) const {
+    for (const BridgeWhitelistEntry &entry : bridgeOps) {
+      if (entry.wrapper == name && !entry.isDeclarative()) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   /// Returns the entry whose wrapper name is `entryName`, or nullptr.
   const BridgeWhitelistEntry *findEntry(llvm::StringRef entryName) const {
@@ -196,6 +247,23 @@ constexpr llvm::StringLiteral kTileTmplMapSource = "tile";
 /// tmpl_map `source` token mapping an enum attribute of the routed op to a
 /// template slot.
 constexpr llvm::StringLiteral kAttrTmplMapSource = "attr";
+
+/// `core` values accepted by a wrapper declaration.
+constexpr llvm::StringLiteral kBridgeWrapperCoreCube = "cube";
+constexpr llvm::StringLiteral kBridgeWrapperCoreVec = "vec";
+constexpr llvm::StringLiteral kBridgeWrapperCoreBoth = "both";
+
+/// Derives the default wrapper entry name of a declarative routed entry
+/// from its IR op name: strip the `pto.` prefix, drop the tile-world `t`
+/// mnemonic lead, replace dots with underscores and prepend `pto_vpto_`
+/// (`pto.tmatmul.mx.acc` -> `pto_vpto_matmul_mx_acc`).
+std::string deriveDefaultBridgeEntry(llvm::StringRef opName);
+
+/// Renders the CamelCase typedef target name of an abi role
+/// (`left_tile` -> `LeftTile`, `a_scale_tile` -> `AScaleTile`). Tile
+/// typedefs of declarative entries are role driven, so this is the single
+/// source of the typedef names the wrapper bodies reference.
+std::string bridgeRoleTypedefTarget(llvm::StringRef role);
 
 } // namespace pto
 } // namespace mlir
