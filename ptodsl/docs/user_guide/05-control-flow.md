@@ -394,15 +394,20 @@ def ast_rewrite_short_circuit_kernel():
 `and` returns the left operand when it is falsy and the right operand
 otherwise; `or` returns the left operand when it is truthy and the right
 operand otherwise. Integer-typed operands are tested with non-zero
-truthiness, and when one merged branch is an `i1` the other operand is
-reconciled with the same rules as `pto.if_` branch merges (including Python
-`bool` literals, which materialize as `i1` constants). Statically-known
-`bool` / `int` operands short-circuit at trace time: `False and rhs` and
-`True or rhs` never trace the RHS at all.
+truthiness. When one merged branch yields an `i1` and the other an
+integer-like value, the integer type is kept and the `i1` side widens to its
+0/1 integer value, so the integer operand value is preserved; a merge of two
+`i1` values stays `i1`. Python `bool` literals materialize as `i1` and widen
+like any other `i1` when the opposite branch is integer-typed. Incompatible
+branch types keep the usual branch-merge diagnostics.
+
+Statically known `bool` / `int` / float operands short-circuit at trace time
+with native Python truthiness: `False and rhs`, `True or rhs`, and
+`0.0 or rhs` never trace the RHS at all. Runtime floating-point controls are
+not valid short-circuit predicates and raise a clear error.
 
 `and` / `or` compose with every rewritten expression context: assignments,
-call arguments, `return`, and `if` / `while` conditions. Floating-point
-values are not valid short-circuit controls and raise a clear error.
+call arguments, `return`, and `if` / `while` conditions.
 
 
 ### Runtime loops

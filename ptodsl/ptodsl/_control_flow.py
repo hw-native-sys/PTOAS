@@ -30,7 +30,7 @@ import warnings
 
 from ._diagnostics import explicit_mode_required_with_context_error
 from ._runtime_index_ops import coerce_runtime_index
-from ._scalar_adaptation import coerce_runtime_i1_value, coerce_runtime_integer_to_i1
+from ._scalar_adaptation import coerce_integer_like, coerce_runtime_i1_value, coerce_runtime_integer_to_i1
 from ._scalar_coercion import coerce_scalar_to_type
 from ._surface_types import const_expr
 from ._tracing.active import current_session, require_active_session
@@ -605,8 +605,9 @@ class BranchHandle:
 
 
 class _IfCM:
-    def __init__(self, cond):
+    def __init__(self, cond, *, short_circuit_merge: bool = False):
         self._cond = cond
+        self._short_circuit_merge = short_circuit_merge
         self._cond_value = None
         self._tmp_if = None
         self._parent_block = None
@@ -759,6 +760,7 @@ class _IfCM:
                 else_value,
                 then_block=self._tmp_if.then_block,
                 else_block=self._tmp_if.else_block,
+                short_circuit_merge=self._short_circuit_merge,
             )
             if then_value.type != else_value.type:
                 raise RuntimeError(
@@ -884,24 +886,21 @@ def _short_circuit_and(lhs, rhs_fn):
 
     Emits a result-bearing ``scf.if``: when ``lhs`` is truthy the RHS lambda is
     traced inside the ``then`` region, otherwise the unmodified ``lhs`` operand
-    is the result.  Non-runtime operands (plain Python values) keep native
-    Python truthiness and short-circuit at trace time without tracing the RHS.
-    The branch merge reuses ``pto.if_`` existing rules: integer-like operands
-    are tested with non-zero coercion, and incompatible branch types keep their
-    existing diagnostics.  Floating-point control values are rejected.
+    is the result.  Non-runtime operands (plain Python values, including static
+    floats) keep native Python truthiness and short-circuit at trace time
+    without tracing the RHS.  Runtime left operands use non-zero truthiness for
+    the control condition; the branch merge keeps Python operand semantics, so
+    an ``i1`` next to an integer-like value widens to that integer's 0/1 value
+    instead of collapsing the integer to a boolean.  Incompatible branch types
+    keep their existing diagnostics.
     """
     if not callable(rhs_fn):
         raise TypeError("pto._short_circuit_and expects a zero-argument callable RHS")
     if not hasattr(lhs, "type"):
-        if isinstance(lhs, float):
-            raise TypeError(
-                "pto short-circuit and does not accept floating-point control values; "
-                "runtime float conditions are not supported",
-            )
         return rhs_fn() if lhs else lhs
     raw_lhs = unwrap_surface_value(lhs)
     cond = coerce_runtime_i1_value(raw_lhs, context="pto short-circuit and condition")
-    with if_(cond) as br:
+    with _IfCM(cond, short_circuit_merge=True) as br:
         with br.then_:
             br.assign(value=_materialize_bool_branch_value(
                 _branch_rhs_value(rhs_fn(), "and"), context="pto short-circuit and RHS"))
@@ -915,22 +914,21 @@ def _short_circuit_or(lhs, rhs_fn):
 
     When ``lhs`` is truthy the unmodified ``lhs`` operand is the result and the
     RHS lambda is never traced; otherwise the RHS runs inside the ``else``
-    region.  Non-runtime operands (plain Python values) keep native Python
-    truthiness and short-circuit at trace time.  Floating-point control values
-    are rejected.
+    region.  Non-runtime operands (plain Python values, including static
+    floats) keep native Python truthiness and short-circuit at trace time.
+    Runtime left operands use non-zero truthiness for the control condition;
+    the branch merge keeps Python operand semantics, so an ``i1`` next to an
+    integer-like value widens to that integer's 0/1 value instead of
+    collapsing the integer to a boolean.  Incompatible branch types keep their
+    existing diagnostics.
     """
     if not callable(rhs_fn):
         raise TypeError("pto._short_circuit_or expects a zero-argument callable RHS")
     if not hasattr(lhs, "type"):
-        if isinstance(lhs, float):
-            raise TypeError(
-                "pto short-circuit or does not accept floating-point control values; "
-                "runtime float conditions are not supported",
-            )
         return lhs if lhs else rhs_fn()
     raw_lhs = unwrap_surface_value(lhs)
     cond = coerce_runtime_i1_value(raw_lhs, context="pto short-circuit or condition")
-    with if_(cond) as br:
+    with _IfCM(cond, short_circuit_merge=True) as br:
         with br.then_:
             br.assign(value=lhs)
         with br.else_:
@@ -956,26 +954,83 @@ def _coerce_integer_to_i1_at(value, *, block, context):
         return coerce_runtime_integer_to_i1(value, context=context)
 
 
-def _reconcile_branch_assignment_values(name, then_value, else_value, *, then_block=None, else_block=None):
+def _coerce_i1_to_integer_at(value, *, block, target_type, context):
+    """Widen an i1 branch value to *target_type* inside *block*."""
+    with InsertionPoint(block):
+        if IndexType.isinstance(target_type):
+            return arith.ExtUIOp(IndexType.get(), value).result
+        return coerce_integer_like(value, target_type)
+
+
+def _reconcile_branch_assignment_values(
+    name,
+    then_value,
+    else_value,
+    *,
+    then_block=None,
+    else_block=None,
+    short_circuit_merge: bool = False,
+):
+    """Reconcile one named value across both branches of ``br.assign``.
+
+    The default merge is predicate-oriented (``pto.if_`` semantics): an
+    integer-like operand next to an ``i1`` is normalized to its non-zero i1.
+    ``short_circuit_merge=True`` instead keeps Python operand semantics for
+    ``and``/``or``: when one branch yields an ``i1`` and the other an
+    integer-like value, the integer type wins and the ``i1`` side is widened
+    to its 0/1 integer value.
+    """
     then_is_typed = hasattr(then_value, "type")
     else_is_typed = hasattr(else_value, "type")
+
+    if short_circuit_merge and (then_is_typed != else_is_typed):
+        # A Python bool literal against a typed branch materializes to i1
+        # first; the typed-vs-typed rules below then pick the result type.
+        if then_is_typed and isinstance(else_value, bool):
+            else_value = coerce_runtime_i1_value(
+                else_value,
+                context=f"br.assign(...) else branch value for '{name}'",
+            )
+            else_is_typed = True
+        elif else_is_typed and isinstance(then_value, bool):
+            then_value = coerce_runtime_i1_value(
+                then_value,
+                context=f"br.assign(...) then branch value for '{name}'",
+            )
+            then_is_typed = True
 
     if then_is_typed and else_is_typed:
         then_is_i1 = _is_i1_type(then_value.type)
         else_is_i1 = _is_i1_type(else_value.type)
         if then_is_i1 != else_is_i1:
             if then_is_i1 and _is_integer_like_type(else_value.type):
-                else_value = _coerce_integer_to_i1_at(
-                    else_value,
-                    block=else_block,
-                    context=f"br.assign(...) else branch value for '{name}'",
-                )
+                if short_circuit_merge:
+                    then_value = _coerce_i1_to_integer_at(
+                        then_value,
+                        block=then_block,
+                        target_type=else_value.type,
+                        context=f"br.assign(...) then branch value for '{name}'",
+                    )
+                else:
+                    else_value = _coerce_integer_to_i1_at(
+                        else_value,
+                        block=else_block,
+                        context=f"br.assign(...) else branch value for '{name}'",
+                    )
             elif else_is_i1 and _is_integer_like_type(then_value.type):
-                then_value = _coerce_integer_to_i1_at(
-                    then_value,
-                    block=then_block,
-                    context=f"br.assign(...) then branch value for '{name}'",
-                )
+                if short_circuit_merge:
+                    else_value = _coerce_i1_to_integer_at(
+                        else_value,
+                        block=else_block,
+                        target_type=then_value.type,
+                        context=f"br.assign(...) else branch value for '{name}'",
+                    )
+                else:
+                    then_value = _coerce_integer_to_i1_at(
+                        then_value,
+                        block=then_block,
+                        context=f"br.assign(...) then branch value for '{name}'",
+                    )
         return then_value, else_value
     if then_is_typed:
         return then_value, coerce_scalar_to_type(

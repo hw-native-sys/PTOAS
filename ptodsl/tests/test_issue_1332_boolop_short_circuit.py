@@ -116,7 +116,66 @@ def issue_1332_integer_operands(x: pto.i32, y: pto.i32, out: pto.ptr(pto.i32, "g
     scalar.store(pred, out, 0)
 
 
+
+
+@pto.jit(name="issue_1332_integer_or_lhs", kernel_kind="vector", target="a5")
+def issue_1332_integer_or_lhs(x: pto.i32, y: pto.i32, out: pto.ptr(pto.i8, "gm")):
+    pred = x or (y > 0)
+    scalar.store(pred, out, 0)
+
+
+@pto.jit(name="issue_1332_flag_integer_rhs", kernel_kind="vector", target="a5")
+def issue_1332_flag_integer_rhs(flag: pto.i1, y: pto.i32, out: pto.ptr(pto.i8, "gm")):
+    pred = flag and y
+    scalar.store(pred, out, 0)
+
+
+# Static floats and ints keep native Python truthiness and operand results at
+# trace time (runtime float controls are still diagnosed).
+
+
+@pto.jit(name="issue_1332_static_float", kernel_kind="vector", target="a5")
+def issue_1332_static_float(f: pto.i1, out: pto.ptr(pto.i8, "gm")):
+    pred_a = 0.0 or True
+    if pred_a is not True:
+        return
+    pred_b = 1.0 and f
+    scalar.store(pred_b, out, 0)
+
+
+@pto.jit(name="issue_1332_static_int_operands", kernel_kind="vector", target="a5")
+def issue_1332_static_int_operands(out: pto.ptr(pto.i8, "gm")):
+    a = 2 and True
+    if a is not True:
+        return
+    b = 0 and True
+    if b != 0:
+        return
+    c = 5 or (1 > 2)
+    if c != 5:
+        return
+    d = 0 or (1 > 2)
+    if d is not False:
+        return
+    scalar.store(pto.const(3, dtype=pto.i8), out, 0)
+
+
+# and/or inside an @pto.func helper body.
+
+
+@pto.func(returns=pto.i1)
+def issue_1332_func_and(a: pto.i1, b: pto.i1) -> pto.i1:
+    return a and b
+
+
+@pto.jit(name="issue_1332_func_call", kernel_kind="vector", target="a5")
+def issue_1332_func_call(x: pto.i32, y: pto.i32, out: pto.ptr(pto.i8, "gm")):
+    pred = issue_1332_func_and(x > 0, y > 0)
+    scalar.store(pred, out, 0)
+
+
 # ``runtime_value and True`` materializes the Python bool to an i1 const in
+# the branch merge.
 # the branch merge.
 
 
@@ -185,11 +244,33 @@ def _expect_error(fn, needle):
 def main():
     and_mlir = issue_1332_and_kernel.compile().mlir_text()
     or_mlir = issue_1332_or_kernel.compile().mlir_text()
-    # The guarded RHS (division) must live inside an scf.if region.
-    assert "scf.if" in and_mlir and "arith.floordivsi" in and_mlir
-    assert "scf.if" in or_mlir and "arith.floordivsi" in or_mlir
-    # Short-circuit control uses the LHS predicate, not the division result.
-    assert "arith.cmpi ne, %" in and_mlir or "arith.cmpi ne" in and_mlir
+
+    # The guarded RHS (division) must live inside the scf.if branch and the
+    # condition must come from the LHS comparison.  Verify by walking the
+    # emitted module rather than matching text fragments.
+    def _walk(op):
+        yield op
+        for region in op.operation.regions:
+            for block in region.blocks:
+                for child in block.operations:
+                    yield from _walk(child)
+
+    def _guarded_division(module, region_index):
+        scf_ifs = [op for op in _walk(module) if op.operation.name == "scf.if"]
+        assert scf_ifs, "expected scf.if in the short-circuit kernel"
+        scf_if = scf_ifs[0]
+        cond_owner = scf_if.operation.operands[0].owner
+        assert cond_owner is not None and cond_owner.operation.name == "arith.cmpi", (
+            "scf.if condition must be the LHS comparison",
+        )
+        names = []
+        for block in scf_if.operation.regions[region_index].blocks:
+            for child in block.operations:
+                names.extend(op.operation.name for op in _walk(child))
+        assert "arith.floordivsi" in names, f"guarded division missing from region {region_index}"
+
+    _guarded_division(issue_1332_and_kernel.mlir_module(), 0)  # and: then region
+    _guarded_division(issue_1332_or_kernel.mlir_module(), 1)   # or: else region
 
     chain_and = issue_1332_and_chain.compile().mlir_text()
     chain_or = issue_1332_or_chain.compile().mlir_text()
@@ -209,11 +290,21 @@ def main():
     assert "floordiv" not in static_mlir, static_mlir
 
     int_lhs = issue_1332_integer_lhs.compile().mlir_text()
-    # Integer LHS becomes a non-zero i1 control condition.
-    assert int_lhs.count("arith.cmpi ne") == 2, int_lhs
+    # Integer LHS becomes a non-zero i1 control condition; the integer operand
+    # is preserved and the i1 RHS widens to the integer type.
+    assert int_lhs.count("arith.cmpi ne") == 1, int_lhs
+    assert "arith.extui" in int_lhs and "-> (i32)" in int_lhs, int_lhs
     int_operands = issue_1332_integer_operands.compile().mlir_text()
     # Both integer operands merge back to i32 (Python operand semantics).
     assert "-> (i32)" in int_operands, int_operands
+
+    or_lhs = issue_1332_integer_or_lhs.compile().mlir_text()
+    assert "arith.extui" in or_lhs and "-> (i32)" in or_lhs, or_lhs
+    flag_and = issue_1332_flag_integer_rhs.compile().mlir_text()
+    assert "arith.extui" in flag_and and "-> (i32)" in flag_and, flag_and
+    issue_1332_static_float.compile().mlir_text()
+    issue_1332_static_int_operands.compile().mlir_text()
+    issue_1332_func_call.compile().mlir_text()
 
     plain = issue_1332_plain_python_operands.compile().mlir_text()
     bool_lit = issue_1332_bool_literal_rhs.compile().mlir_text()
