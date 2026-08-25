@@ -227,6 +227,12 @@ static bool isRuntimeTileCarrier(Value value) {
   if (isSCFTileCarrier(value)) {
     return true;
   }
+  // A declare_tile tile may be wrapped in bridging unrealized_conversion_cast
+  // ops when the materialized template carries a richer tile_buf config (e.g.
+  // compact=normal) than the tpop-declared plain tile. Unwrap those casts so
+  // the runtime tile handle is still recognized and not sent through
+  // resolveTileHandle (which would reject declare_tile as a non-anchor).
+  value = unwrapBridgingCasts(value);
   return value.getDefiningOp<pto::DeclareTileOp>() != nullptr;
 }
 
