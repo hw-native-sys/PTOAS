@@ -7,11 +7,21 @@
 //      SIMT-only restriction of pto-unroll-simt-for has been lifted: the
 //      annotation is explicit user intent in any context)
 
-// RUN: ptoas --pto-arch=a5 --pto-backend=vpto %s -o /dev/null --mlir-print-ir-after=pto-unroll-loops 2>&1 | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=pto-unroll-loops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=UNROLL
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-pto-ir %s -o - 2>&1 | FileCheck %s --check-prefix=EMITIR
 
-// There should be exactly 1 scf.for in the output (from case 2).
-// CHECK-COUNT-1: scf.for
-// CHECK-NOT:     scf.for
+// The unroll pass runs in the VPTO backend pipeline, so --emit-vpto is required
+// to observe it. The annotated simt_entry loop is fully unrolled while an
+// unannotated simt_entry loop survives.
+// UNROLL-COUNT-1: scf.for
+// UNROLL-NOT:     scf.for
+
+// --emit-pto-ir stops before the VPTO backend pipeline, so the module is
+// printed as text without requiring the CANN toolchain (regressions here used
+// to fail with "CANN toolchain is required").
+// EMITIR-LABEL: module attributes
+// EMITIR: func.func @annotated_unrolled() -> index
+// EMITIR: pto.unroll = "full"
 
 module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
   // Case 1: simt_entry + pto.unroll="full" -> unrolled (no scf.for)
