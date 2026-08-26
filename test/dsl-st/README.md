@@ -130,6 +130,10 @@ auto_main(globals())
   - 如果输出 dtype 需要和 golden 分开控制，可以显式指定
 - `output_index`
   - 默认比较最后一个 tensor；如果不是最后一个，改这里
+- `grid`
+  - launch 的 block 数，默认 `1`
+  - 只有真的要覆盖多核行为（例如 kernel 里用 `pto.get_block_idx` 分片）才需要改
+  - 此时 golden 要按“所有 block 合起来的结果”来写
 - `rtol` / `atol`
   - 浮点结果建议显式写；位级结果一般用 `0.0`
 
@@ -148,6 +152,8 @@ auto_main(globals())
 
 - `make_case()`
 - `check(device_inputs, expected)`
+
+自定义 case dict 里同样可以带 `"grid"`；不写就是 `1`。
 
 ## 当前参考用例
 

@@ -1,0 +1,86 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s
+
+// The two kernel shapes the PTODSL ST case ships
+// (test/vpto/cases/async-comm/sdma_gm_gm.py). That case only runs where a
+// device or simulator is available, so the shapes are pinned here as well.
+//
+// Both take their session from a host template instead of spelling the fields
+// out, which the existing A5 {soft_put} coverage does not: async_session_init
+// pairs pto.session_init with the A2/A3 engine path, and
+// async_sdma_gm_gm_a5_soft_put builds its session by hand.
+
+module attributes {"pto.target_arch" = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @soft_put_from_template(%src: !pto.ptr<i8, gm>,
+                                    %sess_gm: !pto.ptr<i8, gm>,
+                                    %dst: !pto.ptr<i8, gm>,
+                                    %nbytes: i64) attributes {pto.kernel} {
+    %sess = pto.declare_struct
+      -> !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>
+
+    pto.session_init %sess, %sess_gm
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>,
+        !pto.ptr<i8, gm>
+
+    pto.sdma_gm_gm %dst, %src, %nbytes session(%sess) {soft_put}
+      : !pto.ptr<i8, gm>, !pto.ptr<i8, gm>, i64,
+        !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>
+
+    return
+  }
+
+  // Per-core slicing through the session rather than the pointers: every core
+  // loads the same template and then retunes CommBlockOffset, which the
+  // expansion applies to both endpoints.
+  func.func @soft_put_per_core_offset(%src: !pto.ptr<i8, gm>,
+                                      %sess_gm: !pto.ptr<i8, gm>,
+                                      %dst: !pto.ptr<i8, gm>,
+                                      %chunk: i64) attributes {pto.kernel} {
+    %sess = pto.declare_struct
+      -> !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>
+
+    pto.session_init %sess, %sess_gm
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>,
+        !pto.ptr<i8, gm>
+
+    %bid = pto.get_block_idx
+    %off = arith.muli %bid, %chunk : i64
+    pto.struct_set %sess[7], %off
+      : !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>, i64
+
+    pto.sdma_gm_gm %dst, %src, %chunk session(%sess) {soft_put}
+      : !pto.ptr<i8, gm>, !pto.ptr<i8, gm>, i64,
+        !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>
+
+    return
+  }
+}
+
+// The template load survives as one ld_dev per field, and the transfer becomes
+// the GM->UB->GM copy. No doorbell is written, because nothing was posted.
+// CHECK-LABEL: func.func @soft_put_from_template(
+// CHECK-NOT: pto.session_init
+// CHECK: pto.ld_dev
+// CHECK: pto.struct_set %{{.*}}[0]
+// CHECK-NOT: pto.sdma_gm_gm
+// CHECK: pto.copy_gm_to_ubuf
+// CHECK: pto.copy_ubuf_to_gm
+// CHECK-NOT: pto.st_dev
+
+// The retuned offset is what the expansion reads back, so the block query has
+// to reach field 7 before the copy is formed.
+// CHECK-LABEL: func.func @soft_put_per_core_offset(
+// CHECK: pto.get_block_idx
+// CHECK: pto.struct_set %{{.*}}[7]
+// CHECK: pto.struct_get %{{.*}}[7]
+// CHECK-NOT: pto.sdma_gm_gm
+// CHECK: pto.copy_gm_to_ubuf
+// CHECK: pto.copy_ubuf_to_gm
+// CHECK-NOT: pto.st_dev

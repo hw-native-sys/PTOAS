@@ -67,6 +67,7 @@ def golden_output_case(
     output_dtype=None,
     output_index: int = -1,
     launch_args=None,
+    grid: int = 1,
     rtol: float = 1e-5,
     atol: float = 1e-5,
 ):
@@ -99,6 +100,7 @@ def golden_output_case(
     return {
         "name": name,
         "kernel": kernel,
+        "grid": grid,
         "make_case": make_case,
         "check": check_case,
     }
@@ -190,6 +192,12 @@ def run_cases(cases: list[dict], *, emit_mlir_fn=None, argv=None) -> int:
                 f"DSL ST case {name!r} make_case() must return 2 or 3 values, got {len(made_case)}"
             )
 
+        grid = case.get("grid", 1)
+        if not isinstance(grid, int) or grid <= 0:
+            raise RuntimeError(
+                f"DSL ST case {name!r} grid must be a positive integer, got {grid!r}"
+            )
+
         device_inputs = [torch.from_numpy(array).to(_DEVICE) for array in inputs]
         stream = npu_stream(torch)
 
@@ -198,12 +206,12 @@ def run_cases(cases: list[dict], *, emit_mlir_fn=None, argv=None) -> int:
         compile_s = time.perf_counter() - t0
 
         t0 = time.perf_counter()
-        compiled[1, stream](*device_inputs, *launch_args)
+        compiled[grid, stream](*device_inputs, *launch_args)
         torch.npu.synchronize()
         launch_s = time.perf_counter() - t0
 
         case["check"](device_inputs, expected)
-        print(f"PASS {name}  compile={compile_s:.3f}s launch={launch_s:.3f}s")
+        print(f"PASS {name}  grid={grid} compile={compile_s:.3f}s launch={launch_s:.3f}s")
 
     print("All cases passed.")
     return 0
