@@ -55,6 +55,27 @@ namespace {
 // equal this width so CastIndex is a same-width conversion.
 static constexpr unsigned kIndexBitWidth = 64;
 
+/// Convert a signedness-carrying integer to the equivalent signless carrier
+/// required by arith operations. Reuse the source of an existing no-op bridge
+/// when possible so canonicalization does not grow redundant casts.
+static Value getSignlessIntegerCarrier(PatternRewriter &rewriter, Location loc,
+                                       Value value) {
+  auto integerType = dyn_cast<IntegerType>(value.getType());
+  if (!integerType || integerType.isSignless()) {
+    return value;
+  }
+  auto carrierType = rewriter.getIntegerType(integerType.getWidth());
+  if (auto cast = value.getDefiningOp<UnrealizedConversionCastOp>()) {
+    if (cast.getInputs().size() == 1 &&
+        cast.getInputs().front().getType() == carrierType) {
+      return cast.getInputs().front();
+    }
+  }
+  return rewriter
+      .create<UnrealizedConversionCastOp>(loc, carrierType, value)
+      .getResult(0);
+}
+
 /// Rebuild a cast with `kind` into `targetType`. Same-type casts are skipped
 /// so absorbed index extensions do not leave a redundant index_cast behind.
 /// arith's ext/si/trunc ops require fixed-width targets, so an index target
@@ -129,6 +150,7 @@ static Value materializeQuotient(PatternRewriter &rewriter, Location loc,
     // conversion into index keeps the bit pattern.
     if (src.getType().isIntOrIndex() && targetType.isIndex() &&
         src.getType().getIntOrFloatBitWidth() == kIndexBitWidth) {
+      src = getSignlessIntegerCarrier(rewriter, loc, src);
       return rewriter.create<arith::IndexCastOp>(loc, targetType, src);
     }
     return {};
@@ -220,9 +242,15 @@ struct CanonicalizeIntegerCastPtr final
     unsigned inputWidth =
         inputType.isIndex() ? kIndexBitWidth
                             : inputType.getIntOrFloatBitWidth();
+    // Design C14 requires the *quotient* to round-trip losslessly into index.
+    // The first implementation approximates this with the sufficient condition
+    // inputWidth == index width (same-width CastIndex is trivially lossless).
+    // Narrower inputs (e.g. i32) are conservatively rejected until PTO defines
+    // the zero/sign extension semantics of castptr into the 64-bit address
+    // space; the full quotient round-trip proof is future work.
     if (inputWidth != kIndexBitWidth) {
       return rewriter.notifyMatchFailure(
-          castOp, "input width does not round-trip into index");
+          castOp, "only 64-bit integer inputs are supported (first version)");
     }
 
     Type elementType = ptrType.getElementType();
@@ -339,8 +367,12 @@ struct CanonicalizeIntegerCastPtr final
                                                    : castOp.getOperation());
     Value rootValue = rootInteger;
     if (!rootValue) {
+      Type rootType = inputType;
+      if (auto integerType = dyn_cast<IntegerType>(inputType)) {
+        rootType = rewriter.getIntegerType(integerType.getWidth());
+      }
       rootValue = rewriter.create<arith::ConstantOp>(
-          castOp.getLoc(), rewriter.getIntegerAttr(inputType, 0));
+          castOp.getLoc(), rewriter.getIntegerAttr(rootType, 0));
     }
     Value base =
         rewriter.create<pto::CastPtrOp>(castOp.getLoc(), ptrType, rootValue);

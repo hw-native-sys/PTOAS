@@ -199,6 +199,13 @@ Q-expression -> index -> addptr element scaling -> Waddr
 LLVM lowering 产物反推。当前 `PTOValueEvolutionAnalysis` 中固定 64 位的 index 处理是
 实现现状，不应被提升为跨 target 合同。
 
+**实现近似（C14 的充分条件）**：第一版实现以「输入位宽 == index 位宽（64）」作为
+round-trip 的充分条件——同宽 `CastIndex` 平凡无损。更窄输入（如 i32）即使商在数学上
+可无损进入 index（如 `x * 4096` 的商 `x * 2048` 在 `x` 值域内不溢出）也被保守拒绝，
+直到 PTO 明确 `castptr` 从窄整数到 64 位地址空间的零/符号扩展语义；完整的商
+round-trip proof 列为后续工作。拒绝 message 与 C14 表格行的「不改」行为一致，但
+当前实现不区分「商真的不能无损」与「语义未定义导致不能证明」。
+
 带 `nuw`/`nsw` 的原算术只要求在原程序有定义的输入上保持地址，并且新表达式不新增
 poison。reifier 不复制无法证明的 overflow flag。无法证明 refinement 时保持原样。
 
