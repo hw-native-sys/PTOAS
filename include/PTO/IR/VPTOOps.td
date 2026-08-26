@@ -3665,7 +3665,8 @@ def PTO_VmulconvOp : PTO_VectorMicroOp<"vmulconv", [Pure]> {
 }
 
 def PTO_Vstsx2Op : PTO_VectorMicroOp<"vstsx2", [
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    VPTOAddressSemanticsOpInterface
   ]> {
   let arguments = (ins
     PTO_VectorType:$low,

@@ -133,6 +133,15 @@ mlir::pto::getDefaultVPTOAddressSemantics(Operation *operation) {
             postUpdate(base, &offset, VPTOAddressUnit::Element,
                        op.getUpdatedBase())};
       })
+      .Case<Vstsx2Op>([](Vstsx2Op op) {
+        // vstsx2 has no result, so it cannot carry a post-update updated base;
+        // only the current access (destination + element offset) is modeled.
+        OpOperand &base = op.getDestinationMutable();
+        OpOperand &offset = op.getOffsetMutable();
+        return VPTOAddressSemantics{
+            {oneAccess(base, offset, VPTOAddressUnit::Element)},
+            std::nullopt};
+      })
       .Case<VstusOp>([](VstusOp op) {
         OpOperand &base = op.getBaseMutable();
         return VPTOAddressSemantics{

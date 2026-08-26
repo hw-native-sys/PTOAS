@@ -1,0 +1,35 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+module attributes {
+  pto.target_arch = "a5",
+  pto.kernel_kind = #pto.kernel_kind<vector>
+} {
+  // Streams ntile UB tiles; tile t lives at UB byte offset t * stride.
+  func.func @affine_base_in_scf_for(%x: !pto.ptr<f16, gm>, %sink: !pto.ptr<f16, ub>, %ntile: i32)
+      attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %e0 = arith.constant 0 : index
+    %stride = arith.constant 4096 : i64
+    %nt = arith.index_cast %ntile : i32 to index
+    %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+    scf.for %t = %c0 to %nt step %c1 {
+      %ti = arith.index_cast %t : index to i64
+      %off = arith.muli %ti, %stride : i64
+      %ub = pto.castptr %off : i64 -> !pto.ptr<f16, ub>
+      %lo, %hi = pto.vldsx2 %ub[%e0], "DINTLV_B16"
+          : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+      pto.vsts %lo, %sink[%e0], %mask
+          : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+      pto.vsts %hi, %sink[%e0], %mask
+          : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+    }
+    return
+  }
+}

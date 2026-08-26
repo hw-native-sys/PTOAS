@@ -1253,8 +1253,8 @@ def VMILowerUnifiedToLegacy : Pass<"vmi-lower-unified-to-legacy", "ModuleOp"> {
     Ops lowered (Category A–C6):
       A:  vci, vinterpret_cast, vsel, vbrc  →  iota, bitcast, select, broadcast/group_broadcast
       B:  vadd/vsub/vmul/vdiv/vmin/vmax/vand/vor/vxor/vshl/vshr (masked binary)
-          vneg/vabs/vsqrt/vexp/vln/vrelu/vnot (masked unary)
-          →  binary ops discard mask/pmode; unary ops preserve zero mode with select;
+          vneg/vsqrt/vexp/vln/vrelu/vnot (masked unary)
+          →  mask-less legacy operations;
              vshr selects shrui for explicit unsigned elements and shrsi otherwise
       C1: vcmp/vcmps  →  legacy cmp + select
       C2: vcvt        →  legacy extf/truncf/fptosi/sitofp/extsi/extui/trunci
@@ -1262,8 +1262,8 @@ def VMILowerUnifiedToLegacy : Pass<"vmi-lower-unified-to-legacy", "ModuleOp"> {
       C4: pset/pge    →  create_mask/create_group_mask
       C6: vcadd/vcmax/vcmin  →  legacy reduce variants
 
-    Ops NOT lowered (no legacy equivalent — require direct VMIToVPTO 1:N patterns):
-      plt, vadds, vmuls, vmaxs, vmins, vshls, vshrs, vhist, vintlv, vdintlv, vselr,
+    Ops kept unified for direct VMIToVPTO 1:N patterns:
+      plt, vabs, vadds, vmuls, vmaxs, vmins, vshls, vshrs, vhist, vintlv, vdintlv, vselr,
       vgather, vgatherb, vscatter,
       vexpdif, vaxpy, vlrelu, vprelu, vmull, vmula
   }];
@@ -1460,6 +1460,44 @@ def PTOPrintAddressAnalysis
                            "mlir::pto::PTODialect",
                            "mlir::arith::ArithDialect",
                            "mlir::scf::SCFDialect"];
+}
+
+def PTOIntegerAddressCanonicalization
+    : Pass<"pto-canonicalize-integer-address", "func::FuncOp"> {
+  let summary = "Canonicalize integer-backed pto.castptr into castptr(root) + addptr(quotient)";
+  let description = [{
+    Rewrites `castptr(B)` with an integer byte-address input `B` into the
+    canonical pointer form `addptr(castptr(R), Q)` where `R` is the canonical
+    root (constant 0, or a single non-divisible atom leaf such as a runtime
+    base-address kernel parameter) and `Q` is the exact element quotient
+    `(B - R) / sizeof(element)`. The rewrite only matches zero-origin integral
+    address spaces (A5 UB). It refuses non-linear inputs, non-exact quotients,
+    non-unit-coefficient or multiple non-divisible atoms, and inputs whose
+    width does not round-trip into index. The rule requires a non-trivial
+    quotient (constant-zero and pure-atom inputs stay untouched) so the
+    rewrite converges to the normal form in one pass.
+  }];
+  let constructor = "mlir::pto::createPTOIntegerAddressCanonicalizationPass()";
+  let dependentDialects = ["mlir::func::FuncDialect",
+                           "mlir::pto::PTODialect",
+                           "mlir::arith::ArithDialect"];
+}
+
+def PTOAbsorbAddPtr
+    : Pass<"pto-absorb-addptr", "func::FuncOp"> {
+  let summary = "Absorb addptr element offsets into VPTO memory op offsets";
+  let description = [{
+    Canonical fold `op(addptr(base, A), O) -> op(base, A + O)` for VPTO memory
+    operations whose offset unit is Element and whose element type matches the
+    addptr. Legality comes only from VPTOAddressSemanticsOpInterface:
+    current access with an Element offset, no updated-base post-update form,
+    and a no-loss index addition. This is the backend-shape fold that lets the
+    post-update consumer see the affine offset directly on the operation.
+  }];
+  let constructor = "mlir::pto::createPTOAbsorbAddPtrPass()";
+  let dependentDialects = ["mlir::func::FuncDialect",
+                           "mlir::pto::PTODialect",
+                           "mlir::arith::ArithDialect"];
 }
 
 def PTOVPTOPtrBoundary

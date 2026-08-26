@@ -797,6 +797,14 @@ static void prepareVPTOForEmission(PassManager &pm,
       createVPTOExpandWrapperOpsPass());
   kernelModulePM.addNestedPass<func::FuncOp>(
       pto::createPTOInferVPTOVecScopePass());
+  // Integer address canonicalization must run after integer-backed castptr
+  // forms are produced and before the typed-address consumers. The addptr
+  // absorption fold then exposes the affine offset on the operation itself so
+  // the post-update consumer can strength-reduce it (Issue #591).
+  kernelModulePM.addNestedPass<func::FuncOp>(
+      pto::createPTOIntegerAddressCanonicalizationPass());
+  kernelModulePM.addNestedPass<func::FuncOp>(
+      pto::createPTOAbsorbAddPtrPass());
   if (enableSoftPostUpdate) {
     kernelModulePM.addPass(pto::createVPTOSoftPostUpdatePass());
   }

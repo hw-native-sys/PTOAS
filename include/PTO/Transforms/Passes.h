@@ -104,6 +104,8 @@ std::unique_ptr<Pass> createVPTOExpandWrapperOpsPass();
 std::unique_ptr<Pass> createVPTOSoftPostUpdatePass();
 std::unique_ptr<Pass> createVPTOGuardedLICMPass();
 std::unique_ptr<Pass> createPTOPrintAddressAnalysisPass();
+std::unique_ptr<Pass> createPTOIntegerAddressCanonicalizationPass();
+std::unique_ptr<Pass> createPTOAbsorbAddPtrPass();
 std::unique_ptr<Pass> createPTOVPTOPtrBoundaryPass();
 std::unique_ptr<Pass>
 createPTOLowLevelLoopFusionPass(const PTOLowLevelLoopFusionOptions &options = {});

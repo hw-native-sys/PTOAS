@@ -1,0 +1,79 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -pto-absorb-addptr -canonicalize | FileCheck %s
+
+// C11: load through addptr(base, A) absorbs A into the op offset.
+// CHECK-LABEL: func.func @absorb_load
+// CHECK-NOT: pto.addptr
+// CHECK: %{{.*}}, %{{.*}} = pto.vldsx2 %arg0[%arg1], "DINTLV_B16"
+func.func @absorb_load(%base: !pto.ptr<f16, ub>, %off: index,
+                       %sink: !pto.ptr<f16, ub>) {
+  %c0 = arith.constant 0 : index
+  %ptr = pto.addptr %base, %off : !pto.ptr<f16, ub> -> !pto.ptr<f16, ub>
+  %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+  %lo, %hi = pto.vldsx2 %ptr[%c0], "DINTLV_B16"
+      : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+  pto.vsts %lo, %sink[%c0], %mask
+      : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  return
+}
+
+// C11: store through addptr(base, A) absorbs A into the op offset.
+// CHECK-LABEL: func.func @absorb_store
+// CHECK-NOT: pto.addptr
+// CHECK: pto.vsts %{{.*}}, %arg0[%arg1], %{{.*}}
+func.func @absorb_store(%dst: !pto.ptr<f16, ub>, %off: index,
+                        %sink: !pto.ptr<f16, ub>) {
+  %c0 = arith.constant 0 : index
+  %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+  %lo, %hi = pto.vldsx2 %sink[%c0], "DINTLV_B16"
+      : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+  %ptr = pto.addptr %dst, %off : !pto.ptr<f16, ub> -> !pto.ptr<f16, ub>
+  pto.vsts %lo, %ptr[%c0], %mask
+      : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  return
+}
+
+// C11: non-zero op offset adds to the absorbed addptr offset.
+// CHECK-LABEL: func.func @absorb_existing_offset
+// CHECK-NOT: pto.addptr
+// CHECK: %[[SUM:.*]] = arith.addi %arg1, %arg2
+// CHECK: pto.vldsx2 %arg0[%[[SUM]]]
+func.func @absorb_existing_offset(%base: !pto.ptr<f16, ub>, %a: index,
+                                  %o: index, %sink: !pto.ptr<f16, ub>) {
+  %ptr = pto.addptr %base, %a : !pto.ptr<f16, ub> -> !pto.ptr<f16, ub>
+  %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+  %lo, %hi = pto.vldsx2 %ptr[%o], "DINTLV_B16"
+      : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+  pto.vsts %lo, %sink[%o], %mask
+      : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  return
+}
+
+// C10: addptr with multiple users folds every user; the addptr dies once
+// its last use is absorbed.
+// CHECK-LABEL: func.func @absorb_multi_user
+// CHECK-NOT: pto.addptr
+// CHECK: pto.vldsx2 %arg0[%arg1]
+// CHECK: pto.vldsx2 %arg0[%arg1]
+func.func @absorb_multi_user(%base: !pto.ptr<f16, ub>, %off: index,
+                             %sink: !pto.ptr<f16, ub>) {
+  %c0 = arith.constant 0 : index
+  %ptr = pto.addptr %base, %off : !pto.ptr<f16, ub> -> !pto.ptr<f16, ub>
+  %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+  %lo, %hi = pto.vldsx2 %ptr[%c0], "DINTLV_B16"
+      : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+  %lo2, %hi2 = pto.vldsx2 %ptr[%c0], "DINTLV_B16"
+      : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+  pto.vsts %lo, %sink[%c0], %mask
+      : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  pto.vsts %lo2, %sink[%c0], %mask
+      : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  return
+}

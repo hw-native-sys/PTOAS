@@ -1,0 +1,284 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -pto-canonicalize-integer-address | FileCheck %s
+// RUN: pto-test-opt %s -pto-canonicalize-integer-address -pto-canonicalize-integer-address | FileCheck %s --check-prefix=IDEMPOTENT
+
+// C01: Issue #591 minimal pattern. Whole byte expression is exactly divisible.
+// CHECK-LABEL: func.func @c01_affine_iv
+// CHECK: %[[ZERO:.*]] = arith.constant 0 : i64
+// CHECK: %[[Q:.*]] = arith.muli %{{.*}}, %c2048 : index
+// CHECK: %[[BASE:.*]] = pto.castptr %[[ZERO]] : i64 -> !pto.ptr<f16, ub>
+// CHECK: %[[PTR:.*]] = pto.addptr %[[BASE]], %[[Q]]  : <f16, ub> -> <f16, ub>
+// CHECK: pto.vldsx2 %[[PTR]][%c0]
+func.func @c01_affine_iv(%iv: index, %sink: !pto.ptr<f16, ub>) {
+  %c0 = arith.constant 0 : index
+  %c4096 = arith.constant 4096 : i64
+  %iv64 = arith.index_cast %iv : index to i64
+  %bytes = arith.muli %iv64, %c4096 : i64
+  %ptr = pto.castptr %bytes : i64 -> !pto.ptr<f16, ub>
+  %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+  %lo, %hi = pto.vldsx2 %ptr[%c0], "DINTLV_B16"
+      : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+  pto.vsts %lo, %sink[%c0], %mask
+      : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  return
+}
+
+// C02: Constant base and dynamic term normalize together (root stays 0).
+// CHECK-LABEL: func.func @c02_const_plus_iv
+// CHECK: %[[ZERO:.*]] = arith.constant 0 : i64
+// CHECK: %[[Q:.*]] = arith.muli %{{.*}}, %c2048 : index
+// CHECK: pto.castptr %[[ZERO]] : i64 -> !pto.ptr<f16, ub>
+// CHECK: pto.addptr
+func.func @c02_const_plus_iv(%iv: index, %sink: !pto.ptr<f16, ub>) {
+  %c0 = arith.constant 0 : index
+  %c8192 = arith.constant 8192 : i64
+  %c4096 = arith.constant 4096 : i64
+  %iv64 = arith.index_cast %iv : index to i64
+  %dyn = arith.muli %iv64, %c4096 : i64
+  %bytes = arith.addi %c8192, %dyn : i64
+  %ptr = pto.castptr %bytes : i64 -> !pto.ptr<f16, ub>
+  %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+  %lo, %hi = pto.vldsx2 %ptr[%c0], "DINTLV_B16"
+      : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+  pto.vsts %lo, %sink[%c0], %mask
+      : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  return
+}
+
+// C03: f32 element -> quotient scales by 4.
+// CHECK-LABEL: func.func @c03_f32
+// CHECK: arith.muli %{{.*}}, %c1024 : index
+func.func @c03_f32(%iv: index, %sink: !pto.ptr<f32, ub>) {
+  %c0 = arith.constant 0 : index
+  %c4096 = arith.constant 4096 : i64
+  %iv64 = arith.index_cast %iv : index to i64
+  %bytes = arith.muli %iv64, %c4096 : i64
+  %ptr = pto.castptr %bytes : i64 -> !pto.ptr<f32, ub>
+  %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+  %lo, %hi = pto.vldsx2 %ptr[%c0], "DINTLV_B16"
+      : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
+  pto.vsts %lo, %sink[%c0], %mask
+      : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b16>
+  return
+}
+
+// C05: cast leaf is preserved as an atom (rebuilt as index_castui into the
+// index domain, preserving zero-extension); coefficient is divided.
+// CHECK-LABEL: func.func @c05_extui_atom
+// CHECK: %[[X:.*]] = arith.index_castui %arg0 : i32 to index
+// CHECK: arith.muli %[[X]], %c2048{{.*}} : index
+func.func @c05_extui_atom(%x: i32, %sink: !pto.ptr<f16, ub>) {
+  %c0 = arith.constant 0 : index
+  %c4096 = arith.constant 4096 : i64
+  %x64 = arith.extui %x : i32 to i64
+  %bytes = arith.muli %x64, %c4096 : i64
+  %ptr = pto.castptr %bytes : i64 -> !pto.ptr<f16, ub>
+  %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+  %lo, %hi = pto.vldsx2 %ptr[%c0], "DINTLV_B16"
+      : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+  pto.vsts %lo, %sink[%c0], %mask
+      : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  return
+}
+
+// C07: non-divisible constant -> unchanged.
+// CHECK-LABEL: func.func @c07_nondivisible_const
+// CHECK: %[[BYTES:.*]] = arith.addi %{{.*}}, %c1{{.*}} : i64
+// CHECK: %[[PTR:.*]] = pto.castptr %[[BYTES]] : i64 -> !pto.ptr<f16, ub>
+// CHECK: pto.vldsx2 %[[PTR]][%c0]
+func.func @c07_nondivisible_const(%iv: index, %sink: !pto.ptr<f16, ub>) {
+  %c0 = arith.constant 0 : index
+  %c4096 = arith.constant 4096 : i64
+  %c1 = arith.constant 1 : i64
+  %iv64 = arith.index_cast %iv : index to i64
+  %dyn = arith.muli %iv64, %c4096 : i64
+  %bytes = arith.addi %dyn, %c1 : i64
+  %ptr = pto.castptr %bytes : i64 -> !pto.ptr<f16, ub>
+  %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+  %lo, %hi = pto.vldsx2 %ptr[%c0], "DINTLV_B16"
+      : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+  pto.vsts %lo, %sink[%c0], %mask
+      : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  return
+}
+
+// C08: non-zero-origin space (gm) -> unchanged.
+// CHECK-LABEL: func.func @c08_gm_space
+// CHECK: %[[PTR:.*]] = pto.castptr %{{.*}} : i64 -> !pto.ptr<f16, gm>
+// CHECK: %[[BACK:.*]] = pto.castptr %[[PTR]] : !pto.ptr<f16, gm> -> i64
+// CHECK: return %[[BACK]]
+func.func @c08_gm_space(%iv: index) -> i64 {
+  %c4096 = arith.constant 4096 : i64
+  %iv64 = arith.index_cast %iv : index to i64
+  %bytes = arith.muli %iv64, %c4096 : i64
+  %ptr = pto.castptr %bytes : i64 -> !pto.ptr<f16, gm>
+  %back = pto.castptr %ptr : !pto.ptr<f16, gm> -> i64
+  return %back : i64
+}
+
+// C09a: bare castptr(0) is canonical -> unchanged.
+// CHECK-LABEL: func.func @c09a_bare_zero
+// CHECK: %[[ZERO:.*]] = arith.constant 0 : i64
+// CHECK: %[[PTR:.*]] = pto.castptr %[[ZERO]] : i64 -> !pto.ptr<f16, ub>
+// CHECK-NOT: pto.addptr
+func.func @c09a_bare_zero(%sink: !pto.ptr<f16, ub>) {
+  %c0 = arith.constant 0 : index
+  %c0i = arith.constant 0 : i64
+  %ptr = pto.castptr %c0i : i64 -> !pto.ptr<f16, ub>
+  %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+  %lo, %hi = pto.vldsx2 %ptr[%c0], "DINTLV_B16"
+      : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+  pto.vsts %lo, %sink[%c0], %mask
+      : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  return
+}
+
+// C09b: pure-atom root is canonical -> unchanged.
+// CHECK-LABEL: func.func @c09b_bare_atom
+// CHECK: %[[PTR:.*]] = pto.castptr %arg0 : i64 -> !pto.ptr<f16, ub>
+// CHECK-NOT: pto.addptr
+func.func @c09b_bare_atom(%param: i64, %sink: !pto.ptr<f16, ub>) {
+  %c0 = arith.constant 0 : index
+  %ptr = pto.castptr %param : i64 -> !pto.ptr<f16, ub>
+  %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+  %lo, %hi = pto.vldsx2 %ptr[%c0], "DINTLV_B16"
+      : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+  pto.vsts %lo, %sink[%c0], %mask
+      : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  return
+}
+
+// C10: multiple users share one rewritten pointer.
+// CHECK-LABEL: func.func @c10_multi_user
+// CHECK: %[[ZERO:.*]] = arith.constant 0 : i64
+// CHECK: %[[BASE:.*]] = pto.castptr %[[ZERO]] : i64 -> !pto.ptr<f16, ub>
+// CHECK: %[[PTR:.*]] = pto.addptr %[[BASE]], %{{.*}}  : <f16, ub> -> <f16, ub>
+// CHECK: pto.vldsx2 %[[PTR]][%c0]
+// CHECK: pto.vldsx2 %[[PTR]][%c0]
+func.func @c10_multi_user(%iv: index, %sink: !pto.ptr<f16, ub>) {
+  %c0 = arith.constant 0 : index
+  %c4096 = arith.constant 4096 : i64
+  %iv64 = arith.index_cast %iv : index to i64
+  %bytes = arith.muli %iv64, %c4096 : i64
+  %ptr = pto.castptr %bytes : i64 -> !pto.ptr<f16, ub>
+  %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+  %lo, %hi = pto.vldsx2 %ptr[%c0], "DINTLV_B16"
+      : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+  %lo2, %hi2 = pto.vldsx2 %ptr[%c0], "DINTLV_B16"
+      : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+  pto.vsts %lo, %sink[%c0], %mask
+      : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  pto.vsts %lo2, %sink[%c0], %mask
+      : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  return
+}
+
+// C13: pointer-derived integer stays untouched.
+// CHECK-LABEL: func.func @c13_ptr_derived
+// CHECK: %[[RAW:.*]] = pto.castptr %arg0 : !pto.ptr<f16, ub> -> i64
+// CHECK: %[[BYTES:.*]] = arith.muli %[[RAW]], %c2{{.*}} : i64
+// CHECK: %[[PTR:.*]] = pto.castptr %[[BYTES]] : i64 -> !pto.ptr<f16, ub>
+func.func @c13_ptr_derived(%base: !pto.ptr<f16, ub>, %sink: !pto.ptr<f16, ub>) {
+  %c0 = arith.constant 0 : index
+  %c2 = arith.constant 2 : i64
+  %raw = pto.castptr %base : !pto.ptr<f16, ub> -> i64
+  %bytes = arith.muli %raw, %c2 : i64
+  %ptr = pto.castptr %bytes : i64 -> !pto.ptr<f16, ub>
+  %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+  %lo, %hi = pto.vldsx2 %ptr[%c0], "DINTLV_B16"
+      : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+  pto.vsts %lo, %sink[%c0], %mask
+      : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  return
+}
+
+// C14: input width (i32) does not round-trip into index -> unchanged.
+// CHECK-LABEL: func.func @c14_i32_input
+// CHECK: %[[PTR:.*]] = pto.castptr %{{.*}} : i32 -> !pto.ptr<f16, ub>
+func.func @c14_i32_input(%iv: i32, %sink: !pto.ptr<f16, ub>) {
+  %c0 = arith.constant 0 : index
+  %c4096 = arith.constant 4096 : i32
+  %bytes = arith.muli %iv, %c4096 : i32
+  %ptr = pto.castptr %bytes : i32 -> !pto.ptr<f16, ub>
+  %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+  %lo, %hi = pto.vldsx2 %ptr[%c0], "DINTLV_B16"
+      : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+  pto.vsts %lo, %sink[%c0], %mask
+      : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  return
+}
+
+// C15: runtime atom base -> root stays castptr(%param).
+// CHECK-LABEL: func.func @c15_runtime_atom
+// CHECK: %[[Q:.*]] = arith.muli %{{.*}}, %c2048 : index
+// CHECK: %[[BASE:.*]] = pto.castptr %arg0 : i64 -> !pto.ptr<f16, ub>
+// CHECK: %[[PTR:.*]] = pto.addptr %[[BASE]], %[[Q]]  : <f16, ub> -> <f16, ub>
+func.func @c15_runtime_atom(%param: i64, %iv: index, %sink: !pto.ptr<f16, ub>) {
+  %c0 = arith.constant 0 : index
+  %c4096 = arith.constant 4096 : i64
+  %iv64 = arith.index_cast %iv : index to i64
+  %bytes = arith.muli %iv64, %c4096 : i64
+  %addr = arith.addi %param, %bytes : i64
+  %ptr = pto.castptr %addr : i64 -> !pto.ptr<f16, ub>
+  %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+  %lo, %hi = pto.vldsx2 %ptr[%c0], "DINTLV_B16"
+      : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+  pto.vsts %lo, %sink[%c0], %mask
+      : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  return
+}
+
+// Rejected: multiple non-divisible atoms have no unique root.
+// CHECK-LABEL: func.func @reject_multi_atom
+// CHECK: %[[PTR:.*]] = pto.castptr %{{.*}} : i64 -> !pto.ptr<f16, ub>
+func.func @reject_multi_atom(%p1: i64, %p2: i64, %sink: !pto.ptr<f16, ub>) {
+  %c0 = arith.constant 0 : index
+  %c4096 = arith.constant 4096 : i64
+  %iv64 = arith.constant 16 : i64
+  %bytes = arith.muli %iv64, %c4096 : i64
+  %addr = arith.addi %p1, %p2 : i64
+  %addr2 = arith.addi %addr, %bytes : i64
+  %ptr = pto.castptr %addr2 : i64 -> !pto.ptr<f16, ub>
+  %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+  %lo, %hi = pto.vldsx2 %ptr[%c0], "DINTLV_B16"
+      : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+  pto.vsts %lo, %sink[%c0], %mask
+      : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  return
+}
+
+// Rejected: non-unit-coefficient atom has no root/offset split.
+// CHECK-LABEL: func.func @reject_nonunit_coeff
+// CHECK: %[[PTR:.*]] = pto.castptr %{{.*}} : i64 -> !pto.ptr<f16, ub>
+func.func @reject_nonunit_coeff(%p: i64, %sink: !pto.ptr<f16, ub>) {
+  %c0 = arith.constant 0 : index
+  %c3 = arith.constant 3 : i64
+  %c4096 = arith.constant 4096 : i64
+  %iv64 = arith.constant 16 : i64
+  %scaled = arith.muli %p, %c3 : i64
+  %dyn = arith.muli %iv64, %c4096 : i64
+  %addr = arith.addi %scaled, %dyn : i64
+  %ptr = pto.castptr %addr : i64 -> !pto.ptr<f16, ub>
+  %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+  %lo, %hi = pto.vldsx2 %ptr[%c0], "DINTLV_B16"
+      : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+  pto.vsts %lo, %sink[%c0], %mask
+      : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  return
+}
+
+// Second run leaves the canonical form untouched (no double addptr wrap).
+// IDEMPOTENT-LABEL: func.func @c01_affine_iv
+// IDEMPOTENT: pto.castptr %{{.*}} : i64 -> !pto.ptr<f16, ub>
+// IDEMPOTENT: pto.addptr %{{.*}}, %{{.*}} : <f16, ub> -> <f16, ub>
+// IDEMPOTENT-NOT: pto.addptr %{{.*}}, %{{.*}} : <f16, ub> -> <f16, ub>
+// IDEMPOTENT-LABEL: func.func @c02_const_plus_iv
+// IDEMPOTENT-LABEL: func.func @c15_runtime_atom
+// IDEMPOTENT: pto.castptr %arg0 : i64 -> !pto.ptr<f16, ub>
