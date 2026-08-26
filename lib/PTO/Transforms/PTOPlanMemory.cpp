@@ -696,9 +696,11 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
       // entry is a result tile that PlanMemory must know about.
       SmallVector<Value> buffers = llvm::to_vector(op->getOperands());
       UpdateOpGenInfo(curOpInfo, buffers);
-      if (op->getNumResults() == 1 &&
-          isa<TileBufType>(op->getResult(0).getType()))
+      bool hasTileBufResult =
+          op->getNumResults() == 1 && isa<TileBufType>(op->getResult(0).getType());
+      if (hasTileBufResult) {
         UpdateOpGenInfo(curOpInfo, ValueRange{op->getResult(0)});
+      }
       OpKillHandle(curOpInfo, live, op->getBlock());
     } else if (auto gpuLaunchOp = dyn_cast<gpu::LaunchFuncOp>(op)) {
       UpdateOpGenInfo(curOpInfo, llvm::to_vector(gpuLaunchOp->getOperands()));

@@ -925,18 +925,19 @@ static std::string buildOperandSpecsJson(const SpecKey &key) {
       json += std::to_string(op.fractal);
       json += ",\"pad_value\":\"0x";
       json += llvm::utohexstr(op.pad, /*LowerCase=*/false);
-json += "\",\"compact_mode\":\"";
-	      // Match the TileBuf compact band exactly: 0/null (no band), 1/Normal,
-	      // 2/RowPlusOne. Emitting "normal" for a plain tile would materialize
-	      // a compact=1 helper that FoldTileBufIntrinsics cannot bridge from an
-	      // uncompacted caller tile.
-	      if (op.compactMode == 2)
-	        json += "row_plus_one";
-	      else if (op.compactMode == 1)
-	        json += "normal";
-	      else
-	        json += "null";
-	      json += "\"";
+      // Match the TileBuf compact band exactly: 0/null (no band), 1/Normal,
+      // 2/RowPlusOne. Emitting "normal" for a plain tile would materialize
+      // a compact=1 helper that FoldTileBufIntrinsics cannot bridge from an
+      // uncompacted caller tile.
+      json += "\",\"compact_mode\":\"";
+      if (op.compactMode == 2) {
+        json += "row_plus_one";
+      } else if (op.compactMode == 1) {
+        json += "normal";
+      } else {
+        json += "null";
+      }
+      json += "\"";
       json += "}}";
       continue;
     }
