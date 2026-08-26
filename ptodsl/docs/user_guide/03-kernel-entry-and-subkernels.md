@@ -251,6 +251,72 @@ compiled[grid, stream](A.ctypes.data, O.ctypes.data, 4, 128)
 **Only `entry=True` kernels support `.compile()` and `[grid, stream]` launch.**
 Calling `.compile()` on an `entry=False` module raises an error.
 
+### Host C++ in the kernel's library: `native_options`
+
+PTODSL builds a kernel into a shared library from two inputs it generates itself:
+the launch code and the ptoas-produced kernel object. When a kernel's host side
+already exists in C++ — a resource setup helper, an ABI the device code shares
+with a host header — that closed set leaves only bad options: reimplement the C++
+in Python, or ship it as a second library the caller loads separately and keeps
+in step by hand.
+
+`native_options` opens the build up. It names host C++ sources to compile and
+link into the same library:
+
+```python
+@pto.jit(
+    name="my_kernel",
+    target="a3",
+    mode="explicit",
+    native_options={
+        # Compiled as host C++ and linked into this kernel's library.
+        "host_sources": ["MyHostHelper.cpp"],
+        # Include directories for those sources.
+        "include_dirs": [".", "../../include"],
+        # Extra link inputs; bare library names, as for -l.
+        "link_libraries": ["dl"],
+        "library_dirs": ["/opt/mylib/lib"],
+    },
+)
+def my_kernel(buf: pto.ptr(pto.f32, "gm")):
+    ...
+```
+
+Then reach the host entry points through the library the build produced:
+
+```python
+compiled = my_kernel.compile()
+lib = compiled.native_library()      # a ctypes.CDLL
+lib.my_host_setup()                  # a symbol from MyHostHelper.cpp
+compiled[grid, stream](buf)
+```
+
+Rules worth knowing:
+
+- **Relative paths resolve against the declaring file**, not the working
+  directory, so a kernel keeps building wherever it is invoked from. This is the
+  same rule `source=` uses.
+- **Host sources are part of the build's identity.** Their contents are digested
+  into the cache key, so editing one rebuilds the library instead of silently
+  reusing the old one.
+- **Host sources are compiled as host code**, with `-xc++` and no AI-core arch —
+  not as device code. They cannot contain kernel code.
+- **`link_libraries` takes bare names.** Pass `"dl"`, not `"-ldl"` or a path to a
+  `.so`; directories belong in `library_dirs`, which also become rpath entries so
+  the library is found again at load time.
+- **Undefined symbols remain an error.** The link keeps `-Wl,--no-undefined`, so a
+  library you forgot to name fails the build rather than the first launch.
+- **`include_dirs` requires `host_sources`.** On its own it would apply to
+  nothing, so it is rejected rather than quietly ignored.
+- Unknown keys are rejected when the decorator runs, not at build time.
+
+`native_library()` and `native_library_path()` are only for reaching host symbols;
+launching needs neither. Both build the specialization if it is not built yet, and
+both share one loaded library with every launch handle over that specialization.
+
+For a worked example, see `test/comm/` in the repository: a host helper that owns
+an ABI shared with the device code, linked into the kernel that uses it.
+
 ### Loading an existing PTO file
 
 Use `source=` when the kernel implementation already exists as hand-written PTO

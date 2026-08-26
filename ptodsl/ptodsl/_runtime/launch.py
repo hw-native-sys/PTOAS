@@ -108,6 +108,29 @@ def _marshal_launch_args(kernel_signature, args):
     return marshaled
 
 
+def build_and_load_native_library(compiled: CompiledKernelHandle):
+    """Build this specialization if needed and return ``(library, path, symbol)``.
+
+    The loaded library is cached on the compiled handle. Several launch handles
+    over one specialization share it, and so does a caller reaching past the
+    launch entry for a symbol that ``native_options['host_sources']`` contributed.
+    """
+    cached = getattr(compiled, "_native_library_cache", None)
+    if cached is not None:
+        return cached
+
+    lib_path, launch_symbol = build_native_library(
+        py_name=compiled._py_name,
+        module_spec=compiled._module_spec,
+        kernel_signature=compiled._kernel_signature,
+        mlir_text=compiled.mlir_text(),
+        specialization_key=compiled.specialization_key,
+    )
+    loaded = (ctypes.CDLL(str(lib_path)), lib_path, launch_symbol)
+    compiled._native_library_cache = loaded
+    return loaded
+
+
 class LaunchHandle:
     """Callable launch binding returned by ``compiled[grid, stream]``."""
 
@@ -124,14 +147,7 @@ class LaunchHandle:
         if self._launch_fn is not None:
             return
 
-        lib_path, launch_symbol = build_native_library(
-            py_name=self._compiled._py_name,
-            module_spec=self._compiled._module_spec,
-            kernel_signature=self._compiled._kernel_signature,
-            mlir_text=self._compiled.mlir_text(),
-            specialization_key=self._compiled.specialization_key,
-        )
-        lib = ctypes.CDLL(str(lib_path))
+        lib, _lib_path, launch_symbol = build_and_load_native_library(self._compiled)
         fn = getattr(lib, launch_symbol)
         fn.argtypes = _launch_argtypes(self._compiled._kernel_signature)
         fn.restype = None
@@ -174,5 +190,6 @@ def parse_launch_spec(launch_spec) -> tuple[int, object]:
 
 __all__ = [
     "LaunchHandle",
+    "build_and_load_native_library",
     "parse_launch_spec",
 ]

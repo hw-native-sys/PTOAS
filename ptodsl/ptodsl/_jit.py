@@ -21,6 +21,7 @@ from ._diagnostics import (
 )
 from ._kernel_compilation import CompiledKernelHandle, KernelCompiler
 from ._kernel_signature import parse_jit_kernel_signature
+from ._native_options import normalize_native_options
 from ._tracing import (
     KernelModuleSpec,
     ModuleArtifact,
@@ -231,6 +232,7 @@ def jit(
     insert_sync: bool | None = None,
     ast_rewrite: bool | None = None,
     frontend_options: Mapping | None = None,
+    native_options: Mapping | None = None,
     source: str | None = None,
 ):
     """
@@ -258,6 +260,14 @@ def jit(
     frontend_options:
                  Reserved structured frontend options. Currently supports
                  ``ast_rewrite`` and ``rewrite_part={"control_flow"}``.
+    native_options:
+                 Host-side additions to the native build, for a kernel whose
+                 host side already exists in C++. Supports ``host_sources``
+                 (C++ files compiled and linked into the kernel's shared
+                 library), ``include_dirs`` for those sources, and
+                 ``link_libraries`` / ``library_dirs`` for the link. Relative
+                 paths resolve against the declaring file. Host sources are part
+                 of the build's identity, so editing one rebuilds the library.
     source:
                  Optional filesystem path to a PTO IR source file. When
                  provided, PTODSL keeps the Python signature as the host ABI
@@ -298,6 +308,11 @@ def jit(
             source_file = inspect.getsourcefile(fn) or inspect.getfile(fn)
         except (OSError, TypeError):
             source_file = None
+        normalized_native_options = normalize_native_options(
+            native_options,
+            declaring_file=source_file,
+            function_name=fn_name,
+        )
         kernel_kind_explicit = kernel_kind is not _DEFAULT_KERNEL_KIND_SENTINEL
         effective_kernel_kind = kernel_kind if kernel_kind_explicit else _DEFAULT_KERNEL_KIND
         compiler = KernelCompiler(
@@ -315,6 +330,7 @@ def jit(
                 source_file=source_file,
                 source_line=getattr(fn.__code__, "co_firstlineno", None),
                 jit_source=source,
+                native_options=normalized_native_options,
             ),
             kernel_signature,
             fn,
@@ -374,6 +390,7 @@ class KernelHandle(ModuleArtifact):
             module_spec.mode,
             module_spec.kernel_kind,
             module_spec.kernel_kind_explicit,
+            module_spec.native_options,
         )
 
     def _build_default_module(self):
