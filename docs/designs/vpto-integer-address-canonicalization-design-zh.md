@@ -306,6 +306,13 @@ reifier 负责：
 只重建 Pure、可推测执行且已由 proof 覆盖的算术。load、call、带副作用 op 或 region
 外不可捕获的值都只可作为支配位置合法的叶子，不能 clone。
 
+**规范根的提升约束**：规范根 `castptr(R)` 是 loop-invariant（`R` 为常量 0 或函数
+参数等原子），reifier 把它提升到最近 `scf.for` 之外，使 post-update consumer 看到
+循环外 base。提升仅当 `R` 对**所有**被跳过的循环都是 loop-invariant 时合法；若原子根
+定义在循环内（如 `index_cast(iv)` 本身不可整除），提升会违反 SSA 支配，此时 `castptr(R)`
+留在原位（IR 保持合法，只是不触发 post-update）。商 `Q` 始终在原 `castptr` 位置物化
+（依赖循环变量的部分留在循环内）。
+
 ### 4.3 与 `PTOAddressAnalysis` 的接入
 
 规范化后无需给 `PTOAddressAnalysis` 增加 raw-integer root：

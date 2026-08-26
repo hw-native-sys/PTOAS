@@ -77,3 +77,19 @@ func.func @absorb_multi_user(%base: !pto.ptr<f16, ub>, %off: index,
       : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
   return
 }
+
+// vstsx2 (interface added with this change) absorbs addptr too.
+// CHECK-LABEL: func.func @absorb_vstsx2
+// CHECK-NOT: pto.addptr
+// CHECK: pto.vstsx2 %{{.*}}, %{{.*}}, %arg0[%arg1]
+func.func @absorb_vstsx2(%dst: !pto.ptr<f16, ub>, %off: index,
+                         %src: !pto.ptr<f16, ub>) {
+  %c0 = arith.constant 0 : index
+  %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+  %lo, %hi = pto.vldsx2 %src[%c0], "DINTLV_B16"
+      : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+  %ptr = pto.addptr %dst, %off : !pto.ptr<f16, ub> -> !pto.ptr<f16, ub>
+  pto.vstsx2 %lo, %hi, %ptr[%c0], "INTLV_B16", %mask
+      : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.ptr<f16, ub>, index, !pto.mask<b16>
+  return
+}

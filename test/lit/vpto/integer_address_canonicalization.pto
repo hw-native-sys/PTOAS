@@ -274,6 +274,72 @@ func.func @reject_nonunit_coeff(%p: i64, %sink: !pto.ptr<f16, ub>) {
   return
 }
 
+// Atom root defined inside the loop: the base must NOT be hoisted (hoisting
+// would violate SSA dominance); the IR stays legal with the base in place.
+// CHECK-LABEL: func.func @atom_root_in_loop
+// CHECK: scf.for
+// CHECK: pto.castptr %{{.*}} : i64 -> !pto.ptr<f16, ub>
+// CHECK: pto.addptr %{{.*}}, %{{.*}}
+func.func @atom_root_in_loop(%sink: !pto.ptr<f16, ub>) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : i64
+  %c1024 = arith.constant 1024 : index
+  %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+  scf.for %t = %c0 to %c1024 step %c1 {
+    %t64 = arith.index_cast %t : index to i64
+    %addr = arith.addi %t64, %c2 : i64
+    %ptr = pto.castptr %addr : i64 -> !pto.ptr<f16, ub>
+    %lo, %hi = pto.vldsx2 %ptr[%c0], "DINTLV_B16"
+        : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+    pto.vsts %lo, %sink[%c0], %mask
+        : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  }
+  return
+}
+
+// Rejected: negative-coefficient atom has no root/offset split.
+// CHECK-LABEL: func.func @reject_neg_coeff
+// CHECK: %[[PTR:.*]] = pto.castptr %{{.*}} : i64 -> !pto.ptr<f16, ub>
+func.func @reject_neg_coeff(%p: i64, %sink: !pto.ptr<f16, ub>) {
+  %c0 = arith.constant 0 : index
+  %c4096 = arith.constant 4096 : i64
+  %neg = arith.subi %c4096, %p : i64
+  %ptr = pto.castptr %neg : i64 -> !pto.ptr<f16, ub>
+  %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+  %lo, %hi = pto.vldsx2 %ptr[%c0], "DINTLV_B16"
+      : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+  pto.vsts %lo, %sink[%c0], %mask
+      : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  return
+}
+
+// Nested loops: the canonical base is hoisted above the OUTERMOST loop.
+// CHECK-LABEL: func.func @nested_loop_hoist
+// CHECK: %[[BASE:.*]] = pto.castptr %{{.*}} : i64 -> !pto.ptr<f16, ub>
+// CHECK: scf.for
+// CHECK: scf.for
+// CHECK: pto.addptr %[[BASE]], %{{.*}}
+func.func @nested_loop_hoist(%sink: !pto.ptr<f16, ub>) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c64 = arith.constant 64 : index
+  %c4096 = arith.constant 4096 : i64
+  %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+  scf.for %i = %c0 to %c64 step %c1 {
+    scf.for %j = %c0 to %c64 step %c1 {
+      %j64 = arith.index_cast %j : index to i64
+      %bytes = arith.muli %j64, %c4096 : i64
+      %ptr = pto.castptr %bytes : i64 -> !pto.ptr<f16, ub>
+      %lo, %hi = pto.vldsx2 %ptr[%c0], "DINTLV_B16"
+          : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+      pto.vsts %lo, %sink[%c0], %mask
+          : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+    }
+  }
+  return
+}
+
 // Second run leaves the canonical form untouched (no double addptr wrap).
 // IDEMPOTENT-LABEL: func.func @c01_affine_iv
 // IDEMPOTENT: pto.castptr %{{.*}} : i64 -> !pto.ptr<f16, ub>

@@ -279,7 +279,9 @@ struct CanonicalizeIntegerCastPtr final
             castOp, "multiple non-divisible atoms have no unique root");
       }
       const PTOLinearTerm &rootTerm = nonDivisible.front();
-      if (rootTerm.coefficient != 1 && rootTerm.coefficient != -1) {
+      // Design contract: only a unit-coefficient (+1) atom is the canonical
+      // root; negative or scaled atoms have no unique root/offset split.
+      if (rootTerm.coefficient != 1) {
         return rewriter.notifyMatchFailure(
             castOp, "non-unit-coefficient atom has no root/offset split");
       }
@@ -319,14 +321,22 @@ struct CanonicalizeIntegerCastPtr final
       return rewriter.notifyMatchFailure(castOp, "cannot materialize quotient");
     }
 
-    // The canonical root (castptr(0) or castptr(%atom)) is loop-invariant.
-    // Hoist it above any enclosing scf.for so the post-update consumer sees a
-    // base defined outside the loop (VPTOSoftPostUpdate requires that).
+    // The canonical root (castptr(0) or castptr(%atom)) is hoisted above any
+    // enclosing scf.for so the post-update consumer sees a base defined
+    // outside the loop (VPTOSoftPostUpdate requires that). Hoisting is only
+    // legal when the root value itself is loop-invariant; an atom-root defined
+    // inside the loop must stay in place or the hoisted castptr would violate
+    // SSA dominance.
     Operation *anchor = castOp.getOperation();
+    bool rootIsLoopInvariant = true;
     while (scf::ForOp forOp = anchor->getParentOfType<scf::ForOp>()) {
+      if (rootInteger && !forOp.isDefinedOutsideOfLoop(rootInteger)) {
+        rootIsLoopInvariant = false;
+      }
       anchor = forOp.getOperation();
     }
-    rewriter.setInsertionPoint(anchor);
+    rewriter.setInsertionPoint(rootIsLoopInvariant ? anchor
+                                                   : castOp.getOperation());
     Value rootValue = rootInteger;
     if (!rootValue) {
       rootValue = rewriter.create<arith::ConstantOp>(
