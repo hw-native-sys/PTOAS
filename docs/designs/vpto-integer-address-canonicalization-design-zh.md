@@ -76,10 +76,13 @@ legality 或 emitter 的问题。
 
 **实测（2026-08-26）**：`castptr %x : i32 -> ptr<f16, ub>` 当前经
 `ConvertPtoCastPtrOp` 直接生成 `inttoptr i32 %x to ptr addrspace(6)`（无位宽扩展），
-LLVM 合法且 bisheng 可编译。窄整数到 64 位指针的扩展行为（bisheng 现为 zero-extend）
-是 LLVM `inttoptr` 的实现约定，不是 PTO 语义契约；这印证本节的立场——lowering 事实
-既不能作为规范化拒绝条件，也不能作为 round-trip 证明依据（§3.3 的实现近似因此保持
-"仅 64 位输入"）。
+LLVM 合法且 bisheng 可编译。窄整数到 64 位指针的扩展在 LLVM 层**有书面定义**
+（`LangRef.rst` 的 `inttoptr` Semantics：窄→宽 zero-extend、宽→窄 truncate），
+bisheng 行为与之一致；PTO 层只是未文档化继承该语义。LLVM 真正的未定义在
+provenance——纯整数 `inttoptr` 形成的指针不基于任何指针，按 pointer aliasing
+rules 解引用是 UB，但 PTO 的 zero-origin 数值地址模型（§2.3）本就按整数位模式
+处理 UB 空间，规范化不改变这一性质。lowering 事实既不能作为规范化拒绝条件，
+也不能作为 round-trip 证明依据（§3.3 的实现近似因此保持"仅 64 位输入"）。
 
 ### 2.3 地址空间前提不是用户配置
 
@@ -209,9 +212,10 @@ LLVM lowering 产物反推。当前 `PTOValueEvolutionAnalysis` 中固定 64 位
 **实现近似（C14 的充分条件）**：第一版实现以「输入位宽 == index 位宽（64）」作为
 round-trip 的充分条件——同宽 `CastIndex` 平凡无损。更窄输入（如 i32）即使商在数学上
 可无损进入 index（如 `x * 4096` 的商 `x * 2048` 在 `x` 值域内不溢出）也被保守拒绝，
-直到 PTO 明确 `castptr` 从窄整数到 64 位地址空间的零/符号扩展语义；完整的商
-round-trip proof 列为后续工作。拒绝 message 与 C14 表格行的「不改」行为一致，但
-当前实现不区分「商真的不能无损」与「语义未定义导致不能证明」。
+直到 PTO 文档化继承 LLVM `inttoptr` 的 zero-extend 语义（§2.2 实测）；完整的商
+round-trip proof（`PTOValueEvolutionAnalysis` 的 range 能力即可证明）列为后续工作。
+拒绝 message 与 C14 表格行的「不改」行为一致，但当前实现不区分「商真的不能无损」
+与「PTO 尚未文档化扩展语义」。
 
 带 `nuw`/`nsw` 的原算术只要求在原程序有定义的输入上保持地址，并且新表达式不新增
 poison。reifier 不复制无法证明的 overflow flag。无法证明 refinement 时保持原样。
