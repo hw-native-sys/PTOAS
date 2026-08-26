@@ -507,6 +507,37 @@ static std::optional<uint64_t> vstsStoredElementCount(pto::VstsOp op) {
   return count;
 }
 
+// Return the number of contiguous bytes read from memory by a `vlds`
+// distribution, when the access footprint can be modelled more precisely than
+// the full result-vreg width. A scalar broadcast distribution (BRC_B8/B16/B32)
+// reads a single hardware element whose width is fixed by the `_Bn` suffix
+// (1/2/4 bytes) — independent of the source element type, so the verifier
+// accepts width-mismatched forms such as `BRC_B32` on `ptr<f16>` (4 bytes,
+// i.e. two f16 elements). Reporting the footprint as `n/8` bytes keeps the
+// model sound under those mismatches; reporting one source element would
+// under-count (e.g. 2 bytes for `BRC_B32` on f16) and could drop a required
+// loop-carried barrier. BRC_BLK reads an entire block and keeps the
+// conservative vreg width; the unpack/upcast/shift distributions (US_*, DS_*,
+// UNPK_*, E2B_*) read a different element type than they produce, so their
+// read width is left conservatively at the full vreg width until the
+// element-type pairing is modelled.
+static std::optional<uint64_t> vldsBroadcastByteSize(pto::VldsOp op) {
+  auto dist = op.getDist();
+  if (!dist) {
+    return std::nullopt;
+  }
+  if (*dist == "BRC_B8") {
+    return uint64_t(1);
+  }
+  if (*dist == "BRC_B16") {
+    return uint64_t(2);
+  }
+  if (*dist == "BRC_B32") {
+    return uint64_t(4);
+  }
+  return std::nullopt;
+}
+
 } // namespace
 
 FailureOr<VecMemoryAccessDescriptor>
@@ -525,6 +556,15 @@ vecscopemembar::buildAccessDescriptor(Operation *op, ArrayRef<Value> ivs) {
     fillContiguous(desc, vlds.getSource(), vlds.getOffset(),
                    elementByteSize(vlds.getSource().getType()),
                    vregElementCount(vlds.getResult().getType()), ivs);
+    // A scalar broadcast distribution reads a fixed-width hardware element
+    // (BRC_B8/B16/B32 -> 1/2/4 bytes) regardless of source element type.
+    // Override the full-vreg size with the precise broadcast footprint so the
+    // analysis neither over-approximates (fabricating a cross-iteration RAW
+    // against an adjacent buffer) nor under-reports (dropping a real RAW on a
+    // width-mismatched form such as BRC_B32 on ptr<f16>).
+    if (auto broadcastBytes = vldsBroadcastByteSize(vlds)) {
+      desc.conservativeByteSize = *broadcastBytes;
+    }
     return desc;
   }
   if (auto vsts = dyn_cast<pto::VstsOp>(op)) {

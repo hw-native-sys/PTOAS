@@ -1,0 +1,130 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-vecscope-mem-bar %s -o - 2>/dev/null | FileCheck %s
+
+// Regression test for issue #12: a BRC_B32 broadcast load reads a single
+// scalar (4 bytes) and replicates it across the result vreg lanes. Modelling
+// the load as the full vreg width (256 bytes) over-approximates the footprint
+// and fabricated a cross-iteration RAW between an IV-strided store of `y` and
+// the next iteration's broadcast load of `rowsum`, inserting a redundant
+// `pto.mem_bar "VST_VLD"` inside the div loop.
+//
+// Layout (disjoint absolute UB buffers):
+//   rowsum @ 32768   (broadcast-loaded: 1-element footprint per iteration)
+//   x     @ 0        (contiguous, read in the div loop)
+//   y     @ 33280    (contiguous, written in the div loop)
+//
+// y at 33280 sits just above rowsum's last scalar (32768 + 4*127 = 33276), so
+// modelling the broadcast load as a full 256-byte vreg makes rowsum[j] reach
+// into y's range (rowsum[0] = [32768, 33024) stays clear, but rowsum[j>=65]
+// crosses 33280). With the correct 1-element footprint the broadcast never
+// touches y, suppressing the redundant intra-loop VST_VLD.
+// The first loop fills rowsum from x (genuine cross-op RAW on rowsum -> one
+// VST_VLD between the loops). The second loop broadcasts rowsum[i], divides
+// x[i] by it, and stores the result to y[i]; the 1-element broadcast footprint
+// never reaches y, so no intra-loop barrier should appear. Both loops stride
+// their stores by a full vreg (64 elements) so no loop-carried WAW arises
+// inside either loop.
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @vecscope_membar_broadcast_load_disjoint() {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %c8192 = arith.constant 8192 : index
+    %c0_i64 = arith.constant 0 : i64
+    %c32768_i64 = arith.constant 32768 : i64
+    %c33280_i64 = arith.constant 33280 : i64
+    %x = pto.castptr %c0_i64 : i64 -> !pto.ptr<f32, ub>
+    %rowsum = pto.castptr %c32768_i64 : i64 -> !pto.ptr<f32, ub>
+    %y = pto.castptr %c33280_i64 : i64 -> !pto.ptr<f32, ub>
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      // First loop: vld(x[i]) -> vst(rowsum[i]).  Stride rowsum stores by a
+      // full vreg (64 elements) so successive stores touch disjoint ranges
+      // (no loop-carried WAW).  The cross-op RAW on rowsum still requires a
+      // barrier before the second loop reads it.
+      scf.for %i = %c0 to %c8192 step %c64 {
+        %vx = pto.vlds %x[%i] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+        pto.vsts %vx, %rowsum[%i], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+        scf.yield
+      }
+      // Second loop: broadcast rowsum[i] (4-byte footprint) + vld(x[i]) ->
+      // vdiv -> vst(y[i]).  rowsum advances by 1 (broadcast, 4-byte footprint)
+      // while y advances by a full vreg (64 elements, no loop-carried WAW).
+      // The 4-byte broadcast footprint never reaches y, so no intra-loop
+      // barrier should appear.
+      scf.for %i2 = %c0 to %c128 step %c1 {
+        %vrs = pto.vlds %rowsum[%i2] {dist = "BRC_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+        %y_off = arith.muli %i2, %c64 : index
+        %vx2 = pto.vlds %x[%y_off] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+        %vd = pto.vdiv %vx2, %vrs, %mask : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        pto.vsts %vd, %y[%y_off], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+        scf.yield
+      }
+    }
+    return
+  }
+
+  // Width-mismatch case: BRC_B32 on ptr<f16> reads a single 4-byte hardware
+  // element (two f16 elements), not one f16 element. The `_Bn` suffix fixes the
+  // hardware access width independent of the source element type, so the
+  // verifier accepts this mismatched form. rowsum lives at bytes [0, 256) and
+  // is broadcast-read 4 bytes at a time at element 2*i (bytes [4i, 4i+4)); y
+  // lives at byte 256 and above. The 4-byte broadcast never reaches y, so no
+  // barrier should appear. Modelling the load as the full 256-byte vreg (the
+  // pre-fix behaviour) fabricates a cross-iteration RAW between rowsum's read
+  // and y's store; modelling it as one f16 element (2 bytes) would be unsound
+  // for forms where the store overlaps the [4i+2, 4i+4) tail of the broadcast.
+  func.func @vecscope_membar_broadcast_load_width_mismatch() {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %c0_i64 = arith.constant 0 : i64
+    %c256_i64 = arith.constant 256 : i64
+    %rowsum = pto.castptr %c0_i64 : i64 -> !pto.ptr<f16, ub>
+    %y = pto.castptr %c256_i64 : i64 -> !pto.ptr<f16, ub>
+    pto.vecscope {
+      %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+      // BRC_B32 on ptr<f16>: reads 4 bytes (2 f16 elements) at rowsum[2*i].
+      // y store at y[128*i] = 256 bytes, strides by a full vreg (no WAW).
+      // rowsum's 4-byte read (max byte 4*63+4=256) never reaches y@256.
+      scf.for %iv = %c0 to %c64 step %c1 {
+        %load_off = arith.muli %iv, %c2 : index
+        %store_off = arith.muli %iv, %c128 : index
+        %vrs = pto.vlds %rowsum[%load_off] {dist = "BRC_B32"} : !pto.ptr<f16, ub> -> !pto.vreg<128xf16>
+        pto.vsts %vrs, %y[%store_off], %mask : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+        scf.yield
+      }
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @vecscope_membar_broadcast_load_disjoint
+// CHECK: pto.vecscope
+// Exactly one barrier total: between the two loops, protecting the rowsum RAW.
+// The second (div) loop must NOT contain a per-iteration VST_VLD barrier.
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: scf.for
+// CHECK: pto.vlds {{.*}} {dist = "BRC_B32"}
+// CHECK: pto.vdiv
+// CHECK: pto.vsts
+// CHECK-NOT: pto.mem_bar
+
+// CHECK-LABEL: func.func @vecscope_membar_broadcast_load_width_mismatch
+// CHECK: pto.vecscope
+// CHECK: scf.for
+// CHECK: pto.vlds {{.*}} {dist = "BRC_B32"}
+// CHECK: pto.vsts
+// No barrier: the 4-byte broadcast footprint never reaches y@256.
+// CHECK-NOT: pto.mem_bar
