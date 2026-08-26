@@ -117,8 +117,9 @@ def _scalar_type_token(dtype: ScalarType) -> str:
 class TileSpec:
     """Concrete specialization of one tile operand.
 
-    ``valid_shape``/``b_layout``/``s_layout``/``memory_space`` are carried for both
-    constraint evaluation (selection) and the rendered entry ``tile_buf`` type.
+    ``valid_shape``/``b_layout``/``s_layout``/``memory_space``/``s_fractal_size``/
+    ``compact_mode``/``pad_value`` are carried for both constraint evaluation
+    (selection) and the rendered entry ``tile_buf`` type.
     """
 
     shape: tuple
@@ -128,6 +129,11 @@ class TileSpec:
     b_layout: str = "row_major"
     s_layout: str = "none_box"
     pad_value: str = "Null"
+    s_fractal_size: int | None = 512
+    # ``null`` (no compact band) is the gap-free default; an explicit None
+    # still means "unknown compact layout" and is rejected by the 1-D
+    # constraints (see _has_gap_free_row_stride).
+    compact_mode: str | int | None = "null"
 
     def __post_init__(self):
         if len(self.shape) != 2:
@@ -138,6 +144,11 @@ class TileSpec:
     def mlir_type(self):
         rows, cols = self.shape
         valid_shape = self.valid_shape if self.valid_shape is not None else self.shape
+        fractal_size = self.s_fractal_size if self.s_fractal_size else 512
+        # ``null`` (the default) renders as no compact suffix, keeping plain
+        # tiles in the historical shape and FoldTileBufIntrinsics happy. An
+        # explicit None also renders without a compact suffix.
+        compact = self.compact_mode if self.compact_mode is not None else "Null"
         return _tile_buf_type(
             [rows, cols],
             scalar_descriptor(self.dtype),
@@ -145,8 +156,9 @@ class TileSpec:
             blayout=_layout_token(self.b_layout),
             address_space=self.memory_space,
             slayout=_layout_token(self.s_layout),
-            fractal_size=512,
+            fractal_size=fractal_size,
             pad=_pad_token(self.pad_value),
+            compact_mode=compact,
         )
 
 

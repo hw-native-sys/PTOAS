@@ -313,6 +313,86 @@ with tempfile.TemporaryDirectory() as td:
             self.assertFalse(os.path.exists(sock),
                               f"socket leaked after timeout: {sock}")
 
+    def test_daemon_preserves_s_fractal_size(self):
+        """The wire path must not silently collapse config.s_fractal_size.
+
+        The C++ side and the in-process ``_selection`` path both forward the
+        payload's ``s_fractal_size``; the daemon must do the same, including
+        the 0 -> 512 normalization, so constraint selection and the rendered
+        tile_buf ABI match what the in-process path would produce.  A daemon
+        that dropped the field would turn every request into the 512 default
+        and change the selected candidate / emitted tile_buf for non-default
+        fractal sizes.
+        """
+        sys.path.insert(0, str(REPO_ROOT / "ptodsl"))
+        from ptodsl._context import make_context
+        from ptodsl.tilelib._selection import _build_tile_specs as selection_build
+        from ptodsl.tilelib.serving import daemon as daemon_mod
+
+        candidates = daemon_mod._registered_candidates("a5", "pto.tadd")
+        desc = candidates[0]
+
+        operand = {
+            "kind": "tile",
+            "shape": [8, 32],
+            "dtype": "f32",
+            "config": {
+                "b_layout": "row_major",
+                "s_layout": "none_box",
+                "pad_value": "Null",
+            },
+        }
+        for fractal in (32, 1024):
+            wire_spec = {
+                **operand,
+                "config": {**operand["config"], "s_fractal_size": fractal},
+            }
+            # pto.tadd binds three positional tile operands (src0, src1, dst).
+            operand_specs = [wire_spec, wire_spec, wire_spec]
+            daemon_specs = daemon_mod._build_tile_specs(desc, operand_specs)
+            selection_specs = selection_build(desc, operand_specs)
+            for label, specs in (
+                ("daemon", daemon_specs),
+                ("selection", selection_specs),
+            ):
+                for spec in specs.values():
+                    self.assertEqual(
+                        spec.s_fractal_size,
+                        fractal,
+                        f"{label} should preserve s_fractal_size={fractal}",
+                    )
+                    with make_context():
+                        self.assertIn(
+                            f"fractal={fractal}",
+                            str(spec.mlir_type()),
+                            f"{label} should render fractal={fractal} in the tile_buf ABI",
+                        )
+            with make_context():
+                daemon_abis = [str(spec.mlir_type()) for spec in daemon_specs.values()]
+                selection_abis = [str(spec.mlir_type()) for spec in selection_specs.values()]
+            self.assertEqual(
+                daemon_abis,
+                selection_abis,
+                f"daemon and selection should agree on the s_fractal_size={fractal} ABI",
+            )
+
+        zero_spec = {
+            **operand,
+            "config": {**operand["config"], "s_fractal_size": 0},
+        }
+        zero_operands = [zero_spec, zero_spec, zero_spec]
+        daemon_zero = daemon_mod._build_tile_specs(desc, zero_operands)
+        for spec in daemon_zero.values():
+            self.assertEqual(
+                spec.s_fractal_size, 512,
+                "s_fractal_size=0 should normalize to the 512 default",
+            )
+            with make_context():
+                self.assertNotIn(
+                    "fractal=", str(spec.mlir_type()),
+                    "normalized 512 is the default fractal, rendered without a suffix",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

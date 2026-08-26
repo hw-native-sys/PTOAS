@@ -1378,6 +1378,8 @@ static std::unique_ptr<Pass> createNarrowUnusedMultiResultProvenancePass() {
   return std::make_unique<NarrowUnusedMultiResultProvenancePass>();
 }
 
+static SmallVector<func::FuncOp> collectSharedPipelineFunctions(ModuleOp module);
+
 namespace {
 struct SerialFrontendPipeLoweringPass
     : public PassWrapper<SerialFrontendPipeLoweringPass,
@@ -1399,7 +1401,10 @@ struct SerialFrontendPipeLoweringPass
     // adaptor allows one function to be verified while another function is
     // still mutating its pipe ops. Keep these two small passes serial so every
     // verifier observes either the complete frontend or complete lowered form.
-    for (func::FuncOp funcOp : getOperation().getOps<func::FuncOp>()) {
+    // Nested-module containers (mixed-backend / per-kernel-kind modules) must
+    // have their enclosed functions lowered too, so collect them via the same
+    // walk used by the sync passes.
+    for (func::FuncOp funcOp : collectSharedPipelineFunctions(getOperation())) {
       if (failed(runPipeline(functionPM, funcOp))) {
         signalPassFailure();
         return;
@@ -3710,7 +3715,8 @@ int mlir::pto::compilePTOASModule(
       tileLibBackend != TileLibBackend::TileLang)
     expandOptions = resolveExpandTileOpOptions(argc, argv);
 
-  if (effectiveBackend == PTOBackend::VPTO && !hasTileOpsToExpand) {
+  if (effectiveBackend == PTOBackend::VPTO && !hasTileOpsToExpand &&
+    !emitMlirIR) {
     if (ptoPrintSeamIR || !ptoSeamIRFile.empty()) {
       llvm::errs() << "Error: shared pre-backend seam IR is unavailable when "
                       "skipping the shared PTO-to-VPTO lowering pipeline.\n";

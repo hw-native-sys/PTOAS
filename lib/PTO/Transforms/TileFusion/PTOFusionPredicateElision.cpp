@@ -79,13 +79,6 @@ static void normalizeValuePair(Value &lhs, Value &rhs) {
   }
 }
 
-static bool areSameValuePair(Value lhs, Value rhs, Value expectedLhs,
-                             Value expectedRhs) {
-  normalizeValuePair(lhs, rhs);
-  normalizeValuePair(expectedLhs, expectedRhs);
-  return lhs == expectedLhs && rhs == expectedRhs;
-}
-
 static std::optional<EquivalenceState>
 lookupEquivalenceState(ValueEquivalenceContext &context, Value lhs, Value rhs) {
   normalizeValuePair(lhs, rhs);
@@ -217,7 +210,11 @@ static bool areEquivalentLoopCarriedValues(Value lhs, Value rhs,
   // recurrence cycle is the direct iter_arg -> plt.scalar_out self recursion
   // for the same value pair, optionally bridged by the index casts required by
   // the plt/scf type boundary; more complex cycles remain unsupported.
-  if (areSameValuePair(lhs, rhs, lhsRecurrenceInput, rhsRecurrenceInput)) {
+  // Each side must recurse back to itself: lhs -> lhsRecurrenceInput and
+  // rhs -> rhsRecurrenceInput.  A set-equality comparison would also accept
+  // distinct iter-arg streams (lhs on arg5, rhs on arg6) where each recurses
+  // back to itself — those are independent recurrences and must not be elided.
+  if (lhs == lhsRecurrenceInput && rhs == rhsRecurrenceInput) {
     return true;
   }
 
@@ -342,26 +339,25 @@ buildPredicateScopeContext(Operation *scope, DominanceInfo &dominanceInfo,
   return context;
 }
 
-static Value getCurrentScalarOperand(const PltCandidate &candidate) {
-  return candidate.op ? candidate.op->getOperand(0) : Value();
-}
-
 static std::optional<unsigned>
 findEquivalentDominatingCandidate(PredicateScopeContext &context,
                                   ValueEquivalenceContext &valueContext,
                                   unsigned currentIndex,
                                   const llvm::DenseSet<unsigned> &erased) {
   const PltCandidate &current = context.pltCandidates[currentIndex];
-  Value currentScalar = getCurrentScalarOperand(current);
   for (unsigned previousIndex : current.dominatingCandidates) {
     if (erased.contains(previousIndex)) {
       continue;
     }
     const PltCandidate &previous = context.pltCandidates[previousIndex];
-    // Equivalence is checked on the scalar input; when it holds, both plt
-    // results are reused as a pair.
-    if (areEquivalentValues(getCurrentScalarOperand(previous), currentScalar,
-                            valueContext)) {
+    // Two plt candidates are only elidable when the operations themselves are
+    // equivalent (same attributes, result types, and all operands) — not merely
+    // when their scalar inputs happen to be equal. Checking only the scalar
+    // input falsely merges independent plt streams (e.g. distinct
+    // loop-carried recurrences or cross-template predicates sharing a
+    // constant), corrupting use-lists during replaceAllUsesWith/erase.
+    if (previous.bitWidth == current.bitWidth &&
+        areEquivalentOperations(previous.op, current.op, valueContext)) {
       return previousIndex;
     }
   }
@@ -369,7 +365,8 @@ findEquivalentDominatingCandidate(PredicateScopeContext &context,
 }
 
 static bool
-elideEquivalentPltCandidates(PredicateScopeContext &context) {
+elideEquivalentPltCandidates(PredicateScopeContext &context,
+                            llvm::DenseSet<Operation *> &globallyErased) {
   bool changed = false;
   llvm::DenseSet<unsigned> erased;
   SmallVector<Operation *, mlir::pto::kValue8> opsToErase;
@@ -378,6 +375,12 @@ elideEquivalentPltCandidates(PredicateScopeContext &context) {
   for (unsigned currentIndex = 0; currentIndex < context.pltCandidates.size();
        ++currentIndex) {
     if (erased.contains(currentIndex)) {
+      continue;
+    }
+    // A plt op may appear in multiple scopes (e.g. a fusion_region scope and
+    // its nested vecscope scope both collect the same plt). Skip ops already
+    // erased by an earlier scope to avoid a double-erase / use-list crash.
+    if (globallyErased.contains(context.pltCandidates[currentIndex].op)) {
       continue;
     }
 
@@ -390,9 +393,13 @@ elideEquivalentPltCandidates(PredicateScopeContext &context) {
 
     PltCandidate &current = context.pltCandidates[currentIndex];
     PltCandidate &previous = context.pltCandidates[*previousIndex];
+    if (globallyErased.contains(previous.op)) {
+      continue;
+    }
     current.mask.replaceAllUsesWith(previous.mask);
     current.scalarOut.replaceAllUsesWith(previous.scalarOut);
     opsToErase.push_back(current.op);
+    globallyErased.insert(current.op);
     erased.insert(currentIndex);
     changed = true;
   }
@@ -443,8 +450,9 @@ struct PTOFusionPredicateElisionPass
     });
 
     bool changed = false;
+    llvm::DenseSet<Operation *> globallyErased;
     for (PredicateScopeContext &context : scopeContexts) {
-      changed |= elideEquivalentPltCandidates(context);
+      changed |= elideEquivalentPltCandidates(context, globallyErased);
     }
 
     if (!changed) {

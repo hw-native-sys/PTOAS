@@ -65,9 +65,9 @@ module {
 // EXPAND-SAME: pto.tilelib.candidate = "template_trowmax"
 // EXPAND-SAME: pto.tilelib.impl = "ptodsl"
 // EXPAND-LABEL: func.func @narrow_rowsum
-// EXPAND: call {{.*}}__template_trowsum
-// EXPAND-SAME: pto.tilelib.candidate = "template_trowsum"
-// EXPAND-SAME: pto.tilelib.impl = "ptodsl"
+// EXPAND: call {{.*}}__vmi_trowsum
+// EXPAND-SAME: pto.tilelib.candidate = "vmi_trowsum"
+// EXPAND-SAME: pto.tilelib.impl = "vmi"
 
 // ADR-0003 dtype coverage CHECKs go after the pre-existing narrow_row* CHECKs
 // so the EXPAND-LABEL scan order matches the IR func order.

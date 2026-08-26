@@ -677,14 +677,9 @@ class TileLibCatalogTest(unittest.TestCase):
                         dtype=ScalarType(index_dtype),
                         memory_space="ub",
                     ),
-                    "tmp": TileSpec(
-                        shape=(1, cols),
-                        dtype=ScalarType(index_dtype),
-                        memory_space="ub",
-                    ),
                 }
                 selected = select("pto.tgather", "a5", specs)
-                self.assertEqual(selected.name, "template_tgather_index")
+                self.assertEqual(selected.name, "template_tgather")
                 mlir = selected.specialize(**specs).mlir_text()
                 self.assertIn("pto.vgather2", mlir)
                 self.assertIn("pto.vsts", mlir)
@@ -706,14 +701,9 @@ class TileLibCatalogTest(unittest.TestCase):
                 dtype=ScalarType("i32"),
                 memory_space="ub",
             ),
-            "tmp": TileSpec(
-                shape=(1, 64),
-                dtype=ScalarType("i32"),
-                memory_space="ub",
-            ),
         }
         selected = select("pto.tgather", "a5", specs)
-        self.assertEqual(selected.name, "template_tgather_index")
+        self.assertEqual(selected.name, "template_tgather")
         self.assertIn("pto.vgather2", selected.specialize(**specs).mlir_text())
 
     def test_tgather_index_rejects_mismatched_offset_width(self):
@@ -782,12 +772,16 @@ class TileLibCatalogTest(unittest.TestCase):
         selected = select("pto.tfillpad", "a5", specs)
         self.assertEqual(selected.name, "template_tfillpad")
         mlir = selected.specialize(**specs).mlir_text()
+        # The normal lowering preserves the valid source prefix with a masked
+        # vector copy (vlds/vsts), then fills the padding region with a masked
+        # vdup (masked-out source prefix) so no scalar store is needed.
         self.assertIn("pto.vlds", mlir)
-        self.assertIn("pto.vsel", mlir)
         self.assertIn("pto.vsts", mlir)
+        self.assertIn("pto.vdup", mlir)
+        self.assertIn("pto.pxor", mlir)
+        self.assertNotIn("pto.vsel", mlir)
         self.assertNotIn("pto.store", mlir)
-        self.assertLess(mlir.index("pto.vlds"), mlir.index("pto.vsel"))
-        self.assertLess(mlir.index("pto.vsel"), mlir.index("pto.vsts"))
+        self.assertLess(mlir.index("pto.vlds"), mlir.index("pto.vdup"))
 
     def test_row_expand_accepts_col_major_single_column_broadcast(self):
         for op, expected_op in (
@@ -911,7 +905,7 @@ class TileLibCatalogTest(unittest.TestCase):
         ):
             select("pto.trowmax", "a5", specs, candidate_id="vmi_trowmax")
 
-    def test_vmi_trowmax_accepts_narrow_full_shape(self):
+    def test_vmi_trowmax_rejects_full_shape_over_256_lanes(self):
         specs = {
             "src": TileSpec(
                 shape=(64, 32),
@@ -933,12 +927,14 @@ class TileLibCatalogTest(unittest.TestCase):
                 b_layout="col_major",
             ),
         }
-        selected = select("pto.trowmax", "a5", specs, candidate_id="vmi_trowmax")
-        mlir = selected.specialize(**specs).mlir_text()
-        self.assertIn("pto.vmi.vload", mlir)
-        self.assertIn("!pto.vmi.vreg<2048xf32>", mlir)
-        self.assertIn("!pto.vmi.vreg<64xf32>", mlir)
-        self.assertIn("group = 64", mlir)
+        # The grouped row-reduce emit loads the whole tile as one 256-lane-max
+        # VMI vreg (total_lanes = rows * physical_cols = 2048 here), so shapes
+        # wider than 256 lanes are rejected by the P1-2 gating until the emit
+        # gains proper chunking. The ordinary template is the fallback.
+        with self.assertRaisesRegex(
+            NoMatchingTemplate, "custom constraints are not satisfied"
+        ):
+            select("pto.trowmax", "a5", specs, candidate_id="vmi_trowmax")
 
     def test_vmi_grouped_sinkhorn_forms_use_grouped_candidates(self):
         data = TileSpec(
@@ -1466,7 +1462,6 @@ class TileLibCatalogTest(unittest.TestCase):
             ("i16", "i32"): "template_tcvt_i16_to_i32",
             ("i32", "i64"): "template_tcvt_i32_to_i64",
             ("i32", "i16"): "template_tcvt_i32_to_i16",
-            ("i32", "f16"): "template_tcvt_i32_to_f16",
             ("i32", "ui8"): "template_tcvt_i32_to_ui8",
             ("i32", "ui16"): "template_tcvt_i32_to_ui16",
             ("ui32", "i16"): "template_tcvt_ui32_to_i16",
@@ -1641,9 +1636,12 @@ class TileLibCatalogTest(unittest.TestCase):
                 "pto.tcvt",
                 "a5",
             )
+            if "vmi" not in getattr(descriptor.metadata, "tags", ())
         ]
         by_id = {descriptor.metadata.id: descriptor for descriptor in candidates}
 
+        # The VMI-form catalog lives alongside the 2D/1D traversal pairs; the
+        # pairing invariant applies to the non-VMI traversal candidates only.
         self.assertEqual(len(candidates), 76)
         self.assertEqual(set(by_id), set(range(76)))
         for fallback_id in range(38):

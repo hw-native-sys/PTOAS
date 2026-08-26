@@ -501,9 +501,20 @@ def main() -> None:
         < mixed_backend_emitc_frontend_text.index("func.call @process_row_ptr_kernel_module__ptodsl_"),
         "mixed-backend caller frontend verification should preserve the entry tile path before the helper call",
     )
+    mixed_backend_vpto_child_text = mixed_backend_frontend_texts[1]
     expect(
-        mixed_backend_frontend_texts[1] == "",
-        "mixed-backend VPTO callee child should continue to compile through the fallback object path when --emit-pto-ir is unavailable",
+        mixed_backend_vpto_child_text,
+        "mixed-backend VPTO callee child should emit IR text via --emit-pto-ir through the main pipeline",
+    )
+    expect(
+        "func.func public @process_row_ptr_kernel_module" in mixed_backend_vpto_child_text,
+        "mixed-backend VPTO callee child should preserve the callee kernel symbol",
+    )
+    expect(
+        "pto.get_buf" in mixed_backend_vpto_child_text
+        and "pto.mte_gm_ub" in mixed_backend_vpto_child_text
+        and "pto.mte_ub_gm" in mixed_backend_vpto_child_text,
+        "mixed-backend VPTO callee child should keep the pipe copy contract visible",
     )
 
     ptr_like_addr_text = PTR_LIKE_TILE_BUF_ADDR_MLIR
@@ -593,9 +604,19 @@ def main() -> None:
         < example_emitc_frontend_text.index("func.call @scale_row_kernel_module__ptodsl_"),
         "mixed_backend_kernel_module.py frontend verification should preserve the entry tile path before the helper call",
     )
+    example_vpto_frontend_text = example_frontend_texts[1]
     expect(
-        example_frontend_texts[1] == "",
-        "mixed_backend_kernel_module.py VPTO child should continue to compile through the fallback object path in frontend verification",
+        example_vpto_frontend_text,
+        "mixed_backend_kernel_module.py VPTO child should emit IR text via --emit-pto-ir through the main pipeline",
+    )
+    expect(
+        "func.func public @scale_row_kernel_module__ptodsl_" in example_vpto_frontend_text,
+        "mixed_backend_kernel_module.py VPTO child should preserve the callee kernel symbol",
+    )
+    expect(
+        "pto.mte_gm_ub" in example_vpto_frontend_text
+        and "pto.vmuls" in example_vpto_frontend_text,
+        "mixed_backend_kernel_module.py VPTO child should keep the pipe copy and vector compute contract visible",
     )
 
     cv_split = load_example_module(
@@ -669,8 +690,10 @@ def main() -> None:
     )
     lowp_frontend_text = lowp_frontend_texts[0]
     expect(
-        lowp_frontend_text == "",
-        "low_precision_vcvt_frontend should continue to compile through the VPTO fallback object path when --emit-pto-ir is unavailable",
+        lowp_frontend_text
+        and "low_precision_vcvt_frontend" in lowp_frontend_text
+        and "pto.vcvt" in lowp_frontend_text,
+        "low_precision_vcvt_frontend should compile through the main PTO pipeline and emit IR via --emit-pto-ir",
     )
 
     invalid_lowp_vcvt_mlir = """
@@ -717,8 +740,10 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     )
     vec_arith_frontend_text = vec_arith_frontend_texts[0]
     expect(
-        vec_arith_frontend_text == "",
-        "vec_value_arith_frontend should compile through the VPTO fallback object path when --emit-pto-ir is unavailable",
+        vec_arith_frontend_text
+        and "vec_value_arith_frontend" in vec_arith_frontend_text
+        and "pto.simt_launch" in vec_arith_frontend_text,
+        "vec_value_arith_frontend should compile through the main PTO pipeline and emit IR via --emit-pto-ir",
     )
 
     print("ptodsl_ptoas_frontend_verify: PASS")

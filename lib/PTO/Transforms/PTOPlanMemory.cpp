@@ -687,8 +687,20 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
                    pto::TGetOp, pto::TNotifyOp, pto::TWaitOp, pto::TTestOp,
                    pto::SyncAllOp,
                    pto::TBroadcastOp, pto::CommTGatherOp,
-                   pto::CommTScatterOp, pto::TReduceOp>(op)) {
-      UpdateOpGenInfo(curOpInfo, llvm::to_vector(op->getOperands()));
+                   pto::CommTScatterOp, pto::TReduceOp,
+                   pto::TPopFromAicOp, pto::TPopFromAivOp,
+                   pto::TFreeFromAicOp, pto::TFreeFromAivOp>(op)) {
+      // Pipe-entry producer/consumer ops (tpop_from_aic/aiv,
+      // tfree_from_aic/aiv) hand a local FIFO tile to/from the vector/cube
+      // helper. The consumed entry is an operand (kept live); the produced
+      // entry is a result tile that PlanMemory must know about.
+      SmallVector<Value> buffers = llvm::to_vector(op->getOperands());
+      UpdateOpGenInfo(curOpInfo, buffers);
+      bool hasTileBufResult =
+          op->getNumResults() == 1 && isa<TileBufType>(op->getResult(0).getType());
+      if (hasTileBufResult) {
+        UpdateOpGenInfo(curOpInfo, ValueRange{op->getResult(0)});
+      }
       OpKillHandle(curOpInfo, live, op->getBlock());
     } else if (auto gpuLaunchOp = dyn_cast<gpu::LaunchFuncOp>(op)) {
       UpdateOpGenInfo(curOpInfo, llvm::to_vector(gpuLaunchOp->getOperands()));

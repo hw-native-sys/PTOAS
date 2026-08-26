@@ -25,7 +25,14 @@ from ptoas.mlir.ir import (
 
 from ._scalar_coercion import coerce_scalar_to_type
 from ._surface_values import _coerce_index_value, _try_get_constant_index, unwrap_surface_value, wrap_surface_value
-from ._types import _ensure_tensor_storage_dtype, _resolve, vmi_mask_type, vmi_vreg_type
+from ._types import (
+    _ensure_tensor_storage_dtype,
+    _isinstance_pto_type,
+    _resolve,
+    _vmi_bf16x2,
+    vmi_mask_type,
+    vmi_vreg_type,
+)
 
 
 class _UnspecifiedArgument:
@@ -76,6 +83,9 @@ def _is_sequence(value) -> bool:
 def _wrap_result(result):
     if hasattr(result, "type"):
         return wrap_surface_value(result)
+    # An Operation with no results (e.g. store ops) — return it unwrapped.
+    if hasattr(result, "operation") or str(type(result)) == "<class 'ptoas.mlir._mlir_libs._mlir.ir.Operation'>":
+        return result
     try:
         count = len(result)
     except TypeError:
@@ -168,6 +178,17 @@ def _type_bit_width(type_obj, *, context: str):
         return 16
     if F32Type.isinstance(type_obj):
         return 32
+    # Packed PTO element types carry two storage elements in one slot; the
+    # storage width differs per type (bf16x2 = 2x16b, hif8x2 = 2x8b, f4x2 =
+    # 2x4b).
+    if _isinstance_pto_type(type_obj, "BF16x2Type"):
+        return 32
+    if _isinstance_pto_type(type_obj, "HiF8x2Type"):
+        return 16
+    if _isinstance_pto_type(type_obj, "F4E1M2x2Type") or _isinstance_pto_type(
+        type_obj, "F4E2M1x2Type"
+    ):
+        return 8
     raise TypeError(f"{context} does not support element type {type_obj}")
 
 
@@ -178,14 +199,24 @@ def _is_vmi_float_element_type(type_obj) -> bool:
     )
 
 
-def _normalize_vmi_vcvt_rounding(mode, *, context: str):
+def _is_packed_vmi_element_type(type_obj) -> bool:
+    """True for packed storage types (bf16x2, hif8x2, f4x2, ...)."""
+    return any(
+        _isinstance_pto_type(type_obj, name)
+        for name in ("BF16x2Type", "HiF8x2Type", "F4E1M2x2Type", "F4E2M1x2Type")
+    )
+
+
+def _normalize_vmi_vcvt_rounding(mode, *, context: str, packed_pair: bool = False):
     token = mode
     if not isinstance(token, str):
         token = str(token)
         if "." in token:
             token = token.rsplit(".", 1)[-1]
     normalized = token.strip().upper()
-    allowed = {"R", "A", "H", "Z"}
+    # Packed bf16x2/f4x2 conversions support 'R'/'A'/'F'/'C'/'Z'
+    # (half-to-even, away, toward, ...) per the C++ verifier's r/a/f/c/z set.
+    allowed = {"R", "A", "F", "C", "Z"} if packed_pair else {"A", "H", "R", "Z"}
     if normalized not in allowed:
         expected = ", ".join(sorted(allowed))
         raise ValueError(
@@ -206,24 +237,88 @@ def _derive_vcvt_result_type(source, to_dtype, *, context: str):
     )
 
 
+# Legal VMI vreg lane counts (1, 2, 4, 8, 64, 128, 256). Used by
+# _derive_vinterpret_cast_result_type to validate a derived target count.
+_VMI_LEGAL_LANE_COUNTS = frozenset({1, 2, 4, 8, 64, 128, 256})
+
+
 def _derive_vinterpret_cast_result_type(source, to_dtype, *, context: str):
     if to_dtype is None:
         raise TypeError(f"{context} requires to_dtype")
     source_type = _as_vmi_vreg_type(_type_of(source), context=context)
     source_elem_type = source_type.element_type
     target_elem_type = _ensure_tensor_storage_dtype(to_dtype, context=context)
-    source_bits = _type_bit_width(source_elem_type, context=context)
-    target_bits = _type_bit_width(target_elem_type, context=context)
-    if source_bits != target_bits:
+    source_elem_bits = _type_bit_width(source_elem_type, context=context)
+    target_elem_bits = _type_bit_width(target_elem_type, context=context)
+    source_total_bits = source_type.element_count * source_elem_bits
+    if target_elem_bits == 0 or source_total_bits % target_elem_bits != 0:
         raise TypeError(
-            f"{context} requires source and target element widths to match; got "
-            f"{source_elem_type} -> {target_elem_type}"
+            f"{context} requires the source bit count to be divisible by the "
+            f"target element width; got {source_type} ({source_total_bits} bits) "
+            f"-> {target_elem_type} ({target_elem_bits} bits)"
+        )
+    target_count = source_total_bits // target_elem_bits
+    if target_count not in _VMI_LEGAL_LANE_COUNTS:
+        raise ValueError(
+            f"{context} derived lane count {target_count} is outside the legal "
+            f"domain 1, 2, 4, 8, 64, 128, 256"
+        )
+    # A bit-reinterpretation that changes the lane count must not reuse the
+    # source layout: group/slot counts are tied to the source lanes.
+    layout = source_type.layout
+    if layout is not None and target_count != source_type.element_count:
+        raise TypeError(
+            f"{context} cannot carry a layout across a lane-count change "
+            f"({source_type.element_count} -> {target_count}); the source "
+            "layout is tied to the original lanes"
         )
     return _pto.VMIVRegType.get(
-        source_type.element_count,
+        target_count,
         target_elem_type,
-        layout=source_type.layout,
+        layout=layout,
     )
+
+
+def _check_vci_group_tiles_phys_vl(elem_type, size, group, *, context: str):
+    """Validate that a grouped vci size tiles the physical VL.
+
+    For group > 1, each group must occupy a whole number of physical vregs
+    (64, 128, or 256 lanes per group).  group=1 is equivalent to ungrouped
+    and is always legal regardless of tiling.
+    """
+    if group is None or group <= 1:
+        return
+    if size % group != 0:
+        raise ValueError(
+            f"{context}: size {size} must be divisible by group {group}"
+        )
+    group_size = size // group
+    if group_size <= 0:
+        raise ValueError(
+            f"{context}: group_size must be positive; got size={size}, group={group}"
+        )
+    # Physical VL depends on the element width: i32/f32 = 64 lanes,
+    # i16/f16 = 128 lanes, i8 = 256 lanes.
+    if IntegerType.isinstance(elem_type):
+        width = IntegerType(elem_type).width
+    elif _is_vmi_float_element_type(elem_type):
+        from ptoas.mlir.ir import FloatType
+        if FloatType.isinstance(elem_type):
+            width = FloatType(elem_type).width
+        else:
+            width = 32
+    else:
+        width = 32
+    phys_vl = 64 if width >= 32 else (128 if width >= 16 else 256)
+    # The backend accepts a group whose per-group lane count tiles the
+    # physical VL in either direction: a small group within one VL
+    # (group_size < phys_vl, phys_vl % group_size == 0) or a group spanning
+    # several VLs (group_size > phys_vl, group_size % phys_vl == 0).
+    if phys_vl % group_size != 0 and group_size % phys_vl != 0:
+        raise ValueError(
+            f"{context}: group_size {group_size} does not tile physical lanes "
+            f"({phys_vl}) in either direction; size={size}, group={group}"
+        )
 
 
 def _derive_vbrc_result_type(value, size, *, context: str):
@@ -252,7 +347,32 @@ def _derive_vci_result_type(base, size, *, context: str):
             f"{context} requires a typed scalar such as pto.i32(0) or "
             "pto.f32(0.0); plain Python scalars are ambiguous"
         )
-    return _pto.VMIVRegType.get(size, raw_base.type)
+    base_type = raw_base.type
+    # VMI vreg elements must be 8/16/32-bit.  An MLIR index (64-bit, used
+    # for loop induction variables) is narrowed to signless i32 — this is
+    # the documented dynamic-base case.  Any other unsupported width
+    # (e.g. an explicit i64) must raise a clear error rather than silently
+    # truncating and changing the value.
+    if _is_vmi_float_element_type(base_type):
+        pass  # float types are fine
+    elif IntegerType.isinstance(base_type):
+        width = IntegerType(base_type).width
+        if width not in (8, 16, 32):
+            # MLIR index is 64-bit signless; narrow it to i32 (dynamic base).
+            if str(base_type) == "index":
+                base_type = IntegerType.get_signless(32)
+            else:
+                raise TypeError(
+                    f"{context} requires an 8/16/32-bit integer or float base; "
+                    f"got {base_type} ({width}-bit)"
+                )
+    elif str(base_type) == "index":
+        base_type = IntegerType.get_signless(32)
+    else:
+        raise TypeError(
+            f"{context} requires a typed 8/16/32-bit scalar base; got {base_type}"
+        )
+    return _pto.VMIVRegType.get(size, base_type)
 
 
 def _derive_vmull_result_types(a, b, *, context: str):
@@ -509,12 +629,72 @@ def _call_value(op_name: str, *args, **kwargs):
     return _wrap_result(_generated(op_name)(*args, **kwargs))
 
 
+# VMI binary ops for which swapping scalar/vector operands preserves
+# semantics (a ⊕ b == b ⊕ a).  Non-commutative ops (vsub/vdiv/vshl/vshr)
+# must NOT swap; their scalar-vector form must broadcast the scalar and
+# keep the original operand order.
+_VMI_COMMUTATIVE_BINARY_OPS = frozenset(
+    {"vadd", "vmul", "vmax", "vmin", "vand", "vor", "vxor"}
+)
+
+
 def _emit_binary(op_name: str, lhs, rhs, mask=None, *, pmode=None, loc=None, ip=None):
+    context = f"pto.vmi.{op_name}(...)"
+    raw_lhs = _raw(lhs)
+    raw_rhs = _raw(rhs)
+    lhs_has_type = hasattr(raw_lhs, "type")
+    rhs_has_type = hasattr(raw_rhs, "type")
+    lhs_is_vreg = lhs_has_type and _is_vmi_vreg_type(raw_lhs.type)
+    rhs_is_vreg = rhs_has_type and _is_vmi_vreg_type(raw_rhs.type)
+    if lhs_is_vreg and not rhs_is_vreg:
+        # vector-scalar: delegate to the vec-scalar variant (e.g. vadd -> vadds)
+        vec_scalar_name = op_name + "s"
+        if hasattr(_pto, f"vmi_{vec_scalar_name}"):
+            return _emit_vec_scalar(
+                vec_scalar_name, lhs, rhs, mask, pmode=pmode, loc=loc, ip=ip
+            )
+        # Fallback: broadcast the scalar into a constant vector
+        vreg_type = raw_lhs.type
+        coerced = _coerce_scalar_like_vmi_element(lhs, rhs, context=context)
+        raw_rhs = _raw(
+            _call_value(
+                "vbrc",
+                vreg_type,
+                coerced,
+                loc=loc,
+                ip=ip,
+            )
+        )
+    elif rhs_is_vreg and not lhs_is_vreg:
+        vec_scalar_name = op_name + "s"
+        if op_name in _VMI_COMMUTATIVE_BINARY_OPS:
+            # Commutative: scalar-vector normalizes to vec-scalar by
+            # swapping (e.g. vadd(1, vec) -> vadds(vec, 1)).
+            if hasattr(_pto, f"vmi_{vec_scalar_name}"):
+                return _emit_vec_scalar(
+                    vec_scalar_name, rhs, lhs, mask, pmode=pmode, loc=loc, ip=ip
+                )
+        # Non-commutative (vsub/vdiv/vshl/vshr) or no vec-scalar builder:
+        # broadcast the scalar into a vector and keep the original operand
+        # order so the operation's semantics are preserved.
+        vreg_type = raw_rhs.type
+        coerced = _coerce_scalar_like_vmi_element(rhs, lhs, context=context)
+        raw_lhs = _raw(
+            _call_value(
+                "vbrc",
+                vreg_type,
+                coerced,
+                loc=loc,
+                ip=ip,
+            )
+        )
+    else:
+        vreg_type = raw_lhs.type if lhs_has_type else _type_of(lhs)
     return _call_value(
         op_name,
-        _type_of(lhs),
-        _raw(lhs),
-        _raw(rhs),
+        vreg_type,
+        raw_lhs,
+        raw_rhs,
         _variadic_mask(mask),
         pmode=pmode,
         loc=loc,
@@ -536,11 +716,18 @@ def _emit_unary(op_name: str, source, mask=None, *, pmode=None, loc=None, ip=Non
 
 def _emit_vec_scalar(op_name: str, source, scalar, mask, *, pmode=None, loc=None, ip=None):
     context = f"pto.vmi.{op_name}(...)"
+    if op_name in ("vshls", "vshrs"):
+        # Shift count operands must be I16 per the VMI hardware contract.
+        scalar = coerce_scalar_to_type(
+            scalar, IntegerType.get_signless(16), context=context
+        )
+    else:
+        scalar = _coerce_scalar_like_vmi_element(source, scalar, context=context)
     return _call_value(
         op_name,
         _type_of(source),
         _raw(source),
-        _coerce_scalar_like_vmi_element(source, scalar, context=context),
+        scalar,
         _required_mask(mask, context=context),
         pmode=pmode,
         loc=loc,
@@ -560,6 +747,18 @@ def _emit_reduce(
     reassoc=_UNSPECIFIED,
 ):
     context = f"pto.vmi.{op_name}(...)"
+    if group is not None:
+        if isinstance(group, bool) or not isinstance(group, int):
+            raise TypeError(f"{context} requires group to be a positive integer")
+        if group <= 0:
+            raise ValueError(f"{context} requires group to be positive, got {group!r}")
+        # The result lane count equals the group value; it must be a legal
+        # VMI vreg width.
+        if group not in (1, 2, 4, 8, 32, 64, 128, 256):
+            raise ValueError(
+                f"{context} requires group to be one of 1, 2, 4, 8, 64, 128, 256; "
+                f"got {group}"
+            )
     if op_name == "vcadd":
         source_elem_type = _vmi_element_type(_type_of(source), context=context)
         if reassoc is _UNSPECIFIED:
@@ -573,9 +772,13 @@ def _emit_reduce(
                 f"{context} requires reassoc to be the Python boolean True or False; "
                 f"received {reassoc!r}"
             )
-    kwargs = {"group": group, "pmode": pmode, "loc": loc, "ip": ip}
+    kwargs = {"group": group if group is not None else 1, "pmode": pmode, "loc": loc, "ip": ip}
     if reassoc is not _UNSPECIFIED:
-        kwargs["reassoc"] = reassoc
+        # reassoc is a UnitAttr on the C++ side: its presence (not its value)
+        # signals that the user made an explicit choice.  Always materialise
+        # the attribute when the user explicitly specified reassoc (True or
+        # False); the verifier requires it for floating-point sources.
+        kwargs["reassoc"] = True
     return _call_value(
         op_name,
         _derive_vmi_reduce_result_type(source, group, context=context),
@@ -588,6 +791,7 @@ def _emit_reduce(
 class _VMINamespace:
     vreg = staticmethod(vmi_vreg_type)
     mask = staticmethod(vmi_mask_type)
+    bf16x2 = _vmi_bf16x2
 
     @staticmethod
     def vload(
@@ -700,16 +904,69 @@ dest = _raw(destination)
         )
 
     @staticmethod
-    def vci(base, *, size, order=None, loc=None, ip=None):
-        result_type = _derive_vci_result_type(base, size, context="pto.vmi.vci(...)")
+    def vsstb(value, destination, offset, block_stride, mask, *, pmode=None, loc=None, ip=None):
+        context = "pto.vmi.vsstb(...)"
+        return _call_value(
+            "vsstb",
+            _raw(value),
+            _raw(destination),
+            _raw(offset),
+            _raw(block_stride),
+            _required_mask(mask, context=context),
+            pmode=pmode,
+            loc=loc,
+            ip=ip,
+        )
+
+    @staticmethod
+    def vci(base, *, size, order=None, group=None, loc=None, ip=None):
+        context = "pto.vmi.vci(...)"
+        result_type = _derive_vci_result_type(base, size, context=context)
+        _check_vci_group_tiles_phys_vl(
+            result_type.element_type, size, group, context=context
+        )
         base = coerce_scalar_to_type(
             base,
-            _vmi_element_type(result_type, context="pto.vmi.vci(...)"),
+            _vmi_element_type(result_type, context=context),
             context="pto.vmi.vci(base)",
         )
-        return _call_value("vci", result_type, base, order=order, loc=loc, ip=ip)
+        return _call_value("vci", result_type, base, order=order, group=group, loc=loc, ip=ip)
 
     vadd = staticmethod(lambda lhs, rhs, mask=None, **kw: _emit_binary("vadd", lhs, rhs, mask, **kw))
+
+    @staticmethod
+    def vaddc(lhs, rhs, mask, *, loc=None, ip=None):
+        context = "pto.vmi.vaddc(...)"
+        source_type = _as_vmi_vreg_type(_type_of(lhs), context=context)
+        mask_type = _resolve_vmi_mask_type(source_type.element_count, context=context)
+        return _call_value(
+            "vaddc",
+            source_type,
+            mask_type,
+            _raw(lhs),
+            _raw(rhs),
+            _required_mask(mask, context=context),
+            loc=loc,
+            ip=ip,
+        )
+
+    @staticmethod
+    def vaddcs(lhs, rhs, carry_in, mask, *, loc=None, ip=None):
+        context = "pto.vmi.vaddcs(...)"
+        source_type = _as_vmi_vreg_type(_type_of(lhs), context=context)
+        mask_type = _resolve_vmi_mask_type(source_type.element_count, context=context)
+        return _call_value(
+            "vaddcs",
+            source_type,
+            mask_type,
+            _raw(lhs),
+            _raw(rhs),
+            _required_mask(carry_in, context=context),
+            _required_mask(mask, context=context),
+            loc=loc,
+            ip=ip,
+        )
+
     vsub = staticmethod(lambda lhs, rhs, mask=None, **kw: _emit_binary("vsub", lhs, rhs, mask, **kw))
     vmul = staticmethod(lambda lhs, rhs, mask=None, **kw: _emit_binary("vmul", lhs, rhs, mask, **kw))
     vdiv = staticmethod(lambda lhs, rhs, mask=None, **kw: _emit_binary("vdiv", lhs, rhs, mask, **kw))
@@ -729,12 +986,47 @@ dest = _raw(destination)
     vsqrt = staticmethod(lambda source, mask=None, **kw: _emit_unary("vsqrt", source, mask, **kw))
     vnot = staticmethod(lambda source, mask=None, **kw: _emit_unary("vnot", source, mask, **kw))
 
-    vadds = staticmethod(lambda source, scalar, mask, **kw: _emit_vec_scalar("vadds", source, scalar, mask, **kw))
-    vmuls = staticmethod(lambda source, scalar, mask, **kw: _emit_vec_scalar("vmuls", source, scalar, mask, **kw))
-    vmaxs = staticmethod(lambda source, scalar, mask, **kw: _emit_vec_scalar("vmaxs", source, scalar, mask, **kw))
-    vmins = staticmethod(lambda source, scalar, mask, **kw: _emit_vec_scalar("vmins", source, scalar, mask, **kw))
-    vshls = staticmethod(lambda source, scalar, mask, **kw: _emit_vec_scalar("vshls", source, scalar, mask, **kw))
-    vshrs = staticmethod(lambda source, scalar, mask, **kw: _emit_vec_scalar("vshrs", source, scalar, mask, **kw))
+    def _deprecated_vec_scalar(op_name, source, scalar, mask, **kw):
+        import warnings
+        from ._diagnostics import PTODSLDeprecationWarning
+        warnings.warn(
+            f"pto.vmi.{op_name}(vector, scalar, mask) is deprecated; use "
+            f"pto.vmi.{op_name[:-1]}(vector, scalar, mask) instead",
+            PTODSLDeprecationWarning,
+            stacklevel=2,
+        )
+        return _emit_vec_scalar(op_name, source, scalar, mask, **kw)
+
+    vadds = staticmethod(
+        lambda source, scalar, mask, **kw: _VMINamespace._deprecated_vec_scalar(
+            "vadds", source, scalar, mask, **kw
+        )
+    )
+    vmuls = staticmethod(
+        lambda source, scalar, mask, **kw: _VMINamespace._deprecated_vec_scalar(
+            "vmuls", source, scalar, mask, **kw
+        )
+    )
+    vmaxs = staticmethod(
+        lambda source, scalar, mask, **kw: _VMINamespace._deprecated_vec_scalar(
+            "vmaxs", source, scalar, mask, **kw
+        )
+    )
+    vmins = staticmethod(
+        lambda source, scalar, mask, **kw: _VMINamespace._deprecated_vec_scalar(
+            "vmins", source, scalar, mask, **kw
+        )
+    )
+    vshls = staticmethod(
+        lambda source, scalar, mask, **kw: _VMINamespace._deprecated_vec_scalar(
+            "vshls", source, scalar, mask, **kw
+        )
+    )
+    vshrs = staticmethod(
+        lambda source, scalar, mask, **kw: _VMINamespace._deprecated_vec_scalar(
+            "vshrs", source, scalar, mask, **kw
+        )
+    )
 
     @staticmethod
     def vcmp(lhs, rhs, seed, cmp, *, pmode=None, loc=None, ip=None):
@@ -836,29 +1128,65 @@ dest = _raw(destination)
         if mask is not None:
             raise _unsupported_vmi_feature_error("pto.vmi.vcvt", "masked form")
         result_type = _derive_vcvt_result_type(source, to_dtype, context="pto.vmi.vcvt(...)")
-        if rounding is not None:
-            rounding = _normalize_vmi_vcvt_rounding(
-                rounding,
-                context="pto.vmi.vcvt(..., rounding=...)",
+        source_elem = _as_vmi_vreg_type(
+            _type_of(source), context="pto.vmi.vcvt(...)"
+        ).element_type
+        src_packed = _is_packed_vmi_element_type(source_elem)
+        dst_packed = _is_packed_vmi_element_type(result_type.element_type)
+        if src_packed or dst_packed:
+            # Packed conversions are A5-supported only for the bf16x2 <-> f4x2
+            # pair; reject any other packed source or destination up front.
+            if not (src_packed and dst_packed):
+                raise TypeError(
+                    "pto.vmi.vcvt(...) supports bf16x2 only for bf16x2 <-> "
+                    "f4x2 packed conversions"
+                )
+            # Packed conversions never accept a saturate attribute.
+            if saturate is not None:
+                raise ValueError(
+                    "pto.vmi.vcvt(...) does not support saturate for "
+                    "bf16x2/f4x2 packed conversions"
+                )
+            # Rounding only applies to the narrowing direction (bf16x2 -> f4x2);
+            # the widening direction (f4x2 -> bf16x2) must not carry it.
+            narrowing = (
+                _type_bit_width(source_elem, context="pto.vmi.vcvt(...)")
+                > _type_bit_width(result_type.element_type, context="pto.vmi.vcvt(...)")
             )
-        if saturate is None:
+            if narrowing:
+                if rounding is not None:
+                    rounding = _normalize_vmi_vcvt_rounding(
+                        rounding,
+                        context="pto.vmi.vcvt(..., rounding=...)",
+                        packed_pair=True,
+                    )
+                else:
+                    rounding = "R"
+            else:
+                if rounding is not None:
+                    raise ValueError(
+                        "pto.vmi.vcvt(...) does not support rounding for "
+                        "bf16x2/f4x2 widening conversions"
+                    )
+        else:
+            if rounding is not None:
+                rounding = _normalize_vmi_vcvt_rounding(
+                    rounding,
+                    context="pto.vmi.vcvt(..., rounding=...)",
+                )
             # The VMI verifier requires explicit "SAT" or "NOSAT" for
             # narrowing and fp-to-int directions.  Default to "SAT" when
             # the user does not specify.
-            src_bits = _type_bit_width(
-                _as_vmi_vreg_type(_type_of(source), context="pto.vmi.vcvt(...)").element_type,
-                context="pto.vmi.vcvt(...)",
-            )
-            dst_bits = _type_bit_width(
-                result_type.element_type,
-                context="pto.vmi.vcvt(...)",
-            )
-            src_is_fp = _is_vmi_float_element_type(
-                _as_vmi_vreg_type(_type_of(source), context="pto.vmi.vcvt(...)").element_type
-            )
-            dst_is_fp = _is_vmi_float_element_type(result_type.element_type)
-            if src_bits > dst_bits or (src_is_fp and not dst_is_fp):
-                saturate = "SAT"
+            if saturate is None:
+                src_bits = _type_bit_width(source_elem, context="pto.vmi.vcvt(...)")
+                dst_bits = _type_bit_width(
+                    result_type.element_type,
+                    context="pto.vmi.vcvt(...)",
+                )
+                src_is_fp = _is_vmi_float_element_type(source_elem)
+                dst_is_fp = _is_vmi_float_element_type(result_type.element_type)
+                if src_bits > dst_bits or (src_is_fp and not dst_is_fp):
+                    saturate = "SAT"
         return _call_value(
             "vcvt",
             result_type,
@@ -886,12 +1214,20 @@ dest = _raw(destination)
 
     @staticmethod
     def vexpdif(x, max_value, mask, *, pmode=None, loc=None, ip=None):
+        context = "pto.vmi.vexpdif(...)"
+        x_type = _as_vmi_vreg_type(_type_of(x), context=context)
+        # The A5 vexpdif op computes exp(x - max) widened to f32 while
+        # preserving the logical lane count, so an f16 input pair produces an
+        # f32 result vreg with the same element count.
+        result_type = _pto.VMIVRegType.get(
+            x_type.element_count, _ensure_tensor_storage_dtype(F32Type.get(), context=context)
+        )
         return _call_value(
             "vexpdif",
-            _type_of(max_value),
+            result_type,
             _raw(x),
             _raw(max_value),
-            _required_mask(mask, context="pto.vmi.vexpdif(...)"),
+            _required_mask(mask, context=context),
             pmode=pmode,
             loc=loc,
             ip=ip,

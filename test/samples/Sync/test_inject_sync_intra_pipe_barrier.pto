@@ -1,4 +1,4 @@
-// RUN: ./bin/ptoas --enable-insert-sync %s 2>&1 1>/dev/null | FileCheck %s
+// RUN: ptoas --enable-insert-sync --mlir-print-ir-after=pto-insert-sync %s 2>&1 1>/dev/null | FileCheck %s
 
 // This test models the PyPTO expectation for intra-pipe dependencies:
 // when two ops run on the same pipe (here: PIPE_V) and have a true memory
