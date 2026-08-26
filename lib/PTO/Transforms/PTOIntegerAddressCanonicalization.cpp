@@ -242,15 +242,45 @@ struct CanonicalizeIntegerCastPtr final
     unsigned inputWidth =
         inputType.isIndex() ? kIndexBitWidth
                             : inputType.getIntOrFloatBitWidth();
+
     // Design C14 requires the *quotient* to round-trip losslessly into index.
-    // The first implementation approximates this with the sufficient condition
-    // inputWidth == index width (same-width CastIndex is trivially lossless).
-    // Narrower inputs (e.g. i32) are conservatively rejected until PTO defines
-    // the zero/sign extension semantics of castptr into the 64-bit address
-    // space; the full quotient round-trip proof is future work.
-    if (inputWidth != kIndexBitWidth) {
+    // Same-width (64-bit) inputs are trivially lossless. Narrower inputs
+    // (e.g. i32) are accepted only when the byte expression provably does not
+    // wrap in its own width: with the zero-extension semantics of LLVM
+    // inttoptr (design §2.2), 0 <= B < 2^inputWidth implies Q = B / E <
+    // 2^inputWidth and zext(Q) * E == zext(B) exactly in the 64-bit index
+    // domain. Wider inputs would truncate and are rejected.
+    auto roundTripsLosslessly = [&]() -> bool {
+      if (inputWidth == kIndexBitWidth) {
+        return true;
+      }
+      if (inputWidth > kIndexBitWidth) {
+        return false;
+      }
+      if (auto folded = foldPTOConstant(valueEvolution.getExpr(input))) {
+        // Constant byte expression: non-negative and fits the input width.
+        return *folded >= 0 &&
+               static_cast<uint64_t>(*folded) <
+                   (uint64_t{1} << (inputWidth - 1));
+      }
+      // Loop-carried byte expression: require a provable non-negative range
+      // whose signed upper bound leaves room in the input width.
+      scf::ForOp loop = castOp->getParentOfType<scf::ForOp>();
+      if (!loop) {
+        return false;
+      }
+      auto range = valueEvolution.getRange(input, loop);
+      if (!range) {
+        return false;
+      }
+      unsigned rangeWidth = std::max(1U, inputWidth);
+      return range.value->lowerInclusive.isNonNegative() &&
+             range.value->upperInclusive.ult(
+                 APInt(rangeWidth, 1).shl(inputWidth - 1));
+    };
+    if (!roundTripsLosslessly()) {
       return rewriter.notifyMatchFailure(
-          castOp, "only 64-bit integer inputs are supported (first version)");
+          castOp, "byte expression does not provably round-trip into index");
     }
 
     Type elementType = ptrType.getElementType();

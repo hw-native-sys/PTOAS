@@ -235,6 +235,21 @@ func.func @c15_runtime_atom(%param: i64, %iv: index, %sink: !pto.ptr<f16, ub>) {
   return
 }
 
+// C16: a signedness-carrying address uses signless carriers for the synthesized
+// zero root and index offset.
+// CHECK-LABEL: func.func @c16_unsigned_input
+// CHECK-DAG: %[[ZERO:.*]] = arith.constant 0 : i64
+// CHECK-DAG: %[[OFFSET:.*]] = arith.constant 4096 : index
+// CHECK: %[[BASE:.*]] = pto.castptr %[[ZERO]] : i64 -> !pto.ptr<ui8, ub>
+// CHECK: %[[PTR:.*]] = pto.addptr %[[BASE]], %[[OFFSET]]
+// CHECK: return %[[PTR]]
+func.func @c16_unsigned_input() -> !pto.ptr<ui8, ub> {
+  %c4096 = arith.constant 4096 : i64
+  %bytes = builtin.unrealized_conversion_cast %c4096 : i64 to ui64
+  %ptr = pto.castptr %bytes : ui64 -> !pto.ptr<ui8, ub>
+  return %ptr : !pto.ptr<ui8, ub>
+}
+
 // Rejected: multiple non-divisible atoms have no unique root.
 // CHECK-LABEL: func.func @reject_multi_atom
 // CHECK: %[[PTR:.*]] = pto.castptr %{{.*}} : i64 -> !pto.ptr<f16, ub>
@@ -266,6 +281,23 @@ func.func @reject_nonunit_coeff(%p: i64, %sink: !pto.ptr<f16, ub>) {
   %dyn = arith.muli %iv64, %c4096 : i64
   %addr = arith.addi %scaled, %dyn : i64
   %ptr = pto.castptr %addr : i64 -> !pto.ptr<f16, ub>
+  %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+  %lo, %hi = pto.vldsx2 %ptr[%c0], "DINTLV_B16"
+      : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+  pto.vsts %lo, %sink[%c0], %mask
+      : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  return
+}
+
+// i32 constant byte expression round-trips losslessly into index (LLVM
+// inttoptr zero-extension semantics); narrower constant inputs are accepted.
+// CHECK-LABEL: func.func @i32_const_accept
+// CHECK: pto.castptr %{{.*}} : i32 -> !pto.ptr<f16, ub>
+// CHECK: pto.addptr %{{.*}}, %c2048
+func.func @i32_const_accept(%sink: !pto.ptr<f16, ub>) {
+  %c0 = arith.constant 0 : index
+  %c4096 = arith.constant 4096 : i32
+  %ptr = pto.castptr %c4096 : i32 -> !pto.ptr<f16, ub>
   %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
   %lo, %hi = pto.vldsx2 %ptr[%c0], "DINTLV_B16"
       : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>

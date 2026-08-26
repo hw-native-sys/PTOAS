@@ -209,13 +209,16 @@ Q-expression -> index -> addptr element scaling -> Waddr
 LLVM lowering 产物反推。当前 `PTOValueEvolutionAnalysis` 中固定 64 位的 index 处理是
 实现现状，不应被提升为跨 target 合同。
 
-**实现近似（C14 的充分条件）**：第一版实现以「输入位宽 == index 位宽（64）」作为
-round-trip 的充分条件——同宽 `CastIndex` 平凡无损。更窄输入（如 i32）即使商在数学上
-可无损进入 index（如 `x * 4096` 的商 `x * 2048` 在 `x` 值域内不溢出）也被保守拒绝，
-直到 PTO 文档化继承 LLVM `inttoptr` 的 zero-extend 语义（§2.2 实测）；完整的商
-round-trip proof（`PTOValueEvolutionAnalysis` 的 range 能力即可证明）列为后续工作。
-拒绝 message 与 C14 表格行的「不改」行为一致，但当前实现不区分「商真的不能无损」
-与「PTO 尚未文档化扩展语义」。
+**实现（C14 的 round-trip proof）**：同宽（64 位）输入平凡无损，直接接受。更窄
+输入（如 i32）按 LLVM `inttoptr` 的 zero-extend 语义（§2.2 实测）做 round-trip
+证明：字节表达式 `B` 可证 `0 <= B < 2^inputWidth` 时，`Q = B/E < 2^inputWidth` 且
+`zext(Q) * E == zext(B)` 在 64 位 index 域精确成立。证明路径：常量表达式用
+`foldPTOConstant`；循环递推用 `PTOValueEvolutionAnalysis::getRange`（要求非负且
+signed 上界留有余量）。已知边界：分析器的 Mul range 目前仅支持 `index` 类型
+（`getSyntheticEvolutionImpl` 的 `hasIndexType` 检查），因此 i32 循环递推（如
+`muli(iv32, 4096)`）即使数学上不溢出也会返回 `PossibleWrap` 而拒绝——扩展现有
+分析器支持非 index 算术 range 是后续工作，不影响本设计边界。宽于 index 的输入
+（如 i128）会截断，拒绝。
 
 带 `nuw`/`nsw` 的原算术只要求在原程序有定义的输入上保持地址，并且新表达式不新增
 poison。reifier 不复制无法证明的 overflow flag。无法证明 refinement 时保持原样。
