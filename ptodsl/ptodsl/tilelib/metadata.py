@@ -130,7 +130,10 @@ class TileSpec:
     s_layout: str = "none_box"
     pad_value: str = "Null"
     s_fractal_size: int | None = 512
-    compact_mode: str | int | None = None
+    # ``null`` (no compact band) is the gap-free default; an explicit None
+    # still means "unknown compact layout" and is rejected by the 1-D
+    # constraints (see _has_gap_free_row_stride).
+    compact_mode: str | int | None = "null"
 
     def __post_init__(self):
         if len(self.shape) != 2:
@@ -142,9 +145,9 @@ class TileSpec:
         rows, cols = self.shape
         valid_shape = self.valid_shape if self.valid_shape is not None else self.shape
         fractal_size = self.s_fractal_size if self.s_fractal_size else 512
-        # An unspecified compact_mode (None) renders as Null (no compact suffix),
-        # matching the historical default and keeping FoldTileBufIntrinsics happy
-        # for plain tiles that do not carry an explicit compact band.
+        # ``null`` (the default) renders as no compact suffix, keeping plain
+        # tiles in the historical shape and FoldTileBufIntrinsics happy. An
+        # explicit None also renders without a compact suffix.
         compact = self.compact_mode if self.compact_mode is not None else "Null"
         return _tile_buf_type(
             [rows, cols],

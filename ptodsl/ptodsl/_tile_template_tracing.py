@@ -84,6 +84,9 @@ bf16 = ScalarType("bf16", lanes=128, mask_bits=16, bytewidth=2)
 i32 = ScalarType("i32", lanes=64, mask_bits=32, bytewidth=4)
 i16 = ScalarType("i16", lanes=128, mask_bits=16, bytewidth=2)
 i8 = ScalarType("i8", lanes=256, mask_bits=8, bytewidth=1)
+si32 = ScalarType("si32", lanes=64, mask_bits=32, bytewidth=4)
+si16 = ScalarType("si16", lanes=128, mask_bits=16, bytewidth=2)
+si8 = ScalarType("si8", lanes=256, mask_bits=8, bytewidth=1)
 ui8 = ScalarType("ui8", lanes=256, mask_bits=8, bytewidth=1)
 
 _SCALAR_TYPES_BY_NAME = {
@@ -101,7 +104,8 @@ class TileSpec:
     # valid_shape: may be smaller than shape (e.g. RowPlusOne: shape=(129,64),
     # valid_shape=(128,64)). Defaults to shape when None (plain tiles).
     valid_shape: tuple[int, int] | None = None
-    # compact_mode: "normal" (default) or "row_plus_one" (UB +1 padding band).
+    # compact_mode: "normal" (default), "row_plus_one" (UB +1 padding band),
+    # or "null" (no compact band, plain tiles).
     compact_mode: str = "normal"
     # s_fractal_size: physical fractal granularity; 0/None defaults to 512.
     s_fractal_size: int | None = 512
@@ -117,9 +121,10 @@ class TileSpec:
             raise ValueError("TileSpec currently only supports ub tiles")
         if self.b_layout not in {"row_major", "col_major"}:
             raise ValueError("TileSpec.b_layout must be 'row_major' or 'col_major'")
-        if self.compact_mode not in {"normal", "row_plus_one"}:
+        if self.compact_mode not in {"normal", "row_plus_one", "null"}:
             raise ValueError(
-                "TileSpec.compact_mode must be 'normal' or 'row_plus_one'"
+                "TileSpec.compact_mode must be 'normal', 'row_plus_one', "
+                "or 'null'"
             )
         # pto-isa invariant: ValidRow <= alignRow (physical rows). valid_shape
         # defaults to shape when None (handled in mlir_type / consumers).
@@ -152,7 +157,9 @@ class TileSpec:
             slayout="NoneBox",
             fractal_size=fractal,
             pad=self.pad_value,
-            compact_mode=self.compact_mode,
+            # "null" (no compact band) renders without a compact suffix, same
+            # as the metadata TileSpec default.
+            compact_mode="Null" if self.compact_mode == "null" else self.compact_mode,
         )
 
 
@@ -839,7 +846,10 @@ def _coerce_parameter_spec(spec):
         if dtype is None:
             raise ValueError(f"unsupported VMI tile-template dtype {spec.dtype!r}")
         s_layout = getattr(spec, "s_layout", "none_box")
-        compact_mode = getattr(spec, "compact_mode", "normal") or "normal"
+        # The tracing engine understands "normal", "row_plus_one", and "null"
+        # (no compact band); an absent/None compact_mode is a plain tile,
+        # normalized to "null".
+        compact_mode = getattr(spec, "compact_mode", "null") or "null"
         is_nd2nz_layout = (
             s_layout == "row_major"
             and getattr(spec, "b_layout", "row_major") == "col_major"

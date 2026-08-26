@@ -35,6 +35,9 @@ from ptodsl._tile_template_tracing import (
     i8,
     i16,
     i32,
+    si8,
+    si16,
+    si32,
     ui8,
     for_,
     index_add,
@@ -94,6 +97,9 @@ def _pto_dtype(dtype: ScalarType):
         "i8": pto.i8,
         "i16": pto.i16,
         "i32": pto.i32,
+        "si8": pto.si8,
+        "si16": pto.si16,
+        "si32": pto.si32,
         "ui8": pto.ui8,
         "ui16": pto.ui16,
         "ui32": pto.ui32,
@@ -180,6 +186,11 @@ def row_reduce_vmi_constraint(
         and src_config is not None
         and src_config.b_layout == "row_major"
         and src_config.s_layout == "none_box"
+        # A padded source breaks the VMI emit path's tile_buf_addr bridge
+        # (FoldTileBufIntrinsics), so keep VMI for null-padded sources only.
+        # The Sinkhorn 8x8/8x4 form is exempt: its emit never reads through
+        # the padded region.
+        and (_has_null_pad(src_config.pad_value) or sinkhorn_grouped_form)
         # Padding metadata is irrelevant when every physical lane is valid.
         and workspace_config is not None
         and _has_null_pad(workspace_config.pad_value)
@@ -214,6 +225,11 @@ def row_reduce_streaming_vmi_constraint(**context):
         # gains 256-lane chunking; the ordinary ptodsl row-reduce template
         # already chunks correctly. See P1-2.
         and cols <= 256
+        # The per-row mask uses size=physical_cols directly (no snap), so the
+        # column count must itself be a legal VMI mask lane count. An 8x32
+        # source, for example, would otherwise be accepted and then fail in
+        # _resolve_vmi_mask_type(32).
+        and cols in VMI_LANE_COUNTS
     )
 
 
@@ -1715,12 +1731,12 @@ def _div_ieee754_f32_vmi(
     src1_exp_shifted = _vshr(src1_exponent, shift23, int_mask)
 
     scale = _vinterpret_cast(
-        _vsub(src0_exp_shifted, src1_exp_shifted, int_mask), i32
+        _vsub(src0_exp_shifted, src1_exp_shifted, int_mask), si32
     )
-    scale_mask = _mask_as(mask, i32)
-    scale = _vadds(scale, _scalar_constant(127, i32), scale_mask)
+    scale_mask = _mask_as(mask, si32)
+    scale = _vadds(scale, _scalar_constant(127, si32), scale_mask)
 
-    neg23 = _vbrc_constant(-23, i32, like=scale)
+    neg23 = _vbrc_constant(-23, si32, like=scale)
     mask_underflow1 = _vcmp(scale, neg23, scale_mask, "eq")
     mask_underflow1 = _pand(mask_underflow1, mask_valid)
     z1_u32 = _vadd(divided_sign, min_denormal, mask_underflow1)
@@ -1743,11 +1759,11 @@ def _div_ieee754_f32_vmi(
     )
 
     mask_valid_temp = _pand(_pnot(mask_underflow2), mask_valid_temp)
-    max_exp = _vbrc_constant(255, i32, like=scale)
+    max_exp = _vbrc_constant(255, si32, like=scale)
     mask_overflow1 = _vcmp(scale, max_exp, scale_mask, "eq")
     mask_overflow1 = _pand(mask_overflow1, mask_valid_temp)
     scale = _vsel(
-        _vadds(scale, _scalar_constant(-1, i32), mask_overflow1),
+        _vadds(scale, _scalar_constant(-1, si32), mask_overflow1),
         scale,
         mask_overflow1,
     )
@@ -1772,8 +1788,8 @@ def _div_ieee754_f32_vmi(
     )
 
     mask_valid_final = _pand(_pnot(mask_overflow2), mask_valid_temp)
-    zero_exp = _vbrc_constant(0, i32, like=scale)
-    mask_pos_exp = _vcmp(scale, zero_exp, _mask_as(mask_valid_final, i32), "gt")
+    zero_exp = _vbrc_constant(0, si32, like=scale)
+    mask_pos_exp = _vcmp(scale, zero_exp, _mask_as(mask_valid_final, si32), "gt")
     scale_u32 = _vinterpret_cast(scale, ui32)
     exp_shifted = _vshl(scale_u32, shift23, _mask_as(mask_pos_exp, ui32))
     exp_factor_f32 = _vinterpret_cast(exp_shifted, f32)
@@ -1894,12 +1910,12 @@ def _div_ieee754_f16_vmi(
     src1_exp_shifted = _vshr(src1_exponent, shift10, int_mask)
 
     scale = _vinterpret_cast(
-        _vsub(src0_exp_shifted, src1_exp_shifted, int_mask), i16
+        _vsub(src0_exp_shifted, src1_exp_shifted, int_mask), si16
     )
-    scale_mask = _mask_as(mask, i16)
-    scale = _vadds(scale, _scalar_constant(15, i16), scale_mask)
+    scale_mask = _mask_as(mask, si16)
+    scale = _vadds(scale, _scalar_constant(15, si16), scale_mask)
 
-    neg9 = _vbrc_constant(-9, i16, like=scale)
+    neg9 = _vbrc_constant(-9, si16, like=scale)
     mask_underflow1 = _vcmp(scale, neg9, scale_mask, "eq")
     mask_underflow1 = _pand(mask_underflow1, mask_valid)
     z1_u16 = _vadd(divided_sign, min_denormal, mask_underflow1)
@@ -1918,11 +1934,11 @@ def _div_ieee754_f16_vmi(
     )
 
     mask_valid_temp = _pand(_pnot(mask_underflow2), mask_valid_temp)
-    max_exp = _vbrc_constant(31, i16, like=scale)
+    max_exp = _vbrc_constant(31, si16, like=scale)
     mask_overflow1 = _vcmp(scale, max_exp, scale_mask, "eq")
     mask_overflow1 = _pand(mask_overflow1, mask_valid_temp)
     scale = _vsel(
-        _vadds(scale, _scalar_constant(-1, i16), mask_overflow1),
+        _vadds(scale, _scalar_constant(-1, si16), mask_overflow1),
         scale,
         mask_overflow1,
     )
@@ -1947,8 +1963,8 @@ def _div_ieee754_f16_vmi(
     )
 
     mask_valid_final = _pand(_pnot(mask_overflow2), mask_valid_temp)
-    zero_exp = _vbrc_constant(0, i16, like=scale)
-    mask_pos_exp = _vcmp(scale, zero_exp, _mask_as(mask_valid_final, i16), "gt")
+    zero_exp = _vbrc_constant(0, si16, like=scale)
+    mask_pos_exp = _vcmp(scale, zero_exp, _mask_as(mask_valid_final, si16), "gt")
     scale_u16 = _vinterpret_cast(scale, ui16)
     exp_factor_f16 = _vinterpret_cast(
         _vshl(scale_u16, shift10, _mask_as(mask_pos_exp, ui16)), f16
@@ -2215,7 +2231,10 @@ def emit_row_reduce_vmi(
             "grouped row-reduce requires a full static source tile or the "
             "registered Sinkhorn 8x8/8x4 form"
         )
-    _prepare_tile_access(src, workspace, dst)
+    # The workspace is scratch-storage only for the grouped emit: it is
+    # shape-validated but never read, so requiring its tile pointer would
+    # reject callers whose workspace tile has no addr operand yet.
+    _prepare_tile_access(src, dst)
     total_lanes = rows * physical_cols
     active = src._trace.index_const(valid_cols)
     src_dtype = src.element_type
@@ -2787,23 +2806,35 @@ def emit_convert_vmi(src: _TileProxy, dst: _TileProxy) -> None:
     def convert(source: _VectorValue) -> _VectorValue:
         kwargs = {}
         if src.element_type == f32 and dst.element_type in (f16, bf16):
+            # FP narrowing: carries rounding + saturation.
             kwargs["rounding"] = rounding
             kwargs["saturate"] = saturate
+            converted = _vcvt(source, dst.element_type, **kwargs)
         elif src.element_type == f32 and dst.element_type == i32:
-            # VMIToVPTO defaults an omitted fp-to-int rounding mode to R.
-            # Preserve TileOp TRUNC explicitly as the physical Z mode.
+            # FP-to-int: A5 vcvt requires an explicitly signed integer
+            # destination (si32), so convert into si32 and reinterpret back to
+            # the signless i32 store form afterwards.
             kwargs["rounding"] = rounding
             kwargs["saturate"] = saturate
-        if src.element_type == i32 and dst.element_type == f16:
-            # Integer widening has no rounding semantics.  Apply the TileOp
-            # rounding mode only to the subsequent f32 -> f16 narrowing.
-            widened = _vcvt(source, f32)
-            converted = _vcvt(
-                widened,
-                f16,
-                rounding=rounding,
-                saturate=saturate,
+            converted = _vinterpret_cast(
+                _vcvt(source, si32, **kwargs), i32
             )
+        elif src.element_type == i32 and dst.element_type in (f32, f16):
+            # Integer widening has no rounding semantics.  A5 vcvt requires an
+            # explicitly signed integer source for int-to-fp, so reinterpret
+            # the signless i32 source as si32 first.  Apply the TileOp
+            # rounding mode only to the subsequent f32 -> f16 narrowing.
+            source = _vinterpret_cast(source, si32)
+            widened = _vcvt(source, f32)
+            if dst.element_type == f16:
+                converted = _vcvt(
+                    widened,
+                    f16,
+                    rounding=rounding,
+                    saturate=saturate,
+                )
+            else:
+                converted = widened
         else:
             converted = _vcvt(source, dst.element_type, **kwargs)
         return converted
