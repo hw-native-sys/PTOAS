@@ -203,10 +203,12 @@ def check_candidate_ir() -> tuple[str, str, str]:
     expect(texp_text.count("pto.vmi.vexp") == 1, "texp should issue one VMI exp")
     expect(texp_text.count("pto.vmi.vstore") == 1, "texp should issue one VMI store")
 
-    expect_raises(
-        lambda: specialize_tadd(dtype=f16).mlir_text(),
-        ValueError,
-        "dtype is not supported",
+    f16_tadd = specialize_tadd(dtype=f16)
+    f16_tadd.verify()
+    f16_text = f16_tadd.mlir_text()
+    expect(
+        "pto.vmi.vadd" in f16_text,
+        "vmi_tadd_block64 should accept f16 tiles",
     )
     wide_texp = specialize_texp(shape=WIDE_TILE_SHAPE)
     wide_texp.verify()
@@ -246,8 +248,8 @@ def check_candidate_ir() -> tuple[str, str, str]:
     non_divisible.verify()
     non_divisible_text = non_divisible.mlir_text()
     expect(
-        "!pto.vmi.vreg<96xf32>" in non_divisible_text,
-        "non-divisible one-row widths should retain the logical-row path",
+        "!pto.vmi.vreg<128xf32>" in non_divisible_text,
+        "non-divisible one-row widths should snap to the next legal VMI vreg",
     )
     expect(
         "arith.constant 1 : index" in non_divisible_text,
@@ -331,7 +333,10 @@ def check_rope_128b_candidates() -> dict[str, tuple[str, str]]:
         col_mul_text[: col_mul_text.index("scf.for")].count("pto.vmi.vload") == 1,
         "RoPE tcolexpandmul should hoist its column vector load",
     )
-    expect("!pto.vmi.vreg<32xf32>" in col_mul_text, "RoPE column multiply should use 32 lanes")
+    expect(
+        "!pto.vmi.vreg<64xf32>" in col_mul_text,
+        "RoPE column multiply should snap the 32-column row to a legal 64-lane vreg",
+    )
     lowering_cases["vmi_tcolexpandmul_rope128"] = (col_mul_text, "pto.vmul")
 
     tail = TileSpec(ROPE_TILE_SHAPE, f32, valid_shape=(63, 32))
@@ -339,7 +344,7 @@ def check_rope_128b_candidates() -> dict[str, tuple[str, str]]:
     tail_tmuls.verify()
     tail_text = tail_tmuls.mlir_text()
     expect(
-        "!pto.vmi.vreg<32xf32>" in tail_text
+        "!pto.vmi.vreg<64xf32>" in tail_text
         and "arith.constant 2048 : index" not in tail_text,
         "RoPE tails must retain the row-aware masked form",
     )
@@ -572,15 +577,20 @@ def check_local_broadcast_candidates() -> dict[str, tuple[str, str]]:
             )
 
     row_specs = {"src": wide, "row_values": compact, "dst": wide}
+    # The VMI row-expand emit path loads each row with a single VMI vreg, which
+    # maxes out at 256 lanes.  The P1-2 gating keeps shapes whose logical row
+    # exceeds that ceiling on the ordinary fallback instead of silently
+    # truncating the trailing columns (a 512-column f32 row would drop the
+    # second half), matching the row-reduce/streaming and col-expand gates.
     expect(
-        evaluate_candidate(
+        not evaluate_candidate(
             vmi_trowexpanddiv,
             row_specs,
             "a5",
             "pto.trowexpanddiv",
             {"precisionType": "default"},
         ).legal,
-        "default-precision DSv4 row expand should be a legal candidate",
+        "a 512-column row expand must remain a fallback under the 256-lane VMI ceiling",
     )
     expect(
         not evaluate_candidate(
@@ -700,16 +710,21 @@ def check_provider_helper() -> None:
         "shape": [32, 128],
         "valid_shape": [32, 128],
     }
-    expect_raises(
-        lambda: instantiate_candidate(
-            target="a5",
-            op_name="pto.tadd",
-            operand_specs=[f16_tile_spec, f16_tile_spec, f16_tile_spec],
-            provider_module="ptodsl.vmi_tilelib",
-            context_attrs={},
-        ),
-        LookupError,
-        "no legal PTODSL VMI candidate",
+    f16_artifact = instantiate_candidate(
+        target="a5",
+        op_name="pto.tadd",
+        operand_specs=[f16_tile_spec, f16_tile_spec, f16_tile_spec],
+        provider_module="ptodsl.vmi_tilelib",
+        context_attrs={},
+    )
+    f16_text = f16_artifact.mlir_text()
+    expect(
+        "pto.vmi.vadd" in f16_text,
+        "provider helper should instantiate the f16 tadd VMI candidate",
+    )
+    expect(
+        "!pto.vmi.vreg<128xf16>" in f16_text,
+        "f16 multi-row tadd should chunk per 128-lane native vreg",
     )
 
     exp_artifact = instantiate_candidate(
@@ -812,28 +827,29 @@ def check_provider_helper() -> None:
         "high-precision tdivs should lower to the VMI refinement sequence",
     )
 
+    rowmax_src_spec = {**raw_tile_spec, "shape": [8, 32], "valid_shape": [8, 32]}
     reduced_tile_spec = {
         **raw_tile_spec,
-        "shape": [32, 1],
-        "valid_shape": [32, 1],
+        "shape": [8, 1],
+        "valid_shape": [8, 1],
         "config": {**raw_tile_spec["config"], "b_layout": "col_major"},
     }
     rowmax = instantiate_candidate(
         target="a5",
         op_name="pto.trowmax",
-        operand_specs=[raw_tile_spec, raw_tile_spec, reduced_tile_spec],
+        operand_specs=[rowmax_src_spec, rowmax_src_spec, reduced_tile_spec],
         provider_module="ptodsl.vmi_tilelib",
         context_attrs={},
     ).mlir_text()
     expect("scf.for" not in rowmax, "rowmax should emit one grouped reduction")
     expect(rowmax.count("pto.vmi.vcmax") == 1, "rowmax should reduce all row groups")
-    expect("group = 32" in rowmax, "rowmax should preserve 32 compact row groups")
-    expect("!pto.vmi.vreg<32xf32>" in rowmax, "rowmax should produce one value per row")
+    expect("group = 8" in rowmax, "rowmax should preserve 8 compact row groups")
+    expect("!pto.vmi.vreg<8xf32>" in rowmax, "rowmax should produce one value per row")
 
     row_expand = instantiate_candidate(
         target="a5",
         op_name="pto.trowexpandsub",
-        operand_specs=[raw_tile_spec, reduced_tile_spec, raw_tile_spec],
+        operand_specs=[rowmax_src_spec, reduced_tile_spec, rowmax_src_spec],
         provider_module="ptodsl.vmi_tilelib",
         context_attrs={},
     ).mlir_text()
@@ -1117,41 +1133,65 @@ def check_col_reduce_split() -> None:
 
 def check_row_reduce_candidates() -> dict[str, tuple[str, str, int]]:
     lowering_cases = {}
+    # The grouped row-reduce emit loads the whole tile as one vector
+    # (total_lanes = rows * physical_cols), so the shape is limited to a
+    # single 256-lane VMI vreg.  8x32 is the widest legal f32 grouped form;
+    # wider tiles take the row_streaming candidates instead.
     for op_name, candidate, physical_op in (
         ("trowmax", vmi_trowmax, "pto.vcmax"),
         ("trowsum", vmi_trowsum, "pto.vcadd"),
     ):
-        for cols in (32, 128):
-            src = TileSpec((8, cols), f32)
-            workspace = TileSpec((8, max(cols, 128)), f32)
-            dst = TileSpec((8, 1), f32, b_layout="col_major")
-            artifact = candidate.specialize(src=src, workspace=workspace, dst=dst)
-            artifact.verify()
-            text = artifact.mlir_text()
-            name = f"vmi_{op_name}_{cols}lanes"
-            expect("scf.for" not in text, f"{name} should use one grouped reduction")
+        cols = 32
+        src = TileSpec((8, cols), f32)
+        workspace = TileSpec((8, max(cols, 128)), f32)
+        dst = TileSpec((8, 1), f32, b_layout="col_major")
+        artifact = candidate.specialize(src=src, workspace=workspace, dst=dst)
+        artifact.verify()
+        text = artifact.mlir_text()
+        name = f"vmi_{op_name}_{cols}lanes"
+        expect("scf.for" not in text, f"{name} should use one grouped reduction")
+        expect(
+            f"!pto.vmi.vreg<{8 * cols}xf32>" in text,
+            f"{name} should reduce the complete logical row group",
+        )
+        expect(text.count("pto.vmi.vload") == 1, f"{name} should load one row")
+        expect("group = 8" in text, f"{name} should preserve eight row groups")
+        expected_stores = 1 if cols < f32.lanes else 0
+        expect(
+            text.count("pto.vmi.vstore") == expected_stores,
+            f"{name} should use allocation-safe row-result stores",
+        )
+        if expected_stores == 0:
             expect(
-                f"!pto.vmi.vreg<{8 * cols}xf32>" in text,
-                f"{name} should reduce the complete logical row group",
+                "pto.vmi.vscatter" in text,
+                f"{name} should scatter compact rows from an aligned base",
             )
-            expect(text.count("pto.vmi.vload") == 1, f"{name} should load one row")
-            expect("group = 8" in text, f"{name} should preserve eight row groups")
-            expected_stores = 1 if cols < f32.lanes else 0
-            expect(
-                text.count("pto.vmi.vstore") == expected_stores,
-                f"{name} should use allocation-safe row-result stores",
-            )
-            if expected_stores == 0:
-                expect(
-                    "pto.vmi.vscatter" in text,
-                    f"{name} should scatter compact rows from an aligned base",
-                )
-            expected_physical_op = (
-                physical_op.replace("pto.vc", "pto.vcg")
-                if cols < f32.lanes
-                else physical_op
-            )
-            lowering_cases[name] = (text, expected_physical_op, 0)
+        expected_physical_op = (
+            physical_op.replace("pto.vc", "pto.vcg")
+            if cols < f32.lanes
+            else physical_op
+        )
+        lowering_cases[name] = (text, expected_physical_op, 0)
+
+    # A 8x128 grouped reduction would need a 1024-lane mask, which no VMI vreg
+    # can represent (P1-2: VMI vregs max out at 256 lanes).  The row_streaming
+    # candidates cover rows wider than one vreg; the grouped form must fall
+    # back.  Guard that boundary at the constraint level so the emit path never
+    # builds an impossible mask.
+    src = TileSpec((8, 128), f32)
+    workspace = TileSpec((8, 128), f32)
+    dst = TileSpec((8, 1), f32, b_layout="col_major")
+    row_specs = {"src": src, "workspace": workspace, "dst": dst}
+    for op_name, candidate in (("trowmax", vmi_trowmax), ("trowsum", vmi_trowsum)):
+        expect(
+            not evaluate_candidate(
+                candidate,
+                row_specs,
+                "a5",
+                f"pto.{op_name}",
+            ).legal,
+            f"8x128 grouped {op_name} must remain a fallback under the 256-lane total ceiling",
+        )
 
     workspace = TileSpec((8, 128), f32)
     dst = TileSpec((8, 1), f32, b_layout="col_major")
@@ -1660,6 +1700,115 @@ def check_legacy_vpto_compatibility() -> None:
     expect("pto.vsts" in text, "legacy VPTO template should still emit vsts")
 
 
+def _wrap_template_with_alloc_driver(mlir_text: str) -> str:
+    """Add a driver that allocates the template's tile args and inlines it.
+
+    The standalone template render uses tile_buf function arguments, which
+    FoldTileBufIntrinsics cannot bridge on the VPTO path (it requires
+    alloc_tile/treshape-defined handles). Rewrite the render into one driver
+    function that allocates each tile argument locally and runs the template
+    body with those handles — the shape ExpandTileOp produces after inlining
+    the helper into the caller.
+    """
+    import re as _re
+
+    matches = list(_re.finditer(
+        r"func\.func @([\w.]+)\(([^)]*)\)", mlir_text
+    ))
+    expect(len(matches) == 1, "template render should contain exactly one function")
+    func_name = matches[0].group(1)
+    params_text = matches[0].group(2)
+
+    def _split_params(text: str) -> list[str]:
+        """Split on top-level commas (tile types contain ``<..., ...>``)."""
+        parts = []
+        depth = 0
+        current = []
+        for ch in text:
+            if ch == "<":
+                depth += 1
+            elif ch == ">":
+                depth -= 1
+            if ch == "," and depth == 0:
+                parts.append("".join(current).strip())
+                current = []
+            else:
+                current.append(ch)
+        tail = "".join(current).strip()
+        if tail:
+            parts.append(tail)
+        return [part for part in parts if part]
+
+    param_names = []
+    tile_args = []
+    scalar_args = []
+    for param in _split_params(params_text):
+        match = _re.match(r"%(\w+):\s*((?:!pto\.tile_buf)<[^)]+>)", param)
+        if match:
+            param_names.append(match.group(1))
+            tile_args.append((match.group(1), match.group(2)))
+            continue
+        match = _re.match(r"%(\w+):\s*(\w+)", param)
+        if match:
+            param_names.append(match.group(1))
+            scalar_args.append((match.group(1), match.group(2)))
+
+    alloc_lines = []
+    renames = {}
+    addr_consts = []
+    for index, (arg_name, tile_type) in enumerate(tile_args):
+        # VPTO helpers require alloc_tile to carry an explicit addr operand
+        # (PlanMemory normally assigns it); give each tile a distinct base.
+        addr_consts.append(
+            f"    %addr{index} = arith.constant {index * 4096} : i64"
+        )
+        alloc_lines.append(
+            f"    %tile{index} = pto.alloc_tile addr = %addr{index} : {tile_type}"
+        )
+        renames[arg_name] = f"%tile{index}"
+    for index, (arg_name, scalar_type) in enumerate(scalar_args):
+        value = "1.0" if scalar_type in ("f32", "f16", "bf16") else "1"
+        # The body already materializes locals for scalar args; bind the SSA
+        # name to a printed constant so remaining uses resolve.
+        alloc_lines.append(
+            f"    %{arg_name} = arith.constant {value} : {scalar_type}"
+        )
+        renames[arg_name] = f"%{arg_name}"
+
+    # Extract the template function body (from its `{` to the matching `}`)
+    # and substitute the argument SSA names with the driver locals.
+    body_start = mlir_text.find("{", matches[0].start())
+    depth = 0
+    body_end = None
+    for index in range(body_start, len(mlir_text)):
+        if mlir_text[index] == "{":
+            depth += 1
+        elif mlir_text[index] == "}":
+            depth -= 1
+            if depth == 0:
+                body_end = index
+                break
+    expect(body_end is not None, "template render should have a balanced body")
+    body = mlir_text[body_start + 1 : body_end]
+    for arg_name in param_names:
+        body = body.replace(f"%{arg_name}", renames[arg_name])
+    body_indented = "\n".join(
+        f"    {line}" if line.strip() else line for line in body.splitlines()
+    )
+
+    driver = f"""module attributes {{pto.target_arch = "a5"}} {{
+  module attributes {{pto.backend = "vpto", pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch = "a5"}} {{
+    func.func @{func_name}() {{
+{chr(10).join(addr_consts)}
+{chr(10).join(alloc_lines)}
+{body_indented}
+    }}
+  }}
+}}
+"""
+    return driver
+
+
 def check_vmi_to_vpto_lowering(
     name: str,
     mlir_text: str,
@@ -1668,14 +1817,21 @@ def check_vmi_to_vpto_lowering(
 ) -> str:
     ptoas = shutil.which("ptoas")
     expect(ptoas is not None, "ptoas must be available for VMI-to-VPTO regression coverage")
+    # The rendered text is a template function whose tile arguments are not
+    # materialized tile handles. FoldTileBufIntrinsics requires every tile_buf
+    # used by tile_buf_addr to come from alloc_tile/treshape, so wrap the
+    # template in a driver that allocates the operand tiles and calls it —
+    # the same usage pattern ExpandTileOp generates in the real pipeline.
+    driver = _wrap_template_with_alloc_driver(mlir_text)
     with TemporaryDirectory() as temp_dir:
         input_path = Path(temp_dir) / f"{name}.pto"
-        input_path.write_text(mlir_text, encoding="utf-8")
+        input_path.write_text(driver, encoding="utf-8")
         completed = subprocess.run(
             [
                 ptoas,
                 "--pto-arch=a5",
                 "--pto-backend=vpto",
+                "--pto-level=level3",
                 "--enable-vmi",
                 "--emit-vpto",
                 str(input_path),
