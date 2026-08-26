@@ -74,6 +74,13 @@ LLVM 最终使用 GEP、整数加法还是 target intrinsic，不属于该证明
 正确性依据。若某个 operation 的 lowering 字段过窄，那是 operation verifier、target
 legality 或 emitter 的问题。
 
+**实测（2026-08-26）**：`castptr %x : i32 -> ptr<f16, ub>` 当前经
+`ConvertPtoCastPtrOp` 直接生成 `inttoptr i32 %x to ptr addrspace(6)`（无位宽扩展），
+LLVM 合法且 bisheng 可编译。窄整数到 64 位指针的扩展行为（bisheng 现为 zero-extend）
+是 LLVM `inttoptr` 的实现约定，不是 PTO 语义契约；这印证本节的立场——lowering 事实
+既不能作为规范化拒绝条件，也不能作为 round-trip 证明依据（§3.3 的实现近似因此保持
+"仅 64 位输入"）。
+
 ### 2.3 地址空间前提不是用户配置
 
 该变换只适用于 PTO 语义明确规定为 **zero-origin integral address space** 的空间：
