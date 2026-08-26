@@ -957,13 +957,17 @@ def _coerce_integer_to_i1_at(value, *, block, context):
 def _coerce_i1_to_integer_at(value, *, block, target_type, context):
     """Widen an i1 branch value to *target_type* inside *block*.
 
-    Fixed-width integer targets use ``arith.extui``; ``index`` is not a valid
-    extui result type, so it widens through ``arith.index_cast`` (i1 -> index
-    zero-extends a 0/1 truth value).
+    Fixed-width integer targets use ``arith.extui``, which zero-extends the
+    0/1 truth value.  ``index`` is not a valid extui result type and a direct
+    ``arith.index_cast`` from ``i1`` sign-extends (``1`` becomes ``-1``), so
+    the truth value is first zero-extended to ``i32`` and then index-cast,
+    keeping it bit-exact.
     """
     with InsertionPoint(block):
         if IndexType.isinstance(target_type):
-            return arith.IndexCastOp(IndexType.get(), value).result
+            i32 = IntegerType.get_signless(32)
+            widened = coerce_integer_like(value, i32)
+            return arith.IndexCastOp(IndexType.get(), widened).result
         return coerce_integer_like(value, target_type)
 
 

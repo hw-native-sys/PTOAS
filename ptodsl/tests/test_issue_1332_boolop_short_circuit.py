@@ -325,6 +325,16 @@ def main():
     index_lhs = issue_1332_index_lhs.compile().mlir_text()
     # index + i1: the index type is kept and the i1 side widens via index_cast.
     assert "arith.index_cast" in index_lhs and "-> (index)" in index_lhs, index_lhs
+    # The i1 -> index widening must keep the 0/1 truth value: a direct
+    # arith.index_cast from i1 sign-extends (1 becomes -1 on the simulator),
+    # so the widening must zero-extend through i32 first.
+    index_casts = [op for op in _walk(issue_1332_index_lhs.mlir_module())
+                    if op.operation.name == "arith.index_cast"]
+    assert any(
+        op.operation.operands[0].owner is not None
+        and op.operation.operands[0].owner.operation.name == "arith.extui"
+        for op in index_casts
+    ), "i1->index widening must zero-extend via extui first"
     anchored = issue_1332_int_literal_anchored.compile().mlir_text()
     # A Python int literal anchors to the integer branch type.
     assert "arith.constant 2 : i32" in anchored and "-> (i32)" in anchored, anchored
