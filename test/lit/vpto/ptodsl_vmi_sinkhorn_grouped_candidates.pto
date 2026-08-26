@@ -116,20 +116,20 @@ module {
 // EXPAND: call {{.*}}__vmi_tadds_sinkhorn_compact
 // EXPAND-SAME: pto.tilelib.impl = "vmi"
 // EXPAND-LABEL: func.func @sinkhorn_identity_reductions
-// EXPAND: call {{.*}}__template_trowmax
-// EXPAND-SAME: pto.tilelib.impl = "ptodsl"
-// EXPAND: call {{.*}}__template_trowsum
-// EXPAND-SAME: pto.tilelib.impl = "ptodsl"
+// EXPAND: call {{.*}}__vmi_trowmax_sinkhorn_row
+// EXPAND-SAME: pto.tilelib.impl = "vmi"
+// EXPAND: call {{.*}}__vmi_trowsum_sinkhorn_row
+// EXPAND-SAME: pto.tilelib.impl = "vmi"
 // EXPAND-LABEL: func.func @sinkhorn_grouped_tail_reductions
-// EXPAND: call {{.*}}__template_trowmax
-// EXPAND-SAME: pto.tilelib.impl = "ptodsl"
-// EXPAND: call {{.*}}__template_trowsum
-// EXPAND-SAME: pto.tilelib.impl = "ptodsl"
+// EXPAND: call {{.*}}__vmi_trowmax_sinkhorn_row
+// EXPAND-SAME: pto.tilelib.impl = "vmi"
+// EXPAND: call {{.*}}__vmi_trowsum_sinkhorn_row
+// EXPAND-SAME: pto.tilelib.impl = "vmi"
 // EXPAND-LABEL: func.func @sinkhorn_full_shape_pad_metadata
-// EXPAND: call {{.*}}__template_trowmax
-// EXPAND-SAME: pto.tilelib.impl = "ptodsl"
-// EXPAND: call {{.*}}__template_trowsum
-// EXPAND-SAME: pto.tilelib.impl = "ptodsl"
+// EXPAND: call {{.*}}__vmi_trowmax_sinkhorn_row
+// EXPAND-SAME: pto.tilelib.impl = "vmi"
+// EXPAND: call {{.*}}__vmi_trowsum_sinkhorn_row
+// EXPAND-SAME: pto.tilelib.impl = "vmi"
 // EXPAND-LABEL: func.func @sinkhorn_unsupported_forms
 // EXPAND: pto.vmi.fusion.boundary = "local"
 
@@ -150,11 +150,11 @@ module {
 // FINAL-LABEL: func.func @sinkhorn_compact_state
 // FINAL: pto.vadd
 // FINAL-LABEL: func.func @sinkhorn_identity_reductions
-// FINAL: pto.vcmax
-// FINAL: pto.vcadd
+// FINAL: pto.vcgmax
+// FINAL: pto.vcgadd
 // FINAL-LABEL: func.func @sinkhorn_grouped_tail_reductions
-// FINAL: pto.vcmax
-// FINAL: pto.vcadd
+// FINAL: pto.vcgmax
+// FINAL: pto.vcgadd
 
 // ORDINARY-LABEL: func.func @sinkhorn_grouped_tail
 // ORDINARY: pto.vci
