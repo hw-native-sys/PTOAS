@@ -109,7 +109,9 @@ LogicalResult replaceMemCopyByPTOLoadOp(memref::CopyOp copyOp,
   auto maybeLeftPadNum = getLeftPadNum(rewriter, maybeAlloc);
 
   auto loadOp = rewriter.create<pto::TLoadOp>(copyOp->getLoc(), TypeRange(),
-                                              copyOp.getSource(), dst, nullptr, nullptr, nullptr, nullptr, false, nullptr);
+                                              copyOp.getSource(), dst, nullptr,
+                                              nullptr, nullptr, nullptr, false,
+                                              nullptr, nullptr);
   if (maybeLeftPadNum.has_value()) {
     loadOp.getLeftPaddingNumMutable().assign(maybeLeftPadNum.value());
   }

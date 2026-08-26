@@ -62,6 +62,14 @@ MLIR_CAPI_EXPORTED MlirAttribute mlirPTOAddressSpaceAttrGet(MlirContext ctx, int
 // Read back enum value (0..6)
 MLIR_CAPI_EXPORTED int32_t mlirPTOAddressSpaceAttrGetValue(MlirAttribute attr);
 
+// ---- #pto.load_cache_policy<...> ----
+MLIR_CAPI_EXPORTED bool
+mlirPTOAttrIsALoadCachePolicyAttr(MlirAttribute attr);
+MLIR_CAPI_EXPORTED MlirAttribute
+mlirPTOLoadCachePolicyAttrGet(MlirContext ctx, int32_t value);
+MLIR_CAPI_EXPORTED int32_t
+mlirPTOLoadCachePolicyAttrGetValue(MlirAttribute attr);
+
 // ---- !pto.tensor_view<shape x elem> ----
 MLIR_CAPI_EXPORTED bool mlirPTOTypeIsATensorViewType(MlirType type);
 MLIR_CAPI_EXPORTED MlirType mlirPTOTensorViewTypeGet(MlirContext ctx, intptr_t rank,

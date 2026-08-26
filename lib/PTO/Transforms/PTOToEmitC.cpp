@@ -4809,8 +4809,15 @@ struct PTOTLoadToTLOAD : public OpConversionPattern<pto::TLoadOp> {
     Value src = peelGlobalTensorConversionBridge(adaptor.getSrc());
     Value dst = adaptor.getDst();
 
+    ArrayAttr templateArgs = ArrayAttr{};
+    if (auto policy = op.getCachePolicyAttr();
+        policy && policy.getValue() == pto::LoadCachePolicy::L2Bypass) {
+      templateArgs = rewriter.getArrayAttr({emitc::OpaqueAttr::get(
+          rewriter.getContext(), "pto::LoadCachePolicy::L2Bypass")});
+    }
+
     rewriter.create<emitc::CallOpaqueOp>(op.getLoc(), TypeRange{}, "TLOAD",
-                                         ArrayAttr{}, ArrayAttr{},
+                                         ArrayAttr{}, templateArgs,
                                          ValueRange{dst, src});
 
     if (op->getNumResults() == 1) {

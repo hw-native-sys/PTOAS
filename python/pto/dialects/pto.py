@@ -65,6 +65,8 @@ AddressSpace = _pto_mod.AddressSpace
 AddressSpaceAttr = _pto_mod.AddressSpaceAttr
 FenceScope = _pto_mod.FenceScope
 FenceScopeAttr = _pto_mod.FenceScopeAttr
+LoadCachePolicy = _pto_mod.LoadCachePolicy
+LoadCachePolicyAttr = _pto_mod.LoadCachePolicyAttr
 TileBufConfigAttr = _pto_mod.TileBufConfigAttr
 BLayout = _pto_mod.BLayout
 BLayoutAttr = _pto_mod.BLayoutAttr
@@ -212,11 +214,17 @@ def _install_enum_attr_builders():
     def fence_scope_attr_builder(value, context=None):
         return FenceScopeAttr.get(value, context)
 
+    def load_cache_policy_attr_builder(value, context=None):
+        return LoadCachePolicyAttr.get(value, context)
+
     _ods_ir.AttrBuilder.insert(
         "PTO_AddressSpaceAttr", address_space_attr_builder, replace=True
     )
     _ods_ir.AttrBuilder.insert(
         "PTO_FenceScopeAttr", fence_scope_attr_builder, replace=True
+    )
+    _ods_ir.AttrBuilder.insert(
+        "PTO_LoadCachePolicyAttr", load_cache_policy_attr_builder, replace=True
     )
 
 
@@ -248,6 +256,8 @@ __all__ = [
     "AddressSpaceAttr",
     "FenceScope",
     "FenceScopeAttr",
+    "LoadCachePolicy",
+    "LoadCachePolicyAttr",
     "BLayout",
     "BLayoutAttr",
     "SLayout",

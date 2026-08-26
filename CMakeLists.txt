@@ -261,6 +261,15 @@ if(BUILD_TESTING)
       ENVIRONMENT "${_pto_python_test_env}"
     )
     add_test(
+      NAME pto_tload_cache_policy_bindings
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/test/python/tload_cache_policy_bindings.py"
+    )
+    set_tests_properties(pto_tload_cache_policy_bindings PROPERTIES
+      LABELS "PTO"
+      ENVIRONMENT "${_pto_python_test_env}"
+    )
+    add_test(
       NAME pto_install_nightly_wheel
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/test/python/test_install_nightly_wheel.py"

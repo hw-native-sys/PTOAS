@@ -13,6 +13,7 @@ This chapter documents the public tile DMA instructions `pto.tload` and `pto.tst
 ```mlir
 pto.tload ins(%src : !pto.partition_tensor_view<...>)
           outs(%dst : !pto.tile_buf<...>)
+          {cache_policy = #pto.load_cache_policy<l2_bypass>}
 ```
 - **semantics:** Physical DMA transfer from a global partition view into a local tile buffer. For each element `(i, j)` in the destination valid region: `dst[i, j] = src[i, j]`.
 
@@ -22,6 +23,7 @@ pto.tload ins(%src : !pto.partition_tensor_view<...>)
 |-----------|------|-------------|
 | `src` | `PartitionTensorViewType` | Source partition view. |
 | `dst` | `pto.tile_buf` | Destination tile buffer. |
+| `cache_policy` | `LoadCachePolicyAttr` (optional) | `default` when absent; `l2_bypass` requests a non-allocating L2 path for this load. |
 
 **Constraints:**
 
@@ -29,6 +31,8 @@ pto.tload ins(%src : !pto.partition_tensor_view<...>)
 - Destination tile must use `loc=vec`.
 - Destination tile element type and source partition element type must have the same bitwidth.
 - Runtime: source partition extents and destination valid region must be positive.
+- `l2_bypass` is currently supported on A2/A3 and rejected on A5.
+- PTO-ISA owns the target-specific bypass mechanism; PTOAS emits no address-alias constant.
 
 **Pipeline:** `PIPE_MTE2`.
 
@@ -38,6 +42,10 @@ pto.tload ins(%src : !pto.partition_tensor_view<...>)
 pto.tload ins(%pv : !pto.partition_tensor_view<16x16xf16>)
           outs(%tb : !pto.tile_buf<vec, 16x16xf16>)
 ```
+
+When `cache_policy` is absent or `default`, PTOAS emits the legacy
+`TLOAD(dst, src)` call. `l2_bypass` emits
+`TLOAD<pto::LoadCachePolicy::L2Bypass>(dst, src)`.
 
 ---
 

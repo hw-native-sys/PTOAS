@@ -3863,6 +3863,13 @@ LogicalResult TLoadOp::verify() {
   };
 
   auto verifyA5 = [&]() -> LogicalResult {
+    if (auto policy = getCachePolicyAttr();
+        policy && policy.getValue() == pto::LoadCachePolicy::L2Bypass) {
+      return emitOpError(
+          "does not support cache_policy=l2_bypass on A5; the policy is "
+          "currently supported only on A2/A3");
+    }
+
     auto common = verifyCommon(/*allowLowPrecision=*/true);
     if (failed(common)) {
       return failure();

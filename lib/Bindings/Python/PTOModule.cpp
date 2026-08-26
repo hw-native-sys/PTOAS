@@ -161,6 +161,9 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
     .value("GM", mlir::pto::FenceScope::GM)
     .value("All", mlir::pto::FenceScope::All)
     .export_values();
+    py::enum_<mlir::pto::LoadCachePolicy>(m, "LoadCachePolicy")
+    .value("Default", mlir::pto::LoadCachePolicy::Default)
+    .value("L2Bypass", mlir::pto::LoadCachePolicy::L2Bypass);
     py::enum_<mlir::pto::BLayout>(m, "BLayout")
     .value("RowMajor", mlir::pto::BLayout::RowMajor)
     .value("ColMajor", mlir::pto::BLayout::ColMajor);
@@ -551,6 +554,11 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
         [](MlirAttribute self) -> int32_t {
         return mlirPTOFenceScopeAttrGetValue(self);
         });
+
+    bindPTOEnumAttr(m, "LoadCachePolicyAttr", "LoadCachePolicy",
+                    mlirPTOAttrIsALoadCachePolicyAttr,
+                    mlirPTOLoadCachePolicyAttrGet,
+                    mlirPTOLoadCachePolicyAttrGetValue);
 
     mlir_attribute_subclass(
         m, "RoundModeAttr",

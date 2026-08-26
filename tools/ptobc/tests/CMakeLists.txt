@@ -187,3 +187,10 @@ add_test(NAME ptobc_tcvt_satmode_v0_encode
     TESTDATA_DIR=${PTObc_TESTDATA_DIR}
     ${CMAKE_CURRENT_LIST_DIR}/tcvt_satmode_v0_encode.sh
 )
+
+add_test(NAME ptobc_tload_cache_policy_v0_encode
+  COMMAND ${CMAKE_COMMAND} -E env
+    PTOBC_BIN=$<TARGET_FILE:ptobc>
+    TESTDATA_DIR=${PTObc_TESTDATA_DIR}
+    bash ${CMAKE_CURRENT_LIST_DIR}/tload_cache_policy_v0_encode.sh
+)

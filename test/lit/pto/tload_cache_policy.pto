@@ -1,0 +1,48 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-level=level3 --pto-arch=a3 --emit-pto-ir %s 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=PTOIR
+// RUN: ptoas --pto-level=level3 --pto-arch=a3 %s 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=EMITC
+// RUN: not ptoas --pto-level=level3 --pto-arch=a5 %s -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=A5-ERR
+
+module {
+  func.func private @default_load(
+      %src: !pto.partition_tensor_view<16x16xf32>,
+      %dst: !pto.tile_buf<vec, 16x16xf32>) {
+    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+              outs(%dst : !pto.tile_buf<vec, 16x16xf32>)
+    return
+  }
+
+  func.func private @l2_bypass_load(
+      %src: !pto.partition_tensor_view<16x16xf32>,
+      %dst: !pto.tile_buf<vec, 16x16xf32>) {
+    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+              outs(%dst : !pto.tile_buf<vec, 16x16xf32>)
+              {cache_policy = #pto.load_cache_policy<l2_bypass>}
+    return
+  }
+}
+
+// PTOIR-LABEL: func.func private @default_load(
+// PTOIR: pto.tload ins(
+// PTOIR-NOT: cache_policy
+// PTOIR-LABEL: func.func private @l2_bypass_load(
+// PTOIR: pto.tload ins(
+// PTOIR-SAME: cache_policy = #pto.load_cache_policy<l2_bypass>
+
+// EMITC-LABEL: default_load(
+// EMITC: TLOAD(
+// EMITC-LABEL: l2_bypass_load(
+// EMITC: TLOAD<pto::LoadCachePolicy::L2Bypass>(
+// EMITC-NOT: 0x80000000000
+
+// A5-ERR: 'pto.tload' op does not support cache_policy=l2_bypass on A5

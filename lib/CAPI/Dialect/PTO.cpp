@@ -187,6 +187,26 @@ int32_t mlirPTOAddressSpaceAttrGetValue(MlirAttribute attr) {
   return static_cast<int32_t>(a.getAddressSpace());
 }
 
+bool mlirPTOAttrIsALoadCachePolicyAttr(MlirAttribute attr) {
+  return mlir::isa<mlir::pto::LoadCachePolicyAttr>(unwrap(attr));
+}
+
+MlirAttribute mlirPTOLoadCachePolicyAttrGet(MlirContext ctx, int32_t value) {
+  const bool isValidPolicy =
+      value >= static_cast<int32_t>(mlir::pto::LoadCachePolicy::Default) &&
+      value <= static_cast<int32_t>(mlir::pto::LoadCachePolicy::L2Bypass);
+  if (!isValidPolicy) {
+    return MlirAttribute{nullptr};
+  }
+  auto policy = static_cast<mlir::pto::LoadCachePolicy>(value);
+  return wrap(mlir::pto::LoadCachePolicyAttr::get(unwrap(ctx), policy));
+}
+
+int32_t mlirPTOLoadCachePolicyAttrGetValue(MlirAttribute attr) {
+  auto policy = mlir::cast<mlir::pto::LoadCachePolicyAttr>(unwrap(attr));
+  return static_cast<int32_t>(policy.getValue());
+}
+
 //===----------------------------------------------------------------------===//
 // Type queries / constructors for !pto.tensor_view<shape x elem>
 //===----------------------------------------------------------------------===//

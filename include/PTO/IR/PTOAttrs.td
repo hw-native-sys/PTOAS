@@ -76,6 +76,27 @@ def PTO_AddressSpaceAttr : PTO_Attr<"AddressSpace", "address_space"> {
 }
 
 //===----------------------------------------------------------------------===//
+// Tile load cache policy
+//===----------------------------------------------------------------------===//
+
+def PTO_LoadCachePolicyEnum : PTO_I32Enum<
+  "LoadCachePolicy", "PTO tile load cache policy", [
+    I32EnumAttrCase<"Default", 0, "default">,
+    I32EnumAttrCase<"L2Bypass", 1, "l2_bypass">
+  ]>;
+
+def PTO_LoadCachePolicyAttr
+    : EnumAttr<PTO_Dialect, PTO_LoadCachePolicyEnum, "load_cache_policy"> {
+  let assemblyFormat = "`<` params `>`";
+  let summary = "cache allocation policy for a tile load";
+  let description = [{
+    Selects the cache allocation policy for one GM-to-tile transfer. The
+    default policy preserves the target's ordinary load behavior. L2Bypass
+    requests a target-defined load path that does not allocate in L2.
+  }];
+}
+
+//===----------------------------------------------------------------------===//
 // Signedness
 //===----------------------------------------------------------------------===//
 
