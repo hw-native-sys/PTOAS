@@ -1272,6 +1272,23 @@ def PTOValidateVPTOEmissionIR
                            "mlir::scf::SCFDialect"];
 }
 
+def VPTOMaterializeTiedOperandCopies
+    : Pass<"pto-vpto-materialize-tied-operand-copies", "func::FuncOp"> {
+  let summary = "Materialize physical copies for destructive VPTO tied operands";
+  let description = [{
+    Finds A5 vector operations whose result must reuse one input physical
+    register. For each block-local physical-view root, the last destructive
+    material use may update the original register; all other destructive uses
+    receive an explicit full-register `pto.vmov` copy. Cross-block, live-out,
+    and later ordinary reads use the conservative all-copy form. The pass is
+    independent of the VPTO scheduler and is idempotent.
+  }];
+  let constructor =
+      "mlir::pto::createVPTOMaterializeTiedOperandCopiesPass()";
+  let dependentDialects = ["mlir::func::FuncDialect",
+                           "mlir::pto::PTODialect"];
+}
+
 def VPTOScheduler : Pass<"pto-vpto-scheduler", "ModuleOp"> {
   let summary = "Analyze emission-ready VPTO scheduling regions";
   let description = [{

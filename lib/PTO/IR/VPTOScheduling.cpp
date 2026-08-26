@@ -126,7 +126,7 @@ static void setStaticAccessRange(Operation *op, VPTOMemoryAccess &access) {
 /// Pure: vector-memory barriers and register-state effects must remain visible
 /// to the scheduler and to general IR transformations.
 static bool hasKnownNoOrdinaryMemoryAccess(Operation *op) {
-  return isa<MemBarOp, SprclrOp, GetCtrlOp, SetCtrlOp>(op);
+  return isa<MemBarOp, SprclrOp, GetCtrlOp, SetCtrlOp, VmovOp>(op);
 }
 
 static void collectMemoryAccesses(Operation *op,

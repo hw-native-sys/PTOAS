@@ -43,6 +43,19 @@
 using namespace mlir;
 using namespace mlir::pto;
 
+unsigned Chistv2Op::getTiedOperandIndex() { return 0; }
+unsigned Chistv2Op::getTiedResultIndex() { return 0; }
+unsigned Dhistv2Op::getTiedOperandIndex() { return 0; }
+unsigned Dhistv2Op::getTiedResultIndex() { return 0; }
+unsigned VmaddOp::getTiedOperandIndex() { return 0; }
+unsigned VmaddOp::getTiedResultIndex() { return 0; }
+unsigned VusqzOp::getTiedOperandIndex() { return 0; }
+unsigned VusqzOp::getTiedResultIndex() { return 0; }
+unsigned VmulaOp::getTiedOperandIndex() { return 0; }
+unsigned VmulaOp::getTiedResultIndex() { return 0; }
+unsigned VaxpyOp::getTiedOperandIndex() { return 1; }
+unsigned VaxpyOp::getTiedResultIndex() { return 0; }
+
 static llvm::cl::opt<bool> disableVPTOAlignChainVerification(
     "vpto-disable-align-chain-verification",
     llvm::cl::desc("Disable !pto.align linear-chain verifier checks"),
@@ -7071,6 +7084,41 @@ LogicalResult VbitcastOp::verify() {
   }
 
   return success();
+}
+
+LogicalResult VmovOp::verify() {
+  bool invalidInput =
+      failed(verifyVRegTypeLike(*this, getInput().getType(), "input type"));
+  bool invalidResult =
+      failed(verifyVRegTypeLike(*this, getResult().getType(), "result type"));
+  if (invalidInput || invalidResult) {
+    return failure();
+  }
+  Type inputType = getInput().getType();
+  Type resultType = getResult().getType();
+  if (inputType != resultType) {
+    return emitOpError(
+        "requires input and result to have identical vector types");
+  }
+
+  Type elementType = cast<VRegType>(inputType).getElementType();
+  bool isSupportedFloat =
+      elementType.isF16() || elementType.isBF16() || elementType.isF32();
+  if (isSupportedFloat) {
+    return success();
+  }
+  auto integerType = dyn_cast<IntegerType>(elementType);
+  if (!integerType) {
+    return emitOpError("requires f16/bf16/f32 or integer vector element type");
+  }
+  unsigned width = integerType.getWidth();
+  if (width == mlir::pto::kValue8 || width == 16 ||
+      width == mlir::pto::kValue32 ||
+      (width == 64 && !integerType.isUnsigned())) {
+    return success();
+  }
+  return emitOpError("requires 8/16/32-bit integer or non-unsigned 64-bit "
+                     "integer vector element type");
 }
 
 LogicalResult PdintlvB8Op::verify() {

@@ -1,0 +1,46 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -canonicalize -cse | FileCheck %s
+// RUN: pto-test-opt %s '-pto-vpto-scheduler=mode=analyze' > /dev/null 2> %t
+// RUN: FileCheck %s --check-prefix=SCHED < %t
+
+// CHECK-LABEL: func.func @copies_are_not_folded_or_eliminated(
+// CHECK-COUNT-2: pto.vmov %arg0 : !pto.vreg<64xf32> -> !pto.vreg<64xf32>
+// SCHED-LABEL: vpto-scheduler: function=copies_are_not_folded_or_eliminated
+// SCHED: nodes=2 edges=0
+// SCHED-COUNT-2: op=pto.vmov semantic=schedulable sched-class=vector known=true
+// SCHED: coverage schedulable=2 structural=0 boundary=0 unsupported=0 unclassified=0
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @copies_are_not_folded_or_eliminated(%input: !pto.vreg<64xf32>) {
+    pto.vecscope {
+      %copy0 = pto.vmov %input : !pto.vreg<64xf32> -> !pto.vreg<64xf32>
+      %copy1 = pto.vmov %input : !pto.vreg<64xf32> -> !pto.vreg<64xf32>
+    }
+    return
+  }
+
+  // Parsing all supported element types also covers the vmov verifier's
+  // single-physical-vector type matrix.
+  func.func @supported_types(%u8: !pto.vreg<256xui8>, %s8: !pto.vreg<256xsi8>, %u16: !pto.vreg<128xui16>, %s16: !pto.vreg<128xsi16>, %f16: !pto.vreg<128xf16>, %bf16: !pto.vreg<128xbf16>, %u32: !pto.vreg<64xui32>, %s32: !pto.vreg<64xsi32>, %f32: !pto.vreg<64xf32>, %s64: !pto.vreg<32xsi64>) {
+    pto.vecscope {
+      %copy0 = pto.vmov %u8 : !pto.vreg<256xui8> -> !pto.vreg<256xui8>
+      %copy1 = pto.vmov %s8 : !pto.vreg<256xsi8> -> !pto.vreg<256xsi8>
+      %copy2 = pto.vmov %u16 : !pto.vreg<128xui16> -> !pto.vreg<128xui16>
+      %copy3 = pto.vmov %s16 : !pto.vreg<128xsi16> -> !pto.vreg<128xsi16>
+      %copy4 = pto.vmov %f16 : !pto.vreg<128xf16> -> !pto.vreg<128xf16>
+      %copy5 = pto.vmov %bf16 : !pto.vreg<128xbf16> -> !pto.vreg<128xbf16>
+      %copy6 = pto.vmov %u32 : !pto.vreg<64xui32> -> !pto.vreg<64xui32>
+      %copy7 = pto.vmov %s32 : !pto.vreg<64xsi32> -> !pto.vreg<64xsi32>
+      %copy8 = pto.vmov %f32 : !pto.vreg<64xf32> -> !pto.vreg<64xf32>
+      %copy9 = pto.vmov %s64 : !pto.vreg<32xsi64> -> !pto.vreg<32xsi64>
+    }
+    return
+  }
+}

@@ -1323,7 +1323,7 @@ This section provides a categorized overview of all PTO micro Instruction operat
 | 3 | [Vector Load/Store](isa/micro-isa/03-vector-load-store.md) | UB↔vreg data movement with various access patterns | ~23 | `pto.vlds`, `pto.vldsx2`, `pto.vgather2`, `pto.vsts`, `pto.vstsx2`, `pto.vscatter`, `pto.sprclr`, `pto.sprsti`, `pto.sprsts`, etc. |
 | 4 | [Predicate Load/Store](isa/micro-isa/04-predicate-load-store.md) | UB↔mask register movement | 5 | `pto.plds`, `pto.pldi`, `pto.psts`, `pto.psti`, `pto.pstu` |
 | 5 | [Materialization & Predicate Ops](isa/micro-isa/05-materialization-predicate.md) | Scalar broadcast, predicate generation and manipulation | ~20 | `pto.vbr`, `pto.vdup`, `pto.pset_b*`, `pto.pge_b*`, `pto.plt_b*`, `pto.pltm_b*`, `pto.ppack`, `pto.punpack`, `pto.pnot`, `pto.psel`, etc. |
-| 6 | [Unary Vector Ops](isa/micro-isa/06-unary-vector-ops.md) | Single-input element-wise operations | 7 | `pto.vabs`, `pto.vneg`, `pto.vexp`, `pto.vln`, `pto.vsqrt`, `pto.vrelu`, `pto.vnot` |
+| 6 | [Unary Vector Ops](isa/micro-isa/06-unary-vector-ops.md) | Single-input element-wise and register-copy operations | 8 | `pto.vabs`, `pto.vneg`, `pto.vexp`, `pto.vln`, `pto.vsqrt`, `pto.vrelu`, `pto.vnot`, `pto.vmov` |
 | 7 | [Binary Vector Ops](isa/micro-isa/07-binary-vector-ops.md) | Two-input element-wise operations | 14 | `pto.vadd`, `pto.vsub`, `pto.vmul`, `pto.vdiv`, `pto.vmax`, `pto.vmin`, `pto.vmadd`, `pto.vand`, `pto.vor`, `pto.vxor`, `pto.vshl`, `pto.vshr`, `pto.vaddc`, `pto.vsubc` |
 | 8 | [Vec-Scalar Ops](isa/micro-isa/08-vec-scalar-ops.md) | Vector-scalar operations | 9 | `pto.vadds`, `pto.vmuls`, `pto.vmaxs`, `pto.vmins`, `pto.vlrelu`, `pto.vshls`, `pto.vshrs`, `pto.vaddcs`, `pto.vsubcs` |
 | 9 | [Conversion Ops](isa/micro-isa/09-conversion-ops.md) | Type conversion with rounding/saturation control | 4 | `pto.vcvt`, `pto.vtrc`, `pto.vbitcast`, `pto.pbitcast` |
@@ -1379,6 +1379,7 @@ This section provides a categorized overview of all PTO micro Instruction operat
 | Operation | Group | Description |
 |-----------|-------|-------------|
 | Type Conversion | 9 | `pto.vcvt`, `pto.vbitcast`, `pto.pbitcast` |
+| Full vector-register copy | 6 | `pto.vmov` |
 | Interleave/Deinterleave | 12 | `pto.vintlv`, `pto.vdintlv` |
 | Interleave/Deinterleave (not A5) | 12 | `pto.vintlvv2`, `pto.vdintlvv2` |
 

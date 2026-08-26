@@ -1,0 +1,30 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -pto-vpto-materialize-tied-operand-copies -pto-vpto-materialize-tied-operand-copies | FileCheck %s
+
+// CHECK-LABEL: func.func @idempotent(
+// CHECK: pto.vmov
+// CHECK-NEXT: pto.vmula
+// CHECK: pto.vmov
+// CHECK-NEXT: pto.vmula
+// CHECK-NOT: pto.vmov
+// CHECK: pto.vmula
+// CHECK-NOT: pto.vmov
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @idempotent(%acc: !pto.vreg<64xf32>, %lhs: !pto.vreg<64xf32>, %rhs: !pto.vreg<64xf32>) {
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %r0 = pto.vmula %acc, %lhs, %rhs, %mask : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %r1 = pto.vmula %acc, %lhs, %rhs, %mask : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %r2 = pto.vmula %acc, %lhs, %rhs, %mask : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    }
+    return
+  }
+}

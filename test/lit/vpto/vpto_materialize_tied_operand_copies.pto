@@ -1,0 +1,115 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -pto-vpto-materialize-tied-operand-copies | FileCheck %s
+
+module attributes {pto.target_arch = "a5"} {
+  // CHECK-LABEL: func.func @shared_vmula(
+  func.func @shared_vmula(%acc: !pto.vreg<64xf32>, %lhs0: !pto.vreg<64xf32>, %lhs1: !pto.vreg<64xf32>, %lhs2: !pto.vreg<64xf32>, %rhs: !pto.vreg<64xf32>) {
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      // CHECK: %[[COPY0:.*]] = pto.vmov %arg0 : !pto.vreg<64xf32> -> !pto.vreg<64xf32>
+      // CHECK-NEXT: pto.vmula %[[COPY0]], %arg1, %arg4, %{{.*}}
+      %r0 = pto.vmula %acc, %lhs0, %rhs, %mask : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      // CHECK: %[[COPY1:.*]] = pto.vmov %arg0 : !pto.vreg<64xf32> -> !pto.vreg<64xf32>
+      // CHECK-NEXT: pto.vmula %[[COPY1]], %arg2, %arg4, %{{.*}}
+      %r1 = pto.vmula %acc, %lhs1, %rhs, %mask : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      // CHECK-NOT: pto.vmov
+      // CHECK: pto.vmula %arg0, %arg3, %arg4, %{{.*}}
+      %r2 = pto.vmula %acc, %lhs2, %rhs, %mask : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    }
+    return
+  }
+
+  // CHECK-LABEL: func.func @shared_vmadd(
+  func.func @shared_vmadd(%acc: !pto.vreg<64xf32>, %lhs: !pto.vreg<64xf32>, %rhs: !pto.vreg<64xf32>) {
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      // CHECK: %[[MADD_COPY0:.*]] = pto.vmov %arg0
+      // CHECK-NEXT: pto.vmadd %[[MADD_COPY0]], %arg1, %arg2, %{{.*}}
+      %r0 = pto.vmadd %acc, %lhs, %rhs, %mask : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      // CHECK: %[[MADD_COPY1:.*]] = pto.vmov %arg0
+      // CHECK-NEXT: pto.vmadd %[[MADD_COPY1]], %arg1, %arg2, %{{.*}}
+      %r1 = pto.vmadd %acc, %lhs, %rhs, %mask : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      // CHECK-NOT: pto.vmov
+      // CHECK: pto.vmadd %arg0, %arg1, %arg2, %{{.*}}
+      %r2 = pto.vmadd %acc, %lhs, %rhs, %mask : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    }
+    return
+  }
+
+  // CHECK-LABEL: func.func @mixed_view_root(
+  func.func @mixed_view_root(%acc: !pto.vreg<64xf32>, %lhs: !pto.vreg<64xf32>, %rhs: !pto.vreg<64xf32>) {
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %view0 = pto.vbitcast %acc : !pto.vreg<64xf32> -> !pto.vreg<64xi32>
+      %view1 = pto.vbitcast %view0 : !pto.vreg<64xi32> -> !pto.vreg<64xf32>
+      // CHECK: %[[VIEW_COPY:.*]] = pto.vmov %{{.*}}
+      // CHECK-NEXT: pto.vmula %[[VIEW_COPY]], %arg1, %arg2, %{{.*}}
+      %r0 = pto.vmula %view1, %lhs, %rhs, %mask : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      // CHECK-NOT: pto.vmov
+      // CHECK: pto.vmadd %arg0, %arg1, %arg2, %{{.*}}
+      %r1 = pto.vmadd %acc, %lhs, %rhs, %mask : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    }
+    return
+  }
+
+  // CHECK-LABEL: func.func @vaxpy_uses_operand_one(
+  func.func @vaxpy_uses_operand_one(%src: !pto.vreg<64xf32>, %dst: !pto.vreg<64xf32>, %alpha: f32) {
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      // CHECK: %[[AXPY_COPY:.*]] = pto.vmov %arg1
+      // CHECK-NEXT: pto.vaxpy %arg0, %[[AXPY_COPY]], %arg2, %{{.*}}
+      %r0 = pto.vaxpy %src, %dst, %alpha, %mask : !pto.vreg<64xf32>, !pto.vreg<64xf32>, f32, !pto.mask<b32> -> !pto.vreg<64xf32>
+      // CHECK-NOT: pto.vmov
+      // CHECK: pto.vaxpy %arg0, %arg1, %arg2, %{{.*}}
+      %r1 = pto.vaxpy %src, %dst, %alpha, %mask : !pto.vreg<64xf32>, !pto.vreg<64xf32>, f32, !pto.mask<b32> -> !pto.vreg<64xf32>
+    }
+    return
+  }
+
+  // CHECK-LABEL: func.func @histogram_tied_acc(
+  func.func @histogram_tied_acc(%acc: !pto.vreg<128xui16>, %src: !pto.vreg<256xui8>, %bin: i32) {
+    pto.vecscope {
+      %mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+      // CHECK: %[[HIST_COPY:.*]] = pto.vmov %arg0
+      // CHECK-NEXT: pto.chistv2 %[[HIST_COPY]], %arg1, %{{.*}}, %arg2
+      %r0 = pto.chistv2 %acc, %src, %mask, %bin : !pto.vreg<128xui16>, !pto.vreg<256xui8>, !pto.mask<b8>, i32 -> !pto.vreg<128xui16>
+      // CHECK-NOT: pto.vmov
+      // CHECK: pto.dhistv2 %arg0, %arg1, %{{.*}}, %arg2
+      %r1 = pto.dhistv2 %acc, %src, %mask, %bin : !pto.vreg<128xui16>, !pto.vreg<256xui8>, !pto.mask<b8>, i32 -> !pto.vreg<128xui16>
+    }
+    return
+  }
+
+  // CHECK-LABEL: func.func @vusqz_tied_carrier(
+  func.func @vusqz_tied_carrier(%src: !pto.vreg<64xi32>, %mask0: !pto.mask<b32>, %mask1: !pto.mask<b32>) {
+    pto.vecscope {
+      // CHECK: %[[USQZ_COPY:.*]] = pto.vmov %arg0
+      // CHECK-NEXT: pto.vusqz %[[USQZ_COPY]], %arg1
+      %r0 = pto.vusqz %src, %mask0 : !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+      // CHECK-NOT: pto.vmov
+      // CHECK: pto.vusqz %arg0, %arg2
+      %r1 = pto.vusqz %src, %mask1 : !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+    }
+    return
+  }
+
+  // CHECK-LABEL: func.func @carry_ops_are_not_tied(
+  func.func @carry_ops_are_not_tied(%lhs: !pto.vreg<64xui32>, %rhs: !pto.vreg<64xui32>, %carry_in: !pto.mask<b32>) {
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      // CHECK-NOT: pto.vmov
+      // CHECK: pto.vaddcs
+      %sum0, %carry0 = pto.vaddcs %lhs, %rhs, %carry_in, %mask : !pto.vreg<64xui32>, !pto.vreg<64xui32>, !pto.mask<b32>, !pto.mask<b32> -> !pto.vreg<64xui32>, !pto.mask<b32>
+      // CHECK-NEXT: pto.vsubcs
+      %sum1, %carry1 = pto.vsubcs %lhs, %rhs, %carry0, %mask : !pto.vreg<64xui32>, !pto.vreg<64xui32>, !pto.mask<b32>, !pto.mask<b32> -> !pto.vreg<64xui32>, !pto.mask<b32>
+    }
+    return
+  }
+}

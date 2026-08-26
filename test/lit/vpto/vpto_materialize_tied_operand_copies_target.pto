@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not pto-test-opt %s -split-input-file -pto-vpto-materialize-tied-operand-copies 2>&1 | FileCheck %s
+
+// CHECK: error: VPTO tied-copy materialization requires target architecture 'a5', but neither this function's module nor an enclosing module defines 'pto.target_arch'
+module {
+  func.func @missing_target() {
+    return
+  }
+}
+
+// -----
+
+// CHECK: error: VPTO tied-copy materialization requires target architecture 'a5', but module targets 'a3'
+module attributes {pto.target_arch = "a3"} {
+  func.func @wrong_target() {
+    return
+  }
+}

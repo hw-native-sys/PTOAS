@@ -117,6 +117,7 @@ std::unique_ptr<Pass> createVPTOPtrCastCleanupPass();
 std::unique_ptr<Pass> createVPTOCombineReductionsPass();
 std::unique_ptr<Pass> createVPTOOptimizeVcvtPass();
 std::unique_ptr<Pass> createVPTOMaskSimplifyPass();
+std::unique_ptr<Pass> createVPTOMaterializeTiedOperandCopiesPass();
 std::unique_ptr<Pass>
 createVPTOSchedulerPass(const VPTOSchedulerOptions &options = {});
 LogicalResult validateVPTOAuthoringIR(ModuleOp module,

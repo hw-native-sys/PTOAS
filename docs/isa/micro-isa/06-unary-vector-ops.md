@@ -8,9 +8,11 @@ Element-wise operations that take one vector input and produce one vector output
 ## Common Operand Model
 
 - `%input` is the source vector register value.
-- `%mask` is the predicate operand. For this family, inactive lanes follow the
+- `%mask`, where present, is the predicate operand. Inactive lanes follow the
   predication behavior of the selected instruction form: zeroing forms
   zero-fill inactive lanes, while merging forms preserve the destination value.
+  `pto.vmov` is the exception in this group: it has no mask and copies every
+  lane.
 - `%result` is the destination vector register value. Unless stated otherwise,
   `%result` has the same lane count and element type as `%input`.
 
@@ -160,6 +162,26 @@ for (int i = 0; i < N; i++)
 ---
 
 ## Movement
+
+### `pto.vmov`
+
+- **syntax:** `%result = pto.vmov %input : !pto.vreg<NxT> -> !pto.vreg<NxT>`
+- **A5 types:** ui8, si8, ui16, si16, f16, bf16, ui32, si32, f32,
+  si64
+
+```c
+for (int i = 0; i < N; i++)
+    dst[i] = src[i];
+```
+
+- **inputs:** `%input` supplies every lane of one physical vector register.
+- **outputs:** `%result` contains the same lane values in an independent
+  physical vector register.
+- **constraints and limitations:** Source and result types MUST match and MUST
+  represent one full A5 vector register. This operation has no mask: it always
+  copies the complete register. It represents a required hardware copy and is
+  therefore not removed or merged with another `pto.vmov`, even when the two
+  operations have the same input.
 
 ## Typical Usage
 

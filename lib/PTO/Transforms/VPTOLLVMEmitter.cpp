@@ -4563,6 +4563,20 @@ static FailureOr<StringRef> buildVmulaCallee(MLIRContext *context,
   return buildLaneTypedCallee(context, resultType, "vmula", ".m");
 }
 
+static FailureOr<StringRef> buildVmovCallee(MLIRContext *context,
+                                            Type resultType) {
+  std::string element =
+      getElementTypeFragment(getElementTypeFromVectorLike(resultType));
+  auto lanes = getElementCountFromVectorLike(resultType);
+  bool isUnsupportedType = element.empty() || !lanes;
+  if (isUnsupportedType) {
+    return failure();
+  }
+  return StringAttr::get(context, "llvm.hivm.vmov.v" +
+                                      std::to_string(*lanes) + element)
+      .getValue();
+}
+
 static FailureOr<StringRef> buildVmullCallee(MLIRContext *context,
                                              Type resultType) {
   return buildLaneTypedCallee(context, resultType, "vmull", "");
@@ -10478,6 +10492,42 @@ private:
   LoweringState &state;
 };
 
+class LowerVmovOpPattern final : public OpConversionPattern<pto::VmovOp> {
+public:
+  explicit LowerVmovOpPattern(TypeConverter &typeConverter,
+                              MLIRContext *context, LoweringState &state)
+      : OpConversionPattern<pto::VmovOp>(typeConverter, context), state(state) {}
+
+  LogicalResult
+  matchAndRewrite(pto::VmovOp op, pto::VmovOp::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    FailureOr<StringRef> calleeName =
+        buildVmovCallee(op.getContext(), op.getResult().getType());
+    if (failed(calleeName)) {
+      return rewriter.notifyMatchFailure(op, "unsupported vmov VPTO signature");
+    }
+
+    Type resultType =
+        this->getTypeConverter()->convertType(op.getResult().getType());
+    Value input = adaptor.getInput();
+    bool hasInvalidTypes = !resultType || input.getType() != resultType;
+    if (hasInvalidTypes) {
+      return rewriter.notifyMatchFailure(op, "failed to convert vmov types");
+    }
+
+    auto funcType =
+        rewriter.getFunctionType(TypeRange{resultType}, TypeRange{resultType});
+    auto call = rewriter.create<func::CallOp>(
+        op.getLoc(), *calleeName, TypeRange{resultType}, ValueRange{input});
+    state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
+    rewriter.replaceOp(op, call.getResults());
+    return success();
+  }
+
+private:
+  LoweringState &state;
+};
+
 class LowerVbitcastOpPattern final
     : public OpConversionPattern<pto::VbitcastOp> {
 public:
@@ -13535,7 +13585,8 @@ static void populateVPTOOpLoweringPatterns(VPTOTypeConverter &typeConverter,
                LowerVciOpPattern, LowerVexpdifOpPattern,
                LowerVbitsortOpPattern, LowerVmrgsort4OpPattern,
                LowerVtrcOpPattern, LowerVcvtOpPattern,
-               LowerVbitcastOpPattern, LowerPbitcastOpPattern,
+               LowerVmovOpPattern, LowerVbitcastOpPattern,
+               LowerPbitcastOpPattern,
                LowerPredicateLoadOpPattern<pto::PldiOp>,
                LowerPredicateLoadOpPattern<pto::PldsOp>,
                LowerPredicateStoreOpPattern<pto::PstiOp>,
@@ -13732,7 +13783,7 @@ static void configureVPTOOpLoweringTarget(ConversionTarget &target,
                       pto::VaxpyOp, pto::VmulscvtOp, pto::VciOp, pto::VexpdifOp,
                       pto::VbitsortOp, pto::Vmrgsort4Op, pto::VtrcOp,
                       pto::VcvtOp,
-                      pto::VbitcastOp,
+                      pto::VmovOp, pto::VbitcastOp,
                       pto::VcmpOp, pto::VcmpsOp,
                       pto::CopyGmToUbufOp, pto::CopyUbufToGmOp,
                       pto::CopyUbufToUbufOp, pto::CopyCbufToUbufOp,
