@@ -123,6 +123,9 @@ def _build_tile_specs(descriptor, operand_specs: list) -> dict:
         # omits the key, ``config.get`` yields None, which 1-D constraints
         # treat as an unknown compact layout (rejected); the in-process
         # ``_compiler_runtime`` path behaves the same way.
+        s_fractal_size = config.get("s_fractal_size", 512)
+        if s_fractal_size == 0:
+            s_fractal_size = 512
         specs[name] = TileSpec(
             shape=shape,
             dtype=dtype,
@@ -130,6 +133,7 @@ def _build_tile_specs(descriptor, operand_specs: list) -> dict:
             valid_shape=tuple(valid_shape) if valid_shape is not None else None,
             b_layout=config.get("b_layout", "row_major"),
             s_layout=config.get("s_layout", "none_box"),
+            s_fractal_size=s_fractal_size,
             compact_mode=config.get("compact_mode"),
             pad_value=spec.get("pad_value", config.get("pad_value", "Null")),
         )
