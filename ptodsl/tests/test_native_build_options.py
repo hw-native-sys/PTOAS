@@ -12,6 +12,7 @@ Everything here runs without a toolchain: the option layer is pure Python, and
 the build layer is exercised by capturing the commands it would run.
 """
 
+import importlib.util
 import tempfile
 import types
 import unittest
@@ -24,6 +25,10 @@ from ptodsl._native_options import (
     normalize_native_options,
 )
 from ptodsl._runtime import native_build
+
+# KernelModuleSpec and @pto.jit pull MLIR bindings. The rest of this file
+# only inspects option records and captured compiler command lines.
+_HAS_PTOAS_MLIR = importlib.util.find_spec("ptoas.mlir") is not None
 
 
 class NormalizeNativeOptionsTest(unittest.TestCase):
@@ -177,6 +182,7 @@ class HostSourceCacheIdentityTest(unittest.TestCase):
         self.assertIs(native_build._native_options_of(legacy), EMPTY_NATIVE_OPTIONS)
 
 
+@unittest.skipUnless(_HAS_PTOAS_MLIR, "needs ptoas.mlir bindings")
 class KernelModuleSpecTest(unittest.TestCase):
     def test_the_spec_carries_the_options_and_stays_frozen(self):
         from ptodsl._tracing import KernelModuleSpec
@@ -197,6 +203,7 @@ class KernelModuleSpecTest(unittest.TestCase):
         self.assertTrue(spec.native_options.is_empty())
 
 
+@unittest.skipUnless(_HAS_PTOAS_MLIR, "needs ptoas.mlir bindings")
 class JitDecoratorSurfaceTest(unittest.TestCase):
     """The decorator kwarg has to reach the spec, and reject bad input early."""
 

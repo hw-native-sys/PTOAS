@@ -21,7 +21,6 @@ from .cache import (
     write_manifest,
 )
 from .._native_options import EMPTY_NATIVE_OPTIONS, NativeBuildOptions
-from .codegen import generate_launch_cpp, launch_symbol_name
 from .toolchain import (
     aicore_arch_for_kernel_kind,
     common_include_flags,
@@ -378,6 +377,8 @@ def build_native_library(
     specialization_key,
 ) -> tuple[Path, str]:
     """Build or reuse the shared library for one compiled specialization."""
+    from .codegen import generate_launch_cpp, launch_symbol_name
+
     ir_function_name = module_spec.function_name
     artifacts = artifact_paths(py_name, ir_function_name, specialization_key)
     launch_symbol = launch_symbol_name(ir_function_name)
