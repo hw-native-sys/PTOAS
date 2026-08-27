@@ -3141,6 +3141,7 @@ static void prepareVPTOForEmission(PassManager &pm) {
   // Reconstruct the optimized reduction tree before scheduling so the
   // scheduler sees the final MI instruction set and dependencies.
   kernelModulePM.addPass(pto::createVPTOCombineReductionsPass());
+  kernelModulePM.addPass(createCSEPass());
   if (vptoSchedulerMode != VPTOSchedulerCLIMode::Off) {
     pto::VPTOSchedulerOptions schedulerOptions;
     schedulerOptions.mode = vptoSchedulerMode == VPTOSchedulerCLIMode::Analyze
@@ -3148,7 +3149,6 @@ static void prepareVPTOForEmission(PassManager &pm) {
                                 : "on";
     kernelModulePM.addPass(pto::createVPTOSchedulerPass(schedulerOptions));
   }
-  kernelModulePM.addPass(createCSEPass());
   kernelModulePM.addPass(pto::createPTOValidateVPTOEmissionIRPass());
 }
 
