@@ -309,7 +309,7 @@ struct VPTOBridgeLoweringPass final
         [](Operation *op) { return true; });
 
     RewritePatternSet patterns(&getContext());
-    BridgeLoweringState state{whitelist};
+    BridgeLoweringState state{whitelist, {}};
     patterns.add<LowerBridgeCallPattern>(converter, &getContext(), state);
     patterns.add<LowerBridgeIntToPtrPattern>(converter, &getContext());
     if (failed(applyPartialConversion(module, target, std::move(patterns)))) {
