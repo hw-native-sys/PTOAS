@@ -62,6 +62,7 @@ private:
   bool isTypeRewriteable(Value value) const;
   VMILayoutAttr getOperandLayout(OpOperand &operand) const;
   bool canProduceValueLayout(Value value, VMILayoutAttr layout) const;
+  bool hasUniqueProducerRelation(OpResult result, VMILayoutAttr layout) const;
   bool canMaterializeLayout(Value value, VMILayoutAttr sourceLayout,
                             VMILayoutAttr resultLayout) const;
 

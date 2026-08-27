@@ -15,6 +15,8 @@
 #include "PTO/IR/VMIUtils.h"
 #include "PTO/Transforms/VMILayoutSupport.h"
 
+#include "llvm/ADT/STLExtras.h"
+
 using namespace mlir;
 using namespace mlir::pto;
 
@@ -1257,6 +1259,24 @@ bool VMILayoutPropagator::canProduceValueLayout(Value value,
   return false;
 }
 
+bool VMILayoutPropagator::hasUniqueProducerRelation(
+    OpResult result, VMILayoutAttr layout) const {
+  Operation *definingOp = result.getDefiningOp();
+  const VMILayoutTransfer *transfer = getTransfer(definingOp);
+  if (!transfer) {
+    return false;
+  }
+  FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>> relations =
+      transfer->query(definingOp, result, layout, *this,
+                      /*changedOperand=*/nullptr);
+  if (failed(relations)) {
+    return false;
+  }
+  return llvm::count_if(*relations, [&](const VMILayoutRelation &relation) {
+           return relationContainsValueLayout(relation, result, layout);
+         }) == 1;
+}
+
 bool VMILayoutPropagator::canMaterializeLayout(
     Value value, VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout) const {
   static VMILayoutMaterializationTransfer materializationTransfer;
@@ -1315,7 +1335,10 @@ LogicalResult VMILayoutPropagator::request(OpOperand &operand,
   if (assignment.layout == layout) {
     return propagateOperandFact(operand, layout);
   }
-  if (!assignment.layout && isa<OpResult>(value)) {
+  auto result = dyn_cast<OpResult>(value);
+  bool canPromote = !assignment.layout && result &&
+                    hasUniqueProducerRelation(result, layout);
+  if (canPromote) {
     if (failed(request(value, layout))) {
       return failure();
     }
