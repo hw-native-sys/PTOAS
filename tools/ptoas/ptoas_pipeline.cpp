@@ -1303,6 +1303,116 @@ static LogicalResult runPreBackendNormalization(ModuleOp module) {
 /// text or a VPTO backend result) and `exitCode` carries the process exit code;
 /// when false the caller continues with EmitC emission. Failure means the caller
 /// must propagate the error.
+/// Keep frontend fusion on tile-native PTO IR and annotate last_use directly
+/// on scheduled block-local spans before the shared mainline lowers tiles.
+/// The shape-inference switch drives FusionPlan only: that is where the
+/// iteration-domain decisions (static vs ShapeConstraintSolver) are made.
+/// FusionRegionGen consumes only the shared pre-fusion dataflow graph (cached
+/// by the analysis manager and built once by FusionPlan) plus the resulting
+/// pto.fusion.group_id/order metadata; it never consults the domain classes,
+/// so it takes no option here.
+static void appendFusionFrontendPassesForBackend(
+    PassManager &pm, const pto::FusionPlanOptions &fusionPlanOpts) {
+  pm.addNestedPass<mlir::func::FuncOp>(
+      pto::createFusionPlanPass(fusionPlanOpts));
+  pm.addNestedPass<mlir::func::FuncOp>(pto::createOpSchedulingPass());
+}
+
+static LogicalResult appendFusionFrontendPasses(
+    PassManager &pm, bool isA2A3, bool enableA5EmitCFusionPath,
+    bool enableA5VPTOFusionPath) {
+  if (isA2A3) {
+    return success();
+  }
+  pto::FusionPlanOptions fusionPlanOpts;
+  fusionPlanOpts.enableShapeInference = enableShapeInference;
+  fusionPlanOpts.enableVfSimCostmodelOptimization =
+      enableVfSimCostmodelOptimization;
+  fusionPlanOpts.dumpVfSimUnrollTest = dumpVfSimUnrollTest;
+  if (enableA5EmitCFusionPath) {
+    appendFusionFrontendPassesForBackend(pm, fusionPlanOpts);
+    pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOMarkLastUsePass());
+    return success();
+  }
+  if (enableA5VPTOFusionPath) {
+    appendFusionFrontendPassesForBackend(pm, fusionPlanOpts);
+    pm.addNestedPass<mlir::func::FuncOp>(
+        pto::createPTOFusionRegionGenPass());
+  }
+  return success();
+}
+
+static LogicalResult appendPlanMemoryPasses(PassManager &pm,
+                                            PTOBuildLevel effectiveLevel) {
+  if (planMemoryImpl != "legacy" && planMemoryImpl != "modern") {
+    llvm::errs() << "Error: invalid --plan-memory-impl='" << planMemoryImpl
+                 << "', expected 'legacy' or 'modern'.\n";
+    return failure();
+  }
+
+  if (effectiveLevel != PTOBuildLevel::Level3) {
+    pto::PlanMemoryOptions planMemoryOptions;
+    planMemoryOptions.memMode = "local";
+    bool effectivePlanMemoryOrderBySize = planMemoryOrderBySize;
+    if (planMemoryImpl == "modern" &&
+        planMemoryOrderBySize.getNumOccurrences() == 0) {
+      effectivePlanMemoryOrderBySize = true;
+    }
+    planMemoryOptions.orderBySize = effectivePlanMemoryOrderBySize;
+    if (planMemoryImpl == "legacy") {
+      pm.addPass(pto::createPlanMemoryPass(planMemoryOptions));
+    } else {
+      pm.addPass(pto::createPlanMemoryModernPass(planMemoryOptions));
+    }
+  }
+  return success();
+}
+
+/// Conditionally add one automatic synchronization mode. Barrier-all is a
+/// conservative standalone pass; InsertSync and GraphSyncSolver are set/wait
+/// solvers, while BufidSync is A5-only get_buf/rls_buf synchronization. Sync
+/// runs BEFORE PTOResolveBufferSelect so it sees per-use `pto.multi_tile_get`
+/// operations and keeps their slot identity for alias and event-id analysis.
+static void appendAutoSyncPasses(PassManager &pm) {
+  if (enableInsertSync) {
+    if (emitMlirIR) {
+      pm.addPass(std::make_unique<SerialAutoSyncPass>(
+          SerialAutoSyncPass::Mode::InsertSync, false, 0));
+    } else {
+      pm.addNestedPass<func::FuncOp>(pto::createPTOInsertSyncPass());
+    }
+  }
+  else if (enableBufidSync) {
+    if (emitMlirIR) {
+      pm.addPass(std::make_unique<SerialAutoSyncPass>(
+          SerialAutoSyncPass::Mode::Bufid, enableBufidSyncDebug, 0));
+    } else {
+      PTOBufidSyncOptions options;
+      options.enableBufidSyncDebug = enableBufidSyncDebug;
+      pm.addNestedPass<func::FuncOp>(pto::createPTOBufidSyncPass(options));
+    }
+  } else if (enableInjectBarrierAllSync) {
+    if (emitMlirIR) {
+      pm.addPass(std::make_unique<SerialAutoSyncPass>(
+          SerialAutoSyncPass::Mode::BarrierAll, false, 0));
+    } else {
+      pm.addNestedPass<func::FuncOp>(
+          pto::createPTOInjectBarrierAllSyncPass());
+    }
+  } else if (enableGraphSyncSolver) {
+    if (emitMlirIR) {
+      pm.addPass(std::make_unique<SerialAutoSyncPass>(
+          SerialAutoSyncPass::Mode::GraphSolver, false,
+          graphSyncSolverEventIdMax));
+    } else {
+      PTOGraphSyncSolverOptions options;
+      options.eventIdNumMax = graphSyncSolverEventIdMax;
+      pm.addNestedPass<func::FuncOp>(
+          pto::createPTOGraphSyncSolverPass(options));
+    }
+  }
+}
+
 static LogicalResult runMainLoweringPipeline(
     OwningOpRef<ModuleOp> &module, PTOASContext &context,
     PTOBackend effectiveBackend, const CompilePipelineState &state,
@@ -1354,29 +1464,9 @@ static LogicalResult runMainLoweringPipeline(
     pm.addPass(pto::createInsertTemplateAttributesPass());
   }
 
-  // Keep frontend fusion on tile-native PTO IR and annotate last_use directly
-  // on scheduled block-local spans before the shared mainline lowers tiles.
-  // The shape-inference switch drives FusionPlan only: that is where the
-  // iteration-domain decisions (static vs ShapeConstraintSolver) are made.
-  // FusionRegionGen consumes only the shared pre-fusion dataflow graph (cached
-  // by the analysis manager and built once by FusionPlan) plus the resulting
-  // pto.fusion.group_id/order metadata; it never consults the domain classes,
-  // so it takes no option here.
-  pto::FusionPlanOptions fusionPlanOpts;
-  fusionPlanOpts.enableShapeInference = enableShapeInference;
-  fusionPlanOpts.enableVfSimCostmodelOptimization =
-      enableVfSimCostmodelOptimization;
-  fusionPlanOpts.dumpVfSimUnrollTest = dumpVfSimUnrollTest;
-  if (!isA2A3 && enableA5EmitCFusionPath) {
-    pm.addNestedPass<mlir::func::FuncOp>(
-        pto::createFusionPlanPass(fusionPlanOpts));
-    pm.addNestedPass<mlir::func::FuncOp>(pto::createOpSchedulingPass());
-    pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOMarkLastUsePass());
-  } else if (!isA2A3 && enableA5VPTOFusionPath) {
-    pm.addNestedPass<mlir::func::FuncOp>(
-        pto::createFusionPlanPass(fusionPlanOpts));
-    pm.addNestedPass<mlir::func::FuncOp>(pto::createOpSchedulingPass());
-    pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOFusionRegionGenPass());
+  if (failed(appendFusionFrontendPasses(pm, isA2A3, enableA5EmitCFusionPath,
+                                         enableA5VPTOFusionPath))) {
+    return failure();
   }
 
   pm.addNestedPass<mlir::func::FuncOp>(
@@ -1385,73 +1475,13 @@ static LogicalResult runMainLoweringPipeline(
   pm.addNestedPass<mlir::func::FuncOp>(
       pto::createPTORematerializeFixpipeVectorQuantPass());
 
-  if (planMemoryImpl != "legacy" && planMemoryImpl != "modern") {
-    llvm::errs() << "Error: invalid --plan-memory-impl='" << planMemoryImpl
-                 << "', expected 'legacy' or 'modern'.\n";
+  if (failed(appendPlanMemoryPasses(pm, effectiveLevel))) {
     return failure();
-  }
-
-  if (effectiveLevel != PTOBuildLevel::Level3) {
-    pto::PlanMemoryOptions planMemoryOptions;
-    planMemoryOptions.memMode = "local";
-    bool effectivePlanMemoryOrderBySize = planMemoryOrderBySize;
-    if (planMemoryImpl == "modern" &&
-        planMemoryOrderBySize.getNumOccurrences() == 0) {
-      effectivePlanMemoryOrderBySize = true;
-    }
-    planMemoryOptions.orderBySize = effectivePlanMemoryOrderBySize;
-    if (planMemoryImpl == "legacy") {
-      pm.addPass(pto::createPlanMemoryPass(planMemoryOptions));
-    } else {
-      pm.addPass(pto::createPlanMemoryModernPass(planMemoryOptions));
-    }
   }
   pm.addPass(pto::createPTOResolveReservedBuffersPass());
   pm.addNestedPass<mlir::func::FuncOp>(pto::createPTORemoveIdentityTMovPass());
 
-  // Conditionally add one automatic synchronization mode. Barrier-all is a
-  // conservative standalone pass; InsertSync and GraphSyncSolver are set/wait
-  // solvers. Sync runs BEFORE PTOResolveBufferSelect so it sees per-use
-  // `pto.multi_tile_get` operations and keeps their slot identity for alias
-  // and event-id analysis.
-  // solvers, while BufidSync is A5-only get_buf/rls_buf synchronization.
-  if (enableInsertSync) {
-    if (emitMlirIR) {
-      pm.addPass(std::make_unique<SerialAutoSyncPass>(
-          SerialAutoSyncPass::Mode::InsertSync, false, 0));
-    } else {
-      pm.addNestedPass<func::FuncOp>(pto::createPTOInsertSyncPass());
-    }
-  }
-  else if (enableBufidSync) {
-    if (emitMlirIR) {
-      pm.addPass(std::make_unique<SerialAutoSyncPass>(
-          SerialAutoSyncPass::Mode::Bufid, enableBufidSyncDebug, 0));
-    } else {
-      PTOBufidSyncOptions options;
-      options.enableBufidSyncDebug = enableBufidSyncDebug;
-      pm.addNestedPass<func::FuncOp>(pto::createPTOBufidSyncPass(options));
-    }
-  } else if (enableInjectBarrierAllSync) {
-    if (emitMlirIR) {
-      pm.addPass(std::make_unique<SerialAutoSyncPass>(
-          SerialAutoSyncPass::Mode::BarrierAll, false, 0));
-    } else {
-      pm.addNestedPass<func::FuncOp>(
-          pto::createPTOInjectBarrierAllSyncPass());
-    }
-  } else if (enableGraphSyncSolver) {
-    if (emitMlirIR) {
-      pm.addPass(std::make_unique<SerialAutoSyncPass>(
-          SerialAutoSyncPass::Mode::GraphSolver, false,
-          graphSyncSolverEventIdMax));
-    } else {
-      PTOGraphSyncSolverOptions options;
-      options.eventIdNumMax = graphSyncSolverEventIdMax;
-      pm.addNestedPass<func::FuncOp>(
-          pto::createPTOGraphSyncSolverPass(options));
-    }
-  }
+  appendAutoSyncPasses(pm);
 
   // Materialize each `pto.multi_tile_get` as an addressed `pto.alloc_tile`;
   // dynamic selections use an `arith.select` chain over planned addresses.
