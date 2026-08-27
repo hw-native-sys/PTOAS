@@ -16,14 +16,14 @@ module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<ve
     %c1 = arith.constant 1 : index
     %c2 = arith.constant 2 : index
     %c4 = arith.constant 4 : index
+    %c5 = arith.constant 5 : index
     %c8 = arith.constant 8 : index
     %c16 = arith.constant 16 : index
-    %c20 = arith.constant 20 : index
     %c32 = arith.constant 32 : index
 
-    %rowView = pto.make_tensor_view %rowSrc, shape = [%c4, %c16], strides = [%c20, %c1]
+    %rowView = pto.make_tensor_view %rowSrc, shape = [%c5, %c16], strides = [%c16, %c1]
       : !pto.tensor_view<?x?xf16>
-    %rowPart = pto.partition_view %rowView, offsets = [%c0, %c0], sizes = [%c4, %c16]
+    %rowPart = pto.partition_view %rowView, offsets = [%c1, %c0], sizes = [%c4, %c16]
       : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<4x16xf16>
     %rowIdx = pto.alloc_tile
       : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=2, blayout=row_major, slayout=none_box, fractal=512, pad=0>
@@ -32,8 +32,11 @@ module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<ve
     pto.mgather ins(%rowPart, %rowIdx : !pto.partition_tensor_view<4x16xf16>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=2, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
       outs(%rowDst : !pto.tile_buf<loc=vec, dtype=f16, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
       {coalesce = #pto<coalesce row>}
+    // CHECK: arith.muli %c1, %c16 : index
+    // CHECK: arith.muli {{.*}}, %c2 : index
+    // CHECK: pto.addptr
     // CHECK: pto.load_scalar
-    // CHECK: arith.muli {{.*}}, %strides{{.*}}#3 : index
+    // CHECK: arith.muli {{.*}}, %c16 : index
     // CHECK: pto.set_flag[<PIPE_S>, <PIPE_MTE2>, <EVENT_ID0>]
     // CHECK: pto.wait_flag[<PIPE_S>, <PIPE_MTE2>, <EVENT_ID0>]
     // CHECK: pto.mte_gm_ub {{.*}}, %c32{{.*}} nburst
@@ -65,9 +68,9 @@ module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<ve
     pto.mgather ins(%clampPart, %clampIdx : !pto.partition_tensor_view<8xf32>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
       outs(%clampDst : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
       {coalesce = #pto<coalesce elem>, gatherOob = #pto<gather_oob clamp>}
-    // CHECK: %[[CLAMP_LOW:.*]] = arith.select
-    // CHECK: %[[CLAMP_IDX:.*]] = arith.select {{.*}}, {{.*}}, %[[CLAMP_LOW]] : index
-    // CHECK-NEXT: {{.*}} = pto.load_scalar {{.*}}[%[[CLAMP_IDX]]] : !pto.ptr<f32, gm> -> f32
+    // CHECK: arith.extui
+    // CHECK: %[[CLAMP_IDX:.*]] = arith.select
+    // CHECK-NEXT: {{.*}} = pto.load_scalar {{.*}}[%[[CLAMP_IDX]]] : <f32, gm> -> f32
     // CHECK: pto.store_scalar
 
     %wrapView = pto.make_tensor_view %wrapSrc, shape = [%c8], strides = [%c1]
@@ -81,9 +84,9 @@ module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<ve
     pto.mgather ins(%wrapPart, %wrapIdx : !pto.partition_tensor_view<8xi32>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
       outs(%wrapDst : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
       {coalesce = #pto<coalesce elem>, gatherOob = #pto<gather_oob wrap>}
-    // CHECK: arith.remsi
-    // CHECK: %[[WRAP_IDX:.*]] = arith.select
-    // CHECK-NEXT: {{.*}} = pto.load_scalar {{.*}}[%[[WRAP_IDX]]] : !pto.ptr<i32, gm> -> i32
+    // CHECK: arith.extui
+    // CHECK: %[[WRAP_IDX:.*]] = arith.remui
+    // CHECK-NEXT: {{.*}} = pto.load_scalar {{.*}}[%[[WRAP_IDX]]] : <i32, gm> -> i32
     // CHECK: pto.store_scalar
     // CHECK-NOT: pto.mgather
     return

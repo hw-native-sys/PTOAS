@@ -827,23 +827,24 @@ def launch_and_check_mgather(
         pattern = np.array([-2, -1, 0, limit - 1, limit, limit + 1], dtype=np.int32)
         idx = np.resize(pattern, idx_count)
 
+    unsigned_idx = idx.view(np.uint32).astype(np.int64)
     if gather_oob == "clamp":
-        normalized = np.clip(idx, 0, limit - 1)
+        normalized = np.minimum(unsigned_idx, limit - 1)
     elif gather_oob == "wrap":
-        normalized = idx % limit
+        normalized = unsigned_idx % limit
     else:
-        normalized = idx
+        normalized = unsigned_idx
 
     if coalesce == "row":
         golden = np.zeros((dst_rows, dst_cols), dtype=np_dtype)
-        valid = (idx >= 0) & (idx < limit)
+        valid = unsigned_idx < limit
         if gather_oob in {"clamp", "wrap"}:
             valid[:] = True
         golden[valid] = src[normalized[valid], :dst_cols]
     else:
         src_flat = src.reshape(-1)
         golden_flat = np.zeros((idx_count,), dtype=np_dtype)
-        valid = (idx >= 0) & (idx < limit)
+        valid = unsigned_idx < limit
         if gather_oob in {"clamp", "wrap"}:
             valid[:] = True
         golden_flat[valid] = src_flat[normalized[valid]]

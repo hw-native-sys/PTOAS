@@ -1,8 +1,7 @@
 # A2/A3 VPTO Gather Lowering — Design Notes
 
-Scope: bring tile-level gather (`pto.tgather`, `pto.tgatherb`, and the GM-to-UB
-form of `pto.mgather`) to the A2/A3 `vpto` backend so it reaches feature parity
-with the EmitC path for gather,
+Scope: bring tile-level gather (`pto.tgather`, `pto.tgatherb`, and a documented
+GM-to-UB subset of `pto.mgather`) to the A2/A3 `vpto` backend,
 using the flat `pto.ub.*` UB-pointer op layer (the same layer as the
 elementwise `ub.vadd` family). The A5 `vreg`/`vgather2` path is **out of
 scope** for A2/A3 and must not be used.
@@ -14,7 +13,7 @@ PTOAS has two parallel lowering tiers for gather, one per backend family:
 | Backend | Gather tier | Primitive | Where |
 |---|---|---|---|
 | A5 (`vpto`) | vreg | `vgather2` / `vgather2_bc` (vreg operands) | `VPTOLLVMEmitter.cpp:7926` lowers to `llvm.hivm.vgather2.v300.*` |
-| A2/A3 (`vpto`) | flat UB pointer (`pto.ub.*`) | raw CCE `vgather` / `vgatherb` (UB pointers) | implemented by this branch |
+| A2/A3 (`vpto`) | flat UB pointer (`pto.ub.*`) | raw CCE `vgather` / `vgatherb` (UB pointers) | `LowerPTOToUBufOps` |
 | Any arch (EmitC) | tile-level CCE call | `TGATHER` / `TGATHERB` opaque calls | `PTOToEmitC.cpp:9772` (tgather), `:9875` (tgatherb) |
 
 The EmitC path already covers gather for A2/A3 (`ptoas --pto-arch=a3 %s` →
@@ -66,8 +65,8 @@ identical to `LowerPTOToUBufOps`'s `dispatch` head/tail repeat loop.
 ### Related A2/A3 operations
 
 - **`MGather` exists on A2/A3** — `npu/a2a3/MGather.hpp` implements GM gather
-  loads for row and element coalescing. Its GM-to-UB VPTO lowering is implemented
-  as a stacked follow-up using scalar address generation, scalar loads/stores,
+  loads for row and element coalescing. Its GM-to-UB VPTO lowering uses scalar
+  address generation, scalar loads/stores,
   and per-row MTE2 copies rather than the UB-local `vgather`/`vgatherb`
   instructions covered here.
 - **No vreg** — A5's `vgather2`/`vgather2_bc` (`npu/a5/TGather.hpp:51,79,108`)
@@ -100,12 +99,15 @@ intrinsic:
 - `Coalesce::Elem` performs scalar indexed GM loads and UB stores for each valid
   destination element, with the same four OOB policies.
 - The lowering accepts the A2/A3 payload set
-  (`i8/ui8/i16/ui16/i32/ui32/f16/bf16/f32`) with signless `i32` indices and
-  row-major, none-box UB tiles. Source and destination element types must match.
+  (`i8/ui8/i16/ui16/i32/ui32/f16/bf16/f32`) with signless `i32` indices,
+  interpreted as `uint32` values, and row-major, none-box UB tiles. Source and
+  destination element types must match.
 - `Coalesce::Row` requires a statically positive effective rank-2 ND table,
   exact source/destination row-width agreement, unit innermost stride, and a
-  32-byte-aligned row transfer. `Coalesce::Elem` requires a statically positive,
-  dense contiguous table and treats each index as a direct flat element offset.
+  32-byte-aligned base, row stride, and row transfer. `Coalesce::Elem` requires
+  a statically positive, dense contiguous table and treats each index as a
+  direct flat element offset. Both forms require the partition to stay within
+  the parent tensor view.
 - Unsupported dynamic, empty, strided Elem, column-major, row-plus-one, scratch,
   and implicit-coalesce forms fail at the A2/A3 VPTO lowering boundary.
 - GM-to-L1 MGATHER is rejected explicitly at the A2/A3 VPTO lowering boundary
