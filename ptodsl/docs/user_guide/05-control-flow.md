@@ -409,7 +409,15 @@ the usual branch-merge diagnostics.
 Statically known `bool` / `int` / float operands short-circuit at trace time
 with native Python truthiness: `False and rhs`, `True or rhs`, and
 `0.0 or rhs` never trace the RHS at all. Runtime floating-point controls are
-not valid short-circuit predicates and raise a clear error.
+not valid short-circuit predicates and raise a clear error. Python float
+literals on the RHS of a runtime short-circuit merge are also rejected: the
+merge currently accepts only `bool`/`int` literals and PTO runtime scalar
+values, because a float literal (for example, `flag and 0.5`) has no
+compatible result type when the other branch preserves the left operand. Use
+an explicit `pto.if_` merge with same-typed branch values when a floating-point
+result is required.
+Assignment expressions (`:=`) on a lazily evaluated RHS are rejected because
+the rewrite uses a helper lambda and cannot preserve the Python binding scope.
 
 `and` / `or` compose with every rewritten expression context: assignments,
 call arguments, `return`, and `if` / `while` conditions.
@@ -635,10 +643,10 @@ Do not pass conflicting values through both spellings. For example,
 `@pto.jit(ast_rewrite=False, frontend_options={"ast_rewrite": True})` is
 rejected.
 
-When this mode is disabled for a function, native Python `if` / `for` executes
-while tracing that function. Runtime device-side control flow should still use
-the default rewrite mode, or explicit `pto.if_` / `pto.for_` APIs when you need
-manual control.
+When this mode is disabled for a function, native Python `if` / `for` / `and` /
+`or` executes while tracing that function. Runtime device-side control flow
+should still use the default rewrite mode, or explicit `pto.if_` / `pto.for_`
+APIs when you need manual control.
 
 The structured `frontend_options` argument is reserved for frontend rewrite
 debugging and future rewrite passes. Today it accepts the same AST rewrite

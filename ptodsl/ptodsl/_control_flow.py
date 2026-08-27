@@ -35,7 +35,12 @@ from ._scalar_coercion import coerce_scalar_to_type
 from ._surface_types import const_expr
 from ._tracing.active import current_session, require_active_session
 from ._tracing.control_flow import apply_unroll_hint, normalize_unroll_hint
-from ._surface_values import unwrap_surface_value, wrap_like_surface_value, wrap_surface_value
+from ._surface_values import (
+    RuntimeValue,
+    unwrap_surface_value,
+    wrap_like_surface_value,
+    wrap_surface_value,
+)
 from ._types import _StructDescriptor
 
 from ptoas.mlir.dialects import arith, pto as _pto, scf
@@ -856,15 +861,18 @@ def if_(cond) -> _IfCM:
 def _branch_rhs_value(value, kind):
     """Validate a short-circuit RHS evaluated inside a runtime branch.
 
-    A branch may only yield a PTO runtime value, an i1-materializable bool
-    literal, or a Python integer literal; anything else would fail later inside
-    ``br.assign`` with an opaque error.
+    A branch may only yield a PTO runtime scalar value, an i1-materializable
+    bool literal, or a Python integer literal.  Python float literals are
+    intentionally excluded because the short-circuit merge has no type anchor
+    for a floating-point result; static float operands still use native Python
+    short-circuiting before this helper is called.
     """
-    if isinstance(value, (bool, int)) or hasattr(value, "type"):
+    if isinstance(value, (bool, int, RuntimeValue)):
         return value
     raise TypeError(
-        "pto short-circuit " + kind + " RHS must be a PTO runtime value or a Python "
-        "bool/int literal, got " + type(value).__name__,
+        "pto short-circuit " + kind + " RHS must be a PTO runtime scalar value or a "
+        "Python bool/int literal; Python float literals are not supported in "
+        "runtime branch merges, got " + type(value).__name__,
     )
 
 
@@ -905,7 +913,7 @@ def _short_circuit_and(lhs, rhs_fn):
             br.assign(value=_materialize_bool_branch_value(
                 _branch_rhs_value(rhs_fn(), "and"), context="pto short-circuit and RHS"))
         with br.else_:
-            br.assign(value=lhs)
+            br.assign(value=raw_lhs)
     return br.value
 
 
@@ -930,7 +938,7 @@ def _short_circuit_or(lhs, rhs_fn):
     cond = coerce_runtime_i1_value(raw_lhs, context="pto short-circuit or condition")
     with _IfCM(cond, short_circuit_merge=True) as br:
         with br.then_:
-            br.assign(value=lhs)
+            br.assign(value=raw_lhs)
         with br.else_:
             br.assign(value=_materialize_bool_branch_value(
                 _branch_rhs_value(rhs_fn(), "or"), context="pto short-circuit or RHS"))

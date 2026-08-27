@@ -29,8 +29,10 @@ def rewrite_jit_function(
 ):
     """Return a function with PTODSL lexical sections lowered safely.
 
-    ``pto.section`` is a physical SSA region, not a Python ``with`` hint.  The
-    section body therefore gets a small source-level lexical rewrite even when
+    ``rewrite_control_flow`` controls both runtime statement rewriting and the
+    ``and``/``or`` short-circuit rewrite.  ``pto.section`` is a physical SSA
+    region, not a Python ``with`` hint.  Its body therefore gets a small
+    source-level lexical rewrite even when
     the optional control-flow rewrite is disabled.  This keeps Python's
     function-local assignment rules from leaking a section-local SSA value into
     a sibling physical section.
@@ -418,7 +420,22 @@ class _BoolOpRewriter(ast.NodeTransformer):
     traced at all when Python semantics would skip it.
     """
 
+    @staticmethod
+    def _reject_rhs_assignment_expressions(node):
+        """Reject walrus expressions that would move into a generated lambda."""
+        if any(
+            isinstance(child, ast.NamedExpr)
+            for value in node.values[1:]
+            for child in ast.walk(value)
+        ):
+            raise PTODSLAstRewriteError(
+                "ast_rewrite=True cannot rewrite an and/or expression containing "
+                "an assignment expression (walrus operator) on the RHS; the "
+                "assignment would bind inside the generated helper lambda"
+            )
+
     def visit_BoolOp(self, node):
+        self._reject_rhs_assignment_expressions(node)
         node = self.generic_visit(node)
         if isinstance(node.op, ast.And):
             helper = "_short_circuit_and"

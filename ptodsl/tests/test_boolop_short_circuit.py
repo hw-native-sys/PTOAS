@@ -8,9 +8,10 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 
 import inspect
+from types import FunctionType
 
 from ptodsl import pto, scalar
-from ptodsl._ast_rewrite import rewrite_jit_function
+from ptodsl._ast_rewrite import PTODSLAstRewriteError, rewrite_jit_function
 
 
 # Issue #1332 original kernels: Python ``and``/``or`` between runtime
@@ -176,7 +177,6 @@ def issue_1332_func_call(x: pto.i32, y: pto.i32, out: pto.ptr(pto.i8, "gm")):
 
 # ``runtime_value and True`` materializes the Python bool to an i1 const in
 # the branch merge.
-# the branch merge.
 
 
 @pto.jit(name="issue_1332_bool_literal_rhs", kernel_kind="vector", target="a5")
@@ -189,6 +189,7 @@ def issue_1332_bool_literal_rhs(f: pto.i1, out: pto.ptr(pto.i8, "gm")):
 # inside rewritten kernels: TileOps templates use the loops-or-None pattern where
 # loops is a regular Python list that must not be traced as a runtime condition
 # (and must never reach the surface-value validator).
+
 
 @pto.jit(name="issue_1332_plain_python_operands", kernel_kind="vector", target="a5")
 def issue_1332_plain_python_operands(out: pto.ptr(pto.i8, "gm")):
@@ -205,8 +206,6 @@ def issue_1332_plain_python_operands(out: pto.ptr(pto.i8, "gm")):
     if value != (1, 2):
         return
     scalar.store(pto.const(11, dtype=pto.i8), out, 0)
-
-
 
 
 @pto.jit(name="issue_1332_index_lhs", kernel_kind="vector", target="a5")
@@ -227,6 +226,12 @@ def issue_1332_int_literal_vs_i1(flag: pto.i1, out: pto.ptr(pto.i8, "gm")):
     scalar.store(pred, out, 0)
 
 
+@pto.jit(name="issue_1332_walrus_rhs", kernel_kind="vector", target="a5")
+def issue_1332_walrus_rhs(flag: pto.i1, out: pto.ptr(pto.i8, "gm")):
+    pred = flag and (bound := flag)
+    scalar.store(pred, out, 0)
+
+
 # Diagnostics: floating-point controls, incompatible branch merges, and the
 # native behavior preserved when AST rewrite is disabled.
 
@@ -243,16 +248,26 @@ def issue_1332_incompatible_merge(x: pto.i32, f: pto.f32, out: pto.ptr(pto.i8, "
     scalar.store(pred, out, 0)
 
 
+@pto.jit(name="issue_1332_float_rhs_literal", kernel_kind="vector", target="a5")
+def issue_1332_float_rhs_literal(flag: pto.i1, out: pto.ptr(pto.i8, "gm")):
+    pred = flag and 0.5
+    scalar.store(pred, out, 0)
+
+
 @pto.jit(name="issue_1332_no_ast_rewrite", kernel_kind="vector", target="a5", ast_rewrite=False)
 def issue_1332_no_ast_rewrite(x: pto.i32, y: pto.i32, out: pto.ptr(pto.i8, "gm")):
     pred = (x > 0) and (y > 0)
     scalar.store(pred, out, 0)
 
 
-def _expect_error(fn, needle):
+def _expect_error(fn, needle, error_type=None):
     try:
         fn()
     except Exception as exc:
+        if error_type is not None and not isinstance(exc, error_type):
+            raise AssertionError(
+                f"expected {error_type.__name__}, got: {type(exc).__name__}: {exc}"
+            ) from exc
         if needle in str(exc):
             return
         raise AssertionError(
@@ -262,9 +277,6 @@ def _expect_error(fn, needle):
 
 
 def main():
-    and_mlir = issue_1332_and_kernel.compile().mlir_text()
-    or_mlir = issue_1332_or_kernel.compile().mlir_text()
-
     # The guarded RHS (division) must live inside the scf.if branch and the
     # condition must come from the LHS comparison.  Verify by walking the
     # emitted module rather than matching text fragments.
@@ -274,6 +286,25 @@ def main():
             for block in region.blocks:
                 for child in block.operations:
                     yield from _walk(child)
+
+    def _ops(module, name):
+        return [op for op in _walk(module) if op.operation.name == name]
+
+    def _has_result_type(module, name, expected_type):
+        return any(
+            str(result.type) == expected_type
+            for op in _ops(module, name)
+            for result in op.operation.results
+        )
+
+    def _has_constant(module, value, expected_type):
+        for op in _ops(module, "arith.constant"):
+            if not any(str(result.type) == expected_type for result in op.operation.results):
+                continue
+            attributes = op.operation.attributes
+            if "value" in attributes and str(attributes["value"]).split(" :", 1)[0] == str(value):
+                return True
+        return False
 
     def _guarded_division(module, region_index):
         scf_ifs = [op for op in _walk(module) if op.operation.name == "scf.if"]
@@ -292,63 +323,70 @@ def main():
     _guarded_division(issue_1332_and_kernel.mlir_module(), 0)  # and: then region
     _guarded_division(issue_1332_or_kernel.mlir_module(), 1)   # or: else region
 
-    chain_and = issue_1332_and_chain.compile().mlir_text()
-    chain_or = issue_1332_or_chain.compile().mlir_text()
+    chain_and_module = issue_1332_and_chain.mlir_module()
+    chain_or_module = issue_1332_or_chain.mlir_module()
     # a and b and c lowers to two nested scf.if regions.
-    assert chain_and.count("scf.if") == 2, chain_and
-    assert chain_or.count("scf.if") == 2, chain_or
+    assert len(_ops(chain_and_module, "scf.if")) == 2
+    assert len(_ops(chain_or_module, "scf.if")) == 2
 
     issue_1332_if_condition.compile().mlir_text()
     issue_1332_while_test.compile().mlir_text()
     issue_1332_call_argument.compile().mlir_text()
-    ret_mlir = issue_1332_return_position.compile().mlir_text()
-    assert "scf.if" in ret_mlir
+    assert _ops(issue_1332_return_position.mlir_module(), "scf.if")
 
-    static_mlir = issue_1332_static_short_circuit.compile().mlir_text()
     # A traced RHS would raise ZeroDivisionError; static operands must also
     # leave no division in the IR at all.
-    assert "floordiv" not in static_mlir, static_mlir
+    assert not _ops(issue_1332_static_short_circuit.mlir_module(), "arith.floordivsi")
 
-    int_lhs = issue_1332_integer_lhs.compile().mlir_text()
+    int_lhs_module = issue_1332_integer_lhs.mlir_module()
     # Integer LHS becomes a non-zero i1 control condition; the integer operand
     # is preserved and the i1 RHS widens to the integer type.
-    assert int_lhs.count("arith.cmpi ne") == 1, int_lhs
-    assert "arith.extui" in int_lhs and "-> (i32)" in int_lhs, int_lhs
-    int_operands = issue_1332_integer_operands.compile().mlir_text()
+    assert len(_ops(int_lhs_module, "arith.cmpi")) == 1
+    assert _ops(int_lhs_module, "arith.extui")
+    assert _has_result_type(int_lhs_module, "scf.if", "i32")
+    int_operands_module = issue_1332_integer_operands.mlir_module()
     # Both integer operands merge back to i32 (Python operand semantics).
-    assert "-> (i32)" in int_operands, int_operands
+    assert _has_result_type(int_operands_module, "scf.if", "i32")
 
-    or_lhs = issue_1332_integer_or_lhs.compile().mlir_text()
-    assert "arith.extui" in or_lhs and "-> (i32)" in or_lhs, or_lhs
-    flag_and = issue_1332_flag_integer_rhs.compile().mlir_text()
-    assert "arith.extui" in flag_and and "-> (i32)" in flag_and, flag_and
-    index_lhs = issue_1332_index_lhs.compile().mlir_text()
+    or_lhs_module = issue_1332_integer_or_lhs.mlir_module()
+    assert _ops(or_lhs_module, "arith.extui")
+    assert _has_result_type(or_lhs_module, "scf.if", "i32")
+    flag_and_module = issue_1332_flag_integer_rhs.mlir_module()
+    assert _ops(flag_and_module, "arith.extui")
+    assert _has_result_type(flag_and_module, "scf.if", "i32")
+    index_lhs_module = issue_1332_index_lhs.mlir_module()
     # index + i1: the index type is kept and the i1 side widens via index_cast.
-    assert "arith.index_cast" in index_lhs and "-> (index)" in index_lhs, index_lhs
+    assert _ops(index_lhs_module, "arith.index_cast")
+    assert _has_result_type(index_lhs_module, "scf.if", "index")
     # The i1 -> index widening must keep the 0/1 truth value: a direct
     # arith.index_cast from i1 sign-extends (1 becomes -1 on the simulator),
     # so the widening must zero-extend through i32 first.
-    index_casts = [op for op in _walk(issue_1332_index_lhs.mlir_module())
-                    if op.operation.name == "arith.index_cast"]
+    index_casts = _ops(index_lhs_module, "arith.index_cast")
     assert any(
         op.operation.operands[0].owner is not None
         and op.operation.operands[0].owner.operation.name == "arith.extui"
         for op in index_casts
     ), "i1->index widening must zero-extend via extui first"
-    anchored = issue_1332_int_literal_anchored.compile().mlir_text()
+    anchored_module = issue_1332_int_literal_anchored.mlir_module()
     # A Python int literal anchors to the integer branch type.
-    assert "arith.constant 2 : i32" in anchored and "-> (i32)" in anchored, anchored
+    assert _has_constant(anchored_module, 2, "i32")
+    assert _has_result_type(anchored_module, "scf.if", "i32")
     _expect_error(
         lambda: issue_1332_int_literal_vs_i1.compile().mlir_text(),
         "cannot infer an integer width",
+    )
+    _expect_error(
+        lambda: issue_1332_walrus_rhs.compile().mlir_text(),
+        "assignment expression",
+        PTODSLAstRewriteError,
     )
     issue_1332_static_float.compile().mlir_text()
     issue_1332_static_int_operands.compile().mlir_text()
     issue_1332_func_call.compile().mlir_text()
 
-    plain = issue_1332_plain_python_operands.compile().mlir_text()
-    bool_lit = issue_1332_bool_literal_rhs.compile().mlir_text()
-    assert "arith.constant true" in bool_lit, bool_lit
+    issue_1332_plain_python_operands.compile().mlir_text()
+    bool_lit_module = issue_1332_bool_literal_rhs.mlir_module()
+    assert _has_result_type(bool_lit_module, "arith.constant", "i1")
 
     _expect_error(
         lambda: issue_1332_float_control.compile().mlir_text(),
@@ -359,14 +397,21 @@ def main():
         "type mismatch",
     )
     _expect_error(
+        lambda: issue_1332_float_rhs_literal.compile().mlir_text(),
+        "float literals",
+    )
+    _expect_error(
         lambda: issue_1332_no_ast_rewrite.compile().mlir_text(),
         "native Python if/while condition cannot consume a PTODSL runtime value",
     )
 
     # Source-less functions keep the pre-rewrite tracing behavior: the
     # rewriter returns them untouched instead of synthesizing helper calls.
-    exec("def _source_less(x):\n    return x\n")
-    source_less_fn = locals()["_source_less"]
+    source_less_fn = FunctionType(
+        (lambda value: value).__code__.replace(co_filename="<source-less>"),
+        globals(),
+        "_source_less",
+    )
     try:
         inspect.getsource(source_less_fn)
     except (OSError, TypeError):
