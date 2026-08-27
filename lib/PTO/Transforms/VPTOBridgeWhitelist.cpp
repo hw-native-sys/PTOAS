@@ -460,34 +460,11 @@ pto::parseBridgeWhitelist(llvm::StringRef path, llvm::raw_ostream &diagOS) {
 }
 
 /// The built-in default whitelist covering the wrappers bridged today:
-/// the pipe wrapper (C2V/V2C fifo, dedicated renderer), the matmul wrapper
-/// (TMATMUL and the acc/bias/MX entry variants) and the vec_elem wrapper
-/// (TADD, vector-core elementwise add), the latter two rendered by the
-/// generic declarative renderer from their wrapper declaration plus the
-/// per-entry call spelling. It keeps `ptoas --pto-backend=vpto` working
-/// out of the box; an explicit whitelist (pass option or
-/// PTOAS_VPTO_BRIDGE_WHITELIST) always overrides it. End-to-end cases
-/// under test/vpto/cases/kernels/ rely on this default, so bridging a new
-/// interface requires extending it here.
-/// The declarative entries ride the default declarative lowering channel:
-/// each abi row binds a wrapper argument to an IR operand position and a
-/// tile role (the role also names the entry's tile typedef), and an
-/// optional attr tmpl_map row maps the accPhase enum attribute. The entry
-/// name, the i64 argument types and the parameter names are defaulted, so
-/// a mechanically mapped op registers with op/wrapper/abi(operand+role)
-/// only; pto.tadd additionally rides the derived call spelling and the
-/// vec_elem wrapper the derived core guard. The matmul entries spell call
-/// and core explicitly where the convention does not apply (the mx.acc /
-/// mx.bias variants share TMATMUL_MX). The pipe entries opt out with
-/// `lowering: custom` because the storage lifecycle and the TPOP address
-/// rebinding need a dedicated pass.
+/// The default bridge whitelist currently contains only the pipe family.
+/// Pipe entries opt out of the declarative channel because storage lifecycle
+/// and TPOP address rebinding require a dedicated lowering pass.
 static constexpr llvm::StringLiteral kDefaultBridgeWhitelistYaml = R"yaml(
 wrappers:
-  - name: matmul
-    includes: [pto/npu/a5/TMatmul.hpp]
-    core: cube
-  - name: vec_elem      # core omitted: derived from the routed VEC tiles
-    includes: [pto/npu/a5/TAdd.hpp]
 bridge_ops:
   - op: pto.initialize_l2l_pipe
     wrapper: pipe
@@ -532,99 +509,6 @@ bridge_ops:
     wrapper: pipe
     entry: pto_vpto_pipe_size
     abi: []
-  - op: pto.tmatmul
-    wrapper: matmul
-    call: pto::TMATMUL
-    tmpl_args: [acc_phase]
-    abi:
-      - {operand: 2, arg: dst, role: result_tile}
-      - {operand: 0, arg: lhs, role: left_tile}
-      - {operand: 1, arg: rhs, role: right_tile}
-    tmpl_map:
-      - source: attr
-        field: acc_phase
-        target: AccPhase
-        enum_type: pto::AccPhase
-        omit_value: Unspecified
-  - op: pto.tmatmul.acc
-    wrapper: matmul
-    call: pto::TMATMUL_ACC
-    tmpl_args: [acc_phase]
-    abi:
-      - {operand: 3, arg: dst, role: result_tile}
-      - {operand: 0, arg: accIn, role: acc_in_tile}
-      - {operand: 1, arg: lhs, role: left_tile}
-      - {operand: 2, arg: rhs, role: right_tile}
-    tmpl_map:
-      - source: attr
-        field: acc_phase
-        target: AccPhase
-        enum_type: pto::AccPhase
-        omit_value: Unspecified
-  - op: pto.tmatmul.bias
-    wrapper: matmul
-    call: pto::TMATMUL_BIAS
-    tmpl_args: [acc_phase]
-    abi:
-      - {operand: 3, arg: dst, role: result_tile}
-      - {operand: 0, arg: lhs, role: left_tile}
-      - {operand: 1, arg: rhs, role: right_tile}
-      - {operand: 2, arg: bias, role: bias_tile}
-    tmpl_map:
-      - source: attr
-        field: acc_phase
-        target: AccPhase
-        enum_type: pto::AccPhase
-        omit_value: Unspecified
-  - op: pto.tmatmul.mx
-    wrapper: matmul
-    call: pto::TMATMUL_MX
-    tmpl_args: [acc_phase]
-    abi:
-      - {operand: 4, arg: dst, role: result_tile}
-      - {operand: 0, arg: lhs, role: left_tile}
-      - {operand: 1, arg: aScale, role: a_scale_tile}
-      - {operand: 2, arg: rhs, role: right_tile}
-      - {operand: 3, arg: bScale, role: b_scale_tile}
-    tmpl_map:
-      - source: attr
-        field: acc_phase
-        target: AccPhase
-        enum_type: pto::AccPhase
-        omit_value: Unspecified
-  - op: pto.tmatmul.mx.acc
-    wrapper: matmul
-    call: pto::TMATMUL_MX
-    tmpl_args: [acc_phase]
-    abi:
-      - {operand: 5, arg: dst, role: result_tile}
-      - {operand: 0, arg: accIn, role: acc_in_tile}
-      - {operand: 1, arg: lhs, role: left_tile}
-      - {operand: 2, arg: aScale, role: a_scale_tile}
-      - {operand: 3, arg: rhs, role: right_tile}
-      - {operand: 4, arg: bScale, role: b_scale_tile}
-    tmpl_map:
-      - source: attr
-        field: acc_phase
-        target: AccPhase
-        enum_type: pto::AccPhase
-        omit_value: Unspecified
-  - op: pto.tmatmul.mx.bias
-    wrapper: matmul
-    call: pto::TMATMUL_MX
-    abi:
-      - {operand: 5, arg: dst, role: result_tile}
-      - {operand: 0, arg: lhs, role: left_tile}
-      - {operand: 1, arg: aScale, role: a_scale_tile}
-      - {operand: 2, arg: rhs, role: right_tile}
-      - {operand: 3, arg: bScale, role: b_scale_tile}
-      - {operand: 4, arg: bias, role: bias_tile}
-  - op: pto.tadd    # call omitted: derived as pto::TADD from the op name
-    wrapper: vec_elem
-    abi:            # arg omitted: derived from the role (resultTile, ...)
-      - {operand: 2, role: result_tile}
-      - {operand: 0, role: left_tile}
-      - {operand: 1, role: right_tile}
 )yaml";
 
 std::string pto::resolveBridgeWhitelistPath(llvm::StringRef optionValue) {
