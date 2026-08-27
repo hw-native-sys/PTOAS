@@ -1,0 +1,13 @@
+# Diagnostic fixture: a valid declarative entry whose wrapper has no
+# declaration in the wrappers section. The entry parses and lowers, but
+# the generic renderer needs the declaration's includes and core guard, so
+# wrapper generation rejects the module with a diagnostic naming the
+# missing section.
+bridge_ops:
+  - op: pto.tmatmul
+    wrapper: matmul
+    call: pto::TMATMUL
+    abi:
+      - {operand: 2, arg: dst, role: result_tile}
+      - {operand: 0, arg: lhs, role: left_tile}
+      - {operand: 1, arg: rhs, role: right_tile}

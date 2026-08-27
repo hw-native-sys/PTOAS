@@ -1,0 +1,43 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// You may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+// https://www.huawei.com/
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A
+// PARTICULAR PURPOSE.
+// See LICENSE for more details.
+
+// The `lowering` whitelist field defaults to the generic declarative
+// channel, so an interface family that is mechanically mapped costs no pass
+// code and no tag, while an entry owned by a dedicated family pass has to
+// opt out with `lowering: custom`.
+//
+// MISSING covers the payoff of that polarity: an entry that forgets the
+// opt-out is validated as declarative, and its unbound abi arguments are
+// rejected at whitelist parse time with the missing tag named. Before the
+// default was flipped this file parsed clean and only failed after lowering,
+// blaming a family pass that never existed.
+//
+// LEGACY pins the vocabulary: `family`, the pre-flip spelling of the opt-out,
+// is not silently reinterpreted.
+
+// RUN: not pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-missing-custom-tag.yaml" 2>&1 | FileCheck %s --check-prefix=MISSING
+// RUN: not pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-legacy-family-lowering.yaml" 2>&1 | FileCheck %s --check-prefix=LEGACY
+
+// MISSING: VPTO bridge whitelist: declarative entry 'pto_vpto_pipe_init' has an abi argument without operand/role binding
+// MISSING-SAME: vpto-bridge-whitelist-missing-custom-tag.yaml
+// MISSING-SAME: (entries owned by a dedicated family pass must declare 'lowering: custom')
+
+// LEGACY: VPTO bridge whitelist: entry 'pto_vpto_pipe_init' declares unsupported lowering 'family'
+// LEGACY-SAME: (supported: declarative, custom)
+
+module {
+  func.func private @default_channel_diag(%addr: i32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %pipe = pto.initialize_l2l_pipe{dir_mask = 1, slot_size = 1024, slot_num = 8, flag_base = 0, nosplit = false} (%addr : i32) -> !pto.pipe
+    pto.tfree(%pipe : !pto.pipe) {split = 1}
+    return
+  }
+}

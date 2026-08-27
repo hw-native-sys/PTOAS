@@ -31,6 +31,12 @@ mlir_tablegen(PTOAttrs.cpp.inc -gen-attrdef-defs -attrdefs-dialect=pto)
 mlir_tablegen(PTOEnums.h.inc -gen-enum-decls)
 mlir_tablegen(PTOEnums.cpp.inc -gen-enum-defs)
 
+# 生成 Attribute Interfaces 定义
+set(LLVM_TARGET_DEFINITIONS PTOAttrInterfaces.td)
+mlir_tablegen(PTOAttrInterfaces.h.inc -gen-attr-interface-decls)
+mlir_tablegen(PTOAttrInterfaces.cpp.inc -gen-attr-interface-defs)
+set(LLVM_TARGET_DEFINITIONS PTOOps.td)
+
 # ============================================================
 # 2. 处理 Interfaces (防止下个报错)
 # ============================================================

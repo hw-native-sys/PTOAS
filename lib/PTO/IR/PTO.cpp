@@ -243,6 +243,8 @@ static ParseResult parseI32LiteralAttr(OpAsmParser &parser, IntegerAttr &attr);
 #define GET_ATTRDEF_CLASSES
 #include "PTO/IR/PTOAttrs.cpp.inc"
 
+#include "PTO/IR/PTOAttrInterfaces.cpp.inc"
+
 #include "PTO/IR/PTODialect.cpp.inc"
 
 [[maybe_unused]] static LogicalResult parseShapeAndElemStable(mlir::AsmParser &parser,
@@ -18992,8 +18994,11 @@ getEnclosingFunctionKernelKind(Operation *op) {
 }
 
 static bool isInsideSectionOrAttributedKernel(Operation *op) {
-  return isInsideSectionCube(op) || isInsideSectionVector(op) ||
-         isInsideTileOpHelper(op) || getEnclosingFunctionKernelKind(op).has_value();
+  if (isInsideSectionCube(op) || isInsideSectionVector(op) ||
+      isInsideTileOpHelper(op) || getEnclosingFunctionKernelKind(op).has_value())
+    return true;
+  auto module = op->getParentOfType<ModuleOp>();
+  return module && module->hasAttr(FunctionKernelKindAttr::name);
 }
 
 static LogicalResult verifySplitAttr(Operation *op, int64_t split) {
@@ -22693,6 +22698,21 @@ void TFreeOp::getEffects(
   }
   addEffect(effects, &getPipeHandleMutable(), MemoryEffects::Read::get());
   addEffect(effects, &getPipeHandleMutable(), MemoryEffects::Write::get());
+}
+
+void BridgeCallOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  for (OpOperand &arg : getArgsMutable()) {
+    addEffect(effects, &arg, MemoryEffects::Read::get());
+  }
+  // The wrapper may mutate state the bridge cannot model (e.g. a FIFO or
+  // the storage it is handed), so the call itself is conservatively marked
+  // as reading and writing the default resource.
+  effects.emplace_back(MemoryEffects::Read::get(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(),
+                       SideEffects::DefaultResource::get());
 }
 
 void SetQuantScalarOp::getEffects(

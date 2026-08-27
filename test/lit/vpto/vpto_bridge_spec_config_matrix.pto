@@ -1,0 +1,88 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// You may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+// https://www.huawei.com/
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A
+// PARTICULAR PURPOSE.
+// See LICENSE for more details.
+
+// Phase 2 configuration matrix: the pipe family pass must no longer reject
+// non-default pipe configurations. The slot_size/slot_num/flag_base/nosplit
+// attributes and the tile shapes flow verbatim into the collected bridge
+// specialization as C++ template tokens. The whitelist carries declarative
+// tmpl_map rows, which the pass consumes without changing the collected
+// fields. Each function stores its specialization in a function attribute;
+// the wrapper generation pass merges the identical per-function specs and
+// renders the variant tokens into the wrapper source.
+
+// RUN: pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-variant.yaml" | FileCheck %s --check-prefix=SPEC
+// RUN: pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-variant.yaml" -pto-emit-vpto-bridge-wrapper | FileCheck %s --check-prefix=WRAP
+
+// SPEC-LABEL: func.func private @variant_bridge_cube
+// SPEC-SAME: pto.vpto.bridge.func_spec = {
+// SPEC-SAME: entry.init = "pto_vpto_pipe_init"
+// SPEC-SAME: pipe = "pto::TPipe<8, pto::Direction::DIR_C2V, 2048, 4, 2, true>"
+// SPEC-SAME: producer_tile = "pto::Tile<pto::TileType::Acc, half, 32, 16, pto::BLayout::ColMajor, 32, 16, pto::SLayout::RowMajor, 512>"
+// SPEC: pto.bridge_call "pto_vpto_pipe_init"{{.*}}storage_size_callee = "pto_vpto_pipe_size"
+// SPEC-SAME: -> !pto.pipe
+// SPEC: pto.bridge_call "pto_vpto_pipe_push"
+// SPEC-SAME: : !pto.pipe, i64
+// SPEC-NOT: pto.alloc_tile
+// SPEC-NOT: pto.tpush
+
+// SPEC-LABEL: func.func private @variant_bridge_vector
+// SPEC-SAME: pto.vpto.bridge.func_spec = {
+// SPEC-SAME: consumer_tile = "pto::Tile<pto::TileType::Vec, half, 4, 16, pto::BLayout::RowMajor, 4, 16>"
+// SPEC-SAME: pipe = "pto::TPipe<8, pto::Direction::DIR_C2V, 2048, 4, 2, true>"
+// SPEC-SAME: split = "pto::TileSplitAxis::TILE_UP_DOWN"
+// SPEC: pto.bridge_call "pto_vpto_pipe_init"
+// SPEC: pto.bridge_call "pto_vpto_pipe_pop"
+// SPEC-SAME: -> i64
+// SPEC: pto.bridge_inttoptr
+// SPEC: pto.bridge_call "pto_vpto_pipe_free"
+// SPEC-NOT: pto.declare_tile
+// SPEC-NOT: pto.tpop
+// SPEC-NOT: pto.tfree
+
+// WRAP: module attributes {{{.*}}pto.vpto.bridge.wrapper_source = "
+// WRAP-SAME: using Pipe = pto::TPipe<8, pto::Direction::DIR_C2V, 2048, 4, 2, true>;
+// WRAP-SAME: using ProducerTile = pto::Tile<pto::TileType::Acc, half, 32, 16, pto::BLayout::ColMajor, 32, 16, pto::SLayout::RowMajor, 512>;
+// WRAP-SAME: using ConsumerTile = pto::Tile<pto::TileType::Vec, half, 4, 16, pto::BLayout::RowMajor, 4, 16>;
+// WRAP-NOT: pto.vpto.bridge.func_spec
+
+module {
+  func.func private @variant_bridge_cube(%addr: i32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : i64
+    %acc = pto.alloc_tile addr = %c0
+      : !pto.tile_buf<loc=acc, dtype=f16, rows=32, cols=16, v_row=32, v_col=16,
+                      blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    %pipe = pto.initialize_l2l_pipe{dir_mask = 1, slot_size = 2048, slot_num = 4, flag_base = 8, nosplit = true} (%addr : i32) -> !pto.pipe
+    pto.tpush(%acc, %pipe
+      : !pto.tile_buf<loc=acc, dtype=f16, rows=32, cols=16, v_row=32, v_col=16,
+                      blayout=col_major, slayout=row_major, fractal=512, pad=0>,
+        !pto.pipe) {split = 1}
+    return
+  }
+
+  func.func private @variant_bridge_vector(%addr: i32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %pipe = pto.initialize_l2l_pipe{dir_mask = 1, slot_size = 2048, slot_num = 4, flag_base = 8, nosplit = true} (%addr : i32) -> !pto.pipe
+    %tile = pto.declare_tile
+      -> !pto.tile_buf<loc=vec, dtype=f16, rows=4, cols=16, v_row=4, v_col=16,
+                       blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tpop(%tile, %pipe
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=4, cols=16, v_row=4, v_col=16,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+        !pto.pipe) {split = 1}
+    %ub = pto.tile_buf_addr %tile
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=4, cols=16, v_row=4, v_col=16,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+     -> !pto.ptr<f16, ub>
+    pto.tfree(%pipe : !pto.pipe) {split = 1}
+    return
+  }
+}

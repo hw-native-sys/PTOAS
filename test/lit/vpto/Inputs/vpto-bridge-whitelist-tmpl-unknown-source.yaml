@@ -1,0 +1,15 @@
+# tmpl_map diagnostic fixture: the row below uses a source token outside the
+# pipe-family known set (pipe.init, tile), which the whitelist parser must
+# reject.
+bridge_ops:
+  - op: pto.initialize_l2l_pipe
+    wrapper: pipe
+    lowering: custom    # storage lifecycle: owned by the pipe family pass
+    entry: pto_vpto_pipe_init
+    abi:
+      - type: ptr
+      - type: i32
+    tmpl_map:
+      - source: pipe.pop
+        field: split
+        target: TPipe::slotSize

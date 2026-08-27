@@ -1,0 +1,6 @@
+# Explicitly empty VPTO bridge whitelist: routes no IR op to the C++
+# interface bridge. Since Phase 4 ships a built-in default whitelist
+# (which routes pto.tmatmul to the TMATMUL bridge), tests that exercise the
+# regular tile-op expansion path (tmatmul -> pto.mad) must opt out of the
+# bridge routing with this document.
+bridge_ops: []

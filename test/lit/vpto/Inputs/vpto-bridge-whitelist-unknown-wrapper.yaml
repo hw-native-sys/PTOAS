@@ -1,0 +1,34 @@
+# Diagnostic fixture: a whitelist whose routed ops name a `wrapper` value the
+# bridge wrapper generator has no renderer for. The generator dispatches its
+# renderer on the wrapper names of the entries the module used, so instead of
+# falling through into some other wrapper's renderer (and failing on its
+# missing spec fields) it must reject the module with a diagnostic naming the
+# unknown wrapper and the available ones.
+bridge_ops:
+  - op: pto.initialize_l2l_pipe
+    wrapper: pipe_unfinished_port
+    lowering: custom
+    entry: pto_vpto_pipe_init
+    storage_size_entry: pto_vpto_pipe_size
+    abi:
+      - type: ptr
+      - type: i32
+    tmpl_map:
+      - source: pipe.init
+        field: pipe
+        target: Pipe
+  - op: pto.tpush
+    wrapper: pipe_unfinished_port
+    lowering: custom
+    entry: pto_vpto_pipe_push
+    abi:
+      - type: ptr
+      - type: i64
+    tmpl_map:
+      - source: tile
+        field: tile
+        target: ProducerTile
+  - op: internal
+    wrapper: pipe_unfinished_port
+    entry: pto_vpto_pipe_size
+    abi: []

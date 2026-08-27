@@ -1,0 +1,14 @@
+# Diagnostic fixture: a pipe entry that needs the dedicated family pass but
+# never opted out of the default declarative channel. Because `lowering`
+# defaults to `declarative`, the entry is validated as a declarative one and
+# rejected at parse time for its unbound abi arguments -- with the missing
+# `lowering: custom` tag named -- instead of parsing clean and only failing
+# after lowering, at the leftover routing check, against a family pass that
+# was never going to claim it.
+bridge_ops:
+  - op: pto.initialize_l2l_pipe
+    wrapper: pipe
+    entry: pto_vpto_pipe_init
+    abi:
+      - type: ptr
+      - type: i32

@@ -1,0 +1,71 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// You may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+// https://www.huawei.com/
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A
+// PARTICULAR PURPOSE.
+// See LICENSE for more details.
+
+// Wrapper generation for a C2V pipe: the wrapper-gen pass renders the spec
+// collected by the family pass into `pto.vpto.bridge.wrapper_source`, drops
+// the spec attribute, and the rendered source instantiates the pipe/tile
+// tokens from the IR configuration (not from any hardcoded default). The
+// cube core produces (push) and the vector core consumes (pop/free), each
+// guarded by its core macro. The StringAttr prints on a single line with
+// \0A escapes, hence the single-line {{.*}} patterns.
+
+// RUN: pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist.yaml" -pto-emit-vpto-bridge-wrapper | FileCheck %s
+
+// CHECK-NOT: pto.vpto.bridge.spec
+// CHECK: module attributes {{{.*}}pto.vpto.bridge.wrapper_source = "
+// CHECK-NOT: pto.vpto.bridge.func_spec
+// CHECK-SAME: using Pipe = pto::TPipe<0, pto::Direction::DIR_C2V, 1024, 8, 2, false>;
+// CHECK-SAME: using ProducerTile = pto::Tile<pto::TileType::Acc, float, 16, 16, pto::BLayout::ColMajor, 16, 16, pto::SLayout::RowMajor, 1024>;
+// CHECK-SAME: using ConsumerTile = pto::Tile<pto::TileType::Vec, float, 8, 16, pto::BLayout::RowMajor, 8, 16>;
+// CHECK-SAME: extern \22C\22 [aicore] void pto_vpto_pipe_init(void *storage, uint32_t localBuffer)
+// CHECK-SAME: extern \22C\22 [aicore] size_t pto_vpto_pipe_size() { return sizeof(Pipe); }
+// CHECK-SAME: #ifdef __DAV_CUBE__
+// CHECK-SAME: pto::TPUSH<Pipe, ProducerTile, pto::TileSplitAxis::TILE_UP_DOWN>(pipe, tile);
+// CHECK-SAME: #endif
+// CHECK-SAME: #ifdef __DAV_VEC__
+// CHECK-SAME: pto::TPOP<Pipe, ConsumerTile, pto::TileSplitAxis::TILE_UP_DOWN>(pipe, tile);
+// CHECK-SAME: pipe_barrier(PIPE_ALL);
+// CHECK-SAME: pto::TFREE<Pipe, pto::TileSplitAxis::TILE_UP_DOWN>(pipe);
+// CHECK-SAME: #endif
+
+module {
+  func.func private @bridge_cube(%addr: i32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : i64
+    %acc = pto.alloc_tile addr = %c0
+      : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    %pipe = pto.initialize_l2l_pipe{dir_mask = 1, slot_size = 1024, slot_num = 8, flag_base = 0, nosplit = false} (%addr : i32) -> !pto.pipe
+    pto.tpush(%acc, %pipe
+      : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=row_major, fractal=1024, pad=0>,
+        !pto.pipe) {split = 1}
+    return
+  }
+
+  func.func private @bridge_vector(%addr: i32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %pipe = pto.initialize_l2l_pipe{dir_mask = 1, slot_size = 1024, slot_num = 8, flag_base = 0, nosplit = false} (%addr : i32) -> !pto.pipe
+    %tile = pto.declare_tile
+      -> !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16,
+                       blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tpop(%tile, %pipe
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+        !pto.pipe) {split = 1}
+    %ub = pto.tile_buf_addr %tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+     -> !pto.ptr<f32, ub>
+    pto.tfree(%pipe : !pto.pipe) {split = 1}
+    return
+  }
+}

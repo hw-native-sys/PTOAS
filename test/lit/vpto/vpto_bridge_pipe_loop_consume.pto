@@ -1,0 +1,98 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// You may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+// https://www.huawei.com/
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A
+// PARTICULAR PURPOSE.
+// See LICENSE for more details.
+
+// Correctness boundary probe turned regression: a FIFO consumed inside an
+// scf.for loop (TPUSH per producer iteration, TPOP + address consumption +
+// TFREE per consumer iteration). The IR holds a single pop op executed
+// repeatedly at runtime, so the bridge must rebind the consumer tile on
+// every iteration: the pop call result is a loop-body SSA value feeding a
+// loop-body bridge_inttoptr, which pins each iteration to its own FIFO
+// slot. The EmitC run anchors the reference loop shape (tile declared
+// outside the loop, TPOP rebinding it inside) so the bridge lowering stays
+// semantically aligned with the production path.
+//
+// RUN: env -u PTOAS_VPTO_BRIDGE_WHITELIST pto-test-opt %s -pto-lower-pipe-family-ops -pto-emit-vpto-bridge-wrapper | FileCheck %s --check-prefix=BRIDGE
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 %s 2>&1 | FileCheck %s --check-prefix=EMITC
+
+module {
+  func.func @probe_cube(%addr: i32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %addr0 = arith.constant 0 : i64
+    %pipe_addr = arith.constant 0 : i32
+    %acc = pto.alloc_tile addr = %addr0
+      : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    %pipe = pto.initialize_l2l_pipe{dir_mask = 1, slot_size = 2048, slot_num = 4,
+                                    flag_base = 8, nosplit = false} (%pipe_addr : i32) -> !pto.pipe
+    scf.for %i = %c0 to %c4 step %c1 {
+      pto.tpush(%acc, %pipe
+        : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                        blayout=col_major, slayout=row_major, fractal=1024, pad=0>,
+          !pto.pipe) {split = 1}
+    }
+    return
+  }
+
+  func.func @probe_vector(%addr: i32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %addr0 = arith.constant 0 : i32
+    %pipe = pto.initialize_l2l_pipe{dir_mask = 1, slot_size = 2048, slot_num = 4,
+                                    flag_base = 8, nosplit = false} (%addr0 : i32) -> !pto.pipe
+    %tile = pto.declare_tile
+      -> !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16,
+                       blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    scf.for %i = %c0 to %c4 step %c1 {
+      pto.tpop(%tile, %pipe
+        : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+          !pto.pipe) {split = 1}
+      %ub = pto.tile_buf_addr %tile
+        : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>
+       -> !pto.ptr<f32, ub>
+      %off = arith.index_cast %i : index to i64
+      %off_f32 = arith.sitofp %off : i64 to f32
+      pto.store_scalar %off_f32, %ub[%i] : !pto.ptr<f32, ub>, f32
+      pto.tfree(%pipe : !pto.pipe) {split = 1}
+    }
+    return
+  }
+}
+
+// The per-iteration pop address must stay inside the loop body: the
+// bridge_call result feeds the bridge_inttoptr and the store in the same
+// scf.for region, so each iteration consumes its own FIFO slot.
+
+// BRIDGE-LABEL: func.func @probe_cube
+// BRIDGE: scf.for
+// BRIDGE: pto.bridge_call "pto_vpto_pipe_push"
+
+// BRIDGE-LABEL: func.func @probe_vector
+// BRIDGE: scf.for
+// BRIDGE: [[POP:%.+]] = pto.bridge_call "pto_vpto_pipe_pop"{{.*}}-> i64
+// BRIDGE: [[PTR:%.+]] = pto.bridge_inttoptr [[POP]] : i64 -> !pto.ptr<f32, ub>
+// BRIDGE: pto.store_scalar {{%.+}}, [[PTR]]
+// BRIDGE: pto.bridge_call "pto_vpto_pipe_free"
+
+// EMITC-LABEL: AICORE void probe_cube
+// EMITC: for (
+// EMITC: TPUSH<TPipe<8, Direction::DIR_C2V, 2048, 4, 2, false>
+
+// EMITC-LABEL: AICORE void probe_vector
+// EMITC: for (
+// EMITC: TPOP<TPipe<8, Direction::DIR_C2V, 2048, 4, 2, false>
+// EMITC: TFREE<TPipe<8, Direction::DIR_C2V, 2048, 4, 2, false>

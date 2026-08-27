@@ -1,0 +1,46 @@
+# Variant VPTO pipe bridge whitelist with declarative tmpl_map rows, used by
+# the Phase 2 bridge spec/wrapper generation lit tests. The tmpl_map rows are
+# declarative IR-field -> C++-template-slot mappings validated at parse time;
+# the token construction itself lives in VPTOBridgeTokens.
+bridge_ops:
+  - op: pto.initialize_l2l_pipe
+    wrapper: pipe
+    lowering: custom    # storage lifecycle: owned by the pipe family pass
+    entry: pto_vpto_pipe_init
+    storage_size_entry: pto_vpto_pipe_size
+    abi:
+      - type: ptr    # storage, synthesized by the bridge lowering
+      - type: i32    # consumer local buffer address
+    tmpl_map:
+      - source: pipe.init
+        field: slot_size
+        target: TPipe::slotSize
+      - source: pipe.init
+        field: slot_num
+        target: TPipe::slotNum
+      - source: tile
+        field: rows
+        target: Tile::Rows
+  - op: pto.tpush
+    wrapper: pipe
+    lowering: custom    # consumes the family pass storage SSA value
+    entry: pto_vpto_pipe_push
+    abi:
+      - type: ptr    # storage
+      - type: i64    # producer tile address
+  - op: pto.tpop
+    wrapper: pipe
+    lowering: custom    # rebinds the tile address to the bridge call result
+    entry: pto_vpto_pipe_pop
+    abi:
+      - type: ptr    # storage
+  - op: pto.tfree
+    wrapper: pipe
+    lowering: custom    # consumes the family pass storage SSA value
+    entry: pto_vpto_pipe_free
+    abi:
+      - type: ptr    # storage
+  - op: internal    # wrapper-internal helper, not routed from an IR op
+    wrapper: pipe
+    entry: pto_vpto_pipe_size
+    abi: []

@@ -1,0 +1,13 @@
+# Diagnostic fixture: `lowering: family` was the pre-flip spelling of the
+# opt-out channel, back when it was also the default. It is no longer an
+# accepted value -- the opt-out is spelled `lowering: custom` -- and a
+# whitelist still using it must be rejected with the supported set listed,
+# not silently reinterpreted.
+bridge_ops:
+  - op: pto.initialize_l2l_pipe
+    wrapper: pipe
+    lowering: family
+    entry: pto_vpto_pipe_init
+    abi:
+      - type: ptr
+      - type: i32
