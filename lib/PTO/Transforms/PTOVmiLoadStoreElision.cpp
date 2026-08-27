@@ -636,21 +636,21 @@ inferVMILoadUserMask(pto::VMIvLoadOp load) {
 
 // First-version shape guard: this pass models ONLY the continuous, single
 // result (load) / single value (store) vmi.vload/vmi.vstore, with no stride,
-// block_stride, repeat_stride, group or dist_mode, and (for stores) no
-// updated_base (post_update) result. Every other shape — dintlv dual load
-// (2 results), unpack/brc load, grouped load/store, block-strided load/store,
-// multi-value store, post_update store — is left untouched: loads are
-// recorded as non-matchable (unknown read set) and flush the table; stores
-// flush the table (we cannot soundly model which lanes they define).
+// block_stride, group or dist_mode, and (for stores) no updated_base
+// (post_update) result. Every other shape — dintlv dual load (2 results),
+// unpack/brc load, grouped load/store, block-strided load/store, multi-value
+// store, post_update store — is left untouched: loads are recorded as
+// non-matchable (unknown read set) and flush the table; stores flush the
+// table (we cannot soundly model which lanes they define).
 static bool isContinuousSingleVLoad(pto::VMIvLoadOp op) {
-  if (op.getStride() || op.getBlockStride() || op.getRepeatStride())
+  if (op.getStride() || op.getBlockStride())
     return false;
   if (op.getDistMode() || op.getGroup())
     return false;
   return op.getResults().size() == 1;
 }
 static bool isContinuousSingleVStore(pto::VMIvStoreOp op) {
-  if (op.getStride() || op.getBlockStride() || op.getRepeatStride())
+  if (op.getStride() || op.getBlockStride())
     return false;
   if (op.getDistMode() || op.getGroup())
     return false;

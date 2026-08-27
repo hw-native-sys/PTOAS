@@ -15,7 +15,7 @@ module {
   }
 }
 
-// CHECK: 'pto.vmi.vstore' op updated_base result requires block_stride and repeat_stride
+// CHECK: 'pto.vmi.vstore' op updated_base result requires block_stride
 
 // -----
 
@@ -26,13 +26,13 @@ module {
   }
 }
 
-// CHECK: 'pto.vmi.vstore' op updated_base result requires block_stride and repeat_stride
+// CHECK: 'pto.vmi.vstore' op updated_base result requires block_stride
 
 // -----
 
 module {
-  func.func @wrong_result_type(%value: !pto.vmi.vreg<64xf32>, %dst: !pto.ptr<f32, ub>, %off: index, %bs: i16, %rs: i16) {
-    %updated = pto.vmi.vstore %value, %dst[%off], %bs, %rs : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub> -> !pto.ptr<f16, ub>
+  func.func @wrong_result_type(%value: !pto.vmi.vreg<64xf32>, %dst: !pto.ptr<f32, ub>, %off: index, %bs: i16) {
+    %updated = pto.vmi.vstore %value, %dst[%off], %bs : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub> -> !pto.ptr<f16, ub>
     return
   }
 }

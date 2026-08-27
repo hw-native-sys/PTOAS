@@ -164,7 +164,6 @@ def vmi_tmov(src: pto.Tile, dst: pto.Tile):
             0,
             mask.value,
             block_stride=dst._spec.shape[0],
-            repeat_stride=1,
             post_update=True,
         )
         loop.yield_state(dst=updated_dst.value)

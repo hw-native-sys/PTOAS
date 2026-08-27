@@ -1331,8 +1331,8 @@ void VMILowerUnifiedToLegacyPass::runOnOperation() {
         continue;
       }
       builder.create<VMIStrideStoreOp>(
-          vop.getLoc(), vop.getValue(), vop.getDestination(), vop.getOffset(),
-          vop.getBlockStride(), vop.getMask());
+          vop.getLoc(), TypeRange(), vop.getValue(), vop.getDestination(),
+          vop.getOffset(), vop.getBlockStride(), vop.getMask());
       vop->erase();
       continue;
     }
