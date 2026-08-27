@@ -376,7 +376,11 @@ op(addptr(base, A), O) -> op(base, A + O)
 - offset unit 是 Element，且 element type 与 `addptr` 相同；
 - operation 不是已经带 `updatedBase` 的 post-update form；
 - `A + O` 能在原 offset 类型中无损物化；
-- 替换不改变其他 base users。
+- 替换不改变其他 base users；
+- **`addptr` 的 base 必须是 integer-backed `castptr`**（规范化的产物形态）。任意
+  `addptr` 链（base 是用户指针或另一层 addptr）不折叠——`VPTOSoftPostUpdate`
+  对这类链有自己的 sequential base-chain post-update 处理，提前折叠会改变或破坏
+  该结构（lit 回归：`soft_postupdate_sequential-base-chain`）。
 
 这个 fold 不读取 LLVM intrinsic 字段，不推测 post-update step，也不分析 footprint。
 它只是把同单位的两级加法折叠到 operation 已有的地址 operand。对于 offset unit 为 Byte、
