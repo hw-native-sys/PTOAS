@@ -73,6 +73,16 @@ struct AbsorbAddPtrIntoOpOffset final : public RewritePattern {
     if (!addptr) {
       return rewriter.notifyMatchFailure(op, "base is not an addptr");
     }
+    // Only fold addptr whose base is itself an integer-backed castptr — the
+    // canonical shape produced by pto-canonicalize-integer-address. Arbitrary
+    // addptr chains over user pointers are left alone: VPTOSoftPostUpdate has
+    // its own sequential base-chain handling for those, and folding them here
+    // would change (or destroy) that post-update structure.
+    if (!addptr.getPtr().getDefiningOp<pto::CastPtrOp>()) {
+      return rewriter.notifyMatchFailure(
+          op, "addptr base is not a castptr (sequential chain handled by "
+              "soft post-update)");
+    }
     if (!addptr.getOffset().getType().isIndex() ||
         !access.offset->operand->get().getType().isIndex()) {
       return rewriter.notifyMatchFailure(op, "offsets are not index-typed");

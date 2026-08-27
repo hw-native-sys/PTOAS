@@ -2,8 +2,8 @@
 
 // IV starts at 64 (not 0). The initial pointer must be base + 64, not base.
 // CHECK-LABEL: func.func @nonzero_lb
-// CHECK: %[[INIT:.*]] = pto.addptr
-// CHECK: scf.for {{.*}} iter_args({{.*}}, %{{.*}} = %[[INIT]]
+// CHECK: scf.for {{.*}} iter_args({{.*}} = %{{.*}}, %{{.*}} = %{{.*}}, %{{.*}} = %{{.*}})
+// CHECK: %{{.*}}, %{{.*}} = pto.vlds %{{.*}}[%c64]
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @nonzero_lb(%input: !pto.ptr<f32, gm>, %output: !pto.ptr<f32, gm>) attributes {pto.kernel} {

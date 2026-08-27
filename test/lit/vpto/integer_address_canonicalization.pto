@@ -306,6 +306,83 @@ func.func @i32_const_accept(%sink: !pto.ptr<f16, ub>) {
   return
 }
 
+// C04: element size 1 (i8) is an identity quotient.
+// CHECK-LABEL: func.func @c04_i8
+// CHECK: %[[ZERO:.*]] = arith.constant 0 : i64
+// CHECK: %[[Q:.*]] = arith.muli %{{.*}}, %c4096 : index
+// CHECK: pto.castptr %[[ZERO]] : i64 -> !pto.ptr<i8, ub>
+// CHECK: pto.addptr
+func.func @c04_i8(%iv: index, %sink: !pto.ptr<i8, ub>) {
+  %c0 = arith.constant 0 : index
+  %c4096 = arith.constant 4096 : i64
+  %iv64 = arith.index_cast %iv : index to i64
+  %bytes = arith.muli %iv64, %c4096 : i64
+  %ptr = pto.castptr %bytes : i64 -> !pto.ptr<i8, ub>
+  %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+  %lo, %hi = pto.vldsx2 %ptr[%c0], "DINTLV_B16"
+      : !pto.ptr<i8, ub>, index -> !pto.vreg<256xi8>, !pto.vreg<256xi8>
+  pto.vsts %lo, %sink[%c0], %mask
+      : !pto.vreg<256xi8>, !pto.ptr<i8, ub>, !pto.mask<b16>
+  return
+}
+
+// C06: trunc in the byte expression cannot be proven -> unchanged.
+// CHECK-LABEL: func.func @c06_trunc
+// CHECK: %[[TRUNC:.*]] = arith.trunci %{{.*}} : i64 to i32
+// CHECK: %[[PTR:.*]] = pto.castptr %[[TRUNC]] : i32 -> !pto.ptr<f16, ub>
+func.func @c06_trunc(%iv: i64, %sink: !pto.ptr<f16, ub>) {
+  %c0 = arith.constant 0 : index
+  %c4096 = arith.constant 4096 : i64
+  %wide = arith.muli %iv, %c4096 : i64
+  %bytes = arith.trunci %wide : i64 to i32
+  %ptr = pto.castptr %bytes : i32 -> !pto.ptr<f16, ub>
+  %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+  %lo, %hi = pto.vldsx2 %ptr[%c0], "DINTLV_B16"
+      : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+  pto.vsts %lo, %sink[%c0], %mask
+      : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  return
+}
+
+// Subtraction input: B = iv*4096 - 8192 normalizes like addition.
+// CHECK-LABEL: func.func @sub_input
+// CHECK: %[[ZERO:.*]] = arith.constant 0 : i64
+// CHECK: pto.castptr %[[ZERO]] : i64 -> !pto.ptr<f16, ub>
+// CHECK: pto.addptr
+func.func @sub_input(%iv: index, %sink: !pto.ptr<f16, ub>) {
+  %c0 = arith.constant 0 : index
+  %c8192 = arith.constant 8192 : i64
+  %c4096 = arith.constant 4096 : i64
+  %iv64 = arith.index_cast %iv : index to i64
+  %dyn = arith.muli %iv64, %c4096 : i64
+  %bytes = arith.subi %dyn, %c8192 : i64
+  %ptr = pto.castptr %bytes : i64 -> !pto.ptr<f16, ub>
+  %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+  %lo, %hi = pto.vldsx2 %ptr[%c0], "DINTLV_B16"
+      : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+  pto.vsts %lo, %sink[%c0], %mask
+      : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  return
+}
+
+// Non-linear input (srem) cannot be linearized -> unchanged.
+// CHECK-LABEL: func.func @nonlinear
+// CHECK: %[[PTR:.*]] = pto.castptr %{{.*}} : i64 -> !pto.ptr<f16, ub>
+func.func @nonlinear(%iv: i64, %sink: !pto.ptr<f16, ub>) {
+  %c0 = arith.constant 0 : index
+  %c4096 = arith.constant 4096 : i64
+  %c7 = arith.constant 7 : i64
+  %r = arith.remsi %iv, %c7 : i64
+  %bytes = arith.muli %r, %c4096 : i64
+  %ptr = pto.castptr %bytes : i64 -> !pto.ptr<f16, ub>
+  %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+  %lo, %hi = pto.vldsx2 %ptr[%c0], "DINTLV_B16"
+      : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+  pto.vsts %lo, %sink[%c0], %mask
+      : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  return
+}
+
 // Atom root defined inside the loop: the base must NOT be hoisted (hoisting
 // would violate SSA dominance); the IR stays legal with the base in place.
 // CHECK-LABEL: func.func @atom_root_in_loop

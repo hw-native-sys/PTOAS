@@ -28,11 +28,12 @@ module attributes {pto.target_arch = "a5"} {
 }
 
 // CHECK-LABEL: func.func @auto_vecscope_infer_shared_ptr_capture
-// CHECK: %[[UBOUT:.*]] = pto.castptr %c2048_i64 : i64 -> !pto.ptr<ui16, ub>
+// CHECK: %[[UBASE:.*]] = pto.castptr %c0_i64 : i64 -> !pto.ptr<ui16, ub>
+// CHECK: %[[UBOUT:.*]] = pto.addptr %[[UBASE]], %c1024 : <ui16, ub> -> <ui16, ub>
 // CHECK: pto.vecscope {
 // CHECK: pto.vcvt
 // CHECK: pto.vpack
-// CHECK: pto.vsts %{{.*}}, %[[UBOUT]][%c0], %{{.*}}
+// CHECK: pto.vsts %{{.*}}, %[[UBASE]][%c1024], %{{.*}}
 // CHECK: }
 // CHECK: pto.barrier
 // CHECK: pto.copy_ubuf_to_gm %[[UBOUT]], %{{.*}}, %c0_i64, %c1_i64, %c256_i64, %c0_i64, %c256_i64, %c256_i64

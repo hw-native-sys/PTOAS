@@ -11,10 +11,11 @@
 // C11: load through addptr(base, A) absorbs A into the op offset.
 // CHECK-LABEL: func.func @absorb_load
 // CHECK-NOT: pto.addptr
-// CHECK: %{{.*}}, %{{.*}} = pto.vldsx2 %arg0[%arg1], "DINTLV_B16"
-func.func @absorb_load(%base: !pto.ptr<f16, ub>, %off: index,
-                       %sink: !pto.ptr<f16, ub>) {
+// CHECK: %{{.*}}, %{{.*}} = pto.vldsx2 %{{.*}}[%arg0], "DINTLV_B16"
+func.func @absorb_load(%off: index, %sink: !pto.ptr<f16, ub>) {
   %c0 = arith.constant 0 : index
+  %c0_i64 = arith.constant 0 : i64
+  %base = pto.castptr %c0_i64 : i64 -> !pto.ptr<f16, ub>
   %ptr = pto.addptr %base, %off : !pto.ptr<f16, ub> -> !pto.ptr<f16, ub>
   %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
   %lo, %hi = pto.vldsx2 %ptr[%c0], "DINTLV_B16"
@@ -27,14 +28,15 @@ func.func @absorb_load(%base: !pto.ptr<f16, ub>, %off: index,
 // C11: store through addptr(base, A) absorbs A into the op offset.
 // CHECK-LABEL: func.func @absorb_store
 // CHECK-NOT: pto.addptr
-// CHECK: pto.vsts %{{.*}}, %arg0[%arg1], %{{.*}}
-func.func @absorb_store(%dst: !pto.ptr<f16, ub>, %off: index,
-                        %sink: !pto.ptr<f16, ub>) {
+// CHECK: pto.vsts %{{.*}}, %{{.*}}[%arg0], %{{.*}}
+func.func @absorb_store(%off: index, %sink: !pto.ptr<f16, ub>) {
   %c0 = arith.constant 0 : index
+  %c0_i64 = arith.constant 0 : i64
+  %base = pto.castptr %c0_i64 : i64 -> !pto.ptr<f16, ub>
   %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
   %lo, %hi = pto.vldsx2 %sink[%c0], "DINTLV_B16"
       : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
-  %ptr = pto.addptr %dst, %off : !pto.ptr<f16, ub> -> !pto.ptr<f16, ub>
+  %ptr = pto.addptr %base, %off : !pto.ptr<f16, ub> -> !pto.ptr<f16, ub>
   pto.vsts %lo, %ptr[%c0], %mask
       : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
   return
@@ -43,10 +45,11 @@ func.func @absorb_store(%dst: !pto.ptr<f16, ub>, %off: index,
 // C11: non-zero op offset adds to the absorbed addptr offset.
 // CHECK-LABEL: func.func @absorb_existing_offset
 // CHECK-NOT: pto.addptr
-// CHECK: %[[SUM:.*]] = arith.addi %arg1, %arg2
-// CHECK: pto.vldsx2 %arg0[%[[SUM]]]
-func.func @absorb_existing_offset(%base: !pto.ptr<f16, ub>, %a: index,
-                                  %o: index, %sink: !pto.ptr<f16, ub>) {
+// CHECK: %[[SUM:.*]] = arith.addi %arg0, %arg1
+// CHECK: pto.vldsx2 %{{.*}}[%[[SUM]]]
+func.func @absorb_existing_offset(%a: index, %o: index, %sink: !pto.ptr<f16, ub>) {
+  %c0_i64 = arith.constant 0 : i64
+  %base = pto.castptr %c0_i64 : i64 -> !pto.ptr<f16, ub>
   %ptr = pto.addptr %base, %a : !pto.ptr<f16, ub> -> !pto.ptr<f16, ub>
   %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
   %lo, %hi = pto.vldsx2 %ptr[%o], "DINTLV_B16"
@@ -60,11 +63,12 @@ func.func @absorb_existing_offset(%base: !pto.ptr<f16, ub>, %a: index,
 // its last use is absorbed.
 // CHECK-LABEL: func.func @absorb_multi_user
 // CHECK-NOT: pto.addptr
-// CHECK: pto.vldsx2 %arg0[%arg1]
-// CHECK: pto.vldsx2 %arg0[%arg1]
-func.func @absorb_multi_user(%base: !pto.ptr<f16, ub>, %off: index,
-                             %sink: !pto.ptr<f16, ub>) {
+// CHECK: pto.vldsx2 %{{.*}}[%arg0]
+// CHECK: pto.vldsx2 %{{.*}}[%arg0]
+func.func @absorb_multi_user(%off: index, %sink: !pto.ptr<f16, ub>) {
   %c0 = arith.constant 0 : index
+  %c0_i64 = arith.constant 0 : i64
+  %base = pto.castptr %c0_i64 : i64 -> !pto.ptr<f16, ub>
   %ptr = pto.addptr %base, %off : !pto.ptr<f16, ub> -> !pto.ptr<f16, ub>
   %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
   %lo, %hi = pto.vldsx2 %ptr[%c0], "DINTLV_B16"
@@ -81,15 +85,36 @@ func.func @absorb_multi_user(%base: !pto.ptr<f16, ub>, %off: index,
 // vstsx2 (interface added with this change) absorbs addptr too.
 // CHECK-LABEL: func.func @absorb_vstsx2
 // CHECK-NOT: pto.addptr
-// CHECK: pto.vstsx2 %{{.*}}, %{{.*}}, %arg0[%arg1]
-func.func @absorb_vstsx2(%dst: !pto.ptr<f16, ub>, %off: index,
-                         %src: !pto.ptr<f16, ub>) {
+// CHECK: pto.vstsx2 %{{.*}}, %{{.*}}, %{{.*}}[%arg0]
+func.func @absorb_vstsx2(%off: index, %src: !pto.ptr<f16, ub>) {
   %c0 = arith.constant 0 : index
+  %c0_i64 = arith.constant 0 : i64
+  %base = pto.castptr %c0_i64 : i64 -> !pto.ptr<f16, ub>
   %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
   %lo, %hi = pto.vldsx2 %src[%c0], "DINTLV_B16"
       : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
-  %ptr = pto.addptr %dst, %off : !pto.ptr<f16, ub> -> !pto.ptr<f16, ub>
+  %ptr = pto.addptr %base, %off : !pto.ptr<f16, ub> -> !pto.ptr<f16, ub>
   pto.vstsx2 %lo, %hi, %ptr[%c0], "INTLV_B16", %mask
       : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.ptr<f16, ub>, index, !pto.mask<b16>
+  return
+}
+
+// Chained addptr over a user pointer is NOT absorbed: sequential base
+// chains are VPTOSoftPostUpdate's job, folding them here would destroy that
+// post-update structure.
+// CHECK-LABEL: func.func @absorb_chained
+// CHECK: %[[P1:.*]] = pto.addptr %arg0, %arg1
+// CHECK: %[[P2:.*]] = pto.addptr %[[P1]], %arg2
+// CHECK: pto.vldsx2 %[[P2]][%c0]
+func.func @absorb_chained(%base: !pto.ptr<f16, ub>, %a: index, %b: index,
+                          %sink: !pto.ptr<f16, ub>) {
+  %c0 = arith.constant 0 : index
+  %p1 = pto.addptr %base, %a : !pto.ptr<f16, ub> -> !pto.ptr<f16, ub>
+  %p2 = pto.addptr %p1, %b : !pto.ptr<f16, ub> -> !pto.ptr<f16, ub>
+  %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+  %lo, %hi = pto.vldsx2 %p2[%c0], "DINTLV_B16"
+      : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+  pto.vsts %lo, %sink[%c0], %mask
+      : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
   return
 }
