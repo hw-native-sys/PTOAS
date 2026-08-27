@@ -13,6 +13,9 @@ set(CMAKE_INSTALL_REMOVE_ENVIRONMENT_RPATH ON)
 
 set(PTOAS_RUNTIME_SOURCES
   ptoas.cpp
+  ptoas_name_hints.cpp
+  ptoas_cpp_rewrite.cpp
+  ptoas_pipeline.cpp
   driver.cpp
   VPTOHostStubEmission.cpp
   ObjectEmission.cpp
