@@ -251,6 +251,10 @@ def _extra_link_flags(native_options: NativeBuildOptions) -> list[str]:
     for lib_dir in native_options.library_dirs:
         flags.extend([f"-L{lib_dir}", f"-Wl,-rpath,{lib_dir}"])
     flags.extend(f"-l{name}" for name in native_options.link_libraries)
+    # bisheng --cce-fatobj-link does not pull the C++ runtime. Host C++ objects
+    # that use std::string, operator new, or static guards need it on the line.
+    if native_options.host_sources and "stdc++" not in native_options.link_libraries:
+        flags.append("-lstdc++")
     return flags
 
 

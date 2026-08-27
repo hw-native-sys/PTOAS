@@ -303,7 +303,8 @@ Rules worth knowing:
   not as device code. They cannot contain kernel code.
 - **`link_libraries` takes bare names.** Pass `"dl"`, not `"-ldl"` or a path to a
   `.so`; directories belong in `library_dirs`, which also become rpath entries so
-  the library is found again at load time.
+  the library is found again at load time. Host sources also pull `-lstdc++`,
+  because `bisheng --cce-fatobj-link` does not add the C++ runtime by itself.
 - **Undefined symbols remain an error.** The link keeps `-Wl,--no-undefined`, so a
   library you forgot to name fails the build rather than the first launch.
 - **`include_dirs` requires `host_sources`.** On its own it would apply to

@@ -48,8 +48,10 @@ side how large a session template is; it never says. `async_workspace.py`
 contains no offsets at all, and adding a session field cannot silently break it.
 
 The shim needs no CANN headers or libraries to build, because `AsyncWorkspace`
-resolves the toolkit at run time through `dlopen`. `-ldl` is the only link
-dependency, so it compiles on a machine with no driver and no card.
+resolves the toolkit at run time through `dlopen`. `-ldl` is the only library
+the shim names; the kernel build also links `-lstdc++` because the fat-object
+link does not pull the C++ runtime. It still compiles on a machine with no
+driver and no card.
 
 ## The engine-path spike
 

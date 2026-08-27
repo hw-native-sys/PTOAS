@@ -268,6 +268,20 @@ class ExtraLinkFlagsTest(unittest.TestCase):
         )
         self.assertLess(flags.index("-L/opt/lib"), flags.index("-lcustom"))
 
+    def test_host_sources_pull_libstdcxx(self):
+        flags = native_build._extra_link_flags(
+            NativeBuildOptions(host_sources=(Path("/tmp/shim.cpp"),), link_libraries=("dl",))
+        )
+        self.assertEqual(flags, ["-ldl", "-lstdc++"])
+
+    def test_explicit_libstdcxx_is_not_duplicated(self):
+        flags = native_build._extra_link_flags(
+            NativeBuildOptions(
+                host_sources=(Path("/tmp/shim.cpp"),), link_libraries=("dl", "stdc++")
+            )
+        )
+        self.assertEqual(flags, ["-ldl", "-lstdc++"])
+
 
 class HostSourceCompileTest(unittest.TestCase):
     def test_no_host_sources_runs_no_compiler(self):
