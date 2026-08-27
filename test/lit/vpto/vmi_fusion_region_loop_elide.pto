@@ -41,7 +41,9 @@
 // (reads the ColMax final UB) nor sink (its store is read by ColExpand-sub), so
 // fusion stops there. ColMax stays a separate reduce for; the rest
 // (ColExpand-sub, tmuls, texp, ColSum, tcvt, ND2NZ tmov) fuse into one for
-// carrying the ColSum accumulator and post-update destination pointer.
+// carrying the ColSum accumulator. ND2NZ advances its destination with an
+// explicit row offset because unified VMI stores no longer expose
+// repeat_stride/post-update state.
 //
 // ColMax uses the split-N VMI candidate (split=4): its reduce loop carries 4
 // independent VL-wide accumulators (step=4, 4 iter_args) instead of the single
@@ -51,7 +53,7 @@
 // LOOP: IR Dump After PTOVmiLoopFusion
 // LOOP-LABEL: func.func @fa_dn_softmax_128x64
 // LOOP: scf.for {{.*}} iter_args({{.*}}) -> (!pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>) {
-// LOOP: scf.for {{.*}} iter_args({{.*}}, {{.*}}) -> (!pto.vmi.vreg<64xf32>, !pto.ptr<bf16, ub>) {
+// LOOP: scf.for {{.*}} iter_args({{.*}}) -> (!pto.vmi.vreg<64xf32>) {
 
 // ---- ELIDE - elision erased redundant vloads/stores -----------------------
 // After PTOVmiLoadStoreElision the function holds EXACTLY 5 surviving

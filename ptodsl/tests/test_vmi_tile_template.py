@@ -1532,9 +1532,9 @@ def check_col_reduce_vmi_to_vpto_lowering() -> None:
 def check_tmov_nd2nz() -> None:
     """tmov dispatches on dst layout: ND row-major -> elementwise move;
     NZ col-major -> single-VL ND->NZ block-strided vstore loop that lowers to
-    pto.vsstb (one row scf.for, constant block_stride/repeat_stride, no
-    last-block branch). Mirrors the hand-written softmax ND->NZ path's
-    single-layer constant-stride form."""
+    pto.vsstb (one row scf.for, constant block_stride, explicit 32-byte row
+    offsets, no last-block branch). Mirrors the hand-written softmax ND->NZ
+    path's single-layer constant-stride form."""
     nd_tile_spec = {
         "kind": "tile",
         "dtype": "f16",
@@ -1572,12 +1572,20 @@ def check_tmov_nd2nz() -> None:
     expect(nz_text.count("scf.for") == 1, "tmov ND->NZ should render one row loop")
     expect("blayout=col_major" in nz_text, "tmov ND->NZ dst should be a col-major NZ tile")
     # constant block stride, no second (tail-block) loop; VMI vstore no longer
-    # carries a repeat_stride operand (upstream dropped it)
+    # carries a repeat_stride operand (upstream dropped it). The explicit
+    # destination offset advances one 32-byte block, or 16 f16 elements, per
+    # row instead of relying on a post-update result.
     expect("arith.constant 16 : i16" in nz_text, "tmov ND->NZ block_stride should be a constant 16")
+    expect("arith.constant 16 : index" in nz_text, "tmov ND->NZ should advance one f16 block per row")
+    expect(
+        all(" -> !pto.ptr" not in line for line in nz_text.splitlines() if "pto.vmi.vstore" in line),
+        "tmov ND->NZ should not use a post-update destination",
+    )
 
     # Lower to VPTO and confirm it reaches a single pto.vsstb with constant
     # block_stride/repeat_stride inside one scf.for (the pto-isa single-VL form).
-    check_vmi_to_vpto_lowering("vmi_tmov_nd2nz", nz_text, "pto.vsstb")
+    nz_lowered = check_vmi_to_vpto_lowering("vmi_tmov_nd2nz", nz_text, "pto.vsstb")
+    expect("pto.addptr" in nz_lowered, "tmov ND->NZ should lower its explicit row offset")
 
     # 1/2-VL case (bf16 cols=64 < lanes=128): the partial tail is handled by a
     # count predicate (pto-isa CreatePredicate(count)); lowering should reach a
@@ -1617,9 +1625,50 @@ def check_tmov_nd2nz() -> None:
         "arith.constant 128 : i16" in half_text,
         "tmov 1/2-VL block_stride should still be a constant 128",
     )
+    expect(
+        "arith.constant 16 : index" in half_text,
+        "tmov 1/2-VL should advance one bf16 block per row",
+    )
+    expect(
+        all(" -> !pto.ptr" not in line for line in half_text.splitlines() if "pto.vmi.vstore" in line),
+        "tmov 1/2-VL should not use a post-update destination",
+    )
     # Lower to VPTO and confirm the half-VL mask form (full-VL vlds + half-VL
     # block-mask vsstb) reaches pto.vsstb inside one scf.for.
     check_vmi_to_vpto_lowering("vmi_tmov_nd2nz_halfvl", half_text, "pto.vsstb")
+
+    # RowPlusOne keeps 129 physical rows for block_stride while iterating only
+    # 128 valid rows. This is the runtime regression shape used by
+    # fa-softmax-dn-init-rowplusone.
+    rowplusone_nz_spec = {
+        **half_nd_spec,
+        "shape": [129, 64],
+        "valid_shape": [128, 64],
+        "config": half_nz_spec["config"],
+    }
+    rowplusone_text = instantiate_candidate(
+        target="a5",
+        op_name="pto.tmov",
+        operand_specs=[half_nd_spec, rowplusone_nz_spec],
+        provider_module="ptodsl.vmi_tilelib",
+        context_attrs={},
+    ).mlir_text()
+    expect(
+        "arith.constant 129 : i16" in rowplusone_text,
+        "tmov RowPlusOne block_stride should preserve 129 physical rows",
+    )
+    expect(
+        "arith.constant 16 : index" in rowplusone_text,
+        "tmov RowPlusOne should advance one bf16 block per valid row",
+    )
+    expect(
+        all(
+            " -> !pto.ptr" not in line
+            for line in rowplusone_text.splitlines()
+            if "pto.vmi.vstore" in line
+        ),
+        "tmov RowPlusOne should not use a post-update destination",
+    )
 
     # Regression: ND -> ND still selects the elementwise move path (no
     # block-strided store), so the dispatch did not break the plain-move case.

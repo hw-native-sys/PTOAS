@@ -155,15 +155,17 @@ def vmi_tmov(src: pto.Tile, dst: pto.Tile):
     src_ptr = trace.ensure_tile_ptr(src)
     dst_ptr = trace.ensure_tile_ptr(dst)
     mask = vmi_create_mask_lanes(cols, cols, src.element_type)
-    with for_(0, valid_rows, step=1, state={"dst": dst_ptr.value}) as loop:
-        src_offset = index_mul(loop.iv, cols)
+    # Unified VMI block stores no longer carry repeat_stride. Advance one
+    # 32-byte NZ row explicitly in addptr element units on each iteration.
+    elements_per_block = lanes // 8
+    with for_(0, valid_rows, step=1) as loop:
+        src_offset = index_mul(loop, cols)
+        dst_offset = index_mul(loop, elements_per_block)
         value = _vmi.vload(src_ptr.value, src_offset.value, size=cols)
-        updated_dst = _vmi.vstore(
+        _vmi.vstore(
             value,
-            loop.state.dst.value,
-            0,
+            dst_ptr.value,
+            dst_offset.value,
             mask.value,
             block_stride=dst._spec.shape[0],
-            post_update=True,
         )
-        loop.yield_state(dst=updated_dst.value)
