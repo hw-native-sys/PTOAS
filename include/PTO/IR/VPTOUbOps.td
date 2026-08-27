@@ -202,7 +202,7 @@ def PTO_UBVgatherbOp : PTO_Op<"ub.vgatherb", [
     `llvm.hivm.VGATHERB.b16/.b32(ptr dst, ptr offset, i64 config)`, where the
     2nd pointer is the offset buffer and the source data base address is packed
     into `config[31:0]`. Config layout (decoded from bisheng IR — see
-    docs/designs/a2a3-vpto-tgather.md): srcAddr[31:0], dstRepeatStride[39:32],
+    docs/designs/a2a3-vpto-gather.md): srcAddr[31:0], dstRepeatStride[39:32],
     dstBlockStride[47:40], reserved[55:48]=0, repeat[63:56]. This is the A2/A3
     UB-pointer gather primitive used to lower `pto.tgatherb`; do not confuse
     with the A5 vreg `vgather2`.

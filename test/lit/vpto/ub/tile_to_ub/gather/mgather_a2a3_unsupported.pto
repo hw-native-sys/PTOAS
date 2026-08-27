@@ -1,0 +1,135 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not ptoas --pto-arch=a3 --pto-backend=vpto --emit-vpto-llvm-ir %s -o /dev/null 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @row_col_major_idx(%mem: !pto.ptr<f16, gm>) attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c16 = arith.constant 16 : index
+    %view = pto.make_tensor_view %mem, shape = [%c4, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<?x?xf16>
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c4, %c16]
+      : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<4x16xf16>
+    %idx = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=2, v_row=2, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    // CHECK: A2/A3 VPTO mgather requires a row-major, none-box, non-row_plus_one VEC idx tile
+    pto.mgather ins(%part, %idx : !pto.partition_tensor_view<4x16xf16>, !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=2, v_row=2, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%dst : !pto.tile_buf<loc=vec, dtype=f16, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      {coalesce = #pto<coalesce row>}
+    return
+  }
+
+  func.func @row_unaligned_width(%mem: !pto.ptr<f16, gm>) attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c15 = arith.constant 15 : index
+    %view = pto.make_tensor_view %mem, shape = [%c4, %c15], strides = [%c15, %c1]
+      : !pto.tensor_view<?x?xf16>
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c4, %c15]
+      : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<4x15xf16>
+    %idx = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=2, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=2, cols=16, v_row=2, v_col=15, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    // CHECK: requires coalesce=row valid_col byte width to be 32-byte aligned
+    pto.mgather ins(%part, %idx : !pto.partition_tensor_view<4x15xf16>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=2, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%dst : !pto.tile_buf<loc=vec, dtype=f16, rows=2, cols=16, v_row=2, v_col=15, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      {coalesce = #pto<coalesce row>}
+    return
+  }
+
+  func.func @row_width_mismatch(%mem: !pto.ptr<f16, gm>) attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c16 = arith.constant 16 : index
+    %view = pto.make_tensor_view %mem, shape = [%c4, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<?x?xf16>
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c4, %c16]
+      : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<4x16xf16>
+    %idx = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=2, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=2, cols=16, v_row=2, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    // CHECK: requires the GM table row width to equal dst valid_col
+    pto.mgather ins(%part, %idx : !pto.partition_tensor_view<4x16xf16>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=2, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%dst : !pto.tile_buf<loc=vec, dtype=f16, rows=2, cols=16, v_row=2, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      {coalesce = #pto<coalesce row>}
+    return
+  }
+
+  func.func @row_unaligned_stride(%mem: !pto.ptr<f16, gm>) attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c5 = arith.constant 5 : index
+    %c16 = arith.constant 16 : index
+    %c20 = arith.constant 20 : index
+    %view = pto.make_tensor_view %mem, shape = [%c5, %c16], strides = [%c20, %c1]
+      : !pto.tensor_view<?x?xf16>
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c4, %c16]
+      : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<4x16xf16>
+    %idx = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=2, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    // CHECK: requires coalesce=row GM base and row stride to be 32-byte aligned
+    pto.mgather ins(%part, %idx : !pto.partition_tensor_view<4x16xf16>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=2, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%dst : !pto.tile_buf<loc=vec, dtype=f16, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      {coalesce = #pto<coalesce row>}
+    return
+  }
+
+  func.func @elem_partition_out_of_bounds(%mem: !pto.ptr<f32, gm>) attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %view = pto.make_tensor_view %mem, shape = [%c4, %c8], strides = [%c8, %c1]
+      : !pto.tensor_view<?x?xf32>
+    %part = pto.partition_view %view, offsets = [%c4, %c0], sizes = [%c1, %c8]
+      : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x8xf32>
+    %idx = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    // CHECK: requires partition offsets and sizes within the GM tensor view
+    pto.mgather ins(%part, %idx : !pto.partition_tensor_view<1x8xf32>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      {coalesce = #pto<coalesce elem>}
+    return
+  }
+
+  func.func @elem_non_dense(%mem: !pto.ptr<f32, gm>) attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %view = pto.make_tensor_view %mem, shape = [%c4, %c8], strides = [%c16, %c1]
+      : !pto.tensor_view<?x?xf32>
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c4, %c8]
+      : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<4x8xf32>
+    %idx = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    // CHECK: requires a dense contiguous GM table for coalesce=elem
+    pto.mgather ins(%part, %idx : !pto.partition_tensor_view<4x8xf32>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      {coalesce = #pto<coalesce elem>}
+    return
+  }
+
+}

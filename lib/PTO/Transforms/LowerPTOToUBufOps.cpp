@@ -32,6 +32,7 @@
 #include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
+#include <limits>
 
 using namespace mlir;
 
@@ -68,6 +69,13 @@ static unsigned getElementSize(Type elemTy) {
     }
   }
   return 0;
+}
+
+static unsigned getMGatherElementSize(Type elemTy) {
+  if (auto intTy = dyn_cast<IntegerType>(elemTy);
+      intTy && intTy.getWidth() == 8)
+    return 1;
+  return getElementSize(elemTy);
 }
 
 static Type getStoredElemType(Type ty) {
@@ -150,6 +158,10 @@ struct TileShapeInfo {
 struct TileShapeMetadata {
   SmallVector<int64_t, mlir::pto::kValue2> shape;
   SmallVector<int64_t, mlir::pto::kValue2> validShape;
+  pto::AddressSpace memorySpace;
+  pto::BLayout bLayout;
+  pto::SLayout sLayout;
+  pto::CompactMode compactMode;
 };
 
 using TileShapeMap = DenseMap<Value, TileShapeMetadata>;
@@ -271,6 +283,7 @@ struct LowerPTOToUBufOpsPass
       for (auto op : allocOps) {
         auto tbTy = cast<pto::TileBufType>(op.getResult().getType());
         auto shape = tbTy.getShape();
+        auto config = tbTy.getConfigAttr();
         Value addr = op.getAddr();
         if (!addr) {
           op.emitError("A3 VPTO UB lowering requires planned alloc_tile "
@@ -287,7 +300,13 @@ struct LowerPTOToUBufOpsPass
         auto pc = builder.create<pto::CastPtrOp>(op.getLoc(), ptrTy, addr);
         tileShapes[pc.getResult()] = {
             SmallVector<int64_t, 2>(shape),
-            SmallVector<int64_t, 2>(tbTy.getValidShape())};
+            SmallVector<int64_t, 2>(tbTy.getValidShape()),
+            cast<pto::AddressSpaceAttr>(tbTy.getMemorySpace())
+                .getAddressSpace(),
+            config ? config.getBLayout().getValue() : pto::BLayout::RowMajor,
+            config ? config.getSLayout().getValue() : pto::SLayout::NoneBox,
+            config ? config.getCompactMode().getValue()
+                   : pto::CompactMode::Null};
         op.getResult().replaceAllUsesWith(pc.getResult());
         op.erase();
       }
@@ -1104,6 +1123,20 @@ struct LowerPTOToUBufOpsPass
       }
     }
 
+    // ---- mgather (GM -> UB) ----
+    {
+      SmallVector<pto::MGatherOp> ops;
+      func.walk([&](pto::MGatherOp op) { ops.push_back(op); });
+      for (auto op : ops) {
+        builder.setInsertionPoint(op);
+        if (failed(lowerMGather(op, builder, tileShapes))) {
+          signalPassFailure();
+          return;
+        }
+        op.erase();
+      }
+    }
+
     // ---- cleanup dead PTO ops ----
     SmallVector<Operation *> toErase;
     func.walk([&](Operation *op) {
@@ -1510,7 +1543,66 @@ private:
     SmallVector<Value> sizes;
     SmallVector<Value> strides;
     SmallVector<Value> offsets;
+    SmallVector<int64_t> staticSizes;
+    SmallVector<int64_t> staticStrides;
+    SmallVector<int64_t> staticOffsets;
+    SmallVector<int64_t> staticParentSizes;
   };
+
+  static int64_t getStaticValue(Value value) {
+    auto constant = getConstantIntValue(value);
+    return constant.value_or(ShapedType::kDynamic);
+  }
+
+  static SmallVector<int64_t> extractStaticViewStrides(Value view) {
+    if (auto subview = view.getDefiningOp<memref::SubViewOp>()) {
+      SmallVector<int64_t> sourceStrides =
+          extractStaticViewStrides(subview.getSource());
+      ArrayRef<int64_t> subviewStrides = subview.getStaticStrides();
+      bool hasMismatchedRank =
+          sourceStrides.size() != subviewStrides.size();
+      if (hasMismatchedRank) {
+        return SmallVector<int64_t>(subview.getType().getRank(),
+                                    ShapedType::kDynamic);
+      }
+      for (auto [sourceStride, subviewStride] : llvm::zip_equal(
+               sourceStrides, subviewStrides)) {
+        bool invalidStride =
+            sourceStride == ShapedType::kDynamic ||
+            subviewStride == ShapedType::kDynamic || sourceStride <= 0 ||
+            subviewStride <= 0 ||
+            sourceStride >
+                std::numeric_limits<int64_t>::max() / subviewStride;
+        if (invalidStride) {
+          sourceStride = ShapedType::kDynamic;
+          continue;
+        }
+        sourceStride *= subviewStride;
+      }
+      return sourceStrides;
+    }
+    if (auto reinterpret = view.getDefiningOp<memref::ReinterpretCastOp>()) {
+      SmallVector<int64_t> strides;
+      for (OpFoldResult stride : reinterpret.getConstifiedMixedStrides()) {
+        auto value = getConstantIntValue(stride);
+        strides.push_back(value.value_or(ShapedType::kDynamic));
+      }
+      return strides;
+    }
+    if (auto cast = view.getDefiningOp<memref::CastOp>()) {
+      return extractStaticViewStrides(cast.getSource());
+    }
+    auto memTy = dyn_cast<MemRefType>(view.getType());
+    if (!memTy) {
+      return {};
+    }
+    SmallVector<int64_t> strides;
+    int64_t offset = 0;
+    if (failed(pto::getPTOMemRefStridesAndOffset(memTy, strides, offset))) {
+      return SmallVector<int64_t>(memTy.getRank(), ShapedType::kDynamic);
+    }
+    return strides;
+  }
 
   static bool hasUnitInnermostStride(Value view) {
     while (Operation *def = view.getDefiningOp()) {
@@ -1542,13 +1634,14 @@ private:
     }
     SmallVector<int64_t> strides;
     int64_t offset = 0;
-    if (failed(pto::getPTOMemRefStridesAndOffset(memTy, strides, offset)))
+    if (failed(pto::getPTOMemRefStridesAndOffset(memTy, strides, offset))) {
       return false;
+    }
     return !strides.empty() && strides.back() == 1;
   }
 
-  static FailureOr<DmaViewInfo> extractDmaViewInfo(pto::TLoadOp op) {
-    auto pvOp = op.getSrc().getDefiningOp<pto::PartitionViewOp>();
+  static FailureOr<DmaViewInfo> extractDmaViewInfo(Operation *op, Value view) {
+    auto pvOp = view.getDefiningOp<pto::PartitionViewOp>();
     if (pvOp) {
       auto mtvOp = pvOp.getSource().getDefiningOp<pto::MakeTensorViewOp>();
       if (!mtvOp) {
@@ -1559,15 +1652,31 @@ private:
       info.sizes.assign(pvOp.getSizes().begin(), pvOp.getSizes().end());
       info.strides.assign(mtvOp.getStrides().begin(),
                           mtvOp.getStrides().end());
+      for (Value size : info.sizes) {
+        info.staticSizes.push_back(getStaticValue(size));
+      }
+      for (Value stride : info.strides) {
+        info.staticStrides.push_back(getStaticValue(stride));
+      }
       if (info.strides.empty() ||
           !matchPattern(info.strides.back(), m_One())) {
-        op.emitError("A2/A3 DMA lowering requires a unit innermost stride");
+        op->emitError("A2/A3 DMA lowering requires a unit innermost stride");
         return failure();
       }
       info.offsets.assign(pvOp.getOffsets().begin(), pvOp.getOffsets().end());
+      for (Value offset : info.offsets) {
+        info.staticOffsets.push_back(getStaticValue(offset));
+      }
+      for (Value size : mtvOp.getShape()) {
+        info.staticParentSizes.push_back(getStaticValue(size));
+      }
       return info;
     }
-    return extractDmaMemRefViewInfo(op.getLoc(), op.getSrc(), op.getContext());
+    return extractDmaMemRefViewInfo(op->getLoc(), view, op->getContext());
+  }
+
+  static FailureOr<DmaViewInfo> extractDmaViewInfo(pto::TLoadOp op) {
+    return extractDmaViewInfo(op.getOperation(), op.getSrc());
   }
 
   static FailureOr<DmaViewInfo> extractDmaViewInfo(pto::TStoreOp op) {
@@ -1617,10 +1726,21 @@ private:
     auto ptrTy = pto::PtrType::get(ctx, memTy.getElementType(), msAttr);
     auto metadata = b.create<memref::ExtractStridedMetadataOp>(loc, view);
     info.gmPtr = b.create<pto::CastPtrOp>(loc, ptrTy, traceRootMemRef(view));
-    info.linearOffset = metadata.getOffset();
+    SmallVector<int64_t> staticStrides;
+    int64_t staticOffset = 0;
+    LogicalResult strideStatus = pto::getPTOMemRefStridesAndOffset(
+        memTy, staticStrides, staticOffset);
+    if (failed(strideStatus)) {
+      return failure();
+    }
+    if (staticOffset != 0) {
+      info.linearOffset = metadata.getOffset();
+    }
     info.sizes.assign(metadata.getSizes().begin(), metadata.getSizes().end());
     info.strides.assign(metadata.getStrides().begin(),
                         metadata.getStrides().end());
+    info.staticSizes.assign(shape.begin(), shape.end());
+    info.staticStrides = extractStaticViewStrides(view);
     return info;
   }
 
@@ -1679,7 +1799,10 @@ private:
     auto origPtrTy = cast<pto::PtrType>(gmPtr.getType());
     auto bytePtrTy = pto::PtrType::get(b.getContext(), b.getI8Type(),
                                        origPtrTy.getMemorySpace());
-    Value bytePtr = b.create<pto::CastPtrOp>(loc, bytePtrTy, gmPtr);
+    Value bytePtr = gmPtr;
+    if (bytePtrTy != origPtrTy) {
+      bytePtr = b.create<pto::CastPtrOp>(loc, bytePtrTy, gmPtr);
+    }
     Value offIdx = byteOff;
     if (!offIdx.getType().isIndex()) {
       offIdx = b.create<arith::IndexCastOp>(loc, b.getIndexType(), byteOff)
@@ -1687,6 +1810,9 @@ private:
     }
     Value offsetBytePtr =
         b.create<pto::AddPtrOp>(loc, bytePtrTy, bytePtr, offIdx);
+    if (bytePtrTy == origPtrTy) {
+      return offsetBytePtr;
+    }
     return b.create<pto::CastPtrOp>(loc, origPtrTy, offsetBytePtr);
   }
 
@@ -1793,6 +1919,490 @@ private:
     b.create<pto::MteUbGmOp>(loc, ubPtr, gmPtr, lenBurst, nburst, Value{},
                              llvm::ArrayRef(loops));
     return success();
+  }
+
+  struct NormalizedGatherIndex {
+    Value value;
+    Value inBounds;
+  };
+
+  Value product(Location loc, OpBuilder &b, ArrayRef<Value> values) {
+    Value result = idxc1(loc, b);
+    for (Value value : values) {
+      result = b.create<arith::MulIOp>(loc, result, value);
+    }
+    return result;
+  }
+
+  NormalizedGatherIndex normalizeGatherIndex(Location loc, OpBuilder &b,
+                                             Value rawIndex, Value count,
+                                             pto::GatherOOB mode) {
+    Value extendedIndex =
+        b.create<arith::ExtUIOp>(loc, b.getI64Type(), rawIndex);
+    Value index =
+        b.create<arith::IndexCastOp>(loc, b.getIndexType(), extendedIndex);
+    Value tooLarge =
+        b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::uge, index, count);
+    Value inBounds = b.create<arith::XOrIOp>(
+        loc, tooLarge, b.create<arith::ConstantIntOp>(loc, 1, 1));
+
+    switch (mode) {
+    case pto::GatherOOB::Undefined:
+    case pto::GatherOOB::Zero:
+      return {index, inBounds};
+    case pto::GatherOOB::Clamp: {
+      Value last = b.create<arith::SubIOp>(loc, count, idxc1(loc, b));
+      Value aboveLast = b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ugt,
+                                                index, last);
+      return {b.create<arith::SelectOp>(loc, aboveLast, last, index),
+              inBounds};
+    }
+    case pto::GatherOOB::Wrap: {
+      return {b.create<arith::RemUIOp>(loc, index, count), inBounds};
+    }
+    }
+    llvm_unreachable("unknown MGATHER OOB mode");
+  }
+
+  void emitScalarZero(Location loc, OpBuilder &b, Value dst, Value dstOffset,
+                      Type elemTy) {
+    Value zero =
+        b.create<arith::ConstantOp>(loc, elemTy, b.getZeroAttr(elemTy));
+    b.create<pto::StoreScalarOp>(loc, dst, dstOffset, zero);
+  }
+
+  void emitScalarGather(Location loc, OpBuilder &b, Value gmPtr, Value dst,
+                        Value dstOffset, Value sourceOffset, Type elemTy) {
+    Value value = b.create<pto::LoadScalarOp>(loc, elemTy, gmPtr, sourceOffset);
+    b.create<pto::StoreScalarOp>(loc, dst, dstOffset, value);
+  }
+
+  void emitScalarToMte2Sync(Location loc, OpBuilder &b) {
+    auto pipeS = pto::PipeAttr::get(b.getContext(), pto::PIPE::PIPE_S);
+    auto pipeMte2 = pto::PipeAttr::get(b.getContext(), pto::PIPE::PIPE_MTE2);
+    auto event0 =
+        pto::EventAttr::get(b.getContext(), static_cast<pto::EVENT>(0));
+    b.create<pto::SetFlagOp>(loc, pipeS, pipeMte2, event0);
+    b.create<pto::WaitFlagOp>(loc, pipeS, pipeMte2, event0);
+  }
+
+  static bool hasPositiveStaticShape(ArrayRef<int64_t> shape) {
+    return !shape.empty() && llvm::all_of(shape, [](int64_t dim) {
+      return dim != ShapedType::kDynamic && dim > 0;
+    });
+  }
+
+  static bool isDenseRowMajor(ArrayRef<int64_t> shape,
+                              ArrayRef<int64_t> strides) {
+    bool hasInvalidShape =
+        shape.size() != strides.size() || !hasPositiveStaticShape(shape);
+    if (hasInvalidShape) {
+      return false;
+    }
+    int64_t expectedStride = 1;
+    int64_t lastDim = static_cast<int64_t>(shape.size()) - 1;
+    for (int64_t i = lastDim; i >= 0; --i) {
+      if (strides[i] != expectedStride) {
+        return false;
+      }
+      bool shapeOverflows =
+          shape[i] > std::numeric_limits<int64_t>::max() / expectedStride;
+      if (shapeOverflows) {
+        return false;
+      }
+      expectedStride *= shape[i];
+    }
+    return true;
+  }
+
+  static bool hasRepresentableByteExtent(ArrayRef<int64_t> shape,
+                                         ArrayRef<int64_t> strides,
+                                         ArrayRef<int64_t> offsets,
+                                         unsigned elemSize) {
+    bool hasInvalidMetadata =
+        shape.size() != strides.size() || shape.size() != offsets.size() ||
+        !hasPositiveStaticShape(shape) || !hasPositiveStaticShape(strides) ||
+        elemSize == 0;
+    if (hasInvalidMetadata) {
+      return false;
+    }
+    int64_t maxOffset = 0;
+    for (auto [dim, stride, offset] : llvm::zip_equal(shape, strides, offsets)) {
+      bool offsetOverflows =
+          offset < 0 ||
+          offset >
+              (std::numeric_limits<int64_t>::max() - maxOffset) / stride;
+      if (offsetOverflows) {
+        return false;
+      }
+      maxOffset += offset * stride;
+      int64_t count = dim - 1;
+      bool extentOverflows =
+          count > (std::numeric_limits<int64_t>::max() - maxOffset) / stride;
+      if (extentOverflows) {
+        return false;
+      }
+      maxOffset += count * stride;
+    }
+    return maxOffset <=
+           std::numeric_limits<int64_t>::max() / elemSize - 1;
+  }
+
+  static bool isValidStaticPartition(ArrayRef<int64_t> parentSizes,
+                                     ArrayRef<int64_t> sizes,
+                                     ArrayRef<int64_t> offsets) {
+    bool hasMismatchedRank = parentSizes.size() != sizes.size() ||
+                             parentSizes.size() != offsets.size();
+    if (hasMismatchedRank || !hasPositiveStaticShape(parentSizes)) {
+      return false;
+    }
+    for (auto [parentSize, size, offset] :
+         llvm::zip_equal(parentSizes, sizes, offsets)) {
+      if (size > parentSize || offset > parentSize - size) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static bool hasAlignedMGatherRows(ArrayRef<int64_t> strides,
+                                    ArrayRef<int64_t> offsets,
+                                    unsigned elemSize) {
+    int64_t baseOffset = 0;
+    for (auto [stride, offset] : llvm::zip_equal(strides, offsets)) {
+      baseOffset += stride * offset;
+    }
+    int64_t alignmentElements = 32 / elemSize;
+    return baseOffset % alignmentElements == 0 &&
+           strides[strides.size() - 2] % alignmentElements == 0;
+  }
+
+  static bool isSupportedMGatherTile(const TileShapeMetadata &meta) {
+    return meta.memorySpace == pto::AddressSpace::VEC &&
+           meta.bLayout == pto::BLayout::RowMajor &&
+           meta.sLayout == pto::SLayout::NoneBox &&
+           meta.compactMode != pto::CompactMode::RowPlusOne;
+  }
+
+  LogicalResult validateMGatherSafeSubset(
+      pto::MGatherOp op, const DmaViewInfo &viewInfo,
+      const TileShapeMetadata &idxMeta, const TileShapeMetadata &dstMeta,
+      Type elemTy, pto::Coalesce coalesce) {
+    if (!isSupportedMGatherTile(dstMeta)) {
+      return op.emitOpError(
+          "A2/A3 VPTO mgather requires a row-major, none-box, non-row_plus_one "
+          "VEC dst tile");
+    }
+    if (!isSupportedMGatherTile(idxMeta)) {
+      return op.emitOpError(
+          "A2/A3 VPTO mgather requires a row-major, none-box, non-row_plus_one "
+          "VEC idx tile");
+    }
+    bool hasInvalidTileRank =
+        dstMeta.shape.size() != 2 || dstMeta.validShape.size() != 2 ||
+        idxMeta.shape.size() != 2 || idxMeta.validShape.size() != 2;
+    if (hasInvalidTileRank) {
+      return op.emitOpError("requires rank-2 idx and dst tiles");
+    }
+    for (const TileShapeMetadata *meta : {&idxMeta, &dstMeta}) {
+      for (size_t i = 0; i < 2; ++i) {
+        bool hasInvalidShape = meta->shape[i] <= 0 || meta->validShape[i] <= 0 ||
+                               meta->validShape[i] > meta->shape[i];
+        if (hasInvalidShape) {
+          return op.emitOpError(
+              "requires positive idx/dst valid shapes within physical shapes");
+        }
+      }
+    }
+
+    auto gmPtrTy = dyn_cast<pto::PtrType>(viewInfo.gmPtr.getType());
+    bool hasInvalidGmPtr =
+        !gmPtrTy || gmPtrTy.getMemorySpace().getAddressSpace() !=
+                        pto::AddressSpace::GM;
+    if (hasInvalidGmPtr) {
+      return op.emitOpError("requires a GM source table");
+    }
+    bool hasMismatchedElementType = gmPtrTy.getElementType() != elemTy;
+    if (hasMismatchedElementType) {
+      return op.emitOpError(
+          "requires the GM table element type to match dst exactly");
+    }
+    bool hasInvalidStaticMetadata =
+        !hasPositiveStaticShape(viewInfo.staticSizes) ||
+        !hasPositiveStaticShape(viewInfo.staticStrides) ||
+        !llvm::all_of(viewInfo.staticOffsets,
+                      [](int64_t offset) { return offset >= 0; }) ||
+        viewInfo.staticSizes.size() != viewInfo.staticStrides.size() ||
+        viewInfo.staticSizes.size() != viewInfo.staticOffsets.size();
+    if (hasInvalidStaticMetadata) {
+      return op.emitOpError(
+          "requires statically known positive GM table dimensions and strides "
+          "and non-negative offsets");
+    }
+    bool hasValidPartition =
+        isValidStaticPartition(viewInfo.staticParentSizes,
+                               viewInfo.staticSizes, viewInfo.staticOffsets);
+    if (!hasValidPartition) {
+      return op.emitOpError(
+          "requires partition offsets and sizes within the GM tensor view");
+    }
+
+    unsigned elemSize = getMGatherElementSize(elemTy);
+    bool hasRepresentableAddressing = hasRepresentableByteExtent(
+        viewInfo.staticSizes, viewInfo.staticStrides, viewInfo.staticOffsets,
+        elemSize);
+    if (!hasRepresentableAddressing) {
+      return op.emitOpError(
+          "requires statically representable GM table byte addressing");
+    }
+    if (coalesce == pto::Coalesce::Row) {
+      bool hasInsufficientRank = viewInfo.staticSizes.size() < 2;
+      if (hasInsufficientRank) {
+        return op.emitOpError(
+            "requires a rank-2 or greater GM table for coalesce=row");
+      }
+      for (size_t i = 0; i + 2 < viewInfo.staticSizes.size(); ++i) {
+        if (viewInfo.staticSizes[i] != 1) {
+          return op.emitOpError(
+              "supports coalesce=row only for an effective rank-2 ND table");
+        }
+      }
+      bool hasNonUnitInnerStride = viewInfo.staticStrides.back() != 1;
+      if (hasNonUnitInnerStride) {
+        return op.emitOpError(
+            "requires a unit innermost GM stride for coalesce=row");
+      }
+      bool hasMismatchedRowWidth =
+          viewInfo.staticSizes.back() != dstMeta.validShape[1];
+      if (hasMismatchedRowWidth) {
+        return op.emitOpError(
+            "requires the GM table row width to equal dst valid_col");
+      }
+      bool hasInvalidRowStride =
+          viewInfo.staticStrides[viewInfo.staticStrides.size() - 2] <
+          viewInfo.staticSizes.back();
+      if (hasInvalidRowStride) {
+        return op.emitOpError(
+            "requires the GM table row stride to cover the logical row width");
+      }
+      bool hasMisalignedRowWidth =
+          dstMeta.validShape[1] % (32 / elemSize) != 0;
+      if (hasMisalignedRowWidth) {
+        return op.emitOpError(
+            "requires coalesce=row valid_col byte width to be 32-byte aligned");
+      }
+      bool hasAlignedRows = hasAlignedMGatherRows(
+          viewInfo.staticStrides, viewInfo.staticOffsets, elemSize);
+      if (!hasAlignedRows) {
+        return op.emitOpError(
+            "requires coalesce=row GM base and row stride to be 32-byte "
+            "aligned");
+      }
+      bool hasInvalidIndexShape =
+          idxMeta.validShape[0] != 1 ||
+          idxMeta.validShape[1] != dstMeta.validShape[0];
+      if (hasInvalidIndexShape) {
+        return op.emitOpError(
+            "requires coalesce=row idx valid_shape to be [1, dst.valid_row]");
+      }
+      return success();
+    }
+
+    if (idxMeta.validShape != dstMeta.validShape) {
+      return op.emitOpError(
+          "requires coalesce=elem idx valid_shape to match dst valid_shape");
+    }
+    if (!isDenseRowMajor(viewInfo.staticSizes, viewInfo.staticStrides)) {
+      return op.emitOpError(
+          "requires a dense contiguous GM table for coalesce=elem");
+    }
+    return success();
+  }
+
+  LogicalResult emitMGatherRow(pto::MGatherOp op, OpBuilder &b,
+                               const DmaViewInfo &viewInfo, Value gmPtr,
+                               Value idxPtr, Value dstPtr,
+                                const TileShapeMetadata &idxMeta,
+                                const TileShapeMetadata &dstMeta, Type elemTy,
+                                pto::GatherOOB oob) {
+    Location loc = op.getLoc();
+    bool hasInsufficientRank = viewInfo.sizes.size() < 2;
+    if (hasInsufficientRank) {
+      return op.emitOpError(
+          "requires a rank-2 or greater GM table for coalesce=row");
+    }
+
+    size_t rowDim = viewInfo.sizes.size() - 2;
+    Value tableRows = viewInfo.sizes[rowDim];
+    Value tableRowStride = viewInfo.strides[rowDim];
+    int64_t dstRows = dstMeta.validShape[0];
+    int64_t dstCols = dstMeta.validShape[1];
+    int64_t dstStride = dstMeta.shape[1];
+    unsigned elemSize = getMGatherElementSize(elemTy);
+
+    for (int64_t row = 0; row < dstRows; ++row) {
+      Value idxOffset = idxc(row, loc, b);
+      Value rawIndex =
+          b.create<pto::LoadScalarOp>(loc, b.getI32Type(), idxPtr, idxOffset);
+      NormalizedGatherIndex index =
+          normalizeGatherIndex(loc, b, rawIndex, tableRows, oob);
+      Value dstOffset = idxc(row * dstStride, loc, b);
+
+      auto emitCopy = [&]() {
+        Value sourceOffset =
+            b.create<arith::MulIOp>(loc, index.value, tableRowStride);
+        Value source =
+            b.create<pto::AddPtrOp>(loc, gmPtr.getType(), gmPtr, sourceOffset);
+        Value destination =
+            b.create<pto::AddPtrOp>(loc, dstPtr.getType(), dstPtr, dstOffset);
+        emitScalarToMte2Sync(loc, b);
+        pto::DmaLoopConfig nburst{i64c1(loc, b), i64c0(loc, b), i64c0(loc, b)};
+        b.create<pto::MteGmUbOp>(loc, source, destination, i64c0(loc, b),
+                                 i64c(dstCols * elemSize, loc, b), nburst,
+                                 llvm::ArrayRef<pto::DmaLoopConfig>{},
+                                 std::nullopt);
+      };
+
+      if (oob != pto::GatherOOB::Zero) {
+        emitCopy();
+        continue;
+      }
+
+      auto ifOp = b.create<scf::IfOp>(loc, TypeRange{}, index.inBounds,
+                                      /*addThenBlock=*/true,
+                                      /*addElseBlock=*/true);
+      b.setInsertionPointToStart(ifOp.thenBlock());
+      emitCopy();
+      b.create<scf::YieldOp>(loc);
+      b.setInsertionPointToStart(ifOp.elseBlock());
+      for (int64_t col = 0; col < dstCols; ++col) {
+        emitScalarZero(loc, b, dstPtr, idxc(row * dstStride + col, loc, b),
+                       elemTy);
+      }
+      emitScalarToMte2Sync(loc, b);
+      b.create<scf::YieldOp>(loc);
+      b.setInsertionPointAfter(ifOp);
+    }
+    return success();
+  }
+
+  LogicalResult emitMGatherElem(pto::MGatherOp op, OpBuilder &b,
+                                const DmaViewInfo &viewInfo, Value gmPtr,
+                                Value idxPtr, Value dstPtr,
+                                const TileShapeMetadata &idxMeta,
+                                const TileShapeMetadata &dstMeta, Type elemTy,
+                                pto::GatherOOB oob) {
+    Location loc = op.getLoc();
+    if (viewInfo.sizes.empty()) {
+      return op.emitOpError("requires a non-empty GM table");
+    }
+
+    Value tableElements = product(loc, b, viewInfo.sizes);
+    int64_t dstRows = dstMeta.validShape[0];
+    int64_t dstCols = dstMeta.validShape[1];
+    int64_t dstStride = dstMeta.shape[1];
+    int64_t idxStride = idxMeta.shape[1];
+    for (int64_t row = 0; row < dstRows; ++row) {
+      for (int64_t col = 0; col < dstCols; ++col) {
+        Value idxOffset = idxc(row * idxStride + col, loc, b);
+        Value dstOffset = idxc(row * dstStride + col, loc, b);
+        Value rawIndex =
+            b.create<pto::LoadScalarOp>(loc, b.getI32Type(), idxPtr, idxOffset);
+        NormalizedGatherIndex index =
+            normalizeGatherIndex(loc, b, rawIndex, tableElements, oob);
+        if (oob != pto::GatherOOB::Zero) {
+          emitScalarGather(loc, b, gmPtr, dstPtr, dstOffset, index.value,
+                           elemTy);
+          continue;
+        }
+
+        auto ifOp = b.create<scf::IfOp>(loc, TypeRange{}, index.inBounds,
+                                        /*addThenBlock=*/true,
+                                        /*addElseBlock=*/true);
+        b.setInsertionPointToStart(ifOp.thenBlock());
+        emitScalarGather(loc, b, gmPtr, dstPtr, dstOffset, index.value,
+                         elemTy);
+        b.create<scf::YieldOp>(loc);
+        b.setInsertionPointToStart(ifOp.elseBlock());
+        emitScalarZero(loc, b, dstPtr, dstOffset, elemTy);
+        b.create<scf::YieldOp>(loc);
+        b.setInsertionPointAfter(ifOp);
+      }
+    }
+    return success();
+  }
+
+  LogicalResult lowerMGather(pto::MGatherOp op, OpBuilder &b,
+                             const TileShapeMap &tileShapes) {
+    auto dstIt = tileShapes.find(op.getDst());
+    auto idxIt = tileShapes.find(op.getIdx());
+    if (dstIt == tileShapes.end()) {
+      return op.emitOpError(
+          "A2/A3 VPTO lowering requires an alloc_tile-backed mgather dst");
+    }
+    if (dstIt->second.memorySpace != pto::AddressSpace::VEC) {
+      return op.emitOpError(
+          "A2/A3 VPTO lowering currently supports only GM->UB mgather; "
+          "GM->L1 is deferred");
+    }
+    if (idxIt == tileShapes.end()) {
+      return op.emitOpError(
+          "A2/A3 GM->UB VPTO mgather requires an alloc_tile-backed idx");
+    }
+    if (op.getScratch()) {
+      return op.emitOpError(
+          "A2/A3 GM->UB VPTO mgather does not support a scratch operand");
+    }
+
+    Type elemTy = getStoredElemType(op.getDst().getType());
+    bool hasUnsupportedElementType =
+        !elemTy || getMGatherElementSize(elemTy) == 0;
+    if (hasUnsupportedElementType) {
+      return op.emitOpError("has an unsupported destination element type");
+    }
+    auto idxPtrTy = dyn_cast<pto::PtrType>(op.getIdx().getType());
+    auto idxElemTy = idxPtrTy
+                         ? dyn_cast<IntegerType>(idxPtrTy.getElementType())
+                         : IntegerType{};
+    bool hasInvalidIndexType =
+        !idxElemTy || idxElemTy.getWidth() != 32 || !idxElemTy.isSignless();
+    if (hasInvalidIndexType) {
+      return op.emitOpError("requires a signless i32 UB index tile");
+    }
+
+    auto viewInfo = extractDmaViewInfo(op.getOperation(), op.getMem());
+    if (failed(viewInfo)) {
+      return op.emitOpError("requires a supported GM tensor view");
+    }
+    bool hasMismatchedViewRank =
+        viewInfo->sizes.size() != viewInfo->strides.size();
+    if (hasMismatchedViewRank) {
+      return op.emitOpError("requires one stride per GM table dimension");
+    }
+
+    auto coalesceAttr =
+        dyn_cast_or_null<pto::CoalesceAttr>(op.getProperties().coalesce);
+    if (!coalesceAttr) {
+      return op.emitOpError("requires an explicit coalesce attribute");
+    }
+    pto::Coalesce coalesce = coalesceAttr.getValue();
+    LogicalResult validation = validateMGatherSafeSubset(
+        op, *viewInfo, idxIt->second, dstIt->second, elemTy, coalesce);
+    if (failed(validation)) {
+      return failure();
+    }
+
+    Value byteOff = computeGMByteOffset(op.getLoc(), b, *viewInfo,
+                                        getMGatherElementSize(elemTy));
+    Value gmPtr = offsetGMPtrByBytes(op.getLoc(), b, viewInfo->gmPtr, byteOff);
+
+    pto::GatherOOB oob = op.getGatherOob();
+    if (coalesce == pto::Coalesce::Row) {
+      return emitMGatherRow(op, b, *viewInfo, gmPtr, op.getIdx(), op.getDst(),
+                            idxIt->second, dstIt->second, elemTy, oob);
+    }
+    return emitMGatherElem(op, b, *viewInfo, gmPtr, op.getIdx(), op.getDst(),
+                           idxIt->second, dstIt->second, elemTy, oob);
   }
 
   LogicalResult lowerTLoad(pto::TLoadOp op, OpBuilder &b,
