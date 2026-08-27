@@ -55,8 +55,10 @@
 #
 #   PTO_ASYNC_ARCH=a5 python3 test/comm/spike_sdma_gm_gm_engine.py
 #   PTO_ASYNC_ARCH=a3 python3 test/comm/spike_sdma_gm_gm_engine.py
-
-from __future__ import annotations
+#
+# Do not add ``from __future__ import annotations``. ``@pto.jit`` reads the
+# entry annotations at decoration time and needs the live ``pto.ptr`` objects,
+# not their string forms.
 
 import os
 from pathlib import Path
