@@ -7,92 +7,86 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 #include "ptoas.h"
+
 #include "PTO/IR/PTO.h"
-#include "PTO/IR/VMIUtils.h"
 #include "PTO/IR/PTOMultiBuffer.h"
-#include "PTO/Transforms/VPTOLLVMEmitter.h"
-#include "PTO/Transforms/Passes.h"
+#include "PTO/IR/VMIUtils.h"
 #include "PTO/Transforms/BufferizableOpInterfaceImpl.h"
-#include "VPTOHostStubEmission.h"
 #include "PTO/Transforms/CppPostprocess.h"
+#include "PTO/Transforms/Passes.h"
+#include "PTO/Transforms/VPTOLLVMEmitter.h"
+#include "VPTOHostStubEmission.h"
 #include "mlir/AsmParser/AsmParserState.h"
-#include "mlir/IR/MLIRContext.h"
-#include "mlir/IR/Diagnostics.h"
-#include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/Verifier.h"
 #include "mlir/Conversion/Passes.h"
-#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
-#include "mlir/Dialect/Arith/Transforms/Passes.h"
-#include "mlir/Dialect/Func/Transforms/Passes.h"
-#include "mlir/Dialect/Math/Transforms/Passes.h"
-#include "mlir/Dialect/MemRef/Transforms/Passes.h"
-#include "mlir/Dialect/SCF/Transforms/Passes.h"
-#include "mlir/Dialect/Tensor/Transforms/Passes.h"
-#include "mlir/Parser/Parser.h"
-#include "mlir/Pass/PassManager.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/Dialect/Math/IR/Math.h"
-#include "mlir/Dialect/Utils/StaticValueUtils.h"
-#include <cctype>
-#include <cstdlib>
-#include <cstring>
-#include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/Dialect/MemRef/Transforms/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Arith/Transforms/BufferizableOpInterfaceImpl.h"
-#include "mlir/Dialect/Tensor/IR/Tensor.h"
-#include "mlir/Dialect/Tensor/Transforms/BufferizableOpInterfaceImpl.h"
-#include "mlir/Target/Cpp/CppEmitter.h"
-#include "mlir/Transforms/Passes.h"
-#include "llvm/Support/SourceMgr.h"
-#include "llvm/Support/ToolOutputFile.h"
-#include "llvm/Support/FileSystem.h" // [Fix] Required for OF_None
-#include "llvm/Support/Path.h"
-#include "ptobc/ptobc_decode.h"
+#include "mlir/Dialect/Arith/Transforms/Passes.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
-#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/EmitC/IR/EmitC.h"
 #include "mlir/Dialect/EmitC/Transforms/Transforms.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Func/Transforms/Passes.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/Math/Transforms/Passes.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/MemRef/Transforms/Passes.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/SCF/Transforms/Passes.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Tensor/Transforms/BufferizableOpInterfaceImpl.h"
+#include "mlir/Dialect/Tensor/Transforms/Passes.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/DialectInterface.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/Verifier.h"
+#include "mlir/Parser/Parser.h"
+#include "mlir/Pass/PassManager.h"
+#include "mlir/Target/Cpp/CppEmitter.h"
 #include "mlir/Transforms/InliningUtils.h"
-#include "llvm/Support/CommandLine.h"
-#include "llvm/Support/Regex.h"
-#include "llvm/Support/raw_ostream.h"
+#include "mlir/Transforms/Passes.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSwitch.h"
-#include "llvm/ADT/StringMap.h"
-#include "llvm/ADT/SmallString.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/Program.h"
+#include "llvm/Support/Regex.h"
+#include "llvm/Support/SourceMgr.h"
+#include "llvm/Support/ToolOutputFile.h"
+#include "llvm/Support/raw_ostream.h"
+#include "ptobc/ptobc_decode.h"
+
 #include <algorithm>
+#include <cctype>
+#include <chrono>
+#include <csignal>
+#include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <optional>
 #include <set>
 #include <string>
 #include <thread>
-#include <chrono>
-#include <unistd.h>
-#include <csignal>
-#include <sys/types.h>
 
-extern "C" {
-extern char **environ;
-}
+#include <sys/types.h>
+#include <unistd.h>
 
 using namespace mlir;
 using namespace pto;
-
-#ifndef PTOAS_RELEASE_VERSION
-#define PTOAS_RELEASE_VERSION "unknown"
-#endif
 
 namespace {
 
@@ -101,10 +95,24 @@ constexpr int kDefaultGraphSyncSolverEventIdMax = 8;
 constexpr unsigned kStringRefInlineCapacity = 4;
 constexpr unsigned kEmptyExpressionInlineCapacity = 8;
 constexpr unsigned kBranchInlineCapacity = 16;
+constexpr unsigned kNameHintInlineCapacity = 4;
+constexpr unsigned kBlockInlineCapacity = 8;
+constexpr unsigned kProvenanceInlineCapacity = 8;
+constexpr unsigned kProvenanceMarkerInlineCapacity = 32;
+constexpr unsigned kFunctionLineInlineCapacity = 32;
+constexpr unsigned kRawStringInlineCapacity = 128;
+constexpr unsigned kIndexBitWidth = 64;
+constexpr unsigned kEmitCIntegerRadix = 10;
+constexpr size_t kCppIdentifierReserveExtra = 4;
+constexpr size_t kMarkerReplacementReserveExtra = 8;
 constexpr size_t kMarkerCallReserveExtra = 16;
 constexpr size_t kRewriteOutputReserveExtra = 64;
 constexpr size_t kMarkerRewriteMinArgCount = 2;
 constexpr size_t kMarkerRewriteTernaryArgCount = 3;
+constexpr size_t kThirdMarkerArgumentIndex = 2;
+constexpr size_t kCommentTerminatorLength = 2;
+constexpr unsigned kHexNibbleBitWidth = 4;
+constexpr unsigned kHexNibbleMask = 0xF;
 
 using StringRefVector =
     llvm::SmallVector<llvm::StringRef, kStringRefInlineCapacity>;
@@ -134,8 +142,9 @@ struct PTOASFuncInlinerInterface final : public DialectInlinerInterface {
 
   void handleTerminator(Operation *op, Block *newDest) const final {
     auto returnOp = dyn_cast<func::ReturnOp>(op);
-    if (!returnOp)
+    if (!returnOp) {
       return;
+    }
     OpBuilder builder(op);
     builder.create<cf::BranchOp>(op->getLoc(), newDest,
                                  returnOp.getOperands());
@@ -145,8 +154,9 @@ struct PTOASFuncInlinerInterface final : public DialectInlinerInterface {
   void handleTerminator(Operation *op, ValueRange valuesToRepl) const final {
     auto returnOp = cast<func::ReturnOp>(op);
     assert(returnOp.getNumOperands() == valuesToRepl.size());
-    for (const auto &it : llvm::enumerate(returnOp.getOperands()))
+    for (const auto &it : llvm::enumerate(returnOp.getOperands())) {
       valuesToRepl[it.index()].replaceAllUsesWith(it.value());
+    }
   }
 };
 
@@ -166,9 +176,11 @@ struct ApplySIMTEntryNoInlinePass final
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ApplySIMTEntryNoInlinePass)
 
   void runOnOperation() final {
-    for (func::FuncOp func : getOperation().getOps<func::FuncOp>())
-      if (func->hasAttr(pto::kPTOSimtEntryAttrName))
+    for (func::FuncOp func : getOperation().getOps<func::FuncOp>()) {
+      if (func->hasAttr(pto::kPTOSimtEntryAttrName)) {
         func->setAttr("no_inline", UnitAttr::get(func.getContext()));
+      }
+    }
   }
 };
 
@@ -201,14 +213,18 @@ struct FormEmitCExpressionsCompatPass final
     for (Operation &op : llvm::make_early_inc_range(
              expression.getBody()->without_terminator())) {
       auto apply = dyn_cast<emitc::ApplyOp>(op);
-      if (apply && apply.getApplicableOperator() == "&")
+      const bool isAddressOf =
+          apply && apply.getApplicableOperator() == "&";
+      if (isAddressOf) {
         continue;
+      }
 
       for (OpOperand &operand : llvm::make_early_inc_range(op.getOpOperands())) {
         auto producer = operand.get().getDefiningOp<emitc::ExpressionOp>();
         if (!producer || !producer.getResult().hasOneUse() ||
-            producer.hasSideEffects())
+            producer.hasSideEffects()) {
           continue;
+        }
 
         if (producer.getDoNotInline()) {
           continue;
@@ -241,10 +257,13 @@ struct FormEmitCExpressionsCompatPass final
     ModuleOp module = getOperation();
     OpBuilder builder(&getContext());
     module.walk([&](Operation *op) {
-      if (op->hasTrait<OpTrait::emitc::CExpression>() &&
+      const bool isTopLevelSingleResultExpression =
+          op->hasTrait<OpTrait::emitc::CExpression>() &&
           !op->getParentOfType<emitc::ExpressionOp>() &&
-          op->getNumResults() == 1)
+          op->getNumResults() == 1;
+      if (isTopLevelSingleResultExpression) {
         emitc::createExpression(op, builder);
+      }
     });
 
     IRRewriter rewriter(&getContext());
@@ -383,37 +402,39 @@ static LogicalResult applyConfiguredPassManagerCLOptions(
   return failure();
 }
 
-static LogicalResult reorderEmitCFunctions(ModuleOp module) {
+struct EmitCFunctionOrder {
   SmallVector<emitc::FuncOp> declarations;
   SmallVector<emitc::FuncOp> definitions;
   llvm::DenseMap<StringAttr, emitc::FuncOp> definitionsByName;
-
-  for (auto func : module.getOps<emitc::FuncOp>()) {
-    if (func.isDeclaration()) {
-      declarations.push_back(func);
-      continue;
-    }
-    definitions.push_back(func);
-    definitionsByName[func.getSymNameAttr()] = func;
-  }
-
   llvm::DenseMap<Operation *, unsigned> indegree;
   llvm::DenseMap<Operation *, SmallVector<Operation *>> outgoing;
-  for (auto func : definitions) {
-    indegree[func.getOperation()] = 0;
-  }
+};
 
-  for (auto caller : definitions) {
+static void collectEmitCFunctions(ModuleOp module, EmitCFunctionOrder &order) {
+  for (auto func : module.getOps<emitc::FuncOp>()) {
+    if (func.isDeclaration()) {
+      order.declarations.push_back(func);
+      continue;
+    }
+    order.definitions.push_back(func);
+    order.definitionsByName[func.getSymNameAttr()] = func;
+    order.indegree[func.getOperation()] = 0;
+  }
+}
+
+static LogicalResult buildEmitCFunctionCallGraph(EmitCFunctionOrder &order) {
+  for (auto caller : order.definitions) {
     Operation *callerOp = caller.getOperation();
     llvm::SmallPtrSet<Operation *, kSeenCalleeInlineCapacity> seenCallees;
     bool hasCycle = false;
-    caller.walk([&](emitc::CallOp call) {
+    caller.walk([&callerOp, &order, &seenCallees,
+                 &hasCycle](emitc::CallOp call) {
       auto calleeAttr = call.getCalleeAttr();
       if (!calleeAttr) {
         return;
       }
-      auto it = definitionsByName.find(calleeAttr.getLeafReference());
-      if (it == definitionsByName.end()) {
+      auto it = order.definitionsByName.find(calleeAttr.getLeafReference());
+      if (it == order.definitionsByName.end()) {
         return;
       }
       Operation *calleeOp = it->second.getOperation();
@@ -424,8 +445,8 @@ static LogicalResult reorderEmitCFunctions(ModuleOp module) {
       if (!seenCallees.insert(calleeOp).second) {
         return;
       }
-      outgoing[calleeOp].push_back(callerOp);
-      ++indegree[callerOp];
+      order.outgoing[calleeOp].push_back(callerOp);
+      ++order.indegree[callerOp];
     });
     if (hasCycle) {
       return caller.emitOpError()
@@ -433,42 +454,47 @@ static LogicalResult reorderEmitCFunctions(ModuleOp module) {
                 "emission";
     }
   }
+  return success();
+}
 
+static LogicalResult sortEmitCFunctionDefinitions(
+    ModuleOp module, const EmitCFunctionOrder &order,
+    SmallVectorImpl<emitc::FuncOp> &sortedDefinitions) {
+  llvm::DenseMap<Operation *, unsigned> remaining = order.indegree;
   SmallVector<Operation *> ready;
-  for (auto func : definitions) {
-    if (indegree[func.getOperation()] == 0) {
+  for (auto func : order.definitions) {
+    if (remaining[func.getOperation()] == 0) {
       ready.push_back(func.getOperation());
     }
   }
 
-  SmallVector<emitc::FuncOp> sortedDefinitions;
   while (!ready.empty()) {
     Operation *next = ready.front();
     ready.erase(ready.begin());
-    auto nextFunc = cast<emitc::FuncOp>(next);
-    sortedDefinitions.push_back(nextFunc);
-
-    for (Operation *user : outgoing[next]) {
-      unsigned &userIndegree = indegree[user];
+    sortedDefinitions.push_back(cast<emitc::FuncOp>(next));
+    auto outgoingIt = order.outgoing.find(next);
+    if (outgoingIt == order.outgoing.end()) {
+      continue;
+    }
+    for (Operation *user : outgoingIt->second) {
+      unsigned &userIndegree = remaining[user];
       if (--userIndegree == 0) {
         ready.push_back(user);
       }
     }
   }
 
-  if (sortedDefinitions.size() != definitions.size()) {
-    return module.emitError()
-           << "cyclic function call graph is not supported for EmitC C++ emission";
-  }
-
-  if (declarations.empty() && definitions.size() <= 1) {
+  const bool hasSortedAllDefinitions =
+      sortedDefinitions.size() == order.definitions.size();
+  if (hasSortedAllDefinitions) {
     return success();
   }
+  return module.emitError()
+         << "cyclic function call graph is not supported for EmitC C++ emission";
+}
 
-  SmallVector<emitc::FuncOp> desiredOrder;
-  desiredOrder.append(declarations.begin(), declarations.end());
-  desiredOrder.append(sortedDefinitions.begin(), sortedDefinitions.end());
-
+static void moveEmitCFunctionsToOrder(
+    ModuleOp module, ArrayRef<emitc::FuncOp> desiredOrder) {
   Block &body = module.getBodyRegion().front();
   Operation *anchor = nullptr;
   for (Operation &op : body.getOperations()) {
@@ -478,31 +504,50 @@ static LogicalResult reorderEmitCFunctions(ModuleOp module) {
     }
   }
   if (!anchor) {
-    return success();
+    return;
   }
 
-  auto advanceAnchor = [&]() {
+  auto advanceAnchor = [&anchor]() {
     while (anchor) {
       anchor = anchor->getNextNode();
       if (!anchor || isa<emitc::FuncOp>(anchor)) {
-        return;
+        break;
       }
     }
   };
-
-  for (auto func : desiredOrder) {
+  for (emitc::FuncOp func : desiredOrder) {
     if (func.getOperation() == anchor) {
       advanceAnchor();
       continue;
     }
     if (anchor) {
       func->moveBefore(anchor);
-    }
-    else {
+    } else {
       func->moveBefore(&body, body.end());
     }
   }
+}
 
+static LogicalResult reorderEmitCFunctions(ModuleOp module) {
+  EmitCFunctionOrder order;
+  collectEmitCFunctions(module, order);
+  if (failed(buildEmitCFunctionCallGraph(order))) {
+    return failure();
+  }
+  SmallVector<emitc::FuncOp> sortedDefinitions;
+  if (failed(sortEmitCFunctionDefinitions(module, order, sortedDefinitions))) {
+    return failure();
+  }
+  const bool onlyOneDefinition = order.definitions.size() <= 1;
+  const bool noReorderingNeeded = order.declarations.empty() && onlyOneDefinition;
+  if (noReorderingNeeded) {
+    return success();
+  }
+
+  SmallVector<emitc::FuncOp> desiredOrder;
+  desiredOrder.append(order.declarations.begin(), order.declarations.end());
+  desiredOrder.append(sortedDefinitions.begin(), sortedDefinitions.end());
+  moveEmitCFunctionsToOrder(module, desiredOrder);
   return success();
 }
 
@@ -909,17 +954,20 @@ static bool hasUnexpandedTileOps(ModuleOp module) {
     // It still needs tile-handle materialization, backend-helper inlining, and
     // tile_buf_addr folding before VPTO emission.
     if (auto func = dyn_cast<func::FuncOp>(op);
-        func && func->hasAttr("pto.tileop.helper"))
+        func && func->hasAttr("pto.tileop.helper")) {
       found = true;
+    }
   });
   return found;
 }
 
-using FunctionBlockArgHintMap =
-    llvm::StringMap<llvm::SmallVector<llvm::SmallVector<std::string, 4>, 4>>;
+using FunctionBlockArgHintMap = llvm::StringMap<
+    llvm::SmallVector<llvm::SmallVector<std::string, kNameHintInlineCapacity>,
+                      kNameHintInlineCapacity>>;
 
 static bool isGeneratedValueName(llvm::StringRef name);
-static SmallVector<std::string, 4> getValueNameHints(Value value);
+static SmallVector<std::string, kNameHintInlineCapacity>
+getValueNameHints(Value value);
 
 static bool isCppIdentifierStart(char c) {
   return std::isalpha(static_cast<unsigned char>(c)) || c == '_';
@@ -949,10 +997,10 @@ static std::optional<std::string> getTextualNameFromSMRange(llvm::SMRange range)
   return name.str();
 }
 
-static SmallVector<std::string, 4>
+static SmallVector<std::string, kNameHintInlineCapacity>
 expandTextualResultGroupHints(const AsmParserState::OperationDefinition &opDef,
                               unsigned groupIndex) {
-  SmallVector<std::string, 4> hints;
+  SmallVector<std::string, kNameHintInlineCapacity> hints;
   if (groupIndex >= opDef.resultGroups.size()) {
     return hints;
   }
@@ -982,9 +1030,9 @@ expandTextualResultGroupHints(const AsmParserState::OperationDefinition &opDef,
 
 static std::string sanitizeCppIdentifier(llvm::StringRef name) {
   std::string sanitized;
-  sanitized.reserve(name.size() + 4);
+  sanitized.reserve(name.size() + kCppIdentifierReserveExtra);
 
-  auto appendUnderscore = [&]() {
+  auto appendUnderscore = [&sanitized]() {
     if (sanitized.empty() || sanitized.back() != '_') {
       sanitized.push_back('_');
     }
@@ -1003,56 +1051,55 @@ static std::string sanitizeCppIdentifier(llvm::StringRef name) {
     sanitized.pop_back();
   }
 
-  if (sanitized.empty())
+  if (sanitized.empty()) {
     return {};
+  }
   if (!isCppIdentifierStart(sanitized.front())) {
     sanitized.insert(sanitized.begin(), '_');
   }
   return sanitized;
 }
 
-static void appendLocationNameHints(Location loc,
-                                    SmallVectorImpl<std::string> &hints) {
-  if (auto nameLoc = dyn_cast<NameLoc>(loc)) {
-    std::string sanitized = sanitizeCppIdentifier(nameLoc.getName().getValue());
+static void appendSanitizedLocationMetadata(
+    Attribute metadata, SmallVectorImpl<std::string> &hints) {
+  if (auto strAttr = dyn_cast<StringAttr>(metadata)) {
+    std::string sanitized = sanitizeCppIdentifier(strAttr.getValue());
     if (!sanitized.empty()) {
       hints.push_back(std::move(sanitized));
     }
     return;
   }
+  auto arrayAttr = dyn_cast<ArrayAttr>(metadata);
+  if (!arrayAttr) {
+    return;
+  }
+  for (Attribute attr : arrayAttr) {
+    auto strAttr = dyn_cast<StringAttr>(attr);
+    if (!strAttr) {
+      continue;
+    }
+    std::string sanitized = sanitizeCppIdentifier(strAttr.getValue());
+    if (!sanitized.empty()) {
+      hints.push_back(std::move(sanitized));
+    }
+  }
+}
 
+static void appendLocationNameHints(Location loc,
+                                    SmallVectorImpl<std::string> &hints) {
+  if (auto nameLoc = dyn_cast<NameLoc>(loc)) {
+    appendSanitizedLocationMetadata(nameLoc.getName(), hints);
+    return;
+  }
   if (auto fusedLoc = dyn_cast<FusedLoc>(loc)) {
     if (Attribute metadata = fusedLoc.getMetadata()) {
-      if (auto strAttr = dyn_cast<StringAttr>(metadata)) {
-        std::string sanitized = sanitizeCppIdentifier(strAttr.getValue());
-        if (!sanitized.empty()) {
-          hints.push_back(std::move(sanitized));
-        }
-        return;
-      }
-      if (auto arrayAttr = dyn_cast<ArrayAttr>(metadata)) {
-        for (Attribute attr : arrayAttr) {
-          auto strAttr = dyn_cast<StringAttr>(attr);
-          if (!strAttr) {
-            continue;
-          }
-          std::string sanitized = sanitizeCppIdentifier(strAttr.getValue());
-          if (!sanitized.empty()) {
-            hints.push_back(std::move(sanitized));
-          }
-        }
-        if (!hints.empty()) {
-          return;
-        }
-      }
+      appendSanitizedLocationMetadata(metadata, hints);
     }
-
     // Only metadata explicitly attached by PTOAS name-hint recovery carries an
     // ordered result-name list. Ordinary fused child locations are debug
     // provenance, not result-indexed name hints.
     return;
   }
-
   if (auto callSiteLoc = dyn_cast<CallSiteLoc>(loc)) {
     appendLocationNameHints(callSiteLoc.getCallee(), hints);
     if (hints.empty()) {
@@ -1062,7 +1109,7 @@ static void appendLocationNameHints(Location loc,
 }
 
 static bool hasLocationNameHints(Location loc) {
-  SmallVector<std::string, 4> hints;
+  SmallVector<std::string, kNameHintInlineCapacity> hints;
   appendLocationNameHints(loc, hints);
   return !hints.empty();
 }
@@ -1072,48 +1119,41 @@ static bool hasLocationNameHints(Location loc) {
 // form (e.g. "0", "24", "query_tile") so that issue #337's "pto: %N" provenance
 // comments can map a generated C++ variable back to its input .pto SSA name,
 // even for pure-digit names that would otherwise be sanitized to "_0".
-static void appendRawLocationProvenance(Location loc,
-                                        SmallVectorImpl<std::string> &hints) {
-  if (auto nameLoc = dyn_cast<NameLoc>(loc)) {
-    std::string raw = nameLoc.getName().getValue().str();
-    if (!raw.empty()) {
-      hints.push_back(std::move(raw));
+static void appendRawLocationMetadata(Attribute metadata,
+                                      SmallVectorImpl<std::string> &hints) {
+  if (auto strAttr = dyn_cast<StringAttr>(metadata)) {
+    if (!strAttr.getValue().empty()) {
+      hints.push_back(strAttr.getValue().str());
     }
     return;
   }
+  auto arrayAttr = dyn_cast<ArrayAttr>(metadata);
+  if (!arrayAttr) {
+    return;
+  }
+  for (Attribute attr : arrayAttr) {
+    auto strAttr = dyn_cast<StringAttr>(attr);
+    if (strAttr && !strAttr.getValue().empty()) {
+      hints.push_back(strAttr.getValue().str());
+    }
+  }
+}
 
+static void appendRawLocationProvenance(Location loc,
+                                        SmallVectorImpl<std::string> &hints) {
+  if (auto nameLoc = dyn_cast<NameLoc>(loc)) {
+    appendRawLocationMetadata(nameLoc.getName(), hints);
+    return;
+  }
   if (auto fusedLoc = dyn_cast<FusedLoc>(loc)) {
     if (Attribute metadata = fusedLoc.getMetadata()) {
-      if (auto strAttr = dyn_cast<StringAttr>(metadata)) {
-        std::string raw = strAttr.getValue().str();
-        if (!raw.empty()) {
-          hints.push_back(std::move(raw));
-        }
-        return;
-      }
-      if (auto arrayAttr = dyn_cast<ArrayAttr>(metadata)) {
-        for (Attribute attr : arrayAttr) {
-          auto strAttr = dyn_cast<StringAttr>(attr);
-          if (!strAttr) {
-            continue;
-          }
-          std::string raw = strAttr.getValue().str();
-          if (!raw.empty()) {
-            hints.push_back(std::move(raw));
-          }
-        }
-        if (!hints.empty()) {
-          return;
-        }
-      }
+      appendRawLocationMetadata(metadata, hints);
     }
-
     // Only metadata explicitly attached by PTOAS name-hint recovery carries an
     // ordered result-name list. Ordinary fused child locations are debug
     // provenance, not result-indexed name hints.
     return;
   }
-
   if (auto callSiteLoc = dyn_cast<CallSiteLoc>(loc)) {
     appendRawLocationProvenance(callSiteLoc.getCallee(), hints);
     if (hints.empty()) {
@@ -1125,8 +1165,9 @@ static void appendRawLocationProvenance(Location loc,
 // Recover the raw provenance (input .pto SSA name) for an op's results.
 // Returns one raw name per result when available, mirroring getResultNameHints
 // but without sanitization.
-static SmallVector<std::string, 4> getRawResultProvenance(Operation *op) {
-  SmallVector<std::string, 4> hints;
+static SmallVector<std::string, kProvenanceInlineCapacity>
+getRawResultProvenance(Operation *op) {
+  SmallVector<std::string, kProvenanceInlineCapacity> hints;
   if (!op || op->getNumResults() == 0) {
     return hints;
   }
@@ -1154,8 +1195,9 @@ static SmallVector<std::string, 4> getRawResultProvenance(Operation *op) {
   return hints;
 }
 
-static SmallVector<std::string, 4> getRawLocationProvenance(Location loc) {
-  SmallVector<std::string, 4> hints;
+static SmallVector<std::string, kProvenanceInlineCapacity>
+getRawLocationProvenance(Location loc) {
+  SmallVector<std::string, kProvenanceInlineCapacity> hints;
   appendRawLocationProvenance(loc, hints);
   hints.erase(std::remove_if(hints.begin(), hints.end(),
                              [](const std::string &hint) {
@@ -1166,7 +1208,8 @@ static SmallVector<std::string, 4> getRawLocationProvenance(Location loc) {
 }
 
 static Location getIndexedRawProvenanceLoc(Location fallbackLoc, unsigned index) {
-  SmallVector<std::string, 4> hints = getRawLocationProvenance(fallbackLoc);
+  SmallVector<std::string, kProvenanceInlineCapacity> hints =
+      getRawLocationProvenance(fallbackLoc);
   if (index >= hints.size()) {
     return fallbackLoc;
   }
@@ -1177,7 +1220,7 @@ static Location getIndexedRawProvenanceLoc(Location fallbackLoc, unsigned index)
 static Location attachLocationNameHints(Location baseLoc,
                                         llvm::ArrayRef<std::string> hints,
                                         MLIRContext *context) {
-  SmallVector<Attribute, 4> attrs;
+  SmallVector<Attribute, kNameHintInlineCapacity> attrs;
   attrs.reserve(hints.size());
   for (llvm::StringRef hint : hints) {
     if (!hint.empty()) {
@@ -1207,7 +1250,7 @@ static void applyOperationResultNameHints(Operation *op,
       hasLocationNameHints(op->getLoc()))
     return;
 
-  SmallVector<std::string, 4> limitedHints;
+  SmallVector<std::string, kNameHintInlineCapacity> limitedHints;
   limitedHints.reserve(std::min<size_t>(op->getNumResults(), hints.size()));
   for (size_t i = 0, e = std::min<size_t>(op->getNumResults(), hints.size());
        i < e; ++i)
@@ -1222,7 +1265,7 @@ static void applyOperationResultNameHints(Operation *op,
 static void splitDerivedSingleResultProvenanceLocsInRegion(Region &region);
 
 static void splitDerivedSingleResultProvenanceLocsInBlock(Block &block) {
-  SmallVector<Operation *, 16> ops;
+  SmallVector<Operation *, kBranchInlineCapacity> ops;
   ops.reserve(block.getOperations().size());
   for (Operation &op : block) {
     ops.push_back(&op);
@@ -1235,7 +1278,8 @@ static void splitDerivedSingleResultProvenanceLocsInBlock(Block &block) {
       continue;
     }
 
-    SmallVector<std::string, 4> hints = getRawLocationProvenance(op->getLoc());
+    SmallVector<std::string, kProvenanceInlineCapacity> hints =
+        getRawLocationProvenance(op->getLoc());
     if (hints.size() <= 1) {
       ++i;
       continue;
@@ -1290,12 +1334,13 @@ static void narrowUnusedMultiResultProvenanceLocs(Operation *root) {
       return;
     }
 
-    SmallVector<std::string, 4> hints = getRawLocationProvenance(op->getLoc());
+    SmallVector<std::string, kProvenanceInlineCapacity> hints =
+        getRawLocationProvenance(op->getLoc());
     if (hints.size() != op->getNumResults()) {
       return;
     }
 
-    SmallVector<std::string, 4> liveHints;
+    SmallVector<std::string, kProvenanceInlineCapacity> liveHints;
     liveHints.reserve(hints.size());
     for (auto [index, result] : llvm::enumerate(op->getResults())) {
       if (!result.use_empty()) {
@@ -1473,11 +1518,11 @@ void mlir::pto::applyTextualNameHintsToModule(ModuleOp module,
       continue;
     }
 
-    SmallVector<std::string, 4> hints;
+    SmallVector<std::string, kNameHintInlineCapacity> hints;
     hints.reserve(opDef.op->getNumResults());
     for (unsigned groupIndex = 0, e = opDef.resultGroups.size(); groupIndex < e;
          ++groupIndex) {
-      SmallVector<std::string, 4> groupHints =
+      SmallVector<std::string, kNameHintInlineCapacity> groupHints =
           expandTextualResultGroupHints(opDef, groupIndex);
       hints.append(groupHints.begin(), groupHints.end());
     }
@@ -1491,19 +1536,22 @@ void mlir::pto::applyTextualNameHintsToModule(ModuleOp module,
 static FunctionBlockArgHintMap collectFunctionBlockArgNameHints(ModuleOp module) {
   FunctionBlockArgHintMap hintsByFunction;
   for (func::FuncOp func : module.getOps<func::FuncOp>()) {
-    SmallVector<Block *, 8> nonEntryBlocks;
+    SmallVector<Block *, kBlockInlineCapacity> nonEntryBlocks;
     collectNonEntryBlocksInSourceOrder(func.getOperation(), nonEntryBlocks);
     if (nonEntryBlocks.empty()) {
       continue;
     }
 
-    SmallVector<SmallVector<std::string, 4>, 4> blockHints;
+    SmallVector<SmallVector<std::string, kNameHintInlineCapacity>,
+                kNameHintInlineCapacity>
+        blockHints;
     blockHints.reserve(nonEntryBlocks.size());
     for (Block *block : nonEntryBlocks) {
-      SmallVector<std::string, 4> argHints;
+      SmallVector<std::string, kNameHintInlineCapacity> argHints;
       bool hasAllHints = block->getNumArguments() != 0;
       for (BlockArgument arg : block->getArguments()) {
-        SmallVector<std::string, 4> hints = getValueNameHints(arg);
+        SmallVector<std::string, kNameHintInlineCapacity> hints =
+            getValueNameHints(arg);
         if (hints.empty()) {
           hasAllHints = false;
           break;
@@ -1530,7 +1578,7 @@ static void applyFunctionBlockArgNameHintsToEmitC(
       continue;
     }
 
-    SmallVector<Block *, 8> nonEntryBlocks;
+    SmallVector<Block *, kBlockInlineCapacity> nonEntryBlocks;
     collectNonEntryBlocksInSourceOrder(func.getOperation(), nonEntryBlocks);
     if (nonEntryBlocks.size() != it->second.size()) {
       continue;
@@ -1549,14 +1597,16 @@ static void applyFunctionBlockArgNameHintsToEmitC(
 
     for (auto [blockIndex, block] : llvm::enumerate(nonEntryBlocks)) {
       const auto &argHints = it->second[blockIndex];
-      for (auto [argIndex, arg] : llvm::enumerate(block->getArguments()))
+      for (auto [argIndex, arg] : llvm::enumerate(block->getArguments())) {
         applyValueNameHints(arg, llvm::ArrayRef<std::string>{argHints[argIndex]});
+      }
     }
   }
 }
 
-static SmallVector<std::string, 4> getValueNameHints(Value value) {
-  SmallVector<std::string, 4> hints;
+static SmallVector<std::string, kNameHintInlineCapacity>
+getValueNameHints(Value value) {
+  SmallVector<std::string, kNameHintInlineCapacity> hints;
   if (!value) {
     return hints;
   }
@@ -1588,25 +1638,27 @@ static std::string buildHintMarker(llvm::StringRef prefix,
         continue;
       }
       encoded.push_back('%');
-      encoded.push_back(hexDigit((c >> 4) & 0xF));
-      encoded.push_back(hexDigit(c & 0xF));
+      encoded.push_back(
+          hexDigit((c >> kHexNibbleBitWidth) & kHexNibbleMask));
+      encoded.push_back(hexDigit(c & kHexNibbleMask));
     }
     return encoded;
   };
 
   std::string marker = ("/* " + prefix + ":").str();
   for (size_t i = 0; i < hints.size(); ++i) {
-    if (i != 0)
+    if (i != 0) {
       marker.push_back(',');
+    }
     marker.append(encodeHintMarkerToken(hints[i]));
   }
   marker.append(" */\n");
   return marker;
 }
 
-static SmallVector<std::string, 8>
+static SmallVector<std::string, kProvenanceInlineCapacity>
 collectExpressionProvenance(emitc::ExpressionOp expr) {
-  SmallVector<std::string, 8> provenance;
+  SmallVector<std::string, kProvenanceInlineCapacity> provenance;
   auto appendUnique = [&](llvm::ArrayRef<std::string> names) {
     for (const std::string &name : names) {
       if (name.empty()) {
@@ -1636,22 +1688,25 @@ collectExpressionProvenance(emitc::ExpressionOp expr) {
 static void annotateEmitCProvenanceHints(ModuleOp module) {
   struct ProvenanceMarker {
     Operation *op = nullptr;
-    SmallVector<std::string, 8> names;
+    SmallVector<std::string, kProvenanceInlineCapacity> names;
   };
 
-  llvm::SmallVector<ProvenanceMarker, 32> opsToAnnotate;
+  llvm::SmallVector<ProvenanceMarker, kProvenanceMarkerInlineCapacity>
+      opsToAnnotate;
   module.walk<WalkOrder::PreOrder>([&](Operation *op) {
     if (op->getNumResults() == 0 || isa<emitc::VerbatimOp>(op)) {
       return WalkResult::advance();
     }
 
     if (auto expr = dyn_cast<emitc::ExpressionOp>(op)) {
-      SmallVector<std::string, 8> provenance = collectExpressionProvenance(expr);
+      SmallVector<std::string, kProvenanceInlineCapacity> provenance =
+          collectExpressionProvenance(expr);
       if (provenance.empty()) {
         return WalkResult::skip();
       }
       opsToAnnotate.push_back(
-          ProvenanceMarker{op, SmallVector<std::string, 8>(provenance)});
+          ProvenanceMarker{
+              op, SmallVector<std::string, kProvenanceInlineCapacity>(provenance)});
       return WalkResult::skip();
     }
 
@@ -1661,12 +1716,14 @@ static void annotateEmitCProvenanceHints(ModuleOp module) {
     // Only carry raw provenance into the C++ post-pass. Semantic renaming is
     // intentionally deferred until naming can happen inside the emitter's own
     // symbol table instead of via post-hoc C++ text rewriting.
-    SmallVector<std::string, 4> provenance = getRawResultProvenance(op);
+    SmallVector<std::string, kProvenanceInlineCapacity> provenance =
+        getRawResultProvenance(op);
     if (provenance.empty()) {
       return WalkResult::advance();
     }
     opsToAnnotate.push_back(ProvenanceMarker{
-        op, SmallVector<std::string, 8>(provenance.begin(), provenance.end())});
+        op, SmallVector<std::string, kProvenanceInlineCapacity>(
+                provenance.begin(), provenance.end())});
     return WalkResult::advance();
   });
 
@@ -1757,8 +1814,11 @@ findNextMarkerCall(const std::string &cpp, llvm::StringRef marker,
   }
 
   size_t lparenPos = call.markerPos + marker.size();
-  if (lparenPos >= cpp.size() || cpp[lparenPos] != '(')
+  const bool missingOpeningParen =
+      lparenPos >= cpp.size() || cpp[lparenPos] != '(';
+  if (missingOpeningParen) {
     return ParsedMarkerCall{call.markerPos, std::string::npos, {}};
+  }
 
   size_t argsBegin = lparenPos + 1;
   int parenDepth = 0;
@@ -1834,7 +1894,7 @@ static bool rewriteMarkerCallToMember(std::string &cpp, llvm::StringRef marker,
         }
         if (expectedNumArgs == kMarkerRewriteTernaryArgCount) {
           replacement.append(", ");
-          replacement.append(call.args[2].str());
+          replacement.append(call.args[kThirdMarkerArgumentIndex].str());
         }
         replacement.push_back(')');
         return replacement;
@@ -1943,8 +2003,8 @@ static void appendEmitCIntegerAttrLiteral(std::string &storage,
     return;
   }
 
-  SmallString<128> strValue;
-  value.toString(strValue, 10, !isUnsigned, false);
+  SmallString<kRawStringInlineCapacity> strValue;
+  value.toString(strValue, kEmitCIntegerRadix, !isUnsigned, false);
   storage.append(strValue.data(), strValue.size());
 }
 
@@ -2023,7 +2083,8 @@ static IntegerAttr normalizeEmitCIndexPlaceholderAttr(MLIRContext *ctx,
                                                       IntegerAttr attr) {
   const APInt &value = attr.getValue();
   int64_t index = value.getBitWidth() == 0 ? 0 : value.getSExtValue();
-  return IntegerAttr::get(IndexType::get(ctx), APInt(64, index));
+  return IntegerAttr::get(IndexType::get(ctx),
+                          APInt(kIndexBitWidth, index));
 }
 
 static ArrayAttr normalizeEmitCCallArgsForCppEmission(MLIRContext *ctx,
@@ -2200,8 +2261,11 @@ static bool rewriteMarkerCallToSubscript(std::string &cpp, llvm::StringRef marke
           return std::nullopt;
         }
         std::string replacement;
-        replacement.reserve(call.args[0].size() + call.args[1].size() + 8 +
-                            (isStore ? call.args[2].size() : 0));
+        replacement.reserve(call.args[0].size() + call.args[1].size() +
+                            kMarkerReplacementReserveExtra +
+                            (isStore
+                                 ? call.args[kThirdMarkerArgumentIndex].size()
+                                 : 0));
         replacement.push_back('(');
         replacement.append(call.args[0].str());
         replacement.push_back(')');
@@ -2210,7 +2274,7 @@ static bool rewriteMarkerCallToSubscript(std::string &cpp, llvm::StringRef marke
         replacement.push_back(']');
         if (isStore) {
           replacement.append(" = ");
-          replacement.append(call.args[2].str());
+          replacement.append(call.args[kThirdMarkerArgumentIndex].str());
         }
         return replacement;
       });
@@ -2221,8 +2285,11 @@ static void rewriteGlobalTensorMetadataMarkers(std::string &cpp) {
     (void)rewriteMarkerCalls(
         cpp, marker,
         [&](const ParsedMarkerCall &call) -> std::optional<std::string> {
-          if (call.args.size() != 2)
+          const bool hasExpectedArgs =
+              call.args.size() == kMarkerRewriteMinArgCount;
+          if (!hasExpectedArgs) {
             return std::nullopt;
+          }
           return ("(" + call.args[0] + ")." + method +
                   "(static_cast<int>(" + call.args[1] + "))")
               .str();
@@ -2262,8 +2329,12 @@ static std::string getLineIndent(llvm::StringRef line) {
 }
 
 static bool isAICOREFunctionStart(llvm::StringRef trimmed) {
-  if (trimmed.empty() || trimmed.starts_with("#") || trimmed.starts_with("//"))
+  const bool isCommentOrEmpty =
+      trimmed.empty() || trimmed.starts_with("#") ||
+      trimmed.starts_with("//");
+  if (isCommentOrEmpty) {
     return false;
+  }
   if (!trimmed.contains("AICORE")) {
     return false;
   }
@@ -2356,62 +2427,84 @@ static bool previousSignificantLineIsExitOrTailFlushPoint(
   return false;
 }
 
-static std::string rewriteScalarGMStoreFlushMarkersInFunction(
-    llvm::ArrayRef<std::string> functionLines, bool hasTrailingNewline) {
-  bool needsScalarGMFlush = false;
-  llvm::SmallVector<std::string, 32> lines;
+static llvm::SmallVector<std::string, kFunctionLineInlineCapacity>
+stripScalarGMFlushMarkers(llvm::ArrayRef<std::string> functionLines,
+                          bool &needsScalarGMFlush) {
+  llvm::SmallVector<std::string, kFunctionLineInlineCapacity> lines;
   lines.reserve(functionLines.size());
-
   for (const std::string &rawLine : functionLines) {
     std::string line = rawLine;
-    bool hadMarker = stripScalarGMFlushMarkersFromLine(line);
+    const bool hadMarker = stripScalarGMFlushMarkersFromLine(line);
     needsScalarGMFlush |= hadMarker;
     if (hadMarker && llvm::StringRef(line).trim().empty()) {
       continue;
     }
     lines.push_back(std::move(line));
   }
+  return lines;
+}
 
-  if (!needsScalarGMFlush) {
-    std::string unchanged;
-    unchanged.reserve(kRewriteOutputReserveExtra);
-    for (size_t i = 0; i < lines.size(); ++i) {
-      unchanged.append(lines[i]);
-      if (i + 1 < lines.size() || hasTrailingNewline) {
-        unchanged.push_back('\n');
-      }
+static std::string joinScalarGMFlushLines(llvm::ArrayRef<std::string> lines,
+                                          bool hasTrailingNewline) {
+  std::string output;
+  output.reserve(kRewriteOutputReserveExtra);
+  for (size_t i = 0; i < lines.size(); ++i) {
+    output.append(lines[i]);
+    const bool needsNewline = i + 1 < lines.size() || hasTrailingNewline;
+    if (needsNewline) {
+      output.push_back('\n');
     }
-    return unchanged;
   }
+  return output;
+}
 
-  std::string out;
-  out.reserve(kRewriteOutputReserveExtra);
-  bool inserted = false;
-  size_t fallbackIndex = lines.size();
+static size_t findScalarGMFlushFallbackIndex(
+    llvm::ArrayRef<std::string> lines) {
   for (size_t i = lines.size(); i > 0; --i) {
     llvm::StringRef trimmed = llvm::StringRef(lines[i - 1]).trim();
     if (trimmed.empty()) {
       continue;
     }
-    if (trimmed.starts_with("}"))
-      fallbackIndex = i - 1;
-    break;
+    return trimmed.starts_with("}") ? i - 1 : lines.size();
   }
+  return lines.size();
+}
+
+static bool shouldInsertScalarGMFlush(llvm::ArrayRef<std::string> lines,
+                                       size_t index, size_t fallbackIndex) {
+  llvm::StringRef trimmed = llvm::StringRef(lines[index]).trim();
+  bool insertHere = false;
+  if (trimmed.starts_with("return")) {
+    insertHere = !previousSignificantLineIsTailFlushPoint(lines, index);
+  } else {
+    insertHere = trimmed.starts_with("#endif // __DAV_") ||
+                 trimmed.starts_with("ptoas_auto_sync_tail(");
+  }
+  if (index == fallbackIndex &&
+      !previousSignificantLineIsExitOrTailFlushPoint(lines, index)) {
+    insertHere = true;
+  }
+  return insertHere;
+}
+
+static std::string rewriteScalarGMStoreFlushMarkersInFunction(
+    llvm::ArrayRef<std::string> functionLines, bool hasTrailingNewline) {
+  bool needsScalarGMFlush = false;
+  llvm::SmallVector<std::string, kFunctionLineInlineCapacity> lines =
+      stripScalarGMFlushMarkers(functionLines, needsScalarGMFlush);
+
+  if (!needsScalarGMFlush) {
+    return joinScalarGMFlushLines(lines, hasTrailingNewline);
+  }
+
+  std::string out;
+  out.reserve(kRewriteOutputReserveExtra);
+  bool inserted = false;
+  const size_t fallbackIndex = findScalarGMFlushFallbackIndex(lines);
 
   for (size_t i = 0; i < lines.size(); ++i) {
     llvm::StringRef lineRef(lines[i]);
-    llvm::StringRef trimmed = lineRef.trim();
-    bool insertHere = false;
-    if (trimmed.starts_with("return")) {
-      insertHere = !previousSignificantLineIsTailFlushPoint(lines, i);
-    } else {
-      insertHere = trimmed.starts_with("#endif // __DAV_") ||
-                   trimmed.starts_with("ptoas_auto_sync_tail(");
-    }
-    if (i == fallbackIndex &&
-        !previousSignificantLineIsExitOrTailFlushPoint(lines, i))
-      insertHere = true;
-    if (insertHere) {
+    if (shouldInsertScalarGMFlush(lines, i, fallbackIndex)) {
       appendScalarGMFlush(out, getLineIndent(lineRef));
       inserted = true;
     }
@@ -2431,7 +2524,7 @@ static void rewriteScalarGMStoreFlushMarkers(std::string &cpp) {
   std::string out;
   out.reserve(cpp.size() + kRewriteOutputReserveExtra);
 
-  llvm::SmallVector<std::string, 32> functionLines;
+  llvm::SmallVector<std::string, kFunctionLineInlineCapacity> functionLines;
   bool inFunction = false;
   bool sawFunctionBrace = false;
   int braceDepth = 0;
@@ -2494,6 +2587,29 @@ static bool isPreprocessorDirectiveLine(llvm::StringRef trimmedLine) {
   return trimmedLine.starts_with("#");
 }
 
+static bool normalizeMalformedVerbatimLine(llvm::StringRef line,
+                                           bool prevWasPreprocessorDirective,
+                                           std::string &current) {
+  current = line.str();
+  llvm::StringRef trimmed = llvm::StringRef(current).trim();
+  if (trimmed == ";" && prevWasPreprocessorDirective) {
+    return false;
+  }
+
+  const bool hasTrailingDirectiveSemicolon =
+      isPreprocessorDirectiveLine(trimmed) && trimmed.ends_with(";");
+  const bool hasDuplicateStatementSemicolon =
+      !trimmed.empty() && !trimmed.starts_with("//") &&
+      !trimmed.starts_with("/*") && trimmed.ends_with(";;");
+  if (hasTrailingDirectiveSemicolon || hasDuplicateStatementSemicolon) {
+    size_t semicolonPos = current.find_last_of(';');
+    if (semicolonPos != std::string::npos) {
+      current.erase(semicolonPos, 1);
+    }
+  }
+  return true;
+}
+
 // Nested emitc.verbatim ops inside emitc.for / emitc.if regions currently
 // pick up an extra trailing semicolon from EmitC C++ emission, which produces
 // invalid lines such as `#if defined(__DAV_VEC__);` and `set_mask_norm();;`.
@@ -2515,35 +2631,24 @@ static void rewriteMalformedVerbatimSemicolons(std::string &cpp) {
     bool hasNewline = newlinePos != llvm::StringRef::npos;
     llvm::StringRef line =
         hasNewline ? input.slice(offset, newlinePos) : input.drop_front(offset);
-    std::string current(line.str());
-    llvm::StringRef trimmed = llvm::StringRef(current).trim();
-
-    if (trimmed == ";" && prevWasPreprocessorDirective) {
+    std::string current;
+    if (!normalizeMalformedVerbatimLine(line, prevWasPreprocessorDirective,
+                                        current)) {
       // `#endif ...` in nested verbatim blocks currently materializes as the
       // directive line followed by a standalone `;` on the next line.
       prevWasPreprocessorDirective = false;
     } else {
-      if (isPreprocessorDirectiveLine(trimmed) && trimmed.ends_with(";")) {
-        size_t semicolonPos = current.find_last_of(';');
-        if (semicolonPos != std::string::npos) {
-          current.erase(semicolonPos, 1);
-        }
-      } else if (!trimmed.empty() && !trimmed.starts_with("//") &&
-                 !trimmed.starts_with("/*") && trimmed.ends_with(";;")) {
-        size_t semicolonPos = current.find_last_of(';');
-        if (semicolonPos != std::string::npos)
-          current.erase(semicolonPos, 1);
-      }
-
       rewritten.append(current);
-      if (hasNewline)
+      if (hasNewline) {
         rewritten.push_back('\n');
+      }
       prevWasPreprocessorDirective =
           isPreprocessorDirectiveLine(llvm::StringRef(current).trim());
     }
 
-    if (!hasNewline)
+    if (!hasNewline) {
       break;
+    }
     offset = newlinePos + 1;
   }
 
@@ -2572,7 +2677,7 @@ static bool rewriteAddPtrTraceMarkers(std::string &cpp, bool showTrace) {
       replacement.append(" = ");
       replacement.append(call->args[1].str());
       replacement.append(" + ");
-      replacement.append(call->args[2].str());
+      replacement.append(call->args[kThirdMarkerArgumentIndex].str());
       replacement.append(" */");
     }
 
@@ -2663,42 +2768,43 @@ static void rewriteHoistedGlobalTensorDecls(std::string &cpp) {
   cpp.swap(out);
 }
 
-static std::optional<llvm::SmallVector<std::string, 4>>
-parseNameHintMarker(llvm::StringRef markerBody) {
-  auto decodeHintMarkerToken = [](llvm::StringRef token) {
-    auto hexValue = [](char c) -> int {
-      if (c >= '0' && c <= '9') {
-        return c - '0';
-      }
-      if (c >= 'a' && c <= 'f') {
-        return c - 'a' + 10;
-      }
-      if (c >= 'A' && c <= 'F') {
-        return c - 'A' + 10;
-      }
-      return -1;
-    };
+static int decodeNameHintHexDigit(char c) {
+  if (c >= '0' && c <= '9') {
+    return c - '0';
+  }
+  if (c >= 'a' && c <= 'f') {
+    return c - 'a' + 10;
+  }
+  if (c >= 'A' && c <= 'F') {
+    return c - 'A' + 10;
+  }
+  return -1;
+}
 
-    std::string decoded;
-    decoded.reserve(token.size());
-    for (size_t i = 0; i < token.size();) {
-      if (token[i] == '%' && i + 2 < token.size()) {
-        int hi = hexValue(token[i + 1]);
-        int lo = hexValue(token[i + 2]);
-        if (hi >= 0 && lo >= 0) {
-          decoded.push_back(
-              static_cast<char>((static_cast<unsigned>(hi) << 4) | lo));
-          i += 3;
-          continue;
-        }
+static std::string decodeNameHintMarkerToken(llvm::StringRef token) {
+  std::string decoded;
+  decoded.reserve(token.size());
+  for (size_t i = 0; i < token.size();) {
+    if (token[i] == '%' && i + 2 < token.size()) {
+      int hi = decodeNameHintHexDigit(token[i + 1]);
+      int lo = decodeNameHintHexDigit(token[i + 2]);
+      if (hi >= 0 && lo >= 0) {
+        decoded.push_back(static_cast<char>(
+            (static_cast<unsigned>(hi) << kHexNibbleBitWidth) | lo));
+        i += 3;
+        continue;
       }
-      decoded.push_back(token[i]);
-      ++i;
     }
-    return decoded;
-  };
+    decoded.push_back(token[i]);
+    ++i;
+  }
+  return decoded;
+}
 
-  llvm::SmallVector<std::string, 4> hints;
+static std::optional<llvm::SmallVector<std::string, kNameHintInlineCapacity>>
+parseNameHintMarker(llvm::StringRef markerBody) {
+
+  llvm::SmallVector<std::string, kNameHintInlineCapacity> hints;
   markerBody = markerBody.trim();
   if (markerBody.empty()) {
     return std::nullopt;
@@ -2711,7 +2817,7 @@ parseNameHintMarker(llvm::StringRef markerBody) {
         start, comma == llvm::StringRef::npos ? markerBody.size() : comma);
     token = token.trim();
     if (!token.empty()) {
-      hints.push_back(decodeHintMarkerToken(token));
+      hints.push_back(decodeNameHintMarkerToken(token));
     }
     if (comma == llvm::StringRef::npos) {
       break;
@@ -2743,7 +2849,7 @@ static void stripHintMarkersWithPrefix(std::string &cpp,
       out.append(cpp, markerPos, std::string::npos);
       break;
     }
-    markerEnd += 2;
+    markerEnd += kCommentTerminatorLength;
     while (markerEnd < cpp.size() &&
            (cpp[markerEnd] == '\r' || cpp[markerEnd] == '\n'))
       ++markerEnd;
@@ -2779,8 +2885,9 @@ static std::string sanitizeCommentText(llvm::StringRef text) {
       if (std::iscntrl(c)) {
         sanitized.push_back('\\');
         sanitized.push_back('x');
-        sanitized.push_back(hexDigit((c >> 4) & 0xF));
-        sanitized.push_back(hexDigit(c & 0xF));
+        sanitized.push_back(
+            hexDigit((c >> kHexNibbleBitWidth) & kHexNibbleMask));
+        sanitized.push_back(hexDigit(c & kHexNibbleMask));
       } else {
         sanitized.push_back(static_cast<char>(c));
       }
@@ -2794,42 +2901,54 @@ static std::string sanitizeCommentText(llvm::StringRef text) {
 // `// pto: %rawname` comment lines in-place. This avoids guessing which later
 // generated declaration a marker should attach to after EmitC/Cpp emission,
 // hoisting, or inlining. The marker is consumed (removed) here.
+static constexpr llvm::StringLiteral kProvenanceMarkerPrefix =
+    "/* PTOAS_PROVENANCE:";
+
+static size_t appendProvenanceMarkerComment(llvm::StringRef segment,
+                                            size_t markerPos, size_t markerEnd,
+                                            std::string &out) {
+  auto names = parseNameHintMarker(
+      segment.slice(markerPos + kProvenanceMarkerPrefix.size(), markerEnd));
+  if (names && !names->empty()) {
+    out.append("// pto: ");
+    for (size_t idx = 0; idx < names->size(); ++idx) {
+      if (idx != 0) {
+        out.append(", ");
+      }
+      out.push_back('%');
+      out.append(sanitizeCommentText((*names)[idx]));
+    }
+    out.push_back('\n');
+  }
+
+  size_t next = markerEnd + kCommentTerminatorLength;
+  while (next < segment.size()) {
+    const char current = segment[next];
+    if (current != '\r' && current != '\n') {
+      break;
+    }
+    ++next;
+  }
+  return next;
+}
+
 static void emitProvenanceComments(std::string &segment) {
-  static constexpr llvm::StringLiteral kProvenancePrefix =
-      "/* PTOAS_PROVENANCE:";
   std::string out;
-  out.reserve(segment.size() + 128);
+  out.reserve(segment.size() + kRawStringInlineCapacity);
   size_t i = 0;
   while (i < segment.size()) {
-    size_t mp = segment.find(kProvenancePrefix.str(), i);
+    size_t mp = segment.find(kProvenanceMarkerPrefix.str(), i);
     if (mp == std::string::npos) {
       out.append(segment, i, std::string::npos);
       break;
     }
     out.append(segment, i, mp - i);
-    size_t me = segment.find("*/", mp + kProvenancePrefix.size());
+    size_t me = segment.find("*/", mp + kProvenanceMarkerPrefix.size());
     if (me == std::string::npos) {
       out.append(segment, i, std::string::npos);
       break;
     }
-    auto names = parseNameHintMarker(
-        llvm::StringRef(segment).slice(mp + kProvenancePrefix.size(), me));
-    if (names && !names->empty()) {
-      out.append("// pto: ");
-      for (size_t idx = 0; idx < names->size(); ++idx) {
-        if (idx != 0) {
-          out.append(", ");
-        }
-        out.push_back('%');
-        out.append(sanitizeCommentText((*names)[idx]));
-      }
-      out.push_back('\n');
-    }
-    me += 2;
-    while (me < segment.size() &&
-           (segment[me] == '\r' || segment[me] == '\n'))
-      ++me;
-    i = me;
+    i = appendProvenanceMarkerComment(segment, mp, me, out);
   }
   segment.swap(out);
 }
@@ -2908,25 +3027,29 @@ static std::string normalizeConstInitializer(llvm::StringRef type,
   return rhs.str();
 }
 
-static bool parseConstantDeclarationLine(llvm::StringRef line,
-                                         ConstantDeclCandidate &candidate,
-                                         std::string &valueName) {
-  llvm::StringRef trimmed = line.trim();
-  if (trimmed.empty() || trimmed.starts_with("#") || trimmed.starts_with("//") ||
-      !trimmed.ends_with(";"))
-    return false;
+static bool startsWithAny(llvm::StringRef value,
+                          llvm::ArrayRef<llvm::StringRef> prefixes) {
+  for (llvm::StringRef prefix : prefixes) {
+    if (value.starts_with(prefix)) {
+      return true;
+    }
+  }
+  return false;
+}
 
-  llvm::StringRef body = trimmed.drop_back().rtrim();
-  if (body.starts_with("return") || body.starts_with("goto ") ||
-      body.starts_with("if ") || body.starts_with("if(") ||
-      body.starts_with("switch ") || body.starts_with("switch(") ||
-      body.starts_with("for ") || body.starts_with("for(") ||
-      body.starts_with("while ") || body.starts_with("while(") ||
-      body.starts_with("case ") || body == "default")
-    return false;
+static bool isNonDeclarationStatement(llvm::StringRef body) {
+  static constexpr llvm::StringRef kStatementPrefixes[] = {
+      "return", "go" "to ", "if ",    "if(",     "switch ", "switch(",
+      "for ",   "for(",    "while ", "while(",  "case "};
+  return body == "default" || startsWithAny(body, kStatementPrefixes);
+}
 
+static bool splitConstantDeclaration(llvm::StringRef body,
+                                     llvm::StringRef &type,
+                                     llvm::StringRef &name,
+                                     llvm::StringRef &rhs) {
   llvm::StringRef lhs = body;
-  llvm::StringRef rhs;
+  rhs = llvm::StringRef();
   if (size_t eqPos = body.find('='); eqPos != llvm::StringRef::npos) {
     lhs = body.take_front(eqPos).rtrim();
     rhs = body.drop_front(eqPos + 1).trim();
@@ -2936,9 +3059,44 @@ static bool parseConstantDeclarationLine(llvm::StringRef line,
   if (lastWs == llvm::StringRef::npos) {
     return false;
   }
+  type = lhs.take_front(lastWs).rtrim();
+  name = lhs.drop_front(lastWs + 1).trim();
+  return true;
+}
 
-  llvm::StringRef type = lhs.take_front(lastWs).rtrim();
-  llvm::StringRef name = lhs.drop_front(lastWs + 1).trim();
+static bool parseConstantInitializer(llvm::StringRef type,
+                                     llvm::StringRef rhs,
+                                     ConstantDeclCandidate &candidate) {
+  if (rhs.empty()) {
+    return true;
+  }
+  if (!isLiteralInitializer(rhs)) {
+    return false;
+  }
+  candidate.hasInitializer = true;
+  candidate.initializer = normalizeConstInitializer(type, rhs);
+  return true;
+}
+
+static bool parseConstantDeclarationLine(llvm::StringRef line,
+                                         ConstantDeclCandidate &candidate,
+                                         std::string &valueName) {
+  llvm::StringRef trimmed = line.trim();
+  if (trimmed.empty() || trimmed.starts_with("#") || trimmed.starts_with("//") ||
+      !trimmed.ends_with(";"))
+    return false;
+
+  llvm::StringRef body = trimmed.drop_back().rtrim();
+  if (isNonDeclarationStatement(body)) {
+    return false;
+  }
+
+  llvm::StringRef type;
+  llvm::StringRef name;
+  llvm::StringRef rhs;
+  if (!splitConstantDeclaration(body, type, name, rhs)) {
+    return false;
+  }
   if (!isGeneratedValueName(name) || !isConstFoldableScalarType(type)) {
     return false;
   }
@@ -2950,16 +3108,7 @@ static bool parseConstantDeclarationLine(llvm::StringRef line,
   candidate.indent = line.take_front(indentLen).str();
   candidate.type = type.str();
   valueName = name.str();
-
-  if (!rhs.empty()) {
-    if (!isLiteralInitializer(rhs)) {
-      return false;
-    }
-    candidate.hasInitializer = true;
-    candidate.initializer = normalizeConstInitializer(type, rhs);
-  }
-
-  return true;
+  return parseConstantInitializer(type, rhs, candidate);
 }
 
 static bool parseGeneratedValueAssignment(llvm::StringRef line,
@@ -2985,6 +3134,67 @@ static bool parseGeneratedValueAssignment(llvm::StringRef line,
   return true;
 }
 
+static void collectScalarConstantCandidates(
+    llvm::ArrayRef<std::string> lines, size_t beginLine, size_t endLine,
+    llvm::StringMap<ConstantDeclCandidate> &candidates) {
+  for (size_t i = beginLine; i <= endLine; ++i) {
+    ConstantDeclCandidate candidate;
+    std::string valueName;
+    if (parseConstantDeclarationLine(lines[i], candidate, valueName)) {
+      candidate.declLine = i;
+      candidates[valueName] = std::move(candidate);
+      continue;
+    }
+
+    llvm::StringRef assignedName;
+    llvm::StringRef rhs;
+    if (!parseGeneratedValueAssignment(lines[i], assignedName, rhs)) {
+      continue;
+    }
+
+    auto it = candidates.find(assignedName);
+    if (it == candidates.end()) {
+      continue;
+    }
+
+    ConstantDeclCandidate &info = it->second;
+    ++info.assignmentCount;
+    info.assignmentLine = i;
+    info.assignmentRhs = rhs.str();
+  }
+}
+
+static void applyScalarConstantRewrites(
+    llvm::SmallVectorImpl<std::string> &lines,
+    llvm::SmallVectorImpl<bool> &eraseLine,
+    llvm::StringMap<ConstantDeclCandidate> &candidates) {
+  for (auto &entry : candidates) {
+    llvm::StringRef valueName = entry.getKey();
+    ConstantDeclCandidate &info = entry.getValue();
+
+    std::string initializer;
+    if (info.hasInitializer) {
+      if (info.assignmentCount != 0) {
+        continue;
+      }
+      initializer = info.initializer;
+    } else {
+      if (info.assignmentCount != 1) {
+        continue;
+      }
+      if (!isLiteralInitializer(info.assignmentRhs)) {
+        continue;
+      }
+      initializer = normalizeConstInitializer(
+          info.type, llvm::StringRef(info.assignmentRhs));
+      eraseLine[info.assignmentLine] = true;
+    }
+
+    lines[info.declLine] = (info.indent + "const " + info.type + " " +
+                            valueName.str() + " = " + initializer + ";");
+  }
+}
+
 static void rewriteScalarConstantDecls(std::string &cpp) {
   llvm::SmallVector<std::string, 0> lines;
   for (llvm::StringRef ref(cpp); !ref.empty(); ref = ref.split('\n').second) {
@@ -2993,61 +3203,6 @@ static void rewriteScalarConstantDecls(std::string &cpp) {
   }
 
   llvm::SmallVector<bool, 0> eraseLine(lines.size(), false);
-  auto rewriteSegment = [&](size_t beginLine, size_t endLine) {
-    llvm::StringMap<ConstantDeclCandidate> candidates;
-
-    for (size_t i = beginLine; i <= endLine; ++i) {
-      ConstantDeclCandidate candidate;
-      std::string valueName;
-      if (parseConstantDeclarationLine(lines[i], candidate, valueName)) {
-        candidate.declLine = i;
-        candidates[valueName] = std::move(candidate);
-        continue;
-      }
-
-      llvm::StringRef assignedName;
-      llvm::StringRef rhs;
-      if (!parseGeneratedValueAssignment(lines[i], assignedName, rhs)) {
-        continue;
-      }
-
-      auto it = candidates.find(assignedName);
-      if (it == candidates.end()) {
-        continue;
-      }
-
-      ConstantDeclCandidate &info = it->second;
-      ++info.assignmentCount;
-      info.assignmentLine = i;
-      info.assignmentRhs = rhs.str();
-    }
-
-    for (auto &entry : candidates) {
-      llvm::StringRef valueName = entry.getKey();
-      ConstantDeclCandidate &info = entry.getValue();
-
-      std::string initializer;
-      if (info.hasInitializer) {
-        if (info.assignmentCount != 0) {
-          continue;
-        }
-        initializer = info.initializer;
-      } else {
-        if (info.assignmentCount != 1) {
-          continue;
-        }
-        if (!isLiteralInitializer(info.assignmentRhs)) {
-          continue;
-        }
-        initializer = normalizeConstInitializer(
-            info.type, llvm::StringRef(info.assignmentRhs));
-        eraseLine[info.assignmentLine] = true;
-      }
-
-      lines[info.declLine] = (info.indent + "const " + info.type + " " +
-                              valueName.str() + " = " + initializer + ";");
-    }
-  };
 
   int braceDepth = 0;
   size_t segmentStart = 0;
@@ -3064,7 +3219,9 @@ static void rewriteScalarConstantDecls(std::string &cpp) {
       segmentStart = i;
     }
     if (depthBefore > 0 && braceDepth == 0) {
-      rewriteSegment(segmentStart, i);
+      llvm::StringMap<ConstantDeclCandidate> candidates;
+      collectScalarConstantCandidates(lines, segmentStart, i, candidates);
+      applyScalarConstantRewrites(lines, eraseLine, candidates);
     }
   }
 
@@ -3152,6 +3309,37 @@ static void prepareVPTOForEmission(PassManager &pm) {
   kernelModulePM.addPass(pto::createPTOValidateVPTOEmissionIRPass());
 }
 
+static void appendA5VPTOPostLoweringFusionPipeline(OpPassManager &kernelModulePM) {
+  kernelModulePM.addPass(pto::createPTOLowLevelLoopFusionPass());
+  kernelModulePM.addPass(mlir::createCanonicalizerPass());
+  kernelModulePM.addPass(mlir::createCSEPass());
+  kernelModulePM.addNestedPass<mlir::func::FuncOp>(
+      pto::createPTOFusionPredicateElisionPass());
+  kernelModulePM.addNestedPass<mlir::func::FuncOp>(
+      pto::createPTOFusionLoadStoreElisionPass());
+  if (enableVexpdifFusion) {
+    kernelModulePM.addNestedPass<mlir::func::FuncOp>(
+        pto::createPTOVexpdifFusionPass());
+  }
+  if (enableUnrollAfterLoopFusion) {
+    kernelModulePM.addNestedPass<mlir::func::FuncOp>(
+        pto::createPTOUnrollAfterLoopFusionPass());
+    kernelModulePM.addPass(mlir::createCanonicalizerPass());
+    kernelModulePM.addPass(mlir::createCSEPass());
+    kernelModulePM.addNestedPass<mlir::func::FuncOp>(
+        pto::createPTOFusionLoadStoreElisionPass());
+    // Unrolling and cleanup can expose new vsub + vexp patterns, so run
+    // vexpdif fusion again before flattening the regions.
+    if (enableVexpdifFusion) {
+      kernelModulePM.addNestedPass<mlir::func::FuncOp>(
+          pto::createPTOVexpdifFusionPass());
+    }
+  }
+  kernelModulePM.addNestedPass<mlir::func::FuncOp>(
+      pto::createPTOFlattenFusionRegionPass());
+  kernelModulePM.addPass(mlir::createCSEPass());
+}
+
 static void lowerPTOToVPTOBackend(PassManager &pm, ModuleOp module) {
   auto &kernelModulePM = pm.nest<ModuleOp>();
   auto moduleArchAttr =
@@ -3175,34 +3363,7 @@ static void lowerPTOToVPTOBackend(PassManager &pm, ModuleOp module) {
   kernelModulePM.addNestedPass<mlir::func::FuncOp>(
       pto::createFoldTileBufIntrinsicsPass("shape-only"));
   if (enableA5VPTOPostLoweringFusionLifecycle) {
-    kernelModulePM.addPass(pto::createPTOLowLevelLoopFusionPass());
-    kernelModulePM.addPass(mlir::createCanonicalizerPass());
-    kernelModulePM.addPass(mlir::createCSEPass());
-    kernelModulePM.addNestedPass<mlir::func::FuncOp>(
-        pto::createPTOFusionPredicateElisionPass());
-    kernelModulePM.addNestedPass<mlir::func::FuncOp>(
-        pto::createPTOFusionLoadStoreElisionPass());
-    if (enableVexpdifFusion) {
-      kernelModulePM.addNestedPass<mlir::func::FuncOp>(
-          pto::createPTOVexpdifFusionPass());
-    }
-    if (enableUnrollAfterLoopFusion) {
-      kernelModulePM.addNestedPass<mlir::func::FuncOp>(
-          pto::createPTOUnrollAfterLoopFusionPass());
-      kernelModulePM.addPass(mlir::createCanonicalizerPass());
-      kernelModulePM.addPass(mlir::createCSEPass());
-      kernelModulePM.addNestedPass<mlir::func::FuncOp>(
-          pto::createPTOFusionLoadStoreElisionPass());
-      // Unrolling and the cleanup passes above can expose new vsub + vexp
-      // patterns, so run vexpdif fusion again before flattening the regions.
-      if (enableVexpdifFusion) {
-        kernelModulePM.addNestedPass<mlir::func::FuncOp>(
-            pto::createPTOVexpdifFusionPass());
-      }
-    }
-    kernelModulePM.addNestedPass<mlir::func::FuncOp>(
-        pto::createPTOFlattenFusionRegionPass());
-    kernelModulePM.addPass(mlir::createCSEPass());
+    appendA5VPTOPostLoweringFusionPipeline(kernelModulePM);
   }
   kernelModulePM.addNestedPass<mlir::func::FuncOp>(
       pto::createFoldTileBufIntrinsicsPass("addr-only"));
@@ -3349,8 +3510,9 @@ static void appendVMISemanticPipeline(OpPassManager &pm) {
 static LogicalResult validateSCFForConstantSteps(ModuleOp module) {
   WalkResult result = module.walk([](scf::ForOp forOp) -> WalkResult {
     std::optional<int64_t> step = getConstantIntValue(forOp.getStep());
-    if (!step || *step > 0)
+    if (!step || *step > 0) {
       return WalkResult::advance();
+    }
 
     forOp.emitOpError("constant step operand must be positive");
     return WalkResult::interrupt();
@@ -3358,278 +3520,293 @@ static LogicalResult validateSCFForConstantSteps(ModuleOp module) {
   return result.wasInterrupted() ? failure() : success();
 }
 
-int mlir::pto::compilePTOASModule(
-    OwningOpRef<ModuleOp> &module, PTOASContext &context,
-    PTOBackend effectiveBackend, PTOASCompileResult &result,
-    bool emitVPTOHostStub) {
-  result.reset();
-  if (failed(validateSCFForConstantSteps(*module))) {
-    return 1;
-  }
-
-  // Validate stack-local struct provenance before every output path. In
-  // particular, --emit-pto-ir returns before the EmitC validation pass and
-  // VPTO does not use that pass.
-  if (failed(pto::validateStructProvenance(*module))) {
-    return 1;
-  }
-
-  std::string arch = resolveEffectiveTargetArch(*module, context.getArch());
-
-  // Name-hint provenance: textual .pto inputs had their SSA/arg/block-arg names
-  // attached to op Locations by the driver right after parsing. Collect the
-  // block-arg hint map now, before lowering, so it can be reattached on the
-  // EmitC CFG side before final C++ emission.
+struct CompilePipelineState {
+  std::string arch;
+  PTOBuildLevel level = PTOBuildLevel::Level2;
+  bool isA2A3 = false;
+  bool opFusionEnabled = false;
+  bool enableA5EmitCFusionPath = false;
+  bool enableA5VPTOFusionPath = false;
+  bool hasTileOpsToExpand = false;
   FunctionBlockArgHintMap functionBlockArgHints;
-  if (module) {
-    functionBlockArgHints = collectFunctionBlockArgNameHints(*module);
-  }
+};
 
-  if (effectiveBackend != PTOBackend::VPTO &&
+static LogicalResult validateCompileBackendFlags(PTOBackend backend,
+                                                 llvm::StringRef arch) {
+  if (backend != PTOBackend::VPTO &&
       (emitVPTO || emitVPTOLLVMDialect || ptoPrintSeamIR ||
        !ptoSeamIRFile.empty())) {
     llvm::errs() << "Error: VPTO-specific flags require "
                     "--pto-backend=vpto or pto.backend = \"vpto\".\n";
-    return 1;
-  }
-  PTOBuildLevel effectiveLevel = defaultBuildLevel();
-  if (!parseBuildLevel(ptoBuildLevel, effectiveLevel)) {
-    llvm::errs() << "Error: invalid --pto-level='" << ptoBuildLevel
-                 << "'. Expected 'level1', 'level2', or 'level3'.\n";
-    return 1;
+    return failure();
   }
   if (enableBufidSync && arch != "a5") {
     llvm::errs() << "Error: --enable-bufid_sync requires --pto-arch=a5.\n";
-    return 1;
+    return failure();
   }
   if (vptoSchedulerMode != VPTOSchedulerCLIMode::Off && arch != "a5") {
     llvm::errs() << "Error: --vpto-scheduler requires --pto-arch=a5.\n";
-    return 1;
+    return failure();
   }
+  return success();
+}
 
-  module->getOperation()->setAttr("pto.target_arch",
-                                  mlir::StringAttr::get(module->getContext(), arch));
-
+static LogicalResult initializeCompilePipelineState(
+    OwningOpRef<ModuleOp> &module, PTOASContext &context, PTOBackend backend,
+    CompilePipelineState &state) {
+  const bool invalidScfStep = failed(validateSCFForConstantSteps(*module));
+  const bool invalidStructProvenance =
+      failed(pto::validateStructProvenance(*module));
+  if (invalidScfStep || invalidStructProvenance) {
+    return failure();
+  }
+  state.arch = resolveEffectiveTargetArch(*module, context.getArch());
+  state.functionBlockArgHints = collectFunctionBlockArgNameHints(*module);
+  if (failed(validateCompileBackendFlags(backend, state.arch))) {
+    return failure();
+  }
+  state.level = defaultBuildLevel();
+  if (!parseBuildLevel(ptoBuildLevel, state.level)) {
+    llvm::errs() << "Error: invalid --pto-level='" << ptoBuildLevel
+                 << "'. Expected 'level1', 'level2', or 'level3'.\n";
+    return failure();
+  }
+  state.isA2A3 = isA2A3Arch(state.arch);
+  module->getOperation()->setAttr(
+      "pto.target_arch",
+      mlir::StringAttr::get(module->getContext(), state.arch));
   if (failed(mlir::verify(module.get()))) {
     llvm::errs() << "Error: input module verification failed.\n";
-    return 1;
+    return failure();
   }
+  state.opFusionEnabled = enableOpFusion == llvm::cl::BOU_TRUE;
+  return success();
+}
 
-  const bool requestedEnableOpFusion = enableOpFusion == llvm::cl::BOU_TRUE;
-  const bool opFusionEnabled = requestedEnableOpFusion;
-
-  if (requestedEnableOpFusion && arch != "a5") {
+static LogicalResult validateFusionConfiguration(const CompilePipelineState &state,
+                                                 PTOBackend backend) {
+  if (state.opFusionEnabled && state.arch != "a5") {
     llvm::errs() << "Error: --enable-op-fusion=true requires --pto-arch=a5.\n";
-    return 1;
+    return failure();
   }
-  if (requestedEnableOpFusion && effectiveLevel == PTOBuildLevel::Level1) {
+  if (state.opFusionEnabled && state.level == PTOBuildLevel::Level1) {
     llvm::errs() << "Warning: --enable-op-fusion=true is ignored because "
                     "--pto-level=level2 or level3 is required.\n";
   }
-
-  if (enableUnrollAfterLoopFusion && !(opFusionEnabled && arch == "a5")) {
+  if (enableUnrollAfterLoopFusion &&
+      !(state.opFusionEnabled && state.arch == "a5")) {
     llvm::errs() << "Error: --enable-unroll-after-loop-fusion requires "
                     "--pto-arch=a5 and --enable-op-fusion.\n";
-    return 1;
+    return failure();
   }
-  if (enableUnrollAfterLoopFusion && effectiveBackend != PTOBackend::VPTO) {
+  if (enableUnrollAfterLoopFusion && backend != PTOBackend::VPTO) {
     llvm::errs() << "Error: --enable-unroll-after-loop-fusion requires "
                     "--pto-backend=vpto; the pass is VPTO-only and is not "
                     "inserted under other backends.\n";
-    return 1;
+    return failure();
   }
   if (enableUnrollAfterLoopFusion && !enableVfSimCostmodelOptimization) {
     llvm::errs() << "Warning: --enable-unroll-after-loop-fusion consumes "
                     "pto.fusion.row/col_unroll_factor, which is produced by "
                     "--enable-vfsim-costmodel-optimization.\n";
   }
+  return success();
+}
 
-  const bool enableA5FusionPath =
-      opFusionEnabled && arch == "a5" &&
-      effectiveLevel != PTOBuildLevel::Level1;
-  const bool enableA5EmitCFusionPath =
-      enableA5FusionPath && effectiveBackend == PTOBackend::EmitC;
-  const bool enableA5VPTOFusionPath =
-      enableA5FusionPath && effectiveBackend == PTOBackend::VPTO;
-
+static void setFusionPipelineFlags(CompilePipelineState &state,
+                                   PTOBackend backend) {
+  const bool enabled = state.opFusionEnabled && state.arch == "a5" &&
+                       state.level != PTOBuildLevel::Level1;
+  state.enableA5EmitCFusionPath = enabled && backend == PTOBackend::EmitC;
+  state.enableA5VPTOFusionPath = enabled && backend == PTOBackend::VPTO;
   if (enableVfSimCostmodelOptimization &&
-      !(enableA5EmitCFusionPath || enableA5VPTOFusionPath)) {
+      !(state.enableA5EmitCFusionPath || state.enableA5VPTOFusionPath)) {
     llvm::errs() << "Warning: --enable-vfsim-costmodel-optimization is ignored "
                     "because the A5 tile-fusion pipeline is not enabled; "
                     "requires --pto-arch=a5, --pto-level=level2 or level3, "
                     "and op fusion enabled.\n";
   }
-  if (enableVfSimCostmodelOptimization && enableA5EmitCFusionPath) {
+  if (enableVfSimCostmodelOptimization && state.enableA5EmitCFusionPath) {
     llvm::errs() << "Warning: --enable-vfsim-costmodel-optimization may "
                     "annotate costmodel attributes on the EmitC fusion path, "
                     "but current VfSim unroll attributes are consumed only by "
                     "the VPTO backend; use --pto-backend=vpto for unroll "
                     "consumption.\n";
   }
-  if (enableVfSimCostmodelOptimization && enableA5VPTOFusionPath &&
+  if (enableVfSimCostmodelOptimization && state.enableA5VPTOFusionPath &&
       !enableUnrollAfterLoopFusion) {
     llvm::errs() << "Warning: --enable-vfsim-costmodel-optimization may "
                     "annotate pto.fusion.row/col_unroll_factor, but "
                     "--enable-unroll-after-loop-fusion is not enabled; unroll "
                     "attributes will not be consumed by the VPTO backend.\n";
   }
+}
 
-  bool invalidAutoSyncTailHint = false;
-  module->walk([&](mlir::func::FuncOp func) {
+static LogicalResult validateAutoSyncTailHints(ModuleOp module) {
+  bool invalid = false;
+  module.walk([&invalid, &module](mlir::func::FuncOp func) {
     auto hintAttr =
         func->getAttrOfType<mlir::StringAttr>("pto.auto_sync_tail_hint");
     if (!hintAttr) {
       return;
     }
-
     std::string normalizedHint;
     if (!parseAutoSyncTailHint(hintAttr.getValue(), normalizedHint)) {
       func.emitError("invalid pto.auto_sync_tail_hint '")
           << hintAttr.getValue()
           << "'. Expected 'barrier-all' (or 'default') or "
              "'mte3-to-s-event0'.";
-      invalidAutoSyncTailHint = true;
+      invalid = true;
       return;
     }
     func->setAttr("pto.auto_sync_tail_hint",
-                  mlir::StringAttr::get(module->getContext(), normalizedHint));
+                  mlir::StringAttr::get(module.getContext(), normalizedHint));
   });
-  if (invalidAutoSyncTailHint) {
-    return 1;
-  }
+  return invalid ? failure() : success();
+}
 
+static bool moduleHasTAssign(ModuleOp module) {
   bool hasTAssign = false;
-  module->walk([&](pto::TAssignOp) { hasTAssign = true; });
+  module.walk([&hasTAssign](pto::TAssignOp) { hasTAssign = true; });
+  return hasTAssign;
+}
 
-  if (hasTAssign && effectiveLevel != PTOBuildLevel::Level3) {
+static LogicalResult validateTAssignConfiguration(ModuleOp module,
+                                                  PTOBuildLevel level) {
+  const bool hasTAssign = moduleHasTAssign(module);
+  if (hasTAssign && level != PTOBuildLevel::Level3) {
     llvm::errs() << "Error: pto.tassign is only supported when "
                     "--pto-level=level3.\n";
-    return 1;
+    return failure();
   }
-
   if (hasTAssign && enableInsertSync) {
     llvm::errs() << "Error: pto.tassign requires --enable-insert-sync to be "
                     "disabled.\n";
-    return 1;
+    return failure();
   }
-
-  int enabledAutoSyncModes =
+  const int enabledAutoSyncModes =
       (enableInsertSync ? 1 : 0) + (enableBufidSync ? 1 : 0) +
-      (enableInjectBarrierAllSync ? 1 : 0) + (enableGraphSyncSolver ? 1 : 0);
+      (enableInjectBarrierAllSync ? 1 : 0) +
+      (enableGraphSyncSolver ? 1 : 0);
   if (enabledAutoSyncModes > 1) {
     llvm::errs() << "Error: --enable-insert-sync, --enable-bufid_sync, "
                     "--enable-inject-barrier-all-sync, and "
                     "--enable-graph-sync-solver are mutually exclusive.\n";
-    return 1;
+    return failure();
   }
   if (hasTAssign && enableInjectBarrierAllSync) {
     llvm::errs() << "Error: pto.tassign requires "
                     "--enable-inject-barrier-all-sync to be disabled.\n";
-    return 1;
+    return failure();
   }
   if (hasTAssign && enableGraphSyncSolver) {
     llvm::errs() << "Error: pto.tassign requires --enable-graph-sync-solver "
                     "to be disabled.\n";
-    return 1;
+    return failure();
   }
   if (hasTAssign && enableBufidSync) {
     llvm::errs() << "Error: pto.tassign requires --enable-bufid_sync to be "
                     "disabled.\n";
-    return 1;
+    return failure();
   }
+  return success();
+}
 
+static LogicalResult validateAllocationConfiguration(ModuleOp module,
+                                                     PTOBuildLevel level) {
   bool hasUserPlannedMultiAddrs = false;
-  module->walk([&](pto::AllocMultiTileOp op) {
-    if (!op->hasAttr(pto::kPtoMultiBufferAddrsAttrName)) {
-      return;
+  module.walk([&hasUserPlannedMultiAddrs](pto::AllocMultiTileOp op) {
+    if (op->hasAttr(pto::kPtoMultiBufferAddrsAttrName)) {
+      op.emitError() << "attribute '" << pto::kPtoMultiBufferAddrsAttrName
+                     << "' is reserved for pto-plan-memory";
+      hasUserPlannedMultiAddrs = true;
     }
-    op.emitError() << "attribute '" << pto::kPtoMultiBufferAddrsAttrName
-                   << "' is reserved for pto-plan-memory";
-    hasUserPlannedMultiAddrs = true;
   });
   if (hasUserPlannedMultiAddrs) {
-    return 1;
+    return failure();
   }
 
-  if (effectiveLevel == PTOBuildLevel::Level3) {
-    // In level3 the caller owns local memory and PTOPlanMemory is skipped, so
-    // every allocation must carry an explicit physical address. For
-    // multi-buffer, `addr` is the base of the contiguous N-slot region.
-    bool missing = false;
-    module->walk([&](pto::AllocTileOp op) {
+  bool invalidAddress = false;
+  if (level == PTOBuildLevel::Level3) {
+    module.walk([&invalidAddress](pto::AllocTileOp op) {
       if (!op.getAddr()) {
         op.emitError("requires 'addr' operand when --pto-level=level3");
-        missing = true;
+        invalidAddress = true;
       }
     });
-    module->walk([&](pto::AllocMultiTileOp op) {
+    module.walk([&invalidAddress](pto::AllocMultiTileOp op) {
       if (!op.getAddr()) {
         op.emitError("pto.alloc_multi_tile requires a base 'addr' operand when "
                      "--pto-level=level3");
-        missing = true;
+        invalidAddress = true;
       }
     });
-    if (missing) {
-      return 1;
-    }
   } else {
-    bool hasAddr = false;
-    module->walk([&](pto::AllocTileOp op) {
+    module.walk([&invalidAddress](pto::AllocTileOp op) {
       if (op.getAddr()) {
-        op.emitError(
-            "unexpected 'addr' operand: only supported when --pto-level=level3");
-        hasAddr = true;
+        op.emitError("unexpected 'addr' operand: only supported when "
+                     "--pto-level=level3");
+        invalidAddress = true;
       }
     });
-    module->walk([&](pto::AllocMultiTileOp op) {
+    module.walk([&invalidAddress](pto::AllocMultiTileOp op) {
       if (op.getAddr()) {
         op.emitError("unexpected 'addr' operand on pto.alloc_multi_tile: only "
                      "supported when --pto-level=level3");
-        hasAddr = true;
+        invalidAddress = true;
       }
     });
-    if (hasAddr) {
-      return 1;
-    }
   }
+  return invalidAddress ? failure() : success();
+}
 
-  if (!validateReserveBufferLevelRules(*module, effectiveLevel)) {
-    return 1;
+static LogicalResult validateCompileOptions(ModuleOp module,
+                                            PTOBuildLevel level) {
+  return failed(validateAutoSyncTailHints(module)) ||
+                 failed(validateTAssignConfiguration(module, level)) ||
+                 failed(validateAllocationConfiguration(module, level)) ||
+                 !validateReserveBufferLevelRules(module, level)
+             ? failure()
+             : success();
+}
+
+static LogicalResult runPreBackendNormalization(ModuleOp module) {
+  PassManager preBackendPM(module.getContext());
+  preBackendPM.enableVerifier();
+  preBackendPM.addPass(pto::createPTOMaterializeTileOpSectionsPass());
+  preBackendPM.addPass(pto::createPTONormalizeUncoveredTileSectionsPass());
+  preBackendPM.addPass(pto::createPTOValidatePhysicalSectionBoundariesPass());
+  if (failed(preBackendPM.run(module))) {
+    llvm::errs() << "Error: failed to normalize uncovered PTO tile sections.\n";
+    return failure();
   }
+  return success();
+}
 
-  {
-    PassManager preBackendPM(module->getContext());
-    preBackendPM.enableVerifier();
-    preBackendPM.addPass(pto::createPTOMaterializeTileOpSectionsPass());
-    preBackendPM.addPass(pto::createPTONormalizeUncoveredTileSectionsPass());
-    preBackendPM.addPass(
-        pto::createPTOValidatePhysicalSectionBoundariesPass());
-    if (failed(preBackendPM.run(module.get()))) {
-      llvm::errs() << "Error: failed to normalize uncovered PTO tile sections.\n";
-      return 1;
-    }
-  }
-
-  const bool hasTileOpsToExpand = hasUnexpandedTileOps(*module);
-
-  if (effectiveBackend == PTOBackend::VPTO && !hasTileOpsToExpand) {
-    if (ptoPrintSeamIR || !ptoSeamIRFile.empty()) {
-      llvm::errs() << "Error: shared pre-backend seam IR is unavailable when "
-                      "skipping the shared PTO-to-VPTO lowering pipeline.\n";
-      return 1;
-    }
-    if (failed(runVPTOBackendPipeline(module, hasTileOpsToExpand))) {
-      return 1;
-    }
-    return emitVPTOBackendResult(*module, result, emitVPTOHostStub,
-                                 context.getCANNVersionOrDefault());
-  }
+/// Build and run the shared mainline lowering pipeline (everything between the
+/// VPTO fast path and backend-specific emission). On success the caller checks
+/// `handled`: when true the pipeline fully answered the request (`--emit-mlir-ir`
+/// text or a VPTO backend result) and `exitCode` carries the process exit code;
+/// when false the caller continues with EmitC emission. Failure means the caller
+/// must propagate the error.
+static LogicalResult runMainLoweringPipeline(
+    OwningOpRef<ModuleOp> &module, PTOASContext &context,
+    PTOBackend effectiveBackend, const CompilePipelineState &state,
+    PTOASCompileResult &result, bool emitVPTOHostStub, bool &handled,
+    int &exitCode) {
+  handled = false;
+  exitCode = 0;
+  const bool enableA5EmitCFusionPath = state.enableA5EmitCFusionPath;
+  const bool enableA5VPTOFusionPath = state.enableA5VPTOFusionPath;
+  const bool isA2A3 = state.isA2A3;
+  const bool hasTileOpsToExpand = state.hasTileOpsToExpand;
+  const PTOBuildLevel effectiveLevel = state.level;
 
   // Main PassManager
   PassManager pm(module->getContext());
 
   if (failed(applyPassManagerCLOptions(pm))) {
-    return 1;
+    return failure();
   }
 
   // Rank-2 → rank-5 view canonicalization is currently gated on the VPTO
@@ -3642,7 +3819,6 @@ int mlir::pto::compilePTOASModule(
     pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOCanonicalizeIRPass());
   }
   pm.addPass(createSerialFrontendPipeLoweringPass());
-  //pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOVerifyTFreePass());
   pm.addPass(pto::createPTOInferValidatePipeInitPass());
   pm.addNestedPass<mlir::func::FuncOp>(pto::createLoweringSyncToPipePass());
   if (!disableInferLayout) {
@@ -3651,7 +3827,6 @@ int mlir::pto::compilePTOASModule(
   // PTOViewToMemref is generic view lowering required by both backends; keep it
   // outside the local-memory planning gate so default A2/A3 EmitC still lowers
   // pto.make_tensor_view before backend legalization.
-  const bool isA2A3 = isA2A3Arch(arch);
   if (!isA2A3) {
     pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOA5NormalizeTMovPass());
   }
@@ -3699,7 +3874,7 @@ int mlir::pto::compilePTOASModule(
   if (planMemoryImpl != "legacy" && planMemoryImpl != "modern") {
     llvm::errs() << "Error: invalid --plan-memory-impl='" << planMemoryImpl
                  << "', expected 'legacy' or 'modern'.\n";
-    return 1;
+    return failure();
   }
 
   if (effectiveLevel != PTOBuildLevel::Level3) {
@@ -3769,20 +3944,18 @@ int mlir::pto::compilePTOASModule(
     pm.addPass(createNarrowUnusedMultiResultProvenancePass());
   }
 
-  module->getOperation()->setAttr(
-      "pto.target_arch",
-      mlir::StringAttr::get(module->getContext(), arch));
-
   if (emitMlirIR) {
     if (failed(pm.run(*module))) {
       llvm::errs() << "Error: Pass execution failed.\n";
-      return 1;
+      return failure();
     }
     result.kind = PTOASCompileResultKind::Text;
     llvm::raw_string_ostream os(result.textOutput);
     module->print(os);
     os.flush();
-    return 0;
+    handled = true;
+    exitCode = 0;
+    return success();
   }
 
   pm.addPass(createCSEPass());
@@ -3794,13 +3967,13 @@ int mlir::pto::compilePTOASModule(
   pm.addPass(createCanonicalizerPass());
   pm.addPass(createCSEPass());
   if (failed(applyConfiguredPassManagerCLOptions(pm, "main PTOAS pipeline"))) {
-    return 1;
+    return failure();
   }
 
   if (effectiveBackend == PTOBackend::VPTO) {
     if (failed(pm.run(*module))) {
       llvm::errs() << "Error: Pass execution failed.\n";
-      return 1;
+      return failure();
     }
 
     if (ptoPrintSeamIR) {
@@ -3811,20 +3984,78 @@ int mlir::pto::compilePTOASModule(
       llvm::errs() << "\n";
     }
     if (failed(emitSharedPreBackendSeamIR(*module, ptoSeamIRFile))) {
-      return 1;
+      return failure();
     }
 
     if (failed(runVPTOBackendPipeline(module, hasTileOpsToExpand))) {
+      return failure();
+    }
+    handled = true;
+    exitCode = emitVPTOBackendResult(*module, result, emitVPTOHostStub,
+                                     context.getCANNVersionOrDefault());
+    return success();
+  }
+
+  if (failed(pm.run(*module))) {
+    llvm::errs() << "Error: Pass execution failed.\n";
+    return failure();
+  }
+  return success();
+}
+
+int mlir::pto::compilePTOASModule(
+    OwningOpRef<ModuleOp> &module, PTOASContext &context,
+    PTOBackend effectiveBackend, PTOASCompileResult &result,
+    bool emitVPTOHostStub) {
+  result.reset();
+  CompilePipelineState state;
+  if (failed(initializeCompilePipelineState(module, context, effectiveBackend,
+                                            state)) ||
+      failed(validateFusionConfiguration(state, effectiveBackend))) {
+    return 1;
+  }
+  setFusionPipelineFlags(state, effectiveBackend);
+  if (failed(validateCompileOptions(*module, state.level))) {
+    return 1;
+  }
+  if (failed(runPreBackendNormalization(*module))) {
+    return 1;
+  }
+  state.hasTileOpsToExpand = hasUnexpandedTileOps(*module);
+
+  // The state is assembled and validated once above, so backend branches
+  // cannot observe partially validated option combinations.
+  if (effectiveBackend == PTOBackend::VPTO && !state.hasTileOpsToExpand) {
+    if (ptoPrintSeamIR || !ptoSeamIRFile.empty()) {
+      llvm::errs() << "Error: shared pre-backend seam IR is unavailable when "
+                      "skipping the shared PTO-to-VPTO lowering pipeline.\n";
+      return 1;
+    }
+    if (failed(runVPTOBackendPipeline(module, state.hasTileOpsToExpand))) {
       return 1;
     }
     return emitVPTOBackendResult(*module, result, emitVPTOHostStub,
                                  context.getCANNVersionOrDefault());
   }
 
-  if (failed(pm.run(*module))) {
-    llvm::errs() << "Error: Pass execution failed.\n";
+  bool mainPipelineHandled = false;
+  int mainPipelineExitCode = 0;
+  if (failed(runMainLoweringPipeline(module, context, effectiveBackend, state,
+                                     result, emitVPTOHostStub,
+                                     mainPipelineHandled,
+                                     mainPipelineExitCode))) {
     return 1;
   }
+  if (mainPipelineHandled) {
+    return mainPipelineExitCode;
+  }
+  if (effectiveBackend == PTOBackend::VPTO) {
+    return 0;
+  }
+
+  const std::string &arch = state.arch;
+  const FunctionBlockArgHintMap &functionBlockArgHints =
+      state.functionBlockArgHints;
 
   if (ptoPrintSeamIR) {
     printSharedPreBackendSeamIR(*module);

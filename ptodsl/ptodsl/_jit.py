@@ -92,6 +92,36 @@ def _module_attr_map(module):
     return {name: str(attrs[name]) for name in _MODULE_ATTRS if name in attrs}
 
 
+def _normalize_rewrite_parts(frontend_options):
+    rewrite_part = frontend_options.get("rewrite_part", {"control_flow"})
+    if isinstance(rewrite_part, str):
+        rewrite_parts = {rewrite_part}
+    else:
+        try:
+            rewrite_parts = set(rewrite_part)
+        except TypeError as exc:
+            raise TypeError(
+                "@pto.jit frontend_options['rewrite_part'] must be a string or iterable of strings"
+            ) from exc
+    unsupported_parts = rewrite_parts - _SUPPORTED_REWRITE_PARTS
+    if unsupported_parts:
+        raise ValueError(
+            "@pto.jit frontend_options['rewrite_part'] currently only supports "
+            f"{sorted(_SUPPORTED_REWRITE_PARTS)!r}; got unsupported parts: {sorted(unsupported_parts)!r}"
+        )
+    return rewrite_parts
+
+
+def _validate_dump_rewritten_source(frontend_options):
+    dump_rewritten_source = frontend_options.get("dump_rewritten_source", False)
+    if not isinstance(dump_rewritten_source, bool):
+        raise TypeError("@pto.jit frontend_options['dump_rewritten_source'] must be a bool")
+    if dump_rewritten_source:
+        raise ValueError(
+            "@pto.jit frontend_options['dump_rewritten_source']=True is reserved but not implemented yet"
+        )
+
+
 def _normalize_frontend_options(*, ast_rewrite, frontend_options):
     if frontend_options is None:
         return True if ast_rewrite is None else bool(ast_rewrite)
@@ -108,30 +138,13 @@ def _normalize_frontend_options(*, ast_rewrite, frontend_options):
     if ast_rewrite is not None and option_ast_rewrite is not None and bool(ast_rewrite) != option_ast_rewrite:
         raise ValueError("@pto.jit ast_rewrite conflicts with frontend_options['ast_rewrite']")
 
-    enabled = option_ast_rewrite if option_ast_rewrite is not None else (True if ast_rewrite is None else bool(ast_rewrite))
-
-    rewrite_part = frontend_options.get("rewrite_part", {"control_flow"})
-    if isinstance(rewrite_part, str):
-        rewrite_parts = {rewrite_part}
-    else:
-        try:
-            rewrite_parts = set(rewrite_part)
-        except TypeError as exc:
-            raise TypeError("@pto.jit frontend_options['rewrite_part'] must be a string or iterable of strings") from exc
-    unsupported_parts = rewrite_parts - _SUPPORTED_REWRITE_PARTS
-    if unsupported_parts:
-        raise ValueError(
-            "@pto.jit frontend_options['rewrite_part'] currently only supports "
-            f"{sorted(_SUPPORTED_REWRITE_PARTS)!r}; got unsupported parts: {sorted(unsupported_parts)!r}"
-        )
+    enabled = option_ast_rewrite if option_ast_rewrite is not None else (
+        True if ast_rewrite is None else bool(ast_rewrite)
+    )
+    rewrite_parts = _normalize_rewrite_parts(frontend_options)
     if enabled and "control_flow" not in rewrite_parts:
         raise ValueError("@pto.jit ast_rewrite=True requires rewrite_part to include 'control_flow'")
-
-    dump_rewritten_source = frontend_options.get("dump_rewritten_source", False)
-    if not isinstance(dump_rewritten_source, bool):
-        raise TypeError("@pto.jit frontend_options['dump_rewritten_source'] must be a bool")
-    if dump_rewritten_source:
-        raise ValueError("@pto.jit frontend_options['dump_rewritten_source']=True is reserved but not implemented yet")
+    _validate_dump_rewritten_source(frontend_options)
     return enabled
 
 

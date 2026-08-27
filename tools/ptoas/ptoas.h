@@ -26,7 +26,6 @@
 namespace mlir {
 class AsmParserState;
 class DialectRegistry;
-class MLIRContext;
 } // namespace mlir
 
 namespace mlir::pto {

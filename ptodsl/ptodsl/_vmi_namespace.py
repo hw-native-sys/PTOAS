@@ -262,6 +262,52 @@ def _derive_vcvt_result_type(source, to_dtype, *, context: str):
     )
 
 
+def _normalize_vcvt_options(
+    source_type,
+    result_type,
+    *,
+    is_bf16x2_pair,
+    is_bf16x2_to_f4x2,
+    is_f4x2_to_bf16x2,
+    rounding,
+    saturate,
+    context,
+    rounding_context,
+):
+    if rounding is not None:
+        if is_f4x2_to_bf16x2:
+            raise ValueError(
+                f"{context} does not support rounding for "
+                "f4E1M2x2/f4E2M1x2 -> bf16x2 conversion"
+            )
+        rounding = _normalize_vmi_vcvt_rounding(
+            rounding,
+            context=rounding_context,
+            allowed={"R", "A", "F", "Z", "C"} if is_bf16x2_to_f4x2 else None,
+        )
+    elif is_bf16x2_to_f4x2:
+        rounding = "R"
+
+    if is_bf16x2_to_f4x2 and saturate is not None:
+        raise ValueError(
+            f"{context} does not support saturate for bf16x2 -> "
+            "f4E1M2x2/f4E2M1x2 conversion"
+        )
+    if is_f4x2_to_bf16x2 and saturate is not None:
+        raise ValueError(
+            f"{context} does not support saturate for "
+            "f4E1M2x2/f4E2M1x2 -> bf16x2 conversion"
+        )
+    if saturate is None:
+        src_bits = _type_bit_width(source_type.element_type, context=context)
+        dst_bits = _type_bit_width(result_type.element_type, context=context)
+        src_is_fp = _is_vmi_float_element_type(source_type.element_type)
+        dst_is_fp = _is_vmi_float_element_type(result_type.element_type)
+        if not is_bf16x2_pair and (src_bits > dst_bits or (src_is_fp and not dst_is_fp)):
+            saturate = "SAT"
+    return rounding, saturate
+
+
 def _check_vmi_lane_count(lanes: int, *, context: str) -> None:
     if lanes not in VMI_LANE_COUNTS:
         raise ValueError(
@@ -1046,42 +1092,17 @@ class _VMINamespace:
         is_f4x2_to_bf16x2 = is_bf16x2_pair and _is_f4x2_type(
             source_type.element_type
         )
-        if rounding is not None:
-            if is_f4x2_to_bf16x2:
-                raise ValueError(
-                    "pto.vmi.vcvt(...) does not support rounding for "
-                    "f4E1M2x2/f4E2M1x2 -> bf16x2 conversion"
-                )
-            rounding = _normalize_vmi_vcvt_rounding(
-                rounding,
-                context="pto.vmi.vcvt(..., rounding=...)",
-                allowed={"R", "A", "F", "Z", "C"} if is_bf16x2_to_f4x2 else None,
-            )
-        elif is_bf16x2_to_f4x2:
-            rounding = "R"
-        if is_bf16x2_to_f4x2 and saturate is not None:
-            raise ValueError(
-                "pto.vmi.vcvt(...) does not support saturate for bf16x2 -> "
-                "f4E1M2x2/f4E2M1x2 conversion"
-            )
-        if is_f4x2_to_bf16x2 and saturate is not None:
-            raise ValueError(
-                "pto.vmi.vcvt(...) does not support saturate for "
-                "f4E1M2x2/f4E2M1x2 -> bf16x2 conversion"
-            )
-        if saturate is None:
-            # The VMI verifier requires explicit "SAT" or "NOSAT" for
-            # narrowing and fp-to-int directions.  Default to "SAT" when
-            # the user does not specify.
-            src_bits = _type_bit_width(source_type.element_type, context="pto.vmi.vcvt(...)")
-            dst_bits = _type_bit_width(
-                result_type.element_type,
-                context="pto.vmi.vcvt(...)",
-            )
-            src_is_fp = _is_vmi_float_element_type(source_type.element_type)
-            dst_is_fp = _is_vmi_float_element_type(result_type.element_type)
-            if not is_bf16x2_pair and (src_bits > dst_bits or (src_is_fp and not dst_is_fp)):
-                saturate = "SAT"
+        rounding, saturate = _normalize_vcvt_options(
+            source_type,
+            result_type,
+            is_bf16x2_pair=is_bf16x2_pair,
+            is_bf16x2_to_f4x2=is_bf16x2_to_f4x2,
+            is_f4x2_to_bf16x2=is_f4x2_to_bf16x2,
+            rounding=rounding,
+            saturate=saturate,
+            context="pto.vmi.vcvt(...)",
+            rounding_context="pto.vmi.vcvt(..., rounding=...)",
+        )
         return _call_value(
             "vcvt",
             result_type,

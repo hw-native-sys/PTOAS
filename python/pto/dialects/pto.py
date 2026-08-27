@@ -936,6 +936,70 @@ PartitionView = PartitionViewOp
 _GeneratedTScatterOp = TScatterOp
 
 
+def _is_tscatter_mask_pattern(value):
+    return isinstance(value, (MaskPattern, MaskPatternAttr))
+
+
+def _tscatter_value_type(value):
+    try:
+        return _get_op_result_or_value(value).type
+    except Exception:
+        return None
+
+
+def _normalize_tscatter_positional(src, args, dst, indexes, mask_pattern):
+    if len(args) > 2:
+        raise TypeError(f"too many positional arguments: {len(args) + 1}")
+    if len(args) == 2:
+        if dst is not _TSCATTER_UNSET or indexes is not _TSCATTER_UNSET or mask_pattern is not _TSCATTER_UNSET:
+            raise TypeError(
+                "two positional mode arguments cannot be combined with "
+                "'dst', 'indexes', or 'maskPattern' keywords"
+            )
+        first, second = args
+        src_type = _get_op_result_or_value(src).type
+        first_type = _tscatter_value_type(first)
+        second_type = _tscatter_value_type(second)
+        if _is_tscatter_mask_pattern(second):
+            return first, _TSCATTER_UNSET, second
+        if first_type is not None and first_type == src_type and second_type != src_type:
+            return first, second, _TSCATTER_UNSET
+        if second_type is not None and second_type == src_type and first_type != src_type:
+            return second, first, _TSCATTER_UNSET
+        return second, first, _TSCATTER_UNSET
+    if len(args) == 1:
+        positional = args[0]
+        if dst is _TSCATTER_UNSET:
+            if indexes is _TSCATTER_UNSET and mask_pattern is _TSCATTER_UNSET:
+                raise TypeError(
+                    "missing required mode for tscatter; provide 'indexes' "
+                    "or 'maskPattern'"
+                )
+            return positional, indexes, mask_pattern
+        if indexes is not _TSCATTER_UNSET or mask_pattern is not _TSCATTER_UNSET:
+            raise TypeError(
+                "positional mode argument cannot be combined with "
+                "'indexes' or 'maskPattern' keywords"
+            )
+        if _is_tscatter_mask_pattern(positional):
+            return dst, _TSCATTER_UNSET, positional
+        return dst, positional, _TSCATTER_UNSET
+    return dst, indexes, mask_pattern
+
+
+def _build_tscatter_kwargs(dst, indexes, mask_pattern, axis):
+    if dst is _TSCATTER_UNSET:
+        raise TypeError("missing required argument: dst")
+    kwargs = {"dst": dst}
+    if indexes is not _TSCATTER_UNSET:
+        kwargs["indexes"] = indexes
+    if mask_pattern is not _TSCATTER_UNSET:
+        kwargs["maskPattern"] = mask_pattern
+    if axis is not None:
+        kwargs["axis"] = axis
+    return kwargs
+
+
 class TScatterOp(_GeneratedTScatterOp):
     """Compatibility wrapper for legacy positional-index tscatter builders."""
 
@@ -950,76 +1014,14 @@ class TScatterOp(_GeneratedTScatterOp):
         loc=None,
         ip=None,
     ):
-        if len(args) > 2:
-            raise TypeError(f"too many positional arguments: {len(args) + 1}")
-
-        def _is_mask_pattern(value):
-            return isinstance(value, (MaskPattern, MaskPatternAttr))
-
-        def _value_type(value):
-            try:
-                return _get_op_result_or_value(value).type
-            except Exception:
-                return None
-
-        def _matches_src_type(value):
-            src_value = _get_op_result_or_value(src)
-            value_type = _value_type(value)
-            return value_type is not None and value_type == src_value.type
-
-        if len(args) == 2:
-            if (
-                dst is not _TSCATTER_UNSET
-                or indexes is not _TSCATTER_UNSET
-                or maskPattern is not _TSCATTER_UNSET
-            ):
-                raise TypeError(
-                    "two positional mode arguments cannot be combined with "
-                    "'dst', 'indexes', or 'maskPattern' keywords"
-                )
-            first, second = args
-            if _is_mask_pattern(second):
-                dst = first
-                maskPattern = second
-            elif _matches_src_type(first) and not _matches_src_type(second):
-                dst = first
-                indexes = second
-            elif _matches_src_type(second) and not _matches_src_type(first):
-                indexes = first
-                dst = second
-            else:
-                indexes = first
-                dst = second
-        elif len(args) == 1:
-            positional = args[0]
-            if dst is _TSCATTER_UNSET:
-                if indexes is _TSCATTER_UNSET and maskPattern is _TSCATTER_UNSET:
-                    raise TypeError(
-                        "missing required mode for tscatter; provide 'indexes' "
-                        "or 'maskPattern'"
-                    )
-                dst = positional
-            else:
-                if indexes is not _TSCATTER_UNSET or maskPattern is not _TSCATTER_UNSET:
-                    raise TypeError(
-                        "positional mode argument cannot be combined with "
-                        "'indexes' or 'maskPattern' keywords"
-                    )
-                if _is_mask_pattern(positional):
-                    maskPattern = positional
-                else:
-                    indexes = positional
-
-        kwargs = {}
-        if dst is _TSCATTER_UNSET:
-            raise TypeError("missing required argument: dst")
-        kwargs["dst"] = dst
-        if indexes is not _TSCATTER_UNSET:
-            kwargs["indexes"] = indexes
-        if maskPattern is not _TSCATTER_UNSET:
-            kwargs["maskPattern"] = maskPattern
-        if axis is not None:
-            kwargs["axis"] = axis
+        dst, indexes, maskPattern = _normalize_tscatter_positional(
+            src,
+            args,
+            dst,
+            indexes,
+            maskPattern,
+        )
+        kwargs = _build_tscatter_kwargs(dst, indexes, maskPattern, axis)
         super().__init__(src, **kwargs, loc=loc, ip=ip)
 
 
@@ -1433,38 +1435,40 @@ class _VKernelBuilder:
     def _format_typed_operands(self, values):
         return ", ".join(v.name for v in values), ", ".join(v.render_type() for v in values)
 
-    def _lower_call(self, node, env, lines, indent, expected_types=None):
-        opname = self._lower_call_name(node.func)
-
+    def _lower_call_memory(self, opname, node, env, lines, indent):
         if opname in ("set_loop_size_outtoub", "set_loop_size_ubtoout"):
             ops = [self._lower_expr(arg, env, lines, indent, i64) for arg in node.args]
             operands, types = self._format_typed_operands(ops)
             self._emit(lines, indent, f"pto.{opname} {operands} : {types}")
             return []
-
         if opname == "castptr":
             if len(node.args) != 2:
                 raise _VKernelCompileError("pto.castptr expects 2 arguments")
             result_type = self._eval_type_expr(node.args[1])
             addr = self._lower_expr(node.args[0], env, lines, indent, i64)
             result = self._new_value(result_type)
-            self._emit(lines, indent, f"{result.name} = pto.castptr {addr.name} : {addr.render_type()} -> {result.render_type()}")
+            self._emit(
+                lines,
+                indent,
+                f"{result.name} = pto.castptr {addr.name} : {addr.render_type()} -> {result.render_type()}",
+            )
             return [result]
-
-        if opname == "copy_gm_to_ubuf":
-            expected = [None, None, i64, i64, i64, i64, i64, i1, i64, i64, i64]
-            ops = [self._lower_expr(arg, env, lines, indent, expected[i]) for i, arg in enumerate(node.args)]
+        copy_specs = {
+            "copy_gm_to_ubuf": [None, None, i64, i64, i64, i64, i64, i1, i64, i64, i64],
+            "copy_ubuf_to_gm": [None, None, i64, i64, i64, i64, i64, i64],
+        }
+        if opname in copy_specs:
+            expected = copy_specs[opname]
+            ops = [
+                self._lower_expr(arg, env, lines, indent, expected[i])
+                for i, arg in enumerate(node.args)
+            ]
             operands, types = self._format_typed_operands(ops)
-            self._emit(lines, indent, f"pto.copy_gm_to_ubuf {operands} : {types}")
+            self._emit(lines, indent, f"pto.{opname} {operands} : {types}")
             return []
+        return None
 
-        if opname == "copy_ubuf_to_gm":
-            expected = [None, None, i64, i64, i64, i64, i64, i64]
-            ops = [self._lower_expr(arg, env, lines, indent, expected[i]) for i, arg in enumerate(node.args)]
-            operands, types = self._format_typed_operands(ops)
-            self._emit(lines, indent, f"pto.copy_ubuf_to_gm {operands} : {types}")
-            return []
-
+    def _lower_call_sync(self, opname, node, lines, indent):
         if opname in ("set_flag", "wait_flag"):
             attrs = []
             for arg in node.args:
@@ -1473,56 +1477,94 @@ class _VKernelBuilder:
                 attrs.append(arg.value)
             self._emit(lines, indent, f'pto.{opname}["{attrs[0]}", "{attrs[1]}", "{attrs[2]}"]')
             return []
-
         if opname == "barrier":
             arg = node.args[0]
             if not isinstance(arg, _ast.Constant) or not isinstance(arg.value, str):
                 raise _VKernelCompileError("pto.barrier expects a string literal")
             self._emit(lines, indent, f"pto.barrier #pto.pipe<{arg.value}>")
             return []
+        return None
 
+    def _lower_call_vector_mask(self, opname, node, env, lines, indent):
         if opname == "plt_b32":
             src = self._lower_expr(node.args[0], env, lines, indent, i32)
             res0 = self._new_value(mask)
             res1 = self._new_value(i32)
-            self._emit(lines, indent, f"{res0.name}, {res1.name} = pto.plt_b32 {src.name} : i32 -> !pto.mask, i32")
+            self._emit(
+                lines,
+                indent,
+                f"{res0.name}, {res1.name} = pto.plt_b32 {src.name} : i32 -> !pto.mask, i32",
+            )
             return [res0, res1]
-
         if opname == "pset_b32":
             arg = node.args[0]
             if not isinstance(arg, _ast.Constant) or not isinstance(arg.value, str):
                 raise _VKernelCompileError("pto.pset_b32 expects a string literal")
-            res = self._new_value(mask)
-            self._emit(lines, indent, f'{res.name} = pto.pset_b32 "{arg.value}" : !pto.mask')
-            return [res]
+            result = self._new_value(mask)
+            self._emit(lines, indent, f'{result.name} = pto.pset_b32 "{arg.value}" : !pto.mask')
+            return [result]
+        return None
 
+    def _lower_call_vector_memory(self, opname, node, env, lines, indent):
         if opname == "vlds":
             ptr_value = self._lower_expr(node.args[0], env, lines, indent)
             if not isinstance(ptr_value.type, _VKernelPtrType):
                 raise _VKernelCompileError("pto.vlds expects a ptr operand")
             offset = self._lower_expr(node.args[1], env, lines, indent, _vk_index)
             result = self._new_value(vreg(_ptr_vector_lanes(ptr_value.type), ptr_value.type.elem))
-            self._emit(lines, indent,
-                       f"{result.name} = pto.vlds {ptr_value.name}[{offset.name}] : {ptr_value.render_type()} -> {result.render_type()}")
+            self._emit(
+                lines,
+                indent,
+                f"{result.name} = pto.vlds {ptr_value.name}[{offset.name}] : "
+                f"{ptr_value.render_type()} -> {result.render_type()}",
+            )
             return [result]
-
         if opname == "vabs":
             vec_value = self._lower_expr(node.args[0], env, lines, indent)
             mask_value = self._lower_expr(node.args[1], env, lines, indent, mask)
             result = self._new_value(vec_value.type)
-            self._emit(lines, indent,
-                       f"{result.name} = pto.vabs {vec_value.name}, {mask_value.name} : {vec_value.render_type()}, {mask_value.render_type()} -> {result.render_type()}")
+            self._emit(
+                lines,
+                indent,
+                f"{result.name} = pto.vabs {vec_value.name}, {mask_value.name} : "
+                f"{vec_value.render_type()}, {mask_value.render_type()} -> {result.render_type()}",
+            )
             return [result]
-
         if opname == "vsts":
             vec_value = self._lower_expr(node.args[0], env, lines, indent)
             ptr_value = self._lower_expr(node.args[1], env, lines, indent)
             offset = self._lower_expr(node.args[2], env, lines, indent, _vk_index)
             mask_value = self._lower_expr(node.args[3], env, lines, indent, mask)
-            self._emit(lines, indent,
-                       f"pto.vsts {vec_value.name}, {ptr_value.name}[{offset.name}], {mask_value.name} : {vec_value.render_type()}, {ptr_value.render_type()}, {mask_value.render_type()}")
+            self._emit(
+                lines,
+                indent,
+                f"pto.vsts {vec_value.name}, {ptr_value.name}[{offset.name}], {mask_value.name} : "
+                f"{vec_value.render_type()}, {ptr_value.render_type()}, {mask_value.render_type()}",
+            )
             return []
+        return None
 
+    def _lower_call_vector(self, opname, node, env, lines, indent):
+        result = self._lower_call_vector_mask(opname, node, env, lines, indent)
+        return result if result is not None else self._lower_call_vector_memory(
+            opname, node, env, lines, indent
+        )
+
+    def _lower_call(self, node, env, lines, indent, expected_types=None):
+        opname = self._lower_call_name(node.func)
+        handlers = (
+            (self._lower_call_memory, True),
+            (self._lower_call_sync, False),
+            (self._lower_call_vector, True),
+        )
+        for handler, needs_env in handlers:
+            result = (
+                handler(opname, node, env, lines, indent)
+                if needs_env
+                else handler(opname, node, lines, indent)
+            )
+            if result is not None:
+                return result
         raise _VKernelCompileError(f"unsupported pto op in vkernel: {opname}")
 
     def _collect_assigned_names(self, statements):
@@ -1547,81 +1589,89 @@ class _VKernelBuilder:
             visitor.visit(stmt)
         return names
 
+    def _compile_assignment(self, stmt, current_env, lines, indent):
+        if len(stmt.targets) != 1:
+            raise _VKernelCompileError("multiple assignment targets are not supported")
+        target = stmt.targets[0]
+        if isinstance(target, _ast.Name):
+            current_env[target.id] = self._lower_expr(stmt.value, current_env, lines, indent)
+            return current_env
+        if isinstance(target, _ast.Tuple):
+            results = self._lower_call(stmt.value, current_env, lines, indent)
+            if len(results) != len(target.elts):
+                raise _VKernelCompileError("tuple assignment arity mismatch")
+            for elt, value in zip(target.elts, results):
+                if not isinstance(elt, _ast.Name):
+                    raise _VKernelCompileError("tuple assignment only supports names")
+                current_env[elt.id] = value
+            return current_env
+        raise _VKernelCompileError("unsupported assignment target")
+
+    def _compile_annotated_assignment(self, stmt, current_env, lines, indent):
+        if stmt.value is None:
+            raise _VKernelCompileError("annotation-only assignment is not supported")
+        if not isinstance(stmt.target, _ast.Name):
+            raise _VKernelCompileError("annotated assignment only supports names")
+        target_type = self._eval_type_expr(stmt.annotation)
+        current_env[stmt.target.id] = self._lower_expr(
+            stmt.value,
+            current_env,
+            lines,
+            indent,
+            target_type,
+        )
+        return current_env
+
+    def _compile_with(self, stmt, current_env, lines, indent):
+        if len(stmt.items) != 1:
+            raise _VKernelCompileError("only single with item is supported")
+        item = stmt.items[0]
+        name = self._lower_call_name(item.context_expr.func)
+        if name not in ("strict_vecscope", "vecscope"):
+            raise _VKernelCompileError("unsupported with context")
+        if name == "strict_vecscope":
+            body_lines, body_result = self._compile_strict_vecscope(
+                item, stmt.body, current_env, indent
+            )
+        else:
+            body_lines, body_result = self._compile_vecscope(stmt.body, current_env, indent)
+        lines.extend(body_lines)
+        current_env.update(body_result)
+        return current_env
+
+    def _compile_statement(self, stmt, current_env, lines, indent):
+        if isinstance(stmt, _ast.Assign):
+            return self._compile_assignment(stmt, current_env, lines, indent)
+        if isinstance(stmt, _ast.AnnAssign):
+            return self._compile_annotated_assignment(stmt, current_env, lines, indent)
+        if isinstance(stmt, _ast.Expr):
+            if isinstance(stmt.value, _ast.Call):
+                self._lower_call(stmt.value, current_env, lines, indent)
+            else:
+                self._lower_expr(stmt.value, current_env, lines, indent)
+            return current_env
+        if isinstance(stmt, _ast.Return):
+            if stmt.value is not None:
+                raise _VKernelCompileError("only empty return is supported")
+            self._emit(lines, indent, "return")
+            return current_env
+        if isinstance(stmt, _ast.With):
+            return self._compile_with(stmt, current_env, lines, indent)
+        if isinstance(stmt, _ast.For):
+            loop_lines, updated_env = self._compile_for(stmt, current_env, indent)
+            lines.extend(loop_lines)
+            return updated_env
+        if isinstance(stmt, _ast.If):
+            if_lines, updated_env = self._compile_if(stmt, current_env, indent)
+            lines.extend(if_lines)
+            return updated_env
+        raise _VKernelCompileError(f"unsupported statement: {type(stmt).__name__}")
+
     def _compile_block(self, statements, env, indent):
         lines = []
         current_env = dict(env)
-
         for stmt in statements:
-            if isinstance(stmt, _ast.Assign):
-                if len(stmt.targets) != 1:
-                    raise _VKernelCompileError("multiple assignment targets are not supported")
-                target = stmt.targets[0]
-                if isinstance(target, _ast.Name):
-                    value = self._lower_expr(stmt.value, current_env, lines, indent)
-                    current_env[target.id] = value
-                elif isinstance(target, _ast.Tuple):
-                    results = self._lower_call(stmt.value, current_env, lines, indent)
-                    if len(results) != len(target.elts):
-                        raise _VKernelCompileError("tuple assignment arity mismatch")
-                    for elt, value in zip(target.elts, results):
-                        if not isinstance(elt, _ast.Name):
-                            raise _VKernelCompileError("tuple assignment only supports names")
-                        current_env[elt.id] = value
-                else:
-                    raise _VKernelCompileError("unsupported assignment target")
-                continue
-
-            if isinstance(stmt, _ast.AnnAssign):
-                if stmt.value is None:
-                    raise _VKernelCompileError("annotation-only assignment is not supported")
-                if not isinstance(stmt.target, _ast.Name):
-                    raise _VKernelCompileError("annotated assignment only supports names")
-                target_type = self._eval_type_expr(stmt.annotation)
-                value = self._lower_expr(stmt.value, current_env, lines, indent, target_type)
-                current_env[stmt.target.id] = value
-                continue
-
-            if isinstance(stmt, _ast.Expr):
-                if isinstance(stmt.value, _ast.Call):
-                    self._lower_call(stmt.value, current_env, lines, indent)
-                else:
-                    self._lower_expr(stmt.value, current_env, lines, indent)
-                continue
-
-            if isinstance(stmt, _ast.Return):
-                if stmt.value is not None:
-                    raise _VKernelCompileError("only empty return is supported")
-                self._emit(lines, indent, "return")
-                continue
-
-            if isinstance(stmt, _ast.With):
-                if len(stmt.items) != 1:
-                    raise _VKernelCompileError("only single with item is supported")
-                item = stmt.items[0]
-                name = self._lower_call_name(item.context_expr.func)
-                if name not in ("strict_vecscope", "vecscope"):
-                    raise _VKernelCompileError("unsupported with context")
-                if name == "strict_vecscope":
-                    body_lines, body_result = self._compile_strict_vecscope(item, stmt.body, current_env, indent)
-                else:
-                    body_lines, body_result = self._compile_vecscope(stmt.body, current_env, indent)
-                lines.extend(body_lines)
-                current_env.update(body_result)
-                continue
-
-            if isinstance(stmt, _ast.For):
-                loop_lines, updated_env = self._compile_for(stmt, current_env, indent)
-                lines.extend(loop_lines)
-                current_env = updated_env
-                continue
-
-            if isinstance(stmt, _ast.If):
-                if_lines, updated_env = self._compile_if(stmt, current_env, indent)
-                lines.extend(if_lines)
-                current_env = updated_env
-                continue
-
-            raise _VKernelCompileError(f"unsupported statement: {type(stmt).__name__}")
+            current_env = self._compile_statement(stmt, current_env, lines, indent)
 
         return lines, current_env
 
@@ -1682,10 +1732,27 @@ class _VKernelBuilder:
             raise _VKernelCompileError("range expects exactly 3 arguments in vkernel")
 
         lines = []
-        lb = self._lower_expr(stmt.iter.args[0], outer_env, lines, indent, _vk_index)
-        ub = self._lower_expr(stmt.iter.args[1], outer_env, lines, indent, _vk_index)
-        step = self._lower_expr(stmt.iter.args[2], outer_env, lines, indent, _vk_index)
+        bounds = [
+            self._lower_expr(arg, outer_env, lines, indent, _vk_index)
+            for arg in stmt.iter.args
+        ]
+        loop_env, iv, candidate_carried = self._prepare_loop_environment(stmt, outer_env)
+        body_lines, body_env = self._compile_block(stmt.body, loop_env, indent + 1)
+        carried = self._resolve_carried_values(candidate_carried, body_env)
+        result_value = self._emit_for_header(lines, indent, bounds, iv, candidate_carried, carried)
+        lines.extend(body_lines)
+        if carried:
+            result_types = ", ".join(after.render_type() for _, _, after in carried)
+            carried_names = ", ".join(after.name for _, _, after in carried)
+            self._emit(
+                lines,
+                indent + 1,
+                f"scf.yield {carried_names} : {result_types}",
+            )
+        self._emit(lines, indent, "}")
+        return lines, self._loop_updated_env(outer_env, carried, result_value)
 
+    def _prepare_loop_environment(self, stmt, outer_env):
         loop_env = dict(outer_env)
         iv = self._new_arg_value(_vk_index)
         loop_env[stmt.target.id] = iv
@@ -1695,47 +1762,48 @@ class _VKernelBuilder:
                 iter_arg = self._new_arg_value(outer_env[name].type)
                 loop_env[name] = iter_arg
                 candidate_carried.append((name, outer_env[name], iter_arg))
+        return loop_env, iv, candidate_carried
 
-        body_lines, body_env = self._compile_block(stmt.body, loop_env, indent + 1)
-        carried = []
-        for name, before, iter_arg in candidate_carried:
-            after = body_env.get(name)
-            if after is not None and after is not iter_arg:
-                carried.append((name, before, after))
+    def _resolve_carried_values(self, candidate_carried, body_env):
+        return [
+            (name, before, after)
+            for name, before, iter_arg in candidate_carried
+            if (after := body_env.get(name)) is not None and after is not iter_arg
+        ]
 
-        result_prefix = ""
-        yield_line = None
-        if carried:
-            results = [after.render_type() for _, _, after in carried]
-            result_value = self._new_value()
-            result_prefix = f"{result_value.name}:{len(carried)} = "
-            iter_arg_map = {name: iter_arg for name, _, iter_arg in candidate_carried}
-            carried_with_initials = []
-            for name, before, after in carried:
-                before = self._materialize_value(before, lines, indent, after.type)
-                carried_with_initials.append((name, before, after))
-            carried = carried_with_initials
-            iter_args = ", ".join(
-                f"{iter_arg_map[name].name} = {before.name}" for name, before, _ in carried
-            )
+    def _emit_for_header(self, lines, indent, bounds, iv, candidates, carried):
+        if not carried:
             self._emit(
                 lines,
                 indent,
-                f"{result_prefix}scf.for {iv.name} = {lb.name} to {ub.name} step {step.name} iter_args({iter_args}) -> ({', '.join(results)}) {{",
+                f"scf.for {iv.name} = {bounds[0].name} to {bounds[1].name} step {bounds[2].name} {{",
             )
-            yield_line = f"scf.yield {', '.join(after.name for _, _, after in carried)} : {', '.join(results)}"
-        else:
-            self._emit(lines, indent, f"scf.for {iv.name} = {lb.name} to {ub.name} step {step.name} {{")
-        lines.extend(body_lines)
-        if yield_line:
-            self._emit(lines, indent + 1, yield_line)
-        self._emit(lines, indent, "}")
+            return None
+        result_value = self._new_value()
+        iter_arg_map = {name: iter_arg for name, _, iter_arg in candidates}
+        carried_with_initials = [
+            (name, self._materialize_value(before, lines, indent, after.type), after)
+            for name, before, after in carried
+        ]
+        carried[:] = carried_with_initials
+        iter_args = ", ".join(
+            f"{iter_arg_map[name].name} = {before.name}" for name, before, _ in carried
+        )
+        result_types = ", ".join(after.render_type() for _, _, after in carried)
+        self._emit(
+            lines,
+            indent,
+            f"{result_value.name}:{len(carried)} = scf.for {iv.name} = {bounds[0].name} "
+            f"to {bounds[1].name} step {bounds[2].name} iter_args({iter_args}) -> ({result_types}) {{",
+        )
+        return result_value
 
+    def _loop_updated_env(self, outer_env, carried, result_value):
         updated_env = dict(outer_env)
-        if carried:
+        if result_value is not None:
             for idx, (name, _, after) in enumerate(carried):
                 updated_env[name] = _project_result(result_value, idx, after.type)
-        return lines, updated_env
+        return updated_env
 
     def _compile_if(self, stmt, outer_env, indent):
         lines = []
@@ -1773,8 +1841,52 @@ class _VKernelBuilder:
         self._emit(lines, indent, "}")
         return lines, dict(outer_env)
 
-    def build_text(self):
-        lines = [f'module attributes {{pto.target_arch = "{self.target}"}} {{']
+    def _build_struct_argument(self, arg, arg_ty, arg_types):
+        if arg.arg not in self.specialization:
+            raise _VKernelCompileError(
+                f"template argument '{arg.arg}: {arg_ty.name}' requires .jit(...) specialization"
+            )
+        binding = self.specialization[arg.arg]
+        if not isinstance(binding, _VKernelStructBinding) or binding.schema != arg_ty:
+            raise _VKernelCompileError(
+                f"specialization for '{arg.arg}' must be a {arg_ty.name}(...) binding"
+            )
+        fields = {}
+        for field_name, field_kind in arg_ty.fields:
+            if field_name not in binding.values:
+                raise _VKernelCompileError(
+                    f"missing field '{field_name}' in specialization for '{arg.arg}'"
+                )
+            field_value = binding.values[field_name]
+            if field_kind is ptr:
+                if not isinstance(field_value, _VKernelPtrType):
+                    raise _VKernelCompileError(
+                        f"{arg_ty.name}.{field_name} must be a pto.ptr(...) type object"
+                    )
+                arg_val = self._new_arg_value(field_value)
+                arg_types.append(f"{arg_val.name}: {field_value.render()}")
+                fields[field_name] = arg_val
+                continue
+            if field_kind is const:
+                if not isinstance(field_value, _VKernelConstBinding):
+                    raise _VKernelCompileError(f"{arg_ty.name}.{field_name} must use pto.const(...)")
+                static_value = field_value.value
+                if not isinstance(static_value, (list, tuple)) or not all(
+                    isinstance(v, int) for v in static_value
+                ):
+                    raise _VKernelCompileError(
+                        f"{arg_ty.name}.{field_name} must be a list/tuple of ints"
+                    )
+                fields[field_name] = _VKStaticSequence(
+                    tuple(_VKValue(literal=v) for v in static_value)
+                )
+                continue
+            raise _VKernelCompileError(
+                f"unsupported struct field kind for {arg_ty.name}.{field_name}"
+            )
+        return _VKStructValue(arg_ty, fields)
+
+    def _build_kernel_arguments(self):
         arg_types = []
         env = {}
         for arg in self.fn_def.args.args:
@@ -1784,55 +1896,16 @@ class _VKernelBuilder:
             if not isinstance(arg_ty, _VKernelType):
                 raise _VKernelCompileError(f"unsupported type annotation for argument '{arg.arg}'")
             if isinstance(arg_ty, _VKernelStructDef):
-                if arg.arg not in self.specialization:
-                    raise _VKernelCompileError(
-                        f"template argument '{arg.arg}: {arg_ty.name}' requires .jit(...) specialization"
-                    )
-                binding = self.specialization[arg.arg]
-                if not isinstance(binding, _VKernelStructBinding) or binding.schema != arg_ty:
-                    raise _VKernelCompileError(
-                        f"specialization for '{arg.arg}' must be a {arg_ty.name}(...) binding"
-                    )
-                struct_fields = {}
-                for field_name, field_kind in arg_ty.fields:
-                    if field_name not in binding.values:
-                        raise _VKernelCompileError(
-                            f"missing field '{field_name}' in specialization for '{arg.arg}'"
-                        )
-                    field_value = binding.values[field_name]
-                    if field_kind is ptr:
-                        if not isinstance(field_value, _VKernelPtrType):
-                            raise _VKernelCompileError(
-                                f"{arg_ty.name}.{field_name} must be a pto.ptr(...) type object"
-                            )
-                        arg_val = self._new_arg_value(field_value)
-                        arg_types.append(f"{arg_val.name}: {field_value.render()}")
-                        struct_fields[field_name] = arg_val
-                        continue
-                    if field_kind is const:
-                        if not isinstance(field_value, _VKernelConstBinding):
-                            raise _VKernelCompileError(
-                                f"{arg_ty.name}.{field_name} must use pto.const(...)"
-                            )
-                        static_value = field_value.value
-                        if not isinstance(static_value, (list, tuple)) or not all(
-                            isinstance(v, int) for v in static_value
-                        ):
-                            raise _VKernelCompileError(
-                                f"{arg_ty.name}.{field_name} must be a list/tuple of ints"
-                            )
-                        struct_fields[field_name] = _VKStaticSequence(
-                            tuple(_VKValue(literal=v) for v in static_value)
-                        )
-                        continue
-                    raise _VKernelCompileError(
-                        f"unsupported struct field kind for {arg_ty.name}.{field_name}"
-                    )
-                env[arg.arg] = _VKStructValue(arg_ty, struct_fields)
+                env[arg.arg] = self._build_struct_argument(arg, arg_ty, arg_types)
                 continue
             arg_val = self._new_arg_value(arg_ty)
             arg_types.append(f"{arg_val.name}: {arg_ty.render()}")
             env[arg.arg] = arg_val
+        return arg_types, env
+
+    def build_text(self):
+        lines = [f'module attributes {{pto.target_arch = "{self.target}"}} {{']
+        arg_types, env = self._build_kernel_arguments()
         self._emit(lines, 1, f"func.func @{self.kernel_name}({', '.join(arg_types)}) {{")
         body_lines, _ = self._compile_block(self.fn_def.body, env, 2)
         lines.extend(body_lines)

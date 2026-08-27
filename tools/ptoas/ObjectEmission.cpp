@@ -676,20 +676,12 @@ static std::string resolveHostTargetCPU() {
   return hostCPU;
 }
 
-static bool compileHostStubToObject(llvm::StringRef stubPath,
-                                    llvm::StringRef outObjPath,
-                                    llvm::StringRef moduleId,
-                                    llvm::StringRef targetCPU,
-                                    const mlir::pto::CANNToolchain &toolchain,
-                                    llvm::StringRef deviceObjPath,
-                                    llvm::StringRef stderrPath,
-                                    llvm::raw_ostream &diagOS) {
-  std::string coverageDir = ".";
-  std::string debugDir = ".";
-  std::string hostTriple = llvm::sys::getProcessTriple();
-  std::string hostTargetCPU = resolveHostTargetCPU();
-
-  llvm::SmallVector<std::string, mlir::pto::kValue32> args = {
+static llvm::SmallVector<std::string, mlir::pto::kValue32>
+buildHostStubFrontendArgs(llvm::StringRef targetCPU,
+                          const mlir::pto::CANNToolchain &toolchain) {
+  const std::string hostTriple = llvm::sys::getProcessTriple();
+  const std::string hostTargetCPU = resolveHostTargetCPU();
+  return {
       toolchain.bishengCc1Path,
       "-cc1",
       "-triple",
@@ -727,7 +719,7 @@ static bool compileHostStubToObject(llvm::StringRef stubPath,
       "-fallow-half-arguments-and-returns",
       "-mllvm",
       "-treat-scalable-fixed-error-as-warning",
-      std::string("-fcoverage-compilation-dir=") + coverageDir,
+      "-fcoverage-compilation-dir=.",
       "-resource-dir",
       toolchain.resourceDirPath,
       "-internal-isystem",
@@ -743,7 +735,7 @@ static bool compileHostStubToObject(llvm::StringRef stubPath,
       "-Wno-ignored-attributes",
       "-std=c++17",
       "-fdeprecated-macro",
-      std::string("-fdebug-compilation-dir=") + debugDir,
+      "-fdebug-compilation-dir=.",
       "-ferror-limit",
       "19",
       "-stack-protector",
@@ -764,6 +756,14 @@ static bool compileHostStubToObject(llvm::StringRef stubPath,
       "-cce-aicore-addr-transform",
       "-mllvm",
       "-cce-aicore-dcci-insert-for-scalar=false",
+  };
+}
+
+static void appendHostStubInputAndOutputArgs(
+    llvm::SmallVectorImpl<std::string> &args, llvm::StringRef stubPath,
+    llvm::StringRef outObjPath, llvm::StringRef moduleId,
+    llvm::StringRef deviceObjPath) {
+  args.append({
       "-fcce-include-aibinary",
       deviceObjPath.str(),
       "-fcce-device-module-id",
@@ -775,7 +775,21 @@ static bool compileHostStubToObject(llvm::StringRef stubPath,
       "-x",
       "cce",
       stubPath.str(),
-  };
+  });
+}
+
+static bool compileHostStubToObject(llvm::StringRef stubPath,
+                                    llvm::StringRef outObjPath,
+                                    llvm::StringRef moduleId,
+                                    llvm::StringRef targetCPU,
+                                    const mlir::pto::CANNToolchain &toolchain,
+                                    llvm::StringRef deviceObjPath,
+                                    llvm::StringRef stderrPath,
+                                    llvm::raw_ostream &diagOS) {
+  llvm::SmallVector<std::string, mlir::pto::kValue32> args =
+      buildHostStubFrontendArgs(targetCPU, toolchain);
+  appendHostStubInputAndOutputArgs(args, stubPath, outObjPath, moduleId,
+                                   deviceObjPath);
   return runCommandWithStderr(toolchain.bishengCc1Path, args, stderrPath, diagOS,
                               "host stub compilation");
 }

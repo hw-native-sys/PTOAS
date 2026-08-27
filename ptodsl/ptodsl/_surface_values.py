@@ -525,6 +525,18 @@ class _TileValidShapeView:
         return self._tile._get_valid_shape_dim(index)
 
 
+def _surface_sequence_metadata(value, parsed, key):
+    if value is not None:
+        return tuple(value)
+    return parsed[key] if parsed is not None else None
+
+
+def _surface_scalar_metadata(value, parsed, key):
+    if value is not None:
+        return value
+    return parsed[key] if parsed is not None else None
+
+
 class TileValue(_SurfaceValue, Tile):
     """Author-facing tile handle with surface-style accessors."""
 
@@ -576,23 +588,16 @@ class TileValue(_SurfaceValue, Tile):
     ):
         super().__init__(value)
         parsed = parse_tile_type_metadata(value.type)
-        self.shape = tuple(shape) if shape is not None else (
-            parsed["shape_dims"] if parsed is not None else None
+        self.shape = _surface_sequence_metadata(shape, parsed, "shape_dims")
+        physical_metadata = physical_shape if physical_shape is not None else shape
+        self.physical_shape = _surface_sequence_metadata(
+            physical_metadata,
+            parsed,
+            "shape_dims",
         )
-        self.physical_shape = tuple(physical_shape) if physical_shape is not None else (
-            tuple(shape) if shape is not None else (
-                parsed["shape_dims"] if parsed is not None else None
-            )
-        )
-        self.dtype = dtype if dtype is not None else (
-            parsed["element_type"] if parsed is not None else None
-        )
-        self.memory_space = memory_space if memory_space is not None else (
-            parsed["memory_space"] if parsed is not None else None
-        )
-        self.static_valid_shape = tuple(valid_shape) if valid_shape is not None else (
-            parsed["valid_dims"] if parsed is not None else None
-        )
+        self.dtype = _surface_scalar_metadata(dtype, parsed, "element_type")
+        self.memory_space = _surface_scalar_metadata(memory_space, parsed, "memory_space")
+        self.static_valid_shape = _surface_sequence_metadata(valid_shape, parsed, "valid_dims")
         self._valid_shape_cache: dict[int, object] = {}
 
     @property

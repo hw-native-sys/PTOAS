@@ -25,7 +25,7 @@ to the raw layout strings carried in operand specs).
 from __future__ import annotations
 
 import inspect
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 from .._types import _normalize_compact_mode
@@ -61,119 +61,225 @@ class _ConfigView:
     compact_mode: str | int | None
 
 
+@dataclass
+class _ContextAccumulators:
+    kinds: list = field(default_factory=list)
+    memory_spaces: list = field(default_factory=list)
+    rows: list = field(default_factory=list)
+    cols: list = field(default_factory=list)
+    sizes: list = field(default_factory=list)
+    valid_rows: list = field(default_factory=list)
+    valid_cols: list = field(default_factory=list)
+    b_layouts: list = field(default_factory=list)
+    s_layouts: list = field(default_factory=list)
+    s_fractal_sizes: list = field(default_factory=list)
+    compact_modes: list = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class _PredicateStorage:
+    shape: tuple
+    row_bytes: int
+    elements_per_store: int
+    bytes_per_store: int
+
+
+def _collect_flat_data_context(context, names, allowed_memory_spaces):
+    if not names:
+        return None
+    shapes = []
+    valid_shapes = []
+    for name in names:
+        if not _is_flat_local_tile(context, name, allowed_memory_spaces):
+            return None
+        shapes.append(context.get(f"{name}_shape"))
+        valid_shapes.append(context.get(f"{name}_valid_shape"))
+    if any(valid != valid_shapes[0] for valid in valid_shapes[1:]):
+        return None
+    return shapes, valid_shapes
+
+
+def _predicate_storage_context(
+    context,
+    name,
+    allowed_memory_spaces,
+    valid_rows,
+    valid_cols,
+    data_dtype,
+):
+    if not _is_flat_local_tile(context, name, allowed_memory_spaces):
+        return None
+    shape = context.get(f"{name}_shape")
+    valid_shape = context.get(f"{name}_valid_shape")
+    if valid_shape[0] != valid_rows:
+        return None
+    packing = _PREDICATE_PACKING_LAYOUTS.get(data_dtype)
+    if packing is None:
+        return None
+    elements_per_store, bytes_per_store = packing
+    bytewidth = _dtype_bytewidth(context.get(f"{name}_dtype"))
+    if bytewidth is None:
+        return None
+    row_bytes = shape[1] * bytewidth
+    if row_bytes % 32 != 0:
+        return None
+    row_store_count = _ceil_div(valid_cols, elements_per_store)
+    required_row_bytes = row_store_count * bytes_per_store
+    if row_bytes < required_row_bytes:
+        return None
+    return _PredicateStorage(shape, row_bytes, elements_per_store, bytes_per_store)
+
+
+def _data_rows_contiguous(shapes, valid_shapes):
+    return all(
+        valid_shape[1] == shape[1]
+        for shape, valid_shape in zip(shapes, valid_shapes)
+    )
+
+
+def _single_row_has_capacity(shapes, storage, valid_cols):
+    required_elements = _ceil_div(valid_cols, storage.elements_per_store) * storage.elements_per_store
+    return all(shape[1] >= required_elements for shape in shapes)
+
+
+def _predicate_rows_are_flattenable(shapes, valid_shapes, storage, valid_cols):
+    if not _data_rows_contiguous(shapes, valid_shapes):
+        return False
+    row_store_count = _ceil_div(valid_cols, storage.elements_per_store)
+    required_row_bytes = row_store_count * storage.bytes_per_store
+    return (
+        valid_cols % storage.elements_per_store == 0
+        and storage.row_bytes == required_row_bytes
+    )
+
+
+def _record_rank2_context(name, shape, valid, context, accumulators, *, static_only=False):
+    if len(shape) != 2:
+        return
+    context[f"{name}_rows"], context[f"{name}_cols"] = shape
+    if valid is not None and len(valid) == 2:
+        context[f"{name}_valid_rows"], context[f"{name}_valid_cols"] = valid
+    if static_only and not all(isinstance(dim, int) for dim in shape):
+        return
+    accumulators.rows.append(shape[0])
+    accumulators.cols.append(shape[1])
+    if valid is not None and len(valid) == 2:
+        accumulators.valid_rows.append(valid[0])
+        accumulators.valid_cols.append(valid[1])
+    elif valid is not None:
+        accumulators.valid_rows.append(None)
+        accumulators.valid_cols.append(None)
+
+
+def _record_scalar_context(name, spec, context, accumulators):
+    accumulators.kinds.append("scalar")
+    context[f"{name}_kind"] = "scalar"
+    if hasattr(spec, "value"):
+        context[f"{name}_value"] = spec.value
+
+
+def _record_vector_context(name, spec, context, accumulators):
+    accumulators.kinds.append("vector")
+    shape = tuple(spec.shape)
+    size = _shape_size(shape)
+    accumulators.sizes.append(size)
+    context[f"{name}_kind"] = "vector"
+    context[f"{name}_shape"] = shape
+    context[f"{name}_size"] = size
+
+
+def _record_view_context(name, spec, context, accumulators):
+    accumulators.kinds.append("view")
+    shape = tuple(spec.shape)
+    memory_space = getattr(spec, "memory_space", "gm")
+    accumulators.memory_spaces.append(memory_space)
+    if _is_static_shape(shape):
+        accumulators.sizes.append(_shape_size(shape))
+    context.update(
+        {
+            f"{name}_kind": "view",
+            f"{name}_shape": shape,
+            f"{name}_strides": tuple(spec.strides) if spec.strides else None,
+            f"{name}_memory_space": memory_space,
+            f"{name}_layout": spec.layout,
+        }
+    )
+    _record_rank2_context(name, shape, None, context, accumulators, static_only=True)
+
+
+def _record_tile_context(name, spec, context, accumulators):
+    accumulators.kinds.append("tile")
+    shape = tuple(spec.shape)
+    valid = tuple(spec.valid_shape) if getattr(spec, "valid_shape", None) else shape
+    memory_space = getattr(spec, "memory_space", "ub")
+    b_layout = getattr(spec, "b_layout", "row_major")
+    s_layout = getattr(spec, "s_layout", "none_box")
+    s_fractal_size = getattr(spec, "s_fractal_size", None)
+    compact_mode = getattr(spec, "compact_mode", None)
+    accumulators.memory_spaces.append(memory_space)
+    accumulators.sizes.append(_shape_size(shape))
+    accumulators.b_layouts.append(b_layout)
+    accumulators.s_layouts.append(s_layout)
+    accumulators.s_fractal_sizes.append(s_fractal_size)
+    accumulators.compact_modes.append(compact_mode)
+    context.update(
+        {
+            f"{name}_kind": "tile",
+            f"{name}_shape": shape,
+            f"{name}_valid_shape": valid,
+            f"{name}_memory_space": memory_space,
+            f"{name}_s_fractal_size": s_fractal_size,
+            f"{name}_compact_mode": compact_mode,
+            f"{name}_config": _ConfigView(
+                b_layout=b_layout,
+                s_layout=s_layout,
+                s_fractal_size=s_fractal_size,
+                compact_mode=compact_mode,
+            ),
+        }
+    )
+    _record_rank2_context(name, shape, valid, context, accumulators)
+
+
+def _record_operand_context(name, spec, context, accumulators):
+    if isinstance(spec, ScalarSpec):
+        return _record_scalar_context(name, spec, context, accumulators)
+    if isinstance(spec, VectorSpec):
+        return _record_vector_context(name, spec, context, accumulators)
+    if isinstance(spec, ViewSpec):
+        return _record_view_context(name, spec, context, accumulators)
+    if not hasattr(spec, "shape"):
+        accumulators.kinds.append(type(spec).__name__)
+        context[f"{name}_kind"] = type(spec).__name__
+        return
+    _record_tile_context(name, spec, context, accumulators)
+
+
 def build_context(tile_specs: dict, target: str, op: str) -> dict:
     """Build the flat name-keyed context predicates are matched against."""
     context: dict = {"target": target, "op": op}
     operand_dtypes = []
-    operand_kinds = []
-    operand_memory_spaces = []
-    operand_rows = []
-    operand_cols = []
-    operand_sizes = []
-    operand_valid_rows = []
-    operand_valid_cols = []
-    operand_b_layouts = []
-    operand_s_layouts = []
-    operand_s_fractal_sizes = []
-    operand_compact_modes = []
+    accumulators = _ContextAccumulators()
     for name, spec in tile_specs.items():
         dtype = spec.dtype.name
         operand_dtypes.append(dtype)
         context[f"{name}_dtype"] = dtype
-
-        if isinstance(spec, ScalarSpec):
-            operand_kinds.append("scalar")
-            context[f"{name}_kind"] = "scalar"
-            if hasattr(spec, "value"):
-                context[f"{name}_value"] = spec.value
-            continue
-
-        if isinstance(spec, VectorSpec):
-            operand_kinds.append("vector")
-            shape = tuple(spec.shape)
-            operand_sizes.append(_shape_size(shape))
-            context[f"{name}_kind"] = "vector"
-            context[f"{name}_shape"] = shape
-            context[f"{name}_size"] = _shape_size(shape)
-            continue
-
-        if isinstance(spec, ViewSpec):
-            operand_kinds.append("view")
-            shape = tuple(spec.shape)
-            memory_space = getattr(spec, "memory_space", "gm")
-            operand_memory_spaces.append(memory_space)
-            if _is_static_shape(shape):
-                operand_sizes.append(_shape_size(shape))
-            context[f"{name}_kind"] = "view"
-            context[f"{name}_shape"] = shape
-            context[f"{name}_strides"] = tuple(spec.strides) if spec.strides else None
-            context[f"{name}_memory_space"] = memory_space
-            context[f"{name}_layout"] = spec.layout
-            if len(shape) == 2:
-                context[f"{name}_rows"], context[f"{name}_cols"] = shape
-                if all(isinstance(dim, int) for dim in shape):
-                    operand_rows.append(shape[0])
-                    operand_cols.append(shape[1])
-            continue
-
-        if not hasattr(spec, "shape"):
-            operand_kinds.append(type(spec).__name__)
-            context[f"{name}_kind"] = type(spec).__name__
-            continue
-
-        operand_kinds.append("tile")
-        shape = tuple(spec.shape)
-        valid = tuple(spec.valid_shape) if getattr(spec, "valid_shape", None) else shape
-        memory_space = getattr(spec, "memory_space", "ub")
-        b_layout = getattr(spec, "b_layout", "row_major")
-        s_layout = getattr(spec, "s_layout", "none_box")
-        s_fractal_size = getattr(spec, "s_fractal_size", None)
-        compact_mode = getattr(spec, "compact_mode", None)
-        operand_memory_spaces.append(memory_space)
-        operand_sizes.append(_shape_size(shape))
-        operand_b_layouts.append(b_layout)
-        operand_s_layouts.append(s_layout)
-        operand_s_fractal_sizes.append(s_fractal_size)
-        operand_compact_modes.append(compact_mode)
-        context[f"{name}_kind"] = "tile"
-        context[f"{name}_shape"] = shape
-        context[f"{name}_valid_shape"] = valid
-        context[f"{name}_memory_space"] = memory_space
-        context[f"{name}_s_fractal_size"] = s_fractal_size
-        context[f"{name}_compact_mode"] = compact_mode
-        context[f"{name}_config"] = _ConfigView(
-            b_layout=b_layout,
-            s_layout=s_layout,
-            s_fractal_size=s_fractal_size,
-            compact_mode=compact_mode,
-        )
-        if len(shape) == 2:
-            context[f"{name}_rows"], context[f"{name}_cols"] = shape
-            if len(valid) == 2:
-                (
-                    context[f"{name}_valid_rows"],
-                    context[f"{name}_valid_cols"],
-                ) = valid
-            operand_rows.append(shape[0])
-            operand_cols.append(shape[1])
-            if len(valid) == 2:
-                operand_valid_rows.append(valid[0])
-                operand_valid_cols.append(valid[1])
-            else:
-                operand_valid_rows.append(None)
-                operand_valid_cols.append(None)
+        _record_operand_context(name, spec, context, accumulators)
     context["operand_dtypes"] = tuple(operand_dtypes)
-    context["operand_kinds"] = tuple(operand_kinds)
-    context["operand_memory_spaces"] = tuple(operand_memory_spaces)
-    context["operand_rows"] = tuple(operand_rows)
-    context["operand_cols"] = tuple(operand_cols)
-    context["operand_sizes"] = tuple(operand_sizes)
-    context["operand_valid_rows"] = tuple(operand_valid_rows)
-    context["operand_valid_cols"] = tuple(operand_valid_cols)
-    context["operand_b_layouts"] = tuple(operand_b_layouts)
-    context["operand_s_layouts"] = tuple(operand_s_layouts)
-    context["operand_s_fractal_sizes"] = tuple(operand_s_fractal_sizes)
-    context["operand_compact_modes"] = tuple(operand_compact_modes)
+    for field_name, values in (
+        ("operand_kinds", accumulators.kinds),
+        ("operand_memory_spaces", accumulators.memory_spaces),
+        ("operand_rows", accumulators.rows),
+        ("operand_cols", accumulators.cols),
+        ("operand_sizes", accumulators.sizes),
+        ("operand_valid_rows", accumulators.valid_rows),
+        ("operand_valid_cols", accumulators.valid_cols),
+        ("operand_b_layouts", accumulators.b_layouts),
+        ("operand_s_layouts", accumulators.s_layouts),
+        ("operand_s_fractal_sizes", accumulators.s_fractal_sizes),
+        ("operand_compact_modes", accumulators.compact_modes),
+    ):
+        context[field_name] = tuple(values)
     return context
 
 
@@ -190,6 +296,33 @@ def _is_static_shape(shape):
     return all(isinstance(dim, int) for dim in shape)
 
 
+def _candidate_shape_error(descriptor, tile_specs):
+    missing = [name for name in descriptor.param_names if name not in tile_specs]
+    if missing:
+        return f"missing operand specifications for {', '.join(missing)}"
+    extra = [name for name in tile_specs if name not in descriptor.param_names]
+    if extra:
+        return f"unexpected operand specifications for {', '.join(extra)}"
+    return None
+
+
+def _candidate_metadata_error(metadata, context):
+    dtype_signature = context["operand_dtypes"]
+    if metadata.dtypes and dtype_signature not in metadata.dtypes:
+        return f"dtype signature {dtype_signature} is not supported"
+    if not _metadata_values_match(metadata.layouts, context["operand_b_layouts"]):
+        return (
+            f"block layouts {context['operand_b_layouts']} do not match "
+            f"{metadata.layouts}"
+        )
+    if not _metadata_values_match(metadata.memory_spaces, context["operand_memory_spaces"]):
+        return (
+            f"memory spaces {context['operand_memory_spaces']} do not match "
+            f"{metadata.memory_spaces}"
+        )
+    return None
+
+
 def evaluate_candidate(
     descriptor,
     tile_specs: dict,
@@ -204,18 +337,9 @@ def evaluate_candidate(
             f"candidate targets op={descriptor.op!r} target={descriptor.target!r}",
         )
 
-    missing = [name for name in descriptor.param_names if name not in tile_specs]
-    if missing:
-        return CandidateLegality(
-            False,
-            f"missing operand specifications for {', '.join(missing)}",
-        )
-    extra = [name for name in tile_specs if name not in descriptor.param_names]
-    if extra:
-        return CandidateLegality(
-            False,
-            f"unexpected operand specifications for {', '.join(extra)}",
-        )
+    shape_error = _candidate_shape_error(descriptor, tile_specs)
+    if shape_error:
+        return CandidateLegality(False, shape_error)
 
     ordered_specs = {
         name: tile_specs[name]
@@ -224,32 +348,9 @@ def evaluate_candidate(
     context = build_context(ordered_specs, target, op)
 
     metadata = descriptor.metadata
-    dtype_signature = context["operand_dtypes"]
-    if metadata.dtypes and dtype_signature not in metadata.dtypes:
-        return CandidateLegality(
-            False,
-            f"dtype signature {dtype_signature} is not supported",
-        )
-
-    if not _metadata_values_match(
-        metadata.layouts,
-        context["operand_b_layouts"],
-    ):
-        return CandidateLegality(
-            False,
-            f"block layouts {context['operand_b_layouts']} do not match "
-            f"{metadata.layouts}",
-        )
-
-    if not _metadata_values_match(
-        metadata.memory_spaces,
-        context["operand_memory_spaces"],
-    ):
-        return CandidateLegality(
-            False,
-            f"memory spaces {context['operand_memory_spaces']} do not match "
-            f"{metadata.memory_spaces}",
-        )
+    metadata_error = _candidate_metadata_error(metadata, context)
+    if metadata_error:
+        return CandidateLegality(False, metadata_error)
 
     if context_attrs:
         for name, value in context_attrs.items():
@@ -486,96 +587,45 @@ def require_predicate_compare_1d(
     allowed_memory_spaces = frozenset(memory_spaces)
 
     def _require_predicate_compare_1d(**context):
-        if not data_operand_names:
-            return False
-
-        data_shapes = []
-        data_valid_shapes = []
-        for name in data_operand_names:
-            if not _is_flat_local_tile(context, name, allowed_memory_spaces):
-                return False
-            shape = context.get(f"{name}_shape")
-            valid_shape = context.get(f"{name}_valid_shape")
-            data_shapes.append(shape)
-            data_valid_shapes.append(valid_shape)
-
-        if any(
-            valid_shape != data_valid_shapes[0]
-            for valid_shape in data_valid_shapes[1:]
-        ):
-            return False
-
-        predicate_name = predicate_operand
-        if not _is_flat_local_tile(
+        data_context = _collect_flat_data_context(
             context,
-            predicate_name,
+            data_operand_names,
             allowed_memory_spaces,
-        ):
+        )
+        if data_context is None:
             return False
-
-        predicate_shape = context.get(f"{predicate_name}_shape")
-        predicate_valid_shape = context.get(f"{predicate_name}_valid_shape")
+        data_shapes, data_valid_shapes = data_context
         valid_rows, valid_cols = data_valid_shapes[0]
-        if predicate_valid_shape[0] != valid_rows:
-            return False
-
-        dtype = context.get(f"{data_operand_names[0]}_dtype")
-        store_layout = _PREDICATE_PACKING_LAYOUTS.get(dtype)
-        if store_layout is None:
-            return False
-        elements_per_store, bytes_per_store = store_layout
-
-        predicate_dtype = context.get(f"{predicate_name}_dtype")
-        predicate_bytewidth = _dtype_bytewidth(predicate_dtype)
-        if predicate_bytewidth is None:
-            return False
-        predicate_row_bytes = predicate_shape[1] * predicate_bytewidth
-        if predicate_row_bytes % 32 != 0:
-            return False
-        row_store_count = _ceil_div(valid_cols, elements_per_store)
-        required_row_bytes = row_store_count * bytes_per_store
-        if predicate_row_bytes < required_row_bytes:
-            return False
-
-        single_logical_row = valid_rows == 1
-        if single_logical_row:
-            required_data_row_elements = row_store_count * elements_per_store
-            return all(
-                shape[1] >= required_data_row_elements
-                for shape in data_shapes
-            )
-
-        data_rows_are_contiguous = all(
-            valid_shape[1] == shape[1]
-            for shape, valid_shape in zip(data_shapes, data_valid_shapes)
+        storage = _predicate_storage_context(
+            context,
+            predicate_operand,
+            allowed_memory_spaces,
+            valid_rows,
+            valid_cols,
+            context.get(f"{data_operand_names[0]}_dtype"),
         )
-        required_logical_row_bytes = (
-            max(shape[1] for shape in data_shapes) * predicate_bytewidth
-        )
-        destination_holds_logical_range = (
-            predicate_row_bytes >= required_logical_row_bytes
-        )
+        if storage is None:
+            return False
+        if valid_rows == 1:
+            return _single_row_has_capacity(data_shapes, storage, valid_cols)
+        data_rows_are_contiguous = _data_rows_contiguous(data_shapes, data_valid_shapes)
+        destination_holds_logical_range = storage.row_bytes >= max(
+            shape[1] for shape in data_shapes
+        ) * _dtype_bytewidth(context.get(f"{predicate_operand}_dtype"))
         if flattened_destination and destination_holds_logical_range:
             total_elements = valid_rows * valid_cols
-            total_store_count = _ceil_div(
-                total_elements,
-                elements_per_store,
-            )
-            required_total_bytes = total_store_count * bytes_per_store
-            predicate_total_bytes = (
-                predicate_shape[0] * predicate_row_bytes
-            )
+            total_store_count = _ceil_div(total_elements, storage.elements_per_store)
+            required_total_bytes = total_store_count * storage.bytes_per_store
+            predicate_total_bytes = storage.shape[0] * storage.row_bytes
             return (
                 data_rows_are_contiguous
                 and predicate_total_bytes >= required_total_bytes
             )
-
-        rows_end_on_store_boundary = valid_cols % elements_per_store == 0
-        predicate_rows_are_contiguous = predicate_row_bytes == required_row_bytes
-        return (
-            data_rows_are_contiguous
-            and rows_end_on_store_boundary
-            and predicate_rows_are_contiguous
+        return _predicate_rows_are_flattenable(
+            data_shapes,
+            data_valid_shapes,
+            storage,
+            valid_cols,
         )
 
     return _require_predicate_compare_1d
@@ -598,83 +648,34 @@ def require_predicate_select_1d(
     allowed_memory_spaces = frozenset(memory_spaces)
 
     def _require_predicate_select_1d(**context):
-        if not data_operand_names:
+        data_context = _collect_flat_data_context(
+            context,
+            data_operand_names,
+            allowed_memory_spaces,
+        )
+        if data_context is None:
             return False
-
-        data_shapes = []
-        data_valid_shapes = []
-        for name in data_operand_names:
-            if not _is_flat_local_tile(context, name, allowed_memory_spaces):
-                return False
-            data_shapes.append(context.get(f"{name}_shape"))
-            data_valid_shapes.append(context.get(f"{name}_valid_shape"))
-
-        if any(
-            valid_shape != data_valid_shapes[0]
-            for valid_shape in data_valid_shapes[1:]
-        ):
+        data_shapes, data_valid_shapes = data_context
+        if temporary_operand is not None and not _is_flat_local_tile(context, temporary_operand, allowed_memory_spaces):
             return False
-
-        if not _is_flat_local_tile(
+        valid_rows, valid_cols = data_valid_shapes[0]
+        storage = _predicate_storage_context(
             context,
             predicate_operand,
             allowed_memory_spaces,
-        ):
-            return False
-        if temporary_operand is not None and not _is_flat_local_tile(
-            context,
-            temporary_operand,
-            allowed_memory_spaces,
-        ):
-            return False
-
-        predicate_shape = context.get(f"{predicate_operand}_shape")
-        predicate_valid_shape = context.get(
-            f"{predicate_operand}_valid_shape"
+            valid_rows,
+            valid_cols,
+            context.get(f"{data_operand_names[0]}_dtype"),
         )
-        valid_rows, valid_cols = data_valid_shapes[0]
-        if predicate_valid_shape[0] != valid_rows:
+        if storage is None:
             return False
-
-        dtype = context.get(f"{data_operand_names[0]}_dtype")
-        store_layout = _PREDICATE_PACKING_LAYOUTS.get(dtype)
-        if store_layout is None:
-            return False
-        elements_per_store, bytes_per_store = store_layout
-
-        predicate_dtype = context.get(f"{predicate_operand}_dtype")
-        predicate_bytewidth = _dtype_bytewidth(predicate_dtype)
-        if predicate_bytewidth is None:
-            return False
-        predicate_row_bytes = predicate_shape[1] * predicate_bytewidth
-        if predicate_row_bytes % 32 != 0:
-            return False
-
-        row_store_count = _ceil_div(valid_cols, elements_per_store)
-        required_predicate_row_bytes = row_store_count * bytes_per_store
-        if predicate_row_bytes < required_predicate_row_bytes:
-            return False
-
-        single_logical_row = valid_rows == 1
-        if single_logical_row:
-            required_data_row_elements = row_store_count * elements_per_store
-            return all(
-                shape[1] >= required_data_row_elements
-                for shape in data_shapes
-            )
-
-        data_rows_are_contiguous = all(
-            valid_shape[1] == shape[1]
-            for shape, valid_shape in zip(data_shapes, data_valid_shapes)
-        )
-        rows_end_on_store_boundary = valid_cols % elements_per_store == 0
-        predicate_rows_are_contiguous = (
-            predicate_row_bytes == required_predicate_row_bytes
-        )
-        return (
-            data_rows_are_contiguous
-            and rows_end_on_store_boundary
-            and predicate_rows_are_contiguous
+        if valid_rows == 1:
+            return _single_row_has_capacity(data_shapes, storage, valid_cols)
+        return _predicate_rows_are_flattenable(
+            data_shapes,
+            data_valid_shapes,
+            storage,
+            valid_cols,
         )
 
     return _require_predicate_select_1d

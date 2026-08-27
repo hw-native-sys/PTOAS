@@ -406,72 +406,80 @@ _VLOAD_DIST_TOKENS = {
 }
 
 
+def _vector_memory_dist_kwargs(dist, *, allowed: set[str], context: str):
+    if dist is None:
+        return {}
+    return {
+        "dist": _normalize_dist_token(
+            dist,
+            allowed=allowed,
+            context=context,
+        )
+    }
+
+
+def _vlds_tile_slice(src_ptr, *, dist, post_mode):
+    if post_mode != "NO_POST_UPDATE":
+        raise TypeError(
+            "vlds(tile[...], post_update=...) only supports post_update=PostUpdate.OFF; "
+            "use the pointer form for stateful loads"
+        )
+    source, source_offset = _tile_slice_address(src_ptr)
+    return wrap_surface_value(
+        _pto.VldsOp(
+            _infer_vreg_type_from_tile_slice(src_ptr),
+            None,
+            unwrap_surface_value(source),
+            source_offset,
+            **_vector_memory_dist_kwargs(
+                dist,
+                allowed=_VLOAD_DIST_TOKENS,
+                context="vlds(..., dist)",
+            ),
+        ).result
+    )
+
+
+def _vlds_pointer(src_ptr, offset, result_vreg_type, *, dist, post_mode):
+    raw_source = unwrap_surface_value(src_ptr)
+    result_type = _resolve(result_vreg_type)
+    raw_offset = _coerce_index(offset, context="vlds(ptr, offset)")
+    kwargs = _vector_memory_dist_kwargs(
+        dist,
+        allowed=_VLOAD_DIST_TOKENS,
+        context="vlds(..., dist)",
+    )
+    if post_mode != "POST_UPDATE":
+        return wrap_surface_value(
+            _pto.VldsOp(result_type, None, raw_source, raw_offset, **kwargs).result
+        )
+
+    post_ctor = getattr(_pto, "VldsPostOp", None)
+    if post_ctor is not None:
+        op = post_ctor(result_type, raw_source.type, raw_source, raw_offset, **kwargs)
+        return wrap_surface_value(op.result), wrap_surface_value(op.updated_source)
+    op = _pto.VldsOp(result_type, raw_source.type, raw_source, raw_offset, **kwargs)
+    return wrap_surface_value(op.result), wrap_surface_value(op.updated_base)
+
+
 def vlds(src_ptr, offset=None, result_vreg_type=None, *, dist=None, post_update="OFF"):
     """``pto.vlds`` – vector load from a tile slice or from *src_ptr* at *offset*."""
     post_mode = _normalize_post_update_mode(post_update, context="vlds(..., post_update=...)")
     if isinstance(src_ptr, TileSliceValue):
         if offset is not None or result_vreg_type is not None:
             raise TypeError("vlds(tile[row, col:]) infers its pointer slice and vreg type; do not pass offset/result_vreg_type")
-        if post_mode != "NO_POST_UPDATE":
-            raise TypeError("vlds(tile[...], post_update=...) only supports post_update=PostUpdate.OFF; use the pointer form for stateful loads")
-        kwargs = {}
-        if dist is not None:
-            kwargs["dist"] = _normalize_dist_token(
-                dist,
-                allowed=_VLOAD_DIST_TOKENS,
-                context="vlds(..., dist)",
-            )
-        source, source_offset = _tile_slice_address(src_ptr)
-        raw_source = unwrap_surface_value(source)
-        return wrap_surface_value(
-            _pto.VldsOp(
-                _infer_vreg_type_from_tile_slice(src_ptr),
-                None,
-                raw_source,
-                source_offset,
-                **kwargs,
-            ).result
-        )
+        return _vlds_tile_slice(src_ptr, dist=dist, post_mode=post_mode)
 
     if offset is None:
         raise TypeError("vlds(ptr, offset, result_vreg_type=None) requires an explicit offset")
     if result_vreg_type is None:
         result_vreg_type = _infer_vreg_type_from_address_source(src_ptr)
-    kwargs = {}
-    if dist is not None:
-        kwargs["dist"] = _normalize_dist_token(
-            dist,
-            allowed=_VLOAD_DIST_TOKENS,
-            context="vlds(..., dist)",
-        )
-    raw_source = unwrap_surface_value(src_ptr)
-    if post_mode == "POST_UPDATE":
-        post_ctor = getattr(_pto, "VldsPostOp", None)
-        if post_ctor is not None:
-            op = post_ctor(
-                _resolve(result_vreg_type),
-                raw_source.type,
-                raw_source,
-                _coerce_index(offset, context="vlds(ptr, offset)"),
-                **kwargs,
-            )
-            return wrap_surface_value(op.result), wrap_surface_value(op.updated_source)
-        op = _pto.VldsOp(
-            _resolve(result_vreg_type),
-            raw_source.type,
-            raw_source,
-            _coerce_index(offset, context="vlds(ptr, offset)"),
-            **kwargs,
-        )
-        return wrap_surface_value(op.result), wrap_surface_value(op.updated_base)
-    return wrap_surface_value(
-        _pto.VldsOp(
-            _resolve(result_vreg_type),
-            None,
-            raw_source,
-            _coerce_index(offset, context="vlds(ptr, offset)"),
-            **kwargs,
-        ).result
+    return _vlds_pointer(
+        src_ptr,
+        offset,
+        result_vreg_type,
+        dist=dist,
+        post_mode=post_mode,
     )
 
 
@@ -664,35 +672,39 @@ def _normalize_vpack_part(part, *, context: str):
     return normalized
 
 
-def _classify_vcvt_elem_kind(elem_type):
-    if Float8E4M3FNType.isinstance(elem_type):
-        return "f8e4m3"
-    if Float8E5M2Type.isinstance(elem_type):
-        return "f8e5m2"
-    if _isinstance_pto_type(elem_type, "HiF8Type"):
-        return "hif8"
-    if _isinstance_pto_type(elem_type, "F4E1M2x2Type"):
-        return "f4e1m2x2"
-    if _isinstance_pto_type(elem_type, "F4E2M1x2Type"):
-        return "f4e2m1x2"
-    if F16Type.isinstance(elem_type):
-        return "f16"
-    if BF16Type.isinstance(elem_type):
-        return "bf16"
-    if F32Type.isinstance(elem_type):
-        return "f32"
+_VCVT_BUILTIN_FLOAT_KINDS = (
+    (Float8E4M3FNType, "f8e4m3"),
+    (Float8E5M2Type, "f8e5m2"),
+    (F16Type, "f16"),
+    (BF16Type, "bf16"),
+    (F32Type, "f32"),
+)
+_VCVT_PTO_FLOAT_KINDS = (
+    ("HiF8Type", "hif8"),
+    ("F4E1M2x2Type", "f4e1m2x2"),
+    ("F4E2M1x2Type", "f4e2m1x2"),
+)
+
+
+def _classify_vcvt_integer_kind(elem_type):
     if IntegerType.isinstance(elem_type):
         int_type = IntegerType(elem_type)
-        width = int_type.width
-        if width == 8:
-            return "u8" if int_type.is_unsigned else "s8"
-        if width == 16:
-            return "u16" if int_type.is_unsigned else "s16"
-        if width == 32:
-            return "u32" if int_type.is_unsigned else "s32"
-        if width == 64 and not int_type.is_unsigned:
+        if int_type.width in {8, 16, 32}:
+            prefix = "u" if int_type.is_unsigned else "s"
+            return f"{prefix}{int_type.width}"
+        if int_type.width == 64 and not int_type.is_unsigned:
             return "s64"
     return None
+
+
+def _classify_vcvt_elem_kind(elem_type):
+    for type_cls, kind in _VCVT_BUILTIN_FLOAT_KINDS:
+        if type_cls.isinstance(elem_type):
+            return kind
+    for type_name, kind in _VCVT_PTO_FLOAT_KINDS:
+        if _isinstance_pto_type(elem_type, type_name):
+            return kind
+    return _classify_vcvt_integer_kind(elem_type)
 
 
 def _vcvt_contract(requires_rnd, requires_sat, requires_part, *, part_family=None, allowed_rnd=None):
@@ -989,72 +1001,80 @@ def vmulscvt(src, scalar, mask, *, rnd, part):
     )
 
 
+def _vsts_tile_slice(val, dst_ptr, mask_value, *, extra_mask, dist, post_mode):
+    if extra_mask is not None:
+        raise TypeError("vsts(vec, tile[row, col:], mask) does not accept a separate offset argument")
+    if post_mode != "NO_POST_UPDATE":
+        raise TypeError(
+            "vsts(vec, tile[...], post_update=...) only supports post_update=PostUpdate.OFF; "
+            "use the pointer form for stateful stores"
+        )
+    destination, destination_offset = _tile_slice_address(dst_ptr)
+    _pto.VstsOp(
+        None,
+        unwrap_surface_value(val),
+        unwrap_surface_value(destination),
+        destination_offset,
+        unwrap_surface_value(mask_value),
+        **_vector_memory_dist_kwargs(
+            dist,
+            allowed=_VSTORE_DIST_TOKENS,
+            context="vsts(..., dist)",
+        ),
+    )
+
+
+def _vsts_pointer(val, dst_ptr, offset, mask_value, *, dist, post_mode):
+    raw_destination = unwrap_surface_value(dst_ptr)
+    raw_value = unwrap_surface_value(val)
+    raw_offset = _coerce_index(offset, context="vsts(ptr, offset, mask)")
+    raw_mask = unwrap_surface_value(mask_value)
+    kwargs = _vector_memory_dist_kwargs(
+        dist,
+        allowed=_VSTORE_DIST_TOKENS,
+        context="vsts(..., dist)",
+    )
+    if post_mode != "POST_UPDATE":
+        _pto.VstsOp(None, raw_value, raw_destination, raw_offset, raw_mask, **kwargs)
+        return None
+
+    post_ctor = getattr(_pto, "VstsPostOp", None)
+    if post_ctor is not None:
+        op = post_ctor(
+            raw_destination.type,
+            raw_value,
+            raw_destination,
+            raw_offset,
+            raw_mask,
+            **kwargs,
+        )
+        return wrap_surface_value(op.updated_destination)
+    op = _pto.VstsOp(
+        raw_destination.type,
+        raw_value,
+        raw_destination,
+        raw_offset,
+        raw_mask,
+        **kwargs,
+    )
+    return wrap_surface_value(op.updated_base)
+
+
 def vsts(val, dst_ptr, offset, mask=None, *, dist=None, post_update="OFF"):
     """``pto.vsts`` – vector store to a tile slice or to *dst_ptr* at *offset*."""
     post_mode = _normalize_post_update_mode(post_update, context="vsts(..., post_update=...)")
     if isinstance(dst_ptr, TileSliceValue):
-        if mask is not None:
-            raise TypeError("vsts(vec, tile[row, col:], mask) does not accept a separate offset argument")
-        if post_mode != "NO_POST_UPDATE":
-            raise TypeError("vsts(vec, tile[...], post_update=...) only supports post_update=PostUpdate.OFF; use the pointer form for stateful stores")
-        kwargs = {}
-        if dist is not None:
-            kwargs["dist"] = _normalize_dist_token(
-                dist,
-                allowed=_VSTORE_DIST_TOKENS,
-                context="vsts(..., dist)",
-            )
-        destination, destination_offset = _tile_slice_address(dst_ptr)
-        raw_destination = unwrap_surface_value(destination)
-        _pto.VstsOp(
-            None,
-            unwrap_surface_value(val),
-            raw_destination,
-            destination_offset,
-            unwrap_surface_value(offset),
-            **kwargs,
+        return _vsts_tile_slice(
+            val,
+            dst_ptr,
+            offset,
+            extra_mask=mask,
+            dist=dist,
+            post_mode=post_mode,
         )
-        return
-
     if mask is None:
         raise TypeError("vsts(vec, ptr, offset, mask) requires an explicit mask")
-    kwargs = {}
-    if dist is not None:
-        kwargs["dist"] = _normalize_dist_token(
-            dist,
-            allowed=_VSTORE_DIST_TOKENS,
-            context="vsts(..., dist)",
-        )
-    if post_mode == "POST_UPDATE":
-        raw_destination = unwrap_surface_value(dst_ptr)
-        post_ctor = getattr(_pto, "VstsPostOp", None)
-        if post_ctor is not None:
-            op = post_ctor(
-                raw_destination.type,
-                unwrap_surface_value(val),
-                raw_destination,
-                _coerce_index(offset, context="vsts(ptr, offset, mask)"),
-                unwrap_surface_value(mask),
-                **kwargs,
-            )
-            return wrap_surface_value(op.updated_destination)
-        op = _pto.VstsOp(
-            raw_destination.type,
-            unwrap_surface_value(val),
-            raw_destination,
-            _coerce_index(offset, context="vsts(ptr, offset, mask)"),
-            unwrap_surface_value(mask),
-            **kwargs,
-        )
-        return wrap_surface_value(op.updated_base)
-    _pto.VstsOp(
-        None,
-        unwrap_surface_value(val),
-        unwrap_surface_value(dst_ptr),
-        _coerce_index(offset, context="vsts(ptr, offset, mask)"),
-        unwrap_surface_value(mask),
-        **kwargs,
-    )
+    return _vsts_pointer(val, dst_ptr, offset, mask, dist=dist, post_mode=post_mode)
 
 
 def vstsx2(low, high, dst_ptr, offset_or_dist, dist_or_mask=None, mask=None):
@@ -3031,6 +3051,143 @@ def _normalize_alloc_buffer_shape_metadata(shape):
     return tuple(unwrap_surface_value(dim) for dim in shape)
 
 
+def _authored_alloc_tile_type(
+    shape,
+    dtype,
+    memory_space,
+    valid_shape,
+    blayout,
+    slayout,
+    fractal_size,
+    pad,
+):
+    if shape is None or dtype is None:
+        raise TypeError("alloc_tile() requires either tile_type or both shape= and dtype=")
+    logical_shape = _normalize_static_tile_shape(shape)
+    physical_shape = _authored_tile_physical_shape(logical_shape)
+    _validate_authored_tile_row_alignment(
+        physical_shape,
+        dtype,
+        blayout=blayout,
+        slayout=slayout,
+    )
+    type_valid_shape, valid_row, valid_col, surface_valid_shape = _split_valid_shape(
+        logical_shape,
+        valid_shape,
+    )
+    from ._types import tile_buf_type
+
+    tile_type = tile_buf_type(
+        physical_shape,
+        dtype,
+        type_valid_shape,
+        blayout=blayout,
+        address_space=memory_space,
+        slayout=slayout,
+        fractal_size=fractal_size,
+        pad=pad,
+    )
+    return tile_type, logical_shape, physical_shape, surface_valid_shape, valid_row, valid_col
+
+
+def _explicit_tile_valid_shape(tile_type, shape, valid_row, valid_col):
+    if valid_row is None and valid_col is None:
+        return None
+    parsed_tile_type = parse_tile_type_metadata(_resolve(tile_type))
+    rank = len(shape) if shape is not None else len(parsed_tile_type["shape_dims"])
+    surface_valid_shape = [None] * rank
+    if rank >= 1:
+        surface_valid_shape[0] = valid_row
+    if rank >= 2:
+        surface_valid_shape[1] = valid_col
+    return tuple(surface_valid_shape)
+
+
+def _normalize_alloc_tile_request(
+    tile_type,
+    shape,
+    dtype,
+    memory_space,
+    valid_shape,
+    blayout,
+    slayout,
+    fractal_size,
+    pad,
+    valid_row,
+    valid_col,
+):
+    if tile_type is not None and shape is not None:
+        raise TypeError("alloc_tile() accepts either tile_type or shape=/dtype=, not both")
+    if tile_type is None:
+        if valid_row is not None or valid_col is not None:
+            raise TypeError(
+                "alloc_tile(shape=..., dtype=...) uses the authored surface form; "
+                "use valid_shape=... instead of valid_row=/valid_col="
+            )
+        return _authored_alloc_tile_type(
+            shape,
+            dtype,
+            memory_space,
+            valid_shape,
+            blayout,
+            slayout,
+            fractal_size,
+            pad,
+        )
+    return (
+        tile_type,
+        shape,
+        None,
+        _explicit_tile_valid_shape(tile_type, shape, valid_row, valid_col),
+        valid_row,
+        valid_col,
+    )
+
+
+def _emit_alloc_tile(tile_type, addr, valid_row, valid_col):
+    return _pto.AllocTileOp(
+        _resolve(tile_type),
+        addr=_coerce_i64(addr, context="alloc_tile(addr)") if addr is not None else None,
+        valid_row=_coerce_index(valid_row, context="alloc_tile(valid_row)") if valid_row is not None else None,
+        valid_col=_coerce_index(valid_col, context="alloc_tile(valid_col)") if valid_col is not None else None,
+    ).result
+
+
+def _wrap_allocated_tile(value, shape, physical_shape, dtype, memory_space, valid_shape):
+    return wrap_surface_value(
+        value,
+        tile_metadata={
+            "shape": shape,
+            "physical_shape": physical_shape,
+            "dtype": dtype,
+            "memory_space": memory_space,
+            "valid_shape": valid_shape,
+        },
+    )
+
+
+def _materialize_alloc_tile(
+    tile_type,
+    shape,
+    physical_shape,
+    dtype,
+    memory_space,
+    surface_valid_shape,
+    addr,
+    valid_row,
+    valid_col,
+):
+    value = _emit_alloc_tile(tile_type, addr, valid_row, valid_col)
+    return _wrap_allocated_tile(
+        value,
+        shape,
+        physical_shape,
+        dtype,
+        memory_space,
+        surface_valid_shape,
+    )
+
+
 def alloc_tile(
     tile_type=None,
     *,
@@ -3050,68 +3207,33 @@ def alloc_tile(
     ``pto.alloc_tile``.
 
     Accepts either the authored surface form:
-
     ``alloc_tile(shape=[...], dtype=..., memory_space=..., valid_shape=..., addr=...)``
-
     or the low-level explicit-type form:
-
     ``alloc_tile(tile_type, addr=..., valid_row=..., valid_col=...)``.
     """
-    if tile_type is not None and shape is not None:
-        raise TypeError("alloc_tile() accepts either tile_type or shape=/dtype=, not both")
-
-    if tile_type is None:
-        if shape is None or dtype is None:
-            raise TypeError("alloc_tile() requires either tile_type or both shape= and dtype=")
-        if valid_row is not None or valid_col is not None:
-            raise TypeError(
-                "alloc_tile(shape=..., dtype=...) uses the authored surface form; "
-                "use valid_shape=... instead of valid_row=/valid_col="
-            )
-        logical_shape = _normalize_static_tile_shape(shape)
-        physical_shape = _authored_tile_physical_shape(logical_shape)
-        _validate_authored_tile_row_alignment(physical_shape, dtype, blayout=blayout, slayout=slayout)
-        type_valid_shape, valid_row, valid_col, surface_valid_shape = _split_valid_shape(logical_shape, valid_shape)
-        from ._types import tile_buf_type
-        tile_type = tile_buf_type(
-            physical_shape,
-            dtype,
-            type_valid_shape,
-            blayout=blayout,
-            address_space=memory_space,
-            slayout=slayout,
-            fractal_size=fractal_size,
-            pad=pad,
-        )
-        shape = logical_shape
-    else:
-        physical_shape = None
-        surface_valid_shape = None
-
-    value = _pto.AllocTileOp(
-        _resolve(tile_type),
-        addr=_coerce_i64(addr, context="alloc_tile(addr)") if addr is not None else None,
-        valid_row=_coerce_index(valid_row, context="alloc_tile(valid_row)") if valid_row is not None else None,
-        valid_col=_coerce_index(valid_col, context="alloc_tile(valid_col)") if valid_col is not None else None,
-    ).result
-    if tile_type is not None and (valid_row is not None or valid_col is not None):
-        parsed_tile_type = parse_tile_type_metadata(_resolve(tile_type))
-        rank = len(shape) if shape is not None else len(parsed_tile_type["shape_dims"])
-        surface_valid_shape = [None] * rank
-        if rank >= 1:
-            surface_valid_shape[0] = valid_row
-        if rank >= 2:
-            surface_valid_shape[1] = valid_col
-        surface_valid_shape = tuple(surface_valid_shape)
-    return wrap_surface_value(
-        value,
-        tile_metadata={
-            "shape": shape,
-            "physical_shape": physical_shape,
-            "dtype": dtype,
-            "memory_space": memory_space,
-            "valid_shape": surface_valid_shape,
-        },
+    (
+        tile_type,
+        shape,
+        physical_shape,
+        surface_valid_shape,
+        valid_row,
+        valid_col,
+    ) = _normalize_alloc_tile_request(
+        tile_type,
+        shape,
+        dtype,
+        memory_space,
+        valid_shape,
+        blayout,
+        slayout,
+        fractal_size,
+        pad,
+        valid_row,
+        valid_col,
+    )
+    return _materialize_alloc_tile(
+        tile_type, shape, physical_shape, dtype, memory_space,
+        surface_valid_shape, addr, valid_row, valid_col,
     )
 
 
@@ -4027,12 +4149,7 @@ def tgather(
     offset=None,
 ):
     """``pto.tgather`` tile gather/select wrapper."""
-    if indices is not None and (axis is not None or mask_pattern is not None):
-        raise ValueError("indices and axis/mask_pattern cannot be provided together")
-    if mask_pattern is not None and axis is None:
-        raise ValueError("axis must be provided when mask_pattern is specified")
-    if axis is not None and axis not in ("row", "col"):
-        raise ValueError(f"axis must be 'row' or 'col', got {axis!r}")
+    _validate_tgather_mode(indices, axis, mask_pattern)
     _pto.tgather(
         unwrap_surface_value(src),
         unwrap_surface_value(dst),
@@ -4045,6 +4162,15 @@ def tgather(
         cmp_mode=None if cmp_mode is None else _normalize_cmp_mode(cmp_mode),
         offset=offset,
     )
+
+
+def _validate_tgather_mode(indices, axis, mask_pattern):
+    if indices is not None and (axis is not None or mask_pattern is not None):
+        raise ValueError("indices and axis/mask_pattern cannot be provided together")
+    if mask_pattern is not None and axis is None:
+        raise ValueError("axis must be provided when mask_pattern is specified")
+    if axis is not None and axis not in ("row", "col"):
+        raise ValueError(f"axis must be 'row' or 'col', got {axis!r}")
 
 def ttri(diagonal, dst, *, upper_or_lower="lower"):
     """``pto.ttri ins(diagonal) outs(dst)``."""

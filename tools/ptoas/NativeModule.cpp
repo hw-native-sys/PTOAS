@@ -9,16 +9,16 @@
 #include "PTO/Support/CodeConstants.h"
 #include "ptoas.h"
 
-#include "PTOModule.h"
-#include "PTO/Transforms/TileLibService.h"
 #include "PTO/Transforms/SoftLibService.h"
+#include "PTO/Transforms/TileLibService.h"
+#include "PTOModule.h"
 
 #include "mlir/Bindings/Python/PybindAdaptors.h"
 #include "mlir/CAPI/IR.h"
 
-#include "llvm/Support/raw_ostream.h"
 #include "pybind11/pybind11.h"
 #include "pybind11/stl.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <string>
 #include <vector>
@@ -29,8 +29,8 @@ namespace {
 
 class PythonTileLibService final : public mlir::pto::TileLibService {
 public:
-  mlir::FailureOr<std::string>
-  getMetadata(const mlir::pto::TileLibMaterializationRequest &request) override {
+  mlir::FailureOr<std::string> getMetadata(
+      const mlir::pto::TileLibMaterializationRequest &request) override {
     py::gil_scoped_acquire acquire;
     try {
       return py::cast<std::string>(getCompilerRuntime().attr("metadata")(
@@ -61,7 +61,8 @@ public:
       py::tuple result = getCompilerRuntime().attr("materialize")(
           request.target, request.op, request.operandSpecsJson,
           request.contextAttrsJson, request.candidateId, contextOwner);
-      if (result.size() != mlir::pto::kValue2) {
+      const bool hasExpectedResultArity = result.size() == mlir::pto::kValue2;
+      if (!hasExpectedResultArity) {
         throw py::value_error(
             "PTODSL materialize() must return (module, entry_symbol)");
       }
@@ -117,19 +118,26 @@ public:
     try {
       py::object contextOwner = PythonTileLibService::getPythonContext(context);
       MlirContext pythonContext = py::cast<MlirContext>(contextOwner);
-      py::tuple result = py::module_::import("ptodsl.softlib._compiler_runtime")
-          .attr("materialize")(request.target, request.op,
-                                request.operandSpecsJson, contextOwner);
-      if (result.size() != 2)
-        throw py::value_error("SoftLib materialize() must return (module, entry_symbol)");
+      py::tuple result =
+          py::module_::import("ptodsl.softlib._compiler_runtime")
+              .attr("materialize")(request.target, request.op,
+                                   request.operandSpecsJson, contextOwner);
+      const bool hasExpectedResultCount =
+          result.size() == mlir::pto::kValue2;
+      if (!hasExpectedResultCount) {
+        throw py::value_error(
+            "SoftLib materialize() must return (module, entry_symbol)");
+      }
       py::object moduleOwner = result[0];
       MlirModule rawModule = py::cast<MlirModule>(moduleOwner);
-      if (!mlirContextEqual(mlirModuleGetContext(rawModule), pythonContext))
+      if (!mlirContextEqual(mlirModuleGetContext(rawModule), pythonContext)) {
         return mlir::failure();
+      }
       return callback(unwrap(rawModule), py::cast<std::string>(result[1]));
     } catch (const py::error_already_set &error) {
-      llvm::errs() << "SoftLib: PTODSL materialization raised Python exception:\n"
-                   << error.what() << "\n";
+      llvm::errs()
+          << "SoftLib: PTODSL materialization raised Python exception:\n"
+          << error.what() << "\n";
       return mlir::failure();
     } catch (const std::exception &error) {
       llvm::errs() << "SoftLib: invalid PTODSL materialization result: "
@@ -198,10 +206,9 @@ PYBIND11_MODULE(_core, module) {
   module.doc() = "PTOAS compiler and PTO dialect native bindings";
   py::module_::import("ptoas.mlir.ir");
   mlir::pto::python::populatePTODialectBindings(module);
-  module.add_object(
-      "_tilelib_runtime_registration",
-      py::capsule(new PythonTileLibRuntimeRegistration(),
-                  kRuntimeRegistrationCapsuleName,
-                  destroyRuntimeRegistration));
+  module.add_object("_tilelib_runtime_registration",
+                    py::capsule(new PythonTileLibRuntimeRegistration(),
+                                kRuntimeRegistrationCapsuleName,
+                                destroyRuntimeRegistration));
   module.def("main", &runPTOASFromPython, py::arg("argv"));
 }

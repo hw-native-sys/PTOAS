@@ -51,7 +51,9 @@ using namespace mlir;
 using mlir::pto::PTOASContext;
 
 #ifndef PTOAS_RELEASE_VERSION
-#define PTOAS_RELEASE_VERSION "unknown"
+constexpr char kPTOASReleaseVersion[] = "unknown";
+#else
+constexpr char kPTOASReleaseVersion[] = PTOAS_RELEASE_VERSION;
 #endif
 
 static llvm::cl::opt<std::string> inputFilename(llvm::cl::Positional,
@@ -63,7 +65,7 @@ static llvm::cl::opt<std::string>
                    llvm::cl::value_desc("filename"), llvm::cl::init("-"));
 
 static void printPTOASVersion(llvm::raw_ostream &os) {
-  os << "ptoas " << PTOAS_RELEASE_VERSION << "\n";
+  os << "ptoas " << kPTOASReleaseVersion << "\n";
 }
 
 static bool parseRequestedOutputCANNVersion(
@@ -530,7 +532,9 @@ static void rewriteExportedFunctionToLogicalWrapper(func::FuncOp exportedFunc,
 static LogicalResult
 verifyInChildLogicalWrapperAmbiguity(ModuleOp targetChild,
                                      ArrayRef<func::FuncOp> exportedFuncs) {
-  llvm::SmallDenseMap<StringRef, SmallVector<func::FuncOp, mlir::pto::kValue2>> grouped;
+  llvm::SmallDenseMap<StringRef,
+                      SmallVector<func::FuncOp, mlir::pto::kValue2>>
+      grouped;
   for (func::FuncOp exportedFunc : exportedFuncs) {
     auto kernelKindAttr =
         exportedFunc->getAttrOfType<mlir::pto::FunctionKernelKindAttr>(
@@ -547,13 +551,137 @@ verifyInChildLogicalWrapperAmbiguity(ModuleOp targetChild,
     if (entry.second.size() <= 1) {
       continue;
     }
-    targetChild.emitError(
-        "mixed-backend child assembly does not yet support ambiguous in-child logical reference '@")
+    targetChild.emitError("mixed-backend child assembly does not yet support "
+                          "ambiguous in-child logical reference '@")
         << entry.first
         << "'; found multiple ABI-specialized public func.func definitions";
     return failure();
   }
   return success();
+}
+
+static LogicalResult addCrossChildCalleeDeclarations(ModuleOp outer,
+                                                      ModuleOp targetChild,
+                                                      ModuleOp jobModule) {
+  for (StringRef calleeName : collectDirectCalleeNames(targetChild)) {
+    if (findFunctionByLogicalName(jobModule, calleeName)) {
+      continue;
+    }
+    FailureOr<func::FuncOp> siblingSource = findSiblingSourceFunction(
+        outer, targetChild, calleeName, /*allowLogicalNameMatch=*/false,
+        /*referenceKind=*/"function reference");
+    if (failed(siblingSource)) {
+      return failure();
+    }
+    if (!*siblingSource) {
+      targetChild.emitError(
+          "mixed-backend child assembly does not yet support unresolved "
+          "cross-child function reference '@")
+          << calleeName
+          << "'; each cross-child func.call must resolve to one sibling "
+             "public func.func";
+      return failure();
+    }
+    cloneFunctionDeclarationIntoModule(jobModule, *siblingSource, calleeName,
+                                       "private");
+  }
+  return success();
+}
+
+static SmallVector<func::FuncOp>
+collectExportedFunctions(ModuleOp jobModule) {
+  SmallVector<func::FuncOp> exportedFuncs;
+  for (func::FuncOp funcOp : jobModule.getOps<func::FuncOp>()) {
+    auto visibility = funcOp->getAttrOfType<StringAttr>("sym_visibility");
+    const bool isExported =
+        (!visibility || visibility.getValue() != "private") &&
+        !funcOp.isExternal();
+    if (isExported) {
+      exportedFuncs.push_back(funcOp);
+    }
+  }
+  return exportedFuncs;
+}
+
+static LogicalResult addLogicalFunctionWrappers(ModuleOp targetChild,
+                                                ModuleOp jobModule) {
+  SmallVector<func::FuncOp> exportedFuncs =
+      collectExportedFunctions(jobModule);
+  if (failed(
+          verifyInChildLogicalWrapperAmbiguity(targetChild, exportedFuncs))) {
+    return failure();
+  }
+  for (func::FuncOp exportedFunc : exportedFuncs) {
+    auto kernelKind =
+        exportedFunc->getAttrOfType<mlir::pto::FunctionKernelKindAttr>(
+            mlir::pto::FunctionKernelKindAttr::name);
+    if (kernelKind) {
+      continue;
+    }
+    StringRef logicalName =
+        mlir::pto::getPTODSLLogicalNameOrSymbolName(exportedFunc);
+    if (!findFunctionByLogicalName(jobModule, logicalName)) {
+      cloneFunctionIntoModule(jobModule, exportedFunc, logicalName, "private");
+    }
+    rewriteExportedFunctionToLogicalWrapper(exportedFunc, logicalName);
+  }
+  return success();
+}
+
+static void rewritePeerReferences(ModuleOp jobModule, StringRef logicalName,
+                                  StringRef peerSymbolName) {
+  jobModule.walk([&](pto::ImportReservedBufferOp importOp) {
+    const bool matchesLogicalName =
+        importOp.getPeerFuncAttr().getValue() == logicalName;
+    if (matchesLogicalName) {
+      importOp.setPeerFuncAttr(
+          FlatSymbolRefAttr::get(jobModule.getContext(), peerSymbolName));
+    }
+  });
+}
+
+static LogicalResult importCrossChildPeerFunctions(ModuleOp outer,
+                                                   ModuleOp targetChild,
+                                                   ModuleOp jobModule) {
+  for (StringRef logicalName : collectImportedPeerNames(targetChild)) {
+    FailureOr<func::FuncOp> peerSource = findSiblingSourceFunction(
+        outer, targetChild, logicalName, /*allowLogicalNameMatch=*/true,
+        /*referenceKind=*/"peer_func reference");
+    if (failed(peerSource)) {
+      return failure();
+    }
+    if (!*peerSource) {
+      targetChild.emitError(
+          "mixed-backend child assembly does not yet support unresolved "
+          "cross-child peer_func reference '@")
+          << logicalName
+          << "'; each import_reserved_buffer peer_func must resolve to one "
+             "sibling public func.func";
+      return failure();
+    }
+    if (failed(verifyImportedPeerCloneContract(*peerSource, logicalName))) {
+      return failure();
+    }
+    StringRef peerSymbolName = peerSource->getSymName();
+    if (!findFunctionBySymbolName(jobModule, peerSymbolName)) {
+      cloneFunctionIntoModule(jobModule, *peerSource, peerSymbolName,
+                              "private");
+    }
+    rewritePeerReferences(jobModule, logicalName, peerSymbolName);
+  }
+  return success();
+}
+
+static void normalizeLocalPeerReferences(ModuleOp jobModule) {
+  jobModule.walk([&](pto::ImportReservedBufferOp importOp) {
+    StringRef peerRef = importOp.getPeerFuncAttr().getValue();
+    func::FuncOp localPeer = findFunctionForPeerReference(jobModule, peerRef);
+    const bool needsPeerRename = localPeer && localPeer.getSymName() != peerRef;
+    if (needsPeerRename) {
+      importOp.setPeerFuncAttr(FlatSymbolRefAttr::get(
+          jobModule.getContext(), localPeer.getSymName()));
+    }
+  });
 }
 
 static FailureOr<OwningOpRef<ModuleOp>>
@@ -565,108 +693,16 @@ buildBackendChildCompileUnit(ModuleOp outer, ModuleOp targetChild) {
   for (Operation &op : targetChild.getBodyRegion().front().getOperations()) {
     jobModule.push_back(op.clone());
   }
-
-  SmallVector<StringRef> directCalleeNames = collectDirectCalleeNames(targetChild);
-  for (StringRef calleeName : directCalleeNames) {
-    if (findFunctionByLogicalName(jobModule, calleeName)) {
-      continue;
-    }
-    FailureOr<func::FuncOp> siblingSourceOr =
-        findSiblingSourceFunction(outer, targetChild, calleeName,
-                                  /*allowLogicalNameMatch=*/false,
-                                  /*referenceKind=*/"function reference");
-    if (failed(siblingSourceOr)) {
-      return failure();
-    }
-    func::FuncOp siblingSource = *siblingSourceOr;
-    if (!siblingSource) {
-      targetChild.emitError(
-          "mixed-backend child assembly does not yet support unresolved cross-child function reference '@")
-          << calleeName
-          << "'; each cross-child func.call must resolve to one sibling public func.func";
-      return failure();
-    }
-    cloneFunctionDeclarationIntoModule(jobModule, siblingSource, calleeName,
-                                       "private");
-  }
-
-  SmallVector<StringRef> importedPeerNames = collectImportedPeerNames(targetChild);
-  SmallVector<func::FuncOp> exportedFuncs;
-  for (func::FuncOp funcOp : jobModule.getOps<func::FuncOp>()) {
-    auto visibility = funcOp->getAttrOfType<StringAttr>("sym_visibility");
-    if (visibility && visibility.getValue() == "private") {
-      continue;
-    }
-    if (funcOp.isExternal()) {
-      continue;
-    }
-    exportedFuncs.push_back(funcOp);
-  }
-  if (failed(verifyInChildLogicalWrapperAmbiguity(targetChild, exportedFuncs))) {
+  if (failed(addCrossChildCalleeDeclarations(outer, targetChild, jobModule))) {
     return failure();
   }
-  for (func::FuncOp exportedFunc : exportedFuncs) {
-    StringRef logicalName =
-        mlir::pto::getPTODSLLogicalNameOrSymbolName(exportedFunc);
-    auto kernelKindAttr =
-        exportedFunc->getAttrOfType<mlir::pto::FunctionKernelKindAttr>(
-            mlir::pto::FunctionKernelKindAttr::name);
-    if (kernelKindAttr) {
-      continue;
-    }
-    if (!findFunctionByLogicalName(jobModule, logicalName)) {
-      cloneFunctionIntoModule(jobModule, exportedFunc, logicalName, "private");
-    }
-    rewriteExportedFunctionToLogicalWrapper(exportedFunc, logicalName);
+  if (failed(addLogicalFunctionWrappers(targetChild, jobModule))) {
+    return failure();
   }
-
-  for (StringRef logicalName : importedPeerNames) {
-    FailureOr<func::FuncOp> peerSourceOr =
-        findSiblingSourceFunction(outer, targetChild, logicalName,
-                                  /*allowLogicalNameMatch=*/true,
-                                  /*referenceKind=*/"peer_func reference");
-    if (failed(peerSourceOr)) {
-      return failure();
-    }
-    func::FuncOp peerSource = *peerSourceOr;
-    if (!peerSource) {
-      targetChild.emitError(
-          "mixed-backend child assembly does not yet support unresolved cross-child peer_func reference '@")
-          << logicalName
-          << "'; each import_reserved_buffer peer_func must resolve to one sibling public func.func";
-      return failure();
-    }
-    if (failed(verifyImportedPeerCloneContract(peerSource, logicalName))) {
-      return failure();
-    }
-
-    StringRef peerSymbolName = peerSource.getSymName();
-    if (!findFunctionBySymbolName(jobModule, peerSymbolName)) {
-      cloneFunctionIntoModule(jobModule, peerSource, peerSymbolName, "private");
-    }
-
-    jobModule.walk([&](pto::ImportReservedBufferOp importOp) {
-      if (importOp.getPeerFuncAttr().getValue() != logicalName) {
-        return;
-      }
-      importOp.setPeerFuncAttr(
-          FlatSymbolRefAttr::get(jobModule.getContext(), peerSymbolName));
-    });
+  if (failed(importCrossChildPeerFunctions(outer, targetChild, jobModule))) {
+    return failure();
   }
-
-  jobModule.walk([&](pto::ImportReservedBufferOp importOp) {
-    StringRef peerRef = importOp.getPeerFuncAttr().getValue();
-    func::FuncOp localPeer = findFunctionForPeerReference(jobModule, peerRef);
-    if (!localPeer) {
-      return;
-    }
-    if (localPeer.getSymName() == peerRef) {
-      return;
-    }
-    importOp.setPeerFuncAttr(
-        FlatSymbolRefAttr::get(jobModule.getContext(), localPeer.getSymName()));
-  });
-
+  normalizeLocalPeerReferences(jobModule);
   return OwningOpRef<ModuleOp>(jobModule);
 }
 
@@ -1148,6 +1184,60 @@ static LogicalResult emitVPTOLLVMFatobj(
   return success();
 }
 
+static LogicalResult appendBackendChildJob(
+    ModuleOp module, ModuleOp child, mlir::pto::PTOBackend defaultBackend,
+    bool cliBackendOverride, PTOASContext &context,
+    SmallVectorImpl<std::string> &fatobjPaths,
+    SmallVectorImpl<std::unique_ptr<BackendChildJob>> &backendJobs) {
+  std::optional<mlir::pto::PTOBackend> childBackend;
+  if (failed(parseDriverBackendAttr(child.getOperation(), childBackend))) {
+    return failure();
+  }
+
+  FailureOr<OwningOpRef<ModuleOp>> jobModuleOr =
+      buildBackendChildCompileUnit(module, child);
+  if (failed(jobModuleOr)) {
+    return failure();
+  }
+  OwningOpRef<ModuleOp> jobModule = std::move(*jobModuleOr);
+  if (llvm::sys::Process::GetEnv("PTOAS_DEBUG_CHILD_UNIT")) {
+    llvm::errs() << "// ----- child compile unit ----- //\n";
+    jobModule->print(llvm::errs());
+    llvm::errs() << "\n";
+  }
+
+  std::string summary = summarizeMixedChildModule(jobModule.get());
+  mlir::pto::PTOBackend effectiveBackend =
+      cliBackendOverride ? defaultBackend
+                         : childBackend.value_or(defaultBackend);
+  if (effectiveBackend == mlir::pto::PTOBackend::VPTO) {
+    backendJobs.push_back(std::make_unique<VPTOBackendChildJob>(
+        std::move(jobModule), std::move(summary), context.allocModuleId(),
+        fatobjPaths));
+  } else {
+    backendJobs.push_back(std::make_unique<EmitCBackendChildJob>(
+        std::move(jobModule), std::move(summary), fatobjPaths));
+  }
+  return success();
+}
+
+// PTOAS driver job topology: one .pto input feeds EmitC and VPTO jobs, plus
+// per-child backend jobs in mixed assemblies; child jobs produce fatobj pieces
+// that the fatobj link job merges into the final artifact.
+//
+// +----------------------------------------------------------+
+// |                        .pto                              |
+// +----------------------------------------------------------+
+// +-------------+ +------------+ +------------+ +------------+
+// | EmitC job   | | VPTO job   | | EmitC      | | VPTO       |
+// |             | |            | | child job  | | child job  |
+// |             | |            | +------------+ +------------+
+// |             | |            | +---------------------------+
+// |             | |            | | Fatobj link job           |
+// +-------------+ +------------+ +---------------------------+
+// +-------------+ +------------------------------------------+
+// | C++ source  | |                fatobj                    |
+// +-------------+ +------------------------------------------+
 static LogicalResult collectChildJobs(
     ModuleOp module, mlir::pto::PTOBackend defaultBackend,
     bool cliBackendOverride,
@@ -1155,34 +1245,11 @@ static LogicalResult collectChildJobs(
     SmallVectorImpl<std::unique_ptr<BackendChildJob>> &backendJobs) {
   SmallVector<ModuleOp, mlir::pto::kValue4> children(module.getOps<ModuleOp>());
   for (ModuleOp child : children) {
-    std::optional<mlir::pto::PTOBackend> childBackend;
-    if (failed(parseDriverBackendAttr(child.getOperation(), childBackend))) {
+    if (failed(appendBackendChildJob(module, child, defaultBackend,
+                                     cliBackendOverride, context, fatobjPaths,
+                                     backendJobs))) {
       return failure();
     }
-
-    FailureOr<OwningOpRef<ModuleOp>> jobModuleOr =
-        buildBackendChildCompileUnit(module, child);
-    if (failed(jobModuleOr)) {
-      return failure();
-    }
-    OwningOpRef<ModuleOp> jobModule = std::move(*jobModuleOr);
-    if (llvm::sys::Process::GetEnv("PTOAS_DEBUG_CHILD_UNIT")) {
-      llvm::errs() << "// ----- child compile unit ----- //\n";
-      jobModule->print(llvm::errs());
-      llvm::errs() << "\n";
-    }
-    std::string summary = summarizeMixedChildModule(jobModule.get());
-    mlir::pto::PTOBackend effectiveBackend =
-        cliBackendOverride ? defaultBackend
-                           : childBackend.value_or(defaultBackend);
-    if (effectiveBackend == mlir::pto::PTOBackend::VPTO) {
-      backendJobs.push_back(std::make_unique<VPTOBackendChildJob>(
-          std::move(jobModule), std::move(summary), context.allocModuleId(),
-          fatobjPaths));
-    } else {
-      backendJobs.push_back(std::make_unique<EmitCBackendChildJob>(
-          std::move(jobModule), std::move(summary), fatobjPaths));
-}
   }
   return success();
 }
@@ -1239,8 +1306,7 @@ static LogicalResult resolveSingleBackend(
 
   if (firstChildBackend) {
     singleBackend = *firstChildBackend;
-  }
-  else {
+  } else {
     singleBackend = defaultBackend;
   }
   return success();
@@ -1347,23 +1413,15 @@ static LogicalResult writeTextOutput(llvm::StringRef output,
   return success();
 }
 
-// PTOAS driver jobs:
-// +----------------------------------------------------------+
-// |                        .pto                              |
-// +----------------------------------------------------------+
-// +-------------+ +------------+ +------------+ +------------+
-// | EmitC job   | | VPTO job   | | EmitC      | | VPTO       |
-// |             | |            | | child job  | | child job  |
-// |             | |            | +------------+ +------------+
-// |             | |            | +---------------------------+
-// |             | |            | | Fatobj link job           |
-// +-------------+ +------------+ +---------------------------+
-// +-------------+ +------------------------------------------+
-// | C++ source  | |                fatobj                    |
-// +-------------+ +------------------------------------------+
-static int runPTOASDriver(int argc, char **argv,
-                          MLIRContext *borrowedContext = nullptr) {
-  DialectRegistry registry;
+struct DriverInvocationOptions {
+  bool cliArchSpecified = false;
+  bool cliBackendSpecified = false;
+  std::optional<mlir::pto::CANNVersion> outputCANNVersionOverride;
+};
+
+static FailureOr<DriverInvocationOptions>
+parseDriverInvocation(int argc, char **argv, DialectRegistry &registry,
+                      MLIRContext *borrowedContext) {
   mlir::pto::registerPTOASDialects(registry);
   if (borrowedContext) {
     borrowedContext->appendDialectRegistry(registry);
@@ -1376,18 +1434,22 @@ static int runPTOASDriver(int argc, char **argv,
   // parsing the next invocation.
   llvm::cl::ResetAllOptionOccurrences();
 
-  const bool cliArchSpecified = hasCLIOption(argc, argv, "--pto-arch");
-  const bool cliBackendSpecified = hasCLIOption(argc, argv, "--pto-backend");
-
+  DriverInvocationOptions options;
+  options.cliArchSpecified = hasCLIOption(argc, argv, "--pto-arch");
+  options.cliBackendSpecified = hasCLIOption(argc, argv, "--pto-backend");
   llvm::cl::ParseCommandLineOptions(argc, argv, "PTO Assembler (ptoas)\n");
-
-  std::optional<mlir::pto::CANNVersion> outputCANNVersionOverride;
   if (!parseRequestedOutputCANNVersion(mlir::pto::cannOutputVersion,
-                                       outputCANNVersionOverride,
+                                       options.outputCANNVersionOverride,
                                        llvm::errs())) {
-    return 1;
+    return failure();
   }
+  return options;
+}
 
+static std::unique_ptr<PTOASContext>
+createDriverContext(DialectRegistry &registry, MLIRContext *borrowedContext,
+                    int argc, char **argv,
+                    const DriverInvocationOptions &options) {
   std::unique_ptr<PTOASContext> context;
   if (borrowedContext) {
     context = std::make_unique<PTOASContext>(*borrowedContext, outputFilename,
@@ -1396,38 +1458,45 @@ static int runPTOASDriver(int argc, char **argv,
     context =
         std::make_unique<PTOASContext>(registry, outputFilename, argc, argv);
   }
-  context->setOutputCANNVersionOverride(outputCANNVersionOverride);
+  context->setOutputCANNVersionOverride(options.outputCANNVersionOverride);
   context->setVFSIMTSizeFixMode(mlir::pto::vptoFixVFSIMTSize);
   context->initializeMLIRContext();
+  return context;
+}
 
+static OwningOpRef<ModuleOp>
+loadDriverModule(PTOASContext &context, bool cliArchSpecified) {
   std::unique_ptr<llvm::MemoryBuffer> inputBuffer = readInputBuffer();
   if (!inputBuffer) {
-    return 1;
+    return {};
   }
-
   std::string arch;
   OwningOpRef<ModuleOp> module = loadInputModule(
-      std::move(inputBuffer), context->getMLIRContext(), cliArchSpecified, arch);
+      std::move(inputBuffer), context.getMLIRContext(), cliArchSpecified, arch);
   if (!module) {
-    return 1;
+    return {};
   }
-  context->setArch(std::move(arch));
+  context.setArch(std::move(arch));
+  return module;
+}
 
+static LogicalResult configureDriverBackend(PTOASContext &context,
+                                            ModuleOp module,
+                                            bool cliBackendSpecified) {
   mlir::pto::BackendInfo backendInfo;
-  if (failed(buildBackendInfo(module.get(), cliBackendSpecified, backendInfo))) {
-    return 1;
+  if (failed(buildBackendInfo(module, cliBackendSpecified, backendInfo))) {
+    return failure();
   }
-  context->setBackendInfo(std::move(backendInfo));
-  (void)context->initializeEnvironment(
-      context->getBackendInfo().requiresToolchain, llvm::errs());
+  context.setBackendInfo(std::move(backendInfo));
+  (void)context.initializeEnvironment(
+      context.getBackendInfo().requiresToolchain, llvm::errs());
+  return success();
+}
 
-  mlir::pto::PTOASCompileResult result;
-  if (failed(runPTOASJobs(module, *context, result))) {
-    return 1;
-  }
-
+static int finishDriverResult(const mlir::pto::PTOASCompileResult &result,
+                              llvm::StringRef outputPath) {
   if (result.kind == mlir::pto::PTOASCompileResultKind::Text) {
-    return failed(writeTextOutput(result.textOutput, context->getOutputPath()));
+    return failed(writeTextOutput(result.textOutput, outputPath));
   }
   if (result.kind == mlir::pto::PTOASCompileResultKind::MixedObject) {
     return 0;
@@ -1435,6 +1504,29 @@ static int runPTOASDriver(int argc, char **argv,
 
   llvm::errs() << "Error: unsupported ptoas compile result.\n";
   return 1;
+}
+
+static int runPTOASDriver(int argc, char **argv,
+                          MLIRContext *borrowedContext = nullptr) {
+  DialectRegistry registry;
+  FailureOr<DriverInvocationOptions> options =
+      parseDriverInvocation(argc, argv, registry, borrowedContext);
+  if (failed(options)) {
+    return 1;
+  }
+  std::unique_ptr<PTOASContext> context =
+      createDriverContext(registry, borrowedContext, argc, argv, *options);
+  OwningOpRef<ModuleOp> module =
+      loadDriverModule(*context, options->cliArchSpecified);
+  if (!module || failed(configureDriverBackend(
+                     *context, module.get(), options->cliBackendSpecified))) {
+    return 1;
+  }
+  mlir::pto::PTOASCompileResult result;
+  if (failed(runPTOASJobs(module, *context, result))) {
+    return 1;
+  }
+  return finishDriverResult(result, context->getOutputPath());
 }
 
 int mlir::pto::runPTOAS(int argc, char **argv) {
