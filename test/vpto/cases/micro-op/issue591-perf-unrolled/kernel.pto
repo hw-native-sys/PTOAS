@@ -1,0 +1,186 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Issue #591 performance acceptance case (fully-unrolled form).
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @issue591_perf_unrolled(%in: !pto.ptr<f16, gm>, %out: !pto.ptr<f16, gm>)
+      attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c128 = arith.constant 128 : index
+    %c0_i64 = arith.constant 0 : i64
+    %c65536 = arith.constant 65536 : i64
+    %c128_i64 = arith.constant 128 : i64
+    %c32_i64 = arith.constant 32 : i64
+    %c16_i64 = arith.constant 16 : i64
+    %c2048_i64 = arith.constant 2048 : i64
+
+    %ub_in = pto.castptr %c0_i64 : i64 -> !pto.ptr<f16, ub>
+    %ub_out = pto.castptr %c65536 : i64 -> !pto.ptr<f16, ub>
+
+    pto.mte_gm_ub %in, %ub_in, %c0_i64, %c2048_i64
+      nburst(%c16_i64, %c128_i64, %c128_i64)
+      : !pto.ptr<f16, gm>, !pto.ptr<f16, ub>, i64, i64, i64, i64, i64
+    pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+
+    pto.vecscope {
+      %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+    %ct0_i64 = arith.constant 0 : i64
+    %p0 = pto.castptr %ct0_i64 : i64 -> !pto.ptr<f16, ub>
+    %lo0, %hi0 = pto.vldsx2 %p0[%c0], "DINTLV_B16"
+        : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+    %sum0 = pto.vadd %lo0, %hi0, %mask
+        : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<128xf16>
+    %o0 = arith.constant 0 : index
+    pto.vsts %sum0, %ub_out[%o0], %mask
+        : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+    %ct1_i64 = arith.constant 4096 : i64
+    %p1 = pto.castptr %ct1_i64 : i64 -> !pto.ptr<f16, ub>
+    %lo1, %hi1 = pto.vldsx2 %p1[%c0], "DINTLV_B16"
+        : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+    %sum1 = pto.vadd %lo1, %hi1, %mask
+        : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<128xf16>
+    %o1 = arith.constant 128 : index
+    pto.vsts %sum1, %ub_out[%o1], %mask
+        : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+    %ct2_i64 = arith.constant 8192 : i64
+    %p2 = pto.castptr %ct2_i64 : i64 -> !pto.ptr<f16, ub>
+    %lo2, %hi2 = pto.vldsx2 %p2[%c0], "DINTLV_B16"
+        : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+    %sum2 = pto.vadd %lo2, %hi2, %mask
+        : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<128xf16>
+    %o2 = arith.constant 256 : index
+    pto.vsts %sum2, %ub_out[%o2], %mask
+        : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+    %ct3_i64 = arith.constant 12288 : i64
+    %p3 = pto.castptr %ct3_i64 : i64 -> !pto.ptr<f16, ub>
+    %lo3, %hi3 = pto.vldsx2 %p3[%c0], "DINTLV_B16"
+        : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+    %sum3 = pto.vadd %lo3, %hi3, %mask
+        : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<128xf16>
+    %o3 = arith.constant 384 : index
+    pto.vsts %sum3, %ub_out[%o3], %mask
+        : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+    %ct4_i64 = arith.constant 16384 : i64
+    %p4 = pto.castptr %ct4_i64 : i64 -> !pto.ptr<f16, ub>
+    %lo4, %hi4 = pto.vldsx2 %p4[%c0], "DINTLV_B16"
+        : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+    %sum4 = pto.vadd %lo4, %hi4, %mask
+        : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<128xf16>
+    %o4 = arith.constant 512 : index
+    pto.vsts %sum4, %ub_out[%o4], %mask
+        : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+    %ct5_i64 = arith.constant 20480 : i64
+    %p5 = pto.castptr %ct5_i64 : i64 -> !pto.ptr<f16, ub>
+    %lo5, %hi5 = pto.vldsx2 %p5[%c0], "DINTLV_B16"
+        : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+    %sum5 = pto.vadd %lo5, %hi5, %mask
+        : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<128xf16>
+    %o5 = arith.constant 640 : index
+    pto.vsts %sum5, %ub_out[%o5], %mask
+        : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+    %ct6_i64 = arith.constant 24576 : i64
+    %p6 = pto.castptr %ct6_i64 : i64 -> !pto.ptr<f16, ub>
+    %lo6, %hi6 = pto.vldsx2 %p6[%c0], "DINTLV_B16"
+        : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+    %sum6 = pto.vadd %lo6, %hi6, %mask
+        : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<128xf16>
+    %o6 = arith.constant 768 : index
+    pto.vsts %sum6, %ub_out[%o6], %mask
+        : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+    %ct7_i64 = arith.constant 28672 : i64
+    %p7 = pto.castptr %ct7_i64 : i64 -> !pto.ptr<f16, ub>
+    %lo7, %hi7 = pto.vldsx2 %p7[%c0], "DINTLV_B16"
+        : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+    %sum7 = pto.vadd %lo7, %hi7, %mask
+        : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<128xf16>
+    %o7 = arith.constant 896 : index
+    pto.vsts %sum7, %ub_out[%o7], %mask
+        : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+    %ct8_i64 = arith.constant 32768 : i64
+    %p8 = pto.castptr %ct8_i64 : i64 -> !pto.ptr<f16, ub>
+    %lo8, %hi8 = pto.vldsx2 %p8[%c0], "DINTLV_B16"
+        : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+    %sum8 = pto.vadd %lo8, %hi8, %mask
+        : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<128xf16>
+    %o8 = arith.constant 1024 : index
+    pto.vsts %sum8, %ub_out[%o8], %mask
+        : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+    %ct9_i64 = arith.constant 36864 : i64
+    %p9 = pto.castptr %ct9_i64 : i64 -> !pto.ptr<f16, ub>
+    %lo9, %hi9 = pto.vldsx2 %p9[%c0], "DINTLV_B16"
+        : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+    %sum9 = pto.vadd %lo9, %hi9, %mask
+        : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<128xf16>
+    %o9 = arith.constant 1152 : index
+    pto.vsts %sum9, %ub_out[%o9], %mask
+        : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+    %ct10_i64 = arith.constant 40960 : i64
+    %p10 = pto.castptr %ct10_i64 : i64 -> !pto.ptr<f16, ub>
+    %lo10, %hi10 = pto.vldsx2 %p10[%c0], "DINTLV_B16"
+        : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+    %sum10 = pto.vadd %lo10, %hi10, %mask
+        : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<128xf16>
+    %o10 = arith.constant 1280 : index
+    pto.vsts %sum10, %ub_out[%o10], %mask
+        : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+    %ct11_i64 = arith.constant 45056 : i64
+    %p11 = pto.castptr %ct11_i64 : i64 -> !pto.ptr<f16, ub>
+    %lo11, %hi11 = pto.vldsx2 %p11[%c0], "DINTLV_B16"
+        : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+    %sum11 = pto.vadd %lo11, %hi11, %mask
+        : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<128xf16>
+    %o11 = arith.constant 1408 : index
+    pto.vsts %sum11, %ub_out[%o11], %mask
+        : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+    %ct12_i64 = arith.constant 49152 : i64
+    %p12 = pto.castptr %ct12_i64 : i64 -> !pto.ptr<f16, ub>
+    %lo12, %hi12 = pto.vldsx2 %p12[%c0], "DINTLV_B16"
+        : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+    %sum12 = pto.vadd %lo12, %hi12, %mask
+        : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<128xf16>
+    %o12 = arith.constant 1536 : index
+    pto.vsts %sum12, %ub_out[%o12], %mask
+        : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+    %ct13_i64 = arith.constant 53248 : i64
+    %p13 = pto.castptr %ct13_i64 : i64 -> !pto.ptr<f16, ub>
+    %lo13, %hi13 = pto.vldsx2 %p13[%c0], "DINTLV_B16"
+        : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+    %sum13 = pto.vadd %lo13, %hi13, %mask
+        : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<128xf16>
+    %o13 = arith.constant 1664 : index
+    pto.vsts %sum13, %ub_out[%o13], %mask
+        : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+    %ct14_i64 = arith.constant 57344 : i64
+    %p14 = pto.castptr %ct14_i64 : i64 -> !pto.ptr<f16, ub>
+    %lo14, %hi14 = pto.vldsx2 %p14[%c0], "DINTLV_B16"
+        : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+    %sum14 = pto.vadd %lo14, %hi14, %mask
+        : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<128xf16>
+    %o14 = arith.constant 1792 : index
+    pto.vsts %sum14, %ub_out[%o14], %mask
+        : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+    %ct15_i64 = arith.constant 61440 : i64
+    %p15 = pto.castptr %ct15_i64 : i64 -> !pto.ptr<f16, ub>
+    %lo15, %hi15 = pto.vldsx2 %p15[%c0], "DINTLV_B16"
+        : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+    %sum15 = pto.vadd %lo15, %hi15, %mask
+        : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<128xf16>
+    %o15 = arith.constant 1920 : index
+    pto.vsts %sum15, %ub_out[%o15], %mask
+        : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+    }
+    pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.mte_ub_gm %ub_out, %out, %c2048_i64
+      nburst(%c16_i64, %c128_i64, %c128_i64)
+      : !pto.ptr<f16, ub>, !pto.ptr<f16, gm>, i64, i64, i64, i64
+    pto.barrier #pto.pipe<PIPE_ALL>
+    return
+  }
+}

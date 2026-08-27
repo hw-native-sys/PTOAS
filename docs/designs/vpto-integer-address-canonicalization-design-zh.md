@@ -623,6 +623,22 @@ MLIR analysis preservation 应如实声明失效；下游自然重建 `PTOAddres
    标量地址 op（对照 fully-unrolled 形态），且 rolled 形态的 RVEC cycles 不劣于
    unrolled 形态（目标 ≤1.1×）；WHT N=512 的 RVEC cycle 对比作为回归记录。
 
+**性能验收实测（2026-08-27，camodel/dav_3510 仿真）**：`test/vpto/cases/micro-op/
+issue591-perf-rolled` 与 `issue591-perf-unrolled` 两个 case（16 tile，f16，
+`castptr(t*4096)` 读 UB + vadd + 写回，跑 `run_host_vpto_validation.sh`）：
+
+| 指标 | rolled（规范化后） | unrolled（基线） |
+| --- | --- | --- |
+| `kernal total ticks` | 3959 | 3957 |
+| `rvec_veccore0_busy_cycle` | 70 | 71 |
+| 循环内 `RV_SADD`/`RV_SMOVK` | **0** | 2（循环外 prologue） |
+| `RV_VLDS` / `RV_VLDI` | 16 / 0 | 15 / 1 |
+
+rolled 与 unrolled 性能持平（1.0005× ≤ 1.1×），循环体内零标量地址 op——验收
+达成。注意：本地 build 的 `VPTOSoftPostUpdate` 对**动态 trip count** 的 `scf.for`
+不转换（`UnknownIterationDomain`，缺 hw-native-sys #1330 的修复），验收 case 使用
+常量 trip count；动态 trip 的 post-update 依赖 #1330 或后续改进。
+
 ## 10. 调研依据与事实证据
 
 - LLVM [GetElementPtr FAQ](https://llvm.org/docs/GetElementPtr.html) 说明 GEP 与整数地址算术
