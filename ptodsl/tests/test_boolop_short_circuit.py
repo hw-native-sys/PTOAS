@@ -11,6 +11,7 @@ import inspect
 from types import FunctionType
 
 from ptodsl import pto, scalar
+from ptoas.mlir.dialects import arith
 from ptodsl._ast_rewrite import PTODSLAstRewriteError, rewrite_jit_function
 
 
@@ -341,7 +342,13 @@ def main():
     int_lhs_module = issue_1332_integer_lhs.mlir_module()
     # Integer LHS becomes a non-zero i1 control condition; the integer operand
     # is preserved and the i1 RHS widens to the integer type.
-    assert len(_ops(int_lhs_module, "arith.cmpi")) == 1
+    int_lhs_ifs = _ops(int_lhs_module, "scf.if")
+    assert len(int_lhs_ifs) == 1
+    int_lhs_condition = int_lhs_ifs[0].operation.operands[0].owner
+    assert int_lhs_condition is not None
+    assert int_lhs_condition.operation.name == "arith.cmpi"
+    predicate = int_lhs_condition.operation.attributes["predicate"]
+    assert predicate.value == int(arith.CmpIPredicate.ne)
     assert _ops(int_lhs_module, "arith.extui")
     assert _has_result_type(int_lhs_module, "scf.if", "i32")
     int_operands_module = issue_1332_integer_operands.mlir_module()
