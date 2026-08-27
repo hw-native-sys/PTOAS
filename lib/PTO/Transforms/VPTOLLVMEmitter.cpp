@@ -6074,7 +6074,7 @@ private:
 };
 
 // pto.ub.vgatherb -> llvm.hivm.VGATHERB.b16/.b32(dst_ptr, offset_ptr, i64 config)
-// Config (decoded from bisheng IR, see docs/designs/a2a3-vpto-tgather.md):
+// Config (decoded from bisheng IR, see docs/designs/a2a3-vpto-gather.md):
 //   srcAddr[31:0] | dstRepeatStride[39:32] | dstBlockStride[47:40]
 //   | reserved[55:48]=0 | repeat[63:56]
 // The 2nd pointer operand is the offset buffer; the source data base address
