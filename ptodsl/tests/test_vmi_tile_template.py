@@ -1571,8 +1571,9 @@ def check_tmov_nd2nz() -> None:
     expect("pto.vmi.vstore" in nz_text, "tmov ND->NZ should store via pto.vmi.vstore")
     expect(nz_text.count("scf.for") == 1, "tmov ND->NZ should render one row loop")
     expect("blayout=col_major" in nz_text, "tmov ND->NZ dst should be a col-major NZ tile")
-    # constant strides, no second (tail-block) loop
-    expect("arith.constant 1 : i16" in nz_text, "tmov ND->NZ repeat_stride should be a constant 1")
+    # constant block stride, no second (tail-block) loop; VMI vstore no longer
+    # carries a repeat_stride operand (upstream dropped it)
+    expect("arith.constant 16 : i16" in nz_text, "tmov ND->NZ block_stride should be a constant 16")
 
     # Lower to VPTO and confirm it reaches a single pto.vsstb with constant
     # block_stride/repeat_stride inside one scf.for (the pto-isa single-VL form).
@@ -1613,8 +1614,8 @@ def check_tmov_nd2nz() -> None:
     ).mlir_text()
     expect(half_text.count("scf.for") == 1, "tmov 1/2-VL ND->NZ should render one row loop")
     expect(
-        "arith.constant 1 : i16" in half_text,
-        "tmov 1/2-VL repeat_stride should still be a constant 1",
+        "arith.constant 128 : i16" in half_text,
+        "tmov 1/2-VL block_stride should still be a constant 128",
     )
     # Lower to VPTO and confirm the half-VL mask form (full-VL vlds + half-VL
     # block-mask vsstb) reaches pto.vsstb inside one scf.for.

@@ -21,8 +21,10 @@
 //
 // RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --tile-lib-backend=ptodsl %s -o - 2>/dev/null | FileCheck %s
 
-// Outer loop: scf.for 0 to 2 step 1, carrying dst_ptr (ptr<bf16,ub>) + remained (index, init %c192).
-// CHECK: scf.for %{{.*}} = %c0{{[^ ]*}} to %c2{{[^ ]*}} step %c1{{[^ ]*}} iter_args(%{{.*}} = %{{.*}}, %{{.*}} = %c192) -> (!pto.ptr<bf16, ub>, index) {{.*}}{
+// Outer loop: scf.for 0 to 2 step 1, carrying dst_ptr (ptr<bf16,ub>) + remained
+// (index, init %c192) + the src last-row pointer (addptr of src base).
+// CHECK: %{{.*}} = pto.addptr %{{.*}}, %c24384
+// CHECK: scf.for %{{.*}} = %c0{{[^ ]*}} to %c2{{[^ ]*}} step %c1{{[^ ]*}} iter_args(%{{.*}} = %{{.*}}, %{{.*}} = %c192, %{{.*}} = %{{.*}}) -> (!pto.ptr<bf16, ub>, index, !pto.ptr<bf16, ub>) {{.*}}{
 
 // Inner row loop: scf.for 0 to 127 step 1, carrying dst_ptr.
 // CHECK: scf.for %{{.*}} = %c0{{[^ ]*}} to %c127{{[^ ]*}} step %c1{{[^ ]*}} iter_args(%{{.*}} = %{{.*}}) -> (!pto.ptr<bf16, ub>) {{.*}}{

@@ -868,7 +868,7 @@ class _VMINamespace:
                 raise TypeError('pto.vmi.vstore(...) with dist_mode="dintlv" requires an (even, odd) pair')
         elif _is_sequence(values):
             raise TypeError("pto.vmi.vstore(...) expects a single VMI vector unless dist_mode=\"dintlv\"")
-dest = _raw(destination)
+        dest = _raw(destination)
         if post_update:
             # Produce the updated_base result (block-stride mode only): the
             # generated vstore builder takes the result type as `updated_base`.
