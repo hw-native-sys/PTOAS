@@ -2530,8 +2530,8 @@ arithmetic in SIMT scalar code after contiguous scalar loads or explicit
 
 <!-- ptodsl-doc-pending: {"reason":"illustrative fragment; covered by test_jit_compile scalar contiguous vector probes"} -->
 ```python
-x4 = scalar.load(ptr, offset, contiguous=4)
+x4 = pto.load(ptr, offset, contiguous=4)
 rstd4 = pto.Vec(pto.f32, 4, init=rstd)
 y4 = x4 * rstd4
-scalar.store(y4, ptr, offset)
+pto.store(y4, ptr, offset)
 ```

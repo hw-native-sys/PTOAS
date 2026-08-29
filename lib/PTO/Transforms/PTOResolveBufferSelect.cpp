@@ -185,7 +185,8 @@ static Value computeTileAddress(Value value, IRRewriter &rewriter,
                                      tileType.getElementType(), memorySpace);
     Value ptr =
         rewriter.create<pto::TileBufAddrOp>(loc, ptrType, value).getDst();
-    return rewriter.create<pto::PtrToIntOp>(loc, ptr).getResult();
+    return rewriter.create<pto::CastPtrOp>(loc, rewriter.getI64Type(), ptr)
+        .getResult();
   }
   if (auto subview = value.getDefiningOp<pto::SubViewOp>()) {
     Value base = computeTileAddress(subview.getSource(), rewriter, loc);

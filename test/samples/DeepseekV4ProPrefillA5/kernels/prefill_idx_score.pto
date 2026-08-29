@@ -24,7 +24,7 @@ module attributes {pto.target_arch = "a5"} {
   %prefill_idx_score_c2v_slot_buffer_import = pto.import_reserved_buffer {name = "prefill_idx_score_c2v_slot_buffer", peer_func = @prefill_idx_score_aiv} -> i32
   pto.aic_initialize_pipe {dir_mask = 1, slot_size = 8192} (c2v_consumer_buf = %prefill_idx_score_c2v_slot_buffer_import : i32, v2c_consumer_buf = %c0_i32 : i32)
   %1 = arith.subi %c64_index, %c1_index : index
-  %last_pos_inline5361__tile = pto.load_scalar %arg0[%1] : !pto.ptr<i32> -> i32
+  %last_pos_inline5361__tile = pto.load %arg0[%1] : !pto.ptr<i32> -> i32
   %2 = arith.index_cast %last_pos_inline5361__tile : i32 to index
   %3 = arith.addi %2, %c1_index : index
   %4 = arith.divsi %3, %c4_index : index
@@ -34,7 +34,7 @@ module attributes {pto.target_arch = "a5"} {
     %7 = arith.cmpi slt, %6, %5 : index
     scf.if %7 {
       %8 = arith.divsi %6, %c128_index : index
-      %t__tile = pto.load_scalar %arg2[%8] : !pto.ptr<i32> -> i32
+      %t__tile = pto.load %arg2[%8] : !pto.ptr<i32> -> i32
       %9 = arith.index_cast %t__tile : i32 to index
       %10 = arith.muli %9, %c128_index : index
       %11 = arith.remsi %6, %c128_index : index
@@ -59,7 +59,7 @@ module attributes {pto.target_arch = "a5"} {
           %score_acc_s_inline5151__tile = pto.alloc_tile addr = %c0_i64 valid_row = %c32_index valid_col = %c64_index : !pto.tile_buf<loc=acc, dtype=i32, rows=32, cols=64, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
           pto.tmatmul ins(%kv_q_i8_full_inline5154__tile_Left, %qr_hadamard_tile_inline5152__tile_t_Right : !pto.tile_buf<loc=left, dtype=i8, rows=32, cols=128, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=512, pad=0>, !pto.tile_buf<loc=right, dtype=i8, rows=128, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=col_major, fractal=512, pad=0>) outs(%score_acc_s_inline5151__tile : !pto.tile_buf<loc=acc, dtype=i32, rows=32, cols=64, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
           pto.tpush_to_aiv(%score_acc_s_inline5151__tile : !pto.tile_buf<loc=acc, dtype=i32, rows=32, cols=64, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=1024, pad=0>) {split = 0}
-          %pos_inline5353__tile = pto.load_scalar %arg0[%t_inline5241__idx_v0] : !pto.ptr<i32> -> i32
+          %pos_inline5353__tile = pto.load %arg0[%t_inline5241__idx_v0] : !pto.ptr<i32> -> i32
           %18 = arith.index_cast %pos_inline5353__tile : i32 to index
           %19 = arith.addi %18, %c1_index : index
           %20 = arith.divsi %19, %c4_index : index
@@ -106,7 +106,7 @@ module attributes {pto.target_arch = "a5"} {
   %prefill_idx_score_c2v_slot_buffer = pto.reserve_buffer {name = "prefill_idx_score_c2v_slot_buffer", size = 65536, location = #pto.address_space<vec>, auto = false, base = 0} -> i32
   pto.aiv_initialize_pipe {dir_mask = 1, slot_size = 8192} (c2v_consumer_buf = %prefill_idx_score_c2v_slot_buffer : i32, v2c_consumer_buf = %c0_i32 : i32)
   %8 = arith.subi %c64_index, %c1_index : index
-  %last_pos_inline5361__tile = pto.load_scalar %arg0[%8] : !pto.ptr<i32> -> i32
+  %last_pos_inline5361__tile = pto.load %arg0[%8] : !pto.ptr<i32> -> i32
   %9 = arith.index_cast %last_pos_inline5361__tile : i32 to index
   %10 = arith.addi %9, %c1_index : index
   %11 = arith.divsi %10, %c4_index : index
@@ -116,7 +116,7 @@ module attributes {pto.target_arch = "a5"} {
     %14 = arith.cmpi slt, %13, %12 : index
     scf.if %14 {
       %16 = arith.divsi %13, %c128_index : index
-      %15 = pto.load_scalar %arg2[%16] : !pto.ptr<i32> -> i32
+      %15 = pto.load %arg2[%16] : !pto.ptr<i32> -> i32
       %17 = arith.index_cast %15 : i32 to index
       %18 = arith.muli %17, %c128_index : index
       %19 = arith.remsi %13, %c128_index : index
@@ -156,7 +156,7 @@ module attributes {pto.target_arch = "a5"} {
           %4 = pto.alloc_tile addr = %c90496_i64 valid_row = %c32_index valid_col = %c1_index : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=1, v_row=?, v_col=?, blayout=col_major, slayout=none_box, fractal=512, pad=0>
           pto.trowsum ins(%3, %tmp_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%4 : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=1, v_row=?, v_col=?, blayout=col_major, slayout=none_box, fractal=512, pad=0>)
           %weighted_score_s_inline5148__tile = pto.alloc_tile addr = %c90496_i64 valid_row = %c1_index valid_col = %c32_index : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
-          %pos_inline5353__tile = pto.load_scalar %arg0[%t_inline5241__idx_v0] : !pto.ptr<i32> -> i32
+          %pos_inline5353__tile = pto.load %arg0[%t_inline5241__idx_v0] : !pto.ptr<i32> -> i32
           %27 = arith.index_cast %pos_inline5353__tile : i32 to index
           %28 = arith.addi %27, %c1_index : index
           %29 = arith.divsi %28, %c4_index : index

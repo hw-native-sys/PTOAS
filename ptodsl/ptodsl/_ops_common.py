@@ -48,7 +48,6 @@ from ._surface_values import (
 from ._types import (
     _is_struct_type,
     _isinstance_pto_type,
-    _materialize_integer_literal,
     _normalize_address_space,
     _resolve,
     _strip_integer_signedness,
@@ -60,7 +59,7 @@ from ._types import (
     tensor_view_type_from_dims,
     vreg_type,
 )
-from ptoas.mlir.dialects import arith, pto as _pto
+from ptoas.mlir.dialects import pto as _pto
 from ptoas.mlir.ir import (
     Attribute,
     BF16Type,
@@ -68,7 +67,6 @@ from ptoas.mlir.ir import (
     F32Type,
     Float8E4M3FNType,
     Float8E5M2Type,
-    FloatAttr,
     IndexType,
     IntegerAttr,
     IntegerType,
@@ -223,8 +221,18 @@ def _explicit_mode_only(surface: str):
 
 def castptr(int_addr, result_ptr_type):
     """``pto.castptr`` – cast an integer address to a typed PTO pointer."""
+    result_type = _resolve(result_ptr_type)
+    raw_addr = unwrap_surface_value(int_addr)
+    # Generic PTO IR uses signless i64 for pointer carriers. Keep the
+    # authoring surface independent of legacy VMI signedness spelling.
+    if IntegerType.isinstance(raw_addr.type) and not IntegerType.isinstance(result_type):
+        raw_addr = coerce_runtime_integer_value(
+            raw_addr, IntegerType.get_signless(64), context="pto.castptr address"
+        )
+    if IntegerType.isinstance(result_type):
+        result_type = IntegerType.get_signless(64)
     return wrap_surface_value(
-        _pto.CastPtrOp(_resolve(result_ptr_type), unwrap_surface_value(int_addr)).result
+        _pto.CastPtrOp(result_type, raw_addr).result
     )
 
 
@@ -607,15 +615,15 @@ def _constant_like(value, mlir_type):
     value = unwrap_surface_value(value)
     if hasattr(value, "type"):
         return value
-    if isinstance(value, float):
-        return arith.ConstantOp(mlir_type, FloatAttr.get(mlir_type, value)).result
-    if IntegerType.isinstance(mlir_type):
-        return _materialize_integer_literal(mlir_type, value)
-    return arith.ConstantOp(mlir_type, value).result
+    return materialize_scalar_literal(
+        value, mlir_type, context="PTO operation scalar operand"
+    )
 
 
 def _index_zero():
-    return arith.ConstantOp(IndexType.get(), 0).result
+    return materialize_scalar_literal(
+        0, IndexType.get(), context="PTO operation index operand"
+    )
 
 
 def _tile_slice_linear_offset(tile_slice: TileSliceValue):
@@ -635,9 +643,9 @@ def _tile_slice_linear_offset(tile_slice: TileSliceValue):
         return row * stride + col
 
     row_value = _coerce_index(row, context="tile slice pointer lowering")
-    row_stride = arith.MulIOp(row_value, arith.ConstantOp(IndexType.get(), stride).result).result
+    row_stride = emit_runtime_binary_op("mul", row_value, stride)
     col_value = _coerce_index(col, context="tile slice pointer lowering")
-    return arith.AddIOp(row_stride, col_value).result
+    return emit_runtime_binary_op("add", row_stride, col_value)
 
 
 def _tile_slice_ptr(tile_slice: TileSliceValue):
@@ -826,7 +834,11 @@ def _coerce_i1(value, *, context: str):
 
 
 def _i64_zero():
-    return arith.ConstantOp(IntegerType.get_signless(64), 0).result
+    return materialize_scalar_literal(
+        0,
+        IntegerType.get_signless(64),
+        context="PTO operation i64 operand",
+    )
 
 
 def _coerce_scalar_like_vector_element(vector_value, scalar_value, *, context: str):
@@ -945,7 +957,6 @@ _ST_L2_CACHE_CONTROL_VALUES = {
     "wtsred": 15,
 }
 _ROUNDING_TOKENS = {"r", "a", "f", "c", "z", "o", "h"}
-_SATURATION_TOKENS = {"sat", "nosat"}
 
 
 def _optional_signedness_attr(signedness, *, context: str):
@@ -982,16 +993,6 @@ def _normalize_mte_store_l2_cache(l2_cache, *, context: str):
 
 def _rounding_attr(value, *, context: str):
     return _simt_enum_attr("rounding", value, supported=_ROUNDING_TOKENS, context=context)
-
-
-def _saturation_attr(value, *, context: str):
-    normalized = _normalize_token(value, context=context)
-    aliases = {"on": "sat", "off": "nosat", "sat": "sat", "nosat": "nosat"}
-    token = aliases.get(normalized)
-    if token is None:
-        expected = ", ".join(sorted((*_SATURATION_TOKENS, "on", "off")))
-        raise ValueError(f"{context} does not support {value!r}; expected one of {expected}")
-    return _simt_enum_attr("saturation", token, supported=_SATURATION_TOKENS, context=context)
 
 
 def _simt_enum_attr(kind, value, *, supported: set[str], context: str):
@@ -1035,18 +1036,3 @@ def _validate_redux_signedness(value_type, signedness, *, require_for_integer: b
 def _validate_integer_signedness_only(value_type, signedness, *, context: str):
     if signedness is not None and not IntegerType.isinstance(value_type):
         raise TypeError(f"{context} does not accept signedness for non-integer values")
-
-
-def _validate_convert_signedness(src_type, dst_type, signedness, *, context: str):
-    src_int = IntegerType.isinstance(src_type)
-    dst_int = IntegerType.isinstance(dst_type)
-    if src_int and dst_int:
-        raise TypeError(f"{context} does not support integer-to-integer conversion")
-    if src_int or dst_int:
-        if signedness is None:
-            raise TypeError(
-                f"{context} requires signedness='signed' or 'unsigned' "
-                "when converting to or from integer types")
-        return
-    if signedness is not None:
-        raise TypeError(f"{context} does not accept signedness for floating-point or packed conversion")

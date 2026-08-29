@@ -39,6 +39,7 @@ class PTO_Attr<string attrName, string attrMnemonic, list<Trait> traits = []>
 }
 
 include "PTO/IR/VMIAttrs.td"
+include "PTO/IR/PTOGenericAttrs.td"
 
 //===----------------------------------------------------------------------===//
 // Address Space

@@ -232,7 +232,7 @@ def vec_add_micro(
     num_blocks = (N + BLOCK - 1) // BLOCK
     for i in range(0, num_blocks, 1):
         offset = i * BLOCK
-        this_block = scalar.min(N - offset, BLOCK)
+        this_block = pto.min(N - offset, BLOCK)
         a_part = pto.partition_view(a_view, offsets=[offset], sizes=[this_block])
         b_part = pto.partition_view(b_view, offsets=[offset], sizes=[this_block])
         o_part = pto.partition_view(o_view, offsets=[offset], sizes=[this_block])

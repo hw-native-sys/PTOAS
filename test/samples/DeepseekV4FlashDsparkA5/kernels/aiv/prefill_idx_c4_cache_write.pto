@@ -61,7 +61,7 @@ module attributes {pto.target_arch = "a5"} {
     %11 = arith.addi %8, %final_dt_inline2605__idx_v0 : index
     %flat_offset_mul = arith.muli %c0_index, %c32_index : index
     %flat_offset = arith.addi %flat_offset_mul, %11 : index
-    %dst_row_raw_inline2495__tile = pto.load_scalar %arg3[%flat_offset] : !pto.ptr<i32> -> i32
+    %dst_row_raw_inline2495__tile = pto.load %arg3[%flat_offset] : !pto.ptr<i32> -> i32
     %12 = arith.index_cast %dst_row_raw_inline2495__tile : i32 to index
     %13 = arith.cmpi sle, %c0_index, %12 : index
     scf.if %13 {

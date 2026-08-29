@@ -7,6 +7,8 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
+import re
+
 from ptodsl import pto
 
 
@@ -83,7 +85,7 @@ def main():
 
     compiled_warp = kernel_warp.compile()
     mlir_warp = compiled_warp.mlir_text()
-    expect("pto.redux_add" in mlir_warp,
+    expect("pto.redux_addf" in mlir_warp,
            "IR: redux_add in warp_reduce helper")
     expect("pto.syncthreads" not in mlir_warp,
            "IR: warp_reduce has no syncthreads")
@@ -105,10 +107,10 @@ def main():
 
     compiled_warp_t16 = kernel_warp_t16.compile()
     mlir_warp_t16 = compiled_warp_t16.mlir_text()
-    expect("pto.redux_add" in mlir_warp_t16,
+    expect("pto.redux_addf" in mlir_warp_t16,
            "IR: redux_add for groups>1")
-    expect("arith.select" in mlir_warp_t16,
-           "IR: arith.select for group masking")
+    expect("pto.select" in mlir_warp_t16,
+           "IR: pto.select for group masking")
     expect("pto.syncthreads" not in mlir_warp_t16,
            "IR: warp_reduce (groups=2) has no syncthreads")
     compiled_warp_t16.verify()
@@ -129,7 +131,7 @@ def main():
     mlir_warp_t8 = compiled_warp_t8.mlir_text()
     expect("pto.shuffle_bfly" in mlir_warp_t8,
            "IR: shuffle_bfly for butterfly path")
-    expect("pto.redux_add" not in mlir_warp_t8,
+    expect("pto.redux_addf" not in mlir_warp_t8,
            "IR: butterfly has no hardware redux")
     expect("pto.syncthreads" not in mlir_warp_t8,
            "IR: butterfly has no syncthreads")
@@ -151,7 +153,7 @@ def main():
     mlir_warp_s2 = compiled_warp_s2.mlir_text()
     expect("pto.shuffle_bfly" in mlir_warp_s2,
            "IR: shuffle_bfly for butterfly (scale>1)")
-    expect("pto.redux_add" not in mlir_warp_s2,
+    expect("pto.redux_addf" not in mlir_warp_s2,
            "IR: butterfly (scale>1) has no hardware redux")
     compiled_warp_s2.verify()
 
@@ -168,10 +170,10 @@ def main():
     mlir_warp_o4 = compiled_warp_o4.mlir_text()
     expect("pto.get_tid_x" in mlir_warp_o4,
            "IR: warp_reduce o=4 uses get_tid_x (not raw get_laneid)")
-    expect("arith.subi" in mlir_warp_o4,
-           "IR: warp_reduce o=4 uses subi for tx = tid_x - offset")
-    expect("arith.andi" in mlir_warp_o4,
-           "IR: warp_reduce o=4 uses andi to extract lane_in_warp")
+    expect("pto.subi" in mlir_warp_o4,
+           "IR: warp_reduce o=4 uses pto.subi for tx = tid_x - offset")
+    expect("pto.and" in mlir_warp_o4,
+           "IR: warp_reduce o=4 uses pto.and to extract lane_in_warp")
     compiled_warp_o4.verify()
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -218,12 +220,12 @@ def main():
            "IR: ub_reduce t=6 s=2 has load")
     expect("scf.for" in mlir_ub6s2,
            "IR: ub_reduce t=6 s=2 has scf.for (sequential reduce loop)")
-    expect("pto.redux_add" not in mlir_ub6s2,
+    expect("pto.redux_addf" not in mlir_ub6s2,
            "IR: ub_reduce t=6 s=2 has no hardware redux")
     expect("pto.shuffle_bfly" not in mlir_ub6s2,
            "IR: ub_reduce t=6 s=2 has no butterfly shuffle")
-    # scale>1 fixes: reducer uses lane < scale (ult), not lane_mod == 0
-    expect("arith.cmpi slt" in mlir_ub6s2 or "arith.cmpi ult" in mlir_ub6s2,
+    # scale>1 fixes: reducer uses lane < scale, not lane_mod == 0.
+    expect(re.search(r"pto\.cmpi lt [^\n]+ signed :", mlir_ub6s2),
            "IR: ub_reduce t=6 s=2 reducer uses lane < scale")
     compiled_ub6s2.verify()
 
@@ -239,8 +241,8 @@ def main():
 
     compiled_ub_o4 = kernel_ub_o4.compile()
     mlir_ub_o4 = compiled_ub_o4.mlir_text()
-    expect("arith.subi" in mlir_ub_o4,
-           "IR: ub_reduce o=4 uses subi for tx = tid_x - offset")
+    expect("pto.subi" in mlir_ub_o4,
+           "IR: ub_reduce o=4 uses pto.subi for tx = tid_x - offset")
     compiled_ub_o4.verify()
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -264,8 +266,8 @@ def main():
            "IR: inline SIMT body does not become pto.simt_entry during DSL tracing")
 
     for op_name in (
-        "pto.redux_add", "pto.syncthreads", "pto.store", "pto.load",
-        "pto.get_tid_x", "pto.get_laneid", "arith.select", "scf.if",
+        "pto.redux_addf", "pto.syncthreads", "pto.store", "pto.load",
+        "pto.get_tid_x", "pto.get_laneid", "pto.select", "scf.if",
     ):
         expect(op_name in mlir, f"IR: expected '{op_name}' in helper body")
 
@@ -356,8 +358,8 @@ def main():
     mlir_cw_o4 = compiled_cw_o4.mlir_text()
     expect("pto.get_tid_x" in mlir_cw_o4,
            "IR: cross_warp o=4 uses get_tid_x")
-    expect("arith.subi" in mlir_cw_o4,
-           "IR: cross_warp o=4 uses subi for tx = tid_x - offset")
+    expect("pto.subi" in mlir_cw_o4,
+           "IR: cross_warp o=4 uses pto.subi for tx = tid_x - offset")
     compiled_cw_o4.verify()
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -435,7 +437,7 @@ def main():
         expect("requires a UB scratch buffer" in str(e),
                f"error message should mention scratch (ub_reduce), got: {e}")
 
-    # scratch must be a pto.ptr type — PTODSL scalar.load/store catch this
+    # scratch must be a pto.ptr type — PTODSL pto.load/store catch this
     @pto.jit(target="a5")
     def kernel_non_ptr():
         with pto.simt():
@@ -447,7 +449,7 @@ def main():
         kernel_non_ptr.compile()
         raise AssertionError("expected error for non-ptr scratch")
     except Exception:
-        pass  # PTODSL scalar.store / resolve_address_access catches this
+        pass  # PTODSL pto.store / resolve_address_access catches this
 
     # cross_warp: gm scratch (wrong memory space) should be rejected
     @pto.jit(target="a5")
@@ -497,8 +499,8 @@ def main():
     mlir_max_warp = compiled_max_warp.mlir_text()
 
     expect(
-        "pto.redux_max" in mlir_max_warp,
-        "Path 1a (max): IR must contain pto.redux_max",
+        "pto.redux_maxf" in mlir_max_warp,
+        "Path 1a (max): IR must contain pto.redux_maxf",
     )
     expect(
         "pto.syncthreads" not in mlir_max_warp,
@@ -516,15 +518,15 @@ def main():
     mlir_max_bfly = str(compiled_max_bfly.mlir_text())
 
     expect(
-        "arith.maximumf" in mlir_max_bfly,
-        "Path 1c (max): butterfly must emit arith.maximumf for element-wise max",
+        "pto.maxf" in mlir_max_bfly,
+        "Path 1c (max): butterfly must use the common PTO max operation",
     )
     expect(
         "pto.shuffle_bfly" in mlir_max_bfly,
         "Path 1c (max): butterfly must use pto.shuffle_bfly",
     )
     expect(
-        "pto.redux_max" not in mlir_max_bfly,
+        "pto.redux_maxf" not in mlir_max_bfly,
         "Path 1c (max): butterfly path should NOT use hw redux",
     )
 
@@ -541,8 +543,8 @@ def main():
     mlir_max_cw = str(compiled_max_cw.mlir_text())
 
     expect(
-        "pto.redux_max" in mlir_max_cw,
-        "Path 3 (max): cross-warp IR must contain pto.redux_max",
+        "pto.redux_maxf" in mlir_max_cw,
+        "Path 3 (max): cross-warp IR must contain pto.redux_maxf",
     )
     expect(
         "pto.syncthreads" in mlir_max_cw,
@@ -562,8 +564,8 @@ def main():
     mlir_min_warp = str(compiled_min_warp.mlir_text())
 
     expect(
-        "pto.redux_min" in mlir_min_warp,
-        "Path 1a (min): IR must contain pto.redux_min",
+        "pto.redux_minf" in mlir_min_warp,
+        "Path 1a (min): IR must contain pto.redux_minf",
     )
     expect(
         "pto.syncthreads" not in mlir_min_warp,
@@ -583,8 +585,8 @@ def main():
     mlir_min_ub = str(compiled_min_ub.mlir_text())
 
     expect(
-        "arith.minimumf" in mlir_min_ub,
-        "Path 4 (min): ub_reduce fallback must emit arith.minimumf",
+        "pto.minf" in mlir_min_ub,
+        "Path 4 (min): ub_reduce fallback must use the common PTO min operation",
     )
 
     # ── Identity smoke tests for max/min ───────────────────────────────────

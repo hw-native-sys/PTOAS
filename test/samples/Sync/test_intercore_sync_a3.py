@@ -56,7 +56,7 @@ def build():
                 with InsertionPoint(if_op.then_block):
                     pto.sync_wait(pipe_v, 3)
                     scf.YieldOp([])
-                pto.store_scalar(entry.arguments[1], c0, one)
+                pto.store(entry.arguments[1], c0, one)
                 func.ReturnOp([])
 
             module.operation.verify()

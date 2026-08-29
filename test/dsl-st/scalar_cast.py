@@ -7,16 +7,16 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
-"""End-to-end SIMT coverage for the public ``scalar.cast`` API.
+"""End-to-end SIMT coverage for the public ``pto.cast`` API.
 
 The SIMT body exercises both per-thread runtime scalars and lane-local builtin
-vectors returned by ``scalar.load(..., contiguous=VEC)``.
+vectors returned by ``pto.load(..., contiguous=VEC)``.
 """
 
 import numpy as np
 
 from common import auto_main, golden_output_case
-from ptodsl import pto, scalar
+from ptodsl import pto
 
 
 VEC = 4
@@ -30,18 +30,18 @@ def scalar_cast_simt_body(
     output_ptr: pto.ptr(pto.f32, "gm"),
 ) -> None:
     tid = pto.get_tid_x()
-    idx = scalar.index_cast(tid)
+    idx = pto.index_cast(tid)
 
-    scalar_value = scalar.load(input_ptr, idx)
-    narrowed_scalar = scalar.cast(scalar_value, pto.f16)
-    widened_scalar = scalar.cast(narrowed_scalar, pto.f32)
-    scalar.store(widened_scalar, output_ptr, idx)
+    scalar_value = pto.load(input_ptr, idx)
+    narrowed_scalar = pto.cast(scalar_value, pto.f16)
+    widened_scalar = pto.cast(narrowed_scalar, pto.f32)
+    pto.store(widened_scalar, output_ptr, idx)
 
     vector_base = THREADS + idx * VEC
-    vector_value = scalar.load(input_ptr, vector_base, contiguous=VEC)
-    narrowed_vector = scalar.cast(vector_value, pto.f16)
-    widened_vector = scalar.cast(narrowed_vector, pto.Vec(pto.f32, VEC))
-    scalar.store(widened_vector, output_ptr, vector_base)
+    vector_value = pto.load(input_ptr, vector_base, contiguous=VEC)
+    narrowed_vector = pto.cast(vector_value, pto.f16)
+    widened_vector = pto.cast(narrowed_vector, pto.Vec(pto.f32, VEC))
+    pto.store(widened_vector, output_ptr, vector_base)
 
 
 @pto.jit(

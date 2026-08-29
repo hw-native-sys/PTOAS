@@ -22,7 +22,7 @@ guard, so the tail executed unconditionally in the stopping iteration:
 import numpy as np
 
 from common import auto_main, golden_output_case
-from ptodsl import pto, scalar
+from ptodsl import pto
 
 
 @pto.simt
@@ -35,7 +35,7 @@ def while_break_tail_body(output_ptr: pto.ptr(pto.i32, "gm")) -> None:
         if should_break:
             break
         value = value + pto.const(1, dtype=pto.i32)
-    scalar.store(value, output_ptr, 0)
+    pto.store(value, output_ptr, 0)
 
     i = pto.const(0, dtype=pto.i32)
     total = pto.const(0, dtype=pto.i32)
@@ -44,7 +44,7 @@ def while_break_tail_body(output_ptr: pto.ptr(pto.i32, "gm")) -> None:
         if i == pto.const(2, dtype=pto.i32):
             continue
         total = total + pto.const(10, dtype=pto.i32)
-    scalar.store(total, output_ptr, 1)
+    pto.store(total, output_ptr, 1)
 
     fval = pto.const(0, dtype=pto.i32)
     ten = pto.const(10, dtype=pto.i32)
@@ -52,7 +52,7 @@ def while_break_tail_body(output_ptr: pto.ptr(pto.i32, "gm")) -> None:
         if j == limit:
             break
         fval = fval + pto.const(1, dtype=pto.i32)
-    scalar.store(fval, output_ptr, 2)
+    pto.store(fval, output_ptr, 2)
 
 
 @pto.jit(

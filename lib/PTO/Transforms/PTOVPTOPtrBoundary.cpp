@@ -129,9 +129,9 @@ static bool isSupportedVPTOBufferLikeBoundaryOp(Operation *op) {
   return isa<pto::VldsOp, pto::UvldOp, pto::PldsOp, pto::PldiOp, pto::VstsOp,
              pto::PstsOp, pto::PstiOp, pto::Vldsx2Op, pto::Vstsx2Op,
              pto::VsldbOp, pto::VsstbOp, pto::VstasOp, pto::VstarOp,
-             pto::LoadScalarOp, pto::StoreScalarOp, pto::MteGmL1FracOp,
-             pto::MteL1FbOp, pto::MteL1L0aOp, pto::MteL1L0bOp,
-             pto::MteL0cL1Op, pto::MteL0cGmOp, pto::RawFillL1Op>(op);
+             pto::PTOLoadOp, pto::PTOStoreOp, pto::MteGmL1FracOp,
+             pto::MteL1FbOp, pto::MteL1L0aOp, pto::MteL1L0bOp, pto::MteL0cL1Op,
+             pto::MteL0cGmOp, pto::RawFillL1Op>(op);
 }
 
 static LogicalResult canonicalizeBoundaryCastPtrOps(ModuleOp module,

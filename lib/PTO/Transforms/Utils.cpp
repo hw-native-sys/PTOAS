@@ -305,12 +305,6 @@ getPTOOperationAliasInfo(Operation *op) {
   if (auto addPtrOp = dyn_cast<pto::AddPtrOp>(op)) {
     return std::make_pair(addPtrOp.getResult(), addPtrOp.getPtr());
   }
-  if (auto ptrToIntOp = dyn_cast<pto::PtrToIntOp>(op)) {
-    return std::make_pair(ptrToIntOp.getResult(), ptrToIntOp.getPtr());
-  }
-  if (auto intToPtrOp = dyn_cast<pto::IntToPtrOp>(op)) {
-    return std::make_pair(intToPtrOp.getResult(), intToPtrOp.getAddr());
-  }
   if (auto castPtrOp = dyn_cast<pto::CastPtrOp>(op)) {
     return std::make_pair(castPtrOp.getResult(), castPtrOp.getInput());
   }

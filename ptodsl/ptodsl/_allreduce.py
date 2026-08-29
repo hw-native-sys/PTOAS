@@ -22,7 +22,7 @@ Dispatch tree (compile-time, since *threads* / *scale* are Python ints)::
 
 from __future__ import annotations
 
-from . import scalar
+from . import _scalar as scalar
 from ._control_flow import if_, for_
 from ._ops import const as _const, get_laneid, get_tid_x, redux_add, redux_max, redux_min, shuffle_bfly, syncthreads
 from ._surface_values import unwrap_surface_value
@@ -263,7 +263,7 @@ def _emit_ub_reduce(x, scratch, *,
     syncthreads()
 
     # ── reducers sequentially combine ────────────────────────────────────
-    is_reducer = lane < scale
+    is_reducer = scalar.cmp(lane, scale, "lt")
     with if_(is_reducer) as br:
         with br.then_:
             group_offset = group * threads
@@ -286,7 +286,7 @@ def _emit_ub_reduce(x, scratch, *,
     syncthreads()
 
     # ── per-class leader writes back ─────────────────────────────────────
-    is_leader = lane < scale
+    is_leader = scalar.cmp(lane, scale, "lt")
     with if_(is_leader) as br5:
         with br5.then_:
             scalar.store(flag, scratch, scalar.index_cast(group * threads + lane))

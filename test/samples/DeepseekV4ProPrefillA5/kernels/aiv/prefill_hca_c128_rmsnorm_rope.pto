@@ -49,13 +49,13 @@ module attributes {pto.target_arch = "a5"} {
   scf.for %norm_i_inline2701__idx_v0 = %c0_index to %c8_index step %c1_index {
     %flat_offset_mul = arith.muli %c0_index, %c8_index : index
     %flat_offset = arith.addi %flat_offset_mul, %norm_i_inline2701__idx_v0 : index
-    %norm_slot_raw_inline2700__tile = pto.load_scalar %arg0[%flat_offset] : !pto.ptr<i32> -> i32
+    %norm_slot_raw_inline2700__tile = pto.load %arg0[%flat_offset] : !pto.ptr<i32> -> i32
     %63 = arith.index_cast %norm_slot_raw_inline2700__tile : i32 to index
     %64 = arith.cmpi sle, %c0_index, %63 : index
     scf.if %64 {
       %66 = arith.muli %c0_index, %c8_index : index
       %67 = arith.addi %66, %norm_i_inline2701__idx_v0 : index
-      %65 = pto.load_scalar %arg1[%67] : !pto.ptr<i32> -> i32
+      %65 = pto.load %arg1[%67] : !pto.ptr<i32> -> i32
       %68 = arith.index_cast %65 : i32 to index
       %69 = arith.addi %68, %cn127_index : index
       %t__tile = pto.alloc_tile addr = %c8224_i64 valid_row = %c1_index valid_col = %c32_index : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>

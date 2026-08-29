@@ -426,8 +426,12 @@ def main() -> None:
         module.operation.verify()
 
     read_before_rebinding_text = lexical_section_single_sided_read_before_rebinding_probe.compile().mlir_text()
+    zero_match = re.search(
+        r"(%\d+) = pto\.constant 0 : i64", read_before_rebinding_text
+    )
+    assert zero_match is not None
     assert re.search(
-        r"scf\.yield %c0_i64, %[\d]+ : i64, i64",
+        rf"scf\.yield {re.escape(zero_match.group(1))}, %\d+ : i64, i64",
         read_before_rebinding_text,
     )
     with make_context() as context:

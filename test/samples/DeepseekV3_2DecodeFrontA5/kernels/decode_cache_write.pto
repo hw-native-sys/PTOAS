@@ -25,7 +25,7 @@ module attributes {pto.target_arch = "a5"} {
   %kv_a_out__rv_v2_view = pto.make_tensor_view %arg4, shape = [%c16_index, %c576_index], strides = [%c576_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
   %kv_cache__iter_v1_view = pto.make_tensor_view %arg5, shape = [%c65536_index, %c512_index], strides = [%c512_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
   %pe_cache__iter_v1_view = pto.make_tensor_view %arg6, shape = [%c65536_index, %c64_index], strides = [%c64_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
-  %ctx_len__tile = pto.load_scalar %arg0[%arg7] : !pto.ptr<i32> -> i32
+  %ctx_len__tile = pto.load %arg0[%arg7] : !pto.ptr<i32> -> i32
   %7 = arith.index_cast %ctx_len__tile : i32 to index
   %8 = arith.subi %7, %c1_index : index
   %9 = arith.muli %arg7, %c4096_index : index

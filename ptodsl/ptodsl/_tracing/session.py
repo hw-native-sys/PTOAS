@@ -42,7 +42,7 @@ from .control_flow import (
 from .._types import _resolve, _strip_integer_signedness, int1
 from .module_builder import create_container_child_module
 
-from ptoas.mlir.dialects import arith, func
+from ptoas.mlir.dialects import func
 from ptoas.mlir.dialects import pto as _pto
 from ptoas.mlir.ir import (
     Attribute,
@@ -443,9 +443,16 @@ class TraceSession:
 
     def _emit_simt_helper_launch_metadata(self) -> None:
         i32 = IntegerType.get_signless(32)
-        dim_z = arith.ConstantOp(i32, 1).result
-        dim_y = arith.ConstantOp(i32, 1).result
-        dim_x = arith.ConstantOp(i32, 1).result
+        one = IntegerAttr.get(i32, 1)
+        dim_z = Operation.create(
+            "pto.constant", results=[i32], attributes={"value": one}
+        ).results[0]
+        dim_y = Operation.create(
+            "pto.constant", results=[i32], attributes={"value": one}
+        ).results[0]
+        dim_x = Operation.create(
+            "pto.constant", results=[i32], attributes={"value": one}
+        ).results[0]
         _pto.StoreVfSimtInfoOp(dim_z, dim_y, dim_x)
 
     def _erase_attached_op(self, op_view) -> None:
@@ -1341,9 +1348,17 @@ def _coerce_i32_dim(value, *, context: str):
     if isinstance(raw_value, int):
         if raw_value < 0:
             raise ValueError(f"{context} expects a non-negative i32 launch dimension, got {raw_value}")
-        return arith.ConstantOp(i32, raw_value).result
+        return Operation.create(
+            "pto.constant", results=[i32],
+            attributes={"value": IntegerAttr.get(i32, raw_value)},
+        ).results[0]
     if IndexType.isinstance(raw_value.type):
-        return arith.IndexCastOp(i32, raw_value).result
+        return Operation.create(
+            "pto.index_cast", results=[i32], operands=[raw_value],
+            attributes={
+                "signedness": Attribute.parse("#pto.signedness<signed>")
+            },
+        ).results[0]
     if IntegerType.isinstance(raw_value.type):
         width = IntegerType(raw_value.type).width
         if width != 32:

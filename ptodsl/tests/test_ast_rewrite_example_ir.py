@@ -74,10 +74,6 @@ def compare_modules(
 
 
 def make_explicit_tadd_kernel():
-    from ptodsl import scalar
-
-    s = scalar
-
     @pto.jit(name="explicit_TADD", kernel_kind="vector", target="a5")
     def kernel():
         c0_i64 = pto.const(0, dtype=pto.int64)
@@ -96,7 +92,7 @@ def make_explicit_tadd_kernel():
 
             with pto.for_(c0, c16, step=c1) as tile_idx:
                 mask, _ = pto.plt_b32(c64_i32)
-                tile_off = s.muli(tile_idx, c64)
+                tile_off = pto.mul(tile_idx, c64)
                 va = pto.vlds(pto.addptr(ptr_src, tile_off), c0, vf32)
                 ptr_dst_tile = pto.addptr(ptr_dst, tile_off)
                 vb = pto.vlds(ptr_dst_tile, c0, vf32)

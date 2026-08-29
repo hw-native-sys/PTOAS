@@ -12,24 +12,24 @@ module attributes {pto.target_arch = "a2a3"} {
   %metadata_core_inline1442_inline2811__ssa_v0 = arith.index_cast %__pypto_spmd_block_idx : i32 to index
   %position_inline1454_inline2806__rv_v2, %request_inline1455_inline2832__rv_v2 = scf.for %token_inline1445_inline2810__idx_v0 = %metadata_core_inline1442_inline2811__ssa_v0 to %c8_index step %c1_index iter_args(%position_inline1454_inline2806__iter_v1 = %arg4, %request_inline1455_inline2832__iter_v1 = %arg5) -> (i32, index) {
     %0 = arith.divsi %token_inline1445_inline2810__idx_v0, %c2_index : index
-    %position_inline1454_inline2806__tile = pto.load_scalar %arg0[%token_inline1445_inline2810__idx_v0] : !pto.ptr<i32> -> i32
+    %position_inline1454_inline2806__tile = pto.load %arg0[%token_inline1445_inline2810__idx_v0] : !pto.ptr<i32> -> i32
     %1 = arith.index_cast %position_inline1454_inline2806__tile : i32 to index
     %2 = arith.divsi %1, %c128_index : index
     %3 = arith.index_cast %position_inline1454_inline2806__tile : i32 to index
     %4 = arith.remsi %3, %c128_index : index
     %flat_offset_mul = arith.muli %0, %c128_index : index
     %flat_offset = arith.addi %flat_offset_mul, %2 : index
-    %physical_block_inline1440_inline2826__tile = pto.load_scalar %arg1[%flat_offset] : !pto.ptr<i32> -> i32
+    %physical_block_inline1440_inline2826__tile = pto.load %arg1[%flat_offset] : !pto.ptr<i32> -> i32
     %6 = arith.index_cast %physical_block_inline1440_inline2826__tile : i32 to index
     %7 = arith.muli %6, %c128_index : index
     %8 = arith.addi %7, %4 : index
     %9 = arith.index_cast %8 : index to i64
-    pto.store_scalar %9, %arg2[%token_inline1445_inline2810__idx_v0] : !pto.ptr<i64>, i64
+    pto.store %9, %arg2[%token_inline1445_inline2810__idx_v0] : !pto.ptr<i64>, i64
     %10 = arith.index_cast %position_inline1454_inline2806__tile : i32 to index
     %11 = arith.addi %10, %c1_index : index
     %12 = arith.minsi %11, %c128_index : index
     %13 = arith.index_cast %12 : index to i32
-    pto.store_scalar %13, %arg3[%token_inline1445_inline2810__idx_v0] : !pto.ptr<i32>, i32
+    pto.store %13, %arg3[%token_inline1445_inline2810__idx_v0] : !pto.ptr<i32>, i32
     scf.yield %position_inline1454_inline2806__tile, %0 : i32, index
   }
   return

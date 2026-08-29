@@ -10,7 +10,7 @@ module attributes {pto.target_arch = "a5"} {
   %write_dst_map_inline2732__ssa_v1_view = pto.make_tensor_view %arg0, shape = [%c1_index, %c8_index], strides = [%c8_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xi32>
   %cmp_kv_flat_inline2751__ssa_v0_view = pto.make_tensor_view %arg1, shape = [%c4096_index, %c512_index], strides = [%c512_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
   %normed_kv_pad_inline2759__ssa_v7_view = pto.make_tensor_view %arg2, shape = [%c8_index, %c512_index], strides = [%c512_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
-  %final_cmp_row_raw_inline2696__tile = pto.load_scalar %arg0[%c0_index] : !pto.ptr<i32> -> i32
+  %final_cmp_row_raw_inline2696__tile = pto.load %arg0[%c0_index] : !pto.ptr<i32> -> i32
   %0 = arith.index_cast %final_cmp_row_raw_inline2696__tile : i32 to index
   %1 = arith.cmpi sle, %c0_index, %0 : index
   scf.if %1 {

@@ -156,13 +156,6 @@ static bool isSupportedShuffleValueType(Type type) {
   return type.isF16() || type.isF32();
 }
 
-static bool isSupportedReduxValueType(Type type) {
-  if (auto intType = dyn_cast<IntegerType>(type)) {
-    return intType.getWidth() == mlir::pto::kValue32;
-  }
-  return type.isF16() || type.isF32();
-}
-
 LogicalResult SimtLaunchOp::verify() {
   if (auto parentFunc = (*this)->getParentOfType<func::FuncOp>()) {
     if (parentFunc->hasAttr(pto::kPTOSimtEntryAttrName)) {
@@ -226,34 +219,16 @@ static LogicalResult verifyShuffleSemanticControl(Operation *op,
   return success();
 }
 
-static LogicalResult verifyReduxSemanticType(Operation *op, Type valueType,
-                                             Attribute signednessAttr,
-                                             bool requireSignedness) {
-  if (!isSupportedReduxValueType(valueType)) {
-    return op->emitOpError()
-           << "requires i32, f16 or f32 value/result type";
-  }
-
-  auto intType = dyn_cast<IntegerType>(valueType);
-  if (!intType) {
-    if (signednessAttr) {
-      return op->emitOpError()
-             << "does not accept signedness for floating-point redux";
+static LogicalResult verifyReduxSemanticAttrs(Operation *op,
+                                              bool acceptsSignedness) {
+  for (StringRef attrName : {"fastmath", "roundingmode", "overflowFlags"}) {
+    if (op->hasAttr(attrName)) {
+      return op->emitOpError() << "does not accept " << attrName;
     }
-    return success();
   }
-
-  if (!signednessAttr && requireSignedness) {
-    return op->emitOpError()
-           << "requires explicit signedness for integer redux";
+  if (!acceptsSignedness && op->hasAttr("signedness")) {
+    return op->emitOpError() << "does not accept signedness";
   }
-
-  if (!signednessAttr) {
-    return success();
-  }
-
-  auto signedness = cast<pto::SignednessAttr>(signednessAttr).getValue();
-  (void)signedness;
   return success();
 }
 
@@ -389,11 +364,9 @@ static LogicalResult verifyPackedConvertControls(Operation *op, Type srcType,
             "f8x2/hif8x2-to-f32x2/f16x2, and bf16x2-to/from-f4";
 }
 
-static LogicalResult verifyConvertControls(Operation *op, Type srcType,
-                                           Type dstType,
-                                           pto::Rounding rounding,
-                                           pto::Saturation saturation,
-                                           Attribute signednessAttr) {
+LogicalResult mlir::pto::verifySimtConversionControls(
+    Operation *op, Type srcType, Type dstType, pto::Rounding rounding,
+    pto::Saturation saturation, Attribute signednessAttr) {
   if (!isSupportedConvertType(srcType) || !isSupportedConvertType(dstType)) {
     return op->emitOpError()
            << "requires i32, i64, f16, bf16, f32 or supported vector<2xT> "
@@ -517,9 +490,19 @@ static bool isSupportedAtomicScalarType(Type type) {
          isVector2F16OrBF16Type(type);
 }
 
-static LogicalResult verifyAtomicCommon(Operation *op, Value ptr, Type valueType,
-                                        Type resultType, bool bitwise,
-                                        Attribute signednessAttr) {
+static LogicalResult verifyAtomicCommon(Operation *op, Value ptr,
+                                        Type valueType, Type resultType,
+                                        bool bitwise, Attribute signednessAttr,
+                                        bool requireIntegerSignedness) {
+  for (StringRef attrName : {"fastmath", "roundingmode", "overflowFlags"}) {
+    if (op->hasAttr(attrName)) {
+      return op->emitOpError() << "does not accept " << attrName;
+    }
+  }
+  if (!requireIntegerSignedness && op->hasAttr("signedness")) {
+    return op->emitOpError() << "does not accept signedness";
+  }
+
   if (!isSupportedAtomicScalarType(valueType)) {
     return op->emitOpError()
            << "requires i32, i64, f16, bf16, f32, vector<2xf16> or "
@@ -560,6 +543,10 @@ static LogicalResult verifyAtomicCommon(Operation *op, Value ptr, Type valueType
   if (signednessAttr && !intType) {
     return op->emitOpError()
            << "does not accept signedness for floating-point atomics";
+  }
+  if (requireIntegerSignedness && intType && !signednessAttr) {
+    return op->emitOpError()
+           << "requires explicit signedness for integer atomic extrema";
   }
   if (isVector2F16OrBF16Type(valueType)) {
     if (!isInsideSimtExecutionScope(op)) {
@@ -729,19 +716,23 @@ LogicalResult ShuffleBflyOp::verify() {
                                       getWidthAttr(), "mask");
 }
 
-LogicalResult ReduxAddOp::verify() {
-  return verifyReduxSemanticType(getOperation(), getValue().getType(),
-                                  getSignednessAttr(), /*requireSignedness=*/false);
+LogicalResult ReduxAddIOp::verify() {
+  return verifyReduxSemanticAttrs(getOperation(), /*acceptsSignedness=*/false);
 }
-
-LogicalResult ReduxMaxOp::verify() {
-  return verifyReduxSemanticType(getOperation(), getValue().getType(),
-                                  getSignednessAttr(), /*requireSignedness=*/true);
+LogicalResult ReduxAddFOp::verify() {
+  return verifyReduxSemanticAttrs(getOperation(), /*acceptsSignedness=*/false);
 }
-
-LogicalResult ReduxMinOp::verify() {
-  return verifyReduxSemanticType(getOperation(), getValue().getType(),
-                                  getSignednessAttr(), /*requireSignedness=*/true);
+LogicalResult ReduxMaxIOp::verify() {
+  return verifyReduxSemanticAttrs(getOperation(), /*acceptsSignedness=*/true);
+}
+LogicalResult ReduxMaxFOp::verify() {
+  return verifyReduxSemanticAttrs(getOperation(), /*acceptsSignedness=*/false);
+}
+LogicalResult ReduxMinIOp::verify() {
+  return verifyReduxSemanticAttrs(getOperation(), /*acceptsSignedness=*/true);
+}
+LogicalResult ReduxMinFOp::verify() {
+  return verifyReduxSemanticAttrs(getOperation(), /*acceptsSignedness=*/false);
 }
 
 LogicalResult MulhiOp::verify() {
@@ -760,61 +751,64 @@ LogicalResult AtomicCasOp::verify() {
   }
   return verifyAtomicCommon(getOperation(), getPtr(), getValue().getType(),
                             getOld().getType(), /*bitwise=*/false,
-                            getSignednessAttr());
+                            /*signednessAttr=*/{},
+                            /*requireIntegerSignedness=*/false);
 }
 
 LogicalResult AtomicExchOp::verify() {
   return verifyAtomicCommon(getOperation(), getPtr(), getValue().getType(),
                             getOld().getType(), /*bitwise=*/false,
-                            getSignednessAttr());
+                            /*signednessAttr=*/{},
+                            /*requireIntegerSignedness=*/false);
 }
 
 LogicalResult AtomicAddOp::verify() {
   return verifyAtomicCommon(getOperation(), getPtr(), getValue().getType(),
                             getOld().getType(), /*bitwise=*/false,
-                            getSignednessAttr());
+                            /*signednessAttr=*/{},
+                            /*requireIntegerSignedness=*/false);
 }
 
 LogicalResult AtomicSubOp::verify() {
   return verifyAtomicCommon(getOperation(), getPtr(), getValue().getType(),
                             getOld().getType(), /*bitwise=*/false,
-                            getSignednessAttr());
+                            /*signednessAttr=*/{},
+                            /*requireIntegerSignedness=*/false);
 }
 
 LogicalResult AtomicMinOp::verify() {
   return verifyAtomicCommon(getOperation(), getPtr(), getValue().getType(),
                             getOld().getType(), /*bitwise=*/false,
-                            getSignednessAttr());
+                            getSignednessAttr(),
+                            /*requireIntegerSignedness=*/true);
 }
 
 LogicalResult AtomicMaxOp::verify() {
   return verifyAtomicCommon(getOperation(), getPtr(), getValue().getType(),
                             getOld().getType(), /*bitwise=*/false,
-                            getSignednessAttr());
+                            getSignednessAttr(),
+                            /*requireIntegerSignedness=*/true);
 }
 
 LogicalResult AtomicAndOp::verify() {
   return verifyAtomicCommon(getOperation(), getPtr(), getValue().getType(),
                             getOld().getType(), /*bitwise=*/true,
-                            getSignednessAttr());
+                            /*signednessAttr=*/{},
+                            /*requireIntegerSignedness=*/false);
 }
 
 LogicalResult AtomicOrOp::verify() {
   return verifyAtomicCommon(getOperation(), getPtr(), getValue().getType(),
                             getOld().getType(), /*bitwise=*/true,
-                            getSignednessAttr());
+                            /*signednessAttr=*/{},
+                            /*requireIntegerSignedness=*/false);
 }
 
 LogicalResult AtomicXorOp::verify() {
   return verifyAtomicCommon(getOperation(), getPtr(), getValue().getType(),
                             getOld().getType(), /*bitwise=*/true,
-                            getSignednessAttr());
-}
-
-LogicalResult ConvertOp::verify() {
-  return verifyConvertControls(getOperation(), getSrc().getType(),
-                               getDst().getType(), getRounding(),
-                               getSaturation(), getSignednessAttr());
+                            /*signednessAttr=*/{},
+                            /*requireIntegerSignedness=*/false);
 }
 
 void PTOLoadOp::getEffects(

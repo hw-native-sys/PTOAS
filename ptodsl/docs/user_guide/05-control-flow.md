@@ -74,7 +74,7 @@ with pto.for_(0, num_blocks, step=1) as i:
 ```python
 with pto.for_(0, rows, step=1) as r:
     with pto.for_(0, cols, step=1) as c:
-        val = scalar.load(tile[r, c])
+        val = pto.load(tile[r, c])
 ```
 
 Both loops execute on the device. The outer loop bound `rows` and inner loop bound `cols` can be runtime values.
@@ -227,7 +227,7 @@ def conditional_scale(
 ):
     with pto.for_(0, rows, step=1) as r:
         with pto.for_(0, cols, step=1) as c:
-            val = scalar.load(tile[r, c])
+            val = pto.load(tile[r, c])
             big = val > threshold
 
             with pto.if_(big) as br:
@@ -237,7 +237,7 @@ def conditional_scale(
                     br.assign(val=val)
 
             val = br.val
-            scalar.store(val, tile[r, c])
+            pto.store(val, tile[r, c])
 ```
 
 In this example, both branches define the merged value named `val`. After the

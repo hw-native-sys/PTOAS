@@ -41,7 +41,7 @@ module {
       } else {
         scf.yield %c0_i32 : i32
       }
-      pto.store_scalar %val, %out[%t] : !pto.ptr<i32, gm>, i32
+      pto.store %val, %out[%t] : !pto.ptr<i32, gm>, i32
       scf.yield %eid2 : index
     }
     return

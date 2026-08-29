@@ -10,7 +10,7 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from ptodsl import pto, scalar
+from ptodsl import pto
 from ptodsl._ast_rewrite import PTODSLAstRewriteError
 from ptodsl._host_tensors import TensorSpec
 from ptodsl._host_tensors import inspect_host_tensor_metadata
@@ -113,13 +113,13 @@ def float_addptr_offset_probe():
 @pto.jit(target="a5")
 def float_bitwise_probe():
     tile = pto.alloc_tile(shape=[1, 8], dtype=pto.f32, valid_shape=[1, 1])
-    value = scalar.load(tile[0, 0])
+    value = pto.load(tile[0, 0])
     _ = value & 1
 
 
 @pto.jit(target="a5")
 def float_literal_index_store_probe(ptr: pto.ptr(pto.index, "gm")):
-    scalar.store(1.5, ptr)
+    pto.store(1.5, ptr)
 
 
 @pto.jit(target="a5")
@@ -132,8 +132,8 @@ def float_literal_index_binary_probe():
 def same_width_float_store_probe():
     f16_tile = pto.alloc_tile(shape=[1, 16], dtype=pto.f16, valid_shape=[1, 1])
     bf16_tile = pto.alloc_tile(shape=[1, 16], dtype=pto.bf16, valid_shape=[1, 1])
-    f16_value = scalar.load(f16_tile[0, 0])
-    scalar.store(f16_value, bf16_tile[0, 0])
+    f16_value = pto.load(f16_tile[0, 0])
+    pto.store(f16_value, bf16_tile[0, 0])
 
 
 @pto.jit(target="a5")
@@ -247,13 +247,13 @@ def bool_fixed_integer_probe():
 @pto.jit(target="a5")
 def bool_tile_element_probe():
     tile = pto.alloc_tile(shape=[2, 8], dtype=pto.i32, valid_shape=[2, 4])
-    _ = scalar.load(tile[True, 0])
+    _ = pto.load(tile[True, 0])
 
 
 @pto.jit(target="a5")
 def bool_address_sugar_probe():
     tile = pto.alloc_tile(shape=[1, 8], dtype=pto.i32, valid_shape=[1, 4])
-    _ = scalar.load(tile.as_ptr() + True)
+    _ = pto.load(tile.as_ptr() + True)
 
 
 @pto.jit(target="a5")
@@ -753,7 +753,7 @@ def main() -> None:
     expect_raises(
         float_literal_index_store_probe.compile,
         TypeError,
-        "scalar.store(...)",
+        "pto.store(...)",
         "cannot materialize a floating-point literal against non-floating",
         "index",
     )

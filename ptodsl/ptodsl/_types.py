@@ -20,7 +20,6 @@ the actual type is materialised later by the ``@pto.jit`` decorator.
 """
 
 from ptoas.mlir.dialects import pto as _pto
-from ptoas.mlir.dialects import arith
 from ptoas.mlir.dialects.builtin import UnrealizedConversionCastOp
 from ptoas.mlir.ir import (
     BF16Type,
@@ -30,7 +29,9 @@ from ptoas.mlir.ir import (
     Float8E5M2Type,
     FloatAttr,
     IndexType,
+    IntegerAttr,
     IntegerType,
+    Operation,
     ShapedType,
     Type,
     VectorType,
@@ -76,7 +77,11 @@ class _DType:
         target_type = self.resolve()
         kind = _classify_scalar_type(target_type)
         if kind == "float":
-            return arith.ConstantOp(target_type, _parse_float_attr(target_type, value)).result
+            return Operation.create(
+                "pto.constant",
+                results=[target_type],
+                attributes={"value": _parse_float_attr(target_type, value)},
+            ).results[0]
         if kind == "integer":
             return _materialize_integer_literal(target_type, value)
         raise TypeError(f"unsupported eager constructor target type {target_type}")
@@ -425,12 +430,14 @@ def _restore_integer_signedness(value, target_type):
 def _materialize_integer_literal(target_type, value):
     if not IntegerType.isinstance(target_type):
         raise TypeError(f"unsupported eager integer constructor target type {target_type}")
-    signless_type = _signless_integer_type(target_type)
     raw_value = _parse_integer_value(value, target_type=target_type)
-    constant = arith.ConstantOp(signless_type, raw_value).result
-    if target_type == signless_type:
-        return constant
-    return _restore_integer_signedness(constant, target_type)
+    signless_type = _signless_integer_type(target_type)
+    result = Operation.create(
+        "pto.constant",
+        results=[signless_type],
+        attributes={"value": IntegerAttr.get(signless_type, raw_value)},
+    ).results[0]
+    return _restore_integer_signedness(result, target_type)
 
 
 def _parse_integer_value(value, *, target_type=None):

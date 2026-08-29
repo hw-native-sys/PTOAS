@@ -170,7 +170,7 @@ cd $PTO_SOURCE_DIR
 
 ```python
 import ptodsl
-from ptodsl import pto, scalar
+from ptodsl import pto
 from ptoas.mlir.dialects import pto as mlir_pto
 ```
 
@@ -311,13 +311,13 @@ ptoas --version
 from ptoas.mlir.ir import Context, Module, Location
 # PTOAS 自带的 MLIR Python API 位于 ptoas.mlir 命名空间。
 from ptoas.mlir.dialects import pto
-from ptodsl import pto as jit_pto, scalar
+from ptodsl import pto as jit_pto
 
 with Context() as ctx, Location.unknown():
     pto.register_dialect(ctx, load=True)
     module = Module.create()
     print("PTO Dialect registered successfully!")
-    print("PTODSL imported successfully!", jit_pto, scalar)
+    print("PTODSL imported successfully!", jit_pto)
 
 ```
 

@@ -608,5 +608,5 @@ def template_tinsert_vec_to_vec_nd_scalar_basic(
     index_col: pto.i32,
     dst: pto.Tile,
 ):
-    value = pto.load_scalar(src.as_ptr(), 0)
-    pto.store_scalar(dst.as_ptr(), index_row * dst.shape[1] + index_col, value)
+    value = pto.load(src.as_ptr(), 0)
+    pto.store(value, dst.as_ptr(), index_row * dst.shape[1] + index_col)

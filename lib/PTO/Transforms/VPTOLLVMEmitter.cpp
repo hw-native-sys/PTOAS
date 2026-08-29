@@ -204,8 +204,7 @@ static Type convertVPTOType(Type type, Builder &builder) {
   if (isa<pto::AlignType>(type)) {
     return VectorType::get({32}, builder.getI8Type());
   }
-  if (isa<pto::StructType>(type))
-  {
+  if (isa<pto::LocalArrayType, pto::StructType>(type)) {
     return LLVM::LLVMPointerType::get(builder.getContext());
   }
   if (auto ptrType = dyn_cast<pto::PtrType>(type)) {
@@ -272,7 +271,7 @@ static bool hasVPTOConvertibleType(Type type) {
     return false;
   }
   if (isa<pto::VRegType, pto::MaskType, pto::AlignType, pto::PtrType,
-          pto::StructType>(type) ||
+          pto::LocalArrayType, pto::StructType>(type) ||
       pto::isPTOLowPrecisionType(type)) {
     return true;
   }
@@ -311,6 +310,41 @@ public:
     addTargetMaterialization(materializeVPTOCast);
   }
 };
+
+static LLVM::LLVMArrayType
+getVPTOLocalArrayStorageType(pto::LocalArrayType arrayType, Builder &builder) {
+  Type storageType = convertVPTOType(arrayType.getElementType(), builder);
+  for (int64_t dim : llvm::reverse(arrayType.getShape())) {
+    storageType = LLVM::LLVMArrayType::get(storageType, dim);
+  }
+  return cast<LLVM::LLVMArrayType>(storageType);
+}
+
+static FailureOr<Value> getVPTOLocalArrayElementAddress(
+    ConversionPatternRewriter &rewriter, Location loc, Value root,
+    pto::LocalArrayType arrayType, ValueRange indices) {
+  bool hasWrongRank =
+      indices.size() != static_cast<size_t>(arrayType.getRank());
+  if (hasWrongRank) {
+    return failure();
+  }
+
+  auto pointerType = LLVM::LLVMPointerType::get(rewriter.getContext());
+  Type storageType = getVPTOLocalArrayStorageType(arrayType, rewriter);
+  Value address = root;
+  Value zero = rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI64Type(),
+                                                 rewriter.getI64IntegerAttr(0));
+  for (Value index : indices) {
+    if (index.getType().isIndex()) {
+      index = rewriter.create<arith::IndexCastUIOp>(loc, rewriter.getI64Type(),
+                                                    index);
+    }
+    address = rewriter.create<LLVM::GEPOp>(loc, pointerType, storageType,
+                                           address, ValueRange{zero, index});
+    storageType = cast<LLVM::LLVMArrayType>(storageType).getElementType();
+  }
+  return address;
+}
 
 // Struct values carry the address of stack-local storage. Keep the pointee
 // type local to struct access lowering so the public type conversion remains
@@ -3242,9 +3276,9 @@ static FailureOr<StringRef> buildReduxCallee(MLIRContext *context,
                                              Attribute signednessAttr);
 
 template <>
-FailureOr<StringRef> buildReduxCallee<pto::ReduxAddOp>(MLIRContext *context,
-                                                      Type valueType,
-                                                      Attribute signednessAttr) {
+FailureOr<StringRef>
+buildReduxCallee<pto::ReduxAddIOp>(MLIRContext *context, Type valueType,
+                                   Attribute signednessAttr) {
   std::string elem = getReduxIntrinsicTypeFragment(valueType, signednessAttr);
   if (elem.empty())
   {
@@ -3254,9 +3288,20 @@ FailureOr<StringRef> buildReduxCallee<pto::ReduxAddOp>(MLIRContext *context,
 }
 
 template <>
-FailureOr<StringRef> buildReduxCallee<pto::ReduxMaxOp>(MLIRContext *context,
-                                                      Type valueType,
-                                                      Attribute signednessAttr) {
+FailureOr<StringRef>
+buildReduxCallee<pto::ReduxAddFOp>(MLIRContext *context, Type valueType,
+                                   Attribute signednessAttr) {
+  std::string elem = getReduxIntrinsicTypeFragment(valueType, signednessAttr);
+  if (elem.empty()) {
+    return failure();
+  }
+  return StringAttr::get(context, "llvm.hivm.redux.add." + elem).getValue();
+}
+
+template <>
+FailureOr<StringRef>
+buildReduxCallee<pto::ReduxMaxIOp>(MLIRContext *context, Type valueType,
+                                   Attribute signednessAttr) {
   std::string elem = getReduxIntrinsicTypeFragment(valueType, signednessAttr);
   if (elem.empty())
   {
@@ -3266,9 +3311,31 @@ FailureOr<StringRef> buildReduxCallee<pto::ReduxMaxOp>(MLIRContext *context,
 }
 
 template <>
-FailureOr<StringRef> buildReduxCallee<pto::ReduxMinOp>(MLIRContext *context,
-                                                      Type valueType,
-                                                      Attribute signednessAttr) {
+FailureOr<StringRef>
+buildReduxCallee<pto::ReduxMaxFOp>(MLIRContext *context, Type valueType,
+                                   Attribute signednessAttr) {
+  std::string elem = getReduxIntrinsicTypeFragment(valueType, signednessAttr);
+  if (elem.empty()) {
+    return failure();
+  }
+  return StringAttr::get(context, "llvm.hivm.redux.max." + elem).getValue();
+}
+
+template <>
+FailureOr<StringRef>
+buildReduxCallee<pto::ReduxMinIOp>(MLIRContext *context, Type valueType,
+                                   Attribute signednessAttr) {
+  std::string elem = getReduxIntrinsicTypeFragment(valueType, signednessAttr);
+  if (elem.empty()) {
+    return failure();
+  }
+  return StringAttr::get(context, "llvm.hivm.redux.min." + elem).getValue();
+}
+
+template <>
+FailureOr<StringRef>
+buildReduxCallee<pto::ReduxMinFOp>(MLIRContext *context, Type valueType,
+                                   Attribute signednessAttr) {
   std::string elem = getReduxIntrinsicTypeFragment(valueType, signednessAttr);
   if (elem.empty())
   {
@@ -3635,28 +3702,6 @@ FailureOr<StringRef> buildUnaryScalarMathCallee<pto::RoundOp>(MLIRContext *conte
 template <typename BinaryOp>
 static FailureOr<StringRef> buildBinaryScalarMathCallee(MLIRContext *context,
                                                         Type valueType);
-
-template <>
-FailureOr<StringRef> buildBinaryScalarMathCallee<pto::FMinOp>(MLIRContext *context,
-                                                              Type valueType) {
-  std::string elem = getLLVMFloatBuiltinFragment(valueType);
-  if (elem != "f16" && elem != "f32" && elem != "bf16" &&
-      elem != "v2f16" && elem != "v2bf16") {
-    return failure();
-  }
-  return StringAttr::get(context, "llvm.minnum." + elem).getValue();
-}
-
-template <>
-FailureOr<StringRef> buildBinaryScalarMathCallee<pto::FMaxOp>(MLIRContext *context,
-                                                              Type valueType) {
-  std::string elem = getLLVMFloatBuiltinFragment(valueType);
-  if (elem != "f16" && elem != "f32" && elem != "bf16" &&
-      elem != "v2f16" && elem != "v2bf16") {
-    return failure();
-  }
-  return StringAttr::get(context, "llvm.maxnum." + elem).getValue();
-}
 
 template <>
 FailureOr<StringRef> buildBinaryScalarMathCallee<pto::PowOp>(MLIRContext *context,
@@ -4925,21 +4970,7 @@ static FailureOr<VcvtContract> buildVcvtContract(pto::VcvtOp op) {
 }
 
 static bool needsV300CtrlModeForVPTOFunc(func::FuncOp funcOp) {
-  if (!pto::isPTOEntryFunction(funcOp) || funcOp.getBlocks().empty())
-  {
-    return false;
-  }
-
-  bool needsCtrlSetup = false;
-  funcOp.walk([&](pto::VcvtOp vcvtOp) {
-    FailureOr<VcvtContract> contract = buildVcvtContract(vcvtOp);
-    if (succeeded(contract) && (*contract).requiresSat) {
-      needsCtrlSetup = true;
-      return WalkResult::interrupt();
-    }
-    return WalkResult::advance();
-  });
-  return needsCtrlSetup;
+  return pto::isPTOEntryFunction(funcOp) && !funcOp.getBlocks().empty();
 }
 
 template <typename LoopOp>
@@ -11145,43 +11176,6 @@ private:
 };
 
 template <typename SyncOp>
-class LowerNamedSyncOpPattern final : public OpConversionPattern<SyncOp> {
-public:
-  explicit LowerNamedSyncOpPattern(TypeConverter &tc, MLIRContext *ctx,
-                                   LoweringState &state)
-      : OpConversionPattern<SyncOp>(tc, ctx), state(state) {}
-  LogicalResult matchAndRewrite(
-      SyncOp op, typename SyncOp::Adaptor adaptor,
-      ConversionPatternRewriter &rewriter) const override {
-    auto pipe = parsePipeImmediate(stringifyPIPE(op.getPipe().getPipe()));
-    if (!pipe) {
-      return rewriter.notifyMatchFailure(op, "unsupported sync pipe");
-    }
-    Value pipeValue = getI64Constant(rewriter, op.getLoc(), *pipe);
-    Value eventValue;
-    if (IntegerAttr attr = op.getEventIdAttr()) {
-      eventValue = getI64Constant(rewriter, op.getLoc(), attr.getInt());
-    } else {
-      eventValue = castIntegerLikeTo(op, adaptor.getEventIdDyn(),
-                                     rewriter.getI64Type());
-      if (!eventValue) {
-        return rewriter.notifyMatchFailure(op, "missing event-id operand");
-      }
-    }
-    StringRef callee = buildSyncCallee<SyncOp>(op.getContext());
-    auto fnTy = rewriter.getFunctionType(
-        TypeRange{rewriter.getI64Type(), rewriter.getI64Type()}, TypeRange{});
-    rewriter.create<func::CallOp>(op.getLoc(), callee, TypeRange{},
-                                  ValueRange{pipeValue, eventValue});
-    state.plannedDecls.push_back(PlannedDecl{callee.str(), fnTy});
-    rewriter.eraseOp(op);
-    return success();
-  }
-private:
-  LoweringState &state;
-};
-
-template <typename SyncOp>
 class LowerPipeEventDynSyncOpPattern final : public OpConversionPattern<SyncOp> {
 public:
   explicit LowerPipeEventDynSyncOpPattern(TypeConverter &typeConverter,
@@ -11295,30 +11289,65 @@ public:
       Value one = getI64Constant(rewriter, op.getLoc(), 1);
       Value modeMask = getI64Constant(rewriter, op.getLoc(), 0x3);
       Value eventMask = getI64Constant(rewriter, op.getLoc(), 0xf);
-      modeValue = rewriter.create<arith::AndIOp>(op.getLoc(), modeValue,
-                                                  modeMask);
-      eventValue = rewriter.create<arith::AndIOp>(op.getLoc(), eventValue,
-                                                   eventMask);
-      Value modeShift = rewriter.create<arith::ShLIOp>(op.getLoc(), modeValue,
-          getI64Constant(rewriter, op.getLoc(), 4));
-      Value eventShift = rewriter.create<arith::ShLIOp>(op.getLoc(), eventValue,
-          getI64Constant(rewriter, op.getLoc(), 8));
+      modeValue = rewriter.create<arith::AndIOp>(op.getLoc(), modeValue, modeMask);
+      eventValue = rewriter.create<arith::AndIOp>(op.getLoc(), eventValue, eventMask);
+      Value modeShift = rewriter.create<arith::ShLIOp>(
+          op.getLoc(), modeValue, getI64Constant(rewriter, op.getLoc(), 4));
+      Value eventShift = rewriter.create<arith::ShLIOp>(
+          op.getLoc(), eventValue, getI64Constant(rewriter, op.getLoc(), 8));
       Value msg = rewriter.create<arith::OrIOp>(op.getLoc(), one, modeShift);
       msg = rewriter.create<arith::OrIOp>(op.getLoc(), msg, eventShift);
       args = {pipeValue, msg};
     } else if constexpr (std::is_same_v<SyncOp, pto::SyncWaitOp>) {
       calleeName = op.getEventIdAttr()
                        ? StringAttr::get(op.getContext(),
-                                         "llvm.hivm.WAIT.FLAG.DEV.PIPE.IMM")
-                             .getValue()
+                                         "llvm.hivm.WAIT.FLAG.DEV.PIPE.IMM").getValue()
                        : StringAttr::get(op.getContext(),
-                                         "llvm.hivm.WAIT.FLAG.DEV.PIPE.REG")
-                             .getValue();
+                                         "llvm.hivm.WAIT.FLAG.DEV.PIPE.REG").getValue();
     }
     auto funcType = rewriter.getFunctionType(
         TypeRange{args[0].getType(), args[1].getType()}, TypeRange{});
     rewriter.create<func::CallOp>(op.getLoc(), calleeName, TypeRange{}, args);
     state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+private:
+  LoweringState &state;
+};
+
+template <typename SyncOp>
+class LowerNamedSyncOpPattern final : public OpConversionPattern<SyncOp> {
+public:
+  explicit LowerNamedSyncOpPattern(TypeConverter &tc, MLIRContext *ctx,
+                                   LoweringState &state)
+      : OpConversionPattern<SyncOp>(tc, ctx), state(state) {}
+
+  LogicalResult matchAndRewrite(
+      SyncOp op, typename SyncOp::Adaptor adaptor,
+      ConversionPatternRewriter &rewriter) const override {
+    auto pipe = parsePipeImmediate(stringifyPIPE(op.getPipe().getPipe()));
+    if (!pipe) {
+      return rewriter.notifyMatchFailure(op, "unsupported sync pipe");
+    }
+    Value pipeValue = getI64Constant(rewriter, op.getLoc(), *pipe);
+    Value eventValue;
+    if (IntegerAttr attr = op.getEventIdAttr()) {
+      eventValue = getI64Constant(rewriter, op.getLoc(), attr.getInt());
+    } else {
+      eventValue = castIntegerLikeTo(op, adaptor.getEventIdDyn(),
+                                     rewriter.getI64Type());
+      if (!eventValue) {
+        return rewriter.notifyMatchFailure(op, "missing event-id operand");
+      }
+    }
+    StringRef callee = buildSyncCallee<SyncOp>(op.getContext());
+    auto fnTy = rewriter.getFunctionType(
+        TypeRange{rewriter.getI64Type(), rewriter.getI64Type()}, TypeRange{});
+    rewriter.create<func::CallOp>(op.getLoc(), callee, TypeRange{},
+                                  ValueRange{pipeValue, eventValue});
+    state.plannedDecls.push_back(PlannedDecl{callee.str(), fnTy});
     rewriter.eraseOp(op);
     return success();
   }
@@ -11813,8 +11842,13 @@ public:
       return rewriter.notifyMatchFailure(op, "unexpected converted redux operand type");
     }
 
+    Attribute signednessAttr;
+    if constexpr (std::is_same_v<ReduxOp, pto::ReduxMaxIOp> ||
+                  std::is_same_v<ReduxOp, pto::ReduxMinIOp>) {
+      signednessAttr = op.getSignednessAttr();
+    }
     FailureOr<StringRef> calleeName = buildReduxCallee<ReduxOp>(
-        op.getContext(), op.getValue().getType(), op.getSignednessAttr());
+        op.getContext(), op.getValue().getType(), signednessAttr);
     if (failed(calleeName))
     {
       return rewriter.notifyMatchFailure(op, "unsupported redux VPTO signature");
@@ -11858,9 +11892,14 @@ public:
       return rewriter.notifyMatchFailure(op, "failed to convert atomic pointer type");
     }
 
-    FailureOr<StringRef> calleeName = buildAtomicCallee<AtomicOp>(
-        op.getContext(), op.getPtr().getType(), op.getValue().getType(),
-        op.getSignednessAttr());
+    Attribute signednessAttr;
+    if constexpr (std::is_same_v<AtomicOp, pto::AtomicMinOp> ||
+                  std::is_same_v<AtomicOp, pto::AtomicMaxOp>) {
+      signednessAttr = op.getSignednessAttr();
+    }
+    FailureOr<StringRef> calleeName =
+        buildAtomicCallee<AtomicOp>(op.getContext(), op.getPtr().getType(),
+                                    op.getValue().getType(), signednessAttr);
     if (failed(calleeName))
     {
       return rewriter.notifyMatchFailure(op, "unsupported atomic VPTO signature");
@@ -11915,7 +11954,7 @@ public:
 
     FailureOr<StringRef> calleeName = buildAtomicCallee<pto::AtomicCasOp>(
         op.getContext(), op.getPtr().getType(), op.getValue().getType(),
-        op.getSignednessAttr());
+        /*signednessAttr=*/{});
     if (failed(calleeName))
     {
       return rewriter.notifyMatchFailure(op, "unsupported atomic CAS signature");
@@ -12248,35 +12287,58 @@ private:
   LoweringState &state;
 };
 
-class LowerConvertOpPattern final : public OpConversionPattern<pto::ConvertOp> {
+template <typename OpTy>
+class LowerGenericConversionOpPattern final : public OpConversionPattern<OpTy> {
 public:
-  explicit LowerConvertOpPattern(TypeConverter &typeConverter,
-                                 MLIRContext *context, LoweringState &state)
-      : OpConversionPattern<pto::ConvertOp>(typeConverter, context),
-        state(state) {}
+  LowerGenericConversionOpPattern(TypeConverter &typeConverter,
+                                  MLIRContext *context, LoweringState &state)
+      : OpConversionPattern<OpTy>(typeConverter, context), state(state) {}
 
   LogicalResult
-  matchAndRewrite(pto::ConvertOp op, pto::ConvertOp::Adaptor adaptor,
+  matchAndRewrite(OpTy op, typename OpTy::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    Type resultType = getTypeConverter()->convertType(op.getDst().getType());
+    Type resultType =
+        this->getTypeConverter()->convertType(op.getDst().getType());
     if (!resultType) {
-      return rewriter.notifyMatchFailure(op,
-                                         "failed to convert result type");
+      return rewriter.notifyMatchFailure(op, "failed to convert result type");
     }
-
     FailureOr<StringRef> calleeName =
         buildConvertCallee(op.getContext(), op.getSrc().getType(),
-                           op.getDst().getType(), op.getSignednessAttr());
-    if (failed(calleeName))
-    {
-      return rewriter.notifyMatchFailure(op, "unsupported convert signature");
+                           op.getDst().getType(), op->getAttr("signedness"));
+    if (failed(calleeName)) {
+      return rewriter.notifyMatchFailure(op,
+                                         "unsupported conversion signature");
     }
 
-    Value rounding = getI32Constant(
-        rewriter, op.getLoc(), static_cast<uint64_t>(op.getRounding()));
+    uint64_t roundingValue = static_cast<uint64_t>(pto::Rounding::R);
+    if (auto rounding = op.getRoundingmodeAttr()) {
+      switch (rounding.getValue()) {
+      case pto::FloatRoundingMode::to_nearest_even:
+        roundingValue = static_cast<uint64_t>(pto::Rounding::R);
+        break;
+      case pto::FloatRoundingMode::to_nearest_away:
+        roundingValue = static_cast<uint64_t>(pto::Rounding::A);
+        break;
+      case pto::FloatRoundingMode::downward:
+        roundingValue = static_cast<uint64_t>(pto::Rounding::F);
+        break;
+      case pto::FloatRoundingMode::upward:
+        roundingValue = static_cast<uint64_t>(pto::Rounding::C);
+        break;
+      case pto::FloatRoundingMode::toward_zero:
+        roundingValue = static_cast<uint64_t>(pto::Rounding::Z);
+        break;
+      case pto::FloatRoundingMode::to_odd:
+        roundingValue = static_cast<uint64_t>(pto::Rounding::O);
+        break;
+      case pto::FloatRoundingMode::hybrid:
+        roundingValue = static_cast<uint64_t>(pto::Rounding::H);
+        break;
+      }
+    }
+    Value rounding = getI32Constant(rewriter, op.getLoc(), roundingValue);
     Value saturation = getI32Constant(
         rewriter, op.getLoc(), static_cast<uint64_t>(op.getSaturation()));
-
     auto funcType = rewriter.getFunctionType(
         TypeRange{adaptor.getSrc().getType(), rewriter.getI32Type(),
                   rewriter.getI32Type()},
@@ -12440,6 +12502,92 @@ public:
     }
 
     return rewriter.notifyMatchFailure(op, "unsupported tilebuf address source");
+  }
+};
+
+class ConvertPtoDeclareLocalArrayOp final
+    : public OpConversionPattern<pto::DeclareLocalArrayOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(pto::DeclareLocalArrayOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    (void)adaptor;
+    auto resultType = dyn_cast<LLVM::LLVMPointerType>(
+        getTypeConverter()->convertType(op.getArray().getType()));
+    if (!resultType) {
+      return rewriter.notifyMatchFailure(op,
+                                         "expected LLVM pointer result type");
+    }
+
+    auto arrayType = cast<pto::LocalArrayType>(op.getArray().getType());
+    Type storageType = getVPTOLocalArrayStorageType(arrayType, rewriter);
+    auto parentFunc = op->getParentOfType<func::FuncOp>();
+    if (!parentFunc) {
+      return rewriter.notifyMatchFailure(
+          op, "expected local array declaration inside a function");
+    }
+
+    Value storage;
+    {
+      OpBuilder::InsertionGuard guard(rewriter);
+      Block &entryBlock = parentFunc.getBody().front();
+      rewriter.setInsertionPointToStart(&entryBlock);
+      Value one = rewriter.create<LLVM::ConstantOp>(
+          op.getLoc(), rewriter.getI64Type(), rewriter.getI64IntegerAttr(1));
+      storage = rewriter.create<LLVM::AllocaOp>(
+          op.getLoc(), resultType, storageType, one, /*alignment=*/0);
+    }
+    rewriter.replaceOp(op, storage);
+    return success();
+  }
+};
+
+class ConvertPtoLocalArrayGetOp final
+    : public OpConversionPattern<pto::LocalArrayGetOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(pto::LocalArrayGetOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Type resultType = getTypeConverter()->convertType(op.getResult().getType());
+    if (!resultType) {
+      return rewriter.notifyMatchFailure(op, "could not convert result type");
+    }
+    auto address = getVPTOLocalArrayElementAddress(
+        rewriter, op.getLoc(), adaptor.getArray(),
+        cast<pto::LocalArrayType>(op.getArray().getType()),
+        adaptor.getIndices());
+    if (failed(address)) {
+      return rewriter.notifyMatchFailure(op, "invalid local array indices");
+    }
+    rewriter.replaceOpWithNewOp<LLVM::LoadOp>(
+        op, resultType, *address, getNaturalByteAlignment(resultType));
+    return success();
+  }
+};
+
+class ConvertPtoLocalArraySetOp final
+    : public OpConversionPattern<pto::LocalArraySetOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(pto::LocalArraySetOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto address = getVPTOLocalArrayElementAddress(
+        rewriter, op.getLoc(), adaptor.getArray(),
+        cast<pto::LocalArrayType>(op.getArray().getType()),
+        adaptor.getIndices());
+    if (failed(address)) {
+      return rewriter.notifyMatchFailure(op, "invalid local array indices");
+    }
+    rewriter.replaceOpWithNewOp<LLVM::StoreOp>(
+        op, adaptor.getValue(), *address,
+        getNaturalByteAlignment(adaptor.getValue().getType()));
+    return success();
   }
 };
 
@@ -12655,85 +12803,6 @@ public:
     }
 
     return rewriter.notifyMatchFailure(op, "unsupported castptr conversion");
-  }
-};
-
-class ConvertPtoLoadScalarOp final
-    : public OpConversionPattern<pto::LoadScalarOp> {
-public:
-  using OpConversionPattern::OpConversionPattern;
-
-  LogicalResult
-  matchAndRewrite(pto::LoadScalarOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    auto llvmPtrType = dyn_cast<LLVM::LLVMPointerType>(adaptor.getPtr().getType());
-    if (!llvmPtrType)
-    {
-      return rewriter.notifyMatchFailure(op, "expected LLVM pointer operand");
-    }
-
-    Type convertedValueType =
-        getTypeConverter()->convertType(op.getValue().getType());
-    if (!convertedValueType) {
-      return rewriter.notifyMatchFailure(op,
-                                         "could not convert load_scalar result type");
-    }
-
-    Value offset = adaptor.getOffset();
-    if (offset.getType().isIndex()) {
-      offset = rewriter.create<arith::IndexCastUIOp>(op.getLoc(),
-                                                     rewriter.getI64Type(), offset);
-    }
-
-    Value elemPtr = adaptor.getPtr();
-    if (!matchPattern(offset, m_Zero())) {
-      elemPtr = rewriter.create<LLVM::GEPOp>(op.getLoc(), llvmPtrType,
-                                             normalizeGEPElementTypeForLLVMLowering(
-                                                 convertedValueType, rewriter),
-                                             adaptor.getPtr(),
-                                             ValueRange{offset});
-    }
-
-    rewriter.replaceOpWithNewOp<LLVM::LoadOp>(
-        op, convertedValueType, elemPtr,
-        getNaturalByteAlignment(convertedValueType));
-    return success();
-  }
-};
-
-class ConvertPtoStoreScalarOp final
-    : public OpConversionPattern<pto::StoreScalarOp> {
-public:
-  using OpConversionPattern::OpConversionPattern;
-
-  LogicalResult
-  matchAndRewrite(pto::StoreScalarOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    auto llvmPtrType = dyn_cast<LLVM::LLVMPointerType>(adaptor.getPtr().getType());
-    if (!llvmPtrType)
-    {
-      return rewriter.notifyMatchFailure(op, "expected LLVM pointer operand");
-    }
-
-    Value offset = adaptor.getOffset();
-    if (offset.getType().isIndex()) {
-      offset = rewriter.create<arith::IndexCastUIOp>(op.getLoc(),
-                                                     rewriter.getI64Type(), offset);
-    }
-
-    Value elemPtr = adaptor.getPtr();
-    if (!matchPattern(offset, m_Zero())) {
-      elemPtr = rewriter.create<LLVM::GEPOp>(op.getLoc(), llvmPtrType,
-                                             normalizeGEPElementTypeForLLVMLowering(
-                                                 adaptor.getValue().getType(),
-                                                 rewriter),
-                                             adaptor.getPtr(), ValueRange{offset});
-    }
-
-    rewriter.create<LLVM::StoreOp>(op.getLoc(), adaptor.getValue(), elemPtr,
-                                   getNaturalByteAlignment(adaptor.getValue().getType()));
-    rewriter.eraseOp(op);
-    return success();
   }
 };
 
@@ -13166,234 +13235,208 @@ static void populateVPTOOpLoweringPatterns(VPTOTypeConverter &typeConverter,
                                            RewritePatternSet &patterns,
                                            LoweringState &state,
                                            const std::string &march) {
-  patterns.add<LowerUnaryMaskedOpPattern<pto::VabsOp>,
-               LowerUnaryMaskedOpPattern<pto::VexpOp>,
-               LowerUnaryMaskedOpPattern<pto::VlnOp>,
-               LowerUnaryMaskedOpPattern<pto::VnegOp>,
-               LowerUnaryMaskedOpPattern<pto::VsqrtOp>,
-               LowerUnaryMaskedOpPattern<pto::VreluOp>,
-               LowerUnaryMaskedOpPattern<pto::VnotOp>,
-               LowerVsqzOpPattern, LowerVusqzOpPattern,
-               LowerVmulaOpPattern, LowerVmullOpPattern,
-               LowerBinaryMaskedOpPattern<pto::VaddOp>,
-               LowerBinaryMaskedOpPattern<pto::VsubOp>,
-               LowerBinaryMaskedOpPattern<pto::VmulOp>,
-               LowerBinaryMaskedOpPattern<pto::VdivOp>,
-               LowerBinaryMaskedOpPattern<pto::VmaxOp>,
-               LowerBinaryMaskedOpPattern<pto::VminOp>,
-               LowerBinaryMaskedOpPattern<pto::VandOp>,
-               LowerBinaryMaskedOpPattern<pto::VorOp>,
-               LowerBinaryMaskedOpPattern<pto::VxorOp>,
-               LowerTernaryMaskedOpPattern<pto::VmaddOp>,
-               LowerBinaryMaskedOpPattern<pto::VpreluOp>,
-               LowerCarryBinaryOpPattern<pto::VaddcOp>,
-               LowerCarryBinaryOpPattern<pto::VsubcOp>,
-               LowerCarryBinaryOpPattern<pto::VaddcsOp>,
-               LowerCarryBinaryOpPattern<pto::VsubcsOp>,
-               LowerBinaryMaskedOpPattern<pto::VshlOp>,
-               LowerBinaryMaskedOpPattern<pto::VshrOp>,
-               LowerVecScalarMaskedOpPattern<pto::VmulsOp>,
-               LowerVecScalarMaskedOpPattern<pto::VaddsOp>,
-               LowerVecScalarMaskedOpPattern<pto::VmaxsOp>,
-               LowerVecScalarMaskedOpPattern<pto::VminsOp>,
-               LowerVecScalarMaskedOpPattern<pto::VlreluOp>,
-               LowerVecScalarMaskedOpPattern<pto::VshlsOp>,
-               LowerVecScalarMaskedOpPattern<pto::VshrsOp>,
-               LowerWideningReductionUnaryOpPattern<pto::VcaddOp>,
-               LowerReductionUnaryOpPattern<pto::VcmaxOp>,
-               LowerReductionUnaryOpPattern<pto::VcminOp>,
-               LowerReductionUnaryOpPattern<pto::VcgaddOp>,
-               LowerReductionUnaryOpPattern<pto::VcgmaxOp>,
-               LowerReductionUnaryOpPattern<pto::VcgminOp>,
-               LowerReductionUnaryOpPattern<pto::VcpaddOp>,
-               LowerHistogramOpPattern<pto::Chistv2Op>,
-               LowerHistogramOpPattern<pto::Dhistv2Op>,
-               LowerExtremaPredicateOpPattern<pto::VcbmaxOp>,
-               LowerExtremaPredicateOpPattern<pto::VcbminOp>,
-               LowerVdupOpPattern,
-               LowerVbrOpPattern,
-               LowerPredicatePackOpPattern<pto::PpackOp>,
-               LowerPredicatePackOpPattern<pto::PunpackOp>,
-               LowerVselOpPattern, LowerVselrOpPattern, LowerPnotOpPattern,
-               LowerPredicateMaskBinaryOpPattern<pto::PselOp>,
-               LowerPredicateMaskBinaryOpPattern<pto::PandOp>,
-               LowerPredicateMaskBinaryOpPattern<pto::PorOp>,
-               LowerPredicateMaskBinaryOpPattern<pto::PxorOp>,
-               LowerPredicatePairReorderOpPattern<pto::PdintlvB8Op>,
-               LowerPredicatePairReorderOpPattern<pto::PdintlvB16Op>,
-               LowerPredicatePairReorderOpPattern<pto::PdintlvB32Op>,
-               LowerPredicatePairReorderOpPattern<pto::PintlvB8Op>,
-               LowerPredicatePairReorderOpPattern<pto::PintlvB16Op>,
-               LowerPredicatePairReorderOpPattern<pto::PintlvB32Op>,
-               LowerUnpackOpPattern<pto::VsunpackOp>,
-               LowerUnpackOpPattern<pto::VzunpackOp>,
-               LowerVpackOpPattern,
-               LowerInterleaveOpPattern<pto::VintlvOp>,
-               LowerInterleaveOpPattern<pto::VdintlvOp>,
-               LowerCmpOpPattern<pto::VcmpOp>,
-               LowerCmpOpPattern<pto::VcmpsOp>,
-               LowerPltOpPattern<pto::PltB8Op>,
-               LowerPltOpPattern<pto::PltB16Op>,
-               LowerPltOpPattern<pto::PltB32Op>,
-               LowerPltmOpPattern<pto::PltmB8Op>,
-               LowerPltmOpPattern<pto::PltmB16Op>,
-               LowerPltmOpPattern<pto::PltmB32Op>,
-               LowerPsetOpPattern<pto::PsetB8Op>,
-               LowerPsetOpPattern<pto::PsetB16Op>,
-               LowerPsetOpPattern<pto::PsetB32Op>,
-               LowerPgeOpPattern<pto::PgeB8Op>,
-               LowerPgeOpPattern<pto::PgeB16Op>,
-               LowerPgeOpPattern<pto::PgeB32Op>,
-               LowerRuntimeQueryOpPattern<pto::GetCtrlOp>,
-               LowerGetVms4SrOpPattern,
-               LowerRuntimeQueryOpPattern<pto::GetTidXOp>,
-               LowerRuntimeQueryOpPattern<pto::GetTidYOp>,
-               LowerRuntimeQueryOpPattern<pto::GetTidZOp>,
-               LowerRuntimeQueryOpPattern<pto::GetBlockDimXOp>,
-               LowerRuntimeQueryOpPattern<pto::GetBlockDimYOp>,
-               LowerRuntimeQueryOpPattern<pto::GetBlockDimZOp>,
-               LowerRuntimeQueryOpPattern<pto::GetGridDimXOp>,
-               LowerRuntimeQueryOpPattern<pto::GetGridDimYOp>,
-               LowerRuntimeQueryOpPattern<pto::GetGridDimZOp>,
-               LowerRuntimeQueryOpPattern<pto::GetBlockIdxXOp>,
-               LowerRuntimeQueryOpPattern<pto::GetBlockIdxYOp>,
-               LowerRuntimeQueryOpPattern<pto::GetBlockIdxZOp>,
-               LowerRuntimeQueryOpPattern<pto::GetVecCoreIdOp>,
-               LowerRuntimeQueryOpPattern<pto::GetLaneIdOp>,
-               LowerRuntimeQueryOpPattern<pto::GetClock32Op>,
-               LowerRuntimeQueryOpPattern<pto::GetClock64Op>,
-               LowerRuntimeQueryOpPattern<pto::GetLaneMaskEqOp>,
-               LowerRuntimeQueryOpPattern<pto::GetLaneMaskLeOp>,
-               LowerRuntimeQueryOpPattern<pto::GetLaneMaskLtOp>,
-               LowerRuntimeQueryOpPattern<pto::GetLaneMaskGeOp>,
-               LowerRuntimeQueryOpPattern<pto::GetLaneMaskGtOp>,
-               LowerVoteOpPattern<pto::VoteAllOp>,
-               LowerVoteOpPattern<pto::VoteAnyOp>,
-               LowerVoteOpPattern<pto::VoteUniOp>,
-               LowerVoteOpPattern<pto::VoteBallotOp>,
-               LowerShuffleOpPattern<pto::ShuffleIdxOp>,
-               LowerShuffleOpPattern<pto::ShuffleUpOp>,
-               LowerShuffleOpPattern<pto::ShuffleDownOp>,
-               LowerShuffleOpPattern<pto::ShuffleBflyOp>,
-               LowerReduxOpPattern<pto::ReduxAddOp>,
-               LowerReduxOpPattern<pto::ReduxMaxOp>,
-               LowerReduxOpPattern<pto::ReduxMinOp>,
-               LowerAtomicCasOpPattern,
-               LowerAtomicBinaryOpPattern<pto::AtomicExchOp>,
-               LowerAtomicBinaryOpPattern<pto::AtomicAddOp>,
-               LowerAtomicBinaryOpPattern<pto::AtomicSubOp>,
-               LowerAtomicBinaryOpPattern<pto::AtomicMinOp>,
-               LowerAtomicBinaryOpPattern<pto::AtomicMaxOp>,
-               LowerAtomicBinaryOpPattern<pto::AtomicAndOp>,
-               LowerAtomicBinaryOpPattern<pto::AtomicOrOp>,
-               LowerAtomicBinaryOpPattern<pto::AtomicXorOp>,
-               LowerTrapOpPattern,
-               LowerScalarIntrinsicOpPattern<pto::PrmtOp>,
-               LowerMulhiOpPattern,
-               LowerMulI32ToI64OpPattern,
-               LowerSqrtOpPattern,
-               LowerUnaryScalarMathOpPattern<pto::AbsFOp>,
-               LowerUnaryScalarMathOpPattern<pto::ExpOp>,
-               LowerUnaryScalarMathOpPattern<pto::LogOp>,
-               LowerUnaryScalarMathOpPattern<pto::CeilOp>,
-               LowerUnaryScalarMathOpPattern<pto::FloorOp>,
-               LowerUnaryScalarMathOpPattern<pto::RintOp>,
-               LowerUnaryScalarMathOpPattern<pto::RoundOp>,
-               LowerBinaryScalarMathOpPattern<pto::FMinOp>,
-               LowerBinaryScalarMathOpPattern<pto::FMaxOp>,
-               LowerBinaryScalarMathOpPattern<pto::PowOp>,
-               LowerFmaOpPattern,
-               LowerConvertOpPattern,
-               LowerSimtFenceOpPattern<pto::SyncthreadsOp>,
-               LowerSimtFenceOpPattern<pto::ThreadfenceOp>,
-               LowerSimtFenceOpPattern<pto::ThreadfenceBlockOp>,
-               LowerKeepOpPattern,
-               LowerResumeOpPattern,
-               LowerBinaryI64PureOpPattern<pto::Sbitset0Op>,
-               LowerBinaryI64PureOpPattern<pto::Sbitset1Op>,
-               LowerSetLoopConfigOpPattern<pto::SetLoop2StrideOutToUbOp>,
-               LowerSetLoopConfigOpPattern<pto::SetLoop1StrideOutToUbOp>,
-               LowerSetLoopConfigOpPattern<pto::SetLoopSizeOutToUbOp>,
-               LowerSetLoopConfigOpPattern<pto::SetLoop2StrideUbToOutOp>,
-               LowerSetLoopConfigOpPattern<pto::SetLoop1StrideUbToOutOp>,
-               LowerSetLoopConfigOpPattern<pto::SetLoopSizeUbToOutOp>,
-               LowerSetLoopConfigOpPattern<pto::SetLoop3ParaOp>,
-               LowerSetLoopConfigOpPattern<pto::SetChannelParaOp>,
-               LowerUnaryI64ConfigOpPattern<pto::SetCtrlOp>,
-               LowerStoreVfSimtInfoOpPattern,
-               LowerUnaryConfigOpPattern<pto::SetMovPadValOp>,
-               LowerUnaryI64ConfigOpPattern<pto::SetQuantPreOp>,
-               LowerUnaryI64ConfigOpPattern<pto::SetReluAlphaOp>,
-               LowerUnaryI64ConfigOpPattern<pto::SetFixClipReluOp>,
-               LowerUnaryI64ConfigOpPattern<pto::SetLoop2StrideOutToL1Op>,
-               LowerUnaryI64ConfigOpPattern<pto::SetLoop1StrideOutToL1Op>,
-               LowerUnaryI64ConfigOpPattern<pto::SetLoopSizeOutToL1Op>,
-               LowerUnaryI64ConfigOpPattern<pto::SetMte2NzParaOp>,
-               LowerUnaryI64ConfigOpPattern<pto::SetPadValOutToL1Op>,
-               LowerUnaryI64ConfigOpPattern<pto::SetFpcOp>,
-               LowerUnaryI64ConfigOpPattern<pto::SetStoreAtomicCfgOp>,
-               LowerNullaryConfigOpPattern<pto::SetAtomicS32Op>,
-               LowerNullaryConfigOpPattern<pto::SetAtomicS8Op>,
-               LowerPipeEventSyncOpPattern<pto::SetFlagOp>,
-               LowerPipeEventSyncOpPattern<pto::WaitFlagOp>,
-               LowerPipeEventDynSyncOpPattern<pto::SetFlagDynOp>,
-               LowerPipeEventDynSyncOpPattern<pto::WaitFlagDynOp>,
-               LowerBarrierOpPattern, LowerMemBarOpPattern,
-               LowerUnsupportedMemoryConsistencyOpPattern<pto::CmoCacheInvalidOp>,
-               LowerUnsupportedMemoryConsistencyOpPattern<pto::FenceBarrierAllOp>,
-               LowerDsbOpPattern,
-               LowerDcciOpPattern,
-               LowerBufSyncOpPattern<pto::GetBufOp>,
-               LowerBufSyncOpPattern<pto::RlsBufOp>,
-               LowerBufDynSyncOpPattern<pto::GetBufDynOp>,
-               LowerBufDynSyncOpPattern<pto::RlsBufDynOp>,
-               LowerBlockRuntimeQueryOpPattern<pto::GetBlockIdxOp>,
-               LowerRuntimeQueryOpPattern<pto::GetSubBlockIdxOp>,
-               LowerBlockRuntimeQueryOpPattern<pto::GetBlockNumOp>,
-               LowerRuntimeQueryOpPattern<pto::GetSubBlockNumOp>,
-               LowerVldsOpPattern, LowerVldsx2OpPattern, LowerVsldbOpPattern,
-               LowerVldasOpPattern, LowerInitAlignOpPattern,
-               LowerVldusOpPattern, LowerSprclrOpPattern,
-               LowerSprStoreOpPattern<pto::SprstiOp>,
-               LowerSprStoreOpPattern<pto::SprstsOp>,
-               LowerVstsOpPattern, LowerVsstbOpPattern,
-               LowerVstsx2OpPattern,
-               LowerVstarOpPattern, LowerVstasOpPattern,
-               LowerVgather2OpPattern, LowerVgather2BcOpPattern,
-               LowerVgatherbOpPattern, LowerVscatterOpPattern,
-               LowerVaxpyOpPattern, LowerVmulscvtOpPattern,
-               LowerVciOpPattern, LowerVexpdifOpPattern,
-               LowerVbitsortOpPattern, LowerVmrgsort4OpPattern,
-               LowerVtrcOpPattern, LowerVcvtOpPattern,
-               LowerVbitcastOpPattern, LowerPbitcastOpPattern,
-               LowerPredicateLoadOpPattern<pto::PldiOp>,
-               LowerPredicateLoadOpPattern<pto::PldsOp>,
-               LowerPredicateStoreOpPattern<pto::PstiOp>,
-               LowerPredicateStoreOpPattern<pto::PstsOp>,
-               LowerPstuOpPattern, LowerVstusOpPattern, LowerVsturOpPattern,
-               LowerInterCoreSyncOpPattern<pto::SyncSetOp>,
-               LowerInterCoreSyncOpPattern<pto::SyncWaitOp>,
-               LowerNamedSyncOpPattern<pto::SetIntraBlockOp>,
-               LowerNamedSyncOpPattern<pto::WaitIntraBlockOp>,
-               LowerCopyGmToCbufOpPattern, LowerLoadCbufToCaOpPattern,
-               LowerLoadCbufToCbOpPattern,
-               LowerLoadCbufToS4OpPattern<pto::LoadCbufToCaS4Op>,
-               LowerLoadCbufToS4OpPattern<pto::LoadCbufToCbS4Op>,
-               LowerLoadCbufToCaMxOpPattern,
-               LowerLoadCbufToCbMxOpPattern, LowerCopyMatrixCcToGmOpPattern,
-               LowerCopyMatrixCcToBufOpPattern<pto::CopyMatrixCcToCbufOp>,
-               LowerCopyMatrixCcToBufOpPattern<pto::CopyMatrixCcToUbOp>,
-               LowerCopyCbufToBtOpPattern, LowerCopyCbufToFbufOpPattern,
-               LowerCopyGmToCbufMultiOpPattern<pto::CopyGmToCbufMultiNd2NzOp>,
-               LowerCopyGmToCbufMultiOpPattern<pto::CopyGmToCbufMultiDn2NzOp>,
-               LowerMadRawPattern<pto::MadRawOp>,
-               LowerMadRawPattern<pto::MadBiasRawOp>,
-               LowerMadRawPattern<pto::MadMxRawOp>,
-               LowerMadRawPattern<pto::MadMxBiasRawOp>,
-               LowerCopyUbufToUbufOpPattern,
-               LowerCopyCbufToUbufOpPattern,
-               LowerCopyUbufToCbufOpPattern,
-               LowerCreateCbufMatrixOpPattern>(
+  patterns.add<
+      LowerUnaryMaskedOpPattern<pto::VabsOp>,
+      LowerUnaryMaskedOpPattern<pto::VexpOp>,
+      LowerUnaryMaskedOpPattern<pto::VlnOp>,
+      LowerUnaryMaskedOpPattern<pto::VnegOp>,
+      LowerUnaryMaskedOpPattern<pto::VsqrtOp>,
+      LowerUnaryMaskedOpPattern<pto::VreluOp>,
+      LowerUnaryMaskedOpPattern<pto::VnotOp>, LowerVsqzOpPattern,
+      LowerVusqzOpPattern, LowerVmulaOpPattern, LowerVmullOpPattern,
+      LowerBinaryMaskedOpPattern<pto::VaddOp>,
+      LowerBinaryMaskedOpPattern<pto::VsubOp>,
+      LowerBinaryMaskedOpPattern<pto::VmulOp>,
+      LowerBinaryMaskedOpPattern<pto::VdivOp>,
+      LowerBinaryMaskedOpPattern<pto::VmaxOp>,
+      LowerBinaryMaskedOpPattern<pto::VminOp>,
+      LowerBinaryMaskedOpPattern<pto::VandOp>,
+      LowerBinaryMaskedOpPattern<pto::VorOp>,
+      LowerBinaryMaskedOpPattern<pto::VxorOp>,
+      LowerTernaryMaskedOpPattern<pto::VmaddOp>,
+      LowerBinaryMaskedOpPattern<pto::VpreluOp>,
+      LowerCarryBinaryOpPattern<pto::VaddcOp>,
+      LowerCarryBinaryOpPattern<pto::VsubcOp>,
+      LowerCarryBinaryOpPattern<pto::VaddcsOp>,
+      LowerCarryBinaryOpPattern<pto::VsubcsOp>,
+      LowerBinaryMaskedOpPattern<pto::VshlOp>,
+      LowerBinaryMaskedOpPattern<pto::VshrOp>,
+      LowerVecScalarMaskedOpPattern<pto::VmulsOp>,
+      LowerVecScalarMaskedOpPattern<pto::VaddsOp>,
+      LowerVecScalarMaskedOpPattern<pto::VmaxsOp>,
+      LowerVecScalarMaskedOpPattern<pto::VminsOp>,
+      LowerVecScalarMaskedOpPattern<pto::VlreluOp>,
+      LowerVecScalarMaskedOpPattern<pto::VshlsOp>,
+      LowerVecScalarMaskedOpPattern<pto::VshrsOp>,
+      LowerWideningReductionUnaryOpPattern<pto::VcaddOp>,
+      LowerReductionUnaryOpPattern<pto::VcmaxOp>,
+      LowerReductionUnaryOpPattern<pto::VcminOp>,
+      LowerReductionUnaryOpPattern<pto::VcgaddOp>,
+      LowerReductionUnaryOpPattern<pto::VcgmaxOp>,
+      LowerReductionUnaryOpPattern<pto::VcgminOp>,
+      LowerReductionUnaryOpPattern<pto::VcpaddOp>,
+      LowerHistogramOpPattern<pto::Chistv2Op>,
+      LowerHistogramOpPattern<pto::Dhistv2Op>,
+      LowerExtremaPredicateOpPattern<pto::VcbmaxOp>,
+      LowerExtremaPredicateOpPattern<pto::VcbminOp>, LowerVdupOpPattern,
+      LowerVbrOpPattern, LowerPredicatePackOpPattern<pto::PpackOp>,
+      LowerPredicatePackOpPattern<pto::PunpackOp>, LowerVselOpPattern,
+      LowerVselrOpPattern, LowerPnotOpPattern,
+      LowerPredicateMaskBinaryOpPattern<pto::PselOp>,
+      LowerPredicateMaskBinaryOpPattern<pto::PandOp>,
+      LowerPredicateMaskBinaryOpPattern<pto::PorOp>,
+      LowerPredicateMaskBinaryOpPattern<pto::PxorOp>,
+      LowerPredicatePairReorderOpPattern<pto::PdintlvB8Op>,
+      LowerPredicatePairReorderOpPattern<pto::PdintlvB16Op>,
+      LowerPredicatePairReorderOpPattern<pto::PdintlvB32Op>,
+      LowerPredicatePairReorderOpPattern<pto::PintlvB8Op>,
+      LowerPredicatePairReorderOpPattern<pto::PintlvB16Op>,
+      LowerPredicatePairReorderOpPattern<pto::PintlvB32Op>,
+      LowerUnpackOpPattern<pto::VsunpackOp>,
+      LowerUnpackOpPattern<pto::VzunpackOp>, LowerVpackOpPattern,
+      LowerInterleaveOpPattern<pto::VintlvOp>,
+      LowerInterleaveOpPattern<pto::VdintlvOp>, LowerCmpOpPattern<pto::VcmpOp>,
+      LowerCmpOpPattern<pto::VcmpsOp>, LowerPltOpPattern<pto::PltB8Op>,
+      LowerPltOpPattern<pto::PltB16Op>, LowerPltOpPattern<pto::PltB32Op>,
+      LowerPltmOpPattern<pto::PltmB8Op>, LowerPltmOpPattern<pto::PltmB16Op>,
+      LowerPltmOpPattern<pto::PltmB32Op>, LowerPsetOpPattern<pto::PsetB8Op>,
+      LowerPsetOpPattern<pto::PsetB16Op>, LowerPsetOpPattern<pto::PsetB32Op>,
+      LowerPgeOpPattern<pto::PgeB8Op>, LowerPgeOpPattern<pto::PgeB16Op>,
+      LowerPgeOpPattern<pto::PgeB32Op>,
+      LowerRuntimeQueryOpPattern<pto::GetCtrlOp>, LowerGetVms4SrOpPattern,
+      LowerRuntimeQueryOpPattern<pto::GetTidXOp>,
+      LowerRuntimeQueryOpPattern<pto::GetTidYOp>,
+      LowerRuntimeQueryOpPattern<pto::GetTidZOp>,
+      LowerRuntimeQueryOpPattern<pto::GetBlockDimXOp>,
+      LowerRuntimeQueryOpPattern<pto::GetBlockDimYOp>,
+      LowerRuntimeQueryOpPattern<pto::GetBlockDimZOp>,
+      LowerRuntimeQueryOpPattern<pto::GetGridDimXOp>,
+      LowerRuntimeQueryOpPattern<pto::GetGridDimYOp>,
+      LowerRuntimeQueryOpPattern<pto::GetGridDimZOp>,
+      LowerRuntimeQueryOpPattern<pto::GetBlockIdxXOp>,
+      LowerRuntimeQueryOpPattern<pto::GetBlockIdxYOp>,
+      LowerRuntimeQueryOpPattern<pto::GetBlockIdxZOp>,
+      LowerRuntimeQueryOpPattern<pto::GetVecCoreIdOp>,
+      LowerRuntimeQueryOpPattern<pto::GetLaneIdOp>,
+      LowerRuntimeQueryOpPattern<pto::GetClock32Op>,
+      LowerRuntimeQueryOpPattern<pto::GetClock64Op>,
+      LowerRuntimeQueryOpPattern<pto::GetLaneMaskEqOp>,
+      LowerRuntimeQueryOpPattern<pto::GetLaneMaskLeOp>,
+      LowerRuntimeQueryOpPattern<pto::GetLaneMaskLtOp>,
+      LowerRuntimeQueryOpPattern<pto::GetLaneMaskGeOp>,
+      LowerRuntimeQueryOpPattern<pto::GetLaneMaskGtOp>,
+      LowerVoteOpPattern<pto::VoteAllOp>, LowerVoteOpPattern<pto::VoteAnyOp>,
+      LowerVoteOpPattern<pto::VoteUniOp>, LowerVoteOpPattern<pto::VoteBallotOp>,
+      LowerShuffleOpPattern<pto::ShuffleIdxOp>,
+      LowerShuffleOpPattern<pto::ShuffleUpOp>,
+      LowerShuffleOpPattern<pto::ShuffleDownOp>,
+      LowerShuffleOpPattern<pto::ShuffleBflyOp>,
+      LowerReduxOpPattern<pto::ReduxAddIOp>,
+      LowerReduxOpPattern<pto::ReduxAddFOp>,
+      LowerReduxOpPattern<pto::ReduxMaxIOp>,
+      LowerReduxOpPattern<pto::ReduxMaxFOp>,
+      LowerReduxOpPattern<pto::ReduxMinIOp>,
+      LowerReduxOpPattern<pto::ReduxMinFOp>, LowerAtomicCasOpPattern,
+      LowerAtomicBinaryOpPattern<pto::AtomicExchOp>,
+      LowerAtomicBinaryOpPattern<pto::AtomicAddOp>,
+      LowerAtomicBinaryOpPattern<pto::AtomicSubOp>,
+      LowerAtomicBinaryOpPattern<pto::AtomicMinOp>,
+      LowerAtomicBinaryOpPattern<pto::AtomicMaxOp>,
+      LowerAtomicBinaryOpPattern<pto::AtomicAndOp>,
+      LowerAtomicBinaryOpPattern<pto::AtomicOrOp>,
+      LowerAtomicBinaryOpPattern<pto::AtomicXorOp>, LowerTrapOpPattern,
+      LowerScalarIntrinsicOpPattern<pto::PrmtOp>, LowerMulhiOpPattern,
+      LowerMulI32ToI64OpPattern, LowerSqrtOpPattern,
+      LowerUnaryScalarMathOpPattern<pto::AbsFOp>,
+      LowerUnaryScalarMathOpPattern<pto::ExpOp>,
+      LowerUnaryScalarMathOpPattern<pto::LogOp>,
+      LowerUnaryScalarMathOpPattern<pto::CeilOp>,
+      LowerUnaryScalarMathOpPattern<pto::FloorOp>,
+      LowerUnaryScalarMathOpPattern<pto::RintOp>,
+      LowerUnaryScalarMathOpPattern<pto::RoundOp>,
+      LowerBinaryScalarMathOpPattern<pto::PowOp>, LowerFmaOpPattern,
+      LowerGenericConversionOpPattern<pto::FToIOp>,
+      LowerGenericConversionOpPattern<pto::IToFOp>,
+      LowerGenericConversionOpPattern<pto::FToFOp>,
+      LowerSimtFenceOpPattern<pto::SyncthreadsOp>,
+      LowerSimtFenceOpPattern<pto::ThreadfenceOp>,
+      LowerSimtFenceOpPattern<pto::ThreadfenceBlockOp>, LowerKeepOpPattern,
+      LowerResumeOpPattern, LowerBinaryI64PureOpPattern<pto::Sbitset0Op>,
+      LowerBinaryI64PureOpPattern<pto::Sbitset1Op>,
+      LowerSetLoopConfigOpPattern<pto::SetLoop2StrideOutToUbOp>,
+      LowerSetLoopConfigOpPattern<pto::SetLoop1StrideOutToUbOp>,
+      LowerSetLoopConfigOpPattern<pto::SetLoopSizeOutToUbOp>,
+      LowerSetLoopConfigOpPattern<pto::SetLoop2StrideUbToOutOp>,
+      LowerSetLoopConfigOpPattern<pto::SetLoop1StrideUbToOutOp>,
+      LowerSetLoopConfigOpPattern<pto::SetLoopSizeUbToOutOp>,
+      LowerSetLoopConfigOpPattern<pto::SetLoop3ParaOp>,
+      LowerSetLoopConfigOpPattern<pto::SetChannelParaOp>,
+      LowerUnaryI64ConfigOpPattern<pto::SetCtrlOp>,
+      LowerStoreVfSimtInfoOpPattern,
+      LowerUnaryConfigOpPattern<pto::SetMovPadValOp>,
+      LowerUnaryI64ConfigOpPattern<pto::SetQuantPreOp>,
+      LowerUnaryI64ConfigOpPattern<pto::SetReluAlphaOp>,
+      LowerUnaryI64ConfigOpPattern<pto::SetFixClipReluOp>,
+      LowerUnaryI64ConfigOpPattern<pto::SetLoop2StrideOutToL1Op>,
+      LowerUnaryI64ConfigOpPattern<pto::SetLoop1StrideOutToL1Op>,
+      LowerUnaryI64ConfigOpPattern<pto::SetLoopSizeOutToL1Op>,
+      LowerUnaryI64ConfigOpPattern<pto::SetMte2NzParaOp>,
+      LowerUnaryI64ConfigOpPattern<pto::SetPadValOutToL1Op>,
+      LowerUnaryI64ConfigOpPattern<pto::SetFpcOp>,
+      LowerUnaryI64ConfigOpPattern<pto::SetStoreAtomicCfgOp>,
+      LowerNullaryConfigOpPattern<pto::SetAtomicS32Op>,
+      LowerNullaryConfigOpPattern<pto::SetAtomicS8Op>,
+      LowerPipeEventSyncOpPattern<pto::SetFlagOp>,
+      LowerPipeEventSyncOpPattern<pto::WaitFlagOp>,
+      LowerPipeEventDynSyncOpPattern<pto::SetFlagDynOp>,
+      LowerPipeEventDynSyncOpPattern<pto::WaitFlagDynOp>, LowerBarrierOpPattern,
+      LowerMemBarOpPattern,
+      LowerUnsupportedMemoryConsistencyOpPattern<pto::CmoCacheInvalidOp>,
+      LowerUnsupportedMemoryConsistencyOpPattern<pto::FenceBarrierAllOp>,
+      LowerDsbOpPattern, LowerDcciOpPattern,
+      LowerBufSyncOpPattern<pto::GetBufOp>,
+      LowerBufSyncOpPattern<pto::RlsBufOp>,
+      LowerBufDynSyncOpPattern<pto::GetBufDynOp>,
+      LowerBufDynSyncOpPattern<pto::RlsBufDynOp>,
+      LowerBlockRuntimeQueryOpPattern<pto::GetBlockIdxOp>,
+      LowerRuntimeQueryOpPattern<pto::GetSubBlockIdxOp>,
+      LowerBlockRuntimeQueryOpPattern<pto::GetBlockNumOp>,
+      LowerRuntimeQueryOpPattern<pto::GetSubBlockNumOp>, LowerVldsOpPattern,
+      LowerVldsx2OpPattern, LowerVsldbOpPattern, LowerVldasOpPattern,
+      LowerInitAlignOpPattern, LowerVldusOpPattern, LowerSprclrOpPattern,
+      LowerSprStoreOpPattern<pto::SprstiOp>,
+      LowerSprStoreOpPattern<pto::SprstsOp>, LowerVstsOpPattern,
+      LowerVsstbOpPattern, LowerVstsx2OpPattern, LowerVstarOpPattern,
+      LowerVstasOpPattern, LowerVgather2OpPattern, LowerVgather2BcOpPattern,
+      LowerVgatherbOpPattern, LowerVscatterOpPattern, LowerVaxpyOpPattern,
+      LowerVmulscvtOpPattern, LowerVciOpPattern, LowerVexpdifOpPattern,
+      LowerVbitsortOpPattern, LowerVmrgsort4OpPattern, LowerVtrcOpPattern,
+      LowerVcvtOpPattern, LowerVbitcastOpPattern, LowerPbitcastOpPattern,
+      LowerPredicateLoadOpPattern<pto::PldiOp>,
+      LowerPredicateLoadOpPattern<pto::PldsOp>,
+      LowerPredicateStoreOpPattern<pto::PstiOp>,
+      LowerPredicateStoreOpPattern<pto::PstsOp>, LowerPstuOpPattern,
+      LowerVstusOpPattern, LowerVsturOpPattern,
+      LowerInterCoreSyncOpPattern<pto::SyncSetOp>,
+      LowerInterCoreSyncOpPattern<pto::SyncWaitOp>,
+      LowerNamedSyncOpPattern<pto::SetIntraBlockOp>,
+      LowerNamedSyncOpPattern<pto::WaitIntraBlockOp>,
+      LowerCopyGmToCbufOpPattern,
+      LowerLoadCbufToCaOpPattern, LowerLoadCbufToCbOpPattern,
+      LowerLoadCbufToS4OpPattern<pto::LoadCbufToCaS4Op>,
+      LowerLoadCbufToS4OpPattern<pto::LoadCbufToCbS4Op>,
+      LowerLoadCbufToCaMxOpPattern, LowerLoadCbufToCbMxOpPattern,
+      LowerCopyMatrixCcToGmOpPattern,
+      LowerCopyMatrixCcToBufOpPattern<pto::CopyMatrixCcToCbufOp>,
+      LowerCopyMatrixCcToBufOpPattern<pto::CopyMatrixCcToUbOp>,
+      LowerCopyCbufToBtOpPattern, LowerCopyCbufToFbufOpPattern,
+      LowerCopyGmToCbufMultiOpPattern<pto::CopyGmToCbufMultiNd2NzOp>,
+      LowerCopyGmToCbufMultiOpPattern<pto::CopyGmToCbufMultiDn2NzOp>,
+      LowerMadRawPattern<pto::MadRawOp>, LowerMadRawPattern<pto::MadBiasRawOp>,
+      LowerMadRawPattern<pto::MadMxRawOp>,
+      LowerMadRawPattern<pto::MadMxBiasRawOp>, LowerCopyUbufToUbufOpPattern,
+      LowerCopyCbufToUbufOpPattern, LowerCopyUbufToCbufOpPattern,
+      LowerCreateCbufMatrixOpPattern>(
       typeConverter, patterns.getContext(), state);
 
   patterns.add<LowerCopyOpPattern<pto::CopyGmToUbufOp>>(
@@ -13478,39 +13521,33 @@ static void configureVPTOOpLoweringTarget(ConversionTarget &target,
                !hasVPTOConvertibleType(op->getResultTypes());
       });
   target.addIllegalOp<pto::SetFlagOp, pto::WaitFlagOp, pto::SetFlagDynOp, pto::WaitFlagDynOp, pto::SyncSetOp,
-                      pto::SyncWaitOp, pto::SetIntraBlockOp, pto::WaitIntraBlockOp,
-                      pto::BarrierOp, pto::MemBarOp,
+                      pto::SyncWaitOp, pto::SetIntraBlockOp,
+                      pto::WaitIntraBlockOp, pto::BarrierOp, pto::MemBarOp,
                       pto::CmoCacheInvalidOp, pto::FenceBarrierAllOp,
                       pto::DsbOp, pto::DcciOp,
                       pto::GetBufOp, pto::RlsBufOp,
                       pto::GetBufDynOp, pto::RlsBufDynOp>();
-  target.addIllegalOp<pto::GetBlockIdxOp, pto::GetSubBlockIdxOp,
-                      pto::GetBlockNumOp, pto::GetSubBlockNumOp,
-                      pto::GetCtrlOp, pto::GetVms4SrOp, pto::GetTidXOp,
-                      pto::GetTidYOp, pto::GetTidZOp,
-                      pto::GetBlockDimXOp, pto::GetBlockDimYOp,
-                      pto::GetBlockDimZOp, pto::GetGridDimXOp,
-                      pto::GetGridDimYOp, pto::GetGridDimZOp,
-                      pto::GetBlockIdxXOp, pto::GetBlockIdxYOp,
-                      pto::GetBlockIdxZOp, pto::GetVecCoreIdOp,
-                      pto::GetLaneIdOp, pto::GetClock32Op, pto::GetClock64Op,
-                      pto::GetLaneMaskEqOp, pto::GetLaneMaskLeOp,
-                      pto::GetLaneMaskLtOp, pto::GetLaneMaskGeOp,
-                      pto::GetLaneMaskGtOp, pto::VoteAllOp, pto::VoteAnyOp,
-                      pto::VoteUniOp, pto::VoteBallotOp, pto::ShuffleIdxOp,
-                      pto::ShuffleUpOp, pto::ShuffleDownOp,
-                      pto::ShuffleBflyOp, pto::ReduxAddOp, pto::ReduxMaxOp,
-                      pto::ReduxMinOp, pto::AtomicCasOp, pto::AtomicExchOp,
-                      pto::AtomicAddOp, pto::AtomicSubOp,
-                      pto::AtomicMinOp, pto::AtomicMaxOp,
-                      pto::AtomicAndOp, pto::AtomicOrOp,
-                      pto::AtomicXorOp, pto::TrapOp, pto::PrmtOp,
-                      pto::MulhiOp, pto::MulI32ToI64Op, pto::SqrtOp,
-                      pto::AbsFOp, pto::ExpOp, pto::LogOp, pto::CeilOp,
-                      pto::FloorOp, pto::RintOp, pto::RoundOp, pto::FMinOp,
-                      pto::FMaxOp, pto::PowOp, pto::FmaOp, pto::ConvertOp,
-                      pto::SyncthreadsOp, pto::ThreadfenceOp,
-                      pto::ThreadfenceBlockOp, pto::KeepOp, pto::ResumeOp>();
+  target.addIllegalOp<
+      pto::GetBlockIdxOp, pto::GetSubBlockIdxOp, pto::GetBlockNumOp,
+      pto::GetSubBlockNumOp, pto::GetCtrlOp, pto::GetVms4SrOp, pto::GetTidXOp,
+      pto::GetTidYOp, pto::GetTidZOp, pto::GetBlockDimXOp, pto::GetBlockDimYOp,
+      pto::GetBlockDimZOp, pto::GetGridDimXOp, pto::GetGridDimYOp,
+      pto::GetGridDimZOp, pto::GetBlockIdxXOp, pto::GetBlockIdxYOp,
+      pto::GetBlockIdxZOp, pto::GetVecCoreIdOp, pto::GetLaneIdOp,
+      pto::GetClock32Op, pto::GetClock64Op, pto::GetLaneMaskEqOp,
+      pto::GetLaneMaskLeOp, pto::GetLaneMaskLtOp, pto::GetLaneMaskGeOp,
+      pto::GetLaneMaskGtOp, pto::VoteAllOp, pto::VoteAnyOp, pto::VoteUniOp,
+      pto::VoteBallotOp, pto::ShuffleIdxOp, pto::ShuffleUpOp,
+      pto::ShuffleDownOp, pto::ShuffleBflyOp, pto::ReduxAddIOp,
+      pto::ReduxAddFOp, pto::ReduxMaxIOp, pto::ReduxMaxFOp, pto::ReduxMinIOp,
+      pto::ReduxMinFOp, pto::AtomicCasOp, pto::AtomicExchOp, pto::AtomicAddOp,
+      pto::AtomicSubOp, pto::AtomicMinOp, pto::AtomicMaxOp, pto::AtomicAndOp,
+      pto::AtomicOrOp, pto::AtomicXorOp, pto::TrapOp, pto::PrmtOp, pto::MulhiOp,
+      pto::MulI32ToI64Op, pto::SqrtOp, pto::AbsFOp, pto::ExpOp, pto::LogOp,
+      pto::CeilOp, pto::FloorOp, pto::RintOp, pto::RoundOp, pto::PowOp,
+      pto::FmaOp, pto::FToFOp, pto::FToIOp, pto::IToFOp, pto::SyncthreadsOp,
+      pto::ThreadfenceOp, pto::ThreadfenceBlockOp, pto::KeepOp,
+      pto::ResumeOp>();
   target.addIllegalOp<pto::SetLoop2StrideOutToUbOp, pto::SetLoop1StrideOutToUbOp,
                       pto::SetLoopSizeOutToUbOp, pto::SetLoop2StrideUbToOutOp,
                       pto::SetLoop1StrideUbToOutOp, pto::SetLoopSizeUbToOutOp,
@@ -13702,10 +13739,12 @@ static LogicalResult lowerVPTOTypes(ModuleOp module, llvm::raw_ostream &diagOS) 
     return typeConverter.isLegal(op->getOperandTypes()) &&
            typeConverter.isLegal(op->getResultTypes());
   });
-  target.addIllegalOp<pto::AddPtrOp, pto::CastPtrOp, pto::LoadScalarOp,
-                      pto::StoreScalarOp, pto::PTOLoadOp, pto::PTOStoreOp,
-                      pto::PTOLdgOp, pto::PTOStgOp, pto::DeclareStructOp,
-                      pto::StructGetOp, pto::StructSetOp>();
+  target.addIllegalOp<pto::AddPtrOp, pto::CastPtrOp, pto::PTOLoadOp,
+                      pto::PTOStoreOp, pto::PTOLdgOp, pto::PTOStgOp,
+                      pto::DeclareLocalArrayOp, pto::LocalArrayGetOp,
+                      pto::LocalArraySetOp, pto::DeclareStructOp,
+                      pto::StructGetOp, pto::StructSetOp, pto::FToFOp,
+                      pto::FToIOp, pto::IToFOp>();
   target.addDynamicallyLegalOp<UnrealizedConversionCastOp>(
       [&](UnrealizedConversionCastOp op) {
         return !hasVPTOConvertibleType(op->getOperandTypes()) &&
@@ -13728,9 +13767,10 @@ static LogicalResult lowerVPTOTypes(ModuleOp module, llvm::raw_ostream &diagOS) 
 
   populateVPTOStructuralTypePatterns(typeConverter, patterns, target);
   patterns.add<ConvertPtoTileBufAddrOp, ConvertPtoAddPtrOp, ConvertPtoCastPtrOp,
-               ConvertPtoLoadScalarOp, ConvertPtoDeclareStructOp,
-               ConvertPtoStructGetOp, ConvertPtoStructSetOp,
-               ConvertPtoStoreScalarOp>(typeConverter, context);
+               ConvertPtoDeclareLocalArrayOp, ConvertPtoLocalArrayGetOp,
+               ConvertPtoLocalArraySetOp, ConvertPtoDeclareStructOp,
+               ConvertPtoStructGetOp, ConvertPtoStructSetOp>(typeConverter,
+                                                             context);
   patterns.add<ConvertPtoLoadOp, ConvertPtoStoreOp, ConvertPtoLdgOp,
                ConvertPtoStgOp>(
       typeConverter, context, state);
@@ -14208,6 +14248,7 @@ static LogicalResult runPipeline(ModuleOp module, const std::string &march,
   // emitted LLVM IR.  It replaces createConvertSCFToCFPass here; running both
   // would be redundant.
   kernelModulePM.addNestedPass<func::FuncOp>(pto::createPTOConvertSCFToCFWithLoopHintsPass());
+  kernelModulePM.addPass(createConvertMathToLLVMPass());
   kernelModulePM.addPass(createArithToLLVMConversionPass());
   kernelModulePM.addPass(createConvertIndexToLLVMPass());
   kernelModulePM.addPass(createFinalizeMemRefToLLVMConversionPass());

@@ -15,9 +15,8 @@ from .._runtime_index_ops import coerce_runtime_index
 from .._surface_values import unwrap_surface_value
 from .._types import _is_struct_type
 
-from ptoas.mlir.dialects import arith
 from ptoas.mlir.dialects import scf
-from ptoas.mlir.ir import InsertionPoint, IntegerAttr, IntegerType, StringAttr
+from ptoas.mlir.ir import InsertionPoint, IntegerAttr, IntegerType, StringAttr, Operation
 
 
 # ── loop-unroll hints ─────────────────────────────────────────────────────────
@@ -150,7 +149,11 @@ def _materialize_carry_init(value):
     if isinstance(raw_value, bool):
         raise TypeError("pto.for_(...).carry(...) does not accept bool loop-carried values")
     if isinstance(raw_value, int):
-        return arith.ConstantOp(IntegerType.get_signless(32), raw_value).result
+        i32 = IntegerType.get_signless(32)
+        return Operation.create(
+            "pto.constant", results=[i32],
+            attributes={"value": IntegerAttr.get(i32, raw_value)},
+        ).results[0]
     return raw_value
 
 

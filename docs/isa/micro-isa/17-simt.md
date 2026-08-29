@@ -1,13 +1,21 @@
 # 17. SIMT Ops
 
-> **Category:** SIMT scalar execution, lane collectives, scalar memory, and
+> **Category:** SIMT execution, lane collectives, specialized memory, and
 > memory-reduction operations
 > **Pipeline:** Vector-side SIMT execution
 
-SIMT ops are scalar operations executed by a group of workitems. A VPTO SIMT
-program has an outer `pto.aicore` kernel that configures a VF subtask launch and
-calls a SIMT body function marked with `pto.simt_entry`. The body is executed by
-the logical workitems in the configured `dim_x * dim_y * dim_z` launch space.
+SIMT-dependent ops are scalar operations whose result or side effects depend on
+a group of workitems. A VPTO SIMT program has an outer `pto.aicore` kernel that
+configures a VF subtask launch and calls a SIMT body function marked with
+`pto.simt_entry`. The body is executed by the logical workitems in the
+configured `dim_x * dim_y * dim_z` launch space.
+
+This chapter also documents target-specific scalar-value and memory operations
+used in SIMT code. Common scalar value operations are documented in
+[Generic Scalar Operations](14-generic-scalar-ops.md), and ordinary PTO-pointer
+`pto.load` / `pto.store` accesses are documented in
+[Special Scalar Operations](18-special-scalar.md). Those common operations do
+not by themselves read lane or thread state or select SIMT execution.
 
 ---
 
@@ -41,11 +49,11 @@ The current PTO SIMT surface supports these operation families:
 |--------|-----|
 | Launch configuration | `pto.store_vfsimt_info`, `pto.simt_launch` |
 | Thread and lane queries | `pto.get_tid_x`, `pto.get_tid_y`, `pto.get_tid_z`, `pto.get_block_dim_x`, `pto.get_block_dim_y`, `pto.get_block_dim_z`, `pto.get_grid_dim_x`, `pto.get_grid_dim_y`, `pto.get_grid_dim_z`, `pto.get_block_idx_x`, `pto.get_block_idx_y`, `pto.get_block_idx_z`, `pto.get_veccoreid`, `pto.get_clock32`, `pto.get_clock64`, `pto.get_laneid`, `pto.get_lanemask_eq`, `pto.get_lanemask_le`, `pto.get_lanemask_lt`, `pto.get_lanemask_ge`, `pto.get_lanemask_gt` |
-| Lane collectives | `pto.vote_all`, `pto.vote_any`, `pto.vote_uni`, `pto.vote_ballot`, `pto.shuffle_idx`, `pto.shuffle_up`, `pto.shuffle_down`, `pto.shuffle_bfly`, `pto.redux_add`, `pto.redux_max`, `pto.redux_min` |
-| Scalar memory | `pto.load`, `pto.store`, `pto.ldg`, `pto.stg` |
+| Lane collectives | `pto.vote_all`, `pto.vote_any`, `pto.vote_uni`, `pto.vote_ballot`, `pto.shuffle_idx`, `pto.shuffle_up`, `pto.shuffle_down`, `pto.shuffle_bfly`, `pto.redux_addi`, `pto.redux_addf`, `pto.redux_maxi`, `pto.redux_maxf`, `pto.redux_mini`, `pto.redux_minf` |
+| SIMT GM memory | `pto.ldg`, `pto.stg` |
 | Atomic memory | `pto.atomic_exch`, `pto.atomic_add`, `pto.atomic_sub`, `pto.atomic_min`, `pto.atomic_max`, `pto.atomic_and`, `pto.atomic_or`, `pto.atomic_xor`, `pto.atomic_cas` |
-| Scalar math | `pto.prmt`, `pto.mulhi`, `pto.mul_i32toi64`, `pto.absf`, `pto.sqrt`, `pto.exp`, `pto.log`, `pto.sin`, `pto.cos`, `pto.pow`, `pto.ceil`, `pto.floor`, `pto.rint`, `pto.round`, `pto.fmin`, `pto.fmax`, `pto.fma` |
-| Conversion | `pto.convert` |
+| Target-specific scalar math | `pto.prmt`, `pto.mulhi`, `pto.mul_i32toi64`, `pto.sin`, `pto.cos`, `pto.ceil`, `pto.floor`, `pto.rint`, `pto.round` |
+| Conversion | `pto.ftof`, `pto.ftoi`, or `pto.itof` |
 | Entry synchronization and state | `pto.syncthreads`, `pto.threadfence`, `pto.threadfence_block`, `pto.keep`, `pto.resume` |
 
 One optional function attribute may be attached to a `pto.simt_entry`
@@ -336,13 +344,13 @@ result        = value[source] when source is a valid participating lane
 Redux ops reduce one scalar value from each participating active lane and
 return the reduction result to each participating active lane.
 
-### `pto.redux_add` / `pto.redux_max` / `pto.redux_min`
+### `pto.redux_addi` / `pto.redux_addf` / `pto.redux_maxi` / `pto.redux_maxf` / `pto.redux_mini` / `pto.redux_minf`
 
 - **syntax:**
 ```mlir
-%sum_i = pto.redux_add %v signed : i32 -> i32
-%max_u = pto.redux_max %v unsigned : i32 -> i32
-%sum_f = pto.redux_add %f : f32 -> f32
+%sum_i = pto.redux_addi %v : i32 -> i32
+%max_u = pto.redux_maxi %v unsigned : i32 -> i32
+%sum_f = pto.redux_addf %f : f32 -> f32
 ```
 - **semantics:**
 ```text
@@ -354,10 +362,10 @@ result    = the selected reduction value in every participating active lane
 - **inputs:** `%value` is `i32`, `f16`, or `f32`.
 - **outputs:** The result type matches `%value`.
 - **constraints and limitations:** Floating-point forms do not accept
-  signedness. For `i32`, `pto.redux_max` and `pto.redux_min` require explicit
-  `signed` or `unsigned`. `pto.redux_add` accepts signedness for consistency
-  with integer authoring, but addition has the same two's-complement bit result
-  for signed and unsigned inputs.
+  signedness. For `i32`, `pto.redux_maxi` and `pto.redux_mini` require explicit
+  `signed` or `unsigned`. `pto.redux_addi` has no signedness clause because
+  addition has the same two's-complement bit result for signed and unsigned
+  inputs.
 
 ---
 
@@ -435,55 +443,12 @@ table, `<st-l2cache>` means one token from the store/atomic L2 cache table,
 
 ---
 
-## SIMT Scalar Memory Ops
+## SIMT GM Memory Ops
 
-### `pto.load`
-
-- **syntax:** `%value = pto.load %ptr[%offset] : !pto.ptr<T, space> -> T`
-- **accepted forms:**
-
-```mlir
-// Plain scalar load. Uses the ordinary scalar memory path.
-%value = pto.load %ptr[%offset] : !pto.ptr<T, space> -> T
-```
-
-- **semantics:** Load one scalar element from `%ptr + %offset`.
-
-```text
-effective_element = ptr + offset
-result = memory[effective_element]
-```
-
-- **inputs:** `%ptr` is a `!pto.ptr<T, space>` or memref. `%offset` is an
-  `index` element offset, not a byte offset.
-- **outputs:** One scalar value of type `T`.
-- **constraints and limitations:** The result type must match the pointer
-  element type. This op does not accept cache-control clauses; use `pto.ldg`
-  for GM scalar loads that need `l1cache(...)` or `l2cache(...)`.
-
-### `pto.store`
-
-- **syntax:** `pto.store %value, %ptr[%offset] : !pto.ptr<T, space>, T`
-- **accepted forms:**
-
-```mlir
-// Plain scalar store. Uses the ordinary scalar memory path.
-pto.store %value, %ptr[%offset] : !pto.ptr<T, space>, T
-```
-
-- **semantics:** Store one scalar element to `%ptr + %offset`.
-
-```text
-effective_element = ptr + offset
-memory[effective_element] = value
-```
-
-- **inputs:** `%value` is the scalar element to write. `%ptr` is a
-  `!pto.ptr<T, space>` or memref. `%offset` is an `index` element offset.
-- **outputs:** None.
-- **constraints and limitations:** `%value` type must match the pointer element
-  type. This op does not accept cache-control clauses; use `pto.stg` for GM
-  scalar stores that need `l1cache(...)` or `l2cache(...)`.
+`pto.ldg` and `pto.stg` are SIMT-scoped GM accesses with explicit cache-control
+support. For ordinary typed access without SIMT scope or cache controls, use
+`pto.load` / `pto.store` as documented in
+[Special Scalar Operations](18-special-scalar.md#ordinary-typed-memory-operations).
 
 ### `pto.ldg`
 
@@ -573,18 +538,18 @@ value form one atomic read-modify-write at `%ptr`.
 
 - **syntax:**
 ```mlir
-%old = pto.atomic_exch %ptr, %value l2cache(<st-l2cache>)? signedness? : !pto.ptr<T, space>, T -> T
-%old = pto.atomic_add  %ptr, %value l2cache(<st-l2cache>)? signedness? : !pto.ptr<T, space>, T -> T
-%old = pto.atomic_sub  %ptr, %value l2cache(<st-l2cache>)? signedness? : !pto.ptr<T, space>, T -> T
+%old = pto.atomic_exch %ptr, %value l2cache(<st-l2cache>)? : !pto.ptr<T, space>, T -> T
+%old = pto.atomic_add  %ptr, %value l2cache(<st-l2cache>)? : !pto.ptr<T, space>, T -> T
+%old = pto.atomic_sub  %ptr, %value l2cache(<st-l2cache>)? : !pto.ptr<T, space>, T -> T
 ```
 - **accepted forms:**
 
 ```mlir
-// Signed integer atomic with default nmfv L2 cache.
-%old = pto.atomic_add %ptr, %value signed : !pto.ptr<i32, space>, i32 -> i32
+// Integer atomic with default nmfv L2 cache.
+%old = pto.atomic_add %ptr, %value : !pto.ptr<i32, space>, i32 -> i32
 
-// Signed integer atomic with an explicit store/atomic L2 cache.
-%old = pto.atomic_add %ptr, %value l2cache(wtsred) signed : !pto.ptr<i32, space>, i32 -> i32
+// Integer atomic with an explicit store/atomic L2 cache.
+%old = pto.atomic_add %ptr, %value l2cache(wtsred) : !pto.ptr<i32, space>, i32 -> i32
 
 // Floating-point atomic. Floating-point atomics do not take signedness.
 %old = pto.atomic_add %ptr, %value l2cache(nmfv) : !pto.ptr<f32, space>, f32 -> f32
@@ -610,7 +575,7 @@ return old
   unused; beta.1 can compile the packed atomic update but cannot compile a
   consumed packed old-value result.
 - **constraints and limitations:** UB-space atomics do not support `i64`.
-  Floating-point and packed atomics do not accept `signed` or `unsigned`.
+  These operations do not accept `signed` or `unsigned` for any type.
   Packed atomics must be placed inside a `pto.simt_entry` function on beta.1.
 
 ### `pto.atomic_min` / `pto.atomic_max`
@@ -648,27 +613,27 @@ return old
   `vector<2xf16>` and `vector<2xbf16>` atomics on beta.1, `%old` must be left
   unused; beta.1 can compile the packed atomic update but cannot compile a
   consumed packed old-value result.
-- **constraints and limitations:** Floating-point and packed atomics do not
-  accept signedness. UB-space atomics do not support `i64`. Packed atomics
-  must be placed inside a `pto.simt_entry` function on beta.1.
+- **constraints and limitations:** Integer forms require `signed` or
+  `unsigned`. Floating-point and packed atomics do not accept signedness.
+  UB-space atomics do not support `i64`. Packed atomics must be placed inside
+  a `pto.simt_entry` function on beta.1.
 
 ### `pto.atomic_and` / `pto.atomic_or` / `pto.atomic_xor`
 
 - **syntax:**
 ```mlir
-%old = pto.atomic_and %ptr, %value l2cache(<st-l2cache>)? signedness? : !pto.ptr<T, space>, T -> T
-%old = pto.atomic_or  %ptr, %value l2cache(<st-l2cache>)? signedness? : !pto.ptr<T, space>, T -> T
-%old = pto.atomic_xor %ptr, %value l2cache(<st-l2cache>)? signedness? : !pto.ptr<T, space>, T -> T
+%old = pto.atomic_and %ptr, %value l2cache(<st-l2cache>)? : !pto.ptr<T, space>, T -> T
+%old = pto.atomic_or  %ptr, %value l2cache(<st-l2cache>)? : !pto.ptr<T, space>, T -> T
+%old = pto.atomic_xor %ptr, %value l2cache(<st-l2cache>)? : !pto.ptr<T, space>, T -> T
 ```
 - **accepted forms:**
 
 ```mlir
-// Unsigned bitwise atomic with default nmfv L2 cache.
-%old = pto.atomic_and %ptr, %value unsigned : !pto.ptr<i32, space>, i32 -> i32
+// Bitwise atomic with default nmfv L2 cache.
+%old = pto.atomic_and %ptr, %value : !pto.ptr<i32, space>, i32 -> i32
 
-// Signedness is accepted for integer authoring consistency; the bit operation
-// itself is bitwise and does not reinterpret arithmetic magnitude.
-%old = pto.atomic_and %ptr, %value l2cache(napw) signed : !pto.ptr<i32, space>, i32 -> i32
+// Bitwise atomic with an explicit L2 cache policy.
+%old = pto.atomic_and %ptr, %value l2cache(napw) : !pto.ptr<i32, space>, i32 -> i32
 ```
 - **semantics:**
 ```text
@@ -682,19 +647,20 @@ return old
   `i64`.
 - **outputs:** `%old` has the same type as `%value`.
 - **constraints and limitations:** Bitwise atomics require integer types.
-  UB-space bitwise atomics do not support `i64`.
+  They do not accept `signed` or `unsigned`. UB-space bitwise atomics do not
+  support `i64`.
 
 ### `pto.atomic_cas`
 
-- **syntax:** `%old = pto.atomic_cas %ptr, %compare, %value l2cache(<st-l2cache>)? signedness? : !pto.ptr<T, space>, T -> T`
+- **syntax:** `%old = pto.atomic_cas %ptr, %compare, %value l2cache(<st-l2cache>)? : !pto.ptr<T, space>, T -> T`
 - **accepted forms:**
 
 ```mlir
 // Integer CAS with default nmfv L2 cache.
-%old = pto.atomic_cas %ptr, %compare, %value signed : !pto.ptr<i32, space>, i32 -> i32
+%old = pto.atomic_cas %ptr, %compare, %value : !pto.ptr<i32, space>, i32 -> i32
 
 // Integer CAS with an explicit store/atomic L2 cache.
-%old = pto.atomic_cas %ptr, %compare, %value l2cache(wbhred) signed : !pto.ptr<i32, space>, i32 -> i32
+%old = pto.atomic_cas %ptr, %compare, %value l2cache(wbhred) : !pto.ptr<i32, space>, i32 -> i32
 
 // Floating-point CAS. Floating-point atomics do not take signedness.
 %old = pto.atomic_cas %ptr, %compare, %value : !pto.ptr<f32, space>, f32 -> f32
@@ -719,7 +685,8 @@ return old
 - **constraints and limitations:** `%compare`, `%value`, pointer element type,
   and result type must match. `T` is `i32`, `i64`, `f32`,
   `vector<2xf16>`, or `vector<2xbf16>`; UB-space `i64` is not supported.
-  Packed CAS must be placed inside a `pto.simt_entry` function on beta.1.
+  CAS does not accept `signed` or `unsigned`. Packed CAS must be placed inside
+  a `pto.simt_entry` function on beta.1.
 
 When multiple workitems target the same address, each workitem observes one
 serialized old value from the total order chosen by the target. Algorithms must
@@ -727,7 +694,14 @@ not rely on any particular tie order beyond atomicity.
 
 ---
 
-## SIMT Scalar Math Ops
+## Target-Specific Scalar Math Ops
+
+The operations in this section provide target-specific integer, packed-value,
+rounding, or numeric semantics. Pure value operations in this section do not
+read workitem or lane state merely because they are documented alongside SIMT
+operations. Common scalar extrema, absolute value, casts, selection, and
+`pto.exp` / `pto.log` / `pto.sqrt` are documented in
+[Generic Scalar Operations](14-generic-scalar-ops.md).
 
 ### `pto.prmt`
 
@@ -888,52 +862,22 @@ else:
 - **outputs:** One scalar with the same type as `%x`.
 - **constraints and limitations:** `T` is `f16`, `bf16`, or `f32`.
 
-### `pto.fmin`
-
-- **syntax:** `%r = pto.fmin %a, %b : T, T -> T`
-- **semantics:** Return the floating minimum of `%a` and `%b`.
-- **inputs:** `%a` and `%b` have the same type.
-- **outputs:** One value with the same type as the inputs.
-- **constraints and limitations:** `T` is `f16`, `f32`, `bf16`,
-  `vector<2xf16>`, or `vector<2xbf16>`. For vector types, the minimum is
-  computed element-wise. NaN handling follows the target floating-point
-  minimum rule.
-
-### `pto.fmax`
-
-- **syntax:** `%r = pto.fmax %a, %b : T, T -> T`
-- **semantics:** Return the floating maximum of `%a` and `%b`.
-- **inputs:** `%a` and `%b` have the same type.
-- **outputs:** One value with the same type as the inputs.
-- **constraints and limitations:** `T` is `f16`, `f32`, `bf16`,
-  `vector<2xf16>`, or `vector<2xbf16>`. For vector types, the maximum is
-  computed element-wise. NaN handling follows the target floating-point
-  maximum rule.
-
-### `pto.fma`
-
-- **syntax:** `%r = pto.fma %a, %b, %acc : T, T, T -> T`
-- **semantics:** Return fused `a * b + acc` with one final rounding.
-- **inputs:** `%a`, `%b`, and `%acc` have the same type.
-- **outputs:** One value with the same type as the inputs.
-- **constraints and limitations:** `T` is `f16`, `bf16`, `f32`,
-  `vector<2xf16>`, or `vector<2xbf16>`. For vector types, fused multiply-add is
-  computed element-wise.
-
 ---
 
 ## SIMT Conversion Op
 
-### `pto.convert`
+### `pto.ftof`, `pto.ftoi`, and `pto.itof`
 
-- **syntax:** `%dst = pto.convert %src round(R) sat|nosat [signed|unsigned] : SrcType -> DstType`
+- **syntax:** `%dst = pto.ftof %src [round(R)] [sat] : SrcType -> DstType`
+- **syntax:** `%dst = pto.ftoi %src signed|unsigned [round(R)] [sat] : SrcType -> DstType`
+- **syntax:** `%dst = pto.itof %src signed|unsigned [round(R)] [sat] : SrcType -> DstType`
 - **semantics:** Convert one scalar or packed two-element value from `SrcType` to
   `DstType` using the specified rounding, saturation, and signedness controls.
 
 ```mlir
-%as_f32 = pto.convert %i round(r) nosat signed : i32 -> f32
-%as_i32 = pto.convert %f round(z) sat signed : f32 -> i32
-%as_h2 = pto.convert %f2 round(r) nosat : vector<2xf32> -> vector<2xf16>
+%as_f32 = pto.itof %i signed round(r) : i32 -> f32
+%as_i32 = pto.ftoi %f signed round(z) sat : f32 -> i32
+%as_h2 = pto.ftof %f2 round(r) : vector<2xf32> -> vector<2xf16>
 ```
 
 - **inputs:** `%src` is `i32`, `i64`, `f16`, `bf16`, `f32`,
@@ -945,7 +889,7 @@ else:
 - **outputs:** `%dst` is `i32`, `i64`, `f16`, `bf16`, `f32`,
   `vector<2xf16>`, `vector<2xbf16>`, or `vector<2xf32>`.
 - **constraints and limitations:** Integer-to-integer conversion is not
-  supported by `pto.convert`. Scalar floating-to-floating conversion supports
+  supported by `pto.ftof`, `pto.ftoi`, or `pto.itof`. Scalar floating-to-floating conversion supports
   `f32`, `f16`, and `bf16` source/destination pairs. `i64` source conversion is
   supported only to `f32`; conversion to `i64` is supported only from `f32`.
   `i32` can convert to `f32`, `f16`, or `bf16`, with `signed` or `unsigned`

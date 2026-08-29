@@ -73,6 +73,8 @@ class PTO_DpsOp<string mnemonic, list<Trait> traits = []>
 class PTO_Op<string mnemonic, list<Trait> traits = []>
     : Op<PTO_Dialect, mnemonic, !listconcat(traits, [ ])>;
 
+include "PTO/IR/PTOGenericOps.td"
+
 include "PTO/IR/VMIOps.td"
 include "PTO/IR/VPTOOps.td"
 include "PTO/IR/VPTOUbOps.td"
@@ -106,53 +108,6 @@ def AddPtrOp : PTO_Op<"addptr", [
   }];
 }
 
-def PtrToIntOp : PTO_Op<"ptrtoint", [Pure]> {
-  let summary = "Convert a global pointer to a byte address";
-  let description = [{
-    Converts a global pointer value to an i64 byte address. Pointer arithmetic
-    such as `pto.addptr` remains explicit until backend lowering.
-  }];
-
-  let arguments = (ins
-    PtrType:$ptr
-  );
-
-  let results = (outs
-    I64:$result
-  );
-
-  let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    $ptr attr-dict `:` type($ptr) `->` type($result)
-  }];
-}
-
-def IntToPtrOp : PTO_Op<"inttoptr", [Pure]> {
-  let summary = "Convert an i64 byte address to a global pointer";
-  let description = [{
-    Converts an i64 byte address to a global pointer of the requested element
-    type. This is an escape hatch for explicit byte-address arithmetic and
-    cross-element-type pointer reinterpretation. To keep byte-address-derived
-    pointers from escaping into general pointer IR, the result may only be used
-    directly as the pointer operand of `pto.load_scalar` or `pto.store_scalar`.
-  }];
-
-  let arguments = (ins
-    AnyInteger:$addr
-  );
-
-  let results = (outs
-    PtrType:$result
-  );
-
-  let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    $addr attr-dict `:` type($addr) `->` type($result)
-  }];
-}
-
 def CastPtrOp : PTO_Op<"castptr", [Pure]> {
   let summary = "Cast between integer and !pto.ptr, or between !pto.ptr types";
   let description = [{
@@ -175,59 +130,6 @@ def CastPtrOp : PTO_Op<"castptr", [Pure]> {
 
   let assemblyFormat = [{
     $input attr-dict `:` type($input) `->` type($result)
-  }];
-}
-
-//===----------------------------------------------------------------------===//
-// Scalar pointer load/store
-//===----------------------------------------------------------------------===//
-
-def LoadScalarOp : PTO_Op<"load_scalar", [
-    OpPipeInterface,
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
-  ]> {
-  let summary = "Load a single scalar element from a pointer at offset.";
-
-  let arguments = (ins
-    PtrType:$ptr,
-    Index:$offset
-  );
-
-  let results = (outs AnyType:$value);
-
-  let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    $ptr `[` $offset `]` attr-dict `:` type($ptr) `->` type($value)
-  }];
-
-  let extraClassDeclaration = [{
-    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_S; }
-  }];
-}
-
-def StoreScalarOp : PTO_Op<"store_scalar", [
-    OpPipeInterface,
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
-  ]> {
-  let summary = "Store a single scalar element to a pointer at offset.";
-
-  let arguments = (ins
-    PtrType:$ptr,
-    Index:$offset,
-    AnyType:$value
-  );
-
-  let results = (outs);
-
-  let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    $value `,` $ptr `[` $offset `]` attr-dict `:` type($ptr) `,` type($value)
-  }];
-
-  let extraClassDeclaration = [{
-    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_S; }
   }];
 }
 
@@ -545,24 +447,33 @@ def GetValidShapeOp : PTO_Op<"get_validshape", [
 // SSA TileBuf Config Ops (aliasing views)
 // ============================================================================
 
+def PTO_BitcastType : AnyTypeOf<[
+    TileBufType,
+    AnySignlessInteger,
+    AnyFloat,
+    VectorOfAnyRankOf<[AnySignlessInteger, AnyFloat]>
+  ], "tile buffer, integer, float, or builtin vector thereof">;
+
 def BitcastOp : PTO_Op<"bitcast", [
     Pure,
     ViewLikeOpInterface
   ]> {
-  let summary = "SSA dtype reinterpretation of a tile buffer view (aliases src storage)";
+  let summary = "Bitwise reinterpretation of a value or tile buffer view";
   let description = [{
-    Returns a tile buffer view with a different element type (dtype) while
-    reusing the same underlying storage as the source.
+    For tile buffers, returns a view with a different element type while
+    reusing the same underlying storage as the source. For scalar and builtin
+    vector values, reinterprets each value using an equal-width integer or
+    floating-point type without numeric conversion.
 
-    This op is a metadata/config rewrite only (no data movement).
+    This operation does not change the underlying bits.
   }];
 
   let arguments = (ins
-    TileBufType:$src
+    PTO_BitcastType:$src
   );
 
   let results = (outs
-    TileBufType:$result
+    PTO_BitcastType:$result
   );
 
   let hasVerifier = 1;
@@ -1722,7 +1633,9 @@ def TPushToAivOp : PTO_TOp<"tpush_to_aiv", [
   }];
 }
 
-def TPushToAicOp : PTO_TOp<"tpush_to_aic"> {
+def TPushToAicOp : PTO_TOp<"tpush_to_aic", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
   let summary = "Frontend V2C producer push from Vector to Cube";
 
   let arguments = (ins
@@ -2426,17 +2339,17 @@ def EventIdArraySetOp : PTO_Op<"eventid_array_set"> {
 //
 // Mirrors the `eventid_array` triad (declare / get / set) for a generic
 // statically-shaped scalar stack array. Disjoint from the tile-buf / scratch
-// memory world: the array's address is decided by the host C++ compiler at
-// codegen time, never by PTO memory planning.
+// memory world: the array is ordinary function-local stack storage, never PTO
+// memory-planned tile storage.
 
 def DeclareLocalArrayOp : PTO_Op<"declare_local_array"> {
   let summary = "Declare a stack-local statically-shaped array";
   let description = [{
-    Lowers to a plain C++ stack variable like `T a[d1][d2]...;`. The element
-    type is restricted to scalars (integer / float); no nested aggregates.
+    Lowers to ordinary function-local stack storage, such as a C++ variable
+    `T a[d1][d2]...;` or an equivalent LLVM allocation. The element type is
+    restricted to scalars (integer / float); no nested aggregates.
 
-    This op does not participate in PTO memory planning. The resulting array's
-    address is determined by the host C++ compiler.
+    This op does not participate in PTO memory planning.
   }];
 
   let results = (outs LocalArrayType:$array);

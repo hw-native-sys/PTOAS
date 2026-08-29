@@ -19,8 +19,8 @@
 // SHAPE: pto.tile_buf_addr
 // SHAPE-NOT: pto.tile_valid_rows
 // SHAPE-NOT: pto.tile_valid_cols
-// SHAPE: arith.constant 16 : index
-// SHAPE: arith.constant 64 : index
+// SHAPE-DAG: arith.constant 16 : index
+// SHAPE-DAG: arith.constant 64 : index
 // SHAPE: pto.vlds
 // SHAPE: pto.vadd
 // SHAPE: pto.vsts

@@ -17,7 +17,7 @@ module attributes {pto.target_arch = "a5"} {
   %freqs_sin__ssa_v0_view = pto.make_tensor_view %arg4, shape = [%c16384_index, %c64_index], strides = [%c64_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
   scf.for %b_inline4662__idx_v0 = %c0_index to %c4_index step %c1_index {
     %3 = arith.muli %b_inline4662__idx_v0, %c2_index : index
-    %first_pos_b_inline4933__tile = pto.load_scalar %arg2[%3] : !pto.ptr<i32> -> i32
+    %first_pos_b_inline4933__tile = pto.load %arg2[%3] : !pto.ptr<i32> -> i32
     %4 = arith.index_cast %first_pos_b_inline4933__tile : i32 to index
     %5 = arith.remsi %4, %c4_index : index
     %6 = arith.subi %c4_index, %5 : index

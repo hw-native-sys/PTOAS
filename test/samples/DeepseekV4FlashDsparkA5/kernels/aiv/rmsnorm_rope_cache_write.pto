@@ -240,7 +240,7 @@ module attributes {pto.target_arch = "a5"} {
   scf.for %local_c_idx_inline34__idx_v0 = %c0_index to %41 step %c1_index {
     %83 = arith.addi %39, %local_c_idx_inline34__idx_v0 : index
     %84 = arith.muli %83, %arg10 : index
-    %first_pos_b_inline29__tile = pto.load_scalar %arg7[%84] : !pto.ptr<i32> -> i32
+    %first_pos_b_inline29__tile = pto.load %arg7[%84] : !pto.ptr<i32> -> i32
     %85 = arith.index_cast %first_pos_b_inline29__tile : i32 to index
     %86 = arith.remsi %85, %c128_index : index
     %87 = arith.addi %86, %arg10 : index
@@ -253,7 +253,7 @@ module attributes {pto.target_arch = "a5"} {
       pto.tload ins(%91 : !pto.partition_tensor_view<1x512xf32>) outs(%kv_row_inline100__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
       %92 = arith.muli %83, %arg10 : index
       %93 = arith.addi %92, %89 : index
-      %cmp_row_i64_inline72__tile = pto.load_scalar %arg8[%93] : !pto.ptr<i64> -> i64
+      %cmp_row_i64_inline72__tile = pto.load %arg8[%93] : !pto.ptr<i64> -> i64
       %94 = arith.index_cast %cmp_row_i64_inline72__tile : i64 to index
       %95 = arith.cmpi sle, %c0_index, %94 : index
       scf.if %95 {

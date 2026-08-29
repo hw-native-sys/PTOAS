@@ -34,11 +34,11 @@ module attributes {pto.target_arch = "a5"} {
   scf.for %t_inline1921__idx_v0 = %42 to %43 step %c2_index {
     %flat_offset_mul = arith.muli %t_inline1921__idx_v0, %c4_index : index
     %flat_offset = arith.addi %flat_offset_mul, %41 : index
-    %post_w_inline1932__tile = pto.load_scalar %arg1[%flat_offset] : !pto.ptr<f32> -> f32
+    %post_w_inline1932__tile = pto.load %arg1[%flat_offset] : !pto.ptr<f32> -> f32
     %45 = arith.addi %t_inline1921__idx_v0, %c1_index : index
     %46 = arith.muli %45, %c4_index : index
     %47 = arith.addi %46, %41 : index
-    %44 = pto.load_scalar %arg1[%47] : !pto.ptr<f32> -> f32
+    %44 = pto.load %arg1[%47] : !pto.ptr<f32> -> f32
     %t__tile = pto.alloc_tile addr = %c147456_i64 valid_row = %c1_index valid_col = %c4096_index : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=4096, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     %48 = arith.maxsi %t_inline1921__idx_v0, %c0_index : index
     %attn_out_inline411__ssa_v3_pview = pto.partition_view %attn_out_inline411__ssa_v3_view, offsets = [%48, %c0_index], sizes = [%c1_index, %c4096_index] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<1x4096xbf16>
@@ -54,19 +54,19 @@ module attributes {pto.target_arch = "a5"} {
     pto.tmuls ins(%x_row_inline1923__tile, %post_w_inline1932__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=4096, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32) outs(%y_row_inline1922__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=4096, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     %52 = arith.muli %t_inline1921__idx_v0, %c16_index : index
     %53 = arith.addi %52, %41 : index
-    %comb_w_inline1924__tile = pto.load_scalar %arg3[%53] : !pto.ptr<f32> -> f32
+    %comb_w_inline1924__tile = pto.load %arg3[%53] : !pto.ptr<f32> -> f32
     %55 = arith.addi %41, %c4_index : index
     %56 = arith.muli %t_inline1921__idx_v0, %c16_index : index
     %57 = arith.addi %56, %55 : index
-    %54 = pto.load_scalar %arg3[%57] : !pto.ptr<f32> -> f32
+    %54 = pto.load %arg3[%57] : !pto.ptr<f32> -> f32
     %59 = arith.addi %41, %c8_index : index
     %60 = arith.muli %t_inline1921__idx_v0, %c16_index : index
     %61 = arith.addi %60, %59 : index
-    %58 = pto.load_scalar %arg3[%61] : !pto.ptr<f32> -> f32
+    %58 = pto.load %arg3[%61] : !pto.ptr<f32> -> f32
     %63 = arith.addi %41, %c12_index : index
     %64 = arith.muli %t_inline1921__idx_v0, %c16_index : index
     %65 = arith.addi %64, %63 : index
-    %62 = pto.load_scalar %arg3[%65] : !pto.ptr<f32> -> f32
+    %62 = pto.load %arg3[%65] : !pto.ptr<f32> -> f32
     %res_row_inline1918__tile = pto.alloc_tile addr = %c147456_i64 valid_row = %c1_index valid_col = %c4096_index : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=4096, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     %66 = arith.maxsi %t_inline1921__idx_v0, %c0_index : index
     %67 = arith.maxsi %c0_index, %c0_index : index
@@ -115,22 +115,22 @@ module attributes {pto.target_arch = "a5"} {
     %81 = arith.addi %t_inline1921__idx_v0, %c1_index : index
     %82 = arith.muli %81, %c16_index : index
     %83 = arith.addi %82, %41 : index
-    %80 = pto.load_scalar %arg3[%83] : !pto.ptr<f32> -> f32
+    %80 = pto.load %arg3[%83] : !pto.ptr<f32> -> f32
     %85 = arith.addi %t_inline1921__idx_v0, %c1_index : index
     %86 = arith.addi %41, %c4_index : index
     %87 = arith.muli %85, %c16_index : index
     %88 = arith.addi %87, %86 : index
-    %84 = pto.load_scalar %arg3[%88] : !pto.ptr<f32> -> f32
+    %84 = pto.load %arg3[%88] : !pto.ptr<f32> -> f32
     %90 = arith.addi %t_inline1921__idx_v0, %c1_index : index
     %91 = arith.addi %41, %c8_index : index
     %92 = arith.muli %90, %c16_index : index
     %93 = arith.addi %92, %91 : index
-    %89 = pto.load_scalar %arg3[%93] : !pto.ptr<f32> -> f32
+    %89 = pto.load %arg3[%93] : !pto.ptr<f32> -> f32
     %95 = arith.addi %t_inline1921__idx_v0, %c1_index : index
     %96 = arith.addi %41, %c12_index : index
     %97 = arith.muli %95, %c16_index : index
     %98 = arith.addi %97, %96 : index
-    %94 = pto.load_scalar %arg3[%98] : !pto.ptr<f32> -> f32
+    %94 = pto.load %arg3[%98] : !pto.ptr<f32> -> f32
     %13 = pto.alloc_tile addr = %c65536_i64 valid_row = %c1_index valid_col = %c4096_index : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=4096, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     %99 = arith.addi %t_inline1921__idx_v0, %c1_index : index
     %100 = arith.maxsi %99, %c0_index : index
@@ -184,7 +184,7 @@ module attributes {pto.target_arch = "a5"} {
   scf.if %122 {
     %124 = arith.muli %43, %c4_index : index
     %125 = arith.addi %124, %41 : index
-    %123 = pto.load_scalar %arg1[%125] : !pto.ptr<f32> -> f32
+    %123 = pto.load %arg1[%125] : !pto.ptr<f32> -> f32
     %25 = pto.alloc_tile addr = %c147456_i64 valid_row = %c1_index valid_col = %c4096_index : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=4096, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     %126 = arith.maxsi %43, %c0_index : index
     %127 = pto.partition_view %attn_out_inline411__ssa_v3_view, offsets = [%126, %c0_index], sizes = [%c1_index, %c4096_index] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<1x4096xbf16>
@@ -195,19 +195,19 @@ module attributes {pto.target_arch = "a5"} {
     pto.tmuls ins(%26, %123 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=4096, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32) outs(%27 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=4096, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     %129 = arith.muli %43, %c16_index : index
     %130 = arith.addi %129, %41 : index
-    %128 = pto.load_scalar %arg3[%130] : !pto.ptr<f32> -> f32
+    %128 = pto.load %arg3[%130] : !pto.ptr<f32> -> f32
     %132 = arith.addi %41, %c4_index : index
     %133 = arith.muli %43, %c16_index : index
     %134 = arith.addi %133, %132 : index
-    %131 = pto.load_scalar %arg3[%134] : !pto.ptr<f32> -> f32
+    %131 = pto.load %arg3[%134] : !pto.ptr<f32> -> f32
     %136 = arith.addi %41, %c8_index : index
     %137 = arith.muli %43, %c16_index : index
     %138 = arith.addi %137, %136 : index
-    %135 = pto.load_scalar %arg3[%138] : !pto.ptr<f32> -> f32
+    %135 = pto.load %arg3[%138] : !pto.ptr<f32> -> f32
     %140 = arith.addi %41, %c12_index : index
     %141 = arith.muli %43, %c16_index : index
     %142 = arith.addi %141, %140 : index
-    %139 = pto.load_scalar %arg3[%142] : !pto.ptr<f32> -> f32
+    %139 = pto.load %arg3[%142] : !pto.ptr<f32> -> f32
     %28 = pto.alloc_tile addr = %c147456_i64 valid_row = %c1_index valid_col = %c4096_index : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=4096, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     %143 = arith.maxsi %43, %c0_index : index
     %144 = arith.maxsi %c0_index, %c0_index : index

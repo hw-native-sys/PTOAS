@@ -7,7 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // RUN: ( mkdir -p %T && ptoas --pto-arch=a5 --pto-backend=vpto %s -o %t --mlir-print-ir-after=convert-func-to-llvm 2>&1 || true ) | FileCheck %s
-// RUN: ( mkdir -p %T && ptoas --pto-arch=a5 --pto-backend=vpto --cann-output-version=9.0.0 %s -o %t.cann900 --mlir-print-ir-after=convert-func-to-llvm 2>&1 || true ) | FileCheck %s
+// RUN: ( mkdir -p %T && ptoas --cann-output-version=9.0.0 --pto-arch=a5 --pto-backend=vpto %s -o %t.cann900 --mlir-print-ir-after=convert-func-to-llvm 2>&1 || true ) | FileCheck %s
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @simt_float_math_kernel(%dst_f32: !pto.ptr<f32, ub>, %dst_f16: !pto.ptr<f16, ub>, %dst_bf16: !pto.ptr<bf16, ub>) attributes {pto.aicore} {
@@ -39,12 +39,13 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %bf16_b = arith.constant 2.000000e+00 : bf16
     %bf16_c = arith.constant 4.000000e+00 : bf16
 
-    %abs = pto.absf %f32_a : f32 -> f32
-    %abs16 = pto.absf %f16_neg : f16 -> f16
-    %fmin = pto.fmin %f32_a, %f32_b : f32, f32 -> f32
-    %fmax = pto.fmax %bf16_a, %bf16_b : bf16, bf16 -> bf16
-    %fmin16 = pto.fmin %f16_a, %f16_b : f16, f16 -> f16
-    %fmax16 = pto.fmax %f16_a, %f16_b : f16, f16 -> f16
+    %f32_dynamic = pto.load %dst_f32[%c7] : !pto.ptr<f32, ub> -> f32
+    %abs = pto.absf %f32_dynamic : f32
+    %min = pto.minf %f32_a, %f32_b : f32
+    %max = pto.maxf %bf16_a, %bf16_b : bf16
+    %abs16 = pto.absf %f16_neg : f16
+    %min16 = pto.minf %f16_a, %f16_b : f16
+    %max16 = pto.maxf %f16_a, %f16_b : f16
     %exp = pto.exp %f32_a : f32 -> f32
     %exp16 = pto.exp %f16_a : f16 -> f16
     %log = pto.log %f32_c : f32 -> f32
@@ -60,7 +61,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %fmabf16 = pto.fma %bf16_a, %bf16_b, %bf16_c : bf16, bf16, bf16 -> bf16
 
     pto.store %abs, %dst_f32[%c0] : !pto.ptr<f32, ub>, f32
-    pto.store %fmin, %dst_f32[%c1] : !pto.ptr<f32, ub>, f32
+    pto.store %min, %dst_f32[%c1] : !pto.ptr<f32, ub>, f32
     pto.store %exp, %dst_f32[%c2] : !pto.ptr<f32, ub>, f32
     pto.store %log, %dst_f32[%c3] : !pto.ptr<f32, ub>, f32
     pto.store %pow, %dst_f32[%c4] : !pto.ptr<f32, ub>, f32
@@ -72,9 +73,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     pto.store %pow16, %dst_f16[%c2] : !pto.ptr<f16, ub>, f16
     pto.store %rint, %dst_f16[%c3] : !pto.ptr<f16, ub>, f16
     pto.store %fma16, %dst_f16[%c4] : !pto.ptr<f16, ub>, f16
-    pto.store %fmin16, %dst_f16[%c5] : !pto.ptr<f16, ub>, f16
-    pto.store %fmax16, %dst_f16[%c6] : !pto.ptr<f16, ub>, f16
-    pto.store %fmax, %dst_bf16[%c0] : !pto.ptr<bf16, ub>, bf16
+    pto.store %max, %dst_bf16[%c0] : !pto.ptr<bf16, ub>, bf16
+    pto.store %min16, %dst_f16[%c5] : !pto.ptr<f16, ub>, f16
+    pto.store %max16, %dst_f16[%c6] : !pto.ptr<f16, ub>, f16
     pto.store %ceil, %dst_bf16[%c1] : !pto.ptr<bf16, ub>, bf16
     pto.store %round, %dst_bf16[%c2] : !pto.ptr<bf16, ub>, bf16
     pto.store %fmabf16, %dst_bf16[%c3] : !pto.ptr<bf16, ub>, bf16
@@ -85,22 +86,18 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK-LABEL: llvm.func @simt_float_math_kernel_mix_aiv
 // CHECK-DAG: llvm.call @llvm.hivm.store.vfsimt.info
 // CHECK-LABEL: llvm.func @simt_float_math
-// CHECK-DAG: llvm.call @llvm.fabs.f32
-// CHECK-DAG: llvm.call @llvm.fabs.f16
-// CHECK-DAG: llvm.call @llvm.minnum.f32
-// CHECK-DAG: llvm.call @llvm.maxnum.bf16
-// CHECK-DAG: llvm.call @llvm.minnum.f16
-// CHECK-DAG: llvm.call @llvm.maxnum.f16
-// CHECK-DAG: llvm.call @llvm.exp.f32
-// CHECK-DAG: llvm.call @llvm.exp.f16
-// CHECK-DAG: llvm.call @llvm.log.f32
-// CHECK-DAG: llvm.call @llvm.log.f16
-// CHECK-DAG: llvm.call @llvm.pow.f32
-// CHECK-DAG: llvm.call @llvm.pow.f16
+// CHECK-DAG: llvm.intr.fabs
+// CHECK-DAG: llvm.intr.minnum({{.*}}, {{.*}}) : (f32, f32) -> f32
+// CHECK-DAG: llvm.intr.maxnum({{.*}}, {{.*}}) : (bf16, bf16) -> bf16
+// CHECK-DAG: llvm.intr.minnum({{.*}}, {{.*}}) : (f16, f16) -> f16
+// CHECK-DAG: llvm.intr.maxnum({{.*}}, {{.*}}) : (f16, f16) -> f16
+// CHECK-DAG: llvm.intr.exp
+// CHECK-DAG: llvm.intr.log
+// CHECK-DAG: llvm.intr.pow({{.*}}) : (f16, f16) -> f16
 // CHECK-DAG: llvm.call @llvm.hivm.ceil.y
 // CHECK-DAG: llvm.call @llvm.hivm.floor.f
 // CHECK-DAG: llvm.call @llvm.hivm.rint.h
 // CHECK-DAG: llvm.call @llvm.hivm.round.y
-// CHECK-DAG: llvm.call @llvm.hivm.ffma.f32.rrr
-// CHECK-DAG: llvm.call @llvm.hivm.ffma.f16.rrr
-// CHECK-DAG: llvm.call @llvm.hivm.ffma.bf16.rrr
+// CHECK-DAG: llvm.intr.fma({{.*}}) : (f32, f32, f32) -> f32
+// CHECK-DAG: llvm.intr.fma({{.*}}) : (f16, f16, f16) -> f16
+// CHECK-DAG: llvm.intr.fma({{.*}}) : (bf16, bf16, bf16) -> bf16

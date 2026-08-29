@@ -392,46 +392,6 @@ struct ConvertTileBufAddrToPtrPattern
   }
 };
 
-struct ConvertIntToPtrToCastPtrPattern
-    : public OpConversionPattern<pto::IntToPtrOp> {
-  using OpConversionPattern::OpConversionPattern;
-
-  LogicalResult
-  matchAndRewrite(pto::IntToPtrOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    Type convertedType =
-        getTypeConverter()->convertType(op.getResult().getType());
-    if (!isa<pto::PtrType>(convertedType)) {
-      return rewriter.notifyMatchFailure(op, "expected pointer result type");
-    }
-
-    rewriter.replaceOpWithNewOp<pto::CastPtrOp>(op, convertedType,
-                                                adaptor.getAddr());
-    return success();
-  }
-};
-
-struct ConvertPtrToIntToCastPtrPattern
-    : public OpConversionPattern<pto::PtrToIntOp> {
-  using OpConversionPattern::OpConversionPattern;
-
-  LogicalResult
-  matchAndRewrite(pto::PtrToIntOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    Type convertedType = getTypeConverter()->convertType(op.getResult().getType());
-    if (!isa<IntegerType>(convertedType)) {
-      return rewriter.notifyMatchFailure(op, "expected integer result type");
-    }
-    if (!isa<pto::PtrType>(adaptor.getPtr().getType())) {
-      return rewriter.notifyMatchFailure(op, "expected pointer input type");
-    }
-
-    rewriter.replaceOpWithNewOp<pto::CastPtrOp>(op, convertedType,
-                                                adaptor.getPtr());
-    return success();
-  }
-};
-
 struct ConvertCastPtrPattern : public OpConversionPattern<pto::CastPtrOp> {
   using OpConversionPattern::OpConversionPattern;
 
@@ -578,51 +538,6 @@ struct ConvertVsstbSubviewOperandPattern
     state.addAttributes(op->getAttrs());
     Operation *newOp = rewriter.create(state);
     rewriter.replaceOp(op, newOp->getResults());
-    return success();
-  }
-};
-
-struct ConvertLoadScalarOperandToPtrPattern
-    : public OpConversionPattern<pto::LoadScalarOp> {
-  using OpConversionPattern::OpConversionPattern;
-
-  LogicalResult
-  matchAndRewrite(pto::LoadScalarOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    Value ptr = materializeScalarAccessPtr(adaptor.getPtr(), rewriter, op.getLoc());
-    if (!ptr) {
-      return rewriter.notifyMatchFailure(op,
-                                         "failed to materialize load_scalar ptr");
-    }
-    if (!isa<pto::PtrType>(ptr.getType())) {
-      return rewriter.notifyMatchFailure(op, "expected ptr-form load_scalar input");
-    }
-
-    rewriter.replaceOpWithNewOp<pto::LoadScalarOp>(op, op.getValue().getType(),
-                                                   ptr, adaptor.getOffset());
-    return success();
-  }
-};
-
-struct ConvertStoreScalarOperandToPtrPattern
-    : public OpConversionPattern<pto::StoreScalarOp> {
-  using OpConversionPattern::OpConversionPattern;
-
-  LogicalResult
-  matchAndRewrite(pto::StoreScalarOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    Value ptr = materializeScalarAccessPtr(adaptor.getPtr(), rewriter, op.getLoc());
-    if (!ptr) {
-      return rewriter.notifyMatchFailure(op,
-                                         "failed to materialize store_scalar ptr");
-    }
-    if (!isa<pto::PtrType>(ptr.getType())) {
-      return rewriter.notifyMatchFailure(op, "expected ptr-form store_scalar input");
-    }
-
-    rewriter.replaceOpWithNewOp<pto::StoreScalarOp>(op, ptr,
-                                                    adaptor.getOffset(),
-                                                    adaptor.getValue());
     return success();
   }
 };
@@ -1009,7 +924,6 @@ struct VPTOPtrNormalizePass
                            scf::SCFDialect>();
     target.addDynamicallyLegalDialect<pto::PTODialect>([](Operation *op) {
       return !isa<pto::TileBufAddrOp, pto::CastPtrOp,
-                  pto::IntToPtrOp, pto::PtrToIntOp,
                   pto::VldsOp, pto::VstsOp, pto::VsstbOp>(op);
     });
     target.addLegalOp<ModuleOp>();
@@ -1053,10 +967,6 @@ struct VPTOPtrNormalizePass
           return isa<pto::PtrType>(op.getDestination().getType()) &&
                  typeConverter.isLegal(op->getResultTypes());
         });
-    target.addDynamicallyLegalOp<pto::LoadScalarOp>(
-        [](pto::LoadScalarOp op) { return isa<pto::PtrType>(op.getPtr().getType()); });
-    target.addDynamicallyLegalOp<pto::StoreScalarOp>(
-        [](pto::StoreScalarOp op) { return isa<pto::PtrType>(op.getPtr().getType()); });
     target.addDynamicallyLegalOp<pto::MteUbUbOp>([](pto::MteUbUbOp op) {
       return isa<pto::PtrType>(op.getSource().getType()) &&
              isa<pto::PtrType>(op.getDestination().getType());
@@ -1135,35 +1045,21 @@ struct VPTOPtrNormalizePass
                                                                    typeConverter);
     populateCallOpTypeConversionPattern(patterns, typeConverter);
     populateReturnOpTypeConversionPattern(patterns, typeConverter);
-    patterns.add<ConvertTileBufAddrToPtrPattern,
-                 ConvertIntToPtrToCastPtrPattern,
-                 ConvertPtrToIntToCastPtrPattern, ConvertCastPtrPattern,
-                 ConvertSubviewToAddPtrPattern, ConvertVldsSubviewOperandPattern,
-                 ConvertVstsSubviewOperandPattern,
-                 ConvertVsstbSubviewOperandPattern,
-                 ConvertLoadScalarOperandToPtrPattern,
-                 ConvertStoreScalarOperandToPtrPattern,
-                 ConvertMteUbUbOperandPattern,
-                 ConvertMteUbL1OperandPattern,
-                 ConvertCubeLoadOperandPattern,
-                 ConvertRawFillL1OperandPattern,
-                 ConvertCubeStoreOperandPattern,
-                 ConvertBiasLoadOperandPattern,
-                 ConvertCubeLoadFracOperandPattern,
-                 ConvertLeftLoadOperandPattern,
-                 ConvertRightLoadOperandPattern,
-                 ConvertLeftLoadMxOperandPattern,
-                 ConvertRightLoadMxOperandPattern,
-                 ConvertAccStoreOperandPattern,
-                 ConvertAccStoreGmOperandPattern,
-                 ConvertAccStoreUbOperandPattern,
-                 ConvertMteUbGmOperandPattern,
-                 ConvertLoadOperandToPtrPattern,
-                 ConvertStoreOperandToPtrPattern,
-                 ConvertSimtLaunchOp,
-                 ConvertPtrNormalizeUnrealizedCastOp,
-                 ConvertPtrNormalizeMemRefCastOp>(
-        typeConverter, context);
+    patterns.add<
+        ConvertTileBufAddrToPtrPattern, ConvertCastPtrPattern,
+        ConvertSubviewToAddPtrPattern, ConvertVldsSubviewOperandPattern,
+        ConvertVstsSubviewOperandPattern, ConvertVsstbSubviewOperandPattern,
+        ConvertMteUbUbOperandPattern, ConvertMteUbL1OperandPattern,
+        ConvertCubeLoadOperandPattern, ConvertRawFillL1OperandPattern,
+        ConvertCubeStoreOperandPattern,
+        ConvertBiasLoadOperandPattern, ConvertCubeLoadFracOperandPattern,
+        ConvertLeftLoadOperandPattern, ConvertRightLoadOperandPattern,
+        ConvertLeftLoadMxOperandPattern, ConvertRightLoadMxOperandPattern,
+        ConvertAccStoreOperandPattern, ConvertAccStoreGmOperandPattern,
+        ConvertAccStoreUbOperandPattern, ConvertMteUbGmOperandPattern,
+        ConvertLoadOperandToPtrPattern, ConvertStoreOperandToPtrPattern,
+        ConvertSimtLaunchOp, ConvertPtrNormalizeUnrealizedCastOp,
+        ConvertPtrNormalizeMemRefCastOp>(typeConverter, context);
 
     if (failed(applyPartialConversion(module, target, std::move(patterns)))) {
       signalPassFailure();

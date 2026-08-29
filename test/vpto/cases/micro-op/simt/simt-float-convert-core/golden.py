@@ -28,6 +28,19 @@ def generate(output_dir: Path) -> None:
     golden_v1[32:64] = np.minimum(values, three).view(np.uint16).astype(np.int32)
     golden_v1[64:96] = np.maximum(values, three).view(np.uint16).astype(np.int32)
     golden_v1[96:128] = np.abs(np.arange(-16, 16, dtype=np.float16)).view(np.uint16)
+    signed_tid = np.arange(-16, 16, dtype=np.int32)
+    as_f32 = signed_tid.astype(np.float32)
+    golden_v1[128:160] = as_f32.view(np.int32)
+    golden_v1[160:192] = as_f32.astype(np.int32)
+    golden_v1[192:224] = as_f32.astype(np.float16).view(np.uint16).astype(np.int32)
+    rounding_results = [2, -2, 3, -3, 2, -3, 3, -2, 2, -2]
+    for index, value in enumerate(rounding_results):
+        start = 224 + index * 32
+        golden_v1[start : start + 32] = value
+    golden_v1[544:576] = np.iinfo(np.int32).max
+    golden_v1[576:608] = np.iinfo(np.int32).min
+    golden_v1[608:640] = 0x7BFF
+    golden_v1[640:672] = 0x7C00
     v1.tofile(output_dir / "v1.bin")
     golden_v1.tofile(output_dir / "golden_v1.bin")
 

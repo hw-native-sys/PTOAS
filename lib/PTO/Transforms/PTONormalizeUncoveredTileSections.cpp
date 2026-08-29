@@ -216,7 +216,14 @@ classifyRawSectionCarrierOp(Operation *op) {
 }
 
 static bool isPipeLikeOp(Operation *op) {
-  return op && isa<OpPipeInterface>(op);
+  auto pipeOp = dyn_cast_or_null<OpPipeInterface>(op);
+  if (!pipeOp) {
+    return false;
+  }
+  // PIPE_S is shared by cube and vector cores. Scalar memory operations need
+  // the interface for synchronization, but cannot determine a function's
+  // physical kernel kind by themselves.
+  return pipeOp.getPipe() != PIPE::PIPE_S;
 }
 
 static bool isRawVPTOVectorTransientType(Type type) {
@@ -587,14 +594,24 @@ static void inspectModuleKindOperation(Operation *op,
     return;
   }
 
-  if (isRawSectionCarrierOp(op)) {
+  if (isTileLikeOp(op)) {
+    if (std::optional<InferredSectionKind> kind = classifyTileOp(op)) {
+      if (*kind == InferredSectionKind::Vector) {
+        ++summary.vectorCount;
+      } else {
+        ++summary.cubeCount;
+      }
+    } else {
+      summary.ambiguousOps.push_back(op);
+    }
+  } else if (isRawSectionCarrierOp(op)) {
     if (std::optional<InferredSectionKind> kind =
             classifyRawSectionCarrierOp(op)) {
       if (*kind == InferredSectionKind::Vector) {
         ++summary.vectorCount;
       } else {
         ++summary.cubeCount;
-}
+      }
     } else {
       summary.ambiguousOps.push_back(op);
     }
@@ -605,9 +622,7 @@ static void inspectModuleKindOperation(Operation *op,
         ++summary.vectorCount;
       } else {
         ++summary.cubeCount;
-}
-    } else if (isTileLikeOp(op)) {
-      summary.ambiguousOps.push_back(op);
+      }
     }
   } else if (isRawVPTOVectorLikeOp(op)) {
     ++summary.vectorCount;

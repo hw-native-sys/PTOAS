@@ -810,8 +810,8 @@ FRAGMENT_FIXTURES = {
         ):
             for row in range(0, 1, 1):
                 col = pto.const(0, dtype=pto.index)
-                o_prev = scalar.load(o_prev_tile[row, col])
-                pv_val = scalar.load(pv_tile[row, col])
+                o_prev = pto.load(o_prev_tile[row, col])
+                pv_val = pto.load(pv_tile[row, col])
                 {SNIPPET_PLACEHOLDER}
 
 
@@ -918,17 +918,17 @@ FRAGMENT_FIXTURES = {
         @pto.jit(target="a5")
         def scalar_ops_math_probe():
             tile = pto.alloc_tile(shape=[1, 8], dtype=pto.f32, valid_shape=[1, 4])
-            alpha = scalar.load(tile[0, 0])
-            o_prev = scalar.load(tile[0, 1])
-            beta = scalar.load(tile[0, 2])
-            pv_val = scalar.load(tile[0, 3])
-            m_prev = scalar.load(tile[0, 0])
-            row_max = scalar.load(tile[0, 1])
-            l_prev = scalar.load(tile[0, 2])
-            m_next = scalar.load(tile[0, 3])
-            val = scalar.load(tile[0, 0])
+            alpha = pto.load(tile[0, 0])
+            o_prev = pto.load(tile[0, 1])
+            beta = pto.load(tile[0, 2])
+            pv_val = pto.load(tile[0, 3])
+            m_prev = pto.load(tile[0, 0])
+            row_max = pto.load(tile[0, 1])
+            l_prev = pto.load(tile[0, 2])
+            m_next = pto.load(tile[0, 3])
+            val = pto.load(tile[0, 0])
             threshold = pto.const(0.0, dtype=pto.f32)
-            tail_count = scalar.load(tile[0, 1])
+            tail_count = pto.load(tile[0, 1])
             N = pto.const(16, dtype=pto.i32)
             BLOCK = 8
             {SNIPPET_PLACEHOLDER}
@@ -1448,7 +1448,7 @@ FRAGMENT_FIXTURES = {
     "flash_attention.l1_loop_body": _fixture(
         f"""
         def _min_index(lhs, rhs):
-            return scalar.select(lhs < rhs, lhs, rhs)
+            return pto.select(lhs < rhs, lhs, rhs)
 
 
         def _block_valid_extent(total, block_index, block_size):
@@ -1638,9 +1638,9 @@ FRAGMENT_FIXTURES = {
             valid_rows: pto.i32,
             valid_cols: pto.i32,
         ):
-            scalar.store(0, meta_ptr + 0)
-            scalar.store(valid_rows, meta_ptr + 1)
-            scalar.store(valid_cols, meta_ptr + 2)
+            pto.store(0, meta_ptr + 0)
+            pto.store(valid_rows, meta_ptr + 1)
+            pto.store(valid_cols, meta_ptr + 2)
 
 
         def flash_attention_explicit_phase(

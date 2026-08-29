@@ -38,6 +38,77 @@ public:
   }
 };
 
+class ConvertPtoDeclareLocalArrayOp final : public OpConversionPattern<pto::DeclareLocalArrayOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::DeclareLocalArrayOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    (void)adaptor;
+    auto resultType = dyn_cast<LLVM::LLVMPointerType>(getTypeConverter()->convertType(op.getArray().getType()));
+    if (!resultType) {
+      return rewriter.notifyMatchFailure(op, "expected LLVM pointer result type");
+    }
+    auto arrayType = cast<pto::LocalArrayType>(op.getArray().getType());
+    Type storageType = getVPTOLocalArrayStorageType(arrayType, rewriter);
+    auto parentFunc = op->getParentOfType<func::FuncOp>();
+    if (!parentFunc) {
+      return rewriter.notifyMatchFailure(op, "expected local array declaration inside a function");
+    }
+
+    Value storage;
+    {
+      OpBuilder::InsertionGuard guard(rewriter);
+      Block &entryBlock = parentFunc.getBody().front();
+      rewriter.setInsertionPointToStart(&entryBlock);
+      Value one = rewriter.create<LLVM::ConstantOp>(op.getLoc(), rewriter.getI64Type(),
+                                                    rewriter.getI64IntegerAttr(1));
+      storage = rewriter.create<LLVM::AllocaOp>(op.getLoc(), resultType, storageType, one, /*alignment=*/0);
+    }
+    rewriter.replaceOp(op, storage);
+    return success();
+  }
+};
+
+class ConvertPtoLocalArrayGetOp final : public OpConversionPattern<pto::LocalArrayGetOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::LocalArrayGetOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    Type resultType = getTypeConverter()->convertType(op.getResult().getType());
+    if (!resultType) {
+      return rewriter.notifyMatchFailure(op, "could not convert result type");
+    }
+    auto address = getVPTOLocalArrayElementAddress(rewriter, op.getLoc(), adaptor.getArray(),
+                                                   cast<pto::LocalArrayType>(op.getArray().getType()),
+                                                   adaptor.getIndices());
+    if (failed(address)) {
+      return rewriter.notifyMatchFailure(op, "invalid local array indices");
+    }
+    rewriter.replaceOpWithNewOp<LLVM::LoadOp>(op, resultType, *address, getNaturalByteAlignment(resultType));
+    return success();
+  }
+};
+
+class ConvertPtoLocalArraySetOp final : public OpConversionPattern<pto::LocalArraySetOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::LocalArraySetOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    auto address = getVPTOLocalArrayElementAddress(rewriter, op.getLoc(), adaptor.getArray(),
+                                                   cast<pto::LocalArrayType>(op.getArray().getType()),
+                                                   adaptor.getIndices());
+    if (failed(address)) {
+      return rewriter.notifyMatchFailure(op, "invalid local array indices");
+    }
+    rewriter.replaceOpWithNewOp<LLVM::StoreOp>(op, adaptor.getValue(), *address,
+                                               getNaturalByteAlignment(adaptor.getValue().getType()));
+    return success();
+  }
+};
+
 class ConvertPtoDeclareStructOp final : public OpConversionPattern<pto::DeclareStructOp> {
 public:
   using OpConversionPattern::OpConversionPattern;
@@ -208,70 +279,6 @@ public:
     }
 
     return rewriter.notifyMatchFailure(op, "unsupported castptr conversion");
-  }
-};
-
-class ConvertPtoLoadScalarOp final : public OpConversionPattern<pto::LoadScalarOp> {
-public:
-  using OpConversionPattern::OpConversionPattern;
-
-  LogicalResult matchAndRewrite(pto::LoadScalarOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
-    auto llvmPtrType = dyn_cast<LLVM::LLVMPointerType>(adaptor.getPtr().getType());
-    if (!llvmPtrType) {
-      return rewriter.notifyMatchFailure(op, "expected LLVM pointer operand");
-    }
-
-    Type convertedValueType = getTypeConverter()->convertType(op.getValue().getType());
-    if (!convertedValueType) {
-      return rewriter.notifyMatchFailure(op, "could not convert load_scalar result type");
-    }
-
-    Value offset = adaptor.getOffset();
-    if (offset.getType().isIndex()) {
-      offset = rewriter.create<arith::IndexCastUIOp>(op.getLoc(), rewriter.getI64Type(), offset);
-    }
-
-    Value elemPtr = adaptor.getPtr();
-    if (!matchPattern(offset, m_Zero())) {
-      elemPtr = rewriter.create<LLVM::GEPOp>(op.getLoc(), llvmPtrType,
-                                             normalizeGEPElementTypeForLLVMLowering(convertedValueType, rewriter),
-                                             adaptor.getPtr(), ValueRange{offset});
-    }
-
-    rewriter.replaceOpWithNewOp<LLVM::LoadOp>(op, convertedValueType, elemPtr,
-                                              getNaturalByteAlignment(convertedValueType));
-    return success();
-  }
-};
-
-class ConvertPtoStoreScalarOp final : public OpConversionPattern<pto::StoreScalarOp> {
-public:
-  using OpConversionPattern::OpConversionPattern;
-
-  LogicalResult matchAndRewrite(pto::StoreScalarOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
-    auto llvmPtrType = dyn_cast<LLVM::LLVMPointerType>(adaptor.getPtr().getType());
-    if (!llvmPtrType) {
-      return rewriter.notifyMatchFailure(op, "expected LLVM pointer operand");
-    }
-
-    Value offset = adaptor.getOffset();
-    if (offset.getType().isIndex()) {
-      offset = rewriter.create<arith::IndexCastUIOp>(op.getLoc(), rewriter.getI64Type(), offset);
-    }
-
-    Value elemPtr = adaptor.getPtr();
-    if (!matchPattern(offset, m_Zero())) {
-      elemPtr = rewriter.create<LLVM::GEPOp>(
-          op.getLoc(), llvmPtrType, normalizeGEPElementTypeForLLVMLowering(adaptor.getValue().getType(), rewriter),
-          adaptor.getPtr(), ValueRange{offset});
-    }
-
-    rewriter.create<LLVM::StoreOp>(op.getLoc(), adaptor.getValue(), elemPtr,
-                                   getNaturalByteAlignment(adaptor.getValue().getType()));
-    rewriter.eraseOp(op);
-    return success();
   }
 };
 
@@ -730,8 +737,9 @@ public:
 void populateVPTOTypePatterns(VPTOTypeConverter &typeConverter, RewritePatternSet &patterns, ConversionTarget &target,
                               LoweringState &state) {
   MLIRContext *context = patterns.getContext();
-  patterns.add<ConvertPtoAddPtrOp, ConvertPtoCastPtrOp, ConvertPtoLoadScalarOp, ConvertPtoStoreScalarOp,
-               ConvertPtoDeclareStructOp, ConvertPtoStructGetOp, ConvertPtoStructSetOp>(typeConverter, context);
+  patterns.add<ConvertPtoAddPtrOp, ConvertPtoCastPtrOp, ConvertPtoDeclareLocalArrayOp,
+               ConvertPtoLocalArrayGetOp, ConvertPtoLocalArraySetOp, ConvertPtoDeclareStructOp,
+               ConvertPtoStructGetOp, ConvertPtoStructSetOp>(typeConverter, context);
   patterns
       .add<ConvertPtoLoadOp, ConvertPtoStoreOp, ConvertPtoLdgOp, ConvertPtoStgOp, ConvertPtoLdDevOp, ConvertPtoStDevOp>(
           typeConverter, context, state);

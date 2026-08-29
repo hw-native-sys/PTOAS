@@ -165,7 +165,7 @@ After installation, the following imports should work directly:
 
 ```python
 import ptodsl
-from ptodsl import pto, scalar
+from ptodsl import pto
 from ptoas.mlir.dialects import pto as mlir_pto
 ```
 
@@ -267,13 +267,13 @@ can be imported directly.
 from ptoas.mlir.ir import Context, Module, Location
 # PTOAS ships its MLIR Python API in the ptoas.mlir namespace.
 from ptoas.mlir.dialects import pto
-from ptodsl import pto as jit_pto, scalar
+from ptodsl import pto as jit_pto
 
 with Context() as ctx, Location.unknown():
     pto.register_dialect(ctx, load=True)
     module = Module.create()
     print("PTO Dialect registered successfully!")
-    print("PTODSL imported successfully!", jit_pto, scalar)
+    print("PTODSL imported successfully!", jit_pto)
 ```
 
 ### 5.3 Running Tests

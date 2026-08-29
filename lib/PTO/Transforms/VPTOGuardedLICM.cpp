@@ -99,7 +99,7 @@ static bool isHoistableScalarOp(Operation *op) {
              arith::MinSIOp, arith::MinUIOp, arith::ExtSIOp, arith::ExtUIOp,
              arith::TruncIOp, arith::IndexCastOp, arith::IndexCastUIOp,
              arith::SelectOp, arith::ConstantOp, pto::AddPtrOp,
-             pto::CastPtrOp, pto::PtrToIntOp, pto::IntToPtrOp>(op);
+             pto::CastPtrOp>(op);
 }
 
 // An operation is a hoist candidate only when it is on the deterministic

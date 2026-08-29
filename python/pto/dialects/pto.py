@@ -332,11 +332,6 @@ __all__ = [
     # A5 buffer-id sync helpers
     "get_buf",
     "rls_buf",
-    # Scalar pointer helpers
-    "ptrtoint",
-    "inttoptr",
-    "load_scalar",
-    "store_scalar",
     # Aliases for SyncOpType enums (for terse calls)
     "TLOAD",
     "TSTORE_ACC",
@@ -733,68 +728,6 @@ def rls_buf(op_type, buf_id, mode=0, *, loc=None, ip=None):
     return _ods_ir.Operation.create(
         "pto.rls_buf",
         attributes=attrs,
-        loc=loc,
-        ip=ip,
-    )
-
-
-# -----------------------------------------------------------------------------
-# Scalar pointer helpers (manual wrappers until python ops are regenerated)
-# -----------------------------------------------------------------------------
-
-
-def ptrtoint(ptr, *, loc=None, ip=None):
-    operands = [
-        get_op_result_or_value(ptr),
-    ]
-    op = _ods_ir.Operation.create(
-        "pto.ptrtoint",
-        results=[_ods_ir.IntegerType.get_signless(64)],
-        operands=operands,
-        loc=loc,
-        ip=ip,
-    )
-    return op.results[0]
-
-
-def inttoptr(result_type, addr, *, loc=None, ip=None):
-    operands = [
-        get_op_result_or_value(addr),
-    ]
-    op = _ods_ir.Operation.create(
-        "pto.inttoptr",
-        results=[result_type],
-        operands=operands,
-        loc=loc,
-        ip=ip,
-    )
-    return op.results[0]
-
-
-def load_scalar(result_type, ptr, offset, *, loc=None, ip=None):
-    operands = [
-        get_op_result_or_value(ptr),
-        get_op_result_or_value(offset),
-    ]
-    op = _ods_ir.Operation.create(
-        "pto.load_scalar",
-        results=[result_type],
-        operands=operands,
-        loc=loc,
-        ip=ip,
-    )
-    return op.results[0]
-
-
-def store_scalar(ptr, offset, value, *, loc=None, ip=None):
-    operands = [
-        get_op_result_or_value(ptr),
-        get_op_result_or_value(offset),
-        get_op_result_or_value(value),
-    ]
-    return _ods_ir.Operation.create(
-        "pto.store_scalar",
-        operands=operands,
         loc=loc,
         ip=ip,
     )
@@ -1320,9 +1253,9 @@ class _VKernelBuilder:
         value.name = self.ctx.new_ssa()
         lit = _literal_text(value.literal)
         if isinstance(value.literal, bool):
-            self._emit(lines, indent, f"{value.name} = arith.constant {lit}")
+            self._emit(lines, indent, f"{value.name} = pto.constant {lit}")
         else:
-            self._emit(lines, indent, f"{value.name} = arith.constant {lit} : {value.type.render()}")
+            self._emit(lines, indent, f"{value.name} = pto.constant {lit} : {value.type.render()}")
         return value
 
     def _literal_value(self, node, lines, indent, expected_type):

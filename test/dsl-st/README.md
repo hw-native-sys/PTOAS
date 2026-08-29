@@ -31,7 +31,7 @@ pip install /path/to/ptoas*.whl
 快速自检：
 
 ```bash
-python3 -c "import ptodsl; from ptodsl import pto, scalar; print(ptodsl.__file__)"
+python3 -c "import ptodsl; from ptodsl import pto; print(ptodsl.__file__)"
 ```
 
 注意：

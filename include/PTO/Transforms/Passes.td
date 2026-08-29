@@ -92,6 +92,24 @@ def ConvertToPTOOp : Pass<"convert-to-pto-op"> {
   ];
 }
 
+def PTOLowerGenericOps
+    : Pass<"pto-lower-generic-ops", "func::FuncOp"> {
+  let summary = "Lower frontend PTO generic operations to core MLIR dialects";
+  let description = [{
+    Legalizes execution-domain-independent scalar and builtin-vector operations
+    authored as `pto.*` into arith/math/LLVM operations after frontend scope
+    classification. Packed and target-specialized PTO operations remain in the
+    PTO dialect.
+  }];
+  let constructor = "mlir::pto::createPTOLowerGenericOpsPass()";
+  let dependentDialects = [
+    "mlir::arith::ArithDialect",
+    "mlir::LLVM::LLVMDialect",
+    "mlir::math::MathDialect",
+    "mlir::pto::PTODialect"
+  ];
+}
+
 def InferPTOLayout : Pass<"pto-infer-layout", "func::FuncOp"> {
   let summary = "Infer GlobalTensor layout (ND/DN/NZ) for make_tensor_view";
   let description = [{
@@ -695,22 +713,6 @@ def PTOVerifyTFree : Pass<"pto-verify-tfree", "func::FuncOp"> {
 
   let dependentDialects = [
     "mlir::pto::PTODialect"
-  ];
-}
-
-def PTOValidateIntToPtrUses : Pass<"pto-validate-inttoptr-uses", "func::FuncOp"> {
-  let summary = "Validate restricted uses of PTO inttoptr results";
-  let description = [{
-    Verifies that `pto.inttoptr` results do not escape into general pointer IR.
-    The result may only be used directly as the pointer operand of
-    `pto.load_scalar` or `pto.store_scalar`.
-  }];
-
-  let constructor = "mlir::pto::createPTOValidateIntToPtrUsesPass()";
-
-  let dependentDialects = [
-    "mlir::pto::PTODialect",
-    "mlir::func::FuncDialect"
   ];
 }
 

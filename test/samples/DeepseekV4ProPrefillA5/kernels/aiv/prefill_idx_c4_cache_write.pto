@@ -59,7 +59,7 @@ module attributes {pto.target_arch = "a5"} {
     %10 = arith.addi %8, %final_dt_inline9_inline5174__idx_v0 : index
     %flat_offset_mul = arith.muli %c0_index, %c32_index : index
     %flat_offset = arith.addi %flat_offset_mul, %10 : index
-    %dst_row_raw_inline8_inline5201__tile = pto.load_scalar %arg2[%flat_offset] : !pto.ptr<i32> -> i32
+    %dst_row_raw_inline8_inline5201__tile = pto.load %arg2[%flat_offset] : !pto.ptr<i32> -> i32
     %11 = arith.index_cast %dst_row_raw_inline8_inline5201__tile : i32 to index
     %12 = arith.cmpi sle, %c0_index, %11 : index
     scf.if %12 {
@@ -74,7 +74,7 @@ module attributes {pto.target_arch = "a5"} {
       %15 = pto.tgetval ins(%kv_scale_dq_col_inline16_inline5181__tile, %17 : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=?, v_col=?, blayout=col_major, slayout=none_box, fractal=512, pad=0>, index) outs : f32
       %18 = arith.muli %13, %c1_index : index
       %19 = arith.addi %18, %c0_index : index
-      pto.store_scalar %15, %arg3[%19] : !pto.ptr<f32>, f32
+      pto.store %15, %arg3[%19] : !pto.ptr<f32>, f32
     } else {
       %20 = arith.addi %10, %c8160_index : index
       %7 = pto.alloc_tile addr = %c8192_i64 valid_row = %c1_index valid_col = %c128_index : !pto.tile_buf<loc=vec, dtype=i8, rows=1, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
@@ -86,10 +86,10 @@ module attributes {pto.target_arch = "a5"} {
       pto.tstore ins(%7 : !pto.tile_buf<loc=vec, dtype=i8, rows=1, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%25 : !pto.partition_tensor_view<1x128xi8>)
       %27 = arith.muli %20, %c1_index : index
       %28 = arith.addi %27, %c0_index : index
-      %26 = pto.load_scalar %arg3[%28] : !pto.ptr<f32> -> f32
+      %26 = pto.load %arg3[%28] : !pto.ptr<f32> -> f32
       %29 = arith.muli %20, %c1_index : index
       %30 = arith.addi %29, %c0_index : index
-      pto.store_scalar %26, %arg3[%30] : !pto.ptr<f32>, f32
+      pto.store %26, %arg3[%30] : !pto.ptr<f32>, f32
     }
   }
   return

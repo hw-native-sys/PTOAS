@@ -7,7 +7,8 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 """PTODSL TileLib template for pto.tlrelu."""
 
-from ptodsl import pto, scalar
+from ptodsl import pto
+from ptodsl._scalar_coercion import coerce_scalar_to_type
 import ptodsl.tilelib as tilelib
 from ptodsl._types import _resolve
 
@@ -61,7 +62,7 @@ def _register_tlrelu(*, name, traversal):
         dtype = dst.dtype
         slope_scalar = slope
         if str(dtype) == "f16":
-            slope_scalar = scalar.coerce_scalar_to_type(
+            slope_scalar = coerce_scalar_to_type(
                 slope,
                 _resolve(pto.f16),
                 context="template_tlrelu(slope)",

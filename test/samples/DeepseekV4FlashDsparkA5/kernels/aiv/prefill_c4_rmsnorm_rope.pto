@@ -49,13 +49,13 @@ module attributes {pto.target_arch = "a5"} {
     %50 = arith.addi %49, %final_dt_inline31__idx_v0 : index
     %flat_offset_mul = arith.muli %c0_index, %c32_index : index
     %flat_offset = arith.addi %flat_offset_mul, %50 : index
-    %write_slot_raw_inline84__tile = pto.load_scalar %arg0[%flat_offset] : !pto.ptr<i32> -> i32
+    %write_slot_raw_inline84__tile = pto.load %arg0[%flat_offset] : !pto.ptr<i32> -> i32
     %51 = arith.index_cast %write_slot_raw_inline84__tile : i32 to index
     %52 = arith.cmpi sle, %c0_index, %51 : index
     scf.if %52 {
       %53 = arith.muli %c0_index, %c32_index : index
       %54 = arith.addi %53, %50 : index
-      %write_pos_inline112__tile = pto.load_scalar %arg1[%54] : !pto.ptr<i32> -> i32
+      %write_pos_inline112__tile = pto.load %arg1[%54] : !pto.ptr<i32> -> i32
       %55 = arith.index_cast %write_pos_inline112__tile : i32 to index
       %56 = arith.addi %55, %cn3_index : index
       %t__tile = pto.alloc_tile addr = %c0_i64 valid_row = %c1_index valid_col = %c32_index : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>

@@ -30,7 +30,7 @@ module attributes {pto.target_arch = "a5"} {
         pto.tcvt ins(%t__tile {rmode = #pto<round_mode ROUND>} : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%s2_q_h_b__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
         %7 = arith.muli %b__idx_v0, %c64_index : index
         %8 = arith.addi %7, %h__idx_v0 : index
-        %s2_w_h_b__tile = pto.load_scalar %arg2[%8] : !pto.ptr<f32> -> f32
+        %s2_w_h_b__tile = pto.load %arg2[%8] : !pto.ptr<f32> -> f32
         %0 = pto.alloc_tile addr = %c384_i64 valid_row = %c1_index valid_col = %c64_index : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
         pto.tmuls ins(%s2_q_h_b__tile, %s2_w_h_b__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32) outs(%0 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
         %1 = pto.alloc_tile addr = %c0_i64 valid_row = %c1_index valid_col = %c64_index : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>

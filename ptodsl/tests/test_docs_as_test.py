@@ -22,7 +22,7 @@ from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 USER_GUIDE_ROOT = REPO_ROOT / "ptodsl" / "docs" / "user_guide"
-from ptodsl import pto, scalar
+from ptodsl import pto
 from ptodsl._context import make_context
 from ptodsl._runtime.launch import LaunchHandle, _marshal_launch_args
 from ptodsl._runtime.toolchain import resolve_ptoas_binary
@@ -343,7 +343,6 @@ def execute_source(
         "__name__": "__ptodsl_doc_snippet__",
         "__file__": str(source_file),
         "pto": pto,
-        "scalar": scalar,
     }
     if extra_namespace is not None:
         namespace.update(extra_namespace)

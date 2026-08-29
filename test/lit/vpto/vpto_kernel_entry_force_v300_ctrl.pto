@@ -26,7 +26,10 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 }
 
 // CHECK-LABEL: llvm.func @nonsat_kernel_mix_aiv
-// CHECK-NOT: llvm.hivm.GET.CTRL
+// CHECK: llvm.mlir.constant(60 : i64)
+// CHECK: llvm.call @llvm.hivm.GET.CTRL()
+// CHECK: llvm.call @llvm.hivm.SBITSET0
+// CHECK: llvm.call @llvm.hivm.SET.CTRL
 // CHECK: llvm.call @llvm.hivm.vcvtff.f162f32.x
 // CHECK-LABEL: llvm.func @sat_kernel_mix_aiv
 // CHECK: llvm.mlir.constant(60 : i64)

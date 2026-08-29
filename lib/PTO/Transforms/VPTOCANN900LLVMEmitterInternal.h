@@ -134,6 +134,9 @@ unsigned getNaturalByteAlignment(Type type);
 bool hasVPTOConvertibleType(Type type);
 bool hasVPTOConvertibleType(TypeRange types);
 Value materializeVPTOCast(OpBuilder &builder, Type resultType, ValueRange inputs, Location loc);
+LLVM::LLVMArrayType getVPTOLocalArrayStorageType(pto::LocalArrayType arrayType, Builder &builder);
+FailureOr<Value> getVPTOLocalArrayElementAddress(ConversionPatternRewriter &rewriter, Location loc, Value root,
+                                                 pto::LocalArrayType arrayType, ValueRange indices);
 LLVM::LLVMStructType getVPTOStructStorageType(pto::StructType structType, Builder &builder);
 FailureOr<Value> getVPTOStructFieldAddress(ConversionPatternRewriter &rewriter, Location loc, Value root,
                                            pto::StructType rootType, ArrayRef<int64_t> path);

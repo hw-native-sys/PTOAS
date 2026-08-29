@@ -1,0 +1,81 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt -split-input-file -verify-diagnostics %s
+
+module {
+  func.func @supported_pointer_elements(%addr: i64) {
+    %f8e8m0 = pto.castptr %addr : i64 -> !pto.ptr<!pto.f8E8M0, l1>
+    %hif8x2 = pto.castptr %addr : i64 -> !pto.ptr<!pto.hif8x2, ub>
+    %bf16x2 = pto.castptr %addr : i64 -> !pto.ptr<!pto.bf16x2, ub>
+    %vector = pto.castptr %addr : i64 -> !pto.ptr<vector<4xf32>, ub>
+    %packed_vector = pto.castptr %addr : i64 -> !pto.ptr<vector<2xf8E4M3FN>, ub>
+    %signed = pto.castptr %addr : i64 -> !pto.ptr<si32, ub>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @invalid_result_aggregate(%addr: i64) {
+    // expected-error@+1 {{result pointer element type is not supported by PTO: 'tensor<2xf32>'}}
+    %ptr = pto.castptr %addr : i64 -> !pto.ptr<tensor<2xf32>, ub>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @invalid_input_aggregate(%ptr: !pto.ptr<tensor<2xf32>, ub>) {
+    // expected-error@+1 {{input pointer element type is not supported by PTO: 'tensor<2xf32>'}}
+    %addr = pto.castptr %ptr : !pto.ptr<tensor<2xf32>, ub> -> i64
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @invalid_multidimensional_vector(%addr: i64) {
+    // expected-error@+1 {{result pointer element type is not supported by PTO: 'vector<2x2xf32>'}}
+    %ptr = pto.castptr %addr : i64 -> !pto.ptr<vector<2x2xf32>, ub>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @invalid_scalable_vector(%addr: i64) {
+    // expected-error@+1 {{result pointer element type is not supported by PTO: 'vector<[2]xf32>'}}
+    %ptr = pto.castptr %addr : i64 -> !pto.ptr<vector<[2]xf32>, ub>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @invalid_signed_address(%addr: si64) {
+    // expected-error@+1 {{integer address input must be signless i64}}
+    %ptr = pto.castptr %addr : si64 -> !pto.ptr<i32, ub>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @invalid_unsigned_address(%ptr: !pto.ptr<i32, ub>) {
+    // expected-error@+1 {{integer address result must be signless i64}}
+    %addr = pto.castptr %ptr : !pto.ptr<i32, ub> -> ui64
+    return
+  }
+}

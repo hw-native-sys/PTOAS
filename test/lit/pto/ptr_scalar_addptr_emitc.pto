@@ -6,8 +6,8 @@ module attributes {pto.target_arch = "a2a3"} {
     %c4 = arith.constant 4 : index
     %c8 = arith.constant 8 : index
     %src_off = pto.addptr %src, %c8 : !pto.ptr<f32, gm> -> !pto.ptr<f32, gm>
-    %val = pto.load_scalar %src_off[%c4] : !pto.ptr<f32, gm> -> f32
-    pto.store_scalar %val, %dst[%c4] : !pto.ptr<f32, gm>, f32
+    %val = pto.load %src_off[%c4] : !pto.ptr<f32, gm> -> f32
+    pto.store %val, %dst[%c4] : !pto.ptr<f32, gm>, f32
     return
   }
 }

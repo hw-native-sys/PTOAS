@@ -18,9 +18,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c1 = arith.constant 1 : index
     %c0_i64 = arith.constant 0 : i64
     %c1_i64 = arith.constant 1 : i64
-    %lhs = pto.load_scalar %src[%c0]
+    %lhs = pto.load %src[%c0]
         : !pto.ptr<ui32, gm> -> ui32
-    %rhs = pto.load_scalar %src[%c1]
+    %rhs = pto.load %src[%c1]
         : !pto.ptr<ui32, gm> -> ui32
     %block_idx = pto.get_block_idx
     %outer_cond = arith.cmpi eq, %block_idx, %c0_i64 : i64
@@ -37,9 +37,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       scf.yield %nested#0, %nested#1 : ui32, ui32
     }
 
-    pto.store_scalar %result#0, %dst[%c0]
+    pto.store %result#0, %dst[%c0]
         : !pto.ptr<ui32, gm>, ui32
-    pto.store_scalar %result#1, %dst[%c1]
+    pto.store %result#1, %dst[%c1]
         : !pto.ptr<ui32, gm>, ui32
     return
   }

@@ -10,8 +10,7 @@
 import inspect
 from types import FunctionType
 
-from ptodsl import pto, scalar
-from ptoas.mlir.dialects import arith
+from ptodsl import pto
 from ptodsl._ast_rewrite import PTODSLAstRewriteError, rewrite_jit_function
 
 
@@ -23,13 +22,13 @@ from ptodsl._ast_rewrite import PTODSLAstRewriteError, rewrite_jit_function
 @pto.jit(name="issue_1332_and_kernel", kernel_kind="vector", target="a5")
 def issue_1332_and_kernel(value: pto.i32, divisor: pto.i32, out: pto.ptr(pto.i8, "gm")):
     pred = (divisor != 0) and ((value // divisor) > 0)
-    scalar.store(pred, out, 0)
+    pto.store(pred, out, 0)
 
 
 @pto.jit(name="issue_1332_or_kernel", kernel_kind="vector", target="a5")
 def issue_1332_or_kernel(value: pto.i32, divisor: pto.i32, out: pto.ptr(pto.i8, "gm")):
     pred = (divisor == 0) or ((value // divisor) > 0)
-    scalar.store(pred, out, 0)
+    pto.store(pred, out, 0)
 
 
 # Three-operand chains fold right, matching Python semantics.
@@ -38,13 +37,13 @@ def issue_1332_or_kernel(value: pto.i32, divisor: pto.i32, out: pto.ptr(pto.i8, 
 @pto.jit(name="issue_1332_and_chain", kernel_kind="vector", target="a5")
 def issue_1332_and_chain(a: pto.i32, b: pto.i32, c: pto.i32, out: pto.ptr(pto.i8, "gm")):
     pred = (a > 0) and (b > 0) and (c > 0)
-    scalar.store(pred, out, 0)
+    pto.store(pred, out, 0)
 
 
 @pto.jit(name="issue_1332_or_chain", kernel_kind="vector", target="a5")
 def issue_1332_or_chain(a: pto.i32, b: pto.i32, c: pto.i32, out: pto.ptr(pto.i8, "gm")):
     pred = (a > 0) or (b > 0) or (c > 0)
-    scalar.store(pred, out, 0)
+    pto.store(pred, out, 0)
 
 
 # ``and``/``or`` inside an ``if`` condition and a native ``while`` test.
@@ -53,18 +52,18 @@ def issue_1332_or_chain(a: pto.i32, b: pto.i32, c: pto.i32, out: pto.ptr(pto.i8,
 @pto.jit(name="issue_1332_if_condition", kernel_kind="vector", target="a5")
 def issue_1332_if_condition(a: pto.i32, b: pto.i32, out: pto.ptr(pto.i8, "gm")):
     if (a > 0) and (b > 0):
-        scalar.store(pto.const(1, dtype=pto.i8), out, 0)
+        pto.store(pto.const(1, dtype=pto.i8), out, 0)
     else:
-        scalar.store(pto.const(0, dtype=pto.i8), out, 0)
+        pto.store(pto.const(0, dtype=pto.i8), out, 0)
 
 
 @pto.jit(name="issue_1332_while_test", kernel_kind="vector", target="a5")
 def issue_1332_while_test(x: pto.i32, y: pto.i32, out: pto.ptr(pto.i8, "gm")):
     i = pto.const(0, dtype=pto.i32)
     while (i < y) and (x > 0):
-        scalar.store(pto.const(7, dtype=pto.i8), out, i)
+        pto.store(pto.const(7, dtype=pto.i8), out, i)
         i = i + 1
-    scalar.store(pto.const(9, dtype=pto.i8), out, 0)
+    pto.store(pto.const(9, dtype=pto.i8), out, 0)
 
 
 # ``and``/``or`` in call-argument position and in ``return``.
@@ -73,12 +72,12 @@ def issue_1332_while_test(x: pto.i32, y: pto.i32, out: pto.ptr(pto.i8, "gm")):
 @pto.jit(name="issue_1332_call_argument", kernel_kind="vector", target="a5")
 def issue_1332_call_argument(a: pto.i32, b: pto.i32, out: pto.ptr(pto.i8, "gm")):
     pred = (a > 0) and (b > 0)
-    result = scalar.select(
+    result = pto.select(
         pred,
         pto.const(1, dtype=pto.i32),
         pto.const(0, dtype=pto.i32),
     )
-    scalar.store(result, out, 0)
+    pto.store(result, out, 0)
 
 
 @pto.jit(name="issue_1332_return_position", kernel_kind="vector", target="a5")
@@ -96,9 +95,9 @@ def issue_1332_static_short_circuit(out: pto.ptr(pto.i8, "gm")):
     pred_and = False and (1 // 0)
     pred_or = True or (1 // 0)
     if pred_and is False and pred_or is True:
-        scalar.store(pto.const(1, dtype=pto.i8), out, 0)
+        pto.store(pto.const(1, dtype=pto.i8), out, 0)
     else:
-        scalar.store(pto.const(0, dtype=pto.i8), out, 0)
+        pto.store(pto.const(0, dtype=pto.i8), out, 0)
 
 
 # Runtime integer left operand: the control condition uses non-zero
@@ -109,13 +108,13 @@ def issue_1332_static_short_circuit(out: pto.ptr(pto.i8, "gm")):
 @pto.jit(name="issue_1332_integer_lhs", kernel_kind="vector", target="a5")
 def issue_1332_integer_lhs(x: pto.i32, y: pto.i32, out: pto.ptr(pto.i8, "gm")):
     pred = x and (y > 0)
-    scalar.store(pred, out, 0)
+    pto.store(pred, out, 0)
 
 
 @pto.jit(name="issue_1332_integer_operands", kernel_kind="vector", target="a5")
 def issue_1332_integer_operands(x: pto.i32, y: pto.i32, out: pto.ptr(pto.i32, "gm")):
     pred = x and y
-    scalar.store(pred, out, 0)
+    pto.store(pred, out, 0)
 
 
 
@@ -123,13 +122,13 @@ def issue_1332_integer_operands(x: pto.i32, y: pto.i32, out: pto.ptr(pto.i32, "g
 @pto.jit(name="issue_1332_integer_or_lhs", kernel_kind="vector", target="a5")
 def issue_1332_integer_or_lhs(x: pto.i32, y: pto.i32, out: pto.ptr(pto.i8, "gm")):
     pred = x or (y > 0)
-    scalar.store(pred, out, 0)
+    pto.store(pred, out, 0)
 
 
 @pto.jit(name="issue_1332_flag_integer_rhs", kernel_kind="vector", target="a5")
 def issue_1332_flag_integer_rhs(flag: pto.i1, y: pto.i32, out: pto.ptr(pto.i8, "gm")):
     pred = flag and y
-    scalar.store(pred, out, 0)
+    pto.store(pred, out, 0)
 
 
 # Static floats and ints keep native Python truthiness and operand results at
@@ -142,7 +141,7 @@ def issue_1332_static_float(f: pto.i1, out: pto.ptr(pto.i8, "gm")):
     if pred_a is not True:
         return
     pred_b = 1.0 and f
-    scalar.store(pred_b, out, 0)
+    pto.store(pred_b, out, 0)
 
 
 @pto.jit(name="issue_1332_static_int_operands", kernel_kind="vector", target="a5")
@@ -159,7 +158,7 @@ def issue_1332_static_int_operands(out: pto.ptr(pto.i8, "gm")):
     d = 0 or (1 > 2)
     if d is not False:
         return
-    scalar.store(pto.const(3, dtype=pto.i8), out, 0)
+    pto.store(pto.const(3, dtype=pto.i8), out, 0)
 
 
 # and/or inside an @pto.func helper body.
@@ -173,7 +172,7 @@ def issue_1332_func_and(a: pto.i1, b: pto.i1) -> pto.i1:
 @pto.jit(name="issue_1332_func_call", kernel_kind="vector", target="a5")
 def issue_1332_func_call(x: pto.i32, y: pto.i32, out: pto.ptr(pto.i8, "gm")):
     pred = issue_1332_func_and(x > 0, y > 0)
-    scalar.store(pred, out, 0)
+    pto.store(pred, out, 0)
 
 
 # ``runtime_value and True`` materializes the Python bool to an i1 const in
@@ -183,7 +182,7 @@ def issue_1332_func_call(x: pto.i32, y: pto.i32, out: pto.ptr(pto.i8, "gm")):
 @pto.jit(name="issue_1332_bool_literal_rhs", kernel_kind="vector", target="a5")
 def issue_1332_bool_literal_rhs(f: pto.i1, out: pto.ptr(pto.i8, "gm")):
     pred = f and True
-    scalar.store(pred, out, 0)
+    pto.store(pred, out, 0)
 
 
 # and/or on plain Python operands (lists, strings) keep native truthiness
@@ -206,31 +205,31 @@ def issue_1332_plain_python_operands(out: pto.ptr(pto.i8, "gm")):
     value = pairs and pairs[0]
     if value != (1, 2):
         return
-    scalar.store(pto.const(11, dtype=pto.i8), out, 0)
+    pto.store(pto.const(11, dtype=pto.i8), out, 0)
 
 
 @pto.jit(name="issue_1332_index_lhs", kernel_kind="vector", target="a5")
 def issue_1332_index_lhs(idx: pto.index, y: pto.i32, out: pto.ptr(pto.i8, "gm")):
     pred = idx and (y > 0)
-    scalar.store(pred, out, 0)
+    pto.store(pred, out, 0)
 
 
 @pto.jit(name="issue_1332_int_literal_anchored", kernel_kind="vector", target="a5")
 def issue_1332_int_literal_anchored(x: pto.i32, out: pto.ptr(pto.i32, "gm")):
     pred = x or 2
-    scalar.store(pred, out, 0)
+    pto.store(pred, out, 0)
 
 
 @pto.jit(name="issue_1332_int_literal_vs_i1", kernel_kind="vector", target="a5")
 def issue_1332_int_literal_vs_i1(flag: pto.i1, out: pto.ptr(pto.i8, "gm")):
     pred = flag and 2
-    scalar.store(pred, out, 0)
+    pto.store(pred, out, 0)
 
 
 @pto.jit(name="issue_1332_walrus_rhs", kernel_kind="vector", target="a5")
 def issue_1332_walrus_rhs(flag: pto.i1, out: pto.ptr(pto.i8, "gm")):
     pred = flag and (bound := flag)
-    scalar.store(pred, out, 0)
+    pto.store(pred, out, 0)
 
 
 # Diagnostics: floating-point controls, incompatible branch merges, and the
@@ -240,25 +239,25 @@ def issue_1332_walrus_rhs(flag: pto.i1, out: pto.ptr(pto.i8, "gm")):
 @pto.jit(name="issue_1332_float_control", kernel_kind="vector", target="a5")
 def issue_1332_float_control(x: pto.f32, out: pto.ptr(pto.i8, "gm")):
     pred = x and (x > 0)
-    scalar.store(pred, out, 0)
+    pto.store(pred, out, 0)
 
 
 @pto.jit(name="issue_1332_incompatible_merge", kernel_kind="vector", target="a5")
 def issue_1332_incompatible_merge(x: pto.i32, f: pto.f32, out: pto.ptr(pto.i8, "gm")):
     pred = (x > 0) and f
-    scalar.store(pred, out, 0)
+    pto.store(pred, out, 0)
 
 
 @pto.jit(name="issue_1332_float_rhs_literal", kernel_kind="vector", target="a5")
 def issue_1332_float_rhs_literal(flag: pto.i1, out: pto.ptr(pto.i8, "gm")):
     pred = flag and 0.5
-    scalar.store(pred, out, 0)
+    pto.store(pred, out, 0)
 
 
 @pto.jit(name="issue_1332_no_ast_rewrite", kernel_kind="vector", target="a5", ast_rewrite=False)
 def issue_1332_no_ast_rewrite(x: pto.i32, y: pto.i32, out: pto.ptr(pto.i8, "gm")):
     pred = (x > 0) and (y > 0)
-    scalar.store(pred, out, 0)
+    pto.store(pred, out, 0)
 
 
 def _expect_error(fn, needle, error_type=None):
@@ -299,7 +298,7 @@ def main():
         )
 
     def _has_constant(module, value, expected_type):
-        for op in _ops(module, "arith.constant"):
+        for op in _ops(module, "pto.constant"):
             if not any(str(result.type) == expected_type for result in op.operation.results):
                 continue
             attributes = op.operation.attributes
@@ -312,14 +311,14 @@ def main():
         assert scf_ifs, "expected scf.if in the short-circuit kernel"
         scf_if = scf_ifs[0]
         cond_owner = scf_if.operation.operands[0].owner
-        assert cond_owner is not None and cond_owner.operation.name == "arith.cmpi", (
+        assert cond_owner is not None and cond_owner.operation.name == "pto.cmpi", (
             "scf.if condition must be the LHS comparison",
         )
         names = []
         for block in scf_if.operation.regions[region_index].blocks:
             for child in block.operations:
                 names.extend(op.operation.name for op in _walk(child))
-        assert "arith.floordivsi" in names, f"guarded division missing from region {region_index}"
+        assert "pto.floordiv" in names, f"guarded division missing from region {region_index}"
 
     _guarded_division(issue_1332_and_kernel.mlir_module(), 0)  # and: then region
     _guarded_division(issue_1332_or_kernel.mlir_module(), 1)   # or: else region
@@ -337,7 +336,7 @@ def main():
 
     # A traced RHS would raise ZeroDivisionError; static operands must also
     # leave no division in the IR at all.
-    assert not _ops(issue_1332_static_short_circuit.mlir_module(), "arith.floordivsi")
+    assert not _ops(issue_1332_static_short_circuit.mlir_module(), "pto.floordiv")
 
     int_lhs_module = issue_1332_integer_lhs.mlir_module()
     # Integer LHS becomes a non-zero i1 control condition; the integer operand
@@ -346,20 +345,20 @@ def main():
     assert len(int_lhs_ifs) == 1
     int_lhs_condition = int_lhs_ifs[0].operation.operands[0].owner
     assert int_lhs_condition is not None
-    assert int_lhs_condition.operation.name == "arith.cmpi"
+    assert int_lhs_condition.operation.name == "pto.cmpi"
     predicate = int_lhs_condition.operation.attributes["predicate"]
-    assert predicate.value == int(arith.CmpIPredicate.ne)
-    assert _ops(int_lhs_module, "arith.extui")
+    assert str(predicate) == "#pto.scalar_cmp_predicate<ne>"
+    assert _ops(int_lhs_module, "pto.exti")
     assert _has_result_type(int_lhs_module, "scf.if", "i32")
     int_operands_module = issue_1332_integer_operands.mlir_module()
     # Both integer operands merge back to i32 (Python operand semantics).
     assert _has_result_type(int_operands_module, "scf.if", "i32")
 
     or_lhs_module = issue_1332_integer_or_lhs.mlir_module()
-    assert _ops(or_lhs_module, "arith.extui")
+    assert _ops(or_lhs_module, "pto.exti")
     assert _has_result_type(or_lhs_module, "scf.if", "i32")
     flag_and_module = issue_1332_flag_integer_rhs.mlir_module()
-    assert _ops(flag_and_module, "arith.extui")
+    assert _ops(flag_and_module, "pto.exti")
     assert _has_result_type(flag_and_module, "scf.if", "i32")
     index_lhs_module = issue_1332_index_lhs.mlir_module()
     # index + i1: the index type is kept and the i1 side widens via index_cast.
@@ -371,7 +370,7 @@ def main():
     index_casts = _ops(index_lhs_module, "arith.index_cast")
     assert any(
         op.operation.operands[0].owner is not None
-        and op.operation.operands[0].owner.operation.name == "arith.extui"
+        and op.operation.operands[0].owner.operation.name == "pto.exti"
         for op in index_casts
     ), "i1->index widening must zero-extend via extui first"
     anchored_module = issue_1332_int_literal_anchored.mlir_module()
@@ -393,7 +392,7 @@ def main():
 
     issue_1332_plain_python_operands.compile().mlir_text()
     bool_lit_module = issue_1332_bool_literal_rhs.mlir_module()
-    assert _has_result_type(bool_lit_module, "arith.constant", "i1")
+    assert _has_result_type(bool_lit_module, "pto.constant", "i1")
 
     _expect_error(
         lambda: issue_1332_float_control.compile().mlir_text(),

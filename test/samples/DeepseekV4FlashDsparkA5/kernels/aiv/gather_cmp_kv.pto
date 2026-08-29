@@ -32,7 +32,7 @@ module attributes {pto.target_arch = "a5"} {
     %8 = arith.addi %6, %gather_dt_inline2280__idx_v0 : index
     %flat_offset_mul = arith.muli %8, %c8_index : index
     %flat_offset = arith.addi %flat_offset_mul, %5 : index
-    %gather_block_valid_inline2295__tile = pto.load_scalar %arg1[%flat_offset] : !pto.ptr<i32> -> i32
+    %gather_block_valid_inline2295__tile = pto.load %arg1[%flat_offset] : !pto.ptr<i32> -> i32
     %9 = arith.index_cast %gather_block_valid_inline2295__tile : i32 to index
     %10 = arith.cmpi slt, %c0_index, %9 : index
     scf.if %10 {
@@ -47,13 +47,13 @@ module attributes {pto.target_arch = "a5"} {
         scf.if %15 {
           %16 = arith.muli %8, %c512_index : index
           %17 = arith.addi %16, %14 : index
-          %gather_raw_inline2208__tile = pto.load_scalar %arg2[%17] : !pto.ptr<i32> -> i32
+          %gather_raw_inline2208__tile = pto.load %arg2[%17] : !pto.ptr<i32> -> i32
           %18 = arith.index_cast %gather_raw_inline2208__tile : i32 to index
           %19 = arith.cmpi sle, %c0_index, %18 : index
           scf.if %19 {
             %20 = arith.index_cast %gather_raw_inline2208__tile : i32 to index
             %21 = arith.divsi %20, %c128_index : index
-            %22 = pto.load_scalar %arg3[%21] : !pto.ptr<i32> -> i32
+            %22 = pto.load %arg3[%21] : !pto.ptr<i32> -> i32
             %23 = arith.index_cast %22 : i32 to index
             %24 = arith.muli %23, %c128_index : index
             %25 = arith.index_cast %gather_raw_inline2208__tile : i32 to index

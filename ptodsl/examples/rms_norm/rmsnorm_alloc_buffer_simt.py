@@ -25,7 +25,7 @@ Run this file directly to print the emitted MLIR for one specialization.
 import argparse
 
 
-from ptodsl import pto, scalar
+from ptodsl import pto
 
 
 @pto.simt
@@ -53,18 +53,18 @@ def rmsnorm_simt_token_body(
         x_offset = pingpong * hidden_size + lane_offset
         frag_offset = r * lanes
 
-        x_vec = scalar.load(x_ub, x_offset, contiguous=lanes)
-        scalar.store(x_vec, x_frag, frag_offset)
+        x_vec = pto.load(x_ub, x_offset, contiguous=lanes)
+        pto.store(x_vec, x_frag, frag_offset)
 
-    scalar.store(pto.const(0.0, dtype=pto.f32), sum_sq, 0)
+    pto.store(pto.const(0.0, dtype=pto.f32), sum_sq, 0)
 
     for i in range(0, frag_elems):
-        local_sum = scalar.load(sum_sq, 0)
-        x = scalar.load(x_frag, i)
+        local_sum = pto.load(sum_sq, 0)
+        x = pto.load(x_frag, i)
         local_sum = local_sum + x * x
-        scalar.store(local_sum, sum_sq, 0)
+        pto.store(local_sum, sum_sq, 0)
 
-    local_sum = scalar.load(sum_sq, 0)
+    local_sum = pto.load(sum_sq, 0)
 
     sum_sq = pto.simt_allreduce_sum(
         local_sum,
@@ -76,7 +76,7 @@ def rmsnorm_simt_token_body(
 
     rstd = 1.0 / pto.sqrt(sum_sq / hidden_size + eps)
 
-    scalar.store(rstd, rstd_ub, pingpong * 8)
+    pto.store(rstd, rstd_ub, pingpong * 8)
 
     for r in range(0, rounds):
         round_offset = r * threads * lanes
@@ -85,11 +85,11 @@ def rmsnorm_simt_token_body(
         y_offset = pingpong * hidden_size + lane_base
         frag_offset = r * lanes
 
-        x_vec = scalar.load(x_frag, frag_offset, contiguous=lanes)
-        w_vec = scalar.load(w_ub, lane_base, contiguous=lanes)
+        x_vec = pto.load(x_frag, frag_offset, contiguous=lanes)
+        w_vec = pto.load(w_ub, lane_base, contiguous=lanes)
         rstd_vec = pto.Vec(pto.f32, lanes, init=rstd)
         y_vec = x_vec * rstd_vec * w_vec
-        scalar.store(y_vec, y_ub, y_offset)
+        pto.store(y_vec, y_ub, y_offset)
 
 
 @pto.jit(target="a5", mode="explicit", kernel_kind="vector")

@@ -20,15 +20,15 @@ module attributes {pto.target_arch = "a5"} {
     scf.if %0 {
       %flat_offset_mul = arith.muli %zt_inline2539_inline3356__idx_v0, %c1_index : index
       %flat_offset = arith.addi %flat_offset_mul, %c0_index : index
-      pto.store_scalar %cst_7, %arg0[%flat_offset] : !pto.ptr<f32>, f32
+      pto.store %cst_7, %arg0[%flat_offset] : !pto.ptr<f32>, f32
       scf.for %zk_inline2550_inline3507__idx_v0 = %c0_index to %c6_index step %c1_index {
         %2 = arith.index_cast %c0_index : index to i32
         %3 = arith.muli %zt_inline2539_inline3356__idx_v0, %c6_index : index
         %4 = arith.addi %3, %zk_inline2550_inline3507__idx_v0 : index
-        pto.store_scalar %2, %arg1[%4] : !pto.ptr<i32>, i32
+        pto.store %2, %arg1[%4] : !pto.ptr<i32>, i32
         %6 = arith.muli %zt_inline2539_inline3356__idx_v0, %c6_index : index
         %7 = arith.addi %6, %zk_inline2550_inline3507__idx_v0 : index
-        pto.store_scalar %cst_7, %arg2[%7] : !pto.ptr<f32>, f32
+        pto.store %cst_7, %arg2[%7] : !pto.ptr<f32>, f32
       }
     }
   }

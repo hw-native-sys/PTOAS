@@ -7,7 +7,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 """PTODSL TileLib templates for ``pto.tscatter``."""
 
-from ptodsl import pto, scalar
+from ptodsl import pto
 import ptodsl.tilelib as tilelib
 
 from ._common import NUMERIC_DTYPES

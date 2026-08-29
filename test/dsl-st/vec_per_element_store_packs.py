@@ -21,7 +21,6 @@ import numpy as np
 
 from common import auto_main, golden_output_case
 from ptodsl import pto
-from ptodsl import scalar
 
 
 LANES = 32
@@ -62,10 +61,10 @@ def _make_pack_case(name, dtype, np_dtype, size, recipe):
     def pack_body(inp: pto.ptr(dtype, "gm"), out: pto.ptr(dtype, "gm")):
         tid = pto.get_tid_x()
         pack = pto.Vec(dtype, size, init=tuple(
-            scalar.load(inp, scalar.index_cast(tid * size + index))
+            pto.load(inp, pto.index_cast(tid * size + index))
             for index in pto.static_range(size)
         ))
-        scalar.store(pack, out, scalar.index_cast(tid * size))
+        pto.store(pack, out, pto.index_cast(tid * size))
 
     @pto.jit(
         name=f"{name}_kernel",

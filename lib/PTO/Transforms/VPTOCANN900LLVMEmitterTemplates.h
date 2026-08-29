@@ -295,8 +295,8 @@ template <typename ReduxOp>
 FailureOr<StringRef> buildReduxCallee(MLIRContext *context, Type valueType, Attribute signednessAttr);
 
 template <>
-inline FailureOr<StringRef> buildReduxCallee<pto::ReduxAddOp>(MLIRContext *context, Type valueType,
-                                                              Attribute signednessAttr) {
+inline FailureOr<StringRef> buildReduxCallee<pto::ReduxAddIOp>(MLIRContext *context, Type valueType,
+                                                               Attribute signednessAttr) {
   std::string elem = getReduxIntrinsicTypeFragment(valueType, signednessAttr);
   if (elem.empty()) {
     return failure();
@@ -305,8 +305,18 @@ inline FailureOr<StringRef> buildReduxCallee<pto::ReduxAddOp>(MLIRContext *conte
 }
 
 template <>
-inline FailureOr<StringRef> buildReduxCallee<pto::ReduxMaxOp>(MLIRContext *context, Type valueType,
-                                                              Attribute signednessAttr) {
+inline FailureOr<StringRef> buildReduxCallee<pto::ReduxAddFOp>(MLIRContext *context, Type valueType,
+                                                               Attribute signednessAttr) {
+  std::string elem = getReduxIntrinsicTypeFragment(valueType, signednessAttr);
+  if (elem.empty()) {
+    return failure();
+  }
+  return StringAttr::get(context, "llvm.hivm.redux.add." + elem).getValue();
+}
+
+template <>
+inline FailureOr<StringRef> buildReduxCallee<pto::ReduxMaxIOp>(MLIRContext *context, Type valueType,
+                                                               Attribute signednessAttr) {
   std::string elem = getReduxIntrinsicTypeFragment(valueType, signednessAttr);
   if (elem.empty()) {
     return failure();
@@ -315,8 +325,28 @@ inline FailureOr<StringRef> buildReduxCallee<pto::ReduxMaxOp>(MLIRContext *conte
 }
 
 template <>
-inline FailureOr<StringRef> buildReduxCallee<pto::ReduxMinOp>(MLIRContext *context, Type valueType,
-                                                              Attribute signednessAttr) {
+inline FailureOr<StringRef> buildReduxCallee<pto::ReduxMaxFOp>(MLIRContext *context, Type valueType,
+                                                               Attribute signednessAttr) {
+  std::string elem = getReduxIntrinsicTypeFragment(valueType, signednessAttr);
+  if (elem.empty()) {
+    return failure();
+  }
+  return StringAttr::get(context, "llvm.hivm.redux.max." + elem).getValue();
+}
+
+template <>
+inline FailureOr<StringRef> buildReduxCallee<pto::ReduxMinIOp>(MLIRContext *context, Type valueType,
+                                                               Attribute signednessAttr) {
+  std::string elem = getReduxIntrinsicTypeFragment(valueType, signednessAttr);
+  if (elem.empty()) {
+    return failure();
+  }
+  return StringAttr::get(context, "llvm.hivm.redux.min." + elem).getValue();
+}
+
+template <>
+inline FailureOr<StringRef> buildReduxCallee<pto::ReduxMinFOp>(MLIRContext *context, Type valueType,
+                                                               Attribute signednessAttr) {
   std::string elem = getReduxIntrinsicTypeFragment(valueType, signednessAttr);
   if (elem.empty()) {
     return failure();
@@ -389,22 +419,6 @@ template <> inline FailureOr<StringRef> buildUnaryScalarMathCallee<pto::RoundOp>
 }
 
 template <typename BinaryOp> FailureOr<StringRef> buildBinaryScalarMathCallee(MLIRContext *context, Type valueType);
-
-template <> inline FailureOr<StringRef> buildBinaryScalarMathCallee<pto::FMinOp>(MLIRContext *context, Type valueType) {
-  std::string elem = getLLVMFloatBuiltinFragment(valueType);
-  if (elem != "f16" && elem != "f32" && elem != "bf16" && elem != "v2f16" && elem != "v2bf16") {
-    return failure();
-  }
-  return StringAttr::get(context, "llvm.minnum." + elem).getValue();
-}
-
-template <> inline FailureOr<StringRef> buildBinaryScalarMathCallee<pto::FMaxOp>(MLIRContext *context, Type valueType) {
-  std::string elem = getLLVMFloatBuiltinFragment(valueType);
-  if (elem != "f16" && elem != "f32" && elem != "bf16" && elem != "v2f16" && elem != "v2bf16") {
-    return failure();
-  }
-  return StringAttr::get(context, "llvm.maxnum." + elem).getValue();
-}
 
 template <> inline FailureOr<StringRef> buildBinaryScalarMathCallee<pto::PowOp>(MLIRContext *context, Type valueType) {
   std::string elem = getLLVMFloatBuiltinFragment(valueType);

@@ -1,0 +1,98 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --verify-diagnostics --split-input-file %s
+
+module {
+  func.func @float_predicate_on_integer(%lhs: i32, %rhs: i32) {
+    // expected-error@+1 {{predicate uno requires floating-point operands}}
+    %result = pto.cmpi uno %lhs, %rhs signed : i32
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @bitcast_width_mismatch(%value: i16) {
+    // expected-error@+1 {{requires equal element bit widths}}
+    %result = pto.bitcast %value : i16 -> f32
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @bitcast_shape_mismatch(%value: vector<4xi32>) {
+    // expected-error@+1 {{requires numeric vectors to have the same shape}}
+    %result = pto.bitcast %value : vector<4xi32> -> vector<8xf32>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @bitcast_semantic_attribute(%value: i32) {
+    // expected-error@+1 {{does not accept signedness}}
+    %result = pto.bitcast %value {signedness = #pto.signedness<signed>} : i32 -> f32
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @implicit_integer_ordering(%lhs: i32, %rhs: i32) {
+    // expected-error@+1 {{expected valid keyword}}
+    %result = pto.cmpi gt %lhs, %rhs : i32
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @ambiguous_signless_cast(%value: i16) {
+    // expected-error@+1 {{expected valid keyword}}
+    %result = pto.exti %value : i16 -> i32
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @mismatched_select(%cond: vector<2xi1>, %values: vector<4xi32>) {
+    // expected-error@+1 {{requires a vector condition to match the selected vector shape}}
+    %result = pto.select %cond, %values, %values : vector<2xi1>, vector<4xi32>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @signed_common_integer_type(%lhs: si32, %rhs: si32) {
+    // expected-error@+1 {{operand #0 must be integer, index, or builtin vector of integers}}
+    %result = pto.addi %lhs, %rhs : si32
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @unsigned_common_vector_type(
+      %lhs: vector<4xui32>, %rhs: vector<4xui32>) {
+    // expected-error@+1 {{operand #0 must be integer, index, or builtin vector of integers}}
+    %result = pto.addi %lhs, %rhs : vector<4xui32>
+    return
+  }
+}

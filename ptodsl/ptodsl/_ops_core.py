@@ -59,7 +59,7 @@ from ._types import (
     tensor_view_type_from_dims,
     vreg_type,
 )
-from ptoas.mlir.dialects import arith, pto as _pto
+from ptoas.mlir.dialects import pto as _pto
 from ptoas.mlir.ir import (
     Attribute,
     BF16Type,
@@ -67,7 +67,6 @@ from ptoas.mlir.ir import (
     F32Type,
     Float8E4M3FNType,
     Float8E5M2Type,
-    FloatAttr,
     IndexType,
     IntegerAttr,
     IntegerType,
@@ -84,18 +83,16 @@ from ptoas.mlir.ir import (
 
 def const(value: int, *, dtype=None):
     """
-    Emit an ``arith.constant``.
+    Emit a frontend ``pto.constant``.
 
     ``dtype`` is a ``_DType`` descriptor or a concrete ``ptoas.mlir.ir.Type``.
     Defaults to ``index`` when omitted.
     """
     from ._types import index as _idx_dtype
     mlir_type = _resolve(dtype) if dtype is not None else _resolve(_idx_dtype)
-    if any(cls.isinstance(mlir_type) for cls in (F16Type, BF16Type, F32Type)):
-        return wrap_surface_value(arith.ConstantOp(mlir_type, FloatAttr.get(mlir_type, value)).result)
-    if IntegerType.isinstance(mlir_type):
-        return wrap_surface_value(_materialize_integer_literal(mlir_type, value))
-    return wrap_surface_value(arith.ConstantOp(mlir_type, value).result)
+    return wrap_surface_value(
+        materialize_scalar_literal(value, mlir_type, context="pto.const(...)")
+    )
 
 
 # ── Stack-local structs ──────────────────────────────────────────

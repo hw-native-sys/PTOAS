@@ -10,229 +10,164 @@
 from __future__ import annotations
 
 from ._scalar_adaptation import (
+    _integer_signedness,
+    _restore_authored_integer_type,
+    _signedness_attr,
+    _signless_integer_type,
+    _to_common_integer_value,
     classify_runtime_scalar_type,
     normalize_runtime_binary_operands,
 )
-from ._types import (
-    _integer_signedness,
-    _restore_integer_signedness,
-    _strip_integer_signedness,
-)
-
-from ptoas.mlir.dialects import arith, math
-from ptoas.mlir.ir import IndexType, IntegerType
+from ptoas.mlir.ir import Attribute, IntegerType, Operation, VectorType
 
 
-_FLOAT_BINARY_OPS = {
-    "add": arith.AddFOp,
-    "sub": arith.SubFOp,
-    "mul": arith.MulFOp,
-    "truediv": arith.DivFOp,
+_SHORT_CMP_PREDICATES = {"eq", "ne", "lt", "le", "gt", "ge"}
+_INTEGER_CMP_PREDICATES = _SHORT_CMP_PREDICATES
+_FLOAT_CMP_PREDICATES = _SHORT_CMP_PREDICATES | {
+    "false", "oeq", "ogt", "oge", "olt", "ole", "one", "ord",
+    "ueq", "ugt", "uge", "ult", "ule", "une", "uno", "true",
 }
 
 
-def emit_runtime_binary_op(op_name: str, lhs, rhs):
+def emit_runtime_binary_op(op_name: str, lhs, rhs, *, attributes=None):
     """Lower one authored runtime scalar binary operator."""
-    lhs, rhs, kind = normalize_runtime_binary_operands(lhs, rhs)
+    lhs, rhs, kind = normalize_runtime_binary_operands(
+        lhs, rhs, require_matching_signedness=op_name in
+        {"truediv", "floordiv", "ceildiv", "mod", "shr"})
+    attributes = dict(attributes or {})
     if kind in {"index", "integer"}:
-        op_cls = _integer_binary_op(op_name, lhs.type)
-        if op_cls is None:
+        if "fastmath" in attributes:
+            raise TypeError(
+                f"runtime scalar operator '{op_name}' does not accept fastmath for integer/index values"
+            )
+        mnemonic = {
+            "add": "addi",
+            "sub": "subi",
+            "mul": "muli",
+        }.get(op_name)
+        if op_name == "shl" and kind == "integer":
+            mnemonic = "shl"
+        if op_name in {"truediv", "floordiv", "ceildiv", "mod", "shr"}:
+            signedness = "signed" if kind == "index" else _integer_signedness(lhs.type)
+            mnemonic = _SIGNED_INTEGER_BINARY_OPS[op_name]
+            attributes["signedness"] = _signedness_attr(signedness)
+        if mnemonic is None:
             raise TypeError(f"runtime scalar operator '{op_name}' is not supported for integer/index values")
-        authored_type = lhs.type
-        if kind == "integer":
-            lhs = _strip_integer_signedness(lhs)
-            rhs = _strip_integer_signedness(rhs)
-        result = op_cls(lhs, rhs).result
-        if kind == "index":
-            return result
-        return _restore_runtime_integer_result(result, authored_type)
+        return _emit_binary_pto_op(mnemonic, lhs, rhs, attributes=attributes)
     if kind == "float":
-        op_cls = _FLOAT_BINARY_OPS.get(op_name)
-        if op_cls is None:
+        if "overflowFlags" in attributes:
+            raise TypeError(
+                f"runtime scalar operator '{op_name}' does not accept overflow for floating-point values"
+            )
+        mnemonic = {
+            "add": "addf",
+            "sub": "subf",
+            "mul": "mulf",
+            "truediv": "divf",
+            "mod": "remf",
+        }.get(op_name)
+        if mnemonic is None:
             raise TypeError(f"runtime scalar operator '{op_name}' is not supported for floating-point values")
-        return op_cls(lhs, rhs).result
+        return _emit_binary_pto_op(mnemonic, lhs, rhs, attributes=attributes)
     raise TypeError(f"unsupported runtime scalar operand category '{kind}'")
 
 
-def emit_runtime_max(lhs, rhs):
-    """Lower one authored runtime scalar max operation."""
-    lhs, rhs, kind = normalize_runtime_binary_operands(lhs, rhs)
-    if kind == "float":
-        return arith.MaximumFOp(lhs, rhs).result
-    if kind == "integer":
-        signedness = _integer_signedness(lhs.type)
-        signless_lhs = _strip_integer_signedness(lhs)
-        signless_rhs = _strip_integer_signedness(rhs)
-        if signedness == "unsigned":
-            result = arith.MaxUIOp(signless_lhs, signless_rhs).result
-        else:
-            result = arith.MaxSIOp(signless_lhs, signless_rhs).result
-        return _restore_integer_signedness(result, lhs.type)
-    if kind == "index":
-        cond = arith.CmpIOp(arith.CmpIPredicate.sge, lhs, rhs).result
-        return arith.SelectOp(cond, lhs, rhs).result
-    raise TypeError(f"unsupported runtime scalar operand category '{kind}'")
+def emit_runtime_unary_op(op_name: str, value, *, attributes=None):
+    """Lower one authored runtime scalar unary operator."""
+    kind = classify_runtime_scalar_type(value.type)
+    if op_name != "neg" or kind not in {"index", "integer", "float"}:
+        raise TypeError(
+            f"runtime scalar unary operator '{op_name}' is not supported for {value.type}"
+        )
+    mnemonic = "negf" if kind == "float" else "negi"
+    attributes = dict(attributes or {})
+    if kind == "float" and "overflowFlags" in attributes:
+        raise TypeError("floating-point negation does not accept overflow")
+    if kind != "float" and "fastmath" in attributes:
+        raise TypeError("integer/index negation does not accept fastmath")
+    result = Operation.create(
+        f"pto.{mnemonic}",
+        results=[_signless_integer_type(value.type)],
+        operands=[_to_common_integer_value(value)],
+        attributes=attributes,
+    ).results[0]
+    return _restore_authored_integer_type(result, value.type)
 
 
-def emit_runtime_min(lhs, rhs):
-    """Lower one authored runtime scalar min operation."""
-    lhs, rhs, kind = normalize_runtime_binary_operands(lhs, rhs)
-    if kind == "float":
-        return arith.MinimumFOp(lhs, rhs).result
-    if kind == "integer":
-        signedness = _integer_signedness(lhs.type)
-        signless_lhs = _strip_integer_signedness(lhs)
-        signless_rhs = _strip_integer_signedness(rhs)
-        if signedness == "unsigned":
-            result = arith.MinUIOp(signless_lhs, signless_rhs).result
-        else:
-            result = arith.MinSIOp(signless_lhs, signless_rhs).result
-        return _restore_integer_signedness(result, lhs.type)
-    if kind == "index":
-        cond = arith.CmpIOp(arith.CmpIPredicate.sle, lhs, rhs).result
-        return arith.SelectOp(cond, lhs, rhs).result
-    raise TypeError(f"unsupported runtime scalar operand category '{kind}'")
+def _emit_binary_pto_op(mnemonic: str, lhs, rhs, *, attributes=None):
+    authored_type = lhs.type
+    common_type = _signless_integer_type(authored_type)
+    result = Operation.create(
+        f"pto.{mnemonic}", results=[common_type],
+        operands=[_to_common_integer_value(lhs), _to_common_integer_value(rhs)],
+        attributes=attributes or {},
+    ).results[0]
+    return _restore_authored_integer_type(result, authored_type)
 
 
-def _restore_runtime_integer_result(result, authored_type):
-    if IndexType.isinstance(authored_type):
-        return result
-    if not IntegerType.isinstance(authored_type):
-        return result
-    return _restore_integer_signedness(result, authored_type)
+_SIGNED_INTEGER_BINARY_OPS = {
+    "truediv": "divi",
+    "floordiv": "floordiv",
+    "ceildiv": "ceildiv",
+    "mod": "remi",
+    "shr": "shr",
+}
 
 
-def emit_runtime_compare(op_name: str, lhs, rhs):
+def emit_runtime_compare(op_name: str, lhs, rhs, *, attributes=None):
     """Lower one authored runtime scalar comparison operator."""
-    lhs, rhs, kind = normalize_runtime_binary_operands(lhs, rhs)
-
+    lhs, rhs, kind = normalize_runtime_binary_operands(
+        lhs, rhs, require_matching_signedness=True)
     if kind == "float":
-        predicate = {
-            "lt": arith.CmpFPredicate.OLT,
-            "le": arith.CmpFPredicate.OLE,
-            "gt": arith.CmpFPredicate.OGT,
-            "ge": arith.CmpFPredicate.OGE,
-            "eq": arith.CmpFPredicate.OEQ,
-            "ne": arith.CmpFPredicate.ONE,
-        }.get(op_name)
-        if predicate is None:
-            raise TypeError(f"runtime scalar comparison '{op_name}' is not supported for floating-point values")
-        return arith.CmpFOp(predicate, lhs, rhs).result
-
-    if kind == "index":
-        predicate = {
-            "lt": arith.CmpIPredicate.slt,
-            "le": arith.CmpIPredicate.sle,
-            "gt": arith.CmpIPredicate.sgt,
-            "ge": arith.CmpIPredicate.sge,
-            "eq": arith.CmpIPredicate.eq,
-            "ne": arith.CmpIPredicate.ne,
-        }.get(op_name)
-        if predicate is None:
-            raise TypeError(f"runtime scalar comparison '{op_name}' is not supported for index values")
-        return arith.CmpIOp(predicate, lhs, rhs).result
-
-    if kind == "integer":
-        signedness = _integer_signedness(lhs.type)
-        signed_predicates = {
-            "lt": arith.CmpIPredicate.slt,
-            "le": arith.CmpIPredicate.sle,
-            "gt": arith.CmpIPredicate.sgt,
-            "ge": arith.CmpIPredicate.sge,
-            "eq": arith.CmpIPredicate.eq,
-            "ne": arith.CmpIPredicate.ne,
-        }
-        unsigned_predicates = {
-            "lt": arith.CmpIPredicate.ult,
-            "le": arith.CmpIPredicate.ule,
-            "gt": arith.CmpIPredicate.ugt,
-            "ge": arith.CmpIPredicate.uge,
-            "eq": arith.CmpIPredicate.eq,
-            "ne": arith.CmpIPredicate.ne,
-        }
-        predicate = (unsigned_predicates if signedness == "unsigned" else signed_predicates).get(op_name)
-        if predicate is None:
-            raise TypeError(f"runtime scalar comparison '{op_name}' is not supported for integer values")
-        return arith.CmpIOp(predicate, _strip_integer_signedness(lhs), _strip_integer_signedness(rhs)).result
-
-    raise TypeError(f"unsupported runtime scalar operand category '{kind}'")
+        supported_predicates = _FLOAT_CMP_PREDICATES
+    else:
+        signedness = "signed" if kind == "index" else _integer_signedness(lhs.type)
+        supported_predicates = _INTEGER_CMP_PREDICATES
+    if op_name not in supported_predicates:
+        raise TypeError(f"runtime scalar comparison '{op_name}' is not supported")
+    predicate = Attribute.parse(f"#pto.scalar_cmp_predicate<{op_name}>")
+    result_type = IntegerType.get_signless(1)
+    if VectorType.isinstance(lhs.type):
+        vector_type = VectorType(lhs.type)
+        result_type = VectorType.get(
+            list(vector_type.shape),
+            result_type,
+            scalable=list(vector_type.scalable_dims),
+        )
+    op_attributes = dict(attributes or {})
+    op_attributes["predicate"] = predicate
+    if kind != "float":
+        op_attributes["signedness"] = _signedness_attr(signedness)
+    return Operation.create(
+        "pto.cmpf" if kind == "float" else "pto.cmpi",
+        results=[result_type],
+        operands=[_to_common_integer_value(lhs), _to_common_integer_value(rhs)],
+        attributes=op_attributes,
+    ).results[0]
 
 
 def emit_runtime_bitwise_op(op_name: str, lhs, rhs):
     """Lower one authored runtime scalar bitwise operator."""
     lhs, rhs, kind = normalize_runtime_binary_operands(lhs, rhs)
-    op_cls = {
-        "and": arith.AndIOp,
-        "or": arith.OrIOp,
-        "xor": arith.XOrIOp,
-    }.get(op_name)
-    if op_cls is None:
+    if op_name not in {"and", "or", "xor"}:
         raise TypeError(f"unsupported runtime scalar bitwise operator '{op_name}'")
 
     if kind == "index":
-        return op_cls(lhs, rhs).result
+        return _emit_binary_pto_op(op_name, lhs, rhs)
 
     if kind != "integer":
         raise TypeError(
             f"runtime scalar bitwise operator '{op_name}' expects integer-like operands, got {lhs.type} and {rhs.type}"
         )
 
-    authored_type = lhs.type
-    result = op_cls(_strip_integer_signedness(lhs), _strip_integer_signedness(rhs)).result
-    return _restore_integer_signedness(result, authored_type)
-
-
-def emit_runtime_abs(value):
-    """Lower one authored runtime scalar absolute-value operation."""
-    kind = classify_runtime_scalar_type(value.type)
-    if kind == "float":
-        return math.AbsFOp(value).result
-    if kind == "index":
-        return value
-    if kind == "integer":
-        signedness = _integer_signedness(value.type)
-        if signedness == "unsigned":
-            return value
-        result = math.AbsIOp(_strip_integer_signedness(value)).result
-        return _restore_integer_signedness(result, value.type)
-    raise TypeError(f"unsupported runtime scalar operand category '{kind}'")
-
-
-def _integer_binary_op(op_name: str, authored_type):
-    if IndexType.isinstance(authored_type):
-        return {
-            "add": arith.AddIOp,
-            "sub": arith.SubIOp,
-            "mul": arith.MulIOp,
-            "floordiv": arith.FloorDivSIOp,
-            "mod": arith.RemSIOp,
-        }.get(op_name)
-
-    signedness = _integer_signedness(authored_type)
-    if op_name in {"add", "sub", "mul"}:
-        return {
-            "add": arith.AddIOp,
-            "sub": arith.SubIOp,
-            "mul": arith.MulIOp,
-        }[op_name]
-    if op_name == "floordiv":
-        if signedness == "unsigned":
-            return arith.DivUIOp
-        return arith.FloorDivSIOp
-    if op_name == "mod":
-        if signedness == "unsigned":
-            return arith.RemUIOp
-        return arith.RemSIOp
-    return None
+    return _emit_binary_pto_op(op_name, lhs, rhs)
 
 
 __all__ = [
     "classify_runtime_scalar_type",
-    "emit_runtime_abs",
     "emit_runtime_binary_op",
+    "emit_runtime_unary_op",
     "emit_runtime_compare",
     "emit_runtime_bitwise_op",
-    "emit_runtime_max",
-    "emit_runtime_min",
     "normalize_runtime_binary_operands",
 ]

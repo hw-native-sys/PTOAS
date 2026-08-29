@@ -1363,8 +1363,12 @@ public:
       return rewriter.notifyMatchFailure(op, "unexpected converted redux operand type");
     }
 
+    Attribute signednessAttr;
+    if constexpr (std::is_same_v<ReduxOp, pto::ReduxMaxIOp> || std::is_same_v<ReduxOp, pto::ReduxMinIOp>) {
+      signednessAttr = op.getSignednessAttr();
+    }
     FailureOr<StringRef> calleeName =
-        buildReduxCallee<ReduxOp>(op.getContext(), op.getValue().getType(), op.getSignednessAttr());
+        buildReduxCallee<ReduxOp>(op.getContext(), op.getValue().getType(), signednessAttr);
     if (failed(calleeName)) {
       return rewriter.notifyMatchFailure(op, "unsupported redux VPTO signature");
     }
@@ -1399,8 +1403,12 @@ public:
       return rewriter.notifyMatchFailure(op, "failed to convert atomic pointer type");
     }
 
-    FailureOr<StringRef> calleeName = buildAtomicCallee<AtomicOp>(op.getContext(), op.getPtr().getType(),
-                                                                  op.getValue().getType(), op.getSignednessAttr());
+    Attribute signednessAttr;
+    if constexpr (std::is_same_v<AtomicOp, pto::AtomicMinOp> || std::is_same_v<AtomicOp, pto::AtomicMaxOp>) {
+      signednessAttr = op.getSignednessAttr();
+    }
+    FailureOr<StringRef> calleeName =
+        buildAtomicCallee<AtomicOp>(op.getContext(), op.getPtr().getType(), op.getValue().getType(), signednessAttr);
     if (failed(calleeName)) {
       return rewriter.notifyMatchFailure(op, "unsupported atomic VPTO signature");
     }
@@ -1441,7 +1449,7 @@ public:
     }
 
     FailureOr<StringRef> calleeName = buildAtomicCallee<pto::AtomicCasOp>(
-        op.getContext(), op.getPtr().getType(), op.getValue().getType(), op.getSignednessAttr());
+        op.getContext(), op.getPtr().getType(), op.getValue().getType(), /*signednessAttr=*/{});
     if (failed(calleeName)) {
       return rewriter.notifyMatchFailure(op, "unsupported atomic CAS signature");
     }
@@ -1703,25 +1711,51 @@ private:
   LoweringState &state;
 };
 
-class LowerConvertOpPattern final : public OpConversionPattern<pto::ConvertOp> {
+template <typename OpTy> class LowerGenericConversionOpPattern final : public OpConversionPattern<OpTy> {
 public:
-  explicit LowerConvertOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
-      : OpConversionPattern<pto::ConvertOp>(typeConverter, context), state(state) {}
+  LowerGenericConversionOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+      : OpConversionPattern<OpTy>(typeConverter, context), state(state) {}
 
-  LogicalResult matchAndRewrite(pto::ConvertOp op, pto::ConvertOp::Adaptor adaptor,
+  LogicalResult matchAndRewrite(OpTy op, typename OpTy::Adaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
-    Type resultType = getTypeConverter()->convertType(op.getDst().getType());
+    Type resultType = this->getTypeConverter()->convertType(op.getDst().getType());
     if (!resultType) {
       return rewriter.notifyMatchFailure(op, "failed to convert result type");
     }
 
-    FailureOr<StringRef> calleeName =
-        buildConvertCallee(op.getContext(), op.getSrc().getType(), op.getDst().getType(), op.getSignednessAttr());
+    FailureOr<StringRef> calleeName = buildConvertCallee(op.getContext(), op.getSrc().getType(), op.getDst().getType(),
+                                                         op->getAttr("signedness"));
     if (failed(calleeName)) {
-      return rewriter.notifyMatchFailure(op, "unsupported convert signature");
+      return rewriter.notifyMatchFailure(op, "unsupported conversion signature");
     }
 
-    Value rounding = getI32Constant(rewriter, op.getLoc(), static_cast<uint64_t>(op.getRounding()));
+    uint64_t roundingValue = static_cast<uint64_t>(pto::Rounding::R);
+    if (auto rounding = op.getRoundingmodeAttr()) {
+      switch (rounding.getValue()) {
+      case pto::FloatRoundingMode::to_nearest_even:
+        roundingValue = static_cast<uint64_t>(pto::Rounding::R);
+        break;
+      case pto::FloatRoundingMode::to_nearest_away:
+        roundingValue = static_cast<uint64_t>(pto::Rounding::A);
+        break;
+      case pto::FloatRoundingMode::downward:
+        roundingValue = static_cast<uint64_t>(pto::Rounding::F);
+        break;
+      case pto::FloatRoundingMode::upward:
+        roundingValue = static_cast<uint64_t>(pto::Rounding::C);
+        break;
+      case pto::FloatRoundingMode::toward_zero:
+        roundingValue = static_cast<uint64_t>(pto::Rounding::Z);
+        break;
+      case pto::FloatRoundingMode::to_odd:
+        roundingValue = static_cast<uint64_t>(pto::Rounding::O);
+        break;
+      case pto::FloatRoundingMode::hybrid:
+        roundingValue = static_cast<uint64_t>(pto::Rounding::H);
+        break;
+      }
+    }
+    Value rounding = getI32Constant(rewriter, op.getLoc(), roundingValue);
     Value saturation = getI32Constant(rewriter, op.getLoc(), static_cast<uint64_t>(op.getSaturation()));
 
     auto funcType = rewriter.getFunctionType(
@@ -1816,8 +1850,10 @@ static void populateVPTOSIMTAndScalarPatterns(VPTOTypeConverter &typeConverter, 
       LowerVoteOpPattern<pto::VoteAllOp>, LowerVoteOpPattern<pto::VoteAnyOp>, LowerVoteOpPattern<pto::VoteUniOp>,
       LowerVoteOpPattern<pto::VoteBallotOp>, LowerShuffleOpPattern<pto::ShuffleIdxOp>,
       LowerShuffleOpPattern<pto::ShuffleUpOp>, LowerShuffleOpPattern<pto::ShuffleDownOp>,
-      LowerShuffleOpPattern<pto::ShuffleBflyOp>, LowerReduxOpPattern<pto::ReduxAddOp>,
-      LowerReduxOpPattern<pto::ReduxMaxOp>, LowerReduxOpPattern<pto::ReduxMinOp>, LowerAtomicCasOpPattern,
+      LowerShuffleOpPattern<pto::ShuffleBflyOp>, LowerReduxOpPattern<pto::ReduxAddIOp>,
+      LowerReduxOpPattern<pto::ReduxAddFOp>, LowerReduxOpPattern<pto::ReduxMaxIOp>,
+      LowerReduxOpPattern<pto::ReduxMaxFOp>, LowerReduxOpPattern<pto::ReduxMinIOp>,
+      LowerReduxOpPattern<pto::ReduxMinFOp>, LowerAtomicCasOpPattern,
       LowerAtomicBinaryOpPattern<pto::AtomicExchOp>, LowerAtomicBinaryOpPattern<pto::AtomicAddOp>,
       LowerAtomicBinaryOpPattern<pto::AtomicSubOp>, LowerAtomicBinaryOpPattern<pto::AtomicMinOp>,
       LowerAtomicBinaryOpPattern<pto::AtomicMaxOp>, LowerAtomicBinaryOpPattern<pto::AtomicAndOp>,
@@ -1826,9 +1862,10 @@ static void populateVPTOSIMTAndScalarPatterns(VPTOTypeConverter &typeConverter, 
       LowerUnaryScalarMathOpPattern<pto::AbsFOp>, LowerUnaryScalarMathOpPattern<pto::ExpOp>,
       LowerUnaryScalarMathOpPattern<pto::LogOp>, LowerUnaryScalarMathOpPattern<pto::CeilOp>,
       LowerUnaryScalarMathOpPattern<pto::FloorOp>, LowerUnaryScalarMathOpPattern<pto::RintOp>,
-      LowerUnaryScalarMathOpPattern<pto::RoundOp>, LowerBinaryScalarMathOpPattern<pto::FMinOp>,
-      LowerBinaryScalarMathOpPattern<pto::FMaxOp>, LowerBinaryScalarMathOpPattern<pto::PowOp>, LowerFmaOpPattern,
-      LowerConvertOpPattern, LowerSimtFenceOpPattern<pto::SyncthreadsOp>, LowerSimtFenceOpPattern<pto::ThreadfenceOp>,
+      LowerUnaryScalarMathOpPattern<pto::RoundOp>, LowerBinaryScalarMathOpPattern<pto::PowOp>, LowerFmaOpPattern,
+      LowerGenericConversionOpPattern<pto::FToFOp>, LowerGenericConversionOpPattern<pto::FToIOp>,
+      LowerGenericConversionOpPattern<pto::IToFOp>, LowerSimtFenceOpPattern<pto::SyncthreadsOp>,
+      LowerSimtFenceOpPattern<pto::ThreadfenceOp>,
       LowerSimtFenceOpPattern<pto::ThreadfenceBlockOp>, LowerKeepOpPattern, LowerResumeOpPattern,
       LowerBinaryI64PureOpPattern<pto::Sbitset0Op>, LowerBinaryI64PureOpPattern<pto::Sbitset1Op>,
       LowerSetLoopConfigOpPattern<pto::SetLoop2StrideOutToUbOp>,

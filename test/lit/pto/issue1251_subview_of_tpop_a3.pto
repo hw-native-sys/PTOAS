@@ -72,7 +72,7 @@ module attributes {pto.target_arch = "a2a3"} {
 // IR: %[[SHARD:.*]] = pto.declare_tile
 // IR: pto.tpop(%[[SHARD]],
 // IR: %[[BASE_PTR:.*]] = pto.tile_buf_addr %[[SHARD]]
-// IR: %[[BASE_I64:.*]] = pto.ptrtoint %[[BASE_PTR]]
+// IR: %[[BASE_I64:.*]] = pto.castptr %[[BASE_PTR]]
 // IR: %[[ADDR:.*]] = arith.addi %[[BASE_I64]],
 // IR: %[[SUB:.*]] = pto.alloc_tile addr = %[[ADDR]] {pto.view_semantics = "subview"}
 // IR: pto.tstore ins(%[[SUB]]

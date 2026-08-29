@@ -7,7 +7,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
-from ptodsl import pto, scalar
+from ptodsl import pto
 
 
 @pto.jit(name="issue_1126_bool_merge", target="a5")
@@ -15,7 +15,7 @@ def issue_1126_bool_merge(flag: pto.ptr(pto.i8, "gm")) -> pto.i32:
     cond = pto.const(0, dtype=pto.i1)
 
     if pto.const(1, dtype=pto.i32):
-        cond = scalar.load(flag, 0)
+        cond = pto.load(flag, 0)
 
     if cond:
         return pto.const(42, dtype=pto.i32)
@@ -52,14 +52,14 @@ def issue_1126_integer_widths(
     flag_ui32 = _explicit_integer_bool_merge(ui32_value)
     flag_ui64 = _explicit_integer_bool_merge(ui64_value)
     result = pto.const(0, dtype=pto.i32)
-    result = scalar.select(flag_i8, pto.const(1, dtype=pto.i32), result)
-    result = scalar.select(flag_i16, pto.const(1, dtype=pto.i32), result)
-    result = scalar.select(flag_i32, pto.const(1, dtype=pto.i32), result)
-    result = scalar.select(flag_i64, pto.const(1, dtype=pto.i32), result)
-    result = scalar.select(flag_ui8, pto.const(1, dtype=pto.i32), result)
-    result = scalar.select(flag_ui16, pto.const(1, dtype=pto.i32), result)
-    result = scalar.select(flag_ui32, pto.const(1, dtype=pto.i32), result)
-    result = scalar.select(flag_ui64, pto.const(1, dtype=pto.i32), result)
+    result = pto.select(flag_i8, pto.const(1, dtype=pto.i32), result)
+    result = pto.select(flag_i16, pto.const(1, dtype=pto.i32), result)
+    result = pto.select(flag_i32, pto.const(1, dtype=pto.i32), result)
+    result = pto.select(flag_i64, pto.const(1, dtype=pto.i32), result)
+    result = pto.select(flag_ui8, pto.const(1, dtype=pto.i32), result)
+    result = pto.select(flag_ui16, pto.const(1, dtype=pto.i32), result)
+    result = pto.select(flag_ui32, pto.const(1, dtype=pto.i32), result)
+    result = pto.select(flag_ui64, pto.const(1, dtype=pto.i32), result)
     return result
 
 
@@ -75,11 +75,11 @@ def issue_1126_incompatible_merge(value: pto.i32) -> pto.i32:
 
 def main():
     mlir = issue_1126_bool_merge.compile().mlir_text()
-    assert "arith.cmpi ne" in mlir
-    assert "arith.cmpi ne" in mlir and "i8" in mlir
+    assert "pto.cmpi ne" in mlir
+    assert "pto.cmpi ne" in mlir and "i8" in mlir
 
     widths_mlir = issue_1126_integer_widths.compile().mlir_text()
-    assert widths_mlir.count("arith.cmpi ne") == 8
+    assert widths_mlir.count("pto.cmpi ne") == 8
     for width in ("i8", "i16", "i32", "i64"):
         assert width in widths_mlir
 

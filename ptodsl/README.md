@@ -15,9 +15,9 @@ root install flows described below.
 ```
 ptodsl/
 ├── ptodsl/              # pip-installable package
-│   ├── __init__.py      # exports: pto, scalar
+│   ├── __init__.py      # exports: pto
 │   ├── pto.py           # main PTO DSL namespace
-│   ├── scalar.py        # top-level scalar.* helper namespace
+│   ├── _scalar.py       # internal implementation for pto.* scalar helpers
 │   ├── _context.py      # MLIR context factory
 │   ├── _types.py        # lazy dtype descriptors and type constructors
 │   ├── _ops.py          # PTO operation wrappers
@@ -56,7 +56,7 @@ pip install -e . --no-build-isolation
 Install verification:
 
 ```bash
-python3 -c "import ptodsl; from ptodsl import pto, scalar; print(ptodsl.__file__)"
+python3 -c "import ptodsl; from ptodsl import pto; print(ptodsl.__file__)"
 ```
 
 Not supported:
@@ -222,10 +222,11 @@ The example exercises the PTODSL surfaces needed by this style of kernel:
 
 - SIMT-local `pto.alloc_buffer(...)` for per-thread fragment storage
 - hand-authored dynamic UB scratch layout with `pto.castptr` / `pto.addptr`
-- contiguous vector loads through `scalar.load(..., contiguous=N)` and vector
-  stores through `scalar.store(vector, ...)`
+- contiguous vector loads through `pto.load(..., contiguous=N)` and vector
+  stores through `pto.store(vector, ...)`
 - `pto.Vec(..., init=scalar)` for scalar-to-vector broadcast
-- `pto.simt_allreduce_sum(...)` lowered inline through `pto.redux_add` and
+- `pto.simt_allreduce_sum(...)` lowered inline through the type-specific
+  `pto.redux_addi` / `pto.redux_addf` operation and
   `pto.syncthreads`
 - explicit pipe `set_flag` / `wait_flag` synchronization, including dynamic
   ping-pong event ids inside the token loop
@@ -239,7 +240,8 @@ python3 ptodsl/examples/rms_norm/rmsnorm_alloc_buffer_simt.py --variant x64 > /t
 Expected: MLIR containing `@rmsnorm_4096_alloc_buffer_simt_context_kernel`,
 the named SIMT helper `@rmsnorm_simt_token_body__simt_...`, explicit
 `pto.simt_launch`, `scf.for`, `vector<4xf32>`, `llvm.alloca` for local
-fragments, inline `pto.redux_add` / `pto.syncthreads` allreduce operations, and
+fragments, inline `pto.redux_addi` / `pto.redux_addf` and `pto.syncthreads`
+allreduce operations, and
 dynamic `pto.set_flag_dyn` / `pto.wait_flag_dyn` operations for the ping-pong
 events.
 
@@ -344,7 +346,7 @@ reference. This README keeps only a compact map of the public surface:
 - `pto.ptr(...)` + runtime PTO scalar annotations: public entry ABI
 - `pto.make_tensor_view(...)`, `pto.partition_view(...)`, `pto.alloc_tile(...)`:
   core data-model builders
-- `pto.tile.*`, `pto.mte_*`, `pto.v*`, `scalar.*`: operational namespaces
+- `pto.tile.*`, `pto.mte_*`, `pto.v*`, and `pto.*` scalar helpers: operational surfaces
 - default AST rewrite for Python `for` / `if`, plus explicit `pto.for_` /
   `pto.if_`: control-flow surface
 

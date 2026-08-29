@@ -561,7 +561,7 @@ subprocess unless the projects deliberately share one compatible runtime.
 from ptoas.mlir import ir
 from ptoas.mlir.dialects import pto
 import ptodsl
-from ptodsl import pto as dsl_pto, scalar
+from ptodsl import pto as dsl_pto
 ```
 
 The test must create a context and module, register the PTO dialect, compile a

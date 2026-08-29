@@ -10,7 +10,7 @@ module attributes {pto.target_arch = "a5"} {
   %seq_lens__ssa_v0_view = pto.make_tensor_view %arg0, shape = [%c16_index], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xi32>
   %k_idx__ssa_v9_view = pto.make_tensor_view %arg1, shape = [%c16_index, %c128_index], strides = [%c128_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
   %k_cache_idx__iter_v1_view = pto.make_tensor_view %arg2, shape = [%c65536_index, %c128_index], strides = [%c128_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
-  %0 = pto.load_scalar %arg0[%arg3] : !pto.ptr<i32> -> i32
+  %0 = pto.load %arg0[%arg3] : !pto.ptr<i32> -> i32
   %1 = arith.index_cast %0 : i32 to index
   %2 = arith.subi %1, %c1_index : index
   %3 = arith.muli %arg3, %c4096_index : index

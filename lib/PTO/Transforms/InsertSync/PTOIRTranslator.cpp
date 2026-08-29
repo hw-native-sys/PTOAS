@@ -376,18 +376,17 @@ void PTOIRTranslator::RecursionIR(Region *region) {
     else if (auto addPtrOp = dyn_cast<pto::AddPtrOp>(op)) {
       UpdateAliasBufferInfo(addPtrOp.getResult(), addPtrOp.getPtr());
     }
-    else if (auto ptrToIntOp = dyn_cast<pto::PtrToIntOp>(op)) {
-      UpdateAliasBufferInfo(ptrToIntOp.getResult(), ptrToIntOp.getPtr());
-    }
-    else if (auto intToPtrOp = dyn_cast<pto::IntToPtrOp>(op)) {
-      if (failed(UpdateIntToPtrOpMemInfo(intToPtrOp))) {
-        return WalkResult::interrupt();
-      }
-    }
     else if (auto castPtrOp = dyn_cast<pto::CastPtrOp>(op)) {
       if (isa<pto::PtrType>(castPtrOp.getInput().getType()) &&
           isa<pto::PtrType>(castPtrOp.getResult().getType())) {
         UpdateAliasBufferInfo(castPtrOp.getResult(), castPtrOp.getInput());
+      } else if (isa<pto::PtrType>(castPtrOp.getInput().getType()) &&
+                 isa<IntegerType>(castPtrOp.getResult().getType())) {
+        UpdateAliasBufferInfo(castPtrOp.getResult(), castPtrOp.getInput());
+      } else if (isa<IntegerType>(castPtrOp.getInput().getType()) &&
+                 isa<pto::PtrType>(castPtrOp.getResult().getType()) &&
+                 failed(UpdateIntegerToPtrCastMemInfo(castPtrOp))) {
+        return WalkResult::interrupt();
       }
     }
     else if (auto subViewOp = dyn_cast<pto::SubViewOp>(op)) {
@@ -422,12 +421,6 @@ void PTOIRTranslator::RecursionIR(Region *region) {
       UpdateMacroOpInfo(op);
     } else if (auto callOp = dyn_cast<func::CallOp>(op)) {
       UpdateHelperCallInfo(callOp);
-    } else if (isa<pto::LoadScalarOp, pto::StoreScalarOp>(op)) {
-      // Scalar GM pointer accesses do not implement OpPipeInterface, but they
-      // execute on PIPE_S and can race with async MTE/FIX tile stores touching
-      // the same GM payload.
-      UpdatePTOOpInfoWithPipeline(op, pto::PipelineType::PIPE_S,
-                                  /*skipIfNoMemInfo=*/true);
     } else if (isa<pto::OpPipeInterface>(op)) {
       // --- Case D: 带有 OpPipeInterface 的计算/搬运指令 ---
       UpdatePTOOpInfo(op);
@@ -914,20 +907,23 @@ void PTOIRTranslator::UpdateConservativeAliasBufferInfo(Value result,
   UpdateAliasBufferInfo(result, source);
 }
 
-LogicalResult PTOIRTranslator::UpdateIntToPtrOpMemInfo(pto::IntToPtrOp op) {
+LogicalResult
+PTOIRTranslator::UpdateIntegerToPtrCastMemInfo(pto::CastPtrOp op) {
   Value result = op.getResult();
   if (!result) {
     return failure();
   }
 
   // Preserve provenance across the explicit byte-address round trip:
-  //   %addr = pto.ptrtoint %ptr
-  //   %ptr2 = pto.inttoptr %addr
+  //   %addr = pto.castptr %ptr : !pto.ptr<T> -> i64
+  //   %ptr2 = pto.castptr %addr : i64 -> !pto.ptr<U>
   // `ptr2` is the same address as `ptr`, possibly with a different element
   // type, so scalar memory ops must participate in the same GM dependency
   // chain as tile stores/loads through the original pointer.
-  if (auto ptrToInt = op.getAddr().getDefiningOp<pto::PtrToIntOp>()) {
-    UpdateConservativeAliasBufferInfo(result, ptrToInt.getPtr());
+  if (auto ptrToInt = op.getInput().getDefiningOp<pto::CastPtrOp>();
+      ptrToInt && isa<pto::PtrType>(ptrToInt.getInput().getType()) &&
+      isa<IntegerType>(ptrToInt.getResult().getType())) {
+    UpdateConservativeAliasBufferInfo(result, ptrToInt.getInput());
     if (buffer2MemInfoMap_.contains(result)) {
       return success();
     }

@@ -29,7 +29,7 @@ module {
       %eid_after = scf.while (%eid = %expert_id) : (index) -> index {
         %lt_e = arith.cmpi slt, %eid, %c2 : index
         %go = scf.if %lt_e -> (i1) {
-          %thr_i32 = pto.load_scalar %psum[%eid] : !pto.ptr<i32, gm> -> i32
+          %thr_i32 = pto.load %psum[%eid] : !pto.ptr<i32, gm> -> i32
           %thr = arith.index_cast %thr_i32 : i32 to index
           %thr_plus = arith.addi %thr, %c7 : index
           %thr_div = arith.divui %thr_plus, %c8 : index
@@ -47,7 +47,7 @@ module {
       }
       %lt_e2 = arith.cmpi slt, %eid_after, %c2 : index
       %valid = scf.if %lt_e2 -> (i1) {
-        %end_i32 = pto.load_scalar %psum[%eid_after] : !pto.ptr<i32, gm> -> i32
+        %end_i32 = pto.load %psum[%eid_after] : !pto.ptr<i32, gm> -> i32
         %end = arith.index_cast %end_i32 : i32 to index
         %lt_tok = arith.cmpi ult, %token_id, %end : index
         scf.yield %lt_tok : i1
@@ -59,7 +59,7 @@ module {
       } else {
         scf.yield %c0_i32 : i32
       }
-      pto.store_scalar %val, %out[%token_id] : !pto.ptr<i32, gm>, i32
+      pto.store %val, %out[%token_id] : !pto.ptr<i32, gm>, i32
       scf.yield %eid_after : index
     }
     return

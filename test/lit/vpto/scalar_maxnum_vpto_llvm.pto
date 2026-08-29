@@ -1,0 +1,36 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s
+// RUN: ptoas --cann-output-version=9.0.0 --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @scalar_maxnum(
+      %lhs_ptr: !pto.ptr<f32, gm>,
+      %rhs_ptr: !pto.ptr<f32, gm>,
+      %dst: !pto.ptr<f32, gm>) attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %lhs = pto.load %lhs_ptr[%c0] : !pto.ptr<f32, gm> -> f32
+    %rhs = pto.load %rhs_ptr[%c0] : !pto.ptr<f32, gm> -> f32
+    %max = arith.maxnumf %lhs, %rhs : f32
+    %min = arith.minnumf %lhs, %rhs : f32
+    %sum = arith.addf %max, %min : f32
+    pto.store %sum, %dst[%c0] : !pto.ptr<f32, gm>, f32
+    return
+  }
+}
+
+// CHECK-LABEL: define void @scalar_maxnum
+// CHECK: fcmp ugt float
+// CHECK: select i1
+// CHECK: fcmp uno float
+// CHECK: select i1
+// CHECK: fcmp ult float
+// CHECK: select i1
+// CHECK: fcmp uno float
+// CHECK: select i1

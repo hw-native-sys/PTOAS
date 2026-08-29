@@ -16,7 +16,6 @@ from importlib.util import module_from_spec, spec_from_file_location
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 from ptodsl import pto
-from ptodsl import scalar
 from ptodsl._context import make_context
 from ptodsl._runtime.toolchain import resolve_ptoas_binary
 from ptoas.mlir.ir import Module
@@ -241,11 +240,11 @@ def host_vec_copy(
 @pto.simt
 def simt_gm_memory_core_body(gm: pto.ptr(pto.i32, "gm")):
     tx = pto.get_tid_x()
-    src_idx = scalar.index_cast(tx)
-    loaded = scalar.load(gm, src_idx)
+    src_idx = pto.index_cast(tx)
+    loaded = pto.load(gm, src_idx)
     with_bias = loaded + tx + 1000
-    scalar.store(with_bias, gm, scalar.index_cast(tx + 32))
-    scalar.store(tx, gm, scalar.index_cast(tx + 64))
+    pto.store(with_bias, gm, pto.index_cast(tx + 32))
+    pto.store(tx, gm, pto.index_cast(tx + 64))
 
 
 @pto.jit(target="a5", mode="explicit")
@@ -346,11 +345,11 @@ def vec_value_arith_simt_body(
 ):
     tid = pto.get_tid_x()
     base = tid * 4
-    x4 = scalar.load(A_ptr, base, contiguous=4)
-    y4 = scalar.load(A_ptr, 32 + base, contiguous=4)
-    scalar.store(x4 + y4, O_ptr, base)
-    scalar.store(x4 - y4, O_ptr, 32 + base)
-    scalar.store(x4 * y4, O_ptr, 64 + base)
+    x4 = pto.load(A_ptr, base, contiguous=4)
+    y4 = pto.load(A_ptr, 32 + base, contiguous=4)
+    pto.store(x4 + y4, O_ptr, base)
+    pto.store(x4 - y4, O_ptr, 32 + base)
+    pto.store(x4 * y4, O_ptr, 64 + base)
 
 
 @pto.jit(target="a5", mode="explicit")
@@ -701,9 +700,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
         "vec_value_arith_frontend source MLIR should lower through a SIMT launch",
     )
     expect(
-        "arith.addf" in vec_arith_text
-        and "arith.subf" in vec_arith_text
-        and "arith.mulf" in vec_arith_text,
+        "pto.addf" in vec_arith_text
+        and "pto.subf" in vec_arith_text
+        and "pto.mulf" in vec_arith_text,
         "vec_value_arith_frontend source MLIR should contain all three VecValue arithmetic ops before frontend verification",
     )
     vec_arith_frontend_texts = run_ptoas_frontend_verify(
@@ -717,8 +716,16 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     )
     vec_arith_frontend_text = vec_arith_frontend_texts[0]
     expect(
-        vec_arith_frontend_text == "",
-        "vec_value_arith_frontend should compile through the VPTO fallback object path when --emit-pto-ir is unavailable",
+        "arith.addf" in vec_arith_frontend_text
+        and "arith.subf" in vec_arith_frontend_text
+        and "arith.mulf" in vec_arith_frontend_text,
+        "vec_value_arith_frontend should lower PTO vector arithmetic to standard arith operations",
+    )
+    expect(
+        "pto.addf" not in vec_arith_frontend_text
+        and "pto.subf" not in vec_arith_frontend_text
+        and "pto.mulf" not in vec_arith_frontend_text,
+        "vec_value_arith_frontend should not retain lowered PTO vector arithmetic operations",
     )
 
     print("ptodsl_ptoas_frontend_verify: PASS")

@@ -17,15 +17,25 @@ from ._runtime_scalar_ops import (
     emit_runtime_binary_op,
     emit_runtime_bitwise_op,
     emit_runtime_compare,
+    emit_runtime_unary_op,
 )
 from ._scalar_adaptation import coerce_runtime_index_value, normalize_runtime_binary_operands
 from ._surface_types import PartitionTensorView, TensorView, Tile
 from ._types import _normalize_address_space, _resolve, ptr
 
-from ptoas.mlir.dialects import arith
 from ptoas.mlir.dialects import memref
 from ptoas.mlir.dialects import pto as _pto
-from ptoas.mlir.ir import IndexType, IntegerAttr, IntegerType, MemRefType, ShapedType, StridedLayoutAttr, Type, VectorType
+from ptoas.mlir.ir import (
+    IndexType,
+    IntegerAttr,
+    IntegerType,
+    MemRefType,
+    Operation,
+    ShapedType,
+    StridedLayoutAttr,
+    Type,
+    VectorType,
+)
 
 
 def _validate_surface_value_access(value):
@@ -97,7 +107,12 @@ def _normalize_index(value):
 
 
 def _index_const(value: int):
-    return arith.ConstantOp(IndexType.get(), value).result
+    index_type = IndexType.get()
+    return Operation.create(
+        "pto.constant",
+        results=[index_type],
+        attributes={"value": IntegerAttr.get(index_type, value)},
+    ).results[0]
 
 
 def _add_index(lhs, rhs):
@@ -113,18 +128,20 @@ def _add_index(lhs, rhs):
         lhs = _index_const(lhs)
     if _is_python_index_literal(rhs):
         rhs = _index_const(rhs)
-    return arith.AddIOp(lhs, rhs).result
+    return Operation.create(
+        "pto.addi", results=[lhs.type], operands=[lhs, rhs]
+    ).results[0]
 
 
 def _try_get_constant_index(value) -> int | None:
-    """Return a compile-time index when *value* is a Python int or ``arith.constant``."""
+    """Return a compile-time index from a Python or scalar IR constant."""
     if _is_python_index_literal(value):
         return value
     raw = unwrap_surface_value(value)
     owner = getattr(raw, "owner", None)
     if owner is None or not hasattr(owner, "operation"):
         return None
-    if owner.operation.name != "arith.constant":
+    if owner.operation.name not in {"pto.constant", "arith.constant"}:
         return None
     attrs = owner.operation.attributes
     if "value" not in attrs:
@@ -254,6 +271,9 @@ class RuntimeValue(_SurfaceValue):
     def __int__(self):
         raise native_python_control_flow_error("int() coercion")
 
+    def __neg__(self):
+        return wrap_surface_value(emit_runtime_unary_op("neg", self.value))
+
     def __add__(self, other):
         return wrap_surface_value(emit_runtime_binary_op("add", self.value, unwrap_surface_value(other)))
 
@@ -326,6 +346,18 @@ class RuntimeValue(_SurfaceValue):
     def __rxor__(self, other):
         return wrap_surface_value(emit_runtime_bitwise_op("xor", unwrap_surface_value(other), self.value))
 
+    def __lshift__(self, other):
+        return wrap_surface_value(emit_runtime_binary_op("shl", self.value, unwrap_surface_value(other)))
+
+    def __rlshift__(self, other):
+        return wrap_surface_value(emit_runtime_binary_op("shl", unwrap_surface_value(other), self.value))
+
+    def __rshift__(self, other):
+        return wrap_surface_value(emit_runtime_binary_op("shr", self.value, unwrap_surface_value(other)))
+
+    def __rrshift__(self, other):
+        return wrap_surface_value(emit_runtime_binary_op("shr", unwrap_surface_value(other), self.value))
+
 
 class VecValue(_SurfaceValue):
     """Author-facing builtin vector value backed by an MLIR vector SSA value."""
@@ -339,6 +371,9 @@ class VecValue(_SurfaceValue):
             raise TypeError(f"PTODSL builtin vectors must be rank-1, got {value.type}")
         self.size = int(vec_type.shape[0])
         self.element_type = vec_type.element_type
+
+    def __neg__(self):
+        return VecValue(emit_runtime_unary_op("neg", self.value))
 
     def __add__(self, other):
         return _emit_vec_binary_op("add", self, other)
@@ -358,16 +393,106 @@ class VecValue(_SurfaceValue):
     def __rmul__(self, other):
         return _emit_vec_binary_op("mul", other, self)
 
+    def __truediv__(self, other):
+        return _emit_vec_binary_op("truediv", self, other)
+
+    def __rtruediv__(self, other):
+        return _emit_vec_binary_op("truediv", other, self)
+
+    def __floordiv__(self, other):
+        return _emit_vec_binary_op("floordiv", self, other)
+
+    def __rfloordiv__(self, other):
+        return _emit_vec_binary_op("floordiv", other, self)
+
+    def __mod__(self, other):
+        return _emit_vec_binary_op("mod", self, other)
+
+    def __rmod__(self, other):
+        return _emit_vec_binary_op("mod", other, self)
+
+    def __lt__(self, other):
+        return _emit_vec_compare("lt", self, other)
+
+    def __le__(self, other):
+        return _emit_vec_compare("le", self, other)
+
+    def __gt__(self, other):
+        return _emit_vec_compare("gt", self, other)
+
+    def __ge__(self, other):
+        return _emit_vec_compare("ge", self, other)
+
+    def __eq__(self, other):
+        return _emit_vec_compare("eq", self, other)
+
+    def __ne__(self, other):
+        return _emit_vec_compare("ne", self, other)
+
+    def __and__(self, other):
+        return _emit_vec_bitwise_op("and", self, other)
+
+    def __rand__(self, other):
+        return _emit_vec_bitwise_op("and", other, self)
+
+    def __or__(self, other):
+        return _emit_vec_bitwise_op("or", self, other)
+
+    def __ror__(self, other):
+        return _emit_vec_bitwise_op("or", other, self)
+
+    def __xor__(self, other):
+        return _emit_vec_bitwise_op("xor", self, other)
+
+    def __rxor__(self, other):
+        return _emit_vec_bitwise_op("xor", other, self)
+
+    def __lshift__(self, other):
+        return _emit_vec_binary_op("shl", self, other)
+
+    def __rlshift__(self, other):
+        return _emit_vec_binary_op("shl", other, self)
+
+    def __rshift__(self, other):
+        return _emit_vec_binary_op("shr", self, other)
+
+    def __rrshift__(self, other):
+        return _emit_vec_binary_op("shr", other, self)
+
 
 def _emit_vec_binary_op(op_name: str, lhs, rhs):
     lhs_raw = unwrap_surface_value(lhs)
     rhs_raw = unwrap_surface_value(rhs)
-    if not (VectorType.isinstance(lhs_raw.type) and VectorType.isinstance(rhs_raw.type)):
+    lhs_is_vector = hasattr(lhs_raw, "type") and VectorType.isinstance(lhs_raw.type)
+    rhs_is_vector = hasattr(rhs_raw, "type") and VectorType.isinstance(rhs_raw.type)
+    if not (lhs_is_vector or rhs_is_vector):
         raise TypeError("PTODSL VecValue arithmetic expects compatible vector operands")
     lhs_raw, rhs_raw, kind = normalize_runtime_binary_operands(lhs_raw, rhs_raw)
-    if kind != "float":
-        raise TypeError(f"PTODSL VecValue operator '{op_name}' currently supports only floating-point vectors")
+    if kind == "float" and op_name not in {"add", "sub", "mul", "truediv", "mod"}:
+        raise TypeError(
+            f"PTODSL floating-point VecValue operator '{op_name}' is not supported"
+        )
+    if kind == "integer" and op_name not in {
+        "add", "sub", "mul", "floordiv", "ceildiv", "mod", "shl", "shr"
+    }:
+        raise TypeError(
+            f"PTODSL integer VecValue operator '{op_name}' is not supported"
+        )
     return VecValue(emit_runtime_binary_op(op_name, lhs_raw, rhs_raw))
+
+
+def _emit_vec_compare(op_name: str, lhs, rhs):
+    lhs_raw = unwrap_surface_value(lhs)
+    rhs_raw = unwrap_surface_value(rhs)
+    result = emit_runtime_compare(op_name, lhs_raw, rhs_raw)
+    return VecValue(result)
+
+
+def _emit_vec_bitwise_op(op_name: str, lhs, rhs):
+    lhs_raw = unwrap_surface_value(lhs)
+    rhs_raw = unwrap_surface_value(rhs)
+    result = emit_runtime_bitwise_op(op_name, lhs_raw, rhs_raw)
+    return VecValue(result)
 
 
 class MaskValue(_SurfaceValue):
@@ -429,7 +554,7 @@ class AllocatedBufferValue(AddressValue):
 
 @dataclass(frozen=True)
 class AddressOffsetValue:
-    """Address view plus an element offset, used by scalar.load/store sugar."""
+    """Address view plus an element offset, used by pto.load/store sugar."""
 
     base: AddressValue
     offset: object
@@ -1017,7 +1142,11 @@ def _build_tile_slice_view(tile: TileValue, *, raw_offsets, shape):
 def _dynamic_extent(static_dim, start):
     if _is_python_index_literal(start):
         return static_dim - start
-    return arith.SubIOp(_index_const(static_dim), _coerce_index_value(start)).result
+    lhs = _index_const(static_dim)
+    rhs = _coerce_index_value(start)
+    return Operation.create(
+        "pto.subi", results=[lhs.type], operands=[lhs, rhs]
+    ).results[0]
 
 
 def _mul_index(lhs, rhs):
@@ -1029,7 +1158,9 @@ def _mul_index(lhs, rhs):
         lhs = _index_const(lhs)
     if _is_python_index_literal(rhs):
         rhs = _index_const(rhs)
-    return arith.MulIOp(lhs, rhs).result
+    return Operation.create(
+        "pto.muli", results=[lhs.type], operands=[lhs, rhs]
+    ).results[0]
 
 
 def _coerce_index_value(value):

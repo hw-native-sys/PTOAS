@@ -2,10 +2,10 @@
 
 module {
   func.func @inttoptr_invalid(%addr: i32) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
-    %ptr = pto.inttoptr %addr : i32 -> !pto.ptr<ui32>
+    %ptr = pto.castptr %addr : i32 -> !pto.ptr<ui32>
     return
   }
 }
 
-// CHECK: pto.inttoptr
-// CHECK: address operand must be i64
+// CHECK: pto.castptr
+// CHECK: integer address input must be signless i64

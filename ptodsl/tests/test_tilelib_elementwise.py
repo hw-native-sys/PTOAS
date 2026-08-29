@@ -733,7 +733,7 @@ class TileLibElementwiseTest(unittest.TestCase):
                     )
                 ).mlir_text()
                 self.assertEqual(mlir.count("scf.for"), 1)
-                self.assertIn("arith.muli", mlir)
+                self.assertIn("pto.muli", mlir)
                 self.assertIn("iter_args", mlir)
                 self.assertNotIn("memref.subview", mlir)
 
@@ -1741,8 +1741,8 @@ class TileLibElementwiseTest(unittest.TestCase):
 
         self.assertEqual(selected.name, "template_tcmps")
         self.assertEqual(selected.metadata.loop_depth, 2)
-        self.assertIn("arith.constant 16 : index", mlir)
-        self.assertNotIn("arith.constant 64 : index", mlir)
+        self.assertIn("pto.constant 16 : index", mlir)
+        self.assertNotIn("pto.constant 64 : index", mlir)
 
     def test_select_family_registers_preferred_1d_and_fallback_2d(self):
         cases = (

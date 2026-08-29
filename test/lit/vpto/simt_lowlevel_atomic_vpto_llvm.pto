@@ -22,17 +22,17 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %bf16 = arith.constant 1.500000e+00 : bf16
     %f32 = arith.constant 1.500000e+00 : f32
 
-    %cas = pto.atomic_cas %gm_i32, %cmp, %i32 signed : !pto.ptr<i32, gm>, i32 -> i32
-    %exch = pto.atomic_exch %gm_i32, %i32 l2cache(nmlv) signed : !pto.ptr<i32, gm>, i32 -> i32
-    %add = pto.atomic_add %gm_i32, %i32 l2cache(wtsred) signed : !pto.ptr<i32, gm>, i32 -> i32
-    %sub64 = pto.atomic_sub %gm_i64, %i64 l2cache(nmfv) signed : !pto.ptr<i64, gm>, i64 -> i64
+    %cas = pto.atomic_cas %gm_i32, %cmp, %i32 : !pto.ptr<i32, gm>, i32 -> i32
+    %exch = pto.atomic_exch %gm_i32, %i32 l2cache(nmlv) : !pto.ptr<i32, gm>, i32 -> i32
+    %add = pto.atomic_add %gm_i32, %i32 l2cache(wtsred) : !pto.ptr<i32, gm>, i32 -> i32
+    %sub64 = pto.atomic_sub %gm_i64, %i64 l2cache(nmfv) : !pto.ptr<i64, gm>, i64 -> i64
     %add_h = pto.atomic_add %gm_f16, %f16 l2cache(nmfv) : !pto.ptr<f16, gm>, f16 -> f16
     %min_s_h = pto.atomic_min %ub_f16, %f16 l2cache(nmfv) : !pto.ptr<f16, ub>, f16 -> f16
     %cas_b = pto.atomic_cas %gm_bf16, %bf16, %bf16 l2cache(nmfv) : !pto.ptr<bf16, gm>, bf16 -> bf16
     %max_s_b = pto.atomic_max %ub_bf16, %bf16 l2cache(nmfv) : !pto.ptr<bf16, ub>, bf16 -> bf16
     %minf = pto.atomic_min %gm_f32, %f32 l2cache(nmfv) : !pto.ptr<f32, gm>, f32 -> f32
     %maxs = pto.atomic_max %ub_i32, %i32 l2cache(nmfv) signed : !pto.ptr<i32, ub>, i32 -> i32
-    %ands = pto.atomic_and %ub_i32, %i32 l2cache(nmfv) unsigned : !pto.ptr<i32, ub>, i32 -> i32
+    %ands = pto.atomic_and %ub_i32, %i32 l2cache(nmfv) : !pto.ptr<i32, ub>, i32 -> i32
     %exch_s_f32 = pto.atomic_exch %ub_f32, %f32 l2cache(nmfv) : !pto.ptr<f32, ub>, f32 -> f32
     pto.store %cas, %dst_i32[%c0] : !pto.ptr<i32, ub>, i32
     pto.store %exch, %dst_i32[%c1] : !pto.ptr<i32, ub>, i32
@@ -84,7 +84,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK-DAG: llvm.call @llvm.hivm.atom.MAX.S.bf16
 // CHECK-DAG: llvm.call @llvm.hivm.atom.MIN.G.fp32
 // CHECK-DAG: llvm.call @llvm.hivm.atom.MAX.S.s32
-// CHECK-DAG: llvm.call @llvm.hivm.atom.AND.S.u32
+// CHECK-DAG: llvm.call @llvm.hivm.atom.AND.S.s32
 // CHECK-DAG: llvm.call @llvm.hivm.atom.EXCH.S.fp32
 // CHECK-LABEL: llvm.func @packed_atomic_body
 // CHECK-DAG: llvm.call @llvm.hivm.atom.CAS.G.f16x2

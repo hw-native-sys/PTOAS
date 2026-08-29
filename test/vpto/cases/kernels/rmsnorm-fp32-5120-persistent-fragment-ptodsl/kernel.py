@@ -6,7 +6,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
-from ptodsl import pto, scalar
+from ptodsl import pto
 
 
 @pto.jit(
@@ -46,8 +46,8 @@ def main_kernel(
   with pto.simt(256, 1, 1):
     simtvf_tx = pto.get_tid_x()
     for weight_i in pto.static_range(0, 10):
-      scalar.store(
-          scalar.load(
+      pto.store(
+          pto.load(
               pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")),
               (weight_i * 512) + (simtvf_tx * 2),
               contiguous=2,
@@ -78,8 +78,8 @@ def main_kernel(
       simtvf_tx = pto.get_tid_x()
 
       for input_i in pto.static_range(0, 16):
-        scalar.store(
-            scalar.load(
+        pto.store(
+            pto.load(
                 pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")),
                 ((((t & 1) * 8192) + (input_i * 512)) + (simtvf_tx * 2))
                 + 5120,
@@ -89,18 +89,18 @@ def main_kernel(
             input_i * 2,
         )
 
-      scalar.store(float.fromhex("0x0p+0"), sum_sq, 0)
+      pto.store(float.fromhex("0x0p+0"), sum_sq, 0)
       for reduce_i in pto.static_range(0, 20):
-        scalar.store(
-            scalar.load(sum_sq, 0)
-            + (scalar.load(x_frag, reduce_i) * scalar.load(x_frag, reduce_i)),
+        pto.store(
+            pto.load(sum_sq, 0)
+            + (pto.load(x_frag, reduce_i) * pto.load(x_frag, reduce_i)),
             sum_sq,
             0,
         )
 
-      scalar.store(
+      pto.store(
           pto.simt_allreduce_sum(
-              scalar.load(sum_sq, 0),
+              pto.load(sum_sq, 0),
               threads=256,
               scale=1,
               thread_offset=0,
@@ -111,21 +111,21 @@ def main_kernel(
           sum_sq,
           0,
       )
-      var = (scalar.load(sum_sq, 0) / float.fromhex("0x1.4p+12")) + eps
+      var = (pto.load(sum_sq, 0) / float.fromhex("0x1.4p+12")) + eps
       rstd_val = float.fromhex("0x1p+0") / pto.sqrt(var)
-      scalar.store(
+      pto.store(
           rstd_val,
           pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")),
           ((t & 1) * 8) + 37888,
       )
 
       for output_i in pto.static_range(0, 10):
-        scalar.store(
+        pto.store(
             (
-                scalar.load(x_frag, output_i * 2, contiguous=2)
+                pto.load(x_frag, output_i * 2, contiguous=2)
                 * pto.Vec(pto.f32, 2, init=rstd_val)
             )
-            * scalar.load(w_frag, output_i * 2, contiguous=2),
+            * pto.load(w_frag, output_i * 2, contiguous=2),
             pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")),
             ((((t & 1) * 8192) + (output_i * 512)) + (simtvf_tx * 2))
             + 21504,

@@ -12,8 +12,8 @@
 // RUN: not ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %t/e5m2.pto -o - 2>&1 | FileCheck %s --check-prefix=E5M2
 // RUN: not ptoas --cann-output-version=9.0.0 --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %t/e5m2.pto -o - 2>&1 | FileCheck %s --check-prefix=E5M2
 
-// E4M3: error: 'arith.constant' op does not support directly constructed FP8 constants in the VPTO backend; produce FP8 values with pto.convert
-// E5M2: error: 'arith.constant' op does not support directly constructed FP8 constants in the VPTO backend; produce FP8 values with pto.convert
+// E4M3: error: 'arith.constant' op does not support directly constructed FP8 constants in the VPTO backend; produce FP8 values with pto.ftof
+// E5M2: error: 'arith.constant' op does not support directly constructed FP8 constants in the VPTO backend; produce FP8 values with pto.ftof
 
 //--- e4m3.pto
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {

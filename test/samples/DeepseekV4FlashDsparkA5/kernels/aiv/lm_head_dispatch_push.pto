@@ -15,7 +15,7 @@ module attributes {pto.target_arch = "a5"} {
   %hidden_window__ssa_v0_view = pto.make_tensor_view %arg3, shape = [%c256_index, %c4096_index], strides = [%c4096_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
   %hidden_done__ssa_v0_view = pto.make_tensor_view %arg4, shape = [%c2_index, %c1_index], strides = [%c1_index, %c2_index] {layout = #pto.layout<dn>} : !pto.tensor_view<?x?xi32>
   %row_inline139__ssa_v0 = arith.index_cast %__pypto_spmd_block_idx : i32 to index
-  %source_row_raw_inline142__tile = pto.load_scalar %arg1[%row_inline139__ssa_v0] : !pto.ptr<i32> -> i32
+  %source_row_raw_inline142__tile = pto.load %arg1[%row_inline139__ssa_v0] : !pto.ptr<i32> -> i32
   %1 = arith.index_cast %source_row_raw_inline142__tile : i32 to index
   %2 = arith.subi %arg9, %c1_index : index
   %3 = arith.minsi %1, %2 : index
@@ -78,13 +78,13 @@ module attributes {pto.target_arch = "a5"} {
   func.func private @CommRemoteOffset_i32(%ctx: !pto.ptr<i64>, %peer: index) -> index {
     %c_r = arith.constant 2 : index
     %c_w = arith.constant 4 : index
-    %rk_pair = pto.load_scalar %ctx[%c_r] : !pto.ptr<i64> -> i64
+    %rk_pair = pto.load %ctx[%c_r] : !pto.ptr<i64> -> i64
     %rk_i32 = arith.trunci %rk_pair : i64 to i32
     %rk_idx = arith.index_cast %rk_i32 : i32 to index
     %lb_off = arith.addi %c_w, %rk_idx : index
-    %lbase = pto.load_scalar %ctx[%lb_off] : !pto.ptr<i64> -> i64
+    %lbase = pto.load %ctx[%lb_off] : !pto.ptr<i64> -> i64
     %pb_off = arith.addi %c_w, %peer : index
-    %pbase = pto.load_scalar %ctx[%pb_off] : !pto.ptr<i64> -> i64
+    %pbase = pto.load %ctx[%pb_off] : !pto.ptr<i64> -> i64
     %dbytes = arith.subi %pbase, %lbase : i64
     %esize = arith.constant 4 : i64
     %delems_i = arith.divsi %dbytes, %esize : i64
@@ -94,13 +94,13 @@ module attributes {pto.target_arch = "a5"} {
   func.func private @CommRemoteOffset_bf16(%ctx: !pto.ptr<i64>, %peer: index) -> index {
     %c_r = arith.constant 2 : index
     %c_w = arith.constant 4 : index
-    %rk_pair = pto.load_scalar %ctx[%c_r] : !pto.ptr<i64> -> i64
+    %rk_pair = pto.load %ctx[%c_r] : !pto.ptr<i64> -> i64
     %rk_i32 = arith.trunci %rk_pair : i64 to i32
     %rk_idx = arith.index_cast %rk_i32 : i32 to index
     %lb_off = arith.addi %c_w, %rk_idx : index
-    %lbase = pto.load_scalar %ctx[%lb_off] : !pto.ptr<i64> -> i64
+    %lbase = pto.load %ctx[%lb_off] : !pto.ptr<i64> -> i64
     %pb_off = arith.addi %c_w, %peer : index
-    %pbase = pto.load_scalar %ctx[%pb_off] : !pto.ptr<i64> -> i64
+    %pbase = pto.load %ctx[%pb_off] : !pto.ptr<i64> -> i64
     %dbytes = arith.subi %pbase, %lbase : i64
     %esize = arith.constant 2 : i64
     %delems_i = arith.divsi %dbytes, %esize : i64

@@ -7,7 +7,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 """Shared basic fill-pad helpers."""
 
-from ptodsl import pto, scalar
+from ptodsl import pto
 import ptodsl.tilelib as tilelib
 
 
@@ -144,7 +144,7 @@ def _fill(dst, row_start, row_stop, col_start, col_stop, scalar_tail_start=None)
             col_loop.update(remained=remained)
         if scalar_tail_start is not None:
             with pto.for_(scalar_tail_start, col_stop, step=1) as col:
-                scalar.store(fill_scalar, dst[row, col])
+                pto.store(fill_scalar, dst[row, col])
 
 
 def _fill_inplace(dst, src_valid_rows, src_valid_cols, dst_valid_rows, dst_valid_cols):

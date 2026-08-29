@@ -514,81 +514,50 @@ NOTE: These third-party ops are supported only to the extent required by PTOAS f
 
 ### 4.1 Pointer & View Operations
 
-##### `pto.ptrtoint` - Convert Pointer to Byte Address
+##### `pto.castptr` - Convert Pointer Representations
 
-**Summary:** Converts a global pointer to an `i64` byte address.
+**Summary:** Converts between a typed PTO pointer and an `i64` byte address, or reinterprets the element type of a pointer within the same memory space.
 
 **Semantics:**
 
 ```
-result = reinterpret_cast<i64>(ptr)
+ptr -> i64: result = byte_address(ptr)
+i64 -> ptr: result = pointer<T, space>(address)
+ptr<T1, space> -> ptr<T2, space>: result = reinterpret_pointer<T2>(ptr)
 ```
 
 If the source is produced by `pto.addptr`, the addptr offset is materialized as an explicit byte offset:
 
 ```
-pto.ptrtoint(pto.addptr %p, %idx) == pto.ptrtoint(%p) + idx * sizeof(elementType)
+pto.castptr(pto.addptr %p, %idx) == pto.castptr(%p) + idx * sizeof(elementType)
 ```
 
 **Arguments:**
 
 | Name | Type | Description |
 |------|------|-------------|
-| `ptr` | `!pto.ptr<elementType>` | Source global pointer |
+| `input` | `i64`, `memref`, or `!pto.ptr<elementType, space>` | Source address or pointer-like value |
 
-**Results:** `i64`
+**Results:** `i64` or `!pto.ptr<resultElementType, space>`
 
-**Lowering Notes:**
-
-- PTO view lowering accepts either PTO pointer form or the lowered rank-1 GM memref form.
-- `pto.addptr` sources are folded into explicit byte-address arithmetic before EmitC lowering.
-- EmitC lowering emits a C++ `reinterpret_cast<int64_t>`.
-
-##### `pto.inttoptr` - Convert Byte Address to Pointer
-
-**Summary:** Converts an `i64` byte address to a global pointer of the requested element type.
-
-**Semantics:**
-
-```
-result = reinterpret_cast<result-element-type *>(addr)
-```
-
-This op is an escape hatch for explicit byte-address arithmetic and
-cross-element-type pointer reinterpretation.
-
-To limit provenance loss from integer-derived pointers, the result is
-restricted to scalar memory access: every direct use must be the pointer operand
-of `pto.load_scalar` or `pto.store_scalar`. The result cannot feed
-`pto.addptr`, `pto.make_tensor_view`, returns, or other general pointer users.
-Use the offset operand on `pto.load_scalar` / `pto.store_scalar` for element
-offsets from an `inttoptr` pointer.
-
-The result element type must be representable by EmitC scalar pointer lowering:
-floating-point element types (`f16`, `bf16`, `f32`, `f64`), 8/16/32/64-bit
-integer element types, and PTO low-precision floating-point element types are
-accepted. Non-scalar element types such as `index` are rejected by the verifier.
+Pointer-to-pointer conversion must preserve the memory space. The operation
+changes only the pointer's element interpretation; it does not move data.
 
 **Arguments:**
 
 | Name | Type | Description |
 |------|------|-------------|
-| `addr` | `i64` | Source byte address |
+| `input` | `i64`, `memref`, or `!pto.ptr<T, space>` | Source address or pointer-like value |
 
-**Results:** `!pto.ptr<resultElementType>`
-
-**Lowering Notes:**
-
-- PTO view lowering rewrites the result to an equivalent rank-1 GM memref form.
-- EmitC lowering emits a C++ `reinterpret_cast<__gm__ T*>`.
+**Results:** `i64` or `!pto.ptr<resultElementType, space>`
 
 **Basic Example:**
 
 ```mlir
 %p64_off = pto.addptr %p64, %idx : !pto.ptr<ui64> -> !pto.ptr<ui64>
-%addr = pto.ptrtoint %p64_off : !pto.ptr<ui64> -> i64
-%p32 = pto.inttoptr %addr : i64 -> !pto.ptr<ui32>
-%val = pto.load_scalar %p32[%c0] : !pto.ptr<ui32> -> ui32
+%addr = pto.castptr %p64_off : !pto.ptr<ui64> -> i64
+%p32 = pto.castptr %addr : i64 -> !pto.ptr<ui32>
+%val = pto.load %p32[%c0] : !pto.ptr<ui32> -> ui32
 ```
 
 ##### `pto.addptr` - Add Element Offset to Pointer
@@ -687,9 +656,6 @@ This operation defines the physical "base" and stride rules for global memory. I
   - `ptr` must be `!pto.ptr<...>` and its element type must match the result element type
   - `shape` and `strides` operand counts must match the tensor_view rank
   - If `layout` is provided with static shapes/strides, it must be consistent with inferred layout
-- `pto.inttoptr` results cannot feed `pto.make_tensor_view`. Tensor views must
-  be constructed from a source pointer that already carries the desired element
-  type.
 
 **Notes:**
 
@@ -1445,7 +1411,7 @@ pto.tstore ins(%acc : !pto.tile_buf<loc=acc, dtype=i32, rows=32, cols=32, v_row=
 
 ---
 
-##### `pto.load_scalar` - Load Single Scalar Element
+##### `pto.load` - Load Single Scalar Element
 
 **Summary:** Loads a single scalar element from a pointer at the given offset.
 
@@ -1476,12 +1442,12 @@ value = ptr[offset]
 **Basic Example:**
 
 ```mlir
-%val = pto.load_scalar %ptr[%offset] : !pto.ptr<f32> -> f32
+%val = pto.load %ptr[%offset] : !pto.ptr<f32> -> f32
 ```
 
 ---
 
-##### `pto.store_scalar` - Store Single Scalar Element
+##### `pto.store` - Store Single Scalar Element
 
 **Summary:** Stores a single scalar element to a pointer at the given offset.
 
@@ -1513,7 +1479,7 @@ ptr[offset] = value
 **Basic Example:**
 
 ```mlir
-pto.store_scalar %val, %ptr[%offset] : !pto.ptr<f32>, f32
+pto.store %val, %ptr[%offset] : !pto.ptr<f32>, f32
 ```
 
 ---

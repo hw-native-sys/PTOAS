@@ -9,7 +9,7 @@ module attributes {pto.target_arch = "a5"} {
   %ori_slot_mapping__ssa_v0_view = pto.make_tensor_view %arg1, shape = [%c128_index], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xi64>
   %kv_inline895__ssa_v0_view = pto.make_tensor_view %arg2, shape = [%c128_index, %c512_index], strides = [%c512_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
   scf.for %write_t_inline866__idx_v0 = %c0_index to %c128_index step %c1_index {
-    %write_row_raw_inline883__tile = pto.load_scalar %arg1[%write_t_inline866__idx_v0] : !pto.ptr<i64> -> i64
+    %write_row_raw_inline883__tile = pto.load %arg1[%write_t_inline866__idx_v0] : !pto.ptr<i64> -> i64
     %0 = arith.index_cast %write_row_raw_inline883__tile : i64 to index
     %1 = arith.cmpi sle, %c0_index, %0 : index
     scf.if %1 {

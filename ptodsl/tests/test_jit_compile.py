@@ -24,7 +24,7 @@ from unittest import mock
 # previously installed generated bindings, which can miss newly added ops.
 sys.meta_path[:] = [finder for finder in sys.meta_path if "editable" not in repr(finder).lower()]
 
-from ptodsl import pto, scalar
+from ptodsl import pto
 from ptodsl import _types as pto_types
 import ptodsl._vmi_namespace as vmi_namespace
 from ptodsl._ast_rewrite import PTODSLAstRewriteError
@@ -343,11 +343,11 @@ def _all_operations(operation):
 
 
 def _ui32_const_results(operation, value):
-    # The frontend materializes ui32 scalars as i32 constants wrapped in
-    # builtin.unrealized_conversion_cast ops, so match constants by value only.
+    # The unified frontend materializes ui32 scalars as signless i32
+    # pto.constant values, so match constants by value only.
     results = []
     for op in _all_operations(operation):
-        if op.operation.name == 'arith.constant':
+        if op.operation.name == 'pto.constant':
             attr = op.attributes['value']
             if attr.value == value:
                 results.append(op.results[0])
@@ -790,27 +790,27 @@ def host_vec_copy(
 
 
 @pto.jit(target="a5", backend="vpto", mode="explicit")
-def scalar_pipeline_access_modes_probe(
+def scalar_memory_access_modes_probe(
     src: pto.ptr(pto.i32, "gm"),
     dst: pto.ptr(pto.i32, "gm"),
 ):
-    normal = pto.load_scalar(src, 1)
-    pto.store_scalar(dst, 2, normal)
-    bypass = pto.load_scalar(src, 3, bypass_l1=True)
-    pto.store_scalar(dst, 4, bypass, bypass_l1=True)
+    normal = pto.load(src, 1)
+    pto.store(normal, dst, 2)
+    bypass = pto.ld_dev(src, 3)
+    pto.st_dev(dst, 4, bypass)
 
 
 @pto.jit(target="a5", backend="vpto", mode="explicit")
 def scalar_pipeline_bypass_ub_invalid_probe():
     src = pto.castptr(pto.const(0, dtype=pto.i64), pto.ptr(pto.i32, "ub"))
-    pto.load_scalar(src, 0, bypass_l1=True)
+    pto.ld_dev(src, 0)
 
 
 @pto.jit(target="a5", backend="vpto", mode="explicit")
 def scalar_pipeline_bypass_float_invalid_probe(
     src: pto.ptr(pto.f32, "gm"),
 ):
-    pto.load_scalar(src, 0, bypass_l1=True)
+    pto.ld_dev(src, 0)
 
 
 @pto.jit(target="a5", mode="explicit")
@@ -1268,7 +1268,7 @@ def dynamic_addr_tile_surface_probe(
     tile = pto.alloc_tile(
         shape=[1, 128],
         dtype=pto.f32,
-        addr=scalar.index_cast(pto.i64, scalar.index_cast(rows)),
+        addr=pto.index_cast(pto.i64, pto.index_cast(rows)),
         valid_shape=[rows, cols],
     )
     _ = tile
@@ -1446,7 +1446,7 @@ def inline_subkernel_scope_probe(*, TRACE_TOKEN: pto.const_expr = 0):
     with pto.simt():
         frame = session.current_subkernel
         INLINE_SUBKERNEL_SCOPE_OBSERVATIONS.append((frame.role, frame.symbol_name, session.subkernel_stack_depth))
-        scalar.store(0, meta_tile.as_ptr() + 0)
+        pto.store(0, meta_tile.as_ptr() + 0)
     with pto.tileop():
         frame = session.current_subkernel
         INLINE_SUBKERNEL_SCOPE_OBSERVATIONS.append((frame.role, frame.symbol_name, session.subkernel_stack_depth))
@@ -1461,7 +1461,7 @@ def inline_simt_launch_dims_probe(
 ):
     with pto.simt(32, 2, 1):
         tid = pto.get_tid_x()
-        pto.stg(tid, gm, scalar.index_cast(tid))
+        pto.stg(tid, gm, pto.index_cast(tid))
 
 
 @pto.jit(target="a5", mode="explicit")
@@ -1538,7 +1538,7 @@ def simt_collective_math_probe():
     pto.shuffle_down(lane, 1, width=32)
     pto.shuffle_bfly(lane, 1, width=32)
 
-    pto.redux_add(lane, signedness="signed")
+    pto.redux_add(lane)
     pto.redux_max(lane, signedness="signed")
     pto.redux_min(lane, signedness="signed")
 
@@ -1546,9 +1546,9 @@ def simt_collective_math_probe():
     pto.mulhi(lane, lane, signedness="signed")
     pto.mul_i32toi64(lane, lane, signedness="unsigned")
 
-    as_f32 = pto.convert(lane, pto.f32, rounding="r", saturation="nosat", signedness="signed")
-    as_f16 = pto.const(1.0, dtype=pto.f16)
-    pto.convert(as_f32, pto.i32, rounding="z", saturation="sat", signedness="signed")
+    as_f32 = pto.cast(lane, pto.f32, rounding="to_nearest_even")
+    as_f16 = pto.cast(as_f32, pto.f16, rounding="toward_zero")
+    pto.cast(as_f32, pto.i32, rounding="toward_zero", saturation="sat")
     pto.absf(as_f32)
     pto.sqrt(as_f32)
     pto.exp(as_f32)
@@ -1560,10 +1560,10 @@ def simt_collective_math_probe():
     pto.floor(as_f32)
     pto.rint(as_f32)
     pto.round(as_f32)
-    pto.fmin(as_f32, as_f32)
-    pto.fmax(as_f32, as_f32)
-    pto.fmin(as_f16, as_f16)
-    pto.fmax(as_f16, as_f16)
+    pto.min(as_f32, as_f32)
+    pto.max(as_f32, as_f32)
+    pto.min(as_f16, as_f16)
+    pto.max(as_f16, as_f16)
     pto.fma(as_f32, as_f32, as_f32)
 
 
@@ -1571,20 +1571,20 @@ def simt_collective_math_probe():
 def simt_memory_atomic_probe(
     gm: pto.ptr(pto.i32, "gm"),
 ):
-    idx = scalar.index_cast(pto.get_tid_x())
+    idx = pto.index_cast(pto.get_tid_x())
     value = pto.ldg(gm, idx, l1cache="cache", l2cache="nmfv")
     pto.stg(value, gm, idx, l1cache="uncache", l2cache="wtsred")
     pto.stg(1, gm, idx)
 
-    old = pto.atomic_add(gm, value, l2cache="nmfv", signedness="signed")
-    pto.atomic_exch(gm, value, signedness="signed")
-    pto.atomic_sub(gm, value, signedness="signed")
+    old = pto.atomic_add(gm, value, l2cache="nmfv")
+    pto.atomic_exch(gm, value)
+    pto.atomic_sub(gm, value)
     pto.atomic_min(gm, value, signedness="signed")
     pto.atomic_max(gm, value, signedness="signed")
-    pto.atomic_and(gm, value, signedness="unsigned")
-    pto.atomic_or(gm, value, signedness="unsigned")
-    pto.atomic_xor(gm, value, signedness="unsigned")
-    pto.atomic_cas(gm, old, value, signedness="signed")
+    pto.atomic_and(gm, value)
+    pto.atomic_or(gm, value)
+    pto.atomic_xor(gm, value)
+    pto.atomic_cas(gm, old, value)
 
     pto.syncthreads()
     pto.threadfence()
@@ -1598,7 +1598,7 @@ def simt_fp8_ext_ldg_stg_probe(
     gm_f8e5x4: pto.ptr(pto.f8e5m2x4, "gm"),
     gm_f8e5x8: pto.ptr(pto.f8e5m2x8, "gm"),
 ):
-    idx = scalar.index_cast(pto.get_tid_x())
+    idx = pto.index_cast(pto.get_tid_x())
     v_f8e4x4 = pto.ldg(gm_f8e4x4, idx)
     v_f8e4x8 = pto.ldg(gm_f8e4x8, idx)
     v_f8e5x4 = pto.ldg(gm_f8e5x4, idx)
@@ -1611,13 +1611,13 @@ def simt_fp8_ext_ldg_stg_probe(
 
 @pto.simt
 def simt_specialized_i32_ptr_probe(ptr: pto.ptr(pto.i32, "gm")):
-    value = scalar.load(ptr)
+    value = pto.load(ptr)
     _ = value
 
 
 @pto.simt
 def simt_specialized_f32_ptr_probe(ptr: pto.ptr(pto.f32, "gm")):
-    value = scalar.load(ptr)
+    value = pto.load(ptr)
     _ = value
 
 
@@ -1637,18 +1637,13 @@ def simt_keep_stage():
 @pto.simt
 def simt_resume_stage(gm: pto.ptr(pto.i32, "gm")):
     resumed = pto.resume(pto.i32, slot=0)
-    idx = scalar.index_cast(pto.get_tid_x())
-    scalar.store(resumed, gm, idx)
+    idx = pto.index_cast(pto.get_tid_x())
+    pto.store(resumed, gm, idx)
 
 
 @pto.simt
 def simt_invalid_redux_signedness_probe():
     pto.redux_max(pto.get_laneid())
-
-
-@pto.simt
-def simt_invalid_convert_signedness_probe():
-    pto.convert(pto.get_laneid(), pto.f32, rounding="r", saturation="nosat")
 
 
 @pto.simt
@@ -1818,11 +1813,6 @@ def simt_specialized_static_kwarg_probe(*, TRACE_TOKEN: pto.const_expr = 0):
 @pto.jit(target="a5")
 def simt_invalid_redux_signedness_launch(*, TRACE_TOKEN: pto.const_expr = 0):
     pto.simt_launch(simt_invalid_redux_signedness_probe, dims=(32, 1, 1))
-
-
-@pto.jit(target="a5")
-def simt_invalid_convert_signedness_launch(*, TRACE_TOKEN: pto.const_expr = 0):
-    pto.simt_launch(simt_invalid_convert_signedness_probe, dims=(32, 1, 1))
 
 
 @pto.jit(target="a5")
@@ -2008,7 +1998,7 @@ def ast_nested_with_if_merge_probe():
         else:
             value = rhs + lhs
         merged = value + rhs
-        scalar.store(merged, meta_tile.as_ptr() + 0)
+        pto.store(merged, meta_tile.as_ptr() + 0)
 
 
 @pto.jit(target="a5")
@@ -2739,16 +2729,17 @@ def runtime_scalar_operator_probe(
     y = (x + 1.0) * 2.0
     z = 4.0 - y
     w = 1.0 / z
-    m = scalar.max(w, x)
-    n = scalar.min(m, x)
-    e = scalar.exp(m)
-    lg = scalar.log(e)
-    rt = scalar.sqrt(e)
-    mag = scalar.abs(z)
+    m = pto.max(w, x)
+    n = pto.min(m, x)
+    e = pto.exp(m)
+    lg = pto.log(e)
+    rt = pto.sqrt(e)
+    mag = pto.abs(z)
+    index_mag = pto.abs(pto.index_cast(rows))
     gt_zero = m > x
     eq_self = x == x
     in_range = (m >= x) & (m <= e)
-    scalar.store(e, o_ptr + 0)
+    pto.store(e, o_ptr + 0)
 
     _ = batch_idx
     _ = head_idx
@@ -2761,6 +2752,7 @@ def runtime_scalar_operator_probe(
     _ = lg
     _ = rt
     _ = mag
+    _ = index_mag
     _ = gt_zero
     _ = eq_self
     _ = in_range
@@ -2888,12 +2880,12 @@ def integer_loop_bound_probe(*, BLOCK: pto.const_expr = 8):
 def scalar_pointer_offset_probe():
     meta_tile = pto.alloc_tile(shape=[1, 8], dtype=pto.i32, valid_shape=[1, 3])
     meta_ptr = meta_tile.as_ptr()
-    scalar.store(0, meta_ptr, 0)
-    scalar.store(1, meta_ptr, 1)
-    scalar.store(2, meta_ptr + 2)
-    row_start = scalar.load(meta_ptr, 0)
-    row_stop = scalar.load(meta_ptr, 1)
-    valid_cols = scalar.load(meta_ptr + 2)
+    pto.store(0, meta_ptr, 0)
+    pto.store(1, meta_ptr, 1)
+    pto.store(2, meta_ptr + 2)
+    row_start = pto.load(meta_ptr, 0)
+    row_stop = pto.load(meta_ptr, 1)
+    valid_cols = pto.load(meta_ptr + 2)
     _ = row_start
     _ = row_stop
     _ = valid_cols
@@ -2903,24 +2895,48 @@ def scalar_pointer_offset_probe():
 def scalar_contiguous_vector_probe():
     data_tile = pto.alloc_tile(shape=[1, 16], dtype=pto.f32, valid_shape=[1, 16])
     data_ptr = data_tile.as_ptr()
-    x4 = scalar.load(data_ptr, 0, contiguous=4)
+    x4 = pto.load(data_ptr, 0, contiguous=4)
     scale4 = pto.Vec(pto.f32, size=4, init=1.0)
     y4 = x4 * scale4
-    scalar.store(y4, data_ptr, 4)
+    pto.store(y4, data_ptr, 4)
 
 
 @pto.simt
 def scalar_contiguous_vector_arith_simt_body(data_ptr):
     tid = pto.get_tid_x()
     base = tid * 4
-    x4 = scalar.load(data_ptr, base, contiguous=4)
-    y4 = scalar.load(data_ptr, 32 + base, contiguous=4)
+    x4 = pto.load(data_ptr, base, contiguous=4)
+    y4 = pto.load(data_ptr, 32 + base, contiguous=4)
     sum4 = x4 + y4
     diff4 = x4 - y4
     prod4 = x4 * y4
-    scalar.store(sum4, data_ptr, 64 + base)
-    scalar.store(diff4, data_ptr, 96 + base)
-    scalar.store(prod4, data_ptr, 128 + base)
+    quot4 = x4 / 2.0
+    greater4 = x4 > y4
+    neg4 = -x4
+    selected4 = pto.select(greater4, x4, y4)
+    half4 = pto.Vec(pto.f16, size=4, init=1.0)
+    wide4 = pto.cast(half4, pto.f32)
+    int4 = pto.Vec(pto.si32, size=4, init=8)
+    ceil4 = pto.ceildiv(int4, 3)
+    shl4 = int4 << 1
+    shr4 = int4 >> 1
+    max4 = pto.max(x4, y4)
+    min4 = pto.min(x4, y4)
+    abs4 = pto.abs(x4)
+    pto.store(sum4, data_ptr, 64 + base)
+    pto.store(diff4, data_ptr, 96 + base)
+    pto.store(prod4, data_ptr, 128 + base)
+    pto.store(quot4, data_ptr, 160 + base)
+    pto.store(max4, data_ptr, 192 + base)
+    pto.store(min4, data_ptr, 224 + base)
+    pto.store(abs4, data_ptr, 256 + base)
+    _ = greater4
+    _ = neg4
+    _ = selected4
+    _ = wide4
+    _ = ceil4
+    _ = shl4
+    _ = shr4
 
 
 @pto.jit(target="a5", mode="explicit")
@@ -2934,10 +2950,10 @@ def scalar_contiguous_vector_arith_probe():
 @pto.simt
 def scalar_contiguous_local_alloc_buffer_helper():
     data = pto.alloc_buffer((16,), pto.f32)
-    x4 = scalar.load(data, 0, contiguous=4)
+    x4 = pto.load(data, 0, contiguous=4)
     scale4 = pto.Vec(pto.f32, 4, init=1.0)
     y4 = x4 * scale4
-    scalar.store(y4, data, 4)
+    pto.store(y4, data, 4)
 
 
 @pto.jit(target="a5", mode="explicit")
@@ -2949,24 +2965,24 @@ def scalar_contiguous_local_alloc_buffer_probe():
 def scalar_contiguous_width_mismatch_probe():
     data_tile = pto.alloc_tile(shape=[1, 16], dtype=pto.f32, valid_shape=[1, 16])
     data_ptr = data_tile.as_ptr()
-    x4 = scalar.load(data_ptr, 0, contiguous=4)
-    scalar.store(x4, data_ptr, 4, contiguous=2)
+    x4 = pto.load(data_ptr, 0, contiguous=4)
+    pto.store(x4, data_ptr, 4, contiguous=2)
 
 
 @pto.jit(target="a5")
 def scalar_contiguous_scalar_store_probe():
     data_tile = pto.alloc_tile(shape=[1, 16], dtype=pto.f32, valid_shape=[1, 16])
     data_ptr = data_tile.as_ptr()
-    scalar.store(1.0, data_ptr, 0, contiguous=4)
+    pto.store(1.0, data_ptr, 0, contiguous=4)
 
 
 @pto.simt
 def per_element_vec_f32_simt_body(data_ptr):
     base = pto.get_tid_x() * 2
-    v0 = scalar.load(data_ptr, base)
-    v1 = scalar.load(data_ptr, base + 1)
+    v0 = pto.load(data_ptr, base)
+    v1 = pto.load(data_ptr, base + 1)
     pair = pto.Vec(pto.f32, 2, init=(v0, v1))
-    scalar.store(pair, data_ptr, 16 + base)
+    pto.store(pair, data_ptr, 16 + base)
 
 
 @pto.jit(target="a5", mode="explicit")
@@ -2980,10 +2996,10 @@ def per_element_vec_f32_probe():
 @pto.simt
 def per_element_vec_i32_simt_body(data_ptr):
     base = pto.get_tid_x() * 2
-    v0 = scalar.load(data_ptr, base)
-    v1 = scalar.load(data_ptr, base + 1)
+    v0 = pto.load(data_ptr, base)
+    v1 = pto.load(data_ptr, base + 1)
     pair = pto.Vec(pto.i32, 2, init=(v0, v1))
-    scalar.store(pair, data_ptr, 16 + base)
+    pto.store(pair, data_ptr, 16 + base)
 
 
 @pto.jit(target="a5", mode="explicit")
@@ -2997,10 +3013,10 @@ def per_element_vec_i32_probe():
 @pto.simt
 def per_element_vec_ui32_simt_body(data_ptr):
     base = pto.get_tid_x() * 2
-    v0 = scalar.load(data_ptr, base)
-    v1 = scalar.load(data_ptr, base + 1)
+    v0 = pto.load(data_ptr, base)
+    v1 = pto.load(data_ptr, base + 1)
     pair = pto.Vec(pto.ui32, 2, init=(v0, v1))
-    scalar.store(pair, data_ptr, 16 + base)
+    pto.store(pair, data_ptr, 16 + base)
 
 
 @pto.jit(target="a5", mode="explicit")
@@ -3016,7 +3032,7 @@ def vec_init_size_mismatch_probe():
     data_tile = pto.alloc_tile(shape=[1, 16], dtype=pto.f32, valid_shape=[1, 16])
     data_ptr = data_tile.as_ptr()
     pair = pto.Vec(pto.f32, 2, init=(1.0, 2.0, 3.0))
-    scalar.store(pair, data_ptr, 0)
+    pto.store(pair, data_ptr, 0)
 
 
 @pto.jit(target="a5")
@@ -3024,7 +3040,7 @@ def vec_init_str_probe():
     data_tile = pto.alloc_tile(shape=[1, 16], dtype=pto.f32, valid_shape=[1, 16])
     data_ptr = data_tile.as_ptr()
     pair = pto.Vec(pto.f32, 2, init="ab")
-    scalar.store(pair, data_ptr, 0)
+    pto.store(pair, data_ptr, 0)
 
 
 @pto.jit(target="a5")
@@ -3035,8 +3051,8 @@ def vec_init_literals_probe():
     unsigned_ptr = unsigned_tile.as_ptr()
     signed_pair = pto.Vec(pto.si32, 2, init=(-1, 2))
     unsigned_pair = pto.Vec(pto.ui32, 2, init=(-1, 2))
-    scalar.store(signed_pair, signed_ptr, 0)
-    scalar.store(unsigned_pair, unsigned_ptr, 0)
+    pto.store(signed_pair, signed_ptr, 0)
+    pto.store(unsigned_pair, unsigned_ptr, 0)
 
 
 @pto.jit(target="a5")
@@ -3044,7 +3060,7 @@ def vec_init_mapping_probe():
     data_tile = pto.alloc_tile(shape=[1, 16], dtype=pto.f32, valid_shape=[1, 16])
     data_ptr = data_tile.as_ptr()
     pair = pto.Vec(pto.f32, 2, init={0: 1.0, 1: 2.0})
-    scalar.store(pair, data_ptr, 0)
+    pto.store(pair, data_ptr, 0)
 
 
 @pto.jit(target="a5")
@@ -3052,7 +3068,7 @@ def vec_broadcast_unsigned_probe():
     unsigned_tile = pto.alloc_tile(shape=[1, 16], dtype=pto.ui32, valid_shape=[1, 16])
     unsigned_ptr = unsigned_tile.as_ptr()
     broadcast = pto.Vec(pto.ui32, 2, init=7)
-    scalar.store(broadcast, unsigned_ptr, 0)
+    pto.store(broadcast, unsigned_ptr, 0)
 
 
 @pto.jit(target="a5")
@@ -3067,10 +3083,10 @@ def vec_init_16b_probe():
     quad_f16 = pto.Vec(pto.f16, 4, init=(1.5, -2.25, 3.0, 4.5))
     quad_i16 = pto.Vec(pto.i16, 4, init=(-1, 2, 3, -4))
     quad_ui16 = pto.Vec(pto.ui16, 4, init=(1, 2, 3, 4))
-    scalar.store(pair_f16, f16_ptr, 0)
-    scalar.store(quad_f16, f16_ptr, 2)
-    scalar.store(quad_i16, i16_ptr, 0)
-    scalar.store(quad_ui16, ui16_ptr, 0)
+    pto.store(pair_f16, f16_ptr, 0)
+    pto.store(quad_f16, f16_ptr, 2)
+    pto.store(quad_i16, i16_ptr, 0)
+    pto.store(quad_ui16, ui16_ptr, 0)
 
 
 @pto.jit(target="a5")
@@ -3079,18 +3095,18 @@ def addptr_surface_probe():
     meta_ptr = meta_tile.as_ptr()
     ptr_pyint = pto.addptr(meta_ptr, 2)
     ptr_i32 = pto.addptr(meta_ptr, pto.i32(3))
-    scalar.store(11, ptr_pyint)
-    scalar.store(13, ptr_i32)
-    val_pyint = scalar.load(ptr_pyint)
-    val_i32 = scalar.load(ptr_i32)
+    pto.store(11, ptr_pyint)
+    pto.store(13, ptr_i32)
+    val_pyint = pto.load(ptr_pyint)
+    val_i32 = pto.load(ptr_i32)
     _ = val_pyint
     _ = val_i32
 
 
 @pto.simt
 def simt_pointer_offset_helper(meta_ptr: pto.ptr(pto.i32, pto.MemorySpace.UB)):
-    scalar.store(7, meta_ptr + 0)
-    scalar.store(9, meta_ptr + 1)
+    pto.store(7, meta_ptr + 0)
+    pto.store(9, meta_ptr + 1)
 
 
 @pto.simt
@@ -3109,8 +3125,8 @@ def simt_reserved_buffer_ambiguous_peer(*, FLAG):
 def simt_pointer_offset_probe():
     meta_tile = pto.alloc_tile(shape=[1, 8], dtype=pto.i32, valid_shape=[1, 2])
     simt_pointer_offset_helper(meta_tile.as_ptr())
-    first = scalar.load(meta_tile.as_ptr() + 0)
-    second = scalar.load(meta_tile.as_ptr() + 1)
+    first = pto.load(meta_tile.as_ptr() + 0)
+    second = pto.load(meta_tile.as_ptr() + 1)
     _ = first
     _ = second
 
@@ -3135,10 +3151,10 @@ def scalar_store_element_coercion_probe():
     meta_ptr = meta_tile.as_ptr()
     row_start = pto.const(0)
     row_stop = pto.const(4)
-    scalar.store(row_start, meta_ptr + 0)
-    scalar.store(row_stop, meta_ptr + 1)
-    scalar.store(pto.const(2, dtype=pto.i64), meta_ptr + 2)
-    scalar.store(3, meta_ptr + 3)
+    pto.store(row_start, meta_ptr + 0)
+    pto.store(row_stop, meta_ptr + 1)
+    pto.store(pto.const(2, dtype=pto.i64), meta_ptr + 2)
+    pto.store(3, meta_ptr + 3)
 
 
 @pto.jit(target="a5")
@@ -3149,7 +3165,7 @@ def shared_index_coercion_probe():
     meta_ptr = meta_tile.as_ptr()
     with pto.for_(0, limit, step=step) as i:
         ptr = pto.addptr(meta_ptr, limit)
-        scalar.store(i, ptr)
+        pto.store(i, ptr)
         pto.wait_flag(pto.Pipe.V, pto.Pipe.MTE2, event_id=limit)
 
 
@@ -4129,29 +4145,37 @@ def signed_integer_scalar_probe():
     signed_ptr = signed_tile.as_ptr()
     unsigned_ptr = unsigned_tile.as_ptr()
 
-    scalar.store(pto.si32(-7), signed_ptr + 0)
-    scalar.store(pto.si32(5), signed_ptr + 1)
-    scalar.store(pto.ui32("0xFFFFFFFF"), unsigned_ptr + 0)
-    scalar.store(pto.ui32(9), unsigned_ptr + 1)
+    pto.store(pto.si32(-7), signed_ptr + 0)
+    pto.store(pto.si32(5), signed_ptr + 1)
+    pto.store(pto.ui32("0xFFFFFFFF"), unsigned_ptr + 0)
+    pto.store(pto.ui32(9), unsigned_ptr + 1)
 
-    s0 = scalar.load(signed_ptr + 0)
-    s1 = scalar.load(signed_ptr + 1)
-    u0 = scalar.load(unsigned_ptr + 0)
-    u1 = scalar.load(unsigned_ptr + 1)
+    s0 = pto.load(signed_ptr + 0)
+    s1 = pto.load(signed_ptr + 1)
+    u0 = pto.load(unsigned_ptr + 0)
+    u1 = pto.load(unsigned_ptr + 1)
 
     s_add = s0 + 1
     u_add = u1 + 2
-    s_max = scalar.max(s0, s1)
-    s_min = scalar.min(s0, s1)
-    u_max = scalar.max(u0, u1)
-    u_min = scalar.min(u0, u1)
-    s_abs = scalar.abs(s0)
-    u_abs = scalar.abs(u0)
+    s_max = pto.max(s0, s1)
+    s_min = pto.min(s0, s1)
+    u_max = pto.max(u0, u1)
+    u_min = pto.min(u0, u1)
+    s_abs = pto.abs(s0)
+    u_abs = pto.abs(u0)
     s_cmp = s1 > s0
     u_cmp = u0 > u1
+    s_neg = -s0
+    s_ceil = pto.ceildiv(s0, s1)
+    u_ceil = pto.ceildiv(u0, u1)
+    s_div = s0 / s1
+    u_div = u0 / u1
+    s_shl = s0 << 1
+    s_shr = s0 >> 1
+    u_shr = u0 >> 1
 
-    scalar.store(s_add, signed_ptr + 2)
-    scalar.store(u_add, unsigned_ptr + 2)
+    pto.store(s_add, signed_ptr + 2)
+    pto.store(u_add, unsigned_ptr + 2)
 
     _ = s_max
     _ = s_min
@@ -4161,6 +4185,14 @@ def signed_integer_scalar_probe():
     _ = u_abs
     _ = s_cmp
     _ = u_cmp
+    _ = s_neg
+    _ = s_ceil
+    _ = u_ceil
+    _ = s_div
+    _ = u_div
+    _ = s_shl
+    _ = s_shr
+    _ = u_shr
 
 
 @pto.jit(target="a5")
@@ -5070,9 +5102,6 @@ def main() -> None:
     expect(not hasattr(pto, "copy_ubuf_to_ubuf"), "pto.copy_ubuf_to_ubuf should not remain on the public pto namespace")
     expect(not hasattr(pto, "vmi_vreg_type"), "pto.vmi_vreg_type should not remain on the public pto namespace")
     expect(not hasattr(pto, "vmi_mask_type"), "pto.vmi_mask_type should not remain on the public pto namespace")
-    expect(not hasattr(scalar, "sts"), "scalar.sts should not remain in the public scalar namespace")
-    expect(not hasattr(scalar, "cmpi"), "scalar.cmpi should not remain in the public scalar namespace")
-    expect(not hasattr(scalar, "cmpi_sgt"), "scalar.cmpi_sgt should not remain in the public scalar namespace")
     removed_tile_buf_type = expect_raises(AttributeError, lambda: getattr(pto, "tile_buf_type"))
     expect(
         "pto.tile_buf_type is not a supported PTODSL public interface" in str(removed_tile_buf_type),
@@ -5109,8 +5138,12 @@ def main() -> None:
         and "Use pto.mte_ub_ub" in str(removed_copy_ubuf_to_ubuf),
         "removed pto.copy_ubuf_to_ubuf should diagnose pto.mte_ub_ub as the replacement",
     )
-    for name in ("max", "min", "exp", "log", "sqrt", "abs"):
-        expect(hasattr(scalar, name), f"scalar.{name} should be exported from the public scalar namespace")
+    for name in (
+        "load", "store", "max", "min", "exp", "log", "sqrt", "abs",
+        "cast", "select", "index_cast",
+    ):
+        expect(hasattr(pto, name), f"pto.{name} should be exported from the unified public namespace")
+    expect(not hasattr(__import__("ptodsl"), "scalar"), "ptodsl.scalar should not remain as a compatibility namespace")
 
     with make_context() as ctx, Location.unknown(ctx):
         tile_buf_ty = pto_types.tile_buf_type(
@@ -5218,16 +5251,18 @@ def main() -> None:
             _ = pto.i32("0x80000000")
         bit_pattern_text = str(bit_pattern_module)
         expect(
-            "unrealized_conversion_cast" in bit_pattern_text,
-            "signed/unsigned integer bit-pattern constructors should bridge through unrealized_conversion_cast",
+            "pto.constant -1 : i32" in bit_pattern_text and
+            "unrealized_conversion_cast" in bit_pattern_text and
+            "i32 to si32" in bit_pattern_text,
+            "signed integer constructors should use a signless common constant and restore the authored type",
         )
         expect(
-            "arith.constant -1 : i32" in bit_pattern_text,
-            "pto.si32/ui32 bit-pattern initialization should materialize the expected signless constant payload",
+            "i32 to ui32" in bit_pattern_text,
+            "unsigned integer constructors should restore the authored type after the signless common constant",
         )
         expect(
-            "arith.constant -2147483648 : i32" in bit_pattern_text,
-            "pto.i32 bit-pattern initialization should materialize the documented signless bit pattern",
+            "pto.constant -2147483648 : i32" in bit_pattern_text,
+            "pto.i32 bit-pattern initialization should materialize the documented PTO constant",
         )
         expect(
             str(pto.f8e4m3.resolve()) == "f8E4M3FN",
@@ -5365,20 +5400,20 @@ def main() -> None:
     explicit_default = host_vec_copy.compile(BLOCK=128)
     block64 = host_vec_copy.compile(BLOCK=64)
 
-    scalar_pipeline_text = scalar_pipeline_access_modes_probe.compile().mlir_text()
+    scalar_pipeline_text = scalar_memory_access_modes_probe.compile().mlir_text()
     expect_parse_roundtrip_and_verify(
         scalar_pipeline_text,
         "scalar pipeline access mode specialization",
     )
     expect(
-        scalar_pipeline_text.count("pto.load_scalar") == 1
-        and scalar_pipeline_text.count("pto.store_scalar") == 1,
-        "default scalar pipeline accesses should remain load_scalar/store_scalar",
+        scalar_pipeline_text.count("pto.load") == 1
+        and scalar_pipeline_text.count("pto.store") == 1,
+        "ordinary scalar accesses should use pto.load/store",
     )
     expect(
         scalar_pipeline_text.count("pto.ld_dev") == 1
         and scalar_pipeline_text.count("pto.st_dev") == 1,
-        "bypass_l1 scalar pipeline accesses should lower to ld_dev/st_dev",
+        "L1-bypass scalar accesses should use ld_dev/st_dev",
     )
     expect_raises(
         TypeError,
@@ -6357,7 +6392,10 @@ def main() -> None:
     expect("!pto.tile_buf<right, 16x16xf16" in tile_window_matmul_text, "pto.tile.matmul rhs should preserve RIGHT scratch tile typing")
     expect("!pto.tile_buf<acc, 16x16xf32" in tile_window_matmul_text, "pto.tile.matmul/matmul_acc should preserve ACC destination typing")
     expect(
-        "pto.tinsert ins(" in tile_window_matmul_text and ", %c0, %c32 :" in tile_window_matmul_text,
+        re.search(
+            r"pto\.tinsert ins\([^\n]+, %[a-zA-Z0-9_]+, %[a-zA-Z0-9_]+ :",
+            tile_window_matmul_text,
+        ) is not None,
         "pto.tile.insert should preserve the authored insertion offsets in MLIR",
     )
     expect(
@@ -6381,7 +6419,8 @@ def main() -> None:
     expect_parse_roundtrip_and_verify(authored_addr_tile_text, "authored alloc_tile addr specialization")
     expect(
         re.search(
-            r"pto\.alloc_tile addr = %c0_i64 valid_row = %[a-zA-Z0-9_]+ valid_col = %[a-zA-Z0-9_]+ : !pto\.tile_buf<vec, 1x128xf32, valid=\?x\?>",
+            r"pto\.alloc_tile addr = %[a-zA-Z0-9_]+ valid_row = %[a-zA-Z0-9_]+ "
+            r"valid_col = %[a-zA-Z0-9_]+ : !pto\.tile_buf<vec, 1x128xf32, valid=\?x\?>",
             authored_addr_tile_text,
         ) is not None,
         "alloc_tile(shape=..., dtype=..., addr=int, valid_shape=...) should coerce Python ints to i64 operands",
@@ -6390,12 +6429,12 @@ def main() -> None:
     dynamic_addr_tile_text = dynamic_addr_tile_surface_probe.compile().mlir_text()
     expect_parse_roundtrip_and_verify(dynamic_addr_tile_text, "dynamic alloc_tile addr specialization")
     expect(
-        "arith.index_cast %arg0 : i32 to index" in dynamic_addr_tile_text,
+        "pto.index_cast %arg0 signed : i32 -> index" in dynamic_addr_tile_text,
         "alloc_tile(addr=runtime integer metadata) should first bridge the public i32 scalar to index",
     )
     expect(
         re.search(
-            r"arith\.index_cast %[a-zA-Z0-9_]+ : index to i64",
+            r"pto\.index_cast %[a-zA-Z0-9_]+ signed : index -> i64",
             dynamic_addr_tile_text,
         ) is not None,
         "alloc_tile(addr=runtime index) should still cast the bridged index metadata to i64 before lowering",
@@ -6452,8 +6491,9 @@ def main() -> None:
     carry_static_pyint_init_text = carry_static_pyint_init_probe.compile().mlir_text()
     expect_parse_roundtrip_and_verify(carry_static_pyint_init_text, "carry static pyint init specialization")
     expect(
-        re.search(
-            r"iter_args\(%[a-zA-Z0-9_]+ = %c64_i32\) -> \(i32\)",
+        "pto.constant 64 : i32" in carry_static_pyint_init_text
+        and re.search(
+            r"iter_args\(%[a-zA-Z0-9_]+ = %[a-zA-Z0-9_]+\) -> \(i32\)",
             carry_static_pyint_init_text,
         ) is not None,
         "pto.for_(...).carry(remained=64) should materialize Python int carry init values as public i32 constants",
@@ -6467,7 +6507,7 @@ def main() -> None:
     expect_parse_roundtrip_and_verify(fixed_integer_index_coercion_text, "fixed integer index coercion specialization")
     expect(
         re.search(
-            r"arith\.index_cast %[a-zA-Z0-9_]+ : index to i32",
+            r"pto\.index_cast %[a-zA-Z0-9_]+ signed : index -> i32",
             fixed_integer_index_coercion_text,
         ) is not None,
         "fixed-width integer parameters should coerce runtime index values through shared scalar adaptation",
@@ -6643,7 +6683,7 @@ def main() -> None:
     expect_parse_roundtrip_and_verify(rmsnorm_alloc_buffer_text, "RMSNorm hand-authored UB layout specialization")
     for expected_offset in (4096, 4224, 12416, 20608):
         expect(
-            f"arith.constant {expected_offset} : index" in rmsnorm_alloc_buffer_text,
+            f"pto.constant {expected_offset} : index" in rmsnorm_alloc_buffer_text,
             f"RMSNorm hand-authored UB layout should materialize f32 offset {expected_offset}",
         )
     expect(
@@ -6798,9 +6838,9 @@ def main() -> None:
         "pto.shuffle_up",
         "pto.shuffle_down",
         "pto.shuffle_bfly",
-        "pto.redux_add",
-        "pto.redux_max",
-        "pto.redux_min",
+        "pto.redux_addi",
+        "pto.redux_maxi",
+        "pto.redux_mini",
         "pto.ldg",
         "pto.stg",
         "pto.atomic_exch",
@@ -6826,10 +6866,8 @@ def main() -> None:
         "pto.floor",
         "pto.rint",
         "pto.round",
-        "pto.fmin",
-        "pto.fmax",
         "pto.fma",
-        "pto.convert",
+        "pto.ftof", "pto.ftoi", "pto.itof",
         "pto.syncthreads",
         "pto.threadfence",
         "pto.threadfence_block",
@@ -6838,12 +6876,12 @@ def main() -> None:
     ):
         expect(op_name in simt_full_text, f"full SIMT surface should contain {op_name}")
     expect(
-        re.search(r"pto\.fmin .* : f16, f16 -> f16", simt_full_text) is not None,
-        "full SIMT surface should accept scalar f16 pto.fmin",
+        re.search(r"pto\.minf .* : f16", simt_full_text) is not None,
+        "full SIMT surface should accept scalar f16 pto.minf",
     )
     expect(
-        re.search(r"pto\.fmax .* : f16, f16 -> f16", simt_full_text) is not None,
-        "full SIMT surface should accept scalar f16 pto.fmax",
+        re.search(r"pto\.maxf .* : f16", simt_full_text) is not None,
+        "full SIMT surface should accept scalar f16 pto.maxf",
     )
     for fp8_vec in (
         "vector<4xf8E4M3FN>",
@@ -6867,13 +6905,8 @@ def main() -> None:
     )
     expect_raises(
         TypeError,
-        lambda: simt_invalid_convert_signedness_launch.compile(TRACE_TOKEN=1).mlir_text(),
-        "requires signedness",
-    )
-    expect_raises(
-        TypeError,
         lambda: simt_invalid_atomic_signedness_launch.compile(TRACE_TOKEN=1).mlir_text(),
-        "does not accept signedness",
+        "unexpected keyword argument 'signedness'",
     )
 
     ast_subkernel_runtime_for_text = ast_subkernel_runtime_for_probe.compile().mlir_text()
@@ -6928,7 +6961,7 @@ def main() -> None:
         "automatic branch merge should materialize one internal scf.yield per branch",
     )
     expect(
-        "arith.addi" in branch_merge_text and "arith.subi" in branch_merge_text,
+        "pto.addi" in branch_merge_text and "pto.subi" in branch_merge_text,
         "merged branch values should remain usable as ordinary runtime scalars after the conditional",
     )
 
@@ -7259,7 +7292,7 @@ def main() -> None:
         is not None
         and re.search(r"func\.func @func_partition_metadata_helper__ptodsl_[0-9a-f]+\(.*\) -> i32", ptodsl_func_partition_metadata_text)
         is not None
-        and re.search(r"%c1_i32 = arith\.constant 1 : i32", ptodsl_func_partition_metadata_text) is not None,
+        and re.search(r"%\d+ = pto\.constant 1 : i32", ptodsl_func_partition_metadata_text) is not None,
         "@pto.func should preserve partition metadata across the helper boundary",
     )
     ptodsl_func_future_annotations_text = ptodsl_func_future_annotations_probe.compile().mlir_text()
@@ -7325,7 +7358,7 @@ def main() -> None:
     )
     expect(
         ptodsl_func_constexpr_text.count("call @func_constexpr_static_helper__ptodsl_") == 2
-        and ptodsl_func_constexpr_text.count("arith.addi") >= 6,
+        and ptodsl_func_constexpr_text.count("pto.addi") >= 6,
         "@pto.func const_expr values should remain available for static_range unrolling",
     )
     expect_raises(
@@ -7341,7 +7374,7 @@ def main() -> None:
         "@pto.func traced argument annotation coercion",
     )
     expect(
-        "arith.trunci" in ptodsl_func_traced_argument_coercion_text
+        "pto.trunci" in ptodsl_func_traced_argument_coercion_text
         and re.search(
             r"func\.func @func_i32_argument_helper__ptodsl_[0-9a-f]+\(%arg0: i32\)",
             ptodsl_func_traced_argument_coercion_text,
@@ -7414,7 +7447,7 @@ def main() -> None:
         mlir_op_sequence(ast_control_flow_equiv_native_text) == mlir_op_sequence(ast_control_flow_equiv_explicit_text),
         "native Python for/if rewrite should emit the same operation sequence as explicit pto.for_/pto.if_",
     )
-    for pattern in ("scf.for", "scf.if", "iter_args(", "scf.yield", "arith.addi"):
+    for pattern in ("scf.for", "scf.if", "iter_args(", "scf.yield", "pto.addi"):
         expect(
             ast_control_flow_equiv_native_text.count(pattern) == ast_control_flow_equiv_explicit_text.count(pattern),
             f"native AST rewrite should match explicit control-flow count for {pattern}",
@@ -7587,24 +7620,45 @@ def main() -> None:
 
     runtime_scalar_text = runtime_scalar_operator_probe.compile(BLOCK=8).mlir_text()
     expect_parse_roundtrip_and_verify(runtime_scalar_text, "runtime scalar operator specialization")
-    expect("arith.index_cast" in runtime_scalar_text, "mixed i64/index runtime arithmetic should materialize index_cast")
-    expect("arith.floordivsi" in runtime_scalar_text, "runtime // should lower to arith.floordivsi")
-    expect("arith.remsi" in runtime_scalar_text, "runtime % should lower to arith.remsi")
-    expect("arith.addf" in runtime_scalar_text, "runtime float + should lower to arith.addf")
-    expect("arith.mulf" in runtime_scalar_text, "runtime float * should lower to arith.mulf")
-    expect("arith.subf" in runtime_scalar_text, "runtime float - should lower to arith.subf")
-    expect("arith.divf" in runtime_scalar_text, "runtime float / should lower to arith.divf")
-    expect("arith.maximumf" in runtime_scalar_text, "scalar.max(float, float) should lower to arith.maximumf")
-    expect("arith.minimumf" in runtime_scalar_text, "scalar.min(float, float) should lower to arith.minimumf")
-    expect("math.exp" in runtime_scalar_text, "scalar.exp(...) should lower to math.exp")
-    expect("math.log" in runtime_scalar_text, "scalar.log(...) should lower to math.log")
-    expect("math.sqrt" in runtime_scalar_text, "scalar.sqrt(...) should lower to math.sqrt")
-    expect("math.absf" in runtime_scalar_text, "scalar.abs(float) should lower to math.absf")
-    expect("arith.cmpf ogt" in runtime_scalar_text, "float runtime '>' should lower to arith.cmpf ogt")
-    expect("arith.cmpf oeq" in runtime_scalar_text, "float runtime '==' should lower to arith.cmpf oeq")
-    expect("arith.cmpf oge" in runtime_scalar_text, "float runtime '>=' should lower to arith.cmpf oge")
-    expect("arith.cmpf ole" in runtime_scalar_text, "float runtime '<=' should lower to arith.cmpf ole")
-    expect("arith.andi" in runtime_scalar_text, "i1 conjunction from native '&' should lower to arith.andi")
+    expect(
+        "pto.index_cast" in runtime_scalar_text,
+        "mixed i64/index runtime arithmetic should materialize pto.index_cast",
+    )
+    expect(
+        "pto.floordiv" in runtime_scalar_text and " signed :" in runtime_scalar_text,
+        "runtime // should record signed floor division",
+    )
+    expect(
+        "pto.remi" in runtime_scalar_text and " signed :" in runtime_scalar_text,
+        "runtime % should record signed remainder",
+    )
+    expect("pto.addf" in runtime_scalar_text, "runtime float + should use pto.addf in frontend IR")
+    expect("pto.mulf" in runtime_scalar_text, "runtime float * should use pto.mulf in frontend IR")
+    expect("pto.subf" in runtime_scalar_text, "runtime float - should use pto.subf in frontend IR")
+    expect("pto.divf" in runtime_scalar_text, "runtime float / should select explicit floating division")
+    expect("pto.maxf" in runtime_scalar_text, "pto.max(float, float) should emit pto.maxf")
+    expect("pto.minf" in runtime_scalar_text, "pto.min(float, float) should emit pto.minf")
+    expect(
+        "arith.maximumf" not in runtime_scalar_text,
+        "pto.max(float, float) should avoid NaN-propagating arith.maximumf",
+    )
+    expect(
+        "arith.minimumf" not in runtime_scalar_text,
+        "pto.min(float, float) should avoid NaN-propagating arith.minimumf",
+    )
+    expect("pto.exp" in runtime_scalar_text, "pto.exp(...) should remain in the PTO frontend dialect")
+    expect("pto.log" in runtime_scalar_text, "pto.log(...) should remain in the PTO frontend dialect")
+    expect("pto.sqrt" in runtime_scalar_text, "pto.sqrt(...) should remain in the PTO frontend dialect")
+    expect("pto.absf" in runtime_scalar_text, "pto.abs(float) should emit pto.absf")
+    expect(
+        re.search(r"pto\.absi %[a-zA-Z0-9_]+ signed : index", runtime_scalar_text) is not None,
+        "pto.abs(index) should emit signed pto.absi",
+    )
+    expect("pto.cmpf gt" in runtime_scalar_text, "float runtime '>' should emit pto.cmpf gt")
+    expect("pto.cmpf eq" in runtime_scalar_text, "float runtime '==' should emit pto.cmpf eq")
+    expect("pto.cmpf ge" in runtime_scalar_text, "float runtime '>=' should emit pto.cmpf ge")
+    expect("pto.cmpf le" in runtime_scalar_text, "float runtime '<=' should emit pto.cmpf le")
+    expect("pto.and" in runtime_scalar_text, "i1 conjunction from native '&' should remain as pto.and")
 
     host_runtime_scalar_entry_text = host_runtime_scalar_entry_probe.compile().mlir_text()
     expect_parse_roundtrip_and_verify(
@@ -7636,19 +7690,42 @@ def main() -> None:
 
     signed_integer_scalar_text = signed_integer_scalar_probe.compile().mlir_text()
     expect_parse_roundtrip_and_verify(signed_integer_scalar_text, "signed integer scalar specialization")
+    expect("pto.constant" in signed_integer_scalar_text, "signed/unsigned literals should use pto.constant")
+    expect("pto.addi" in signed_integer_scalar_text, "signed/unsigned scalar addition should use pto.addi")
     expect(
-        "builtin.unrealized_conversion_cast" in signed_integer_scalar_text,
-        "signed/unsigned scalar lowering should bridge signless arith values through unrealized_conversion_cast",
+        re.search(r"pto\.maxi [^\n]+ signed :", signed_integer_scalar_text)
+        and re.search(r"pto\.maxi [^\n]+ unsigned :", signed_integer_scalar_text),
+        "integer max should record signedness",
     )
-    expect("arith.addi" in signed_integer_scalar_text, "signed/unsigned scalar addition should lower through arith.addi")
-    expect("arith.maxsi" in signed_integer_scalar_text, "signed scalar max should lower through arith.maxsi")
-    expect("arith.minsi" in signed_integer_scalar_text, "signed scalar min should lower through arith.minsi")
-    expect("arith.maxui" in signed_integer_scalar_text, "unsigned scalar max should lower through arith.maxui")
-    expect("arith.minui" in signed_integer_scalar_text, "unsigned scalar min should lower through arith.minui")
-    expect("math.absi" in signed_integer_scalar_text, "signed scalar abs should lower through math.absi")
-    expect("arith.cmpi sgt" in signed_integer_scalar_text, "signed scalar cmp should preserve signed predicate")
-    expect("arith.cmpi ugt" in signed_integer_scalar_text, "unsigned scalar cmp should preserve unsigned predicate")
-    expect("pto.store" in runtime_scalar_text, "scalar.store(...) should lower to pto.store")
+    expect(
+        re.search(r"pto\.mini [^\n]+ signed :", signed_integer_scalar_text)
+        and re.search(r"pto\.mini [^\n]+ unsigned :", signed_integer_scalar_text),
+        "integer min should record signedness",
+    )
+    expect("pto.absi" in signed_integer_scalar_text, "signed scalar abs should use pto.absi")
+    expect("pto.negi" in signed_integer_scalar_text, "signed scalar negation should use pto.negi")
+    expect(
+        re.search(r"pto\.ceildiv [^\n]+ signed :", signed_integer_scalar_text)
+        and re.search(r"pto\.ceildiv [^\n]+ unsigned :", signed_integer_scalar_text),
+        "ceiling division should record signedness",
+    )
+    expect(
+        re.search(r"pto\.divi [^\n]+ signed :", signed_integer_scalar_text)
+        and re.search(r"pto\.divi [^\n]+ unsigned :", signed_integer_scalar_text),
+        "integer / should record signedness",
+    )
+    expect("pto.shl" in signed_integer_scalar_text, "integer left shift should use pto.shl")
+    expect(
+        re.search(r"pto\.shr [^\n]+ signed :", signed_integer_scalar_text)
+        and re.search(r"pto\.shr [^\n]+ unsigned :", signed_integer_scalar_text),
+        "right shift should record signedness",
+    )
+    expect(
+        re.search(r"pto\.cmpi gt [^\n]+ signed :", signed_integer_scalar_text)
+        and re.search(r"pto\.cmpi gt [^\n]+ unsigned :", signed_integer_scalar_text),
+        "integer comparisons should record signedness in an attribute",
+    )
+    expect("pto.store" in runtime_scalar_text, "pto.store(...) should lower PTO-pointer access to pto.store")
 
     tile_slice_text = tile_slice_surface_probe.compile(BLOCK=128).mlir_text()
     expect_parse_roundtrip_and_verify(tile_slice_text, "tile slice surface specialization")
@@ -7673,8 +7750,8 @@ def main() -> None:
     integer_loop_text = integer_loop_bound_probe.compile(BLOCK=8).mlir_text()
     expect_parse_roundtrip_and_verify(integer_loop_text, "integer loop bound specialization")
     expect(
-        integer_loop_text.count("arith.index_cast") >= 2,
-        "integer runtime loop bounds should be normalized to index with arith.index_cast",
+        integer_loop_text.count("pto.index_cast") >= 2,
+        "integer runtime loop bounds should be normalized to index with pto.index_cast",
     )
     expect(
         integer_loop_text.count("scf.for") == 2,
@@ -7684,32 +7761,56 @@ def main() -> None:
     scalar_pointer_offset_text = scalar_pointer_offset_probe.compile().mlir_text()
     expect_parse_roundtrip_and_verify(scalar_pointer_offset_text, "scalar pointer offset specialization")
     expect(
-        re.search(r"pto\.store %c1_i32, %\d+\[%c1\]", scalar_pointer_offset_text) is not None,
-        "scalar.store(ptr, 1) should lower as element offset 1",
+        re.search(
+            r"(%\d+) = pto\.constant 1 : index\s+%\d+ = pto\.constant 1 : i32\s+"
+            r"pto\.store %\d+, %\d+\[\1\]",
+            scalar_pointer_offset_text,
+        ) is not None,
+        "pto.store(ptr, 1) should lower as element offset 1",
     )
     expect(
-        re.search(r"pto\.store %c2_i32, %\d+\[%c2\]", scalar_pointer_offset_text) is not None,
-        "scalar.store(ptr + 2) should lower as element offset 2",
+        re.search(
+            r"(%\d+) = pto\.constant 2 : index\s+%\d+ = pto\.constant 2 : i32\s+"
+            r"pto\.store %\d+, %\d+\[\1\]",
+            scalar_pointer_offset_text,
+        ) is not None,
+        "pto.store(ptr + 2) should lower as element offset 2",
     )
     expect(
-        re.search(r"pto\.load %\d+\[%c1(?:_\d+)?\]", scalar_pointer_offset_text) is not None,
-        "scalar.load(ptr, 1) should lower as element offset 1",
+        re.search(
+            r"(%\d+) = pto\.constant 1 : index\s+%\d+ = pto\.load %\d+\[\1\]",
+            scalar_pointer_offset_text,
+        ) is not None,
+        "pto.load(ptr, 1) should lower as element offset 1",
     )
     expect(
-        re.search(r"pto\.load %\d+\[%c2(?:_\d+)?\]", scalar_pointer_offset_text) is not None,
-        "scalar.load(ptr + 2) should lower as element offset 2",
+        re.search(
+            r"(%\d+) = pto\.constant 2 : index\s+%\d+ = pto\.load %\d+\[\1\]",
+            scalar_pointer_offset_text,
+        ) is not None,
+        "pto.load(ptr + 2) should lower as element offset 2",
     )
 
     scalar_contiguous_text = scalar_contiguous_vector_probe.compile().mlir_text()
     expect_parse_roundtrip_and_verify(scalar_contiguous_text, "scalar contiguous vector specialization")
-    expect("llvm.load" in scalar_contiguous_text, "scalar.load(..., contiguous=N) should lower to llvm.load")
-    expect("llvm.store" in scalar_contiguous_text, "scalar.store(vector, ...) should lower to llvm.store")
-    expect("vector<4xf32>" in scalar_contiguous_text, "contiguous=4 over f32 should produce vector<4xf32>")
-    expect("llvm.insertelement" in scalar_contiguous_text, "pto.Vec(..., init=scalar) should broadcast with insertelement")
-    expect("arith.mulf" in scalar_contiguous_text, "VecValue multiplication should lower to arith.mulf")
+    expect("pto.load" in scalar_contiguous_text, "PTO-pointer contiguous loads should preserve the PTO pointer domain")
     expect(
-        "pto.load" not in scalar_contiguous_text and "pto.store" not in scalar_contiguous_text,
-        "contiguous vector memory access should not lower through scalar pto.load/store",
+        "pto.store" in scalar_contiguous_text,
+        "PTO-pointer contiguous stores should preserve the PTO pointer domain",
+    )
+    expect("vector<4xf32>" in scalar_contiguous_text, "contiguous=4 over f32 should produce vector<4xf32>")
+    expect(
+        "pto.constant dense<1.000000e+00>" in scalar_contiguous_text,
+        "pto.Vec(..., init=literal) should use a PTO dense splat",
+    )
+    expect("pto.mulf" in scalar_contiguous_text, "VecValue multiplication should use pto.mulf")
+    expect(
+        "!pto.ptr<vector<4xf32>" in scalar_contiguous_text,
+        "contiguous PTO-pointer access should retype the addressed location to a vector pointer",
+    )
+    expect(
+        "llvm.load" not in scalar_contiguous_text and "llvm.store" not in scalar_contiguous_text,
+        "PTO-pointer contiguous access should not leave the PTO pointer domain early",
     )
     expect_raises(
         ValueError,
@@ -7719,13 +7820,13 @@ def main() -> None:
     expect_raises(
         TypeError,
         lambda: scalar_contiguous_scalar_store_probe.compile(),
-        "scalar.store(scalar, ..., contiguous=N) is not supported",
+        "pto.store(scalar, ..., contiguous=N) is not supported",
     )
 
     per_element_vec_text = per_element_vec_f32_probe.compile().mlir_text()
     expect_parse_roundtrip_and_verify(per_element_vec_text, "per-element Vec init= specialization")
     expect("vector<2xf32>" in per_element_vec_text, "pto.Vec(..., init=...) over f32 should produce vector<2xf32>")
-    # NOTE: the exact `count("llvm.insertelement" / "llvm.store") == N` assertions in this
+    # NOTE: the exact `count("llvm.insertelement" / "pto.store") == N` assertions in this
     # section are white-box snapshot checks of the traced MLIR. Unrelated pipeline changes
     # (canonicalization, constant folding of the undef/insertelement chain, etc.) can shift
     # the counts without any behavioral regression; update the expected numbers when that
@@ -7744,12 +7845,12 @@ def main() -> None:
         "pto.Vec(..., init=(v0, v1)) should insert two distinct SSA values, not broadcast",
     )
     expect(
-        per_element_vec_text.count("llvm.store") == 1,
-        "scalar.store(vector, ...) built from init= should emit exactly one llvm.store",
+        per_element_vec_text.count("pto.store") == 1,
+        "pto.store(vector, ...) built from init= should emit exactly one pto.store",
     )
     expect(
-        "pto.store" not in per_element_vec_text,
-        "per-element Vec store should not lower through scalar pto.store",
+        "llvm.store" not in per_element_vec_text,
+        "per-element Vec store should remain in the PTO pointer domain",
     )
 
     per_element_vec_i32_text = per_element_vec_i32_probe.compile().mlir_text()
@@ -7762,8 +7863,8 @@ def main() -> None:
             f"pto.Vec(pto.{int_label}, 2, init=...) should emit exactly two llvm.insertelement ops",
         )
         expect(
-            int_text.count("llvm.store") == 1,
-            f"pto.Vec(pto.{int_label}, 2, init=...) store should emit exactly one llvm.store",
+            int_text.count("pto.store") == 1,
+            f"pto.Vec(pto.{int_label}, 2, init=...) store should emit exactly one pto.store",
         )
         expect(
             "arith.fpext" not in int_text
@@ -7786,15 +7887,15 @@ def main() -> None:
         "two two-element Vec init= builders over literals should emit exactly four llvm.insertelement ops",
     )
     expect(
-        vec_literals_text.count("llvm.store") == 2,
-        "each literal-built vector should be stored with exactly one llvm.store",
+        vec_literals_text.count("pto.store") == 2,
+        "each literal-built vector should be stored with exactly one pto.store",
     )
     expect(
-        "pto.store" not in vec_literals_text,
-        "literal-built vector stores should not lower through scalar pto.store",
+        "llvm.store" not in vec_literals_text,
+        "literal-built vector stores should remain in the PTO pointer domain",
     )
     expect(
-        "arith.constant -1" in vec_literals_text,
+        "pto.constant -1" in vec_literals_text,
         "a negative Python literal should keep the two-complement bit pattern",
     )
     expect(
@@ -7824,9 +7925,8 @@ def main() -> None:
         "pto.Vec(pto.ui32, 2, init=scalar) should build a signless vector<2xi32> instead of failing verification",
     )
     expect(
-        vec_broadcast_unsigned_text.count("llvm.insertelement") == 2
-        and vec_broadcast_unsigned_text.count("llvm.store") == 1,
-        "unsigned broadcast should lower through two insertelements and one llvm.store",
+        vec_broadcast_unsigned_text.count("pto.store") == 1,
+        "unsigned broadcast should emit one pto.store",
     )
 
     vec_16b_text = vec_init_16b_probe.compile().mlir_text()
@@ -7843,12 +7943,12 @@ def main() -> None:
         "16-bit packs (2+4+4+4 elements) should emit exactly fourteen llvm.insertelement ops",
     )
     expect(
-        vec_16b_text.count("llvm.store") == 4,
-        "each 16-bit vector should be stored with exactly one llvm.store",
+        vec_16b_text.count("pto.store") == 4,
+        "each 16-bit vector should be stored with exactly one pto.store",
     )
     expect(
-        "pto.store" not in vec_16b_text,
-        "16-bit vector stores should not lower through scalar pto.store",
+        "llvm.store" not in vec_16b_text,
+        "16-bit vector stores should remain in the PTO pointer domain",
     )
     expect(
         "arith.fpext" not in vec_16b_text
@@ -7878,21 +7978,52 @@ def main() -> None:
         "pto.simt_launch" in vec_arith_text,
         "VecValue arithmetic probe should lower through a SIMT launch",
     )
-    expect("arith.addf" in vec_arith_text, "VecValue addition should lower to arith.addf")
-    expect("arith.subf" in vec_arith_text, "VecValue subtraction should lower to arith.subf")
-    expect("arith.mulf" in vec_arith_text, "VecValue multiplication should lower to arith.mulf")
+    expect("pto.addf" in vec_arith_text, "VecValue addition should use pto.addf")
+    expect("pto.subf" in vec_arith_text, "VecValue subtraction should use pto.subf")
+    expect("pto.mulf" in vec_arith_text, "VecValue multiplication should use pto.mulf")
+    expect("pto.divf" in vec_arith_text, "VecValue division should use pto.divf")
+    expect("pto.cmpf gt" in vec_arith_text, "VecValue comparison should use pto.cmpf")
+    expect("pto.maxf" in vec_arith_text, "builtin-vector maximum should use pto.maxf")
+    expect("pto.minf" in vec_arith_text, "builtin-vector minimum should use pto.minf")
+    expect("pto.absf" in vec_arith_text, "builtin-vector absolute value should use pto.absf")
+    expect("pto.negf" in vec_arith_text, "builtin-vector negation should use pto.negf")
+    expect("pto.select" in vec_arith_text, "builtin-vector selection should remain as pto.select")
+    expect("pto.ftof" in vec_arith_text, "builtin-vector float conversion should use pto.ftof")
+    expect(
+        "pto.ceildiv" in vec_arith_text and " signed : vector<4xi" in vec_arith_text,
+        "builtin-vector ceiling division should record signedness",
+    )
+    expect("pto.shl" in vec_arith_text, "builtin-vector left shift should remain as pto.shl")
+    expect(
+        "pto.shr" in vec_arith_text and " signed : vector<4xi" in vec_arith_text,
+        "builtin-vector right shift should record signedness",
+    )
+    expect("pto.constant dense<2.000000e+00>" in vec_arith_text, "vector literals should use pto.constant splats")
     expect("vector<4xf32>" in vec_arith_text, "vector arithmetic should keep vector<4xf32> type")
     expect(
-        vec_arith_text.count("arith.addf") == 1,
-        "VecValue __add__ should emit exactly one arith.addf",
+        "pto.load" in vec_arith_text and "pto.store" in vec_arith_text,
+        "SIMT contiguous PTO-pointer access should use vector-typed pto.load/store",
     )
     expect(
-        vec_arith_text.count("arith.subf") == 1,
-        "VecValue __sub__ should emit exactly one arith.subf",
+        len(re.findall(r"pto\.addf [^\n]+ : vector<4xf32>", vec_arith_text)) == 1,
+        "VecValue __add__ should emit exactly one pto.addf",
     )
     expect(
-        vec_arith_text.count("arith.mulf") == 1,
-        "VecValue __mul__ should emit exactly one arith.mulf",
+        len(re.findall(r"pto\.subf [^\n]+ : vector<4xf32>", vec_arith_text)) == 1,
+        "VecValue __sub__ should emit exactly one pto.subf",
+    )
+    expect(
+        len(re.findall(r"pto\.mulf [^\n]+ : vector<4xf32>", vec_arith_text)) == 1,
+        "VecValue __mul__ should emit exactly one pto.mulf",
+    )
+
+    local_contiguous_text = scalar_contiguous_local_alloc_buffer_probe.compile().mlir_text()
+    expect_parse_roundtrip_and_verify(
+        local_contiguous_text, "scalar contiguous local allocated-buffer specialization"
+    )
+    expect(
+        "llvm.load" in local_contiguous_text and "llvm.store" in local_contiguous_text,
+        "local allocated-buffer contiguous access should remain in the LLVM pointer domain",
     )
 
     addptr_surface_text = addptr_surface_probe.compile().mlir_text()
@@ -7902,11 +8033,11 @@ def main() -> None:
         "addptr(...) should lower one PTO addptr op per authored pointer-advance call",
     )
     expect(
-        "arith.index_cast" in addptr_surface_text,
+        "pto.index_cast" in addptr_surface_text,
         "addptr(ptr, i32-value) should coerce integer runtime scalars to index",
     )
     expect(
-        re.search(r"pto\.addptr %\d+, %c2(?:_\d+)?", addptr_surface_text) is not None,
+        "pto.constant 2 : index" in addptr_surface_text,
         "addptr(ptr, 2) should accept a Python int offset and lower it as an index element offset",
     )
     expect(
@@ -7921,11 +8052,18 @@ def main() -> None:
         "@pto.simt pointer helper should lower to a helper func.call",
     )
     expect(
-        re.search(r"pto\.store %c9_i32, %(?:arg0|\d+)\[%c1(?:_\d+)?\]", simt_pointer_offset_text) is not None,
+        re.search(
+            r"(%\d+) = pto\.constant 1 : index\s+%\d+ = pto\.constant 9 : i32\s+"
+            r"pto\.store %\d+, %arg0\[\1\]",
+            simt_pointer_offset_text,
+        ) is not None,
         "ptr+offset sugar inside @pto.simt helpers should lower as address offsets, not scalar add",
     )
     expect(
-        re.search(r"pto\.load %\d+\[%c1(?:_\d+)?\]", simt_pointer_offset_text) is not None,
+        re.search(
+            r"(%\d+) = pto\.constant 1 : index\s+%\d+ = pto\.load %\d+\[\1\]",
+            simt_pointer_offset_text,
+        ) is not None,
         "@pto.simt pointer helper probe should preserve ptr+offset load syntax on the caller side",
     )
     simt_reserved_buffer_peer_text = simt_reserved_buffer_peer_probe.compile().mlir_text()
@@ -7949,26 +8087,30 @@ def main() -> None:
     scalar_store_coercion_text = scalar_store_element_coercion_probe.compile().mlir_text()
     expect_parse_roundtrip_and_verify(scalar_store_coercion_text, "scalar store coercion specialization")
     expect(
-        scalar_store_coercion_text.count("arith.index_cast") >= 2,
-        "scalar.store(...) should coerce index runtime values to the destination integer element type",
+        scalar_store_coercion_text.count("pto.index_cast") >= 2,
+        "pto.store(...) should coerce index runtime values to the destination integer element type",
     )
     expect(
-        "arith.trunci" in scalar_store_coercion_text,
-        "scalar.store(...) should coerce wider integer runtime values down to the destination element type",
+        "pto.trunci" in scalar_store_coercion_text,
+        "pto.store(...) should coerce wider integer runtime values down to the destination element type",
     )
     expect(
         scalar_store_coercion_text.count("pto.store") == 4,
-        "scalar.store(...) coercion probe should still lower to four pto.store operations",
+        "pto.store(...) coercion probe should still lower to four pto.store operations",
     )
     expect(
-        re.search(r"pto\.store %\w+, %\d+\[%c0(?:_\d+)?\]", scalar_store_coercion_text) is not None,
-        "scalar.store(index, i32_ptr) should preserve explicit target coercion at offset 0",
+        re.search(
+            r"(%\d+) = pto\.constant 0 : index\s+%\d+ = pto\.index_cast %\d+ signed : index -> i32\s+"
+            r"pto\.store %\d+, %\d+\[\1\]",
+            scalar_store_coercion_text,
+        ) is not None,
+        "pto.store(index, i32_ptr) should preserve explicit target coercion at offset 0",
     )
 
     shared_index_coercion_text = shared_index_coercion_probe.compile().mlir_text()
     expect_parse_roundtrip_and_verify(shared_index_coercion_text, "shared index coercion specialization")
     expect(
-        shared_index_coercion_text.count("arith.index_cast") >= 3,
+        shared_index_coercion_text.count("pto.index_cast") >= 3,
         "shared index coercion should cast one i32 value through loop bound, step, addptr, and event id paths",
     )
     expect("scf.for" in shared_index_coercion_text, "shared index coercion should lower i32 loop bounds to scf.for")
@@ -8417,7 +8559,12 @@ def main() -> None:
     expect("pto.mte_gm_ub" in public_surface_text, "mte_load(...) should lower to pto.mte_gm_ub")
     expect("pto.mte_ub_gm" in public_surface_text, "mte_store(...) should lower to pto.mte_ub_gm")
     expect(
-        re.search(r"pto\.mte_ub_gm [^\n]+ nburst\([^)]+\) l2_cache_ctl\(%c0[^)\n]*\)", public_surface_text) is not None,
+        re.search(
+            r"pto\.mte_ub_gm [^\n]+ nburst\([^)]+\) "
+            r"l2_cache_ctl\(%[a-zA-Z0-9_]+\)",
+            public_surface_text,
+        )
+        is not None,
         "mte_store(...) should pass default l2_cache_ctl through the pto.mte_ub_gm l2_cache_ctl group",
     )
     expect(public_surface_text.count("pto.mem_bar") >= 1, "mem_bar(...) should still lower explicit memory barriers")
@@ -8455,22 +8602,45 @@ def main() -> None:
         "constant and loop rls_buf_dyn calls should preserve PIPE_MTE2",
     )
     expect(
-        "arith.andi" in dynamic_buf_sync_text,
-        "iter & 1 in pto.for_ should lower to arith.andi for dynamic buf_id computation",
+        "pto.and" in dynamic_buf_sync_text,
+        "iter & 1 in pto.for_ should remain as pto.and for dynamic buf_id computation",
     )
     expect("pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]" in sync_surface_text, "set_flag(..., event_id=0) should lower static event ids to pto.set_flag")
     expect("pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]" in sync_surface_text, "wait_flag(..., event_id=0) should lower static event ids to pto.wait_flag")
-    expect("pto.set_flag_dyn[<PIPE_V>, <PIPE_MTE3>, %c3]" in sync_surface_text, "set_flag(..., event_id=dynamic_event) should lower runtime event ids to pto.set_flag_dyn")
-    expect("pto.wait_flag_dyn[<PIPE_V>, <PIPE_MTE3>, %c3]" in sync_surface_text, "wait_flag(..., event_id=dynamic_event) should lower runtime event ids to pto.wait_flag_dyn")
-    expect("arith.andi" in explicit_runtime_index_bitwise_event_text, "explicit pto.for_ index & event id should lower to arith.andi")
-    expect("arith.ori" in explicit_runtime_index_bitwise_event_text, "explicit pto.for_ index | event id should lower to arith.ori")
-    expect("arith.xori" in explicit_runtime_index_bitwise_event_text, "explicit pto.for_ index ^ event id should lower to arith.xori")
     expect(
-        re.search(r"arith\.andi .* : index", explicit_runtime_index_bitwise_event_text) is not None,
+        re.search(
+            r"pto\.set_flag_dyn\[<PIPE_V>, <PIPE_MTE3>, %[a-zA-Z0-9_]+\]",
+            sync_surface_text,
+        )
+        is not None,
+        "set_flag(..., event_id=dynamic_event) should lower runtime event ids to pto.set_flag_dyn",
+    )
+    expect(
+        re.search(
+            r"pto\.wait_flag_dyn\[<PIPE_V>, <PIPE_MTE3>, %[a-zA-Z0-9_]+\]",
+            sync_surface_text,
+        )
+        is not None,
+        "wait_flag(..., event_id=dynamic_event) should lower runtime event ids to pto.wait_flag_dyn",
+    )
+    expect(
+        "pto.and" in explicit_runtime_index_bitwise_event_text,
+        "explicit pto.for_ index & event id should remain as pto.and",
+    )
+    expect(
+        "pto.or" in explicit_runtime_index_bitwise_event_text,
+        "explicit pto.for_ index | event id should remain as pto.or",
+    )
+    expect(
+        "pto.xor" in explicit_runtime_index_bitwise_event_text,
+        "explicit pto.for_ index ^ event id should remain as pto.xor",
+    )
+    expect(
+        re.search(r"pto\.and .* : index", explicit_runtime_index_bitwise_event_text) is not None,
         "index & literal event id should stay in the index type domain",
     )
     expect(
-        "arith.index_cast" not in explicit_runtime_index_bitwise_event_text,
+        "pto.index_cast" not in explicit_runtime_index_bitwise_event_text,
         "index/literal bitwise event ids should not lower through fixed-width integer casts",
     )
     expect(
@@ -8482,7 +8652,7 @@ def main() -> None:
         "explicit pto.for_ index bitwise event id should lower to pto.set_flag_dyn",
     )
     expect(
-        explicit_runtime_index_integer_bitwise_event_text.count("arith.index_cast") >= 2,
+        explicit_runtime_index_integer_bitwise_event_text.count("pto.index_cast") >= 2,
         "index/integer bitwise event ids should coerce integer runtime scalars to index",
     )
     expect(
@@ -8494,8 +8664,8 @@ def main() -> None:
         "index/integer bitwise event ids should lower sets to pto.set_flag_dyn",
     )
     expect(
-        "arith.andi" in ast_runtime_index_bitwise_event_text,
-        "AST rewritten range loop index & event id should lower to arith.andi",
+        "pto.and" in ast_runtime_index_bitwise_event_text,
+        "AST rewritten range loop index & event id should remain as pto.and",
     )
     expect(
         ast_runtime_index_bitwise_event_text.count("pto.wait_flag_dyn") == 1,
@@ -8503,37 +8673,47 @@ def main() -> None:
     )
     expect(
         "pto.set_cross_block <PIPE_FIX>, 0" in sync_surface_text,
-        "set_cross_block(Pipe.FIX, 0) should lower to pto.set_cross_block",
+        "set_cross_flag(Pipe.FIX, 0) should lower to pto.set_cross_block",
     )
     expect(
         "pto.wait_cross_block <PIPE_FIX>, 0" in sync_surface_text,
-        "wait_cross_block(Pipe.FIX, 0) should lower to pto.wait_cross_block",
+        "wait_cross_flag(Pipe.FIX, 0) should lower to pto.wait_cross_block",
     )
     expect(
-        "pto.set_intra_block <PIPE_MTE3>, %c3" in sync_surface_text,
-        "set_intra_block(Pipe.MTE3, dynamic_event) should lower to pto.set_intra_block",
+        re.search(
+            r"pto\.set_intra_block <PIPE_MTE3>, %[a-zA-Z0-9_]+", sync_surface_text
+        )
+        is not None,
+        "set_intra_flag(Pipe.MTE3, dynamic_event) should lower through pto.set_intra_block",
     )
     expect(
         "pto.set_intra_block <PIPE_FIX>, 4" in sync_surface_text,
-        "set_intra_block(Pipe.FIX, 4) should preserve physical event ids",
+        "set_intra_flag(Pipe.FIX, 4) should lower physical event ids through pto.set_intra_block",
     )
     expect(
-        "pto.wait_intra_block <PIPE_V>, %c3" in sync_surface_text,
-        "wait_intra_block(Pipe.V, dynamic_event) should lower to pto.wait_intra_block",
+        re.search(r"pto\.wait_intra_block <PIPE_V>, %[a-zA-Z0-9_]+", sync_surface_text)
+        is not None,
+        "wait_intra_flag(Pipe.V, dynamic_event) should lower through pto.wait_intra_block",
     )
     expect(
         "pto.wait_intra_block <PIPE_FIX>, 20" in sync_surface_text,
-        "wait_intra_block(Pipe.FIX, 20) should preserve physical event ids",
+        "wait_intra_flag(Pipe.FIX, 20) should lower physical event ids through pto.wait_intra_block",
     )
     expect(
-        "pto.wait_intra_block <PIPE_MTE3>, %c3" in sync_surface_text,
-        "wait_intra_block(Pipe.MTE3, dynamic_event) should lower to pto.wait_intra_block",
+        re.search(
+            r"pto\.wait_intra_block <PIPE_MTE3>, %[a-zA-Z0-9_]+", sync_surface_text
+        )
+        is not None,
+        "wait_intra_flag(Pipe.MTE3, dynamic_event) should lower through pto.wait_intra_block",
     )
     expect(
         "pto.wait_intra_block <PIPE_MTE3>, 31" in sync_surface_text,
-        "wait_intra_block(Pipe.MTE3, 31) should preserve static physical event ids",
+        "wait_intra_flag(Pipe.MTE3, 31) should lower the static physical event id through pto.wait_intra_block",
     )
-    expect(data_movement_surface_text.count("pto.mte_gm_ub") == 2, "public grouped GM->UB wrappers should lower to pto.mte_gm_ub")
+    expect(
+        data_movement_surface_text.count("pto.mte_gm_ub") == 2,
+        "public grouped GM->UB wrappers should lower to pto.mte_gm_ub",
+    )
     expect("pto.mte_ub_gm" in data_movement_surface_text, "public grouped UB->GM wrapper should lower to pto.mte_ub_gm")
     expect(
         data_movement_surface_text.count("pto.set_store_atomic_cfg") == 2,
@@ -8556,11 +8736,25 @@ def main() -> None:
             f"{atomic_api} should lower through the explicit PTODSL surface",
         )
     expect(
-        re.search(r"pto\.mte_ub_gm [^\n]+ nburst\([^)]+\) l2_cache_ctl\(%c7[^)\n]*\)", data_movement_surface_text) is not None,
+        "pto.constant 7 : i64" in data_movement_surface_text
+        and re.search(
+            r"pto\.mte_ub_gm [^\n]+ nburst\([^)]+\) "
+            r"l2_cache_ctl\(%[a-zA-Z0-9_]+\)",
+            data_movement_surface_text,
+        )
+        is not None,
         "mte_ub_gm(..., l2_cache='nared') should map to the l2_cache_ctl group",
     )
     expect(
-        re.search(r"pto\.mte_ub_gm [^\n]+ nburst\([^)]+\) l2_cache_ctl\(%c15[^)\n]*\)", data_movement_surface_text) is not None,
+        "pto.constant 15 : i64" in data_movement_surface_text
+        and len(
+            re.findall(
+                r"pto\.mte_ub_gm [^\n]+ nburst\([^)]+\) "
+                r"l2_cache_ctl\(%[a-zA-Z0-9_]+\)",
+                data_movement_surface_text,
+            )
+        )
+        >= 2,
         "mte_ub_gm(..., l2_cache='wtsred') should map to the l2_cache_ctl group",
     )
     expect(
@@ -8591,7 +8785,7 @@ def main() -> None:
     expect("pto.vsldb" in data_movement_surface_text, "vsldb(...) should lower to pto.vsldb")
     expect("pto.vsstb" in data_movement_surface_text, "vsstb(...) should lower to pto.vsstb")
     expect(
-        re.search(r"arith\.index_cast %[a-zA-Z0-9_]+ : index to i16", fixed_width_integer_text) is not None,
+        re.search(r"pto\.index_cast %[a-zA-Z0-9_]+ signed : index -> i16", fixed_width_integer_text) is not None,
         "vsldb/vsstb i16 operands should accept runtime index values through shared scalar adaptation",
     )
     expect(
@@ -8662,14 +8856,29 @@ def main() -> None:
         "pto.load_cbuf_to_cb_s4" not in explicit_fp4_s4_staging_text,
         "PTODSL must not expose internal raw S4 load operations",
     )
-    explicit_ca_controls = (
-        r"pto\.mte_l1_l0a .*%c4_i64(?:_\d+)?, %c0_i64(?:_\d+)?, "
-        r"%c4_i64(?:_\d+)?, %c16_i64(?:_\d+)?, "
-        r"%c16_i64(?:_\d+)?, %c4_i64(?:_\d+)? \{transpose = true\}"
+    explicit_ca_match = re.search(
+        r"pto\.mte_l1_l0a\s+([^\n]+)\s+\{transpose = true\}",
+        public_surface_text,
     )
+    explicit_ca_controls = []
+    if explicit_ca_match is not None:
+        explicit_ca_operands = re.findall(
+            r"%[a-zA-Z0-9_]+", explicit_ca_match.group(1)
+        )
+        constant_values = {
+            name: int(value)
+            for name, value in re.findall(
+                r"^\s*(%[a-zA-Z0-9_]+) = pto\.constant (-?\d+) : i64$",
+                public_surface_text,
+                re.MULTILINE,
+            )
+        }
+        explicit_ca_controls = [
+            constant_values.get(name) for name in explicit_ca_operands[-6:]
+    ]
     expect(
-        re.search(explicit_ca_controls, public_surface_text) is not None,
-        "explicit mte_l1_l0a controls should remain on the public wrapper",
+        explicit_ca_controls == [4, 0, 4, 16, 16, 4],
+        "explicit mte_l1_l0a wrapper should preserve independent source and destination strides",
     )
     expect("pto.mte_l1_l0a_mx" in public_surface_text, "mte_l1_l0a_mx(...) should lower to pto.mte_l1_l0a_mx")
     expect("pto.mte_l1_l0b_mx" in public_surface_text, "mte_l1_l0b_mx(...) should lower to pto.mte_l1_l0b_mx")
@@ -8677,11 +8886,15 @@ def main() -> None:
         explicit_mx_scale_staging_text.count("!pto.ptr<!pto.f8E8M0, l1>") >= 2,
         "explicit MX staging should preserve E8M0 L1 source pointers",
     )
+    for control_value in (3, 5, 16, 2, 8):
+        expect(
+            f"pto.constant {control_value} : i64" in explicit_mx_scale_staging_text,
+            f"explicit MX staging should preserve control value {control_value}",
+        )
     for op_name in ("mte_l1_l0a_mx", "mte_l1_l0b_mx"):
         expect(
             re.search(
-                rf"pto\.{op_name} %\d+, %\d+, %c3_i64(?:_\d+)?, %c5_i64(?:_\d+)?, "
-                r"%c16_i64(?:_\d+)?, %c2_i64(?:_\d+)?, %c8_i64(?:_\d+)?, %c2_i64(?:_\d+)",
+                rf"pto\.{op_name}(?: %[a-zA-Z0-9_]+,?){{8}} :",
                 explicit_mx_scale_staging_text,
             ) is not None,
             f"{op_name}(...) should preserve every explicit MX control operand",

@@ -1,0 +1,43 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Execution-domain-independent scalar value and PTO-pointer operations must
+// not cause the uncovered-section pass to infer a SIMT/vector kernel kind.
+// RUN: pto-test-opt --pto-normalize-uncovered-tile-sections %s | FileCheck %s
+
+module {
+  func.func @scalar_value_ops(%lhs: f32, %rhs: f32) -> f32 {
+    %one = pto.constant 1.000000e+00 : f32
+    %sum = pto.addf %lhs, %one : f32
+    %ordered = pto.cmpf gt %sum, %rhs : f32
+    %max = pto.maxf %sum, %rhs : f32
+    %root = pto.sqrt %max : f32 -> f32
+    return %root : f32
+  }
+
+  func.func @scalar_pointer_ops(%ptr: !pto.ptr<f32, ub>) -> f32 {
+    %c0 = arith.constant 0 : index
+    %value = pto.load %ptr[%c0] : !pto.ptr<f32, ub> -> f32
+    pto.store %value, %ptr[%c0] : !pto.ptr<f32, ub>, f32
+    return %value : f32
+  }
+}
+
+// CHECK: module {
+// CHECK-NOT: pto.kernel_kind
+// CHECK: func.func @scalar_value_ops
+// CHECK-NOT: pto.kernel_kind
+// CHECK: pto.constant
+// CHECK: pto.addf
+// CHECK: pto.cmpf gt
+// CHECK: pto.maxf
+// CHECK: pto.sqrt
+// CHECK: func.func @scalar_pointer_ops
+// CHECK-NOT: pto.kernel_kind
+// CHECK: pto.load
+// CHECK: pto.store

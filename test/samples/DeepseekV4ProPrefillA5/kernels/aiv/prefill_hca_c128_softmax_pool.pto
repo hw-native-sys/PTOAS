@@ -31,13 +31,13 @@ module attributes {pto.target_arch = "a5"} {
   %pool_score_tile_inline2716__tile = pto.alloc_tile addr = %c98560_i64 valid_row = %c128_index valid_col = %c64_index : !pto.tile_buf<loc=vec, dtype=f32, rows=128, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
   %flat_offset_mul = arith.muli %c0_index, %c8_index : index
   %flat_offset = arith.addi %flat_offset_mul, %14 : index
-  %write_slot_raw_inline2764__tile = pto.load_scalar %arg0[%flat_offset] : !pto.ptr<i32> -> i32
+  %write_slot_raw_inline2764__tile = pto.load %arg0[%flat_offset] : !pto.ptr<i32> -> i32
   %18 = arith.index_cast %write_slot_raw_inline2764__tile : i32 to index
   %19 = arith.cmpi sle, %c0_index, %18 : index
   scf.if %19 {
     %20 = arith.muli %c0_index, %c8_index : index
     %21 = arith.addi %20, %14 : index
-    %write_pos_inline2761__tile = pto.load_scalar %arg1[%21] : !pto.ptr<i32> -> i32
+    %write_pos_inline2761__tile = pto.load %arg1[%21] : !pto.ptr<i32> -> i32
     scf.for %pool_state_i_inline2715__idx_v0 = %c0_index to %c128_index step %c1_index {
       %t__tile = pto.alloc_tile addr = %c0_i64 valid_row = %c1_index valid_col = %c64_index : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
       pto.texpands ins(%cst_13 : f32) outs(%t__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
@@ -53,7 +53,7 @@ module attributes {pto.target_arch = "a5"} {
       %26 = arith.divsi %25, %c8_index : index
       %28 = arith.muli %26, %c8_index : index
       %29 = arith.subi %25, %28 : index
-      %pool_phys_block_raw_inline2748__tile = pto.load_scalar %arg2[%26] : !pto.ptr<i32> -> i32
+      %pool_phys_block_raw_inline2748__tile = pto.load %arg2[%26] : !pto.ptr<i32> -> i32
       %31 = arith.index_cast %pool_phys_block_raw_inline2748__tile : i32 to index
       %32 = arith.cmpi sle, %c0_index, %31 : index
       scf.if %32 {

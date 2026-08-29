@@ -62,11 +62,11 @@ instead of forcing authors to spell ``pto.const(...)`` or ``index_cast(...)``
 at every use site.
 """
 
-from ptodsl import pto, scalar
+from ptodsl import pto
 
 
 def _min_index(lhs, rhs):
-    return scalar.select(
+    return pto.select(
         lhs < rhs,
         lhs,
         rhs,
@@ -480,15 +480,15 @@ def blend_output_rows(
     the tile domain.
     """
     for row in range(row_start, row_stop, 1):
-        alpha = scalar.load(alpha_tile[row, 0])
-        beta = scalar.load(beta_tile[row, 0])
+        alpha = pto.load(alpha_tile[row, 0])
+        beta = pto.load(beta_tile[row, 0])
 
         for col in range(0, valid_dim, 1):
-            o_prev = scalar.load(o_prev_tile[row, col])
-            pv_val = scalar.load(pv_tile[row, col])
+            o_prev = pto.load(o_prev_tile[row, col])
+            pv_val = pto.load(pv_tile[row, col])
 
             o_next = alpha * o_prev + beta * pv_val
-            scalar.store(o_next, o_next_tile[row, col])
+            pto.store(o_next, o_next_tile[row, col])
 
 
 @pto.simt
@@ -503,9 +503,9 @@ def materialize_tile_bounds(
     The SIMT kernel stays intentionally small here: it is responsible for
     scalar control metadata, not for rewriting the vector or cube logic.
     """
-    scalar.store(0, meta_ptr + 0)
-    scalar.store(valid_rows, meta_ptr + 1)
-    scalar.store(valid_cols, meta_ptr + 2)
+    pto.store(0, meta_ptr + 0)
+    pto.store(valid_rows, meta_ptr + 1)
+    pto.store(valid_cols, meta_ptr + 2)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -575,9 +575,9 @@ def kv_block_process(
         q_mat.valid_shape[0],
         k_mat.valid_shape[0],
     )
-    row_start = scalar.load(meta_ptr + 0)
-    row_stop = scalar.load(meta_ptr + 1)
-    valid_cols = scalar.load(meta_ptr + 2)
+    row_start = pto.load(meta_ptr + 0)
+    row_stop = pto.load(meta_ptr + 1)
+    valid_cols = pto.load(meta_ptr + 2)
 
     # 1. S = Q @ K^T
     qk_m = q_mat.valid_shape[0]

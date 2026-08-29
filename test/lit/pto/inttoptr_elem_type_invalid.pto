@@ -1,13 +1,11 @@
 // RUN: not ptoas --pto-arch=a3 %s -o /dev/null 2>&1 | FileCheck %s
 
 module {
-  func.func @inttoptr_index_elem_invalid(%addr: i64) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
-    %c0 = arith.constant 0 : index
-    %ptr = pto.inttoptr %addr : i64 -> !pto.ptr<index>
-    %val = pto.load_scalar %ptr[%c0] : !pto.ptr<index> -> index
+  func.func @castptr_cross_space_invalid(%ptr: !pto.ptr<i32, gm>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %cast = pto.castptr %ptr : !pto.ptr<i32, gm> -> !pto.ptr<i32, ub>
     return
   }
 }
 
-// CHECK: pto.inttoptr
-// CHECK: result element type is not supported by EmitC: 'index'
+// CHECK: pto.castptr
+// CHECK: ptr-to-ptr cast must stay within the same PTO memory space

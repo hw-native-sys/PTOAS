@@ -66,37 +66,37 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %u32_edge = arith.select %is_last, %minus_one, %laneid : i1, i32
     %value_i32 = arith.addi %laneid, %c100_i32 : i32
     %value_i64 = arith.extui %value_i32 : i32 to i64
-    %value_f32 = pto.convert %lane_plus_one round(r) nosat unsigned : i32 -> f32
-    %value_f16 = pto.convert %lane_plus_one round(r) nosat unsigned : i32 -> f16
+    %value_f32 = pto.itof %lane_plus_one unsigned round(r) : i32 -> f32
+    %value_f16 = pto.itof %lane_plus_one unsigned round(r) : i32 -> f16
 
-    %redux_u32_add = pto.redux_add %lane_plus_one unsigned : i32 -> i32
-    %redux_u32_max = pto.redux_max %u32_edge unsigned : i32 -> i32
-    %redux_u32_min = pto.redux_min %u32_edge unsigned : i32 -> i32
-    %redux_f32_add = pto.redux_add %value_f32 : f32 -> f32
-    %redux_f32_max = pto.redux_max %value_f32 : f32 -> f32
-    %redux_f32_min = pto.redux_min %value_f32 : f32 -> f32
-    %redux_f16_add = pto.redux_add %value_f16 : f16 -> f16
-    %redux_f16_max = pto.redux_max %value_f16 : f16 -> f16
-    %redux_f16_min = pto.redux_min %value_f16 : f16 -> f16
-    %redux_f32_add_i = pto.convert %redux_f32_add round(z) sat signed : f32 -> i32
-    %redux_f32_max_i = pto.convert %redux_f32_max round(z) sat signed : f32 -> i32
-    %redux_f32_min_i = pto.convert %redux_f32_min round(z) sat signed : f32 -> i32
-    %redux_f16_add_i = pto.convert %redux_f16_add round(z) sat signed : f16 -> i32
-    %redux_f16_max_i = pto.convert %redux_f16_max round(z) sat signed : f16 -> i32
-    %redux_f16_min_i = pto.convert %redux_f16_min round(z) sat signed : f16 -> i32
+    %redux_u32_add = pto.redux_addi %lane_plus_one : i32 -> i32
+    %redux_u32_max = pto.redux_maxi %u32_edge unsigned : i32 -> i32
+    %redux_u32_min = pto.redux_mini %u32_edge unsigned : i32 -> i32
+    %redux_f32_add = pto.redux_addf %value_f32 : f32 -> f32
+    %redux_f32_max = pto.redux_maxf %value_f32 : f32 -> f32
+    %redux_f32_min = pto.redux_minf %value_f32 : f32 -> f32
+    %redux_f16_add = pto.redux_addf %value_f16 : f16 -> f16
+    %redux_f16_max = pto.redux_maxf %value_f16 : f16 -> f16
+    %redux_f16_min = pto.redux_minf %value_f16 : f16 -> f16
+    %redux_f32_add_i = pto.ftoi %redux_f32_add signed round(z) sat : f32 -> i32
+    %redux_f32_max_i = pto.ftoi %redux_f32_max signed round(z) sat : f32 -> i32
+    %redux_f32_min_i = pto.ftoi %redux_f32_min signed round(z) sat : f32 -> i32
+    %redux_f16_add_i = pto.ftoi %redux_f16_add signed round(z) sat : f16 -> i32
+    %redux_f16_max_i = pto.ftoi %redux_f16_max signed round(z) sat : f16 -> i32
+    %redux_f16_min_i = pto.ftoi %redux_f16_min signed round(z) sat : f16 -> i32
 
     %shfl_idx_w16 = pto.shuffle_idx %value_i32, %c3_i32 {width = 16 : i32} : i32, i32 -> i32
     %shfl_up_w16 = pto.shuffle_up %value_i32, %c2_i32 {width = 16 : i32} : i32, i32 -> i32
     %shfl_down_i64_w16 = pto.shuffle_down %value_i64, %c2_i32 {width = 16 : i32} : i64, i32 -> i64
     %shfl_down_i64_i32 = arith.trunci %shfl_down_i64_w16 : i64 to i32
     %shfl_bfly_f32_w16 = pto.shuffle_bfly %value_f32, %c1_i32 {width = 16 : i32} : f32, i32 -> f32
-    %shfl_bfly_f32_i = pto.convert %shfl_bfly_f32_w16 round(z) sat signed : f32 -> i32
+    %shfl_bfly_f32_i = pto.ftoi %shfl_bfly_f32_w16 signed round(z) sat : f32 -> i32
     %shfl_idx_f16_w16 = pto.shuffle_idx %value_f16, %c3_i32 {width = 16 : i32} : f16, i32 -> f16
-    %shfl_idx_f16_i = pto.convert %shfl_idx_f16_w16 round(z) sat signed : f16 -> i32
+    %shfl_idx_f16_i = pto.ftoi %shfl_idx_f16_w16 signed round(z) sat : f16 -> i32
 
     %one_point_75 = arith.constant 1.750000e+00 : f32
-    %round_z = pto.convert %one_point_75 round(z) sat signed : f32 -> i32
-    %round_r = pto.convert %one_point_75 round(r) sat signed : f32 -> i32
+    %round_z = pto.ftoi %one_point_75 signed round(z) sat : f32 -> i32
+    %round_r = pto.ftoi %one_point_75 signed round(r) sat : f32 -> i32
 
     %base_i32 = arith.muli %laneid, %c_fields_i32 : i32
     %base = arith.index_castui %base_i32 : i32 to index

@@ -9,6 +9,8 @@
 import unittest
 from pathlib import Path
 
+from ptodsl import _ops
+
 
 class PythonPackageLayoutTest(unittest.TestCase):
     def test_tileops_is_declared_as_an_editable_python_package(self):
@@ -18,6 +20,10 @@ class PythonPackageLayoutTest(unittest.TestCase):
         self.assertIn("[tool.scikit-build.wheel.packages]", pyproject)
         self.assertIn('TileOps = "lib/TileOps"', pyproject)
         self.assertTrue((project_root / "lib/TileOps/__init__.py").is_file())
+
+    def test_internal_ops_exports_reference_existing_symbols(self):
+        missing = [name for name in _ops.__all__ if not hasattr(_ops, name)]
+        self.assertEqual(missing, [])
 
 
 if __name__ == "__main__":

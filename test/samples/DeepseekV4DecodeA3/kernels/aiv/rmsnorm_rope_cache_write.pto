@@ -160,7 +160,7 @@ module attributes {pto.target_arch = "a2a3"} {
   scf.for %inner_inline2047_inline4991__idx_v0 = %c0_index to %c4_index step %c1_index {
     %flat_offset_mul = arith.muli %inner_inline2047_inline4991__idx_v0, %c2_index : index
     %flat_offset = arith.addi %flat_offset_mul, %c0_index : index
-    %first_pos_b_inline2080_inline4655__tile = pto.load_scalar %arg7[%flat_offset] : !pto.ptr<i32> -> i32
+    %first_pos_b_inline2080_inline4655__tile = pto.load %arg7[%flat_offset] : !pto.ptr<i32> -> i32
     %34 = arith.index_cast %first_pos_b_inline2080_inline4655__tile : i32 to index
     %35 = arith.remsi %34, %c4_index : index
     %36 = arith.cmpi sle, %c2_index, %35 : index
@@ -172,7 +172,7 @@ module attributes {pto.target_arch = "a2a3"} {
       pto.tload ins(%normed_kv_inline2051_inline4605__tile_pview : !pto.partition_tensor_view<1x512xf32>) outs(%kv_row_fp32_inline2020_inline4528__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
       %39 = arith.muli %inner_inline2047_inline4991__idx_v0, %c2_index : index
       %40 = arith.addi %39, %37 : index
-      %cache_row_i64_inline2101_inline4684__tile = pto.load_scalar %arg8[%40] : !pto.ptr<i64> -> i64
+      %cache_row_i64_inline2101_inline4684__tile = pto.load %arg8[%40] : !pto.ptr<i64> -> i64
       %41 = arith.index_cast %cache_row_i64_inline2101_inline4684__tile : i64 to index
       %42 = arith.cmpi sle, %c0_index, %41 : index
       scf.if %42 {

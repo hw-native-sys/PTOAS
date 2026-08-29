@@ -15,13 +15,13 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %v5 = arith.constant 5 : i32
 
     %ptr0 = pto.addptr %arg0, %c0 : !pto.ptr<i32, gm> -> !pto.ptr<i32, gm>
-    %old0 = pto.atomic_add %ptr0, %v5 l2cache(nmfv) signed : !pto.ptr<i32, gm>, i32 -> i32
+    %old0 = pto.atomic_add %ptr0, %v5 l2cache(nmfv) : !pto.ptr<i32, gm>, i32 -> i32
     %ptr1 = pto.addptr %arg0, %c1 : !pto.ptr<i32, gm> -> !pto.ptr<i32, gm>
-    %old1 = pto.atomic_add %ptr1, %v5 l2cache(naci) signed : !pto.ptr<i32, gm>, i32 -> i32
+    %old1 = pto.atomic_add %ptr1, %v5 l2cache(naci) : !pto.ptr<i32, gm>, i32 -> i32
     %ptr2 = pto.addptr %arg0, %c2 : !pto.ptr<i32, gm> -> !pto.ptr<i32, gm>
-    %old2 = pto.atomic_add %ptr2, %v5 l2cache(wbhred) signed : !pto.ptr<i32, gm>, i32 -> i32
+    %old2 = pto.atomic_add %ptr2, %v5 l2cache(wbhred) : !pto.ptr<i32, gm>, i32 -> i32
     %ptr3 = pto.addptr %arg0, %c3 : !pto.ptr<i32, gm> -> !pto.ptr<i32, gm>
-    %old3 = pto.atomic_add %ptr3, %v5 l2cache(wtsred) signed : !pto.ptr<i32, gm>, i32 -> i32
+    %old3 = pto.atomic_add %ptr3, %v5 l2cache(wtsred) : !pto.ptr<i32, gm>, i32 -> i32
 
     pto.store %old0, %arg0[%c16] : !pto.ptr<i32, gm>, i32
     pto.store %old1, %arg0[%c17] : !pto.ptr<i32, gm>, i32

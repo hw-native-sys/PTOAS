@@ -6699,7 +6699,7 @@ struct PTOTAssignToEmitC : public OpConversionPattern<pto::TAssignOp> {
 };
 
 //===----------------------------------------------------------------------===//
-// pto.load_scalar / pto.store_scalar lowering -> ptr[offset]
+// pto.load / pto.store lowering -> ptr[offset]
 //===----------------------------------------------------------------------===//
 
 static void emitInvalidateGmCacheAll(ConversionPatternRewriter &rewriter,
@@ -6749,71 +6749,12 @@ struct PTOCmoCacheInvalidToEmitC
   }
 };
 
-static Type getPointerLikeElementType(Type type) {
-  if (auto ptrTy = dyn_cast<pto::PtrType>(type))
-    return ptrTy.getElementType();
-  if (auto memTy = dyn_cast<MemRefType>(type))
-    return memTy.getElementType();
-  return Type();
-}
+struct PTOLoadToEmitC : public OpConversionPattern<pto::PTOLoadOp> {
+  using OpConversionPattern<pto::PTOLoadOp>::OpConversionPattern;
 
-struct PTOPtrToIntToEmitC : public OpConversionPattern<pto::PtrToIntOp> {
-  using OpConversionPattern<pto::PtrToIntOp>::OpConversionPattern;
-
-  LogicalResult matchAndRewrite(pto::PtrToIntOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
-    Value ptr = adaptor.getPtr();
-    Type dstTy = getTypeConverter()->convertType(op.getResult().getType());
-    if (!dstTy)
-      return failure();
-
-    auto dstOpaque = dyn_cast<emitc::OpaqueType>(dstTy);
-    if (!dstOpaque)
-      return failure();
-
-    auto templateArgs =
-        rewriter.getArrayAttr({emitc::OpaqueAttr::get(rewriter.getContext(),
-                                                      dstOpaque.getValue())});
-    auto cast = rewriter.create<emitc::CallOpaqueOp>(
-        op.getLoc(), dstTy, "reinterpret_cast", ArrayAttr{}, templateArgs,
-        ValueRange{ptr});
-    rewriter.replaceOp(op, cast.getResult(0));
-    return success();
-  }
-};
-
-struct PTOIntToPtrToEmitC : public OpConversionPattern<pto::IntToPtrOp> {
-  using OpConversionPattern<pto::IntToPtrOp>::OpConversionPattern;
-
-  LogicalResult matchAndRewrite(pto::IntToPtrOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
-    Value addr = adaptor.getAddr();
-    Type dstTy = getTypeConverter()->convertType(op.getResult().getType());
-    if (!dstTy)
-      return failure();
-
-    Type dstElemTy = getPointerLikeElementType(op.getResult().getType());
-    if (!dstElemTy)
-      return failure();
-
-    std::string castType =
-        std::string("__gm__ ") + getEmitCScalarTypeToken(dstElemTy) + "*";
-    auto templateArgs =
-        rewriter.getArrayAttr({emitc::OpaqueAttr::get(rewriter.getContext(),
-                                                      castType)});
-    auto cast = rewriter.create<emitc::CallOpaqueOp>(
-        op.getLoc(), dstTy, "reinterpret_cast", ArrayAttr{}, templateArgs,
-        ValueRange{addr});
-    rewriter.replaceOp(op, cast.getResult(0));
-    return success();
-  }
-};
-
-struct PTOLoadScalarToEmitC : public OpConversionPattern<pto::LoadScalarOp> {
-  using OpConversionPattern<pto::LoadScalarOp>::OpConversionPattern;
-
-  LogicalResult matchAndRewrite(pto::LoadScalarOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
+  LogicalResult
+  matchAndRewrite(pto::PTOLoadOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
     Value ptr = adaptor.getPtr();
     Value offset = adaptor.getOffset();
 
@@ -6830,11 +6771,12 @@ struct PTOLoadScalarToEmitC : public OpConversionPattern<pto::LoadScalarOp> {
   }
 };
 
-struct PTOStoreScalarToEmitC : public OpConversionPattern<pto::StoreScalarOp> {
-  using OpConversionPattern<pto::StoreScalarOp>::OpConversionPattern;
+struct PTOStoreToEmitC : public OpConversionPattern<pto::PTOStoreOp> {
+  using OpConversionPattern<pto::PTOStoreOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::StoreScalarOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
+  LogicalResult
+  matchAndRewrite(pto::PTOStoreOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
     Value ptr = adaptor.getPtr();
     Value offset = adaptor.getOffset();
     Value val = adaptor.getValue();
@@ -13552,9 +13494,8 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<SubviewToEmitCPattern>(typeConverter, ctx);
   patterns.add<CastPtrConversion, PTOAddPtrToEmitC>(typeConverter, ctx);
   patterns.add<PTOSetValToSETVAL, PTOGetValToGETVAL, PTOSetValidShapeToEmitC,
-               PTOGetValidShapeToEmitC, PTOTAssignToEmitC,
-               PTOPtrToIntToEmitC, PTOIntToPtrToEmitC, PTOLoadScalarToEmitC,
-               PTOStoreScalarToEmitC>(typeConverter, ctx);
+               PTOGetValidShapeToEmitC, PTOTAssignToEmitC, PTOLoadToEmitC,
+               PTOStoreToEmitC>(typeConverter, ctx);
   patterns.add<PTOTAxpyToEmitC, PTOHistogramToEmitC, PTOGetScaleAddrToEmitC>(
       typeConverter, ctx);
   patterns.add<PTOTAndToEmitC>(typeConverter, ctx);

@@ -7,7 +7,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 """PTODSL TileLib templates for ``pto.tmrgsort``."""
 
-from ptodsl import pto, scalar
+from ptodsl import pto
 import ptodsl.tilelib as tilelib
 
 
@@ -23,13 +23,13 @@ def _structures(valid_cols, dtype):
 
 
 def _as_i64(value):
-    return scalar.addi(value, pto.i64(0))
+    return pto.add(value, pto.i64(0))
 
 
 def _pack_count(*structures):
     count = _as_i64(structures[0])
     for shift, structure in zip((16, 32, 48), structures[1:]):
-        count = count | scalar.muli(_as_i64(structure), 1 << shift)
+        count = count | pto.mul(_as_i64(structure), 1 << shift)
     return count
 
 

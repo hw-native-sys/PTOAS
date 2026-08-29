@@ -277,14 +277,13 @@ def EventIdArrayType : TypeDef<PTO_Dialect, "EventIdArray"> {
 }
 
 // ---- !pto.local_array<D1 x D2 x ... x Dk x T> ----
-// Statically-shaped C++ stack-local array. Lowers to a plain `T a[D1][D2]...;`
-// declaration in the emitted C++. Element type is restricted to scalars
-// (integer / float). This type does NOT participate in PTO memory planning
-// lowering; the underlying address is decided by the
-// host C++ compiler, not by PTOAS.
+// Statically-shaped stack-local array. Lowers to a plain `T a[D1][D2]...;`
+// declaration in emitted C++ or equivalent LLVM stack storage. Element type is
+// restricted to scalars (integer / float). This type does NOT participate in
+// PTO memory planning lowering; its storage is owned by the enclosing function.
 def LocalArrayType : TypeDef<PTO_Dialect, "LocalArray"> {
   let mnemonic = "local_array";
-  let summary = "C++ stack-local statically-sized array";
+  let summary = "Stack-local statically-sized scalar array";
   let parameters = (ins
     ArrayRefParameter<"int64_t">:$shape,
     "mlir::Type":$elementType

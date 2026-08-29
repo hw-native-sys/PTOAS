@@ -25,7 +25,7 @@ module attributes {pto.target_arch = "a5"} {
     pto.texpands ins(%c0_i32 : i32) outs(%mask_row_inline896__tile : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     %2 = arith.cmpi slt, %1, %c128_index : index
     scf.if %2 {
-      %abs_pos_inline900__tile = pto.load_scalar %arg2[%1] : !pto.ptr<i32> -> i32
+      %abs_pos_inline900__tile = pto.load %arg2[%1] : !pto.ptr<i32> -> i32
       %3 = arith.index_cast %abs_pos_inline900__tile : i32 to index
       %4 = arith.addi %3, %c1_index : index
       %5 = arith.divsi %4, %c4_index : index
@@ -58,7 +58,7 @@ module attributes {pto.target_arch = "a5"} {
           %24 = arith.index_cast %21 : i32 to index
           %25 = arith.addi %20, %24 : index
           %26 = arith.divsi %25, %c128_index : index
-          %blk_inline860__tile = pto.load_scalar %arg3[%26] : !pto.ptr<i32> -> i32
+          %blk_inline860__tile = pto.load %arg3[%26] : !pto.ptr<i32> -> i32
           %28 = arith.index_cast %blk_inline860__tile : i32 to index
           %29 = arith.cmpi sle, %c0_index, %28 : index
           scf.if %29 {

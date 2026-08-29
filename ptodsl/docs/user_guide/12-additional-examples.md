@@ -130,7 +130,7 @@ def vec_add_with_tail(
 
     for i in range(0, num_blocks, 1):
         offset = i * BLOCK
-        this_block = scalar.min(BLOCK, N - offset)
+        this_block = pto.min(BLOCK, N - offset)
 
         a_part = pto.partition_view(a_view, offsets=[offset], sizes=[this_block])
         b_part = pto.partition_view(b_view, offsets=[offset], sizes=[this_block])
@@ -147,7 +147,7 @@ def vec_add_with_tail(
         pto.tile.store(o_tile, o_part)
 ```
 
-- `this_block = scalar.min(BLOCK, N - offset)` computes the actual block size for the tail iteration on the device side.
+- `this_block = pto.min(BLOCK, N - offset)` computes the actual block size for the tail iteration on the device side.
 - `sizes=[this_block]` on the partition and `tile.valid_shape = [...]` on the tile tell `tile.load`/`tile.add`/`tile.store` how many elements are live.
 
 ### 12.2.3 The general rule
@@ -323,13 +323,13 @@ def online_layernorm(
     m2 = pto.f32(0.0)
     for i in range(0, num_blocks, 1):
         offset = i * BLOCK
-        this_block = scalar.min(BLOCK, N - offset)
+        this_block = pto.min(BLOCK, N - offset)
         x_part = pto.partition_view(x_view, offsets=[offset], sizes=[this_block])
         pto.tile.load(x_part, x_tile)
         x_tile.valid_shape = [this_block]
 
         for j in range(0, this_block, 1):
-            x = scalar.load(x_tile.as_ptr(), j)
+            x = pto.load(x_tile.as_ptr(), j)
             n_next = n + 1.0
             delta = x - mu
             mu_next = mu + delta / n_next
@@ -342,12 +342,12 @@ def online_layernorm(
 
     mean = mu
     count = n
-    inv_std = 1.0 / scalar.sqrt(m2 / count + pto.f32(1.0e-5))
+    inv_std = 1.0 / pto.sqrt(m2 / count + pto.f32(1.0e-5))
 
     # Pass 2: apply (x - mean) / sqrt(var + eps) block by block.
     for i in range(0, num_blocks, 1):
         offset = i * BLOCK
-        this_block = scalar.min(BLOCK, N - offset)
+        this_block = pto.min(BLOCK, N - offset)
         x_part = pto.partition_view(x_view, offsets=[offset], sizes=[this_block])
         o_part = pto.partition_view(o_view, offsets=[offset], sizes=[this_block])
 
@@ -356,9 +356,9 @@ def online_layernorm(
         o_tile.valid_shape = [this_block]
 
         for j in range(0, this_block, 1):
-            x = scalar.load(x_tile.as_ptr(), j)
+            x = pto.load(x_tile.as_ptr(), j)
             y = (x - mean) * inv_std
-            scalar.store(y, o_tile.as_ptr(), j)
+            pto.store(y, o_tile.as_ptr(), j)
 
         pto.tile.store(o_tile, o_part)
 ```
@@ -366,8 +366,8 @@ def online_layernorm(
 **Key points**:
 
 - **Carry state**: assigning `mu`, `n`, and `m2` inside the Python loops makes them loop-carried state after AST rewrite. The outer loop carries state across blocks; the inner loop carries state across elements inside one block.
-- **Tail handling**: `scalar.min(BLOCK, N - offset)` computes the live width of the current block, and `tile.valid_shape = [this_block]` keeps the tile contract aligned with that tail.
-- **No special tile op required**: the normalization pass is written explicitly with `scalar.load(...)`, scalar arithmetic, `scalar.sqrt(...)`, and `scalar.store(...)`. There is no dependency on a dedicated `tnormalize` op.
+- **Tail handling**: `pto.min(BLOCK, N - offset)` computes the live width of the current block, and `tile.valid_shape = [this_block]` keeps the tile contract aligned with that tail.
+- **No special tile op required**: the normalization pass is written explicitly with `pto.load(...)`, scalar arithmetic, `pto.sqrt(...)`, and `pto.store(...)`. There is no dependency on a dedicated `tnormalize` op.
 - **Compare to flash attention**: the flash attention carry in Chapter 11 moves several tiles through ping-pong buffers. Here the carried state is only three scalars, so the rewritten Python surface reads like a conventional streaming reduction.
 
 ## 12.5 Design guidelines

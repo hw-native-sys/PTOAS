@@ -11,8 +11,8 @@
 VecValue arithmetic end-to-end ST.
 
 Exercises the add / sub / mul floating-point vector arithmetic operators on
-``vector<4xf32>`` values produced by ``scalar.load(..., contiguous=VEC)`` and
-consumed by ``scalar.store`` inside an ``@pto.simt`` body. ``pto.Vec`` is the
+``vector<4xf32>`` values produced by ``pto.load(..., contiguous=VEC)`` and
+consumed by ``pto.store`` inside an ``@pto.simt`` body. ``pto.Vec`` is the
 SIMT lane-local vector type, so the SIMT kernel is the target scenario.
 
 Vector division is intentionally omitted: the backend does not support it, so
@@ -22,7 +22,7 @@ the PTODSL surface does not expose ``__truediv__`` on ``VecValue``.
 import numpy as np
 
 from common import auto_main, golden_output_case
-from ptodsl import pto, scalar
+from ptodsl import pto
 
 
 VEC = 4
@@ -36,13 +36,13 @@ def vec_value_arith_body(
     o_ptr: pto.ptr(pto.f32, "gm"),
 ):
     tid = pto.get_tid_x()
-    idx = scalar.index_cast(tid)
+    idx = pto.index_cast(tid)
     base = idx * 2 * VEC
-    x = scalar.load(a_ptr, base, contiguous=VEC)
-    y = scalar.load(a_ptr, base + VEC, contiguous=VEC)
-    scalar.store(x + y, o_ptr, idx * VEC)
-    scalar.store(x - y, o_ptr, THREADS * VEC + idx * VEC)
-    scalar.store(x * y, o_ptr, 2 * THREADS * VEC + idx * VEC)
+    x = pto.load(a_ptr, base, contiguous=VEC)
+    y = pto.load(a_ptr, base + VEC, contiguous=VEC)
+    pto.store(x + y, o_ptr, idx * VEC)
+    pto.store(x - y, o_ptr, THREADS * VEC + idx * VEC)
+    pto.store(x * y, o_ptr, 2 * THREADS * VEC + idx * VEC)
 
 
 @pto.jit(

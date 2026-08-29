@@ -10,7 +10,7 @@ module attributes {pto.target_arch = "a5"} {
   %dispatch_buf__ssa_v0_s0 = arith.muli %c16384_index, %c16_index : index
   %dispatch_buf__ssa_v0_view = pto.make_tensor_view %arg1, shape = [%c128_index, %c16_index, %c16384_index], strides = [%dispatch_buf__ssa_v0_s0, %c16384_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?x?xbf16>
   %attn_front__rv_v2_view = pto.make_tensor_view %arg2, shape = [%c16_index, %c16384_index], strides = [%c16384_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
-  %layer_id__tile = pto.load_scalar %arg0[%c0_index] : !pto.ptr<i32> -> i32
+  %layer_id__tile = pto.load %arg0[%c0_index] : !pto.ptr<i32> -> i32
   scf.for %b__idx_v0 = %c0_index to %c16_index step %c1_index {
     %0 = arith.index_cast %layer_id__tile : i32 to index
     %1 = arith.addi %b__idx_v0, %0 : index

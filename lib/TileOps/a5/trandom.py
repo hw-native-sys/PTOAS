@@ -8,7 +8,7 @@
 """PTODSL TileLib template for ``pto.trandom``."""
 
 from ptodsl import pto
-from ptodsl import scalar
+from ptodsl import pto
 import ptodsl.tilelib as tilelib
 
 
@@ -110,9 +110,9 @@ def template_trandom(
             pto.vsts(tmp3, dst[row, (TRANDOM_ONCE_REPEAT * repeat + 3) * lanes:], mask3)
 
             tail_counter_add = (valid_cols - 1) % lanes + 1
-            counter_add = scalar.select(
+            counter_add = pto.select(
                 repeat == repeats - 1,
-                scalar.index_cast(pto.i32, tail_counter_add),
+                pto.index_cast(pto.i32, tail_counter_add),
                 pto.const(lanes, dtype=pto.i32),
             )
             counter_add = pto.vbr(counter_add)

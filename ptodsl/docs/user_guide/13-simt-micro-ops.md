@@ -141,7 +141,7 @@ def capture_query_state(dst: pto.ptr(pto.i32, "gm")):
         block_x + block_y + block_z +
         grid_x + grid_y + grid_z
     )
-    pto.stg(value, dst, scalar.index_cast(lane))
+    pto.stg(value, dst, pto.index_cast(lane))
 
 
 @pto.jit(target="a5")
@@ -180,7 +180,7 @@ def vote_probe(dst: pto.ptr(pto.i32, "gm")):
     any_pred = pto.vote_any(pred)
     uni_pred = pto.vote_uni(pred)
     value = ballot + all_pred + any_pred + uni_pred
-    pto.stg(value, dst, scalar.index_cast(lane))
+    pto.stg(value, dst, pto.index_cast(lane))
 
 
 @pto.jit(target="a5")
@@ -221,7 +221,7 @@ def shuffle_probe(dst: pto.ptr(pto.i32, "gm")):
     shifted_down = pto.shuffle_down(lane, 1, width=32)
     butterfly = pto.shuffle_bfly(lane, 1, width=32)
     value = shuffled + shifted_up + shifted_down + butterfly
-    pto.stg(value, dst, scalar.index_cast(lane))
+    pto.stg(value, dst, pto.index_cast(lane))
 
 
 @pto.jit(target="a5")
@@ -231,20 +231,22 @@ def simt_ops_shuffle_probe(dst: pto.ptr(pto.i32, "gm")):
 
 ---
 
-#### `pto.redux_add(value: ScalarType, *, signedness: str | None = None) -> ScalarType`
+#### `pto.redux_add(value: ScalarType) -> ScalarType`
 #### `pto.redux_max(value: ScalarType, *, signedness: str | None = None) -> ScalarType`
 #### `pto.redux_min(value: ScalarType, *, signedness: str | None = None) -> ScalarType`
 
 **Description**: Reduces a scalar value across SIMT lanes. Integer
 `redux_max` and `redux_min` require `signedness="signed"` or
-`signedness="unsigned"`. Floating-point reductions do not accept `signedness`.
+`signedness="unsigned"`. Integer addition is bitwise-identical for signed and
+unsigned values, so `redux_add` has no signedness control. Floating-point
+reductions do not accept `signedness`.
 
 **Parameters**:
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `value` | PTO scalar | Payload to reduce |
-| `signedness` | `"signed"`, `"unsigned"`, or `None` | Integer signedness control |
+| `signedness` | `"signed"`, `"unsigned"`, or `None` | Required for integer `redux_max` and `redux_min`; omitted for floating point |
 
 **Returns**: PTO scalar with the same type as `value`.
 
@@ -266,10 +268,10 @@ def reduce_lane_value(dst: pto.ptr(pto.i32, "gm")):
     pto.shuffle_up(lane, 1, width=32)
     pto.shuffle_down(lane, 1, width=32)
     value = pto.shuffle_bfly(lane, 1, width=32)
-    total = pto.redux_add(value, signedness="signed")
+    total = pto.redux_add(value)
     maximum = pto.redux_max(total, signedness="signed")
     minimum = pto.redux_min(maximum, signedness="signed")
-    pto.stg(minimum, dst, scalar.index_cast(lane))
+    pto.stg(minimum, dst, pto.index_cast(lane))
 
 
 @pto.jit(target="a5")
@@ -305,7 +307,7 @@ Packed vector pointer element descriptors include `pto.f32x2`, `pto.f16x2`,
 **Offset contract**: The offset is an element-level ``index``, not a byte
 offset.  For ``pto.ptr(pto.f32x2, "gm")``, offset 1 advances by 8 bytes
 (2 × sizeof(f32)).  Dynamic ``i64`` offsets must be cast to ``index`` via
-``scalar.index_cast(value)``.
+``pto.index_cast(value)``.
 
 **Example**:
 
@@ -314,7 +316,7 @@ offset.  For ``pto.ptr(pto.f32x2, "gm")``, offset 1 advances by 8 bytes
 @pto.simt
 def ldg_stg_probe(src: pto.ptr(pto.i32, "gm"), dst: pto.ptr(pto.i32, "gm")):
     lane = pto.get_tid_x()
-    idx = scalar.index_cast(lane)
+    idx = pto.index_cast(lane)
     value = pto.ldg(src, idx, l1cache="cache", l2cache="nmfv")
     pto.stg(value, dst, idx, l1cache="uncache", l2cache="wtsred")
 
@@ -336,7 +338,7 @@ def gm_vector_ldst(
     dst: pto.ptr(pto.f32x2, "gm"),
     offset: pto.i64,
 ):
-    idx = scalar.index_cast(offset)
+    idx = pto.index_cast(offset)
     value = pto.ldg(src, idx)
     pto.stg(value, dst, idx)
 
@@ -352,19 +354,22 @@ def gm_vector_ldst_entry(
 
 ---
 
-#### `pto.atomic_exch(ptr: PtrType, value: ScalarType, *, l2cache: str = "nmfv", signedness: str | None = None) -> ScalarType`
-#### `pto.atomic_add(ptr: PtrType, value: ScalarType, *, l2cache: str = "nmfv", signedness: str | None = None) -> ScalarType`
-#### `pto.atomic_sub(ptr: PtrType, value: ScalarType, *, l2cache: str = "nmfv", signedness: str | None = None) -> ScalarType`
+#### `pto.atomic_exch(ptr: PtrType, value: ScalarType, *, l2cache: str = "nmfv") -> ScalarType`
+#### `pto.atomic_add(ptr: PtrType, value: ScalarType, *, l2cache: str = "nmfv") -> ScalarType`
+#### `pto.atomic_sub(ptr: PtrType, value: ScalarType, *, l2cache: str = "nmfv") -> ScalarType`
 #### `pto.atomic_min(ptr: PtrType, value: ScalarType, *, l2cache: str = "nmfv", signedness: str | None = None) -> ScalarType`
 #### `pto.atomic_max(ptr: PtrType, value: ScalarType, *, l2cache: str = "nmfv", signedness: str | None = None) -> ScalarType`
-#### `pto.atomic_and(ptr: PtrType, value: ScalarType, *, l2cache: str = "nmfv", signedness: str | None = None) -> ScalarType`
-#### `pto.atomic_or(ptr: PtrType, value: ScalarType, *, l2cache: str = "nmfv", signedness: str | None = None) -> ScalarType`
-#### `pto.atomic_xor(ptr: PtrType, value: ScalarType, *, l2cache: str = "nmfv", signedness: str | None = None) -> ScalarType`
-#### `pto.atomic_cas(ptr: PtrType, compare: ScalarType, value: ScalarType, *, l2cache: str = "nmfv", signedness: str | None = None) -> ScalarType`
+#### `pto.atomic_and(ptr: PtrType, value: ScalarType, *, l2cache: str = "nmfv") -> ScalarType`
+#### `pto.atomic_or(ptr: PtrType, value: ScalarType, *, l2cache: str = "nmfv") -> ScalarType`
+#### `pto.atomic_xor(ptr: PtrType, value: ScalarType, *, l2cache: str = "nmfv") -> ScalarType`
+#### `pto.atomic_cas(ptr: PtrType, compare: ScalarType, value: ScalarType, *, l2cache: str = "nmfv") -> ScalarType`
 
 **Description**: Performs a scalar atomic operation and returns the old value.
-Integer atomics may pass `signedness`; floating-point and packed atomics must
-omit it.
+Only integer `atomic_min` and `atomic_max` use signedness because their ordering
+depends on the integer interpretation. Those two operations require
+`signedness="signed"` or `signedness="unsigned"` for integer values and omit it
+for floating-point values. The other atomic operations have no signedness
+parameter.
 
 **Parameters**:
 
@@ -374,7 +379,7 @@ omit it.
 | `value` | PTO scalar | Atomic payload |
 | `compare` | PTO scalar | Compare value for `atomic_cas` |
 | `l2cache` | cache token string | L2 cache policy accepted by VPTO |
-| `signedness` | `"signed"`, `"unsigned"`, or `None` | Integer signedness control |
+| `signedness` | `"signed"`, `"unsigned"`, or `None` | Required only for integer `atomic_min` and `atomic_max` |
 
 **Returns**: Old value loaded from `ptr`.
 
@@ -385,17 +390,17 @@ omit it.
 @pto.simt
 def update_counter(counter: pto.ptr(pto.i32, "gm")):
     tid = pto.get_tid_x()
-    idx = scalar.index_cast(tid)
+    idx = pto.index_cast(tid)
     value = pto.ldg(counter, idx, l1cache="cache", l2cache="nmfv")
-    old = pto.atomic_add(counter, value, l2cache="nmfv", signedness="signed")
-    pto.atomic_exch(counter, value, signedness="signed")
-    pto.atomic_sub(counter, value, signedness="signed")
+    old = pto.atomic_add(counter, value, l2cache="nmfv")
+    pto.atomic_exch(counter, value)
+    pto.atomic_sub(counter, value)
     pto.atomic_min(counter, value, signedness="signed")
     pto.atomic_max(counter, value, signedness="signed")
-    pto.atomic_and(counter, value, signedness="unsigned")
-    pto.atomic_or(counter, value, signedness="unsigned")
-    pto.atomic_xor(counter, value, signedness="unsigned")
-    pto.atomic_cas(counter, old, value, signedness="signed")
+    pto.atomic_and(counter, value)
+    pto.atomic_or(counter, value)
+    pto.atomic_xor(counter, value)
+    pto.atomic_cas(counter, old, value)
     pto.stg(old, counter, idx, l1cache="uncache", l2cache="wtsred")
 
 
@@ -435,7 +440,7 @@ def integer_math_probe(dst: pto.ptr(pto.i32, "gm")):
     high = pto.mulhi(permuted, lane, signedness="unsigned")
     wide = pto.mul_i32toi64(lane, lane, signedness="unsigned")
     _ = wide
-    pto.stg(high, dst, scalar.index_cast(lane))
+    pto.stg(high, dst, pto.index_cast(lane))
 
 
 @pto.jit(target="a5")
@@ -446,23 +451,41 @@ def simt_ops_integer_math_probe(dst: pto.ptr(pto.i32, "gm")):
 ---
 
 #### `pto.absf(value: ScalarType) -> ScalarType`
+
+This helper emits the common floating-point `pto.absf` operation documented in
+the shared arithmetic chapter; it is not a SIMT-only semantic operation.
 #### `pto.sqrt(value: ScalarType) -> ScalarType`
 #### `pto.exp(value: ScalarType) -> ScalarType`
 #### `pto.log(value: ScalarType) -> ScalarType`
-#### `pto.pow(lhs: ScalarType, rhs: ScalarType) -> ScalarType`
 #### `pto.ceil(value: ScalarType) -> ScalarType`
 #### `pto.floor(value: ScalarType) -> ScalarType`
 #### `pto.rint(value: ScalarType) -> ScalarType`
 #### `pto.round(value: ScalarType) -> ScalarType`
-#### `pto.fmin(lhs: ScalarType, rhs: ScalarType) -> ScalarType`
-#### `pto.fmax(lhs: ScalarType, rhs: ScalarType) -> ScalarType`
-#### `pto.fma(lhs: ScalarType, rhs: ScalarType, acc: ScalarType) -> ScalarType`
 
-**Description**: Performs SIMT floating-point math. These functions are VPTO
-SIMT micro-ops and are distinct from the generic scalar helpers in Chapter 6.
+**Description**: Performs floating-point value operations available to SIMT
+code. `pto.sqrt`, `pto.exp`, and `pto.log` use the generic scalar contract for
+ordinary scalar inputs and the packed PTO contract for supported packed values.
+`pto.pow` and `pto.fma` are also common value helpers documented in the scalar
+chapter; they may be used inside SIMT code but do not imply SIMT execution.
+Prefer `pto.abs`, `pto.min`, and `pto.max` for common value operations;
+`pto.min` and `pto.max` also support the packed builtin-vector forms. `ceil`,
+`floor`, `rint`, and `round` retain their target-specific contracts. Numeric
+conversion is authored with `pto.cast`, which emits the category-specific
+`pto.ftof`, `pto.ftoi`, `pto.itof`, `pto.exti`, or `pto.trunci` operation.
 
-`pto.fmin` and `pto.fmax` accept `f16`, `f32`, `bf16`, `vector<2xf16>`, and
-`vector<2xbf16>` operands.
+The common `pto.min` and `pto.max` helpers cover ordinary floating-point
+minimum/maximum semantics, including supported packed vector forms. Use
+`pto.minimum`/`pto.maximum` when NaN propagation is required; the old
+`pto.fmin`/`pto.fmax` names are not part of the unified surface.
+
+### Migration from the pre-unification API
+
+| Former API | Unified API |
+|------------|-------------|
+| `scalar.load` / `scalar.store` | `pto.load` / `pto.store` |
+| `scalar.cast` / `scalar.index_cast` | `pto.cast` / `pto.index_cast` |
+| `pto.convert(...)` | `pto.cast(..., rounding=..., saturation=...)` |
+| `pto.fmin` / `pto.fmax` | `pto.min` / `pto.max` |
 
 **Parameters**: PTO floating-point scalar or packed operands supported by the
 selected operation.
@@ -476,19 +499,13 @@ selected operation.
 @pto.simt
 def float_math_probe(dst: pto.ptr(pto.f32, "gm")):
     lane = pto.get_laneid()
-    value = pto.convert(
-        lane,
-        pto.f32,
-        rounding="r",
-        saturation="nosat",
-        signedness="unsigned",
-    )
+    value = pto.cast(lane, pto.f32, rounding="to_nearest_even")
     root = pto.sqrt(pto.absf(value))
     powered = pto.pow(root, root)
     rounded = pto.round(pto.rint(pto.floor(pto.ceil(powered))))
-    bounded = pto.fmin(pto.fmax(value, root), rounded)
-    accum = pto.fma(bounded, pto.exp(value), pto.log(pto.fmax(value, root)))
-    pto.stg(accum, dst, scalar.index_cast(lane))
+    bounded = pto.min(pto.max(value, root), rounded)
+    accum = pto.fma(bounded, pto.exp(value), pto.log(pto.max(value, root)))
+    pto.stg(accum, dst, pto.index_cast(lane))
 
 
 @pto.jit(target="a5")
@@ -497,57 +514,6 @@ def simt_ops_float_math_probe(dst: pto.ptr(pto.f32, "gm")):
 ```
 
 ---
-
-#### `pto.convert(src: ScalarType, dst_type: Type, *, rounding: str, saturation: str, signedness: str | None = None) -> ScalarType`
-
-**Description**: Converts a scalar or packed value to `dst_type` with explicit
-VPTO conversion controls.
-
-**Parameters**:
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `src` | PTO scalar | Source value |
-| `dst_type` | PTO type | Destination type |
-| `rounding` | `"r"`, `"a"`, `"f"`, `"c"`, `"z"`, `"o"`, or `"h"` | Rounding mode |
-| `saturation` | `"sat"`, `"nosat"`, `"on"`, or `"off"` | Saturation mode |
-| `signedness` | `"signed"`, `"unsigned"`, or `None` | Required when converting to/from integer types |
-
-**Returns**: Converted PTO scalar. Integer-to-integer conversion is not
-supported by `pto.convert`.
-
-**Example**:
-
-<!-- ptodsl-doc-test: {"mode":"compile","symbol":"simt_ops_math_probe","compile":{}} -->
-```python
-@pto.simt
-def transform_lane_value(dst: pto.ptr(pto.f32, "gm")):
-    lane = pto.get_laneid()
-    permuted = pto.prmt(lane, lane, lane)
-    high = pto.mulhi(permuted, lane, signedness="unsigned")
-    product = pto.mul_i32toi64(lane, lane, signedness="unsigned")
-    _ = high
-    _ = product
-
-    value = pto.convert(
-        lane,
-        pto.f32,
-        rounding="r",
-        saturation="nosat",
-        signedness="unsigned",
-    )
-    root = pto.sqrt(pto.absf(value))
-    powered = pto.pow(root, root)
-    rounded = pto.round(pto.rint(pto.floor(pto.ceil(powered))))
-    bounded = pto.fmin(pto.fmax(value, root), rounded)
-    accum = pto.fma(bounded, pto.exp(value), pto.log(pto.fmax(value, root)))
-    pto.stg(accum, dst, scalar.index_cast(lane))
-
-
-@pto.jit(target="a5")
-def simt_ops_math_probe(dst: pto.ptr(pto.f32, "gm")):
-    transform_lane_value[32, 1, 1](dst)
-```
 
 ## 13.6 Sync and state ops
 
@@ -571,7 +537,7 @@ def sync_probe(dst: pto.ptr(pto.i32, "gm")):
     pto.syncthreads()
     pto.threadfence()
     pto.threadfence_block()
-    pto.stg(lane, dst, scalar.index_cast(lane))
+    pto.stg(lane, dst, pto.index_cast(lane))
 
 
 @pto.jit(target="a5")
@@ -612,7 +578,7 @@ def use_lane_state(dst: pto.ptr(pto.i32, "gm")):
     pto.syncthreads()
     pto.threadfence()
     pto.threadfence_block()
-    pto.stg(lane, dst, scalar.index_cast(lane))
+    pto.stg(lane, dst, pto.index_cast(lane))
 
 
 @pto.jit(target="a5")

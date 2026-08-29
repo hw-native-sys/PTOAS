@@ -803,6 +803,13 @@ static void prepareVPTOForEmission(PassManager &pm) {
   kernelModulePM.addPass(pto::createPTOInlineLibCallPass());
   kernelModulePM.addPass(createCanonicalizerPass());
   kernelModulePM.addPass(createCSEPass());
+  // Tile and soft-library expansion may introduce generic scalar PTO ops.
+  // Lower them before final VPTO scheduling and legality validation.
+  kernelModulePM.addNestedPass<func::FuncOp>(
+      pto::createPTOLowerGenericOpsPass());
+  auto &expandedChildModulePM = kernelModulePM.nest<ModuleOp>();
+  expandedChildModulePM.addNestedPass<func::FuncOp>(
+      pto::createPTOLowerGenericOpsPass());
   // Reconstruct the optimized reduction tree before scheduling so the
   // scheduler sees the final MI instruction set and dependencies.
   kernelModulePM.addPass(pto::createVPTOCombineReductionsPass());
@@ -871,6 +878,8 @@ static void lowerPTOToVPTOBackend(PassManager &pm, ModuleOp module) {
   kernelModulePM.addPass(pto::createPTOInlineLibCallPass());
   kernelModulePM.addNestedPass<mlir::func::FuncOp>(
       pto::createFoldTileBufIntrinsicsPass("shape-only"));
+  kernelModulePM.addNestedPass<mlir::func::FuncOp>(
+      pto::createPTOLowerGenericOpsPass());
   if (enableA5VPTOPostLoweringFusionLifecycle) {
     appendA5VPTOPostLoweringFusionPipeline(kernelModulePM);
   }
@@ -1280,6 +1289,13 @@ static LogicalResult runPreBackendNormalization(ModuleOp module) {
   preBackendPM.addPass(pto::createPTOMaterializeTileOpSectionsPass());
   preBackendPM.addPass(pto::createPTONormalizeUncoveredTileSectionsPass());
   preBackendPM.addPass(pto::createPTOValidatePhysicalSectionBoundariesPass());
+  // Shared frontend analyses consume standard arith/index producer chains.
+  // Lower execution-domain-independent PTO scalar ops before those analyses.
+  preBackendPM.addNestedPass<func::FuncOp>(
+      pto::createPTOLowerGenericOpsPass());
+  auto &preBackendChildModulePM = preBackendPM.nest<ModuleOp>();
+  preBackendChildModulePM.addNestedPass<func::FuncOp>(
+      pto::createPTOLowerGenericOpsPass());
   if (failed(preBackendPM.run(module))) {
     llvm::errs() << "Error: failed to normalize uncovered PTO tile sections.\n";
     return failure();
@@ -1433,9 +1449,6 @@ static LogicalResult runMainLoweringPipeline(
   if (!isA2A3) {
     pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOA5NormalizeTMovPass());
   }
-  pm.addNestedPass<mlir::func::FuncOp>(
-      pto::createPTOValidateIntToPtrUsesPass());
-
   // PTODSL legality discovery happens on tile-native PTO IR before fusion.
   // Fusion may later filter the ordered `candidates` array; ExpandTileOp
   // consumes the first candidate that remains.

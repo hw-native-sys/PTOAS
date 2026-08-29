@@ -17,7 +17,7 @@ module attributes {pto.target_arch = "a5"} {
     %3 = arith.addi %2, %kv_dt__idx_v0 : index
     %4 = arith.index_cast %cn1_index : index to i64
     %src_row_raw__rv_v2, %write_seen__rv_v2 = scf.for %scan_w__idx_v0 = %c0_index to %c128_index step %c1_index iter_args(%src_row_raw__iter_v1 = %4, %write_seen__iter_v1 = %c0_index) -> (i64, index) {
-      %scan_slot_raw__tile = pto.load_scalar %arg1[%scan_w__idx_v0] : !pto.ptr<i64> -> i64
+      %scan_slot_raw__tile = pto.load %arg1[%scan_w__idx_v0] : !pto.ptr<i64> -> i64
       %6 = arith.index_cast %scan_slot_raw__tile : i64 to index
       %7 = arith.cmpi sle, %c0_index, %6 : index
       %src_row_raw__phi_v5, %write_seen__phi_v4 = scf.if %7 -> (i64, index) {

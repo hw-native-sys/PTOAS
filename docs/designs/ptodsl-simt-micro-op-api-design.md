@@ -38,7 +38,7 @@ Current PTO-DSL already has a narrow SIMT surface:
   attributes.
 - `pto.store_vfsimt_info(dim_z, dim_y, dim_x)`.
 - `pto.get_tid_x()`, `pto.get_tid_y()`, `pto.get_tid_z()`.
-- `scalar.load(...)` and `scalar.store(...)` for plain scalar element access.
+- `pto.load(...)` and `pto.store(...)` for plain scalar element access.
 
 Current `@pto.simt` helper calls lower to:
 
@@ -86,23 +86,26 @@ Expose direct wrappers for:
 
 - `pto.vote_all/any/uni/ballot(pred)`
 - `pto.shuffle_idx/up/down/bfly(value, control, *, width=32)`
-- `pto.redux_add/max/min(value, *, signedness=None)`
+- `pto.redux_add(value)`
+- `pto.redux_max/min(value, *, signedness=None)`; integer values require an
+  explicit signedness
 
 ### Batch 3: SIMT Scalar Memory and Atomics
 
 Status: implemented as direct VPTO wrappers. `pto.ldg`/`pto.stg` reuse the
-same address-access normalization as `scalar.load`/`scalar.store`; atomics
+same address-access normalization as `pto.load`/`pto.store`; atomics
 operate on explicit pointer operands.
 
 Expose direct wrappers for:
 
 - `pto.ldg(ptr, offset=0, *, l1cache="cache", l2cache="nmfv")`
 - `pto.stg(value, ptr, offset=0, *, l1cache="cache", l2cache="nmfv")`
-- `pto.atomic_exch/add/sub/min/max/and/or/xor(ptr, value, *, l2cache="nmfv", signedness=None)`
-- `pto.atomic_cas(ptr, compare, value, *, l2cache="nmfv", signedness=None)`
+- `pto.atomic_exch/add/sub/and/or/xor(ptr, value, *, l2cache="nmfv")`
+- `pto.atomic_min/max(ptr, value, *, l2cache="nmfv", signedness=None)`;
+  integer values require an explicit signedness
+- `pto.atomic_cas(ptr, compare, value, *, l2cache="nmfv")`
 
-Plain scalar memory remains available through `scalar.load(...)` and
-`scalar.store(...)`.
+Plain scalar memory is provided through `pto.load(...)` and `pto.store(...)`.
 
 ### Batch 4: SIMT Scalar Math, Convert, Sync, and State
 
@@ -116,14 +119,15 @@ Expose direct wrappers for:
 - `pto.mul_i32toi64(...)`
 - `pto.absf(...)`, `pto.sqrt(...)`, `pto.exp(...)`, `pto.log(...)`,
   `pto.pow(...)`, `pto.ceil(...)`, `pto.floor(...)`, `pto.rint(...)`,
-  `pto.round(...)`, `pto.fmin(...)`, `pto.fmax(...)`, `pto.fma(...)`
-- `pto.convert(...)`
+  `pto.round(...)`, `pto.fma(...)`
+- `pto.cast(...)`, which emits `pto.ftof`, `pto.ftoi`, `pto.itof`, `pto.exti`,
+  or `pto.trunci` according to the source and destination categories
 - `pto.syncthreads()`, `pto.threadfence()`, `pto.threadfence_block()`
 - `pto.keep(...)`, `pto.resume(...)`
 
-`pto.sqrt/exp/log` are VPTO SIMT micro-ops. They are not the same API layer as
-the existing `scalar.sqrt/exp/log` helpers, which currently emit generic
-`math.*` operations.
+`pto.sqrt/exp/log` are shared value operations. Their DSL surface is the same
+inside and outside SIMT; lowering selects the generic `math.*` form for ordinary
+values and retains the packed or hardware form when the type requires it.
 
 ## 5. Implemented Launch and Helper Design
 
@@ -151,7 +155,7 @@ itself. Lane collectives, atomics, GM scalar cache policy, scalar math,
 conversion, keep/resume, and validation rules are exposed as direct VPTO
 wrappers in Batches 2-4.
 
-The launch/helper layer should not change the semantics of `scalar.load/store`.
+The launch/helper layer should not change the semantics of `pto.load/store`.
 
 ### 5.3 Operation Mapping
 
@@ -213,14 +217,14 @@ This asymmetry is intentional:
 #### Example
 
 ```python
-from ptodsl import pto, scalar
+from ptodsl import pto
 
 
 @pto.simt
 def write_tid(dst: pto.ptr(pto.i32, pto.MemorySpace.UB)):
     tid = pto.get_tid_x()
-    idx = scalar.index_cast(tid)
-    scalar.store(tid, dst, idx)
+    idx = pto.index_cast(tid)
+    pto.store(tid, dst, idx)
 
 
 @pto.jit(target="a5")

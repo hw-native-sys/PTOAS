@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s
+// RUN: ptoas --cann-output-version=9.0.0 --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @local_array_vpto_llvm(%i : index, %j : index, %value : f32)
+      attributes {pto.kernel} {
+    %array = pto.declare_local_array -> !pto.local_array<4x8xf32>
+    pto.local_array_set %array[%i, %j], %value : !pto.local_array<4x8xf32>, f32
+    %read = pto.local_array_get %array[%j, %i] : !pto.local_array<4x8xf32> -> f32
+    pto.local_array_set %array[%i, %j], %read : !pto.local_array<4x8xf32>, f32
+    return
+  }
+}
+
+// CHECK-LABEL: define {{.*}} @local_array_vpto_llvm_mix_aiv
+// CHECK: alloca [4 x [8 x float]], i64 1
+// CHECK: getelementptr [4 x [8 x float]], ptr {{.*}}, i32 0, i64 {{.*}}
+// CHECK: getelementptr [8 x float], ptr {{.*}}, i32 0, i64 {{.*}}
+// CHECK: store float {{.*}}, ptr
+// CHECK: load float, ptr

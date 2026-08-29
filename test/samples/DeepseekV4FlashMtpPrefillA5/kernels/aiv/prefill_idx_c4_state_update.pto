@@ -24,12 +24,12 @@ module attributes {pto.target_arch = "a5"} {
   %5 = arith.index_cast %arg7 : i32 to index
   %6 = arith.cmpi slt, %update_t_inline8936__ssa_v0, %5 : index
   scf.if %6 {
-    %state_row_raw_inline9051__tile = pto.load_scalar %arg0[%update_t_inline8936__ssa_v0] : !pto.ptr<i64> -> i64
+    %state_row_raw_inline9051__tile = pto.load %arg0[%update_t_inline8936__ssa_v0] : !pto.ptr<i64> -> i64
     %7 = arith.index_cast %state_row_raw_inline9051__tile : i64 to index
     %8 = arith.cmpi sle, %c0_index, %7 : index
     scf.if %8 {
       %9 = arith.index_cast %state_row_raw_inline9051__tile : i64 to index
-      %update_pos_inline9047__tile = pto.load_scalar %arg1[%update_t_inline8936__ssa_v0] : !pto.ptr<i32> -> i32
+      %update_pos_inline9047__tile = pto.load %arg1[%update_t_inline8936__ssa_v0] : !pto.ptr<i32> -> i32
       %10 = arith.index_cast %update_pos_inline9047__tile : i32 to index
       %11 = arith.remsi %10, %c4_index : index
       %t__tile = pto.alloc_tile addr = %c256_i64 valid_row = %c1_index valid_col = %c64_index : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>

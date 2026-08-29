@@ -26,7 +26,7 @@ def _bootstrap_dsl_st_common() -> None:
 _bootstrap_dsl_st_common()
 
 from common import auto_main, golden_output_case  # noqa: E402
-from ptodsl import pto, scalar  # noqa: E402
+from ptodsl import pto  # noqa: E402
 
 
 WARP_THREADS = 32
@@ -43,8 +43,8 @@ def allreduce_sum_body(
     threads: pto.const_expr,
 ):
     tid = pto.get_tid_x()
-    idx = scalar.index_cast(tid)
-    value = scalar.load(inp, idx)
+    idx = pto.index_cast(tid)
+    value = pto.load(inp, idx)
     reduced = pto.simt_allreduce_sum(
         value,
         threads=threads,
@@ -52,7 +52,7 @@ def allreduce_sum_body(
         thread_offset=0,
         scratch=scratch,
     )
-    scalar.store(reduced, out, idx)
+    pto.store(reduced, out, idx)
 
 
 @pto.simt
@@ -64,8 +64,8 @@ def allreduce_max_body(
     threads: pto.const_expr,
 ):
     tid = pto.get_tid_x()
-    idx = scalar.index_cast(tid)
-    value = scalar.load(inp, idx)
+    idx = pto.index_cast(tid)
+    value = pto.load(inp, idx)
     reduced = pto.simt_allreduce_max(
         value,
         threads=threads,
@@ -73,7 +73,7 @@ def allreduce_max_body(
         thread_offset=0,
         scratch=scratch,
     )
-    scalar.store(reduced, out, idx)
+    pto.store(reduced, out, idx)
 
 
 @pto.simt
@@ -85,8 +85,8 @@ def allreduce_min_body(
     threads: pto.const_expr,
 ):
     tid = pto.get_tid_x()
-    idx = scalar.index_cast(tid)
-    value = scalar.load(inp, idx)
+    idx = pto.index_cast(tid)
+    value = pto.load(inp, idx)
     reduced = pto.simt_allreduce_min(
         value,
         threads=threads,
@@ -94,7 +94,7 @@ def allreduce_min_body(
         thread_offset=0,
         scratch=scratch,
     )
-    scalar.store(reduced, out, idx)
+    pto.store(reduced, out, idx)
 
 
 @pto.jit(name="allreduce_warp_sum_kernel", kernel_kind="vector", target="a5", mode="explicit", insert_sync=False)

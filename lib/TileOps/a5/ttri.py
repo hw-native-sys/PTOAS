@@ -9,7 +9,7 @@
 """PTODSL TileLib template for pto.ttri."""
 
 from ptodsl import pto
-from ptodsl import scalar
+from ptodsl import pto
 import ptodsl.tilelib as tilelib
 from ._common import NUMERIC_DTYPES
 from ._elementwise import _ub_or_vec_row_major
@@ -61,9 +61,9 @@ def template_ttri_lower(diagonal, dst: pto.Tile):
     v_ones = pto.vbr(_as_pto_type(dtype)(1))
 
     if diagonal >= 0:
-        start_row = scalar.index_cast(pto.const(0, dtype=pto.i32))
+        start_row = pto.index_cast(pto.const(0, dtype=pto.i32))
     else:
-        start_row = scalar.index_cast(0 - diagonal)
+        start_row = pto.index_cast(0 - diagonal)
     start_num = diagonal + 1
 
     # Pass 1: fill all with zeros
@@ -103,9 +103,9 @@ def template_ttri_upper(diagonal, dst: pto.Tile):
     v_ones = pto.vbr(_as_pto_type(dtype)(1))
 
     if diagonal > 0:
-        start_row = scalar.index_cast(pto.const(0, dtype=pto.i32))
+        start_row = pto.index_cast(pto.const(0, dtype=pto.i32))
     else:
-        start_row = scalar.index_cast(1 - diagonal)
+        start_row = pto.index_cast(1 - diagonal)
     
     start_num = diagonal
     for row in range(valid_rows):

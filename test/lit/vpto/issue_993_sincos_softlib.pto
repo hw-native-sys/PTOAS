@@ -24,4 +24,4 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 
 // CHECK-LABEL: define linkonce_odr simt_entry void @issue_993_sincos
 // CHECK-COUNT-2: call float @llvm.hivm.round.f
-// CHECK-COUNT-12: call float @llvm.hivm.ffma.f32.rrr
+// CHECK-COUNT-12: call float @llvm.fma.f32

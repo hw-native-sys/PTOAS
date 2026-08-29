@@ -3093,66 +3093,6 @@ LogicalResult mlir::pto::AddPtrOp::verify() {
   return success();
 }
 
-static Type getPointerLikeElementType(Type type) {
-  if (auto ptrTy = dyn_cast<mlir::pto::PtrType>(type)) {
-    return ptrTy.getElementType();
-  }
-  return Type();
-}
-
-static bool isEmitCSupportedScalarType(Type type) {
-  if (!type) {
-    return false;
-  }
-  if (type.isF16() || type.isBF16() || type.isF32() || type.isF64()) {
-    return true;
-  }
-  if (auto intTy = dyn_cast<IntegerType>(type)) {
-    return intTy.getWidth() == 8 || intTy.getWidth() == 16 ||
-           intTy.getWidth() == 32 || intTy.getWidth() == 64;
-  }
-  if (mlir::pto::isPTOFloat8Type(type)) {
-    return true;
-  }
-  if (isa<mlir::pto::HiF8Type, mlir::pto::F4E1M2x2Type,
-          mlir::pto::F4E2M1x2Type>(type)) {
-    return true;
-  }
-  return false;
-}
-
-LogicalResult mlir::pto::PtrToIntOp::verify() {
-  Type resultTy = getResult().getType();
-  auto intTy = dyn_cast<IntegerType>(resultTy);
-  if (!intTy || intTy.getWidth() != 64) {
-    return emitOpError("result must be i64");
-  }
-
-  if (!isa<mlir::pto::PtrType>(getPtr().getType())) {
-    return emitOpError("ptr operand must be !pto.ptr<...>");
-  }
-  return success();
-}
-
-LogicalResult mlir::pto::IntToPtrOp::verify() {
-  auto addrTy = dyn_cast<IntegerType>(getAddr().getType());
-  if (!addrTy || addrTy.getWidth() != 64) {
-    return emitOpError("address operand must be i64");
-  }
-
-  if (!isa<mlir::pto::PtrType>(getResult().getType())) {
-    return emitOpError("result must be !pto.ptr<...>");
-  }
-
-  Type dstElem = getPointerLikeElementType(getResult().getType());
-  if (!isEmitCSupportedScalarType(dstElem)) {
-    return emitOpError("result element type is not supported by EmitC: ")
-           << dstElem;
-  }
-
-  return success();
-}
-
 LogicalResult mlir::pto::LocalArrayGetOp::verify() {
   auto arrayTy = getArray().getType();
   int64_t rank = arrayTy.getRank();
@@ -3300,6 +3240,11 @@ LogicalResult mlir::pto::CastPtrOp::verify() {
   bool inputIsInteger = isa<IntegerType>(inputType);
   bool resultIsInteger = isa<IntegerType>(resultType);
 
+  auto isSignlessI64Address = [](Type type) {
+    auto integer = dyn_cast<IntegerType>(type);
+    return integer && integer.getWidth() == 64 && integer.isSignless();
+  };
+
   if (!inputPtrType && !inputMemRefType && !inputIsInteger) {
     return emitOpError("input must be an integer, memref, or !pto.ptr<...>");
   }
@@ -3309,6 +3254,24 @@ LogicalResult mlir::pto::CastPtrOp::verify() {
 
   if (inputIsInteger && resultIsInteger) {
     return emitOpError("integer-to-integer cast is not a ptr cast");
+  }
+
+  if (inputIsInteger && !isSignlessI64Address(inputType)) {
+    return emitOpError("integer address input must be signless i64");
+  }
+  if (resultIsInteger && !isSignlessI64Address(resultType)) {
+    return emitOpError("integer address result must be signless i64");
+  }
+
+  if (inputPtrType &&
+      !isSupportedPTOPointerElementType(inputPtrType.getElementType())) {
+    return emitOpError("input pointer element type is not supported by PTO: ")
+           << inputPtrType.getElementType();
+  }
+  if (resultPtrType &&
+      !isSupportedPTOPointerElementType(resultPtrType.getElementType())) {
+    return emitOpError("result pointer element type is not supported by PTO: ")
+           << resultPtrType.getElementType();
   }
 
   if (inputMemRefType && resultIsInteger) {
@@ -9710,39 +9673,6 @@ static LogicalResult verifyMatmulLike(Operation *op, Type aTy, Type bTy, Type ds
   return success();
 }
 
-// ---- LoadScalarOp ----
-LogicalResult LoadScalarOp::verify() {
-  Type ptrTy = getPtr().getType();
-  Type elemTy;
-  if (auto pty = dyn_cast<mlir::pto::PtrType>(ptrTy)) {
-    elemTy = pty.getElementType();
-  } else {
-    return emitOpError("expects ptr to be !pto.ptr type");
-  }
-
-  if (getValue().getType() != elemTy) {
-    return emitOpError("expects result type to match ptr element type");
-  }
-
-  return success();
-}
-// ---- StoreScalarOp ----
-LogicalResult StoreScalarOp::verify() {
-  Type ptrTy = getPtr().getType();
-  Type elemTy;
-  if (auto pty = dyn_cast<mlir::pto::PtrType>(ptrTy)) {
-    elemTy = pty.getElementType();
-  } else {
-    return emitOpError("expects ptr to be !pto.ptr type");
-  }
-
-  if (getValue().getType() != elemTy) {
-    return emitOpError("expects value type to match ptr element type");
-  }
-
-  return success();
-}
-
 // ---- CmoCacheInvalidOp ----
 static bool isGmOrDefaultAddressSpace(pto::AddressSpace space) {
   return space == pto::AddressSpace::GM || space == pto::AddressSpace::Zero;
@@ -14072,10 +14002,62 @@ mlir::LogicalResult mlir::pto::TReshapeOp::verify() {
 }
 
 mlir::LogicalResult mlir::pto::BitcastOp::verify() {
+  for (StringRef attrName :
+       {"fastmath", "roundingmode", "overflowFlags", "signedness"}) {
+    if ((*this)->hasAttr(attrName)) {
+      return emitOpError() << "does not accept " << attrName;
+    }
+  }
+
   auto srcTy = llvm::dyn_cast<TileBufType>(getSrc().getType());
   auto dstTy = llvm::dyn_cast<TileBufType>(getResult().getType());
-  if (!srcTy || !dstTy) {
-    return emitOpError("expects tile_buf src and tile_buf result");
+  bool mixesTileAndNumeric =
+      static_cast<bool>(srcTy) != static_cast<bool>(dstTy);
+  if (mixesTileAndNumeric) {
+    return emitOpError(
+        "requires both source and result to be tile buffers or both to be "
+        "numeric values");
+  }
+
+  if (!srcTy) {
+    Type srcType = getSrc().getType();
+    Type dstType = getResult().getType();
+    auto srcVectorType = dyn_cast<VectorType>(srcType);
+    auto dstVectorType = dyn_cast<VectorType>(dstType);
+    bool mixesScalarAndVector =
+        static_cast<bool>(srcVectorType) != static_cast<bool>(dstVectorType);
+    if (mixesScalarAndVector) {
+      return emitOpError()
+             << "requires both numeric types to be scalar or both to be "
+                "builtin vectors; got "
+             << srcType << " -> " << dstType;
+    }
+    if (srcVectorType &&
+        (srcVectorType.getShape() != dstVectorType.getShape() ||
+         srcVectorType.getScalableDims() != dstVectorType.getScalableDims())) {
+      return emitOpError()
+             << "requires numeric vectors to have the same shape; got "
+             << srcType << " -> " << dstType;
+    }
+
+    Type srcElementType = getElementTypeOrSelf(srcType);
+    Type dstElementType = getElementTypeOrSelf(dstType);
+    bool hasUnsupportedElementType =
+        !isa<IntegerType, FloatType>(srcElementType) ||
+        !isa<IntegerType, FloatType>(dstElementType);
+    if (hasUnsupportedElementType) {
+      return emitOpError()
+             << "requires integer or floating-point numeric types; got "
+             << srcType << " -> " << dstType;
+    }
+    bool hasMismatchedElementWidth =
+        srcElementType.getIntOrFloatBitWidth() !=
+        dstElementType.getIntOrFloatBitWidth();
+    if (hasMismatchedElementWidth) {
+      return emitOpError() << "requires equal element bit widths; got "
+                           << srcType << " -> " << dstType;
+    }
+    return success();
   }
 
   if (srcTy.getMemorySpace() != dstTy.getMemorySpace()) {
@@ -18143,16 +18125,6 @@ void TMovOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffect
     PTO_ADD_READ(op3);                                                              \
     PTO_ADD_WRITE(dstOperand);                                                      \
   }
-
-void LoadScalarOp::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  PTO_ADD_READ(getPtrMutable());
-}
-
-void StoreScalarOp::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  PTO_ADD_WRITE(getPtrMutable());
-}
 
 // === Tile/Device ops added for InsertSync ===
 
@@ -22635,6 +22607,10 @@ void TPushToAivOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   addEffect(effects, &getTileMutable(), MemoryEffects::Read::get());
+  effects.emplace_back(MemoryEffects::Read::get(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(),
+                       SideEffects::DefaultResource::get());
 
   auto funcOp = getOperation()->getParentOfType<func::FuncOp>();
   if (!funcOp) {
@@ -22662,6 +22638,20 @@ void TPushToAivOp::getEffects(
                          getFixpipeQuantStateIdAttr(getOperation(), getId()),
                          FixpipeQuantStateResource::get());
   }
+}
+
+void TPushToAicOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  addEffect(effects, &getTileMutable(), MemoryEffects::Read::get());
+  auto aivSubblockId = getAivSubblockidMutable();
+  if (!aivSubblockId.empty()) {
+    addEffect(effects, &*aivSubblockId.begin(), MemoryEffects::Read::get());
+  }
+  effects.emplace_back(MemoryEffects::Read::get(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(),
+                       SideEffects::DefaultResource::get());
 }
 
 void TAllocOp::getEffects(
@@ -22713,49 +22703,70 @@ void SetQuantVectorOp::getEffects(
                        FixpipeQuantStateResource::get());
 }
 
-static constexpr const char kConvertRoundingKeywords[] = "r/a/f/c/z/o/h";
-
-static ParseResult parseConvertRounding(OpAsmParser &parser,
-                                        RoundingAttr &roundingAttr) {
-  StringRef roundingKeyword;
-  if (parser.parseKeyword("round") || parser.parseLParen() ||
-      parser.parseKeyword(&roundingKeyword) || parser.parseRParen()) {
+static OptionalParseResult
+parseOptionalGenericRounding(OpAsmParser &parser,
+                             FloatRoundingModeAttr &roundingAttr) {
+  if (failed(parser.parseOptionalKeyword("round"))) {
+    return std::nullopt;
+  }
+  if (parser.parseLParen()) {
     return failure();
   }
-  std::optional<Rounding> rounding = symbolizeRounding(roundingKeyword);
+  StringRef token;
+  bool parseFailed = failed(parser.parseKeyword(&token)) ||
+                     failed(parser.parseRParen());
+  if (parseFailed) {
+    return failure();
+  }
+  static const llvm::StringMap<FloatRoundingMode> modes = {
+      {"r", FloatRoundingMode::to_nearest_even},
+      {"a", FloatRoundingMode::to_nearest_away},
+      {"f", FloatRoundingMode::downward},
+      {"c", FloatRoundingMode::upward},
+      {"z", FloatRoundingMode::toward_zero},
+      {"o", FloatRoundingMode::to_odd},
+      {"h", FloatRoundingMode::hybrid},
+  };
+  auto it = modes.find(token);
+  if (it == modes.end()) {
+    return parser.emitError(parser.getCurrentLocation())
+           << "expected rounding r/a/f/c/z/o/h";
+  }
+  roundingAttr = FloatRoundingModeAttr::get(parser.getContext(), it->second);
+  return success();
+}
+
+static void printOptionalGenericRounding(OpAsmPrinter &printer, Operation *op,
+                                         FloatRoundingModeAttr rounding) {
   if (!rounding) {
-    return parser.emitError(parser.getCurrentLocation())
-           << "expected convert rounding to be one of "
-           << kConvertRoundingKeywords;
+    return;
   }
-  roundingAttr = RoundingAttr::get(parser.getContext(), *rounding);
+  static constexpr StringLiteral tokens[] = {"r", "f", "c", "z", "a", "o", "h"};
+  printer << "round(" << tokens[static_cast<unsigned>(rounding.getValue())]
+          << ")";
+}
+
+static OptionalParseResult
+parseOptionalSaturation(OpAsmParser &parser, SaturationAttr &saturationAttr) {
+  if (succeeded(parser.parseOptionalKeyword("sat"))) {
+    saturationAttr =
+        SaturationAttr::get(parser.getContext(), Saturation::Enable);
+  } else if (succeeded(parser.parseOptionalKeyword("nosat"))) {
+    saturationAttr =
+        SaturationAttr::get(parser.getContext(), Saturation::Disable);
+  } else {
+    return std::nullopt;
+  }
   return success();
 }
 
-static void printConvertRounding(OpAsmPrinter &printer, Operation *op,
-                                 RoundingAttr rounding) {
-  printer << "round(" << stringifyRounding(rounding.getValue()) << ")";
-}
-
-static ParseResult parseConvertSaturation(OpAsmParser &parser,
-                                          SaturationAttr &saturationAttr) {
-  StringRef saturationKeyword;
-  if (parser.parseKeyword(&saturationKeyword)) {
-    return failure();
+static void printOptionalSaturation(OpAsmPrinter &printer, Operation *op,
+                                    SaturationAttr saturation) {
+  bool isEnabled =
+      saturation && saturation.getValue() != Saturation::Disable;
+  if (isEnabled) {
+    printer << "sat";
   }
-  std::optional<Saturation> saturation =
-      symbolizeSaturation(saturationKeyword);
-  if (!saturation) {
-    return parser.emitError(parser.getCurrentLocation())
-           << "expected convert saturation to be sat or nosat";
-  }
-  saturationAttr = SaturationAttr::get(parser.getContext(), *saturation);
-  return success();
-}
-
-static void printConvertSaturation(OpAsmPrinter &printer, Operation *op,
-                                   SaturationAttr saturation) {
-  printer << stringifySaturation(saturation.getValue());
 }
 
 static ParseResult parseSignedness(OpAsmParser &parser,
@@ -22776,6 +22787,61 @@ static ParseResult parseSignedness(OpAsmParser &parser,
 static void printSignedness(OpAsmPrinter &printer, Operation *op,
                             SignednessAttr signedness) {
   printer << stringifySignedness(signedness.getValue());
+}
+
+static ParseResult
+parseScalarCmpPredicate(OpAsmParser &parser,
+                        ScalarCmpPredicateAttr &predicateAttr) {
+  StringRef predicateKeyword;
+  if (parser.parseKeyword(&predicateKeyword)) {
+    return failure();
+  }
+  std::optional<ScalarCmpPredicate> predicate =
+      symbolizeScalarCmpPredicate(predicateKeyword);
+  if (!predicate) {
+    return parser.emitError(parser.getCurrentLocation())
+           << "expected scalar comparison predicate to be one of "
+              "eq, ne, lt, le, gt, ge, or an explicit floating-point "
+              "predicate";
+  }
+  predicateAttr = ScalarCmpPredicateAttr::get(parser.getContext(), *predicate);
+  return success();
+}
+
+static void printScalarCmpPredicate(OpAsmPrinter &printer, Operation *op,
+                                    ScalarCmpPredicateAttr predicate) {
+  printer << stringifyScalarCmpPredicate(predicate.getValue());
+}
+
+static Type getPTOI1SameShape(Type type) {
+  if (auto vectorType = dyn_cast<VectorType>(type)) {
+    return VectorType::Builder(vectorType)
+        .setElementType(IntegerType::get(type.getContext(), 1));
+  }
+  return IntegerType::get(type.getContext(), 1);
+}
+
+static ParseResult parseSelectType(OpAsmParser &parser, Type &conditionType,
+                                   Type &resultType) {
+  Type firstType;
+  if (failed(parser.parseType(firstType))) {
+    return failure();
+  }
+  if (succeeded(parser.parseOptionalComma())) {
+    conditionType = firstType;
+    return parser.parseType(resultType);
+  }
+  resultType = firstType;
+  conditionType = getPTOI1SameShape(resultType);
+  return success();
+}
+
+static void printSelectType(OpAsmPrinter &printer, Operation *op,
+                            Type conditionType, Type resultType) {
+  if (conditionType != getPTOI1SameShape(resultType)) {
+    printer << conditionType << ", ";
+  }
+  printer << resultType;
 }
 
 static OptionalParseResult parseOptionalSignedness(OpAsmParser &parser,

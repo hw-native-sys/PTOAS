@@ -1,16 +1,16 @@
-// RUN: not ptoas --pto-arch=a3 %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: ptoas --pto-arch=a3 --emit-pto-ir %s -o - 2>&1 | FileCheck %s
 
 module {
-  func.func @inttoptr_make_tensor_view_invalid(%addr: i64)
+  func.func @castptr_make_tensor_view(%addr: i64)
       -> !pto.tensor_view<?xui32>
       attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %c1 = arith.constant 1 : index
-    %ptr = pto.inttoptr %addr : i64 -> !pto.ptr<ui32>
+    %ptr = pto.castptr %addr : i64 -> !pto.ptr<ui32>
     %view = pto.make_tensor_view %ptr, shape = [%c1], strides = [%c1] : !pto.tensor_view<?xui32>
     return %view : !pto.tensor_view<?xui32>
   }
 }
 
-// CHECK: pto.inttoptr
-// CHECK: result may only be used as the pointer operand of pto.load_scalar or pto.store_scalar
+// CHECK-LABEL: func.func @castptr_make_tensor_view
+// CHECK: pto.castptr
 // CHECK: pto.make_tensor_view

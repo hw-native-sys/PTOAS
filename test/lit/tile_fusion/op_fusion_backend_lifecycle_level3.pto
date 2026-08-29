@@ -57,11 +57,10 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 
 // LLF: // -----// IR Dump After PTOLowLevelLoopFusion (pto-low-level-loop-fusion) //----- //
 // LLF-LABEL: func.func @fusion_backend_lifecycle_level3(
+// LLF-DAG: %[[ROWS:.*]] = arith.constant 32 : index
+// LLF-DAG: %[[ELEMENT_COUNT:.*]] = arith.constant 1024 : index
+// LLF-DAG: %[[VECTOR_WIDTH:.*]] = arith.constant 64 : index
 // LLF: %[[REGION:.*]] = pto.fusion_region {
-// LLF: %[[ROWS:.*]] = arith.constant 32 : index
-// LLF: %[[COLS:.*]] = arith.constant 32 : index
-// LLF: %[[ELEMENT_COUNT:.*]] = arith.muli %[[ROWS]], %[[COLS]] : index
-// LLF: %[[VECTOR_WIDTH:.*]] = arith.constant 64 : index
 // LLF: scf.for {{.*}} to %[[ELEMENT_COUNT]] step %[[VECTOR_WIDTH]] {{.*}} -> (index, index, index) {
 // LLF: pto.plt_b32
 // LLF: pto.vadd

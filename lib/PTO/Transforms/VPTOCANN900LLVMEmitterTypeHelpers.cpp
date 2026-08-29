@@ -118,7 +118,7 @@ Type convertVPTOType(Type type, Builder &builder) {
   if (isa<pto::AlignType>(type)) {
     return VectorType::get({32}, builder.getI8Type());
   }
-  if (isa<pto::StructType>(type)) {
+  if (isa<pto::LocalArrayType, pto::StructType>(type)) {
     return LLVM::LLVMPointerType::get(builder.getContext());
   }
   if (auto ptrType = dyn_cast<pto::PtrType>(type)) {
@@ -175,7 +175,8 @@ bool hasVPTOConvertibleType(Type type) {
   if (!type) {
     return false;
   }
-  if (isa<pto::VRegType, pto::MaskType, pto::AlignType, pto::PtrType, pto::StructType>(type) ||
+  if (isa<pto::VRegType, pto::MaskType, pto::AlignType, pto::PtrType, pto::LocalArrayType,
+          pto::StructType>(type) ||
       pto::isPTOLowPrecisionType(type)) {
     return true;
   }
@@ -194,6 +195,35 @@ Value materializeVPTOCast(OpBuilder &builder, Type resultType, ValueRange inputs
     return {};
   }
   return builder.create<UnrealizedConversionCastOp>(loc, TypeRange{resultType}, inputs).getResult(0);
+}
+
+LLVM::LLVMArrayType getVPTOLocalArrayStorageType(pto::LocalArrayType arrayType, Builder &builder) {
+  Type storageType = convertVPTOType(arrayType.getElementType(), builder);
+  for (int64_t dim : llvm::reverse(arrayType.getShape())) {
+    storageType = LLVM::LLVMArrayType::get(storageType, dim);
+  }
+  return cast<LLVM::LLVMArrayType>(storageType);
+}
+
+FailureOr<Value> getVPTOLocalArrayElementAddress(ConversionPatternRewriter &rewriter, Location loc, Value root,
+                                                 pto::LocalArrayType arrayType, ValueRange indices) {
+  bool hasWrongRank = indices.size() != static_cast<size_t>(arrayType.getRank());
+  if (hasWrongRank) {
+    return failure();
+  }
+
+  auto pointerType = LLVM::LLVMPointerType::get(rewriter.getContext());
+  Type storageType = getVPTOLocalArrayStorageType(arrayType, rewriter);
+  Value address = root;
+  Value zero = rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI64Type(), rewriter.getI64IntegerAttr(0));
+  for (Value index : indices) {
+    if (index.getType().isIndex()) {
+      index = rewriter.create<arith::IndexCastUIOp>(loc, rewriter.getI64Type(), index);
+    }
+    address = rewriter.create<LLVM::GEPOp>(loc, pointerType, storageType, address, ValueRange{zero, index});
+    storageType = cast<LLVM::LLVMArrayType>(storageType).getElementType();
+  }
+  return address;
 }
 
 // Struct values carry the address of stack-local storage. Keep the pointee

@@ -582,70 +582,30 @@ def _resolve_l1_bypass_scalar_pointer(ptr_value, *, context: str):
     return raw_ptr, elem_type
 
 
-def _validate_scalar_l1_bypass(value, *, context: str) -> bool:
-    if not isinstance(value, bool):
-        raise TypeError(f"{context} expects bypass_l1 to be a bool")
-    return value
-
-
-def load_scalar(ptr_value, offset=0, *, bypass_l1=False):
-    """Load one scalar through the scalar pipeline.
-
-    ``bypass_l1=True`` selects the AICore GM device-memory form and emits
-    ``pto.ld_dev``.  The bypass form requires a GM pointer with an i8, i16,
-    i32, or i64 element type and is valid only in an ordinary AICore entry.
-    """
-    bypass_l1 = _validate_scalar_l1_bypass(bypass_l1, context="load_scalar(...)")
-    if bypass_l1:
-        raw_ptr, elem_type = _resolve_l1_bypass_scalar_pointer(
-            ptr_value, context="load_scalar(..., bypass_l1=True)"
-        )
-        return wrap_surface_value(
-            _pto.PTOLdDevOp(
-                elem_type,
-                raw_ptr,
-                _coerce_index(offset, context="load_scalar(offset)"),
-            ).value
-        )
-
-    result_type = _pointer_element_type(ptr_value, context="load_scalar(ptr)")
+def ld_dev(ptr_value, offset=0):
+    """Load one integer GM element while bypassing the local L1 cache."""
+    raw_ptr, elem_type = _resolve_l1_bypass_scalar_pointer(
+        ptr_value, context="ld_dev(...)"
+    )
     return wrap_surface_value(
-        _pto.LoadScalarOp(
-            _resolve(result_type),
-            unwrap_surface_value(ptr_value),
-            _coerce_index(offset, context="load_scalar(offset)"),
+        _pto.PTOLdDevOp(
+            elem_type,
+            raw_ptr,
+            _coerce_index(offset, context="ld_dev(offset)"),
         ).value
     )
 
 
-def store_scalar(ptr_value, offset, value, *, bypass_l1=False):
-    """Store one scalar through the scalar pipeline.
-
-    ``bypass_l1=True`` selects the AICore GM device-memory form and emits
-    ``pto.st_dev``.  The bypass form requires a GM pointer with an i8, i16,
-    i32, or i64 element type and is valid only in an ordinary AICore entry.
-    """
-    bypass_l1 = _validate_scalar_l1_bypass(bypass_l1, context="store_scalar(...)")
-    if bypass_l1:
-        raw_ptr, elem_type = _resolve_l1_bypass_scalar_pointer(
-            ptr_value, context="store_scalar(..., bypass_l1=True)"
-        )
-        raw_value = coerce_scalar_to_type(
-            value,
-            elem_type,
-            context="store_scalar(..., bypass_l1=True)",
-        )
-        _pto.PTOStDevOp(
-            raw_value,
-            raw_ptr,
-            _coerce_index(offset, context="store_scalar(offset)"),
-        )
-        return
-
-    _pto.StoreScalarOp(
-        unwrap_surface_value(ptr_value),
-        _coerce_index(offset, context="store_scalar(offset)"),
-        unwrap_surface_value(value),
+def st_dev(ptr_value, offset, value):
+    """Store one integer GM element while bypassing the local L1 cache."""
+    raw_ptr, elem_type = _resolve_l1_bypass_scalar_pointer(
+        ptr_value, context="st_dev(...)"
+    )
+    raw_value = coerce_scalar_to_type(value, elem_type, context="st_dev(...)")
+    _pto.PTOStDevOp(
+        raw_value,
+        raw_ptr,
+        _coerce_index(offset, context="st_dev(offset)"),
     )
 
 

@@ -40,12 +40,12 @@ def _make_kernel(rounds):
         # ABI stores the same bits as ui32, so reinterpret the GM pointer once.
         key_ptr_i32 = pto.castptr(key_ptr, pto.ptr(pto.i32, "gm"))
         counter_ptr_i32 = pto.castptr(counter_ptr, pto.ptr(pto.i32, "gm"))
-        key0 = pto.load_scalar(key_ptr_i32, 0)
-        key1 = pto.load_scalar(key_ptr_i32, 1)
-        counter0 = pto.load_scalar(counter_ptr_i32, 0)
-        counter1 = pto.load_scalar(counter_ptr_i32, 1)
-        counter2 = pto.load_scalar(counter_ptr_i32, 2)
-        counter3 = pto.load_scalar(counter_ptr_i32, 3)
+        key0 = pto.load(key_ptr_i32, 0)
+        key1 = pto.load(key_ptr_i32, 1)
+        counter0 = pto.load(counter_ptr_i32, 0)
+        counter1 = pto.load(counter_ptr_i32, 1)
+        counter2 = pto.load(counter_ptr_i32, 2)
+        counter3 = pto.load(counter_ptr_i32, 3)
         output_view = pto.make_tensor_view(
             output_ptr,
             shape=[1, 1, 1, ROWS, COLS],

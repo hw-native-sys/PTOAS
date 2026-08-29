@@ -15,8 +15,8 @@ Generates the same IR as expand_tileop_to_vpto_result.pto using the
 The Python code maps 1-to-1 to the MLIR IR lines:
 
     func.func @TADD() {                      # @pto.jit(name="TADD", …)
-      %c0_i64    = arith.constant 0 : i64    # pto.const(0, dtype=pto.int64)
-      %c16       = arith.constant 16 : index # pto.const(16, dtype=pto.index)
+      %c0_i64    = pto.constant 0 : i64      # pto.const(0, dtype=pto.int64)
+      %c16       = pto.constant 16 : index   # pto.const(16, dtype=pto.index)
       …
       func.call @inline_tileop_0(...)         # with pto.tileop():
         %0 = pto.castptr %c4096_i64 …        #   pto.castptr(c4096_i64, …)
@@ -28,9 +28,7 @@ The Python code maps 1-to-1 to the MLIR IR lines:
     }
 """
 
-from ptodsl import pto, scalar
-
-s = scalar  # arith shorthand alias
+from ptodsl import pto
 
 
 @pto.jit(name="TADD", kernel_kind="vector", target="a5", mode="auto")
@@ -51,7 +49,7 @@ def TADD():
 
         for tile_idx in range(c0, c16, c1):
             mask, _      = pto.plt_b32(c64_i32)
-            tile_off     = s.muli(tile_idx, c64)
+            tile_off     = tile_idx * c64
             va           = pto.vlds(pto.addptr(ptr_src, tile_off), c0, vf32)
             ptr_dst_tile = pto.addptr(ptr_dst, tile_off)
             vb           = pto.vlds(ptr_dst_tile, c0, vf32)

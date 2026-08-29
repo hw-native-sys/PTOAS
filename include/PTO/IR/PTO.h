@@ -263,6 +263,13 @@ inline StringRef getPTODSLLogicalNameOrSymbolName(func::FuncOp func) {
 bool hasExplicitPTOEntryAttr(func::FuncOp func);
 bool hasExplicitPTOEntryAttr(LLVM::LLVMFuncOp func);
 
+/// Verify the hardware conversion type pair and controls used in a SIMT
+/// execution scope.
+LogicalResult verifySimtConversionControls(Operation *op, Type srcType,
+                                           Type dstType, Rounding rounding,
+                                           Saturation saturation,
+                                           Attribute signednessAttr);
+
 /// Return true if the function should be emitted as an AICORE entry.
 bool isPTOEntryFunction(func::FuncOp func);
 bool isPTOEntryFunction(LLVM::LLVMFuncOp func);

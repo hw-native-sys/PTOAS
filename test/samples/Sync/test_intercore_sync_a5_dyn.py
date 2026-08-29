@@ -53,8 +53,8 @@ def build():
 
                 sec_vec = pto.SectionVectorOp()
                 with InsertionPoint(sec_vec.body.blocks.append()):
-                    pto.wait_intra_block(pipe_mte3, c0_evt)
-                    pto.store_scalar(out, c0, two)
+                    pto.sync_wait(pipe_mte3, c0_evt)
+                    pto.store(two, out, c0)
                 func.ReturnOp([])
 
             module.operation.verify()

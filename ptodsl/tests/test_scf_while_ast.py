@@ -77,15 +77,16 @@ def _assert_tail_guarded(mlir_text: str, tail_op_pattern: str):
     """
     assert not re.search(r"scf\.if %true", mlir_text), (
         "constant-true guard still present; break/continue tails are unpredicated")
-    tail = re.search(tail_op_pattern, mlir_text)
-    assert tail is not None, f"tail op {tail_op_pattern!r} not found in MLIR"
+    tails = list(re.finditer(tail_op_pattern, mlir_text))
+    assert tails, f"tail op {tail_op_pattern!r} not found in MLIR"
     guards = list(re.finditer(r"= scf\.if (%(?!true|false)\w+(?:#\d+)?) -> \(", mlir_text))
     assert guards, "no active-guarded tail region found"
     for guard in guards:
         if not _is_flag_merge_result(mlir_text, guard.group(1)):
             continue
         open_brace = mlir_text.index("{", guard.end())
-        if guard.start() < tail.start() < _region_close(mlir_text, open_brace):
+        region_end = _region_close(mlir_text, open_brace)
+        if any(guard.start() < tail.start() < region_end for tail in tails):
             return
     raise AssertionError(
         "tail op is not contained in a region guarded by the merged active "
@@ -583,18 +584,18 @@ def main():
     # after ``if should_break: break`` used to execute unconditionally.
     _assert_tail_guarded(
         issue_1256_exact_while_true_break.compile().mlir_text(),
-        r"arith\.addi %[\w#]+, %c1_i32")
+        r"pto\.addi %[\w#]+, %[\w#]+")
     _assert_tail_guarded(
         while_continue_skips_tail.compile().mlir_text(),
-        r"arith\.addi %[\w#]+, %c10_i32")
+        r"pto\.addi %[\w#]+, %[\w#]+")
     _assert_tail_guarded(
         while_nested_if_break_tail.compile().mlir_text(),
-        r"arith\.addi %[\w#]+, %c10_i32")
+        r"pto\.addi %[\w#]+, %[\w#]+")
     _assert_tail_guarded(
         for_break_tail_guard.compile().mlir_text(),
-        r"arith\.addi %[\w#]+, %c1_i32")
+        r"pto\.addi %[\w#]+, %[\w#]+")
     for_tail_carry_text = for_break_tail_carry_merge.compile().mlir_text()
-    _assert_tail_guarded(for_tail_carry_text, r"arith\.addi %[\w#]+, %c10_i32")
+    _assert_tail_guarded(for_tail_carry_text, r"pto\.addi %[\w#]+, %[\w#]+")
     assert re.search(r"= scf\.if %\w+(?:#\d+)? -> \(i1, i32\)", for_tail_carry_text), (
         "for break tail guard must merge active + loop-carried value so the "
         "loop update does not read a stale SSA value")
@@ -602,7 +603,7 @@ def main():
     # The continue-guard's tail contains a break: the guard must merge both
     # control flags back out (value + active + did_break).
     flags_text = while_continue_then_break_flags.compile().mlir_text()
-    _assert_tail_guarded(flags_text, r"arith\.addi %[\w#]+, %c1_i32")
+    _assert_tail_guarded(flags_text, r"pto\.addi %[\w#]+, %[\w#]+")
     assert re.search(r"= scf\.if %\w+(?:#\d+)? -> \(i1, i1, i32\)", flags_text), (
         "outer guard must merge value + active + did_break so the nested "
         "break survives the guard region")
@@ -610,13 +611,14 @@ def main():
     # Nested branch tail: the +1 addi inside the branch must also sit inside
     # an active-guarded region (verified by brace-depth containment).
     nested_text = while_nested_if_break_tail.compile().mlir_text()
-    _assert_tail_guarded(nested_text, r"arith\.addi %[\w#]+, %c1_i32")
+    _assert_tail_guarded(nested_text, r"pto\.addi %[\w#]+, %[\w#]+")
 
     # The dead tail of an unconditional break is truncated before analysis:
     # the dead addi must not appear in the IR at all (neither executed nor
     # wrapped in a constant-false guard).
     dead_text = while_unconditional_break_dead_tail.compile().mlir_text()
-    assert not re.search(r"arith\.addi %[\w#]+, %c10_i32", dead_text), (
+    assert not re.search(
+        r"pto\.constant 10 : i32\s+%[\w#]+ = pto\.addi", dead_text), (
         "dead tail after unconditional break must be dropped, not emitted")
     assert not re.search(r"scf\.if %false", dead_text), (
         "dead tail after unconditional break must be dropped, not false-guarded")
@@ -650,7 +652,8 @@ def main():
     for fn in (while_if_else_break_dead_tail, while_with_break_dead_tail,
                while_try_break_dead_tail):
         text = fn.compile().mlir_text()
-        assert not re.search(r"arith\.addi %[\w#]+, %c10_i32", text), (
+        assert not re.search(
+            r"pto\.constant 10 : i32\s+%[\w#]+ = pto\.addi", text), (
             f"{fn.__name__}: dead tail after a guaranteed compound transfer "
             "must be dropped, not emitted")
 

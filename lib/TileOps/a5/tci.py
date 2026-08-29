@@ -8,7 +8,7 @@
 
 """PTODSL TileLib templates for pto.tci."""
 
-from ptodsl import pto, scalar
+from ptodsl import pto
 import ptodsl.tilelib as tilelib
 
 
@@ -38,7 +38,7 @@ def template_tci(start, dst: pto.Tile):
     ptr = dst.as_ptr()
     if descending:
         for col in range(0, valid_cols, 1):
-            scalar.store(scalar.index_cast(cast_dtype, start - col), ptr, col)
+            pto.store(pto.index_cast(cast_dtype, start - col), ptr, col)
     else:
         for col in range(0, valid_cols, 1):
-            scalar.store(scalar.index_cast(cast_dtype, start + col), ptr, col)
+            pto.store(pto.index_cast(cast_dtype, start + col), ptr, col)

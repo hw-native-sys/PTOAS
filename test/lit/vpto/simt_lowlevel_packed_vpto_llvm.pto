@@ -53,19 +53,21 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 
     %shfl = pto.shuffle_idx %h2a, %idx {width = 16 : i32} : vector<2xf16>, i32 -> vector<2xf16>
     %sqrt_h2 = pto.sqrt %h2a : vector<2xf16> -> vector<2xf16>
-    %abs_h2 = pto.absf %h2a : vector<2xf16> -> vector<2xf16>
-    %abs_b2 = pto.absf %b2a : vector<2xbf16> -> vector<2xbf16>
+    %abs_h2 = pto.absf %h2a : vector<2xf16>
+    %abs_b2 = pto.absf %b2a : vector<2xbf16>
     %exp_h2 = pto.exp %h2a : vector<2xf16> -> vector<2xf16>
     %log_h2 = pto.log %h2b : vector<2xf16> -> vector<2xf16>
-    %min_h2 = pto.fmin %h2a, %h2b : vector<2xf16>, vector<2xf16> -> vector<2xf16>
-    %max_b2 = pto.fmax %b2a, %b2b : vector<2xbf16>, vector<2xbf16> -> vector<2xbf16>
+    %min_h2 = pto.minf %h2a, %h2b : vector<2xf16>
+    %max_b2 = pto.maxf %b2a, %b2b : vector<2xbf16>
     %pow_h2 = pto.pow %h2a, %h2b : vector<2xf16>, vector<2xf16> -> vector<2xf16>
     %fma_h2 = pto.fma %h2a, %h2b, %h2a : vector<2xf16>, vector<2xf16>, vector<2xf16> -> vector<2xf16>
     %fma_b2 = pto.fma %b2a, %b2b, %b2a : vector<2xbf16>, vector<2xbf16>, vector<2xbf16> -> vector<2xbf16>
-    %f32_to_h2 = pto.convert %f2a round(r) nosat : vector<2xf32> -> vector<2xf16>
-    %h2_to_f32 = pto.convert %h2a round(r) nosat : vector<2xf16> -> vector<2xf32>
-    %f32_to_b2 = pto.convert %f2a round(r) nosat : vector<2xf32> -> vector<2xbf16>
-    %b2_to_f32 = pto.convert %b2a round(r) nosat : vector<2xbf16> -> vector<2xf32>
+    %f32_to_h2 = pto.ftof %f2a round(r) : vector<2xf32> -> vector<2xf16>
+    %h2_to_f32 = pto.ftof %h2a round(r) : vector<2xf16> -> vector<2xf32>
+    %f32_to_b2 = pto.ftof %f2a round(r) : vector<2xf32> -> vector<2xbf16>
+    %b2_to_f32 = pto.ftof %b2a round(r) : vector<2xbf16> -> vector<2xf32>
+    %f32_to_hif8 = pto.ftof %f2a round(a) : vector<2xf32> -> !pto.hif8x2
+    %hif8_to_f32 = pto.ftof %f32_to_hif8 round(a) : !pto.hif8x2 -> vector<2xf32>
 
     %shfl_bits = llvm.bitcast %shfl : vector<2xf16> to i32
     %sqrt_h2_bits = llvm.bitcast %sqrt_h2 : vector<2xf16> to i32
@@ -82,6 +84,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %f32_to_b2_bits = llvm.bitcast %f32_to_b2 : vector<2xbf16> to i32
     %h2_to_f32_bits = llvm.bitcast %h2_to_f32 : vector<2xf32> to i64
     %b2_to_f32_bits = llvm.bitcast %b2_to_f32 : vector<2xf32> to i64
+    %hif8_to_f32_bits = llvm.bitcast %hif8_to_f32 : vector<2xf32> to i64
 
     pto.store %shfl_bits, %ub_i32[%c0] : !pto.ptr<i32, ub>, i32
     pto.store %sqrt_h2_bits, %ub_i32[%c1] : !pto.ptr<i32, ub>, i32
@@ -98,6 +101,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     pto.store %f32_to_b2_bits, %ub_i32[%c12] : !pto.ptr<i32, ub>, i32
     pto.store %h2_to_f32_bits, %ub_i64[%f2_off0] : !pto.ptr<i64, ub>, i64
     pto.store %b2_to_f32_bits, %ub_i64[%f2_off1] : !pto.ptr<i64, ub>, i64
+    pto.store %hif8_to_f32_bits, %ub_i64[%c10] : !pto.ptr<i64, ub>, i64
     return
   }
 }
@@ -111,8 +115,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK-DAG: llvm.call @llvm.fabs.v2bf16
 // CHECK-DAG: llvm.call @llvm.exp.v2f16
 // CHECK-DAG: llvm.call @llvm.log.v2f16
-// CHECK-DAG: llvm.call @llvm.minnum.v2f16
-// CHECK-DAG: llvm.call @llvm.maxnum.v2bf16
+// CHECK-DAG: llvm.intr.minnum({{.*}}, {{.*}}) : (vector<2xf16>, vector<2xf16>) -> vector<2xf16>
+// CHECK-DAG: llvm.intr.maxnum({{.*}}, {{.*}}) : (vector<2xbf16>, vector<2xbf16>) -> vector<2xbf16>
 // CHECK-DAG: llvm.call @llvm.pow.v2f16
 // CHECK-DAG: llvm.call @llvm.hivm.ffma.f16x2.rrr
 // CHECK-DAG: llvm.call @llvm.hivm.ffma.bf16x2.rrr
@@ -120,6 +124,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK-DAG: llvm.call @llvm.hivm.f16x2.to.f32x2
 // CHECK-DAG: llvm.call @llvm.hivm.f32x2.to.bf16x2
 // CHECK-DAG: llvm.call @llvm.hivm.bf16x2.to.f32x2
+// CHECK-DAG: llvm.call @llvm.hivm.f32x2.to.hif8x2
+// CHECK-DAG: llvm.call @llvm.hivm.hif8x2.to.f32x2
 // CHECK-DAG: llvm.bitcast {{.*}} : vector<2xf16> to i32
 // CHECK-DAG: llvm.bitcast {{.*}} : vector<2xbf16> to i32
 // CHECK-DAG: llvm.bitcast {{.*}} : vector<2xf32> to i64

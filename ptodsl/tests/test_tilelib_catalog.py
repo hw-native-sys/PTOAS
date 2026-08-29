@@ -933,8 +933,8 @@ class TileLibCatalogTest(unittest.TestCase):
         }
         selected = select("pto.tfillpad", "a5", specs)
         mlir = selected.specialize(**specs).mlir_text()
-        self.assertIn("arith.constant 0.000000e+00 : f32", mlir)
-        self.assertNotIn("arith.constant -1.000000e+00 : f32", mlir)
+        self.assertIn("pto.constant 0.000000e+00 : f32", mlir)
+        self.assertNotIn("pto.constant -1.000000e+00 : f32", mlir)
 
     def test_tcvt_contiguous_versions_select_flattened_candidates(self):
         signatures = {
@@ -1214,7 +1214,7 @@ class TileLibCatalogTest(unittest.TestCase):
         mlir = selected.specialize(**specs).mlir_text()
         self.assertIn("pto.mte_ub_ub", mlir)
         self.assertIn("pto.vbitsort", mlir)
-        self.assertIn("%c130", mlir)
+        self.assertIn("pto.constant 130 : index", mlir)
 
     def test_trandom_uses_valid_width_for_repeats(self):
         specs = {
@@ -1237,8 +1237,9 @@ class TileLibCatalogTest(unittest.TestCase):
         self.assertEqual(selected.name, "template_trandom")
         mlir = selected.specialize(context_attrs={"rounds": "10"}, **specs).mlir_text()
         self.assertIn("pto.tile_valid_cols %arg6", mlir)
-        self.assertIn("arith.floordivsi %3, %c256", mlir)
-        self.assertIn("arith.select", mlir)
+        self.assertIn("pto.floordiv", mlir)
+        self.assertIn(" signed :", mlir)
+        self.assertIn("pto.select", mlir)
         self.assertIn("pto.vaddc", mlir)
 
     def test_colarg_additional_dtype_versions_render(self):
@@ -1354,7 +1355,7 @@ class TileLibCatalogTest(unittest.TestCase):
         mlir = selected.specialize(**specs).mlir_text()
 
         self.assertEqual(selected.name, "template_tstore_acc_to_gm_nz2nd")
-        self.assertIn("arith.constant 16 : i64", mlir)
+        self.assertIn("pto.constant 16 : i64", mlir)
         self.assertIn("pto.mte_l0c_gm", mlir)
 
     def test_tload_accepts_numeric_pad_value_metadata(self):

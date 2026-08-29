@@ -22,6 +22,8 @@ def main():
             np.arange(0, 18, dtype=np.intp),
             np.arange(32, 96, dtype=np.intp),
             np.arange(96, 128, dtype=np.intp),
+            np.arange(128, 224, dtype=np.intp),
+            np.arange(224, 672, dtype=np.intp),
         )
     )
     ok = golden.shape == out.shape and np.array_equal(golden[written], out[written])
