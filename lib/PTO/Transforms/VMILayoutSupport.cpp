@@ -525,7 +525,9 @@ getHighPriorityCastLayoutFactImpl(VMIVRegType sourceType,
   for (const HighPriorityCastLayoutPattern &pattern :
        kHighPriorityCastLayoutPatterns) {
     if (!matchesElementBitsPattern(pattern.sourceBits, sourceBits) ||
-        !matchesElementBitsPattern(pattern.resultBits, resultBits)) {
+        !matchesElementBitsPattern(pattern.resultBits, resultBits) ||
+        !matchesCastTypeClass(pattern.typeClass, sourceType.getElementType(),
+                              resultType.getElementType())) {
       continue;
     }
 
@@ -596,6 +598,8 @@ struct PreferredCastPatternQuery {
   int64_t sourceBits;
   int64_t resultBits;
   int64_t elementCount;
+  Type sourceElementType;
+  Type resultElementType;
   StringRef tableName;
   std::string *reason;
 };
@@ -618,7 +622,9 @@ selectPreferredCastLayoutPattern(
     bool elementBitsMismatch =
         !matchesElementBitsPattern(pattern.sourceBits, query.sourceBits) ||
         !matchesElementBitsPattern(pattern.resultBits, query.resultBits);
-    if (elementBitsMismatch) {
+    if (elementBitsMismatch ||
+        !matchesCastTypeClass(pattern.typeClass, query.sourceElementType,
+                              query.resultElementType)) {
       continue;
     }
     bool isExact = pattern.elementCount != 0;
@@ -654,9 +660,14 @@ static FailureOr<VMICastLayoutFact> getPreferredCastLayoutFactImpl(
     const PreferredCastLayoutRequest &request) {
   auto [sourceBits, resultBits] =
       getCastElementBits(request.sourceType, request.resultType);
-  PreferredCastPatternQuery query{sourceBits, resultBits,
-                                  request.sourceType.getElementCount(),
-                                  request.tableName, request.reason};
+  PreferredCastPatternQuery query{
+      sourceBits,
+      resultBits,
+      request.sourceType.getElementCount(),
+      request.sourceType.getElementType(),
+      request.resultType.getElementType(),
+      request.tableName,
+      request.reason};
   FailureOr<const PreferredCastLayoutPattern *> selected =
       selectPreferredCastLayoutPattern(patterns, query);
   if (failed(selected)) {
@@ -727,7 +738,9 @@ VMILayoutSupport::getCastLayoutFactsForLayout(VMIVRegType sourceType,
       layout && layout.isGroupSlots() ? layout.getNumGroups() : 0;
   for (const LegalCastLayoutPattern &pattern : kLegalCastLayoutPatterns) {
     if (!matchesElementBitsPattern(pattern.sourceBits, sourceBits) ||
-        !matchesElementBitsPattern(pattern.resultBits, resultBits)) {
+        !matchesElementBitsPattern(pattern.resultBits, resultBits) ||
+        !matchesCastTypeClass(pattern.typeClass, sourceType.getElementType(),
+                              resultType.getElementType())) {
       continue;
     }
 

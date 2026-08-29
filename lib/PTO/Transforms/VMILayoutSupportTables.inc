@@ -139,6 +139,7 @@ struct PreferredCastLayoutPattern {
   int64_t elementCount = 0; // 0 means the default row for this bit-width pair.
   LayoutPattern sourceLayout;
   LayoutPattern resultLayout;
+  CastTypeClass typeClass = CastTypeClass::Any;
 };
 
 struct HighPriorityCastLayoutPattern {
@@ -148,6 +149,7 @@ struct HighPriorityCastLayoutPattern {
   PhysicalChunkCountPattern resultChunks;
   LayoutPattern sourceLayout;
   LayoutPattern resultLayout;
+  CastTypeClass typeClass = CastTypeClass::Any;
 };
 
 struct LegalCastLayoutPattern {
@@ -155,6 +157,7 @@ struct LegalCastLayoutPattern {
   ElementBitsPattern resultBits;
   LayoutPattern sourceLayout;
   LayoutPattern resultLayout;
+  CastTypeClass typeClass = CastTypeClass::Any;
 };
 
 struct LegalMaskGranularityCastLayoutPattern {
@@ -215,7 +218,7 @@ static constexpr HighPriorityCastLayoutPattern
 
 static constexpr LegalCastLayoutPattern kLegalCastLayoutPatterns[] = {
     // Same-width fp-to-fp (bf16 -> f16): dense contiguous 1:1.
-    {bits<16>(), bits<16>(), c(), c()},
+    {bits<16>(), bits<16>(), c(), c(), CastTypeClass::Float},
 
     // 2x widening.
     {bits<8>(), bits<16>(), c(), d(2)},
@@ -250,15 +253,15 @@ static constexpr LegalCastLayoutPattern kLegalCastLayoutPatterns[] = {
     {bits<16>(), bits<32>(), gs(8, 2), gs(8)},
     {bits<8>(), bits<32>(), gs(1), gs(1)},
     {bits<8>(), bits<32>(), gs(8, 4), gs(8)},
-    {bits<8>(), bits<16>(), gs(2), gs(2)},
-    {bits<8>(), bits<16>(), gs(4), gs(4)},
-    {bits<8>(), bits<16>(), gs(8), gs(8)},
-    {bits<16>(), bits<32>(), gs(2), gs(2)},
-    {bits<16>(), bits<32>(), gs(4), gs(4)},
-    {bits<16>(), bits<32>(), gs(8), gs(8)},
-    {bits<8>(), bits<32>(), gs(2), gs(2)},
-    {bits<8>(), bits<32>(), gs(4), gs(4)},
-    {bits<8>(), bits<32>(), gs(8), gs(8)},
+    {bits<8>(), bits<16>(), gs(2), gs(2), CastTypeClass::Integer},
+    {bits<8>(), bits<16>(), gs(4), gs(4), CastTypeClass::Integer},
+    {bits<8>(), bits<16>(), gs(8), gs(8), CastTypeClass::Integer},
+    {bits<16>(), bits<32>(), gs(2), gs(2), CastTypeClass::Integer},
+    {bits<16>(), bits<32>(), gs(4), gs(4), CastTypeClass::Integer},
+    {bits<16>(), bits<32>(), gs(8), gs(8), CastTypeClass::Integer},
+    {bits<8>(), bits<32>(), gs(2), gs(2), CastTypeClass::Integer},
+    {bits<8>(), bits<32>(), gs(4), gs(4), CastTypeClass::Integer},
+    {bits<8>(), bits<32>(), gs(8), gs(8), CastTypeClass::Integer},
     {bits<16>(), bits<8>(), gs(1), gs(1)},
     {bits<16>(), bits<8>(), gs(8), gs(8, 2)},
     {bits<32>(), bits<16>(), gs(1), gs(1)},

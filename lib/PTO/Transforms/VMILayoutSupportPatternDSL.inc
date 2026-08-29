@@ -21,6 +21,15 @@ enum class LayoutPatternKind {
   GroupSlots,
 };
 
+enum class CastTypeClass {
+  // The layout relation is independent of the source/result value semantics.
+  Any,
+  // Both source and result are floating-point-like VMI element types.
+  Float,
+  // Both source and result are integer element types.
+  Integer,
+};
+
 struct LayoutPattern {
   LayoutPatternKind kind = LayoutPatternKind::Contiguous;
   int64_t value = 1;
@@ -115,6 +124,20 @@ static bool matchesElementBitsPattern(ElementBitsPattern pattern,
                                       Type elementType) {
   unsigned elementBits = pto::getPTOStorageElemBitWidth(elementType);
   return matchesElementBitsPattern(pattern, elementBits);
+}
+
+static bool matchesCastTypeClass(CastTypeClass typeClass, Type sourceType,
+                                 Type resultType) {
+  switch (typeClass) {
+  case CastTypeClass::Any:
+    return true;
+  case CastTypeClass::Float:
+    return isVMIFloatLikeType(sourceType) &&
+           isVMIFloatLikeType(resultType);
+  case CastTypeClass::Integer:
+    return isa<IntegerType>(sourceType) && isa<IntegerType>(resultType);
+  }
+  llvm_unreachable("unknown cast type class");
 }
 
 static bool matchesElementCountPattern(ElementCountPattern pattern,
