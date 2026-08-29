@@ -16,9 +16,11 @@ module {
       %dense: !pto.ptr<f32, ub>,
       %masked: !pto.ptr<f32, ub>,
       %off: index) {
+    %c8 = arith.constant 8 : index
     %c48 = arith.constant 48 : index
-    %x = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
-    %y = pto.vmi.vload %rhs[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+    %aligned_off = arith.muli %off, %c8 : index
+    %x = pto.vmi.vload %src[%aligned_off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+    %y = pto.vmi.vload %rhs[%aligned_off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
     %mask = pto.vmi.create_mask %c48 : index -> !pto.vmi.mask<64xpred>
     %sum = pto.vmi.vadd %x, %y
         : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
@@ -26,9 +28,9 @@ module {
     %passthrough = pto.vmi.vsel %mask, %sum, %x
         : !pto.vmi.mask<64xpred>, !pto.vmi.vreg<64xf32>,
           !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf32>
-    pto.vmi.vstore %passthrough, %dense[%off]
+    pto.vmi.vstore %passthrough, %dense[%aligned_off]
         : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
-    pto.vmi.vstore %sum, %masked[%off], %mask
+    pto.vmi.vstore %sum, %masked[%aligned_off], %mask
         : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
     return
   }

@@ -21,7 +21,8 @@ module {
     %exp_mask = pto.vmi.vbrc %c32640_ui16
         : ui16 -> !pto.vmi.vreg<256xui16>
     %c32 = arith.constant 32 : index
-    %x = pto.vmi.vload %src[%off], %c32 {group = 8}
+    %aligned_off = arith.muli %off, %c32 : index
+    %x = pto.vmi.vload %src[%aligned_off], %c32 {group = 8}
         : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<256xbf16>
     %bits = pto.vmi.vinterpret_cast %x
         : !pto.vmi.vreg<256xbf16> -> !pto.vmi.vreg<256xui16>
@@ -35,11 +36,12 @@ module {
   }
 
   func.func @contiguous_ui8_group_load(
-      %src: !pto.ptr<ui8, ub>,
+      %src: memref<256xui8, #pto.address_space<vec>>,
       %off: index) -> !pto.vmi.vreg<64xui8> {
+    %c0 = arith.constant 0 : index
     %c16 = arith.constant 16 : index
-    %value = pto.vmi.vload %src[%off], %c16 {group = 4}
-        : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<64xui8>
+    %value = pto.vmi.vload %src[%c0], %c16 {group = 4}
+        : memref<256xui8, #pto.address_space<vec>> -> !pto.vmi.vreg<64xui8>
     return %value : !pto.vmi.vreg<64xui8>
   }
 
@@ -47,7 +49,8 @@ module {
       %src: !pto.ptr<f32, ub>,
       %off: index) -> !pto.vmi.vreg<128xf32> {
     %c8 = arith.constant 8 : index
-    %value = pto.vmi.vload %src[%off], %c8 {group = 16}
+    %aligned_off = arith.muli %off, %c8 : index
+    %value = pto.vmi.vload %src[%aligned_off], %c8 {group = 16}
         : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
     return %value : !pto.vmi.vreg<128xf32>
   }
@@ -56,7 +59,8 @@ module {
       %src: !pto.ptr<si16, ub>,
       %off: index) -> !pto.vmi.vreg<128xsi16> {
     %c16 = arith.constant 16 : index
-    %value = pto.vmi.vload %src[%off], %c16 {group = 8}
+    %aligned_off = arith.muli %off, %c16 : index
+    %value = pto.vmi.vload %src[%aligned_off], %c16 {group = 8}
         : !pto.ptr<si16, ub> -> !pto.vmi.vreg<128xsi16>
     return %value : !pto.vmi.vreg<128xsi16>
   }

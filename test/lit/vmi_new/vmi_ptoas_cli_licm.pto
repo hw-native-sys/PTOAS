@@ -16,13 +16,15 @@ module attributes {pto.target_arch = "a5"} {
         %count: index) {
       %c0 = arith.constant 0 : index
       %c1 = arith.constant 1 : index
+      %c16 = arith.constant 16 : index
       pto.vecscope {
         scf.for %i = %c0 to %count step %c1 {
-          %x16 = pto.vmi.vload %src[%i] {dist_mode = "continuous"}
+          %aligned_i = arith.muli %i, %c16 : index
+          %x16 = pto.vmi.vload %src[%aligned_i] {dist_mode = "continuous"}
               : !pto.ptr<f16, ub> -> !pto.vmi.vreg<128xf16>
           %x32 = pto.vmi.vcvt %x16
               : !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xf32>
-          pto.vmi.vstore %x32, %dst[%i]
+          pto.vmi.vstore %x32, %dst[%aligned_i]
               : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
         }
       }

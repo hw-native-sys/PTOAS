@@ -12,7 +12,9 @@ module {
   func.func @vmi_to_vpto_store_deint2(
       %value: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>,
       %dst: !pto.ptr<f32, ub>, %offset: index) {
-    pto.vmi.vstore %value, %dst[%offset]
+    %c8 = arith.constant 8 : index
+    %aligned_offset = arith.muli %offset, %c8 : index
+    pto.vmi.vstore %value, %dst[%aligned_offset]
         : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>, !pto.ptr<f32, ub>
     return
   }
@@ -20,7 +22,9 @@ module {
   func.func @vmi_to_vpto_store_deint4(
       %value: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>,
       %dst: !pto.ptr<f32, ub>, %offset: index) {
-    pto.vmi.vstore %value, %dst[%offset]
+    %c8 = arith.constant 8 : index
+    %aligned_offset = arith.muli %offset, %c8 : index
+    pto.vmi.vstore %value, %dst[%aligned_offset]
         : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>, !pto.ptr<f32, ub>
     return
   }
@@ -28,7 +32,9 @@ module {
   func.func @vmi_to_vpto_store_deint2_multichunk(
       %value: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>,
       %dst: !pto.ptr<f32, ub>, %offset: index) {
-    pto.vmi.vstore %value, %dst[%offset]
+    %c8 = arith.constant 8 : index
+    %aligned_offset = arith.muli %offset, %c8 : index
+    pto.vmi.vstore %value, %dst[%aligned_offset]
         : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>, !pto.ptr<f32, ub>
     return
   }
@@ -36,7 +42,7 @@ module {
 
 // CHECK-LABEL: func.func @vmi_to_vpto_store_deint2(
 // CHECK: %[[MASK:.*]] = pto.pset_b32 "PAT_ALL"
-// CHECK: pto.vstsx2 %arg0, %arg1, %arg2[%arg3], "INTLV_B32", %[[MASK]]
+// CHECK: pto.vstsx2 %arg0, %arg1, %arg2[{{.*}}], "INTLV_B32", %[[MASK]]
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast
@@ -46,17 +52,15 @@ module {
 // CHECK: %[[B0:.*]], %[[B1:.*]] = pto.vintlv %arg1, %arg3
 // CHECK: %[[D0:.*]], %[[D1:.*]] = pto.vintlv %[[A0]], %[[B0]]
 // CHECK: %[[D2:.*]], %[[D3:.*]] = pto.vintlv %[[A1]], %[[B1]]
-// CHECK: pto.vsts %[[D0]], %arg4[%arg5]
-// CHECK: pto.vsts %[[D1]], %arg4[{{.*}}]
-// CHECK: pto.vsts %[[D2]], %arg4[{{.*}}]
-// CHECK: pto.vsts %[[D3]], %arg4[{{.*}}]
+// CHECK-COUNT-4: pto.vsts
+// CHECK-NOT: pto.vstus
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast
 
 // CHECK-LABEL: func.func @vmi_to_vpto_store_deint2_multichunk(
 // CHECK: %[[MASK0:.*]] = pto.pset_b32 "PAT_ALL"
-// CHECK: pto.vstsx2 %arg0, %arg2, %arg4[%arg5], "INTLV_B32", %[[MASK0]]
+// CHECK: pto.vstsx2 %arg0, %arg2, %arg4[{{.*}}], "INTLV_B32", %[[MASK0]]
 // CHECK: %[[MASK1:.*]] = pto.pset_b32 "PAT_ALL"
 // CHECK: pto.vstsx2 %arg1, %arg3, %arg4[{{.*}}], "INTLV_B32", %[[MASK1]]
 // CHECK-NOT: pto.vmi.

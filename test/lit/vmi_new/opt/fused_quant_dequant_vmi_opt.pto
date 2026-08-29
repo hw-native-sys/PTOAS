@@ -21,17 +21,16 @@
 // - the FP8 roundtrip needs no standalone vector-interleave materialization.
 
 // VPTO-LABEL: func.func @fused_qd_vmi_current
-// VPTO: scf.for
-// VPTO: scf.if
-// VPTO: pto.vecscope
-// VPTO: pto.pset_b16 "PAT_ALL"
+// VPTO-DAG: pto.pset_b16 "PAT_ALL"
+// VPTO-DAG: %[[SCALE_BASE:[^ ]+]] = pto.addptr {{.*}}, %c0 : <ui8, ub> -> <ui8, ub>
+// VPTO-DAG: %[[SCALE_ALIGN:.*]] = pto.init_align
 // VPTO: pto.pset_b16 "PAT_VL8"
-// VPTO: pto.pset_b32 "PAT_VL1"
-// VPTO: scf.for
+// VPTO: %[[SCALE_LOOP:.*]]:{{[0-9]+}} = scf.for
+// VPTO-SAME: iter_args(%[[SCALE_BASE_ARG:.*]] = %[[SCALE_BASE]], %[[SCALE_ALIGN_ARG:.*]] = %[[SCALE_ALIGN]]{{.*}})
 // VPTO: %[[REDUCE_LOW:.*]], %[[REDUCE_HIGH:.*]] = pto.vldsx2 {{.*}}, "DINTLV_B16"
 // VPTO: pto.vcgmax
 // VPTO: pto.vcvt {{.*}} {part = "EVEN", sat = "SAT"}
-// VPTO: pto.vsts {{.*}} {dist = "1PT_B32"}
+// VPTO: %[[SCALE_ALIGN_OUT:.*]], %[[SCALE_BASE_OUT:.*]] = pto.vstus %[[SCALE_ALIGN_ARG]], {{.*}}, {{.*}}, %[[SCALE_BASE_ARG]]
 // VPTO: %[[RECIP_LOW:.*]] = pto.vselr {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xui16> -> !pto.vreg<128xbf16>
 // VPTO: %[[RECIP_HIGH:.*]] = pto.vselr {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xui16> -> !pto.vreg<128xbf16>
 // VPTO: %[[QUANT_0:[^,]+]], %{{.*}} = pto.vlds {{.*}} {dist = "UNPK_B16"}
@@ -88,6 +87,8 @@
 // VPTO: pto.vsts %[[DEQUANT_BF16_1]], {{.*}} {dist = "PK_B32"}
 // VPTO: pto.vsts %[[DEQUANT_BF16_2]], {{.*}} {dist = "PK_B32"}
 // VPTO: pto.vsts %[[DEQUANT_BF16_3]], {{.*}} {dist = "PK_B32"}
+// VPTO: scf.yield %[[SCALE_BASE_OUT]], %[[SCALE_ALIGN_OUT]]
+// VPTO: pto.vstas %[[SCALE_LOOP]]#1, %[[SCALE_LOOP]]#0,
 
 module attributes {pto.target_arch = "a5"} {
   module attributes {pto.backend = "vpto", pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch = "a5"} {

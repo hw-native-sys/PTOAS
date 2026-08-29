@@ -11,6 +11,7 @@
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOSyncUtils.h"
 #include "PTO/IR/PTOTypeUtils.h"
+#include "PTO/IR/VPTOMemoryDist.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/VPTOLLVMEmitter.h"
 #include "PTO/Transforms/VPTOLLVMEmitterHelper.h"

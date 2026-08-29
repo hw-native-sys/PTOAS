@@ -1,0 +1,228 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto -vpto-stateful-stream-fusion | FileCheck %s
+
+module {
+  func.func private @side_effect()
+  func.func @fuse_three_streams(%v0: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, %v1: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, %v2: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, %dst: !pto.ptr<f32, ub>) {
+    %c1 = arith.constant 1 : index
+    %c65 = arith.constant 65 : index
+    %c129 = arith.constant 129 : index
+    pto.vmi.vstore %v0, %dst[%c1] : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.ptr<f32, ub>
+    pto.vmi.vstore %v1, %dst[%c65] : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.ptr<f32, ub>
+    pto.vmi.vstore %v2, %dst[%c129] : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.ptr<f32, ub>
+    return
+  }
+  func.func @keep_non_contiguous_streams(%v0: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, %v1: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, %dst: !pto.ptr<f32, ub>) {
+    %c1 = arith.constant 1 : index
+    %c66 = arith.constant 66 : index
+    pto.vmi.vstore %v0, %dst[%c1] : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.ptr<f32, ub>
+    pto.vmi.vstore %v1, %dst[%c66] : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.ptr<f32, ub>
+    return
+  }
+  func.func @keep_streams_across_side_effect(%v0: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, %v1: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, %dst: !pto.ptr<f32, ub>) {
+    %c1 = arith.constant 1 : index
+    %c65 = arith.constant 65 : index
+    pto.vmi.vstore %v0, %dst[%c1] : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.ptr<f32, ub>
+    func.call @side_effect() : () -> ()
+    pto.vmi.vstore %v1, %dst[%c65] : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.ptr<f32, ub>
+    return
+  }
+  func.func @keep_streams_for_different_roots(%v0: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, %v1: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, %dst0: !pto.ptr<f32, ub>, %dst1: !pto.ptr<f32, ub>) {
+    %c1 = arith.constant 1 : index
+    %c65 = arith.constant 65 : index
+    pto.vmi.vstore %v0, %dst0[%c1] : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.ptr<f32, ub>
+    pto.vmi.vstore %v1, %dst1[%c65] : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.ptr<f32, ub>
+    return
+  }
+  func.func @fuse_contiguous_and_group_store(%v0: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, %v1: !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 1>>, %dst: !pto.ptr<f32, ub>) {
+    %c1 = arith.constant 1 : index
+    %c65 = arith.constant 65 : index
+    pto.vmi.vstore %v0, %dst[%c1] : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.ptr<f32, ub>
+    pto.vmi.vstore %v1, %dst[%c65], %c1 {group = 8} : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 1>>, !pto.ptr<f32, ub>
+    return
+  }
+  func.func @fuse_load_streams(
+      %src: memref<136xf32, #pto.address_space<vec>>)
+      -> (!pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>) {
+    %c1 = arith.constant 1 : index
+    %c65 = arith.constant 65 : index
+    %v0 = pto.vmi.vload %src[%c1]
+        : memref<136xf32, #pto.address_space<vec>>
+        -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    %v1 = pto.vmi.vload %src[%c65]
+        : memref<136xf32, #pto.address_space<vec>>
+        -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return %v0, %v1 : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @fuse_store_loop(%value: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, %dst: !pto.ptr<f32, ub>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c64 = arith.constant 64 : index
+    scf.for %i = %c0 to %c4 step %c1 {
+      %iteration_offset = arith.muli %i, %c64 : index
+      %offset = arith.addi %iteration_offset, %c1 : index
+      pto.vmi.vstore %value, %dst[%offset] : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.ptr<f32, ub>
+    }
+    return
+  }
+  func.func @fuse_load_loop(
+      %src: memref<328xf32, #pto.address_space<vec>>,
+      %initial: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c64 = arith.constant 64 : index
+    %result = scf.for %i = %c0 to %c4 step %c1 iter_args(%current = %initial) -> (!pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>) {
+      %iteration_offset = arith.muli %i, %c64 : index
+      %offset = arith.addi %iteration_offset, %c1 : index
+      %value = pto.vmi.vload %src[%offset]
+          : memref<328xf32, #pto.address_space<vec>>
+          -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+      scf.yield %value : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    }
+    return %result : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @keep_dynamic_trip_loop(%value: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, %dst: !pto.ptr<f32, ub>, %upper: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    scf.for %i = %c0 to %upper step %c1 {
+      %iteration_offset = arith.muli %i, %c64 : index
+      %offset = arith.addi %iteration_offset, %c1 : index
+      pto.vmi.vstore %value, %dst[%offset] : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.ptr<f32, ub>
+    }
+    return
+  }
+  func.func @keep_non_contiguous_loop(%value: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, %dst: !pto.ptr<f32, ub>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c65 = arith.constant 65 : index
+    scf.for %i = %c0 to %c4 step %c1 {
+      %iteration_offset = arith.muli %i, %c65 : index
+      %offset = arith.addi %iteration_offset, %c1 : index
+      pto.vmi.vstore %value, %dst[%offset] : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.ptr<f32, ub>
+    }
+    return
+  }
+  func.func @keep_single_iteration_loop(%value: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, %dst: !pto.ptr<f32, ub>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    scf.for %i = %c0 to %c1 step %c1 {
+      %offset = arith.addi %i, %c1 : index
+      pto.vmi.vstore %value, %dst[%offset] : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.ptr<f32, ub>
+    }
+    return
+  }
+  func.func @keep_store_loop_with_aliasing_load(%value: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, %dst: !pto.ptr<f32, ub>) -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c64 = arith.constant 64 : index
+    %result = scf.for %i = %c0 to %c4 step %c1 iter_args(%current = %value) -> (!pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>) {
+      %iteration_offset = arith.muli %i, %c64 : index
+      %offset = arith.addi %iteration_offset, %c1 : index
+      pto.vmi.vstore %value, %dst[%offset] : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.ptr<f32, ub>
+      %loaded = pto.vmi.vload %dst[%iteration_offset] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+      scf.yield %loaded : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    }
+    return %result : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+}
+
+// CHECK-LABEL: func.func @fuse_three_streams(
+// CHECK: %[[ALIGN0:.*]] = pto.init_align
+// CHECK: %[[ALIGN1:.*]], %[[BASE1:.*]] = pto.vstus %[[ALIGN0]],
+// CHECK-NOT: pto.init_align
+// CHECK-NOT: pto.vstas
+// CHECK: %[[ALIGN2:.*]], %[[BASE2:.*]] = pto.vstus %[[ALIGN1]], {{.*}}, {{.*}}, %[[BASE1]]
+// CHECK-NOT: pto.init_align
+// CHECK-NOT: pto.vstas
+// CHECK: %[[ALIGN3:.*]], %[[BASE3:.*]] = pto.vstus %[[ALIGN2]], {{.*}}, {{.*}}, %[[BASE2]]
+// CHECK: pto.vstas %[[ALIGN3]], %[[BASE3]],
+// CHECK: return
+// CHECK-LABEL: func.func @keep_non_contiguous_streams(
+// CHECK: pto.init_align
+// CHECK: pto.vstus
+// CHECK: pto.vstas
+// CHECK: pto.init_align
+// CHECK: pto.vstus
+// CHECK: pto.vstas
+// CHECK: return
+// CHECK-LABEL: func.func @keep_streams_across_side_effect(
+// CHECK: pto.init_align
+// CHECK: pto.vstas
+// CHECK: call @side_effect()
+// CHECK: pto.init_align
+// CHECK: pto.vstas
+// CHECK: return
+// CHECK-LABEL: func.func @keep_streams_for_different_roots(
+// CHECK: pto.init_align
+// CHECK: pto.vstus
+// CHECK: pto.vstas
+// CHECK: pto.init_align
+// CHECK: pto.vstus
+// CHECK: pto.vstas
+// CHECK: return
+// CHECK-LABEL: func.func @fuse_contiguous_and_group_store(
+// CHECK: %[[GROUP_ALIGN0:.*]] = pto.init_align
+// CHECK: %[[GROUP_ALIGN1:.*]], %[[GROUP_BASE1:.*]] = pto.vstus %[[GROUP_ALIGN0]],
+// CHECK-NOT: pto.init_align
+// CHECK-NOT: pto.vstas
+// CHECK: %[[GROUP_ALIGN2:.*]], %[[GROUP_BASE2:.*]] = pto.vstus %[[GROUP_ALIGN1]], {{.*}}, {{.*}}, %[[GROUP_BASE1]]
+// CHECK: pto.vstas %[[GROUP_ALIGN2]], %[[GROUP_BASE2]],
+// CHECK: return
+// CHECK-LABEL: func.func @fuse_load_streams(
+// CHECK: %[[LOAD_ALIGN0:.*]] = pto.vldas
+// CHECK: %{{.*}}, %[[LOAD_ALIGN1:.*]], %[[LOAD_BASE1:.*]] = pto.vldus {{.*}}, %[[LOAD_ALIGN0]], %{{.*}}
+// CHECK-NOT: pto.vldas
+// CHECK: %{{.*}}, %[[LOAD_ALIGN2:.*]], %[[LOAD_BASE2:.*]] = pto.vldus %[[LOAD_BASE1]], %[[LOAD_ALIGN1]], %{{.*}}
+// CHECK: return
+// CHECK-LABEL: func.func @fuse_store_loop(
+// CHECK: %[[STORE_BASE0:.*]] = pto.addptr
+// CHECK: %[[STORE_ALIGN0:.*]] = pto.init_align
+// CHECK: %[[STORE_LOOP:.*]]:2 = scf.for
+// CHECK-SAME: iter_args(%[[STORE_BASE_ARG:.*]] = %[[STORE_BASE0]], %[[STORE_ALIGN_ARG:.*]] = %[[STORE_ALIGN0]])
+// CHECK-NOT: pto.init_align
+// CHECK: %[[STORE_ALIGN1:.*]], %[[STORE_BASE1:.*]] = pto.vstus %[[STORE_ALIGN_ARG]], {{.*}}, {{.*}}, %[[STORE_BASE_ARG]]
+// CHECK-NOT: pto.vstas
+// CHECK: scf.yield %[[STORE_BASE1]], %[[STORE_ALIGN1]]
+// CHECK: pto.vstas %[[STORE_LOOP]]#1, %[[STORE_LOOP]]#0,
+// CHECK: return
+// CHECK-LABEL: func.func @fuse_load_loop(
+// CHECK: %[[LOAD_BASE0:.*]] = pto.addptr
+// CHECK: %[[LOAD_ALIGN0:.*]] = pto.vldas %[[LOAD_BASE0]]
+// CHECK: %[[LOAD_LOOP:.*]]:3 = scf.for
+// CHECK-SAME: iter_args({{.*}}, %[[LOAD_BASE_ARG:.*]] = %[[LOAD_BASE0]], %[[LOAD_ALIGN_ARG:.*]] = %[[LOAD_ALIGN0]])
+// CHECK-NOT: pto.vldas
+// CHECK: %{{.*}}, %[[LOAD_ALIGN1:.*]], %[[LOAD_BASE1:.*]] = pto.vldus %[[LOAD_BASE_ARG]], %[[LOAD_ALIGN_ARG]],
+// CHECK: scf.yield {{.*}}, %[[LOAD_BASE1]], %[[LOAD_ALIGN1]]
+// CHECK: return %[[LOAD_LOOP]]#0
+// CHECK-LABEL: func.func @keep_dynamic_trip_loop(
+// CHECK: scf.for
+// CHECK: pto.init_align
+// CHECK: pto.vstus
+// CHECK: pto.vstas
+// CHECK: return
+// CHECK-LABEL: func.func @keep_non_contiguous_loop(
+// CHECK: scf.for
+// CHECK: pto.init_align
+// CHECK: pto.vstus
+// CHECK: pto.vstas
+// CHECK: return
+// CHECK-LABEL: func.func @keep_single_iteration_loop(
+// CHECK: scf.for
+// CHECK: pto.init_align
+// CHECK: pto.vstus
+// CHECK: pto.vstas
+// CHECK: return
+// CHECK-LABEL: func.func @keep_store_loop_with_aliasing_load(
+// CHECK: scf.for
+// CHECK: pto.init_align
+// CHECK: pto.vstus
+// CHECK: pto.vstas
+// CHECK: pto.vlds
+// CHECK: return

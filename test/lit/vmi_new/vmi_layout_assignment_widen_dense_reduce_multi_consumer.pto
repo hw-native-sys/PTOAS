@@ -18,11 +18,13 @@ module {
       %off: index) {
     %c128 = arith.constant 128 : index
     %c0 = arith.constant 0 : index
-    %a = pto.vmi.vload %src[%off] {dist_mode = "continuous"}
+    %c16 = arith.constant 16 : index
+    %aligned_off = arith.muli %off, %c16 : index
+    %a = pto.vmi.vload %src[%aligned_off] {dist_mode = "continuous"}
         : !pto.ptr<f16, ub> -> !pto.vmi.vreg<128xf16>
     %w = pto.vmi.vcvt %a
         : !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xf32>
-    %k1 = pto.vmi.vload %rhs[%off] {dist_mode = "continuous"}
+    %k1 = pto.vmi.vload %rhs[%aligned_off] {dist_mode = "continuous"}
         : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
     %t1 = pto.vmi.vmul %w, %k1
         : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>

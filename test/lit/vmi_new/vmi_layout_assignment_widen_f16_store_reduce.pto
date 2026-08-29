@@ -16,16 +16,18 @@ module {
       %dense: !pto.ptr<f32, ub>,
       %off: index) {
     %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
     %c128 = arith.constant 128 : index
-    %x16 = pto.vmi.vload %src[%off] {dist_mode = "continuous"} : !pto.ptr<f16, ub> -> !pto.vmi.vreg<128xf16>
+    %aligned_off = arith.muli %off, %c16 : index
+    %x16 = pto.vmi.vload %src[%aligned_off] {dist_mode = "continuous"} : !pto.ptr<f16, ub> -> !pto.vmi.vreg<128xf16>
     %x32 = pto.vmi.vcvt %x16 : !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xf32>
     %mask = pto.vmi.create_mask %c128 : index -> !pto.vmi.mask<128xpred>
     %sumv = pto.vmi.vcadd %x32, %mask {group = 8, reassoc}
         : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred>
         -> !pto.vmi.vreg<8xf32>
-    pto.vmi.vstore %sumv, %sum[%off], %c1 {group = 8}
+    pto.vmi.vstore %sumv, %sum[%aligned_off], %c1 {group = 8}
         : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
-    pto.vmi.vstore %x32, %dense[%off] {dist_mode = "continuous"}
+    pto.vmi.vstore %x32, %dense[%aligned_off] {dist_mode = "continuous"}
         : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
     return
   }

@@ -13,7 +13,9 @@ module {
   func.func @vmi_layout_assignment_load_truncf(
       %src: !pto.ptr<f32, ub>,
       %offset: index) -> !pto.vmi.vreg<128xf16> {
-    %wide = pto.vmi.vload %src[%offset]
+    %c8 = arith.constant 8 : index
+    %aligned_offset = arith.muli %offset, %c8 : index
+    %wide = pto.vmi.vload %src[%aligned_offset]
         : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
     %narrow = pto.vmi.vcvt %wide {saturate = "SAT"}
         : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf16>
@@ -24,9 +26,11 @@ module {
       %src: !pto.ptr<f32, ub>,
       %dst: !pto.ptr<f32, ub>,
       %offset: index) -> !pto.vmi.vreg<128xf16> {
-    %wide = pto.vmi.vload %src[%offset]
+    %c8 = arith.constant 8 : index
+    %aligned_offset = arith.muli %offset, %c8 : index
+    %wide = pto.vmi.vload %src[%aligned_offset]
         : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
-    pto.vmi.vstore %wide, %dst[%offset]
+    pto.vmi.vstore %wide, %dst[%aligned_offset]
         : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
     %narrow = pto.vmi.vcvt %wide {saturate = "SAT"}
         : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf16>

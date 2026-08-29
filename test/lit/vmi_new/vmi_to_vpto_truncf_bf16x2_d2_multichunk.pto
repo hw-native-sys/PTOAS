@@ -19,11 +19,13 @@ module {
                            #pto.vmi.layout<deinterleaved = 2>>,
       %dst: !pto.ptr<!pto.f4E2M1x2, ub>,
       %off: index) {
+    %c32 = arith.constant 32 : index
+    %aligned_off = arith.muli %off, %c32 : index
     %packed = pto.vmi.vcvt %src {rounding = "C"}
         : !pto.vmi.vreg<256x!pto.bf16x2,
                         #pto.vmi.layout<deinterleaved = 2>>
        -> !pto.vmi.vreg<256x!pto.f4E2M1x2>
-    pto.vmi.vstore %packed, %dst[%off]
+    pto.vmi.vstore %packed, %dst[%aligned_off]
         : !pto.vmi.vreg<256x!pto.f4E2M1x2>,
           !pto.ptr<!pto.f4E2M1x2, ub>
     return
@@ -51,6 +53,6 @@ module {
 // LOWER: %[[P2C1_BF16:.*]] = pto.vbitcast %[[P2C1]]
 // LOWER: %[[C1P2:.*]] = pto.vcvt %[[P2C1_BF16]], {{.*}} {part = "P2", rnd = "C"}
 // LOWER: %[[C1:.*]] = pto.vor %[[C1P0]], %[[C1P2]]
-// LOWER: pto.vsts %[[C0]], %[[DST]][%[[OFF]]], {{.*}} {dist = "PK_B16"}
-// LOWER: %[[OFF128:.*]] = arith.addi %[[OFF]], %{{.*}} : index
+// LOWER: pto.vsts %[[C0]], %[[DST]][{{.*}}], {{.*}} {dist = "PK_B16"}
+// LOWER: %[[OFF128:.*]] = arith.addi {{.*}}, %{{.*}} : index
 // LOWER: pto.vsts %[[C1]], %[[DST]][%[[OFF128]]], {{.*}} {dist = "PK_B16"}

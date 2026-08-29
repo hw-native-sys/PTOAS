@@ -14,12 +14,14 @@ module {
       %src: !pto.vmi.vreg<128xf16>,
       %dst: !pto.ptr<f32, ub>,
       %offset: index) {
+    %c8 = arith.constant 8 : index
+    %aligned_offset = arith.muli %offset, %c8 : index
     %wide = pto.vmi.vcvt %src
         : !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xf32>
     %sum = pto.vmi.vadd %wide, %wide
         : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>
         -> !pto.vmi.vreg<128xf32>
-    pto.vmi.vstore %sum, %dst[%offset] {dist_mode = "continuous"}
+    pto.vmi.vstore %sum, %dst[%aligned_offset] {dist_mode = "continuous"}
         : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
     return
   }

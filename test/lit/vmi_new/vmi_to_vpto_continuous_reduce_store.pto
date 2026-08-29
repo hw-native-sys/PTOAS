@@ -14,11 +14,13 @@ module {
       %source: !pto.vmi.vreg<64xf32>,
       %reduce_mask: !pto.vmi.mask<64xpred>,
       %dst: !pto.ptr<f32, ub>, %off: index) {
+    %c8 = arith.constant 8 : index
+    %aligned_off = arith.muli %off, %c8 : index
     %store_mask = pto.vmi.pset "PAT_ALL" : !pto.vmi.mask<1xpred>
     %sum = pto.vmi.vcadd %source, %reduce_mask {reassoc}
         : !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred>
         -> !pto.vmi.vreg<1xf32>
-    pto.vmi.vstore %sum, %dst[%off], %store_mask
+    pto.vmi.vstore %sum, %dst[%aligned_off], %store_mask
         : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<1xpred>
     return
   }
@@ -51,10 +53,12 @@ module {
       %source: !pto.vmi.vreg<512xf32>,
       %mask: !pto.vmi.mask<512xpred>,
       %dst: !pto.ptr<f32, ub>, %off: index) {
+    %c8 = arith.constant 8 : index
+    %aligned_off = arith.muli %off, %c8 : index
     %sum = pto.vmi.vcadd %source, %mask {group = 8, reassoc}
         : !pto.vmi.vreg<512xf32>, !pto.vmi.mask<512xpred>
         -> !pto.vmi.vreg<8xf32>
-    pto.vmi.vstore %sum, %dst[%off]
+    pto.vmi.vstore %sum, %dst[%aligned_off]
         : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
     return
   }
@@ -64,10 +68,12 @@ module {
       %reduce_mask: !pto.vmi.mask<64xpred>,
       %store_mask: !pto.vmi.mask<1xpred>,
       %dst: !pto.ptr<f32, ub>, %off: index) {
+    %c8 = arith.constant 8 : index
+    %aligned_off = arith.muli %off, %c8 : index
     %sum = pto.vmi.vcadd %source, %reduce_mask {reassoc}
         : !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred>
         -> !pto.vmi.vreg<1xf32>
-    pto.vmi.vstore %sum, %dst[%off], %store_mask
+    pto.vmi.vstore %sum, %dst[%aligned_off], %store_mask
         : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<1xpred>
     return
   }
@@ -106,14 +112,21 @@ module {
 // LOWER: pto.vsts {{.*}} {dist = "1PT_B32"}
 
 // LOWER-LABEL: func.func @continuous_reduce_store_2(
-// LOWER: pto.vsts {{.*}} {dist = "1PT_B32"}
-// LOWER: pto.vsts {{.*}} {dist = "1PT_B32"}
+// LOWER: pto.init_align
+// LOWER: pto.vstus
+// LOWER: pto.vstas
+// LOWER-NOT: dist = "1PT_B32"
 
 // LOWER-LABEL: func.func @continuous_reduce_store_4(
-// LOWER-COUNT-4: pto.vsts {{.*}} {dist = "1PT_B32"}
+// LOWER: pto.init_align
+// LOWER: pto.vstus
+// LOWER: pto.vstas
+// LOWER-NOT: dist = "1PT_B32"
 
 // LOWER-LABEL: func.func @continuous_reduce_store_8(
-// LOWER-COUNT-8: pto.vsts {{.*}} {dist = "1PT_B32"}
+// LOWER: pto.vsts
+// LOWER-NOT: pto.vstus
+// LOWER-NOT: dist = "1PT_B32"
 
 // LOWER-LABEL: func.func @dynamic_mask_keeps_masked_store(
 // LOWER: pto.vsts

@@ -9,25 +9,125 @@
 // RUN: pto-test-opt %s -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
 
 module {
-  func.func @vmi_to_vpto_load_store_contiguous(
+  func.func @dynamic_unaligned_store_f32(
       %src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>, %offset: index) {
-    %value = pto.vmi.vload %src[%offset]
+    %c0 = arith.constant 0 : index
+    %value = pto.vmi.vload %src[%c0]
         : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
     pto.vmi.vstore %value, %dst[%offset]
         : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
     return
   }
+
+  func.func @constant_unaligned_full_chunk_load_f32(
+      %src: memref<136xf32, #pto.address_space<vec>>,
+      %dst: !pto.ptr<f32, ub>) {
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %value = pto.vmi.vload %src[%c4]
+        : memref<136xf32, #pto.address_space<vec>>
+        -> !pto.vmi.vreg<128xf32>
+    pto.vmi.vstore %value, %dst[%c0]
+        : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+    return
+  }
+
+  func.func @known_aligned_f32(
+      %src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>) {
+    %c0 = arith.constant 0 : index
+    %value = pto.vmi.vload %src[%c0]
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+    pto.vmi.vstore %value, %dst[%c0]
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
+    return
+  }
+
+  func.func @known_aligned_loop_iv_f32(
+      %src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>) {
+    %c0 = arith.constant 0 : index
+    %c8 = arith.constant 8 : index
+    %c64 = arith.constant 64 : index
+    scf.for %offset = %c0 to %c64 step %c8 {
+      %value = pto.vmi.vload %src[%offset]
+          : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+      pto.vmi.vstore %value, %dst[%offset]
+          : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
+    }
+    return
+  }
+
+  func.func @constant_unaligned_f16_tail(
+      %src: memref<272xf16, #pto.address_space<vec>>,
+      %dst: memref<272xf16, #pto.address_space<vec>>) {
+    %c1 = arith.constant 1 : index
+    %value = pto.vmi.vload %src[%c1]
+        : memref<272xf16, #pto.address_space<vec>> -> !pto.vmi.vreg<130xf16>
+    pto.vmi.vstore %value, %dst[%c1]
+        : !pto.vmi.vreg<130xf16>,
+          memref<272xf16, #pto.address_space<vec>>
+    return
+  }
+
+  func.func @dynamic_unaligned_memref(
+      %src: memref<256xui8, #pto.address_space<vec>>,
+      %dst: memref<256xui8, #pto.address_space<vec>>, %offset: index) {
+    %c0 = arith.constant 0 : index
+    %value = "pto.vmi.load"(%src, %c0)
+        : (memref<256xui8, #pto.address_space<vec>>, index)
+        -> !pto.vmi.vreg<256xui8>
+    "pto.vmi.store"(%value, %dst, %offset)
+        : (!pto.vmi.vreg<256xui8>,
+           memref<256xui8, #pto.address_space<vec>>, index) -> ()
+    return
+  }
 }
 
-// CHECK-LABEL: func.func @vmi_to_vpto_load_store_contiguous(
-// CHECK: %[[C64_LOAD:.*]] = arith.constant 64 : index
-// CHECK: %[[L0:.*]] = pto.vlds %arg0[%arg2] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-// CHECK: %[[OFF1_LOAD:.*]] = arith.addi %arg2, %[[C64_LOAD]] : index
-// CHECK: %[[L1:.*]] = pto.vlds %arg0[%[[OFF1_LOAD]]] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-// CHECK: %[[M0:.*]] = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-// CHECK: pto.vsts %[[L0]], %arg1[%arg2], %[[M0]] : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-// CHECK: %[[M1:.*]] = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-// CHECK: pto.vsts %[[L1]], %arg1[{{.*}}], %[[M1]] : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+// CHECK-LABEL: func.func @dynamic_unaligned_store_f32(
+// CHECK: %[[L0:.*]] = pto.vlds
+// CHECK: %[[L1:.*]] = pto.vlds
+// CHECK: %[[DST_BASE:.*]] = pto.addptr %arg1, %arg2
+// CHECK: %[[SA0:.*]] = pto.init_align : !pto.align
+// CHECK: %[[SA1:.*]], %[[DST1:.*]] = pto.vstus %[[SA0]], %{{.*}}, %[[L0]], %[[DST_BASE]]
+// CHECK: %[[SA2:.*]], %[[DST2:.*]] = pto.vstus %[[SA1]], %{{.*}}, %[[L1]], %[[DST1]]
+// CHECK: pto.vstas %[[SA2]], %[[DST2]], %{{.*}}
+
+// CHECK-LABEL: func.func @constant_unaligned_full_chunk_load_f32(
+// CHECK: %[[SRC_PTR:.*]] = pto.castptr %arg0 : memref<136xf32, #pto.address_space<vec>> -> !pto.ptr<f32, ub>
+// CHECK: %[[SRC_BASE:.*]] = pto.addptr %[[SRC_PTR]], %{{.*}}
+// CHECK: %[[LA0:.*]] = pto.vldas %[[SRC_BASE]]
+// CHECK: %[[L0:.*]], %[[LA1:.*]], %[[SRC1:.*]] = pto.vldus %[[SRC_BASE]], %[[LA0]], %{{.*}}
+// CHECK: %[[L1:.*]], %{{.*}}, %{{.*}} = pto.vldus %[[SRC1]], %[[LA1]], %{{.*}}
+// CHECK: pto.vsts %[[L0]]
+// CHECK: pto.vsts %[[L1]]
+
+// CHECK-LABEL: func.func @known_aligned_f32(
+// CHECK: %[[ALIGNED_LOAD:.*]] = pto.vlds %arg0[%{{.*}}]
+// CHECK: pto.vsts %[[ALIGNED_LOAD]], %arg1[%{{.*}}], %{{.*}}
+// CHECK-NOT: pto.vldas
+// CHECK-NOT: pto.vstus
+
+// CHECK-LABEL: func.func @known_aligned_loop_iv_f32(
+// CHECK: scf.for
+// CHECK: %[[LOOP_LOAD:.*]] = pto.vlds %arg0[%{{.*}}]
+// CHECK: pto.vsts %[[LOOP_LOAD]], %arg1[%{{.*}}], %{{.*}}
+// CHECK-NOT: pto.vldas
+// CHECK-NOT: pto.vstus
+
+// CHECK-LABEL: func.func @constant_unaligned_f16_tail(
+// CHECK: %[[C2:.*]] = arith.constant 2 : i32
+// CHECK: %[[C128:.*]] = arith.constant 128 : i32
+// CHECK-COUNT-1: pto.vldas
+// CHECK: %[[F16_SA0:.*]] = pto.init_align : !pto.align
+// CHECK: %[[F16_SA1:.*]], %[[F16_DST1:.*]] = pto.vstus %[[F16_SA0]], %[[C128]],
+// CHECK: %[[F16_SA2:.*]], %[[F16_DST2:.*]] = pto.vstus %[[F16_SA1]], %[[C2]],
+// CHECK: pto.vstas %[[F16_SA2]], %[[F16_DST2]], %{{.*}}
+
+// CHECK-LABEL: func.func @dynamic_unaligned_memref(
+// CHECK: %[[U8_LOAD:.*]] = pto.vlds %arg0
+// CHECK: %[[DST_PTR:.*]] = pto.castptr %arg1 : memref<256xui8, #pto.address_space<vec>> -> !pto.ptr<ui8, ub>
+// CHECK: %[[U8_DST:.*]] = pto.addptr %[[DST_PTR]], %arg2
+// CHECK: pto.vstus {{.*}}, %[[U8_DST]]
+// CHECK: pto.vstas
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast

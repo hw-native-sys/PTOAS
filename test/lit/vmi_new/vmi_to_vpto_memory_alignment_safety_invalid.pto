@@ -1,0 +1,71 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not pto-test-opt %s -split-input-file -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-lower-unified-to-legacy -vmi-to-vpto 2>&1 | FileCheck %s
+
+module {
+  func.func @full_chunk_unaligned_load_without_read_envelope(
+      %src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>, %offset: index) {
+    %c0 = arith.constant 0 : index
+    %value = pto.vmi.vload %src[%offset]
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+    pto.vmi.vstore %value, %dst[%c0]
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @full_chunk_unaligned_load_exceeds_static_read_envelope(
+      %src: memref<65xf32, #pto.address_space<vec>>,
+      %dst: !pto.ptr<f32, ub>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %value = pto.vmi.vload %src[%c1]
+        : memref<65xf32, #pto.address_space<vec>> -> !pto.vmi.vreg<64xf32>
+    pto.vmi.vstore %value, %dst[%c0]
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @unaligned_masked_store(
+      %value: !pto.vmi.vreg<64xf32>,
+      %mask: !pto.vmi.mask<64xb32>,
+      %dst: !pto.ptr<f32, ub>, %offset: index) {
+    pto.vmi.vstore %value, %dst[%offset], %mask
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xb32>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @unaligned_lane_stride_masked_store(
+      %value: !pto.vmi.vreg<64xf16,
+          #pto.vmi.layout<contiguous, lane_stride = 2>>,
+      %mask: !pto.vmi.mask<64xb16,
+          #pto.vmi.layout<contiguous, lane_stride = 2>>,
+      %dst: !pto.ptr<f16, ub>, %offset: index) {
+    pto.vmi.masked_store %value, %dst[%offset], %mask
+        : !pto.vmi.vreg<64xf16,
+              #pto.vmi.layout<contiguous, lane_stride = 2>>,
+          !pto.ptr<f16, ub>,
+          !pto.vmi.mask<64xb16,
+              #pto.vmi.layout<contiguous, lane_stride = 2>>
+    return
+  }
+}
+
+// CHECK-COUNT-4: VMI-RESIDUAL-OP: failed to convert all VMI ops/types to VPTO

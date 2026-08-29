@@ -16,7 +16,9 @@ module {
   func.func @vmi_layout_fold_load_lane_stride(
       %src: !pto.ptr<f16, ub>, %off: index)
       -> !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous, lane_stride = 2>> {
-    %load = pto.vmi.vload %src[%off] {dist_mode = "continuous"}
+    %c16 = arith.constant 16 : index
+    %aligned_off = arith.muli %off, %c16 : index
+    %load = pto.vmi.vload %src[%aligned_off] {dist_mode = "continuous"}
         : !pto.ptr<f16, ub>
         -> !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous>>
     %strided = pto.vmi.ensure_layout %load
@@ -29,10 +31,12 @@ module {
   func.func @vmi_layout_fold_store_lane_stride(
       %value: !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>,
       %dst: !pto.ptr<f16, ub>, %off: index) {
+    %c16 = arith.constant 16 : index
+    %aligned_off = arith.muli %off, %c16 : index
     %compact = pto.vmi.ensure_layout %value
         : !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
         -> !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous>>
-    pto.vmi.vstore %compact, %dst[%off] {dist_mode = "continuous"}
+    pto.vmi.vstore %compact, %dst[%aligned_off] {dist_mode = "continuous"}
         : !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous>>,
           !pto.ptr<f16, ub>
     return
@@ -59,10 +63,12 @@ module {
   func.func @vmi_layout_fold_store_lane_stride_b32(
       %value: !pto.vmi.vreg<32xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>,
       %dst: !pto.ptr<f32, ub>, %off: index) {
+    %c8 = arith.constant 8 : index
+    %aligned_off = arith.muli %off, %c8 : index
     %compact = pto.vmi.ensure_layout %value
         : !pto.vmi.vreg<32xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>
         -> !pto.vmi.vreg<32xf32, #pto.vmi.layout<contiguous>>
-    pto.vmi.vstore %compact, %dst[%off] {dist_mode = "continuous"}
+    pto.vmi.vstore %compact, %dst[%aligned_off] {dist_mode = "continuous"}
         : !pto.vmi.vreg<32xf32, #pto.vmi.layout<contiguous>>,
           !pto.ptr<f32, ub>
     return
@@ -70,13 +76,15 @@ module {
 
   func.func @vmi_layout_fold_load_store_lane_stride4_u8(
       %src: !pto.ptr<ui8, ub>, %dst: !pto.ptr<ui8, ub>, %off: index) {
-    %load = pto.vmi.vload %src[%off] {dist_mode = "continuous"}
+    %c32 = arith.constant 32 : index
+    %aligned_off = arith.muli %off, %c32 : index
+    %load = pto.vmi.vload %src[%aligned_off] {dist_mode = "continuous"}
         : !pto.ptr<ui8, ub>
         -> !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous>>
     %strided = pto.vmi.ensure_layout %load
         : !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous>>
         -> !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>
-    pto.vmi.vstore %strided, %dst[%off] {dist_mode = "continuous"}
+    pto.vmi.vstore %strided, %dst[%aligned_off] {dist_mode = "continuous"}
         : !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>,
           !pto.ptr<ui8, ub>
     return
@@ -197,7 +205,9 @@ module {
   func.func @vmi_load_extui_u8_u16_zero_gap(
       %src: !pto.ptr<ui8, ub>, %off: index)
       -> !pto.vmi.vreg<128xui16, #pto.vmi.layout<contiguous>> {
-    %load = pto.vmi.vload %src[%off] {dist_mode = "continuous"}
+    %c32 = arith.constant 32 : index
+    %aligned_off = arith.muli %off, %c32 : index
+    %load = pto.vmi.vload %src[%aligned_off] {dist_mode = "continuous"}
         : !pto.ptr<ui8, ub>
         -> !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous, lane_stride = 2>>
     %wide = pto.vmi.vcvt %load
@@ -210,7 +220,9 @@ module {
   func.func @vmi_load_extui_u16_u32_zero_gap(
       %src: !pto.ptr<ui16, ub>, %off: index)
       -> !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>> {
-    %load = pto.vmi.vload %src[%off] {dist_mode = "continuous"}
+    %c16 = arith.constant 16 : index
+    %aligned_off = arith.muli %off, %c16 : index
+    %load = pto.vmi.vload %src[%aligned_off] {dist_mode = "continuous"}
         : !pto.ptr<ui16, ub>
         -> !pto.vmi.vreg<64xui16, #pto.vmi.layout<contiguous, lane_stride = 2>>
     %wide = pto.vmi.vcvt %load
@@ -223,7 +235,9 @@ module {
   func.func @vmi_load_extui_u8_u32_zero_gap(
       %src: !pto.ptr<ui8, ub>, %off: index)
       -> !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>> {
-    %load = pto.vmi.vload %src[%off] {dist_mode = "continuous"}
+    %c32 = arith.constant 32 : index
+    %aligned_off = arith.muli %off, %c32 : index
+    %load = pto.vmi.vload %src[%aligned_off] {dist_mode = "continuous"}
         : !pto.ptr<ui8, ub>
         -> !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>
     %wide = pto.vmi.vcvt %load

@@ -11,10 +11,11 @@
 
 module {
   func.func @vmi_layout_rematerialize_direct_ext(
-      %src: !pto.ptr<f16, ub>, %off: index)
+      %src: memref<512xf16, #pto.address_space<vec>>, %off: index)
       -> !pto.vmi.vreg<256xf8E4M3FN, #pto.vmi.layout<contiguous>> {
-    %x16 = pto.vmi.vload %src[%off]
-        : !pto.ptr<f16, ub>
+    %c0 = arith.constant 0 : index
+    %x16 = pto.vmi.vload %src[%c0]
+        : memref<512xf16, #pto.address_space<vec>>
         -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>>
     %x32_d2 = pto.vmi.vcvt %x16
         : !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>>
@@ -29,13 +30,15 @@ module {
   }
 
   func.func @vmi_layout_rematerialize_mulf_chain(
-      %lhs: !pto.ptr<f16, ub>, %rhs: !pto.ptr<f16, ub>, %off: index)
+      %lhs: memref<512xf16, #pto.address_space<vec>>,
+      %rhs: memref<512xf16, #pto.address_space<vec>>, %off: index)
       -> !pto.vmi.vreg<256xf8E4M3FN, #pto.vmi.layout<contiguous>> {
-    %lhs16 = pto.vmi.vload %lhs[%off]
-        : !pto.ptr<f16, ub>
+    %c0 = arith.constant 0 : index
+    %lhs16 = pto.vmi.vload %lhs[%c0]
+        : memref<512xf16, #pto.address_space<vec>>
         -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>>
-    %rhs16 = pto.vmi.vload %rhs[%off]
-        : !pto.ptr<f16, ub>
+    %rhs16 = pto.vmi.vload %rhs[%c0]
+        : memref<512xf16, #pto.address_space<vec>>
         -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>>
     %lhs32_d2 = pto.vmi.vcvt %lhs16
         : !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>>
@@ -57,11 +60,12 @@ module {
   }
 
   func.func @vmi_layout_rematerialize_ext_multi_consumer(
-      %src: !pto.ptr<f16, ub>, %off: index)
+      %src: memref<512xf16, #pto.address_space<vec>>, %off: index)
       -> (!pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>>,
           !pto.vmi.vreg<256xf8E4M3FN, #pto.vmi.layout<contiguous>>) {
-    %x16 = pto.vmi.vload %src[%off]
-        : !pto.ptr<f16, ub>
+    %c0 = arith.constant 0 : index
+    %x16 = pto.vmi.vload %src[%c0]
+        : memref<512xf16, #pto.address_space<vec>>
         -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>>
     %x32_d2 = pto.vmi.vcvt %x16
         : !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>>
@@ -81,10 +85,11 @@ module {
   }
 
   func.func @vmi_layout_rematerialize_keeps_wider_source(
-      %src: !pto.ptr<f16, ub>, %off: index)
+      %src: memref<256xf16, #pto.address_space<vec>>, %off: index)
       -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> {
-    %x16 = pto.vmi.vload %src[%off]
-        : !pto.ptr<f16, ub>
+    %c0 = arith.constant 0 : index
+    %x16 = pto.vmi.vload %src[%c0]
+        : memref<256xf16, #pto.address_space<vec>>
         -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
     %x32_d2 = pto.vmi.vcvt %x16
         : !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>

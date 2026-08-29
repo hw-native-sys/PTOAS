@@ -88,6 +88,16 @@ module {
     return
   }
 
+  func.func @unaligned_compact_group_store_ui8_ls4(
+      %value: !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>,
+      %dst: !pto.ptr<ui8, ub>, %off: index) {
+    %c1 = arith.constant 1 : index
+    pto.vmi.vstore %value, %dst[%off], %c1 {group = 8}
+        : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>,
+          !pto.ptr<ui8, ub>
+    return
+  }
+
   func.func @aligned_compact_group_store_ui8_ls2(
       %value: !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>) {
     %c102400_i64 = arith.constant 102400 : i64
@@ -126,8 +136,12 @@ module {
 
   func.func @regular_group_store_ui32(
       %value: !pto.vmi.vreg<8xui32, #pto.vmi.layout<num_groups = 8, slots = 8>>,
-      %dst: !pto.ptr<ui32, ub>, %off: index) {
+      %tile: index) {
+    %base_addr = arith.constant 102400 : i64
+    %dst = pto.castptr %base_addr : i64 -> !pto.ptr<ui32, ub>
     %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %off = arith.muli %tile, %c8 : index
     pto.vmi.vstore %value, %dst[%off], %c1 {group = 8}
         : !pto.vmi.vreg<8xui32, #pto.vmi.layout<num_groups = 8, slots = 8>>,
           !pto.ptr<ui32, ub>
@@ -146,8 +160,12 @@ module {
 
   func.func @regular_group_store_f32(
       %value: !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>,
-      %dst: !pto.ptr<f32, ub>, %off: index) {
+      %tile: index) {
+    %base_addr = arith.constant 102400 : i64
+    %dst = pto.castptr %base_addr : i64 -> !pto.ptr<f32, ub>
     %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %off = arith.muli %tile, %c8 : index
     pto.vmi.vstore %value, %dst[%off], %c1 {group = 8}
         : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>,
           !pto.ptr<f32, ub>
@@ -166,8 +184,11 @@ module {
 // ASSIGN: pto.vmi.group_store %arg0
 
 // LOWER-LABEL: func.func @compact_group_store_ui16(
-// LOWER: %[[WORDS:.*]] = pto.vbitcast %arg0 : !pto.vreg<128xui16> -> !pto.vreg<64xui32>
-// LOWER-COUNT-4: pto.vsts {{.*}} {dist = "1PT_B32"} : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, !pto.mask<b32>
+// LOWER: %[[UI16_BASE:.*]] = pto.addptr %arg1, %arg2
+// LOWER: %[[UI16_ALIGN:.*]] = pto.init_align
+// LOWER: %[[UI16_NEXT_ALIGN:.*]], %[[UI16_NEXT_BASE:.*]] = pto.vstus %[[UI16_ALIGN]], %{{.*}}, %arg0, %[[UI16_BASE]]
+// LOWER: pto.vstas %[[UI16_NEXT_ALIGN]], %[[UI16_NEXT_BASE]], %{{.*}}
+// LOWER-NOT: dist = "1PT_B32"
 // LOWER-NOT: dist = "NORM_B16"
 // LOWER-NOT: dist = "PK_B16"
 // LOWER-NOT: dist = "PK4_B32"
@@ -179,15 +200,28 @@ module {
 // LOWER: pto.vsts %arg0, %{{.*}}[%{{.*}}], %{{.*}} {dist = "NORM_B16"} : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, !pto.mask<b16>
 // LOWER-NOT: dist = "1PT_B32"
 // LOWER-LABEL: func.func @partially_aligned_compact_group_store_bf16(
-// LOWER-COUNT-4: pto.vsts {{.*}} {dist = "1PT_B32"} : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, !pto.mask<b32>
+// LOWER: %[[PARTIAL_ALIGN:.*]] = pto.init_align
+// LOWER: %[[PARTIAL_NEXT_ALIGN:.*]], %[[PARTIAL_NEXT_BASE:.*]] = pto.vstus %[[PARTIAL_ALIGN]], %{{.*}}, %arg0, %{{.*}}
+// LOWER: pto.vstas %[[PARTIAL_NEXT_ALIGN]], %[[PARTIAL_NEXT_BASE]], %{{.*}}
+// LOWER-NOT: dist = "1PT_B32"
 // LOWER-NOT: dist = "NORM_B16"
 // LOWER-LABEL: func.func @unaligned_base_compact_group_store_bf16(
-// LOWER-COUNT-4: pto.vsts {{.*}} {dist = "1PT_B32"} : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, !pto.mask<b32>
+// LOWER: %[[UNALIGNED_ALIGN:.*]] = pto.init_align
+// LOWER: %[[UNALIGNED_NEXT_ALIGN:.*]], %[[UNALIGNED_NEXT_BASE:.*]] = pto.vstus %[[UNALIGNED_ALIGN]], %{{.*}}, %arg0, %{{.*}}
+// LOWER: pto.vstas %[[UNALIGNED_NEXT_ALIGN]], %[[UNALIGNED_NEXT_BASE]], %{{.*}}
+// LOWER-NOT: dist = "1PT_B32"
 // LOWER-NOT: dist = "NORM_B16"
 // LOWER-LABEL: func.func @aligned_compact_group_store_ui8_ls4(
 // LOWER: %[[PACK16:.*]] = pto.vpack {{.*}}, "LOWER" : !pto.vreg<64xui32> -> !pto.vreg<128xui16>
 // LOWER: %[[PACK8:.*]] = pto.vpack %[[PACK16]], "LOWER" : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
 // LOWER: pto.vsts %[[PACK8]], %{{.*}}[%{{.*}}], %{{.*}} {dist = "NORM_B8"} : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, !pto.mask<b8>
+// LOWER-NOT: dist = "1PT_B32"
+// LOWER-LABEL: func.func @unaligned_compact_group_store_ui8_ls4(
+// LOWER: %[[UNALIGNED_PACK16:.*]] = pto.vpack {{.*}}, "LOWER" : !pto.vreg<64xui32> -> !pto.vreg<128xui16>
+// LOWER: %[[UNALIGNED_PACK8:.*]] = pto.vpack %[[UNALIGNED_PACK16]], "LOWER" : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
+// LOWER: %[[UNALIGNED_UI8_ALIGN:.*]] = pto.init_align
+// LOWER: %[[UNALIGNED_UI8_NEXT_ALIGN:.*]], %[[UNALIGNED_UI8_NEXT_BASE:.*]] = pto.vstus %[[UNALIGNED_UI8_ALIGN]], %{{.*}}, %[[UNALIGNED_PACK8]], %{{.*}}
+// LOWER: pto.vstas %[[UNALIGNED_UI8_NEXT_ALIGN]], %[[UNALIGNED_UI8_NEXT_BASE]], %{{.*}}
 // LOWER-NOT: dist = "1PT_B32"
 // LOWER-LABEL: func.func @aligned_compact_group_store_ui8_ls2(
 // LOWER: %[[PACKED8:.*]] = pto.vpack {{.*}}, "LOWER" : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
@@ -206,8 +240,10 @@ module {
 // LOWER-NOT: dist = "1PT_B32"
 // LOWER-COUNT-1: pto.vsts {{.*}} : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, !pto.mask<b32>
 // LOWER-LABEL: func.func @compact_group_store_f32(
-// LOWER: %[[F32WORDS:.*]] = pto.vbitcast %arg0 : !pto.vreg<64xf32> -> !pto.vreg<64xui32>
-// LOWER-COUNT-4: pto.vsts {{.*}} {dist = "1PT_B32"} : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, !pto.mask<b32>
+// LOWER: %[[F32_ALIGN:.*]] = pto.init_align
+// LOWER: %[[F32_NEXT_ALIGN:.*]], %[[F32_NEXT_BASE:.*]] = pto.vstus %[[F32_ALIGN]], %{{.*}}, %arg0, %{{.*}}
+// LOWER: pto.vstas %[[F32_NEXT_ALIGN]], %[[F32_NEXT_BASE]], %{{.*}}
+// LOWER-NOT: dist = "1PT_B32"
 // LOWER-LABEL: func.func @regular_group_store_f32(
 // LOWER-NOT: dist = "1PT_B32"
 // LOWER-COUNT-1: pto.vsts {{.*}} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>

@@ -1007,6 +1007,7 @@ static void appendVMISemanticPipeline(OpPassManager &pm) {
   pm.addPass(pto::createVMILegalizeArithSelectPass());
   pm.addPass(pto::createPTOValidateVMILayoutIRPass());
   pm.addPass(pto::createVMIToVPTOPass());
+  pm.addPass(pto::createVPTOStatefulStreamFusionPass());
 }
 
 /// Reject statically invalid scf.for steps at the PTOAS input boundary.

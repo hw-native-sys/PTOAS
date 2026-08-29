@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s | FileCheck %s
+
+module {
+  func.func @align_local_chain_in_loop(
+      %src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64_i32 = arith.constant 64 : i32
+    %c0_i32 = arith.constant 0 : i32
+    scf.for %iv = %c0 to %c1 step %c1 {
+      pto.vecscope {
+        %load_align = pto.vldas %src : !pto.ptr<f32, ub> -> !pto.align
+        %value, %unused_load_align = pto.vldus %src, %load_align
+            : !pto.ptr<f32, ub>, !pto.align
+            -> !pto.vreg<64xf32>, !pto.align
+        %store_align = pto.init_align : !pto.align
+        %next_store_align, %next_dst = pto.vstus
+            %store_align, %c64_i32, %value, %dst
+            : !pto.align, i32, !pto.vreg<64xf32>, !pto.ptr<f32, ub>
+            -> !pto.align, !pto.ptr<f32, ub>
+        pto.vstas %next_store_align, %next_dst, %c0_i32
+            : !pto.align, !pto.ptr<f32, ub>, i32
+      }
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @align_local_chain_in_loop(
+// CHECK: scf.for
+// CHECK: pto.vecscope
+// CHECK: pto.vldas
+// CHECK: pto.vldus
+// CHECK: pto.init_align
+// CHECK: pto.vstus
+// CHECK: pto.vstas

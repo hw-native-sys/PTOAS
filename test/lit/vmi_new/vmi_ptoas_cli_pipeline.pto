@@ -15,9 +15,11 @@ module attributes {pto.target_arch = "a5"} {
         %scalar: f32,
         %dst: !pto.ptr<f32, ub>,
         %offset: index) {
+      %c8 = arith.constant 8 : index
+      %aligned_offset = arith.muli %offset, %c8 : index
       %value = pto.vmi.vbrc %scalar
           : f32 -> !pto.vmi.vreg<128xf32>
-      pto.vmi.vstore %value, %dst[%offset]
+      pto.vmi.vstore %value, %dst[%aligned_offset]
           : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
       return
     }
@@ -26,11 +28,13 @@ module attributes {pto.target_arch = "a5"} {
         %src: !pto.ptr<f16, ub>,
         %dst: !pto.ptr<f32, ub>,
         %offset: index) {
-      %x16 = pto.vmi.vload %src[%offset] {dist_mode = "continuous"}
+      %c16 = arith.constant 16 : index
+      %aligned_offset = arith.muli %offset, %c16 : index
+      %x16 = pto.vmi.vload %src[%aligned_offset] {dist_mode = "continuous"}
           : !pto.ptr<f16, ub> -> !pto.vmi.vreg<128xf16>
       %x32 = pto.vmi.vcvt %x16
           : !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xf32>
-      pto.vmi.vstore %x32, %dst[%offset]
+      pto.vmi.vstore %x32, %dst[%aligned_offset]
           : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
       return
     }
@@ -39,9 +43,9 @@ module attributes {pto.target_arch = "a5"} {
 
 // CHECK-LABEL: func.func @vmi_ptoas_cli_pipeline
 // CHECK: pto.vecscope
-// CHECK: pto.vdup
-// CHECK: pto.vsts
-// CHECK: pto.vsts
+// CHECK: %[[VALUE:.*]] = pto.vdup
+// CHECK: pto.vsts %[[VALUE]]
+// CHECK: pto.vsts %[[VALUE]]
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast

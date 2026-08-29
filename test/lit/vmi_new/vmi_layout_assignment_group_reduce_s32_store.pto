@@ -44,8 +44,9 @@ module {
 // LOWER: %[[VL8:.*]] = pto.pset_b32 "PAT_VL8" : !pto.mask<b32>
 // LOWER-COUNT-4: pto.vcgadd
 // LOWER-COUNT-3: pto.vadd {{.*}}, {{.*}}, %[[VL8]]
-// LOWER: %[[STORE_MASK:.*]] = pto.pset_b32 "PAT_VL8" : !pto.mask<b32>
-// LOWER: pto.vsts {{.*}}, %arg8[%arg9], %[[STORE_MASK]]
+// LOWER: pto.init_align
+// LOWER: pto.vstus
+// LOWER: pto.vstas
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.
 // LOWER-NOT: unrealized_conversion_cast

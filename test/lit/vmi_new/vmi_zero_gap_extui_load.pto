@@ -15,25 +15,27 @@ module {
       %src8: !pto.ptr<ui8, ub>, %src16: !pto.ptr<ui16, ub>,
       %dst16: !pto.ptr<ui16, ub>, %dst32a: !pto.ptr<ui32, ub>,
       %dst32b: !pto.ptr<ui32, ub>, %off: index) {
-    %a = pto.vmi.load %src8[%off]
+    %c32 = arith.constant 32 : index
+    %aligned_off = arith.muli %off, %c32 : index
+    %a = pto.vmi.load %src8[%aligned_off]
         : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<128xui8>
     %aw = pto.vmi.extui %a
         : !pto.vmi.vreg<128xui8> -> !pto.vmi.vreg<128xui16>
-    pto.vmi.store %aw, %dst16[%off]
+    pto.vmi.store %aw, %dst16[%aligned_off]
         : !pto.vmi.vreg<128xui16>, !pto.ptr<ui16, ub>
 
-    %b = pto.vmi.load %src8[%off]
+    %b = pto.vmi.load %src8[%aligned_off]
         : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<64xui8>
     %bw = pto.vmi.extui %b
         : !pto.vmi.vreg<64xui8> -> !pto.vmi.vreg<64xui32>
-    pto.vmi.store %bw, %dst32a[%off]
+    pto.vmi.store %bw, %dst32a[%aligned_off]
         : !pto.vmi.vreg<64xui32>, !pto.ptr<ui32, ub>
 
-    %c = pto.vmi.load %src16[%off]
+    %c = pto.vmi.load %src16[%aligned_off]
         : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<64xui16>
     %cw = pto.vmi.extui %c
         : !pto.vmi.vreg<64xui16> -> !pto.vmi.vreg<64xui32>
-    pto.vmi.store %cw, %dst32b[%off]
+    pto.vmi.store %cw, %dst32b[%aligned_off]
         : !pto.vmi.vreg<64xui32>, !pto.ptr<ui32, ub>
     return
   }
@@ -42,12 +44,12 @@ module {
 // CHECK-LABEL: func.func @vmi_surface_load_extui_zero_gap(
 // CHECK: %[[U8U16:.*]] = pto.vlds {{.*}} {dist = "UNPK_B8"}
 // CHECK-NEXT: %[[U16:.*]] = pto.vbitcast %[[U8U16]] : !pto.vreg<256xui8> -> !pto.vreg<128xui16>
-// CHECK: pto.vsts %[[U16]],
+// CHECK: pto.vsts
 // CHECK: %[[U8U32:.*]] = pto.vlds {{.*}} {dist = "UNPK4"}
 // CHECK-NEXT: %[[U32A:.*]] = pto.vbitcast %[[U8U32]] : !pto.vreg<256xui8> -> !pto.vreg<64xui32>
-// CHECK: pto.vsts %[[U32A]],
+// CHECK: pto.vsts
 // CHECK: %[[U16U32:.*]] = pto.vlds {{.*}} {dist = "UNPK_B16"}
 // CHECK-NEXT: %[[U32B:.*]] = pto.vbitcast %[[U16U32]] : !pto.vreg<128xui16> -> !pto.vreg<64xui32>
-// CHECK: pto.vsts %[[U32B]],
+// CHECK: pto.vsts
 // CHECK-NOT: pto.vcvt
 // CHECK-NOT: pto.vzunpack

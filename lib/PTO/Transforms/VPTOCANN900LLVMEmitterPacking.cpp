@@ -30,56 +30,24 @@ FailureOr<Value> packShiftedFields(Operation *anchor, Value base, ArrayRef<std::
 }
 
 std::optional<uint64_t> parseLoadX2DistImmediate(StringRef dist, Type elementType) {
-  auto width = getDistElementWidth(elementType);
-  if (dist == "BDINTLV") {
-    return 10;
-  }
-  if (!width) {
-    return std::nullopt;
-  }
-  if (dist == "DINTLV_B8") {
-    return std::optional<uint64_t>(11);
-  }
-  if (dist == "DINTLV_B16") {
-    return std::optional<uint64_t>(12);
-  }
-  if (dist == "DINTLV_B32") {
-    return std::optional<uint64_t>(19);
-  }
-  return std::nullopt;
+  const auto *contract = lookupVPTOMemoryDist(VPTOMemoryOpFamily::LoadX2, dist,
+                                              getDistElementWidth(elementType));
+  return contract ? std::optional<uint64_t>(contract->a5Immediate)
+                  : std::nullopt;
 }
 
 std::optional<uint64_t> parseStoreDistImmediate(StringRef dist, Type elementType) {
-  auto width = getDistElementWidth(elementType);
-  if (dist.empty()) {
-    if (!width) {
-      return std::nullopt;
-    }
-    if (*width == 8) {
-      return 0;
-    }
-    if (*width == 16) {
-      return 1;
-    }
-    if (*width == 32) {
-      return 2;
-    }
-    return std::nullopt;
-  }
-  static constexpr std::pair<StringLiteral, uint64_t> encodings[] = {
-      {"NORM_B8", 0},     {"NORM_B16", 1},    {"NORM_B32", 2},     {"1PT_B8", 3},  {"1PT_B16", 4},
-      {"1PT_B32", 5},     {"PK_B16", 6},      {"PK_B32", 7},       {"PK_B64", 10}, {"PK4_B32", 12},
-      {"MRG4CHN_B8", 13}, {"MRG2CHN_B8", 14}, {"MRG2CHN_B16", 15},
-  };
-  for (const auto &[name, value] : encodings) {
-    if (dist == name) {
-      return value;
-    }
-  }
-  return std::nullopt;
+  const auto *contract = lookupVPTOMemoryDist(
+      VPTOMemoryOpFamily::Store, dist,
+      dist.empty() ? getDistElementWidth(elementType) : std::nullopt);
+  return contract ? std::optional<uint64_t>(contract->a5Immediate)
+                  : std::nullopt;
 }
 
-bool isOnePointStoreDist(StringRef dist) { return dist == "1PT_B8" || dist == "1PT_B16" || dist == "1PT_B32"; }
+bool isOnePointStoreDist(StringRef dist) {
+  const auto *contract = lookupVPTOMemoryDist(VPTOMemoryOpFamily::Store, dist);
+  return contract && contract->isOnePointStore();
+}
 
 bool isMaskOnlyUsedByOnePointStores(Value mask) {
   return !mask.use_empty() && llvm::all_of(mask.getUsers(), [](Operation *user) {
@@ -88,21 +56,11 @@ bool isMaskOnlyUsedByOnePointStores(Value mask) {
   });
 }
 
-std::optional<uint64_t> parseStoreX2DistImmediate(StringRef dist, Type elementType) {
-  auto width = getDistElementWidth(elementType);
-  if (!width) {
-    return std::nullopt;
-  }
-  if (dist == "INTLV_B8") {
-    return std::optional<uint64_t>(8);
-  }
-  if (dist == "INTLV_B16") {
-    return std::optional<uint64_t>(9);
-  }
-  if (dist == "INTLV_B32") {
-    return std::optional<uint64_t>(11);
-  }
-  return std::nullopt;
+std::optional<uint64_t> parseStoreX2DistImmediate(StringRef dist, Type) {
+  const auto *contract =
+      lookupVPTOMemoryDist(VPTOMemoryOpFamily::StoreX2, dist);
+  return contract ? std::optional<uint64_t>(contract->a5Immediate)
+                  : std::nullopt;
 }
 
 Value packBlockRepeatStride(Operation *anchor, Value blockStride, Value repeatStride) {

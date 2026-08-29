@@ -10,11 +10,12 @@
 
 module {
   func.func @vmi_to_vpto_load_deint2_f16_no_widen(
-      %src: !pto.ptr<f16, ub>, %offset: index)
+      %src: memref<144xf16, #pto.address_space<vec>>)
       -> (!pto.vreg<128xf16>, !pto.vreg<128xf16>) {
+    %c8 = arith.constant 8 : index
     %c64 = arith.constant 64 : index
-    %value = pto.vmi.vload %src[%offset]
-        : !pto.ptr<f16, ub>
+    %value = pto.vmi.vload %src[%c8]
+        : memref<144xf16, #pto.address_space<vec>>
         -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
     %mask = pto.vmi.create_mask %c64
         : index -> !pto.vmi.mask<128xb16, #pto.vmi.layout<contiguous>>
@@ -67,7 +68,7 @@ module {
 
 // CHECK-LABEL: func.func @vmi_to_vpto_load_deint2_f16_no_widen(
 // CHECK-NOT: pto.vldsx2
-// CHECK: %[[LOAD:.*]] = pto.vlds %arg0[%arg1]
+// CHECK: %[[LOAD:[^,]+]], %{{[^,]+}}, %{{[^ ]+}} = pto.vldus
 // CHECK: %[[LOW:.*]], %[[HIGH:.*]] = pto.vdintlv %[[LOAD]], %[[LOAD]]
 // CHECK: return %[[LOW]], %[[HIGH]]
 // CHECK-NOT: pto.vmi.
@@ -77,9 +78,9 @@ module {
 // CHECK-LABEL: func.func @vmi_to_vpto_store_deint2_f16_no_widen(
 // CHECK-NOT: pto.vstsx2
 // CHECK: %[[LOW:.*]], %[[HIGH:.*]] = pto.vintlv %arg0, %arg1
-// CHECK: %[[MASK:.*]] = pto.pset_b16 "PAT_ALL"
-// CHECK: pto.vsts %[[LOW]], %arg2[%arg3], %[[MASK]]
-// CHECK-NOT: pto.vsts %[[HIGH]]
+// CHECK: pto.init_align
+// CHECK: pto.vstus
+// CHECK-NOT: pto.vstus
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast
