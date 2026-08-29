@@ -2,63 +2,36 @@
 // This program is free software; you can redistribute it and/or modify it under the terms and conditions of
 // CANN Open Software License Agreement Version 2.0 (the "License").
 // Please refer to the License for details. THIS SOFTWARE IS PROVIDED ON AN
-// "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
-// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// "AS IS" BASIS, WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED, INCLUDING
+// BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR
+// A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
 // for the full text of the License.
 
-// Positive case for the pto-vexpdif-fusion pass over a real ptoas pipeline.
-// A single-use f32 tsub + texp sequence lowers to vsub + vexp inside a
-// pto.fusion_region and is fused into pto.vexpdif ("ODD"). vexpdif fusion is
-// enabled by default; pass --enable-vexpdif-fusion=false to opt out.
+// Positive case for the pto-vexpdif-fusion pass. A single-use f32 `vsub`
+// followed by a f32 `vexp`, both sharing one mask SSA inside a
+// pto.fusion_region, fuses into `pto.vexpdif "ODD"`. vexpdif fusion is enabled
+// by default; pass --enable-vexpdif-fusion=false to opt out.
+//
+// Unlike the mask/f16/multiuse siblings, this is a direct vreg-level positive
+// case: the pass is exercised on hand-written vector IR through pto-test-opt,
+// so it stays decoupled from the full ptoas pipeline and the TileLib template
+// / local-boundary behavior that only the end-to-end path exercises.
 
-// RUN: ptoas --pto-backend=vpto --pto-arch=a5 --pto-level=level2 --enable-op-fusion --enable-vexpdif-fusion --emit-vpto %s --mlir-print-ir-after=pto-vexpdif-fusion -o /dev/null 2>&1 | FileCheck %s
-// RUN: ptoas --pto-backend=vpto --pto-arch=a5 --pto-level=level2 --enable-op-fusion --enable-vexpdif-fusion --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s --check-prefix=LLVM
+// RUN: pto-test-opt %s -pto-vexpdif-fusion | FileCheck %s
 
-module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
-  func.func @vexpdif_fusion(%dst_ptr : !pto.ptr<f32>) {
-    %c0 = arith.constant 0 : index
-    %c1 = arith.constant 1 : index
-    %c16 = arith.constant 16 : index
-    %c64 = arith.constant 64 : index
-    %c1024 = arith.constant 1024 : index
-    %dst_view = pto.make_tensor_view %dst_ptr,
-      shape = [%c1, %c1, %c1, %c16, %c64],
-      strides = [%c1024, %c1024, %c1024, %c64, %c1]
-      : !pto.tensor_view<1x1x1x16x64xf32>
-    %dst_part = pto.partition_view %dst_view,
-      offsets = [%c0, %c0, %c0, %c0, %c0],
-      sizes = [%c1, %c1, %c1, %c16, %c64]
-      : !pto.tensor_view<1x1x1x16x64xf32> -> !pto.partition_tensor_view<1x1x1x16x64xf32>
-    %a = pto.alloc_tile
-      : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=16, v_col=64,
-                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
-    %b = pto.alloc_tile
-      : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=16, v_col=64,
-                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
-    %sub = pto.alloc_tile
-      : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=16, v_col=64,
-                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
-    %result = pto.alloc_tile
-      : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=16, v_col=64,
-                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
-
-    pto.tsub ins(%a, %b : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=16, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>,
-                          !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=16, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
-             outs(%sub : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=16, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
-    pto.texp ins(%sub : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=16, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
-             outs(%result : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=16, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
-    pto.tstore ins(%result : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=16, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
-               outs(%dst_part : !pto.partition_tensor_view<1x1x1x16x64xf32>)
-    return
+module {
+  func.func @vexpdif_fusion(%a : !pto.vreg<64xf32>, %b : !pto.vreg<64xf32>) -> !pto.vreg<64xf32> {
+    %res = pto.fusion_region {
+      %m = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %sub = pto.vsub %a, %b, %m : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %exp = pto.vexp %sub, %m : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      pto.yield(%exp) : (!pto.vreg<64xf32>) -> ()
+    } : !pto.vreg<64xf32>
+    return %res : !pto.vreg<64xf32>
   }
 }
 
 // CHECK-LABEL: func.func @vexpdif_fusion(
-// CHECK: pto.fusion_region
 // CHECK: pto.vexpdif {{.*}} "ODD"
 // CHECK-NOT: pto.vsub
 // CHECK-NOT: pto.vexp {{.*}} :
-
-// LLVM-LABEL: define void @vexpdif_fusion
-// LLVM: call {{.*}} @llvm.hivm.vexpdif
