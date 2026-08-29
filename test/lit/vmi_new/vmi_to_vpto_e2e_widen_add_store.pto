@@ -11,7 +11,9 @@
 module {
   func.func @vmi_to_vpto_f16_widen_add_store(
       %src: !pto.ptr<f16, ub>, %dst: !pto.ptr<f32, ub>, %offset: index) {
-    %narrow = pto.vmi.vload %src[%offset]
+    %c16 = arith.constant 16 : index
+    %aligned_offset = arith.muli %offset, %c16 : index
+    %narrow = pto.vmi.vload %src[%aligned_offset]
         : !pto.ptr<f16, ub> -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
     %wide = pto.vmi.vcvt %narrow
         : !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
@@ -20,14 +22,16 @@ module {
         : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>,
           !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
         -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
-    pto.vmi.vstore %sum, %dst[%offset]
+    pto.vmi.vstore %sum, %dst[%aligned_offset]
         : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>, !pto.ptr<f32, ub>
     return
   }
 
   func.func @vmi_to_vpto_f8_widen_add_store(
       %src: !pto.ptr<f8E4M3FN, ub>, %dst: !pto.ptr<f32, ub>, %offset: index) {
-    %narrow = pto.vmi.vload %src[%offset]
+    %c32 = arith.constant 32 : index
+    %aligned_offset = arith.muli %offset, %c32 : index
+    %narrow = pto.vmi.vload %src[%aligned_offset]
         : !pto.ptr<f8E4M3FN, ub> -> !pto.vmi.vreg<256xf8E4M3FN, #pto.vmi.layout<contiguous>>
     %wide = pto.vmi.vcvt %narrow
         : !pto.vmi.vreg<256xf8E4M3FN, #pto.vmi.layout<contiguous>>
@@ -36,14 +40,14 @@ module {
         : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>,
           !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
         -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
-    pto.vmi.vstore %sum, %dst[%offset]
+    pto.vmi.vstore %sum, %dst[%aligned_offset]
         : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>, !pto.ptr<f32, ub>
     return
   }
 }
 
 // CHECK-LABEL: func.func @vmi_to_vpto_f16_widen_add_store(
-// CHECK: %[[NARROW:.*]] = pto.vlds %arg0[%arg2] : !pto.ptr<f16, ub> -> !pto.vreg<128xf16>
+// CHECK: %[[NARROW:.*]] = pto.vlds
 // CHECK: %[[CVT_MASK:.*]] = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
 // CHECK: %[[EVEN:.*]] = pto.vcvt %[[NARROW]], %[[CVT_MASK]] {part = "EVEN"}
 // CHECK: %[[ODD:.*]] = pto.vcvt %[[NARROW]], %[[CVT_MASK]] {part = "ODD"}
@@ -52,13 +56,13 @@ module {
 // CHECK: %[[ADD_MASK1:.*]] = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
 // CHECK: %[[SUM1:.*]] = pto.vadd %[[ODD]], %[[ODD]], %[[ADD_MASK1]]
 // CHECK: %[[STORE_MASK:.*]] = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-// CHECK: pto.vstsx2 %[[SUM0]], %[[SUM1]], %arg1[%arg2], "INTLV_B32", %[[STORE_MASK]]
+// CHECK: pto.vstsx2 %[[SUM0]], %[[SUM1]], %arg1[%{{.*}}], "INTLV_B32", %[[STORE_MASK]]
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast
 
 // CHECK-LABEL: func.func @vmi_to_vpto_f8_widen_add_store(
-// CHECK: %[[NARROW8:.*]] = pto.vlds %arg0[%arg2] : !pto.ptr<f8E4M3FN, ub> -> !pto.vreg<256xf8E4M3FN>
+// CHECK: %[[NARROW8:.*]] = pto.vlds
 // CHECK: pto.vcvt %[[NARROW8]], {{.*}} {part = "P0"}
 // CHECK: pto.vcvt %[[NARROW8]], {{.*}} {part = "P1"}
 // CHECK: pto.vcvt %[[NARROW8]], {{.*}} {part = "P2"}

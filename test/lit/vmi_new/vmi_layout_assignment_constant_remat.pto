@@ -14,6 +14,8 @@ module {
       %src: !pto.vmi.vreg<128xf16>,
       %dst: !pto.ptr<f32, ub>,
       %offset: index) -> !pto.vmi.vreg<128xf32> {
+    %c8 = arith.constant 8 : index
+    %aligned_offset = arith.muli %offset, %c8 : index
     %constant = "pto.vmi.constant"() {
       value = dense<1.000000e+00> : tensor<128xf32>
     } : () -> !pto.vmi.vreg<128xf32>
@@ -22,7 +24,7 @@ module {
     %sum = pto.vmi.vadd %constant, %wide
         : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>
         -> !pto.vmi.vreg<128xf32>
-    pto.vmi.vstore %constant, %dst[%offset]
+    pto.vmi.vstore %constant, %dst[%aligned_offset]
         : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
     return %sum : !pto.vmi.vreg<128xf32>
   }

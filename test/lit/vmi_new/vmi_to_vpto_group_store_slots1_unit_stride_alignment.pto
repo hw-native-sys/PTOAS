@@ -40,8 +40,11 @@ module {
 // CHECK-NOT: dist = "1PT_B32"
 
 // CHECK-LABEL: func.func @unaligned_unit_stride_group_store(
-// CHECK-NOT: pto.vdup
-// CHECK-COUNT-8: pto.vsts {{.*}} {dist = "1PT_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+// CHECK-COUNT-8: pto.vdup
+// CHECK: %[[ALIGN:.*]] = pto.init_align
+// CHECK: %[[NEXT_ALIGN:.*]], %[[NEXT_BASE:.*]] = pto.vstus %[[ALIGN]], %{{.*}}, %{{.*}}, %{{.*}}
+// CHECK: pto.vstas %[[NEXT_ALIGN]], %[[NEXT_BASE]], %{{.*}}
+// CHECK-NOT: dist = "1PT_B32"
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast

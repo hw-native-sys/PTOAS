@@ -15,7 +15,9 @@ module {
       %scale: f32,
       %dst: !pto.ptr<f8E4M3FN, ub>,
       %off: index) {
-    %x8 = pto.vmi.vload %src[%off]
+    %c32 = arith.constant 32 : index
+    %aligned_off = arith.muli %off, %c32 : index
+    %x8 = pto.vmi.vload %src[%aligned_off]
         : !pto.ptr<f8E4M3FN, ub> -> !pto.vmi.vreg<256xf8E4M3FN>
     %x32 = pto.vmi.vcvt %x8
         : !pto.vmi.vreg<256xf8E4M3FN> -> !pto.vmi.vreg<256xf32>
@@ -26,7 +28,7 @@ module {
         -> !pto.vmi.vreg<256xf32>
     %y8 = pto.vmi.vcvt %y32 {saturate = "SAT"}
         : !pto.vmi.vreg<256xf32> -> !pto.vmi.vreg<256xf8E4M3FN>
-    pto.vmi.vstore %y8, %dst[%off]
+    pto.vmi.vstore %y8, %dst[%aligned_off]
         : !pto.vmi.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>
     return
   }

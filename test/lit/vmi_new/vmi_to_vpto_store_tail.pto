@@ -11,19 +11,23 @@
 module {
   func.func @vmi_to_vpto_store_tail(
       %value: !pto.vmi.vreg<100xf32>,
-      %dst: !pto.ptr<f32, ub>, %offset: index) {
-    pto.vmi.vstore %value, %dst[%offset]
+      %offset: index) {
+    %c102400_i64 = arith.constant 102400 : i64
+    %dst = pto.castptr %c102400_i64 : i64 -> !pto.ptr<f32, ub>
+    %c32 = arith.constant 32 : index
+    %aligned_offset = arith.muli %offset, %c32 : index
+    pto.vmi.vstore %value, %dst[%aligned_offset]
         : !pto.vmi.vreg<100xf32>, !pto.ptr<f32, ub>
     return
   }
 }
 
 // CHECK-LABEL: func.func @vmi_to_vpto_store_tail(
+// CHECK: %[[C64:.*]] = arith.constant 64 : index
 // CHECK: %[[C36:.*]] = arith.constant 36 : i32
-// CHECK: %[[FULL_MASK:.*]] = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-// CHECK: pto.vsts %arg0, %arg2[%arg3], %[[FULL_MASK]]
-// CHECK: %[[TAIL_MASK:.*]], %{{.*}} = pto.plt_b32 %[[C36]] : i32 -> !pto.mask<b32>, i32
-// CHECK: pto.vsts %arg1, %arg2[{{.*}}], %[[TAIL_MASK]]
+// CHECK: pto.vsts
+// CHECK: pto.vsts
+// CHECK-NOT: pto.vstus
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast

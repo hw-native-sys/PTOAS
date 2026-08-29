@@ -14,7 +14,9 @@ module {
       %src: !pto.ptr<f32, ub>, %off: index)
       -> (!pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>,
           !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>) {
-    %load = pto.vmi.vload %src[%off] {dist_mode = "continuous"}
+    %c8 = arith.constant 8 : index
+    %aligned_off = arith.muli %off, %c8 : index
+    %load = pto.vmi.vload %src[%aligned_off] {dist_mode = "continuous"}
         : !pto.ptr<f32, ub>
         -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
     %split0 = pto.vmi.ensure_layout %load
@@ -32,7 +34,9 @@ module {
       %src: !pto.ptr<f32, ub>, %off: index)
       -> (!pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>,
           !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>) {
-    %load = pto.vmi.vload %src[%off] {dist_mode = "continuous"}
+    %c8 = arith.constant 8 : index
+    %aligned_off = arith.muli %off, %c8 : index
+    %load = pto.vmi.vload %src[%aligned_off] {dist_mode = "continuous"}
         : !pto.ptr<f32, ub>
         -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
     %split = pto.vmi.ensure_layout %load

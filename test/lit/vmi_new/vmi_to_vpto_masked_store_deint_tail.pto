@@ -14,7 +14,9 @@ module {
       %mask: !pto.vmi.mask<4xb32, #pto.vmi.layout<deinterleaved = 2>>,
       %dst: !pto.ptr<f32, ub>,
       %offset: index) {
-    pto.vmi.vstore %value, %dst[%offset], %mask
+    %c8 = arith.constant 8 : index
+    %aligned_offset = arith.muli %offset, %c8 : index
+    pto.vmi.vstore %value, %dst[%aligned_offset], %mask
         : !pto.vmi.vreg<4xf32, #pto.vmi.layout<deinterleaved = 2>>,
           !pto.ptr<f32, ub>,
           !pto.vmi.mask<4xb32, #pto.vmi.layout<deinterleaved = 2>>
@@ -30,12 +32,14 @@ module {
 // CHECK-SAME: %[[DST:[^,]+]]: !pto.ptr<f32, ub>
 // CHECK-SAME: %[[OFF:[^)]+]]: index
 // CHECK: %[[C4:.*]] = arith.constant 4 : i32
+// CHECK: %[[C8:.*]] = arith.constant 8 : index
+// CHECK: %[[ALIGNED_OFF:.*]] = arith.muli %[[OFF]], %[[C8]] : index
 // CHECK: %[[LOW:.*]], %[[HIGH:.*]] = pto.vintlv %[[V0]], %[[V1]]
 // CHECK: %[[USER:.*]], %{{.*}} = pto.pintlv_b32 %[[M0]], %[[M1]]
 // CHECK: %[[TAIL:.*]], %{{.*}} = pto.plt_b32 %[[C4]] : i32 -> !pto.mask<b32>, i32
 // CHECK: %[[ALL:.*]] = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
 // CHECK: %[[MASK:.*]] = pto.pand %[[USER]], %[[TAIL]], %[[ALL]]
-// CHECK: pto.vsts %[[LOW]], %[[DST]][%[[OFF]]], %[[MASK]]
+// CHECK: pto.vsts %[[LOW]], %[[DST]][%[[ALIGNED_OFF]]], %[[MASK]]
 // CHECK-NOT: pto.vsts %[[HIGH]]
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.

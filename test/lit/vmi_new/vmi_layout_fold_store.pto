@@ -16,6 +16,8 @@ module {
       %out1: !pto.ptr<f32, ub>,
       %out2: !pto.ptr<f32, ub>,
       %offset: index) {
+    %c8 = arith.constant 8 : index
+    %aligned_offset = arith.muli %offset, %c8 : index
     %scale_v = pto.vmi.vbrc %scale
         : f32 -> !pto.vmi.vreg<128xf32>
     %wide = pto.vmi.vcvt %src
@@ -23,9 +25,9 @@ module {
     %prod = pto.vmi.vmul %wide, %scale_v
         : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>
         -> !pto.vmi.vreg<128xf32>
-    pto.vmi.vstore %prod, %out1[%offset] {dist_mode = "continuous"}
+    pto.vmi.vstore %prod, %out1[%aligned_offset] {dist_mode = "continuous"}
         : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
-    pto.vmi.vstore %wide, %out2[%offset] {dist_mode = "continuous"}
+    pto.vmi.vstore %wide, %out2[%aligned_offset] {dist_mode = "continuous"}
         : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
     return
   }
@@ -61,4 +63,3 @@ module {
 // LOWER: pto.vstsx2 %[[WIDE0]], %[[WIDE1]]
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.
-

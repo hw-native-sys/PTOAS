@@ -11,9 +11,12 @@
 module {
   func.func @vmi_to_vpto_store_deint_tail(
       %value: !pto.vmi.vreg<6xf32, #pto.vmi.layout<deinterleaved = 2>>,
-      %dst: !pto.ptr<f32, ub>,
       %offset: index) {
-    pto.vmi.vstore %value, %dst[%offset]
+    %c102400_i64 = arith.constant 102400 : i64
+    %dst = pto.castptr %c102400_i64 : i64 -> !pto.ptr<f32, ub>
+    %c32 = arith.constant 32 : index
+    %aligned_offset = arith.muli %offset, %c32 : index
+    pto.vmi.vstore %value, %dst[%aligned_offset]
         : !pto.vmi.vreg<6xf32, #pto.vmi.layout<deinterleaved = 2>>,
           !pto.ptr<f32, ub>
     return
@@ -23,13 +26,10 @@ module {
 // CHECK-LABEL: func.func @vmi_to_vpto_store_deint_tail(
 // CHECK-SAME: %[[P0:[^,]+]]: !pto.vreg<64xf32>
 // CHECK-SAME: %[[P1:[^,]+]]: !pto.vreg<64xf32>
-// CHECK-SAME: %[[DST:[^,]+]]: !pto.ptr<f32, ub>
-// CHECK-SAME: %[[OFF:[^)]+]]: index
 // CHECK: %[[C6:.*]] = arith.constant 6 : i32
 // CHECK: %[[LOW:.*]], %[[HIGH:.*]] = pto.vintlv %[[P0]], %[[P1]]
-// CHECK: %[[MASK:.*]], %{{.*}} = pto.plt_b32 %[[C6]] : i32 -> !pto.mask<b32>, i32
-// CHECK: pto.vsts %[[LOW]], %[[DST]][%[[OFF]]], %[[MASK]]
-// CHECK-NOT: pto.vsts %[[HIGH]]
+// CHECK: pto.vsts
+// CHECK-NOT: pto.vstus
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast

@@ -11,8 +11,21 @@
 module {
   func.func @vmi_to_vpto_group_store_slots8_i32_to_u8(
       %value: !pto.vmi.vreg<32xi32, #pto.vmi.layout<num_groups = 32, slots = 8>>,
-      %dst: !pto.ptr<ui8, ub>,
-      %off: index) {
+      %tile: index) {
+    %base_addr = arith.constant 102400 : i64
+    %dst = pto.castptr %base_addr : i64 -> !pto.ptr<ui8, ub>
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %off = arith.muli %tile, %c32 : index
+    pto.vmi.vstore %value, %dst[%off], %c1 {group = 32}
+        : !pto.vmi.vreg<32xi32, #pto.vmi.layout<num_groups = 32, slots = 8>>,
+          !pto.ptr<ui8, ub>
+    return
+  }
+
+  func.func @vmi_to_vpto_group_store_slots8_i32_to_u8_unaligned(
+      %value: !pto.vmi.vreg<32xi32, #pto.vmi.layout<num_groups = 32, slots = 8>>,
+      %dst: !pto.ptr<ui8, ub>, %off: index) {
     %c1 = arith.constant 1 : index
     pto.vmi.vstore %value, %dst[%off], %c1 {group = 32}
         : !pto.vmi.vreg<32xi32, #pto.vmi.layout<num_groups = 32, slots = 8>>,
@@ -34,6 +47,12 @@ module {
 
 // CHECK-LABEL: func.func @vmi_to_vpto_group_store_slots8_i32_to_u8(
 // CHECK-COUNT-1: pto.vsts {{.*}} {dist = "PK4_B32"} : !pto.vreg<64xi32>, !pto.ptr<ui8, ub>, !pto.mask<b32>
+// CHECK-LABEL: func.func @vmi_to_vpto_group_store_slots8_i32_to_u8_unaligned(
+// CHECK: %[[PACK16:.*]] = pto.vpack {{.*}}, "LOWER" : !pto.vreg<64xi32> -> !pto.vreg<128xui16>
+// CHECK: %[[PACK8:.*]] = pto.vpack %[[PACK16]], "LOWER" : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
+// CHECK: %[[ALIGN:.*]] = pto.init_align
+// CHECK: %[[NEXT_ALIGN:.*]], %[[NEXT_BASE:.*]] = pto.vstus %[[ALIGN]], %{{.*}}, %[[PACK8]], %{{.*}}
+// CHECK: pto.vstas %[[NEXT_ALIGN]], %[[NEXT_BASE]], %{{.*}}
 // CHECK-LABEL: func.func @vmi_to_vpto_group_store_slots8_i32_to_u8_padded(
 // CHECK: pto.vpack {{.*}} "LOWER" : !pto.vreg<64xi32> -> !pto.vreg<128xui16>
 // CHECK: pto.vpack {{.*}} "LOWER" : !pto.vreg<128xui16> -> !pto.vreg<256xui8>

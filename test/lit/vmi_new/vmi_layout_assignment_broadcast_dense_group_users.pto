@@ -17,15 +17,17 @@ module {
       %off: index,
       %scale: f32) {
     %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
     %c32 = arith.constant 32 : index
+    %aligned_off = arith.muli %off, %c8 : index
     %scale_v = pto.vmi.vbrc %scale
         : f32 -> !pto.vmi.vreg<256xf32>
-    %x = pto.vmi.vload %base[%off]
+    %x = pto.vmi.vload %base[%aligned_off]
         : !pto.ptr<f32, ub> -> !pto.vmi.vreg<256xf32>
     %copy = pto.vmi.vadd %x, %scale_v
         : !pto.vmi.vreg<256xf32>, !pto.vmi.vreg<256xf32>
         -> !pto.vmi.vreg<256xf32>
-    pto.vmi.vstore %copy, %copy_out[%off]
+    pto.vmi.vstore %copy, %copy_out[%aligned_off]
         : !pto.vmi.vreg<256xf32>, !pto.ptr<f32, ub>
     %mask = pto.vmi.create_group_mask %c32
         {num_groups = 8, group_size = 32}
@@ -37,7 +39,7 @@ module {
         {group = 8, reassoc}
         : !pto.vmi.vreg<256xf32>, !pto.vmi.mask<256xpred>
         -> !pto.vmi.vreg<8xf32>
-    pto.vmi.vstore %sum, %sum_out[%off], %c1 {group = 8}
+    pto.vmi.vstore %sum, %sum_out[%aligned_off], %c1 {group = 8}
         : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
     return
   }

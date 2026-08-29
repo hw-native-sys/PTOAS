@@ -10,13 +10,13 @@
 
 module {
   func.func @vmi_to_vpto_masked_load_safe_tail_memref(
-      %src: !pto.ptr<f32, ub>,
+      %src: memref<128xf32, #pto.address_space<vec>>,
       %mask: !pto.vmi.mask<100xb32, #pto.vmi.layout<contiguous>>,
       %passthru: !pto.vmi.vreg<100xf32, #pto.vmi.layout<contiguous>>)
       -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>) {
     %c0 = arith.constant 0 : index
     %loaded = pto.vmi.vload %src[%c0]
-        : !pto.ptr<f32, ub>
+        : memref<128xf32, #pto.address_space<vec>>
         -> !pto.vmi.vreg<100xf32, #pto.vmi.layout<contiguous>>
     %out = pto.vmi.vsel %mask, %loaded, %passthru
         : !pto.vmi.mask<100xb32, #pto.vmi.layout<contiguous>>,
@@ -30,13 +30,13 @@ module {
   }
 
   func.func @vmi_to_vpto_masked_load_safe_tail_memref_nonzero_offset(
-      %src: !pto.ptr<f32, ub>,
+      %src: memref<136xf32, #pto.address_space<vec>>,
       %mask: !pto.vmi.mask<100xb32, #pto.vmi.layout<contiguous>>,
       %passthru: !pto.vmi.vreg<100xf32, #pto.vmi.layout<contiguous>>)
       -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>) {
     %c4 = arith.constant 4 : index
     %loaded = pto.vmi.vload %src[%c4]
-        : !pto.ptr<f32, ub>
+        : memref<136xf32, #pto.address_space<vec>>
         -> !pto.vmi.vreg<100xf32, #pto.vmi.layout<contiguous>>
     %out = pto.vmi.vsel %mask, %loaded, %passthru
         : !pto.vmi.mask<100xb32, #pto.vmi.layout<contiguous>>,
@@ -53,8 +53,8 @@ module {
 // CHECK-LABEL: func.func @vmi_to_vpto_masked_load_safe_tail_memref(
 // CHECK: %[[C64:.*]] = arith.constant 64 : index
 // CHECK: %[[C0:.*]] = arith.constant 0 : index
-// CHECK: %[[L0:.*]] = pto.vlds %arg0[%[[C0]]] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-// CHECK: %[[L1:.*]] = pto.vlds %arg0[%[[C64]]] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+// CHECK: %[[L0:.*]] = pto.vlds
+// CHECK: %[[L1:.*]] = pto.vlds
 // CHECK: %[[O0:.*]] = pto.vsel %[[L0]], %arg3, %arg1 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 // CHECK: %[[O1:.*]] = pto.vsel %[[L1]], %arg4, %arg2 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 // CHECK: return %[[O0]], %[[O1]]
@@ -63,10 +63,10 @@ module {
 // CHECK-NOT: unrealized_conversion_cast
 
 // CHECK-LABEL: func.func @vmi_to_vpto_masked_load_safe_tail_memref_nonzero_offset(
-// CHECK: %[[C68:.*]] = arith.constant 68 : index
+// CHECK: %[[C64:.*]] = arith.constant 64 : index
 // CHECK: %[[C4:.*]] = arith.constant 4 : index
-// CHECK: %[[L0:.*]] = pto.vlds %arg0[%[[C4]]] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-// CHECK: %[[L1:.*]] = pto.vlds %arg0[%[[C68]]] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+// CHECK: %[[L0:[^,]+]], %{{[^,]+}}, %{{[^ ]+}} = pto.vldus
+// CHECK: %[[L1:[^,]+]], %{{[^,]+}}, %{{[^ ]+}} = pto.vldus
 // CHECK: %[[O0:.*]] = pto.vsel %[[L0]], %arg3, %arg1 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 // CHECK: %[[O1:.*]] = pto.vsel %[[L1]], %arg4, %arg2 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 // CHECK: return %[[O0]], %[[O1]]

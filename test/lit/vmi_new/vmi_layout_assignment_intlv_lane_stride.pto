@@ -15,11 +15,13 @@ module {
   func.func @f16_ls2(
       %src0: !pto.ptr<f16, ub>, %src1: !pto.ptr<f16, ub>,
       %dst0: !pto.ptr<f16, ub>, %dst1: !pto.ptr<f16, ub>, %off: index) {
+    %c16 = arith.constant 16 : index
     %c64 = arith.constant 64 : index
+    %aligned_off = arith.muli %off, %c16 : index
     %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
-    %a = pto.vmi.vload %src0[%off] {dist_mode = "continuous"}
+    %a = pto.vmi.vload %src0[%aligned_off] {dist_mode = "continuous"}
         : !pto.ptr<f16, ub> -> !pto.vmi.vreg<64xf16>
-    %b = pto.vmi.vload %src1[%off] {dist_mode = "continuous"}
+    %b = pto.vmi.vload %src1[%aligned_off] {dist_mode = "continuous"}
         : !pto.ptr<f16, ub> -> !pto.vmi.vreg<64xf16>
     %even, %odd = pto.vmi.vdintlv %a, %b, %mask
         : !pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16>,
@@ -29,9 +31,9 @@ module {
         : !pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16>,
           !pto.vmi.mask<64xpred>
         -> !pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16>
-    pto.vmi.vstore %lo, %dst0[%off] {dist_mode = "continuous"}
+    pto.vmi.vstore %lo, %dst0[%aligned_off] {dist_mode = "continuous"}
         : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>
-    pto.vmi.vstore %hi, %dst1[%off] {dist_mode = "continuous"}
+    pto.vmi.vstore %hi, %dst1[%aligned_off] {dist_mode = "continuous"}
         : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>
     return
   }
@@ -40,11 +42,13 @@ module {
       %src0: !pto.ptr<f8E4M3FN, ub>, %src1: !pto.ptr<f8E4M3FN, ub>,
       %dst0: !pto.ptr<f8E4M3FN, ub>, %dst1: !pto.ptr<f8E4M3FN, ub>,
       %off: index) {
+    %c32 = arith.constant 32 : index
     %c128 = arith.constant 128 : index
+    %aligned_off = arith.muli %off, %c32 : index
     %mask = pto.vmi.create_mask %c128 : index -> !pto.vmi.mask<128xpred>
-    %a = pto.vmi.vload %src0[%off] {dist_mode = "continuous"}
+    %a = pto.vmi.vload %src0[%aligned_off] {dist_mode = "continuous"}
         : !pto.ptr<f8E4M3FN, ub> -> !pto.vmi.vreg<128xf8E4M3FN>
-    %b = pto.vmi.vload %src1[%off] {dist_mode = "continuous"}
+    %b = pto.vmi.vload %src1[%aligned_off] {dist_mode = "continuous"}
         : !pto.ptr<f8E4M3FN, ub> -> !pto.vmi.vreg<128xf8E4M3FN>
     %even, %odd = pto.vmi.vdintlv %a, %b, %mask
         : !pto.vmi.vreg<128xf8E4M3FN>, !pto.vmi.vreg<128xf8E4M3FN>,
@@ -54,9 +58,9 @@ module {
         : !pto.vmi.vreg<128xf8E4M3FN>, !pto.vmi.vreg<128xf8E4M3FN>,
           !pto.vmi.mask<128xpred>
         -> !pto.vmi.vreg<128xf8E4M3FN>, !pto.vmi.vreg<128xf8E4M3FN>
-    pto.vmi.vstore %lo, %dst0[%off] {dist_mode = "continuous"}
+    pto.vmi.vstore %lo, %dst0[%aligned_off] {dist_mode = "continuous"}
         : !pto.vmi.vreg<128xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>
-    pto.vmi.vstore %hi, %dst1[%off] {dist_mode = "continuous"}
+    pto.vmi.vstore %hi, %dst1[%aligned_off] {dist_mode = "continuous"}
         : !pto.vmi.vreg<128xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>
     return
   }
@@ -64,11 +68,13 @@ module {
   func.func @ui8_ls4(
       %src0: !pto.ptr<ui8, ub>, %src1: !pto.ptr<ui8, ub>,
       %dst0: !pto.ptr<ui8, ub>, %dst1: !pto.ptr<ui8, ub>, %off: index) {
+    %c32 = arith.constant 32 : index
     %c64 = arith.constant 64 : index
+    %aligned_off = arith.muli %off, %c32 : index
     %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
-    %a = pto.vmi.vload %src0[%off] {dist_mode = "continuous"}
+    %a = pto.vmi.vload %src0[%aligned_off] {dist_mode = "continuous"}
         : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<64xui8>
-    %b = pto.vmi.vload %src1[%off] {dist_mode = "continuous"}
+    %b = pto.vmi.vload %src1[%aligned_off] {dist_mode = "continuous"}
         : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<64xui8>
     %even, %odd = pto.vmi.vdintlv %a, %b, %mask
         : !pto.vmi.vreg<64xui8>, !pto.vmi.vreg<64xui8>,
@@ -78,9 +84,9 @@ module {
         : !pto.vmi.vreg<64xui8>, !pto.vmi.vreg<64xui8>,
           !pto.vmi.mask<64xpred>
         -> !pto.vmi.vreg<64xui8>, !pto.vmi.vreg<64xui8>
-    pto.vmi.vstore %lo, %dst0[%off] {dist_mode = "continuous"}
+    pto.vmi.vstore %lo, %dst0[%aligned_off] {dist_mode = "continuous"}
         : !pto.vmi.vreg<64xui8>, !pto.ptr<ui8, ub>
-    pto.vmi.vstore %hi, %dst1[%off] {dist_mode = "continuous"}
+    pto.vmi.vstore %hi, %dst1[%aligned_off] {dist_mode = "continuous"}
         : !pto.vmi.vreg<64xui8>, !pto.ptr<ui8, ub>
     return
   }

@@ -16,11 +16,13 @@ module {
       %out8: !pto.ptr<f8E4M3FN, ub>,
       %off: index) {
     %c8 = arith.constant 8 : index
+    %c32 = arith.constant 32 : index
     %c256 = arith.constant 256 : index
     %eps = arith.constant 1.000000e-04 : f32
     %fp8_max = arith.constant 4.480000e+02 : f32
     %mask = pto.vmi.create_mask %c256 : index -> !pto.vmi.mask<256xpred>
-    %x = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<256xf32>
+    %aligned_off = arith.muli %off, %c32 : index
+    %x = pto.vmi.vload %src[%aligned_off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<256xf32>
     %abs = pto.vmi.vabs %x : !pto.vmi.vreg<256xf32> -> !pto.vmi.vreg<256xf32>
     %amax_raw = pto.vmi.vcmax %abs, %mask {group = 2}
         : !pto.vmi.vreg<256xf32>, !pto.vmi.mask<256xpred>
@@ -33,7 +35,7 @@ module {
     %scale = pto.vmi.vdiv %amax, %fp8_max2
         : !pto.vmi.vreg<2xf32>, !pto.vmi.vreg<2xf32>
         -> !pto.vmi.vreg<2xf32>
-    pto.vmi.vstore %scale, %scale_out[%off], %c8 {group = 2}
+    pto.vmi.vstore %scale, %scale_out[%aligned_off], %c8 {group = 2}
         : !pto.vmi.vreg<2xf32>, !pto.ptr<f32, ub>
     %scale_vec = pto.vmi.vbrc %scale {group = 2}
         : !pto.vmi.vreg<2xf32> -> !pto.vmi.vreg<256xf32>
@@ -42,7 +44,7 @@ module {
         -> !pto.vmi.vreg<256xf32>
     %q8 = pto.vmi.vcvt %q {saturate = "SAT"}
         : !pto.vmi.vreg<256xf32> -> !pto.vmi.vreg<256xf8E4M3FN>
-    pto.vmi.vstore %q8, %out8[%off]
+    pto.vmi.vstore %q8, %out8[%aligned_off]
         : !pto.vmi.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>
     return
   }

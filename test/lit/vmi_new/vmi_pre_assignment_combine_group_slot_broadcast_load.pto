@@ -13,7 +13,9 @@ module {
   func.func @not_e2b_num_groups_16(%src: !pto.ptr<f16, ub>, %off: index)
       -> !pto.vmi.vreg<256xf16> {
     %c1 = arith.constant 1 : index
-    %slots = pto.vmi.group_slot_load %src[%off], %c1 {num_groups = 16}
+    %c32 = arith.constant 32 : index
+    %aligned_off = arith.muli %off, %c32 : index
+    %slots = pto.vmi.group_slot_load %src[%aligned_off], %c1 {num_groups = 16}
         : !pto.ptr<f16, ub> -> !pto.vmi.vreg<16xf16>
     %out = pto.vmi.vbrc %slots {group = 16}
         : !pto.vmi.vreg<16xf16> -> !pto.vmi.vreg<256xf16>
@@ -23,7 +25,9 @@ module {
   func.func @e2b_deint4_candidate(%src: !pto.ptr<f32, ub>, %off: index)
       -> !pto.vmi.vreg<256xf32> {
     %c1 = arith.constant 1 : index
-    %slots = pto.vmi.group_slot_load %src[%off], %c1 {num_groups = 8}
+    %c8 = arith.constant 8 : index
+    %aligned_off = arith.muli %off, %c8 : index
+    %slots = pto.vmi.group_slot_load %src[%aligned_off], %c1 {num_groups = 8}
         : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
     %out = pto.vmi.vbrc %slots {group = 8}
         : !pto.vmi.vreg<8xf32> -> !pto.vmi.vreg<256xf32>
@@ -34,7 +38,9 @@ module {
                                      %x: !pto.vmi.vreg<256xf16>, %off: index)
       -> !pto.vmi.vreg<256xf32> {
     %c1 = arith.constant 1 : index
-    %slots = pto.vmi.group_slot_load %scale[%off], %c1 {num_groups = 8}
+    %c8 = arith.constant 8 : index
+    %aligned_off = arith.muli %off, %c8 : index
+    %slots = pto.vmi.group_slot_load %scale[%aligned_off], %c1 {num_groups = 8}
         : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
     %sf = pto.vmi.vbrc %slots {group = 8}
         : !pto.vmi.vreg<8xf32> -> !pto.vmi.vreg<256xf32>

@@ -56,7 +56,9 @@ module {
 // LOWER-NOT: pto.vsel {{.*}}
 // LOWER-NOT: pto.vdup
 // LOWER-COUNT-4: pto.vmul
-// LOWER: pto.vsts {{.*}}, %arg8[%arg9], {{.*}} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+// LOWER: pto.init_align
+// LOWER: pto.vstus
+// LOWER: pto.vstas
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.
 // LOWER-NOT: unrealized_conversion_cast

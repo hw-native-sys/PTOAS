@@ -45,8 +45,10 @@ module {
 // LOWER: %[[SLO:.*]] = pto.vcgadd %[[LO]], %[[MLO]]
 // LOWER: %[[SHI:.*]] = pto.vcgadd %[[HI]], %[[MHI]]
 // LOWER: %[[SUM:.*]] = pto.vadd %[[SLO]], %[[SHI]], %[[VL8]]
-// LOWER: %[[STORE_MASK:.*]] = pto.pset_b32 "PAT_VL8" : !pto.mask<b32>
-// LOWER: pto.vsts %[[SUM]], %arg4[%arg5], %[[STORE_MASK]]
+// LOWER: %[[BASE:.*]] = pto.addptr %arg4, %arg5
+// LOWER: %[[ALIGN:.*]] = pto.init_align
+// LOWER: %[[NEXT_ALIGN:.*]], %[[NEXT_BASE:.*]] = pto.vstus %[[ALIGN]], %{{.*}}, %[[SUM]], %[[BASE]]
+// LOWER: pto.vstas %[[NEXT_ALIGN]], %[[NEXT_BASE]], %{{.*}}
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.
 // LOWER-NOT: unrealized_conversion_cast

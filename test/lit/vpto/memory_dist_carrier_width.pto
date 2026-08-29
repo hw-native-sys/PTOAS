@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -split-input-file | FileCheck %s
+
+// Explicit dist tokens describe the physical access width independently of
+// the vreg carrier element type. The carrier still preserves one 256-byte
+// register payload.
+
+module {
+  func.func @load_dist_cross_width_carrier(%src: !pto.ptr<f32, ub>) {
+    %c0 = arith.constant 0 : index
+    %value = pto.vlds %src[%c0] {dist = "E2B_B16"}
+        : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @load_dist_cross_width_carrier
+// CHECK: pto.vlds {{.*}} {dist = "E2B_B16"}
+
+// -----
+
+module {
+  func.func @load_x2_dist_cross_width_carrier(%src: !pto.ptr<f16, ub>) {
+    %c0 = arith.constant 0 : index
+    %low, %high = pto.vldsx2 %src[%c0], "DINTLV_B32"
+        : !pto.ptr<f16, ub>, index
+        -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @load_x2_dist_cross_width_carrier
+// CHECK: pto.vldsx2 {{.*}}, "DINTLV_B32"

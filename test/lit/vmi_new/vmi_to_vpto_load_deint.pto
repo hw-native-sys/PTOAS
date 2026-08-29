@@ -11,7 +11,9 @@
 module {
   func.func @vmi_to_vpto_load_deint2(%src: !pto.ptr<f32, ub>, %offset: index)
       -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>) {
-    %lo, %hi = pto.vmi.vload %src[%offset] {dist_mode = "dintlv"}
+    %c8 = arith.constant 8 : index
+    %aligned_offset = arith.muli %offset, %c8 : index
+    %lo, %hi = pto.vmi.vload %src[%aligned_offset] {dist_mode = "dintlv"}
         : !pto.ptr<f32, ub>
         -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
     %p0 = "pto.vmi.unpack"(%lo)
@@ -23,7 +25,9 @@ module {
 
   func.func @vmi_to_vpto_load_deint4(%src: !pto.ptr<f32, ub>, %offset: index)
       -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>) {
-    %lo, %hi = pto.vmi.vload %src[%offset] {dist_mode = "dintlv"}
+    %c8 = arith.constant 8 : index
+    %aligned_offset = arith.muli %offset, %c8 : index
+    %lo, %hi = pto.vmi.vload %src[%aligned_offset] {dist_mode = "dintlv"}
         : !pto.ptr<f32, ub>
         -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
     %p0, %p1 = "pto.vmi.unpack"(%lo)
@@ -38,14 +42,14 @@ module {
 }
 
 // CHECK-LABEL: func.func @vmi_to_vpto_load_deint2(
-// CHECK: %[[P0:.*]], %[[P1:.*]] = pto.vldsx2 %arg0[%arg1], "DINTLV_B32"
+// CHECK: %[[P0:.*]], %[[P1:.*]] = pto.vldsx2 %arg0[{{.*}}], "DINTLV_B32"
 // CHECK: return %[[P0]], %[[P1]]
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast
 
 // CHECK-LABEL: func.func @vmi_to_vpto_load_deint4(
-// CHECK: %[[P0:.*]], %[[P2:.*]] = pto.vldsx2 %arg0[%arg1], "DINTLV_B32"
+// CHECK: %[[P0:.*]], %[[P2:.*]] = pto.vldsx2 %arg0[{{.*}}], "DINTLV_B32"
 // CHECK: %[[P1:.*]], %[[P3:.*]] = pto.vldsx2 %arg0[{{.*}}], "DINTLV_B32"
 // CHECK: return %[[P0]], %[[P1]], %[[P2]], %[[P3]]
 // CHECK-NOT: pto.vmi.

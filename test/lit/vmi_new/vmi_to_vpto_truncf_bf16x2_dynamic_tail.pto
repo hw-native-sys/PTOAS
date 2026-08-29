@@ -20,6 +20,8 @@ module {
       %dst: !pto.ptr<!pto.f4E1M2x2, ub>,
       %off: index,
       %active: index) {
+    %c32 = arith.constant 32 : index
+    %aligned_off = arith.muli %off, %c32 : index
     %mask = pto.vmi.create_mask %active
         : index -> !pto.vmi.mask<128xpred>
     %pair = pto.vmi.vinterpret_cast %src
@@ -27,7 +29,7 @@ module {
     %packed = pto.vmi.vcvt %pair {rounding = "R"}
         : !pto.vmi.vreg<128x!pto.bf16x2>
        -> !pto.vmi.vreg<128x!pto.f4E1M2x2>
-    pto.vmi.vstore %packed, %dst[%off], %mask
+    pto.vmi.vstore %packed, %dst[%aligned_off], %mask
         : !pto.vmi.vreg<128x!pto.f4E1M2x2>,
           !pto.ptr<!pto.f4E1M2x2, ub>,
           !pto.vmi.mask<128xpred>
@@ -54,6 +56,8 @@ module {
 // LOWER-SAME: %[[DST:[^,]+]]: !pto.ptr<!pto.f4E1M2x2, ub>
 // LOWER-SAME: %[[OFF:[^,]+]]: index
 // LOWER-SAME: %[[ACTIVE:[^)]+]]: index)
+// LOWER: %[[C32:.*]] = arith.constant 32 : index
+// LOWER: %[[ALIGNED_OFF:.*]] = arith.muli %[[OFF]], %[[C32]] : index
 // LOWER: %[[SRC0_PAIR:.*]] = pto.vbitcast %[[SRC0]] : !pto.vreg<128xbf16> -> !pto.vreg<64x!pto.bf16x2>
 // LOWER: %[[SRC1_PAIR:.*]] = pto.vbitcast %[[SRC1]] : !pto.vreg<128xbf16> -> !pto.vreg<64x!pto.bf16x2>
 // LOWER-DAG: %[[VCVT_MASK:.*]] = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
@@ -66,6 +70,6 @@ module {
 // LOWER: %[[STORE_CLAMPED:.*]] = arith.minui %[[STORE_NONNEG]], {{.*}} : i32
 // LOWER: %[[STORE_M0:.*]], %[[STORE_REM:.*]] = pto.plt_b32 %[[STORE_CLAMPED]] : i32 -> !pto.mask<b32>, i32
 // LOWER: %[[STORE_M1:.*]], %{{.*}} = pto.plt_b32 %[[STORE_REM]] : i32 -> !pto.mask<b32>, i32
-// LOWER: pto.vsts %[[R0]], %[[DST]][%[[OFF]]], %[[STORE_M0]] {dist = "PK4_B32"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b32>
-// LOWER: %[[OFF64:.*]] = arith.addi %[[OFF]], %{{.*}} : index
+// LOWER: pto.vsts %[[R0]], %[[DST]][%[[ALIGNED_OFF]]], %[[STORE_M0]] {dist = "PK4_B32"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b32>
+// LOWER: %[[OFF64:.*]] = arith.addi %[[ALIGNED_OFF]], %{{.*}} : index
 // LOWER: pto.vsts %[[R1]], %[[DST]][%[[OFF64]]], %[[STORE_M1]] {dist = "PK4_B32"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b32>

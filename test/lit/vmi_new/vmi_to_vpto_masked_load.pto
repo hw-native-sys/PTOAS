@@ -10,13 +10,14 @@
 
 module {
   func.func @vmi_to_vpto_masked_load(
-      %src: !pto.ptr<f32, ub>,
+      %src: memref<72xf32, #pto.address_space<vec>>,
       %offset: index,
       %mask: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>,
       %passthru: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>)
       -> !pto.vreg<64xf32> {
-    %loaded = pto.vmi.vload %src[%offset]
-        : !pto.ptr<f32, ub>
+    %c4 = arith.constant 4 : index
+    %loaded = pto.vmi.vload %src[%c4]
+        : memref<72xf32, #pto.address_space<vec>>
         -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
     %out = pto.vmi.vsel %mask, %loaded, %passthru
         : !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>,
@@ -31,7 +32,7 @@ module {
 }
 
 // CHECK-LABEL: func.func @vmi_to_vpto_masked_load(
-// CHECK: %[[LOAD:.*]] = pto.vlds %arg0[%arg1] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+// CHECK: %[[LOAD:[^,]+]], %{{[^,]+}}, %{{[^ ]+}} = pto.vldus
 // CHECK: %[[OUT:.*]] = pto.vsel %[[LOAD]], %arg3, %arg2 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 // CHECK: return %[[OUT]]
 // CHECK-NOT: pto.vmi.

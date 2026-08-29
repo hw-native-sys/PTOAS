@@ -16,7 +16,9 @@ module {
       %acc: !pto.vmi.vreg<256xui16>,
       %full_mask: !pto.vmi.mask<256xpred>,
       %limit: ui32) -> !pto.vmi.vreg<256xui16> {
-    %low, %high = pto.vmi.vload %src[%offset] {dist_mode = "dintlv"}
+    %c8 = arith.constant 8 : index
+    %aligned_offset = arith.muli %offset, %c8 : index
+    %low, %high = pto.vmi.vload %src[%aligned_offset] {dist_mode = "dintlv"}
         : !pto.ptr<ui32, ub>
         -> !pto.vmi.vreg<256xui32>, !pto.vmi.vreg<256xui32>
     %valid = pto.vmi.vcmps %low, %limit, %full_mask {cmp = "lt"}
@@ -33,7 +35,9 @@ module {
   func.func @vmi_deinterleave_load_high_cast(
       %src: !pto.ptr<ui32, ub>,
       %offset: index) -> !pto.vmi.vreg<256xui8> {
-    %low, %high = pto.vmi.vload %src[%offset] {dist_mode = "dintlv"}
+    %c8 = arith.constant 8 : index
+    %aligned_offset = arith.muli %offset, %c8 : index
+    %low, %high = pto.vmi.vload %src[%aligned_offset] {dist_mode = "dintlv"}
         : !pto.ptr<ui32, ub>
         -> !pto.vmi.vreg<256xui32>, !pto.vmi.vreg<256xui32>
     %result = pto.vmi.vcvt %high {saturate = "SAT"}

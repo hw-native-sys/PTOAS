@@ -1250,6 +1250,18 @@ def VMIToVPTO : Pass<"vmi-to-vpto", "ModuleOp"> {
                            "mlir::scf::SCFDialect"];
 }
 
+def VPTOStatefulStreamFusion : Pass<"vpto-stateful-stream-fusion", "ModuleOp"> {
+  let summary = "Fuse compatible VPTO stateful load and store streams";
+  let description = [{
+    Fuses adjacent VPTO streams that thread alignment state through SSA. Load
+    streams use vldas/vldus and store streams use init_align/vstus with a
+    matching flush. Fusion requires provably contiguous addresses and does not
+    cross observable memory effects or control flow.
+  }];
+  let constructor = "mlir::pto::createVPTOStatefulStreamFusionPass()";
+  let dependentDialects = ["mlir::pto::PTODialect"];
+}
+
 def PTOExpandSoftLib : Pass<"pto-expand-soft-lib", "ModuleOp"> {
   let summary = "Expand VPTO operations that lack native target support";
   let description = [{

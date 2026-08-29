@@ -124,19 +124,25 @@ module {
 // LOWER-LABEL: func.func @compact_2(
 // LOWER: pto.pset_b32 "PAT_VL2"
 // LOWER: pto.vsldb
-// LOWER: pto.vsts
+// LOWER: pto.init_align
+// LOWER: pto.vstus
+// LOWER: pto.vstas
 // LOWER-NOT: pto.vmi.
 
 // LOWER-LABEL: func.func @compact_4(
 // LOWER: pto.pset_b32 "PAT_VL4"
 // LOWER: pto.vsldb
-// LOWER: pto.vsts
+// LOWER: pto.init_align
+// LOWER: pto.vstus
+// LOWER: pto.vstas
 // LOWER-NOT: pto.vmi.
 
 // LOWER-LABEL: func.func @compact_8(
 // LOWER: pto.pset_b32 "PAT_VL8"
 // LOWER: pto.vsldb
-// LOWER: pto.vsts
+// LOWER: pto.init_align
+// LOWER: pto.vstus
+// LOWER: pto.vstas
 // LOWER-NOT: pto.vmi.
 
 // LOWER-LABEL: func.func @compact_reduce_through_elementwise(

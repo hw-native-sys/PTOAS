@@ -15,11 +15,13 @@ module {
       %rhs: !pto.vmi.vreg<64xf32>,
       %dst: !pto.ptr<bf16, ub>,
       %offset: index) {
+    %c16 = arith.constant 16 : index
+    %aligned_offset = arith.muli %offset, %c16 : index
     %mask = pto.vmi.cmpf "olt", %lhs, %rhs
         : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32> -> !pto.vmi.mask<64xpred>
     %value = pto.vmi.truncf %lhs {saturate = "SAT"}
         : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
-    pto.vmi.masked_store %value, %dst[%offset], %mask
+    pto.vmi.masked_store %value, %dst[%aligned_offset], %mask
         : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, !pto.vmi.mask<64xpred>
     return
   }

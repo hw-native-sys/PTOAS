@@ -21,10 +21,11 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
   func.func @per_block_bf16_group8_quant_vmi_opt(
       %src: !pto.ptr<bf16, ub>,
       %dst: !pto.ptr<f8E4M3FN, ub>,
-      %off: index) attributes {pto.kernel} {
+      %tile: index) attributes {pto.kernel} {
     %c128 = arith.constant 128 : index
     %c256 = arith.constant 256 : index
     %cst = arith.constant 0.000000e+00 : bf16
+    %off = arith.muli %tile, %c128 : index
     %off128 = arith.addi %off, %c128 : index
     %mask = pto.vmi.create_mask %c256
         : index -> !pto.vmi.mask<256xpred>

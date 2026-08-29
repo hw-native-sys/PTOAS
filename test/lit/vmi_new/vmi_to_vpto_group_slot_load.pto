@@ -155,8 +155,9 @@ module {
 // CHECK: %[[LOAD_MASK:.*]] = pto.pset_b32 "PAT_VL8" : !pto.mask<b32>
 // CHECK: %[[BASE:.*]] = pto.addptr %arg0, %arg2 : <f32, ub> -> <f32, ub>
 // CHECK: %[[OUT:.*]] = pto.vsldb %[[BASE]], {{.*}}, {{.*}}, %[[LOAD_MASK]]
-// CHECK: %[[STORE_MASK:.*]] = pto.pset_b32 "PAT_VL8" : !pto.mask<b32>
-// CHECK: pto.vsts %[[OUT]], %arg1[%arg2], %[[STORE_MASK]] : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+// CHECK: pto.init_align
+// CHECK: pto.vstus
+// CHECK: pto.vstas
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast
@@ -171,7 +172,7 @@ module {
 // CHECK: pto.vcvt {{.*}} {part = "P0"} : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<64xui32>
 // CHECK: pto.vshl
 // CHECK: pto.vselr
-// CHECK: pto.vsts {{.*}} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+// CHECK: pto.vstus
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast
@@ -183,7 +184,7 @@ module {
 // CHECK: pto.vbitcast %[[U32]] : !pto.vreg<64xui32> -> !pto.vreg<128xui16>
 // CHECK: pto.pset_b16 "PAT_VL16" : !pto.mask<b16>
 // CHECK: pto.vcvt {{.*}} {part = "EVEN"} : !pto.vreg<128xui16>, !pto.mask<b16> -> !pto.vreg<64xui32>
-// CHECK: pto.vsts {{.*}} : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, !pto.mask<b32>
+// CHECK: pto.vstus
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast
@@ -192,7 +193,10 @@ module {
 // CHECK: %[[LOAD:.*]] = pto.vsldb {{.*}} : !pto.ptr<ui8, ub>, i16, i16, !pto.mask<b8> -> !pto.vreg<256xui8>
 // CHECK: %[[UNPACK:.*]] = pto.vzunpack %[[LOAD]]
 // CHECK: %[[WIDE:.*]] = pto.vcvt {{.*}} {part = "EVEN"} : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<128xui16>
-// CHECK: pto.vsts {{.*}} {dist = "1PT_B32"}
+// CHECK: pto.init_align
+// CHECK: pto.vstus {{.*}}, %[[WIDE]],
+// CHECK: pto.vstas
+// CHECK-NOT: dist = "1PT_B32"
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 

@@ -27,13 +27,15 @@ module {
   func.func @caller(%base: !pto.ptr<f32, ub>,
                     %out: !pto.ptr<f32, ub>,
                     %off: index) {
+    %c8 = arith.constant 8 : index
     %c32 = arith.constant 32 : index
-    %x = pto.vmi.vload %base[%off]
+    %aligned_off = arith.muli %off, %c8 : index
+    %x = pto.vmi.vload %base[%aligned_off]
         : !pto.ptr<f32, ub> -> !pto.vmi.vreg<256xf32>
     %mask = pto.vmi.create_group_mask %c32
         {num_groups = 8, group_size = 32}
         : index -> !pto.vmi.mask<256xpred>
-    call @consume(%x, %mask, %out, %off)
+    call @consume(%x, %mask, %out, %aligned_off)
         : (!pto.vmi.vreg<256xf32>, !pto.vmi.mask<256xpred>,
            !pto.ptr<f32, ub>, index) -> ()
     return
@@ -65,7 +67,9 @@ module {
 // LOWER: pto.vdintlv
 // LOWER: pto.pdintlv_b32
 // LOWER-COUNT-4: pto.vcgadd
-// LOWER: pto.vsts
+// LOWER: pto.init_align
+// LOWER: pto.vstus
+// LOWER: pto.vstas
 // LOWER-LABEL: func.func @caller(
 // LOWER: call @consume(
 // LOWER-NOT: pto.vmi.

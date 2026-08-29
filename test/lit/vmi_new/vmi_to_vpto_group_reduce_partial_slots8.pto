@@ -12,14 +12,18 @@ module {
   func.func @vmi_to_vpto_group_reduce_f16_s64_g4(
       %source: !pto.vmi.vreg<256xf16, #pto.vmi.layout<deinterleaved = 4>>,
       %mask: !pto.vmi.mask<256xb16, #pto.vmi.layout<deinterleaved = 4>>,
-      %dst: !pto.ptr<f16, ub>, %off: index) {
+      %off: index) {
+    %c102400_i64 = arith.constant 102400 : i64
+    %dst = pto.castptr %c102400_i64 : i64 -> !pto.ptr<f16, ub>
+    %c16 = arith.constant 16 : index
+    %aligned_off = arith.muli %off, %c16 : index
     %c1 = arith.constant 1 : index
     %out = pto.vmi.vcadd %source, %mask
         {group = 4, reassoc}
         : !pto.vmi.vreg<256xf16, #pto.vmi.layout<deinterleaved = 4>>,
           !pto.vmi.mask<256xb16, #pto.vmi.layout<deinterleaved = 4>>
         -> !pto.vmi.vreg<4xf16, #pto.vmi.layout<num_groups = 4, slots = 8>>
-    pto.vmi.vstore %out, %dst[%off], %c1 {group = 4}
+    pto.vmi.vstore %out, %dst[%aligned_off], %c1 {group = 4}
         : !pto.vmi.vreg<4xf16, #pto.vmi.layout<num_groups = 4, slots = 8>>,
           !pto.ptr<f16, ub>
     return
@@ -28,14 +32,18 @@ module {
   func.func @vmi_to_vpto_group_reduce_f16_s64_g8(
       %source: !pto.vmi.vreg<512xf16, #pto.vmi.layout<deinterleaved = 4>>,
       %mask: !pto.vmi.mask<512xb16, #pto.vmi.layout<deinterleaved = 4>>,
-      %dst: !pto.ptr<f16, ub>, %off: index) {
+      %off: index) {
+    %c102400_i64 = arith.constant 102400 : i64
+    %dst = pto.castptr %c102400_i64 : i64 -> !pto.ptr<f16, ub>
+    %c16 = arith.constant 16 : index
+    %aligned_off = arith.muli %off, %c16 : index
     %c1 = arith.constant 1 : index
     %out = pto.vmi.vcadd %source, %mask
         {group = 8, reassoc}
         : !pto.vmi.vreg<512xf16, #pto.vmi.layout<deinterleaved = 4>>,
           !pto.vmi.mask<512xb16, #pto.vmi.layout<deinterleaved = 4>>
         -> !pto.vmi.vreg<8xf16, #pto.vmi.layout<num_groups = 8, slots = 8>>
-    pto.vmi.vstore %out, %dst[%off], %c1 {group = 8}
+    pto.vmi.vstore %out, %dst[%aligned_off], %c1 {group = 8}
         : !pto.vmi.vreg<8xf16, #pto.vmi.layout<num_groups = 8, slots = 8>>,
           !pto.ptr<f16, ub>
     return
@@ -44,14 +52,18 @@ module {
   func.func @vmi_to_vpto_group_reduce_f16_s64_g12(
       %source: !pto.vmi.vreg<768xf16, #pto.vmi.layout<deinterleaved = 4>>,
       %mask: !pto.vmi.mask<768xb16, #pto.vmi.layout<deinterleaved = 4>>,
-      %dst: !pto.ptr<f16, ub>, %off: index) {
+      %off: index) {
+    %c102400_i64 = arith.constant 102400 : i64
+    %dst = pto.castptr %c102400_i64 : i64 -> !pto.ptr<f16, ub>
+    %c16 = arith.constant 16 : index
+    %aligned_off = arith.muli %off, %c16 : index
     %c1 = arith.constant 1 : index
     %out = pto.vmi.vcadd %source, %mask
         {group = 12, reassoc}
         : !pto.vmi.vreg<768xf16, #pto.vmi.layout<deinterleaved = 4>>,
           !pto.vmi.mask<768xb16, #pto.vmi.layout<deinterleaved = 4>>
         -> !pto.vmi.vreg<12xf16, #pto.vmi.layout<num_groups = 12, slots = 8>>
-    pto.vmi.vstore %out, %dst[%off], %c1 {group = 12}
+    pto.vmi.vstore %out, %dst[%aligned_off], %c1 {group = 12}
         : !pto.vmi.vreg<12xf16, #pto.vmi.layout<num_groups = 12, slots = 8>>,
           !pto.ptr<f16, ub>
     return
@@ -62,8 +74,9 @@ module {
 // CHECK-DAG: %[[SLOT4:.*]] = pto.pset_b16 "PAT_VL4" : !pto.mask<b16>
 // CHECK-COUNT-4: pto.vcgadd
 // CHECK-COUNT-3: pto.vadd {{.*}}, {{.*}}, %[[SLOT4]]
-// CHECK: %[[WORDS4:.*]] = pto.vbitcast {{.*}} : !pto.vreg<128xf16> -> !pto.vreg<64xui32>
-// CHECK-COUNT-2: pto.vsts {{.*}} {dist = "1PT_B32"}
+// CHECK: pto.vsts
+// CHECK-NOT: pto.vstus
+// CHECK-NOT: dist = "1PT_B32"
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast
@@ -72,8 +85,9 @@ module {
 // CHECK-DAG: %[[SLOT8:.*]] = pto.pset_b16 "PAT_VL8" : !pto.mask<b16>
 // CHECK-COUNT-4: pto.vcgadd
 // CHECK-COUNT-3: pto.vadd {{.*}}, {{.*}}, %[[SLOT8]]
-// CHECK: %[[WORDS8:.*]] = pto.vbitcast {{.*}} : !pto.vreg<128xf16> -> !pto.vreg<64xui32>
-// CHECK-COUNT-4: pto.vsts {{.*}} {dist = "1PT_B32"}
+// CHECK: pto.vsts
+// CHECK-NOT: pto.vstus
+// CHECK-NOT: dist = "1PT_B32"
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast
@@ -85,10 +99,10 @@ module {
 // CHECK: %[[SLOT4_12:.*]] = pto.pset_b16 "PAT_VL4" : !pto.mask<b16>
 // CHECK-COUNT-4: pto.vcgadd
 // CHECK-COUNT-3: pto.vadd {{.*}}, {{.*}}, %[[SLOT4_12]]
-// CHECK: %[[STORE8_12:.*]] = pto.pset_b16 "PAT_VL8" : !pto.mask<b16>
-// CHECK: pto.vsts {{.*}}, {{.*}}, %[[STORE8_12]]
-// CHECK: %[[STORE4_12:.*]] = pto.pset_b16 "PAT_VL4" : !pto.mask<b16>
-// CHECK: pto.vsts {{.*}}, {{.*}}, %[[STORE4_12]]
+// CHECK: %[[ALIGN:.*]] = pto.init_align
+// CHECK: %[[NEXT_ALIGN:.*]], %[[NEXT_BASE:.*]] = pto.vstus %[[ALIGN]], %{{.*}}, {{.*}}, {{.*}}
+// CHECK: %[[FINAL_ALIGN:.*]], %[[FINAL_BASE:.*]] = pto.vstus %[[NEXT_ALIGN]], %{{.*}}, {{.*}}, %[[NEXT_BASE]]
+// CHECK: pto.vstas %[[FINAL_ALIGN]], %[[FINAL_BASE]], %{{.*}}
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast
