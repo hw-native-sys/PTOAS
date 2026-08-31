@@ -428,9 +428,15 @@ def _materialize_integer_literal(target_type, value):
     signless_type = _signless_integer_type(target_type)
     raw_value = _parse_integer_value(value, target_type=target_type)
     constant = arith.ConstantOp(signless_type, raw_value).result
-    if target_type == signless_type:
-        return constant
-    return _restore_integer_signedness(constant, target_type)
+    # Keep integer literals signless in the builtin arithmetic dialect.  A
+    # signed ``siN`` target is an authored PTODSL type, but MLIR integer
+    # constants are signless and arithmetic ops canonicalize their operands
+    # to that type.  Restoring signedness here creates a conversion cast which
+    # can be printed with the wrong source annotation (``siN to iN``), yielding
+    # invalid SSA and PTOAS parse failures.  Consumers that require an
+    # explicitly signed value can still call ``_restore_integer_signedness``
+    # at the operation boundary.
+    return constant
 
 
 def _parse_integer_value(value, *, target_type=None):
