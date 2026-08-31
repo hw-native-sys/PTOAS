@@ -654,7 +654,8 @@ struct LayoutSolver {
         .Case<VMIAddFOp, VMIAddIOp, VMISubFOp, VMISubIOp, VMIMulFOp,
               VMIMulIOp, VMIDivFOp, VMIMinFOp, VMIMinIOp, VMIMaxFOp,
               VMIMaxIOp, VMIAndIOp, VMIOrIOp, VMIXOrIOp, VMIShLIOp,
-              VMIShRUIOp, VMIShRSIOp, VMIVaddcOp, VMIVaddcsOp>(
+              VMIShRUIOp, VMIShRSIOp, VMIVaddcOp, VMIVsubcOp, VMIVaddcsOp,
+              VMIVsubcsOp>(
             [this, op](auto binaryOp) {
               return constraintResult(constrainElementwiseBinary(
                   binaryOp.getLhsMutable(), binaryOp.getRhsMutable(),

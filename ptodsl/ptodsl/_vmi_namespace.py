@@ -437,7 +437,7 @@ def _derive_vmull_result_types(a, b, *, context: str):
     return lhs_type, rhs_type
 
 
-def _derive_add_carry_result_types(lhs, rhs, mask, *, carry_in=None, context: str):
+def _derive_carry_result_types(lhs, rhs, mask, *, carry_in=None, context: str):
     lhs_type = _as_vmi_vreg_type(_type_of(lhs), context=context)
     rhs_type = _as_vmi_vreg_type(_type_of(rhs), context=context)
     if lhs_type != rhs_type:
@@ -854,7 +854,7 @@ class _VMINamespace:
         """Emit a 32-bit integer add with per-lane carry output."""
         context = "pto.vmi.vaddc(...)"
         mask_value = _required_mask(mask, context=context)
-        result_type, carry_type = _derive_add_carry_result_types(
+        result_type, carry_type = _derive_carry_result_types(
             lhs, rhs, mask_value, context=context
         )
         return _call_value(
@@ -869,11 +869,34 @@ class _VMINamespace:
         )
 
     @staticmethod
+    def vsubc(lhs, rhs, mask, *, loc=None, ip=None):
+        """Emit 32-bit subtraction with a per-lane not-borrow output.
+
+        A carry value of 1 means the lane completed without borrow; 0 means
+        that the lane borrowed.
+        """
+        context = "pto.vmi.vsubc(...)"
+        mask_value = _required_mask(mask, context=context)
+        result_type, carry_type = _derive_carry_result_types(
+            lhs, rhs, mask_value, context=context
+        )
+        return _call_value(
+            "vsubc",
+            result_type,
+            carry_type,
+            _raw(lhs),
+            _raw(rhs),
+            mask_value,
+            loc=loc,
+            ip=ip,
+        )
+
+    @staticmethod
     def vaddcs(lhs, rhs, carry_in, mask, *, loc=None, ip=None):
         """Emit a 32-bit integer add with carry input and carry output."""
         context = "pto.vmi.vaddcs(...)"
         mask_value = _required_mask(mask, context=context)
-        result_type, carry_type = _derive_add_carry_result_types(
+        result_type, carry_type = _derive_carry_result_types(
             lhs, rhs, mask_value, carry_in=carry_in, context=context
         )
         return _call_value(
@@ -889,6 +912,30 @@ class _VMINamespace:
         )
 
     vsub = staticmethod(lambda lhs, rhs, mask=None, **kw: _emit_binary("vsub", lhs, rhs, mask, **kw))
+
+    @staticmethod
+    def vsubcs(lhs, rhs, carry_in, mask, *, loc=None, ip=None):
+        """Emit 32-bit subtraction with per-lane not-borrow carry chaining.
+
+        Each lane computes ``lhs - rhs - (1 - carry_in)``. A carry-in or
+        carry-out value of 1 means no borrow; 0 means borrow.
+        """
+        context = "pto.vmi.vsubcs(...)"
+        mask_value = _required_mask(mask, context=context)
+        result_type, carry_type = _derive_carry_result_types(
+            lhs, rhs, mask_value, carry_in=carry_in, context=context
+        )
+        return _call_value(
+            "vsubcs",
+            result_type,
+            carry_type,
+            _raw(lhs),
+            _raw(rhs),
+            _raw(carry_in),
+            mask_value,
+            loc=loc,
+            ip=ip,
+        )
 
     @staticmethod
     def vmul(lhs, rhs, mask=None, **kw):
