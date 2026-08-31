@@ -392,6 +392,10 @@ struct VPTOSplitCVModulePass
 
 } // namespace
 
-std::unique_ptr<Pass> mlir::pto::createVPTOSplitCVModulePass() {
+namespace mlir::pto {
+
+std::unique_ptr<Pass> createVPTOSplitCVModulePass() {
   return std::make_unique<VPTOSplitCVModulePass>();
 }
+
+} // namespace mlir::pto

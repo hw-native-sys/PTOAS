@@ -129,6 +129,40 @@ static Value materializeUnrealizedCast(OpBuilder &builder, Type resultType,
       .getResult(0);
 }
 
+static LogicalResult accumulateSubviewElementOffsets(
+    ArrayRef<int64_t> staticOffsets, ValueRange dynamicOffsets,
+    ArrayRef<int64_t> strides, PatternRewriter &rewriter, Location loc,
+    Value &total) {
+  unsigned dynamicIndex = 0;
+  for (auto [staticOffset, stride] : llvm::zip(staticOffsets, strides)) {
+    if (stride == 0) {
+      continue;
+    }
+    if (stride == ShapedType::kDynamic) {
+      return failure();
+    }
+
+    Value index;
+    if (ShapedType::isDynamic(staticOffset)) {
+      if (dynamicIndex >= dynamicOffsets.size()) {
+        return failure();
+      }
+      index = dynamicOffsets[dynamicIndex++];
+    } else {
+      index = rewriter.create<arith::ConstantIndexOp>(loc, staticOffset);
+    }
+    if (!index.getType().isIndex()) {
+      return failure();
+    }
+    if (stride != 1) {
+      Value strideValue = rewriter.create<arith::ConstantIndexOp>(loc, stride);
+      index = rewriter.create<arith::MulIOp>(loc, index, strideValue);
+    }
+    total = rewriter.create<arith::AddIOp>(loc, total, index);
+  }
+  return dynamicIndex == dynamicOffsets.size() ? success() : failure();
+}
+
 static LogicalResult computeSubviewElementOffset(memref::SubViewOp op,
                                                  PatternRewriter &rewriter,
                                                  Value &offset) {
@@ -158,36 +192,8 @@ static LogicalResult computeSubviewElementOffset(memref::SubViewOp op,
     return failure();
   }
 
-  unsigned dynamicIndex = 0;
-  for (auto [staticOffset, stride] : llvm::zip(staticOffsets, strides)) {
-    if (stride == 0) {
-      continue;
-    }
-    if (stride == ShapedType::kDynamic) {
-      return failure();
-    }
-
-    Value idx;
-    if (ShapedType::isDynamic(staticOffset)) {
-      if (dynamicIndex >= dynamicOffsets.size()) {
-        return failure();
-      }
-      idx = dynamicOffsets[dynamicIndex++];
-    } else {
-      idx = rewriter.create<arith::ConstantIndexOp>(loc, staticOffset);
-    }
-    if (!idx.getType().isIndex()) {
-      return failure();
-    }
-
-    if (stride != 1) {
-      Value strideValue =
-          rewriter.create<arith::ConstantIndexOp>(loc, stride);
-      idx = rewriter.create<arith::MulIOp>(loc, idx, strideValue);
-    }
-    total = rewriter.create<arith::AddIOp>(loc, total, idx);
-  }
-  if (dynamicIndex != dynamicOffsets.size()) {
+  if (failed(accumulateSubviewElementOffsets(staticOffsets, dynamicOffsets,
+                                             strides, rewriter, loc, total))) {
     return failure();
   }
 
@@ -221,98 +227,101 @@ static Value materializeSubviewInputPtr(Value source, PatternRewriter &rewriter,
 }
 
 static Value materializeScalarAccessPtr(Value source, PatternRewriter &rewriter,
+                                        Location loc);
+
+static Value castPtrToResultType(Value pointer, Type resultType,
+                                 PatternRewriter &rewriter, Location loc) {
+  if (pointer.getType() == resultType) {
+    return pointer;
+  }
+  return rewriter.create<pto::CastPtrOp>(loc, resultType, pointer);
+}
+
+static Value materializeReinterpretCastPtr(memref::ReinterpretCastOp reinterpret,
+                                           PatternRewriter &rewriter,
+                                           Location loc) {
+  auto ptrType = dyn_cast<pto::PtrType>(
+      convertSubviewResultType(reinterpret.getType()));
+  if (!ptrType) {
+    return {};
+  }
+  Value basePtr = materializeScalarAccessPtr(reinterpret.getSource(), rewriter, loc);
+  if (!basePtr) {
+    return {};
+  }
+  basePtr = castPtrToResultType(basePtr, ptrType, rewriter, loc);
+
+  ArrayRef<int64_t> staticOffsets = reinterpret.getStaticOffsets();
+  if (staticOffsets.size() != 1) {
+    return {};
+  }
+  int64_t staticOffset = staticOffsets.front();
+  if (!ShapedType::isDynamic(staticOffset)) {
+    if (staticOffset == 0) {
+      return basePtr;
+    }
+    Value offset = rewriter.create<arith::ConstantIndexOp>(loc, staticOffset);
+    return rewriter.create<pto::AddPtrOp>(loc, ptrType, basePtr, offset);
+  }
+
+  ValueRange dynamicOffsets = reinterpret.getOffsets();
+  if (dynamicOffsets.size() != 1 || !dynamicOffsets.front().getType().isIndex()) {
+    return {};
+  }
+  return rewriter.create<pto::AddPtrOp>(loc, ptrType, basePtr,
+                                        dynamicOffsets.front());
+}
+
+static Value materializeSubviewPtr(memref::SubViewOp subview,
+                                   PatternRewriter &rewriter, Location loc) {
+  if (!needsSubviewPtrConversion(subview)) {
+    return {};
+  }
+  Value basePtr = materializeScalarAccessPtr(subview.getSource(), rewriter, loc);
+  if (!basePtr) {
+    return {};
+  }
+  Value offset;
+  if (failed(computeSubviewElementOffset(subview, rewriter, offset))) {
+    return {};
+  }
+  auto ptrType = dyn_cast<pto::PtrType>(convertSubviewResultType(subview.getType()));
+  if (!ptrType) {
+    return {};
+  }
+  basePtr = castPtrToResultType(basePtr, ptrType, rewriter, loc);
+  return rewriter.create<pto::AddPtrOp>(loc, ptrType, basePtr, offset);
+}
+
+static Value materializeScalarAccessPtr(Value source, PatternRewriter &rewriter,
                                         Location loc) {
   if (!source) {
     return {};
   }
-
   if (auto cast = source.getDefiningOp<UnrealizedConversionCastOp>()) {
     if (cast->getNumOperands() != 1 || cast->getNumResults() != 1) {
       return {};
     }
-    Value input = cast.getOperands().front();
-    Value ptr = materializeScalarAccessPtr(input, rewriter, loc);
+    Value ptr = materializeScalarAccessPtr(cast.getOperands().front(), rewriter, loc);
     if (!ptr) {
       return {};
     }
     auto resultType = dyn_cast<pto::PtrType>(source.getType());
-    if (!resultType) {
-      return ptr;
-    }
-    if (ptr.getType() == resultType) {
-      return ptr;
-    }
-    return rewriter.create<pto::CastPtrOp>(loc, resultType, ptr);
+    return resultType ? castPtrToResultType(ptr, resultType, rewriter, loc) : ptr;
   }
-
   if (isa<pto::PtrType>(source.getType())) {
     return source;
   }
-
   if (auto cast = source.getDefiningOp<memref::CastOp>()) {
     return materializeScalarAccessPtr(cast.getSource(), rewriter, loc);
   }
 
   if (auto reinterpret = source.getDefiningOp<memref::ReinterpretCastOp>()) {
-    auto ptrType = dyn_cast<pto::PtrType>(convertSubviewResultType(source.getType()));
-    if (!ptrType) {
-      return {};
-    }
-
-    Value basePtr =
-        materializeScalarAccessPtr(reinterpret.getSource(), rewriter, loc);
-    if (!basePtr) {
-      return {};
-    }
-    if (basePtr.getType() != ptrType) {
-      basePtr = rewriter.create<pto::CastPtrOp>(loc, ptrType, basePtr);
-    }
-
-    ArrayRef<int64_t> staticOffsets = reinterpret.getStaticOffsets();
-    if (staticOffsets.size() != 1) {
-      return {};
-    }
-    int64_t staticOffset = staticOffsets.front();
-    if (!ShapedType::isDynamic(staticOffset)) {
-      if (staticOffset == 0) {
-        return basePtr;
-      }
-      Value offset = rewriter.create<arith::ConstantIndexOp>(loc, staticOffset);
-      return rewriter.create<pto::AddPtrOp>(loc, ptrType, basePtr, offset);
-    }
-
-    ValueRange dynamicOffsets = reinterpret.getOffsets();
-    if (dynamicOffsets.size() != 1 || !dynamicOffsets.front().getType().isIndex()) {
-      return {};
-    }
-    return rewriter.create<pto::AddPtrOp>(loc, ptrType, basePtr,
-                                          dynamicOffsets.front());
+    return materializeReinterpretCastPtr(reinterpret, rewriter, loc);
   }
 
   if (auto subview = source.getDefiningOp<memref::SubViewOp>()) {
-    if (!needsSubviewPtrConversion(subview)) {
-      return {};
-    }
-
-    Value basePtr =
-        materializeScalarAccessPtr(subview.getSource(), rewriter, loc);
-    if (!basePtr) {
-      return {};
-    }
-
-    Value offset;
-    if (failed(computeSubviewElementOffset(subview, rewriter, offset))) {
-      return {};
-    }
-
-    auto ptrType = dyn_cast<pto::PtrType>(convertSubviewResultType(source.getType()));
-    if (!ptrType) {
-      return {};
-    }
-    if (basePtr.getType() != ptrType) {
-      basePtr = rewriter.create<pto::CastPtrOp>(loc, ptrType, basePtr);
-    }
-    return rewriter.create<pto::AddPtrOp>(loc, ptrType, basePtr, offset);
+    return materializeSubviewPtr(subview, rewriter, loc);
   }
 
   // Restrict normalization to memref views that already sit on top of a ptr-like
@@ -1173,6 +1182,10 @@ struct VPTOPtrNormalizePass
 
 } // namespace
 
-std::unique_ptr<Pass> mlir::pto::createVPTOPtrNormalizePass() {
+namespace mlir::pto {
+
+std::unique_ptr<Pass> createVPTOPtrNormalizePass() {
   return std::make_unique<VPTOPtrNormalizePass>();
 }
+
+} // namespace mlir::pto

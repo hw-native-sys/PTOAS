@@ -65,6 +65,8 @@ namespace mlir::pto {
 namespace {
 
 constexpr StringLiteral kAIVScopeDummyCallee = "aivscope_dummy";
+constexpr int64_t kCarrierLoopLowerBound = 0;
+constexpr int64_t kCarrierLoopUpperBound = 1;
 
 struct QueriedTargetAttrs {
   std::string targetCPU;
@@ -527,8 +529,10 @@ void materializeVecScopeCarrierLoops(ModuleOp module) {
 
     rewriter.setInsertionPoint(vecScope);
     auto loc = vecScope.getLoc();
-    Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-    Value c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value c0 = rewriter.create<arith::ConstantIndexOp>(
+        loc, kCarrierLoopLowerBound);
+    Value c1 = rewriter.create<arith::ConstantIndexOp>(
+        loc, kCarrierLoopUpperBound);
     scf::ForOp carrier = rewriter.create<scf::ForOp>(loc, c0, c1, c1);
 
     Block &vecScopeBody = vecScope.getBody().front();
@@ -556,8 +560,10 @@ void materializeVecScopeCarrierLoops(ModuleOp module) {
 
     rewriter.setInsertionPoint(strictVecScope);
     auto loc = strictVecScope.getLoc();
-    Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-    Value c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value c0 = rewriter.create<arith::ConstantIndexOp>(
+        loc, kCarrierLoopLowerBound);
+    Value c1 = rewriter.create<arith::ConstantIndexOp>(
+        loc, kCarrierLoopUpperBound);
     scf::ForOp carrier = rewriter.create<scf::ForOp>(loc, c0, c1, c1);
 
     Block &strictBody = strictVecScope.getBody().front();

@@ -85,6 +85,10 @@ struct VPTONormalizeContainerPass
 
 } // namespace
 
-std::unique_ptr<Pass> mlir::pto::createVPTONormalizeContainerPass() {
+namespace mlir::pto {
+
+std::unique_ptr<Pass> createVPTONormalizeContainerPass() {
   return std::make_unique<VPTONormalizeContainerPass>();
 }
+
+} // namespace mlir::pto

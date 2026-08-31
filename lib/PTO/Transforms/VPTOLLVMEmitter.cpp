@@ -104,8 +104,9 @@ static bool isLLVMExtensionVectorElementType(Type type) {
 static Type getLLVMCompatibleVectorType(ArrayRef<int64_t> shape,
                                         Type elementType,
                                         ArrayRef<bool> scalableDims = {}) {
-  if (shape.size() == 1 && isLLVMExtensionVectorElementType(elementType))
+  if (shape.size() == 1 && isLLVMExtensionVectorElementType(elementType)) {
     return LLVM::LLVMFixedVectorType::get(elementType, shape.front());
+  }
   return VectorType::get(shape, elementType, scalableDims);
 }
 
@@ -182,8 +183,9 @@ static Type normalizeGEPElementTypeForLLVMLowering(Type type,
     Type normalizedElement =
         normalizeGEPElementTypeForLLVMLowering(vecType.getElementType(),
                                                builder);
-    if (normalizedElement == vecType.getElementType())
+    if (normalizedElement == vecType.getElementType()) {
       return normalizePayloadTypeForLLVMLowering(type, builder);
+    }
     return getLLVMCompatibleVectorType({vecType.getNumElements()},
                                        normalizedElement);
   }
@@ -219,7 +221,7 @@ static Type convertVPTOType(Type type, Builder &builder) {
 static unsigned getNaturalByteAlignment(Type type) {
   if (auto vecType = dyn_cast<VectorType>(type)) {
     unsigned elemAlign = getNaturalByteAlignment(vecType.getElementType());
-    if (!elemAlign)
+    if (elemAlign == 0)
     {
       return 0;
     }
@@ -232,8 +234,9 @@ static unsigned getNaturalByteAlignment(Type type) {
   }
   if (auto vecType = dyn_cast<LLVM::LLVMFixedVectorType>(type)) {
     unsigned elemAlign = getNaturalByteAlignment(vecType.getElementType());
-    if (!elemAlign)
+    if (elemAlign == 0) {
       return 0;
+    }
     return elemAlign * vecType.getNumElements();
   }
   if (auto intType = dyn_cast<IntegerType>(type))
@@ -1027,8 +1030,9 @@ static Type getElementTypeFromVectorLike(Type type) {
   {
     return vecType.getElementType();
   }
-  if (auto vecType = dyn_cast<LLVM::LLVMFixedVectorType>(type))
+  if (auto vecType = dyn_cast<LLVM::LLVMFixedVectorType>(type)) {
     return vecType.getElementType();
+  }
   return {};
 }
 
@@ -1044,8 +1048,9 @@ static std::optional<int64_t> getElementCountFromVectorLike(Type type) {
     }
     return vecType.getShape().front();
   }
-  if (auto vecType = dyn_cast<LLVM::LLVMFixedVectorType>(type))
+  if (auto vecType = dyn_cast<LLVM::LLVMFixedVectorType>(type)) {
     return vecType.getNumElements();
+  }
   return std::nullopt;
 }
 
@@ -1941,49 +1946,47 @@ static FailureOr<Value> packLoopSize(Operation *anchor, Value loop2, Value loop1
       .getResult();
 }
 
-static FailureOr<Value>
-packCopyGmToUbConfig0(Operation *anchor, ValueRange operands) {
-  if (operands.size() != 11)
-  {
+static Value packShiftedI64Fields(OpBuilder &builder, Location loc,
+                                  Value config,
+                                  ArrayRef<std::pair<Value, uint64_t>> fields) {
+  for (auto [value, amount] : fields) {
+    Value shift = getI64Constant(builder, loc, amount);
+    Value shifted = builder.create<arith::ShLIOp>(loc, value, shift);
+    config = builder.create<arith::OrIOp>(loc, config, shifted);
+  }
+  return config;
+}
+
+static FailureOr<SmallVector<Value, 7>> castCopyGmToUbConfig0Operands(
+    Operation *anchor, ValueRange operands, Type i64Type) {
+  if (operands.size() != 11) {
     return failure();
   }
 
+  SmallVector<Value, 7> values;
+  for (unsigned index : {2u, 3u, 4u, 5u, 6u, 7u, 8u}) {
+    Value value = castIntegerLikeTo(anchor, operands[index], i64Type);
+    if (!value) {
+      return failure();
+    }
+    values.push_back(value);
+  }
+  return values;
+}
+
+static FailureOr<Value>
+packCopyGmToUbConfig0(Operation *anchor, ValueRange operands) {
   OpBuilder builder(anchor);
   builder.setInsertionPoint(anchor);
   Location loc = anchor->getLoc();
-
-  auto getI64Operand = [&](unsigned idx) -> Value {
-    return castIntegerLikeTo(anchor, operands[idx], builder.getI64Type());
-  };
-
-  Value sid = getI64Operand(2);
-  Value nBurst = getI64Operand(3);
-  Value lenBurst = getI64Operand(4);
-  Value leftPadding = getI64Operand(5);
-  Value rightPadding = getI64Operand(6);
-  Value dataSelect = castIntegerLikeTo(anchor, operands[7], builder.getI64Type());
-  Value cacheCtl = getI64Operand(8);
-  if (!sid || !nBurst || !lenBurst || !leftPadding || !rightPadding ||
-      !dataSelect || !cacheCtl) {
+  FailureOr<SmallVector<Value, 7>> values =
+      castCopyGmToUbConfig0Operands(anchor, operands, builder.getI64Type());
+  if (failed(values))
     return failure();
-  }
-
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value,
-                                         getI64Constant(builder, loc, amount));
-  };
-  auto bitOr = [&](Value lhs, Value rhs) -> Value {
-    return builder.create<arith::OrIOp>(loc, lhs, rhs);
-  };
-
-  Value config = sid;
-  config = bitOr(config, shl(nBurst, 4));
-  config = bitOr(config, shl(lenBurst, 25));
-  config = bitOr(config, shl(leftPadding, 46));
-  config = bitOr(config, shl(rightPadding, 52));
-  config = bitOr(config, shl(dataSelect, 58));
-  config = bitOr(config, shl(cacheCtl, 60));
-  return config;
+  return packShiftedI64Fields(
+      builder, loc, (*values)[0],
+      {{(*values)[1], 4}, {(*values)[2], 25}, {(*values)[3], 46},
+       {(*values)[4], 52}, {(*values)[5], 58}, {(*values)[6], 60}});
 }
 
 static FailureOr<Value>
@@ -2410,20 +2413,12 @@ static FailureOr<Value> packCopyCbufToBtConfig(Operation *anchor,
     return failure();
   }
 
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value,
-                                         getI64Constant(builder, loc, amount));
-  };
-  auto bitOr = [&](Value lhs, Value rhs) -> Value {
-    return builder.create<arith::OrIOp>(loc, lhs, rhs);
-  };
-
-  Value config = shl(convControlI64, 3);
-  config = bitOr(config, shl(nBurstI64, 4));
-  config = bitOr(config, shl(lenBurstI64, 16));
-  config = bitOr(config, shl(sourceGapI64, 32));
-  config = bitOr(config, shl(dstGapI64, 48));
-  return config;
+  Value config = builder.create<arith::ShLIOp>(
+      loc, convControlI64, getI64Constant(builder, loc, 3));
+  return packShiftedI64Fields(
+      builder, loc, config,
+      {{nBurstI64, 4}, {lenBurstI64, 16}, {sourceGapI64, 32},
+       {dstGapI64, 48}});
 }
 
 static FailureOr<Value> packCopyCbufToFbufConfig(Operation *anchor, Value nBurst,
@@ -10311,8 +10306,8 @@ private:
 class LowerVbitcastOpPattern final
     : public OpConversionPattern<pto::VbitcastOp> {
 public:
-  explicit LowerVbitcastOpPattern(TypeConverter &typeConverter,
-                                  MLIRContext *context, LoweringState &state)
+  explicit LowerVbitcastOpPattern(const TypeConverter &typeConverter,
+                                  MLIRContext *context, LoweringState &)
       : OpConversionPattern<pto::VbitcastOp>(typeConverter, context) {}
 
   LogicalResult
@@ -10340,8 +10335,8 @@ public:
 class LowerPbitcastOpPattern final
     : public OpConversionPattern<pto::PbitcastOp> {
 public:
-  explicit LowerPbitcastOpPattern(TypeConverter &typeConverter,
-                                  MLIRContext *context, LoweringState &state)
+  explicit LowerPbitcastOpPattern(const TypeConverter &typeConverter,
+                                  MLIRContext *context, LoweringState &)
       : OpConversionPattern<pto::PbitcastOp>(typeConverter, context) {}
 
   LogicalResult

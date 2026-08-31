@@ -76,13 +76,18 @@ struct VPTOPtrCastCleanupPass
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
     patterns.add<CollapsePtrMemRefPtrBridgePattern>(&getContext());
-    if (failed(applyPatternsAndFoldGreedily(getOperation(), std::move(patterns))))
+    if (failed(applyPatternsAndFoldGreedily(getOperation(), std::move(patterns)))) {
       signalPassFailure();
+    }
   }
 };
 
 } // namespace
 
-std::unique_ptr<Pass> mlir::pto::createVPTOPtrCastCleanupPass() {
+namespace mlir::pto {
+
+std::unique_ptr<Pass> createVPTOPtrCastCleanupPass() {
   return std::make_unique<VPTOPtrCastCleanupPass>();
 }
+
+} // namespace mlir::pto

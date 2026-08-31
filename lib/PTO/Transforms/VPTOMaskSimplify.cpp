@@ -79,13 +79,18 @@ struct VPTOMaskSimplifyPass
                  SimplifyAllTruePredicateReorder<PdintlvB16Op>,
                  SimplifyAllTruePredicateReorder<PdintlvB32Op>>(&getContext());
 
-    if (failed(applyPatternsAndFoldGreedily(getOperation(), std::move(patterns))))
+    if (failed(applyPatternsAndFoldGreedily(getOperation(), std::move(patterns)))) {
       signalPassFailure();
+    }
   }
 };
 
 } // namespace
 
-std::unique_ptr<Pass> mlir::pto::createVPTOMaskSimplifyPass() {
+namespace mlir::pto {
+
+std::unique_ptr<Pass> createVPTOMaskSimplifyPass() {
   return std::make_unique<VPTOMaskSimplifyPass>();
 }
+
+} // namespace mlir::pto

@@ -27,6 +27,10 @@ using namespace mlir::pto;
 
 namespace {
 
+constexpr unsigned kB16StorageBits = 16;
+constexpr unsigned kB32StorageBits = 32;
+constexpr unsigned kFourLanePackingFactor = 4;
+
 static bool isOddPart(StringRef part) {
   return part == "ODD" || part == "PART_ODD";
 }
@@ -102,13 +106,16 @@ static bool isZeroGapLoad(Value value, AlignedUnsignedWidening widening) {
     return false;
   }
 
-  if (widening.payloadBits == mlir::pto::kValue8 && widening.carrierBits == 16) {
+  if (widening.payloadBits == mlir::pto::kValue8 &&
+      widening.carrierBits == kB16StorageBits) {
     return *dist == "UNPK_B8";
   }
-  if (widening.payloadBits == mlir::pto::kValue16 && widening.carrierBits == 32) {
+  if (widening.payloadBits == mlir::pto::kValue16 &&
+      widening.carrierBits == kB32StorageBits) {
     return *dist == "UNPK_B16";
   }
-  if (widening.payloadBits == mlir::pto::kValue8 && widening.carrierBits == 32) {
+  if (widening.payloadBits == mlir::pto::kValue8 &&
+      widening.carrierBits == kB32StorageBits) {
     return *dist == "UNPK4";
   }
   return false;
@@ -214,7 +221,8 @@ matchAlignedUnsignedWidening(VcvtOp op) {
   }
   if ((resultBits == inputBits * mlir::pto::kValue2 && *part != "EVEN") ||
       (resultBits == inputBits * mlir::pto::kValue4 && *part != "P0") ||
-      (resultBits != inputBits * mlir::pto::kValue2 && resultBits != inputBits * 4)) {
+      (resultBits != inputBits * mlir::pto::kValue2 &&
+       resultBits != inputBits * kFourLanePackingFactor)) {
     return std::nullopt;
   }
 
@@ -269,13 +277,18 @@ struct VPTOOptimizeVcvtPass
     RewritePatternSet patterns(&getContext());
     patterns.add<CanonicalizeEquivalentPartPattern,
                  FoldZeroGapExtensionPattern>(&getContext());
-    if (failed(applyPatternsAndFoldGreedily(getOperation(), std::move(patterns))))
+    if (failed(applyPatternsAndFoldGreedily(getOperation(), std::move(patterns)))) {
       signalPassFailure();
+    }
   }
 };
 
 } // namespace
 
-std::unique_ptr<Pass> mlir::pto::createVPTOOptimizeVcvtPass() {
+namespace mlir::pto {
+
+std::unique_ptr<Pass> createVPTOOptimizeVcvtPass() {
   return std::make_unique<VPTOOptimizeVcvtPass>();
 }
+
+} // namespace mlir::pto
