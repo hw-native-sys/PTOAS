@@ -64,6 +64,7 @@ Python Wrapper              L0  user-facing wrapper (NumPy, torch-npu, pure Pyth
   │    └─ backend="emitc"         EmitC backend, mode="auto" only
   ├─ Tile Ops                     tile.load, tile.store, tile.add, ...
   ├─ MTE Ops                      mte_load / mte_store / mte_gm_ub / ...
+  ├─ Async GM↔GM                  session_init / sdma_gm_gm
   ├─ @pto.tileop                    matrix products (mad, mte_l1_l0a, mte_l0c_ub, ...)
   ├─ @pto.tileop                    row-wise vector math (vlds, vadd, vexp, vsts, ...)
   └─ @pto.simt                    scalar-like compute (lds, sts, pointwise blends, ...)

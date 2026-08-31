@@ -187,3 +187,14 @@ else:
     : !pto.ptr<i8, gm>, !pto.ptr<i8, gm>, i64,
       !pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>
   ```
+
+---
+
+## PTODSL
+
+PTODSL explicit mode exposes the same two operations as `pto.session_init` and
+`pto.sdma_gm_gm`. The session type is `pto.async_session_type()`. A session still
+cannot be a kernel argument: the host writes the GM template, and the kernel
+declares its own struct then fills it. See
+[7.7 GM↔GM SDMA](../../../ptodsl/docs/user_guide/07-data-movement-ops.md#77-gmgm-sdma-ptosession_init-and-ptosdma_gm_gm)
+in the PTODSL user guide.

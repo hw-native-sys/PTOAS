@@ -34,7 +34,7 @@ from ._types import (           # noqa: F401
     si8, si16, si32, si64,
     ui8, ui16, ui32, ui64,
     index,
-    ptr, vreg_type, vec_type, mask_type, struct_type,
+    ptr, vreg_type, vec_type, mask_type, struct_type, async_session_type,
     _resolve,
 )
 from ._builtin_vector import Vec  # noqa: F401
@@ -87,6 +87,7 @@ from ._vmi_namespace import vmi  # noqa: F401
 from ._ops import (             # noqa: F401
     const,
     declare_struct, struct_get, struct_set,
+    session_init, sdma_gm_gm,
     get_op_attr,
     castptr, addptr,
     vlds, vldas, vldus, vldsx2, vsts, vstsx2,

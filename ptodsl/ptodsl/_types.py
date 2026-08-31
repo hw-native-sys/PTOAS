@@ -598,6 +598,18 @@ def struct_type(*field_types) -> _StructDescriptor:
     return _StructDescriptor(field_types)
 
 
+# Field widths of the async-comm session, matching docs/isa/micro-isa/19-async-comm.md.
+_ASYNC_SESSION_FIELD_WIDTHS = (64, 64, 32, 32, 32, 32, 64, 64, 32, 32, 32, 32, 32)
+
+
+def async_session_type() -> _StructDescriptor:
+    """Return the 13-field session type used by ``pto.session_init`` / ``pto.sdma_gm_gm``."""
+    fields = []
+    for width in _ASYNC_SESSION_FIELD_WIDTHS:
+        fields.append(int64 if width == 64 else int32)
+    return struct_type(*fields)
+
+
 def vmi_vreg_type(lanes: int, elem) -> _VMIVRegDescriptor:
     """Return a lazy descriptor for ``!pto.vmi.vreg<lanesxelem>``."""
     return _VMIVRegDescriptor(lanes, elem)
@@ -714,7 +726,7 @@ __all__ = [
     "si8", "si16", "si32", "si64",
     "ui8", "ui16", "ui32", "ui64",
     "index",
-    "ptr", "vreg_type", "vec_type", "mask_type", "struct_type",
+    "ptr", "vreg_type", "vec_type", "mask_type", "struct_type", "async_session_type",
     "vmi_vreg_type", "vmi_mask_type",
     "tile_buf_type", "tensor_view_type", "tensor_view_type_from_dims",
     "part_tensor_view_type", "part_tensor_view_type_from_dims",

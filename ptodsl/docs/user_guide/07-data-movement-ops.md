@@ -1,6 +1,6 @@
 # 7. Data Movement Operations
 
-This chapter covers every operation that moves data between memory spaces in PTODSL — tile-level transfers, DMA micro-instructions, vector loads and stores, and cube data movement. Operations are organized by abstraction level: tile ops for auto mode, DMA orchestration for explicit mode, vector memory ops on the SIMD unit, and cube memory ops on the Cube unit.
+This chapter covers every operation that moves data between memory spaces in PTODSL — tile-level transfers, DMA micro-instructions, vector loads and stores, cube data movement, and GM↔GM engine copies. Operations are organized by abstraction level: tile ops for auto mode, DMA orchestration for explicit mode, vector memory ops on the SIMD unit, cube memory ops on the Cube unit, and session-driven GM↔GM copies.
 
 ## 7.1 Tile-level movement: tile.load and tile.store
 
@@ -1599,4 +1599,124 @@ def vector_consumer(
     pto.tile.load(entry_part, b_tile)
     c2v.free(entry, split=0)
     pto.tile.store(b_tile, b_part)
+```
+
+## 7.7 GM↔GM SDMA: `pto.session_init` and `pto.sdma_gm_gm`
+
+These two operations copy a contiguous GM range through the SDMA engine. They
+are explicit-mode only, must sit in an ordinary AICore `@pto.jit` body, and are
+illegal inside `@pto.simt` or `pto.section.simt`. There is no stride or burst
+model: the transfer is one contiguous byte count.
+
+A session cannot be a kernel argument. The host writes a GM template; the kernel
+declares its own struct with `pto.async_session_type()` and fills it with
+`pto.session_init`. Field order and widths match the ISA chapter
+[19. Async Communication](../../../../docs/isa/micro-isa/19-async-comm.md). After
+the fill, `pto.struct_set` may retune a field. Field 4 is the channel group: a
+multi-core launch gives each core its own queue by writing that field rather
+than by having the host name the core.
+
+The kick does not wait for the engine except when `soft_put=True` on A5. The
+operation does not publish a completion record; local drain and cross-rank
+visibility are arranged by the caller.
+
+#### `pto.async_session_type() -> StructTypeDescriptor`
+
+**Description**: The 13-field session type
+`!pto.struct<i64, i64, i32, i32, i32, i32, i64, i64, i32, i32, i32, i32, i32>`.
+Use it with `pto.declare_struct`.
+
+#### `pto.session_init(session, template_gm) -> None`
+
+**Description**: Copy the host template into `session` in place. The caller keeps
+using the value `pto.declare_struct` produced. Each core fills its own copy, so
+a session is per-core even when the template is shared and read-only.
+
+**Parameters**:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `session` | the 13-field session struct | Destination; written in place |
+| `template_gm` | `PtrType` in GM | Base of the host template |
+
+**Returns**: None.
+
+**Constraints**: `session` must be `pto.async_session_type()`. `template_gm` must
+be a GM pointer. Explicit mode only.
+
+#### `pto.sdma_gm_gm(destination, source, nbytes, *, session, block_bytes=None, channel_idx=None, soft_put=False) -> None`
+
+**Description**: Copy `nbytes` contiguous bytes from `source` to `destination`
+through the session. Either pointer may address peer memory; peer-ness is the
+numeric address, not a pointer attribute. Element types need not match; the
+transfer is counted in bytes.
+
+When `block_bytes` is omitted, the split size comes from the session. When
+`channel_idx` is omitted, the channel group comes from the session. `soft_put`
+is for a remote write on A5: that generation's engine does not perform a remote
+write, so this flag makes the copy complete before the call returns. A2/A3
+ignore it and still post to the engine.
+
+Without `soft_put`, returning from the kernel does not mean the destination is
+visible. The caller observes completion by an agreed host-side check or a later
+sync object.
+
+```text
+if soft_put and target is A5:
+  copy nbytes bytes from source to destination   # finished when the call returns
+else:
+  post the copy to the session's engine
+  return without waiting
+```
+
+**Parameters**:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `destination` | `PtrType` in GM | Destination range |
+| `source` | `PtrType` in GM | Source range |
+| `nbytes` | `i64` | Contiguous byte count |
+| `session` | the 13-field session struct | Required session |
+| `block_bytes` | static `int` or `None` | Split size in bytes; omitted uses the session value |
+| `channel_idx` | static `int` or `None` | Channel group for this kick; omitted uses the session value |
+| `soft_put` | `bool` | A5 remote-write completion path; default `False` |
+
+**Returns**: None.
+
+**Constraints**:
+
+- `destination` and `source` must be GM pointers.
+- `session` must be `pto.async_session_type()`.
+- `block_bytes`, when present, must be a positive multiple of 64.
+- `channel_idx`, when present, must be in `[0, 39]`.
+- Explicit mode only; ordinary AICore entry, not SIMT.
+
+**Example (local copy):**
+
+<!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"data_movement.async_comm","symbol":"data_movement_async_comm_probe","compile":{}} -->
+```python
+sess = pto.declare_struct(pto.async_session_type())
+pto.session_init(sess, sess_gm)
+pto.sdma_gm_gm(dst, src, nbytes, session=sess)
+```
+
+**Example (A5 remote write):**
+
+<!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"data_movement.async_comm","symbol":"data_movement_async_comm_probe","compile":{}} -->
+```python
+sess = pto.declare_struct(pto.async_session_type())
+pto.session_init(sess, sess_gm)
+pto.sdma_gm_gm(dst, src, nbytes, session=sess, soft_put=True)
+```
+
+**Example (per-core channel after init):**
+
+<!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"data_movement.async_comm","symbol":"data_movement_async_comm_probe","compile":{}} -->
+```python
+sess = pto.declare_struct(pto.async_session_type())
+pto.session_init(sess, sess_gm)
+# Field 4 is the channel group. A Python int or an i32 SSA value is legal;
+# pto.get_block_idx() is i64 and must be narrowed first.
+pto.struct_set(sess, 4, 0)
+pto.sdma_gm_gm(dst, src, nbytes, session=sess)
 ```

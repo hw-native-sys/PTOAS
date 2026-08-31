@@ -5,7 +5,7 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-"""Data-movement ops: MTE transfers, mad, accumulator-store attributes."""
+"""Data-movement ops: MTE transfers, async GM copies, mad, accumulator-store attributes."""
 
 from functools import wraps
 import warnings
@@ -45,6 +45,7 @@ from ._surface_values import (
     wrap_surface_value,
 )
 from ._types import (
+    _ASYNC_SESSION_FIELD_WIDTHS,
     _is_struct_type,
     _isinstance_pto_type,
     _materialize_integer_literal,
@@ -79,6 +80,9 @@ from ptoas.mlir.ir import (
     VectorType,
 )
 
+from ._ops_core import (
+    _require_struct_value,
+)
 from ._ops_common import (
     _coerce_i1,
     _coerce_i32,
@@ -527,6 +531,110 @@ def _require_pto_ptr_operand(value, *, context: str):
     except Exception as exc:
         raise TypeError(f"{context} expects PTO ptr operands, got {raw_value.type}") from exc
     return raw_value
+
+
+def _require_gm_ptr(ptr_value, *, context: str):
+    raw_ptr = unwrap_surface_value(ptr_value)
+    try:
+        ptr_type = _pto.PtrType(raw_ptr.type)
+    except Exception as exc:
+        raise TypeError(f"{context} requires a typed PTO pointer") from exc
+    gm_space = _pto.AddressSpaceAttr.get(_pto.AddressSpace.GM)
+    if ptr_type.memory_space != gm_space:
+        raise TypeError(f"{context} requires a GM pointer, got {raw_ptr.type}")
+    return raw_ptr
+
+
+def _require_async_session(session, *, op_name: str):
+    raw_session, struct_type = _require_struct_value(session, op_name=op_name)
+    fields = tuple(struct_type.field_types)
+    if len(fields) != len(_ASYNC_SESSION_FIELD_WIDTHS):
+        raise TypeError(
+            f"{op_name}: session must have {len(_ASYNC_SESSION_FIELD_WIDTHS)} fields "
+            f"to match the async session type, but has {len(fields)}"
+        )
+    for index, (field, width) in enumerate(zip(fields, _ASYNC_SESSION_FIELD_WIDTHS)):
+        if not IntegerType.isinstance(field) or IntegerType(field).width != width:
+            raise TypeError(
+                f"{op_name}: session field {index} must be i{width}, got {field}"
+            )
+    return raw_session
+
+
+def _optional_static_i64_attr(
+    value,
+    *,
+    context: str,
+    minimum: int | None = None,
+    maximum: int | None = None,
+    alignment: int | None = None,
+):
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{context} expects a static int or None, got {value!r}")
+    if minimum is not None and value < minimum:
+        raise ValueError(f"{context} expects a value >= {minimum}, got {value}")
+    if maximum is not None and value > maximum:
+        raise ValueError(f"{context} expects a value <= {maximum}, got {value}")
+    if alignment is not None and value % alignment != 0:
+        raise ValueError(
+            f"{context} expects a multiple of {alignment} bytes, got {value}"
+        )
+    return IntegerAttr.get(IntegerType.get_signless(64), value)
+
+
+@_explicit_mode_only("pto.session_init(...)")
+def session_init(session, template_gm):
+    """Fill ``session`` in place from the host-written GM template."""
+    raw_session = _require_async_session(session, op_name="pto.session_init(...)")
+    raw_template = _require_gm_ptr(template_gm, context="pto.session_init(...) template")
+    _pto.SessionInitOp(raw_session, raw_template)
+
+
+@_explicit_mode_only("pto.sdma_gm_gm(...)")
+def sdma_gm_gm(
+    destination,
+    source,
+    nbytes,
+    *,
+    session,
+    block_bytes=None,
+    channel_idx=None,
+    soft_put=False,
+):
+    """Kick a contiguous GM→GM copy through the session."""
+    if not isinstance(soft_put, bool):
+        raise TypeError("pto.sdma_gm_gm(...): soft_put expects a bool")
+    raw_dst = _require_gm_ptr(destination, context="pto.sdma_gm_gm(...) destination")
+    raw_src = _require_gm_ptr(source, context="pto.sdma_gm_gm(...) source")
+    raw_session = _require_async_session(session, op_name="pto.sdma_gm_gm(...)")
+    attrs = {}
+    block_bytes_attr = _optional_static_i64_attr(
+        block_bytes,
+        context="pto.sdma_gm_gm(...) block_bytes",
+        minimum=1,
+        alignment=64,
+    )
+    channel_idx_attr = _optional_static_i64_attr(
+        channel_idx,
+        context="pto.sdma_gm_gm(...) channel_idx",
+        minimum=0,
+        maximum=39,
+    )
+    if block_bytes_attr is not None:
+        attrs["block_bytes"] = block_bytes_attr
+    if channel_idx_attr is not None:
+        attrs["channel_idx"] = channel_idx_attr
+    if soft_put:
+        attrs["soft_put"] = UnitAttr.get()
+    _pto.SdmaGmGmOp(
+        raw_dst,
+        raw_src,
+        _coerce_i64(nbytes, context="pto.sdma_gm_gm(...) nbytes"),
+        raw_session,
+        **attrs,
+    )
 
 
 @_explicit_mode_only("pto.mte_load(...)")
