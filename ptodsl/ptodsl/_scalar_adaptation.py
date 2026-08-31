@@ -194,6 +194,14 @@ def reconcile_typed_runtime_binary_operands(lhs, rhs):
         lhs_width = IntegerType(lhs_type).width
         rhs_width = IntegerType(rhs_type).width
         target_type = lhs_type if lhs_width >= rhs_width else rhs_type
+        # Arithmetic operands are signless.  When a signed/unsigned runtime
+        # value is combined with a literal (which is intentionally emitted as
+        # signless), keep the common operand type signless through the op and
+        # restore the authored signedness only on the result.  This avoids
+        # manufacturing a signed literal cast that can be reused with stale
+        # type metadata by the tracer.
+        if _integer_signedness(lhs_type) == "signless" or _integer_signedness(rhs_type) == "signless":
+            target_type = _signless_integer_type(target_type)
         lhs = coerce_integer_like(lhs, target_type)
         rhs = coerce_integer_like(rhs, target_type)
         return lhs, rhs, "integer"
@@ -205,6 +213,12 @@ def reconcile_typed_runtime_binary_operands(lhs, rhs):
 
 
 def coerce_integer_like(value, target_type):
+    # Avoid a strip/restore round-trip when the authored integer type already
+    # matches the requested type.  Besides being redundant, the intermediate
+    # signless SSA value can be reused by the tracer with stale signedness and
+    # print an invalid cast (e.g. an i32 value declared as si32 source).
+    if value.type == target_type:
+        return value
     if IndexType.isinstance(value.type):
         signless_target = _signless_integer_type(target_type)
         adapted = arith.IndexCastOp(signless_target, value).result
@@ -246,7 +260,13 @@ def _materialize_runtime_literal(value, anchor_type):
     if kind == "index":
         return arith.ConstantOp(anchor_type, int(value)).result
 
-    return _materialize_integer_literal(anchor_type, value)
+    # Runtime arithmetic is lowered through builtin ``arith`` integer ops,
+    # whose operands are signless.  Materialize literals directly as signless
+    # constants instead of constructing a signed value and immediately
+    # stripping it again (the latter used to print malformed ``siN to iN``
+    # casts for expressions such as ``num_tokens + 3``).
+    signless_type = _signless_integer_type(anchor_type)
+    return arith.ConstantOp(signless_type, int(value)).result
 
 
 def _coerce_float_like(value, target_type):
