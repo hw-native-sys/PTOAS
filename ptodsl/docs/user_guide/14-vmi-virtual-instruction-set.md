@@ -1075,7 +1075,7 @@ low, high = pto.vmi.vmull(a32, b32, mask)
 - `a` and `b` must be identical 32-bit integer VMI vectors.
 - `low` and `high` each have the same lane count and signedness as `a`.
 
-### `pto.vmi.vmula(acc, lhs, rhs, mask, *, pmode=None) -> VRegType`
+### `pto.vmi.vmula(acc, lhs, rhs, mask=None, *, pmode=None) -> VRegType`
 
 **Description**: Fused multiply-accumulate: `result = acc + (lhs * rhs)`.
 The accumulator is both the input and the result value.
@@ -1087,7 +1087,7 @@ The accumulator is both the input and the result value.
 | `acc` | `VRegType` | Accumulator vector |
 | `lhs` | `VRegType` | First multiply operand |
 | `rhs` | `VRegType` | Second multiply operand |
-| `mask` | VMI mask | **Required.** Predicate mask |
+| `mask` | VMI mask or `None` | Optional predicate mask. If omitted, all lanes are active. |
 | `pmode` | `str` or `None` | Optional predicate mode: `"merge"` keeps predicate-inactive lanes at their prior value; `"zero"` writes 0 |
 **Returns**:
 

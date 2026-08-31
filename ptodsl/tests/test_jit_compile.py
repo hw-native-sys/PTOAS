@@ -3771,6 +3771,7 @@ def vmi_wrapper_dispatch_probe():
     parametric_relu = pto.vmi.vprelu(lhs, rhs, mask)
     low, high = pto.vmi.vmull(int_lhs, int_rhs, mask)
     multiply_accumulate = pto.vmi.vmula(lhs, lhs, rhs, mask)
+    multiply_accumulate_all_active = pto.vmi.vmula(lhs, lhs, rhs)
     widened = pto.vmi.vadd(low, high, mask)
     casted = pto.vmi.vcvt(shuffled, pto.f16)
     casted_r = pto.vmi.vcvt(shuffled, pto.f16, rounding="R", saturate="SAT")
@@ -3802,6 +3803,7 @@ def vmi_wrapper_dispatch_probe():
     _ = gatherb
     _ = hist
     _ = cumul
+    _ = multiply_accumulate_all_active
     _ = widened
     _ = casted
     _ = (casted_r, casted_a, casted_h, casted_z)
@@ -8356,6 +8358,15 @@ def main() -> None:
     expect(
         vmi_wrapper_dispatch_text.count("pto.vmi.vexpdif") == 2,
         "VMI wrapper dispatch should cover both f32 and f16 vexpdif forms",
+    )
+    expect(
+        re.search(
+            r"pto\.vmi\.vmula %[^,]+, %[^,]+, %[^,:]+ : !pto\.vmi\.vreg<64xf32>, "
+            r"!pto\.vmi\.vreg<64xf32>, !pto\.vmi\.vreg<64xf32> -> "
+            r"!pto\.vmi\.vreg<64xf32>",
+            vmi_wrapper_dispatch_text,
+        ) is not None,
+        "pto.vmi.vmula should emit the all-active form when its mask is omitted",
     )
     expect(
         "!pto.vmi.vreg<128xf32>" in vmi_wrapper_dispatch_text,

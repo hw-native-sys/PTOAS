@@ -1210,14 +1210,15 @@ class _VMINamespace:
         )
 
     @staticmethod
-    def vmula(acc, lhs, rhs, mask, *, pmode=None, loc=None, ip=None):
+    def vmula(acc, lhs, rhs, mask=None, *, pmode=None, loc=None, ip=None):
+        """Emit fused ``acc + lhs * rhs``; an omitted mask means all-active."""
         return _call_value(
             "vmula",
             _type_of(acc),
             _raw(acc),
             _raw(lhs),
             _raw(rhs),
-            _required_variadic_mask(mask, context="pto.vmi.vmula(...)"),
+            _variadic_mask(mask),
             pmode=pmode,
             loc=loc,
             ip=ip,
