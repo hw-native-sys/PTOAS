@@ -137,7 +137,14 @@ LogicalResult emitFatobjLLVM(
     llvm::StringRef stubSource, llvm::StringRef outputPath,
     llvm::StringRef moduleId, const CANNToolchain &toolchain,
     TempFileRegistry &tempFiles, llvm::raw_ostream &diagOS,
-    ObjectEmissionOptions options = {});
+    ObjectEmissionOptions options = {},
+    // M1: optional device-side kernel_entry wrapper source. When non-empty it
+    // is compiled to a device .o and merged into the merged device ELF so
+    // simpler's scheduler can dispatch the VPTO body via kernel_entry.
+    llvm::StringRef deviceWrapperSource = "",
+    // M1: when true, skip the host-stub fatobj packaging and write the merged
+    // device ELF (with the wrapper) directly to outputPath.
+    bool mergedDeviceOnly = false);
 
 LogicalResult mergeDeviceObjects(llvm::ArrayRef<std::string> deviceObjPaths,
                                  llvm::StringRef outObjPath,

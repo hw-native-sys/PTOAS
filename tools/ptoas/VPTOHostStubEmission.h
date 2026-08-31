@@ -28,6 +28,24 @@ LogicalResult emitVPTOHostStubSource(ArrayRef<ModuleOp> modules,
                                      std::string &stubSource,
                                      llvm::raw_ostream &diagOS);
 
+/// Generate a device-side `kernel_entry(__gm__ int64_t* args)` wrapper source
+/// (cpp) that unpacks the simpler dispatch payload's args[] (tensors-first
+/// ChipTensor* → buffer.addr + start_offset, then scalar union uint64 punning)
+/// and forwards to the VPTO body entry (`<logicalName>_mix_aiv`/`_mix_aic`).
+///
+/// This mirrors the EmitC wrapper codegen (pypto pto_backend.py
+/// _generate_kernel_wrapper) but is emitted from the PTO IR at VPTOHostStub
+/// emission time (before MLIR→LLVM lowering/rename). Parameter order is
+/// preserved because normalizeFuncSignaturesForOfficialLLVMLowering only
+/// normalizes types, not arg count/order.
+LogicalResult emitVPTODeviceWrapperSource(ModuleOp module,
+                                          std::string &wrapperSource,
+                                          llvm::raw_ostream &diagOS);
+
+LogicalResult emitVPTODeviceWrapperSource(ArrayRef<ModuleOp> modules,
+                                          std::string &wrapperSource,
+                                          llvm::raw_ostream &diagOS);
+
 } // namespace mlir::pto
 
 #endif

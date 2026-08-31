@@ -35,6 +35,10 @@ extern llvm::cl::opt<std::string> ptoTargetArch;
 extern llvm::cl::opt<std::string> ptoBackend;
 extern llvm::cl::opt<bool> emitVPTO;
 extern llvm::cl::opt<bool> emitVPTOLLVMDialect;
+// M1: emit the merged device ELF directly to -o (no fatobj outer packaging),
+// with a device-side kernel_entry wrapper merged in. Lets simpler consume the
+// VPTO body via extract_text_section + CoreCallable.build + the scheduler.
+extern llvm::cl::opt<bool> vptoEmitMergedDeviceOnly;
 extern llvm::cl::opt<bool> ptoPrintSeamIR;
 extern llvm::cl::opt<std::string> ptoSeamIRFile;
 extern llvm::cl::opt<std::string> cannOutputVersion;
@@ -116,6 +120,7 @@ struct PTOASCompileResult {
   void reset() {
     textOutput.clear();
     vptoStubSource.clear();
+    vptoDeviceWrapperSource.clear();
     vptoCubeModule.reset();
     vptoVectorModule.reset();
     objectEmissionOptions = {};
@@ -125,6 +130,9 @@ struct PTOASCompileResult {
   PTOASCompileResultKind kind = PTOASCompileResultKind::Text;
   std::string textOutput;
   std::string vptoStubSource;
+  // Device-side kernel_entry(__gm__ int64_t* args) wrapper cpp (M1: VPTO
+  // <-> simpler scheduler ABI). Empty when host-stub emission is disabled.
+  std::string vptoDeviceWrapperSource;
   EmittedLLVMModule vptoCubeModule;
   EmittedLLVMModule vptoVectorModule;
   ObjectEmissionOptions objectEmissionOptions;

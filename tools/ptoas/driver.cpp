@@ -1180,7 +1180,9 @@ static LogicalResult emitVPTOLLVMFatobj(
           jobResult.vptoCubeModule.module.get(),
           jobResult.vptoVectorModule.module.get(), stubSource,
           outputPath, moduleId, *toolchain, context.getTempFiles(),
-          llvm::errs(), jobResult.objectEmissionOptions))) {
+          llvm::errs(), jobResult.objectEmissionOptions,
+          jobResult.vptoDeviceWrapperSource,
+          mlir::pto::vptoEmitMergedDeviceOnly))) {
     return failure();
   }
   return success();
