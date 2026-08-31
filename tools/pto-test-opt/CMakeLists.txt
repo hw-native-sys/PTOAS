@@ -55,6 +55,24 @@ add_dependencies(pto-vpto-scheduler-tracker-test
   PTOPassesIncGen
 )
 
+add_llvm_executable(pto-vmi-layout-support-test
+  pto-vmi-layout-support-test.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+
+target_link_libraries(pto-vmi-layout-support-test PRIVATE
+  PTOIR
+  PTOTransforms
+  MLIRFuncDialect
+  MLIRIR
+  MLIRSupport
+)
+
+add_dependencies(pto-vmi-layout-support-test
+  PTOOpsIncGen
+  PTOPassesIncGen
+)
+
 add_llvm_executable(pto-vfsimt-size-patcher-test
   pto-vfsimt-size-patcher-test.cpp
   PARTIAL_SOURCES_INTENDED

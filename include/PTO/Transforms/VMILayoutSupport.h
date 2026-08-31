@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 //===- VMILayoutSupport.h - VMI layout support queries ------*- C++ -*-===//
 //===----------------------------------------------------------------------===//
@@ -12,12 +14,14 @@
 #ifndef PTO_TRANSFORMS_VMILAYOUTSUPPORT_H
 #define PTO_TRANSFORMS_VMILAYOUTSUPPORT_H
 
-#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
+#include "PTO/Support/CodeConstants.h"
 #include "mlir/Support/LLVM.h"
 
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
+#include <cstddef>
 #include <string>
 
 namespace mlir::pto {
@@ -201,25 +205,75 @@ struct VMIVselrLayoutFact {
   VMILayoutAttr resultLayout;
 };
 
+enum class VMILayoutRelationPortKind {
+  Operand,
+  Result,
+};
+
+struct VMILayoutRelationPortDomain {
+  VMILayoutRelationPortKind kind = VMILayoutRelationPortKind::Operand;
+  unsigned portNumber = 0;
+  ArrayRef<VMILayoutAttr> layouts;
+};
+
+struct VMILayoutRelationFact {
+  // Entries use raw MLIR operand/result numbering. Non-layout ports contain a
+  // null attribute, so callers never need a family-specific port remapping.
+  SmallVector<VMILayoutAttr, mlir::pto::kValue4> operandLayouts;
+  SmallVector<VMILayoutAttr, mlir::pto::kValue4> resultLayouts;
+};
+
+using VMILayoutRelationFactVisitor =
+    llvm::function_ref<void(const VMILayoutRelationFact &)>;
+
+struct VMILayoutConversionFact {
+  VMILayoutAttr sourceLayout;
+  VMILayoutAttr resultLayout;
+};
+
+using VMILayoutConversionFactVisitor =
+    llvm::function_ref<void(const VMILayoutConversionFact &)>;
+
 class VMILayoutSupport {
 public:
+  // Visits the finite table-backed layout relations legal for a concrete op.
+  // An absent port domain is unconstrained; a present domain must be nonempty.
+  // Returns the number of visited facts. Polymorphic relations that need an
+  // anchor layout are rejected instead of being represented by invented rows.
+  FailureOr<size_t>
+  visitLayoutRelationFacts(Operation *op,
+                           ArrayRef<VMILayoutRelationPortDomain> portDomains,
+                           VMILayoutRelationFactVisitor visitor,
+                           std::string *reason = nullptr) const;
+
+  // Visits identity and registered explicit conversions within finite endpoint
+  // domains. At least one endpoint domain must be present so parameterized
+  // identity support cannot invent a global layout universe.
+  FailureOr<size_t>
+  visitLayoutConversionFacts(Type valueType,
+                             ArrayRef<VMILayoutAttr> sourceLayouts,
+                             ArrayRef<VMILayoutAttr> resultLayouts,
+                             VMILayoutConversionFactVisitor visitor,
+                             std::string *reason = nullptr) const;
+
   FailureOr<VMILoadLayoutFact>
   getLoadLayoutFact(VMIVRegType resultType,
                     std::string *reason = nullptr) const;
 
   FailureOr<VMIDeinterleaveLoadLayoutFact>
-  getPreferredDeinterleaveLoadLayoutFact(
-      VMIVRegType valueType, std::string *reason = nullptr) const;
+  getPreferredDeinterleaveLoadLayoutFact(VMIVRegType valueType,
+                                         std::string *reason = nullptr) const;
 
   FailureOr<SmallVector<VMIDeinterleaveLoadLayoutFact, mlir::pto::kValue4>>
-  getDeinterleaveLoadLayoutFactsForLayout(
-      VMIVRegType valueType, VMIDeinterleaveLoadLayoutPort port,
-      VMILayoutAttr layout, std::string *reason = nullptr) const;
+  getDeinterleaveLoadLayoutFactsForLayout(VMIVRegType valueType,
+                                          VMIDeinterleaveLoadLayoutPort port,
+                                          VMILayoutAttr layout,
+                                          std::string *reason = nullptr) const;
 
   FailureOr<VMIDeinterleaveLoadLayoutFact>
-  getDeinterleaveLoadLayoutFactForLayouts(
-      VMIVRegType lowType, VMIVRegType highType,
-      std::string *reason = nullptr) const;
+  getDeinterleaveLoadLayoutFactForLayouts(VMIVRegType lowType,
+                                          VMIVRegType highType,
+                                          std::string *reason = nullptr) const;
 
   FailureOr<VMIStoreLayoutFact>
   getStoreLayoutFact(VMIVRegType valueType,
@@ -234,8 +288,7 @@ public:
                            std::string *reason = nullptr) const;
 
   FailureOr<VMIMaskedStoreLayoutFact>
-  getPreferredMaskedStoreLayoutFact(VMIVRegType valueType,
-                                    VMIMaskType maskType,
+  getPreferredMaskedStoreLayoutFact(VMIVRegType valueType, VMIMaskType maskType,
                                     std::string *reason = nullptr) const;
 
   FailureOr<VMIMaskedLoadLayoutFact>
@@ -268,9 +321,11 @@ public:
       VMIVRegType sourceType, VMIVRegType resultType,
       VMILayoutAttr resultLayout, std::string *reason = nullptr) const;
 
-  FailureOr<VMICastLayoutFact> getCastLayoutFactForLayouts(
-      VMIVRegType sourceType, VMIVRegType resultType, VMILayoutAttr sourceLayout,
-      VMILayoutAttr resultLayout, std::string *reason = nullptr) const;
+  FailureOr<VMICastLayoutFact>
+  getCastLayoutFactForLayouts(VMIVRegType sourceType, VMIVRegType resultType,
+                              VMILayoutAttr sourceLayout,
+                              VMILayoutAttr resultLayout,
+                              std::string *reason = nullptr) const;
 
   FailureOr<SmallVector<VMIMaskGranularityCastLayoutFact, mlir::pto::kValue4>>
   getMaskGranularityCastLayoutFactsForLayout(
@@ -307,15 +362,17 @@ public:
                                  VMILayoutAttr layout,
                                  std::string *reason = nullptr) const;
 
-  FailureOr<VMIInterleaveLayoutFact> getVintlvLayoutFactForLayouts(
-      VMIVRegType lhsType, VMIVRegType rhsType, VMIMaskType maskType,
-      VMIVRegType lowType, VMIVRegType highType,
-      std::string *reason = nullptr) const;
+  FailureOr<VMIInterleaveLayoutFact>
+  getVintlvLayoutFactForLayouts(VMIVRegType lhsType, VMIVRegType rhsType,
+                                VMIMaskType maskType, VMIVRegType lowType,
+                                VMIVRegType highType,
+                                std::string *reason = nullptr) const;
 
-  FailureOr<VMIInterleaveLayoutFact> getVdintlvLayoutFactForLayouts(
-      VMIVRegType lhsType, VMIVRegType rhsType, VMIMaskType maskType,
-      VMIVRegType lowType, VMIVRegType highType,
-      std::string *reason = nullptr) const;
+  FailureOr<VMIInterleaveLayoutFact>
+  getVdintlvLayoutFactForLayouts(VMIVRegType lhsType, VMIVRegType rhsType,
+                                 VMIMaskType maskType, VMIVRegType lowType,
+                                 VMIVRegType highType,
+                                 std::string *reason = nullptr) const;
 
   FailureOr<VMIGroupSlotLayoutFact>
   getGroupSlotLoadLayoutFact(VMIVRegType resultType, int64_t numGroups,
@@ -338,8 +395,7 @@ public:
                           std::string *reason = nullptr) const;
 
   FailureOr<SmallVector<VMIGroupStoreLayoutFact, mlir::pto::kValue4>>
-  getGroupStoreLayoutFactsForLayout(VMIGroupStoreOp op,
-                                    VMIVRegType valueType,
+  getGroupStoreLayoutFactsForLayout(VMIGroupStoreOp op, VMIVRegType valueType,
                                     VMILayoutAttr layout,
                                     std::string *reason = nullptr) const;
 
@@ -348,8 +404,7 @@ public:
                                    std::string *reason = nullptr) const;
 
   FailureOr<VMIGroupStoreLayoutFact>
-  getHighPriorityGroupStoreLayoutFact(VMIGroupStoreOp op,
-                                      VMIVRegType valueType,
+  getHighPriorityGroupStoreLayoutFact(VMIGroupStoreOp op, VMIVRegType valueType,
                                       std::string *reason = nullptr) const;
 
   FailureOr<VMIGroupReduceLayoutFact>
@@ -361,17 +416,14 @@ public:
       int64_t numGroups, std::string *reason = nullptr) const;
 
   FailureOr<SmallVector<VMIGroupReduceLayoutFact, mlir::pto::kValue4>>
-  getGroupReduceLayoutFactsForLayout(VMIVRegType sourceType,
-                                     int64_t numGroups,
+  getGroupReduceLayoutFactsForLayout(VMIVRegType sourceType, int64_t numGroups,
                                      VMIGroupReduceLayoutPort port,
                                      VMILayoutAttr layout,
                                      std::string *reason = nullptr) const;
 
-  FailureOr<VMIGroupBroadcastLayoutFact>
-  getGroupBroadcastLayoutFactForLayouts(VMIVRegType sourceType,
-                                        VMIVRegType resultType,
-                                        int64_t numGroups,
-                                        std::string *reason = nullptr) const;
+  FailureOr<VMIGroupBroadcastLayoutFact> getGroupBroadcastLayoutFactForLayouts(
+      VMIVRegType sourceType, VMIVRegType resultType, int64_t numGroups,
+      std::string *reason = nullptr) const;
 
   FailureOr<SmallVector<VMIGroupBroadcastLayoutFact, mlir::pto::kValue4>>
   getGroupBroadcastLayoutFactsForLayout(VMIVRegType sourceType,
@@ -388,11 +440,13 @@ public:
   getGroupBroadcastLoadLayoutFact(VMIVRegType resultType,
                                   Value sourceGroupStride, int64_t numGroups,
                                   std::string *reason = nullptr) const;
-  FailureOr<VMIGroupBroadcastLoadDirectFact> getGroupBroadcastLoadDirectFact(
-      VMIGroupBroadcastLoadOp op, std::string *reason = nullptr) const;
-  FailureOr<VMIGroupBroadcastLoadDirectFact> getGroupBroadcastLoadDirectFact(
-      VMIVRegType resultType, Type sourceType, Value sourceGroupStride,
-      int64_t numGroups, std::string *reason = nullptr) const;
+  FailureOr<VMIGroupBroadcastLoadDirectFact>
+  getGroupBroadcastLoadDirectFact(VMIGroupBroadcastLoadOp op,
+                                  std::string *reason = nullptr) const;
+  FailureOr<VMIGroupBroadcastLoadDirectFact>
+  getGroupBroadcastLoadDirectFact(VMIVRegType resultType, Type sourceType,
+                                  Value sourceGroupStride, int64_t numGroups,
+                                  std::string *reason = nullptr) const;
 
   FailureOr<VMIHistogramLayoutFact>
   getVdhistLayoutFact(VMIVdhistOp op, std::string *reason = nullptr) const;
@@ -405,8 +459,7 @@ public:
                               std::string *reason = nullptr) const;
 
   FailureOr<VMIVselrLayoutFact>
-  getVselrLayoutFact(VMIVselrOp op,
-                     std::string *reason = nullptr) const;
+  getVselrLayoutFact(VMIVselrOp op, std::string *reason = nullptr) const;
 
   LogicalResult getVselrSupport(VMIVselrOp op,
                                 std::string *reason = nullptr) const;
@@ -437,8 +490,9 @@ public:
                                          int64_t numGroups,
                                          std::string *reason = nullptr) const;
 
-  LogicalResult getGroupBroadcastLoadSupport(
-      VMIGroupBroadcastLoadOp op, std::string *reason = nullptr) const;
+  LogicalResult
+  getGroupBroadcastLoadSupport(VMIGroupBroadcastLoadOp op,
+                               std::string *reason = nullptr) const;
 
   LogicalResult getTruncFSupport(VMITruncFOp op,
                                  std::string *reason = nullptr) const;
@@ -456,24 +510,21 @@ public:
                                  std::string *reason = nullptr) const;
 
   FailureOr<VMIBitcastLayoutFact>
-  getBitcastLayoutFact(VMIBitcastOp op,
-                       std::string *reason = nullptr) const;
+  getBitcastLayoutFact(VMIBitcastOp op, std::string *reason = nullptr) const;
 
   FailureOr<SmallVector<VMIBitcastLayoutFact, mlir::pto::kValue4>>
-  getBitcastLayoutFactsForLayout(VMIVRegType sourceType,
-                                 VMIVRegType resultType,
-                                 VMICastLayoutPort port,
-                                 VMILayoutAttr layout,
+  getBitcastLayoutFactsForLayout(VMIVRegType sourceType, VMIVRegType resultType,
+                                 VMICastLayoutPort port, VMILayoutAttr layout,
                                  std::string *reason = nullptr) const;
 
   LogicalResult getBitcastSupport(VMIBitcastOp op,
                                   std::string *reason = nullptr) const;
 
   LogicalResult getVdhistSupport(VMIVdhistOp op,
-                                std::string *reason = nullptr) const;
+                                 std::string *reason = nullptr) const;
 
   LogicalResult getVchistSupport(VMIVchistOp op,
-                                std::string *reason = nullptr) const;
+                                 std::string *reason = nullptr) const;
 };
 
 } // namespace mlir::pto
