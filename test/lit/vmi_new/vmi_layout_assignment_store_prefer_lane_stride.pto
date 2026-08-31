@@ -114,7 +114,7 @@ module {
 // ASSIGN-SAME: !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
 // ASSIGN: %[[Y:.*]] = pto.vmi.load
 // ASSIGN-SAME: !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
-// ASSIGN: %[[SUM:.*]] = pto.vmi.addf %[[X]], %[[Y]]
+// ASSIGN: %[[SUM:.*]] = pto.vmi.vadd %[[X]], %[[Y]]
 // ASSIGN-SAME: !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
 // ASSIGN: pto.vmi.store %[[SUM]]
 // ASSIGN-SAME: !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
@@ -126,7 +126,7 @@ module {
 // ASSIGN-SAME: !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
 // ASSIGN: %[[Y:.*]] = pto.vmi.load
 // ASSIGN-SAME: !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
-// ASSIGN: %[[SUM:.*]] = pto.vmi.addf %[[X]], %[[Y]]
+// ASSIGN: %[[SUM:.*]] = pto.vmi.vadd %[[X]], %[[Y]]
 // ASSIGN-SAME: !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
 // ASSIGN: %[[STORE_MASK:.*]] = pto.vmi.create_mask
 // ASSIGN-SAME: !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous, lane_stride = 2>>
@@ -139,7 +139,7 @@ module {
 // ASSIGN-SAME: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
 // ASSIGN: %[[Y:.*]] = pto.vmi.load
 // ASSIGN-SAME: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
-// ASSIGN: %[[SUM:.*]] = pto.vmi.addf %[[X]], %[[Y]]
+// ASSIGN: %[[SUM:.*]] = pto.vmi.vadd %[[X]], %[[Y]]
 // ASSIGN-SAME: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
 // ASSIGN: pto.vmi.store %[[SUM]]
 // ASSIGN-SAME: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
@@ -149,7 +149,7 @@ module {
 // ASSIGN-SAME: !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous, lane_stride = 2>>
 // ASSIGN: %[[Y:.*]] = pto.vmi.load
 // ASSIGN-SAME: !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous, lane_stride = 2>>
-// ASSIGN: %[[SUM:.*]] = pto.vmi.addi %[[X]], %[[Y]]
+// ASSIGN: %[[SUM:.*]] = pto.vmi.vadd %[[X]], %[[Y]]
 // ASSIGN-SAME: !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous, lane_stride = 2>>
 // ASSIGN: pto.vmi.store %[[SUM]]
 // ASSIGN-SAME: !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous, lane_stride = 2>>
@@ -159,7 +159,7 @@ module {
 // ASSIGN-SAME: !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>
 // ASSIGN: %[[Y:.*]] = pto.vmi.load
 // ASSIGN-SAME: !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>
-// ASSIGN: %[[SUM:.*]] = pto.vmi.addi %[[X]], %[[Y]]
+// ASSIGN: %[[SUM:.*]] = pto.vmi.vadd %[[X]], %[[Y]]
 // ASSIGN-SAME: !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>
 // ASSIGN: pto.vmi.store %[[SUM]]
 // ASSIGN-SAME: !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>

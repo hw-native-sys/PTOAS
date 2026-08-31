@@ -25,5 +25,5 @@ module {
 // CHECK-SAME: %arg1: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
 // CHECK-SAME: %arg2: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
 // CHECK-SAME: -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
-// CHECK: %[[OUT:.*]] = pto.vmi.fma %arg0, %arg1, %arg2
+// CHECK: %[[OUT:.*]] = pto.vmi.vmula %arg2, %arg0, %arg1
 // CHECK: return %[[OUT]]

@@ -269,11 +269,11 @@ DataNode:
 
 ```text
 layout-transparent elementwise:
-  addf/addi/subf/subi/mulf/muli/fma/divf/minf/maxf/...
+  vadd/vsub/vmul/vmula/vdiv/vmin/vmax/...
   L(operands...) = L(result)
 
 unary elementwise:
-  negf/absf/absi/sqrt/exp/ln/relu/not
+  vneg/vabs/vsqrt/vexp/vln/vrelu/vnot
   L(source) = L(result)
 
 select:
@@ -307,7 +307,7 @@ surface VMI:
 
   %x = pto.vmi.load ...
   %k = pto.vmi.broadcast ...
-  %y = pto.vmi.mulf %x, %k
+  %y = pto.vmi.vmul %x, %k
   %q = pto.vmi.truncf %y
 
 data layout 等价类:
@@ -315,7 +315,7 @@ data layout 等价类:
   class C0
   +--------------------------------------+
   | %x        %k        %y               |
-  | load      broadcast mulf result      |
+  | load      broadcast vmul result      |
   +--------------------------------------+
                          ^
                          |
@@ -364,7 +364,7 @@ scf.if result 不是 consumer-driven adoption 的可采纳 producer。
 ```text
 surface VMI:
 
-  %y = pto.vmi.mulf %x, %k
+  %y = pto.vmi.vmul %x, %k
   pto.vmi.store %y, %out0
   %q = pto.vmi.truncf %y
 
@@ -459,14 +459,14 @@ bitcast
 ```mlir
 %x = pto.vmi.load ...
 %k = pto.vmi.broadcast ...
-%y = pto.vmi.mulf %x, %k
+%y = pto.vmi.vmul %x, %k
 %q = pto.vmi.truncf %y
 ```
 
-`mulf` 先把 `%x`、`%k`、`%y` 合成同一个 data 等价类。`truncf` 对 `%y`
+`vmul` 先把 `%x`、`%k`、`%y` 合成同一个 data 等价类。`truncf` 对 `%y`
 的 source use 请求 `deinterleaved=4` 时，这个 request 作用到 `%y` 所在等价类；
-因为 `mulf` 是可采纳 producer，assignment 可以把整个等价类选成
-`deinterleaved=4`，从而让 load/broadcast/mulf 直接在这个 layout 下产生数据。
+因为 `vmul` 是可采纳 producer，assignment 可以把整个等价类选成
+`deinterleaved=4`，从而让 load/broadcast/vmul 直接在这个 layout 下产生数据。
 
 控制流边界也会形成等价类，但它不是任意 request 的自动传播通道：
 
@@ -498,7 +498,7 @@ consumer %x_req
 这个规则也处理多 consumer 冲突：
 
 ```mlir
-%y = pto.vmi.mulf %x, %k
+%y = pto.vmi.vmul %x, %k
 pto.vmi.store %y, %out0      // wants contiguous
 %q = pto.vmi.truncf %y       // wants deinterleaved=4 source
 ```
@@ -621,13 +621,13 @@ control-flow results
 ```mlir
 %a_dense = pto.vmi.ensure_layout %a : deinterleaved=2 -> contiguous
 %b_dense = pto.vmi.ensure_layout %b : deinterleaved=2 -> contiguous
-%y_dense = pto.vmi.addf %a_dense, %b_dense : contiguous
+%y_dense = pto.vmi.vadd %a_dense, %b_dense : contiguous
 ```
 
 变换后：
 
 ```mlir
-%y_split = pto.vmi.addf %a, %b : deinterleaved=2
+%y_split = pto.vmi.vadd %a, %b : deinterleaved=2
 %y_dense = pto.vmi.ensure_layout %y_split : deinterleaved=2 -> contiguous
 ```
 
@@ -891,7 +891,7 @@ VMI 通过 mask 表达 tail，不通过 padding 表达 tail。
 ```mlir
 %mask = pto.vmi.create_mask %active_lanes
 %x = pto.vmi.masked_load %src[%off], %mask
-%y = pto.vmi.mulf %x, %scale
+%y = pto.vmi.vmul %x, %scale
 pto.vmi.masked_store %y, %dst[%off], %mask
 ```
 

@@ -6,10 +6,10 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: not pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto 2>&1 | FileCheck %s
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s
 
 module {
-  func.func @vmi_fma_integer_invalid(
+  func.func @vmi_vmula_integer(
       %acc: !pto.vmi.vreg<64xi32>,
       %lhs: !pto.vmi.vreg<64xi32>,
       %rhs: !pto.vmi.vreg<64xi32>,
@@ -21,4 +21,5 @@ module {
   }
 }
 
-// CHECK: VMI-RESIDUAL-OP: failed to convert all VMI ops/types to VPTO
+// CHECK-LABEL: func.func @vmi_vmula_integer(
+// CHECK: pto.vmula

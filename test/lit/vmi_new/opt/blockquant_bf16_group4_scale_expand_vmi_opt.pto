@@ -69,7 +69,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // ASSIGN-SAME: -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
 // ASSIGN: %[[X128:.*]] = pto.vmi.load
 // ASSIGN-SAME: -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
-// ASSIGN: pto.vmi.mulf %[[X128]], %[[SCALE128]]
+// ASSIGN: pto.vmi.vmul %[[X128]], %[[SCALE128]]
 
 // LOWER-LABEL: func.func @blockquant_bf16_group4_scale_expand(
 // bf16 abs via sign-bit clear (not absf).

@@ -625,10 +625,7 @@ struct LayoutSolver {
           return constraintResult(
               uniteMask(maskOp.getSource(), maskOp.getResult(), op));
         })
-        .Case<VMIAddFOp, VMIAddIOp, VMISubFOp, VMISubIOp, VMIMulFOp,
-              VMIMulIOp, VMIDivFOp, VMIMinFOp, VMIMinIOp, VMIMaxFOp,
-              VMIMaxIOp, VMIAndIOp, VMIOrIOp, VMIXOrIOp, VMIShLIOp,
-              VMIShRUIOp, VMIShRSIOp, VMIVaddcOp, VMIVaddcsOp>(
+        .Case<VMIVaddcOp, VMIVaddcsOp>(
             [this, op](auto binaryOp) {
               return constraintResult(constrainElementwiseBinary(
                   binaryOp.getLhsMutable(), binaryOp.getRhsMutable(),
@@ -639,12 +636,10 @@ struct LayoutSolver {
           return constraintResult(
               unite(scalarOp.getSrc(), scalarOp.getResult(), op));
         })
-        .Case<VMINegFOp, VMINegIOp, VMIAbsFOp, VMIAbsIOp, VMISqrtOp,
-              VMIExpOp, VMILnOp, VMIReluOp, VMINotOp, VMIBitcastOp>(
-            [this, op](auto unaryOp) {
-              return constraintResult(
-                  unite(unaryOp.getSource(), unaryOp.getResult(), op));
-            })
+        .Case<VMIBitcastOp>([this, op](auto unaryOp) {
+          return constraintResult(
+              unite(unaryOp.getSource(), unaryOp.getResult(), op));
+        })
         .Default([](Operation *) { return std::nullopt; });
   }
 
@@ -656,12 +651,6 @@ struct LayoutSolver {
                                                 vmull.getBMutable(),
                                                 vmull.getLow(), op)) ||
               failed(unite(vmull.getA(), vmull.getHigh(), op));
-          return constraintResult(failure(failedToUnite));
-        })
-        .Case<VMIFmaOp>([this, op](VMIFmaOp fma) {
-          bool failedToUnite = failed(unite(fma.getLhs(), fma.getRhs(), op)) ||
-                               failed(unite(fma.getLhs(), fma.getAcc(), op)) ||
-                               failed(unite(fma.getLhs(), fma.getResult(), op));
           return constraintResult(failure(failedToUnite));
         })
         .Case<VMICmpFOp, VMICmpIOp>([this, op](auto compareOp) {

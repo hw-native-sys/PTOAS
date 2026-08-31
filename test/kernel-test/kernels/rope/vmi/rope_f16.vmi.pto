@@ -111,7 +111,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       // │   UNPK_B16 解包       │   continuous 逻辑连续向量           │
       // │ vcvt + part EVEN/ODD  │ vmi.extf / vmi.truncf（纯语义转换） │
       // │   显式 rnd="R" sat=   │   无需指定硬件舍入/饱和参数          │
-      // │ vmul/vsub/vadd        │ vmi.mulf / subf / addf             │
+      // │ vmul/vsub/vadd        │ vmi.vmul / vsub / vadd             │
       // │   + mask<b16/b32>     │   无 mask 参数（编译器管理）         │
       // │ vsts + PK_B32 打包    │ vmi.masked_store（编译器处理 pack）  │
       // │ pge_b16/pset_b16      │ vmi.create_mask（逻辑长度创建）      │
@@ -196,7 +196,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
               // 公式: out1 = x1*cos - x2*sin
               //       out2 = x2*cos + x1*sin
               //
-              // VMI: vmi.mulf / subf / addf 直接表达向量乘减加，无需 mask 参数。
+              // VMI: vmi.vmul / vsub / vadd 直接表达向量乘减加；省略 mask 时使用全有效语义。
               // MI 对应 (f16 half 模式):
               //   %t0 = pto.vmul %cos_lo, %x_lo, %mask16_half  ← 需 mask<b16>
               //   %t1 = pto.vmul %sin_lo, %x_hi, %mask16_half
@@ -205,18 +205,18 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
               //   每条算术指令都需要显式携带 mask（b16 for f16），
               //   VMI 消除了这个负担——编译器自动管理 mask。
               // ========================================================================
-              %x1_cos = pto.vmi.mulf %x1_16, %cos1_16
+              %x1_cos = pto.vmi.vmul %x1_16, %cos1_16
                   : !pto.vmi.vreg<128xf16>, !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xf16>
-              %x2_sin = pto.vmi.mulf %x2_16, %sin1_16
+              %x2_sin = pto.vmi.vmul %x2_16, %sin1_16
                   : !pto.vmi.vreg<128xf16>, !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xf16>
-              %out1 = pto.vmi.subf %x1_cos, %x2_sin
+              %out1 = pto.vmi.vsub %x1_cos, %x2_sin
                   : !pto.vmi.vreg<128xf16>, !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xf16>
 
-              %x2_cos = pto.vmi.mulf %x2_16, %cos2_16
+              %x2_cos = pto.vmi.vmul %x2_16, %cos2_16
                   : !pto.vmi.vreg<128xf16>, !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xf16>
-              %x1_sin = pto.vmi.mulf %x1_16, %sin2_16
+              %x1_sin = pto.vmi.vmul %x1_16, %sin2_16
                   : !pto.vmi.vreg<128xf16>, !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xf16>
-              %out2 = pto.vmi.addf %x2_cos, %x1_sin
+              %out2 = pto.vmi.vadd %x2_cos, %x1_sin
                   : !pto.vmi.vreg<128xf16>, !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xf16>
 
               // VMI: masked_store 统一处理部分写入，一个 mask 管理活跃 lane。
@@ -294,22 +294,22 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
               // 1. channel_split/merge 表达"拆奇偶/合奇偶"的语义意图，
               //    而非 MI 的 vdintlv/vintlv 硬件指令（需要理解寄存器 lane 映射）
               // 2. 直接在 even/odd 通道上表达成对 f16 乘加，避免额外的 f32 中间值
-              // 3. 所有 mulf/addf/subf 无需 mask 参数——编译器自动管理
+              // 3. 所有 vmul/vadd/vsub 均省略 mask，由编译器提供全有效 mask
               // ========================================================================
               %x_even, %x_odd = "pto.vmi.channel_split"(%x16)
                   : (!pto.vmi.vreg<128xf16>) -> (!pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16>)
-              %x_even_cos = pto.vmi.mulf %x_even, %cos_even
+              %x_even_cos = pto.vmi.vmul %x_even, %cos_even
                   : !pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16> -> !pto.vmi.vreg<64xf16>
-              %x_odd_sin = pto.vmi.mulf %x_odd, %sin_even
+              %x_odd_sin = pto.vmi.vmul %x_odd, %sin_even
                   : !pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16> -> !pto.vmi.vreg<64xf16>
-              %y_even = pto.vmi.subf %x_even_cos, %x_odd_sin
+              %y_even = pto.vmi.vsub %x_even_cos, %x_odd_sin
                   : !pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16> -> !pto.vmi.vreg<64xf16>
 
-              %x_odd_cos = pto.vmi.mulf %x_odd, %cos_odd
+              %x_odd_cos = pto.vmi.vmul %x_odd, %cos_odd
                   : !pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16> -> !pto.vmi.vreg<64xf16>
-              %x_even_sin = pto.vmi.mulf %x_even, %sin_odd
+              %x_even_sin = pto.vmi.vmul %x_even, %sin_odd
                   : !pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16> -> !pto.vmi.vreg<64xf16>
-              %y_odd = pto.vmi.addf %x_odd_cos, %x_even_sin
+              %y_odd = pto.vmi.vadd %x_odd_cos, %x_even_sin
                   : !pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16> -> !pto.vmi.vreg<64xf16>
 
               %out = "pto.vmi.channel_merge"(%y_even, %y_odd)

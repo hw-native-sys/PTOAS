@@ -61,21 +61,21 @@ module {
 // CHECK-LABEL: func.func @vshrs_signed(
 // CHECK: pto.vmi.vshrs
 // CHECK-NOT: pto.vmi.broadcast
-// CHECK-NOT: pto.vmi.shrsi
+// CHECK-NOT: pto.vmi.vshr
 
 // CHECK-LABEL: func.func @vshrs_signless(
 // CHECK: pto.vmi.vshrs
 // CHECK-NOT: pto.vmi.broadcast
-// CHECK-NOT: pto.vmi.shrui
+// CHECK-NOT: pto.vmi.vshr
 
 // CHECK-LABEL: func.func @vshrs_unsigned(
 // CHECK: pto.vmi.vshrs
 // CHECK-NOT: pto.vmi.broadcast
-// CHECK-NOT: pto.vmi.shrui
+// CHECK-NOT: pto.vmi.vshr
 
 // CHECK-LABEL: func.func @vshr_signless(
-// CHECK: pto.vmi.shrui
-// CHECK-NOT: pto.vmi.shrsi
+// CHECK: pto.vmi.vshr
+// CHECK-NOT: pto.vmi.vshr
 
 // LOWER-LABEL: func.func @vshrs_signed(
 // LOWER-NOT: unrealized_conversion_cast

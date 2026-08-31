@@ -29,7 +29,7 @@ module {
 // ASSIGN-SAME: %[[SRC:.*]]: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
 // ASSIGN: %[[WIDE:.*]] = pto.vmi.extf %[[SRC]]
 // ASSIGN-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
-// ASSIGN: %[[SUM:.*]] = pto.vmi.addf %[[WIDE]], %[[WIDE]]
+// ASSIGN: %[[SUM:.*]] = pto.vmi.vadd %[[WIDE]], %[[WIDE]]
 // ASSIGN-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 // ASSIGN-NOT: pto.vmi.ensure_layout %[[SUM]]
 // ASSIGN: pto.vmi.store %[[SUM]]

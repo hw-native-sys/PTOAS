@@ -49,7 +49,7 @@ module {
 // ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 // ASSIGN: %[[B:.*]] = pto.vmi.load
 // ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
-// ASSIGN: %[[T1:.*]] = pto.vmi.mulf %[[W]], %[[B]]
+// ASSIGN: %[[T1:.*]] = pto.vmi.vmul %[[W]], %[[B]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 // ASSIGN: %[[MASK:.*]] = pto.vmi.create_mask
 // ASSIGN-SAME: -> !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>

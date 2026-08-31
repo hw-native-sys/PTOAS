@@ -39,7 +39,7 @@ module {
 // CHECK-SAME: -> !pto.vmi.vreg<512xf32, #pto.vmi.layout<deinterleaved = 4>>
 // CHECK: %[[SCALE:.*]] = pto.vmi.group_broadcast %arg0
 // CHECK-SAME: -> !pto.vmi.vreg<512xf32, #pto.vmi.layout<deinterleaved = 4>>
-// CHECK: %[[OUT:.*]] = pto.vmi.mulf %[[SCALE]], %[[X]]
+// CHECK: %[[OUT:.*]] = pto.vmi.vmul %[[SCALE]], %[[X]]
 // CHECK-SAME: -> !pto.vmi.vreg<512xf32, #pto.vmi.layout<deinterleaved = 4>>
 // CHECK: %[[OUT_D2:.*]] = pto.vmi.ensure_layout %[[OUT]]
 // CHECK-SAME: -> !pto.vmi.vreg<512xf32, #pto.vmi.layout<deinterleaved = 2>>

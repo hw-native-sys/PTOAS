@@ -27,9 +27,9 @@ attrs:
   #pto.vmi.layout<...>
 
 ops:
-  pto.vmi.addf
-  pto.vmi.subf
-  pto.vmi.mulf
+  pto.vmi.vadd
+  pto.vmi.vsub
+  pto.vmi.vmul
   pto.vmi.ensure_layout
 ```
 
@@ -37,7 +37,7 @@ ops:
 如果后续要拆成真正独立的 `pto.vmi` dialect，必须先保证所有 pass、type converter、parser 测试
 和公开文档同步迁移；第一版不要做这个拆分。
 
-风险点：带点 mnemonic 例如 `vmi.vreg`、`vmi.addf` 必须在 Slice 0 先用 parser round-trip 测试
+风险点：带点 mnemonic 例如 `vmi.vreg`、`vmi.vadd` 必须在 Slice 0 先用 parser round-trip 测试
 证明。如果 TableGen 的默认 type/attr parser 不接受该 spelling，就在 VMI type/attr 上实现
 custom assembly format，而不是改公开 spelling。
 
@@ -1479,7 +1479,7 @@ facts; it must not rewrite while walking:
 
 ```text
 Data equivalence:
-  pto.vmi.addf/addi: lhs == rhs == result
+  pto.vmi.vadd: lhs == rhs == result
   pto.vmi.cmpf/cmpi: lhs == rhs
   pto.vmi.select: true_value == false_value == result
   pto.vmi.ensure_layout: source and result are not equivalent if layouts differ
@@ -1827,7 +1827,7 @@ The main reason is not style. It is correctness across values without defining o
   cf.br ^bb1(%x : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>)
 
 ^bb1(%y: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>):
-  %z = pto.vmi.addf %y, %y
+  %z = pto.vmi.vadd %y, %y
     : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
   ...
 ```
@@ -1901,7 +1901,7 @@ identity/helper:
   pack, unpack, ensure_layout identity/materialization cases, ensure_mask_* identity case
 
 per-part elementwise:
-  addf, addi, subf, subi, mulf, muli, divf, minf, maxf, negf, absf, absi, sqrt, exp, ln, relu, andi, ori, xori, shli, shrui, shrsi, not, cmpf, cmpi, select
+  vadd, vsub, vmul, vdiv, vmin, vmax, vneg, vabs, vsqrt, vexp, vln, vrelu, vand, vor, vxor, vshl, vshr, vnot, vmula, cmpf, cmpi, select
 
 per-part predicate:
   mask_and, mask_or, mask_xor, mask_not
@@ -1923,7 +1923,7 @@ logical deinterleaved=2 value:
   part0 contains logical lanes 0, 2, 4, ...
   part1 contains logical lanes 1, 3, 5, ...
 
-vmi.addf/subf/mulf on two such values:
+vmi.vadd/vsub/vmul on two such values:
   emit the matching VPTO per-part op for part0_lhs, part0_rhs
   emit the matching VPTO per-part op for part1_lhs, part1_rhs
 ```
@@ -2175,30 +2175,25 @@ pto.vmi.mask_not
 Arithmetic / conversion：
 
 ```text
-pto.vmi.addf
-pto.vmi.addi
-pto.vmi.subf
-pto.vmi.subi
-pto.vmi.mulf
-pto.vmi.muli
-pto.vmi.fma
-pto.vmi.divf
-pto.vmi.minf
-pto.vmi.maxf
-pto.vmi.negf
-pto.vmi.absf
-pto.vmi.absi
-pto.vmi.sqrt
-pto.vmi.exp
-pto.vmi.ln
-pto.vmi.relu
-pto.vmi.andi
-pto.vmi.ori
-pto.vmi.xori
-pto.vmi.shli
-pto.vmi.shrui
-pto.vmi.shrsi
-pto.vmi.not
+pto.vmi.vadd
+pto.vmi.vsub
+pto.vmi.vmul
+pto.vmi.vmula
+pto.vmi.vdiv
+pto.vmi.vmin
+pto.vmi.vmax
+pto.vmi.vneg
+pto.vmi.vabs
+pto.vmi.vsqrt
+pto.vmi.vexp
+pto.vmi.vln
+pto.vmi.vrelu
+pto.vmi.vand
+pto.vmi.vor
+pto.vmi.vxor
+pto.vmi.vshl
+pto.vmi.vshr
+pto.vmi.vnot
 pto.vmi.cmpf
 pto.vmi.cmpi
 pto.vmi.select
@@ -2207,8 +2202,8 @@ pto.vmi.truncf
 pto.vmi.bitcast
 ```
 
-`pto.vmi.shrui` represents logical right shift and lowers to unsigned
-`pto.vshr`. `pto.vmi.shrsi` represents arithmetic right shift and lowers to
+`pto.vmi.vshr` represents logical right shift and lowers to unsigned
+`pto.vshr`. `pto.vmi.vshr` represents arithmetic right shift and lowers to
 signed `pto.vshr`; the physical element type selects the VPTO/VISA sign mode.
 Integer div/rem, integer casts, int-float casts, and index casts are also
 intentionally outside the current VMI surface until signedness, rounding,
@@ -2497,7 +2492,7 @@ constant/broadcast/create_mask/constant_mask:
 mask_and/mask_or/mask_xor/mask_not:
   all mask operands/results same layout and granularity
 
-addf/addi/subf/subi/mulf/muli/divf/minf/maxf/negf/absf/absi/sqrt/exp/ln/relu/andi/ori/xori/shli/shrui/shrsi/not/cmpf/cmpi/select:
+vadd/vsub/vmul/vdiv/vmin/vmax/vneg/vabs/vsqrt/vexp/vln/vrelu/vand/vor/vxor/vshl/vshr/vnot/vmula/cmpf/cmpi/select:
   all data operands/results same layout
   mask layout follows data layout
 
@@ -2680,7 +2675,7 @@ for each iter_arg index i:
 ```
 
 这条规则避免 loop-carried value 每次迭代改变 layout。对于 `extf f16->f32` 作为 init、
-loop body 内部 `addf` 并 yield 的 case，`extf` 的 natural layout `deinterleaved=2`
+loop body 内部 `vadd` 并 yield 的 case，`extf` 的 natural layout `deinterleaved=2`
 必须稳定传递到 `%acc` region arg、`scf.yield` 和 loop result。
 
 `cf.br` / `cf.cond_br` equivalence：
@@ -2872,7 +2867,7 @@ pto.vmi.mask_and / mask_or / mask_xor / mask_not:
     mask_xor emits pto.pxor(lhs_part, rhs_part, all_true_mask)
     mask_not emits pto.pnot(source_part, all_true_mask)
 
-pto.vmi.addf / addi / subf / subi / mulf / muli / divf / minf / maxf / negf / absf / absi / sqrt / exp / ln / relu / andi / ori / xori / shli / shrui / shrsi / not:
+pto.vmi.vadd / vsub / vmul / vdiv / vmin / vmax / vneg / vabs / vsqrt / vexp / vln / vrelu / vand / vor / vxor / vshl / vshr / vnot:
   current direct lowering requires the physical element width to be 8, 16, or
   32 bits, because every emitted VPTO op is predicated by a materialized
   pto.mask<b8/b16/b32>. VMI types such as index or f64 remain valid semantic
@@ -2881,50 +2876,33 @@ pto.vmi.addf / addi / subf / subi / mulf / muli / divf / minf / maxf / negf / ab
   This common predicate-maskability rule is necessary but not sufficient for
   every target op. Direct lowering must also preflight the concrete VPTO/VISA
   element contract before OneToN rewriting:
-    addf/subf/mulf -> pto.vadd/vsub/vmul support f16/bf16/f32 floating types
-    divf -> pto.vdiv supports f16/f32 floating types
-    minf/maxf -> pto.vmin/vmax support f16/bf16/f32 floating types
-    negf/absf/sqrt/exp/ln/relu -> pto.vneg/vabs/vsqrt/vexp/vln/vrelu support f16/f32 floating types
-    absi -> pto.vabs supports signless/signed i8/i16/i32 integer types
+    vadd/vsub/vmul -> pto.vadd/vsub/vmul support the corresponding floating or integer element types
+    vdiv -> pto.vdiv supports f16/f32 floating types
+    vmin/vmax -> pto.vmin/vmax support the corresponding floating or integer element types
+    vneg/vabs/vsqrt/vexp/vln/vrelu -> the matching VPTO op and its element-type contract
   bf16/f8 remain legal VMI float-like semantic types for the ops whose VMI
   semantics allow them, but vmi-to-vpto must report VMI-UNSUPPORTED until a
   materialization plan or wider target contract exists.
   for each physical part:
-    materialize pto.pset_b8/b16/b32 "PAT_ALL" from the physical element width
-    addf/addi emit pto.vadd(lhs_part, rhs_part, all_true_mask)
-    subf/subi emit pto.vsub(lhs_part, rhs_part, all_true_mask)
-    mulf/muli emit pto.vmul(lhs_part, rhs_part, all_true_mask)
-    divf emits pto.vdiv(lhs_part, rhs_part, all_true_mask)
-    minf emits pto.vmin(lhs_part, rhs_part, all_true_mask)
-    maxf emits pto.vmax(lhs_part, rhs_part, all_true_mask)
-    negf emits pto.vneg(source_part, all_true_mask)
-    absf/absi emit pto.vabs(source_part, all_true_mask)
-    sqrt emits pto.vsqrt(source_part, all_true_mask)
-    exp emits pto.vexp(source_part, all_true_mask)
-    ln emits pto.vln(source_part, all_true_mask)
-    relu emits pto.vrelu(source_part, all_true_mask)
-    andi emits pto.vand(lhs_part, rhs_part, all_true_mask)
-    ori emits pto.vor(lhs_part, rhs_part, all_true_mask)
-    xori emits pto.vxor(lhs_part, rhs_part, all_true_mask)
-    shli emits pto.vshl(lhs_part, rhs_part, all_true_mask)
-    shrui emits pto.vshr(lhs_part, rhs_part, all_true_mask)
-    shrsi emits signed pto.vshr(lhs_part, rhs_part, all_true_mask)
-    not emits pto.vnot(source_part, all_true_mask)
+    forward an explicit VMI mask part when present; otherwise materialize an
+    all-active pto.mask<b8/b16/b32> for that physical part
+    emit the same-named VPTO operation for each physical part
+    vshr signedness follows the operand element type
 
-pto.vmi.fma:
+pto.vmi.vmula:
   semantic:
     result = fused_multiply_add(lhs, rhs, acc)
-    It must not be decomposed to pto.vmi.mulf + pto.vmi.addf because VPTO VMULA
+    It must not be decomposed to pto.vmi.vmul + pto.vmi.vadd because VPTO VMULA
     may produce different floating-point results from separate multiply and add.
   layout assignment:
     lhs, rhs, acc, and result belong to one data layout equivalence class.
   verifier contract:
-    source/result element type must be f16, bf16, or f32
+    source/result element type must be f16, bf16, f32, or i8/i16/i32
   current direct lowering:
     for each physical part:
-      materialize pto.pset_b16/b32 "PAT_ALL" from the physical element width
-      emit pto.vmula(acc_part, lhs_part, rhs_part, all_true_mask)
-    The VMI operand order is lhs, rhs, acc; the VPTO operand order is acc, lhs, rhs.
+      forward the explicit mask part, or materialize an all-active predicate
+      emit pto.vmula(acc_part, lhs_part, rhs_part, mask_part)
+    VMI and VPTO both use operand order acc, lhs, rhs.
 
 pto.vmi.cmpf / cmpi:
   verifier contract:
@@ -4100,7 +4078,7 @@ Slice 4 完成条件：
     Covered by vmi_to_vpto_bf16_arith.pto, vmi_to_vpto_math_element_type_invalid.pto,
     vmi_to_vpto_cmp_select.pto, vmi_to_vpto_cmp_element_type_invalid.pto,
     vmi_to_vpto_fma.pto, vmi_to_vpto_fma_element_type_invalid.pto, and
-    vmi_to_vpto_unary_math.pto for negf/absf/absi/sqrt/exp/ln/relu, plus
+    vmi_to_vpto_unary_math.pto for vneg/vabs/vsqrt/vexp/vln/vrelu, plus
     vmi_to_vpto_relu_element_type_invalid.pto.
 11. Same-family mask logic ops lower through the physical mask granularity instead of assuming b32 masks.
     Covered by vmi_to_vpto_mask_logic.pto for mask_and/mask_or/mask_xor/mask_not on b32 masks produced by
@@ -4349,7 +4327,7 @@ vmi_pipeline_hard_gates.mlir
 Each pass test must use `FileCheck` to prove both positive output and negative absence:
 
 ```text
-CHECK: pto.vmi.addf
+CHECK: pto.vmi.vadd
 CHECK-NOT: pto.vadd
 CHECK-NOT: unrealized_conversion_cast
 ```
@@ -4471,7 +4449,7 @@ logical vector 语义和当前物理指令的天然限制。
 ```text
 elementwise same-shape op:
   examples:
-    addf/addi/subf/mulf/andi/shli/shrui/shrsi/absf/absi/sqrt
+    vadd/vsub/vmul/vand/vshl/vshr/vabs/vsqrt
   layout rule:
     all data operands and result are in one equivalence class
   lowering rule:
@@ -4526,9 +4504,9 @@ structural boundary:
 只需要：
 
 ```cpp
-if (auto addf = dyn_cast<VMIAddFOp>(op)) {
-  if (failed(unite(addf.getLhs(), addf.getRhs(), op)) ||
-      failed(unite(addf.getLhs(), addf.getResult(), op)))
+if (auto vadd = dyn_cast<VMIVaddOp>(op)) {
+  if (failed(unite(vadd.getLhs(), vadd.getRhs(), op)) ||
+      failed(unite(vadd.getLhs(), vadd.getResult(), op)))
     return WalkResult::interrupt();
   return WalkResult::advance();
 }
@@ -4616,7 +4594,7 @@ scf.execute_region / scf.index_switch:
 
 ```mlir
 %r = scf.if %cond -> !pto.vmi.vreg<128xf32> {
-  %x = pto.vmi.addf %a, %b : ... -> !pto.vmi.vreg<128xf32>
+  %x = pto.vmi.vadd %a, %b : ... -> !pto.vmi.vreg<128xf32>
   scf.yield %x : !pto.vmi.vreg<128xf32>
 } else {
   scf.yield %c : !pto.vmi.vreg<128xf32>
@@ -4644,9 +4622,8 @@ CHECK-NOT: unrealized_conversion_cast
 use verifier failure:
   op 本身语义非法，任何 target 都不应该接受。
   examples:
-    absf on integer element
-    shrui on signed integer element
-    shrsi on unsigned integer element
+    vabs on an unsupported element type
+    vshr whose element type is unsupported by the target contract
     bitcast total bits mismatch
 
 use VMI-LAYOUT-CONTRACT:

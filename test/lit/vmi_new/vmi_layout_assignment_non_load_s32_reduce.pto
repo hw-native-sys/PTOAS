@@ -42,7 +42,7 @@ module {
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
 // ASSIGN: %[[BIASV:.*]] = pto.vmi.broadcast %[[BIAS]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
-// ASSIGN: %[[X:.*]] = pto.vmi.addf %[[A]], %[[BIASV]]
+// ASSIGN: %[[X:.*]] = pto.vmi.vadd %[[A]], %[[BIASV]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
 // ASSIGN: %[[SUM:.*]] = pto.vmi.group_reduce_addf %[[X]], %[[MASK]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>

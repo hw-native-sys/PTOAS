@@ -47,7 +47,7 @@ module {
 // ASSIGN-SAME: -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
 // ASSIGN: %[[B:.*]] = pto.vmi.group_broadcast %[[SUM]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<block_deinterleaved = 4>>
-// ASSIGN: %[[Y_GROUP:.*]] = pto.vmi.mulf %[[RAW]], %[[B]]
+// ASSIGN: %[[Y_GROUP:.*]] = pto.vmi.vmul %[[RAW]], %[[B]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<block_deinterleaved = 4>>
 // ASSIGN: %[[MASK2:.*]] = pto.vmi.ensure_mask_layout
 // ASSIGN-SAME: -> !pto.vmi.mask<256xb32, #pto.vmi.layout<block_deinterleaved = 4>>

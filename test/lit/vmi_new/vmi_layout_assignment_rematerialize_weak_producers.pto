@@ -49,21 +49,25 @@ module {
 }
 
 // ASSIGN-LABEL: func.func @vmi_layout_assignment_rematerialize_weak_producers(
-// ASSIGN: %[[MASK:.*]] = pto.vmi.create_mask %{{.*}} : index -> !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
-// ASSIGN: %[[INDEX:.*]] = pto.vmi.iota %{{.*}} : f32 -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
-// ASSIGN: %[[INDEX_C:.*]] = pto.vmi.iota %{{.*}} : f32 -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
-// ASSIGN: %[[SCORE_BASE:.*]] = pto.vmi.addf %{{.*}}, %[[INDEX_C]]
+// ASSIGN: %[[REDUCE_MASK:.*]] = pto.vmi.create_mask %{{.*}} : index -> !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: %[[INDEX:.*]] = pto.vmi.iota %{{.*}} : f32 -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[SCORE_BASE:.*]] = pto.vmi.vadd %[[INDEX]], %[[INDEX]]
 // ASSIGN-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
-// ASSIGN: %[[MASK_C:.*]] = pto.vmi.create_mask %{{.*}} : index -> !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
-// ASSIGN: pto.vmi.vmuls %[[SCORE_BASE]], {{.*}}, %[[MASK_C]]
+// ASSIGN: %[[SCORE_MASK:.*]] = pto.vmi.create_mask %{{.*}} : index -> !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
+// ASSIGN: pto.vmi.vmuls %[[SCORE_BASE]], {{.*}}, %[[SCORE_MASK]]
 // ASSIGN-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>, f32, !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
 // ASSIGN: pto.vmi.vexpdif {{.*}} !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: %[[INDEX_D2:.*]] = pto.vmi.iota %{{.*}} : f32 -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: pto.vmi.vadd {{.*}}, %[[INDEX_D2]]
 // ASSIGN: pto.vmi.group_reduce_addf {{.*}} !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 
 // REMAT-LABEL: func.func @vmi_layout_assignment_rematerialize_weak_producers(
-// REMAT: %[[INDEX_D2:.*]] = pto.vmi.iota %{{.*}} : f32 -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 // REMAT: %[[INDEX_C:.*]] = pto.vmi.iota %{{.*}} : f32 -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// REMAT: %[[SCORE_BASE_C:.*]] = pto.vmi.vadd %[[INDEX_C]], %[[INDEX_C]]
 // REMAT: %[[MASK_C:.*]] = pto.vmi.create_mask %{{.*}} : index -> !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
+// REMAT: pto.vmi.vmuls %[[SCORE_BASE_C]], {{.*}}, %[[MASK_C]]
+// REMAT: pto.vmi.create_mask %{{.*}} : index -> !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
+// REMAT: %[[INDEX_D2:.*]] = pto.vmi.iota %{{.*}} : f32 -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 // REMAT-NOT: pto.vmi.ensure_mask_layout
 
 // LOWER-LABEL: func.func @vmi_layout_assignment_rematerialize_weak_producers(

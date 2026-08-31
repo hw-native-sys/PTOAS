@@ -32,7 +32,7 @@ module {
 // CHECK: pto.vmi.extf
 // CHECK-SAME: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
 // CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
-// CHECK: pto.vmi.addf
+// CHECK: pto.vmi.vadd
 // CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 // CHECK: pto.vmi.cmpf
 // CHECK-SAME: !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>

@@ -43,7 +43,7 @@ module {
 // ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
 // ASSIGN: %[[IDX:.*]] = pto.vmi.ensure_layout %[[IOTA]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
-// ASSIGN: pto.vmi.addf %[[WIDE]], %[[IDX]]
+// ASSIGN: pto.vmi.vadd %[[WIDE]], %[[IDX]]
 // ASSIGN-SAME: #pto.vmi.layout<deinterleaved = 2>
 // ASSIGN-NOT: pto.vmi.group_iota {{.*}} -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 

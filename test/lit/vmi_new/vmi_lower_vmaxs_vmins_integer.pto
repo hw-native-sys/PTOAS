@@ -38,12 +38,12 @@ module {
 // CHECK-LABEL: func.func @vmaxs_integer(
 // CHECK: pto.vmi.vmaxs
 // CHECK-NOT: pto.vmi.broadcast
-// CHECK-NOT: pto.vmi.maxi
+// CHECK-NOT: pto.vmi.vmax
 
 // CHECK-LABEL: func.func @vmins_integer(
 // CHECK: pto.vmi.vmins
 // CHECK-NOT: pto.vmi.broadcast
-// CHECK-NOT: pto.vmi.mini
+// CHECK-NOT: pto.vmi.vmin
 
 // LOWER-LABEL: func.func @vmaxs_integer(
 // LOWER: pto.vmaxs

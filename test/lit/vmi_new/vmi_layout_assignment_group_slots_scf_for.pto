@@ -58,7 +58,7 @@ module {
 // ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 // ASSIGN: %[[SUM:.*]] = pto.vmi.group_reduce_addf %[[X]], %[[MASK0]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
-// ASSIGN: pto.vmi.addf %[[ARG]], %[[SUM]]
+// ASSIGN: pto.vmi.vadd %[[ARG]], %[[SUM]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
 // ASSIGN: scf.yield
 // ASSIGN-SAME: !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>

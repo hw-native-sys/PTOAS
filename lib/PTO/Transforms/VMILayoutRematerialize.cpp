@@ -22,9 +22,6 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/TypeSwitch.h"
-
-#include <type_traits>
 
 namespace mlir {
 namespace pto {
@@ -94,99 +91,50 @@ rematerializeWidenExt(ExtOp op, VMIVRegType resultType, Location loc,
   return builder.create<ExtOp>(loc, resultType, rematSource).getResult();
 }
 
-static std::optional<Value> rematerializeBinaryDataOp(Operation *op,
-                                                      VMIVRegType resultType,
-                                                      Location loc,
-                                                      OpBuilder &builder) {
-  auto rebuild = [&](auto typedOp) -> std::optional<Value> {
-    auto lhsType = dyn_cast<VMIVRegType>(typedOp.getLhs().getType());
-    auto rhsType = dyn_cast<VMIVRegType>(typedOp.getRhs().getType());
-    if (!lhsType || !rhsType) {
-      return std::nullopt;
-    }
-    auto lhsResultType =
-        VMIVRegType::get(lhsType.getContext(), lhsType.getElementCount(),
-                         lhsType.getElementType(), resultType.getLayoutAttr());
-    auto rhsResultType =
-        VMIVRegType::get(rhsType.getContext(), rhsType.getElementCount(),
-                         rhsType.getElementType(), resultType.getLayoutAttr());
-    Value lhs =
-        materializeDataLayout(typedOp.getLhs(), lhsResultType, loc, builder);
-    Value rhs =
-        materializeDataLayout(typedOp.getRhs(), rhsResultType, loc, builder);
-    return builder
-        .create<std::decay_t<decltype(typedOp)>>(loc, resultType, lhs, rhs)
-        .getResult();
-  };
-
-  return llvm::TypeSwitch<Operation *, std::optional<Value>>(op)
-      .Case<VMIAddFOp, VMIAddIOp, VMISubFOp, VMISubIOp, VMIMulFOp, VMIMulIOp,
-            VMIDivFOp, VMIMinFOp, VMIMinIOp, VMIMaxFOp, VMIMaxIOp, VMIAndIOp,
-            VMIOrIOp, VMIXOrIOp, VMIShLIOp, VMIShRUIOp, VMIShRSIOp>(rebuild)
-      .Default([](Operation *) { return std::nullopt; });
+static bool isRematerializableElementwiseOp(Operation *op) {
+  return isa<VMIVaddOp, VMIVsubOp, VMIVmulOp, VMIVdivOp, VMIVminOp, VMIVmaxOp,
+             VMIVandOp, VMIVorOp, VMIVxorOp, VMIVshlOp, VMIVshrOp, VMIVnegOp,
+             VMIVabsOp, VMIVsqrtOp, VMIVexpOp, VMIVlnOp, VMIVreluOp, VMIVnotOp,
+             VMIVmulaOp>(op);
 }
 
-static std::optional<Value> rematerializeUnaryDataOp(Operation *op,
-                                                     VMIVRegType resultType,
-                                                     Location loc,
-                                                     OpBuilder &builder) {
-  auto rebuild = [&](auto typedOp) -> std::optional<Value> {
-    auto sourceType = dyn_cast<VMIVRegType>(typedOp.getSource().getType());
-    if (!sourceType) {
-      return std::nullopt;
-    }
-    auto sourceResultType = VMIVRegType::get(
-        sourceType.getContext(), sourceType.getElementCount(),
-        sourceType.getElementType(), resultType.getLayoutAttr());
-    Value source = materializeDataLayout(typedOp.getSource(), sourceResultType,
-                                         loc, builder);
-    return builder
-        .create<std::decay_t<decltype(typedOp)>>(loc, resultType, source)
-        .getResult();
-  };
-
-  return llvm::TypeSwitch<Operation *, std::optional<Value>>(op)
-      .Case<VMINegFOp, VMINegIOp, VMIAbsFOp, VMIAbsIOp, VMISqrtOp, VMIExpOp,
-            VMILnOp, VMIReluOp, VMINotOp>(rebuild)
-      .Default([](Operation *) { return std::nullopt; });
-}
-
-static std::optional<Value> rematerializeExtension(Value value,
-                                                   VMIVRegType resultType,
-                                                   Location loc,
-                                                   OpBuilder &builder) {
-  if (auto extf = value.getDefiningOp<VMIExtFOp>()) {
-    return rematerializeWidenExt(extf, resultType, loc, builder);
-  }
-  if (auto extsi = value.getDefiningOp<VMIExtSIOp>()) {
-    return rematerializeWidenExt(extsi, resultType, loc, builder);
-  }
-  if (auto extui = value.getDefiningOp<VMIExtUIOp>()) {
-    return rematerializeWidenExt(extui, resultType, loc, builder);
-  }
-  return std::nullopt;
-}
-
-static std::optional<Value> rematerializeFma(VMIFmaOp fma,
-                                             VMIVRegType resultType,
-                                             Location loc, OpBuilder &builder) {
-  auto lhsType = dyn_cast<VMIVRegType>(fma.getLhs().getType());
-  auto rhsType = dyn_cast<VMIVRegType>(fma.getRhs().getType());
-  auto accType = dyn_cast<VMIVRegType>(fma.getAcc().getType());
-  if (!lhsType || !rhsType || !accType) {
+static std::optional<Value> rematerializeElementwiseOp(Operation *op,
+                                                       VMIVRegType resultType,
+                                                       Location loc,
+                                                       OpBuilder &builder) {
+  if (!isRematerializableElementwiseOp(op)) {
     return std::nullopt;
   }
-  auto makeType = [resultType](VMIVRegType type) {
-    return VMIVRegType::get(type.getContext(), type.getElementCount(),
-                            type.getElementType(), resultType.getLayoutAttr());
-  };
-  Value lhs =
-      materializeDataLayout(fma.getLhs(), makeType(lhsType), loc, builder);
-  Value rhs =
-      materializeDataLayout(fma.getRhs(), makeType(rhsType), loc, builder);
-  Value acc =
-      materializeDataLayout(fma.getAcc(), makeType(accType), loc, builder);
-  return builder.create<VMIFmaOp>(loc, resultType, lhs, rhs, acc).getResult();
+
+  SmallVector<Value> operands;
+  operands.reserve(op->getNumOperands());
+  for (Value operand : op->getOperands()) {
+    if (auto dataType = dyn_cast<VMIVRegType>(operand.getType())) {
+      auto targetType = VMIVRegType::get(
+          dataType.getContext(), dataType.getElementCount(),
+          dataType.getElementType(), resultType.getLayoutAttr());
+      operands.push_back(
+          materializeDataLayout(operand, targetType, loc, builder));
+      continue;
+    }
+    if (auto maskType = dyn_cast<VMIMaskType>(operand.getType())) {
+      auto targetType = VMIMaskType::get(
+          maskType.getContext(), maskType.getElementCount(),
+          maskType.getGranularity(), resultType.getLayoutAttr());
+      if (maskType != targetType) {
+        operand =
+            builder.create<VMIEnsureMaskLayoutOp>(loc, targetType, operand)
+                .getResult();
+      }
+    }
+    operands.push_back(operand);
+  }
+
+  OperationState state(loc, op->getName());
+  state.addOperands(operands);
+  state.addTypes(resultType);
+  state.addAttributes(op->getAttrs());
+  return builder.create(state)->getResult(0);
 }
 
 static std::optional<Value> rematerializeDataProducer(Value value,
@@ -197,18 +145,19 @@ static std::optional<Value> rematerializeDataProducer(Value value,
     return std::nullopt;
   }
 
-  if (auto result = rematerializeExtension(value, resultType, loc, builder)) {
-    return result;
+  if (auto extf = value.getDefiningOp<VMIExtFOp>()) {
+    return rematerializeWidenExt(extf, resultType, loc, builder);
+  }
+  if (auto extsi = value.getDefiningOp<VMIExtSIOp>()) {
+    return rematerializeWidenExt(extsi, resultType, loc, builder);
+  }
+  if (auto extui = value.getDefiningOp<VMIExtUIOp>()) {
+    return rematerializeWidenExt(extui, resultType, loc, builder);
   }
 
   if (Operation *op = value.getDefiningOp()) {
-    if (auto fma = dyn_cast<VMIFmaOp>(op)) {
-      return rematerializeFma(fma, resultType, loc, builder);
-    }
-    if (auto result = rematerializeBinaryDataOp(op, resultType, loc, builder)) {
-      return result;
-    }
-    if (auto result = rematerializeUnaryDataOp(op, resultType, loc, builder)) {
+    if (auto result =
+            rematerializeElementwiseOp(op, resultType, loc, builder)) {
       return result;
     }
   }

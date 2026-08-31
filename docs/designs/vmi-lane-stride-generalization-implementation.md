@@ -682,9 +682,9 @@ elementwise sink, owned by vmi-layout-sink-materialization:
   before:
     %a1 = ensure_layout %a0 -> lane_stride=2
     %b1 = ensure_layout %b0 -> lane_stride=2
-    %c1 = pto.vmi.addf %a1, %b1
+    %c1 = pto.vmi.vadd %a1, %b1
   after:
-    %c0 = pto.vmi.addf %a0, %b0
+    %c0 = pto.vmi.vadd %a0, %b0
     %c1 = ensure_layout %c0 -> lane_stride=2
 ```
 
@@ -1269,11 +1269,11 @@ The current checked-in `vmi-layout-rematerialize` cheap producers are:
 data:
   VMIExtFOp / VMIExtSIOp / VMIExtUIOp when the source layout can be
   materialized for the requested result relation
-  VMIFmaOp
+  VMIVmulaOp
   binary layout-transparent ops:
-    addf/addi/subf/subi/mulf/muli/divf/minf/maxf/andi/ori/xori/shli/shrui/shrsi
+    vadd/vsub/vmul/vdiv/vmin/vmax/vand/vor/vxor/vshl/vshr
   unary layout-transparent ops:
-    negf/absf/absi/sqrt/exp/ln/relu/not
+    vneg/vabs/vsqrt/vexp/vln/vrelu/vnot
   VMIConstantOp only when the DenseElementsAttr is a splat
   VMIBroadcastOp
   VMIIotaOp
@@ -1326,7 +1326,7 @@ splat constant / broadcast / iota:
   rebuild the op with the requested lane_stride result type
   lowering later materializes that layout directly or through ensure_layout
 
-layout-transparent unary/binary/fma:
+layout-transparent unary/binary/vmula:
   rebuild the op with the requested lane_stride result type
   materialize each operand to the same lane_stride layout before rebuilding
   this relies on canMaterializeDataLayout for operand conversions

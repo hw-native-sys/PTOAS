@@ -32,7 +32,7 @@ module {
 // CHECK-LABEL: func.func private @callee(
 // CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 // CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
-// CHECK: pto.vmi.addf
+// CHECK: pto.vmi.vadd
 // CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 // CHECK: return
 // CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
@@ -41,5 +41,5 @@ module {
 // CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 // CHECK: %[[R:.*]] = call @callee(%[[EA]])
 // CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
-// CHECK: pto.vmi.addf %[[R]], %[[R]]
+// CHECK: pto.vmi.vadd %[[R]], %[[R]]
 // CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>

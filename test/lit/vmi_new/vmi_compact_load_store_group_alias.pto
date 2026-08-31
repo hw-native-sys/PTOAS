@@ -102,7 +102,7 @@ module {
 // LEGACY-LABEL: func.func @compact_reduce_through_elementwise(
 // LEGACY: pto.vmi.group_reduce_maxf
 // LEGACY-SAME: {num_groups = 1 : i64}
-// LEGACY: pto.vmi.divf
+// LEGACY: pto.vmi.vdiv
 // LEGACY: pto.vmi.group_store
 // LEGACY-SAME: {num_groups = 1 : i64}
 

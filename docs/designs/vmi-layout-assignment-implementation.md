@@ -81,7 +81,7 @@ vmi-layout-sink-materialization:
   rewritten IR reduces materialization overhead and keeps every op locally legal
   current implementation: sink two identical operand ensure_layout helpers
   across binary add/sub/mul/div/min/max/and/or/xor/shl/shru VMI ops, three
-  identical operand ensure_layout helpers across fma, or one source
+  identical operand ensure_layout helpers across vmula, or one source
   ensure_layout across unary neg/abs/sqrt/exp/ln/relu/not VMI ops, producing
   one result ensure_layout.  It also sinks compare data helpers to one result
   ensure_mask_layout, and sinks select only when both selected values and the
@@ -124,7 +124,7 @@ allowed to be conservative:
 
 ```text
 %w = pto.vmi.extf %a                 // natural layout deinterleaved=2
-%t1 = pto.vmi.mulf %w, %k1           // layout-transparent, stays deinterleaved=2
+%t1 = pto.vmi.vmul %w, %k1           // layout-transparent, stays deinterleaved=2
 %t1_c = pto.vmi.ensure_layout %t1    // hard store contract wants contiguous
 pto.vmi.store %t1_c, %OUT1
 %w_c = pto.vmi.ensure_layout %w
@@ -387,9 +387,9 @@ truncf
 extsi
 extui
 trunci
-addf
-addi
-mulf
+vadd
+vsub
+vmul
 select
 broadcast
 
@@ -787,7 +787,7 @@ buildGroupMemoryRequests:
   unsupported dynamic/unaligned grouped memory -> diagnostic
 
 buildElementwiseRequests:
-  dense add/mul/fma/min/max/select -> all dense operands/results share one
+  dense add/mul/vmula/min/max/select -> all dense operands/results share one
   dense layout
   group-slot add/mul/select -> all operands/results share one group_slots(G,K)
   dense/group_slots mixing -> diagnostic unless an explicit group_broadcast or
@@ -843,7 +843,7 @@ cheap rematerializable producers:
   and the memory access remains legal at the clone site
 
 layout-transparent producers:
-  add/sub/mul/fma/min/max/neg/abs
+  add/sub/mul/vmula/min/max/neg/abs
   select
   bitcast
   integer bitwise and shift ops
@@ -2075,7 +2075,7 @@ Current checked-in lit coverage for the first
 `vmi-layout-sink-materialization` optimization is:
 
 ```text
-test/lit/vmi_new/vmi_layout_sink_materialization_binary.pto  // unary, binary, fma, cmp, and select data ops
+test/lit/vmi_new/vmi_layout_sink_materialization_binary.pto  // unary, binary, vmula, cmp, and select data ops
 test/lit/vmi_new/vmi_layout_sink_materialization_mask.pto
 ```
 

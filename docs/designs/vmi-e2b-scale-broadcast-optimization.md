@@ -921,7 +921,7 @@ For MX quant scale after bf16->f32:
 2. emit vcvt PART_EVEN to produce the f32 packet.
 3. map that f32 packet to every physical f32 chunk whose lane mapping requires
    s0 x8, s1 x8, ..., s7 x8.
-4. lower mulf normally using the assigned physical chunks.
+4. lower vmul normally using the assigned physical chunks.
 ```
 
 ### 10.5 Where Layout Choices Happen

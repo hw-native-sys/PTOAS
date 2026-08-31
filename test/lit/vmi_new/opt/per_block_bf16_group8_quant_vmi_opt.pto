@@ -80,7 +80,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // ASSIGN-NOT: pto.vmi.load
 // ASSIGN: %[[SCALE256:.*]] = pto.vmi.group_broadcast %[[SCALE]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>>
-// ASSIGN: %[[Q:.*]] = pto.vmi.mulf %[[X]], %[[SCALE256]]
+// ASSIGN: %[[Q:.*]] = pto.vmi.vmul %[[X]], %[[SCALE256]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>>
 // ASSIGN: %[[Q_C:.*]] = pto.vmi.ensure_layout %[[Q]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous>>

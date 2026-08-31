@@ -45,7 +45,7 @@ module {
 // ASSIGN-SAME: !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>, {{(!pto\.ptr)?<f32, ub>}}
 // ASSIGN: %[[BROADCAST:.*]] = pto.vmi.group_broadcast %[[SUM]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
-// ASSIGN: %[[SCALED:.*]] = pto.vmi.mulf
+// ASSIGN: %[[SCALED:.*]] = pto.vmi.vmul
 // ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 // ASSIGN: %[[SCALED_SUM:.*]] = pto.vmi.group_reduce_addf %[[SCALED]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>

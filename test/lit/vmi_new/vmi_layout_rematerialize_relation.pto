@@ -123,7 +123,7 @@ module {
 // REMAT-DAG: %[[RHS_D2:.*]] = pto.vmi.ensure_layout
 // REMAT-DAG: %[[LHS_D4:.*]] = pto.vmi.extf %[[LHS_D2]]
 // REMAT-DAG: %[[RHS_D4:.*]] = pto.vmi.extf %[[RHS_D2]]
-// REMAT: %[[MUL_D4:.*]] = pto.vmi.mulf %[[LHS_D4]], %[[RHS_D4]]
+// REMAT: %[[MUL_D4:.*]] = pto.vmi.vmul %[[LHS_D4]], %[[RHS_D4]]
 // REMAT-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
 // REMAT: pto.vmi.truncf %[[MUL_D4]]
 // REMAT-NOT: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>

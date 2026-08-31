@@ -40,7 +40,7 @@ module {
 // ASSIGN: %[[SCALE:.*]] = pto.vmi.broadcast
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
 // ASSIGN-NOT: pto.vmi.ensure_layout %[[X32]]
-// ASSIGN: %[[Y32:.*]] = pto.vmi.mulf %[[X32]], %[[SCALE]]
+// ASSIGN: %[[Y32:.*]] = pto.vmi.vmul %[[X32]], %[[SCALE]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
 // ASSIGN: %[[Y8:.*]] = pto.vmi.truncf %[[Y32]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xf8E4M3FN, #pto.vmi.layout<contiguous, lane_stride = 4>>

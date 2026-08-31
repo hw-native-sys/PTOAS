@@ -38,7 +38,7 @@ module {
 // FOLD-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 // FOLD: %[[WIDE:.*]] = pto.vmi.extf %[[SRC]]
 // FOLD-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
-// FOLD: %[[PROD:.*]] = pto.vmi.mulf %[[WIDE]], %[[SCALE]]
+// FOLD: %[[PROD:.*]] = pto.vmi.vmul %[[WIDE]], %[[SCALE]]
 // FOLD-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 // FOLD-NOT: pto.vmi.ensure_layout
 // FOLD: pto.vmi.store %[[PROD]]

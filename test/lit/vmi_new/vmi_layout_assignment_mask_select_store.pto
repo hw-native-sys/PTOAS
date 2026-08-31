@@ -41,7 +41,7 @@ module {
 // ASSIGN-SAME: -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
 // ASSIGN: %[[MASK:.*]] = pto.vmi.create_mask
 // ASSIGN-SAME: -> !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
-// ASSIGN: %[[SUM:.*]] = pto.vmi.addf %[[X]], %[[Y]]
+// ASSIGN: %[[SUM:.*]] = pto.vmi.vadd %[[X]], %[[Y]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
 // ASSIGN: %[[PASS:.*]] = pto.vmi.select %[[MASK]], %[[SUM]], %[[X]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>

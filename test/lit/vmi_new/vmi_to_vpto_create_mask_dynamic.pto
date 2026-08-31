@@ -29,6 +29,18 @@ module {
     return %p0, %p1 : !pto.mask<b32>, !pto.mask<b32>
   }
 
+  func.func @vmi_to_vpto_create_mask_dynamic_block_deint2(%active: index)
+      -> (!pto.mask<b32>, !pto.mask<b32>) {
+    %mask = pto.vmi.create_mask %active
+        : index -> !pto.vmi.mask<64xb32,
+            #pto.vmi.layout<block_deinterleaved = 2>>
+    %p0, %p1 = "pto.vmi.unpack"(%mask)
+        : (!pto.vmi.mask<64xb32,
+            #pto.vmi.layout<block_deinterleaved = 2>>)
+        -> (!pto.mask<b32>, !pto.mask<b32>)
+    return %p0, %p1 : !pto.mask<b32>, !pto.mask<b32>
+  }
+
   func.func @vmi_to_vpto_create_mask_dynamic_deint4(%active: index)
       -> (!pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32>) {
     %mask = pto.vmi.create_mask %active
@@ -82,6 +94,29 @@ module {
 // CHECK: %[[PART1:.*]] = arith.divui %[[CLAMPED2]], {{.*}} : i32
 // CHECK: %[[P2_1:.*]], %{{.*}} = pto.plt_b32 %[[PART1]] : i32 -> !pto.mask<b32>, i32
 // CHECK: return %[[P2_0]], %[[P2_1]]
+// CHECK-NOT: pto.vmi.
+// CHECK-NOT: !pto.vmi.
+// CHECK-NOT: unrealized_conversion_cast
+
+// CHECK-LABEL: func.func @vmi_to_vpto_create_mask_dynamic_block_deint2
+// CHECK: %[[ACTIVE_BD2:.*]] = arith.index_cast %arg0 : index to i32
+// CHECK: %[[NONNEG_BD2:.*]] = arith.maxsi %[[ACTIVE_BD2]], {{.*}} : i32
+// CHECK: %[[CLAMPED_BD2:.*]] = arith.minui %[[NONNEG_BD2]], {{.*}} : i32
+// CHECK: %[[CYCLES_BD2:.*]] = arith.divui %[[CLAMPED_BD2]], {{.*}} : i32
+// CHECK: %[[BASE_BD2:.*]] = arith.muli %[[CYCLES_BD2]], {{.*}} : i32
+// CHECK: %[[REM_BD2:.*]] = arith.remui %[[CLAMPED_BD2]], {{.*}} : i32
+// CHECK: %[[EXTRA0_BD2:.*]] = arith.minui %[[REM_BD2]], {{.*}} : i32
+// CHECK: %[[PART0_BD2:.*]] = arith.addi %[[BASE_BD2]], %[[EXTRA0_BD2]] : i32
+// CHECK: %[[P0_BD2:.*]], %{{.*}} = pto.plt_b32 %[[PART0_BD2]] : i32 -> !pto.mask<b32>, i32
+// CHECK: %[[CYCLES1_BD2:.*]] = arith.divui %[[CLAMPED_BD2]], {{.*}} : i32
+// CHECK: %[[BASE1_BD2:.*]] = arith.muli %[[CYCLES1_BD2]], {{.*}} : i32
+// CHECK: %[[REM1_BD2:.*]] = arith.remui %[[CLAMPED_BD2]], {{.*}} : i32
+// CHECK: %[[CLAMPED_REM1_BD2:.*]] = arith.maxui %[[REM1_BD2]], {{.*}} : i32
+// CHECK: %[[OFFSET_REM1_BD2:.*]] = arith.subi %[[CLAMPED_REM1_BD2]], {{.*}} : i32
+// CHECK: %[[EXTRA1_BD2:.*]] = arith.minui %[[OFFSET_REM1_BD2]], {{.*}} : i32
+// CHECK: %[[PART1_BD2:.*]] = arith.addi %[[BASE1_BD2]], %[[EXTRA1_BD2]] : i32
+// CHECK: %[[P1_BD2:.*]], %{{.*}} = pto.plt_b32 %[[PART1_BD2]] : i32 -> !pto.mask<b32>, i32
+// CHECK: return %[[P0_BD2]], %[[P1_BD2]]
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast

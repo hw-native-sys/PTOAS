@@ -196,15 +196,15 @@ public:
 };
 
 static bool isSameLayoutOp(Operation *op) {
-  return isa<VMIAddFOp, VMIAddIOp, VMISubFOp, VMISubIOp, VMIMulFOp, VMIMulIOp,
-             VMIVaddcOp, VMIVaddcsOp, VMIAddSOp, VMIMulSOp, VMIMaxSOp,
-             VMIMinSOp, VMIShlSOp, VMIShrSOp, VMIVmullOp, VMIFmaOp, VMIDivFOp,
-             VMIMinFOp, VMIMinIOp, VMIMaxFOp, VMIMaxIOp, VMINegFOp, VMIAbsFOp,
-             VMIAbsIOp, VMISqrtOp, VMIExpOp, VMILnOp, VMIReluOp, VMIFPToSIOp,
-             VMISIToFPOp, VMIAndIOp, VMIOrIOp, VMIXOrIOp, VMIShLIOp, VMIShRUIOp,
-             VMIShRSIOp, VMINotOp, VMICmpFOp, VMICmpIOp, VMISelectOp,
-             VMIMaskAndOp, VMIMaskOrOp, VMIMaskXOrOp, VMIMaskNotOp,
-             VMIActivePrefixIndexOp, VMICompressOp, VMIExpandLoadOp>(op);
+  return isa<VMIVaddOp, VMIVsubOp, VMIVmulOp, VMIVdivOp, VMIVminOp, VMIVmaxOp,
+             VMIVandOp, VMIVorOp, VMIVxorOp, VMIVshlOp, VMIVshrOp, VMIVnegOp,
+             VMIVabsOp, VMIVsqrtOp, VMIVexpOp, VMIVlnOp, VMIVreluOp, VMIVnotOp,
+             VMIVmulaOp, VMIVaxpyOp, VMIVlreluOp, VMIVpreluOp, VMIVaddcOp,
+             VMIVaddcsOp, VMIAddSOp, VMIMulSOp, VMIMaxSOp, VMIMinSOp, VMIShlSOp,
+             VMIShrSOp, VMIVmullOp, VMIFPToSIOp, VMISIToFPOp, VMICmpFOp,
+             VMICmpIOp, VMISelectOp, VMIMaskAndOp, VMIMaskOrOp, VMIMaskXOrOp,
+             VMIMaskNotOp, VMIActivePrefixIndexOp, VMICompressOp,
+             VMIExpandLoadOp>(op);
 }
 
 static bool isCastOp(Operation *op) {
@@ -250,14 +250,14 @@ public:
     if (changedValue == op->getOperand(0)) {
       FailureOr<SmallVector<VMICastLayoutFact, mlir::pto::kValue4>> facts =
           supports.getCastLayoutFactsForLayout(
-              sourceType, resultType, VMICastLayoutPort::Source,
-              changedLayout);
+              sourceType, resultType, VMICastLayoutPort::Source, changedLayout);
       if (failed(facts) || facts->empty()) {
         return failure();
       }
       SmallVector<VMILayoutRelation, mlir::pto::kValue4> relations;
       for (const VMICastLayoutFact &fact : *facts) {
-        relations.push_back(makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
+        relations.push_back(
+            makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
             operandFact(op->getOpOperand(0), fact.sourceLayout),
             valueFact(op->getResult(0), fact.resultLayout)}));
       }
@@ -267,14 +267,14 @@ public:
     if (changedValue == op->getResult(0)) {
       FailureOr<SmallVector<VMICastLayoutFact, mlir::pto::kValue4>> facts =
           supports.getCastLayoutFactsForLayout(
-              sourceType, resultType, VMICastLayoutPort::Result,
-              changedLayout);
+              sourceType, resultType, VMICastLayoutPort::Result, changedLayout);
       if (failed(facts) || facts->empty()) {
         return failure();
       }
       SmallVector<VMILayoutRelation, mlir::pto::kValue4> relations;
       for (const VMICastLayoutFact &fact : *facts) {
-        relations.push_back(makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
+        relations.push_back(
+            makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
             operandFact(op->getOpOperand(0), fact.sourceLayout),
             valueFact(op->getResult(0), fact.resultLayout)}));
       }
@@ -390,7 +390,8 @@ public:
 
     SmallVector<VMILayoutRelation, mlir::pto::kValue4> relations;
     for (const VMIBitcastLayoutFact &fact : *facts) {
-      relations.push_back(makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
+      relations.push_back(
+          makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
           operandFact(bitcast.getSourceMutable(), fact.sourceLayout),
           valueFact(bitcast.getResult(), fact.resultLayout)}));
     }
@@ -417,16 +418,17 @@ public:
 
     VMILayoutSupport supports;
     if (changedValue == ensure.getSource()) {
-      FailureOr<SmallVector<VMIMaskGranularityCastLayoutFact, mlir::pto::kValue4>> facts =
-          supports.getMaskGranularityCastLayoutFactsForLayout(
-              sourceType, resultType, VMICastLayoutPort::Source,
-              changedLayout);
+      FailureOr<
+          SmallVector<VMIMaskGranularityCastLayoutFact, mlir::pto::kValue4>>
+          facts = supports.getMaskGranularityCastLayoutFactsForLayout(
+              sourceType, resultType, VMICastLayoutPort::Source, changedLayout);
       if (failed(facts) || facts->empty()) {
         return failure();
       }
       SmallVector<VMILayoutRelation, mlir::pto::kValue4> relations;
       for (const VMIMaskGranularityCastLayoutFact &fact : *facts) {
-        relations.push_back(makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
+        relations.push_back(
+            makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
             operandFact(ensure.getSourceMutable(), fact.sourceLayout),
             valueFact(ensure.getResult(), fact.resultLayout)}));
       }
@@ -434,16 +436,17 @@ public:
     }
 
     if (changedValue == ensure.getResult()) {
-      FailureOr<SmallVector<VMIMaskGranularityCastLayoutFact, mlir::pto::kValue4>> facts =
-          supports.getMaskGranularityCastLayoutFactsForLayout(
-              sourceType, resultType, VMICastLayoutPort::Result,
-              changedLayout);
+      FailureOr<
+          SmallVector<VMIMaskGranularityCastLayoutFact, mlir::pto::kValue4>>
+          facts = supports.getMaskGranularityCastLayoutFactsForLayout(
+              sourceType, resultType, VMICastLayoutPort::Result, changedLayout);
       if (failed(facts) || facts->empty()) {
         return failure();
       }
       SmallVector<VMILayoutRelation, mlir::pto::kValue4> relations;
       for (const VMIMaskGranularityCastLayoutFact &fact : *facts) {
-        relations.push_back(makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
+        relations.push_back(
+            makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
             operandFact(ensure.getSourceMutable(), fact.sourceLayout),
             valueFact(ensure.getResult(), fact.resultLayout)}));
       }
@@ -496,8 +499,8 @@ public:
     if (!resultType) {
       return failure();
     }
-    auto assignedType = VMIVRegType::get(
-        resultType.getContext(), resultType.getElementCount(),
+    auto assignedType =
+        VMIVRegType::get(resultType.getContext(), resultType.getElementCount(),
         resultType.getElementType(), changedLayout);
     VMILayoutSupport supports;
     if (failed(supports.getLoadLayoutFact(assignedType))) {
@@ -542,7 +545,8 @@ public:
 
     SmallVector<VMILayoutRelation, mlir::pto::kValue4> relations;
     for (const VMIDeinterleaveLoadLayoutFact &fact : *facts) {
-      relations.push_back(makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
+      relations.push_back(
+          makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
           valueFact(load.getLow(), fact.lowLayout),
           valueFact(load.getHigh(), fact.highLayout)}));
     }
@@ -564,8 +568,8 @@ public:
     if (!resultType) {
       return failure();
     }
-    auto assignedType = VMIVRegType::get(
-        resultType.getContext(), resultType.getElementCount(),
+    auto assignedType =
+        VMIVRegType::get(resultType.getContext(), resultType.getElementCount(),
         resultType.getElementType(), changedLayout);
     VMILayoutSupport supports;
     if (failed(supports.getGroupLoadLayoutFact(
@@ -637,7 +641,8 @@ private:
     }
     SmallVector<VMILayoutRelation, mlir::pto::kValue4> relations;
     for (const VMIGroupReduceLayoutFact &fact : *facts) {
-      relations.push_back(makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
+      relations.push_back(
+          makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
           operandFact(reduce.getSourceMutable(), fact.sourceLayout),
           operandFact(reduce.getMaskMutable(), fact.maskLayout),
           valueFact(reduce.getResult(), fact.resultLayout)}));
@@ -660,8 +665,8 @@ public:
     if (!resultType) {
       return failure();
     }
-    auto assignedType = VMIVRegType::get(
-        resultType.getContext(), resultType.getElementCount(),
+    auto assignedType =
+        VMIVRegType::get(resultType.getContext(), resultType.getElementCount(),
         resultType.getElementType(), changedLayout);
     VMILayoutSupport supports;
     if (failed(supports.getGroupSlotLoadLayoutFact(
@@ -687,8 +692,8 @@ public:
     if (!resultType) {
       return failure();
     }
-    auto assignedType = VMIVRegType::get(
-        resultType.getContext(), resultType.getElementCount(),
+    auto assignedType =
+        VMIVRegType::get(resultType.getContext(), resultType.getElementCount(),
         resultType.getElementType(), changedLayout);
     VMILayoutSupport supports;
     if (failed(supports.getGroupBroadcastLoadLayoutFact(
@@ -728,15 +733,16 @@ public:
     }
 
     VMILayoutSupport supports;
-    FailureOr<SmallVector<VMIGroupBroadcastLayoutFact, mlir::pto::kValue4>> facts =
-        supports.getGroupBroadcastLayoutFactsForLayout(
+    FailureOr<SmallVector<VMIGroupBroadcastLayoutFact, mlir::pto::kValue4>>
+        facts = supports.getGroupBroadcastLayoutFactsForLayout(
             sourceType, resultType, numGroups, port, changedLayout);
     if (failed(facts) || facts->empty()) {
       return failure();
     }
     SmallVector<VMILayoutRelation, mlir::pto::kValue4> relations;
     for (const VMIGroupBroadcastLayoutFact &fact : *facts) {
-      relations.push_back(makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
+      relations.push_back(
+          makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
           operandFact(broadcast.getSourceMutable(), fact.sourceLayout),
           valueFact(broadcast.getResult(), fact.resultLayout)}));
     }
@@ -801,7 +807,8 @@ private:
 
     SmallVector<VMILayoutRelation, mlir::pto::kValue4> relations;
     for (const VMIInterleaveLayoutFact &fact : *facts) {
-      relations.push_back(makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
+      relations.push_back(
+          makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
           operandFact(op.getLhsMutable(), fact.lhsLayout),
           operandFact(op.getRhsMutable(), fact.rhsLayout),
           operandFact(op.getMaskMutable(), fact.maskLayout),
@@ -892,7 +899,8 @@ public:
     }
     SmallVector<VMILayoutRelation, mlir::pto::kValue4> relations;
     for (const VMIGroupStoreLayoutFact &fact : *facts) {
-      relations.push_back(makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
+      relations.push_back(
+          makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
           operandFact(store.getValueMutable(), fact.valueLayout)}));
     }
     return relations;
@@ -1381,8 +1389,9 @@ LogicalResult VMILayoutPropagator::propagateOperandFact(OpOperand &operand,
   return propagateThrough(operand.getOwner(), operand.get(), layout, &operand);
 }
 
-LogicalResult VMILayoutPropagator::propagateThrough(
-    Operation *op, Value changedValue, VMILayoutAttr changedLayout,
+LogicalResult VMILayoutPropagator::propagateThrough(Operation *op,
+                                                    Value changedValue,
+                                                    VMILayoutAttr changedLayout,
     OpOperand *changedOperand) {
   const VMILayoutTransfer *transfer = op ? getTransfer(op) : nullptr;
   if (!transfer) {
@@ -1427,19 +1436,19 @@ LogicalResult VMILayoutPropagator::verifyMaterializationPlan() const {
       if (!canMaterializeLayout(value, currentLayout, assignment.layout)) {
         return emitError(value.getLoc())
                << kVMIDiagLayoutContractPrefix
-               << "cannot materialize primary VMI layout "
-               << assignment.layout << " from " << currentLayout;
+               << "cannot materialize primary VMI layout " << assignment.layout
+               << " from " << currentLayout;
       }
     }
 
     for (const VMILayoutConflict &conflict : assignment.conflicts) {
       if (!canMaterializeLayout(value, assignment.layout, conflict.layout)) {
-        return emitError(conflict.operand ? conflict.operand->getOwner()->getLoc()
+        return emitError(conflict.operand
+                             ? conflict.operand->getOwner()->getLoc()
                                           : value.getLoc())
                << kVMIDiagLayoutContractPrefix
-               << "cannot materialize requested VMI layout "
-               << conflict.layout << " from assigned layout "
-               << assignment.layout;
+               << "cannot materialize requested VMI layout " << conflict.layout
+               << " from assigned layout " << assignment.layout;
       }
     }
   }

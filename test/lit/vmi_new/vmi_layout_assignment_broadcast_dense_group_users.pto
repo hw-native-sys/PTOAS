@@ -48,14 +48,14 @@ module {
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
 // ASSIGN: %[[X:.*]] = pto.vmi.load
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
-// ASSIGN: %[[COPY:.*]] = pto.vmi.addf %[[X]], %[[SCALE]]
+// ASSIGN: %[[COPY:.*]] = pto.vmi.vadd %[[X]], %[[SCALE]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
 // ASSIGN-NOT: pto.vmi.ensure_layout %[[COPY]]
 // ASSIGN: pto.vmi.store %[[COPY]]
 // ASSIGN-SAME: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>, {{(!pto\.ptr)?<f32, ub>}}
 // ASSIGN: %[[MASK0:.*]] = pto.vmi.create_group_mask
 // ASSIGN-SAME: -> !pto.vmi.mask<256xb32, #pto.vmi.layout<deinterleaved = 4>>
-// ASSIGN: %[[PROD:.*]] = pto.vmi.mulf %[[X]], %[[SCALE]]
+// ASSIGN: %[[PROD:.*]] = pto.vmi.vmul %[[X]], %[[SCALE]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
 // ASSIGN: %[[SUM:.*]] = pto.vmi.group_reduce_addf %[[PROD]], %[[MASK0]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>

@@ -203,6 +203,22 @@ struct MaskGranularitySolver {
     return success();
   }
 
+  LogicalResult constrainDirectMaskedElementwise(
+      Operation *op, unsigned sourceOperandIndex,
+      std::optional<unsigned> maskOperandIndex) {
+    if (!maskOperandIndex || *maskOperandIndex >= op->getNumOperands()) {
+      return success();
+    }
+    auto sourceType =
+        dyn_cast<VMIVRegType>(op->getOperand(sourceOperandIndex).getType());
+    if (!sourceType) {
+      return success();
+    }
+    return requestMaskUse(
+        op->getOpOperand(*maskOperandIndex),
+        getMaskGranularityForElement(sourceType.getElementType()), op);
+  }
+
   static std::optional<WalkResult> constraintResult(LogicalResult result) {
     return failed(result) ? WalkResult::interrupt() : WalkResult::advance();
   }
@@ -244,6 +260,52 @@ struct MaskGranularitySolver {
 
   std::optional<WalkResult> addSourceMaskUseConstraint(Operation *op) {
     return llvm::TypeSwitch<Operation *, std::optional<WalkResult>>(op)
+        .Case<VMIVabsOp>([this, op](auto unaryOp) {
+          MutableOperandRange maskOperands = unaryOp.getMaskMutable();
+          if (maskOperands.empty()) {
+            return constraintResult(success());
+          }
+          return constraintResult(requestMaskUseForSource(
+              *maskOperands.begin(), unaryOp.getSource(), op));
+        })
+        .Case<VMIVaddOp, VMIVsubOp, VMIVmulOp, VMIVdivOp, VMIVminOp,
+              VMIVmaxOp, VMIVandOp, VMIVorOp, VMIVxorOp, VMIVshlOp,
+              VMIVshrOp>([this, op](auto) {
+          if (!isa<VMIVRegType>(op->getResult(0).getType())) {
+            return constraintResult(success());
+          }
+          std::optional<unsigned> maskIndex =
+              op->getNumOperands() > 2 ? std::optional<unsigned>(2)
+                                       : std::nullopt;
+          return constraintResult(
+              constrainDirectMaskedElementwise(op, 0, maskIndex));
+        })
+        .Case<VMIVnegOp, VMIVsqrtOp, VMIVexpOp, VMIVlnOp, VMIVreluOp,
+              VMIVnotOp>([this, op](auto) {
+          if (!isa<VMIVRegType>(op->getResult(0).getType())) {
+            return constraintResult(success());
+          }
+          std::optional<unsigned> maskIndex =
+              op->getNumOperands() > 1 ? std::optional<unsigned>(1)
+                                       : std::nullopt;
+          return constraintResult(
+              constrainDirectMaskedElementwise(op, 0, maskIndex));
+        })
+        .Case<VMIVmulaOp>([this, op](auto) {
+          std::optional<unsigned> maskIndex =
+              op->getNumOperands() > 3 ? std::optional<unsigned>(3)
+                                       : std::nullopt;
+          return constraintResult(
+              constrainDirectMaskedElementwise(op, 0, maskIndex));
+        })
+        .Case<VMIVaxpyOp>([this, op](auto) {
+          return constraintResult(
+              constrainDirectMaskedElementwise(op, 0, 3));
+        })
+        .Case<VMIVlreluOp, VMIVpreluOp>([this, op](auto) {
+          return constraintResult(
+              constrainDirectMaskedElementwise(op, 0, 2));
+        })
         .Case<VMIAddSOp, VMIMulSOp, VMIMaxSOp, VMIMinSOp, VMIShlSOp,
               VMIShrSOp>([this, op](auto maskOp) {
           return constraintResult(requestMaskUseForSource(

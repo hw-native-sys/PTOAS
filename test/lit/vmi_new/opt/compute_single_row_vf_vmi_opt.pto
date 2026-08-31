@@ -83,7 +83,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 }
 
 // ASSIGN-LABEL: func.func @ComputeSingleRowVF_fp16_vmi_opt(
-// ASSIGN: %[[Q:.*]] = pto.vmi.divf {{.*}} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[Q:.*]] = pto.vmi.vdiv {{.*}} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
 // ASSIGN: %[[Q8:.*]] = pto.vmi.truncf %[[Q]]
 // ASSIGN-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf8E4M3FN, #pto.vmi.layout<contiguous, lane_stride = 4>>
 // ASSIGN-NOT: pto.vmi.ensure_layout %[[Q8]]

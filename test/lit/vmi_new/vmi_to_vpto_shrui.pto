@@ -21,8 +21,8 @@ module {
 }
 
 // LEGACY-LABEL: func.func @vmi_to_vpto_shrui(
-// LEGACY: pto.vmi.shrui
-// LEGACY-NOT: pto.vmi.shrsi
+// LEGACY: pto.vmi.vshr
+// LEGACY-NOT: pto.vmi.vshr
 
 // LOWER-LABEL: func.func @vmi_to_vpto_shrui(
 // LOWER-SAME: %[[VALUE0:[^,]+]]: !pto.vreg<128xui16>

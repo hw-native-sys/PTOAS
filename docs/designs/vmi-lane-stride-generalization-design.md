@@ -314,7 +314,7 @@ Layout-transparent dense ops include ordinary elementwise arithmetic and
 select-like ops when every dense data operand/result has the same layout:
 
 ```text
-add/mul/fma/min/max/select:
+add/mul/vmula/min/max/select:
   operands and result require identical dense layout key
   key includes F, B, and LS
 ```

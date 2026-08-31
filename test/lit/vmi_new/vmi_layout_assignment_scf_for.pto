@@ -35,9 +35,9 @@ module {
 // CHECK: %[[RESULT:.*]] = scf.for
 // CHECK-SAME: iter_args(%[[ACC:.*]] = %[[INIT]])
 // CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
-// CHECK: pto.vmi.addf %[[ACC]], %[[ACC]]
+// CHECK: pto.vmi.vadd %[[ACC]], %[[ACC]]
 // CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 // CHECK: scf.yield
 // CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
-// CHECK: pto.vmi.addf %[[RESULT]], %[[RESULT]]
+// CHECK: pto.vmi.vadd %[[RESULT]], %[[RESULT]]
 // CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>

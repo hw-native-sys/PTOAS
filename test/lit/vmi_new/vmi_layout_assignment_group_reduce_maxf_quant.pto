@@ -51,26 +51,30 @@ module {
 // ASSIGN-LABEL: func.func @vmi_layout_assignment_group_reduce_maxf_quant(
 // ASSIGN: %[[X:.*]] = pto.vmi.load
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
-// ASSIGN: %[[ABS:.*]] = pto.vmi.absf %[[X]]
+// ASSIGN: %[[ABS:.*]] = pto.vmi.vabs %[[X]]
 // ASSIGN-NOT: pto.vmi.ensure_layout %[[ABS]]
 // ASSIGN: %[[AMAX_RAW:.*]] = pto.vmi.group_reduce_maxf %[[ABS]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<2xf32, #pto.vmi.layout<num_groups = 2, slots = 1>>
-// ASSIGN: %[[SCALE:.*]] = pto.vmi.divf
+// ASSIGN: %[[SCALE:.*]] = pto.vmi.vdiv
 // ASSIGN-SAME: -> !pto.vmi.vreg<2xf32, #pto.vmi.layout<num_groups = 2, slots = 1>>
 // ASSIGN: pto.vmi.group_store %[[SCALE]]
 // ASSIGN: %[[SCALE_VEC:.*]] = pto.vmi.group_broadcast %[[SCALE]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
 // ASSIGN-NOT: pto.vmi.ensure_layout %[[SCALE_VEC]]
-// ASSIGN: %[[Q:.*]] = pto.vmi.divf %[[X]], %[[SCALE_VEC]]
+// ASSIGN: %[[Q:.*]] = pto.vmi.vdiv %[[X]], %[[SCALE_VEC]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
 // ASSIGN: %[[Q8:.*]] = pto.vmi.truncf %[[Q]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xf8E4M3FN, #pto.vmi.layout<contiguous, lane_stride = 4>>
 
 // LOWER-LABEL: func.func @vmi_layout_assignment_group_reduce_maxf_quant(
+// LOWER: %[[SCALAR_MASK0:.*]] = pto.pset_b32 "PAT_VL1"
 // LOWER: %[[PAIR0:.*]] = pto.vmax
 // LOWER: %[[RED0:.*]] = pto.vcmax %[[PAIR0]]
+// LOWER: pto.vmax %[[RED0]], {{.*}}, %[[SCALAR_MASK0]]
+// LOWER: %[[SCALAR_MASK1:.*]] = pto.pset_b32 "PAT_VL1"
 // LOWER: %[[PAIR1:.*]] = pto.vmax
 // LOWER: %[[RED1:.*]] = pto.vcmax %[[PAIR1]]
+// LOWER: pto.vmax %[[RED1]], {{.*}}, %[[SCALAR_MASK1]]
 // LOWER-NOT: pto.vcmax
 // LOWER-NOT: pto.vsel
 // LOWER: pto.vdiv
