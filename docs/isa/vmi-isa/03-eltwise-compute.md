@@ -77,9 +77,9 @@
       : !pto.vmi.vreg<64×f32>, !pto.vmi.vreg<64×f32>, !pto.vmi.mask<64> -> !pto.vmi.vreg<64×f32>
   ```
 
-### `pto.vmi.vaddc` / `pto.vmi.vaddcs`
+### `pto.vmi.vaddc` / `pto.vmi.vsubc` / `pto.vmi.vaddcs` / `pto.vmi.vsubcs`
 
-Carry-chain integer adds are exposed as multi-result VMI operations so the
+Carry-chain integer arithmetic is exposed as multi-result VMI operations so the
 frontend can preserve the hardware carry instruction instead of expanding the
 operation into an add/compare/select sequence.
 
@@ -87,15 +87,24 @@ operation into an add/compare/select sequence.
 %sum, %carry = pto.vmi.vaddc %lhs, %rhs, %mask
     : !pto.vmi.vreg<Lxui32>, !pto.vmi.vreg<Lxui32>, !pto.vmi.mask<L>
     -> !pto.vmi.vreg<Lxui32>, !pto.vmi.mask<L>
+%difference, %borrow_free = pto.vmi.vsubc %lhs, %rhs, %mask
+    : !pto.vmi.vreg<Lxui32>, !pto.vmi.vreg<Lxui32>, !pto.vmi.mask<L>
+    -> !pto.vmi.vreg<Lxui32>, !pto.vmi.mask<L>
 %next, %carry2 = pto.vmi.vaddcs %lhs, %rhs, %carry, %mask
+    : !pto.vmi.vreg<Lxui32>, !pto.vmi.vreg<Lxui32>, !pto.vmi.mask<L>, !pto.vmi.mask<L>
+    -> !pto.vmi.vreg<Lxui32>, !pto.vmi.mask<L>
+%difference2, %borrow_free2 = pto.vmi.vsubcs %lhs, %rhs, %carry, %mask
     : !pto.vmi.vreg<Lxui32>, !pto.vmi.vreg<Lxui32>, !pto.vmi.mask<L>, !pto.vmi.mask<L>
     -> !pto.vmi.vreg<Lxui32>, !pto.vmi.mask<L>
 ```
 
-Both operations require matching 32-bit integer data values. The execution
-mask, carry-in (for `vaddcs`), and carry-out use the same logical lane count,
-layout, and `b32` physical mask granularity as the data ports. They lower
-one-to-N to `pto.vaddc` and `pto.vaddcs` respectively.
+These operations require matching 32-bit integer data values. The execution
+mask, carry-in (for `vaddcs`/`vsubcs`), and carry-out use the same logical lane
+count and layout as the data ports, and all physical mask parts must use `b32`
+granularity. They lower one-to-N to the corresponding VPTO carry operation.
+For subtraction, the carry predicate is **not-borrow**: the comparison is
+unsigned, `carry[i] = 1` means no borrow occurred, and `carry[i] = 0` means a
+borrow occurred. In `vsubcs`, a carry-in of 0 propagates a borrow.
 
 ### `pto.vmi.vdiv`
 

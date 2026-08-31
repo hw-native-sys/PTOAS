@@ -400,11 +400,22 @@ public:
   }
 };
 
-struct OneToNVMIVaddcOpPattern : OneToNOpConversionPattern<VMIVaddcOp> {
-  using OneToNOpConversionPattern<VMIVaddcOp>::OneToNOpConversionPattern;
+namespace {
+template <typename CarryOp>
+void appendCarryResults(CarryOp carryOp,
+                        SmallVectorImpl<Value> &results,
+                        SmallVectorImpl<Value> &carries) {
+  results.push_back(carryOp.getResult());
+  carries.push_back(carryOp.getCarry());
+}
+} // namespace
+
+template <typename VMICarryOp, typename CarryOp>
+struct OneToNVMICarryOutputOpPattern : OneToNOpConversionPattern<VMICarryOp> {
+  using OneToNOpConversionPattern<VMICarryOp>::OneToNOpConversionPattern;
 
 private:
-  LogicalResult lowerParts(VMIVaddcOp op, ValueRange lhsParts,
+  LogicalResult lowerParts(VMICarryOp op, ValueRange lhsParts,
                            ValueRange rhsParts, ValueRange maskParts,
                            ArrayRef<Type> resultTypes,
                            ArrayRef<Type> carryTypes,
@@ -417,7 +428,7 @@ private:
         resultTypes.size() != lhsParts.size() ||
         carryTypes.size() != lhsParts.size();
     if (invalidArity) {
-      return rewriter.notifyMatchFailure(op, "vaddc physical arity mismatch");
+      return rewriter.notifyMatchFailure(op, "carry-output operation physical arity mismatch");
     }
     for (auto [lhs, rhs, mask, resultType, carryType] :
          llvm::zip_equal(lhsParts, rhsParts, maskParts, resultTypes,
@@ -433,18 +444,17 @@ private:
           rhs.getType() != resultType;
       if (invalidPart) {
         return rewriter.notifyMatchFailure(
-            op, "vaddc requires matching 32-bit data and b32 mask parts");
+            op, "requires matching 32-bit data and b32 mask parts");
       }
-      auto addc = rewriter.create<VaddcOp>(op.getLoc(), resultType, carryType,
-                                           lhs, rhs, mask);
-      results.push_back(addc.getResult());
-      carries.push_back(addc.getCarry());
+      auto carryOp = rewriter.create<CarryOp>(op.getLoc(), resultType, carryType,
+                                              lhs, rhs, mask);
+      appendCarryResults(carryOp, results, carries);
     }
     return success();
   }
 
 public:
-  LogicalResult matchAndRewrite(VMIVaddcOp op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(VMICarryOp op, typename OneToNOpConversionPattern<VMICarryOp>::OpAdaptor adaptor,
                                 OneToNPatternRewriter &rewriter) const override {
     ValueRange lhsParts = adaptor.getLhs();
     ValueRange rhsParts = adaptor.getRhs();
@@ -460,11 +470,12 @@ public:
   }
 };
 
-struct OneToNVMIVaddcsOpPattern : OneToNOpConversionPattern<VMIVaddcsOp> {
-  using OneToNOpConversionPattern<VMIVaddcsOp>::OneToNOpConversionPattern;
+template <typename VMICarryOp, typename CarryOp>
+struct OneToNVMICarryInputOpPattern : OneToNOpConversionPattern<VMICarryOp> {
+  using OneToNOpConversionPattern<VMICarryOp>::OneToNOpConversionPattern;
 
 private:
-  LogicalResult lowerParts(VMIVaddcsOp op, ValueRange lhsParts,
+  LogicalResult lowerParts(VMICarryOp op, ValueRange lhsParts,
                            ValueRange rhsParts, ValueRange carryInParts,
                            ValueRange maskParts, ArrayRef<Type> resultTypes,
                            ArrayRef<Type> carryTypes,
@@ -500,16 +511,15 @@ private:
         return rewriter.notifyMatchFailure(
             op, "vaddcs requires matching 32-bit data and b32 mask parts");
       }
-      auto addcs = rewriter.create<VaddcsOp>(
+      auto carryOp = rewriter.create<CarryOp>(
           op.getLoc(), resultType, carryType, lhs, rhs, carryIn, mask);
-      results.push_back(addcs.getResult());
-      carries.push_back(addcs.getCarry());
+      appendCarryResults(carryOp, results, carries);
     }
     return success();
   }
 
 public:
-  LogicalResult matchAndRewrite(VMIVaddcsOp op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(VMICarryOp op, typename OneToNOpConversionPattern<VMICarryOp>::OpAdaptor adaptor,
                                 OneToNPatternRewriter &rewriter) const override {
     ValueRange lhsParts = adaptor.getLhs();
     ValueRange rhsParts = adaptor.getRhs();
@@ -1833,5 +1843,3 @@ classifyGroupReduceLoweringPlan(VMIVRegType sourceType, VMIMaskType maskType,
   }
   llvm_unreachable("unknown group block class");
 }
-
-

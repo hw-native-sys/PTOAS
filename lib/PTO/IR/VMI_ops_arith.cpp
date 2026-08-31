@@ -1413,7 +1413,16 @@ LogicalResult VMIVaddcOp::verify() {
   return verifyVMIAddCarryOp(*this, VMIMaskType{}, /*hasCarryIn=*/false);
 }
 
+LogicalResult VMIVsubcOp::verify() {
+  return verifyVMIAddCarryOp(*this, VMIMaskType{}, /*hasCarryIn=*/false);
+}
+
 LogicalResult VMIVaddcsOp::verify() {
+  return verifyVMIAddCarryOp(*this, cast<VMIMaskType>(getCarryIn().getType()),
+                             /*hasCarryIn=*/true);
+}
+
+LogicalResult VMIVsubcsOp::verify() {
   return verifyVMIAddCarryOp(*this, cast<VMIMaskType>(getCarryIn().getType()),
                              /*hasCarryIn=*/true);
 }
