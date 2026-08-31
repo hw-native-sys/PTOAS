@@ -132,8 +132,10 @@ static bool matchesCastTypeClass(CastTypeClass typeClass, Type sourceType,
   case CastTypeClass::Any:
     return true;
   case CastTypeClass::Float:
-    return isVMIFloatLikeType(sourceType) &&
-           isVMIFloatLikeType(resultType);
+    return (isa<FloatType>(sourceType) ||
+            pto::isPTOLowPrecisionType(sourceType)) &&
+           (isa<FloatType>(resultType) ||
+            pto::isPTOLowPrecisionType(resultType));
   case CastTypeClass::Integer:
     return isa<IntegerType>(sourceType) && isa<IntegerType>(resultType);
   }
