@@ -565,28 +565,9 @@ def _vmi_vreg_element_count(type_obj, *, context: str):
     raise TypeError(f"{context} could not determine VMI vector lane count from {type_obj}")
 
 
-def _resolve_vmi_unpack_result_type(source, size, to_dtype, *, context: str):
-    if to_dtype is None:
-        raise TypeError(f'{context} requires to_dtype when dist_mode="unpack"')
-    source_type = _pointer_element_type(_type_of(source), context=context)
-    result_type = _ensure_tensor_storage_dtype(to_dtype, context=context)
-    source_bits = _type_bit_width(source_type, context=context)
-    result_bits = _type_bit_width(result_type, context=context)
-    if source_bits * 2 != result_bits:
-        raise TypeError(
-            f"{context} requires unpack to widen by exactly one step; got "
-            f"{source_type} -> {result_type}"
-        )
-    return _pto.VMIVRegType.get(size, result_type)
-
-
-def _resolve_vmi_vload_result_types(source, size, *, dist_mode, to_dtype, context: str):
-    if to_dtype is not None and dist_mode != "unpack":
-        raise TypeError(f'{context} accepts to_dtype only when dist_mode="unpack"')
+def _resolve_vmi_vload_result_types(source, size, *, dist_mode, context: str):
     if size is None:
         raise TypeError(f"{context} requires size")
-    if dist_mode == "unpack":
-        return [_resolve_vmi_unpack_result_type(source, size, to_dtype, context=context)]
     element_type = _pointer_element_type(_type_of(source), context=context)
     resolved = _pto.VMIVRegType.get(size, element_type)
     if dist_mode == "dintlv":
@@ -744,7 +725,6 @@ class _VMINamespace:
         offset,
         *,
         size,
-        to_dtype=None,
         stride=None,
         block_stride=None,
         dist_mode=None,
@@ -759,13 +739,12 @@ class _VMINamespace:
             stride=stride,
             block_stride=block_stride,
             allow_group_brc=True,
-            allowed_dist_modes={None, "continuous", "dintlv", "unpack", "brc"},
+            allowed_dist_modes={None, "continuous", "dintlv", "brc"},
         )
         result_types = _resolve_vmi_vload_result_types(
             source,
             size,
             dist_mode=dist_mode,
-            to_dtype=to_dtype,
             context="pto.vmi.vload(...)",
         )
         return _call_value(
@@ -803,15 +782,15 @@ class _VMINamespace:
             stride=stride,
             block_stride=block_stride,
             allow_group_brc=False,
-            allowed_dist_modes={None, "continuous", "dintlv"},
+            allowed_dist_modes={None, "continuous", "intlv"},
         )
         if group is not None and mask is not None:
             raise TypeError("pto.vmi.vstore(...) group mode does not take a mask operand")
-        if dist_mode == "dintlv":
+        if dist_mode == "intlv":
             if not _is_sequence(values) or len(values) != 2:
-                raise TypeError('pto.vmi.vstore(...) with dist_mode="dintlv" requires an (even, odd) pair')
+                raise TypeError('pto.vmi.vstore(...) with dist_mode="intlv" requires an (even, odd) pair')
         elif _is_sequence(values):
-            raise TypeError("pto.vmi.vstore(...) expects a single VMI vector unless dist_mode=\"dintlv\"")
+            raise TypeError("pto.vmi.vstore(...) expects a single VMI vector unless dist_mode=\"intlv\"")
         return _generated("vstore")(
             _raw_sequence(values),
             _raw(destination),

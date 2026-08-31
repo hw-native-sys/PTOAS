@@ -1435,7 +1435,6 @@ def VMIvLoadOp : VMI_Op<"vload",
     - "continuous" (default): contiguous stride-1 load  → 1 result;
       1/2/4/8-lane results alias group=1/2/4/8 with unit stride
     - "dintlv":             deinterleaved dual load      → 2 results (%lo, %hi)
-    - "unpack":             widening unpack load         → 1 result
     - "brc":                broadcast load               → 1 result
 
     group mode (mutually exclusive with dist-mode):
@@ -1473,7 +1472,7 @@ def VMIvStoreOp : VMI_Op<"vstore",
     dist-mode controls the memory access pattern:
     - "continuous" (default): contiguous stride-1 store  → 1 value;
       1/2/4/8-lane inputs alias group=1/2/4/8 with unit stride
-    - "dintlv":             interleaved dual store        → 2 values (%lo, %hi)
+    - "intlv":              interleaved dual store        → 2 values (%lo, %hi)
 
     group mode (mutually exclusive with dist-mode):
     - {group = C}: grouped vector store with row stride

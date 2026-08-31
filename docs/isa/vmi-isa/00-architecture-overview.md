@@ -177,7 +177,7 @@ type's `C`).
 
 | # | Group | Ops | Category | Mask |
 |---|---|---|---|---|
-| 1 | **Load / Store** | `vload`, `vstore` | A (+B on dintlv/unpack) | load: none; store: `Pg` |
+| 1 | **Load / Store** | `vload`, `vstore` | A (+B on dintlv/intlv) | load: none; store: `Pg` |
 | 2 | **Index-gen** | `vci` | A | none |
 | 3 | **Eltwise Compute** | `vadd`, `vsub`, `vmul`, `vdiv`, `vmax`, `vmin`, `vabs`, `vneg`, `vrelu`, `vexp`, `vln`, `vsqrt`, `vand`, `vor`, `vxor`, `vnot`, `vshl`, `vshr`, `vadds`, `vmuls`, `vmaxs`, `vmins`, `vshls`, `vshrs`, `vcmp`, `vcmps`, `vsel`, `vselr` | A | `Pg` (except `vselr`: none) |
 | 4 | **Broadcast** | `vbrc` | A (ungrouped) / B (grouped) | none |

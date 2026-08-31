@@ -4033,21 +4033,6 @@ def vmi_f4x2_to_bf16x2_sat_probe():
 
 
 @pto.jit(target="a5", backend="vpto", mode="explicit")
-def vmi_unpack_vload_probe():
-    src_tile = pto.alloc_tile(shape=[1, 128], dtype=pto.i8)
-    src_ptr = src_tile.as_ptr()
-    offset = pto.const(0, dtype=pto.index)
-
-    _ = pto.vmi.vload(
-        src_ptr,
-        offset,
-        size=128,
-        dist_mode="unpack",
-        to_dtype=pto.i16,
-    )
-
-
-@pto.jit(target="a5", backend="vpto", mode="explicit")
 def vmi_brc_vload_probe():
     src_tile = pto.alloc_tile(shape=[1, 64], dtype=pto.f32)
     src_ptr = src_tile.as_ptr()
@@ -4089,20 +4074,6 @@ def vmi_block_stride_memory_probe():
     )
     pto.vmi.vstore(
         value, dst_tile.as_ptr(), offset, block_stride=pto.i16(2)
-    )
-
-
-@pto.jit(target="a5", backend="vpto", mode="explicit")
-def vmi_unpack_vload_missing_dtype_probe():
-    src_tile = pto.alloc_tile(shape=[1, 128], dtype=pto.i8)
-    src_ptr = src_tile.as_ptr()
-    offset = pto.const(0, dtype=pto.index)
-
-    _ = pto.vmi.vload(
-        src_ptr,
-        offset,
-        size=128,
-        dist_mode="unpack",
     )
 
 
@@ -8139,8 +8110,6 @@ def main() -> None:
         "pto.vmi.vdhist(...)" in str(vmi_vhist_bad_acc_error),
         "vdhist bad-acc rejection should carry the pto.vmi.vdhist call-site context",
     )
-    vmi_unpack_vload_text = vmi_unpack_vload_probe.compile().mlir_text()
-    expect_parse_roundtrip_and_verify(vmi_unpack_vload_text, "public VMI unpack vload specialization")
     vmi_brc_vload_text = vmi_brc_vload_probe.compile().mlir_text()
     expect_parse_roundtrip_and_verify(vmi_brc_vload_text, "public VMI brc vload specialization")
     expect(
@@ -8316,15 +8285,6 @@ def main() -> None:
         vmi_f4x2_to_bf16x2_sat_probe.compile,
         "does not support saturate for",
     )
-    unpack_missing_dtype_error = expect_raises(
-        TypeError,
-        vmi_unpack_vload_missing_dtype_probe.compile,
-        'to_dtype when dist_mode="unpack"',
-    )
-    expect(
-        'to_dtype when dist_mode="unpack"' in str(unpack_missing_dtype_error),
-        "unpack vload without to_dtype should diagnose the missing widened element type",
-    )
 
     expected_vmi_ops = [
         "pto.vmi.vload",
@@ -8453,10 +8413,6 @@ def main() -> None:
     expect(
         "reassoc" in vmi_wrapper_dispatch_text,
         "PTODSL VMI vcadd should preserve the reassoc attr in MLIR",
-    )
-    expect(
-        "!pto.vmi.vreg<128xi16>" in vmi_unpack_vload_text,
-        "PTODSL VMI unpack vload should infer the widened logical VMI vector result type from to_dtype",
     )
     expect("pto.mte_gm_ub" in public_surface_text, "mte_load(...) should lower to pto.mte_gm_ub")
     expect("pto.mte_ub_gm" in public_surface_text, "mte_store(...) should lower to pto.mte_ub_gm")

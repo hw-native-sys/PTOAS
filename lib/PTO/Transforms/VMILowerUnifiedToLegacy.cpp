@@ -658,7 +658,7 @@ static LogicalResult lowerDistributedStore(VMIvStoreOp op,
   if (mode == "continuous") {
     return lowerContinuousStore(op, builder);
   }
-  if (mode == "dintlv") {
+  if (mode == "intlv") {
     ValueRange values = op.getValues();
     if (values.size() < mlir::pto::kValue2) {
       return failure();

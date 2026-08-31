@@ -26,7 +26,7 @@ module {
       %lo: !pto.vmi.vreg<256xi8, #pto.vmi.layout<contiguous>>,
       %hi: !pto.vmi.vreg<256xi8, #pto.vmi.layout<contiguous>>,
       %dst: !pto.ptr<i8, ub>, %offset: index) {
-    pto.vmi.vstore %lo, %hi, %dst[%offset] {dist_mode = "dintlv"}
+    pto.vmi.vstore %lo, %hi, %dst[%offset] {dist_mode = "intlv"}
         : !pto.vmi.vreg<256xi8, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<256xi8, #pto.vmi.layout<contiguous>>, !pto.ptr<i8, ub>
     return
   }

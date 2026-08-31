@@ -3219,8 +3219,12 @@ static bool isSupportedVCmpPredicate(StringRef cmpMode) {
 //===----------------------------------------------------------------------===//
 
 static const std::set<StringRef> &validDistModes() {
-  static const std::set<StringRef> modes = {"continuous", "unpack", "dintlv",
-                                            "brc"};
+  static const std::set<StringRef> modes = {"continuous", "dintlv", "brc"};
+  return modes;
+}
+
+static const std::set<StringRef> &validStoreDistModes() {
+  static const std::set<StringRef> modes = {"continuous", "intlv"};
   return modes;
 }
 
@@ -4880,15 +4884,18 @@ LogicalResult VMIvStoreOp::verify() {
   }
 
   auto distMode = getDistMode();
-  bool isDintlv = distMode && *distMode == "dintlv";
+  if (distMode && !validStoreDistModes().count(*distMode)) {
+    return emitOpError("invalid dist-mode: \"") << *distMode << "\"";
+  }
+  bool isIntlv = distMode && *distMode == "intlv";
   size_t nValues = getValues().size();
   if (nValues < 1) {
     return emitOpError("requires at least 1 value");
   }
-  if (isDintlv && nValues != mlir::pto::kValue2) {
-    return emitOpError("dist-mode \"dintlv\" requires exactly 2 values");
+  if (isIntlv && nValues != mlir::pto::kValue2) {
+    return emitOpError("dist-mode \"intlv\" requires exactly 2 values");
   }
-  if (!isDintlv && nValues != 1) {
+  if (!isIntlv && nValues != 1) {
     return emitOpError("requires exactly 1 value for dist-mode \"")
            << (distMode ? *distMode : "continuous") << "\"";
   }
@@ -4896,14 +4903,6 @@ LogicalResult VMIvStoreOp::verify() {
   bool hasMask = !getMask().empty();
   if (getMask().size() > 1) {
     return emitOpError("at most one mask allowed");
-  }
-
-  if (distMode && !validDistModes().count(*distMode)) {
-    return emitOpError("invalid dist-mode: \"") << *distMode << "\"";
-  }
-  if (distMode && (*distMode == "unpack" || *distMode == "brc")) {
-    return emitOpError("dist-mode \"")
-           << *distMode << "\" is not valid for vstore";
   }
 
   auto pmode = getPmode();
@@ -5337,6 +5336,9 @@ LogicalResult VMIvLoadOp::verify() {
 
   // result count vs dist-mode
   auto distMode = getDistMode();
+  if (distMode && !validDistModes().count(*distMode)) {
+    return emitOpError("invalid dist-mode: \"") << *distMode << "\"";
+  }
   bool isDintlv = distMode && *distMode == "dintlv";
   size_t nResults = getResults().size();
   if (isDintlv && nResults != mlir::pto::kValue2) {
@@ -5347,20 +5349,14 @@ LogicalResult VMIvLoadOp::verify() {
            << (distMode ? *distMode : "continuous") << "\"";
   }
 
-  if (distMode && !validDistModes().count(*distMode)) {
-    return emitOpError("invalid dist-mode: \"") << *distMode << "\"";
-  }
   auto pmode = getPmode();
   if (pmode && !validPModes().count(*pmode)) {
     return emitOpError("invalid pmode: \"") << *pmode << "\"";
   }
 
-  bool isUnpack = distMode && *distMode == "unpack";
   for (auto res : getResults()) {
     auto resType = cast<VMIVRegType>(res.getType());
-    // unpack: source element type intentionally differs from result
-    if (!isUnpack &&
-        failed(verifyMemoryElementMatches(getOperation(),
+    if (failed(verifyMemoryElementMatches(getOperation(),
                                           getSource().getType(), resType,
                                           "source"))) {
       return failure();
