@@ -82,6 +82,7 @@ void markIllegalVPTOArithmeticAndCopyOps(ConversionTarget &target) {
       pto::PorOp, pto::PxorOp, pto::PdintlvB8Op, pto::PdintlvB16Op, pto::PdintlvB32Op, pto::PintlvB8Op,
       pto::PintlvB16Op, pto::PintlvB32Op, pto::VsunpackOp, pto::VzunpackOp, pto::VpackOp, pto::VintlvOp, pto::VdintlvOp,
       pto::VpreluOp, pto::VaxpyOp, pto::VmulscvtOp, pto::VciOp, pto::VexpdifOp, pto::VbitsortOp, pto::Vmrgsort4Op,
+      pto::VtransposeOp,
       pto::VtrcOp, pto::VcvtOp, pto::VbitcastOp, pto::VcmpOp, pto::VcmpsOp, pto::CopyGmToUbufOp, pto::CopyUbufToGmOp,
       pto::CopyUbufToUbufOp, pto::CopyCbufToUbufOp, pto::CopyUbufToCbufOp, pto::CopyGmToCbufOp, pto::CreateCbufMatrixOp,
       pto::LoadCbufToCaOp, pto::LoadCbufToCbOp, pto::LoadCbufToCaS4Op, pto::LoadCbufToCbS4Op, pto::LoadCbufToCaMxOp,

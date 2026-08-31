@@ -371,7 +371,7 @@ public:
     }
 
     if (isa<VldsOp, UvldOp, PldsOp, PldiOp, VstsOp, PstiOp, PstsOp,
-            VbitsortOp, Vmrgsort4Op, Vgather2Op,
+            VbitsortOp, Vmrgsort4Op, VtransposeOp, Vgather2Op,
             VgatherbOp, Vgather2BcOp, VscatterOp, Vldsx2Op, Vstsx2Op, VsldbOp,
             VsstbOp, VstasOp, VstarOp>(op)) {
       return VPTOBufferAddressFamily::BufferLike;

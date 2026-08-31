@@ -1,0 +1,19 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0.
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -verify-diagnostics
+
+module {
+  func.func @vtranspose_non_ub(
+      %dst: !pto.ptr<i16, ub>, %src: !pto.ptr<i16, gm>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    // expected-error @+1 {{'pto.vtranspose' op requires UB-backed destination and source}}
+    pto.vtranspose %dst, %src : !pto.ptr<i16, ub>, !pto.ptr<i16, gm>
+    return
+  }
+}

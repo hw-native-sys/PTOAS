@@ -4724,6 +4724,17 @@ def vdup_surface_probe():
     _ = highest_dup
 
 
+@pto.jit(target="a5", backend="vpto", mode="explicit")
+def vtranspose_surface_probe():
+    zero_u64 = pto.const(0, dtype=pto.ui64)
+    signed_source = pto.castptr(zero_u64, pto.ptr(pto.i16, "ub"))
+    signed_destination = pto.castptr(zero_u64, pto.ptr(pto.i16, "ub"))
+    unsigned_source = pto.castptr(zero_u64, pto.ptr(pto.ui16, "ub"))
+    unsigned_destination = pto.castptr(zero_u64, pto.ptr(pto.ui16, "ub"))
+    pto.vtranspose(signed_destination, signed_source)
+    pto.vtranspose(unsigned_destination, unsigned_source)
+
+
 @pto.jit(target="a5", mode="explicit")
 def vecscope_surface_probe():
     zero_u64 = pto.const(0, dtype=pto.ui64)
@@ -5222,6 +5233,7 @@ def main() -> None:
     fixed_width_integer_specialization_probe.verify()
     public_vector_conversion_surface_probe.verify()
     vdup_surface_probe.verify()
+    vtranspose_surface_probe.verify()
     vmulscvt_surface_probe.verify()
     vmula_surface_probe.verify()
     vmadd_surface_probe.verify()
@@ -8123,6 +8135,10 @@ def main() -> None:
     expect_parse_roundtrip_and_verify(low_precision_vcvt_surface_text, "low-precision vcvt surface specialization")
     vdup_surface_text = vdup_surface_probe.compile().mlir_text()
     expect_parse_roundtrip_and_verify(vdup_surface_text, "public vdup surface specialization")
+    vtranspose_surface_text = vtranspose_surface_probe.compile().mlir_text()
+    expect_parse_roundtrip_and_verify(
+        vtranspose_surface_text, "public vtranspose surface specialization"
+    )
     vecscope_surface_text = vecscope_surface_probe.compile().mlir_text()
     expect_parse_roundtrip_and_verify(vecscope_surface_text, "public vecscope surface specialization")
     vmulscvt_surface_text = vmulscvt_surface_probe.compile().mlir_text()
@@ -8706,6 +8722,18 @@ def main() -> None:
     expect('\"EVEN\"' in vmulscvt_surface_text, "vmulscvt(..., part=PartMode.EVEN) should preserve the authored part token")
     expect("!pto.vreg<128xf16>" in vmulscvt_surface_text, "vmulscvt(f32 -> f16) should infer the packed f16 result type")
     expect("pto.vmula" in vmula_surface_text, "vmula(...) should lower to pto.vmula")
+    expect(
+        vtranspose_surface_text.count("pto.vtranspose") == 2,
+        "vtranspose(...) should lower once for each signed and unsigned UB pointer pair",
+    )
+    expect(
+        "!pto.ptr<i16, ub>" in vtranspose_surface_text,
+        "vtranspose(i16) should preserve the signed UB pointer type",
+    )
+    expect(
+        "!pto.ptr<ui16, ub>" in vtranspose_surface_text,
+        "vtranspose(ui16) should preserve the unsigned UB pointer type",
+    )
     expect("!pto.vreg<64xf32>" in vmula_surface_text, "vmula(f32, f32, f32) should infer the f32 vector result type")
     expect("pto.vmadd" in vmadd_surface_text, "vmadd(...) should lower to pto.vmadd")
     expect("!pto.vreg<64xf32>" in vmadd_surface_text, "vmadd(f32, f32, f32) should infer the f32 vector result type")

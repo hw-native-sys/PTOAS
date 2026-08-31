@@ -216,6 +216,7 @@ add_mlir_dialect_library(PTOIR
   VPTO/vecop/datamov/VPTOVstar.cpp
   VPTO/vecop/datamov/VPTOVsunpack.cpp
   VPTO/vecop/datamov/VPTOVtrc.cpp
+  VPTO/vecop/datamov/VPTOVtranspose.cpp
   VPTO/vecop/datamov/VPTOVusqz.cpp
   VPTO/vecop/datamov/VPTOVzunpack.cpp
   VPTO/vecop/mulred/VPTOMulI32ToI64.cpp

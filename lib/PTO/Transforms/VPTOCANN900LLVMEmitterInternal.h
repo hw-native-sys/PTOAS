@@ -500,6 +500,7 @@ FailureOr<StringRef> buildVtrcCallee(MLIRContext *context, Type resultType);
 FailureOr<StringRef> buildVexpdifCallee(MLIRContext *context, Type inputType, Type resultType);
 FailureOr<StringRef> buildVbitsortCallee(MLIRContext *context, pto::VbitsortOp op);
 FailureOr<StringRef> buildVmrgsort4Callee(MLIRContext *context, pto::Vmrgsort4Op op);
+FailureOr<StringRef> buildVtransposeCallee(MLIRContext *context, pto::VtransposeOp op);
 FailureOr<Value> packVmrgsort4SourceAddr(Operation *anchor, Value source0, Value source1, Value source2, Value source3,
                                          Type elemType);
 FailureOr<VcvtContract> buildVcvtContract(pto::VcvtOp op);
