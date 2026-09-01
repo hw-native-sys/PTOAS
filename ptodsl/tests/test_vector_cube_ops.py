@@ -1215,6 +1215,35 @@ class VectorCubeSurfaceTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsupported tile mask pattern"):
             pto.tile.gather(src, dst, mask_pattern="PAT_ALL", axis="row")
 
+        coalesce_attr = object()
+        oob_attr = object()
+        with patch.object(_ops, "unwrap_surface_value", side_effect=_identity), \
+             patch.object(_ops, "_enum_attr", side_effect=[coalesce_attr, oob_attr]) as enum_attr, \
+             patch.object(_ops._pto, "mgather") as mgather_op:
+            pto.tile.mgather(src, idx, dst, "row", gather_oob="zero")
+        self.assertEqual(
+            enum_attr.call_args_list,
+            [
+                call(
+                    "coalesce",
+                    "row",
+                    supported={"row", "elem"},
+                    context="tile.mgather(..., coalesce=...)",
+                ),
+                call(
+                    "gather_oob",
+                    "zero",
+                    supported={"undefined", "clamp", "wrap", "zero"},
+                    context="tile.mgather(..., gather_oob=...)",
+                ),
+            ],
+        )
+        self.assertEqual(mgather_op.call_args.args, (src, idx, dst, coalesce_attr))
+        self.assertEqual(
+            mgather_op.call_args.kwargs,
+            {"scratch": None, "gather_oob": oob_attr},
+        )
+
     def test_tile_mov_accepts_acc_to_vec_mode(self):
         src = object()
         dst = object()

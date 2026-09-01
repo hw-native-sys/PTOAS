@@ -868,6 +868,15 @@ def host_vec_copy_emitc(
     pto.tile.store(o_tile, out)
 
 
+@pto.jit(target="a5", backend="emitc")
+def mgather_emitc_frontend_probe(table_ptr: pto.ptr(pto.f32, "gm")):
+    table_view = pto.make_tensor_view(table_ptr, shape=[32, 32], strides=[32, 1])
+    table = pto.partition_view(table_view, offsets=[0, 0], sizes=[32, 32])
+    indexes = pto.alloc_tile(shape=[1, 32], dtype=pto.i32)
+    destination = pto.alloc_tile(shape=[32, 32], dtype=pto.f32)
+    pto.tile.mgather(table, indexes, destination, coalesce="row", gather_oob="zero")
+
+
 @pto.jit(target="a5", entry=False, backend="vpto")
 def non_entry_metadata_probe(
     A_ptr: pto.ptr(pto.f32, "gm"),
@@ -5729,6 +5738,17 @@ def main() -> None:
     expect(
         '#pto.kernel_kind<' not in emitc_entry_text,
         "EmitC-only child modules should not carry VPTO kernel-kind metadata",
+    )
+    mgather_emitc_text = mgather_emitc_frontend_probe.compile().mlir_text()
+    expect_parse_roundtrip_and_verify(mgather_emitc_text, "emitc pto.tile.mgather specialization")
+    expect("pto.mgather" in mgather_emitc_text, "pto.tile.mgather should lower to pto.mgather")
+    expect(
+        "coalesce = #pto<coalesce row>" in mgather_emitc_text,
+        "pto.tile.mgather should preserve the explicit row coalesce attribute",
+    )
+    expect(
+        "gatherOob = #pto<gather_oob zero>" in mgather_emitc_text,
+        "pto.tile.mgather should preserve the non-default zero gather_oob attribute",
     )
     emitc_helper_text = (
         emitc_entry_calls_emitc_vector_kernel_module_metadata_probe.compile().mlir_text()
