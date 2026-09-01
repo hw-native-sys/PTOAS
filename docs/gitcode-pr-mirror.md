@@ -11,16 +11,23 @@ objects and never executes code from the pull request.
 
 Configure these GitHub Actions secrets:
 
-- `GITCODE_MIRROR_SSH_KEY`: a write-enabled key for the `lllzzzddd/pto-as`
-  fork. It must not be allowed to push `master`.
+- `GITCODE_MIRROR_SSH_KEY`: a write-enabled key for the configured fork. It
+  must not be allowed to push `master`.
 - `GITCODE_KNOWN_HOSTS`: the verified SSH host key for `gitcode.com`.
-- `GITCODE_MIRROR_TOKEN`: a GitCode token owned by `lllzzzddd` with permission
-  to read pull requests and create them in `cann/pto-as`.
+- `GITCODE_MIRROR_TOKEN`: a GitCode token owned by the configured fork owner,
+  with permission to read pull requests and create them in `cann/pto-as`.
 
-The GitCode commit identity is intentionally fixed to the required account:
+Configure these repository variables (Settings → Secrets and variables →
+Actions → Variables):
+
+- `GITCODE_FORK_OWNER`: the GitCode user or namespace that owns the fork.
+- `GITCODE_FORK_REPOSITORY`: fork repository name; defaults to `pto-as`.
+- `GITCODE_COMMIT_EMAIL`: a verified email for `GITCODE_FORK_OWNER`.
+
+The GitCode commit identity is taken from the configured fork owner and email:
 
 ```text
-lllzzzddd <liuzidi1@huawei.com>
+<GITCODE_FORK_OWNER> <GITCODE_COMMIT_EMAIL>
 ```
 
 Use the verified email configured for that account if it changes.
