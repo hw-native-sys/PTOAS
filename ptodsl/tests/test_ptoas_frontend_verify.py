@@ -238,6 +238,15 @@ def host_vec_copy(
     pto.tile.store(o_tile, out)
 
 
+@pto.jit(target="a5", backend="emitc")
+def mgather_emitc_frontend_probe(table_ptr: pto.ptr(pto.f32, "gm")):
+    table_view = pto.make_tensor_view(table_ptr, shape=[32, 32], strides=[32, 1])
+    table = pto.partition_view(table_view, offsets=[0, 0], sizes=[32, 32])
+    indexes = pto.alloc_tile(shape=[1, 32], dtype=pto.i32)
+    destination = pto.alloc_tile(shape=[32, 32], dtype=pto.f32)
+    pto.tile.mgather(table, indexes, destination, coalesce="row", gather_oob="zero")
+
+
 @pto.simt
 def simt_gm_memory_core_body(gm: pto.ptr(pto.i32, "gm")):
     tx = pto.get_tid_x()
@@ -385,6 +394,20 @@ def main() -> None:
     expect(
         "pto.tload" in simple_frontend_text and "pto.tstore" in simple_frontend_text,
         "host_vec_copy frontend verification output should keep the tile IO contract visible",
+    )
+
+    mgather_cpp_texts = run_ptoas_emitc(
+        ptoas_bin,
+        mgather_emitc_frontend_probe.compile().mlir_text(),
+        "mgather_emitc_frontend_probe PTODSL EmitC artifact",
+    )
+    expect(
+        len(mgather_cpp_texts) == 1,
+        "mgather PTODSL probe should materialize one EmitC module",
+    )
+    expect(
+        "MGATHER<pto::Coalesce::Row, pto::GatherOOB::Zero>" in mgather_cpp_texts[0],
+        "PTODSL mgather probe should preserve row coalescing and zero out-of-bounds handling in EmitC",
     )
 
     struct_text = struct_frontend_verify_probe.compile().mlir_text()
