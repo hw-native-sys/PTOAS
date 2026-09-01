@@ -364,7 +364,7 @@ def _emit_vec_binary_op(op_name: str, lhs, rhs):
     rhs_raw = unwrap_surface_value(rhs)
     if not (VectorType.isinstance(lhs_raw.type) and VectorType.isinstance(rhs_raw.type)):
         raise TypeError("PTODSL VecValue arithmetic expects compatible vector operands")
-    lhs_raw, rhs_raw, kind = normalize_runtime_binary_operands(lhs_raw, rhs_raw)
+    lhs_raw, rhs_raw, kind, _ = normalize_runtime_binary_operands(lhs_raw, rhs_raw)
     if kind != "float":
         raise TypeError(f"PTODSL VecValue operator '{op_name}' currently supports only floating-point vectors")
     return VecValue(emit_runtime_binary_op(op_name, lhs_raw, rhs_raw))

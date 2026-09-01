@@ -33,12 +33,11 @@ _FLOAT_BINARY_OPS = {
 
 def emit_runtime_binary_op(op_name: str, lhs, rhs):
     """Lower one authored runtime scalar binary operator."""
-    lhs, rhs, kind = normalize_runtime_binary_operands(lhs, rhs)
+    lhs, rhs, kind, authored_type = normalize_runtime_binary_operands(lhs, rhs)
     if kind in {"index", "integer"}:
-        op_cls = _integer_binary_op(op_name, lhs.type)
+        op_cls = _integer_binary_op(op_name, authored_type)
         if op_cls is None:
             raise TypeError(f"runtime scalar operator '{op_name}' is not supported for integer/index values")
-        authored_type = lhs.type
         if kind == "integer":
             lhs = _strip_integer_signedness(lhs)
             rhs = _strip_integer_signedness(rhs)
@@ -56,18 +55,18 @@ def emit_runtime_binary_op(op_name: str, lhs, rhs):
 
 def emit_runtime_max(lhs, rhs):
     """Lower one authored runtime scalar max operation."""
-    lhs, rhs, kind = normalize_runtime_binary_operands(lhs, rhs)
+    lhs, rhs, kind, authored_type = normalize_runtime_binary_operands(lhs, rhs)
     if kind == "float":
         return arith.MaximumFOp(lhs, rhs).result
     if kind == "integer":
-        signedness = _integer_signedness(lhs.type)
+        signedness = _integer_signedness(authored_type)
         signless_lhs = _strip_integer_signedness(lhs)
         signless_rhs = _strip_integer_signedness(rhs)
         if signedness == "unsigned":
             result = arith.MaxUIOp(signless_lhs, signless_rhs).result
         else:
             result = arith.MaxSIOp(signless_lhs, signless_rhs).result
-        return _restore_integer_signedness(result, lhs.type)
+        return _restore_integer_signedness(result, authored_type)
     if kind == "index":
         cond = arith.CmpIOp(arith.CmpIPredicate.sge, lhs, rhs).result
         return arith.SelectOp(cond, lhs, rhs).result
@@ -76,18 +75,18 @@ def emit_runtime_max(lhs, rhs):
 
 def emit_runtime_min(lhs, rhs):
     """Lower one authored runtime scalar min operation."""
-    lhs, rhs, kind = normalize_runtime_binary_operands(lhs, rhs)
+    lhs, rhs, kind, authored_type = normalize_runtime_binary_operands(lhs, rhs)
     if kind == "float":
         return arith.MinimumFOp(lhs, rhs).result
     if kind == "integer":
-        signedness = _integer_signedness(lhs.type)
+        signedness = _integer_signedness(authored_type)
         signless_lhs = _strip_integer_signedness(lhs)
         signless_rhs = _strip_integer_signedness(rhs)
         if signedness == "unsigned":
             result = arith.MinUIOp(signless_lhs, signless_rhs).result
         else:
             result = arith.MinSIOp(signless_lhs, signless_rhs).result
-        return _restore_integer_signedness(result, lhs.type)
+        return _restore_integer_signedness(result, authored_type)
     if kind == "index":
         cond = arith.CmpIOp(arith.CmpIPredicate.sle, lhs, rhs).result
         return arith.SelectOp(cond, lhs, rhs).result
@@ -104,7 +103,7 @@ def _restore_runtime_integer_result(result, authored_type):
 
 def emit_runtime_compare(op_name: str, lhs, rhs):
     """Lower one authored runtime scalar comparison operator."""
-    lhs, rhs, kind = normalize_runtime_binary_operands(lhs, rhs)
+    lhs, rhs, kind, authored_type = normalize_runtime_binary_operands(lhs, rhs)
 
     if kind == "float":
         predicate = {
@@ -133,7 +132,7 @@ def emit_runtime_compare(op_name: str, lhs, rhs):
         return arith.CmpIOp(predicate, lhs, rhs).result
 
     if kind == "integer":
-        signedness = _integer_signedness(lhs.type)
+        signedness = _integer_signedness(authored_type)
         signed_predicates = {
             "lt": arith.CmpIPredicate.slt,
             "le": arith.CmpIPredicate.sle,
@@ -160,7 +159,7 @@ def emit_runtime_compare(op_name: str, lhs, rhs):
 
 def emit_runtime_bitwise_op(op_name: str, lhs, rhs):
     """Lower one authored runtime scalar bitwise operator."""
-    lhs, rhs, kind = normalize_runtime_binary_operands(lhs, rhs)
+    lhs, rhs, kind, authored_type = normalize_runtime_binary_operands(lhs, rhs)
     op_cls = {
         "and": arith.AndIOp,
         "or": arith.OrIOp,
@@ -177,7 +176,6 @@ def emit_runtime_bitwise_op(op_name: str, lhs, rhs):
             f"runtime scalar bitwise operator '{op_name}' expects integer-like operands, got {lhs.type} and {rhs.type}"
         )
 
-    authored_type = lhs.type
     result = op_cls(_strip_integer_signedness(lhs), _strip_integer_signedness(rhs)).result
     return _restore_integer_signedness(result, authored_type)
 

@@ -39,3 +39,26 @@ def test_signed_runtime_arithmetic_roundtrip():
     import re
 
     assert not re.search(r"%c\w+ = builtin\.unrealized_conversion_cast .*: si32 to i32", text)
+
+
+@pto.jit(target="a5")
+def unsigned_runtime_arithmetic_probe(
+    out_ptr: pto.ptr(pto.ui32, "gm"),
+    value: pto.ui32,
+):
+    quotient = (value + "0x3") // 4
+    remainder = value % 4
+    is_small = value < 7
+    bounded_max = scalar.max(value, 7)
+    bounded_min = scalar.min(value, 7)
+    scalar.store(quotient + remainder + bounded_max + bounded_min, out_ptr, 0)
+    scalar.store(is_small, out_ptr, 1)
+
+
+def test_unsigned_runtime_arithmetic_preserves_unsigned_ops():
+    text = unsigned_runtime_arithmetic_probe.compile().mlir_text()
+    assert "arith.divui" in text
+    assert "arith.remui" in text
+    assert "arith.cmpi ult" in text
+    assert "arith.maxui" in text
+    assert "arith.minui" in text
