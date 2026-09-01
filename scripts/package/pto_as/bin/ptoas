@@ -1,0 +1,18 @@
+#!/bin/bash
+set -e
+bin_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+version_root=$(CDPATH= cd -- "${bin_dir}/../../.." && pwd)
+share_info="${version_root}/share/info/pto_as"
+python_dir="${version_root}/tools/ptoas/python"
+record="${version_root}/tools/ptoas/.ptoas-python.path"
+if [ ! -s "${record}" ] || [ ! -d "${python_dir}" ]; then
+  echo "ptoas: private PTOAS Python runtime is not installed; run the CANN package installer first" >&2
+  exit 1
+fi
+python_bin=$(head -n 1 "${record}")
+if [ -z "${python_bin}" ] || [ ! -x "${python_bin}" ]; then
+  echo "ptoas: recorded private PTOAS Python interpreter is unavailable" >&2
+  exit 1
+fi
+export PYTHONPATH="${python_dir}${PYTHONPATH:+:${PYTHONPATH}}"
+exec "${python_bin}" -m ptoas._cli "$@"
