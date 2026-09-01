@@ -1654,6 +1654,7 @@ pto.tile.store(dst_tile, out_view)
 | Windowing | `tile.extract`, `tile.insert` |
 | Tile movement | `tile.mov`, `tile.concat` |
 | Dequantize | `tile.dequant` |
+| Quantize | `tile.quant`, `tile.quant.mx` |
 | Debug print | `tile.print` |
 | Tile matmul | `tile.matmul`, `tile.matmul_acc`, `tile.matmul_mx`, `tile.matmul_mx_acc`, `tile.matmul_mx_bias` |
 | Tile gemv | `tile.gemv_mx`, `tile.gemv_mx_acc`, `tile.gemv_mx_bias` |
@@ -1699,7 +1700,106 @@ pto.tile.dequant(src_tile, scale_tile, offset_tile, dst_tile)
 
 ---
 
-### 8.1.19 Debug Print
+### 8.1.19 Quantize
+
+#### `pto.tile.quant(src: Tile, scale: Tile, dst: Tile, *, quant_type: str | None = None, offset: Tile | None = None, tmp: Tile | None = None) -> None`
+
+**Description**: Quantize the source tile row-by-row with per-row scaling. This maps to `pto.tquant` and is the quantization counterpart of `pto.tile.dequant`:
+
+```
+dst[r, c] = saturate(round(src[r, c] * scale[r, 0]) + offset[r, 0])
+```
+
+The symmetric variant (`quant_type="INT8_SYM"`) omits the zero-point `offset` and saturates to `i8` `[-128, 127]`; the asymmetric variant saturates to `ui8` `[0, 255]`.
+
+**Parameters**:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| src | Tile | Source tile, `f32` `[rows, cols]`. |
+| scale | Tile | Per-row scale factor, `f32` `[rows, 1]`. |
+| dst | Tile | Destination tile, `i8` (symmetric) or `ui8` (asymmetric), same shape as `src`. |
+| quant_type | str | Optional quantization flavor: `"INT8_SYM"` or `"INT8_ASYM"`. Defaults to `INT8_ASYM` when `offset` is provided, `INT8_SYM` otherwise. |
+| offset | Tile | Optional per-row zero point, `f32` `[rows, 1]` (asymmetric mode only). |
+| tmp | Tile | Optional scratch tile used by the lowering. |
+
+**Returns**: None (destination-style op; results are written to `dst`).
+
+**Hardware mapping**: `PIPE_V` vector compute; scalar conversion in the vector pipe (`pto.tquant`).
+
+**Constraints**:
+
+- `src`, `scale` and `offset` must be `f32` tiles; `dst` must match the variant's integer dtype with the same logical shape as `src`.
+- `scale` (and `offset`, when present) must be `[rows, 1]` column vectors.
+
+**Example**:
+
+```python
+# src: f32 [rows, cols]; scale: f32 [rows, 1]; dst: i8 [rows, cols]
+pto.tile.quant(src_tile, scale_tile, dst_tile)
+
+# Asymmetric with per-row zero point; dst: ui8 [rows, cols]
+pto.tile.quant(src_tile, scale_tile, dst_tile, quant_type="INT8_ASYM", offset=offset_tile)
+```
+
+#### `pto.tile.quant.mx(src: Tile, dst: Tile, exp: Tile, max_tile: Tile, scaling: Tile, *, quant_type: str = "MXFP8", quant_scale_alg: str | None = None, grp_axis: int = 1, interleave: bool = False) -> None`
+
+**Description**: Microscaling (MX) block quantization. This maps to `pto.tquant.mx`: the source tile is partitioned into groups of 32 consecutive elements (along the group axis), each group is described by a shared `e8m0` exponent and an implicit scaling factor, and the source values are quantized to the MX format's narrow dtype (`uint8` codes for `MXFP8`, packed `f4e2m1` pairs for `MXFP4_E2M1`).
+
+Two group orientations are available:
+
+- `grp_axis=1` (default, column grouping): groups of 32 consecutive elements along each row. `max_tile`/`scaling` are flat `[1, groups]` tiles (source dtype) where `groups` covers all `rows * cols / 32` groups; `exp` is a flat `[1, groups]` `ui8` tile for `MXFP8`, or a canonical 2-D `[rows, cols / 32]` tile for `MXFP4_E2M1`.
+- `grp_axis=0` (row grouping, "DN" layout): groups of 32 consecutive rows per column. `max_tile`/`scaling` are `[rows / 32, cols]` tiles (source dtype); `exp` is `[rows / 32, cols]`, or `[rows / 64, 2 * cols]` when `interleave=True` stores exponent and quantized data in an interleaved layout.
+
+**Parameters**:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| src | Tile | Source tile: `f32`, `f16`, or `bf16` `[rows, cols]`. |
+| dst | Tile | Quantized values: `ui8` for `MXFP8` or `f4e2m1x2` for `MXFP4_E2M1`. |
+| exp | Tile | `e8m0` exponent tile, `ui8`. Column grouping: flat `[1, groups]` (`MXFP8`) or canonical `[rows, cols/32]` (`MXFP4_E2M1`); row grouping: `[rows/32, cols]` (or `[rows/64, 2*cols]` interleaved). |
+| max_tile | Tile | Group abs-max staging buffer, source dtype. Flat `[1, groups]` (column grouping) or `[rows/32, cols]` (row grouping). |
+| scaling | Tile | Reciprocal scaling staging buffer, same shape/dtype as `max_tile`. |
+| quant_type | str | `"MXFP8"` (default) or `"MXFP4_E2M1"`. |
+| quant_scale_alg | str | Optional scale algorithm: `"ocp"` or `"nv"`. Both supported for `f32`/`f16`/`bf16` sources. |
+| grp_axis | int | Group axis: `1` = column grouping (default), `0` = row grouping (DN layout). |
+| interleave | bool | Interleave exponent and quantized data in the destination layout (DN). |
+
+**Returns**: None (destination-style op; quantized codes are written to `dst`, exponents to `exp`).
+
+**Hardware mapping**: `PIPE_V` vector compute with `set_ctrl` programming; vector loads/stores shuffle staging buffers (`pto.tquant.mx`).
+
+**Constraints**:
+
+- With `grp_axis=1`, the source valid column count must be a multiple of 32.
+- Flat `max_tile`/`scaling` capacity: `f32` sources need `alignTo(groups * (2 if unrolled else 1), 64) * 4` bytes; `f16`/`bf16` sources need `alignTo(groups, 128) * 2` bytes (both `ocp` and `nv` algorithms). Unrolling applies when the padded source exceeds 1024 elements and both padded and valid element counts are multiples of 256.
+- Flat `exp` must be tight: valid shape exactly `[1, groups]`.
+- Canonical 2-D exponent layout requires `exp` valid shape `[rows, cols / 32]` with physical capacity covering the group prefix.
+- DN layouts: `max_tile`/`scaling` rows are `rows / 32`; `exp` rows are `rows / 32` (`rows / 64` with `2 * cols` columns when interleaved); `dst` must cover the packed quantized payload.
+
+**Example**:
+
+```python
+# Column-grouped MXFP8: src f32 [32, 128] -> groups = 32*128/32 = 128
+src = pto.alloc_tile(shape=[32, 128], dtype=pto.f32, valid_shape=[32, 128])
+exp = pto.alloc_tile(shape=[1, 128], dtype=pto.ui8, valid_shape=[1, 128])
+max_tile = pto.alloc_tile(shape=[1, 256], dtype=pto.f32, valid_shape=[1, 128])
+scaling = pto.alloc_tile(shape=[1, 256], dtype=pto.f32, valid_shape=[1, 128])
+dst = pto.alloc_tile(shape=[32, 128], dtype=pto.ui8, valid_shape=[32, 128])
+pto.tile.quant.mx(src, dst, exp, max_tile, scaling, quant_type="MXFP8")
+
+# Row-grouped (DN) MXFP8 from bf16 source [64, 128]
+exp = pto.alloc_tile(shape=[2, 128], dtype=pto.ui8, valid_shape=[2, 128])
+max_tile = pto.alloc_tile(shape=[2, 128], dtype=pto.bf16, valid_shape=[2, 128])
+scaling = pto.alloc_tile(shape=[2, 128], dtype=pto.bf16, valid_shape=[2, 128])
+dst = pto.alloc_tile(shape=[64, 128], dtype=pto.ui8, valid_shape=[64, 128])
+pto.tile.quant.mx(src, dst, exp, max_tile, scaling,
+                  quant_type="MXFP8", grp_axis=0)
+```
+
+---
+
+### 8.1.20 Debug Print
 
 #### `pto.tile.print(src: Tile, tmp: PartitionTensorView | None = None, *, print_format: str | None = None) -> None`
 

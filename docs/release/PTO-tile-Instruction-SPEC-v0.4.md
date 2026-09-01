@@ -1891,17 +1891,14 @@ tight source (`Ps == N`) and `exp.rows == 1`.
 
 Flat axis1 scaling writes full vector widths. Its required capacity is
 `alignTo(G,64)*4` bytes for ordinary f32, `alignTo(2G,64)*4` bytes for the
-unrolled f32 path, and `alignTo(G,128)*2` bytes for f16/bf16 OCP. These bounds
-are at least 256, 512, and 256 bytes, respectively. The f32 path is unrolled
-when `src.rows*src.cols > 1024` and both `src.rows*src.cols` and
-`src.valid_rows*src.cols` are multiples of 256.
+unrolled f32 path, and `alignTo(G,128)*2` bytes for f16/bf16 with either OCP
+or NV scaling. These bounds are at least 256, 512, and 256 bytes,
+respectively. The f32 path is unrolled when `src.rows*src.cols > 1024` and
+both `src.rows*src.cols` and `src.valid_rows*src.cols` are multiples of 256.
 
 The pinned A5 revisions reject these combinations:
 
-- axis1 canonical f16/bf16;
-- axis1 legacy-flat f16/bf16 with NV scaling;
 - axis0 FP16 MXFP4 when `Ps/2` is not a multiple of 32 bytes;
-- axis0 FP32 MXFP8 with `interleave=true`;
 - padded f16/bf16 source whose final vector-aligned padding store is incomplete.
 
 Padded f16/bf16 source may be zeroed in place, so it has Read+Write effects.

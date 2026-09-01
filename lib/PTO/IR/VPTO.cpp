@@ -1771,6 +1771,9 @@ static std::optional<VcvtContract> lookupVcvtContract(VcvtElemKind src,
     case VcvtElemKind::U8:
       return VcvtContract{/*requiresRnd=*/true, /*requiresSat=*/true,
                           /*requiresPart=*/true};
+    case VcvtElemKind::BF16:
+      return VcvtContract{/*requiresRnd=*/true, /*requiresSat=*/false,
+                          /*requiresPart=*/false};
     default:
       return std::nullopt;
     }

@@ -660,6 +660,7 @@ from ._ops_simt import (  # noqa: F401
     rls_buf,
     round,
     set_cross_block,
+    set_ctrl,
     set_flag,
     set_intra_block,
     shuffle_bfly,
@@ -768,6 +769,7 @@ __all__ = [
     "syncthreads", "threadfence", "threadfence_block", "trap", "keep", "resume",
     "pipe_barrier", "get_buf", "rls_buf",
     "set_cross_block", "wait_cross_block", "set_intra_block", "wait_intra_block",
+    "set_ctrl",
     "set_flag", "wait_flag",
     "reserve_buffer", "import_reserved_buffer",
 ]

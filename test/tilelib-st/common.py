@@ -17,6 +17,12 @@ import time
 
 import numpy as np
 
+try:
+    import ml_dtypes
+    _BF16_DTYPE = ml_dtypes.bfloat16
+except ImportError:
+    _BF16_DTYPE = None
+
 _DEVICE = "npu:0"
 
 def init_runtime():
@@ -31,6 +37,19 @@ def init_runtime():
 
 def npu_stream(torch):
     return torch.npu.current_stream()._as_parameter_  # noqa: SLF001
+
+
+def _to_torch(array):
+    """Convert a numpy array to a device tensor.
+
+    torch does not accept ml_dtypes.bfloat16 arrays directly, and NPU rejects
+    fp32->bf16 device-side casts, so upload through a uint16 bit view.
+    """
+    import torch
+    if _BF16_DTYPE is not None and array.dtype == _BF16_DTYPE:
+        u16 = array.view(np.uint16).copy()
+        return torch.from_numpy(u16).view(torch.bfloat16).to(_DEVICE)
+    return torch.from_numpy(array).to(_DEVICE)
 
 
 def emit_mlir(*kernels):
@@ -86,10 +105,11 @@ def golden_output_case(
             output_shape or golden.shape,
             dtype=output_dtype or golden.dtype,
         )
+        case_inputs = [*host_inputs, out]
         if launch_args is None:
-            return [*host_inputs, out], golden
+            return case_inputs, golden
         extra_launch_args = launch_args(*host_inputs) if callable(launch_args) else list(launch_args)
-        return [*host_inputs, out], golden, extra_launch_args
+        return case_inputs, golden, extra_launch_args
 
     def check_case(device_inputs, golden):
         actual = device_inputs[output_index].cpu().numpy()
@@ -199,7 +219,7 @@ def run_cases(cases: list[dict], *, emit_mlir_fn=None, argv=None) -> int:
                 f"TileLib ST case {name!r} make_case() must return 2 or 3 values, got {len(made_case)}"
             )
 
-        device_inputs = [torch.from_numpy(array).to(_DEVICE) for array in inputs]
+        device_inputs = [_to_torch(array) for array in inputs]
         stream = npu_stream(torch)
 
         t0 = time.perf_counter()

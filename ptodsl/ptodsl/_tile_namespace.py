@@ -7,6 +7,8 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 
 from . import _ops
+from ._ops_tile import tquant as _tquant_impl
+from ._ops_tile import tquant_mx as _tquant_mx_impl
 
 
 def _row_reduction_tmp_metadata(src):
@@ -138,6 +140,16 @@ class _TileNamespace:
     neg = staticmethod(_ops.tneg)
     dequant = staticmethod(_ops.tdequant)
     print = staticmethod(_ops.tprint)
+
+    class _QuantNamespace:
+        def __call__(self, src, scale, dst, *, quant_type=None, offset=None, tmp=None):
+            return _tquant_impl(src, scale, dst, quant_type=quant_type, offset=offset, tmp=tmp)
+
+        @staticmethod
+        def mx(src, dst, exp, max_tile, scaling, *, quant_type="MXFP8", **kwargs):
+            return _tquant_mx_impl(src, dst, exp, max_tile, scaling, quant_type=quant_type, **kwargs)
+
+    quant = _QuantNamespace()
 
     relu = staticmethod(_ops.trelu)
     lrelu = staticmethod(_ops.tlrelu)

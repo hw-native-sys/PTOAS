@@ -8748,7 +8748,7 @@ requirements beyond its valid shape:
 | f32, non-unrolled | `alignTo(G, 64) * 4` bytes, at least 256 bytes |
 | f32, unrolled | `alignTo(2*G, 64) * 4` bytes, at least 512 bytes |
 | f16/bf16, OCP | `alignTo(G, 128) * 2` bytes, at least 256 bytes |
-| f16/bf16, NV | Unsupported on the pinned A5 revisions |
+| f16/bf16, NV | `alignTo(G, 128) * 2` bytes, at least 256 bytes |
 
 The f32 flat form is unrolled when all of these hold:
 
@@ -8760,13 +8760,10 @@ src.rows * src.cols > 1024
 
 **Pinned A5 support boundary:**
 
-- axis1 canonical 2-D quantization with f16/bf16 source is rejected;
 - axis0 FP16 MXFP4 is rejected when the packed source stride `Ps/2` is not a
   multiple of 32 bytes;
-- axis0 FP32 MXFP8 with `interleave=true` is rejected;
 - padded f16/bf16 source is rejected when its final vector-aligned padding
-  store would be incomplete;
-- axis1 legacy-flat f16/bf16 with `quantScaleAlg=nv` is rejected.
+  store would be incomplete.
 
 For f16/bf16 source with `src.valid_cols < src.cols`, the operation may zero
 row padding in place, so the source has `Read+Write` effects. Tight B16 and all

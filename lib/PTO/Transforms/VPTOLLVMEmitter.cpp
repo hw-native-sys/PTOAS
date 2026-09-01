@@ -1652,6 +1652,8 @@ static std::optional<VcvtContract> lookupVcvtContract(VcvtElemKind src,
       return VcvtContract{"llvm.hivm.vcvtff.f162f8e5m2.x", true, true, true, 16};
     case VcvtElemKind::HiF8:
       return VcvtContract{"llvm.hivm.vcvtff.f162hif8.x", true, true, true, 16};
+    case VcvtElemKind::BF16:
+      return VcvtContract{"llvm.hivm.vcvtff.f162bf16.x", true, false, false, 16};
     case VcvtElemKind::F32:
       return VcvtContract{"llvm.hivm.vcvtff.f162f32.x", false, false, true, 16};
     case VcvtElemKind::S32:
@@ -5083,12 +5085,23 @@ static FailureOr<VcvtContract> buildVcvtContract(pto::VcvtOp op) {
   Type resultElemType = getElementTypeFromVectorLike(op.getResult().getType());
   if (!inputElemType || !resultElemType)
   {
+    if (const char *dbg = std::getenv("PTOAS_DEBUG_VCVT")) {
+      (void)dbg;
+      llvm::errs() << "[vcvt-debug] elem type extract failed: " << op << "\n";
+    }
     return failure();
   }
   auto contract = lookupVcvtContract(classifyVcvtElemType(inputElemType),
                                      classifyVcvtElemType(resultElemType));
   if (!contract)
   {
+    if (const char *dbg = std::getenv("PTOAS_DEBUG_VCVT")) {
+      (void)dbg;
+      llvm::errs() << "[vcvt-debug] no contract for kind "
+                   << static_cast<int>(classifyVcvtElemType(inputElemType)) << " -> "
+                   << static_cast<int>(classifyVcvtElemType(resultElemType))
+                   << ": " << op << "\n";
+    }
     return failure();
   }
   return *contract;
@@ -10397,6 +10410,10 @@ public:
     Type resultType = this->getTypeConverter()->convertType(op.getResult().getType());
     if (!resultType)
     {
+      if (const char *dbg = std::getenv("PTOAS_DEBUG_VCVT")) {
+        (void)dbg;
+        llvm::errs() << "[vcvt-debug] result type conversion failed: " << op << "\n";
+      }
       return rewriter.notifyMatchFailure(op, "failed to convert vcvt result type");
     }
 

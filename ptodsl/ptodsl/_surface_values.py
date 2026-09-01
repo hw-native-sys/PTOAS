@@ -809,8 +809,8 @@ def emit_as_ptr(surface_value):
 _TILE_TYPE_RE = re.compile(
     r"!pto\.tile_buf<(?P<space>[^,]+),\s*"
     r"(?P<shape>(?:\?|[0-9]+)(?:x(?:\?|[0-9]+))*)x"
-    r"(?P<elem>[^,>]+),\s*"
-    r"valid=(?P<valid>(?:\?|[0-9]+)(?:x(?:\?|[0-9]+))*)"
+    r"(?P<elem>[^,>]+)"
+    r"(?:,\s*valid=(?P<valid>(?:\?|[0-9]+)(?:x(?:\?|[0-9]+))*))?"
     r"(?:,.*)?>"
 )
 
@@ -878,10 +878,13 @@ def parse_tile_type_metadata(type_obj):
         None if dim == "?" else int(dim)
         for dim in match.group("shape").split("x")
     ]
-    valid_dims = [
-        None if dim == "?" else int(dim)
-        for dim in match.group("valid").split("x")
-    ]
+    # Tiles allocated without a valid_shape carry no `valid=` segment; treat
+    # them as fully dynamic (matches the `valid=...` `?` case).
+    valid_text = match.group("valid")
+    valid_dims = (
+        [None] * len(shape_dims) if valid_text is None
+        else [None if dim == "?" else int(dim) for dim in valid_text.split("x")]
+    )
     return {
         "memory_space": match.group("space"),
         "shape_dims": tuple(shape_dims),

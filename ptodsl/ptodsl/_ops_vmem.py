@@ -385,6 +385,7 @@ _VCVT_CONTRACTS = {
     ("f16", "s16"): _vcvt_contract(True, True, False),
     ("f16", "s8"): _vcvt_contract(True, True, True),
     ("f16", "u8"): _vcvt_contract(True, True, True),
+    ("f16", "bf16"): _vcvt_contract(True, False, False),
     ("bf16", "f8e4m3"): _vcvt_contract(True, True, True, allowed_rnd="RAFZC"),
     ("bf16", "f8e5m2"): _vcvt_contract(True, True, True, allowed_rnd="RAFZC"),
     ("bf16", "f4e1m2x2"): _vcvt_contract(True, False, True, part_family="packed4", allowed_rnd="RAFZC"),

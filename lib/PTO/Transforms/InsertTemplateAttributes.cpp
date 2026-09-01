@@ -589,6 +589,14 @@ static void appendOpContextAttrs(
       attrs.emplace_back("axis_value", axisAttr.getValue().str());
     }
   }
+  if (auto tquantMx = dyn_cast<pto::TQuantMxOp>(op)) {
+    attrs.emplace_back("quant_scale_alg",
+                       stringifyQuantScaleAlg(tquantMx.getQuantScaleAlg()).str());
+    attrs.emplace_back("grp_axis",
+                       stringifyMxGroupAxis(tquantMx.getGrpAxis()).str());
+    if (tquantMx.getInterleave())
+      attrs.emplace_back("interleave", "true");
+  }
   (void)(tryAppendPrecisionType<pto::TExpOp>(op, attrs) ||
          tryAppendPrecisionType<pto::TLogOp>(op, attrs) ||
          tryAppendPrecisionType<pto::TSqrtOp>(op, attrs) ||
