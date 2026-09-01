@@ -9,75 +9,92 @@
 name: Mirror PR to GitCode
 
 on:
-  pull_request_target:
-    types: [opened, synchronize, reopened]
+  push:
+    branches-ignore:
+      - main
   workflow_dispatch:
     inputs:
       pr_number:
-        description: GitHub PR number to mirror
+        description: Upstream GitHub PR number to mirror
         required: true
         type: string
 
 permissions:
   contents: read
-  pull-requests: read
 
 concurrency:
-  group: gitcode-mirror-${{ github.event.pull_request.number || inputs.pr_number }}
+  group: gitcode-mirror-${{ github.repository }}-${{ inputs.pr_number || github.ref_name }}
   cancel-in-progress: true
 
 env:
   GH_TOKEN: ${{ github.token }}
+  GITHUB_UPSTREAM_REPOSITORY: hw-native-sys/PTOAS
+  GITHUB_UPSTREAM_BRANCH: main
   GITCODE_API: https://gitcode.com/api/v5
   GITCODE_UPSTREAM: cann/pto-as
+  GITCODE_TARGET_BRANCH: master
+  GITCODE_SOURCE_PREFIX: mirror/github-pr-
   GITCODE_FORK_OWNER: ${{ vars.GITCODE_FORK_OWNER }}
   GITCODE_FORK_REPOSITORY: ${{ vars.GITCODE_FORK_REPOSITORY || 'pto-as' }}
   GITCODE_COMMIT_EMAIL: ${{ vars.GITCODE_COMMIT_EMAIL }}
-  GITCODE_TARGET_BRANCH: master
-  GITCODE_SOURCE_PREFIX: mirror/github-pr-
 
 jobs:
   mirror:
     runs-on: ubuntu-22.04
     steps:
-      - name: Read pull request metadata
+      - name: Resolve upstream pull request
         env:
-          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
           INPUT_PR_NUMBER: ${{ inputs.pr_number }}
+          EVENT_BRANCH: ${{ github.ref_name }}
         shell: bash
         run: |
           set -euo pipefail
 
-          pr_number="${EVENT_PR_NUMBER:-${INPUT_PR_NUMBER:-}}"
+          if [[ -n "$INPUT_PR_NUMBER" ]]; then
+            pr_number="$INPUT_PR_NUMBER"
+          else
+            pr_number=""
+          fi
           if [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
-            echo "Invalid pull request number." >&2
-            exit 1
+            source_branch="$EVENT_BRANCH"
+            if [[ -z "$source_branch" || "$source_branch" =~ (^|/)(\.|\.\.)($|/) ||
+                  "$source_branch" == -* || "$source_branch" == */ || "$source_branch" == *' ' * ||
+                  ! "$source_branch" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+              echo "The GitHub source branch is invalid." >&2
+              exit 1
+            fi
+
+            encoded_head="${GITHUB_REPOSITORY_OWNER}:${source_branch}"
+            prs="$(gh api --method GET \
+              "repos/${GITHUB_UPSTREAM_REPOSITORY}/pulls" \
+              -f state=open -f base="$GITHUB_UPSTREAM_BRANCH" \
+              -f head="$encoded_head" -f per_page=100)"
+            count="$(jq 'length' <<< "$prs")"
+            if [[ "$count" != "1" ]]; then
+              echo "Expected exactly one open upstream PR for ${GITHUB_REPOSITORY}:${source_branch}; found ${count}." >&2
+              exit 1
+            fi
+            pr_number="$(jq -r '.[0].number' <<< "$prs")"
           fi
 
-          metadata="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}")"
+          metadata="$(gh api "repos/${GITHUB_UPSTREAM_REPOSITORY}/pulls/${pr_number}")"
           base_ref="$(jq -r '.base.ref' <<< "$metadata")"
           head_sha="$(jq -r '.head.sha' <<< "$metadata")"
-          author_login="$(jq -r '.user.login' <<< "$metadata")"
-          author_id="$(jq -r '.user.id' <<< "$metadata")"
           source_repo="$(jq -r '.head.repo.full_name // empty' <<< "$metadata")"
+          source_branch="$(jq -r '.head.ref // empty' <<< "$metadata")"
+          pr_state="$(jq -r '.state' <<< "$metadata")"
 
-          if [[ "$base_ref" != "main" || ! "$head_sha" =~ ^[0-9a-f]{40}$ ||
-                ! "$author_login" =~ ^[A-Za-z0-9-]+$ || ! "$author_id" =~ ^[0-9]+$ ]]; then
-            echo "Unsupported pull request metadata." >&2
-            exit 1
-          fi
-          if [[ -z "$source_repo" || ! "$source_repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
-            echo "The pull request has no valid source repository." >&2
+          if [[ "$pr_state" != "open" || "$base_ref" != "$GITHUB_UPSTREAM_BRANCH" ||
+                ! "$head_sha" =~ ^[0-9a-f]{40}$ || "$source_repo" != "$GITHUB_REPOSITORY" ||
+                -z "$source_branch" || ! "$source_branch" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+            echo "The upstream PR does not belong to this GitHub fork or target main." >&2
             exit 1
           fi
 
           {
             echo "PR_NUMBER=$pr_number"
-            echo "GITHUB_BASE_REF=$base_ref"
             echo "GITHUB_HEAD_SHA=$head_sha"
-            echo "PR_AUTHOR_LOGIN=$author_login"
-            echo "PR_AUTHOR_ID=$author_id"
-            echo "GITHUB_SOURCE_REPOSITORY=$source_repo"
+            echo "GITHUB_SOURCE_BRANCH=$source_branch"
             echo "MIRROR_BRANCH=${GITCODE_SOURCE_PREFIX}${pr_number}"
           } >> "$GITHUB_ENV"
 
@@ -89,22 +106,44 @@ jobs:
           github_dir="${RUNNER_TEMP}/github"
           mkdir -p "$github_dir"
           git -C "$github_dir" init -q
-          git -C "$github_dir" remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
-          git -C "$github_dir" fetch --no-tags --filter=blob:none origin \
-            "+refs/heads/${GITHUB_BASE_REF}:refs/remotes/origin/base" \
-            "+refs/pull/${PR_NUMBER}/head:refs/remotes/origin/pr-head"
+          git -C "$github_dir" remote add upstream "https://github.com/${GITHUB_UPSTREAM_REPOSITORY}.git"
+          git -C "$github_dir" remote add fork "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -C "$github_dir" -c http.extraHeader="Authorization: Bearer ${GH_TOKEN}" fetch \
+            --no-tags --filter=blob:none upstream \
+            "+refs/heads/${GITHUB_UPSTREAM_BRANCH}:refs/remotes/upstream/base"
+          git -C "$github_dir" -c http.extraHeader="Authorization: Bearer ${GH_TOKEN}" fetch \
+            --no-tags --filter=blob:none fork \
+            "+refs/heads/${GITHUB_SOURCE_BRANCH}:refs/remotes/fork/pr-head"
 
-          actual_head="$(git -C "$github_dir" rev-parse refs/remotes/origin/pr-head)"
+          actual_head="$(git -C "$github_dir" rev-parse refs/remotes/fork/pr-head)"
           if [[ "$actual_head" != "$GITHUB_HEAD_SHA" ]]; then
-            echo "The pull request changed while it was being read." >&2
+            echo "The upstream PR changed while it was being read." >&2
             exit 1
           fi
 
           merge_base="$(git -C "$github_dir" merge-base \
-            refs/remotes/origin/base refs/remotes/origin/pr-head)"
+            refs/remotes/upstream/base refs/remotes/fork/pr-head)"
           git -C "$github_dir" -c diff.renames=false diff \
             --no-ext-diff --no-textconv --binary --full-index \
-            "$merge_base" refs/remotes/origin/pr-head > "${RUNNER_TEMP}/github-pr.patch"
+            "$merge_base" refs/remotes/fork/pr-head > "${RUNNER_TEMP}/github-pr.patch"
+
+      - name: Validate personal GitCode configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$GITCODE_FORK_OWNER" =~ ^[A-Za-z0-9_.-]+$ ||
+                ! "$GITCODE_FORK_REPOSITORY" =~ ^[A-Za-z0-9_.-]+$ ||
+                ! "$GITCODE_COMMIT_EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]; then
+            echo "Configure GITCODE_FORK_OWNER, GITCODE_FORK_REPOSITORY, and GITCODE_COMMIT_EMAIL in this fork." >&2
+            exit 1
+          fi
+          if [[ -z "${{ secrets.GITCODE_MIRROR_SSH_KEY }}" ||
+                -z "${{ secrets.GITCODE_KNOWN_HOSTS }}" ||
+                -z "${{ secrets.GITCODE_MIRROR_TOKEN }}" ]]; then
+            echo "Configure the GitCode mirror secrets in this fork." >&2
+            exit 1
+          fi
+          echo "GITCODE_FORK=${GITCODE_FORK_OWNER}/${GITCODE_FORK_REPOSITORY}" >> "$GITHUB_ENV"
 
       - name: Configure GitCode SSH
         env:
@@ -113,20 +152,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -z "$GITCODE_SSH_KEY" || -z "$GITCODE_KNOWN_HOSTS" ]]; then
-            echo "GitCode SSH secrets are not configured." >&2
-            exit 1
-          fi
-
           install -d -m 700 "$HOME/.ssh"
           printf '%s\n' "$GITCODE_SSH_KEY" > "$HOME/.ssh/gitcode_mirror"
           printf '%s\n' "$GITCODE_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/gitcode_mirror" "$HOME/.ssh/known_hosts"
-          {
-            echo "GIT_SSH_COMMAND=ssh -i $HOME/.ssh/gitcode_mirror -o IdentitiesOnly=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
-          } >> "$GITHUB_ENV"
+          echo "GIT_SSH_COMMAND=ssh -i $HOME/.ssh/gitcode_mirror -o IdentitiesOnly=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts" >> "$GITHUB_ENV"
 
-      - name: Update GitCode fork branch
+      - name: Update personal GitCode fork branch
         env:
           GIT_AUTHOR_NAME: ${{ vars.GITCODE_FORK_OWNER }}
           GIT_AUTHOR_EMAIL: ${{ vars.GITCODE_COMMIT_EMAIL }}
@@ -136,29 +168,20 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ ! "$GITCODE_FORK_OWNER" =~ ^[A-Za-z0-9_.-]+$ ||
-                ! "$GITCODE_FORK_REPOSITORY" =~ ^[A-Za-z0-9_.-]+$ ||
-                ! "$GITCODE_COMMIT_EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]; then
-            echo "GitCode fork owner, repository, or commit email is not configured." >&2
-            exit 1
-          fi
-          export GITCODE_FORK="${GITCODE_FORK_OWNER}/${GITCODE_FORK_REPOSITORY}"
-          echo "GITCODE_FORK=$GITCODE_FORK" >> "$GITHUB_ENV"
-
           gitcode_dir="${RUNNER_TEMP}/gitcode"
           git clone -q --single-branch --branch "$GITCODE_TARGET_BRANCH" \
             "git@gitcode.com:${GITCODE_FORK}.git" "$gitcode_dir"
-
           git -C "$gitcode_dir" checkout -q -B "$MIRROR_BRANCH" "origin/$GITCODE_TARGET_BRANCH"
 
-          old_remote="$(git ls-remote origin "refs/heads/${MIRROR_BRANCH}" | cut -f1)"
+          old_remote="$(git -C "$gitcode_dir" ls-remote origin "refs/heads/${MIRROR_BRANCH}" | cut -f1)"
           git -C "$gitcode_dir" apply --check --binary "${RUNNER_TEMP}/github-pr.patch"
           git -C "$gitcode_dir" apply --index --binary "${RUNNER_TEMP}/github-pr.patch"
 
           if ! git -C "$gitcode_dir" diff --cached --quiet; then
+            pr_title="$(gh api "repos/${GITHUB_UPSTREAM_REPOSITORY}/pulls/${PR_NUMBER}" --jq .title)"
             git -C "$gitcode_dir" commit -q \
-              -m "$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json title --jq .title)" \
-              -m "Mirrored from https://github.com/${GITHUB_REPOSITORY}/pull/${PR_NUMBER}" \
+              -m "$pr_title" \
+              -m "Mirrored from https://github.com/${GITHUB_UPSTREAM_REPOSITORY}/pull/${PR_NUMBER}" \
               -m "GitHub-Head: ${GITHUB_HEAD_SHA}"
           fi
 
@@ -169,21 +192,15 @@ jobs:
       - name: Create GitCode pull request if needed
         env:
           GITCODE_TOKEN: ${{ secrets.GITCODE_MIRROR_TOKEN }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -z "$GITCODE_TOKEN" ]]; then
-            echo "GITCODE_MIRROR_TOKEN is not configured." >&2
-            exit 1
-          fi
 
           pulls_file="${RUNNER_TEMP}/gitcode-pulls.json"
           curl --fail-with-body --silent --show-error --retry 3 \
             -H "Authorization: Bearer ${GITCODE_TOKEN}" \
             -H 'Accept: application/json' \
-            "${GITCODE_API}/repos/${GITCODE_UPSTREAM}/pulls?state=all&per_page=100" \
-            > "$pulls_file"
+            "${GITCODE_API}/repos/${GITCODE_UPSTREAM}/pulls?state=all&per_page=100" > "$pulls_file"
 
           existing_url="$(jq -r --arg branch "$MIRROR_BRANCH" --arg fork "$GITCODE_FORK" \
             '.[] | select(.head.ref == $branch and .head.repo.full_name == $fork and .state == "open") | .html_url' \
@@ -193,9 +210,10 @@ jobs:
             exit 0
           fi
 
-          body="Mirrored from: https://github.com/${GITHUB_REPOSITORY}/pull/${PR_NUMBER}\n\nGitHub head SHA: ${GITHUB_HEAD_SHA}\n\nThis branch is maintained from the GitHub PR and should not be edited directly."
+          pr_title="$(gh api "repos/${GITHUB_UPSTREAM_REPOSITORY}/pulls/${PR_NUMBER}" --jq .title)"
+          body="Mirrored from: https://github.com/${GITHUB_UPSTREAM_REPOSITORY}/pull/${PR_NUMBER}\n\nGitHub head SHA: ${GITHUB_HEAD_SHA}\n\nThis branch is maintained from the GitHub PR and should not be edited directly."
           payload="$(jq -n \
-            --arg title "[GitHub #${PR_NUMBER}] ${PR_TITLE:-GitHub pull request}" \
+            --arg title "[GitHub #${PR_NUMBER}] ${pr_title}" \
             --arg body "$body" \
             --arg head "${GITCODE_FORK_OWNER}:${MIRROR_BRANCH}" \
             --arg base "$GITCODE_TARGET_BRANCH" \

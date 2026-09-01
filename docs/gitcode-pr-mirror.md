@@ -1,59 +1,75 @@
 # GitCode PR mirror
 
-This repository mirrors GitHub pull requests to the GitCode upstream project
-`cann/pto-as`. GitHub `main` maps to GitCode `master`.
+This repository-specific workflow is designed for personal GitHub and GitCode
+Forks. It mirrors pull requests from a personal GitHub Fork into the GitCode
+upstream project `cann/pto-as`; GitHub `main` maps to GitCode `master`.
 
-## One-time administrator setup
+## How it works
 
-The workflow is `.github/workflows/mirror-pr-to-gitcode.yml`. It runs from the
-trusted default branch with `pull_request_target`; it reads pull request Git
-objects and never executes code from the pull request.
+```text
+Personal GitHub Fork branch push
+        ↓
+Find the matching open PR in hw-native-sys/PTOAS
+        ↓
+Compute the PR diff against hw-native-sys/PTOAS:main
+        ↓
+Push mirror/github-pr-<number> to the personal GitCode Fork
+        ↓
+Create or reuse a PR to cann/pto-as:master
+```
 
-Configure these GitHub Actions secrets:
+The workflow synchronizes the final diff instead of cherry-picking commits, so
+the two repositories do not need identical Git histories. Later pushes to the
+same GitHub branch update the same GitCode mirror branch and PR.
 
-- `GITCODE_MIRROR_SSH_KEY`: a write-enabled key for the configured fork. It
-  must not be allowed to push `master`.
+## Personal setup
+
+Each contributor must first create both Forks:
+
+```text
+GitHub: <github-user>/PTOAS
+GitCode: <gitcode-user>/pto-as
+```
+
+Copy this workflow into the personal GitHub Fork's default branch and enable
+Actions. Configure these repository variables in that Fork:
+
+- `GITCODE_FORK_OWNER`: the GitCode user or namespace that owns the Fork.
+- `GITCODE_FORK_REPOSITORY`: the Fork repository name; normally `pto-as`.
+- `GITCODE_COMMIT_EMAIL`: a verified email for the GitCode account.
+
+Configure these repository secrets in the same GitHub Fork:
+
+- `GITCODE_MIRROR_SSH_KEY`: a write-enabled SSH key for the personal GitCode
+  Fork; it must not be allowed to push `master`.
 - `GITCODE_KNOWN_HOSTS`: the verified SSH host key for `gitcode.com`.
-- `GITCODE_MIRROR_TOKEN`: a GitCode token owned by the configured fork owner,
-  with permission to read pull requests and create them in `cann/pto-as`.
+- `GITCODE_MIRROR_TOKEN`: a GitCode token for reading and creating PRs in
+  `cann/pto-as`.
 
-Configure these repository variables (Settings → Secrets and variables →
-Actions → Variables):
-
-- `GITCODE_FORK_OWNER`: the GitCode user or namespace that owns the fork.
-- `GITCODE_FORK_REPOSITORY`: fork repository name; defaults to `pto-as`.
-- `GITCODE_COMMIT_EMAIL`: a verified email for `GITCODE_FORK_OWNER`.
-
-The GitCode commit identity is taken from the configured fork owner and email:
+The mirror commit author and committer are set to:
 
 ```text
 <GITCODE_FORK_OWNER> <GITCODE_COMMIT_EMAIL>
 ```
 
-Use the verified email configured for that account if it changes.
+## Daily usage
 
-## Operation
+1. Create a GitHub PR from the personal Fork to `hw-native-sys/PTOAS:main`.
+2. Push to the PR branch in the personal GitHub Fork.
+3. The `push` workflow finds the matching upstream PR and mirrors it.
+4. Continue pushing to that GitHub branch; do not edit the GitCode mirror branch.
 
-For each GitHub pull request targeting `main`, the workflow maintains this
-branch in the GitCode fork:
+For an existing PR or a retry, open Actions in the personal GitHub Fork, run
+`Mirror PR to GitCode`, and enter the upstream PR number.
 
-```text
-mirror/github-pr-<number>
-```
-
-It creates one GitCode pull request from that branch to
-`cann/pto-as:master`. Later GitHub pushes update the same branch, so the
-existing GitCode pull request is updated automatically.
-
-To mirror an already-open pull request, run the workflow manually and enter
-its GitHub pull request number.
-
-If applying the patch fails, the workflow stops without pushing a new mirror
-commit. Resolve the divergence in the GitHub pull request and run it again.
+The matching upstream PR must be open, target `main`, and have its head repo
+equal to the personal GitHub Fork. If no unique match is found, the workflow
+stops without changing GitCode.
 
 ## Security requirements
 
-Do not change this workflow to check out or execute the pull request head. A
-fork pull request is untrusted input, while the workflow has access to the
-GitCode credentials. Rotate any token that has been exposed and keep all
-credentials in GitHub Actions secrets only.
+This workflow does not check out or execute the pull request source code. It
+only reads Git objects, computes a patch, and uses credentials from the
+personal Fork's own Actions secrets. Keep all credentials in secrets, rotate
+tokens that have been exposed, and never allow the mirror key to push the
+GitCode protected branch.
