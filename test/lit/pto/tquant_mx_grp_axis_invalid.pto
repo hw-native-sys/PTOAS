@@ -26,16 +26,13 @@
 // RUN: not ptoas --pto-arch=a5 %t/nd_flat_f32_scaling_below_one_vl.pto 2>&1 | FileCheck %s --check-prefix=F32-VL
 // RUN: not ptoas --pto-arch=a5 %t/nd_flat_f32_unroll_scaling_below_two_vl.pto 2>&1 | FileCheck %s --check-prefix=F32-UNROLL
 // RUN: not ptoas --pto-arch=a5 %t/nd_flat_b16_ocp_scaling_below_one_vl.pto 2>&1 | FileCheck %s --check-prefix=B16-VL
-// RUN: not ptoas --pto-arch=a5 %t/nd_flat_b16_nv_unsupported.pto 2>&1 | FileCheck %s --check-prefix=B16-NV
 // RUN: not ptoas --pto-arch=a5 %t/nd_legacy_exp_selects_2d.pto 2>&1 | FileCheck %s --check-prefix=LEGACY-2D
 // RUN: not ptoas --pto-arch=a5 %t/nd_flat_exp_with_padded_src.pto 2>&1 | FileCheck %s --check-prefix=FLAT-PADDED
 // RUN: not ptoas --pto-arch=a5 %t/nd_fp8_dst_stride_mismatch.pto 2>&1 | FileCheck %s --check-prefix=FP8-DST
 // RUN: not ptoas --pto-arch=a5 %t/nd_fp4_dst_packed_stride_mismatch.pto 2>&1 | FileCheck %s --check-prefix=FP4-DST
 // RUN: not ptoas --pto-arch=a5 %t/dn_fp4_dst_packed_stride_mismatch.pto 2>&1 | FileCheck %s --check-prefix=DN-FP4-DST
 // RUN: not ptoas --pto-arch=a5 %t/mxfp4_odd_src_physical_cols.pto 2>&1 | FileCheck %s --check-prefix=FP4-ODD
-// RUN: not ptoas --pto-arch=a5 %t/nd_canonical_b16_pinned_unsupported.pto 2>&1 | FileCheck %s --check-prefix=B16-CANONICAL
 // RUN: not ptoas --pto-arch=a5 %t/dn_fp4_fp16_unaligned_packed_stride_pinned_unsupported.pto 2>&1 | FileCheck %s --check-prefix=DN-FP16
-// RUN: not ptoas --pto-arch=a5 %t/dn_fp8_f32_interleave_pinned_unsupported.pto 2>&1 | FileCheck %s --check-prefix=DN-F32-IL
 // RUN: not ptoas --pto-arch=a5 %t/b16_padding_incomplete_vl_pinned_unsupported.pto 2>&1 | FileCheck %s --check-prefix=B16-PAD
 // RUN: not ptoas --pto-arch=a5 %t/tquant_dynamic_valid.pto 2>&1 | FileCheck %s --check-prefix=DYNAMIC-VALID
 // RUN: not ptoas --pto-arch=a5 %t/tquant_dynamic_physical.pto 2>&1 | FileCheck %s --check-prefix=DYNAMIC-PHYSICAL
@@ -60,16 +57,13 @@
 // F32-VL: expects axis1 flat f32 scaling physical capacity to cover 256 bytes
 // F32-UNROLL: expects axis1 flat unrolled f32 scaling physical capacity to cover 512 bytes
 // B16-VL: expects axis1 flat B16 OCP scaling physical capacity to cover 256 bytes
-// B16-NV: does not support axis1 flat B16 NV quantization with the pinned pto-isa revisions
-// LEGACY-2D: expects legacy flat exp to use physical rows == 1
+// LEGACY-2D: expects exp valid_shape to match canonical [M, N/32] for grpAxis=axis1
 // FLAT-PADDED: expects axis1 flat exp to use a tight source with physical cols equal to valid cols
 // FP8-DST: expects MXFP8 axis1 dst physical cols to equal src physical cols
 // FP4-DST: expects MXFP4 axis1 dst physical cols to equal src physical cols / 2
 // DN-FP4-DST: expects MXFP4 axis0 dst physical cols to equal src physical cols / 2
 // FP4-ODD: expects MXFP4 src physical cols to be even for packed destination addressing
-// B16-CANONICAL: does not support axis1 canonical 2D B16 quantization with the pinned pto-isa revision
 // DN-FP16: does not support FP16 MXFP4 axis0 when packed source stride is not a multiple of 32 bytes
-// DN-F32-IL: does not support FP32 interleave with the pinned pto-isa revision
 // B16-PAD: does not support padded B16 source whose VL-aligned padding store has an incomplete final VL
 // DYNAMIC-VALID: expects static valid and physical shapes for src in MX quantization
 // DYNAMIC-PHYSICAL: tile_buf rows/cols must be positive
@@ -111,12 +105,6 @@ module { func.func @case(%src: !pto.tile_buf<vec, 16x32xbf16>, %dst: !pto.tile_b
   return
 } }
 
-//--- nd_flat_b16_nv_unsupported.pto
-module { func.func @case(%src: !pto.tile_buf<vec, 16x32xbf16>, %dst: !pto.tile_buf<vec, 16x32xi8>, %exp: !pto.tile_buf<vec, 1x16xui8>, %max: !pto.tile_buf<vec, 1x16xbf16>, %scaling: !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=128, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {
-  pto.tquant.mx ins(%src : !pto.tile_buf<vec, 16x32xbf16>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 16x32xi8>, !pto.tile_buf<vec, 1x16xui8>, !pto.tile_buf<vec, 1x16xbf16>, !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=128, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {quant_type = #pto<quant_type MXFP8>, quantScaleAlg = #pto<quant_scale_alg nv>}
-  return
-} }
-
 //--- nd_legacy_exp_selects_2d.pto
 module { func.func @case(%src: !pto.tile_buf<vec, 16x32xf32>, %dst: !pto.tile_buf<vec, 16x32xi8>, %exp: !pto.tile_buf<loc=vec, dtype=ui8, rows=2, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %max: !pto.tile_buf<vec, 1x16xf32>, %scaling: !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {
   pto.tquant.mx ins(%src : !pto.tile_buf<vec, 16x32xf32>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 16x32xi8>, !pto.tile_buf<loc=vec, dtype=ui8, rows=2, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<vec, 1x16xf32>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {quant_type = #pto<quant_type MXFP8>}
@@ -153,21 +141,9 @@ module { func.func @case(%src: !pto.tile_buf<loc=vec, dtype=bf16, rows=32, cols=
   return
 } }
 
-//--- nd_canonical_b16_pinned_unsupported.pto
-module { func.func @case(%src: !pto.tile_buf<vec, 16x32xbf16>, %dst: !pto.tile_buf<vec, 16x32xi8>, %exp: !pto.tile_buf<vec, 16x1xui8>, %max: !pto.tile_buf<vec, 16x1xbf16>, %scaling: !pto.tile_buf<vec, 16x1xbf16>) {
-  pto.tquant.mx ins(%src : !pto.tile_buf<vec, 16x32xbf16>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 16x32xi8>, !pto.tile_buf<vec, 16x1xui8>, !pto.tile_buf<vec, 16x1xbf16>, !pto.tile_buf<vec, 16x1xbf16>) {quant_type = #pto<quant_type MXFP8>}
-  return
-} }
-
 //--- dn_fp4_fp16_unaligned_packed_stride_pinned_unsupported.pto
 module { func.func @case(%src: !pto.tile_buf<vec, 32x32xf16>, %dst: !pto.tile_buf<vec, 32x16x!pto.f4E2M1x2>, %exp: !pto.tile_buf<vec, 1x32xui8>, %max: !pto.tile_buf<vec, 1x32xf16>, %scaling: !pto.tile_buf<vec, 1x32xf16>) {
   pto.tquant.mx ins(%src : !pto.tile_buf<vec, 32x32xf16>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 32x16x!pto.f4E2M1x2>, !pto.tile_buf<vec, 1x32xui8>, !pto.tile_buf<vec, 1x32xf16>, !pto.tile_buf<vec, 1x32xf16>) {quant_type = #pto<quant_type MXFP4_E2M1>, grpAxis = #pto<mx_group_axis axis0>}
-  return
-} }
-
-//--- dn_fp8_f32_interleave_pinned_unsupported.pto
-module { func.func @case(%src: !pto.tile_buf<vec, 64x32xf32>, %dst: !pto.tile_buf<vec, 64x32xi8>, %exp: !pto.tile_buf<vec, 1x64xui8>, %max: !pto.tile_buf<vec, 2x32xf32>, %scaling: !pto.tile_buf<vec, 2x32xf32>) {
-  pto.tquant.mx ins(%src : !pto.tile_buf<vec, 64x32xf32>) outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 64x32xi8>, !pto.tile_buf<vec, 1x64xui8>, !pto.tile_buf<vec, 2x32xf32>, !pto.tile_buf<vec, 2x32xf32>) {quant_type = #pto<quant_type MXFP8>, grpAxis = #pto<mx_group_axis axis0>, interleave = true}
   return
 } }
 

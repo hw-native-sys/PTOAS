@@ -89,6 +89,8 @@ _TEMPLATE_MODULES = {
     ("a5", "pto.tpartmul"): ".a5.tpartmul",
     ("a5", "pto.tprelu"): ".a5.tprelu",
     ("a5", "pto.trelu"): ".a5.trelu",
+    ("a5", "pto.tquant"): ".a5.tquant",
+    ("a5", "pto.tquant.mx"): ".a5.tquant",
     ("a5", "pto.trecip"): ".a5.trecip",
     ("a5", "pto.trem"): ".a5.trem",
     ("a5", "pto.trems"): ".a5.trems",
