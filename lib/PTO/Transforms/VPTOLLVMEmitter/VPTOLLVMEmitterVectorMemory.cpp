@@ -13,7 +13,6 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 
 namespace mlir::pto {
-using namespace detail;
 namespace {
 
 static Value getI32Constant(OpBuilder &builder, Location loc, uint64_t value) {
@@ -1636,7 +1635,7 @@ private:
 
 void populateVPTOVectorMemoryPatterns(TypeConverter &typeConverter,
                                       RewritePatternSet &patterns,
-                                      detail::LoweringState &state) {
+                                      LoweringState &state) {
   patterns.add<LowerVldsOpPattern, LowerVldsx2OpPattern, LowerVsldbOpPattern,
                LowerVldasOpPattern, LowerInitAlignOpPattern,
                LowerVldusOpPattern, LowerSprclrOpPattern,

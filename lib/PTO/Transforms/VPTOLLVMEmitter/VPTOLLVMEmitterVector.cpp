@@ -10,7 +10,6 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 
 namespace mlir::pto {
-using namespace detail;
 namespace {
 
 template <typename UnaryOp>
@@ -27,9 +26,9 @@ StringRef getUnaryMaskedStem() {
 
 FailureOr<StringRef> buildLaneTypedCallee(MLIRContext *context, Type resultType,
                                           StringRef stem, StringRef suffix) {
-  std::string vec = detail::getElementTypeFragment(
-      detail::getElementTypeFromVectorLike(resultType));
-  auto lanes = detail::getElementCountFromVectorLike(resultType);
+  std::string vec = getElementTypeFragment(
+      getElementTypeFromVectorLike(resultType));
+  auto lanes = getElementCountFromVectorLike(resultType);
   if (vec.empty() || !lanes) return failure();
   return StringAttr::get(context, "llvm.hivm." + stem.str() + ".v" +
                                       std::to_string(*lanes) + vec + suffix.str())
@@ -106,9 +105,9 @@ static constexpr bool hasCarryInput() {
 static FailureOr<StringRef> buildCarryBinaryCallee(MLIRContext *context,
                                                    Type resultType,
                                                    StringRef stem) {
-  std::string vec = detail::getElementTypeFragment(
+  std::string vec = getElementTypeFragment(
       cast<pto::VRegType>(resultType).getElementType());
-  auto lanes = detail::getElementCountFromVectorLike(resultType);
+  auto lanes = getElementCountFromVectorLike(resultType);
   if (vec.empty() || !lanes) return failure();
   return StringAttr::get(context, "llvm.hivm." + stem.str() + ".v" +
                                       std::to_string(*lanes) + vec)
@@ -119,7 +118,7 @@ template <typename TernaryOp>
 class LowerTernaryMaskedOpPattern final : public OpConversionPattern<TernaryOp> {
 public:
   explicit LowerTernaryMaskedOpPattern(TypeConverter &converter, MLIRContext *context,
-                                       detail::LoweringState &state)
+                                       LoweringState &state)
       : OpConversionPattern<TernaryOp>(converter, context), state(state) {}
   LogicalResult matchAndRewrite(TernaryOp op, typename TernaryOp::Adaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
@@ -136,19 +135,19 @@ public:
       return rewriter.notifyMatchFailure(op, "unexpected converted ternary operand types");
     auto call = rewriter.create<func::CallOp>(op.getLoc(), *callee, TypeRange{result},
                                                ValueRange{acc, lhs, rhs, mask});
-    state.plannedDecls.push_back(detail::PlannedDecl{callee->str(), call.getCalleeType()});
+    state.plannedDecls.push_back(PlannedDecl{callee->str(), call.getCalleeType()});
     rewriter.replaceOp(op, call.getResults());
     return success();
   }
 private:
-  detail::LoweringState &state;
+  LoweringState &state;
 };
 
 template <typename CarryOp>
 class LowerCarryBinaryOpPattern final : public OpConversionPattern<CarryOp> {
 public:
   explicit LowerCarryBinaryOpPattern(TypeConverter &converter, MLIRContext *context,
-                                     detail::LoweringState &state)
+                                     LoweringState &state)
       : OpConversionPattern<CarryOp>(converter, context), state(state) {}
   LogicalResult matchAndRewrite(CarryOp op, typename CarryOp::Adaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
@@ -166,18 +165,18 @@ public:
       return rewriter.notifyMatchFailure(op, "unexpected converted carry operands");
     auto call = rewriter.create<func::CallOp>(op.getLoc(), *callee,
                                                TypeRange{result, carry}, args);
-    state.plannedDecls.push_back(detail::PlannedDecl{callee->str(), call.getCalleeType()});
+    state.plannedDecls.push_back(PlannedDecl{callee->str(), call.getCalleeType()});
     rewriter.replaceOp(op, call.getResults());
     return success();
   }
 private:
-  detail::LoweringState &state;
+  LoweringState &state;
 };
 
 static Type getLowpPayloadCarrierType(Type vectorLikeType, MLIRContext *context) {
-  Type elementType = detail::getElementTypeFromVectorLike(vectorLikeType);
+  Type elementType = getElementTypeFromVectorLike(vectorLikeType);
   if (!elementType || !pto::isPTOLowPrecisionType(elementType)) return {};
-  auto lanes = detail::getElementCountFromVectorLike(vectorLikeType);
+  auto lanes = getElementCountFromVectorLike(vectorLikeType);
   if (!lanes) return {};
   return VectorType::get({*lanes}, IntegerType::get(context, 8));
 }
@@ -201,8 +200,8 @@ static FailureOr<StringRef> buildDirectLowpVLogicCallee(MLIRContext *context,
                                                         Type vectorType,
                                                         StringRef stem,
                                                         StringRef mode) {
-  Type element = detail::getElementTypeFromVectorLike(vectorType);
-  auto lanes = detail::getElementCountFromVectorLike(vectorType);
+  Type element = getElementTypeFromVectorLike(vectorType);
+  auto lanes = getElementCountFromVectorLike(vectorType);
   std::string elem;
   if (pto::isPTOFloat8E4M3LikeType(element)) elem = "fp8e4m3";
   if (pto::isPTOFloat8E5M2LikeType(element)) elem = "fp8e5m2";
@@ -216,8 +215,8 @@ static FailureOr<StringRef> buildLowpPayloadVLogicCallee(MLIRContext *context,
                                                          Type vectorType,
                                                          StringRef stem,
                                                          StringRef mode) {
-  auto lanes = detail::getElementCountFromVectorLike(vectorType);
-  if (!lanes || !detail::getElementTypeFromVectorLike(vectorType)) return failure();
+  auto lanes = getElementCountFromVectorLike(vectorType);
+  if (!lanes || !getElementTypeFromVectorLike(vectorType)) return failure();
   return StringAttr::get(context, "llvm.hivm." + stem.str() + ".v" +
                                       std::to_string(*lanes) + "u8." + mode.str())
       .getValue();
@@ -227,7 +226,7 @@ template <typename BinaryOp>
 class LowerBinaryMaskedOpPattern final : public OpConversionPattern<BinaryOp> {
 public:
   explicit LowerBinaryMaskedOpPattern(TypeConverter &converter, MLIRContext *context,
-                                      detail::LoweringState &state)
+                                      LoweringState &state)
       : OpConversionPattern<BinaryOp>(converter, context), state(state) {}
   LogicalResult matchAndRewrite(BinaryOp op, typename BinaryOp::Adaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
@@ -248,7 +247,7 @@ public:
     if constexpr (std::is_same_v<BinaryOp, pto::VandOp> ||
                   std::is_same_v<BinaryOp, pto::VorOp> ||
                   std::is_same_v<BinaryOp, pto::VxorOp>) {
-      Type element = detail::getElementTypeFromVectorLike(op.getResult().getType());
+      Type element = getElementTypeFromVectorLike(op.getResult().getType());
       if (element && pto::isPTOLowPrecisionType(element)) {
         callee = buildDirectLowpVLogicCallee(op.getContext(), op.getResult().getType(),
                                              stem, "x");
@@ -265,19 +264,19 @@ public:
     if (failed(callee)) return rewriter.notifyMatchFailure(op, "unsupported binary VPTO signature");
     auto call = rewriter.create<func::CallOp>(op.getLoc(), *callee, TypeRange{callResult},
                                                ValueRange{callLhs, callRhs, mask});
-    state.plannedDecls.push_back(detail::PlannedDecl{callee->str(), call.getCalleeType()});
+    state.plannedDecls.push_back(PlannedDecl{callee->str(), call.getCalleeType()});
     rewriter.replaceOp(op, castFromPayloadABI(op.getLoc(), call.getResult(0),
                                               op.getResult().getType(), result, rewriter));
     return success();
   }
 private:
-  detail::LoweringState &state;
+  LoweringState &state;
 };
 
 class LowerVmullOpPattern final : public OpConversionPattern<pto::VmullOp> {
 public:
   explicit LowerVmullOpPattern(TypeConverter &converter, MLIRContext *context,
-                               detail::LoweringState &state)
+                               LoweringState &state)
       : OpConversionPattern<pto::VmullOp>(converter, context), state(state) {}
 
   LogicalResult matchAndRewrite(pto::VmullOp op, pto::VmullOp::Adaptor adaptor,
@@ -304,19 +303,19 @@ public:
         TypeRange{inputType, inputType, maskType}, resultTypes);
     auto call = rewriter.create<func::CallOp>(op.getLoc(), *callee, resultTypes,
                                                ValueRange{lhs, rhs, mask});
-    state.plannedDecls.push_back(detail::PlannedDecl{callee->str(), functionType});
+    state.plannedDecls.push_back(PlannedDecl{callee->str(), functionType});
     rewriter.replaceOp(op, call.getResults());
     return success();
   }
 
 private:
-  detail::LoweringState &state;
+  LoweringState &state;
 };
 
 class LowerVmulaOpPattern final : public OpConversionPattern<pto::VmulaOp> {
 public:
   explicit LowerVmulaOpPattern(TypeConverter &converter, MLIRContext *context,
-                               detail::LoweringState &state)
+                               LoweringState &state)
       : OpConversionPattern<pto::VmulaOp>(converter, context), state(state) {}
   LogicalResult matchAndRewrite(pto::VmulaOp op, pto::VmulaOp::Adaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
@@ -338,18 +337,18 @@ public:
     auto call = rewriter.create<func::CallOp>(op.getLoc(), *callee,
                                                TypeRange{result},
                                                ValueRange{acc, lhs, rhs, mask});
-    state.plannedDecls.push_back(detail::PlannedDecl{callee->str(), functionType});
+    state.plannedDecls.push_back(PlannedDecl{callee->str(), functionType});
     rewriter.replaceOp(op, call.getResults());
     return success();
   }
 private:
-  detail::LoweringState &state;
+  LoweringState &state;
 };
 
 class LowerVsqzOpPattern final : public OpConversionPattern<pto::VsqzOp> {
 public:
   explicit LowerVsqzOpPattern(TypeConverter &converter, MLIRContext *context,
-                              detail::LoweringState &state)
+                              LoweringState &state)
       : OpConversionPattern<pto::VsqzOp>(converter, context), state(state) {}
   LogicalResult matchAndRewrite(pto::VsqzOp op, pto::VsqzOp::Adaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
@@ -367,18 +366,18 @@ public:
                                               TypeRange{result});
     auto call = rewriter.create<func::CallOp>(op.getLoc(), *callee, TypeRange{result},
                                                ValueRange{input, mask, hint});
-    state.plannedDecls.push_back(detail::PlannedDecl{callee->str(), funcType});
+    state.plannedDecls.push_back(PlannedDecl{callee->str(), funcType});
     rewriter.replaceOp(op, call.getResults());
     return success();
   }
 private:
-  detail::LoweringState &state;
+  LoweringState &state;
 };
 
 class LowerVusqzOpPattern final : public OpConversionPattern<pto::VusqzOp> {
 public:
   explicit LowerVusqzOpPattern(TypeConverter &converter, MLIRContext *context,
-                               detail::LoweringState &state)
+                               LoweringState &state)
       : OpConversionPattern<pto::VusqzOp>(converter, context), state(state) {}
   LogicalResult matchAndRewrite(pto::VusqzOp op, pto::VusqzOp::Adaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
@@ -394,12 +393,12 @@ public:
     auto funcType = rewriter.getFunctionType(TypeRange{result, maskType}, TypeRange{result});
     auto call = rewriter.create<func::CallOp>(op.getLoc(), *callee, TypeRange{result},
                                                ValueRange{src, mask});
-    state.plannedDecls.push_back(detail::PlannedDecl{callee->str(), funcType});
+    state.plannedDecls.push_back(PlannedDecl{callee->str(), funcType});
     rewriter.replaceOp(op, call.getResults());
     return success();
   }
 private:
-  detail::LoweringState &state;
+  LoweringState &state;
 };
 
 template <typename UnaryOp>
@@ -407,7 +406,7 @@ class LowerUnaryMaskedOpPattern final : public OpConversionPattern<UnaryOp> {
 public:
   explicit LowerUnaryMaskedOpPattern(TypeConverter &typeConverter,
                                      MLIRContext *context,
-                                     detail::LoweringState &state)
+                                     LoweringState &state)
       : OpConversionPattern<UnaryOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(
@@ -436,20 +435,20 @@ public:
     auto call = rewriter.create<func::CallOp>(
         op.getLoc(), *calleeName, TypeRange{resultType}, ValueRange{input, mask});
     state.plannedDecls.push_back(
-        detail::PlannedDecl{calleeName->str(), call.getCalleeType()});
+        PlannedDecl{calleeName->str(), call.getCalleeType()});
     rewriter.replaceOp(op, call.getResults());
     return success();
   }
 
 private:
-  detail::LoweringState &state;
+  LoweringState &state;
 };
 
 } // namespace
 
 void populateVPTOVectorUnaryPatterns(TypeConverter &typeConverter,
                                      RewritePatternSet &patterns,
-                                     detail::LoweringState &state) {
+                                     LoweringState &state) {
   patterns.add<LowerUnaryMaskedOpPattern<pto::VabsOp>,
                LowerUnaryMaskedOpPattern<pto::VexpOp>,
                LowerUnaryMaskedOpPattern<pto::VlnOp>,
@@ -462,20 +461,20 @@ void populateVPTOVectorUnaryPatterns(TypeConverter &typeConverter,
 
 void populateVPTOVectorCompactionPatterns(TypeConverter &typeConverter,
                                           RewritePatternSet &patterns,
-                                          detail::LoweringState &state) {
+                                          LoweringState &state) {
   patterns.add<LowerVsqzOpPattern, LowerVusqzOpPattern>(
       typeConverter, patterns.getContext(), state);
 }
 
 void populateVPTOVectorMulaPatterns(TypeConverter &typeConverter,
                                     RewritePatternSet &patterns,
-                                    detail::LoweringState &state) {
+                                    LoweringState &state) {
   patterns.add<LowerVmulaOpPattern>(typeConverter, patterns.getContext(), state);
 }
 
 void populateVPTOVectorBinaryPatterns(TypeConverter &typeConverter,
                                       RewritePatternSet &patterns,
-                                      detail::LoweringState &state) {
+                                      LoweringState &state) {
   patterns.add<LowerBinaryMaskedOpPattern<pto::VaddOp>,
                LowerBinaryMaskedOpPattern<pto::VsubOp>,
                LowerBinaryMaskedOpPattern<pto::VmulOp>,
@@ -493,13 +492,13 @@ void populateVPTOVectorBinaryPatterns(TypeConverter &typeConverter,
 
 void populateVPTOVectorVmullPatterns(TypeConverter &typeConverter,
                                      RewritePatternSet &patterns,
-                                     detail::LoweringState &state) {
+                                     LoweringState &state) {
   patterns.add<LowerVmullOpPattern>(typeConverter, patterns.getContext(), state);
 }
 
 void populateVPTOVectorCarryPatterns(TypeConverter &typeConverter,
                                      RewritePatternSet &patterns,
-                                     detail::LoweringState &state) {
+                                     LoweringState &state) {
   patterns.add<LowerTernaryMaskedOpPattern<pto::VmaddOp>,
                LowerCarryBinaryOpPattern<pto::VaddcOp>,
                LowerCarryBinaryOpPattern<pto::VsubcOp>,

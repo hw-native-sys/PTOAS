@@ -81,7 +81,7 @@ FailureOr<StringRef> buildPstuCallee(MLIRContext *context, pto::PstuOp op) {
 }
 
 FailureOr<StringRef> buildVstusCallee(MLIRContext *context, Type valueType) {
-  std::string vec = getMemoryElementTypeFragment(getElementTypeFromVectorLike(valueType));
+  std::string vec = getCANN900MemoryElementTypeFragment(getElementTypeFromVectorLike(valueType));
   auto lanes = getElementCountFromVectorLike(valueType);
   if (vec.empty() || !lanes) {
     return failure();
@@ -90,7 +90,7 @@ FailureOr<StringRef> buildVstusCallee(MLIRContext *context, Type valueType) {
 }
 
 FailureOr<StringRef> buildVstusPostCallee(MLIRContext *context, Type valueType) {
-  std::string vec = getMemoryElementTypeFragment(getElementTypeFromVectorLike(valueType));
+  std::string vec = getCANN900MemoryElementTypeFragment(getElementTypeFromVectorLike(valueType));
   auto lanes = getElementCountFromVectorLike(valueType);
   if (vec.empty() || !lanes) {
     return failure();
@@ -399,7 +399,7 @@ FailureOr<StringRef> buildConvertCallee(MLIRContext *context, Type srcType, Type
 }
 
 FailureOr<StringRef> buildVldsPostCallee(MLIRContext *context, Type resultType) {
-  std::string vec = getMemoryElementTypeFragment(getElementTypeFromVectorLike(resultType));
+  std::string vec = getCANN900MemoryElementTypeFragment(getElementTypeFromVectorLike(resultType));
   auto lanes = getElementCountFromVectorLike(resultType);
   if (vec.empty() || !lanes) {
     return failure();
@@ -408,7 +408,7 @@ FailureOr<StringRef> buildVldsPostCallee(MLIRContext *context, Type resultType) 
 }
 
 FailureOr<StringRef> buildVstsPostCallee(MLIRContext *context, Type valueType) {
-  std::string vec = getMemoryElementTypeFragment(getElementTypeFromVectorLike(valueType));
+  std::string vec = getCANN900MemoryElementTypeFragment(getElementTypeFromVectorLike(valueType));
   auto lanes = getElementCountFromVectorLike(valueType);
   if (vec.empty() || !lanes) {
     return failure();
@@ -419,7 +419,7 @@ FailureOr<StringRef> buildVstsPostCallee(MLIRContext *context, Type valueType) {
 StringRef buildVldasCallee(MLIRContext *context) { return StringAttr::get(context, "llvm.hivm.vldas").getValue(); }
 
 FailureOr<StringRef> buildVldusCallee(MLIRContext *context, Type resultType) {
-  std::string vec = getMemoryElementTypeFragment(getElementTypeFromVectorLike(resultType));
+  std::string vec = getCANN900MemoryElementTypeFragment(getElementTypeFromVectorLike(resultType));
   auto lanes = getElementCountFromVectorLike(resultType);
   if (vec.empty() || !lanes) {
     return failure();
@@ -428,7 +428,7 @@ FailureOr<StringRef> buildVldusCallee(MLIRContext *context, Type resultType) {
 }
 
 FailureOr<StringRef> buildVldusPostCallee(MLIRContext *context, Type resultType) {
-  std::string vec = getMemoryElementTypeFragment(getElementTypeFromVectorLike(resultType));
+  std::string vec = getCANN900MemoryElementTypeFragment(getElementTypeFromVectorLike(resultType));
   auto lanes = getElementCountFromVectorLike(resultType);
   if (vec.empty() || !lanes) {
     return failure();

@@ -11,7 +11,6 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 
 namespace mlir::pto {
-using namespace detail;
 namespace {
 
 static Value getI64Constant(OpBuilder &builder, Location loc, uint64_t value) {
@@ -367,7 +366,7 @@ private:
 
 void populateVPTOCubeMadPatterns(TypeConverter &typeConverter,
                                  RewritePatternSet &patterns,
-                                 detail::LoweringState &state) {
+                                 LoweringState &state) {
   patterns.add<LowerMadRawPattern<pto::MadRawOp>,
                LowerMadRawPattern<pto::MadBiasRawOp>,
                LowerMadRawPattern<pto::MadMxRawOp>,

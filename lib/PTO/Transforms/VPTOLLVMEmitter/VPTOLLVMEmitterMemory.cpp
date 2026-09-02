@@ -12,32 +12,11 @@
 namespace mlir::pto {
 namespace {
 
-Value castIntegerLikeTo(Operation *anchor, Value value, Type targetType) {
-  OpBuilder builder(anchor);
-  builder.setInsertionPoint(anchor);
-  if (value.getType() == targetType) return value;
-  auto targetInt = dyn_cast<IntegerType>(targetType);
-  if (value.getType().isIndex() && targetInt)
-    return builder.create<arith::IndexCastOp>(anchor->getLoc(), targetType, value);
-  if (auto sourceInt = dyn_cast<IntegerType>(value.getType())) {
-    if (targetInt) {
-      if (sourceInt.getWidth() < targetInt.getWidth())
-        return builder.create<arith::ExtUIOp>(anchor->getLoc(), targetType, value);
-      if (sourceInt.getWidth() > targetInt.getWidth())
-        return builder.create<arith::TruncIOp>(anchor->getLoc(), targetType, value);
-      return value;
-    }
-    if (targetType.isIndex())
-      return builder.create<arith::IndexCastOp>(anchor->getLoc(), targetType, value);
-  }
-  return {};
-}
-
 class LowerUBSetMaskOpPattern final
     : public OpConversionPattern<pto::UBSetMaskOp> {
 public:
   explicit LowerUBSetMaskOpPattern(TypeConverter &converter, MLIRContext *context,
-                                   detail::LoweringState &state)
+                                   LoweringState &state)
       : OpConversionPattern<pto::UBSetMaskOp>(converter, context), state(state) {}
   LogicalResult matchAndRewrite(
       pto::UBSetMaskOp op, pto::UBSetMaskOp::Adaptor adaptor,
@@ -54,12 +33,12 @@ public:
                                   ValueRange{c0, adaptor.getMask0()});
     rewriter.create<func::CallOp>(loc, calleeName, TypeRange{},
                                   ValueRange{c1, adaptor.getMask1()});
-    state.plannedDecls.push_back(detail::PlannedDecl{calleeName.str(), funcType});
+    state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
     rewriter.eraseOp(op);
     return success();
   }
 private:
-  detail::LoweringState &state;
+  LoweringState &state;
 };
 
 class LowerUBSetMaskCountOpPattern final
@@ -105,7 +84,7 @@ public:
 class LowerUBufVdupPattern final : public OpConversionPattern<pto::UBVdupOp> {
 public:
   explicit LowerUBufVdupPattern(TypeConverter &converter, MLIRContext *context,
-                                detail::LoweringState &state)
+                                LoweringState &state)
       : OpConversionPattern<pto::UBVdupOp>(converter, context), state(state) {}
   LogicalResult matchAndRewrite(pto::UBVdupOp op, pto::UBVdupOp::Adaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
@@ -138,19 +117,19 @@ public:
     std::string callee = "llvm.hivm.MOVEV." + suffix.str();
     auto functionType = rewriter.getFunctionType(TypeRange{dst.getType(), i64, i64}, TypeRange{});
     rewriter.create<func::CallOp>(loc, callee, TypeRange{}, ValueRange{dst, scalar, config});
-    state.plannedDecls.push_back(detail::PlannedDecl{callee, functionType});
+    state.plannedDecls.push_back(PlannedDecl{callee, functionType});
     rewriter.eraseOp(op);
     return success();
   }
 private:
-  detail::LoweringState &state;
+  LoweringState &state;
 };
 
 } // namespace
 
 void populateVPTOMemoryMaskPatterns(TypeConverter &typeConverter,
                                     RewritePatternSet &patterns,
-                                    detail::LoweringState &state) {
+                                    LoweringState &state) {
   patterns.add<LowerUBSetMaskOpPattern>(typeConverter, patterns.getContext(), state);
   patterns.add<LowerUBSetMaskCountOpPattern, LowerUBSetMaskNormOpPattern>(
       typeConverter, patterns.getContext());
@@ -158,7 +137,7 @@ void populateVPTOMemoryMaskPatterns(TypeConverter &typeConverter,
 
 void populateVPTOMemoryUbufPatterns(TypeConverter &typeConverter,
                                     RewritePatternSet &patterns,
-                                    detail::LoweringState &state) {
+                                    LoweringState &state) {
   patterns.add<LowerUBufVdupPattern>(typeConverter, patterns.getContext(), state);
 }
 

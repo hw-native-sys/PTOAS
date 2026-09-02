@@ -251,7 +251,7 @@ void forceV300CtrlModeForVPTOFuncs(ModuleOp module) {
   OpBuilder builder(module.getContext());
 
   for (func::FuncOp funcOp : module.getOps<func::FuncOp>()) {
-    if (!needsV300CtrlModeForVPTOFunc(funcOp)) {
+    if (!needsV300CtrlModeForCANN900Func(funcOp)) {
       continue;
     }
 

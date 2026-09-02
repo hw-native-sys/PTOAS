@@ -44,11 +44,6 @@ std::optional<uint64_t> parseStoreDistImmediate(StringRef dist, Type elementType
                   : std::nullopt;
 }
 
-bool isOnePointStoreDist(StringRef dist) {
-  const auto *contract = lookupVPTOMemoryDist(VPTOMemoryOpFamily::Store, dist);
-  return contract && contract->isOnePointStore();
-}
-
 bool isMaskOnlyUsedByOnePointStores(Value mask) {
   return !mask.use_empty() && llvm::all_of(mask.getUsers(), [](Operation *user) {
     auto store = dyn_cast<pto::VstsOp>(user);
@@ -86,36 +81,6 @@ std::optional<uint64_t> parseOrderImmediate(StringRef order) {
     return 1;
   }
   return std::nullopt;
-}
-
-FailureOr<Value> packLoopPair(Operation *anchor, Value low, Value high) {
-  OpBuilder builder(anchor);
-  builder.setInsertionPoint(anchor);
-
-  Value lowI64 = castIntegerLikeTo(anchor, low, builder.getI64Type());
-  Value highI64 = castIntegerLikeTo(anchor, high, builder.getI64Type());
-  if (!lowI64 || !highI64) {
-    return failure();
-  }
-
-  Value shift = getI64Constant(builder, anchor->getLoc(), 40);
-  Value highShifted = builder.create<arith::ShLIOp>(anchor->getLoc(), highI64, shift).getResult();
-  return builder.create<arith::OrIOp>(anchor->getLoc(), highShifted, lowI64).getResult();
-}
-
-FailureOr<Value> packLoopSize(Operation *anchor, Value loop2, Value loop1) {
-  OpBuilder builder(anchor);
-  builder.setInsertionPoint(anchor);
-
-  Value loop2I64 = castIntegerLikeTo(anchor, loop2, builder.getI64Type());
-  Value loop1I64 = castIntegerLikeTo(anchor, loop1, builder.getI64Type());
-  if (!loop2I64 || !loop1I64) {
-    return failure();
-  }
-
-  Value shift = getI64Constant(builder, anchor->getLoc(), 21);
-  Value loop2Shifted = builder.create<arith::ShLIOp>(anchor->getLoc(), loop2I64, shift).getResult();
-  return builder.create<arith::OrIOp>(anchor->getLoc(), loop2Shifted, loop1I64).getResult();
 }
 
 FailureOr<Value> packCopyGmToUbConfig0(Operation *anchor, ValueRange operands) {

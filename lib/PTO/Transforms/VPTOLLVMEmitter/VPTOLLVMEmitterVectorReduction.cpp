@@ -9,7 +9,6 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 
 namespace mlir::pto {
-using namespace detail;
 namespace {
 
 static FailureOr<StringRef> buildLaneTypedCalleeFromInput(MLIRContext *context,
@@ -392,7 +391,7 @@ private:
 
 void populateVPTOVectorReductionPatterns(TypeConverter &typeConverter,
                                          RewritePatternSet &patterns,
-                                         detail::LoweringState &state) {
+                                         LoweringState &state) {
   patterns.add<LowerVecScalarMaskedOpPattern<pto::VmulsOp>,
                LowerVecScalarMaskedOpPattern<pto::VaddsOp>,
                LowerVecScalarMaskedOpPattern<pto::VmaxsOp>,

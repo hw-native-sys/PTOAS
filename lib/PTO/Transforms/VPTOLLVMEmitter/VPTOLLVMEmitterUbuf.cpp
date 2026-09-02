@@ -14,7 +14,6 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 
 namespace mlir::pto {
-using namespace detail;
 namespace {
 
 static Value getI64Constant(OpBuilder &builder, Location loc, uint64_t value) {
@@ -371,7 +370,7 @@ static FailureOr<StringRef> buildCopyGmToUbCallee(MLIRContext *context,
         elementType.isF64()) {
       return "s32";
     }
-    return detail::getCopyElementFragment(elementType);
+    return getCopyElementFragment(elementType);
   };
 
   if (march == "dav-c220-vec") {
@@ -1337,7 +1336,7 @@ private:
 
 void populateVPTOUbufPatterns(TypeConverter &typeConverter,
                                RewritePatternSet &patterns,
-                               detail::LoweringState &state,
+                               LoweringState &state,
                                const std::string &march) {
   patterns.add<LowerCopyOpPattern<pto::CopyGmToUbufOp>>(
       typeConverter, patterns.getContext(), state, march);
@@ -1389,12 +1388,12 @@ void populateVPTOUbufPatterns(TypeConverter &typeConverter,
         typeConverter, patterns.getContext(), state);
     patterns.add<LowerUBufScalarBinaryPattern<pto::UBVminSOp>>(
         typeConverter, patterns.getContext(), state);
-    detail::populateVPTOMemoryUbufPatterns(typeConverter, patterns, state);
+    populateVPTOMemoryUbufPatterns(typeConverter, patterns, state);
     patterns.add<LowerUBVgatherbOpPattern>(
         typeConverter, patterns.getContext(), state);
     patterns.add<LowerUBVgatherOpPattern>(
         typeConverter, patterns.getContext(), state);
-    detail::populateVPTOMemoryMaskPatterns(typeConverter, patterns, state);
+    populateVPTOMemoryMaskPatterns(typeConverter, patterns, state);
   }
 }
 

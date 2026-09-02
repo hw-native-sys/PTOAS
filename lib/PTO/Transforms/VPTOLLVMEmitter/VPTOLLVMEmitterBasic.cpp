@@ -9,7 +9,7 @@
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 
-namespace mlir::pto::detail {
+namespace mlir::pto {
 
 class LowerTrapOpPattern final : public OpConversionPattern<pto::TrapOp> {
 public:
@@ -41,4 +41,4 @@ void populateVPTOBasicPatterns(TypeConverter &typeConverter,
                                    state);
 }
 
-} // namespace mlir::pto::detail
+} // namespace mlir::pto

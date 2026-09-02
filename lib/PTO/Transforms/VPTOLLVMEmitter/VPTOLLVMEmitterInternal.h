@@ -12,7 +12,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "llvm/ADT/DenseMap.h"
 
-namespace mlir::pto::detail {
+namespace mlir::pto {
 struct PlannedDecl { std::string name; FunctionType type; };
 struct LoweringState { SmallVector<PlannedDecl> plannedDecls; };
 Type convertVPTOType(Type type, Builder &builder);
@@ -98,4 +98,4 @@ void populateVPTOVcvtPatterns(TypeConverter &typeConverter,
                               LoweringState &state);
 bool needsV300CtrlModeForVPTOFunc(func::FuncOp funcOp);
 class VPTOTypeConverter final : public TypeConverter { public: explicit VPTOTypeConverter(MLIRContext *context); };
-} // namespace mlir::pto::detail
+} // namespace mlir::pto

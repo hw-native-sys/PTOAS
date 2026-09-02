@@ -19,7 +19,6 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 
 namespace mlir::pto {
-using namespace detail;
 
 namespace {
 

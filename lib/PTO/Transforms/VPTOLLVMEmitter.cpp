@@ -52,7 +52,6 @@
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 
 namespace mlir::pto {
-using namespace detail;
 
 void materializeVecScopeCarrierLoops(ModuleOp module);
 LogicalResult applyQueriedTargetAttrs(ModuleOp module,
@@ -1083,15 +1082,15 @@ static void populateVPTOOpLoweringPatterns(VPTOTypeConverter &typeConverter,
   populateVPTOVectorMemoryPatterns(typeConverter, patterns, state);
   populateVPTOVectorGatherPatterns(typeConverter, patterns, state);
 
-  detail::populateVPTOBasicPatterns(typeConverter, patterns, state);
+  populateVPTOBasicPatterns(typeConverter, patterns, state);
   populateVPTOVectorUnaryPatterns(typeConverter, patterns, state);
-  detail::populateVPTOVectorCompactionPatterns(typeConverter, patterns, state);
-  detail::populateVPTOVectorMulaPatterns(typeConverter, patterns, state);
-  detail::populateVPTOVectorBinaryPatterns(typeConverter, patterns, state);
-  detail::populateVPTOVectorVmullPatterns(typeConverter, patterns, state);
-  detail::populateVPTOVectorCarryPatterns(typeConverter, patterns, state);
-  detail::populateVPTOVectorReductionPatterns(typeConverter, patterns, state);
-  detail::populateVPTOVectorPredicatePatterns(typeConverter, patterns, state);
+  populateVPTOVectorCompactionPatterns(typeConverter, patterns, state);
+  populateVPTOVectorMulaPatterns(typeConverter, patterns, state);
+  populateVPTOVectorBinaryPatterns(typeConverter, patterns, state);
+  populateVPTOVectorVmullPatterns(typeConverter, patterns, state);
+  populateVPTOVectorCarryPatterns(typeConverter, patterns, state);
+  populateVPTOVectorReductionPatterns(typeConverter, patterns, state);
+  populateVPTOVectorPredicatePatterns(typeConverter, patterns, state);
   populateVPTOUbufPatterns(typeConverter, patterns, state, march);
   populateVPTOScalarAndRuntimePatterns(typeConverter, patterns, state);
   populateVPTOSyncAndConfigPatterns(typeConverter, patterns, state);

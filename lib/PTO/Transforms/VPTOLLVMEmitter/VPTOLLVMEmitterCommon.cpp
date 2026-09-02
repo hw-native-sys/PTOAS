@@ -8,7 +8,7 @@
 #include "PTO/IR/VPTOMemoryDist.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 
-namespace mlir::pto::detail {
+namespace mlir::pto {
 
 static Value getI64Constant(OpBuilder &builder, Location loc, uint64_t value) {
   return builder.create<arith::ConstantOp>(loc, builder.getI64IntegerAttr(value));
@@ -536,4 +536,4 @@ getVPTOStructFieldAddress(ConversionPatternRewriter &rewriter, Location loc,
   return address;
 }
 
-} // namespace mlir::pto::detail
+} // namespace mlir::pto

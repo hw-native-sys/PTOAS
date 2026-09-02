@@ -14,7 +14,6 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 
 namespace mlir::pto {
-using namespace detail;
 
 namespace {
 
@@ -481,8 +480,6 @@ private:
 
 } // namespace
 
-namespace detail {
-
 bool needsV300CtrlModeForVPTOFunc(func::FuncOp funcOp) {
   if (!pto::isPTOEntryFunction(funcOp) || funcOp.getBlocks().empty()) {
     return false;
@@ -505,7 +502,5 @@ void populateVPTOVcvtPatterns(TypeConverter &typeConverter,
                               LoweringState &state) {
   patterns.add<LowerVcvtOpPattern>(typeConverter, patterns.getContext(), state);
 }
-
-} // namespace detail
 
 } // namespace mlir::pto

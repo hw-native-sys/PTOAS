@@ -13,7 +13,6 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 
 namespace mlir::pto {
-using namespace detail;
 namespace {
 
 static Value getI64Constant(OpBuilder &builder, Location loc, uint64_t value) {
@@ -701,7 +700,7 @@ static std::string getConvertScalarFragment(Type type,
       return {};
     }
     Type elementType = vecType.getElementType();
-    if (std::string elem = detail::getLowPrecisionElementFragment(elementType);
+    if (std::string elem = getLowPrecisionElementFragment(elementType);
         !elem.empty() && !pto::isPTOFloat4PackedType(elementType)) {
       return elem + "x2";
     }
@@ -731,7 +730,7 @@ static std::string getConvertScalarFragment(Type type,
   {
     return "bf16";
   }
-  if (std::string elem = detail::getLowPrecisionElementFragment(type); !elem.empty())
+  if (std::string elem = getLowPrecisionElementFragment(type); !elem.empty())
   {
     return elem;
   }
@@ -1578,7 +1577,7 @@ private:
 
 void populateVPTOScalarAndRuntimePatterns(TypeConverter &typeConverter,
                                           RewritePatternSet &patterns,
-                                          detail::LoweringState &state) {
+                                          LoweringState &state) {
   patterns.add<
                LowerRuntimeQueryOpPattern<pto::GetCtrlOp>,
                LowerGetVms4SrOpPattern,

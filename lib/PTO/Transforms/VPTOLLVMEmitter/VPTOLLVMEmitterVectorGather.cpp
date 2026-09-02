@@ -11,7 +11,6 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 
 namespace mlir::pto {
-using namespace detail;
 namespace {
 
 static Value getI64Constant(OpBuilder &builder, Location loc, uint64_t value) {
@@ -989,7 +988,7 @@ private:
 
 void populateVPTOVectorGatherPatterns(TypeConverter &typeConverter,
                                       RewritePatternSet &patterns,
-                                      detail::LoweringState &state) {
+                                      LoweringState &state) {
   patterns.add<LowerVgather2OpPattern, LowerVgather2BcOpPattern,
                LowerVgatherbOpPattern, LowerVscatterOpPattern,
                LowerVaxpyOpPattern, LowerVmulscvtOpPattern,
