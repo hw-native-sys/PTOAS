@@ -28,6 +28,8 @@ enum class CastTypeClass {
   Float,
   // Both source and result are integer element types.
   Integer,
+  // Packed E2M1 pairs widened to the register-only BF16-pair carrier.
+  F4E2M1x2ToBF16x2,
 };
 
 struct LayoutPattern {
@@ -138,6 +140,9 @@ static bool matchesCastTypeClass(CastTypeClass typeClass, Type sourceType,
             pto::isPTOLowPrecisionType(resultType));
   case CastTypeClass::Integer:
     return isa<IntegerType>(sourceType) && isa<IntegerType>(resultType);
+  case CastTypeClass::F4E2M1x2ToBF16x2:
+    return isa<pto::F4E2M1x2Type>(sourceType) &&
+           pto::isPTOBF16x2Type(resultType);
   }
   llvm_unreachable("unknown cast type class");
 }
