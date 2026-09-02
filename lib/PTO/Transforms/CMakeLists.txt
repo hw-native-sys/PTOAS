@@ -39,6 +39,20 @@ add_mlir_dialect_library(PTOTransforms
   TileFusion/PTOUnrollAfterLoopFusion.cpp
   TileFusion/PTOFlattenFusionRegion.cpp
   VPTOLLVMEmitter.cpp
+  VPTOLLVMEmitter/VPTOLLVMEmitterCommon.cpp
+  VPTOLLVMEmitter/VPTOLLVMEmitterBasic.cpp
+  VPTOLLVMEmitter/VPTOLLVMEmitterVector.cpp
+  VPTOLLVMEmitter/VPTOLLVMEmitterVectorReduction.cpp
+  VPTOLLVMEmitter/VPTOLLVMEmitterVectorPredicate.cpp
+  VPTOLLVMEmitter/VPTOLLVMEmitterMemory.cpp
+  VPTOLLVMEmitter/VPTOLLVMEmitterCubeMad.cpp
+  VPTOLLVMEmitter/VPTOLLVMEmitterCubeMemory.cpp
+  VPTOLLVMEmitter/VPTOLLVMEmitterVectorMemory.cpp
+  VPTOLLVMEmitter/VPTOLLVMEmitterVectorGather.cpp
+  VPTOLLVMEmitter/VPTOLLVMEmitterUbuf.cpp
+  VPTOLLVMEmitter/VPTOLLVMEmitterScalarRuntime.cpp
+  VPTOLLVMEmitter/VPTOLLVMEmitterSyncConfig.cpp
+  VPTOLLVMEmitter/VPTOLLVMEmitterVcvt.cpp
   VPTOCANN900LLVMEmitter.cpp
   VPTOCANN900LLVMEmitterArithmeticPatterns.cpp
   VPTOCANN900LLVMEmitterCalleeCore.cpp
