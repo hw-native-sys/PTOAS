@@ -13184,9 +13184,7 @@ static LogicalResult verifyTQuantMxAxis0(TQuantMxOp op, const TQuantMxA5 &s) {
       return op.emitOpError("expects interleaved exp physical cols to be align32(2 * src physical cols)");
     }
   }
-  if (s.srcElem.isF32() && op.getInterleave()) {
-    return op.emitOpError("does not support FP32 interleave with the pinned pto-isa revision");
-  }
+  // FP32 DN interleave is covered by the shape checks above.
   return success();
 }
 
@@ -13216,28 +13214,31 @@ static LogicalResult verifyTQuantMxAxis1Flat(TQuantMxOp op, const TQuantMxA5 &s)
                                       *requiredBytes))) {
       return failure();
     }
-  } else if (op.getQuantScaleAlg() == pto::QuantScaleAlg::OCP) {
+  } else if (op.getQuantScaleAlg() == pto::QuantScaleAlg::OCP ||
+             op.getQuantScaleAlg() == pto::QuantScaleAlg::NV) {
+    // B16 scaling stores 2 bytes per group for both OCP and NV; the same
+    // 128-group alignment capacity rule applies.
     auto aligned = mxAlignTo(s.groups, 128);
     auto requiredBytes = aligned ? mxCheckedMul(*aligned, 2) : std::nullopt;
+    StringRef scalingName =
+        op.getQuantScaleAlg() == pto::QuantScaleAlg::NV
+            ? "axis1 flat B16 NV scaling"
+            : "axis1 flat B16 OCP scaling";
     if (!requiredBytes ||
-        failed(mxRequireCapacityBytes(op, "axis1 flat B16 OCP scaling",
-                                      s.scalingTy, *requiredBytes))) {
+        failed(mxRequireCapacityBytes(op, scalingName, s.scalingTy,
+                                      *requiredBytes))) {
       return failure();
     }
   } else {
-    return op.emitOpError("does not support axis1 flat B16 NV quantization with the pinned pto-isa revisions");
+    return op.emitOpError("does not support axis1 flat B16 quantization with the pinned pto-isa revisions");
   }
   return success();
 }
 
 static LogicalResult verifyTQuantMxAxis1Canonical(TQuantMxOp op,
                                                   const TQuantMxA5 &s) {
-  if (s.expValid[0] == 1) {
-    return op.emitOpError("expects legacy flat exp to use physical rows == 1");
-  }
-  if (s.srcElem.isF16() || s.srcElem.isBF16()) {
-    return op.emitOpError("does not support axis1 canonical 2D B16 quantization with the pinned pto-isa revision");
-  }
+  // Exp2D uses a dynamic valid (rows=1, validGroups) over physical
+  // (staticRows, expCols), so a single valid row is legal.
   SmallVector<int64_t, 2> canonicalShape = {s.srcRows, s.srcCols / 32};
   if (!llvm::equal(s.expValid, canonicalShape)) {
     return op.emitOpError("expects exp valid_shape to match canonical [M, N/32] for grpAxis=axis1");
