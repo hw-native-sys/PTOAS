@@ -2,7 +2,9 @@
 
 This repository-specific workflow is designed for personal GitHub and GitCode
 Forks. It mirrors pull requests from a personal GitHub Fork into the GitCode
-upstream project `cann/pto-as`; GitHub `main` maps to GitCode `master`.
+upstream project `cann/pto-as`; GitHub `test` maps to GitCode `master` by
+default while this workflow is being validated. Set the repository variable
+`GITHUB_UPSTREAM_BRANCH=main` when the workflow is ready for production use.
 
 ## How it works
 
@@ -11,7 +13,7 @@ Personal GitHub Fork branch push
         ↓
 Find the matching open PR in hw-native-sys/PTOAS
         ↓
-Compute the PR diff against hw-native-sys/PTOAS:main
+Compute the PR diff against the configured upstream branch
         ↓
 Push mirror/github-pr-<number> to the personal GitCode Fork
         ↓
@@ -54,7 +56,8 @@ The mirror commit author and committer are set to:
 
 ## Daily usage
 
-1. Create a GitHub PR from the personal Fork to `hw-native-sys/PTOAS:main`.
+1. Create a GitHub PR from the personal Fork to the configured upstream branch
+   (`test` by default; set `GITHUB_UPSTREAM_BRANCH=main` for production).
 2. Push to the PR branch in the personal GitHub Fork.
 3. The `push` workflow finds the matching upstream PR and mirrors it.
 4. Continue pushing to that GitHub branch; do not edit the GitCode mirror branch.
@@ -62,9 +65,9 @@ The mirror commit author and committer are set to:
 For an existing PR or a retry, open Actions in the personal GitHub Fork, run
 `Mirror PR to GitCode`, and enter the upstream PR number.
 
-The matching upstream PR must be open, target `main`, and have its head repo
-equal to the personal GitHub Fork. If no unique match is found, the workflow
-stops without changing GitCode.
+The matching upstream PR must be open, target the configured upstream branch,
+and have its head repo equal to the personal GitHub Fork. If no unique match is
+found, the workflow stops without changing GitCode.
 
 ## Security requirements
 

@@ -29,7 +29,7 @@ concurrency:
 env:
   GH_TOKEN: ${{ github.token }}
   GITHUB_UPSTREAM_REPOSITORY: hw-native-sys/PTOAS
-  GITHUB_UPSTREAM_BRANCH: main
+  GITHUB_UPSTREAM_BRANCH: ${{ vars.GITHUB_UPSTREAM_BRANCH || 'test' }}
   GITCODE_API: https://gitcode.com/api/v5
   GITCODE_UPSTREAM: cann/pto-as
   GITCODE_TARGET_BRANCH: master
@@ -87,7 +87,7 @@ jobs:
           if [[ "$pr_state" != "open" || "$base_ref" != "$GITHUB_UPSTREAM_BRANCH" ||
                 ! "$head_sha" =~ ^[0-9a-f]{40}$ || "$source_repo" != "$GITHUB_REPOSITORY" ||
                 -z "$source_branch" || ! "$source_branch" =~ ^[A-Za-z0-9._/-]+$ ]]; then
-            echo "The upstream PR does not belong to this GitHub fork or target main." >&2
+            echo "The upstream PR does not belong to this GitHub fork or target branch." >&2
             exit 1
           fi
 
