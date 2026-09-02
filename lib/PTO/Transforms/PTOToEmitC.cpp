@@ -8617,8 +8617,17 @@ struct PTOTFreeToEmitC : public OpConversionPattern<mlir::pto::TFreeOp> {
       auto entryTok = getPipeDataTypeToken(entry);
       if (failed(entryTok))
         return rewriter.notifyMatchFailure(op, "failed to resolve entry token");
-      callee = "TFREE<" + *pipeTok + ", " + *entryTok + ", " + *splitTok + ">";
-      operands.push_back(entry);
+      if (entryTok->find("GlobalTensor<") != std::string::npos) {
+        // The three-argument TFREE is only defined for GlobalData entries
+        // (GM FIFO directions); pass the entry operand there.
+        callee = "TFREE<" + *pipeTok + ", " + *entryTok + ", " + *splitTok + ">";
+        operands.push_back(entry);
+      } else {
+        // Tile entries: TFREE<Pipe, Split>(pipe) takes no entry operand
+        // (the implementation only consumes the pipe handle); the IR entry
+        // operand is frontend bookkeeping and must not reach codegen.
+        callee = "TFREE<" + *pipeTok + ", " + *splitTok + ">";
+      }
     } else {
       callee = "TFREE<" + *pipeTok + ", " + *splitTok + ">";
     }

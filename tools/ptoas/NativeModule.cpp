@@ -194,6 +194,9 @@ int runPTOASFromPython(const std::vector<std::string> &arguments) {
   int result;
   {
     py::gil_scoped_release release;
+    // Template expansion calls back into Python from pass adaptor worker
+    // threads; run the context single-threaded to avoid GIL deadlocks.
+    unwrap(rawContext)->disableMultithreading();
     result = mlir::pto::runPTOAS(static_cast<int>(argv.size()), argv.data(),
                                  *unwrap(rawContext));
   }

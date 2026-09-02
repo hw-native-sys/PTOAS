@@ -90,8 +90,11 @@ constexpr llvm::StringLiteral kCandidatesAttr = "candidates";
 //            distinguish auxiliary vector operands such as tmrgsort's
 //            `excuted : vector<4xi16>`.
 //   Scalar — from a scalar element type.  Only dtype participates in SpecKey.
+//   Struct — from a StructType (pto.struct).  Only dtype "struct" participates
+//            in SpecKey.  Used by pipe template ops (tpush/tpop) to pass
+//            state across template expansions.
 // ============================================================================
-enum class OperandKind { Tile, View, Vector, Scalar };
+enum class OperandKind { Tile, View, Vector, Scalar, Struct, Ptr };
 
 struct OperandTypeInfo {
   OperandKind kind = OperandKind::Tile;
@@ -112,6 +115,9 @@ struct OperandTypeInfo {
   SmallVector<int64_t> viewStrides;
   std::string viewMemorySpace; // "gm" or "ub"
   std::optional<pto::Layout> viewLayout;
+
+  // --- Ptr-only (PtrType) — for JSON / constraint checking only ---
+  std::string ptrMemorySpace; // e.g. "gm", "ub", "mat"
 
   // --- Vector-only (builtin VectorType) ---
   SmallVector<int64_t> vectorShape;
@@ -137,6 +143,12 @@ struct OperandTypeInfo {
     }
     if (kind == OperandKind::Scalar) {
       return scalarValue == rhs.scalarValue;
+    }
+    if (kind == OperandKind::Struct) {
+      return true;
+    }
+    if (kind == OperandKind::Ptr) {
+      return true;
     }
     return viewShape == rhs.viewShape &&
            viewStrides == rhs.viewStrides &&
@@ -187,6 +199,8 @@ struct SpecKeyInfo : public llvm::DenseMapInfo<SpecKey> {
         if (op.scalarValue) {
           h = llvm::hash_combine(h, *op.scalarValue);
         }
+      } else if (op.kind == OperandKind::Ptr) {
+        h = llvm::hash_combine(h, op.ptrMemorySpace);
       }
       if (op.kind == OperandKind::View) {
         h = llvm::hash_combine(h, op.viewMemorySpace);
@@ -657,6 +671,55 @@ static LogicalResult appendOpContextAttrs(
              op, attrs, pto::DivPrecision::HighPrecision) ||
          tryAppendPrecisionType<pto::TColExpandDivOp>(
              op, attrs, pto::DivPrecision::HighPrecision));
+
+  if (auto push = dyn_cast<pto::TPushToAivOp>(op)) {
+    attrs.emplace_back("id", std::to_string(push.getId()));
+    attrs.emplace_back("split", std::to_string(push.getSplit()));
+    if (auto slotNum = push.getSlotNumAttr())
+      attrs.emplace_back("slot_num", std::to_string(slotNum.getInt()));
+    if (auto slotSize = push.getSlotSizeAttr())
+      attrs.emplace_back("slot_size", std::to_string(slotSize.getInt()));
+  }
+  if (auto push = dyn_cast<pto::TPushToAicOp>(op)) {
+    attrs.emplace_back("id", std::to_string(push.getId()));
+    attrs.emplace_back("split", std::to_string(push.getSplit()));
+    if (auto slotNum = push.getSlotNumAttr())
+      attrs.emplace_back("slot_num", std::to_string(slotNum.getInt()));
+    if (auto slotSize = push.getSlotSizeAttr())
+      attrs.emplace_back("slot_size", std::to_string(slotSize.getInt()));
+  }
+  if (auto pop = dyn_cast<pto::TPopFromAicOp>(op)) {
+    attrs.emplace_back("id", std::to_string(pop.getId()));
+    attrs.emplace_back("split", std::to_string(pop.getSplit()));
+    if (auto slotNum = pop.getSlotNumAttr())
+      attrs.emplace_back("slot_num", std::to_string(slotNum.getInt()));
+    if (auto slotSize = pop.getSlotSizeAttr())
+      attrs.emplace_back("slot_size", std::to_string(slotSize.getInt()));
+    if (auto consRows = pop.getConsRowsAttr())
+      attrs.emplace_back("cons_rows", std::to_string(consRows.getInt()));
+    if (auto consCols = pop.getConsColsAttr())
+      attrs.emplace_back("cons_cols", std::to_string(consCols.getInt()));
+    if (auto elemBytes = pop.getElemBytesAttr())
+      attrs.emplace_back("elem_bytes", std::to_string(elemBytes.getInt()));
+    if (auto consDtype = pop.getConsDtypeAttr())
+      attrs.emplace_back("cons_dtype", consDtype.getValue().str());
+  }
+  if (auto pop = dyn_cast<pto::TPopFromAivOp>(op)) {
+    attrs.emplace_back("id", std::to_string(pop.getId()));
+    attrs.emplace_back("split", std::to_string(pop.getSplit()));
+    if (auto slotNum = pop.getSlotNumAttr())
+      attrs.emplace_back("slot_num", std::to_string(slotNum.getInt()));
+    if (auto slotSize = pop.getSlotSizeAttr())
+      attrs.emplace_back("slot_size", std::to_string(slotSize.getInt()));
+    if (auto consRows = pop.getConsRowsAttr())
+      attrs.emplace_back("cons_rows", std::to_string(consRows.getInt()));
+    if (auto consCols = pop.getConsColsAttr())
+      attrs.emplace_back("cons_cols", std::to_string(consCols.getInt()));
+    if (auto elemBytes = pop.getElemBytesAttr())
+      attrs.emplace_back("elem_bytes", std::to_string(elemBytes.getInt()));
+    if (auto consDtype = pop.getConsDtypeAttr())
+      attrs.emplace_back("cons_dtype", consDtype.getValue().str());
+  }
   return success();
 }
 
@@ -870,6 +933,27 @@ static std::optional<OperandTypeInfo> buildOperandTypeInfo(Value value) {
     return info;
   }
 
+  // TensorView operand — from a TensorViewType (pto.tensor_view).
+  // This is the GM-staged pipe entry type used by tpush/tpop GlobalData path.
+  if (auto tvTy = dyn_cast<pto::TensorViewType>(ty)) {
+    OperandTypeInfo info;
+    info.kind = OperandKind::View;
+    info.dtype = getDtypeString(tvTy.getElementType());
+    if (info.dtype.empty()) {
+      return std::nullopt;
+    }
+    info.viewMemorySpace = "gm";
+    info.viewLayout = resolveViewLayout(value);
+    populateViewShapeAndStrides(value, info.viewShape, info.viewStrides);
+    if (info.viewShape.empty()) {
+      info.viewShape.assign(tvTy.getShape().begin(), tvTy.getShape().end());
+    }
+    if (info.viewStrides.empty()) {
+      info.viewStrides.assign(tvTy.getRank(), ShapedType::kDynamic);
+    }
+    return info;
+  }
+
   // Auxiliary vector operand — from builtin VectorType (e.g. vector<4xi16>).
   if (auto vecTy = dyn_cast<VectorType>(ty)) {
     OperandTypeInfo info;
@@ -879,6 +963,27 @@ static std::optional<OperandTypeInfo> buildOperandTypeInfo(Value value) {
       return std::nullopt;
     }
     info.vectorShape.assign(vecTy.getShape().begin(), vecTy.getShape().end());
+    return info;
+  }
+
+  // Struct operand — from a StructType (pto.struct).
+  if (dyn_cast<pto::StructType>(ty)) {
+    OperandTypeInfo info;
+    info.kind = OperandKind::Struct;
+    info.dtype = "struct";
+    return info;
+  }
+
+  // Ptr operand — from a PtrType (pto.ptr).
+  if (auto ptrTy = dyn_cast<pto::PtrType>(ty)) {
+    OperandTypeInfo info;
+    info.kind = OperandKind::Ptr;
+    info.dtype = getDtypeString(ptrTy.getElementType());
+    if (info.dtype.empty()) {
+      return std::nullopt;
+    }
+    info.ptrMemorySpace =
+        stringifyMemorySpace(ptrTy.getMemorySpace().getAddressSpace());
     return info;
   }
 
@@ -902,7 +1007,11 @@ static FailureOr<SpecKey> buildSpecKey(Operation *op) {
   key.targetArch = getTargetArchString(op);
 
   for (unsigned i = 0; i < op->getNumOperands(); ++i) {
-    auto info = buildOperandTypeInfo(op->getOperand(i));
+    Value operand = op->getOperand(i);
+    if (!operand) {
+      continue;
+    }
+    auto info = buildOperandTypeInfo(operand);
     if (!info) {
       op->emitError("ExpandTileOp: cannot build specialization key for this "
                     "operand schema");
@@ -1044,6 +1153,19 @@ static std::string buildOperandSpecsJson(const SpecKey &key) {
       continue;
     }
 
+    // Struct
+    if (op.kind == OperandKind::Struct) {
+      json += "{\"kind\":\"struct\",\"dtype\":\"struct\"}";
+      continue;
+    }
+
+    // Ptr
+    if (op.kind == OperandKind::Ptr) {
+      json += "{\"kind\":\"ptr\",\"dtype\":\"" + op.dtype +
+              "\",\"memory_space\":\"" + op.ptrMemorySpace + "\"}";
+      continue;
+    }
+
     // Scalar
     json += "{\"kind\":\"scalar\",\"dtype\":\"" + op.dtype + "\"";
     if (op.scalarValue) {
@@ -1069,6 +1191,8 @@ static std::string buildUniqueFunctionBaseName(const SpecKey &key) {
     uniqueName += op.kind == OperandKind::Tile   ? "_tile"
                  : op.kind == OperandKind::View ? "_view"
                  : op.kind == OperandKind::Vector ? "_vector"
+                 : op.kind == OperandKind::Struct ? "_struct"
+                 : op.kind == OperandKind::Ptr ? "_ptr"
                                                   : "_scalar";
     uniqueName += "_" + op.dtype;
     if (op.kind == OperandKind::Tile) {
@@ -1291,9 +1415,14 @@ LogicalResult ExpandState::expandTileOpsInFunction(func::FuncOp func,
   OpBuilder builder(ctx);
 
   // Collect tile ops first (avoid modifying while iterating).
+  // Only process ops that have been marked with `candidates` by
+  // InsertTemplateAttributes.  Ops without candidates (e.g. lowered
+  // pto.talloc/pto.tpush created by PTOLowerFrontendPipeOpsPass after
+  // InsertTemplateAttributes ran) are left for the C++ lowering path.
   SmallVector<Operation *, mlir::pto::kValue16> tileOps;
   func.walk([&](Operation *op) {
-    if (pto::isTileLibExpandableOp(op)) {
+    if (pto::isTileLibExpandableOp(op) &&
+        op->hasAttr(kCandidatesAttr)) {
       tileOps.push_back(op);
     }
   });
@@ -1320,15 +1449,25 @@ LogicalResult ExpandState::expandTileOpsInFunction(func::FuncOp func,
     builder.setInsertionPoint(op);
     SmallVector<Value> operands;
     auto fnArgTypes = dslFn.getArgumentTypes();
+    unsigned fnArgIdx = 0;
     for (unsigned i = 0; i < op->getNumOperands(); ++i) {
       Value operand = op->getOperand(i);
-      if (i < fnArgTypes.size() && operand.getType() != fnArgTypes[i]) {
+      if (!operand) {
+        continue;
+      }
+      if (fnArgIdx < fnArgTypes.size() && operand.getType() != fnArgTypes[fnArgIdx]) {
         operand = bridgeOperandToType(builder, op->getLoc(), operand,
-                                      fnArgTypes[i]);
+                                      fnArgTypes[fnArgIdx]);
       }
       operands.push_back(operand);
+      ++fnArgIdx;
     }
-    builder.create<func::CallOp>(op->getLoc(), dslFn, operands);
+    auto call = builder.create<func::CallOp>(op->getLoc(), dslFn, operands);
+    if (op->getNumResults() > 0 && call.getNumResults() > 0) {
+      for (unsigned i = 0; i < op->getNumResults() && i < call.getNumResults(); ++i) {
+        op->getResult(i).replaceAllUsesWith(call.getResult(i));
+      }
+    }
     op->erase();
   }
 

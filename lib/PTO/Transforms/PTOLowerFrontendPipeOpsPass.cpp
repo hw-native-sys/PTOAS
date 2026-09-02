@@ -464,6 +464,9 @@ static LogicalResult lowerFrontendDataOps(func::FuncOp funcOp,
   funcOp.walk([&](Operation *op) {
     if (isa<TAllocToAivOp, TAllocToAicOp, TPushToAivOp, TPushToAicOp,
             TPopFromAicOp, TPopFromAivOp, TFreeFromAicOp, TFreeFromAivOp>(op)) {
+      if (op->hasAttr("candidates")) {
+        return;
+      }
       frontendOps.push_back(op);
     }
   });
@@ -670,6 +673,11 @@ struct PTOLowerFrontendPipeOpsPass
     if (!hasFrontendPipeOps(funcOp)) {
       return;
     }
+
+    // Lower frontend pipe ops.  lowerFrontendDataOps already skips ops
+    // marked with `candidates` by InsertTemplateAttributes (they are handled
+    // by ExpandTileOp), so tpush/tpop templates keep their frontend form
+    // while init/reserve/talloc/tfree are lowered as normal.
 
     IRRewriter rewriter(funcOp.getContext());
     auto loweredOr = lowerInitIfPresent(funcOp, rewriter);

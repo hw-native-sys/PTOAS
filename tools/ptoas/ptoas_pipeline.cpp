@@ -21,6 +21,7 @@
 #include "PTO/Transforms/BufferizableOpInterfaceImpl.h"
 #include "PTO/Transforms/CppPostprocess.h"
 #include "PTO/Transforms/Passes.h"
+#include "PTO/Transforms/TileOpExpansionUtils.h"
 #include "PTO/Transforms/VPTOLLVMEmitter.h"
 #include "VPTOHostStubEmission.h"
 #include "mlir/AsmParser/AsmParserState.h"
@@ -623,6 +624,14 @@ static bool hasUnexpandedTileOps(ModuleOp module) {
       return;
     }
     if (isa<pto::OpPipeInterface>(op)) {
+      found = true;
+      return;
+    }
+
+    // Frontend pipe ops (tpush_to_aiv, tpop_from_aic, etc.) implement
+    // TileOpInterface but not OpPipeInterface.  They are template-eligible
+    // when InsertTemplateAttributes marks them with candidates.
+    if (pto::isTileLibExpandableOp(op)) {
       found = true;
       return;
     }
@@ -1230,6 +1239,11 @@ static LogicalResult validateAllocationConfiguration(ModuleOp module,
     return failure();
   }
 
+  // `pto.alloc_tile` with an explicit `addr` operand is allowed at any
+  // level: PTOPlanMemory skips addr-carrying allocations (the tile is
+  // user-owned local-memory aliasing, e.g. TASSIGN strip views of the form
+  // `TASSIGN(accStrip, strip * H * 64)`). This is the same mechanism the
+  // tile-template expansion relies on for FIFO slot tiles.
   bool invalidAddress = false;
   if (level == PTOBuildLevel::Level3) {
     module.walk([&invalidAddress](pto::AllocTileOp op) {
@@ -1246,13 +1260,6 @@ static LogicalResult validateAllocationConfiguration(ModuleOp module,
       }
     });
   } else {
-    module.walk([&invalidAddress](pto::AllocTileOp op) {
-      if (op.getAddr()) {
-        op.emitError("unexpected 'addr' operand: only supported when "
-                     "--pto-level=level3");
-        invalidAddress = true;
-      }
-    });
     module.walk([&invalidAddress](pto::AllocMultiTileOp op) {
       if (op.getAddr()) {
         op.emitError("unexpected 'addr' operand on pto.alloc_multi_tile: only "
@@ -1421,6 +1428,16 @@ static LogicalResult runMainLoweringPipeline(
   if (effectiveBackend == PTOBackend::VPTO) {
     pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOCanonicalizeIRPass());
   }
+
+  // PTODSL legality discovery must run BEFORE frontend pipe lowering so that
+  // tpush/tpop ops get marked with `candidates` attr.  PTOLowerFrontendPipeOpsPass
+  // then skips candidate-marked ops, leaving them for ExpandTileOp to expand.
+  // Without this ordering, PTOLowerFrontendPipeOpsPass would lower tpush/tpop
+  // to pto.tpush (with !pto.pipe operand) before InsertTemplateAttributes can
+  // mark them, and ExpandTileOp would never see template-eligible ops.
+  if (!isA2A3 && effectiveBackend == PTOBackend::VPTO && hasTileOpsToExpand) {
+    pm.addPass(pto::createInsertTemplateAttributesPass());
+  }
   pm.addPass(createSerialFrontendPipeLoweringPass());
   pm.addPass(pto::createPTOInferValidatePipeInitPass());
   pm.addNestedPass<mlir::func::FuncOp>(pto::createLoweringSyncToPipePass());
@@ -1435,13 +1452,6 @@ static LogicalResult runMainLoweringPipeline(
   }
   pm.addNestedPass<mlir::func::FuncOp>(
       pto::createPTOValidateIntToPtrUsesPass());
-
-  // PTODSL legality discovery happens on tile-native PTO IR before fusion.
-  // Fusion may later filter the ordered `candidates` array; ExpandTileOp
-  // consumes the first candidate that remains.
-  if (!isA2A3 && effectiveBackend == PTOBackend::VPTO && hasTileOpsToExpand) {
-    pm.addPass(pto::createInsertTemplateAttributesPass());
-  }
 
   if (failed(appendFusionFrontendPasses(pm, isA2A3, enableA5EmitCFusionPath,
                                          enableA5VPTOFusionPath))) {

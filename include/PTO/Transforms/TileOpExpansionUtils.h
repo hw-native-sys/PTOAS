@@ -16,12 +16,14 @@ namespace mlir::pto {
 /// Return whether an operation is a TileLib template expansion candidate.
 /// Frontend pipe/sync pseudo-ops use TileOpInterface for surface
 /// classification but must be handled by their dedicated lowering instead.
+/// TPushToAivOp, TPushToAicOp, TPopFromAicOp, TPopFromAivOp are now
+/// expandable via TileLib templates when candidates are attached; they
+/// fall back to the C++ pipe lowering path when no candidates are present.
 inline bool isTileLibExpandableOp(Operation *op) {
   if (!op || !isa<TileOpInterface>(op)) {
     return false;
   }
   return !isa<TReshapeOp, TSyncOp, TAllocToAivOp, TAllocToAicOp,
-              TPushToAivOp, TPushToAicOp, TPopFromAicOp, TPopFromAivOp,
               TFreeFromAicOp, TFreeFromAivOp>(op);
 }
 

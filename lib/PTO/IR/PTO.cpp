@@ -5822,7 +5822,15 @@ static LogicalResult verifyMatTileOperandsA2A3(Operation *op, Type lhsTy,
   auto lhsShape = getMatmulLogicalShapeVec(lhsTy);
   auto rhsShape = getMatmulLogicalShapeVec(rhsTy);
   auto dstShape = getMatmulLogicalShapeVec(dstTy);
-  if ((lhsShape[0] != dstShape[0] || rhsShape[1] != dstShape[1] || lhsShape[1] != rhsShape[0])) {
+  auto dstValid = getValidShapeVec(dstTy);
+  // A dynamic dst valid dim (runtime ctor, e.g. oversized Acc tiles) defers
+  // that dimension to runtime; only statically-known dst
+  // dims are compared against the operand logical shapes.
+  bool dstMDynamic = dstValid.size() == 2 && dstValid[0] == ShapedType::kDynamic;
+  bool dstNDynamic = dstValid.size() == 2 && dstValid[1] == ShapedType::kDynamic;
+  if ((!dstMDynamic && lhsShape[0] != dstShape[0]) ||
+      (!dstNDynamic && rhsShape[1] != dstShape[1]) ||
+      (lhsShape[1] != rhsShape[0])) {
     return op->emitOpError(
         "expects static matmul tile shapes lhs[M,K], rhs[K,N], and dst[M,N]");
   }
@@ -20095,20 +20103,20 @@ static LogicalResult verifyAivSubblockIdOperand(Operation *op,
     return success();
   }
 
-  if (split == 0) {
-    return op->emitOpError(
-        "expects 'aiv_subblockid' only when 'split' is 1, 2, 3, or 4");
-  }
+  // The three-argument TPUSH/TPOP form accepts an explicit sub-block ID for
+  // TILE_NO_SPLIT too: the single logical lane ignores the value, and the
+  // subblock_dispatch ST relies on that contract ("passing a non-zero ID
+  // must not move the payload").
+  //
+  // GM-entry pops (tensor_view results) DO consume the sub-block ID in the
+  // subAIVOffset arithmetic, so the operand is allowed there as well.
 
-  if (isa<TensorViewType>(pipeEntryType)) {
-    return op->emitOpError(
-        "does not support 'aiv_subblockid' for !pto.tensor_view pipe entries");
-  }
-
-  auto addrSpace = getPTOMemorySpaceEnum(pipeEntryType);
-  if (!addrSpace || *addrSpace != AddressSpace::VEC) {
-    return op->emitOpError(
-        "expects 'aiv_subblockid' only on AIV-side vector tile pipe entries");
+  if (isa<TileBufType>(pipeEntryType)) {
+    auto addrSpace = getPTOMemorySpaceEnum(pipeEntryType);
+    if (!addrSpace || *addrSpace != AddressSpace::VEC) {
+      return op->emitOpError(
+          "expects 'aiv_subblockid' only on AIV-side vector tile pipe entries");
+    }
   }
 
   return success();
@@ -20162,7 +20170,8 @@ static Value getFrontendInitGmSlotTensor(Operation *initOp) {
 
 static LogicalResult verifyFrontendTensorEntryMatchesInit(Operation *op,
                                                           int32_t id,
-                                                          Type entryTy) {
+                                                          Type entryTy,
+                                                          int64_t split = 0) {
   auto entryViewTy = dyn_cast<TensorViewType>(entryTy);
   if (!entryViewTy) {
     return success();
@@ -20206,6 +20215,15 @@ static LogicalResult verifyFrontendTensorEntryMatchesInit(Operation *op,
         entryDim == ShapedType::kDynamic || slotDim == entryDim) {
       continue;
     }
+    // UP_DOWN / LEFT_RIGHT consumers may bind a per-core sub-range view
+    // Sub-range consumer view: dim0 (UP_DOWN) / dim1 (LEFT_RIGHT) may be
+    // half the slot extent; the subAIVOffset arithmetic uses the entry shape.
+    if (split == 1 && idx == 0 && entryDim * 2 == slotDim) {
+      continue;
+    }
+    if (split == 2 && idx == 1 && entryDim * 2 == slotDim) {
+      continue;
+    }
     return op->emitOpError()
            << "expects pipe entry dimension " << idx
            << " to match gm_slot_tensor dimension " << slotDim;
@@ -20232,7 +20250,8 @@ static LogicalResult verifyFrontendPopOp(FrontendPopOpT op,
     return failure();
   }
   if (failed(verifyFrontendTensorEntryMatchesInit(op.getOperation(), op.getId(),
-                                                  op.getTile().getType()))) {
+                                                  op.getTile().getType(),
+                                                  op.getSplit()))) {
     return failure();
   }
   if (!expectC2V &&
@@ -20619,7 +20638,8 @@ static bool getTensorLikeElementAndShape(Type ty, Type &elementType,
 
 static LogicalResult verifyTensorEntryMatchesInternalPipeInit(Operation *op,
                                                               Value pipeHandle,
-                                                              Type entryTy) {
+                                                              Type entryTy,
+                                                              int64_t split = 0) {
   auto entryViewTy = dyn_cast<TensorViewType>(entryTy);
   if (!entryViewTy) {
     return success();
@@ -20662,6 +20682,15 @@ slotElementType, slotShape)) {
     int64_t slotDim = slotShape[idx];
     if (slotDim == ShapedType::kDynamic ||
         entryDim == ShapedType::kDynamic || slotDim == entryDim) {
+      continue;
+    }
+    // UP_DOWN / LEFT_RIGHT consumers may bind a per-core sub-range view
+    // Sub-range consumer view: dim0 (UP_DOWN) / dim1 (LEFT_RIGHT) may be
+    // half the slot extent.
+    if (split == 1 && idx == 0 && entryDim * 2 == slotDim) {
+      continue;
+    }
+    if (split == 2 && idx == 1 && entryDim * 2 == slotDim) {
       continue;
     }
     return op->emitOpError()
@@ -21409,7 +21438,7 @@ LogicalResult TAllocToAivOp::verify() {
     return failure();
   }
   return verifyFrontendTensorEntryMatchesInit(getOperation(), getId(),
-                                              getEntry().getType());
+                                              getEntry().getType(), getSplit());
 }
 
 LogicalResult TAllocToAicOp::verify() {
@@ -21430,10 +21459,17 @@ LogicalResult TAllocToAicOp::verify() {
     return failure();
   }
   return verifyFrontendTensorEntryMatchesInit(getOperation(), getId(),
-                                              getEntry().getType());
+                                              getEntry().getType(), getSplit());
 }
 
 LogicalResult TPushToAivOp::verify() {
+  // Template-eligible ops (marked with `candidates` by InsertTemplateAttributes)
+  // keep their frontend form while frontend pipe init is lowered to L2L/L2G2L.
+  // Frontend verifiers that look up Aic/AivInitializePipeOp no longer apply;
+  // ExpandTileOp handles these ops.
+  if (getOperation()->hasAttr("candidates")) {
+    return success();
+  }
   if (failed(verifyNoUnpublishedFixpipeFrontendAttrs(getOperation()))) {
     return failure();
   }
@@ -21447,7 +21483,8 @@ LogicalResult TPushToAivOp::verify() {
     return failure();
   }
   if (failed(verifyFrontendTensorEntryMatchesInit(getOperation(), getId(),
-                                                  getTile().getType()))) {
+                                                  getTile().getType(),
+                                                  getSplit()))) {
     return failure();
   }
   if (failed(verifyOddSplitTileEntry(getOperation(), getSplit(),
@@ -21581,6 +21618,11 @@ LogicalResult TPushToAivOp::verify() {
 }
 
 LogicalResult TPushToAicOp::verify() {
+  // Template-eligible ops keep frontend form after init lowering (see
+  // TPushToAivOp::verify note); ExpandTileOp handles them.
+  if (getOperation()->hasAttr("candidates")) {
+    return success();
+  }
   if (failed(verifyNoUnpublishedFixpipeFrontendAttrs(getOperation()))) {
     return failure();
   }
@@ -21594,7 +21636,8 @@ LogicalResult TPushToAicOp::verify() {
     return failure();
   }
   if (failed(verifyFrontendTensorEntryMatchesInit(getOperation(), getId(),
-                                                  getTile().getType()))) {
+                                                  getTile().getType(),
+                                                  getSplit()))) {
     return failure();
   }
   if (failed(verifyOddSplitTileEntry(getOperation(), getSplit(),
@@ -21606,6 +21649,11 @@ LogicalResult TPushToAicOp::verify() {
 }
 
 LogicalResult TPopFromAicOp::verify() {
+  // Template-eligible ops keep frontend form after init lowering (see
+  // TPushToAivOp::verify note); ExpandTileOp handles them.
+  if (getOperation()->hasAttr("candidates")) {
+    return success();
+  }
   if (failed(verifyNoUnpublishedFixpipeFrontendAttrs(getOperation()))) {
     return failure();
   }
@@ -21621,6 +21669,11 @@ LogicalResult TPopFromAicOp::verify() {
 }
 
 LogicalResult TPopFromAivOp::verify() {
+  // Template-eligible ops keep frontend form after init lowering (see
+  // TPushToAivOp::verify note); ExpandTileOp handles them.
+  if (getOperation()->hasAttr("candidates")) {
+    return success();
+  }
   if (failed(verifyNoUnpublishedFixpipeFrontendAttrs(getOperation()))) {
     return failure();
   }
@@ -21666,7 +21719,7 @@ LogicalResult TFreeFromAicOp::verify() {
   }
   if (getEntry()) {
     return verifyFrontendTensorEntryMatchesInit(getOperation(), getId(),
-                                                getEntry().getType());
+                                                getEntry().getType(), getSplit());
   }
   return success();
 }
@@ -21709,7 +21762,7 @@ LogicalResult TFreeFromAivOp::verify() {
   }
   if (getEntry()) {
     return verifyFrontendTensorEntryMatchesInit(getOperation(), getId(),
-                                                getEntry().getType());
+                                                getEntry().getType(), getSplit());
   }
   return success();
 }
@@ -21923,7 +21976,7 @@ LogicalResult TPushOp::verify() {
     return failure();
   }
   if (failed(verifyTensorEntryMatchesInternalPipeInit(
-          getOperation(), getPipeHandle(), getTile().getType()))) {
+          getOperation(), getPipeHandle(), getTile().getType(), getSplit()))) {
     return failure();
   }
   if (!isa<TensorViewType>(getTile().getType()) &&
@@ -21953,7 +22006,7 @@ LogicalResult TAllocOp::verify() {
     return failure();
   }
   if (failed(verifyTensorEntryMatchesInternalPipeInit(
-          getOperation(), getPipeHandle(), getEntry().getType()))) {
+          getOperation(), getPipeHandle(), getEntry().getType(), getSplit()))) {
     return failure();
   }
   return success();
@@ -21988,7 +22041,7 @@ LogicalResult TPopOp::verify() {
     return failure();
   }
   if (failed(verifyTensorEntryMatchesInternalPipeInit(
-          getOperation(), getPipeHandle(), getTile().getType()))) {
+          getOperation(), getPipeHandle(), getTile().getType(), getSplit()))) {
     return failure();
   }
   if (!isa<TensorViewType>(getTile().getType()) &&
@@ -22021,7 +22074,7 @@ LogicalResult TFreeOp::verify() {
   }
   if (getEntry() &&
       failed(verifyTensorEntryMatchesInternalPipeInit(
-          getOperation(), getPipeHandle(), getEntry().getType()))) {
+          getOperation(), getPipeHandle(), getEntry().getType(), getSplit()))) {
     return failure();
   }
   return success();
@@ -22635,7 +22688,22 @@ void TPushOp::getEffects(
 void TPushToAivOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
+  // Frontend pipe ops carrying `candidates` must survive PlanMemory/DCE so
+  // ExpandTileOp can expand them; without an explicit Write effect the
+  // result-less push is treated as pure dead code and silently erased.
   addEffect(effects, &getTileMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getTileMutable(), MemoryEffects::Write::get());
+  effects.emplace_back(MemoryEffects::Read::get(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(),
+                       SideEffects::DefaultResource::get());
+
+  // Template-eligible ops keep the frontend form after init lowering; the
+  // lookup below would fail (aic_initialize_pipe already lowered to
+  // initialize_l2l_pipe) and emit spurious id-mismatch errors.
+  if (getOperation()->hasAttr("candidates")) {
+    return;
+  }
 
   auto funcOp = getOperation()->getParentOfType<func::FuncOp>();
   if (!funcOp) {
@@ -22663,6 +22731,60 @@ void TPushToAivOp::getEffects(
                          getFixpipeQuantStateIdAttr(getOperation(), getId()),
                          FixpipeQuantStateResource::get());
   }
+}
+
+void TPushToAicOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  // Mirror TPushToAivOp::getEffects: keep the result-less frontend push alive
+  // through PlanMemory/DCE until ExpandTileOp expands it.
+  addEffect(effects, &getTileMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getTileMutable(), MemoryEffects::Write::get());
+  effects.emplace_back(MemoryEffects::Read::get(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(),
+                       SideEffects::DefaultResource::get());
+}
+
+void TPopFromAicOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  // Frontend pop produces its tile result from the pipe slot; model the slot
+  // read side so effects-driven passes see the op as non-pure.
+  auto state = getStateMutable();
+  if (!state.empty()) {
+    addEffect(effects, &*state.begin(), MemoryEffects::Read::get());
+    addEffect(effects, &*state.begin(), MemoryEffects::Write::get());
+  }
+  auto slotPtr = getSlotBasePtrMutable();
+  if (!slotPtr.empty()) {
+    addEffect(effects, &*slotPtr.begin(), MemoryEffects::Read::get());
+    addEffect(effects, &*slotPtr.begin(), MemoryEffects::Write::get());
+  }
+  effects.emplace_back(MemoryEffects::Read::get(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(),
+                       SideEffects::DefaultResource::get());
+}
+
+void TPopFromAivOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  // Mirror TPopFromAicOp::getEffects for the V2C consumer pop.
+  auto state = getStateMutable();
+  if (!state.empty()) {
+    addEffect(effects, &*state.begin(), MemoryEffects::Read::get());
+    addEffect(effects, &*state.begin(), MemoryEffects::Write::get());
+  }
+  auto slotPtr = getSlotBasePtrMutable();
+  if (!slotPtr.empty()) {
+    addEffect(effects, &*slotPtr.begin(), MemoryEffects::Read::get());
+    addEffect(effects, &*slotPtr.begin(), MemoryEffects::Write::get());
+  }
+  effects.emplace_back(MemoryEffects::Read::get(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(),
+                       SideEffects::DefaultResource::get());
 }
 
 void TAllocOp::getEffects(

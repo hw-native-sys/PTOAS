@@ -704,6 +704,42 @@ buildBackendChildCompileUnit(ModuleOp outer, ModuleOp targetChild) {
   if (failed(importCrossChildPeerFunctions(outer, targetChild, jobModule))) {
     return failure();
   }
+  // Reverse peers: functions in sibling children that import reserved
+  // buffers owned by functions in this child.  The import-side pipe init
+  // must join this compile unit so the reserve/import peer pair validation
+  // (PTOResolveReservedBuffers) sees both sides of every local FIFO; the
+  // forward clone above only covers this child's own imports.
+  for (ModuleOp sibling : outer.getOps<ModuleOp>()) {
+    if (sibling == targetChild) {
+      continue;
+    }
+    SmallVector<func::FuncOp, mlir::pto::kValue4> importers;
+    sibling.walk([&](func::FuncOp siblingFunc) {
+      if (siblingFunc.isExternal()) {
+        return;
+      }
+      bool importsFromTarget = false;
+      siblingFunc.walk([&](pto::ImportReservedBufferOp importOp) {
+        StringRef peerName = importOp.getPeerFuncAttr().getValue();
+        for (func::FuncOp ownedFunc : targetChild.getOps<func::FuncOp>()) {
+          if (mlir::pto::getPTODSLLogicalNameOrSymbolName(ownedFunc) ==
+              peerName) {
+            importsFromTarget = true;
+          }
+        }
+      });
+      if (importsFromTarget) {
+        importers.push_back(siblingFunc);
+      }
+    });
+    for (func::FuncOp importer : importers) {
+      StringRef importerSymbol = importer.getSymName();
+      if (!findFunctionBySymbolName(jobModule, importerSymbol)) {
+        cloneFunctionIntoModule(jobModule, importer, importerSymbol,
+                                "private");
+      }
+    }
+  }
   normalizeLocalPeerReferences(jobModule);
   return OwningOpRef<ModuleOp>(jobModule);
 }

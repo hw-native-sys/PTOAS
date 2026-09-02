@@ -606,6 +606,55 @@ static void appendOpContextAttrs(
          tryAppendPrecisionType<pto::TDivSOp>(op, attrs) ||
          tryAppendPrecisionType<pto::TRowExpandDivOp>(op, attrs) ||
          tryAppendPrecisionType<pto::TColExpandDivOp>(op, attrs));
+
+  if (auto push = dyn_cast<pto::TPushToAivOp>(op)) {
+    attrs.emplace_back("id", std::to_string(push.getId()));
+    attrs.emplace_back("split", std::to_string(push.getSplit()));
+    if (auto slotNum = push.getSlotNumAttr())
+      attrs.emplace_back("slot_num", std::to_string(slotNum.getInt()));
+    if (auto slotSize = push.getSlotSizeAttr())
+      attrs.emplace_back("slot_size", std::to_string(slotSize.getInt()));
+  }
+  if (auto push = dyn_cast<pto::TPushToAicOp>(op)) {
+    attrs.emplace_back("id", std::to_string(push.getId()));
+    attrs.emplace_back("split", std::to_string(push.getSplit()));
+    if (auto slotNum = push.getSlotNumAttr())
+      attrs.emplace_back("slot_num", std::to_string(slotNum.getInt()));
+    if (auto slotSize = push.getSlotSizeAttr())
+      attrs.emplace_back("slot_size", std::to_string(slotSize.getInt()));
+  }
+  if (auto pop = dyn_cast<pto::TPopFromAicOp>(op)) {
+    attrs.emplace_back("id", std::to_string(pop.getId()));
+    attrs.emplace_back("split", std::to_string(pop.getSplit()));
+    if (auto slotNum = pop.getSlotNumAttr())
+      attrs.emplace_back("slot_num", std::to_string(slotNum.getInt()));
+    if (auto slotSize = pop.getSlotSizeAttr())
+      attrs.emplace_back("slot_size", std::to_string(slotSize.getInt()));
+    if (auto consRows = pop.getConsRowsAttr())
+      attrs.emplace_back("cons_rows", std::to_string(consRows.getInt()));
+    if (auto consCols = pop.getConsColsAttr())
+      attrs.emplace_back("cons_cols", std::to_string(consCols.getInt()));
+    if (auto elemBytes = pop.getElemBytesAttr())
+      attrs.emplace_back("elem_bytes", std::to_string(elemBytes.getInt()));
+    if (auto consDtype = pop.getConsDtypeAttr())
+      attrs.emplace_back("cons_dtype", consDtype.getValue().str());
+  }
+  if (auto pop = dyn_cast<pto::TPopFromAivOp>(op)) {
+    attrs.emplace_back("id", std::to_string(pop.getId()));
+    attrs.emplace_back("split", std::to_string(pop.getSplit()));
+    if (auto slotNum = pop.getSlotNumAttr())
+      attrs.emplace_back("slot_num", std::to_string(slotNum.getInt()));
+    if (auto slotSize = pop.getSlotSizeAttr())
+      attrs.emplace_back("slot_size", std::to_string(slotSize.getInt()));
+    if (auto consRows = pop.getConsRowsAttr())
+      attrs.emplace_back("cons_rows", std::to_string(consRows.getInt()));
+    if (auto consCols = pop.getConsColsAttr())
+      attrs.emplace_back("cons_cols", std::to_string(consCols.getInt()));
+    if (auto elemBytes = pop.getElemBytesAttr())
+      attrs.emplace_back("elem_bytes", std::to_string(elemBytes.getInt()));
+    if (auto consDtype = pop.getConsDtypeAttr())
+      attrs.emplace_back("cons_dtype", consDtype.getValue().str());
+  }
 }
 
 static std::string buildContextAttrsJson(Operation *operation) {
@@ -719,6 +768,30 @@ static void appendViewOperandSpecJson(std::string &json, Value operand,
   json += "}";
 }
 
+static void appendViewOperandSpecJson(std::string &json, Value operand,
+                                      pto::TensorViewType tvType) {
+  std::string dtype = getDtypeString(tvType.getElementType());
+  json += "{\"kind\":\"view\",\"dtype\":\"" + dtype + "\",\"shape\":";
+  SmallVector<int64_t> shape;
+  SmallVector<int64_t> strides;
+  populatePTOViewShapeAndStrides(operand, shape, strides);
+  if (shape.empty()) {
+    shape.assign(tvType.getShape().begin(), tvType.getShape().end());
+  }
+  appendJsonDimArray(json, shape);
+  if (!strides.empty()) {
+    json += ",\"strides\":";
+    appendJsonDimArray(json, strides);
+  }
+  json += ",\"memory_space\":\"gm\"";
+  if (auto layout = getViewLayoutString(resolveViewLayout(operand))) {
+    json += ",\"config\":{\"layout\":\"";
+    json += *layout;
+    json += "\"}";
+  }
+  json += "}";
+}
+
 static void appendVectorOperandSpecJson(std::string &json,
                                         VectorType vectorType) {
   std::string dtype = getDtypeString(vectorType.getElementType());
@@ -739,7 +812,7 @@ static void appendScalarOperandSpecJson(std::string &json, Value operand) {
 }
 
 static void appendPtrOperandSpecJson(std::string &json, pto::PtrType ptrType) {
-  json += "{\"kind\":\"pointer\",\"dtype\":\"";
+  json += "{\"kind\":\"ptr\",\"dtype\":\"";
   json += getDtypeString(ptrType.getElementType());
   json += "\",\"memory_space\":\"";
   json += getMemorySpaceString(ptrType);
@@ -782,6 +855,21 @@ buildOperandSpecsJson(Operation *operation) {
         return std::nullopt;
       }
       appendViewOperandSpecJson(json, operand, viewType);
+      continue;
+    }
+
+    if (auto tvType = dyn_cast<pto::TensorViewType>(type)) {
+      if (getDtypeString(tvType.getElementType()).empty()) {
+        operation->emitError(
+            "InsertTemplateAttributes encountered an unsupported tensor_view dtype");
+        return std::nullopt;
+      }
+      appendViewOperandSpecJson(json, operand, tvType);
+      continue;
+    }
+
+    if (dyn_cast<pto::StructType>(type)) {
+      json += "{\"kind\":\"struct\",\"dtype\":\"struct\"}";
       continue;
     }
 

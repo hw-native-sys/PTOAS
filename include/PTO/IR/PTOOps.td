@@ -1703,14 +1703,20 @@ def TAllocToAicOp : PTO_TOp<"talloc_to_aic"> {
 }
 
 def TPushToAivOp : PTO_TOp<"tpush_to_aiv", [
+    AttrSizedOperandSegments,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
   let summary = "Frontend C2V producer push from Cube to Vector";
 
   let arguments = (ins
       PTOPipeEntryType:$tile,
+      Optional<StructType>:$state,
+      Optional<PtrType>:$slot_base_ptr,
       DefaultValuedOptionalAttr<I32Attr, "0">:$id,
-      I8Attr:$split
+      I8Attr:$split,
+      OptionalAttr<I32Attr>:$slot_num,
+      OptionalAttr<I32Attr>:$slot_size,
+      DefaultValuedOptionalAttr<I32Attr, "0">:$en_unit_flag
   );
 
   let results = (outs);
@@ -1718,18 +1724,30 @@ def TPushToAivOp : PTO_TOp<"tpush_to_aiv", [
 
   let assemblyFormat = [{
     `(` $tile `:` qualified(type($tile)) `)`
-    `{` (`id` `=` $id^ `,`)? `split` `=` $split `}` attr-dict
+    (`state` `(` $state^ `:` qualified(type($state)) `)`)?
+    (`slot_ptr` `(` $slot_base_ptr^ `:` qualified(type($slot_base_ptr)) `)`)?
+    `{` (`id` `=` $id^ `,`)? `split` `=` $split `}`
+    (`slot_num` `=` $slot_num^)? (`slot_size` `=` $slot_size^)?
+    attr-dict
   }];
 }
 
-def TPushToAicOp : PTO_TOp<"tpush_to_aic"> {
+def TPushToAicOp : PTO_TOp<"tpush_to_aic", [
+    AttrSizedOperandSegments,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
   let summary = "Frontend V2C producer push from Vector to Cube";
 
   let arguments = (ins
       PTOPipeEntryType:$tile,
       Optional<I64>:$aiv_subblockid,
+      Optional<StructType>:$state,
+      Optional<PtrType>:$slot_base_ptr,
       DefaultValuedOptionalAttr<I32Attr, "0">:$id,
-      I8Attr:$split
+      I8Attr:$split,
+      OptionalAttr<I32Attr>:$slot_num,
+      OptionalAttr<I32Attr>:$slot_size,
+      DefaultValuedOptionalAttr<I32Attr, "0">:$en_unit_flag
   );
 
   let results = (outs);
@@ -1739,19 +1757,34 @@ def TPushToAicOp : PTO_TOp<"tpush_to_aic"> {
     `(` $tile `:` qualified(type($tile)) `)`
     `{` (`id` `=` $id^ `,`)? `split` `=` $split `}`
     (`aiv_subblockid` `(` $aiv_subblockid^ `)`)?
+    (`state` `(` $state^ `:` qualified(type($state)) `)`)?
+    (`slot_ptr` `(` $slot_base_ptr^ `:` qualified(type($slot_base_ptr)) `)`)?
+    (`slot_num` `=` $slot_num^)? (`slot_size` `=` $slot_size^)?
     attr-dict
   }];
 }
 
-def TPopFromAicOp : PTO_TOp<"tpop_from_aic", [AttrSizedOperandSegments]> {
+def TPopFromAicOp : PTO_TOp<"tpop_from_aic", [
+    AttrSizedOperandSegments,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
   let summary = "Frontend C2V consumer pop in Vector kernel";
 
   let arguments = (ins
       Optional<Index>:$valid_row,
       Optional<Index>:$valid_col,
       Optional<I64>:$aiv_subblockid,
+      Optional<StructType>:$state,
+      Optional<PtrType>:$slot_base_ptr,
       DefaultValuedOptionalAttr<I32Attr, "0">:$id,
-      I8Attr:$split
+      I8Attr:$split,
+      OptionalAttr<I32Attr>:$slot_num,
+      OptionalAttr<I32Attr>:$slot_size,
+      OptionalAttr<I32Attr>:$cons_rows,
+      OptionalAttr<I32Attr>:$cons_cols,
+      OptionalAttr<I32Attr>:$elem_bytes,
+      OptionalAttr<StrAttr>:$cons_dtype,
+      DefaultValuedOptionalAttr<I32Attr, "0">:$en_unit_flag
   );
 
   let results = (outs PTOPipeEntryType:$tile);
@@ -1761,26 +1794,49 @@ def TPopFromAicOp : PTO_TOp<"tpop_from_aic", [AttrSizedOperandSegments]> {
     (`(` $valid_row^ `,` $valid_col `)`)?
     `{` (`id` `=` $id^ `,`)? `split` `=` $split `}`
     (`aiv_subblockid` `(` $aiv_subblockid^ `)`)?
+    (`state` `(` $state^ `:` qualified(type($state)) `)`)?
+    (`slot_ptr` `(` $slot_base_ptr^ `:` qualified(type($slot_base_ptr)) `)`)?
+    (`slot_num` `=` $slot_num^)? (`slot_size` `=` $slot_size^)?
+    (`cons_dtype` `=` $cons_dtype^)?
     attr-dict
     `->` qualified(type($tile))
   }];
 }
 
-def TPopFromAivOp : PTO_TOp<"tpop_from_aiv", [AttrSizedOperandSegments]> {
+def TPopFromAivOp : PTO_TOp<"tpop_from_aiv", [
+    AttrSizedOperandSegments,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
   let summary = "Frontend V2C consumer pop in Cube kernel";
 
   let arguments = (ins
       Optional<Index>:$valid_row,
       Optional<Index>:$valid_col,
+      Optional<I64>:$aiv_subblockid,
+      Optional<StructType>:$state,
+      Optional<PtrType>:$slot_base_ptr,
       DefaultValuedOptionalAttr<I32Attr, "0">:$id,
-      I8Attr:$split
+      I8Attr:$split,
+      OptionalAttr<I32Attr>:$slot_num,
+      OptionalAttr<I32Attr>:$slot_size,
+      OptionalAttr<I32Attr>:$cons_rows,
+      OptionalAttr<I32Attr>:$cons_cols,
+      OptionalAttr<I32Attr>:$elem_bytes,
+      OptionalAttr<StrAttr>:$cons_dtype,
+      DefaultValuedOptionalAttr<I32Attr, "0">:$en_unit_flag
   );
 
   let results = (outs PTOPipeEntryType:$tile);
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    (`(` $valid_row^ `,` $valid_col `)`)? `{` (`id` `=` $id^ `,`)? `split` `=` $split `}` attr-dict
+    (`(` $valid_row^ `,` $valid_col `)`)? `{` (`id` `=` $id^ `,`)? `split` `=` $split `}`
+    (`aiv_subblockid` `(` $aiv_subblockid^ `)`)?
+    (`state` `(` $state^ `:` qualified(type($state)) `)`)?
+    (`slot_ptr` `(` $slot_base_ptr^ `:` qualified(type($slot_base_ptr)) `)`)?
+    (`slot_num` `=` $slot_num^)? (`slot_size` `=` $slot_size^)?
+    (`cons_dtype` `=` $cons_dtype^)?
+    attr-dict
     `->` qualified(type($tile))
   }];
 }
@@ -2641,11 +2697,46 @@ def TPopOp : PTO_TOp<"tpop", [
       if (!as)
         return ::mlir::pto::PIPE::PIPE_UNASSIGNED;
 
+      // A5 GM-entry pops bind the consumer tile AND issue an internal MTE2
+      // TLOAD from the GM slot, so they must be modeled on PIPE_MTE2; local
+      // pops only TASSIGN the slot address (scalar). GM-entry pipes are the
+      // L2G2L init form (dir_mask 1/2/3 map to DIR_C2V_GM/DIR_V2C_GM/
+      // DIR_BOTH on A5, mirroring getTPipeDirectionToken in PTOToEmitC).
+      if (isA5Target()) {
+        if (Value handle = getPipeHandle()) {
+          if (handle.getDefiningOp() &&
+              ::mlir::isa<::mlir::pto::InitializeL2G2LPipeOp>(
+                  handle.getDefiningOp()))
+            return ::mlir::pto::PIPE::PIPE_MTE2;
+          if (auto l2l =
+                  handle.getDefiningOp()
+                      ? ::mlir::dyn_cast<::mlir::pto::InitializeL2LPipeOp>(
+                            handle.getDefiningOp())
+                      : nullptr) {
+            // Local pops: TPOP's internal data-arrival wait runs on the
+            // consumer-side pipe: PIPE_V for C2V (vector consumer), PIPE_MTE1
+            // for V2C (cube consumer). Modeling the pop on that pipe lets
+            // InsertSync emit the cross-pipe handshake the implementation
+            // writes manually, e.g. set/wait_flag(PIPE_V, PIPE_MTE3) before a
+            // TSTORE consuming the popped entry.
+            int64_t dirMask = l2l.getDirMask();
+            if (dirMask == 2)
+              return ::mlir::pto::PIPE::PIPE_MTE1;
+            if (dirMask == 3) {
+              auto tileSpace = getAddressSpace(getTile().getType());
+              if (tileSpace == ::mlir::pto::AddressSpace::MAT)
+                return ::mlir::pto::PIPE::PIPE_MTE1;
+              return ::mlir::pto::PIPE::PIPE_V;
+            }
+            return ::mlir::pto::PIPE::PIPE_V;
+          }
+        }
+        return ::mlir::pto::PIPE::PIPE_S;
+      }
       switch (*as) {
       case ::mlir::pto::AddressSpace::VEC:
       case ::mlir::pto::AddressSpace::MAT:
-        return isA5Target() ? ::mlir::pto::PIPE::PIPE_S
-                            : ::mlir::pto::PIPE::PIPE_MTE2;
+        return ::mlir::pto::PIPE::PIPE_MTE2;
       default:
         break;
       }

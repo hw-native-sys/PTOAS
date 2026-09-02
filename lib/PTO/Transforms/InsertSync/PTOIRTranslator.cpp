@@ -376,6 +376,12 @@ void PTOIRTranslator::RecursionIR(Region *region) {
     else if (auto addPtrOp = dyn_cast<pto::AddPtrOp>(op)) {
       UpdateAliasBufferInfo(addPtrOp.getResult(), addPtrOp.getPtr());
     }
+    else if (auto tileBufAddrOp = dyn_cast<pto::TileBufAddrOp>(op)) {
+      // `tile.as_ptr()` starts an address-provenance chain; propagating the
+      // tile's MemInfo here lets alloc_tile(addr=...) consumers (e.g. TASSIGN
+      // strip views) stay visible to the dependency analysis.
+      UpdateAliasBufferInfo(tileBufAddrOp.getResult(), tileBufAddrOp.getSrc());
+    }
     else if (auto ptrToIntOp = dyn_cast<pto::PtrToIntOp>(op)) {
       UpdateAliasBufferInfo(ptrToIntOp.getResult(), ptrToIntOp.getPtr());
     }
@@ -485,6 +491,19 @@ LogicalResult PTOIRTranslator::UpdateAllocTileOpMemInfo(pto::AllocTileOp op) {
       knownPhysicalAddress.has_value() && isLocalAddressSpace(space));
 
   buffer2MemInfoMap_[res].emplace_back(newMemInfo->clone());
+
+  // 3b. When addr derives from another buffer (a tile.as_ptr() -> addptr ->
+  // ptrtoint chain), inherit the source buffer's MemInfo (conservatively
+  // treated as overlapping it). Otherwise strip/alias views become
+  // independent roots and the dependency analysis misses their read/write
+  // conflicts with the parent tile (a missing M->FIX handshake).
+  if (Value addr = op.getAddr()) {
+    if (buffer2MemInfoMap_.contains(addr)) {
+      for (auto &parentInfo : buffer2MemInfoMap_[addr]) {
+        appendUniqueMemInfo(buffer2MemInfoMap_[res], parentInfo->clone(res));
+      }
+    }
+  }
   return success();
 }
 
