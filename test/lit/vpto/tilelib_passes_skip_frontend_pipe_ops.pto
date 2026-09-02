@@ -6,10 +6,13 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// TileLib passes must remain safe when run without frontend pipe lowering.
-// These ops implement TileOpInterface but are pipe pseudo-ops, not templates.
-// RUN: pto-test-opt --pto-insert-template-attributes %s | FileCheck %s
-// RUN: pto-test-opt --pto-expand-tile-op %s | FileCheck %s
+// TileLib passes and frontend pipe ops: tpush/tpop are now template-eligible
+// (marked by InsertTemplateAttributes when a PTODSL runtime is available), so
+// these passes require an initialized runtime when such ops are present and
+// fail cleanly without one.  Non-template pseudo-ops (talloc/tfree) still take
+// no part in template expansion.
+// RUN: not pto-test-opt --pto-insert-template-attributes %s 2>&1 | FileCheck %s --check-prefix=INSERT
+// RUN: not pto-test-opt --pto-expand-tile-op %s 2>&1 | FileCheck %s --check-prefix=EXPAND
 
 module {
   func.func @frontend_cube_pipe_ops(%base: !pto.ptr<f32, gm>) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
@@ -40,8 +43,5 @@ module {
   }
 }
 
-// CHECK: pto.talloc_to_aiv
-// CHECK-NOT: candidates =
-// CHECK: pto.tpush_to_aiv
-// CHECK: pto.tpop_from_aic
-// CHECK: pto.tfree_from_aic
+// INSERT: error: InsertTemplateAttributes requires an initialized PTODSL runtime
+// EXPAND: error: ExpandTileOp requires an initialized PTODSL runtime

@@ -125,6 +125,10 @@ _TEMPLATE_MODULES = {
     ("a5", "pto.tsqrt"): ".a5.tsqrt",
     ("a5", "pto.ttrans"): ".a5.ttrans",
     ("a5", "pto.ttri"): ".a5.ttri",
+    ("a5", "pto.tpush_to_aiv"): ".a5.tpush",
+    ("a5", "pto.tpush_to_aic"): ".a5.tpush",
+    ("a5", "pto.tpop_from_aic"): ".a5.tpop",
+    ("a5", "pto.tpop_from_aiv"): ".a5.tpop",
     ("a5", "pto.txor"): ".a5.txor",
     ("a5", "pto.txors"): ".a5.txors",
 }
