@@ -147,7 +147,7 @@ static std::string sanitizeModuleId(llvm::StringRef raw) {
 
 static std::optional<std::string> getAscendHomePath() {
   const char *env = std::getenv("ASCEND_HOME_PATH");
-  if (!env || !*env) {
+  if (!env || env[0] == '\0') {
     return std::nullopt;
   }
   return std::string(env);
@@ -155,7 +155,7 @@ static std::optional<std::string> getAscendHomePath() {
 
 static std::optional<std::string> getEnvPath(llvm::StringRef name) {
   const char *env = std::getenv(name.str().c_str());
-  if (!env || !*env) {
+  if (!env || env[0] == '\0') {
     return std::nullopt;
   }
   return std::string(env);

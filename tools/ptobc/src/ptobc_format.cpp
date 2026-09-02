@@ -32,7 +32,7 @@ constexpr size_t kPTOBCMagicSize = sizeof(kPTOBCMagic);
 } // namespace
 
 void Buffer::append(const void* p, size_t n) {
-  const uint8_t* b = reinterpret_cast<const uint8_t*>(p);
+  const uint8_t* b = static_cast<const uint8_t*>(p);
   bytes.insert(bytes.end(), b, b + n);
 }
 
@@ -203,8 +203,20 @@ std::vector<uint8_t> PTOBCFile::serialize() const {
   return out.bytes;
 }
 
+std::filesystem::path canonicalizeIoPath(const std::string& path) {
+  // weakly_canonical resolves the existing prefix (symlinks, dots) while
+  // tolerating a not-yet-existing tail, which writeFile needs for new outputs.
+  std::error_code ec;
+  std::filesystem::path canonical =
+      std::filesystem::weakly_canonical(std::filesystem::path(path), ec);
+  if (ec || canonical.empty()) {
+    return std::filesystem::path(path).lexically_normal();
+  }
+  return canonical;
+}
+
 std::vector<uint8_t> readFile(const std::string& path) {
-  std::ifstream ifs(path, std::ios::binary);
+  std::ifstream ifs(canonicalizeIoPath(path), std::ios::binary);
   if (!ifs) {
     throw std::runtime_error("Failed to open: " + path);
   }
@@ -213,11 +225,12 @@ std::vector<uint8_t> readFile(const std::string& path) {
 }
 
 void writeFile(const std::string& path, const std::vector<uint8_t>& data) {
-  std::ofstream ofs(path, std::ios::binary);
+  std::ofstream ofs(canonicalizeIoPath(path), std::ios::binary);
   if (!ofs) {
     throw std::runtime_error("Failed to write: " + path);
   }
-  ofs.write(reinterpret_cast<const char*>(data.data()), data.size());
+  const char* rawBytes = static_cast<const char*>(static_cast<const void*>(data.data()));
+  ofs.write(rawBytes, data.size());
 }
 
 } // namespace ptobc

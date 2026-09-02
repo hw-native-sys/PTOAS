@@ -168,7 +168,8 @@ static bool resolveTextInputArch(llvm::StringRef buffer, bool cliArchSpecified,
 
 static OwningOpRef<ModuleOp> decodePTOBCModule(llvm::StringRef buffer,
                                                MLIRContext &context) {
-  llvm::ArrayRef<uint8_t> bytes(reinterpret_cast<const uint8_t *>(buffer.data()),
+  const void *rawBytes = buffer.data();
+  llvm::ArrayRef<uint8_t> bytes(static_cast<const uint8_t *>(rawBytes),
                                 buffer.size());
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
   try {
@@ -336,7 +337,7 @@ static bool isUserVisibleIROutputRequested() {
 
 static SmallVector<StringRef> collectImportedPeerNames(ModuleOp module) {
   SmallVector<StringRef> names;
-  module.walk([&](pto::ImportReservedBufferOp importOp) {
+  module.walk([&names](pto::ImportReservedBufferOp importOp) {
     names.push_back(importOp.getPeerFuncAttr().getValue());
   });
   llvm::sort(names);
@@ -346,7 +347,7 @@ static SmallVector<StringRef> collectImportedPeerNames(ModuleOp module) {
 
 static SmallVector<StringRef> collectDirectCalleeNames(ModuleOp module) {
   SmallVector<StringRef> names;
-  module.walk([&](func::CallOp callOp) {
+  module.walk([&names](func::CallOp callOp) {
     names.push_back(callOp.getCalleeAttr().getLeafReference());
   });
   llvm::sort(names);
@@ -359,7 +360,7 @@ static SmallVector<StringRef> collectDirectCalleeNames(func::FuncOp funcOp) {
   if (!funcOp || funcOp.isDeclaration()) {
     return names;
   }
-  funcOp.walk([&](func::CallOp callOp) {
+  funcOp.walk([&names, &funcOp](func::CallOp callOp) {
     if (callOp->getParentOfType<func::FuncOp>() != funcOp) {
       return;
     }
@@ -630,7 +631,8 @@ static LogicalResult addLogicalFunctionWrappers(ModuleOp targetChild,
 
 static void rewritePeerReferences(ModuleOp jobModule, StringRef logicalName,
                                   StringRef peerSymbolName) {
-  jobModule.walk([&](pto::ImportReservedBufferOp importOp) {
+  jobModule.walk([&jobModule, &logicalName,
+                  &peerSymbolName](pto::ImportReservedBufferOp importOp) {
     const bool matchesLogicalName =
         importOp.getPeerFuncAttr().getValue() == logicalName;
     if (matchesLogicalName) {
@@ -673,7 +675,7 @@ static LogicalResult importCrossChildPeerFunctions(ModuleOp outer,
 }
 
 static void normalizeLocalPeerReferences(ModuleOp jobModule) {
-  jobModule.walk([&](pto::ImportReservedBufferOp importOp) {
+  jobModule.walk([&jobModule](pto::ImportReservedBufferOp importOp) {
     StringRef peerRef = importOp.getPeerFuncAttr().getValue();
     func::FuncOp localPeer = findFunctionForPeerReference(jobModule, peerRef);
     const bool needsPeerRename = localPeer && localPeer.getSymName() != peerRef;
@@ -736,7 +738,7 @@ static std::string summarizeMixedChildModule(ModuleOp module) {
   if (!exportedNames.empty()) {
     os << "exports=[";
     for (size_t i = 0; i < exportedNames.size(); ++i) {
-      if (i) {
+      if (i != 0) {
         os << ", ";
       }
       os << exportedNames[i];
@@ -838,7 +840,7 @@ llvm::StringRef mlir::pto::PTOASContext::getOutputPath() const {
   return outputPath;
 }
 
-std::string mlir::pto::PTOASContext::allocModuleId() {
+std::string mlir::pto::PTOASContext::allocModuleId() const {
   static size_t nextModuleId = 0;
   return "ptoas_module_" + std::to_string(nextModuleId++);
 }
@@ -898,7 +900,7 @@ mlir::pto::PTOASContext::createTempPath(llvm::StringRef prefix,
 
 static bool hasPTOEntry(ModuleOp module) {
   bool found = false;
-  module.walk([&](func::FuncOp func) {
+  module.walk([&found](func::FuncOp func) {
     if (mlir::pto::isPTOEntryFunction(func)) {
       found = true;
       return WalkResult::interrupt();

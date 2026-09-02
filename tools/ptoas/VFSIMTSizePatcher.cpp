@@ -472,8 +472,9 @@ decodeCallSites(const ELFFunction &caller, StringRef objectBytes,
   llvm::SmallVector<DecodedCallSite, mlir::pto::kValue4> callSites;
   for (uint64_t offset = 0; offset + sizeof(uint64_t) <= bytes.size();
        offset += kInstructionBytes) {
+    const void *rawInstruction = bytes.data() + offset;
     uint64_t instruction = llvm::support::endian::read64le(
-        reinterpret_cast<const uint8_t *>(bytes.data() + offset));
+        static_cast<const uint8_t *>(rawInstruction));
     if (!isVFSIMT(instruction)) {
       continue;
     }
@@ -548,9 +549,10 @@ resolveManifestCalls(llvm::ArrayRef<const SimtCallSite *> calls,
     if (failed(validatePatchCallee(callee, diagOS))) {
       return failure();
     }
-    auto existing = llvm::find_if(resolvedCalls, [&](const ResolvedCall &item) {
-      return item.callee->name == callee.name;
-    });
+    auto existing =
+        llvm::find_if(resolvedCalls, [&callee](const ResolvedCall &item) {
+          return item.callee->name == callee.name;
+        });
     if (existing == resolvedCalls.end()) {
       resolvedCalls.push_back({call, &callee, false});
     }
@@ -758,12 +760,14 @@ static LogicalResult validatePatchedBytes(StringRef rawBytes,
     return failure();
   }
   for (const PatchRecord &record : plan) {
-    const uint64_t rawInstruction =
-        llvm::support::endian::read64le(reinterpret_cast<const uint8_t *>(
-            rawBytes.data() + record.decoded.fileOffset));
-    const uint64_t patchedInstruction =
-        llvm::support::endian::read64le(reinterpret_cast<const uint8_t *>(
-            patchedBytes.data() + record.decoded.fileOffset));
+    const void *rawInstructionBytes =
+        rawBytes.data() + record.decoded.fileOffset;
+    const uint64_t rawInstruction = llvm::support::endian::read64le(
+        static_cast<const uint8_t *>(rawInstructionBytes));
+    const void *patchedInstructionBytes =
+        patchedBytes.data() + record.decoded.fileOffset;
+    const uint64_t patchedInstruction = llvm::support::endian::read64le(
+        static_cast<const uint8_t *>(patchedInstructionBytes));
     if (((rawInstruction ^ patchedInstruction) & ~kVFSIMTSizeMask) != 0) {
       emitError(diagOS, "patch changes bits outside the VF_SIMT size field");
       return failure();
@@ -790,7 +794,7 @@ static LogicalResult writePatchedObject(StringRef path, StringRef bytes,
                                         llvm::raw_ostream &diagOS) {
   // FileOutputBuffer may leave a partial file if allocation or commit fails.
   auto removeOutput =
-      llvm::make_scope_exit([&]() { llvm::sys::fs::remove(path); });
+      llvm::make_scope_exit([&path]() { llvm::sys::fs::remove(path); });
   auto output = llvm::FileOutputBuffer::create(path, bytes.size());
   if (!output) {
     diagOS << "Error: VF_SIMT size patch: failed to create '" << path

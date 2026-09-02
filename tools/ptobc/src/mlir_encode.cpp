@@ -561,6 +561,17 @@ struct Encoder {
   bool
   tryEncodeLegacyFpOperands(mlir::Operation &op, Buffer &out,
                             const ptobc::v0::OpcodeAndVariant &variantInfo);
+  void encodeFixedCountOperands(
+      mlir::Operation &op, Buffer &out, const ptobc::v0::OpInfo &info,
+      const ptobc::v0::OpcodeAndVariant &variantInfo);
+  void encodeByVariantOperands(mlir::Operation &op, Buffer &out,
+                               const ptobc::v0::OpcodeAndVariant &variantInfo);
+  void encodeLengthPrefixedOperands(mlir::Operation &op, Buffer &out);
+  void encodeSegmentedOperands(mlir::Operation &op, Buffer &out,
+                               const ptobc::v0::OpInfo &info,
+                               llvm::ArrayRef<uint64_t> imms);
+  void encodeOptMaskOperands(mlir::Operation &op, Buffer &out,
+                             llvm::ArrayRef<uint64_t> imms);
   void encodeKnownOperandMode(mlir::Operation &op, Buffer &out,
                               const ptobc::v0::OpInfo &info,
                               const ptobc::v0::OpcodeAndVariant &variantInfo,
@@ -702,14 +713,17 @@ void Encoder::encodeAllocTileImmediate(mlir::Operation &op, Buffer &out,
         "imm_kind=alloc_tile but op is not pto.alloc_tile");
   }
   uint8_t mask = 0;
+  constexpr uint8_t kAllocTileValidRowBit = 0x1;
+  constexpr uint8_t kAllocTileValidColBit = 0x2;
+  constexpr uint8_t kAllocTileAddrBit = 0x4;
   if (at.getValidRow()) {
-    mask |= 0x1;
+    mask |= kAllocTileValidRowBit;
   }
   if (at.getValidCol()) {
-    mask |= 0x2;
+    mask |= kAllocTileValidColBit;
   }
   if (at.getAddr()) {
-    mask |= 0x4;
+    mask |= kAllocTileAddrBit;
   }
   out.appendU8(mask);
   imms.push_back(mask);
@@ -781,7 +795,7 @@ bool Encoder::tryEncodeLegacyIndexedTscatterOperands(
 bool Encoder::tryEncodeLegacyFpOperands(
     mlir::Operation &op, Buffer &out,
     const ptobc::v0::OpcodeAndVariant &variantInfo) {
-  auto emit = [&](llvm::ArrayRef<mlir::Value> operands) {
+  auto emit = [this, &out](llvm::ArrayRef<mlir::Value> operands) {
     for (mlir::Value value : operands) {
       writeULEB128(getValueId(value), out.bytes);
     }
@@ -814,51 +828,81 @@ bool Encoder::tryEncodeLegacyFpOperands(
   }
 }
 
+void Encoder::encodeFixedCountOperands(mlir::Operation &op, Buffer &out,
+                                       const ptobc::v0::OpInfo &info,
+                                       const ptobc::v0::OpcodeAndVariant &variantInfo) {
+  if (tryEncodeLegacyIndexedTscatterOperands(op, out, variantInfo)) {
+    return;
+  }
+  emitOperandIds(op, out, info.num_operands);
+}
+
+void Encoder::encodeByVariantOperands(mlir::Operation &op, Buffer &out,
+                                      const ptobc::v0::OpcodeAndVariant &variantInfo) {
+  auto count = ptobc::v0::lookupOperandsByVariant(variantInfo.opcode,
+                                                  variantInfo.variant);
+  if (!count) {
+    throw std::runtime_error("missing by-variant operand count");
+  }
+  emitOperandIds(op, out, *count);
+}
+
+void Encoder::encodeLengthPrefixedOperands(mlir::Operation &op, Buffer &out) {
+  writeULEB128(op.getNumOperands(), out.bytes);
+  for (auto value : op.getOperands()) {
+    writeULEB128(getValueId(value), out.bytes);
+  }
+}
+
+void Encoder::encodeSegmentedOperands(mlir::Operation &op, Buffer &out,
+                                      const ptobc::v0::OpInfo &info,
+                                      llvm::ArrayRef<uint64_t> imms) {
+  if (imms.size() < kSegmentedOperandImmediateCount) {
+    throw std::runtime_error("segmented operands missing immediates");
+  }
+  if (imms[0] != 0) {
+    throw std::runtime_error(
+        "list_mode=1 not implemented in ptobc encoder yet");
+  }
+  emitOperandIds(op, out,
+                 size_t(info.num_operands) + size_t(imms[1]) + size_t(imms[2]));
+}
+
+void Encoder::encodeOptMaskOperands(mlir::Operation &op, Buffer &out,
+                                    llvm::ArrayRef<uint64_t> imms) {
+  if (imms.empty()) {
+    throw std::runtime_error("optmask operands missing immediate");
+  }
+  constexpr uint64_t kOptMaskValidRowBit = 0x1;
+  constexpr uint64_t kOptMaskValidColBit = 0x2;
+  constexpr uint64_t kOptMaskAddrBit = 0x4;
+  const uint64_t optMask = imms.front();
+  const size_t operandCount =
+      ((optMask & kOptMaskValidRowBit) != 0 ? 1U : 0U) +
+      ((optMask & kOptMaskValidColBit) != 0 ? 1U : 0U) +
+      ((optMask & kOptMaskAddrBit) != 0 ? 1U : 0U);
+  emitOperandIds(op, out, operandCount);
+}
+
 void Encoder::encodeKnownOperandMode(
     mlir::Operation &op, Buffer &out, const ptobc::v0::OpInfo &info,
     const ptobc::v0::OpcodeAndVariant &variantInfo,
     llvm::ArrayRef<uint64_t> imms) {
   switch (info.operand_mode) {
   case 0x00:
-    if (tryEncodeLegacyIndexedTscatterOperands(op, out, variantInfo)) {
-      return;
-    }
-    emitOperandIds(op, out, info.num_operands);
+    encodeFixedCountOperands(op, out, info, variantInfo);
     return;
-  case 0x01: {
-    auto count = ptobc::v0::lookupOperandsByVariant(variantInfo.opcode,
-                                                    variantInfo.variant);
-    if (!count) {
-      throw std::runtime_error("missing by-variant operand count");
-    }
-    emitOperandIds(op, out, *count);
+  case 0x01:
+    encodeByVariantOperands(op, out, variantInfo);
     return;
-  }
   case 0x02:
-    writeULEB128(op.getNumOperands(), out.bytes);
-    for (auto value : op.getOperands()) {
-      writeULEB128(getValueId(value), out.bytes);
-    }
+    encodeLengthPrefixedOperands(op, out);
     return;
   case 0x03:
-    if (imms.size() < kSegmentedOperandImmediateCount) {
-      throw std::runtime_error("segmented operands missing immediates");
-    }
-    if (imms[0] != 0) {
-      throw std::runtime_error(
-          "list_mode=1 not implemented in ptobc encoder yet");
-    }
-    emitOperandIds(
-        op, out, size_t(info.num_operands) + size_t(imms[1]) + size_t(imms[2]));
+    encodeSegmentedOperands(op, out, info, imms);
     return;
   case 0x04:
-    if (imms.empty()) {
-      throw std::runtime_error("optmask operands missing immediate");
-    }
-    emitOperandIds(op, out,
-                   ((imms.front() & 0x1) ? 1 : 0) +
-                       ((imms.front() & 0x2) ? 1 : 0) +
-                       ((imms.front() & 0x4) ? 1 : 0));
+    encodeOptMaskOperands(op, out, imms);
     return;
   default:
     throw std::runtime_error("unknown operand_mode in v0 schema");

@@ -88,7 +88,8 @@ static LogicalResult collectVPTOKernelStubDecls(
   llvm::StringMap<unsigned> logicalNameToIndex;
 
   for (ModuleOp module : modules) {
-    module.walk([&](func::FuncOp func) {
+    module.walk([&decls, &logicalNameToIndex, &hadError,
+                 &diagOS](func::FuncOp func) {
       if (!pto::isPTOEntryFunction(func)) {
         return;
       }
@@ -144,7 +145,7 @@ LogicalResult mlir::pto::emitVPTOHostStubSource(ArrayRef<ModuleOp> modules,
   for (const VPTOKernelStubDecl &decl : stubDecls) {
     os << "extern \"C\" __global__ AICORE void " << decl.logicalName << "(";
     for (size_t i = 0; i < decl.argTypes.size(); ++i) {
-      if (i) {
+      if (i != 0) {
         os << ", ";
       }
       os << decl.argTypes[i] << " arg" << i;

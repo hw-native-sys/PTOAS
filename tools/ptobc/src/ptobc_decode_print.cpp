@@ -77,9 +77,9 @@ struct Reader {
     return *p++;
   }
   uint16_t readU16LE() {
-    uint16_t lo = readU8();
-    uint16_t hi = readU8();
-    return lo | (hi << kBitsPerByte);
+    const uint32_t lo = readU8();
+    const uint32_t hi = readU8();
+    return static_cast<uint16_t>(lo | (hi << kBitsPerByte));
   }
   uint32_t readU32LE() {
     uint32_t b0 = readU8();
@@ -354,19 +354,19 @@ struct BuildCtx {
   // Function-global value_id table.
   std::vector<mlir::Value> values;
 
-  // Function-global op_id table (preorder DFS).
-  uint64_t *nextOpId = nullptr;
-  std::vector<mlir::Operation *> *opsById = nullptr;
+  // Function-global op_id state (preorder DFS), reset per decoded function.
+  uint64_t nextOpId = 0;
+  std::vector<mlir::Operation *> opsById;
 };
 
-static mlir::Type getType(BuildCtx &bc, uint64_t tid) {
+static mlir::Type getType(const BuildCtx &bc, uint64_t tid) {
   if (tid >= bc.types->size()) {
     throw std::runtime_error("bad type_id");
   }
   return parseType(*bc.ctx, (*bc.types)[tid].asmStr);
 }
 
-static mlir::DictionaryAttr getAttrDict(BuildCtx &bc, uint64_t aid) {
+static mlir::DictionaryAttr getAttrDict(const BuildCtx &bc, uint64_t aid) {
   if (aid == 0) {
     return mlir::DictionaryAttr::get(bc.ctx);
   }
@@ -390,7 +390,7 @@ static llvm::APInt rebuildAPIntFromBytes(llvm::ArrayRef<uint8_t> bytes,
   return llvm::APInt(bitWidth, words);
 }
 
-static mlir::Attribute buildFloatConstAttr(BuildCtx &bc,
+static mlir::Attribute buildFloatConstAttr(const BuildCtx &bc,
                                            const ConstEntryParsed &entry) {
   auto ty = getType(bc, entry.typeId);
   auto floatType = mlir::dyn_cast<mlir::FloatType>(ty);
@@ -409,7 +409,7 @@ static mlir::Attribute buildFloatConstAttr(BuildCtx &bc,
   return mlir::FloatAttr::get(floatType, value);
 }
 
-static mlir::Attribute buildIntegerConstAttr(BuildCtx &bc,
+static mlir::Attribute buildIntegerConstAttr(const BuildCtx &bc,
                                              const ConstEntryParsed &entry) {
   auto ty = getType(bc, entry.typeId);
   auto intType = mlir::dyn_cast<mlir::IntegerType>(ty);
@@ -427,7 +427,7 @@ static mlir::Attribute buildIntegerConstAttr(BuildCtx &bc,
   return mlir::IntegerAttr::get(intType, bits);
 }
 
-static mlir::Attribute buildConstAttr(BuildCtx &bc, uint64_t constId) {
+static mlir::Attribute buildConstAttr(const BuildCtx &bc, uint64_t constId) {
   if (!bc.consts) {
     throw std::runtime_error("constpool not available");
   }
@@ -468,13 +468,10 @@ static void addAttrDictionary(mlir::OperationState &state,
 
 static void registerDecodedOp(BuildCtx &bc, uint64_t opId,
                               mlir::Operation *op) {
-  if (!bc.opsById) {
-    return;
+  if (opId >= bc.opsById.size()) {
+    bc.opsById.resize(opId + 1, nullptr);
   }
-  if (opId >= bc.opsById->size()) {
-    bc.opsById->resize(opId + 1, nullptr);
-  }
-  (*bc.opsById)[opId] = op;
+  bc.opsById[opId] = op;
 }
 
 static void assignDecodedResults(BuildCtx &bc, size_t resStart,
@@ -570,9 +567,14 @@ static size_t getKnownOperandCount(Reader &r, uint16_t opcode, uint8_t variant,
       throw std::runtime_error("list_mode=1 not supported yet");
     }
     return size_t(info.num_operands) + size_t(imms.n1) + size_t(imms.n2);
-  case 0x04:
-    return ((imms.optMask & 0x1) ? 1 : 0) + ((imms.optMask & 0x2) ? 1 : 0) +
-           ((imms.optMask & 0x4) ? 1 : 0);
+  case 0x04: {
+    constexpr uint8_t kOptMaskValidRowBit = 0x1;
+    constexpr uint8_t kOptMaskValidColBit = 0x2;
+    constexpr uint8_t kOptMaskAddrBit = 0x4;
+    return ((imms.optMask & kOptMaskValidRowBit) != 0 ? 1U : 0U) +
+           ((imms.optMask & kOptMaskValidColBit) != 0 ? 1U : 0U) +
+           ((imms.optMask & kOptMaskAddrBit) != 0 ? 1U : 0U);
+  }
   default:
     throw std::runtime_error("unknown operand_mode");
   }
@@ -587,7 +589,7 @@ readKnownOperandIds(Reader &r, uint16_t opcode, uint8_t variant,
 }
 
 static llvm::SmallVector<mlir::Value, kOperandInlineCapacity>
-materializeOperands(BuildCtx &bc, llvm::ArrayRef<uint64_t> operandIds) {
+materializeOperands(const BuildCtx &bc, llvm::ArrayRef<uint64_t> operandIds) {
   llvm::SmallVector<mlir::Value, kOperandInlineCapacity> operands;
   operands.reserve(operandIds.size());
   for (uint64_t valueId : operandIds) {
@@ -811,7 +813,7 @@ static mlir::Operation *buildKnownOpFromReader(BuildCtx &bc, Reader &r,
     throw std::runtime_error("missing opcode schema");
   }
 
-  uint8_t variant = info->has_variant_u8 ? r.readU8() : 0;
+  uint8_t variant = info->has_variant_u8 != 0 ? r.readU8() : 0;
   KnownOpImmediates imms = readKnownOpImmediates(r, *info);
   auto operandIds = readKnownOperandIds(r, opcode, variant, *info, imms);
   auto operands = materializeOperands(bc, operandIds);
@@ -854,7 +856,7 @@ static void buildOpList(BuildCtx &bc, Reader &r, mlir::Block &block) {
     if (dbg) {
       llvm::errs() << "[ptobc]    op[" << oi << "]...\n";
     }
-    const uint64_t opId = bc.nextOpId ? (*bc.nextOpId)++ : 0;
+    const uint64_t opId = bc.nextOpId++;
 
     uint16_t opcode = r.readU16LE();
     uint64_t attrId = r.readULEB();
@@ -980,17 +982,16 @@ static void buildDefinedFunctionBody(
     BuildCtx &bc, Reader &r, mlir::func::FuncOp fn, bool dbg,
     std::vector<std::vector<mlir::Operation *>> *opsByFuncOut) {
   bc.values.clear();
-  uint64_t nextOpId = 0;
-  std::vector<mlir::Operation *> opsById;
-  bc.nextOpId = &nextOpId;
-  bc.opsById = &opsById;
+  bc.nextOpId = 0;
+  bc.opsById.clear();
   buildRegionInto(bc, r, fn.getBody());
   if (dbg) {
     llvm::errs() << "[ptobc] func body built ok: values=" << bc.values.size()
-                 << " ops=" << opsById.size() << "\n";
+                 << " ops=" << bc.opsById.size() << "\n";
   }
   if (opsByFuncOut) {
-    opsByFuncOut->push_back(std::move(opsById));
+    opsByFuncOut->push_back(std::move(bc.opsById));
+    bc.opsById.clear();
   }
 }
 
@@ -1037,7 +1038,7 @@ decodeToModule(mlir::MLIRContext &ctx, const std::vector<std::string> &strings,
   Reader r{moduleBytes.data(), moduleBytes.data() + moduleBytes.size()};
   std::vector<ConstEntryParsed> consts;
   parseConstPoolSection(constPool, consts);
-  BuildCtx bc{&ctx, &strings, &types, &attrs, &consts, {}, nullptr, nullptr};
+  BuildCtx bc{&ctx, &strings, &types, &attrs, &consts, {}, 0, {}};
   uint64_t moduleAttrId = readModuleHeader(r, dbg);
   std::vector<FuncDecl> decls = readFunctionDecls(bc, r, dbg);
 
@@ -1229,7 +1230,7 @@ void decodeFileToPTO(const std::string &inPath, const std::string &outPath) {
   if (dbg) {
     llvm::errs() << "[ptobc] writing output: " << outPath << "\n";
   }
-  std::ofstream ofs(outPath);
+  std::ofstream ofs(canonicalizeIoPath(outPath));
   ofs << out;
   if (!out.empty() && out.back() != '\n') {
     ofs << "\n";

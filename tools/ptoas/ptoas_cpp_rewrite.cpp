@@ -217,7 +217,9 @@ static bool rewriteMarkerCallToMember(std::string &cpp, llvm::StringRef marker,
                                       llvm::StringRef memberName,
                                       unsigned expectedNumArgs) {
   return rewriteMarkerCalls(
-      cpp, marker, [&](const ParsedMarkerCall &call) -> std::optional<std::string> {
+      cpp, marker,
+      [&marker, &memberName,
+       expectedNumArgs](const ParsedMarkerCall &call) -> std::optional<std::string> {
         if (call.args.size() != expectedNumArgs) {
           return std::nullopt;
         }
@@ -246,9 +248,11 @@ static void rewriteMarkerCallsToMembers(
   while (changed) {
     changed = false;
     for (const MarkerRewriteSpec &rewrite : rewrites) {
-      changed |= rewriteMarkerCallToMember(cpp, rewrite.marker,
-                                           rewrite.memberName,
-                                           rewrite.expectedNumArgs);
+      if (rewriteMarkerCallToMember(cpp, rewrite.marker,
+                                    rewrite.memberName,
+                                    rewrite.expectedNumArgs)) {
+        changed = true;
+      }
     }
   }
 }
@@ -257,7 +261,8 @@ static bool rewriteMarkerCallToField(std::string &cpp, llvm::StringRef marker,
                                      llvm::StringRef fieldName,
                                      size_t expectedNumArgs) {
   return rewriteMarkerCalls(
-      cpp, marker, [&](const ParsedMarkerCall &call) -> std::optional<std::string> {
+      cpp, marker,
+      [&fieldName, expectedNumArgs](const ParsedMarkerCall &call) -> std::optional<std::string> {
         if (call.args.size() != expectedNumArgs) {
           return std::nullopt;
         }
@@ -308,7 +313,7 @@ void rewriteAsyncEventMarkers(std::string &cpp) {
 void dropEmptyEmitCExpressions(Operation *rootOp) {
   llvm::SmallVector<emitc::ExpressionOp, kEmptyExpressionInlineCapacity>
       toErase;
-  rootOp->walk([&](emitc::ExpressionOp expr) {
+  rootOp->walk([&toErase](emitc::ExpressionOp expr) {
     Block *body = expr.getBody();
     if (!body) {
       return;
@@ -407,7 +412,7 @@ static Attribute normalizeEmitCPrintedAttrForCppEmission(MLIRContext *ctx,
     for (Attribute element : arrayAttr) {
       Attribute normalizedElement =
           normalizeEmitCPrintedAttrForCppEmission(ctx, element);
-      changed |= normalizedElement != element;
+      changed = changed || normalizedElement != element;
       normalized.push_back(normalizedElement);
     }
     if (changed) {
@@ -437,21 +442,21 @@ static ArrayAttr normalizeEmitCCallArgsForCppEmission(MLIRContext *ctx,
       if (isa<IndexType>(intAttr.getType())) {
         Attribute normalizedAttr =
             normalizeEmitCIndexPlaceholderAttr(ctx, intAttr);
-        changed |= normalizedAttr != attr;
+        changed = changed || normalizedAttr != attr;
         normalized.push_back(normalizedAttr);
         continue;
       }
 
       Attribute normalizedAttr =
           normalizeEmitCPrintedAttrForCppEmission(ctx, attr);
-      changed |= normalizedAttr != attr;
+      changed = changed || normalizedAttr != attr;
       normalized.push_back(normalizedAttr);
       continue;
     }
 
     Attribute normalizedAttr =
         normalizeEmitCPrintedAttrForCppEmission(ctx, attr);
-    changed |= normalizedAttr != attr;
+    changed = changed || normalizedAttr != attr;
     normalized.push_back(normalizedAttr);
   }
 
@@ -467,7 +472,7 @@ static ArrayAttr normalizeEmitCTemplateArgsForCppEmission(MLIRContext *ctx,
   for (Attribute attr : args) {
     Attribute normalizedAttr =
         normalizeEmitCPrintedAttrForCppEmission(ctx, attr);
-    changed |= normalizedAttr != attr;
+    changed = changed || normalizedAttr != attr;
     normalized.push_back(normalizedAttr);
   }
 
@@ -476,7 +481,7 @@ static ArrayAttr normalizeEmitCTemplateArgsForCppEmission(MLIRContext *ctx,
 
 void normalizeEmitCIntegerAttrsForCppEmission(Operation *rootOp) {
   MLIRContext *ctx = rootOp->getContext();
-  rootOp->walk([&](Operation *op) {
+  rootOp->walk([&ctx](Operation *op) {
     if (auto constant = dyn_cast<emitc::ConstantOp>(op)) {
       Attribute value = constant.getValue();
       Attribute normalized =
@@ -558,7 +563,7 @@ static Type getEmitCVariableStorageType(Type valueType) {
 // lowering (e.g. scf.while -> cf.*) stays valid.
 void materializeControlFlowOperands(Operation *rootOp) {
   llvm::SmallVector<Operation *, kBranchInlineCapacity> branches;
-  rootOp->walk([&](Operation *op) {
+  rootOp->walk([&branches](Operation *op) {
     if (isa<cf::BranchOp, cf::CondBranchOp>(op)) {
       branches.push_back(op);
     }
@@ -595,7 +600,9 @@ static bool rewriteMarkerCallToSubscript(std::string &cpp, llvm::StringRef marke
                                          unsigned expectedNumArgs,
                                          bool isStore) {
   return rewriteMarkerCalls(
-      cpp, marker, [&](const ParsedMarkerCall &call) -> std::optional<std::string> {
+      cpp, marker,
+      [expectedNumArgs,
+       isStore](const ParsedMarkerCall &call) -> std::optional<std::string> {
         if (call.args.size() != expectedNumArgs) {
           return std::nullopt;
         }
@@ -620,10 +627,10 @@ static bool rewriteMarkerCallToSubscript(std::string &cpp, llvm::StringRef marke
 }
 
 void rewriteGlobalTensorMetadataMarkers(std::string &cpp) {
-  auto rewrite = [&](llvm::StringRef marker, llvm::StringRef method) {
+  auto rewrite = [&cpp](llvm::StringRef marker, llvm::StringRef method) {
     (void)rewriteMarkerCalls(
         cpp, marker,
-        [&](const ParsedMarkerCall &call) -> std::optional<std::string> {
+        [method](const ParsedMarkerCall &call) -> std::optional<std::string> {
           const bool hasExpectedArgs =
               call.args.size() == kMarkerRewriteMinArgCount;
           if (!hasExpectedArgs) {
@@ -644,9 +651,11 @@ static void rewriteMarkerCallsToSubscripts(
   while (changed) {
     changed = false;
     for (const MarkerSubscriptRewriteSpec &rewrite : rewrites) {
-      changed |= rewriteMarkerCallToSubscript(cpp, rewrite.marker,
-                                              rewrite.expectedNumArgs,
-                                              rewrite.isStore);
+      if (rewriteMarkerCallToSubscript(cpp, rewrite.marker,
+                                       rewrite.expectedNumArgs,
+                                       rewrite.isStore)) {
+        changed = true;
+      }
     }
   }
 }
@@ -777,7 +786,7 @@ stripScalarGMFlushMarkers(llvm::ArrayRef<std::string> functionLines,
   for (const std::string &rawLine : functionLines) {
     std::string line = rawLine;
     const bool hadMarker = stripScalarGMFlushMarkersFromLine(line);
-    needsScalarGMFlush |= hadMarker;
+    needsScalarGMFlush = needsScalarGMFlush || hadMarker;
     if (hadMarker && llvm::StringRef(line).trim().empty()) {
       continue;
     }
@@ -871,7 +880,9 @@ void rewriteScalarGMStoreFlushMarkers(std::string &cpp) {
   bool sawFunctionBrace = false;
   int braceDepth = 0;
 
-  auto flushFunction = [&](bool hasTrailingNewline) {
+  auto flushFunction = [&out, &functionLines, &inFunction,
+                        &sawFunctionBrace,
+                        &braceDepth](bool hasTrailingNewline) {
     out.append(rewriteScalarGMStoreFlushMarkersInFunction(functionLines,
                                                          hasTrailingNewline));
     functionLines.clear();

@@ -326,7 +326,7 @@ inline const char *fullNameFromOpcodeVariant(uint16_t opcode, uint8_t variant) {
   if (opcode == kTscatterMaskOpcode) {
     return "pto.tscatter";
   }
-  if (!info->has_variant_u8) {
+  if (info->has_variant_u8 == 0) {
     return info->name;
   }
   for (const VariantName &entry : kVariantNameTable) {

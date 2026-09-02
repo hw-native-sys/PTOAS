@@ -85,7 +85,7 @@ public:
   char **getArgv() const;
 
   llvm::StringRef getOutputPath() const;
-  std::string allocModuleId();
+  std::string allocModuleId() const;
 
   const CANNToolchain *getToolchain(llvm::raw_ostream &diagOS) const;
   CANNVersion getCANNVersionOrDefault() const;
@@ -129,7 +129,7 @@ struct PTOASCompileResult {
 };
 
 int compilePTOASModule(OwningOpRef<ModuleOp> &module,
-                       PTOASContext &context, PTOBackend backend,
+                       PTOASContext &context, PTOBackend effectiveBackend,
                        PTOASCompileResult &result,
                        bool emitVPTOHostStub = true);
 void registerPTOASDialects(DialectRegistry &registry);

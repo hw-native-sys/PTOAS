@@ -111,6 +111,16 @@ static bool isCppIdentifierChar(char c) {
   return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
 }
 
+static char encodeHexDigit(unsigned value) {
+  constexpr unsigned kDecimalDigitCount = 10;
+  constexpr unsigned kDigitZero = '0';
+  constexpr unsigned kLetterA = 'A';
+  if (value < kDecimalDigitCount) {
+    return static_cast<char>(kDigitZero + value);
+  }
+  return static_cast<char>(kLetterA + (value - kDecimalDigitCount));
+}
+
 static std::optional<std::string> getTextualNameFromSMRange(llvm::SMRange range) {
   if (!range.Start.isValid() || !range.End.isValid()) {
     return std::nullopt;
@@ -464,7 +474,7 @@ void narrowUnusedMultiResultProvenanceLocs(Operation *root) {
     return;
   }
 
-  root->walk([&](Operation *op) {
+  root->walk([](Operation *op) {
     if (op->getNumResults() <= 1) {
       return;
     }
@@ -638,11 +648,6 @@ getValueNameHints(Value value) {
 static std::string buildHintMarker(llvm::StringRef prefix,
                                    llvm::ArrayRef<std::string> hints) {
   auto encodeHintMarkerToken = [](llvm::StringRef token) {
-    auto hexDigit = [](unsigned value) -> char {
-      return value < 10 ? static_cast<char>('0' + value)
-                        : static_cast<char>('A' + (value - 10));
-    };
-
     auto isSafeMarkerChar = [](unsigned char c) {
       return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
              (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '-';
@@ -657,8 +662,8 @@ static std::string buildHintMarker(llvm::StringRef prefix,
       }
       encoded.push_back('%');
       encoded.push_back(
-          hexDigit((c >> kHexNibbleBitWidth) & kHexNibbleMask));
-      encoded.push_back(hexDigit(c & kHexNibbleMask));
+          encodeHexDigit((c >> kHexNibbleBitWidth) & kHexNibbleMask));
+      encoded.push_back(encodeHexDigit(c & kHexNibbleMask));
     }
     return encoded;
   };
@@ -677,7 +682,7 @@ static std::string buildHintMarker(llvm::StringRef prefix,
 static SmallVector<std::string, kProvenanceInlineCapacity>
 collectExpressionProvenance(emitc::ExpressionOp expr) {
   SmallVector<std::string, kProvenanceInlineCapacity> provenance;
-  auto appendUnique = [&](llvm::ArrayRef<std::string> names) {
+  auto appendUnique = [&provenance](llvm::ArrayRef<std::string> names) {
     for (const std::string &name : names) {
       if (name.empty()) {
         continue;
@@ -690,7 +695,7 @@ collectExpressionProvenance(emitc::ExpressionOp expr) {
     }
   };
 
-  expr.walk<WalkOrder::PreOrder>([&](Operation *nested) {
+  expr.walk<WalkOrder::PreOrder>([&expr, &appendUnique](Operation *nested) {
     if (nested == expr.getOperation()) {
       return WalkResult::advance();
     }
@@ -712,7 +717,7 @@ void annotateEmitCProvenanceHints(ModuleOp module) {
 
   llvm::SmallVector<ProvenanceMarker, kProvenanceMarkerInlineCapacity>
       opsToAnnotate;
-  module.walk<WalkOrder::PreOrder>([&](Operation *op) {
+  module.walk<WalkOrder::PreOrder>([&opsToAnnotate](Operation *op) {
     if (op->getNumResults() == 0 || isa<emitc::VerbatimOp>(op)) {
       return WalkResult::advance();
     }
@@ -778,14 +783,20 @@ void annotateEmitCProvenanceHints(ModuleOp module) {
 //   PTOAS__EVENTID_ARRAY_STORE(arr, idx, v) -> arr[idx] = v
 
 static int decodeNameHintHexDigit(char c) {
-  if (c >= '0' && c <= '9') {
-    return c - '0';
+  constexpr unsigned kDecimalDigitCount = 10;
+  constexpr unsigned kHexLetterCount = 6;
+  constexpr unsigned kDigitZero = '0';
+  constexpr unsigned kLetterLowerA = 'a';
+  constexpr unsigned kLetterUpperA = 'A';
+  const unsigned digit = static_cast<unsigned char>(c);
+  if (digit >= kDigitZero && digit < kDigitZero + kDecimalDigitCount) {
+    return static_cast<int>(digit - kDigitZero);
   }
-  if (c >= 'a' && c <= 'f') {
-    return c - 'a' + 10;
+  if (digit >= kLetterLowerA && digit < kLetterLowerA + kHexLetterCount) {
+    return static_cast<int>(digit - kLetterLowerA + kDecimalDigitCount);
   }
-  if (c >= 'A' && c <= 'F') {
-    return c - 'A' + 10;
+  if (digit >= kLetterUpperA && digit < kLetterUpperA + kHexLetterCount) {
+    return static_cast<int>(digit - kLetterUpperA + kDecimalDigitCount);
   }
   return -1;
 }
@@ -873,11 +884,6 @@ static void stripAllHintMarkers(std::string &cpp) {
 }
 
 static std::string sanitizeCommentText(llvm::StringRef text) {
-  auto hexDigit = [](unsigned value) -> char {
-    return value < 10 ? static_cast<char>('0' + value)
-                      : static_cast<char>('A' + (value - 10));
-  };
-
   std::string sanitized;
   sanitized.reserve(text.size());
   for (unsigned char c : text.bytes()) {
@@ -896,8 +902,8 @@ static std::string sanitizeCommentText(llvm::StringRef text) {
         sanitized.push_back('\\');
         sanitized.push_back('x');
         sanitized.push_back(
-            hexDigit((c >> kHexNibbleBitWidth) & kHexNibbleMask));
-        sanitized.push_back(hexDigit(c & kHexNibbleMask));
+            encodeHexDigit((c >> kHexNibbleBitWidth) & kHexNibbleMask));
+        sanitized.push_back(encodeHexDigit(c & kHexNibbleMask));
       } else {
         sanitized.push_back(static_cast<char>(c));
       }
