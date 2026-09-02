@@ -413,31 +413,7 @@ struct LayoutSolver {
       return {};
     }
 
-    VMILayoutAttr directLayout = fact->layout.resultLayout;
-    // A direct E2B packet fills exactly one physical part. When the
-    // contiguous form of this broadcast spans multiple physical chunks, the
-    // direct table can only offer a deinterleaved split layout. Prefer the
-    // generic contiguous lowering (group_slots -> contiguous) so consumers
-    // such as plain elementwise vmul can stay contiguous and avoid
-    // vldsx2/vintlv-style deinterleave materialization.
-    if (fact->kind == VMIGroupBroadcastLoadDirectKind::E2B &&
-        directLayout.isDeinterleaved()) {
-      VMILayoutAttr contiguous = getContiguousLayout();
-      auto contiguousType = VMIVRegType::get(
-          ctx, type.getElementCount(), type.getElementType(), contiguous);
-      FailureOr<int64_t> contiguousArity = getVMIPhysicalArity(contiguousType);
-      if (succeeded(contiguousArity) && *contiguousArity > 1) {
-        FailureOr<
-            SmallVector<VMIGroupBroadcastLayoutFact, mlir::pto::kValue4>>
-            contiguousFacts = supports.getGroupBroadcastLayoutFactsForLayout(
-                type, contiguousType, op.getNumGroupsAttr().getInt(),
-                VMIGroupBroadcastLayoutPort::Result, contiguous);
-        if (succeeded(contiguousFacts) && !contiguousFacts->empty()) {
-          return contiguous;
-        }
-      }
-    }
-    return directLayout;
+    return fact->layout.resultLayout;
   }
 
   VMILayoutAttr getPreferredGroupBroadcastSourceLayout(Value value,
@@ -952,20 +928,6 @@ struct LayoutSolver {
     return llvm::TypeSwitch<Operation *, std::optional<WalkResult>>(op)
         .Case<VMIDeinterleaveLoadOp>([this, op](auto load) {
           return addDeinterleaveLoadConstraint(load, op);
-        })
-        .Case<VMILoadOp>([this, op](auto load) {
-          auto type = cast<VMIVRegType>(load.getResult().getType());
-          FailureOr<int64_t> lanesPerPart =
-              getDataLanesPerPart(type.getElementType());
-          VMILayoutAttr layout = getContiguousLayout();
-          if (succeeded(lanesPerPart) &&
-              type.getElementCount() < *lanesPerPart &&
-              *lanesPerPart % type.getElementCount() == 0) {
-            int64_t laneStride = *lanesPerPart / type.getElementCount();
-            layout = VMILayoutAttr::getContiguous(ctx, laneStride);
-          }
-          return constraintResult(
-              setNaturalLayout(load.getResult(), layout, op));
         })
         .Case<VMIMaskedLoadOp, VMIExpandLoadOp>([this, op](auto load) {
           requestDataUse(load.getPassthruMutable(), getContiguousLayout());

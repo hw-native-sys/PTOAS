@@ -11324,26 +11324,41 @@ struct OneToNVMIExtFOpPattern : OneToNOpConversionPattern<VMIExtFOp> {
     int64_t factor = 0;
     if (sourceBits == 16) {
       static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
-      constexpr int64_t kMaxFactor = 2;
-      if (resultTypes.size() == 0 ||
-          resultTypes.size() % sourceParts.size() != 0 ||
-          resultTypes.size() > kMaxFactor * sourceParts.size()) {
+      if (resultTypes.size() != 2 * sourceParts.size()) {
         return rewriter.notifyMatchFailure(
             op, "unsupported physical extf source/result width relation");
       }
-      factor = resultTypes.size() / sourceParts.size();
-      parts = ArrayRef<StringRef>(kEvenOddParts, factor);
+      factor = 2;
+      parts = kEvenOddParts;
     } else if (sourceBits == 8) {
       static constexpr StringRef kPacked4Parts[] = {"P0", "P1", "P2", "P3"};
-      constexpr int64_t kMaxFactor = 4;
-      if (resultTypes.size() == 0 ||
-          resultTypes.size() % sourceParts.size() != 0 ||
-          resultTypes.size() > kMaxFactor * sourceParts.size()) {
+      static constexpr StringRef kPacked2Parts[] = {"P0", "P2"};
+      static constexpr StringRef kPacked1Parts[] = {"P0"};
+      bool isPackedE2M1 =
+          isa<pto::F4E2M1x2Type>(sourceVMIType.getElementType());
+      if (!isPackedE2M1 && resultTypes.size() != 4 * sourceParts.size()) {
         return rewriter.notifyMatchFailure(
             op, "unsupported physical extf source/result width relation");
       }
-      factor = resultTypes.size() / sourceParts.size();
-      parts = ArrayRef<StringRef>(kPacked4Parts, factor);
+      if (!isPackedE2M1) {
+        factor = 4;
+        parts = kPacked4Parts;
+      } else if (sourceLayout && sourceLayout.isContiguous() &&
+                 sourceLayout.getLaneStride() == 4) {
+        factor = 1;
+        parts = kPacked1Parts;
+      } else if (sourceLayout && sourceLayout.isContiguous() &&
+                 sourceLayout.getLaneStride() == 2) {
+        factor = 2;
+        parts = kPacked2Parts;
+      } else {
+        factor = 4;
+        parts = kPacked4Parts;
+      }
+      if (resultTypes.size() != factor * sourceParts.size()) {
+        return rewriter.notifyMatchFailure(
+            op, "FP4 extf physical arity does not match its source layout");
+      }
     } else {
       return rewriter.notifyMatchFailure(
           op, "unsupported physical extf source/result width relation");
@@ -11356,15 +11371,15 @@ struct OneToNVMIExtFOpPattern : OneToNOpConversionPattern<VMIExtFOp> {
 
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
-      for (int64_t partIndex = 0; partIndex < factor; ++partIndex) {
-        for (auto [chunkIndex, sourcePart] : llvm::enumerate(sourceParts)) {
-          VRegType resultType =
-              resultVRegTypes[partIndex * sourceParts.size() + chunkIndex];
-          results.push_back(viewVcvtResult(
-              resultType, sourcePart, *mask, /*rnd=*/nullptr, /*sat=*/nullptr,
-              rewriter.getStringAttr(parts[partIndex])));
-        }
+    for (int64_t partIndex = 0; partIndex < factor; ++partIndex) {
+      for (auto [chunkIndex, sourcePart] : llvm::enumerate(sourceParts)) {
+        VRegType resultType =
+            resultVRegTypes[partIndex * sourceParts.size() + chunkIndex];
+        results.push_back(viewVcvtResult(
+            resultType, sourcePart, *mask, /*rnd=*/nullptr, /*sat=*/nullptr,
+            rewriter.getStringAttr(parts[partIndex])));
       }
+    }
 
     replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
     return success();
