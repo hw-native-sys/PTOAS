@@ -201,6 +201,33 @@ class ScalarSpec:
 
 
 @dataclass(frozen=True)
+class StructSpec:
+    """Concrete specialization of one struct TileOp operand (e.g. pipe state).
+
+    The struct type is ``!pto.struct<i32, i32, i8, i8, i32>`` (signless)
+    matching the Producer/Consumer state layout used by tpush/tpop templates.
+    """
+
+    dtype: str = "struct"
+
+    def mlir_type(self):
+        from .._types import struct_type as _struct_type, int32 as _int32, int8 as _int8
+        return _resolve(_struct_type(_int32, _int32, _int8, _int8, _int32))
+
+
+@dataclass(frozen=True)
+class PtrSpec:
+    """Concrete specialization of one pointer TileOp operand."""
+
+    dtype: str = "ptr"
+    memory_space: str = "gm"
+
+    def mlir_type(self):
+        from .._types import ptr as _ptr, float32 as _f32
+        return _resolve(_ptr(_f32, self.memory_space))
+
+
+@dataclass(frozen=True)
 class ViewSpec:
     """Concrete specialization of one tensor-view TileOp operand."""
 
@@ -313,6 +340,8 @@ __all__ = [
     "ScalarType",
     "TileSpec",
     "ScalarSpec",
+    "StructSpec",
+    "PtrSpec",
     "ViewSpec",
     "VectorSpec",
     "TemplateMetadata",

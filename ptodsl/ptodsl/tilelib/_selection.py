@@ -12,7 +12,7 @@ from __future__ import annotations
 from . import constraints as _constraints
 from . import registry as _registry
 from ._template_package import load_template
-from .metadata import ScalarSpec, ScalarType, TileSpec, VectorSpec, ViewSpec
+from .metadata import ScalarSpec, ScalarType, StructSpec, PtrSpec, TileSpec, VectorSpec, ViewSpec
 
 
 def _operand_config(spec, index):
@@ -109,10 +109,18 @@ def _build_tile_specs(descriptor, operand_specs: list) -> dict:
             specs[name] = _build_view_spec(name, spec, index)
             continue
 
+        if kind == "struct":
+            specs[name] = StructSpec()
+            continue
+
+        if kind == "ptr":
+            specs[name] = PtrSpec(memory_space=spec.get("memory_space", "gm"))
+            continue
+
         if kind != "tile":
             raise NotImplementedError(
                 "PTODSL TileLib currently supports tile, scalar, view, "
-                f"and vector operands; "
+                "vector, struct, and ptr operands; "
                 f"operand {index} ({name!r}) has kind {kind!r}"
             )
 

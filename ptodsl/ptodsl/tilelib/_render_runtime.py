@@ -26,18 +26,18 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass
 
-from .metadata import ScalarSpec, TileSpec, VectorSpec, ViewSpec, scalar_descriptor
+from .metadata import ScalarSpec, StructSpec, PtrSpec, TileSpec, VectorSpec, ViewSpec, scalar_descriptor
 from .._ast_rewrite import rewrite_jit_function
 from .._context import make_context
 from .._surface_types import Tile
 from .._surface_values import PartitionTensorViewValue, TensorViewValue, TileValue
 from .._tracing import KernelModuleSpec, ModuleStyle, TracingRuntime
 from .._tracing.active import activate_runtime, activate_session
-from .._surface_values import wrap_surface_value
+from .._surface_values import wrap_surface_value, unwrap_surface_value
 from .._types import _DType, _resolve
 
 from ptoas.mlir.dialects import func
-from ptoas.mlir.ir import Attribute, InsertionPoint, Location, Module, StringAttr, UnitAttr
+from ptoas.mlir.ir import Attribute, InsertionPoint, Location, Module, StringAttr, TypeAttr, UnitAttr
 
 
 # ── tile handle handed to the template body ────────────────────────────────────────
@@ -106,6 +106,14 @@ class _TemplateTrace(TracingRuntime):
         self.context_attrs = dict(context_attrs or {})
         self._ordered_specs: list = []
         self._signature_parameters = tuple(inspect.signature(descriptor.py_fn).parameters.items())
+        self._trace_return_value = None
+
+    def emit_return(self, return_values=None):
+        """Emit the function return terminator."""
+        if return_values is not None:
+            func.ReturnOp(return_values)
+        else:
+            func.ReturnOp([])
 
     def compute_argument_types(self):
         arg_types = []
@@ -127,7 +135,7 @@ class _TemplateTrace(TracingRuntime):
                         f"tile-template scalar parameter {param_name!r} cannot be annotated Tile"
                     )
                 arg_types.append(_scalar_argument_type(param.annotation, spec))
-            elif isinstance(spec, (ViewSpec, VectorSpec)):
+            elif isinstance(spec, (ViewSpec, VectorSpec, StructSpec, PtrSpec)):
                 if _is_tile_annotation(param.annotation):
                     raise TypeError(
                         f"tile-template {type(spec).__name__} parameter "
@@ -165,6 +173,10 @@ class _TemplateTrace(TracingRuntime):
                 )
             elif isinstance(spec, VectorSpec):
                 bound.append(wrap_surface_value(arg))
+            elif isinstance(spec, StructSpec):
+                bound.append(wrap_surface_value(arg))
+            elif isinstance(spec, PtrSpec):
+                bound.append(wrap_surface_value(arg))
             else:
                 raise TypeError(f"unsupported operand spec {type(spec).__name__}")
         return tuple(bound)
@@ -173,7 +185,8 @@ class _TemplateTrace(TracingRuntime):
         # Apply the engine's AST control-flow rewrite so the template body can use plain
         # `for x in range(...)` (rewritten to pto.for_(...).carry(...)) like tilelang.
         rewritten = rewrite_jit_function(self.descriptor.py_fn)
-        rewritten(*args)
+        result = rewritten(*args)
+        self._trace_return_value = result
 
     # Custom golden-shaped container: single module(target_arch) + func(instance, kernel_kind).
     def build_standalone_module(self):
@@ -194,7 +207,23 @@ class _TemplateTrace(TracingRuntime):
                 args = self.bind_entry_arguments(entry.arguments)
                 self.trace_entry(*args)
                 self.validate_trace_state()
-                self.emit_return()
+                return_value = getattr(self, "_trace_return_value", None)
+                if return_value is not None:
+                    raw_value = unwrap_surface_value(return_value)
+                    if hasattr(raw_value, "type"):
+                        fn_type = ir_fn.type
+                        if not fn_type.results:
+                            ir_fn.function_type = TypeAttr.get(
+                                func.FunctionType.get(
+                                    fn_type.inputs,
+                                    [raw_value.type],
+                                )
+                            )
+                        self.emit_return([raw_value])
+                    else:
+                        self.emit_return()
+                else:
+                    self.emit_return()
                 self.finalize_session(session)
                 session.validate_final_state()
             self.verify_module(module)

@@ -305,6 +305,10 @@ class Tile:
     """Authoring-time marker for an on-chip tile value."""
 
 
+class Struct:
+    """Authoring-time marker for a stack-local struct value (pipe state)."""
+
+
 __all__ = [
     "const_expr",
     "MemorySpace",
@@ -345,4 +349,5 @@ __all__ = [
     "TensorView",
     "PartitionTensorView",
     "Tile",
+    "Struct",
 ]

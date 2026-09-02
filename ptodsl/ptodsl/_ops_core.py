@@ -210,14 +210,25 @@ def struct_set(struct, path, value):
 
 
 def get_op_attr(name: str, default=None):
-    """Return a TileLib render-time op attribute supplied by the C++ bridge."""
+    """Return a TileLib render-time op attribute supplied by the C++ bridge.
+
+    The C++ bridge stores all context attrs as ``pair<string, string>``.
+    When the Python default is an int, the returned string is converted to
+    int so template code can use it in arithmetic directly.
+    """
     from ._tracing.active import current_runtime
 
     runtime = current_runtime()
     attrs = getattr(runtime, "context_attrs", None)
     if not attrs:
         return default
-    return attrs.get(name, default)
+    value = attrs.get(name, default)
+    if isinstance(default, int) and isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return default
+    return value
 
 
 # ── Pointer ops ───────────────────────────────────────────────────────────────

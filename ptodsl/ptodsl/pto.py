@@ -78,6 +78,7 @@ from ._surface_types import (   # noqa: F401
     TensorView,
     PartitionTensorView,
     Tile,
+    Struct,
 )
 from ._tensor_factories import empty_like  # noqa: F401
 from ._tile_namespace import tile  # noqa: F401
@@ -133,6 +134,7 @@ from ._ops import (             # noqa: F401
     set_atomic_s32, set_atomic_s16, set_atomic_s8,
     mte_l1_l0a, mte_l1_l0b, mte_l1_l0a_mx, mte_l1_l0b_mx,
     mte_l0c_l1, mte_l0c_gm, mte_l0c_ub,
+    tmov, tinsert,
     mad, mad_acc, mad_bias, mad_mx, mad_mx_acc, mad_mx_bias,
     tgemv, tgemv_acc, tgemv_bias,
     get_block_idx, get_block_num, get_subblock_idx, get_subblock_num,

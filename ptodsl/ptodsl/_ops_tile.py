@@ -183,6 +183,27 @@ def _split_valid_shape(shape, valid_shape):
             f"alloc_tile(valid_shape=...) rank mismatch: expected {logical_rank} dims, got {len(valid_shape)}"
         )
 
+    # Fold statically-known index constants (e.g. `tile.valid_shape[i]` or
+    # arithmetic on them materializes `arith.constant ... : index`) back to
+    # Python ints.  Keeping them as index SSA values makes alloc_tile's
+    # valid_row/valid_col operands survive both ArithToLLVM and
+    # ConvertIndexToLLVM as i64 + unrealized cast, which aborts the final
+    # LLVM translation (PTO ops are translated by the custom translator,
+    # not the conversion framework, so the cast is never folded).
+    def _fold_static_dim(dim):
+        if isinstance(dim, int):
+            return dim
+        raw = unwrap_surface_value(dim)
+        if hasattr(raw, "getDefiningOp") and raw.getDefiningOp() is not None:
+            def_op = raw.getDefiningOp()
+            if isinstance(def_op, arith.ConstantOp):
+                value = def_op.getValue()
+                if hasattr(value, "value") and isinstance(value.value, int):
+                    return int(value.value)
+        return dim
+
+    valid_shape = [_fold_static_dim(dim) for dim in valid_shape]
+
     surface_valid_shape = []
     if logical_rank == 1:
         dim = valid_shape[0]
@@ -578,7 +599,7 @@ def _normalize_alloc_tile_request(
 def _emit_alloc_tile(tile_type, addr, valid_row, valid_col):
     return _pto.AllocTileOp(
         _resolve(tile_type),
-        addr=_coerce_i64(addr, context="alloc_tile(addr)") if addr is not None else None,
+        addr=_coerce_alloc_addr(addr, context="alloc_tile(addr)") if addr is not None else None,
         valid_row=_coerce_index(valid_row, context="alloc_tile(valid_row)") if valid_row is not None else None,
         valid_col=_coerce_index(valid_col, context="alloc_tile(valid_col)") if valid_col is not None else None,
     ).result
@@ -617,6 +638,18 @@ def _materialize_alloc_tile(
         memory_space,
         surface_valid_shape,
     )
+
+
+def _coerce_alloc_addr(value, *, context: str):
+    """alloc_tile(addr=...) accepts an i64 byte address or a typed pointer.
+
+    Pointer inputs lower to `pto.ptrtoint` (byte address of the pointer),
+    the `(uint64_t)ptr` idiom used by TASSIGN view aliasing.
+    """
+    raw_value = unwrap_surface_value(value)
+    if hasattr(raw_value, "type") and _pto.PtrType.isinstance(raw_value.type):
+        return _pto.PtrToIntOp(raw_value).result
+    return _coerce_i64(value, context=context)
 
 
 def alloc_tile(
@@ -679,7 +712,7 @@ def set_tile_valid_shape(tile, valid_shape):
     if logical_rank == 1:
         if len(valid_shape) != 1:
             raise TypeError("rank-1 tile.valid_shape assignment expects exactly one dimension")
-        if parsed_tile_type["valid_dims"] not in (None, (None, None)):
+        if parsed_tile_type["valid_dims"] != (None, None):
             raise TypeError(
                 "rank-1 tile.valid_shape assignment requires a tile allocated with "
                 "valid_shape=[...] so the physical valid row/col metadata remain dynamic"
@@ -689,7 +722,7 @@ def set_tile_valid_shape(tile, valid_shape):
     else:
         if len(valid_shape) != 2:
             raise TypeError("tile.valid_shape assignment currently expects exactly two dimensions")
-        if parsed_tile_type["valid_dims"] not in (None, (None, None)):
+        if parsed_tile_type["valid_dims"] != (None, None):
             raise TypeError(
                 "tile.valid_shape assignment requires a tile allocated with fully dynamic "
                 "valid_shape=[..., ...]"

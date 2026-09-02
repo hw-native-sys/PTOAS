@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from .._types import _normalize_compact_mode
-from .metadata import ScalarSpec, VectorSpec, ViewSpec
+from .metadata import ScalarSpec, StructSpec, PtrSpec, VectorSpec, ViewSpec
 
 
 class BLayout(str, Enum):
@@ -261,6 +261,23 @@ def build_context(tile_specs: dict, target: str, op: str) -> dict:
     operand_dtypes = []
     accumulators = _ContextAccumulators()
     for name, spec in tile_specs.items():
+        if isinstance(spec, StructSpec):
+            accumulators.kinds.append("struct")
+            context[f"{name}_kind"] = "struct"
+            context[f"{name}_dtype"] = "struct"
+            operand_dtypes.append("struct")
+            continue
+
+        if isinstance(spec, PtrSpec):
+            accumulators.kinds.append("ptr")
+            memory_space = getattr(spec, "memory_space", "gm")
+            accumulators.memory_spaces.append(memory_space)
+            context[f"{name}_kind"] = "ptr"
+            context[f"{name}_dtype"] = "ptr"
+            context[f"{name}_memory_space"] = memory_space
+            operand_dtypes.append("ptr")
+            continue
+
         dtype = spec.dtype.name
         operand_dtypes.append(dtype)
         context[f"{name}_dtype"] = dtype

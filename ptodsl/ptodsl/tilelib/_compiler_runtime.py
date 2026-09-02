@@ -61,12 +61,28 @@ def materialize(
         context_attrs,
         candidate_id or None,
     )
-    module = _TemplateTrace(
-        descriptor,
-        tile_specs,
-        context_attrs=context_attrs,
-    ).build_module_in_context(context)
-    module.operation.verify()
+    # The MLIR Python bindings' PyOperation live-map and CPython GC have a
+    # non-atomic window: when one context materializes several templates in a
+    # row, delayed reclamation of the previous module wrapper races with the
+    # next op wrap and trips the `cannot create detached operation that
+    # already exists` assertion (observed from the 3rd materialize on).
+    # Defenses: collect stale wrappers before entering, disable automatic GC
+    # while tracing, then re-enable and collect afterwards.
+    import gc
+
+    gc.collect()
+    was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        module = _TemplateTrace(
+            descriptor,
+            tile_specs,
+            context_attrs=context_attrs,
+        ).build_module_in_context(context)
+        module.operation.verify()
+    finally:
+        if was_enabled:
+            gc.enable()
     return module, descriptor.name
 
 

@@ -11,18 +11,39 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 
-_ACTIVE_RUNTIME_STACK = []
-_ACTIVE_SESSION_STACK = []
+import threading
+
+# Per-thread stacks: MLIR pass pipelines may run ExpandTileOp materialization
+# concurrently on multiple threads; a process-global stack would interleave
+# unrelated runtimes and report spurious corruption.
+_LOCAL = threading.local()
+
+
+def _runtime_stack():
+    stack = getattr(_LOCAL, "runtime_stack", None)
+    if stack is None:
+        stack = []
+        _LOCAL.runtime_stack = stack
+    return stack
+
+
+def _session_stack():
+    stack = getattr(_LOCAL, "session_stack", None)
+    if stack is None:
+        stack = []
+        _LOCAL.session_stack = stack
+    return stack
 
 
 @contextmanager
 def activate_runtime(runtime):
     """Push *runtime* as the current active tracing runtime."""
-    _ACTIVE_RUNTIME_STACK.append(runtime)
+    stack = _runtime_stack()
+    stack.append(runtime)
     try:
         yield runtime
     finally:
-        popped = _ACTIVE_RUNTIME_STACK.pop()
+        popped = stack.pop()
         if popped is not runtime:
             raise RuntimeError("PTODSL active tracing runtime stack corruption detected")
 
@@ -30,20 +51,22 @@ def activate_runtime(runtime):
 @contextmanager
 def activate_session(session):
     """Push *session* as the current active trace session."""
-    _ACTIVE_SESSION_STACK.append(session)
+    stack = _session_stack()
+    stack.append(session)
     try:
         yield session
     finally:
-        popped = _ACTIVE_SESSION_STACK.pop()
+        popped = stack.pop()
         if popped is not session:
             raise RuntimeError("PTODSL active trace-session stack corruption detected")
 
 
 def current_runtime(expected_type=None):
     """Return the current active tracing runtime, or ``None`` if inactive."""
-    if not _ACTIVE_RUNTIME_STACK:
+    stack = _runtime_stack()
+    if not stack:
         return None
-    runtime = _ACTIVE_RUNTIME_STACK[-1]
+    runtime = stack[-1]
     if expected_type is not None and not isinstance(runtime, expected_type):
         return None
     return runtime
@@ -51,9 +74,10 @@ def current_runtime(expected_type=None):
 
 def current_session():
     """Return the current active trace session, or ``None`` if inactive."""
-    if not _ACTIVE_SESSION_STACK:
+    stack = _session_stack()
+    if not stack:
         return None
-    return _ACTIVE_SESSION_STACK[-1]
+    return stack[-1]
 
 
 def require_active_runtime(surface: str, expected_type=None):
