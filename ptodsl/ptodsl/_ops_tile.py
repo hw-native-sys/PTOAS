@@ -62,6 +62,7 @@ from ._types import (
 from ptoas.mlir.dialects import arith, pto as _pto
 from ptoas.mlir.ir import (
     Attribute,
+    BoolAttr,
     BF16Type,
     F16Type,
     F32Type,
@@ -678,7 +679,7 @@ def set_tile_valid_shape(tile, valid_shape):
     if logical_rank == 1:
         if len(valid_shape) != 1:
             raise TypeError("rank-1 tile.valid_shape assignment expects exactly one dimension")
-        if parsed_tile_type["valid_dims"] != (None, None):
+        if parsed_tile_type["valid_dims"] not in (None, (None, None)):
             raise TypeError(
                 "rank-1 tile.valid_shape assignment requires a tile allocated with "
                 "valid_shape=[...] so the physical valid row/col metadata remain dynamic"
@@ -688,7 +689,7 @@ def set_tile_valid_shape(tile, valid_shape):
     else:
         if len(valid_shape) != 2:
             raise TypeError("tile.valid_shape assignment currently expects exactly two dimensions")
-        if parsed_tile_type["valid_dims"] != (None, None):
+        if parsed_tile_type["valid_dims"] not in (None, (None, None)):
             raise TypeError(
                 "tile.valid_shape assignment requires a tile allocated with fully dynamic "
                 "valid_shape=[..., ...]"
@@ -1238,6 +1239,53 @@ def tdequant(src, scale, offset, dst):
         unwrap_surface_value(scale),
         unwrap_surface_value(offset),
         unwrap_surface_value(dst),
+    )
+
+
+def tquant(src, scale, dst, *, quant_type=None, offset=None, tmp=None):
+    """``pto.tquant ins(src, scale) outs(dst)`` with optional offset/tmp."""
+    if quant_type is None:
+        quant_type = "INT8_ASYM" if offset is not None else "INT8_SYM"
+    qt_attr = Attribute.parse(f"#pto<quant_type {quant_type}>")
+    kwargs = {}
+    if offset is not None:
+        kwargs["offset"] = unwrap_surface_value(offset)
+    if tmp is not None:
+        kwargs["tmp"] = unwrap_surface_value(tmp)
+    _pto.tquant(
+        unwrap_surface_value(src),
+        unwrap_surface_value(scale),
+        unwrap_surface_value(dst),
+        qt_attr,
+        **kwargs,
+    )
+
+
+def tquant_mx(src, dst, exp, max_tile, scaling, *,
+              quant_type="MXFP8", quant_scale_alg=None, grp_axis=1, interleave=False):
+    """``pto.tquant_mx ins(src, exp, max_tile, scaling) outs(dst)``."""
+    qt_attr = Attribute.parse(f"#pto<quant_type {quant_type}>")
+    kwargs = {}
+    if quant_scale_alg is not None:
+        kwargs["quant_scale_alg"] = Attribute.parse(
+            f"#pto<quant_scale_alg {quant_scale_alg}>")
+    if grp_axis != 1:
+        # grpAxis is #pto<mx_group_axis axis0|axis1> (enum attr) on upstream;
+        # an i32 IntegerAttr here crashes getGrpAxis() during verify.
+        axis_token = "axis0" if grp_axis == 0 else "axis1"
+        kwargs["grp_axis"] = Attribute.parse(f"#pto<mx_group_axis {axis_token}>")
+    if interleave:
+        # upstream ODS models `interleave` as a BoolAttr (default false);
+        # a UnitAttr here crashes TQuantMxOp::verify (attr-layout mismatch).
+        kwargs["interleave"] = BoolAttr.get(True)
+    _pto.tquant_mx(
+        unwrap_surface_value(src),
+        unwrap_surface_value(dst),
+        unwrap_surface_value(exp),
+        unwrap_surface_value(max_tile),
+        unwrap_surface_value(scaling),
+        qt_attr,
+        **kwargs,
     )
 
 

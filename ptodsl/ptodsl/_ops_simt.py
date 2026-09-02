@@ -103,6 +103,7 @@ from ._ops_common import (
     _validate_static_event_id,
     _validate_static_event_id_range,
     _validate_sync_pipe,
+    _coerce_i64,
 )
 
 
@@ -764,6 +765,11 @@ def wait_intra_block(pipe, event_id):
         meaning="physical event_id",
     )
     _pto.wait_intra_block(_pipe_attr(pipe), event_operand)
+
+
+def set_ctrl(value):
+    """``pto.set_ctrl`` – program the scalar control register."""
+    _pto.set_ctrl(_coerce_i64(value, context="set_ctrl(value)"))
 
 
 def set_flag(src: str, dst: str, *, event_id: int = 0):
