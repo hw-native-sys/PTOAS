@@ -52,6 +52,14 @@ with pto.for_(start, stop, step=step) as iv:
 ```
 
 - `start`, `stop`, `step` are PTO scalar expressions. They are evaluated on the device.
+- PTODSL infers the loop type from runtime bounds. `index` bounds produce an `index` loop;
+  same-width `iN`/`siN` bounds produce a signless `iN` loop with signed iteration semantics.
+  Python integer literals such as `0` and `1` adopt that inferred type.
+- `uiN` bounds are rejected. `scf.for` has signed/index loop semantics, so an `index_cast` would
+  not implement a true unsigned loop. Convert the value explicitly to `index` or a signed `iN`
+  only when the program already guarantees that the value is in the corresponding non-negative
+  range.
+- Integer runtime bounds must have matching widths. Vector and floating-point bounds are rejected.
 - The loop body executes `(stop - start + step - 1) // step` times.
 - Use with `step=1` unless you need a strided iteration.
 
@@ -183,7 +191,7 @@ def unroll_hint_probe(*, BLOCK: pto.const_expr = 8):
 Rules and limitations:
 
 - `unroll_factor` must be a positive Python `int` no larger than `2**31 - 1` (the hint is encoded as an i32 attribute).
-- **A hint never changes program semantics.** When the loop cannot be unrolled natively the hint is dropped with a compiler remark and the loop is compiled unchanged. This happens for: a dynamic trip count with `unroll="full"`; a dynamic step with `unroll_factor`; `unroll_factor=1` (a no-op); a factor above the `pto-unroll-loops` pass's `max-unroll-factor` (default 1024); an empty loop body; a statically empty iteration space (`stop <= start`); and a loop whose induction variable is not `index` (PTODSL loops are `index`-typed, so this only applies to hand-written IR). This is unlike `pto.static_range`, which always unrolls at trace time and requires compile-time-constant bounds.
+- **A hint never changes program semantics.** When the loop cannot be unrolled natively the hint is dropped with a compiler remark and the loop is compiled unchanged. This happens for: a dynamic trip count with `unroll="full"`; a dynamic step with `unroll_factor`; `unroll_factor=1` (a no-op); a factor above the `pto-unroll-loops` pass's `max-unroll-factor` (default 1024); an empty loop body; a statically empty iteration space (`stop <= start`); and a loop whose induction variable is not `index`. The latter includes PTODSL loops inferred from `iN`/`siN` bounds. This is unlike `pto.static_range`, which always unrolls at trace time and requires compile-time-constant bounds.
 - Plain `range(...)` / `pto.range(...)` loops require a positive step (they lower to `scf.for`, which only supports ascending iteration); a constant non-positive step is rejected. Loops with `break` / `continue` / `else` lower through `pto._while` and cannot carry hints — using one raises an error.
 - Loops without any hint are compiled exactly as before.
 - Unroll hints are honored by the VPTO LLVM backends only (the default `pto-backend=vpto` pipelines). The EmitC backend (`PTOToEmitC`) does not consume `pto.unroll` / `pto.unroll_factor` — hints are silently dropped there.

@@ -30,7 +30,13 @@ import warnings
 
 from ._diagnostics import explicit_mode_required_with_context_error
 from ._runtime_index_ops import coerce_runtime_index
-from ._scalar_adaptation import coerce_integer_like, coerce_runtime_i1_value, coerce_runtime_integer_to_i1
+from ._scalar_adaptation import (
+    coerce_integer_like,
+    coerce_runtime_i1_value,
+    coerce_runtime_integer_to_i1,
+    coerce_runtime_loop_bounds,
+    classify_runtime_scalar_type,
+)
 from ._scalar_coercion import coerce_scalar_to_type
 from ._surface_types import const_expr
 from ._tracing.active import current_session, require_active_session
@@ -193,10 +199,16 @@ class _ForCM:
         self._ip = None
 
     def __enter__(self):
+        start, stop, step = coerce_runtime_loop_bounds(
+            unwrap_surface_value(self._start),
+            unwrap_surface_value(self._stop),
+            unwrap_surface_value(self._step),
+            context="pto.for_(...) loop bound",
+        )
         self._for_op = scf.ForOp(
-            _coerce_index(self._start),
-            _coerce_index(self._stop),
-            _coerce_index(self._step),
+            start,
+            stop,
+            step,
             self._iter_args if self._iter_args else None,
         )
         apply_unroll_hint(self._for_op, self._unroll, self._unroll_factor)
@@ -1080,6 +1092,22 @@ def _reconcile_branch_assignment_values(
                     then_value = _coerce_integer_to_i1_at(
                         then_value,
                         block=then_block,
+                        context=f"br.assign(...) then branch value for '{name}'",
+                    )
+        elif _is_integer_like_type(then_value.type) and _is_integer_like_type(else_value.type):
+            then_kind = classify_runtime_scalar_type(then_value.type)
+            else_kind = classify_runtime_scalar_type(else_value.type)
+            if then_kind != else_kind:
+                if then_kind == "index":
+                    else_value = coerce_scalar_to_type(
+                        else_value,
+                        then_value.type,
+                        context=f"br.assign(...) else branch value for '{name}'",
+                    )
+                else:
+                    then_value = coerce_scalar_to_type(
+                        then_value,
+                        else_value.type,
                         context=f"br.assign(...) then branch value for '{name}'",
                     )
         return then_value, else_value

@@ -20,13 +20,14 @@ address views such as `tile[row, col]` and `tile.as_ptr() + offset`.
 
 from ._scalar_coercion import coerce_scalar_to_type
 from ._scalar_adaptation import (
+    classify_runtime_scalar_type,
+    coerce_scalar_value_to_type,
     _integer_signedness,
     _pto_cast,
     _restore_authored_integer_type,
     _signedness_attr,
     _signless_integer_type,
     _to_common_integer_value,
-    classify_runtime_scalar_type,
 )
 from ._runtime_scalar_ops import (
     emit_runtime_binary_op,
@@ -134,9 +135,19 @@ def select(cond, true_val, false_val):
     """Frontend ``pto.select`` lowered to ``arith.select`` by PTOAS."""
     raw_true = unwrap_surface_value(true_val)
     raw_false = unwrap_surface_value(false_val)
+    true_kind = classify_runtime_scalar_type(raw_true.type)
+    false_kind = classify_runtime_scalar_type(raw_false.type)
+    if {true_kind, false_kind} == {"index", "integer"}:
+        target_type = raw_true.type if true_kind == "index" else raw_false.type
+    elif true_kind == false_kind == "integer":
+        target_type = _signless_integer_type(raw_true.type)
+    else:
+        target_type = raw_true.type
+    raw_true = coerce_scalar_value_to_type(raw_true, target_type, context="pto.select true value")
+    raw_false = coerce_scalar_value_to_type(raw_false, target_type, context="pto.select false value")
     result = Operation.create(
         "pto.select",
-        results=[_signless_integer_type(raw_true.type)],
+        results=[_signless_integer_type(target_type)],
         operands=[
             unwrap_surface_value(cond),
             _to_common_integer_value(raw_true),

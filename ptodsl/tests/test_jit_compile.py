@@ -2066,8 +2066,8 @@ def ast_runtime_for_branch_local_temp_probe(rows: pto.i32):
 
 @pto.jit(target="a5")
 def ast_runtime_ifexp_assign_probe(rows: pto.i32):
-    limit = pto.const(64, dtype=pto.index)
-    zero = pto.const(0, dtype=pto.index)
+    limit = pto.const(64, dtype=pto.i32)
+    zero = pto.const(0, dtype=pto.i32)
 
     for row in range(rows):
         cnt = row if row < limit else limit
@@ -2077,8 +2077,8 @@ def ast_runtime_ifexp_assign_probe(rows: pto.i32):
 
 @pto.jit(target="a5")
 def ast_runtime_ifexp_python_literal_assign_probe(rows: pto.i32):
-    limit = pto.const(64, dtype=pto.index)
-    zero = pto.const(0, dtype=pto.index)
+    limit = pto.const(64, dtype=pto.i32)
+    zero = pto.const(0, dtype=pto.i32)
 
     for row in range(rows):
         cnt = row if row < limit else 64
@@ -2874,6 +2874,25 @@ def integer_loop_bound_probe(*, BLOCK: pto.const_expr = 8):
         for col in range(0, valid_dim, 1):
             _ = row
             _ = col
+
+
+@pto.jit(target="a5", mode="explicit")
+def signed_integer_loop_bound_probe(stop: pto.si32):
+    with pto.for_(0, stop, step=1) as row:
+        _ = row
+
+
+@pto.jit(target="a5", mode="explicit")
+def unsigned_integer_loop_bound_probe(stop: pto.ui32):
+    with pto.for_(0, stop, step=1) as row:
+        _ = row
+
+
+@pto.jit(target="a5", mode="explicit")
+def integer_carry_loop_bound_probe(stop: pto.i32):
+    loop = pto.for_(0, stop, step=1).carry(acc=pto.i32(0))
+    with loop:
+        loop.update(acc=loop.acc + 1)
 
 
 @pto.jit(target="a5")
@@ -5952,7 +5971,7 @@ def main() -> None:
         "func.func public @process_row_ptr_kernel_module__ptodsl_" in mixed_backend_text
         and "func.call @process_row_ptr_kernel_module__ptodsl_"
         in mixed_backend_text
-        and ": (!pto.ptr<f32, gm>, !pto.ptr<f32, gm>, index) -> ()" in mixed_backend_text
+        and ": (!pto.ptr<f32, gm>, !pto.ptr<f32, gm>, i32) -> ()" in mixed_backend_text
         and "func.func private @process_row_ptr_kernel_module__ptodsl_"
         in mixed_backend_text,
         "mixed-backend kernel-module calls should currently lower through the C-ABI-compatible ptr/scalar subset",
@@ -7751,12 +7770,33 @@ def main() -> None:
     integer_loop_text = integer_loop_bound_probe.compile(BLOCK=8).mlir_text()
     expect_parse_roundtrip_and_verify(integer_loop_text, "integer loop bound specialization")
     expect(
-        integer_loop_text.count("pto.index_cast") >= 2,
-        "integer runtime loop bounds should be normalized to index with pto.index_cast",
+        integer_loop_text.count("scf.for") == 2
+        and integer_loop_text.count(": i32 {") >= 2,
+        "same-width signed integer bounds should preserve i32 scf.for induction variables",
     )
     expect(
-        integer_loop_text.count("scf.for") == 2,
-        "integer loop bound probe should still lower nested authored loops to scf.for",
+        "pto.index_cast" not in integer_loop_text,
+        "signed integer loop bounds should not introduce unnecessary index casts",
+    )
+
+    signed_loop_text = signed_integer_loop_bound_probe.compile().mlir_text()
+    expect_parse_roundtrip_and_verify(signed_loop_text, "signed integer loop bound specialization")
+    expect(
+        re.search(r"scf\.for .* : i32 \{", signed_loop_text) is not None,
+        "pto.si32 bounds and Python literal start/step should normalize to a signless i32 loop",
+    )
+
+    expect_raises(
+        TypeError,
+        unsigned_integer_loop_bound_probe.compile,
+        "does not support unsigned integer bounds",
+    )
+
+    carry_loop_text = integer_carry_loop_bound_probe.compile().mlir_text()
+    expect_parse_roundtrip_and_verify(carry_loop_text, "integer carry loop bound specialization")
+    expect(
+        re.search(r"scf\.for .* iter_args\([^)]*\).*: i32", carry_loop_text) is not None,
+        "pto.for_(...).carry(...) should use the same inferred i32 loop type",
     )
 
     scalar_pointer_offset_text = scalar_pointer_offset_probe.compile().mlir_text()
@@ -8111,8 +8151,8 @@ def main() -> None:
     shared_index_coercion_text = shared_index_coercion_probe.compile().mlir_text()
     expect_parse_roundtrip_and_verify(shared_index_coercion_text, "shared index coercion specialization")
     expect(
-        shared_index_coercion_text.count("pto.index_cast") >= 3,
-        "shared index coercion should cast one i32 value through loop bound, step, addptr, and event id paths",
+        shared_index_coercion_text.count("pto.index_cast") >= 2,
+        "shared index coercion should cast i32 values through addptr and event id paths",
     )
     expect("scf.for" in shared_index_coercion_text, "shared index coercion should lower i32 loop bounds to scf.for")
     expect("pto.addptr" in shared_index_coercion_text, "shared index coercion should lower i32 pointer offsets")

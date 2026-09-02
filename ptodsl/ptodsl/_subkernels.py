@@ -397,6 +397,14 @@ def _normalize_subkernel_argument(role: KernelRole, name: str, annotation, value
                 raw_value = unwrap_surface_value(value)
                 expected_type = _resolve(annotation)
                 if raw_value.type != expected_type:
+                    if str(expected_type) == "index" and is_runtime_scalar_ir_type(raw_value.type):
+                        from ._scalar_coercion import coerce_scalar_to_type
+
+                        return coerce_scalar_to_type(
+                            raw_value,
+                            expected_type,
+                            context=f"@pto.tileop argument '{name}'",
+                        )
                     raise subkernel_argument_type_error(
                         role.value,
                         name,

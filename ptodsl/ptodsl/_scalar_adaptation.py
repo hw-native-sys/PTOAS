@@ -384,6 +384,75 @@ def coerce_runtime_index_value(value, *, context: str):
     raise TypeError(f"{context} expects an index or integer runtime scalar, got {value_type}")
 
 
+def coerce_runtime_loop_bounds(start, stop, step, *, context: str):
+    """Normalize loop bounds while preserving safe signed-integer loops.
+
+    ``scf.for`` accepts signless integer bounds, but its loop condition is
+    signed.  Therefore same-width signless/signed integer bounds remain in
+    that integer type, while index bounds remain index. Unsigned bounds are
+    rejected because converting them to index would not provide unsigned-loop
+    semantics.
+    Python literals follow the selected runtime bound type.
+    """
+    raw_values = (start, stop, step)
+    if any(isinstance(value, bool) for value in raw_values):
+        raise TypeError(f"{context} does not accept bool values")
+    typed_values = tuple(value for value in raw_values if hasattr(value, "type"))
+    if not typed_values:
+        index_type = IndexType.get()
+        return tuple(
+            materialize_scalar_literal(value, index_type, context=context)
+            for value in raw_values
+        )
+
+    bound_types = tuple(value.type for value in typed_values)
+    if any(not (IndexType.isinstance(ty) or IntegerType.isinstance(ty)) for ty in bound_types):
+        raise TypeError(
+            f"{context} expects an index or integer runtime scalar, got "
+            + ", ".join(str(value.type) for value in typed_values)
+        )
+
+    integer_widths = {
+        IntegerType(ty).width for ty in bound_types if IntegerType.isinstance(ty)
+    }
+    if len(integer_widths) > 1:
+        raise TypeError(
+            f"{context} requires integer bounds with matching widths, got "
+            + ", ".join(str(value.type) for value in typed_values)
+        )
+
+    if any(_integer_signedness(value.type) == "unsigned" for value in typed_values):
+        raise TypeError(
+            f"{context} does not support unsigned integer bounds; "
+            "convert the bound to index or a signed integer explicitly"
+        )
+
+    if any(IndexType.isinstance(ty) for ty in bound_types):
+        target_type = IndexType.get()
+    else:
+        target_type = IntegerType.get_signless(integer_widths.pop())
+
+    normalized = []
+    for value in raw_values:
+        if not hasattr(value, "type"):
+            normalized.append(materialize_scalar_literal(value, target_type, context=context))
+            continue
+        value_kind = classify_runtime_scalar_type(value.type)
+        if value_kind == "index" and IndexType.isinstance(target_type):
+            normalized.append(value)
+        elif value_kind == "integer" and IntegerType.isinstance(target_type):
+            if _integer_element_type(value.type).width != IntegerType(target_type).width:
+                raise TypeError(f"{context} requires integer bounds with matching widths")
+            normalized.append(_to_common_integer_value(value))
+        elif value_kind == "integer" and IndexType.isinstance(target_type):
+            normalized.append(_emit_index_cast(value, target_type))
+        elif value_kind == "index" and IntegerType.isinstance(target_type):
+            raise TypeError(f"{context} cannot mix index and integer bounds")
+        else:
+            raise TypeError(f"{context} expects index or integer bounds, got {value.type}")
+    return tuple(normalized)
+
+
 def coerce_runtime_integer_value(value, target_type, *, context: str):
     """Normalize one authored integer-like value/literal to *target_type*."""
     if isinstance(value, bool):
