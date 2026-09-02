@@ -130,7 +130,8 @@ static bool hasTileDependency(Operation *opA, Operation *opB) {
          sharesAnyValue(a.tileOutputs, b.tileOutputs);
 }
 
-static bool crossesOperandDefinition(Operation *movingOp, Operation *candidate) {
+static bool crossesOperandDefinition(Operation *movingOp,
+                                     const Operation *candidate) {
   for (Value operand : movingOp->getOperands()) {
     Operation *defOp = operand.getDefiningOp();
     if (defOp == candidate) {
@@ -269,8 +270,9 @@ collectScheduledGroups(Block &block, SmallVectorImpl<ScheduledGroup> &groups) {
   return validateScheduledGroups(groups);
 }
 
-static bool canPrefixMoveLaterAcross(
-    ArrayRef<GroupMember> members, Operation *placement, Operation *barrier) {
+static bool canPrefixMoveLaterAcross(ArrayRef<GroupMember> members,
+                                     const Operation *placement,
+                                     Operation *barrier) {
   for (const GroupMember &prevMember : members) {
     if (!canMoveLaterAcross(prevMember.op, barrier)) {
       return false;
@@ -283,7 +285,7 @@ static bool canPrefixMoveLaterAcross(
 }
 
 static void movePrefixPastBarrier(ArrayRef<GroupMember> members,
-                                  Operation *placement,
+                                  const Operation *placement,
                                   Operation *barrier) {
   Operation *anchor = barrier;
   for (const GroupMember &prevMember : members) {

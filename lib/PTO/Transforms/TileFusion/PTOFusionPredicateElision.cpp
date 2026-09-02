@@ -326,16 +326,19 @@ buildFusionRegionPredicateContext(pto::FusionRegionOp fusionRegion,
   FusionRegionPredicateContext context;
   context.fusionRegion = fusionRegion;
 
-  fusionRegion.walk([&](Operation *op) -> WalkResult {
-    if (op != fusionRegion.getOperation() && isa<pto::FusionRegionOp>(op)) {
-      return WalkResult::skip();
-    }
+  fusionRegion.walk(
+      [fusionRegion, &context](Operation *op) mutable -> WalkResult {
+        const bool isNestedFusionRegion =
+            op != fusionRegion.getOperation() && isa<pto::FusionRegionOp>(op);
+        if (isNestedFusionRegion) {
+          return WalkResult::skip();
+        }
 
-    if (std::optional<PltCandidate> candidate = buildPltCandidate(op)) {
-      context.pltCandidates.push_back(std::move(*candidate));
-    }
-    return WalkResult::advance();
-  });
+        if (std::optional<PltCandidate> candidate = buildPltCandidate(op)) {
+          context.pltCandidates.push_back(std::move(*candidate));
+        }
+        return WalkResult::advance();
+      });
 
   populateDominatingCandidateIndices(context.pltCandidates, dominanceInfo);
   return context;
@@ -417,7 +420,8 @@ struct PTOFusionPredicateElisionPass
 
     DominanceInfo &dominanceInfo = getAnalysis<DominanceInfo>();
     SmallVector<FusionRegionPredicateContext, mlir::pto::kValue4> fusionContexts;
-    func.walk([&](pto::FusionRegionOp fusionRegion) {
+    func.walk([&dominanceInfo,
+               &fusionContexts](pto::FusionRegionOp fusionRegion) {
       FusionRegionPredicateContext context =
           buildFusionRegionPredicateContext(fusionRegion, dominanceInfo);
       if (!context.pltCandidates.empty()) {
@@ -427,7 +431,7 @@ struct PTOFusionPredicateElisionPass
 
     bool changed = false;
     for (FusionRegionPredicateContext &context : fusionContexts) {
-      changed |= elideEquivalentPltCandidates(context);
+      changed = elideEquivalentPltCandidates(context) || changed;
     }
 
     if (!changed) {

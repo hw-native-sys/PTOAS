@@ -188,7 +188,7 @@ struct MaskGranularitySolver {
   }
 
   LogicalResult collect() {
-    module.walk([&](Operation *op) {
+    module.walk([this](Operation *op) {
       for (Value result : op->getResults()) {
         addMaskValue(result);
       }
@@ -443,21 +443,25 @@ struct MaskGranularitySolver {
   }
 
   LogicalResult addExecuteRegionConstraints(scf::ExecuteRegionOp executeOp) {
-    WalkResult result = executeOp.getRegion().walk([&](scf::YieldOp yieldOp) {
-      if (yieldOp->getParentOp() != executeOp.getOperation()) {
-        return WalkResult::advance();
-      }
-      if (failed(
-              addYieldConstraints(executeOp->getResults(), yieldOp, executeOp))) {
-        return WalkResult::interrupt();
-      }
-      return WalkResult::advance();
-    });
+    WalkResult result = executeOp.getRegion().walk(
+        [this, executeOp](scf::YieldOp yieldOp) mutable {
+          const bool belongsToExecuteRegion =
+              yieldOp->getParentOp() == executeOp.getOperation();
+          if (!belongsToExecuteRegion) {
+            return WalkResult::advance();
+          }
+          if (failed(addYieldConstraints(executeOp->getResults(), yieldOp,
+                                         executeOp))) {
+            return WalkResult::interrupt();
+          }
+          return WalkResult::advance();
+        });
     return failure(result.wasInterrupted());
   }
 
   LogicalResult addIndexSwitchConstraints(scf::IndexSwitchOp indexSwitchOp) {
-    auto addBlockTerminator = [&](Block &block) -> LogicalResult {
+    auto addBlockTerminator =
+        [this, indexSwitchOp](Block &block) mutable -> LogicalResult {
       auto yieldOp = dyn_cast<scf::YieldOp>(block.getTerminator());
       if (!yieldOp) {
         return success();
@@ -478,14 +482,14 @@ struct MaskGranularitySolver {
 
   LogicalResult addWhileConstraints(scf::WhileOp whileOp) {
     return VMIControlFlowSupport::addWhileConstraints(
-        whileOp, [&](Value lhs, Value rhs, Operation *op) {
+        whileOp, [this](Value lhs, Value rhs, Operation *op) {
           return uniteEquivalentValues(lhs, rhs, op);
         });
   }
 
   LogicalResult addForConstraints(scf::ForOp forOp) {
     return VMIControlFlowSupport::addForConstraints(
-        forOp, [&](Value lhs, Value rhs, Operation *op) {
+        forOp, [this](Value lhs, Value rhs, Operation *op) {
           return uniteEquivalentValues(lhs, rhs, op);
         });
   }
@@ -532,12 +536,12 @@ struct MaskGranularitySolver {
     return success();
   }
 
-  bool hasVMIValueTypes(Operation *op) {
+  bool hasVMIValueTypes(Operation *op) const {
     return llvm::any_of(op->getOperandTypes(), containsVMIType) ||
            llvm::any_of(op->getResultTypes(), containsVMIType);
   }
 
-  bool hasVMIFunctionType(func::FuncOp func) {
+  bool hasVMIFunctionType(func::FuncOp func) const {
     FunctionType type = func.getFunctionType();
     return llvm::any_of(type.getInputs(), containsVMIType) ||
            llvm::any_of(type.getResults(), containsVMIType);
@@ -564,7 +568,8 @@ struct MaskGranularitySolver {
     }
 
     SmallVector<func::ReturnOp> returns;
-    callee.walk([&](func::ReturnOp returnOp) { returns.push_back(returnOp); });
+    callee.walk(
+        [&returns](func::ReturnOp returnOp) { returns.push_back(returnOp); });
     for (func::ReturnOp returnOp : returns) {
       for (auto [index, result] : llvm::enumerate(callOp.getResults())) {
         if (index >= returnOp.getNumOperands()) {
@@ -593,7 +598,7 @@ struct MaskGranularitySolver {
   SmallVector<Type> getCallResultTypes(func::FuncOp func) {
     SmallVector<Type> resultTypes;
     bool found = false;
-    module.walk([&](func::CallOp call) {
+    module.walk([func, &resultTypes, &found](func::CallOp call) mutable {
       if (call.getCallee() != func.getSymName()) {
         return;
       }
@@ -616,7 +621,7 @@ struct MaskGranularitySolver {
   }
 
   void rewriteFunctionType() {
-    module.walk([&](func::FuncOp func) {
+    module.walk([this](func::FuncOp func) {
       if (func.empty()) {
         return;
       }
@@ -693,7 +698,7 @@ struct MaskGranularitySolver {
   }
 
   Value rematerializeMaskProducer(Value value, VMIMaskType resultType,
-                                  Location loc, OpBuilder &builder) {
+                                  Location loc, OpBuilder &builder) const {
     if (auto createMask = value.getDefiningOp<VMICreateMaskOp>()) {
       return builder
           .create<VMICreateMaskOp>(loc, resultType, createMask.getActiveLanes())

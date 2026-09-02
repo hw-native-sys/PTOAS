@@ -291,7 +291,7 @@ static LogicalResult collectAliasRelevantRoots(
 }
 
 static bool containsEquivalentRoot(ArrayRef<Value> roots, Value candidate) {
-  return llvm::any_of(roots, [&](Value root) {
+  return llvm::any_of(roots, [candidate](Value root) {
     return areEquivalentValues(root, candidate);
   });
 }
@@ -303,26 +303,21 @@ static bool canMoveAcrossOperations(Operation *movableOp,
                                     ArrayRef<Value> movableRoots,
                                     ArrayRef<Operation *> crossedOps,
                                     StringRef crossedKind,
-                                    llvm::raw_ostream *debugOS) {
+                                    llvm::raw_ostream &debugOS) {
   for (Operation *op : crossedOps) {
     SmallVector<Value, mlir::pto::kValue4> opRoots;
     if (failed(collectAliasRelevantRoots(op, opRoots))) {
-      if (debugOS) {
-        *debugOS << "[op-fusion] reject movable op " << movableOp->getName()
-                 << " at " << movableOp->getLoc() << ": crossed effects of "
-                 << op->getName() << " are not alias-analyzable\n";
-      }
+      debugOS << "[op-fusion] reject movable op " << movableOp->getName()
+              << " at " << movableOp->getLoc() << ": crossed effects of "
+              << op->getName() << " are not alias-analyzable\n";
       return false;
     }
-    if (llvm::any_of(movableRoots, [&](Value root) {
+    if (llvm::any_of(movableRoots, [&opRoots](Value root) {
           return containsEquivalentRoot(opRoots, root);
         })) {
-      if (debugOS) {
-        *debugOS << "[op-fusion] reject movable op " << movableOp->getName()
-                 << " at " << movableOp->getLoc()
-                 << ": touched root may alias a crossed " << crossedKind
-                 << "\n";
-      }
+      debugOS << "[op-fusion] reject movable op " << movableOp->getName()
+              << " at " << movableOp->getLoc()
+              << ": touched root may alias a crossed " << crossedKind << "\n";
       return false;
     }
   }
@@ -341,14 +336,15 @@ static bool canMoveAcrossStages(Operation *movableOp,
     }
     return false;
   }
+  llvm::raw_ostream &diagnosticStream = debugOS ? *debugOS : llvm::nulls();
   for (const StageInfo &crossStage : crossStages) {
     if (!canMoveAcrossOperations(movableOp, roots, crossStage.leafOps,
-                                 "stage memory op", debugOS)) {
+                                 "stage memory op", diagnosticStream)) {
       return false;
     }
     for (const LoopLevelInfo &level : crossStage.levels) {
       if (!canMoveAcrossOperations(movableOp, roots, level.epilogueOps,
-                                   "stage epilogue op", debugOS)) {
+                                   "stage epilogue op", diagnosticStream)) {
         return false;
       }
     }
@@ -451,7 +447,7 @@ static LogicalResult analyzeStage(scf::ForOp outerLoop, StageInfo &stage) {
 static bool appendStage(scf::ForOp loop,
                         SmallVectorImpl<Operation *> &pendingSetup,
                         SmallVectorImpl<StageInfo> &stages,
-                        llvm::raw_ostream *debugOS) {
+                        llvm::raw_ostream &debugOS) {
   StageInfo stage;
   stage.setupOps.assign(pendingSetup.begin(), pendingSetup.end());
   pendingSetup.clear();
@@ -459,10 +455,8 @@ static bool appendStage(scf::ForOp loop,
     stages.push_back(std::move(stage));
     return true;
   }
-  if (debugOS) {
-    *debugOS << "[op-fusion] stop stage run before " << loop.getLoc()
-             << ": next stage analysis failed\n";
-  }
+  debugOS << "[op-fusion] stop stage run before " << loop.getLoc()
+          << ": next stage analysis failed\n";
   return false;
 }
 
@@ -481,9 +475,10 @@ static SmallVector<StageInfo, mlir::pto::kValue8> collectStageRunFrom(scf::ForOp
   stages.push_back(std::move(firstStage));
 
   SmallVector<Operation *, mlir::pto::kValue4> pendingSetup;
+  llvm::raw_ostream &diagnosticStream = debugOS ? *debugOS : llvm::nulls();
   for (Operation *op = firstLoop->getNextNode(); op; op = op->getNextNode()) {
     if (auto nextLoop = dyn_cast<scf::ForOp>(op)) {
-      if (!appendStage(nextLoop, pendingSetup, stages, debugOS)) {
+      if (!appendStage(nextLoop, pendingSetup, stages, diagnosticStream)) {
         break;
       }
       continue;
@@ -735,8 +730,10 @@ struct PTOLowLevelLoopFusionPass
       }
 
       bool changed = false;
-      func.walk([&](pto::FusionRegionOp fusionRegion) {
-        changed |= fuseStageRunsInBlock(fusionRegion.getBody().front(), traceOS);
+      func.walk([traceOS, &changed](pto::FusionRegionOp fusionRegion) {
+        changed =
+            fuseStageRunsInBlock(fusionRegion.getBody().front(), traceOS) ||
+            changed;
       });
       if (changed) {
         ++fusedFuncs;

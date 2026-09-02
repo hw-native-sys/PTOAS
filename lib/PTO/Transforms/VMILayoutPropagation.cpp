@@ -72,7 +72,7 @@ static bool hasAmbiguousTransferTargets(ArrayRef<VMILayoutFact> facts) {
 }
 
 static bool relationContainsOperandLayout(const VMILayoutRelation &relation,
-                                          OpOperand &operand,
+                                          const OpOperand &operand,
                                           VMILayoutAttr layout) {
   for (const VMILayoutFact &fact : relation.facts) {
     if (fact.operand == &operand) {
@@ -585,22 +585,22 @@ public:
     [[maybe_unused]] auto [op, changedValue, changedLayout, propagator,
                            changedOperand] = request;
     if (auto reduce = dyn_cast<VMIGroupReduceAddFOp>(op)) {
-      return queryReduce(reduce, changedValue, changedLayout, changedOperand);
+      return queryReduce(reduce, changedValue, changedLayout);
     }
     if (auto reduce = dyn_cast<VMIGroupReduceMaxFOp>(op)) {
-      return queryReduce(reduce, changedValue, changedLayout, changedOperand);
+      return queryReduce(reduce, changedValue, changedLayout);
     }
     if (auto reduce = dyn_cast<VMIGroupReduceMinFOp>(op)) {
-      return queryReduce(reduce, changedValue, changedLayout, changedOperand);
+      return queryReduce(reduce, changedValue, changedLayout);
     }
     if (auto reduce = dyn_cast<VMIGroupReduceAddIOp>(op)) {
-      return queryReduce(reduce, changedValue, changedLayout, changedOperand);
+      return queryReduce(reduce, changedValue, changedLayout);
     }
     if (auto reduce = dyn_cast<VMIGroupReduceMaxIOp>(op)) {
-      return queryReduce(reduce, changedValue, changedLayout, changedOperand);
+      return queryReduce(reduce, changedValue, changedLayout);
     }
     if (auto reduce = dyn_cast<VMIGroupReduceMinIOp>(op)) {
-      return queryReduce(reduce, changedValue, changedLayout, changedOperand);
+      return queryReduce(reduce, changedValue, changedLayout);
     }
     return failure();
   }
@@ -608,8 +608,8 @@ public:
 private:
   template <typename OpTy>
   FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>>
-  queryReduce(OpTy reduce, Value changedValue, VMILayoutAttr changedLayout,
-              OpOperand *changedOperand) const {
+  queryReduce(OpTy reduce, Value changedValue,
+              VMILayoutAttr changedLayout) const {
     auto sourceType = dyn_cast<VMIVRegType>(reduce.getSource().getType());
     auto resultType = dyn_cast<VMIVRegType>(reduce.getResult().getType());
     if (!sourceType || !resultType) {
@@ -1189,7 +1189,7 @@ void VMILayoutPropagator::addEquivalentValues(Value lhs, Value rhs) {
     return;
   }
 
-  auto addEdge = [&](Value from, Value to) {
+  auto addEdge = [this](Value from, Value to) {
     SmallVector<Value, 2> &values = equivalentValues[from];
     if (!llvm::is_contained(values, to)) {
       values.push_back(to);
@@ -1214,7 +1214,7 @@ void VMILayoutPropagator::enqueue(Value value, VMILayoutAttr layout) {
 LogicalResult
 VMILayoutPropagator::addUseConflict(OpOperand &operand,
                                     VMIValueLayoutAssignment &assignment,
-                                    VMILayoutAttr layout) {
+                                    VMILayoutAttr layout) const {
   for (VMILayoutConflict &conflict : assignment.conflicts) {
     if (conflict.operand != &operand) {
       continue;
@@ -1467,7 +1467,7 @@ bool VMILayoutPropagator::isTypeRewriteable(Value value) const {
 FailureOr<Value> VMILayoutPropagator::materializeAt(Value source,
                                                     VMILayoutAttr layout,
                                                     RewriterBase &rewriter,
-                                                    Location loc) {
+                                                    Location loc) const {
   VMILayoutAttr sourceLayout = getCurrentLayout(source);
   if (!sourceLayout) {
     return failure();

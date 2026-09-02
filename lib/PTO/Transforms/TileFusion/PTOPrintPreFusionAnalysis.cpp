@@ -87,7 +87,7 @@ static StringRef stringifyWriteInstanceEscapeClass(
 static void appendIndexList(llvm::raw_ostream &os, ArrayRef<unsigned> values) {
   os << "[";
   for (auto [idx, value] : llvm::enumerate(values)) {
-    if (idx) {
+    if (idx != 0) {
       os << ", ";
     }
     os << value;
@@ -154,12 +154,14 @@ buildValueLabels(Block &block, const pto::FusionBlockAnalysis &analysis) {
 
     if (semanticsOr->kind == pto::FusionOpKind::LocalBoundary) {
       for (Value input : semanticsOr->tileInputs) {
-        if (!labels.count(input)) {
+        const bool isUnlabeledInput = labels.count(input) == 0;
+        if (isUnlabeledInput) {
           labels.try_emplace(input, makeExternalValueLabel(externalOrdinal++));
         }
       }
       for (Value output : semanticsOr->tileOutputs) {
-        if (!labels.count(output)) {
+        const bool isUnlabeledOutput = labels.count(output) == 0;
+        if (isUnlabeledOutput) {
           labels.try_emplace(output, makeBoundaryValueLabel(boundaryOrdinal++));
         }
       }
@@ -167,7 +169,8 @@ buildValueLabels(Block &block, const pto::FusionBlockAnalysis &analysis) {
     }
 
     for (Value input : semanticsOr->tileInputs) {
-      if (!labels.count(input)) {
+      const bool isUnlabeledInput = labels.count(input) == 0;
+      if (isUnlabeledInput) {
         labels.try_emplace(input, makeExternalValueLabel(externalOrdinal++));
       }
     }
@@ -190,14 +193,14 @@ static void printLocalBoundaries(llvm::raw_ostream &os, Block &block,
     os << "    local_boundary[" << boundaryId++ << "] op="
        << semanticsOr->opName << " inputs=[";
     for (auto [idx, input] : llvm::enumerate(semanticsOr->tileInputs)) {
-      if (idx) {
+      if (idx != 0) {
         os << ", ";
       }
       os << valueLabels.lookup(input);
     }
     os << "] outputs=[";
     for (auto [idx, output] : llvm::enumerate(semanticsOr->tileOutputs)) {
-      if (idx) {
+      if (idx != 0) {
         os << ", ";
       }
       os << valueLabels.lookup(output);
@@ -228,11 +231,11 @@ static void printComputeNodes(llvm::raw_ostream &os,
        << " family=" << stringifyComputeFamily(node.semantics.computeFamily)
        << " domain_class=" << node.iterationDomainClass << " inputs=[";
     for (auto [idx, input] : llvm::enumerate(node.semantics.tileInputs)) {
-      os << (idx ? ", " : "") << labels.lookup(input);
+      os << (idx != 0 ? ", " : "") << labels.lookup(input);
     }
     os << "] outputs=[";
     for (auto [idx, output] : llvm::enumerate(node.semantics.tileOutputs)) {
-      os << (idx ? ", " : "") << labels.lookup(output);
+      os << (idx != 0 ? ", " : "") << labels.lookup(output);
     }
     os << "] incoming=";
     appendIndexList(os, node.incomingEdges);

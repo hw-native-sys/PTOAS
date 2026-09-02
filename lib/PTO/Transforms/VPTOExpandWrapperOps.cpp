@@ -174,8 +174,7 @@ static Type getBufferElementType(Type type) {
   return {};
 }
 
-static Value offsetBufferPointer(Value basePtr, Type elementType,
-                                 Value elementOffset,
+static Value offsetBufferPointer(Value basePtr, Value elementOffset,
                                  PatternRewriter &rewriter, Location loc) {
   if (!basePtr) {
     return {};
@@ -603,13 +602,14 @@ static FailureOr<Value> packMadXt(Location loc, const MadXtConfig &config,
     return failure();
   }
 
-  auto constant = [&](uint64_t value) -> Value {
+  auto constant = [&rewriter, loc](uint64_t value) -> Value {
     return rewriter.create<arith::ConstantIntOp>(loc, value, mlir::pto::kValue64);
   };
-  auto shl = [&](Value value, uint64_t amount) -> Value {
+  auto shl = [&rewriter, loc, &constant](Value value,
+                                         uint64_t amount) -> Value {
     return rewriter.create<arith::ShLIOp>(loc, value, constant(amount));
   };
-  auto bitOr = [&](Value lhs, Value rhs) -> Value {
+  auto bitOr = [&rewriter, loc](Value lhs, Value rhs) -> Value {
     return rewriter.create<arith::OrIOp>(loc, lhs, rhs);
   };
 
@@ -1196,8 +1196,8 @@ struct ExpandUvldPattern : public OpRewritePattern<pto::UvldOp> {
           "requires a recoverable pointer base for uvld expansion");
     }
 
-    Value loadPtr = offsetBufferPointer(basePtr, vecType.getElementType(),
-                                       op.getOffset(), rewriter, op.getLoc());
+    Value loadPtr =
+        offsetBufferPointer(basePtr, op.getOffset(), rewriter, op.getLoc());
     auto alignType = pto::AlignType::get(rewriter.getContext());
     Value align =
         rewriter.create<pto::VldasOp>(op.getLoc(), alignType, loadPtr);
@@ -1334,7 +1334,8 @@ struct ExpandDmaLoadPattern : public OpRewritePattern<pto::MteGmUbOp> {
 
     buildSoftwareLoopNest(
         rewriter, loc, loopPlan.softwareLoops, {zero, zero},
-        [&](Value srcOffset, Value dstOffset) {
+        [op, &rewriter, loc, zero, effectiveNBurst,
+         padding](Value srcOffset, Value dstOffset) mutable {
           Value source = offsetPointerByBytes(op.getSource(), srcOffset, rewriter, loc);
           Value destination =
               offsetPointerByBytes(op.getDestination(), dstOffset, rewriter, loc);
@@ -1376,7 +1377,8 @@ struct ExpandDmaStorePattern : public OpRewritePattern<pto::MteUbGmOp> {
 
     buildSoftwareLoopNest(
         rewriter, loc, loopPlan.softwareLoops, {zero, zero},
-        [&](Value srcOffset, Value dstOffset) {
+        [op, &rewriter, loc, zero, effectiveNBurst](Value srcOffset,
+                                                    Value dstOffset) mutable {
           Value source = offsetPointerByBytes(op.getSource(), srcOffset, rewriter, loc);
           Value destination =
               offsetPointerByBytes(op.getDestination(), dstOffset, rewriter, loc);
@@ -1434,7 +1436,7 @@ struct ExpandCubeLoadPattern : public OpRewritePattern<pto::MteGmL1Op> {
     DmaLoopPlan loopPlan = configureLoadToL1Loops(op, loops, one, rewriter);
     buildSoftwareLoopNest(
         rewriter, loc, loopPlan.softwareLoops, {zero, zero},
-        [&](Value srcOffset, Value dstOffset) {
+        [op, &rewriter, loc](Value srcOffset, Value dstOffset) mutable {
           Value source =
               offsetPointerByBytes(op.getSource(), srcOffset, rewriter, loc);
           Value destination = offsetPointerByBytes(op.getDestination(), dstOffset,
@@ -1510,7 +1512,7 @@ struct ExpandCubeStorePattern : public OpRewritePattern<pto::MteL1UbOp> {
                                                     loops.rend());
     buildSoftwareLoopNest(
         rewriter, loc, swLoopNestOrder, {zero, zero},
-        [&](Value srcOffset, Value dstOffset) {
+        [op, &rewriter, loc, zero](Value srcOffset, Value dstOffset) mutable {
           Value source =
               offsetPointerByBytes(op.getSource(), srcOffset, rewriter, loc);
           Value destination =
@@ -1624,7 +1626,9 @@ struct ExpandLeftLoadPattern : public OpRewritePattern<pto::MteL1L0aOp> {
     if (!destination) {
       return rewriter.notifyMatchFailure(op, "expected pointer-like destination");
     }
-    FailureOr<LoadCbufToCbControl> control = [&]() -> FailureOr<LoadCbufToCbControl> {
+    FailureOr<LoadCbufToCbControl> control =
+        [op, loc, elementType,
+         &rewriter]() mutable -> FailureOr<LoadCbufToCbControl> {
       if (op.getMStart()) {
         return LoadCbufToCbControl{op.getMStart(), op.getKStart(),
                                    op.getMStep(), op.getKStep(),
@@ -1674,7 +1678,9 @@ struct ExpandRightLoadPattern : public OpRewritePattern<pto::MteL1L0bOp> {
     if (!destination) {
       return rewriter.notifyMatchFailure(op, "expected pointer-like destination");
     }
-    FailureOr<LoadCbufToCbControl> control = [&]() -> FailureOr<LoadCbufToCbControl> {
+    FailureOr<LoadCbufToCbControl> control =
+        [op, loc, elementType,
+         &rewriter]() mutable -> FailureOr<LoadCbufToCbControl> {
       if (op.getMStart()) {
         return LoadCbufToCbControl{op.getMStart(), op.getKStart(),
                                    op.getMStep(), op.getKStep(),

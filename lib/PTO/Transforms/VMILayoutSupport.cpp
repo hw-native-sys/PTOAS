@@ -70,7 +70,7 @@ static llvm::cl::opt<bool> preferLaneStrideNarrowing(
 FailureOr<VMIVselrLayoutFact>
 VMILayoutSupport::getPreferredVselrLayoutFact(
     VMIVselrOp op, std::string *reason) const {
-  auto fail = [&](const Twine &message) -> FailureOr<VMIVselrLayoutFact> {
+  auto fail = [reason](const Twine &message) -> FailureOr<VMIVselrLayoutFact> {
     if (reason) {
       *reason = message.str();
     }
@@ -92,7 +92,7 @@ VMILayoutSupport::getPreferredVselrLayoutFact(
 FailureOr<VMIVselrLayoutFact>
 VMILayoutSupport::getVselrLayoutFact(VMIVselrOp op,
                                      std::string *reason) const {
-  auto fail = [&](const Twine &message) -> FailureOr<VMIVselrLayoutFact> {
+  auto fail = [reason](const Twine &message) -> FailureOr<VMIVselrLayoutFact> {
     if (reason) {
       *reason = message.str();
     }
@@ -136,7 +136,8 @@ FailureOr<VMIGroupReduceLayoutFact>
 VMILayoutSupport::getPreferredGroupReduceLayoutFact(VMIVRegType sourceType,
                                                     int64_t numGroups,
                                                     std::string *reason) const {
-  auto fail = [&](const Twine &message) -> FailureOr<VMIGroupReduceLayoutFact> {
+  auto fail =
+      [reason](const Twine &message) -> FailureOr<VMIGroupReduceLayoutFact> {
     if (reason) {
       *reason = message.str();
     }
@@ -168,7 +169,8 @@ FailureOr<VMIGroupReduceLayoutFact>
 VMILayoutSupport::getGroupReduceLayoutFactForLayouts(
     VMIVRegType sourceType, VMIMaskType maskType, VMIVRegType resultType,
     int64_t numGroups, std::string *reason) const {
-  auto fail = [&](const Twine &message) -> FailureOr<VMIGroupReduceLayoutFact> {
+  auto fail =
+      [reason](const Twine &message) -> FailureOr<VMIGroupReduceLayoutFact> {
     if (reason) {
       *reason = message.str();
     }
@@ -210,7 +212,7 @@ FailureOr<SmallVector<VMIGroupReduceLayoutFact, mlir::pto::kValue4>>
 VMILayoutSupport::getGroupReduceLayoutFactsForLayout(
     VMIVRegType sourceType, int64_t numGroups, VMIGroupReduceLayoutPort port,
     VMILayoutAttr layout, std::string *reason) const {
-  auto fail = [&](const Twine &message)
+  auto fail = [reason](const Twine &message)
       -> FailureOr<SmallVector<VMIGroupReduceLayoutFact, 4>> {
     if (reason) {
       *reason = message.str();
@@ -266,7 +268,7 @@ VMILayoutSupport::getGroupBroadcastLayoutFactForLayouts(
     VMIVRegType sourceType, VMIVRegType resultType, int64_t numGroups,
     std::string *reason) const {
   auto fail =
-      [&](const Twine &message) -> FailureOr<VMIGroupBroadcastLayoutFact> {
+      [reason](const Twine &message) -> FailureOr<VMIGroupBroadcastLayoutFact> {
     if (reason) {
       *reason = message.str();
     }
@@ -308,7 +310,7 @@ VMILayoutSupport::getGroupBroadcastLayoutFactsForLayout(
     VMIVRegType sourceType, VMIVRegType resultType, int64_t numGroups,
     VMIGroupBroadcastLayoutPort port, VMILayoutAttr layout,
     std::string *reason) const {
-  auto fail = [&](const Twine &message)
+  auto fail = [reason](const Twine &message)
       -> FailureOr<SmallVector<VMIGroupBroadcastLayoutFact, 4>> {
     if (reason) {
       *reason = message.str();
@@ -372,7 +374,8 @@ VMILayoutSupport::getGroupBroadcastLoadLayoutFact(VMIVRegType resultType,
                                                   int64_t numGroups,
                                                   std::string *reason) const {
   auto fail =
-      [&](const Twine &message) -> FailureOr<VMIGroupBroadcastLoadLayoutFact> {
+      [reason](
+          const Twine &message) -> FailureOr<VMIGroupBroadcastLoadLayoutFact> {
     if (reason) {
       *reason = message.str();
     }
@@ -431,7 +434,8 @@ VMILayoutSupport::getGroupBroadcastLoadDirectFact(
     VMIVRegType resultType, Type sourceType, Value sourceGroupStride,
     int64_t numGroups, std::string *reason) const {
   auto fail =
-      [&](const Twine &message) -> FailureOr<VMIGroupBroadcastLoadDirectFact> {
+      [reason](
+          const Twine &message) -> FailureOr<VMIGroupBroadcastLoadDirectFact> {
     if (reason) {
       *reason = message.str();
     }
@@ -722,7 +726,7 @@ VMILayoutSupport::getCastLayoutFactsForLayout(VMIVRegType sourceType,
                                               VMICastLayoutPort port,
                                               VMILayoutAttr layout,
                                               std::string *reason) const {
-  auto fail = [&](const Twine &message)
+  auto fail = [reason](const Twine &message)
       -> FailureOr<SmallVector<VMICastLayoutFact, 4>> {
     if (reason) {
       *reason = message.str();
@@ -775,7 +779,7 @@ VMILayoutSupport::getCastLayoutFactsForLayout(VMIVRegType sourceType,
 static FailureOr<VMICastLayoutFact>
 getUniqueCastLayoutFact(FailureOr<SmallVector<VMICastLayoutFact, mlir::pto::kValue4>> facts,
                         std::string *reason) {
-  auto fail = [&](const Twine &message) -> FailureOr<VMICastLayoutFact> {
+  auto fail = [reason](const Twine &message) -> FailureOr<VMICastLayoutFact> {
     if (reason) {
       *reason = message.str();
     }
@@ -816,7 +820,7 @@ FailureOr<VMICastLayoutFact> VMILayoutSupport::getCastLayoutFactForResultLayout(
 FailureOr<VMICastLayoutFact> VMILayoutSupport::getCastLayoutFactForLayouts(
     VMIVRegType sourceType, VMIVRegType resultType, VMILayoutAttr sourceLayout,
     VMILayoutAttr resultLayout, std::string *reason) const {
-  auto fail = [&](const Twine &message) -> FailureOr<VMICastLayoutFact> {
+  auto fail = [reason](const Twine &message) -> FailureOr<VMICastLayoutFact> {
     if (reason) {
       *reason = message.str();
     }
@@ -856,7 +860,8 @@ struct MaskGranularityCastQuery {
 static FailureOr<MaskGranularityCastQuery> buildMaskGranularityCastQuery(
     VMIMaskType sourceType, VMIMaskType resultType, VMILayoutAttr layout,
     std::string *reason) {
-  auto fail = [&](const Twine &message) -> FailureOr<MaskGranularityCastQuery> {
+  auto fail =
+      [reason](const Twine &message) -> FailureOr<MaskGranularityCastQuery> {
     if (reason) {
       *reason = message.str();
     }
@@ -895,7 +900,7 @@ FailureOr<SmallVector<VMIMaskGranularityCastLayoutFact, mlir::pto::kValue4>>
 VMILayoutSupport::getMaskGranularityCastLayoutFactsForLayout(
     VMIMaskType sourceType, VMIMaskType resultType, VMICastLayoutPort port,
     VMILayoutAttr layout, std::string *reason) const {
-  auto fail = [&](const Twine &message)
+  auto fail = [reason](const Twine &message)
       -> FailureOr<SmallVector<VMIMaskGranularityCastLayoutFact, 4>> {
     if (reason) {
       *reason = message.str();
@@ -952,7 +957,8 @@ VMILayoutSupport::getMaskGranularityCastLayoutFactForLayouts(
     VMIMaskType sourceType, VMIMaskType resultType, VMILayoutAttr sourceLayout,
     VMILayoutAttr resultLayout, std::string *reason) const {
   auto fail =
-      [&](const Twine &message) -> FailureOr<VMIMaskGranularityCastLayoutFact> {
+      [reason](
+          const Twine &message) -> FailureOr<VMIMaskGranularityCastLayoutFact> {
     if (reason) {
       *reason = message.str();
     }
@@ -999,7 +1005,8 @@ FailureOr<VMILayoutAttr> VMILayoutSupport::getWidenSourceLayoutForResultLayout(
 static FailureOr<VMIInterleaveLayoutFact> getPreferredInterleaveLayoutFactImpl(
     ArrayRef<InterleaveLayoutPattern> patterns, VMIVRegType valueType,
     std::string *reason) {
-  auto fail = [&](const Twine &message) -> FailureOr<VMIInterleaveLayoutFact> {
+  auto fail =
+      [reason](const Twine &message) -> FailureOr<VMIInterleaveLayoutFact> {
     if (reason) {
       *reason = message.str();
     }
@@ -1028,7 +1035,7 @@ getInterleaveLayoutFactsForLayoutImpl(
     ArrayRef<InterleaveLayoutPattern> patterns, VMIVRegType valueType,
     VMIInterleaveLayoutPort port, VMILayoutAttr layout,
     std::string *reason) {
-  auto fail = [&](const Twine &message)
+  auto fail = [reason](const Twine &message)
       -> FailureOr<SmallVector<VMIInterleaveLayoutFact, 4>> {
     if (reason) {
       *reason = message.str();
@@ -1153,7 +1160,8 @@ static bool matchesInterleaveLayouts(const VMIInterleaveLayoutFact &fact,
 static FailureOr<VMIInterleaveLayoutFact> getInterleaveLayoutFactForLayoutsImpl(
     ArrayRef<InterleaveLayoutPattern> patterns, InterleaveTypes types,
     std::string *reason) {
-  auto fail = [&](const Twine &message) -> FailureOr<VMIInterleaveLayoutFact> {
+  auto fail =
+      [reason](const Twine &message) -> FailureOr<VMIInterleaveLayoutFact> {
     if (reason) {
       *reason = message.str();
     }
@@ -1243,7 +1251,7 @@ VMILayoutSupport::getVdintlvLayoutFactForLayouts(
 FailureOr<VMILoadLayoutFact>
 VMILayoutSupport::getLoadLayoutFact(VMIVRegType resultType,
                                     std::string *reason) const {
-  auto fail = [&](const Twine &message) -> FailureOr<VMILoadLayoutFact> {
+  auto fail = [reason](const Twine &message) -> FailureOr<VMILoadLayoutFact> {
     if (reason) {
       *reason = message.str();
     }
@@ -1276,7 +1284,8 @@ FailureOr<VMIDeinterleaveLoadLayoutFact>
 VMILayoutSupport::getPreferredDeinterleaveLoadLayoutFact(
     VMIVRegType valueType, std::string *reason) const {
   auto fail =
-      [&](const Twine &message) -> FailureOr<VMIDeinterleaveLoadLayoutFact> {
+      [reason](
+          const Twine &message) -> FailureOr<VMIDeinterleaveLoadLayoutFact> {
     if (reason) {
       *reason = message.str();
     }
@@ -1299,7 +1308,7 @@ FailureOr<SmallVector<VMIDeinterleaveLoadLayoutFact, mlir::pto::kValue4>>
 VMILayoutSupport::getDeinterleaveLoadLayoutFactsForLayout(
     VMIVRegType valueType, VMIDeinterleaveLoadLayoutPort port,
     VMILayoutAttr layout, std::string *reason) const {
-  auto fail = [&](const Twine &message)
+  auto fail = [reason](const Twine &message)
       -> FailureOr<SmallVector<VMIDeinterleaveLoadLayoutFact, 4>> {
     if (reason) {
       *reason = message.str();
@@ -1337,7 +1346,8 @@ FailureOr<VMIDeinterleaveLoadLayoutFact>
 VMILayoutSupport::getDeinterleaveLoadLayoutFactForLayouts(
     VMIVRegType lowType, VMIVRegType highType, std::string *reason) const {
   auto fail =
-      [&](const Twine &message) -> FailureOr<VMIDeinterleaveLoadLayoutFact> {
+      [reason](
+          const Twine &message) -> FailureOr<VMIDeinterleaveLoadLayoutFact> {
     if (reason) {
       *reason = message.str();
     }
@@ -1373,7 +1383,7 @@ VMILayoutSupport::getDeinterleaveLoadLayoutFactForLayouts(
 FailureOr<VMIStoreLayoutFact>
 VMILayoutSupport::getStoreLayoutFact(VMIVRegType valueType,
                                      std::string *reason) const {
-  auto fail = [&](const Twine &message) -> FailureOr<VMIStoreLayoutFact> {
+  auto fail = [reason](const Twine &message) -> FailureOr<VMIStoreLayoutFact> {
     if (reason) {
       *reason = message.str();
     }
@@ -1405,7 +1415,7 @@ VMILayoutSupport::getStoreLayoutFact(VMIVRegType valueType,
 FailureOr<VMIStoreLayoutFact>
 VMILayoutSupport::getPreferredStoreLayoutFact(VMIVRegType valueType,
                                               std::string *reason) const {
-  auto fail = [&](const Twine &message) -> FailureOr<VMIStoreLayoutFact> {
+  auto fail = [reason](const Twine &message) -> FailureOr<VMIStoreLayoutFact> {
     if (reason) {
       *reason = message.str();
     }
@@ -1441,7 +1451,8 @@ VMILayoutSupport::getPreferredStoreLayoutFact(VMIVRegType valueType,
 
 FailureOr<VMIMaskedStoreLayoutFact> VMILayoutSupport::getMaskedStoreLayoutFact(
     VMIVRegType valueType, VMIMaskType maskType, std::string *reason) const {
-  auto fail = [&](const Twine &message) -> FailureOr<VMIMaskedStoreLayoutFact> {
+  auto fail =
+      [reason](const Twine &message) -> FailureOr<VMIMaskedStoreLayoutFact> {
     if (reason) {
       *reason = message.str();
     }
@@ -1482,7 +1493,7 @@ FailureOr<VMIMaskedStoreLayoutFact>
 VMILayoutSupport::getPreferredMaskedStoreLayoutFact(
     VMIVRegType valueType, VMIMaskType maskType, std::string *reason) const {
   auto fail =
-      [&](const Twine &message) -> FailureOr<VMIMaskedStoreLayoutFact> {
+      [reason](const Twine &message) -> FailureOr<VMIMaskedStoreLayoutFact> {
     if (reason) {
       *reason = message.str();
     }
@@ -1532,7 +1543,8 @@ VMILayoutSupport::getPreferredMaskedStoreLayoutFact(
 FailureOr<VMIMaskedLoadLayoutFact> VMILayoutSupport::getMaskedLoadLayoutFact(
     VMIVRegType resultType, VMIMaskType maskType, VMIVRegType passthruType,
     std::string *reason) const {
-  auto fail = [&](const Twine &message) -> FailureOr<VMIMaskedLoadLayoutFact> {
+  auto fail =
+      [reason](const Twine &message) -> FailureOr<VMIMaskedLoadLayoutFact> {
     if (reason) {
       *reason = message.str();
     }
@@ -1575,7 +1587,7 @@ static LogicalResult matchEnsureLayoutPattern(VMIVRegType sourceType,
                                               VMILayoutAttr sourceLayout,
                                               VMILayoutAttr resultLayout,
                                               std::string *reason) {
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [reason](const Twine &message) -> LogicalResult {
     if (reason) {
       *reason = message.str();
     }
@@ -1622,7 +1634,7 @@ static LogicalResult matchEnsureMaskLayoutPattern(VMIMaskType sourceType,
                                                   VMILayoutAttr sourceLayout,
                                                   VMILayoutAttr resultLayout,
                                                   std::string *reason) {
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [reason](const Twine &message) -> LogicalResult {
     if (reason) {
       *reason = message.str();
     }
@@ -1683,7 +1695,8 @@ FailureOr<VMIEnsureMaskLayoutFact> VMILayoutSupport::getEnsureMaskLayoutFact(
 
 FailureOr<VMIGroupSlotLayoutFact> VMILayoutSupport::getGroupSlotLoadLayoutFact(
     VMIVRegType resultType, int64_t numGroups, std::string *reason) const {
-  auto fail = [&](const Twine &message) -> FailureOr<VMIGroupSlotLayoutFact> {
+  auto fail =
+      [reason](const Twine &message) -> FailureOr<VMIGroupSlotLayoutFact> {
     if (reason) {
       *reason = message.str();
     }
@@ -1714,7 +1727,8 @@ VMILayoutSupport::getGroupLoadLayoutFact(VMIGroupLoadOp op,
 FailureOr<VMIGroupLoadLayoutFact> VMILayoutSupport::getGroupLoadLayoutFact(
     VMIVRegType resultType, Value rowStride, int64_t numGroups,
     std::string *reason) const {
-  auto fail = [&](const Twine &message) -> FailureOr<VMIGroupLoadLayoutFact> {
+  auto fail =
+      [reason](const Twine &message) -> FailureOr<VMIGroupLoadLayoutFact> {
     if (reason) {
       *reason = message.str();
     }
@@ -1765,7 +1779,8 @@ FailureOr<VMIGroupLoadLayoutFact> VMILayoutSupport::getGroupLoadLayoutFact(
 
 FailureOr<VMIGroupSlotLayoutFact> VMILayoutSupport::getGroupStoreLayoutFact(
     VMIVRegType valueType, int64_t numGroups, std::string *reason) const {
-  auto fail = [&](const Twine &message) -> FailureOr<VMIGroupSlotLayoutFact> {
+  auto fail =
+      [reason](const Twine &message) -> FailureOr<VMIGroupSlotLayoutFact> {
     if (reason) {
       *reason = message.str();
     }
@@ -1785,7 +1800,8 @@ FailureOr<VMIGroupSlotLayoutFact> VMILayoutSupport::getGroupStoreLayoutFact(
 
 FailureOr<VMIGroupStoreLayoutFact> VMILayoutSupport::getGroupStoreLayoutFact(
     VMIGroupStoreOp op, VMIVRegType valueType, std::string *reason) const {
-  auto fail = [&](const Twine &message) -> FailureOr<VMIGroupStoreLayoutFact> {
+  auto fail =
+      [reason](const Twine &message) -> FailureOr<VMIGroupStoreLayoutFact> {
     if (reason) {
       *reason = message.str();
     }
@@ -1841,7 +1857,7 @@ FailureOr<SmallVector<VMIGroupStoreLayoutFact, mlir::pto::kValue4>>
 VMILayoutSupport::getGroupStoreLayoutFactsForLayout(
     VMIGroupStoreOp op, VMIVRegType valueType, VMILayoutAttr layout,
     std::string *reason) const {
-  auto fail = [&](const Twine &message)
+  auto fail = [reason](const Twine &message)
       -> FailureOr<SmallVector<VMIGroupStoreLayoutFact, 4>> {
     if (reason) {
       *reason = message.str();
@@ -1885,7 +1901,8 @@ VMILayoutSupport::getGroupStoreLayoutFactsForLayout(
 FailureOr<VMIGroupStoreLayoutFact>
 VMILayoutSupport::getPreferredGroupStoreLayoutFact(
     VMIGroupStoreOp op, VMIVRegType valueType, std::string *reason) const {
-  auto fail = [&](const Twine &message) -> FailureOr<VMIGroupStoreLayoutFact> {
+  auto fail =
+      [reason](const Twine &message) -> FailureOr<VMIGroupStoreLayoutFact> {
     if (reason) {
       *reason = message.str();
     }
@@ -1926,7 +1943,8 @@ VMILayoutSupport::getPreferredGroupStoreLayoutFact(
 FailureOr<VMIGroupStoreLayoutFact>
 VMILayoutSupport::getHighPriorityGroupStoreLayoutFact(
     VMIGroupStoreOp op, VMIVRegType valueType, std::string *reason) const {
-  auto fail = [&](const Twine &message) -> FailureOr<VMIGroupStoreLayoutFact> {
+  auto fail =
+      [reason](const Twine &message) -> FailureOr<VMIGroupStoreLayoutFact> {
     if (reason) {
       *reason = message.str();
     }
@@ -1968,7 +1986,8 @@ VMILayoutSupport::getHighPriorityGroupStoreLayoutFact(
 FailureOr<VMIBitcastLayoutFact>
 VMILayoutSupport::getBitcastLayoutFact(VMIBitcastOp op,
                                        std::string *reason) const {
-  auto fail = [&](const Twine &message) -> FailureOr<VMIBitcastLayoutFact> {
+  auto fail =
+      [reason](const Twine &message) -> FailureOr<VMIBitcastLayoutFact> {
     if (reason) {
       *reason = message.str();
     }
@@ -2022,7 +2041,7 @@ FailureOr<SmallVector<VMIBitcastLayoutFact, mlir::pto::kValue4>>
 VMILayoutSupport::getBitcastLayoutFactsForLayout(
     VMIVRegType sourceType, VMIVRegType resultType, VMICastLayoutPort port,
     VMILayoutAttr layout, std::string *reason) const {
-  auto fail = [&](const Twine &message)
+  auto fail = [reason](const Twine &message)
       -> FailureOr<SmallVector<VMIBitcastLayoutFact, 4>> {
     if (reason) {
       *reason = message.str();
@@ -2086,7 +2105,8 @@ template <typename OpTy>
 static FailureOr<VMIHistogramLayoutFact>
 getHistogramLayoutFactImpl(OpTy op, ArrayRef<HistogramLayoutPattern> patterns,
                            StringRef opName, std::string *reason) {
-  auto fail = [&](const Twine &message) -> FailureOr<VMIHistogramLayoutFact> {
+  auto fail =
+      [reason](const Twine &message) -> FailureOr<VMIHistogramLayoutFact> {
     if (reason) {
       *reason = message.str();
     }

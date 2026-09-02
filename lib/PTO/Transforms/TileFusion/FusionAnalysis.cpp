@@ -835,10 +835,11 @@ static void recordLastLocalConsumer(std::optional<unsigned> &lastLocalConsumer,
   }
 }
 
-static void finalizeBlockLiveness(
-    Block &block, DenseMap<Operation *, FusionOpKind> &kindByOp,
-    DenseMap<Operation *, unsigned> &computeNodeByOp,
-    SmallVectorImpl<MutableLiveness> &mutableLiveness) {
+static void
+finalizeBlockLiveness(const Block &block,
+                      DenseMap<Operation *, FusionOpKind> &kindByOp,
+                      DenseMap<Operation *, unsigned> &computeNodeByOp,
+                      SmallVectorImpl<MutableLiveness> &mutableLiveness) {
   for (MutableLiveness &state : mutableLiveness) {
     for (OpOperand &use : state.live.value.getUses()) {
       Operation *user = use.getOwner();
@@ -947,7 +948,7 @@ static void recordWriteInstanceUse(Operation *user,
   }
 }
 
-static void finalizeWriteInstanceUse(Block &block,
+static void finalizeWriteInstanceUse(const Block &block,
                                      const MutableLiveness &storageState,
                                      OpOperand &use,
                                      DFGConstructionState &state) {

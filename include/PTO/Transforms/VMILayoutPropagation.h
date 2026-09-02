@@ -68,7 +68,7 @@ private:
   void enqueue(Value value, VMILayoutAttr layout);
   LogicalResult addUseConflict(OpOperand &operand,
                                VMIValueLayoutAssignment &assignment,
-                               VMILayoutAttr layout);
+                               VMILayoutAttr layout) const;
   LogicalResult propagateFact(Value value, VMILayoutAttr layout);
   LogicalResult propagateOperandFact(OpOperand &operand, VMILayoutAttr layout);
   LogicalResult propagateThrough(Operation *op, Value changedValue,
@@ -81,7 +81,7 @@ private:
                                    RewriterBase &rewriter,
                                    DenseMap<Value, Value> &assignedValues);
   FailureOr<Value> materializeAt(Value source, VMILayoutAttr layout,
-                                 RewriterBase &rewriter, Location loc);
+                                 RewriterBase &rewriter, Location loc) const;
   LogicalResult materializeUseConflict(Value assignedValue,
                                        VMILayoutConflict conflict,
                                        RewriterBase &rewriter);

@@ -260,7 +260,7 @@ lowerBinaryIgnoringMask(
 /// Lower a UNARY unified op (vneg, vabs, …) to its legacy counterpart.
 template <typename UnifiedOp>
 static LogicalResult
-lowerMaskedUnary(UnifiedOp op, OpBuilder &builder,
+lowerMaskedUnary(UnifiedOp op,
                  function_ref<Value(Location, Type, Value)> createLegacy) {
   if (hasMergePmode(op)) {
     return failure();
@@ -1450,7 +1450,7 @@ static void lowerTypedUnary(UnifiedOp op, OpBuilder &builder) {
     }
     return builder.create<IntegerOp>(loc, type, source).getResult();
   };
-  (void)lowerMaskedUnary(op, builder, createLegacy);
+  (void)lowerMaskedUnary(op, createLegacy);
 }
 
 template <typename LegacyOp, typename UnifiedOp>
@@ -1459,7 +1459,7 @@ static void lowerSimpleUnary(UnifiedOp op, OpBuilder &builder) {
                                   Value source) -> Value {
     return builder.create<LegacyOp>(loc, type, source).getResult();
   };
-  (void)lowerMaskedUnary(op, builder, createLegacy);
+  (void)lowerMaskedUnary(op, createLegacy);
 }
 
 static Value createAbsoluteValue(VMIVabsOp op, OpBuilder &builder,
@@ -1491,7 +1491,7 @@ static void lowerAbsolute(VMIVabsOp op, OpBuilder &builder) {
                                       Value source) -> Value {
     return createAbsoluteValue(op, builder, loc, type, source);
   };
-  (void)lowerMaskedUnary(op, builder, createLegacy);
+  (void)lowerMaskedUnary(op, createLegacy);
 }
 
 static void lowerLogicalNot(VMIVnotOp op, OpBuilder &builder) {

@@ -98,7 +98,8 @@ static std::optional<Value> rematerializeBinaryDataOp(Operation *op,
                                                       VMIVRegType resultType,
                                                       Location loc,
                                                       OpBuilder &builder) {
-  auto rebuild = [&](auto typedOp) -> std::optional<Value> {
+  auto rebuild = [resultType, loc,
+                  &builder](auto typedOp) -> std::optional<Value> {
     auto lhsType = dyn_cast<VMIVRegType>(typedOp.getLhs().getType());
     auto rhsType = dyn_cast<VMIVRegType>(typedOp.getRhs().getType());
     if (!lhsType || !rhsType) {
@@ -130,7 +131,8 @@ static std::optional<Value> rematerializeUnaryDataOp(Operation *op,
                                                      VMIVRegType resultType,
                                                      Location loc,
                                                      OpBuilder &builder) {
-  auto rebuild = [&](auto typedOp) -> std::optional<Value> {
+  auto rebuild = [resultType, loc,
+                  &builder](auto typedOp) -> std::optional<Value> {
     auto sourceType = dyn_cast<VMIVRegType>(typedOp.getSource().getType());
     if (!sourceType) {
       return std::nullopt;
@@ -381,7 +383,7 @@ struct VMILayoutRematerializePass
     while (changed) {
       changed = false;
       SmallVector<Operation *> helpers;
-      module.walk([&](Operation *op) {
+      module.walk([&helpers](Operation *op) {
         if (isa<VMIEnsureLayoutOp, VMIEnsureMaskLayoutOp,
                 VMIEnsureMaskGranularityOp, VMITruncIOp>(op)) {
           helpers.push_back(op);
@@ -394,22 +396,22 @@ struct VMILayoutRematerializePass
         }
 
         if (auto ensure = dyn_cast<VMIEnsureLayoutOp>(op)) {
-          changed |= tryReplaceDataEnsure(ensure);
+          changed = tryReplaceDataEnsure(ensure) || changed;
           continue;
         }
 
         if (auto ensure = dyn_cast<VMIEnsureMaskLayoutOp>(op)) {
-          changed |= tryReplaceMaskEnsure(ensure);
+          changed = tryReplaceMaskEnsure(ensure) || changed;
           continue;
         }
 
         if (auto ensure = dyn_cast<VMIEnsureMaskGranularityOp>(op)) {
-          changed |= tryReplaceMaskEnsure(ensure);
+          changed = tryReplaceMaskEnsure(ensure) || changed;
           continue;
         }
 
         if (auto trunc = dyn_cast<VMITruncIOp>(op)) {
-          changed |= tryRematerializeTruncIThroughSourceEnsure(trunc);
+          changed = tryRematerializeTruncIThroughSourceEnsure(trunc) || changed;
         }
       }
     }

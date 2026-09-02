@@ -685,7 +685,7 @@ struct VMILayoutSinkMaterializationPass
   void runOnOperation() override {
     ModuleOp module = getOperation();
     SmallVector<Operation *> candidates;
-    module.walk([&](Operation *op) {
+    module.walk([&candidates](Operation *op) {
       if (isSinkCandidate(op)) {
         candidates.push_back(op);
       }
