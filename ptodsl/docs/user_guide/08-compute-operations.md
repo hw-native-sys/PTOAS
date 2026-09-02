@@ -1656,6 +1656,7 @@ pto.tile.store(dst_tile, out_view)
 | Dequantize | `tile.dequant` |
 | Quantize | `tile.quant`, `tile.quant.mx` |
 | Debug print | `tile.print` |
+| Cube–vector pipe | `pipe.c2v`, `pipe.v2c`, `pipe.bidirectional` (`init_cube`/`init_simd`, `push`, `pop`, `free`, `alloc`) |
 | Tile matmul | `tile.matmul`, `tile.matmul_acc`, `tile.matmul_mx`, `tile.matmul_mx_acc`, `tile.matmul_mx_bias` |
 | Tile gemv | `tile.gemv_mx`, `tile.gemv_mx_acc`, `tile.gemv_mx_bias` |
 
@@ -1828,6 +1829,92 @@ is currently supported only by the EmitC backend.
 pto.tile.print(src_tile)
 pto.tile.print(src_tile, print_format="width10_precision6")
 ```
+
+---
+
+### 8.1.21 Cube–vector pipe dataflow
+
+#### `pto.pipe.c2v(...) -> Pipe`, `pto.pipe.v2c(...) -> Pipe`
+
+**Description**: Create a logical FIFO pipe that streams tiles between a cube-kind kernel and a vector-kind kernel on the same AI core. `c2v` flows cube → vector (the cube kernel pushes, the vector kernel pops); `v2c` flows vector → cube. The pipe decouples the two kernels: the producer pushes fully computed tiles into FIFO slots and the consumer pops them on demand, with slot reuse managed automatically once entries are freed.
+
+Two backing kinds are available:
+
+- **Local pipe** (`consumer_buf=...`): the FIFO lives in on-chip local memory reserved by the consumer kernel (`pto.reserve_buffer`). The consumer-side kernel declares the buffer; the producer-side kernel imports the same logical buffer with `pto.import_reserved_buffer` and passes the imported handle as `consumer_buf`. This is the default high-bandwidth path.
+- **Global pipe** (`gm_slot_tensor=...`): the FIFO slots are carved out of a global-memory buffer supplied as a tensor view. Both kernels construct the pipe over the same GM slot tensor. Global pipes additionally support `pipe.alloc()` for explicit slot assignment on the producer side.
+
+For a bidirectional pair of local pipes sharing one `id`, use `pto.pipe.bidirectional(...)` and select the two endpoints through the `.c2v` and `.v2c` properties.
+
+**Parameters**:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `slot_size` | int | FIFO slot capacity in **bytes**. Required for local pipes; for global pipes it may be omitted, in which case it is inferred from the `gm_slot_tensor` shape and dtype. |
+| `consumer_buf` | handle | Consumer-side reserved-buffer handle (local pipes). The cube consumer of a `v2c` pipe reserves `mat`-located memory; the vector consumer of a `c2v` pipe reserves `ub`-located memory; the peer kernel passes the imported handle. |
+| `gm_slot_tensor` | TensorView | GM tensor view covering the FIFO slots (global pipes). Mutually exclusive with `consumer_buf` and `gm_slot_buffer`. |
+| `id` | int | Pipe identifier, shared by both kernels' pipe objects. Required. |
+| `slot_num` | int | Number of FIFO slots. Defaults to 2 when omitted. |
+| `nosplit` | bool, optional | Global pipes only: override marking the slot tensor as one full un-split slot, making the `slot_size` inference unambiguous when `slot_size` is omitted. |
+
+**Pipe methods**:
+
+| Method | Side | Description |
+|--------|------|-------------|
+| `init_cube()` / `init_simd()` | both | Initialize the pipe state for the cube / vector side. Each kernel calls the initializer matching its own kind before any other pipe call. |
+| `push(entry, split=0, *, sub_block_id=None)` | producer | Push one tile into the next FIFO slot. `split=1` partitions the tile up/down across the two vector cores, `split=2` left/right, `split=0` (default) sends it whole. `sub_block_id` (vector producer only) overrides which sub-block's state slot is advanced. |
+| `pop(split=0, result_type=None, *, valid_shape=None, valid_row=None, valid_col=None, sub_block_id=None)` | consumer | Pop the next entry and return it as a tile. `result_type` is a tile type describing the pop layout; for global pipes it defaults to the slot tensor's tile type. `valid_shape`/`valid_row`/`valid_col` describe a partially valid result. `sub_block_id` (vector consumer only) selects which sub-block's window is read. |
+| `free(entry, split=0)` | consumer | Release a popped entry so its FIFO slot can be reused. For global pipes `entry` is required; for local pipes it defaults to the most recent pop of this pipe object. |
+| `alloc(split=0)` | producer | Global pipes only: allocate the next GM slot and return its tensor view. The returned entry is passed to `push`; the consumer releases it with `free`. |
+
+**Split semantics**: with `split=1` (up/down), each of the two vector cores produces or consumes one row half of the tile; with `split=2` (left/right), each core handles one column half. The same `split` value must be used on both sides of the pipe.
+
+**Sub-block contract**: on a `split=0` pipe an explicit `sub_block_id` is accepted and ignored for tile placement, but it still selects which sub-block's producer/consumer state advances. A non-zero ID therefore never moves the payload — only the slot-bookkeeping owner changes. On global pipes the popped result honors the sub-block window derived from the GM slot layout.
+
+**Constraints**:
+
+- Both kernels must construct pipe objects with the same `id`, direction, `slot_size`, and backing kind.
+- The consumer-side reserved buffer must be at least `slot_size * slot_num` bytes.
+- Global-pipe slot tensors must be `gm` tensor views; the inferred `slot_size` is the full-view byte size divided by the slot count.
+- `push`/`pop`/`free` on a bidirectional pipe object must be issued through the `.c2v` / `.v2c` endpoint, not the combined object.
+
+**Example** — local `v2c` pipe feeding a cube matmul (vector dequantizes, cube consumes):
+
+```python
+# Vector kernel (producer): imports the cube-side reserved buffer.
+v2c_buf = pto.import_reserved_buffer(name="v2c_fifo", peer_func="cube_kernel")
+pipe = pto.pipe.v2c(slot_size=4 * TILE_K * N, consumer_buf=v2c_buf, id=0)
+pipe.init_simd()
+for k_tile in range(num_k_tiles):
+    pto.tile.load(quant_view, quant_tile, offsets=[...], sizes=[prod_k, prod_n])
+    pto.tile.dequant(quant_tile, scale_tile, offset_tile, dequant_tile)
+    pto.tile.mov(dequant_tile, dequant_nz)
+    pipe.push(dequant_nz, split=1)
+
+# Cube kernel (consumer): reserves the buffer, pops per K-tile.
+v2c_buf = pto.reserve_buffer(name="v2c_fifo", size=slot_size * 4, location="mat", auto=True)
+pipe = pto.pipe.v2c(slot_size=slot_size, consumer_buf=v2c_buf, id=0)
+pipe.init_cube()
+for k_tile in range(num_k_tiles):
+    entry = pipe.pop(split=1, result_type=b_mat)
+    pto.tile.mov(entry, b_right)
+    pipe.free(entry, split=1)
+    pto.tile.matmul_acc(acc, a_left, b_right, acc)
+```
+
+**Example** — global `c2v` pipe over a GM slot tensor:
+
+```python
+fifo_view = pto.make_tensor_view(fifo_ptr, shape=[M, N], strides=[N, 1])
+pipe = pto.pipe.c2v(slot_size=4 * M * N, gm_slot_tensor=fifo_view, id=0)
+pipe.init_cube()
+
+pto.tile.matmul(a_left, b_right, acc)       # compute into a local acc tile
+push_entry = pipe.alloc(split=0)            # claim the next GM slot
+pto.tile.store(acc, fifo_view)              # fill the slot region
+pipe.push(push_entry, split=0)              # publish the entry
+```
+
+For the complete pipe reference — constructors, read-only properties, global-entry lowering notes, and additional global/bidirectional examples — see §7.6 Pipe Communication in the data-movement guide.
 
 ---
 

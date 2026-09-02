@@ -1294,17 +1294,17 @@ transactions.
 
 ### 7.6.1 Pipe Constructors
 
-#### `pto.pipe.c2v(*, id, slot_size=None, consumer_buf=None, gm_slot_buffer=None, gm_slot_tensor=None, local_slot_num=None, nosplit=None)`
+#### `pto.pipe.c2v(*, id, slot_size=None, consumer_buf=None, gm_slot_buffer=None, gm_slot_tensor=None, local_slot_num=None, slot_num=None, nosplit=None, en_unit_flag=False)`
 
 Creates a logical Cube-to-Vector pipe.
 
 The constructor does not expose separate global/local names. A local tile-entry
-pipe is selected by passing `slot_size` and `consumer_buf`. An A2/A3
-global-entry L2G2L pipe is selected by passing `gm_slot_tensor`; the tensor view
-describes the single FIFO slot entry. Global-entry pipes do not use a
-consumer-side local FIFO buffer and do not take `consumer_buf` or
-`gm_slot_buffer`. On A5, use the local tile-entry form and omit
-`gm_slot_tensor`.
+pipe is selected by passing `slot_size` and `consumer_buf`. A global-entry
+pipe is selected by passing `gm_slot_tensor`; the tensor view describes the
+single FIFO slot entry. Global-entry pipes do not use a consumer-side local
+FIFO buffer and do not take `consumer_buf` or `gm_slot_buffer`. Both backing
+kinds are available on A5; on A2/A3 the global-entry form lowers through the
+L2G2L path.
 
 **Parameters:**
 
@@ -1316,19 +1316,21 @@ consumer-side local FIFO buffer and do not take `consumer_buf` or
 | `gm_slot_buffer` | `PtrType` | Optional GM FIFO storage pointer for A2/A3 local tile-entry L2G2L lowering. Do not use with `gm_slot_tensor`. |
 | `gm_slot_tensor` | `TensorView` | Optional. When provided, the pipe uses GlobalTensor-like entries and `alloc/pop` infer the entry descriptor type. |
 | `local_slot_num` | `int` | Optional. Local FIFO slot count override for local tile-entry pipes. |
+| `slot_num` | `int` | Optional. FIFO slot count. When neither `slot_num` nor `local_slot_num` is given, the pipe defaults to 2 slots. |
 | `nosplit` | `bool` | Optional. Override-only metadata; not required in the common path. |
+| `en_unit_flag` | `bool` | Optional. Enable unit-flag mode on the pipe's slot bookkeeping. Defaults to `False`. |
 
 The returned pipe object exposes C2V-producer methods (`init_cube`, `alloc`,
 `push`) on the Cube side and C2V-consumer methods (`init_simd`, `pop`, `free`)
 on the Vector side.
 
-#### `pto.pipe.v2c(*, id, slot_size=None, consumer_buf=None, gm_slot_buffer=None, gm_slot_tensor=None, local_slot_num=None, nosplit=None)`
+#### `pto.pipe.v2c(*, id, slot_size=None, consumer_buf=None, gm_slot_buffer=None, gm_slot_tensor=None, local_slot_num=None, slot_num=None, nosplit=None, en_unit_flag=False)`
 
 Creates a logical Vector-to-Cube pipe. Same contract as `c2v`, but
 reversed direction: the Vector side is the producer and the Cube side is the
 consumer.
 
-#### `pto.pipe.bidirectional(*, slot_size, c2v_consumer_buf, v2c_consumer_buf, id, gm_slot_buffer=None, local_slot_num=None, nosplit=None)`
+#### `pto.pipe.bidirectional(*, slot_size, c2v_consumer_buf, v2c_consumer_buf, id, gm_slot_buffer=None, local_slot_num=None, slot_num=None, nosplit=None, en_unit_flag=False)`
 
 Creates a bidirectional local tile-entry pipe. Accepts both `c2v_consumer_buf`
 and `v2c_consumer_buf` since the pipe carries traffic in both directions. Use
@@ -1362,7 +1364,7 @@ direction.
 | `init_cube()` | Initialise the pipe on the Cube side. |
 | `init_simd()` | Initialise the pipe on the Vector (SIMD) side. |
 | `alloc(split=0)` | Allocate the next FIFO slot. Global-entry pipes only. Returns an entry descriptor. |
-| `push(entry_or_tile, split=0)` | Push a filled GlobalTensor entry or local tile to the consumer. Notifies the consumer side. |
+| `push(entry_or_tile, split=0, *, sub_block_id=None)` | Push a filled GlobalTensor entry or local tile to the consumer. Notifies the consumer side. `sub_block_id` (Vector producer only) overrides which sub-block's state slot advances; on `split=0` pipes the payload placement is unaffected. |
 
 **Consumer-side methods** (Vector side for C2V, Cube side for V2C):
 
@@ -1370,7 +1372,7 @@ direction.
 |--------|-------------|
 | `init_cube()` | Initialise the pipe on the Cube side. |
 | `init_simd()` | Initialise the pipe on the Vector (SIMD) side. |
-| `pop(split=0, result_type=None, valid_shape=None)` | Pop the next entry from the producer. Global-entry pipes return a GM slot descriptor; local/tile-entry pipes return a tile. |
+| `pop(split=0, result_type=None, valid_shape=None, valid_row=None, valid_col=None, *, sub_block_id=None)` | Pop the next entry from the producer. Global-entry pipes return a GM slot descriptor; local/tile-entry pipes return a tile. `sub_block_id` (Vector consumer only) selects which sub-block's window is read on global-entry pipes. |
 | `free(entry=None, split=0)` | Release the consumed slot back to the producer. |
 
 **Read-only properties:**
