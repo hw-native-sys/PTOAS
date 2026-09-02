@@ -13,6 +13,7 @@
 
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
+#include "Utils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Pass/Pass.h"
 
@@ -43,22 +44,10 @@ static TFreeOp findMatchingTFree(TPopOp tpopOp) {
   return {};
 }
 
-static Operation *getTopLevelAncestorInBlock(Operation *op, Block *block) {
-  Operation *current = op;
-  while (current && current->getBlock() != block) {
-    Region *parentRegion = current->getParentRegion();
-    if (!parentRegion) {
-      return nullptr;
-    }
-    current = parentRegion->getParentOp();
-  }
-  return current;
-}
-
 static bool hasSamePipeTPopInRegion(Operation *op, Value pipeHandle,
                                     TPopOp current) {
   bool found = false;
-  op->walk([&](TPopOp nestedTpop) {
+  op->walk([current, pipeHandle, &found](TPopOp nestedTpop) {
     if (nestedTpop == current) {
       return WalkResult::advance();
     }
@@ -100,7 +89,7 @@ static LogicalResult verifyNoTileUsesAfterTFree(TPopOp tpopOp,
   Block *block = tpopOp->getBlock();
 
   for (OpOperand &use : tile.getUses()) {
-    Operation *topLevelOwner = getTopLevelAncestorInBlock(use.getOwner(), block);
+    Operation *topLevelOwner = pto::getAncestorInBlock(use.getOwner(), block);
     if (!topLevelOwner) {
       return tpopOp.emitOpError(
           "borrowed tile uses must stay in the same parent block as the producing tpop");
@@ -129,7 +118,7 @@ struct PTOVerifyTFreePass
     func::FuncOp funcOp = getOperation();
 
     SmallVector<TPopOp> tpops;
-    funcOp.walk([&](TPopOp op) { tpops.push_back(op); });
+    funcOp.walk([&tpops](TPopOp op) { tpops.push_back(op); });
 
     for (TPopOp tpopOp : tpops) {
       if (!isInsideSectionOrAttributedKernel(tpopOp, funcOp)) {

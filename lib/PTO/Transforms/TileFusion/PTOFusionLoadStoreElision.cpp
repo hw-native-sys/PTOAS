@@ -9,6 +9,7 @@
 #include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
+#include "../Utils.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -218,16 +219,6 @@ static Value getCanonicalTrackedValue(Value value) {
   return value;
 }
 
-static Operation *getTopLevelAncestorInBlock(Operation *op,
-                                             const Block *block) {
-  for (Operation *cur = op; cur; cur = cur->getParentOp()) {
-    if (cur->getBlock() == block) {
-      return cur;
-    }
-  }
-  return nullptr;
-}
-
 static Region *getDirectRegionUnderAncestor(Operation *op,
                                             const Operation *ancestor) {
   for (Operation *cur = op; cur; cur = cur->getParentOp()) {
@@ -417,7 +408,7 @@ static bool isTailStoreUseCompatible(
     return true;
   }
   if (context.regionOp->isProperAncestor(owner)) {
-    Operation *topLevelUser = getTopLevelAncestorInBlock(owner, context.body);
+    Operation *topLevelUser = pto::getAncestorInBlock(owner, context.body);
     if (!topLevelUser) {
       return false;
     }
@@ -431,7 +422,7 @@ static bool isTailStoreUseCompatible(
   }
 
   Operation *topLevelUser =
-      getTopLevelAncestorInBlock(owner, context.parentBlock);
+      pto::getAncestorInBlock(owner, context.parentBlock);
   if (!topLevelUser) {
     return areMutuallyExclusiveByIfRegion(localScopeOp, owner);
   }

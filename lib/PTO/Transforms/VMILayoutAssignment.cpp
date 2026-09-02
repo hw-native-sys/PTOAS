@@ -1508,31 +1508,6 @@ struct LayoutSolver {
     return failure();
   }
 
-  SmallVector<Type> getCallResultTypes(func::FuncOp func) {
-    SmallVector<Type> resultTypes;
-    bool found = false;
-    module.walk([func, &resultTypes, &found](func::CallOp call) mutable {
-      if (call.getCallee() != func.getSymName()) {
-        return;
-      }
-      if (!found) {
-        resultTypes.assign(call.getResultTypes().begin(),
-                           call.getResultTypes().end());
-        found = true;
-        return;
-      }
-      if (resultTypes.size() != call.getNumResults()) {
-        return;
-      }
-      for (auto [index, type] : llvm::enumerate(call.getResultTypes())) {
-        if (index < resultTypes.size() && resultTypes[index] != type) {
-          resultTypes[index] = {};
-        }
-      }
-    });
-    return found ? resultTypes : SmallVector<Type>{};
-  }
-
   LogicalResult materializeCallOperands(IRRewriter &rewriter) {
     WalkResult result = module.walk([this, &rewriter](func::CallOp call) {
       auto callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(
@@ -1587,7 +1562,8 @@ struct LayoutSolver {
 
   LogicalResult materializeFunctionReturns(IRRewriter &rewriter) {
     WalkResult result = module.walk([this, &rewriter](func::FuncOp func) {
-      SmallVector<Type> resultTypes = getCallResultTypes(func);
+      SmallVector<Type> resultTypes =
+          getConsistentCallResultTypes(module, func);
       if (resultTypes.empty()) {
         return WalkResult::advance();
       }
@@ -1815,15 +1791,11 @@ struct LayoutSolver {
         return;
       }
 
-      SmallVector<Type> inputs;
-      inputs.reserve(func.getNumArguments());
-      for (BlockArgument arg : func.getArguments()) {
-        inputs.push_back(arg.getType());
-      }
-
+      SmallVector<Type> inputs = getFunctionInputTypes(func);
       SmallVector<Type> results;
       auto it = firstReturnOperandsByFunc.find(func);
-      SmallVector<Type> callResultTypes = getCallResultTypes(func);
+      SmallVector<Type> callResultTypes =
+          getConsistentCallResultTypes(module, func);
       if (!callResultTypes.empty()) {
         for (Type type : callResultTypes) {
           results.push_back(type);

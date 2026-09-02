@@ -165,6 +165,16 @@ func::ReturnOp getAssumedUniqueReturnOp(func::FuncOp funcOp) {
   return returnOp;
 }
 
+Operation *getAncestorInBlock(Operation *op, const Block *block) {
+  for (Operation *current = op; current; current = current->getParentOp()) {
+    bool isInBlock = current->getBlock() == block;
+    if (isInBlock) {
+      return current;
+    }
+  }
+  return nullptr;
+}
+
 Value peelUnrealized(Value value) {
   if (auto castOp = value.getDefiningOp<UnrealizedConversionCastOp>()) {
     return castOp.getOperand(0);

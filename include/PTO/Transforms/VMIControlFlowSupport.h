@@ -12,7 +12,9 @@
 #ifndef PTO_TRANSFORMS_VMICONTROLFLOWSUPPORT_H
 #define PTO_TRANSFORMS_VMICONTROLFLOWSUPPORT_H
 
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 
@@ -36,6 +38,14 @@ public:
   static LogicalResult addWhileConstraints(
       scf::WhileOp whileOp, EquivalenceCallback addEquivalent);
 };
+
+/// Return the result types agreed on by every call to \p func. A null type
+/// marks a result position whose callers currently disagree.
+SmallVector<Type> getConsistentCallResultTypes(ModuleOp module,
+                                               func::FuncOp func);
+
+/// Collect the current argument types used to rebuild a function signature.
+SmallVector<Type> getFunctionInputTypes(func::FuncOp func);
 
 } // namespace pto
 } // namespace mlir

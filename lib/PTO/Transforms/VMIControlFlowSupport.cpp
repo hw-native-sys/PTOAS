@@ -84,3 +84,40 @@ LogicalResult VMIControlFlowSupport::addWhileConstraints(
   }
   return success();
 }
+
+SmallVector<Type> mlir::pto::getConsistentCallResultTypes(ModuleOp module,
+                                                          func::FuncOp func) {
+  SmallVector<Type> resultTypes;
+  bool found = false;
+  module.walk([func, &resultTypes, &found](func::CallOp call) mutable {
+    bool callsFunction = call.getCallee() == func.getSymName();
+    if (!callsFunction) {
+      return;
+    }
+    if (!found) {
+      resultTypes.assign(call.getResultTypes().begin(),
+                         call.getResultTypes().end());
+      found = true;
+      return;
+    }
+    bool hasMatchingArity = resultTypes.size() == call.getNumResults();
+    if (!hasMatchingArity) {
+      return;
+    }
+    for (auto [index, type] : llvm::enumerate(call.getResultTypes())) {
+      if (resultTypes[index] != type) {
+        resultTypes[index] = {};
+      }
+    }
+  });
+  return found ? resultTypes : SmallVector<Type>{};
+}
+
+SmallVector<Type> mlir::pto::getFunctionInputTypes(func::FuncOp func) {
+  SmallVector<Type> inputs;
+  inputs.reserve(func.getNumArguments());
+  for (BlockArgument argument : func.getArguments()) {
+    inputs.push_back(argument.getType());
+  }
+  return inputs;
+}

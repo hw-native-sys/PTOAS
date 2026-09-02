@@ -16,6 +16,7 @@
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
 #include "PTO/Transforms/Passes.h"
+#include "Utils.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -258,15 +259,6 @@ static bool hasSameConcreteAddressRange(const BaseMemInfo *srcInfo,
   return srcRootAddr && dstRootAddr && *srcRootAddr == *dstRootAddr;
 }
 
-static Operation *getAncestorInBlock(Operation *op, Block *block) {
-  for (Operation *cur = op; cur; cur = cur->getParentOp()) {
-    if (cur->getBlock() == block) {
-      return cur;
-    }
-  }
-  return nullptr;
-}
-
 static bool hasUseAfterOp(Value value, Operation *currentOp) {
   Block *block = currentOp->getBlock();
   for (OpOperand &use : value.getUses()) {
@@ -274,7 +266,7 @@ static bool hasUseAfterOp(Value value, Operation *currentOp) {
     if (owner == currentOp) {
       continue;
     }
-    Operation *ancestor = getAncestorInBlock(owner, block);
+    Operation *ancestor = pto::getAncestorInBlock(owner, block);
     if (!ancestor) {
       return true;
     }
@@ -293,7 +285,7 @@ static bool hasLaterUseOfSameAddressRange(
     if (entry.first == op.getSrc()) {
       continue;
     }
-    bool sameRange = llvm::any_of(entry.second, [&](const auto &info) {
+    bool sameRange = llvm::any_of(entry.second, [dstInfo](const auto &info) {
       return hasSameConcreteAddressRange(info.get(), dstInfo);
     });
     if (sameRange && hasUseAfterOp(entry.first, op)) {
@@ -371,7 +363,7 @@ struct PTORemoveIdentityTMovPass
     SmallVector<TMovOp, mlir::pto::kValue16> identityMoves;
     SmallVector<TMovOp, mlir::pto::kValue16> memInfoCandidates;
 
-    func.walk([&](TMovOp op) {
+    func.walk([&identityMoves, &memInfoCandidates](TMovOp op) {
       if (!hasPlainTMovSemantics(op) || !hasCompatibleIdentityTypes(op) ||
           touchesLowPrecisionElement(op)) {
         return;

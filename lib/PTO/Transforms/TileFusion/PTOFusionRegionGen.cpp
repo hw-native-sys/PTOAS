@@ -10,6 +10,7 @@
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/TileFusion/FusionAnalysis.h"
+#include "../Utils.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
@@ -179,19 +180,9 @@ static void appendUniqueValue(SmallVectorImpl<Value> &values,
   }
 }
 
-static Operation *getTopLevelAncestorInBlock(Operation *op,
-                                             const Block *block) {
-  for (Operation *cur = op; cur; cur = cur->getParentOp()) {
-    if (cur->getBlock() == block) {
-      return cur;
-    }
-  }
-  return nullptr;
-}
-
 static bool canReplaceUseWithRegionResult(OpOperand &use, Operation *boundary) {
   Operation *topLevel =
-      getTopLevelAncestorInBlock(use.getOwner(), boundary->getBlock());
+      pto::getAncestorInBlock(use.getOwner(), boundary->getBlock());
   if (!topLevel || topLevel == boundary) {
     return false;
   }

@@ -62,6 +62,7 @@ namespace pto {
   uint64_t AlignUp(uint64_t lhs, uint64_t rhs);
   LoopLikeOpInterface getParentLoop(Value val);
   ModuleOp getTopLevelModuleOp(Operation *op);
+  Operation *getAncestorInBlock(Operation *op, const Block *block);
   void setBaseMemRefTypeScope(Value val, AddressSpaceAttr targetMemScope);
   BaseMemRefType getBaseMemRefTypeWithNewScope(BaseMemRefType type,
                                              AddressSpaceAttr targetMemScope);

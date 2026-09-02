@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/Transforms/Passes.h"
+#include "Utils.h"
 
 #include "PTO/Support/CodeConstants.h"
 
@@ -306,15 +307,6 @@ computeMovedOpsForResultlessScope(ArrayRef<Operation *> ops) {
   return movedOps;
 }
 
-static Operation *getAncestorInBlock(Operation *op, Block &block) {
-  for (Operation *cur = op; cur; cur = cur->getParentOp()) {
-    if (cur->getBlock() == &block) {
-      return cur;
-    }
-  }
-  return nullptr;
-}
-
 static FailureOr<Operation *>
 cloneVecScopeProducerForUse(
     Value value, Operation *user, Operation *logicalScopeAnchor,
@@ -481,7 +473,7 @@ static LogicalResult rematerializeEscapingValueForUserSegments(
       continue;
     }
 
-    Operation *ancestor = getAncestorInBlock(user, block);
+    Operation *ancestor = pto::getAncestorInBlock(user, &block);
     if (!ancestor) {
       return failure();
     }
@@ -804,7 +796,7 @@ static LogicalResult repairEscapingSubclusters(Block &block,
       ops.push_back(&op);
     }
 
-    auto flush = [&]() -> FailureOr<bool> {
+    auto flush = [&pending, &cache, context]() -> FailureOr<bool> {
       FailureOr<bool> changed =
           fixOneEscapingSubcluster(pending, cache, context);
       pending.clear();
@@ -854,7 +846,7 @@ static LogicalResult inferVecScopesInBlock(Block &block, MLIRContext *context) {
 
   SmallVector<Operation *, mlir::pto::kValue16> pending;
 
-  auto flush = [&]() -> LogicalResult {
+  auto flush = [&pending, context]() -> LogicalResult {
     if (failed(wrapGreedySubclusters(pending, context))) {
       return failure();
     }

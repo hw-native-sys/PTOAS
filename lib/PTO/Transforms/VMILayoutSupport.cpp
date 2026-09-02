@@ -49,6 +49,20 @@ namespace {
 
 constexpr int64_t kLayoutBlockBitWidth = 256;
 
+template <typename ResultT>
+static ResultT failWithReason(std::string *reason, const Twine &message) {
+  if (reason) {
+    *reason = message.str();
+  }
+  return failure();
+}
+
+static FailureOr<VMIGroupBroadcastLoadDirectFact>
+failGroupBroadcastLoadDirect(std::string *reason, const Twine &message) {
+  return failWithReason<FailureOr<VMIGroupBroadcastLoadDirectFact>>(reason,
+                                                                    message);
+}
+
 static llvm::cl::opt<bool> preferLaneStrideNarrowing(
     "vmi-prefer-lane-stride-narrowing",
     llvm::cl::desc(
@@ -62,6 +76,18 @@ static llvm::cl::opt<bool> preferLaneStrideNarrowing(
 } // namespace
 
 #include "VMILayoutSupportQueryHelpers.inc"
+
+static VMIGroupBroadcastLoadDirectFact materializeGroupBroadcastLoadDirectFact(
+    const GroupBroadcastLoadDirectPattern &pattern,
+    const GroupBroadcastLoadQuery &query, VMILayoutAttr resultLayout,
+    unsigned elementBits) {
+  return VMIGroupBroadcastLoadDirectFact{
+      pattern.kind,
+      VMIGroupBroadcastLoadLayoutFact{
+          getGroupBlockClassFromPattern(pattern.block), resultLayout,
+          query.key.groupSize, query.key.lanesPerPart, query.key.vcgBlockElems,
+          static_cast<int64_t>(elementBits)}};
+}
 
 //===----------------------------------------------------------------------===//
 // Query implementations
@@ -433,23 +459,17 @@ FailureOr<VMIGroupBroadcastLoadDirectFact>
 VMILayoutSupport::getGroupBroadcastLoadDirectFact(
     VMIVRegType resultType, Type sourceType, Value sourceGroupStride,
     int64_t numGroups, std::string *reason) const {
-  auto fail =
-      [reason](
-          const Twine &message) -> FailureOr<VMIGroupBroadcastLoadDirectFact> {
-    if (reason) {
-      *reason = message.str();
-    }
-    return failure();
-  };
-
   if (!isa<PtrType>(sourceType)) {
-    return fail("group_broadcast_load direct lowering requires !pto.ptr source");
+    return failGroupBroadcastLoadDirect(
+        reason,
+        "group_broadcast_load direct lowering requires !pto.ptr source");
   }
 
   unsigned elementBits =
       pto::getPTOStorageElemBitWidth(resultType.getElementType());
   if (elementBits == 0) {
-    return fail("group_broadcast_load requires known element bit width");
+    return failGroupBroadcastLoadDirect(
+        reason, "group_broadcast_load requires known element bit width");
   }
   std::optional<int64_t> stride = getConstantIndexValue(sourceGroupStride);
 
@@ -475,19 +495,13 @@ VMILayoutSupport::getGroupBroadcastLoadDirectFact(
     if (existing && existing != resultLayout) {
       continue;
     }
-    return VMIGroupBroadcastLoadDirectFact{
-        pattern.kind,
-        VMIGroupBroadcastLoadLayoutFact{
-            getGroupBlockClassFromPattern(pattern.block),
-            resultLayout,
-            query.key.groupSize,
-            query.key.lanesPerPart,
-            query.key.vcgBlockElems,
-            static_cast<int64_t>(elementBits)}};
+    return materializeGroupBroadcastLoadDirectFact(pattern, query, resultLayout,
+                                                   elementBits);
   }
 
-  return fail("group_broadcast_load has no preferred direct lowering layout "
-              "table row");
+  return failGroupBroadcastLoadDirect(
+      reason,
+      "group_broadcast_load has no preferred direct lowering layout table row");
 }
 
 static std::pair<int64_t, int64_t> getCastElementBits(VMIVRegType sourceType,
@@ -1587,14 +1601,9 @@ static LogicalResult matchEnsureLayoutPattern(VMIVRegType sourceType,
                                               VMILayoutAttr sourceLayout,
                                               VMILayoutAttr resultLayout,
                                               std::string *reason) {
-  auto fail = [reason](const Twine &message) -> LogicalResult {
-    if (reason) {
-      *reason = message.str();
-    }
-    return failure();
-  };
   if (!sourceLayout || !resultLayout) {
-    return fail("requires assigned source/result layouts");
+    return failWithReason<LogicalResult>(
+        reason, "requires assigned source/result layouts");
   }
   if (sourceLayout == resultLayout) {
     return success();
@@ -1625,8 +1634,9 @@ static LogicalResult matchEnsureLayoutPattern(VMIVRegType sourceType,
     return success();
   }
 
-  return fail("source/result layouts do not match a supported ensure_layout "
-              "table row");
+  return failWithReason<LogicalResult>(
+      reason,
+      "source/result layouts do not match a supported ensure_layout table row");
 }
 
 static LogicalResult matchEnsureMaskLayoutPattern(VMIMaskType sourceType,
@@ -1634,14 +1644,9 @@ static LogicalResult matchEnsureMaskLayoutPattern(VMIMaskType sourceType,
                                                   VMILayoutAttr sourceLayout,
                                                   VMILayoutAttr resultLayout,
                                                   std::string *reason) {
-  auto fail = [reason](const Twine &message) -> LogicalResult {
-    if (reason) {
-      *reason = message.str();
-    }
-    return failure();
-  };
   if (!sourceLayout || !resultLayout) {
-    return fail("requires assigned source/result layouts");
+    return failWithReason<LogicalResult>(
+        reason, "requires assigned source/result layouts");
   }
   if (sourceLayout == resultLayout) {
     return success();
@@ -1667,8 +1672,10 @@ static LogicalResult matchEnsureMaskLayoutPattern(VMIMaskType sourceType,
     return success();
   }
 
-  return fail("source/result mask layouts do not match a supported "
-              "ensure_mask_layout table row");
+  return failWithReason<LogicalResult>(
+      reason,
+      "source/result mask layouts do not match a supported ensure_mask_layout "
+      "table row");
 }
 
 FailureOr<VMIEnsureLayoutFact> VMILayoutSupport::getEnsureLayoutFact(

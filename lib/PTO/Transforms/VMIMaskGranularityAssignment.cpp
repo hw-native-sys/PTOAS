@@ -595,45 +595,16 @@ struct MaskGranularitySolver {
     }
   }
 
-  SmallVector<Type> getCallResultTypes(func::FuncOp func) {
-    SmallVector<Type> resultTypes;
-    bool found = false;
-    module.walk([func, &resultTypes, &found](func::CallOp call) mutable {
-      if (call.getCallee() != func.getSymName()) {
-        return;
-      }
-      if (!found) {
-        resultTypes.assign(call.getResultTypes().begin(),
-                           call.getResultTypes().end());
-        found = true;
-        return;
-      }
-      if (resultTypes.size() != call.getNumResults()) {
-        return;
-      }
-      for (auto [index, type] : llvm::enumerate(call.getResultTypes())) {
-        if (index < resultTypes.size() && resultTypes[index] != type) {
-          resultTypes[index] = {};
-        }
-      }
-    });
-    return found ? resultTypes : SmallVector<Type>{};
-  }
-
   void rewriteFunctionType() {
     module.walk([this](func::FuncOp func) {
       if (func.empty()) {
         return;
       }
 
-      SmallVector<Type> inputs;
-      inputs.reserve(func.getNumArguments());
-      for (BlockArgument arg : func.getArguments()) {
-        inputs.push_back(arg.getType());
-      }
-
+      SmallVector<Type> inputs = getFunctionInputTypes(func);
       SmallVector<Type> results;
-      SmallVector<Type> callResultTypes = getCallResultTypes(func);
+      SmallVector<Type> callResultTypes =
+          getConsistentCallResultTypes(module, func);
       auto it = firstReturnOperandsByFunc.find(func);
       if (!callResultTypes.empty()) {
         for (Type type : callResultTypes) {
