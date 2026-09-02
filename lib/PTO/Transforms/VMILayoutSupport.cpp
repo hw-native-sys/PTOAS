@@ -63,6 +63,19 @@ failGroupBroadcastLoadDirect(std::string *reason, const Twine &message) {
                                                                     message);
 }
 
+static std::optional<LogicalResult>
+getEnsureLayoutEarlyExit(VMILayoutAttr sourceLayout,
+                         VMILayoutAttr resultLayout, std::string *reason) {
+  if (!sourceLayout || !resultLayout) {
+    return failWithReason<LogicalResult>(
+        reason, "requires assigned source/result layouts");
+  }
+  if (sourceLayout == resultLayout) {
+    return success();
+  }
+  return std::nullopt;
+}
+
 static llvm::cl::opt<bool> preferLaneStrideNarrowing(
     "vmi-prefer-lane-stride-narrowing",
     llvm::cl::desc(
@@ -1601,12 +1614,9 @@ static LogicalResult matchEnsureLayoutPattern(VMIVRegType sourceType,
                                               VMILayoutAttr sourceLayout,
                                               VMILayoutAttr resultLayout,
                                               std::string *reason) {
-  if (!sourceLayout || !resultLayout) {
-    return failWithReason<LogicalResult>(
-        reason, "requires assigned source/result layouts");
-  }
-  if (sourceLayout == resultLayout) {
-    return success();
+  if (std::optional<LogicalResult> earlyExit =
+          getEnsureLayoutEarlyExit(sourceLayout, resultLayout, reason)) {
+    return *earlyExit;
   }
 
   int64_t numGroups =
@@ -1644,12 +1654,9 @@ static LogicalResult matchEnsureMaskLayoutPattern(VMIMaskType sourceType,
                                                   VMILayoutAttr sourceLayout,
                                                   VMILayoutAttr resultLayout,
                                                   std::string *reason) {
-  if (!sourceLayout || !resultLayout) {
-    return failWithReason<LogicalResult>(
-        reason, "requires assigned source/result layouts");
-  }
-  if (sourceLayout == resultLayout) {
-    return success();
+  if (std::optional<LogicalResult> earlyExit =
+          getEnsureLayoutEarlyExit(sourceLayout, resultLayout, reason)) {
+    return *earlyExit;
   }
 
   for (const EnsureMaskLayoutPattern &pattern : kEnsureMaskLayoutPatterns) {
