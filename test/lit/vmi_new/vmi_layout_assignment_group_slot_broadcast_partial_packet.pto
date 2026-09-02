@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: not pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-pre-assignment-combine -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto 2>&1 | FileCheck %s
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-pre-assignment-combine -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s
 
 module {
   func.func @partial_group_slots_1(
@@ -37,6 +37,20 @@ module {
   }
 }
 
-// CHECK: VMI-UNSUPPORTED: pto.vmi.group_broadcast
-// CHECK-SAME: pto.vmi.ensure_layout cannot materialize this conversion
-// CHECK: partial/tail layout materialization requires an explicit packing plan
+// CHECK-LABEL: func.func @partial_group_slots_1(
+// CHECK: pto.vlds {{.*}} {dist = "BRC_B32"}
+// CHECK-NOT: pto.vmi.
+
+// CHECK-LABEL: func.func @partial_group_slots_2(
+// CHECK: pto.pset_b32 "PAT_VL2"
+// CHECK: pto.vsldb
+// CHECK: pto.vshrs
+// CHECK: pto.vselr
+// CHECK-NOT: pto.vmi.
+
+// CHECK-LABEL: func.func @partial_group_slots_4(
+// CHECK: pto.pset_b32 "PAT_VL4"
+// CHECK: pto.vsldb
+// CHECK: pto.vshrs
+// CHECK: pto.vselr
+// CHECK-NOT: pto.vmi.

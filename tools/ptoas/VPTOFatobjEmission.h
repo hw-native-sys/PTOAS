@@ -17,9 +17,11 @@ inline LogicalResult emitVPTOFatobj(llvm::Module *cubeModule,
                                     llvm::Module *vectorModule,
                                     llvm::StringRef stubSource,
                                     llvm::ToolOutputFile &outputFile,
-                                    llvm::raw_ostream &diagOS) {
+                                    llvm::raw_ostream &diagOS,
+                                    ObjectEmissionOptions options = {}) {
   return emitFatobjLLVMWithRuntime(cubeModule, vectorModule, stubSource,
-                                   outputFile, VFSIMTSizeFixMode::Auto, diagOS);
+                                   outputFile, VFSIMTSizeFixMode::Auto, diagOS,
+                                   options);
 }
 
 } // namespace mlir::pto

@@ -57,6 +57,18 @@ static LogicalResult flattenFusionRegion(pto::FusionRegionOp fusionRegion) {
   return success();
 }
 
+static void eraseDeadAllocTiles(func::FuncOp func) {
+  SmallVector<pto::AllocTileOp, mlir::pto::kValue8> deadAllocs;
+  func.walk([&](pto::AllocTileOp alloc) {
+    if (alloc.use_empty()) {
+      deadAllocs.push_back(alloc);
+    }
+  });
+  for (pto::AllocTileOp alloc : llvm::reverse(deadAllocs)) {
+    alloc.erase();
+  }
+}
+
 struct PTOFlattenFusionRegionPass
     : public pto::impl::PTOFlattenFusionRegionBase<
           PTOFlattenFusionRegionPass> {
@@ -85,6 +97,7 @@ struct PTOFlattenFusionRegionPass
         return;
       }
     }
+    eraseDeadAllocTiles(func);
   }
 };
 

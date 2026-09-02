@@ -766,12 +766,14 @@ buildOperandSpecsJson(Operation *operation) {
 
 static bool hasPipeTypedValue(Operation *operation) {
   for (Type type : operation->getOperandTypes()) {
-    if (isa<pto::PipeType>(type))
+    if (isa<pto::PipeType>(type)) {
       return true;
+    }
   }
   for (Type type : operation->getResultTypes()) {
-    if (isa<pto::PipeType>(type))
+    if (isa<pto::PipeType>(type)) {
       return true;
+    }
   }
   return false;
 }
@@ -781,10 +783,23 @@ static bool shouldSkipTemplateMetadata(Operation *operation) {
   // pointer operations, not TileLib templates. Their PtrType operand cannot be
   // described by buildOperandSpecsJson, so collecting them would emit a
   // spurious "unsupported operand type" error.
-  if (isa<pto::StoreScalarOp, pto::LoadScalarOp>(operation))
+  if (isa<pto::StoreScalarOp, pto::LoadScalarOp>(operation)) {
     return true;
-  if (isa<pto::TGetValOp, pto::TSetValOp>(operation))
+  }
+  if (isa<pto::TGetValOp, pto::TSetValOp>(operation)) {
     return true;
+  }
+  // pto.tquant.mx is an A5-native instruction lowered directly by the EmitC
+  // backend. It implements OpPipeInterface for scheduling, but has no PTODSL
+  // TileLib template or candidate metadata.
+  if (isa<pto::TQuantMxOp>(operation)) {
+    return true;
+  }
+  // The A5 X-to-ZZ tmov form carries an auxiliary tile and is lowered by the
+  // native TMOV path. Ordinary two-tile tmov forms remain TileLib candidates.
+  if (auto tmov = dyn_cast<pto::TMovOp>(operation)) {
+    return pto::classifyTMovForm(tmov.getFp()) == pto::TMovForm::XToZz;
+  }
   return hasPipeTypedValue(operation);
 }
 

@@ -57,17 +57,10 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 }
 
 // CHECK-LABEL: func.func @vector_scalar_f32(
-// CHECK-COUNT-4: pto.vdup {{.*}} : f32, !pto.mask<b32> -> !pto.vreg<64xf32>
-// CHECK-COUNT-4: pto.vadd {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
-// CHECK-COUNT-4: pto.vmul {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
-// CHECK-COUNT-4: pto.vmax {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
-// CHECK-COUNT-4: pto.vmin {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
-// CHECK-NOT: pto.vadds
-// CHECK-NOT: pto.vmuls
-// CHECK-NOT: pto.vmaxs
-// CHECK-NOT: pto.vmins
-// CHECK-NOT: pto.vmi.
-// CHECK-NOT: !pto.vmi.
+// CHECK-COUNT-4: pto.vadds {{.*}} : !pto.vreg<64xf32>, f32, !pto.mask<b32> -> !pto.vreg<64xf32>
+// CHECK-COUNT-4: pto.vmuls {{.*}} : !pto.vreg<64xf32>, f32, !pto.mask<b32> -> !pto.vreg<64xf32>
+// CHECK-COUNT-4: pto.vmaxs {{.*}} : !pto.vreg<64xf32>, f32, !pto.mask<b32> -> !pto.vreg<64xf32>
+// CHECK-COUNT-4: pto.vmins {{.*}} : !pto.vreg<64xf32>, f32, !pto.mask<b32> -> !pto.vreg<64xf32>
 
 // CHECK-LABEL: func.func @vector_scalar_shift_i16(
 // CHECK-COUNT-2: pto.vshls {{.*}} : !pto.vreg<128xi16>, i16, !pto.mask<b16> -> !pto.vreg<128xi16>
@@ -78,14 +71,12 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK-NOT: !pto.vmi.
 
 // PIPELINE-LABEL: func.func @vector_scalar_f32(
-// PIPELINE-COUNT-1: pto.vdup
-// PIPELINE-COUNT-4: pto.vadd
-// PIPELINE-COUNT-4: pto.vmul
-// PIPELINE-COUNT-4: pto.vmax
-// PIPELINE-COUNT-4: pto.vmin
-// PIPELINE-NOT: pto.vadds
-// PIPELINE-NOT: pto.vmuls
+// PIPELINE-COUNT-4: pto.vadds
+// PIPELINE-COUNT-4: pto.vmuls
+// PIPELINE-COUNT-4: pto.vmaxs
+// PIPELINE-COUNT-4: pto.vmins
 // PIPELINE-LABEL: func.func @vector_scalar_shift_i16(
 // PIPELINE-COUNT-2: pto.vshls
 // PIPELINE-COUNT-2: pto.vshrs
+// PIPELINE-NOT: pto.vdup
 // PIPELINE-NOT: pto.vmi.

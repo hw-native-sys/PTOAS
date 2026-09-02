@@ -1259,7 +1259,8 @@ static void lowerStrideStore(VMIVsstbOp store, OpBuilder &builder) {
     return;
   }
   builder.create<VMIStrideStoreOp>(
-      store.getLoc(), store.getValue(), store.getDestination(),
+      store.getLoc(), /*updated_base=*/Type(), store.getValue(),
+      store.getDestination(),
       store.getOffset(), store.getBlockStride(), store.getMask());
   store.erase();
 }

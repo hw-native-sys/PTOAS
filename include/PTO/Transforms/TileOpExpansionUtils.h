@@ -22,7 +22,9 @@ inline bool isTileLibExpandableOp(Operation *op) {
   }
   return !isa<TReshapeOp, TSyncOp, TAllocToAivOp, TAllocToAicOp,
               TPushToAivOp, TPushToAicOp, TPopFromAicOp, TPopFromAivOp,
-              TFreeFromAicOp, TFreeFromAivOp>(op);
+              TFreeFromAicOp, TFreeFromAivOp, TQuantMxOp>(op) &&
+         !(isa<TMovOp>(op) &&
+           classifyTMovForm(cast<TMovOp>(op).getFp()) == TMovForm::XToZz);
 }
 
 } // namespace mlir::pto

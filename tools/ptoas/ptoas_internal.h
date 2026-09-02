@@ -75,6 +75,16 @@ extern llvm::cl::opt<bool> disableInferLayout;
 extern llvm::cl::opt<bool> enableSoftPostUpdate;
 extern llvm::cl::opt<bool> emitAddPtrTrace;
 extern llvm::cl::opt<bool> dumpVPTOIR;
+extern llvm::cl::opt<bool> enableVMI;
+extern llvm::cl::opt<bool> enableVMILoopFusion;
+extern llvm::cl::opt<bool> enableVMILoadStoreElision;
+extern llvm::cl::opt<bool> disableBishengVFFusion;
+extern llvm::cl::opt<bool> enableVecScopeMemBar;
+extern llvm::cl::opt<bool> enableVecScopeMemBarAll;
+extern llvm::cl::opt<std::string> tileLibBackend;
+extern llvm::cl::opt<std::string> tileLibPythonExe;
+extern llvm::cl::opt<std::string> tileLibPackagePath;
+extern llvm::cl::opt<std::string> daemonSocketPath;
 
 // Name-hint machinery (ptoas_name_hints.cpp).
 FunctionBlockArgHintMap collectFunctionBlockArgNameHints(

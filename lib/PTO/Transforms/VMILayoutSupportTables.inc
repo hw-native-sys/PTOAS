@@ -61,6 +61,10 @@ static constexpr EnsureLayoutPattern kEnsureLayoutPatterns[] = {
     {bits<8>(), anyN(), gs(8, 4), gs(8)},
     {bits<8>(), anyN(), gs(8, 2), gs(8, 4)},
     {bits<8>(), anyN(), gs(8, 4), gs(8, 2)},
+    // A single 32-bit carrier with eight groups/eight slots preserves the
+    // lane order when projected to/from contiguous storage.
+    {bits<32>(), N<8>(), gs(8), c()},
+    {bits<32>(), N<8>(), c(), gs(8)},
 };
 
 struct EnsureMaskLayoutPattern {

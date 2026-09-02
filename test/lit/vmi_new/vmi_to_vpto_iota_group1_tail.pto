@@ -55,15 +55,12 @@ module {
 // CHECK: %[[P0:.*]] = pto.vci %arg0 : i32 -> !pto.vreg<64xi32>
 // CHECK: arith.addi %arg0
 // CHECK: %[[P1:.*]] = pto.vci
-// CHECK: pto.vdup
-// CHECK: pto.vdup
-// CHECK: pto.vadd %[[P0]]
-// CHECK: pto.vadd %[[P1]]
+// CHECK: pto.vadds %[[P0]]
+// CHECK: pto.vadds %[[P1]]
 // CHECK: pto.vsts
 // CHECK: pto.vsts
 
 // CHECK-LABEL: func.func @vmi_to_vpto_iota_group1_full_vl(
 // CHECK: %[[P0:.*]] = pto.vci %arg0 : i32 -> !pto.vreg<64xi32>
-// CHECK: pto.vdup
-// CHECK: pto.vadd %[[P0]]
+// CHECK: pto.vadds %[[P0]]
 // CHECK: pto.vsts

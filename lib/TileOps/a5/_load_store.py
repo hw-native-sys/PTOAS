@@ -196,7 +196,14 @@ def tstore_nd_constraint(src_kind, src_shape, src_valid_shape, src_memory_space,
         logical_rows = _shape_size(dst_shape[:4])
         logical_cols = dst_shape[4]
         stride_axis = 4
-    return _is_tile_layout(src_config, row_major=True, s_layout="none_box") and _check_store_bounds(
+    # X-to-ZZ exponent tiles are materialized as a single row with an
+    # explicit row-major secondary layout.  They are still contiguous ND
+    # data for the one-row store; do not generalize this exception to
+    # multi-row row-major tiles.
+    src_layout_ok = _is_tile_layout(src_config, row_major=True, s_layout="none_box")
+    if not src_layout_ok and src_config.b_layout == "row_major" and src_config.s_layout == "row_major":
+        src_layout_ok = src_shape[0] == 1
+    return src_layout_ok and _check_store_bounds(
         src_shape,
         src_valid_shape,
         dst_shape,

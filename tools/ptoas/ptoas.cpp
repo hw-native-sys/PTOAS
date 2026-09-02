@@ -324,6 +324,12 @@ llvm::cl::opt<bool> enableVMILoadStoreElision(
     llvm::cl::desc("Enable VMI load/store forwarding inside fusion regions"),
     llvm::cl::init(true));
 
+llvm::cl::opt<bool> disableBishengVFFusion(
+    "disable-bisheng-vf-fusion",
+    llvm::cl::desc("Disable Bisheng VF, loop-fusion, and load/store "
+                   "elimination for VPTO device compilation"),
+    llvm::cl::init(false));
+
 llvm::cl::opt<bool> enableVecScopeMemBar(
     "enable-vecscope-mem-bar",
     llvm::cl::desc("Insert memory barriers for VPTO vecscope hazards"),

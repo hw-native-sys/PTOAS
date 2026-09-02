@@ -17,6 +17,7 @@
 #define MLIR_DIALECT_PTO_TRANSFORMS_PASSES_H
 
 #include "PTO/IR/PTO.h"
+#include "PTO/Transforms/MemPlanMode.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Support/LLVM.h"
 #include "llvm/ADT/DenseMap.h"
@@ -46,6 +47,11 @@ std::unique_ptr<Pass> createPTOMaterializeTileOpSectionsPass();
 std::unique_ptr<Pass> createVPTOSplitCVModulePass();
 std::unique_ptr<Pass> createVPTONormalizeContainerPass();
 std::unique_ptr<Pass> createPTOVerifyTFreePass();
+std::unique_ptr<Pass> createPTOInsertVecScopeMemBarPass();
+std::unique_ptr<Pass> createPTOInsertVecScopeMemBarAllPass();
+std::unique_ptr<Pass> createPTOMaterializeTileHandlesPass();
+std::unique_ptr<Pass> createPTOViewToMemrefPass();
+std::unique_ptr<Pass> createVPTONormalizeEquivalentVcvtPass();
 
 // Creates a pass for ...
 std::unique_ptr<Pass> createPTOInsertSyncPass();

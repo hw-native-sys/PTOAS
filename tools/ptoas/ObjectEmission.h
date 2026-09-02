@@ -9,7 +9,9 @@
 #ifndef PTOAS_OBJECT_EMISSION_H
 #define PTOAS_OBJECT_EMISSION_H
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Support/CANNVersion.h"
+#include "VFSIMTSizePatcher.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
@@ -34,9 +36,6 @@ enum class ObjectEmissionDeviceTarget {
 };
 
 struct ObjectEmissionOptions {
-  // PTOAS VMI fusion has already handled the vector-fusion decisions. Keep
-  // Bisheng's secondary VF/loop/load-store optimizations disabled only when
-  // this explicit mode is requested.
   bool disableBishengVFFusion = false;
 };
 
@@ -58,7 +57,7 @@ public:
   std::string bishengCompilerBinDirPath;
   std::string ptoIsaPath;
   std::string cannVersionString;
-  CANNVersion cannVersion = CANNVersion{9, 0, 0, 1};
+  CANNVersion cannVersion = kDefaultCANNVersion;
   std::vector<std::string> cppIncludeDirs;
 };
 
@@ -77,7 +76,7 @@ public:
                        std::string &path, llvm::raw_ostream &diagOS);
 
 private:
-  llvm::SmallVector<std::string, 8> paths;
+  llvm::SmallVector<std::string, mlir::pto::kValue8> paths;
 };
 
 LogicalResult writeLLVMModule(llvm::Module &module, llvm::StringRef path,
@@ -136,15 +135,8 @@ LogicalResult emitFatobjLLVM(
     llvm::Module *cubeModule, llvm::Module *vectorModule,
     llvm::StringRef stubSource, llvm::StringRef outputPath,
     llvm::StringRef moduleId, const CANNToolchain &toolchain,
-    TempFileRegistry &tempFiles, llvm::raw_ostream &diagOS,
-    ObjectEmissionOptions options = {},
-    // M1: optional device-side kernel_entry wrapper source. When non-empty it
-    // is compiled to a device .o and merged into the merged device ELF so
-    // simpler's scheduler can dispatch the VPTO body via kernel_entry.
-    llvm::StringRef deviceWrapperSource = "",
-    // M1: when true, skip the host-stub fatobj packaging and write the merged
-    // device ELF (with the wrapper) directly to outputPath.
-    bool mergedDeviceOnly = false);
+    TempFileRegistry &tempFiles, VFSIMTSizeFixMode vfsimtSizeFixMode,
+    llvm::raw_ostream &diagOS, ObjectEmissionOptions options = {});
 
 LogicalResult mergeDeviceObjects(llvm::ArrayRef<std::string> deviceObjPaths,
                                  llvm::StringRef outObjPath,
@@ -168,7 +160,9 @@ LogicalResult emitFatobjLLVMWithRuntime(llvm::Module *cubeModule,
                                         llvm::Module *vectorModule,
                                         llvm::StringRef stubSource,
                                         llvm::ToolOutputFile &outputFile,
-                                        llvm::raw_ostream &diagOS);
+                                        VFSIMTSizeFixMode vfsimtSizeFixMode,
+                                        llvm::raw_ostream &diagOS,
+                                        ObjectEmissionOptions options = {});
 
 } // namespace mlir::pto
 

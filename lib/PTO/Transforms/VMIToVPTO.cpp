@@ -18,6 +18,7 @@
 #include "PTO/IR/VMIUtils.h"
 #include "PTO/IR/VPTOMemoryDist.h"
 #include "PTO/Transforms/Passes.h"
+#include "PTO/Transforms/VmiMemoryLocation.h"
 #include "PTO/Transforms/VMILayoutSupport.h"
 #include "PTO/Transforms/VPTOLowering.h"
 
@@ -1031,6 +1032,59 @@ FailureOr<int64_t> getStaticMemRefElementCount(Type type) {
   return elements;
 }
 
+FailureOr<int64_t> getStaticStorageElementCount(Value source,
+                                                Type elementType) {
+  if (FailureOr<int64_t> elements =
+          getStaticMemRefElementCount(source.getType());
+      succeeded(elements)) {
+    return *elements;
+  }
+
+  std::optional<VmiStorageRoot> root = resolveVmiStorageRoot(source);
+  if (!root) {
+    if (auto addr = source.getDefiningOp<TileBufAddrOp>()) {
+      auto tileType = dyn_cast<TileBufType>(addr.getSrc().getType());
+      if (tileType && llvm::none_of(tileType.getShape(),
+                                   ShapedType::isDynamic)) {
+        int64_t elements = 1;
+        for (int64_t dim : tileType.getShape()) {
+          if (llvm::MulOverflow(elements, dim, elements)) {
+            return failure();
+          }
+        }
+        return elements;
+      }
+    }
+  }
+  unsigned elementBits = pto::getPTOStorageElemBitWidth(elementType);
+  if (!root || !root->storageBytes || elementBits == 0 || elementBits % 8 != 0) {
+    return failure();
+  }
+  int64_t elementBytes = static_cast<int64_t>(elementBits / 8);
+  if (*root->storageBytes < 0 || *root->storageBytes % elementBytes != 0) {
+    return failure();
+  }
+  return *root->storageBytes / elementBytes;
+}
+
+FailureOr<int64_t> getAvailableStorageElementCount(Value source,
+                                                   Type elementType) {
+  std::optional<VmiStorageRoot> root = resolveVmiStorageRoot(source);
+  unsigned elementBits = pto::getPTOStorageElemBitWidth(elementType);
+  if (!root || elementBits == 0 || elementBits % 8 != 0 ||
+      root->address < 0) {
+    return getStaticStorageElementCount(source, elementType);
+  }
+
+  constexpr int64_t a5UBBytes = 253952;
+  int64_t availableBytes = a5UBBytes - root->address;
+  int64_t elementBytes = static_cast<int64_t>(elementBits / 8);
+  if (availableBytes < 0 || availableBytes % elementBytes != 0) {
+    return failure();
+  }
+  return availableBytes / elementBytes;
+}
+
 static Type getMemoryElementType(Type type) {
   if (auto ptrType = dyn_cast<PtrType>(type))
     return ptrType.getElementType();
@@ -1296,7 +1350,7 @@ computeSafeStatefulReadProof(Value source, Value offset,
   };
 
   FailureOr<int64_t> staticElements =
-      getStaticMemRefElementCount(source.getType());
+      getAvailableStorageElementCount(source, resultType.getElementType());
   if (failed(staticElements)) {
     return fail("requires statically shaped memref source");
   }
@@ -1530,10 +1584,7 @@ FailureOr<int64_t> verifyFullOrSafeReadVRegChunks(Operation *op,
   }
 
   VMIMemorySafeReadProof safeReadProof =
-      usesAlignedLoad
-          ? computeSafeFullReadProof(source.getType(),
-                                     getConstantIndexValue(offset), type)
-          : computeSafeStatefulReadProof(source, offset, type);
+      computeSafeStatefulReadProof(source, offset, type);
   if (safeReadProof.proven) {
     lanesPerPart = getDataLanesPerPart(type.getElementType());
     if (succeeded(lanesPerPart))
@@ -4032,7 +4083,20 @@ FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
       sourceLayout.isGroupSlots() && sourceLayout.getNumGroups() == 1 &&
       sourceLayout.getSlots() == 1 && resultLayout.isContiguous() &&
       resultLayout.getLaneStride() == 1;
-  if (oneLaneContiguousToGroup || oneLaneGroupToContiguous) {
+  bool eightSlotGroupToContiguous =
+      sourceLayout.isGroupSlots() && sourceLayout.getNumGroups() == 8 &&
+      sourceLayout.getSlots() == 8 && sourceLayout.getLaneStride() == 1 &&
+      resultLayout.isContiguous() && resultLayout.getLaneStride() == 1 &&
+      sourceParts.size() == 1 && resultTypes.size() == 1 &&
+      pto::getPTOStorageElemBitWidth(sourceVMIElementType) == 32;
+  bool contiguousToEightSlotGroup =
+      sourceLayout.isContiguous() && sourceLayout.getLaneStride() == 1 &&
+      resultLayout.isGroupSlots() && resultLayout.getNumGroups() == 8 &&
+      resultLayout.getSlots() == 8 && resultLayout.getLaneStride() == 1 &&
+      sourceParts.size() == 1 && resultTypes.size() == 1 &&
+      pto::getPTOStorageElemBitWidth(sourceVMIElementType) == 32;
+  if (oneLaneContiguousToGroup || oneLaneGroupToContiguous ||
+      eightSlotGroupToContiguous || contiguousToEightSlotGroup) {
     if (failed(verifyIdentityPartForwarding(op, sourceParts, resultTypes,
                                             rewriter)))
       return failure();
@@ -10179,6 +10243,44 @@ struct OneToNVMISelectOpPattern : OneToNOpConversionPattern<VMISelectOp> {
   }
 };
 
+struct OneToNArithSelectOpPattern : OneToNOpConversionPattern<arith::SelectOp> {
+  using OneToNOpConversionPattern<arith::SelectOp>::OneToNOpConversionPattern;
+  LogicalResult matchAndRewrite(arith::SelectOp op, OpAdaptor adaptor,
+                                OneToNPatternRewriter &rewriter) const override {
+    // Do not rewrite the physical selects created below.  Without this guard,
+    // the conversion pattern matches its own non-VMI replacement forever.
+    if (!isa<VMIVRegType, VMIMaskType>(op.getResult().getType())) {
+      return failure();
+    }
+    ValueRange trueParts = adaptor.getTrueValue();
+    ValueRange falseParts = adaptor.getFalseValue();
+    FailureOr<SmallVector<Type>> resultTypes =
+        getConvertedResultTypes(op, 0, *this->getTypeConverter());
+    const bool arityMismatch =
+        failed(resultTypes) || trueParts.size() != falseParts.size() ||
+        trueParts.size() != resultTypes->size();
+    if (arityMismatch) {
+      return rewriter.notifyMatchFailure(op, "physical select arity mismatch");
+    }
+    Value condition = adaptor.getCondition().front();
+    if (!condition.getType().isInteger(1)) {
+      return rewriter.notifyMatchFailure(op, "select condition must be i1");
+    }
+    SmallVector<Value> results;
+    for (auto [t, f, type] :
+         llvm::zip_equal(trueParts, falseParts, *resultTypes)) {
+      const bool typeMismatch = t.getType() != type || f.getType() != type;
+      if (typeMismatch) {
+        return rewriter.notifyMatchFailure(op, "physical select part type mismatch");
+      }
+      results.push_back(rewriter.create<arith::SelectOp>(op.getLoc(), condition, t, f));
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+};
+
 struct OneToNVMIVselrOpPattern : OneToNOpConversionPattern<VMIVselrOp> {
   using OneToNOpConversionPattern<VMIVselrOp>::OneToNOpConversionPattern;
 
@@ -13285,6 +13387,7 @@ void populateVMIConversionPatterns(
   scf::populateSCFStructuralOneToNTypeConversions(typeConverter, patterns);
   patterns.add<OneToNCFBranchOpPattern, OneToNCFCondBranchOpPattern,
                OneToNCFSwitchOpPattern>(typeConverter, patterns.getContext());
+  patterns.add<OneToNArithSelectOpPattern>(typeConverter, patterns.getContext());
   patterns.add<OneToNSCFExecuteRegionOpPattern, OneToNSCFIndexSwitchOpPattern>(
       typeConverter, patterns.getContext());
   patterns.add<OneToNVMIPackOpPattern, OneToNVMIUnpackOpPattern>(

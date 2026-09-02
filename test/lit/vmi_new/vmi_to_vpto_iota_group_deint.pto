@@ -33,15 +33,9 @@ module {
 
 // CHECK-LABEL: func.func @vmi_to_vpto_iota_group2_deint_vcvt(
 // CHECK-SAME: %[[BASE:.*]]: i32
-// CHECK: %[[C1:.*]] = arith.constant 1 : i32
-// CHECK: %[[C2:.*]] = arith.constant 2 : i32
-// CHECK: %[[C0:.*]] = arith.constant 0 : i32
-// CHECK: %[[IDX0:.*]] = pto.vci %[[C0]] : i32 -> !pto.vreg<64xsi32>
-// CHECK: %[[S0:.*]] = pto.vmuls %[[IDX0]], %[[C2]]
-// CHECK: %[[E:.*]] = pto.vadds %[[S0]], %[[BASE]]
-// CHECK: %[[IDX1:.*]] = pto.vci %[[C0]] : i32 -> !pto.vreg<64xsi32>
-// CHECK: %[[S1:.*]] = pto.vmuls %[[IDX1]], %[[C2]]
-// CHECK: %[[O:.*]] = pto.vadds %[[S1]]
+// CHECK: %[[IDX:.*]] = pto.vci %[[BASE]] : i32 -> !pto.vreg<64xsi32>
+// CHECK-NOT: pto.vci
+// CHECK: %[[E:.*]], %[[O:.*]] = pto.vdintlv %[[IDX]], %[[IDX]]
 // CHECK: %[[FE:.*]] = pto.vcvt %[[E]]
 // CHECK: %[[FO:.*]] = pto.vcvt %[[O]]
 // CHECK: pto.vstsx2 %[[FE]], %[[FO]], {{.*}}, "INTLV_B32"

@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-pkg-path=%S/../../../ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-expand-tile-op 2>&1 | FileCheck %s --check-prefix=EXPAND
+// RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion=false --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-pkg-path=%S/../../../ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-expand-tile-op 2>&1 | FileCheck %s --check-prefix=NOFUSION
 // RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-pkg-path=%S/../../../ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o /dev/null --mlir-print-ir-after=pto-inline-libcall 2>&1 | FileCheck %s --check-prefix=INLINE
 // RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi --enable-op-fusion --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-pkg-path=%S/../../../ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o - | FileCheck %s --check-prefix=FINAL --implicit-check-not=pto.vmi.v --implicit-check-not=!pto.vmi.
 // RUN: env MLIR_PYTHON_ROOT=%mlir_python_root ptoas --enable-vmi=false --enable-op-fusion=false --pto-arch=a5 --pto-backend=vpto --tile-lib-backend=ptodsl --ptodsl-pkg-path=%S/../../../ptodsl --ptodsl-python-exe=%python_executable --emit-vpto %s -o - | FileCheck %s --check-prefix=ORDINARY
@@ -132,6 +133,12 @@ module {
 // EXPAND-SAME: pto.tilelib.impl = "vmi"
 // EXPAND-LABEL: func.func @sinkhorn_unsupported_forms
 // EXPAND: pto.vmi.fusion.boundary = "local"
+
+// NOFUSION-LABEL: func.func @sinkhorn_grouped_tail
+// NOFUSION: call {{.*}}__vmi_tcolexpand
+// NOFUSION-SAME: pto.tilelib.impl = "vmi"
+// NOFUSION: call {{.*}}__vmi_tadd_sinkhorn_compact
+// NOFUSION-SAME: pto.tilelib.impl = "vmi"
 
 // INLINE-LABEL: func.func @sinkhorn_grouped_tail
 // INLINE: arith.constant {{.*}} 4 : index

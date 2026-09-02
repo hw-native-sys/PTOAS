@@ -100,12 +100,14 @@ constexpr llvm::StringLiteral kVmiResourceEstimateExactAttr =
 
 static bool hasPipeTypedValue(Operation *operation) {
   for (Type type : operation->getOperandTypes()) {
-    if (isa<pto::PipeType>(type))
+    if (isa<pto::PipeType>(type)) {
       return true;
+    }
   }
   for (Type type : operation->getResultTypes()) {
-    if (isa<pto::PipeType>(type))
+    if (isa<pto::PipeType>(type)) {
       return true;
+    }
   }
   return false;
 }
@@ -115,10 +117,22 @@ static bool shouldSkipTileLibExpansion(Operation *operation) {
   // pointer operations, not TileLib templates. Their PtrType operand cannot be
   // described by buildSpecKey, so collecting them would emit a spurious
   // "cannot build specialization key" error.
-  if (isa<pto::StoreScalarOp, pto::LoadScalarOp>(operation))
+  if (isa<pto::StoreScalarOp, pto::LoadScalarOp>(operation)) {
     return true;
-  if (isa<pto::TGetValOp, pto::TSetValOp>(operation))
+  }
+  if (isa<pto::TGetValOp, pto::TSetValOp>(operation)) {
     return true;
+  }
+  // pto.tquant.mx is lowered directly by the A5-native EmitC backend rather
+  // than expanded through a PTODSL TileLib template.
+  if (isa<pto::TQuantMxOp>(operation)) {
+    return true;
+  }
+  // Preserve the A5-native X-to-ZZ tmov form for direct TMOV lowering. Other
+  // tmov forms continue through TileLib expansion.
+  if (auto tmov = dyn_cast<pto::TMovOp>(operation)) {
+    return pto::classifyTMovForm(tmov.getFp()) == pto::TMovForm::XToZz;
+  }
   return hasPipeTypedValue(operation);
 }
 

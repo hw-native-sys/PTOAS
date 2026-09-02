@@ -43,16 +43,20 @@ module {
       %wide_dst: !pto.ptr<f32, ub>,
       %offset: index) {
     %c128 = arith.constant 128 : index
-    %wide = pto.vmi.load %src[%offset]
+    %c16 = arith.constant 16 : index
+    // Keep the dynamic element offset aligned for both the f32 load and the
+    // bf16 PK_B32 store; this test exercises layout conversion, not alignment.
+    %store_offset = arith.muli %offset, %c16 : index
+    %wide = pto.vmi.load %src[%store_offset]
         : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
     %narrow = pto.vmi.truncf %wide {rounding = "R", saturate = "NOSAT"}
         : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xbf16>
     %mask = pto.vmi.create_mask %c128 : index -> !pto.vmi.mask<128xpred>
-    pto.vmi.masked_store %narrow, %narrow_dst[%offset], %mask
+    pto.vmi.masked_store %narrow, %narrow_dst[%store_offset], %mask
         : !pto.vmi.vreg<128xbf16>, !pto.ptr<bf16, ub>, !pto.vmi.mask<128xpred>
     %rewide = pto.vmi.extf %narrow
         : !pto.vmi.vreg<128xbf16> -> !pto.vmi.vreg<128xf32>
-    pto.vmi.masked_store %rewide, %wide_dst[%offset], %mask
+    pto.vmi.masked_store %rewide, %wide_dst[%store_offset], %mask
         : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<128xpred>
     return
   }

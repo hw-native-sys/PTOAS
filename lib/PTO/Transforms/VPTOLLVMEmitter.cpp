@@ -14201,6 +14201,12 @@ static LogicalResult runPipeline(ModuleOp module, const std::string &march,
   kernelModulePM.addPass(
       std::make_unique<NormalizeFuncSignaturesForLLVMLoweringPass>());
   kernelModulePM.addPass(arith::createArithExpandOpsPass());
+  // VMI fusion may leave a pto.fusion_region around the final VPTO sequence.
+  // Flatten it before SCF-to-CF conversion: that conversion turns the nested
+  // scf.for body into multiple blocks, which is not a legal fusion_region
+  // shape and would make the subsequent verifier reject otherwise valid IR.
+  kernelModulePM.addNestedPass<func::FuncOp>(
+      pto::createPTOFlattenFusionRegionPass());
   // pto-convert-scf-to-cf-with-loop-hints performs the SCF-to-CF conversion for this pipeline:
   // it runs the upstream conversion patterns plus a higher-benefit lowering
   // for {pto.unroll = "enable"} loops that attaches llvm.loop_annotation to

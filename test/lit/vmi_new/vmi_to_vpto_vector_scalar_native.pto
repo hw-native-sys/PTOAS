@@ -93,5 +93,5 @@ module {
 // CHECK: pto.vmins
 
 // CHECK-LABEL: func.func @partial_mask_uses_broadcast_fallback(
-// CHECK: pto.vdup
-// CHECK: pto.vmul
+// CHECK-NOT: pto.vdup
+// CHECK: pto.vmuls

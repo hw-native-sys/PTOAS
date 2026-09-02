@@ -49,12 +49,13 @@ module {
 // CHECK-LABEL: func.func @vmi_to_vpto_iota_group_tail_i32_32_g2(
 // CHECK-SAME: %[[BASE:.*]]: i32
 // CHECK: %[[C32:.*]] = arith.constant 32 : i32
-// CHECK: %[[C1000:.*]] = arith.constant 1000 : i32
-// CHECK: %[[IDX:.*]] = pto.vci %[[BASE]] : i32 -> !pto.vreg<64xi32>
-// CHECK-NOT: pto.vand
-// CHECK-NOT: pto.vsel
-// CHECK: pto.vdup %[[C1000]]
-// CHECK: pto.vadd %[[IDX]]
+// CHECK: %[[C15:.*]] = arith.constant 15 : i32
+// CHECK: %[[C0:.*]] = arith.constant 0 : i32
+// CHECK: %[[LANES:.*]] = pto.vci %[[C0]] : i32 -> !pto.vreg<64xi32>
+// CHECK: %[[MASKV:.*]] = pto.vdup %[[C15]]
+// CHECK: %[[REM:.*]] = pto.vand %[[LANES]], %[[MASKV]]
+// CHECK: %[[PACKED:.*]] = pto.vadds %[[REM]], %[[BASE]]
+// CHECK: pto.vadds %[[PACKED]], %{{.*}}
 // Tail mask on store: only 32 of 64 physical lanes active.
 // CHECK: pto.plt_b32 %[[C32]]
 // CHECK: pto.vsts
@@ -62,16 +63,16 @@ module {
 
 // CHECK-LABEL: func.func @vmi_to_vpto_iota_group_tail_i32_96_g3(
 // CHECK-SAME: %[[BASE:.*]]: i32
+// CHECK: %[[C64:.*]] = arith.constant 64 : index
 // CHECK: %[[C32:.*]] = arith.constant 32 : i32
-// CHECK: %[[C1000:.*]] = arith.constant 1000 : i32
-// CHECK: %[[IDX0:.*]] = pto.vci %[[BASE]] : i32 -> !pto.vreg<64xi32>
-// CHECK: %[[IDX1:.*]] = pto.vci
-// CHECK-NOT: pto.vand
-// CHECK-NOT: pto.vsel
-// CHECK: pto.vdup %[[C1000]]
-// CHECK: pto.vdup %[[C1000]]
-// CHECK: pto.vadd %[[IDX0]]
-// CHECK: pto.vadd %[[IDX1]]
+// CHECK: %[[C31:.*]] = arith.constant 31 : i32
+// CHECK: %[[C0:.*]] = arith.constant 0 : i32
+// CHECK: %[[LANES:.*]] = pto.vci %[[C0]] : i32 -> !pto.vreg<64xi32>
+// CHECK: %[[MASKV:.*]] = pto.vdup %[[C31]]
+// CHECK: %[[REM:.*]] = pto.vand %[[LANES]], %[[MASKV]]
+// CHECK: %[[PACKED:.*]] = pto.vadds %[[REM]], %[[BASE]]
+// CHECK: pto.vadds %[[PACKED]], %{{.*}}
+// CHECK: pto.vadds %[[PACKED]], %{{.*}}
 // First chunk full VL store; second chunk partial (32 active).
 // CHECK: pto.vsts
 // CHECK: pto.plt_b32 %[[C32]]

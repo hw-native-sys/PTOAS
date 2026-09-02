@@ -88,6 +88,7 @@ add_mlir_dialect_library(PTOTransforms
   VMILayoutSupport.cpp
   VMILayoutRematerialize.cpp
   VMILayoutSinkMaterialization.cpp
+  VMIStubs.cpp
   VMIToVPTO.cpp
   VPTOStatefulStreamFusion.cpp
   PTOExpandSoftLib.cpp

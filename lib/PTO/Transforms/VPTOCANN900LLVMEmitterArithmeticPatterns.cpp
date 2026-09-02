@@ -1622,6 +1622,9 @@ private:
 };
 
 static FailureOr<Type> getVselrIntrinsicResultType(pto::VselrOp op, Type resultType, PatternRewriter &rewriter) {
+  if (Type carrierType = getLowpPayloadCarrierType(op.getResult().getType(), rewriter.getContext())) {
+    return carrierType;
+  }
   auto resultVectorType = dyn_cast<VectorType>(resultType);
   if (!resultVectorType) {
     return failure();
@@ -1630,9 +1633,6 @@ static FailureOr<Type> getVselrIntrinsicResultType(pto::VselrOp op, Type resultT
   if (auto floatType = dyn_cast<FloatType>(resultVectorType.getElementType()); floatType && floatType.isF32()) {
     intrinsicResultType =
         VectorType::get(resultVectorType.getShape(), rewriter.getI32Type(), resultVectorType.getScalableDims());
-  }
-  if (Type carrierType = getLowpPayloadCarrierType(op.getResult().getType(), rewriter.getContext())) {
-    intrinsicResultType = carrierType;
   }
   return intrinsicResultType;
 }

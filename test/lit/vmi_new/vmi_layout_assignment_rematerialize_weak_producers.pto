@@ -56,8 +56,7 @@ module {
 // ASSIGN: %[[INDEX_C:.*]] = pto.vmi.iota %{{.*}} : f32 -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
 // ASSIGN: %[[SCORE_BASE:.*]] = pto.vmi.addf %{{.*}}, %[[INDEX_C]]
 // ASSIGN-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
-// ASSIGN: pto.vmi.broadcast %{{.*}} : f32 -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
-// ASSIGN: pto.vmi.mulf %[[SCORE_BASE]], {{.*}} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: pto.vmi.vmuls %[[SCORE_BASE]], {{.*}}, {{.*}}
 // ASSIGN: pto.vmi.vexpdif {{.*}} !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 // ASSIGN: pto.vmi.group_reduce_addf {{.*}} !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 

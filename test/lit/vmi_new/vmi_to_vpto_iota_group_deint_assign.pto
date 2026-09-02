@@ -39,18 +39,18 @@ module {
 // ASSIGN: %[[WIDE:.*]] = pto.vmi.extf
 // ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 // Grouped iota is materialized directly in the deinterleaved layout.
-// ASSIGN: %[[IDX:.*]] = pto.vmi.iota
+// ASSIGN: %[[IOTA:.*]] = pto.vmi.group_iota
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[IDX:.*]] = pto.vmi.ensure_layout %[[IOTA]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 // ASSIGN: pto.vmi.addf %[[WIDE]], %[[IDX]]
 // ASSIGN-SAME: #pto.vmi.layout<deinterleaved = 2>
-// ASSIGN-NOT: pto.vmi.group_iota
-// ASSIGN-NOT: pto.vmi.ensure_layout
+// ASSIGN-NOT: pto.vmi.group_iota {{.*}} -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 
 // LOWER-LABEL: func.func @grouped_vci_elem_with_widen_deint(
 // Contiguous group=2 share: one physical vci, then layout conversion.
-// LOWER: pto.vcvt {{.*}} "EVEN"
-// LOWER: pto.vcvt {{.*}} "ODD"
 // LOWER: pto.vci
+// LOWER: pto.vdintlv
 // LOWER: pto.vadd
 // LOWER: pto.vstsx2
 // LOWER-NOT: pto.vmi.
