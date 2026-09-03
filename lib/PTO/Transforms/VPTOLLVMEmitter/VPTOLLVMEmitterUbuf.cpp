@@ -262,6 +262,37 @@ packCopyUbToCbufConfig(Operation *anchor, ValueRange operands) {
                                {srcStride, 32}, {dstStride, 48}});
 }
 
+static FailureOr<Value> buildUbufUnaryConfig(Operation *anchor,
+                                             ConversionPatternRewriter &rewriter,
+                                             Value repeat, Value dstBlockStride,
+                                             Value srcBlockStride,
+                                             Value dstRepeatStride,
+                                             Value srcRepeatStride) {
+  Type i64Type = rewriter.getI64Type();
+  Value repeatI64 = castIntegerLikeTo(anchor, repeat, i64Type);
+  Value dstBlockStrideI64 =
+      castIntegerLikeTo(anchor, dstBlockStride, i64Type);
+  Value srcBlockStrideI64 =
+      castIntegerLikeTo(anchor, srcBlockStride, i64Type);
+  Value dstRepeatStrideI64 =
+      castIntegerLikeTo(anchor, dstRepeatStride, i64Type);
+  Value srcRepeatStrideI64 =
+      castIntegerLikeTo(anchor, srcRepeatStride, i64Type);
+  if (!repeatI64 || !dstBlockStrideI64 || !srcBlockStrideI64 ||
+      !dstRepeatStrideI64 || !srcRepeatStrideI64) {
+    return failure();
+  }
+
+  return packMaskedI64Fields(
+      rewriter, anchor->getLoc(), getI64Constant(rewriter, anchor->getLoc(), 0),
+      {{repeatI64, 56},
+       {dstBlockStrideI64, 0},
+       {srcBlockStrideI64, 16},
+       {dstRepeatStrideI64, 32},
+       {srcRepeatStrideI64, 40}},
+      0xff);
+}
+
 
 static FailureOr<StringRef> buildCopyGmToUbCallee(MLIRContext *context,
                                                   Type sourceType,
@@ -471,36 +502,25 @@ public:
     }
 
     Location loc = op.getLoc();
-    auto i64Ty = rewriter.getI64Type();
-    auto getI64 = [&](Value v) -> Value {
-      return castIntegerLikeTo(op, v, i64Ty);
-    };
-    auto maskByte = [&](Value v) -> Value {
-      return rewriter.create<arith::AndIOp>(
-          loc, v, rewriter.create<arith::ConstantOp>(
-                     loc, rewriter.getI64IntegerAttr(0xff)));
-    };
-    auto shl = [&](Value v, uint64_t amount) -> Value {
-      return rewriter.create<arith::ShLIOp>(
-          loc, v, rewriter.create<arith::ConstantOp>(
-                       loc, rewriter.getI64IntegerAttr(amount)));
-    };
-    Value config = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getI64IntegerAttr(1LL << 56));
-    config = rewriter.create<arith::OrIOp>(
-        loc, config, maskByte(getI64(adaptor.getRepeat())));
-    config = rewriter.create<arith::OrIOp>(
-        loc, config, shl(maskByte(getI64(adaptor.getDstBlockStride())), 8));
-    config = rewriter.create<arith::OrIOp>(
-        loc, config, shl(maskByte(getI64(adaptor.getSrc0BlockStride())), 16));
-    config = rewriter.create<arith::OrIOp>(
-        loc, config, shl(maskByte(getI64(adaptor.getSrc1BlockStride())), 24));
-    config = rewriter.create<arith::OrIOp>(
-        loc, config, shl(maskByte(getI64(adaptor.getDstRepeatStride())), 32));
-    config = rewriter.create<arith::OrIOp>(
-        loc, config, shl(maskByte(getI64(adaptor.getSrc0RepeatStride())), 40));
-    config = rewriter.create<arith::OrIOp>(
-        loc, config, shl(maskByte(getI64(adaptor.getSrc1RepeatStride())), 48));
+    Type i64Ty = rewriter.getI64Type();
+    Value config = getI64Constant(rewriter, loc, 1ULL << 56);
+    SmallVector<std::pair<Value, uint64_t>> fields = {
+        {adaptor.getRepeat(), 0},
+        {adaptor.getDstBlockStride(), 8},
+        {adaptor.getSrc0BlockStride(), 16},
+        {adaptor.getSrc1BlockStride(), 24},
+        {adaptor.getDstRepeatStride(), 32},
+        {adaptor.getSrc0RepeatStride(), 40},
+        {adaptor.getSrc1RepeatStride(), 48}};
+    SmallVector<std::pair<Value, uint64_t>> convertedFields;
+    for (auto [value, amount] : fields) {
+      Value converted = castIntegerLikeTo(op, value, i64Ty);
+      if (!converted) {
+        return rewriter.notifyMatchFailure(op, "invalid ubuf binary config operand");
+      }
+      convertedFields.push_back({converted, amount});
+    }
+    config = packMaskedI64Fields(rewriter, loc, config, convertedFields, 0xff);
 
     auto funcType = rewriter.getFunctionType(
         TypeRange{dst.getType(), src0.getType(), src1.getType(),
@@ -558,7 +578,7 @@ public:
         std::string("llvm.hivm.VGATHERB.") + ((width == 16) ? "b16" : "b32");
 
     Location loc = op.getLoc();
-    auto i64Ty = rewriter.getI64Type();
+    Type i64Ty = rewriter.getI64Type();
     auto constI64 = [&](uint64_t v) -> Value {
       return rewriter.create<arith::ConstantOp>(loc,
                                                 rewriter.getI64IntegerAttr(v));
@@ -633,7 +653,7 @@ public:
         std::string("llvm.hivm.VGATHER.") + ((width == 16) ? "b16" : "b32");
 
     Location loc = op.getLoc();
-    auto i64Ty = rewriter.getI64Type();
+    Type i64Ty = rewriter.getI64Type();
     auto constI64 = [&](uint64_t v) -> Value {
       return rewriter.create<arith::ConstantOp>(loc,
                                                 rewriter.getI64IntegerAttr(v));
@@ -714,23 +734,20 @@ public:
     }
 
     Location loc = op.getLoc();
-    auto i64Ty = rewriter.getI64Type();
-    auto getI64 = [&](Value v) -> Value {
-      return castIntegerLikeTo(op, v, i64Ty);
-    };
     // Unary config layout (same as VABS):
     //   repeat[63:56], dstBlkStride[15:0], srcBlkStride[31:16],
     //   dstRepStride[39:32], srcRepStride[51:40]
-    Value config = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getI64IntegerAttr(0));
-    config = packMaskedI64Fields(
-        rewriter, loc, config,
-        {{getI64(adaptor.getRepeat()), 56},
-         {getI64(adaptor.getDstBlockStride()), 0},
-         {getI64(adaptor.getSrcBlockStride()), 16},
-         {getI64(adaptor.getDstRepeatStride()), 32},
-         {getI64(adaptor.getSrcRepeatStride()), 40}},
-        0xff);
+    Type i64Ty = rewriter.getI64Type();
+    auto getI64 = [&](Value v) -> Value {
+      return castIntegerLikeTo(op, v, i64Ty);
+    };
+    FailureOr<Value> config = buildUbufUnaryConfig(
+        op, rewriter, adaptor.getRepeat(), adaptor.getDstBlockStride(),
+        adaptor.getSrcBlockStride(), adaptor.getDstRepeatStride(),
+        adaptor.getSrcRepeatStride());
+    if (failed(config)) {
+      return rewriter.notifyMatchFailure(op, "invalid ubuf shift config operands");
+    }
 
     Value shiftDist = getI64(adaptor.getShiftDist());
 
@@ -739,7 +756,7 @@ public:
           TypeRange{dst.getType(), src.getType(), i64Ty, i64Ty},
           TypeRange{});
       rewriter.create<func::CallOp>(loc, calleeName, TypeRange{},
-                                    ValueRange{dst, src, shiftDist, config});
+                                    ValueRange{dst, src, shiftDist, *config});
       state.plannedDecls.push_back(PlannedDecl{calleeName, funcType});
     } else {
       Value roundZero = rewriter.create<arith::ConstantOp>(
@@ -748,7 +765,7 @@ public:
           TypeRange{dst.getType(), src.getType(), i64Ty, i64Ty, i64Ty},
           TypeRange{});
       rewriter.create<func::CallOp>(loc, calleeName, TypeRange{},
-                                    ValueRange{dst, src, shiftDist, config,
+                                               ValueRange{dst, src, shiftDist, *config,
                                                roundZero});
       state.plannedDecls.push_back(PlannedDecl{calleeName, funcType});
     }
@@ -807,21 +824,18 @@ public:
     }
 
     Location loc = op.getLoc();
-    auto i64Ty = rewriter.getI64Type();
+    Type i64Ty = rewriter.getI64Type();
     auto getI64 = [&](Value v) -> Value {
       return castIntegerLikeTo(op, v, i64Ty);
     };
     // Unary config layout (same as VABS/VSHR): repeat[63:56]
-    Value config = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getI64IntegerAttr(0));
-    config = packMaskedI64Fields(
-        rewriter, loc, config,
-        {{getI64(adaptor.getRepeat()), 56},
-         {getI64(adaptor.getDstBlockStride()), 0},
-         {getI64(adaptor.getSrcBlockStride()), 16},
-         {getI64(adaptor.getDstRepeatStride()), 32},
-         {getI64(adaptor.getSrcRepeatStride()), 40}},
-        0xff);
+    FailureOr<Value> config = buildUbufUnaryConfig(
+        op, rewriter, adaptor.getRepeat(), adaptor.getDstBlockStride(),
+        adaptor.getSrcBlockStride(), adaptor.getDstRepeatStride(),
+        adaptor.getSrcRepeatStride());
+    if (failed(config)) {
+      return rewriter.notifyMatchFailure(op, "invalid ubuf unary config operands");
+    }
 
     Value scalarI64 = getI64(adaptor.getShiftDist());
 
@@ -839,7 +853,7 @@ public:
           TypeRange{dst.getType(), src.getType(), floatTy, i64Ty},
           TypeRange{});
       rewriter.create<func::CallOp>(loc, calleeName, TypeRange{},
-                                    ValueRange{dst, src, scalarFloat, config});
+                                    ValueRange{dst, src, scalarFloat, *config});
       state.plannedDecls.push_back(PlannedDecl{calleeName, funcType});
     } else {
       // Integer: VMULS/VADDS/etc .s16/s32 takes i64 scalar directly.
@@ -847,7 +861,7 @@ public:
           TypeRange{dst.getType(), src.getType(), i64Ty, i64Ty},
           TypeRange{});
       rewriter.create<func::CallOp>(loc, calleeName, TypeRange{},
-                                    ValueRange{dst, src, scalarI64, config});
+                                    ValueRange{dst, src, scalarI64, *config});
       state.plannedDecls.push_back(PlannedDecl{calleeName, funcType});
     }
 
@@ -916,27 +930,22 @@ public:
     }
 
     Location loc = op.getLoc();
-    auto i64Ty = rewriter.getI64Type();
-    auto getI64 = [&](Value v) -> Value {
-      return castIntegerLikeTo(op, v, i64Ty);
-    };
+    Type i64Ty = rewriter.getI64Type();
     // Unary config layout (same as VABS/VSHR): repeat[63:56]
-    Value config = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getI64IntegerAttr(0));
-    config = packMaskedI64Fields(
-        rewriter, loc, config,
-        {{getI64(adaptor.getRepeat()), 56},
-         {getI64(adaptor.getDstBlockStride()), 0},
-         {getI64(adaptor.getSrcBlockStride()), 16},
-         {getI64(adaptor.getDstRepeatStride()), 32},
-         {getI64(adaptor.getSrcRepeatStride()), 40}},
-        0xff);
+    FailureOr<Value> config = buildUbufUnaryConfig(
+        op, rewriter, adaptor.getRepeat(), adaptor.getDstBlockStride(),
+        adaptor.getSrcBlockStride(), adaptor.getDstRepeatStride(),
+        adaptor.getSrcRepeatStride());
+    if (failed(config)) {
+      return rewriter.notifyMatchFailure(op,
+                                         "invalid ubuf unary config operands");
+    }
 
     auto funcType = rewriter.getFunctionType(
         TypeRange{dst.getType(), src.getType(), i64Ty},
         TypeRange{});
     rewriter.create<func::CallOp>(loc, calleeName, TypeRange{},
-                                  ValueRange{dst, src, config});
+                                  ValueRange{dst, src, *config});
     state.plannedDecls.push_back(PlannedDecl{calleeName, funcType});
 
     rewriter.eraseOp(op);

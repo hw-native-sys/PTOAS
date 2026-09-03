@@ -164,200 +164,89 @@ static VcvtElemKind classifyVcvtElemType(Type type) {
   return VcvtElemKind::Invalid;
 }
 
-static std::optional<VcvtContract> lookupVcvtContractForF32(
-    VcvtElemKind dst) {
-  switch (dst) {
-  case VcvtElemKind::F8E4M3:
-    return VcvtContract{"llvm.hivm.vcvtff.f322f8e4m3.x", true, true, true, 32};
-  case VcvtElemKind::F8E5M2:
-    return VcvtContract{"llvm.hivm.vcvtff.f322f8e5m2.x", true, true, true, 32};
-  case VcvtElemKind::HiF8:
-    return VcvtContract{"llvm.hivm.vcvtff.f322hif8.x", true, true, true, 32};
-  case VcvtElemKind::F16:
-    return VcvtContract{"llvm.hivm.vcvtff.f322f16.x", true, true, true, 32};
-  case VcvtElemKind::BF16:
-    return VcvtContract{"llvm.hivm.vcvtff.f322bf16.x", true, true, true, 32};
-  case VcvtElemKind::S16:
-    return VcvtContract{"llvm.hivm.vcvtfi.f322s16.x", true, true, true, 32};
-  case VcvtElemKind::S32:
-    return VcvtContract{"llvm.hivm.vcvtfi.f322s32.x", true, true, false, 32};
-  case VcvtElemKind::S64:
-    return VcvtContract{"llvm.hivm.vcvtfi.f322s64.x", true, true, true, 32};
-  default:
-    return std::nullopt;
-  }
-}
-
 static std::optional<VcvtContract> lookupVcvtContract(VcvtElemKind src,
                                                         VcvtElemKind dst) {
-  switch (src) {
-  case VcvtElemKind::F32:
-    return lookupVcvtContractForF32(dst);
-  case VcvtElemKind::F16:
-    switch (dst) {
-    case VcvtElemKind::F8E4M3:
-      return VcvtContract{"llvm.hivm.vcvtff.f162f8e4m3.x", true, true, true, 16};
-    case VcvtElemKind::F8E5M2:
-      return VcvtContract{"llvm.hivm.vcvtff.f162f8e5m2.x", true, true, true, 16};
-    case VcvtElemKind::HiF8:
-      return VcvtContract{"llvm.hivm.vcvtff.f162hif8.x", true, true, true, 16};
-    case VcvtElemKind::F32:
-      return VcvtContract{"llvm.hivm.vcvtff.f162f32.x", false, false, true, 16};
-    case VcvtElemKind::S32:
-      return VcvtContract{"llvm.hivm.vcvtfi.f162s32.x", true, false, true, 16};
-    case VcvtElemKind::S16:
-      return VcvtContract{"llvm.hivm.vcvtfi.f162s16.x", true, true, false, 16};
-    case VcvtElemKind::S8:
-      return VcvtContract{"llvm.hivm.vcvtfi.f162s8.x", true, true, true, 16};
-    case VcvtElemKind::U8:
-      return VcvtContract{"llvm.hivm.vcvtfi.f162u8.x", true, true, true, 16};
-    case VcvtElemKind::BF16:
-      return VcvtContract{"llvm.hivm.vcvtff.f162bf16.x", true, false, false, 16};
-    default:
-      return std::nullopt;
-    }
-  case VcvtElemKind::BF16:
-    switch (dst) {
-    case VcvtElemKind::F8E4M3:
-      return VcvtContract{"llvm.hivm.vcvtff.bf162f8e4m3.x", true, true, true, 16};
-    case VcvtElemKind::F8E5M2:
-      return VcvtContract{"llvm.hivm.vcvtff.bf162f8e5m2.x", true, true, true, 16};
-    case VcvtElemKind::F4E1M2x2:
-      return VcvtContract{"llvm.hivm.vcvtff2.bf162f4e1m2x2.x", true, false, true, 16};
-    case VcvtElemKind::F4E2M1x2:
-      return VcvtContract{"llvm.hivm.vcvtff2.bf162f4e2m1x2.x", true, false, true, 16};
-    case VcvtElemKind::F16:
-      return VcvtContract{"llvm.hivm.vcvtff.bf162f16.x", true, true, false, 16,
-                          true};
-    case VcvtElemKind::F32:
-      return VcvtContract{"llvm.hivm.vcvtff.bf162f32.x", false, false, true, 16};
-    case VcvtElemKind::S32:
-      return VcvtContract{"llvm.hivm.vcvtfi.bf162s32.x", true, true, true, 16};
-    default:
-      return std::nullopt;
-    }
-  case VcvtElemKind::U8:
-    switch (dst) {
-    case VcvtElemKind::F16:
-      return VcvtContract{"llvm.hivm.vcvtif.u82f16.x", false, false, true, 8};
-    case VcvtElemKind::U16:
-      return VcvtContract{"llvm.hivm.vcvtii.u82u16.x", false, false, true, 8};
-    case VcvtElemKind::U32:
-      return VcvtContract{"llvm.hivm.vcvtii.u82u32.x", false, false, true, 8};
-    default:
-      return std::nullopt;
-    }
-  case VcvtElemKind::S8:
-    switch (dst) {
-    case VcvtElemKind::F16:
-      return VcvtContract{"llvm.hivm.vcvtif.s82f16.x", false, false, true, 8};
-    case VcvtElemKind::S16:
-      return VcvtContract{"llvm.hivm.vcvtii.s82s16.x", false, false, true, 8};
-    case VcvtElemKind::S32:
-      return VcvtContract{"llvm.hivm.vcvtii.s82s32.x", false, false, true, 8};
-    default:
-      return std::nullopt;
-    }
-  case VcvtElemKind::U16:
-    switch (dst) {
-    case VcvtElemKind::U8:
-      return VcvtContract{"llvm.hivm.vcvtii.u162u8.x", false, true, true, 16};
-    case VcvtElemKind::U32:
-      return VcvtContract{"llvm.hivm.vcvtii.u162u32.x", false, false, true, 16};
-    default:
-      return std::nullopt;
-    }
-  case VcvtElemKind::S16:
-    switch (dst) {
-    case VcvtElemKind::F16:
-      return VcvtContract{"llvm.hivm.vcvtif.s162f16.x", true, false, false, 16};
-    case VcvtElemKind::F32:
-      return VcvtContract{"llvm.hivm.vcvtif.s162f32.x", false, false, true, 16};
-    case VcvtElemKind::U8:
-      return VcvtContract{"llvm.hivm.vcvtii.s162u8.x", false, true, true, 16};
-    case VcvtElemKind::U32:
-      return VcvtContract{"llvm.hivm.vcvtii.s162u32.x", false, false, true, 16};
-    case VcvtElemKind::S32:
-      return VcvtContract{"llvm.hivm.vcvtii.s162s32.x", false, false, true, 16};
-    default:
-      return std::nullopt;
-    }
-  case VcvtElemKind::U32:
-    switch (dst) {
-    case VcvtElemKind::U8:
-      return VcvtContract{"llvm.hivm.vcvtii.u322u8.x", false, true, true, 32};
-    case VcvtElemKind::U16:
-      return VcvtContract{"llvm.hivm.vcvtii.u322u16.x", false, true, true, 32};
-    case VcvtElemKind::S16:
-      return VcvtContract{"llvm.hivm.vcvtii.u322s16.x", false, true, true, 32};
-    default:
-      return std::nullopt;
-    }
-  case VcvtElemKind::S32:
-    switch (dst) {
-    case VcvtElemKind::F32:
-      return VcvtContract{"llvm.hivm.vcvtif.s322f32.x", true, false, false, 32};
-    case VcvtElemKind::U8:
-      return VcvtContract{"llvm.hivm.vcvtii.s322u8.x", false, true, true, 32};
-    case VcvtElemKind::U16:
-      return VcvtContract{"llvm.hivm.vcvtii.s322u16.x", false, true, true, 32};
-    case VcvtElemKind::S16:
-      return VcvtContract{"llvm.hivm.vcvtii.s322s16.x", false, true, true, 32};
-    case VcvtElemKind::S64:
-      return VcvtContract{"llvm.hivm.vcvtii.s322s64.x", false, false, true, 32};
-    default:
-      return std::nullopt;
-    }
-  case VcvtElemKind::S64:
-    switch (dst) {
-    case VcvtElemKind::F32:
-      return VcvtContract{"llvm.hivm.vcvtif.s642f32.x", true, false, true, 32};
-    case VcvtElemKind::S32:
-      return VcvtContract{"llvm.hivm.vcvtii.s642s32.x", false, true, true, 32};
-    default:
-      return std::nullopt;
-    }
-  case VcvtElemKind::F8E4M3:
-    switch (dst) {
-    case VcvtElemKind::F32:
-      return VcvtContract{"llvm.hivm.vcvtff.f8e4m32f32.x", false, false, true, 8};
-    default:
-      return std::nullopt;
-    }
-  case VcvtElemKind::F8E5M2:
-    switch (dst) {
-    case VcvtElemKind::F32:
-      return VcvtContract{"llvm.hivm.vcvtff.f8e5m22f32.x", false, false, true, 8};
-    default:
-      return std::nullopt;
-    }
-  case VcvtElemKind::HiF8:
-    switch (dst) {
-    case VcvtElemKind::F32:
-      return VcvtContract{"llvm.hivm.vcvtff.hif82f32.x", false, false, true, 8};
-    default:
-      return std::nullopt;
-    }
-  case VcvtElemKind::F4E1M2x2:
-    switch (dst) {
-    case VcvtElemKind::BF16:
-      return VcvtContract{"llvm.hivm.vcvtff2.f4e1m2x22bf16.x", false, false, true, 8};
-    default:
-      return std::nullopt;
-    }
-  case VcvtElemKind::F4E2M1x2:
-    switch (dst) {
-    case VcvtElemKind::BF16:
-      return VcvtContract{"llvm.hivm.vcvtff2.f4e2m1x22bf16.x", false, false, true, 8};
-    default:
-      return std::nullopt;
-    }
-  case VcvtElemKind::Invalid:
+  static const llvm::DenseMap<VcvtElemKind, llvm::DenseMap<VcvtElemKind,
+                                                               VcvtContract>>
+      contracts = {
+          {VcvtElemKind::F32,
+           {{VcvtElemKind::F8E4M3, {"llvm.hivm.vcvtff.f322f8e4m3.x", true, true, true, 32}},
+            {VcvtElemKind::F8E5M2, {"llvm.hivm.vcvtff.f322f8e5m2.x", true, true, true, 32}},
+            {VcvtElemKind::HiF8, {"llvm.hivm.vcvtff.f322hif8.x", true, true, true, 32}},
+            {VcvtElemKind::F16, {"llvm.hivm.vcvtff.f322f16.x", true, true, true, 32}},
+            {VcvtElemKind::BF16, {"llvm.hivm.vcvtff.f322bf16.x", true, true, true, 32}},
+            {VcvtElemKind::S16, {"llvm.hivm.vcvtfi.f322s16.x", true, true, true, 32}},
+            {VcvtElemKind::S32, {"llvm.hivm.vcvtfi.f322s32.x", true, true, false, 32}},
+            {VcvtElemKind::S64, {"llvm.hivm.vcvtfi.f322s64.x", true, true, true, 32}}}},
+          {VcvtElemKind::F16,
+           {{VcvtElemKind::F8E4M3, {"llvm.hivm.vcvtff.f162f8e4m3.x", true, true, true, 16}},
+            {VcvtElemKind::F8E5M2, {"llvm.hivm.vcvtff.f162f8e5m2.x", true, true, true, 16}},
+            {VcvtElemKind::HiF8, {"llvm.hivm.vcvtff.f162hif8.x", true, true, true, 16}},
+            {VcvtElemKind::F32, {"llvm.hivm.vcvtff.f162f32.x", false, false, true, 16}},
+            {VcvtElemKind::S32, {"llvm.hivm.vcvtfi.f162s32.x", true, false, true, 16}},
+            {VcvtElemKind::S16, {"llvm.hivm.vcvtfi.f162s16.x", true, true, false, 16}},
+            {VcvtElemKind::S8, {"llvm.hivm.vcvtfi.f162s8.x", true, true, true, 16}},
+            {VcvtElemKind::U8, {"llvm.hivm.vcvtfi.f162u8.x", true, true, true, 16}},
+            {VcvtElemKind::BF16, {"llvm.hivm.vcvtff.f162bf16.x", true, false, false, 16}}}},
+          {VcvtElemKind::BF16,
+           {{VcvtElemKind::F8E4M3, {"llvm.hivm.vcvtff.bf162f8e4m3.x", true, true, true, 16}},
+            {VcvtElemKind::F8E5M2, {"llvm.hivm.vcvtff.bf162f8e5m2.x", true, true, true, 16}},
+            {VcvtElemKind::F4E1M2x2, {"llvm.hivm.vcvtff2.bf162f4e1m2x2.x", true, false, true, 16}},
+            {VcvtElemKind::F4E2M1x2, {"llvm.hivm.vcvtff2.bf162f4e2m1x2.x", true, false, true, 16}},
+            {VcvtElemKind::F16, {"llvm.hivm.vcvtff.bf162f16.x", true, true, false, 16, true}},
+            {VcvtElemKind::F32, {"llvm.hivm.vcvtff.bf162f32.x", false, false, true, 16}},
+            {VcvtElemKind::S32, {"llvm.hivm.vcvtfi.bf162s32.x", true, true, true, 16}}}},
+          {VcvtElemKind::U8,
+           {{VcvtElemKind::F16, {"llvm.hivm.vcvtif.u82f16.x", false, false, true, 8}},
+            {VcvtElemKind::U16, {"llvm.hivm.vcvtii.u82u16.x", false, false, true, 8}},
+            {VcvtElemKind::U32, {"llvm.hivm.vcvtii.u82u32.x", false, false, true, 8}}}},
+          {VcvtElemKind::S8,
+           {{VcvtElemKind::F16, {"llvm.hivm.vcvtif.s82f16.x", false, false, true, 8}},
+            {VcvtElemKind::S16, {"llvm.hivm.vcvtii.s82s16.x", false, false, true, 8}},
+            {VcvtElemKind::S32, {"llvm.hivm.vcvtii.s82s32.x", false, false, true, 8}}}},
+          {VcvtElemKind::U16,
+           {{VcvtElemKind::U8, {"llvm.hivm.vcvtii.u162u8.x", false, true, true, 16}},
+            {VcvtElemKind::U32, {"llvm.hivm.vcvtii.u162u32.x", false, false, true, 16}}}},
+          {VcvtElemKind::S16,
+           {{VcvtElemKind::F16, {"llvm.hivm.vcvtif.s162f16.x", true, false, false, 16}},
+            {VcvtElemKind::F32, {"llvm.hivm.vcvtif.s162f32.x", false, false, true, 16}},
+            {VcvtElemKind::U8, {"llvm.hivm.vcvtii.s162u8.x", false, true, true, 16}},
+            {VcvtElemKind::U32, {"llvm.hivm.vcvtii.s162u32.x", false, false, true, 16}},
+            {VcvtElemKind::S32, {"llvm.hivm.vcvtii.s162s32.x", false, false, true, 16}}}},
+          {VcvtElemKind::U32,
+           {{VcvtElemKind::U8, {"llvm.hivm.vcvtii.u322u8.x", false, true, true, 32}},
+            {VcvtElemKind::U16, {"llvm.hivm.vcvtii.u322u16.x", false, true, true, 32}},
+            {VcvtElemKind::S16, {"llvm.hivm.vcvtii.u322s16.x", false, true, true, 32}}}},
+          {VcvtElemKind::S32,
+           {{VcvtElemKind::F32, {"llvm.hivm.vcvtif.s322f32.x", true, false, false, 32}},
+            {VcvtElemKind::U8, {"llvm.hivm.vcvtii.s322u8.x", false, true, true, 32}},
+            {VcvtElemKind::U16, {"llvm.hivm.vcvtii.s322u16.x", false, true, true, 32}},
+            {VcvtElemKind::S16, {"llvm.hivm.vcvtii.s322s16.x", false, true, true, 32}},
+            {VcvtElemKind::S64, {"llvm.hivm.vcvtii.s322s64.x", false, false, true, 32}}}},
+          {VcvtElemKind::S64,
+           {{VcvtElemKind::F32, {"llvm.hivm.vcvtif.s642f32.x", true, false, true, 32}},
+            {VcvtElemKind::S32, {"llvm.hivm.vcvtii.s642s32.x", false, true, true, 32}}}},
+          {VcvtElemKind::F8E4M3,
+           {{VcvtElemKind::F32, {"llvm.hivm.vcvtff.f8e4m32f32.x", false, false, true, 8}}}},
+          {VcvtElemKind::F8E5M2,
+           {{VcvtElemKind::F32, {"llvm.hivm.vcvtff.f8e5m22f32.x", false, false, true, 8}}}},
+          {VcvtElemKind::HiF8,
+           {{VcvtElemKind::F32, {"llvm.hivm.vcvtff.hif82f32.x", false, false, true, 8}}}},
+          {VcvtElemKind::F4E1M2x2,
+           {{VcvtElemKind::BF16, {"llvm.hivm.vcvtff2.f4e1m2x22bf16.x", false, false, true, 8}}}},
+          {VcvtElemKind::F4E2M1x2,
+           {{VcvtElemKind::BF16, {"llvm.hivm.vcvtff2.f4e2m1x22bf16.x", false, false, true, 8}}}}};
+
+  auto source = contracts.find(src);
+  if (source == contracts.end()) {
     return std::nullopt;
   }
-  return std::nullopt;
+  auto destination = source->second.find(dst);
+  if (destination == source->second.end()) {
+    return std::nullopt;
+  }
+  return destination->second;
 }
-
 
 static FailureOr<VcvtContract> buildVcvtContract(pto::VcvtOp op) {
   Type inputElemType = getElementTypeFromVectorLike(op.getInput().getType());

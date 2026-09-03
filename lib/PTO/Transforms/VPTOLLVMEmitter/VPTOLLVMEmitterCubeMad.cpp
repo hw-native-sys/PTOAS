@@ -150,70 +150,66 @@ static std::string getMadDstFragment(Type type) {
   return {};
 }
 
+static std::string getMadLhsFragment(Type type) {
+  if (type.isF16()) {
+    return "f16";
+  }
+  if (type.isBF16()) {
+    return "bf16";
+  }
+  if (type.isF32()) {
+    return "f32";
+  }
+  if (isSignedOrSignlessInteger(dyn_cast<IntegerType>(type), 8)) {
+    return "s8";
+  }
+  if (isMadE4M3ElementType(type)) {
+    return "e4m3";
+  }
+  if (isMadE5M2ElementType(type)) {
+    return "e5m2";
+  }
+  if (pto::isPTOHiFloat8Type(type)) {
+    return "hif8";
+  }
+  return {};
+}
+
 static FailureOr<StringRef> buildMadTypedCalleeName(MLIRContext *context,
                                                      Type lhsElem, Type rhsElem,
                                                      Type dstElem) {
+  struct MadContract {
+    StringRef lhs;
+    StringRef rhs;
+    StringRef dst;
+    StringRef callee;
+  };
+
+  static const MadContract contracts[] = {
+      {"f16", "f16", "f32", "llvm.hivm.MAD.f162f32.c310"},
+      {"f16", "f16", "f16", "llvm.hivm.MAD.f162f16"},
+      {"f16", "f16", "s32", "llvm.hivm.MAD.f162s32.1952"},
+      {"bf16", "bf16", "f32", "llvm.hivm.MAD.bf162f32.c310"},
+      {"f32", "f32", "f32", "llvm.hivm.MAD.f322f32.c310"},
+      {"s8", "s8", "s32", "llvm.hivm.MAD.s8.c310"},
+      {"e4m3", "e4m3", "f32", "llvm.hivm.MAD.e4m3e4m3.c310"},
+      {"e4m3", "e5m2", "f32", "llvm.hivm.MAD.e4m3e5m2.c310"},
+      {"e5m2", "e4m3", "f32", "llvm.hivm.MAD.e5m2e4m3.c310"},
+      {"e5m2", "e5m2", "f32", "llvm.hivm.MAD.e5m2e5m2.c310"},
+      {"hif8", "hif8", "f32", "llvm.hivm.MAD.e4m3e4m3.c310"},
+      {"f16", "s4", "", "llvm.hivm.MAD.f16s4.c310"},
+      {"f16", "s8", "", "llvm.hivm.MAD.f16s8.c310"},
+      {"f16", "u2", "", "llvm.hivm.MAD.f16u2"},
+      {"f16", "e8m0", "", "llvm.hivm.MAD.f16e8m0.c310"},
+  };
+
+  StringRef lhs = getMadLhsFragment(lhsElem);
   std::string rhs = getMadRhsFragment(rhsElem);
   std::string dst = getMadDstFragment(dstElem);
-  if (lhsElem.isF16() && rhs == "f16" && dst == "f32")
-  {
-    return StringAttr::get(context, "llvm.hivm.MAD.f162f32.c310").getValue();
-  }
-  if (lhsElem.isF16() && rhs == "f16" && dst == "f16")
-  {
-    return StringAttr::get(context, "llvm.hivm.MAD.f162f16").getValue();
-  }
-  if (lhsElem.isF16() && rhs == "f16" && dst == "s32")
-  {
-    return StringAttr::get(context, "llvm.hivm.MAD.f162s32.1952").getValue();
-  }
-  if (lhsElem.isBF16() && rhs == "bf16" && dst == "f32")
-  {
-    return StringAttr::get(context, "llvm.hivm.MAD.bf162f32.c310").getValue();
-  }
-  if (lhsElem.isF32() && rhs == "f32" && dst == "f32")
-  {
-    return StringAttr::get(context, "llvm.hivm.MAD.f322f32.c310").getValue();
-  }
-  if (isSignedOrSignlessInteger(dyn_cast<IntegerType>(lhsElem), 8) &&
-      rhs == "s8" && dst == "s32") {
-    return StringAttr::get(context, "llvm.hivm.MAD.s8.c310").getValue();
-  }
-  if (isMadE4M3ElementType(lhsElem) && isMadE4M3ElementType(rhsElem) &&
-      dst == "f32") {
-    return StringAttr::get(context, "llvm.hivm.MAD.e4m3e4m3.c310").getValue();
-  }
-  if (isMadE4M3ElementType(lhsElem) && isMadE5M2ElementType(rhsElem) &&
-      dst == "f32") {
-    return StringAttr::get(context, "llvm.hivm.MAD.e4m3e5m2.c310").getValue();
-  }
-  if (isMadE5M2ElementType(lhsElem) && isMadE4M3ElementType(rhsElem) &&
-      dst == "f32") {
-    return StringAttr::get(context, "llvm.hivm.MAD.e5m2e4m3.c310").getValue();
-  }
-  if (isMadE5M2ElementType(lhsElem) && isMadE5M2ElementType(rhsElem) &&
-      dst == "f32") {
-    return StringAttr::get(context, "llvm.hivm.MAD.e5m2e5m2.c310").getValue();
-  }
-  if (pto::isPTOHiFloat8Type(lhsElem) && pto::isPTOHiFloat8Type(rhsElem) &&
-      dst == "f32") {
-    return StringAttr::get(context, "llvm.hivm.MAD.e4m3e4m3.c310").getValue();
-  }
-  if (lhsElem.isF16() && rhs == "s4")
-  {
-    return StringAttr::get(context, "llvm.hivm.MAD.f16s4.c310").getValue();
-  }
-  if (lhsElem.isF16() && rhs == "s8")
-  {
-    return StringAttr::get(context, "llvm.hivm.MAD.f16s8.c310").getValue();
-  }
-  if (lhsElem.isF16() && rhs == "u2")
-  {
-    return StringAttr::get(context, "llvm.hivm.MAD.f16u2").getValue();
-  }
-  if (lhsElem.isF16() && rhs == "e8m0")
-  {
-    return StringAttr::get(context, "llvm.hivm.MAD.f16e8m0.c310").getValue();
+  for (const MadContract &contract : contracts) {
+    if (contract.lhs == lhs && contract.rhs == rhs && contract.dst == dst) {
+      return StringAttr::get(context, contract.callee).getValue();
+    }
   }
   return failure();
 }
@@ -264,29 +260,39 @@ static FailureOr<StringRef> buildMxMadCallee(MLIRContext *context,
   return failure();
 }
 
-static LogicalResult lowerMadRawOp(pto::MadRawOpInterface op,
-                                   ValueRange convertedOperands,
-                                   ConversionPatternRewriter &rewriter,
-                                   LoweringState &state) {
-  Value lhsRaw = convertedOperands[0];
-  Value rhsRaw = convertedOperands[1];
-  Value dstRaw = convertedOperands[2];
-  Value biasRaw = op.hasBiasOperand() ? convertedOperands[3] : Value();
-  Value xt = convertedOperands[op.hasBiasOperand() ? 4 : 3];
-  if (!lhsRaw || !rhsRaw || !dstRaw || !xt ||
-      (op.hasBiasOperand() && !biasRaw)) {
-    return rewriter.notifyMatchFailure(op, "expected converted mad raw operands");
+struct MadConvertedOperands {
+  Value lhs;
+  Value rhs;
+  Value dst;
+  Value bias;
+  Value xt;
+};
+
+static FailureOr<MadConvertedOperands>
+prepareMadConvertedOperands(pto::MadRawOpInterface op,
+                            ValueRange convertedOperands,
+                            ConversionPatternRewriter &rewriter) {
+  const bool hasBias = op.hasBiasOperand();
+  if (convertedOperands.size() < (hasBias ? 5U : 4U)) {
+    return failure();
   }
 
-  if (!isa<LLVM::LLVMPointerType>(lhsRaw.getType()) ||
-      !isa<LLVM::LLVMPointerType>(rhsRaw.getType()) ||
-      !isa<LLVM::LLVMPointerType>(dstRaw.getType()) ||
-      (biasRaw && !isa<LLVM::LLVMPointerType>(biasRaw.getType()))) {
-    return rewriter.notifyMatchFailure(
-        op, "expected LLVM pointer lhs/rhs/dst/bias operands");
+  MadConvertedOperands operands{convertedOperands[0], convertedOperands[1],
+                                convertedOperands[2],
+                                hasBias ? convertedOperands[3] : Value(),
+                                convertedOperands[hasBias ? 4 : 3]};
+  if (!operands.lhs || !operands.rhs || !operands.dst || !operands.xt ||
+      (hasBias && !operands.bias)) {
+    return failure();
   }
 
-  Type i64Ty = rewriter.getI64Type();
+  if (!isa<LLVM::LLVMPointerType>(operands.lhs.getType()) ||
+      !isa<LLVM::LLVMPointerType>(operands.rhs.getType()) ||
+      !isa<LLVM::LLVMPointerType>(operands.dst.getType()) ||
+      (operands.bias && !isa<LLVM::LLVMPointerType>(operands.bias.getType()))) {
+    return failure();
+  }
+
   constexpr unsigned caAddressSpace =
       static_cast<unsigned>(pto::AddressSpace::LEFT);
   constexpr unsigned cbAddressSpace =
@@ -295,21 +301,36 @@ static LogicalResult lowerMadRawOp(pto::MadRawOpInterface op,
       static_cast<unsigned>(pto::AddressSpace::ACC);
   constexpr unsigned btAddressSpace =
       static_cast<unsigned>(pto::AddressSpace::BIAS);
-  FailureOr<Value> lhs =
-      reinterpretPointerToAddrSpace(op, lhsRaw, caAddressSpace);
-  FailureOr<Value> rhs =
-      reinterpretPointerToAddrSpace(op, rhsRaw, cbAddressSpace);
-  FailureOr<Value> dst =
-      reinterpretPointerToAddrSpace(op, dstRaw, ccAddressSpace);
+  FailureOr<Value> lhs = reinterpretPointerToAddrSpace(
+      op, operands.lhs, caAddressSpace);
+  FailureOr<Value> rhs = reinterpretPointerToAddrSpace(
+      op, operands.rhs, cbAddressSpace);
+  FailureOr<Value> dst = reinterpretPointerToAddrSpace(
+      op, operands.dst, ccAddressSpace);
   FailureOr<Value> bias;
-  if (biasRaw)
-  {
-    bias = reinterpretPointerToAddrSpace(op, biasRaw, btAddressSpace);
+  if (operands.bias) {
+    bias = reinterpretPointerToAddrSpace(op, operands.bias, btAddressSpace);
   }
   if (failed(lhs) || failed(rhs) || failed(dst) ||
-      (biasRaw && failed(bias))) {
-    return rewriter.notifyMatchFailure(op, "failed to map cube pointer spaces");
+      (operands.bias && failed(bias))) {
+    return failure();
   }
+  return MadConvertedOperands{*lhs, *rhs, *dst,
+                              operands.bias ? *bias : Value(), operands.xt};
+}
+
+static LogicalResult lowerMadRawOp(pto::MadRawOpInterface op,
+                                   ValueRange convertedOperands,
+                                   ConversionPatternRewriter &rewriter,
+                                   LoweringState &state) {
+  FailureOr<MadConvertedOperands> operands =
+      prepareMadConvertedOperands(op, convertedOperands, rewriter);
+  if (failed(operands)) {
+    return rewriter.notifyMatchFailure(op,
+                                       "invalid converted mad raw operands");
+  }
+
+  Type i64Ty = rewriter.getI64Type();
 
   FailureOr<StringRef> calleeName =
       op.isMadMxFamily() ? buildMxMadCallee(op.getContext(), op)
@@ -319,17 +340,19 @@ static LogicalResult lowerMadRawOp(pto::MadRawOpInterface op,
         op, "unsupported mad element types for raw dispatch");
   }
 
-  Value callDst = *dst;
-  if (biasRaw)
+  Value callDst = operands->dst;
+  if (operands->bias)
   {
-    callDst = buildMadBiasDestination(op, rewriter, *dst, *bias);
+    callDst = buildMadBiasDestination(op, rewriter, operands->dst,
+                                      operands->bias);
   }
   auto funcType = rewriter.getFunctionType(
-      TypeRange{dst->getType(), lhs->getType(), rhs->getType(), i64Ty},
+      TypeRange{operands->dst.getType(), operands->lhs.getType(),
+                operands->rhs.getType(), i64Ty},
       TypeRange{});
   auto call = rewriter.create<func::CallOp>(
       op->getLoc(), *calleeName, TypeRange{},
-      ValueRange{callDst, *lhs, *rhs, xt});
+      ValueRange{callDst, operands->lhs, operands->rhs, operands->xt});
   state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
   rewriter.replaceOp(op, call.getResults());
   return success();
