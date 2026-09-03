@@ -22955,3 +22955,11 @@ static void printStructPath(OpAsmPrinter &printer, Operation *op,
 #include "PTO/IR/VPTOInterfaces.cpp.inc"
 #define GET_OP_CLASSES
 #include "PTO/IR/PTOOps.cpp.inc"
+void BridgeObjectCreateOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  for (OpOperand &arg : getArgsMutable()) {
+    addEffect(effects, &arg, MemoryEffects::Read::get());
+  }
+  effects.emplace_back(MemoryEffects::Write::get(),
+                       SideEffects::DefaultResource::get());
+}

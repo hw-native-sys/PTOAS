@@ -2711,6 +2711,17 @@ def BridgeCallOp : PTO_Op<"bridge_call", [
   }];
 }
 
+def BridgeObjectCreateOp : PTO_Op<"bridge_object_create", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Create a stateful object owned by a bridge wrapper";
+  let arguments = (ins StrAttr:$entry, Variadic<AnyType>:$args);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = [{
+    $entry (`(` $args^ `:` type($args) `)`)? attr-dict `->` type($result)
+  }];
+}
+
 def BridgeIntToPtrOp : PTO_Op<"bridge_inttoptr"> {
   let summary = "Generic bridge address materialization (i64 to PTO pointer)";
 

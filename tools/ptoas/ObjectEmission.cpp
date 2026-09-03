@@ -388,6 +388,8 @@ static bool compileBridgeWrapperToBitcode(
       "-c",
       "-emit-llvm",
       "-xcce",
+      "-fenable-matrix",
+      "--cce-aicore-enable-tl",
       "--cce-aicore-only",
       std::string("--cce-aicore-arch=") + getTargetCPU(target).str(),
       "-DREGISTER_BASE",

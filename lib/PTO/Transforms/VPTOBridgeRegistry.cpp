@@ -33,7 +33,7 @@ constexpr BridgeValueKind kGemvArgs[] = {BridgeValueKind::I64,
 const BridgeFunctionDesc kRegistry[] = {
     {BridgeEntryId::PipeInit, BridgeFamily::Pipe, BridgeRendererKind::Pipe,
      "pto.initialize_l2l_pipe", "pto_vpto_pipe_init", kPipeInitArgs,
-     kPipeInitResults, true},
+     kPipeInitResults, true, 32},
     {BridgeEntryId::PipeSize, BridgeFamily::Pipe, BridgeRendererKind::Pipe,
      "", "pto_vpto_pipe_size", {}, {}, false},
     {BridgeEntryId::PipePush, BridgeFamily::Pipe, BridgeRendererKind::Pipe,

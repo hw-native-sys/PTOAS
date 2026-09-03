@@ -26,7 +26,7 @@
 // SPEC-SAME: entry.init = "pto_vpto_pipe_init"
 // SPEC-SAME: pipe = "pto::TPipe<8, pto::Direction::DIR_C2V, 2048, 4, 2, true>"
 // SPEC-SAME: producer_tile = "pto::Tile<pto::TileType::Acc, half, 32, 16, pto::BLayout::ColMajor, 32, 16, pto::SLayout::RowMajor, 512>"
-// SPEC: pto.bridge_call "pto_vpto_pipe_init"{{.*}}storage_size_callee = "pto_vpto_pipe_size"
+// SPEC: pto.bridge_object_create "pto_vpto_pipe_init"
 // SPEC-SAME: -> !pto.pipe
 // SPEC: pto.bridge_call "pto_vpto_pipe_push"
 // SPEC-SAME: : !pto.pipe, i64
@@ -38,7 +38,7 @@
 // SPEC-SAME: consumer_tile = "pto::Tile<pto::TileType::Vec, half, 4, 16, pto::BLayout::RowMajor, 4, 16>"
 // SPEC-SAME: pipe = "pto::TPipe<8, pto::Direction::DIR_C2V, 2048, 4, 2, true>"
 // SPEC-SAME: split = "pto::TileSplitAxis::TILE_UP_DOWN"
-// SPEC: pto.bridge_call "pto_vpto_pipe_init"
+// SPEC: pto.bridge_object_create "pto_vpto_pipe_init"
 // SPEC: pto.bridge_call "pto_vpto_pipe_pop"
 // SPEC-SAME: -> i64
 // SPEC: pto.bridge_inttoptr

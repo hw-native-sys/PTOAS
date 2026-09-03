@@ -198,15 +198,12 @@ struct PTOLowerPipeFamilyOpsPass final
       spec.addUniqueField(init, kBridgeSpecEntrySizeKey,
                           entry->storageSizeEntry);
       builder.setInsertionPoint(init);
-      BridgeCallOp call = builder.create<BridgeCallOp>(
-          init.getLoc(), /*results=*/TypeRange{init.getPipe().getType()},
-          /*callee=*/entry->entry,
-          /*storage_size_callee=*/
-          builder.getStringAttr(entry->storageSizeEntry),
-          /*args=*/ValueRange{init.getLocalAddr()});
+      BridgeObjectCreateOp call = builder.create<BridgeObjectCreateOp>(
+          init.getLoc(), init.getPipe().getType(), entry->entry,
+          ValueRange{init.getLocalAddr()});
       // The bridge call result becomes the storage handle: push/pop/free
       // consume the same SSA value instead of the erased pipe op.
-      init.getPipe().replaceAllUsesWith(call.getResults().front());
+      init.getPipe().replaceAllUsesWith(call.getResult());
       init.erase();
     }
 

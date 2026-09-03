@@ -19,7 +19,7 @@
 // RUN: env -u PTOAS_VPTO_BRIDGE_WHITELIST pto-test-opt %s -pto-lower-pipe-family-ops | FileCheck %s
 
 // CHECK-LABEL: func.func private @default_whitelist_cube
-// CHECK: pto.bridge_call "pto_vpto_pipe_init"{{.*}}storage_size_callee = "pto_vpto_pipe_size"
+// CHECK: pto.bridge_object_create "pto_vpto_pipe_init"
 // CHECK: pto.bridge_call "pto_vpto_pipe_push"
 // CHECK-NOT: pto.alloc_tile
 // CHECK-NOT: pto.tpush

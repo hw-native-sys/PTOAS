@@ -57,6 +57,7 @@ struct BridgeFunctionDesc {
   llvm::ArrayRef<BridgeValueKind> arguments;
   llvm::ArrayRef<BridgeValueKind> results;
   bool createsObject = false;
+  uint64_t objectAlignment = 0;
 };
 
 llvm::ArrayRef<BridgeFunctionDesc> getBridgeFunctionRegistry();

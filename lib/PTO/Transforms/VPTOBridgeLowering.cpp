@@ -27,6 +27,7 @@
 
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/VPTOBridgeWhitelist.h"
+#include "PTO/Transforms/VPTOBridgeRegistry.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Builders.h"
@@ -125,6 +126,54 @@ static LogicalResult validateAbi(Operation *op, const BridgeWhitelistEntry &entr
   }
   return success();
 }
+
+class LowerBridgeObjectCreatePattern final
+    : public OpConversionPattern<BridgeObjectCreateOp> {
+public:
+  LowerBridgeObjectCreatePattern(TypeConverter &converter, MLIRContext *context,
+                                 BridgeLoweringState &state)
+      : OpConversionPattern<BridgeObjectCreateOp>(converter, context),
+        state(state) {}
+
+  LogicalResult
+  matchAndRewrite(BridgeObjectCreateOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    StringRef symbol = op.getEntryAttr().getValue();
+    const BridgeFunctionDesc *desc = findBridgeFunctionBySymbol(symbol);
+    if (!desc || !desc->createsObject) {
+      return op.emitError() << "entry does not create a registered bridge object: "
+                            << symbol;
+    }
+    const BridgeFunctionDesc *sizeDesc =
+        findBridgeFunction(BridgeEntryId::PipeSize);
+    if (!sizeDesc) {
+      return op.emitError("bridge registry has no object size entry");
+    }
+    ModuleOp module = op->getParentOfType<ModuleOp>();
+    Location loc = op.getLoc();
+    Value size = rewriter
+                     .create<func::CallOp>(loc, sizeDesc->symbolBase,
+                                           rewriter.getI64Type(), ValueRange{})
+                     .getResult(0);
+    ensureWrapperDecl(module, state, rewriter, sizeDesc->symbolBase, {},
+                      {rewriter.getI64Type()});
+    Value storage = rewriter.create<LLVM::AllocaOp>(
+        loc, LLVM::LLVMPointerType::get(rewriter.getContext()),
+        rewriter.getI8Type(), size, desc->objectAlignment);
+    SmallVector<Value> args{storage};
+    args.append(adaptor.getArgs().begin(), adaptor.getArgs().end());
+    rewriter.create<func::CallOp>(loc, symbol, TypeRange{}, args);
+    ensureWrapperDecl(module, state, rewriter, symbol,
+                      llvm::map_to_vector<4>(
+                          args, [](Value arg) { return arg.getType(); }),
+                      {});
+    rewriter.replaceOp(op, storage);
+    return success();
+  }
+
+private:
+  BridgeLoweringState &state;
+};
 
 class LowerBridgeCallPattern final : public OpConversionPattern<BridgeCallOp> {
 public:
@@ -248,7 +297,7 @@ struct VPTOBridgeLoweringPass final
     ModuleOp module = getOperation();
     bool hasBridgeOps = false;
     module.walk([&](Operation *op) {
-      if (isa<BridgeCallOp, BridgeIntToPtrOp>(op)) {
+      if (isa<BridgeCallOp, BridgeObjectCreateOp, BridgeIntToPtrOp>(op)) {
         hasBridgeOps = true;
       }
     });
@@ -304,7 +353,7 @@ struct VPTOBridgeLoweringPass final
 
     BridgeTypeConverter converter(&getContext());
     ConversionTarget target(getContext());
-    target.addIllegalOp<BridgeCallOp, BridgeIntToPtrOp>();
+    target.addIllegalOp<BridgeCallOp, BridgeObjectCreateOp, BridgeIntToPtrOp>();
     // Everything the patterns create (func.call, llvm.alloca, private
     // declarations) must be legal on the target, otherwise the conversion
     // driver rejects the generated operations and rolls the pattern back.
@@ -314,6 +363,7 @@ struct VPTOBridgeLoweringPass final
     RewritePatternSet patterns(&getContext());
     BridgeLoweringState state{whitelist, {}};
     patterns.add<LowerBridgeCallPattern>(converter, &getContext(), state);
+    patterns.add<LowerBridgeObjectCreatePattern>(converter, &getContext(), state);
     patterns.add<LowerBridgeIntToPtrPattern>(converter, &getContext());
     if (failed(applyPartialConversion(module, target, std::move(patterns)))) {
       signalPassFailure();
