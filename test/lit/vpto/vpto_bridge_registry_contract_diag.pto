@@ -1,0 +1,33 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not pto-test-opt %s -split-input-file \
+// RUN:   "-vpto-bridge-lowering=whitelist-path=%S/Inputs/vpto-bridge-whitelist.yaml" \
+// RUN:   2>&1 | FileCheck %s
+
+module {
+  func.func private @pto_vpto_pipe_push(i32)
+  func.func private @signature_conflict(%storage: !pto.pipe, %addr: i64) {
+    pto.bridge_call "pto_vpto_pipe_push" (%storage, %addr : !pto.pipe, i64)
+    return
+  }
+}
+
+// CHECK: VPTO bridge wrapper 'pto_vpto_pipe_push' already has type
+// CHECK: requested '(!llvm.ptr, i64) -> ()'
+
+// -----
+
+module {
+  func.func private @bad_object_create(%addr: i64) {
+    %pipe = pto.bridge_object_create "pto_vpto_pipe_init"(%addr : i64) -> !pto.pipe
+    return
+  }
+}
+
+// CHECK: pipe object init requires one i32 local address

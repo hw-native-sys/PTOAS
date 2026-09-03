@@ -90,19 +90,30 @@ struct BridgeLoweringState {
 
 /// Creates the module-level private declaration of a wrapper entry the
 /// first time it is called.
-static void ensureWrapperDecl(ModuleOp module, BridgeLoweringState &state,
-                              PatternRewriter &rewriter, StringRef callee,
-                              TypeRange argTypes, TypeRange resultTypes) {
-  if (state.declaredEntries.contains(callee)) {
-    return;
+static LogicalResult ensureWrapperDecl(ModuleOp module,
+                                       BridgeLoweringState &state,
+                                       PatternRewriter &rewriter,
+                                       Operation *anchor, StringRef callee,
+                                       TypeRange argTypes,
+                                       TypeRange resultTypes) {
+  FunctionType expected =
+      FunctionType::get(module.getContext(), argTypes, resultTypes);
+  auto existing = module.lookupSymbol<func::FuncOp>(callee);
+  if (existing && existing.getFunctionType() != expected) {
+    return anchor->emitError()
+           << "VPTO bridge wrapper '" << callee << "' already has type "
+           << existing.getFunctionType() << ", requested " << expected;
+  }
+  if (existing) {
+    state.declaredEntries.insert(callee);
+    return success();
   }
   state.declaredEntries.insert(callee);
   OpBuilder::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointToStart(&module.getBodyRegion().front());
-  auto decl = rewriter.create<func::FuncOp>(
-      module.getLoc(), callee,
-      FunctionType::get(module.getContext(), argTypes, resultTypes));
+  auto decl = rewriter.create<func::FuncOp>(module.getLoc(), callee, expected);
   decl.setPrivate();
+  return success();
 }
 
 /// Validates the fully assembled call argument list against the whitelist
@@ -144,6 +155,17 @@ public:
       return op.emitError() << "entry does not create a registered bridge object: "
                             << symbol;
     }
+    if (desc->arguments.size() != adaptor.getArgs().size() ||
+        desc->results.size() != 1 ||
+        desc->results.front() != BridgeValueKind::PipeObject) {
+      return op.emitError()
+             << "bridge object operands/results do not match registry entry "
+             << stringifyBridgeEntryId(desc->id);
+    }
+    if (desc->arguments.front() != BridgeValueKind::I32 ||
+        !adaptor.getArgs().front().getType().isInteger(32)) {
+      return op.emitError("pipe object init requires one i32 local address");
+    }
     const BridgeFunctionDesc *sizeDesc =
         findBridgeFunction(BridgeEntryId::PipeSize);
     if (!sizeDesc) {
@@ -155,18 +177,24 @@ public:
                      .create<func::CallOp>(loc, sizeDesc->symbolBase,
                                            rewriter.getI64Type(), ValueRange{})
                      .getResult(0);
-    ensureWrapperDecl(module, state, rewriter, sizeDesc->symbolBase, {},
-                      {rewriter.getI64Type()});
+    if (failed(ensureWrapperDecl(module, state, rewriter, op,
+                                 sizeDesc->symbolBase, {},
+                                 {rewriter.getI64Type()}))) {
+      return failure();
+    }
     Value storage = rewriter.create<LLVM::AllocaOp>(
         loc, LLVM::LLVMPointerType::get(rewriter.getContext()),
         rewriter.getI8Type(), size, desc->objectAlignment);
     SmallVector<Value> args{storage};
     args.append(adaptor.getArgs().begin(), adaptor.getArgs().end());
     rewriter.create<func::CallOp>(loc, symbol, TypeRange{}, args);
-    ensureWrapperDecl(module, state, rewriter, symbol,
-                      llvm::map_to_vector<4>(
-                          args, [](Value arg) { return arg.getType(); }),
-                      {});
+    if (failed(ensureWrapperDecl(
+            module, state, rewriter, op, symbol,
+            llvm::map_to_vector<4>(
+                args, [](Value arg) { return arg.getType(); }),
+            {}))) {
+      return failure();
+    }
     rewriter.replaceOp(op, storage);
     return success();
   }
@@ -230,8 +258,11 @@ public:
                                                  rewriter.getI64Type(),
                                                  ValueRange{})
                        .getResult(0);
-      ensureWrapperDecl(module, state, rewriter, sizeCallee, /*argTypes=*/{},
-                        /*resultTypes=*/{rewriter.getI64Type()});
+      if (failed(ensureWrapperDecl(
+              module, state, rewriter, op, sizeCallee, /*argTypes=*/{},
+              /*resultTypes=*/{rewriter.getI64Type()}))) {
+        return failure();
+      }
       storage = rewriter.create<LLVM::AllocaOp>(
           loc, LLVM::LLVMPointerType::get(rewriter.getContext()),
           rewriter.getI8Type(), size, /*alignment=*/8);
@@ -259,10 +290,13 @@ public:
 
     func::CallOp call = rewriter.create<func::CallOp>(
         loc, callee, TypeRange(resultTypes), ValueRange(callArgs));
-    ensureWrapperDecl(module, state, rewriter, callee,
-                      llvm::map_to_vector<4>(callArgs,
-                                             [](Value arg) { return arg.getType(); }),
-                      TypeRange(resultTypes));
+    if (failed(ensureWrapperDecl(
+            module, state, rewriter, op, callee,
+            llvm::map_to_vector<4>(
+                callArgs, [](Value arg) { return arg.getType(); }),
+            TypeRange(resultTypes)))) {
+      return failure();
+    }
 
     if (hasStorage) {
       rewriter.replaceOp(op, storage);

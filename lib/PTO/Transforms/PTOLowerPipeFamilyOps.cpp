@@ -34,6 +34,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -279,6 +280,7 @@ struct PTOLowerPipeFamilyOpsPass final
     }
 
     // Phase 3: tile_buf_addr -> bridge_inttoptr on the resolved address.
+    DominanceInfo dominance(func);
     for (TileBufAddrOp addr : addrs) {
       if (!bridgedTiles.contains(addr.getSrc())) {
         continue;
@@ -290,6 +292,15 @@ struct PTOLowerPipeFamilyOpsPass final
             "alloc_tile or a declare_tile rebound by tpop");
         hadError = true;
         continue;
+      }
+      if (auto decl = addr.getSrc().getDefiningOp<DeclareTileOp>()) {
+        Operation *producer = address.getDefiningOp();
+        if (!producer || !dominance.dominates(producer, addr.getOperation())) {
+          addr.emitError("VPTO pipe bridge requires the matching tpop to "
+                         "dominate tile_buf_addr");
+          hadError = true;
+          continue;
+        }
       }
       builder.setInsertionPoint(addr);
       BridgeIntToPtrOp pointer = builder.create<BridgeIntToPtrOp>(
