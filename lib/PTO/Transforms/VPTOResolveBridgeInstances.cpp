@@ -33,6 +33,12 @@ static FailureOr<BridgeCoreKind> getBridgeCore(Operation *op) {
                          FunctionKernelKindAttr::name)
                    : FunctionKernelKindAttr();
   if (!kind) {
+    auto module = op->getParentOfType<ModuleOp>();
+    kind = module ? module->getAttrOfType<FunctionKernelKindAttr>(
+                        FunctionKernelKindAttr::name)
+                  : FunctionKernelKindAttr();
+  }
+  if (!kind) {
     return failure();
   }
   switch (kind.getKernelKind()) {

@@ -113,16 +113,6 @@ public:
 
   LogicalResult matchAndRewrite(OpTy op,
                                 PatternRewriter &rewriter) const override {
-    func::FuncOp func = op->template getParentOfType<func::FuncOp>();
-    auto kernelKind = func->getAttrOfType<FunctionKernelKindAttr>(
-        FunctionKernelKindAttr::name);
-    bool isCubeCore =
-        kernelKind && kernelKind.getKernelKind() == FunctionKernelKind::Cube;
-    if (desc.core == BridgeCoreKind::Cube && !isCubeCore) {
-      return op.emitError()
-             << "bridge entry '" << stringifyBridgeEntryId(desc.id)
-             << "' requires a cube kernel";
-    }
     if (desc.renderer != BridgeRendererKind::CubeDirect ||
         desc.bindings.size() != desc.arguments.size()) {
       return op.emitError("Cube bridge registry entry is not a direct ABI");
