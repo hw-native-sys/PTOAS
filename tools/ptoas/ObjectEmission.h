@@ -127,6 +127,24 @@ LogicalResult emitVPTOCubeDeviceObject(
     const CANNToolchain &toolchain, llvm::StringRef bridgeBitcodePath,
     llvm::StringRef stderrPath, llvm::raw_ostream &diagOS);
 
+inline LogicalResult emitVPTOVectorDeviceObject(
+    llvm::Module &module, llvm::StringRef llPath, llvm::StringRef outObjPath,
+    const CANNToolchain &toolchain, llvm::StringRef stderrPath,
+    llvm::raw_ostream &diagOS) {
+  return emitVPTOVectorDeviceObject(module, llPath, outObjPath, toolchain,
+                                    /*bridgeBitcodePath=*/"", stderrPath,
+                                    diagOS);
+}
+
+inline LogicalResult emitVPTOCubeDeviceObject(
+    llvm::Module &module, llvm::StringRef llPath, llvm::StringRef outObjPath,
+    const CANNToolchain &toolchain, llvm::StringRef stderrPath,
+    llvm::raw_ostream &diagOS) {
+  return emitVPTOCubeDeviceObject(module, llPath, outObjPath, toolchain,
+                                  /*bridgeBitcodePath=*/"", stderrPath,
+                                  diagOS);
+}
+
 LogicalResult emitFatobjLLVM(
     llvm::Module *cubeModule, llvm::Module *vectorModule,
     llvm::StringRef stubSource, llvm::StringRef bridgeWrapperSource,
