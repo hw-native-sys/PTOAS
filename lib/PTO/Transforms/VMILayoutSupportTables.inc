@@ -183,7 +183,15 @@ static constexpr PreferredCastLayoutPattern kPreferredCastLayoutPatterns[] = {
     // compact lane-stride form is the natural cast layout.
     {bits<16>(), bits<32>(), 64, ls(2), c()},
     {bits<8>(), bits<32>(), 64, ls(4), c()},
-    {bits<8>(), bits<32>(), 128, ls(4), c()},
+    // fp4 pair-cast row: f4E2M1x2(8-bit storage) -> bf16x2(32-bit pair) at 128
+    // elements (UNPK4 + P0; dense-safe -- LaneExpand4 carries every byte and
+    // the sourceBits==8 ls(4) early path selects exactly the valid lanes).
+    // Restricted to packed float carriers so dense 8-bit -> 32-bit casts keep
+    // the stock default row {c(), d(4)}: with this row matching dense casts
+    // the solver preferred c() over d(4) (both value-correct, but it changes
+    // downstream solver outcomes and conflict diagnostics -- see the
+    // multi_return_conflict_invalid lit test).
+    {bits<8>(), bits<32>(), 128, ls(4), c(), CastTypeClass::PackedFloatCarrier},
     {bits<32>(), bits<16>(), 64, c(), ls(2)},
     {bits<32>(), bits<8>(), 64, c(), ls(4)},
     {bits<32>(), bits<8>(), 128, d(2), ls(2)},
@@ -239,7 +247,14 @@ static constexpr LegalCastLayoutPattern kLegalCastLayoutPatterns[] = {
 
     // 4x widening/narrowing.
     {bits<8>(), bits<32>(), c(), d(4)},
-    {bits<8>(), bits<32>(), ls(2), d(2)},
+    // Integer-only: both observed Float consumers of this row are broken.
+    //   - dense f8 (e4m3 -> f32/bf16): result d(2) back-propagates ls(2) onto
+    //     the source; ls(2) lowers to UNPK_B8 whose zero-fill gaps surface as
+    //     the "odd columns = 0" 50% regression.
+    //   - packed f4x2: the original pre-578dec5d 47% bug (same shape).
+    // Restricting the row to Integer forces the Float solver back to the
+    // consistent {c(), d(4)} solution (stock form).
+    {bits<8>(), bits<32>(), ls(2), d(2), CastTypeClass::Integer},
     {bits<8>(), bits<32>(), ls(4), c()},
     {bits<32>(), bits<8>(), d(4), c()},
     {bits<32>(), bits<8>(), c(), ls(4)},

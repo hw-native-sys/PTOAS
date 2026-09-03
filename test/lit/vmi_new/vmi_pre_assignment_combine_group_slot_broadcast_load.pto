@@ -74,13 +74,19 @@ module {
 // LOWER: pto.vselr
 
 // LOWER-LABEL: func.func @e2b_deint4_candidate
-// LOWER: %[[E2B:.*]] = pto.vlds %{{.*}}[%{{.*}}] {dist = "E2B_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-// LOWER-NOT: pto.vselr
-// LOWER: return %[[E2B]], %[[E2B]], %[[E2B]], %[[E2B]] : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>
+// LOWER-NOT: E2B_B32
+// LOWER: pto.vsldb
+// LOWER: pto.vselr
+// LOWER: return {{%.*}}, {{%.*}}, {{%.*}}, {{%.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>
+// LOWER-NOT: E2B_B32
 // LOWER-NOT: pto.vmi.
 
 // LOWER-LABEL: func.func @e2b_deint4_consumer
-// LOWER: %[[E2B2:.*]] = pto.vlds %{{.*}}[%{{.*}}] {dist = "E2B_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-// LOWER-NOT: pto.vselr
-// LOWER: pto.vmul %{{.*}}, %[[E2B2]]
+// LOWER-NOT: E2B_B32
+// LOWER: pto.vsldb
+// LOWER: pto.vselr
+// LOWER: pto.vcvt {{%.*}}, {{%.*}} {part = "EVEN"}
+// LOWER: pto.vmul {{%.*}}, {{%.*}}
+// LOWER: return {{%.*}}, {{%.*}}, {{%.*}}, {{%.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>
+// LOWER-NOT: E2B_B32
 // LOWER-NOT: pto.vmi.

@@ -11343,6 +11343,20 @@ struct OneToNVMIExtFOpPattern : OneToNOpConversionPattern<VMIExtFOp> {
             op, "unsupported physical extf source/result width relation");
       }
       factor = resultTypes.size() / sourceParts.size();
+      // Dense 8-bit sources (f8*/i8/ui8) keep the stock factor-4 requirement:
+      // a sub-byte part selection (factor < 4) is only meaningful when the
+      // storage byte holds a pair of packed values (f4x2 / hi-float8x2 /
+      // bf16x2).  For dense bytes, factor<4 parts would read the zero-fill
+      // gaps of an unpack-style distribution and silently produce wrong
+      // output (the e4m3 odd-column regression).  Restore the pre-578dec5d
+      // compile-time rejection for that case.
+      if (!isVMIPackedFloatCarrierType(sourceVMIType.getElementType()) &&
+          factor != kMaxFactor) {
+        return rewriter.notifyMatchFailure(
+            op,
+            "dense 8-bit extf requires factor 4 (one result part per source "
+            "byte)");
+      }
       parts = ArrayRef<StringRef>(kPacked4Parts, factor);
     } else {
       return rewriter.notifyMatchFailure(

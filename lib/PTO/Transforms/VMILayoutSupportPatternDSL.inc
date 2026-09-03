@@ -28,6 +28,11 @@ enum class CastTypeClass {
   Float,
   // Both source and result are integer element types.
   Integer,
+  // At least one side is a packed float carrier (f4x2 / hi-float8x2 /
+  // bf16x2): a storage byte that holds a pair of values.  Lane-stride
+  // forms tuned for paired data (UNPK-style distributions) must not be
+  // selected for dense element casts (see the e4m3 odd-column regression).
+  PackedFloatCarrier,
 };
 
 struct LayoutPattern {
@@ -138,6 +143,13 @@ static bool matchesCastTypeClass(CastTypeClass typeClass, Type sourceType,
             pto::isPTOLowPrecisionType(resultType));
   case CastTypeClass::Integer:
     return isa<IntegerType>(sourceType) && isa<IntegerType>(resultType);
+  case CastTypeClass::PackedFloatCarrier:
+    return pto::isPTOFloat4PackedType(sourceType) ||
+           pto::isPTOHiFloat8x2Type(sourceType) ||
+           pto::isPTOBF16x2Type(sourceType) ||
+           pto::isPTOFloat4PackedType(resultType) ||
+           pto::isPTOHiFloat8x2Type(resultType) ||
+           pto::isPTOBF16x2Type(resultType);
   }
   llvm_unreachable("unknown cast type class");
 }
