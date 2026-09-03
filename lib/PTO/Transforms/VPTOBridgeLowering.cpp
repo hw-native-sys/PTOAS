@@ -11,16 +11,13 @@
 //===- VPTOBridgeLowering.cpp - generic C++ interface bridge lowering ----===//
 //===----------------------------------------------------------------------===//
 //
-// Generic bridge lowering pass of the VPTO C++ interface bridge. It knows
-// nothing about individual PTO-ISA interface families: it validates each
-// pto.bridge_call against the bridge whitelist and mechanically lowers it
-// into a call to the wrapper entry, materializing the wrapper declaration
-// at module level. Entries that carry `storage_size_callee` additionally
-// synthesize the stateful-object pattern (size query + stack storage) so
-// family passes can express "construct a template object on the kernel
-// stack" without emitting LLVM dialect ops themselves.
+// Generic bridge lowering pass of the VPTO C++ interface bridge. It validates
+// resolved logical entries against the compiler-owned registry and
+// mechanically lowers them into calls to concrete wrapper instances.
+// bridge_object_create exclusively owns stateful object materialization:
+// registry-bound size query, aligned stack storage, and void initialization.
 //
-// The whitelist is also the routing check of last resort: any op still
+// The route policy is also the routing check of last resort: any op still
 // present in the IR that the whitelist routes to a wrapper entry was
 // missed by its family pass, and is rejected with a diagnostic instead of
 // silently flowing into the regular LLVM emission path.
