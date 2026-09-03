@@ -177,7 +177,7 @@ static std::optional<uint64_t> parseStoreDistImmediate(StringRef dist,
 
 static std::optional<uint64_t> parseSprImmediate(StringRef spr) {
   if (spr == "AR") {
-    return 0;
+    return 74;
   }
   if (spr == "VR") {
     return 1;

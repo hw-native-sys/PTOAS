@@ -15,9 +15,9 @@ module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<ve
   func.func @set_mask_full() attributes {pto.aicore} {
     %cNeg1 = arith.constant -1 : i64
     // CHECK: %[[MASK:.*]] = llvm.mlir.constant(-1 : i64) : i64
-    // CHECK: %[[IDX0:.*]] = llvm.mlir.constant(0 : i64) : i64
+    // CHECK-DAG: %[[IDX0:.*]] = llvm.mlir.constant(0 : i64) : i64
+    // CHECK-DAG: %[[IDX1:.*]] = llvm.mlir.constant(1 : i64) : i64
     // CHECK: llvm.call @llvm.hivm.MOVEMASK(%[[IDX0]], %[[MASK]]) : (i64, i64) -> ()
-    // CHECK: %[[IDX1:.*]] = llvm.mlir.constant(1 : i64) : i64
     // CHECK: llvm.call @llvm.hivm.MOVEMASK(%[[IDX1]], %[[MASK]]) : (i64, i64) -> ()
     // CHECK-NOT: pto.ub.
     pto.ub.set_mask %cNeg1, %cNeg1 : i64, i64

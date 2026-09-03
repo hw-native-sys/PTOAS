@@ -1367,7 +1367,8 @@ void populateVPTOCubeMemoryPatterns(TypeConverter &typeConverter,
                LowerCopyMatrixCcToBufOpPattern<pto::CopyMatrixCcToUbOp>,
                LowerCopyCbufToBtOpPattern, LowerCopyCbufToFbufOpPattern,
                LowerCopyGmToCbufMultiOpPattern<pto::CopyGmToCbufMultiNd2NzOp>,
-               LowerCopyGmToCbufMultiOpPattern<pto::CopyGmToCbufMultiDn2NzOp>>(
+               LowerCopyGmToCbufMultiOpPattern<pto::CopyGmToCbufMultiDn2NzOp>,
+               LowerCreateCbufMatrixOpPattern>(
       typeConverter, patterns.getContext(), state);
 }
 
