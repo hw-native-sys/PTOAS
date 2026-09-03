@@ -6,45 +6,24 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-//===- PTOLowerDeclarativeBridgeOps.cpp - declarative bridge lowering ----===//
+//===- PTOLowerDeclarativeBridgeOps.cpp - typed Cube bridge lowering -----===//
 //===----------------------------------------------------------------------===//
 //
-// Generic declarative lowering channel of the VPTO C++ interface bridge.
-// It rewrites every whitelist entry marked `lowering: declarative` into a
-// void pto.bridge_call using only the whitelist description: each abi row
-// binds a wrapper argument to an IR operand position whose planned
-// alloc_tile address becomes the i64 call argument, and the template
-// specialization is collected from the operand tile types (keyed by the
-// abi role) plus optional enum attributes (tmpl_map `source: attr` rows).
-// No family semantics are understood here; ops needing storage lifecycle
-// or address rebinding stay on their family pass (`lowering: family`).
-//
-// Routing is whitelist driven: an op the whitelist does not route (or
-// routes to the family channel) is left untouched, so unrouted matmul ops
-// keep flowing through the regular tile-op expansion path.
-//
-// The collected spec keys deliberately match the constants consumed by the
-// wrapper generation pass: the role name is the tile spec key, the attr
-// row `field` is the enum spec key, the entry spec key is derived
-// from the op name (`pto.tmatmul.mx.acc` -> `entry.matmul_mx_acc`), and
-// the reserved `core.<wrapper>` key carries the derived core guard of a
-// wrapper declaration that omits `core`.
+// The external policy only selects registered Cube ops. Typed adapters own
+// PTO op semantics, the registry owns wrapper ABI ordering, and this pass
+// materializes structured bridge calls without YAML operand indices.
 //
 //===----------------------------------------------------------------------===//
 
 #include "PTO/IR/PTO.h"
-#include "PTO/Transforms/VPTOBridgeSpecCollector.h"
 #include "PTO/Transforms/VPTOBridgeRegistry.h"
-#include "PTO/Transforms/VPTOBridgeTokens.h"
 #include "PTO/Transforms/VPTOBridgeWhitelist.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/StringMap.h"
 #include "llvm/Support/raw_ostream.h"
-#include <algorithm>
-#include <string>
 
 namespace mlir {
 namespace pto {
@@ -55,11 +34,8 @@ namespace pto {
 
 namespace {
 
-/// Derives the wrapper entry spec key from the routed IR op name.
-/// Tile-world ops carry the `pto.t` mnemonic prefix, which is not part of
-/// the wrapper's entry naming (`pto.tmatmul.mx.acc` -> `entry.matmul_mx_acc`).
 static std::string canonicalBridgeInstanceKey(llvm::StringRef entryId,
-                                             DictionaryAttr spec) {
+                                              DictionaryAttr spec) {
   std::string text;
   llvm::raw_string_ostream os(text);
   os << entryId << "|";
@@ -68,52 +44,128 @@ static std::string canonicalBridgeInstanceKey(llvm::StringRef entryId,
   return text;
 }
 
-static std::string deriveEntrySpecKey(llvm::StringRef opName) {
-  constexpr llvm::StringLiteral kTileWorldOpPrefix = "pto.t";
-  if (!opName.consume_front(kTileWorldOpPrefix)) {
-    opName.consume_front("pto.");
+static DictionaryAttr buildStructuredTileSpec(OpBuilder &builder,
+                                              TileBufType tileType) {
+  SmallVector<NamedAttribute> fields = {
+      builder.getNamedAttr("element_type",
+                           TypeAttr::get(tileType.getElementType())),
+      builder.getNamedAttr("shape",
+                           builder.getDenseI64ArrayAttr(tileType.getShape())),
+      builder.getNamedAttr(
+          "valid_shape",
+          builder.getDenseI64ArrayAttr(tileType.getValidShape())),
+      builder.getNamedAttr(
+          "b_layout", builder.getI32IntegerAttr(tileType.getBLayoutValueI32())),
+      builder.getNamedAttr(
+          "s_layout", builder.getI32IntegerAttr(tileType.getSLayoutValueI32())),
+      builder.getNamedAttr(
+          "s_fractal",
+          builder.getI32IntegerAttr(tileType.getSFractalSizeI32()))};
+  if (Attribute memorySpace = tileType.getMemorySpace()) {
+    fields.push_back(builder.getNamedAttr("memory_space", memorySpace));
   }
-  std::string key = ("entry." + opName).str();
-  constexpr llvm::StringLiteral kEntryKeyPrefix = "entry.";
-  std::replace(key.begin() + kEntryKeyPrefix.size(), key.end(), '.', '_');
-  return key;
+  return DictionaryAttr::get(builder.getContext(), fields);
 }
 
-/// Derives the camelCase spelling of a snake_case whitelist field name.
-/// ODS attribute names are camelCase ($accPhase) while the whitelist field
-/// doubles as the spec key (acc_phase), so the attribute lookup tries both
-/// spellings.
-static std::string camelCaseFieldName(llvm::StringRef fieldName) {
-  std::string camel;
-  camel.reserve(fieldName.size());
-  bool upperNext = false;
-  for (char c : fieldName) {
-    if (c == '_') {
-      upperNext = true;
-      continue;
+struct TMatmulBridgeAdapter {
+  static Value getTile(TMatmulOp op, llvm::StringRef role) {
+    if (role == "result_tile") {
+      return op.getDst();
     }
-    camel.push_back(upperNext && c >= 'a' && c <= 'z'
-                        ? static_cast<char>(c - 'a' + 'A')
-                        : c);
-    upperNext = false;
+    if (role == "left_tile") {
+      return op.getLhs();
+    }
+    if (role == "right_tile") {
+      return op.getRhs();
+    }
+    return nullptr;
   }
-  return camel;
-}
+  static Attribute getAccPhase(TMatmulOp op) { return op.getAccPhaseAttr(); }
+  static Value getResult(TMatmulOp op) {
+    return op->getNumResults() == 1 ? op.getResult() : Value{};
+  }
+};
 
-/// Maps a bridged tile to the core kind its wrapper renders under when the
-/// wrapper declaration omits `core`: VEC tiles run on the vector core, the
-/// cube-family tile spaces (mat/left/right/acc/bias/scaling) on the cube
-/// core. Tiles without a supported address space fail earlier in
-/// buildBridgeTileToken, so the cube default here is unreachable for a
-/// successfully collected tile.
-static llvm::StringLiteral bridgeCoreKindForTile(Value tile) {
-  auto tileTy = cast<TileBufType>(tile.getType());
-  auto spaceAttr =
-      dyn_cast_or_null<AddressSpaceAttr>(tileTy.getMemorySpace());
-  if (spaceAttr && spaceAttr.getAddressSpace() == AddressSpace::VEC)
-    return kBridgeWrapperCoreVec;
-  return kBridgeWrapperCoreCube;
-}
+struct TGemvBridgeAdapter {
+  static Value getTile(TGemvOp op, llvm::StringRef role) {
+    if (role == "result_tile") {
+      return op.getDst();
+    }
+    if (role == "left_tile") {
+      return op.getLhs();
+    }
+    if (role == "right_tile") {
+      return op.getRhs();
+    }
+    return nullptr;
+  }
+  static Attribute getAccPhase(TGemvOp op) { return op.getAccPhaseAttr(); }
+  static Value getResult(TGemvOp op) {
+    return op->getNumResults() == 1 ? op.getResult() : Value{};
+  }
+};
+
+template <typename OpTy, typename Adapter>
+class LowerDirectBridgeOp final : public OpRewritePattern<OpTy> {
+public:
+  LowerDirectBridgeOp(MLIRContext *context, const BridgeFunctionDesc &desc)
+      : OpRewritePattern<OpTy>(context), desc(desc) {}
+
+  LogicalResult matchAndRewrite(OpTy op,
+                                PatternRewriter &rewriter) const override {
+    if (desc.renderer != BridgeRendererKind::CubeDirect ||
+        desc.bindings.size() != desc.arguments.size()) {
+      return op.emitError("Cube bridge registry entry is not a direct ABI");
+    }
+
+    SmallVector<Value> callArgs;
+    SmallVector<NamedAttribute> structuredSpec;
+    SmallVector<AllocTileOp> allocs;
+    for (const BridgeAbiBinding &binding : desc.bindings) {
+      Value tile = Adapter::getTile(op, binding.role);
+      auto tileType = tile ? dyn_cast<TileBufType>(tile.getType()) : nullptr;
+      if (!tileType) {
+        return op.emitError() << "Cube bridge role '" << binding.role
+                              << "' must be a tile_buf";
+      }
+      auto alloc = tile.template getDefiningOp<AllocTileOp>();
+      if (!alloc || !alloc.getAddr()) {
+        return op.emitError() << "Cube bridge role '" << binding.role
+                              << "' must come from alloc_tile with a planned "
+                                 "address";
+      }
+      callArgs.push_back(alloc.getAddr());
+      structuredSpec.push_back(rewriter.getNamedAttr(
+          binding.role, buildStructuredTileSpec(rewriter, tileType)));
+      allocs.push_back(alloc);
+    }
+    structuredSpec.push_back(
+        rewriter.getNamedAttr("acc_phase", Adapter::getAccPhase(op)));
+    DictionaryAttr spec =
+        DictionaryAttr::get(rewriter.getContext(), structuredSpec);
+    auto call = rewriter.create<BridgeCallOp>(
+        op.getLoc(), TypeRange{}, desc.symbolBase, nullptr, callArgs);
+    StringRef entryId = stringifyBridgeEntryId(desc.id);
+    call->setAttr("entry_id", rewriter.getStringAttr(entryId));
+    call->setAttr("spec",
+                  BridgeCubeSpecAttr::get(rewriter.getContext(), spec));
+    call->setAttr("instance_key", rewriter.getStringAttr(
+                                      canonicalBridgeInstanceKey(entryId, spec)));
+    if (Value result = Adapter::getResult(op)) {
+      result.replaceAllUsesWith(Adapter::getTile(op, "result_tile"));
+    }
+    rewriter.eraseOp(op);
+    for (AllocTileOp alloc : allocs) {
+      if (alloc.use_empty()) {
+        rewriter.eraseOp(alloc);
+      }
+    }
+    return success();
+  }
+
+private:
+  const BridgeFunctionDesc &desc;
+};
 
 struct PTOLowerDeclarativeBridgeOpsPass final
     : public impl::PTOLowerDeclarativeBridgeOpsBase<
@@ -121,287 +173,46 @@ struct PTOLowerDeclarativeBridgeOpsPass final
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PTOLowerDeclarativeBridgeOpsPass)
 
   void runOnOperation() override {
-    func::FuncOp func = getOperation();
-
-    // The whitelist always resolves through the formal chain (pass option,
-    // PTOAS_VPTO_BRIDGE_WHITELIST, built-in default); kernels that want the
-    // regular tile-op expansion route the op out of the whitelist with an
-    // explicit whitelist file.
-    FailureOr<BridgeWhitelist> whitelistOr =
-        loadBridgeWhitelist(whitelistPath, llvm::errs());
-    if (failed(whitelistOr)) {
+    FailureOr<BridgeRoutePolicy> policyOr =
+        loadBridgeRoutePolicy(whitelistPath, llvm::errs());
+    if (failed(policyOr)) {
       signalPassFailure();
       return;
     }
-    const BridgeWhitelist &whitelist = *whitelistOr;
 
-    // Collect the ops routed to the declarative channel first; rewriting
-    // during the walk would invalidate the walker. Ops with no whitelist
-    // entry or with a family entry are left untouched: unrouted ops keep
-    // their non-bridge lowering (e.g. the matmul mad expansion), and family
-    // entries are rewritten by their family pass.
-    SmallVector<std::pair<Operation *, const BridgeWhitelistEntry *>> routed;
-    func.walk([&](Operation *op) {
-      const BridgeWhitelistEntry *entry =
-          whitelist.findOp(op->getName().getStringRef());
-      if (entry && entry->isDeclarative()) {
-        routed.push_back({op, entry});
+    RewritePatternSet patterns(&getContext());
+    bool hasPatterns = false;
+    if (policyOr->routesOp("cube", "pto.tmatmul")) {
+      const BridgeFunctionDesc *desc =
+          findBridgeFunction(BridgeEntryId::CubeTMatmul);
+      if (!desc) {
+        getOperation().emitError("registry has no tmatmul bridge entry");
+        signalPassFailure();
+        return;
       }
-    });
-    if (routed.empty()) {
+      patterns.add<LowerDirectBridgeOp<TMatmulOp, TMatmulBridgeAdapter>>(
+          &getContext(), *desc);
+      hasPatterns = true;
+    }
+    if (policyOr->routesOp("cube", "pto.tgemv")) {
+      const BridgeFunctionDesc *desc =
+          findBridgeFunction(BridgeEntryId::CubeTgemv);
+      if (!desc) {
+        getOperation().emitError("registry has no tgemv bridge entry");
+        signalPassFailure();
+        return;
+      }
+      patterns.add<LowerDirectBridgeOp<TGemvOp, TGemvBridgeAdapter>>(
+          &getContext(), *desc);
+      hasPatterns = true;
+    }
+    if (!hasPatterns) {
       return;
     }
-
-    bool hadError = false;
-    // Wrapper specialization fields collected while lowering this function;
-    // stored as a function attribute once lowering succeeds. The module-level
-    // wrapper generation pass merges the per-function specs deterministically
-    // (the pass instances may run concurrently).
-    BridgeSpecCollector spec;
-    // Tile handles consumed by bridged ops; erased once use-empty.
-    SmallVector<AllocTileOp> bridgedAllocs;
-
-    // Resolves a tile operand to its planned address. The bridge wrapper
-    // binds each tile to the address at runtime, so every operand must be an
-    // alloc_tile carrying a planned address.
-    auto resolvePlannedTile = [&](Operation *op, const BridgeAbiArg &abiArg,
-                                  Value tile) -> Value {
-      auto tileTy = dyn_cast<TileBufType>(tile.getType());
-      if (!tileTy) {
-        op->emitError() << "VPTO declarative bridge: operand #" << abiArg.operand
-                        << " ('" << abiArg.arg << "', role " << abiArg.role
-                        << ") must be a tile_buf";
-        hadError = true;
-        return nullptr;
-      }
-      auto alloc = tile.getDefiningOp<AllocTileOp>();
-      if (!alloc || !alloc.getAddr()) {
-        op->emitError() << "VPTO declarative bridge: operand #" << abiArg.operand
-                        << " ('" << abiArg.arg << "', role " << abiArg.role
-                        << ") tile must come from an alloc_tile with a "
-                           "planned address";
-        hadError = true;
-        return nullptr;
-      }
-      return alloc.getAddr();
-    };
-
-    // Collects the tile template token of one abi-bound operand into the
-    // spec under the operand's role, plus the core kind of the wrapper the
-    // entry routes into: a wrapper declaration may omit `core`, in which
-    // case the renderer picks the guard up from the reserved
-    // `core.<wrapper>` spec key collected here.
-    auto collectTileToken = [&](Operation *op, const BridgeAbiArg &abiArg,
-                                Value tile,
-                                const BridgeWhitelistEntry &entry) {
-      auto tileTokOr = buildBridgeTileToken(cast<TileBufType>(tile.getType()));
-      if (failed(tileTokOr)) {
-        op->emitError() << "VPTO declarative bridge failed to build the "
-                        << abiArg.role << " tile template token for operand '"
-                        << abiArg.arg << "'";
-        hadError = true;
-        return;
-      }
-      spec.addField(op, abiArg.role, *tileTokOr);
-      spec.addField(op, "core." + entry.wrapper,
-                    bridgeCoreKindForTile(tile));
-      if (auto alloc = tile.getDefiningOp<AllocTileOp>()) {
-        bridgedAllocs.push_back(alloc);
-      }
-    };
-
-    // Renders a tmpl_map attr row into the spec. The attribute is reflected
-    // through the enum token interface; a missing attribute or the omit
-    // case renders no template argument (e.g. the Unspecified accumulation
-    // phase, and entries such as tmatmul.mx.bias that carry no phase).
-    auto collectAttrToken = [&](Operation *op,
-                                const BridgeTmplMapField &field) {
-      Attribute attrValue = op->getAttr(field.field);
-      if (!attrValue) {
-        attrValue = op->getAttr(camelCaseFieldName(field.field));
-      }
-      if (!attrValue) {
-        return;
-      }
-      auto enumTokenAttr = dyn_cast<EnumTokenAttr>(attrValue);
-      if (!enumTokenAttr) {
-        op->emitError() << "VPTO declarative bridge: attribute '"
-                        << field.field
-                        << "' must be a PTO enum attribute to feed a "
-                           "template slot";
-        hadError = true;
-        return;
-      }
-      llvm::StringRef caseSymbol = enumTokenAttr.getEnumCaseSymbol();
-      if (!field.omitValue.empty() && caseSymbol == field.omitValue) {
-        return;
-      }
-      spec.addField(op, field.field, field.enumType + "::" + caseSymbol.str());
-    };
-
-    for (auto &[op, entry] : routed) {
-      // Per-op error flag: one broken op must not keep the other routed ops
-      // from lowering (matching the family pass continue semantics); the
-      // pass fails at the end when any error was recorded.
-      bool opFailed = false;
-      Value directDst;
-      Value directLhs;
-      Value directRhs;
-      Value directResult;
-      Attribute directAccPhase;
-      if (auto matmul = dyn_cast<TMatmulOp>(op)) {
-        directDst = matmul.getDst();
-        directLhs = matmul.getLhs();
-        directRhs = matmul.getRhs();
-        directAccPhase = matmul.getAccPhaseAttr();
-        if (matmul->getNumResults() == 1) {
-          directResult = matmul.getResult();
-        }
-      } else if (auto gemv = dyn_cast<TGemvOp>(op)) {
-        directDst = gemv.getDst();
-        directLhs = gemv.getLhs();
-        directRhs = gemv.getRhs();
-        directAccPhase = gemv.getAccPhaseAttr();
-        if (gemv->getNumResults() == 1) {
-          directResult = gemv.getResult();
-        }
-      }
-      if (directDst) {
-        const BridgeFunctionDesc *desc =
-            findBridgeFunctionByOp(op->getName().getStringRef());
-        if (!desc || desc->renderer != BridgeRendererKind::CubeDirect) {
-          op->emitError("VPTO Cube op has no registered direct adapter");
-          hadError = true;
-          continue;
-        }
-        SmallVector<Value> tiles = {directDst, directLhs, directRhs};
-        llvm::StringRef roles[] = {"result_tile", "left_tile", "right_tile"};
-        SmallVector<Value> callArgs;
-        SmallVector<NamedAttribute> structuredSpec;
-        OpBuilder builder(op);
-        for (auto [index, tile] : llvm::enumerate(tiles)) {
-          BridgeAbiArg binding;
-          binding.operand = index;
-          binding.arg = roles[index].str();
-          binding.role = roles[index].str();
-          Value addr = resolvePlannedTile(op, binding, tile);
-          if (!addr) {
-            opFailed = true;
-            break;
-          }
-          auto tileType = cast<TileBufType>(tile.getType());
-          SmallVector<NamedAttribute> fields = {
-              builder.getNamedAttr("element_type",
-                                   TypeAttr::get(tileType.getElementType())),
-              builder.getNamedAttr(
-                  "shape", builder.getDenseI64ArrayAttr(tileType.getShape())),
-              builder.getNamedAttr(
-                  "valid_shape",
-                  builder.getDenseI64ArrayAttr(tileType.getValidShape())),
-              builder.getNamedAttr(
-                  "b_layout", builder.getI32IntegerAttr(
-                                  tileType.getBLayoutValueI32())),
-              builder.getNamedAttr(
-                  "s_layout", builder.getI32IntegerAttr(
-                                  tileType.getSLayoutValueI32())),
-              builder.getNamedAttr(
-                  "s_fractal", builder.getI32IntegerAttr(
-                                   tileType.getSFractalSizeI32()))};
-          if (Attribute memorySpace = tileType.getMemorySpace()) {
-            fields.push_back(builder.getNamedAttr("memory_space", memorySpace));
-          }
-          structuredSpec.push_back(builder.getNamedAttr(
-              roles[index], DictionaryAttr::get(builder.getContext(), fields)));
-          callArgs.push_back(addr);
-          if (auto alloc = tile.getDefiningOp<AllocTileOp>()) {
-            bridgedAllocs.push_back(alloc);
-          }
-        }
-        if (opFailed) {
-          continue;
-        }
-        structuredSpec.push_back(
-            builder.getNamedAttr("acc_phase", directAccPhase));
-        auto call = builder.create<BridgeCallOp>(
-            op->getLoc(), TypeRange{}, desc->symbolBase, nullptr, callArgs);
-        call->setAttr("entry_id", builder.getStringAttr(
-                                      stringifyBridgeEntryId(desc->id)));
-        auto structured = DictionaryAttr::get(builder.getContext(),
-                                               structuredSpec);
-        call->setAttr("spec", BridgeCubeSpecAttr::get(builder.getContext(), structured));
-        call->setAttr("instance_key", builder.getStringAttr(
-            canonicalBridgeInstanceKey(stringifyBridgeEntryId(desc->id),
-                                       structured)));
-        if (directResult) {
-          directResult.replaceAllUsesWith(directDst);
-        }
-        op->erase();
-        continue;
-      }
-      if (op->getNumResults() > 0) {
-        op->emitError("VPTO declarative bridge supports the buffer form "
-                      "without a tensor result");
-        hadError = true;
-        continue;
-      }
-      // Resolve the call arguments in abi order; every operand must bind to
-      // a planned tile address.
-      SmallVector<Value> callArgs;
-      for (const BridgeAbiArg &abiArg : entry->abi) {
-        if (abiArg.operand >= static_cast<int64_t>(op->getNumOperands())) {
-          op->emitError() << "VPTO declarative bridge: whitelist entry '"
-                          << entry->entry << "' binds operand #"
-                          << abiArg.operand << " but the op has only "
-                          << op->getNumOperands() << " operands";
-          hadError = true;
-          opFailed = true;
-          break;
-        }
-        Value tile = op->getOperand(abiArg.operand);
-        Value addr = resolvePlannedTile(op, abiArg, tile);
-        if (!addr) {
-          opFailed = true;
-          break;
-        }
-        callArgs.push_back(addr);
-      }
-      if (opFailed) {
-        continue;
-      }
-      // Template specialization: one tile token per abi role, then the
-      // enum attribute rows, then the wrapper entry name.
-      for (const BridgeAbiArg &abiArg : entry->abi) {
-        collectTileToken(op, abiArg, op->getOperand(abiArg.operand), *entry);
-      }
-      for (const BridgeTmplMapField &field : entry->tmplMap) {
-        if (field.source == kAttrTmplMapSource) {
-          collectAttrToken(op, field);
-        }
-      }
-      spec.addField(op, deriveEntrySpecKey(op->getName().getStringRef()),
-                    entry->entry);
-      OpBuilder builder(op);
-      builder.create<BridgeCallOp>(op->getLoc(), /*results=*/TypeRange{},
-                                   /*callee=*/entry->entry,
-                                   /*storage_size_callee=*/nullptr,
-                                   /*args=*/callArgs);
-      op->erase();
-    }
-
-    // Erase the tile handles consumed by the bridged ops. Handles with
-    // surviving users (e.g. a tile_buf_addr feeding a non-bridged op) stay
-    // on the regular lowering path.
-    for (AllocTileOp alloc : bridgedAllocs) {
-      if (alloc.use_empty()) {
-        alloc.erase();
-      }
-    }
-
-    if (hadError || spec.hadError()) {
+    if (failed(applyPatternsAndFoldGreedily(getOperation(),
+                                            std::move(patterns)))) {
       signalPassFailure();
-      return;
     }
-    spec.store(func);
   }
 };
 

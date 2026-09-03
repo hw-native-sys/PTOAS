@@ -15,30 +15,22 @@
 // specialization as C++ template tokens. The whitelist carries declarative
 // tmpl_map rows, which the pass consumes without changing the collected
 // fields. Each function stores its specialization in a function attribute;
-// the wrapper generation pass merges the identical per-function specs and
-// renders the variant tokens into the wrapper source.
+// each Pipe object carries its own typed specialization and wrapper instance.
 
 // RUN: pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-variant.yaml" | FileCheck %s --check-prefix=SPEC
 // RUN: pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-variant.yaml" -pto-emit-vpto-bridge-wrapper | FileCheck %s --check-prefix=WRAP
 
 // SPEC-LABEL: func.func private @variant_bridge_cube
-// SPEC-SAME: pto.vpto.bridge.func_spec = {
-// SPEC-SAME: entry.init = "pto_vpto_pipe_init"
-// SPEC-SAME: pipe = "pto::TPipe<8, pto::Direction::DIR_C2V, 2048, 4, 2, true>"
-// SPEC-SAME: producer_tile = "pto::Tile<pto::TileType::Acc, half, 32, 16, pto::BLayout::ColMajor, 32, 16, pto::SLayout::RowMajor, 512>"
 // SPEC: pto.bridge_object_create "pto_vpto_pipe_init"
-// SPEC-SAME: -> !pto.pipe
+// SPEC-SAME: spec = #pto.bridge_pipe_spec<{{.*}}pipe = "pto::TPipe<8, pto::Direction::DIR_C2V, 2048, 4, 2, true>"{{.*}}producer_tile = "pto::Tile<pto::TileType::Acc, half, 32, 16, pto::BLayout::ColMajor, 32, 16, pto::SLayout::RowMajor, 512>"
 // SPEC: pto.bridge_call "pto_vpto_pipe_push"
 // SPEC-SAME: : !pto.pipe, i64
 // SPEC-NOT: pto.alloc_tile
 // SPEC-NOT: pto.tpush
 
 // SPEC-LABEL: func.func private @variant_bridge_vector
-// SPEC-SAME: pto.vpto.bridge.func_spec = {
-// SPEC-SAME: consumer_tile = "pto::Tile<pto::TileType::Vec, half, 4, 16, pto::BLayout::RowMajor, 4, 16>"
-// SPEC-SAME: pipe = "pto::TPipe<8, pto::Direction::DIR_C2V, 2048, 4, 2, true>"
-// SPEC-SAME: split = "pto::TileSplitAxis::TILE_UP_DOWN"
 // SPEC: pto.bridge_object_create "pto_vpto_pipe_init"
+// SPEC-SAME: spec = #pto.bridge_pipe_spec<{{.*}}consumer_tile = "pto::Tile<pto::TileType::Vec, half, 4, 16, pto::BLayout::RowMajor, 4, 16>"{{.*}}pipe = "pto::TPipe<8, pto::Direction::DIR_C2V, 2048, 4, 2, true>"
 // SPEC: pto.bridge_call "pto_vpto_pipe_pop"
 // SPEC-SAME: -> i64
 // SPEC: pto.bridge_inttoptr
@@ -48,9 +40,9 @@
 // SPEC-NOT: pto.tfree
 
 // WRAP: module attributes {{{.*}}pto.vpto.bridge.wrapper_source = "
-// WRAP-SAME: using Pipe = pto::TPipe<8, pto::Direction::DIR_C2V, 2048, 4, 2, true>;
-// WRAP-SAME: using ProducerTile = pto::Tile<pto::TileType::Acc, half, 32, 16, pto::BLayout::ColMajor, 32, 16, pto::SLayout::RowMajor, 512>;
-// WRAP-SAME: using ConsumerTile = pto::Tile<pto::TileType::Vec, half, 4, 16, pto::BLayout::RowMajor, 4, 16>;
+// WRAP-SAME: using Pipe__0 = pto::TPipe<8, pto::Direction::DIR_C2V, 2048, 4, 2, true>;
+// WRAP-SAME: using ProducerTile__0 = pto::Tile<pto::TileType::Acc, half, 32, 16, pto::BLayout::ColMajor, 32, 16, pto::SLayout::RowMajor, 512>;
+// WRAP-SAME: using ConsumerTile__1 = pto::Tile<pto::TileType::Vec, half, 4, 16, pto::BLayout::RowMajor, 4, 16>;
 // WRAP-NOT: pto.vpto.bridge.func_spec
 
 module {
