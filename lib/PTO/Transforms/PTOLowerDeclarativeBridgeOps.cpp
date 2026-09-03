@@ -42,6 +42,7 @@
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <string>
 
@@ -57,6 +58,16 @@ namespace {
 /// Derives the wrapper entry spec key from the routed IR op name.
 /// Tile-world ops carry the `pto.t` mnemonic prefix, which is not part of
 /// the wrapper's entry naming (`pto.tmatmul.mx.acc` -> `entry.matmul_mx_acc`).
+static std::string canonicalBridgeInstanceKey(llvm::StringRef entryId,
+                                             DictionaryAttr spec) {
+  std::string text;
+  llvm::raw_string_ostream os(text);
+  os << entryId << "|";
+  spec.print(os);
+  os.flush();
+  return text;
+}
+
 static std::string deriveEntrySpecKey(llvm::StringRef opName) {
   constexpr llvm::StringLiteral kTileWorldOpPrefix = "pto.t";
   if (!opName.consume_front(kTileWorldOpPrefix)) {
@@ -315,8 +326,12 @@ struct PTOLowerDeclarativeBridgeOpsPass final
             op->getLoc(), TypeRange{}, desc->symbolBase, nullptr, callArgs);
         call->setAttr("entry_id", builder.getStringAttr(
                                       stringifyBridgeEntryId(desc->id)));
-        call->setAttr("spec", DictionaryAttr::get(builder.getContext(),
-                                                   structuredSpec));
+        auto structured = DictionaryAttr::get(builder.getContext(),
+                                               structuredSpec);
+        call->setAttr("spec", structured);
+        call->setAttr("instance_key", builder.getStringAttr(
+            canonicalBridgeInstanceKey(stringifyBridgeEntryId(desc->id),
+                                       structured)));
         if (directResult) {
           directResult.replaceAllUsesWith(directDst);
         }
