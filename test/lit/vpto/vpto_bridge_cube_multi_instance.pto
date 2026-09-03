@@ -1,0 +1,43 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s -vpto-resolve-bridge-instances | FileCheck %s --check-prefix=IR
+// RUN: pto-test-opt %s -vpto-resolve-bridge-instances -pto-emit-vpto-bridge-wrapper | FileCheck %s --check-prefix=WRAP
+
+#spec0 = #pto.bridge_cube_spec<{acc_phase = #pto<acc_phase unspecified>, left_tile = {b_layout = 1 : i32, element_type = f16, memory_space = #pto.address_space<left>, s_fractal = 512 : i32, s_layout = 1 : i32, shape = array<i64: 16, 16>, valid_shape = array<i64: 16, 16>}, result_tile = {b_layout = 1 : i32, element_type = f32, memory_space = #pto.address_space<acc>, s_fractal = 1024 : i32, s_layout = 1 : i32, shape = array<i64: 16, 16>, valid_shape = array<i64: 16, 16>}, right_tile = {b_layout = 0 : i32, element_type = f16, memory_space = #pto.address_space<right>, s_fractal = 512 : i32, s_layout = 2 : i32, shape = array<i64: 16, 16>, valid_shape = array<i64: 16, 16>}}>
+#spec1 = #pto.bridge_cube_spec<{acc_phase = #pto<acc_phase unspecified>, left_tile = {b_layout = 1 : i32, element_type = f16, memory_space = #pto.address_space<left>, s_fractal = 512 : i32, s_layout = 1 : i32, shape = array<i64: 32, 16>, valid_shape = array<i64: 32, 16>}, result_tile = {b_layout = 1 : i32, element_type = f32, memory_space = #pto.address_space<acc>, s_fractal = 1024 : i32, s_layout = 1 : i32, shape = array<i64: 32, 16>, valid_shape = array<i64: 32, 16>}, right_tile = {b_layout = 0 : i32, element_type = f16, memory_space = #pto.address_space<right>, s_fractal = 512 : i32, s_layout = 2 : i32, shape = array<i64: 16, 16>, valid_shape = array<i64: 16, 16>}}>
+
+module attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func private @first(%dst: i64, %lhs: i64, %rhs: i64) {
+    pto.bridge_call <cube_tmatmul>(%dst, %lhs, %rhs : i64, i64, i64) {spec = #spec0}
+    return
+  }
+  func.func private @second(%dst: i64, %lhs: i64, %rhs: i64) {
+    pto.bridge_call <cube_tmatmul>(%dst, %lhs, %rhs : i64, i64, i64) {spec = #spec1}
+    return
+  }
+  func.func private @duplicate(%dst: i64, %lhs: i64, %rhs: i64) {
+    pto.bridge_call <cube_tmatmul>(%dst, %lhs, %rhs : i64, i64, i64) {spec = #spec0}
+    return
+  }
+}
+
+// IR-LABEL: func.func private @first
+// IR: pto.bridge_call <cube_tmatmul>{{.*}}callee = "pto_vpto_tmatmul__0"
+// IR-LABEL: func.func private @second
+// IR: pto.bridge_call <cube_tmatmul>{{.*}}callee = "pto_vpto_tmatmul__1"
+// IR-LABEL: func.func private @duplicate
+// IR: pto.bridge_call <cube_tmatmul>{{.*}}callee = "pto_vpto_tmatmul__0"
+
+// WRAP: void pto_vpto_tmatmul__0(uint64_t dstAddress, uint64_t lhsAddress, uint64_t rhsAddress)
+// WRAP: using ResultTile__0
+// WRAP: void pto_vpto_tmatmul__1(uint64_t dstAddress, uint64_t lhsAddress, uint64_t rhsAddress)
+// WRAP: using ResultTile__1
+// WRAP-NOT: using ResultTile__2
