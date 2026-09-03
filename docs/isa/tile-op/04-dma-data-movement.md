@@ -31,8 +31,8 @@ pto.tload ins(%src : !pto.partition_tensor_view<...>)
 - Destination tile must use `loc=vec`.
 - Destination tile element type and source partition element type must have the same bitwidth.
 - Runtime: source partition extents and destination valid region must be positive.
-- `l2_bypass` is currently supported on A2/A3 and rejected on A5.
-- PTO-ISA owns the target-specific bypass mechanism; PTOAS emits no address-alias constant.
+- `l2_bypass` is supported on A2/A3 and A5.
+- The target implementation owns the architecture-specific bypass mechanism.
 
 **Pipeline:** `PIPE_MTE2`.
 
@@ -43,9 +43,9 @@ pto.tload ins(%pv : !pto.partition_tensor_view<16x16xf16>)
           outs(%tb : !pto.tile_buf<vec, 16x16xf16>)
 ```
 
-When `cache_policy` is absent or `default`, PTOAS emits the legacy
-`TLOAD(dst, src)` call. `l2_bypass` emits
-`TLOAD<pto::LoadCachePolicy::L2Bypass>(dst, src)`.
+When `cache_policy` is absent or `default`, the target uses its ordinary cache
+allocation behavior. `l2_bypass` requests no L2 allocation for this transfer
+without changing the logical source address.
 
 ---
 

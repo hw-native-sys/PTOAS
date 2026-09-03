@@ -1178,8 +1178,8 @@ Cache allocation policy for one `pto.tload` operation.
 | `l2_bypass` | 1 | Request a target-defined GM load path that does not allocate in L2 |
 
 The policy is attached to an individual load, so cached and L2-bypass operands
-may be mixed in one kernel. The target library owns the architecture-specific
-mechanism; PTOAS never emits an address-alias constant.
+may be mixed in one kernel. The active target interprets the policy without
+changing the operation's logical source address.
 
 ---
 
@@ -1219,12 +1219,12 @@ For each element (i, j) in the tile valid region:
   - The destination tile must use `loc=vec` or `loc=mat`.
   - The destination tile element type and source partition element type must have the same bitwidth.
   - Runtime: all source partition extents must be positive; the destination valid region must be non-negative.
-  - `cache_policy=l2_bypass` is supported and lowers to the corresponding typed PTO-ISA `TLOAD` policy.
+  - `cache_policy=l2_bypass` requests a non-allocating L2 load for this transfer.
 - **Implementation checks (A5)**
   - The source partition and destination tile element types must be one of `i8/i16/i32/i64/f16/bf16/f32/f8E4M3*/f8E5M2*/!pto.hif8/!pto.f4E1M2x2/!pto.f4E2M1x2`.
   - The destination tile element size must be `1`, `2`, `4`, or `8` bytes, and must match the source partition element size.
   - For `i64`, the destination tile `pad` must be `null` or `zero`.
-  - `cache_policy=l2_bypass` is rejected until the target defines equivalent behavior.
+  - `cache_policy=l2_bypass` requests a non-allocating L2 load for this transfer.
 
 **Hardware Mapping:**
 
@@ -1237,7 +1237,7 @@ pto.tload ins(%pv : !pto.partition_tensor_view<16x16xf16>)
           outs(%tb : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
 ```
 
-**L2-bypass example (A2/A3):**
+**L2-bypass example (A2/A3/A5):**
 
 ```mlir
 pto.tload ins(%weight : !pto.partition_tensor_view<16x16xf16>)

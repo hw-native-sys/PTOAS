@@ -4813,7 +4813,7 @@ struct PTOTLoadToTLOAD : public OpConversionPattern<pto::TLoadOp> {
     if (auto policy = op.getCachePolicyAttr();
         policy && policy.getValue() == pto::LoadCachePolicy::L2Bypass) {
       templateArgs = rewriter.getArrayAttr({emitc::OpaqueAttr::get(
-          rewriter.getContext(), "pto::LoadCachePolicy::L2Bypass")});
+          rewriter.getContext(), "pto::TLoadL2Hint::NotAllocKeep")});
     }
 
     rewriter.create<emitc::CallOpaqueOp>(op.getLoc(), TypeRange{}, "TLOAD",

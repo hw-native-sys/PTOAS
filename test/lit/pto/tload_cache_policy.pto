@@ -10,8 +10,8 @@
 // RUN:   | FileCheck %s --check-prefix=PTOIR
 // RUN: ptoas --pto-level=level3 --pto-arch=a3 %s 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=EMITC
-// RUN: not ptoas --pto-level=level3 --pto-arch=a5 %s -o /dev/null 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=A5-ERR
+// RUN: ptoas --pto-level=level3 --pto-arch=a5 %s 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=EMITC
 
 module {
   func.func private @default_load(
@@ -39,10 +39,9 @@ module {
 // PTOIR: pto.tload ins(
 // PTOIR-SAME: cache_policy = #pto.load_cache_policy<l2_bypass>
 
+// EMITC-NOT: 0x80000000000
 // EMITC-LABEL: default_load(
 // EMITC: TLOAD(
 // EMITC-LABEL: l2_bypass_load(
-// EMITC: TLOAD<pto::LoadCachePolicy::L2Bypass>(
+// EMITC: TLOAD<pto::TLoadL2Hint::NotAllocKeep>(
 // EMITC-NOT: 0x80000000000
-
-// A5-ERR: 'pto.tload' op does not support cache_policy=l2_bypass on A5
