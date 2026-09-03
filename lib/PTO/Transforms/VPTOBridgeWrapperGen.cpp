@@ -42,6 +42,54 @@ namespace pto {
 
 namespace {
 
+static FailureOr<llvm::StringRef> renderBridgeCType(BridgeValueKind kind) {
+  switch (kind) {
+  case BridgeValueKind::Pointer:
+    return llvm::StringRef("void *");
+  case BridgeValueKind::I32:
+    return llvm::StringRef("uint32_t");
+  case BridgeValueKind::I64:
+    return llvm::StringRef("uint64_t");
+  }
+  return failure();
+}
+
+static FailureOr<std::string>
+renderBridgeCSignature(const BridgeFunctionDesc &desc, StringRef symbol,
+                       ArrayRef<StringRef> argumentNames) {
+  bool invalidSignature = argumentNames.size() != desc.arguments.size() ||
+                          desc.results.size() > 1;
+  if (invalidSignature) {
+    return failure();
+  }
+  FailureOr<StringRef> resultType =
+      desc.results.empty() ? FailureOr<StringRef>(StringRef("void"))
+                           : renderBridgeCType(desc.results.front());
+  if (failed(resultType)) {
+    return failure();
+  }
+  std::string signature;
+  llvm::raw_string_ostream os(signature);
+  os << *resultType << " " << symbol << "(";
+  for (auto [index, name] : llvm::enumerate(argumentNames)) {
+    auto argumentType = renderBridgeCType(desc.arguments[index]);
+    if (failed(argumentType)) {
+      return failure();
+    }
+    if (index != 0) {
+      os << ", ";
+    }
+    os << *argumentType;
+    if (!argumentType->ends_with("*")) {
+      os << " ";
+    }
+    os << name;
+  }
+  os << ")";
+  os.flush();
+  return signature;
+}
+
 static FailureOr<std::string> renderStructuredTile(DictionaryAttr tile) {
   auto element = tile.getAs<TypeAttr>("element_type");
   auto shape = tile.getAs<DenseI64ArrayAttr>("shape");
@@ -172,6 +220,11 @@ static FailureOr<std::string> renderCubeInstance(BridgeCallOp call,
       desc->callSpelling.empty()) {
     return failure();
   }
+  auto signature = renderBridgeCSignature(
+      *desc, symbol, {"dstAddress", "lhsAddress", "rhsAddress"});
+  if (failed(signature)) {
+    return failure();
+  }
   StringRef callName = desc->callSpelling;
   callName.consume_front("pto::");
   std::string suffix = "__" + std::to_string(instanceId);
@@ -182,8 +235,7 @@ static FailureOr<std::string> renderCubeInstance(BridgeCallOp call,
   llvm::raw_string_ostream os(source);
   os << "#include <pto/pto-inst.hpp>\n#include <stdint.h>\n"
      << "#ifdef __DAV_CUBE__\n"
-     << "extern \"C\" [aicore] void " << symbol
-     << "(uint64_t dstAddress, uint64_t lhsAddress, uint64_t rhsAddress) {\n"
+     << "extern \"C\" [aicore] " << *signature << " {\n"
      << "  using " << resultType << " = " << *result << ";\n"
      << "  using " << leftType << " = " << *left << ";\n"
      << "  using " << rightType << " = " << *right << ";\n"
@@ -263,6 +315,36 @@ renderPipeInstance(BridgeObjectCreateOp create,
   std::string producerType = "ProducerTile__" + suffix;
   std::string consumerType = "ConsumerTile__" + suffix;
 
+  const BridgeFunctionDesc *initDesc =
+      findBridgeFunction(BridgeEntryId::PipeInit);
+  const BridgeFunctionDesc *sizeDesc =
+      findBridgeFunction(BridgeEntryId::PipeSize);
+  const BridgeFunctionDesc *pushDesc =
+      findBridgeFunction(BridgeEntryId::PipePush);
+  const BridgeFunctionDesc *popDesc =
+      findBridgeFunction(BridgeEntryId::PipePop);
+  const BridgeFunctionDesc *freeDesc =
+      findBridgeFunction(BridgeEntryId::PipeFree);
+  if (!initDesc || !sizeDesc || !pushDesc || !popDesc || !freeDesc) {
+    return create.emitError("Pipe bridge registry is incomplete");
+  }
+  auto initSignature = renderBridgeCSignature(
+      *initDesc, symbols.init, {"storage", "localBuffer"});
+  auto sizeSignature = renderBridgeCSignature(*sizeDesc, symbols.size, {});
+  auto pushSignature = renderBridgeCSignature(
+      *pushDesc, symbols.push, {"storage", "producerAddress"});
+  auto popSignature =
+      renderBridgeCSignature(*popDesc, symbols.pop, {"storage"});
+  auto freeSignature =
+      renderBridgeCSignature(*freeDesc, symbols.free, {"storage"});
+  bool invalidSignature =
+      failed(initSignature) || failed(sizeSignature) ||
+      (needsPush && failed(pushSignature)) ||
+      (needsPop && failed(popSignature)) ||
+      (needsFree && failed(freeSignature));
+  if (invalidSignature) {
+    return create.emitError("Pipe bridge registry has an invalid ABI");
+  }
   std::string source;
   llvm::raw_string_ostream os(source);
   auto producerToken = producer ? renderStructuredTile(producer)
@@ -282,15 +364,13 @@ renderPipeInstance(BridgeObjectCreateOp create,
   if (consumer) {
     os << "using " << consumerType << " = " << *consumerToken << ";\n";
   }
-  os << "extern \"C\" [aicore] void " << symbols.init
-     << "(void *storage, uint32_t localBuffer) {\n"
+  os << "extern \"C\" [aicore] " << *initSignature << " {\n"
      << "  new (storage) " << pipeType << "(nullptr, localBuffer, 0);\n}\n"
-     << "extern \"C\" [aicore] size_t " << symbols.size << "() { return sizeof("
-     << pipeType << "); }\n"
+     << "extern \"C\" [aicore] " << *sizeSignature
+     << " { return sizeof(" << pipeType << "); }\n"
      << "#ifdef " << guard << "\n";
   if (needsPush) {
-    os << "extern \"C\" [aicore] void " << symbols.push
-       << "(void *storage, uint64_t producerAddress) {\n"
+    os << "extern \"C\" [aicore] " << *pushSignature << " {\n"
        << "  auto &pipe = *reinterpret_cast<" << pipeType << " *>(storage);\n"
        << "  " << producerType << " tile;\n"
        << "  pto::TASSIGN_IMPL(tile, producerAddress);\n"
@@ -298,8 +378,7 @@ renderPipeInstance(BridgeObjectCreateOp create,
        << ">(pipe, tile);\n}\n";
   }
   if (needsPop) {
-    os << "extern \"C\" [aicore] uint64_t " << symbols.pop
-       << "(void *storage) {\n"
+    os << "extern \"C\" [aicore] " << *popSignature << " {\n"
        << "  auto &pipe = *reinterpret_cast<" << pipeType << " *>(storage);\n"
        << "  " << consumerType << " tile;\n"
        << "  pto::TPOP<" << pipeType << ", " << consumerType << ", " << *split
@@ -308,7 +387,7 @@ renderPipeInstance(BridgeObjectCreateOp create,
        << "  return reinterpret_cast<uint64_t>(tile.data());\n}\n";
   }
   if (needsFree) {
-    os << "extern \"C\" [aicore] void " << symbols.free << "(void *storage) {\n"
+    os << "extern \"C\" [aicore] " << *freeSignature << " {\n"
        << "  auto &pipe = *reinterpret_cast<" << pipeType << " *>(storage);\n"
        << "  pto::TFREE<" << pipeType << ", " << *split << ">(pipe);\n}\n";
   }

@@ -18,13 +18,14 @@ using namespace mlir::pto;
 
 namespace {
 
-constexpr BridgeValueKind kPipeInitArgs[] = {BridgeValueKind::I32};
-constexpr BridgeValueKind kPipeInitResults[] = {BridgeValueKind::PipeObject};
-constexpr BridgeValueKind kPipePushArgs[] = {BridgeValueKind::PipeObject,
+constexpr BridgeValueKind kPipeInitArgs[] = {BridgeValueKind::Pointer,
+                                             BridgeValueKind::I32};
+constexpr BridgeValueKind kPipeSizeResults[] = {BridgeValueKind::I64};
+constexpr BridgeValueKind kPipePushArgs[] = {BridgeValueKind::Pointer,
                                              BridgeValueKind::I64};
-constexpr BridgeValueKind kPipePopArgs[] = {BridgeValueKind::PipeObject};
+constexpr BridgeValueKind kPipePopArgs[] = {BridgeValueKind::Pointer};
 constexpr BridgeValueKind kPipePopResults[] = {BridgeValueKind::I64};
-constexpr BridgeValueKind kPipeFreeArgs[] = {BridgeValueKind::PipeObject};
+constexpr BridgeValueKind kPipeFreeArgs[] = {BridgeValueKind::Pointer};
 constexpr BridgeAbiBinding kCubeBindings[] = {
     {BridgeValueKind::I64, 2, "dst", "result_tile"},
     {BridgeValueKind::I64, 0, "lhs", "left_tile"},
@@ -44,7 +45,7 @@ const BridgeFunctionDesc kRegistry[] = {
      "",
      {},
      kPipeInitArgs,
-     kPipeInitResults,
+     {},
      true,
      32},
     {BridgeEntryId::PipeSize,
@@ -56,7 +57,7 @@ const BridgeFunctionDesc kRegistry[] = {
      "",
      {},
      {},
-     {},
+     kPipeSizeResults,
      false},
     {BridgeEntryId::PipePush,
      BridgeFamily::Pipe,

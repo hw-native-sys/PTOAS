@@ -112,7 +112,7 @@ ensureWrapperDecl(ModuleOp module, BridgeLoweringState &state,
   return success();
 }
 
-/// Validates the fully assembled call argument list against the whitelist
+/// Validates the fully assembled call argument list against the registry
 /// ABI. Emits a diagnostic and returns failure on any mismatch.
 static bool bridgeValueKindMatches(BridgeValueKind kind, Type type) {
   switch (kind) {
@@ -121,9 +121,7 @@ static bool bridgeValueKindMatches(BridgeValueKind kind, Type type) {
   case BridgeValueKind::I64:
     return type.isInteger(64);
   case BridgeValueKind::Pointer:
-    return isa<LLVM::LLVMPointerType, pto::PtrType>(type);
-  case BridgeValueKind::PipeObject:
-    return isa<LLVM::LLVMPointerType, pto::PipeType>(type);
+    return isa<LLVM::LLVMPointerType, pto::PtrType, pto::PipeType>(type);
   }
   return false;
 }
@@ -207,20 +205,23 @@ public:
              << "resolved callee '" << symbol
              << "' does not belong to bridge entry '" << entryName << "'";
     }
-    if (desc->arguments.size() != adaptor.getArgs().size() ||
-        desc->results.size() != 1 ||
-        desc->results.front() != BridgeValueKind::PipeObject) {
+    bool invalidObjectAbi =
+        desc->arguments.size() != adaptor.getArgs().size() + 1 ||
+        desc->arguments.empty() ||
+        desc->arguments.front() != BridgeValueKind::Pointer ||
+        !desc->results.empty() || !isa<pto::PipeType>(op.getResult().getType());
+    if (invalidObjectAbi) {
       return op.emitError()
              << "bridge object operands/results do not match registry entry "
              << entryName;
     }
-    if (failed(validateRegistryAbi(op, *desc, adaptor.getArgs()))) {
-      return failure();
-    }
     const BridgeFunctionDesc *sizeDesc =
         findBridgeFunction(BridgeEntryId::PipeSize);
-    if (!sizeDesc) {
-      return op.emitError("bridge registry has no object size entry");
+    bool invalidSizeAbi = !sizeDesc || !sizeDesc->arguments.empty() ||
+                          sizeDesc->results.size() != 1 ||
+                          sizeDesc->results.front() != BridgeValueKind::I64;
+    if (invalidSizeAbi) {
+      return op.emitError("bridge registry has an invalid object size ABI");
     }
     StringRef sizeSymbol = sizeDesc->symbolBase;
     if (op.getSizeCalleeAttr()) {
@@ -245,6 +246,9 @@ public:
         rewriter.getI8Type(), size, desc->objectAlignment);
     SmallVector<Value> args{storage};
     args.append(adaptor.getArgs().begin(), adaptor.getArgs().end());
+    if (failed(validateRegistryAbi(op, *desc, args))) {
+      return failure();
+    }
     rewriter.create<func::CallOp>(loc, symbol, TypeRange{}, args);
     if (failed(ensureWrapperDecl(
             module, state, rewriter, op, symbol,

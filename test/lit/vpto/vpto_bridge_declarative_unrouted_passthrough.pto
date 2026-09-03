@@ -18,6 +18,8 @@
 // RUN: pto-test-opt %s "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-no-routing.yaml" | FileCheck %s --check-prefix=NOROUTE
 // RUN: pto-test-opt %s "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-policy-pipe.yaml" | FileCheck %s --check-prefix=FAMILY
 // RUN: pto-test-opt %s "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-policy-tmatmul.yaml" | FileCheck %s --check-prefix=TYPED
+// RUN: pto-test-opt %s "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-policy-tmatmul.yaml" -vpto-resolve-bridge-instances | FileCheck %s --check-prefix=TYPED-IR
+// RUN: pto-test-opt %s "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-policy-tmatmul.yaml" -vpto-resolve-bridge-instances -pto-emit-vpto-bridge-wrapper | FileCheck %s --check-prefix=TYPED-WRAP
 
 // NOROUTE-LABEL: func.func private @unrouted_matmul_cube
 // NOROUTE: pto.tmatmul
@@ -28,7 +30,7 @@
 // FAMILY: pto.tpush
 // FAMILY-NOT: pto.bridge_call
 // FAMILY-NOT: pto.vpto.bridge.func_spec
-// TYPED-WRAP: pto_vpto_tmatmul__0
+// TYPED-WRAP: void pto_vpto_tmatmul__0(uint64_t dstAddress, uint64_t lhsAddress, uint64_t rhsAddress)
 // TYPED-WRAP: pto::TMATMUL(dst, lhs, rhs);
 // TYPED-IR: pto.bridge_call <cube_tmatmul>{{.*}}callee = "pto_vpto_tmatmul__0"
 

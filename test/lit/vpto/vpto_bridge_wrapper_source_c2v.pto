@@ -24,16 +24,19 @@
 // CHECK-NOT: pto.vpto.bridge.func_spec
 // CHECK-SAME: using Pipe__0 = pto::TPipe<0, pto::Direction::DIR_C2V, 1024, 8, 2, false>;
 // CHECK-SAME: using ProducerTile__0 = pto::Tile<pto::TileType::Acc, float, 16, 16, pto::BLayout::ColMajor, 16, 16, pto::SLayout::RowMajor, 1024>;
-// CHECK-SAME: pto_vpto_pipe_init__0
-// CHECK-SAME: pto_vpto_pipe_size__0
+// CHECK-SAME: void pto_vpto_pipe_init__0(void *storage, uint32_t localBuffer)
+// CHECK-SAME: uint64_t pto_vpto_pipe_size__0()
 // CHECK-SAME: #ifdef __DAV_CUBE__
+// CHECK-SAME: void pto_vpto_pipe_push__0(void *storage, uint64_t producerAddress)
 // CHECK-SAME: pto::TPUSH<Pipe__0, ProducerTile__0, pto::TileSplitAxis::TILE_UP_DOWN>(pipe, tile);
 // CHECK-SAME: using Pipe__1 = pto::TPipe<0, pto::Direction::DIR_C2V, 1024, 8, 2, false>;
 // CHECK-SAME: using ConsumerTile__1 = pto::Tile<pto::TileType::Vec, float, 8, 16, pto::BLayout::RowMajor, 8, 16>;
-// CHECK-SAME: pto_vpto_pipe_init__1
-// CHECK-SAME: pto_vpto_pipe_size__1
+// CHECK-SAME: void pto_vpto_pipe_init__1(void *storage, uint32_t localBuffer)
+// CHECK-SAME: uint64_t pto_vpto_pipe_size__1()
 // CHECK-SAME: #ifdef __DAV_VEC__
+// CHECK-SAME: uint64_t pto_vpto_pipe_pop__1(void *storage)
 // CHECK-SAME: pto::TPOP<Pipe__1, ConsumerTile__1, pto::TileSplitAxis::TILE_UP_DOWN>(pipe, tile);
+// CHECK-SAME: void pto_vpto_pipe_free__1(void *storage)
 // CHECK-SAME: pto::TFREE<Pipe__1, pto::TileSplitAxis::TILE_UP_DOWN>(pipe);
 
 module {

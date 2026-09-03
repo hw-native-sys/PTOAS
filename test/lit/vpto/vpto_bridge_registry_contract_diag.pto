@@ -30,7 +30,7 @@ module {
   }
 }
 
-// CHECK: VPTO bridge call to registry entry 'pipe.init' argument #0 has type 'i64', which does not match the registry ABI
+// CHECK: VPTO bridge call to registry entry 'pipe.init' argument #1 has type 'i64', which does not match the registry ABI
 
 
 // -----

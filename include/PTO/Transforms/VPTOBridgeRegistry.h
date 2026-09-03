@@ -36,7 +36,6 @@ enum class BridgeValueKind : uint8_t {
   Pointer,
   I32,
   I64,
-  PipeObject,
 };
 
 enum class BridgeRendererKind : uint8_t {
