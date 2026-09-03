@@ -10,7 +10,7 @@
 // See LICENSE for more details.
 
 // RUN: pto-test-opt %s -pto-lower-pipe-family-ops | FileCheck %s --check-prefix=IR
-// RUN: pto-test-opt %s -pto-lower-pipe-family-ops -pto-emit-vpto-bridge-wrapper | FileCheck %s --check-prefix=RESOLVE
+// RUN: pto-test-opt %s -pto-lower-pipe-family-ops -vpto-resolve-bridge-instances -pto-emit-vpto-bridge-wrapper | FileCheck %s --check-prefix=RESOLVE
 
 // IR: #pto.bridge_pipe_spec<{{.*}}slot_size = 1024 : i32
 // IR: #pto.bridge_pipe_spec<{{.*}}slot_size = 2048 : i32
@@ -19,9 +19,9 @@
 // RESOLVE-SAME: pto::TPUSH<Pipe__0, {{.*}}pto::TileSplitAxis::TILE_UP_DOWN
 // RESOLVE-SAME: using Pipe__1 = pto::TPipe<4, pto::Direction::DIR_C2V, 2048, 4, 2, false>;
 // RESOLVE-SAME: pto::TPUSH<Pipe__1, {{.*}}pto::TileSplitAxis::TILE_LEFT_RIGHT
-// RESOLVE: pto.bridge_object_create "pto_vpto_pipe_init__0"
-// RESOLVE: pto.bridge_object_create "pto_vpto_pipe_init__1"
-// RESOLVE: pto.bridge_object_create "pto_vpto_pipe_init__0"
+// RESOLVE: pto.bridge_object_create "pipe.init"{{.*}}callee = "pto_vpto_pipe_init__0"
+// RESOLVE: pto.bridge_object_create "pipe.init"{{.*}}callee = "pto_vpto_pipe_init__1"
+// RESOLVE: pto.bridge_object_create "pipe.init"{{.*}}callee = "pto_vpto_pipe_init__0"
 
 
 module {

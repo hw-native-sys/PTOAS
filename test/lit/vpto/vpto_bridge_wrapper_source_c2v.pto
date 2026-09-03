@@ -17,7 +17,7 @@
 // guarded by its core macro. The StringAttr prints on a single line with
 // \0A escapes, hence the single-line {{.*}} patterns.
 
-// RUN: pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist.yaml" -pto-emit-vpto-bridge-wrapper | FileCheck %s
+// RUN: pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist.yaml" -vpto-resolve-bridge-instances -pto-emit-vpto-bridge-wrapper | FileCheck %s
 
 // CHECK-NOT: pto.vpto.bridge.spec
 // CHECK: module attributes {{{.*}}pto.vpto.bridge.wrapper_source = "

@@ -15,7 +15,7 @@
 // pop/free entries under __DAV_CUBE__, with the producer/consumer tile
 // typedefs bound accordingly.
 
-// RUN: pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist.yaml" -pto-emit-vpto-bridge-wrapper | FileCheck %s
+// RUN: pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist.yaml" -vpto-resolve-bridge-instances -pto-emit-vpto-bridge-wrapper | FileCheck %s
 
 // CHECK: module attributes {{{.*}}pto.vpto.bridge.wrapper_source = "
 // CHECK-NOT: pto.vpto.bridge.func_spec

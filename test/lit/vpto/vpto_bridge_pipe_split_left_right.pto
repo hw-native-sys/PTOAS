@@ -12,7 +12,7 @@
 // structured IR and the renderer maps it to TILE_LEFT_RIGHT in the wrapper.
 
 // RUN: pto-test-opt %s -pto-lower-pipe-family-ops | FileCheck %s --check-prefix=SPEC
-// RUN: pto-test-opt %s -pto-lower-pipe-family-ops -pto-emit-vpto-bridge-wrapper | FileCheck %s --check-prefix=WRAP
+// RUN: pto-test-opt %s -pto-lower-pipe-family-ops -vpto-resolve-bridge-instances -pto-emit-vpto-bridge-wrapper | FileCheck %s --check-prefix=WRAP
 
 // SPEC-LABEL: func.func private @bridge_cube
 // SPEC: pto.bridge_object_create

@@ -19,7 +19,7 @@
 // outside the loop, TPOP rebinding it inside) so the bridge lowering stays
 // semantically aligned with the production path.
 //
-// RUN: env -u PTOAS_VPTO_BRIDGE_WHITELIST pto-test-opt %s -pto-lower-pipe-family-ops -pto-emit-vpto-bridge-wrapper | FileCheck %s --check-prefix=BRIDGE
+// RUN: env -u PTOAS_VPTO_BRIDGE_WHITELIST pto-test-opt %s -pto-lower-pipe-family-ops -vpto-resolve-bridge-instances -pto-emit-vpto-bridge-wrapper | FileCheck %s --check-prefix=BRIDGE
 // RUN: ptoas --pto-arch=a5 --pto-level=level3 %s 2>&1 | FileCheck %s --check-prefix=EMITC
 
 module {
@@ -79,14 +79,14 @@ module {
 
 // BRIDGE-LABEL: func.func @probe_cube
 // BRIDGE: scf.for
-// BRIDGE: pto.bridge_call "pto_vpto_pipe_push__0"
+// BRIDGE: pto.bridge_call "pipe.push"{{.*}}callee = "pto_vpto_pipe_push__0"
 
 // BRIDGE-LABEL: func.func @probe_vector
 // BRIDGE: scf.for
-// BRIDGE: [[POP:%.+]] = pto.bridge_call "pto_vpto_pipe_pop__1"{{.*}}-> i64
+// BRIDGE: [[POP:%.+]] = pto.bridge_call "pipe.pop"{{.*}}callee = "pto_vpto_pipe_pop__1"{{.*}}-> i64
 // BRIDGE: [[PTR:%.+]] = pto.bridge_inttoptr [[POP]] : i64 -> !pto.ptr<f32, ub>
 // BRIDGE: pto.store_scalar {{%.+}}, [[PTR]]
-// BRIDGE: pto.bridge_call "pto_vpto_pipe_free__1"
+// BRIDGE: pto.bridge_call "pipe.free"{{.*}}callee = "pto_vpto_pipe_free__1"
 
 // EMITC-LABEL: AICORE void probe_cube
 // EMITC: for (

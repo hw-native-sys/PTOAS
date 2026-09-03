@@ -1246,6 +1246,10 @@ def BridgeCubeSpecAttr : AttrDef<PTO_Dialect, "BridgeCubeSpec"> {
   let mnemonic = "bridge_cube_spec";
   let parameters = (ins "mlir::DictionaryAttr":$value);
   let assemblyFormat = "`<` $value `>`";
+  let extraClassDeclaration = [{
+    static LogicalResult verify(function_ref<InFlightDiagnostic()> emitError,
+                                mlir::DictionaryAttr value);
+  }];
 }
 
 // Structured specialization carried by a stateful Pipe bridge object.
@@ -1253,6 +1257,10 @@ def BridgePipeSpecAttr : AttrDef<PTO_Dialect, "BridgePipeSpec"> {
   let mnemonic = "bridge_pipe_spec";
   let parameters = (ins "mlir::DictionaryAttr":$value);
   let assemblyFormat = "`<` $value `>`";
+  let extraClassDeclaration = [{
+    static LogicalResult verify(function_ref<InFlightDiagnostic()> emitError,
+                                mlir::DictionaryAttr value);
+  }];
 }
 
 //===----------------------------------------------------------------------===//

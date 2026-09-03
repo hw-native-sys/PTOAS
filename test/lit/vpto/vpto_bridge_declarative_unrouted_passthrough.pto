@@ -30,11 +30,11 @@
 // FAMILY-NOT: pto.vpto.bridge.func_spec
 // TYPED-WRAP: pto_vpto_tmatmul__0
 // TYPED-WRAP: pto::TMATMUL(dst, lhs, rhs);
-// TYPED-IR: pto.bridge_call "pto_vpto_tmatmul__0"
+// TYPED-IR: pto.bridge_call "cube.tmatmul"{{.*}}callee = "pto_vpto_tmatmul__0"
 
 // TYPED-LABEL: func.func private @unrouted_matmul_cube
-// TYPED: pto.bridge_call "pto_vpto_tmatmul"
-// TYPED-SAME: {entry_id = "cube.tmatmul"
+// TYPED: pto.bridge_call "cube.tmatmul"
+// TYPED-SAME: {instance_key = "cube.tmatmul|
 // TYPED-SAME: spec = #pto.bridge_cube_spec<{acc_phase = #pto<acc_phase unspecified>
 // TYPED-SAME: left_tile = {b_layout = 1 : i32, element_type = f16
 // TYPED-SAME: result_tile = {b_layout = 1 : i32, element_type = f32

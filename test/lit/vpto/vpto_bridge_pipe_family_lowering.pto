@@ -10,41 +10,41 @@
 // See LICENSE for more details.
 
 // RUN: pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist.yaml" | FileCheck %s --check-prefix=FAMILY
-// RUN: pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist.yaml" "-vpto-bridge-lowering=whitelist-path=%S/Inputs/vpto-bridge-whitelist.yaml" | FileCheck %s --check-prefix=LOWER
+// RUN: pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist.yaml" "-vpto-resolve-bridge-instances" "-vpto-bridge-lowering=whitelist-path=%S/Inputs/vpto-bridge-whitelist.yaml" | FileCheck %s --check-prefix=LOWER
 
 // FAMILY-LABEL: func.func private @bridge_cube
-// FAMILY: pto.bridge_object_create "pto_vpto_pipe_init"
+// FAMILY: pto.bridge_object_create "pipe.init"
 // FAMILY-SAME: -> !pto.pipe
-// FAMILY: pto.bridge_call "pto_vpto_pipe_push"
+// FAMILY: pto.bridge_call "pipe.push"
 // FAMILY-NOT: pto.alloc_tile
 // FAMILY-NOT: pto.tpush
 
 // FAMILY-LABEL: func.func private @bridge_vector
-// FAMILY: pto.bridge_object_create "pto_vpto_pipe_init"
-// FAMILY: pto.bridge_call "pto_vpto_pipe_pop"
+// FAMILY: pto.bridge_object_create "pipe.init"
+// FAMILY: pto.bridge_call "pipe.pop"
 // FAMILY-SAME: -> i64
 // FAMILY: pto.bridge_inttoptr
-// FAMILY: pto.bridge_call "pto_vpto_pipe_free"
+// FAMILY: pto.bridge_call "pipe.free"
 // FAMILY-NOT: pto.declare_tile
 // FAMILY-NOT: pto.tpop
 // FAMILY-NOT: pto.tile_buf_addr
 // FAMILY-NOT: pto.tfree
 
-// LOWER-DAG: func.func private @pto_vpto_pipe_size() -> i64
-// LOWER-DAG: func.func private @pto_vpto_pipe_init(!llvm.ptr, i32)
-// LOWER-DAG: func.func private @pto_vpto_pipe_push(!llvm.ptr, i64)
-// LOWER-DAG: func.func private @pto_vpto_pipe_pop(!llvm.ptr) -> i64
-// LOWER-DAG: func.func private @pto_vpto_pipe_free(!llvm.ptr)
+// LOWER-DAG: func.func private @pto_vpto_pipe_size__{{[01]}}() -> i64
+// LOWER-DAG: func.func private @pto_vpto_pipe_init__{{[01]}}(!llvm.ptr, i32)
+// LOWER-DAG: func.func private @pto_vpto_pipe_push__0(!llvm.ptr, i64)
+// LOWER-DAG: func.func private @pto_vpto_pipe_pop__1(!llvm.ptr) -> i64
+// LOWER-DAG: func.func private @pto_vpto_pipe_free__1(!llvm.ptr)
 
 // LOWER-LABEL: func.func private @bridge_cube
-// LOWER: call @pto_vpto_pipe_size() : () -> i64
+// LOWER: call @pto_vpto_pipe_size__{{[01]}}() : () -> i64
 // LOWER: llvm.alloca
 // LOWER: call @pto_vpto_pipe_init
 // LOWER: call @pto_vpto_pipe_push
 // LOWER-NOT: pto.bridge_call
 
 // LOWER-LABEL: func.func private @bridge_vector
-// LOWER: call @pto_vpto_pipe_size() : () -> i64
+// LOWER: call @pto_vpto_pipe_size__{{[01]}}() : () -> i64
 // LOWER: llvm.alloca
 // LOWER: call @pto_vpto_pipe_init
 // LOWER: call @pto_vpto_pipe_pop

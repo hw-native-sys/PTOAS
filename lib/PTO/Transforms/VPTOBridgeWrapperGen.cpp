@@ -29,6 +29,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/Support/raw_ostream.h"
 #include <string>
 
@@ -80,10 +81,13 @@ static FailureOr<std::string> renderStructuredTile(DictionaryAttr tile) {
     return failure();
   }
   llvm::StringRef blockLayout = bLayout.getInt() == 0 ? "RowMajor" : "ColMajor";
+  auto elementToken = buildBridgeElementTypeToken(element.getValue());
+  if (failed(elementToken)) {
+    return failure();
+  }
   std::string token =
-      "pto::Tile<pto::TileType::" + tileKind.str() + ", " +
-      buildBridgeElementTypeToken(element.getValue()) + ", " +
-      std::to_string(shape[0]) + ", " + std::to_string(shape[1]) +
+      "pto::Tile<pto::TileType::" + tileKind.str() + ", " + *elementToken +
+      ", " + std::to_string(shape[0]) + ", " + std::to_string(shape[1]) +
       ", pto::BLayout::" + blockLayout.str() + ", " + std::to_string(valid[0]) +
       ", " + std::to_string(valid[1]);
   if (sLayout.getInt() != 0) {
@@ -148,9 +152,10 @@ static FailureOr<std::string> renderPipeSplit(IntegerAttr split) {
 }
 
 static FailureOr<std::string> renderCubeInstance(BridgeCallOp call,
-                                                 llvm::StringRef symbol) {
-  auto entryId = call->getAttrOfType<StringAttr>("entry_id");
-  auto specAttr = call->getAttrOfType<BridgeCubeSpecAttr>("spec");
+                                                 llvm::StringRef symbol,
+                                                 unsigned instanceId) {
+  StringAttr entryId = call.getEntryAttr();
+  auto specAttr = dyn_cast_or_null<BridgeCubeSpecAttr>(call.getSpecAttr());
   DictionaryAttr spec = specAttr ? specAttr.getValue() : DictionaryAttr();
   if (!entryId || !spec) {
     return failure();
@@ -169,16 +174,21 @@ static FailureOr<std::string> renderCubeInstance(BridgeCallOp call,
   }
   StringRef callName = desc->callSpelling;
   callName.consume_front("pto::");
+  std::string suffix = "__" + std::to_string(instanceId);
+  std::string resultType = "ResultTile" + suffix;
+  std::string leftType = "LeftTile" + suffix;
+  std::string rightType = "RightTile" + suffix;
   std::string source;
   llvm::raw_string_ostream os(source);
   os << "#include <pto/pto-inst.hpp>\n#include <stdint.h>\n"
      << "#ifdef __DAV_CUBE__\n"
      << "extern \"C\" [aicore] void " << symbol
      << "(uint64_t dstAddress, uint64_t lhsAddress, uint64_t rhsAddress) {\n"
-     << "  using ResultTile = " << *result << ";\n"
-     << "  using LeftTile = " << *left << ";\n"
-     << "  using RightTile = " << *right << ";\n"
-     << "  ResultTile dst; LeftTile lhs; RightTile rhs;\n"
+     << "  using " << resultType << " = " << *result << ";\n"
+     << "  using " << leftType << " = " << *left << ";\n"
+     << "  using " << rightType << " = " << *right << ";\n"
+     << "  " << resultType << " dst; " << leftType << " lhs; " << rightType
+     << " rhs;\n"
      << "  pto::TASSIGN_IMPL(dst, dstAddress);\n"
      << "  pto::TASSIGN_IMPL(lhs, lhsAddress);\n"
      << "  pto::TASSIGN_IMPL(rhs, rhsAddress);\n"
@@ -195,16 +205,11 @@ struct ResolvedPipeSymbols {
   std::string free;
 };
 
-static std::string pipeSymbol(BridgeEntryId id, unsigned instanceId) {
-  const BridgeFunctionDesc *desc = findBridgeFunction(id);
-  return desc->symbolBase.str() + "__" + std::to_string(instanceId);
-}
-
 static FailureOr<std::string>
 renderPipeInstance(BridgeObjectCreateOp create,
                    const ResolvedPipeSymbols &symbols, unsigned instanceId,
                    ArrayRef<BridgeCallOp> calls) {
-  auto spec = create->getAttrOfType<BridgePipeSpecAttr>("spec");
+  auto spec = dyn_cast_or_null<BridgePipeSpecAttr>(create.getSpecAttr());
   if (!spec) {
     return create.emitError("resolved Pipe object has no structured spec");
   }
@@ -226,7 +231,7 @@ renderPipeInstance(BridgeObjectCreateOp create,
   bool needsPop = false;
   bool needsFree = false;
   for (BridgeCallOp call : calls) {
-    auto entryId = call->getAttrOfType<StringAttr>("entry_id");
+    StringAttr entryId = call.getEntryAttr();
     if (!entryId) {
       return call.emitError("Pipe bridge call is missing its logical entry ID");
     }
@@ -315,84 +320,57 @@ renderPipeInstance(BridgeObjectCreateOp create,
   return source;
 }
 
-static FailureOr<std::string> resolvePipeInstances(ModuleOp module) {
+static FailureOr<std::string> renderPipeInstances(ModuleOp module) {
   std::string source;
-  llvm::StringMap<std::pair<unsigned, ResolvedPipeSymbols>> instances;
+  llvm::StringSet<> rendered;
   unsigned nextId = 0;
-  bool failedResolve = false;
+  bool failedRender = false;
   module.walk([&](BridgeObjectCreateOp create) {
-    auto entryId = create->getAttrOfType<StringAttr>("entry_id");
-    if (!entryId || entryId.getValue() != "pipe.init") {
+    bool isPipeInit = create.getEntry() == "pipe.init";
+    if (!isPipeInit) {
+      return;
+    }
+    StringAttr key = create.getInstanceKeyAttr();
+    StringAttr init = create.getCalleeAttr();
+    StringAttr size = create.getSizeCalleeAttr();
+    if (!key || !init || !size) {
+      create.emitError("Pipe bridge instance has not been resolved");
+      failedRender = true;
+      return;
+    }
+    if (!rendered.insert(key.getValue()).second) {
       return;
     }
     SmallVector<BridgeCallOp> calls;
+    ResolvedPipeSymbols symbols;
+    symbols.init = init.getValue().str();
+    symbols.size = size.getValue().str();
     for (Operation *user : create.getResult().getUsers()) {
       auto call = dyn_cast<BridgeCallOp>(user);
-      if (!call) {
-        create.emitError("Pipe bridge object has a non-bridge lifecycle user");
-        failedResolve = true;
+      if (!call || !call.getCalleeAttr()) {
+        create.emitError("Pipe bridge lifecycle has not been resolved");
+        failedRender = true;
         return;
       }
       calls.push_back(call);
-    }
-    llvm::sort(calls, [](BridgeCallOp lhs, BridgeCallOp rhs) {
-      return lhs->isBeforeInBlock(rhs);
-    });
-
-    std::string canonical;
-    llvm::raw_string_ostream keyOS(canonical);
-    create->getAttr("spec").print(keyOS);
-    create->getParentOfType<func::FuncOp>()
-        ->getAttr(FunctionKernelKindAttr::name)
-        .print(keyOS);
-    for (BridgeCallOp call : calls) {
-      call->getAttr("entry_id").print(keyOS);
-    }
-    keyOS.flush();
-
-    auto found = instances.find(canonical);
-    if (found == instances.end()) {
-      const unsigned instanceId = nextId++;
-      ResolvedPipeSymbols newSymbols{
-          pipeSymbol(BridgeEntryId::PipeInit, instanceId),
-          pipeSymbol(BridgeEntryId::PipeSize, instanceId),
-          pipeSymbol(BridgeEntryId::PipePush, instanceId),
-          pipeSymbol(BridgeEntryId::PipePop, instanceId),
-          pipeSymbol(BridgeEntryId::PipeFree, instanceId)};
-      FailureOr<std::string> rendered =
-          renderPipeInstance(create, newSymbols, instanceId, calls);
-      if (failed(rendered)) {
-        failedResolve = true;
-        return;
+      bool isPush = call.getEntry() == "pipe.push";
+      if (isPush) {
+        symbols.push = call.getCalleeAttr().getValue().str();
+      } else if (call.getEntry() == "pipe.pop") {
+        symbols.pop = call.getCalleeAttr().getValue().str();
+      } else if (call.getEntry() == "pipe.free") {
+        symbols.free = call.getCalleeAttr().getValue().str();
       }
-      source += *rendered;
-      found =
-          instances.try_emplace(canonical, instanceId, std::move(newSymbols))
-              .first;
     }
-    const ResolvedPipeSymbols &symbols = found->second.second;
-    create->setAttr("entry",
-                    StringAttr::get(module.getContext(), symbols.init));
-    create->setAttr("size_callee",
-                    StringAttr::get(module.getContext(), symbols.size));
-    for (BridgeCallOp call : calls) {
-      StringRef id = call->getAttrOfType<StringAttr>("entry_id").getValue();
-      StringRef symbol;
-      if (id == "pipe.push") {
-        symbol = symbols.push;
-      } else if (id == "pipe.pop") {
-        symbol = symbols.pop;
-      } else if (id == "pipe.free") {
-        symbol = symbols.free;
-      } else {
-        call.emitError("unsupported Pipe bridge lifecycle entry");
-        failedResolve = true;
-        continue;
-      }
-      call.setCalleeAttr(StringAttr::get(module.getContext(), symbol));
+    FailureOr<std::string> renderedSource =
+        renderPipeInstance(create, symbols, nextId++, calls);
+    if (failed(renderedSource)) {
+      failedRender = true;
+      return;
     }
+    source += *renderedSource;
   });
-  if (failedResolve) {
+  if (failedRender) {
     return failure();
   }
   if (!source.empty()) {
@@ -410,40 +388,35 @@ static FailureOr<std::string> resolvePipeInstances(ModuleOp module) {
   return source;
 }
 
-static FailureOr<std::string> resolveCubeInstances(ModuleOp module) {
-  llvm::StringMap<std::pair<std::string, std::string>> instances;
+static FailureOr<std::string> renderCubeInstances(ModuleOp module) {
+  llvm::StringSet<> rendered;
   std::string source;
   unsigned nextId = 0;
   bool failedRender = false;
   module.walk([&](BridgeCallOp call) {
-    auto key = call->getAttrOfType<StringAttr>("instance_key");
-    auto entryId = call->getAttrOfType<StringAttr>("entry_id");
-    if (!key || !entryId || !entryId.getValue().starts_with("cube.")) {
+    const BridgeFunctionDesc *desc = findBridgeFunctionById(call.getEntry());
+    if (!desc || desc->family != BridgeFamily::Cube) {
       return;
     }
-    auto found = instances.find(key.getValue());
-    if (found == instances.end()) {
-      const BridgeFunctionDesc *desc =
-          findBridgeFunctionBySymbol(call.getCallee());
-      if (!desc) {
-        failedRender = true;
-        return;
-      }
-      std::string symbol =
-          desc->symbolBase.str() + "__" + std::to_string(nextId++);
-      auto rendered = renderCubeInstance(call, symbol);
-      if (failed(rendered)) {
-        failedRender = true;
-        return;
-      }
-      found = instances.try_emplace(key.getValue(), symbol, *rendered).first;
-      source += found->second.second;
+    StringAttr key = call.getInstanceKeyAttr();
+    StringAttr callee = call.getCalleeAttr();
+    if (!key || !callee) {
+      call.emitError("Cube bridge instance has not been resolved");
+      failedRender = true;
+      return;
     }
-    call.setCalleeAttr(
-        StringAttr::get(module.getContext(), found->second.first));
+    if (!rendered.insert(key.getValue()).second) {
+      return;
+    }
+    auto renderedSource = renderCubeInstance(call, callee.getValue(), nextId++);
+    if (failed(renderedSource)) {
+      failedRender = true;
+      return;
+    }
+    source += *renderedSource;
   });
   if (failedRender) {
-    module.emitError("cannot resolve structured Cube bridge instance");
+    module.emitError("cannot render structured Cube bridge instance");
     return failure();
   }
   return source;
@@ -455,12 +428,12 @@ struct VPTOBridgeWrapperGenPass final
 
   void runOnOperation() override {
     ModuleOp module = getOperation();
-    FailureOr<std::string> pipeSource = resolvePipeInstances(module);
+    FailureOr<std::string> pipeSource = renderPipeInstances(module);
     if (failed(pipeSource)) {
       signalPassFailure();
       return;
     }
-    FailureOr<std::string> cubeSource = resolveCubeInstances(module);
+    FailureOr<std::string> cubeSource = renderCubeInstances(module);
     if (failed(cubeSource)) {
       signalPassFailure();
       return;

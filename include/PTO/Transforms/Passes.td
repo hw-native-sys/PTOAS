@@ -453,12 +453,11 @@ def PTOLowerDeclarativeBridgeOps : Pass<"pto-lower-declarative-bridge-ops", "mli
 def VPTOBridgeLowering : Pass<"vpto-bridge-lowering", "ModuleOp"> {
   let summary = "Lower generic bridge ops into C++ wrapper calls";
   let description = [{
-    Generic bridge lowering pass of the VPTO C++ interface bridge. It knows
-    nothing about individual PTO-ISA interface families: it validates each
-    pto.bridge_call against the bridge whitelist and mechanically lowers it
-    into a call to the wrapper entry, materializing the wrapper declaration
-    at module level. Entries carrying storage_size_callee additionally
-    synthesize the stateful-object pattern (size query + stack storage).
+    Generic bridge lowering pass of the VPTO C++ interface bridge. It validates
+    each resolved logical entry against the compiler-owned registry and
+    mechanically lowers it into a func.call, materializing the wrapper
+    declaration at module level. Stateful object creation is represented by
+    bridge_object_create and lowered through the registry size entry.
     pto.bridge_inttoptr is lowered to llvm.inttoptr.
   }];
   let constructor = "mlir::pto::createVPTOBridgeLoweringPass()";
@@ -476,17 +475,25 @@ def VPTOBridgeLowering : Pass<"vpto-bridge-lowering", "ModuleOp"> {
   ];
 }
 
+def VPTOResolveBridgeInstances : Pass<"vpto-resolve-bridge-instances", "ModuleOp"> {
+  let summary = "Resolve logical bridge entries to concrete wrapper instances";
+  let description = [{
+    Canonicalizes entry, structured specialization, and core into a bridge
+    instance key. Equal keys reuse one concrete wrapper symbol; distinct keys
+    receive independent symbols. This pass does not render C++ source.
+  }];
+  let constructor = "mlir::pto::createVPTOResolveBridgeInstancesPass()";
+  let dependentDialects = ["mlir::pto::PTODialect"];
+}
+
 def VPTOBridgeWrapperGen : Pass<"pto-emit-vpto-bridge-wrapper", "ModuleOp"> {
   let summary = "Render the VPTO bridge wrapper source from the collected spec";
   let description = [{
-    Wrapper generation pass of the VPTO C++ interface bridge. It reads the
-    pipe bridge specialization collected by the family passes in the
-    `pto.vpto.bridge.spec` module attribute (TPipe/Tile/split C++ template
-    tokens plus the whitelist wrapper entry names), renders the complete
-    bridge wrapper C++ source, and stores it in the
-    `pto.vpto.bridge.wrapper_source` module attribute for object emission to
-    compile and link. The spec attribute is removed once rendered. Modules
-    without a bridge spec are left untouched.
+    Wrapper generation pass of the VPTO C++ interface bridge. It consumes
+    instances resolved by `vpto-resolve-bridge-instances`, renders structured
+    Pipe/Cube specializations into complete wrapper C++ source, and stores it
+    in `pto.vpto.bridge.wrapper_source` for object emission. Modules without
+    bridge instances are left untouched.
   }];
   let constructor = "mlir::pto::createVPTOBridgeWrapperGenPass()";
   let options = [

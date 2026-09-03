@@ -12,7 +12,7 @@
 // Different Pipe configurations are resolved as independent bridge instances
 // and can coexist in one module.
 
-// RUN: pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist.yaml" -pto-emit-vpto-bridge-wrapper | FileCheck %s
+// RUN: pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist.yaml" -vpto-resolve-bridge-instances -pto-emit-vpto-bridge-wrapper | FileCheck %s
 
 // CHECK: using Pipe__0 = pto::TPipe<0, pto::Direction::DIR_C2V, 1024, 8, 2, false>
 // CHECK-SAME: pto_vpto_pipe_init__0

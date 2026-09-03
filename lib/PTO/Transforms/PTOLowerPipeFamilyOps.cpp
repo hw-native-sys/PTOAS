@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 //===- PTOLowerPipeFamilyOps.cpp - TPipe family bridge lowering ----------===//
 //===----------------------------------------------------------------------===//
@@ -52,18 +54,17 @@ namespace {
 
 /// Emits a bridge call with no results and no synthesized storage.
 static BridgeCallOp emitVoidBridgeCall(OpBuilder &builder, Location loc,
-                                       llvm::StringRef callee,
-                                       ValueRange args) {
+                                       BridgeEntryId entry, ValueRange args) {
   return builder.create<BridgeCallOp>(
-      loc, /*results=*/TypeRange{}, /*callee=*/callee,
-      /*storage_size_callee=*/nullptr, /*args=*/args);
+      loc, /*results=*/TypeRange{}, stringifyBridgeEntryId(entry),
+      /*callee=*/nullptr, /*spec=*/nullptr, /*instanceKey=*/nullptr, args);
 }
 
 static DictionaryAttr buildPipeConfigSpec(OpBuilder &builder,
                                           InitializeL2LPipeOp init) {
   SmallVector<NamedAttribute> fields = {
       builder.getNamedAttr("flag_base", builder.getI32IntegerAttr(
-                                        init.getFlagBaseAttr().getInt())),
+                                            init.getFlagBaseAttr().getInt())),
       builder.getNamedAttr("dir_mask",
                            builder.getI32IntegerAttr(init.getDirMask())),
       builder.getNamedAttr("slot_size",
@@ -71,37 +72,30 @@ static DictionaryAttr buildPipeConfigSpec(OpBuilder &builder,
       builder.getNamedAttr("slot_num",
                            builder.getI32IntegerAttr(init.getSlotNum())),
       builder.getNamedAttr("local_slot_num", builder.getI32IntegerAttr(2)),
-      builder.getNamedAttr("nosplit", builder.getBoolAttr(
-                                        init.getNosplitAttr() &&
-                                        init.getNosplitAttr().getValue()))};
+      builder.getNamedAttr(
+          "nosplit", builder.getBoolAttr(init.getNosplitAttr() &&
+                                         init.getNosplitAttr().getValue()))};
   return DictionaryAttr::get(builder.getContext(), fields);
 }
 
 static DictionaryAttr buildTileSpec(OpBuilder &builder, TileBufType tile) {
   SmallVector<NamedAttribute> fields = {
-      builder.getNamedAttr("element_type", TypeAttr::get(tile.getElementType())),
-      builder.getNamedAttr("shape", builder.getDenseI64ArrayAttr(tile.getShape())),
+      builder.getNamedAttr("element_type",
+                           TypeAttr::get(tile.getElementType())),
+      builder.getNamedAttr("shape",
+                           builder.getDenseI64ArrayAttr(tile.getShape())),
       builder.getNamedAttr("valid_shape",
-                          builder.getDenseI64ArrayAttr(tile.getValidShape())),
-      builder.getNamedAttr("b_layout",
-                          builder.getI32IntegerAttr(tile.getBLayoutValueI32())),
-      builder.getNamedAttr("s_layout",
-                          builder.getI32IntegerAttr(tile.getSLayoutValueI32())),
-      builder.getNamedAttr("s_fractal",
-                          builder.getI32IntegerAttr(tile.getSFractalSizeI32()))};
+                           builder.getDenseI64ArrayAttr(tile.getValidShape())),
+      builder.getNamedAttr(
+          "b_layout", builder.getI32IntegerAttr(tile.getBLayoutValueI32())),
+      builder.getNamedAttr(
+          "s_layout", builder.getI32IntegerAttr(tile.getSLayoutValueI32())),
+      builder.getNamedAttr(
+          "s_fractal", builder.getI32IntegerAttr(tile.getSFractalSizeI32()))};
   if (Attribute memory = tile.getMemorySpace()) {
     fields.push_back(builder.getNamedAttr("memory_space", memory));
   }
   return DictionaryAttr::get(builder.getContext(), fields);
-}
-
-static void annotatePipeBridgeCall(BridgeCallOp call,
-                                   llvm::StringRef callee) {
-  if (const BridgeFunctionDesc *desc = findBridgeFunctionBySymbol(callee)) {
-    call->setAttr("entry_id", StringAttr::get(
-                                  call.getContext(),
-                                  stringifyBridgeEntryId(desc->id)));
-  }
 }
 
 /// Returns the address value a tile_buf_addr operand resolves to, or nullptr
@@ -224,10 +218,11 @@ struct PTOLowerPipeFamilyOpsPass final
       }
       builder.setInsertionPoint(init);
       BridgeObjectCreateOp call = builder.create<BridgeObjectCreateOp>(
-          init.getLoc(), init.getPipe().getType(), entry->symbolBase,
+          init.getLoc(), init.getPipe().getType(),
+          stringifyBridgeEntryId(entry->id), /*callee=*/nullptr,
+          /*sizeCallee=*/nullptr, /*spec=*/nullptr, /*instanceKey=*/nullptr,
           ValueRange{init.getLocalAddr()});
       call->setAttr("pipe_config", buildPipeConfigSpec(builder, init));
-      call->setAttr("entry_id", builder.getStringAttr("pipe.init"));
       // The bridge call result becomes the storage handle: push/pop/free
       // consume the same SSA value instead of the erased pipe op.
       init.getPipe().replaceAllUsesWith(call.getResult());
@@ -283,11 +278,12 @@ struct PTOLowerPipeFamilyOpsPass final
       builder.setInsertionPoint(pop);
       BridgeCallOp call = builder.create<BridgeCallOp>(
           pop.getLoc(), /*results=*/TypeRange{builder.getI64Type()},
-          /*callee=*/entry->symbolBase, /*storage_size_callee=*/nullptr,
-          /*args=*/ValueRange{pop.getPipeHandle()});
-      annotatePipeBridgeCall(call, entry->symbolBase);
+          stringifyBridgeEntryId(entry->id), /*callee=*/nullptr,
+          /*spec=*/nullptr, /*instanceKey=*/nullptr,
+          ValueRange{pop.getPipeHandle()});
       call->setAttr("split", builder.getI32IntegerAttr(pop.getSplit()));
-      call->setAttr("consumer_tile_spec", buildTileSpec(builder, consumerTileTy));
+      call->setAttr("consumer_tile_spec",
+                    buildTileSpec(builder, consumerTileTy));
       popAddresses[pop.getTile()] = call.getResults().front();
       pop.erase();
     }
@@ -346,12 +342,12 @@ struct PTOLowerPipeFamilyOpsPass final
         continue;
       }
       builder.setInsertionPoint(push);
-      BridgeCallOp call = emitVoidBridgeCall(
-          builder, push.getLoc(), entry->symbolBase,
-          ValueRange{push.getPipeHandle(), alloc.getAddr()});
-      annotatePipeBridgeCall(call, entry->symbolBase);
+      BridgeCallOp call =
+          emitVoidBridgeCall(builder, push.getLoc(), entry->id,
+                             ValueRange{push.getPipeHandle(), alloc.getAddr()});
       call->setAttr("split", builder.getI32IntegerAttr(push.getSplit()));
-      call->setAttr("producer_tile_spec", buildTileSpec(builder, producerTileTy));
+      call->setAttr("producer_tile_spec",
+                    buildTileSpec(builder, producerTileTy));
       push.erase();
     }
 
@@ -372,10 +368,8 @@ struct PTOLowerPipeFamilyOpsPass final
         continue;
       }
       builder.setInsertionPoint(free);
-      BridgeCallOp call = emitVoidBridgeCall(
-          builder, free.getLoc(), entry->symbolBase,
-          ValueRange{free.getPipeHandle()});
-      annotatePipeBridgeCall(call, entry->symbolBase);
+      BridgeCallOp call = emitVoidBridgeCall(builder, free.getLoc(), entry->id,
+                                             ValueRange{free.getPipeHandle()});
       call->setAttr("split", builder.getI32IntegerAttr(free.getSplit()));
       free.erase();
     }
@@ -429,12 +423,12 @@ struct PTOLowerPipeFamilyOpsPass final
           if (auto value = bridgeCall->getAttrOfType<IntegerAttr>("split")) {
             split = value;
           }
-          if (auto value =
-                  bridgeCall->getAttrOfType<DictionaryAttr>("producer_tile_spec")) {
+          if (auto value = bridgeCall->getAttrOfType<DictionaryAttr>(
+                  "producer_tile_spec")) {
             producer = value;
           }
-          if (auto value =
-                  bridgeCall->getAttrOfType<DictionaryAttr>("consumer_tile_spec")) {
+          if (auto value = bridgeCall->getAttrOfType<DictionaryAttr>(
+                  "consumer_tile_spec")) {
             consumer = value;
           }
         }

@@ -3297,8 +3297,9 @@ static LogicalResult runVPTOBackendPipeline(OwningOpRef<ModuleOp> &module,
   // sees the tile handles that remain in the function.
   pm.addNestedPass<func::FuncOp>(pto::createPTOLowerDeclarativeBridgeOpsPass());
   pm.addNestedPass<func::FuncOp>(pto::createPTOLowerPipeFamilyOpsPass());
-  // Render the bridge wrapper source from the spec the family pass collected
-  // before the module is split into per-kind kernel modules.
+  // Resolve logical bridge instances, then render their wrapper source before
+  // the module is split into per-kind kernel modules.
+  pm.addPass(pto::createVPTOResolveBridgeInstancesPass());
   pm.addPass(pto::createVPTOBridgeWrapperGenPass());
   pm.addPass(pto::createVPTOSplitCVModulePass());
   pm.addPass(pto::createVPTONormalizeContainerPass());

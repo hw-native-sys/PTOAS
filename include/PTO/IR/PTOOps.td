@@ -2695,16 +2695,17 @@ def BridgeCallOp : PTO_Op<"bridge_call", [
   let summary = "Generic call into an externally linked C++ wrapper entry";
 
   let arguments = (ins
-      StrAttr:$callee,
-      OptionalAttr<StrAttr>:$storage_size_callee,
+      StrAttr:$entry,
+      OptionalAttr<StrAttr>:$callee,
+      OptionalAttr<AnyAttr>:$spec,
+      OptionalAttr<StrAttr>:$instance_key,
       Variadic<AnyType>:$args
   );
 
   let results = (outs Variadic<AnyType>:$results);
 
   let assemblyFormat = [{
-    $callee
-    (`{` `storage_size_callee` `=` $storage_size_callee^ `}`)?
+    $entry
     (`(` $args^ `:` type($args) `)`)?
     attr-dict
     (`->` type($results)^)?
@@ -2715,7 +2716,14 @@ def BridgeObjectCreateOp : PTO_Op<"bridge_object_create", [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
   let summary = "Create a stateful object owned by a bridge wrapper";
-  let arguments = (ins StrAttr:$entry, Variadic<AnyType>:$args);
+  let arguments = (ins
+      StrAttr:$entry,
+      OptionalAttr<StrAttr>:$callee,
+      OptionalAttr<StrAttr>:$size_callee,
+      OptionalAttr<AnyAttr>:$spec,
+      OptionalAttr<StrAttr>:$instance_key,
+      Variadic<AnyType>:$args
+  );
   let results = (outs AnyType:$result);
   let assemblyFormat = [{
     $entry (`(` $args^ `:` type($args) `)`)? attr-dict `->` type($result)

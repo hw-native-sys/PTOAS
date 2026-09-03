@@ -115,6 +115,7 @@ add_mlir_dialect_library(PTOTransforms
   PTOLowerDeclarativeBridgeOps.cpp
   VPTOBridgeLowering.cpp
   VPTOBridgeRegistry.cpp
+  VPTOResolveBridgeInstances.cpp
   VPTOBridgeTokens.cpp
   VPTOBridgeWhitelist.cpp
   VPTOBridgeWrapperGen.cpp

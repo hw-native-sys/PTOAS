@@ -174,6 +174,15 @@ static LogicalResult validateRegistryResults(Operation *op,
   return success();
 }
 
+static bool isResolvedSymbolForEntry(StringRef symbol,
+                                     const BridgeFunctionDesc &desc) {
+  if (symbol == desc.symbolBase) {
+    return true;
+  }
+  return symbol.starts_with(desc.symbolBase) &&
+         symbol.drop_front(desc.symbolBase.size()).starts_with("__");
+}
+
 class LowerBridgeObjectCreatePattern final
     : public OpConversionPattern<BridgeObjectCreateOp> {
 public:
@@ -185,42 +194,45 @@ public:
   LogicalResult
   matchAndRewrite(BridgeObjectCreateOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    StringRef symbol = op.getEntryAttr().getValue();
-    const BridgeFunctionDesc *desc = nullptr;
-    if (auto idAttr = op->getAttrOfType<StringAttr>("entry_id")) {
-      desc = findBridgeFunctionById(idAttr.getValue());
+    StringRef entryId = op.getEntryAttr().getValue();
+    const BridgeFunctionDesc *desc = findBridgeFunctionById(entryId);
+    StringRef symbol =
+        op.getCalleeAttr() ? op.getCalleeAttr().getValue() : StringRef();
+    if (!desc || !desc->createsObject || symbol.empty()) {
+      return op.emitError() << "bridge object requires a resolved registered "
+                               "entry and callee: "
+                            << entryId;
     }
-    if (!desc) {
-      desc = findBridgeFunctionBySymbol(symbol);
-    }
-    if (!desc || !desc->createsObject) {
+    if (!isResolvedSymbolForEntry(symbol, *desc)) {
       return op.emitError()
-             << "entry does not create a registered bridge object: " << symbol;
+             << "resolved callee '" << symbol
+             << "' does not belong to bridge entry '" << entryId << "'";
     }
     if (desc->arguments.size() != adaptor.getArgs().size() ||
         desc->results.size() != 1 ||
         desc->results.front() != BridgeValueKind::PipeObject) {
       return op.emitError()
              << "bridge object operands/results do not match registry entry "
-             << stringifyBridgeEntryId(desc->id);
+             << entryId;
     }
-    if (desc->arguments.empty() ||
-        desc->arguments.front() != BridgeValueKind::I32 ||
-        adaptor.getArgs().empty() ||
-        !adaptor.getArgs().front().getType().isInteger(32)) {
-      return op.emitError("pipe object init requires one i32 local address");
+    if (failed(validateRegistryAbi(op, *desc, adaptor.getArgs()))) {
+      return failure();
     }
     const BridgeFunctionDesc *sizeDesc =
         findBridgeFunction(BridgeEntryId::PipeSize);
     if (!sizeDesc) {
       return op.emitError("bridge registry has no object size entry");
     }
+    StringRef sizeSymbol = sizeDesc->symbolBase;
+    if (op.getSizeCalleeAttr()) {
+      sizeSymbol = op.getSizeCalleeAttr().getValue();
+    }
+    if (!isResolvedSymbolForEntry(sizeSymbol, *sizeDesc)) {
+      return op.emitError() << "resolved size callee '" << sizeSymbol
+                            << "' does not belong to bridge entry 'pipe.size'";
+    }
     ModuleOp module = op->getParentOfType<ModuleOp>();
     Location loc = op.getLoc();
-    StringRef sizeSymbol = sizeDesc->symbolBase;
-    if (auto resolved = op->getAttrOfType<StringAttr>("size_callee")) {
-      sizeSymbol = resolved.getValue();
-    }
     Value size = rewriter
                      .create<func::CallOp>(loc, sizeSymbol,
                                            rewriter.getI64Type(), ValueRange{})
@@ -260,77 +272,40 @@ public:
   matchAndRewrite(BridgeCallOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
-    StringRef callee = op.getCalleeAttr().getValue();
-    const BridgeFunctionDesc *registryDesc = nullptr;
-    if (auto idAttr = op->getAttrOfType<StringAttr>("entry_id")) {
-      registryDesc = findBridgeFunctionById(idAttr.getValue());
+    StringRef entryId = op.getEntryAttr().getValue();
+    auto calleeAttr = op.getCalleeAttr();
+    if (!calleeAttr) {
+      return op.emitError() << "bridge call '" << entryId
+                            << "' has no resolved concrete callee";
     }
+    StringRef callee = calleeAttr.getValue();
+    const BridgeFunctionDesc *registryDesc = findBridgeFunctionById(entryId);
     if (!registryDesc) {
-      registryDesc = findBridgeFunctionBySymbol(callee);
-    }
-    if (!registryDesc) {
-      return op.emitError() << "VPTO bridge call '" << callee
+      return op.emitError() << "VPTO bridge entry '" << entryId
                             << "' has no registered ABI entry";
     }
-    ModuleOp module = op->getParentOfType<ModuleOp>();
-    ValueRange operands = adaptor.getArgs();
-
-    // Stateful entries synthesize their own storage: query the wrapper for
-    // the object size and alloca it on the kernel stack. The storage value
-    // replaces the bridge call result, which must be the only result.
-    bool hasStorage = op.getStorageSizeCalleeAttr() != nullptr;
-    SmallVector<Value> callArgs;
-    Value storage;
-    if (hasStorage) {
-      if (op.getNumResults() != 1) {
-        return op.emitError()
-               << "VPTO bridge call with storage_size_callee must have "
-                  "exactly one result (the storage handle)";
-      }
-      StringRef sizeCallee = op.getStorageSizeCalleeAttr().getValue();
-      if (sizeCallee.empty()) {
-        return op.emitError("VPTO bridge storage size callee is empty");
-      }
-      Value size = rewriter
-                       .create<func::CallOp>(
-                           loc, sizeCallee, rewriter.getI64Type(), ValueRange{})
-                       .getResult(0);
-      if (failed(ensureWrapperDecl(module, state, rewriter, op, sizeCallee,
-                                   /*argTypes=*/{},
-                                   /*resultTypes=*/{rewriter.getI64Type()}))) {
-        return failure();
-      }
-      storage = rewriter.create<LLVM::AllocaOp>(
-          loc, LLVM::LLVMPointerType::get(rewriter.getContext()),
-          rewriter.getI8Type(), size, /*alignment=*/8);
-      callArgs.push_back(storage);
+    if (!isResolvedSymbolForEntry(callee, *registryDesc)) {
+      return op.emitError()
+             << "resolved callee '" << callee
+             << "' does not belong to bridge entry '" << entryId << "'";
     }
-    callArgs.append(operands.begin(), operands.end());
-
+    ModuleOp module = op->getParentOfType<ModuleOp>();
+    ValueRange callArgs = adaptor.getArgs();
     if (failed(validateRegistryAbi(op, *registryDesc, callArgs))) {
       return failure();
     }
-
-    SmallVector<Type> declaredResultTypes;
+    SmallVector<Type> resultTypes;
     for (Type resultType : op.getResultTypes()) {
       Type converted = getTypeConverter()->convertType(resultType);
       if (!converted) {
         return op.emitError() << "VPTO bridge call result type " << resultType
                               << " has no bridge conversion";
       }
-      declaredResultTypes.push_back(converted);
+      resultTypes.push_back(converted);
     }
-    if (!hasStorage &&
-        failed(validateRegistryResults(op, *registryDesc,
-                                       TypeRange(declaredResultTypes)))) {
+    if (failed(validateRegistryResults(op, *registryDesc,
+                                       TypeRange(resultTypes)))) {
       return failure();
-    }
-
-    // A stateful bridge call has a pseudo result used only to carry the
-    // synthesized storage SSA value. The wrapper init entry itself is void.
-    SmallVector<Type> resultTypes;
-    if (!hasStorage) {
-      resultTypes = std::move(declaredResultTypes);
     }
 
     func::CallOp call = rewriter.create<func::CallOp>(
@@ -343,10 +318,6 @@ public:
       return failure();
     }
 
-    if (hasStorage) {
-      rewriter.replaceOp(op, storage);
-      return success();
-    }
     if (call.getNumResults() == 0) {
       rewriter.eraseOp(op);
       return success();
