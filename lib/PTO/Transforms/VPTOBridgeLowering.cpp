@@ -153,7 +153,8 @@ static LogicalResult validateRegistryAbi(Operation *op,
 static LogicalResult validateRegistryResults(Operation *op,
                                              const BridgeFunctionDesc &desc,
                                              TypeRange resultTypes) {
-  if (resultTypes.size() != desc.results.size()) {
+  bool resultCountMismatch = resultTypes.size() != desc.results.size();
+  if (resultCountMismatch) {
     return op->emitError() << "VPTO bridge call to registry entry '"
                            << stringifyBridgeEntryId(desc.id) << "' declares "
                            << resultTypes.size()
