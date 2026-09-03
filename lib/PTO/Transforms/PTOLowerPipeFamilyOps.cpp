@@ -21,9 +21,8 @@
 // TPOP) are resolved here; the generic bridge lowering pass only sees the
 // resulting bridge ops.
 //
-// Routing is whitelist driven: the wrapper callee of every converted op is
-// looked up in the bridge whitelist by IR op name, so this pass holds no
-// hardcoded wrapper entry names. Functions without pipe family ops are
+// Routing is policy driven, while wrapper entries are resolved from the
+// compiler-owned registry. Functions without pipe family ops are
 // left untouched entirely (their tile handles keep flowing through the
 // regular FoldTileBufIntrinsics path).
 //

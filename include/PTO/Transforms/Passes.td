@@ -426,16 +426,12 @@ def PTOLowerDeclarativeBridgeOps : Pass<"pto-lower-declarative-bridge-ops", "mli
   let summary = "Lower whitelist-routed ops through the declarative VPTO "
                 "bridge channel";
   let description = [{
-    Declarative lowering channel of the VPTO C++ interface bridge, and the
-    default channel of every whitelist entry. It rewrites each entry into a
-    void pto.bridge_call using only the whitelist description: each abi row
-    binds a wrapper argument to an IR operand position whose planned
-    alloc_tile address becomes the i64 call argument, and the wrapper
-    specialization is collected from the operand tile types (keyed by the
-    abi role) plus optional enum attributes. Ops needing family semantics
-    (storage lifecycle, address rebinding) opt out with `lowering: custom`
-    and stay on their family pass. Routing is whitelist driven: unrouted
-    ops keep flowing through their regular non-bridge lowering path.
+    Declarative lowering channel of the VPTO C++ interface bridge. The route
+    policy selects registered Cube operations; typed adapters own operand and
+    specialization collection, while the registry owns ABI and renderer
+    selection. Ops needing family semantics (storage lifecycle, address
+    rebinding) stay on their family pass. Unrouted ops keep flowing through
+    their regular non-bridge lowering path.
   }];
   let constructor = "mlir::pto::createPTOLowerDeclarativeBridgeOpsPass()";
   let options = [
