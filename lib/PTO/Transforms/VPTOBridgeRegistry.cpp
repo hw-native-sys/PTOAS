@@ -26,6 +26,9 @@ constexpr BridgeValueKind kPipeFreeArgs[] = {BridgeValueKind::PipeObject};
 constexpr BridgeValueKind kMatmulArgs[] = {BridgeValueKind::I64,
                                            BridgeValueKind::I64,
                                            BridgeValueKind::I64};
+constexpr BridgeValueKind kGemvArgs[] = {BridgeValueKind::I64,
+                                         BridgeValueKind::I64,
+                                         BridgeValueKind::I64};
 
 const BridgeFunctionDesc kRegistry[] = {
     {BridgeEntryId::PipeInit, BridgeFamily::Pipe, BridgeRendererKind::Pipe,
@@ -42,6 +45,9 @@ const BridgeFunctionDesc kRegistry[] = {
     {BridgeEntryId::CubeTMatmul, BridgeFamily::Cube,
      BridgeRendererKind::CubeDirect, "pto.tmatmul", "pto_vpto_tmatmul",
      kMatmulArgs, {}, false},
+    {BridgeEntryId::CubeTgemv, BridgeFamily::Cube,
+     BridgeRendererKind::CubeDirect, "pto.tgemv", "pto_vpto_tgemv", kGemvArgs,
+     {}, false},
 };
 
 } // namespace
@@ -90,6 +96,8 @@ llvm::StringRef pto::stringifyBridgeEntryId(BridgeEntryId id) {
     return "pipe.free";
   case BridgeEntryId::CubeTMatmul:
     return "cube.tmatmul";
+  case BridgeEntryId::CubeTgemv:
+    return "cube.tgemv";
   }
   llvm_unreachable("unknown bridge entry ID");
 }

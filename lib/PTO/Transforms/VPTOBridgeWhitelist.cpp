@@ -662,6 +662,20 @@ pto::loadBridgeWhitelist(llvm::StringRef optionValue,
         entry.abi = {{"i64", 2, "dst", "result_tile"},
                      {"i64", 0, "lhs", "left_tile"},
                      {"i64", 1, "rhs", "right_tile"}};
+      if (policyOr->routesOp("cube", "pto.tgemv")) {
+        BridgeWhitelistEntry entry;
+        entry.op = "pto.tgemv";
+        entry.wrapper = "cube";
+        entry.entry = "pto_vpto_tgemv";
+        entry.call = "pto::TGEMV";
+        entry.tmplArgs = {"acc_phase"};
+        entry.tmplMap.push_back({"attr", "acc_phase", "AccPhase",
+                                 "pto::AccPhase", "Unspecified"});
+        entry.abi = {{"i64", 2, "dst", "result_tile"},
+                     {"i64", 0, "lhs", "left_tile"},
+                     {"i64", 1, "rhs", "right_tile"}};
+        result->bridgeOps.push_back(std::move(entry));
+      }
         result->bridgeOps.push_back(std::move(entry));
         result->wrappers.push_back({"cube", {"pto/pto-inst.hpp"}, "cube"});
       }

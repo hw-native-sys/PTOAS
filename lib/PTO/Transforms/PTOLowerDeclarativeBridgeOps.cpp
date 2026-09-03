@@ -233,16 +233,37 @@ struct PTOLowerDeclarativeBridgeOpsPass final
       // from lowering (matching the family pass continue semantics); the
       // pass fails at the end when any error was recorded.
       bool opFailed = false;
+      Value directDst;
+      Value directLhs;
+      Value directRhs;
+      Value directResult;
+      Attribute directAccPhase;
       if (auto matmul = dyn_cast<TMatmulOp>(op)) {
+        directDst = matmul.getDst();
+        directLhs = matmul.getLhs();
+        directRhs = matmul.getRhs();
+        directAccPhase = matmul.getAccPhaseAttr();
+        if (matmul->getNumResults() == 1) {
+          directResult = matmul.getResult();
+        }
+      } else if (auto gemv = dyn_cast<TGemvOp>(op)) {
+        directDst = gemv.getDst();
+        directLhs = gemv.getLhs();
+        directRhs = gemv.getRhs();
+        directAccPhase = gemv.getAccPhaseAttr();
+        if (gemv->getNumResults() == 1) {
+          directResult = gemv.getResult();
+        }
+      }
+      if (directDst) {
         const BridgeFunctionDesc *desc =
             findBridgeFunctionByOp(op->getName().getStringRef());
-        if (!desc || desc->id != BridgeEntryId::CubeTMatmul) {
-          op->emitError("VPTO tmatmul bridge has no registered typed adapter");
+        if (!desc || desc->renderer != BridgeRendererKind::CubeDirect) {
+          op->emitError("VPTO Cube op has no registered direct adapter");
           hadError = true;
           continue;
         }
-        SmallVector<Value> tiles = {matmul.getDst(), matmul.getLhs(),
-                                    matmul.getRhs()};
+        SmallVector<Value> tiles = {directDst, directLhs, directRhs};
         llvm::StringRef roles[] = {"result_tile", "left_tile", "right_tile"};
         SmallVector<Value> callArgs;
         SmallVector<NamedAttribute> structuredSpec;
@@ -287,7 +308,7 @@ struct PTOLowerDeclarativeBridgeOpsPass final
           continue;
         }
         structuredSpec.push_back(
-            builder.getNamedAttr("acc_phase", matmul.getAccPhaseAttr()));
+            builder.getNamedAttr("acc_phase", directAccPhase));
         spec.addField(op, deriveEntrySpecKey(op->getName().getStringRef()),
                       desc->symbolBase);
         auto call = builder.create<BridgeCallOp>(
@@ -296,10 +317,10 @@ struct PTOLowerDeclarativeBridgeOpsPass final
                                       stringifyBridgeEntryId(desc->id)));
         call->setAttr("spec", DictionaryAttr::get(builder.getContext(),
                                                    structuredSpec));
-        if (matmul->getNumResults() == 1) {
-          matmul.getResult().replaceAllUsesWith(matmul.getDst());
+        if (directResult) {
+          directResult.replaceAllUsesWith(directDst);
         }
-        matmul.erase();
+        op->erase();
         continue;
       }
       if (op->getNumResults() > 0) {

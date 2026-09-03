@@ -45,6 +45,7 @@ enum class BridgeEntryId : uint8_t {
   PipePop,
   PipeFree,
   CubeTMatmul,
+  CubeTgemv,
 };
 
 struct BridgeFunctionDesc {
