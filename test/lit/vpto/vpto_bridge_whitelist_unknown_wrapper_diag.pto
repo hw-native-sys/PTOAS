@@ -19,7 +19,7 @@
 
 // RUN: not pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-unknown-wrapper.yaml" "-pto-emit-vpto-bridge-wrapper=whitelist-path=%S/Inputs/vpto-bridge-whitelist-unknown-wrapper.yaml" 2>&1 | FileCheck %s
 
-// CHECK: error: VPTO bridge: whitelist entries name the custom wrapper 'pipe_unfinished_port', which has no dedicated renderer in the bridge wrapper generator (available: pipe)
+// CHECK: VPTO bridge policy: legacy key 'bridge_ops' is not allowed
 
 module {
   func.func private @unknown_wrapper(%addr: i32)

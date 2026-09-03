@@ -18,17 +18,17 @@
 // RUN: pto-test-opt %s -pto-lower-pipe-family-ops -pto-emit-vpto-bridge-wrapper | FileCheck %s --check-prefix=WRAP
 
 // SPEC-LABEL: func.func private @bridge_cube
-// SPEC-SAME: pto.vpto.bridge.func_spec = {
-// SPEC-SAME: split = "pto::TileSplitAxis::TILE_LEFT_RIGHT"
+// SPEC: pto.bridge_object_create
+// SPEC-SAME: spec = #pto.bridge_pipe_spec<{{.*}}split = "pto::TileSplitAxis::TILE_LEFT_RIGHT"
 
 // SPEC-LABEL: func.func private @bridge_vector
-// SPEC-SAME: pto.vpto.bridge.func_spec = {
-// SPEC-SAME: split = "pto::TileSplitAxis::TILE_LEFT_RIGHT"
+// SPEC: pto.bridge_object_create
+// SPEC-SAME: spec = #pto.bridge_pipe_spec<{{.*}}split = "pto::TileSplitAxis::TILE_LEFT_RIGHT"
 
 // WRAP: module attributes {{{.*}}pto.vpto.bridge.wrapper_source = "
-// WRAP-SAME: pto::TPUSH<Pipe, ProducerTile, pto::TileSplitAxis::TILE_LEFT_RIGHT>(pipe, tile);
-// WRAP-SAME: pto::TPOP<Pipe, ConsumerTile, pto::TileSplitAxis::TILE_LEFT_RIGHT>(pipe, tile);
-// WRAP-SAME: pto::TFREE<Pipe, pto::TileSplitAxis::TILE_LEFT_RIGHT>(pipe);
+// WRAP-SAME: pto::TPUSH<Pipe__0, ProducerTile__0, pto::TileSplitAxis::TILE_LEFT_RIGHT>(pipe, tile);
+// WRAP-SAME: pto::TPOP<Pipe__1, ConsumerTile__1, pto::TileSplitAxis::TILE_LEFT_RIGHT>(pipe, tile);
+// WRAP-SAME: pto::TFREE<Pipe__1, pto::TileSplitAxis::TILE_LEFT_RIGHT>(pipe);
 
 module {
   func.func private @bridge_cube(%addr: i32)
