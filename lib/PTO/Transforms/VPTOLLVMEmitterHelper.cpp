@@ -14,9 +14,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-// https://discourse.llvm.org/t/matchandrewrite-hiding-virtual-functions/84933/8
-#pragma GCC diagnostic ignored "-Woverloaded-virtual"
-
 #include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/VPTOLLVMEmitterHelper.h"
 
