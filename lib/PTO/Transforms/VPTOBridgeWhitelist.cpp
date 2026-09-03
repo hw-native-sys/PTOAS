@@ -155,6 +155,19 @@ FailureOr<BridgeRoutePolicy> pto::parseBridgeRoutePolicyFromBuffer(
     llvm::StringRef content, llvm::StringRef sourceName,
     llvm::raw_ostream &diagOS) {
   BridgeRoutePolicy policy;
+  // Route policy is intentionally closed over routing keys. Reject legacy
+  // bridge_ops/wrapper/ABI fields instead of silently ignoring them; doing
+  // so prevents an external YAML file from changing compiler-owned ABI.
+  for (llvm::StringRef key : {"bridge_ops", "wrappers", "entry", "abi",
+                              "operand", "role", "call", "tmpl_args",
+                              "tmpl_map", "includes", "storage_size_entry"}) {
+    if (content.contains((key + ":").str())) {
+      diagOS << "VPTO bridge policy: legacy key '" << key
+             << "' is not allowed; policy YAML only selects routed families "
+                "and ops in '" << sourceName << "'\n";
+      return failure();
+    }
+  }
   llvm::yaml::Input input(content);
   input >> policy;
   if (std::error_code error = input.error()) {

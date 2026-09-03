@@ -155,26 +155,21 @@ struct PTOLowerPipeFamilyOpsPass final
     // The whitelist always resolves through the formal chain (pass option,
     // PTOAS_VPTO_BRIDGE_WHITELIST, built-in default), so routing is
     // guaranteed; `whitelistName` is only for diagnostics.
-    std::string whitelistName;
-    FailureOr<BridgeWhitelist> whitelistOr =
-        loadBridgeWhitelist(whitelistPath, llvm::errs(), &whitelistName);
-    if (failed(whitelistOr)) {
+    FailureOr<BridgeRoutePolicy> policyOr =
+        loadBridgeRoutePolicy(whitelistPath, llvm::errs());
+    if (failed(policyOr)) {
       signalPassFailure();
       return;
     }
-    const BridgeWhitelist &whitelist = *whitelistOr;
+    if (!policyOr->routesFamily("pipe")) {
+      return;
+    }
 
-    // Resolves the whitelist entry routing `op`, or nullptr after emitting
-    // a diagnostic. Pipe ops have no non-bridge VPTO lowering, so a missing
-    // routing entry is a hard error rather than a silent fallback.
-    auto routeOp = [&](Operation *op) -> const BridgeWhitelistEntry * {
-      StringRef opName = op->getName().getStringRef();
-      const BridgeWhitelistEntry *entry = whitelist.findOp(opName);
-      if (!entry) {
-        op->emitError()
-            << "VPTO pipe bridge: '" << opName
-            << "' is not routed in the bridge whitelist '" << whitelistName
-            << "'";
+    auto routeOp = [&](Operation *op) -> const BridgeFunctionDesc * {
+      const BridgeFunctionDesc *entry =
+          findBridgeFunctionByOp(op->getName().getStringRef());
+      if (!entry || entry->family != BridgeFamily::Pipe) {
+        op->emitError("VPTO pipe bridge op has no registered handler");
         hadError = true;
       }
       return entry;
@@ -184,15 +179,14 @@ struct PTOLowerPipeFamilyOpsPass final
     // The SSA pipe value becomes the bridge call result (the storage handle);
     // push/pop/free below consume that same value.
     for (InitializeL2LPipeOp init : inits) {
-      const BridgeWhitelistEntry *entry = routeOp(init);
+      const BridgeFunctionDesc *entry = routeOp(init);
       if (!entry) {
         continue;
       }
-      if (entry->storageSizeEntry.empty()) {
-        init.emitError()
-            << "VPTO pipe bridge: whitelist entry '" << entry->entry
-            << "' must declare a storage_size_entry for the stateful pipe "
-               "storage";
+      const BridgeFunctionDesc *sizeEntry =
+          findBridgeFunction(BridgeEntryId::PipeSize);
+      if (!sizeEntry) {
+        init.emitError("VPTO pipe bridge registry has no object size entry");
         hadError = true;
         continue;
       }
@@ -213,12 +207,12 @@ struct PTOLowerPipeFamilyOpsPass final
         continue;
       }
       spec.addUniqueField(init, kBridgeSpecPipeKey, *pipeTokOr);
-      spec.addUniqueField(init, kBridgeSpecEntryInitKey, entry->entry);
+      spec.addUniqueField(init, kBridgeSpecEntryInitKey, entry->symbolBase);
       spec.addUniqueField(init, kBridgeSpecEntrySizeKey,
-                          entry->storageSizeEntry);
+                          sizeEntry->symbolBase);
       builder.setInsertionPoint(init);
       BridgeObjectCreateOp call = builder.create<BridgeObjectCreateOp>(
-          init.getLoc(), init.getPipe().getType(), entry->entry,
+          init.getLoc(), init.getPipe().getType(), entry->symbolBase,
           ValueRange{init.getLocalAddr()});
       auto pipeSpec = DictionaryAttr::get(
           builder.getContext(),
@@ -266,7 +260,7 @@ struct PTOLowerPipeFamilyOpsPass final
       return true;
     };
     for (TPopOp pop : pops) {
-      const BridgeWhitelistEntry *entry = routeOp(pop);
+      const BridgeFunctionDesc *entry = routeOp(pop);
       if (!entry) {
         continue;
       }
@@ -294,13 +288,13 @@ struct PTOLowerPipeFamilyOpsPass final
         continue;
       }
       spec.addUniqueField(pop, kBridgeSpecConsumerTileKey, *consumerTokOr);
-      spec.addUniqueField(pop, kBridgeSpecEntryPopKey, entry->entry);
+      spec.addUniqueField(pop, kBridgeSpecEntryPopKey, entry->symbolBase);
       builder.setInsertionPoint(pop);
       BridgeCallOp call = builder.create<BridgeCallOp>(
           pop.getLoc(), /*results=*/TypeRange{builder.getI64Type()},
-          /*callee=*/entry->entry, /*storage_size_callee=*/nullptr,
+          /*callee=*/entry->symbolBase, /*storage_size_callee=*/nullptr,
           /*args=*/ValueRange{pop.getPipeHandle()});
-      annotatePipeBridgeCall(call, entry->entry, pop.getPipeHandle());
+      annotatePipeBridgeCall(call, entry->symbolBase, pop.getPipeHandle());
       popAddresses[pop.getTile()] = call.getResults().front();
       pop.erase();
     }
@@ -337,7 +331,7 @@ struct PTOLowerPipeFamilyOpsPass final
 
     // Phase 4: tpush -> bridge push call on the planned alloc_tile address.
     for (TPushOp push : pushes) {
-      const BridgeWhitelistEntry *entry = routeOp(push);
+      const BridgeFunctionDesc *entry = routeOp(push);
       if (!entry) {
         continue;
       }
@@ -365,18 +359,18 @@ struct PTOLowerPipeFamilyOpsPass final
         continue;
       }
       spec.addUniqueField(push, kBridgeSpecProducerTileKey, *producerTokOr);
-      spec.addUniqueField(push, kBridgeSpecEntryPushKey, entry->entry);
+      spec.addUniqueField(push, kBridgeSpecEntryPushKey, entry->symbolBase);
       builder.setInsertionPoint(push);
       BridgeCallOp call = emitVoidBridgeCall(
-          builder, push.getLoc(), entry->entry,
+          builder, push.getLoc(), entry->symbolBase,
           ValueRange{push.getPipeHandle(), alloc.getAddr()});
-      annotatePipeBridgeCall(call, entry->entry, push.getPipeHandle());
+      annotatePipeBridgeCall(call, entry->symbolBase, push.getPipeHandle());
       push.erase();
     }
 
     // Phase 5: tfree -> bridge free call.
     for (TFreeOp free : frees) {
-      const BridgeWhitelistEntry *entry = routeOp(free);
+      const BridgeFunctionDesc *entry = routeOp(free);
       if (!entry) {
         continue;
       }
@@ -389,12 +383,12 @@ struct PTOLowerPipeFamilyOpsPass final
       if (!checkSplitConsistency(free, free.getSplit(), "TFREE")) {
         continue;
       }
-      spec.addUniqueField(free, kBridgeSpecEntryFreeKey, entry->entry);
+      spec.addUniqueField(free, kBridgeSpecEntryFreeKey, entry->symbolBase);
       builder.setInsertionPoint(free);
       BridgeCallOp call = emitVoidBridgeCall(
-          builder, free.getLoc(), entry->entry,
+          builder, free.getLoc(), entry->symbolBase,
           ValueRange{free.getPipeHandle()});
-      annotatePipeBridgeCall(call, entry->entry, free.getPipeHandle());
+      annotatePipeBridgeCall(call, entry->symbolBase, free.getPipeHandle());
       free.erase();
     }
 
