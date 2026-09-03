@@ -440,7 +440,7 @@
   | Operand | Type | Description |
   |---|---|---|
   | `src` | `!pto.ptr<T, ub>` | UB base pointer |
-  | `offsets` | `!pto.vmi.vreg<L×i32>` | Per-lane element offset |
+  | `offsets` | `!pto.vmi.vreg<L×i32>` or `!pto.vmi.vreg<L×ui16>` | Per-lane element offset |
   | `mask` | `!pto.vmi.mask<L>` | Governing predicate |
 
 - **results:** `!pto.vmi.vreg<L×T>`
@@ -492,7 +492,7 @@
   |---|---|---|
   | `value` | `!pto.vmi.vreg<L×T>` | Values to scatter |
   | `dest` | `!pto.ptr<T, ub>` | UB destination base pointer |
-  | `offsets` | `!pto.vmi.vreg<L×i32>` | Per-lane element offset |
+  | `offsets` | `!pto.vmi.vreg<L×i32>` or `!pto.vmi.vreg<L×ui16>` | Per-lane element offset |
   | `mask` | `!pto.vmi.mask<L>` | Governing predicate |
 
 - **results:** *(none)*

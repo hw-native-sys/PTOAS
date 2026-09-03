@@ -88,9 +88,238 @@ type-construction choices.
 | `V<64×f16>` | 128B | 1 | 1 | low 64 f16 valid |
 | `V<64×i8>` | 64B | 1 | 1 | low 64 i8 valid |
 
-See the [Design Doc](../PTO-vmi-design.md) for detailed physical layout
-diagrams (contiguous, parity EVEN/ODD, sub-part, stride-4 interleave) for each
-logical type.
+### `V<256×f32>`: 4 physical regs (K=4)
+
+**Logical view**
+
+```text
+┌────┬────┬────┬─────┬──────┬──────┐
+│ x0 │ x1 │ x2 │ ... │ x254 │ x255 │
+└────┴────┴────┴─────┴──────┴──────┘
+                  256 lane
+```
+
+**Physical view (contiguous)** — 4 physical regs, each BlockLane = 32B = 8 f32 lanes:
+
+```text
+   BL0       BL1               BL7
+┌───────┬───────┬───┬───────┐
+│ x0..7 │ x8..15│...│x56..63│
+└───────┴───────┴───┴───────┘
+            P0 (256B)
+
+   BL0        BL1              BL7
+┌────────┬────────┬───┬─────────┐
+│x64..71 │x72..79 │...│x120..127│
+└────────┴────────┴───┴─────────┘
+            P1 (256B)
+
+   BL0          BL1             BL7
+┌──────────┬──────────┬───┬──────────┐
+│x128..135 │x136..143 │...│x184..191 │
+└──────────┴──────────┴───┴──────────┘
+            P2 (256B)
+
+   BL0          BL1             BL7
+┌──────────┬──────────┬───┬──────────┐
+│x192..199 │x200..207 │...│x248..255 │
+└──────────┴──────────┴───┴──────────┘
+            P3 (256B)
+```
+
+**Physical view (non-contiguous, parity EVEN/ODD)** — even lanes in P0/P2, odd
+lanes in P1/P3 (typical source: `V<256×f16> -> V<256×f32>` widening preserves
+parity; all 4 regs carry 64 valid lanes each):
+
+```text
+ P0 (chunk0 EVEN)   P1 (chunk0 ODD)    P2 (chunk1 EVEN)   P3 (chunk1 ODD)
+┌────┬────┬─────┐ ┌────┬────┬─────┐ ┌──────┬──────┬─────┐ ┌──────┬──────┬─────┐
+│ x0 │ x2 │x126 │ │ x1 │ x3 │x127 │ │ x128 │ x130 │x254 │ │ x129 │ x131 │x255 │
+└────┴────┴─────┘ └────┴────┴─────┘ └──────┴──────┴─────┘ └──────┴──────┴─────┘
+    64 lane            64 lane            64 lane            64 lane
+```
+
+> Restore contiguous: `INTLV_B32(P0, P1) -> [x0..x127]`, `INTLV_B32(P2, P3) -> [x128..x255]`, then concatenate in chunk order.
+
+**Physical view (non-contiguous, P0/P1/P2/P3)** — 4-way stride-4 interleave:
+every 4 logical elements land in one reg each (`x0,x4,...` -> P0; `x1,x5,...` -> P1;
+`x2,x6,...` -> P2; `x3,x7,...` -> P3); all 4 regs carry 64 valid lanes each
+(corresponds to the sub_part / part_T 4-way axis):
+
+```text
+   P0                   P1                   P2                   P3
+┌────┬────┬─────┐  ┌────┬────┬─────┐  ┌────┬────┬─────┐  ┌────┬────┬─────┐
+│ x0 │ x4 │x252 │  │ x1 │ x5 │x253 │  │ x2 │ x6 │x254 │  │ x3 │ x7 │x255 │
+└────┴────┴─────┘  └────┴────┴─────┘  └────┴────┴─────┘  └────┴────┴─────┘
+     64 lane              64 lane              64 lane              64 lane
+```
+
+### `V<256×f16>`: 2 physical regs (K=2)
+
+**Logical view**
+
+```text
+┌────┬────┬────┬─────┬──────┬──────┐
+│ x0 │ x1 │ x2 │ ... │ x254 │ x255 │
+└────┴────┴────┴─────┴──────┴──────┘
+                  256 lane
+```
+
+**Physical view (contiguous)** — 2 physical regs, each BlockLane = 32B = 16 fp16 lanes:
+
+```text
+   BL0           BL1               BL7
+┌──────────┬──────────┬───┬───────────┐
+│ x0..x15  │ x16..x31 │...│x112..x127 │
+└──────────┴──────────┴───┴───────────┘
+                  P0 (256B)
+
+   BL0           BL1               BL7
+┌──────────┬──────────┬───┬───────────┐
+│x128..x143│x144..x159│...│x240..x255 │
+└──────────┴──────────┴───┴───────────┘
+                  P1 (256B)
+```
+
+**Physical view (non-contiguous, parity EVEN/ODD)** — even lanes in P0, odd
+lanes in P1 (e.g. after a deinterleaved dual load, which preserves parity; both
+regs carry 128 valid lanes each):
+
+```text
+   P0 (EVEN)                                   P1 (ODD)
+┌────┬────┬────┬─────┬──────┬──────┐  ┌────┬────┬────┬─────┬──────┬──────┐
+│ x0 │ x2 │ x4 │ ... │ x252 │ x254 │  │ x1 │ x3 │ x5 │ ... │ x253 │ x255 │
+└────┴────┴────┴─────┴──────┴──────┘  └────┴────┴────┴─────┴──────┴──────┘
+   128 even lanes valid                     128 odd lanes valid
+```
+
+### `V<256×i8>`: 1 physical reg (K=1)
+
+**Logical view**
+
+```text
+┌────┬────┬────┬─────┬──────┬──────┐
+│ x0 │ x1 │ x2 │ ... │ x254 │ x255 │
+└────┴────┴────┴─────┴──────┴──────┘
+                  256 lane
+```
+
+**Physical view (contiguous)** — 1 physical reg, each BlockLane = 32B = 32 i8 lanes:
+
+```text
+   BL0          BL1                  BL7
+┌─────────────┬─────────────┬───┬──────────────┐
+│ x0 ... x31  │ x32 ... x63 │...│x224 ... x255 │
+└─────────────┴─────────────┴───┴──────────────┘
+                   P0 (256B)
+```
+
+### `V<128×f32>`: 2 physical regs (K=2)
+
+**Logical view**
+
+```text
+┌────┬────┬────┬─────┬──────┬──────┐
+│ x0 │ x1 │ x2 │ ... │ x127 │ x128 │
+└────┴────┴────┴─────┴──────┴──────┘
+                  128 lane
+```
+
+**Physical view (contiguous)** — 2 physical regs, each BlockLane = 32B = 8 f32 lanes:
+
+```text
+   BL0       BL1               BL7
+┌───────┬───────┬───┬───────┐
+│ x0..7 │ x8..15│...│x56..63│
+└───────┴───────┴───┴───────┘
+            P0 (256B)
+
+   BL0        BL1              BL7
+┌────────┬────────┬───┬─────────┐
+│x64..71 │x72..79 │...│x120..127│
+└────────┴────────┴───┴─────────┘
+            P1 (256B)
+```
+
+**Physical view (non-contiguous, parity EVEN/ODD)** — even lanes in P0, odd lanes in P1:
+
+```text
+ P0 (chunk0 EVEN)   P1 (chunk0 ODD)
+┌────┬────┬─────┐ ┌────┬────┬─────┐
+│ x0 │ x2 │x126 │ │ x1 │ x3 │x127 │
+└────┴────┴─────┘ └────┴────┴─────┘
+    64 lane            64 lane
+```
+
+### `V<64×f16>`: 1 partial physical reg (K=1, low 64 lanes valid)
+
+**Logical view**
+
+```text
+┌────┬────┬────┬─────┬──────┬──────┐
+│ x0 │ x1 │ x2 │ ... │ x62  │ x63  │
+└────┴────┴────┴─────┴──────┴──────┘
+                  64 lane
+```
+
+**Physical view (contiguous)** — 1 physical reg, low 64 lanes valid, each
+BlockLane = 16 fp16 lanes:
+
+```text
+   BL0          BL1         BL2          BL3          BL4   BL5   BL6   BL7
+┌──────────┬──────────┬──────────┬──────────┬──────┬──────┬──────┬──────┐
+│ x0..x15  │ x16..x31 │ x32..x47 │ x48..x63 │      │      │      │      │
+└──────────┴──────────┴──────────┴──────────┴──────┴──────┴──────┴──────┘
+<------------- 128B logical payload -------------><---- 128B outside logical value ---->
+                          P0 (256B)
+```
+
+**Physical view (non-contiguous, part EVEN/ODD)** — single `V<64×f32> -> V<64×f16>`
+narrowing carrier: the 64 valid fp16 sit on even/odd positions of the 128
+physical lanes:
+
+```text
+   EVEN carrier (phys lanes 0,2,...,126 valid)
+┌────┬───┬────┬───┬─────┬─────┬───┬─────┬───┐
+│ x0 │ _ │ x1 │ _ │ ... │ x62 │ _ │ x63 │ _ │
+└────┴───┴────┴───┴─────┴─────┴───┴─────┴───┘
+```
+
+### `V<64×fp8>`: 1 partial physical reg (K=1, low 64 lanes valid)
+
+**Logical view**
+
+```text
+┌────┬────┬────┬─────┬──────┬──────┐
+│ x0 │ x1 │ x2 │ ... │ x62  │ x63  │
+└────┴────┴────┴─────┴──────┴──────┘
+                  64 lane
+```
+
+**Physical view (contiguous)** — 1 physical reg, low 64 lanes valid, each
+BlockLane = 32 fp8 lanes:
+
+```text
+      BL0           BL1          BL2   BL3   BL4   BL5   BL6   BL7
+┌─────────────┬─────────────┬──────┬──────┬──────┬──────┬──────┬──────┐
+│ x0 ... x31  │ x32 ... x63 │      │      │      │      │      │      │
+└─────────────┴─────────────┴──────┴──────┴──────┴──────┴──────┴──────┘
+<-- 64B logical payload  --><------- 192B outside logical value ------>
+                          P0 (256B)
+```
+
+**Physical view (non-contiguous, sub_part P0)** — from `V<64×f32> -> V<64×fp8>`
+via `vcvt`: instead of placing the low 64B contiguously, the 0th byte of each 4B
+group holds the valid fp8:
+
+```text
+P0: 256B fp8 carrier, viewed as 64 groups × 4B, only the P0 slot is valid per group
+┌────────────┬────────────┬─────┬─────────────┐
+│ x0  _  _  _│ x1  _  _  _│ ... │ x63  _  _  _│
+│ P0 P1 P2 P3│ P0 P1 P2 P3│     │ P0 P1 P2 P3 │
+└────────────┴────────────┴─────┴─────────────┘
+   grp0          grp1              grp63
+```
 
 ### `!pto.vmi.mask<L>`
 

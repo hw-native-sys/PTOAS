@@ -52,7 +52,7 @@
 | 44 | `pto.vmi.vmula` | 7: SFU | A | Fused multiply-add |
 | 45 | `pto.vmi.vchist` | 7: SFU | B | Cumulative histogram (half-axis) |
 | 46 | `pto.vmi.vdhist` | 7: SFU | B | Distribution histogram (plain per-bin) |
-| 47 | `pto.vmi.vgather` | 7: SFU | C | Indexed gather (B32) |
+| 47 | `pto.vmi.vgather` | 7: SFU | C | Indexed gather (B32/B16) |
 | 48 | `pto.vmi.vgatherb` | 7: SFU | C | Byte-granularity indexed gather |
 | 49 | `pto.vmi.vscatter` | 7: SFU | C | Indexed scatter |
 | 50 | `pto.vmi.create_mask` | 8: Predicate | gen | Prefix / first-N tail mask |
