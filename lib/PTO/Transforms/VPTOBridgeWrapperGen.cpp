@@ -32,7 +32,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "PTO/IR/PTO.h"
 #include "PTO/Transforms/VPTOBridgeTokens.h"
+#include "PTO/Transforms/VPTOBridgeRegistry.h"
 #include "PTO/Transforms/VPTOBridgeWhitelist.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
@@ -43,6 +45,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSet.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/Support/raw_ostream.h"
 #include <map>
 #include <string>
@@ -450,12 +453,133 @@ buildCustomTypedefDecls(ModuleOp module, const BridgeWhitelist &whitelist,
   return decls;
 }
 
+static FailureOr<std::string> renderStructuredTile(DictionaryAttr tile) {
+  auto element = tile.getAs<TypeAttr>("element_type");
+  auto shape = tile.getAs<DenseI64ArrayAttr>("shape");
+  auto valid = tile.getAs<DenseI64ArrayAttr>("valid_shape");
+  auto memory = tile.getAs<AddressSpaceAttr>("memory_space");
+  auto bLayout = tile.getAs<IntegerAttr>("b_layout");
+  auto sLayout = tile.getAs<IntegerAttr>("s_layout");
+  auto fractal = tile.getAs<IntegerAttr>("s_fractal");
+  if (!element || !shape || !valid || !memory || !bLayout || !sLayout ||
+      !fractal || shape.size() != 2 || valid.size() != 2) {
+    return failure();
+  }
+  llvm::StringRef tileKind;
+  switch (memory.getAddressSpace()) {
+  case AddressSpace::LEFT: tileKind = "Left"; break;
+  case AddressSpace::RIGHT: tileKind = "Right"; break;
+  case AddressSpace::ACC: tileKind = "Acc"; break;
+  case AddressSpace::MAT: tileKind = "Mat"; break;
+  case AddressSpace::VEC: tileKind = "Vec"; break;
+  case AddressSpace::BIAS: tileKind = "Bias"; break;
+  case AddressSpace::SCALING: tileKind = "Scaling"; break;
+  default: return failure();
+  }
+  llvm::StringRef blockLayout = bLayout.getInt() == 0 ? "RowMajor" : "ColMajor";
+  std::string token = "pto::Tile<pto::TileType::" + tileKind.str() + ", " +
+      buildBridgeElementTypeToken(element.getValue()) + ", " +
+      std::to_string(shape[0]) + ", " + std::to_string(shape[1]) +
+      ", pto::BLayout::" + blockLayout.str() + ", " +
+      std::to_string(valid[0]) + ", " + std::to_string(valid[1]);
+  if (sLayout.getInt() != 0) {
+    llvm::StringRef storageLayout =
+        sLayout.getInt() == 1 ? "RowMajor" : "ColMajor";
+    token += ", pto::SLayout::" + storageLayout.str() + ", " +
+             std::to_string(fractal.getInt());
+  }
+  return token + ">";
+}
+
+static FailureOr<std::string> renderCubeInstance(BridgeCallOp call,
+                                                  llvm::StringRef symbol) {
+  auto entryId = call->getAttrOfType<StringAttr>("entry_id");
+  auto spec = call->getAttrOfType<DictionaryAttr>("spec");
+  if (!entryId || !spec) {
+    return failure();
+  }
+  auto result = renderStructuredTile(spec.getAs<DictionaryAttr>("result_tile"));
+  auto left = renderStructuredTile(spec.getAs<DictionaryAttr>("left_tile"));
+  auto right = renderStructuredTile(spec.getAs<DictionaryAttr>("right_tile"));
+  if (failed(result) || failed(left) || failed(right)) {
+    return failure();
+  }
+  llvm::StringRef callName;
+  if (entryId.getValue() == "cube.tmatmul") {
+    callName = "TMATMUL";
+  } else if (entryId.getValue() == "cube.tgemv") {
+    callName = "TGEMV";
+  } else {
+    return failure();
+  }
+  std::string source;
+  llvm::raw_string_ostream os(source);
+  os << "#include <pto/pto-inst.hpp>\n#include <stdint.h>\n"
+     << "#ifdef __DAV_CUBE__\n"
+     << "extern \"C\" [aicore] void " << symbol
+     << "(uint64_t dstAddress, uint64_t lhsAddress, uint64_t rhsAddress) {\n"
+     << "  using ResultTile = " << *result << ";\n"
+     << "  using LeftTile = " << *left << ";\n"
+     << "  using RightTile = " << *right << ";\n"
+     << "  ResultTile dst; LeftTile lhs; RightTile rhs;\n"
+     << "  pto::TASSIGN_IMPL(dst, dstAddress);\n"
+     << "  pto::TASSIGN_IMPL(lhs, lhsAddress);\n"
+     << "  pto::TASSIGN_IMPL(rhs, rhsAddress);\n"
+     << "  pto::" << callName << "(dst, lhs, rhs);\n}\n#endif\n";
+  os.flush();
+  return source;
+}
+
+static FailureOr<std::string> resolveCubeInstances(ModuleOp module) {
+  llvm::StringMap<std::pair<std::string, std::string>> instances;
+  std::string source;
+  unsigned nextId = 0;
+  bool failedRender = false;
+  module.walk([&](BridgeCallOp call) {
+    auto key = call->getAttrOfType<StringAttr>("instance_key");
+    auto entryId = call->getAttrOfType<StringAttr>("entry_id");
+    if (!key || !entryId) {
+      return;
+    }
+    auto found = instances.find(key.getValue());
+    if (found == instances.end()) {
+      const BridgeFunctionDesc *desc =
+          findBridgeFunctionBySymbol(call.getCallee());
+      if (!desc) {
+        failedRender = true;
+        return;
+      }
+      std::string symbol = desc->symbolBase.str() + "__" +
+                           std::to_string(nextId++);
+      auto rendered = renderCubeInstance(call, symbol);
+      if (failed(rendered)) {
+        failedRender = true;
+        return;
+      }
+      found = instances.try_emplace(key.getValue(), symbol, *rendered).first;
+      source += found->second.second;
+    }
+    call.setCalleeAttr(StringAttr::get(module.getContext(), found->second.first));
+  });
+  if (failedRender) {
+    module.emitError("cannot resolve structured Cube bridge instance");
+    return failure();
+  }
+  return source;
+}
+
 struct VPTOBridgeWrapperGenPass final
     : public impl::VPTOBridgeWrapperGenBase<VPTOBridgeWrapperGenPass> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(VPTOBridgeWrapperGenPass)
 
   void runOnOperation() override {
     ModuleOp module = getOperation();
+    FailureOr<std::string> cubeSourceOr = resolveCubeInstances(module);
+    if (failed(cubeSourceOr)) {
+      signalPassFailure();
+      return;
+    }
+    std::string cubeSource = std::move(*cubeSourceOr);
 
     // Merge the per-function specs into the module spec first: the family
     // pass instances may have run concurrently and only write their own
@@ -469,7 +593,11 @@ struct VPTOBridgeWrapperGenPass final
     auto specAttr =
         module->getAttrOfType<DictionaryAttr>(kBridgeSpecAttrName);
     if (!specAttr) {
-      // No bridge specialization was collected; nothing to generate.
+      if (!cubeSource.empty()) {
+        OpBuilder builder(module);
+        module->setAttr(kBridgeWrapperSourceAttrName,
+                        builder.getStringAttr(cubeSource));
+      }
       return;
     }
 
@@ -498,20 +626,10 @@ struct VPTOBridgeWrapperGenPass final
       if (!llvm::is_contained(usedWrappers, StringRef(entry.wrapper)))
         usedWrappers.push_back(entry.wrapper);
     }
-    if (usedWrappers.size() != 1) {
-      InFlightDiagnostic diag = module.emitError();
-      if (usedWrappers.empty()) {
-        diag << "VPTO bridge: the collected specialization names no wrapper "
-                "entry declared in the bridge whitelist";
-      } else {
-        diag << "VPTO bridge: mixing the ";
-        for (auto [index, wrapper] : llvm::enumerate(usedWrappers)) {
-          if (index)
-            diag << " and ";
-          diag << "'" << wrapper << "'";
-        }
-        diag << " bridge wrappers in one module is not supported yet";
-      }
+    if (usedWrappers.empty()) {
+      module.emitError()
+          << "VPTO bridge: the collected specialization names no wrapper "
+             "entry declared in the bridge whitelist";
       signalPassFailure();
       return;
     }
@@ -622,12 +740,32 @@ struct VPTOBridgeWrapperGenPass final
                                                specAttr, usedEntries);
       }
     }
+    if (succeeded(source) && usedWrappers.size() > 1) {
+      for (StringRef wrapper :
+           ArrayRef<StringRef>(usedWrappers).drop_front()) {
+        const BridgeWrapperDecl *decl = whitelistOr->findWrapper(wrapper);
+        if (!decl || whitelistOr->wrapperHasCustomEntry(wrapper)) {
+          module.emitError() << "VPTO bridge: wrapper '" << wrapper
+                             << "' has no composable declarative renderer";
+          signalPassFailure();
+          return;
+        }
+        FailureOr<std::string> extra = renderDeclarativeBridgeSource(
+            module, *whitelistOr, *decl, specAttr, usedEntries);
+        if (failed(extra)) {
+          signalPassFailure();
+          return;
+        }
+        source->append(*extra);
+      }
+    }
     if (failed(source)) {
       signalPassFailure();
       return;
     }
 
     OpBuilder builder(module);
+    source->append(cubeSource);
     module->setAttr(kBridgeWrapperSourceAttrName,
                     builder.getStringAttr(*source));
     module->removeAttr(kBridgeSpecAttrName);

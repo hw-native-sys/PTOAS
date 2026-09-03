@@ -313,15 +313,15 @@ struct PTOLowerDeclarativeBridgeOpsPass final
           structuredSpec.push_back(builder.getNamedAttr(
               roles[index], DictionaryAttr::get(builder.getContext(), fields)));
           callArgs.push_back(addr);
-          collectTileToken(op, binding, tile, *entry);
+          if (auto alloc = tile.getDefiningOp<AllocTileOp>()) {
+            bridgedAllocs.push_back(alloc);
+          }
         }
         if (opFailed) {
           continue;
         }
         structuredSpec.push_back(
             builder.getNamedAttr("acc_phase", directAccPhase));
-        spec.addField(op, deriveEntrySpecKey(op->getName().getStringRef()),
-                      desc->symbolBase);
         auto call = builder.create<BridgeCallOp>(
             op->getLoc(), TypeRange{}, desc->symbolBase, nullptr, callArgs);
         call->setAttr("entry_id", builder.getStringAttr(

@@ -188,6 +188,19 @@ public:
     StringRef callee = op.getCalleeAttr().getValue();
     const BridgeWhitelistEntry *entry = state.whitelist.findEntry(callee);
     if (!entry) {
+      // Concrete instance symbols are suffixed by WrapperGen; recover the
+      // registry-owned canonical entry through the logical entry ID.
+      if (auto idAttr = op->getAttrOfType<StringAttr>("entry_id")) {
+        for (const BridgeFunctionDesc &desc : getBridgeFunctionRegistry()) {
+          if (stringifyBridgeEntryId(desc.id) != idAttr.getValue()) {
+            continue;
+          }
+          entry = state.whitelist.findEntry(desc.symbolBase);
+          break;
+        }
+      }
+    }
+    if (!entry) {
       return op.emitError()
              << "VPTO bridge call to wrapper entry '" << callee
              << "' is not declared in the bridge whitelist";
