@@ -3,9 +3,6 @@
 // The CANN Open Software License Agreement Version 2.0 (the "License").
 // Please refer to the License for details. This software is provided on an "AS IS" BASIS.
 
-// https://discourse.llvm.org/t/matchandrewrite-hiding-virtual-functions/84933/8
-#pragma GCC diagnostic ignored "-Woverloaded-virtual"
-
 #include "VPTOLLVMEmitterInternal.h"
 
 #include "PTO/IR/PTO.h"
@@ -45,11 +42,6 @@ struct VcvtContract {
   bool satBeforeRnd = false;
 };
 
-
-static Value getI32Constant(OpBuilder &builder, Location loc, uint64_t value) {
-  return builder.create<arith::ConstantOp>(loc, builder.getI32IntegerAttr(value))
-      .getResult();
-}
 
 [[maybe_unused]] static Value getI1Constant(OpBuilder &builder, Location loc,
                                             bool value) {
@@ -172,30 +164,35 @@ static VcvtElemKind classifyVcvtElemType(Type type) {
   return VcvtElemKind::Invalid;
 }
 
+static std::optional<VcvtContract> lookupVcvtContractForF32(
+    VcvtElemKind dst) {
+  switch (dst) {
+  case VcvtElemKind::F8E4M3:
+    return VcvtContract{"llvm.hivm.vcvtff.f322f8e4m3.x", true, true, true, 32};
+  case VcvtElemKind::F8E5M2:
+    return VcvtContract{"llvm.hivm.vcvtff.f322f8e5m2.x", true, true, true, 32};
+  case VcvtElemKind::HiF8:
+    return VcvtContract{"llvm.hivm.vcvtff.f322hif8.x", true, true, true, 32};
+  case VcvtElemKind::F16:
+    return VcvtContract{"llvm.hivm.vcvtff.f322f16.x", true, true, true, 32};
+  case VcvtElemKind::BF16:
+    return VcvtContract{"llvm.hivm.vcvtff.f322bf16.x", true, true, true, 32};
+  case VcvtElemKind::S16:
+    return VcvtContract{"llvm.hivm.vcvtfi.f322s16.x", true, true, true, 32};
+  case VcvtElemKind::S32:
+    return VcvtContract{"llvm.hivm.vcvtfi.f322s32.x", true, true, false, 32};
+  case VcvtElemKind::S64:
+    return VcvtContract{"llvm.hivm.vcvtfi.f322s64.x", true, true, true, 32};
+  default:
+    return std::nullopt;
+  }
+}
+
 static std::optional<VcvtContract> lookupVcvtContract(VcvtElemKind src,
-                                                      VcvtElemKind dst) {
+                                                        VcvtElemKind dst) {
   switch (src) {
   case VcvtElemKind::F32:
-    switch (dst) {
-    case VcvtElemKind::F8E4M3:
-      return VcvtContract{"llvm.hivm.vcvtff.f322f8e4m3.x", true, true, true, 32};
-    case VcvtElemKind::F8E5M2:
-      return VcvtContract{"llvm.hivm.vcvtff.f322f8e5m2.x", true, true, true, 32};
-    case VcvtElemKind::HiF8:
-      return VcvtContract{"llvm.hivm.vcvtff.f322hif8.x", true, true, true, 32};
-    case VcvtElemKind::F16:
-      return VcvtContract{"llvm.hivm.vcvtff.f322f16.x", true, true, true, 32};
-    case VcvtElemKind::BF16:
-      return VcvtContract{"llvm.hivm.vcvtff.f322bf16.x", true, true, true, 32};
-    case VcvtElemKind::S16:
-      return VcvtContract{"llvm.hivm.vcvtfi.f322s16.x", true, true, true, 32};
-    case VcvtElemKind::S32:
-      return VcvtContract{"llvm.hivm.vcvtfi.f322s32.x", true, true, false, 32};
-    case VcvtElemKind::S64:
-      return VcvtContract{"llvm.hivm.vcvtfi.f322s64.x", true, true, true, 32};
-    default:
-      return std::nullopt;
-    }
+    return lookupVcvtContractForF32(dst);
   case VcvtElemKind::F16:
     switch (dst) {
     case VcvtElemKind::F8E4M3:

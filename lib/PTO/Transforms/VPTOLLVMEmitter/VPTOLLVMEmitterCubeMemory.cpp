@@ -13,27 +13,6 @@
 namespace mlir::pto {
 namespace {
 
-static Value getI64Constant(OpBuilder &builder, Location loc, uint64_t value) {
-  return builder.create<arith::ConstantOp>(loc, builder.getI64IntegerAttr(value))
-      .getResult();
-}
-
-static Value getI32Constant(OpBuilder &builder, Location loc, uint64_t value) {
-  return builder.create<arith::ConstantOp>(loc, builder.getI32IntegerAttr(value))
-      .getResult();
-}
-
-static Value packShiftedI64Fields(OpBuilder &builder, Location loc,
-                                  Value config,
-                                  ArrayRef<std::pair<Value, uint64_t>> fields) {
-  for (auto [value, amount] : fields) {
-    Value shift = getI64Constant(builder, loc, amount);
-    Value shifted = builder.create<arith::ShLIOp>(loc, value, shift);
-    config = builder.create<arith::OrIOp>(loc, config, shifted);
-  }
-  return config;
-}
-
 static std::string getL0LoadElementFragment(Type type) {
   std::string elem = getElementTypeFragment(type);
   if (!elem.empty()) {
@@ -111,18 +90,10 @@ packCopyGmToCbufConfig0(Operation *anchor, Value nBurst, Value lenBurst) {
     return failure();
   }
 
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value,
-                                         getI64Constant(builder, loc, amount));
-  };
-  auto bitOr = [&](Value lhs, Value rhs) -> Value {
-    return builder.create<arith::OrIOp>(loc, lhs, rhs);
-  };
-
   Value config0 = getI64Constant(builder, loc, 0); // sid
-  config0 = bitOr(config0, shl(nBurstI64, 4));     // burst_num[24:4]
-  config0 = bitOr(config0, shl(lenBurstI64, 25));  // burst_len[45:25]
-  return config0;
+  // burst_num[24:4], burst_len[45:25].
+  return packShiftedI64Fields(builder, loc, config0,
+                              {{nBurstI64, 4}, {lenBurstI64, 25}});
 }
 
 static FailureOr<Value>
@@ -139,16 +110,9 @@ packCopyGmToCbufConfig1(Operation *anchor, Value srcStride,
     return failure();
   }
 
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value,
-                                         getI64Constant(builder, loc, amount));
-  };
-  auto bitOr = [&](Value lhs, Value rhs) -> Value {
-    return builder.create<arith::OrIOp>(loc, lhs, rhs);
-  };
-
   // config1 packs burst_src_stride[39:0] and burst_dst_stride[60:40].
-  return bitOr(srcStrideI64, shl(dstStrideI64, 40));
+  return packShiftedI64Fields(builder, loc, srcStrideI64,
+                              {{dstStrideI64, 40}});
 }
 
 static FailureOr<Value>
@@ -169,19 +133,9 @@ packCopyGmToCbufMultiConfig0(Operation *anchor, Value sid,
     return failure();
   }
 
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value,
-                                         getI64Constant(builder, loc, amount));
-  };
-  auto bitOr = [&](Value lhs, Value rhs) -> Value {
-    return builder.create<arith::OrIOp>(loc, lhs, rhs);
-  };
-
-  Value config0 = sidI64;
-  config0 = bitOr(config0, shl(loop1SrcStrideI64, 4));
-  config0 = bitOr(config0, shl(l2CacheCtlI64, 44));
-  config0 = bitOr(config0, shl(nValueI64, 48));
-  return config0;
+  return packShiftedI64Fields(builder, loc, sidI64,
+                              {{loop1SrcStrideI64, 4},
+                               {l2CacheCtlI64, 44}, {nValueI64, 48}});
 }
 
 static FailureOr<Value>
@@ -200,18 +154,9 @@ packCopyGmToCbufMultiConfig1(Operation *anchor, Value dValue,
     return failure();
   }
 
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value,
-                                         getI64Constant(builder, loc, amount));
-  };
-  auto bitOr = [&](Value lhs, Value rhs) -> Value {
-    return builder.create<arith::OrIOp>(loc, lhs, rhs);
-  };
-
-  Value config1 = dValueI64;
-  config1 = bitOr(config1, shl(loop4SrcStrideI64, 21));
-  config1 = bitOr(config1, shl(smallC0EnI64, 61));
-  return config1;
+  return packShiftedI64Fields(builder, loc, dValueI64,
+                              {{loop4SrcStrideI64, 21},
+                               {smallC0EnI64, 61}});
 }
 
 static FailureOr<Value> packCopyCbufToBtConfig(Operation *anchor,
@@ -259,19 +204,11 @@ static FailureOr<Value> packCopyCbufToFbufConfig(Operation *anchor, Value nBurst
     return failure();
   }
 
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value,
-                                         getI64Constant(builder, loc, amount));
-  };
-  auto bitOr = [&](Value lhs, Value rhs) -> Value {
-    return builder.create<arith::OrIOp>(loc, lhs, rhs);
-  };
-
-  Value config = shl(nBurstI64, 4);
-  config = bitOr(config, shl(lenBurstI64, 16));
-  config = bitOr(config, shl(sourceGapI64, 32));
-  config = bitOr(config, shl(dstGapI64, 48));
-  return config;
+  Value config = builder.create<arith::ShLIOp>(
+      loc, nBurstI64, getI64Constant(builder, loc, 4));
+  return packShiftedI64Fields(
+      builder, loc, config,
+      {{lenBurstI64, 16}, {sourceGapI64, 32}, {dstGapI64, 48}});
 }
 
 static FailureOr<Value>
@@ -290,19 +227,9 @@ packLoadCbufToS4Config0(Operation *anchor, Value mStart, Value kStart,
     return failure();
   }
 
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value,
-                                         getI64Constant(builder, loc, amount));
-  };
-  auto bitOr = [&](Value lhs, Value rhs) -> Value {
-    return builder.create<arith::OrIOp>(loc, lhs, rhs);
-  };
-
-  Value config0 = mStartI64;
-  config0 = bitOr(config0, shl(kStartI64, 16));
-  config0 = bitOr(config0, shl(mStepI64, 32));
-  config0 = bitOr(config0, shl(kStepI64, 40));
-  return config0;
+  return packShiftedI64Fields(builder, loc, mStartI64,
+                              {{kStartI64, 16}, {mStepI64, 32},
+                               {kStepI64, 40}});
 }
 
 static FailureOr<Value>
@@ -318,12 +245,8 @@ packLoadCbufToS4Config1(Operation *anchor, Value srcStride, Value dstStride) {
     return failure();
   }
 
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value,
-                                         getI64Constant(builder, loc, amount));
-  };
-  return builder.create<arith::OrIOp>(loc, srcStrideI64, shl(dstStrideI64, 16))
-      .getResult();
+  return packShiftedI64Fields(builder, loc, srcStrideI64,
+                              {{dstStrideI64, 16}});
 }
 
 static FailureOr<Value>
@@ -342,19 +265,9 @@ packLoadCbufToCaConfig0(Operation *anchor, Value mStart, Value kStart,
     return failure();
   }
 
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value,
-                                         getI64Constant(builder, loc, amount));
-  };
-  auto bitOr = [&](Value lhs, Value rhs) -> Value {
-    return builder.create<arith::OrIOp>(loc, lhs, rhs);
-  };
-
-  Value config0 = mStartI64;
-  config0 = bitOr(config0, shl(kStartI64, 16));
-  config0 = bitOr(config0, shl(mStepI64, 32));
-  config0 = bitOr(config0, shl(kStepI64, 40));
-  return config0;
+  return packShiftedI64Fields(builder, loc, mStartI64,
+                              {{kStartI64, 16}, {mStepI64, 32},
+                               {kStepI64, 40}});
 }
 
 static FailureOr<Value>
@@ -372,12 +285,8 @@ packLoadCbufToCaConfig1(Operation *anchor, Value srcStride, Value dstStride) {
     return failure();
   }
 
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value,
-                                         getI64Constant(builder, loc, amount));
-  };
-  return builder.create<arith::OrIOp>(loc, srcStrideI64, shl(dstStrideI64, 16))
-      .getResult();
+  return packShiftedI64Fields(builder, loc, srcStrideI64,
+                              {{dstStrideI64, 16}});
 }
 
 static FailureOr<Value>
@@ -396,19 +305,9 @@ packLoadCbufToCbConfig0(Operation *anchor, Value mStart, Value kStart,
     return failure();
   }
 
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value,
-                                         getI64Constant(builder, loc, amount));
-  };
-  auto bitOr = [&](Value lhs, Value rhs) -> Value {
-    return builder.create<arith::OrIOp>(loc, lhs, rhs);
-  };
-
-  Value config0 = mStartI64;
-  config0 = bitOr(config0, shl(kStartI64, 16));
-  config0 = bitOr(config0, shl(mStepI64, 32));
-  config0 = bitOr(config0, shl(kStepI64, 40));
-  return config0;
+  return packShiftedI64Fields(builder, loc, mStartI64,
+                              {{kStartI64, 16}, {mStepI64, 32},
+                               {kStepI64, 40}});
 }
 
 static FailureOr<Value>
@@ -426,12 +325,8 @@ packLoadCbufToCbConfig1(Operation *anchor, Value srcStride, Value dstStride) {
     return failure();
   }
 
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value,
-                                         getI64Constant(builder, loc, amount));
-  };
-  return builder.create<arith::OrIOp>(loc, srcStrideI64, shl(dstStrideI64, 16))
-      .getResult();
+  return packShiftedI64Fields(builder, loc, srcStrideI64,
+                              {{dstStrideI64, 16}});
 }
 
 static FailureOr<StringRef> buildCopyGmToCbufCallee(MLIRContext *context,

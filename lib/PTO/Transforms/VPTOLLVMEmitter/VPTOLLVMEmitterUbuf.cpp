@@ -16,22 +16,6 @@
 namespace mlir::pto {
 namespace {
 
-static Value getI64Constant(OpBuilder &builder, Location loc, uint64_t value) {
-  return builder.create<arith::ConstantOp>(loc, builder.getI64IntegerAttr(value))
-      .getResult();
-}
-
-static Value packShiftedI64Fields(OpBuilder &builder, Location loc,
-                                  Value config,
-                                  ArrayRef<std::pair<Value, uint64_t>> fields) {
-  for (auto [value, amount] : fields) {
-    Value shift = getI64Constant(builder, loc, amount);
-    Value shifted = builder.create<arith::ShLIOp>(loc, value, shift);
-    config = builder.create<arith::OrIOp>(loc, config, shifted);
-  }
-  return config;
-}
-
 static FailureOr<SmallVector<Value, 7>> castCopyGmToUbConfig0Operands(
     Operation *anchor, ValueRange operands, Type i64Type) {
   if (operands.size() != 11) {
@@ -90,28 +74,12 @@ packCopyGmToUbCfgV220(Operation *anchor, ValueRange operands) {
     return failure();
   }
 
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value,
-                                         getI64Constant(builder, loc, amount));
-  };
-  auto bitOr = [&](Value lhs, Value rhs) -> Value {
-    return builder.create<arith::OrIOp>(loc, lhs, rhs);
-  };
-
-  Value cfg = sid;
-  auto oneI64 = builder
-                    .create<arith::ConstantOp>(loc,
-                                               builder.getI64IntegerAttr(1))
-                    .getResult();
-  cfg = bitOr(cfg, shl(oneI64, 4));
-  auto bytesPer32B = builder
-                         .create<arith::ConstantOp>(
-                             loc, builder.getI64IntegerAttr(5))
-                         .getResult();
+  Value oneI64 = getI64Constant(builder, loc, 1);
+  Value bytesPer32B = getI64Constant(builder, loc, 5);
   auto lenIn32B =
       builder.create<arith::ShRUIOp>(loc, lenBurst, bytesPer32B).getResult();
-  cfg = bitOr(cfg, shl(lenIn32B, 16));
-  return cfg;
+  return packShiftedI64Fields(builder, loc, sid,
+                              {{oneI64, 4}, {lenIn32B, 16}});
 }
 
 [[maybe_unused]] static FailureOr<Value>
@@ -153,19 +121,9 @@ packCopyUbToGmConfig0(Operation *anchor, ValueRange operands) {
     return failure();
   }
 
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value,
-                                         getI64Constant(builder, loc, amount));
-  };
-  auto bitOr = [&](Value lhs, Value rhs) -> Value {
-    return builder.create<arith::OrIOp>(loc, lhs, rhs);
-  };
-
-  Value config = sid;
-  config = bitOr(config, shl(nBurst, 4));
-  config = bitOr(config, shl(lenBurst, 25));
-  config = bitOr(config, shl(l2CacheCtl, 60));
-  return config;
+  return packShiftedI64Fields(builder, loc, sid,
+                              {{nBurst, 4}, {lenBurst, 25},
+                               {l2CacheCtl, 60}});
 }
 
 static FailureOr<Value>
@@ -199,28 +157,12 @@ packCopyUbToGmCfgV220(Operation *anchor, ValueRange operands) {
     return failure();
   }
 
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value,
-                                         getI64Constant(builder, loc, amount));
-  };
-  auto bitOr = [&](Value lhs, Value rhs) -> Value {
-    return builder.create<arith::OrIOp>(loc, lhs, rhs);
-  };
-
-  Value cfg = sid;
-  auto oneI64 = builder
-                    .create<arith::ConstantOp>(loc,
-                                               builder.getI64IntegerAttr(1))
-                    .getResult();
-  cfg = bitOr(cfg, shl(oneI64, 4));
-  auto bytesPer32B = builder
-                         .create<arith::ConstantOp>(
-                             loc, builder.getI64IntegerAttr(5))
-                         .getResult();
+  Value oneI64 = getI64Constant(builder, loc, 1);
+  Value bytesPer32B = getI64Constant(builder, loc, 5);
   auto lenIn32B =
       builder.create<arith::ShRUIOp>(loc, lenBurst, bytesPer32B).getResult();
-  cfg = bitOr(cfg, shl(lenIn32B, 16));
-  return cfg;
+  return packShiftedI64Fields(builder, loc, sid,
+                              {{oneI64, 4}, {lenIn32B, 16}});
 }
 
 [[maybe_unused]] static FailureOr<Value>
@@ -257,19 +199,9 @@ packCopyUbToUbConfig(Operation *anchor, ValueRange operands) {
     return failure();
   }
 
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value,
-                                         getI64Constant(builder, loc, amount));
-  };
-  auto bitOr = [&](Value lhs, Value rhs) -> Value {
-    return builder.create<arith::OrIOp>(loc, lhs, rhs);
-  };
-
-  Value config = nBurst;
-  config = bitOr(config, shl(lenBurst, 16));
-  config = bitOr(config, shl(srcStride, 32));
-  config = bitOr(config, shl(dstStride, 48));
-  return config;
+  return packShiftedI64Fields(builder, loc, nBurst,
+                              {{lenBurst, 16}, {srcStride, 32},
+                               {dstStride, 48}});
 }
 
 static FailureOr<Value>
@@ -296,20 +228,9 @@ packCopyCbufToUbConfig(Operation *anchor, ValueRange operands) {
     return failure();
   }
 
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value,
-                                         getI64Constant(builder, loc, amount));
-  };
-  auto bitOr = [&](Value lhs, Value rhs) -> Value {
-    return builder.create<arith::OrIOp>(loc, lhs, rhs);
-  };
-
-  Value config = sid;
-  config = bitOr(config, shl(nBurst, 4));
-  config = bitOr(config, shl(lenBurst, 16));
-  config = bitOr(config, shl(srcStride, 32));
-  config = bitOr(config, shl(dstStride, 48));
-  return config;
+  return packShiftedI64Fields(builder, loc, sid,
+                              {{nBurst, 4}, {lenBurst, 16},
+                               {srcStride, 32}, {dstStride, 48}});
 }
 
 static FailureOr<Value>
@@ -336,20 +257,9 @@ packCopyUbToCbufConfig(Operation *anchor, ValueRange operands) {
     return failure();
   }
 
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value,
-                                         getI64Constant(builder, loc, amount));
-  };
-  auto bitOr = [&](Value lhs, Value rhs) -> Value {
-    return builder.create<arith::OrIOp>(loc, lhs, rhs);
-  };
-
-  Value config = sid;
-  config = bitOr(config, shl(nBurst, 4));
-  config = bitOr(config, shl(lenBurst, 16));
-  config = bitOr(config, shl(srcStride, 32));
-  config = bitOr(config, shl(dstStride, 48));
-  return config;
+  return packShiftedI64Fields(builder, loc, sid,
+                              {{nBurst, 4}, {lenBurst, 16},
+                               {srcStride, 32}, {dstStride, 48}});
 }
 
 
@@ -656,13 +566,6 @@ public:
     auto getI64 = [&](Value v) -> Value {
       return castIntegerLikeTo(op, v, i64Ty);
     };
-    auto maskByte = [&](Value v) -> Value {
-      return rewriter.create<arith::AndIOp>(loc, v, constI64(0xff));
-    };
-    auto shl = [&](Value v, uint64_t amount) -> Value {
-      return rewriter.create<arith::ShLIOp>(loc, v, constI64(amount));
-    };
-
     // config[31:0] = source data address (low 32 bits of the src pointer).
     // Trace back through castptr to get the planned UB offset, matching the
     // address loaded from Tile host_ptr metadata by the PTO-ISA reference.
@@ -677,12 +580,12 @@ public:
     }
     Value config =
         rewriter.create<arith::AndIOp>(loc, srcAddr, constI64(0xffffffff));
-    config = rewriter.create<arith::OrIOp>(
-        loc, config, shl(maskByte(getI64(adaptor.getDstRepeatStride())), 32));
-    config = rewriter.create<arith::OrIOp>(
-        loc, config, shl(maskByte(getI64(adaptor.getDstBlockStride())), 40));
-    config = rewriter.create<arith::OrIOp>(
-        loc, config, shl(maskByte(getI64(adaptor.getRepeat())), 56));
+    config = packMaskedI64Fields(
+        rewriter, loc, config,
+        {{getI64(adaptor.getDstRepeatStride()), 32},
+         {getI64(adaptor.getDstBlockStride()), 40},
+         {getI64(adaptor.getRepeat()), 56}},
+        0xff);
 
     auto funcType = rewriter.getFunctionType(
         TypeRange{dst.getType(), offset.getType(), rewriter.getI64Type()},
@@ -815,31 +718,19 @@ public:
     auto getI64 = [&](Value v) -> Value {
       return castIntegerLikeTo(op, v, i64Ty);
     };
-    auto maskByte = [&](Value v) -> Value {
-      return rewriter.create<arith::AndIOp>(
-          loc, v, rewriter.create<arith::ConstantOp>(
-                     loc, rewriter.getI64IntegerAttr(0xff)));
-    };
-    auto shl = [&](Value v, uint64_t amount) -> Value {
-      return rewriter.create<arith::ShLIOp>(
-          loc, v, rewriter.create<arith::ConstantOp>(
-                       loc, rewriter.getI64IntegerAttr(amount)));
-    };
     // Unary config layout (same as VABS):
     //   repeat[63:56], dstBlkStride[15:0], srcBlkStride[31:16],
     //   dstRepStride[39:32], srcRepStride[51:40]
     Value config = rewriter.create<arith::ConstantOp>(
         loc, rewriter.getI64IntegerAttr(0));
-    config = rewriter.create<arith::OrIOp>(
-        loc, config, shl(maskByte(getI64(adaptor.getRepeat())), 56));
-    config = rewriter.create<arith::OrIOp>(
-        loc, config, maskByte(getI64(adaptor.getDstBlockStride())));
-    config = rewriter.create<arith::OrIOp>(
-        loc, config, shl(maskByte(getI64(adaptor.getSrcBlockStride())), 16));
-    config = rewriter.create<arith::OrIOp>(
-        loc, config, shl(maskByte(getI64(adaptor.getDstRepeatStride())), 32));
-    config = rewriter.create<arith::OrIOp>(
-        loc, config, shl(maskByte(getI64(adaptor.getSrcRepeatStride())), 40));
+    config = packMaskedI64Fields(
+        rewriter, loc, config,
+        {{getI64(adaptor.getRepeat()), 56},
+         {getI64(adaptor.getDstBlockStride()), 0},
+         {getI64(adaptor.getSrcBlockStride()), 16},
+         {getI64(adaptor.getDstRepeatStride()), 32},
+         {getI64(adaptor.getSrcRepeatStride()), 40}},
+        0xff);
 
     Value shiftDist = getI64(adaptor.getShiftDist());
 
@@ -920,29 +811,17 @@ public:
     auto getI64 = [&](Value v) -> Value {
       return castIntegerLikeTo(op, v, i64Ty);
     };
-    auto maskByte = [&](Value v) -> Value {
-      return rewriter.create<arith::AndIOp>(
-          loc, v, rewriter.create<arith::ConstantOp>(
-                     loc, rewriter.getI64IntegerAttr(0xff)));
-    };
-    auto shl = [&](Value v, uint64_t amount) -> Value {
-      return rewriter.create<arith::ShLIOp>(
-          loc, v, rewriter.create<arith::ConstantOp>(
-                       loc, rewriter.getI64IntegerAttr(amount)));
-    };
     // Unary config layout (same as VABS/VSHR): repeat[63:56]
     Value config = rewriter.create<arith::ConstantOp>(
         loc, rewriter.getI64IntegerAttr(0));
-    config = rewriter.create<arith::OrIOp>(
-        loc, config, shl(maskByte(getI64(adaptor.getRepeat())), 56));
-    config = rewriter.create<arith::OrIOp>(
-        loc, config, maskByte(getI64(adaptor.getDstBlockStride())));
-    config = rewriter.create<arith::OrIOp>(
-        loc, config, shl(maskByte(getI64(adaptor.getSrcBlockStride())), 16));
-    config = rewriter.create<arith::OrIOp>(
-        loc, config, shl(maskByte(getI64(adaptor.getDstRepeatStride())), 32));
-    config = rewriter.create<arith::OrIOp>(
-        loc, config, shl(maskByte(getI64(adaptor.getSrcRepeatStride())), 40));
+    config = packMaskedI64Fields(
+        rewriter, loc, config,
+        {{getI64(adaptor.getRepeat()), 56},
+         {getI64(adaptor.getDstBlockStride()), 0},
+         {getI64(adaptor.getSrcBlockStride()), 16},
+         {getI64(adaptor.getDstRepeatStride()), 32},
+         {getI64(adaptor.getSrcRepeatStride()), 40}},
+        0xff);
 
     Value scalarI64 = getI64(adaptor.getShiftDist());
 
@@ -1041,29 +920,17 @@ public:
     auto getI64 = [&](Value v) -> Value {
       return castIntegerLikeTo(op, v, i64Ty);
     };
-    auto maskByte = [&](Value v) -> Value {
-      return rewriter.create<arith::AndIOp>(
-          loc, v, rewriter.create<arith::ConstantOp>(
-                     loc, rewriter.getI64IntegerAttr(0xff)));
-    };
-    auto shl = [&](Value v, uint64_t amount) -> Value {
-      return rewriter.create<arith::ShLIOp>(
-          loc, v, rewriter.create<arith::ConstantOp>(
-                       loc, rewriter.getI64IntegerAttr(amount)));
-    };
     // Unary config layout (same as VABS/VSHR): repeat[63:56]
     Value config = rewriter.create<arith::ConstantOp>(
         loc, rewriter.getI64IntegerAttr(0));
-    config = rewriter.create<arith::OrIOp>(
-        loc, config, shl(maskByte(getI64(adaptor.getRepeat())), 56));
-    config = rewriter.create<arith::OrIOp>(
-        loc, config, maskByte(getI64(adaptor.getDstBlockStride())));
-    config = rewriter.create<arith::OrIOp>(
-        loc, config, shl(maskByte(getI64(adaptor.getSrcBlockStride())), 16));
-    config = rewriter.create<arith::OrIOp>(
-        loc, config, shl(maskByte(getI64(adaptor.getDstRepeatStride())), 32));
-    config = rewriter.create<arith::OrIOp>(
-        loc, config, shl(maskByte(getI64(adaptor.getSrcRepeatStride())), 40));
+    config = packMaskedI64Fields(
+        rewriter, loc, config,
+        {{getI64(adaptor.getRepeat()), 56},
+         {getI64(adaptor.getDstBlockStride()), 0},
+         {getI64(adaptor.getSrcBlockStride()), 16},
+         {getI64(adaptor.getDstRepeatStride()), 32},
+         {getI64(adaptor.getSrcRepeatStride()), 40}},
+        0xff);
 
     auto funcType = rewriter.getFunctionType(
         TypeRange{dst.getType(), src.getType(), i64Ty},

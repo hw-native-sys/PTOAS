@@ -35,10 +35,6 @@ FailureOr<StringRef> buildLaneTypedCallee(MLIRContext *context, Type resultType,
       .getValue();
 }
 
-static Value getI32Constant(OpBuilder &builder, Location loc, uint64_t value) {
-  return builder.create<arith::ConstantOp>(loc, builder.getI32IntegerAttr(value));
-}
-
 static uint64_t determineVsqzStoreHint(pto::VsqzOp vsqz) {
   Value result = vsqz.getResult();
   for (Operation *user : result.getUsers()) {

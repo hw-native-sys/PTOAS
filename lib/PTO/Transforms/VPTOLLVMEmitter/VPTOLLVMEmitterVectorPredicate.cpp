@@ -13,10 +13,6 @@
 namespace mlir::pto {
 namespace {
 
-static Value getI32Constant(OpBuilder &builder, Location loc, uint64_t value) {
-  return builder.create<arith::ConstantOp>(loc, builder.getI32IntegerAttr(value));
-}
-
 static FailureOr<Value> normalizeVdupScalarOperand(OpBuilder &builder, Location loc,
                                                    Value input, Type resultType) {
   auto intType = dyn_cast<IntegerType>(input.getType());

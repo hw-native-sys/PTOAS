@@ -15,6 +15,13 @@
 namespace mlir::pto {
 struct PlannedDecl { std::string name; FunctionType type; };
 struct LoweringState { SmallVector<PlannedDecl> plannedDecls; };
+Value getI64Constant(OpBuilder &builder, Location loc, uint64_t value);
+Value getI32Constant(OpBuilder &builder, Location loc, uint64_t value);
+Value packShiftedI64Fields(OpBuilder &builder, Location loc, Value config,
+                            ArrayRef<std::pair<Value, uint64_t>> fields);
+Value packMaskedI64Fields(OpBuilder &builder, Location loc, Value config,
+                           ArrayRef<std::pair<Value, uint64_t>> fields,
+                           uint64_t mask);
 Type convertVPTOType(Type type, Builder &builder);
 Value materializeVPTOCast(OpBuilder &builder, Type resultType, ValueRange inputs, Location loc);
 Type getLowPrecisionLLVMType(Type type, MLIRContext *context);

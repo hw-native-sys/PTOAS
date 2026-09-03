@@ -15,11 +15,6 @@
 namespace mlir::pto {
 namespace {
 
-static Value getI32Constant(OpBuilder &builder, Location loc, uint64_t value) {
-  return builder.create<arith::ConstantOp>(loc, builder.getI32IntegerAttr(value))
-      .getResult();
-}
-
 static bool isLowpPayloadElementType(Type type) {
   return pto::isPTOFloat8Type(type) || pto::isPTOHiFloat8Type(type) ||
          pto::isPTOFloat4PackedType(type);

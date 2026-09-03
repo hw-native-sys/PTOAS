@@ -13,11 +13,6 @@
 namespace mlir::pto {
 namespace {
 
-static Value getI64Constant(OpBuilder &builder, Location loc, uint64_t value) {
-  return builder.create<arith::ConstantOp>(loc, builder.getI64IntegerAttr(value))
-      .getResult();
-}
-
 static bool isMxElementType(Type ty) {
   if (auto floatType = dyn_cast<FloatType>(ty))
   {

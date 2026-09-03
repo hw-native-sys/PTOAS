@@ -10,8 +10,35 @@
 
 namespace mlir::pto {
 
-static Value getI64Constant(OpBuilder &builder, Location loc, uint64_t value) {
+Value getI64Constant(OpBuilder &builder, Location loc, uint64_t value) {
   return builder.create<arith::ConstantOp>(loc, builder.getI64IntegerAttr(value));
+}
+
+Value getI32Constant(OpBuilder &builder, Location loc, uint64_t value) {
+  return builder.create<arith::ConstantOp>(loc, builder.getI32IntegerAttr(value));
+}
+
+Value packShiftedI64Fields(OpBuilder &builder, Location loc, Value config,
+                            ArrayRef<std::pair<Value, uint64_t>> fields) {
+  for (auto [value, amount] : fields) {
+    Value shift = getI64Constant(builder, loc, amount);
+    Value shifted = builder.create<arith::ShLIOp>(loc, value, shift);
+    config = builder.create<arith::OrIOp>(loc, config, shifted);
+  }
+  return config;
+}
+
+Value packMaskedI64Fields(OpBuilder &builder, Location loc, Value config,
+                           ArrayRef<std::pair<Value, uint64_t>> fields,
+                           uint64_t mask) {
+  Value maskValue = getI64Constant(builder, loc, mask);
+  for (auto [value, amount] : fields) {
+    Value masked = builder.create<arith::AndIOp>(loc, value, maskValue);
+    Value shift = getI64Constant(builder, loc, amount);
+    Value shifted = builder.create<arith::ShLIOp>(loc, masked, shift);
+    config = builder.create<arith::OrIOp>(loc, config, shifted);
+  }
+  return config;
 }
 
 Value castIntegerLikeTo(Operation *anchor, Value value, Type targetType) {

@@ -3,9 +3,6 @@
 // The CANN Open Software License Agreement Version 2.0 (the "License").
 // Please refer to the License for details. This software is provided on an "AS IS" BASIS.
 
-// https://discourse.llvm.org/t/matchandrewrite-hiding-virtual-functions/84933/8
-#pragma GCC diagnostic ignored "-Woverloaded-virtual"
-
 #include "VPTOLLVMEmitterInternal.h"
 #include "PTO/Transforms/VPTOLLVMEmitterHelper.h"
 
@@ -21,11 +18,6 @@
 namespace mlir::pto {
 
 namespace {
-
-static Value getI64Constant(OpBuilder &builder, Location loc, uint64_t value) {
-  return builder.create<arith::ConstantOp>(loc, builder.getI64IntegerAttr(value))
-      .getResult();
-}
 
 static std::optional<uint64_t> parsePipeImmediate(StringRef pipe) {
   if (pipe == "PIPE_S")

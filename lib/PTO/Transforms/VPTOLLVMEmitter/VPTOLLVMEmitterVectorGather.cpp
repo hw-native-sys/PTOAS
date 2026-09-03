@@ -13,16 +13,6 @@
 namespace mlir::pto {
 namespace {
 
-static Value getI64Constant(OpBuilder &builder, Location loc, uint64_t value) {
-  return builder.create<arith::ConstantOp>(loc, builder.getI64IntegerAttr(value))
-      .getResult();
-}
-
-static Value getI32Constant(OpBuilder &builder, Location loc, uint64_t value) {
-  return builder.create<arith::ConstantOp>(loc, builder.getI32IntegerAttr(value))
-      .getResult();
-}
-
 static FailureOr<StringRef> buildLaneTypedCallee(MLIRContext *context,
                                                  Type resultType,
                                                  StringRef stem,
