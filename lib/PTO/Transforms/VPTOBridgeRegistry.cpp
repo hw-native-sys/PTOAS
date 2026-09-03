@@ -23,6 +23,10 @@ constexpr BridgeValueKind kPipePushArgs[] = {BridgeValueKind::PipeObject,
 constexpr BridgeValueKind kPipePopArgs[] = {BridgeValueKind::PipeObject};
 constexpr BridgeValueKind kPipePopResults[] = {BridgeValueKind::I64};
 constexpr BridgeValueKind kPipeFreeArgs[] = {BridgeValueKind::PipeObject};
+constexpr BridgeAbiBinding kCubeBindings[] = {
+    {BridgeValueKind::I64, 2, "dst", "result_tile"},
+    {BridgeValueKind::I64, 0, "lhs", "left_tile"},
+    {BridgeValueKind::I64, 1, "rhs", "right_tile"}};
 constexpr BridgeValueKind kMatmulArgs[] = {BridgeValueKind::I64,
                                            BridgeValueKind::I64,
                                            BridgeValueKind::I64};
@@ -32,22 +36,22 @@ constexpr BridgeValueKind kGemvArgs[] = {BridgeValueKind::I64,
 
 const BridgeFunctionDesc kRegistry[] = {
     {BridgeEntryId::PipeInit, BridgeFamily::Pipe, BridgeRendererKind::Pipe,
-     "pto.initialize_l2l_pipe", "pto_vpto_pipe_init", kPipeInitArgs,
+     "pto.initialize_l2l_pipe", "pto_vpto_pipe_init", "", {}, kPipeInitArgs,
      kPipeInitResults, true, 32},
     {BridgeEntryId::PipeSize, BridgeFamily::Pipe, BridgeRendererKind::Pipe,
-     "", "pto_vpto_pipe_size", {}, {}, false},
+     "", "pto_vpto_pipe_size", "", {}, {}, {}, false},
     {BridgeEntryId::PipePush, BridgeFamily::Pipe, BridgeRendererKind::Pipe,
-     "pto.tpush", "pto_vpto_pipe_push", kPipePushArgs, {}, false},
+     "pto.tpush", "pto_vpto_pipe_push", "", {}, kPipePushArgs, {}, false},
     {BridgeEntryId::PipePop, BridgeFamily::Pipe, BridgeRendererKind::Pipe,
-     "pto.tpop", "pto_vpto_pipe_pop", kPipePopArgs, kPipePopResults, false},
+     "pto.tpop", "pto_vpto_pipe_pop", "", {}, kPipePopArgs, kPipePopResults, false},
     {BridgeEntryId::PipeFree, BridgeFamily::Pipe, BridgeRendererKind::Pipe,
-     "pto.tfree", "pto_vpto_pipe_free", kPipeFreeArgs, {}, false},
+     "pto.tfree", "pto_vpto_pipe_free", "", {}, kPipeFreeArgs, {}, false},
     {BridgeEntryId::CubeTMatmul, BridgeFamily::Cube,
      BridgeRendererKind::CubeDirect, "pto.tmatmul", "pto_vpto_tmatmul",
-     kMatmulArgs, {}, false},
+     "pto::TMATMUL", kCubeBindings, kMatmulArgs, {}, false},
     {BridgeEntryId::CubeTgemv, BridgeFamily::Cube,
-     BridgeRendererKind::CubeDirect, "pto.tgemv", "pto_vpto_tgemv", kGemvArgs,
-     {}, false},
+     BridgeRendererKind::CubeDirect, "pto.tgemv", "pto_vpto_tgemv",
+     "pto::TGEMV", kCubeBindings, kGemvArgs, {}, false},
 };
 
 } // namespace

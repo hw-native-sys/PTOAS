@@ -48,12 +48,21 @@ enum class BridgeEntryId : uint8_t {
   CubeTgemv,
 };
 
+struct BridgeAbiBinding {
+  BridgeValueKind kind;
+  int64_t operand = -1;
+  llvm::StringLiteral argument;
+  llvm::StringLiteral role;
+};
+
 struct BridgeFunctionDesc {
   BridgeEntryId id;
   BridgeFamily family;
   BridgeRendererKind renderer;
   llvm::StringLiteral opName;
   llvm::StringLiteral symbolBase;
+  llvm::StringLiteral callSpelling;
+  llvm::ArrayRef<BridgeAbiBinding> bindings;
   llvm::ArrayRef<BridgeValueKind> arguments;
   llvm::ArrayRef<BridgeValueKind> results;
   bool createsObject = false;

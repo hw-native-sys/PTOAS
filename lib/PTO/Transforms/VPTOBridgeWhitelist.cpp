@@ -650,33 +650,35 @@ pto::loadBridgeWhitelist(llvm::StringRef optionValue,
       if (!policyOr->routesFamily("pipe")) {
         result->bridgeOps.clear();
       }
-      if (policyOr->routesOp("cube", "pto.tmatmul")) {
+      bool hasCubeEntry = false;
+      for (const BridgeFunctionDesc &desc : getBridgeFunctionRegistry()) {
+        const bool routedCubeEntry =
+            desc.family == BridgeFamily::Cube && !desc.opName.empty() &&
+            policyOr->routesOp("cube", desc.opName);
+        if (!routedCubeEntry) {
+          continue;
+        }
         BridgeWhitelistEntry entry;
-        entry.op = "pto.tmatmul";
+        entry.op = desc.opName.str();
         entry.wrapper = "cube";
-        entry.entry = "pto_vpto_tmatmul";
-        entry.call = "pto::TMATMUL";
+        entry.entry = desc.symbolBase.str();
+        entry.call = desc.callSpelling.str();
         entry.tmplArgs = {"acc_phase"};
         entry.tmplMap.push_back({"attr", "acc_phase", "AccPhase",
                                  "pto::AccPhase", "Unspecified"});
-        entry.abi = {{"i64", 2, "dst", "result_tile"},
-                     {"i64", 0, "lhs", "left_tile"},
-                     {"i64", 1, "rhs", "right_tile"}};
-      if (policyOr->routesOp("cube", "pto.tgemv")) {
-        BridgeWhitelistEntry entry;
-        entry.op = "pto.tgemv";
-        entry.wrapper = "cube";
-        entry.entry = "pto_vpto_tgemv";
-        entry.call = "pto::TGEMV";
-        entry.tmplArgs = {"acc_phase"};
-        entry.tmplMap.push_back({"attr", "acc_phase", "AccPhase",
-                                 "pto::AccPhase", "Unspecified"});
-        entry.abi = {{"i64", 2, "dst", "result_tile"},
-                     {"i64", 0, "lhs", "left_tile"},
-                     {"i64", 1, "rhs", "right_tile"}};
+        for (const BridgeAbiBinding &binding : desc.bindings) {
+          if (binding.kind != BridgeValueKind::I64) {
+            diagOS << "VPTO bridge registry: Cube direct binding for '"
+                   << desc.opName << "' is not an i64 address\n";
+            return failure();
+          }
+          entry.abi.push_back({"i64", binding.operand,
+                               binding.argument.str(), binding.role.str()});
+        }
         result->bridgeOps.push_back(std::move(entry));
+        hasCubeEntry = true;
       }
-        result->bridgeOps.push_back(std::move(entry));
+      if (hasCubeEntry) {
         result->wrappers.push_back({"cube", {"pto/pto-inst.hpp"}, "cube"});
       }
       return result;

@@ -516,14 +516,14 @@ static FailureOr<std::string> renderCubeInstance(BridgeCallOp call,
   if (failed(result) || failed(left) || failed(right)) {
     return failure();
   }
-  llvm::StringRef callName;
-  if (entryId.getValue() == "cube.tmatmul") {
-    callName = "TMATMUL";
-  } else if (entryId.getValue() == "cube.tgemv") {
-    callName = "TGEMV";
-  } else {
+  const BridgeFunctionDesc *desc =
+      findBridgeFunctionById(entryId.getValue());
+  if (!desc || desc->renderer != BridgeRendererKind::CubeDirect ||
+      desc->callSpelling.empty()) {
     return failure();
   }
+  StringRef callName = desc->callSpelling;
+  callName.consume_front("pto::");
   std::string source;
   llvm::raw_string_ostream os(source);
   os << "#include <pto/pto-inst.hpp>\n#include <stdint.h>\n"
