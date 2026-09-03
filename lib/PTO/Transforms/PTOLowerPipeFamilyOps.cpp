@@ -30,6 +30,7 @@
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/VPTOBridgeSpecCollector.h"
 #include "PTO/Transforms/VPTOBridgeTokens.h"
+#include "PTO/Transforms/VPTOBridgeRegistry.h"
 #include "PTO/Transforms/VPTOBridgeWhitelist.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -56,6 +57,23 @@ static BridgeCallOp emitVoidBridgeCall(OpBuilder &builder, Location loc,
   return builder.create<BridgeCallOp>(
       loc, /*results=*/TypeRange{}, /*callee=*/callee,
       /*storage_size_callee=*/nullptr, /*args=*/args);
+}
+
+static void annotatePipeBridgeCall(BridgeCallOp call, llvm::StringRef callee,
+                                   Value pipeHandle) {
+  if (const BridgeFunctionDesc *desc = findBridgeFunctionBySymbol(callee)) {
+    call->setAttr("entry_id",
+                  StringAttr::get(call.getContext(),
+                                  stringifyBridgeEntryId(desc->id)));
+  }
+  if (auto create = pipeHandle.getDefiningOp<BridgeObjectCreateOp>()) {
+    if (auto key = create->getAttrOfType<StringAttr>(kBridgeInstanceKeyAttrName)) {
+      call->setAttr(kBridgeInstanceKeyAttrName, key);
+    }
+    if (auto spec = create->getAttrOfType<BridgePipeSpecAttr>("spec")) {
+      call->setAttr("spec", spec);
+    }
+  }
 }
 
 /// Returns the address value a tile_buf_addr operand resolves to, or nullptr
@@ -202,6 +220,13 @@ struct PTOLowerPipeFamilyOpsPass final
       BridgeObjectCreateOp call = builder.create<BridgeObjectCreateOp>(
           init.getLoc(), init.getPipe().getType(), entry->entry,
           ValueRange{init.getLocalAddr()});
+      auto pipeSpec = DictionaryAttr::get(
+          builder.getContext(),
+          {builder.getNamedAttr(kBridgeSpecPipeKey, builder.getStringAttr(*pipeTokOr))});
+      call->setAttr("spec", BridgePipeSpecAttr::get(builder.getContext(), pipeSpec));
+      call->setAttr("entry_id", builder.getStringAttr("pipe.init"));
+      call->setAttr(kBridgeInstanceKeyAttrName,
+                    builder.getStringAttr("pipe|" + *pipeTokOr));
       // The bridge call result becomes the storage handle: push/pop/free
       // consume the same SSA value instead of the erased pipe op.
       init.getPipe().replaceAllUsesWith(call.getResult());
@@ -275,6 +300,7 @@ struct PTOLowerPipeFamilyOpsPass final
           pop.getLoc(), /*results=*/TypeRange{builder.getI64Type()},
           /*callee=*/entry->entry, /*storage_size_callee=*/nullptr,
           /*args=*/ValueRange{pop.getPipeHandle()});
+      annotatePipeBridgeCall(call, entry->entry, pop.getPipeHandle());
       popAddresses[pop.getTile()] = call.getResults().front();
       pop.erase();
     }
@@ -341,8 +367,10 @@ struct PTOLowerPipeFamilyOpsPass final
       spec.addUniqueField(push, kBridgeSpecProducerTileKey, *producerTokOr);
       spec.addUniqueField(push, kBridgeSpecEntryPushKey, entry->entry);
       builder.setInsertionPoint(push);
-      emitVoidBridgeCall(builder, push.getLoc(), entry->entry,
-                         ValueRange{push.getPipeHandle(), alloc.getAddr()});
+      BridgeCallOp call = emitVoidBridgeCall(
+          builder, push.getLoc(), entry->entry,
+          ValueRange{push.getPipeHandle(), alloc.getAddr()});
+      annotatePipeBridgeCall(call, entry->entry, push.getPipeHandle());
       push.erase();
     }
 
@@ -363,8 +391,10 @@ struct PTOLowerPipeFamilyOpsPass final
       }
       spec.addUniqueField(free, kBridgeSpecEntryFreeKey, entry->entry);
       builder.setInsertionPoint(free);
-      emitVoidBridgeCall(builder, free.getLoc(), entry->entry,
-                         ValueRange{free.getPipeHandle()});
+      BridgeCallOp call = emitVoidBridgeCall(
+          builder, free.getLoc(), entry->entry,
+          ValueRange{free.getPipeHandle()});
+      annotatePipeBridgeCall(call, entry->entry, free.getPipeHandle());
       free.erase();
     }
 
@@ -400,6 +430,19 @@ struct PTOLowerPipeFamilyOpsPass final
     // so they must not write the shared module attribute directly.
     if (!hadError && !spec.hadError()) {
       spec.store(func);
+      auto funcSpec =
+          func->getAttrOfType<DictionaryAttr>(kBridgeFuncSpecAttrName);
+      if (funcSpec) {
+        BridgePipeSpecAttr pipeSpec =
+            BridgePipeSpecAttr::get(builder.getContext(), funcSpec);
+        func.walk([&](Operation *op) {
+          auto key = op->getAttrOfType<StringAttr>(kBridgeInstanceKeyAttrName);
+          if (key && key.getValue().starts_with("pipe|")) {
+            op->setAttr("spec", pipeSpec);
+          }
+        });
+        func->removeAttr(kBridgeFuncSpecAttrName);
+      }
     }
 
     if (hadError || spec.hadError()) {

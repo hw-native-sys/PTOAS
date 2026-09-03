@@ -63,6 +63,7 @@ struct BridgeFunctionDesc {
 llvm::ArrayRef<BridgeFunctionDesc> getBridgeFunctionRegistry();
 
 const BridgeFunctionDesc *findBridgeFunction(BridgeEntryId id);
+const BridgeFunctionDesc *findBridgeFunctionById(llvm::StringRef id);
 const BridgeFunctionDesc *findBridgeFunctionByOp(llvm::StringRef opName);
 const BridgeFunctionDesc *findBridgeFunctionBySymbol(llvm::StringRef symbol);
 

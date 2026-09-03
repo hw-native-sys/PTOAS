@@ -54,6 +54,7 @@ constexpr llvm::StringLiteral kBridgeFuncSpecAttrName =
 /// object emission.
 constexpr llvm::StringLiteral kBridgeWrapperSourceAttrName =
     "pto.vpto.bridge.wrapper_source";
+constexpr llvm::StringLiteral kBridgeInstanceKeyAttrName = "instance_key";
 
 /// Spec DictionaryAttr keys for the pipe bridge specialization.
 constexpr llvm::StringLiteral kBridgeSpecPipeKey = "pipe";

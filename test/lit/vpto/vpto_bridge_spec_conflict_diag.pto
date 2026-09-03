@@ -9,15 +9,15 @@
 // PARTICULAR PURPOSE.
 // See LICENSE for more details.
 
-// Cross-function spec merging: identical pipe configurations deduplicate
-// into a single module spec, but two functions initializing the pipe with
-// different slot configurations are a conflict the wrapper generation pass
-// must reject with a diagnostic (a single wrapper cannot serve two
-// specializations).
+// Different Pipe configurations are resolved as independent bridge instances
+// and can coexist in one module.
 
-// RUN: not pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist.yaml" -pto-emit-vpto-bridge-wrapper 2>&1 | FileCheck %s
+// RUN: pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist.yaml" -pto-emit-vpto-bridge-wrapper | FileCheck %s
 
-// CHECK: error: VPTO bridge: conflicting bridge specialization across functions; the family configurations must be identical
+// CHECK: pto_vpto_pipe_init__0
+// CHECK: pto::TPipe<0, pto::Direction::DIR_C2V, 1024, 8, 2, false>
+// CHECK: pto_vpto_pipe_init__1
+// CHECK: pto::TPipe<0, pto::Direction::DIR_C2V, 256, 16, 2, false>
 
 module {
   func.func private @conflict_cube(%addr: i32)

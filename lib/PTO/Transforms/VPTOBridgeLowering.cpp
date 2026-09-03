@@ -118,25 +118,40 @@ static LogicalResult ensureWrapperDecl(ModuleOp module,
 
 /// Validates the fully assembled call argument list against the whitelist
 /// ABI. Emits a diagnostic and returns failure on any mismatch.
-static LogicalResult validateAbi(Operation *op, const BridgeWhitelistEntry &entry,
-                                 ValueRange callArgs) {
-  if (callArgs.size() != entry.abi.size()) {
-    return op->emitError()
-           << "VPTO bridge call to '" << entry.entry << "' passes "
-           << callArgs.size() << " argument(s), whitelist ABI declares "
-           << entry.abi.size();
+static bool bridgeValueKindMatches(BridgeValueKind kind, Type type) {
+  switch (kind) {
+  case BridgeValueKind::I32:
+    return type.isInteger(32);
+  case BridgeValueKind::I64:
+    return type.isInteger(64);
+  case BridgeValueKind::Pointer:
+    return isa<LLVM::LLVMPointerType, pto::PtrType>(type);
+  case BridgeValueKind::PipeObject:
+    return isa<LLVM::LLVMPointerType, pto::PipeType>(type);
+  }
+  return false;
+}
+
+static LogicalResult validateRegistryAbi(Operation *op,
+                                          const BridgeFunctionDesc &desc,
+                                          ValueRange callArgs) {
+  if (callArgs.size() != desc.arguments.size()) {
+    return op->emitError() << "VPTO bridge call to registry entry '"
+                           << stringifyBridgeEntryId(desc.id) << "' passes "
+                           << callArgs.size() << " argument(s), registry ABI declares "
+                           << desc.arguments.size();
   }
   for (auto [index, arg] : llvm::enumerate(callArgs)) {
-    const BridgeAbiArg &abiArg = entry.abi[index];
-    if (!bridgeAbiTypeMatches(abiArg.type, arg.getType())) {
-      return op->emitError()
-             << "VPTO bridge call to '" << entry.entry << "' argument #"
-             << index << " has type " << arg.getType()
-             << ", whitelist ABI declares '" << abiArg.type << "'";
+    if (!bridgeValueKindMatches(desc.arguments[index], arg.getType())) {
+      return op->emitError() << "VPTO bridge call to registry entry '"
+                             << stringifyBridgeEntryId(desc.id) << "' argument #"
+                             << index << " has type " << arg.getType()
+                             << ", which does not match the registry ABI";
     }
   }
   return success();
 }
+
 
 class LowerBridgeObjectCreatePattern final
     : public OpConversionPattern<BridgeObjectCreateOp> {
@@ -150,7 +165,13 @@ public:
   matchAndRewrite(BridgeObjectCreateOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     StringRef symbol = op.getEntryAttr().getValue();
-    const BridgeFunctionDesc *desc = findBridgeFunctionBySymbol(symbol);
+    const BridgeFunctionDesc *desc = nullptr;
+    if (auto idAttr = op->getAttrOfType<StringAttr>("entry_id")) {
+      desc = findBridgeFunctionById(idAttr.getValue());
+    }
+    if (!desc) {
+      desc = findBridgeFunctionBySymbol(symbol);
+    }
     if (!desc || !desc->createsObject) {
       return op.emitError() << "entry does not create a registered bridge object: "
                             << symbol;
@@ -173,13 +194,16 @@ public:
     }
     ModuleOp module = op->getParentOfType<ModuleOp>();
     Location loc = op.getLoc();
+    StringRef sizeSymbol = sizeDesc->symbolBase;
+    if (auto resolved = op->getAttrOfType<StringAttr>("size_callee")) {
+      sizeSymbol = resolved.getValue();
+    }
     Value size = rewriter
-                     .create<func::CallOp>(loc, sizeDesc->symbolBase,
+                     .create<func::CallOp>(loc, sizeSymbol,
                                            rewriter.getI64Type(), ValueRange{})
                      .getResult(0);
     if (failed(ensureWrapperDecl(module, state, rewriter, op,
-                                 sizeDesc->symbolBase, {},
-                                 {rewriter.getI64Type()}))) {
+                                 sizeSymbol, {}, {rewriter.getI64Type()}))) {
       return failure();
     }
     Value storage = rewriter.create<LLVM::AllocaOp>(
@@ -228,10 +252,16 @@ public:
         }
       }
     }
-    if (!entry) {
-      return op.emitError()
-             << "VPTO bridge call to wrapper entry '" << callee
-             << "' is not declared in the bridge whitelist";
+    const BridgeFunctionDesc *registryDesc = nullptr;
+    if (auto idAttr = op->getAttrOfType<StringAttr>("entry_id")) {
+      registryDesc = findBridgeFunctionById(idAttr.getValue());
+    }
+    if (!registryDesc) {
+      registryDesc = findBridgeFunctionBySymbol(callee);
+    }
+    if (!registryDesc) {
+      return op.emitError() << "VPTO bridge call '" << callee
+                            << "' has no registered ABI entry";
     }
     ModuleOp module = op->getParentOfType<ModuleOp>();
     ValueRange operands = adaptor.getArgs();
@@ -270,7 +300,7 @@ public:
     }
     callArgs.append(operands.begin(), operands.end());
 
-    if (failed(validateAbi(op, *entry, callArgs))) {
+    if (failed(validateRegistryAbi(op, *registryDesc, callArgs))) {
       return failure();
     }
 

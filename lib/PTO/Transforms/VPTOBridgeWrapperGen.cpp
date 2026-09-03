@@ -349,15 +349,26 @@ renderDeclarativeBridgeSource(ModuleOp module,
 static LogicalResult mergeFuncSpecsIntoModule(ModuleOp module) {
   SmallVector<func::FuncOp> specFuncs;
   for (auto func : module.getOps<func::FuncOp>()) {
-    if (func->getAttrOfType<DictionaryAttr>(kBridgeFuncSpecAttrName))
+    if (func->getAttrOfType<DictionaryAttr>(kBridgeFuncSpecAttrName)) {
       specFuncs.push_back(func);
+    }
   }
   if (specFuncs.empty())
     return success();
 
   SmallVector<NamedAttribute> merged;
   for (func::FuncOp func : specFuncs) {
+    bool hasPipeInstance = false;
+    func.walk([&](BridgeObjectCreateOp create) {
+      if (create->getAttrOfType<StringAttr>(kBridgeInstanceKeyAttrName)) {
+        hasPipeInstance = true;
+      }
+    });
     auto funcSpec = func->getAttrOfType<DictionaryAttr>(kBridgeFuncSpecAttrName);
+    if (hasPipeInstance) {
+      func->removeAttr(kBridgeFuncSpecAttrName);
+      continue;
+    }
     for (NamedAttribute field : funcSpec) {
       bool found = false;
       for (NamedAttribute existing : merged) {
@@ -531,6 +542,201 @@ static FailureOr<std::string> renderCubeInstance(BridgeCallOp call,
   return source;
 }
 
+
+struct ResolvedPipeSymbols {
+  std::string init;
+  std::string size;
+  std::string push;
+  std::string pop;
+  std::string free;
+};
+
+static std::string pipeSymbol(BridgeEntryId id, unsigned instanceId) {
+  const BridgeFunctionDesc *desc = findBridgeFunction(id);
+  return desc->symbolBase.str() + "__" + std::to_string(instanceId);
+}
+
+static FailureOr<std::string>
+renderPipeInstance(BridgeObjectCreateOp create,
+                   const ResolvedPipeSymbols &symbols, unsigned instanceId,
+                   ArrayRef<BridgeCallOp> calls) {
+  auto spec = create->getAttrOfType<BridgePipeSpecAttr>("spec");
+  if (!spec) {
+    return create.emitError("resolved Pipe object has no structured spec");
+  }
+  DictionaryAttr fields = spec.getValue();
+  auto pipe = fields.getAs<StringAttr>(kBridgeSpecPipeKey);
+  auto split = fields.getAs<StringAttr>(kBridgeSpecSplitKey);
+  auto producer = fields.getAs<StringAttr>(kBridgeSpecProducerTileKey);
+  auto consumer = fields.getAs<StringAttr>(kBridgeSpecConsumerTileKey);
+  if (!pipe) {
+    return create.emitError("Pipe bridge spec is missing the pipe configuration");
+  }
+
+  bool needsPush = false;
+  bool needsPop = false;
+  bool needsFree = false;
+  for (BridgeCallOp call : calls) {
+    auto entryId = call->getAttrOfType<StringAttr>("entry_id");
+    if (!entryId) {
+      return call.emitError("Pipe bridge call is missing its logical entry ID");
+    }
+    needsPush |= entryId.getValue() == "pipe.push";
+    needsPop |= entryId.getValue() == "pipe.pop";
+    needsFree |= entryId.getValue() == "pipe.free";
+  }
+  if ((needsPush || needsPop || needsFree) && !split) {
+    return create.emitError("Pipe bridge spec is missing the split axis");
+  }
+  if (needsPush && !producer) {
+    return create.emitError("Pipe bridge spec is missing its producer tile");
+  }
+  if (needsPop && !consumer) {
+    return create.emitError("Pipe bridge spec is missing its consumer tile");
+  }
+
+  func::FuncOp func = create->getParentOfType<func::FuncOp>();
+  auto kind = func->getAttrOfType<FunctionKernelKindAttr>(
+      FunctionKernelKindAttr::name);
+  if (!kind || (kind.getKernelKind() != FunctionKernelKind::Cube &&
+                kind.getKernelKind() != FunctionKernelKind::Vector)) {
+    return create.emitError(
+        "Pipe bridge instance requires a cube or vector kernel kind");
+  }
+  StringRef guard = kind.getKernelKind() == FunctionKernelKind::Cube
+                        ? "__DAV_CUBE__"
+                        : "__DAV_VEC__";
+  std::string suffix = std::to_string(instanceId);
+  std::string pipeType = "Pipe__" + suffix;
+  std::string producerType = "ProducerTile__" + suffix;
+  std::string consumerType = "ConsumerTile__" + suffix;
+
+  std::string source;
+  llvm::raw_string_ostream os(source);
+  os << "using " << pipeType << " = " << pipe.getValue() << ";\n";
+  if (producer) {
+    os << "using " << producerType << " = " << producer.getValue() << ";\n";
+  }
+  if (consumer) {
+    os << "using " << consumerType << " = " << consumer.getValue() << ";\n";
+  }
+  os << "extern \"C\" [aicore] void " << symbols.init
+     << "(void *storage, uint32_t localBuffer) {\n"
+     << "  new (storage) " << pipeType << "(nullptr, localBuffer, 0);\n}\n"
+     << "extern \"C\" [aicore] size_t " << symbols.size
+     << "() { return sizeof(" << pipeType << "); }\n"
+     << "#ifdef " << guard << "\n";
+  if (needsPush) {
+    os << "extern \"C\" [aicore] void " << symbols.push
+       << "(void *storage, uint64_t producerAddress) {\n"
+       << "  auto &pipe = *reinterpret_cast<" << pipeType
+       << " *>(storage);\n"
+       << "  " << producerType << " tile;\n"
+       << "  pto::TASSIGN_IMPL(tile, producerAddress);\n"
+       << "  pto::TPUSH<" << pipeType << ", " << producerType << ", "
+       << split.getValue() << ">(pipe, tile);\n}\n";
+  }
+  if (needsPop) {
+    os << "extern \"C\" [aicore] uint64_t " << symbols.pop
+       << "(void *storage) {\n"
+       << "  auto &pipe = *reinterpret_cast<" << pipeType
+       << " *>(storage);\n"
+       << "  " << consumerType << " tile;\n"
+       << "  pto::TPOP<" << pipeType << ", " << consumerType << ", "
+       << split.getValue() << ">(pipe, tile);\n"
+       << "  pipe_barrier(PIPE_ALL);\n"
+       << "  return reinterpret_cast<uint64_t>(tile.data());\n}\n";
+  }
+  if (needsFree) {
+    os << "extern \"C\" [aicore] void " << symbols.free
+       << "(void *storage) {\n"
+       << "  auto &pipe = *reinterpret_cast<" << pipeType
+       << " *>(storage);\n"
+       << "  pto::TFREE<" << pipeType << ", " << split.getValue()
+       << ">(pipe);\n}\n";
+  }
+  os << "#endif\n";
+  os.flush();
+  return source;
+}
+
+static FailureOr<std::string> resolvePipeInstances(ModuleOp module) {
+  std::string source;
+  unsigned nextId = 0;
+  bool failedResolve = false;
+  module.walk([&](BridgeObjectCreateOp create) {
+    auto entryId = create->getAttrOfType<StringAttr>("entry_id");
+    if (!entryId || entryId.getValue() != "pipe.init") {
+      return;
+    }
+    SmallVector<BridgeCallOp> calls;
+    for (Operation *user : create.getResult().getUsers()) {
+      auto call = dyn_cast<BridgeCallOp>(user);
+      if (!call) {
+        create.emitError("Pipe bridge object has a non-bridge lifecycle user");
+        failedResolve = true;
+        return;
+      }
+      calls.push_back(call);
+    }
+    llvm::sort(calls, [](BridgeCallOp lhs, BridgeCallOp rhs) {
+      return lhs->isBeforeInBlock(rhs);
+    });
+
+    const unsigned instanceId = nextId++;
+    ResolvedPipeSymbols symbols{
+        pipeSymbol(BridgeEntryId::PipeInit, instanceId),
+        pipeSymbol(BridgeEntryId::PipeSize, instanceId),
+        pipeSymbol(BridgeEntryId::PipePush, instanceId),
+        pipeSymbol(BridgeEntryId::PipePop, instanceId),
+        pipeSymbol(BridgeEntryId::PipeFree, instanceId)};
+    FailureOr<std::string> rendered =
+        renderPipeInstance(create, symbols, instanceId, calls);
+    if (failed(rendered)) {
+      failedResolve = true;
+      return;
+    }
+    source += *rendered;
+    create->setAttr("entry", StringAttr::get(module.getContext(), symbols.init));
+    create->setAttr("size_callee",
+                    StringAttr::get(module.getContext(), symbols.size));
+    for (BridgeCallOp call : calls) {
+      StringRef id = call->getAttrOfType<StringAttr>("entry_id").getValue();
+      StringRef symbol;
+      if (id == "pipe.push") {
+        symbol = symbols.push;
+      }
+      else if (id == "pipe.pop") {
+        symbol = symbols.pop;
+      }
+      else if (id == "pipe.free") {
+        symbol = symbols.free;
+      }
+      else {
+        call.emitError("unsupported Pipe bridge lifecycle entry");
+        failedResolve = true;
+        continue;
+      }
+      call.setCalleeAttr(StringAttr::get(module.getContext(), symbol));
+    }
+  });
+  if (failedResolve) {
+    return failure();
+  }
+  if (!source.empty()) {
+    source.insert(0,
+        "// Generated by ptoas (pto-emit-vpto-bridge-wrapper). Do not edit.\n"
+        "#include <pto/pto-inst.hpp>\n"
+        "#include <pto/npu/a5/TFree.hpp>\n"
+        "#include <pto/npu/a5/TPop.hpp>\n"
+        "#include <pto/npu/a5/TPush.hpp>\n"
+        "#include <stddef.h>\n#include <stdint.h>\n"
+        "[aicore] inline void *operator new(size_t, void *ptr) noexcept { "
+        "return ptr; }\n");
+  }
+  return source;
+}
+
 static FailureOr<std::string> resolveCubeInstances(ModuleOp module) {
   llvm::StringMap<std::pair<std::string, std::string>> instances;
   std::string source;
@@ -539,7 +745,7 @@ static FailureOr<std::string> resolveCubeInstances(ModuleOp module) {
   module.walk([&](BridgeCallOp call) {
     auto key = call->getAttrOfType<StringAttr>("instance_key");
     auto entryId = call->getAttrOfType<StringAttr>("entry_id");
-    if (!key || !entryId) {
+    if (!key || !entryId || !entryId.getValue().starts_with("cube.")) {
       return;
     }
     auto found = instances.find(key.getValue());
@@ -575,12 +781,19 @@ struct VPTOBridgeWrapperGenPass final
 
   void runOnOperation() override {
     ModuleOp module = getOperation();
+    FailureOr<std::string> pipeSourceOr = resolvePipeInstances(module);
+    if (failed(pipeSourceOr)) {
+      signalPassFailure();
+      return;
+    }
     FailureOr<std::string> cubeSourceOr = resolveCubeInstances(module);
     if (failed(cubeSourceOr)) {
       signalPassFailure();
       return;
     }
+    std::string pipeSource = std::move(*pipeSourceOr);
     std::string cubeSource = std::move(*cubeSourceOr);
+    std::string resolvedSource = pipeSource + cubeSource;
 
     // Merge the per-function specs into the module spec first: the family
     // pass instances may have run concurrently and only write their own
@@ -594,10 +807,10 @@ struct VPTOBridgeWrapperGenPass final
     auto specAttr =
         module->getAttrOfType<DictionaryAttr>(kBridgeSpecAttrName);
     if (!specAttr) {
-      if (!cubeSource.empty()) {
+      if (!resolvedSource.empty()) {
         OpBuilder builder(module);
         module->setAttr(kBridgeWrapperSourceAttrName,
-                        builder.getStringAttr(cubeSource));
+                        builder.getStringAttr(resolvedSource));
       }
       return;
     }
@@ -772,7 +985,7 @@ struct VPTOBridgeWrapperGenPass final
     }
 
     OpBuilder builder(module);
-    source->append(cubeSource);
+    source->append(resolvedSource);
     module->setAttr(kBridgeWrapperSourceAttrName,
                     builder.getStringAttr(*source));
     module->removeAttr(kBridgeSpecAttrName);

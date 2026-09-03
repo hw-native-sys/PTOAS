@@ -1248,6 +1248,13 @@ def BridgeCubeSpecAttr : AttrDef<PTO_Dialect, "BridgeCubeSpec"> {
   let assemblyFormat = "`<` $value `>`";
 }
 
+// Structured specialization carried by a stateful Pipe bridge object.
+def BridgePipeSpecAttr : AttrDef<PTO_Dialect, "BridgePipeSpec"> {
+  let mnemonic = "bridge_pipe_spec";
+  let parameters = (ins "mlir::DictionaryAttr":$value);
+  let assemblyFormat = "`<` $value `>`";
+}
+
 //===----------------------------------------------------------------------===//
 // QuantType
 //===----------------------------------------------------------------------===//
