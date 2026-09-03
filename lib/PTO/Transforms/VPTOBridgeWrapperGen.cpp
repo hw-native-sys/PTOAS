@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 //===- VPTOBridgeWrapperGen.cpp - bridge wrapper source generation -------===//
 //===----------------------------------------------------------------------===//
@@ -78,11 +80,12 @@ static FailureOr<std::string> renderStructuredTile(DictionaryAttr tile) {
     return failure();
   }
   llvm::StringRef blockLayout = bLayout.getInt() == 0 ? "RowMajor" : "ColMajor";
-  std::string token = "pto::Tile<pto::TileType::" + tileKind.str() + ", " +
+  std::string token =
+      "pto::Tile<pto::TileType::" + tileKind.str() + ", " +
       buildBridgeElementTypeToken(element.getValue()) + ", " +
       std::to_string(shape[0]) + ", " + std::to_string(shape[1]) +
-      ", pto::BLayout::" + blockLayout.str() + ", " +
-      std::to_string(valid[0]) + ", " + std::to_string(valid[1]);
+      ", pto::BLayout::" + blockLayout.str() + ", " + std::to_string(valid[0]) +
+      ", " + std::to_string(valid[1]);
   if (sLayout.getInt() != 0) {
     llvm::StringRef storageLayout =
         sLayout.getInt() == 1 ? "RowMajor" : "ColMajor";
@@ -91,7 +94,6 @@ static FailureOr<std::string> renderStructuredTile(DictionaryAttr tile) {
   }
   return token + ">";
 }
-
 
 static FailureOr<std::string> renderPipeConfig(DictionaryAttr config) {
   auto flag = config.getAs<IntegerAttr>("flag_base");
@@ -130,18 +132,23 @@ static FailureOr<std::string> renderPipeSplit(IntegerAttr split) {
     return failure();
   }
   switch (split.getInt()) {
-  case 0: return std::string("pto::TileSplitAxis::TILE_NO_SPLIT");
-  case 1: return std::string("pto::TileSplitAxis::TILE_UP_DOWN");
-  case 2: return std::string("pto::TileSplitAxis::TILE_LEFT_RIGHT");
-  case 3: return std::string("pto::TileSplitAxis::TILE_UP_DOWN_ODD");
-  case 4: return std::string("pto::TileSplitAxis::TILE_LEFT_RIGHT_ODD");
+  case 0:
+    return std::string("pto::TileSplitAxis::TILE_NO_SPLIT");
+  case 1:
+    return std::string("pto::TileSplitAxis::TILE_UP_DOWN");
+  case 2:
+    return std::string("pto::TileSplitAxis::TILE_LEFT_RIGHT");
+  case 3:
+    return std::string("pto::TileSplitAxis::TILE_UP_DOWN_ODD");
+  case 4:
+    return std::string("pto::TileSplitAxis::TILE_LEFT_RIGHT_ODD");
   default:
     return failure();
   }
 }
 
 static FailureOr<std::string> renderCubeInstance(BridgeCallOp call,
-                                                  llvm::StringRef symbol) {
+                                                 llvm::StringRef symbol) {
   auto entryId = call->getAttrOfType<StringAttr>("entry_id");
   auto specAttr = call->getAttrOfType<BridgeCubeSpecAttr>("spec");
   DictionaryAttr spec = specAttr ? specAttr.getValue() : DictionaryAttr();
@@ -154,9 +161,9 @@ static FailureOr<std::string> renderCubeInstance(BridgeCallOp call,
   if (failed(result) || failed(left) || failed(right)) {
     return failure();
   }
-  const BridgeFunctionDesc *desc =
-      findBridgeFunctionById(entryId.getValue());
-  if (!desc || desc->renderer != BridgeRendererKind::CubeDirect ||
+  const BridgeFunctionDesc *desc = findBridgeFunctionById(entryId.getValue());
+  if (!desc || desc->core != BridgeCoreKind::Cube ||
+      desc->renderer != BridgeRendererKind::CubeDirect ||
       desc->callSpelling.empty()) {
     return failure();
   }
@@ -179,7 +186,6 @@ static FailureOr<std::string> renderCubeInstance(BridgeCallOp call,
   os.flush();
   return source;
 }
-
 
 struct ResolvedPipeSymbols {
   std::string init;
@@ -240,8 +246,8 @@ renderPipeInstance(BridgeObjectCreateOp create,
   }
 
   func::FuncOp func = create->getParentOfType<func::FuncOp>();
-  auto kind = func->getAttrOfType<FunctionKernelKindAttr>(
-      FunctionKernelKindAttr::name);
+  auto kind =
+      func->getAttrOfType<FunctionKernelKindAttr>(FunctionKernelKindAttr::name);
   if (!kind || (kind.getKernelKind() != FunctionKernelKind::Cube &&
                 kind.getKernelKind() != FunctionKernelKind::Vector)) {
     return create.emitError(
@@ -277,37 +283,32 @@ renderPipeInstance(BridgeObjectCreateOp create,
   os << "extern \"C\" [aicore] void " << symbols.init
      << "(void *storage, uint32_t localBuffer) {\n"
      << "  new (storage) " << pipeType << "(nullptr, localBuffer, 0);\n}\n"
-     << "extern \"C\" [aicore] size_t " << symbols.size
-     << "() { return sizeof(" << pipeType << "); }\n"
+     << "extern \"C\" [aicore] size_t " << symbols.size << "() { return sizeof("
+     << pipeType << "); }\n"
      << "#ifdef " << guard << "\n";
   if (needsPush) {
     os << "extern \"C\" [aicore] void " << symbols.push
        << "(void *storage, uint64_t producerAddress) {\n"
-       << "  auto &pipe = *reinterpret_cast<" << pipeType
-       << " *>(storage);\n"
+       << "  auto &pipe = *reinterpret_cast<" << pipeType << " *>(storage);\n"
        << "  " << producerType << " tile;\n"
        << "  pto::TASSIGN_IMPL(tile, producerAddress);\n"
-       << "  pto::TPUSH<" << pipeType << ", " << producerType << ", "
-       << *split << ">(pipe, tile);\n}\n";
+       << "  pto::TPUSH<" << pipeType << ", " << producerType << ", " << *split
+       << ">(pipe, tile);\n}\n";
   }
   if (needsPop) {
     os << "extern \"C\" [aicore] uint64_t " << symbols.pop
        << "(void *storage) {\n"
-       << "  auto &pipe = *reinterpret_cast<" << pipeType
-       << " *>(storage);\n"
+       << "  auto &pipe = *reinterpret_cast<" << pipeType << " *>(storage);\n"
        << "  " << consumerType << " tile;\n"
-       << "  pto::TPOP<" << pipeType << ", " << consumerType << ", "
-       << *split << ">(pipe, tile);\n"
+       << "  pto::TPOP<" << pipeType << ", " << consumerType << ", " << *split
+       << ">(pipe, tile);\n"
        << "  pipe_barrier(PIPE_ALL);\n"
        << "  return reinterpret_cast<uint64_t>(tile.data());\n}\n";
   }
   if (needsFree) {
-    os << "extern \"C\" [aicore] void " << symbols.free
-       << "(void *storage) {\n"
-       << "  auto &pipe = *reinterpret_cast<" << pipeType
-       << " *>(storage);\n"
-       << "  pto::TFREE<" << pipeType << ", " << *split
-       << ">(pipe);\n}\n";
+    os << "extern \"C\" [aicore] void " << symbols.free << "(void *storage) {\n"
+       << "  auto &pipe = *reinterpret_cast<" << pipeType << " *>(storage);\n"
+       << "  pto::TFREE<" << pipeType << ", " << *split << ">(pipe);\n}\n";
   }
   os << "#endif\n";
   os.flush();
@@ -365,12 +366,13 @@ static FailureOr<std::string> resolvePipeInstances(ModuleOp module) {
         return;
       }
       source += *rendered;
-      found = instances
-                  .try_emplace(canonical, instanceId, std::move(newSymbols))
-                  .first;
+      found =
+          instances.try_emplace(canonical, instanceId, std::move(newSymbols))
+              .first;
     }
     const ResolvedPipeSymbols &symbols = found->second.second;
-    create->setAttr("entry", StringAttr::get(module.getContext(), symbols.init));
+    create->setAttr("entry",
+                    StringAttr::get(module.getContext(), symbols.init));
     create->setAttr("size_callee",
                     StringAttr::get(module.getContext(), symbols.size));
     for (BridgeCallOp call : calls) {
@@ -394,7 +396,8 @@ static FailureOr<std::string> resolvePipeInstances(ModuleOp module) {
     return failure();
   }
   if (!source.empty()) {
-    source.insert(0,
+    source.insert(
+        0,
         "// Generated by ptoas (pto-emit-vpto-bridge-wrapper). Do not edit.\n"
         "#include <pto/pto-inst.hpp>\n"
         "#include <pto/npu/a5/TFree.hpp>\n"
@@ -426,8 +429,8 @@ static FailureOr<std::string> resolveCubeInstances(ModuleOp module) {
         failedRender = true;
         return;
       }
-      std::string symbol = desc->symbolBase.str() + "__" +
-                           std::to_string(nextId++);
+      std::string symbol =
+          desc->symbolBase.str() + "__" + std::to_string(nextId++);
       auto rendered = renderCubeInstance(call, symbol);
       if (failed(rendered)) {
         failedRender = true;
@@ -436,7 +439,8 @@ static FailureOr<std::string> resolveCubeInstances(ModuleOp module) {
       found = instances.try_emplace(key.getValue(), symbol, *rendered).first;
       source += found->second.second;
     }
-    call.setCalleeAttr(StringAttr::get(module.getContext(), found->second.first));
+    call.setCalleeAttr(
+        StringAttr::get(module.getContext(), found->second.first));
   });
   if (failedRender) {
     module.emitError("cannot resolve structured Cube bridge instance");

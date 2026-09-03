@@ -31,3 +31,15 @@ module {
 }
 
 // CHECK: pipe object init requires one i32 local address
+
+
+// -----
+
+module {
+  func.func private @bad_result_abi(%storage: !pto.pipe) {
+    %bad = pto.bridge_call "pto_vpto_pipe_pop" (%storage : !pto.pipe) -> i32
+    return
+  }
+}
+
+// CHECK: VPTO bridge call to registry entry 'pipe.pop' result #0 has type 'i32', which does not match the registry ABI

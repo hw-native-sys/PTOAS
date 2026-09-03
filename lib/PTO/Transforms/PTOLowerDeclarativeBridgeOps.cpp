@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 //===- PTOLowerDeclarativeBridgeOps.cpp - typed Cube bridge lowering -----===//
 //===----------------------------------------------------------------------===//
@@ -51,16 +53,14 @@ static DictionaryAttr buildStructuredTileSpec(OpBuilder &builder,
                            TypeAttr::get(tileType.getElementType())),
       builder.getNamedAttr("shape",
                            builder.getDenseI64ArrayAttr(tileType.getShape())),
-      builder.getNamedAttr(
-          "valid_shape",
-          builder.getDenseI64ArrayAttr(tileType.getValidShape())),
+      builder.getNamedAttr("valid_shape", builder.getDenseI64ArrayAttr(
+                                              tileType.getValidShape())),
       builder.getNamedAttr(
           "b_layout", builder.getI32IntegerAttr(tileType.getBLayoutValueI32())),
       builder.getNamedAttr(
           "s_layout", builder.getI32IntegerAttr(tileType.getSLayoutValueI32())),
-      builder.getNamedAttr(
-          "s_fractal",
-          builder.getI32IntegerAttr(tileType.getSFractalSizeI32()))};
+      builder.getNamedAttr("s_fractal", builder.getI32IntegerAttr(
+                                            tileType.getSFractalSizeI32()))};
   if (Attribute memorySpace = tileType.getMemorySpace()) {
     fields.push_back(builder.getNamedAttr("memory_space", memorySpace));
   }
@@ -113,6 +113,16 @@ public:
 
   LogicalResult matchAndRewrite(OpTy op,
                                 PatternRewriter &rewriter) const override {
+    func::FuncOp func = op->template getParentOfType<func::FuncOp>();
+    auto kernelKind = func->getAttrOfType<FunctionKernelKindAttr>(
+        FunctionKernelKindAttr::name);
+    bool isCubeCore =
+        kernelKind && kernelKind.getKernelKind() == FunctionKernelKind::Cube;
+    if (desc.core == BridgeCoreKind::Cube && !isCubeCore) {
+      return op.emitError()
+             << "bridge entry '" << stringifyBridgeEntryId(desc.id)
+             << "' requires a cube kernel";
+    }
     if (desc.renderer != BridgeRendererKind::CubeDirect ||
         desc.bindings.size() != desc.arguments.size()) {
       return op.emitError("Cube bridge registry entry is not a direct ABI");
@@ -147,10 +157,10 @@ public:
         op.getLoc(), TypeRange{}, desc.symbolBase, nullptr, callArgs);
     StringRef entryId = stringifyBridgeEntryId(desc.id);
     call->setAttr("entry_id", rewriter.getStringAttr(entryId));
-    call->setAttr("spec",
-                  BridgeCubeSpecAttr::get(rewriter.getContext(), spec));
-    call->setAttr("instance_key", rewriter.getStringAttr(
-                                      canonicalBridgeInstanceKey(entryId, spec)));
+    call->setAttr("spec", BridgeCubeSpecAttr::get(rewriter.getContext(), spec));
+    call->setAttr(
+        "instance_key",
+        rewriter.getStringAttr(canonicalBridgeInstanceKey(entryId, spec)));
     if (Value result = Adapter::getResult(op)) {
       result.replaceAllUsesWith(Adapter::getTile(op, "result_tile"));
     }
