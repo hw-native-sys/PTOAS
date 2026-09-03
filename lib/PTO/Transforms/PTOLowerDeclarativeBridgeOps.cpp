@@ -34,6 +34,7 @@
 
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/VPTOBridgeSpecCollector.h"
+#include "PTO/Transforms/VPTOBridgeRegistry.h"
 #include "PTO/Transforms/VPTOBridgeTokens.h"
 #include "PTO/Transforms/VPTOBridgeWhitelist.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -232,6 +233,75 @@ struct PTOLowerDeclarativeBridgeOpsPass final
       // from lowering (matching the family pass continue semantics); the
       // pass fails at the end when any error was recorded.
       bool opFailed = false;
+      if (auto matmul = dyn_cast<TMatmulOp>(op)) {
+        const BridgeFunctionDesc *desc =
+            findBridgeFunctionByOp(op->getName().getStringRef());
+        if (!desc || desc->id != BridgeEntryId::CubeTMatmul) {
+          op->emitError("VPTO tmatmul bridge has no registered typed adapter");
+          hadError = true;
+          continue;
+        }
+        SmallVector<Value> tiles = {matmul.getDst(), matmul.getLhs(),
+                                    matmul.getRhs()};
+        llvm::StringRef roles[] = {"result_tile", "left_tile", "right_tile"};
+        SmallVector<Value> callArgs;
+        SmallVector<NamedAttribute> structuredSpec;
+        OpBuilder builder(op);
+        for (auto [index, tile] : llvm::enumerate(tiles)) {
+          BridgeAbiArg binding;
+          binding.operand = index;
+          binding.arg = roles[index].str();
+          binding.role = roles[index].str();
+          Value addr = resolvePlannedTile(op, binding, tile);
+          if (!addr) {
+            opFailed = true;
+            break;
+          }
+          auto tileType = cast<TileBufType>(tile.getType());
+          SmallVector<NamedAttribute> fields = {
+              builder.getNamedAttr("element_type",
+                                   TypeAttr::get(tileType.getElementType())),
+              builder.getNamedAttr(
+                  "shape", builder.getDenseI64ArrayAttr(tileType.getShape())),
+              builder.getNamedAttr(
+                  "valid_shape",
+                  builder.getDenseI64ArrayAttr(tileType.getValidShape())),
+              builder.getNamedAttr(
+                  "b_layout", builder.getI32IntegerAttr(
+                                  tileType.getBLayoutValueI32())),
+              builder.getNamedAttr(
+                  "s_layout", builder.getI32IntegerAttr(
+                                  tileType.getSLayoutValueI32())),
+              builder.getNamedAttr(
+                  "s_fractal", builder.getI32IntegerAttr(
+                                   tileType.getSFractalSizeI32()))};
+          if (Attribute memorySpace = tileType.getMemorySpace()) {
+            fields.push_back(builder.getNamedAttr("memory_space", memorySpace));
+          }
+          structuredSpec.push_back(builder.getNamedAttr(
+              roles[index], DictionaryAttr::get(builder.getContext(), fields)));
+          callArgs.push_back(addr);
+          collectTileToken(op, binding, tile, *entry);
+        }
+        if (opFailed) {
+          continue;
+        }
+        structuredSpec.push_back(
+            builder.getNamedAttr("acc_phase", matmul.getAccPhaseAttr()));
+        spec.addField(op, deriveEntrySpecKey(op->getName().getStringRef()),
+                      desc->symbolBase);
+        auto call = builder.create<BridgeCallOp>(
+            op->getLoc(), TypeRange{}, desc->symbolBase, nullptr, callArgs);
+        call->setAttr("entry_id", builder.getStringAttr(
+                                      stringifyBridgeEntryId(desc->id)));
+        call->setAttr("spec", DictionaryAttr::get(builder.getContext(),
+                                                   structuredSpec));
+        if (matmul->getNumResults() == 1) {
+          matmul.getResult().replaceAllUsesWith(matmul.getDst());
+        }
+        matmul.erase();
+        continue;
+      }
       if (op->getNumResults() > 0) {
         op->emitError("VPTO declarative bridge supports the buffer form "
                       "without a tensor result");

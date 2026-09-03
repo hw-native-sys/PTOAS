@@ -17,6 +17,7 @@
 
 // RUN: pto-test-opt %s "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-no-routing.yaml" | FileCheck %s --check-prefix=NOROUTE
 // RUN: pto-test-opt %s "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-variant.yaml" | FileCheck %s --check-prefix=FAMILY
+// RUN: pto-test-opt %s "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-policy-tmatmul.yaml" | FileCheck %s --check-prefix=TYPED
 
 // NOROUTE-LABEL: func.func private @unrouted_matmul_cube
 // NOROUTE: pto.tmatmul
@@ -27,6 +28,14 @@
 // FAMILY: pto.tpush
 // FAMILY-NOT: pto.bridge_call
 // FAMILY-NOT: pto.vpto.bridge.func_spec
+
+// TYPED-LABEL: func.func private @unrouted_matmul_cube
+// TYPED: pto.bridge_call "pto_vpto_tmatmul"
+// TYPED-SAME: {entry_id = "cube.tmatmul"
+// TYPED-SAME: spec = {acc_phase = #pto<acc_phase unspecified>
+// TYPED-SAME: left_tile = {b_layout = 1 : i32, element_type = f16
+// TYPED-SAME: result_tile = {b_layout = 1 : i32, element_type = f32
+// TYPED-SAME: right_tile = {b_layout = 0 : i32, element_type = f16
 
 module attributes {pto.target_arch = "a5"} {
   func.func private @unrouted_matmul_cube(%addr: i32)

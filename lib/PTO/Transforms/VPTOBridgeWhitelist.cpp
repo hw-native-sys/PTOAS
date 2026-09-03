@@ -656,6 +656,9 @@ pto::loadBridgeWhitelist(llvm::StringRef optionValue,
         entry.wrapper = "cube";
         entry.entry = "pto_vpto_tmatmul";
         entry.call = "pto::TMATMUL";
+        entry.tmplArgs = {"acc_phase"};
+        entry.tmplMap.push_back({"attr", "acc_phase", "AccPhase",
+                                 "pto::AccPhase", "Unspecified"});
         entry.abi = {{"i64", 2, "dst", "result_tile"},
                      {"i64", 0, "lhs", "left_tile"},
                      {"i64", 1, "rhs", "right_tile"}};
