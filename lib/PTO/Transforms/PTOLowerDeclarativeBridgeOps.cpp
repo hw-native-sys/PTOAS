@@ -328,7 +328,7 @@ struct PTOLowerDeclarativeBridgeOpsPass final
                                       stringifyBridgeEntryId(desc->id)));
         auto structured = DictionaryAttr::get(builder.getContext(),
                                                structuredSpec);
-        call->setAttr("spec", structured);
+        call->setAttr("spec", BridgeCubeSpecAttr::get(builder.getContext(), structured));
         call->setAttr("instance_key", builder.getStringAttr(
             canonicalBridgeInstanceKey(stringifyBridgeEntryId(desc->id),
                                        structured)));

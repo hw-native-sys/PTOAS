@@ -1239,6 +1239,15 @@ def TileBufConfigAttr : AttrDef<PTO_Dialect, "TileBufConfig"> {
   }];
 }
 
+// Structured specialization carried by a Cube bridge call. The payload is
+// compiler-produced and remains typed at the IR boundary; conversion to C++
+// template spelling is deferred to the bridge renderer.
+def BridgeCubeSpecAttr : AttrDef<PTO_Dialect, "BridgeCubeSpec"> {
+  let mnemonic = "bridge_cube_spec";
+  let parameters = (ins "mlir::DictionaryAttr":$value);
+  let assemblyFormat = "`<` $value `>`";
+}
+
 //===----------------------------------------------------------------------===//
 // QuantType
 //===----------------------------------------------------------------------===//

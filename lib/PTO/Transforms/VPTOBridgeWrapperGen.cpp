@@ -494,7 +494,8 @@ static FailureOr<std::string> renderStructuredTile(DictionaryAttr tile) {
 static FailureOr<std::string> renderCubeInstance(BridgeCallOp call,
                                                   llvm::StringRef symbol) {
   auto entryId = call->getAttrOfType<StringAttr>("entry_id");
-  auto spec = call->getAttrOfType<DictionaryAttr>("spec");
+  auto specAttr = call->getAttrOfType<BridgeCubeSpecAttr>("spec");
+  DictionaryAttr spec = specAttr ? specAttr.getValue() : DictionaryAttr();
   if (!entryId || !spec) {
     return failure();
   }
