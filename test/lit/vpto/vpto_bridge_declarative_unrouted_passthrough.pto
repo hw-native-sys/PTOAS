@@ -28,6 +28,9 @@
 // FAMILY: pto.tpush
 // FAMILY-NOT: pto.bridge_call
 // FAMILY-NOT: pto.vpto.bridge.func_spec
+// TYPED-WRAP: pto_vpto_tmatmul__0
+// TYPED-WRAP: pto::TMATMUL(dst, lhs, rhs);
+// TYPED-IR: pto.bridge_call "pto_vpto_tmatmul__0"
 
 // TYPED-LABEL: func.func private @unrouted_matmul_cube
 // TYPED: pto.bridge_call "pto_vpto_tmatmul"
