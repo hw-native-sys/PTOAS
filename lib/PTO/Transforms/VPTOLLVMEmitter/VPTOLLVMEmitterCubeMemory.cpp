@@ -212,7 +212,7 @@ static FailureOr<Value> packCopyCbufToFbufConfig(Operation *anchor, Value nBurst
 }
 
 static FailureOr<Value>
-packLoadCbufToS4Config0(Operation *anchor, Value mStart, Value kStart,
+packLoadCbufToL0Config0(Operation *anchor, Value mStart, Value kStart,
                         Value mStep, Value kStep) {
   OpBuilder builder(anchor);
   builder.setInsertionPoint(anchor);
@@ -233,93 +233,13 @@ packLoadCbufToS4Config0(Operation *anchor, Value mStart, Value kStart,
 }
 
 static FailureOr<Value>
-packLoadCbufToS4Config1(Operation *anchor, Value srcStride, Value dstStride) {
+packLoadCbufToL0Config1(Operation *anchor, Value srcStride, Value dstStride) {
   OpBuilder builder(anchor);
   builder.setInsertionPoint(anchor);
   Location loc = anchor->getLoc();
 
   Value srcStrideI64 = castIntegerLikeTo(anchor, srcStride, builder.getI64Type());
   Value dstStrideI64 = castIntegerLikeTo(anchor, dstStride, builder.getI64Type());
-  if (!srcStrideI64 || !dstStrideI64)
-  {
-    return failure();
-  }
-
-  return packShiftedI64Fields(builder, loc, srcStrideI64,
-                              {{dstStrideI64, 16}});
-}
-
-static FailureOr<Value>
-packLoadCbufToCaConfig0(Operation *anchor, Value mStart, Value kStart,
-                        Value mStep, Value kStep) {
-  OpBuilder builder(anchor);
-  builder.setInsertionPoint(anchor);
-  Location loc = anchor->getLoc();
-
-  Value mStartI64 = castIntegerLikeTo(anchor, mStart, builder.getI64Type());
-  Value kStartI64 = castIntegerLikeTo(anchor, kStart, builder.getI64Type());
-  Value mStepI64 = castIntegerLikeTo(anchor, mStep, builder.getI64Type());
-  Value kStepI64 = castIntegerLikeTo(anchor, kStep, builder.getI64Type());
-  if (!mStartI64 || !kStartI64 || !mStepI64 || !kStepI64)
-  {
-    return failure();
-  }
-
-  return packShiftedI64Fields(builder, loc, mStartI64,
-                              {{kStartI64, 16}, {mStepI64, 32},
-                               {kStepI64, 40}});
-}
-
-static FailureOr<Value>
-packLoadCbufToCaConfig1(Operation *anchor, Value srcStride, Value dstStride) {
-  OpBuilder builder(anchor);
-  builder.setInsertionPoint(anchor);
-  Location loc = anchor->getLoc();
-
-  Value srcStrideI64 =
-      castIntegerLikeTo(anchor, srcStride, builder.getI64Type());
-  Value dstStrideI64 =
-      castIntegerLikeTo(anchor, dstStride, builder.getI64Type());
-  if (!srcStrideI64 || !dstStrideI64)
-  {
-    return failure();
-  }
-
-  return packShiftedI64Fields(builder, loc, srcStrideI64,
-                              {{dstStrideI64, 16}});
-}
-
-static FailureOr<Value>
-packLoadCbufToCbConfig0(Operation *anchor, Value mStart, Value kStart,
-                        Value mStep, Value kStep) {
-  OpBuilder builder(anchor);
-  builder.setInsertionPoint(anchor);
-  Location loc = anchor->getLoc();
-
-  Value mStartI64 = castIntegerLikeTo(anchor, mStart, builder.getI64Type());
-  Value kStartI64 = castIntegerLikeTo(anchor, kStart, builder.getI64Type());
-  Value mStepI64 = castIntegerLikeTo(anchor, mStep, builder.getI64Type());
-  Value kStepI64 = castIntegerLikeTo(anchor, kStep, builder.getI64Type());
-  if (!mStartI64 || !kStartI64 || !mStepI64 || !kStepI64)
-  {
-    return failure();
-  }
-
-  return packShiftedI64Fields(builder, loc, mStartI64,
-                              {{kStartI64, 16}, {mStepI64, 32},
-                               {kStepI64, 40}});
-}
-
-static FailureOr<Value>
-packLoadCbufToCbConfig1(Operation *anchor, Value srcStride, Value dstStride) {
-  OpBuilder builder(anchor);
-  builder.setInsertionPoint(anchor);
-  Location loc = anchor->getLoc();
-
-  Value srcStrideI64 =
-      castIntegerLikeTo(anchor, srcStride, builder.getI64Type());
-  Value dstStrideI64 =
-      castIntegerLikeTo(anchor, dstStride, builder.getI64Type());
   if (!srcStrideI64 || !dstStrideI64)
   {
     return failure();
@@ -968,9 +888,9 @@ public:
     }
 
     FailureOr<Value> config0 =
-        packLoadCbufToCaConfig0(op, mStart, kStart, mStep, kStep);
+        packLoadCbufToL0Config0(op, mStart, kStart, mStep, kStep);
     FailureOr<Value> config1 =
-        packLoadCbufToCaConfig1(op, srcStride, dstStride);
+        packLoadCbufToL0Config1(op, srcStride, dstStride);
     if (failed(config0) || failed(config1))
     {
       return rewriter.notifyMatchFailure(op, "failed to pack load_cbuf_to_ca config");
@@ -1037,11 +957,11 @@ public:
       return rewriter.notifyMatchFailure(op, "failed to map cbuf/cube pointer spaces");
     }
 
-    FailureOr<Value> config0 = packLoadCbufToS4Config0(
+    FailureOr<Value> config0 = packLoadCbufToL0Config0(
         op, adaptor.getMStart(), adaptor.getKStart(), adaptor.getMStep(),
         adaptor.getKStep());
     FailureOr<Value> config1 =
-        packLoadCbufToS4Config1(op, adaptor.getSrcStride(),
+        packLoadCbufToL0Config1(op, adaptor.getSrcStride(),
                                 adaptor.getDstStride());
     if (failed(config0) || failed(config1))
     {
@@ -1128,9 +1048,9 @@ public:
 
     bool transpose = op.getTranspose();
     FailureOr<Value> config0 =
-        packLoadCbufToCbConfig0(op, mStart, kStart, mStep, kStep);
+        packLoadCbufToL0Config0(op, mStart, kStart, mStep, kStep);
     FailureOr<Value> config1 =
-        packLoadCbufToCbConfig1(op, srcStride, dstStride);
+        packLoadCbufToL0Config1(op, srcStride, dstStride);
     if (failed(config0) || failed(config1))
     {
       return rewriter.notifyMatchFailure(op, "failed to pack load_cbuf_to_cb config");
@@ -1203,11 +1123,11 @@ public:
                                          "unsupported load_cbuf_to_ca_mx element type");
     }
     FailureOr<Value> config0 =
-        packLoadCbufToCaConfig0(op, adaptor.getXStartPosition(),
+        packLoadCbufToL0Config0(op, adaptor.getXStartPosition(),
                                 adaptor.getYStartPosition(), adaptor.getXStep(),
                                 adaptor.getYStep());
     FailureOr<Value> config1 =
-        packLoadCbufToCaConfig1(op, adaptor.getSrcStride(),
+        packLoadCbufToL0Config1(op, adaptor.getSrcStride(),
                                 adaptor.getDstStride());
     if (failed(config0) || failed(config1)) {
       return rewriter.notifyMatchFailure(op,
@@ -1274,11 +1194,11 @@ public:
                                          "unsupported load_cbuf_to_cb_mx element type");
     }
     FailureOr<Value> config0 =
-        packLoadCbufToCbConfig0(op, adaptor.getXStartPosition(),
+        packLoadCbufToL0Config0(op, adaptor.getXStartPosition(),
                                 adaptor.getYStartPosition(), adaptor.getXStep(),
                                 adaptor.getYStep());
     FailureOr<Value> config1 =
-        packLoadCbufToCbConfig1(op, adaptor.getSrcStride(),
+        packLoadCbufToL0Config1(op, adaptor.getSrcStride(),
                                 adaptor.getDstStride());
     if (failed(config0) || failed(config1)) {
       return rewriter.notifyMatchFailure(op,
