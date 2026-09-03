@@ -743,6 +743,12 @@ struct VPTOBridgeWrapperGenPass final
     if (succeeded(source) && usedWrappers.size() > 1) {
       for (StringRef wrapper :
            ArrayRef<StringRef>(usedWrappers).drop_front()) {
+        // Cube instances are already rendered from each call's structured
+        // spec by ResolveBridgeInstances; do not try to render them again
+        // from the Pipe module-level specialization.
+        if (wrapper == "cube" && !cubeSource.empty()) {
+          continue;
+        }
         const BridgeWrapperDecl *decl = whitelistOr->findWrapper(wrapper);
         if (!decl || whitelistOr->wrapperHasCustomEntry(wrapper)) {
           module.emitError() << "VPTO bridge: wrapper '" << wrapper
