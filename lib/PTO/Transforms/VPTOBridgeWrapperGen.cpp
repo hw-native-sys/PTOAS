@@ -662,6 +662,7 @@ renderPipeInstance(BridgeObjectCreateOp create,
 
 static FailureOr<std::string> resolvePipeInstances(ModuleOp module) {
   std::string source;
+  llvm::StringMap<std::pair<unsigned, ResolvedPipeSymbols>> instances;
   unsigned nextId = 0;
   bool failedResolve = false;
   module.walk([&](BridgeObjectCreateOp create) {
@@ -683,20 +684,38 @@ static FailureOr<std::string> resolvePipeInstances(ModuleOp module) {
       return lhs->isBeforeInBlock(rhs);
     });
 
-    const unsigned instanceId = nextId++;
-    ResolvedPipeSymbols symbols{
-        pipeSymbol(BridgeEntryId::PipeInit, instanceId),
-        pipeSymbol(BridgeEntryId::PipeSize, instanceId),
-        pipeSymbol(BridgeEntryId::PipePush, instanceId),
-        pipeSymbol(BridgeEntryId::PipePop, instanceId),
-        pipeSymbol(BridgeEntryId::PipeFree, instanceId)};
-    FailureOr<std::string> rendered =
-        renderPipeInstance(create, symbols, instanceId, calls);
-    if (failed(rendered)) {
-      failedResolve = true;
-      return;
+    std::string canonical;
+    llvm::raw_string_ostream keyOS(canonical);
+    create->getAttr("spec").print(keyOS);
+    create->getParentOfType<func::FuncOp>()
+        ->getAttr(FunctionKernelKindAttr::name)
+        .print(keyOS);
+    for (BridgeCallOp call : calls) {
+      call->getAttr("entry_id").print(keyOS);
     }
-    source += *rendered;
+    keyOS.flush();
+
+    auto found = instances.find(canonical);
+    if (found == instances.end()) {
+      const unsigned instanceId = nextId++;
+      ResolvedPipeSymbols newSymbols{
+          pipeSymbol(BridgeEntryId::PipeInit, instanceId),
+          pipeSymbol(BridgeEntryId::PipeSize, instanceId),
+          pipeSymbol(BridgeEntryId::PipePush, instanceId),
+          pipeSymbol(BridgeEntryId::PipePop, instanceId),
+          pipeSymbol(BridgeEntryId::PipeFree, instanceId)};
+      FailureOr<std::string> rendered =
+          renderPipeInstance(create, newSymbols, instanceId, calls);
+      if (failed(rendered)) {
+        failedResolve = true;
+        return;
+      }
+      source += *rendered;
+      found = instances
+                  .try_emplace(canonical, instanceId, std::move(newSymbols))
+                  .first;
+    }
+    const ResolvedPipeSymbols &symbols = found->second.second;
     create->setAttr("entry", StringAttr::get(module.getContext(), symbols.init));
     create->setAttr("size_callee",
                     StringAttr::get(module.getContext(), symbols.size));

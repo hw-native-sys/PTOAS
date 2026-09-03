@@ -14,10 +14,10 @@
 
 // RUN: pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist.yaml" -pto-emit-vpto-bridge-wrapper | FileCheck %s
 
-// CHECK: pto_vpto_pipe_init__0
-// CHECK: pto::TPipe<0, pto::Direction::DIR_C2V, 1024, 8, 2, false>
-// CHECK: pto_vpto_pipe_init__1
-// CHECK: pto::TPipe<0, pto::Direction::DIR_C2V, 256, 16, 2, false>
+// CHECK: using Pipe__0 = pto::TPipe<0, pto::Direction::DIR_C2V, 1024, 8, 2, false>
+// CHECK-SAME: pto_vpto_pipe_init__0
+// CHECK-SAME: using Pipe__1 = pto::TPipe<0, pto::Direction::DIR_C2V, 256, 16, 2, false>
+// CHECK-SAME: pto_vpto_pipe_init__1
 
 module {
   func.func private @conflict_cube(%addr: i32)
