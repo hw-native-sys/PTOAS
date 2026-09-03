@@ -201,6 +201,19 @@ add_mlir_dialect_library(PTOTransforms
   ${_ptoas_transforms_private_link_libs}
 )
 
+# VfSim is build-tree-only. Remove its BUILD_INTERFACE links from MLIR's
+# install-time aggregate metadata, which cannot contain generator expressions.
+if(TARGET vfsim::native_core OR TARGET vfsim::ir_planner)
+  get_target_property(_ptoas_aggregate_imported_deps PTOTransforms
+    MLIR_AGGREGATE_DEP_LIBS_IMPORTED)
+  if(_ptoas_aggregate_imported_deps)
+    list(FILTER _ptoas_aggregate_imported_deps EXCLUDE REGEX "vfsim::")
+    set_property(TARGET PTOTransforms PROPERTY
+      MLIR_AGGREGATE_DEP_LIBS_IMPORTED
+      "${_ptoas_aggregate_imported_deps}")
+  endif()
+endif()
+
 install(TARGETS PTOTransforms
   EXPORT PTOASTargets      # 将此 Target 加入导出集
   LIBRARY DESTINATION lib
