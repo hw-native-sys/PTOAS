@@ -212,19 +212,22 @@ static Value offsetPointerByBytes(Value basePtr, Value byteOffset,
     return basePtrValue;
   }
 
-  auto bytePtrType =
-      pto::PtrType::get(rewriter.getContext(), rewriter.getI8Type(),
-                        ptrType.getMemorySpace());
-  Value bytePtr =
-      rewriter.create<pto::CastPtrOp>(loc, bytePtrType, basePtrValue);
+  auto bytePtrType = pto::PtrType::get(
+      rewriter.getContext(), rewriter.getI8Type(), ptrType.getMemorySpace());
+  Value bytePtr = basePtrValue;
+  if (bytePtrType != ptrType) {
+    bytePtr = rewriter.create<pto::CastPtrOp>(loc, bytePtrType, basePtrValue);
+  }
   Value offsetIndex = byteOffset;
   if (!offsetIndex.getType().isIndex()) {
-    offsetIndex =
-        rewriter.create<arith::IndexCastUIOp>(loc, rewriter.getIndexType(),
-                                              offsetIndex);
+    offsetIndex = rewriter.create<arith::IndexCastUIOp>(
+        loc, rewriter.getIndexType(), offsetIndex);
   }
   Value advanced =
       rewriter.create<pto::AddPtrOp>(loc, bytePtrType, bytePtr, offsetIndex);
+  if (bytePtrType == ptrType) {
+    return advanced;
+  }
   return rewriter.create<pto::CastPtrOp>(loc, ptrType, advanced);
 }
 
