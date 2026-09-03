@@ -8,22 +8,19 @@
 // PARTICULAR PURPOSE.
 // See LICENSE for more details.
 
-// Non-unit split on the pipe entries: tpush/tpop/tfree carry split = 2,
-// which maps to pto::TileSplitAxis::TILE_LEFT_RIGHT. The family pass fixes
-// the split token on the first bridged op of the function and every later
-// op checks against it; the wrapper renders the shared TileSplitAxis into
-// all three entry bodies.
+// Non-unit split on the pipe entries: the family pass preserves split = 2 as
+// structured IR and the renderer maps it to TILE_LEFT_RIGHT in the wrapper.
 
 // RUN: pto-test-opt %s -pto-lower-pipe-family-ops | FileCheck %s --check-prefix=SPEC
 // RUN: pto-test-opt %s -pto-lower-pipe-family-ops -pto-emit-vpto-bridge-wrapper | FileCheck %s --check-prefix=WRAP
 
 // SPEC-LABEL: func.func private @bridge_cube
 // SPEC: pto.bridge_object_create
-// SPEC-SAME: spec = #pto.bridge_pipe_spec<{{.*}}split = "pto::TileSplitAxis::TILE_LEFT_RIGHT"
+// SPEC-SAME: spec = #pto.bridge_pipe_spec<{{.*}}split = 2 : i32
 
 // SPEC-LABEL: func.func private @bridge_vector
 // SPEC: pto.bridge_object_create
-// SPEC-SAME: spec = #pto.bridge_pipe_spec<{{.*}}split = "pto::TileSplitAxis::TILE_LEFT_RIGHT"
+// SPEC-SAME: spec = #pto.bridge_pipe_spec<{{.*}}split = 2 : i32
 
 // WRAP: module attributes {{{.*}}pto.vpto.bridge.wrapper_source = "
 // WRAP-SAME: pto::TPUSH<Pipe__0, ProducerTile__0, pto::TileSplitAxis::TILE_LEFT_RIGHT>(pipe, tile);

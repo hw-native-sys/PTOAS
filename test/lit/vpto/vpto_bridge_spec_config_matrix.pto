@@ -22,7 +22,7 @@
 
 // SPEC-LABEL: func.func private @variant_bridge_cube
 // SPEC: pto.bridge_object_create "pto_vpto_pipe_init"
-// SPEC-SAME: spec = #pto.bridge_pipe_spec<{{.*}}pipe = "pto::TPipe<8, pto::Direction::DIR_C2V, 2048, 4, 2, true>"{{.*}}producer_tile = "pto::Tile<pto::TileType::Acc, half, 32, 16, pto::BLayout::ColMajor, 32, 16, pto::SLayout::RowMajor, 512>"
+// SPEC-SAME: spec = #pto.bridge_pipe_spec<{{.*}}pipe = {dir_mask = 1 : i32, flag_base = 8 : i32{{.*}}slot_size = 2048 : i32}{{.*}}producer_tile = {b_layout = 1 : i32, element_type = f16{{.*}}shape = array<i64: 32, 16>
 // SPEC: pto.bridge_call "pto_vpto_pipe_push"
 // SPEC-SAME: : !pto.pipe, i64
 // SPEC-NOT: pto.alloc_tile
@@ -30,7 +30,7 @@
 
 // SPEC-LABEL: func.func private @variant_bridge_vector
 // SPEC: pto.bridge_object_create "pto_vpto_pipe_init"
-// SPEC-SAME: spec = #pto.bridge_pipe_spec<{{.*}}consumer_tile = "pto::Tile<pto::TileType::Vec, half, 4, 16, pto::BLayout::RowMajor, 4, 16>"{{.*}}pipe = "pto::TPipe<8, pto::Direction::DIR_C2V, 2048, 4, 2, true>"
+// SPEC-SAME: spec = #pto.bridge_pipe_spec<{{.*}}consumer_tile = {b_layout = 0 : i32, element_type = f16{{.*}}shape = array<i64: 4, 16>{{.*}}pipe = {dir_mask = 1 : i32, flag_base = 8 : i32{{.*}}slot_size = 2048 : i32}
 // SPEC: pto.bridge_call "pto_vpto_pipe_pop"
 // SPEC-SAME: -> i64
 // SPEC: pto.bridge_inttoptr

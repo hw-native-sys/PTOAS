@@ -28,9 +28,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/IR/PTO.h"
-#include "PTO/Transforms/VPTOBridgeSpecCollector.h"
-#include "PTO/Transforms/VPTOBridgeTokens.h"
 #include "PTO/Transforms/VPTOBridgeRegistry.h"
+#include "PTO/Transforms/VPTOBridgeTokens.h"
 #include "PTO/Transforms/VPTOBridgeWhitelist.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -40,6 +39,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/raw_ostream.h"
 
 namespace mlir {
 namespace pto {
@@ -59,20 +59,48 @@ static BridgeCallOp emitVoidBridgeCall(OpBuilder &builder, Location loc,
       /*storage_size_callee=*/nullptr, /*args=*/args);
 }
 
-static void annotatePipeBridgeCall(BridgeCallOp call, llvm::StringRef callee,
-                                   Value pipeHandle) {
-  if (const BridgeFunctionDesc *desc = findBridgeFunctionBySymbol(callee)) {
-    call->setAttr("entry_id",
-                  StringAttr::get(call.getContext(),
-                                  stringifyBridgeEntryId(desc->id)));
+static DictionaryAttr buildPipeConfigSpec(OpBuilder &builder,
+                                          InitializeL2LPipeOp init) {
+  SmallVector<NamedAttribute> fields = {
+      builder.getNamedAttr("flag_base", builder.getI32IntegerAttr(
+                                        init.getFlagBaseAttr().getInt())),
+      builder.getNamedAttr("dir_mask",
+                           builder.getI32IntegerAttr(init.getDirMask())),
+      builder.getNamedAttr("slot_size",
+                           builder.getI32IntegerAttr(init.getSlotSize())),
+      builder.getNamedAttr("slot_num",
+                           builder.getI32IntegerAttr(init.getSlotNum())),
+      builder.getNamedAttr("local_slot_num", builder.getI32IntegerAttr(2)),
+      builder.getNamedAttr("nosplit", builder.getBoolAttr(
+                                        init.getNosplitAttr() &&
+                                        init.getNosplitAttr().getValue()))};
+  return DictionaryAttr::get(builder.getContext(), fields);
+}
+
+static DictionaryAttr buildTileSpec(OpBuilder &builder, TileBufType tile) {
+  SmallVector<NamedAttribute> fields = {
+      builder.getNamedAttr("element_type", TypeAttr::get(tile.getElementType())),
+      builder.getNamedAttr("shape", builder.getDenseI64ArrayAttr(tile.getShape())),
+      builder.getNamedAttr("valid_shape",
+                          builder.getDenseI64ArrayAttr(tile.getValidShape())),
+      builder.getNamedAttr("b_layout",
+                          builder.getI32IntegerAttr(tile.getBLayoutValueI32())),
+      builder.getNamedAttr("s_layout",
+                          builder.getI32IntegerAttr(tile.getSLayoutValueI32())),
+      builder.getNamedAttr("s_fractal",
+                          builder.getI32IntegerAttr(tile.getSFractalSizeI32()))};
+  if (Attribute memory = tile.getMemorySpace()) {
+    fields.push_back(builder.getNamedAttr("memory_space", memory));
   }
-  if (auto create = pipeHandle.getDefiningOp<BridgeObjectCreateOp>()) {
-    if (auto key = create->getAttrOfType<StringAttr>(kBridgeInstanceKeyAttrName)) {
-      call->setAttr(kBridgeInstanceKeyAttrName, key);
-    }
-    if (auto spec = create->getAttrOfType<BridgePipeSpecAttr>("spec")) {
-      call->setAttr("spec", spec);
-    }
+  return DictionaryAttr::get(builder.getContext(), fields);
+}
+
+static void annotatePipeBridgeCall(BridgeCallOp call,
+                                   llvm::StringRef callee) {
+  if (const BridgeFunctionDesc *desc = findBridgeFunctionBySymbol(callee)) {
+    call->setAttr("entry_id", StringAttr::get(
+                                  call.getContext(),
+                                  stringifyBridgeEntryId(desc->id)));
   }
 }
 
@@ -103,10 +131,6 @@ struct PTOLowerPipeFamilyOpsPass final
     func::FuncOp func = getOperation();
     OpBuilder builder(func);
     bool hadError = false;
-    // Wrapper specialization fields collected while lowering this function;
-    // merged into the module bridge spec attribute once lowering succeeds.
-    BridgeSpecCollector spec;
-
     // Collect first; rewriting during the walk would invalidate the walker.
     SmallVector<InitializeL2LPipeOp> inits;
     SmallVector<TPushOp> pushes;
@@ -198,29 +222,12 @@ struct PTOLowerPipeFamilyOpsPass final
         hadError = true;
         continue;
       }
-      auto pipeTokOr = buildBridgePipeToken(init);
-      if (failed(pipeTokOr)) {
-        init.emitError("VPTO pipe bridge failed to build the TPipe template "
-                       "token from the init attributes (flag_base is "
-                       "required, dir_mask must be 1, 2 or 3)");
-        hadError = true;
-        continue;
-      }
-      spec.addUniqueField(init, kBridgeSpecPipeKey, *pipeTokOr);
-      spec.addUniqueField(init, kBridgeSpecEntryInitKey, entry->symbolBase);
-      spec.addUniqueField(init, kBridgeSpecEntrySizeKey,
-                          sizeEntry->symbolBase);
       builder.setInsertionPoint(init);
       BridgeObjectCreateOp call = builder.create<BridgeObjectCreateOp>(
           init.getLoc(), init.getPipe().getType(), entry->symbolBase,
           ValueRange{init.getLocalAddr()});
-      auto pipeSpec = DictionaryAttr::get(
-          builder.getContext(),
-          {builder.getNamedAttr(kBridgeSpecPipeKey, builder.getStringAttr(*pipeTokOr))});
-      call->setAttr("spec", BridgePipeSpecAttr::get(builder.getContext(), pipeSpec));
+      call->setAttr("pipe_config", buildPipeConfigSpec(builder, init));
       call->setAttr("entry_id", builder.getStringAttr("pipe.init"));
-      call->setAttr(kBridgeInstanceKeyAttrName,
-                    builder.getStringAttr("pipe|" + *pipeTokOr));
       // The bridge call result becomes the storage handle: push/pop/free
       // consume the same SSA value instead of the erased pipe op.
       init.getPipe().replaceAllUsesWith(call.getResult());
@@ -230,32 +237,24 @@ struct PTOLowerPipeFamilyOpsPass final
     // Phase 2: tpop -> bridge pop call; record the returned FIFO slot
     // address for the declared tile it rebinds.
     llvm::DenseMap<Value, Value> popAddresses;
-    // The wrapper renders one shared TileSplitAxis template argument for the
-    // push/pop/free entries, so every bridged op of the function must agree
-    // on the split value. The first bridged op fixes it; later ops check
-    // against it. Cross-function mismatches surface as a spec merge conflict
-    // in the wrapper generation pass.
-    std::optional<int64_t> bridgedSplit;
-    auto checkSplitConsistency = [&](Operation *op, int64_t split,
-                                     llvm::StringRef opName) {
-      if (bridgedSplit && *bridgedSplit != split) {
-        op->emitError() << "VPTO pipe bridge " << opName << " split " << split
-                        << " does not match the split " << *bridgedSplit
-                        << " already bridged in this function; the wrapper "
-                           "renders one shared TileSplitAxis";
+    // A Pipe specialization renders one shared TileSplitAxis template
+    // argument, so every lifecycle op using that object must agree.
+    llvm::DenseMap<Value, int64_t> bridgedSplits;
+    auto checkSplitConsistency = [&](Operation *op, Value pipeHandle,
+                                     int64_t split, llvm::StringRef opName) {
+      if (split < 0 || split > 4) {
+        op->emitError() << "VPTO pipe bridge " << opName
+                        << " carries an unsupported split value " << split;
         hadError = true;
         return false;
       }
-      if (!bridgedSplit) {
-        auto splitTokOr = buildBridgeTileSplitToken(split);
-        if (failed(splitTokOr)) {
-          op->emitError() << "VPTO pipe bridge " << opName
-                          << " carries an unsupported split value " << split;
-          hadError = true;
-          return false;
-        }
-        spec.addUniqueField(op, kBridgeSpecSplitKey, *splitTokOr);
-        bridgedSplit = split;
+      auto [it, inserted] = bridgedSplits.try_emplace(pipeHandle, split);
+      if (!inserted && it->second != split) {
+        op->emitError() << "VPTO pipe bridge " << opName << " split " << split
+                        << " does not match split " << it->second
+                        << " used by the same pipe object";
+        hadError = true;
+        return false;
       }
       return true;
     };
@@ -277,24 +276,18 @@ struct PTOLowerPipeFamilyOpsPass final
         hadError = true;
         continue;
       }
-      auto consumerTokOr = buildBridgeTileToken(consumerTileTy);
-      if (failed(consumerTokOr)) {
-        pop.emitError("VPTO pipe bridge failed to build the consumer tile "
-                      "template token for TPOP");
-        hadError = true;
+      if (!checkSplitConsistency(pop, pop.getPipeHandle(), pop.getSplit(),
+                                 "TPOP")) {
         continue;
       }
-      if (!checkSplitConsistency(pop, pop.getSplit(), "TPOP")) {
-        continue;
-      }
-      spec.addUniqueField(pop, kBridgeSpecConsumerTileKey, *consumerTokOr);
-      spec.addUniqueField(pop, kBridgeSpecEntryPopKey, entry->symbolBase);
       builder.setInsertionPoint(pop);
       BridgeCallOp call = builder.create<BridgeCallOp>(
           pop.getLoc(), /*results=*/TypeRange{builder.getI64Type()},
           /*callee=*/entry->symbolBase, /*storage_size_callee=*/nullptr,
           /*args=*/ValueRange{pop.getPipeHandle()});
-      annotatePipeBridgeCall(call, entry->symbolBase, pop.getPipeHandle());
+      annotatePipeBridgeCall(call, entry->symbolBase);
+      call->setAttr("split", builder.getI32IntegerAttr(pop.getSplit()));
+      call->setAttr("consumer_tile_spec", buildTileSpec(builder, consumerTileTy));
       popAddresses[pop.getTile()] = call.getResults().front();
       pop.erase();
     }
@@ -348,23 +341,17 @@ struct PTOLowerPipeFamilyOpsPass final
         hadError = true;
         continue;
       }
-      auto producerTokOr = buildBridgeTileToken(producerTileTy);
-      if (failed(producerTokOr)) {
-        push.emitError("VPTO pipe bridge failed to build the producer tile "
-                       "template token for TPUSH");
-        hadError = true;
+      if (!checkSplitConsistency(push, push.getPipeHandle(), push.getSplit(),
+                                 "TPUSH")) {
         continue;
       }
-      if (!checkSplitConsistency(push, push.getSplit(), "TPUSH")) {
-        continue;
-      }
-      spec.addUniqueField(push, kBridgeSpecProducerTileKey, *producerTokOr);
-      spec.addUniqueField(push, kBridgeSpecEntryPushKey, entry->symbolBase);
       builder.setInsertionPoint(push);
       BridgeCallOp call = emitVoidBridgeCall(
           builder, push.getLoc(), entry->symbolBase,
           ValueRange{push.getPipeHandle(), alloc.getAddr()});
-      annotatePipeBridgeCall(call, entry->symbolBase, push.getPipeHandle());
+      annotatePipeBridgeCall(call, entry->symbolBase);
+      call->setAttr("split", builder.getI32IntegerAttr(push.getSplit()));
+      call->setAttr("producer_tile_spec", buildTileSpec(builder, producerTileTy));
       push.erase();
     }
 
@@ -380,15 +367,16 @@ struct PTOLowerPipeFamilyOpsPass final
         hadError = true;
         continue;
       }
-      if (!checkSplitConsistency(free, free.getSplit(), "TFREE")) {
+      if (!checkSplitConsistency(free, free.getPipeHandle(), free.getSplit(),
+                                 "TFREE")) {
         continue;
       }
-      spec.addUniqueField(free, kBridgeSpecEntryFreeKey, entry->symbolBase);
       builder.setInsertionPoint(free);
       BridgeCallOp call = emitVoidBridgeCall(
           builder, free.getLoc(), entry->symbolBase,
           ValueRange{free.getPipeHandle()});
-      annotatePipeBridgeCall(call, entry->symbolBase, free.getPipeHandle());
+      annotatePipeBridgeCall(call, entry->symbolBase);
+      call->setAttr("split", builder.getI32IntegerAttr(free.getSplit()));
       free.erase();
     }
 
@@ -418,28 +406,72 @@ struct PTOLowerPipeFamilyOpsPass final
       decl.erase();
     }
 
-    // Store the per-function specialization on the function itself; the
-    // module-level wrapper generation pass merges the per-function specs
-    // deterministically. The family pass instances may run concurrently,
-    // so they must not write the shared module attribute directly.
-    if (!hadError && !spec.hadError()) {
-      spec.store(func);
-      auto funcSpec =
-          func->getAttrOfType<DictionaryAttr>(kBridgeFuncSpecAttrName);
-      if (funcSpec) {
-        BridgePipeSpecAttr pipeSpec =
-            BridgePipeSpecAttr::get(builder.getContext(), funcSpec);
-        func.walk([&](Operation *op) {
-          auto key = op->getAttrOfType<StringAttr>(kBridgeInstanceKeyAttrName);
-          if (key && key.getValue().starts_with("pipe|")) {
-            op->setAttr("spec", pipeSpec);
+    if (!hadError) {
+      func.walk([&](BridgeObjectCreateOp create) {
+        auto config = create->getAttrOfType<DictionaryAttr>("pipe_config");
+        if (!config) {
+          create.emitError("Pipe bridge object is missing structured config");
+          hadError = true;
+          return;
+        }
+        SmallVector<NamedAttribute> fields = {
+            builder.getNamedAttr(kBridgeSpecPipeKey, config)};
+        IntegerAttr split;
+        DictionaryAttr producer;
+        DictionaryAttr consumer;
+        SmallVector<BridgeCallOp> calls;
+        for (Operation *user : create.getResult().getUsers()) {
+          auto bridgeCall = dyn_cast<BridgeCallOp>(user);
+          if (!bridgeCall) {
+            continue;
           }
-        });
-        func->removeAttr(kBridgeFuncSpecAttrName);
-      }
+          calls.push_back(bridgeCall);
+          if (auto value = bridgeCall->getAttrOfType<IntegerAttr>("split")) {
+            split = value;
+          }
+          if (auto value =
+                  bridgeCall->getAttrOfType<DictionaryAttr>("producer_tile_spec")) {
+            producer = value;
+          }
+          if (auto value =
+                  bridgeCall->getAttrOfType<DictionaryAttr>("consumer_tile_spec")) {
+            consumer = value;
+          }
+        }
+        if (split) {
+          fields.push_back(builder.getNamedAttr(kBridgeSpecSplitKey, split));
+        }
+        if (producer) {
+          fields.push_back(
+              builder.getNamedAttr(kBridgeSpecProducerTileKey, producer));
+        }
+        if (consumer) {
+          fields.push_back(
+              builder.getNamedAttr(kBridgeSpecConsumerTileKey, consumer));
+        }
+        DictionaryAttr value =
+            DictionaryAttr::get(builder.getContext(), fields);
+        BridgePipeSpecAttr pipeSpec =
+            BridgePipeSpecAttr::get(builder.getContext(), value);
+        std::string key;
+        llvm::raw_string_ostream os(key);
+        os << "pipe|";
+        value.print(os);
+        os.flush();
+        StringAttr keyAttr = builder.getStringAttr(key);
+        create->setAttr("spec", pipeSpec);
+        create->setAttr(kBridgeInstanceKeyAttrName, keyAttr);
+        create->removeAttr("pipe_config");
+        for (BridgeCallOp bridgeCall : calls) {
+          bridgeCall->setAttr("spec", pipeSpec);
+          bridgeCall->setAttr(kBridgeInstanceKeyAttrName, keyAttr);
+          bridgeCall->removeAttr("split");
+          bridgeCall->removeAttr("producer_tile_spec");
+          bridgeCall->removeAttr("consumer_tile_spec");
+        }
+      });
     }
-
-    if (hadError || spec.hadError()) {
+    if (hadError) {
       signalPassFailure();
     }
   }
@@ -451,13 +483,17 @@ private:
   /// are rejected here.
   static bool isSupportedPipeCapability(InitializeL2LPipeOp init) {
     int8_t dirMask = init.getDirMask();
-    if (dirMask != 1 && dirMask != 2)
+    if (dirMask != 1 && dirMask != 2) {
       return false;
-    if (init.getAccPushEpilogueAttr())
+    }
+    if (init.getAccPushEpilogueAttr()) {
       return false;
+    }
     auto localAddrTy = dyn_cast<IntegerType>(init.getLocalAddr().getType());
-    if (!localAddrTy || localAddrTy.getWidth() != 32)
+    bool hasI32LocalAddress = localAddrTy && localAddrTy.getWidth() == 32;
+    if (!hasI32LocalAddress) {
       return false;
+    }
     return true;
   }
 };

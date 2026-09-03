@@ -53,14 +53,29 @@ static FailureOr<std::string> renderStructuredTile(DictionaryAttr tile) {
   }
   llvm::StringRef tileKind;
   switch (memory.getAddressSpace()) {
-  case AddressSpace::LEFT: tileKind = "Left"; break;
-  case AddressSpace::RIGHT: tileKind = "Right"; break;
-  case AddressSpace::ACC: tileKind = "Acc"; break;
-  case AddressSpace::MAT: tileKind = "Mat"; break;
-  case AddressSpace::VEC: tileKind = "Vec"; break;
-  case AddressSpace::BIAS: tileKind = "Bias"; break;
-  case AddressSpace::SCALING: tileKind = "Scaling"; break;
-  default: return failure();
+  case AddressSpace::LEFT:
+    tileKind = "Left";
+    break;
+  case AddressSpace::RIGHT:
+    tileKind = "Right";
+    break;
+  case AddressSpace::ACC:
+    tileKind = "Acc";
+    break;
+  case AddressSpace::MAT:
+    tileKind = "Mat";
+    break;
+  case AddressSpace::VEC:
+    tileKind = "Vec";
+    break;
+  case AddressSpace::BIAS:
+    tileKind = "Bias";
+    break;
+  case AddressSpace::SCALING:
+    tileKind = "Scaling";
+    break;
+  default:
+    return failure();
   }
   llvm::StringRef blockLayout = bLayout.getInt() == 0 ? "RowMajor" : "ColMajor";
   std::string token = "pto::Tile<pto::TileType::" + tileKind.str() + ", " +
@@ -75,6 +90,54 @@ static FailureOr<std::string> renderStructuredTile(DictionaryAttr tile) {
              std::to_string(fractal.getInt());
   }
   return token + ">";
+}
+
+
+static FailureOr<std::string> renderPipeConfig(DictionaryAttr config) {
+  auto flag = config.getAs<IntegerAttr>("flag_base");
+  auto dir = config.getAs<IntegerAttr>("dir_mask");
+  auto slotSize = config.getAs<IntegerAttr>("slot_size");
+  auto slotNum = config.getAs<IntegerAttr>("slot_num");
+  auto localSlot = config.getAs<IntegerAttr>("local_slot_num");
+  auto nosplit = config.getAs<BoolAttr>("nosplit");
+  if (!flag || !dir || !slotSize || !slotNum || !localSlot || !nosplit) {
+    return failure();
+  }
+  StringRef direction;
+  switch (dir.getInt()) {
+  case 1:
+    direction = "C2V";
+    break;
+  case 2:
+    direction = "V2C";
+    break;
+  case 3:
+    direction = "BOTH";
+    break;
+  default:
+    return failure();
+  }
+  return ("pto::TPipe<" + std::to_string(flag.getInt()) +
+          ", pto::Direction::DIR_" + direction.str() + ", " +
+          std::to_string(slotSize.getInt()) + ", " +
+          std::to_string(slotNum.getInt()) + ", " +
+          std::to_string(localSlot.getInt()) + ", " +
+          (nosplit.getValue() ? "true>" : "false>"));
+}
+
+static FailureOr<std::string> renderPipeSplit(IntegerAttr split) {
+  if (!split) {
+    return failure();
+  }
+  switch (split.getInt()) {
+  case 0: return std::string("pto::TileSplitAxis::TILE_NO_SPLIT");
+  case 1: return std::string("pto::TileSplitAxis::TILE_UP_DOWN");
+  case 2: return std::string("pto::TileSplitAxis::TILE_LEFT_RIGHT");
+  case 3: return std::string("pto::TileSplitAxis::TILE_UP_DOWN_ODD");
+  case 4: return std::string("pto::TileSplitAxis::TILE_LEFT_RIGHT_ODD");
+  default:
+    return failure();
+  }
 }
 
 static FailureOr<std::string> renderCubeInstance(BridgeCallOp call,
@@ -140,12 +203,17 @@ renderPipeInstance(BridgeObjectCreateOp create,
     return create.emitError("resolved Pipe object has no structured spec");
   }
   DictionaryAttr fields = spec.getValue();
-  auto pipe = fields.getAs<StringAttr>(kBridgeSpecPipeKey);
-  auto split = fields.getAs<StringAttr>(kBridgeSpecSplitKey);
-  auto producer = fields.getAs<StringAttr>(kBridgeSpecProducerTileKey);
-  auto consumer = fields.getAs<StringAttr>(kBridgeSpecConsumerTileKey);
-  if (!pipe) {
-    return create.emitError("Pipe bridge spec is missing the pipe configuration");
+  auto pipeConfig = fields.getAs<DictionaryAttr>(kBridgeSpecPipeKey);
+  auto splitAttr = fields.getAs<IntegerAttr>(kBridgeSpecSplitKey);
+  auto producer = fields.getAs<DictionaryAttr>(kBridgeSpecProducerTileKey);
+  auto consumer = fields.getAs<DictionaryAttr>(kBridgeSpecConsumerTileKey);
+  auto pipe = pipeConfig ? renderPipeConfig(pipeConfig)
+                         : FailureOr<std::string>(failure());
+  auto split = renderPipeSplit(splitAttr);
+  bool hasValidPipeConfig = pipeConfig && succeeded(pipe);
+  if (!hasValidPipeConfig) {
+    return create.emitError(
+        "Pipe bridge spec is missing structured pipe configuration");
   }
 
   bool needsPush = false;
@@ -160,7 +228,8 @@ renderPipeInstance(BridgeObjectCreateOp create,
     needsPop |= entryId.getValue() == "pipe.pop";
     needsFree |= entryId.getValue() == "pipe.free";
   }
-  if ((needsPush || needsPop || needsFree) && !split) {
+  bool needsSplit = needsPush || needsPop || needsFree;
+  if (needsSplit && failed(split)) {
     return create.emitError("Pipe bridge spec is missing the split axis");
   }
   if (needsPush && !producer) {
@@ -188,12 +257,22 @@ renderPipeInstance(BridgeObjectCreateOp create,
 
   std::string source;
   llvm::raw_string_ostream os(source);
-  os << "using " << pipeType << " = " << pipe.getValue() << ";\n";
+  auto producerToken = producer ? renderStructuredTile(producer)
+                                : FailureOr<std::string>(failure());
+  auto consumerToken = consumer ? renderStructuredTile(consumer)
+                                : FailureOr<std::string>(failure());
+  bool invalidProducer = needsPush && failed(producerToken);
+  bool invalidConsumer = needsPop && failed(consumerToken);
+  if (invalidProducer || invalidConsumer) {
+    return create.emitError(
+        "Pipe bridge spec contains an invalid structured tile");
+  }
+  os << "using " << pipeType << " = " << *pipe << ";\n";
   if (producer) {
-    os << "using " << producerType << " = " << producer.getValue() << ";\n";
+    os << "using " << producerType << " = " << *producerToken << ";\n";
   }
   if (consumer) {
-    os << "using " << consumerType << " = " << consumer.getValue() << ";\n";
+    os << "using " << consumerType << " = " << *consumerToken << ";\n";
   }
   os << "extern \"C\" [aicore] void " << symbols.init
      << "(void *storage, uint32_t localBuffer) {\n"
@@ -209,7 +288,7 @@ renderPipeInstance(BridgeObjectCreateOp create,
        << "  " << producerType << " tile;\n"
        << "  pto::TASSIGN_IMPL(tile, producerAddress);\n"
        << "  pto::TPUSH<" << pipeType << ", " << producerType << ", "
-       << split.getValue() << ">(pipe, tile);\n}\n";
+       << *split << ">(pipe, tile);\n}\n";
   }
   if (needsPop) {
     os << "extern \"C\" [aicore] uint64_t " << symbols.pop
@@ -218,7 +297,7 @@ renderPipeInstance(BridgeObjectCreateOp create,
        << " *>(storage);\n"
        << "  " << consumerType << " tile;\n"
        << "  pto::TPOP<" << pipeType << ", " << consumerType << ", "
-       << split.getValue() << ">(pipe, tile);\n"
+       << *split << ">(pipe, tile);\n"
        << "  pipe_barrier(PIPE_ALL);\n"
        << "  return reinterpret_cast<uint64_t>(tile.data());\n}\n";
   }
@@ -227,7 +306,7 @@ renderPipeInstance(BridgeObjectCreateOp create,
        << "(void *storage) {\n"
        << "  auto &pipe = *reinterpret_cast<" << pipeType
        << " *>(storage);\n"
-       << "  pto::TFREE<" << pipeType << ", " << split.getValue()
+       << "  pto::TFREE<" << pipeType << ", " << *split
        << ">(pipe);\n}\n";
   }
   os << "#endif\n";

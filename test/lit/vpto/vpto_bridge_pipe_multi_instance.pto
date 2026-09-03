@@ -1,0 +1,50 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// You may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+// https://www.huawei.com/
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A
+// PARTICULAR PURPOSE.
+// See LICENSE for more details.
+
+// RUN: pto-test-opt %s -pto-lower-pipe-family-ops | FileCheck %s --check-prefix=IR
+// RUN: pto-test-opt %s -pto-lower-pipe-family-ops -pto-emit-vpto-bridge-wrapper | FileCheck %s --check-prefix=RESOLVE
+
+// IR: #pto.bridge_pipe_spec<{{.*}}slot_size = 1024 : i32
+// IR: #pto.bridge_pipe_spec<{{.*}}slot_size = 2048 : i32
+// IR-NOT: pto::TPipe
+// RESOLVE: using Pipe__0 = pto::TPipe<0, pto::Direction::DIR_C2V, 1024, 8, 2, false>;
+// RESOLVE-SAME: pto::TPUSH<Pipe__0, {{.*}}pto::TileSplitAxis::TILE_UP_DOWN
+// RESOLVE-SAME: using Pipe__1 = pto::TPipe<4, pto::Direction::DIR_C2V, 2048, 4, 2, false>;
+// RESOLVE-SAME: pto::TPUSH<Pipe__1, {{.*}}pto::TileSplitAxis::TILE_LEFT_RIGHT
+// RESOLVE: pto.bridge_object_create "pto_vpto_pipe_init__0"
+// RESOLVE: pto.bridge_object_create "pto_vpto_pipe_init__1"
+// RESOLVE: pto.bridge_object_create "pto_vpto_pipe_init__0"
+
+
+module {
+  func.func private @multi_pipe(%addr: i32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : i64
+    %c1024 = arith.constant 1024 : i64
+    %c2048 = arith.constant 2048 : i64
+    %a = pto.alloc_tile addr = %c0
+      : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    %b = pto.alloc_tile addr = %c1024
+      : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=16, v_row=32, v_col=16,
+                      blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    %c = pto.alloc_tile addr = %c2048
+      : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    %p0 = pto.initialize_l2l_pipe{dir_mask = 1, slot_size = 1024, slot_num = 8, flag_base = 0, nosplit = false} (%addr : i32) -> !pto.pipe
+    pto.tpush(%a, %p0 : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, !pto.pipe) {split = 1}
+    %p1 = pto.initialize_l2l_pipe{dir_mask = 1, slot_size = 2048, slot_num = 4, flag_base = 4, nosplit = false} (%addr : i32) -> !pto.pipe
+    pto.tpush(%b, %p1 : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=16, v_row=32, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, !pto.pipe) {split = 2}
+    %p2 = pto.initialize_l2l_pipe{dir_mask = 1, slot_size = 1024, slot_num = 8, flag_base = 0, nosplit = false} (%addr : i32) -> !pto.pipe
+    pto.tpush(%c, %p2 : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, !pto.pipe) {split = 1}
+    return
+  }
+}

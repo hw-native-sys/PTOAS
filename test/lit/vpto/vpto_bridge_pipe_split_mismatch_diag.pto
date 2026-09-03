@@ -15,7 +15,7 @@
 
 // RUN: not pto-test-opt %s -pto-lower-pipe-family-ops 2>&1 | FileCheck %s
 
-// CHECK: VPTO pipe bridge TFREE split 2 does not match the split 1 already bridged in this function; the wrapper renders one shared TileSplitAxis
+// CHECK: VPTO pipe bridge TFREE split 2 does not match split 1 used by the same pipe object
 
 module {
   func.func private @bridge_vector(%addr: i32)
