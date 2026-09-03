@@ -15,8 +15,8 @@
 
 // RUN: not pto-test-opt %s "-vpto-bridge-lowering=whitelist-path=%S/Inputs/vpto-bridge-whitelist.yaml" 2>&1 | FileCheck %s
 
-// CHECK: error: VPTO bridge: 'pto.initialize_l2l_pipe' is routed to wrapper entry 'pto_vpto_pipe_init'
-// CHECK: error: VPTO bridge: 'pto.tpush' is routed to wrapper entry 'pto_vpto_pipe_push'
+// CHECK: error: VPTO bridge: 'pto.initialize_l2l_pipe' is routed by policy but was not lowered into a bridge op
+// CHECK: error: VPTO bridge: 'pto.tpush' is routed by policy but was not lowered into a bridge op
 
 module {
   func.func private @unlowered_pipe_ops(%addr: i32)

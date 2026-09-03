@@ -26,8 +26,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/IR/PTO.h"
-#include "PTO/Transforms/VPTOBridgeWhitelist.h"
 #include "PTO/Transforms/VPTOBridgeRegistry.h"
+#include "PTO/Transforms/VPTOBridgeWhitelist.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Builders.h"
@@ -84,7 +84,6 @@ private:
 };
 
 struct BridgeLoweringState {
-  const BridgeWhitelist &whitelist;
   llvm::StringSet<> declaredEntries;
 };
 
@@ -238,20 +237,6 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     StringRef callee = op.getCalleeAttr().getValue();
-    const BridgeWhitelistEntry *entry = state.whitelist.findEntry(callee);
-    if (!entry) {
-      // Concrete instance symbols are suffixed by WrapperGen; recover the
-      // registry-owned canonical entry through the logical entry ID.
-      if (auto idAttr = op->getAttrOfType<StringAttr>("entry_id")) {
-        for (const BridgeFunctionDesc &desc : getBridgeFunctionRegistry()) {
-          if (stringifyBridgeEntryId(desc.id) != idAttr.getValue()) {
-            continue;
-          }
-          entry = state.whitelist.findEntry(desc.symbolBase);
-          break;
-        }
-      }
-    }
     const BridgeFunctionDesc *registryDesc = nullptr;
     if (auto idAttr = op->getAttrOfType<StringAttr>("entry_id")) {
       registryDesc = findBridgeFunctionById(idAttr.getValue());
@@ -279,10 +264,8 @@ public:
                   "exactly one result (the storage handle)";
       }
       StringRef sizeCallee = op.getStorageSizeCalleeAttr().getValue();
-      if (!state.whitelist.findEntry(sizeCallee)) {
-        return op.emitError()
-               << "VPTO bridge storage size callee '" << sizeCallee
-               << "' is not declared in the bridge whitelist";
+      if (sizeCallee.empty()) {
+        return op.emitError("VPTO bridge storage size callee is empty");
       }
       Value size = rewriter.create<func::CallOp>(loc, sizeCallee,
                                                  rewriter.getI64Type(),
@@ -379,44 +362,29 @@ struct VPTOBridgeLoweringPass final
       }
     });
 
-    // The whitelist always resolves through the formal chain (pass option,
-    // PTOAS_VPTO_BRIDGE_WHITELIST, built-in default), so this pass always
-    // validates; `whitelistName` is only for diagnostics.
-    std::string whitelistName;
-    FailureOr<BridgeWhitelist> whitelistOr =
-        loadBridgeWhitelist(whitelistPath, llvm::errs(), &whitelistName);
-    if (failed(whitelistOr)) {
+    // Routing policy is only used to reject operations that should have
+    // been claimed by a family/typed lowering pass.
+    FailureOr<BridgeRoutePolicy> policyOr =
+        loadBridgeRoutePolicy(whitelistPath, llvm::errs());
+    if (failed(policyOr)) {
       signalPassFailure();
       return;
     }
-    BridgeWhitelist whitelist = std::move(*whitelistOr);
-
-    // Routing check: an op the whitelist routes to a wrapper entry must
-    // have been rewritten into bridge ops by the pass owning its lowering
-    // channel. Leftovers mean that pass was skipped or missed the op;
-    // reject them here instead of letting them flow into the regular
-    // emission path. The diagnostic names the channel so the reader knows
-    // which pass to look at.
-    llvm::StringMap<const BridgeWhitelistEntry *> routedOps;
-    for (const BridgeWhitelistEntry &entry : whitelist.bridgeOps) {
-      if (entry.op != BridgeWhitelist::kInternalOp) {
-        routedOps[entry.op] = &entry;
-      }
-    }
     bool leftoversFound = false;
     module.walk([&](Operation *op) {
-      auto it = routedOps.find(op->getName().getStringRef());
-      if (it == routedOps.end()) {
+      StringRef name = op->getName().getStringRef();
+      StringRef family = name == "pto.tpush" || name == "pto.tpop" ||
+                                 name == "pto.tfree" ||
+                                 name == "pto.initialize_l2l_pipe"
+                             ? "pipe"
+                             : "cube";
+      bool routed = family == "pipe" ? policyOr->routesFamily("pipe")
+                                     : policyOr->routesOp("cube", name);
+      if (!routed || isa<BridgeCallOp, BridgeObjectCreateOp, BridgeIntToPtrOp>(op)) {
         return;
       }
-      op->emitError()
-          << "VPTO bridge: '" << it->first()
-          << "' is routed to wrapper entry '" << it->second->entry
-          << "' by the bridge whitelist '" << whitelistName
-          << "' but was not lowered into a pto.bridge_call by "
-          << (it->second->isDeclarative()
-                  ? "the declarative bridge lowering"
-                  : "its family pass");
+      op->emitError() << "VPTO bridge: '" << name
+                      << "' is routed by policy but was not lowered into a bridge op";
       leftoversFound = true;
     });
     if (leftoversFound) {
@@ -438,7 +406,7 @@ struct VPTOBridgeLoweringPass final
         [](Operation *op) { return true; });
 
     RewritePatternSet patterns(&getContext());
-    BridgeLoweringState state{whitelist, {}};
+    BridgeLoweringState state{};
     patterns.add<LowerBridgeCallPattern>(converter, &getContext(), state);
     patterns.add<LowerBridgeObjectCreatePattern>(converter, &getContext(), state);
     patterns.add<LowerBridgeIntToPtrPattern>(converter, &getContext());
