@@ -17,6 +17,8 @@
 
 #include "SIMTPersistentFragmentAnalysis.h"
 
+#include "PTO/IR/PTO.h"
+
 #include "PTO/Support/CodeConstants.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -38,7 +40,6 @@ namespace mlir {
 namespace pto {
 namespace {
 
-constexpr llvm::StringLiteral kPersistentAttrName = "pto.persistent";
 constexpr int64_t kPersistentSlotLimit = 123;
 constexpr int64_t kWideValueSlotWidth = 2;
 
@@ -631,9 +632,9 @@ analyzePersistentFragment(LLVM::AllocaOp allocaOp, DominanceInfo &dominance,
     return allocaOp.emitOpError("must be nested in a func.func");
   }
 
-  if (!isa<UnitAttr>(allocaOp->getAttr(kPersistentAttrName))) {
+  if (!isa<UnitAttr>(allocaOp->getAttr(pto::kPersistentAttrName))) {
     return allocaOp.emitOpError()
-           << "expects '" << kPersistentAttrName << "' to be a unit attribute";
+           << "expects '" << pto::kPersistentAttrName << "' to be a unit attribute";
   }
   if (allocaOp->getParentOfType<pto::SectionSimtOp>()) {
     return allocaOp.emitOpError(
@@ -743,7 +744,7 @@ SIMTPersistentFragmentAnalysis::SIMTPersistentFragmentAnalysis(
     func::FuncOp func) {
   SmallVector<LLVM::AllocaOp> persistentAllocas;
   func.walk([&](LLVM::AllocaOp allocaOp) {
-    if (allocaOp->hasAttr(kPersistentAttrName)) {
+    if (allocaOp->hasAttr(pto::kPersistentAttrName)) {
       persistentAllocas.push_back(allocaOp);
     }
   });

@@ -8,9 +8,6 @@
 
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync \
 // RUN:   --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=INSERT
-// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-graph-sync-solver \
-// RUN:   --graph-sync-solver-event-id-max=8 --emit-pto-ir %s 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=GSS
 
 module attributes {pto.target_arch = "a3"} {
   func.func @arith_select_tile_same_pipe_read_sync(
@@ -99,28 +96,3 @@ module attributes {pto.target_arch = "a3"} {
 // INSERT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>,
 // INSERT: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>,
 // INSERT-NEXT: pto.tstore
-
-// GSS-LABEL: func.func @arith_select_tile_same_pipe_read_sync
-// GSS: pto.tload
-// GSS: pto.tload
-// GSS: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>,
-// GSS: arith.select
-// GSS: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>,
-// GSS-NEXT: pto.tstore
-
-// GSS-LABEL: func.func @arith_select_tile_cross_pipe_read_sync
-// GSS: pto.tload
-// GSS: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>,
-// GSS: pto.tabs
-// GSS: pto.set_flag[<PIPE_V>, <PIPE_MTE3>,
-// GSS: arith.select
-// GSS-DAG: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>,
-// GSS-DAG: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>,
-// GSS-NEXT: pto.tstore
-
-// GSS-LABEL: func.func @arith_select_tile_write_sync
-// GSS: arith.select
-// GSS: pto.tload
-// GSS: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>,
-// GSS: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>,
-// GSS-NEXT: pto.tstore

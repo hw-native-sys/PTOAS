@@ -17,21 +17,19 @@
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @ComputeY1ToFP8_fp16_e4m3_vmi(
-      %dataLen: i16,
-      %blockCount: i16,
-      %xAddr: !pto.ptr<f16, ub>,
-      %mxScale1ReciprocalAddr: !pto.ptr<f16, ub>,
-      %y1Addr: !pto.ptr<f8E4M3FN, ub>,
-      %ubBlockSize: i16,
-      %vlForHalfNumber: i16)
+      %blockCount: i16)
       attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
-    %c2 = arith.constant 2 : index
+    %c256 = arith.constant 256 : index
+    %c0_i64 = arith.constant 0 : i64
+    %c16384_i64 = arith.constant 16384 : i64
+    %c20480_i64 = arith.constant 20480 : i64
+    %xAddr = pto.castptr %c0_i64 : i64 -> !pto.ptr<f16, ub>
+    %mxScale1ReciprocalAddr = pto.castptr %c16384_i64 : i64 -> !pto.ptr<f16, ub>
+    %y1Addr = pto.castptr %c20480_i64 : i64 -> !pto.ptr<f8E4M3FN, ub>
 
     %block_count = arith.index_cast %blockCount : i16 to index
-    %vl_half = arith.index_cast %vlForHalfNumber : i16 to index
-    %load_stride_y8 = arith.muli %vl_half, %c2 : index
 
     pto.vecscope {
       %scale_f16 = pto.vmi.vload %mxScale1ReciprocalAddr[%c0], %c1 {group = 8}
@@ -42,8 +40,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
         : !pto.vmi.vreg<256xf16> -> !pto.vmi.vreg<256xf32>
 
       scf.for %i = %c0 to %block_count step %c1 {
-        %x_off = arith.muli %i, %load_stride_y8 : index
-        %y_off = arith.muli %i, %load_stride_y8 : index
+        %x_off = arith.muli %i, %c256 : index
+        %y_off = arith.muli %i, %c256 : index
 
         %x_f16 = pto.vmi.vload %xAddr[%x_off]
           : !pto.ptr<f16, ub> -> !pto.vmi.vreg<256xf16>
@@ -64,21 +62,19 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
   }
 
   func.func @ComputeY1ToFP8_fp16_e5m2_vmi(
-      %dataLen: i16,
-      %blockCount: i16,
-      %xAddr: !pto.ptr<f16, ub>,
-      %mxScale1ReciprocalAddr: !pto.ptr<f16, ub>,
-      %y1Addr: !pto.ptr<f8E5M2, ub>,
-      %ubBlockSize: i16,
-      %vlForHalfNumber: i16)
+      %blockCount: i16)
       attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
-    %c2 = arith.constant 2 : index
+    %c256 = arith.constant 256 : index
+    %c0_i64 = arith.constant 0 : i64
+    %c16384_i64 = arith.constant 16384 : i64
+    %c20480_i64 = arith.constant 20480 : i64
+    %xAddr = pto.castptr %c0_i64 : i64 -> !pto.ptr<f16, ub>
+    %mxScale1ReciprocalAddr = pto.castptr %c16384_i64 : i64 -> !pto.ptr<f16, ub>
+    %y1Addr = pto.castptr %c20480_i64 : i64 -> !pto.ptr<f8E5M2, ub>
 
     %block_count = arith.index_cast %blockCount : i16 to index
-    %vl_half = arith.index_cast %vlForHalfNumber : i16 to index
-    %load_stride_y8 = arith.muli %vl_half, %c2 : index
 
     pto.vecscope {
       %scale_f16 = pto.vmi.vload %mxScale1ReciprocalAddr[%c0], %c1 {group = 8}
@@ -89,8 +85,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
         : !pto.vmi.vreg<256xf16> -> !pto.vmi.vreg<256xf32>
 
       scf.for %i = %c0 to %block_count step %c1 {
-        %x_off = arith.muli %i, %load_stride_y8 : index
-        %y_off = arith.muli %i, %load_stride_y8 : index
+        %x_off = arith.muli %i, %c256 : index
+        %y_off = arith.muli %i, %c256 : index
 
         %x_f16 = pto.vmi.vload %xAddr[%x_off]
           : !pto.ptr<f16, ub> -> !pto.vmi.vreg<256xf16>

@@ -145,22 +145,21 @@ static bool areEquivalentValues(Value lhs, Value rhs) {
   return areEquivalentOperations(lhs.getDefiningOp(), rhs.getDefiningOp());
 }
 
-static Value traceAliasRootOneStep(Value value) {
-  if (auto arg = dyn_cast<BlockArgument>(value)) {
-    auto *parentOp = arg.getOwner()->getParentOp();
-    if (auto forOp = dyn_cast_or_null<scf::ForOp>(parentOp)) {
-      if (arg.getArgNumber() > 0 &&
-          forOp.getInitArgs().size() >= arg.getArgNumber()) {
-        return forOp.getInitArgs()[arg.getArgNumber() - 1];
-      }
-    }
-  }
-
-  Operation *def = value.getDefiningOp();
-  if (!def) {
+static Value traceBlockArgumentAlias(Value value) {
+  auto arg = dyn_cast<BlockArgument>(value);
+  if (!arg) {
     return {};
   }
+  auto forOp = dyn_cast_or_null<scf::ForOp>(arg.getOwner()->getParentOp());
+  bool hasMatchingInit = forOp && arg.getArgNumber() > 0 &&
+                         forOp.getInitArgs().size() >= arg.getArgNumber();
+  if (hasMatchingInit) {
+    return forOp.getInitArgs()[arg.getArgNumber() - 1];
+  }
+  return {};
+}
 
+static Value traceMemRefAlias(Operation *def) {
   if (auto subview = dyn_cast<memref::SubViewOp>(def)) {
     return subview.getSource();
   }
@@ -176,6 +175,10 @@ static Value traceAliasRootOneStep(Value value) {
   if (auto transpose = dyn_cast<memref::TransposeOp>(def)) {
     return transpose.getIn();
   }
+  return {};
+}
+
+static Value tracePTOAlias(Operation *def) {
   if (auto subview = dyn_cast<pto::SubViewOp>(def)) {
     return subview.getSource();
   }
@@ -185,30 +188,54 @@ static Value traceAliasRootOneStep(Value value) {
   if (auto reshape = dyn_cast<pto::TReshapeOp>(def)) {
     return reshape.getSrc();
   }
-  if (auto cast = dyn_cast<UnrealizedConversionCastOp>(def)) {
-    if (cast.getInputs().empty()) {
-      return {};
-    }
-    if (auto result = dyn_cast<OpResult>(value)) {
-      unsigned resultNumber = result.getResultNumber();
-      if (resultNumber < cast.getInputs().size()) {
-        return cast.getInputs()[resultNumber];
-      }
-    }
-    if (cast.getInputs().size() == 1) {
-      return cast.getInputs().front();
-    }
+  return {};
+}
+
+static Value traceUnrealizedAlias(Value value,
+                                  UnrealizedConversionCastOp cast) {
+  if (cast.getInputs().empty()) {
     return {};
   }
-  if (auto forOp = dyn_cast<scf::ForOp>(def)) {
-    if (auto result = dyn_cast<OpResult>(value)) {
-      unsigned resultNumber = result.getResultNumber();
-      if (resultNumber < forOp.getInitArgs().size()) {
-        return forOp.getInitArgs()[resultNumber];
-      }
+  if (auto result = dyn_cast<OpResult>(value)) {
+    unsigned resultNumber = result.getResultNumber();
+    if (resultNumber < cast.getInputs().size()) {
+      return cast.getInputs()[resultNumber];
     }
   }
+  return cast.getInputs().size() == 1 ? cast.getInputs().front() : Value();
+}
 
+static Value traceLoopResultAlias(Value value, scf::ForOp forOp) {
+  auto result = dyn_cast<OpResult>(value);
+  bool hasMatchingInit =
+      result && result.getResultNumber() < forOp.getInitArgs().size();
+  if (hasMatchingInit) {
+    return forOp.getInitArgs()[result.getResultNumber()];
+  }
+  return {};
+}
+
+static Value traceAliasRootOneStep(Value value) {
+  if (Value alias = traceBlockArgumentAlias(value)) {
+    return alias;
+  }
+
+  Operation *def = value.getDefiningOp();
+  if (!def) {
+    return {};
+  }
+  if (Value alias = traceMemRefAlias(def)) {
+    return alias;
+  }
+  if (Value alias = tracePTOAlias(def)) {
+    return alias;
+  }
+  if (auto cast = dyn_cast<UnrealizedConversionCastOp>(def)) {
+    return traceUnrealizedAlias(value, cast);
+  }
+  if (auto forOp = dyn_cast<scf::ForOp>(def)) {
+    return traceLoopResultAlias(value, forOp);
+  }
   return {};
 }
 
@@ -272,11 +299,41 @@ static bool containsEquivalentRoot(ArrayRef<Value> roots, Value candidate) {
 /// Check that \p movableOp has no aliasing conflict with the memory ops in
 /// \p crossStages.  \p crossStages are stages whose leaf and epilogue ops the
 /// movableOp would be reordered across in the fused loop.
+static bool canMoveAcrossOperations(Operation *movableOp,
+                                    ArrayRef<Value> movableRoots,
+                                    ArrayRef<Operation *> crossedOps,
+                                    StringRef crossedKind,
+                                    llvm::raw_ostream *debugOS) {
+  for (Operation *op : crossedOps) {
+    SmallVector<Value, mlir::pto::kValue4> opRoots;
+    if (failed(collectAliasRelevantRoots(op, opRoots))) {
+      if (debugOS) {
+        *debugOS << "[op-fusion] reject movable op " << movableOp->getName()
+                 << " at " << movableOp->getLoc() << ": crossed effects of "
+                 << op->getName() << " are not alias-analyzable\n";
+      }
+      return false;
+    }
+    if (llvm::any_of(movableRoots, [&](Value root) {
+          return containsEquivalentRoot(opRoots, root);
+        })) {
+      if (debugOS) {
+        *debugOS << "[op-fusion] reject movable op " << movableOp->getName()
+                 << " at " << movableOp->getLoc()
+                 << ": touched root may alias a crossed " << crossedKind
+                 << "\n";
+      }
+      return false;
+    }
+  }
+  return true;
+}
+
 static bool canMoveAcrossStages(Operation *movableOp,
                                 ArrayRef<StageInfo> crossStages,
                                 llvm::raw_ostream *debugOS) {
-  SmallVector<Value, mlir::pto::kValue4> movableRoots;
-  if (failed(collectAliasRelevantRoots(movableOp, movableRoots))) {
+  SmallVector<Value, mlir::pto::kValue4> roots;
+  if (failed(collectAliasRelevantRoots(movableOp, roots))) {
     if (debugOS) {
       *debugOS << "[op-fusion] reject movable op " << movableOp->getName()
                << " at " << movableOp->getLoc()
@@ -285,54 +342,14 @@ static bool canMoveAcrossStages(Operation *movableOp,
     return false;
   }
   for (const StageInfo &crossStage : crossStages) {
-    for (Operation *op : crossStage.leafOps) {
-      SmallVector<Value, mlir::pto::kValue4> opRoots;
-      if (failed(collectAliasRelevantRoots(op, opRoots))) {
-        if (debugOS) {
-          *debugOS << "[op-fusion] reject movable op " << movableOp->getName()
-                   << " at " << movableOp->getLoc()
-                   << ": crossed effects of " << op->getName()
-                   << " are not alias-analyzable\n";
-        }
-        return false;
-      }
-      for (Value movableRoot : movableRoots) {
-        if (containsEquivalentRoot(opRoots, movableRoot)) {
-          if (debugOS) {
-            *debugOS << "[op-fusion] reject movable op "
-                     << movableOp->getName() << " at " << movableOp->getLoc()
-                     << ": touched root may alias a crossed stage memory op\n";
-          }
-          return false;
-        }
-      }
+    if (!canMoveAcrossOperations(movableOp, roots, crossStage.leafOps,
+                                 "stage memory op", debugOS)) {
+      return false;
     }
-    // Check all nesting levels' epilogueOps, not just the outermost.
-    // buildFusedLoopNestAtLevel clones epilogueOps at every level, so
-    // a movableOp that is reordered across a prior stage must be checked
-    // against epilogueOps at every nesting depth.
     for (const LoopLevelInfo &level : crossStage.levels) {
-      for (Operation *op : level.epilogueOps) {
-        SmallVector<Value, mlir::pto::kValue4> opRoots;
-        if (failed(collectAliasRelevantRoots(op, opRoots))) {
-          if (debugOS) {
-            *debugOS << "[op-fusion] reject movable op " << movableOp->getName()
-                     << " at " << movableOp->getLoc()
-                     << ": crossed effects of " << op->getName()
-                     << " are not alias-analyzable\n";
-          }
-          return false;
-        }
-        for (Value movableRoot : movableRoots) {
-          if (containsEquivalentRoot(opRoots, movableRoot)) {
-            if (debugOS) {
-              *debugOS << "[op-fusion] reject movable op "
-                       << movableOp->getName() << " at " << movableOp->getLoc()
-                       << ": touched root may alias a crossed stage epilogue op\n";
-            }
-            return false;
-          }
-        }
+      if (!canMoveAcrossOperations(movableOp, roots, level.epilogueOps,
+                                   "stage epilogue op", debugOS)) {
+        return false;
       }
     }
   }
@@ -431,6 +448,24 @@ static LogicalResult analyzeStage(scf::ForOp outerLoop, StageInfo &stage) {
   return failure();
 }
 
+static bool appendStage(scf::ForOp loop,
+                        SmallVectorImpl<Operation *> &pendingSetup,
+                        SmallVectorImpl<StageInfo> &stages,
+                        llvm::raw_ostream *debugOS) {
+  StageInfo stage;
+  stage.setupOps.assign(pendingSetup.begin(), pendingSetup.end());
+  pendingSetup.clear();
+  if (succeeded(analyzeStage(loop, stage))) {
+    stages.push_back(std::move(stage));
+    return true;
+  }
+  if (debugOS) {
+    *debugOS << "[op-fusion] stop stage run before " << loop.getLoc()
+             << ": next stage analysis failed\n";
+  }
+  return false;
+}
+
 static SmallVector<StageInfo, mlir::pto::kValue8> collectStageRunFrom(scf::ForOp firstLoop,
                                                      llvm::raw_ostream *debugOS) {
   SmallVector<StageInfo, mlir::pto::kValue8> stages;
@@ -448,17 +483,9 @@ static SmallVector<StageInfo, mlir::pto::kValue8> collectStageRunFrom(scf::ForOp
   SmallVector<Operation *, mlir::pto::kValue4> pendingSetup;
   for (Operation *op = firstLoop->getNextNode(); op; op = op->getNextNode()) {
     if (auto nextLoop = dyn_cast<scf::ForOp>(op)) {
-      StageInfo nextStage;
-      nextStage.setupOps = pendingSetup;
-      pendingSetup.clear();
-      if (failed(analyzeStage(nextLoop, nextStage))) {
-        if (debugOS) {
-          *debugOS << "[op-fusion] stop stage run before " << nextLoop.getLoc()
-                   << ": next stage analysis failed\n";
-        }
+      if (!appendStage(nextLoop, pendingSetup, stages, debugOS)) {
         break;
       }
-      stages.push_back(std::move(nextStage));
       continue;
     }
 
@@ -500,6 +527,66 @@ static void appendMappedValues(ValueRange values, IRMapping &mapping,
   }
 }
 
+static void mapFusedLoopArguments(scf::ForOp fusedLoop,
+                                  MutableArrayRef<StageInfo> stages,
+                                  MutableArrayRef<IRMapping> mappings,
+                                  unsigned levelIndex) {
+  unsigned iterArgOffset = 0;
+  for (auto [stageIndex, stage] : llvm::enumerate(stages)) {
+    scf::ForOp originalLoop = stage.levels[levelIndex].loop;
+    mappings[stageIndex].map(originalLoop.getInductionVar(),
+                             fusedLoop.getInductionVar());
+    for (auto [argIndex, originalArg] :
+         llvm::enumerate(originalLoop.getRegionIterArgs())) {
+      mappings[stageIndex].map(
+          originalArg, fusedLoop.getRegionIterArgs()[iterArgOffset + argIndex]);
+    }
+    iterArgOffset += originalLoop.getRegionIterArgs().size();
+  }
+}
+
+static SmallVector<Value, mlir::pto::kValue8>
+collectFusedYieldOperands(MutableArrayRef<StageInfo> stages,
+                          MutableArrayRef<IRMapping> mappings,
+                          unsigned levelIndex) {
+  SmallVector<Value, mlir::pto::kValue8> operands;
+  for (auto [stageIndex, stage] : llvm::enumerate(stages)) {
+    auto originalYield = cast<scf::YieldOp>(
+        stage.levels[levelIndex].loop.getBody()->getTerminator());
+    appendMappedValues(ValueRange(originalYield.getOperands()),
+                       mappings[stageIndex], operands);
+  }
+  return operands;
+}
+
+static void setFusedYieldOperands(scf::ForOp fusedLoop, Location location,
+                                  ValueRange operands) {
+  Block *body = fusedLoop.getBody();
+  Operation *terminator =
+      !body->empty() && body->back().hasTrait<OpTrait::IsTerminator>()
+          ? &body->back()
+          : nullptr;
+  if (auto yield = dyn_cast_or_null<scf::YieldOp>(terminator)) {
+    yield->setOperands(operands);
+    return;
+  }
+  OpBuilder::atBlockEnd(body).create<scf::YieldOp>(location, operands);
+}
+
+static void mapFusedLoopResults(scf::ForOp fusedLoop,
+                                MutableArrayRef<StageInfo> stages,
+                                MutableArrayRef<IRMapping> mappings,
+                                unsigned levelIndex) {
+  unsigned resultOffset = 0;
+  for (auto [stageIndex, stage] : llvm::enumerate(stages)) {
+    scf::ForOp originalLoop = stage.levels[levelIndex].loop;
+    for (Value originalResult : originalLoop.getResults()) {
+      mappings[stageIndex].map(originalResult,
+                               fusedLoop.getResults()[resultOffset++]);
+    }
+  }
+}
+
 static scf::ForOp buildFusedLoopNestAtLevel(OpBuilder &builder,
                                             MutableArrayRef<StageInfo> stages,
                                             MutableArrayRef<IRMapping> mappings,
@@ -518,19 +605,7 @@ static scf::ForOp buildFusedLoopNestAtLevel(OpBuilder &builder,
       mapValueOrSelf(firstLoop.getUpperBound(), mappings.front()),
       mapValueOrSelf(firstLoop.getStep(), mappings.front()), fusedInitArgs);
   fusedLoop->setAttrs(firstLoop->getAttrs());
-
-  unsigned iterArgOffset = 0;
-  for (auto [stageIndex, stage] : llvm::enumerate(stages)) {
-    scf::ForOp originalLoop = stage.levels[levelIndex].loop;
-    mappings[stageIndex].map(originalLoop.getInductionVar(),
-                             fusedLoop.getInductionVar());
-    for (auto [argIndex, originalArg] :
-         llvm::enumerate(originalLoop.getRegionIterArgs())) {
-      mappings[stageIndex].map(
-          originalArg, fusedLoop.getRegionIterArgs()[iterArgOffset + argIndex]);
-    }
-    iterArgOffset += originalLoop.getRegionIterArgs().size();
-  }
+  mapFusedLoopArguments(fusedLoop, stages, mappings, levelIndex);
 
   OpBuilder bodyBuilder = OpBuilder::atBlockBegin(fusedLoop.getBody());
   for (auto [stageIndex, stage] : llvm::enumerate(stages)) {
@@ -559,36 +634,10 @@ static scf::ForOp buildFusedLoopNestAtLevel(OpBuilder &builder,
     }
   }
 
-  SmallVector<Value, mlir::pto::kValue8> fusedYieldOperands;
-  for (auto [stageIndex, stage] : llvm::enumerate(stages)) {
-    auto originalYield = cast<scf::YieldOp>(
-        stage.levels[levelIndex].loop.getBody()->getTerminator());
-    appendMappedValues(ValueRange(originalYield.getOperands()),
-                       mappings[stageIndex], fusedYieldOperands);
-  }
-
-  Block *fusedBody = fusedLoop.getBody();
-  Operation *fusedTerminator = nullptr;
-  if (!fusedBody->empty() &&
-      fusedBody->back().hasTrait<OpTrait::IsTerminator>()) {
-    fusedTerminator = &fusedBody->back();
-  }
-
-  if (auto fusedYield = dyn_cast_or_null<scf::YieldOp>(fusedTerminator)) {
-    fusedYield->setOperands(fusedYieldOperands);
-  } else {
-    OpBuilder yieldBuilder = OpBuilder::atBlockEnd(fusedBody);
-    yieldBuilder.create<scf::YieldOp>(firstLoop.getLoc(), fusedYieldOperands);
-  }
-
-  unsigned resultOffset = 0;
-  for (auto [stageIndex, stage] : llvm::enumerate(stages)) {
-    scf::ForOp originalLoop = stage.levels[levelIndex].loop;
-    for (Value originalResult : originalLoop.getResults()) {
-      mappings[stageIndex].map(originalResult,
-                               fusedLoop.getResults()[resultOffset++]);
-    }
-  }
+  SmallVector<Value, mlir::pto::kValue8> fusedYieldOperands =
+      collectFusedYieldOperands(stages, mappings, levelIndex);
+  setFusedYieldOperands(fusedLoop, firstLoop.getLoc(), fusedYieldOperands);
+  mapFusedLoopResults(fusedLoop, stages, mappings, levelIndex);
 
   return fusedLoop;
 }

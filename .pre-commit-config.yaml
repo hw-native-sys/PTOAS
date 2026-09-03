@@ -1,0 +1,82 @@
+minimum_pre_commit_version: 4.0.0
+exclude: ^LICENSES/|\.(html|csv|svg)$
+
+default_stages: [pre-commit]
+ci:
+  autofix_prs: false
+  autoupdate_schedule: monthly
+
+repos:
+  # pre-commit 基础检查
+  - repo: https://gitcode.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        # TODO: 临时屏蔽（全树格式化在独立 PR 治理），恢复后删除本行
+        exclude: ^.*$
+      - id: end-of-file-fixer
+        # TODO: 临时屏蔽（全树格式化在独立 PR 治理），恢复后删除本行
+        exclude: ^.*$
+      - id: check-yaml
+        args: ["--allow-multiple-documents"]
+      - id: check-added-large-files
+        args: ["--maxkb=1000"]
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: check-json
+
+  # C++ 代码格式化检查
+  - repo: https://gitcode.com/pre-commit-clang/mirrors-clang-format
+    rev: v18.1.8
+    hooks:
+      - id: clang-format
+        files: \.(c|h|cpp|hpp|cc|hh|cxx|hxx)$
+        args:
+          - "-i"
+        # TODO: 临时屏蔽（全树格式化在独立 PR 治理），恢复后还原 exclude 配置
+        exclude: ^.*$
+
+  # Python 代码检查
+  - repo: https://gitcode.com/gh_mirrors/ru/ruff-pre-commit
+    rev: v0.14.14
+    hooks:
+      - id: ruff-check
+        args: ["--output-format", "github"]
+        types: [python]
+        # TODO: 临时屏蔽（全树 lint 修复在独立 PR 治理），恢复后还原 exclude 配置
+        exclude: ^.*$
+      - id: ruff-format
+        types: [python]
+        # TODO: 临时屏蔽（全树格式化在独立 PR 治理），恢复后删除本行
+        exclude: ^.*$
+
+  # 拼写检查
+  - repo: https://gitcode.com/gh_mirrors/co/codespell
+    rev: v2.4.1
+    hooks:
+      - id: codespell
+        args: [
+            "-L",
+            "CANN,cann,NNAL,nnal,ASCEND,ascend,EnQue,CopyIn,ArchType,AND,ND,nd,tbe,copyin,alog,excuted,CEHCK,compatiable,NORAML,toi,subtile,ADN,vor,VOR,Vor,confg,olt,predicable,ges,declare,re-declare,ony,intrisics,implemtation,faciliate,compileable,NAM,SER,disjointness",
+            "--skip",
+            "*.py,*.cpp,*.hpp,*.c,*.h,*.pto,*.toml",
+          ]
+
+  # typos 检查
+  - repo: https://gitcode.com/gh_mirrors/ty/typos
+    rev: v1.32.0
+    hooks:
+      - id: typos
+        args: ["--force-exclude", "--config", "typos.toml"]
+
+  # OAT 合规性检查 (Open Source Audit Tool)
+  - repo: local
+    hooks:
+      - id: oat-check
+        name: OAT Compliance Check
+        entry: bash scripts/oat_check.sh
+        language: system
+        pass_filenames: true
+        types_or: [c, c++, python]
+        stages: [commit]
+        verbose: true

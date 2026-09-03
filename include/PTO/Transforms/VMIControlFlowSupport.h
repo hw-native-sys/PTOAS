@@ -12,16 +12,13 @@
 #ifndef PTO_TRANSFORMS_VMICONTROLFLOWSUPPORT_H
 #define PTO_TRANSFORMS_VMICONTROLFLOWSUPPORT_H
 
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 
 #include "llvm/ADT/STLFunctionalExtras.h"
 
 namespace mlir {
-namespace scf {
-class ForOp;
-class WhileOp;
-} // namespace scf
 
 namespace pto {
 

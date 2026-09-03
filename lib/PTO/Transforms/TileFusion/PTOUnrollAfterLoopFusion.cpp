@@ -82,6 +82,41 @@ static std::optional<int64_t> getConstantTripCount(scf::ForOp forOp) {
   return (*ub - *lb + *step - 1) / *step; // ceilDiv
 }
 
+struct UnrollFactor {
+  int64_t value;
+  llvm::StringRef source;
+};
+
+static FailureOr<UnrollFactor> selectUnrollFactor(int64_t rowFactor,
+                                                  int64_t colFactor) {
+  if (colFactor > 1) {
+    return UnrollFactor{colFactor, "col"};
+  }
+  if (rowFactor > 1) {
+    return UnrollFactor{rowFactor, "row"};
+  }
+  return failure();
+}
+
+static FailureOr<int64_t> getDivisibleTripCount(scf::ForOp forOp,
+                                                UnrollFactor factor) {
+  std::optional<int64_t> trip = getConstantTripCount(forOp);
+  if (!trip) {
+    LLVM_DEBUG(llvm::dbgs() << "PTOUnrollAfterLoopFusion: skip non-constant "
+               << "trip scf.for at " << forOp.getLoc() << " factor(from "
+               << factor.source << ")=" << factor.value << "\n");
+    return failure();
+  }
+  if (*trip % factor.value != 0) {
+    LLVM_DEBUG(llvm::dbgs() << "PTOUnrollAfterLoopFusion: skip indivisible "
+               << "trip scf.for at " << forOp.getLoc() << " trip=" << *trip
+               << " factor=" << factor.value << "(from " << factor.source
+               << ")\n");
+    return failure();
+  }
+  return *trip;
+}
+
 /// Attempt to partial-unroll a single leaf `scf.for` inside a fusion_region.
 /// Returns success on actual unroll, failure on every skip (non-fusion scope,
 /// non-leaf, no factor > 1, non-constant / indivisible trip)
@@ -113,47 +148,29 @@ static LogicalResult tryUnrollLeafForOp(scf::ForOp forOp) {
   // either attribute depending on which layer is the effective innermost
   // (e.g. col trip == 1 -> col gets folded away -> row becomes leaf -> the
   // > 1 value lives on row_f). Both > 1 is a legal input; col wins.
-  int64_t factor;
-  llvm::StringRef src;
-  if (colF > 1) {
-    factor = colF;
-    src = "col";
-  } else if (rowF > 1) {
-    factor = rowF;
-    src = "row";
-  } else {
+  FailureOr<UnrollFactor> factor = selectUnrollFactor(rowF, colF);
+  if (failed(factor)) {
     LLVM_DEBUG(llvm::dbgs() << "PTOUnrollAfterLoopFusion: skip no factor>1 "
                << "scf.for at " << forOp.getLoc()
                << " row_f=" << rowF << " col_f=" << colF << "\n");
     return failure();
   }
 
-  // Divisibility gate: constant trip count must be divisible by the factor
-  // (no epilogue tail loop). Non-constant / non-divisible -> leave untouched.
-  auto trip = getConstantTripCount(forOp);
-  if (!trip) {
-    LLVM_DEBUG(llvm::dbgs() << "PTOUnrollAfterLoopFusion: skip non-constant "
-               << "trip scf.for at " << forOp.getLoc()
-               << " factor(from " << src << ")=" << factor << "\n");
-    return failure();
-  }
-  if (*trip % factor != 0) {
-    LLVM_DEBUG(llvm::dbgs() << "PTOUnrollAfterLoopFusion: skip indivisible "
-               << "trip scf.for at " << forOp.getLoc()
-               << " trip=" << *trip << " factor=" << factor << "(from "
-               << src << ")\n");
+  FailureOr<int64_t> trip = getDivisibleTripCount(forOp, *factor);
+  if (failed(trip)) {
     return failure();
   }
 
   LLVM_DEBUG(llvm::dbgs() << "PTOUnrollAfterLoopFusion: unroll scf.for at "
-             << forOp.getLoc() << " factor=" << factor << "(from " << src
-             << ") trip=" << *trip
+             << forOp.getLoc() << " factor=" << factor->value << "(from "
+             << factor->source << ") trip=" << *trip
              << " row_f=" << rowF << " col_f=" << colF << "\n");
 
   // loopUnrollByFactor rewrites the loop in place (step scaled, body copied)
   // via its own internal IRRewriter, bypassing any outer rewriter/listener --
   // which is exactly why we are a walk and not an OpRewritePattern.
-  auto unrolled = loopUnrollByFactor(forOp, static_cast<uint64_t>(factor));
+  auto unrolled =
+      loopUnrollByFactor(forOp, static_cast<uint64_t>(factor->value));
   if (failed(unrolled)) {
     LLVM_DEBUG(llvm::dbgs() << "  loopUnrollByFactor failed "
                << "(iter_args live-out?) at " << forOp.getLoc() << "\n");
@@ -162,7 +179,7 @@ static LogicalResult tryUnrollLeafForOp(scf::ForOp forOp) {
   (void)unrolled; // mainLoopOp/epilogueLoopOp unused: divisibility => no tail.
 
   llvm::StringRef consumedAttr =
-      src == "col" ? kColUnrollFactorAttr : kRowUnrollFactorAttr;
+      factor->source == "col" ? kColUnrollFactorAttr : kRowUnrollFactorAttr;
   region->setAttr(consumedAttr,
                   Builder(region->getContext()).getI64IntegerAttr(/*value=*/1));
   return success();

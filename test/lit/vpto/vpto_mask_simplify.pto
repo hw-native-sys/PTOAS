@@ -83,6 +83,47 @@ module {
     return %low, %high, %lhs, %rhs
         : !pto.mask<b16>, !pto.mask<b16>, !pto.mask<b16>, !pto.mask<b16>
   }
+  func.func @vsel_all_true_b16_pset(%a: !pto.vreg<128xi16>,
+                                    %b: !pto.vreg<128xi16>)
+      -> !pto.vreg<128xi16> {
+    %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+    %r = pto.vsel %a, %b, %mask
+        : !pto.vreg<128xi16>, !pto.vreg<128xi16>, !pto.mask<b16>
+        -> !pto.vreg<128xi16>
+    return %r : !pto.vreg<128xi16>
+  }
+
+  func.func @vsel_all_true_b16_pge(%a: !pto.vreg<128xi16>,
+                                   %b: !pto.vreg<128xi16>)
+      -> !pto.vreg<128xi16> {
+    %mask = pto.pge_b16 "PAT_ALL" : !pto.mask<b16>
+    %r = pto.vsel %a, %b, %mask
+        : !pto.vreg<128xi16>, !pto.vreg<128xi16>, !pto.mask<b16>
+        -> !pto.vreg<128xi16>
+    return %r : !pto.vreg<128xi16>
+  }
+
+  func.func @vsel_all_true_b32_pset(%a: !pto.vreg<64xi32>,
+                                    %b: !pto.vreg<64xi32>)
+      -> !pto.vreg<64xi32> {
+    %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %r = pto.vsel %a, %b, %mask
+        : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32>
+        -> !pto.vreg<64xi32>
+    return %r : !pto.vreg<64xi32>
+  }
+
+  func.func @vsel_nonuniform_b16_preserved(%a: !pto.vreg<128xi16>,
+                                           %b: !pto.vreg<128xi16>)
+      -> !pto.vreg<128xi16> {
+    %mask = pto.pge_b16 "PAT_VL8" : !pto.mask<b16>
+    %r = pto.vsel %a, %b, %mask
+        : !pto.vreg<128xi16>, !pto.vreg<128xi16>, !pto.mask<b16>
+        -> !pto.vreg<128xi16>
+    return %r : !pto.vreg<128xi16>
+  }
+
+
 }
 
 // CHECK-LABEL: func.func @pintlv_b8_pset
@@ -122,3 +163,19 @@ module {
 // CHECK: %[[RHS:.*]] = pto.pge_b16 "PAT_ALL"
 // CHECK-NOT: pto.pintlv_b16
 // CHECK: return %[[LHS]], %[[RHS]], %[[LHS]], %[[RHS]]
+
+// CHECK-LABEL: func.func @vsel_all_true_b16_pset
+// CHECK-NOT: pto.vsel
+// CHECK: return %{{.*}} : !pto.vreg<128xi16>
+
+// CHECK-LABEL: func.func @vsel_all_true_b16_pge
+// CHECK-NOT: pto.vsel
+// CHECK: return %{{.*}} : !pto.vreg<128xi16>
+
+// CHECK-LABEL: func.func @vsel_all_true_b32_pset
+// CHECK-NOT: pto.vsel
+// CHECK: return %{{.*}} : !pto.vreg<64xi32>
+
+// CHECK-LABEL: func.func @vsel_nonuniform_b16_preserved
+// CHECK: pto.vsel
+// CHECK: return %{{.*}} : !pto.vreg<128xi16>

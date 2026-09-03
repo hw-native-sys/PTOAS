@@ -1,0 +1,65 @@
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# ============================================================================
+
+# typos 拼写检查配置：CANN 是项目专有名词，不应被误判为 CAN
+
+[default.extend-identifiers]
+CANN = "CANN"
+
+[default.extend-words]
+CANN = "CANN"
+nd = "nd"
+# 历史遗留拼写,后续单独 PR 治理
+excuted = "excuted"
+Excuted = "Excuted"
+informations = "informations"
+ofr = "ofr"
+Ofr = "Ofr"
+OLT = "OLT"
+ot = "ot"
+OT = "OT"
+paramter = "paramter"
+poniter = "poniter"
+Resuable = "Resuable"
+tbe = "tbe"
+vaule = "vaule"
+DEFFINED = "DEFFINED"
+UNDEFFINED = "UNDEFFINED"
+entrys = "entrys"
+ands = "ands"
+ba = "ba"
+CHEC = "CHEC"
+alog = "alog"
+CEHCK = "CEHCK"
+compatiable = "compatiable"
+# 快照替换带入的历史文件拼写/标识符,后续单独 PR 治理
+toi = "toi"
+subtile = "subtile"
+ADN = "ADN"
+NORAML = "NORAML"
+availble = "availble"
+compileable = "compileable"
+faciliate = "faciliate"
+implemtation = "implemtation"
+ony = "ony"
+intrisics = "intrisics"
+validd = "validd"
+htmp = "htmp"
+# GitHub main 镜像带入的规则编号/标识符片段(G.NAM.03、G.TYP.02、SafeSEH、
+# tmpGapEles、SecA_Ascend_GERecommandHighPerformanceInterface),非拼写错误
+NAM = "NAM"
+TYP = "TYP"
+SER = "SER"
+SEH = "SEH"
+Eles = "Eles"
+Recommand = "Recommand"
+
+[files]
+# .pto 是 PTO IR 二进制文本格式，含 nd 等字段名，不应做拼写检查
+extend-exclude = ["*.pto", "*.golden", ".pre-commit-config.yaml"]

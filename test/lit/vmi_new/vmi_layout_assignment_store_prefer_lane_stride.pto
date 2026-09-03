@@ -15,14 +15,16 @@ module {
   func.func @f16_store_prefers_lane_stride(
       %src0: !pto.ptr<f16, ub>, %src1: !pto.ptr<f16, ub>,
       %dst: !pto.ptr<f16, ub>, %off: index) {
-    %x = pto.vmi.vload %src0[%off] {dist_mode = "continuous"}
+    %c16 = arith.constant 16 : index
+    %aligned_off = arith.muli %off, %c16 : index
+    %x = pto.vmi.vload %src0[%aligned_off] {dist_mode = "continuous"}
         : !pto.ptr<f16, ub> -> !pto.vmi.vreg<64xf16>
-    %y = pto.vmi.vload %src1[%off] {dist_mode = "continuous"}
+    %y = pto.vmi.vload %src1[%aligned_off] {dist_mode = "continuous"}
         : !pto.ptr<f16, ub> -> !pto.vmi.vreg<64xf16>
     %sum = pto.vmi.vadd %x, %y
         : !pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16>
         -> !pto.vmi.vreg<64xf16>
-    pto.vmi.vstore %sum, %dst[%off] {dist_mode = "continuous"}
+    pto.vmi.vstore %sum, %dst[%aligned_off] {dist_mode = "continuous"}
         : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>
     return
   }
@@ -30,16 +32,18 @@ module {
   func.func @f16_masked_store_prefers_lane_stride(
       %src0: !pto.ptr<f16, ub>, %src1: !pto.ptr<f16, ub>,
       %dst: !pto.ptr<f16, ub>, %off: index) {
+    %c16 = arith.constant 16 : index
     %c32 = arith.constant 32 : index
+    %aligned_off = arith.muli %off, %c16 : index
     %mask = pto.vmi.create_mask %c32 : index -> !pto.vmi.mask<64xpred>
-    %x = pto.vmi.vload %src0[%off] {dist_mode = "continuous"}
+    %x = pto.vmi.vload %src0[%aligned_off] {dist_mode = "continuous"}
         : !pto.ptr<f16, ub> -> !pto.vmi.vreg<64xf16>
-    %y = pto.vmi.vload %src1[%off] {dist_mode = "continuous"}
+    %y = pto.vmi.vload %src1[%aligned_off] {dist_mode = "continuous"}
         : !pto.ptr<f16, ub> -> !pto.vmi.vreg<64xf16>
     %sum = pto.vmi.vadd %x, %y
         : !pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16>
         -> !pto.vmi.vreg<64xf16>
-    pto.vmi.vstore %sum, %dst[%off], %mask
+    pto.vmi.vstore %sum, %dst[%aligned_off], %mask
         : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>,
           !pto.vmi.mask<64xpred>
     return
@@ -48,14 +52,16 @@ module {
   func.func @f16_full_width_store_stays_contiguous(
       %src0: !pto.ptr<f16, ub>, %src1: !pto.ptr<f16, ub>,
       %dst: !pto.ptr<f16, ub>, %off: index) {
-    %x = pto.vmi.vload %src0[%off] {dist_mode = "continuous"}
+    %c16 = arith.constant 16 : index
+    %aligned_off = arith.muli %off, %c16 : index
+    %x = pto.vmi.vload %src0[%aligned_off] {dist_mode = "continuous"}
         : !pto.ptr<f16, ub> -> !pto.vmi.vreg<128xf16>
-    %y = pto.vmi.vload %src1[%off] {dist_mode = "continuous"}
+    %y = pto.vmi.vload %src1[%aligned_off] {dist_mode = "continuous"}
         : !pto.ptr<f16, ub> -> !pto.vmi.vreg<128xf16>
     %sum = pto.vmi.vadd %x, %y
         : !pto.vmi.vreg<128xf16>, !pto.vmi.vreg<128xf16>
         -> !pto.vmi.vreg<128xf16>
-    pto.vmi.vstore %sum, %dst[%off] {dist_mode = "continuous"}
+    pto.vmi.vstore %sum, %dst[%aligned_off] {dist_mode = "continuous"}
         : !pto.vmi.vreg<128xf16>, !pto.ptr<f16, ub>
     return
   }
@@ -63,14 +69,16 @@ module {
   func.func @ui8_half_width_store_prefers_lane_stride2(
       %src0: !pto.ptr<ui8, ub>, %src1: !pto.ptr<ui8, ub>,
       %dst: !pto.ptr<ui8, ub>, %off: index) {
-    %x = pto.vmi.vload %src0[%off] {dist_mode = "continuous"}
+    %c32 = arith.constant 32 : index
+    %aligned_off = arith.muli %off, %c32 : index
+    %x = pto.vmi.vload %src0[%aligned_off] {dist_mode = "continuous"}
         : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<128xui8>
-    %y = pto.vmi.vload %src1[%off] {dist_mode = "continuous"}
+    %y = pto.vmi.vload %src1[%aligned_off] {dist_mode = "continuous"}
         : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<128xui8>
     %sum = pto.vmi.vadd %x, %y
         : !pto.vmi.vreg<128xui8>, !pto.vmi.vreg<128xui8>
         -> !pto.vmi.vreg<128xui8>
-    pto.vmi.vstore %sum, %dst[%off] {dist_mode = "continuous"}
+    pto.vmi.vstore %sum, %dst[%aligned_off] {dist_mode = "continuous"}
         : !pto.vmi.vreg<128xui8>, !pto.ptr<ui8, ub>
     return
   }
@@ -78,31 +86,35 @@ module {
   func.func @ui8_quarter_width_store_prefers_lane_stride4(
       %src0: !pto.ptr<ui8, ub>, %src1: !pto.ptr<ui8, ub>,
       %dst: !pto.ptr<ui8, ub>, %off: index) {
-    %x = pto.vmi.vload %src0[%off] {dist_mode = "continuous"}
+    %c32 = arith.constant 32 : index
+    %aligned_off = arith.muli %off, %c32 : index
+    %x = pto.vmi.vload %src0[%aligned_off] {dist_mode = "continuous"}
         : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<64xui8>
-    %y = pto.vmi.vload %src1[%off] {dist_mode = "continuous"}
+    %y = pto.vmi.vload %src1[%aligned_off] {dist_mode = "continuous"}
         : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<64xui8>
     %sum = pto.vmi.vadd %x, %y
         : !pto.vmi.vreg<64xui8>, !pto.vmi.vreg<64xui8>
         -> !pto.vmi.vreg<64xui8>
-    pto.vmi.vstore %sum, %dst[%off] {dist_mode = "continuous"}
+    pto.vmi.vstore %sum, %dst[%aligned_off] {dist_mode = "continuous"}
         : !pto.vmi.vreg<64xui8>, !pto.ptr<ui8, ub>
     return
   }
 
   func.func @f16_store_does_not_override_channel_merge(
-      %src: !pto.ptr<f16, ub>, %dst: !pto.ptr<f16, ub>, %off: index) {
+      %src: memref<256xf16, #pto.address_space<vec>>,
+      %dst: !pto.ptr<f16, ub>, %off: index) {
+    %c0 = arith.constant 0 : index
     %c64 = arith.constant 64 : index
     %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<128xpred>
-    %x = pto.vmi.vload %src[%off] {dist_mode = "continuous"}
-        : !pto.ptr<f16, ub> -> !pto.vmi.vreg<128xf16>
+    %x = pto.vmi.vload %src[%c0] {dist_mode = "continuous"}
+        : memref<256xf16, #pto.address_space<vec>> -> !pto.vmi.vreg<128xf16>
     %lo, %hi = "pto.vmi.channel_split"(%x)
         : (!pto.vmi.vreg<128xf16>)
         -> (!pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16>)
     %merged = "pto.vmi.channel_merge"(%lo, %hi)
         : (!pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16>)
         -> !pto.vmi.vreg<128xf16>
-    pto.vmi.vstore %merged, %dst[%off], %mask
+    pto.vmi.vstore %merged, %dst[%c0], %mask
         : !pto.vmi.vreg<128xf16>, !pto.ptr<f16, ub>,
           !pto.vmi.mask<128xpred>
     return
@@ -194,4 +206,4 @@ module {
 // LOWER: %[[LOAD:.*]] = pto.vlds
 // LOWER: %[[LOW:.*]], %[[HIGH:.*]] = pto.vdintlv %[[LOAD]], %[[LOAD]]
 // LOWER: pto.vintlv
-// LOWER: pto.vsts {{.*}} : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+// LOWER: pto.vsts

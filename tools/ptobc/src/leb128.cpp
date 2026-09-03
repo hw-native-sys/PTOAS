@@ -38,14 +38,24 @@ void writeULEB128(uint64_t value, std::vector<uint8_t>& out) {
 }
 
 void writeSLEB128(int64_t value, std::vector<uint8_t>& out) {
-  bool more = true;
-  while (more) {
-    uint8_t byte = static_cast<uint8_t>(value & kLeb128PayloadMask);
-    int64_t sign = byte & kLeb128SignBit;
-    value >>= kLeb128PayloadBits;
-    if ((value == 0 && sign == 0) || (value == -1 && sign != 0)) {
-      more = false;
-    } else {
+  // SLEB128 needs arithmetic (sign-propagating) shifts, so operate on the
+  // unsigned two's-complement pattern and restore the sign bits explicitly.
+  const bool negative = value < 0;
+  const uint64_t signExtension = ~uint64_t(0)
+                                 << (kInt64BitWidth - kLeb128PayloadBits);
+  uint64_t bits = static_cast<uint64_t>(value);
+  bool done = false;
+  while (!done) {
+    uint8_t byte = static_cast<uint8_t>(bits & kLeb128PayloadMask);
+    const bool signBitSet = (byte & kLeb128SignBit) != 0;
+    bits >>= kLeb128PayloadBits;
+    if (negative) {
+      bits |= signExtension;
+    }
+    const bool upperBitsZero = bits == 0;
+    const bool upperBitsOnes = bits == ~uint64_t(0);
+    done = (upperBitsZero && !signBitSet) || (upperBitsOnes && signBitSet);
+    if (!done) {
       byte |= kLeb128ContinuationBit;
     }
     out.push_back(byte);
@@ -70,13 +80,13 @@ size_t readULEB128(const uint8_t* data, size_t size, uint64_t& value) {
 }
 
 size_t readSLEB128(const uint8_t* data, size_t size, int64_t& value) {
-  value = 0;
+  uint64_t bits = 0;
   unsigned shift = 0;
   uint8_t byte = 0;
   size_t i = 0;
   for (; i < size; ++i) {
     byte = data[i];
-    value |= (int64_t(byte & kLeb128PayloadMask) << shift);
+    bits |= (uint64_t(byte & kLeb128PayloadMask) << shift);
     shift += kLeb128PayloadBits;
     if ((byte & kLeb128ContinuationBit) == 0) {
       break;
@@ -90,9 +100,11 @@ size_t readSLEB128(const uint8_t* data, size_t size, int64_t& value) {
   }
 
   // sign extend
-  if ((shift < kInt64BitWidth) && (byte & kLeb128SignBit)) {
-    value |= static_cast<int64_t>(~uint64_t(0) << shift);
+  const bool signBitSet = (byte & kLeb128SignBit) != 0;
+  if (shift < kInt64BitWidth && signBitSet) {
+    bits |= ~uint64_t(0) << shift;
   }
+  value = static_cast<int64_t>(bits);
   return i + 1;
 }
 

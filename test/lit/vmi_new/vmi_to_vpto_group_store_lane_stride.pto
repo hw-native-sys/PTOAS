@@ -13,9 +13,13 @@
 module {
   func.func @group_store_ui8_slots8_lane_stride2(
       %value: !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>,
-      %dst: !pto.ptr<ui8, ub>, %off: index) {
+      %off: index) {
+    %c102400_i64 = arith.constant 102400 : i64
+    %dst = pto.castptr %c102400_i64 : i64 -> !pto.ptr<ui8, ub>
     %c1 = arith.constant 1 : index
-    pto.vmi.vstore %value, %dst[%off], %c1 {group = 8}
+    %c32 = arith.constant 32 : index
+    %aligned_off = arith.muli %off, %c32 : index
+    pto.vmi.vstore %value, %dst[%aligned_off], %c1 {group = 8}
         : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>,
           !pto.ptr<ui8, ub>
     return
@@ -23,9 +27,10 @@ module {
 }
 
 // CHECK-LABEL: func.func @group_store_ui8_slots8_lane_stride2(
-// CHECK: pto.vpack {{.*}}, "LOWER" : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
-// CHECK: pto.vbitcast {{.*}} : !pto.vreg<256xui8> -> !pto.vreg<64xui32>
-// CHECK-COUNT-2: pto.vsts {{.*}} {dist = "1PT_B32"}
+// CHECK: %[[PACKED:.*]] = pto.vpack {{.*}}, "LOWER" : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
+// CHECK: pto.vsts %[[PACKED]],
+// CHECK-NOT: pto.vstus
+// CHECK-NOT: dist = "1PT_B32"
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast

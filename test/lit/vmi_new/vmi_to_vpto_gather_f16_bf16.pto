@@ -1,0 +1,57 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
+
+module {
+  func.func @vmi_to_vpto_gather_f16(
+      %src: !pto.ptr<f16, ub>,
+      %indices: !pto.vmi.vreg<32xui16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<32xb16, #pto.vmi.layout<contiguous>>)
+      -> !pto.vreg<128xf16> {
+    %out = pto.vmi.vgather %src, %indices, %mask
+        : !pto.ptr<f16, ub>,
+          !pto.vmi.vreg<32xui16, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.mask<32xb16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<32xf16, #pto.vmi.layout<contiguous>>
+    %part = "pto.vmi.unpack"(%out)
+        : (!pto.vmi.vreg<32xf16, #pto.vmi.layout<contiguous>>)
+        -> !pto.vreg<128xf16>
+    return %part : !pto.vreg<128xf16>
+  }
+
+  func.func @vmi_to_vpto_gather_bf16(
+      %src: !pto.ptr<bf16, ub>,
+      %indices: !pto.vmi.vreg<32xui16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<32xb16, #pto.vmi.layout<contiguous>>)
+      -> !pto.vreg<128xbf16> {
+    %out = pto.vmi.vgather %src, %indices, %mask
+        : !pto.ptr<bf16, ub>,
+          !pto.vmi.vreg<32xui16, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.mask<32xb16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<32xbf16, #pto.vmi.layout<contiguous>>
+    %part = "pto.vmi.unpack"(%out)
+        : (!pto.vmi.vreg<32xbf16, #pto.vmi.layout<contiguous>>)
+        -> !pto.vreg<128xbf16>
+    return %part : !pto.vreg<128xbf16>
+  }
+}
+
+// CHECK-LABEL: func.func @vmi_to_vpto_gather_f16(
+// CHECK: %[[GATHER_F16:.*]] = pto.vgather2 %arg0, %arg1, %arg2 : !pto.ptr<f16, ub>, !pto.vreg<128xui16>, !pto.mask<b16> -> !pto.vreg<128xf16>
+// CHECK: %[[OUT_F16:.*]] = pto.vsel %[[GATHER_F16]], %{{.*}}, %arg2 : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<128xf16>
+// CHECK: return %[[OUT_F16]]
+
+// CHECK-LABEL: func.func @vmi_to_vpto_gather_bf16(
+// CHECK: %[[GATHER_BF16:.*]] = pto.vgather2 %arg0, %arg1, %arg2 : !pto.ptr<bf16, ub>, !pto.vreg<128xui16>, !pto.mask<b16> -> !pto.vreg<128xbf16>
+// CHECK: %[[OUT_BF16:.*]] = pto.vsel %[[GATHER_BF16]], %{{.*}}, %arg2 : !pto.vreg<128xbf16>, !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<128xbf16>
+// CHECK: return %[[OUT_BF16]]
+
+// CHECK-NOT: pto.vmi.
+// CHECK-NOT: !pto.vmi.
+// CHECK-NOT: unrealized_conversion_cast

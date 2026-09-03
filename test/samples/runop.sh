@@ -10,6 +10,18 @@
 set -uo pipefail   # 注意：去掉 -e，避免失败直接退出整个脚本
 
 BASE_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
+REPO_ROOT="$(cd -- "${BASE_DIR}/../.." && pwd)"
+
+# build.sh persists this marker because its exported environment does not
+# survive into the later PreSmoke sample step.
+PTOAS_PRESMOKE_SKIP_RUNOP_MARKER="${PTOAS_PRESMOKE_SKIP_RUNOP_MARKER:-${REPO_ROOT}/build/.skip-presmoke-runop}"
+if [[ -f "${PTOAS_PRESMOKE_SKIP_RUNOP_MARKER}" ]]; then
+  echo "PreSmoke runop smoke skipped: ${PTOAS_PRESMOKE_SKIP_RUNOP_MARKER}"
+  echo "========== SUMMARY =========="
+  echo "OK=0  FAIL=0  SKIP=0"
+  echo "============================="
+  exit 0
+fi
 
 # Allow overriding tool/python explicitly:
 #   PTOAS_BIN=/path/to/ptoas PYTHON_BIN=/path/to/python ./runop.sh all
@@ -21,6 +33,7 @@ PTO_BUILD_DIR="${PTO_BUILD_DIR:-}"
 PTOAS_ENABLE_INSERT_SYNC="${PTOAS_ENABLE_INSERT_SYNC:-1}"
 PTOAS_FLAGS="${PTOAS_FLAGS:-}"
 PTOAS_SKIP_CASES="${PTOAS_SKIP_CASES:-}"
+PTOAS_SAMPLE_JOBS="${PTOAS_SAMPLE_JOBS:-1}"
 PTOAS_SKIP_CASES_NORM="$(printf '%s\n' "${PTOAS_SKIP_CASES}" | tr ',[:space:]' '\n' | awk 'NF')"
 MODEL_PTO_DIRS=""
 for model_path in "${BASE_DIR}"/Qwen* "${BASE_DIR}"/Deepseek*; do
@@ -34,7 +47,7 @@ for model_path in "${BASE_DIR}"/Qwen* "${BASE_DIR}"/Deepseek*; do
       ;;
   esac
 done
-PTO_PTO_DIRS="${PTO_PTO_DIRS:-Sync${MODEL_PTO_DIRS} CommSync Prelu Rem Rems Gemvmx MatmulMxLowPrecision TquantMx TquantMxDn Movfp}"
+PTO_PTO_DIRS="${PTO_PTO_DIRS:-Sync${MODEL_PTO_DIRS} CommSync Prelu Rem Rems Gemvmx MatmulMxLowPrecision TquantMx TquantMxDn Movfp Interleave DeInterleave PairReduceSum}"
 ENABLE_BC=0
 
 usage() {
@@ -53,6 +66,7 @@ Env:
   PTOAS_FLAGS  # extra flags passed to ptoas (e.g. --enable-insert-sync)
   PTOAS_ENABLE_INSERT_SYNC  # 1 to append --enable-insert-sync to PTOAS_FLAGS (default: 1)
   PTOAS_SKIP_CASES  # comma/space-separated testcase basenames to skip while generating outputs
+  PTOAS_SAMPLE_JOBS  # number of sample directories to process concurrently (default: 1)
   PTO_PTO_DIRS  # space-separated dirs to run .pto directly (default: Sync, every Qwen*/Deepseek* A3/A5 model dir, and the legacy direct-PTO dirs)
 
 Flags:
@@ -80,7 +94,7 @@ sample_dir_arch() {
   case "$1" in
     TPipe|TAxpy|TColArgMax|TColArgMin|TConcatIdx|\
       TRowArgMax|TRowArgMin|Qwen*A3|Deepseek*A3) printf 'a3\n' ;;
-    Qwen*A5|Deepseek*A5|TquantMx|TquantMxDn) printf 'a5\n' ;;
+    Qwen*A5|Deepseek*A5|TquantMx|TquantMxDn|Interleave|DeInterleave|PairReduceSum) printf 'a5\n' ;;
   esac
 }
 
@@ -1600,8 +1614,39 @@ write_board_case_manifest() {
   echo "BOARD_CASE_MANIFEST=${manifest} ($(wc -l < "${manifest}") cases)"
 }
 
+wait_for_sample_batch() {
+  local summary_file="$1"
+  shift
+
+  local pid dir_name result_file worker_rc
+  while [[ $# -ge 3 ]]; do
+    pid="$1"
+    dir_name="$2"
+    result_file="$3"
+    shift 3
+    if wait "${pid}"; then
+      worker_rc=0
+    else
+      worker_rc=$?
+    fi
+    cat "${result_file}" >>"${summary_file}"
+    if [[ ${worker_rc} -ne 0 ]] && ! grep -q $'\tFAIL\t' "${result_file}"; then
+      printf '%s\tFAIL\tprocess_one_dir exited with status %d\n' \
+        "${dir_name}" "${worker_rc}" >>"${summary_file}"
+    fi
+  done
+}
+
 run_all() {
-  local tmp out_dir summary_rc soc_arch="" dir_name dir_arch
+  local tmp out_dir result_dir result_file summary_rc soc_arch="" dir_name dir_arch
+  local dir_index=0
+  local -a batch=()
+
+  if [[ ! "${PTOAS_SAMPLE_JOBS}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "PTOAS_SAMPLE_JOBS must be a positive integer, got: ${PTOAS_SAMPLE_JOBS}" >&2
+    return 2
+  fi
+
   out_dir="${PTOAS_OUT_DIR}"
   if [[ -z "${out_dir}" ]]; then
     out_dir="$(mktemp -d -t ptoas.samples.XXXXXX)"
@@ -1612,6 +1657,7 @@ run_all() {
   echo "PTOAS_OUT_DIR=${out_dir}"
 
   tmp="$(mktemp -t ptoas.runop.XXXXXX)"
+  result_dir="$(mktemp -d -t ptoas.runop.results.XXXXXX)"
   if [[ -n "${SOC_VERSION:-}" ]]; then
     local soc_lc
     soc_lc="$(printf '%s' "${SOC_VERSION}" | tr '[:upper:]' '[:lower:]')"
@@ -1628,8 +1674,19 @@ run_all() {
     if [[ -n "${soc_arch}" && -n "${dir_arch}" && "${dir_arch}" != "${soc_arch}" ]]; then
       continue
     fi
-    process_one_dir "${dir_name}" "$out_dir" >>"$tmp"
+    result_file="${result_dir}/${dir_index}.log"
+    process_one_dir "${dir_name}" "$out_dir" >"${result_file}" &
+    batch+=("$!" "${dir_name}" "${result_file}")
+    dir_index=$((dir_index + 1))
+    if [[ ${#batch[@]} -ge $((PTOAS_SAMPLE_JOBS * 3)) ]]; then
+      wait_for_sample_batch "${tmp}" "${batch[@]}"
+      batch=()
+    fi
   done
+  if ((${#batch[@]})); then
+    wait_for_sample_batch "${tmp}" "${batch[@]}"
+  fi
+  rm -rf -- "${result_dir}"
 
   echo "========== SUMMARY =========="
   sort "$tmp" | awk -F'\t' '

@@ -250,7 +250,7 @@ def blend_output_rows(
             scalar.store(o_next, o_next_tile[row, col])
 ```
 
-When writing to a raw pointer (e.g., a small metadata buffer obtained via `as_ptr()`), use the pointer-plus-offset form. The following self-contained kernel is the smallest compileable pointer-offset example:
+When writing to a raw pointer (e.g., a small metadata buffer obtained via `as_ptr()`), use the pointer-plus-offset form. The following self-contained kernel is the smallest compilable pointer-offset example:
 
 <!-- ptodsl-doc-test: {"mode":"compile","symbol":"scalar_pointer_offset_probe","compile":{}} -->
 ```python

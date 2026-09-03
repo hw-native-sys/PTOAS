@@ -14,10 +14,12 @@ module {
       %value: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>,
       %dst: !pto.ptr<f32, ub>,
       %offset: index) {
+    %c8 = arith.constant 8 : index
+    %aligned_offset = arith.muli %offset, %c8 : index
     %value_c = pto.vmi.ensure_layout %value
         : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
         -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
-    pto.vmi.vstore %value_c, %dst[%offset] {dist_mode = "continuous"}
+    pto.vmi.vstore %value_c, %dst[%aligned_offset] {dist_mode = "continuous"}
         : !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>,
           !pto.ptr<f32, ub>
     return
@@ -28,13 +30,15 @@ module {
       %mask: !pto.vmi.mask<256xb32, #pto.vmi.layout<deinterleaved = 4>>,
       %dst: !pto.ptr<f32, ub>,
       %offset: index) {
+    %c8 = arith.constant 8 : index
+    %aligned_offset = arith.muli %offset, %c8 : index
     %value_c = pto.vmi.ensure_layout %value
         : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
         -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
     %mask_c = pto.vmi.ensure_mask_layout %mask
         : !pto.vmi.mask<256xb32, #pto.vmi.layout<deinterleaved = 4>>
         -> !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>>
-    pto.vmi.vstore %value_c, %dst[%offset], %mask_c
+    pto.vmi.vstore %value_c, %dst[%aligned_offset], %mask_c
         : !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>,
           !pto.ptr<f32, ub>,
           !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>>

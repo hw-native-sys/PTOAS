@@ -11,9 +11,7 @@
 
 #include "PTO/Transforms/VPTOLLVMEmitter.h"
 
-namespace mlir {
-class ConversionPatternRewriter;
-}
+#include "mlir/Transforms/DialectConversion.h"
 
 namespace mlir::pto {
 

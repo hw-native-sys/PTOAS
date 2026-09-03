@@ -192,6 +192,36 @@ static bool canMoveAfter(Operation *movingOp, Operation *anchorOp) {
 }
 
 static LogicalResult
+validateScheduledGroups(MutableArrayRef<ScheduledGroup> groups) {
+  for (ScheduledGroup &group : groups) {
+    llvm::sort(group.members, [](const GroupMember &lhs,
+                                 const GroupMember &rhs) {
+      if (lhs.order != rhs.order) {
+        return lhs.order < rhs.order;
+      }
+      return lhs.originalIndex < rhs.originalIndex;
+    });
+
+    std::optional<int64_t> previousOrder;
+    for (const GroupMember &member : group.members) {
+      SchedulingBarrierKind barrier = classifySchedulingBarrier(member.op);
+      if (barrier != SchedulingBarrierKind::Movable) {
+        member.op->emitError("fusion scheduling metadata must only annotate "
+                             "movable compute ops");
+        return failure();
+      }
+      if (previousOrder && *previousOrder == member.order) {
+        member.op->emitError("duplicate pto.fusion.order within one fusion "
+                             "group");
+        return failure();
+      }
+      previousOrder = member.order;
+    }
+  }
+  return success();
+}
+
+static LogicalResult
 collectScheduledGroups(Block &block, SmallVectorImpl<ScheduledGroup> &groups) {
   DenseMap<int64_t, unsigned> groupIndexById;
 
@@ -236,32 +266,7 @@ collectScheduledGroups(Block &block, SmallVectorImpl<ScheduledGroup> &groups) {
     return lhs.groupId < rhs.groupId;
   });
 
-  for (ScheduledGroup &group : groups) {
-    llvm::sort(group.members, [](const GroupMember &lhs, const GroupMember &rhs) {
-      if (lhs.order != rhs.order) {
-        return lhs.order < rhs.order;
-      }
-      return lhs.originalIndex < rhs.originalIndex;
-    });
-
-    std::optional<int64_t> previousOrder;
-    for (const GroupMember &member : group.members) {
-      if (classifySchedulingBarrier(member.op) !=
-          SchedulingBarrierKind::Movable) {
-        member.op->emitError("fusion scheduling metadata must only annotate "
-                             "movable compute ops");
-        return failure();
-      }
-      if (previousOrder && *previousOrder == member.order) {
-        member.op->emitError("duplicate pto.fusion.order within one fusion "
-                             "group");
-        return failure();
-      }
-      previousOrder = member.order;
-    }
-  }
-
-  return success();
+  return validateScheduledGroups(groups);
 }
 
 static bool canPrefixMoveLaterAcross(

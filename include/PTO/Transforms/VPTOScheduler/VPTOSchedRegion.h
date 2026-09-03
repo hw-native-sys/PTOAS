@@ -11,7 +11,9 @@
 // A scheduling region is a contiguous, block-local sequence which can be
 // analyzed independently. Boundary operations are never members of a region.
 // Structural operations are retained alongside schedulable instructions so
-// their SSA dependencies remain visible to later DAG construction.
+// their SSA dependencies remain visible to later DAG construction. Values
+// live across a region without being referenced inside it are recorded so
+// pressure tracking includes the surrounding block and loop context.
 //
 //===----------------------------------------------------------------------===//
 
@@ -27,10 +29,14 @@
 #include <array>
 #include <string>
 
+namespace mlir {
+class Liveness;
+}
+
 namespace mlir::pto {
 
 struct VPTOSchedulingCoverage {
-  std::array<unsigned, 4> classCounts{};
+  std::array<unsigned, kNumVPTOSchedulingClasses> classCounts{};
   llvm::StringMap<unsigned> boundaryReasons;
   llvm::StringMap<unsigned> unsupportedOps;
   llvm::StringMap<unsigned> unclassifiedOps;
@@ -48,17 +54,20 @@ struct VPTOSchedRegion {
   Operation *followingBoundary = nullptr;
   std::string precedingBoundaryReason;
   std::string followingBoundaryReason;
+  SmallVector<Value> liveThroughs;
 };
 
 class VPTOSchedRegionBuilder {
 public:
-  explicit VPTOSchedRegionBuilder(VPTOSchedulingCoverage *coverage = nullptr)
-      : coverage(coverage) {}
+  explicit VPTOSchedRegionBuilder(VPTOSchedulingCoverage *coverage = nullptr,
+                                  const Liveness *liveness = nullptr)
+      : coverage(coverage), liveness(liveness) {}
 
   SmallVector<VPTOSchedRegion> build(Block &block) const;
 
 private:
   VPTOSchedulingCoverage *coverage;
+  const Liveness *liveness;
 };
 
 std::string getVPTOSchedulingBoundaryReason(Operation *op);

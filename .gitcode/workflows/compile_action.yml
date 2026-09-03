@@ -1,0 +1,116 @@
+name: compile_action
+
+on:
+  workflow_call:
+    inputs:
+      task_name:
+        required: true
+        type: string
+      image_version:
+        required: true
+        type: string
+      ge_st_rt2:
+        required: false
+        type: string
+        default: ''
+      arch:
+        required: false
+        type: string
+        default: 'x64'
+      package_name:
+        required: false
+        type: string
+        default: ''
+      spec:
+        required: false
+        type: string
+        default: 'xlarge'
+
+jobs:
+  JOB_compile:
+    name: Compile
+    needs: []
+    steps:
+      -
+        name: Checkout
+        identifier: process_checkout
+        uses: checkout
+        with:
+          ref: ${{ atomgit.event.pull_request.merge_commit_sha }}
+          token: ${{ secrets.GIT_TOKEN }}
+      -
+        name: download
+        uses: obs-download
+        with:
+          endpoint: "https://obs.cn-north-4.myhuaweicloud.com"
+          bucket: "ascend-ci"
+          access-key: ${{ secrets.AK }}
+          secret-key: ${{ secrets.SK }}
+          key: |
+            ${{ env.obs_path }}/pr_filelist.txt
+            ${{ env.obs_path }}/pr_filelist_mod.txt
+            ${{ env.obs_path }}/update_file_detail.txt
+            ${{ env.obs_path }}/compile.sh
+          path: ${{ steps.process_checkout.outputs.path }}
+      -
+        name: compile_acc
+        identifier: compile
+        uses: build-accelerate
+        with:
+          command: |
+            export WORKSPACE=${{ steps.process_checkout.outputs.path }}
+            cd ${{ steps.process_checkout.outputs.path }}
+            export task_name=${{ inputs.task_name }}
+            export GE_ST_RT2=${{ inputs.ge_st_rt2 }}
+            export GIT_TARGET_BRANCH=${{ env.TARGET_BRANCH }}
+            export OS_TYPE=${{ inputs.arch == 'arm64' && 'aarch64' || 'x86_64' }}
+            BuildAccelerate bash compile.sh
+          AC_SERVER_IP: ${{ vars.AC_SERVER_IP }}
+      -
+        name: rename_package
+        if: ${{ inputs.package_name != '' }}
+        run: |
+          cd ${{ steps.process_checkout.outputs.path }}/build_out
+          for f in *.run; do
+            [ -f "$f" ] || continue
+            [ "$f" = "${{ inputs.package_name }}" ] && continue
+            mv "$f" "${{ inputs.package_name }}"
+            echo "Renamed: $f -> ${{ inputs.package_name }}"
+            break
+          done
+      -
+        name: api-check
+        identifier: api-check
+        if: ${{ inputs.task_name == 'Compile_Ascend_X86' }}
+        uses: cann/.gitcode/actions/api-check@master
+        with:
+          org_name: ${{ env.org_name }}
+          mode: ${{ steps.compile.outputs.api-check }}
+          repo_name: ${{ env.repo_name }}
+          merge_id: ${{ env.MERGE_ID }}
+          workspace: ${{ steps.process_checkout.outputs.path }}
+          source_branch: ${{ env.SOURCE_BRANCH }}
+          target_branch: ${{ env.TARGET_BRANCH }}
+      -
+        name: verify_package
+        uses: cann/.gitcode/actions/verify-package@master
+        with:
+          workspace: ${{ steps.process_checkout.outputs.path }}
+      -
+        name: upload
+        uses: obs-upload
+        with:
+          endpoint: "https://obs.cn-north-4.myhuaweicloud.com"
+          bucket: "ascend-ci"
+          access-key: ${{ secrets.AK }}
+          secret-key: ${{ secrets.SK }}
+          artifact-path: |
+            ${{ steps.process_checkout.outputs.path }}/build_out/${{ inputs.package_name != '' && inputs.package_name || '*.tar.gz' }}
+          object-prefix: ${{ env.obs_path }}/
+    if: "${{ default() }}"
+    runs-on:
+      - self-hosted
+      - arch=${{ inputs.arch }}
+      - spec=xlarge
+    container:
+      image: swr.cn-north-4.myhuaweicloud.com/ci_cann/${{ inputs.image_version }}

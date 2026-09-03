@@ -8,8 +8,8 @@
 
 //===- SlotAffineAnalysis.h - Multi-buffer slot affine compare --*- C++ -*-===//
 //
-// Small affine helper used by the multi-buffer sync path. Both InsertSync
-// and GraphSyncSolver consume it to decide, for two `pto.multi_tile_get`
+// Small affine helper used by the multi-buffer sync path. InsertSync consumes
+// it to decide, for two `pto.multi_tile_get`
 // slot-index SSA expressions, whether they are provably equal modulo N,
 // provably disjoint modulo N, or indeterminate. The result lets sync
 // shrink event-id count or skip same-iter forward syncs entirely when

@@ -9,6 +9,8 @@
 //===- VPTOCombineReductions.cpp - Combine physical reduction trees -------===//
 //===----------------------------------------------------------------------===//
 
+#include <algorithm>
+
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
 
@@ -16,7 +18,6 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/ADT/STLExtras.h"
-#include <algorithm>
 
 namespace mlir {
 namespace pto {
@@ -30,16 +31,24 @@ using namespace mlir::pto;
 
 namespace {
 
+constexpr unsigned kMinReductionLeaves = 2;
+
 bool areEquivalentMasks(Value lhs, Value rhs) {
-  if (lhs == rhs)
+  if (lhs == rhs) {
     return true;
-  if (lhs.getType() != rhs.getType())
+  }
+  bool hasDifferentType = lhs.getType() != rhs.getType();
+  if (hasDifferentType) {
     return false;
+  }
 
   Operation *lhsOp = lhs.getDefiningOp();
   Operation *rhsOp = rhs.getDefiningOp();
-  if (!lhsOp || !rhsOp || lhsOp->getName() != rhsOp->getName())
+  bool hasDifferentProducer =
+      !lhsOp || !rhsOp || lhsOp->getName() != rhsOp->getName();
+  if (hasDifferentProducer) {
     return false;
+  }
 
   bool isPatternMask =
       isa<PsetB8Op, PsetB16Op, PsetB32Op, PgeB8Op, PgeB16Op, PgeB32Op>(lhsOp);
@@ -65,55 +74,92 @@ struct CombineEquivalentReductionTreePattern : OpRewritePattern<CombineOpTy> {
                                 PatternRewriter &rewriter) const override {
     SmallVector<ReductionLeaf> reductions;
     SmallVector<Value, 1> baseValues;
-    if (failed(collect(op.getLhs(), op.getMask(), reductions, baseValues)) ||
-        failed(collect(op.getRhs(), op.getMask(), reductions, baseValues)) ||
-        reductions.size() < 2 || baseValues.size() > 1)
+    bool invalidReductionTree =
+        failed(collectReductionTree(op, reductions, baseValues)) ||
+        !haveEquivalentMasks(reductions);
+    if (invalidReductionTree) {
       return failure();
-
-    Value reductionMask = reductions.front().mask;
-    if (!llvm::all_of(llvm::drop_begin(reductions), [&](ReductionLeaf leaf) {
-          return areEquivalentMasks(reductionMask, leaf.mask);
-        }))
-      return failure();
-
+    }
     // Accumulator lowering builds the tree from the last physical chunk back
     // toward init. Restore source order to match the direct one-to-N recipe.
-    if (!baseValues.empty())
+    if (!baseValues.empty()) {
       std::reverse(reductions.begin(), reductions.end());
+    }
+    FailureOr<Value> combinedSource =
+        combineReductionSources(op, reductions, rewriter);
+    if (failed(combinedSource)) {
+      return failure();
+    }
+    Value reduced = rewriter
+                        .create<ReduceOpTy>(
+                            op.getLoc(), op.getResult().getType(),
+                            *combinedSource, reductions.front().mask)
+                        .getResult();
+    return replaceReduction(op, reduced, baseValues, rewriter);
+  }
 
+private:
+  LogicalResult
+  collectReductionTree(CombineOpTy op,
+                       SmallVectorImpl<ReductionLeaf> &reductions,
+                       SmallVectorImpl<Value> &baseValues) const {
+    bool invalidTree =
+        failed(collect(op.getLhs(), op.getMask(), reductions, baseValues)) ||
+        failed(collect(op.getRhs(), op.getMask(), reductions, baseValues)) ||
+        reductions.size() < kMinReductionLeaves || baseValues.size() > 1;
+    return failure(invalidTree);
+  }
+
+  static bool
+  haveEquivalentMasks(ArrayRef<ReductionLeaf> reductions) {
+    Value reductionMask = reductions.front().mask;
+    return llvm::all_of(llvm::drop_begin(reductions),
+                        [reductionMask](ReductionLeaf leaf) {
+                          return areEquivalentMasks(reductionMask, leaf.mask);
+                        });
+  }
+
+  static FailureOr<Value>
+  combineReductionSources(CombineOpTy op, ArrayRef<ReductionLeaf> reductions,
+                          PatternRewriter &rewriter) {
     Value combinedSource = reductions.front().source;
     auto sourceType = dyn_cast<VRegType>(combinedSource.getType());
-    if (!sourceType)
+    bool hasDifferentType =
+        !sourceType || llvm::any_of(llvm::drop_begin(reductions),
+                                   [sourceType](ReductionLeaf leaf) {
+                                     return leaf.source.getType() != sourceType;
+                                   });
+    if (hasDifferentType) {
       return failure();
+    }
     for (ReductionLeaf leaf : llvm::drop_begin(reductions)) {
-      if (leaf.source.getType() != sourceType)
-        return failure();
       combinedSource =
           rewriter
               .create<CombineOpTy>(op.getLoc(), sourceType, combinedSource,
-                                   leaf.source, reductionMask)
+                                   leaf.source, reductions.front().mask)
               .getResult();
     }
+    return combinedSource;
+  }
 
-    Value reduced =
-        rewriter
-            .create<ReduceOpTy>(op.getLoc(), op.getResult().getType(),
-                                combinedSource, reductionMask)
-            .getResult();
+  static LogicalResult replaceReduction(
+      CombineOpTy op, Value reduced, ArrayRef<Value> baseValues,
+      PatternRewriter &rewriter) {
     if (baseValues.empty()) {
       rewriter.replaceOp(op, reduced);
       return success();
     }
 
     Value base = baseValues.front();
-    if (base.getType() != op.getResult().getType())
+    bool hasDifferentType = base.getType() != op.getResult().getType();
+    if (hasDifferentType) {
       return failure();
+    }
     rewriter.replaceOpWithNewOp<CombineOpTy>(op, op.getResult().getType(),
                                              reduced, base, op.getMask());
     return success();
   }
 
-private:
   LogicalResult collect(Value value, Value combineMask,
                         SmallVectorImpl<ReductionLeaf> &reductions,
                         SmallVectorImpl<Value> &baseValues) const {
@@ -123,18 +169,22 @@ private:
     }
 
     if (auto combine = value.getDefiningOp<CombineOpTy>()) {
-      if (!areEquivalentMasks(combineMask, combine.getMask()))
+      if (!areEquivalentMasks(combineMask, combine.getMask())) {
         return failure();
+      }
       if (failed(
-              collect(combine.getLhs(), combineMask, reductions, baseValues)))
+              collect(combine.getLhs(), combineMask, reductions, baseValues))) {
         return failure();
+      }
       return collect(combine.getRhs(), combineMask, reductions, baseValues);
     }
 
     // A reduction from another family is not an init value. Reject mixed
     // trees rather than changing their operation semantics.
-    if (isReduction(value) || baseValues.size() == 1)
+    bool cannotUseAsBase = isReduction(value) || baseValues.size() == 1;
+    if (cannotUseAsBase) {
       return failure();
+    }
     baseValues.push_back(value);
     return success();
   }
@@ -151,9 +201,10 @@ struct VPTOCombineReductionsPass
                  CombineEquivalentReductionTreePattern<VminOp, VcminOp>,
                  CombineEquivalentReductionTreePattern<VminOp, VcgminOp>>(
         &getContext());
-    if (failed(
-            applyPatternsAndFoldGreedily(getOperation(), std::move(patterns))))
+    if (failed(applyPatternsAndFoldGreedily(getOperation(),
+                                            std::move(patterns)))) {
       signalPassFailure();
+    }
   }
 };
 

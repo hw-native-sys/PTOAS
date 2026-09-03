@@ -59,7 +59,9 @@ static bool isLoadProducerLayout(VMIVRegType type) {
   }
   if (layout.isContiguous() && layout.getLaneStride() == mlir::pto::kValue2) {
     unsigned elementBits = pto::getPTOStorageElemBitWidth(type.getElementType());
-    return elementBits == mlir::pto::kValue8 || elementBits == 16 || elementBits == 32;
+    return elementBits == mlir::pto::kValue8 ||
+           elementBits == mlir::pto::kValue16 ||
+           elementBits == mlir::pto::kValue32;
   }
   if (layout.isContiguous() && layout.getLaneStride() == mlir::pto::kValue4) {
     unsigned elementBits = pto::getPTOStorageElemBitWidth(type.getElementType());
@@ -71,7 +73,9 @@ static bool isLoadProducerLayout(VMIVRegType type) {
     return false;
   }
   unsigned elementBits = pto::getPTOStorageElemBitWidth(type.getElementType());
-  return elementBits == mlir::pto::kValue8 || elementBits == 16 || elementBits == 32;
+  return elementBits == mlir::pto::kValue8 ||
+         elementBits == mlir::pto::kValue16 ||
+         elementBits == mlir::pto::kValue32;
 }
 
 static bool isFoldableLoadEnsure(VMIEnsureLayoutOp ensure) {

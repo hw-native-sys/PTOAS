@@ -17,3 +17,23 @@
 // CHECK-NEXT: pressure live-in-out-last-use: pass
 // CHECK-NEXT: pressure compare-select: grouped=3 interleaved=2
 // CHECK-NEXT: pressure bottom: pass
+// CHECK-NEXT: pressure bitcast-alias: pass
+// CHECK-NEXT: pressure bitcast-cache-invalidation: pass
+// CHECK-NEXT: strategy near-limit closing: pass
+// CHECK-NEXT: strategy low-pressure critical path: pass
+// CHECK-NEXT: strategy no-producer critical path: pass
+// CHECK-NEXT: strategy urgent critical path: pass
+// CHECK-NEXT: strategy closure-cone progress: pass
+// CHECK-NEXT: strategy deterministic tie-break: pass
+// CHECK-NEXT: model predicate-limit: 7
+// CHECK-NEXT: boundary independent-latency: pass
+// CHECK-NEXT: boundary fanout-budget-cycle-bucket: pass
+// CHECK-NEXT: scheduler verify-replay: pass
+// CHECK-NEXT: scheduler pressure-idle replay: pass
+// CHECK-NEXT: scheduler illegal pressure-idle rejection: pass
+// CHECK-NEXT: scheduler semantic rejection: pass
+// CHECK-NEXT: scheduler budget: pass
+// CHECK-NEXT: scheduler no-pending pressure progress: pass
+// CHECK-NEXT: scheduler over-limit pressure relief: pass
+// CHECK-NEXT: scheduler unbounded-pressure-delta: pass
+// CHECK-NEXT: scheduler random-dag differential: pass seeds=8 dags=8

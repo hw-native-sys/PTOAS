@@ -14,6 +14,7 @@
 #include "PTO/IR/VPTOScheduling.h"
 
 #include "mlir/IR/BuiltinTypes.h"
+#include "llvm/ADT/STLExtras.h"
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -31,19 +32,16 @@ enum ResourceID : unsigned {
 enum PressureSetID : unsigned {
   VectorPressure,
   PredicatePressure,
-  ScalarPressure,
-  AddressPressure,
-  AlignPressure,
-  SpecialPressure,
 };
 
 enum SchedClassID : unsigned {
   StructuralClass,
   ScalarClass,
-  VectorClass,
-  MTEClass,
+  VectorPredicateClass,
   CubeClass,
+  MTEClass,
   ControlClass,
+  GenericClass,
   UnknownClass,
 };
 
@@ -53,7 +51,7 @@ static std::optional<SchedClassID> getSchedClassForPipe(PIPE pipe) {
     return ScalarClass;
   case PIPE::PIPE_V:
   case PIPE::PIPE_V2:
-    return VectorClass;
+    return VectorPredicateClass;
   case PIPE::PIPE_M:
     return CubeClass;
   case PIPE::PIPE_MTE1:
@@ -73,11 +71,21 @@ static std::optional<SchedClassID> getSchedClassForPipe(PIPE pipe) {
   }
   return std::nullopt;
 }
+
+static bool
+hasControlSchedulingEffect(const VPTOSchedulingSemantics &semantics) {
+  return llvm::any_of(
+      semantics.effects, [](const VPTOSchedulingEffect &effect) {
+        return effect.kind == VPTOSchedulingEffectKind::ImplicitRead ||
+               effect.kind == VPTOSchedulingEffectKind::ImplicitWrite ||
+               effect.kind == VPTOSchedulingEffectKind::Barrier;
+      });
+}
 } // namespace
 
 VPTOGenericA5SchedModel::VPTOGenericA5SchedModel() {
   machine.target = "a5";
-  machine.version = "generic-a5-v1";
+  machine.version = "generic-a5-v4";
   machine.issueWidth = 1;
   machine.microOpBufferSize = 0;
 
@@ -90,60 +98,96 @@ VPTOGenericA5SchedModel::VPTOGenericA5SchedModel() {
       {UnknownResource, "unknown", 1, 0, {}},
   };
   pressureSets = {
-      {VectorPressure, "vector", std::nullopt, 1.0, 1.0},
-      {PredicatePressure, "predicate", std::nullopt, 1.0, 1.0},
-      {ScalarPressure, "scalar", std::nullopt, 1.0, 1.0},
-      {AddressPressure, "address", std::nullopt, 1.0, 1.0},
-      {AlignPressure, "align", std::nullopt, 1.0, 1.0},
-      {SpecialPressure, "special", std::nullopt, 1.0, 1.0},
+      {VectorPressure, "vector", 32, 1, 1},
+      {PredicatePressure, "predicate", 7, 1, 1},
   };
   schedClasses = {
       {StructuralClass, "structural", true, 0, 0, {}, {}},
-      {ScalarClass, "scalar", true, 1, 1, {{ScalarResource, 0, 1, 1}}, {}},
-      {VectorClass, "vector", true, 1, 1, {{VectorResource, 0, 1, 1}}, {}},
-      {MTEClass, "mte", true, 1, 2, {{MTEResource, 0, 1, 1}}, {}},
-      {CubeClass, "cube", true, 1, 4, {{CubeResource, 0, 1, 1}}, {}},
-      {ControlClass, "control", true, 1, 1, {{ControlResource, 0, 1, 1}}, {}},
-      {UnknownClass, "unknown", false, 1, 1, {{UnknownResource, 0, 1, 1}}, {}},
+      {ScalarClass, "scalar-zero", true, 0, 0, {}, {}},
+      {VectorPredicateClass,
+       "vector-predicate",
+       true,
+       1,
+       10,
+       {{VectorResource, 0, 1, 1}},
+       {}},
+      {CubeClass, "cube-zero", true, 0, 0, {}, {}},
+      {MTEClass, "mte-zero", true, 0, 0, {}, {}},
+      {ControlClass, "control-zero", true, 0, 0, {}, {}},
+      {GenericClass, "generic-zero", true, 0, 0, {}, {}},
+      {UnknownClass, "unknown", false, 0, 0, {}, {}},
   };
 }
 
 const VPTOSchedClass &
 VPTOGenericA5SchedModel::getSchedClass(Operation *op) const {
   VPTOSchedulingSemantics semantics = getVPTOSchedulingSemantics(op);
-  if (!op || semantics.schedulingClass == VPTOSchedulingClass::Structural)
+  if (!op || semantics.schedulingClass == VPTOSchedulingClass::Structural) {
     return schedClasses[StructuralClass];
-  if (auto pipeOp = dyn_cast<OpPipeInterface>(op))
-    if (std::optional<SchedClassID> schedClass =
-            getSchedClassForPipe(pipeOp.getPipe()))
-      return schedClasses[*schedClass];
-  if (isa<VectorMicroOpInterface>(op))
-    return schedClasses[VectorClass];
-  if (isa<MteOpInterface>(op))
-    return schedClasses[MTEClass];
-  if (isa<CubeMicroOpInterface>(op))
-    return schedClasses[CubeClass];
-  if (isa<SimtOpInterface>(op))
-    return schedClasses[ScalarClass];
-  if (!semantics.effects.empty())
+  }
+  if (hasControlSchedulingEffect(semantics)) {
     return schedClasses[ControlClass];
+  }
+  if (auto pipeOp = dyn_cast<OpPipeInterface>(op)) {
+    if (std::optional<SchedClassID> schedClass =
+            getSchedClassForPipe(pipeOp.getPipe())) {
+      return schedClasses[*schedClass];
+    }
+  }
+  if (isa<VectorMicroOpInterface>(op)) {
+    return schedClasses[VectorPredicateClass];
+  }
+  if (isa<MteOpInterface>(op)) {
+    return schedClasses[MTEClass];
+  }
+  if (isa<CubeMicroOpInterface>(op)) {
+    return schedClasses[CubeClass];
+  }
+  if (isa<SimtOpInterface>(op)) {
+    return schedClasses[ScalarClass];
+  }
+  if (!semantics.effects.empty()) {
+    return schedClasses[ControlClass];
+  }
+  if (semantics.schedulingClass == VPTOSchedulingClass::Schedulable) {
+    return schedClasses[GenericClass];
+  }
   return schedClasses[UnknownClass];
+}
+
+VPTOSchedParameters
+VPTOGenericA5SchedModel::getSchedParameters(Operation *op) const {
+  VPTOSchedParameters parameters =
+      VPTOSchedModel::getSchedParameters(op);
+  if (op && isa<VbitcastOp, PbitcastOp>(op)) {
+    parameters.microOps = 0;
+    parameters.writeLatency = 0;
+    parameters.resources = {};
+    parameters.readAdvance = {};
+  }
+  return parameters;
+}
+
+Value
+VPTOGenericA5SchedModel::getPressureRepresentative(Value value) const {
+  Operation *definingOp = value ? value.getDefiningOp() : nullptr;
+  if (definingOp && isa<VbitcastOp, PbitcastOp>(definingOp)) {
+    return definingOp->getOperand(0);
+  }
+  return value;
 }
 
 SmallVector<VPTORegPressureContribution>
 VPTOGenericA5SchedModel::getPressure(Value value) const {
-  if (!value)
+  if (!value) {
     return {};
+  }
   Type type = value.getType();
-  if (isa<VRegType>(type))
+  if (isa<VRegType>(type)) {
     return {{VectorPressure, 1}};
-  if (isa<MaskType>(type))
+  }
+  if (isa<MaskType>(type)) {
     return {{PredicatePressure, 1}};
-  if (isa<AlignType>(type))
-    return {{AlignPressure, 1}};
-  if (isa<PtrType, BaseMemRefType>(type))
-    return {{AddressPressure, 1}};
-  if (type.isIntOrIndexOrFloat())
-    return {{ScalarPressure, 1}};
-  return {{SpecialPressure, 1}};
+  }
+  return {};
 }

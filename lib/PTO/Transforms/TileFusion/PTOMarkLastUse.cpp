@@ -102,30 +102,29 @@ static bool hasIncompleteFusionMetadata(Operation *op) {
   return hasGroupId != hasOrder;
 }
 
+static void flushGroupSpan(Block &block,
+                           DenseMap<int64_t, unsigned> &spanIndexByGroupId,
+                           GroupSpan &current,
+                           SmallVectorImpl<GroupSpan> &spans) {
+  if (current.members.empty()) {
+    return;
+  }
+
+  current.block = &block;
+  auto [it, inserted] =
+      spanIndexByGroupId.try_emplace(current.groupId, spans.size());
+  if (!inserted) {
+    spans[it->second].members.clear();
+  } else {
+    spans.push_back(std::move(current));
+  }
+  current = GroupSpan();
+}
+
 static LogicalResult
 collectGroupSpansInBlock(Block &block, SmallVectorImpl<GroupSpan> &spans) {
   DenseMap<int64_t, unsigned> spanIndexByGroupId;
-
   GroupSpan current;
-
-  auto flush = [&]() -> LogicalResult {
-    if (current.members.empty()) {
-      return success();
-    }
-
-    current.block = &block;
-    auto [it, inserted] =
-        spanIndexByGroupId.try_emplace(current.groupId, spans.size());
-    if (!inserted) {
-      spans[it->second].members.clear();
-      current = GroupSpan();
-      return success();
-    }
-
-    spans.push_back(std::move(current));
-    current = GroupSpan();
-    return success();
-  };
 
   for (Operation &op : block) {
     if (hasIncompleteFusionMetadata(&op)) {
@@ -143,9 +142,7 @@ collectGroupSpansInBlock(Block &block, SmallVectorImpl<GroupSpan> &spans) {
         // different group.
         continue;
       }
-      if (failed(flush())) {
-        return failure();
-      }
+      flushGroupSpan(block, spanIndexByGroupId, current, spans);
       continue;
     }
 
@@ -162,9 +159,7 @@ collectGroupSpansInBlock(Block &block, SmallVectorImpl<GroupSpan> &spans) {
     }
 
     if (current.groupId != *groupId) {
-      if (failed(flush())) {
-        return failure();
-      }
+      flushGroupSpan(block, spanIndexByGroupId, current, spans);
       current.groupId = *groupId;
     }
 
@@ -177,7 +172,8 @@ collectGroupSpansInBlock(Block &block, SmallVectorImpl<GroupSpan> &spans) {
     current.members.push_back(GroupSpanMember{&op, *order});
   }
 
-  return flush();
+  flushGroupSpan(block, spanIndexByGroupId, current, spans);
+  return success();
 }
 
 static bool isSpanLocalLastUseCandidate(Value value, Operation *currentOp,

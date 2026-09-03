@@ -7,7 +7,6 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // RUN: ptoas --pto-arch=a3 --enable-insert-sync %s -o - 2>&1 | FileCheck %s
-// RUN: ptoas --pto-arch=a3 --enable-graph-sync-solver --graph-sync-solver-event-id-max=8 %s -o - 2>&1 | FileCheck %s
 
 // Preload outside the loop and the dynamic-slot loop body both perform
 // tload -> tstore on the selected tile, so both regions should lower to a

@@ -11,7 +11,6 @@
 //
 // RUN: ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s
 // RUN: ptoas --pto-arch=a3 --mlir-print-ir-after=pto-resolve-reserved-buffers %s 2>&1 >/dev/null | FileCheck %s --check-prefix=RESOLVE
-// RUN: ptoas --pto-arch=a3 --enable-graph-sync-solver --graph-sync-solver-event-id-max=64 %s 2>&1 | FileCheck %s --check-prefix=GSS
 
 module {
   func.func @cube_kernel(
@@ -92,8 +91,3 @@ module {
 // RESOLVE-NOT: pto.import_reserved_buffer
 // RESOLVE: pto.tpop(%{{.*}}, %{{.*}} : !pto.tensor_view<16x16xf32>, !pto.pipe) {split = 0}
 // RESOLVE: pto.tfree(%{{.*}}, %{{.*}} : !pto.tensor_view<16x16xf32>, !pto.pipe) {split = 0}
-
-// GSS-LABEL: AICORE void cube_kernel
-// GSS: TALLOC<TPipe<0, Direction::DIR_C2V, 1024, 8, 8, true>
-// GSS: TSTORE
-// GSS: TPUSH<TPipe<0, Direction::DIR_C2V, 1024, 8, 8, true>

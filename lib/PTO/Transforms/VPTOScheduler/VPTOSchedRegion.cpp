@@ -12,12 +12,91 @@
 
 #include "PTO/IR/PTO.h"
 
+#include "mlir/Analysis/Liveness.h"
 #include "mlir/IR/OpDefinition.h"
+#include "mlir/Interfaces/LoopLikeInterface.h"
+#include "mlir/Transforms/RegionUtils.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace mlir;
 using namespace mlir::pto;
+
+namespace {
+
+static void addOperationUses(Operation &op, llvm::SetVector<Value> &live) {
+  live.insert(op.getOperands().begin(), op.getOperands().end());
+  for (Region &nestedRegion : op.getRegions()) {
+    visitUsedValuesDefinedAbove(
+        nestedRegion, nestedRegion,
+        [&](OpOperand *operand) { live.insert(operand->get()); });
+  }
+}
+
+static void addEnclosingLoopCaptures(Block &block,
+                                     llvm::SetVector<Value> &live) {
+  for (Operation *ancestor = block.getParentOp(); ancestor;
+       ancestor = ancestor->getParentOp()) {
+    auto loop = dyn_cast<LoopLikeOpInterface>(ancestor);
+    if (!loop) {
+      continue;
+    }
+    for (Region *loopRegion : loop.getLoopRegions()) {
+      llvm::SetVector<Value> captures;
+      getUsedValuesDefinedAbove(*loopRegion, *loopRegion, captures);
+      live.insert(captures.begin(), captures.end());
+    }
+  }
+}
+
+static void populateLiveThroughs(Block &block,
+                                 MutableArrayRef<VPTOSchedRegion> regions,
+                                 const Liveness *liveness) {
+  if (regions.empty()) {
+    return;
+  }
+
+  DenseMap<Operation *, unsigned> regionStarts;
+  DenseMap<Operation *, unsigned> regionEnds;
+  for (auto [index, region] : llvm::enumerate(regions)) {
+    regionStarts.try_emplace(region.operations.front(), index);
+    regionEnds.try_emplace(region.operations.back(), index);
+  }
+
+  llvm::SetVector<Value> live;
+  if (liveness) {
+    if (const LivenessBlockInfo *blockInfo = liveness->getLiveness(&block)) {
+      live.insert(blockInfo->out().begin(), blockInfo->out().end());
+    }
+  }
+  addEnclosingLoopCaptures(block, live);
+
+  SmallVector<DenseSet<Value>> liveAfter(regions.size());
+  for (Operation &op : llvm::reverse(block)) {
+    if (auto found = regionEnds.find(&op); found != regionEnds.end()) {
+      liveAfter[found->second].insert(live.begin(), live.end());
+    }
+
+    for (Value result : op.getResults()) {
+      live.remove(result);
+    }
+    addOperationUses(op, live);
+
+    if (auto found = regionStarts.find(&op); found != regionStarts.end()) {
+      VPTOSchedRegion &region = regions[found->second];
+      for (Value value : live) {
+        if (liveAfter[found->second].contains(value)) {
+          region.liveThroughs.push_back(value);
+        }
+      }
+    }
+  }
+}
+
+} // namespace
 
 static unsigned getClassIndex(VPTOSchedulingClass schedulingClass) {
   return static_cast<unsigned>(schedulingClass);
@@ -106,5 +185,6 @@ SmallVector<VPTOSchedRegion> VPTOSchedRegionBuilder::build(Block &block) const {
   }
 
   flush(nullptr, "block-end");
+  populateLiveThroughs(block, regions, liveness);
   return regions;
 }

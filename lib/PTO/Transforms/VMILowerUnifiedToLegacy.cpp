@@ -95,6 +95,7 @@
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/ErrorHandling.h"
 
 namespace mlir {
@@ -200,10 +201,9 @@ static unsigned getVMIElementBitWidth(Type type) {
   return pto::getPTOStorageElemBitWidth(type);
 }
 
-/// Inspect the source and result element types of a vcvt and classify the
-/// conversion direction.  Returns one of:
-///   "widen_fp", "narrow_fp", "fptosi", "fptoui",
-///   "sitofp", "widen_int", "narrow_int"
+// Inspect the source and result element types of a vcvt and classify the
+// conversion direction as a floating-point or integer widening, narrowing,
+// or signedness conversion.
 static StringRef classifyCvtDirection(Type srcElem, Type dstElem) {
   bool srcFp = isFloatType(srcElem);
   bool dstFp = isFloatType(dstElem);
@@ -403,67 +403,63 @@ static LogicalResult lowerVCmps(VMIVcmpsOp op, OpBuilder &builder) {
 //===----------------------------------------------------------------------===//
 
 /// Lower vcvt by dispatching on src→dst element types.
+static Value createCvtReplacement(VMICvtOp op, OpBuilder &builder) {
+  Type sourceElement = getVMIElementType(op.getSource());
+  Type resultElement = getVMIElementType(op.getResult());
+  StringRef direction = classifyCvtDirection(sourceElement, resultElement);
+  Location loc = op.getLoc();
+  Type resultType = op.getResult().getType();
+  Value source = op.getSource();
+  StringAttr saturate = op.getSaturateAttr();
+  if (direction == "widen_fp") {
+    return builder.create<VMIExtFOp>(loc, resultType, source).getResult();
+  }
+  if (direction == "narrow_fp") {
+    return builder
+        .create<VMITruncFOp>(loc, resultType, source, op.getRoundingAttr(),
+                             saturate)
+        .getResult();
+  }
+  if (direction == "fptosi") {
+    return builder
+        .create<VMIFPToSIOp>(loc, resultType, source, op.getRoundingAttr(),
+                             saturate)
+        .getResult();
+  }
+  if (direction == "fptoui") {
+    return builder
+        .create<VMIFPToUIOp>(loc, resultType, source, op.getRoundingAttr(),
+                             saturate)
+        .getResult();
+  }
+  if (direction == "sitofp") {
+    return builder.create<VMISIToFPOp>(loc, resultType, source).getResult();
+  }
+  if (direction == "widen_int") {
+    auto integerType = dyn_cast<IntegerType>(sourceElement);
+    bool useSignedExtension = !integerType || integerType.isSigned();
+    return useSignedExtension
+               ? builder.create<VMIExtSIOp>(loc, resultType, source).getResult()
+               : builder.create<VMIExtUIOp>(loc, resultType, source).getResult();
+  }
+  if (direction == "narrow_int") {
+    return builder
+        .create<VMITruncIOp>(loc, resultType, source, saturate)
+        .getResult();
+  }
+  return {};
+}
+
 static LogicalResult lowerVCvt(VMICvtOp op, OpBuilder &builder) {
   if (hasMergePmode(op)) {
     return failure();
   }
-
-  Type srcElem = getVMIElementType(op.getSource());
-  Type dstElem = getVMIElementType(op.getResult());
-  StringRef direction = classifyCvtDirection(srcElem, dstElem);
-  Location loc = op.getLoc();
-  Type resultType = op.getResult().getType();
-  Value source = op.getSource();
-  Value result;
-
-  StringAttr saturateAttr = op.getSaturateAttr();
-
-  if (direction == "widen_fp") {
-    result = builder.create<VMIExtFOp>(loc, resultType, source).getResult();
-  } else if (direction == "narrow_fp") {
-    StringAttr roundingAttr = op.getRoundingAttr();
-    result =
-        builder.create<VMITruncFOp>(loc, resultType, source, roundingAttr,
-                                     saturateAttr)
-            .getResult();
-  } else if (direction == "fptosi") {
-    result =
-        builder
-            .create<VMIFPToSIOp>(loc, resultType, source,
-                                 op.getRoundingAttr(), saturateAttr)
-            .getResult();
-  } else if (direction == "fptoui") {
-    result =
-        builder
-            .create<VMIFPToUIOp>(loc, resultType, source,
-                                 op.getRoundingAttr(), saturateAttr)
-            .getResult();
-  } else if (direction == "sitofp") {
-    result =
-        builder.create<VMISIToFPOp>(loc, resultType, source).getResult();
-  } else if (direction == "widen_int") {
-    // Use source type signedness to decide signed vs unsigned extension.
-    bool useSigned = true;
-    if (auto intTy = dyn_cast<IntegerType>(srcElem)) {
-      useSigned = intTy.isSigned();
-    }
-    if (useSigned) {
-      result =
-          builder.create<VMIExtSIOp>(loc, resultType, source).getResult();
-    } else {
-      result =
-          builder.create<VMIExtUIOp>(loc, resultType, source).getResult();
-}
-  } else if (direction == "narrow_int") {
-    result =
-        builder.create<VMITruncIOp>(loc, resultType, source, saturateAttr)
-            .getResult();
-  } else {
+  Value result = createCvtReplacement(op, builder);
+  if (!result) {
     return failure();
   }
-
   op.getResult().replaceAllUsesWith(result);
-  op->erase();
+  op.erase();
   return success();
 }
 
@@ -471,240 +467,230 @@ static LogicalResult lowerVCvt(VMICvtOp op, OpBuilder &builder) {
 // Category C3 helpers: vload / vstore
 //===----------------------------------------------------------------------===//
 
-/// Lower vload by dispatching on dist_mode.
-static LogicalResult lowerVLoad(VMIvLoadOp op, OpBuilder &builder) {
-  // Group mode: vload {group=C} → group_load or group_slot_load
-  //   elementCount == num_groups → group_slot_load (compact, 1 scalar per group)
-  //   elementCount  > num_groups → group_load (full groups)
-  // Broadcast-style slot loads (dense output, stride=1) should be decomposed
-  // at the VMI level: vload(compact) + vbrc.
-  if (op.getGroupAttr()) {
-    auto resultType = cast<VMIVRegType>(op.getResults().front().getType());
-    int64_t numGroups = op.getGroupAttr().getInt();
-    // {group, dist_mode="brc"}: group broadcast — one scalar per group
-    // broadcast within each group (e.g. E2B).
-    if (op.getDistMode() && op.getDistMode() == "brc") {
-      auto gbl = builder.create<VMIGroupBroadcastLoadOp>(
-          op->getLoc(), resultType, op.getSource(), op.getOffset(),
-          op.getStride(), op.getGroupAttr());
-      op.getResults().front().replaceAllUsesWith(gbl.getResult());
-    } else if (resultType.getElementCount() == numGroups) {
-      auto slotLoad = builder.create<VMIGroupSlotLoadOp>(
-          op->getLoc(), resultType, op.getSource(), op.getOffset(),
-          op.getStride(), op.getGroupAttr());
-      op.getResults().front().replaceAllUsesWith(slotLoad.getResult());
-    } else {
-      auto groupLoad = builder.create<VMIGroupLoadOp>(
-          op->getLoc(), resultType, op.getSource(), op.getOffset(),
-          op.getStride(), op.getGroupAttr());
-      op.getResults().front().replaceAllUsesWith(groupLoad.getResult());
-    }
-    op->erase();
-    return success();
+static StringAttr getMaskGranularity(Type elementType, OpBuilder &builder) {
+  unsigned bits = mlir::pto::kValue32;
+  if (auto integerType = dyn_cast<IntegerType>(elementType)) {
+    bits = integerType.getWidth();
+  } else if (auto floatType = dyn_cast<FloatType>(elementType)) {
+    bits = floatType.getWidth();
   }
+  StringRef granularity = bits <= mlir::pto::kValue8
+                              ? "b8"
+                              : bits <= mlir::pto::kValue16 ? "b16" : "b32";
+  return builder.getStringAttr(granularity);
+}
 
-  // Block-stride mode: vload {block_stride} → stride_load
-  if (op.getBlockStride()) {
-    auto resultType = op.getResults().front().getType();
-    // Create default all-active mask via create_mask with proper granularity
-    // and layout, so the legacy stride_load passes both-or-neither layout
-    // checks.  pset cannot be used here because pred masks cannot carry
-    // layout.
-    auto resultVMIType = cast<VMIVRegType>(resultType);
-    auto elemType = resultVMIType.getElementType();
-    unsigned bits = 32;
-    if (auto it = dyn_cast<IntegerType>(elemType)) {
-      bits = it.getWidth();
-    } else if (auto ft = dyn_cast<FloatType>(elemType)) {
-      bits = ft.getWidth();
-    }
-    auto gran = StringAttr::get(builder.getContext(),
-                                bits <= 8 ? "b8" : bits <= 16 ? "b16" : "b32");
-    auto maskType = VMIMaskType::get(builder.getContext(),
-                                     resultVMIType.getElementCount(), gran,
-                                     resultVMIType.getLayout());
-    auto fullLanes = builder.create<arith::ConstantOp>(
-        op->getLoc(), builder.getIndexAttr(resultVMIType.getElementCount()));
-    auto mask = builder.create<VMICreateMaskOp>(op->getLoc(), maskType,
-                                                fullLanes.getResult());
-    Value bs = op.getBlockStride();
-    auto strideLoad = builder.create<VMIStrideLoadOp>(
-        op->getLoc(), resultType, op.getSource(), op.getOffset(), bs,
-        mask.getResult());
-    op.getResults().front().replaceAllUsesWith(strideLoad.getResult());
-    op->erase();
-    return success();
-  }
+static Value createAllActiveMask(VMIVRegType valueType, Location loc,
+                                 OpBuilder &builder) {
+  auto maskType = VMIMaskType::get(
+      builder.getContext(), valueType.getElementCount(),
+      getMaskGranularity(valueType.getElementType(), builder),
+      valueType.getLayout());
+  Value activeLanes = builder.create<arith::ConstantOp>(
+      loc, builder.getIndexAttr(valueType.getElementCount()));
+  return builder.create<VMICreateMaskOp>(loc, maskType, activeLanes).getResult();
+}
 
-  // pmode="merge" cannot be expressed by legacy load + select — skip.
-  if (hasMergePmode(op)) {
-    return failure();
-  }
-
-  StringAttr distModeAttr = op.getDistModeAttr();
-  StringRef distMode =
-      distModeAttr ? distModeAttr.getValue() : "continuous";
-
-  Location loc = op.getLoc();
-  Value source = op.getSource();
-  Value offset = op.getOffset();
-
-  if (distMode == "continuous") {
-    auto resultType = cast<VMIVRegType>(op.getResults().front().getType());
-    int64_t numGroups = resultType.getElementCount();
-    if (isCompactGroupCount(numGroups)) {
-      Value unitStride = builder.create<arith::ConstantIndexOp>(loc, 1);
-      auto loadOp = builder.create<VMIGroupSlotLoadOp>(
-          loc, resultType, source, offset, unitStride,
-          builder.getI64IntegerAttr(numGroups));
-      op.getResults().front().replaceAllUsesWith(loadOp.getResult());
-    } else {
-      auto loadOp = builder.create<VMILoadOp>(loc, resultType, source, offset);
-      op.getResults().front().replaceAllUsesWith(loadOp.getResult());
-    }
-  } else if (distMode == "dintlv") {
-    auto dloadOp = builder.create<VMIDeinterleaveLoadOp>(
-        loc, op.getResults()[0].getType(), op.getResults()[1].getType(),
-        source, offset);
-    op.getResults()[0].replaceAllUsesWith(dloadOp.getLow());
-    op.getResults()[1].replaceAllUsesWith(dloadOp.getHigh());
-  } else if (distMode == "brc") {
-    // vload {dist_mode="brc"} -> group_broadcast_load.
-    //   - no group attr: all-lane scalar broadcast (num_groups=1, stride=0).
-    //   - {group = C, stride}: per-group scalar broadcast — one scalar loaded
-    //     per group and broadcast within each group (e.g. E2B).
-    auto resultType = op.getResults().front().getType();
-    if (auto groupAttr = op.getGroupAttr()) {
-      int64_t numGroups = groupAttr.getInt();
-      Value stride = op.getStride();
-      auto gbl = builder.create<VMIGroupBroadcastLoadOp>(
-          loc, resultType, source, offset, stride,
-          builder.getI64IntegerAttr(numGroups));
-      op.getResults().front().replaceAllUsesWith(gbl.getResult());
-    } else {
-      Value zeroStride = builder.create<arith::ConstantOp>(
-          loc, builder.getIndexType(), builder.getIndexAttr(0));
-      auto gbl = builder.create<VMIGroupBroadcastLoadOp>(
-          loc, resultType, source, offset, zeroStride,
-          builder.getI64IntegerAttr(1));
-      op.getResults().front().replaceAllUsesWith(gbl.getResult());
-    }
+static LogicalResult lowerGroupedLoad(VMIvLoadOp op, OpBuilder &builder) {
+  auto resultType = cast<VMIVRegType>(op.getResults().front().getType());
+  int64_t numGroups = op.getGroupAttr().getInt();
+  bool isBroadcast = op.getDistMode() && op.getDistMode() == "brc";
+  Value replacement;
+  if (isBroadcast) {
+    replacement = builder
+                      .create<VMIGroupBroadcastLoadOp>(
+                          op.getLoc(), resultType, op.getSource(),
+                          op.getOffset(), op.getStride(), op.getGroupAttr())
+                      .getResult();
+  } else if (resultType.getElementCount() == numGroups) {
+    replacement = builder
+                      .create<VMIGroupSlotLoadOp>(
+                          op.getLoc(), resultType, op.getSource(),
+                          op.getOffset(), op.getStride(), op.getGroupAttr())
+                      .getResult();
   } else {
-    // "unpack" has no legacy equivalent (physical widening, lane count changes).
-    return failure();
+    replacement = builder
+                      .create<VMIGroupLoadOp>(
+                          op.getLoc(), resultType, op.getSource(),
+                          op.getOffset(), op.getStride(), op.getGroupAttr())
+                      .getResult();
   }
-
-  op->erase();
+  op.getResults().front().replaceAllUsesWith(replacement);
   return success();
 }
 
-/// Lower vstore by dispatching on dist_mode.
-static LogicalResult lowerVStore(VMIvStoreOp op, OpBuilder &builder) {
-  // pmode="merge" (inactive lanes retain the prior destination contents)
-  // cannot be expressed by the legacy store family, whose writes are governed
-  // purely by the mask. Skip instead of silently dropping the attribute.
-  if (hasMergePmode(op)) {
+static LogicalResult lowerBlockStrideLoad(VMIvLoadOp op,
+                                          OpBuilder &builder) {
+  auto resultType = cast<VMIVRegType>(op.getResults().front().getType());
+  Value mask = createAllActiveMask(resultType, op.getLoc(), builder);
+  Value replacement =
+      builder
+          .create<VMIStrideLoadOp>(op.getLoc(), resultType, op.getSource(),
+                                   op.getOffset(), op.getBlockStride(), mask)
+          .getResult();
+  op.getResults().front().replaceAllUsesWith(replacement);
+  return success();
+}
+
+static LogicalResult lowerContinuousLoad(VMIvLoadOp op,
+                                         OpBuilder &builder) {
+  Location loc = op.getLoc();
+  auto resultType = cast<VMIVRegType>(op.getResults().front().getType());
+  int64_t numGroups = resultType.getElementCount();
+  Value replacement;
+  if (isCompactGroupCount(numGroups)) {
+    Value unitStride = builder.create<arith::ConstantIndexOp>(loc, 1);
+    replacement = builder
+                      .create<VMIGroupSlotLoadOp>(
+                          loc, resultType, op.getSource(), op.getOffset(),
+                          unitStride, builder.getI64IntegerAttr(numGroups))
+                      .getResult();
+  } else {
+    replacement = builder
+                      .create<VMILoadOp>(loc, resultType, op.getSource(),
+                                         op.getOffset())
+                      .getResult();
+  }
+  op.getResults().front().replaceAllUsesWith(replacement);
+  return success();
+}
+
+static LogicalResult lowerDeinterleaveLoad(VMIvLoadOp op,
+                                           OpBuilder &builder) {
+  auto load = builder.create<VMIDeinterleaveLoadOp>(
+      op.getLoc(), op.getResults()[0].getType(), op.getResults()[1].getType(),
+      op.getSource(), op.getOffset());
+  op.getResults()[0].replaceAllUsesWith(load.getLow());
+  op.getResults()[1].replaceAllUsesWith(load.getHigh());
+  return success();
+}
+
+static LogicalResult lowerBroadcastLoad(VMIvLoadOp op, OpBuilder &builder) {
+  Location loc = op.getLoc();
+  Type resultType = op.getResults().front().getType();
+  Value stride = builder.create<arith::ConstantOp>(
+      loc, builder.getIndexType(), builder.getIndexAttr(0));
+  auto load = builder.create<VMIGroupBroadcastLoadOp>(
+      loc, resultType, op.getSource(), op.getOffset(), stride,
+      builder.getI64IntegerAttr(1));
+  op.getResults().front().replaceAllUsesWith(load.getResult());
+  return success();
+}
+
+static LogicalResult lowerDistributedLoad(VMIvLoadOp op,
+                                          OpBuilder &builder) {
+  StringAttr modeAttr = op.getDistModeAttr();
+  StringRef mode = modeAttr ? modeAttr.getValue() : "continuous";
+  if (mode == "continuous") {
+    return lowerContinuousLoad(op, builder);
+  }
+  if (mode == "dintlv") {
+    return lowerDeinterleaveLoad(op, builder);
+  }
+  if (mode == "brc") {
+    return lowerBroadcastLoad(op, builder);
+  }
+  return failure();
+}
+
+static LogicalResult lowerVLoad(VMIvLoadOp op, OpBuilder &builder) {
+  LogicalResult result = success();
+  if (op.getGroupAttr()) {
+    result = lowerGroupedLoad(op, builder);
+  } else if (op.getBlockStride()) {
+    result = lowerBlockStrideLoad(op, builder);
+  } else if (hasMergePmode(op)) {
+    return failure();
+  } else {
+    result = lowerDistributedLoad(op, builder);
+  }
+  if (failed(result)) {
     return failure();
   }
+  op.erase();
+  return success();
+}
 
-  // Group mode: vstore {group=C} → group_store
-  if (op.getGroupAttr()) {
+static LogicalResult lowerBlockStrideStore(VMIvStoreOp op,
+                                           OpBuilder &builder) {
+  auto valueType = cast<VMIVRegType>(op.getValues()[0].getType());
+  Value mask = op.getMask().empty()
+                   ? createAllActiveMask(valueType, op.getLoc(), builder)
+                   : op.getMask()[0];
+  builder.create<VMIStrideStoreOp>(
+      op.getLoc(), op.getValues()[0], op.getDestination(), op.getOffset(),
+      op.getBlockStride(), mask);
+  return success();
+}
+
+static LogicalResult lowerContinuousStore(VMIvStoreOp op,
+                                           OpBuilder &builder) {
+  ValueRange values = op.getValues();
+  if (values.empty()) {
+    return failure();
+  }
+  Value mask = op.getMask().empty() ? Value() : op.getMask().front();
+  auto valueType = cast<VMIVRegType>(values.front().getType());
+  int64_t numGroups = valueType.getElementCount();
+  bool canUseGroupStore = isCompactGroupCount(numGroups) &&
+                          (!mask || isAllActiveSeed(mask));
+  if (canUseGroupStore) {
+    Value unitStride = builder.create<arith::ConstantIndexOp>(op.getLoc(), 1);
     builder.create<VMIGroupStoreOp>(
-        op->getLoc(), op.getValues()[0], op.getDestination(), op.getOffset(),
-        op.getStride(), op.getGroupAttr());
-    op->erase();
+        op.getLoc(), values.front(), op.getDestination(), op.getOffset(),
+        unitStride, builder.getI64IntegerAttr(numGroups));
     return success();
   }
-
-  // Block-stride mode: vstore {block_stride} → stride_store
-  if (op.getBlockStride()) {
-    auto valueType = cast<VMIVRegType>(op.getValues()[0].getType());
-    // Use existing mask or create default all-active via create_mask
-    // (pset cannot be used — pred masks cannot carry layout).
-    Value mask;
-    if (!op.getMask().empty()) {
-      mask = op.getMask()[0];
-    } else {
-      auto elemType = valueType.getElementType();
-      unsigned bits = 32;
-      if (auto it = dyn_cast<IntegerType>(elemType)) {
-        bits = it.getWidth();
-      } else if (auto ft = dyn_cast<FloatType>(elemType)) {
-        bits = ft.getWidth();
-      }
-      auto gran = StringAttr::get(builder.getContext(),
-                                  bits <= 8 ? "b8" : bits <= 16 ? "b16" : "b32");
-      auto maskType = VMIMaskType::get(builder.getContext(),
-                                       valueType.getElementCount(), gran,
-                                       valueType.getLayout());
-      auto fullLanes = builder.create<arith::ConstantOp>(
-          op->getLoc(), builder.getIndexAttr(valueType.getElementCount()));
-      mask = builder.create<VMICreateMaskOp>(op->getLoc(), maskType,
-                                             fullLanes.getResult())
-                 .getResult();
-    }
-    Value bs = op.getBlockStride();
-    builder.create<VMIStrideStoreOp>(op->getLoc(), op.getValues()[0],
-                                    op.getDestination(), op.getOffset(), bs,
-                                    mask);
-    op->erase();
-    return success();
+  if (mask) {
+    builder.create<VMIMaskedStoreOp>(op.getLoc(), values.front(),
+                                     op.getDestination(), op.getOffset(), mask);
+  } else {
+    builder.create<VMIStoreOp>(op.getLoc(), values.front(),
+                               op.getDestination(), op.getOffset());
   }
+  return success();
+}
 
-  StringAttr distModeAttr = op.getDistModeAttr();
-  StringRef distMode =
-      distModeAttr ? distModeAttr.getValue() : "continuous";
-
-  Location loc = op.getLoc();
-  Value dest = op.getDestination();
-  Value offset = op.getOffset();
-  auto values = op.getValues();
-
-  if (distMode == "continuous") {
-    if (values.empty()) {
-      return failure();
-    }
-    Value mask = op.getMask().empty() ? Value() : op.getMask().front();
-    auto valueType = cast<VMIVRegType>(values[0].getType());
-    int64_t numGroups = valueType.getElementCount();
-
-    // A compact 1/2/4/8-lane value contains one scalar per logical group.
-    // Keep masked stores unchanged unless their mask is provably all-active:
-    // group_store currently has no dynamic predication operand.
-    bool allActive = !mask || isAllActiveSeed(mask);
-    bool compact = isCompactGroupCount(numGroups);
-    if (compact && allActive) {
-      Value unitStride = builder.create<arith::ConstantIndexOp>(loc, 1);
-      builder.create<VMIGroupStoreOp>(loc, values[0], dest, offset, unitStride,
-                                      builder.getI64IntegerAttr(numGroups));
-      op->erase();
-      return success();
-    }
-    if (mask) {
-      // Masked store path.
-      builder.create<VMIMaskedStoreOp>(loc, values[0], dest, offset, mask);
-    } else {
-      builder.create<VMIStoreOp>(loc, values[0], dest, offset);
-    }
-  } else if (distMode == "dintlv") {
+static LogicalResult lowerDistributedStore(VMIvStoreOp op,
+                                           OpBuilder &builder) {
+  StringAttr modeAttr = op.getDistModeAttr();
+  StringRef mode = modeAttr ? modeAttr.getValue() : "continuous";
+  if (mode == "continuous") {
+    return lowerContinuousStore(op, builder);
+  }
+  if (mode == "intlv") {
+    ValueRange values = op.getValues();
     if (values.size() < mlir::pto::kValue2) {
       return failure();
     }
-    builder.create<VMIInterleaveStoreOp>(loc, values[0], values[1], dest,
-                                         offset);
-  } else {
+    builder.create<VMIInterleaveStoreOp>(
+        op.getLoc(), values[0], values[1], op.getDestination(), op.getOffset());
+    return success();
+  }
+  return failure();
+}
+
+static LogicalResult lowerVStore(VMIvStoreOp op, OpBuilder &builder) {
+  if (hasMergePmode(op)) {
     return failure();
   }
-
-  op->erase();
+  LogicalResult result = success();
+  if (op.getGroupAttr()) {
+    builder.create<VMIGroupStoreOp>(
+        op.getLoc(), op.getValues()[0], op.getDestination(), op.getOffset(),
+        op.getStride(), op.getGroupAttr());
+  } else if (op.getBlockStride()) {
+    result = lowerBlockStrideStore(op, builder);
+  } else {
+    result = lowerDistributedStore(op, builder);
+  }
+  if (failed(result)) {
+    return failure();
+  }
+  op.erase();
   return success();
 }
 
-//===----------------------------------------------------------------------===//
-// Category C4 helpers: pset / pge
-//===----------------------------------------------------------------------===//
-
-/// Lower pset "PAT_ALL" → create_mask(all_lanes).
 static LogicalResult lowerPset(VMIPsetOp op, OpBuilder &builder) {
   // If an all-active consumer (e.g. vcmp) elided its use, drop the seed
   // entirely instead of materialising a dead create_mask.
@@ -1134,6 +1120,432 @@ static LogicalResult lowerVprelu(VMIVpreluOp op, OpBuilder &builder) {
 }
 
 //===----------------------------------------------------------------------===//
+// Unified operation dispatch
+//===----------------------------------------------------------------------===//
+
+static bool isUnifiedLoweringCandidate(Operation *op) {
+  return isa<VMIVciOp, VMIVinterpretCastOp, VMIvSelOp, VMIVbrcOp,
+             VMIVaddOp, VMIVsubOp, VMIVmulOp, VMIVdivOp, VMIVminOp,
+             VMIVmaxOp, VMIVandOp, VMIVorOp, VMIVxorOp, VMIVshlOp,
+             VMIVshrOp, VMIVnegOp, VMIVabsOp, VMIVsqrtOp, VMIVexpOp,
+             VMIVlnOp, VMIVreluOp, VMIVnotOp, VMIVcmpOp, VMIVcmpsOp,
+             VMICvtOp, VMIvLoadOp, VMIvStoreOp, VMIVsstbOp, VMIPsetOp,
+             VMIPgeOp, VMIPltOp, VMIvcaddOp, VMIvcmaxOp, VMIvcminOp,
+             VMIVmulaOp, VMIVaxpyOp, VMIVgatherOp, VMIVscatterOp,
+             VMIVlreluOp, VMIVpreluOp>(op);
+}
+
+static bool requiresDirectVMIToVPTOLowering(Operation *op) {
+  return isa<VMIAddSOp, VMIMulSOp, VMIMaxSOp, VMIMinSOp, VMIShlSOp,
+             VMIShrSOp, VMIVaddcOp, VMIVaddcsOp, VMIVintlvOp, VMIVdintlvOp,
+             VMIVselrOp, VMIVgatherbOp, VMIVmullOp>(op);
+}
+
+static Value createIotaReplacement(VMIVciOp vci, OpBuilder &builder) {
+  StringAttr orderAttr;
+  if (std::optional<StringRef> order = vci.getOrder()) {
+    orderAttr = builder.getStringAttr(*order);
+  }
+  Type resultType = vci.getResult().getType();
+  IntegerAttr groupAttr = vci.getGroupAttr();
+  bool isGrouped = groupAttr && groupAttr.getInt() > 1;
+  if (!isGrouped) {
+    return builder
+        .create<VMIIotaOp>(vci.getLoc(), resultType, vci.getBase(), orderAttr)
+        .getResult();
+  }
+  auto vmiType = dyn_cast<VMIVRegType>(resultType);
+  bool needsLayoutConversion =
+      vmiType && vmiType.getLayoutAttr() &&
+      !vmiType.getLayoutAttr().isContiguous();
+  if (!needsLayoutConversion) {
+    return builder
+        .create<VMIGroupIotaOp>(vci.getLoc(), resultType, vci.getBase(),
+                                orderAttr, groupAttr)
+        .getResult();
+  }
+  Type contiguousType = VMIVRegType::get(
+      vci.getContext(), vmiType.getElementCount(), vmiType.getElementType(),
+      VMILayoutAttr::getContiguous(vci.getContext()));
+  Value contiguous =
+      builder
+          .create<VMIGroupIotaOp>(vci.getLoc(), contiguousType, vci.getBase(),
+                                  orderAttr, groupAttr)
+          .getResult();
+  return builder
+      .create<VMIEnsureLayoutOp>(vci.getLoc(), vmiType, contiguous)
+      .getResult();
+}
+
+static void lowerVci(VMIVciOp vci, OpBuilder &builder) {
+  builder.setInsertionPoint(vci);
+  Value replacement = createIotaReplacement(vci, builder);
+  vci.getResult().replaceAllUsesWith(replacement);
+  vci.erase();
+}
+
+static void lowerInterpretCast(VMIVinterpretCastOp castOp,
+                               OpBuilder &builder) {
+  builder.setInsertionPoint(castOp);
+  Value result = builder
+                     .create<VMIBitcastOp>(castOp.getLoc(),
+                                           castOp.getResult().getType(),
+                                           castOp.getSource())
+                     .getResult();
+  castOp.getResult().replaceAllUsesWith(result);
+  castOp.erase();
+}
+
+static void lowerSelect(VMIvSelOp select, OpBuilder &builder) {
+  builder.setInsertionPoint(select);
+  Value result =
+      builder
+          .create<VMISelectOp>(select.getLoc(), select.getResult().getType(),
+                               select.getMask(), select.getTrueValue(),
+                               select.getFalseValue())
+          .getResult();
+  select.getResult().replaceAllUsesWith(result);
+  select.erase();
+}
+
+static void lowerBroadcast(VMIVbrcOp broadcast, OpBuilder &builder) {
+  builder.setInsertionPoint(broadcast);
+  Value result = broadcast.getGroupAttr()
+                     ? builder
+                           .create<VMIGroupBroadcastOp>(
+                               broadcast.getLoc(),
+                               broadcast.getResult().getType(),
+                               broadcast.getValue(), broadcast.getGroupAttr())
+                           .getResult()
+                     : builder
+                           .create<VMIBroadcastOp>(
+                               broadcast.getLoc(),
+                               broadcast.getResult().getType(),
+                               broadcast.getValue())
+                           .getResult();
+  broadcast.getResult().replaceAllUsesWith(result);
+  broadcast.erase();
+}
+
+static bool lowerRename(Operation *op, OpBuilder &builder) {
+  return llvm::TypeSwitch<Operation *, bool>(op)
+      .Case<VMIVciOp>([&builder](auto vci) {
+        lowerVci(vci, builder);
+        return true;
+      })
+      .Case<VMIVinterpretCastOp>([&builder](auto castOp) {
+        lowerInterpretCast(castOp, builder);
+        return true;
+      })
+      .Case<VMIvSelOp>([&builder](auto select) {
+        lowerSelect(select, builder);
+        return true;
+      })
+      .Case<VMIVbrcOp>([&builder](auto broadcast) {
+        lowerBroadcast(broadcast, builder);
+        return true;
+      })
+      .Default([](Operation *) { return false; });
+}
+
+static void lowerStrideStore(VMIVsstbOp store, OpBuilder &builder) {
+  if (hasMergePmode(store)) {
+    return;
+  }
+  builder.create<VMIStrideStoreOp>(
+      store.getLoc(), store.getValue(), store.getDestination(),
+      store.getOffset(), store.getBlockStride(), store.getMask());
+  store.erase();
+}
+
+static bool lowerPredicateAndMemorySpecial(Operation *op, OpBuilder &builder) {
+  return llvm::TypeSwitch<Operation *, bool>(op)
+      .Case<VMIPsetOp>([&builder](auto typedOp) {
+        (void)lowerPset(typedOp, builder);
+        return true;
+      })
+      .Case<VMIPgeOp>([&builder](auto typedOp) {
+        (void)lowerPge(typedOp, builder);
+        return true;
+      })
+      .Case<VMIPltOp>([&builder](auto typedOp) {
+        (void)lowerPlt(typedOp, builder);
+        return true;
+      })
+      .Case<VMIVcmpOp>([&builder](auto typedOp) {
+        (void)lowerVCmp(typedOp, builder);
+        return true;
+      })
+      .Case<VMIVcmpsOp>([&builder](auto typedOp) {
+        (void)lowerVCmps(typedOp, builder);
+        return true;
+      })
+      .Case<VMICvtOp>([&builder](auto typedOp) {
+        (void)lowerVCvt(typedOp, builder);
+        return true;
+      })
+      .Case<VMIvLoadOp>([&builder](auto typedOp) {
+        (void)lowerVLoad(typedOp, builder);
+        return true;
+      })
+      .Case<VMIvStoreOp>([&builder](auto typedOp) {
+        (void)lowerVStore(typedOp, builder);
+        return true;
+      })
+      .Case<VMIVsstbOp>([&builder](auto typedOp) {
+        lowerStrideStore(typedOp, builder);
+        return true;
+      })
+      .Default([](Operation *) { return false; });
+}
+
+static bool lowerReductionSpecial(Operation *op, OpBuilder &builder) {
+  return llvm::TypeSwitch<Operation *, bool>(op)
+      .Case<VMIvcaddOp>([&builder](auto typedOp) {
+        (void)lowerVCadd(typedOp, builder);
+        return true;
+      })
+      .Case<VMIvcmaxOp>([&builder](auto typedOp) {
+        (void)lowerVcmax(typedOp, builder);
+        return true;
+      })
+      .Case<VMIvcminOp>([&builder](auto typedOp) {
+        (void)lowerVcmin(typedOp, builder);
+        return true;
+      })
+      .Default([](Operation *) { return false; });
+}
+
+static bool lowerAdvancedSpecial(Operation *op, OpBuilder &builder) {
+  return llvm::TypeSwitch<Operation *, bool>(op)
+      .Case<VMIVmulaOp>([&builder](auto typedOp) {
+        (void)lowerVmula(typedOp, builder);
+        return true;
+      })
+      .Case<VMIVaxpyOp>([&builder](auto typedOp) {
+        (void)lowerVaxpy(typedOp, builder);
+        return true;
+      })
+      .Case<VMIVgatherOp>([&builder](auto typedOp) {
+        (void)lowerVgather(typedOp, builder);
+        return true;
+      })
+      .Case<VMIVscatterOp>([&builder](auto typedOp) {
+        (void)lowerVscatter(typedOp, builder);
+        return true;
+      })
+      .Case<VMIVlreluOp>([&builder](auto typedOp) {
+        (void)lowerVlrelu(typedOp, builder);
+        return true;
+      })
+      .Case<VMIVpreluOp>([&builder](auto typedOp) {
+        (void)lowerVprelu(typedOp, builder);
+        return true;
+      })
+      .Default([](Operation *) { return false; });
+}
+
+static bool lowerSpecial(Operation *op, OpBuilder &builder) {
+  return lowerPredicateAndMemorySpecial(op, builder) ||
+         lowerReductionSpecial(op, builder) ||
+         lowerAdvancedSpecial(op, builder);
+}
+
+template <typename FloatOp, typename IntegerOp, typename UnifiedOp>
+static void lowerTypedBinary(UnifiedOp op, OpBuilder &builder) {
+  Type elementType = getVMIElementType(op.getResult());
+  auto createLegacy = [&builder, elementType](Location loc, Type type,
+                                               Value lhs, Value rhs) -> Value {
+    if (isFloatType(elementType)) {
+      return builder.create<FloatOp>(loc, type, lhs, rhs).getResult();
+    }
+    return builder.create<IntegerOp>(loc, type, lhs, rhs).getResult();
+  };
+  (void)lowerBinaryIgnoringMask(op, createLegacy);
+}
+
+template <typename LegacyOp, typename UnifiedOp>
+static void lowerIntegerBinary(UnifiedOp op, OpBuilder &builder) {
+  auto createLegacy = [&builder](Location loc, Type type, Value lhs,
+                                  Value rhs) -> Value {
+    return builder.create<LegacyOp>(loc, type, lhs, rhs).getResult();
+  };
+  (void)lowerBinaryIgnoringMask(op, createLegacy);
+}
+
+template <typename MaskOp, typename DataOp, typename UnifiedOp>
+static void lowerLogicalBinary(UnifiedOp op, OpBuilder &builder) {
+  builder.setInsertionPoint(op);
+  if (isa<VMIMaskType>(op.getLhs().getType())) {
+    Value result = builder
+                       .create<MaskOp>(op.getLoc(), op.getResult().getType(),
+                                       op.getLhs(), op.getRhs())
+                       .getResult();
+    op.getResult().replaceAllUsesWith(result);
+    op.erase();
+    return;
+  }
+  lowerIntegerBinary<DataOp>(op, builder);
+}
+
+static void lowerShiftRight(VMIVshrOp op, OpBuilder &builder) {
+  Type elementType = getVMIElementType(op.getLhs());
+  auto createLegacy = [&builder, elementType](Location loc, Type type,
+                                               Value lhs, Value rhs) -> Value {
+    if (!cast<IntegerType>(elementType).isSigned()) {
+      return builder.create<VMIShRUIOp>(loc, type, lhs, rhs).getResult();
+    }
+    return builder.create<VMIShRSIOp>(loc, type, lhs, rhs).getResult();
+  };
+  (void)lowerBinaryIgnoringMask(op, createLegacy);
+}
+
+static bool lowerBinary(Operation *op, OpBuilder &builder) {
+  return llvm::TypeSwitch<Operation *, bool>(op)
+      .Case<VMIVaddOp>([&builder](auto typedOp) {
+        lowerTypedBinary<VMIAddFOp, VMIAddIOp>(typedOp, builder); return true;
+      })
+      .Case<VMIVsubOp>([&builder](auto typedOp) {
+        lowerTypedBinary<VMISubFOp, VMISubIOp>(typedOp, builder); return true;
+      })
+      .Case<VMIVmulOp>([&builder](auto typedOp) {
+        lowerTypedBinary<VMIMulFOp, VMIMulIOp>(typedOp, builder); return true;
+      })
+      .Case<VMIVdivOp>([&builder](auto typedOp) {
+        lowerIntegerBinary<VMIDivFOp>(typedOp, builder); return true;
+      })
+      .Case<VMIVminOp>([&builder](auto typedOp) {
+        lowerTypedBinary<VMIMinFOp, VMIMinIOp>(typedOp, builder); return true;
+      })
+      .Case<VMIVmaxOp>([&builder](auto typedOp) {
+        lowerTypedBinary<VMIMaxFOp, VMIMaxIOp>(typedOp, builder); return true;
+      })
+      .Case<VMIVandOp>([&builder](auto typedOp) {
+        lowerLogicalBinary<VMIMaskAndOp, VMIAndIOp>(typedOp, builder);
+        return true;
+      })
+      .Case<VMIVorOp>([&builder](auto typedOp) {
+        lowerLogicalBinary<VMIMaskOrOp, VMIOrIOp>(typedOp, builder); return true;
+      })
+      .Case<VMIVxorOp>([&builder](auto typedOp) {
+        lowerLogicalBinary<VMIMaskXOrOp, VMIXOrIOp>(typedOp, builder);
+        return true;
+      })
+      .Case<VMIVshlOp>([&builder](auto typedOp) {
+        lowerIntegerBinary<VMIShLIOp>(typedOp, builder); return true;
+      })
+      .Case<VMIVshrOp>([&builder](auto typedOp) {
+        lowerShiftRight(typedOp, builder); return true;
+      })
+      .Default([](Operation *) { return false; });
+}
+
+template <typename FloatOp, typename IntegerOp, typename UnifiedOp>
+static void lowerTypedUnary(UnifiedOp op, OpBuilder &builder) {
+  Type elementType = getVMIElementType(op.getResult());
+  auto createLegacy = [&builder, elementType](Location loc, Type type,
+                                               Value source) -> Value {
+    if (isFloatType(elementType)) {
+      return builder.create<FloatOp>(loc, type, source).getResult();
+    }
+    return builder.create<IntegerOp>(loc, type, source).getResult();
+  };
+  (void)lowerMaskedUnary(op, builder, createLegacy);
+}
+
+template <typename LegacyOp, typename UnifiedOp>
+static void lowerSimpleUnary(UnifiedOp op, OpBuilder &builder) {
+  auto createLegacy = [&builder](Location loc, Type type,
+                                  Value source) -> Value {
+    return builder.create<LegacyOp>(loc, type, source).getResult();
+  };
+  (void)lowerMaskedUnary(op, builder, createLegacy);
+}
+
+static Value createAbsoluteValue(VMIVabsOp op, OpBuilder &builder,
+                                 Location loc, Type type, Value source) {
+  Type elementType = getVMIElementType(op.getResult());
+  if (!elementType.isBF16()) {
+    return isFloatType(elementType)
+               ? builder.create<VMIAbsFOp>(loc, type, source).getResult()
+               : builder.create<VMIAbsIOp>(loc, type, source).getResult();
+  }
+  constexpr uint16_t kBFloat16MagnitudeMask = 0x7FFF;
+  auto sourceType = cast<VMIVRegType>(source.getType());
+  Type i16 = builder.getIntegerType(mlir::pto::kValue16);
+  auto integerType = VMIVRegType::get(
+      builder.getContext(), sourceType.getElementCount(), i16,
+      sourceType.getLayout());
+  Value asInteger = builder.create<VMIBitcastOp>(loc, integerType, source);
+  Value mask = builder.create<arith::ConstantOp>(
+      loc, i16, builder.getIntegerAttr(i16, kBFloat16MagnitudeMask));
+  Value maskVector =
+      builder.create<VMIBroadcastOp>(loc, integerType, mask).getResult();
+  Value cleared =
+      builder.create<VMIAndIOp>(loc, integerType, asInteger, maskVector);
+  return builder.create<VMIBitcastOp>(loc, type, cleared).getResult();
+}
+
+static void lowerAbsolute(VMIVabsOp op, OpBuilder &builder) {
+  auto createLegacy = [&builder, op](Location loc, Type type,
+                                      Value source) -> Value {
+    return createAbsoluteValue(op, builder, loc, type, source);
+  };
+  (void)lowerMaskedUnary(op, builder, createLegacy);
+}
+
+static void lowerLogicalNot(VMIVnotOp op, OpBuilder &builder) {
+  builder.setInsertionPoint(op);
+  if (isa<VMIMaskType>(op.getSource().getType())) {
+    Value result = builder
+                       .create<VMIMaskNotOp>(op.getLoc(),
+                                             op.getResult().getType(),
+                                             op.getSource())
+                       .getResult();
+    op.getResult().replaceAllUsesWith(result);
+    op.erase();
+    return;
+  }
+  lowerSimpleUnary<VMINotOp>(op, builder);
+}
+
+static bool lowerUnary(Operation *op, OpBuilder &builder) {
+  return llvm::TypeSwitch<Operation *, bool>(op)
+      .Case<VMIVnegOp>([&builder](auto typedOp) {
+        lowerTypedUnary<VMINegFOp, VMINegIOp>(typedOp, builder); return true;
+      })
+      .Case<VMIVabsOp>([&builder](auto typedOp) {
+        lowerAbsolute(typedOp, builder); return true;
+      })
+      .Case<VMIVsqrtOp>([&builder](auto typedOp) {
+        lowerSimpleUnary<VMISqrtOp>(typedOp, builder); return true;
+      })
+      .Case<VMIVexpOp>([&builder](auto typedOp) {
+        lowerSimpleUnary<VMIExpOp>(typedOp, builder); return true;
+      })
+      .Case<VMIVlnOp>([&builder](auto typedOp) {
+        lowerSimpleUnary<VMILnOp>(typedOp, builder); return true;
+      })
+      .Case<VMIVreluOp>([&builder](auto typedOp) {
+        lowerSimpleUnary<VMIReluOp>(typedOp, builder); return true;
+      })
+      .Case<VMIVnotOp>([&builder](auto typedOp) {
+        lowerLogicalNot(typedOp, builder); return true;
+      })
+      .Default([](Operation *) { return false; });
+}
+
+static void lowerUnifiedOperation(Operation *op) {
+  OpBuilder builder(op);
+  bool lowered = lowerRename(op, builder) || lowerSpecial(op, builder) ||
+                 lowerBinary(op, builder);
+  if (lowered) {
+    return;
+  }
+  (void)lowerUnary(op, builder);
+}
+
+//===----------------------------------------------------------------------===//
 // Pass definition
 //===----------------------------------------------------------------------===//
 
@@ -1156,520 +1568,18 @@ struct VMILowerUnifiedToLegacyPass
 void VMILowerUnifiedToLegacyPass::runOnOperation() {
   ModuleOp module = getOperation();
   SmallVector<Operation *, mlir::pto::kValue128> worklist;
-
-  // Collect all unified VMI ops (walk encounters them in IR order).
-  module.walk([&](Operation *op) {
-    // Category A
-    if (isa<VMIVciOp, VMIVinterpretCastOp, VMIvSelOp, VMIVbrcOp>(op) ||
-        // Category B — binary
-        isa<VMIVaddOp, VMIVsubOp, VMIVmulOp, VMIVdivOp, VMIVminOp, VMIVmaxOp,
-            VMIVandOp, VMIVorOp, VMIVxorOp, VMIVshlOp, VMIVshrOp>(op) ||
-        // Category B — unary
-        isa<VMIVnegOp, VMIVabsOp, VMIVsqrtOp, VMIVexpOp, VMIVlnOp, VMIVreluOp,
-            VMIVnotOp>(op) ||
-        // Category C1
-        isa<VMIVcmpOp, VMIVcmpsOp>(op) ||
-        // Category C2
-        isa<VMICvtOp>(op) ||
-        // Category C3
-        isa<VMIvLoadOp, VMIvStoreOp, VMIVsstbOp>(op) ||
-        // Category C4
-        isa<VMIPsetOp, VMIPgeOp, VMIPltOp>(op) ||
-        // Category C6 — unified reduce (partial coverage)
-        isa<VMIvcaddOp, VMIvcmaxOp, VMIvcminOp>(op) ||
-        // Category C7 — fused multiply-add family → legacy fma
-        isa<VMIVmulaOp, VMIVaxpyOp>(op) ||
-        // Category C8 — indexed gather / scatter
-        isa<VMIVgatherOp, VMIVscatterOp>(op) ||
-        // Category C9 — fused activation / softmax (legacy chains)
-        isa<VMIVlreluOp, VMIVpreluOp>(op)) {
+  module.walk([&worklist](Operation *op) {
+    if (isUnifiedLoweringCandidate(op)) {
       worklist.push_back(op);
     }
-
-    // Category D — no legacy equivalent (require direct VMIToVPTO lowering):
-    //   plt, vector-scalar ops, vaddc/vaddcs, vintlv, vdintlv, vselr,
-    //   vgatherb, vmull
-    // These are intentionally NOT added to the worklist — they flow through
-    // to VMIToVPTO which must provide direct 1:N lowering patterns.
-    if (isa<VMIAddSOp, VMIMulSOp, VMIMaxSOp, VMIMinSOp, VMIShlSOp, VMIShrSOp,
-            VMIVaddcOp, VMIVaddcsOp,
-            VMIVintlvOp, VMIVdintlvOp, VMIVselrOp, VMIVgatherbOp, VMIVmullOp>(
-            op)) {
+    if (requiresDirectVMIToVPTOLowering(op)) {
       op->emitRemark("VMI unified op has no legacy equivalent — "
                      "requires direct VMIToVPTO 1:N lowering");
     }
   });
-
-  // Process consumers before producers to avoid stale producer uses.
   for (Operation *op : llvm::reverse(worklist)) {
-    if (!op->getBlock()) {
-      continue;
-    }
-    OpBuilder builder(op);
-
-    // ---- Category A: pure syntactic renames ----
-
-    if (auto vop = dyn_cast<VMIVciOp>(op)) {
-      // Public vci without grouping (or group=1) is ordinary continuous iota.
-      // group>1 lowers to the internal contiguous-only group_iota producer.
-      builder.setInsertionPoint(op);
-      StringAttr orderAttr;
-      if (auto order = vop.getOrder()) {
-        orderAttr = builder.getStringAttr(*order);
-      }
-
-      Type resultType = vop.getResult().getType();
-      IntegerAttr groupAttr = vop.getGroupAttr();
-      if (groupAttr && groupAttr.getInt() > 1) {
-        if (auto vmiTy = dyn_cast<VMIVRegType>(resultType)) {
-          VMILayoutAttr layout = vmiTy.getLayoutAttr();
-          if (layout && !layout.isContiguous()) {
-            Type contigType = VMIVRegType::get(
-                op->getContext(), vmiTy.getElementCount(),
-                vmiTy.getElementType(),
-                VMILayoutAttr::getContiguous(op->getContext()));
-            Value contig =
-                builder
-                    .create<VMIGroupIotaOp>(op->getLoc(), contigType,
-                                            vop.getBase(), orderAttr, groupAttr)
-                    .getResult();
-            Value converted =
-                builder
-                    .create<VMIEnsureLayoutOp>(op->getLoc(), vmiTy, contig)
-                    .getResult();
-            vop.getResult().replaceAllUsesWith(converted);
-            op->erase();
-            continue;
-          }
-        }
-        Value grouped =
-            builder
-                .create<VMIGroupIotaOp>(op->getLoc(), resultType, vop.getBase(),
-                                        orderAttr, groupAttr)
-                .getResult();
-        vop.getResult().replaceAllUsesWith(grouped);
-        op->erase();
-        continue;
-      }
-
-      Value iota =
-          builder
-              .create<VMIIotaOp>(op->getLoc(), resultType, vop.getBase(),
-                                 orderAttr)
-              .getResult();
-      vop.getResult().replaceAllUsesWith(iota);
-      op->erase();
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIVinterpretCastOp>(op)) {
-      // vinterpret_cast -> bitcast
-      builder.setInsertionPoint(op);
-      Value result =
-          builder
-              .create<VMIBitcastOp>(op->getLoc(), vop.getResult().getType(),
-                                    vop.getSource())
-              .getResult();
-      vop.getResult().replaceAllUsesWith(result);
-      op->erase();
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIvSelOp>(op)) {
-      // vsel -> select
-      builder.setInsertionPoint(op);
-      Value result =
-          builder
-              .create<VMISelectOp>(op->getLoc(), vop.getResult().getType(),
-                                   vop.getMask(), vop.getTrueValue(),
-                                   vop.getFalseValue())
-              .getResult();
-      vop.getResult().replaceAllUsesWith(result);
-      op->erase();
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIVbrcOp>(op)) {
-      // vbrc -> broadcast; vbrc{group} -> group_broadcast
-      builder.setInsertionPoint(op);
-      Value result;
-      if (vop.getGroupAttr()) {
-        result =
-            builder
-                .create<VMIGroupBroadcastOp>(op->getLoc(), vop.getResult().getType(),
-                                             vop.getValue(), vop.getGroupAttr())
-                .getResult();
-      } else {
-        result =
-            builder
-                .create<VMIBroadcastOp>(op->getLoc(), vop.getResult().getType(),
-                                        vop.getValue())
-                .getResult();
-      }
-      vop.getResult().replaceAllUsesWith(result);
-      op->erase();
-      continue;
-    }
-
-    // ---- Category C4: static mask creation ----
-
-    if (auto vop = dyn_cast<VMIPsetOp>(op)) {
-      (void)lowerPset(vop, builder);
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIPgeOp>(op)) {
-      (void)lowerPge(vop, builder);
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIPltOp>(op)) {
-      (void)lowerPlt(vop, builder);
-      continue;
-    }
-
-    // ---- Category C1: vcmp / vcmps ----
-
-    if (auto vop = dyn_cast<VMIVcmpOp>(op)) {
-      (void)lowerVCmp(vop, builder);
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIVcmpsOp>(op)) {
-      (void)lowerVCmps(vop, builder);
-      continue;
-    }
-
-    // ---- Category C2: vcvt ----
-
-    if (auto vop = dyn_cast<VMICvtOp>(op)) {
-      (void)lowerVCvt(vop, builder);
-      continue;
-    }
-
-    // ---- Category C3: vload / vstore ----
-
-    if (auto vop = dyn_cast<VMIvLoadOp>(op)) {
-      (void)lowerVLoad(vop, builder);
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIvStoreOp>(op)) {
-      (void)lowerVStore(vop, builder);
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIVsstbOp>(op)) {
-      // pmode="merge" cannot be expressed by the legacy stride store; leave
-      // the op for VMIToVPTO (which has no vsstb pattern) so the conversion
-      // fails loudly instead of silently dropping the attribute.
-      if (hasMergePmode(vop)) {
-        continue;
-      }
-      builder.create<VMIStrideStoreOp>(
-          vop.getLoc(), vop.getValue(), vop.getDestination(), vop.getOffset(),
-          vop.getBlockStride(), vop.getMask());
-      vop->erase();
-      continue;
-    }
-
-    // ---- Category C6: unified reduce ----
-
-    if (auto vop = dyn_cast<VMIvcaddOp>(op)) {
-      (void)lowerVCadd(vop, builder);
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIvcmaxOp>(op)) {
-      (void)lowerVcmax(vop, builder);
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIvcminOp>(op)) {
-      (void)lowerVcmin(vop, builder);
-      continue;
-    }
-
-    // ---- Category C7: fused multiply-add family ----
-
-    if (auto vop = dyn_cast<VMIVmulaOp>(op)) {
-      (void)lowerVmula(vop, builder);
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIVaxpyOp>(op)) {
-      (void)lowerVaxpy(vop, builder);
-      continue;
-    }
-
-    // ---- Category C8: indexed gather / scatter ----
-
-    if (auto vop = dyn_cast<VMIVgatherOp>(op)) {
-      (void)lowerVgather(vop, builder);
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIVscatterOp>(op)) {
-      (void)lowerVscatter(vop, builder);
-      continue;
-    }
-
-    // ---- Category C9: fused activation / softmax ----
-
-    if (auto vop = dyn_cast<VMIVlreluOp>(op)) {
-      (void)lowerVlrelu(vop, builder);
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIVpreluOp>(op)) {
-      (void)lowerVprelu(vop, builder);
-      continue;
-    }
-
-    // ---- Category B: binary elementwise, mask/pmode discarded ----
-
-    if (auto vop = dyn_cast<VMIVaddOp>(op)) {
-      Type elemType = getVMIElementType(vop.getResult());
-      auto createLegacy = [&](Location loc, Type ty, Value lhs, Value rhs) -> Value {
-        if (isFloatType(elemType)) {
-          return builder.create<VMIAddFOp>(loc, ty, lhs, rhs).getResult();
-        }
-        return builder.create<VMIAddIOp>(loc, ty, lhs, rhs).getResult();
-      };
-      (void)lowerBinaryIgnoringMask(vop, createLegacy);
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIVsubOp>(op)) {
-      Type elemType = getVMIElementType(vop.getResult());
-      auto createLegacy = [&](Location loc, Type ty, Value lhs, Value rhs) -> Value {
-        if (isFloatType(elemType)) {
-          return builder.create<VMISubFOp>(loc, ty, lhs, rhs).getResult();
-        }
-        return builder.create<VMISubIOp>(loc, ty, lhs, rhs).getResult();
-      };
-      (void)lowerBinaryIgnoringMask(vop, createLegacy);
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIVmulOp>(op)) {
-      Type elemType = getVMIElementType(vop.getResult());
-      auto createLegacy = [&](Location loc, Type ty, Value lhs, Value rhs) -> Value {
-        if (isFloatType(elemType)) {
-          return builder.create<VMIMulFOp>(loc, ty, lhs, rhs).getResult();
-        }
-        return builder.create<VMIMulIOp>(loc, ty, lhs, rhs).getResult();
-      };
-      (void)lowerBinaryIgnoringMask(vop, createLegacy);
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIVdivOp>(op)) {
-      // Float-only; no legacy integer divide.
-      auto createLegacy = [&](Location loc, Type ty, Value lhs,
-                              Value rhs) -> Value {
-        return builder.create<VMIDivFOp>(loc, ty, lhs, rhs).getResult();
-      };
-      (void)lowerBinaryIgnoringMask(vop, createLegacy);
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIVminOp>(op)) {
-      Type elemType = getVMIElementType(vop.getResult());
-      auto createLegacy = [&](Location loc, Type ty, Value lhs,
-                              Value rhs) -> Value {
-        if (isFloatType(elemType)) {
-          return builder.create<VMIMinFOp>(loc, ty, lhs, rhs).getResult();
-        }
-        return builder.create<VMIMinIOp>(loc, ty, lhs, rhs).getResult();
-      };
-      (void)lowerBinaryIgnoringMask(vop, createLegacy);
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIVmaxOp>(op)) {
-      Type elemType = getVMIElementType(vop.getResult());
-      auto createLegacy = [&](Location loc, Type ty, Value lhs,
-                              Value rhs) -> Value {
-        if (isFloatType(elemType)) {
-          return builder.create<VMIMaxFOp>(loc, ty, lhs, rhs).getResult();
-        }
-        return builder.create<VMIMaxIOp>(loc, ty, lhs, rhs).getResult();
-      };
-      (void)lowerBinaryIgnoringMask(vop, createLegacy);
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIVandOp>(op)) {
-      builder.setInsertionPoint(op);
-      if (isa<VMIMaskType>(vop.getLhs().getType())) {
-        // Mask logic path: lower to mask_and.
-        Value result = builder.create<VMIMaskAndOp>(
-            vop.getLoc(), vop.getResult().getType(),
-            vop.getLhs(), vop.getRhs()).getResult();
-        vop.getResult().replaceAllUsesWith(result);
-        op->erase();
-        continue;
-      }
-      auto createLegacy = [&](Location loc, Type ty, Value lhs,
-                              Value rhs) -> Value {
-        return builder.create<VMIAndIOp>(loc, ty, lhs, rhs).getResult();
-      };
-      (void)lowerBinaryIgnoringMask(vop, createLegacy);
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIVorOp>(op)) {
-      builder.setInsertionPoint(op);
-      if (isa<VMIMaskType>(vop.getLhs().getType())) {
-        // Mask logic path: lower to mask_or.
-        Value result = builder.create<VMIMaskOrOp>(
-            vop.getLoc(), vop.getResult().getType(),
-            vop.getLhs(), vop.getRhs()).getResult();
-        vop.getResult().replaceAllUsesWith(result);
-        op->erase();
-        continue;
-      }
-      auto createLegacy = [&](Location loc, Type ty, Value lhs,
-                              Value rhs) -> Value {
-        return builder.create<VMIOrIOp>(loc, ty, lhs, rhs).getResult();
-      };
-      (void)lowerBinaryIgnoringMask(vop, createLegacy);
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIVxorOp>(op)) {
-      builder.setInsertionPoint(op);
-      if (isa<VMIMaskType>(vop.getLhs().getType())) {
-        // Mask logic path: lower to mask_xor.
-        Value result = builder.create<VMIMaskXOrOp>(
-            vop.getLoc(), vop.getResult().getType(),
-            vop.getLhs(), vop.getRhs()).getResult();
-        vop.getResult().replaceAllUsesWith(result);
-        op->erase();
-        continue;
-      }
-      auto createLegacy = [&](Location loc, Type ty, Value lhs,
-                              Value rhs) -> Value {
-        return builder.create<VMIXOrIOp>(loc, ty, lhs, rhs).getResult();
-      };
-      (void)lowerBinaryIgnoringMask(vop, createLegacy);
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIVshlOp>(op)) {
-      auto createLegacy = [&](Location loc, Type ty, Value lhs,
-                              Value rhs) -> Value {
-        return builder.create<VMIShLIOp>(loc, ty, lhs, rhs).getResult();
-      };
-      (void)lowerBinaryIgnoringMask(vop, createLegacy);
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIVshrOp>(op)) {
-      Type elemType = getVMIElementType(vop.getLhs());
-      auto createLegacy = [&](Location loc, Type ty, Value lhs,
-                              Value rhs) -> Value {
-        auto intType = cast<IntegerType>(elemType);
-        if (!intType.isSigned()) {
-          return builder.create<VMIShRUIOp>(loc, ty, lhs, rhs).getResult();
-        }
-        return builder.create<VMIShRSIOp>(loc, ty, lhs, rhs).getResult();
-      };
-      (void)lowerBinaryIgnoringMask(vop, createLegacy);
-      continue;
-    }
-
-    // ---- Category B: masked elementwise — unary ----
-
-    if (auto vop = dyn_cast<VMIVnegOp>(op)) {
-      Type elemType = getVMIElementType(vop.getResult());
-      auto createLegacy = [&](Location loc, Type ty, Value src) -> Value {
-        if (isFloatType(elemType)) {
-          return builder.create<VMINegFOp>(loc, ty, src).getResult();
-        }
-        return builder.create<VMINegIOp>(loc, ty, src).getResult();
-      };
-      (void)lowerMaskedUnary(vop, builder, createLegacy);
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIVabsOp>(op)) {
-      Type elemType = getVMIElementType(vop.getResult());
-      auto createLegacy = [&](Location loc, Type ty, Value src) -> Value {
-        // bf16 has no vector absf; clear the sign bit (ASC: vand with 0x7FFF).
-        if (elemType.isBF16()) {
-          auto srcTy = cast<VMIVRegType>(src.getType());
-          Type i16 = builder.getIntegerType(16);
-          auto iTy = VMIVRegType::get(builder.getContext(),
-                                      srcTy.getElementCount(), i16,
-                                      srcTy.getLayout());
-          Value asI = builder.create<VMIBitcastOp>(loc, iTy, src);
-          Value c = builder.create<arith::ConstantOp>(
-              loc, i16, builder.getIntegerAttr(i16, 0x7FFF));
-          Value maskVec =
-              builder.create<VMIBroadcastOp>(loc, iTy, c).getResult();
-          Value cleared =
-              builder.create<VMIAndIOp>(loc, iTy, asI, maskVec).getResult();
-          return builder.create<VMIBitcastOp>(loc, ty, cleared).getResult();
-        }
-        if (isFloatType(elemType)) {
-          return builder.create<VMIAbsFOp>(loc, ty, src).getResult();
-        }
-        return builder.create<VMIAbsIOp>(loc, ty, src).getResult();
-      };
-      (void)lowerMaskedUnary(vop, builder, createLegacy);
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIVsqrtOp>(op)) {
-      auto createLegacy = [&](Location loc, Type ty, Value src) -> Value {
-        return builder.create<VMISqrtOp>(loc, ty, src).getResult();
-      };
-      (void)lowerMaskedUnary(vop, builder, createLegacy);
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIVexpOp>(op)) {
-      auto createLegacy = [&](Location loc, Type ty, Value src) -> Value {
-        return builder.create<VMIExpOp>(loc, ty, src).getResult();
-      };
-      (void)lowerMaskedUnary(vop, builder, createLegacy);
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIVlnOp>(op)) {
-      auto createLegacy = [&](Location loc, Type ty, Value src) -> Value {
-        return builder.create<VMILnOp>(loc, ty, src).getResult();
-      };
-      (void)lowerMaskedUnary(vop, builder, createLegacy);
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIVreluOp>(op)) {
-      auto createLegacy = [&](Location loc, Type ty, Value src) -> Value {
-        return builder.create<VMIReluOp>(loc, ty, src).getResult();
-      };
-      (void)lowerMaskedUnary(vop, builder, createLegacy);
-      continue;
-    }
-
-    if (auto vop = dyn_cast<VMIVnotOp>(op)) {
-      builder.setInsertionPoint(op);
-      if (isa<VMIMaskType>(vop.getSource().getType())) {
-        // Mask logic path: lower to mask_not.
-        Value result = builder.create<VMIMaskNotOp>(
-            vop.getLoc(), vop.getResult().getType(),
-            vop.getSource()).getResult();
-        vop.getResult().replaceAllUsesWith(result);
-        op->erase();
-        continue;
-      }
-      auto createLegacy = [&](Location loc, Type ty, Value src) -> Value {
-        return builder.create<VMINotOp>(loc, ty, src).getResult();
-      };
-      (void)lowerMaskedUnary(vop, builder, createLegacy);
-      continue;
+    if (op->getBlock()) {
+      lowerUnifiedOperation(op);
     }
   }
 }

@@ -16,6 +16,8 @@ module attributes {pto.target_arch = "a5"} {
         %rhs: f32,
         %dst: !pto.ptr<f32, ub>,
         %offset: index) {
+      %c8 = arith.constant 8 : index
+      %aligned_offset = arith.muli %offset, %c8 : index
       %lhs_v = pto.vmi.vbrc %lhs
           : f32 -> !pto.vmi.vreg<128xf32>
       %rhs_v = pto.vmi.vbrc %rhs
@@ -25,7 +27,7 @@ module attributes {pto.target_arch = "a5"} {
       } else {
         scf.yield %rhs_v : !pto.vmi.vreg<128xf32>
       }
-      pto.vmi.vstore %chosen, %dst[%offset]
+      pto.vmi.vstore %chosen, %dst[%aligned_offset]
           : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
       return
     }

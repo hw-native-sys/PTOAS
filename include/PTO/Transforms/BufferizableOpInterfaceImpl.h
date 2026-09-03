@@ -12,8 +12,9 @@
 #ifndef PTO_BUFFERIZABLEOPINTERFACEIMPL_H
 #define PTO_BUFFERIZABLEOPINTERFACEIMPL_H
 
+#include "mlir/IR/DialectRegistry.h"
+
 namespace mlir {
-class DialectRegistry;
 
 namespace pto {
 void registerBufferizableOpInterfaceExternalModels(DialectRegistry &registry);

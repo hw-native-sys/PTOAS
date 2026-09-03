@@ -7926,10 +7926,11 @@ static FailureOr<Value> buildGlobalTensorViewFromPointer(
                            strideType, ArrayAttr{}, ArrayAttr{}, ValueRange{})
                        .getResult(0);
 
+  // Keep the GlobalTensor template descriptors identical to the constructor
+  // arguments, including the specialized MX shape and stride types.
   std::string gtTypeStr =
-      getGlobalTensorTypeStringFromShapeAndStrides(elemTy, shape,
-                                                   effectiveStrides,
-                                                   layoutEnum);
+      "GlobalTensor<" + getElemTypeStringForGT(elemTy) + ", " + shapeType +
+      ", " + strideType + ", " + layoutEnum.str() + ">";
   auto gtType = emitc::OpaqueType::get(ctx, gtTypeStr);
   auto gt = rewriter.create<emitc::CallOpaqueOp>(
       loc, gtType, gtTypeStr, ArrayAttr{}, ArrayAttr{},
@@ -11800,6 +11801,48 @@ struct PTORowSumToEmitC : public OpConversionPattern<pto::TRowSumOp> {
   }
 };
 
+struct PTOTInterleaveToEmitC
+    : public OpConversionPattern<pto::TInterleaveOp> {
+  using OpConversionPattern<pto::TInterleaveOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(
+      pto::TInterleaveOp op, OpAdaptor adaptor,
+      ConversionPatternRewriter &rewriter) const override {
+    createLastUseAwareOpaqueCall(
+        rewriter, op.getOperation(), TypeRange{}, "TINTERLEAVE",
+        ValueRange{adaptor.getDst1(), adaptor.getDst0(), adaptor.getSrc1(),
+                   adaptor.getSrc0()});
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+struct PTOTDeInterleaveToEmitC
+    : public OpConversionPattern<pto::TDeInterleaveOp> {
+  using OpConversionPattern<pto::TDeInterleaveOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(
+      pto::TDeInterleaveOp op, OpAdaptor adaptor,
+      ConversionPatternRewriter &rewriter) const override {
+    Value dst1 = adaptor.getDsts()[1];
+    Value dst0 = adaptor.getDsts()[0];
+    Value src0 = adaptor.getSrcs()[0];
+    bool hasSecondSource = adaptor.getSrcs().size() == 2;
+    if (hasSecondSource) {
+      Value src1 = adaptor.getSrcs()[1];
+      createLastUseAwareOpaqueCall(
+          rewriter, op.getOperation(), TypeRange{}, "TDEINTERLEAVE",
+          ValueRange{dst1, dst0, src1, src0});
+    } else {
+      createLastUseAwareOpaqueCall(
+          rewriter, op.getOperation(), TypeRange{}, "TDEINTERLEAVE",
+          ValueRange{dst1, dst0, src0});
+    }
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 struct PTORowProdToEmitC : public OpConversionPattern<pto::TRowProdOp> {
   using OpConversionPattern<pto::TRowProdOp>::OpConversionPattern;
 
@@ -13592,6 +13635,8 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<ReinterpretCastToEmitC>(typeConverter, ctx);
   patterns.add<PTOTAbsToTABS>(typeConverter, ctx);
   patterns.add<PTOTAddToTADD>(typeConverter, ctx);
+  patterns.add<PTOTInterleaveToEmitC>(typeConverter, ctx);
+  patterns.add<PTOTDeInterleaveToEmitC>(typeConverter, ctx);
   patterns.add<PTOAddSCToTADDSC>(typeConverter, ctx);
   patterns.add<ArithCastOPToEmitC>(typeConverter, ctx);
   patterns.add<ArithTruncIToEmitC>(typeConverter, ctx);

@@ -8,7 +8,7 @@ PTOAS 当前主 pipeline 在内存规划前后包含两个 ModuleOp pass：
 PTOViewToMemref
   -> implicit tmp materialization
   -> legacy/modern memplan
-  -> InsertSync/GSS/BufidSync
+  -> InsertSync/BufidSync
   -> PTOResolveBufferSelect
   -> PTOMaterializeTileHandles
   -> EmitC/VPTO
@@ -66,10 +66,10 @@ PTO tile/view IR
 
 | Op | 当前行为 | Tile-native 目标 | Memplan | InsertSync | Backend 与测试 |
 |---|---|---|---|---|---|
-| `pto.alloc_tile` | `PTOViewToMemref` 已透传；memplan 填写 `addr` | 保持现状，作为单 slot local root | legacy/modern 均继续收集无地址 root；level3 校验显式地址 | 现有 InsertSync 已读取类型、大小和常量地址；GSS 需从 `alloc_tile addr` 构造 `PointerLikeInfo` | EmitC/VPTO 已有直接 lowering；保留 level1/2 自动地址和 level3 显式地址测试 |
-| `pto.alloc_multi_tile` | 已保持 tile-native；memplan 写入内部 N-address 属性，level3 保留用户 base | op 本身作为 N-slot root，最终可由 backend 直接消费 | legacy/modern 已支持 `slotCount=N`、`slotBytes`、`totalBytes` 和每 slot offsets；禁止 sibling slot 互相 alias | InsertSync/GSS 已直接识别 multi root，不依赖 `slot_marker -> pointer_cast` | 当前由 `PTOResolveBufferSelect` 展开成带地址的 `alloc_tile`；已覆盖 constant/dynamic slot、loop/non-loop 测试 |
+| `pto.alloc_tile` | `PTOViewToMemref` 已透传；memplan 填写 `addr` | 保持现状，作为单 slot local root | legacy/modern 均继续收集无地址 root；level3 校验显式地址 | InsertSync 已读取类型、大小和常量地址 | EmitC/VPTO 已有直接 lowering；保留 level1/2 自动地址和 level3 显式地址测试 |
+| `pto.alloc_multi_tile` | 已保持 tile-native；memplan 写入内部 N-address 属性，level3 保留用户 base | op 本身作为 N-slot root，最终可由 backend 直接消费 | legacy/modern 已支持 `slotCount=N`、`slotBytes`、`totalBytes` 和每 slot offsets；禁止 sibling slot 互相 alias | InsertSync 已直接识别 multi root，不依赖 `slot_marker -> pointer_cast` | 当前由 `PTOResolveBufferSelect` 展开成带地址的 `alloc_tile`；已覆盖 constant/dynamic slot、loop/non-loop 测试 |
 | `pto.multi_tile_get` | 已保持到 sync 和 `PTOResolveBufferSelect` | 最终继续保持到 backend | result 已 alias 到 multi root，并携带 slot expression | constant slot 只访问一个地址；dynamic slot 保守访问全部地址，并保留 dyn event-id 推导 | 当前 resolve pass 根据 slot 生成带单地址的 `alloc_tile`；不再生成 `slot_marker` |
-| `pto.declare_tile` | 已保持 tile-native，不参与静态 local allocation | 保持现状，表示地址由 `tpop/tassign` 等运行时操作绑定 | legacy/modern 不收集为 allocation root | InsertSync 直接注册 symbolic root；GSS 按 declared SSA identity 建模 | EmitC 已直接声明 Tile；已覆盖 tpush/tpop 和 interleaved sync/GSS |
+| `pto.declare_tile` | 已保持 tile-native，不参与静态 local allocation | 保持现状，表示地址由 `tpop/tassign` 等运行时操作绑定 | legacy/modern 不收集为 allocation root | InsertSync 直接注册 symbolic root | EmitC 已直接声明 Tile；已覆盖 tpush/tpop 和 interleaved sync |
 | `pto.declare_tile_memref` | 仅保留 legacy memref IR 兼容，不再由 `PTOViewToMemref` 生成 | 其余旧兼容用户清除后删除 | legacy 仅跳过，不分配 | InsertSync 暂保兼容入口 | 暂保 legacy EmitC pattern，最终随兼容路径删除 |
 | `pto.bind_tile` | memref 与 tile metadata 的桥接和 alias anchor | local tile 不再需要；只允许迁移期兼容，最终删除或限制为外部 ABI bridge | 先统一 `getAliasSource()`，切换后删除 bind 分支 | 先统一 alias tracing，切换后删除 bind 分支 | 删除 materialize/EmitC bind lowering 测试 |
 | `pto.pointer_cast` | 表达 memref root 的物理地址或 multi-address root | 仅保留真正的 raw-address ABI bridge；普通 local allocation 改由 allocation op 持有地址 | 不再作为 `alloc_tile` 的 materialization 结果 | 若保留，sync 继续读取其地址；multi-buffer 不再必须依赖它 | 后端保留 raw-address lowering，删除 alloc fallback 用法 |
@@ -80,9 +80,9 @@ PTO tile/view IR
 
 | Op | 当前行为 | Tile-native 目标 | Memplan / Alias | InsertSync | Backend 与测试 |
 |---|---|---|---|---|---|
-| `pto.subview` | 已在 memplan 和 sync 主线保持 tile-native，不再生成 `memref.subview + pto.bind_tile` | 同步完成前保留 `pto.subview` | result 与 source 同 root；按 layout/stride/offset 计算 byte range | InsertSync 已精确计算地址范围；GSS 通过通用 view alias 回溯 source | `PTOResolveBufferSelect` 在同步后解析为带偏移地址的 `alloc_tile`，供 EmitC/VPTO 共用；覆盖 row/col-major、boxed、dynamic offset 和 valid shape |
-| `pto.treshape` | 已保持 tile-native，不再生成 memref view 或 `bind_tile` | 保持原 op | result 与 source 完全 alias，size 不变；legacy/modern memplan 已传播 alias | InsertSync/GSS 已直接传播 result-to-source alias | EmitC 已直接 lowering；覆盖 tile 参数、动态 valid shape 和静态 valid shape |
-| `pto.bitcast` | 已保持 tile-native，不再生成 memref view 或 `bind_tile` | 保持原 op | result 与 source alias；legacy/modern memplan 已按 byte range 传播同一 root，并校验总容量一致 | InsertSync/GSS 已直接传播 alias，不按 element type 分裂 root | EmitC 已直接 lowering；覆盖 tile 参数和同容量 dtype 改变 |
+| `pto.subview` | 已在 memplan 和 sync 主线保持 tile-native，不再生成 `memref.subview + pto.bind_tile` | 同步完成前保留 `pto.subview` | result 与 source 同 root；按 layout/stride/offset 计算 byte range | InsertSync 已精确计算地址范围并通过通用 view alias 回溯 source | `PTOResolveBufferSelect` 在同步后解析为带偏移地址的 `alloc_tile`，供 EmitC/VPTO 共用；覆盖 row/col-major、boxed、dynamic offset 和 valid shape |
+| `pto.treshape` | 已保持 tile-native，不再生成 memref view 或 `bind_tile` | 保持原 op | result 与 source 完全 alias，size 不变；legacy/modern memplan 已传播 alias | InsertSync 已直接传播 result-to-source alias | EmitC 已直接 lowering；覆盖 tile 参数、动态 valid shape 和静态 valid shape |
+| `pto.bitcast` | 已保持 tile-native，不再生成 memref view 或 `bind_tile` | 保持原 op | result 与 source alias；legacy/modern memplan 已按 byte range 传播同一 root，并校验总容量一致 | InsertSync 已直接传播 alias，不按 element type 分裂 root | EmitC 已直接 lowering；覆盖 tile 参数和同容量 dtype 改变 |
 | `pto.set_validshape` | 已保持 tile-native，输入已收紧为 `TileBufType` | 直接更新 tile handle metadata，不改变物理 root | 不产生新 root；物理 size 使用 allocation shape，不使用 valid shape | 对原 root 建模为 metadata Write | EmitC 已直接消费；覆盖 if 和动态 valid shape |
 | `pto.get_validshape` | 已保持 tile-native，输入已收紧为 `TileBufType` | 直接读取 tile operand metadata | 不产生 root | 对原 root 建模为 metadata Read | EmitC 已直接 lowering；覆盖 tile 参数和动态值 |
 | `pto.tile_buf_addr` | tile-native 输入已保持原 op；仅 legacy memref 输入仍走线性 memref 兼容路径 | 直接从 tile root/view 计算地址；返回 pointer-like PTO 类型 | 不产生新 root；legacy memplan 将 source 记录为 use | 包含该 op 的函数保持 tile ABI，地址结果保留 source provenance | EmitC 直接生成 `tile.data()`，VPTO pointer normalize 保持 typed pointer；覆盖 tile 参数和 alloc root |
@@ -263,7 +263,7 @@ op 默认不需要迁移实现；仍需通过完整 lit 确认它们没有间接
 删除两个 pass 前的支持状态：
 
 1. `pto.treshape` 和 `pto.bitcast` 的 alias 传播。
-2. `pto.declare_tile` runtime-bound root：已完成 EmitC、memplan、InsertSync/GSS 主路径迁移。
+2. `pto.declare_tile` runtime-bound root：已完成 EmitC、memplan、InsertSync 主路径迁移。
 3. `pto.alloc_multi_tile` 的 N-address root：已完成。
 4. `pto.multi_tile_get` 的 constant/dynamic slot narrowing：已完成。
 5. tile 类型 helper argument 和 `func.call` effects。
@@ -274,20 +274,7 @@ op 默认不需要迁移实现；仍需通过完整 lit 确认它们没有间接
 但新增 view/multi-buffer alias 后必须确认 dependency pair 仍能区分普通
 output-input RAW 和 scratch WAW/WAR。
 
-### 10.2 Graph Sync Solver
-
-GSS 原先主要从 `pto.pointer_cast` 读取物理地址。`getMemInfo()` 的支持状态：
-
-- `pto.alloc_tile addr` -> 单地址 `PointerLikeInfo`；
-- `pto.alloc_multi_tile addrs` -> N 地址 `PointerLikeInfo`：已完成；
-- `pto.multi_tile_get` -> constant slot 单地址或 dynamic slot 全地址：已完成；
-- `pto.subview` -> base address加 byte offset并缩小访问范围；
-- `treshape/bitcast/set_validshape` -> 传播原 root。
-
-否则 memplan 把两个不同 SSA allocation 复用到同一物理地址后，GSS 可能漏掉
-cross-root hazard。
-
-### 10.3 BufidSync 与 Macro Model
+### 10.2 BufidSync 与 Macro Model
 
 检查所有 unwrap helper，去掉对 `bind_tile/memref.subview` 的必需依赖，直接穿透：
 
@@ -366,7 +353,7 @@ VPTO backend
 
 - 主 pipeline 中不再产生需要恢复为 tile 的 local memref；
 - legacy/modern memplan 都通过完整测试；
-- InsertSync/GSS/BufidSync 都能直接分析 tile-native multi-buffer 和 view；
+- InsertSync/BufidSync 都能直接分析 tile-native multi-buffer 和 view；
 - EmitC/VPTO 不再依赖 bind/memref metadata 回溯；
 - helper、控制流、fusion 和 multi-buffer 测试全部通过；
 - `rg "PTOViewToMemref|PTOMaterializeTileHandles"` 只剩历史文档；

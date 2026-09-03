@@ -21,13 +21,15 @@ module {
       %dst: !pto.ptr<!pto.f4E1M2x2, ub>,
       %off: index,
       %active: index) {
+    %c32 = arith.constant 32 : index
+    %aligned_off = arith.muli %off, %c32 : index
     %mask = pto.vmi.create_mask %active
         : index -> !pto.vmi.mask<256xpred>
     %packed = pto.vmi.vcvt %src {rounding = "R"}
         : !pto.vmi.vreg<256x!pto.bf16x2,
                         #pto.vmi.layout<deinterleaved = 4>>
        -> !pto.vmi.vreg<256x!pto.f4E1M2x2>
-    pto.vmi.vstore %packed, %dst[%off], %mask
+    pto.vmi.vstore %packed, %dst[%aligned_off], %mask
         : !pto.vmi.vreg<256x!pto.f4E1M2x2>,
           !pto.ptr<!pto.f4E1M2x2, ub>,
           !pto.vmi.mask<256xpred>
@@ -54,6 +56,8 @@ module {
 // LOWER-SAME: %[[DST:[^,]+]]: !pto.ptr<!pto.f4E1M2x2, ub>
 // LOWER-SAME: %[[OFF:[^,]+]]: index
 // LOWER-SAME: %[[ACTIVE:[^)]+]]: index)
+// LOWER: %[[C32:.*]] = arith.constant 32 : index
+// LOWER: %[[ALIGNED_OFF:.*]] = arith.muli %[[OFF]], %[[C32]] : index
 // LOWER-DAG: %[[VCVT_MASK:.*]] = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
 // LOWER-DAG: %[[MERGE_MASK:.*]] = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
 // LOWER: %[[P0_BF16:.*]] = pto.vbitcast %[[P0]] : !pto.vreg<64x!pto.bf16x2> -> !pto.vreg<128xbf16>
@@ -71,4 +75,4 @@ module {
 // LOWER: %[[STORE_NONNEG:.*]] = arith.maxsi %[[STORE_ACTIVE_I32]], {{.*}} : i32
 // LOWER: %[[STORE_CLAMPED:.*]] = arith.minui %[[STORE_NONNEG]], {{.*}} : i32
 // LOWER: %[[STORE_M:.*]], %{{.*}} = pto.plt_b8 %[[STORE_CLAMPED]] : i32 -> !pto.mask<b8>, i32
-// LOWER: pto.vsts %[[PACKED]], %[[DST]][%[[OFF]]], %[[STORE_M]] : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b8>
+// LOWER: pto.vsts %[[PACKED]], %[[DST]][%[[ALIGNED_OFF]]], %[[STORE_M]] : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b8>

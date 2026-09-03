@@ -1,0 +1,97 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Test pto-promote-persistent-fragment-loops fail-fast behavior.
+//
+// All malformed cases live in ONE function on purpose: the pass collects
+// every diagnostic in a function before failing once.  Spread across
+// multiple functions the emitted set would be nondeterministic - MLIR's
+// function pass adaptor stops scheduling functions after the first failure
+// (and stops immediately with threading disabled).
+
+// RUN: not pto-test-opt --pto-promote-persistent-fragment-loops %s 2>&1 | FileCheck %s
+
+module {
+  // The while check runs during discovery (step 2), before the per-loop
+  // checks (step 3), so its diagnostic prints first.  The while body below
+  // holds TWO related accesses (a direct store and a GEP+store pair); the
+  // error must still be emitted exactly once per scf.while.
+  // CHECK: error: persistent fragment buffer is accessed inside scf.while, which cannot be fully unrolled; persistent fragment loops must use scf.for
+  // CHECK-NOT: error: persistent fragment buffer is accessed inside scf.while
+  // A fixed factor on a persistent loop silently changes explicit user
+  // intent, so it is rejected outright.
+  // CHECK: error: persistent fragment loop requires full unroll; a fixed 'pto.unroll_factor' is not supported
+  // CHECK: error: persistent fragment loop in 'bad_persistent_loops' has trip count 200, which exceeds max-persistent-unroll-trip-count=128
+  // A malformed hint must stay a hard error; the promotion must not
+  // silently overwrite it with "full".
+  // CHECK: error: unknown 'pto.unroll' value 'bogus'; expected "full" (native full unroll) or "enable" (forwarded to the compiler's cost model by pto-convert-scf-to-cf-with-loop-hints)
+  func.func @bad_persistent_loops(%n: index) {
+    %c2_i32 = arith.constant 2 : i32
+    %fragA = llvm.alloca %c2_i32 x f32 {pto.persistent} : (i32) -> !llvm.ptr
+    pto.section.simt<<<32, 1, 1>>> {
+      %zero = arith.constant 0.000000e+00 : f32
+      %c0 = arith.constant 0 : index
+      %c4 = arith.constant 4 : index
+      %c1 = arith.constant 1 : index
+      scf.for %i = %c0 to %c4 step %c1 {
+        %i64 = arith.index_cast %i : index to i64
+        %element = llvm.getelementptr %fragA[%i64] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+        llvm.store %zero, %element : f32, !llvm.ptr
+      } {pto.unroll_factor = 2 : i32}
+    }
+
+    // scf.while cannot carry a full-unroll hint; silently skipping the
+    // access would break fragment materialization downstream.
+    %fragB = llvm.alloca %c2_i32 x f32 {pto.persistent} : (i32) -> !llvm.ptr
+    pto.section.simt<<<32, 1, 1>>> {
+      %zero = arith.constant 0.000000e+00 : f32
+      %c0 = arith.constant 0 : index
+      %c1 = arith.constant 1 : index
+      %i = scf.while (%cur = %c0) : (index) -> index {
+        %cond = arith.cmpi slt, %cur, %n : index
+        scf.condition(%cond) %cur : index
+      } do {
+      ^bb0(%cur: index):
+        %gB = llvm.getelementptr %fragB[0] : (!llvm.ptr) -> !llvm.ptr, f32
+        llvm.store %zero, %gB : f32, !llvm.ptr
+        llvm.store %zero, %fragB : f32, !llvm.ptr
+        %next = arith.addi %cur, %c1 : index
+        scf.yield %next : index
+      }
+    }
+
+    // The trip-count guardrail bounds the forced code expansion.
+    %fragC = llvm.alloca %c2_i32 x f32 {pto.persistent} : (i32) -> !llvm.ptr
+    pto.section.simt<<<32, 1, 1>>> {
+      %zero = arith.constant 0.000000e+00 : f32
+      %c0 = arith.constant 0 : index
+      %c200 = arith.constant 200 : index
+      %c1 = arith.constant 1 : index
+      scf.for %i = %c0 to %c200 step %c1 {
+        %i64 = arith.index_cast %i : index to i64
+        %element = llvm.getelementptr %fragC[%i64] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+        llvm.store %zero, %element : f32, !llvm.ptr
+      }
+    }
+    // A malformed hint on a persistent loop must not be silently repaired
+    // by the promotion overwriting it with "full".
+    %fragD = llvm.alloca %c2_i32 x f32 {pto.persistent} : (i32) -> !llvm.ptr
+    pto.section.simt<<<32, 1, 1>>> {
+      %zero = arith.constant 0.000000e+00 : f32
+      %c0 = arith.constant 0 : index
+      %c4 = arith.constant 4 : index
+      %c1 = arith.constant 1 : index
+      scf.for %i = %c0 to %c4 step %c1 {
+        %i64 = arith.index_cast %i : index to i64
+        %element = llvm.getelementptr %fragD[%i64] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+        llvm.store %zero, %element : f32, !llvm.ptr
+      } {pto.unroll = "bogus"}
+    }
+    return
+  }
+}

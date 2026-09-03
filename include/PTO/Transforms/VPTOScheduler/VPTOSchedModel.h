@@ -22,6 +22,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 
+#include <cstdint>
 #include <optional>
 #include <string>
 
@@ -63,12 +64,22 @@ struct VPTOSchedClass {
   SmallVector<int> readAdvance;
 };
 
+/// Effective scheduling parameters for one operation. Target models may
+/// inherit these values from the operation's scheduling class and override
+/// individual fields without creating an opcode-specific class.
+struct VPTOSchedParameters {
+  unsigned microOps = 1;
+  unsigned writeLatency = 1;
+  ArrayRef<VPTOSchedResourceUse> resources;
+  ArrayRef<int> readAdvance;
+};
+
 struct VPTORegPressureSet {
   VPTOPressureSetID id = 0;
   std::string name;
   std::optional<unsigned> limit;
-  double weight = 1.0;
-  double spillCost = 1.0;
+  int64_t weight = 1;
+  int64_t spillCost = 1;
 };
 
 struct VPTORegPressureContribution {
@@ -84,13 +95,22 @@ public:
   virtual ArrayRef<VPTOSchedResource> getResources() const = 0;
   virtual ArrayRef<VPTORegPressureSet> getPressureSets() const = 0;
   virtual const VPTOSchedClass &getSchedClass(Operation *op) const = 0;
+  virtual VPTOSchedParameters getSchedParameters(Operation *op) const {
+    const VPTOSchedClass &schedClass = getSchedClass(op);
+    return {schedClass.microOps, schedClass.writeLatency,
+            schedClass.resources, schedClass.readAdvance};
+  }
+  /// Return the direct SSA source whose physical register pressure is shared
+  /// by `value`. Trackers may follow this relation across view-like operations
+  /// that belong to their scheduling region.
+  virtual Value getPressureRepresentative(Value value) const { return value; }
   virtual SmallVector<VPTORegPressureContribution>
   getPressure(Value value) const = 0;
 };
 
-/// Conservative A5-shaped model used by framework/analyze mode.  It provides
-/// complete resource and pressure-set contracts while deliberately reporting
-/// unrecognized micro-op families as UnknownSchedClass.
+/// Conservative A5 model shared by analyze and on modes. Operations use the
+/// generic class for their declared execution pipe or micro-op family, with
+/// narrow operation-specific overrides for parameters that differ physically.
 class VPTOGenericA5SchedModel final : public VPTOSchedModel {
 public:
   VPTOGenericA5SchedModel();
@@ -105,6 +125,8 @@ public:
     return pressureSets;
   }
   const VPTOSchedClass &getSchedClass(Operation *op) const override;
+  VPTOSchedParameters getSchedParameters(Operation *op) const override;
+  Value getPressureRepresentative(Value value) const override;
   SmallVector<VPTORegPressureContribution>
   getPressure(Value value) const override;
 

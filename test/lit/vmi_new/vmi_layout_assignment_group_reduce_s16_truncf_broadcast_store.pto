@@ -15,6 +15,8 @@ module {
       %mask: !pto.vmi.mask<128xpred>,
       %dst: !pto.ptr<f16, ub>,
       %off: index) {
+    %c16 = arith.constant 16 : index
+    %aligned_off = arith.muli %off, %c16 : index
     %sum32 = pto.vmi.vcadd %source, %mask {group = 8, reassoc}
         : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred>
         -> !pto.vmi.vreg<8xf32>
@@ -22,7 +24,7 @@ module {
         : !pto.vmi.vreg<8xf32> -> !pto.vmi.vreg<128xf32>
     %rows16 = pto.vmi.vcvt %rows32 {saturate = "SAT"}
         : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf16>
-    pto.vmi.vstore %rows16, %dst[%off]
+    pto.vmi.vstore %rows16, %dst[%aligned_off]
         : !pto.vmi.vreg<128xf16>, !pto.ptr<f16, ub>
     return
   }

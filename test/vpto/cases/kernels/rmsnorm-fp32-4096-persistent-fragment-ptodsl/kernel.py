@@ -47,7 +47,7 @@ def main_kernel(
   w_frag = pto.alloc_buffer((32,), pto.f32)
   with pto.simt(128, 1, 1):
     simtvf_tx = pto.get_tid_x()
-    for i in pto.static_range(0, 16):
+    with pto.for_(0, 16, step=1, unroll="full") as i:
       scalar.store(
           scalar.load(
               pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")),
@@ -120,7 +120,7 @@ def main_kernel(
           ((t & 1) * 8) + 20608,
       )
 
-      for i_2 in pto.static_range(0, 16):
+      with pto.for_(0, 16, step=1, unroll="full") as i_2:
         scalar.store(
             (
                 scalar.load(x_frag, i_2 * 2, contiguous=2)

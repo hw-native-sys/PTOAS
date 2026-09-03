@@ -109,6 +109,12 @@ struct PTOBCFile {
   std::vector<uint8_t> serialize() const;
 };
 
+// Lexically normalize a user-supplied path ("." and ".." components, redundant
+// separators) before it is handed to file IO. Purely lexical: no filesystem
+// access, so the header stays usable from toolchains without C++17
+// <filesystem>.
+std::string canonicalizeIoPath(const std::string& path);
+
 // Helpers to read a PTOBC file from disk.
 std::vector<uint8_t> readFile(const std::string& path);
 void writeFile(const std::string& path, const std::vector<uint8_t>& data);

@@ -63,6 +63,9 @@ class _TileNamespace:
     matmul_mx = staticmethod(_ops.tmatmul_mx)
     matmul_mx_acc = staticmethod(_ops.tmatmul_mx_acc)
     matmul_mx_bias = staticmethod(_ops.tmatmul_mx_bias)
+    gemv = staticmethod(_ops.tgemv)
+    gemv_acc = staticmethod(_ops.tgemv_acc)
+    gemv_bias = staticmethod(_ops.tgemv_bias)
     gemv_mx = staticmethod(_ops.tgemv_mx)
     gemv_mx_acc = staticmethod(_ops.tgemv_mx_acc)
     gemv_mx_bias = staticmethod(_ops.tgemv_mx_bias)
@@ -98,6 +101,11 @@ class _TileNamespace:
     sub = staticmethod(_ops.tsub)
     mul = staticmethod(_ops.tmul)
     div = staticmethod(_ops.tdiv)
+
+    @staticmethod
+    def rem(src0, src1, dst, *, tmp=None, precision=None):
+        return _ops.trem(src0, src1, dst, tmp=tmp, precision=precision)
+
     max = staticmethod(_ops.tmax)
     min = staticmethod(_ops.tmin)
 
@@ -105,6 +113,19 @@ class _TileNamespace:
     subs = staticmethod(_ops.tsubs)
     muls = staticmethod(_ops.tmuls)
     divs = staticmethod(_ops.tdivs)
+
+    @staticmethod
+    def rems(src, scalar, dst, *, tmp=None):
+        return _ops.trems(src, scalar, dst, tmp=tmp)
+
+    @staticmethod
+    def fmod(src0, src1, dst, *, precision=None):
+        return _ops.tfmod(src0, src1, dst, precision=precision)
+
+    @staticmethod
+    def fmods(src, scalar, dst):
+        return _ops.tfmods(src, scalar, dst)
+
     maxs = staticmethod(_ops.tmaxs)
     mins = staticmethod(_ops.tmins)
 
@@ -120,6 +141,13 @@ class _TileNamespace:
 
     relu = staticmethod(_ops.trelu)
     lrelu = staticmethod(_ops.tlrelu)
+
+    random = staticmethod(_ops.trandom)
+
+    @staticmethod
+    def prelu(src0, src1, dst, *, tmp=None):
+        """``pto.tprelu`` with an optional explicit scratch tile."""
+        return _ops.tprelu(src0, src1, dst, tmp=tmp)
 
     @staticmethod
     def rowsum(src, dst, *, tmp=None):

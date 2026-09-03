@@ -1,0 +1,82 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Test the persistent-specific hard errors in pto-unroll-loops: a loop
+// promoted by pto-promote-persistent-fragment-loops that cannot be unrolled
+// natively must fail hard instead of silently keeping the loop, because
+// fragment materialization depends on the unroll.
+//
+// One case per file section is not enough here: the unroll fixpoint stops at
+// the first error inside a function, and the function pass adaptor stops
+// scheduling further functions once one fails.  Each case therefore gets its
+// own RUN line with only its own function left un-commented via -split-input-file.
+
+// RUN: not pto-test-opt --pto-promote-persistent-fragment-loops --pto-unroll-loops -split-input-file %s 2>&1 | FileCheck %s
+
+module {
+  // A dynamic trip count cannot be checked by the promotion pass, so the
+  // marker turns the unroll pass's drop-with-remark fallback into an error.
+  // CHECK: error: persistent fragment loop requires full unroll but has no constant trip count
+  func.func @dynamic_trip_persistent_loop(%n: index) {
+    %c2_i32 = arith.constant 2 : i32
+    %frag = llvm.alloca %c2_i32 x f32 {pto.persistent} : (i32) -> !llvm.ptr
+    pto.section.simt<<<32, 1, 1>>> {
+      %zero = arith.constant 0.000000e+00 : f32
+      %c0 = arith.constant 0 : index
+      %c1 = arith.constant 1 : index
+      scf.for %i = %c0 to %n step %c1 {
+        %i64 = arith.index_cast %i : index to i64
+        %element = llvm.getelementptr %frag[%i64] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+        llvm.store %zero, %element : f32, !llvm.ptr
+      }
+    }
+    return
+  }
+}
+
+// -----
+
+module {
+  // An empty-body persistent loop: the ordinary path drops the hint with a
+  // remark, but a promoted loop must fail instead.
+  // CHECK: error: persistent fragment loop requires full unroll but has an empty body
+  func.func @empty_body_persistent_loop() {
+    %c2_i32 = arith.constant 2 : i32
+    %frag = llvm.alloca %c2_i32 x f32 {pto.persistent} : (i32) -> !llvm.ptr
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %c1 = arith.constant 1 : index
+    pto.section.simt<<<32, 1, 1>>> {
+      %zero = arith.constant 0.000000e+00 : f32
+      llvm.store %zero, %frag : f32, !llvm.ptr
+    }
+    scf.for %i = %c0 to %c4 step %c1 {
+    } {pto.unroll = "full", pto.persistent_unroll}
+    return
+  }
+}
+
+// -----
+
+module {
+  // A non-index persistent loop: loopUnrollByFactor cannot handle it, so the
+  // promoted loop fails rather than losing its hint.
+  // CHECK: error: persistent fragment loop requires full unroll but has a non-index induction variable ('i32')
+  func.func @non_index_persistent_loop() {
+    %c2_i32 = arith.constant 2 : i32
+    %frag = llvm.alloca %c2_i32 x f32 {pto.persistent} : (i32) -> !llvm.ptr
+    %c0 = arith.constant 0 : i32
+    %c4 = arith.constant 4 : i32
+    %c1 = arith.constant 1 : i32
+    scf.for %i = %c0 to %c4 step %c1 : i32 {
+      %zero = arith.constant 0.000000e+00 : f32
+      llvm.store %zero, %frag : f32, !llvm.ptr
+    } {pto.unroll = "full", pto.persistent_unroll}
+    return
+  }
+}

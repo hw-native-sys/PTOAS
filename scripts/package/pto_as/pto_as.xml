@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config name="pto_as" copy_type="delivery" src_path="tools/" dst_path="pto_as" install_type="all" install_mod="550" install_own="$username:$usergroup">
+    <package_info>
+        <product_name>cann</product_name>
+        <func_name>pto-as</func_name>
+        <share_info_name>pto_as</share_info_name>
+        <suffix>run</suffix>
+        <install_script>share/info/pto_as/script/install.sh</install_script>
+        <help>share/info/pto_as/script/help.info</help>
+        <version>package/pto_as/version.xml</version>
+        <cleanup>share/info/pto_as/script/cleanup.sh</cleanup>
+        <parallel>true</parallel>
+        <copy_all>true</copy_all>
+    </package_info>
+    <generate_info value="pto_as_version.h" dst_path="$(TARGET_ENV)/include/version" install_path="$(TARGET_ENV)/include/version" install_mod="440" install_type="devel" generator="version_header">
+       <pto_as_VERSION>$(ASCEND_VER)</pto_as_VERSION>
+       <pto_as_TIMESTAMP>$(TIMESTAMP_NO)</pto_as_TIMESTAMP>
+    </generate_info>
+    <generate_info value="scene.info" dst_path="share/info/pto_as" install_path="share/info/pto_as" install_mod="440">
+        <os>$(OS_NAME)</os>
+        <os_version>$(OS_VER)</os_version>
+        <arch>$(ARCH)</arch>
+    </generate_info>
+    <file_info value="pto_as_script" copy_type="source" src_path="" dst_path="share/info/pto_as" install_path="share/info/pto_as">
+        <file value="script" entity="true"/>
+        <file value="version.info" dst_path="share/info/pto_as" install_path="share/info/pto_as"/>
+    </file_info>
+    <file_info value="ptoas_wheel" copy_type="source" src_path="" dst_path="tools/ptoas" install_path="tools/ptoas">
+        <file value="wheels" install_mod="550" entity="true"/>
+        <file value="bin/ptoas" dst_path="tools/ptoas/bin" install_path="tools/ptoas/bin"/>
+    </file_info>
+    <block_info dependtree="false" dst_path="" block_conf_path="ascend">
+        <block name="EngineeringCommon"/>
+    </block_info>
+    <dir_info value="pto_as" install_path="" install_mod="750" install_type="all">
+        <path value="share" install_mod="750"/>
+        <path value="share/info" install_mod="750"/>
+        <path value="share/info/pto_as" install_mod="550"/>
+        <path value="share/info/pto_as/script" install_mod="550"/>
+    </dir_info>
+    <dir_info value="tools" install_path="" install_mod="750" install_type="all">
+        <path value="tools" install_mod="750"/>
+        <path value="tools/ptoas" install_mod="750"/>
+        <path value="tools/ptoas/bin" install_mod="750"/>
+        <path value="tools/ptoas/wheels" install_mod="750"/>
+    </dir_info>
+</config>
+
+

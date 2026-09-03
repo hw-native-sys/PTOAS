@@ -8,6 +8,8 @@
 
 cmake_minimum_required(VERSION 3.20.0)
 
+include(cmake/fetch_cann_cmake.cmake)
+
 # CANN/Ascend CMake packages used by downstream PTOAS builds may still use the
 # pre-CMake-3.30 FetchContent_Populate(<declared-name>) pattern. Keep that
 # compatibility path enabled so CMake 4.x developer warnings do not become
@@ -45,6 +47,9 @@ if((NOT DEFINED MLIR_DIR OR MLIR_DIR STREQUAL "")
 endif()
 
 project(ptoas VERSION 0.61)
+
+init_cann_project()
+add_cann_target_options()
 
 # Wheel builds carry the same Linux hardening policy as release CMake builds.
 # Including the cache settings here keeps the policy backend-independent.
@@ -346,3 +351,15 @@ install(FILES
     "${CMAKE_CURRENT_BINARY_DIR}/PTOASConfig.cmake"
     DESTINATION ${PTOAS_CMAKE_INSTALL_DIR}
 )
+
+if(NOT DEFINED PACKAGE_TYPE)
+    set(PACKAGE_TYPE "run" CACHE STRING "Package type: run/rpm/deb/all")
+endif()
+include(cmake/package.cmake)
+include(cmake/func.cmake)
+include(version.cmake)
+check_cann_pkg_build_deps("pto_as")
+if(ENABLE_PACKAGE)
+  add_cann_version_info_targets()
+  pack_built_in()
+endif()

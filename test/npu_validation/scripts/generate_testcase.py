@@ -33,7 +33,9 @@ INCLUDE_REPLACEMENT = (
     "#define __VEC_SCOPE__\n"
     "#endif\n"
     "\n"
-    "#if defined(__CCE_AICORE__) && defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)\n"
+    "// Only provide low-precision fallbacks when bisheng does not already\n"
+    "// expose them through its built-in __clang_cce_types.h header.\n"
+    "#if defined(__CCE_AICORE__) && defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201) && !__has_include(<__clang_cce_types.h>)\n"
     "typedef struct { unsigned char v; } hifloat8_t;\n"
     "typedef struct { unsigned char v; } float8_e4m3_t;\n"
     "typedef struct { unsigned char v; } float8_e5m2_t;\n"
@@ -52,6 +54,22 @@ INCLUDE_REPLACEMENT = (
     "#include <pto/pto-inst.hpp>\n"
     "#include <pto/common/constants.hpp>\n"
     "\n"
+    "// Some PTO-ISA types are only available in the __CCE_AICORE__ compilation\n"
+    "// path, but `bisheng -xcce` still performs a host-side parse pass.\n"
+    "// Provide minimal fallbacks only when the corresponding header wasn't\n"
+    "// pulled in by the selected arch implementation.\n"
+    "// CANN 9.2.0+ defines MrgSortExecutedNumList in pto/common/type.hpp\n"
+    "// without defining TMRGSORT_HPP, so detect the providing header directly.\n"
+    "#if !defined(__CCE_AICORE__) && !__has_include(<pto/common/type.hpp>)\n"
+    "namespace pto {\n"
+    "struct MrgSortExecutedNumList {\n"
+    "    uint16_t mrgSortList0;\n"
+    "    uint16_t mrgSortList1;\n"
+    "    uint16_t mrgSortList2;\n"
+    "    uint16_t mrgSortList3;\n"
+    "};\n"
+    "} // namespace pto\n"
+    "#endif\n"
     "#ifndef __CPU_SIM\n"
     "#include \"acl/acl.h\"\n"
     "#endif\n"
@@ -3159,6 +3177,20 @@ endif()
             kernel_info.get("aiv_local_param"),
         )
 
+    kernel_definition = next(
+        (
+            function
+            for function in _extract_aicore_functions(kernel_text_out)
+            if function["name"] == kernel_name and function["is_global"]
+        ),
+        None,
+    )
+    kernel_linkage = (
+        'extern "C" '
+        if kernel_definition is not None and kernel_definition["is_extern_c"]
+        else ""
+    )
+
     kernel_out = output_dir / f"{testcase}_kernel.cpp"
     kernel_out.write_text(_replace_includes(kernel_text_out), encoding="utf-8")
 
@@ -3181,9 +3213,9 @@ endif()
         INCLUDE_REPLACEMENT
         + "\n"
         "#if defined(__CCE_AICORE__)\n"
-        f"extern \"C\" __global__ AICORE void {kernel_name}({', '.join(raw_params)});\n"
+        f"{kernel_linkage}__global__ AICORE void {kernel_name}({', '.join(raw_params)});\n"
         "#else\n"
-        f"extern \"C\" __global__ AICORE void {kernel_name}({', '.join(raw_params_host)});\n"
+        f"{kernel_linkage}__global__ AICORE void {kernel_name}({', '.join(raw_params_host)});\n"
         "#endif\n\n"
         f"extern \"C\" void {launch_name}({launch_fn_params}) {{\n"
         "#if defined(__CCE_AICORE__)\n"

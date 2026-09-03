@@ -23,6 +23,12 @@ from ._load_store import (
 )
 
 
+def _acc_src_stride(src):
+    """Return the physical A5 L0C row stride in C0-size units."""
+    c0_rows = 16
+    return ((src.shape[0] + c0_rows - 1) // c0_rows) * c0_rows
+
+
 @tilelib.tile_template(
     op="pto.tstore",
     target="a5",
@@ -207,7 +213,7 @@ def template_tstore_nz(src: pto.Tile, dst: pto.PartitionTensorView):
 def template_tstore_acc_to_gm_nz2nd(src: pto.Tile, dst: pto.PartitionTensorView):
     m, n = src.valid_shape
     strides = dst.strides
-    src_stride = src.shape[0]
+    src_stride = _acc_src_stride(src)
     dst_stride = n if strides is None or strides[3] is None else strides[3]
 
     pto.mte_l0c_gm(
@@ -241,7 +247,7 @@ def template_tstore_acc_to_gm_nz2nd(src: pto.Tile, dst: pto.PartitionTensorView)
 def template_tstore_acc_to_gm_nz2dn(src: pto.Tile, dst: pto.PartitionTensorView):
     m, n = src.valid_shape
     strides = dst.strides
-    src_stride = src.shape[0]
+    src_stride = _acc_src_stride(src)
     dst_stride = m if strides is None or strides[4] is None else strides[4]
     loop0_src_stride = 1
 
@@ -275,7 +281,7 @@ def template_tstore_acc_to_gm_nz2dn(src: pto.Tile, dst: pto.PartitionTensorView)
 )
 def template_tstore_acc_to_gm_nz2nz(src: pto.Tile, dst: pto.PartitionTensorView):
     m, n = src.valid_shape
-    src_stride = src.shape[0]
+    src_stride = _acc_src_stride(src)
     dst_stride = n
 
     pto.mte_l0c_gm(
@@ -309,7 +315,7 @@ def template_tstore_fp_acc_to_gm(src: pto.Tile, dst: pto.PartitionTensorView, fp
     m, n = src.valid_shape
     strides = dst.strides
     quant_mode = "qf322bf16_pre_vec" if str(fp.dtype) == "bf16" else "qf322f16_pre_vec"
-    src_stride = src.shape[0]
+    src_stride = _acc_src_stride(src)
     dst_stride = n if strides is None or strides[3] is None else strides[3]
 
     pto.mte_l0c_gm(

@@ -6,14 +6,10 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
-
 #ifndef MLIR_DIALECT_PTO_UTILS_UTILS_H
 #define MLIR_DIALECT_PTO_UTILS_UTILS_H
 #include "PTO/IR/PTO.h"
+#include "PTO/Support/CodeConstants.h"
 
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -60,7 +56,7 @@ namespace pto {
   constexpr const uint8_t kBitsToByte = 8;
   func::ReturnOp getAssumedUniqueReturnOp(func::FuncOp funcOp);
   std::optional<std::pair<Value, Value>> getOperationAliasInfo(Operation *op);
-  SmallVector<std::pair<Value, Value>, 15>
+  SmallVector<std::pair<Value, Value>, kValue15>
   getSemanticNoAliasPairs(Operation *op);
   LogicalResult verifySemanticNoAliasRanges(func::FuncOp func);
   std::optional<AddressSpaceAttr> GetBufferSpaceAttr(Value operand);

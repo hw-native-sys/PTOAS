@@ -15,6 +15,74 @@ from ._template_package import load_template
 from .metadata import ScalarSpec, ScalarType, TileSpec, VectorSpec, ViewSpec
 
 
+def _operand_config(spec, index):
+    config = spec.get("config") or {}
+    if not isinstance(config, dict):
+        raise TypeError(f"operand_specs[{index}].config must be an object")
+    return config
+
+
+def _build_scalar_spec(name, spec, index):
+    try:
+        return ScalarSpec(dtype=ScalarType(spec["dtype"]), value=spec.get("value"))
+    except KeyError as exc:
+        raise ValueError(
+            f"scalar operand {index} ({name!r}) is missing {exc.args[0]!r}"
+        ) from exc
+
+
+def _build_vector_spec(name, spec, index):
+    try:
+        return VectorSpec(shape=tuple(spec["shape"]), dtype=ScalarType(spec["dtype"]))
+    except KeyError as exc:
+        raise ValueError(
+            f"vector operand {index} ({name!r}) is missing {exc.args[0]!r}"
+        ) from exc
+
+
+def _build_view_spec(name, spec, index):
+    config = _operand_config(spec, index)
+    try:
+        strides = spec.get("strides")
+        return ViewSpec(
+            shape=tuple(spec["shape"]),
+            dtype=ScalarType(spec["dtype"]),
+            memory_space=spec.get("memory_space", "gm"),
+            strides=tuple(strides) if strides is not None else None,
+            layout=config.get("layout"),
+        )
+    except KeyError as exc:
+        raise ValueError(
+            f"view operand {index} ({name!r}) is missing {exc.args[0]!r}"
+        ) from exc
+
+
+def _build_tile_spec(name, spec, index):
+    config = _operand_config(spec, index)
+    try:
+        shape = tuple(spec["shape"])
+        dtype = ScalarType(spec["dtype"])
+    except KeyError as exc:
+        raise ValueError(
+            f"tile operand {index} ({name!r}) is missing {exc.args[0]!r}"
+        ) from exc
+    valid_shape = spec.get("valid_shape")
+    s_fractal_size = config.get("s_fractal_size", 512)
+    if s_fractal_size == 0:
+        s_fractal_size = 512
+    return TileSpec(
+        shape=shape,
+        dtype=dtype,
+        memory_space=spec.get("memory_space", "ub"),
+        valid_shape=tuple(valid_shape) if valid_shape is not None else None,
+        b_layout=config.get("b_layout", "row_major"),
+        s_layout=config.get("s_layout", "none_box"),
+        s_fractal_size=s_fractal_size,
+        pad_value=spec.get("pad_value", config.get("pad_value", "Null")),
+        compact_mode=config.get("compact_mode", "null"),
+    )
+
+
 def _build_tile_specs(descriptor, operand_specs: list) -> dict:
     """Map positional compiler operands onto a template's parameter names."""
     if not isinstance(operand_specs, list):
@@ -32,46 +100,13 @@ def _build_tile_specs(descriptor, operand_specs: list) -> dict:
 
         kind = spec.get("kind")
         if kind == "scalar":
-            try:
-                specs[name] = ScalarSpec(
-                    dtype=ScalarType(spec["dtype"]),
-                    value=spec.get("value"),
-                )
-            except KeyError as exc:
-                raise ValueError(
-                    f"scalar operand {index} ({name!r}) is missing {exc.args[0]!r}"
-                ) from exc
+            specs[name] = _build_scalar_spec(name, spec, index)
             continue
-
         if kind == "vector":
-            try:
-                specs[name] = VectorSpec(
-                    shape=tuple(spec["shape"]),
-                    dtype=ScalarType(spec["dtype"]),
-                )
-            except KeyError as exc:
-                raise ValueError(
-                    f"vector operand {index} ({name!r}) is missing {exc.args[0]!r}"
-                ) from exc
+            specs[name] = _build_vector_spec(name, spec, index)
             continue
-
         if kind == "view":
-            config = spec.get("config") or {}
-            if not isinstance(config, dict):
-                raise TypeError(f"operand_specs[{index}].config must be an object")
-            try:
-                strides = spec.get("strides")
-                specs[name] = ViewSpec(
-                    shape=tuple(spec["shape"]),
-                    dtype=ScalarType(spec["dtype"]),
-                    memory_space=spec.get("memory_space", "gm"),
-                    strides=tuple(strides) if strides is not None else None,
-                    layout=config.get("layout"),
-                )
-            except KeyError as exc:
-                raise ValueError(
-                    f"view operand {index} ({name!r}) is missing {exc.args[0]!r}"
-                ) from exc
+            specs[name] = _build_view_spec(name, spec, index)
             continue
 
         if kind != "tile":
@@ -81,33 +116,7 @@ def _build_tile_specs(descriptor, operand_specs: list) -> dict:
                 f"operand {index} ({name!r}) has kind {kind!r}"
             )
 
-        config = spec.get("config") or {}
-        if not isinstance(config, dict):
-            raise TypeError(f"operand_specs[{index}].config must be an object")
-
-        try:
-            shape = tuple(spec["shape"])
-            dtype = ScalarType(spec["dtype"])
-        except KeyError as exc:
-            raise ValueError(
-                f"tile operand {index} ({name!r}) is missing {exc.args[0]!r}"
-            ) from exc
-
-        valid_shape = spec.get("valid_shape")
-        s_fractal_size = config.get("s_fractal_size", 512)
-        if s_fractal_size == 0:
-            s_fractal_size = 512
-        specs[name] = TileSpec(
-            shape=shape,
-            dtype=dtype,
-            memory_space=spec.get("memory_space", "ub"),
-            valid_shape=tuple(valid_shape) if valid_shape is not None else None,
-            b_layout=config.get("b_layout", "row_major"),
-            s_layout=config.get("s_layout", "none_box"),
-            s_fractal_size=s_fractal_size,
-            pad_value=spec.get("pad_value", config.get("pad_value", "Null")),
-            compact_mode=config.get("compact_mode", "null"),
-        )
+        specs[name] = _build_tile_spec(name, spec, index)
     return specs
 
 

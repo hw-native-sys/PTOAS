@@ -32,7 +32,10 @@ def _remainder(lhs, rhs, mask, *, round_mode, dtype):
         quotient = pto.vtrc(quotient, mask, rnd=round_mode)
     product = pto.vmul(quotient, rhs, mask)
     result = pto.vsub(lhs, product, mask)
-    if str(dtype) == "f32":
+    # ``F`` implements the legacy floor-style remainder (sign follows the
+    # divisor).  ``Z`` is fmod and must keep the dividend sign, so the
+    # correction would be incorrect for negative operands.
+    if str(dtype) == "f32" and str(round_mode).upper() != "Z":
         sign_diff_mask = pto.vcmps(
             pto.vmul(rhs, result, mask), pto.f32(0.0), mask, pto.CmpMode.LT
         )

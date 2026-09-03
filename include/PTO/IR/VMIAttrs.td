@@ -78,13 +78,13 @@ def VMIPredicationMode : I32EnumAttr<"PredicationMode",
 //===----------------------------------------------------------------------===//
 
 def VMI_DistMode_Continuous : I32EnumAttrCase<"Continuous", 0, "continuous">;
-def VMI_DistMode_Unpack     : I32EnumAttrCase<"Unpack",     1, "unpack">;
 def VMI_DistMode_Dintlv     : I32EnumAttrCase<"Dintlv",     2, "dintlv">;
-def VMI_DistMode_Brc        : I32EnumAttrCase<"Brc",        3, "brc">;
+def VMI_DistMode_Intlv      : I32EnumAttrCase<"Intlv",      3, "intlv">;
+def VMI_DistMode_Brc        : I32EnumAttrCase<"Brc",        4, "brc">;
 def VMIDistMode : I32EnumAttr<"DistMode",
     "VMI distribution mode for load/store", [
-  VMI_DistMode_Continuous, VMI_DistMode_Unpack,
-  VMI_DistMode_Dintlv, VMI_DistMode_Brc
+  VMI_DistMode_Continuous, VMI_DistMode_Dintlv,
+  VMI_DistMode_Intlv, VMI_DistMode_Brc
 ]> {
   let cppNamespace = "::mlir::pto";
 }

@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s '-pto-vpto-scheduler=mode=analyze' > /dev/null 2> %t
+// RUN: FileCheck %s < %t
+
+// CHECK-LABEL: vpto-scheduler: function=vector_bitcast_parameters mode=analyze
+// CHECK: node=0 original-index=0 op=pto.vbitcast semantic=schedulable sched-class=vector-predicate known=true micro-ops=0 write-latency=0 resource-uses=0
+// CHECK: node=1 original-index=1 op=pto.vadds semantic=schedulable sched-class=vector-predicate known=true micro-ops=1 write-latency=10 resource-uses=1
+// CHECK: node=2 original-index=2 op=pto.vbitcast semantic=schedulable sched-class=vector-predicate known=true micro-ops=0 write-latency=0 resource-uses=0
+// CHECK: edge=0->1 kind=data strength=must latency=0
+// CHECK: edge=1->2 kind=data strength=must latency=10
+// CHECK: pressure node=0 delta={vector:0,predicate:0} current={vector:1,predicate:1}
+// CHECK: pressure node=1 delta={vector:0,predicate:-1} current={vector:1,predicate:0}
+// CHECK: pressure node=2 delta={vector:-1,predicate:0} current={vector:0,predicate:0}
+// CHECK-LABEL: vpto-scheduler: function=predicate_bitcast_parameters mode=analyze
+// CHECK: node=0 original-index=0 op=pto.pbitcast semantic=schedulable sched-class=vector-predicate known=true micro-ops=0 write-latency=0 resource-uses=0
+// CHECK: node=1 original-index=1 op=pto.pbitcast semantic=schedulable sched-class=vector-predicate known=true micro-ops=0 write-latency=0 resource-uses=0
+// CHECK: edge=0->1 kind=data strength=must latency=0
+// CHECK: pressure node=0 delta={vector:0,predicate:0} current={vector:0,predicate:1}
+// CHECK: pressure node=1 delta={vector:0,predicate:-1} current={vector:0,predicate:0}
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @vector_bitcast_parameters(%input: !pto.vreg<64xf32>,
+                                       %minus_one: i32,
+                                       %active: !pto.mask<b32>) {
+    pto.vecscope {
+      %bits = pto.vbitcast %input : !pto.vreg<64xf32> -> !pto.vreg<64xi32>
+      %previous = pto.vadds %bits, %minus_one, %active : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %view = pto.vbitcast %previous : !pto.vreg<64xi32> -> !pto.vreg<64xf32>
+    }
+    return
+  }
+
+  func.func @predicate_bitcast_parameters(%input: !pto.mask<b8>) {
+    pto.vecscope {
+      %b16 = pto.pbitcast %input : !pto.mask<b8> -> !pto.mask<b16>
+      %b32 = pto.pbitcast %b16 : !pto.mask<b16> -> !pto.mask<b32>
+    }
+    return
+  }
+}

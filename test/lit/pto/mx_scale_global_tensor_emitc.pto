@@ -1,0 +1,62 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-level=level2 %s -o - | FileCheck %s
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @mx_scale_global_tensor(
+      %a_scale_ptr: !pto.ptr<!pto.f8E8M0, gm>,
+      %b_scale_ptr: !pto.ptr<!pto.f8E8M0, gm>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c128 = arith.constant 128 : index
+
+    %a_scale_view = pto.make_tensor_view %a_scale_ptr,
+      shape = [%c128, %c4], strides = [%c4, %c1]
+      : !pto.tensor_view<?x?x!pto.f8E8M0>
+    %b_scale_view = pto.make_tensor_view %b_scale_ptr,
+      shape = [%c4, %c128], strides = [%c128, %c1]
+      : !pto.tensor_view<?x?x!pto.f8E8M0>
+
+    %a_scale_part = pto.partition_view %a_scale_view,
+      offsets = [%c0, %c0], sizes = [%c128, %c4]
+      : !pto.tensor_view<?x?x!pto.f8E8M0>
+    %b_scale_part = pto.partition_view %b_scale_view,
+      offsets = [%c0, %c0], sizes = [%c4, %c128]
+      : !pto.tensor_view<?x?x!pto.f8E8M0>
+
+    %a_scale_tile = pto.alloc_tile
+      : !pto.tile_buf<mat, 128x4x!pto.f8E8M0,
+                      blayout=row_major, slayout=row_major, fractal=32>
+    %b_scale_tile = pto.alloc_tile
+      : !pto.tile_buf<mat, 4x128x!pto.f8E8M0,
+                      blayout=col_major, slayout=col_major, fractal=32>
+
+    pto.tload ins(%a_scale_part : !pto.partition_tensor_view<128x4x!pto.f8E8M0>)
+              outs(%a_scale_tile : !pto.tile_buf<mat, 128x4x!pto.f8E8M0,
+                                                 blayout=row_major, slayout=row_major, fractal=32>)
+    pto.tload ins(%b_scale_part : !pto.partition_tensor_view<4x128x!pto.f8E8M0>)
+              outs(%b_scale_tile : !pto.tile_buf<mat, 4x128x!pto.f8E8M0,
+                                                 blayout=col_major, slayout=col_major, fractal=32>)
+    return
+  }
+}
+
+// CHECK-DAG: TileShape2D<float8_e8m0_t, 128, 4, pto::Layout::MX_A_ZZ>
+// CHECK-DAG: BaseShape2D<float8_e8m0_t, 128, 4, pto::Layout::MX_A_ZZ>
+// CHECK: GlobalTensor<float8_e8m0_t,
+// CHECK-SAME: TileShape2D<float8_e8m0_t, 128, 4, pto::Layout::MX_A_ZZ>,
+// CHECK-SAME: BaseShape2D<float8_e8m0_t, 128, 4, pto::Layout::MX_A_ZZ>,
+// CHECK-SAME: pto::Layout::MX_A_ZZ>
+// CHECK-DAG: TileShape2D<float8_e8m0_t, 4, 128, pto::Layout::MX_B_NN>
+// CHECK-DAG: BaseShape2D<float8_e8m0_t, 4, 128, pto::Layout::MX_B_NN>
+// CHECK: GlobalTensor<float8_e8m0_t,
+// CHECK-SAME: TileShape2D<float8_e8m0_t, 4, 128, pto::Layout::MX_B_NN>,
+// CHECK-SAME: BaseShape2D<float8_e8m0_t, 4, 128, pto::Layout::MX_B_NN>,
+// CHECK-SAME: pto::Layout::MX_B_NN>

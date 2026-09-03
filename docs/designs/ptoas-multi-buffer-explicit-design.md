@@ -15,7 +15,7 @@
 
 1. **显式表达 multi-buffer**：前端在 alloc 处声明"这块逻辑 tile 有 N 个物理槽位"。
 2. **手动选择 buffer**：前端在每个使用点（tload / tstore / 计算）显式说"使用第 k 个槽位"，slot 索引可以是常量或任意 SSA 表达式。
-3. **自动同步与自动 event id**：跨 slot 的 RAW/WAR/WAW、跨 pipe 同步关系，由 `PTOInsertSync` / `PTOGraphSyncSolver` 自动推导并分配 event id（必要时使用 `set_flag_dyn` / `wait_flag_dyn`）。
+3. **自动同步与自动 event id**：跨 slot 的 RAW/WAR/WAW、跨 pipe 同步关系，由 `PTOInsertSync` 自动推导并分配 event id（必要时使用 `set_flag_dyn` / `wait_flag_dyn`）。
 4. **不引入"全自动 `iv mod N` 注入"**：要求 multi-buffer 用户显式给 slot 表达式，前端可以把 `arith.remui iv, N` 作为 slot 表达式传进来，但这是前端的责任而非编译器的默认。
 
 ## 3. 与 PR615 的关键差异
@@ -132,7 +132,7 @@ flowchart LR
   A["alloc_multi_tile count=N<br/>multi_tile_get [%k]"] --> B["PTOViewToMemref"]
   B --> B2["memref.alloc {pto.multi_buffer=N}<br/>+ pto.slot_marker[%k]"]
   B2 --> C["PTOPlanMemory<br/>(N-address pointer_cast)"]
-  C --> D["PTOInsertSync / GSS<br/>(sees slot_marker; baseAddresses 按 slot 区分)"]
+  C --> D["PTOInsertSync<br/>(sees slot_marker; baseAddresses 按 slot 区分)"]
   D --> E["PTOResolveBufferSelect (新)"]
   E --> F["set_flag / set_flag_dyn / EmitC"]
 ```
@@ -181,7 +181,7 @@ flowchart LR
 
 不变量：本 pass 结束后，每个数据 op 见到的 memref 都是单 slot。多地址 `pto.pointer_cast` 仅作为 sync 分析的"alloc 锚点"保留（已被前置 sync 消费完）。
 
-### 5.4 InsertSync / GraphSyncSolver
+### 5.4 InsertSync
 
 #### 5.4.1 BaseMemInfo 的多 slot 表达（已实现）
 
@@ -431,7 +431,6 @@ slot 标签在 `%slot` 上 pinned，`subview` 在 memref 层继承 `slot_marker`
 | `multi_tile_get_const_slot_resolve.pto` | 例 1：常量 slot → 单地址 pointer_cast |
 | `multi_tile_get_dyn_slot_resolve.pto` | 例 2：动态 slot → dyn select 链 |
 | `multi_tile_prefetch_insert_sync.pto` | 例 2：InsertSync 推导 prefetch 双 event id dyn flag |
-| `multi_tile_prefetch_gss.pto` | 同上，GraphSyncSolver 路径 |
 | `multi_tile_n4_rotate.pto` | 例 3：N=4 同表达式轮转 |
 | `multi_tile_no_loop_unroll.pto` | 例 4：无 scf.for 的手动 unroll |
 | `multi_tile_subview_compose.pto` | 例 5：与 subview 组合 |
@@ -445,7 +444,6 @@ lit test/lit/pto/alloc_multi_tile_view_to_memref.pto
 lit test/lit/pto/multi_tile_get_const_slot_resolve.pto
 lit test/lit/pto/multi_tile_get_dyn_slot_resolve.pto
 lit test/lit/pto/multi_tile_prefetch_insert_sync.pto
-lit test/lit/pto/multi_tile_prefetch_gss.pto
 ```
 
 ## 9. 当前实现状态 & 后续
@@ -465,22 +463,16 @@ lit test/lit/pto/multi_tile_prefetch_gss.pto
 | **Pipeline 重排**：Sync 跑在 `PTOResolveBufferSelect` 之前 → sync 直接看 `pto.slot_marker` | ✅ | `tools/ptoas/ptoas.cpp` |
 | **InsertSync 多 slot 感知**：`UpdatePointerCastOpMemInfo` 多地址 cast 把 N 个 slot 的物理 offset 灌进 `baseAddresses`；`UpdateSlotMarkerAliasBufferInfo` 按 slot 常/动态 narrowing | ✅ | `lib/PTO/Transforms/InsertSync/PTOIRTranslator.cpp` |
 | **`MemAlias` 自动识别 const-slot disjoint**：不同常量 slot 的 access baseAddresses disjoint → 不发同步 | ✅ | `lib/PTO/Transforms/InsertSync/MemoryDependentAnalyzer.cpp` (复用既有 range-overlap 逻辑) |
-| **GSS 别名链穿透 `pto.bind_tile` / `pto.slot_marker`** | ✅ | `lib/PTO/Transforms/Utils.cpp` (`getOperationAliasInfo`) |
 | **InsertSync 处理 arith.select-on-memref**：保留为防御逻辑（Resolve 移到 sync 后实际不再产生此场景） | ✅ | `lib/PTO/Transforms/InsertSync/PTOIRTranslator.cpp` |
 | **`GetEventIdNum` 按多 slot 推 N**：back-edge dep 双侧 `baseAddresses.size() == N` 时返回 N | ✅ | `lib/PTO/Transforms/InsertSync/InsertSyncAnalysis.cpp` |
 | **`SyncOperation` 携带 slot SSA**：`slotSSAExpr` + `slotCount` 字段，set/wait 各自记录自己一侧的 slot SSA | ✅ | `include/PTO/Transforms/InsertSync/SyncCommon.h`, `lib/PTO/Transforms/InsertSync/{SyncCommon,InsertSyncAnalysis}.cpp` |
 | **dyn event-id codegen**：`CreateSetWaitOpForMultiBuffer` 发 `pto.set_flag_dyn` / `pto.wait_flag_dyn`，event id 由 N-way `arith.select` 链根据 `slot % N` 选自分配的 N 个静态 event id | ✅ | `lib/PTO/Transforms/InsertSync/SyncCodegen.cpp` |
 | **`SyncEventIdAllocation` N event ids 分配**：复用既有 `eventIdNum > 1` 路径（已支持 N），自动给 set/wait 对分配 N 个 hardware event id | ✅ pre-existing | `lib/PTO/Transforms/InsertSync/SyncEventIdAllocation.cpp` |
-| **GSS slot-aware**：`SyncSolverIRTranslator::tracebackMemValsStep` 在 `pto.slot_marker` 停步；`MemInfo::getMemInfoForSlotMarker` 按常量 slot 收窄 `PointerLikeInfo::addresses`、按 slot_marker enclosing loop 设 `parentLoop`，让 `getMultiBufferEventIdInfo` 识别多 buffer 并分配 N event ids | ✅ | `lib/PTO/Transforms/GraphSyncSolver/{SyncSolverIRTranslator,MemInfo}.cpp` |
-| **GSS slotSSAExpr 落到 SetWaitOp**：`findSlotSSAExprForRWOp` 沿 `bind_tile` 走回 `pto.slot_marker.slot`，set 端取 `op1` 的 slot SSA、wait 端取 `op2` 的 | ✅ | `include/PTO/Transforms/GraphSyncSolver/SyncSolverIR.h`, `lib/PTO/Transforms/GraphSyncSolver/SyncSolver.cpp` |
-| **GSS dyn flag codegen**：`SyncSolverCodeGen::emitSyncOp` 在 `eventIds.size() > 1 && slotSSAExpr` 时折成单条 `pto.set_flag_dyn` / `pto.wait_flag_dyn`，event_id 用 N-way `arith.select` 链按 `slot % N` 选；`allAtOnce` prime/drain 仍走 N 静态 fanout（语义需要每个 slot 各 prime / drain 一次） | ✅ | `lib/PTO/Transforms/GraphSyncSolver/SyncSolverCodeGen.cpp` |
-| **共享 affine slot 分析 `SlotAffineAnalysis`**：`findSlotMarkerExpr` + `compareSlotSSA` 三态（kEqual / kDisjoint / kUnknown），覆盖 `iv % N`、`(iv ± c) % N`、纯常量、相同 SSA 等形态；InsertSync / GSS / EmitC 三处共用 | ✅ | `include/PTO/Transforms/SlotAffineAnalysis.h`, `lib/PTO/Transforms/SlotAffineAnalysis.cpp` |
+| **共享 affine slot 分析 `SlotAffineAnalysis`**：`findSlotMarkerExpr` + `compareSlotSSA` 三态（kEqual / kDisjoint / kUnknown），覆盖 `iv % N`、`(iv ± c) % N`、纯常量、相同 SSA 等形态；InsertSync / EmitC 两处共用 | ✅ | `include/PTO/Transforms/SlotAffineAnalysis.h`, `lib/PTO/Transforms/SlotAffineAnalysis.cpp` |
 | **InsertSync 同 iter forward 提前 drop**：`MemAnalyze` 在 forward dep 上 跑 `isForwardDepDroppableBySlotAffine`，affine 可证 disjoint 的 pair 整对剔除，loop 体内省一对 same-iter set/wait | ✅ | `lib/PTO/Transforms/InsertSync/InsertSyncAnalysis.cpp` |
-| **GSS 同 iter forward 提前 drop**：`checkMemoryConflictsForOcc` 在非 back-edge 路径上同样基于 affine disjoint 把整组 (corePipeSrc, corePipeDst) 过滤掉 | ✅ | `lib/PTO/Transforms/GraphSyncSolver/SyncSolver.cpp` |
-| **GSS 同 SSA 行为对齐 InsertSync**：`getMultiBufferEventIdInfo` 不再因 all-equal slot SSA 早退，对同 SSA 的 producer/consumer 也走 N dyn event id 路径；GSS 同 SSA 现在 emit 与 InsertSync 完全一样的 prefetch pipeline | ✅ | `lib/PTO/Transforms/GraphSyncSolver/SyncSolver.cpp` |
 | **EmitC 穿透 `arith.select`-on-memref**：`PTOMaterializeTileHandles::computeExplicitAddress` 沿 select 两支递归求 i64 地址，配合 dyn slot 路径的 select 链；EmitC TASSIGN 拿到正确地址 | ✅ | `lib/PTO/Transforms/PTOMaterializeTileHandles.cpp` |
 | **`multi_tile_get` lowering 防御**：`op->getOperand(0)` 取 source（绕开类型 cast），因为 alloc_multi_tile replace 之后 source 已经变成 memref，typed accessor `getSource()` 会断言 | ✅ | `lib/PTO/Transforms/PTOViewToMemref.cpp` |
-| lit 测试（17 个）：parse/print、verifier、const slot lowering、dyn slot lowering、N=3 / N=4 端到端、无 loop unroll、const-slot sync disjoint、dyn-slot sync 编译、GSS multi-buffer compile、prefetch dyn event-id (InsertSync)、prefetch GSS dyn flag、affine disjoint slots、const preload + dyn loop select、preload + loop set/wait、unknown slot GSS 保守降级 | ✅ | `test/lit/pto/multi_tile_*.pto` |
+| lit 测试：parse/print、verifier、const slot lowering、dyn slot lowering、N=3 / N=4 端到端、无 loop unroll、const-slot sync disjoint、dyn-slot sync 编译、prefetch dyn event-id、affine disjoint slots、const preload + dyn loop select、preload + loop set/wait | ✅ | `test/lit/pto/multi_tile_*.pto` |
 
 ### 当前限制
 

@@ -14,12 +14,13 @@ module {
       %src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>, %off: index) {
     %c8 = arith.constant 8 : index
     %c384 = arith.constant 384 : index
+    %aligned_off = arith.muli %off, %c8 : index
     %mask = pto.vmi.create_mask %c384 : index -> !pto.vmi.mask<384xpred>
-    %x = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<384xf32>
+    %x = pto.vmi.vload %src[%aligned_off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<384xf32>
     %sum = pto.vmi.vcadd %x, %mask {group = 6, reassoc}
         : !pto.vmi.vreg<384xf32>, !pto.vmi.mask<384xpred>
         -> !pto.vmi.vreg<6xf32>
-    pto.vmi.vstore %sum, %dst[%off], %c8 {group = 6}
+    pto.vmi.vstore %sum, %dst[%aligned_off], %c8 {group = 6}
         : !pto.vmi.vreg<6xf32>, !pto.ptr<f32, ub>
     return
   }

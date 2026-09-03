@@ -21,6 +21,8 @@ module {
       %dst0: !pto.ptr<f32, ub>,
       %dst1: !pto.ptr<f32, ub>,
       %off: index) {
+    %c8 = arith.constant 8 : index
+    %aligned_off = arith.muli %off, %c8 : index
     %mask = pto.vmi.create_mask %off : index -> !pto.vmi.mask<128xpred>
     %index = pto.vmi.vci %scale : f32 -> !pto.vmi.vreg<128xf32>
     %score_base = pto.vmi.vadd %index, %index
@@ -29,7 +31,7 @@ module {
     %score = pto.vmi.vmuls %score_base, %scale, %mask
         : !pto.vmi.vreg<128xf32>, f32, !pto.vmi.mask<128xpred>
           -> !pto.vmi.vreg<128xf32>
-    pto.vmi.vstore %score, %dst0[%off]
+    pto.vmi.vstore %score, %dst0[%aligned_off]
         : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
 
     %exp = pto.vmi.vexpdif %x, %max, %mask
@@ -42,7 +44,7 @@ module {
     %sum = pto.vmi.vcadd %with_index, %mask {group = 8, reassoc}
         : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred>
           -> !pto.vmi.vreg<8xf32>
-    pto.vmi.group_store %sum, %dst1[%off], %one {num_groups = 8}
+    pto.vmi.group_store %sum, %dst1[%aligned_off], %one {num_groups = 8}
         : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
     return
   }

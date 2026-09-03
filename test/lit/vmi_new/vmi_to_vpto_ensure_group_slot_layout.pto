@@ -165,56 +165,64 @@ module {
 // CHECK-LABEL: func.func @gs8_to_gs8_ls2_ui8(
 // CHECK: %[[U:.*]] = pto.vzunpack %arg0, %{{.*}} : !pto.vreg<256xui8> -> !pto.vreg<128xui16>
 // CHECK: %[[R:.*]] = pto.vbitcast %[[U]] : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
-// CHECK-COUNT-2: pto.vsts {{.*}} {dist = "1PT_B32"}
+// CHECK: pto.vstus
+// CHECK-NOT: dist = "1PT_B32"
 
 // CHECK-LABEL: func.func @gs8_ls2_to_gs8_ui8(
 // CHECK: %[[C:.*]] = pto.vbitcast %arg0 : !pto.vreg<256xui8> -> !pto.vreg<128xui16>
 // CHECK: %[[R:.*]] = pto.vpack %[[C]], "LOWER" : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
-// CHECK: %[[WORDS:.*]] = pto.vbitcast %[[R]] : !pto.vreg<256xui8> -> !pto.vreg<64xui32>
-// CHECK-COUNT-2: pto.vsts {{.*}} {dist = "1PT_B32"}
+// CHECK: pto.vstus {{.*}}, %[[R]],
+// CHECK-NOT: dist = "1PT_B32"
 
 // CHECK-LABEL: func.func @gs8_to_gs8_ls4_ui8(
 // CHECK: %[[U2:.*]] = pto.vzunpack %arg0, %{{.*}} : !pto.vreg<256xui8> -> !pto.vreg<128xui16>
 // CHECK: %[[U4:.*]] = pto.vzunpack %[[U2]], %{{.*}} : !pto.vreg<128xui16> -> !pto.vreg<64xui32>
 // CHECK: %[[R:.*]] = pto.vbitcast %[[U4]] : !pto.vreg<64xui32> -> !pto.vreg<256xui8>
-// CHECK-COUNT-2: pto.vsts {{.*}} {dist = "1PT_B32"}
+// CHECK: pto.vstus
+// CHECK-NOT: dist = "1PT_B32"
 
 // CHECK-LABEL: func.func @gs8_ls4_to_gs8_ui8(
 // CHECK: %[[C:.*]] = pto.vbitcast %arg0 : !pto.vreg<256xui8> -> !pto.vreg<64xui32>
 // CHECK: %[[P2:.*]] = pto.vpack %[[C]], "LOWER" : !pto.vreg<64xui32> -> !pto.vreg<128xui16>
 // CHECK: %[[R:.*]] = pto.vpack %[[P2]], "LOWER" : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
-// CHECK: %[[WORDS:.*]] = pto.vbitcast %[[R]] : !pto.vreg<256xui8> -> !pto.vreg<64xui32>
-// CHECK-COUNT-2: pto.vsts {{.*}} {dist = "1PT_B32"}
+// CHECK: pto.vstus {{.*}}, %[[R]],
+// CHECK-NOT: dist = "1PT_B32"
 
 // CHECK-LABEL: func.func @gs8_ls2_to_gs8_ls4_ui8(
 // CHECK: %[[C:.*]] = pto.vbitcast %arg0 : !pto.vreg<256xui8> -> !pto.vreg<128xui16>
 // CHECK: %[[U4:.*]] = pto.vzunpack %[[C]], %{{.*}} : !pto.vreg<128xui16> -> !pto.vreg<64xui32>
 // CHECK: %[[R:.*]] = pto.vbitcast %[[U4]] : !pto.vreg<64xui32> -> !pto.vreg<256xui8>
-// CHECK-COUNT-2: pto.vsts {{.*}} {dist = "1PT_B32"}
+// CHECK: pto.vstus
+// CHECK-NOT: dist = "1PT_B32"
 
 // CHECK-LABEL: func.func @gs8_ls4_to_gs8_ls2_ui8(
 // CHECK: %[[C:.*]] = pto.vbitcast %arg0 : !pto.vreg<256xui8> -> !pto.vreg<64xui32>
 // CHECK: %[[P:.*]] = pto.vpack %[[C]], "LOWER" : !pto.vreg<64xui32> -> !pto.vreg<128xui16>
 // CHECK: %[[R:.*]] = pto.vbitcast %[[P]] : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
-// CHECK-COUNT-2: pto.vsts {{.*}} {dist = "1PT_B32"}
+// CHECK: pto.vstus
+// CHECK-NOT: dist = "1PT_B32"
 
 // CHECK-LABEL: func.func @gs8_to_gs8_ls2_ui16(
 // CHECK: %[[U:.*]] = pto.vzunpack %arg0, %{{.*}} : !pto.vreg<128xui16> -> !pto.vreg<64xui32>
 // CHECK: %[[R:.*]] = pto.vbitcast %[[U]] : !pto.vreg<64xui32> -> !pto.vreg<128xui16>
-// CHECK-COUNT-4: pto.vsts {{.*}} {dist = "1PT_B32"}
+// CHECK: pto.vstus
+// CHECK-NOT: dist = "1PT_B32"
 
 // CHECK-LABEL: func.func @gs8_ls2_to_gs8_ui16(
 // CHECK: %[[C:.*]] = pto.vbitcast %arg0 : !pto.vreg<128xui16> -> !pto.vreg<64xui32>
 // CHECK: %[[R:.*]] = pto.vpack %[[C]], "LOWER" : !pto.vreg<64xui32> -> !pto.vreg<128xui16>
-// CHECK: %[[WORDS:.*]] = pto.vbitcast %[[R]] : !pto.vreg<128xui16> -> !pto.vreg<64xui32>
-// CHECK-COUNT-4: pto.vsts {{.*}} {dist = "1PT_B32"}
+// CHECK: pto.vstus {{.*}}, %[[R]],
+// CHECK-NOT: dist = "1PT_B32"
 
 // CHECK-LABEL: func.func @gs8_to_gs8_ls2_ui8_multichunk(
 // CHECK: pto.vzunpack
 // CHECK: pto.vbitcast
 // CHECK: pto.vzunpack
 // CHECK: pto.vbitcast
-// CHECK-COUNT-2: pto.vsts
+// CHECK: %[[ALIGN:.*]] = pto.init_align
+// CHECK: %[[NEXT_ALIGN:.*]], %[[NEXT_BASE:.*]] = pto.vstus %[[ALIGN]],
+// CHECK: %[[FINAL_ALIGN:.*]], %[[FINAL_BASE:.*]] = pto.vstus %[[NEXT_ALIGN]],
+// CHECK: pto.vstas %[[FINAL_ALIGN]], %[[FINAL_BASE]],
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast

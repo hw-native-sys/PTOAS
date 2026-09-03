@@ -2725,6 +2725,12 @@ def PTO_Vmrgsort4Op : PTO_VectorMicroOp<"vmrgsort4"> {
 def PTO_Vgather2Op : PTO_VectorMicroOp<"vgather2", [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
+  let description = [{
+    Masked indexed gather from a UB-backed source. For 8-bit integer sources
+    the result is a 16-bit integer (i8/ui8 -> i16/ui16) produced by
+    zero-extension (one byte per lane, upper 8 bits zero-filled).
+    Sign-extension is not performed.
+  }];
   let arguments = (ins
     PTO_BufferType:$source,
     PTO_VectorType:$offsets,

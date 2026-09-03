@@ -409,6 +409,7 @@ jobs:
           PTOBC_BIN: ${{ env.PTO_BUILD_DIR }}/tools/ptobc/ptobc
           PTO_BUILD_DIR: ${{ env.PTO_BUILD_DIR }}
           PYTHON_BIN: ${{ env.PTOAS_VENV }}/bin/python
+          PTOAS_SAMPLE_JOBS: "4"
         run: |
           set -euo pipefail
           export PATH="${PTOAS_VENV}/bin:${PATH}"

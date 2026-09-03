@@ -1,0 +1,424 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Test pto-promote-persistent-fragment-loops: loops touching a
+// {pto.persistent} alloca are promoted to forced full unrolling.
+//
+// RUN-LINE-1 checks the promotion itself: collected loops get
+// pto.unroll="full" plus the pto.persistent_unroll marker.
+// RUN-LINE-2 runs the promotion followed by pto-unroll-loops and checks the
+// promoted loops are actually unrolled and no attribute is left behind.
+//
+// Covers:
+//   1. no-hint loop -> promoted to full + marker
+//   2. pto.unroll="enable" -> overridden to full + marker
+//   3. pto.unroll="full" -> kept, marker added (fail-fast contract)
+//   4. loops without persistent accesses -> untouched
+//   5. nested loops -> every layer is promoted
+//   6. a kernel-level loop wrapping pto.section.simt -> left alone when
+//      its induction variable never reaches a persistent GEP (unrolling
+//      would clone the section and break the VF_SIMT size patch for no
+//      static-resolution benefit)
+//   6b. the same shape but with the induction variable selecting the
+//      fragment slot -> promoted (unrolling is the only way to make the
+//      access static for materialization)
+//   6c. nested section-wrapping loops, outer iv indexes the fragment ->
+//      outer promoted, inner untouched (kept as a device loop per clone)
+//   6d. the mirror: inner iv indexes the fragment -> inner promoted,
+//      outer stays a runtime loop calling the unrolled clones
+//   7. a persistent loop with iter_args -> promoted and unrolled with the
+//      live-out value threaded correctly
+//   8. a loop merely consuming a value loaded from the buffer (not part of
+//      the pointer flow) -> untouched
+//   9. a statically zero-trip persistent loop -> untouched (never executes,
+//      so no promotion and no downstream error)
+//  10. a zero-trip inner loop also shields its dynamic outer loop from
+//      promotion (the access never executes on that chain)
+//  11. (RUN-LINE-2) promoted loops unroll away with no leftover attrs
+//  12. (RUN-LINE-3) an overridden enable hint produces no unroll metadata
+
+// RUN: pto-test-opt --pto-promote-persistent-fragment-loops %s 2>&1 | FileCheck %s
+// RUN: pto-test-opt --pto-promote-persistent-fragment-loops --pto-unroll-loops %s 2>&1 | FileCheck %s --check-prefix=UNROLL
+// RUN: pto-test-opt --pto-promote-persistent-fragment-loops --pto-unroll-loops --pto-convert-scf-to-cf-with-loop-hints %s 2>&1 | FileCheck %s --check-prefix=NOMETA
+
+module {
+  // Case 1: section-internal loop without a hint.
+  // CHECK-LABEL: func.func @promote_no_hint
+  // CHECK: scf.for
+  // CHECK: } {pto.persistent_unroll, pto.unroll = "full"}
+  // UNROLL-LABEL: func.func @promote_no_hint
+  // UNROLL-NOT: scf.for
+  // UNROLL-NOT: pto.unroll
+  // UNROLL-NOT: pto.persistent_unroll
+  func.func @promote_no_hint() {
+    %c2_i32 = arith.constant 2 : i32
+    %frag = llvm.alloca %c2_i32 x f32 {pto.persistent} : (i32) -> !llvm.ptr
+    pto.section.simt<<<32, 1, 1>>> {
+      %zero = arith.constant 0.000000e+00 : f32
+      %c0 = arith.constant 0 : index
+      %c4 = arith.constant 4 : index
+      %c1 = arith.constant 1 : index
+      scf.for %i = %c0 to %c4 step %c1 {
+        %i64 = arith.index_cast %i : index to i64
+        %element = llvm.getelementptr %frag[%i64] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+        llvm.store %zero, %element : f32, !llvm.ptr
+      }
+    }
+    return
+  }
+
+  // Case 2: an enable hint is overridden by the promotion.
+  // NOMETA-LABEL: func.func @promote_overrides_enable
+  // NOMETA-NOT: loop_annotation
+  // CHECK-LABEL: func.func @promote_overrides_enable
+  // CHECK: scf.for
+  // CHECK: } {pto.persistent_unroll, pto.unroll = "full"}
+  // CHECK-NOT: pto.unroll = "enable"
+  // UNROLL-LABEL: func.func @promote_overrides_enable
+  // UNROLL-NOT: scf.for
+  // UNROLL-NOT: pto.unroll
+  func.func @promote_overrides_enable() {
+    %c2_i32 = arith.constant 2 : i32
+    %frag = llvm.alloca %c2_i32 x f32 {pto.persistent} : (i32) -> !llvm.ptr
+    pto.section.simt<<<32, 1, 1>>> {
+      %zero = arith.constant 0.000000e+00 : f32
+      %c0 = arith.constant 0 : index
+      %c4 = arith.constant 4 : index
+      %c1 = arith.constant 1 : index
+      scf.for %i = %c0 to %c4 step %c1 {
+        %i64 = arith.index_cast %i : index to i64
+        %element = llvm.getelementptr %frag[%i64] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+        llvm.store %zero, %element : f32, !llvm.ptr
+      } {pto.unroll = "enable"}
+    }
+    return
+  }
+
+  // Case 3: an explicit full hint is kept; the marker is added so the
+  // fail-fast contract applies to it as well.
+  // CHECK-LABEL: func.func @promote_keeps_full
+  // CHECK: scf.for
+  // CHECK: } {pto.persistent_unroll, pto.unroll = "full"}
+  // UNROLL-LABEL: func.func @promote_keeps_full
+  // UNROLL-NOT: scf.for
+  // UNROLL-NOT: pto.unroll
+  func.func @promote_keeps_full() {
+    %c2_i32 = arith.constant 2 : i32
+    %frag = llvm.alloca %c2_i32 x f32 {pto.persistent} : (i32) -> !llvm.ptr
+    pto.section.simt<<<32, 1, 1>>> {
+      %zero = arith.constant 0.000000e+00 : f32
+      %c0 = arith.constant 0 : index
+      %c4 = arith.constant 4 : index
+      %c1 = arith.constant 1 : index
+      scf.for %i = %c0 to %c4 step %c1 {
+        %i64 = arith.index_cast %i : index to i64
+        %element = llvm.getelementptr %frag[%i64] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+        llvm.store %zero, %element : f32, !llvm.ptr
+      } {pto.unroll = "full"}
+    }
+    return
+  }
+
+  // Case 4: a loop that never touches a persistent buffer is untouched,
+  // even in a function that has persistent allocas.
+  // CHECK-LABEL: func.func @unrelated_loop_untouched
+  // CHECK: scf.for
+  // CHECK-NOT: pto.unroll
+  // CHECK-NOT: pto.persistent_unroll
+  // UNROLL-LABEL: func.func @unrelated_loop_untouched
+  // UNROLL: scf.for
+  func.func @unrelated_loop_untouched() {
+    %c2_i32 = arith.constant 2 : i32
+    %frag = llvm.alloca %c2_i32 x f32 {pto.persistent} : (i32) -> !llvm.ptr
+    %buf = memref.alloc() : memref<4xindex>
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %c1 = arith.constant 1 : index
+    scf.for %i = %c0 to %c4 step %c1 {
+      memref.store %i, %buf[%i] : memref<4xindex>
+    }
+    pto.section.simt<<<32, 1, 1>>> {
+      %zero = arith.constant 0.000000e+00 : f32
+      llvm.store %zero, %frag : f32, !llvm.ptr
+    }
+    return
+  }
+
+  // Case 5: nested loops - every enclosing layer is promoted.
+  // CHECK-LABEL: func.func @promote_nested
+  // CHECK-COUNT-2: } {pto.persistent_unroll, pto.unroll = "full"}
+  // UNROLL-LABEL: func.func @promote_nested
+  // UNROLL-NOT: scf.for
+  // UNROLL-NOT: pto.unroll
+  func.func @promote_nested() {
+    %c2_i32 = arith.constant 2 : i32
+    %frag = llvm.alloca %c2_i32 x f32 {pto.persistent} : (i32) -> !llvm.ptr
+    pto.section.simt<<<32, 1, 1>>> {
+      %zero = arith.constant 0.000000e+00 : f32
+      %c0 = arith.constant 0 : index
+      %c2 = arith.constant 2 : index
+      %c1 = arith.constant 1 : index
+      scf.for %i = %c0 to %c2 step %c1 {
+        scf.for %j = %c0 to %c2 step %c1 {
+          %j64 = arith.index_cast %j : index to i64
+          %element = llvm.getelementptr %frag[%j64] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+          llvm.store %zero, %element : f32, !llvm.ptr
+        }
+      }
+    }
+    return
+  }
+
+  // Case 6: a kernel-level loop wrapping a whole pto.section.simt is NOT
+  // promoted when its induction variable never reaches a persistent GEP
+  // (the RMSNorm shape: the loop only moves tiles while the fragment is
+  // indexed by lane constants). Unrolling it would clone the section once
+  // per iteration, and the SIMT outlining then emits one outlined entry
+  // function per clone; those single-callsite linkonce_odr clones get
+  // folded/inlined by BiSheng, their `_simt_entry` ELF symbols go missing,
+  // and VPTO fatobj emission fails in the VF_SIMT size patch. Materialization
+  // only needs accesses inside the section to be static; such a loop does
+  // not affect that. When the induction variable DOES index the fragment
+  // the loop IS promoted - see case 6b.
+  // CHECK-LABEL: func.func @promote_kernel_level_loop
+  // CHECK: scf.for
+  // CHECK-NOT: pto.unroll
+  // CHECK-NOT: pto.persistent_unroll
+  // UNROLL-LABEL: func.func @promote_kernel_level_loop
+  // UNROLL: scf.for
+  // UNROLL-NOT: pto.unroll
+  // UNROLL-NOT: pto.persistent_unroll
+  func.func @promote_kernel_level_loop() {
+    %c0 = arith.constant 0 : index
+    %c2 = arith.constant 2 : index
+    %c1 = arith.constant 1 : index
+    %c2_i32 = arith.constant 2 : i32
+    %frag = llvm.alloca %c2_i32 x f32 {pto.persistent} : (i32) -> !llvm.ptr
+    scf.for %t = %c0 to %c2 step %c1 {
+      pto.section.simt<<<32, 1, 1>>> {
+        %zero = arith.constant 0.000000e+00 : f32
+        llvm.store %zero, %frag : f32, !llvm.ptr
+      }
+    }
+    return
+  }
+
+  // Case 6b: a kernel-level loop wrapping the section IS promoted when its
+  // induction variable selects the persistent fragment slot - unrolling is
+  // then the only way to statically resolve the access for materialization
+  // (verified end to end: each clone reads its own resident slot).
+  // CHECK-LABEL: func.func @promote_kernel_level_loop_dep
+  // CHECK: scf.for
+  // CHECK: } {pto.persistent_unroll, pto.unroll = "full"}
+  // UNROLL-LABEL: func.func @promote_kernel_level_loop_dep
+  // UNROLL-NOT: scf.for
+  // UNROLL-NOT: pto.unroll
+  func.func @promote_kernel_level_loop_dep() {
+    %c0 = arith.constant 0 : index
+    %c2 = arith.constant 2 : index
+    %c1 = arith.constant 1 : index
+    %c2_i32 = arith.constant 2 : i32
+    %frag = llvm.alloca %c2_i32 x f32 {pto.persistent} : (i32) -> !llvm.ptr
+    scf.for %t = %c0 to %c2 step %c1 {
+      pto.section.simt<<<32, 1, 1>>> {
+        %t64 = arith.index_cast %t : index to i64
+        %element = llvm.getelementptr %frag[%t64] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+        %v = llvm.load %element : !llvm.ptr -> f32
+      }
+    }
+    return
+  }
+
+  // Case 6c: nested section-wrapping loops, only the outer induction
+  // variable indexes the fragment.  The outer loop is promoted (unrolling
+  // is the only way to make its GEP static); the inner loop is left alone
+  // even though it also wraps the section - its variable never reaches a
+  // persistent GEP, so unrolling it would only clone the section per inner
+  // trip with no static-resolution benefit.  After the unroll run each
+  // outer clone keeps the inner loop as a device loop around one section.
+  // CHECK-LABEL: func.func @promote_outer_dep_inner_nodep
+  // CHECK: scf.for %[[I:.*]] =
+  // CHECK: scf.for %[[J:.*]] =
+  // CHECK: pto.section.simt
+  // CHECK: %[[I64:.*]] = arith.index_cast %[[I]] : index to i64
+  // CHECK: llvm.getelementptr %{{.*}}[%[[I64]]] : (!llvm.ptr, i64)
+  // CHECK: llvm.load
+  // CHECK-NOT: pto.unroll
+  // CHECK: } {pto.persistent_unroll, pto.unroll = "full"}
+  // UNROLL-LABEL: func.func @promote_outer_dep_inner_nodep
+  // UNROLL: scf.for
+  // UNROLL-COUNT-4: pto.section.simt
+  // UNROLL-NOT: pto.unroll
+  // UNROLL-NOT: pto.persistent_unroll
+  func.func @promote_outer_dep_inner_nodep() {
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %c2 = arith.constant 2 : index
+    %c1 = arith.constant 1 : index
+    %c4_i32 = arith.constant 4 : i32
+    %frag = llvm.alloca %c4_i32 x f32 {pto.persistent} : (i32) -> !llvm.ptr
+    scf.for %i = %c0 to %c4 step %c1 {
+      scf.for %j = %c0 to %c2 step %c1 {
+        pto.section.simt<<<32, 1, 1>>> {
+          %i64 = arith.index_cast %i : index to i64
+          %element = llvm.getelementptr %frag[%i64] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+          %v = llvm.load %element : !llvm.ptr -> f32
+        }
+      }
+    }
+    return
+  }
+
+  // Case 6d: the mirror shape - only the inner induction variable indexes
+  // the fragment.  The inner loop is promoted even though it wraps the
+  // section; the outer loop stays a runtime loop that simply calls the
+  // unrolled clones.
+  // CHECK-LABEL: func.func @promote_outer_nodep_inner_dep
+  // CHECK: scf.for %[[I:.*]] =
+  // CHECK: scf.for %[[J:.*]] =
+  // CHECK: pto.section.simt
+  // CHECK: %[[J64:.*]] = arith.index_cast %[[J]] : index to i64
+  // CHECK: llvm.getelementptr %{{.*}}[%[[J64]]] : (!llvm.ptr, i64)
+  // CHECK: } {pto.persistent_unroll, pto.unroll = "full"}
+  // CHECK-NOT: pto.unroll
+  // UNROLL-LABEL: func.func @promote_outer_nodep_inner_dep
+  // UNROLL: scf.for
+  // UNROLL-COUNT-2: pto.section.simt
+  // UNROLL-NOT: pto.unroll
+  // UNROLL-NOT: pto.persistent_unroll
+  func.func @promote_outer_nodep_inner_dep() {
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %c2 = arith.constant 2 : index
+    %c1 = arith.constant 1 : index
+    %c2_i32 = arith.constant 2 : i32
+    %frag = llvm.alloca %c2_i32 x f32 {pto.persistent} : (i32) -> !llvm.ptr
+    scf.for %i = %c0 to %c4 step %c1 {
+      scf.for %j = %c0 to %c2 step %c1 {
+        pto.section.simt<<<32, 1, 1>>> {
+          %j64 = arith.index_cast %j : index to i64
+          %element = llvm.getelementptr %frag[%j64] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+          %v = llvm.load %element : !llvm.ptr -> f32
+        }
+      }
+    }
+    return
+  }
+
+  // Case 7: a persistent loop carrying an iter_arg is promoted like any
+  // other, and the full unroll threads the live-out value through.
+  // CHECK-LABEL: func.func @promote_with_iter_args
+  // CHECK: scf.for
+  // CHECK: } {pto.persistent_unroll, pto.unroll = "full"}
+  // UNROLL-LABEL: func.func @promote_with_iter_args
+  // UNROLL-NOT: scf.for
+  // UNROLL-NOT: pto.unroll
+  // UNROLL: return %{{.*}} : index
+  // NOMETA-LABEL: func.func @promote_with_iter_args
+  // NOMETA-NOT: loop_annotation
+  func.func @promote_with_iter_args() -> index {
+    %c2_i32 = arith.constant 2 : i32
+    %frag = llvm.alloca %c2_i32 x f32 {pto.persistent} : (i32) -> !llvm.ptr
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %c1 = arith.constant 1 : index
+    %sum = scf.for %i = %c0 to %c4 step %c1 iter_args(%carry = %c0) -> (index) {
+      %zero = arith.constant 0.000000e+00 : f32
+      %i64 = arith.index_cast %i : index to i64
+      %element = llvm.getelementptr %frag[%i64] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+      llvm.store %zero, %element : f32, !llvm.ptr
+      %next = arith.addi %carry, %i : index
+      scf.yield %next : index
+    }
+    return %sum : index
+  }
+
+  // Case 8: a loop that merely consumes a value loaded from a persistent
+  // buffer is untouched: only the pointer flow (alloca/GEP/load/store)
+  // ties an op to the buffer, not the loaded data.  The dynamic trip count
+  // additionally proves no marker was added - a marked dynamic loop would
+  // fail in pto-unroll-loops with the persistent-unroll hard error.  (The
+  // loop sits at function level because RUN-LINE-3 converts SCF to CF,
+  // which a single-block pto.section.simt region cannot host.)
+  // CHECK-LABEL: func.func @load_result_consumers_untouched
+  // CHECK: scf.for
+  // CHECK-NOT: pto.unroll
+  // CHECK-NOT: pto.persistent_unroll
+  // UNROLL-LABEL: func.func @load_result_consumers_untouched
+  // UNROLL: scf.for
+  // UNROLL-NOT: pto.unroll
+  // UNROLL-NOT: pto.persistent_unroll
+  func.func @load_result_consumers_untouched(%n: index) {
+    %c2_i32 = arith.constant 2 : i32
+    %frag = llvm.alloca %c2_i32 x f32 {pto.persistent} : (i32) -> !llvm.ptr
+    %buf = memref.alloc() : memref<4xf32>
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %g = llvm.getelementptr %frag[0] : (!llvm.ptr) -> !llvm.ptr, f32
+    %v = llvm.load %g : !llvm.ptr -> f32
+    scf.for %k = %c0 to %n step %c1 {
+      %w = arith.mulf %v, %v : f32
+      memref.store %w, %buf[%c0] : memref<4xf32>
+    }
+    return
+  }
+
+  // Case 9: a statically zero-trip loop never executes its access, so it is
+  // left alone instead of being promoted and then rejected downstream for
+  // "no constant trip count" (its trip count is the constant zero).
+  // CHECK-LABEL: func.func @zero_trip_loop_untouched
+  // CHECK: scf.for
+  // CHECK-NOT: pto.unroll
+  // CHECK-NOT: pto.persistent_unroll
+  // UNROLL-LABEL: func.func @zero_trip_loop_untouched
+  // UNROLL: scf.for
+  // UNROLL-NOT: pto.unroll
+  // UNROLL-NOT: pto.persistent_unroll
+  func.func @zero_trip_loop_untouched() {
+    %c2_i32 = arith.constant 2 : i32
+    %frag = llvm.alloca %c2_i32 x f32 {pto.persistent} : (i32) -> !llvm.ptr
+    %zero = arith.constant 0.000000e+00 : f32
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    scf.for %i = %c0 to %c0 step %c1 {
+      %i64 = arith.index_cast %i : index to i64
+      %element = llvm.getelementptr %frag[%i64] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+      llvm.store %zero, %element : f32, !llvm.ptr
+    }
+    return
+  }
+
+  // Case 10: an access under a statically zero-trip inner loop never
+  // executes, so the whole enclosing chain - including the dynamic outer
+  // loop - is left alone.  Marking the outer loop would produce a spurious
+  // "no constant trip count" hard error in pto-unroll-loops.
+  // CHECK-LABEL: func.func @zero_trip_inner_chain_untouched
+  // CHECK-COUNT-2: scf.for
+  // CHECK-NOT: pto.unroll
+  // CHECK-NOT: pto.persistent_unroll
+  // UNROLL-LABEL: func.func @zero_trip_inner_chain_untouched
+  // UNROLL-COUNT-2: scf.for
+  // UNROLL-NOT: pto.unroll
+  // UNROLL-NOT: pto.persistent_unroll
+  func.func @zero_trip_inner_chain_untouched(%n: index) {
+    %c2_i32 = arith.constant 2 : i32
+    %frag = llvm.alloca %c2_i32 x f32 {pto.persistent} : (i32) -> !llvm.ptr
+    %zero = arith.constant 0.000000e+00 : f32
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    scf.for %t = %c0 to %n step %c1 {
+      scf.for %i = %c0 to %c0 step %c1 {
+        %i64 = arith.index_cast %i : index to i64
+        %element = llvm.getelementptr %frag[%i64] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+        llvm.store %zero, %element : f32, !llvm.ptr
+      }
+    }
+    return
+  }
+
+}

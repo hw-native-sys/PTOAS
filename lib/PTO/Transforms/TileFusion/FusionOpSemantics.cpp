@@ -66,6 +66,36 @@ static StringRef getTileFusionOpName(Operation *op) {
   return opName;
 }
 
+static void collectNormalizedInputs(Operation *op,
+                                    PTO_DpsInitOpInterface dpsIface,
+                                    FusionOpSemantics &semantics) {
+  SmallVector<unsigned, mlir::pto::kValue4> dpsInitOperandNumbers;
+  if (dpsIface) {
+    for (OpOperand &dpsInit : dpsIface.getDpsInitsMutable()) {
+      dpsInitOperandNumbers.push_back(dpsInit.getOperandNumber());
+    }
+  }
+
+  for (OpOperand &operand : op->getOpOperands()) {
+    if (llvm::is_contained(dpsInitOperandNumbers, operand.getOperandNumber())) {
+      continue;
+    }
+    Value value = operand.get();
+    if (isTileFusionTileValue(value)) {
+      semantics.tileInputs.push_back(value);
+    } else {
+      semantics.scalarInputs.push_back(value);
+    }
+  }
+}
+
+static bool hasValidOutputOnlySemantics(const FusionOpSemantics &semantics) {
+  return !semantics.tileInputs.empty() ||
+         llvm::all_of(semantics.tileOutputs, [](Value output) {
+           return isa<pto::TileBufType>(output.getType());
+         });
+}
+
 FailureOr<FusionOpSemantics> getFusionOpSemantics(Operation *op) {
   FusionOpSemantics semantics;
   semantics.op = op;
@@ -97,32 +127,9 @@ FailureOr<FusionOpSemantics> getFusionOpSemantics(Operation *op) {
     return failure();
   }
 
-  SmallVector<unsigned, mlir::pto::kValue4> dpsInitOperandNumbers;
-  if (dpsIface) {
-    for (OpOperand &dpsInit : dpsIface.getDpsInitsMutable()) {
-      dpsInitOperandNumbers.push_back(dpsInit.getOperandNumber());
-    }
-  }
-
-  for (OpOperand &operand : op->getOpOperands()) {
-    if (llvm::is_contained(dpsInitOperandNumbers, operand.getOperandNumber())) {
-      continue;
-    }
-
-    Value value = operand.get();
-    if (isTileFusionTileValue(value)) {
-      semantics.tileInputs.push_back(value);
-    } else {
-      semantics.scalarInputs.push_back(value);
-    }
-  }
-
-  if (semantics.tileInputs.empty()) {
-    for (Value output : semantics.tileOutputs) {
-      if (!isa<pto::TileBufType>(output.getType())) {
-        return failure();
-      }
-    }
+  collectNormalizedInputs(op, dpsIface, semantics);
+  if (!hasValidOutputOnlySemantics(semantics)) {
+    return failure();
   }
 
   return semantics;

@@ -112,8 +112,9 @@ struct NormalizeSignlessPattern : public RewritePattern {
 
   LogicalResult matchAndRewrite(Operation *op,
                                 PatternRewriter &rewriter) const override {
-    if (!isWhitelisted(op))
+    if (!isWhitelisted(op)) {
       return failure();
+    }
 
     bool changed = false;
 

@@ -8,8 +8,6 @@
 //
 // RUN: ptoas --pto-arch=a3 --enable-insert-sync %s | FileCheck %s --check-prefix=FIX
 // RUN: ptoas --pto-arch=a5 --enable-insert-sync %s | FileCheck %s --check-prefix=FIX
-// RUN: ptoas --pto-arch=a3 --enable-graph-sync-solver --graph-sync-solver-event-id-max=64 %s | FileCheck %s --check-prefix=FIX
-// RUN: ptoas --pto-arch=a5 --enable-graph-sync-solver --graph-sync-solver-event-id-max=64 %s | FileCheck %s --check-prefix=FIX
 
 module {
   func.func @tmov_fbuf_pipe_selection(

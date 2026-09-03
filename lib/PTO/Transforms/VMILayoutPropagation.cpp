@@ -15,6 +15,8 @@
 #include "PTO/IR/VMIUtils.h"
 #include "PTO/Transforms/VMILayoutSupport.h"
 
+#include "llvm/ADT/TypeSwitch.h"
+
 using namespace mlir;
 using namespace mlir::pto;
 
@@ -102,21 +104,27 @@ static Type getValueTypeWithLayout(Value value, VMILayoutAttr layout) {
   return {};
 }
 
+struct VMILayoutTransferQuery {
+  Operation *op;
+  Value changedValue;
+  VMILayoutAttr changedLayout;
+  const VMILayoutPropagator &propagator;
+  OpOperand *changedOperand;
+};
+
 class VMILayoutTransfer {
 public:
   virtual ~VMILayoutTransfer() = default;
 
   virtual FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>>
-  query(Operation *op, Value changedValue, VMILayoutAttr changedLayout,
-        const VMILayoutPropagator &propagator,
-        OpOperand *changedOperand) const = 0;
+  query(const VMILayoutTransferQuery &request) const = 0;
 
   LogicalResult propagate(Operation *op, Value changedValue,
                           VMILayoutAttr changedLayout,
                           VMILayoutPropagator &propagator,
                           OpOperand *changedOperand) const {
     FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>> relations =
-        query(op, changedValue, changedLayout, propagator, changedOperand);
+        query({op, changedValue, changedLayout, propagator, changedOperand});
     if (failed(relations) || relations->empty()) {
       return success();
     }
@@ -207,9 +215,9 @@ static bool isCastOp(Operation *op) {
 class VMISameLayoutTransfer final : public VMILayoutTransfer {
 public:
   FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>>
-  query(Operation *op, Value changedValue, VMILayoutAttr changedLayout,
-        const VMILayoutPropagator &propagator,
-        OpOperand *changedOperand) const override {
+  query(const VMILayoutTransferQuery &request) const override {
+    [[maybe_unused]] auto [op, changedValue, changedLayout, propagator,
+                           changedOperand] = request;
     SmallVector<VMILayoutFact, mlir::pto::kValue4> facts;
     for (OpOperand &operand : op->getOpOperands()) {
       facts.push_back(operandFact(operand, changedLayout));
@@ -224,9 +232,9 @@ public:
 class VMICastTransfer final : public VMILayoutTransfer {
 public:
   FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>>
-  query(Operation *op, Value changedValue, VMILayoutAttr changedLayout,
-        const VMILayoutPropagator &propagator,
-        OpOperand *changedOperand) const override {
+  query(const VMILayoutTransferQuery &request) const override {
+    [[maybe_unused]] auto [op, changedValue, changedLayout, propagator,
+                           changedOperand] = request;
     if (op->getNumOperands() != 1 || op->getNumResults() != 1) {
       return failure();
     }
@@ -277,11 +285,39 @@ public:
 };
 
 class VMIVexpdifTransfer final : public VMILayoutTransfer {
+  static VMILayoutRelation makeVexpdifRelation(VMIVexpdifOp op,
+                                                VMILayoutAttr sourceLayout,
+                                                VMILayoutAttr resultLayout) {
+    return makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
+        operandFact(op.getXMutable(), sourceLayout),
+        operandFact(op.getMaxMutable(), sourceLayout),
+        operandFact(op.getMaskMutable(), sourceLayout),
+        valueFact(op.getResult(), resultLayout)});
+  }
+
+  static std::optional<VMICastLayoutPort>
+  getChangedPort(VMIVexpdifOp op, Value changedValue,
+                 OpOperand *changedOperand) {
+    if (changedValue == op.getResult()) {
+      return VMICastLayoutPort::Result;
+    }
+    bool changedSource = changedValue == op.getX() ||
+                         changedValue == op.getMax() ||
+                         changedValue == op.getMask() ||
+                         changedOperand == &op.getXMutable() ||
+                         changedOperand == &op.getMaxMutable() ||
+                         changedOperand == &op.getMaskMutable();
+    if (changedSource) {
+      return VMICastLayoutPort::Source;
+    }
+    return std::nullopt;
+  }
+
 public:
-  FailureOr<SmallVector<VMILayoutRelation, 4>>
-  query(Operation *op, Value changedValue, VMILayoutAttr changedLayout,
-        const VMILayoutPropagator &propagator,
-        OpOperand *changedOperand) const override {
+  FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>>
+  query(const VMILayoutTransferQuery &request) const override {
+    [[maybe_unused]] auto [op, changedValue, changedLayout, propagator,
+                           changedOperand] = request;
     auto vexpdif = dyn_cast<VMIVexpdifOp>(op);
     if (!vexpdif) {
       return failure();
@@ -292,49 +328,27 @@ public:
     if (!sourceType || !resultType) {
       return failure();
     }
-
-    auto makeFacts = [&](VMILayoutAttr sourceLayout,
-                         VMILayoutAttr resultLayout) {
-      return makeRelation(SmallVector<VMILayoutFact, 4>{
-          operandFact(vexpdif.getXMutable(), sourceLayout),
-          operandFact(vexpdif.getMaxMutable(), sourceLayout),
-          operandFact(vexpdif.getMaskMutable(), sourceLayout),
-          valueFact(vexpdif.getResult(), resultLayout)});
-    };
-
     if (sourceType.getElementType().isF32()) {
-      return makeSingleRelation(SmallVector<VMILayoutFact, 4>{
-          operandFact(vexpdif.getXMutable(), changedLayout),
-          operandFact(vexpdif.getMaxMutable(), changedLayout),
-          operandFact(vexpdif.getMaskMutable(), changedLayout),
-          valueFact(vexpdif.getResult(), changedLayout)});
+      return SmallVector<VMILayoutRelation, mlir::pto::kValue4>{
+          makeVexpdifRelation(vexpdif, changedLayout, changedLayout)};
     }
-
-    VMICastLayoutPort port;
-    if (changedValue == vexpdif.getResult()) {
-      port = VMICastLayoutPort::Result;
-    } else if (changedValue == vexpdif.getX() ||
-               changedValue == vexpdif.getMax() ||
-               changedValue == vexpdif.getMask() ||
-               changedOperand == &vexpdif.getXMutable() ||
-               changedOperand == &vexpdif.getMaxMutable() ||
-               changedOperand == &vexpdif.getMaskMutable()) {
-      port = VMICastLayoutPort::Source;
-    } else {
+    std::optional<VMICastLayoutPort> port =
+        getChangedPort(vexpdif, changedValue, changedOperand);
+    if (!port) {
       return failure();
     }
-
     VMILayoutSupport supports;
-    FailureOr<SmallVector<VMICastLayoutFact, 4>> facts =
-        supports.getCastLayoutFactsForLayout(sourceType, resultType, port,
+    FailureOr<SmallVector<VMICastLayoutFact, mlir::pto::kValue4>> facts =
+        supports.getCastLayoutFactsForLayout(sourceType, resultType, *port,
                                              changedLayout);
     if (failed(facts) || facts->empty()) {
       return failure();
     }
 
-    SmallVector<VMILayoutRelation, 4> relations;
+    SmallVector<VMILayoutRelation, mlir::pto::kValue4> relations;
     for (const VMICastLayoutFact &fact : *facts) {
-      relations.push_back(makeFacts(fact.sourceLayout, fact.resultLayout));
+      relations.push_back(makeVexpdifRelation(
+          vexpdif, fact.sourceLayout, fact.resultLayout));
     }
     return relations;
   }
@@ -343,14 +357,13 @@ public:
 class VMIBitcastTransfer final : public VMILayoutTransfer {
 public:
   FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>>
-  query(Operation *op, Value changedValue, VMILayoutAttr changedLayout,
-        const VMILayoutPropagator &propagator,
-        OpOperand *changedOperand) const override {
+  query(const VMILayoutTransferQuery &request) const override {
+    [[maybe_unused]] auto [op, changedValue, changedLayout, propagator,
+                           changedOperand] = request;
     auto bitcast = dyn_cast<VMIBitcastOp>(op);
     if (!bitcast) {
       return failure();
     }
-
     auto sourceType = dyn_cast<VMIVRegType>(bitcast.getSource().getType());
     auto resultType = dyn_cast<VMIVRegType>(bitcast.getResult().getType());
     if (!sourceType || !resultType) {
@@ -388,9 +401,9 @@ public:
 class VMIMaskGranularityCastTransfer final : public VMILayoutTransfer {
 public:
   FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>>
-  query(Operation *op, Value changedValue, VMILayoutAttr changedLayout,
-        const VMILayoutPropagator &propagator,
-        OpOperand *changedOperand) const override {
+  query(const VMILayoutTransferQuery &request) const override {
+    [[maybe_unused]] auto [op, changedValue, changedLayout, propagator,
+                           changedOperand] = request;
     auto ensure = dyn_cast<VMIEnsureMaskGranularityOp>(op);
     if (!ensure) {
       return failure();
@@ -443,9 +456,9 @@ public:
 class VMIFreeResultLayoutTransfer final : public VMILayoutTransfer {
 public:
   FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>>
-  query(Operation *op, Value changedValue, VMILayoutAttr changedLayout,
-        const VMILayoutPropagator &propagator,
-        OpOperand *changedOperand) const override {
+  query(const VMILayoutTransferQuery &request) const override {
+    [[maybe_unused]] auto [op, changedValue, changedLayout, propagator,
+                           changedOperand] = request;
     if (isa<OpResult>(changedValue) && changedValue.getDefiningOp() == op) {
       return makeSingleRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
           valueFact(changedValue, changedLayout)});
@@ -457,9 +470,9 @@ public:
 class VMIContiguousResultLayoutTransfer final : public VMILayoutTransfer {
 public:
   FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>>
-  query(Operation *op, Value changedValue, VMILayoutAttr changedLayout,
-        const VMILayoutPropagator &propagator,
-        OpOperand *changedOperand) const override {
+  query(const VMILayoutTransferQuery &request) const override {
+    [[maybe_unused]] auto [op, changedValue, changedLayout, propagator,
+                           changedOperand] = request;
     if (!isa<OpResult>(changedValue) || changedValue.getDefiningOp() != op ||
         !changedLayout.isContiguous()) {
       return failure();
@@ -472,9 +485,9 @@ public:
 class VMILoadTransfer final : public VMILayoutTransfer {
 public:
   FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>>
-  query(Operation *op, Value changedValue, VMILayoutAttr changedLayout,
-        const VMILayoutPropagator &propagator,
-        OpOperand *changedOperand) const override {
+  query(const VMILayoutTransferQuery &request) const override {
+    [[maybe_unused]] auto [op, changedValue, changedLayout, propagator,
+                           changedOperand] = request;
     auto load = dyn_cast<VMILoadOp>(op);
     if (!load || changedValue != load.getResult()) {
       return failure();
@@ -498,9 +511,9 @@ public:
 class VMIDeinterleaveLoadTransfer final : public VMILayoutTransfer {
 public:
   FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>>
-  query(Operation *op, Value changedValue, VMILayoutAttr changedLayout,
-        const VMILayoutPropagator &propagator,
-        OpOperand *changedOperand) const override {
+  query(const VMILayoutTransferQuery &request) const override {
+    [[maybe_unused]] auto [op, changedValue, changedLayout, propagator,
+                           changedOperand] = request;
     auto load = dyn_cast<VMIDeinterleaveLoadOp>(op);
     if (!load) {
       return failure();
@@ -540,9 +553,9 @@ public:
 class VMIGroupLoadTransfer final : public VMILayoutTransfer {
 public:
   FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>>
-  query(Operation *op, Value changedValue, VMILayoutAttr changedLayout,
-        const VMILayoutPropagator &propagator,
-        OpOperand *changedOperand) const override {
+  query(const VMILayoutTransferQuery &request) const override {
+    [[maybe_unused]] auto [op, changedValue, changedLayout, propagator,
+                           changedOperand] = request;
     auto load = dyn_cast<VMIGroupLoadOp>(op);
     if (!load || changedValue != load.getResult()) {
       return failure();
@@ -568,9 +581,9 @@ public:
 class VMIGroupReduceTransfer final : public VMILayoutTransfer {
 public:
   FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>>
-  query(Operation *op, Value changedValue, VMILayoutAttr changedLayout,
-        const VMILayoutPropagator &propagator,
-        OpOperand *changedOperand) const override {
+  query(const VMILayoutTransferQuery &request) const override {
+    [[maybe_unused]] auto [op, changedValue, changedLayout, propagator,
+                           changedOperand] = request;
     if (auto reduce = dyn_cast<VMIGroupReduceAddFOp>(op)) {
       return queryReduce(reduce, changedValue, changedLayout, changedOperand);
     }
@@ -636,9 +649,9 @@ private:
 class VMIGroupSlotLoadTransfer final : public VMILayoutTransfer {
 public:
   FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>>
-  query(Operation *op, Value changedValue, VMILayoutAttr changedLayout,
-        const VMILayoutPropagator &propagator,
-        OpOperand *changedOperand) const override {
+  query(const VMILayoutTransferQuery &request) const override {
+    [[maybe_unused]] auto [op, changedValue, changedLayout, propagator,
+                           changedOperand] = request;
     auto load = dyn_cast<VMIGroupSlotLoadOp>(op);
     if (!load || changedValue != load.getResult()) {
       return failure();
@@ -663,9 +676,9 @@ public:
 class VMIGroupBroadcastLoadTransfer final : public VMILayoutTransfer {
 public:
   FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>>
-  query(Operation *op, Value changedValue, VMILayoutAttr changedLayout,
-        const VMILayoutPropagator &propagator,
-        OpOperand *changedOperand) const override {
+  query(const VMILayoutTransferQuery &request) const override {
+    [[maybe_unused]] auto [op, changedValue, changedLayout, propagator,
+                           changedOperand] = request;
     auto load = dyn_cast<VMIGroupBroadcastLoadOp>(op);
     if (!load || changedValue != load.getResult()) {
       return failure();
@@ -691,9 +704,9 @@ public:
 class VMIGroupBroadcastTransfer final : public VMILayoutTransfer {
 public:
   FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>>
-  query(Operation *op, Value changedValue, VMILayoutAttr changedLayout,
-        const VMILayoutPropagator &propagator,
-        OpOperand *changedOperand) const override {
+  query(const VMILayoutTransferQuery &request) const override {
+    [[maybe_unused]] auto [op, changedValue, changedLayout, propagator,
+                           changedOperand] = request;
     auto broadcast = dyn_cast<VMIGroupBroadcastOp>(op);
     if (!broadcast) {
       return failure();
@@ -734,9 +747,9 @@ public:
 class VMIInterleaveTransfer final : public VMILayoutTransfer {
 public:
   FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>>
-  query(Operation *op, Value changedValue, VMILayoutAttr changedLayout,
-        const VMILayoutPropagator &propagator,
-        OpOperand *changedOperand) const override {
+  query(const VMILayoutTransferQuery &request) const override {
+    [[maybe_unused]] auto [op, changedValue, changedLayout, propagator,
+                           changedOperand] = request;
     if (auto vintlv = dyn_cast<VMIVintlvOp>(op)) {
       return queryInterleave(vintlv, /*vintlv=*/true, changedValue,
                              changedLayout, changedOperand);
@@ -802,9 +815,9 @@ private:
 class VMIGatherTransfer final : public VMILayoutTransfer {
 public:
   FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>>
-  query(Operation *op, Value changedValue, VMILayoutAttr changedLayout,
-        const VMILayoutPropagator &propagator,
-        OpOperand *changedOperand) const override {
+  query(const VMILayoutTransferQuery &request) const override {
+    [[maybe_unused]] auto [op, changedValue, changedLayout, propagator,
+                           changedOperand] = request;
     auto gather = dyn_cast<VMIGatherOp>(op);
     if (!gather) {
       return failure();
@@ -827,9 +840,9 @@ public:
 class VMIStoreTransfer final : public VMILayoutTransfer {
 public:
   FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>>
-  query(Operation *op, Value changedValue, VMILayoutAttr changedLayout,
-        const VMILayoutPropagator &propagator,
-        OpOperand *changedOperand) const override {
+  query(const VMILayoutTransferQuery &request) const override {
+    [[maybe_unused]] auto [op, changedValue, changedLayout, propagator,
+                           changedOperand] = request;
     auto store = dyn_cast<VMIStoreOp>(op);
     if (!store || changedValue != store.getValue()) {
       return failure();
@@ -857,9 +870,9 @@ public:
 class VMIGroupStoreTransfer final : public VMILayoutTransfer {
 public:
   FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>>
-  query(Operation *op, Value changedValue, VMILayoutAttr changedLayout,
-        const VMILayoutPropagator &propagator,
-        OpOperand *changedOperand) const override {
+  query(const VMILayoutTransferQuery &request) const override {
+    [[maybe_unused]] auto [op, changedValue, changedLayout, propagator,
+                           changedOperand] = request;
     auto store = dyn_cast<VMIGroupStoreOp>(op);
     if (!store || changedValue != store.getValue()) {
       return failure();
@@ -889,9 +902,9 @@ public:
 class VMIMaskedLoadTransfer final : public VMILayoutTransfer {
 public:
   FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>>
-  query(Operation *op, Value changedValue, VMILayoutAttr changedLayout,
-        const VMILayoutPropagator &propagator,
-        OpOperand *changedOperand) const override {
+  query(const VMILayoutTransferQuery &request) const override {
+    [[maybe_unused]] auto [op, changedValue, changedLayout, propagator,
+                           changedOperand] = request;
     auto load = dyn_cast<VMIMaskedLoadOp>(op);
     if (!load) {
       return failure();
@@ -933,9 +946,9 @@ public:
 class VMIMaskedStoreTransfer final : public VMILayoutTransfer {
 public:
   FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>>
-  query(Operation *op, Value changedValue, VMILayoutAttr changedLayout,
-        const VMILayoutPropagator &propagator,
-        OpOperand *changedOperand) const override {
+  query(const VMILayoutTransferQuery &request) const override {
+    [[maybe_unused]] auto [op, changedValue, changedLayout, propagator,
+                           changedOperand] = request;
     auto store = dyn_cast<VMIMaskedStoreOp>(op);
     if (!store) {
       return failure();
@@ -969,117 +982,106 @@ public:
   }
 };
 
-const VMILayoutTransfer *getTransfer(Operation *op) {
-  static VMISameLayoutTransfer sameLayoutTransfer;
-  static VMICastTransfer castTransfer;
-  static VMIVexpdifTransfer vexpdifTransfer;
-  static VMIBitcastTransfer bitcastTransfer;
-  static VMIMaskGranularityCastTransfer maskGranularityCastTransfer;
-  static VMIFreeResultLayoutTransfer freeResultLayoutTransfer;
-  static VMIContiguousResultLayoutTransfer contiguousResultLayoutTransfer;
-  static VMILoadTransfer loadTransfer;
-  static VMIDeinterleaveLoadTransfer deinterleaveLoadTransfer;
-  static VMIGroupLoadTransfer groupLoadTransfer;
-  static VMIGroupReduceTransfer groupReduceTransfer;
-  static VMIGroupSlotLoadTransfer groupSlotLoadTransfer;
-  static VMIGroupBroadcastLoadTransfer groupBroadcastLoadTransfer;
-  static VMIGroupBroadcastTransfer groupBroadcastTransfer;
-  static VMIInterleaveTransfer interleaveTransfer;
-  static VMIGatherTransfer gatherTransfer;
-  static VMIStoreTransfer storeTransfer;
-  static VMIGroupStoreTransfer groupStoreTransfer;
-  static VMIMaskedLoadTransfer maskedLoadTransfer;
-  static VMIMaskedStoreTransfer maskedStoreTransfer;
+static unsigned getScalarBitWidth(Type type) {
+  if (auto floatType = dyn_cast<FloatType>(type)) {
+    return floatType.getWidth();
+  }
+  if (auto integerType = dyn_cast<IntegerType>(type)) {
+    return integerType.getWidth();
+  }
+  return 0;
+}
 
-  if (isa<VMIConstantOp, VMIBroadcastOp, VMIIotaOp, VMICreateMaskOp,
-          VMICreateGroupMaskOp, VMIConstantMaskOp>(op)) {
-    return &freeResultLayoutTransfer;
+static bool isSameWidthNumericCast(Operation *op) {
+  auto sourceType = dyn_cast<VMIVRegType>(op->getOperand(0).getType());
+  auto resultType = dyn_cast<VMIVRegType>(op->getResult(0).getType());
+  if (!sourceType || !resultType) {
+    return false;
   }
-  if (isa<VMIGroupIotaOp>(op)) {
-    return &contiguousResultLayoutTransfer;
+  unsigned sourceBits = getScalarBitWidth(sourceType.getElementType());
+  return sourceBits > 0 &&
+         sourceBits == getScalarBitWidth(resultType.getElementType());
+}
+
+struct TransferRegistry {
+  VMISameLayoutTransfer sameLayout;
+  VMICastTransfer cast;
+  VMIVexpdifTransfer vexpdif;
+  VMIBitcastTransfer bitcast;
+  VMIMaskGranularityCastTransfer maskGranularityCast;
+  VMIFreeResultLayoutTransfer freeResultLayout;
+  VMIContiguousResultLayoutTransfer contiguousResultLayout;
+  VMILoadTransfer load;
+  VMIDeinterleaveLoadTransfer deinterleaveLoad;
+  VMIGroupLoadTransfer groupLoad;
+  VMIGroupReduceTransfer groupReduce;
+  VMIGroupSlotLoadTransfer groupSlotLoad;
+  VMIGroupBroadcastLoadTransfer groupBroadcastLoad;
+  VMIGroupBroadcastTransfer groupBroadcast;
+  VMIInterleaveTransfer interleave;
+  VMIGatherTransfer gather;
+  VMIStoreTransfer store;
+  VMIGroupStoreTransfer groupStore;
+  VMIMaskedLoadTransfer maskedLoad;
+  VMIMaskedStoreTransfer maskedStore;
+
+  const VMILayoutTransfer *lookupDirect(Operation *op) {
+    return llvm::TypeSwitch<Operation *, const VMILayoutTransfer *>(op)
+        .Case<VMIConstantOp, VMIBroadcastOp, VMIIotaOp, VMICreateMaskOp,
+              VMICreateGroupMaskOp, VMIConstantMaskOp>(
+            [this](auto) { return &freeResultLayout; })
+        .Case<VMIGroupIotaOp>([this](auto) { return &contiguousResultLayout; })
+        .Case<VMILoadOp>([this](auto) { return &load; })
+        .Case<VMIDeinterleaveLoadOp>(
+            [this](auto) { return &deinterleaveLoad; })
+        .Case<VMIGroupLoadOp>([this](auto) { return &groupLoad; })
+        .Case<VMIGroupReduceAddFOp, VMIGroupReduceMaxFOp,
+              VMIGroupReduceMinFOp, VMIGroupReduceAddIOp,
+              VMIGroupReduceMaxIOp, VMIGroupReduceMinIOp>(
+            [this](auto) { return &groupReduce; })
+        .Case<VMIGroupSlotLoadOp>([this](auto) { return &groupSlotLoad; })
+        .Case<VMIGroupBroadcastLoadOp>(
+            [this](auto) { return &groupBroadcastLoad; })
+        .Case<VMIGroupBroadcastOp>([this](auto) { return &groupBroadcast; })
+        .Case<VMIVintlvOp, VMIVdintlvOp>(
+            [this](auto) { return &interleave; })
+        .Case<VMIGatherOp>([this](auto) { return &gather; })
+        .Case<VMIBitcastOp>([this](auto) { return &bitcast; })
+        .Case<VMIVexpdifOp>([this](auto) { return &vexpdif; })
+        .Default([](Operation *) { return nullptr; });
   }
-  if (isa<VMILoadOp>(op)) {
-    return &loadTransfer;
-  }
-  if (isa<VMIDeinterleaveLoadOp>(op)) {
-    return &deinterleaveLoadTransfer;
-  }
-  if (isa<VMIGroupLoadOp>(op)) {
-    return &groupLoadTransfer;
-  }
-  if (isa<VMIGroupReduceAddFOp, VMIGroupReduceMaxFOp,
-          VMIGroupReduceMinFOp, VMIGroupReduceAddIOp,
-          VMIGroupReduceMaxIOp, VMIGroupReduceMinIOp>(op)) {
-    return &groupReduceTransfer;
-  }
-  if (isa<VMIGroupSlotLoadOp>(op)) {
-    return &groupSlotLoadTransfer;
-  }
-  if (isa<VMIGroupBroadcastLoadOp>(op)) {
-    return &groupBroadcastLoadTransfer;
-  }
-  if (isa<VMIGroupBroadcastOp>(op)) {
-    return &groupBroadcastTransfer;
-  }
-  if (isa<VMIVintlvOp, VMIVdintlvOp>(op)) {
-    return &interleaveTransfer;
-  }
-  if (isa<VMIGatherOp>(op)) {
-    return &gatherTransfer;
-  }
-  if (isa<VMIBitcastOp>(op)) {
-    return &bitcastTransfer;
-  }
-  if (isa<VMIVexpdifOp>(op)) {
-    return &vexpdifTransfer;
-  }
-  if (isa<VMIFPToSIOp, VMIFPToUIOp, VMISIToFPOp>(op)) {
-    // Same-width fp<->int: same-layout.  Widen/narrow: cast.
-    auto srcType = dyn_cast<VMIVRegType>(op->getOperand(0).getType());
-    auto dstType = dyn_cast<VMIVRegType>(op->getResult(0).getType());
-    if (srcType && dstType) {
-      auto srcElem = srcType.getElementType();
-      auto dstElem = dstType.getElementType();
-      unsigned srcBits = 0;
-      unsigned dstBits = 0;
-      if (auto ft = dyn_cast<FloatType>(srcElem)) {
-        srcBits = ft.getWidth();
-      } else if (auto it = dyn_cast<IntegerType>(srcElem)) {
-        srcBits = it.getWidth();
-      }
-      if (auto ft = dyn_cast<FloatType>(dstElem)) {
-        dstBits = ft.getWidth();
-      } else if (auto it = dyn_cast<IntegerType>(dstElem)) {
-        dstBits = it.getWidth();
-      }
-      if (srcBits > 0 && srcBits == dstBits) {
-        return &sameLayoutTransfer;
-      }
+
+  const VMILayoutTransfer *lookup(Operation *op) {
+    if (const VMILayoutTransfer *transfer = lookupDirect(op)) {
+      return transfer;
     }
-    return &castTransfer;
+    if (isa<VMIFPToSIOp, VMIFPToUIOp, VMISIToFPOp>(op)) {
+      if (isSameWidthNumericCast(op)) {
+        return &sameLayout;
+      }
+      return &cast;
+    }
+    if (isSameLayoutOp(op)) {
+      return &sameLayout;
+    }
+    if (isa<VMIEnsureMaskGranularityOp>(op)) {
+      return &maskGranularityCast;
+    }
+    if (isCastOp(op)) {
+      return &cast;
+    }
+    return llvm::TypeSwitch<Operation *, const VMILayoutTransfer *>(op)
+        .Case<VMIStoreOp>([this](auto) { return &store; })
+        .Case<VMIGroupStoreOp>([this](auto) { return &groupStore; })
+        .Case<VMIMaskedLoadOp>([this](auto) { return &maskedLoad; })
+        .Case<VMIMaskedStoreOp>([this](auto) { return &maskedStore; })
+        .Default([](Operation *) { return nullptr; });
   }
-  if (isSameLayoutOp(op)) {
-    return &sameLayoutTransfer;
-  }
-  if (isa<VMIEnsureMaskGranularityOp>(op)) {
-    return &maskGranularityCastTransfer;
-  }
-  if (isCastOp(op)) {
-    return &castTransfer;
-  }
-  if (isa<VMIStoreOp>(op)) {
-    return &storeTransfer;
-  }
-  if (isa<VMIGroupStoreOp>(op)) {
-    return &groupStoreTransfer;
-  }
-  if (isa<VMIMaskedLoadOp>(op)) {
-    return &maskedLoadTransfer;
-  }
-  if (isa<VMIMaskedStoreOp>(op)) {
-    return &maskedStoreTransfer;
-  }
-  return nullptr;
+};
+
+const VMILayoutTransfer *getTransfer(Operation *op) {
+  static TransferRegistry registry;
+  return registry.lookup(op);
 }
 
 } // namespace
@@ -1126,8 +1128,9 @@ bool VMILayoutPropagator::canUseOperandLayout(OpOperand &operand,
   if (!transfer) {
     return false;
   }
-  FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>> relations = transfer->query(
-      operand.getOwner(), operand.get(), layout, *this, &operand);
+  FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>> relations =
+      transfer->query(
+          {operand.getOwner(), operand.get(), layout, *this, &operand});
   if (failed(relations)) {
     return false;
   }
@@ -1242,8 +1245,9 @@ bool VMILayoutPropagator::canProduceValueLayout(Value value,
     if (!transfer) {
       return isTypeRewriteable(value);
     }
-    FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>> relations = transfer->query(
-        definingOp, value, layout, *this, /*changedOperand=*/nullptr);
+    FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>> relations =
+        transfer->query(
+            {definingOp, value, layout, *this, /*changedOperand=*/nullptr});
     if (failed(relations)) {
       return false;
     }
@@ -1351,7 +1355,6 @@ LogicalResult VMILayoutPropagator::propagateFact(Value value,
     if (failed(propagateThrough(result.getDefiningOp(), value, layout))) {
       return failure();
     }
-
   }
 
   SmallVector<OpOperand *, mlir::pto::kValue8> uses;
@@ -1488,6 +1491,29 @@ FailureOr<Value> VMILayoutPropagator::materializeAt(Value source,
   return failure();
 }
 
+static Operation *getBoundaryOwner(Value value, Operation *fallback) {
+  if (auto result = dyn_cast<OpResult>(value)) {
+    return result.getDefiningOp();
+  }
+  if (auto argument = dyn_cast<BlockArgument>(value)) {
+    return argument.getOwner()->getParentOp();
+  }
+  return fallback;
+}
+
+static LogicalResult setMaterializationInsertionPoint(Value value,
+                                                      RewriterBase &rewriter) {
+  if (auto result = dyn_cast<OpResult>(value)) {
+    rewriter.setInsertionPointAfter(result.getDefiningOp());
+    return success();
+  }
+  if (auto argument = dyn_cast<BlockArgument>(value)) {
+    rewriter.setInsertionPointToStart(argument.getOwner());
+    return success();
+  }
+  return failure();
+}
+
 LogicalResult VMILayoutPropagator::materializePrimary(
     Value value, const VMIValueLayoutAssignment &assignment,
     RewriterBase &rewriter, DenseMap<Value, Value> &assignedValues) {
@@ -1513,12 +1539,7 @@ LogicalResult VMILayoutPropagator::materializePrimary(
   }
 
   if (!getCurrentLayout(value)) {
-    Operation *owner = scope;
-    if (auto result = dyn_cast<OpResult>(value)) {
-      owner = result.getDefiningOp();
-    } else if (auto arg = dyn_cast<BlockArgument>(value)) {
-      owner = arg.getOwner()->getParentOp();
-    }
+    Operation *owner = getBoundaryOwner(value, scope);
     if (!owner) {
       return failure();
     }
@@ -1529,11 +1550,7 @@ LogicalResult VMILayoutPropagator::materializePrimary(
   }
 
   OpBuilder::InsertionGuard guard(rewriter);
-  if (auto result = dyn_cast<OpResult>(value)) {
-    rewriter.setInsertionPointAfter(result.getDefiningOp());
-  } else if (auto arg = dyn_cast<BlockArgument>(value)) {
-    rewriter.setInsertionPointToStart(arg.getOwner());
-  } else {
+  if (failed(setMaterializationInsertionPoint(value, rewriter))) {
     return failure();
   }
 

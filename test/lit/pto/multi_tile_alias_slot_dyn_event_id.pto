@@ -8,9 +8,6 @@
 
 // RUN: ptoas --enable-insert-sync --mlir-print-ir-after=pto-insert-sync \
 // RUN:   %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=INSERT
-// RUN: ptoas --enable-graph-sync-solver --graph-sync-solver-event-id-max=8 \
-// RUN:   --mlir-print-ir-after=pto-graph-sync-solver %s 2>&1 1>/dev/null \
-// RUN:   | FileCheck %s --check-prefix=GSS
 
 // The producer/consumer slots are hidden behind tile alias ops. The sync
 // analysis must still trace them back to `pto.multi_tile_get` and keep the
@@ -67,10 +64,3 @@ module {
 // INSERT: pto.set_flag_dyn[<PIPE_MTE3>, <PIPE_MTE2>,
 // INSERT: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
 // INSERT: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID1>]
-
-// GSS-LABEL: func.func @multi_tile_alias_slot_dyn_event_id
-// GSS: scf.for
-// GSS: pto.wait_flag_dyn[<PIPE_MTE3>, <PIPE_MTE2>,
-// GSS: pto.tload
-// GSS: pto.tstore
-// GSS: pto.set_flag_dyn[<PIPE_MTE3>, <PIPE_MTE2>,

@@ -1,0 +1,54 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s '-pto-vpto-scheduler=mode=on trace=true' > %t 2> %t.trace
+// RUN: FileCheck %s --check-prefix=ORDER < %t
+// RUN: FileCheck %s --check-prefix=TRACE < %t.trace
+// RUN: pto-test-opt %s '-pto-vpto-scheduler=mode=analyze' > /dev/null 2> %t.analyze
+// RUN: FileCheck %s --check-prefix=ANALYZE < %t.analyze
+
+// ORDER-LABEL: func.func @generic_vector_ops
+// ORDER: pto.vsub
+// ORDER-NEXT: pto.vmul
+// ORDER-NEXT: pto.vdiv
+// ORDER-NEXT: pto.vexp
+// ORDER-NEXT: pto.vmula
+// ORDER-NEXT: pto.vcadd
+// ORDER-NEXT: pto.vcvt
+
+// TRACE-LABEL: vpto-scheduler: function=generic_vector_ops mode=on
+// TRACE: vpto-scheduler: region=0
+// TRACE-SAME: nodes=7
+// TRACE-SAME: known-classes=7 unknown-classes=0
+// TRACE: vpto-scheduler: schedule-result block=0 region=0 nodes=7
+// TRACE-NOT: VPTO scheduler skipped
+
+// ANALYZE-LABEL: vpto-scheduler: function=generic_vector_ops mode=analyze
+// ANALYZE: vpto-scheduler: region=0
+// ANALYZE-SAME: nodes=7
+// ANALYZE-SAME: known-classes=7 unknown-classes=0
+// ANALYZE-COUNT-7: sched-class=vector-predicate known=true
+// ANALYZE-NOT: known=false
+// ANALYZE-NOT: VPTO scheduler skipped
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @generic_vector_ops(%x0: !pto.vreg<64xf32>,
+                                %x1: !pto.vreg<64xf32>,
+                                %active: !pto.mask<b32>) {
+    pto.vecscope {
+      %sub = pto.vsub %x0, %x1, %active : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %mul = pto.vmul %sub, %x1, %active : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %div = pto.vdiv %mul, %x0, %active : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %exp = pto.vexp %div, %active : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %mula = pto.vmula %x0, %mul, %exp, %active : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %sum = pto.vcadd %mula, %active : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %converted = pto.vcvt %sum, %active {rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+    }
+    return
+  }
+}

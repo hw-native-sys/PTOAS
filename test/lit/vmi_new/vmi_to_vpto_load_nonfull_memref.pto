@@ -9,11 +9,13 @@
 // RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
 
 module {
-  func.func @vmi_to_vpto_load_nonfull_memref(%src: !pto.ptr<f32, ub>)
+  func.func @vmi_to_vpto_load_nonfull_memref(
+      %src: memref<128xf32, #pto.address_space<vec>>)
       -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>) {
     %c0 = arith.constant 0 : index
     %value = pto.vmi.vload %src[%c0]
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<100xf32, #pto.vmi.layout<contiguous>>
+        : memref<128xf32, #pto.address_space<vec>>
+        -> !pto.vmi.vreg<100xf32, #pto.vmi.layout<contiguous>>
     %p0, %p1 = "pto.vmi.unpack"(%value)
         : (!pto.vmi.vreg<100xf32, #pto.vmi.layout<contiguous>>)
         -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>)
@@ -24,8 +26,8 @@ module {
 // CHECK-LABEL: func.func @vmi_to_vpto_load_nonfull_memref(
 // CHECK: %[[C64:.*]] = arith.constant 64 : index
 // CHECK: %[[C0:.*]] = arith.constant 0 : index
-// CHECK: pto.vlds %arg0[%[[C0]]] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-// CHECK: pto.vlds %arg0[%[[C64]]] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+// CHECK: pto.vlds %arg0[%[[C0]]]
+// CHECK: pto.vlds %arg0[%[[C64]]]
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast

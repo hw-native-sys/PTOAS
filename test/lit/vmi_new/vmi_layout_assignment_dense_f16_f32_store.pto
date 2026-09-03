@@ -14,11 +14,13 @@ module {
       %src: !pto.ptr<f16, ub>,
       %dst: !pto.ptr<f32, ub>,
       %off: index) {
-    %x16 = pto.vmi.vload %src[%off]
+    %c16 = arith.constant 16 : index
+    %aligned_off = arith.muli %off, %c16 : index
+    %x16 = pto.vmi.vload %src[%aligned_off]
         : !pto.ptr<f16, ub> -> !pto.vmi.vreg<128xf16>
     %x32 = pto.vmi.vcvt %x16
         : !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xf32>
-    pto.vmi.vstore %x32, %dst[%off]
+    pto.vmi.vstore %x32, %dst[%aligned_off]
         : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
     return
   }
@@ -27,11 +29,13 @@ module {
       %src: !pto.ptr<f16, ub>,
       %dst: !pto.ptr<f32, ub>,
       %off: index) {
-    %x16 = pto.vmi.vload %src[%off]
+    %c16 = arith.constant 16 : index
+    %aligned_off = arith.muli %off, %c16 : index
+    %x16 = pto.vmi.vload %src[%aligned_off]
         : !pto.ptr<f16, ub> -> !pto.vmi.vreg<256xf16>
     %x32 = pto.vmi.vcvt %x16
         : !pto.vmi.vreg<256xf16> -> !pto.vmi.vreg<256xf32>
-    pto.vmi.vstore %x32, %dst[%off]
+    pto.vmi.vstore %x32, %dst[%aligned_off]
         : !pto.vmi.vreg<256xf32>, !pto.ptr<f32, ub>
     return
   }
@@ -40,11 +44,13 @@ module {
       %src: !pto.ptr<f16, ub>,
       %dst: !pto.ptr<f32, ub>,
       %off: index) {
-    %x16 = pto.vmi.vload %src[%off]
+    %c16 = arith.constant 16 : index
+    %aligned_off = arith.muli %off, %c16 : index
+    %x16 = pto.vmi.vload %src[%aligned_off]
         : !pto.ptr<f16, ub> -> !pto.vmi.vreg<64xf16>
     %x32 = pto.vmi.vcvt %x16
         : !pto.vmi.vreg<64xf16> -> !pto.vmi.vreg<64xf32>
-    pto.vmi.vstore %x32, %dst[%off]
+    pto.vmi.vstore %x32, %dst[%aligned_off]
         : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
     return
   }
@@ -53,15 +59,17 @@ module {
       %src: !pto.ptr<f16, ub>,
       %dst: !pto.ptr<f16, ub>,
       %off: index) {
+    %c16 = arith.constant 16 : index
     %c64 = arith.constant 64 : index
+    %aligned_off = arith.muli %off, %c16 : index
     %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
-    %x16 = pto.vmi.vload %src[%off]
+    %x16 = pto.vmi.vload %src[%aligned_off]
         : !pto.ptr<f16, ub> -> !pto.vmi.vreg<64xf16>
     %x32 = pto.vmi.vcvt %x16
         : !pto.vmi.vreg<64xf16> -> !pto.vmi.vreg<64xf32>
     %y16 = pto.vmi.vcvt %x32 {saturate = "SAT"}
         : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf16>
-    pto.vmi.vstore %y16, %dst[%off], %mask
+    pto.vmi.vstore %y16, %dst[%aligned_off], %mask
         : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<64xpred>
     return
   }
@@ -70,11 +78,13 @@ module {
       %src: !pto.ptr<f32, ub>,
       %dst: !pto.ptr<f16, ub>,
       %off: index) {
-    %x32 = pto.vmi.vload %src[%off]
+    %c16 = arith.constant 16 : index
+    %aligned_off = arith.muli %off, %c16 : index
+    %x32 = pto.vmi.vload %src[%aligned_off]
         : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
     %x16 = pto.vmi.vcvt %x32 {saturate = "SAT"}
         : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf16>
-    pto.vmi.vstore %x16, %dst[%off]
+    pto.vmi.vstore %x16, %dst[%aligned_off]
         : !pto.vmi.vreg<128xf16>, !pto.ptr<f16, ub>
     return
   }
@@ -83,11 +93,13 @@ module {
       %src: !pto.ptr<f32, ub>,
       %dst: !pto.ptr<f16, ub>,
       %off: index) {
-    %x32 = pto.vmi.vload %src[%off]
+    %c16 = arith.constant 16 : index
+    %aligned_off = arith.muli %off, %c16 : index
+    %x32 = pto.vmi.vload %src[%aligned_off]
         : !pto.ptr<f32, ub> -> !pto.vmi.vreg<256xf32>
     %x16 = pto.vmi.vcvt %x32 {saturate = "SAT"}
         : !pto.vmi.vreg<256xf32> -> !pto.vmi.vreg<256xf16>
-    pto.vmi.vstore %x16, %dst[%off]
+    pto.vmi.vstore %x16, %dst[%aligned_off]
         : !pto.vmi.vreg<256xf16>, !pto.ptr<f16, ub>
     return
   }

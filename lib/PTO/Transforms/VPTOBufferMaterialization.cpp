@@ -28,11 +28,8 @@ static AddressSpaceAttr getNormalizedPtrMemorySpace(Attribute memorySpace,
   return AddressSpaceAttr::get(context, AddressSpace::GM);
 }
 
-static Value materializeMemRefView(Value value, ArrayRef<int64_t> shape,
-                                   Type elementType, Attribute memorySpace,
+static Value materializeMemRefView(Value value, MemRefType memrefType,
                                    PatternRewriter &rewriter, Location loc) {
-  auto memrefType =
-      MemRefType::get(shape, elementType, AffineMap(), memorySpace);
   if (value.getType() == memrefType) {
     return value;
   }
@@ -53,9 +50,10 @@ static Value materializeTileBufferView(Value value, PatternRewriter &rewriter,
     return {};
   }
 
-  return materializeMemRefView(value, tileType.getShape(),
-                               tileType.getElementType(),
-                               tileType.getMemorySpace(), rewriter, loc);
+  auto memrefType =
+      MemRefType::get(tileType.getShape(), tileType.getElementType(),
+                      AffineMap(), tileType.getMemorySpace());
+  return materializeMemRefView(value, memrefType, rewriter, loc);
 }
 
 } // namespace

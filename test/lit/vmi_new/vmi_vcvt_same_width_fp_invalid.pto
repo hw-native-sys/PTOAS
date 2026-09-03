@@ -8,18 +8,12 @@
 
 // RUN: not ptoas --emit-pto-ir %s 2>&1 | FileCheck %s
 
-// Negative tests for same-width fp->fp vcvt: only bf16->f16 is in the VMI
-// fp-to-fp contract (lookupVMIFpToFpContract); every other same-width fp
-// pair must be rejected. Each function is independently invalid; the first
-// verifier error wins.
+// Negative tests for same-width fp->fp vcvt: only bf16->f16 and f16->bf16
+// are in the VMI fp-to-fp contract (lookupVMIFpToFpContract); every other
+// same-width fp pair must be rejected. Each function is independently
+// invalid; the first verifier error wins.
 
 module {
-  // f16->bf16 same-width: not in lookupVMIFpToFpContract -> rejected
-  func.func @f16_to_bf16_same_width(%source: !pto.vmi.vreg<64xf16>) {
-    %result = pto.vmi.vcvt %source {saturate = "SAT"}
-        : !pto.vmi.vreg<64xf16> -> !pto.vmi.vreg<64xbf16>
-    return
-  }
   // f32->f32 same-width: not in lookupVMIFpToFpContract -> rejected
   func.func @f32_to_f32_same_width(%source: !pto.vmi.vreg<64xf32>) {
     %result = pto.vmi.vcvt %source

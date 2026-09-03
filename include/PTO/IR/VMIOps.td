@@ -712,6 +712,13 @@ def VMIMaskedLoadOp : VMI_Op<"masked_load", [DeclareOpInterfaceMethods<MemoryEff
 
 def VMIGatherOp : VMI_Op<"gather", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "VMI logical masked indexed gather with passthrough lanes";
+  let description = [{
+    Gathers elements from UB memory using an index vector.
+    i8/ui8 sources may be gathered into matching i16/ui16 results. The
+    8-to-16 promotion is a zero-extension: one byte is read per lane and the
+    upper 8 bits are zero-filled, regardless of whether the source element
+    type is signed (i8) or unsigned (ui8). Sign-extension is not supported.
+  }];
   let arguments = (ins PtrOrMemRef:$source,
                        VMI_VRegTypeConstraint:$indices,
                        VMI_MaskTypeConstraint:$mask,
@@ -1435,7 +1442,6 @@ def VMIvLoadOp : VMI_Op<"vload",
     - "continuous" (default): contiguous stride-1 load  → 1 result;
       1/2/4/8-lane results alias group=1/2/4/8 with unit stride
     - "dintlv":             deinterleaved dual load      → 2 results (%lo, %hi)
-    - "unpack":             widening unpack load         → 1 result
     - "brc":                broadcast load               → 1 result
 
     group mode (mutually exclusive with dist-mode):
@@ -1473,7 +1479,7 @@ def VMIvStoreOp : VMI_Op<"vstore",
     dist-mode controls the memory access pattern:
     - "continuous" (default): contiguous stride-1 store  → 1 value;
       1/2/4/8-lane inputs alias group=1/2/4/8 with unit stride
-    - "dintlv":             interleaved dual store        → 2 values (%lo, %hi)
+    - "intlv":              interleaved dual store        → 2 values (%lo, %hi)
 
     group mode (mutually exclusive with dist-mode):
     - {group = C}: grouped vector store with row stride
@@ -1587,9 +1593,13 @@ def VMIVdintlvOp : VMI_Op<"vdintlv"> {
 }
 
 def VMIVgatherOp : VMI_Op<"vgather", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
-  let summary = "VMI logical masked indexed gather (B32 granularity)";
+  let summary = "VMI logical masked indexed gather";
   let description = [{
     Gathers elements from UB memory using an index vector.
+    i8/ui8 sources may be gathered into matching i16/ui16 results. The
+    8-to-16 promotion is a zero-extension: one byte is read per lane and the
+    upper 8 bits are zero-filled, regardless of whether the source element
+    type is signed (i8) or unsigned (ui8). Sign-extension is not supported.
     Inactive lanes are controlled by pmode (no explicit passthru operand).
 
     pmode controls inactive-lane behavior:

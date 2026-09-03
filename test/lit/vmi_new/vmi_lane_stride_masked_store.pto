@@ -16,13 +16,15 @@ module {
       %value: !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>,
       %mask: !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous, lane_stride = 2>>,
       %dst: !pto.ptr<f16, ub>, %offset: index) {
+    %c16 = arith.constant 16 : index
+    %aligned_offset = arith.muli %offset, %c16 : index
     %value_c = pto.vmi.ensure_layout %value
         : !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
         -> !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous>>
     %mask_c = pto.vmi.ensure_mask_layout %mask
         : !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous, lane_stride = 2>>
         -> !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous>>
-    pto.vmi.vstore %value_c, %dst[%offset], %mask_c {dist_mode = "continuous"}
+    pto.vmi.vstore %value_c, %dst[%aligned_offset], %mask_c {dist_mode = "continuous"}
         : !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous>>,
           !pto.ptr<f16, ub>,
           !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous>>
@@ -33,13 +35,15 @@ module {
       %value: !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>,
       %mask: !pto.vmi.mask<64xb8, #pto.vmi.layout<contiguous, lane_stride = 4>>,
       %dst: !pto.ptr<ui8, ub>, %offset: index) {
+    %c32 = arith.constant 32 : index
+    %aligned_offset = arith.muli %offset, %c32 : index
     %value_c = pto.vmi.ensure_layout %value
         : !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>
         -> !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous>>
     %mask_c = pto.vmi.ensure_mask_layout %mask
         : !pto.vmi.mask<64xb8, #pto.vmi.layout<contiguous, lane_stride = 4>>
         -> !pto.vmi.mask<64xb8, #pto.vmi.layout<contiguous>>
-    pto.vmi.vstore %value_c, %dst[%offset], %mask_c {dist_mode = "continuous"}
+    pto.vmi.vstore %value_c, %dst[%aligned_offset], %mask_c {dist_mode = "continuous"}
         : !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous>>,
           !pto.ptr<ui8, ub>,
           !pto.vmi.mask<64xb8, #pto.vmi.layout<contiguous>>

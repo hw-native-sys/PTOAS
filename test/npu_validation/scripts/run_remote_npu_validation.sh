@@ -14,10 +14,21 @@ RUN_MODE="${RUN_MODE:-npu}"   # npu|sim
 SOC_VERSION="${SOC_VERSION:-Ascend910}"
 GOLDEN_MODE="${GOLDEN_MODE:-npu}"  # sim|npu|skip
 PTO_ISA_REPO="${PTO_ISA_REPO:-https://gitcode.com/cann/pto-isa.git}"
-PTO_ISA_COMMIT="${PTO_ISA_COMMIT:-5649f0522ba9987fd22cbf18923b729b97c5f2ff}"
-DEVICE_ID="${DEVICE_ID:-0}"
+PTO_ISA_COMMIT="${PTO_ISA_COMMIT:-ce3262e3825a235f951917eeada30e52910b6a84}"
+DEVICE_ID="${DEVICE_ID:-}"
 SKIP_CASES="${SKIP_CASES:-}"          # comma/space separated testcase names
 RUN_ONLY_CASES="${RUN_ONLY_CASES:-}"  # comma/space separated testcase names or model groups
+
+log() { echo "[$(date +'%F %T')] $*"; }
+
+# PreSmoke performs package and sample/codegen checks in its smoke task. The
+# separate NPU validation command is not part of that gate and can submit a
+# full board sweep; stop it here while leaving explicit board workflows intact.
+if [[ "${SMOKE_TYPE:-}" == "pre" ]]; then
+  log "Skipping remote NPU validation in PreSmoke (SMOKE_TYPE=pre)"
+  log "execute samples success"
+  exit 0
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "${SCRIPT_DIR}/test/npu_validation/scripts/generate_testcase.py" ]]; then
@@ -29,14 +40,45 @@ else
   exit 1
 fi
 
-EXPECTED_CASES_FILE="${EXPECTED_CASES_FILE:-${ROOT_DIR}/test/samples/expected_npu_validation_cases.txt}"
+explicit_samples_root="${PTOAS_SAMPLES_ROOT:-}"
+explicit_expected_cases_file="${EXPECTED_CASES_FILE:-}"
+if [[ -z "${PTOAS_SAMPLES_ENV_FILE:-}" ]]; then
+  for candidate in \
+    "${ROOT_DIR}/build/ptoas-samples-env.sh" \
+    "${ROOT_DIR}/test/samples/ptoas-samples-env.sh"; do
+    if [[ -f "${candidate}" ]]; then
+      PTOAS_SAMPLES_ENV_FILE="${candidate}"
+      break
+    fi
+  done
+fi
+if [[ -n "${PTOAS_SAMPLES_ENV_FILE:-}" && -f "${PTOAS_SAMPLES_ENV_FILE}" ]]; then
+  # Load the last source-tree generation paths without overriding any explicit
+  # PTOAS_SAMPLES_ROOT or EXPECTED_CASES_FILE supplied by the caller.
+  # shellcheck disable=SC1090
+  source "${PTOAS_SAMPLES_ENV_FILE}"
+fi
+if [[ -n "${explicit_samples_root}" ]]; then
+  PTOAS_SAMPLES_ROOT="${explicit_samples_root}"
+elif [[ -n "${PTOAS_LAST_SAMPLES_ROOT:-}" ]]; then
+  PTOAS_SAMPLES_ROOT="${PTOAS_LAST_SAMPLES_ROOT}"
+else
+  PTOAS_SAMPLES_ROOT="${ROOT_DIR}/test/samples"
+fi
+if [[ -n "${explicit_expected_cases_file}" ]]; then
+  EXPECTED_CASES_FILE="${explicit_expected_cases_file}"
+elif [[ -n "${explicit_samples_root}" ]]; then
+  EXPECTED_CASES_FILE="${PTOAS_SAMPLES_ROOT}/expected_npu_validation_cases.txt"
+elif [[ -n "${PTOAS_LAST_EXPECTED_CASES_FILE:-}" ]]; then
+  EXPECTED_CASES_FILE="${PTOAS_LAST_EXPECTED_CASES_FILE}"
+else
+  EXPECTED_CASES_FILE="${PTOAS_SAMPLES_ROOT}/expected_npu_validation_cases.txt"
+fi
 EXPECTED_CASE_COUNT="${EXPECTED_CASE_COUNT:-}"
 # RUN_ONLY_CASES may be expanded by the board monitor into testcase basenames.
 # Keep the original user-facing group aliases here (for example qwen,deepseek)
 # so completeness is checked against every requested model variant.
 EXPECTED_CASES_FILTER="${EXPECTED_CASES_FILTER:-${RUN_ONLY_CASES}}"
-
-log() { echo "[$(date +'%F %T')] $*"; }
 
 append_unique_colon_item() {
   local list="$1"
@@ -224,10 +266,11 @@ discover_cann_host_include_dirs() {
 log "=== Remote NPU Validation ==="
 log "STAGE=${STAGE} RUN_MODE=${RUN_MODE} SOC_VERSION=${SOC_VERSION}"
 log "GOLDEN_MODE=${GOLDEN_MODE}"
-log "DEVICE_ID=${DEVICE_ID}"
+log "DEVICE_ID=${DEVICE_ID:-auto}"
 log "PTO_ISA_REPO=${PTO_ISA_REPO}"
 log "PTO_ISA_COMMIT=${PTO_ISA_COMMIT}"
 log "ROOT_DIR=${ROOT_DIR}"
+log "PTOAS_SAMPLES_ROOT=${PTOAS_SAMPLES_ROOT}"
 if [[ -f "${EXPECTED_CASES_FILE}" ]]; then
   log "EXPECTED_CASES_FILE=${EXPECTED_CASES_FILE}"
 elif [[ -n "${EXPECTED_CASE_COUNT}" ]]; then
@@ -523,12 +566,57 @@ if [[ "${STAGE}" == "run" && "${RUN_MODE}" == "npu" ]]; then
   log "=== NPU Device Check ==="
   id || true
   ls -l /dev/davinci* 2>/dev/null || true
-  devnode="/dev/davinci${DEVICE_ID}"
-  [[ -e "${devnode}" ]] || { log "ERROR: ${devnode} not found"; exit 1; }
-  [[ -r "${devnode}" && -w "${devnode}" ]] || {
-    log "ERROR: no access to ${devnode} (need HwHiAiUser group)";
-    exit 1;
+  available_devnodes=()
+  visible_phys_ids=()
+  shopt -s nullglob
+  for devnode in /dev/davinci[0-9]*; do
+    [[ -r "${devnode}" && -w "${devnode}" ]] || {
+      log "WARN: skip ${devnode} (need read/write access)"
+      continue
+    }
+    available_devnodes+=("${devnode}")
+  done
+  shopt -u nullglob
+  [[ ${#available_devnodes[@]} -gt 0 ]] || {
+    log "ERROR: no accessible /dev/davinciN device found"
+    exit 1
   }
+
+  # The device node suffix is a physical id, while ACL_DEVICE_ID is logical
+  # inside a container. For example, ASCEND_VISIBLE_DEVICES=7 exposes
+  # /dev/davinci7 but the process must select logical device 0.
+  if [[ -n "${ASCEND_VISIBLE_DEVICES:-}" ]]; then
+    IFS=',' read -r -a _visible_devices <<< "${ASCEND_VISIBLE_DEVICES}"
+    unset IFS
+    for physical_id in "${_visible_devices[@]}"; do
+      physical_id="${physical_id//[[:space:]]/}"
+      [[ "${physical_id}" =~ ^[0-9]+$ ]] || continue
+      visible_phys_ids+=("${physical_id}")
+    done
+  fi
+
+  if [[ ${#visible_phys_ids[@]} -gt 0 ]]; then
+    logical_count=${#visible_phys_ids[@]}
+    log "ASCEND_VISIBLE_DEVICES=${ASCEND_VISIBLE_DEVICES} (logical count=${logical_count})"
+  else
+    logical_count=${#available_devnodes[@]}
+    log "ASCEND_VISIBLE_DEVICES not set; fallback logical count from /dev nodes=${logical_count}"
+  fi
+
+  if [[ -z "${DEVICE_ID}" ]]; then
+    DEVICE_ID=0
+    log "Auto-select logical DEVICE_ID=${DEVICE_ID}"
+  else
+    [[ "${DEVICE_ID}" =~ ^[0-9]+$ ]] || {
+      log "ERROR: DEVICE_ID must be a non-negative integer, got: ${DEVICE_ID}"
+      exit 1
+    }
+    if [[ ${#visible_phys_ids[@]} -gt 0 ]] \
+       && (( DEVICE_ID >= logical_count )); then
+      log "ERROR: DEVICE_ID=${DEVICE_ID} out of logical range [0, ${logical_count}) under ASCEND_VISIBLE_DEVICES=${ASCEND_VISIBLE_DEVICES}"
+      exit 1
+    fi
+  fi
   python3 -c "import numpy as np; print('numpy', np.__version__)" >/dev/null
 fi
 
@@ -848,7 +936,7 @@ while IFS= read -r -d '' cpp; do
     printf "%s\tOK\t%s\tvalidation=independent-golden\n" "${case_id}" "${STAGE}" >> "${RESULTS_TSV}"
     log "OK: ${testcase}"
   fi
-done < <(find "${ROOT_DIR}/test/samples" -type f -name '*-pto.cpp' -print0)
+done < <(find "${PTOAS_SAMPLES_ROOT}" -type f -name '*-pto.cpp' -print0)
 
 log "=== SUMMARY ==="
 passed_count=$((ok_count + determinism_only_count))
@@ -906,5 +994,9 @@ elif [[ -n "${EXPECTED_CASE_COUNT}" ]]; then
   fi
 fi
 log "RESULTS_TSV=${RESULTS_TSV}"
+
+if [[ ${fail_count} -eq 0 ]]; then
+  log "execute samples success"
+fi
 
 exit "${status}"

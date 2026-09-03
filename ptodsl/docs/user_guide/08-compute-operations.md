@@ -41,9 +41,14 @@ pto.tile.mul(scale_tile, data_tile, scaled_tile)
 
 ---
 
-#### `pto.tile.div(src0: Tile, src1: Tile, dst: Tile, *, div_precision: DivPrecision = DivPrecision.Default) -> None`
+#### `pto.tile.div(src0: Tile, src1: Tile, dst: Tile, *, precision: Precision = Precision.Default) -> None`
 
-**Description**: Element-wise division. `div_precision` can be `Default` or `HighPrecision` (f16/f32 only).
+**Description**: Element-wise division. `precision` can be `Default` or `HighPrecision` (f16/f32 only).
+
+`div_precision` remains accepted temporarily for compatibility and emits a
+`PTODSLDeprecationWarning`; use `precision` for new code. The same migration
+applies to the operation-specific precision keywords for `exp`, `log`, `sqrt`,
+`rsqrt`, and `recip`.
 
 **Parameters**:
 
@@ -52,7 +57,7 @@ pto.tile.mul(scale_tile, data_tile, scaled_tile)
 | `src0` | `Tile` | Numerator tile |
 | `src1` | `Tile` | Denominator tile |
 | `dst` | `Tile` | Destination tile |
-| `div_precision` | `DivPrecision` | `Default` (default) or `HighPrecision` |
+| `precision` | `Precision` | `Default` (default) or `HighPrecision` |
 
 **Returns**: None.
 
@@ -82,7 +87,7 @@ Element-wise operations between a tile and a scalar.
 
 ---
 
-#### `pto.tile.divs(src: Tile, scalar: ScalarType, dst: Tile, *, div_precision: DivPrecision = DivPrecision.Default) -> None`
+#### `pto.tile.divs(src: Tile, scalar: ScalarType, dst: Tile, *, precision: Precision = Precision.Default) -> None`
 
 **Description**: Element-wise tile-scalar division: `dst[i,j] = src[i,j] / scalar`.
 
@@ -123,15 +128,64 @@ pto.tile.mov(p_tile, p_mat)
 
 ---
 
+### 8.1.2b Tile remainder and fmod
+
+#### `pto.tile.rem(src0: Tile, src1: Tile, dst: Tile, *, tmp: Tile | None = None, precision: Precision = Precision.Default) -> None`
+#### `pto.tile.rems(src: Tile, scalar: ScalarType, dst: Tile, *, tmp: Tile | None = None) -> None`
+#### `pto.tile.fmod(src0: Tile, src1: Tile, dst: Tile, *, precision: Precision = Precision.Default) -> None`
+#### `pto.tile.fmods(src: Tile, scalar: ScalarType, dst: Tile) -> None`
+
+**Description**: Computes the element-wise remainder using truncation toward
+zero for the quotient. The binary form uses two tiles; the scalar form divides
+each source element by the scalar.
+
+**Semantics**:
+
+```text
+rem(src0, src1): dst[i,j] = src0[i,j] - trunc(src0[i,j] / src1[i,j]) * src1[i,j]
+rems(src, scalar): dst[i,j] = src[i,j] - trunc(src[i,j] / scalar) * scalar
+fmod(src0, src1): dst[i,j] = src0[i,j] - trunc(src0[i,j] / src1[i,j]) * src1[i,j]
+fmods(src, scalar): dst[i,j] = src[i,j] - trunc(src[i,j] / scalar) * scalar
+```
+
+For floating-point inputs, `rem` and `rems` preserve the sign of the dividend
+for ordinary finite, non-zero operands. Integer support is target-dependent.
+The A5 public surface currently covers the floating-point forms used by the
+validated A5 cases (`f16` and `f32`).
+
+**Parameters**:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `src0`, `src1`, `src` | `Tile` | Row-major source tile(s) with matching valid shapes |
+| `scalar` | `ScalarType` | Scalar whose type matches `src` |
+| `dst` | `Tile` | Row-major destination tile with the same valid shape as the source |
+| `tmp` | `Tile` or `None` | Optional scratch-tile override. When omitted, the compiler materializes the target-appropriate scratch tile. |
+| `precision` | `Precision` | `Default` or `HighPrecision`; applies to the binary `rem` and `fmod` forms |
+
+The binary operation requires a scratch tile in the target contract; callers
+normally omit `tmp` unless they need to control that scratch tile explicitly.
+
+**Example**:
+
+```python
+pto.tile.rem(a_tile, b_tile, remainder_tile)
+pto.tile.rems(a_tile, 3.0, remainder_tile)
+pto.tile.fmod(a_tile, b_tile, remainder_tile)
+pto.tile.fmods(a_tile, 3.0, remainder_tile)
+```
+
+---
+
 ### 8.1.3 Unary math
 
 Single-source element-wise math functions.
 
-#### `pto.tile.exp(src: Tile, dst: Tile, *, exp_precision: ExpPrecision = ExpPrecision.Default) -> None`
-#### `pto.tile.log(src: Tile, dst: Tile, *, log_precision: LogPrecision = LogPrecision.Default) -> None`
-#### `pto.tile.sqrt(src: Tile, dst: Tile, *, sqrt_precision: SqrtPrecision = SqrtPrecision.Default) -> None`
-#### `pto.tile.rsqrt(src: Tile, dst: Tile, *, rsqrt_precision: RsqrtPrecision = RsqrtPrecision.Default) -> None`
-#### `pto.tile.recip(src: Tile, dst: Tile, *, recip_precision: RecipPrecision = RecipPrecision.Default) -> None`
+#### `pto.tile.exp(src: Tile, dst: Tile, *, precision: Precision = Precision.Default) -> None`
+#### `pto.tile.log(src: Tile, dst: Tile, *, precision: Precision = Precision.Default) -> None`
+#### `pto.tile.sqrt(src: Tile, dst: Tile, *, precision: Precision = Precision.Default) -> None`
+#### `pto.tile.rsqrt(src: Tile, dst: Tile, *, precision: Precision = Precision.Default) -> None`
+#### `pto.tile.recip(src: Tile, dst: Tile, *, precision: Precision = Precision.Default) -> None`
 
 **Description**: Element-wise `exp`, `ln`, `sqrt`, `1/sqrt`, `1/x`.
 
@@ -141,7 +195,7 @@ Single-source element-wise math functions.
 |-----------|------|-------------|
 | `src` | `Tile` | Source tile |
 | `dst` | `Tile` | Destination tile |
-| `*_precision` | op-specific precision enum | `Default` or `HighPrecision` |
+| `precision` | `Precision` | `Default` or `HighPrecision` |
 
 **Returns**: None.
 
@@ -163,6 +217,19 @@ Single-source element-wise math functions.
 #### `pto.tile.lrelu(src: Tile, slope: float, dst: Tile) -> None`
 
 **Description**: Leaky ReLU — `dst[i,j] = src[i,j] >= 0 ? src[i,j] : slope * src[i,j]`.
+
+#### `pto.tile.prelu(src0: Tile, src1: Tile, dst: Tile, *, tmp: Tile | None = None) -> None`
+
+**Description**: Parametric ReLU with a per-element slope tile: `dst[i,j] =
+src0[i,j] >= 0 ? src0[i,j] : src0[i,j] * src1[i,j]`. The optional `tmp` is an
+explicit scratch-tile override. When omitted, the compiler materializes the
+target-specific scratch tile required by the selected architecture.
+
+#### `pto.tile.random(key0: Scalar, key1: Scalar, counter0: Scalar, counter1: Scalar, counter2: Scalar, counter3: Scalar, dst: Tile, *, rounds: int = 10) -> None`
+
+**Description**: Generates A5 Philox random words into `dst`. Every key and
+counter operand must be a runtime signless `i32` scalar. `rounds` is a
+compile-time Python integer and must be `7` or `10`.
 
 ---
 
@@ -1144,6 +1211,45 @@ pto.tile.matmul_mx_bias(lhs_l0a_mx, lhs_scale, rhs_l0b_mx, rhs_scale, bias_tile,
 ```
 
 ---
+
+#### `pto.tile.gemv(lhs: Tile, rhs: Tile, dst: Tile) -> None`
+
+**Description**: Tile-level ordinary GEMV. Computes `lhs @ rhs` on the cube
+pipeline and writes the result into `dst`. The usual A5 shape is a single
+logical row in `lhs` and `dst`.
+
+Conceptually:
+
+```text
+dst[m, n] = sum_k lhs[m, k] * rhs[k, n]
+```
+
+The operands must be staged in compatible `LEFT`, `RIGHT`, and `ACC` tiles.
+This operation is the ordinary-precision counterpart of `pto.tile.gemv_mx`.
+
+#### `pto.tile.gemv_acc(acc_in: Tile, lhs: Tile, rhs: Tile, dst: Tile) -> None`
+
+**Description**: Accumulating ordinary GEMV. Adds `lhs @ rhs` to `acc_in` and
+writes the result into `dst`; use it for split-K GEMV.
+
+```text
+dst[m, n] = acc_in[m, n] + sum_k lhs[m, k] * rhs[k, n]
+```
+
+`acc_in` and `dst` must be compatible `ACC` tiles, while `lhs` and `rhs` must
+be compatible `LEFT` and `RIGHT` tiles.
+
+#### `pto.tile.gemv_bias(lhs: Tile, rhs: Tile, bias: Tile, dst: Tile) -> None`
+
+**Description**: Bias-enabled ordinary GEMV. Computes `lhs @ rhs`, adds the
+`bias` tile, and writes the result into `dst`.
+
+```text
+dst[m, n] = sum_k lhs[m, k] * rhs[k, n] + bias[m, n]
+```
+
+On A5, `bias` is normally a `[1, N]` tile in `MemorySpace.BIAS`, and `dst` is
+an `ACC` tile.
 
 #### `pto.tile.gemv_mx(lhs: Tile, lhs_scale: Tile, rhs: Tile, rhs_scale: Tile, dst: Tile) -> None`
 

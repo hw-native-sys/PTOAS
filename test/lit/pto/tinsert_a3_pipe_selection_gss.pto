@@ -1,7 +1,0 @@
-// RUN: ptoas --pto-arch a3 --enable-graph-sync-solver --graph-sync-solver-event-id-max=64 %S/tinsert_a3_pipe_selection.pto | FileCheck %s
-
-// CHECK-LABEL: AICORE void tinsert_acc_mat_pipeline_a3(
-// CHECK: set_flag(PIPE_M, PIPE_FIX, EVENT_ID{{[0-9]+}});
-// CHECK: wait_flag(PIPE_M, PIPE_FIX, EVENT_ID{{[0-9]+}});
-// CHECK: TINSERT(
-// CHECK-NOT: PIPE_MTE3

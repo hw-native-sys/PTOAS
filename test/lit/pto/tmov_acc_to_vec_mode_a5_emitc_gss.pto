@@ -1,9 +1,0 @@
-// RUN: ptoas --pto-arch a5 --enable-graph-sync-solver --graph-sync-solver-event-id-max=64 %S/tmov_acc_to_vec_mode_a5_emitc.pto | FileCheck %s --check-prefix=A5
-// RUN: ptoas --pto-arch a3 %S/tmov_acc_to_vec_mode_a5_emitc.pto | FileCheck %s --check-prefix=A3
-
-// A5-LABEL: AICORE void tmov_acc_to_vec_mode_a5(
-// A5: set_flag(PIPE_M, PIPE_FIX, EVENT_ID{{[0-9]+}});
-// A5: wait_flag(PIPE_M, PIPE_FIX, EVENT_ID{{[0-9]+}});
-// A5: TMOV<{{.*}}pto::AccToVecMode::DualModeSplitM{{.*}}>(
-// A3-LABEL: AICORE void tmov_acc_to_vec_mode_a5(
-// A3: TMOV<{{.*}}pto::AccToVecMode::DualModeSplitM{{.*}}>(

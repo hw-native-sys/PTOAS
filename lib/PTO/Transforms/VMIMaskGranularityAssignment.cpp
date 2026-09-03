@@ -32,6 +32,7 @@
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/TypeSwitch.h"
 
 namespace mlir {
 namespace pto {
@@ -202,420 +203,193 @@ struct MaskGranularitySolver {
     return success();
   }
 
-  LogicalResult addConstraints() {
-    WalkResult result = module.walk([&](Operation *op) -> WalkResult {
-      if (auto maskAnd = dyn_cast<VMIMaskAndOp>(op)) {
-        if (failed(uniteMask(maskAnd.getLhs(), maskAnd.getRhs(), op)) ||
-            failed(uniteMask(maskAnd.getLhs(), maskAnd.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
+  static std::optional<WalkResult> constraintResult(LogicalResult result) {
+    return failed(result) ? WalkResult::interrupt() : WalkResult::advance();
+  }
+
+  std::optional<WalkResult> addMaskValueConstraint(Operation *op) {
+    return llvm::TypeSwitch<Operation *, std::optional<WalkResult>>(op)
+        .Case<VMIMaskAndOp, VMIMaskOrOp, VMIMaskXOrOp>([this, op](auto maskOp) {
+          bool failedToUnite =
+              failed(uniteMask(maskOp.getLhs(), maskOp.getRhs(), op)) ||
+              failed(uniteMask(maskOp.getLhs(), maskOp.getResult(), op));
+          return constraintResult(failure(failedToUnite));
+        })
+        .Case<VMIMaskNotOp, VMIEnsureMaskLayoutOp>([this, op](auto maskOp) {
+          return constraintResult(
+              uniteMask(maskOp.getSource(), maskOp.getResult(), op));
+        })
+        .Case<VMICmpFOp, VMICmpIOp>([this, op](auto compareOp) {
+          auto lhsType = cast<VMIVRegType>(compareOp.getLhs().getType());
+          return constraintResult(requestMask(
+              compareOp.getResult(),
+              getMaskGranularityForElement(lhsType.getElementType()), op));
+        })
+        .Default([](Operation *) { return std::nullopt; });
+  }
+
+  std::optional<WalkResult> addResultMaskUseConstraint(Operation *op) {
+    return llvm::TypeSwitch<Operation *, std::optional<WalkResult>>(op)
+        .Case<VMISelectOp, VMIActivePrefixIndexOp, VMICompressOp,
+              VMIStrideLoadOp, VMIMaskedLoadOp, VMIGatherOp, VMIExpandLoadOp>(
+            [this, op](auto maskOp) {
+              auto resultType = cast<VMIVRegType>(maskOp.getResult().getType());
+              return constraintResult(requestMaskUse(
+                  maskOp.getMaskMutable(),
+                  getMaskGranularityForElement(resultType.getElementType()),
+                  op));
+            })
+        .Default([](Operation *) { return std::nullopt; });
+  }
+
+  std::optional<WalkResult> addSourceMaskUseConstraint(Operation *op) {
+    return llvm::TypeSwitch<Operation *, std::optional<WalkResult>>(op)
+        .Case<VMIAddSOp, VMIMulSOp, VMIMaxSOp, VMIMinSOp, VMIShlSOp,
+              VMIShrSOp>([this, op](auto maskOp) {
+          return constraintResult(requestMaskUseForSource(
+              maskOp.getMaskMutable(), maskOp.getSrc(), op));
+        })
+        .Case<VMIReduceAddIOp, VMIReduceAddFOp, VMIReduceMaxFOp,
+              VMIReduceMinFOp, VMIReduceMaxIOp, VMIReduceMinIOp,
+              VMIGroupReduceAddFOp, VMIGroupReduceMaxFOp,
+              VMIGroupReduceMinFOp, VMIGroupReduceAddIOp,
+              VMIGroupReduceMaxIOp, VMIGroupReduceMinIOp>(
+            [this, op](auto maskOp) {
+              return constraintResult(requestMaskUseForSource(
+                  maskOp.getMaskMutable(), maskOp.getSource(), op));
+            })
+        .Case<VMIVexpdifOp>([this, op](auto maskOp) {
+          return constraintResult(requestMaskUseForSource(
+              maskOp.getMaskMutable(), maskOp.getX(), op));
+        })
+        .Case<VMIVintlvOp, VMIVdintlvOp>([this, op](auto maskOp) {
+          return constraintResult(requestMaskUseForSource(
+              maskOp.getMaskMutable(), maskOp.getLhs(), op));
+        })
+        .Case<VMIMaskedStoreOp, VMIStrideStoreOp, VMIScatterOp,
+              VMICompressStoreOp>([this, op](auto maskOp) {
+          return constraintResult(requestMaskUseForSource(
+              maskOp.getMaskMutable(), maskOp.getValue(), op));
+        })
+        .Default([](Operation *) { return std::nullopt; });
+  }
+
+  std::optional<WalkResult> addSpecialMaskConstraint(Operation *op) {
+    return llvm::TypeSwitch<Operation *, std::optional<WalkResult>>(op)
+        .Case<VMIVmullOp>([this, op](VMIVmullOp vmull) {
+          return constraintResult(requestMaskUse(vmull.getMaskMutable(),
+                                                 "b32", op));
+        })
+        .Case<VMIVaddcOp>([this, op](VMIVaddcOp addc) {
+          bool failedToConstrain =
+              failed(requestMaskUse(addc.getMaskMutable(), "b32", op)) ||
+              failed(requestMask(addc.getCarry(), "b32", op));
+          return constraintResult(failure(failedToConstrain));
+        })
+        .Case<VMIVaddcsOp>([this, op](VMIVaddcsOp addcs) {
+          bool failedToConstrain =
+              failed(requestMaskUse(addcs.getCarryInMutable(), "b32", op)) ||
+              failed(requestMaskUse(addcs.getMaskMutable(), "b32", op)) ||
+              failed(requestMask(addcs.getCarry(), "b32", op));
+          return constraintResult(failure(failedToConstrain));
+        })
+        .Case<VMIVdhistOp, VMIVchistOp>([this, op](auto histogram) {
+          return constraintResult(
+              requestMaskUse(histogram.getMaskMutable(), "b8", op));
+        })
+        .Default([](Operation *) { return std::nullopt; });
+  }
+
+  LogicalResult addSwitchConstraints(cf::SwitchOp switchOp) {
+    if (failed(addBranchConstraints(switchOp.getDefaultDestination(),
+                                    switchOp.getDefaultOperands(), switchOp))) {
+      return failure();
+    }
+    for (auto [destination, operands] :
+         llvm::zip(switchOp.getCaseDestinations(), switchOp.getCaseOperands())) {
+      if (failed(addBranchConstraints(destination, operands, switchOp))) {
+        return failure();
       }
-      if (auto maskOr = dyn_cast<VMIMaskOrOp>(op)) {
-        if (failed(uniteMask(maskOr.getLhs(), maskOr.getRhs(), op)) ||
-            failed(uniteMask(maskOr.getLhs(), maskOr.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
+    }
+    return success();
+  }
+
+  std::optional<WalkResult> addControlFlowConstraint(Operation *op) {
+    return llvm::TypeSwitch<Operation *, std::optional<WalkResult>>(op)
+        .Case<scf::IfOp>([this](auto controlOp) {
+          return constraintResult(addIfConstraints(controlOp));
+        })
+        .Case<scf::ExecuteRegionOp>([this](auto controlOp) {
+          return constraintResult(addExecuteRegionConstraints(controlOp));
+        })
+        .Case<scf::IndexSwitchOp>([this](auto controlOp) {
+          return constraintResult(addIndexSwitchConstraints(controlOp));
+        })
+        .Case<scf::WhileOp>([this](auto controlOp) {
+          return constraintResult(addWhileConstraints(controlOp));
+        })
+        .Case<scf::ForOp>([this](auto controlOp) {
+          return constraintResult(addForConstraints(controlOp));
+        })
+        .Case<cf::BranchOp>([this, op](cf::BranchOp branch) {
+          return constraintResult(addBranchConstraints(
+              branch.getDest(), branch.getDestOperands(), op));
+        })
+        .Case<cf::CondBranchOp>([this, op](cf::CondBranchOp branch) {
+          bool failedToConstrain =
+              failed(addBranchConstraints(branch.getTrueDest(),
+                                          branch.getTrueDestOperands(), op)) ||
+              failed(addBranchConstraints(branch.getFalseDest(),
+                                          branch.getFalseOperands(), op));
+          return constraintResult(failure(failedToConstrain));
+        })
+        .Case<cf::SwitchOp>([this](auto switchOp) {
+          return constraintResult(addSwitchConstraints(switchOp));
+        })
+        .Case<func::ReturnOp>([this](auto returnOp) {
+          return constraintResult(addReturnConstraints(returnOp));
+        })
+        .Case<func::CallOp>([this](auto callOp) {
+          return constraintResult(addCallConstraints(callOp));
+        })
+        .Default([](Operation *) { return std::nullopt; });
+  }
+
+  WalkResult addConstraint(Operation *op) {
+    for (auto constraint : {addMaskValueConstraint(op),
+                            addResultMaskUseConstraint(op),
+                            addSourceMaskUseConstraint(op),
+                            addSpecialMaskConstraint(op),
+                            addControlFlowConstraint(op)}) {
+      if (constraint) {
+        return *constraint;
       }
-      if (auto maskXor = dyn_cast<VMIMaskXOrOp>(op)) {
-        if (failed(uniteMask(maskXor.getLhs(), maskXor.getRhs(), op)) ||
-            failed(uniteMask(maskXor.getLhs(), maskXor.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto maskNot = dyn_cast<VMIMaskNotOp>(op)) {
-        if (failed(uniteMask(maskNot.getSource(), maskNot.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto ensure = dyn_cast<VMIEnsureMaskLayoutOp>(op)) {
-        if (failed(uniteMask(ensure.getSource(), ensure.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto cmpf = dyn_cast<VMICmpFOp>(op)) {
-        auto lhsType = cast<VMIVRegType>(cmpf.getLhs().getType());
-        if (failed(requestMask(
-                cmpf.getResult(),
-                getMaskGranularityForElement(lhsType.getElementType()), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto cmpi = dyn_cast<VMICmpIOp>(op)) {
-        auto lhsType = cast<VMIVRegType>(cmpi.getLhs().getType());
-        if (failed(requestMask(
-                cmpi.getResult(),
-                getMaskGranularityForElement(lhsType.getElementType()), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto select = dyn_cast<VMISelectOp>(op)) {
-        auto resultType = cast<VMIVRegType>(select.getResult().getType());
-        if (failed(requestMaskUse(
-                select.getMaskMutable(),
-                getMaskGranularityForElement(resultType.getElementType()), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto vecScalar = dyn_cast<VMIAddSOp>(op)) {
-        if (failed(requestMaskUseForSource(vecScalar.getMaskMutable(),
-                                           vecScalar.getSrc(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto vecScalar = dyn_cast<VMIMulSOp>(op)) {
-        if (failed(requestMaskUseForSource(vecScalar.getMaskMutable(),
-                                           vecScalar.getSrc(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto vecScalar = dyn_cast<VMIMaxSOp>(op)) {
-        if (failed(requestMaskUseForSource(vecScalar.getMaskMutable(),
-                                           vecScalar.getSrc(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto vecScalar = dyn_cast<VMIMinSOp>(op)) {
-        if (failed(requestMaskUseForSource(vecScalar.getMaskMutable(),
-                                           vecScalar.getSrc(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto vecScalar = dyn_cast<VMIShlSOp>(op)) {
-        if (failed(requestMaskUseForSource(vecScalar.getMaskMutable(),
-                                           vecScalar.getSrc(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto vecScalar = dyn_cast<VMIShrSOp>(op)) {
-        if (failed(requestMaskUseForSource(vecScalar.getMaskMutable(),
-                                           vecScalar.getSrc(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto vexpdif = dyn_cast<VMIVexpdifOp>(op)) {
-        if (failed(requestMaskUseForSource(vexpdif.getMaskMutable(),
-                                           vexpdif.getX(), op)))
-          return WalkResult::interrupt();
-        return WalkResult::advance();
-      }
-      if (auto vmull = dyn_cast<VMIVmullOp>(op)) {
-        if (failed(requestMaskUse(vmull.getMaskMutable(), "b32", op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto addc = dyn_cast<VMIVaddcOp>(op)) {
-        if (failed(requestMaskUse(addc.getMaskMutable(), "b32", op)) ||
-            failed(requestMask(addc.getCarry(), "b32", op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto addcs = dyn_cast<VMIVaddcsOp>(op)) {
-        if (failed(requestMaskUse(addcs.getCarryInMutable(), "b32", op)) ||
-            failed(requestMaskUse(addcs.getMaskMutable(), "b32", op)) ||
-            failed(requestMask(addcs.getCarry(), "b32", op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto activePrefix = dyn_cast<VMIActivePrefixIndexOp>(op)) {
-        auto resultType = cast<VMIVRegType>(activePrefix.getResult().getType());
-        if (failed(requestMaskUse(
-                activePrefix.getMaskMutable(),
-                getMaskGranularityForElement(resultType.getElementType()), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto compress = dyn_cast<VMICompressOp>(op)) {
-        auto resultType = cast<VMIVRegType>(compress.getResult().getType());
-        if (failed(requestMaskUse(
-                compress.getMaskMutable(),
-                getMaskGranularityForElement(resultType.getElementType()), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto vintlv = dyn_cast<VMIVintlvOp>(op)) {
-        if (failed(requestMaskUseForSource(vintlv.getMaskMutable(),
-                                           vintlv.getLhs(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto vdintlv = dyn_cast<VMIVdintlvOp>(op)) {
-        if (failed(requestMaskUseForSource(vdintlv.getMaskMutable(),
-                                           vdintlv.getLhs(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto reduce = dyn_cast<VMIReduceAddIOp>(op)) {
-        if (failed(requestMaskUseForSource(reduce.getMaskMutable(),
-                                           reduce.getSource(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto reduce = dyn_cast<VMIReduceAddFOp>(op)) {
-        if (failed(requestMaskUseForSource(reduce.getMaskMutable(),
-                                           reduce.getSource(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto reduce = dyn_cast<VMIReduceMaxFOp>(op)) {
-        if (failed(requestMaskUseForSource(reduce.getMaskMutable(),
-                                           reduce.getSource(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto reduce = dyn_cast<VMIReduceMinFOp>(op)) {
-        if (failed(requestMaskUseForSource(reduce.getMaskMutable(),
-                                           reduce.getSource(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto reduce = dyn_cast<VMIReduceMaxIOp>(op)) {
-        if (failed(requestMaskUseForSource(reduce.getMaskMutable(),
-                                           reduce.getSource(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto reduce = dyn_cast<VMIReduceMinIOp>(op)) {
-        if (failed(requestMaskUseForSource(reduce.getMaskMutable(),
-                                           reduce.getSource(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto reduce = dyn_cast<VMIGroupReduceAddFOp>(op)) {
-        if (failed(requestMaskUseForSource(reduce.getMaskMutable(),
-                                           reduce.getSource(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto reduce = dyn_cast<VMIGroupReduceMaxFOp>(op)) {
-        if (failed(requestMaskUseForSource(reduce.getMaskMutable(),
-                                           reduce.getSource(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto reduce = dyn_cast<VMIGroupReduceMinFOp>(op)) {
-        if (failed(requestMaskUseForSource(reduce.getMaskMutable(),
-                                           reduce.getSource(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto reduce = dyn_cast<VMIGroupReduceAddIOp>(op)) {
-        if (failed(requestMaskUseForSource(reduce.getMaskMutable(),
-                                           reduce.getSource(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto reduce = dyn_cast<VMIGroupReduceMaxIOp>(op)) {
-        if (failed(requestMaskUseForSource(reduce.getMaskMutable(),
-                                           reduce.getSource(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto reduce = dyn_cast<VMIGroupReduceMinIOp>(op)) {
-        if (failed(requestMaskUseForSource(reduce.getMaskMutable(),
-                                           reduce.getSource(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto hist = dyn_cast<VMIVdhistOp>(op)) {
-        if (failed(requestMaskUse(hist.getMaskMutable(), "b8", op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto hist = dyn_cast<VMIVchistOp>(op)) {
-        if (failed(requestMaskUse(hist.getMaskMutable(), "b8", op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto load = dyn_cast<VMIStrideLoadOp>(op)) {
-        auto resultType = cast<VMIVRegType>(load.getResult().getType());
-        if (failed(requestMaskUse(
-                load.getMaskMutable(),
-                getMaskGranularityForElement(resultType.getElementType()), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto load = dyn_cast<VMIMaskedLoadOp>(op)) {
-        auto resultType = cast<VMIVRegType>(load.getResult().getType());
-        if (failed(requestMaskUse(
-                load.getMaskMutable(),
-                getMaskGranularityForElement(resultType.getElementType()), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto gather = dyn_cast<VMIGatherOp>(op)) {
-        auto resultType = cast<VMIVRegType>(gather.getResult().getType());
-        if (failed(requestMaskUse(
-                gather.getMaskMutable(),
-                getMaskGranularityForElement(resultType.getElementType()), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto load = dyn_cast<VMIExpandLoadOp>(op)) {
-        auto resultType = cast<VMIVRegType>(load.getResult().getType());
-        if (failed(requestMaskUse(
-                load.getMaskMutable(),
-                getMaskGranularityForElement(resultType.getElementType()), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto store = dyn_cast<VMIMaskedStoreOp>(op)) {
-        if (failed(requestMaskUseForSource(store.getMaskMutable(),
-                                           store.getValue(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto store = dyn_cast<VMIStrideStoreOp>(op)) {
-        if (failed(requestMaskUseForSource(store.getMaskMutable(),
-                                           store.getValue(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto scatter = dyn_cast<VMIScatterOp>(op)) {
-        if (failed(requestMaskUseForSource(scatter.getMaskMutable(),
-                                           scatter.getValue(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto store = dyn_cast<VMICompressStoreOp>(op)) {
-        if (failed(requestMaskUseForSource(store.getMaskMutable(),
-                                           store.getValue(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
-        if (failed(addIfConstraints(ifOp))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto executeOp = dyn_cast<scf::ExecuteRegionOp>(op)) {
-        if (failed(addExecuteRegionConstraints(executeOp))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto indexSwitchOp = dyn_cast<scf::IndexSwitchOp>(op)) {
-        if (failed(addIndexSwitchConstraints(indexSwitchOp))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto whileOp = dyn_cast<scf::WhileOp>(op)) {
-        if (failed(addWhileConstraints(whileOp))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto forOp = dyn_cast<scf::ForOp>(op)) {
-        if (failed(addForConstraints(forOp))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto branchOp = dyn_cast<cf::BranchOp>(op)) {
-        if (failed(addBranchConstraints(branchOp.getDest(),
-                                        branchOp.getDestOperands(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto condBranchOp = dyn_cast<cf::CondBranchOp>(op)) {
-        if (failed(addBranchConstraints(condBranchOp.getTrueDest(),
-                                        condBranchOp.getTrueDestOperands(),
-                                        op)) ||
-            failed(addBranchConstraints(condBranchOp.getFalseDest(),
-                                        condBranchOp.getFalseOperands(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto switchOp = dyn_cast<cf::SwitchOp>(op)) {
-        if (failed(addBranchConstraints(switchOp.getDefaultDestination(),
-                                        switchOp.getDefaultOperands(), op))) {
-          return WalkResult::interrupt();
-        }
-        for (auto [dest, operands] : llvm::zip(switchOp.getCaseDestinations(),
-                                               switchOp.getCaseOperands())) {
-          if (failed(addBranchConstraints(dest, operands, op))) {
-            return WalkResult::interrupt();
-          }
-        }
-        return WalkResult::advance();
-      }
-      if (auto returnOp = dyn_cast<func::ReturnOp>(op)) {
-        if (failed(addReturnConstraints(returnOp))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto callOp = dyn_cast<func::CallOp>(op)) {
-        if (failed(addCallConstraints(callOp))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (op->getName().getStringRef() == "func.call_indirect" &&
-          hasVMIValueTypes(op)) {
-        op->emitError() << kVMIDiagLayoutContractPrefix
-                        << "VMI typed call requires a direct internal callee "
-                           "with a body";
+    }
+    bool invalidIndirectCall =
+        op->getName().getStringRef() == "func.call_indirect" &&
+        hasVMIValueTypes(op);
+    if (invalidIndirectCall) {
+      op->emitError() << kVMIDiagLayoutContractPrefix
+                      << "VMI typed call requires a direct internal callee "
+                         "with a body";
+      return WalkResult::interrupt();
+    }
+    if (auto funcOp = dyn_cast<func::FuncOp>(op)) {
+      bool invalidDeclaration = funcOp.empty() && hasVMIFunctionType(funcOp);
+      if (invalidDeclaration) {
+        funcOp.emitError()
+            << kVMIDiagLayoutContractPrefix
+            << "VMI typed function declaration requires an explicit "
+               "external ABI materialization plan";
         return WalkResult::interrupt();
       }
-      if (auto funcOp = dyn_cast<func::FuncOp>(op)) {
-        if (funcOp.empty() && hasVMIFunctionType(funcOp)) {
-          funcOp.emitError()
-              << kVMIDiagLayoutContractPrefix
-              << "VMI typed function declaration requires an explicit "
-                 "external ABI materialization plan";
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      return WalkResult::advance();
-    });
+    }
+    return WalkResult::advance();
+  }
+
+  LogicalResult addConstraints() {
+    WalkResult result =
+        module.walk([this](Operation *op) { return addConstraint(op); });
     return failure(result.wasInterrupted());
   }
 

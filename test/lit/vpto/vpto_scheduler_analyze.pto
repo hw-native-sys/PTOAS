@@ -11,7 +11,7 @@
 // RUN: diff %t.off %t.analyze
 // RUN: FileCheck %s --check-prefix=OFF < %t.off
 // RUN: FileCheck %s --check-prefix=ANALYZE < %t.analyze-report
-// RUN: pto-test-opt %s '-pto-vpto-scheduler=mode=on' > %t.on 2> %t.on-report
+// RUN: pto-test-opt %s '-pto-vpto-scheduler=mode=on trace=true' > %t.on 2> %t.on-report
 // RUN: diff %t.off %t.on
 // RUN: FileCheck %s --check-prefix=ON < %t.on-report
 // RUN: not pto-test-opt %s '-pto-vpto-scheduler=mode=invalid' 2>&1 | FileCheck %s --check-prefix=INVALID
@@ -19,19 +19,24 @@
 // OFF-LABEL: func.func @scheduler_analysis
 // OFF: pto.vadd
 
-// ANALYZE: vpto-scheduler: function=scheduler_analysis mode=analyze target=a5 model=generic-a5-v1 issue-width=1
+// ANALYZE: vpto-scheduler: function=scheduler_analysis mode=analyze target=a5 model=generic-a5-v4
 // ANALYZE: vpto-scheduler: block=0 regions=1
 // ANALYZE: vpto-scheduler: region=0 before=block-start after=block-end nodes=3
-// ANALYZE: vpto-scheduler: node=0 original-index=0 op=pto.pset_b32 semantic=schedulable sched-class=vector known=true
-// ANALYZE: vpto-scheduler: node=1 original-index=1 op=pto.vadd semantic=schedulable sched-class=vector known=true
+// ANALYZE: vpto-scheduler: node=0 original-index=0 op=pto.pset_b32 semantic=schedulable sched-class=vector-predicate known=true
+// ANALYZE: vpto-scheduler: node=1 original-index=1 op=pto.vadd semantic=schedulable sched-class=vector-predicate known=true
 // ANALYZE: vpto-scheduler: edge=0->1 kind=data strength=must
-// ANALYZE: vpto-scheduler: issue node=0 cycle=0
-// ANALYZE-SAME: delta={vector:0,predicate:1
-// ANALYZE: vpto-scheduler: timeline cycle=0 issue=1
+// ANALYZE: vpto-scheduler: pressure node=0 delta={vector:0,predicate:1} current={vector:2,predicate:1} peak={vector:2,predicate:1}
+// ANALYZE-NOT: schedule-result
+// ANALYZE-NOT: result-position=
 // ANALYZE-NOT: op=pto.set_ctrl
+// ANALYZE-NOT: vpto-scheduler: issue node=
+// ANALYZE-NOT: timeline cycle=
 // ANALYZE: vpto-scheduler: coverage schedulable=3 structural=0 boundary=0 unsupported=0 unclassified=0
 
 // ON: vpto-scheduler: function=scheduler_analysis mode=on
+// ON: vpto-scheduler: region=0 before=block-start after=block-end nodes=3
+// ON: vpto-scheduler: pressure node=0 delta={vector:0,predicate:1}
+// ON: vpto-scheduler: schedule-result block=0 region=0 nodes=3
 // INVALID: error: unknown VPTO scheduler mode 'invalid'
 
 module attributes {pto.target_arch = "a5"} {

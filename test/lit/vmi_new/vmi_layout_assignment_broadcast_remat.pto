@@ -15,6 +15,8 @@ module {
       %src: !pto.vmi.vreg<128xf16>,
       %dst: !pto.ptr<f32, ub>,
       %offset: index) -> !pto.vmi.vreg<128xf32> {
+    %c8 = arith.constant 8 : index
+    %aligned_offset = arith.muli %offset, %c8 : index
     %broadcast = pto.vmi.vbrc %scalar
         : f32 -> !pto.vmi.vreg<128xf32>
     %wide = pto.vmi.vcvt %src
@@ -22,7 +24,7 @@ module {
     %sum = pto.vmi.vadd %broadcast, %wide
         : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>
         -> !pto.vmi.vreg<128xf32>
-    pto.vmi.vstore %broadcast, %dst[%offset]
+    pto.vmi.vstore %broadcast, %dst[%aligned_offset]
         : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
     return %sum : !pto.vmi.vreg<128xf32>
   }

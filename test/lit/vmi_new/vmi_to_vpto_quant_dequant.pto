@@ -16,11 +16,13 @@ module {
       %rows: index,
       %full_blocks: index,
       %tail: index,
-      %src_stride: index,
-      %dst_stride: index) {
+      %src_stride_tiles: index,
+      %dst_stride_tiles: index) {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %c128 = arith.constant 128 : index
+    %src_stride = arith.muli %src_stride_tiles, %c128 : index
+    %dst_stride = arith.muli %dst_stride_tiles, %c128 : index
     %has_tail = arith.cmpi ne, %tail, %c0 : index
     scf.for %row = %c0 to %rows step %c1 {
       %src_row = arith.muli %row, %src_stride : index
@@ -71,11 +73,13 @@ module {
       %rows: index,
       %full_blocks: index,
       %tail: index,
-      %src_stride: index,
-      %dst_stride: index) {
+      %src_stride_tiles: index,
+      %dst_stride_tiles: index) {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %c128 = arith.constant 128 : index
+    %src_stride = arith.muli %src_stride_tiles, %c128 : index
+    %dst_stride = arith.muli %dst_stride_tiles, %c128 : index
     %has_tail = arith.cmpi ne, %tail, %c0 : index
     scf.for %row = %c0 to %rows step %c1 {
       %src_row = arith.muli %row, %src_stride : index
@@ -126,11 +130,13 @@ module {
       %rows: index,
       %full_blocks: index,
       %tail: index,
-      %src_stride: index,
-      %dst_stride: index) {
+      %src_stride_tiles: index,
+      %dst_stride_tiles: index) {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %c256 = arith.constant 256 : index
+    %src_stride = arith.muli %src_stride_tiles, %c256 : index
+    %dst_stride = arith.muli %dst_stride_tiles, %c256 : index
     %has_tail = arith.cmpi ne, %tail, %c0 : index
     scf.for %row = %c0 to %rows step %c1 {
       %src_row = arith.muli %row, %src_stride : index
@@ -181,11 +187,13 @@ module {
       %rows: index,
       %full_blocks: index,
       %tail: index,
-      %src_stride: index,
-      %dst_stride: index) {
+      %src_stride_tiles: index,
+      %dst_stride_tiles: index) {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %c256 = arith.constant 256 : index
+    %src_stride = arith.muli %src_stride_tiles, %c256 : index
+    %dst_stride = arith.muli %dst_stride_tiles, %c256 : index
     %has_tail = arith.cmpi ne, %tail, %c0 : index
     scf.for %row = %c0 to %rows step %c1 {
       %src_row = arith.muli %row, %src_stride : index
@@ -236,14 +244,14 @@ module {
 // CHECK-SAME: %[[DDST:[^,]+]]: !pto.ptr<f32, ub>
 // CHECK: scf.for
 // CHECK: scf.for
-// CHECK: pto.vlds {{.*}} : !pto.ptr<f16, ub> -> !pto.vreg<128xf16>
+// CHECK: pto.vlds
 // CHECK: pto.vcvt {{.*}} {part = "EVEN"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
 // CHECK: pto.vcvt {{.*}} {part = "ODD"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
 // CHECK: pto.vmul {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 // CHECK: pto.vstsx2 {{.*}} "INTLV_B32"{{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 // CHECK: scf.if
 // CHECK: pto.plt_b32 {{.*}} : i32 -> !pto.mask<b32>, i32
-// CHECK: pto.vsts {{.*}} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+// CHECK: pto.vsts
 
 // CHECK-LABEL: func.func @vmi_to_vpto_quant_matrix_f32_to_f16(
 // CHECK-SAME: %[[QSRC:[^,]+]]: !pto.ptr<f32, ub>
@@ -251,7 +259,7 @@ module {
 // CHECK-SAME: %[[QDST:[^,]+]]: !pto.ptr<f16, ub>
 // CHECK: scf.for
 // CHECK: scf.for
-// CHECK-COUNT-2: pto.vlds {{.*}} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+// CHECK-COUNT-2: pto.vlds
 // CHECK-COUNT-2: pto.vmul {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 // CHECK: pto.vcvt {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<128xf16>
 // CHECK: pto.vcvt {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<128xf16>
@@ -259,7 +267,7 @@ module {
 // CHECK-NOT: pto.vor
 // CHECK-COUNT-2: pto.vsts {{.*}} {dist = "PK_B32"} : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b32>
 // CHECK: scf.if
-// CHECK-COUNT-2: pto.vlds {{.*}} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+// CHECK-COUNT-2: pto.vlds
 // CHECK-COUNT-2: pto.vcvt {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<128xf16>
 // CHECK-NOT: part = "ODD"
 // CHECK-NOT: pto.vor
@@ -272,17 +280,17 @@ module {
 // CHECK-SAME: %[[FDST:[^,]+]]: !pto.ptr<f32, ub>
 // CHECK: scf.for
 // CHECK: scf.for
-// CHECK: pto.vlds {{.*}} : !pto.ptr<f8E4M3FN, ub> -> !pto.vreg<256xf8E4M3FN>
+// CHECK: pto.vlds
 // CHECK: pto.vcvt {{.*}} {part = "P0"} : !pto.vreg<256xf8E4M3FN>, !pto.mask<b8> -> !pto.vreg<64xf32>
 // CHECK: pto.vcvt {{.*}} {part = "P1"} : !pto.vreg<256xf8E4M3FN>, !pto.mask<b8> -> !pto.vreg<64xf32>
 // CHECK: pto.vcvt {{.*}} {part = "P2"} : !pto.vreg<256xf8E4M3FN>, !pto.mask<b8> -> !pto.vreg<64xf32>
 // CHECK: pto.vcvt {{.*}} {part = "P3"} : !pto.vreg<256xf8E4M3FN>, !pto.mask<b8> -> !pto.vreg<64xf32>
 // CHECK: pto.vmul {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 // CHECK: pto.vintlv
-// CHECK: pto.vsts {{.*}} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+// CHECK: pto.vsts
 // CHECK: scf.if
 // CHECK: pto.plt_b32 {{.*}} : i32 -> !pto.mask<b32>, i32
-// CHECK: pto.vsts {{.*}} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+// CHECK: pto.vsts
 
 // CHECK-LABEL: func.func @vmi_to_vpto_quant_matrix_f32_to_fp8(
 // CHECK-SAME: %[[FQSRC:[^,]+]]: !pto.ptr<f32, ub>
@@ -290,7 +298,7 @@ module {
 // CHECK-SAME: %[[FQDST:[^,]+]]: !pto.ptr<f8E4M3FN, ub>
 // CHECK: scf.for
 // CHECK: scf.for
-// CHECK-COUNT-4: pto.vlds {{.*}} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+// CHECK-COUNT-4: pto.vlds
 // CHECK: pto.vmul {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 // CHECK-COUNT-4: pto.vcvt {{.*}} {part = "P0", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
 // CHECK-NOT: part = "P1"
@@ -299,7 +307,7 @@ module {
 // CHECK-NOT: pto.vor
 // CHECK-COUNT-4: pto.vsts {{.*}} {dist = "PK4_B32"} : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, !pto.mask<b32>
 // CHECK: scf.if
-// CHECK-COUNT-4: pto.vlds {{.*}} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+// CHECK-COUNT-4: pto.vlds
 // CHECK-COUNT-4: pto.vcvt {{.*}} {part = "P0", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
 // CHECK-NOT: part = "P1"
 // CHECK-NOT: part = "P2"

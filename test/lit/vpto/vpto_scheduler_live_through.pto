@@ -1,0 +1,72 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s '-pto-vpto-scheduler=mode=on trace=true' > %t 2> %t.trace
+// RUN: FileCheck %s --check-prefix=ORDER < %t
+// RUN: FileCheck %s --check-prefix=TRACE < %t.trace
+
+// ORDER-LABEL: func.func @loop_live_through
+// ORDER-COUNT-5: pto.vcmp
+// ORDER-NEXT: pto.vsel
+// ORDER: scf.if
+// ORDER-COUNT-5: pto.vcmp
+// ORDER-NEXT: pto.vsel
+
+// TRACE: vpto-scheduler: function=loop_live_through mode=on
+// TRACE: vpto-scheduler: region=0 before=block-start after=contains-regions nodes=12 edges=6 live-ins=5 live-outs=5
+// TRACE: vpto-scheduler: pressure node=0 delta={vector:0,predicate:1} current={vector:2,predicate:3} peak={vector:2,predicate:3}
+// TRACE: vpto-scheduler: schedule-result block=1 region=0 nodes=12 work-units={{[0-9]+}} pressure-idles=2 peak={vector:2,predicate:4}
+// TRACE: vpto-scheduler: region=1 before=contains-regions after=terminator nodes=12 edges=6 live-ins=5 live-outs=5
+// TRACE: vpto-scheduler: pressure node=0 delta={vector:0,predicate:1} current={vector:2,predicate:3} peak={vector:2,predicate:3}
+// TRACE: vpto-scheduler: schedule-result block=1 region=1 nodes=12 work-units={{[0-9]+}} pressure-idles=2 peak={vector:2,predicate:4}
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @loop_live_through(
+      %x0: !pto.vreg<64xf32>, %x1: !pto.vreg<64xf32>,
+      %active: !pto.mask<b32>, %one_lane: !pto.mask<b32>, %condition: i1) {
+    %c0 = arith.constant 0 : index
+    %c2 = arith.constant 2 : index
+    %c1 = arith.constant 1 : index
+    pto.vecscope {
+      scf.for %i = %c0 to %c2 step %c1 {
+        %p0 = pto.vcmp %x0, %x1, %active, "lt" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.mask<b32>
+        %s0 = pto.vsel %x0, %x1, %p0 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %p1 = pto.vcmp %x0, %x1, %active, "lt" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.mask<b32>
+        %s1 = pto.vsel %x0, %x1, %p1 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %p2 = pto.vcmp %x0, %x1, %active, "lt" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.mask<b32>
+        %s2 = pto.vsel %x0, %x1, %p2 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %p3 = pto.vcmp %x0, %x1, %active, "lt" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.mask<b32>
+        %s3 = pto.vsel %x0, %x1, %p3 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %p4 = pto.vcmp %x0, %x1, %active, "lt" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.mask<b32>
+        %s4 = pto.vsel %x0, %x1, %p4 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %p5 = pto.vcmp %x0, %x1, %active, "lt" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.mask<b32>
+        %s5 = pto.vsel %x0, %x1, %p5 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+
+        scf.if %condition {
+          %keep = pto.vsel %x0, %x1, %one_lane : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        }
+
+        %q0 = pto.vcmp %x0, %x1, %active, "gt" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.mask<b32>
+        %t0 = pto.vsel %x0, %x1, %q0 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %q1 = pto.vcmp %x0, %x1, %active, "gt" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.mask<b32>
+        %t1 = pto.vsel %x0, %x1, %q1 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %q2 = pto.vcmp %x0, %x1, %active, "gt" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.mask<b32>
+        %t2 = pto.vsel %x0, %x1, %q2 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %q3 = pto.vcmp %x0, %x1, %active, "gt" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.mask<b32>
+        %t3 = pto.vsel %x0, %x1, %q3 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %q4 = pto.vcmp %x0, %x1, %active, "gt" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.mask<b32>
+        %t4 = pto.vsel %x0, %x1, %q4 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %q5 = pto.vcmp %x0, %x1, %active, "gt" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.mask<b32>
+        %t5 = pto.vsel %x0, %x1, %q5 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      }
+    }
+    return
+  }
+}

@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
+// RUN: not pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto 2>&1 | FileCheck %s
 
 module {
   func.func @vmi_to_vpto_load_safe_tail_memref_negative_offset(%src: !pto.ptr<f32, ub>)
@@ -21,9 +21,4 @@ module {
   }
 }
 
-// CHECK-LABEL: func.func @vmi_to_vpto_load_safe_tail_memref_negative_offset(
-// CHECK: pto.vlds
-// CHECK: pto.vlds
-// CHECK-NOT: pto.vmi.
-// CHECK-NOT: !pto.vmi.
-// CHECK-NOT: unrealized_conversion_cast
+// CHECK: VMI-RESIDUAL-OP: failed to convert all VMI ops/types to VPTO

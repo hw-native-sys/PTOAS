@@ -1,0 +1,49 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s '-pto-vpto-scheduler=mode=on trace=true' > %t 2> %t.trace
+// RUN: FileCheck %s --check-prefix=ORDER < %t
+// RUN: FileCheck %s --check-prefix=TRACE < %t.trace
+
+// ORDER-LABEL: func.func @multi_user_predicate_closure
+// ORDER: %[[P:[0-9]+]] = pto.vcmp
+// ORDER-NEXT: %{{[0-9]+}} = pto.vcmp
+// ORDER-NEXT: %{{[0-9]+}} = pto.vcmp
+// ORDER-NEXT: %{{[0-9]+}} = pto.vmax
+// ORDER-NEXT: %{{[0-9]+}} = pto.vsel {{.*}}%[[P]]
+// ORDER-NEXT: %{{[0-9]+}} = pto.vsel {{.*}}%[[P]]
+// ORDER-NEXT: %{{[0-9]+}} = pto.vsel {{.*}}%[[P]]
+// ORDER-NEXT: %{{[0-9]+}} = pto.vsel {{.*}}%[[P]]
+// ORDER: pto.vcmp
+
+// TRACE-LABEL: vpto-scheduler: function=multi_user_predicate_closure mode=on
+// TRACE: schedule-result block=0 region=0 nodes=13 work-units={{[0-9]+}} pressure-idles={{[0-9]+}} peak={vector:3,predicate:4}
+// TRACE: reason=advance-pressure-closure op=pto.vsel
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @multi_user_predicate_closure(
+      %x0: !pto.vreg<64xf32>, %x1: !pto.vreg<64xf32>,
+      %active: !pto.mask<b32>) {
+    pto.vecscope {
+      %p0 = pto.vcmp %x0, %x1, %active, "lt" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.mask<b32>
+      %p1 = pto.vcmp %x0, %x1, %active, "lt" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.mask<b32>
+      %p2 = pto.vcmp %x0, %x1, %active, "lt" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.mask<b32>
+      %p3 = pto.vcmp %x0, %x1, %active, "lt" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.mask<b32>
+      %trigger = pto.vmax %x0, %x1, %active : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %new = pto.vcmp %trigger, %x1, %active, "gt" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.mask<b32>
+      %s0 = pto.vsel %x0, %x1, %p0 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %s1 = pto.vsel %x0, %x1, %p0 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %s2 = pto.vsel %x0, %x1, %p0 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %s3 = pto.vsel %x0, %x1, %p0 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %u1 = pto.vsel %x0, %x1, %p1 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %u2 = pto.vsel %x0, %x1, %p2 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %u3 = pto.vsel %x0, %x1, %p3 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    }
+    return
+  }
+}

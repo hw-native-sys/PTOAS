@@ -7,7 +7,6 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // RUN: ptoas --enable-insert-sync --mlir-print-ir-after=pto-insert-sync %s 2>&1 1>/dev/null | FileCheck %s
-// RUN: ptoas --enable-graph-sync-solver --graph-sync-solver-event-id-max=8 --mlir-print-ir-after=pto-graph-sync-solver %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=GSS
 
 // Affine slot disjoint optimization: producer touches slot `(iv+1) % 2`,
 // consumer touches slot `iv % 2`. The slot SSA expressions are provably
@@ -73,17 +72,3 @@ module {
 // Post-loop drains.
 // CHECK: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
 // CHECK: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID1>]
-
-// GSS-LABEL: func.func @prefetch_disjoint_slots
-// GSS: scf.for
-// GSS: pto.wait_flag_dyn[<PIPE_MTE3>, <PIPE_MTE2>,
-// GSS: pto.tload
-// GSS-NOT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>
-// GSS-NOT: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>
-// The MTE2->MTE3 loop-carried dependence remains dyn-slot keyed, but the
-// same-iteration static forward sync is filtered out.
-// GSS: pto.set_flag_dyn[<PIPE_MTE2>, <PIPE_MTE3>,
-// GSS-NOT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>
-// GSS-NOT: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>
-// GSS: pto.tstore
-// GSS: pto.set_flag_dyn[<PIPE_MTE3>, <PIPE_MTE2>,

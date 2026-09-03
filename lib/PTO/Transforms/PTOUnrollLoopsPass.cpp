@@ -56,6 +56,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/IR/PTO.h"
+#include "PTO/Transforms/LoopUnrollUtils.h"
 #include "PTO/Transforms/Passes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -93,21 +94,6 @@ using namespace mlir;
 
 namespace {
 
-/// Compute the constant trip count of *forOp*, or std::nullopt when any of
-/// the bounds/step is not a compile-time constant.  Mirrors the arithmetic of
-/// the historical pto-unroll-simt-for pass.
-static std::optional<int64_t> getStaticTripCount(scf::ForOp forOp) {
-  std::optional<int64_t> lb = getConstantIntValue(forOp.getLowerBound());
-  std::optional<int64_t> ub = getConstantIntValue(forOp.getUpperBound());
-  std::optional<int64_t> step = getConstantIntValue(forOp.getStep());
-  if (!lb || !ub || !step || *step <= 0 || *ub <= *lb)
-    return std::nullopt;
-  int64_t tripCount = (*ub - *lb + *step - 1) / *step;
-  if (tripCount <= 0)
-    return std::nullopt;
-  return tripCount;
-}
-
 /// Outcome of handling one annotated loop.
 enum class UnrollOutcome {
   Unchanged, //< no unroll happened (hint dropped or not applicable)
@@ -129,8 +115,16 @@ struct PTOUnrollLoopsImpl {
   /// trip count is not constant the loop cannot be unrolled natively: drop
   /// the attribute with a remark and keep the loop.
   UnrollOutcome tryFullUnroll(scf::ForOp forOp) const {
-    std::optional<int64_t> tripCount = getStaticTripCount(forOp);
+    std::optional<int64_t> tripCount = pto::getStaticTripCount(forOp);
     if (!tripCount) {
+      // A loop promoted by pto-promote-persistent-fragment-loops must not
+      // silently survive: fragment materialization depends on the unroll.
+      if (forOp->hasAttr(pto::kPersistentUnrollMarkerAttrName)) {
+        forOp.emitError()
+            << "persistent fragment loop requires full unroll but has no "
+               "constant trip count";
+        return UnrollOutcome::Error;
+      }
       forOp.emitRemark()
           << "'" << pto::kUnrollAttrName
           << " = \"full\"' loop has no constant trip count; cannot unroll "
@@ -148,8 +142,14 @@ struct PTOUnrollLoopsImpl {
     // warning beforehand.
     Location loc = forOp.getLoc();
     if (failed(
-            loopUnrollByFactor(forOp, static_cast<uint64_t>(*tripCount))))
+            loopUnrollByFactor(forOp, static_cast<uint64_t>(*tripCount)))) {
+      if (forOp->hasAttr(pto::kPersistentUnrollMarkerAttrName)) {
+        forOp.emitError()
+            << "persistent fragment loop could not be fully unrolled";
+        return UnrollOutcome::Error;
+      }
       return UnrollOutcome::Unchanged;
+    }
 
     if (maxFullUnrollTripCount >= 0 && *tripCount > maxFullUnrollTripCount)
       mlir::emitWarning(loc)
@@ -243,59 +243,18 @@ struct PTOUnrollLoopsImpl {
   /// anything malformed: a wrongly typed attribute, an unknown `pto.unroll`
   /// value, both attributes on one loop, or an out-of-contract factor.
   LogicalResult validateHint(scf::ForOp forOp) const {
-    Attribute unrollRaw = forOp->getAttr(pto::kUnrollAttrName);
-    Attribute factorRaw = forOp->getAttr(pto::kUnrollFactorAttrName);
+    return pto::validateLoopUnrollHint(forOp);
+  }
 
-    // Wrong attribute *types* must not slip through as "no hint": the typed
-    // getters below would return null and the loop would silently keep a
-    // malformed annotation all the way down the pipeline.
-    auto unrollAttr = dyn_cast_if_present<StringAttr>(unrollRaw);
-    if (unrollRaw && !unrollAttr) {
-      forOp.emitError() << "'" << pto::kUnrollAttrName
-                        << "' must be a string attribute, got " << unrollRaw;
-      return failure();
-    }
-    auto factorAttr = dyn_cast_if_present<IntegerAttr>(factorRaw);
-    if (factorRaw && !factorAttr) {
-      forOp.emitError() << "'" << pto::kUnrollFactorAttrName
-                        << "' must be a signless i32 attribute, got "
-                        << factorRaw;
-      return failure();
-    }
-
-    if (unrollAttr && factorAttr) {
-      forOp.emitError()
-          << "'" << pto::kUnrollAttrName << "' and '"
-          << pto::kUnrollFactorAttrName
-          << "' are mutually exclusive on one loop";
-      return failure();
-    }
-
-    StringRef unrollValue = unrollAttr ? unrollAttr.getValue() : "";
-    if (unrollAttr && unrollValue != pto::kUnrollFullValue &&
-        unrollValue != pto::kUnrollEnableValue) {
-      forOp.emitError() << "unknown '" << pto::kUnrollAttrName << "' value '"
-                        << unrollAttr.getValue()
-                        << "'; expected \"full\" (native full unroll) or "
-                           "\"enable\" (forwarded to the compiler's cost "
-                           "model by pto-convert-scf-to-cf-with-loop-hints)";
-      return failure();
-    }
-
-    if (factorAttr && !pto::isValidUnrollFactorAttr(factorAttr)) {
-      if (!factorAttr.getType().isSignlessInteger(32)) {
-        forOp.emitError() << "'" << pto::kUnrollFactorAttrName
-                          << "' must be a signless i32 attribute, got "
-                          << factorAttr.getType();
-      } else {
-        forOp.emitError() << "'" << pto::kUnrollFactorAttrName
-                          << "' must be a positive integer, got "
-                          << factorAttr.getInt();
-      }
-      return failure();
-    }
-
-    return success();
+  /// Drop the native unroll attributes with `remark` attached.  Only the
+  /// native hints ("full" / pto.unroll_factor) ever reach this path:
+  /// "enable" is owned by the metadata pass and is never dropped here.
+  UnrollOutcome dropNativeUnrollHint(scf::ForOp forOp,
+                                      const Twine &remark) const {
+    forOp.emitRemark() << remark;
+    forOp->removeAttr(pto::kUnrollAttrName);
+    forOp->removeAttr(pto::kUnrollFactorAttrName);
+    return UnrollOutcome::Unchanged;
   }
 
   /// Handle one annotated loop (hints are pre-validated by validateHint).
@@ -323,30 +282,38 @@ struct PTOUnrollLoopsImpl {
     // changing them, which would make the fixpoint below loop forever.
     // Drop the hint on such loops instead.
     if (llvm::hasSingleElement(forOp.getBody()->getOperations())) {
-      forOp.emitRemark() << "loop with a native unroll hint has an empty "
-                            "body; dropping the hint";
-      forOp->removeAttr(pto::kUnrollAttrName);
-      forOp->removeAttr(pto::kUnrollFactorAttrName);
-      return UnrollOutcome::Unchanged;
+      // A loop promoted by pto-promote-persistent-fragment-loops must not
+      // silently lose its hint: fragment materialization depends on the
+      // unroll actually happening.
+      if (forOp->hasAttr(pto::kPersistentUnrollMarkerAttrName)) {
+        forOp.emitError() << "persistent fragment loop requires full unroll "
+                             "but has an empty body";
+        return UnrollOutcome::Error;
+      }
+      return dropNativeUnrollHint(
+          forOp, "loop with a native unroll hint has an empty body; "
+                 "dropping the hint");
     }
 
     // scf.for also accepts signless integer induction variables, but
     // loopUnrollByFactor builds its bounds/step arithmetic with
     // arith::ConstantIndexOp unconditionally.  Unrolling an i16/i32 loop
     // would therefore emit mixed-type ops (e.g. arith.muli(i16, index)) and
-    // an scf.for whose step no longer matches its bounds, both of which fail
-    // the verifier.  Only index loops can be unrolled natively; anything
+    // an scf.for whose step no longer matches its bounds, both of which
+    // fail the verifier.  Only index loops can be unrolled natively; anything
     // else keeps its loop and drops the hint.
     if (!forOp.getInductionVar().getType().isIndex()) {
-      forOp.emitRemark()
-          << "loop with a native unroll hint has a non-index induction "
-             "variable ("
-          << forOp.getInductionVar().getType()
-          << "); native unrolling only supports index loops, dropping the "
-             "hint";
-      forOp->removeAttr(pto::kUnrollAttrName);
-      forOp->removeAttr(pto::kUnrollFactorAttrName);
-      return UnrollOutcome::Unchanged;
+      if (forOp->hasAttr(pto::kPersistentUnrollMarkerAttrName)) {
+        forOp.emitError()
+            << "persistent fragment loop requires full unroll but has a "
+               "non-index induction variable ("
+            << forOp.getInductionVar().getType() << ")";
+        return UnrollOutcome::Error;
+      }
+      return dropNativeUnrollHint(
+          forOp, "loop with a native unroll hint has a non-index induction "
+                 "variable; native unrolling only supports index loops, "
+                 "dropping the hint");
     }
 
     if (unrollAttr) {
@@ -355,11 +322,9 @@ struct PTOUnrollLoopsImpl {
 
     if (factorAttr) {
       if (factorAttr.getInt() == 1) {
-        forOp.emitRemark()
-            << "'" << pto::kUnrollFactorAttrName
-            << "' = 1 is a no-op; dropping the hint";
-        forOp->removeAttr(pto::kUnrollFactorAttrName);
-        return UnrollOutcome::Unchanged;
+        return dropNativeUnrollHint(
+            forOp, Twine("'") + pto::kUnrollFactorAttrName +
+                       Twine("' = 1 is a no-op; dropping the hint"));
       }
       return tryFactorUnroll(forOp, factorAttr.getInt());
     }

@@ -84,37 +84,6 @@ def PTOBufidSync : Pass<"pto-bufid-sync", "func::FuncOp"> {
   ];
 }
 
-// Define PTOGraphSyncSolver Pass (graph-based intra-core sync solver).
-// Coexists with PTOInsertSync; selectable via the driver flag
-// `--enable-graph-sync-solver`. Ported from bishengir's GraphSyncSolver core:
-// hierarchical SyncSolver IR, conflict graph pruning, event-id coloring and
-// barrier fallback, with PTO-specific IR translation and sync op codegen.
-def PTOGraphSyncSolver : Pass<"pto-graph-sync-solver", "func::FuncOp"> {
-  let summary = "Graph-based intra-core synchronization solver for PTO";
-  let description = [{
-    Alternative to PTOInsertSync. Builds a hierarchical SyncSolver IR and
-    decides which set/wait/barrier ops to emit by combining a reachability
-    analysis (so transitively-covered candidates are skipped) with graph
-    coloring over the pool of EVENT_IDs.
-  }];
-
-  let constructor = "mlir::pto::createPTOGraphSyncSolverPass()";
-
-  let options = [
-    Option<"eventIdNumMax", "event-id-num-max", "int64_t",
-           /*default=*/"8",
-           "Maximum EVENT_ID slots usable by coloring; this caps the hardware "
-           "available event-id budget used by the graph solver.">,
-  ];
-
-  let dependentDialects = [
-    "mlir::pto::PTODialect",
-    "mlir::memref::MemRefDialect",
-    "mlir::arith::ArithDialect",
-    "mlir::scf::SCFDialect"
-  ];
-}
-
 def ConvertToPTOOp : Pass<"convert-to-pto-op"> {
   let summary = "Convert Ops from other dialects to PTO Ops";
   let constructor = "mlir::pto::createConvertToPTOOpPass()";
@@ -898,6 +867,51 @@ def PTOConvertSCFToCFWithLoopHints : Pass<"pto-convert-scf-to-cf-with-loop-hints
   ];
 }
 
+def PTOPromotePersistentFragmentLoops
+    : Pass<"pto-promote-persistent-fragment-loops", "func::FuncOp"> {
+  let summary =
+      "Promote loops accessing persistent SIMT fragment buffers to forced "
+      "full unrolling";
+  let description = [{
+    Persistent fragment materialization requires every loop touching a
+    persistent buffer to be fully unrolled so that each access resolves to a
+    stable resident slot.  This pass is the discovery half of that pipeline:
+    it finds the loops and marks them for `pto-unroll-loops`; it does not do
+    slot assignment, keep/resume generation, SIMT outlining, or LLVM
+    metadata lowering.
+
+    Every `llvm.alloca` carrying `{pto.persistent}` is an explicit entry
+    point.  The pass walks the alloca's use graph and collects every
+    enclosing `scf.for` of every related op (all nesting layers, including
+    kernel-level loops wrapping `pto.section.simt`).  Each collected loop is
+    promoted to `{pto.unroll = "full"}` (`"enable"` and no-hint are
+    overridden, an existing `"full"` is kept) and additionally marked with
+    `{pto.persistent_unroll}` so that `pto-unroll-loops` fails hard instead
+    of dropping the hint when the loop cannot be unrolled natively - a
+    surviving persistent loop would break fragment materialization.
+
+    Fail-fast (hard errors): a fixed `pto.unroll_factor` on a persistent
+    loop, a persistent access nested under `scf.while`, or a statically
+    known trip count above `max-persistent-unroll-trip-count`.
+  }];
+  let constructor =
+      "mlir::pto::createPTOPromotePersistentFragmentLoopsPass()";
+  let dependentDialects = [
+    "mlir::func::FuncDialect",
+    "mlir::scf::SCFDialect",
+    "mlir::LLVM::LLVMDialect",
+    "mlir::pto::PTODialect"
+  ];
+  let options = [
+    Option<"maxPersistentUnrollTripCount",
+           "max-persistent-unroll-trip-count", "int64_t",
+           /*default=*/"128",
+           "Fail when a persistent fragment loop with a statically known "
+           "trip count exceeds this threshold.  A negative value disables "
+           "the guardrail.">,
+  ];
+}
+
 def PTONarrowVPTOLoopCounters
     : Pass<"pto-narrow-vpto-loop-counters", "func::FuncOp"> {
   let summary =
@@ -1281,6 +1295,18 @@ def VMIToVPTO : Pass<"vmi-to-vpto", "ModuleOp"> {
                            "mlir::scf::SCFDialect"];
 }
 
+def VPTOStatefulStreamFusion : Pass<"vpto-stateful-stream-fusion", "ModuleOp"> {
+  let summary = "Fuse compatible VPTO stateful load and store streams";
+  let description = [{
+    Fuses adjacent VPTO streams that thread alignment state through SSA. Load
+    streams use vldas/vldus and store streams use init_align/vstus with a
+    matching flush. Fusion requires provably contiguous addresses and does not
+    cross observable memory effects or control flow.
+  }];
+  let constructor = "mlir::pto::createVPTOStatefulStreamFusionPass()";
+  let dependentDialects = ["mlir::pto::PTODialect"];
+}
+
 def PTOExpandSoftLib : Pass<"pto-expand-soft-lib", "ModuleOp"> {
   let summary = "Expand VPTO operations that lack native target support";
   let description = [{
@@ -1316,23 +1342,33 @@ def PTOValidateVPTOEmissionIR
 }
 
 def VPTOScheduler : Pass<"pto-vpto-scheduler", "ModuleOp"> {
-  let summary = "Analyze emission-ready VPTO scheduling regions";
+  let summary = "Analyze or schedule emission-ready VPTO regions";
   let description = [{
-    Builds block-local scheduling regions, typed dependency DAGs, target
-    resource timelines, and register-pressure summaries for operations inside
-    dedicated `pto.vecscope` and `pto.strict_vecscope` regions.
+    Builds block-local scheduling regions and typed dependency DAGs for
+    operations inside dedicated `pto.vecscope` and `pto.strict_vecscope`
+    regions.
     The target model supports A5 vector kernel modules only:
     normalized cube kernel modules are skipped, while modules without an
     explicit kernel kind remain available for standalone pass testing. The
     module must declare `pto.target_arch = "a5"` directly or inherit it from
     an enclosing module; a missing or different target is rejected.
-    `off` is an exact no-op. `analyze` emits a deterministic report without
-    mutating IR.
+    `off` is an exact no-op. `analyze` and `on` share region construction,
+    dependency DAG construction, coverage, and original-order pressure
+    analysis. `analyze` stops after that common prefix without mutating IR.
+    `on` additionally performs deterministic top-down list scheduling through
+    an injectable pressure-aware candidate strategy. It preserves critical
+    path priority at low pressure, prefers live-range-closing candidates near
+    a modeled pressure limit within one modeled-latency urgency window, and
+    retains verified pressure-driven advancement when all ready candidates
+    exceed a limit. Validation and fresh replay precede application of each
+    verified result.
   }];
   let constructor = "mlir::pto::createVPTOSchedulerPass()";
   let options = [
     Option<"mode", "mode", "std::string", "\"off\"",
-           "Scheduler mode: off, analyze, or on">
+           "Scheduler mode: off, analyze, or on">,
+    Option<"trace", "trace", "bool", "false",
+           "Print detailed on-mode schedule results">
   ];
   let dependentDialects = ["mlir::func::FuncDialect",
                            "mlir::pto::PTODialect",

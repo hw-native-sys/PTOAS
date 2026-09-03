@@ -197,6 +197,76 @@ def _link_shared_library(
     )
 
 
+def _native_build_config(module_spec):
+    effective_insert_sync = _effective_insert_sync(
+        mode=module_spec.mode,
+        insert_sync=module_spec.insert_sync,
+    )
+    effective_pto_level = _effective_pto_level(mode=module_spec.mode)
+    ptoas_overrides = _source_ptoas_overrides(module_spec)
+    compile_config_text = _compile_config_text(
+        module_spec=module_spec,
+        effective_insert_sync=effective_insert_sync,
+        effective_pto_level=effective_pto_level,
+        ptoas_overrides=ptoas_overrides,
+    )
+    sim_mode = bool(os.environ.get("MSPROF_SIMULATOR_MODE"))
+    link_config_text = "\n".join(runtime_library_flags(sim_mode=sim_mode))
+    return {
+        "insert_sync": effective_insert_sync,
+        "pto_level": effective_pto_level,
+        "ptoas_overrides": ptoas_overrides,
+        "compile_config": compile_config_text,
+        "link_config": link_config_text,
+    }
+
+
+def _compile_native_artifacts(artifacts, module_spec, *, effective_insert_sync, effective_pto_level, ptoas_overrides):
+    _run_ptoas(
+        artifacts.mlir_path,
+        artifacts.kernel_object,
+        target_arch=module_spec.target_arch,
+        insert_sync=effective_insert_sync,
+        pto_level=effective_pto_level,
+        **ptoas_overrides,
+    )
+    launch_object = artifacts.cache_dir / "launch.o"
+    _compile_launch_cpp(
+        artifacts.launch_cpp,
+        launch_object,
+        kernel_kind=module_spec.kernel_kind,
+        target_arch=module_spec.target_arch,
+        export_macro=f"{module_spec.function_name}_EXPORTS",
+    )
+    _link_shared_library(
+        launch_object,
+        artifacts.kernel_object,
+        artifacts.shared_library,
+        kernel_kind=module_spec.kernel_kind,
+    )
+
+
+def _write_native_manifest(
+    artifacts,
+    *,
+    ir_function_name,
+    launch_symbol,
+    mlir_text,
+    launch_cpp_text,
+    compile_config_text,
+    link_config_text,
+):
+    write_manifest(
+        artifacts,
+        ir_function_name=ir_function_name,
+        launch_symbol=launch_symbol,
+        mlir_digest=_content_digest(mlir_text),
+        launch_cpp_digest=_content_digest(launch_cpp_text),
+        compile_config_digest=_content_digest(compile_config_text),
+        link_config_digest=_content_digest(link_config_text),
+    )
+
+
 def build_native_library(
     *,
     py_name: str,
@@ -213,20 +283,12 @@ def build_native_library(
         ir_function_name=ir_function_name,
         kernel_signature=kernel_signature,
     )
-    effective_insert_sync = _effective_insert_sync(
-        mode=module_spec.mode,
-        insert_sync=module_spec.insert_sync,
-    )
-    effective_pto_level = _effective_pto_level(mode=module_spec.mode)
-    ptoas_overrides = _source_ptoas_overrides(module_spec)
-    compile_config_text = _compile_config_text(
-        module_spec=module_spec,
-        effective_insert_sync=effective_insert_sync,
-        effective_pto_level=effective_pto_level,
-        ptoas_overrides=ptoas_overrides,
-    )
-    sim_mode = bool(os.environ.get("MSPROF_SIMULATOR_MODE"))
-    link_config_text = "\n".join(runtime_library_flags(sim_mode=sim_mode))
+    build_config = _native_build_config(module_spec)
+    effective_insert_sync = build_config["insert_sync"]
+    effective_pto_level = build_config["pto_level"]
+    ptoas_overrides = build_config["ptoas_overrides"]
+    compile_config_text = build_config["compile_config"]
+    link_config_text = build_config["link_config"]
 
     if is_native_build_current(
         artifacts,
@@ -241,38 +303,21 @@ def build_native_library(
     artifacts.mlir_path.write_text(mlir_text, encoding="utf-8")
     artifacts.launch_cpp.write_text(launch_cpp_text, encoding="utf-8")
 
-    _run_ptoas(
-        artifacts.mlir_path,
-        artifacts.kernel_object,
-        target_arch=module_spec.target_arch,
-        insert_sync=effective_insert_sync,
-        pto_level=effective_pto_level,
-        **ptoas_overrides,
+    _compile_native_artifacts(
+        artifacts,
+        module_spec,
+        effective_insert_sync=effective_insert_sync,
+        effective_pto_level=effective_pto_level,
+        ptoas_overrides=ptoas_overrides,
     )
-
-    launch_object = artifacts.cache_dir / "launch.o"
-    export_macro = f"{ir_function_name}_EXPORTS"
-    _compile_launch_cpp(
-        artifacts.launch_cpp,
-        launch_object,
-        kernel_kind=module_spec.kernel_kind,
-        target_arch=module_spec.target_arch,
-        export_macro=export_macro,
-    )
-    _link_shared_library(
-        launch_object,
-        artifacts.kernel_object,
-        artifacts.shared_library,
-        kernel_kind=module_spec.kernel_kind,
-    )
-    write_manifest(
+    _write_native_manifest(
         artifacts,
         ir_function_name=ir_function_name,
         launch_symbol=launch_symbol,
-        mlir_digest=_content_digest(mlir_text),
-        launch_cpp_digest=_content_digest(launch_cpp_text),
-        compile_config_digest=_content_digest(compile_config_text),
-        link_config_digest=_content_digest(link_config_text),
+        mlir_text=mlir_text,
+        launch_cpp_text=launch_cpp_text,
+        compile_config_text=compile_config_text,
+        link_config_text=link_config_text,
     )
     return artifacts.shared_library, launch_symbol
 

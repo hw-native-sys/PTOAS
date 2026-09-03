@@ -7,7 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // Regression for the A5 GM->L1 mgather pipe. PTOResolveReservedBuffers rewrites the mat
-// destination into a memref<...,mat> before InsertSync / GraphSyncSolver run, so
+// destination into a memref<...,mat> before InsertSync runs, so
 // MGatherOp::getPipe() must resolve the MAT address space from the lowered
 // memref form too. If it only matched a TileBufType, A5 would fall through to
 // PIPE_V and the GM->L1 DMA would be mis-synced as a vector op. Here the gathered

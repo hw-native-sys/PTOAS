@@ -16,13 +16,15 @@ module {
       %off: index) {
     %c0_f32 = arith.constant 0.000000e+00 : f32
     %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
     %c25 = arith.constant 25 : index
+    %aligned_off = arith.muli %off, %c8 : index
     %mask = pto.vmi.create_group_mask %c25
         {num_groups = 8, group_size = 32}
         : index -> !pto.vmi.mask<256xpred>
     %zero = pto.vmi.vbrc %c0_f32
         : f32 -> !pto.vmi.vreg<256xf32>
-    %loaded = pto.vmi.vload %base[%off]
+    %loaded = pto.vmi.vload %base[%aligned_off]
         : !pto.ptr<f32, ub> -> !pto.vmi.vreg<256xf32>
     %x = pto.vmi.vsel %mask, %loaded, %zero
         : !pto.vmi.mask<256xpred>, !pto.vmi.vreg<256xf32>,
@@ -30,7 +32,7 @@ module {
     %sum = pto.vmi.vcadd %x, %mask {group = 8, reassoc}
         : !pto.vmi.vreg<256xf32>, !pto.vmi.mask<256xpred>
         -> !pto.vmi.vreg<8xf32>
-    pto.vmi.vstore %sum, %sum_out[%off], %c1 {group = 8}
+    pto.vmi.vstore %sum, %sum_out[%aligned_off], %c1 {group = 8}
         : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
     return
   }
@@ -48,3 +50,4 @@ module {
 // LOWER: pto.vdintlv
 // LOWER: pto.vcgadd
 // LOWER: pto.vsts
+// LOWER-NOT: pto.vstus

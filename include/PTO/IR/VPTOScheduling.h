@@ -34,6 +34,9 @@ enum class VPTOSchedulingClass {
   Unsupported,
 };
 
+/// Number of `VPTOSchedulingClass` values; keep in sync with the enum above.
+inline constexpr unsigned kNumVPTOSchedulingClasses = 4;
+
 enum class VPTOSchedulingEffectKind {
   ImplicitRead,
   ImplicitWrite,

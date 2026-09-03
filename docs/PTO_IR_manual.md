@@ -218,9 +218,9 @@ selection):
 
 The slot count is part of `!pto.multi_tile_buf`. In level1/level2,
 `PTOPlanMemory` plans all slots and records their physical addresses in the
-internal `pto.multi_buffer_addrs` attribute. `PTOResolveBufferSelect`,
-InsertSync, and GraphSyncSolver consume the tile-native allocation and slot
-selection directly; no memref allocation is introduced.
+internal `pto.multi_buffer_addrs` attribute. `PTOResolveBufferSelect` and
+InsertSync consume the tile-native allocation and slot selection directly; no
+memref allocation is introduced.
 
 See `docs/designs/ptoas-multi-buffer-explicit-design.md` for the full
 design.

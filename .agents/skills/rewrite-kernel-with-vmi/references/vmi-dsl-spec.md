@@ -31,7 +31,6 @@ vec = pto.vmi.vcvt(src, to_dtype=OUT_DTYPE)
 ```python
 vec = pto.vmi.vload(ub_src, offset, size=128)
 even, odd = pto.vmi.vload(ub_src, offset, size=128, dist_mode="dintlv")
-wide = pto.vmi.vload(ub_src, offset, size=128, dist_mode="unpack", to_dtype=pto.f32)
 pto.vmi.vstore(vec, ub_dst, offset, mask)
 pto.vmi.vstore(vec, ub_dst, offset, group=8, stride=row_stride)
 ```
@@ -43,8 +42,8 @@ Useful options:
 
 - `size` is required for every `vload`.
 - `dist_mode=None` or `"continuous"` is the default contiguous load/store form.
-- `dist_mode="dintlv"` returns an `(even, odd)` pair.
-- `dist_mode="unpack", to_dtype=<dtype>` widens by one adjacent bit-width step.
+- `dist_mode="dintlv"` (load) returns an `(even, odd)` pair; `dist_mode="intlv"`
+  (store) writes an interleaved `(even, odd)` pair.
 - `group=...`, `stride=...` select grouped access.
 - `block_stride=...`, `repeat_stride=...` select block-strided access.
 - `vload` does not take `mask`.

@@ -27,6 +27,11 @@ using namespace mlir::pto;
 namespace {
 
 static constexpr unsigned kIndexBitWidth = 64;
+// The analysis models arithmetic in at most 64-bit signed integers; wider
+// values bail to unknown. `kMaxSignedActiveBits` is the largest active-bit
+// count still representable as a signed 64-bit value.
+static constexpr unsigned kMaxSupportedBitWidth = 64;
+static constexpr unsigned kMaxSignedActiveBits = 63;
 // Exact state propagation is the conservative fallback for loop-varying
 // recurrences.  Keep it bounded so compile time cannot scale with an
 // arbitrarily large constant trip count; constant-step recurrences continue
@@ -220,7 +225,7 @@ static bool accumulateLinear(const PTOTypedExprRef &expr, int64_t scale,
 }
 
 static bool fitsSigned(__int128 value, unsigned width) {
-  if (width == 0 || width > 64) {
+  if (width == 0 || width > kMaxSupportedBitWidth) {
     return false;
   }
   __int128 minimum = -(__int128{1} << (width - 1));
@@ -229,10 +234,10 @@ static bool fitsSigned(__int128 value, unsigned width) {
 }
 
 static bool fitsUnsigned(__int128 value, unsigned width) {
-  if (width == 0 || width > 64 || value < 0) {
+  if (width == 0 || width > kMaxSupportedBitWidth || value < 0) {
     return false;
   }
-  __int128 maximum = width == 64
+  __int128 maximum = width == kMaxSupportedBitWidth
                          ? static_cast<__int128>(
                                std::numeric_limits<uint64_t>::max())
                          : (__int128{1} << width) - 1;
@@ -253,7 +258,7 @@ static std::optional<__int128> getMathematicalConstant(Value value,
                                                        bool isUnsigned) {
   auto bits = getConstantAPInt(value);
   if (
-      !bits || bits->getBitWidth() > 64) {
+      !bits || bits->getBitWidth() > kMaxSupportedBitWidth) {
     return std::nullopt;
   }
   return isUnsigned ? static_cast<__int128>(bits->getZExtValue())
@@ -323,7 +328,7 @@ static std::optional<RecurrenceDecomposition> decomposeRecurrence(
   if (auto cached = cache.find(value); cached != cache.end()) {
     return cached->second;
   }
-  auto record = [&](std::optional<RecurrenceDecomposition> result) {
+  auto record = [&value, &cache](std::optional<RecurrenceDecomposition> result) {
     cache.try_emplace(value, result);
     return result;
   };
@@ -427,8 +432,8 @@ struct MathematicalRange {
 static std::optional<MathematicalRange>
 getMathematicalRange(const PTOFiniteRange &range, bool isUnsigned) {
   if (range.unsignedInterpretation != isUnsigned ||
-      range.lowerInclusive.getBitWidth() > 64 ||
-      range.upperInclusive.getBitWidth() > 64) {
+      range.lowerInclusive.getBitWidth() > kMaxSupportedBitWidth ||
+      range.upperInclusive.getBitWidth() > kMaxSupportedBitWidth) {
     return std::nullopt;
   }
   if (isUnsigned) {
@@ -547,7 +552,7 @@ static std::optional<__int128> evaluateTypedExpr(
   }
   if (expression->kind == PTOTypedExpr::Kind::Constant) {
     if (
-        expression->constant.getBitWidth() > 64) {
+        expression->constant.getBitWidth() > kMaxSupportedBitWidth) {
       return std::nullopt;
     }
     return isUnsigned
@@ -664,7 +669,7 @@ static PTOAnalysisResult<PTOLoopEvolution> analyzeDynamicRecurrence(
   }
 
   unsigned width = getIntegerLikeWidth(iterArg.getType());
-  if (width == 0 || width > 64) {
+  if (width == 0 || width > kMaxSupportedBitWidth) {
     return PTOAnalysisResult<PTOLoopEvolution>::unknown(
         PTOAnalysisUnknownReason::TypeMismatch);
   }
@@ -920,7 +925,7 @@ getMathematicalConstant(const PTOTypedExprRef &expression,
   if (!bits) {
     return std::nullopt;
   }
-  bool hasUnsupportedWidth = bits->getBitWidth() > 64;
+  bool hasUnsupportedWidth = bits->getBitWidth() > kMaxSupportedBitWidth;
   if (hasUnsupportedWidth) {
     return std::nullopt;
   }
@@ -973,15 +978,15 @@ foldPTOCastConstant(const PTOTypedExprRef &expr) {
   if (expr->castKind == PTOCastKind::IndexCastUI ||
       expr->castKind == PTOCastKind::ExtUI) {
     unsigned activeBits = result->getActiveBits();
-    if (activeBits > 63) {
+    if (activeBits > kMaxSignedActiveBits) {
       return std::nullopt;
     }
     return static_cast<int64_t>(result->getZExtValue());
   }
-  if (!result->isSignedIntN(64)) {
+  if (!result->isSignedIntN(kMaxSupportedBitWidth)) {
     return std::nullopt;
   }
-  return result->sextOrTrunc(64).getSExtValue();
+  return result->sextOrTrunc(kMaxSupportedBitWidth).getSExtValue();
 }
 
 static std::optional<int64_t>
@@ -989,7 +994,7 @@ foldSourceBinaryConstant(const PTOTypedExprRef &expr) {
   auto lhs = getFoldedConstantBits(expr->lhs);
   auto rhs = getFoldedConstantBits(expr->rhs);
   unsigned resultWidth = getIntegerLikeWidth(expr->type);
-  if (!lhs || !rhs || resultWidth == 0 || resultWidth > 64) {
+  if (!lhs || !rhs || resultWidth == 0 || resultWidth > kMaxSupportedBitWidth) {
     return std::nullopt;
   }
   APInt lhsBits = lhs->sextOrTrunc(resultWidth);
@@ -999,7 +1004,7 @@ foldSourceBinaryConstant(const PTOTypedExprRef &expr) {
                  : expr->kind == PTOTypedExpr::Kind::Sub
                      ? lhsBits - rhsBits
                      : lhsBits * rhsBits;
-  return result.sextOrTrunc(64).getSExtValue();
+  return result.sextOrTrunc(kMaxSupportedBitWidth).getSExtValue();
 }
 
 std::optional<int64_t>
@@ -1010,7 +1015,7 @@ mlir::pto::foldPTOConstant(const PTOTypedExprRef &expr) {
   switch (expr->kind) {
   case PTOTypedExpr::Kind::Constant:
     if (
-        expr->constant.getBitWidth() > 64) {
+        expr->constant.getBitWidth() > kMaxSupportedBitWidth) {
       return std::nullopt;
     }
     return expr->constant.getSExtValue();
@@ -1192,7 +1197,7 @@ struct PointExpressionProof {
 static std::optional<PTOFiniteRange> getFullPointRange(Type type,
                                                        bool isUnsigned) {
   unsigned width = getIntegerLikeWidth(type);
-  if (width == 0 || width > 64) {
+  if (width == 0 || width > kMaxSupportedBitWidth) {
     return std::nullopt;
   }
   APInt minimum = isUnsigned ? APInt::getZero(width)
@@ -1708,7 +1713,7 @@ PTOValueEvolutionAnalysis::getEvolutionImpl(Value value, scf::ForOp loop,
   }
 
   unsigned width = getIntegerLikeWidth(value.getType());
-  if (width == 0 || width > 64) {
+  if (width == 0 || width > kMaxSupportedBitWidth) {
     return PTOAnalysisResult<PTOLoopEvolution>::unknown(
         PTOAnalysisUnknownReason::TypeMismatch);
   }

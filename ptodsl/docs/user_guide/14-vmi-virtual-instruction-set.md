@@ -145,7 +145,7 @@ Pick exactly one family per call. Do not mix `dist_mode`, `group`, and
 
 ### `vload`
 
-### `pto.vmi.vload(source, offset, *, size, dist_mode=None, to_dtype=None) -> VRegType`
+### `pto.vmi.vload(source, offset, *, size, dist_mode=None) -> VRegType`
 ### `pto.vmi.vload(source, offset, *, size, dist_mode="dintlv") -> (VRegType, VRegType)`
 ### `pto.vmi.vload(source, offset, *, size, group, stride) -> VRegType`
 ### `pto.vmi.vload(source, offset, *, size, group, stride, dist_mode="brc") -> VRegType`
@@ -182,14 +182,12 @@ default contiguous load.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `dist_mode` | `str` or `None` | One of `None`, `"continuous"`, `"dintlv"`, `"unpack"`, or `"brc"` |
-| `to_dtype` | `DType` or `None` | Required only when `dist_mode="unpack"` |
+| `dist_mode` | `str` or `None` | One of `None`, `"continuous"`, `"dintlv"`, or `"brc"` |
 
 Dist-mode behavior:
 
 - `None` or `"continuous"`: contiguous stride-1 load, returning one VMI vector.
 - `"dintlv"`: deinterleaved load, returning an `(even, odd)` pair.
-- `"unpack"`: widening unpack load, returning one widened VMI vector.
 - `"brc"`: broadcast load from one source element, returning one VMI vector.
 
 **Mode 2: `group`**
@@ -221,7 +219,7 @@ Use this family for block-strided accesses.
 
 | Return Value | Type | Description |
 |--------------|------|-------------|
-| `vec` | `VRegType` | Single vector result for continuous, unpack, brc, group, and block-stride modes |
+| `vec` | `VRegType` | Single vector result for continuous, brc, group, and block-stride modes |
 | `(even, odd)` | `(VRegType, VRegType)` | Two-vector result for `dist_mode="dintlv"` |
 
 **Examples**:
@@ -231,18 +229,6 @@ Continuous load:
 ```python
 lhs = pto.vmi.vload(src_ptr, offset, size=64)
 rhs = pto.vmi.vload(other_ptr, offset, size=64)
-```
-
-Dist-mode unpack load:
-
-```python
-wide = pto.vmi.vload(
-    src_ptr,
-    offset,
-    size=128,
-    dist_mode="unpack",
-    to_dtype=pto.i16,
-)
 ```
 
 Broadcast load:
@@ -298,16 +284,14 @@ blocks = pto.vmi.vload(
 - `block_stride` mode is mutually exclusive with both `dist_mode` and `group`.
 - `group` and `dist_mode` are mutually exclusive except for grouped broadcast,
   spelled as `group=...`, `stride=...`, `dist_mode="brc"`.
-- `to_dtype` is only accepted when `dist_mode="unpack"`.
 - `stride` is only accepted when `group` is provided.
-- The unpack form widens by exactly one adjacent bit-width step.
 
 ---
 
 ### `vstore`
 
 ### `pto.vmi.vstore(values, destination, offset, mask=None, *, dist_mode=None, pmode=None) -> None`
-### `pto.vmi.vstore((even, odd), destination, offset, mask=None, *, dist_mode="dintlv", pmode=None) -> None`
+### `pto.vmi.vstore((even, odd), destination, offset, mask=None, *, dist_mode="intlv", pmode=None) -> None`
 ### `pto.vmi.vstore(values, destination, offset, *, group, stride, pmode=None) -> None`
 ### `pto.vmi.vstore(values, destination, offset, mask=None, *, block_stride, pmode=None) -> None`
 
@@ -319,7 +303,7 @@ three mutually exclusive mode families.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `values` | `VRegType` or `(VRegType, VRegType)` | One VMI vector for normal forms, or an `(even, odd)` pair for `dist_mode="dintlv"` |
+| `values` | `VRegType` or `(VRegType, VRegType)` | One VMI vector for normal forms, or an `(even, odd)` pair for `dist_mode="intlv"` |
 | `destination` | `PtrType` (ub) | UB destination pointer |
 | `offset` | `IndexLike` | Element offset into the destination buffer |
 | `pmode` | `str` or `None` | Optional inactive-lane mode: `"zero"` stores 0 to masked-off lanes; `"merge"` skips the write for masked-off lanes |
@@ -339,12 +323,12 @@ three mutually exclusive mode families.
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `mask` | VMI mask or `None` | Optional predicate mask gating which lanes are written |
-| `dist_mode` | `str` or `None` | One of `None`, `"continuous"`, or `"dintlv"` |
+| `dist_mode` | `str` or `None` | One of `None`, `"continuous"`, or `"intlv"` |
 
 Dist-mode behavior:
 
 - `None` or `"continuous"`: contiguous store of one VMI vector.
-- `"dintlv"`: interleaved store of an `(even, odd)` pair.
+- `"intlv"`: interleaved store of an `(even, odd)` pair.
 
 **Mode 2: `group`**
 
@@ -401,7 +385,7 @@ pto.vmi.vstore(
 
 - `dist_mode`, `group`, and `block_stride` mode selection are mutually
   exclusive.
-- `dist_mode="dintlv"` requires `values` to be an `(even, odd)` pair.
+- `dist_mode="intlv"` requires `values` to be an `(even, odd)` pair.
 - Group mode requires `group` and `stride`, and does not accept `mask`.
 - Block-stride lowering fixes the physical repeat stride to zero.
 
@@ -1390,8 +1374,6 @@ surface no longer asks you to spell the full result type manually.
 
 **Ops that infer when given the right hint**:
 
-- `vload` with `dist_mode="unpack"` requires `to_dtype` to derive the widened
-  element type.
 - `vcvt` requires `to_dtype`.
 - `vinterpret_cast` requires `to_dtype`; its lane count is derived by
   preserving the source vector's total bit footprint.

@@ -22,7 +22,7 @@
 
   2. **FpNarrow** — `fp → fp`, `|dst| < |src|` (e.g. `f32 → f16`,
      `f32 → bf16`, `f32 → fp8_e4m3`, `bf16x2 → f4x2`). Same-width `fp → fp`
-     (`|dst| == |src|`, e.g. `bf16 → f16`).
+     (`|dst| == |src|`, e.g. `bf16 → f16`, `f16 → bf16`).
 
   3. **FpToSi** — `fp → signed int`. Supported pairs follow the contract
      table `lookupVMIFpToSiContract`: `f32→s32`, `f16→s16`, `f32→s16`,
@@ -58,7 +58,7 @@
   | Attribute | Values | Valid for | Description |
   |---|---|---|---|
   | `rounding` | `"R"` (nearest-even), `"A"` (away-from-zero), `"H"` (half-up), `"Z"` (toward-zero); for the `bf16x2→f4x2` contract pair the allowed set is `"R"`,`"A"`,`"F"` (floor), `"C"` (ceil), `"Z"` (toward-zero) — `"H"` is **rejected** | fp narrowing | Rounding mode |
-  | `saturate` | `"SAT"`, `"NOSAT"` | required for fp-narrow / int-narrow; for fp→si / fp→ui the requirement follows the vcvt contract's `requiresSat` (e.g. `f16→s8` required, `f16→s32` **forbidden** — no overflow possible; same-width `bf16→f16` required); the `bf16x2→f4x2` narrow has `requiresSat=false` — any `saturate` is **forbidden** | `SAT` clamps to ±max of the destination type; `NOSAT` performs a direct bit truncation of the result representation. |
+  | `saturate` | `"SAT"`, `"NOSAT"` | required for fp-narrow / int-narrow; for fp→si / fp→ui the requirement follows the vcvt contract's `requiresSat` (e.g. `f16→s8` required, `f16→s32` **forbidden** — no overflow possible; same-width `bf16→f16` required, same-width `f16→bf16` **forbidden**); the `bf16x2→f4x2` narrow has `requiresSat=false` — any `saturate` is **forbidden** | `SAT` clamps to ±max of the destination type; `NOSAT` performs a direct bit truncation of the result representation. |
 
 - **datatypes:** Source and destination from `{f32, f16, bf16, fp8_e4m3, fp8_e5m2, i32, i16, i8, ui32, ui16, ui8}`; packed carrier types `{!pto.bf16x2, !pto.f4E1M2x2, !pto.f4E2M1x2}` for the bf16x2↔f4x2 fp-to-fp pair (see contract `lookupVMIFpToFpContract`). `bf16x2` is **conversion-only** — it may not appear as a compute element type (`vfadd`/`vfmul`/`vcmp`/...).
 - **lowering to `pto.mi`:**
@@ -69,7 +69,7 @@
   | 8↔32 (radix-4) | widen: `UNPK_B8` + `vintlv` + `vcvt P0` + `punpack`; narrow: `PK4_B32` store (or `vselr` gather) + `ppack` | `2–3` | `2–3` |
   | f32→fp8 quant | `1 cast` + `PK4_B32` | `K` | `1` |
   | f32→int8 quant | 3-stage cast + `PK4_B32` | `~3K` | `3` |
-  | fp↔fp same-width (`bf16→f16`) | `K × vcvt` (1:1, no part) | `K` | `1` |
+  | fp↔fp same-width (`bf16→f16`, `f16→bf16`) | `K × vcvt` (1:1, no part) | `K` | `1` |
   | fp→si / fp→ui | per contract pair: same-width 1:1, widen EVEN/ODD, narrow EVEN/ODD+Vor | `K`–`~3K` | `2`–`3` |
   | int↔int (same width) | `K × vtrc` or `K × vcvt` | `K` | `1` |
   | `bf16x2→f4x2` narrow (32→8) | source viewed as raw `bf16` lanes (2 bf16/bf16x2); `vcvt{P0}` 1:1, `rnd` set, **no sat**; reuse prior pairing `vbitcast` when present | `K` | `1` |

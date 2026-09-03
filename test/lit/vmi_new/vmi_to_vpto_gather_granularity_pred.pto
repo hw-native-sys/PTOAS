@@ -1,0 +1,26 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment | FileCheck %s
+
+module {
+  func.func @gather_pred_inferred_b16(
+      %src: !pto.ptr<ui16, ub>,
+      %indices: !pto.vmi.vreg<32xui16>,
+      %mask: !pto.vmi.mask<32xpred>)
+      -> !pto.vmi.vreg<32xui16> {
+    %out = pto.vmi.vgather %src, %indices, %mask
+        : !pto.ptr<ui16, ub>, !pto.vmi.vreg<32xui16>, !pto.vmi.mask<32xpred>
+        -> !pto.vmi.vreg<32xui16>
+    return %out : !pto.vmi.vreg<32xui16>
+  }
+}
+
+// CHECK-LABEL: func.func @gather_pred_inferred_b16(
+// CHECK: !pto.vmi.mask<32xb16>
+// CHECK-NOT: !pto.vmi.mask<32xpred>

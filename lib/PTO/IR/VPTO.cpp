@@ -14,9 +14,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
+#include "PTO/IR/VPTOMemoryDist.h"
+#include "PTO/Support/CodeConstants.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -1011,11 +1012,19 @@ static scf::IfOp getEnclosingBranchIf(Operation *op) {
 }
 
 static bool isValueOwnedByRegion(Value value, Region *region) {
+  Region *valueRegion = nullptr;
   if (auto blockArg = dyn_cast<BlockArgument>(value)) {
-    return blockArg.getParentRegion() == region;
+    valueRegion = blockArg.getParentRegion();
+  } else if (Operation *def = value.getDefiningOp()) {
+    valueRegion = def->getParentRegion();
   }
-  if (Operation *def = value.getDefiningOp()) {
-    return def->getParentRegion() == region;
+
+  while (valueRegion) {
+    if (valueRegion == region) {
+      return true;
+    }
+    Operation *parentOp = valueRegion->getParentOp();
+    valueRegion = parentOp ? parentOp->getParentRegion() : nullptr;
   }
   return false;
 }
@@ -1771,6 +1780,9 @@ static std::optional<VcvtContract> lookupVcvtContract(VcvtElemKind src,
     case VcvtElemKind::U8:
       return VcvtContract{/*requiresRnd=*/true, /*requiresSat=*/true,
                           /*requiresPart=*/true};
+    case VcvtElemKind::BF16:
+      return VcvtContract{/*requiresRnd=*/true, /*requiresSat=*/false,
+                          /*requiresPart=*/false};
     default:
       return std::nullopt;
     }
@@ -1924,62 +1936,32 @@ static std::optional<unsigned> getDistElementWidth(Type type) {
   return std::nullopt;
 }
 
-static bool isSupportedVldx2DistToken(StringRef dist) {
-  return dist == "BDINTLV" || dist == "DINTLV_B8" || dist == "DINTLV_B16" ||
-         dist == "DINTLV_B32";
+static bool isSupportedVldx2DistToken(StringRef dist, Type elementType) {
+  return lookupVPTOMemoryDist(VPTOMemoryOpFamily::LoadX2, dist,
+                              getDistElementWidth(elementType));
 }
 
-static bool isSupportedVldsDistToken(StringRef dist) {
-  return dist == "NORM" || dist == "BRC_B8" || dist == "BRC_B16" ||
-         dist == "BRC_B32" || dist == "US_B8" || dist == "US_B16" ||
-         dist == "DS_B8" || dist == "DS_B16" || dist == "UNPK_B8" ||
-         dist == "UNPK_B16" || dist == "UNPK_B32" || dist == "BRC_BLK" ||
-         dist == "E2B_B16" || dist == "E2B_B32" || dist == "UNPK4" ||
-         dist == "SPLT4CHN" || dist == "SPLT2CHN_B8" || dist == "SPLT2CHN_B16";
+static bool isSupportedVldsDistToken(StringRef dist, Type elementType) {
+  return lookupVPTOMemoryDist(VPTOMemoryOpFamily::Load, dist,
+                              getDistElementWidth(elementType));
 }
 
 static bool isSupportedVstsDistToken(StringRef dist) {
-  return dist == "NORM_B8" || dist == "NORM_B16" || dist == "NORM_B32" ||
-         dist == "1PT_B8" || dist == "1PT_B16" || dist == "1PT_B32" ||
-         dist == "PK_B16" || dist == "PK_B32" || dist == "PK_B64" ||
-         dist == "PK4_B32" || dist == "MRG4CHN_B8" || dist == "MRG2CHN_B8" ||
-         dist == "MRG2CHN_B16";
+  return lookupVPTOMemoryDist(VPTOMemoryOpFamily::Store, dist);
 }
 
 static bool isSupportedVstsx2DistToken(StringRef dist) {
-  return dist == "INTLV_B8" || dist == "INTLV_B16" || dist == "INTLV_B32";
+  return lookupVPTOMemoryDist(VPTOMemoryOpFamily::StoreX2, dist);
 }
 
 static std::optional<StringRef>
-getVstsMaskGranularityOverride(StringRef dist, Type elementType) {
-  auto width = getDistElementWidth(elementType);
-  if (!width) {
+getVstsMaskGranularityOverride(StringRef dist) {
+  const auto *contract =
+      lookupVPTOMemoryDist(VPTOMemoryOpFamily::Store, dist);
+  if (!contract || contract->maskGranularity.empty()) {
     return std::nullopt;
   }
-
-  if (dist == "MRG4CHN_B8") {
-    return StringRef("b32");
-  }
-  if (dist == "MRG2CHN_B8") {
-    return StringRef("b16");
-  }
-  if (dist == "MRG2CHN_B16") {
-    return StringRef("b32");
-  }
-  if (dist == "PK_B16") {
-    return StringRef("b16");
-  }
-  if (dist == "PK_B32" || dist == "PK_B64" || dist == "PK4_B32") {
-    return StringRef("b32");
-  }
-  if (dist == "PK_B64") {
-    return StringRef("b32");
-  }
-  if (dist == "PK4_B32") {
-    return StringRef("b32");
-  }
-
-  return std::nullopt;
+  return contract->maskGranularity;
 }
 
 static bool isSupportedPostMode(StringRef mode) {
@@ -5479,7 +5461,9 @@ static LogicalResult verifyVldsCommon(LoadOp op) {
 
   if (op.getDistAttr()) {
     StringRef dist = *op.getDist();
-    if (!isSupportedVldsDistToken(dist)) {
+    Type elementType =
+        cast<VRegType>(op.getResult().getType()).getElementType();
+    if (!isSupportedVldsDistToken(dist, elementType)) {
       return op.emitOpError(
           "supports only NORM, BRC_B8/B16/B32, US_B8/B16, DS_B8/B16, "
           "UNPK_B8/B16/B32, BRC_BLK, E2B_B16/B32, UNPK4, SPLT4CHN, and "
@@ -7375,7 +7359,8 @@ LogicalResult Vldsx2Op::verify() {
   if (getLow().getType() != getHigh().getType()) {
     return emitOpError("requires low/high results to share one vector type");
   }
-  if (!isSupportedVldx2DistToken(getDist())) {
+  Type elementType = cast<VRegType>(getLow().getType()).getElementType();
+  if (!isSupportedVldx2DistToken(getDist(), elementType)) {
     return emitOpError("requires a supported x2 load distribution token");
   }
   if (getUpdatedBase() &&
@@ -7412,8 +7397,8 @@ static LogicalResult verifyVstsCommon(StoreOp op) {
     return op.emitOpError("requires a supported store distribution token");
   }
   if (std::optional<StringRef> dist = op.getDist()) {
-    if (std::optional<StringRef> granularity = getVstsMaskGranularityOverride(
-            *dist, cast<VRegType>(op.getValue().getType()).getElementType())) {
+    if (std::optional<StringRef> granularity =
+            getVstsMaskGranularityOverride(*dist)) {
       if (failed(verifyMaskTypeWithGranularityLike(op, op.getMask().getType(),
                                                    "mask type", *granularity))) {
         return failure();

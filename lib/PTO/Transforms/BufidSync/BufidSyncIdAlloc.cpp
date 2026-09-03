@@ -14,9 +14,10 @@
 #include <sstream>
 #include <string>
 #include <tuple>
-#include "BufidSyncIdAlloc.h"
+
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/Support/Debug.h"
+#include "BufidSyncIdAlloc.h"
 
 
 #define DEBUG_TYPE "pto-bufid-sync"

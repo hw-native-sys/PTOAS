@@ -7,7 +7,6 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 //
 // RUN: ptoas --pto-arch=a5 --enable-insert-sync %s | FileCheck %s --check-prefix=MTE1
-// RUN: ptoas --pto-arch=a5 --enable-graph-sync-solver --graph-sync-solver-event-id-max=64 %s | FileCheck %s --check-prefix=MTE1
 
 module {
   func.func @tmov_mx_scale_left_pipe_selection(

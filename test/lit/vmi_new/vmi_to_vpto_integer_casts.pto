@@ -96,13 +96,16 @@ module {
 
   func.func @vmi_to_vpto_group_slot_trunci_i32_to_ui8(
       %wide: !pto.vmi.vreg<8xi32, #pto.vmi.layout<num_groups = 8, slots = 1>>,
-      %dst: !pto.ptr<ui8, ub>,
       %off: index) {
+    %c102400_i64 = arith.constant 102400 : i64
+    %dst = pto.castptr %c102400_i64 : i64 -> !pto.ptr<ui8, ub>
     %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %aligned_off = arith.muli %off, %c32 : index
     %narrow = pto.vmi.vcvt %wide {saturate = "SAT"}
         : !pto.vmi.vreg<8xi32, #pto.vmi.layout<num_groups = 8, slots = 1>>
         -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 1>>
-    pto.vmi.vstore %narrow, %dst[%off], %c1 {group = 8}
+    pto.vmi.vstore %narrow, %dst[%aligned_off], %c1 {group = 8}
         : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 1>>,
           !pto.ptr<ui8, ub>
     return
@@ -110,13 +113,16 @@ module {
 
   func.func @vmi_to_vpto_group_slot_trunci_slots8_i32_to_ui8(
       %wide: !pto.vmi.vreg<8xi32, #pto.vmi.layout<num_groups = 8, slots = 8>>,
-      %dst: !pto.ptr<ui8, ub>,
       %off: index) {
+    %c102400_i64 = arith.constant 102400 : i64
+    %dst = pto.castptr %c102400_i64 : i64 -> !pto.ptr<ui8, ub>
     %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %aligned_off = arith.muli %off, %c32 : index
     %narrow = pto.vmi.vcvt %wide {saturate = "SAT"}
         : !pto.vmi.vreg<8xi32, #pto.vmi.layout<num_groups = 8, slots = 8>>
         -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>
-    pto.vmi.vstore %narrow, %dst[%off], %c1 {group = 8}
+    pto.vmi.vstore %narrow, %dst[%aligned_off], %c1 {group = 8}
         : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>,
           !pto.ptr<ui8, ub>
     return
@@ -146,12 +152,16 @@ module {
 
   func.func @vmi_to_vpto_group_slot_extui_slots1_ui8_to_ui32(
       %input: !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 1>>,
-      %dst: !pto.ptr<ui32, ub>, %off: index) {
+      %off: index) {
+    %c102400_i64 = arith.constant 102400 : i64
+    %dst = pto.castptr %c102400_i64 : i64 -> !pto.ptr<ui32, ub>
     %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %aligned_off = arith.muli %off, %c8 : index
     %wide = pto.vmi.vcvt %input
         : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 1>>
         -> !pto.vmi.vreg<8xui32, #pto.vmi.layout<num_groups = 8, slots = 1>>
-    pto.vmi.vstore %wide, %dst[%off], %c1 {group = 8}
+    pto.vmi.vstore %wide, %dst[%aligned_off], %c1 {group = 8}
         : !pto.vmi.vreg<8xui32, #pto.vmi.layout<num_groups = 8, slots = 1>>,
           !pto.ptr<ui32, ub>
     return
@@ -159,12 +169,16 @@ module {
 
   func.func @vmi_to_vpto_group_slot_extui_slots1_ui16_to_ui32(
       %input: !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 1>>,
-      %dst: !pto.ptr<ui32, ub>, %off: index) {
+      %off: index) {
+    %c102400_i64 = arith.constant 102400 : i64
+    %dst = pto.castptr %c102400_i64 : i64 -> !pto.ptr<ui32, ub>
     %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %aligned_off = arith.muli %off, %c8 : index
     %wide = pto.vmi.vcvt %input
         : !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 1>>
         -> !pto.vmi.vreg<8xui32, #pto.vmi.layout<num_groups = 8, slots = 1>>
-    pto.vmi.vstore %wide, %dst[%off], %c1 {group = 8}
+    pto.vmi.vstore %wide, %dst[%aligned_off], %c1 {group = 8}
         : !pto.vmi.vreg<8xui32, #pto.vmi.layout<num_groups = 8, slots = 1>>,
           !pto.ptr<ui32, ub>
     return
@@ -230,12 +244,16 @@ module {
 
   func.func @vmi_to_vpto_group_slot_trunci_slots1_ui32_to_ui16(
       %input: !pto.vmi.vreg<8xui32, #pto.vmi.layout<num_groups = 8, slots = 1>>,
-      %dst: !pto.ptr<ui16, ub>, %off: index) {
+      %off: index) {
+    %c102400_i64 = arith.constant 102400 : i64
+    %dst = pto.castptr %c102400_i64 : i64 -> !pto.ptr<ui16, ub>
     %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %aligned_off = arith.muli %off, %c16 : index
     %narrow = pto.vmi.vcvt %input {saturate = "SAT"}
         : !pto.vmi.vreg<8xui32, #pto.vmi.layout<num_groups = 8, slots = 1>>
         -> !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 1>>
-    pto.vmi.vstore %narrow, %dst[%off], %c1 {group = 8}
+    pto.vmi.vstore %narrow, %dst[%aligned_off], %c1 {group = 8}
         : !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 1>>,
           !pto.ptr<ui16, ub>
     return
@@ -243,12 +261,16 @@ module {
 
   func.func @vmi_to_vpto_group_slot_trunci_slots8_ui32_to_ui16(
       %input: !pto.vmi.vreg<8xui32, #pto.vmi.layout<num_groups = 8, slots = 8>>,
-      %dst: !pto.ptr<ui16, ub>, %off: index) {
+      %off: index) {
+    %c102400_i64 = arith.constant 102400 : i64
+    %dst = pto.castptr %c102400_i64 : i64 -> !pto.ptr<ui16, ub>
     %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %aligned_off = arith.muli %off, %c16 : index
     %narrow = pto.vmi.vcvt %input {saturate = "SAT"}
         : !pto.vmi.vreg<8xui32, #pto.vmi.layout<num_groups = 8, slots = 8>>
         -> !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
-    pto.vmi.vstore %narrow, %dst[%off], %c1 {group = 8}
+    pto.vmi.vstore %narrow, %dst[%aligned_off], %c1 {group = 8}
         : !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>,
           !pto.ptr<ui16, ub>
     return
@@ -256,13 +278,16 @@ module {
 
   func.func @vmi_to_vpto_group_slot_trunci_slots8_i32_to_ui8_lane_stride(
       %wide: !pto.vmi.vreg<8xi32, #pto.vmi.layout<num_groups = 8, slots = 8>>,
-      %dst: !pto.ptr<ui8, ub>,
       %off: index) {
+    %c102400_i64 = arith.constant 102400 : i64
+    %dst = pto.castptr %c102400_i64 : i64 -> !pto.ptr<ui8, ub>
     %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %aligned_off = arith.muli %off, %c32 : index
     %narrow = pto.vmi.vcvt %wide {saturate = "SAT"}
         : !pto.vmi.vreg<8xi32, #pto.vmi.layout<num_groups = 8, slots = 8>>
         -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>
-    pto.vmi.vstore %narrow, %dst[%off], %c1 {group = 8}
+    pto.vmi.vstore %narrow, %dst[%aligned_off], %c1 {group = 8}
         : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>,
           !pto.ptr<ui8, ub>
     return
@@ -270,13 +295,16 @@ module {
 
   func.func @vmi_to_vpto_group_slot_trunci_slots8_ui16_to_ui8_lane_stride(
       %wide: !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 8>>,
-      %dst: !pto.ptr<ui8, ub>,
       %off: index) {
+    %c102400_i64 = arith.constant 102400 : i64
+    %dst = pto.castptr %c102400_i64 : i64 -> !pto.ptr<ui8, ub>
     %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %aligned_off = arith.muli %off, %c32 : index
     %narrow = pto.vmi.vcvt %wide {saturate = "SAT"}
         : !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 8>>
         -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
-    pto.vmi.vstore %narrow, %dst[%off], %c1 {group = 8}
+    pto.vmi.vstore %narrow, %dst[%aligned_off], %c1 {group = 8}
         : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>,
           !pto.ptr<ui8, ub>
     return
@@ -351,6 +379,7 @@ module {
 // CHECK: pto.vcvt {{.*}} {part = "P0", sat = "SAT"} : !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<256xui8>
 // CHECK: pto.vcvt {{.*}} {part = "P0", sat = "SAT"} : !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<256xui8>
 // CHECK: pto.vsts
+// CHECK-NOT: pto.vstus
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast
@@ -359,6 +388,7 @@ module {
 // CHECK: pto.pset_b32 "PAT_VL8"
 // CHECK: pto.vcvt {{.*}} {part = "P0", sat = "SAT"} : !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<256xui8>
 // CHECK: pto.vsts
+// CHECK-NOT: pto.vstus
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast
@@ -372,12 +402,16 @@ module {
 // CHECK-LABEL: func.func @vmi_to_vpto_group_slot_extui_slots1_ui8_to_ui32(
 // CHECK: %[[VL1U8:.*]] = pto.pset_b8 "PAT_VL1" : !pto.mask<b8>
 // CHECK-COUNT-8: pto.vcvt {{.*}}, %[[VL1U8]] {part = "P0"} : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<64xui32>
+// CHECK: pto.vsts
+// CHECK-NOT: pto.vstus
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 
 // CHECK-LABEL: func.func @vmi_to_vpto_group_slot_extui_slots1_ui16_to_ui32(
 // CHECK: %[[VL1U16EXT:.*]] = pto.pset_b16 "PAT_VL1" : !pto.mask<b16>
 // CHECK-COUNT-8: pto.vcvt {{.*}}, %[[VL1U16EXT]] {part = "EVEN"} : !pto.vreg<128xui16>, !pto.mask<b16> -> !pto.vreg<64xui32>
+// CHECK: pto.vsts
+// CHECK-NOT: pto.vstus
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 
@@ -408,29 +442,36 @@ module {
 // CHECK-LABEL: func.func @vmi_to_vpto_group_slot_trunci_slots1_ui32_to_ui16(
 // CHECK: %[[VL1U32:.*]] = pto.pset_b32 "PAT_VL1" : !pto.mask<b32>
 // CHECK-COUNT-8: pto.vcvt {{.*}}, %[[VL1U32]] {part = "EVEN", sat = "SAT"} : !pto.vreg<64xui32>, !pto.mask<b32> -> !pto.vreg<128xui16>
+// CHECK: pto.vsts
+// CHECK-NOT: pto.vstus
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 
 // CHECK-LABEL: func.func @vmi_to_vpto_group_slot_trunci_slots8_ui32_to_ui16(
 // CHECK: pto.vcvt {{.*}} {part = "EVEN", sat = "SAT"} : !pto.vreg<64xui32>, !pto.mask<b32> -> !pto.vreg<128xui16>
 // CHECK: pto.vbitcast {{.*}} : !pto.vreg<128xui16> -> !pto.vreg<64xui32>
+// CHECK: pto.vsts
+// CHECK-NOT: pto.vstus
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 
 // CHECK-LABEL: func.func @vmi_to_vpto_group_slot_trunci_slots8_i32_to_ui8_lane_stride(
 // CHECK: pto.vcvt {{.*}} {part = "P0", sat = "SAT"} : !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<256xui8>
 // CHECK: pto.vpack {{.*}} "LOWER" : !pto.vreg<64xui32> -> !pto.vreg<128xui16>
-// CHECK: pto.vpack {{.*}} "LOWER" : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
-// CHECK-COUNT-2: pto.vsts {{.*}} {dist = "1PT_B32"}
+// CHECK: %[[PACKED_I32_UI8:.*]] = pto.vpack {{.*}} "LOWER" : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
+// CHECK: pto.vsts %[[PACKED_I32_UI8]],
+// CHECK-NOT: pto.vstus
+// CHECK-NOT: dist = "1PT_B32"
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast
 
 // CHECK-LABEL: func.func @vmi_to_vpto_group_slot_trunci_slots8_ui16_to_ui8_lane_stride(
 // CHECK: pto.vcvt {{.*}} {part = "EVEN", sat = "SAT"} : !pto.vreg<128xui16>, !pto.mask<b16> -> !pto.vreg<256xui8>
-// CHECK: pto.vpack {{.*}} "LOWER" : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
-// CHECK: pto.vbitcast {{.*}} : !pto.vreg<256xui8> -> !pto.vreg<64xui32>
-// CHECK-COUNT-2: pto.vsts {{.*}} {dist = "1PT_B32"}
+// CHECK: %[[PACKED_UI16_UI8:.*]] = pto.vpack {{.*}} "LOWER" : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
+// CHECK: pto.vsts %[[PACKED_UI16_UI8]],
+// CHECK-NOT: pto.vstus
+// CHECK-NOT: dist = "1PT_B32"
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast

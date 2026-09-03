@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/IR/PTO.h"
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/Passes.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -43,7 +44,7 @@ struct VMILayoutRematerializeWeakProducersPass
 
   void runOnOperation() override {
     ModuleOp module = getOperation();
-    SmallVector<Operation *, 16> producers;
+    SmallVector<Operation *, mlir::pto::kValue16> producers;
     module.walk([&](Operation *op) {
       if (isLayoutPolymorphicProducer(op)) {
         producers.push_back(op);
@@ -56,17 +57,18 @@ struct VMILayoutRematerializeWeakProducersPass
         continue;
       }
       Value result = producer->getResult(0);
-      SmallVector<OpOperand *, 4> uses;
+      SmallVector<OpOperand *, mlir::pto::kValue4> uses;
       for (OpOperand &use : result.getUses()) {
         uses.push_back(&use);
       }
       const size_t useCount = uses.size();
-      if (useCount < 2) {
+      if (useCount < mlir::pto::kValue2) {
         continue;
       }
 
-      DenseMap<Operation *, SmallVector<OpOperand *, 4>> usesByOwner;
-      SmallVector<Operation *, 4> owners;
+      DenseMap<Operation *, SmallVector<OpOperand *, mlir::pto::kValue4>>
+          usesByOwner;
+      SmallVector<Operation *, mlir::pto::kValue4> owners;
       for (OpOperand *use : uses) {
         Operation *owner = use->getOwner();
         const bool isNewOwner = usesByOwner.find(owner) == usesByOwner.end();

@@ -41,7 +41,7 @@ PTOFusionRegionGen
   -> PTORematerializeFixpipeVectorQuant
   -> pto-plan-memory (level1/level2 only; skipped at level3)
   -> PTOResolveReservedBuffers
-  -> sync passes (InsertSync / GraphSyncSolver / BarrierAll ...)
+  -> sync passes (InsertSync / BarrierAll ...)
   -> PTOResolveBufferSelect
   -> EmitPTOManual (PTO -> EmitC lowering)
 ```

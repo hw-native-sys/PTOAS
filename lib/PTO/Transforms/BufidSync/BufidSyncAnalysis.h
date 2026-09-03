@@ -144,8 +144,9 @@ inline void printTileInfo(llvm::raw_ostream &os, const TileInfo &t) {
   if (t.rootBuffer) {
     if (auto *defOp = t.rootBuffer.getDefiningOp()) {
       os << " rootDefBy=" << defOp->getName().getStringRef();
-    } else
+    } else {
       os << " rootDefBy=BlockArg";
+    }
     os << " rootPtr=" << (const void *)t.rootBuffer.getAsOpaquePointer();
   }
 }

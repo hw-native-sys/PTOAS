@@ -22,13 +22,13 @@
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Pass/AnalysisManager.h"
 #include "llvm/ADT/SmallVector.h"
 
 #include <cstdint>
 #include <optional>
 
 namespace mlir {
-class AnalysisManager;
 
 namespace pto {
 
@@ -46,6 +46,24 @@ struct PTOAddressExpr {
   std::optional<PTOTypedAddressOffset> offset;
   int64_t elementBytes = 0;
 };
+
+/// Prove that a pointer plus an element offset is aligned to the requested
+/// byte boundary. Pointer block arguments are assumed to satisfy their
+/// address-space ABI alignment; derived addptr/cast expressions are accepted
+/// only when their byte remainder can be proven.
+bool isKnownAddressAligned(Value pointer, Value elementOffset,
+                           Type elementType, int64_t alignmentBytes);
+
+/// Return the proven byte remainder of a pointer plus an element offset for
+/// the requested byte boundary. Unknown remainders return std::nullopt.
+std::optional<int64_t>
+getKnownAddressRemainderBytes(Value pointer, Value elementOffset,
+                              Type elementType, int64_t alignmentBytes);
+
+/// Return the proven byte difference `to - from` for pointers with the same
+/// element type and root pointer. Unknown or non-affine differences return
+/// std::nullopt.
+std::optional<int64_t> getKnownAddressDifferenceBytes(Value from, Value to);
 
 /// Function-scoped AnalysisManager analysis that builds typed AddressExprs and
 /// provides exact byte/unit deltas without materializing IR.

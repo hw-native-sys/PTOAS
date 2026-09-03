@@ -22,6 +22,9 @@ using namespace mlir;
 using namespace mlir::pto;
 
 namespace {
+constexpr unsigned kBitsPerByte = 8;
+constexpr unsigned kInt64BitWidth = 64;
+
 static std::optional<PIPE> getExecutionPipe(Operation *op) {
   if (auto pipeOp = dyn_cast<OpPipeInterface>(op))
     return pipeOp.getPipe();
@@ -74,11 +77,11 @@ static std::optional<int64_t> getElementByteSize(Value pointer) {
   if (!elementType.isIntOrFloat())
     return std::nullopt;
   unsigned bitWidth = elementType.getIntOrFloatBitWidth();
-  if (bitWidth == 0 || bitWidth % 8 != 0)
+  if (bitWidth == 0 || bitWidth % kBitsPerByte != 0)
     return std::nullopt;
 
   int64_t byteSize;
-  if (llvm::MulOverflow(elementCount, static_cast<int64_t>(bitWidth / 8),
+  if (llvm::MulOverflow(elementCount, static_cast<int64_t>(bitWidth / kBitsPerByte),
                         byteSize))
     return std::nullopt;
   return byteSize;
@@ -86,39 +89,99 @@ static std::optional<int64_t> getElementByteSize(Value pointer) {
 
 static std::optional<int64_t> getConstantOffset(Value offset) {
   APInt value;
-  if (!matchPattern(offset, m_ConstantInt(&value)) || !value.isSignedIntN(64))
+  if (!matchPattern(offset, m_ConstantInt(&value)) || !value.isSignedIntN(kInt64BitWidth))
     return std::nullopt;
   return value.getSExtValue();
 }
 
 template <typename OpTy>
 static void setStaticIndexedRange(OpTy op, VPTOMemoryAccess &access) {
-  if (access.address != op.getPtr())
+  if (access.address != op.getPtr()) {
     return;
+  }
   std::optional<int64_t> elementOffset = getConstantOffset(op.getOffset());
   std::optional<int64_t> elementByteSize = getElementByteSize(access.address);
-  if (!elementOffset || !elementByteSize)
+  if (!elementOffset || !elementByteSize) {
     return;
+  }
   int64_t byteOffset;
-  if (llvm::MulOverflow(*elementOffset, *elementByteSize, byteOffset))
+  if (llvm::MulOverflow(*elementOffset, *elementByteSize, byteOffset)) {
     return;
+  }
   access.byteOffset = byteOffset;
   access.byteSize = *elementByteSize;
 }
 
+static void setStaticVectorRange(Value pointer, Value offset,
+                                 int64_t conservativeByteSize,
+                                 VPTOMemoryAccess &access) {
+  if (access.address != pointer) {
+    return;
+  }
+  std::optional<int64_t> elementOffset = getConstantOffset(offset);
+  std::optional<int64_t> elementByteSize = getElementByteSize(pointer);
+  if (!elementOffset || !elementByteSize) {
+    return;
+  }
+  int64_t byteOffset;
+  if (llvm::MulOverflow(*elementOffset, *elementByteSize, byteOffset)) {
+    return;
+  }
+  access.byteOffset = byteOffset;
+  // One vector register is 256 bytes. Distribution modes may access fewer
+  // bytes, so the full register width is a safe over-approximation for alias
+  // analysis; the x2 forms conservatively use two register widths.
+  access.byteSize = conservativeByteSize;
+}
+
+static int64_t getVstsByteSize(VstsOp store) {
+  std::optional<StringRef> dist = store.getDist();
+  bool isOnePoint = dist && (*dist == "1PT_B8" || *dist == "1PT_B16" ||
+                             *dist == "1PT_B32");
+  if (isOnePoint) {
+    if (std::optional<int64_t> elementByteSize =
+            getElementByteSize(store.getDestination())) {
+      return *elementByteSize;
+    }
+  }
+  return 256;
+}
+
 static void setStaticAccessRange(Operation *op, VPTOMemoryAccess &access) {
-  if (auto load = dyn_cast<PTOLoadOp>(op))
+  if (auto load = dyn_cast<PTOLoadOp>(op)) {
     return setStaticIndexedRange(load, access);
-  if (auto store = dyn_cast<PTOStoreOp>(op))
+  }
+  if (auto store = dyn_cast<PTOStoreOp>(op)) {
     return setStaticIndexedRange(store, access);
-  if (auto load = dyn_cast<PTOLdgOp>(op))
+  }
+  if (auto load = dyn_cast<PTOLdgOp>(op)) {
     return setStaticIndexedRange(load, access);
-  if (auto store = dyn_cast<PTOStgOp>(op))
+  }
+  if (auto store = dyn_cast<PTOStgOp>(op)) {
     return setStaticIndexedRange(store, access);
-  if (auto load = dyn_cast<PTOLdDevOp>(op))
+  }
+  if (auto load = dyn_cast<PTOLdDevOp>(op)) {
     return setStaticIndexedRange(load, access);
-  if (auto store = dyn_cast<PTOStDevOp>(op))
+  }
+  if (auto store = dyn_cast<PTOStDevOp>(op)) {
     return setStaticIndexedRange(store, access);
+  }
+  if (auto load = dyn_cast<VldsOp>(op)) {
+    return setStaticVectorRange(load.getSource(), load.getOffset(), 256,
+                                access);
+  }
+  if (auto store = dyn_cast<VstsOp>(op)) {
+    return setStaticVectorRange(store.getDestination(), store.getOffset(),
+                                getVstsByteSize(store), access);
+  }
+  if (auto load = dyn_cast<Vldsx2Op>(op)) {
+    return setStaticVectorRange(load.getSource(), load.getOffset(), 512,
+                                access);
+  }
+  if (auto store = dyn_cast<Vstsx2Op>(op)) {
+    return setStaticVectorRange(store.getDestination(), store.getOffset(), 512,
+                                access);
+  }
 }
 
 /// These operations have complete scheduler-specific state semantics and do

@@ -3,5 +3,5 @@ Note: Manually inserted #if vector statement in `abs_vec_core.cpp`
 
 ```bash
 bash ./compile_lib_full_flags.sh # full options as pto-isa cmake template
-bash ./compile_lib_minimum_flags.sh  # minimium options to generate so
+bash ./compile_lib_minimum_flags.sh  # minimum options to generate so
 ```

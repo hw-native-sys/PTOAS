@@ -16,9 +16,11 @@ module {
       %dst: !pto.ptr<f32, ub>,
       %off: index) {
     %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
     %c256 = arith.constant 256 : index
+    %aligned_off = arith.muli %off, %c8 : index
     %mask = pto.vmi.create_mask %c256 : index -> !pto.vmi.mask<256xpred>
-    %a = pto.vmi.vload %base[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<256xf32>
+    %a = pto.vmi.vload %base[%aligned_off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<256xf32>
     %biasv = pto.vmi.vbrc %bias : f32 -> !pto.vmi.vreg<256xf32>
     %x = pto.vmi.vadd %a, %biasv
         : !pto.vmi.vreg<256xf32>, !pto.vmi.vreg<256xf32>
@@ -27,7 +29,7 @@ module {
         {group = 8, reassoc}
         : !pto.vmi.vreg<256xf32>, !pto.vmi.mask<256xpred>
         -> !pto.vmi.vreg<8xf32>
-    pto.vmi.vstore %sum, %dst[%off], %c1 {group = 8}
+    pto.vmi.vstore %sum, %dst[%aligned_off], %c1 {group = 8}
         : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
     return
   }
@@ -53,8 +55,8 @@ module {
 // LOWER-COUNT-4: pto.vdup %arg1
 // LOWER-COUNT-7: pto.vadd {{.*}}, {{.*}}, {{.*}} : !pto.vreg<64xf32>
 // LOWER: pto.vcgadd
-// LOWER: %[[VL8:.*]] = pto.pset_b32 "PAT_VL8" : !pto.mask<b32>
-// LOWER: pto.vsts {{.*}}, %arg2[%arg3], {{.*}} : !pto.vreg<64xf32>, {{(!pto\.ptr)?<f32, ub>}}, !pto.mask<b32>
+// LOWER: pto.vsts
+// LOWER-NOT: pto.vstus
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.
 // LOWER-NOT: unrealized_conversion_cast

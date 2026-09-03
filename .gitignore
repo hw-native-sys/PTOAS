@@ -99,3 +99,6 @@ test/samples/**/npu_validation/*
 .planning/
 .work/
 .local/
+
+# OAT scan output
+oat_reports/

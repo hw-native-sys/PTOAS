@@ -2,7 +2,6 @@
 // InsertSync when they touch the same GM payload as async tile stores.
 //
 // RUN: ptoas --pto-arch=a3 --enable-insert-sync %s -o - 2>&1 | FileCheck %s
-// RUN: ptoas --pto-arch=a3 --enable-graph-sync-solver %s -o - 2>&1 | FileCheck %s
 
 module attributes {pto.target_arch = "a2a3"} {
   func.func @tstore_then_store_scalar(%dst: !pto.ptr<ui32, gm>)

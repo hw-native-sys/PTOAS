@@ -14,7 +14,7 @@ module {
       %high: !pto.vmi.vreg<128xf32>,
       %dst: !pto.ptr<f32, ub>,
       %offset: index) {
-    pto.vmi.vstore %low, %high, %dst[%offset] {dist_mode = "dintlv"}
+    pto.vmi.vstore %low, %high, %dst[%offset] {dist_mode = "intlv"}
         : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
     return
   }

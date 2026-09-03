@@ -10,7 +10,7 @@
 // RUN: FileCheck %s < %t
 
 // CHECK-LABEL: vpto-scheduler: function=memory_and_implicit
-// CHECK: kind=memory strength=must latency=0 reason=may-alias memory access in original order
+// CHECK: kind=memory strength=must latency=0 reason=may-alias memory frontier in original order
 // CHECK: kind=data strength=must latency=1 reason=implicit read of AR
 // CHECK: kind=output strength=must latency=0 reason=implicit write of AR
 // CHECK: kind=anti strength=must latency=0 reason=implicit anti-dependence on AR
@@ -19,17 +19,63 @@
 // CHECK-NOT: vpto-scheduler: function=pipe_classification
 
 // CHECK-LABEL: vpto-scheduler: function=memory_ranges
-// CHECK: edge=0->2 kind=memory strength=must latency=0 reason=may-alias memory access in original order
+// CHECK: edge=0->2 kind=memory strength=must latency=0 reason=may-alias memory frontier in original order
 // CHECK-NOT: kind=memory
 
+// CHECK-LABEL: vpto-scheduler: function=constant_pointer_ranges
+// CHECK: edge=0->2 kind=memory strength=must latency=0 reason=may-alias memory frontier in original order
+// CHECK-NOT: kind=memory
+
+// CHECK-LABEL: vpto-scheduler: function=vector_memory_ranges
+// CHECK: edge=1->3 kind=memory strength=must latency=0 reason=may-alias memory frontier in original order
+// CHECK-NOT: kind=memory
+
+// CHECK-LABEL: vpto-scheduler: function=dynamic_pointer_ranges
+// CHECK-NOT: kind=memory
+
+// CHECK-LABEL: vpto-scheduler: function=dynamic_pointer_overlap
+// CHECK: kind=memory strength=must latency=0 reason=may-alias memory frontier in original order
+
+// CHECK-LABEL: vpto-scheduler: function=correlated_dynamic_store_ranges
+// CHECK: edge=0->2 kind=memory strength=must latency=0 reason=may-alias memory frontier in original order
+// CHECK-NOT: kind=memory
+
+// CHECK-LABEL: vpto-scheduler: function=uncorrelated_dynamic_store_ranges
+// CHECK: edge=0->1 kind=memory strength=must latency=0 reason=may-alias memory frontier in original order
+
+// CHECK-LABEL: vpto-scheduler: function=unproven_wrapping_store_ranges
+// CHECK: edge=0->1 kind=memory strength=must latency=0 reason=may-alias memory frontier in original order
+
+// CHECK-LABEL: vpto-scheduler: function=dynamic_pointer_frontier_partial_range
+// CHECK-DAG: edge=0->1 kind=memory strength=must latency=0 reason=may-alias memory frontier in original order
+// CHECK-DAG: edge=0->2 kind=memory strength=must latency=0 reason=may-alias memory frontier in original order
+// CHECK-NOT: edge=1->2 kind=memory
+
 // CHECK-LABEL: vpto-scheduler: function=volatile_reads
-// CHECK: edge=0->1 kind=memory strength=must latency=0 reason=may-alias memory access in original order
+// CHECK: edge=0->1 kind=memory strength=must latency=0 reason=may-alias memory frontier in original order
+
+// CHECK-LABEL: vpto-scheduler: function=memory_frontier_reduction
+// CHECK-DAG: edge=0->2 kind=memory
+// CHECK-DAG: edge=1->2 kind=memory
+// CHECK-DAG: edge=2->3 kind=memory
+// CHECK-NOT: edge=0->3 kind=memory
+// CHECK-NOT: edge=1->3 kind=memory
+
+// CHECK-LABEL: vpto-scheduler: function=memory_frontier_partial_overlap
+// CHECK-DAG: edge=2->3 kind=memory
+// CHECK-DAG: edge=2->4 kind=memory
+
+// CHECK-LABEL: vpto-scheduler: function=vector_one_point_store_ranges
+// CHECK: edge=1->3 kind=memory
+// CHECK-NOT: edge=2->3 kind=memory
+// CHECK: edge=2->4 kind=memory
+// CHECK-NOT: kind=memory
 
 // CHECK-LABEL: vpto-scheduler: function=unknown_memory_fallback
-// CHECK: edge=0->1 kind=memory strength=must latency=0 reason=may-alias memory access in original order
+// CHECK: edge=0->1 kind=memory strength=must latency=0 reason=may-alias memory frontier in original order
 
 // CHECK-LABEL: vpto-scheduler: function=post_update_address
-// CHECK: edge=1->2 kind=data strength=must latency=1 reason=post-update address operand #0
+// CHECK: edge=1->2 kind=data strength=must latency=0 reason=post-update address operand #0
 
 // CHECK-LABEL: vpto-scheduler: function=vpto_memory_barrier
 // CHECK-NOT: kind=memory
@@ -39,7 +85,7 @@
 // CHECK-NOT: kind=memory
 
 // CHECK-LABEL: vpto-scheduler: function=strict_vecscope
-// CHECK: op=pto.sprclr semantic=schedulable sched-class=vector known=true
+// CHECK: op=pto.sprclr semantic=schedulable sched-class=control-zero known=true
 // CHECK: coverage schedulable=1 structural=0 boundary=0 unsupported=0 unclassified=0
 
 module attributes {pto.target_arch = "a5"} {
@@ -85,11 +131,252 @@ module attributes {pto.target_arch = "a5"} {
     return
   }
 
+  func.func @constant_pointer_ranges() attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %base0 = arith.constant 0 : i64
+    %base1 = arith.constant 4096 : i64
+    %ptr0 = pto.castptr %base0 : i64 -> !pto.ptr<i32, gm>
+    %ptr1 = pto.castptr %base1 : i64 -> !pto.ptr<i32, gm>
+    %value = arith.constant 42 : i32
+    pto.vecscope {
+      pto.st_dev %value, %ptr0[%c0] : !pto.ptr<i32, gm>, i32
+      pto.st_dev %value, %ptr1[%c0] : !pto.ptr<i32, gm>, i32
+      pto.st_dev %value, %ptr0[%c0] : !pto.ptr<i32, gm>, i32
+    }
+    return
+  }
+
+  func.func @vector_memory_ranges() attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %base0 = arith.constant 0 : i64
+    %base1 = arith.constant 4096 : i64
+    %ptr0 = pto.castptr %base0 : i64 -> !pto.ptr<f32, ub>
+    %ptr1 = pto.castptr %base1 : i64 -> !pto.ptr<f32, ub>
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %value = pto.vlds %ptr0[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %value, %ptr1[%c0], %mask
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      pto.vsts %value, %ptr0[%c0], %mask
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    }
+    return
+  }
+
+  func.func @dynamic_pointer_ranges(%upper: index) attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c6 = arith.constant 6 : index
+    %c32 = arith.constant 32 : index
+    %c704 = arith.constant 704 : index
+    %c768 = arith.constant 768 : index
+    %c4608 = arith.constant 4608 : index
+    %base = arith.constant 0 : i64
+    %ptr = pto.castptr %base : i64 -> !pto.ptr<f32, ub>
+    scf.for %iv = %c0 to %upper step %c1 {
+      %slot = arith.remsi %iv, %c6 : index
+      %scoreSlot = arith.muli %slot, %c768 : index
+      %scoreOffset = arith.addi %scoreSlot, %c704 : index
+      %score = pto.addptr %ptr, %scoreOffset : <f32, ub> -> <f32, ub>
+      %outputSlot = arith.muli %slot, %c32 : index
+      %outputOffset = arith.addi %outputSlot, %c4608 : index
+      %output = pto.addptr %ptr, %outputOffset : <f32, ub> -> <f32, ub>
+      pto.vecscope {
+        %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+        %value = pto.vlds %score[%c0]
+            : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+        pto.vsts %value, %output[%c0], %mask
+            : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+        %next = pto.vlds %score[%c0]
+            : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      }
+    }
+    return
+  }
+
+  func.func @dynamic_pointer_overlap(%upper: index) attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c6 = arith.constant 6 : index
+    %c32 = arith.constant 32 : index
+    %base = arith.constant 0 : i64
+    %ptr = pto.castptr %base : i64 -> !pto.ptr<f32, ub>
+    scf.for %iv = %c0 to %upper step %c1 {
+      %slot = arith.remsi %iv, %c6 : index
+      %offset = arith.muli %slot, %c32 : index
+      %address = pto.addptr %ptr, %offset : <f32, ub> -> <f32, ub>
+      pto.vecscope {
+        %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+        %value = pto.vlds %address[%c0]
+            : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+        pto.vsts %value, %address[%c0], %mask
+            : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      }
+    }
+    return
+  }
+
+  func.func @correlated_dynamic_store_ranges(
+      %value: !pto.vreg<64xi32>, %mask: !pto.mask<b32>)
+      attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c6 = arith.constant 6 : index
+    %c32 = arith.constant 32 : index
+    %c4608 = arith.constant 4608 : index
+    %c4609 = arith.constant 4609 : index
+    %base = arith.constant 0 : i64
+    %root = pto.castptr %base : i64 -> !pto.ptr<i32, ub>
+    scf.for %iv = %c0 to %c6 step %c1 {
+      %slot = arith.remsi %iv, %c6 : index
+      %slotOffset = arith.muli %slot, %c32 : index
+      %offset0 = arith.addi %slotOffset, %c4608 : index
+      %offset1 = arith.addi %slotOffset, %c4609 : index
+      %address0 = pto.addptr %root, %offset0 : <i32, ub> -> <i32, ub>
+      %address1 = pto.addptr %root, %offset1 : <i32, ub> -> <i32, ub>
+      pto.vecscope {
+        pto.vsts %value, %address0[%c0], %mask {dist = "1PT_B32"}
+            : !pto.vreg<64xi32>, !pto.ptr<i32, ub>, !pto.mask<b32>
+        pto.vsts %value, %address1[%c0], %mask {dist = "1PT_B32"}
+            : !pto.vreg<64xi32>, !pto.ptr<i32, ub>, !pto.mask<b32>
+        pto.vsts %value, %address0[%c0], %mask {dist = "1PT_B32"}
+            : !pto.vreg<64xi32>, !pto.ptr<i32, ub>, !pto.mask<b32>
+      }
+    }
+    return
+  }
+
+  func.func @uncorrelated_dynamic_store_ranges(
+      %slot0: index, %slot1: index, %value: !pto.vreg<64xi32>,
+      %mask: !pto.mask<b32>) attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %c32 = arith.constant 32 : index
+    %c4608 = arith.constant 4608 : index
+    %c4609 = arith.constant 4609 : index
+    %base = arith.constant 0 : i64
+    %root = pto.castptr %base : i64 -> !pto.ptr<i32, ub>
+    %slotOffset0 = arith.muli %slot0, %c32 : index
+    %slotOffset1 = arith.muli %slot1, %c32 : index
+    %offset0 = arith.addi %slotOffset0, %c4608 : index
+    %offset1 = arith.addi %slotOffset1, %c4609 : index
+    %address0 = pto.addptr %root, %offset0 : <i32, ub> -> <i32, ub>
+    %address1 = pto.addptr %root, %offset1 : <i32, ub> -> <i32, ub>
+    pto.vecscope {
+      pto.vsts %value, %address0[%c0], %mask {dist = "1PT_B32"}
+          : !pto.vreg<64xi32>, !pto.ptr<i32, ub>, !pto.mask<b32>
+      pto.vsts %value, %address1[%c0], %mask {dist = "1PT_B32"}
+          : !pto.vreg<64xi32>, !pto.ptr<i32, ub>, !pto.mask<b32>
+    }
+    return
+  }
+
+  func.func @unproven_wrapping_store_ranges(
+      %slot: index, %value: !pto.vreg<64xi32>, %mask: !pto.mask<b32>)
+      attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %c4608 = arith.constant 4608 : index
+    %c4609 = arith.constant 4609 : index
+    %base = arith.constant 0 : i64
+    %root = pto.castptr %base : i64 -> !pto.ptr<i32, ub>
+    %offset0 = arith.addi %slot, %c4608 : index
+    %offset1 = arith.addi %slot, %c4609 : index
+    %address0 = pto.addptr %root, %offset0 : <i32, ub> -> <i32, ub>
+    %address1 = pto.addptr %root, %offset1 : <i32, ub> -> <i32, ub>
+    pto.vecscope {
+      pto.vsts %value, %address0[%c0], %mask {dist = "1PT_B32"}
+          : !pto.vreg<64xi32>, !pto.ptr<i32, ub>, !pto.mask<b32>
+      pto.vsts %value, %address1[%c0], %mask {dist = "1PT_B32"}
+          : !pto.vreg<64xi32>, !pto.ptr<i32, ub>, !pto.mask<b32>
+    }
+    return
+  }
+
+  func.func @dynamic_pointer_frontier_partial_range(%value: i8)
+      attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c6 = arith.constant 6 : index
+    %c20 = arith.constant 20 : index
+    %c50 = arith.constant 50 : index
+    %base = arith.constant 0 : i64
+    %root = pto.castptr %base : i64 -> !pto.ptr<i8, gm>
+    scf.for %outer = %c0 to %c6 step %c1 {
+      %priorSlot = arith.remsi %outer, %c6 : index
+      %priorOffset = arith.muli %priorSlot, %c20 : index
+      %prior = pto.addptr %root, %priorOffset : <i8, gm> -> <i8, gm>
+      scf.for %inner = %c0 to %c6 step %c1 {
+        %currentIndex = arith.remsi %inner, %c6 : index
+        %currentSlot = arith.muli %currentIndex, %c20 : index
+        %currentOffset = arith.addi %currentSlot, %c50 : index
+        %current = pto.addptr %root, %currentOffset : <i8, gm> -> <i8, gm>
+        pto.vecscope {
+          pto.st_dev %value, %prior[%c0] : !pto.ptr<i8, gm>, i8
+          pto.st_dev %value, %current[%c0] : !pto.ptr<i8, gm>, i8
+          pto.st_dev %value, %root[%c0] : !pto.ptr<i8, gm>, i8
+        }
+      }
+    }
+    return
+  }
+
   func.func @volatile_reads(%src: !pto.ptr<i32, gm>) attributes {pto.aicore} {
     %c0 = arith.constant 0 : index
     pto.vecscope {
       %first = pto.ld_dev %src[%c0] {volatile} : !pto.ptr<i32, gm> -> i32
       %second = pto.ld_dev %src[%c0] : !pto.ptr<i32, gm> -> i32
+    }
+    return
+  }
+
+  func.func @memory_frontier_reduction(%ptr: !pto.ptr<i32, gm>)
+      attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %value = arith.constant 42 : i32
+    pto.vecscope {
+      %first = pto.ld_dev %ptr[%c0] : !pto.ptr<i32, gm> -> i32
+      %second = pto.ld_dev %ptr[%c0] : !pto.ptr<i32, gm> -> i32
+      pto.st_dev %value, %ptr[%c0] : !pto.ptr<i32, gm>, i32
+      pto.st_dev %value, %ptr[%c0] : !pto.ptr<i32, gm>, i32
+    }
+    return
+  }
+
+  func.func @memory_frontier_partial_overlap() attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %base0 = arith.constant 6144 : i64
+    %base1 = arith.constant 6400 : i64
+    %ptr0 = pto.castptr %base0 : i64 -> !pto.ptr<f32, ub>
+    %ptr1 = pto.castptr %base1 : i64 -> !pto.ptr<f32, ub>
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %value = pto.vlds %ptr0[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %value, %ptr1[%c0], %mask {dist = "NORM_B32"}
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      pto.vsts %value, %ptr0[%c1], %mask {dist = "NORM_B32"}
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      pto.vsts %value, %ptr1[%c1], %mask {dist = "NORM_B32"}
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    }
+    return
+  }
+
+  func.func @vector_one_point_store_ranges() attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %base0 = arith.constant 6144 : i64
+    %base1 = arith.constant 6400 : i64
+    %ptr0 = pto.castptr %base0 : i64 -> !pto.ptr<f32, ub>
+    %ptr1 = pto.castptr %base1 : i64 -> !pto.ptr<f32, ub>
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %value = pto.vlds %ptr0[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %value, %ptr1[%c0], %mask {dist = "NORM_B32"}
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      pto.vsts %value, %ptr0[%c1], %mask {dist = "1PT_B32"}
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      pto.vsts %value, %ptr1[%c1], %mask {dist = "1PT_B32"}
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
     }
     return
   }

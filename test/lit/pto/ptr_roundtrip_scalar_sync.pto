@@ -8,9 +8,6 @@
 
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync \
 // RUN:   --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=INSERT
-// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-graph-sync-solver \
-// RUN:   --graph-sync-solver-event-id-max=8 --emit-pto-ir %s 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=GSS
 
 module attributes {pto.target_arch = "a3"} {
   func.func @ptr_roundtrip_scalar_sync(%dst: !pto.ptr<ui32>) {
@@ -46,9 +43,3 @@ module attributes {pto.target_arch = "a3"} {
 // INSERT: pto.set_flag[<PIPE_MTE3>, <PIPE_S>,
 // INSERT: pto.wait_flag[<PIPE_MTE3>, <PIPE_S>,
 // INSERT-NEXT: pto.load_scalar
-
-// GSS-LABEL: func.func @ptr_roundtrip_scalar_sync
-// GSS: pto.tstore
-// GSS: pto.set_flag[<PIPE_MTE3>, <PIPE_S>,
-// GSS: pto.wait_flag[<PIPE_MTE3>, <PIPE_S>,
-// GSS-NEXT: pto.load_scalar

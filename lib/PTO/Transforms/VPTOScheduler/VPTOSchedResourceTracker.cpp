@@ -42,18 +42,19 @@ unsigned VPTOResourceTracker::getResourceOccupancy(VPTOSchedResourceID resource,
              : getTimelineValue(found->second, cycle);
 }
 
-bool VPTOResourceTracker::canReserve(const VPTOSchedClass &schedClass,
+bool VPTOResourceTracker::canReserve(const VPTOSchedParameters &parameters,
                                      unsigned cycle,
                                      std::string &reason) const {
   unsigned issueWidth = model.getMachineModel().issueWidth;
-  if (schedClass.microOps > issueWidth) {
+  if (parameters.microOps > issueWidth) {
     reason = "sched class exceeds machine issue width";
     return false;
   }
-  if (getIssueOccupancy(cycle) + schedClass.microOps > issueWidth)
+  if (getIssueOccupancy(cycle) + parameters.microOps > issueWidth) {
     return false;
+  }
 
-  for (const VPTOSchedResourceUse &use : schedClass.resources) {
+  for (const VPTOSchedResourceUse &use : parameters.resources) {
     const VPTOSchedResource *resource = findResource(use.resource);
     if (!resource) {
       reason = "sched class references an unknown resource";
@@ -78,7 +79,8 @@ VPTOResourceTracker::evaluate(const VPTOSUnit &unit,
                               unsigned requestedCycle) const {
   VPTOResourceEvaluation evaluation;
   evaluation.earliestCycle = requestedCycle;
-  const VPTOSchedClass &schedClass = model.getSchedClass(unit.getOperation());
+  VPTOSchedParameters parameters =
+      model.getSchedParameters(unit.getOperation());
   std::string reason;
 
   // This upper bound protects analyze mode from malformed model data. Normal
@@ -87,7 +89,7 @@ VPTOResourceTracker::evaluate(const VPTOSUnit &unit,
   for (unsigned attempt = 0; attempt < kMaxResourceSearchCycles; ++attempt) {
     unsigned cycle = requestedCycle + attempt;
     reason.clear();
-    if (canReserve(schedClass, cycle, reason)) {
+    if (canReserve(parameters, cycle, reason)) {
       evaluation.earliestCycle = cycle;
       evaluation.issueSlot = getIssueOccupancy(cycle);
       evaluation.stallCycles = attempt;
@@ -104,13 +106,13 @@ VPTOResourceTracker::evaluate(const VPTOSUnit &unit,
   return evaluation;
 }
 
-void VPTOResourceTracker::reserve(const VPTOSchedClass &schedClass,
+void VPTOResourceTracker::reserve(const VPTOSchedParameters &parameters,
                                   unsigned cycle) {
   if (issueOccupancy.size() <= cycle)
     issueOccupancy.resize(cycle + 1, 0);
-  issueOccupancy[cycle] += schedClass.microOps;
+  issueOccupancy[cycle] += parameters.microOps;
 
-  for (const VPTOSchedResourceUse &use : schedClass.resources) {
+  for (const VPTOSchedResourceUse &use : parameters.resources) {
     SmallVector<unsigned> &timeline = resourceOccupancy[use.resource];
     unsigned endCycle = cycle + use.acquireAt + use.duration;
     if (timeline.size() < endCycle)
@@ -125,7 +127,7 @@ LogicalResult VPTOResourceTracker::commit(const VPTOSUnit &unit,
   VPTOResourceEvaluation evaluation = evaluate(unit, cycle);
   if (!evaluation.legal || evaluation.earliestCycle != cycle)
     return failure();
-  reserve(model.getSchedClass(unit.getOperation()), cycle);
+  reserve(model.getSchedParameters(unit.getOperation()), cycle);
   return success();
 }
 

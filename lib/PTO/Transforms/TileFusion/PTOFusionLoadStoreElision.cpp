@@ -136,78 +136,84 @@ static bool isSupportedLeafOp(Operation *op) {
   return isPureNoRegionOp(op);
 }
 
-static Value getCanonicalTrackedValue(Value value) {
-  while (value) {
-    Operation *def = value.getDefiningOp();
-    if (!def) {
-      break;
-    }
+static Value tracePTOTrackedValue(Operation *def) {
+  if (auto tileBufAddr = dyn_cast<pto::TileBufAddrOp>(def)) {
+    return tileBufAddr.getSrc();
+  }
+  if (auto subview = dyn_cast<pto::SubViewOp>(def)) {
+    return subview.getSource();
+  }
+  if (auto bitcast = dyn_cast<pto::BitcastOp>(def)) {
+    return bitcast.getSrc();
+  }
+  if (auto reshape = dyn_cast<pto::TReshapeOp>(def)) {
+    return reshape.getSrc();
+  }
+  return {};
+}
 
-    if (auto tileBufAddr = dyn_cast<pto::TileBufAddrOp>(def)) {
-      value = tileBufAddr.getSrc();
-      continue;
+static Value traceMemRefTrackedValue(Operation *def) {
+  if (auto subview = dyn_cast<memref::SubViewOp>(def)) {
+    return subview.getSource();
+  }
+  if (auto cast = dyn_cast<memref::CastOp>(def)) {
+    return cast.getSource();
+  }
+  if (auto reshape = dyn_cast<memref::ReshapeOp>(def)) {
+    return reshape.getSource();
+  }
+  if (auto cast = dyn_cast<memref::ReinterpretCastOp>(def)) {
+    return cast.getSource();
+  }
+  if (auto collapse = dyn_cast<memref::CollapseShapeOp>(def)) {
+    return collapse.getSrc();
+  }
+  if (auto expand = dyn_cast<memref::ExpandShapeOp>(def)) {
+    return expand.getSrc();
+  }
+  if (auto cast = dyn_cast<memref::MemorySpaceCastOp>(def)) {
+    return cast.getSource();
+  }
+  if (auto transpose = dyn_cast<memref::TransposeOp>(def)) {
+    return transpose.getIn();
+  }
+  return {};
+}
+
+static Value traceUnrealizedTrackedValue(Value value,
+                                         UnrealizedConversionCastOp cast) {
+  if (cast.getInputs().empty()) {
+    return {};
+  }
+  if (auto result = dyn_cast<OpResult>(value)) {
+    unsigned resultNumber = result.getResultNumber();
+    if (resultNumber < cast.getInputs().size()) {
+      return cast.getInputs()[resultNumber];
     }
-    if (auto subview = dyn_cast<pto::SubViewOp>(def)) {
-      value = subview.getSource();
-      continue;
-    }
-    if (auto bitcast = dyn_cast<pto::BitcastOp>(def)) {
-      value = bitcast.getSrc();
-      continue;
-    }
-    if (auto reshape = dyn_cast<pto::TReshapeOp>(def)) {
-      value = reshape.getSrc();
-      continue;
-    }
-    if (auto subview = dyn_cast<memref::SubViewOp>(def)) {
-      value = subview.getSource();
-      continue;
-    }
-    if (auto cast = dyn_cast<memref::CastOp>(def)) {
-      value = cast.getSource();
-      continue;
-    }
-    if (auto reshape = dyn_cast<memref::ReshapeOp>(def)) {
-      value = reshape.getSource();
-      continue;
-    }
-    if (auto reinterpretCast = dyn_cast<memref::ReinterpretCastOp>(def)) {
-      value = reinterpretCast.getSource();
-      continue;
-    }
-    if (auto collapse = dyn_cast<memref::CollapseShapeOp>(def)) {
-      value = collapse.getSrc();
-      continue;
-    }
-    if (auto expand = dyn_cast<memref::ExpandShapeOp>(def)) {
-      value = expand.getSrc();
-      continue;
-    }
-    if (auto memorySpaceCast = dyn_cast<memref::MemorySpaceCastOp>(def)) {
-      value = memorySpaceCast.getSource();
-      continue;
-    }
-    if (auto transpose = dyn_cast<memref::TransposeOp>(def)) {
-      value = transpose.getIn();
-      continue;
-    }
-    if (auto cast = dyn_cast<UnrealizedConversionCastOp>(def)) {
-      if (cast.getInputs().empty()) {
-        break;
-      }
-      if (auto result = dyn_cast<OpResult>(value)) {
-        unsigned resultNumber = result.getResultNumber();
-        if (resultNumber < cast.getInputs().size()) {
-          value = cast.getInputs()[resultNumber];
-          continue;
-        }
-      }
-      if (cast.getInputs().size() == 1) {
-        value = cast.getInputs().front();
-        continue;
-      }
-    }
-    break;
+  }
+  return cast.getInputs().size() == 1 ? cast.getInputs().front() : Value();
+}
+
+static Value getCanonicalTrackedValueOneStep(Value value) {
+  Operation *def = value.getDefiningOp();
+  if (!def) {
+    return {};
+  }
+  if (Value source = tracePTOTrackedValue(def)) {
+    return source;
+  }
+  if (Value source = traceMemRefTrackedValue(def)) {
+    return source;
+  }
+  if (auto cast = dyn_cast<UnrealizedConversionCastOp>(def)) {
+    return traceUnrealizedTrackedValue(value, cast);
+  }
+  return {};
+}
+
+static Value getCanonicalTrackedValue(Value value) {
+  while (Value source = getCanonicalTrackedValueOneStep(value)) {
+    value = source;
   }
   return value;
 }
@@ -401,6 +407,40 @@ static void pruneTrackedStoresForLoadBase(SmallVectorImpl<TrackedStore> &stores,
   });
 }
 
+static bool isTailStoreUseCompatible(
+    Operation *owner, Operation *localScopeOp,
+    const FusionRegionStoreContext &context,
+    const llvm::SmallPtrSetImpl<Operation *> &scheduledForErase) {
+  if (!owner || scheduledForErase.contains(owner)) {
+    return true;
+  }
+  if (context.regionOp->isProperAncestor(owner)) {
+    Operation *topLevelUser = getTopLevelAncestorInBlock(owner, context.body);
+    if (!topLevelUser) {
+      return false;
+    }
+    bool isScheduledOrLocal = scheduledForErase.contains(topLevelUser) ||
+                              topLevelUser == localScopeOp;
+    if (isScheduledOrLocal) {
+      return true;
+    }
+    return localScopeOp->getBlock() != topLevelUser->getBlock() ||
+           !localScopeOp->isBeforeInBlock(topLevelUser);
+  }
+
+  Operation *topLevelUser =
+      getTopLevelAncestorInBlock(owner, context.parentBlock);
+  if (!topLevelUser) {
+    return areMutuallyExclusiveByIfRegion(localScopeOp, owner);
+  }
+  bool isScheduledOrRegion = scheduledForErase.contains(topLevelUser) ||
+                             topLevelUser == context.regionOp;
+  if (isScheduledOrRegion) {
+    return true;
+  }
+  return !context.regionOp->isBeforeInBlock(topLevelUser);
+}
+
 static bool shouldElideTailStore(
     const TrackedStore &store, const FusionRegionStoreContext &context,
     Operation *scopeOp,
@@ -421,136 +461,162 @@ static bool shouldElideTailStore(
 
   for (OpOperand &use : canonicalBase.getUses()) {
     Operation *owner = use.getOwner();
-    if (!owner || scheduledForErase.contains(owner)) {
-      continue;
-    }
-    if (context.regionOp->isProperAncestor(owner)) {
-      // Uses nested under the current carrier loop are fine: erasing the tail
-      // store only affects memory materialization, while SSA users still
-      // observe the forwarded vector value. A later top-level op in the same
-      // fusion region may still require the buffer to stay materialized, so
-      // keep the store.
-      Operation *topLevelUser = getTopLevelAncestorInBlock(owner, context.body);
-      if (!topLevelUser) {
-        return false;
-      }
-      if (scheduledForErase.contains(topLevelUser)) {
-        continue;
-      }
-      if (topLevelUser == localScopeOp) {
-        continue;
-      }
-      if (localScopeOp->getBlock() == topLevelUser->getBlock() &&
-          localScopeOp->isBeforeInBlock(topLevelUser)) {
-        return false;
-      }
-      continue;
-    }
-
-    // Any observable use after the fusion_region means the buffer escapes the
-    // region boundary, so the final store must remain.
-    Operation *topLevelUser =
-        getTopLevelAncestorInBlock(owner, context.parentBlock);
-    if (!topLevelUser) {
-      if (areMutuallyExclusiveByIfRegion(localScopeOp, owner)) {
-        continue;
-      }
-      return false;
-    }
-    if (scheduledForErase.contains(topLevelUser)) {
-      continue;
-    }
-    if (topLevelUser == context.regionOp) {
-      continue;
-    }
-    if (context.regionOp->isBeforeInBlock(topLevelUser)) {
+    if (!isTailStoreUseCompatible(owner, localScopeOp, context,
+                                  scheduledForErase)) {
       return false;
     }
   }
   return true;
 }
 
-static bool elideLoadStoreRoundTripsInLeafBody(
-    Block &body, const FusionRegionStoreContext *context, Operation *scopeOp) {
+struct ElisionState {
   SmallVector<Operation *, mlir::pto::kValue8> eraseOrder;
   llvm::SmallPtrSet<Operation *, mlir::pto::kValue8> scheduledForErase;
   SmallVector<TrackedStore, mlir::pto::kValue8> trackedStores;
   bool changed = false;
 
-  auto scheduleErase = [&eraseOrder, &scheduledForErase](Operation *op) {
+  void scheduleErase(Operation *op) {
     if (scheduledForErase.insert(op).second) {
       eraseOrder.push_back(op);
     }
-  };
+  }
+};
+
+static void processTrackedLoad(pto::VldsOp load, ElisionState &state) {
+  Value inferredMask = inferVPTOLoadUserMask(load);
+  if (!inferredMask) {
+    pruneTrackedStoresForLoadBase(state.trackedStores, load.getSource());
+    return;
+  }
+  SmallVector<Value, mlir::pto::kValue4> indices{load.getOffset()};
+  int matchIndex = findTrackedStoreIndex(
+      state.trackedStores, load.getSource(), indices, inferredMask);
+  if (matchIndex < 0) {
+    pruneTrackedStoresForLoadBase(state.trackedStores, load.getSource());
+    return;
+  }
+  load.getResult().replaceAllUsesWith(state.trackedStores[matchIndex].value);
+  state.scheduleErase(load);
+  state.changed = true;
+}
+
+static void processTrackedStore(pto::VstsOp store, ElisionState &state) {
+  SmallVector<Value, mlir::pto::kValue4> indices{store.getOffset()};
+  int matchIndex = findTrackedStoreIndex(
+      state.trackedStores, store.getDestination(), indices, store.getMask());
+  if (matchIndex >= 0) {
+    state.scheduleErase(state.trackedStores[matchIndex].op);
+    state.trackedStores.erase(state.trackedStores.begin() + matchIndex);
+    state.changed = true;
+  }
+  state.trackedStores.push_back(
+      TrackedStore{store.getOperation(), store.getDestination(),
+                   SmallVector<Value, 2>{store.getOffset()}, store.getMask(),
+                   store.getValue()});
+}
+
+static bool elideLoadStoreRoundTripsInLeafBody(
+    Block &body, const FusionRegionStoreContext *context, Operation *scopeOp) {
+  ElisionState state;
 
   for (Operation &op : body.without_terminator()) {
     if (auto load = dyn_cast<pto::VldsOp>(op)) {
-      Value inferredMask = inferVPTOLoadUserMask(load);
-      if (!inferredMask) {
-        // VPTO vlds does not carry an explicit predicate operand. If use-side
-        // mask information is not uniquely recoverable, keep behavior
-        // conservative by dropping only potentially aliasing tracked stores.
-        pruneTrackedStoresForLoadBase(trackedStores, load.getSource());
-        continue;
-      }
-
-      Value base = load.getSource();
-      Value offset = load.getOffset();
-      SmallVector<Value, mlir::pto::kValue4> loadIndices{offset};
-      int matchIndex =
-          findTrackedStoreIndex(trackedStores, base, loadIndices, inferredMask);
-      if (matchIndex >= 0) {
-        load.getResult().replaceAllUsesWith(trackedStores[matchIndex].value);
-        scheduleErase(load);
-        changed = true;
-      } else {
-        pruneTrackedStoresForLoadBase(trackedStores, base);
-      }
+      processTrackedLoad(load, state);
       continue;
     }
 
     if (auto store = dyn_cast<pto::VstsOp>(op)) {
-      Value base = store.getDestination();
-      Value offset = store.getOffset();
-      Value mask = store.getMask();
-      SmallVector<Value, mlir::pto::kValue4> storeIndices{offset};
-      int matchIndex =
-          findTrackedStoreIndex(trackedStores, base, storeIndices, mask);
-      if (matchIndex >= 0) {
-        scheduleErase(trackedStores[matchIndex].op);
-        trackedStores.erase(trackedStores.begin() + matchIndex);
-        changed = true;
-      }
-
-      trackedStores.push_back(TrackedStore{
-          store.getOperation(),
-          base,
-          SmallVector<Value, 2>{offset},
-          mask,
-          store.getValue(),
-      });
+      processTrackedStore(store, state);
       continue;
     }
 
     if (!isPureNoRegionOp(&op)) {
-      trackedStores.clear();
+      state.trackedStores.clear();
     }
   }
 
   if (context) {
-    for (const TrackedStore &store : trackedStores) {
-      if (!shouldElideTailStore(store, *context, scopeOp, scheduledForErase)) {
+    for (const TrackedStore &store : state.trackedStores) {
+      if (!shouldElideTailStore(store, *context, scopeOp,
+                                state.scheduledForErase)) {
         continue;
       }
-      scheduleErase(store.op);
-      changed = true;
+      state.scheduleErase(store.op);
+      state.changed = true;
     }
   }
 
-  for (Operation *op : eraseOrder) {
+  for (Operation *op : state.eraseOrder) {
     op->erase();
   }
-  return changed;
+  return state.changed;
+}
+
+using RegionContextMap =
+    llvm::DenseMap<Operation *, FusionRegionStoreContext>;
+
+static RegionContextMap buildRegionContexts(func::FuncOp func) {
+  RegionContextMap contexts;
+  func.walk([&](pto::FusionRegionOp fusionRegion) {
+    std::optional<FusionRegionStoreContext> context =
+        buildFusionRegionStoreContext(fusionRegion);
+    if (context) {
+      contexts.try_emplace(fusionRegion.getOperation(), std::move(*context));
+    }
+  });
+  return contexts;
+}
+
+static void elideFusionRegionBodies(func::FuncOp func,
+                                    RegionContextMap &contexts,
+                                    bool &changed) {
+  func.walk([&](pto::FusionRegionOp fusionRegion) {
+    auto it = contexts.find(fusionRegion.getOperation());
+    if (it == contexts.end()) {
+      return;
+    }
+    Block &body = fusionRegion.getBody().front();
+    if (isSupportedStraightLineBlock(body)) {
+      changed |=
+          elideLoadStoreRoundTripsInLeafBody(body, &it->second, nullptr);
+    }
+  });
+}
+
+static void runElisionForLeafBody(Block *body, Operation *scopeOp,
+                                  pto::FusionRegionOp fusionRegion,
+                                  RegionContextMap &contexts, bool &changed) {
+  if (!body || !fusionRegion) {
+    return;
+  }
+  auto it = contexts.find(fusionRegion.getOperation());
+  if (it != contexts.end()) {
+    changed |= elideLoadStoreRoundTripsInLeafBody(*body, &it->second, scopeOp);
+  }
+}
+
+template <typename ScopeOp>
+static void elideVectorScopeBodies(func::FuncOp func, RegionContextMap &contexts,
+                                   bool &changed) {
+  func.walk([&](ScopeOp scope) {
+    auto fusionRegion = scope->template getParentOfType<pto::FusionRegionOp>();
+    if (fusionRegion && isSupportedStraightLineBlock(scope.getBody().front())) {
+      runElisionForLeafBody(&scope.getBody().front(), scope, fusionRegion,
+                            contexts, changed);
+    }
+  });
+}
+
+static void elideLoopBodies(func::FuncOp func, RegionContextMap &contexts,
+                            bool &changed) {
+  func.walk([&](scf::ForOp loop) {
+    if (!isSupportedLoopRoot(loop)) {
+      return;
+    }
+    runElisionForLeafBody(getLeafLoopBody(loop), loop.getOperation(),
+                          loop->getParentOfType<pto::FusionRegionOp>(), contexts,
+                          changed);
+  });
 }
 
 struct PTOFusionLoadStoreElisionPass
@@ -566,72 +632,11 @@ struct PTOFusionLoadStoreElisionPass
     }
 
     bool changed = false;
-
-    llvm::DenseMap<Operation *, FusionRegionStoreContext> regionContexts;
-    func.walk([&](pto::FusionRegionOp fusionRegion) {
-      std::optional<FusionRegionStoreContext> context =
-          buildFusionRegionStoreContext(fusionRegion);
-      if (!context) {
-        return;
-      }
-      regionContexts.try_emplace(fusionRegion.getOperation(),
-                                 std::move(*context));
-    });
-
-    func.walk([&](pto::FusionRegionOp fusionRegion) {
-      auto it = regionContexts.find(fusionRegion.getOperation());
-      if (it == regionContexts.end()) {
-        return;
-      }
-
-      Block &body = fusionRegion.getBody().front();
-      if (!isSupportedStraightLineBlock(body)) {
-        return;
-      }
-
-      changed |= elideLoadStoreRoundTripsInLeafBody(body, &it->second, nullptr);
-    });
-
-    auto runElisionForLeafBody = [&changed, &regionContexts](
-                                        Block *leafBody, Operation *scopeOp,
-                                        pto::FusionRegionOp fusionRegion) {
-      if (!leafBody || !fusionRegion) {
-        return;
-      }
-
-      auto it = regionContexts.find(fusionRegion.getOperation());
-      if (it == regionContexts.end()) {
-        return;
-      }
-
-      changed |=
-          elideLoadStoreRoundTripsInLeafBody(*leafBody, &it->second, scopeOp);
-    };
-
-    func.walk([&](pto::VecScopeOp vecscope) {
-      if (auto fusionRegion = vecscope->getParentOfType<pto::FusionRegionOp>()) {
-        if (isSupportedStraightLineBlock(vecscope.getBody().front())) {
-          runElisionForLeafBody(&vecscope.getBody().front(), vecscope,
-                                fusionRegion);
-        }
-      }
-    });
-    func.walk([&](pto::StrictVecScopeOp vecscope) {
-      if (auto fusionRegion = vecscope->getParentOfType<pto::FusionRegionOp>()) {
-        if (isSupportedStraightLineBlock(vecscope.getBody().front())) {
-          runElisionForLeafBody(&vecscope.getBody().front(), vecscope,
-                                fusionRegion);
-        }
-      }
-    });
-
-    func.walk([&](scf::ForOp loop) {
-      if (!isSupportedLoopRoot(loop)) {
-        return;
-      }
-      runElisionForLeafBody(getLeafLoopBody(loop), loop.getOperation(),
-                            loop->getParentOfType<pto::FusionRegionOp>());
-    });
+    RegionContextMap contexts = buildRegionContexts(func);
+    elideFusionRegionBodies(func, contexts, changed);
+    elideVectorScopeBodies<pto::VecScopeOp>(func, contexts, changed);
+    elideVectorScopeBodies<pto::StrictVecScopeOp>(func, contexts, changed);
+    elideLoopBodies(func, contexts, changed);
 
     if (!changed) {
       markAllAnalysesPreserved();

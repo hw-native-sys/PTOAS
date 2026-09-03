@@ -1332,6 +1332,31 @@ class TileLibCatalogTest(unittest.TestCase):
                 self.assertEqual(selected.name, expected_name)
                 self.assertIn(expected_op, selected.specialize(**specs).mlir_text())
 
+    def test_tstore_acc_uses_c0_aligned_source_stride(self):
+        specs = {
+            "src": TileSpec(
+                shape=(1, 96),
+                valid_shape=(1, 96),
+                dtype=ScalarType("f32"),
+                memory_space="acc",
+                b_layout="col_major",
+                s_layout="row_major",
+            ),
+            "dst": ViewSpec(
+                shape=(1, 1, 1, 1, 96),
+                dtype=ScalarType("f32"),
+                strides=(96, 96, 96, 96, 1),
+                layout="nd",
+            ),
+        }
+
+        selected = select("pto.tstore", "a5", specs)
+        mlir = selected.specialize(**specs).mlir_text()
+
+        self.assertEqual(selected.name, "template_tstore_acc_to_gm_nz2nd")
+        self.assertIn("arith.constant 16 : i64", mlir)
+        self.assertIn("pto.mte_l0c_gm", mlir)
+
     def test_tload_accepts_numeric_pad_value_metadata(self):
         specs = {
             "src": ViewSpec(

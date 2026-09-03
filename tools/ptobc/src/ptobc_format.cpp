@@ -15,6 +15,9 @@
 
 #include "ptobc/leb128.h"
 
+#include "llvm/ADT/SmallString.h"
+#include "llvm/Support/Path.h"
+
 #include <cstring>
 #include <fstream>
 #include <stdexcept>
@@ -32,7 +35,7 @@ constexpr size_t kPTOBCMagicSize = sizeof(kPTOBCMagic);
 } // namespace
 
 void Buffer::append(const void* p, size_t n) {
-  const uint8_t* b = reinterpret_cast<const uint8_t*>(p);
+  const uint8_t* b = static_cast<const uint8_t*>(p);
   bytes.insert(bytes.end(), b, b + n);
 }
 
@@ -203,8 +206,17 @@ std::vector<uint8_t> PTOBCFile::serialize() const {
   return out.bytes;
 }
 
+std::string canonicalizeIoPath(const std::string& path) {
+  // Lexically collapse "./", "foo/../" and redundant separators. This is a
+  // pure string rewrite: symlink/absolute resolution is intentionally left to
+  // the stream open below, which still reports unreachable paths.
+  llvm::SmallString<128> normalized(path);
+  llvm::sys::path::remove_dots(normalized, /*remove_dot_dot=*/true);
+  return std::string(normalized);
+}
+
 std::vector<uint8_t> readFile(const std::string& path) {
-  std::ifstream ifs(path, std::ios::binary);
+  std::ifstream ifs(canonicalizeIoPath(path), std::ios::binary);
   if (!ifs) {
     throw std::runtime_error("Failed to open: " + path);
   }
@@ -213,11 +225,12 @@ std::vector<uint8_t> readFile(const std::string& path) {
 }
 
 void writeFile(const std::string& path, const std::vector<uint8_t>& data) {
-  std::ofstream ofs(path, std::ios::binary);
+  std::ofstream ofs(canonicalizeIoPath(path), std::ios::binary);
   if (!ofs) {
     throw std::runtime_error("Failed to write: " + path);
   }
-  ofs.write(reinterpret_cast<const char*>(data.data()), data.size());
+  const char* rawBytes = static_cast<const char*>(static_cast<const void*>(data.data()));
+  ofs.write(rawBytes, data.size());
 }
 
 } // namespace ptobc

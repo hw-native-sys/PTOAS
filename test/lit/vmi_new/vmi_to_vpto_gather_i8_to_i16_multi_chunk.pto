@@ -1,0 +1,62 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
+
+module {
+  func.func @vmi_to_vpto_gather_i8_to_i16_256(
+      %src: !pto.ptr<ui8, ub>,
+      %indices: !pto.vmi.vreg<256xui16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<256xb16, #pto.vmi.layout<contiguous>>)
+      -> (!pto.vreg<128xui16>, !pto.vreg<128xui16>) {
+    %out = pto.vmi.vgather %src, %indices, %mask
+        : !pto.ptr<ui8, ub>,
+          !pto.vmi.vreg<256xui16, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.mask<256xb16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<256xui16, #pto.vmi.layout<contiguous>>
+    %p0, %p1 = "pto.vmi.unpack"(%out)
+        : (!pto.vmi.vreg<256xui16, #pto.vmi.layout<contiguous>>)
+        -> (!pto.vreg<128xui16>, !pto.vreg<128xui16>)
+    return %p0, %p1 : !pto.vreg<128xui16>, !pto.vreg<128xui16>
+  }
+
+  func.func @vmi_to_vpto_gather_i8_to_i16_512(
+      %src: !pto.ptr<ui8, ub>,
+      %indices: !pto.vmi.vreg<512xui16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<512xb16, #pto.vmi.layout<contiguous>>)
+      -> (!pto.vreg<128xui16>, !pto.vreg<128xui16>, !pto.vreg<128xui16>, !pto.vreg<128xui16>) {
+    %out = pto.vmi.vgather %src, %indices, %mask
+        : !pto.ptr<ui8, ub>,
+          !pto.vmi.vreg<512xui16, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.mask<512xb16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<512xui16, #pto.vmi.layout<contiguous>>
+    %p0, %p1, %p2, %p3 = "pto.vmi.unpack"(%out)
+        : (!pto.vmi.vreg<512xui16, #pto.vmi.layout<contiguous>>)
+        -> (!pto.vreg<128xui16>, !pto.vreg<128xui16>, !pto.vreg<128xui16>, !pto.vreg<128xui16>)
+    return %p0, %p1, %p2, %p3
+        : !pto.vreg<128xui16>, !pto.vreg<128xui16>, !pto.vreg<128xui16>, !pto.vreg<128xui16>
+  }
+}
+
+// CHECK-LABEL: func.func @vmi_to_vpto_gather_i8_to_i16_256(
+// CHECK: pto.vgather2
+// CHECK: pto.vsel
+// CHECK: pto.vgather2
+// CHECK: pto.vsel
+// CHECK-LABEL: func.func @vmi_to_vpto_gather_i8_to_i16_512(
+// CHECK: pto.vgather2
+// CHECK: pto.vsel
+// CHECK: pto.vgather2
+// CHECK: pto.vsel
+// CHECK: pto.vgather2
+// CHECK: pto.vsel
+// CHECK: pto.vgather2
+// CHECK: pto.vsel
+// CHECK-NOT: pto.vmi.
+// CHECK-NOT: !pto.vmi.
+// CHECK-NOT: unrealized_conversion_cast

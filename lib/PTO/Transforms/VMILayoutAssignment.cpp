@@ -27,6 +27,7 @@
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/TypeSwitch.h"
 
 namespace mlir {
 namespace pto {
@@ -487,7 +488,8 @@ struct LayoutSolver {
     if (rowStride && *rowStride == groupSize) {
       return getContiguousLayout();
     }
-    if (!rowStride || *rowStride <= 0 || *rowStride % 8 != 0) {
+    if (!rowStride || *rowStride <= 0 ||
+        *rowStride % mlir::pto::kValue8 != 0) {
       return getContiguousLayout();
     }
 
@@ -525,7 +527,8 @@ struct LayoutSolver {
     if (rowStride && *rowStride == groupSize) {
       return success();
     }
-    if (rowStride && *rowStride > 0 && *rowStride % 8 == 0) {
+    if (rowStride && *rowStride > 0 &&
+        *rowStride % mlir::pto::kValue8 == 0) {
       return success();
     }
 
@@ -602,1169 +605,683 @@ struct LayoutSolver {
     return success();
   }
 
-  LogicalResult addConstraints() {
-    WalkResult result = module.walk([&](Operation *op) -> WalkResult {
-      if (auto groupIota = dyn_cast<VMIGroupIotaOp>(op)) {
-        if (failed(setNaturalLayout(groupIota.getResult(),
-                                    getContiguousLayout(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto maskAnd = dyn_cast<VMIMaskAndOp>(op)) {
-        if (failed(uniteMask(maskAnd.getLhs(), maskAnd.getRhs(), op)) ||
-            failed(uniteMask(maskAnd.getLhs(), maskAnd.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto maskOr = dyn_cast<VMIMaskOrOp>(op)) {
-        if (failed(uniteMask(maskOr.getLhs(), maskOr.getRhs(), op)) ||
-            failed(uniteMask(maskOr.getLhs(), maskOr.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto maskXor = dyn_cast<VMIMaskXOrOp>(op)) {
-        if (failed(uniteMask(maskXor.getLhs(), maskXor.getRhs(), op)) ||
-            failed(uniteMask(maskXor.getLhs(), maskXor.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto maskNot = dyn_cast<VMIMaskNotOp>(op)) {
-        if (failed(uniteMask(maskNot.getSource(), maskNot.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto ensure = dyn_cast<VMIEnsureMaskLayoutOp>(op)) {
-        if (failed(uniteMask(ensure.getSource(), ensure.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto ensure = dyn_cast<VMIEnsureMaskGranularityOp>(op)) {
-        return WalkResult::advance();
-      }
-      if (auto addf = dyn_cast<VMIAddFOp>(op)) {
-        if (failed(constrainElementwiseBinary(addf.getLhsMutable(),
-                                              addf.getRhsMutable(),
-                                              addf.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto addi = dyn_cast<VMIAddIOp>(op)) {
-        if (failed(constrainElementwiseBinary(addi.getLhsMutable(),
-                                              addi.getRhsMutable(),
-                                              addi.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto subf = dyn_cast<VMISubFOp>(op)) {
-        if (failed(constrainElementwiseBinary(subf.getLhsMutable(),
-                                              subf.getRhsMutable(),
-                                              subf.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto subi = dyn_cast<VMISubIOp>(op)) {
-        if (failed(constrainElementwiseBinary(subi.getLhsMutable(),
-                                              subi.getRhsMutable(),
-                                              subi.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto mulf = dyn_cast<VMIMulFOp>(op)) {
-        if (failed(constrainElementwiseBinary(mulf.getLhsMutable(),
-                                              mulf.getRhsMutable(),
-                                              mulf.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto muli = dyn_cast<VMIMulIOp>(op)) {
-        if (failed(constrainElementwiseBinary(muli.getLhsMutable(),
-                                              muli.getRhsMutable(),
-                                              muli.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto vecScalar = dyn_cast<VMIAddSOp>(op)) {
-        if (failed(unite(vecScalar.getSrc(), vecScalar.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto vecScalar = dyn_cast<VMIMulSOp>(op)) {
-        if (failed(unite(vecScalar.getSrc(), vecScalar.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto vecScalar = dyn_cast<VMIMaxSOp>(op)) {
-        if (failed(unite(vecScalar.getSrc(), vecScalar.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto vecScalar = dyn_cast<VMIMinSOp>(op)) {
-        if (failed(unite(vecScalar.getSrc(), vecScalar.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto vecScalar = dyn_cast<VMIShlSOp>(op)) {
-        if (failed(unite(vecScalar.getSrc(), vecScalar.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto vecScalar = dyn_cast<VMIShrSOp>(op)) {
-        if (failed(unite(vecScalar.getSrc(), vecScalar.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto vmull = dyn_cast<VMIVmullOp>(op)) {
-        if (failed(constrainElementwiseBinary(vmull.getAMutable(),
-                                              vmull.getBMutable(),
-                                              vmull.getLow(), op)) ||
-            failed(unite(vmull.getA(), vmull.getHigh(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto addc = dyn_cast<VMIVaddcOp>(op)) {
-        if (failed(constrainElementwiseBinary(addc.getLhsMutable(),
-                                              addc.getRhsMutable(),
-                                              addc.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto addcs = dyn_cast<VMIVaddcsOp>(op)) {
-        if (failed(constrainElementwiseBinary(addcs.getLhsMutable(),
-                                              addcs.getRhsMutable(),
-                                              addcs.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto fma = dyn_cast<VMIFmaOp>(op)) {
-        if (failed(unite(fma.getLhs(), fma.getRhs(), op)) ||
-            failed(unite(fma.getLhs(), fma.getAcc(), op)) ||
-            failed(unite(fma.getLhs(), fma.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto divf = dyn_cast<VMIDivFOp>(op)) {
-        if (failed(constrainElementwiseBinary(divf.getLhsMutable(),
-                                              divf.getRhsMutable(),
-                                              divf.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto minf = dyn_cast<VMIMinFOp>(op)) {
-        if (failed(constrainElementwiseBinary(minf.getLhsMutable(),
-                                              minf.getRhsMutable(),
-                                              minf.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto mini = dyn_cast<VMIMinIOp>(op)) {
-        if (failed(constrainElementwiseBinary(mini.getLhsMutable(),
-                                              mini.getRhsMutable(),
-                                              mini.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto maxf = dyn_cast<VMIMaxFOp>(op)) {
-        if (failed(constrainElementwiseBinary(maxf.getLhsMutable(),
-                                              maxf.getRhsMutable(),
-                                              maxf.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto maxi = dyn_cast<VMIMaxIOp>(op)) {
-        if (failed(constrainElementwiseBinary(maxi.getLhsMutable(),
-                                              maxi.getRhsMutable(),
-                                              maxi.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto negf = dyn_cast<VMINegFOp>(op)) {
-        if (failed(unite(negf.getSource(), negf.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto negi = dyn_cast<VMINegIOp>(op)) {
-        if (failed(unite(negi.getSource(), negi.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto absf = dyn_cast<VMIAbsFOp>(op)) {
-        if (failed(unite(absf.getSource(), absf.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto absi = dyn_cast<VMIAbsIOp>(op)) {
-        if (failed(unite(absi.getSource(), absi.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto sqrt = dyn_cast<VMISqrtOp>(op)) {
-        if (failed(unite(sqrt.getSource(), sqrt.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto exp = dyn_cast<VMIExpOp>(op)) {
-        if (failed(unite(exp.getSource(), exp.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto ln = dyn_cast<VMILnOp>(op)) {
-        if (failed(unite(ln.getSource(), ln.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto relu = dyn_cast<VMIReluOp>(op)) {
-        if (failed(unite(relu.getSource(), relu.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto fptosi = dyn_cast<VMIFPToSIOp>(op)) {
-        auto sourceType = cast<VMIVRegType>(fptosi.getSource().getType());
-        auto resultType = cast<VMIVRegType>(fptosi.getResult().getType());
-        VMILayoutSupport supports;
-        FailureOr<VMICastLayoutFact> fact =
-            supports.getPreferredCastLayoutFact(sourceType, resultType);
-        VMILayoutAttr resultLayout = getContiguousLayout();
-        if (succeeded(fact)) {
-          resultLayout = fact->resultLayout;
-        }
-        if (failed(setPreferredLayout(fptosi.getResult(), resultLayout,
-                                      op, DataLayoutSeedPhase::Cast))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto fptoui = dyn_cast<VMIFPToUIOp>(op)) {
-        auto sourceType = cast<VMIVRegType>(fptoui.getSource().getType());
-        auto resultType = cast<VMIVRegType>(fptoui.getResult().getType());
-        VMILayoutSupport supports;
-        FailureOr<VMICastLayoutFact> fact =
-            supports.getPreferredCastLayoutFact(sourceType, resultType);
-        VMILayoutAttr resultLayout = getContiguousLayout();
-        if (succeeded(fact)) {
-          resultLayout = fact->resultLayout;
-        }
-        if (failed(setPreferredLayout(fptoui.getResult(), resultLayout,
-                                      op, DataLayoutSeedPhase::Cast))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto sitofp = dyn_cast<VMISIToFPOp>(op)) {
-        auto sourceType = cast<VMIVRegType>(sitofp.getSource().getType());
-        auto resultType = cast<VMIVRegType>(sitofp.getResult().getType());
-        VMILayoutSupport supports;
-        FailureOr<VMICastLayoutFact> fact =
-            supports.getPreferredCastLayoutFact(sourceType, resultType);
-        VMILayoutAttr resultLayout = getContiguousLayout();
-        if (succeeded(fact)) {
-          resultLayout = fact->resultLayout;
-        }
-        if (failed(setPreferredLayout(sitofp.getResult(), resultLayout,
-                                      op, DataLayoutSeedPhase::Cast))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto andi = dyn_cast<VMIAndIOp>(op)) {
-        if (failed(constrainElementwiseBinary(andi.getLhsMutable(),
-                                              andi.getRhsMutable(),
-                                              andi.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto ori = dyn_cast<VMIOrIOp>(op)) {
-        if (failed(constrainElementwiseBinary(
-                ori.getLhsMutable(), ori.getRhsMutable(), ori.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto xori = dyn_cast<VMIXOrIOp>(op)) {
-        if (failed(constrainElementwiseBinary(xori.getLhsMutable(),
-                                              xori.getRhsMutable(),
-                                              xori.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto shli = dyn_cast<VMIShLIOp>(op)) {
-        if (failed(constrainElementwiseBinary(shli.getLhsMutable(),
-                                              shli.getRhsMutable(),
-                                              shli.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto shrui = dyn_cast<VMIShRUIOp>(op)) {
-        if (failed(constrainElementwiseBinary(shrui.getLhsMutable(),
-                                              shrui.getRhsMutable(),
-                                              shrui.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto shrsi = dyn_cast<VMIShRSIOp>(op)) {
-        if (failed(constrainElementwiseBinary(shrsi.getLhsMutable(),
-                                              shrsi.getRhsMutable(),
-                                              shrsi.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto notOp = dyn_cast<VMINotOp>(op)) {
-        if (failed(unite(notOp.getSource(), notOp.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto cmpf = dyn_cast<VMICmpFOp>(op)) {
-        if (failed(unite(cmpf.getLhs(), cmpf.getRhs(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto cmpi = dyn_cast<VMICmpIOp>(op)) {
-        if (failed(unite(cmpi.getLhs(), cmpi.getRhs(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto select = dyn_cast<VMISelectOp>(op)) {
-        if (failed(unite(select.getTrueValue(), select.getFalseValue(), op)) ||
-            failed(unite(select.getTrueValue(), select.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto vselr = dyn_cast<VMIVselrOp>(op)) {
-        VMILayoutSupport supports;
-        FailureOr<VMIVselrLayoutFact> fact =
-            supports.getPreferredVselrLayoutFact(vselr);
-        if (failed(fact)) {
-          return WalkResult::advance();
-        }
-        requestDataUse(vselr.getSourceMutable(), fact->sourceLayout);
-        requestDataUse(vselr.getIndexMutable(), fact->indexLayout);
-        if (failed(setNaturalLayout(vselr.getResult(), fact->resultLayout, op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto activePrefix = dyn_cast<VMIActivePrefixIndexOp>(op)) {
-        if (failed(setNaturalLayout(activePrefix.getResult(),
-                                    getContiguousLayout(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto compress = dyn_cast<VMICompressOp>(op)) {
-        requestDataUse(compress.getSourceMutable(), getContiguousLayout());
-        if (failed(setNaturalLayout(compress.getResult(), getContiguousLayout(),
-                                    op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto reduce = dyn_cast<VMIReduceAddIOp>(op)) {
-        requestDataUse(reduce.getSourceMutable(), getContiguousLayout(),
-                       /*late=*/false, DataLayoutSeedPhase::Reduce);
-        if (failed(requestMaskUse(reduce.getMaskMutable(),
-                                  getContiguousLayout(), op))) {
-          return WalkResult::interrupt();
-        }
-        if (failed(setNaturalLayout(reduce.getResult(), getContiguousLayout(),
-                                    op, DataLayoutSeedPhase::Reduce))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto reduce = dyn_cast<VMIReduceAddFOp>(op)) {
-        requestDataUse(reduce.getSourceMutable(), getContiguousLayout(),
-                       /*late=*/false, DataLayoutSeedPhase::Reduce);
-        if (failed(requestMaskUse(reduce.getMaskMutable(),
-                                  getContiguousLayout(), op))) {
-          return WalkResult::interrupt();
-        }
-        if (failed(setNaturalLayout(reduce.getResult(), getContiguousLayout(),
-                                    op, DataLayoutSeedPhase::Reduce))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto reduce = dyn_cast<VMIReduceMaxFOp>(op)) {
-        requestDataUse(reduce.getSourceMutable(), getContiguousLayout(),
-                       /*late=*/false, DataLayoutSeedPhase::Reduce);
-        if (failed(requestMaskUse(reduce.getMaskMutable(),
-                                  getContiguousLayout(), op))) {
-          return WalkResult::interrupt();
-        }
-        if (failed(setNaturalLayout(reduce.getResult(), getContiguousLayout(),
-                                    op, DataLayoutSeedPhase::Reduce))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto reduce = dyn_cast<VMIReduceMinFOp>(op)) {
-        requestDataUse(reduce.getSourceMutable(), getContiguousLayout(),
-                       /*late=*/false, DataLayoutSeedPhase::Reduce);
-        if (failed(requestMaskUse(reduce.getMaskMutable(),
-                                  getContiguousLayout(), op))) {
-          return WalkResult::interrupt();
-        }
-        if (failed(setNaturalLayout(reduce.getResult(), getContiguousLayout(),
-                                    op, DataLayoutSeedPhase::Reduce))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto reduce = dyn_cast<VMIReduceMaxIOp>(op)) {
-        requestDataUse(reduce.getSourceMutable(), getContiguousLayout(),
-                       /*late=*/false, DataLayoutSeedPhase::Reduce);
-        if (failed(requestMaskUse(reduce.getMaskMutable(),
-                                  getContiguousLayout(), op))) {
-          return WalkResult::interrupt();
-        }
-        if (failed(setNaturalLayout(reduce.getResult(), getContiguousLayout(),
-                                    op, DataLayoutSeedPhase::Reduce))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto reduce = dyn_cast<VMIReduceMinIOp>(op)) {
-        requestDataUse(reduce.getSourceMutable(), getContiguousLayout(),
-                       /*late=*/false, DataLayoutSeedPhase::Reduce);
-        if (failed(requestMaskUse(reduce.getMaskMutable(),
-                                  getContiguousLayout(), op))) {
-          return WalkResult::interrupt();
-        }
-        if (failed(setNaturalLayout(reduce.getResult(), getContiguousLayout(),
-                                    op, DataLayoutSeedPhase::Reduce))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto reduce = dyn_cast<VMIGroupReduceAddFOp>(op)) {
-        auto sourceType = cast<VMIVRegType>(reduce.getSource().getType());
-        auto resultType = cast<VMIVRegType>(reduce.getResult().getType());
-        int64_t numGroups = reduce.getNumGroupsAttr().getInt();
-        VMILayoutSupport supports;
-        FailureOr<VMIGroupReduceLayoutFact> fact =
-            supports.getPreferredGroupReduceLayoutFact(sourceType, numGroups);
-        VMILayoutAttr sourceLayout =
-            succeeded(fact) ? fact->sourceLayout : getContiguousLayout();
-        DataLayoutSeedPhase usePhase =
-            succeeded(fact)
-                ? getGroupReduceUseSeedPhase(sourceType, numGroups, *fact)
-                : DataLayoutSeedPhase::Reduce;
-        requestDataUse(reduce.getSourceMutable(), sourceLayout, /*late=*/false,
-                       usePhase);
-        if (failed(requestMaskUse(reduce.getMaskMutable(), sourceLayout, op,
-                                  usePhase))) {
-          return WalkResult::interrupt();
-        }
-        if (failed(setNaturalLayout(
-                reduce.getResult(),
-                succeeded(fact)
-                    ? fact->resultLayout
-                    : getPreferredGroupSlotsLayout(resultType, numGroups),
-                op, DataLayoutSeedPhase::Reduce))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto reduce = dyn_cast<VMIGroupReduceMaxFOp>(op)) {
-        auto sourceType = cast<VMIVRegType>(reduce.getSource().getType());
-        auto resultType = cast<VMIVRegType>(reduce.getResult().getType());
-        int64_t numGroups = reduce.getNumGroupsAttr().getInt();
-        VMILayoutSupport supports;
-        FailureOr<VMIGroupReduceLayoutFact> fact =
-            supports.getPreferredGroupReduceLayoutFact(sourceType, numGroups);
-        VMILayoutAttr sourceLayout =
-            succeeded(fact) ? fact->sourceLayout : getContiguousLayout();
-        DataLayoutSeedPhase usePhase =
-            succeeded(fact)
-                ? getGroupReduceUseSeedPhase(sourceType, numGroups, *fact)
-                : DataLayoutSeedPhase::Reduce;
-        requestDataUse(reduce.getSourceMutable(), sourceLayout, /*late=*/false,
-                       usePhase);
-        if (failed(requestMaskUse(reduce.getMaskMutable(), sourceLayout, op,
-                                  usePhase))) {
-          return WalkResult::interrupt();
-        }
-        if (failed(setNaturalLayout(
-                reduce.getResult(),
-                succeeded(fact)
-                    ? fact->resultLayout
-                    : getPreferredGroupSlotsLayout(resultType, numGroups),
-                op, DataLayoutSeedPhase::Reduce))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto reduce = dyn_cast<VMIGroupReduceMinFOp>(op)) {
-        auto sourceType = cast<VMIVRegType>(reduce.getSource().getType());
-        auto resultType = cast<VMIVRegType>(reduce.getResult().getType());
-        int64_t numGroups = reduce.getNumGroupsAttr().getInt();
-        VMILayoutSupport supports;
-        FailureOr<VMIGroupReduceLayoutFact> fact =
-            supports.getPreferredGroupReduceLayoutFact(sourceType, numGroups);
-        VMILayoutAttr sourceLayout =
-            succeeded(fact) ? fact->sourceLayout : getContiguousLayout();
-        DataLayoutSeedPhase usePhase =
-            succeeded(fact)
-                ? getGroupReduceUseSeedPhase(sourceType, numGroups, *fact)
-                : DataLayoutSeedPhase::Reduce;
-        requestDataUse(reduce.getSourceMutable(), sourceLayout, /*late=*/false,
-                       usePhase);
-        if (failed(requestMaskUse(reduce.getMaskMutable(), sourceLayout, op,
-                                  usePhase))) {
-          return WalkResult::interrupt();
-        }
-        if (failed(setNaturalLayout(
-                reduce.getResult(),
-                succeeded(fact)
-                    ? fact->resultLayout
-                    : getPreferredGroupSlotsLayout(resultType, numGroups),
-                op, DataLayoutSeedPhase::Reduce))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto reduce = dyn_cast<VMIGroupReduceAddIOp>(op)) {
-        auto sourceType = cast<VMIVRegType>(reduce.getSource().getType());
-        auto resultType = cast<VMIVRegType>(reduce.getResult().getType());
-        int64_t numGroups = reduce.getNumGroupsAttr().getInt();
-        VMILayoutSupport supports;
-        FailureOr<VMIGroupReduceLayoutFact> fact =
-            supports.getPreferredGroupReduceLayoutFact(sourceType, numGroups);
-        VMILayoutAttr sourceLayout =
-            succeeded(fact) ? fact->sourceLayout : getContiguousLayout();
-        DataLayoutSeedPhase usePhase =
-            succeeded(fact)
-                ? getGroupReduceUseSeedPhase(sourceType, numGroups, *fact)
-                : DataLayoutSeedPhase::Reduce;
-        requestDataUse(reduce.getSourceMutable(), sourceLayout, /*late=*/false,
-                       usePhase);
-        if (failed(requestMaskUse(reduce.getMaskMutable(), sourceLayout, op,
-                                  usePhase))) {
-          return WalkResult::interrupt();
-        }
-        if (failed(setNaturalLayout(
-                reduce.getResult(),
-                succeeded(fact)
-                    ? fact->resultLayout
-                    : getPreferredGroupSlotsLayout(resultType, numGroups),
-                op, DataLayoutSeedPhase::Reduce))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto reduce = dyn_cast<VMIGroupReduceMaxIOp>(op)) {
-        auto sourceType = cast<VMIVRegType>(reduce.getSource().getType());
-        auto resultType = cast<VMIVRegType>(reduce.getResult().getType());
-        int64_t numGroups = reduce.getNumGroupsAttr().getInt();
-        VMILayoutSupport supports;
-        FailureOr<VMIGroupReduceLayoutFact> fact =
-            supports.getPreferredGroupReduceLayoutFact(sourceType, numGroups);
-        VMILayoutAttr sourceLayout =
-            succeeded(fact) ? fact->sourceLayout : getContiguousLayout();
-        DataLayoutSeedPhase usePhase =
-            succeeded(fact)
-                ? getGroupReduceUseSeedPhase(sourceType, numGroups, *fact)
-                : DataLayoutSeedPhase::Reduce;
-        requestDataUse(reduce.getSourceMutable(), sourceLayout, /*late=*/false,
-                       usePhase);
-        if (failed(requestMaskUse(reduce.getMaskMutable(), sourceLayout, op,
-                                  usePhase))) {
-          return WalkResult::interrupt();
-        }
-        if (failed(setNaturalLayout(
-                reduce.getResult(),
-                succeeded(fact)
-                    ? fact->resultLayout
-                    : getPreferredGroupSlotsLayout(resultType, numGroups),
-                op, DataLayoutSeedPhase::Reduce))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto reduce = dyn_cast<VMIGroupReduceMinIOp>(op)) {
-        auto sourceType = cast<VMIVRegType>(reduce.getSource().getType());
-        auto resultType = cast<VMIVRegType>(reduce.getResult().getType());
-        int64_t numGroups = reduce.getNumGroupsAttr().getInt();
-        VMILayoutSupport supports;
-        FailureOr<VMIGroupReduceLayoutFact> fact =
-            supports.getPreferredGroupReduceLayoutFact(sourceType, numGroups);
-        VMILayoutAttr sourceLayout =
-            succeeded(fact) ? fact->sourceLayout : getContiguousLayout();
-        DataLayoutSeedPhase usePhase =
-            succeeded(fact)
-                ? getGroupReduceUseSeedPhase(sourceType, numGroups, *fact)
-                : DataLayoutSeedPhase::Reduce;
-        requestDataUse(reduce.getSourceMutable(), sourceLayout, /*late=*/false,
-                       usePhase);
-        if (failed(requestMaskUse(reduce.getMaskMutable(), sourceLayout, op,
-                                  usePhase))) {
-          return WalkResult::interrupt();
-        }
-        if (failed(setNaturalLayout(
-                reduce.getResult(),
-                succeeded(fact)
-                    ? fact->resultLayout
-                    : getPreferredGroupSlotsLayout(resultType, numGroups),
-                op, DataLayoutSeedPhase::Reduce))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto broadcast = dyn_cast<VMIGroupBroadcastOp>(op)) {
-        requestDataUse(
-            broadcast.getSourceMutable(),
-            getPreferredGroupBroadcastSourceLayout(
-                broadcast.getSource(), broadcast.getNumGroupsAttr().getInt()),
-            /*late=*/false, DataLayoutSeedPhase::GroupBroadcast);
-        if (failed(setPreferredLayout(
-                broadcast.getResult(),
-                getPreferredGroupBroadcastResultLayout(broadcast), op,
-                DataLayoutSeedPhase::GroupBroadcast))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto hist = dyn_cast<VMIVdhistOp>(op)) {
-        requestDataUse(hist.getAccMutable(), getContiguousLayout(),
-                       /*late=*/false, DataLayoutSeedPhase::Reduce);
-        requestDataUse(hist.getSourceMutable(), getContiguousLayout(),
-                       /*late=*/false, DataLayoutSeedPhase::Reduce);
-        if (failed(requestMaskUse(hist.getMaskMutable(), getContiguousLayout(),
-                                  op, DataLayoutSeedPhase::Reduce))) {
-          return WalkResult::interrupt();
-        }
-        if (failed(setNaturalLayout(hist.getResult(), getContiguousLayout(), op,
-                                    DataLayoutSeedPhase::Reduce))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto hist = dyn_cast<VMIVchistOp>(op)) {
-        requestDataUse(hist.getAccMutable(), getContiguousLayout(),
-                       /*late=*/false, DataLayoutSeedPhase::Reduce);
-        requestDataUse(hist.getSourceMutable(), getContiguousLayout(),
-                       /*late=*/false, DataLayoutSeedPhase::Reduce);
-        if (failed(requestMaskUse(hist.getMaskMutable(), getContiguousLayout(),
-                                  op, DataLayoutSeedPhase::Reduce))) {
-          return WalkResult::interrupt();
-        }
-        if (failed(setNaturalLayout(hist.getResult(), getContiguousLayout(), op,
-                                    DataLayoutSeedPhase::Reduce))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto vexpdif = dyn_cast<VMIVexpdifOp>(op)) {
-        auto sourceType = cast<VMIVRegType>(vexpdif.getX().getType());
-        auto resultType = cast<VMIVRegType>(vexpdif.getResult().getType());
-        if (failed(unite(vexpdif.getX(), vexpdif.getMax(), op))) {
-          return WalkResult::interrupt();
-        }
-        if (sourceType.getElementType().isF32()) {
-          if (failed(unite(vexpdif.getX(), vexpdif.getResult(), op))) {
-            return WalkResult::interrupt();
-          }
-          return WalkResult::advance();
-        }
+  static std::optional<WalkResult> constraintResult(LogicalResult result) {
+    return failed(result) ? WalkResult::interrupt() : WalkResult::advance();
+  }
 
-        VMILayoutSupport supports;
-        FailureOr<VMICastLayoutFact> fact =
-            supports.getPreferredCastLayoutFact(sourceType, resultType);
-        if (succeeded(fact) &&
-            failed(setPreferredLayout(vexpdif.getResult(), fact->resultLayout,
-                                      op, getCastSeedPhase(*fact)))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto extf = dyn_cast<VMIExtFOp>(op)) {
-        auto sourceType = cast<VMIVRegType>(extf.getSource().getType());
-        auto resultType = cast<VMIVRegType>(extf.getResult().getType());
-        VMILayoutSupport supports;
-        FailureOr<VMICastLayoutFact> fact =
-            supports.getPreferredCastLayoutFact(sourceType, resultType);
-        if (succeeded(fact)) {
-          if (failed(setPreferredLayout(extf.getResult(), fact->resultLayout,
-                                        op, getCastSeedPhase(*fact)))) {
-            return WalkResult::interrupt();
-          }
-        }
-        return WalkResult::advance();
-      }
-      if (auto extsi = dyn_cast<VMIExtSIOp>(op)) {
-        auto sourceType = cast<VMIVRegType>(extsi.getSource().getType());
-        auto resultType = cast<VMIVRegType>(extsi.getResult().getType());
-        VMILayoutSupport supports;
-        FailureOr<VMICastLayoutFact> fact =
-            supports.getPreferredCastLayoutFact(sourceType, resultType);
-        if (succeeded(fact)) {
-          if (failed(setPreferredLayout(extsi.getResult(), fact->resultLayout,
-                                        op, getCastSeedPhase(*fact)))) {
-            return WalkResult::interrupt();
-          }
-        }
-        return WalkResult::advance();
-      }
-      if (auto extui = dyn_cast<VMIExtUIOp>(op)) {
-        auto sourceType = cast<VMIVRegType>(extui.getSource().getType());
-        auto resultType = cast<VMIVRegType>(extui.getResult().getType());
-        VMILayoutSupport supports;
-        FailureOr<VMICastLayoutFact> fact =
-            supports.getPreferredCastLayoutFact(sourceType, resultType);
-        if (succeeded(fact)) {
-          if (failed(setPreferredLayout(extui.getResult(), fact->resultLayout,
-                                        op, getCastSeedPhase(*fact)))) {
-            return WalkResult::interrupt();
-          }
-        }
-        return WalkResult::advance();
-      }
-      if (auto truncf = dyn_cast<VMITruncFOp>(op)) {
-        auto sourceType = cast<VMIVRegType>(truncf.getSource().getType());
-        auto resultType = cast<VMIVRegType>(truncf.getResult().getType());
-        VMILayoutSupport supports;
-        FailureOr<VMICastLayoutFact> fact =
-            supports.getPreferredCastLayoutFact(sourceType, resultType);
-        VMILayoutAttr resultLayout = getContiguousLayout();
-        if (succeeded(fact)) {
-          resultLayout = fact->resultLayout;
-        }
-        DataLayoutSeedPhase phase =
-            succeeded(fact)
-                ? getCastSeedPhase(*fact)
-                : DataLayoutSeedPhase::Cast;
-        if (failed(setPreferredLayout(truncf.getResult(), resultLayout, op,
-                                      phase))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto trunci = dyn_cast<VMITruncIOp>(op)) {
-        auto sourceType = cast<VMIVRegType>(trunci.getSource().getType());
-        auto resultType = cast<VMIVRegType>(trunci.getResult().getType());
-        VMILayoutSupport supports;
-        FailureOr<VMICastLayoutFact> fact =
-            supports.getPreferredCastLayoutFact(sourceType, resultType);
-        VMILayoutAttr resultLayout = getContiguousLayout();
-        if (succeeded(fact)) {
-          resultLayout = fact->resultLayout;
-        }
-        DataLayoutSeedPhase phase =
-            succeeded(fact)
-                ? getCastSeedPhase(*fact)
-                : DataLayoutSeedPhase::Cast;
-        if (failed(setPreferredLayout(trunci.getResult(), resultLayout, op,
-                                      phase))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto bitcast = dyn_cast<VMIBitcastOp>(op)) {
-        if (failed(unite(bitcast.getSource(), bitcast.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto vintlv = dyn_cast<VMIVintlvOp>(op)) {
-        VMILayoutSupport supports;
-        auto valueType = cast<VMIVRegType>(vintlv.getLow().getType());
-        FailureOr<VMIInterleaveLayoutFact> fact =
-            supports.getPreferredVintlvLayoutFact(valueType);
-        if (failed(fact)) {
-          return WalkResult::advance();
-        }
-        requestDataUse(vintlv.getLhsMutable(), fact->lhsLayout);
-        requestDataUse(vintlv.getRhsMutable(), fact->rhsLayout);
-        if (failed(requestMaskUse(vintlv.getMaskMutable(), fact->maskLayout,
-                                  op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto vdintlv = dyn_cast<VMIVdintlvOp>(op)) {
-        VMILayoutSupport supports;
-        auto valueType = cast<VMIVRegType>(vdintlv.getLow().getType());
-        FailureOr<VMIInterleaveLayoutFact> fact =
-            supports.getPreferredVdintlvLayoutFact(valueType);
-        if (failed(fact)) {
-          return WalkResult::advance();
-        }
-        requestDataUse(vdintlv.getLhsMutable(), fact->lhsLayout);
-        requestDataUse(vdintlv.getRhsMutable(), fact->rhsLayout);
-        if (failed(requestMaskUse(vdintlv.getMaskMutable(), fact->maskLayout,
-                                  op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto load = dyn_cast<VMIDeinterleaveLoadOp>(op)) {
-        VMILayoutSupport supports;
-        FailureOr<VMIDeinterleaveLoadLayoutFact> fact =
-            supports.getPreferredDeinterleaveLoadLayoutFact(
-                cast<VMIVRegType>(load.getLow().getType()));
-        if (failed(fact)) {
-          return WalkResult::advance();
-        }
-        if (failed(setNaturalLayout(load.getLow(), fact->lowLayout, op)) ||
-            failed(setNaturalLayout(load.getHigh(), fact->highLayout, op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto load = dyn_cast<VMIMaskedLoadOp>(op)) {
-        requestDataUse(load.getPassthruMutable(), getContiguousLayout());
-        if (failed(
-                setNaturalLayout(load.getResult(), getContiguousLayout(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto gather = dyn_cast<VMIGatherOp>(op)) {
-        requestDataUse(gather.getIndicesMutable(), getContiguousLayout());
-        requestDataUse(gather.getPassthruMutable(), getContiguousLayout());
-        if (failed(requestMaskUse(gather.getMaskMutable(),
-                                  getContiguousLayout(), op))) {
-          return WalkResult::interrupt();
-        }
-        if (failed(setNaturalLayout(gather.getResult(), getContiguousLayout(),
-                                    op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto load = dyn_cast<VMIExpandLoadOp>(op)) {
-        requestDataUse(load.getPassthruMutable(), getContiguousLayout());
-        if (failed(
-                setNaturalLayout(load.getResult(), getContiguousLayout(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto load = dyn_cast<VMIGroupLoadOp>(op)) {
-        if (failed(validateGroupLoadLayoutPlan(load))) {
-          return WalkResult::interrupt();
-        }
-        VMILayoutAttr layout = getPreferredGroupLoadResultLayout(load);
-        if (layout.isContiguous() && layout.getLaneStride() == 1) {
-          if (failed(setPreferredLayout(load.getResult(), layout, op))) {
-            return WalkResult::interrupt();
-          }
-        } else if (failed(setNaturalLayout(load.getResult(), layout, op,
-                                           DataLayoutSeedPhase::GroupLoad))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto load = dyn_cast<VMIGroupSlotLoadOp>(op)) {
-        if (failed(setPreferredLayout(
-                load.getResult(), getPreferredGroupSlotLoadLayout(load), op,
-                DataLayoutSeedPhase::GroupSlotLoad))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto load = dyn_cast<VMIGroupBroadcastLoadOp>(op)) {
-        FailureOr<VMIGroupBroadcastLoadDirectFact> directFact =
-            VMILayoutSupport().getGroupBroadcastLoadDirectFact(load);
-        // A no-group BRC load is a scalar broadcast. Let downstream users
-        // choose its physical layout; unresolved values fall back to dense.
-        bool scalarBroadcast =
-            succeeded(directFact) &&
-            directFact->kind == VMIGroupBroadcastLoadDirectKind::BRC &&
-            load.getNumGroupsAttr().getInt() == 1;
-        if (scalarBroadcast)
-          return WalkResult::advance();
-        DataLayoutSeedPhase phase =
-            succeeded(directFact)
-                ? DataLayoutSeedPhase::GroupBroadcastLoad
-                : DataLayoutSeedPhase::Other;
-        if (failed(setNaturalLayout(load.getResult(),
-                                    getPreferredGroupBroadcastLoadLayout(load),
-                                    op, phase))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto load = dyn_cast<VMIStrideLoadOp>(op)) {
-        if (failed(
-                setNaturalLayout(load.getResult(), getContiguousLayout(), op))) {
-          return WalkResult::interrupt();
-        }
-        if (failed(requestMaskUse(load.getMaskMutable(), getContiguousLayout(),
-                                  op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto store = dyn_cast<VMIStoreOp>(op)) {
-        auto valueType = cast<VMIVRegType>(store.getValue().getType());
-        if (!hasDataLayoutSeed(store.getValue())) {
-          if (VMILayoutAttr layout = getPreferredDenseStoreLayout(valueType)) {
-            requestDataUse(store.getValueMutable(), layout, /*late=*/false,
-                           DataLayoutSeedPhase::Store);
-          }
-        }
-        return WalkResult::advance();
-      }
-      if (auto store = dyn_cast<VMIInterleaveStoreOp>(op)) {
-        requestDataUse(store.getLowMutable(), getContiguousLayout());
-        requestDataUse(store.getHighMutable(), getContiguousLayout());
-        return WalkResult::advance();
-      }
-      if (auto store = dyn_cast<VMIGroupStoreOp>(op)) {
-        auto valueType = cast<VMIVRegType>(store.getValue().getType());
-        VMILayoutSupport supports;
-        VMILayoutAttr highPriorityLayout;
-        FailureOr<VMIGroupStoreLayoutFact> highPriorityFact =
-            supports.getHighPriorityGroupStoreLayoutFact(store, valueType);
-        if (succeeded(highPriorityFact)) {
-          highPriorityLayout = highPriorityFact->valueLayout;
-          requestDataUse(store.getValueMutable(), highPriorityLayout,
-                         /*late=*/false, DataLayoutSeedPhase::GroupStore);
-        }
+  std::optional<WalkResult> addBasicConstraint(Operation *op) {
+    return llvm::TypeSwitch<Operation *, std::optional<WalkResult>>(op)
+        .Case<VMIGroupIotaOp>([this, op](auto groupIota) {
+          return constraintResult(setNaturalLayout(
+              groupIota.getResult(), getContiguousLayout(), op));
+        })
+        .Case<VMIMaskAndOp, VMIMaskOrOp, VMIMaskXOrOp>([this, op](auto maskOp) {
+          bool failedToUnite =
+              failed(uniteMask(maskOp.getLhs(), maskOp.getRhs(), op)) ||
+              failed(uniteMask(maskOp.getLhs(), maskOp.getResult(), op));
+          return constraintResult(failure(failedToUnite));
+        })
+        .Case<VMIMaskNotOp, VMIEnsureMaskLayoutOp>([this, op](auto maskOp) {
+          return constraintResult(
+              uniteMask(maskOp.getSource(), maskOp.getResult(), op));
+        })
+        .Case<VMIAddFOp, VMIAddIOp, VMISubFOp, VMISubIOp, VMIMulFOp,
+              VMIMulIOp, VMIDivFOp, VMIMinFOp, VMIMinIOp, VMIMaxFOp,
+              VMIMaxIOp, VMIAndIOp, VMIOrIOp, VMIXOrIOp, VMIShLIOp,
+              VMIShRUIOp, VMIShRSIOp, VMIVaddcOp, VMIVaddcsOp>(
+            [this, op](auto binaryOp) {
+              return constraintResult(constrainElementwiseBinary(
+                  binaryOp.getLhsMutable(), binaryOp.getRhsMutable(),
+                  binaryOp.getResult(), op));
+            })
+        .Case<VMIAddSOp, VMIMulSOp, VMIMaxSOp, VMIMinSOp, VMIShlSOp,
+              VMIShrSOp>([this, op](auto scalarOp) {
+          return constraintResult(
+              unite(scalarOp.getSrc(), scalarOp.getResult(), op));
+        })
+        .Case<VMINegFOp, VMINegIOp, VMIAbsFOp, VMIAbsIOp, VMISqrtOp,
+              VMIExpOp, VMILnOp, VMIReluOp, VMINotOp, VMIBitcastOp>(
+            [this, op](auto unaryOp) {
+              return constraintResult(
+                  unite(unaryOp.getSource(), unaryOp.getResult(), op));
+            })
+        .Default([](Operation *) { return std::nullopt; });
+  }
 
-        FailureOr<VMIGroupStoreLayoutFact> preferredFact =
-            supports.getPreferredGroupStoreLayoutFact(store, valueType);
-        if (succeeded(preferredFact) &&
-            preferredFact->valueLayout != highPriorityLayout) {
-          requestDataUse(store.getValueMutable(), preferredFact->valueLayout,
-                         /*late=*/false,
-                         DataLayoutSeedPhase::GroupStoreFallback);
-        }
-        return WalkResult::advance();
-      }
-      if (auto store = dyn_cast<VMIMaskedStoreOp>(op)) {
-        auto valueType = cast<VMIVRegType>(store.getValue().getType());
-        auto maskType = cast<VMIMaskType>(store.getMask().getType());
-        if (!hasDataLayoutSeed(store.getValue())) {
-          FailureOr<VMIMaskedStoreLayoutFact> fact =
-              getPreferredDenseMaskedStoreLayout(valueType, maskType);
-          if (succeeded(fact)) {
-            requestDataUse(store.getValueMutable(), fact->valueLayout,
-                           /*late=*/false,
-                           DataLayoutSeedPhase::Store);
-            if (failed(requestMaskUse(store.getMaskMutable(), fact->maskLayout,
-                                      op, DataLayoutSeedPhase::Store))) {
-              return WalkResult::interrupt();
-            }
-          }
-        }
-        return WalkResult::advance();
-      }
-      if (auto store = dyn_cast<VMIStrideStoreOp>(op)) {
-        requestDataUse(store.getValueMutable(), getContiguousLayout());
-        if (failed(requestMaskUse(store.getMaskMutable(), getContiguousLayout(),
-                                  op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto scatter = dyn_cast<VMIScatterOp>(op)) {
-        requestDataUse(scatter.getValueMutable(), getContiguousLayout());
-        requestDataUse(scatter.getIndicesMutable(), getContiguousLayout());
-        if (failed(requestMaskUse(scatter.getMaskMutable(),
-                                  getContiguousLayout(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto store = dyn_cast<VMICompressStoreOp>(op)) {
-        requestDataUse(store.getValueMutable(), getContiguousLayout());
-        if (failed(requestMaskUse(store.getMaskMutable(), getContiguousLayout(),
-                                  op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto split = dyn_cast<VMIChannelSplitOp>(op)) {
-        int64_t channels = split.getNumResults();
-        if (channels != 2 && channels != 4) {
-          split.emitError() << kVMIDiagUnsupportedPrefix
-                            << "pto.vmi.channel_split supports only 2 or 4 "
-                               "channels";
-          return WalkResult::interrupt();
-        }
-        requestDataUse(split.getSourceMutable(),
-                       VMILayoutAttr::getDeinterleaved(ctx, channels));
-        for (Value result : split.getResults()) {
-          if (failed(setNaturalLayout(result, getContiguousLayout(), op))) {
-            return WalkResult::interrupt();
-          }
-        }
-        return WalkResult::advance();
-      }
-      if (auto merge = dyn_cast<VMIChannelMergeOp>(op)) {
-        int64_t channels = merge.getInputs().size();
-        if (channels != 2 && channels != 4) {
-          merge.emitError() << kVMIDiagUnsupportedPrefix
-                            << "pto.vmi.channel_merge supports only 2 or 4 "
-                               "channels";
-          return WalkResult::interrupt();
-        }
-        for (OpOperand &input : merge.getInputsMutable()) {
-          requestDataUse(input, getContiguousLayout());
-        }
-        if (failed(setNaturalLayout(
-                merge.getResult(),
-                VMILayoutAttr::getDeinterleaved(ctx, channels), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto shuffle = dyn_cast<VMIShuffleOp>(op)) {
-        auto sourceType = cast<VMIVRegType>(shuffle.getSource().getType());
-        auto resultType = cast<VMIVRegType>(shuffle.getResult().getType());
-        if (sourceType.hasLayout() || resultType.hasLayout()) {
-          return WalkResult::advance();
-        }
+  std::optional<WalkResult> addCompositeConstraint(Operation *op) {
+    return llvm::TypeSwitch<Operation *, std::optional<WalkResult>>(op)
+        .Case<VMIVmullOp>([this, op](VMIVmullOp vmull) {
+          bool failedToUnite =
+              failed(constrainElementwiseBinary(vmull.getAMutable(),
+                                                vmull.getBMutable(),
+                                                vmull.getLow(), op)) ||
+              failed(unite(vmull.getA(), vmull.getHigh(), op));
+          return constraintResult(failure(failedToUnite));
+        })
+        .Case<VMIFmaOp>([this, op](VMIFmaOp fma) {
+          bool failedToUnite = failed(unite(fma.getLhs(), fma.getRhs(), op)) ||
+                               failed(unite(fma.getLhs(), fma.getAcc(), op)) ||
+                               failed(unite(fma.getLhs(), fma.getResult(), op));
+          return constraintResult(failure(failedToUnite));
+        })
+        .Case<VMICmpFOp, VMICmpIOp>([this, op](auto compareOp) {
+          return constraintResult(
+              unite(compareOp.getLhs(), compareOp.getRhs(), op));
+        })
+        .Case<VMISelectOp>([this, op](VMISelectOp select) {
+          bool failedToUnite =
+              failed(unite(select.getTrueValue(), select.getFalseValue(), op)) ||
+              failed(unite(select.getTrueValue(), select.getResult(), op));
+          return constraintResult(failure(failedToUnite));
+        })
+        .Default([](Operation *) { return std::nullopt; });
+  }
 
-        requestDataUse(shuffle.getSourceMutable(), getContiguousLayout());
-        if (isLane0SplatShuffle(shuffle)) {
+  template <typename CastOp>
+  WalkResult addConversionConstraint(CastOp castOp, Operation *op) {
+    auto sourceType = cast<VMIVRegType>(castOp.getSource().getType());
+    auto resultType = cast<VMIVRegType>(castOp.getResult().getType());
+    FailureOr<VMICastLayoutFact> fact =
+        VMILayoutSupport().getPreferredCastLayoutFact(sourceType, resultType);
+    VMILayoutAttr resultLayout =
+        succeeded(fact) ? fact->resultLayout : getContiguousLayout();
+    return *constraintResult(setPreferredLayout(
+        castOp.getResult(), resultLayout, op, DataLayoutSeedPhase::Cast));
+  }
+
+  template <typename CastOp>
+  WalkResult addExtensionConstraint(CastOp castOp, Operation *op) {
+    auto sourceType = cast<VMIVRegType>(castOp.getSource().getType());
+    auto resultType = cast<VMIVRegType>(castOp.getResult().getType());
+    FailureOr<VMICastLayoutFact> fact =
+        VMILayoutSupport().getPreferredCastLayoutFact(sourceType, resultType);
+    if (failed(fact)) {
+      return WalkResult::advance();
+    }
+    return *constraintResult(setPreferredLayout(
+        castOp.getResult(), fact->resultLayout, op, getCastSeedPhase(*fact)));
+  }
+
+  template <typename CastOp>
+  WalkResult addTruncationConstraint(CastOp castOp, Operation *op) {
+    auto sourceType = cast<VMIVRegType>(castOp.getSource().getType());
+    auto resultType = cast<VMIVRegType>(castOp.getResult().getType());
+    FailureOr<VMICastLayoutFact> fact =
+        VMILayoutSupport().getPreferredCastLayoutFact(sourceType, resultType);
+    VMILayoutAttr resultLayout =
+        succeeded(fact) ? fact->resultLayout : getContiguousLayout();
+    DataLayoutSeedPhase phase = succeeded(fact) ? getCastSeedPhase(*fact)
+                                                : DataLayoutSeedPhase::Cast;
+    return *constraintResult(
+        setPreferredLayout(castOp.getResult(), resultLayout, op, phase));
+  }
+
+  WalkResult addVexpdifConstraint(VMIVexpdifOp vexpdif, Operation *op) {
+    auto sourceType = cast<VMIVRegType>(vexpdif.getX().getType());
+    auto resultType = cast<VMIVRegType>(vexpdif.getResult().getType());
+    if (failed(unite(vexpdif.getX(), vexpdif.getMax(), op))) {
+      return WalkResult::interrupt();
+    }
+    if (sourceType.getElementType().isF32()) {
+      return *constraintResult(
+          unite(vexpdif.getX(), vexpdif.getResult(), op));
+    }
+    FailureOr<VMICastLayoutFact> fact =
+        VMILayoutSupport().getPreferredCastLayoutFact(sourceType, resultType);
+    if (failed(fact)) {
+      return WalkResult::advance();
+    }
+    return *constraintResult(setPreferredLayout(
+        vexpdif.getResult(), fact->resultLayout, op, getCastSeedPhase(*fact)));
+  }
+
+  std::optional<WalkResult> addCastConstraint(Operation *op) {
+    return llvm::TypeSwitch<Operation *, std::optional<WalkResult>>(op)
+        .Case<VMIFPToSIOp, VMIFPToUIOp, VMISIToFPOp>(
+            [this, op](auto castOp) {
+              return addConversionConstraint(castOp, op);
+            })
+        .Case<VMIExtFOp, VMIExtSIOp, VMIExtUIOp>([this, op](auto castOp) {
+          return addExtensionConstraint(castOp, op);
+        })
+        .Case<VMITruncFOp, VMITruncIOp>([this, op](auto castOp) {
+          return addTruncationConstraint(castOp, op);
+        })
+        .Case<VMIVexpdifOp>([this, op](VMIVexpdifOp vexpdif) {
+          return addVexpdifConstraint(vexpdif, op);
+        })
+        .Default([](Operation *) { return std::nullopt; });
+  }
+
+  template <typename ReduceOp>
+  WalkResult addReductionConstraint(ReduceOp reduce, Operation *op) {
+    VMILayoutAttr layout = getContiguousLayout();
+    requestDataUse(reduce.getSourceMutable(), layout, /*late=*/false,
+                   DataLayoutSeedPhase::Reduce);
+    bool failedToConstrain =
+        failed(requestMaskUse(reduce.getMaskMutable(), layout, op)) ||
+        failed(setNaturalLayout(reduce.getResult(), layout, op,
+                                DataLayoutSeedPhase::Reduce));
+    return *constraintResult(failure(failedToConstrain));
+  }
+
+  template <typename ReduceOp>
+  WalkResult addGroupReductionConstraint(ReduceOp reduce, Operation *op) {
+    auto sourceType = cast<VMIVRegType>(reduce.getSource().getType());
+    auto resultType = cast<VMIVRegType>(reduce.getResult().getType());
+    int64_t numGroups = reduce.getNumGroupsAttr().getInt();
+    FailureOr<VMIGroupReduceLayoutFact> fact =
+        VMILayoutSupport().getPreferredGroupReduceLayoutFact(sourceType,
+                                                             numGroups);
+    VMILayoutAttr sourceLayout =
+        succeeded(fact) ? fact->sourceLayout : getContiguousLayout();
+    DataLayoutSeedPhase usePhase =
+        succeeded(fact)
+            ? getGroupReduceUseSeedPhase(sourceType, numGroups, *fact)
+            : DataLayoutSeedPhase::Reduce;
+    requestDataUse(reduce.getSourceMutable(), sourceLayout, /*late=*/false,
+                   usePhase);
+    VMILayoutAttr resultLayout =
+        succeeded(fact)
+            ? fact->resultLayout
+            : getPreferredGroupSlotsLayout(resultType, numGroups);
+    bool failedToConstrain =
+        failed(requestMaskUse(reduce.getMaskMutable(), sourceLayout, op,
+                              usePhase)) ||
+        failed(setNaturalLayout(reduce.getResult(), resultLayout, op,
+                                DataLayoutSeedPhase::Reduce));
+    return *constraintResult(failure(failedToConstrain));
+  }
+
+  template <typename HistogramOp>
+  WalkResult addHistogramConstraint(HistogramOp histogram, Operation *op) {
+    VMILayoutAttr layout = getContiguousLayout();
+    requestDataUse(histogram.getAccMutable(), layout, /*late=*/false,
+                   DataLayoutSeedPhase::Reduce);
+    requestDataUse(histogram.getSourceMutable(), layout, /*late=*/false,
+                   DataLayoutSeedPhase::Reduce);
+    bool failedToConstrain =
+        failed(requestMaskUse(histogram.getMaskMutable(), layout, op,
+                              DataLayoutSeedPhase::Reduce)) ||
+        failed(setNaturalLayout(histogram.getResult(), layout, op,
+                                DataLayoutSeedPhase::Reduce));
+    return *constraintResult(failure(failedToConstrain));
+  }
+
+  std::optional<WalkResult> addReductionConstraints(Operation *op) {
+    return llvm::TypeSwitch<Operation *, std::optional<WalkResult>>(op)
+        .Case<VMIReduceAddIOp, VMIReduceAddFOp, VMIReduceMaxFOp,
+              VMIReduceMinFOp, VMIReduceMaxIOp, VMIReduceMinIOp>(
+            [this, op](auto reduce) {
+              return addReductionConstraint(reduce, op);
+            })
+        .Case<VMIGroupReduceAddFOp, VMIGroupReduceMaxFOp,
+              VMIGroupReduceMinFOp, VMIGroupReduceAddIOp,
+              VMIGroupReduceMaxIOp, VMIGroupReduceMinIOp>(
+            [this, op](auto reduce) {
+              return addGroupReductionConstraint(reduce, op);
+            })
+        .Case<VMIVdhistOp, VMIVchistOp>([this, op](auto histogram) {
+          return addHistogramConstraint(histogram, op);
+        })
+        .Default([](Operation *) { return std::nullopt; });
+  }
+
+  WalkResult addVselrConstraint(VMIVselrOp vselr, Operation *op) {
+    FailureOr<VMIVselrLayoutFact> fact =
+        VMILayoutSupport().getPreferredVselrLayoutFact(vselr);
+    if (failed(fact)) {
+      return WalkResult::advance();
+    }
+    requestDataUse(vselr.getSourceMutable(), fact->sourceLayout);
+    requestDataUse(vselr.getIndexMutable(), fact->indexLayout);
+    return *constraintResult(
+        setNaturalLayout(vselr.getResult(), fact->resultLayout, op));
+  }
+
+  WalkResult addGroupBroadcastConstraint(VMIGroupBroadcastOp broadcast,
+                                         Operation *op) {
+    requestDataUse(
+        broadcast.getSourceMutable(),
+        getPreferredGroupBroadcastSourceLayout(
+            broadcast.getSource(), broadcast.getNumGroupsAttr().getInt()),
+        /*late=*/false, DataLayoutSeedPhase::GroupBroadcast);
+    return *constraintResult(setPreferredLayout(
+        broadcast.getResult(), getPreferredGroupBroadcastResultLayout(broadcast),
+        op, DataLayoutSeedPhase::GroupBroadcast));
+  }
+
+  std::optional<WalkResult> addSpecialComputeConstraint(Operation *op) {
+    return llvm::TypeSwitch<Operation *, std::optional<WalkResult>>(op)
+        .Case<VMIVselrOp>([this, op](auto vselr) {
+          return addVselrConstraint(vselr, op);
+        })
+        .Case<VMIActivePrefixIndexOp>([this, op](auto activePrefix) {
+          return constraintResult(setNaturalLayout(
+              activePrefix.getResult(), getContiguousLayout(), op));
+        })
+        .Case<VMICompressOp>([this, op](auto compress) {
+          requestDataUse(compress.getSourceMutable(), getContiguousLayout());
+          return constraintResult(setNaturalLayout(
+              compress.getResult(), getContiguousLayout(), op));
+        })
+        .Case<VMIGroupBroadcastOp>([this, op](auto broadcast) {
+          return addGroupBroadcastConstraint(broadcast, op);
+        })
+        .Default([](Operation *) { return std::nullopt; });
+  }
+
+  template <typename InterleaveOp, typename Fact>
+  WalkResult applyInterleaveFact(InterleaveOp interleave, const Fact &fact,
+                                 Operation *op) {
+    requestDataUse(interleave.getLhsMutable(), fact.lhsLayout);
+    requestDataUse(interleave.getRhsMutable(), fact.rhsLayout);
+    return *constraintResult(
+        requestMaskUse(interleave.getMaskMutable(), fact.maskLayout, op));
+  }
+
+  std::optional<WalkResult> addInterleaveConstraint(Operation *op) {
+    return llvm::TypeSwitch<Operation *, std::optional<WalkResult>>(op)
+        .Case<VMIVintlvOp>([this, op](VMIVintlvOp interleave) {
+          auto type = cast<VMIVRegType>(interleave.getLow().getType());
+          FailureOr<VMIInterleaveLayoutFact> fact =
+              VMILayoutSupport().getPreferredVintlvLayoutFact(type);
+          return failed(fact) ? WalkResult::advance()
+                              : applyInterleaveFact(interleave, *fact, op);
+        })
+        .Case<VMIVdintlvOp>([this, op](VMIVdintlvOp interleave) {
+          auto type = cast<VMIVRegType>(interleave.getLow().getType());
+          FailureOr<VMIInterleaveLayoutFact> fact =
+              VMILayoutSupport().getPreferredVdintlvLayoutFact(type);
+          return failed(fact) ? WalkResult::advance()
+                              : applyInterleaveFact(interleave, *fact, op);
+        })
+        .Default([](Operation *) { return std::nullopt; });
+  }
+
+  WalkResult addDeinterleaveLoadConstraint(VMIDeinterleaveLoadOp load,
+                                           Operation *op) {
+    FailureOr<VMIDeinterleaveLoadLayoutFact> fact =
+        VMILayoutSupport().getPreferredDeinterleaveLoadLayoutFact(
+            cast<VMIVRegType>(load.getLow().getType()));
+    if (failed(fact)) {
+      return WalkResult::advance();
+    }
+    bool failedToSet =
+        failed(setNaturalLayout(load.getLow(), fact->lowLayout, op)) ||
+        failed(setNaturalLayout(load.getHigh(), fact->highLayout, op));
+    return *constraintResult(failure(failedToSet));
+  }
+
+  WalkResult addGatherConstraint(VMIGatherOp gather, Operation *op) {
+    VMILayoutAttr layout = getContiguousLayout();
+    requestDataUse(gather.getIndicesMutable(), layout);
+    requestDataUse(gather.getPassthruMutable(), layout);
+    bool failedToConstrain =
+        failed(requestMaskUse(gather.getMaskMutable(), layout, op)) ||
+        failed(setNaturalLayout(gather.getResult(), layout, op));
+    return *constraintResult(failure(failedToConstrain));
+  }
+
+  std::optional<WalkResult> addSimpleLoadConstraint(Operation *op) {
+    return llvm::TypeSwitch<Operation *, std::optional<WalkResult>>(op)
+        .Case<VMIDeinterleaveLoadOp>([this, op](auto load) {
+          return addDeinterleaveLoadConstraint(load, op);
+        })
+        .Case<VMIMaskedLoadOp, VMIExpandLoadOp>([this, op](auto load) {
+          requestDataUse(load.getPassthruMutable(), getContiguousLayout());
+          return constraintResult(setNaturalLayout(
+              load.getResult(), getContiguousLayout(), op));
+        })
+        .Case<VMIGatherOp>([this, op](auto gather) {
+          return addGatherConstraint(gather, op);
+        })
+        .Case<VMIStrideLoadOp>([this, op](auto load) {
+          VMILayoutAttr layout = getContiguousLayout();
+          bool failedToConstrain =
+              failed(setNaturalLayout(load.getResult(), layout, op)) ||
+              failed(requestMaskUse(load.getMaskMutable(), layout, op));
+          return constraintResult(failure(failedToConstrain));
+        })
+        .Default([](Operation *) { return std::nullopt; });
+  }
+
+  WalkResult addGroupLoadConstraint(VMIGroupLoadOp load, Operation *op) {
+    if (failed(validateGroupLoadLayoutPlan(load))) {
+      return WalkResult::interrupt();
+    }
+    VMILayoutAttr layout = getPreferredGroupLoadResultLayout(load);
+    bool isDenseLaneStride = layout.isContiguous() &&
+                             layout.getLaneStride() == 1;
+    LogicalResult result =
+        isDenseLaneStride
+            ? setPreferredLayout(load.getResult(), layout, op)
+            : setNaturalLayout(load.getResult(), layout, op,
+                               DataLayoutSeedPhase::GroupLoad);
+    return *constraintResult(result);
+  }
+
+  WalkResult addGroupBroadcastLoadConstraint(VMIGroupBroadcastLoadOp load,
+                                             Operation *op) {
+    FailureOr<VMIGroupBroadcastLoadDirectFact> directFact =
+        VMILayoutSupport().getGroupBroadcastLoadDirectFact(load);
+    bool scalarBroadcast =
+        succeeded(directFact) &&
+        directFact->kind == VMIGroupBroadcastLoadDirectKind::BRC &&
+        load.getNumGroupsAttr().getInt() == 1;
+    if (scalarBroadcast) {
+      return WalkResult::advance();
+    }
+    DataLayoutSeedPhase phase =
+        succeeded(directFact) ? DataLayoutSeedPhase::GroupBroadcastLoad
+                              : DataLayoutSeedPhase::Other;
+    return *constraintResult(setNaturalLayout(
+        load.getResult(), getPreferredGroupBroadcastLoadLayout(load), op,
+        phase));
+  }
+
+  std::optional<WalkResult> addGroupLoadConstraints(Operation *op) {
+    return llvm::TypeSwitch<Operation *, std::optional<WalkResult>>(op)
+        .Case<VMIGroupLoadOp>([this, op](auto load) {
+          return addGroupLoadConstraint(load, op);
+        })
+        .Case<VMIGroupSlotLoadOp>([this, op](auto load) {
+          return constraintResult(setPreferredLayout(
+              load.getResult(), getPreferredGroupSlotLoadLayout(load), op,
+              DataLayoutSeedPhase::GroupSlotLoad));
+        })
+        .Case<VMIGroupBroadcastLoadOp>([this, op](auto load) {
+          return addGroupBroadcastLoadConstraint(load, op);
+        })
+        .Default([](Operation *) { return std::nullopt; });
+  }
+
+  WalkResult addDenseStoreConstraint(VMIStoreOp store) {
+    auto valueType = cast<VMIVRegType>(store.getValue().getType());
+    if (!hasDataLayoutSeed(store.getValue())) {
+      VMILayoutAttr layout = getPreferredDenseStoreLayout(valueType);
+      if (layout) {
+        requestDataUse(store.getValueMutable(), layout, /*late=*/false,
+                       DataLayoutSeedPhase::Store);
+      }
+    }
+    return WalkResult::advance();
+  }
+
+  WalkResult addGroupStoreConstraint(VMIGroupStoreOp store) {
+    auto valueType = cast<VMIVRegType>(store.getValue().getType());
+    VMILayoutSupport supports;
+    VMILayoutAttr highPriorityLayout;
+    FailureOr<VMIGroupStoreLayoutFact> highPriorityFact =
+        supports.getHighPriorityGroupStoreLayoutFact(store, valueType);
+    if (succeeded(highPriorityFact)) {
+      highPriorityLayout = highPriorityFact->valueLayout;
+      requestDataUse(store.getValueMutable(), highPriorityLayout,
+                     /*late=*/false, DataLayoutSeedPhase::GroupStore);
+    }
+    FailureOr<VMIGroupStoreLayoutFact> preferredFact =
+        supports.getPreferredGroupStoreLayoutFact(store, valueType);
+    bool hasDistinctFallback =
+        succeeded(preferredFact) &&
+        preferredFact->valueLayout != highPriorityLayout;
+    if (hasDistinctFallback) {
+      requestDataUse(store.getValueMutable(), preferredFact->valueLayout,
+                     /*late=*/false,
+                     DataLayoutSeedPhase::GroupStoreFallback);
+    }
+    return WalkResult::advance();
+  }
+
+  WalkResult addMaskedStoreConstraint(VMIMaskedStoreOp store, Operation *op) {
+    if (hasDataLayoutSeed(store.getValue())) {
+      return WalkResult::advance();
+    }
+    auto valueType = cast<VMIVRegType>(store.getValue().getType());
+    auto maskType = cast<VMIMaskType>(store.getMask().getType());
+    FailureOr<VMIMaskedStoreLayoutFact> fact =
+        getPreferredDenseMaskedStoreLayout(valueType, maskType);
+    if (failed(fact)) {
+      return WalkResult::advance();
+    }
+    requestDataUse(store.getValueMutable(), fact->valueLayout,
+                   /*late=*/false, DataLayoutSeedPhase::Store);
+    return *constraintResult(requestMaskUse(
+        store.getMaskMutable(), fact->maskLayout, op,
+        DataLayoutSeedPhase::Store));
+  }
+
+  std::optional<WalkResult> addStoreConstraint(Operation *op) {
+    return llvm::TypeSwitch<Operation *, std::optional<WalkResult>>(op)
+        .Case<VMIStoreOp>([this](auto store) {
+          return addDenseStoreConstraint(store);
+        })
+        .Case<VMIInterleaveStoreOp>([this](auto store) {
+          requestDataUse(store.getLowMutable(), getContiguousLayout());
+          requestDataUse(store.getHighMutable(), getContiguousLayout());
           return WalkResult::advance();
-        }
-        if (failed(setNaturalLayout(shuffle.getResult(), getContiguousLayout(),
-                                    op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
+        })
+        .Case<VMIGroupStoreOp>([this](auto store) {
+          return addGroupStoreConstraint(store);
+        })
+        .Case<VMIMaskedStoreOp>([this, op](auto store) {
+          return addMaskedStoreConstraint(store, op);
+        })
+        .Case<VMIStrideStoreOp, VMICompressStoreOp>([this, op](auto store) {
+          VMILayoutAttr layout = getContiguousLayout();
+          requestDataUse(store.getValueMutable(), layout);
+          return constraintResult(
+              requestMaskUse(store.getMaskMutable(), layout, op));
+        })
+        .Case<VMIScatterOp>([this, op](auto scatter) {
+          VMILayoutAttr layout = getContiguousLayout();
+          requestDataUse(scatter.getValueMutable(), layout);
+          requestDataUse(scatter.getIndicesMutable(), layout);
+          return constraintResult(
+              requestMaskUse(scatter.getMaskMutable(), layout, op));
+        })
+        .Default([](Operation *) { return std::nullopt; });
+  }
+
+  WalkResult addChannelSplitConstraint(VMIChannelSplitOp split,
+                                       Operation *op) {
+    int64_t channels = split.getNumResults();
+    bool unsupported = channels != mlir::pto::kValue2 &&
+                       channels != mlir::pto::kValue4;
+    if (unsupported) {
+      split.emitError() << kVMIDiagUnsupportedPrefix
+                        << "pto.vmi.channel_split supports only 2 or 4 channels";
+      return WalkResult::interrupt();
+    }
+    requestDataUse(split.getSourceMutable(),
+                   VMILayoutAttr::getDeinterleaved(ctx, channels));
+    for (Value result : split.getResults()) {
+      if (failed(setNaturalLayout(result, getContiguousLayout(), op))) {
+        return WalkResult::interrupt();
       }
-      if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
-        if (failed(addIfConstraints(ifOp))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
+    }
+    return WalkResult::advance();
+  }
+
+  WalkResult addChannelMergeConstraint(VMIChannelMergeOp merge,
+                                       Operation *op) {
+    int64_t channels = merge.getInputs().size();
+    bool unsupported = channels != mlir::pto::kValue2 &&
+                       channels != mlir::pto::kValue4;
+    if (unsupported) {
+      merge.emitError() << kVMIDiagUnsupportedPrefix
+                        << "pto.vmi.channel_merge supports only 2 or 4 channels";
+      return WalkResult::interrupt();
+    }
+    for (OpOperand &input : merge.getInputsMutable()) {
+      requestDataUse(input, getContiguousLayout());
+    }
+    return *constraintResult(setNaturalLayout(
+        merge.getResult(), VMILayoutAttr::getDeinterleaved(ctx, channels), op));
+  }
+
+  WalkResult addShuffleConstraint(VMIShuffleOp shuffle, Operation *op) {
+    auto sourceType = cast<VMIVRegType>(shuffle.getSource().getType());
+    auto resultType = cast<VMIVRegType>(shuffle.getResult().getType());
+    bool hasExplicitLayout = sourceType.hasLayout() || resultType.hasLayout();
+    if (hasExplicitLayout) {
+      return WalkResult::advance();
+    }
+    requestDataUse(shuffle.getSourceMutable(), getContiguousLayout());
+    if (isLane0SplatShuffle(shuffle)) {
+      return WalkResult::advance();
+    }
+    return *constraintResult(
+        setNaturalLayout(shuffle.getResult(), getContiguousLayout(), op));
+  }
+
+  std::optional<WalkResult> addChannelConstraint(Operation *op) {
+    return llvm::TypeSwitch<Operation *, std::optional<WalkResult>>(op)
+        .Case<VMIChannelSplitOp>([this, op](auto split) {
+          return addChannelSplitConstraint(split, op);
+        })
+        .Case<VMIChannelMergeOp>([this, op](auto merge) {
+          return addChannelMergeConstraint(merge, op);
+        })
+        .Case<VMIShuffleOp>([this, op](auto shuffle) {
+          return addShuffleConstraint(shuffle, op);
+        })
+        .Default([](Operation *) { return std::nullopt; });
+  }
+
+  LogicalResult addSwitchConstraints(cf::SwitchOp switchOp) {
+    if (failed(addBranchConstraints(switchOp.getDefaultDestination(),
+                                    switchOp.getDefaultOperands(), switchOp))) {
+      return failure();
+    }
+    for (auto [destination, operands] :
+         llvm::zip(switchOp.getCaseDestinations(), switchOp.getCaseOperands())) {
+      if (failed(addBranchConstraints(destination, operands, switchOp))) {
+        return failure();
       }
-      if (auto executeRegionOp = dyn_cast<scf::ExecuteRegionOp>(op)) {
-        if (failed(addExecuteRegionConstraints(executeRegionOp))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto indexSwitchOp = dyn_cast<scf::IndexSwitchOp>(op)) {
-        if (failed(addIndexSwitchConstraints(indexSwitchOp))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto whileOp = dyn_cast<scf::WhileOp>(op)) {
-        if (failed(addWhileConstraints(whileOp))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto forOp = dyn_cast<scf::ForOp>(op)) {
-        if (failed(addForConstraints(forOp))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto branchOp = dyn_cast<cf::BranchOp>(op)) {
-        if (failed(addBranchConstraints(branchOp.getDest(),
-                                        branchOp.getDestOperands(), op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto condBranchOp = dyn_cast<cf::CondBranchOp>(op)) {
-        if (failed(addBranchConstraints(condBranchOp.getTrueDest(),
-                                        condBranchOp.getTrueDestOperands(),
-                                        op)) ||
-            failed(addBranchConstraints(condBranchOp.getFalseDest(),
-                                        condBranchOp.getFalseDestOperands(),
-                                        op))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto switchOp = dyn_cast<cf::SwitchOp>(op)) {
-        if (failed(addBranchConstraints(switchOp.getDefaultDestination(),
-                                        switchOp.getDefaultOperands(), op))) {
-          return WalkResult::interrupt();
-        }
-        for (auto [dest, operands] : llvm::zip(switchOp.getCaseDestinations(),
-                                               switchOp.getCaseOperands())) {
-          if (failed(addBranchConstraints(dest, operands, op))) {
-            return WalkResult::interrupt();
-          }
-        }
-        return WalkResult::advance();
-      }
-      if (auto returnOp = dyn_cast<func::ReturnOp>(op)) {
-        if (failed(addReturnConstraints(returnOp))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto callOp = dyn_cast<func::CallOp>(op)) {
-        if (failed(addCallConstraints(callOp))) {
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (op->getName().getStringRef() == "func.call_indirect") {
-        if (hasVMIValueTypes(op)) {
-          op->emitError()
-              << kVMIDiagLayoutContractPrefix
-              << "VMI typed call requires a direct internal callee with a body";
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      }
-      if (auto funcOp = dyn_cast<func::FuncOp>(op)) {
-        if (funcOp.empty() && hasVMIFunctionType(funcOp)) {
-          funcOp.emitError()
-              << kVMIDiagLayoutContractPrefix
-              << "VMI typed function declaration requires an explicit "
-                 "external ABI materialization plan";
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
+    }
+    return success();
+  }
+
+  std::optional<WalkResult> addControlFlowConstraint(Operation *op) {
+    return llvm::TypeSwitch<Operation *, std::optional<WalkResult>>(op)
+        .Case<scf::IfOp>([this](auto controlOp) {
+          return constraintResult(addIfConstraints(controlOp));
+        })
+        .Case<scf::ExecuteRegionOp>([this](auto controlOp) {
+          return constraintResult(addExecuteRegionConstraints(controlOp));
+        })
+        .Case<scf::IndexSwitchOp>([this](auto controlOp) {
+          return constraintResult(addIndexSwitchConstraints(controlOp));
+        })
+        .Case<scf::WhileOp>([this](auto controlOp) {
+          return constraintResult(addWhileConstraints(controlOp));
+        })
+        .Case<scf::ForOp>([this](auto controlOp) {
+          return constraintResult(addForConstraints(controlOp));
+        })
+        .Case<cf::BranchOp>([this, op](cf::BranchOp branch) {
+          return constraintResult(addBranchConstraints(
+              branch.getDest(), branch.getDestOperands(), op));
+        })
+        .Case<cf::CondBranchOp>([this, op](cf::CondBranchOp branch) {
+          bool failedToConstrain =
+              failed(addBranchConstraints(branch.getTrueDest(),
+                                          branch.getTrueDestOperands(), op)) ||
+              failed(addBranchConstraints(branch.getFalseDest(),
+                                          branch.getFalseDestOperands(), op));
+          return constraintResult(failure(failedToConstrain));
+        })
+        .Case<cf::SwitchOp>([this](auto switchOp) {
+          return constraintResult(addSwitchConstraints(switchOp));
+        })
+        .Case<func::ReturnOp>([this](auto returnOp) {
+          return constraintResult(addReturnConstraints(returnOp));
+        })
+        .Case<func::CallOp>([this](auto callOp) {
+          return constraintResult(addCallConstraints(callOp));
+        })
+        .Default([](Operation *) { return std::nullopt; });
+  }
+
+  std::optional<WalkResult> addComputeConstraint(Operation *op) {
+    if (auto result = addBasicConstraint(op)) {
+      return result;
+    }
+    if (auto result = addCompositeConstraint(op)) {
+      return result;
+    }
+    if (auto result = addCastConstraint(op)) {
+      return result;
+    }
+    if (auto result = addReductionConstraints(op)) {
+      return result;
+    }
+    if (auto result = addSpecialComputeConstraint(op)) {
+      return result;
+    }
+    if (auto result = addInterleaveConstraint(op)) {
+      return result;
+    }
+    return std::nullopt;
+  }
+
+  std::optional<WalkResult> addMemoryAndControlConstraint(Operation *op) {
+    if (auto result = addSimpleLoadConstraint(op)) {
+      return result;
+    }
+    if (auto result = addGroupLoadConstraints(op)) {
+      return result;
+    }
+    if (auto result = addStoreConstraint(op)) {
+      return result;
+    }
+    if (auto result = addChannelConstraint(op)) {
+      return result;
+    }
+    if (auto result = addControlFlowConstraint(op)) {
+      return result;
+    }
+    return std::nullopt;
+  }
+
+  WalkResult validateUnconstrainedOperation(Operation *op) {
+    bool isIndirectCall =
+        op->getName().getStringRef() == "func.call_indirect";
+    if (isIndirectCall) {
+      if (hasVMIValueTypes(op)) {
+        op->emitError()
+            << kVMIDiagLayoutContractPrefix
+            << "VMI typed call requires a direct internal callee with a body";
+        return WalkResult::interrupt();
       }
       return WalkResult::advance();
-    });
+    }
+    if (auto funcOp = dyn_cast<func::FuncOp>(op)) {
+      bool invalidDeclaration = funcOp.empty() && hasVMIFunctionType(funcOp);
+      if (invalidDeclaration) {
+        funcOp.emitError()
+            << kVMIDiagLayoutContractPrefix
+            << "VMI typed function declaration requires an explicit "
+               "external ABI materialization plan";
+        return WalkResult::interrupt();
+      }
+    }
+    return WalkResult::advance();
+  }
+
+  WalkResult addConstraint(Operation *op) {
+    if (auto result = addComputeConstraint(op)) {
+      return *result;
+    }
+    if (auto result = addMemoryAndControlConstraint(op)) {
+      return *result;
+    }
+    return validateUnconstrainedOperation(op);
+  }
+
+  LogicalResult addConstraints() {
+    WalkResult result =
+        module.walk([this](Operation *op) { return addConstraint(op); });
     return failure(result.wasInterrupted());
   }
 
@@ -2010,10 +1527,8 @@ struct LayoutSolver {
     return found ? resultTypes : SmallVector<Type>{};
   }
 
-  LogicalResult materializeCallBoundaries() {
-    IRRewriter rewriter(ctx);
-
-    WalkResult callResult = module.walk([&](func::CallOp call) -> WalkResult {
+  LogicalResult materializeCallOperands(IRRewriter &rewriter) {
+    WalkResult result = module.walk([this, &rewriter](func::CallOp call) {
       auto callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(
           call, call.getCalleeAttr());
       if (!callee || callee.empty()) {
@@ -2039,43 +1554,53 @@ struct LayoutSolver {
       }
       return WalkResult::advance();
     });
-    if (callResult.wasInterrupted()) {
-      return failure();
-    }
+    return failure(result.wasInterrupted());
+  }
 
-    WalkResult returnResult = module.walk([&](func::FuncOp func) -> WalkResult {
+  WalkResult materializeReturnOperands(func::ReturnOp ret,
+                                       ArrayRef<Type> resultTypes,
+                                       IRRewriter &rewriter) {
+    rewriter.setInsertionPoint(ret);
+    for (auto [index, operand] : llvm::enumerate(ret.getOperands())) {
+      if (index >= resultTypes.size()) {
+        break;
+      }
+      Type targetType = resultTypes[index];
+      if (!targetType || !isa<VMIVRegType, VMIMaskType>(targetType)) {
+        continue;
+      }
+      FailureOr<Value> materialized =
+          materializeLayoutValue(operand, targetType, ret.getLoc(), rewriter);
+      if (failed(materialized)) {
+        return WalkResult::interrupt();
+      }
+      ret->setOperand(index, *materialized);
+    }
+    return WalkResult::advance();
+  }
+
+  LogicalResult materializeFunctionReturns(IRRewriter &rewriter) {
+    WalkResult result = module.walk([this, &rewriter](func::FuncOp func) {
       SmallVector<Type> resultTypes = getCallResultTypes(func);
       if (resultTypes.empty()) {
         return WalkResult::advance();
       }
-
-      WalkResult nested = func.walk([&](func::ReturnOp ret) -> WalkResult {
-        rewriter.setInsertionPoint(ret);
-        for (auto [index, operand] : llvm::enumerate(ret.getOperands())) {
-          if (index >= resultTypes.size()) {
-            break;
-          }
-          if (!resultTypes[index]) {
-            continue;
-          }
-          Type targetType = resultTypes[index];
-          if (!isa<VMIVRegType, VMIMaskType>(targetType)) {
-            continue;
-          }
-          FailureOr<Value> materialized =
-              materializeLayoutValue(operand, targetType, ret.getLoc(),
-                                     rewriter);
-          if (failed(materialized)) {
-            return WalkResult::interrupt();
-          }
-          ret->setOperand(index, *materialized);
-        }
-        return WalkResult::advance();
+      WalkResult nested = func.walk([this, &resultTypes, &rewriter](
+                                        func::ReturnOp ret) {
+        return materializeReturnOperands(ret, resultTypes, rewriter);
       });
       return nested.wasInterrupted() ? WalkResult::interrupt()
                                      : WalkResult::advance();
     });
-    return failure(returnResult.wasInterrupted());
+    return failure(result.wasInterrupted());
+  }
+
+  LogicalResult materializeCallBoundaries() {
+    IRRewriter rewriter(ctx);
+    if (failed(materializeCallOperands(rewriter))) {
+      return failure();
+    }
+    return materializeFunctionReturns(rewriter);
   }
 
   LogicalResult insertDataUseMaterializations() {
@@ -2199,8 +1724,7 @@ struct LayoutSolver {
     return propagator.run();
   }
 
-  LogicalResult applyLayouts() {
-    VMILayoutPropagator propagator(module);
+  void addEquivalentLayoutValues(VMILayoutPropagator &propagator) {
     for (DataNode &node : dataNodes) {
       DataNode &root = dataNodes[find(dataIds.lookup(node.value))];
       propagator.addEquivalentValues(root.value, node.value);
@@ -2209,7 +1733,11 @@ struct LayoutSolver {
       MaskNode &root = maskNodes[findMask(maskIds.lookup(node.value))];
       propagator.addEquivalentValues(root.value, node.value);
     }
-    if (failed(requestDataLayoutSeeds(propagator, DataLayoutSeedPhase::Explicit,
+  }
+
+  LogicalResult requestExplicitLayouts(VMILayoutPropagator &propagator) {
+    if (failed(requestDataLayoutSeeds(propagator,
+                                      DataLayoutSeedPhase::Explicit,
                                       /*skipAlreadyRequested=*/false))) {
       return failure();
     }
@@ -2220,10 +1748,10 @@ struct LayoutSolver {
         return failure();
       }
     }
-    if (failed(propagator.run())) {
-      return failure();
-    }
+    return propagator.run();
+  }
 
+  LogicalResult runLayoutSeedPhases(VMILayoutPropagator &propagator) {
     for (int64_t phase = static_cast<int64_t>(DataLayoutSeedPhase::SeedStart);
          phase < static_cast<int64_t>(DataLayoutSeedPhase::SeedEnd); ++phase) {
       if (failed(runSeedPhase(propagator,
@@ -2231,17 +1759,20 @@ struct LayoutSolver {
         return failure();
       }
     }
+    return success();
+  }
 
+  LogicalResult requestLateLayouts(VMILayoutPropagator &propagator) {
     for (DataUseRequest request : dataUseRequests) {
       if (request.late &&
           failed(propagator.request(*request.operand, request.layout))) {
         return failure();
       }
     }
-    if (failed(propagator.run())) {
-      return failure();
-    }
+    return propagator.run();
+  }
 
+  LogicalResult requestFallbackLayouts(VMILayoutPropagator &propagator) {
     for (DataNode &node : dataNodes) {
       if (!propagator.getRequestedLayout(node.value) &&
           failed(propagator.request(node.value, getContiguousLayout()))) {
@@ -2254,7 +1785,17 @@ struct LayoutSolver {
         return failure();
       }
     }
-    if (failed(propagator.run())) {
+    return propagator.run();
+  }
+
+  LogicalResult applyLayouts() {
+    VMILayoutPropagator propagator(module);
+    addEquivalentLayoutValues(propagator);
+    bool failedToPropagate = failed(requestExplicitLayouts(propagator)) ||
+                             failed(runLayoutSeedPhases(propagator)) ||
+                             failed(requestLateLayouts(propagator)) ||
+                             failed(requestFallbackLayouts(propagator));
+    if (failedToPropagate) {
       return failure();
     }
 

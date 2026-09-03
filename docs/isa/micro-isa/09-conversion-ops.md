@@ -154,6 +154,7 @@ destination lane group.
 - `%dst = pto.vcvt %src, %mask {rnd, sat, part} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<128xf16>`
 - `%dst = pto.vcvt %src, %mask {rnd, sat, part} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<128xbf16>`
 - `%dst = pto.vcvt %src, %mask {rnd, sat} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<128xf16>`
+- `%dst = pto.vcvt %src, %mask {rnd} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<128xbf16>`
 - `%dst = pto.vcvt %src, %mask {part} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>`
 - `%dst = pto.vcvt %src, %mask {part} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<64xf32>`
 
@@ -198,7 +199,7 @@ per-form entries above as the source of truth.
 | `ui32` | Y |  | Y | Y |  |  |  |  |  |  |
 | `si32` | Y |  | Y | Y |  |  | Y |  | Y |  |
 | `si64` |  |  |  |  |  |  |  |  |  |  |
-| `f16` | Y | Y |  | Y |  | Y |  |  | Y |  |
+| `f16` | Y | Y |  | Y |  | Y |  |  | Y | Y |
 | `f32` |  |  |  | Y |  | Y | Y | Y |  | Y |
 | `bf16` |  |  |  |  |  | Y |  | Y | Y |  |
 

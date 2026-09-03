@@ -1,0 +1,158 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
+
+// Chunk sweep for physical block counts {1,2,4} x {static all-active, dynamic mask}.
+// C=4 is the ISA limit of four physical registers per VMI instruction.
+
+module {
+  func.func @gather_i8_i16_1chunk_allactive(
+      %src: !pto.ptr<i8, ub>,
+      %indices: !pto.vmi.vreg<32xui16, #pto.vmi.layout<contiguous>>)
+      -> (!pto.vreg<128xi16>) {
+    %c32 = arith.constant 32 : index
+    %mask = pto.vmi.create_mask %c32 : index -> !pto.vmi.mask<32xb16, #pto.vmi.layout<contiguous>>
+    %out = pto.vmi.vgather %src, %indices, %mask
+        : !pto.ptr<i8, ub>,
+          !pto.vmi.vreg<32xui16, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.mask<32xb16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<32xi16, #pto.vmi.layout<contiguous>>
+    %p0 = "pto.vmi.unpack"(%out)
+        : (!pto.vmi.vreg<32xi16, #pto.vmi.layout<contiguous>>)
+        -> (!pto.vreg<128xi16>)
+    return %p0 : !pto.vreg<128xi16>
+  }
+
+  func.func @gather_i8_i16_1chunk_dynamic(
+      %src: !pto.ptr<i8, ub>,
+      %indices: !pto.vmi.vreg<32xui16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<32xb16, #pto.vmi.layout<contiguous>>)
+      -> (!pto.vreg<128xi16>) {
+    %out = pto.vmi.vgather %src, %indices, %mask
+        : !pto.ptr<i8, ub>,
+          !pto.vmi.vreg<32xui16, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.mask<32xb16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<32xi16, #pto.vmi.layout<contiguous>>
+    %p0 = "pto.vmi.unpack"(%out)
+        : (!pto.vmi.vreg<32xi16, #pto.vmi.layout<contiguous>>)
+        -> (!pto.vreg<128xi16>)
+    return %p0 : !pto.vreg<128xi16>
+  }
+
+  func.func @gather_i8_i16_2chunk_allactive(
+      %src: !pto.ptr<i8, ub>,
+      %indices: !pto.vmi.vreg<256xui16, #pto.vmi.layout<contiguous>>)
+      -> (!pto.vreg<128xi16>, !pto.vreg<128xi16>) {
+    %c256 = arith.constant 256 : index
+    %mask = pto.vmi.create_mask %c256 : index -> !pto.vmi.mask<256xb16, #pto.vmi.layout<contiguous>>
+    %out = pto.vmi.vgather %src, %indices, %mask
+        : !pto.ptr<i8, ub>,
+          !pto.vmi.vreg<256xui16, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.mask<256xb16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<256xi16, #pto.vmi.layout<contiguous>>
+    %p0, %p1 = "pto.vmi.unpack"(%out)
+        : (!pto.vmi.vreg<256xi16, #pto.vmi.layout<contiguous>>)
+        -> (!pto.vreg<128xi16>, !pto.vreg<128xi16>)
+    return %p0, %p1 : !pto.vreg<128xi16>, !pto.vreg<128xi16>
+  }
+
+  func.func @gather_i8_i16_2chunk_dynamic(
+      %src: !pto.ptr<i8, ub>,
+      %indices: !pto.vmi.vreg<256xui16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<256xb16, #pto.vmi.layout<contiguous>>)
+      -> (!pto.vreg<128xi16>, !pto.vreg<128xi16>) {
+    %out = pto.vmi.vgather %src, %indices, %mask
+        : !pto.ptr<i8, ub>,
+          !pto.vmi.vreg<256xui16, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.mask<256xb16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<256xi16, #pto.vmi.layout<contiguous>>
+    %p0, %p1 = "pto.vmi.unpack"(%out)
+        : (!pto.vmi.vreg<256xi16, #pto.vmi.layout<contiguous>>)
+        -> (!pto.vreg<128xi16>, !pto.vreg<128xi16>)
+    return %p0, %p1 : !pto.vreg<128xi16>, !pto.vreg<128xi16>
+  }
+
+  func.func @gather_i8_i16_4chunk_allactive(
+      %src: !pto.ptr<i8, ub>,
+      %indices: !pto.vmi.vreg<512xui16, #pto.vmi.layout<contiguous>>)
+      -> (!pto.vreg<128xi16>, !pto.vreg<128xi16>, !pto.vreg<128xi16>, !pto.vreg<128xi16>) {
+    %c512 = arith.constant 512 : index
+    %mask = pto.vmi.create_mask %c512 : index -> !pto.vmi.mask<512xb16, #pto.vmi.layout<contiguous>>
+    %out = pto.vmi.vgather %src, %indices, %mask
+        : !pto.ptr<i8, ub>,
+          !pto.vmi.vreg<512xui16, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.mask<512xb16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<512xi16, #pto.vmi.layout<contiguous>>
+    %p0, %p1, %p2, %p3 = "pto.vmi.unpack"(%out)
+        : (!pto.vmi.vreg<512xi16, #pto.vmi.layout<contiguous>>)
+        -> (!pto.vreg<128xi16>, !pto.vreg<128xi16>, !pto.vreg<128xi16>, !pto.vreg<128xi16>)
+    return %p0, %p1, %p2, %p3 : !pto.vreg<128xi16>, !pto.vreg<128xi16>, !pto.vreg<128xi16>, !pto.vreg<128xi16>
+  }
+
+  func.func @gather_i8_i16_4chunk_dynamic(
+      %src: !pto.ptr<i8, ub>,
+      %indices: !pto.vmi.vreg<512xui16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<512xb16, #pto.vmi.layout<contiguous>>)
+      -> (!pto.vreg<128xi16>, !pto.vreg<128xi16>, !pto.vreg<128xi16>, !pto.vreg<128xi16>) {
+    %out = pto.vmi.vgather %src, %indices, %mask
+        : !pto.ptr<i8, ub>,
+          !pto.vmi.vreg<512xui16, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.mask<512xb16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<512xi16, #pto.vmi.layout<contiguous>>
+    %p0, %p1, %p2, %p3 = "pto.vmi.unpack"(%out)
+        : (!pto.vmi.vreg<512xi16, #pto.vmi.layout<contiguous>>)
+        -> (!pto.vreg<128xi16>, !pto.vreg<128xi16>, !pto.vreg<128xi16>, !pto.vreg<128xi16>)
+    return %p0, %p1, %p2, %p3 : !pto.vreg<128xi16>, !pto.vreg<128xi16>, !pto.vreg<128xi16>, !pto.vreg<128xi16>
+  }
+}
+
+// CHECK-LABEL: func.func @gather_i8_i16_1chunk_allactive(
+// CHECK: pto.vgather2
+// CHECK-NOT: pto.vsel
+// CHECK: return
+
+// CHECK-LABEL: func.func @gather_i8_i16_1chunk_dynamic(
+// CHECK: pto.vgather2
+// CHECK: pto.vsel
+// CHECK: return
+
+// CHECK-LABEL: func.func @gather_i8_i16_2chunk_allactive(
+// CHECK: pto.vgather2
+// CHECK: pto.vgather2
+// CHECK-NOT: pto.vsel
+// CHECK: return
+
+// CHECK-LABEL: func.func @gather_i8_i16_2chunk_dynamic(
+// CHECK: pto.vgather2
+// CHECK: pto.vsel
+// CHECK: pto.vgather2
+// CHECK: pto.vsel
+// CHECK: return
+
+// CHECK-LABEL: func.func @gather_i8_i16_4chunk_allactive(
+// CHECK: pto.vgather2
+// CHECK: pto.vgather2
+// CHECK: pto.vgather2
+// CHECK: pto.vgather2
+// CHECK-NOT: pto.vsel
+// CHECK: return
+
+// CHECK-LABEL: func.func @gather_i8_i16_4chunk_dynamic(
+// CHECK: pto.vgather2
+// CHECK: pto.vsel
+// CHECK: pto.vgather2
+// CHECK: pto.vsel
+// CHECK: pto.vgather2
+// CHECK: pto.vsel
+// CHECK: pto.vgather2
+// CHECK: pto.vsel
+// CHECK: return
+// CHECK-NOT: pto.vmi.
+// CHECK-NOT: !pto.vmi.
+// CHECK-NOT: unrealized_conversion_cast

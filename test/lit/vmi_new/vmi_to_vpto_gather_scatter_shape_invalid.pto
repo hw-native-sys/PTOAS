@@ -22,7 +22,7 @@ module {
   }
 }
 
-// CHECK: VMI{{-}}UNSUPPORTED{{:}} pto.vmi.gather lowers through pto.vgather2_bc + pto.vsel only
+// CHECK: VMI{{-}}UNSUPPORTED{{:}} pto.vmi.gather lowers through pto.vgather2/pto.vgather2_bc + pto.vsel only
 // CHECK-SAME: contiguous result, indices, passthru, and mask layouts
 
 // -----
@@ -41,7 +41,7 @@ module {
   }
 }
 
-// CHECK: VMI{{-}}UNSUPPORTED{{:}} pto.vmi.gather lowers through pto.vgather2_bc + pto.vsel only
+// CHECK: VMI{{-}}UNSUPPORTED{{:}} pto.vmi.gather lowers through pto.vgather2/pto.vgather2_bc + pto.vsel only
 // CHECK-SAME: result requires full physical chunks
 // CHECK-SAME: found padding lane in physical chunk
 

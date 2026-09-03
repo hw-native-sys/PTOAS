@@ -6,11 +6,11 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-#include "ptobc/ptobc_format.h"
+#include "ptobc/mlir_codec.h"
 
-#include <mlir/Dialect/Func/IR/FuncOps.h>
-#include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/Affine/IR/AffineOps.h>
+#include <mlir/Dialect/Arith/IR/Arith.h>
+#include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/MemRef/IR/MemRef.h>
 #include <mlir/Dialect/SCF/IR/SCF.h>
 #include <mlir/IR/DialectRegistry.h>
@@ -22,26 +22,13 @@
 #include <optional>
 #include <vector>
 
-namespace ptobc {
-mlir::OwningOpRef<mlir::ModuleOp> parsePTOFile(mlir::MLIRContext& ctx, const std::string& path);
-PTOBCFile encodeFromMLIRModule(mlir::ModuleOp module);
-void decodeFileToPTO(const std::string& inPath, const std::string& outPath);
-}
-
-static void usage() {
-  std::cerr << "ptobc (v0)\n\n"
-            << "Usage:\n"
-            << "  ptobc encode <input.pto> -o <out.ptobc>\n"
-            << "  ptobc decode <input.ptobc> -o <out.pto>\n";
-}
+namespace {
 
 struct CommandLineOptions {
   std::string cmd;
   std::string input;
   std::string output;
 };
-
-namespace {
 
 constexpr size_t kCommandArgumentCount = 2;
 constexpr size_t kFullCommandArgumentCount = 5;
@@ -51,18 +38,14 @@ constexpr size_t kFirstOptionArgumentIndex = 3;
 constexpr size_t kNextArgumentOffset = 1;
 constexpr int kUsageExitCode = 2;
 
-static std::vector<std::string> collectArguments(int argc, char *argv[]) {
-  std::vector<std::string> args;
-  args.reserve(static_cast<size_t>(argc));
-  for (int i = 0; i < argc; ++i) {
-    args.emplace_back(argv[i]);
-  }
-  return args;
+void usage() {
+  std::cerr << "ptobc (v0)\n\n"
+            << "Usage:\n"
+            << "  ptobc encode <input.pto> -o <out.ptobc>\n"
+            << "  ptobc decode <input.ptobc> -o <out.pto>\n";
 }
 
-} // namespace
-
-static std::optional<CommandLineOptions>
+std::optional<CommandLineOptions>
 parseCommandLine(const std::vector<std::string> &args) {
   if (args.size() < kCommandArgumentCount) {
     return std::nullopt;
@@ -89,7 +72,7 @@ parseCommandLine(const std::vector<std::string> &args) {
   return options;
 }
 
-static mlir::DialectRegistry buildRegistry() {
+mlir::DialectRegistry buildRegistry() {
   mlir::DialectRegistry registry;
   registry.insert<mlir::func::FuncDialect, mlir::arith::ArithDialect,
                   mlir::affine::AffineDialect, mlir::memref::MemRefDialect,
@@ -97,7 +80,7 @@ static mlir::DialectRegistry buildRegistry() {
   return registry;
 }
 
-static void preloadDialects(mlir::MLIRContext &ctx) {
+void preloadDialects(mlir::MLIRContext &ctx) {
   (void)ctx.getOrLoadDialect<mlir::func::FuncDialect>();
   (void)ctx.getOrLoadDialect<mlir::arith::ArithDialect>();
   (void)ctx.getOrLoadDialect<mlir::affine::AffineDialect>();
@@ -106,7 +89,7 @@ static void preloadDialects(mlir::MLIRContext &ctx) {
   (void)ctx.getOrLoadDialect<mlir::pto::PTODialect>();
 }
 
-static int runEncode(const CommandLineOptions &options) {
+int runEncode(const CommandLineOptions &options) {
   mlir::MLIRContext ctx(buildRegistry());
   ctx.allowUnregisteredDialects(true);
   preloadDialects(ctx);
@@ -118,13 +101,19 @@ static int runEncode(const CommandLineOptions &options) {
   return 0;
 }
 
-static int runDecode(const CommandLineOptions &options) {
+int runDecode(const CommandLineOptions &options) {
   ptobc::decodeFileToPTO(options.input, options.output);
   return 0;
 }
 
+} // namespace
+
 int main(int argc, char **argv) {
-  auto args = collectArguments(argc, argv);
+  std::vector<std::string> args;
+  args.reserve(static_cast<size_t>(argc));
+  for (int i = 0; i < argc; ++i) {
+    args.emplace_back(argv[i] != nullptr ? argv[i] : "");
+  }
   auto options = parseCommandLine(args);
   if (!options) {
     usage();
@@ -140,7 +129,7 @@ int main(int argc, char **argv) {
     }
     usage();
     return kUsageExitCode;
-  } catch (const std::exception& e) {
+  } catch (const std::exception &e) {
     std::cerr << "ERROR: " << e.what() << "\n";
     return 1;
   }

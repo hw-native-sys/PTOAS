@@ -37,6 +37,13 @@ namespace {
 enum class DmaArch { A2A3, A5 };
 
 constexpr uint64_t kMxScaleAddressShift = 4;
+constexpr uint64_t kSubBlockShift = 18;
+constexpr uint64_t kQuantBlockBitShift = 29;
+constexpr uint64_t kClipReluShift = 30;
+constexpr uint64_t kQuantFieldShift = 34;
+constexpr uint64_t kReluModeShift = 39;
+constexpr uint64_t kChannelSplitShift = 42;
+constexpr uint64_t kNz2ndShift = 43;
 
 static DmaArch getDmaArch(ModuleOp mod) {
   if (!mod) {
@@ -71,27 +78,57 @@ static bool hasZeroReinterpretOffset(memref::ReinterpretCastOp op) {
 }
 
 static Value materializeBufferPointer(Value value, PatternRewriter &rewriter,
+                                      Location loc);
+
+static Value materializeTypedPointer(Value value, pto::PtrType ptrType,
+                                     PatternRewriter &rewriter, Location loc) {
+  auto cast = value.getDefiningOp<UnrealizedConversionCastOp>();
+  if (!cast) {
+    return value;
+  }
+  bool isSingleValueCast =
+      cast->getNumOperands() == 1 && cast->getNumResults() == 1;
+  if (!isSingleValueCast) {
+    return {};
+  }
+  Value basePtr = materializeBufferPointer(cast.getOperand(0), rewriter, loc);
+  bool needsPointerCast = basePtr && basePtr.getType() != ptrType;
+  if (!needsPointerCast) {
+    return basePtr;
+  }
+  return rewriter.create<pto::CastPtrOp>(loc, ptrType, basePtr).getResult();
+}
+
+static Value materializeReinterpretPointer(memref::ReinterpretCastOp cast,
+                                           PatternRewriter &rewriter,
+                                           Location loc) {
+  auto resultType = dyn_cast<MemRefType>(cast.getType());
+  if (!resultType || !hasZeroReinterpretOffset(cast)) {
+    return {};
+  }
+  Value basePtr = materializeBufferPointer(cast.getSource(), rewriter, loc);
+  if (!basePtr) {
+    return {};
+  }
+  auto ptrType = pto::PtrType::get(
+      rewriter.getContext(), resultType.getElementType(),
+      getPointerMemorySpace(resultType.getMemorySpace(),
+                            rewriter.getContext()));
+  bool alreadyHasPointerType = basePtr.getType() == ptrType;
+  if (alreadyHasPointerType) {
+    return basePtr;
+  }
+  return rewriter.create<pto::CastPtrOp>(loc, ptrType, basePtr).getResult();
+}
+
+static Value materializeBufferPointer(Value value, PatternRewriter &rewriter,
                                       Location loc) {
   if (!value) {
     return {};
   }
 
   if (auto ptrType = dyn_cast<pto::PtrType>(value.getType())) {
-    if (auto cast = value.getDefiningOp<UnrealizedConversionCastOp>()) {
-      if (cast->getNumOperands() != 1 || cast->getNumResults() != 1) {
-        return {};
-      }
-      Value basePtr =
-          materializeBufferPointer(cast.getOperand(0), rewriter, loc);
-      if (!basePtr) {
-        return {};
-      }
-      if (basePtr.getType() == ptrType) {
-        return basePtr;
-      }
-      return rewriter.create<pto::CastPtrOp>(loc, ptrType, basePtr).getResult();
-    }
-    return value;
+    return materializeTypedPointer(value, ptrType, rewriter, loc);
   }
 
   if (auto cast = value.getDefiningOp<UnrealizedConversionCastOp>()) {
@@ -110,23 +147,8 @@ static Value materializeBufferPointer(Value value, PatternRewriter &rewriter,
   }
 
   if (auto cast = value.getDefiningOp<memref::ReinterpretCastOp>()) {
-    auto resultType = dyn_cast<MemRefType>(value.getType());
-    if (!resultType) {
-      return {};
-    }
-
-    if (hasZeroReinterpretOffset(cast)) {
-      Value basePtr = materializeBufferPointer(cast.getSource(), rewriter, loc);
-      if (basePtr) {
-        auto ptrType = pto::PtrType::get(
-            rewriter.getContext(), resultType.getElementType(),
-            getPointerMemorySpace(resultType.getMemorySpace(),
-                                  rewriter.getContext()));
-        if (basePtr.getType() == ptrType) {
-          return basePtr;
-        }
-        return rewriter.create<pto::CastPtrOp>(loc, ptrType, basePtr).getResult();
-      }
+    if (Value pointer = materializeReinterpretPointer(cast, rewriter, loc)) {
+      return pointer;
     }
   }
 
@@ -311,7 +333,7 @@ static Value materializeAccStoreClipPayload(Value value, Type destinationElement
     widened = rewriter.create<arith::ExtSIOp>(loc, rewriter.getI64Type(), value);
   }
 
-  Value mask = rewriter.create<arith::ConstantIntOp>(loc, 0xFFFF, 64);
+  Value mask = rewriter.create<arith::ConstantIntOp>(loc, 0xFFFF, mlir::pto::kValue64);
   return rewriter.create<arith::AndIOp>(loc, widened, mask);
 }
 
@@ -342,146 +364,146 @@ static Value buildAccStoreOptionalEnumValue(Location loc,
   return getI64Constant(loc, rewriter, value.value_or(0));
 }
 
-static Value buildAccStoreFpcValue(Location loc, Value preQuant,
-                                   std::optional<pto::AccStoreQuantPreMode> preQuantMode,
-                                   Value preRelu,
-                                   std::optional<pto::ReluPreMode> preReluMode,
-                                   PatternRewriter &rewriter) {
-  auto encodeFixpipeBufferAddr = [&](Value addr, uint64_t unitShift) -> Value {
-    Value segmentMask = getI64Constant(loc, rewriter, 0xffff);
-    Value fieldMask = getI64Constant(loc, rewriter, 0xff);
-    Value segmentOffset = rewriter.create<arith::AndIOp>(loc, addr, segmentMask);
-    Value scaledAddr = rewriter.create<arith::ShRUIOp>(
-        loc, segmentOffset, getI64Constant(loc, rewriter, unitShift));
-    return rewriter.create<arith::AndIOp>(loc, scaledAddr, fieldMask);
-  };
+static bool isVectorQuantMode(pto::AccStoreQuantPreMode mode) {
+  switch (mode) {
+  case pto::AccStoreQuantPreMode::QF322HIF8PreVec:
+  case pto::AccStoreQuantPreMode::QF322HIF8PreHybridVec:
+  case pto::AccStoreQuantPreMode::DEQS32IntVec:
+  case pto::AccStoreQuantPreMode::REQ8Vec:
+  case pto::AccStoreQuantPreMode::DEQF16Vec:
+  case pto::AccStoreQuantPreMode::QF322FP8PreVec:
+  case pto::AccStoreQuantPreMode::QF322F32PreVec:
+  case pto::AccStoreQuantPreMode::QF162B8PreVec:
+  case pto::AccStoreQuantPreMode::QF162S4PreVec:
+  case pto::AccStoreQuantPreMode::REQ4Vec:
+  case pto::AccStoreQuantPreMode::QF322B8PreVec:
+  case pto::AccStoreQuantPreMode::QF322S4PreVec:
+  case pto::AccStoreQuantPreMode::DEQS16Vec:
+  case pto::AccStoreQuantPreMode::QF162S16PreVec:
+  case pto::AccStoreQuantPreMode::QF322F16PreVec:
+  case pto::AccStoreQuantPreMode::QF322BF16PreVec:
+  case pto::AccStoreQuantPreMode::QS322BF16PreVec:
+    return true;
+  default:
+    return false;
+  }
+}
 
-  Value quantAddr;
-  if (preQuantMode) {
-    switch (*preQuantMode) {
-    case pto::AccStoreQuantPreMode::QF322HIF8PreVec:
-    case pto::AccStoreQuantPreMode::QF322HIF8PreHybridVec:
-    case pto::AccStoreQuantPreMode::DEQS32IntVec:
-    case pto::AccStoreQuantPreMode::REQ8Vec:
-    case pto::AccStoreQuantPreMode::DEQF16Vec:
-    case pto::AccStoreQuantPreMode::QF322FP8PreVec:
-    case pto::AccStoreQuantPreMode::QF322F32PreVec:
-    case pto::AccStoreQuantPreMode::QF162B8PreVec:
-    case pto::AccStoreQuantPreMode::QF162S4PreVec:
-    case pto::AccStoreQuantPreMode::REQ4Vec:
-    case pto::AccStoreQuantPreMode::QF322B8PreVec:
-    case pto::AccStoreQuantPreMode::QF322S4PreVec:
-    case pto::AccStoreQuantPreMode::DEQS16Vec:
-    case pto::AccStoreQuantPreMode::QF162S16PreVec:
-    case pto::AccStoreQuantPreMode::QF322F16PreVec:
-    case pto::AccStoreQuantPreMode::QF322BF16PreVec:
-    case pto::AccStoreQuantPreMode::QS322BF16PreVec:
-      if (Value quantPtr = materializeI64Value(preQuant, rewriter, loc)) {
-        quantAddr = encodeFixpipeBufferAddr(quantPtr, /*unitShift=*/mlir::pto::kValue7);
-      }
-      break;
-    default:
-      break;
+static Value encodeFixpipeBufferAddress(Location loc, Value address,
+                                        uint64_t unitShift,
+                                        PatternRewriter &rewriter) {
+  Value segmentMask = getI64Constant(loc, rewriter, 0xffff);
+  Value fieldMask = getI64Constant(loc, rewriter, 0xff);
+  Value segmentOffset =
+      rewriter.create<arith::AndIOp>(loc, address, segmentMask);
+  Value scaledAddress = rewriter.create<arith::ShRUIOp>(
+      loc, segmentOffset, getI64Constant(loc, rewriter, unitShift));
+  return rewriter.create<arith::AndIOp>(loc, scaledAddress, fieldMask);
+}
+
+struct AccStorePreOpConfig {
+  Value preQuant;
+  std::optional<pto::AccStoreQuantPreMode> preQuantMode;
+  Value preRelu;
+  std::optional<pto::ReluPreMode> preReluMode;
+  Value clipValue;
+  Type destinationElementType;
+};
+
+static Value buildAccStoreFpcValue(Location loc,
+                                   const AccStorePreOpConfig &config,
+    PatternRewriter &rewriter) {
+  Value quantAddress;
+  if (config.preQuantMode && isVectorQuantMode(*config.preQuantMode)) {
+    if (Value quantPointer =
+            materializeI64Value(config.preQuant, rewriter, loc)) {
+      quantAddress = encodeFixpipeBufferAddress(
+          loc, quantPointer, mlir::pto::kValue7, rewriter);
     }
   }
-
-  Value reluAddr;
-  if (preReluMode && *preReluMode == pto::ReluPreMode::VectorRelu) {
-    if (Value reluPtr = materializeI64Value(preRelu, rewriter, loc)) {
-      reluAddr = encodeFixpipeBufferAddr(reluPtr, /*unitShift=*/mlir::pto::kValue6);
+  Value reluAddress;
+  bool usesVectorRelu =
+      config.preReluMode &&
+      *config.preReluMode == pto::ReluPreMode::VectorRelu;
+  if (usesVectorRelu) {
+    if (Value reluPointer =
+            materializeI64Value(config.preRelu, rewriter, loc)) {
+      reluAddress = encodeFixpipeBufferAddress(
+          loc, reluPointer, mlir::pto::kValue6, rewriter);
     }
   }
-
-  if (!quantAddr && !reluAddr) {
+  if (!quantAddress && !reluAddress) {
     return {};
   }
-
-  Value mask = getI64Constant(loc, rewriter, 0xff);
   Value fpc = getI64Constant(loc, rewriter, 0);
-  if (quantAddr) {
-    Value quantShift = getI64Constant(loc, rewriter, 8);
-    Value quantBits = rewriter.create<arith::ShLIOp>(loc, quantAddr, quantShift);
+  if (quantAddress) {
+    Value quantBits = rewriter.create<arith::ShLIOp>(
+        loc, quantAddress, getI64Constant(loc, rewriter, mlir::pto::kValue8));
     fpc = rewriter.create<arith::OrIOp>(loc, fpc, quantBits);
   }
-  if (reluAddr) {
-    Value reluBits = rewriter.create<arith::AndIOp>(loc, reluAddr, mask);
+  if (reluAddress) {
+    Value mask = getI64Constant(loc, rewriter, 0xff);
+    Value reluBits = rewriter.create<arith::AndIOp>(loc, reluAddress, mask);
     fpc = rewriter.create<arith::OrIOp>(loc, fpc, reluBits);
   }
   return fpc;
 }
 
-static void configureAccStoreScalarPreOps(Location loc, Value preQuant,
-                                          std::optional<pto::AccStoreQuantPreMode> preQuantMode,
-                                          Value preRelu,
-                                          std::optional<pto::ReluPreMode> preReluMode,
-                                          Value clipValue,
-                                          Type destinationElementType,
-                                          PatternRewriter &rewriter) {
-  auto isVectorQuantMode = [](pto::AccStoreQuantPreMode mode) {
-    switch (mode) {
-    case pto::AccStoreQuantPreMode::QF322HIF8PreVec:
-    case pto::AccStoreQuantPreMode::QF322HIF8PreHybridVec:
-    case pto::AccStoreQuantPreMode::DEQS32IntVec:
-    case pto::AccStoreQuantPreMode::REQ8Vec:
-    case pto::AccStoreQuantPreMode::DEQF16Vec:
-    case pto::AccStoreQuantPreMode::QF322FP8PreVec:
-    case pto::AccStoreQuantPreMode::QF322F32PreVec:
-    case pto::AccStoreQuantPreMode::QF162B8PreVec:
-    case pto::AccStoreQuantPreMode::QF162S4PreVec:
-    case pto::AccStoreQuantPreMode::REQ4Vec:
-    case pto::AccStoreQuantPreMode::QF322B8PreVec:
-    case pto::AccStoreQuantPreMode::QF322S4PreVec:
-    case pto::AccStoreQuantPreMode::DEQS16Vec:
-    case pto::AccStoreQuantPreMode::QF162S16PreVec:
-    case pto::AccStoreQuantPreMode::QF322F16PreVec:
-    case pto::AccStoreQuantPreMode::QF322BF16PreVec:
-    case pto::AccStoreQuantPreMode::QS322BF16PreVec:
-      return true;
-    default:
-      return false;
-    }
-  };
-
-  if (preQuantMode &&
-      *preQuantMode != pto::AccStoreQuantPreMode::NoConvert &&
-      !isVectorQuantMode(*preQuantMode)) {
+static void configureAccStoreScalarPreOps(
+    Location loc, const AccStorePreOpConfig &config,
+    PatternRewriter &rewriter) {
+  bool hasScalarQuant =
+      config.preQuantMode &&
+      *config.preQuantMode != pto::AccStoreQuantPreMode::NoConvert &&
+      !isVectorQuantMode(*config.preQuantMode);
+  if (hasScalarQuant) {
     if (Value quantValue =
-            materializeAccStoreScalarPayload(preQuant, rewriter, loc)) {
+            materializeAccStoreScalarPayload(config.preQuant, rewriter, loc)) {
       rewriter.create<pto::SetQuantPreOp>(loc, quantValue);
     }
   }
-  if (preReluMode && *preReluMode == pto::ReluPreMode::ScalarRelu) {
+  bool hasScalarRelu =
+      config.preReluMode &&
+      *config.preReluMode == pto::ReluPreMode::ScalarRelu;
+  if (hasScalarRelu) {
     if (Value reluAlpha =
-            materializeAccStoreScalarPayload(preRelu, rewriter, loc)) {
+            materializeAccStoreScalarPayload(config.preRelu, rewriter, loc)) {
       rewriter.create<pto::SetReluAlphaOp>(loc, reluAlpha);
     }
   }
-  if (clipValue) {
-    if (Value clip = materializeAccStoreClipPayload(clipValue,
-                                                    destinationElementType,
-                                                    rewriter, loc)) {
+  if (config.clipValue) {
+    Value clip = materializeAccStoreClipPayload(
+        config.clipValue, config.destinationElementType, rewriter, loc);
+    if (clip) {
       rewriter.create<pto::SetFixClipReluOp>(loc, clip);
     }
   }
 }
 
-static Value configureAccStoreCtrl(Location loc, bool allowAtomic,
-                                   std::optional<pto::AccStoreAtomicType> atomicType,
-                                   std::optional<pto::AccStoreAtomicOp> atomicOp,
-                                   std::optional<pto::AccStoreSatMode> satMode,
+struct AccStoreCtrlConfig {
+  bool allowAtomic;
+  std::optional<pto::AccStoreAtomicType> atomicType;
+  std::optional<pto::AccStoreAtomicOp> atomicOp;
+  std::optional<pto::AccStoreSatMode> satMode;
+};
+
+static Value configureAccStoreCtrl(Location loc,
+                                   const AccStoreCtrlConfig &config,
                                    PatternRewriter &rewriter) {
-  if ((!allowAtomic || !atomicType || !atomicOp) && !satMode) {
+  bool hasAtomic =
+      config.allowAtomic && config.atomicType && config.atomicOp;
+  if (!hasAtomic && !config.satMode) {
     return {};
   }
 
   Value originalCtrl = rewriter.create<pto::GetCtrlOp>(loc);
   Value ctrl = originalCtrl;
   uint64_t clearMaskValue = 0;
-  if (allowAtomic && atomicType && atomicOp) {
+  if (hasAtomic) {
     clearMaskValue |= (static_cast<uint64_t>(0x7) << mlir::pto::kValue6) |
                       (static_cast<uint64_t>(0x3) << mlir::pto::kValue9);
   }
-  if (satMode) {
+  if (config.satMode) {
     clearMaskValue |= (static_cast<uint64_t>(1) << mlir::pto::kValue48) |
                       (static_cast<uint64_t>(1) << mlir::pto::kValue50);
   }
@@ -490,18 +512,23 @@ static Value configureAccStoreCtrl(Location loc, bool allowAtomic,
   Value keepMask = rewriter.create<arith::XOrIOp>(loc, clearMask, fullMask);
   ctrl = rewriter.create<arith::AndIOp>(loc, ctrl, keepMask);
 
-  if (allowAtomic && atomicType && atomicOp) {
-    uint64_t atomicBits = (static_cast<uint64_t>(static_cast<uint32_t>(*atomicType)) << 6) |
-                          (static_cast<uint64_t>(static_cast<uint32_t>(*atomicOp)) << 9);
+  if (hasAtomic) {
+    uint64_t atomicBits =
+        (static_cast<uint64_t>(static_cast<uint32_t>(*config.atomicType))
+         << mlir::pto::kValue6) |
+        (static_cast<uint64_t>(static_cast<uint32_t>(*config.atomicOp))
+         << mlir::pto::kValue9);
     ctrl = rewriter.create<arith::OrIOp>(loc, ctrl,
                                          getI64Constant(loc, rewriter, atomicBits));
   }
-  if (satMode && *satMode == pto::AccStoreSatMode::NoSat) {
+  if (config.satMode &&
+      *config.satMode == pto::AccStoreSatMode::NoSat) {
     ctrl = rewriter.create<arith::OrIOp>(
         loc, ctrl, getI64Constant(loc, rewriter,
                                   static_cast<uint64_t>(1) << mlir::pto::kValue48));
   }
-  if (satMode && *satMode == pto::AccStoreSatMode::SatPreserveNan) {
+  if (config.satMode &&
+      *config.satMode == pto::AccStoreSatMode::SatPreserveNan) {
     ctrl = rewriter.create<arith::OrIOp>(
         loc, ctrl, getI64Constant(loc, rewriter,
                                   static_cast<uint64_t>(1) << mlir::pto::kValue50));
@@ -519,14 +546,14 @@ static Value buildAccumulatedByteOffset(Location loc, Value baseOffset,
 
 static Value packLoopPair(Location loc, Value low, Value high,
                           PatternRewriter &rewriter) {
-  Value shift = rewriter.create<arith::ConstantIntOp>(loc, 40, 64);
+  Value shift = rewriter.create<arith::ConstantIntOp>(loc, 40, mlir::pto::kValue64);
   Value highShifted = rewriter.create<arith::ShLIOp>(loc, high, shift);
   return rewriter.create<arith::OrIOp>(loc, highShifted, low);
 }
 
 static Value packLoopSize(Location loc, Value loop2, Value loop1,
                           PatternRewriter &rewriter) {
-  Value shift = rewriter.create<arith::ConstantIntOp>(loc, 21, 64);
+  Value shift = rewriter.create<arith::ConstantIntOp>(loc, 21, mlir::pto::kValue64);
   Value loop2Shifted = rewriter.create<arith::ShLIOp>(loc, loop2, shift);
   return rewriter.create<arith::OrIOp>(loc, loop2Shifted, loop1);
 }
@@ -559,21 +586,28 @@ static Value castIntegerLikeTo(Location loc, Value value, Type targetType,
   return {};
 }
 
-static FailureOr<Value> packMadXt(Location loc, Value m, Value n, Value k,
-                                  std::optional<pto::MadUnitFlagMode> unitFlagMode,
-                                  bool disableGemv, bool cmatrixSource,
-                                  bool cmatrixInit,
+struct MadXtConfig {
+  Value m;
+  Value n;
+  Value k;
+  std::optional<pto::MadUnitFlagMode> unitFlagMode;
+  bool disableGemv;
+  bool cmatrixSource;
+  bool cmatrixInit;
+};
+
+static FailureOr<Value> packMadXt(Location loc, const MadXtConfig &config,
                                   PatternRewriter &rewriter) {
   Type i64Ty = rewriter.getI64Type();
-  Value mI64 = castIntegerLikeTo(loc, m, i64Ty, rewriter);
-  Value nI64 = castIntegerLikeTo(loc, n, i64Ty, rewriter);
-  Value kI64 = castIntegerLikeTo(loc, k, i64Ty, rewriter);
+  Value mI64 = castIntegerLikeTo(loc, config.m, i64Ty, rewriter);
+  Value nI64 = castIntegerLikeTo(loc, config.n, i64Ty, rewriter);
+  Value kI64 = castIntegerLikeTo(loc, config.k, i64Ty, rewriter);
   if (!mI64 || !nI64 || !kI64) {
     return failure();
   }
 
   auto constant = [&](uint64_t value) -> Value {
-    return rewriter.create<arith::ConstantIntOp>(loc, value, 64);
+    return rewriter.create<arith::ConstantIntOp>(loc, value, mlir::pto::kValue64);
   };
   auto shl = [&](Value value, uint64_t amount) -> Value {
     return rewriter.create<arith::ShLIOp>(loc, value, constant(amount));
@@ -585,18 +619,20 @@ static FailureOr<Value> packMadXt(Location loc, Value m, Value n, Value k,
   Value xt = mI64;
   xt = bitOr(xt, shl(kI64, mlir::pto::kValue12));
   xt = bitOr(xt, shl(nI64, mlir::pto::kValue24));
-  if (unitFlagMode) {
+  if (config.unitFlagMode) {
     uint64_t unitFlagCtrl =
-        *unitFlagMode == pto::MadUnitFlagMode::CheckOnly ? 2 : 3;
+        *config.unitFlagMode == pto::MadUnitFlagMode::CheckOnly
+            ? mlir::pto::kValue2
+            : mlir::pto::kValue3;
     xt = bitOr(xt, shl(constant(unitFlagCtrl), mlir::pto::kValue55));
   }
-  if (disableGemv) {
+  if (config.disableGemv) {
     xt = bitOr(xt, shl(constant(1), mlir::pto::kValue61));
   }
-  if (cmatrixSource) {
+  if (config.cmatrixSource) {
     xt = bitOr(xt, shl(constant(1), mlir::pto::kValue62));
   }
-  if (cmatrixInit) {
+  if (config.cmatrixInit) {
     xt = bitOr(xt, shl(constant(1), mlir::pto::kValue63));
   }
   return xt;
@@ -604,234 +640,207 @@ static FailureOr<Value> packMadXt(Location loc, Value m, Value n, Value k,
 
 static Value setCtrlBit(Location loc, Value ctrl, unsigned bitIndex, bool value,
                         PatternRewriter &rewriter) {
-  Value bit = rewriter.create<arith::ConstantIntOp>(loc, bitIndex, 64);
+  Value bit = rewriter.create<arith::ConstantIntOp>(loc, bitIndex, mlir::pto::kValue64);
   if (value) {
     return rewriter.create<pto::Sbitset1Op>(loc, ctrl, bit).getResult();
   }
   return rewriter.create<pto::Sbitset0Op>(loc, ctrl, bit).getResult();
 }
 
+struct MadCtrlConfig {
+  bool isHif8;
+  std::optional<pto::Tf32Mode> tf32Mode;
+  std::optional<pto::MadSatMode> satMode;
+  bool hasNDir;
+};
+
 static Value buildMadSemanticCtrl(Location loc, Value ctrl,
-                                  bool isHif8,
-                                  std::optional<pto::Tf32Mode> tf32Mode,
-                                  std::optional<pto::MadSatMode> satMode,
-                                  bool hasNDir,
+                                  const MadCtrlConfig &config,
                                   PatternRewriter &rewriter) {
-  ctrl = setCtrlBit(loc, ctrl, mlir::pto::kValue45, isHif8, rewriter);
-  if (tf32Mode) {
+  ctrl =
+      setCtrlBit(loc, ctrl, mlir::pto::kValue45, config.isHif8, rewriter);
+  if (config.tf32Mode) {
     ctrl = setCtrlBit(loc, ctrl, mlir::pto::kValue46, true, rewriter);
     ctrl = setCtrlBit(loc, ctrl, mlir::pto::kValue47,
-                      *tf32Mode == pto::Tf32Mode::RoundAway, rewriter);
+                      *config.tf32Mode == pto::Tf32Mode::RoundAway, rewriter);
   } else {
     ctrl = setCtrlBit(loc, ctrl, mlir::pto::kValue46, false, rewriter);
     ctrl = setCtrlBit(loc, ctrl, mlir::pto::kValue47, false, rewriter);
   }
-  if (satMode) {
-    ctrl = setCtrlBit(loc, ctrl, mlir::pto::kValue48, *satMode == pto::MadSatMode::NoSat,
-                      rewriter);
+  if (config.satMode) {
+    bool noSaturation = *config.satMode == pto::MadSatMode::NoSat;
+    ctrl = setCtrlBit(loc, ctrl, mlir::pto::kValue48, noSaturation, rewriter);
   }
-  ctrl = setCtrlBit(loc, ctrl, mlir::pto::kValue51, hasNDir, rewriter);
+  ctrl = setCtrlBit(loc, ctrl, mlir::pto::kValue51, config.hasNDir, rewriter);
   return ctrl;
 }
 
-static Value packMte2NzPara(Location loc, Value groupCount, Value dstLoop2Stride,
-                            Value dstLoop3Stride, Value dstLoop4Stride,
+struct Mte2NzConfig {
+  Value groupCount;
+  Value dstLoop2Stride;
+  Value dstLoop3Stride;
+  Value dstLoop4Stride;
+};
+
+static Value packMte2NzPara(Location loc, const Mte2NzConfig &config,
                             PatternRewriter &rewriter) {
-  Value shift16 = rewriter.create<arith::ConstantIntOp>(loc, 16, 64);
-  Value shift32 = rewriter.create<arith::ConstantIntOp>(loc, 32, 64);
-  Value shift48 = rewriter.create<arith::ConstantIntOp>(loc, 48, 64);
+  Value shift16 = rewriter.create<arith::ConstantIntOp>(loc, 16, mlir::pto::kValue64);
+  Value shift32 = rewriter.create<arith::ConstantIntOp>(loc, 32, mlir::pto::kValue64);
+  Value shift48 = rewriter.create<arith::ConstantIntOp>(loc, 48, mlir::pto::kValue64);
   Value loop2Bits =
-      rewriter.create<arith::ShLIOp>(loc, dstLoop2Stride, shift16);
+      rewriter.create<arith::ShLIOp>(loc, config.dstLoop2Stride, shift16);
   Value loop3Bits =
-      rewriter.create<arith::ShLIOp>(loc, dstLoop3Stride, shift32);
+      rewriter.create<arith::ShLIOp>(loc, config.dstLoop3Stride, shift32);
   Value loop4Bits =
-      rewriter.create<arith::ShLIOp>(loc, dstLoop4Stride, shift48);
-  Value low = rewriter.create<arith::OrIOp>(loc, groupCount, loop2Bits);
+      rewriter.create<arith::ShLIOp>(loc, config.dstLoop4Stride, shift48);
+  Value low =
+      rewriter.create<arith::OrIOp>(loc, config.groupCount, loop2Bits);
   Value high = rewriter.create<arith::OrIOp>(loc, loop3Bits, loop4Bits);
   return rewriter.create<arith::OrIOp>(loc, low, high);
 }
 
-static Value packCopyMatrixCcToGmXm(Location loc, Value sid, Value nSize,
-                                    Value mSize, Value dstStride,
+struct CopyMatrixXmConfig {
+  Value sid;
+  Value nSize;
+  Value mSize;
+  Value dstStride;
+};
+
+static Value packCopyMatrixCcToGmXm(Location loc,
+                                    const CopyMatrixXmConfig &config,
                                     PatternRewriter &rewriter) {
-  Value nShift4 = rewriter.create<arith::ConstantIntOp>(loc, 4, 64);
-  Value mShift16 = rewriter.create<arith::ConstantIntOp>(loc, 16, 64);
-  Value dstShift32 = rewriter.create<arith::ConstantIntOp>(loc, 32, 64);
-  Value nBits = rewriter.create<arith::ShLIOp>(loc, nSize, nShift4);
-  Value mBits = rewriter.create<arith::ShLIOp>(loc, mSize, mShift16);
-  Value dstStrideBits = rewriter.create<arith::ShLIOp>(loc, dstStride, dstShift32);
-  Value sidMask = rewriter.create<arith::ConstantIntOp>(loc, 0xf, 64);
-  Value sidBits = rewriter.create<arith::AndIOp>(loc, sid, sidMask);
+  Value nShift4 = rewriter.create<arith::ConstantIntOp>(loc, 4, mlir::pto::kValue64);
+  Value mShift16 = rewriter.create<arith::ConstantIntOp>(loc, 16, mlir::pto::kValue64);
+  Value dstShift32 = rewriter.create<arith::ConstantIntOp>(loc, 32, mlir::pto::kValue64);
+  Value nBits =
+      rewriter.create<arith::ShLIOp>(loc, config.nSize, nShift4);
+  Value mBits =
+      rewriter.create<arith::ShLIOp>(loc, config.mSize, mShift16);
+  Value dstStrideBits =
+      rewriter.create<arith::ShLIOp>(loc, config.dstStride, dstShift32);
+  Value sidMask = rewriter.create<arith::ConstantIntOp>(loc, 0xf, mlir::pto::kValue64);
+  Value sidBits = rewriter.create<arith::AndIOp>(loc, config.sid, sidMask);
   Value xmLow = rewriter.create<arith::OrIOp>(loc, sidBits, nBits);
   xmLow = rewriter.create<arith::OrIOp>(loc, xmLow, mBits);
   return rewriter.create<arith::OrIOp>(loc, xmLow, dstStrideBits);
 }
 
-static Value packCopyMatrixCcToGmXt(Location loc, Value srcStride,
-                                    Value clipReluPre, Value unitFlagCtrl,
-                                    Value quantPre, Value reluPreMode,
-                                    Value l2CacheCtrl,
-                                    Value nz2ndEn, Value channelSplitEn,
-                                    Value nz2dnEn,
-                                    PatternRewriter &rewriter) {
-  Value l2CacheShift16 = rewriter.create<arith::ConstantIntOp>(loc, 16, 64);
-  Value clipReluShift30 = rewriter.create<arith::ConstantIntOp>(loc, 30, 64);
-  Value unitFlagShift32 = rewriter.create<arith::ConstantIntOp>(loc, 32, 64);
-  Value quantBlockBitShift29 =
-      rewriter.create<arith::ConstantIntOp>(loc, 29, 64);
-  Value quantFieldShift34 = rewriter.create<arith::ConstantIntOp>(loc, 34, 64);
-  Value reluShift39 = rewriter.create<arith::ConstantIntOp>(loc, 39, 64);
-  Value channelSplitShift42 =
-      rewriter.create<arith::ConstantIntOp>(loc, 42, 64);
-  Value nz2ndShift43 = rewriter.create<arith::ConstantIntOp>(loc, 43, 64);
-  Value nz2dnShift62 = rewriter.create<arith::ConstantIntOp>(loc, 62, 64);
+struct AccStoreModeConfig {
+  Value channelLoop0Stride;
+  Value nz2nd;
+  Value channelSplit;
+  Value nz2dn;
+};
 
-  Value quantShift5 = rewriter.create<arith::ConstantIntOp>(loc, 5, 64);
-  Value quantLowMask = rewriter.create<arith::ConstantIntOp>(loc, 0x1f, 64);
-  Value quantBitMask = rewriter.create<arith::ConstantIntOp>(loc, 0x1, 64);
-  Value clipReluMask = rewriter.create<arith::ConstantIntOp>(loc, 0x3, 64);
-  Value l2CacheMask = rewriter.create<arith::ConstantIntOp>(loc, 0xf, 64);
-  Value unitFlagMask = rewriter.create<arith::ConstantIntOp>(loc, 0x3, 64);
-  Value reluMask = rewriter.create<arith::ConstantIntOp>(loc, 0x7, 64);
+struct AccStorePackedFields {
+  Value clipRelu;
+  Value unitFlag;
+  Value quantMode;
+  Value reluMode;
+};
 
-  Value l2CacheBits = rewriter.create<arith::AndIOp>(loc, l2CacheCtrl, l2CacheMask);
-  l2CacheBits =
-      rewriter.create<arith::ShLIOp>(loc, l2CacheBits, l2CacheShift16);
+struct ExtractedFieldConfig {
+  uint64_t sourceShift;
+  uint64_t mask;
+  uint64_t targetShift;
+};
 
-  Value clipReluBits =
-      rewriter.create<arith::AndIOp>(loc, clipReluPre, clipReluMask);
-  clipReluBits =
-      rewriter.create<arith::ShLIOp>(loc, clipReluBits, clipReluShift30);
+struct CopyMatrixCcToGmXtConfig {
+  Value srcStride;
+  Value l2CacheCtrl;
+  AccStorePackedFields fields;
+  AccStoreModeConfig mode;
+};
 
-  Value unitFlagBits = rewriter.create<arith::AndIOp>(loc, unitFlagCtrl, unitFlagMask);
-  unitFlagBits =
-      rewriter.create<arith::ShLIOp>(loc, unitFlagBits, unitFlagShift32);
+struct CopyMatrixCcToUbConfig1 {
+  Value srcStride;
+  Value dualDstMode;
+  Value subBlockId;
+  AccStorePackedFields fields;
+  AccStoreModeConfig mode;
+};
 
-  Value quantBlockBit = rewriter.create<arith::ShRUIOp>(loc, quantPre, quantShift5);
-  quantBlockBit =
-      rewriter.create<arith::AndIOp>(loc, quantBlockBit, quantBitMask);
-  quantBlockBit = rewriter.create<arith::ShLIOp>(loc, quantBlockBit,
-                                                 quantBlockBitShift29);
-
-  Value quantField = rewriter.create<arith::AndIOp>(loc, quantPre, quantLowMask);
-  quantField =
-      rewriter.create<arith::ShLIOp>(loc, quantField, quantFieldShift34);
-
-  Value reluBits = rewriter.create<arith::AndIOp>(loc, reluPreMode, reluMask);
-  reluBits = rewriter.create<arith::ShLIOp>(loc, reluBits, reluShift39);
-
-  Value channelSplitBits =
-      rewriter.create<arith::AndIOp>(loc, channelSplitEn, quantBitMask);
-  channelSplitBits = rewriter.create<arith::ShLIOp>(loc, channelSplitBits,
-                                                    channelSplitShift42);
-
-  Value nz2ndBits = rewriter.create<arith::AndIOp>(loc, nz2ndEn, quantBitMask);
-  nz2ndBits =
-      rewriter.create<arith::ShLIOp>(loc, nz2ndBits, nz2ndShift43);
-
-  Value nz2dnBits = rewriter.create<arith::AndIOp>(loc, nz2dnEn, quantBitMask);
-  nz2dnBits =
-      rewriter.create<arith::ShLIOp>(loc, nz2dnBits, nz2dnShift62);
-
-  Value xt = rewriter.create<arith::OrIOp>(loc, srcStride, l2CacheBits);
-  xt = rewriter.create<arith::OrIOp>(loc, xt, clipReluBits);
-  xt = rewriter.create<arith::OrIOp>(loc, xt, unitFlagBits);
-  xt = rewriter.create<arith::OrIOp>(loc, xt, quantBlockBit);
-  xt = rewriter.create<arith::OrIOp>(loc, xt, quantField);
-  xt = rewriter.create<arith::OrIOp>(loc, xt, reluBits);
-  xt = rewriter.create<arith::OrIOp>(loc, xt, channelSplitBits);
-  xt = rewriter.create<arith::OrIOp>(loc, xt, nz2ndBits);
-  return rewriter.create<arith::OrIOp>(loc, xt, nz2dnBits);
+static Value packMaskedField(Location loc, Value value, uint64_t mask,
+                             uint64_t shift, PatternRewriter &rewriter) {
+  Value masked = rewriter.create<arith::AndIOp>(
+      loc, value, getI64Constant(loc, rewriter, mask));
+  return rewriter.create<arith::ShLIOp>(
+      loc, masked, getI64Constant(loc, rewriter, shift));
 }
 
-static Value packCopyMatrixCcToUbConfig1(Location loc, Value srcStride,
-                                         Value dualDstMode, Value subBlockId,
-                                         Value clipReluPre, Value unitFlagCtrl,
-                                         Value quantPre, Value reluPreMode,
-                                         Value nz2ndEn, Value channelSplitEn,
-                                         Value nz2dnEn,
-                                         PatternRewriter &rewriter) {
-  Value dualDstShift16 = rewriter.create<arith::ConstantIntOp>(loc, 16, 64);
-  Value subBlockShift18 = rewriter.create<arith::ConstantIntOp>(loc, 18, 64);
-  Value clipReluShift30 = rewriter.create<arith::ConstantIntOp>(loc, 30, 64);
-  Value unitFlagShift32 = rewriter.create<arith::ConstantIntOp>(loc, 32, 64);
-  Value quantBlockBitShift29 =
-      rewriter.create<arith::ConstantIntOp>(loc, 29, 64);
-  Value quantFieldShift34 = rewriter.create<arith::ConstantIntOp>(loc, 34, 64);
-  Value reluShift39 = rewriter.create<arith::ConstantIntOp>(loc, 39, 64);
-  Value channelSplitShift42 =
-      rewriter.create<arith::ConstantIntOp>(loc, 42, 64);
-  Value nz2ndShift43 = rewriter.create<arith::ConstantIntOp>(loc, 43, 64);
-  Value nz2dnShift62 = rewriter.create<arith::ConstantIntOp>(loc, 62, 64);
+static Value packExtractedField(Location loc, Value value,
+                                const ExtractedFieldConfig &config,
+                                PatternRewriter &rewriter) {
+  Value extracted = rewriter.create<arith::ShRUIOp>(
+      loc, value, getI64Constant(loc, rewriter, config.sourceShift));
+  return packMaskedField(loc, extracted, config.mask, config.targetShift,
+                         rewriter);
+}
 
-  Value dualDstMask = rewriter.create<arith::ConstantIntOp>(loc, 0x3, 64);
-  Value subBlockMask = rewriter.create<arith::ConstantIntOp>(loc, 0x1, 64);
-  Value quantShift5 = rewriter.create<arith::ConstantIntOp>(loc, 5, 64);
-  Value quantLowMask = rewriter.create<arith::ConstantIntOp>(loc, 0x1f, 64);
-  Value quantBitMask = rewriter.create<arith::ConstantIntOp>(loc, 0x1, 64);
-  Value clipReluMask = rewriter.create<arith::ConstantIntOp>(loc, 0x3, 64);
-  Value unitFlagMask = rewriter.create<arith::ConstantIntOp>(loc, 0x3, 64);
-  Value reluMask = rewriter.create<arith::ConstantIntOp>(loc, 0x7, 64);
+static Value mergePackedFields(Location loc, Value base,
+                               ArrayRef<Value> fields,
+                               PatternRewriter &rewriter) {
+  Value packed = base;
+  for (Value field : fields) {
+    packed = rewriter.create<arith::OrIOp>(loc, packed, field);
+  }
+  return packed;
+}
 
-  Value dualDstBits = rewriter.create<arith::AndIOp>(loc, dualDstMode, dualDstMask);
-  dualDstBits =
-      rewriter.create<arith::ShLIOp>(loc, dualDstBits, dualDstShift16);
+static Value packAccStoreCommonBits(Location loc,
+                                    const AccStorePackedFields &fields,
+                                    const AccStoreModeConfig &mode,
+                                    PatternRewriter &rewriter) {
+  SmallVector<Value, mlir::pto::kValue8> packedFields{
+      packMaskedField(loc, fields.clipRelu, 0x3, kClipReluShift,
+                      rewriter),
+      packMaskedField(loc, fields.unitFlag, 0x3, mlir::pto::kValue32,
+                      rewriter),
+      packExtractedField(
+          loc, fields.quantMode,
+          {mlir::pto::kValue5, 0x1, kQuantBlockBitShift}, rewriter),
+      packMaskedField(loc, fields.quantMode, 0x1f, kQuantFieldShift,
+                      rewriter),
+      packMaskedField(loc, fields.reluMode, 0x7, kReluModeShift,
+                      rewriter),
+      packMaskedField(loc, mode.channelSplit, 0x1, kChannelSplitShift,
+                      rewriter),
+      packMaskedField(loc, mode.nz2nd, 0x1, kNz2ndShift, rewriter),
+      packMaskedField(loc, mode.nz2dn, 0x1, mlir::pto::kValue62, rewriter)};
+  return mergePackedFields(loc, getI64Constant(loc, rewriter, 0), packedFields,
+                           rewriter);
+}
 
-  Value subBlockBits = rewriter.create<arith::AndIOp>(loc, subBlockId, subBlockMask);
-  subBlockBits =
-      rewriter.create<arith::ShLIOp>(loc, subBlockBits, subBlockShift18);
+static Value
+packCopyMatrixCcToGmXt(Location loc,
+                       const CopyMatrixCcToGmXtConfig &config,
+                       PatternRewriter &rewriter) {
+  Value l2CacheBits = packMaskedField(
+      loc, config.l2CacheCtrl, 0xf, mlir::pto::kValue16, rewriter);
+  Value commonBits =
+      packAccStoreCommonBits(loc, config.fields, config.mode, rewriter);
+  return mergePackedFields(loc, config.srcStride, {l2CacheBits, commonBits},
+                           rewriter);
+}
 
-  Value clipReluBits =
-      rewriter.create<arith::AndIOp>(loc, clipReluPre, clipReluMask);
-  clipReluBits =
-      rewriter.create<arith::ShLIOp>(loc, clipReluBits, clipReluShift30);
-
-  Value unitFlagBits = rewriter.create<arith::AndIOp>(loc, unitFlagCtrl, unitFlagMask);
-  unitFlagBits =
-      rewriter.create<arith::ShLIOp>(loc, unitFlagBits, unitFlagShift32);
-
-  Value quantBlockBit = rewriter.create<arith::ShRUIOp>(loc, quantPre, quantShift5);
-  quantBlockBit =
-      rewriter.create<arith::AndIOp>(loc, quantBlockBit, quantBitMask);
-  quantBlockBit = rewriter.create<arith::ShLIOp>(loc, quantBlockBit,
-                                                 quantBlockBitShift29);
-
-  Value quantField = rewriter.create<arith::AndIOp>(loc, quantPre, quantLowMask);
-  quantField =
-      rewriter.create<arith::ShLIOp>(loc, quantField, quantFieldShift34);
-
-  Value reluBits = rewriter.create<arith::AndIOp>(loc, reluPreMode, reluMask);
-  reluBits = rewriter.create<arith::ShLIOp>(loc, reluBits, reluShift39);
-
-  Value channelSplitBits =
-      rewriter.create<arith::AndIOp>(loc, channelSplitEn, quantBitMask);
-  channelSplitBits = rewriter.create<arith::ShLIOp>(loc, channelSplitBits,
-                                                    channelSplitShift42);
-
-  Value nz2ndBits = rewriter.create<arith::AndIOp>(loc, nz2ndEn, quantBitMask);
-  nz2ndBits =
-      rewriter.create<arith::ShLIOp>(loc, nz2ndBits, nz2ndShift43);
-
-  Value nz2dnBits = rewriter.create<arith::AndIOp>(loc, nz2dnEn, quantBitMask);
-  nz2dnBits =
-      rewriter.create<arith::ShLIOp>(loc, nz2dnBits, nz2dnShift62);
-
-  Value config1 = rewriter.create<arith::OrIOp>(loc, srcStride, dualDstBits);
-  config1 = rewriter.create<arith::OrIOp>(loc, config1, subBlockBits);
-  config1 = rewriter.create<arith::OrIOp>(loc, config1, clipReluBits);
-  config1 = rewriter.create<arith::OrIOp>(loc, config1, unitFlagBits);
-  config1 = rewriter.create<arith::OrIOp>(loc, config1, quantBlockBit);
-  config1 = rewriter.create<arith::OrIOp>(loc, config1, quantField);
-  config1 = rewriter.create<arith::OrIOp>(loc, config1, reluBits);
-  config1 = rewriter.create<arith::OrIOp>(loc, config1, channelSplitBits);
-  config1 = rewriter.create<arith::OrIOp>(loc, config1, nz2ndBits);
-  return rewriter.create<arith::OrIOp>(loc, config1, nz2dnBits);
+static Value
+packCopyMatrixCcToUbConfig1(Location loc,
+                            const CopyMatrixCcToUbConfig1 &config,
+                            PatternRewriter &rewriter) {
+  Value dualDstBits = packMaskedField(
+      loc, config.dualDstMode, 0x3, mlir::pto::kValue16, rewriter);
+  Value subBlockBits = packMaskedField(
+      loc, config.subBlockId, 0x1, kSubBlockShift, rewriter);
+  Value commonBits =
+      packAccStoreCommonBits(loc, config.fields, config.mode, rewriter);
+  return mergePackedFields(loc, config.srcStride,
+                           {dualDstBits, subBlockBits, commonBits}, rewriter);
 }
 
 static Value packLoop3Config(Location loc, Value count, Value srcStride,
                              Value dstStride, PatternRewriter &rewriter) {
-  Value srcShift16 = rewriter.create<arith::ConstantIntOp>(loc, 16, 64);
-  Value dstShift32 = rewriter.create<arith::ConstantIntOp>(loc, 32, 64);
+  Value srcShift16 = rewriter.create<arith::ConstantIntOp>(loc, 16, mlir::pto::kValue64);
+  Value dstShift32 = rewriter.create<arith::ConstantIntOp>(loc, 32, mlir::pto::kValue64);
   Value srcBits = rewriter.create<arith::ShLIOp>(loc, srcStride, srcShift16);
   Value dstBits = rewriter.create<arith::ShLIOp>(loc, dstStride, dstShift32);
   Value low = rewriter.create<arith::OrIOp>(loc, count, srcBits);
@@ -840,7 +849,7 @@ static Value packLoop3Config(Location loc, Value count, Value srcStride,
 
 static Value packChannelConfig(Location loc, Value loop0SrcStride,
                                PatternRewriter &rewriter) {
-  Value shift48 = rewriter.create<arith::ConstantIntOp>(loc, 48, 64);
+  Value shift48 = rewriter.create<arith::ConstantIntOp>(loc, 48, mlir::pto::kValue64);
   return rewriter.create<arith::ShLIOp>(loc, loop0SrcStride, shift48);
 }
 
@@ -862,210 +871,151 @@ struct LoadCbufToMxControl {
   Value dstStride;
 };
 
-static FailureOr<LoadCbufToCbControl>
-deriveLoadCbufToCbControl(Location loc, Value k, Value n, Type elementType,
-                          Value mStart, Value kStart, bool transpose,
-                          PatternRewriter &rewriter) {
-  unsigned elemBitWidth = pto::getPTOStorageElemBitWidth(elementType);
-  if (elemBitWidth == 0 || (elemBitWidth % mlir::pto::kValue8) != 0) {
-    return failure();
-  }
-  uint64_t elemBytes = elemBitWidth / 8;
-  bool isFp4Packed = pto::isPTOFloat4PackedType(elementType);
+struct CbufControlMath {
+  Location loc;
+  PatternRewriter &rewriter;
 
-  auto constant = [&](uint64_t value) -> Value {
-    return rewriter.create<arith::ConstantIntOp>(loc, value, 64);
-  };
-  auto ceilDivConst = [&](Value value, uint64_t divisor) -> Value {
-    Value bias = constant(divisor - 1);
-    Value sum = rewriter.create<arith::AddIOp>(loc, value, bias);
+  Value constant(uint64_t value) const {
+    return rewriter.create<arith::ConstantIntOp>(loc, value, mlir::pto::kValue64);
+  }
+
+  Value ceilDiv(Value value, uint64_t divisor) const {
+    Value sum = rewriter.create<arith::AddIOp>(loc, value,
+                                               constant(divisor - 1));
     return rewriter.create<arith::DivUIOp>(loc, sum, constant(divisor));
-  };
-  auto maybeScaleS4KCoord = [&](Value value) -> Value {
-    if (!isFp4Packed) {
-      return value;
-    }
-    // load_cbuf_to_*_s4 interprets K-axis coordinates in packed s4 units.
-    // The generic wrapper math above first derives K positions from storage
-    // bytes, where one fp4x2 element carries two logical fp4 values, so fp4
-    // payloads must divide the byte-based K coordinate by 2 before lowering
-    // to the raw *_s4 bridge op. This matches the pto-isa TExtract helpers.
-    return rewriter.create<arith::DivUIOp>(loc, value, constant(2));
-  };
-  auto deriveKStep = [&](Value byteExtent) -> Value {
-    // A packed FP4 element contains two logical values.  The S4 bridge
-    // consumes one 32-byte block, so a partial 64-value FP4 block still
-    // requires one hardware step.  Round before converting to the packed
-    // control unit instead of truncating ceilDiv(..., 32) / 2.
-    return ceilDivConst(byteExtent, isFp4Packed ? 64 : 32);
-  };
-
-  if (!transpose) {
-    Value mStep = ceilDivConst(n, 16);
-    Value kBytes = rewriter.create<arith::MulIOp>(loc, k, constant(elemBytes));
-    Value kStep = deriveKStep(kBytes);
-    Value stride = ceilDivConst(n, 16);
-    return LoadCbufToCbControl{mStart, maybeScaleS4KCoord(kStart), mStep, kStep,
-                               stride, stride};
   }
+};
 
-  uint64_t c0Size =
-      isFp4Packed ? 64 : std::max<uint64_t>(16, 32 / elemBytes);
-  Value kAlign = ceilDivConst(k, c0Size);
-  kAlign = rewriter.create<arith::MulIOp>(loc, kAlign, constant(c0Size));
-  Value nAlign = ceilDivConst(n, c0Size);
-  nAlign = rewriter.create<arith::MulIOp>(loc, nAlign, constant(c0Size));
-  Value mStep = ceilDivConst(kAlign, 16);
-  Value nBytes = rewriter.create<arith::MulIOp>(loc, nAlign, constant(elemBytes));
-  Value kStep = deriveKStep(nBytes);
-  Value srcStride = ceilDivConst(kAlign, 16);
-  Value dstStride = ceilDivConst(nAlign, 16);
-  return LoadCbufToCbControl{mStart, maybeScaleS4KCoord(kStart), mStep, kStep,
-                             srcStride, dstStride};
+struct LoadCbufControlQuery {
+  Location loc;
+  Value outerSize;
+  Value kSize;
+  Type elementType;
+  Value outerStart;
+  Value kStart;
+  bool transpose;
+  PatternRewriter &rewriter;
+};
+
+static Value scalePackedKCoordinate(Value coordinate, bool isFp4Packed,
+                                    const CbufControlMath &math) {
+  if (!isFp4Packed) {
+    return coordinate;
+  }
+  return math.rewriter.create<arith::DivUIOp>(math.loc, coordinate,
+                                               math.constant(mlir::pto::kValue2));
+}
+
+static Value deriveCbufKStep(Value byteExtent, bool isFp4Packed,
+                             const CbufControlMath &math) {
+  uint64_t blockElements = isFp4Packed ? mlir::pto::kValue64
+                                       : mlir::pto::kValue32;
+  return math.ceilDiv(byteExtent, blockElements);
 }
 
 static FailureOr<LoadCbufToCbControl>
-deriveLoadCbufToCaControl(Location loc, Value m, Value k, Type elementType,
-                          Value mStart, Value kStart, bool transpose,
-                          PatternRewriter &rewriter) {
-  unsigned elemBitWidth = pto::getPTOStorageElemBitWidth(elementType);
-  if (elemBitWidth == 0 || (elemBitWidth % mlir::pto::kValue8) != 0) {
+deriveLoadCbufControl(const LoadCbufControlQuery &query) {
+  unsigned elementBits = pto::getPTOStorageElemBitWidth(query.elementType);
+  bool hasWholeBytes =
+      elementBits != 0 && elementBits % mlir::pto::kValue8 == 0;
+  if (!hasWholeBytes) {
     return failure();
   }
-  uint64_t elemBytes = elemBitWidth / 8;
-  bool isFp4Packed = pto::isPTOFloat4PackedType(elementType);
-
-  auto constant = [&](uint64_t value) -> Value {
-    return rewriter.create<arith::ConstantIntOp>(loc, value, 64);
-  };
-  auto ceilDivConst = [&](Value value, uint64_t divisor) -> Value {
-    Value bias = constant(divisor - 1);
-    Value sum = rewriter.create<arith::AddIOp>(loc, value, bias);
-    return rewriter.create<arith::DivUIOp>(loc, sum, constant(divisor));
-  };
-  auto maybeScaleS4KCoord = [&](Value value) -> Value {
-    if (!isFp4Packed) {
-      return value;
-    }
-    // load_cbuf_to_*_s4 interprets K-axis coordinates in packed s4 units.
-    // The generic wrapper math above first derives K positions from storage
-    // bytes, where one fp4x2 element carries two logical fp4 values, so fp4
-    // payloads must divide the byte-based K coordinate by 2 before lowering
-    // to the raw *_s4 bridge op. This matches the pto-isa TExtract helpers.
-    return rewriter.create<arith::DivUIOp>(loc, value, constant(2));
-  };
-  auto deriveKStep = [&](Value byteExtent) -> Value {
-    // A packed FP4 element contains two logical values.  The S4 bridge
-    // consumes one 32-byte block, so a partial 64-value FP4 block still
-    // requires one hardware step.  Round before converting to the packed
-    // control unit instead of truncating ceilDiv(..., 32) / 2.
-    return ceilDivConst(byteExtent, isFp4Packed ? 64 : 32);
-  };
-
-  if (!transpose) {
-    Value mStep = ceilDivConst(m, 16);
-    Value kBytes = rewriter.create<arith::MulIOp>(loc, k, constant(elemBytes));
-    Value kStep = deriveKStep(kBytes);
-    Value stride = ceilDivConst(m, 16);
-    return LoadCbufToCbControl{mStart, maybeScaleS4KCoord(kStart), mStep, kStep,
-                               stride, stride};
+  uint64_t elementBytes = elementBits / mlir::pto::kValue8;
+  bool isFp4Packed = pto::isPTOFloat4PackedType(query.elementType);
+  CbufControlMath math{query.loc, query.rewriter};
+  Value kStart = scalePackedKCoordinate(query.kStart, isFp4Packed, math);
+  if (!query.transpose) {
+    Value outerStep = math.ceilDiv(query.outerSize, mlir::pto::kValue16);
+    Value kBytes = query.rewriter.create<arith::MulIOp>(
+        query.loc, query.kSize, math.constant(elementBytes));
+    Value kStep = deriveCbufKStep(kBytes, isFp4Packed, math);
+    return LoadCbufToCbControl{query.outerStart, kStart, outerStep, kStep,
+                               outerStep, outerStep};
   }
 
-  uint64_t c0Size =
-      isFp4Packed ? 64 : std::max<uint64_t>(16, 32 / elemBytes);
-  Value mAlign = ceilDivConst(m, c0Size);
-  mAlign = rewriter.create<arith::MulIOp>(loc, mAlign, constant(c0Size));
-  Value kAlign = ceilDivConst(k, c0Size);
-  kAlign = rewriter.create<arith::MulIOp>(loc, kAlign, constant(c0Size));
-  Value mStep = ceilDivConst(kAlign, 16);
-  Value mBytes = rewriter.create<arith::MulIOp>(loc, mAlign, constant(elemBytes));
-  Value kStep = deriveKStep(mBytes);
-  Value srcStride = ceilDivConst(kAlign, 16);
-  Value dstStride = ceilDivConst(mAlign, 16);
-  return LoadCbufToCbControl{mStart, maybeScaleS4KCoord(kStart), mStep, kStep,
+  uint64_t c0Size = isFp4Packed
+                        ? mlir::pto::kValue64
+                        : std::max<uint64_t>(mlir::pto::kValue16,
+                                             mlir::pto::kValue32 / elementBytes);
+  Value outerAlign = math.ceilDiv(query.outerSize, c0Size);
+  outerAlign = query.rewriter.create<arith::MulIOp>(
+      query.loc, outerAlign, math.constant(c0Size));
+  Value kAlign = math.ceilDiv(query.kSize, c0Size);
+  kAlign = query.rewriter.create<arith::MulIOp>(
+      query.loc, kAlign, math.constant(c0Size));
+  Value outerStep = math.ceilDiv(kAlign, mlir::pto::kValue16);
+  Value outerBytes = query.rewriter.create<arith::MulIOp>(
+      query.loc, outerAlign, math.constant(elementBytes));
+  Value kStep = deriveCbufKStep(outerBytes, isFp4Packed, math);
+  Value srcStride = math.ceilDiv(kAlign, mlir::pto::kValue16);
+  Value dstStride = math.ceilDiv(outerAlign, mlir::pto::kValue16);
+  return LoadCbufToCbControl{query.outerStart, kStart, outerStep, kStep,
                              srcStride, dstStride};
 }
 
-static FailureOr<LoadCbufToMxControl>
-deriveLoadCbufToCaMxControl(Location loc, Value m, Value k, Type elementType,
-                            Value startRow, Value startCol,
-                            PatternRewriter &rewriter) {
-  unsigned elemBitWidth = pto::getPTOStorageElemBitWidth(elementType);
-  if (elemBitWidth == 0 || (elemBitWidth % mlir::pto::kValue8) != 0) {
-    return failure();
-  }
-  uint64_t elemBytes = elemBitWidth / 8;
+enum class CbufMxSide { Left, Right };
 
-  auto constant = [&](uint64_t value) -> Value {
-    return rewriter.create<arith::ConstantIntOp>(loc, value, 64);
-  };
-  auto ceilDivConst = [&](Value value, uint64_t divisor) -> Value {
-    Value bias = constant(divisor - 1);
-    Value sum = rewriter.create<arith::AddIOp>(loc, value, bias);
-    return rewriter.create<arith::DivUIOp>(loc, sum, constant(divisor));
-  };
-
-  Value xStep = ceilDivConst(m, 16);
-  Value kGroups = ceilDivConst(k, 32);
-  // Left-side MX scale payload is packed into 32B fractals. The source big
-  // matrix Y dimension is the number of 32B fragments needed for one 16-row
-  // M slice after packing the K/32 scale groups.
-  Value yStride = ceilDivConst(
-      rewriter.create<arith::MulIOp>(loc, kGroups, constant(elemBytes)), 2);
-  return LoadCbufToMxControl{startRow, startCol, xStep, yStride, yStride,
-                             yStride};
-}
+struct LoadCbufMxControlQuery {
+  Location loc;
+  Value outerSize;
+  Value kSize;
+  Type elementType;
+  Value startRow;
+  Value startCol;
+  CbufMxSide side;
+  PatternRewriter &rewriter;
+};
 
 static FailureOr<LoadCbufToMxControl>
-deriveLoadCbufToCbMxControl(Location loc, Value k, Value n, Type elementType,
-                            Value startRow, Value startCol,
-                            PatternRewriter &rewriter) {
-  unsigned elemBitWidth = pto::getPTOStorageElemBitWidth(elementType);
-  if (elemBitWidth == 0 || (elemBitWidth % mlir::pto::kValue8) != 0) {
+deriveLoadCbufMxControl(const LoadCbufMxControlQuery &query) {
+  unsigned elementBits = pto::getPTOStorageElemBitWidth(query.elementType);
+  bool hasWholeBytes =
+      elementBits != 0 && elementBits % mlir::pto::kValue8 == 0;
+  if (!hasWholeBytes) {
     return failure();
   }
-  uint64_t elemBytes = elemBitWidth / 8;
-
-  auto constant = [&](uint64_t value) -> Value {
-    return rewriter.create<arith::ConstantIntOp>(loc, value, 64);
-  };
-  auto ceilDivConst = [&](Value value, uint64_t divisor) -> Value {
-    Value bias = constant(divisor - 1);
-    Value sum = rewriter.create<arith::AddIOp>(loc, value, bias);
-    return rewriter.create<arith::DivUIOp>(loc, sum, constant(divisor));
-  };
-
-  Value kGroups = ceilDivConst(k, 32);
-  Value xStep = ceilDivConst(n, 16);
-  // Right-side MX scale payload stores K/32 groups along the source big
-  // matrix Y dimension, packed into 32B fractals.
-  Value yStep = ceilDivConst(
-      rewriter.create<arith::MulIOp>(loc, kGroups, constant(elemBytes)), 2);
-  Value yStride = ceilDivConst(kGroups, 2);
-  return LoadCbufToMxControl{startRow, startCol, xStep, yStep, yStride,
-                             yStride};
+  uint64_t elementBytes = elementBits / mlir::pto::kValue8;
+  CbufControlMath math{query.loc, query.rewriter};
+  Value kGroups = math.ceilDiv(query.kSize, mlir::pto::kValue32);
+  Value xStep = math.ceilDiv(query.outerSize, mlir::pto::kValue16);
+  Value packedGroups = query.rewriter.create<arith::MulIOp>(
+      query.loc, kGroups, math.constant(elementBytes));
+  Value packedStride = math.ceilDiv(packedGroups, mlir::pto::kValue2);
+  Value yStep = packedStride;
+  Value yStride = packedStride;
+  if (query.side == CbufMxSide::Right) {
+    yStride = math.ceilDiv(kGroups, mlir::pto::kValue2);
+  }
+  return LoadCbufToMxControl{query.startRow, query.startCol, xStep, yStep,
+                             yStride, yStride};
 }
 
 static Value extractConfigLow40(Location loc, Value packed,
                                 PatternRewriter &rewriter) {
   Value lowMask =
-      rewriter.create<arith::ConstantIntOp>(loc, 0xffffffffffULL, 64);
+      rewriter.create<arith::ConstantIntOp>(loc, 0xffffffffffULL, mlir::pto::kValue64);
   return rewriter.create<arith::AndIOp>(loc, packed, lowMask);
 }
 
 static Value extractConfigHigh24(Location loc, Value packed,
                                  PatternRewriter &rewriter) {
-  Value shift40 = rewriter.create<arith::ConstantIntOp>(loc, 40, 64);
+  Value shift40 = rewriter.create<arith::ConstantIntOp>(loc, 40, mlir::pto::kValue64);
   return rewriter.create<arith::ShRUIOp>(loc, packed, shift40);
 }
+
+struct DmaLoopOffsets {
+  Value source;
+  Value destination;
+};
 
 template <typename BodyBuilder>
 static void buildSoftwareLoopNest(PatternRewriter &rewriter, Location loc,
                                   ArrayRef<pto::DmaLoopConfig> loops,
-                                  Value srcOffset, Value dstOffset,
+                                  DmaLoopOffsets offsets,
                                   BodyBuilder &&buildLeaf) {
   if (loops.empty()) {
-    buildLeaf(srcOffset, dstOffset);
+    buildLeaf(offsets.source, offsets.destination);
     return;
   }
 
@@ -1081,12 +1031,156 @@ static void buildSoftwareLoopNest(PatternRewriter &rewriter, Location loc,
         rewriter.create<arith::IndexCastUIOp>(loc, rewriter.getI64Type(),
                                               forOp.getInductionVar());
     Value nextSrcOffset = buildAccumulatedByteOffset(
-        loc, srcOffset, ivI64, loops.front().srcStride, rewriter);
+        loc, offsets.source, ivI64, loops.front().srcStride, rewriter);
     Value nextDstOffset = buildAccumulatedByteOffset(
-        loc, dstOffset, ivI64, loops.front().dstStride, rewriter);
-    buildSoftwareLoopNest(rewriter, loc, loops.drop_front(), nextSrcOffset,
-                          nextDstOffset, buildLeaf);
+        loc, offsets.destination, ivI64, loops.front().dstStride, rewriter);
+    buildSoftwareLoopNest(rewriter, loc, loops.drop_front(),
+                          {nextSrcOffset, nextDstOffset}, buildLeaf);
   }
+}
+
+struct DmaLoopPlan {
+  SmallVector<pto::DmaLoopConfig> softwareLoops;
+  Value loop1Count;
+  Value loop2Count;
+};
+
+static DmaLoopPlan configureLoadToUbLoops(
+    pto::MteGmUbOp op, DmaArch dmaArch,
+    ArrayRef<pto::DmaLoopConfig> loops, Value one,
+    PatternRewriter &rewriter) {
+  DmaLoopPlan plan{{}, {}, one};
+  if (dmaArch != DmaArch::A5) {
+    plan.softwareLoops.append(loops.begin(), loops.end());
+    plan.softwareLoops.push_back(
+        {op.getNBurst(), op.getNburstSrcStride(), op.getNburstDstStride()});
+    return plan;
+  }
+
+  ArrayRef<pto::DmaLoopConfig> hardwareLoops =
+      loops.take_front(mlir::pto::kValue2);
+  ArrayRef<pto::DmaLoopConfig> softwareLoops =
+      loops.drop_front(hardwareLoops.size());
+  plan.softwareLoops.append(softwareLoops.begin(), softwareLoops.end());
+  bool hasTwoHardwareLoops = hardwareLoops.size() == mlir::pto::kValue2;
+  if (hasTwoHardwareLoops) {
+    rewriter.create<pto::SetLoop2StrideOutToUbOp>(
+        op.getLoc(), hardwareLoops[0].srcStride, hardwareLoops[0].dstStride);
+    plan.loop2Count = hardwareLoops[0].count;
+    plan.loop1Count = hardwareLoops[1].count;
+    rewriter.create<pto::SetLoop1StrideOutToUbOp>(
+        op.getLoc(), hardwareLoops[1].srcStride, hardwareLoops[1].dstStride);
+  } else if (hardwareLoops.size() == 1) {
+    plan.loop1Count = hardwareLoops[0].count;
+    rewriter.create<pto::SetLoop1StrideOutToUbOp>(
+        op.getLoc(), hardwareLoops[0].srcStride, hardwareLoops[0].dstStride);
+  }
+  if (plan.loop1Count) {
+    rewriter.create<pto::SetLoopSizeOutToUbOp>(op.getLoc(), plan.loop2Count,
+                                               plan.loop1Count);
+  }
+  return plan;
+}
+
+static DmaLoopPlan configureStoreFromUbLoops(
+    pto::MteUbGmOp op, DmaArch dmaArch,
+    ArrayRef<pto::DmaLoopConfig> loops, Value one,
+    PatternRewriter &rewriter) {
+  DmaLoopPlan plan{{}, {}, one};
+  if (dmaArch != DmaArch::A5) {
+    plan.softwareLoops.append(loops.begin(), loops.end());
+    plan.softwareLoops.push_back(
+        {op.getNBurst(), op.getNburstSrcStride(), op.getNburstDstStride()});
+    return plan;
+  }
+
+  ArrayRef<pto::DmaLoopConfig> hardwareLoops =
+      loops.take_front(mlir::pto::kValue2);
+  ArrayRef<pto::DmaLoopConfig> softwareLoops =
+      loops.drop_front(hardwareLoops.size());
+  plan.softwareLoops.append(softwareLoops.begin(), softwareLoops.end());
+  bool hasTwoHardwareLoops = hardwareLoops.size() == mlir::pto::kValue2;
+  if (hasTwoHardwareLoops) {
+    rewriter.create<pto::SetLoop2StrideUbToOutOp>(
+        op.getLoc(), hardwareLoops[0].srcStride, hardwareLoops[0].dstStride);
+    plan.loop2Count = hardwareLoops[0].count;
+    plan.loop1Count = hardwareLoops[1].count;
+    rewriter.create<pto::SetLoop1StrideUbToOutOp>(
+        op.getLoc(), hardwareLoops[1].srcStride, hardwareLoops[1].dstStride);
+  } else if (hardwareLoops.size() == 1) {
+    plan.loop1Count = hardwareLoops[0].count;
+    rewriter.create<pto::SetLoop1StrideUbToOutOp>(
+        op.getLoc(), hardwareLoops[0].srcStride, hardwareLoops[0].dstStride);
+  }
+  if (plan.loop1Count) {
+    rewriter.create<pto::SetLoopSizeUbToOutOp>(op.getLoc(), plan.loop2Count,
+                                               plan.loop1Count);
+  }
+  return plan;
+}
+
+struct DmaPaddingConfig {
+  Value left;
+  Value right;
+  Value dataSelect;
+  bool enabled;
+};
+
+static DmaPaddingConfig configureDmaPadding(pto::MteGmUbOp op,
+                                            PatternRewriter &rewriter) {
+  Location loc = op.getLoc();
+  Value left = op.getLeftPaddingCount();
+  Value right = op.getRightPaddingCount();
+  if (!left) {
+    left = rewriter.create<arith::ConstantIntOp>(loc, 0,
+                                                 mlir::pto::kValue64);
+  }
+  if (!right) {
+    right = rewriter.create<arith::ConstantIntOp>(loc, 0,
+                                                  mlir::pto::kValue64);
+  }
+  bool enabled = static_cast<bool>(op.getPadValue());
+  Value dataSelect = rewriter.create<arith::ConstantOp>(
+      loc, rewriter.getI1Type(), rewriter.getBoolAttr(enabled));
+  if (Value padValue = op.getPadValue()) {
+    rewriter.create<pto::SetMovPadValOp>(loc, padValue);
+  }
+  return {left, right, dataSelect, enabled};
+}
+
+static DmaLoopPlan configureLoadToL1Loops(
+    pto::MteGmL1Op op, ArrayRef<pto::DmaLoopConfig> loops, Value one,
+    PatternRewriter &rewriter) {
+  ArrayRef<pto::DmaLoopConfig> hardwareLoops =
+      loops.take_front(mlir::pto::kValue2);
+  ArrayRef<pto::DmaLoopConfig> softwareLoops =
+      loops.drop_front(hardwareLoops.size());
+  DmaLoopPlan plan{
+      SmallVector<pto::DmaLoopConfig>(softwareLoops.rbegin(),
+                                      softwareLoops.rend()),
+      {}, one};
+  bool hasTwoHardwareLoops = hardwareLoops.size() == mlir::pto::kValue2;
+  if (hasTwoHardwareLoops) {
+    rewriter.create<pto::SetLoop2StrideOutToL1Op>(
+        op.getLoc(), packLoopPair(op.getLoc(), hardwareLoops[0].srcStride,
+                                  hardwareLoops[0].dstStride, rewriter));
+    plan.loop2Count = hardwareLoops[0].count;
+    plan.loop1Count = hardwareLoops[1].count;
+    rewriter.create<pto::SetLoop1StrideOutToL1Op>(
+        op.getLoc(), packLoopPair(op.getLoc(), hardwareLoops[1].srcStride,
+                                  hardwareLoops[1].dstStride, rewriter));
+  } else if (hardwareLoops.size() == 1) {
+    plan.loop1Count = hardwareLoops[0].count;
+    rewriter.create<pto::SetLoop1StrideOutToL1Op>(
+        op.getLoc(), packLoopPair(op.getLoc(), hardwareLoops[0].srcStride,
+                                  hardwareLoops[0].dstStride, rewriter));
+  }
+  if (plan.loop1Count) {
+    Value loopSize = packLoopSize(op.getLoc(), plan.loop2Count,
+                                  plan.loop1Count, rewriter);
+    rewriter.create<pto::SetLoopSizeOutToL1Op>(op.getLoc(), loopSize);
+  }
+  return plan;
 }
 
 struct ExpandUvldPattern : public OpRewritePattern<pto::UvldOp> {
@@ -1183,14 +1277,16 @@ static LogicalResult lowerMadSemanticOp(pto::MadSemanticOpInterface op,
 
   Location loc = op->getLoc();
   Value ctrlSaved = rewriter.create<pto::GetCtrlOp>(loc).getResult();
-  Value ctrlForOp = buildMadSemanticCtrl(loc, ctrlSaved, isHif8, tf32Mode,
-                                         satMode, op.getNDir(), rewriter);
+  Value ctrlForOp = buildMadSemanticCtrl(
+      loc, ctrlSaved, {isHif8, tf32Mode, satMode, op.getNDir()}, rewriter);
   rewriter.create<pto::SetCtrlOp>(loc, ctrlForOp);
 
-  FailureOr<Value> xt =
-      packMadXt(loc, op.getM(), op.getN(), op.getK(), unitFlagMode,
-                op.getDisableGemv(), op.initializesAccumulatorWithBias(),
-                op.initializesAccumulatorWithZero(), rewriter);
+  FailureOr<Value> xt = packMadXt(
+      loc,
+      {op.getM(), op.getN(), op.getK(), unitFlagMode, op.getDisableGemv(),
+       op.initializesAccumulatorWithBias(),
+       op.initializesAccumulatorWithZero()},
+      rewriter);
   if (failed(xt)) {
     return rewriter.notifyMatchFailure(op, "failed to pack mad xt");
   }
@@ -1228,80 +1324,34 @@ struct ExpandDmaLoadPattern : public OpRewritePattern<pto::MteGmUbOp> {
   LogicalResult matchAndRewrite(pto::MteGmUbOp op,
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
-    Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 64);
-    Value one = rewriter.create<arith::ConstantIntOp>(loc, 1, 64);
+    Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, mlir::pto::kValue64);
+    Value one = rewriter.create<arith::ConstantIntOp>(loc, 1, mlir::pto::kValue64);
     SmallVector<pto::DmaLoopConfig> loops =
         collectLoopConfigs(op.getLoopCounts(), op.getLoopSrcStrides(),
                            op.getLoopDstStrides());
-
-    SmallVector<pto::DmaLoopConfig> allLoops;
-    ArrayRef<pto::DmaLoopConfig> hwLoops;
-    ArrayRef<pto::DmaLoopConfig> swLoops;
-    Value loop1Count;
-    Value loop2Size = one;
-
-    if (dmaArch == DmaArch::A5) {
-      hwLoops = ArrayRef<pto::DmaLoopConfig>(loops).take_front(mlir::pto::kValue2);
-      swLoops = ArrayRef<pto::DmaLoopConfig>(loops).drop_front(hwLoops.size());
-      if (hwLoops.size() == mlir::pto::kValue2) {
-        rewriter.create<pto::SetLoop2StrideOutToUbOp>(
-            loc, hwLoops[0].srcStride, hwLoops[0].dstStride);
-        loop2Size = hwLoops[0].count;
-        loop1Count = hwLoops[1].count;
-        rewriter.create<pto::SetLoop1StrideOutToUbOp>(
-            loc, hwLoops[1].srcStride, hwLoops[1].dstStride);
-        rewriter.create<pto::SetLoopSizeOutToUbOp>(loc, loop2Size, loop1Count);
-      } else if (hwLoops.size() == 1) {
-        loop1Count = hwLoops[0].count;
-        rewriter.create<pto::SetLoop1StrideOutToUbOp>(
-            loc, hwLoops[0].srcStride, hwLoops[0].dstStride);
-        rewriter.create<pto::SetLoopSizeOutToUbOp>(loc, loop2Size, loop1Count);
-      }
-    } else {
-      allLoops.append(loops);
-      pto::DmaLoopConfig nburstCfg;
-      nburstCfg.count = op.getNBurst();
-      nburstCfg.srcStride = op.getNburstSrcStride();
-      nburstCfg.dstStride = op.getNburstDstStride();
-      allLoops.push_back(nburstCfg);
-      swLoops = ArrayRef<pto::DmaLoopConfig>(allLoops);
-    }
-
-    Value leftPadding = op.getLeftPaddingCount();
-    if (!leftPadding) {
-      leftPadding = rewriter.create<arith::ConstantIntOp>(loc, 0, mlir::pto::kValue64);
-    }
-    Value rightPadding = op.getRightPaddingCount();
-    if (!rightPadding) {
-      rightPadding = rewriter.create<arith::ConstantIntOp>(loc, 0, mlir::pto::kValue64);
-    }
-    Value dataSelect = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getI1Type(),
-        rewriter.getBoolAttr(static_cast<bool>(op.getPadValue())));
-
-    bool hasPad = static_cast<bool>(op.getPadValue());
-    if (Value padValue = op.getPadValue()) {
-      rewriter.create<pto::SetMovPadValOp>(loc, padValue);
-    }
+    DmaLoopPlan loopPlan =
+        configureLoadToUbLoops(op, dmaArch, loops, one, rewriter);
+    DmaPaddingConfig padding = configureDmaPadding(op, rewriter);
 
     Value effectiveNBurst = (dmaArch == DmaArch::A5) ? op.getNBurst() : one;
 
     buildSoftwareLoopNest(
-        rewriter, loc, swLoops, zero, zero,
+        rewriter, loc, loopPlan.softwareLoops, {zero, zero},
         [&](Value srcOffset, Value dstOffset) {
           Value source = offsetPointerByBytes(op.getSource(), srcOffset, rewriter, loc);
           Value destination =
               offsetPointerByBytes(op.getDestination(), dstOffset, rewriter, loc);
           auto copyOp = rewriter.create<pto::CopyGmToUbufOp>(
               loc, source, destination, zero, effectiveNBurst, op.getLenBurst(),
-              leftPadding, rightPadding, dataSelect, op.getL2CacheCtl(),
+              padding.left, padding.right, padding.dataSelect,
+              op.getL2CacheCtl(),
               op.getNburstSrcStride(), op.getNburstDstStride());
-          if (hasPad) {
+          if (padding.enabled) {
             copyOp->setAttr("has_pad", UnitAttr::get(copyOp->getContext()));
           }
         });
     if (dmaArch == DmaArch::A5 &&
-        shouldRestoreDmaLoopSize(loop1Count, loop2Size)) {
+        shouldRestoreDmaLoopSize(loopPlan.loop1Count, loopPlan.loop2Count)) {
       rewriter.create<pto::SetLoopSizeOutToUbOp>(loc, one, one);
     }
     rewriter.eraseOp(op);
@@ -1317,50 +1367,18 @@ struct ExpandDmaStorePattern : public OpRewritePattern<pto::MteUbGmOp> {
   LogicalResult matchAndRewrite(pto::MteUbGmOp op,
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
-    Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 64);
-    Value one = rewriter.create<arith::ConstantIntOp>(loc, 1, 64);
+    Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, mlir::pto::kValue64);
+    Value one = rewriter.create<arith::ConstantIntOp>(loc, 1, mlir::pto::kValue64);
     SmallVector<pto::DmaLoopConfig> loops =
         collectLoopConfigs(op.getLoopCounts(), op.getLoopSrcStrides(),
                            op.getLoopDstStrides());
-
-    SmallVector<pto::DmaLoopConfig> allLoops;
-    ArrayRef<pto::DmaLoopConfig> hwLoops;
-    ArrayRef<pto::DmaLoopConfig> swLoops;
-    Value loop1Count;
-    Value loop2Size = one;
-
-    if (dmaArch == DmaArch::A5) {
-      hwLoops = ArrayRef<pto::DmaLoopConfig>(loops).take_front(mlir::pto::kValue2);
-      swLoops =
-          ArrayRef<pto::DmaLoopConfig>(loops).drop_front(hwLoops.size());
-      if (hwLoops.size() == mlir::pto::kValue2) {
-        rewriter.create<pto::SetLoop2StrideUbToOutOp>(
-            loc, hwLoops[0].srcStride, hwLoops[0].dstStride);
-        loop2Size = hwLoops[0].count;
-        loop1Count = hwLoops[1].count;
-        rewriter.create<pto::SetLoop1StrideUbToOutOp>(
-            loc, hwLoops[1].srcStride, hwLoops[1].dstStride);
-        rewriter.create<pto::SetLoopSizeUbToOutOp>(loc, loop2Size, loop1Count);
-      } else if (hwLoops.size() == 1) {
-        loop1Count = hwLoops[0].count;
-        rewriter.create<pto::SetLoop1StrideUbToOutOp>(
-            loc, hwLoops[0].srcStride, hwLoops[0].dstStride);
-        rewriter.create<pto::SetLoopSizeUbToOutOp>(loc, loop2Size, loop1Count);
-      }
-    } else {
-      allLoops.append(loops);
-      pto::DmaLoopConfig nburstCfg;
-      nburstCfg.count = op.getNBurst();
-      nburstCfg.srcStride = op.getNburstSrcStride();
-      nburstCfg.dstStride = op.getNburstDstStride();
-      allLoops.push_back(nburstCfg);
-      swLoops = ArrayRef<pto::DmaLoopConfig>(allLoops);
-    }
+    DmaLoopPlan loopPlan =
+        configureStoreFromUbLoops(op, dmaArch, loops, one, rewriter);
 
     Value effectiveNBurst = (dmaArch == DmaArch::A5) ? op.getNBurst() : one;
 
     buildSoftwareLoopNest(
-        rewriter, loc, swLoops, zero, zero,
+        rewriter, loc, loopPlan.softwareLoops, {zero, zero},
         [&](Value srcOffset, Value dstOffset) {
           Value source = offsetPointerByBytes(op.getSource(), srcOffset, rewriter, loc);
           Value destination =
@@ -1371,7 +1389,7 @@ struct ExpandDmaStorePattern : public OpRewritePattern<pto::MteUbGmOp> {
               l2CacheCtl, op.getNburstDstStride(), op.getNburstSrcStride());
         });
     if (dmaArch == DmaArch::A5 &&
-        shouldRestoreDmaLoopSize(loop1Count, loop2Size)) {
+        shouldRestoreDmaLoopSize(loopPlan.loop1Count, loopPlan.loop2Count)) {
       rewriter.create<pto::SetLoopSizeUbToOutOp>(loc, one, one);
     }
     rewriter.eraseOp(op);
@@ -1384,7 +1402,7 @@ struct ExpandMteUbUbPattern : public OpRewritePattern<pto::MteUbUbOp> {
 
   LogicalResult matchAndRewrite(pto::MteUbUbOp op,
                                 PatternRewriter &rewriter) const override {
-    Value zero = rewriter.create<arith::ConstantIntOp>(op.getLoc(), 0, 64);
+    Value zero = rewriter.create<arith::ConstantIntOp>(op.getLoc(), 0, mlir::pto::kValue64);
     rewriter.replaceOpWithNewOp<pto::CopyUbufToUbufOp>(
         op, op.getSource(), op.getDestination(), zero, op.getNBurst(),
         op.getLenBurst(), op.getSrcStride(), op.getDstStride());
@@ -1397,7 +1415,7 @@ struct ExpandMteUbL1Pattern : public OpRewritePattern<pto::MteUbL1Op> {
 
   LogicalResult matchAndRewrite(pto::MteUbL1Op op,
                                 PatternRewriter &rewriter) const override {
-    Value zero = rewriter.create<arith::ConstantIntOp>(op.getLoc(), 0, 64);
+    Value zero = rewriter.create<arith::ConstantIntOp>(op.getLoc(), 0, mlir::pto::kValue64);
     rewriter.replaceOpWithNewOp<pto::CopyUbufToCbufOp>(
         op, op.getSource(), op.getDestination(), zero, op.getNBurst(),
         op.getLenBurst(), op.getSrcStride(), op.getDstStride());
@@ -1411,45 +1429,14 @@ struct ExpandCubeLoadPattern : public OpRewritePattern<pto::MteGmL1Op> {
   LogicalResult matchAndRewrite(pto::MteGmL1Op op,
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
-    Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 64);
-    Value one = rewriter.create<arith::ConstantIntOp>(loc, 1, 64);
+    Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, mlir::pto::kValue64);
+    Value one = rewriter.create<arith::ConstantIntOp>(loc, 1, mlir::pto::kValue64);
     SmallVector<pto::DmaLoopConfig> loops =
         collectLoopConfigs(op.getLoopCounts(), op.getLoopSrcStrides(),
                            op.getLoopDstStrides());
-    ArrayRef<pto::DmaLoopConfig> hwLoops =
-        ArrayRef<pto::DmaLoopConfig>(loops).take_front(mlir::pto::kValue2);
-    ArrayRef<pto::DmaLoopConfig> swLoops =
-        ArrayRef<pto::DmaLoopConfig>(loops).drop_front(hwLoops.size());
-
-    Value loop1Count;
-    Value loop2Count = one;
-    if (hwLoops.size() == mlir::pto::kValue2) {
-      rewriter.create<pto::SetLoop2StrideOutToL1Op>(
-          loc,
-          packLoopPair(loc, hwLoops[0].srcStride, hwLoops[0].dstStride,
-                       rewriter));
-      loop2Count = hwLoops[0].count;
-      loop1Count = hwLoops[1].count;
-      rewriter.create<pto::SetLoop1StrideOutToL1Op>(
-          loc,
-          packLoopPair(loc, hwLoops[1].srcStride, hwLoops[1].dstStride,
-                       rewriter));
-      rewriter.create<pto::SetLoopSizeOutToL1Op>(
-          loc, packLoopSize(loc, loop2Count, loop1Count, rewriter));
-    } else if (hwLoops.size() == 1) {
-      loop1Count = hwLoops[0].count;
-      rewriter.create<pto::SetLoop1StrideOutToL1Op>(
-          loc,
-          packLoopPair(loc, hwLoops[0].srcStride, hwLoops[0].dstStride,
-                       rewriter));
-      rewriter.create<pto::SetLoopSizeOutToL1Op>(
-          loc, packLoopSize(loc, loop2Count, loop1Count, rewriter));
-    }
-
-    SmallVector<pto::DmaLoopConfig> swLoopNestOrder(swLoops.rbegin(),
-                                                    swLoops.rend());
+    DmaLoopPlan loopPlan = configureLoadToL1Loops(op, loops, one, rewriter);
     buildSoftwareLoopNest(
-        rewriter, loc, swLoopNestOrder, zero, zero,
+        rewriter, loc, loopPlan.softwareLoops, {zero, zero},
         [&](Value srcOffset, Value dstOffset) {
           Value source =
               offsetPointerByBytes(op.getSource(), srcOffset, rewriter, loc);
@@ -1459,7 +1446,11 @@ struct ExpandCubeLoadPattern : public OpRewritePattern<pto::MteGmL1Op> {
               loc, source, destination, op.getNBurst(), op.getLenBurst(),
               op.getNburstSrcStride(), op.getNburstDstStride());
         });
-    if (loop1Count && (!isKnownOne(loop1Count) || !isKnownOne(loop2Count))) {
+    bool restoreLoopSize =
+        loopPlan.loop1Count &&
+        (!isKnownOne(loopPlan.loop1Count) ||
+         !isKnownOne(loopPlan.loop2Count));
+    if (restoreLoopSize) {
       rewriter.create<pto::SetLoopSizeOutToL1Op>(
           loc, packLoopSize(loc, one, one, rewriter));
     }
@@ -1514,14 +1505,14 @@ struct ExpandCubeStorePattern : public OpRewritePattern<pto::MteL1UbOp> {
   LogicalResult matchAndRewrite(pto::MteL1UbOp op,
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
-    Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 64);
+    Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, mlir::pto::kValue64);
     SmallVector<pto::DmaLoopConfig> loops =
         collectLoopConfigs(op.getLoopCounts(), op.getLoopSrcStrides(),
                            op.getLoopDstStrides());
     SmallVector<pto::DmaLoopConfig> swLoopNestOrder(loops.rbegin(),
                                                     loops.rend());
     buildSoftwareLoopNest(
-        rewriter, loc, swLoopNestOrder, zero, zero,
+        rewriter, loc, swLoopNestOrder, {zero, zero},
         [&](Value srcOffset, Value dstOffset) {
           Value source =
               offsetPointerByBytes(op.getSource(), srcOffset, rewriter, loc);
@@ -1588,10 +1579,12 @@ struct ExpandCubeLoadFracPattern : public OpRewritePattern<pto::MteGmL1FracOp> {
   LogicalResult matchAndRewrite(pto::MteGmL1FracOp op,
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
-    Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 64);
+    Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, mlir::pto::kValue64);
     Value mte2NzPara = packMte2NzPara(
-        loc, op.getGroupCount(), op.getDstLoop2Stride(), op.getDstLoop3Stride(),
-        op.getDstLoop4Stride(), rewriter);
+        loc,
+        {op.getGroupCount(), op.getDstLoop2Stride(), op.getDstLoop3Stride(),
+         op.getDstLoop4Stride()},
+        rewriter);
     rewriter.create<pto::SetMte2NzParaOp>(loc, mte2NzPara);
 
     Value srcOuterStride = op.getSrcOuterStride() ? op.getSrcOuterStride() : zero;
@@ -1639,21 +1632,22 @@ struct ExpandLeftLoadPattern : public OpRewritePattern<pto::MteL1L0aOp> {
         return LoadCbufToCbControl{op.getMStart(), op.getKStart(),
                                    op.getMStep(), op.getKStep(),
                                    op.getSrcStride(), op.getDstStride()};
-}
-      return deriveLoadCbufToCaControl(
-          loc, op.getM(), op.getK(), elementType, op.getStartRow(),
-          op.getStartCol(), op.getTranspose(), rewriter);
+      }
+      return deriveLoadCbufControl(
+          {loc, op.getM(), op.getK(), elementType, op.getStartRow(),
+           op.getStartCol(), op.getTranspose(), rewriter});
     }();
     if (failed(control)) {
       return rewriter.notifyMatchFailure(op,
                                          "failed to derive load_cbuf_to_ca control");
-}
+    }
     if (pto::isPTOFloat4PackedType(elementType)) {
       rewriter.create<pto::LoadCbufToCaS4Op>(
           loc, source, destination, control->mStart,
           control->kStart, control->mStep, control->kStep,
           control->srcStride, control->dstStride,
-          rewriter.create<arith::ConstantIntOp>(loc, op.getTranspose(), 64));
+          rewriter.create<arith::ConstantIntOp>(loc, op.getTranspose(),
+                                                mlir::pto::kValue64));
     } else {
       auto load = rewriter.create<pto::LoadCbufToCaOp>(
           loc, source, destination, control->mStart,
@@ -1688,21 +1682,22 @@ struct ExpandRightLoadPattern : public OpRewritePattern<pto::MteL1L0bOp> {
         return LoadCbufToCbControl{op.getMStart(), op.getKStart(),
                                    op.getMStep(), op.getKStep(),
                                    op.getSrcStride(), op.getDstStride()};
-}
-      return deriveLoadCbufToCbControl(
-          loc, op.getK(), op.getN(), elementType, op.getStartRow(),
-          op.getStartCol(), op.getTranspose(), rewriter);
+      }
+      return deriveLoadCbufControl(
+          {loc, op.getN(), op.getK(), elementType, op.getStartRow(),
+           op.getStartCol(), op.getTranspose(), rewriter});
     }();
     if (failed(control)) {
       return rewriter.notifyMatchFailure(op,
                                          "failed to derive load_cbuf_to_cb control");
-}
+    }
     if (pto::isPTOFloat4PackedType(elementType)) {
       rewriter.create<pto::LoadCbufToCbS4Op>(
           loc, source, destination, control->mStart,
           control->kStart, control->mStep, control->kStep,
           control->srcStride, control->dstStride,
-          rewriter.create<arith::ConstantIntOp>(loc, op.getTranspose(), 64));
+          rewriter.create<arith::ConstantIntOp>(loc, op.getTranspose(),
+                                                mlir::pto::kValue64));
     } else {
       auto load = rewriter.create<pto::LoadCbufToCbOp>(
           loc, source, destination, control->mStart,
@@ -1751,9 +1746,9 @@ struct ExpandLeftLoadMxPattern : public OpRewritePattern<pto::MteL1L0aMxOp> {
         return rewriter.notifyMatchFailure(
             op, "expected complete shape-derived MX operands");
       }
-      FailureOr<LoadCbufToMxControl> derived = deriveLoadCbufToCaMxControl(
-          loc, op.getM(), op.getK(), sourceType.getElementType(),
-          op.getStartRow(), op.getStartCol(), rewriter);
+      FailureOr<LoadCbufToMxControl> derived = deriveLoadCbufMxControl(
+          {loc, op.getM(), op.getK(), sourceType.getElementType(),
+           op.getStartRow(), op.getStartCol(), CbufMxSide::Left, rewriter});
       if (failed(derived)) {
         return rewriter.notifyMatchFailure(
             op, "failed to derive load_cbuf_to_ca_mx control");
@@ -1806,9 +1801,9 @@ struct ExpandRightLoadMxPattern : public OpRewritePattern<pto::MteL1L0bMxOp> {
         return rewriter.notifyMatchFailure(
             op, "expected complete shape-derived MX operands");
       }
-      FailureOr<LoadCbufToMxControl> derived = deriveLoadCbufToCbMxControl(
-          loc, op.getK(), op.getN(), sourceType.getElementType(),
-          op.getStartRow(), op.getStartCol(), rewriter);
+      FailureOr<LoadCbufToMxControl> derived = deriveLoadCbufMxControl(
+          {loc, op.getN(), op.getK(), sourceType.getElementType(),
+           op.getStartRow(), op.getStartCol(), CbufMxSide::Right, rewriter});
       if (failed(derived)) {
         return rewriter.notifyMatchFailure(
             op, "failed to derive load_cbuf_to_cb_mx control");
@@ -1825,101 +1820,133 @@ struct ExpandRightLoadMxPattern : public OpRewritePattern<pto::MteL1L0bMxOp> {
   }
 };
 
+struct AccStorePointers {
+  Value source;
+  Value destination;
+};
+
+template <typename StoreOp>
+static AccStorePointers materializeAccStorePointers(
+    StoreOp op, PatternRewriter &rewriter) {
+  return {materializeBufferPointer(op.getSource(), rewriter, op.getLoc()),
+          materializeBufferPointer(op.getDestination(), rewriter,
+                                   op.getLoc())};
+}
+
+template <typename StoreOp>
+static void configureAccStorePreOps(StoreOp op, PatternRewriter &rewriter) {
+  Location loc = op.getLoc();
+  AccStorePreOpConfig config{
+      op.getPreQuant(), op.getPreQuantMode(), op.getPreRelu(),
+      op.getPreReluMode(), op.getClipValue(),
+      getBufferElementType(op.getDestination().getType())};
+  configureAccStoreScalarPreOps(loc, config, rewriter);
+  Value fpc = buildAccStoreFpcValue(loc, config, rewriter);
+  if (fpc) {
+    rewriter.create<pto::SetFpcOp>(loc, fpc);
+  }
+}
+
+template <typename StoreOp>
+static pto::DmaLoopConfig getAccStoreHardwareLoop(StoreOp op, Value zero,
+                                                   Value one) {
+  if (Value count = op.getLoop3Count()) {
+    return {count, op.getLoop3SrcStride(), op.getLoop3DstStride()};
+  }
+  return {one, zero, zero};
+}
+
+template <typename StoreOp>
+static AccStoreModeConfig getAccStoreModeConfig(StoreOp op, Value zero,
+                                                 Value one) {
+  AccStoreModeConfig config{zero, zero, zero, zero};
+  std::optional<pto::AccStoreMode> mode = op.getMode();
+  if (!mode) {
+    config.nz2nd = one;
+    return config;
+  }
+  switch (*mode) {
+  case pto::AccStoreMode::Nz2nd:
+    config.nz2nd = one;
+    break;
+  case pto::AccStoreMode::Nz2dn:
+    config.nz2dn = one;
+    config.channelLoop0Stride =
+        op.getLoop0SrcStride() ? op.getLoop0SrcStride() : one;
+    break;
+  case pto::AccStoreMode::Nz2nz:
+    config.channelSplit = op.getSplit() ? op.getSplit() : zero;
+    break;
+  }
+  return config;
+}
+
+static void emitAccStoreLoopConfig(Location loc, pto::DmaLoopConfig loop,
+                                   Value channelLoop0Stride,
+                                   PatternRewriter &rewriter) {
+  Value loopConfig = packLoop3Config(loc, loop.count, loop.srcStride,
+                                     loop.dstStride, rewriter);
+  Value channelConfig =
+      packChannelConfig(loc, channelLoop0Stride, rewriter);
+  rewriter.create<pto::SetLoop3ParaOp>(
+      loc, extractConfigLow40(loc, loopConfig, rewriter),
+      extractConfigHigh24(loc, loopConfig, rewriter));
+  rewriter.create<pto::SetChannelParaOp>(
+      loc, extractConfigLow40(loc, channelConfig, rewriter),
+      extractConfigHigh24(loc, channelConfig, rewriter));
+}
+
+template <typename StoreOp>
+static AccStorePackedFields getAccStorePackedFields(
+    StoreOp op, PatternRewriter &rewriter) {
+  Location loc = op.getLoc();
+  auto encode = [loc, &rewriter](auto mode) {
+    return buildAccStoreOptionalEnumValue(
+        loc,
+        mode ? std::optional<uint32_t>(static_cast<uint32_t>(*mode))
+             : std::nullopt,
+        rewriter);
+  };
+  return {getI64Constant(loc, rewriter, op.getClipValue() ? 1 : 0),
+          encode(op.getUnitFlag()), encode(op.getPreQuantMode()),
+          encode(op.getPreReluMode())};
+}
+
+static void restoreAccStoreCtrl(Location loc, Value originalCtrl,
+                                PatternRewriter &rewriter) {
+  if (originalCtrl) {
+    rewriter.create<pto::SetCtrlOp>(loc, originalCtrl);
+  }
+}
+
 struct ExpandAccStorePattern : public OpRewritePattern<pto::MteL0cL1Op> {
   using OpRewritePattern<pto::MteL0cL1Op>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(pto::MteL0cL1Op op,
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
-    Value source = materializeBufferPointer(op.getSource(), rewriter, loc);
-    Value destination =
-        materializeBufferPointer(op.getDestination(), rewriter, loc);
-    if (!source || !destination) {
+    AccStorePointers pointers = materializeAccStorePointers(op, rewriter);
+    if (!pointers.source || !pointers.destination) {
       return rewriter.notifyMatchFailure(op, "expected pointer-like operands");
     }
     Value zero = getI64Constant(loc, rewriter, 0);
     Value one = getI64Constant(loc, rewriter, 1);
-    configureAccStoreScalarPreOps(loc, op.getPreQuant(), op.getPreQuantMode(),
-                                  op.getPreRelu(), op.getPreReluMode(),
-                                  op.getClipValue(),
-                                  getBufferElementType(op.getDestination().getType()),
-                                  rewriter);
-    if (Value fpc = buildAccStoreFpcValue(loc, op.getPreQuant(),
-                                          op.getPreQuantMode(),
-                                          op.getPreRelu(),
-                                          op.getPreReluMode(), rewriter)) {
-      rewriter.create<pto::SetFpcOp>(loc, fpc);
-    }
-    Value originalCtrl =
-        configureAccStoreCtrl(loc, /*allowAtomic=*/false, std::nullopt,
-                              std::nullopt, op.getSatMode(), rewriter);
-    pto::DmaLoopConfig hwLoop{one, zero, zero};
-    if (Value loop3Count = op.getLoop3Count()) {
-      hwLoop = {loop3Count, op.getLoop3SrcStride(), op.getLoop3DstStride()};
-    }
-
-    Value channelLoop0Stride = zero;
-    Value nz2ndEn = zero;
-    Value channelSplitEn = zero;
-    Value nz2dnEn = zero;
-    if (auto mode = op.getMode()) {
-      switch (*mode) {
-      case pto::AccStoreMode::Nz2nd:
-        nz2ndEn = one;
-        break;
-      case pto::AccStoreMode::Nz2dn:
-        nz2dnEn = one;
-        channelLoop0Stride = op.getLoop0SrcStride() ? op.getLoop0SrcStride() : one;
-        break;
-      case pto::AccStoreMode::Nz2nz:
-        channelSplitEn = op.getSplit() ? op.getSplit() : zero;
-        break;
-      }
-    } else {
-      nz2ndEn = one;
-    }
-
-    Value loop3Config = packLoop3Config(loc, hwLoop.count, hwLoop.srcStride,
-                                        hwLoop.dstStride, rewriter);
-    Value channelConfig =
-        packChannelConfig(loc, channelLoop0Stride, rewriter);
-    rewriter.create<pto::SetLoop3ParaOp>(
-        loc, extractConfigLow40(loc, loop3Config, rewriter),
-        extractConfigHigh24(loc, loop3Config, rewriter));
-    rewriter.create<pto::SetChannelParaOp>(
-        loc, extractConfigLow40(loc, channelConfig, rewriter),
-        extractConfigHigh24(loc, channelConfig, rewriter));
-    Value clipReluPre = getI64Constant(loc, rewriter, op.getClipValue() ? 1 : 0);
-    Value unitFlagCtrl = buildAccStoreOptionalEnumValue(
-        loc,
-        op.getUnitFlag()
-            ? std::optional<uint32_t>(static_cast<uint32_t>(*op.getUnitFlag()))
-            : std::nullopt,
-        rewriter);
-    Value quantPreMode = buildAccStoreOptionalEnumValue(
-        loc,
-        op.getPreQuantMode()
-            ? std::optional<uint32_t>(static_cast<uint32_t>(*op.getPreQuantMode()))
-            : std::nullopt,
-        rewriter);
-    Value reluPreMode = buildAccStoreOptionalEnumValue(
-        loc,
-        op.getPreReluMode()
-            ? std::optional<uint32_t>(static_cast<uint32_t>(*op.getPreReluMode()))
-            : std::nullopt,
-        rewriter);
-    Value xm =
-        packCopyMatrixCcToGmXm(loc, zero, op.getN(), op.getM(),
-                               op.getDstStride(), rewriter);
+    configureAccStorePreOps(op, rewriter);
+    Value originalCtrl = configureAccStoreCtrl(
+        loc, {false, std::nullopt, std::nullopt, op.getSatMode()}, rewriter);
+    pto::DmaLoopConfig hardwareLoop =
+        getAccStoreHardwareLoop(op, zero, one);
+    AccStoreModeConfig mode = getAccStoreModeConfig(op, zero, one);
+    emitAccStoreLoopConfig(loc, hardwareLoop, mode.channelLoop0Stride,
+                           rewriter);
+    AccStorePackedFields fields = getAccStorePackedFields(op, rewriter);
+    Value xm = packCopyMatrixCcToGmXm(
+        loc, {zero, op.getN(), op.getM(), op.getDstStride()}, rewriter);
     Value xt = packCopyMatrixCcToGmXt(
-        loc, op.getSrcStride(), clipReluPre, unitFlagCtrl, quantPreMode,
-        reluPreMode, zero, nz2ndEn, channelSplitEn, nz2dnEn,
-        rewriter);
-    rewriter.create<pto::CopyMatrixCcToCbufOp>(loc, source,
-                                               destination, xm, xt);
-    if (originalCtrl) {
-      rewriter.create<pto::SetCtrlOp>(loc, originalCtrl);
-    }
+        loc, {op.getSrcStride(), zero, fields, mode}, rewriter);
+    rewriter.create<pto::CopyMatrixCcToCbufOp>(
+        loc, pointers.source, pointers.destination, xm, xt);
+    restoreAccStoreCtrl(loc, originalCtrl, rewriter);
     rewriter.eraseOp(op);
     return success();
   }
@@ -1931,94 +1958,29 @@ struct ExpandAccStoreGmPattern : public OpRewritePattern<pto::MteL0cGmOp> {
   LogicalResult matchAndRewrite(pto::MteL0cGmOp op,
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
-    Value source = materializeBufferPointer(op.getSource(), rewriter, loc);
-    Value destination =
-        materializeBufferPointer(op.getDestination(), rewriter, loc);
-    if (!source || !destination) {
+    AccStorePointers pointers = materializeAccStorePointers(op, rewriter);
+    if (!pointers.source || !pointers.destination) {
       return rewriter.notifyMatchFailure(op, "expected pointer-like operands");
     }
     Value zero = getI64Constant(loc, rewriter, 0);
     Value one = getI64Constant(loc, rewriter, 1);
-    configureAccStoreScalarPreOps(loc, op.getPreQuant(), op.getPreQuantMode(),
-                                  op.getPreRelu(), op.getPreReluMode(),
-                                  op.getClipValue(),
-                                  getBufferElementType(op.getDestination().getType()),
-                                  rewriter);
-    if (Value fpc = buildAccStoreFpcValue(loc, op.getPreQuant(),
-                                          op.getPreQuantMode(),
-                                          op.getPreRelu(),
-                                          op.getPreReluMode(), rewriter)) {
-      rewriter.create<pto::SetFpcOp>(loc, fpc);
-    }
-    Value originalCtrl =
-        configureAccStoreCtrl(loc, /*allowAtomic=*/true, op.getAtomicType(),
-                              op.getAtomicOp(), op.getSatMode(), rewriter);
-    pto::DmaLoopConfig hwLoop{one, zero, zero};
-    if (Value loop3Count = op.getLoop3Count()) {
-      hwLoop = {loop3Count, op.getLoop3SrcStride(), op.getLoop3DstStride()};
-    }
-
-    Value channelLoop0Stride = zero;
-    Value nz2ndEn = zero;
-    Value channelSplitEn = zero;
-    Value nz2dnEn = zero;
-    if (auto mode = op.getMode()) {
-      switch (*mode) {
-      case pto::AccStoreMode::Nz2nd:
-        nz2ndEn = one;
-        break;
-      case pto::AccStoreMode::Nz2dn:
-        nz2dnEn = one;
-        channelLoop0Stride =
-            op.getLoop0SrcStride() ? op.getLoop0SrcStride() : one;
-        break;
-      case pto::AccStoreMode::Nz2nz:
-        channelSplitEn = op.getSplit() ? op.getSplit() : zero;
-        break;
-      }
-    } else {
-      nz2ndEn = one;
-    }
-
-    Value loop3Config = packLoop3Config(loc, hwLoop.count, hwLoop.srcStride,
-                                        hwLoop.dstStride, rewriter);
-    Value channelConfig = packChannelConfig(loc, channelLoop0Stride, rewriter);
-    rewriter.create<pto::SetLoop3ParaOp>(
-        loc, extractConfigLow40(loc, loop3Config, rewriter),
-        extractConfigHigh24(loc, loop3Config, rewriter));
-    rewriter.create<pto::SetChannelParaOp>(
-        loc, extractConfigLow40(loc, channelConfig, rewriter),
-        extractConfigHigh24(loc, channelConfig, rewriter));
-    Value clipReluPre = getI64Constant(loc, rewriter, op.getClipValue() ? 1 : 0);
-    Value unitFlagCtrl = buildAccStoreOptionalEnumValue(
-        loc,
-        op.getUnitFlag()
-            ? std::optional<uint32_t>(static_cast<uint32_t>(*op.getUnitFlag()))
-            : std::nullopt,
+    configureAccStorePreOps(op, rewriter);
+    Value originalCtrl = configureAccStoreCtrl(
+        loc, {true, op.getAtomicType(), op.getAtomicOp(), op.getSatMode()},
         rewriter);
-    Value quantPreMode = buildAccStoreOptionalEnumValue(
-        loc,
-        op.getPreQuantMode()
-            ? std::optional<uint32_t>(static_cast<uint32_t>(*op.getPreQuantMode()))
-            : std::nullopt,
-        rewriter);
-    Value reluPreMode = buildAccStoreOptionalEnumValue(
-        loc,
-        op.getPreReluMode()
-            ? std::optional<uint32_t>(static_cast<uint32_t>(*op.getPreReluMode()))
-            : std::nullopt,
-        rewriter);
-    Value xm = packCopyMatrixCcToGmXm(loc, op.getSid(), op.getN(), op.getM(),
-                                      op.getDstStride(), rewriter);
+    pto::DmaLoopConfig hardwareLoop =
+        getAccStoreHardwareLoop(op, zero, one);
+    AccStoreModeConfig mode = getAccStoreModeConfig(op, zero, one);
+    emitAccStoreLoopConfig(loc, hardwareLoop, mode.channelLoop0Stride,
+                           rewriter);
+    AccStorePackedFields fields = getAccStorePackedFields(op, rewriter);
+    Value xm = packCopyMatrixCcToGmXm(
+        loc, {op.getSid(), op.getN(), op.getM(), op.getDstStride()}, rewriter);
     Value xt = packCopyMatrixCcToGmXt(
-        loc, op.getSrcStride(), clipReluPre, unitFlagCtrl, quantPreMode,
-        reluPreMode, op.getL2CacheCtrl(), nz2ndEn, channelSplitEn,
-        nz2dnEn, rewriter);
-    rewriter.create<pto::CopyMatrixCcToGmOp>(loc, source,
-                                             destination, xm, xt);
-    if (originalCtrl) {
-      rewriter.create<pto::SetCtrlOp>(loc, originalCtrl);
-    }
+        loc, {op.getSrcStride(), op.getL2CacheCtrl(), fields, mode}, rewriter);
+    rewriter.create<pto::CopyMatrixCcToGmOp>(
+        loc, pointers.source, pointers.destination, xm, xt);
+    restoreAccStoreCtrl(loc, originalCtrl, rewriter);
     rewriter.eraseOp(op);
     return success();
   }
@@ -2030,99 +1992,33 @@ struct ExpandAccStoreUbPattern : public OpRewritePattern<pto::MteL0cUbOp> {
   LogicalResult matchAndRewrite(pto::MteL0cUbOp op,
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
-    Value source = materializeBufferPointer(op.getSource(), rewriter, loc);
-    Value destination =
-        materializeBufferPointer(op.getDestination(), rewriter, loc);
-    if (!source || !destination) {
+    AccStorePointers pointers = materializeAccStorePointers(op, rewriter);
+    if (!pointers.source || !pointers.destination) {
       return rewriter.notifyMatchFailure(op, "expected pointer-like operands");
     }
     Value zero = getI64Constant(loc, rewriter, 0);
     Value one = getI64Constant(loc, rewriter, 1);
-    configureAccStoreScalarPreOps(loc, op.getPreQuant(), op.getPreQuantMode(),
-                                  op.getPreRelu(), op.getPreReluMode(),
-                                  op.getClipValue(),
-                                  getBufferElementType(op.getDestination().getType()),
-                                  rewriter);
-    if (Value fpc = buildAccStoreFpcValue(loc, op.getPreQuant(),
-                                          op.getPreQuantMode(),
-                                          op.getPreRelu(),
-                                          op.getPreReluMode(), rewriter)) {
-      rewriter.create<pto::SetFpcOp>(loc, fpc);
-    }
-    Value originalCtrl =
-        configureAccStoreCtrl(loc, /*allowAtomic=*/false, std::nullopt,
-                              std::nullopt, op.getSatMode(), rewriter);
-    pto::DmaLoopConfig hwLoop{one, zero, zero};
-    if (Value loop3Count = op.getLoop3Count()) {
-      hwLoop = {loop3Count, op.getLoop3SrcStride(), op.getLoop3DstStride()};
-    }
-
-    Value channelLoop0Stride = zero;
-    Value nz2ndEn = zero;
-    Value channelSplitEn = zero;
-    Value nz2dnEn = zero;
-    if (auto mode = op.getMode()) {
-      switch (*mode) {
-      case pto::AccStoreMode::Nz2nd:
-        nz2ndEn = one;
-        break;
-      case pto::AccStoreMode::Nz2dn:
-        nz2dnEn = one;
-        channelLoop0Stride = op.getLoop0SrcStride() ? op.getLoop0SrcStride() : one;
-        break;
-      case pto::AccStoreMode::Nz2nz:
-        channelSplitEn = op.getSplit() ? op.getSplit() : zero;
-        break;
-      }
-    } else {
-      nz2ndEn = one;
-    }
-
-    Value loop3Config = packLoop3Config(loc, hwLoop.count, hwLoop.srcStride,
-                                        hwLoop.dstStride, rewriter);
-    Value channelConfig =
-        packChannelConfig(loc, channelLoop0Stride, rewriter);
-    rewriter.create<pto::SetLoop3ParaOp>(
-        loc, extractConfigLow40(loc, loop3Config, rewriter),
-        extractConfigHigh24(loc, loop3Config, rewriter));
-    rewriter.create<pto::SetChannelParaOp>(
-        loc, extractConfigLow40(loc, channelConfig, rewriter),
-        extractConfigHigh24(loc, channelConfig, rewriter));
-    Value clipReluPre = getI64Constant(loc, rewriter, op.getClipValue() ? 1 : 0);
-    Value unitFlagCtrl = buildAccStoreOptionalEnumValue(
-        loc,
-        op.getUnitFlag()
-            ? std::optional<uint32_t>(static_cast<uint32_t>(*op.getUnitFlag()))
-            : std::nullopt,
-        rewriter);
-    Value quantPreMode = buildAccStoreOptionalEnumValue(
-        loc,
-        op.getPreQuantMode()
-            ? std::optional<uint32_t>(static_cast<uint32_t>(*op.getPreQuantMode()))
-            : std::nullopt,
-        rewriter);
-    Value reluPreMode = buildAccStoreOptionalEnumValue(
-        loc,
-        op.getPreReluMode()
-            ? std::optional<uint32_t>(static_cast<uint32_t>(*op.getPreReluMode()))
-            : std::nullopt,
-        rewriter);
+    configureAccStorePreOps(op, rewriter);
+    Value originalCtrl = configureAccStoreCtrl(
+        loc, {false, std::nullopt, std::nullopt, op.getSatMode()}, rewriter);
+    pto::DmaLoopConfig hardwareLoop =
+        getAccStoreHardwareLoop(op, zero, one);
+    AccStoreModeConfig mode = getAccStoreModeConfig(op, zero, one);
+    emitAccStoreLoopConfig(loc, hardwareLoop, mode.channelLoop0Stride,
+                           rewriter);
+    AccStorePackedFields fields = getAccStorePackedFields(op, rewriter);
 
     Value dualDstMode =
         getI64Constant(loc, rewriter, static_cast<int64_t>(op.getDstMode()));
     Value subBlockId = op.getSubBlockid() ? op.getSubBlockid() : zero;
-    Value config0 = packCopyMatrixCcToGmXm(loc, zero, op.getN(), op.getM(),
-                                           op.getDstStride(), rewriter);
+    Value config0 = packCopyMatrixCcToGmXm(
+        loc, {zero, op.getN(), op.getM(), op.getDstStride()}, rewriter);
     Value config1 = packCopyMatrixCcToUbConfig1(
-        loc, op.getSrcStride(), dualDstMode, subBlockId,
-        clipReluPre, unitFlagCtrl, quantPreMode, reluPreMode, nz2ndEn,
-        channelSplitEn, nz2dnEn, rewriter);
-    rewriter.create<pto::CopyMatrixCcToUbOp>(loc, source,
-                                             destination, config0,
-                                             config1);
-    if (originalCtrl) {
-      rewriter.create<pto::SetCtrlOp>(loc, originalCtrl);
-    }
+        loc, {op.getSrcStride(), dualDstMode, subBlockId, fields, mode},
+        rewriter);
+    rewriter.create<pto::CopyMatrixCcToUbOp>(
+        loc, pointers.source, pointers.destination, config0, config1);
+    restoreAccStoreCtrl(loc, originalCtrl, rewriter);
     rewriter.eraseOp(op);
     return success();
   }
@@ -2148,30 +2044,21 @@ struct AtomicCtrlUpdate {
   uint64_t value;
 };
 
-template <typename AtomicConfigOp>
-static AtomicCtrlUpdate getAtomicCtrlUpdate();
-
-#define DEFINE_ATOMIC_CTRL_UPDATE(OpTy, Mask, Value)                            \
-  template <>                                                                   \
-  AtomicCtrlUpdate getAtomicCtrlUpdate<pto::OpTy>() {                           \
-    return {Mask, Value};                                                       \
-  }
+template <typename AtomicConfigOp> static AtomicCtrlUpdate getAtomicCtrlUpdate();
 
 // CCE set_atomic_* configures CTRL[10:6]. Dtype occupies [8:6] and the
 // reduction operation occupies [10:9]. This matches the structured L0C-to-GM
 // FIXP atomic CTRL encoding used by configureAccStoreCtrl above.
-DEFINE_ATOMIC_CTRL_UPDATE(SetAtomicAddOp, 0x3ULL << 9, 0x0ULL << 9)
-DEFINE_ATOMIC_CTRL_UPDATE(SetAtomicMaxOp, 0x3ULL << 9, 0x1ULL << 9)
-DEFINE_ATOMIC_CTRL_UPDATE(SetAtomicMinOp, 0x3ULL << 9, 0x2ULL << 9)
-DEFINE_ATOMIC_CTRL_UPDATE(SetAtomicNoneOp, 0x7ULL << 6, 0)
-DEFINE_ATOMIC_CTRL_UPDATE(SetAtomicF32Op, 0x7ULL << 6, 0x1ULL << 6)
-DEFINE_ATOMIC_CTRL_UPDATE(SetAtomicF16Op, 0x7ULL << 6, 0x2ULL << 6)
-DEFINE_ATOMIC_CTRL_UPDATE(SetAtomicS16Op, 0x7ULL << 6, 0x3ULL << 6)
-DEFINE_ATOMIC_CTRL_UPDATE(SetAtomicS32Op, 0x7ULL << 6, 0x4ULL << 6)
-DEFINE_ATOMIC_CTRL_UPDATE(SetAtomicS8Op, 0x7ULL << 6, 0x5ULL << 6)
-DEFINE_ATOMIC_CTRL_UPDATE(SetAtomicBF16Op, 0x7ULL << 6, 0x6ULL << 6)
-
-#undef DEFINE_ATOMIC_CTRL_UPDATE
+template <> AtomicCtrlUpdate getAtomicCtrlUpdate<pto::SetAtomicAddOp>() { return {0x3ULL << 9, 0x0ULL << 9}; }
+template <> AtomicCtrlUpdate getAtomicCtrlUpdate<pto::SetAtomicMaxOp>() { return {0x3ULL << 9, 0x1ULL << 9}; }
+template <> AtomicCtrlUpdate getAtomicCtrlUpdate<pto::SetAtomicMinOp>() { return {0x3ULL << 9, 0x2ULL << 9}; }
+template <> AtomicCtrlUpdate getAtomicCtrlUpdate<pto::SetAtomicNoneOp>() { return {0x7ULL << 6, 0}; }
+template <> AtomicCtrlUpdate getAtomicCtrlUpdate<pto::SetAtomicF32Op>() { return {0x7ULL << 6, 0x1ULL << 6}; }
+template <> AtomicCtrlUpdate getAtomicCtrlUpdate<pto::SetAtomicF16Op>() { return {0x7ULL << 6, 0x2ULL << 6}; }
+template <> AtomicCtrlUpdate getAtomicCtrlUpdate<pto::SetAtomicS16Op>() { return {0x7ULL << 6, 0x3ULL << 6}; }
+template <> AtomicCtrlUpdate getAtomicCtrlUpdate<pto::SetAtomicS32Op>() { return {0x7ULL << 6, 0x4ULL << 6}; }
+template <> AtomicCtrlUpdate getAtomicCtrlUpdate<pto::SetAtomicS8Op>() { return {0x7ULL << 6, 0x5ULL << 6}; }
+template <> AtomicCtrlUpdate getAtomicCtrlUpdate<pto::SetAtomicBF16Op>() { return {0x7ULL << 6, 0x6ULL << 6}; }
 
 template <typename AtomicConfigOp>
 struct ExpandAtomicConfigPattern
@@ -2241,8 +2128,9 @@ struct VPTOExpandWrapperOpsPass
                  ExpandMadSemanticPattern<pto::MadMxOp>,
                  ExpandMadSemanticPattern<pto::MadMxAccOp>,
                  ExpandMadSemanticPattern<pto::MadMxBiasOp>>(&getContext());
-    if (failed(applyPatternsAndFoldGreedily(func, std::move(patterns))))
+    if (failed(applyPatternsAndFoldGreedily(func, std::move(patterns)))) {
       signalPassFailure();
+    }
   }
 };
 

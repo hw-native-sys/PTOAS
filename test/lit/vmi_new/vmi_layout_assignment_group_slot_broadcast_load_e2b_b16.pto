@@ -12,7 +12,9 @@ module {
   func.func @vmi_layout_assignment_group_slot_broadcast_load_e2b_b16(
       %src: !pto.ptr<f16, ub>, %off: index) -> !pto.vmi.vreg<256xf16> {
     %c1 = arith.constant 1 : index
-    %slots = pto.vmi.vload %src[%off], %c1 {group = 16}
+    %c8 = arith.constant 8 : index
+    %aligned_off = arith.muli %off, %c8 : index
+    %slots = pto.vmi.vload %src[%aligned_off], %c1 {group = 16}
         : !pto.ptr<f16, ub> -> !pto.vmi.vreg<16xf16>
     %out = pto.vmi.vbrc %slots {group = 16}
         : !pto.vmi.vreg<16xf16> -> !pto.vmi.vreg<256xf16>
@@ -22,7 +24,9 @@ module {
   func.func @vmi_layout_assignment_group_slot_broadcast_load_e2b_b16_deint2(
       %src: !pto.ptr<bf16, ub>, %off: index) -> !pto.vmi.vreg<256xbf16> {
     %c1 = arith.constant 1 : index
-    %slots = pto.vmi.vload %src[%off], %c1 {group = 8}
+    %c8 = arith.constant 8 : index
+    %aligned_off = arith.muli %off, %c8 : index
+    %slots = pto.vmi.vload %src[%aligned_off], %c1 {group = 8}
         : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<8xbf16>
     %out = pto.vmi.vbrc %slots {group = 8}
         : !pto.vmi.vreg<8xbf16> -> !pto.vmi.vreg<256xbf16>
@@ -32,7 +36,9 @@ module {
   func.func @vmi_layout_assignment_group_slot_broadcast_load_e2b_b32(
       %src: !pto.ptr<f32, ub>, %off: index) -> !pto.vmi.vreg<64xf32> {
     %c1 = arith.constant 1 : index
-    %slots = pto.vmi.vload %src[%off], %c1 {group = 8}
+    %c8 = arith.constant 8 : index
+    %aligned_off = arith.muli %off, %c8 : index
+    %slots = pto.vmi.vload %src[%aligned_off], %c1 {group = 8}
         : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
     %out = pto.vmi.vbrc %slots {group = 8}
         : !pto.vmi.vreg<8xf32> -> !pto.vmi.vreg<64xf32>
@@ -42,7 +48,9 @@ module {
   func.func @vmi_layout_assignment_group_slot_broadcast_load_e2b_b32_deint2(
       %src: !pto.ptr<f32, ub>, %off: index) -> !pto.vmi.vreg<128xf32> {
     %c1 = arith.constant 1 : index
-    %slots = pto.vmi.vload %src[%off], %c1 {group = 8}
+    %c8 = arith.constant 8 : index
+    %aligned_off = arith.muli %off, %c8 : index
+    %slots = pto.vmi.vload %src[%aligned_off], %c1 {group = 8}
         : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
     %out = pto.vmi.vbrc %slots {group = 8}
         : !pto.vmi.vreg<8xf32> -> !pto.vmi.vreg<128xf32>
@@ -59,15 +67,15 @@ module {
 
 // CHECK-LABEL: func.func @vmi_layout_assignment_group_slot_broadcast_load_e2b_b16_deint2
 // CHECK-SAME: (%[[SRC2:.*]]: !pto.ptr<bf16, ub>, %[[OFF2:.*]]: index)
-// CHECK: %[[E2B2:.*]] = pto.vlds %[[SRC2]][%[[OFF2]]] {dist = "E2B_B16"} : !pto.ptr<bf16, ub> -> !pto.vreg<128xbf16>
+// CHECK: %[[E2B2:.*]] = pto.vlds %[[SRC2]][{{.*}}] {dist = "E2B_B16"} : !pto.ptr<bf16, ub> -> !pto.vreg<128xbf16>
 // CHECK: return %[[E2B2]], %[[E2B2]] : !pto.vreg<128xbf16>, !pto.vreg<128xbf16>
 
 // CHECK-LABEL: func.func @vmi_layout_assignment_group_slot_broadcast_load_e2b_b32
 // CHECK-SAME: (%[[SRC3:.*]]: !pto.ptr<f32, ub>, %[[OFF3:.*]]: index)
-// CHECK: %[[E2B3:.*]] = pto.vlds %[[SRC3]][%[[OFF3]]] {dist = "E2B_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+// CHECK: %[[E2B3:.*]] = pto.vlds %[[SRC3]][{{.*}}] {dist = "E2B_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
 // CHECK: return %[[E2B3]] : !pto.vreg<64xf32>
 
 // CHECK-LABEL: func.func @vmi_layout_assignment_group_slot_broadcast_load_e2b_b32_deint2
 // CHECK-SAME: (%[[SRC4:.*]]: !pto.ptr<f32, ub>, %[[OFF4:.*]]: index)
-// CHECK: %[[E2B4:.*]] = pto.vlds %[[SRC4]][%[[OFF4]]] {dist = "E2B_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+// CHECK: %[[E2B4:.*]] = pto.vlds %[[SRC4]][{{.*}}] {dist = "E2B_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
 // CHECK: return %[[E2B4]], %[[E2B4]] : !pto.vreg<64xf32>, !pto.vreg<64xf32>

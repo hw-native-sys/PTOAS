@@ -1,5 +1,15 @@
 # PTODSL / PTOAS Loop Unroll Hint 设计文档
 
+> **修订记录（v5）**：新增 `pto-promote-persistent-fragment-loops`——
+> persistent fragment materialization 要求访问 persistent buffer 的循环
+> 被完全展开，此前依赖调用方手写 `full`；该 pass 沿
+> `llvm.alloca {pto.persistent}` 的 pointer use graph（GEP 链，
+> 不跟随 load 的数据结果）发现相关循环并提升为
+> `full`（覆盖 `enable`），附 `pto.persistent_unroll` marker 让 Pass A
+> 的丢弃兜底升级为硬错误。详见
+> `docs/designs/ptoas_persistent_simt_fragment_plan.md` 的「自动提升」一
+> 节。
+>
 > **修订记录（v4）**：评审指出，原实现只局部降级带注解 loop 会把新生成的
 > cf blocks 留在外层 single-block region（无 hint 的外层 `scf.for`、`scf.if`
 > 等）内，触发 SingleBlock verifier 失败。现改为**单 pass 完成整个函数的
@@ -353,6 +363,17 @@ v2 曾整体移除该 pass;v3 为满足 #1242 Req2 的 enable 验收标准恢复
 
 # PTODSL / PTOAS Loop Unroll Hint — Design Document
 
+> **Revision history (v5)**: adds `pto-promote-persistent-fragment-loops` -
+> persistent fragment materialization requires loops touching a persistent
+> buffer to be fully unrolled, which previously relied on authors writing
+> `full` by hand.  The pass discovers loops via the pointer use graph of
+> `llvm.alloca {pto.persistent}` (GEP chains; a load's data result is not
+> followed) and promotes them to `full` (overriding
+> `enable`), attaching a `pto.persistent_unroll` marker that upgrades Pass
+> A's drop-with-remark fallback into a hard error.  See the "automatic
+> promotion" section of
+> `docs/designs/ptoas_persistent_simt_fragment_plan.md`.
+>
 > **Revision history (v4)**: review pointed out that lowering only the
 > annotated loops leaves the freshly created cf blocks inside an enclosing
 > single-block region (an unannotated outer `scf.for`, an `scf.if`, ...) and

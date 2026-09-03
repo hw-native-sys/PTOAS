@@ -13,6 +13,7 @@
 module {
   func.func @positive(%f16: !pto.vmi.vreg<64xf16>, %f32: !pto.vmi.vreg<64xf32>, %si8: !pto.vmi.vreg<64xsi8>, %ui8: !pto.vmi.vreg<64xui8>, %si16: !pto.vmi.vreg<64xsi16>, %si32: !pto.vmi.vreg<64xsi32>) {
     %fw = pto.vmi.vcvt %f16 : !pto.vmi.vreg<64xf16> -> !pto.vmi.vreg<64xf32>
+    %fb = pto.vmi.vcvt %f16 {rounding = "R"} : !pto.vmi.vreg<64xf16> -> !pto.vmi.vreg<64xbf16>
     %fn_r = pto.vmi.vcvt %f32 {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf16>
     %fn_a = pto.vmi.vcvt %f32 {rounding = "A", saturate = "NOSAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf16>
     %fn_h = pto.vmi.vcvt %f32 {rounding = "H", saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
@@ -66,3 +67,5 @@ module {
     return
   }
 }
+
+// CHECK: pto.vmi.vcvt {{.*}} {rounding = "R"} : !pto.vmi.vreg<64xf16> -> !pto.vmi.vreg<64xbf16>

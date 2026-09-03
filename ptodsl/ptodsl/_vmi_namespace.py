@@ -262,6 +262,52 @@ def _derive_vcvt_result_type(source, to_dtype, *, context: str):
     )
 
 
+def _normalize_vcvt_options(
+    source_type,
+    result_type,
+    *,
+    is_bf16x2_pair,
+    is_bf16x2_to_f4x2,
+    is_f4x2_to_bf16x2,
+    rounding,
+    saturate,
+    context,
+    rounding_context,
+):
+    if rounding is not None:
+        if is_f4x2_to_bf16x2:
+            raise ValueError(
+                f"{context} does not support rounding for "
+                "f4E1M2x2/f4E2M1x2 -> bf16x2 conversion"
+            )
+        rounding = _normalize_vmi_vcvt_rounding(
+            rounding,
+            context=rounding_context,
+            allowed={"R", "A", "F", "Z", "C"} if is_bf16x2_to_f4x2 else None,
+        )
+    elif is_bf16x2_to_f4x2:
+        rounding = "R"
+
+    if is_bf16x2_to_f4x2 and saturate is not None:
+        raise ValueError(
+            f"{context} does not support saturate for bf16x2 -> "
+            "f4E1M2x2/f4E2M1x2 conversion"
+        )
+    if is_f4x2_to_bf16x2 and saturate is not None:
+        raise ValueError(
+            f"{context} does not support saturate for "
+            "f4E1M2x2/f4E2M1x2 -> bf16x2 conversion"
+        )
+    if saturate is None:
+        src_bits = _type_bit_width(source_type.element_type, context=context)
+        dst_bits = _type_bit_width(result_type.element_type, context=context)
+        src_is_fp = _is_vmi_float_element_type(source_type.element_type)
+        dst_is_fp = _is_vmi_float_element_type(result_type.element_type)
+        if not is_bf16x2_pair and (src_bits > dst_bits or (src_is_fp and not dst_is_fp)):
+            saturate = "SAT"
+    return rounding, saturate
+
+
 def _check_vmi_lane_count(lanes: int, *, context: str) -> None:
     if lanes not in VMI_LANE_COUNTS:
         raise ValueError(
@@ -432,10 +478,21 @@ def _derive_hist_result_type(acc, *, context: str):
 
 def _derive_vgather_result_type(source, offsets, *, context: str):
     offsets_type = _as_vmi_vreg_type(_type_of(offsets), context=context)
-    result_type = _pointer_element_type(_type_of(source), context=context)
+    result_elem_type = _pointer_element_type(_type_of(source), context=context)
+    # 8-bit integer sources use the B16 gather promotion path (i8 -> i16,
+    # ui8 -> ui16, si8 -> si16).
+    if IntegerType.isinstance(result_elem_type):
+        source_int_type = IntegerType(result_elem_type)
+        if source_int_type.width == 8:
+            if source_int_type.is_unsigned:
+                result_elem_type = IntegerType.get_unsigned(16)
+            elif source_int_type.is_signed:
+                result_elem_type = IntegerType.get_signed(16)
+            else:
+                result_elem_type = IntegerType.get_signless(16)
     return _pto.VMIVRegType.get(
         offsets_type.element_count,
-        result_type,
+        result_elem_type,
         layout=offsets_type.layout,
     )
 
@@ -519,28 +576,9 @@ def _vmi_vreg_element_count(type_obj, *, context: str):
     raise TypeError(f"{context} could not determine VMI vector lane count from {type_obj}")
 
 
-def _resolve_vmi_unpack_result_type(source, size, to_dtype, *, context: str):
-    if to_dtype is None:
-        raise TypeError(f'{context} requires to_dtype when dist_mode="unpack"')
-    source_type = _pointer_element_type(_type_of(source), context=context)
-    result_type = _ensure_tensor_storage_dtype(to_dtype, context=context)
-    source_bits = _type_bit_width(source_type, context=context)
-    result_bits = _type_bit_width(result_type, context=context)
-    if source_bits * 2 != result_bits:
-        raise TypeError(
-            f"{context} requires unpack to widen by exactly one step; got "
-            f"{source_type} -> {result_type}"
-        )
-    return _pto.VMIVRegType.get(size, result_type)
-
-
-def _resolve_vmi_vload_result_types(source, size, *, dist_mode, to_dtype, context: str):
-    if to_dtype is not None and dist_mode != "unpack":
-        raise TypeError(f'{context} accepts to_dtype only when dist_mode="unpack"')
+def _resolve_vmi_vload_result_types(source, size, *, dist_mode, context: str):
     if size is None:
         raise TypeError(f"{context} requires size")
-    if dist_mode == "unpack":
-        return [_resolve_vmi_unpack_result_type(source, size, to_dtype, context=context)]
     element_type = _pointer_element_type(_type_of(source), context=context)
     resolved = _pto.VMIVRegType.get(size, element_type)
     if dist_mode == "dintlv":
@@ -698,7 +736,6 @@ class _VMINamespace:
         offset,
         *,
         size,
-        to_dtype=None,
         stride=None,
         block_stride=None,
         dist_mode=None,
@@ -713,13 +750,12 @@ class _VMINamespace:
             stride=stride,
             block_stride=block_stride,
             allow_group_brc=True,
-            allowed_dist_modes={None, "continuous", "dintlv", "unpack", "brc"},
+            allowed_dist_modes={None, "continuous", "dintlv", "brc"},
         )
         result_types = _resolve_vmi_vload_result_types(
             source,
             size,
             dist_mode=dist_mode,
-            to_dtype=to_dtype,
             context="pto.vmi.vload(...)",
         )
         return _call_value(
@@ -757,15 +793,15 @@ class _VMINamespace:
             stride=stride,
             block_stride=block_stride,
             allow_group_brc=False,
-            allowed_dist_modes={None, "continuous", "dintlv"},
+            allowed_dist_modes={None, "continuous", "intlv"},
         )
         if group is not None and mask is not None:
             raise TypeError("pto.vmi.vstore(...) group mode does not take a mask operand")
-        if dist_mode == "dintlv":
+        if dist_mode == "intlv":
             if not _is_sequence(values) or len(values) != 2:
-                raise TypeError('pto.vmi.vstore(...) with dist_mode="dintlv" requires an (even, odd) pair')
+                raise TypeError('pto.vmi.vstore(...) with dist_mode="intlv" requires an (even, odd) pair')
         elif _is_sequence(values):
-            raise TypeError("pto.vmi.vstore(...) expects a single VMI vector unless dist_mode=\"dintlv\"")
+            raise TypeError("pto.vmi.vstore(...) expects a single VMI vector unless dist_mode=\"intlv\"")
         return _generated("vstore")(
             _raw_sequence(values),
             _raw(destination),
@@ -1046,42 +1082,17 @@ class _VMINamespace:
         is_f4x2_to_bf16x2 = is_bf16x2_pair and _is_f4x2_type(
             source_type.element_type
         )
-        if rounding is not None:
-            if is_f4x2_to_bf16x2:
-                raise ValueError(
-                    "pto.vmi.vcvt(...) does not support rounding for "
-                    "f4E1M2x2/f4E2M1x2 -> bf16x2 conversion"
-                )
-            rounding = _normalize_vmi_vcvt_rounding(
-                rounding,
-                context="pto.vmi.vcvt(..., rounding=...)",
-                allowed={"R", "A", "F", "Z", "C"} if is_bf16x2_to_f4x2 else None,
-            )
-        elif is_bf16x2_to_f4x2:
-            rounding = "R"
-        if is_bf16x2_to_f4x2 and saturate is not None:
-            raise ValueError(
-                "pto.vmi.vcvt(...) does not support saturate for bf16x2 -> "
-                "f4E1M2x2/f4E2M1x2 conversion"
-            )
-        if is_f4x2_to_bf16x2 and saturate is not None:
-            raise ValueError(
-                "pto.vmi.vcvt(...) does not support saturate for "
-                "f4E1M2x2/f4E2M1x2 -> bf16x2 conversion"
-            )
-        if saturate is None:
-            # The VMI verifier requires explicit "SAT" or "NOSAT" for
-            # narrowing and fp-to-int directions.  Default to "SAT" when
-            # the user does not specify.
-            src_bits = _type_bit_width(source_type.element_type, context="pto.vmi.vcvt(...)")
-            dst_bits = _type_bit_width(
-                result_type.element_type,
-                context="pto.vmi.vcvt(...)",
-            )
-            src_is_fp = _is_vmi_float_element_type(source_type.element_type)
-            dst_is_fp = _is_vmi_float_element_type(result_type.element_type)
-            if not is_bf16x2_pair and (src_bits > dst_bits or (src_is_fp and not dst_is_fp)):
-                saturate = "SAT"
+        rounding, saturate = _normalize_vcvt_options(
+            source_type,
+            result_type,
+            is_bf16x2_pair=is_bf16x2_pair,
+            is_bf16x2_to_f4x2=is_bf16x2_to_f4x2,
+            is_f4x2_to_bf16x2=is_f4x2_to_bf16x2,
+            rounding=rounding,
+            saturate=saturate,
+            context="pto.vmi.vcvt(...)",
+            rounding_context="pto.vmi.vcvt(..., rounding=...)",
+        )
         return _call_value(
             "vcvt",
             result_type,

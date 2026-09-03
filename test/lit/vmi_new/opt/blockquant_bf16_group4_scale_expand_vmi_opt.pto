@@ -22,11 +22,14 @@
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @blockquant_bf16_group4_scale_expand(
-      %src: !pto.ptr<bf16, ub>,
-      %dst: !pto.ptr<bf16, ub>,
-      %off: index) attributes {pto.kernel} {
+      %tile: index) attributes {pto.kernel} {
+    %c0_i64 = arith.constant 0 : i64
+    %c4096_i64 = arith.constant 4096 : i64
+    %src = pto.castptr %c0_i64 : i64 -> !pto.ptr<bf16, ub>
+    %dst = pto.castptr %c4096_i64 : i64 -> !pto.ptr<bf16, ub>
     %c128 = arith.constant 128 : index
     %c256 = arith.constant 256 : index
+    %off = arith.muli %tile, %c128 : index
     %mask256 = pto.vmi.create_mask %c256
         : index -> !pto.vmi.mask<256xpred>
     %x = pto.vmi.vload %src[%off]

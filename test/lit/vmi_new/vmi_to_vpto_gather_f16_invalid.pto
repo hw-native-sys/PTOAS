@@ -22,5 +22,5 @@ module {
   }
 }
 
-// CHECK: VMI{{-}}UNSUPPORTED{{:}} pto.vmi.gather lowers through pto.vgather2_bc + pto.vsel only
-// CHECK-SAME: 32-bit result elements
+// CHECK: VMI{{-}}UNSUPPORTED{{:}} pto.vmi.gather lowers through pto.vgather2/pto.vgather2_bc + pto.vsel only
+// CHECK-SAME: or 32-bit results

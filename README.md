@@ -60,9 +60,15 @@ export PTO_SOURCE_DIR=$WORKSPACE_DIR/PTOAS
 # 创建工作目录
 mkdir -p $WORKSPACE_DIR
 
+# 先拉取 PTOAS 源码：venv 将创建在 PTOAS 工作区内（$PTO_SOURCE_DIR/.venv），
+# 保持工作区自包含，所以需要先有 $PTO_SOURCE_DIR 目录。
+cd $WORKSPACE_DIR
+git clone https://github.com/hw-native-sys/PTOAS.git PTOAS
+cd $PTO_SOURCE_DIR
+
 # 推荐使用独立虚拟环境。后续 LLVM 和 PTOAS 构建必须使用同一个 Python。
-python3 -m venv "$WORKSPACE_DIR/.venv"
-source "$WORKSPACE_DIR/.venv/bin/activate"
+python3 -m venv "$PTO_SOURCE_DIR/.venv"
+source "$PTO_SOURCE_DIR/.venv/bin/activate"
 export PYTHON_BIN="$(command -v python3)"
 
 ```
@@ -118,12 +124,10 @@ ninja -C $LLVM_BUILD_DIR
 
 ### 3.3 第二步：构建 PTOAS (Out-of-Tree)
 
-下载 PTOAS 源码并基于刚刚编译好的 LLVM 19 进行构建。
+PTOAS 源码已在 3.0 拉取，基于刚刚编译好的 LLVM 19 进行构建。
 
 ```bash
-# 1. 下载 PTOAS 源码
-cd $WORKSPACE_DIR
-git clone https://github.com/hw-native-sys/PTOAS.git PTOAS
+# 1. 进入 PTOAS 源码目录（3.0 已 clone）
 cd $PTO_SOURCE_DIR
 
 # 2. 安装到当前 Python 环境，并保留可增量构建的 build tree
@@ -197,7 +201,7 @@ Python 环境。editable 安装会将选定 LLVM 构建目录记录为 native ex
 
 ```bash
 # 先重新导出 WORKSPACE_DIR、LLVM_BUILD_DIR 等 3.0 中的路径变量
-source "$WORKSPACE_DIR/.venv/bin/activate"
+source "$PTO_SOURCE_DIR/.venv/bin/activate"
 export PYTHON_BIN="$(command -v python3)"
 
 command -v ptoas

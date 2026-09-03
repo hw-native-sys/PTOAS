@@ -40,6 +40,15 @@ add_mlir_dialect_library(PTOTransforms
   TileFusion/PTOFlattenFusionRegion.cpp
   VPTOLLVMEmitter.cpp
   VPTOCANN900LLVMEmitter.cpp
+  VPTOCANN900LLVMEmitterArithmeticPatterns.cpp
+  VPTOCANN900LLVMEmitterCalleeCore.cpp
+  VPTOCANN900LLVMEmitterCalleeMemory.cpp
+  VPTOCANN900LLVMEmitterMemoryPatterns.cpp
+  VPTOCANN900LLVMEmitterPacking.cpp
+  VPTOCANN900LLVMEmitterPipeline.cpp
+  VPTOCANN900LLVMEmitterScalarPatterns.cpp
+  VPTOCANN900LLVMEmitterTypeHelpers.cpp
+  VPTOCANN900LLVMEmitterTypePatterns.cpp
   VPTOLLVMEmitterDispatcher.cpp
   VPTOLLVMEmitterHelper.cpp
   VPTOPtrNormalize.cpp
@@ -58,12 +67,15 @@ add_mlir_dialect_library(PTOTransforms
   VPTOScheduler/VPTOSchedModel.cpp
   VPTOScheduler/VPTOSchedRegion.cpp
   VPTOScheduler/VPTOSchedResourceTracker.cpp
+  VPTOScheduler/VPTOSchedStrategy.cpp
+  VPTOScheduler/VPTOScheduler.cpp
   VPTOScheduler/VPTOSchedulerPass.cpp
   PTOVPTOPtrBoundary.cpp
   VPTOBufferMaterialization.cpp
   PTOValidateVPTOIR.cpp
   PTONarrowVPTOLoopCounters.cpp
   PTOConvertSCFToCFWithLoopHintsPass.cpp
+  PTOPromotePersistentFragmentLoopsPass.cpp
   PTOUnrollLoopsPass.cpp
   PTOValidateVMIIR.cpp
   VMIPreAssignmentCombine.cpp
@@ -80,6 +92,7 @@ add_mlir_dialect_library(PTOTransforms
   VMILayoutRematerialize.cpp
   VMILayoutSinkMaterialization.cpp
   VMIToVPTO.cpp
+  VPTOStatefulStreamFusion.cpp
   PTOExpandSoftLib.cpp
   SIMTPersistentFragmentAnalysis.cpp
   PTOAnalyzeSIMTPersistentFragment.cpp
@@ -140,15 +153,6 @@ add_mlir_dialect_library(PTOTransforms
   BufidSync/BufidSyncAnalysis.cpp
   BufidSync/BufidSyncIdAlloc.cpp
   BufidSync/BufidSyncCodegen.cpp
-  GraphSyncSolver/PTOGraphSyncSolver.cpp
-  GraphSyncSolver/SyncSolverIR.cpp
-  GraphSyncSolver/SyncSolverIRTranslator.cpp
-  GraphSyncSolver/Utility.cpp
-  GraphSyncSolver/MemInfo.cpp
-  GraphSyncSolver/GraphSolver.cpp
-  GraphSyncSolver/EventIdSolver.cpp
-  GraphSyncSolver/SyncSolver.cpp
-  GraphSyncSolver/SyncSolverCodeGen.cpp
   LoweringSyncToPipe.cpp
   PTOVerifyTFreePass.cpp
 
@@ -166,6 +170,7 @@ add_mlir_dialect_library(PTOTransforms
   PUBLIC
   PTOAnalysis
   PTOIR
+  MLIRAnalysis
   MLIRIR
   MLIRPass
   MLIRFuncDialect

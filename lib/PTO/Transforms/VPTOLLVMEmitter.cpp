@@ -13,8 +13,9 @@
 #include "PTO/Transforms/VPTOLLVMEmitterHelper.h"
 
 #include "PTO/IR/PTO.h"
-#include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/IR/PTOSyncUtils.h"
+#include "PTO/IR/PTOTypeUtils.h"
+#include "PTO/IR/VPTOMemoryDist.h"
 #include "PTO/Transforms/Passes.h"
 
 #include "mlir/Conversion/Passes.h"
@@ -1662,6 +1663,8 @@ static std::optional<VcvtContract> lookupVcvtContract(VcvtElemKind src,
       return VcvtContract{"llvm.hivm.vcvtfi.f162s8.x", true, true, true, 16};
     case VcvtElemKind::U8:
       return VcvtContract{"llvm.hivm.vcvtfi.f162u8.x", true, true, true, 16};
+    case VcvtElemKind::BF16:
+      return VcvtContract{"llvm.hivm.vcvtff.f162bf16.x", true, false, false, 16};
     default:
       return std::nullopt;
     }
@@ -1827,191 +1830,32 @@ static uint64_t determineVsqzStoreHint(pto::VsqzOp vsqz) {
 
 static std::optional<uint64_t> parseLoadDistImmediate(StringRef dist,
                                                       Type elementType) {
-  auto width = getDistElementWidth(elementType);
-  if (dist.empty() || dist == "NORM")
-  {
-    return 0;
-  }
-  if (!width)
-  {
-    return std::nullopt;
-  }
-  if (dist == "BRC_B8")
-  {
-    return std::optional<uint64_t>(1);
-  }
-  if (dist == "BRC_B16")
-  {
-    return std::optional<uint64_t>(2);
-  }
-  if (dist == "BRC_B32")
-  {
-    return std::optional<uint64_t>(3);
-  }
-  if (dist == "US_B8")
-  {
-    return std::optional<uint64_t>(6);
-  }
-  if (dist == "US_B16")
-  {
-    return std::optional<uint64_t>(7);
-  }
-  if (dist == "DS_B8")
-  {
-    return std::optional<uint64_t>(8);
-  }
-  if (dist == "DS_B16")
-  {
-    return std::optional<uint64_t>(9);
-  }
-  if (dist == "UNPK_B8")
-  {
-    return std::optional<uint64_t>(13);
-  }
-  if (dist == "UNPK_B16")
-  {
-    return std::optional<uint64_t>(14);
-  }
-  if (dist == "UNPK_B32")
-  {
-    return std::optional<uint64_t>(18);
-  }
-  if (dist == "BRC_BLK")
-  {
-    return 15;
-  }
-  if (dist == "E2B_B16")
-  {
-    return std::optional<uint64_t>(16);
-  }
-  if (dist == "E2B_B32")
-  {
-    return std::optional<uint64_t>(17);
-  }
-  if (dist == "UNPK4")
-  {
-    return *width == 8 ? std::optional<uint64_t>(20) : std::nullopt;
-  }
-  if (dist == "SPLT4CHN")
-  {
-    return *width == 8 ? std::optional<uint64_t>(21) : std::nullopt;
-  }
-  if (dist == "SPLT2CHN_B8")
-  {
-    return std::optional<uint64_t>(22);
-  }
-  if (dist == "SPLT2CHN_B16")
-  {
-    return std::optional<uint64_t>(23);
-  }
-  return std::nullopt;
+  const auto *contract = lookupVPTOMemoryDist(VPTOMemoryOpFamily::Load, dist,
+                                              getDistElementWidth(elementType));
+  return contract ? std::optional<uint64_t>(contract->a5Immediate)
+                  : std::nullopt;
 }
 
 static std::optional<uint64_t> parseLoadX2DistImmediate(StringRef dist,
                                                         Type elementType) {
-  auto width = getDistElementWidth(elementType);
-  if (dist == "BDINTLV")
-  {
-    return 10;
-  }
-  if (!width)
-  {
-    return std::nullopt;
-  }
-  if (dist == "DINTLV_B8")
-  {
-    return std::optional<uint64_t>(11);
-  }
-  if (dist == "DINTLV_B16")
-  {
-    return std::optional<uint64_t>(12);
-  }
-  if (dist == "DINTLV_B32")
-  {
-    return std::optional<uint64_t>(19);
-  }
-  return std::nullopt;
+  const auto *contract = lookupVPTOMemoryDist(VPTOMemoryOpFamily::LoadX2, dist,
+                                              getDistElementWidth(elementType));
+  return contract ? std::optional<uint64_t>(contract->a5Immediate)
+                  : std::nullopt;
 }
 
 static std::optional<uint64_t> parseStoreDistImmediate(StringRef dist,
                                                        Type elementType) {
-  auto width = getDistElementWidth(elementType);
-  if (dist.empty()) {
-    if (!width)
-    {
-      return std::nullopt;
-    }
-    if (*width == 8)
-    {
-      return 0;
-    }
-    if (*width == 16)
-    {
-      return 1;
-    }
-    if (*width == 32)
-    {
-      return 2;
-    }
-    return std::nullopt;
-  }
-  if (dist == "NORM_B8")
-  {
-    return std::optional<uint64_t>(0);
-  }
-  if (dist == "NORM_B16")
-  {
-    return std::optional<uint64_t>(1);
-  }
-  if (dist == "NORM_B32")
-  {
-    return std::optional<uint64_t>(2);
-  }
-  if (dist == "1PT_B8")
-  {
-    return std::optional<uint64_t>(3);
-  }
-  if (dist == "1PT_B16")
-  {
-    return std::optional<uint64_t>(4);
-  }
-  if (dist == "1PT_B32")
-  {
-    return std::optional<uint64_t>(5);
-  }
-  if (dist == "PK_B16")
-  {
-    return std::optional<uint64_t>(6);
-  }
-  if (dist == "PK_B32")
-  {
-    return std::optional<uint64_t>(7);
-  }
-  if (dist == "PK_B64")
-  {
-    return std::optional<uint64_t>(10);
-  }
-  if (dist == "PK4_B32")
-  {
-    return std::optional<uint64_t>(12);
-  }
-  if (dist == "MRG4CHN_B8")
-  {
-    return std::optional<uint64_t>(13);
-  }
-  if (dist == "MRG2CHN_B8")
-  {
-    return std::optional<uint64_t>(14);
-  }
-  if (dist == "MRG2CHN_B16")
-  {
-    return std::optional<uint64_t>(15);
-  }
-  return std::nullopt;
+  const auto *contract = lookupVPTOMemoryDist(
+      VPTOMemoryOpFamily::Store, dist,
+      dist.empty() ? getDistElementWidth(elementType) : std::nullopt);
+  return contract ? std::optional<uint64_t>(contract->a5Immediate)
+                  : std::nullopt;
 }
 
 static bool isOnePointStoreDist(StringRef dist) {
-  return dist == "1PT_B8" || dist == "1PT_B16" || dist == "1PT_B32";
+  const auto *contract = lookupVPTOMemoryDist(VPTOMemoryOpFamily::Store, dist);
+  return contract && contract->isOnePointStore();
 }
 
 static bool isMaskOnlyUsedByOnePointStores(Value mask) {
@@ -2022,25 +1866,11 @@ static bool isMaskOnlyUsedByOnePointStores(Value mask) {
 }
 
 static std::optional<uint64_t> parseStoreX2DistImmediate(StringRef dist,
-                                                         Type elementType) {
-  auto width = getDistElementWidth(elementType);
-  if (!width)
-  {
-    return std::nullopt;
-  }
-  if (dist == "INTLV_B8")
-  {
-    return std::optional<uint64_t>(8);
-  }
-  if (dist == "INTLV_B16")
-  {
-    return std::optional<uint64_t>(9);
-  }
-  if (dist == "INTLV_B32")
-  {
-    return std::optional<uint64_t>(11);
-  }
-  return std::nullopt;
+                                                         Type) {
+  const auto *contract =
+      lookupVPTOMemoryDist(VPTOMemoryOpFamily::StoreX2, dist);
+  return contract ? std::optional<uint64_t>(contract->a5Immediate)
+                  : std::nullopt;
 }
 
 static Value packBlockRepeatStride(Operation *anchor, Value blockStride,

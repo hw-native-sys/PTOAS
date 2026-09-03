@@ -1,0 +1,22 @@
+  --version                         Query the package version
+  --pre-check                       Package installation/running pre-dependency check
+  --run | --full | --devel          Install run | full | devel mode
+    --docker-root=<docker root fs directory>    Specify the path of docker root
+    --install-path=<path>           Install product to specific dir path
+    --install-for-all               Install for all user
+    --pre-check                     Package installation/running pre-dependency check
+    --quiet                         Quiet install mode, skip human-computer interactions
+    --setenv                        Setting the Environment Variables Required at Run Time
+    --jit                           Install with jit mode
+  --uninstall                       Uninstall product with compatible run package which is installed before
+    --docker-root=<docker root fs directory>    Specify the path of docker root
+    --install-path=<path>           Uninstall specific pto_math dir path
+  --upgrade                         Upgrade product immediately
+    --docker-root=<docker root fs directory>    Specify the path of docker root
+    --install-path=<path>           Upgrade specific pto_math dir path
+    --install-for-all               Install for all user
+    --quiet                         Quiet install mode, skip human-computer interactions
+    --setenv                        Setting the Environment Variables Required at Run Time
+
+
+

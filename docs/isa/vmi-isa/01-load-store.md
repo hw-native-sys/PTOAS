@@ -63,7 +63,7 @@
 
   | Attribute | Values | Default | Description |
   |---|---|---|---|
-  | `dist_mode` | `"continuous"`, `"unpack"`, `"brc"` | `"continuous"` | Memory access pattern |
+  | `dist_mode` | `"continuous"`, `"dintlv"`, `"brc"` | `"continuous"` | Memory access pattern |
   | `group` | positive integer | *(none)* | Strided group load arity; mutually exclusive with `dist_mode`; requires `stride` |
   | `pmode` | `"zero"`, `"merge"` | `"zero"` | Inactive-lane behavior (applied at consumer, not on load) |
 
@@ -73,8 +73,8 @@ declaring the memory access pattern. Default is `"continuous"`.
 
   | `dist_mode` | Physical lowering |
   |---|---|
-  | `"continuous"` | `K × pto.vlds {dist="NORM"}` (element-width-independent `NORM` load) |
-  | `"unpack"` | `K × pto.vlds {dist="UNPK_B*"}` (widening unpack; suffix from `Ptr<T>`) |
+  | `"continuous"` | Known 32B-aligned addresses use the aligned fast path; other effective UB addresses use an unaligned sequence with lowering-managed alignment state |
+  | `"dintlv"` | `K × pto.vldsx2 {dist="DINTLV_B*"}` (deinterleaved dual load; suffix from `Ptr<T>`) |
   | `"brc"` | `1 × pto.vlds {dist="BRC_B*"}` or `BRC_BLK`; broadcast-axis (1-reg backing, replicate-read) |
 
   **Group mode** (`{group = C}` + `stride`) has two sub-cases, decided by the
@@ -119,16 +119,15 @@ declaring the memory access pattern. Default is `"continuous"`.
   // Broadcast load: scalar/block replicate into vreg
   %vb = pto.vmi.vload %ub[%offset] {dist_mode = "brc"} : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64×f32>
   // → pto.as: Ptr<f32> → B32, dist_mode=brc → pto.mi.vlds {dist="BRC_B32"}
-
-  // Widening unpack load: narrow source expanded to wide lanes
-  %u = pto.vmi.vload %ub[%offset] {dist_mode = "unpack"} : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64×f32>
-  // → pto.as: Ptr<bf16> → B16, dist_mode=unpack → pto.mi.vlds {dist="UNPK_B16"}
   ```
 
 - **notes:**
   - **A5 loads are unpredicated.** A tail mask associated with a `vload` is
     never lowered as a masked load. It migrates to the consuming compute op or
     to a `vstore`.
+  - Continuous loads support effective UB addresses that are not 32B-aligned.
+    Alignment state is managed by the lowering and is not part of the VMI
+    programming model.
   - `dist_mode` and layout inference are orthogonal: `pto.as` may still
     rewrite the physical layout of a `continuous` load to serve a downstream
     consumer (e.g. a grouped reduce).
@@ -199,7 +198,7 @@ declaring the memory access pattern. Default is `"continuous"`.
 
   | Attribute | Values | Default | Description |
   |---|---|---|---|
-  | `dist_mode` | `"continuous"` | `"continuous"` | Memory access pattern |
+  | `dist_mode` | `"continuous"`, `"intlv"` | `"continuous"` | Memory access pattern |
   | `group` | positive integer | *(none)* | Strided group store arity; mutually exclusive with `dist_mode`; requires `stride`; forbids `mask` |
   | `pmode` | `"zero"`, `"merge"` | `"zero"` | Inactive-lane behavior: `"zero"` (default) stores 0; `"merge"` skips write on inactive lanes |
 
@@ -209,7 +208,8 @@ declaring the memory access pattern. Default is `"continuous"`.
 
   | `dist_mode` | Physical lowering |
   |---|---|
-  | `"continuous"` | `K × pto.vsts {dist="NORM_B*"}` |
+  | `"continuous"` | Known 32B-aligned addresses use the aligned fast path; unmasked accesses to other effective UB addresses use an unaligned sequence with lowering-managed alignment state |
+  | `"intlv"` | `K × pto.vstsx2 {dist="INTLV_B*"}` (interleaved dual store; suffix from `Ptr<T>`) |
 
   **Group mode** (`{group = C}` + `stride`): row-strided tile store. Not combinable with
   `dist_mode` or `mask` (group stores are unpredicated).
@@ -220,6 +220,13 @@ declaring the memory access pattern. Default is `"continuous"`.
   defaults to 0. `%block_stride` is a dynamic `i16` operand. An explicit
   `mask` is applied; if absent an implicit all-active mask is used. Not
   combinable with `dist_mode` or `group`.
+
+  Continuous unmasked stores support effective UB addresses that are not
+  32B-aligned, including a final prefix tail. Alignment state and the required
+  final flush are managed by lowering and are not part of the VMI programming
+  model. Explicit sparse-mask stores still use the predicated store path and
+  require their target alignment constraints to be statically provable;
+  otherwise the access is unsupported.
 
 - **examples:**
 

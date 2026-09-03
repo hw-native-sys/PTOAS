@@ -206,6 +206,110 @@ static void printLocalBoundaries(llvm::raw_ostream &os, Block &block,
   }
 }
 
+static void printDomainClasses(llvm::raw_ostream &os,
+                               const pto::FusionBlockAnalysis &analysis) {
+  for (const pto::IterationDomainClass &klass :
+       analysis.iterationDomainClasses) {
+    os << "    domain_class[" << klass.id << "] domain=";
+    appendDomain(os, klass.info);
+    os << " proof=" << stringifyIterationProof(klass.info.proof)
+       << " reason=" << stringifyUnprovenReason(klass.info.unprovenReason)
+       << " members=";
+    appendIndexList(os, klass.members);
+    os << "\n";
+  }
+}
+
+static void printComputeNodes(llvm::raw_ostream &os,
+                              const pto::FusionBlockAnalysis &analysis,
+                              const DenseMap<Value, std::string> &labels) {
+  for (const pto::FusionComputeNode &node : analysis.computeNodes) {
+    os << "    compute[" << node.id << "] op=" << node.semantics.opName
+       << " family=" << stringifyComputeFamily(node.semantics.computeFamily)
+       << " domain_class=" << node.iterationDomainClass << " inputs=[";
+    for (auto [idx, input] : llvm::enumerate(node.semantics.tileInputs)) {
+      os << (idx ? ", " : "") << labels.lookup(input);
+    }
+    os << "] outputs=[";
+    for (auto [idx, output] : llvm::enumerate(node.semantics.tileOutputs)) {
+      os << (idx ? ", " : "") << labels.lookup(output);
+    }
+    os << "] incoming=";
+    appendIndexList(os, node.incomingEdges);
+    os << " outgoing=";
+    appendIndexList(os, node.outgoingEdges);
+    os << "\n";
+  }
+}
+
+static void printEdges(llvm::raw_ostream &os,
+                       const pto::FusionBlockAnalysis &analysis,
+                       const DenseMap<Value, std::string> &labels) {
+  for (auto [edgeIndex, edge] : llvm::enumerate(analysis.edges)) {
+    os << "    edge[" << edgeIndex << "] producer=" << edge.producerNode
+       << " consumer=" << edge.consumerNode
+       << " value=" << labels.lookup(edge.value) << "\n";
+  }
+}
+
+static void printValueLiveness(llvm::raw_ostream &os,
+                               const pto::FusionBlockAnalysis &analysis,
+                               const DenseMap<Value, std::string> &labels) {
+  for (const pto::FusionValueLiveness &live : analysis.liveness) {
+    os << "    liveness value=" << labels.lookup(live.value) << " producer=";
+    appendOptionalIndex(os, live.producerNode);
+    os << " consumers=";
+    appendIndexList(os, live.consumerNodes);
+    os << " write_instances=";
+    appendIndexList(os, live.writeInstances);
+    os << " last_local_consumer=";
+    appendOptionalIndex(os, live.lastLocalConsumer);
+    os << " external_users=" << (live.hasExternalUsers ? "true" : "false")
+       << " escapes_block=" << (live.escapesBlock ? "true" : "false")
+       << " boundary_users="
+       << (live.hasLocalBoundaryUsers ? "true" : "false")
+       << " hard_boundary_users="
+       << (live.hasLocalHardBoundaryUsers ? "true" : "false") << "\n";
+  }
+}
+
+static void printWriteInstances(llvm::raw_ostream &os,
+                                const pto::FusionBlockAnalysis &analysis,
+                                const DenseMap<Value, std::string> &labels) {
+  for (const pto::FusionWriteInstanceLiveness &write :
+       analysis.writeInstances) {
+    os << "    write_instance[" << write.id
+       << "] value=" << labels.lookup(write.value)
+       << " storage=" << labels.lookup(write.storageValue) << " producer=";
+    appendOptionalIndex(os, write.producerNode);
+    os << " consumers=";
+    appendIndexList(os, write.consumerNodes);
+    os << " last_local_consumer=";
+    appendOptionalIndex(os, write.lastLocalConsumer);
+    os << " escape_class="
+       << stringifyWriteInstanceEscapeClass(write.escapeClass)
+       << " external_users=" << (write.hasExternalUsers ? "true" : "false")
+       << " escapes_block=" << (write.escapesBlock ? "true" : "false")
+       << " boundary_users="
+       << (write.hasLocalBoundaryUsers ? "true" : "false")
+       << " hard_boundary_users="
+       << (write.hasLocalHardBoundaryUsers ? "true" : "false") << "\n";
+  }
+}
+
+static void printBlockAnalysis(llvm::raw_ostream &os, unsigned blockIndex,
+                               const pto::FusionBlockAnalysis &analysis) {
+  os << "  block[" << blockIndex << "]\n";
+  DenseMap<Value, std::string> labels =
+      buildValueLabels(*analysis.block, analysis);
+  printLocalBoundaries(os, *analysis.block, labels);
+  printDomainClasses(os, analysis);
+  printComputeNodes(os, analysis, labels);
+  printEdges(os, analysis, labels);
+  printValueLiveness(os, analysis, labels);
+  printWriteInstances(os, analysis, labels);
+}
+
 struct PrintPreFusionAnalysisPass
     : public pto::impl::PrintPreFusionAnalysisBase<
           PrintPreFusionAnalysisPass> {
@@ -229,95 +333,7 @@ struct PrintPreFusionAnalysisPass
 
     for (auto [blockIndex, blockAnalysis] :
          llvm::enumerate(analysis.getResult().blocks)) {
-      os << "  block[" << blockIndex << "]\n";
-      DenseMap<Value, std::string> valueLabels =
-          buildValueLabels(*blockAnalysis.block, blockAnalysis);
-      printLocalBoundaries(os, *blockAnalysis.block, valueLabels);
-
-      for (const pto::IterationDomainClass &klass :
-           blockAnalysis.iterationDomainClasses) {
-        os << "    domain_class[" << klass.id << "] domain=";
-        appendDomain(os, klass.info);
-        os << " proof=" << stringifyIterationProof(klass.info.proof)
-           << " reason="
-           << stringifyUnprovenReason(klass.info.unprovenReason)
-           << " members=";
-        appendIndexList(os, klass.members);
-        os << "\n";
-      }
-
-      for (const pto::FusionComputeNode &node : blockAnalysis.computeNodes) {
-        os << "    compute[" << node.id << "] op=" << node.semantics.opName
-           << " family="
-           << stringifyComputeFamily(node.semantics.computeFamily)
-           << " domain_class=" << node.iterationDomainClass << " inputs=[";
-        for (auto [idx, input] : llvm::enumerate(node.semantics.tileInputs)) {
-          if (idx) {
-            os << ", ";
-          }
-          os << valueLabels.lookup(input);
-        }
-        os << "] outputs=[";
-        for (auto [idx, output] : llvm::enumerate(node.semantics.tileOutputs)) {
-          if (idx) {
-            os << ", ";
-          }
-          os << valueLabels.lookup(output);
-        }
-        os << "] incoming=";
-        appendIndexList(os, node.incomingEdges);
-        os << " outgoing=";
-        appendIndexList(os, node.outgoingEdges);
-        os << "\n";
-      }
-
-      for (auto [edgeIndex, edge] : llvm::enumerate(blockAnalysis.edges)) {
-        os << "    edge[" << edgeIndex << "] producer=" << edge.producerNode
-           << " consumer=" << edge.consumerNode
-           << " value=" << valueLabels.lookup(edge.value) << "\n";
-      }
-
-      for (const pto::FusionValueLiveness &live : blockAnalysis.liveness) {
-        os << "    liveness value=" << valueLabels.lookup(live.value)
-           << " producer=";
-        appendOptionalIndex(os, live.producerNode);
-        os << " consumers=";
-        appendIndexList(os, live.consumerNodes);
-        os << " write_instances=";
-        appendIndexList(os, live.writeInstances);
-        os << " last_local_consumer=";
-        appendOptionalIndex(os, live.lastLocalConsumer);
-        os << " external_users=" << (live.hasExternalUsers ? "true" : "false")
-           << " escapes_block=" << (live.escapesBlock ? "true" : "false")
-           << " boundary_users="
-           << (live.hasLocalBoundaryUsers ? "true" : "false")
-           << " hard_boundary_users="
-           << (live.hasLocalHardBoundaryUsers ? "true" : "false") << "\n";
-      }
-
-      for (const pto::FusionWriteInstanceLiveness &writeInstance :
-           blockAnalysis.writeInstances) {
-        os << "    write_instance[" << writeInstance.id
-           << "] value=" << valueLabels.lookup(writeInstance.value)
-           << " storage=" << valueLabels.lookup(writeInstance.storageValue)
-           << " producer=";
-        appendOptionalIndex(os, writeInstance.producerNode);
-        os << " consumers=";
-        appendIndexList(os, writeInstance.consumerNodes);
-        os << " last_local_consumer=";
-        appendOptionalIndex(os, writeInstance.lastLocalConsumer);
-        os << " escape_class="
-           << stringifyWriteInstanceEscapeClass(writeInstance.escapeClass)
-           << " external_users="
-           << (writeInstance.hasExternalUsers ? "true" : "false")
-           << " escapes_block="
-           << (writeInstance.escapesBlock ? "true" : "false")
-           << " boundary_users="
-           << (writeInstance.hasLocalBoundaryUsers ? "true" : "false")
-           << " hard_boundary_users="
-           << (writeInstance.hasLocalHardBoundaryUsers ? "true" : "false")
-           << "\n";
-      }
+      printBlockAnalysis(os, blockIndex, blockAnalysis);
     }
 
     markAllAnalysesPreserved();

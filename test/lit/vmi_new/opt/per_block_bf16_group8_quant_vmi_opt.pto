@@ -9,7 +9,7 @@
 // for the full text of the License.
 
 // RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
-// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s | FileCheck %s --check-prefix=VPTO --implicit-check-not=pto.vmi. --implicit-check-not='!pto.vmi' --implicit-check-not=pto.vdintlv --implicit-check-not=pto.vsldb --implicit-check-not=pto.vsstb --implicit-check-not=pto.vcmax --implicit-check-not=pto.vldsx2 --implicit-check-not='pto.vcvt ' --implicit-check-not=pto.vcgmax --implicit-check-not='pto.vmax ' --implicit-check-not=pto.vpack --implicit-check-not=pto.vselr --implicit-check-not='pto.vmul ' --implicit-check-not=pto.vintlv --implicit-check-not=pto.vbitcast --implicit-check-not='pto.vsts '
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --vpto-scheduler=off --emit-vpto %s | FileCheck %s --check-prefix=VPTO --implicit-check-not=pto.vmi. --implicit-check-not='!pto.vmi' --implicit-check-not=pto.vdintlv --implicit-check-not=pto.vsldb --implicit-check-not=pto.vsstb --implicit-check-not=pto.vcmax --implicit-check-not=pto.vldsx2 --implicit-check-not='pto.vcvt ' --implicit-check-not=pto.vcgmax --implicit-check-not='pto.vmax ' --implicit-check-not=pto.vpack --implicit-check-not=pto.vselr --implicit-check-not='pto.vmul ' --implicit-check-not=pto.vintlv --implicit-check-not=pto.vbitcast --implicit-check-not='pto.vsts '
 
 // Optimization guard for the per-block BF16 group=8 quant path. Two adjacent
 // 128-column strips form one 256-lane value with eight 32-lane groups. Keep the
@@ -21,10 +21,11 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
   func.func @per_block_bf16_group8_quant_vmi_opt(
       %src: !pto.ptr<bf16, ub>,
       %dst: !pto.ptr<f8E4M3FN, ub>,
-      %off: index) attributes {pto.kernel} {
+      %tile: index) attributes {pto.kernel} {
     %c128 = arith.constant 128 : index
     %c256 = arith.constant 256 : index
     %cst = arith.constant 0.000000e+00 : bf16
+    %off = arith.muli %tile, %c128 : index
     %off128 = arith.addi %off, %c128 : index
     %mask = pto.vmi.create_mask %c256
         : index -> !pto.vmi.mask<256xpred>

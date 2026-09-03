@@ -44,9 +44,9 @@ public:
 
 private:
   const VPTOSchedResource *findResource(VPTOSchedResourceID id) const;
-  bool canReserve(const VPTOSchedClass &schedClass, unsigned cycle,
+  bool canReserve(const VPTOSchedParameters &parameters, unsigned cycle,
                   std::string &reason) const;
-  void reserve(const VPTOSchedClass &schedClass, unsigned cycle);
+  void reserve(const VPTOSchedParameters &parameters, unsigned cycle);
 
   const VPTOSchedModel &model;
   SmallVector<unsigned> issueOccupancy;

@@ -552,6 +552,44 @@ def _move_block_ops(src_block, dst_block, *, yield_values):
         op.move_before(yield_anchor)
 
 
+def _validate_matching_branch_names(then_assignment, else_assignment):
+    """Validate merge names and return the authored result order."""
+    then_names = set(then_assignment["raw_values"])
+    else_names = set(else_assignment["raw_values"])
+    if then_names == else_names:
+        return then_assignment["order"]
+
+    pieces = []
+    missing_in_else = sorted(then_names - else_names)
+    missing_in_then = sorted(else_names - then_names)
+    if missing_in_else:
+        pieces.append(f"missing in else: {', '.join(missing_in_else)}")
+    if missing_in_then:
+        pieces.append(f"missing in then: {', '.join(missing_in_then)}")
+    raise RuntimeError(
+        "br.assign(...) names must match across branches; " + "; ".join(pieces)
+    )
+
+
+def _resolved_branch_values(name, then_assignment, else_assignment, *, then_block,
+                            else_block, short_circuit_merge=False):
+    """Reconcile one pair of branch values and require matching result types."""
+    then_value, else_value = _reconcile_branch_assignment_values(
+        name,
+        then_assignment["raw_values"][name],
+        else_assignment["raw_values"][name],
+        then_block=then_block,
+        else_block=else_block,
+        short_circuit_merge=short_circuit_merge,
+    )
+    if then_value.type != else_value.type:
+        raise RuntimeError(
+            f"br.assign(...) type mismatch for '{name}': "
+            f"then branch yields {then_value.type}, else branch yields {else_value.type}"
+        )
+    return then_value, else_value
+
+
 class _IfBranchCM:
     """Enters the insertion point of one branch block for ``with br.then_:`` style."""
 
@@ -743,38 +781,19 @@ class _IfCM:
                 "automatic branch merge requires both br.then_ and br.else_ to call br.assign(...)"
             )
 
-        then_names = set(then_assignment["raw_values"].keys())
-        else_names = set(else_assignment["raw_values"].keys())
-        if then_names != else_names:
-            missing_in_else = sorted(then_names - else_names)
-            missing_in_then = sorted(else_names - then_names)
-            pieces = []
-            if missing_in_else:
-                pieces.append(f"missing in else: {', '.join(missing_in_else)}")
-            if missing_in_then:
-                pieces.append(f"missing in then: {', '.join(missing_in_then)}")
-            raise RuntimeError("br.assign(...) names must match across branches; " + "; ".join(pieces))
-
-        order = then_assignment["order"]
+        order = _validate_matching_branch_names(then_assignment, else_assignment)
         resolved_then_values = {}
         resolved_else_values = {}
         result_types = []
         for name in order:
-            then_value = then_assignment["raw_values"][name]
-            else_value = else_assignment["raw_values"][name]
-            then_value, else_value = _reconcile_branch_assignment_values(
+            then_value, else_value = _resolved_branch_values(
                 name,
-                then_value,
-                else_value,
+                then_assignment,
+                else_assignment,
                 then_block=self._tmp_if.then_block,
                 else_block=self._tmp_if.else_block,
                 short_circuit_merge=self._short_circuit_merge,
             )
-            if then_value.type != else_value.type:
-                raise RuntimeError(
-                    f"br.assign(...) type mismatch for '{name}': "
-                    f"then branch yields {then_value.type}, else branch yields {else_value.type}"
-                )
             resolved_then_values[name] = then_value
             resolved_else_values[name] = else_value
             result_types.append(then_value.type)

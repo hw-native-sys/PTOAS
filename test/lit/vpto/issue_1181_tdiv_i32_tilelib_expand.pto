@@ -9,7 +9,7 @@
 // Regression companion for issue 1181. TileLib must select the exact A5 i32
 // software implementation. This is intentionally pto.tdiv, not pto.ub.vdiv.
 
-// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-tile-op-expand %s -o - 2>/dev/null | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --vpto-scheduler=off --emit-vpto --enable-tile-op-expand %s -o - 2>/dev/null | FileCheck %s
 
 module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @issue_1181_tdiv_i32() {

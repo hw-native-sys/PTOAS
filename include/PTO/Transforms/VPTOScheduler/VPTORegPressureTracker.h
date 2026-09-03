@@ -25,10 +25,15 @@
 namespace mlir::pto {
 
 struct VPTORegPressureEvaluation {
-  SmallVector<int64_t> delta;
-  SmallVector<int64_t> projected;
-  SmallVector<int64_t> projectedExcess;
-  double weightedDelta = 0.0;
+  SmallVector<int64_t, 2> delta;
+  /// Direction-local pressure removed by operand last uses (top-down) or
+  /// result definitions (bottom-up).
+  SmallVector<int64_t, 2> released;
+  /// Direction-local pressure introduced by result definitions (top-down) or
+  /// operand liveness (bottom-up).
+  SmallVector<int64_t, 2> introduced;
+  SmallVector<int64_t, 2> projected;
+  SmallVector<int64_t, 2> projectedExcess;
 };
 
 class VPTORegPressureTracker {
@@ -37,12 +42,15 @@ public:
                          VPTOSchedDirection direction);
 
   VPTORegPressureEvaluation evaluate(const VPTOSUnit &unit) const;
+  void refreshSummary(VPTORegPressureEvaluation &evaluation) const;
   LogicalResult commit(const VPTOSUnit &unit);
 
   VPTOSchedDirection getDirection() const { return direction; }
   ArrayRef<int64_t> getCurrent() const { return current; }
   ArrayRef<int64_t> getPeak() const { return peak; }
-  bool isLive(Value value) const { return liveValues.contains(value); }
+  const DenseSet<Value> &getLiveValues() const { return liveValues; }
+  Value getPressureRepresentative(Value value) const;
+  bool isLive(Value value) const;
 
 private:
   bool isLiveOut(Value value) const;
@@ -53,13 +61,13 @@ private:
   void initializeBottom();
   VPTORegPressureEvaluation evaluateTop(const VPTOSUnit &unit) const;
   VPTORegPressureEvaluation evaluateBottom(const VPTOSUnit &unit) const;
-  void updateSummary(VPTORegPressureEvaluation &evaluation) const;
 
   const VPTOSchedModel &model;
   const VPTOSchedDAG &dag;
   VPTOSchedDirection direction;
   DenseMap<VPTOPressureSetID, unsigned> pressureSetIndex;
   DenseMap<Value, unsigned> remainingUses;
+  DenseSet<Value> liveOutValues;
   DenseSet<Value> liveValues;
   SmallVector<int64_t> current;
   SmallVector<int64_t> peak;

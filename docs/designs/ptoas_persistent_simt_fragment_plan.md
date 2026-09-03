@@ -395,7 +395,17 @@ PTODSL lowering
 
 流水顺序为“保留 structured control flow → persistent analysis/materialize → late outline → SCF-to-CF”。当前 SCF-to-CF 位于 LLVM emission pipeline 的 outline 之后。persistent pass 不依赖 section 的显式 CFG；`pto.section.simt` 的单顶层 block 可以容纳 nested structured control flow，RMSNorm 不需要多顶层 block section。
 
-unroll 须在物化之前执行。slot 数由 init 确定写入的 `residentElements` 决定，不依赖后续访问 footprint。以 `threads=256`、layout capacity 为 32 的 `d=5120` RMSNorm 为例，init 只确定写入 lane-local element 0～19，因此分配 20 个 slot；allocation 中 element 20～31 是 layout padding，不参与驻留。init/consumer 的 load/store 位于静态循环中，不展开就无法把各访问归一到确定 element offset，也无法建立 resident set。展开并折叠 `%i` 后，物化 pass 才能把各访问连接到稳定 slot。`pto-unroll-simt-for` 同时处理 outline 前的 `pto.section.simt` 和 outline 后的 `pto.simt_entry`，只展开显式标注 `{pto.unroll = "full"}` 的循环。
+unroll 须在物化之前执行。slot 数由 init 确定写入的 `residentElements` 决定，不依赖后续访问 footprint。以 `threads=256`、layout capacity 为 32 的 `d=5120` RMSNorm 为例，init 只确定写入 lane-local element 0～19，因此分配 20 个 slot；allocation 中 element 20～31 是 layout padding，不参与驻留。init/consumer 的 load/store 位于静态循环中，不展开就无法把各访问归一到确定 element offset，也无法建立 resident set。展开并折叠 `%i` 后，物化 pass 才能把各访问连接到稳定 slot。`pto-unroll-loops`（旧名 `pto-unroll-simt-for`）同时处理 outline 前的 `pto.section.simt` 和 outline 后的 `pto.simt_entry`，只展开显式标注 `{pto.unroll = "full"}` 的循环。
+
+### 自动提升：`pto-promote-persistent-fragment-loops`
+
+早期版本要求调用方在访问 persistent buffer 的循环上**手写** `{pto.unroll = "full"}`；漏标会让 materialization 在静态访问集合缺失的情况下失败。`pto-promote-persistent-fragment-loops` 把这个前置条件自动化，插在 `pto-unroll-loops` 之前（`prepareVPTOForEmission` 内）：
+
+- **识别**：以显式 `llvm.alloca {pto.persistent}` 为入口（不做结构推断），沿 alloca 的 pointer use graph（getelementptr 链会被跟随，load/store 及其他直接 consumer 视为终点 access；**不跟随** load 的数据结果——物化只要求每个 access 可归一到稳定 slot，仅消费 load 结果的循环与 buffer 无关）收集每个相关 op 的外层 `scf.for`——section 内直接包裹 access 的循环与多层嵌套的各层级；**例外（依赖感知）**：循环体内包含 `pto.section.simt` region、且其 induction variable 不出现在该循环体内任何 persistent GEP 的 index 中（沿纯整数算术链追踪）时才跳过——即循环只搬运数据、fragment 按 lane 常量索引的形态（rmsnorm persistent 的 tile 循环）。此时展开只会把 section 按 trip 克隆 N 份，SIMT outlining 为每个克隆生成单调用点的 linkonce_odr entry 函数，BiSheng 会把其中部分折叠/内联导致 `_simt_entry` ELF symbol 缺失，VPTO fatobj 发射在 VF_SIMT size patch 处失败（且代码体积按 trip 线性膨胀），而对 access 静态化零贡献。当 induction variable 参与 persistent GEP（按迭代选 fragment slot）时循环**仍被提升**——展开是这类 access 静态化的唯一途径；已端到端验证：无手写 hint 的依赖形态 kernel 由 pass 自动提升、编译通过、且每个克隆正确读取各自驻留 slot（数值逐 slot 校验一致）。静态零 trip（`ub <= lb`）的循环不会执行任何 access，整条 enclosing 链（含动态外层循环）都跳过不提升；
+- **提升**：无 hint 或 `pto.unroll = "enable"` 的循环改写为 `pto.unroll = "full"`（覆盖 enable 是刻意的：保持 enable 会让 loop 保留到 metadata 阶段，materialization 看不到确定的静态访问集合）；已是 `"full"` 的保持不变；命中的循环附加内部 marker `pto.persistent_unroll`；
+- **fail-fast（硬错误，绝不静默降级）**：persistent 循环上的 `pto.unroll_factor`；`scf.while` 内的 persistent access（该结构无法承载 full-unroll hint）；静态 trip 超过 `max-persistent-unroll-trip-count`（默认 128，pass option 可调，报错含函数名与 trip 值）。动态 trip 在 promotion 时无法检查，由 marker 把 `pto-unroll-loops` 的"丢 hint + remark"兜底升级为 persistent 专属硬错误——persistent loop 静默存活会破坏物化前提，必须 fail-fast。marker 随循环展开一同消失，不会残留在 IR 中。
+
+该 pass 只做识别与标注：slot 分配、keep/resume 生成、SIMT outline、LLVM metadata lowering 仍归各自的 pass。
 
 ## 当前支持范围与限制
 

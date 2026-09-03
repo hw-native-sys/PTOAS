@@ -59,7 +59,8 @@ bool mlir::pto::isPTOPackedLdgStgVectorType(Type t) {
   Type elemType = vecType.getElementType();
   bool validElem = false;
   if (isPTOFloat8Type(elemType)) {
-    validElem = lanes == mlir::pto::kValue2 || lanes == 4 || lanes == 8;
+    validElem = lanes == mlir::pto::kValue2 || lanes == mlir::pto::kValue4 ||
+                lanes == mlir::pto::kValue8;
   } else {
     validElem =
         lanes == mlir::pto::kValue2 &&
@@ -68,7 +69,9 @@ bool mlir::pto::isPTOPackedLdgStgVectorType(Type t) {
   if (!validElem) {
     if (auto intTy = dyn_cast<IntegerType>(elemType)) {
       unsigned w = intTy.getWidth();
-      validElem = lanes == mlir::pto::kValue2 && (w == 8 || w == 16 || w == 32);
+      validElem = lanes == mlir::pto::kValue2 &&
+                  (w == mlir::pto::kValue8 || w == mlir::pto::kValue16 ||
+                   w == mlir::pto::kValue32);
     }
   }
   if (!validElem) {
@@ -98,12 +101,12 @@ bool mlir::pto::isPTOLowPrecisionType(Type t) {
 
 unsigned mlir::pto::getPTOStorageElemBitWidth(Type t) {
   if (isPTOHiFloat8x2Type(t)) {
-    return 16;
+    return mlir::pto::kValue16;
   }
   // bf16x2 is a 4-byte packed pair; special-case it before the generic
   // low-precision branch (which would otherwise report 8 bits).
   if (isPTOBF16x2Type(t)) {
-    return 32;
+    return mlir::pto::kValue32;
   }
   if (isPTOLowPrecisionType(t)) {
     return kBitsPerByte;

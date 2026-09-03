@@ -16,8 +16,10 @@ module {
       %dst_bf16: !pto.ptr<bf16, ub>,
       %dst: !pto.ptr<f32, ub>,
       %offset: index) {
+    %c16 = arith.constant 16 : index
     %c64 = arith.constant 64 : index
     %c1 = arith.constant 1 : index
+    %aligned_offset = arith.muli %offset, %c16 : index
     %mask64 = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
     %mask1 = pto.vmi.create_mask %c1 : index -> !pto.vmi.mask<1xpred>
     %sum = pto.vmi.vadd %source, %rhs, %mask64
@@ -25,12 +27,12 @@ module {
           !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
     %narrow = pto.vmi.vcvt %sum {saturate = "SAT"}
         : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
-    pto.vmi.vstore %narrow, %dst_bf16[%offset], %mask64
+    pto.vmi.vstore %narrow, %dst_bf16[%aligned_offset], %mask64
         : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, !pto.vmi.mask<64xpred>
     %reduce = pto.vmi.vcadd %sum, %mask64 {reassoc}
         : !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred>
         -> !pto.vmi.vreg<1xf32>
-    pto.vmi.vstore %reduce, %dst[%offset], %mask1
+    pto.vmi.vstore %reduce, %dst[%aligned_offset], %mask1
         : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<1xpred>
     return
   }
@@ -60,10 +62,12 @@ module {
 // LOWER-SAME: %[[DST_BF16:[^,]+]]: !pto.ptr<bf16, ub>
 // LOWER-SAME: %[[DST:[^,]+]]: !pto.ptr<f32, ub>
 // LOWER-SAME: %[[OFF:[^)]+]]: index
+// LOWER: %[[C16:.*]] = arith.constant 16 : index
+// LOWER: %[[ALIGNED_OFF:.*]] = arith.muli %[[OFF]], %[[C16]] : index
 // LOWER: %[[REDUCE_MASK:.*]] = pto.pset_b32 "PAT_ALL"
 // LOWER: %[[ALL:.*]] = pto.pset_b32 "PAT_ALL"
 // LOWER: %[[SUM:.*]] = pto.vadd %[[SRC]], %[[RHS]], %[[ALL]]
-// LOWER: pto.vsts {{.*}}, %[[DST_BF16]][%[[OFF]]], {{.*}} {dist = "PK_B32"}
+// LOWER: pto.vsts {{.*}}, %[[DST_BF16]][%[[ALIGNED_OFF]]], {{.*}} {dist = "PK_B32"}
 // LOWER: %[[REDUCED:.*]] = pto.vcadd %[[SUM]], %[[REDUCE_MASK]]
 // LOWER: %[[STORE_MASK:.*]] = pto.pset_b32 "PAT_VL1"
-// LOWER: pto.vsts %[[REDUCED]], %[[DST]][%[[OFF]]], {{.*}} {dist = "1PT_B32"}
+// LOWER: pto.vsts %[[REDUCED]], %[[DST]][%[[ALIGNED_OFF]]], {{.*}} {dist = "1PT_B32"}

@@ -22,6 +22,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/TypeSwitch.h"
 
 #include <type_traits>
 
@@ -118,58 +119,11 @@ static std::optional<Value> rematerializeBinaryDataOp(Operation *op,
         .getResult();
   };
 
-  if (auto addf = dyn_cast<VMIAddFOp>(op)) {
-    return rebuild(addf);
-  }
-  if (auto addi = dyn_cast<VMIAddIOp>(op)) {
-    return rebuild(addi);
-  }
-  if (auto subf = dyn_cast<VMISubFOp>(op)) {
-    return rebuild(subf);
-  }
-  if (auto subi = dyn_cast<VMISubIOp>(op)) {
-    return rebuild(subi);
-  }
-  if (auto mulf = dyn_cast<VMIMulFOp>(op)) {
-    return rebuild(mulf);
-  }
-  if (auto muli = dyn_cast<VMIMulIOp>(op)) {
-    return rebuild(muli);
-  }
-  if (auto divf = dyn_cast<VMIDivFOp>(op)) {
-    return rebuild(divf);
-  }
-  if (auto minf = dyn_cast<VMIMinFOp>(op)) {
-    return rebuild(minf);
-  }
-  if (auto mini = dyn_cast<VMIMinIOp>(op)) {
-    return rebuild(mini);
-  }
-  if (auto maxf = dyn_cast<VMIMaxFOp>(op)) {
-    return rebuild(maxf);
-  }
-  if (auto maxi = dyn_cast<VMIMaxIOp>(op)) {
-    return rebuild(maxi);
-  }
-  if (auto andi = dyn_cast<VMIAndIOp>(op)) {
-    return rebuild(andi);
-  }
-  if (auto ori = dyn_cast<VMIOrIOp>(op)) {
-    return rebuild(ori);
-  }
-  if (auto xori = dyn_cast<VMIXOrIOp>(op)) {
-    return rebuild(xori);
-  }
-  if (auto shli = dyn_cast<VMIShLIOp>(op)) {
-    return rebuild(shli);
-  }
-  if (auto shrui = dyn_cast<VMIShRUIOp>(op)) {
-    return rebuild(shrui);
-  }
-  if (auto shrsi = dyn_cast<VMIShRSIOp>(op)) {
-    return rebuild(shrsi);
-  }
-  return std::nullopt;
+  return llvm::TypeSwitch<Operation *, std::optional<Value>>(op)
+      .Case<VMIAddFOp, VMIAddIOp, VMISubFOp, VMISubIOp, VMIMulFOp, VMIMulIOp,
+            VMIDivFOp, VMIMinFOp, VMIMinIOp, VMIMaxFOp, VMIMaxIOp, VMIAndIOp,
+            VMIOrIOp, VMIXOrIOp, VMIShLIOp, VMIShRUIOp, VMIShRSIOp>(rebuild)
+      .Default([](Operation *) { return std::nullopt; });
 }
 
 static std::optional<Value> rematerializeUnaryDataOp(Operation *op,
@@ -191,31 +145,24 @@ static std::optional<Value> rematerializeUnaryDataOp(Operation *op,
         .getResult();
   };
 
-  if (auto negf = dyn_cast<VMINegFOp>(op)) {
-    return rebuild(negf);
-  if (auto negi = dyn_cast<VMINegIOp>(op)) {
-    return rebuild(negi);
+  return llvm::TypeSwitch<Operation *, std::optional<Value>>(op)
+      .Case<VMINegFOp, VMINegIOp, VMIAbsFOp, VMIAbsIOp, VMISqrtOp, VMIExpOp,
+            VMILnOp, VMIReluOp, VMINotOp>(rebuild)
+      .Default([](Operation *) { return std::nullopt; });
+}
+
+static std::optional<Value> rematerializeExtension(Value value,
+                                                   VMIVRegType resultType,
+                                                   Location loc,
+                                                   OpBuilder &builder) {
+  if (auto extf = value.getDefiningOp<VMIExtFOp>()) {
+    return rematerializeWidenExt(extf, resultType, loc, builder);
   }
-  if (auto absf = dyn_cast<VMIAbsFOp>(op))
-    return rebuild(absf);
+  if (auto extsi = value.getDefiningOp<VMIExtSIOp>()) {
+    return rematerializeWidenExt(extsi, resultType, loc, builder);
   }
-  if (auto absi = dyn_cast<VMIAbsIOp>(op)) {
-    return rebuild(absi);
-  }
-  if (auto sqrt = dyn_cast<VMISqrtOp>(op)) {
-    return rebuild(sqrt);
-  }
-  if (auto exp = dyn_cast<VMIExpOp>(op)) {
-    return rebuild(exp);
-  }
-  if (auto ln = dyn_cast<VMILnOp>(op)) {
-    return rebuild(ln);
-  }
-  if (auto relu = dyn_cast<VMIReluOp>(op)) {
-    return rebuild(relu);
-  }
-  if (auto notOp = dyn_cast<VMINotOp>(op)) {
-    return rebuild(notOp);
+  if (auto extui = value.getDefiningOp<VMIExtUIOp>()) {
+    return rematerializeWidenExt(extui, resultType, loc, builder);
   }
   return std::nullopt;
 }
@@ -250,14 +197,8 @@ static std::optional<Value> rematerializeDataProducer(Value value,
     return std::nullopt;
   }
 
-  if (auto extf = value.getDefiningOp<VMIExtFOp>()) {
-    return rematerializeWidenExt(extf, resultType, loc, builder);
-  }
-  if (auto extsi = value.getDefiningOp<VMIExtSIOp>()) {
-    return rematerializeWidenExt(extsi, resultType, loc, builder);
-  }
-  if (auto extui = value.getDefiningOp<VMIExtUIOp>()) {
-    return rematerializeWidenExt(extui, resultType, loc, builder);
+  if (auto result = rematerializeExtension(value, resultType, loc, builder)) {
+    return result;
   }
 
   if (Operation *op = value.getDefiningOp()) {

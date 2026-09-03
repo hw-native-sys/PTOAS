@@ -20,6 +20,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Value.h"
+#include "mlir/Pass/AnalysisManager.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
@@ -31,7 +32,6 @@
 #include <optional>
 
 namespace mlir {
-class AnalysisManager;
 
 namespace pto {
 

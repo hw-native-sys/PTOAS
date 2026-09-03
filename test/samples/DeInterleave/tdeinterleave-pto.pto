@@ -1,0 +1,34 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. Please make sure you comply with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+module attributes {pto.target_arch = "a5"} {
+  func.func private @tdeinterleave_single_source(
+      %src: !pto.tile_buf<vec, 16x128xf32>,
+      %dst0: !pto.tile_buf<vec, 16x64xf32>,
+      %dst1: !pto.tile_buf<vec, 16x64xf32>) {
+    pto.tdeinterleave ins(%src : !pto.tile_buf<vec, 16x128xf32>)
+                      outs(%dst0, %dst1 :
+                             !pto.tile_buf<vec, 16x64xf32>,
+                             !pto.tile_buf<vec, 16x64xf32>)
+    return
+  }
+
+  func.func private @tdeinterleave_two_sources(
+      %src0: !pto.tile_buf<vec, 16x64xf32>,
+      %src1: !pto.tile_buf<vec, 16x64xf32>,
+      %dst0: !pto.tile_buf<vec, 16x64xf32>,
+      %dst1: !pto.tile_buf<vec, 16x64xf32>) {
+    pto.tdeinterleave ins(%src0, %src1 :
+                            !pto.tile_buf<vec, 16x64xf32>,
+                            !pto.tile_buf<vec, 16x64xf32>)
+                      outs(%dst0, %dst1 :
+                             !pto.tile_buf<vec, 16x64xf32>,
+                             !pto.tile_buf<vec, 16x64xf32>)
+    return
+  }
+}

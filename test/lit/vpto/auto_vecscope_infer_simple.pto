@@ -1,4 +1,4 @@
-// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --vpto-scheduler=off --emit-vpto %s -o - | FileCheck %s
 
 module attributes {pto.target_arch = "a5"} {
   module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {

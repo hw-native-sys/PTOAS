@@ -16,8 +16,10 @@ module {
       %dense_out: !pto.ptr<f16, ub>,
       %off: index) {
     %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
     %c128 = arith.constant 128 : index
-    %x = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
+    %aligned_off = arith.muli %off, %c16 : index
+    %x = pto.vmi.vload %src[%aligned_off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
     %mask = pto.vmi.create_mask %c128 : index -> !pto.vmi.mask<128xpred>
     %sum = pto.vmi.vcadd %x, %mask {group = 8, reassoc}
         : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred>
@@ -30,13 +32,13 @@ module {
     %ysum = pto.vmi.vcadd %y, %mask {group = 8, reassoc}
         : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred>
         -> !pto.vmi.vreg<8xf32>
-    pto.vmi.vstore %ysum, %sum_out[%off], %c1 {group = 8}
+    pto.vmi.vstore %ysum, %sum_out[%aligned_off], %c1 {group = 8}
         : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
     %b_for_cast = pto.vmi.vbrc %sum {group = 8}
         : !pto.vmi.vreg<8xf32> -> !pto.vmi.vreg<128xf32>
     %h = pto.vmi.vcvt %b_for_cast {saturate = "SAT"}
         : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf16>
-    pto.vmi.vstore %h, %dense_out[%off]
+    pto.vmi.vstore %h, %dense_out[%aligned_off]
         : !pto.vmi.vreg<128xf16>, !pto.ptr<f16, ub>
     return
   }

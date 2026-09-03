@@ -1,14 +1,10 @@
 // RUN: ptoas --pto-level=level3 --pto-arch a5 --enable-insert-sync --emit-pto-ir %s | FileCheck %s --check-prefix=INSERT
-// RUN: ptoas --pto-level=level3 --pto-arch a5 --enable-graph-sync-solver --graph-sync-solver-event-id-max=8 --emit-pto-ir %s | FileCheck %s --check-prefix=GSS
 
 module {
 
   // INSERT-LABEL: func.func @mte2_v_uses_event_id7
   // INSERT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID7>]
   // INSERT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID7>]
-  // GSS-LABEL: func.func @mte2_v_uses_event_id7
-  // GSS: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID7>]
-  // GSS: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID7>]
   func.func @mte2_v_uses_event_id7(%arg0: !pto.ptr<f32>,
                                    %arg1: index, %arg2: index,
                                    %arg3: index, %arg4: index,

@@ -34,5 +34,7 @@ module {
 
 // LOWER-LABEL: func.func @vmi_layout_assignment_dense_store_group_slots(
 // LOWER: pto.vcgadd
-// LOWER: pto.vsts
+// LOWER: pto.init_align
+// LOWER: pto.vstus
+// LOWER: pto.vstas
 // LOWER-NOT: pto.vmi.

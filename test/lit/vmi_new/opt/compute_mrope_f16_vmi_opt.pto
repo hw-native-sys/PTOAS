@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s | FileCheck %s --implicit-check-not=pto.vdintlv --implicit-check-not=pto.vintlv --implicit-check-not=pto.vpack --implicit-check-not='part = "ODD"'
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --vpto-scheduler=off --emit-vpto %s | FileCheck %s --implicit-check-not=pto.vdintlv --implicit-check-not=pto.vintlv --implicit-check-not=pto.vpack --implicit-check-not='part = "ODD"'
 
 // This is an optimization capability guard for the VMI ComputeMropeF16 path.
 // Do not weaken the checks when the output shape regresses. The intended shape is:
@@ -30,7 +30,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
-    %c2_i32 = arith.constant 2 : i32
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
 
     %x_ub = pto.castptr %x_ub_u : !pto.ptr<ui16, ub> -> !pto.ptr<f16, ub>
     %y_ub = pto.castptr %y_ub_u : !pto.ptr<ui16, ub> -> !pto.ptr<f16, ub>
@@ -39,14 +40,15 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %cur_tokens = arith.index_cast %curTokens : i32 to index
     %num_heads_idx = arith.index_cast %num_heads : i32 to index
     %num_heads_max_idx = arith.index_cast %num_heads_max : i32 to index
-    %head_align_idx = arith.index_cast %headAlign_fp16 : i32 to index
-    %rotary_dim_idx = arith.index_cast %rotary_dim : i32 to index
+    %head_align_units = arith.index_cast %headAlign_fp16 : i32 to index
+    %rotary_dim_units = arith.index_cast %rotary_dim : i32 to index
+    %head_align_idx = arith.muli %head_align_units, %c16 : index
+    %rotary_dim_idx = arith.muli %rotary_dim_units, %c32 : index
 
-    %half_rotary_i32 = arith.divui %rotary_dim, %c2_i32 : i32
     %suffix_len_i32 = arith.subi %head_size, %rotary_dim : i32
     %has_suffix = arith.cmpi sgt, %head_size, %rotary_dim : i32
 
-    %half_rotary = arith.index_cast %half_rotary_i32 : i32 to index
+    %half_rotary = arith.muli %rotary_dim_units, %c16 : index
     %suffix_len = arith.index_cast %suffix_len_i32 : i32 to index
     %half_mask = pto.vmi.create_mask %half_rotary : index -> !pto.vmi.mask<64xpred>
     %suffix_mask = pto.vmi.create_mask %suffix_len : index -> !pto.vmi.mask<64xpred>

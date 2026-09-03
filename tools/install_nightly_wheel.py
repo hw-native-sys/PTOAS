@@ -148,6 +148,43 @@ def packaging_modules():
             ) from error
 
 
+def _wheel_candidate(asset, canonical_package, tag_rank, parse_wheel_filename, canonicalize_name):
+    if not isinstance(asset, dict):
+        return None
+    name = asset.get("name")
+    url = asset.get("browser_download_url")
+    if not isinstance(name, str) or not name.endswith(".whl") or not isinstance(url, str):
+        return None
+    try:
+        distribution, version, build, wheel_tags = parse_wheel_filename(name)
+    except (TypeError, ValueError):
+        return None
+    if canonicalize_name(str(distribution)) != canonical_package:
+        return None
+    matching_ranks = [tag_rank[tag] for tag in wheel_tags if tag in tag_rank]
+    if not matching_ranks:
+        return None
+    return (
+        parse_updated_at(asset.get("updated_at")),
+        version,
+        build or (-1, ""),
+        min(matching_ranks),
+        name,
+        url,
+        parse_digest(asset.get("digest")),
+    )
+
+
+def _wheel_sort_key(item):
+    return (
+        item[0] or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc),
+        item[1],
+        item[2],
+        -item[3],
+        item[4],
+    )
+
+
 def select_wheel(release: object, package: str = "ptoas") -> WheelSelection:
     try:
         sys_tags, canonicalize_name, parse_wheel_filename = packaging_modules()
@@ -162,48 +199,23 @@ def select_wheel(release: object, package: str = "ptoas") -> WheelSelection:
     supported_tags = list(sys_tags())
     tag_rank = {tag: rank for rank, tag in enumerate(supported_tags)}
     canonical_package = canonicalize_name(package)
-    candidates = []
-    for asset in release["assets"]:
-        if not isinstance(asset, dict):
-            continue
-        name = asset.get("name")
-        url = asset.get("browser_download_url")
-        if not isinstance(name, str) or not name.endswith(".whl") or not isinstance(url, str):
-            continue
-        try:
-            distribution, version, build, wheel_tags = parse_wheel_filename(name)
-        except (TypeError, ValueError):
-            continue
-        if canonicalize_name(str(distribution)) != canonical_package:
-            continue
-        matching_ranks = [tag_rank[tag] for tag in wheel_tags if tag in tag_rank]
-        if matching_ranks:
-            candidates.append(
-                (
-                    parse_updated_at(asset.get("updated_at")),
-                    version,
-                    build or (-1, ""),
-                    min(matching_ranks),
-                    name,
-                    url,
-                    parse_digest(asset.get("digest")),
-                )
-            )
+    candidates = [
+        candidate
+        for asset in release["assets"]
+        if (candidate := _wheel_candidate(
+            asset,
+            canonical_package,
+            tag_rank,
+            parse_wheel_filename,
+            canonicalize_name,
+        )) is not None
+    ]
 
     if not candidates:
         raise RuntimeError(
             f"no compatible {package} wheel found in the {release.get('tag_name', 'requested')} release"
         )
-    selected = max(
-        candidates,
-        key=lambda item: (
-            item[0] or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc),
-            item[1],
-            item[2],
-            -item[3],
-            item[4],
-        ),
-    )
+    selected = max(candidates, key=_wheel_sort_key)
     return WheelSelection(selected[4], selected[5], selected[0], selected[6])
 
 

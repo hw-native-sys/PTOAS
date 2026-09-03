@@ -10,11 +10,12 @@
 #include <functional>
 #include <map>
 #include <tuple>
-#include "BufidSyncAnalysis.h"
+
 #include "PTO/IR/PTO.h"
 #include "PTO/Support/CodeConstants.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/Support/Debug.h"
+#include "BufidSyncAnalysis.h"
 
 
 #define DEBUG_TYPE "pto-bufid-sync"

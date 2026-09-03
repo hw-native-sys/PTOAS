@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: ptoas --pto-backend=vpto --pto-arch=a5 --enable-vpto-soft-postupdate --emit-vpto %s -o - | FileCheck %s
+// RUN: ptoas --pto-backend=vpto --pto-arch=a5 --vpto-scheduler=off --enable-vpto-soft-postupdate --emit-vpto %s -o - | FileCheck %s
 
 // CHECK-LABEL: func.func @sequential_plds
 // CHECK: %{{.*}}, [[PLDS1:%[a-zA-Z0-9_]+]] = pto.plds {{%.*}}[[[PLDS_STEP:%[a-zA-Z0-9_]+]]]

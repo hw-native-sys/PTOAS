@@ -11,12 +11,36 @@
 #include "PTO/Analysis/PTOAddressAnalysis.h"
 
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/PTOTypeUtils.h"
+#include "PTO/Support/CodeConstants.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/Pass/AnalysisManager.h"
+#include "llvm/Support/MathExtras.h"
+
+#include <numeric>
 
 using namespace mlir;
 using namespace mlir::pto;
 
 namespace {
+
+static std::optional<int64_t> getElementBytes(Value pointer) {
+  Type elementType;
+  if (auto pointerType = dyn_cast<PtrType>(pointer.getType())) {
+    elementType = pointerType.getElementType();
+  } else if (auto memrefType = dyn_cast<BaseMemRefType>(pointer.getType())) {
+    elementType = memrefType.getElementType();
+  } else {
+    return std::nullopt;
+  }
+  unsigned bitWidth = getPTOStorageElemBitWidth(elementType);
+  if (bitWidth == 0 || bitWidth % mlir::pto::kValue8 != 0) {
+    return std::nullopt;
+  }
+  return static_cast<int64_t>(bitWidth / mlir::pto::kValue8);
+}
 
 static PTOAnalysisResult<PTOTypedExprRef>
 scaleExpression(const PTOTypedExprRef &expression, int64_t numerator,
@@ -51,7 +75,263 @@ static bool isZero(const PTOTypedExprRef &expression) {
   return constant && *constant == 0;
 }
 
+static std::optional<int64_t> getConstantIndexValue(Value value) {
+  IntegerAttr attr;
+  if (!matchPattern(value, m_Constant(&attr))) {
+    return std::nullopt;
+  }
+  if (!attr.getValue().isSignedIntN(64)) {
+    return std::nullopt;
+  }
+  return attr.getValue().getSExtValue();
+}
+
+static int64_t normalizeRemainder(int64_t value, int64_t modulus) {
+  int64_t remainder = value % modulus;
+  return remainder < 0 ? remainder + modulus : remainder;
+}
+
+static std::optional<int64_t>
+getKnownIndexRemainder(Value value, int64_t modulus, unsigned depth = 0) {
+  if (modulus <= 1) {
+    return 0;
+  }
+  if (depth > 8) {
+    return std::nullopt;
+  }
+  if (auto constant = getConstantIndexValue(value)) {
+    return normalizeRemainder(*constant, modulus);
+  }
+
+  if (auto blockArgument = dyn_cast<BlockArgument>(value)) {
+    auto forOp = dyn_cast_or_null<scf::ForOp>(
+        blockArgument.getOwner()->getParentOp());
+    if (forOp) {
+      bool isInductionVariable = forOp.getInductionVar() == value;
+      if (!isInductionVariable) {
+        return std::nullopt;
+      }
+      auto lower =
+          getKnownIndexRemainder(forOp.getLowerBound(), modulus, depth + 1);
+      auto step =
+          getKnownIndexRemainder(forOp.getStep(), modulus, depth + 1);
+      if (lower && step && *step == 0) {
+        return lower;
+      }
+    }
+  }
+
+  if (auto cast = value.getDefiningOp<arith::IndexCastOp>()) {
+    return getKnownIndexRemainder(cast.getIn(), modulus, depth + 1);
+  }
+  if (auto cast = value.getDefiningOp<arith::IndexCastUIOp>()) {
+    return getKnownIndexRemainder(cast.getIn(), modulus, depth + 1);
+  }
+  if (auto cast = value.getDefiningOp<arith::ExtSIOp>()) {
+    return getKnownIndexRemainder(cast.getIn(), modulus, depth + 1);
+  }
+  if (auto cast = value.getDefiningOp<arith::ExtUIOp>()) {
+    return getKnownIndexRemainder(cast.getIn(), modulus, depth + 1);
+  }
+  if (auto cast = value.getDefiningOp<UnrealizedConversionCastOp>()) {
+    bool isSingleCast = cast->getNumOperands() == 1 &&
+                        cast->getNumResults() == 1;
+    if (isSingleCast) {
+      return getKnownIndexRemainder(cast.getOperand(0), modulus, depth + 1);
+    }
+  }
+
+  if (auto add = value.getDefiningOp<arith::AddIOp>()) {
+    auto lhs = getKnownIndexRemainder(add.getLhs(), modulus, depth + 1);
+    auto rhs = getKnownIndexRemainder(add.getRhs(), modulus, depth + 1);
+    return lhs && rhs ? std::optional<int64_t>(normalizeRemainder(
+                              *lhs + *rhs, modulus))
+                      : std::nullopt;
+  }
+  if (auto sub = value.getDefiningOp<arith::SubIOp>()) {
+    auto lhs = getKnownIndexRemainder(sub.getLhs(), modulus, depth + 1);
+    auto rhs = getKnownIndexRemainder(sub.getRhs(), modulus, depth + 1);
+    return lhs && rhs ? std::optional<int64_t>(normalizeRemainder(
+                              *lhs - *rhs, modulus))
+                      : std::nullopt;
+  }
+  if (auto mul = value.getDefiningOp<arith::MulIOp>()) {
+    auto lhs = getKnownIndexRemainder(mul.getLhs(), modulus, depth + 1);
+    auto rhs = getKnownIndexRemainder(mul.getRhs(), modulus, depth + 1);
+    if (lhs && *lhs == 0) {
+      return 0;
+    }
+    if (rhs && *rhs == 0) {
+      return 0;
+    }
+    return lhs && rhs ? std::optional<int64_t>(normalizeRemainder(
+                              *lhs * *rhs, modulus))
+                      : std::nullopt;
+  }
+  return std::nullopt;
+}
+
+static std::optional<int64_t>
+getKnownPointerRemainder(Value pointer, int64_t alignmentBytes,
+                         unsigned depth = 0) {
+  if (alignmentBytes <= 1) {
+    return 0;
+  }
+  if (depth > 8) {
+    return std::nullopt;
+  }
+  if (isa<BlockArgument>(pointer)) {
+    return 0;
+  }
+  if (auto cast = pointer.getDefiningOp<CastPtrOp>()) {
+    Value input = cast.getInput();
+    if (isa<PtrType>(input.getType())) {
+      return getKnownPointerRemainder(input, alignmentBytes, depth + 1);
+    }
+    if (isa<IntegerType>(input.getType())) {
+      return getKnownIndexRemainder(input, alignmentBytes);
+    }
+    return std::nullopt;
+  }
+  if (auto cast = pointer.getDefiningOp<UnrealizedConversionCastOp>()) {
+    bool isSingleCast = cast->getNumOperands() == 1 &&
+                        cast->getNumResults() == 1;
+    if (isSingleCast) {
+      return getKnownPointerRemainder(cast.getOperand(0), alignmentBytes,
+                                      depth + 1);
+    }
+    return std::nullopt;
+  }
+  auto add = pointer.getDefiningOp<AddPtrOp>();
+  if (!add) {
+    return std::nullopt;
+  }
+  auto base = getKnownPointerRemainder(add.getPtr(), alignmentBytes,
+                                       depth + 1);
+  auto pointerType = dyn_cast<PtrType>(add.getPtr().getType());
+  if (!base || !pointerType) {
+    return std::nullopt;
+  }
+  unsigned elementBits = getPTOStorageElemBitWidth(pointerType.getElementType());
+  if (elementBits == 0 || elementBits % 8 != 0) {
+    return std::nullopt;
+  }
+  int64_t elementBytes = static_cast<int64_t>(elementBits / 8);
+  int64_t offsetModulus =
+      alignmentBytes / std::gcd(alignmentBytes, elementBytes);
+  auto offset = getKnownIndexRemainder(add.getOffset(), offsetModulus);
+  if (!offset) {
+    return std::nullopt;
+  }
+  return normalizeRemainder(*base + *offset * elementBytes, alignmentBytes);
+}
+
+struct NormalizedPointer {
+  Value root;
+  PTOTypedExprRef offset;
+  int64_t elementBytes = 0;
+};
+
+static std::optional<NormalizedPointer>
+normalizePointer(Value pointer, PTOValueEvolutionAnalysis &valueEvolution) {
+  auto elementBytes = getElementBytes(pointer);
+  if (!elementBytes) {
+    return std::nullopt;
+  }
+  NormalizedPointer result{pointer,
+                           makePTOConstantExpr(0, pointer.getType()),
+                           *elementBytes};
+  while (true) {
+    if (auto add = result.root.getDefiningOp<AddPtrOp>()) {
+      auto parentBytes = getElementBytes(add.getPtr());
+      if (!parentBytes || *parentBytes != result.elementBytes) {
+        break;
+      }
+      result.offset = makePTOAddExpr(
+          result.offset, valueEvolution.getExpr(add.getOffset()),
+          add.getOffset().getType());
+      result.root = add.getPtr();
+      continue;
+    }
+    if (auto cast = result.root.getDefiningOp<CastPtrOp>()) {
+      auto inputBytes = getElementBytes(cast.getInput());
+      if (!inputBytes || *inputBytes != result.elementBytes) {
+        break;
+      }
+      result.root = cast.getInput();
+      continue;
+    }
+    break;
+  }
+  return result;
+}
+
 } // namespace
+
+std::optional<int64_t>
+mlir::pto::getKnownAddressRemainderBytes(Value pointer, Value elementOffset,
+                                         Type elementType,
+                                         int64_t alignmentBytes) {
+  if (alignmentBytes <= 0) {
+    return std::nullopt;
+  }
+  auto base = getKnownPointerRemainder(pointer, alignmentBytes);
+  unsigned elementBits = getPTOStorageElemBitWidth(elementType);
+  if (!base || elementBits == 0 || elementBits % 8 != 0) {
+    return std::nullopt;
+  }
+  int64_t elementBytes = static_cast<int64_t>(elementBits / 8);
+  int64_t offsetModulus =
+      alignmentBytes / std::gcd(alignmentBytes, elementBytes);
+  auto offset = getKnownIndexRemainder(elementOffset, offsetModulus);
+  if (!offset) {
+    return std::nullopt;
+  }
+  return normalizeRemainder(*base + *offset * elementBytes, alignmentBytes);
+}
+
+bool mlir::pto::isKnownAddressAligned(Value pointer, Value elementOffset,
+                                      Type elementType,
+                                      int64_t alignmentBytes) {
+  std::optional<int64_t> remainder = getKnownAddressRemainderBytes(
+      pointer, elementOffset, elementType, alignmentBytes);
+  return remainder && *remainder == 0;
+}
+
+std::optional<int64_t>
+mlir::pto::getKnownAddressDifferenceBytes(Value from, Value to) {
+  func::FuncOp func = from ? from.getParentRegion()->getParentOfType<func::FuncOp>()
+                           : func::FuncOp();
+  if (!func || !to ||
+      to.getParentRegion()->getParentOfType<func::FuncOp>() != func) {
+    return std::nullopt;
+  }
+  PTOValueEvolutionAnalysis valueEvolution(func);
+  auto fromInfo = normalizePointer(from, valueEvolution);
+  auto toInfo = normalizePointer(to, valueEvolution);
+  if (!fromInfo || !toInfo || fromInfo->root != toInfo->root ||
+      fromInfo->elementBytes != toInfo->elementBytes) {
+    return std::nullopt;
+  }
+  auto fromPoint = valueEvolution.getPointExpression(fromInfo->offset);
+  auto toPoint = valueEvolution.getPointExpression(toInfo->offset);
+  if (!fromPoint || !toPoint) {
+    return std::nullopt;
+  }
+  auto differenceExpr = makePTOSubExpr(*toPoint.value, *fromPoint.value);
+  auto difference = normalizePTOLinearExpr(differenceExpr);
+  if (!difference) {
+    return std::nullopt;
+  }
+  if (!difference->terms.empty()) {
+    return std::nullopt;
+  }
+  int64_t result;
+  if (llvm::MulOverflow(difference->constant, fromInfo->elementBytes, result)) {
+    return std::nullopt;
+  }
+  return result;
+}
 
 PTOAddressAnalysis::PTOAddressAnalysis(func::FuncOp func,
                                        AnalysisManager &analysisManager)

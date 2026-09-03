@@ -36,7 +36,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
    %c1 = arith.constant 1 : index
    %c16 = arith.constant 16 : index
    %c32 = arith.constant 32 : index
-   %tv = pto.make_tensor_view %src, shape = [%c32, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xbf16>
+   %tv = pto.make_tensor_view %src, shape = [%c32, %c16], strides = [%c1, %c32] : !pto.tensor_view<?x?xbf16>
    %sv = pto.partition_view %tv, offsets = [%c0, %c0], sizes = [%c32, %c16] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<32x16xbf16>
    %dst_tile = pto.alloc_tile : !pto.tile_buf<mat, 16x32xbf16, blayout=col_major, slayout=row_major>
    pto.tload ins(%sv : !pto.partition_tensor_view<32x16xbf16>)

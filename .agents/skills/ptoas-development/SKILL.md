@@ -17,7 +17,7 @@ build tree. Its runtime commands use this contract:
 ```bash
 export PTO_SOURCE_DIR=<workspace>/PTOAS
 export LLVM_BUILD_DIR=<workspace>/llvm-project/build-shared
-export VENV_DIR=<workspace>/.venv
+export VENV_DIR="$PTO_SOURCE_DIR/.venv"
 export PYTHON_BIN="$VENV_DIR/bin/python"
 export PTOAS_BIN="$VENV_DIR/bin/ptoas"
 export PTO_BUILD_DIR="$PTO_SOURCE_DIR/build"
@@ -25,6 +25,10 @@ export PTO_BUILD_DIR="$PTO_SOURCE_DIR/build"
 
 `<workspace>` is a placeholder, not a literal directory or shell syntax. Probe
 the current checkout or source its generated `env.sh` to obtain the real paths.
+
+The isolated venv lives inside the checkout at `$PTO_SOURCE_DIR/.venv` — not in
+the parent directory — so the workspace stays self-contained and a global
+`python`, `ptoas`, or conda environment is never used.
 
 For an isolated feature worktree created by `ptoas-workspace-manager`, source
 its generated `env.sh`. It is authoritative: it selects the worktree's venv,
@@ -45,9 +49,6 @@ else
   : "${PTO_BUILD_DIR:=$PTO_SOURCE_DIR/build}"
   if [[ -z "${PYTHON_BIN:-}" && -x "$PTO_SOURCE_DIR/.venv/bin/python" ]]; then
     PYTHON_BIN="$PTO_SOURCE_DIR/.venv/bin/python"
-  elif [[ -z "${PYTHON_BIN:-}" && -x "$(dirname "$PTO_SOURCE_DIR")/.venv/bin/python" ]]; then
-    # This is the standard layout in the repository README.
-    PYTHON_BIN="$(dirname "$PTO_SOURCE_DIR")/.venv/bin/python"
   fi
   if [[ -n "${PYTHON_BIN:-}" ]]; then
     VENV_DIR="$(dirname "$(dirname "$PYTHON_BIN")")"
@@ -99,16 +100,15 @@ adding a global shell setting by default.
 ## Initialize or repair PTOAS
 
 Use this path after resolving a compatible LLVM build and the Python intended
-for the workspace. For a normal checkout, create it at the workspace root
-(`$PTO_SOURCE_DIR/../.venv`), as in the repository README; manager-owned
-worktrees already have one.
+for the workspace. For a normal checkout, create it inside the checkout at
+`$PTO_SOURCE_DIR/.venv`; manager-owned worktrees already have one there.
 
 ```bash
 test -d "$LLVM_BUILD_DIR/lib/cmake/llvm"
 test -d "$LLVM_BUILD_DIR/lib/cmake/mlir"
 
 if [[ -z "${PYTHON_BIN:-}" ]]; then
-  VENV_DIR="$(dirname "$PTO_SOURCE_DIR")/.venv"
+  VENV_DIR="$PTO_SOURCE_DIR/.venv"
   python3 -m venv "$VENV_DIR"
   PYTHON_BIN="$VENV_DIR/bin/python"
 fi

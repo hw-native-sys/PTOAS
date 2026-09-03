@@ -182,12 +182,16 @@ jobs:
           esac
           rm -rf -- "${work_root}"
           mkdir -p \
+            "${work_root}/tmp" \
             "${work_root}/payload/test/samples" \
             "${work_root}/payload/test/npu_validation/scripts" \
             "${work_root}/payload/test/npu_validation/templates"
 
           {
             echo "WORK_ROOT=${work_root}"
+            echo "TMPDIR=${work_root}/tmp"
+            echo "TMP=${work_root}/tmp"
+            echo "TEMP=${work_root}/tmp"
             echo "PTO_BUILD_DIR=${work_root}/build"
             echo "PTO_INSTALL_DIR=${work_root}/install"
             echo "PAYLOAD_DIR=${work_root}/payload"
@@ -308,6 +312,9 @@ jobs:
             "EXPECTED_CASES_FILTER=${RUN_ONLY_CASES}" \
             "PTO_ISA_REPO=${PTO_ISA_REPO}" \
             "PTO_ISA_COMMIT=${PTO_ISA_COMMIT}" \
+            "TMPDIR=${TMPDIR}" \
+            "TMP=${TMP}" \
+            "TEMP=${TEMP}" \
             "OUTPUT_ROOT=${OUTPUT_ROOT}" \
             "RESULTS_TSV=${RESULTS_TSV}" \
             > "${env_file}"
@@ -373,6 +380,7 @@ jobs:
           results_tsv="${RESULTS_TSV:-${RUNNER_TEMP}/a5-board-results-missing.tsv}"
           "${report_python}" .github/scripts/report_a5_board_results.py \
             --results "${results_tsv}" \
+            --log "${BOARD_LOG:-}" \
             --conclusion "${BOARD_CONCLUSION}" \
             --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
             --sha "${GITHUB_SHA}"

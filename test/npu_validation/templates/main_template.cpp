@@ -47,6 +47,19 @@ typedef struct {
 } float4_e2m1x2_t;
 #endif
 
+// CANN 9.2.0+ defines MrgSortExecutedNumList in pto/common/type.hpp without
+// defining TMRGSORT_HPP, so detect the providing header directly.
+#if !__has_include(<pto/common/type.hpp>)
+namespace pto {
+struct MrgSortExecutedNumList {
+    uint16_t mrgSortList0;
+    uint16_t mrgSortList1;
+    uint16_t mrgSortList2;
+    uint16_t mrgSortList3;
+};
+} // namespace pto
+#endif
+
 #define ACL_CHECK(expr)                                                                          \
     do {                                                                                         \
         const aclError _ret = (expr);                                                            \

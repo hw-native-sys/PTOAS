@@ -52,11 +52,27 @@ struct SimplifyAllTruePredicateReorder : public OpRewritePattern<OpTy> {
   }
 };
 
+struct SimplifyVselAllTrueMask : public OpRewritePattern<VselOp> {
+  using OpRewritePattern<VselOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(VselOp op,
+                                PatternRewriter &rewriter) const override {
+    // vsel(src0, src1, mask) selects src0 for all-true masks.
+    if (!isAllTrueMask(op.getMask())) {
+      return failure();
+    }
+
+    rewriter.replaceOp(op, op.getSrc0());
+    return success();
+  }
+};
+
 struct VPTOMaskSimplifyPass
     : public pto::impl::VPTOMaskSimplifyBase<VPTOMaskSimplifyPass> {
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
-    patterns.add<SimplifyAllTruePredicateReorder<PintlvB8Op>,
+    patterns.add<SimplifyVselAllTrueMask,
+                 SimplifyAllTruePredicateReorder<PintlvB8Op>,
                  SimplifyAllTruePredicateReorder<PintlvB16Op>,
                  SimplifyAllTruePredicateReorder<PintlvB32Op>,
                  SimplifyAllTruePredicateReorder<PdintlvB8Op>,

@@ -280,12 +280,17 @@ class VcvtPartMode:
 
 AlignType = _pto.AlignType
 RoundMode = _pto.RoundMode
-DivPrecision = _pto.DivPrecision
-ExpPrecision = _pto.ExpPrecision
-LogPrecision = _pto.LogPrecision
-RecipPrecision = _pto.RecipPrecision
-RsqrtPrecision = _pto.RsqrtPrecision
-SqrtPrecision = _pto.SqrtPrecision
+# Public tile precision modes share one enum.  The generated dialect keeps
+# operation-specific attribute classes internally, so the wrappers translate
+# this enum to the attribute type required by each operation.
+Precision = _pto.DivPrecision
+DivPrecision = Precision
+RemPrecision = Precision
+ExpPrecision = Precision
+LogPrecision = Precision
+RecipPrecision = Precision
+RsqrtPrecision = Precision
+SqrtPrecision = Precision
 
 
 class TensorView:
@@ -329,7 +334,9 @@ __all__ = [
     "VcvtPartMode",
     "AlignType",
     "RoundMode",
+    "Precision",
     "DivPrecision",
+    "RemPrecision",
     "ExpPrecision",
     "LogPrecision",
     "RecipPrecision",

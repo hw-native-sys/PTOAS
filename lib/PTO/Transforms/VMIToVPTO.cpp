@@ -12,11 +12,14 @@
 // https://discourse.llvm.org/t/matchandrewrite-hiding-virtual-functions/84933/8
 #pragma GCC diagnostic ignored "-Woverloaded-virtual"
 
+#include "PTO/Analysis/PTOAddressAnalysis.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/IR/VMIUtils.h"
+#include "PTO/IR/VPTOMemoryDist.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/VMILayoutSupport.h"
+#include "PTO/Transforms/VPTOLowering.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -33,12 +36,14 @@
 #include "mlir/Transforms/OneToNTypeConversion.h"
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <cassert>
 #include <numeric>
 #include <type_traits>
+#include <variant>
 
 namespace mlir {
 namespace pto {
@@ -57,6 +62,44 @@ std::optional<std::string> getX2MemoryDistToken(Type elementType,
 std::optional<std::string> getDenseLaneStrideLoadDistToken(VMIVRegType type);
 std::optional<std::string> getDenseLaneStrideStoreDistToken(VMIVRegType type);
 std::optional<std::string> getPointStoreDistToken(Type elementType);
+
+static LogicalResult emitStatefulStoreStream(Operation *op, Value base,
+                                              ValueRange values,
+                                              ArrayRef<int64_t> advances,
+                                              OneToNPatternRewriter &rewriter) {
+  bool invalidStreamShape = values.empty() || values.size() != advances.size();
+  if (invalidStreamShape) {
+    return rewriter.notifyMatchFailure(
+        op, "unaligned store stream requires matching non-empty values and "
+            "advances");
+  }
+  if (llvm::any_of(advances, [](int64_t advance) {
+        return advance <= 0 || !llvm::isInt<32>(advance);
+      })) {
+    return rewriter.notifyMatchFailure(
+        op, "unaligned store stream requires positive 32-bit advances");
+  }
+
+  Value align = rewriter
+                    .create<InitAlignOp>(op->getLoc(),
+                                         AlignType::get(rewriter.getContext()))
+                    .getResult();
+  Value currentBase = base;
+  for (auto [value, advance] : llvm::zip_equal(values, advances)) {
+    Value advanceValue =
+        rewriter.create<arith::ConstantIntOp>(op->getLoc(), advance, 32);
+    auto store = rewriter.create<VstusOp>(op->getLoc(), align.getType(),
+                                          currentBase.getType(), align,
+                                          advanceValue, value, currentBase);
+    align = store.getAlignOut();
+    currentBase = store.getBaseOut();
+  }
+
+  Value zero = rewriter.create<arith::ConstantIntOp>(op->getLoc(), 0, 32);
+  rewriter.create<VstasOp>(op->getLoc(), /*updated_base=*/Type{}, align,
+                           currentBase, zero);
+  return success();
+}
 
 bool isVMIType(Type type) { return isa<VMIVRegType, VMIMaskType>(type); }
 
@@ -974,145 +1017,17 @@ std::optional<int64_t> getConstantIndexValue(Value value) {
   return std::nullopt;
 }
 
-static int64_t normalizeRemainder(int64_t value, int64_t modulus) {
-  int64_t remainder = value % modulus;
-  return remainder < 0 ? remainder + modulus : remainder;
-}
-
-std::optional<int64_t> getKnownIndexRemainder(Value value, int64_t modulus,
-                                              int depth = 0) {
-  if (modulus <= 1)
-    return 0;
-  if (depth > 6)
-    return std::nullopt;
-  if (std::optional<int64_t> constant = getConstantIndexValue(value))
-    return normalizeRemainder(*constant, modulus);
-
-  if (auto cast = value.getDefiningOp<arith::IndexCastOp>())
-    return getKnownIndexRemainder(cast.getIn(), modulus, depth + 1);
-  if (auto cast = value.getDefiningOp<arith::ExtSIOp>())
-    return getKnownIndexRemainder(cast.getIn(), modulus, depth + 1);
-  if (auto cast = value.getDefiningOp<arith::ExtUIOp>())
-    return getKnownIndexRemainder(cast.getIn(), modulus, depth + 1);
-  if (auto cast = value.getDefiningOp<UnrealizedConversionCastOp>()) {
-    if (cast->getNumOperands() == 1 && cast->getNumResults() == 1)
-      return getKnownIndexRemainder(cast.getOperand(0), modulus, depth + 1);
-  }
-
-  if (auto add = value.getDefiningOp<arith::AddIOp>()) {
-    std::optional<int64_t> lhs =
-        getKnownIndexRemainder(add.getLhs(), modulus, depth + 1);
-    std::optional<int64_t> rhs =
-        getKnownIndexRemainder(add.getRhs(), modulus, depth + 1);
-    if (lhs && rhs)
-      return normalizeRemainder(*lhs + *rhs, modulus);
-    return std::nullopt;
-  }
-  if (auto sub = value.getDefiningOp<arith::SubIOp>()) {
-    std::optional<int64_t> lhs =
-        getKnownIndexRemainder(sub.getLhs(), modulus, depth + 1);
-    std::optional<int64_t> rhs =
-        getKnownIndexRemainder(sub.getRhs(), modulus, depth + 1);
-    if (lhs && rhs)
-      return normalizeRemainder(*lhs - *rhs, modulus);
-    return std::nullopt;
-  }
-  if (auto mul = value.getDefiningOp<arith::MulIOp>()) {
-    std::optional<int64_t> lhs =
-        getKnownIndexRemainder(mul.getLhs(), modulus, depth + 1);
-    std::optional<int64_t> rhs =
-        getKnownIndexRemainder(mul.getRhs(), modulus, depth + 1);
-    if ((lhs && *lhs == 0) || (rhs && *rhs == 0))
-      return 0;
-    if (lhs && rhs)
-      return normalizeRemainder(*lhs * *rhs, modulus);
-    return std::nullopt;
-  }
-
-  return std::nullopt;
-}
-
-std::optional<int64_t> getKnownPointerByteRemainder(Value pointer,
-                                                    int64_t alignmentBytes,
-                                                    int depth = 0) {
-  if (alignmentBytes <= 1)
-    return 0;
-  if (depth > 6)
-    return std::nullopt;
-
-  // A raw PTO pointer block argument is a base address. Its required
-  // address-space alignment is an ABI precondition; derived pointers must
-  // prove that their element offsets preserve that alignment.
-  if (isa<BlockArgument>(pointer))
-    return 0;
-
-  if (auto cast = pointer.getDefiningOp<CastPtrOp>()) {
-    Value input = cast.getInput();
-    if (isa<PtrType>(input.getType()))
-      return getKnownPointerByteRemainder(input, alignmentBytes, depth + 1);
-    if (isa<IntegerType>(input.getType()))
-      return getKnownIndexRemainder(input, alignmentBytes, depth + 1);
-    return std::nullopt;
-  }
-
-  if (auto cast = pointer.getDefiningOp<UnrealizedConversionCastOp>()) {
-    if (cast->getNumOperands() == 1 && cast->getNumResults() == 1)
-      return getKnownPointerByteRemainder(cast.getOperand(0), alignmentBytes,
-                                          depth + 1);
-    return std::nullopt;
-  }
-
-  if (auto add = pointer.getDefiningOp<AddPtrOp>()) {
-    std::optional<int64_t> base =
-        getKnownPointerByteRemainder(add.getPtr(), alignmentBytes, depth + 1);
-    auto pointerType = dyn_cast<PtrType>(add.getPtr().getType());
-    if (!base || !pointerType)
-      return std::nullopt;
-    unsigned elementBits =
-        pto::getPTOStorageElemBitWidth(pointerType.getElementType());
-    if (elementBits == 0 || elementBits % 8 != 0)
-      return std::nullopt;
-    int64_t elementBytes = elementBits / 8;
-    int64_t offsetModulus =
-        alignmentBytes / std::gcd(alignmentBytes, elementBytes);
-    std::optional<int64_t> offset =
-        getKnownIndexRemainder(add.getOffset(), offsetModulus, depth + 1);
-    if (!offset)
-      return std::nullopt;
-    return normalizeRemainder(*base + *offset * elementBytes, alignmentBytes);
-  }
-
-  return std::nullopt;
-}
-
-bool isKnown32ByteAlignedAddress(Value pointer, Value elementOffset,
-                                 Type elementType) {
-  constexpr int64_t alignmentBytes = 32;
-  std::optional<int64_t> base =
-      getKnownPointerByteRemainder(pointer, alignmentBytes);
-  unsigned elementBits = pto::getPTOStorageElemBitWidth(elementType);
-  if (!base || elementBits == 0 || elementBits % 8 != 0)
-    return false;
-
-  int64_t elementBytes = elementBits / 8;
-  int64_t offsetModulus =
-      alignmentBytes / std::gcd(alignmentBytes, elementBytes);
-  std::optional<int64_t> offset =
-      getKnownIndexRemainder(elementOffset, offsetModulus);
-  if (!offset)
-    return false;
-  return normalizeRemainder(*base + *offset * elementBytes, alignmentBytes) ==
-         0;
-}
-
 FailureOr<int64_t> getStaticMemRefElementCount(Type type) {
   auto memrefType = dyn_cast<MemRefType>(type);
   if (!memrefType || !memrefType.hasStaticShape())
     return failure();
 
   int64_t elements = 1;
-  for (int64_t dim : memrefType.getShape())
-    elements *= dim;
+  for (int64_t dim : memrefType.getShape()) {
+    if (llvm::MulOverflow(elements, dim, elements)) {
+      return failure();
+    }
+  }
   return elements;
 }
 
@@ -1121,6 +1036,16 @@ static Type getMemoryElementType(Type type) {
     return ptrType.getElementType();
   if (auto memrefType = dyn_cast<MemRefType>(type))
     return memrefType.getElementType();
+  return {};
+}
+
+static Attribute getMemorySpace(Type type) {
+  if (auto ptrType = dyn_cast<PtrType>(type)) {
+    return ptrType.getMemorySpace();
+  }
+  if (auto memrefType = dyn_cast<MemRefType>(type)) {
+    return memrefType.getMemorySpace();
+  }
   return {};
 }
 
@@ -1134,31 +1059,50 @@ static bool isPackedByteGroupStore(Type destinationType, VRegType valueType) {
          pto::getPTOStorageElemBitWidth(valueIntegerType) == 32;
 }
 
-enum class VMIMemoryValidMaskKind {
-  AllTrue,
-  ExplicitMask,
-};
+enum class VMIMemoryDirection { Read, Write };
 
-enum class VMIMemoryWriteMaskKind {
-  AllTrue,
-  ExplicitMask,
-};
+enum class VMIMemoryCoverageKind { Dense, Prefix, Predicate };
 
-enum class VMIMemoryPermutationKind {
-  Identity,
-};
-
-enum class VMIMemoryFallbackDecisionKind {
-  NotRequired,
-  RequiredUnavailable,
-};
-
-struct VMIMemoryLogicalShape {
+struct VMIMemoryCoverage {
+  VMIMemoryCoverageKind kind = VMIMemoryCoverageKind::Dense;
   int64_t elementCount = 0;
+  Value predicate;
+};
+
+struct VMIIdentityTransfer {};
+struct VMILaneExpandTransfer {
+  int64_t factor = 1;
+};
+struct VMILowBitsCompactTransfer {
+  int64_t factor = 1;
+};
+struct VMIGroupRepeatTransfer {
+  int64_t groups = 1;
+  int64_t lanesPerGroup = 1;
+};
+struct VMIDeinterleaveTransfer {
+  int64_t factor = 2;
+};
+struct VMIInterleaveTransfer {
+  int64_t factor = 2;
+};
+struct VMILaneSelectionTransfer {
+  SmallVector<int64_t> lanes;
+};
+
+using VMIRegisterTransfer =
+    std::variant<VMIIdentityTransfer, VMILaneExpandTransfer,
+                 VMILowBitsCompactTransfer, VMIGroupRepeatTransfer,
+                 VMIDeinterleaveTransfer, VMIInterleaveTransfer,
+                 VMILaneSelectionTransfer>;
+
+struct VMIPlannedAddress {
+  Value base;
+  Value elementOffset;
+  Type elementType;
 };
 
 struct VMIMemoryLaneAddressMap {
-  VMIMemoryPermutationKind permutation = VMIMemoryPermutationKind::Identity;
   int64_t baseElementOffset = 0;
   int64_t elementStride = 1;
   int64_t physicalLaneFootprint = 0;
@@ -1168,18 +1112,12 @@ struct VMIMemoryLaneAddressMap {
   }
 };
 
-struct VMIMemoryFallbackDecision {
-  VMIMemoryFallbackDecisionKind kind =
-      VMIMemoryFallbackDecisionKind::NotRequired;
-  std::string reason = "not required";
+struct VMIByteInterval {
+  int64_t begin = 0;
+  int64_t end = 0;
 
-  static VMIMemoryFallbackDecision notRequired() { return {}; }
-
-  static VMIMemoryFallbackDecision requiredUnavailable(const Twine &reason) {
-    VMIMemoryFallbackDecision decision;
-    decision.kind = VMIMemoryFallbackDecisionKind::RequiredUnavailable;
-    decision.reason = reason.str();
-    return decision;
+  bool contains(const VMIByteInterval &other) const {
+    return begin <= other.begin && end >= other.end;
   }
 };
 
@@ -1190,22 +1128,60 @@ struct VMIMemorySafeReadProof {
   std::optional<int64_t> staticElementCount;
   std::optional<VMIMemoryLaneAddressMap> laneAddressMap;
   int64_t physicalFootprint = 0;
+  std::optional<VMIByteInterval> readableEnvelope;
+  std::optional<VMIByteInterval> candidateReadEnvelope;
+};
+
+struct VMIPhysicalMemorySegment {
+  VMIPlannedAddress address;
+  VMIMemoryCoverage coverage;
+  VMIRegisterTransfer transfer = VMIIdentityTransfer{};
+  VMIMemorySafeReadProof readSafety;
 };
 
 struct VMIMemoryAccessPlan {
-  Type baseType;
+  VMIMemoryDirection direction = VMIMemoryDirection::Read;
+  SmallVector<VMIPhysicalMemorySegment, 1> segments;
   VMIVRegType valueType;
-  std::optional<int64_t> constantOffset;
-  VMIMemoryLogicalShape logicalShape;
-  VMIMemoryValidMaskKind validMask = VMIMemoryValidMaskKind::AllTrue;
-  VMIMemoryPermutationKind permutation = VMIMemoryPermutationKind::Identity;
-  std::optional<VMIMemoryLaneAddressMap> laneAddressMap;
   Attribute paddingValue;
-  VMIMemoryWriteMaskKind writeMask = VMIMemoryWriteMaskKind::AllTrue;
-  VMIMemorySafeReadProof safeReadProof;
   VMISupportResult layoutSupport;
-  VMIMemoryFallbackDecision fallbackDecision;
+
+  VMIPhysicalMemorySegment &front() { return segments.front(); }
+  const VMIPhysicalMemorySegment &front() const { return segments.front(); }
 };
+
+static std::optional<int64_t> getPhysicalVectorBytes(VRegType type) {
+  unsigned elementBits = pto::getPTOStorageElemBitWidth(type.getElementType());
+  int64_t totalBits;
+  if (elementBits == 0 ||
+      llvm::MulOverflow(type.getElementCount(),
+                        static_cast<int64_t>(elementBits), totalBits) ||
+      totalBits <= 0 || totalBits % 8 != 0) {
+    return std::nullopt;
+  }
+  return totalBits / 8;
+}
+
+static bool isDirectMemoryDistAddressLegal(Value base, Value offset,
+                                           Type addressElementType,
+                                           VRegType registerType,
+                                           VPTOMemoryOpFamily family,
+                                           StringRef dist) {
+  unsigned registerElementBits =
+      pto::getPTOStorageElemBitWidth(registerType.getElementType());
+  const VPTOMemoryDistContract *contract = lookupVPTOMemoryDist(
+      family, dist,
+      registerElementBits == 0 ? std::nullopt
+                               : std::optional<unsigned>(registerElementBits));
+  std::optional<int64_t> vectorBytes = getPhysicalVectorBytes(registerType);
+  std::optional<int64_t> requiredAlignment =
+      contract && vectorBytes
+          ? contract->getRequiredAlignmentBytes(*vectorBytes)
+          : std::nullopt;
+  return requiredAlignment &&
+         isKnownAddressAligned(base, offset, addressElementType,
+                               *requiredAlignment);
+}
 
 FailureOr<VMIMemoryLaneAddressMap>
 buildContiguousIdentityLaneAddressMap(int64_t constantOffset,
@@ -1278,93 +1254,299 @@ computeSafeFullReadProof(Type sourceType, std::optional<int64_t> constantOffset,
   proof.laneAddressMap = *addressMap;
 
   proof.physicalFootprint = addressMap->physicalLaneFootprint;
-  if (addressMap->getExclusiveEndElement() > elements)
+  unsigned elementBits =
+      pto::getPTOStorageElemBitWidth(resultType.getElementType());
+  if (elementBits == 0 || elementBits % 8 != 0) {
+    return fail("requires byte-addressable element type");
+  }
+  int64_t elementBytes = static_cast<int64_t>(elementBits / 8);
+  int64_t offsetBytes;
+  int64_t allocationBytes;
+  int64_t footprintBytes;
+  if (
+      llvm::MulOverflow(*constantOffset, elementBytes, offsetBytes) ||
+      llvm::MulOverflow(elements, elementBytes, allocationBytes) ||
+      llvm::MulOverflow(proof.physicalFootprint, elementBytes, footprintBytes)) {
+    return fail("byte read envelope overflows int64");
+  }
+
+  proof.readableEnvelope =
+      VMIByteInterval{-offsetBytes, allocationBytes - offsetBytes};
+  proof.candidateReadEnvelope = VMIByteInterval{0, footprintBytes};
+  if (!proof.readableEnvelope->contains(*proof.candidateReadEnvelope)) {
     return fail(Twine("full physical read footprint [") +
                 Twine(addressMap->baseElementOffset) + ", " +
                 Twine(addressMap->getExclusiveEndElement()) +
                 ") exceeds static memref element count " + Twine(elements));
+  }
 
   proof.proven = true;
   return proof;
 }
 
-VMIMemoryAccessPlan
-buildReadAccessPlan(Value source, Type sourceType, VMIVRegType resultType,
-                    std::optional<int64_t> constantOffset,
-                    VMIMemoryValidMaskKind validMask) {
+static VMIMemorySafeReadProof
+computeSafeStatefulReadProof(Value source, Value offset,
+                             VMIVRegType resultType) {
+  VMIMemorySafeReadProof proof;
+
+  auto fail = [&](const Twine &message) {
+    proof.proven = false;
+    proof.reason = message.str();
+    return proof;
+  };
+
+  FailureOr<int64_t> staticElements =
+      getStaticMemRefElementCount(source.getType());
+  if (failed(staticElements)) {
+    return fail("requires statically shaped memref source");
+  }
+
+  std::optional<int64_t> minOffset = getConstantIndexValue(offset);
+  std::optional<int64_t> maxOffset = minOffset;
+  if (!minOffset) {
+    Operation *anchor = offset.getDefiningOp();
+    if (!anchor) {
+      anchor = offset.getParentBlock()->getParentOp();
+    }
+    scf::ForOp loop = dyn_cast_or_null<scf::ForOp>(anchor);
+    if (!loop && anchor) {
+      loop = anchor->getParentOfType<scf::ForOp>();
+    }
+    func::FuncOp func =
+        anchor ? anchor->getParentOfType<func::FuncOp>() : func::FuncOp();
+    if (loop && func) {
+      PTOValueEvolutionAnalysis valueEvolution(func);
+      PTOAnalysisResult<PTOFiniteRange> range =
+          valueEvolution.getRange(offset, loop);
+      if (range) {
+        auto convertBound =
+            [](const APInt &bound,
+               bool unsignedInterpretation) -> std::optional<int64_t> {
+          if (unsignedInterpretation) {
+            bool exceedsSignedInt64 = bound.getActiveBits() > 63;
+            if (exceedsSignedInt64) {
+              return std::nullopt;
+            }
+            return static_cast<int64_t>(bound.getZExtValue());
+          }
+          if (!bound.isSignedIntN(64)) {
+            return std::nullopt;
+          }
+          return bound.getSExtValue();
+        };
+        minOffset = convertBound(range.value->lowerInclusive,
+                                 range.value->unsignedInterpretation);
+        maxOffset = convertBound(range.value->upperInclusive,
+                                 range.value->unsignedInterpretation);
+      }
+    }
+  }
+  if (!minOffset || !maxOffset) {
+    return fail(
+        "requires a constant offset or proven finite loop offset range");
+  }
+  if (*minOffset < 0 || *maxOffset < *minOffset) {
+    return fail("requires a non-negative valid offset range");
+  }
+
+  unsigned elementBits =
+      pto::getPTOStorageElemBitWidth(resultType.getElementType());
+  if (elementBits == 0 || elementBits % 8 != 0) {
+    return fail("requires byte-addressable element type");
+  }
+  int64_t elementBytes = static_cast<int64_t>(elementBits / 8);
+
+  constexpr int64_t blockBytes = 32;
+  std::optional<int64_t> remainder = getKnownAddressRemainderBytes(
+      source, offset, resultType.getElementType(), blockBytes);
+  if (!remainder) {
+    return fail("requires a proven fixed 32-byte address remainder");
+  }
+
+  FailureOr<int64_t> lanesPerPart =
+      getDataLanesPerPart(resultType.getElementType());
+  FailureOr<int64_t> arity = getVMIPhysicalArity(resultType);
+  bool missingFootprint = failed(lanesPerPart) || failed(arity);
+  if (missingFootprint) {
+    return fail("requires computable physical read footprint");
+  }
+
+  int64_t minOffsetBytes;
+  int64_t maxOffsetBytes;
+  int64_t allocationBytes;
+  int64_t footprintElements;
+  int64_t footprintBytes;
+  bool envelopeOverflows =
+      llvm::MulOverflow(*minOffset, elementBytes, minOffsetBytes) ||
+      llvm::MulOverflow(*maxOffset, elementBytes, maxOffsetBytes) ||
+      llvm::MulOverflow(*staticElements, elementBytes, allocationBytes) ||
+      llvm::MulOverflow(*arity, *lanesPerPart, footprintElements) ||
+      llvm::MulOverflow(footprintElements, elementBytes, footprintBytes);
+  if (envelopeOverflows) {
+    return fail("stateful byte read envelope overflows int64");
+  }
+
+  int64_t roundedInput;
+  int64_t roundedEnd;
+  bool roundedEndOverflows =
+      llvm::AddOverflow(footprintBytes, *remainder, roundedInput) ||
+      llvm::AddOverflow(roundedInput, blockBytes - 1, roundedEnd);
+  if (roundedEndOverflows) {
+    return fail("stateful byte read envelope overflows int64");
+  }
+  roundedEnd = roundedEnd / blockBytes * blockBytes - *remainder;
+
+  int64_t physicalBegin;
+  int64_t physicalEnd;
+  bool physicalEnvelopeOverflows =
+      llvm::SubOverflow(minOffsetBytes, *remainder, physicalBegin) ||
+      llvm::AddOverflow(maxOffsetBytes, roundedEnd, physicalEnd);
+  if (physicalEnvelopeOverflows) {
+    return fail("stateful byte read envelope overflows int64");
+  }
+  proof.readableEnvelope = VMIByteInterval{0, allocationBytes};
+  proof.candidateReadEnvelope = VMIByteInterval{physicalBegin, physicalEnd};
+  proof.proven = proof.readableEnvelope->contains(*proof.candidateReadEnvelope);
+  if (!proof.proven) {
+    proof.reason = (Twine("stateful physical read envelope [") +
+                    Twine(proof.candidateReadEnvelope->begin) + ", " +
+                    Twine(proof.candidateReadEnvelope->end) +
+                    ") exceeds proven allocation envelope [" +
+                    Twine(proof.readableEnvelope->begin) + ", " +
+                    Twine(proof.readableEnvelope->end) + ")")
+                       .str();
+  }
+  return proof;
+}
+
+VMIMemoryAccessPlan buildReadAccessPlan(Value source, Value offset,
+                                        VMIVRegType resultType,
+                                        VMIMemoryCoverageKind coverageKind) {
   VMIMemoryAccessPlan plan;
-  plan.baseType = sourceType;
+  plan.direction = VMIMemoryDirection::Read;
   plan.valueType = resultType;
-  plan.constantOffset = constantOffset;
-  plan.logicalShape.elementCount = resultType.getElementCount();
-  plan.validMask = validMask;
-  plan.permutation = VMIMemoryPermutationKind::Identity;
-  plan.writeMask = VMIMemoryWriteMaskKind::AllTrue;
-  plan.safeReadProof =
+  VMIPhysicalMemorySegment segment;
+  segment.address =
+      VMIPlannedAddress{source, offset, resultType.getElementType()};
+  segment.coverage =
+      VMIMemoryCoverage{coverageKind, resultType.getElementCount(), {}};
+  segment.transfer = VMIIdentityTransfer{};
+  segment.readSafety = computeSafeFullReadProof(
+      source.getType(), getConstantIndexValue(offset), resultType);
+  plan.segments.push_back(std::move(segment));
+  plan.layoutSupport =
+      requireIdentityMemRefLayout(source.getType(), "source", source);
+  return plan;
+}
+
+VMIMemoryAccessPlan buildReadAccessPlan(Value source, Type sourceType,
+                                        VMIVRegType resultType,
+                                        std::optional<int64_t> constantOffset,
+                                        VMIMemoryCoverageKind coverageKind) {
+  VMIMemoryAccessPlan plan;
+  plan.direction = VMIMemoryDirection::Read;
+  plan.valueType = resultType;
+  VMIPhysicalMemorySegment segment;
+  segment.address = VMIPlannedAddress{source, {}, resultType.getElementType()};
+  segment.coverage =
+      VMIMemoryCoverage{coverageKind, resultType.getElementCount(), {}};
+  segment.transfer = VMIIdentityTransfer{};
+  segment.readSafety =
       computeSafeFullReadProof(sourceType, constantOffset, resultType);
-  plan.laneAddressMap = plan.safeReadProof.laneAddressMap;
+  plan.segments.push_back(std::move(segment));
   plan.layoutSupport =
       requireIdentityMemRefLayout(sourceType, "source", source);
   return plan;
 }
 
-VMIMemoryAccessPlan
-buildWriteAccessPlan(Value destination, Type destinationType,
-                     VMIVRegType valueType, VMIMemoryWriteMaskKind writeMask) {
+VMIMemoryAccessPlan buildWriteAccessPlan(Value destination, Value offset,
+                                         VMIVRegType valueType,
+                                         VMIMemoryCoverageKind coverageKind) {
   VMIMemoryAccessPlan plan;
-  plan.baseType = destinationType;
+  plan.direction = VMIMemoryDirection::Write;
   plan.valueType = valueType;
-  plan.logicalShape.elementCount = valueType.getElementCount();
-  plan.validMask = VMIMemoryValidMaskKind::AllTrue;
-  plan.permutation = VMIMemoryPermutationKind::Identity;
-  plan.writeMask = writeMask;
+  VMIPhysicalMemorySegment segment;
+  segment.address =
+      VMIPlannedAddress{destination, offset, valueType.getElementType()};
+  segment.coverage =
+      VMIMemoryCoverage{coverageKind, valueType.getElementCount(), {}};
+  segment.transfer = VMIIdentityTransfer{};
+  plan.segments.push_back(std::move(segment));
+  plan.layoutSupport = requireIdentityMemRefLayout(destination.getType(),
+                                                   "destination", destination);
+  return plan;
+}
+
+VMIMemoryAccessPlan buildWriteAccessPlan(Value destination,
+                                         Type destinationType,
+                                         VMIVRegType valueType,
+                                         VMIMemoryCoverageKind coverageKind) {
+  VMIMemoryAccessPlan plan;
+  plan.direction = VMIMemoryDirection::Write;
+  plan.valueType = valueType;
+  VMIPhysicalMemorySegment segment;
+  segment.address =
+      VMIPlannedAddress{destination, {}, valueType.getElementType()};
+  segment.coverage =
+      VMIMemoryCoverage{coverageKind, valueType.getElementCount(), {}};
+  segment.transfer = VMIIdentityTransfer{};
+  plan.segments.push_back(std::move(segment));
   plan.layoutSupport =
       requireIdentityMemRefLayout(destinationType, "destination", destination);
   return plan;
 }
 
-void requireUnavailableReadFallback(VMIMemoryAccessPlan &plan) {
+static std::string
+getUnavailableReadFallbackReason(VMIMemoryCoverageKind coverageKind) {
   std::string maskedLoadReason;
-  if (plan.validMask == VMIMemoryValidMaskKind::ExplicitMask)
+  if (coverageKind == VMIMemoryCoverageKind::Predicate) {
     maskedLoadReason =
         "; target true masked/non-faulting load is unavailable because the "
         "current VPTO pto.vlds surface has no mask operand";
+  }
   std::string scratchReason =
       "; scratch memory fallback resource allocation is not implemented";
   std::string guardedReason =
       "; guarded memory fallback control-flow lowering is not implemented";
-  plan.fallbackDecision = VMIMemoryFallbackDecision::requiredUnavailable(
-      Twine("partial/tail read needs a scratch, guarded, or true "
-            "masked/non-faulting load fallback, but no such fallback resource "
-            "plan is implemented") +
-      maskedLoadReason + scratchReason + guardedReason);
+  return (Twine("partial/tail read needs a scratch, guarded, or true "
+                "masked/non-faulting load fallback, but no such fallback "
+                "resource plan is implemented") +
+          maskedLoadReason + scratchReason + guardedReason)
+      .str();
 }
 
 FailureOr<int64_t> verifyFullOrSafeReadVRegChunks(Operation *op,
                                                   VMIVRegType type,
-                                                  Type sourceType, Value offset,
+                                                  Value source, Value offset,
                                                   PatternRewriter &rewriter) {
   std::string fullChunkReason;
   FailureOr<int64_t> lanesPerPart =
       checkFullDataPhysicalChunks(type, &fullChunkReason);
-  if (succeeded(lanesPerPart))
+  bool usesAlignedLoad =
+      isKnownAddressAligned(source, offset, type.getElementType(), 32);
+  bool canUseAlignedFullChunk = succeeded(lanesPerPart) && usesAlignedLoad;
+  if (canUseAlignedFullChunk) {
     return *lanesPerPart;
+  }
 
   VMIMemorySafeReadProof safeReadProof =
-      computeSafeFullReadProof(sourceType, getConstantIndexValue(offset), type);
+      usesAlignedLoad
+          ? computeSafeFullReadProof(source.getType(),
+                                     getConstantIndexValue(offset), type)
+          : computeSafeStatefulReadProof(source, offset, type);
   if (safeReadProof.proven) {
     lanesPerPart = getDataLanesPerPart(type.getElementType());
     if (succeeded(lanesPerPart))
       return *lanesPerPart;
   }
 
-  lanesPerPart = getDataLanesPerPart(type.getElementType());
-  if (succeeded(lanesPerPart))
-    return *lanesPerPart;
-
+  std::string legalizationReason =
+      succeeded(lanesPerPart)
+          ? "unaligned load requires a proven stateful physical read envelope"
+          : fullChunkReason;
   (void)rewriter.notifyMatchFailure(
-      op, Twine("memory lowering ") + fullChunkReason +
-              "; safe full-read proof failed: " + safeReadProof.reason);
+      op, Twine("memory lowering ") + legalizationReason +
+              "; safe physical-read proof failed: " + safeReadProof.reason);
   return failure();
 }
 
@@ -1378,9 +1560,8 @@ checkSupportedLoadShape(VMIVRegType type, Value source, Type sourceType,
     return failure();
   };
 
-  VMIMemoryAccessPlan accessPlan =
-      buildReadAccessPlan(source, sourceType, type,
-                          constantOffset, VMIMemoryValidMaskKind::AllTrue);
+  VMIMemoryAccessPlan accessPlan = buildReadAccessPlan(
+      source, sourceType, type, constantOffset, VMIMemoryCoverageKind::Dense);
   if (!accessPlan.layoutSupport.isSupported())
     return fail(accessPlan.layoutSupport.reason);
 
@@ -1414,8 +1595,8 @@ LogicalResult checkSupportedDeinterleaveLoadShape(
   if (!getX2MemoryDistToken(lowType.getElementType(), "DINTLV"))
     return fail("requires 8/16/32-bit element type for vldsx2 DINTLV");
 
-  VMIMemoryAccessPlan accessPlan = buildReadAccessPlan(op.getSource(), op.getSource().getType(), lowType,
-      getConstantIndexValue(op.getOffset()), VMIMemoryValidMaskKind::AllTrue);
+  VMIMemoryAccessPlan accessPlan = buildReadAccessPlan(
+      op.getSource(), op.getOffset(), lowType, VMIMemoryCoverageKind::Dense);
   if (!accessPlan.layoutSupport.isSupported())
     return fail(accessPlan.layoutSupport.reason);
 
@@ -1425,12 +1606,11 @@ LogicalResult checkSupportedDeinterleaveLoadShape(
   return success();
 }
 
-LogicalResult
-checkSupportedStoreShape(VMIVRegType type, Value destination,
-                         Type destinationType, std::string *reason) {
-  VMIMemoryAccessPlan accessPlan =
-      buildWriteAccessPlan(destination, destinationType, type,
-                           VMIMemoryWriteMaskKind::AllTrue);
+LogicalResult checkSupportedStoreShape(VMIVRegType type, Value destination,
+                                       Type destinationType,
+                                       std::string *reason) {
+  VMIMemoryAccessPlan accessPlan = buildWriteAccessPlan(
+      destination, destinationType, type, VMIMemoryCoverageKind::Dense);
   if (!accessPlan.layoutSupport.isSupported()) {
     if (reason)
       *reason = accessPlan.layoutSupport.reason;
@@ -1496,8 +1676,9 @@ LogicalResult checkSupportedInterleaveStoreShape(
   if (!getX2MemoryDistToken(lowType.getElementType(), "INTLV"))
     return fail("requires 8/16/32-bit element type for vstsx2 INTLV");
 
-  VMIMemoryAccessPlan accessPlan = buildWriteAccessPlan(op.getDestination(), op.getDestination().getType(), lowType,
-      VMIMemoryWriteMaskKind::AllTrue);
+  VMIMemoryAccessPlan accessPlan =
+      buildWriteAccessPlan(op.getDestination(), op.getOffset(), lowType,
+                           VMIMemoryCoverageKind::Dense);
   if (!accessPlan.layoutSupport.isSupported())
     return fail(accessPlan.layoutSupport.reason);
   if (failed(checkSupportedMaskableVReg(lowType, reason)))
@@ -1629,8 +1810,9 @@ checkSupportedGroupLoadShape(VMIGroupLoadOp op, std::string *reason) {
     VMILayoutSupport supports;
     if (failed(supports.getGroupLoadLayoutFact(op, reason)))
       return failure();
-    VMIMemoryAccessPlan accessPlan = buildReadAccessPlan(op.getSource(), op.getSource().getType(), resultType,
-        getConstantIndexValue(op.getOffset()), VMIMemoryValidMaskKind::AllTrue);
+    VMIMemoryAccessPlan accessPlan =
+        buildReadAccessPlan(op.getSource(), op.getOffset(), resultType,
+                            VMIMemoryCoverageKind::Dense);
     if (!accessPlan.layoutSupport.isSupported())
       return fail(accessPlan.layoutSupport.reason);
     if (!isa<PtrType>(op.getSource().getType()))
@@ -1671,8 +1853,8 @@ LogicalResult checkSupportedGroupSlotLoadShape(
   if (failed(fact))
     return failure();
 
-  VMIMemoryAccessPlan accessPlan = buildReadAccessPlan(op.getSource(), op.getSource().getType(), resultType,
-      getConstantIndexValue(op.getOffset()), VMIMemoryValidMaskKind::AllTrue);
+  VMIMemoryAccessPlan accessPlan = buildReadAccessPlan(
+      op.getSource(), op.getOffset(), resultType, VMIMemoryCoverageKind::Dense);
   if (!accessPlan.layoutSupport.isSupported())
     return fail(accessPlan.layoutSupport.reason);
   if (!isa<PtrType>(op.getSource().getType()))
@@ -1717,9 +1899,10 @@ LogicalResult checkSupportedGroupBroadcastLoadShape(
   VMILayoutSupport supports;
   if (failed(supports.getGroupBroadcastLoadSupport(op, reason)))
     return failure();
-  VMIMemoryAccessPlan accessPlan = buildReadAccessPlan(op.getSource(), op.getSource().getType(),
-      cast<VMIVRegType>(op.getResult().getType()),
-      getConstantIndexValue(op.getOffset()), VMIMemoryValidMaskKind::AllTrue);
+  VMIMemoryAccessPlan accessPlan =
+      buildReadAccessPlan(op.getSource(), op.getOffset(),
+                          cast<VMIVRegType>(op.getResult().getType()),
+                          VMIMemoryCoverageKind::Dense);
   if (!accessPlan.layoutSupport.isSupported())
     return fail(accessPlan.layoutSupport.reason);
   if (!isa<PtrType>(op.getSource().getType()))
@@ -1802,9 +1985,9 @@ checkSupportedGroupStoreShape(VMIGroupStoreOp op, std::string *reason) {
                                op.getNumGroupsAttr().getInt(), rowStride)) {
     if (!isa<PtrType>(op.getDestination().getType()))
       return fail("compact small group_store requires !pto.ptr destination");
-    VMIMemoryAccessPlan accessPlan = buildWriteAccessPlan(
-        op.getDestination(), op.getDestination().getType(), valueType,
-        VMIMemoryWriteMaskKind::AllTrue);
+    VMIMemoryAccessPlan accessPlan =
+        buildWriteAccessPlan(op.getDestination(), op.getOffset(), valueType,
+                             VMIMemoryCoverageKind::Dense);
     if (!accessPlan.layoutSupport.isSupported())
       return fail(accessPlan.layoutSupport.reason);
     return success();
@@ -1816,8 +1999,9 @@ checkSupportedGroupStoreShape(VMIGroupStoreOp op, std::string *reason) {
     if (failed(fact))
       return failure();
 
-    VMIMemoryAccessPlan accessPlan = buildWriteAccessPlan(op.getDestination(), op.getDestination().getType(),
-        valueType, VMIMemoryWriteMaskKind::AllTrue);
+    VMIMemoryAccessPlan accessPlan =
+        buildWriteAccessPlan(op.getDestination(), op.getOffset(), valueType,
+                             VMIMemoryCoverageKind::Dense);
     if (!accessPlan.layoutSupport.isSupported())
       return fail(accessPlan.layoutSupport.reason);
 
@@ -1883,9 +2067,9 @@ checkSupportedMaskedLoadShape(VMIMaskedLoadOp op, std::string *reason) {
   VMILayoutAttr resultLayout = resultType.getLayoutAttr();
   VMILayoutAttr passthruLayout = passthruType.getLayoutAttr();
   VMILayoutAttr maskLayout = maskType.getLayoutAttr();
-  VMIMemoryAccessPlan accessPlan = buildReadAccessPlan(op.getSource(), op.getSource().getType(), resultType,
-      getConstantIndexValue(op.getOffset()),
-      VMIMemoryValidMaskKind::ExplicitMask);
+  VMIMemoryAccessPlan accessPlan =
+      buildReadAccessPlan(op.getSource(), op.getOffset(), resultType,
+                          VMIMemoryCoverageKind::Predicate);
   if (!accessPlan.layoutSupport.isSupported())
     return fail(accessPlan.layoutSupport.reason);
   if (!resultLayout || !passthruLayout || !maskLayout)
@@ -1898,14 +2082,16 @@ checkSupportedMaskedLoadShape(VMIMaskedLoadOp op, std::string *reason) {
   if (succeeded(checkFullDataPhysicalChunks(resultType, &fullChunkReason)))
     return success();
 
-  if (accessPlan.safeReadProof.proven)
+  if (accessPlan.front().readSafety.proven) {
     return success();
-  requireUnavailableReadFallback(accessPlan);
+  }
+  std::string fallbackReason =
+      getUnavailableReadFallbackReason(VMIMemoryCoverageKind::Predicate);
   return fail(Twine("partial/tail masked_load requires statically safe "
                     "full-read footprint; value ") +
               fullChunkReason + ", safe-read proof " +
-              accessPlan.safeReadProof.reason +
-              "; fallback decision: " + accessPlan.fallbackDecision.reason);
+              accessPlan.front().readSafety.reason +
+              "; fallback unavailable: " + fallbackReason);
 }
 
 LogicalResult
@@ -1941,14 +2127,37 @@ checkSupportedGatherShape(VMIGatherOp op, std::string *reason) {
   auto indexElementType = dyn_cast<IntegerType>(indicesType.getElementType());
   if (!indexElementType || indexElementType.isSigned())
     return fail("requires signless or unsigned integer indices");
-  bool isU16Gather = resultBits == 16 && indexElementType.isUnsigned() &&
-                     indexElementType.getWidth() == 16 &&
-                     maskType.getGranularity() == "b16";
+  Type sourceElemType = getMemoryElementType(op.getSource().getType());
+  auto sourceInt = dyn_cast<IntegerType>(sourceElemType);
+  auto resultInt = dyn_cast<IntegerType>(resultType.getElementType());
+  bool isB8To16Gather =
+      resultBits == 16 && sourceInt && resultInt &&
+      sourceInt.getWidth() == mlir::pto::kValue8 &&
+      resultInt.getWidth() == mlir::pto::kValue16 &&
+      indexElementType.isUnsigned() &&
+      indexElementType.getWidth() == 16 &&
+      maskType.getGranularity() == "b16" &&
+      ((sourceInt.isUnsigned() && resultInt.isUnsigned()) ||
+       (!sourceInt.isUnsigned() && !resultInt.isUnsigned()));
+  bool isSameWidth16Gather =
+      resultBits == 16 && indexElementType.isUnsigned() &&
+      indexElementType.getWidth() == 16 &&
+      maskType.getGranularity() == "b16" &&
+      ((sourceInt && resultInt &&
+        sourceInt.getWidth() == mlir::pto::kValue16 &&
+        resultInt.getWidth() == mlir::pto::kValue16 &&
+        ((sourceInt.isUnsigned() && resultInt.isUnsigned()) ||
+         (!sourceInt.isUnsigned() && !resultInt.isUnsigned()))) ||
+       (sourceElemType == resultType.getElementType() &&
+        (sourceElemType.isF16() || sourceElemType.isBF16())));
+  bool isB16Gather = isSameWidth16Gather || isB8To16Gather;
   bool isB32Gather = resultBits == 32 && indexElementType.getWidth() == 32 &&
                      maskType.getGranularity() == "b32";
-  if (!isU16Gather && !isB32Gather)
+  if (!isB16Gather && !isB32Gather) {
     return fail("requires either 32-bit results with 32-bit indices and b32 "
-                "mask, or ui16 results with ui16 indices and b16 mask");
+                "mask, or ui16/i16/f16/bf16 results with ui16 indices and "
+                "b16 mask (including i8/ui8 -> i16/ui16 promotion)");
+  }
 
   FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
   FailureOr<int64_t> indicesArity = getVMIPhysicalArity(indicesType);
@@ -1962,7 +2171,16 @@ checkSupportedGatherShape(VMIGatherOp op, std::string *reason) {
     return fail("requires result, indices, passthru, and mask to have the "
                 "same physical arity");
 
-  if (isB32Gather) {
+  // Each pto.vgather2/pto.vgather2_bc emits one physical vector register per
+  // result part. The ISA has a hard limit of four physical registers per
+  // pto.vmi instruction, so reject anything above that instead of silently
+  // lowering to five or more physical gathers.
+  if (*resultArity > mlir::pto::kValue4) {
+    return fail("gather exceeds the 4 physical register limit per VMI "
+                "instruction");
+  }
+
+  if (isB32Gather || (isB16Gather && *resultArity != 1)) {
     std::string resultReason;
     std::string indicesReason;
     std::string passthruReason;
@@ -1978,8 +2196,6 @@ checkSupportedGatherShape(VMIGatherOp op, std::string *reason) {
                   passthruReason);
     if (failed(checkFullVMIPhysicalChunks(maskType, &maskReason)))
       return fail(Twine("mask requires full physical chunks; ") + maskReason);
-  } else if (*resultArity != 1) {
-    return fail("ui16 gather currently supports one physical chunk");
   }
 
   return success();
@@ -2182,9 +2398,9 @@ checkSupportedExpandLoadShape(VMIExpandLoadOp op, std::string *reason) {
   VMILayoutAttr resultLayout = resultType.getLayoutAttr();
   VMILayoutAttr passthruLayout = passthruType.getLayoutAttr();
   VMILayoutAttr maskLayout = maskType.getLayoutAttr();
-  VMIMemoryAccessPlan accessPlan = buildReadAccessPlan(op.getSource(), op.getSource().getType(), resultType,
-      getConstantIndexValue(op.getOffset()),
-      VMIMemoryValidMaskKind::ExplicitMask);
+  VMIMemoryAccessPlan accessPlan =
+      buildReadAccessPlan(op.getSource(), op.getOffset(), resultType,
+                          VMIMemoryCoverageKind::Predicate);
   if (!accessPlan.layoutSupport.isSupported())
     return fail(accessPlan.layoutSupport.reason);
   if (!resultLayout || !passthruLayout || !maskLayout)
@@ -2202,21 +2418,23 @@ checkSupportedExpandLoadShape(VMIExpandLoadOp op, std::string *reason) {
       succeeded(checkFullDataPhysicalChunks(resultType, &fullChunkReason)))
     return success();
 
-  if (staticAllActive && accessPlan.safeReadProof.proven)
+  if (staticAllActive && accessPlan.front().readSafety.proven) {
     return success();
+  }
 
   std::string allActivePathReason;
   if (!staticAllActive) {
     allActivePathReason =
         maskReason.empty() ? "requires static all-active mask" : maskReason;
   } else {
-    requireUnavailableReadFallback(accessPlan);
+    std::string fallbackReason =
+        getUnavailableReadFallbackReason(VMIMemoryCoverageKind::Predicate);
     allActivePathReason =
         (Twine("requires full physical chunks or statically safe full-read "
                "footprint; value ") +
          fullChunkReason + ", safe-read proof " +
-         accessPlan.safeReadProof.reason +
-         "; fallback decision: " + accessPlan.fallbackDecision.reason)
+         accessPlan.front().readSafety.reason +
+         "; fallback unavailable: " + fallbackReason)
             .str();
   }
 
@@ -2259,8 +2477,8 @@ checkSupportedMaskedStoreShape(VMIVRegType valueType, VMIMaskType maskType,
                                Value destination, Type destinationType,
                                std::string *reason) {
   VMIMemoryAccessPlan accessPlan =
-      buildWriteAccessPlan(destination, destinationType,
-                           valueType, VMIMemoryWriteMaskKind::ExplicitMask);
+      buildWriteAccessPlan(destination, destinationType, valueType,
+                           VMIMemoryCoverageKind::Predicate);
   if (!accessPlan.layoutSupport.isSupported()) {
     if (reason)
       *reason = accessPlan.layoutSupport.reason;
@@ -6013,8 +6231,16 @@ struct OneToNVMILoadOpPattern : OneToNOpConversionPattern<VMILoadOp> {
       return failure();
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
-    if (std::optional<std::string> dist =
-            getDenseLaneStrideLoadDistToken(resultVMIType)) {
+    std::optional<std::string> laneStrideDist =
+        getDenseLaneStrideLoadDistToken(resultVMIType);
+    auto laneStrideResultType =
+        resultTypes.empty() ? VRegType{} : dyn_cast<VRegType>(resultTypes[0]);
+    bool canUseLaneStrideDist =
+        laneStrideDist && laneStrideResultType &&
+        isDirectMemoryDistAddressLegal(
+            op.getSource(), op.getOffset(), resultVMIType.getElementType(),
+            laneStrideResultType, VPTOMemoryOpFamily::Load, *laneStrideDist);
+    if (canUseLaneStrideDist) {
       SmallVector<Value> results;
       results.reserve(resultTypes.size());
       int64_t semanticOffset = 0;
@@ -6023,12 +6249,12 @@ struct OneToNVMILoadOpPattern : OneToNOpConversionPattern<VMILoadOp> {
           return rewriter.notifyMatchFailure(op, "load result must be vreg");
         Value chunkOffset =
             createChunkOffset(op.getLoc(), *offset, semanticOffset, rewriter);
-        results.push_back(rewriter
-                              .create<VldsOp>(op.getLoc(), resultType,
-                                              /*updated_base=*/Type{}, *source,
-                                              chunkOffset,
-                                              rewriter.getStringAttr(*dist))
-                              .getResult());
+        results.push_back(
+            rewriter
+                .create<VldsOp>(op.getLoc(), resultType,
+                                /*updated_base=*/Type{}, *source, chunkOffset,
+                                rewriter.getStringAttr(*laneStrideDist))
+                .getResult());
         FailureOr<int64_t> activeLanes =
             getActiveDataLanesInPhysicalChunk(resultVMIType, index);
         if (failed(activeLanes))
@@ -6041,7 +6267,7 @@ struct OneToNVMILoadOpPattern : OneToNOpConversionPattern<VMILoadOp> {
     }
 
     FailureOr<int64_t> lanesPerPart = verifyFullOrSafeReadVRegChunks(
-        op, resultVMIType, op.getSource().getType(), *offset, rewriter);
+        op, resultVMIType, op.getSource(), op.getOffset(), rewriter);
     if (failed(lanesPerPart))
       return failure();
 
@@ -6064,7 +6290,16 @@ struct OneToNVMILoadOpPattern : OneToNOpConversionPattern<VMILoadOp> {
         resultLayout.getFactor() == 2 && *noWiderThanContiguous) {
       std::optional<std::string> dist =
           getX2MemoryDistToken(resultVMIType.getElementType(), "DINTLV");
-      if (dist && !resultTypes.empty() && resultTypes.size() % 2 == 0) {
+      auto firstType = resultTypes.empty()
+                           ? VRegType{}
+                           : dyn_cast<VRegType>(resultTypes.front());
+      bool canUseDist =
+          dist && firstType &&
+          isDirectMemoryDistAddressLegal(
+              op.getSource(), op.getOffset(), resultVMIType.getElementType(),
+              firstType, VPTOMemoryOpFamily::LoadX2, *dist);
+      if (canUseDist &&
+          resultTypes.size() % 2 == 0) {
         int64_t groups = resultTypes.size() / 2;
         SmallVector<Value> lows;
         SmallVector<Value> highs;
@@ -6099,7 +6334,16 @@ struct OneToNVMILoadOpPattern : OneToNOpConversionPattern<VMILoadOp> {
         *noWiderThanContiguous) {
       std::optional<std::string> dist =
           getX2MemoryDistToken(resultVMIType.getElementType(), "DINTLV");
-      if (dist && !resultTypes.empty() && resultTypes.size() % 4 == 0) {
+      auto firstType = resultTypes.empty()
+                           ? VRegType{}
+                           : dyn_cast<VRegType>(resultTypes.front());
+      bool canUseDist =
+          dist && firstType &&
+          isDirectMemoryDistAddressLegal(
+              op.getSource(), op.getOffset(), resultVMIType.getElementType(),
+              firstType, VPTOMemoryOpFamily::LoadX2, *dist);
+      if (canUseDist &&
+          resultTypes.size() % 4 == 0) {
         int64_t groups = resultTypes.size() / 4;
         SmallVector<Value> part0;
         SmallVector<Value> part1;
@@ -6158,18 +6402,60 @@ struct OneToNVMILoadOpPattern : OneToNOpConversionPattern<VMILoadOp> {
 
     SmallVector<Value> contiguousParts;
     contiguousParts.reserve(contiguousTypes.size());
+    auto firstContiguousType =
+        contiguousTypes.empty() ? VRegType{}
+                                : dyn_cast<VRegType>(contiguousTypes.front());
+    bool useAlignedAccess =
+        firstContiguousType &&
+        isDirectMemoryDistAddressLegal(
+            op.getSource(), op.getOffset(), resultVMIType.getElementType(),
+            firstContiguousType, VPTOMemoryOpFamily::Load, "NORM");
+    Value unalignedBase;
+    Value unalignedAlign;
+    if (!useAlignedAccess) {
+      unalignedBase = materializeBufferPointer(
+          *source, resultVMIType.getElementType(),
+          getMemorySpace((*source).getType()), rewriter, op.getLoc());
+      if (!unalignedBase) {
+        return rewriter.notifyMatchFailure(
+            op, "continuous unaligned load requires a ptr-compatible source");
+      }
+      unalignedBase =
+          rewriter
+              .create<AddPtrOp>(op.getLoc(), unalignedBase.getType(),
+                                unalignedBase, *offset)
+              .getResult();
+      unalignedAlign =
+          rewriter
+              .create<VldasOp>(op.getLoc(),
+                               AlignType::get(rewriter.getContext()),
+                               unalignedBase)
+              .getResult();
+    }
     for (auto [index, resultType] : llvm::enumerate(contiguousTypes)) {
       auto vregType = dyn_cast<VRegType>(resultType);
       if (!vregType)
         return rewriter.notifyMatchFailure(op, "load result must be vreg");
-      Value chunkOffset = createChunkOffset(op.getLoc(), *offset,
-                                            index * *lanesPerPart, rewriter);
-      contiguousParts.push_back(rewriter
-                                    .create<VldsOp>(op.getLoc(), resultType,
-                                                    /*updated_base=*/Type{},
-                                                    *source, chunkOffset,
-                                                    /*dist=*/nullptr)
-                                    .getResult());
+      if (useAlignedAccess) {
+        Value chunkOffset = createChunkOffset(op.getLoc(), *offset,
+                                              index * *lanesPerPart, rewriter);
+        contiguousParts.push_back(rewriter
+                                      .create<VldsOp>(op.getLoc(), resultType,
+                                                      /*updated_base=*/Type{},
+                                                      *source, chunkOffset,
+                                                      /*dist=*/nullptr)
+                                      .getResult());
+        continue;
+      }
+
+      Value increment = rewriter.create<arith::ConstantIndexOp>(
+          op.getLoc(), *lanesPerPart);
+      auto load = rewriter.create<VldusOp>(
+          op.getLoc(), resultType, unalignedAlign.getType(),
+          unalignedBase.getType(), unalignedBase, unalignedAlign, increment);
+      contiguousParts.push_back(load.getResult());
+      unalignedAlign = load.getUpdatedAlign();
+      unalignedBase = load.getUpdatedBase();
     }
 
     FailureOr<SmallVector<Value>> results = materializeDataLayoutConversion(
@@ -6232,6 +6518,35 @@ struct OneToNVMIDeinterleaveLoadOpPattern
       return rewriter.notifyMatchFailure(
           op, "deinterleave_load requires matching low/high physical arity");
 
+    auto firstType =
+        lowTypes.empty() ? VRegType{} : dyn_cast<VRegType>(lowTypes.front());
+    bool useDirectAccess =
+        firstType &&
+        isDirectMemoryDistAddressLegal(op.getSource(), op.getOffset(),
+                                       lowVMIType.getElementType(), firstType,
+                                       VPTOMemoryOpFamily::LoadX2, *dist);
+    Value streamBase;
+    Value streamAlign;
+    if (!useDirectAccess) {
+      streamBase = materializeBufferPointer(
+          *source, lowVMIType.getElementType(),
+          getMemorySpace((*source).getType()), rewriter, op.getLoc());
+      if (!streamBase) {
+        return rewriter.notifyMatchFailure(
+            op, "unaligned deinterleave_load requires a ptr-compatible "
+                "source");
+      }
+      streamBase = rewriter
+                       .create<AddPtrOp>(op.getLoc(), streamBase.getType(),
+                                         streamBase, *offset)
+                       .getResult();
+      streamAlign = rewriter
+                        .create<VldasOp>(op.getLoc(),
+                                         AlignType::get(rewriter.getContext()),
+                                         streamBase)
+                        .getResult();
+    }
+
     SmallVector<Value> lows;
     SmallVector<Value> highs;
     lows.reserve(lowTypes.size());
@@ -6242,15 +6557,34 @@ struct OneToNVMIDeinterleaveLoadOpPattern
       if (lowType != highType)
         return rewriter.notifyMatchFailure(
             op, "deinterleave_load requires matching low/high physical types");
-      Value chunkOffset = createChunkOffset(
-          op.getLoc(), *offset, static_cast<int64_t>(index) * 2 * *lanesPerPart,
-          rewriter);
-      auto load =
-          rewriter.create<Vldsx2Op>(
-              op.getLoc(), lowType, highType, /*updated_base=*/Type{}, *source,
-              chunkOffset, rewriter.getStringAttr(*dist));
-      lows.push_back(load.getLow());
-      highs.push_back(load.getHigh());
+      if (useDirectAccess) {
+        Value chunkOffset = createChunkOffset(
+            op.getLoc(), *offset,
+            static_cast<int64_t>(index) * 2 * *lanesPerPart, rewriter);
+        auto load = rewriter.create<Vldsx2Op>(
+            op.getLoc(), lowType, highType, /*updated_base=*/Type{}, *source,
+            chunkOffset, rewriter.getStringAttr(*dist));
+        lows.push_back(load.getLow());
+        highs.push_back(load.getHigh());
+        continue;
+      }
+
+      Value increment =
+          rewriter.create<arith::ConstantIndexOp>(op.getLoc(), *lanesPerPart);
+      auto first = rewriter.create<VldusOp>(
+          op.getLoc(), lowType, streamAlign.getType(), streamBase.getType(),
+          streamBase, streamAlign, increment);
+      auto second = rewriter.create<VldusOp>(
+          op.getLoc(), highType, first.getUpdatedAlign().getType(),
+          first.getUpdatedBase().getType(), first.getUpdatedBase(),
+          first.getUpdatedAlign(), increment);
+      auto deinterleaved =
+          rewriter.create<VdintlvOp>(op.getLoc(), lowType, highType,
+                                     first.getResult(), second.getResult());
+      lows.push_back(deinterleaved.getLow());
+      highs.push_back(deinterleaved.getHigh());
+      streamBase = second.getUpdatedBase();
+      streamAlign = second.getUpdatedAlign();
     }
 
     SmallVector<Value> results;
@@ -7015,7 +7349,7 @@ struct OneToNVMIMaskedLoadOpPattern
       return failure();
 
     FailureOr<int64_t> lanesPerPart = verifyFullOrSafeReadVRegChunks(
-        op, resultVMIType, (*source).getType(), *offset, rewriter);
+        op, resultVMIType, op.getSource(), op.getOffset(), rewriter);
     if (failed(lanesPerPart))
       return failure();
 
@@ -7084,6 +7418,13 @@ struct OneToNVMIGatherOpPattern : OneToNOpConversionPattern<VMIGatherOp> {
         indicesParts.size() != passthruParts.size() ||
         indicesParts.size() != resultTypes.size())
       return rewriter.notifyMatchFailure(op, "gather physical arity mismatch");
+    // Static all-active masks select gathered[0] for every lane, so the
+    // trailing vsel is a semantic no-op. Skip it and keep gathered directly.
+    // Non-static masks still take the original gather + vsel path.
+    auto resultVMIType = cast<VMIVRegType>(op.getResult().getType());
+    bool allActive = isStaticAllActiveMask(op.getMask(),
+                                           resultVMIType.getElementCount());
+
 
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
@@ -7105,10 +7446,14 @@ struct OneToNVMIGatherOpPattern : OneToNOpConversionPattern<VMIGatherOp> {
                                  .create<Vgather2BcOp>(op.getLoc(), resultType,
                                                        *source, indices, mask)
                                  .getResult();
-      results.push_back(
-          rewriter
-              .create<VselOp>(op.getLoc(), resultType, gathered, passthru, mask)
-              .getResult());
+      if (allActive) {
+        results.push_back(gathered);
+      } else {
+        results.push_back(
+            rewriter
+                .create<VselOp>(op.getLoc(), resultType, gathered, passthru, mask)
+                .getResult());
+      }
     }
 
     replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
@@ -7144,7 +7489,7 @@ struct OneToNVMIExpandLoadOpPattern
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     if (isStaticAllActiveMask(op.getMask(), resultVMIType.getElementCount())) {
       FailureOr<int64_t> lanesPerPart = verifyFullOrSafeReadVRegChunks(
-          op, resultVMIType, (*source).getType(), *offset, rewriter);
+          op, resultVMIType, op.getSource(), op.getOffset(), rewriter);
       if (failed(lanesPerPart))
         return failure();
 
@@ -7247,8 +7592,17 @@ struct OneToNVMIStoreOpPattern : OneToNOpConversionPattern<VMIStoreOp> {
       return failure();
 
     ValueRange valueParts = adaptor.getValue();
-    if (std::optional<std::string> dist =
-            getDenseLaneStrideStoreDistToken(valueVMIType)) {
+    std::optional<std::string> laneStrideDist =
+        getDenseLaneStrideStoreDistToken(valueVMIType);
+    auto laneStrideValueType =
+        valueParts.empty() ? VRegType{}
+                           : dyn_cast<VRegType>(valueParts.front().getType());
+    bool canUseLaneStrideDist =
+        laneStrideDist && laneStrideValueType &&
+        isDirectMemoryDistAddressLegal(
+            op.getDestination(), op.getOffset(), valueVMIType.getElementType(),
+            laneStrideValueType, VPTOMemoryOpFamily::Store, *laneStrideDist);
+    if (canUseLaneStrideDist) {
       std::optional<StringRef> maskGranularity =
           getDenseLaneStrideStoreMaskGranularity(valueVMIType);
       if (!maskGranularity)
@@ -7276,8 +7630,8 @@ struct OneToNVMIStoreOpPattern : OneToNOpConversionPattern<VMIStoreOp> {
             createChunkOffset(op.getLoc(), *offset, semanticOffset, rewriter);
         rewriter.create<VstsOp>(op.getLoc(),
                                 /*updated_base=*/Type{}, value, *destination,
-                                chunkOffset, rewriter.getStringAttr(*dist),
-                                *mask);
+                                chunkOffset,
+                                rewriter.getStringAttr(*laneStrideDist), *mask);
         semanticOffset += *activeLanes;
       }
       rewriter.eraseOp(op);
@@ -7311,7 +7665,16 @@ struct OneToNVMIStoreOpPattern : OneToNOpConversionPattern<VMIStoreOp> {
         *noWiderThanContiguous) {
       std::optional<std::string> dist =
           getX2MemoryDistToken(valueVMIType.getElementType(), "INTLV");
-      if (dist && !valueParts.empty() && valueParts.size() % 2 == 0) {
+      auto firstType = valueParts.empty()
+                           ? VRegType{}
+                           : dyn_cast<VRegType>(valueParts.front().getType());
+      bool canUseDist = dist && firstType &&
+                        isDirectMemoryDistAddressLegal(
+                            op.getDestination(), op.getOffset(),
+                            valueVMIType.getElementType(), firstType,
+                            VPTOMemoryOpFamily::StoreX2, *dist);
+      if (canUseDist &&
+          valueParts.size() % 2 == 0) {
         int64_t groups = valueParts.size() / 2;
         for (int64_t group = 0; group < groups; ++group) {
           Value low = valueParts[group];
@@ -7344,6 +7707,32 @@ struct OneToNVMIStoreOpPattern : OneToNOpConversionPattern<VMIStoreOp> {
     if (failed(storeParts))
       return failure();
 
+    auto firstStoreType =
+        storeParts->empty() ? VRegType{}
+                            : dyn_cast<VRegType>(storeParts->front().getType());
+    bool useAlignedAccess =
+        firstStoreType &&
+        isDirectMemoryDistAddressLegal(
+            op.getDestination(), op.getOffset(), valueVMIType.getElementType(),
+            firstStoreType, VPTOMemoryOpFamily::Store, "");
+    Value storeBase;
+    if (!useAlignedAccess) {
+      storeBase = materializeBufferPointer(
+          *destination, valueVMIType.getElementType(),
+          getMemorySpace((*destination).getType()), rewriter, op.getLoc());
+      if (!storeBase) {
+        return rewriter.notifyMatchFailure(
+            op,
+            "continuous unaligned store requires a ptr-compatible destination");
+      }
+      storeBase = rewriter
+                      .create<AddPtrOp>(op.getLoc(), storeBase.getType(),
+                                        storeBase, *offset)
+                      .getResult();
+    }
+
+    SmallVector<Value> unalignedValues;
+    SmallVector<int64_t> unalignedAdvances;
     for (auto [index, value] : llvm::enumerate(*storeParts)) {
       auto vregType = dyn_cast<VRegType>(value.getType());
       if (!vregType)
@@ -7357,19 +7746,42 @@ struct OneToNVMIStoreOpPattern : OneToNOpConversionPattern<VMIStoreOp> {
         if (*activeLanes == 0)
           continue;
       }
-      FailureOr<Value> mask =
-          fullPhysicalChunks
-              ? createAllTrueMaskForVReg(op.getLoc(), vregType, rewriter)
-              : createContiguousStoreMask(op.getLoc(), valueVMIType, index,
-                                          vregType, rewriter);
-      if (failed(mask))
-        return rewriter.notifyMatchFailure(
-            op, "unsupported element type for store mask");
-      Value chunkOffset = createChunkOffset(op.getLoc(), *offset,
-                                            index * *lanesPerPart, rewriter);
-      rewriter.create<VstsOp>(op.getLoc(),
-                              /*updated_base=*/Type{}, value, *destination,
-                              chunkOffset, /*dist=*/nullptr, *mask);
+      if (useAlignedAccess) {
+        FailureOr<Value> mask =
+            fullPhysicalChunks
+                ? createAllTrueMaskForVReg(op.getLoc(), vregType, rewriter)
+                : createContiguousStoreMask(op.getLoc(), valueVMIType, index,
+                                            vregType, rewriter);
+        if (failed(mask)) {
+          return rewriter.notifyMatchFailure(
+              op, "unsupported element type for store mask");
+        }
+        Value chunkOffset = createChunkOffset(op.getLoc(), *offset,
+                                              index * *lanesPerPart, rewriter);
+        rewriter.create<VstsOp>(op.getLoc(),
+                                /*updated_base=*/Type{}, value, *destination,
+                                chunkOffset, /*dist=*/nullptr, *mask);
+        continue;
+      }
+
+      int64_t activeLanes = *lanesPerPart;
+      if (!fullPhysicalChunks) {
+        FailureOr<int64_t> maybeActiveLanes =
+            getContiguousActiveDataLanes(valueVMIType, index);
+        if (failed(maybeActiveLanes)) {
+          return rewriter.notifyMatchFailure(
+              op, "failed to compute unaligned store active lanes");
+        }
+        activeLanes = *maybeActiveLanes;
+      }
+      unalignedValues.push_back(value);
+      unalignedAdvances.push_back(activeLanes);
+    }
+
+    if (!useAlignedAccess &&
+        failed(emitStatefulStoreStream(op, storeBase, unalignedValues,
+                                        unalignedAdvances, rewriter))) {
+      return failure();
     }
 
     rewriter.eraseOp(op);
@@ -7413,6 +7825,32 @@ struct OneToNVMIInterleaveStoreOpPattern
       return rewriter.notifyMatchFailure(
           op, "interleave_store requires matching low/high physical arity");
 
+    auto firstType = lowParts.empty()
+                         ? VRegType{}
+                         : dyn_cast<VRegType>(lowParts.front().getType());
+    bool useDirectAccess =
+        firstType &&
+        isDirectMemoryDistAddressLegal(op.getDestination(), op.getOffset(),
+                                       lowVMIType.getElementType(), firstType,
+                                       VPTOMemoryOpFamily::StoreX2, *dist);
+    SmallVector<Value> streamValues;
+    SmallVector<int64_t> streamAdvances;
+    Value streamBase;
+    if (!useDirectAccess) {
+      streamBase = materializeBufferPointer(
+          *destination, lowVMIType.getElementType(),
+          getMemorySpace((*destination).getType()), rewriter, op.getLoc());
+      if (!streamBase) {
+        return rewriter.notifyMatchFailure(
+            op, "unaligned interleave_store requires a ptr-compatible "
+                "destination");
+      }
+      streamBase = rewriter
+                       .create<AddPtrOp>(op.getLoc(), streamBase.getType(),
+                                         streamBase, *offset)
+                       .getResult();
+    }
+
     for (size_t index = 0, e = lowParts.size(); index < e; ++index) {
       Value low = lowParts[index];
       Value high = highParts[index];
@@ -7423,17 +7861,34 @@ struct OneToNVMIInterleaveStoreOpPattern
       if (!vregType)
         return rewriter.notifyMatchFailure(
             op, "interleave_store value must be vreg");
-      FailureOr<Value> mask =
-          createAllTrueMaskForVReg(op.getLoc(), vregType, rewriter);
-      if (failed(mask))
-        return rewriter.notifyMatchFailure(
-            op, "unsupported element type for interleave_store mask");
-      Value chunkOffset = createChunkOffset(
-          op.getLoc(), *offset, static_cast<int64_t>(index) * 2 * *lanesPerPart,
-          rewriter);
-      rewriter.create<Vstsx2Op>(op.getLoc(), low, high, *destination,
-                                chunkOffset, rewriter.getStringAttr(*dist),
-                                *mask);
+      if (useDirectAccess) {
+        FailureOr<Value> mask =
+            createAllTrueMaskForVReg(op.getLoc(), vregType, rewriter);
+        if (failed(mask)) {
+          return rewriter.notifyMatchFailure(
+              op, "unsupported element type for interleave_store mask");
+        }
+        Value chunkOffset = createChunkOffset(
+            op.getLoc(), *offset,
+            static_cast<int64_t>(index) * 2 * *lanesPerPart, rewriter);
+        rewriter.create<Vstsx2Op>(op.getLoc(), low, high, *destination,
+                                  chunkOffset, rewriter.getStringAttr(*dist),
+                                  *mask);
+        continue;
+      }
+
+      auto packets =
+          rewriter.create<VintlvOp>(op.getLoc(), vregType, vregType, low, high);
+      streamValues.push_back(packets.getLow());
+      streamValues.push_back(packets.getHigh());
+      streamAdvances.push_back(*lanesPerPart);
+      streamAdvances.push_back(*lanesPerPart);
+    }
+
+    if (!useDirectAccess &&
+        failed(emitStatefulStoreStream(op, streamBase, streamValues,
+                                       streamAdvances, rewriter))) {
+      return failure();
     }
 
     rewriter.eraseOp(op);
@@ -7463,8 +7918,6 @@ struct OneToNVMIGroupStoreOpPattern
     if (failed(destination) || failed(offset) || failed(rowStride))
       return failure();
 
-    unsigned elementBits =
-        pto::getPTOStorageElemBitWidth(valueVMIType.getElementType());
     bool compactSmallGroupStore = isCompactSmallGroupStore(
         layout, valueVMIType, op.getNumGroupsAttr().getInt(),
         getConstantIndexValue(op.getRowStride()));
@@ -7510,16 +7963,16 @@ struct OneToNVMIGroupStoreOpPattern
       // The VMI input remains group_slots(num_groups=8, slots=8). Its active
       // group values occupy the leading physical lanes. Materialize the same
       // lane_stride=1 carrier as ensure_layout before selecting either an
-      // aligned NORM store or unaligned 32-bit point stores.
+      // aligned NORM store or an unaligned contiguous store stream.
       ValueRange valueParts = adaptor.getValue();
       if (valueParts.size() != 1)
         return rewriter.notifyMatchFailure(
             op, "compact small group_store requires one physical value part");
       auto valueType = dyn_cast<VRegType>(valueParts.front().getType());
-      auto destinationType = dyn_cast<PtrType>((*destination).getType());
-      if (!valueType || !destinationType)
+      if (!valueType || !isa<PtrType>((*destination).getType())) {
         return rewriter.notifyMatchFailure(
             op, "compact small group_store requires vreg and ptr operands");
+      }
 
       Value compactValue = valueParts.front();
       if (layout.getLaneStride() != 1) {
@@ -7538,8 +7991,8 @@ struct OneToNVMIGroupStoreOpPattern
         compactValue = packed->front();
       }
 
-      if (isKnown32ByteAlignedAddress(*destination, *offset,
-                                      valueVMIType.getElementType())) {
+      if (isKnownAddressAligned(*destination, *offset,
+                                valueVMIType.getElementType(), 32)) {
         auto compactType = dyn_cast<VRegType>(compactValue.getType());
         std::optional<std::string> normalDist =
             getX2MemoryDistToken(valueVMIType.getElementType(), "NORM");
@@ -7564,64 +8017,16 @@ struct OneToNVMIGroupStoreOpPattern
         return success();
       }
 
-      FailureOr<VRegType> wordType =
-          getUnsignedCarrierVRegType(rewriter.getContext(), 32);
-      if (failed(wordType))
-        return rewriter.notifyMatchFailure(
-            op, "failed to derive compact group-store word carrier type");
-      FailureOr<Value> words =
-          bitcastVReg(op.getLoc(), compactValue, *wordType, rewriter);
-      FailureOr<Value> wordMask = createPrefixMask(
-          op.getLoc(), MaskType::get(rewriter.getContext(), "b32"), "PAT_VL1",
-          rewriter);
-      if (failed(words) || failed(wordMask))
-        return rewriter.notifyMatchFailure(
-            op, "failed to materialize compact group-store words");
-
       Value elementBase =
           rewriter
               .create<AddPtrOp>(op.getLoc(), (*destination).getType(),
                                 *destination, *offset)
               .getResult();
-      auto wordPtrType =
-          PtrType::get(rewriter.getContext(), wordType->getElementType(),
-                       destinationType.getMemorySpace());
-      Value wordBase =
-          rewriter.create<CastPtrOp>(op.getLoc(), wordPtrType, elementBase)
-              .getResult();
-      FailureOr<Value> allWordMask =
-          createAllTrueMaskForVReg(op.getLoc(), *wordType, rewriter);
-      if (failed(allWordMask))
-        return rewriter.notifyMatchFailure(
-            op, "failed to materialize compact group-store word selector mask");
-      auto indexType =
-          VRegType::get(rewriter.getContext(), wordType->getElementCount(),
-                        rewriter.getI32Type());
-
-      int64_t wordCount = valueVMIType.getElementCount() *
-                          static_cast<int64_t>(elementBits) / 32;
-      for (int64_t wordIndex = 0; wordIndex < wordCount; ++wordIndex) {
-        Value word = *words;
-        if (wordIndex != 0) {
-          FailureOr<Value> index = createScalarOffsetConstant(
-              op.getLoc(), indexType.getElementType(), wordIndex, rewriter);
-          if (failed(index))
-            return rewriter.notifyMatchFailure(
-                op, "failed to materialize compact group-store word index");
-          Value indices =
-              rewriter
-                  .create<VdupOp>(op.getLoc(), indexType, *index, *allWordMask,
-                                  /*position=*/nullptr)
-                  .getResult();
-          word = rewriter
-                     .create<VselrOp>(op.getLoc(), *wordType, *words, indices)
-                     .getResult();
-        }
-        Value wordOffset =
-            rewriter.create<arith::ConstantIndexOp>(op.getLoc(), wordIndex);
-        rewriter.create<VstsOp>(
-            op.getLoc(), /*updated_base=*/Type{}, word, wordBase, wordOffset,
-            rewriter.getStringAttr("1PT_B32"), *wordMask);
+      SmallVector<Value> streamValues{compactValue};
+      SmallVector<int64_t> streamAdvances{valueVMIType.getElementCount()};
+      if (failed(emitStatefulStoreStream(op, elementBase, streamValues,
+                                          streamAdvances, rewriter))) {
+        return failure();
       }
 
       rewriter.eraseOp(op);
@@ -7644,9 +8049,7 @@ struct OneToNVMIGroupStoreOpPattern
       FailureOr<int64_t> lanesPerPart =
           getDataLanesPerPart(valueVMIType.getElementType());
       if (constantRowStride && *constantRowStride == 1 &&
-          succeeded(lanesPerPart) && layout.getNumGroups() <= *lanesPerPart &&
-          isKnown32ByteAlignedAddress(*destination, *offset,
-                                      valueVMIType.getElementType())) {
+          succeeded(lanesPerPart) && layout.getNumGroups() <= *lanesPerPart) {
         auto firstType = dyn_cast<VRegType>(valueParts.front().getType());
         if (!firstType)
           return rewriter.notifyMatchFailure(op,
@@ -7685,14 +8088,37 @@ struct OneToNVMIGroupStoreOpPattern
                        .getResult();
         }
 
-        FailureOr<Value> storeMask = createPrefixMaskForActiveLanes(
-            op.getLoc(), *maskType, layout.getNumGroups(), rewriter);
-        if (failed(storeMask))
-          return rewriter.notifyMatchFailure(
-              op, "failed to create packed group_store store mask");
-        rewriter.create<VstsOp>(op.getLoc(),
-                                /*updated_base=*/Type{}, packed, *destination,
-                                *offset, /*dist=*/nullptr, *storeMask);
+        if (isKnownAddressAligned(*destination, *offset,
+                                  valueVMIType.getElementType(), 32)) {
+          FailureOr<Value> storeMask = createPrefixMaskForActiveLanes(
+              op.getLoc(), *maskType, layout.getNumGroups(), rewriter);
+          if (failed(storeMask)) {
+            return rewriter.notifyMatchFailure(
+                op, "failed to create packed group_store store mask");
+          }
+          rewriter.create<VstsOp>(op.getLoc(),
+                                  /*updated_base=*/Type{}, packed, *destination,
+                                  *offset, /*dist=*/nullptr, *storeMask);
+        } else {
+          Value storeBase = materializeBufferPointer(
+              *destination, valueVMIType.getElementType(),
+              getMemorySpace((*destination).getType()), rewriter, op.getLoc());
+          if (!storeBase) {
+            return rewriter.notifyMatchFailure(
+                op, "packed unaligned group_store requires a ptr-compatible "
+                    "destination");
+          }
+          storeBase = rewriter
+                          .create<AddPtrOp>(op.getLoc(), storeBase.getType(),
+                                            storeBase, *offset)
+                          .getResult();
+          SmallVector<Value> streamValues{packed};
+          SmallVector<int64_t> streamAdvances{layout.getNumGroups()};
+          if (failed(emitStatefulStoreStream(op, storeBase, streamValues,
+                                              streamAdvances, rewriter))) {
+            return failure();
+          }
+        }
         rewriter.eraseOp(op);
         return success();
       }
@@ -7772,8 +8198,8 @@ struct OneToNVMIGroupStoreOpPattern
                 op, "unsupported element type for packed group_store mask");
           if (!laneStridedPackedByteStore && numGroups == 8 &&
               valueParts.size() == 1 &&
-              isKnown32ByteAlignedAddress(*destination, *offset,
-                                          valueVMIType.getElementType())) {
+              isKnownAddressAligned(*destination, *offset,
+                                    valueVMIType.getElementType(), 32)) {
             MLIRContext *ctx = rewriter.getContext();
             auto ui16 = IntegerType::get(
                 ctx, 16, IntegerType::SignednessSemantics::Unsigned);
@@ -7824,6 +8250,12 @@ struct OneToNVMIGroupStoreOpPattern
             return rewriter.notifyMatchFailure(
                 op, "failed to create packed group_store lane selector");
 
+          SmallVector<Value> statefulValues;
+          SmallVector<int64_t> statefulAdvances;
+          bool useDirectPack4 = isDirectMemoryDistAddressLegal(
+              op.getDestination(), op.getOffset(),
+              getMemoryElementType(op.getDestination().getType()),
+              firstVRegType, VPTOMemoryOpFamily::Store, "PK4_B32");
           for (int64_t blockStart = 0; blockStart < numGroups;
                blockStart += 32) {
             FailureOr<Value> zero =
@@ -7865,11 +8297,54 @@ struct OneToNVMIGroupStoreOpPattern
               return rewriter.notifyMatchFailure(
                   op, "failed to create packed group_store store mask");
             Value groupOffset = createGroupChunkOffset(
-                op.getLoc(), *offset, *rowStride, blockStart / 4,
+                op.getLoc(), *offset, *rowStride, blockStart,
                 /*chunkLaneOffset=*/0, rewriter);
-            rewriter.create<VstsOp>(
-                op.getLoc(), /*updated_base=*/Type{}, merged, *destination,
-                groupOffset, rewriter.getStringAttr("PK4_B32"), *storeMask);
+            if (useDirectPack4) {
+              rewriter.create<VstsOp>(
+                  op.getLoc(), /*updated_base=*/Type{}, merged, *destination,
+                  groupOffset, rewriter.getStringAttr("PK4_B32"), *storeMask);
+              continue;
+            }
+
+            MLIRContext *ctx = rewriter.getContext();
+            auto ui16 = IntegerType::get(
+                ctx, 16, IntegerType::SignednessSemantics::Unsigned);
+            auto ui8 = IntegerType::get(
+                ctx, 8, IntegerType::SignednessSemantics::Unsigned);
+            auto packed16Type = VRegType::get(ctx, 128, ui16);
+            auto packed8Type = VRegType::get(ctx, 256, ui8);
+            Value packed16 =
+                rewriter
+                    .create<VpackOp>(op.getLoc(), packed16Type, merged,
+                                     rewriter.getStringAttr("LOWER"))
+                    .getResult();
+            statefulValues.push_back(
+                rewriter
+                    .create<VpackOp>(op.getLoc(), packed8Type, packed16,
+                                     rewriter.getStringAttr("LOWER"))
+                    .getResult());
+            statefulAdvances.push_back(activeGroups);
+          }
+
+          if (!useDirectPack4) {
+            Type destinationElementType =
+                getMemoryElementType((*destination).getType());
+            Value storeBase = materializeBufferPointer(
+                *destination, destinationElementType,
+                getMemorySpace((*destination).getType()), rewriter,
+                op.getLoc());
+            if (!storeBase) {
+              return rewriter.notifyMatchFailure(
+                  op, "unaligned packed byte group_store requires a "
+                      "ptr-compatible destination");
+            }
+            storeBase = rewriter
+                            .create<AddPtrOp>(op.getLoc(), storeBase.getType(),
+                                              storeBase, *offset)
+                            .getResult();
+            if (failed(emitStatefulStoreStream(op, storeBase, statefulValues,
+                                               statefulAdvances, rewriter)))
+              return failure();
           }
 
           rewriter.eraseOp(op);
@@ -7887,8 +8362,68 @@ struct OneToNVMIGroupStoreOpPattern
           return rewriter.notifyMatchFailure(
               op, "unsupported slots=8 lane_stride group_store packing");
 
-        auto maskType =
-            MaskType::get(rewriter.getContext(), *maskGranularity);
+        auto maskType = MaskType::get(rewriter.getContext(), *maskGranularity);
+        SmallVector<Value> groupOffsets;
+        bool useDirectAccess = true;
+        for (auto [slotBlock, value] : llvm::enumerate(valueParts)) {
+          auto vregType = dyn_cast<VRegType>(value.getType());
+          if (!vregType) {
+            return rewriter.notifyMatchFailure(
+                op, "group_store value must be vreg");
+          }
+          Value groupOffset = createGroupChunkOffset(
+              op.getLoc(), *offset, *rowStride, slotBlock * 8,
+              /*chunkLaneOffset=*/0, rewriter);
+          groupOffsets.push_back(groupOffset);
+          useDirectAccess &= isDirectMemoryDistAddressLegal(
+              op.getDestination(), groupOffset,
+              getMemoryElementType(op.getDestination().getType()), vregType,
+              VPTOMemoryOpFamily::Store, *dist);
+        }
+
+        if (!useDirectAccess) {
+          VMILayoutAttr compactLayout = VMILayoutAttr::getGroupSlots(
+              rewriter.getContext(), layout.getNumGroups(), layout.getSlots());
+          auto compactType = VMIVRegType::get(
+              rewriter.getContext(), valueVMIType.getElementCount(),
+              valueVMIType.getElementType(), compactLayout);
+          FailureOr<SmallVector<Value>> compactValues =
+              materializeEnsureLayoutConversion(
+                  op, valueParts, valueVMIType, compactType,
+                  *this->getTypeConverter(), rewriter);
+          if (
+              failed(compactValues) ||
+              compactValues->size() != valueParts.size()) {
+            return rewriter.notifyMatchFailure(
+                op, "failed to compact unaligned slots=8 group_store");
+          }
+
+          SmallVector<int64_t> advances;
+          for (size_t slotBlock = 0; slotBlock < compactValues->size();
+               ++slotBlock) {
+            advances.push_back(std::min<int64_t>(8, numGroups - slotBlock * 8));
+          }
+          Type destinationElementType =
+              getMemoryElementType((*destination).getType());
+          Value storeBase = materializeBufferPointer(
+              *destination, destinationElementType,
+              getMemorySpace((*destination).getType()), rewriter, op.getLoc());
+          if (!storeBase) {
+            return rewriter.notifyMatchFailure(
+                op, "unaligned slots=8 group_store requires a ptr-compatible "
+                    "destination");
+          }
+          storeBase = rewriter
+                          .create<AddPtrOp>(op.getLoc(), storeBase.getType(),
+                                            storeBase, *offset)
+                          .getResult();
+          if (failed(emitStatefulStoreStream(op, storeBase, *compactValues,
+                                             advances, rewriter)))
+            return failure();
+          rewriter.eraseOp(op);
+          return success();
+        }
+
         for (auto [slotBlock, value] : llvm::enumerate(valueParts)) {
           if (!isa<VRegType>(value.getType()))
             return rewriter.notifyMatchFailure(
@@ -7900,23 +8435,60 @@ struct OneToNVMIGroupStoreOpPattern
           if (failed(mask))
             return rewriter.notifyMatchFailure(
                 op, "failed to create packed slots=8 group_store mask");
-          Value groupOffset = createGroupChunkOffset(
-              op.getLoc(), *offset, *rowStride, slotBlock * 8,
-              /*chunkLaneOffset=*/0, rewriter);
-          rewriter.create<VstsOp>(
-              op.getLoc(), /*updated_base=*/Type{}, value, *destination,
-              groupOffset, rewriter.getStringAttr(*dist), *mask);
+          rewriter.create<VstsOp>(op.getLoc(), /*updated_base=*/Type{}, value,
+                                  *destination, groupOffsets[slotBlock],
+                                  rewriter.getStringAttr(*dist), *mask);
         }
 
         rewriter.eraseOp(op);
         return success();
       }
 
+      SmallVector<Value> groupOffsets;
+      bool useDirectAccess = true;
       for (auto [slotBlock, value] : llvm::enumerate(valueParts)) {
         auto vregType = dyn_cast<VRegType>(value.getType());
         if (!vregType)
           return rewriter.notifyMatchFailure(op,
                                              "group_store value must be vreg");
+        Value groupOffset = createGroupChunkOffset(
+            op.getLoc(), *offset, *rowStride, slotBlock * 8,
+            /*chunkLaneOffset=*/0, rewriter);
+        groupOffsets.push_back(groupOffset);
+        useDirectAccess &= isDirectMemoryDistAddressLegal(
+            op.getDestination(), groupOffset,
+            getMemoryElementType(op.getDestination().getType()), vregType,
+            VPTOMemoryOpFamily::Store, "");
+      }
+
+      if (!useDirectAccess) {
+        SmallVector<int64_t> advances;
+        for (size_t slotBlock = 0; slotBlock < valueParts.size(); ++slotBlock) {
+          advances.push_back(std::min<int64_t>(8, numGroups - slotBlock * 8));
+        }
+        Type destinationElementType =
+            getMemoryElementType((*destination).getType());
+        Value storeBase = materializeBufferPointer(
+            *destination, destinationElementType,
+            getMemorySpace((*destination).getType()), rewriter, op.getLoc());
+        if (!storeBase) {
+          return rewriter.notifyMatchFailure(
+              op, "unaligned slots=8 group_store requires a ptr-compatible "
+                  "destination");
+        }
+        storeBase = rewriter
+                        .create<AddPtrOp>(op.getLoc(), storeBase.getType(),
+                                          storeBase, *offset)
+                        .getResult();
+        if (failed(emitStatefulStoreStream(op, storeBase, valueParts, advances,
+                                           rewriter)))
+          return failure();
+        rewriter.eraseOp(op);
+        return success();
+      }
+
+      for (auto [slotBlock, value] : llvm::enumerate(valueParts)) {
+        auto vregType = cast<VRegType>(value.getType());
         FailureOr<MaskType> maskType =
             getMaskTypeForVReg(vregType, rewriter.getContext());
         if (failed(maskType))
@@ -7928,12 +8500,10 @@ struct OneToNVMIGroupStoreOpPattern
         if (failed(mask))
           return rewriter.notifyMatchFailure(
               op, "failed to create slots=8 group_store mask");
-        Value groupOffset = createGroupChunkOffset(
-            op.getLoc(), *offset, *rowStride, slotBlock * 8,
-            /*chunkLaneOffset=*/0, rewriter);
         rewriter.create<VstsOp>(op.getLoc(),
                                 /*updated_base=*/Type{}, value, *destination,
-                                groupOffset, /*dist=*/nullptr, *mask);
+                                groupOffsets[slotBlock], /*dist=*/nullptr,
+                                *mask);
       }
 
       rewriter.eraseOp(op);
@@ -8140,6 +8710,13 @@ struct OneToNVMIMaskedStoreOpPattern
                 op, "failed to compact lane_stride masked_store predicate");
           Value chunkOffset =
               createChunkOffset(op.getLoc(), *offset, semanticOffset, rewriter);
+          if (!isDirectMemoryDistAddressLegal(
+                  *destination, chunkOffset, valueVMIType.getElementType(),
+                  vregType, VPTOMemoryOpFamily::Store, *dist)) {
+            return rewriter.notifyMatchFailure(
+                op, "lane_stride masked_store requires a proven target "
+                    "alignment for every physical store chunk");
+          }
           rewriter.create<VstsOp>(op.getLoc(),
                                   /*updated_base=*/Type{}, value, *destination,
                                   chunkOffset, rewriter.getStringAttr(*dist),
@@ -8198,6 +8775,13 @@ struct OneToNVMIMaskedStoreOpPattern
             op, "failed to materialize masked_store predicate");
       Value chunkOffset = createChunkOffset(op.getLoc(), *offset,
                                             index * *lanesPerPart, rewriter);
+      if (!isDirectMemoryDistAddressLegal(
+              *destination, chunkOffset, valueVMIType.getElementType(),
+              vregType, VPTOMemoryOpFamily::Store, /*dist=*/{})) {
+        return rewriter.notifyMatchFailure(
+            op, "masked_store requires a proven target alignment for every "
+                "physical store chunk");
+      }
       rewriter.create<VstsOp>(op.getLoc(),
                               /*updated_base=*/Type{}, value, *destination,
                               chunkOffset, /*dist=*/nullptr, *storeMask);
@@ -8259,13 +8843,30 @@ struct OneToNVMIGroupBroadcastLoadOpPattern
       return std::nullopt;
     };
 
-    if (succeeded(directFact) &&
-        directFact->kind == VMIGroupBroadcastLoadDirectKind::BRC) {
+    bool canUseDirectBRC = false;
+    if (
+        succeeded(directFact) &&
+        directFact->kind == VMIGroupBroadcastLoadDirectKind::BRC &&
+        !resultTypes.empty()) {
+      std::optional<StringRef> brcDist = getBRCDist();
+      auto firstType = dyn_cast<VRegType>(resultTypes.front());
+      canUseDirectBRC =
+          brcDist && firstType &&
+          isDirectMemoryDistAddressLegal(
+              op.getSource(), op.getOffset(), resultVMIType.getElementType(),
+              firstType, VPTOMemoryOpFamily::Load, *brcDist);
+    }
+
+    if (
+        succeeded(directFact) &&
+        directFact->kind == VMIGroupBroadcastLoadDirectKind::BRC &&
+        canUseDirectBRC) {
       if (numGroups <= 0 ||
-          static_cast<int64_t>(resultTypes.size()) % numGroups != 0)
+          static_cast<int64_t>(resultTypes.size()) % numGroups != 0) {
         return rewriter.notifyMatchFailure(
             op, "group_broadcast_load BRC result arity is not divisible by "
                 "num_groups");
+      }
       // BRC duplicates the scalar independently into every physical result
       // chunk. Derive the chunk count from the assigned result arity so
       // deinterleaved scalar-broadcast layouts (d2/d4) remain valid even
@@ -8309,8 +8910,25 @@ struct OneToNVMIGroupBroadcastLoadOpPattern
       return success();
     }
 
+    bool canUseDirectE2B = false;
+    if (
+        succeeded(directFact) &&
+        directFact->kind == VMIGroupBroadcastLoadDirectKind::E2B &&
+        !resultTypes.empty()) {
+      unsigned elementBits = directFact->layout.elementBits;
+      StringRef e2bDist =
+          elementBits == 16 ? StringRef("E2B_B16") : StringRef("E2B_B32");
+      auto firstType = dyn_cast<VRegType>(resultTypes.front());
+      canUseDirectE2B =
+          (elementBits == 16 || elementBits == 32) && firstType &&
+          isDirectMemoryDistAddressLegal(
+              op.getSource(), op.getOffset(), resultVMIType.getElementType(),
+              firstType, VPTOMemoryOpFamily::Load, e2bDist);
+    }
+
     if (failed(directFact) ||
-        directFact->kind != VMIGroupBroadcastLoadDirectKind::E2B) {
+        directFact->kind != VMIGroupBroadcastLoadDirectKind::E2B ||
+        !canUseDirectE2B) {
       std::optional<int64_t> stride =
           getConstantIndexValue(op.getSourceGroupStride());
       int64_t slots = (stride && *stride == 1) ? 8 : 1;
@@ -10869,7 +11487,8 @@ struct OneToNVMITruncFOpPattern : OneToNOpConversionPattern<VMITruncFOp> {
 
     unsigned resultBits = pto::getPTOStorageElemBitWidth(
         resultVRegTypes.front().getElementType());
-    // Same-width fp->fp (bf16 -> f16): dense contiguous 1:1, no part, rnd+sat.
+    // Same-width fp->fp (bf16 -> f16, f16 -> bf16): dense contiguous 1:1,
+    // no part; rnd always, sat follows the fp-to-fp contract.
     if (sourceBits == resultBits && sourceLayout && resultLayout &&
         sourceLayout.isContiguous() && sourceLayout.getLaneStride() == 1 &&
         resultLayout.isContiguous() && resultLayout.getLaneStride() == 1 &&
@@ -12053,40 +12672,96 @@ struct OneToNVMISIToFPOpPattern : OneToNOpConversionPattern<VMISIToFPOp> {
     ValueRange sourceParts = adaptor.getSource();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    if (failed(maybe_resultTypes)) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-    if (sourceParts.size() != resultTypes.size())
+
+    auto sourceType = dyn_cast<VRegType>(sourceParts.front().getType());
+    if (!sourceType || !isa<IntegerType>(sourceType.getElementType())) {
       return rewriter.notifyMatchFailure(
-          op, "sitofp physical source/result arity mismatch");
+          op, "sitofp requires integer source chunks");
+    }
+    unsigned sourceBits =
+        pto::getPTOStorageElemBitWidth(sourceType.getElementType());
+
+    SmallVector<VRegType> resultVRegTypes;
+    resultVRegTypes.reserve(resultTypes.size());
+    for (Type resultType : resultTypes) {
+      auto resultVRegType = dyn_cast<VRegType>(resultType);
+      if (!resultVRegType ||
+          (!resultVRegTypes.empty() &&
+           resultVRegType != resultVRegTypes.front())) {
+        return rewriter.notifyMatchFailure(
+            op, "unsupported physical sitofp result type");
+      }
+      resultVRegTypes.push_back(resultVRegType);
+    }
+    unsigned resultBits = pto::getPTOStorageElemBitWidth(
+        resultVRegTypes.front().getElementType());
+
+    FailureOr<Value> mask =
+        createAllTrueMaskForVReg(op.getLoc(), sourceType, rewriter);
+    if (failed(mask)) {
+      return rewriter.notifyMatchFailure(op, "failed to build sitofp mask");
+    }
 
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
-    StringAttr rnd = rewriter.getStringAttr("R");
-    for (auto [sourcePart, resultType] :
-         llvm::zip_equal(sourceParts, resultTypes)) {
-      auto sourceType = dyn_cast<VRegType>(sourcePart.getType());
-      auto resultVRegType = dyn_cast<VRegType>(resultType);
-      if (!sourceType || !isa<IntegerType>(sourceType.getElementType()) ||
-          pto::getPTOStorageElemBitWidth(sourceType.getElementType()) != 32 ||
-          !resultVRegType || !resultVRegType.getElementType().isF32())
-        return rewriter.notifyMatchFailure(
-            op, "sitofp requires physical 32-bit integer source and f32 "
-                "result chunks");
 
-      FailureOr<Value> mask =
-          createAllTrueMaskForVReg(op.getLoc(), sourceType, rewriter);
-      if (failed(mask))
-        return rewriter.notifyMatchFailure(op, "failed to build sitofp mask");
-      results.push_back(rewriter
-                            .create<VcvtOp>(op.getLoc(), resultVRegType,
-                                            sourcePart, *mask, rnd,
-                                            /*sat=*/nullptr, /*part=*/nullptr)
-                            .getResult());
+    // si32 -> f32: same-width 1:1, no part, rnd=R.
+    if (sourceBits == 32 && resultBits == 32) {
+      size_t srcArity = sourceParts.size();
+      size_t dstArity = resultTypes.size();
+      if (srcArity != dstArity) {
+        return rewriter.notifyMatchFailure(
+            op, "si32->f32 requires matching physical arity");
+      }
+      StringAttr rnd = rewriter.getStringAttr("R");
+      for (auto [sourcePart, resultVRegType] :
+           llvm::zip_equal(sourceParts, resultVRegTypes)) {
+        results.push_back(rewriter
+                              .create<VcvtOp>(op.getLoc(), resultVRegType,
+                                              sourcePart, *mask, rnd,
+                                              /*sat=*/nullptr,
+                                              /*part=*/nullptr)
+                              .getResult());
+      }
+      replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                       *this->getTypeConverter());
+      return success();
     }
 
-    replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
-    return success();
+    // si8 -> f16: 8->16 widening, EvenOdd parts, no rnd/sat.
+    if (sourceBits == 8 && resultBits == 16) {
+      size_t expectedResults = 2 * sourceParts.size();
+      size_t actualResults = resultTypes.size();
+      if (actualResults != expectedResults) {
+        return rewriter.notifyMatchFailure(
+            op, "si8->f16 requires result arity = 2 x source arity");
+      }
+      static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
+      for (int64_t partIndex = 0; partIndex < 2; ++partIndex) {
+        for (auto [chunkIndex, sourcePart] :
+             llvm::enumerate(sourceParts)) {
+          VRegType resultType =
+              resultVRegTypes[partIndex * sourceParts.size() + chunkIndex];
+          results.push_back(
+              rewriter
+                  .create<VcvtOp>(op.getLoc(), resultType, sourcePart, *mask,
+                                  /*rnd=*/nullptr, /*sat=*/nullptr,
+                                  rewriter.getStringAttr(
+                                      kEvenOddParts[partIndex]))
+                  .getResult());
+        }
+      }
+      replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                       *this->getTypeConverter());
+      return success();
+    }
+
+    return rewriter.notifyMatchFailure(
+        op, "unsupported sitofp source/result width relation");
   }
 };
 
@@ -12808,8 +13483,9 @@ LogicalResult checkSupportedFPToUIShape(VMIFPToUIOp op,
 LogicalResult checkSupportedSIToFPShape(VMISIToFPOp op,
                                         std::string *reason = nullptr) {
   auto fail = [&](const Twine &message) {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
@@ -12817,29 +13493,49 @@ LogicalResult checkSupportedSIToFPShape(VMISIToFPOp op,
   auto resultType = cast<VMIVRegType>(op.getResult().getType());
   VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();
   VMILayoutAttr resultLayout = resultType.getLayoutAttr();
-  if (!sourceLayout || !resultLayout)
+  if (!sourceLayout || !resultLayout) {
     return fail("requires assigned source/result layouts");
-  if (sourceLayout != resultLayout)
-    return fail("requires source/result layouts to match");
-  if (!isa<IntegerType>(sourceType.getElementType()) ||
-      pto::getPTOStorageElemBitWidth(sourceType.getElementType()) != 32)
-    return fail("requires 32-bit integer source element type");
-  if (!resultType.getElementType().isF32())
-    return fail("requires f32 result element type");
-  FailureOr<int64_t> sourceArity = getVMIPhysicalArity(sourceType);
-  FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
-  if (failed(sourceArity) || failed(resultArity) ||
-      *sourceArity != *resultArity)
-    return fail("requires matching computable physical arity");
+  }
+  unsigned srcBits = pto::getPTOStorageElemBitWidth(sourceType.getElementType());
+  unsigned dstBits = pto::getPTOStorageElemBitWidth(resultType.getElementType());
+  if (srcBits == 32 && dstBits == 32) {
+    if (sourceLayout != resultLayout) {
+      return fail("si32->f32 requires matching layouts");
+    }
+    if (!resultType.getElementType().isF32()) {
+      return fail("requires f32 result element type");
+    }
+    FailureOr<int64_t> sourceArity = getVMIPhysicalArity(sourceType);
+    FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
+    bool aritiesOk = succeeded(sourceArity) && succeeded(resultArity) &&
+        *sourceArity == *resultArity;
+    if (!aritiesOk) {
+      return fail("requires matching computable physical arity");
+    }
+  } else if (srcBits == 8 && dstBits == 16) {
+    if (!resultType.getElementType().isF16()) {
+      return fail("requires f16 result element type");
+    }
+    VMILayoutSupport layoutSupport;
+    if (failed(layoutSupport.getCastLayoutFactForLayouts(
+            sourceType, resultType, sourceLayout, resultLayout, reason))) {
+      return failure();
+    }
+  } else {
+    return fail("supports only si32 -> f32 or si8 -> f16");
+  }
   return success();
 }
 
 LogicalResult checkSupportedBitcastShape(VMIBitcastOp op, std::string *reason) {
   VMILayoutSupport supports;
-  if (failed(supports.getBitcastSupport(op, reason)))
+  if (failed(supports.getBitcastSupport(op, reason))) {
     return failure();
+  }
   return success();
 }
+
+
 
 LogicalResult
 checkSupportedChannelSplitShape(VMIChannelSplitOp op,
@@ -13604,9 +14300,10 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
         return WalkResult::advance();
       gather.emitError()
           << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.gather lowers through pto.vgather2_bc + pto.vsel only "
+          << "pto.vmi.gather lowers through pto.vgather2/pto.vgather2_bc + pto.vsel only "
              "for UB pointer sources, contiguous full physical chunks, "
-             "32-bit result elements, i32 indices, and b32 masks ("
+             "ui16/i16/f16/bf16 results with ui16 indices and b16 masks, "
+             "or 32-bit results with i32 indices and b32 masks ("
           << reason << ")";
       return WalkResult::interrupt();
     }
@@ -14221,13 +14918,13 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
 
     if (auto sitofp = dyn_cast<VMISIToFPOp>(op)) {
       std::string reason;
-      if (succeeded(checkSupportedSIToFPShape(sitofp, &reason)))
+      if (succeeded(checkSupportedSIToFPShape(sitofp, &reason))) {
         return WalkResult::advance();
+      }
 
       sitofp.emitError()
           << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.sitofp supports 32-bit integer source chunks to "
-             "matching f32 result chunks with identical assigned layouts ("
+          << "pto.vmi.sitofp supports si32->f32 or si8->f16 conversion shapes ("
           << reason << ")";
       return WalkResult::interrupt();
     }
@@ -14286,8 +14983,9 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
 
     if (auto bitcast = dyn_cast<VMIBitcastOp>(op)) {
       std::string reason;
-      if (succeeded(checkSupportedBitcastShape(bitcast, &reason)))
+      if (succeeded(checkSupportedBitcastShape(bitcast, &reason))) {
         return WalkResult::advance();
+      }
 
       bitcast.emitError()
           << kVMIDiagUnsupportedPrefix

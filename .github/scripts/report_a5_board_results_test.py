@@ -55,6 +55,57 @@ class BoardResultReportTest(unittest.TestCase):
             self.assertIn("`Add/add`", markdown)
             self.assertIn("`0123456789ab`", markdown)
 
+    def test_log_errors_are_attached_to_failed_cases(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="a5-board-report-") as temp_dir:
+            root = pathlib.Path(temp_dir)
+            results = root / "results.tsv"
+            results.write_text(
+                "testcase\tstatus\tstage\tinfo\n"
+                "Rowexpandsub/rowexpandsub\tFAIL\trun\texit=2\n"
+                "DeepseekV4DecodeA5/rope_cs\tFAIL\trun\texit=139\n"
+                "TquantMx/tquant_mx\tFAIL\trun\texit=2\n",
+                encoding="utf-8",
+            )
+            log = root / "board-validation.log"
+            log.write_text(
+                "[time] === CASE: /tmp/payload/test/samples/Rowexpandsub/rowexpandsub-pto.cpp ===\n"
+                "[ERROR] Mismatch: golden_v3.bin vs v3.bin, max diff=5.5\n"
+                "[time] ERROR: testcase failed (exit 2): rowexpandsub\n"
+                "[time] === CASE: /tmp/payload/test/samples/DeepseekV4DecodeA5/rope_cs-pto.cpp ===\n"
+                "run_remote_npu_validation.sh: line 792: Segmentation fault (core dumped)\n"
+                "[time] === CASE: /tmp/payload/test/samples/TquantMx/tquant_mx-pto.cpp ===\n"
+                "error: no member named 'assignData' in 'pto::Tile'\n",
+                encoding="utf-8",
+            )
+
+            summary = REPORT.load_results(results, log)
+            details = dict(summary.failure_details)
+            self.assertIn("Mismatch: golden_v3.bin", details["Rowexpandsub/rowexpandsub"])
+            self.assertIn("Segmentation fault", details["DeepseekV4DecodeA5/rope_cs"])
+            self.assertIn("no member named 'assignData'", details["TquantMx/tquant_mx"])
+            markdown = REPORT.render_markdown(
+                summary, conclusion="failure", run_url="", sha=""
+            )
+            self.assertIn("### Concrete errors", markdown)
+
+            payload = REPORT.build_feishu_payload(
+                summary, conclusion="failure", run_url="", sha=""
+            )
+            content = payload["card"]["elements"][0]["text"]["content"]
+            self.assertIn("**Concrete errors**", content)
+            self.assertIn("Segmentation fault", content)
+
+            detail_payloads = REPORT.build_feishu_detail_payloads(
+                summary, run_url="https://github.example/actions/runs/3"
+            )
+            self.assertGreaterEqual(len(detail_payloads), 1)
+            detail_content = "\n".join(
+                card["card"]["elements"][0]["text"]["content"]
+                for card in detail_payloads
+            )
+            for testcase in summary.failed_cases:
+                self.assertIn(f"`{testcase}`", detail_content)
+
     def test_missing_results_are_reported_as_failure(self) -> None:
         summary = REPORT.load_results(pathlib.Path("/path/that/does/not/exist"))
         self.assertFalse(summary.results_found)
@@ -66,6 +117,7 @@ class BoardResultReportTest(unittest.TestCase):
             sha="",
         )
         self.assertEqual(payload["card"]["header"]["template"], "red")
+        self.assertIn("夜间看护", payload["card"]["header"]["title"]["content"])
 
     def test_successful_results_are_reported_as_pass(self) -> None:
         summary = REPORT.BoardSummary(

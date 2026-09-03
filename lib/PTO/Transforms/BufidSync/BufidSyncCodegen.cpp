@@ -8,11 +8,12 @@
 
 #include <algorithm>
 #include <tuple>
-#include "BufidSyncCodegen.h"
+
 #include "PTO/IR/PTO.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/IRMapping.h"
 #include "llvm/Support/Debug.h"
+#include "BufidSyncCodegen.h"
 
 
 #define DEBUG_TYPE "pto-bufid-sync"

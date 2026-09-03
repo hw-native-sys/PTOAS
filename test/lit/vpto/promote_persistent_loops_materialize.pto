@@ -1,0 +1,62 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// End-to-end chain: persistent fragment loops WITHOUT any hand-written
+// unroll hint must be auto-promoted to full unroll, unrolled natively, and
+// then materialized (keep/resume) by the standard ptoas pipeline - the
+// pipeline's promotion pass runs ahead of pto-unroll-loops and the fragment
+// analysis/materialization.
+//
+// The loops carry no pto.unroll attribute at all; if the promotion did not
+// fire, the fragment analysis would see loop-carried accesses and fail, so
+// a successful keep/resume materialization proves the whole chain.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=pto-materialize-simt-persistent-fragment %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=MATERIALIZE
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @persistent_fragment_loop_auto_promote(%dst: !pto.ptr<f32, ub>) attributes {pto.entry} {
+    %c2_i32 = arith.constant 2 : i32
+    %fragment = llvm.alloca %c2_i32 x f32 {pto.persistent} : (i32) -> !llvm.ptr
+    %c0 = arith.constant 0 : index
+    %c2 = arith.constant 2 : index
+    %c1 = arith.constant 1 : index
+    pto.section.simt<<<32, 1, 1>>> {
+      %one = arith.constant 1.000000e+00 : f32
+      scf.for %i = %c0 to %c2 step %c1 {
+        %i64 = arith.index_cast %i : index to i64
+        %element = llvm.getelementptr %fragment[%i64] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+        llvm.store %one, %element : f32, !llvm.ptr
+      }
+    }
+    pto.section.simt<<<32, 1, 1>>> {
+      %two = arith.constant 2.000000e+00 : f32
+      scf.for %i = %c0 to %c2 step %c1 {
+        %i64 = arith.index_cast %i : index to i64
+        %element = llvm.getelementptr %fragment[%i64] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+        %old = llvm.load %element : !llvm.ptr -> f32
+        %updated = arith.addf %old, %two : f32
+        llvm.store %updated, %element : f32, !llvm.ptr
+        pto.store %updated, %dst[%i] : !pto.ptr<f32, ub>, f32
+      }
+    }
+    return
+  }
+}
+
+// MATERIALIZE-LABEL: func.func @persistent_fragment_loop_auto_promote
+// MATERIALIZE-NOT: scf.for
+// MATERIALIZE-NOT: pto.unroll
+// MATERIALIZE-NOT: pto.persistent_unroll
+// MATERIALIZE-NOT: llvm.alloca
+// MATERIALIZE-DAG: pto.keep %{{.*}} {slot = 0 : i64} : f32
+// MATERIALIZE-DAG: pto.keep %{{.*}} {slot = 1 : i64} : f32
+// MATERIALIZE-DAG: %{{.*}} = pto.resume {slot = 0 : i64} : f32
+// MATERIALIZE-DAG: %{{.*}} = pto.resume {slot = 1 : i64} : f32
+// MATERIALIZE-NOT: llvm.getelementptr
+// MATERIALIZE-NOT: llvm.load
+// MATERIALIZE-NOT: llvm.store

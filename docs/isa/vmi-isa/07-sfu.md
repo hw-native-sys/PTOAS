@@ -413,7 +413,7 @@
 
 ### `pto.vmi.vgather`
 
-- **semantics:** Indexed gather from UB at B32 granularity. For each active
+- **semantics:** Indexed gather from UB at B32/B16 granularity. For each active
   lane `i`, load `src[offsets[i]]`.
 
   ```c
@@ -423,7 +423,17 @@
 
 - **syntax:**
   ```mlir
-  %g = pto.vmi.vgather %src, %offsets, %mask : !pto.ptr<T, ub>, !pto.vmi.vreg<L×i32>, !pto.vmi.mask<L> -> !pto.vmi.vreg<L×T>
+  // B32 path
+  %g = pto.vmi.vgather %src, %offsets, %mask
+      : !pto.ptr<T, ub>, !pto.vmi.vreg<L×i32>, !pto.vmi.mask<L×b32> -> !pto.vmi.vreg<L×T>   // T in {i32,ui32,f32}
+
+  // B16 path
+  %g = pto.vmi.vgather %src, %offsets, %mask
+      : !pto.ptr<T, ub>, !pto.vmi.vreg<L×ui16>, !pto.vmi.mask<L×b16> -> !pto.vmi.vreg<L×T>   // T in {i16,ui16,f16,bf16}
+  %g = pto.vmi.vgather %src, %offsets, %mask
+      : !pto.ptr<i8, ub>, !pto.vmi.vreg<L×ui16>, !pto.vmi.mask<L×b16> -> !pto.vmi.vreg<L×i16>
+  %g = pto.vmi.vgather %src, %offsets, %mask
+      : !pto.ptr<ui8, ub>, !pto.vmi.vreg<L×ui16>, !pto.vmi.mask<L×b16> -> !pto.vmi.vreg<L×ui16>
   ```
 - **operands:**
 
@@ -435,12 +445,10 @@
 
 - **results:** `!pto.vmi.vreg<L×T>`
 - **attributes:** `pmode`
-- **datatypes:** `i8`–`i32`, `f16`, `bf16`, `f32`
-- **lowering to `pto.mi`:**
-  ```
-  K × pto.vgather2
-  ```
-  `#mi = K`, `dep = 1`, util data-dependent.
+- **datatypes:** B32 -- `i32`/`ui32`/`f32`; B16 -- `i16`/`ui16`/`f16`/`bf16`,
+  plus `i8`/`ui8` -> `i16`/`ui16` zero-extension.
+- **lowering:** B16 -> `K × pto.vgather2`; B32 -> `K × pto.vgather2_bc`.
+  A statically all-active mask omits the trailing `vsel`.
 
 ### `pto.vmi.vgatherb`
 

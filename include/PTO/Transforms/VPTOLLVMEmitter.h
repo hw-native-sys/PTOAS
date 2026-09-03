@@ -18,16 +18,7 @@
 #include "mlir/Support/LLVM.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
-
-namespace mlir {
-class ModuleOp;
-}
-
-namespace llvm {
-class LLVMContext;
-class Module;
-class raw_ostream;
-}
+#include "llvm/Support/raw_ostream.h"
 
 namespace mlir::pto {
 

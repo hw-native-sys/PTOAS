@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=GRAN
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=VPTO
+
+module {
+  func.func @gather_pred_conflict_ui16_i32(
+      %src16: !pto.ptr<ui16, ub>,
+      %idx16: !pto.vmi.vreg<128xui16>,
+      %src32: !pto.ptr<i32, ub>,
+      %idx32: !pto.vmi.vreg<128xi32>,
+      %mask: !pto.vmi.mask<128xpred>)
+      -> (!pto.vmi.vreg<128xui16>, !pto.vmi.vreg<128xi32>) {
+    %g16 = pto.vmi.vgather %src16, %idx16, %mask
+        : !pto.ptr<ui16, ub>, !pto.vmi.vreg<128xui16>, !pto.vmi.mask<128xpred>
+        -> !pto.vmi.vreg<128xui16>
+    %g32 = pto.vmi.vgather %src32, %idx32, %mask
+        : !pto.ptr<i32, ub>, !pto.vmi.vreg<128xi32>, !pto.vmi.mask<128xpred>
+        -> !pto.vmi.vreg<128xi32>
+    return %g16, %g32 : !pto.vmi.vreg<128xui16>, !pto.vmi.vreg<128xi32>
+  }
+}
+
+// GRAN-LABEL: func.func @gather_pred_conflict_ui16_i32(
+// GRAN: pto.vmi.ensure_mask_granularity
+
+// VPTO-LABEL: func.func @gather_pred_conflict_ui16_i32(
+// VPTO: pto.vgather2
+// VPTO: pto.vgather2_bc
+// VPTO-NOT: pto.vmi.
+// VPTO-NOT: !pto.vmi.
+// VPTO-NOT: unrealized_conversion_cast

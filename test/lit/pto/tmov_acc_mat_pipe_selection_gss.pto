@@ -1,8 +1,0 @@
-// RUN: ptoas --pto-arch a5 --enable-graph-sync-solver --graph-sync-solver-event-id-max=64 %S/tmov_acc_mat_pipe_selection.pto | FileCheck %s
-
-// CHECK-LABEL: AICORE void tmov_acc_mat_pipeline(
-// CHECK: set_flag(PIPE_M, PIPE_FIX, EVENT_ID{{[0-9]+}});
-// CHECK: wait_flag(PIPE_M, PIPE_FIX, EVENT_ID{{[0-9]+}});
-// CHECK: TMOV(
-// CHECK: set_flag(PIPE_FIX, PIPE_MTE1, EVENT_ID{{[0-9]+}});
-// CHECK: wait_flag(PIPE_FIX, PIPE_MTE1, EVENT_ID{{[0-9]+}});

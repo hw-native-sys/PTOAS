@@ -604,18 +604,12 @@ class TraceSession:
                 continue
             raise inline_tileop_capture_type_error(position, str(value.type))
 
-    def _outline_inline_subkernel(self, outline_frame: InlineSubkernelOutlineFrame) -> None:
-        role = outline_frame.trace_frame.role
-        section_policy = self._subkernel_section_policy(role)
+    def _inline_outline_roots(self, outline_frame, role, section_policy):
         if role in {"simd", "cube"} and section_policy != "function_kind":
-            root_ops = (outline_frame.wrapper_op,)
-        else:
-            root_ops = tuple(outline_frame.body_block.operations)
+            return (outline_frame.wrapper_op,)
+        return tuple(outline_frame.body_block.operations)
 
-        defined_values = self._collect_defined_values(root_ops)
-        captures = self._collect_capture_values(root_ops)
-        if role == "tileop":
-            self._validate_inline_tileop_captures(captures)
+    def _create_inline_outline_helper(self, outline_frame, captures, role):
         helper_spec = HelperFunctionSpec(
             symbol_name=outline_frame.helper_symbol_name,
             arg_types=tuple(value.type for value in captures),
@@ -629,7 +623,9 @@ class TraceSession:
             raise RuntimeError(
                 f"duplicate inline subkernel helper symbol {helper_fn.name.value!r} in one trace session"
             )
+        return helper_fn
 
+    def _emit_inline_outline_call(self, outline_frame, helper_fn, captures, role):
         with InsertionPoint(outline_frame.wrapper_op.operation):
             if role == "simt" and outline_frame.simt_launch_dims is not None:
                 dim_x, dim_y, dim_z = _coerce_simt_launch_dims(outline_frame.simt_launch_dims)
@@ -638,26 +634,42 @@ class TraceSession:
                     attributes={"callee": FlatSymbolRefAttr.get(_symbol_name(helper_fn))},
                     operands=[dim_x, dim_y, dim_z, *captures],
                 )
-            else:
-                if role == "simt":
-                    self._emit_simt_helper_launch_metadata()
-                func.CallOp(helper_fn, list(captures))
+                return
+            if role == "simt":
+                self._emit_simt_helper_launch_metadata()
+            func.CallOp(helper_fn, list(captures))
 
+    def _move_inline_outline_body(self, outline_frame, helper_fn, role, section_policy):
         entry_block = helper_fn.add_entry_block()
         with InsertionPoint(entry_block):
             terminator = func.ReturnOp([])
         return_anchor = terminator.operation.opview
-
         if role in {"simd", "cube"} and section_policy != "function_kind":
             outline_frame.wrapper_op.move_before(return_anchor)
-            outlined_roots = (outline_frame.wrapper_op,)
-        else:
-            body_ops = tuple(outline_frame.body_block.operations)
-            for op_view in body_ops:
-                op_view.move_before(return_anchor)
-            outline_frame.wrapper_op.operation.erase()
-            outlined_roots = body_ops
+            return (outline_frame.wrapper_op,), entry_block
 
+        body_ops = tuple(outline_frame.body_block.operations)
+        for op_view in body_ops:
+            op_view.move_before(return_anchor)
+        outline_frame.wrapper_op.operation.erase()
+        return body_ops, entry_block
+
+    def _outline_inline_subkernel(self, outline_frame: InlineSubkernelOutlineFrame) -> None:
+        role = outline_frame.trace_frame.role
+        section_policy = self._subkernel_section_policy(role)
+        root_ops = self._inline_outline_roots(outline_frame, role, section_policy)
+        defined_values = self._collect_defined_values(root_ops)
+        captures = self._collect_capture_values(root_ops)
+        if role == "tileop":
+            self._validate_inline_tileop_captures(captures)
+        helper_fn = self._create_inline_outline_helper(outline_frame, captures, role)
+        self._emit_inline_outline_call(outline_frame, helper_fn, captures, role)
+        outlined_roots, entry_block = self._move_inline_outline_body(
+            outline_frame,
+            helper_fn,
+            role,
+            section_policy,
+        )
         capture_mapping = dict(zip(captures, entry_block.arguments))
         self._remap_captured_operands(outlined_roots, capture_mapping)
         self._note_escaped_inline_values(defined_values, role=role)
@@ -700,95 +712,128 @@ class TraceSession:
 
     def lower_ptodsl_func_call(self, func_template, *args, **kwargs):
         """Lower one ``@pto.func`` helper call in the active trace."""
-        bound = func_template.signature.bind(*args, **kwargs)
-        bound.apply_defaults()
-        runtime_arg_values = []
-        runtime_arg_templates = []
-        param_bindings = []
-        constexpr_bindings = []
-        type_hints = getattr(func_template, "type_hints", {})
-        for name, param in func_template.signature.parameters.items():
-            if param.kind not in {
-                inspect.Parameter.POSITIONAL_ONLY,
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                inspect.Parameter.KEYWORD_ONLY,
-            }:
-                raise TypeError("@pto.func helpers do not support var-positional or var-keyword parameters yet")
-            original_value = bound.arguments[name]
-            annotation = type_hints.get(name, param.annotation)
-            if annotation is _const_expr_marker:
-                value = self._normalize_ptodsl_func_constexpr_argument(name, original_value)
-                param_bindings.append(("constexpr", name, param, value))
-                constexpr_bindings.append((name, cache_signature_atom(value)))
-                continue
-            value = self._normalize_ptodsl_func_argument(
-                name,
-                annotation,
-                original_value,
-            )
-            param_bindings.append(("runtime", name, param, original_value))
-            runtime_arg_values.append(value)
-            runtime_arg_templates.append(original_value)
-
+        runtime_arg_values, runtime_arg_templates, param_bindings, constexpr_bindings = (
+            self._bind_ptodsl_func_arguments(func_template, args, kwargs)
+        )
         runtime_arg_values = tuple(runtime_arg_values)
         runtime_arg_templates = tuple(runtime_arg_templates)
-        identity = func_template.__ptodsl_cache_signature__()
-        if constexpr_bindings:
-            identity = (
-                identity,
-                ("constexprs", tuple(constexpr_bindings)),
-            )
-        owner_symbol_name = self.current_function_owner_symbol_name
-        helper_spec = HelperFunctionSpec(
-            symbol_name=func_template.spec.symbol_name,
-            arg_types=tuple(unwrap_surface_value(arg).type for arg in runtime_arg_values),
-            result_types=self._declared_ptodsl_func_result_types(func_template),
-            attributes=(("pto.ptodsl.callable_kind", StringAttr.get("func")),),
-            identity=identity,
+        helper_spec = self._ptodsl_func_helper_spec(
+            func_template,
+            runtime_arg_values,
+            constexpr_bindings,
         )
+        owner_symbol_name = self.current_function_owner_symbol_name
         helper_fn, created = self.get_or_create_helper_function(
             helper_spec,
             owner_symbol_name=owner_symbol_name,
         )
 
         if created:
-            entry_block = helper_fn.add_entry_block()
-            entry_args = tuple(entry_block.arguments)
-            wrapped_args = []
-            wrapped_kwargs = {}
-            entry_arg_index = 0
-            for binding_kind, name, param, value in param_bindings:
-                if binding_kind == "constexpr":
-                    wrapped_value = value
-                else:
-                    entry_arg = entry_args[entry_arg_index]
-                    arg_template = runtime_arg_templates[entry_arg_index]
-                    entry_arg_index += 1
-                    wrapped_value = wrap_like_surface_value(arg_template, entry_arg)
-                if param.kind in {inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD}:
-                    wrapped_args.append(wrapped_value)
-                elif param.kind == inspect.Parameter.KEYWORD_ONLY:
-                    wrapped_kwargs[name] = wrapped_value
-                else:
-                    raise TypeError("@pto.func helpers do not support var-positional or var-keyword parameters yet")
-            with (
-                self.enter_function(helper_fn, owner_symbol_name=owner_symbol_name),
-                self.suspend_subkernel_scope(),
-                InsertionPoint(entry_block),
-            ):
-                result = func_template.emit_body(*wrapped_args, **wrapped_kwargs)
-                return_values = self._normalize_ptodsl_func_return_values(
-                    result,
-                    func_template=func_template,
-                    result_types=helper_spec.result_types,
-                )
-                if return_values:
-                    func.ReturnOp([unwrap_surface_value(value) for value in return_values])
-                else:
-                    func.ReturnOp([])
+            self._emit_ptodsl_func_helper_body(
+                helper_fn,
+                func_template,
+                param_bindings,
+                runtime_arg_templates,
+                helper_spec,
+                owner_symbol_name,
+            )
 
         call_op = func.CallOp(helper_fn, [unwrap_surface_value(arg) for arg in runtime_arg_values])
         return self._wrap_ptodsl_func_call_results(call_op.results)
+
+    def _bind_ptodsl_func_arguments(self, func_template, args, kwargs):
+        bound = func_template.signature.bind(*args, **kwargs)
+        bound.apply_defaults()
+        runtime_values = []
+        runtime_templates = []
+        bindings = []
+        constexpr_values = []
+        type_hints = getattr(func_template, "type_hints", {})
+        supported_kinds = {
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        }
+        for name, param in func_template.signature.parameters.items():
+            if param.kind not in supported_kinds:
+                raise TypeError("@pto.func helpers do not support var-positional or var-keyword parameters yet")
+            original_value = bound.arguments[name]
+            annotation = type_hints.get(name, param.annotation)
+            if annotation is _const_expr_marker:
+                value = self._normalize_ptodsl_func_constexpr_argument(name, original_value)
+                bindings.append(("constexpr", name, param, value))
+                constexpr_values.append((name, cache_signature_atom(value)))
+                continue
+            value = self._normalize_ptodsl_func_argument(name, annotation, original_value)
+            bindings.append(("runtime", name, param, original_value))
+            runtime_values.append(value)
+            runtime_templates.append(original_value)
+        return runtime_values, runtime_templates, bindings, constexpr_values
+
+    def _ptodsl_func_helper_spec(self, func_template, runtime_values, constexpr_bindings):
+        identity = func_template.__ptodsl_cache_signature__()
+        if constexpr_bindings:
+            identity = (identity, ("constexprs", tuple(constexpr_bindings)))
+        return HelperFunctionSpec(
+            symbol_name=func_template.spec.symbol_name,
+            arg_types=tuple(unwrap_surface_value(arg).type for arg in runtime_values),
+            result_types=self._declared_ptodsl_func_result_types(func_template),
+            attributes=(("pto.ptodsl.callable_kind", StringAttr.get("func")),),
+            identity=identity,
+        )
+
+    def _emit_ptodsl_func_helper_body(
+        self,
+        helper_fn,
+        func_template,
+        param_bindings,
+        runtime_arg_templates,
+        helper_spec,
+        owner_symbol_name,
+    ):
+        entry_block = helper_fn.add_entry_block()
+        wrapped_args, wrapped_kwargs = self._wrap_ptodsl_func_bindings(
+            param_bindings,
+            runtime_arg_templates,
+            entry_block.arguments,
+        )
+        with (
+            self.enter_function(helper_fn, owner_symbol_name=owner_symbol_name),
+            self.suspend_subkernel_scope(),
+            InsertionPoint(entry_block),
+        ):
+            result = func_template.emit_body(*wrapped_args, **wrapped_kwargs)
+            return_values = self._normalize_ptodsl_func_return_values(
+                result,
+                func_template=func_template,
+                result_types=helper_spec.result_types,
+            )
+            func.ReturnOp([unwrap_surface_value(value) for value in return_values] if return_values else [])
+
+    def _wrap_ptodsl_func_bindings(self, param_bindings, runtime_templates, entry_args):
+        wrapped_args = []
+        wrapped_kwargs = {}
+        entry_arg_index = 0
+        positional_kinds = {
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        }
+        for binding_kind, name, param, value in param_bindings:
+            if binding_kind == "constexpr":
+                wrapped_value = value
+            else:
+                wrapped_value = wrap_like_surface_value(
+                    runtime_templates[entry_arg_index],
+                    entry_args[entry_arg_index],
+                )
+                entry_arg_index += 1
+            if param.kind in positional_kinds:
+                wrapped_args.append(wrapped_value)
+            elif param.kind == inspect.Parameter.KEYWORD_ONLY:
+                wrapped_kwargs[name] = wrapped_value
+            else:
+                raise TypeError("@pto.func helpers do not support var-positional or var-keyword parameters yet")
+        return wrapped_args, wrapped_kwargs
 
     def begin_carry_loop(self, start, stop, step, state_items, *, unroll=None, unroll_factor=None):
         """Materialize one authored ``pto.for_(...).carry(...)`` loop body."""
@@ -941,6 +986,28 @@ class TraceSession:
 
     def lower_kernel_module_call(self, kernel_handle, *args, **kwargs):
         """Lower one ``@pto.jit(entry=False)`` kernel-module call in the active trace."""
+        compiler, arg_templates = self._prepare_kernel_module_call(kernel_handle, args, kwargs)
+        helper_spec = HelperFunctionSpec(
+            symbol_name=compiler._module_spec.function_name,
+            arg_types=tuple(unwrap_surface_value(arg).type for arg in arg_templates),
+        )
+        helper_fn, created = self.get_or_create_kernel_module_primary_function(
+            helper_spec,
+            compiler._module_spec,
+        )
+        if created:
+            self._emit_kernel_module_body(helper_fn, compiler, arg_templates)
+
+        caller_symbol_name = self.current_function_owner_symbol_name
+        import_fn, _ = self.get_or_create_kernel_module_import_declaration(
+            caller_symbol_name,
+            helper_spec,
+        )
+        self.record_kernel_module_dependency(caller_symbol_name, helper_spec.symbol_name)
+        call_args = [unwrap_surface_value(arg) for arg in arg_templates]
+        func.CallOp(import_fn, call_args)
+
+    def _prepare_kernel_module_call(self, kernel_handle, args, kwargs):
         outer_frame = self.current_subkernel
         if outer_frame is not None and outer_frame.role == "tileop":
             raise RuntimeError(
@@ -950,7 +1017,6 @@ class TraceSession:
             )
         if kwargs:
             raise TypeError("@pto.jit(entry=False) kernel module calls do not support keyword arguments yet")
-
         compiler = kernel_handle._compiler
         kernel_signature = compiler._kernel_signature
         if kernel_signature.constexpr_parameters:
@@ -965,43 +1031,26 @@ class TraceSession:
             )
         arg_templates = tuple(
             const(arg, dtype=param.annotation)
-            if isinstance(param, RuntimeScalarParameterSpec) and not hasattr(unwrap_surface_value(arg), "type")
+            if isinstance(param, RuntimeScalarParameterSpec)
+            and not hasattr(unwrap_surface_value(arg), "type")
             else arg
             for param, arg in zip(positional_params, args)
         )
+        return compiler, arg_templates
 
-        arg_types = tuple(unwrap_surface_value(arg).type for arg in arg_templates)
-        helper_spec = HelperFunctionSpec(
-            symbol_name=compiler._module_spec.function_name,
-            arg_types=arg_types,
+    def _emit_kernel_module_body(self, helper_fn, compiler, arg_templates):
+        entry_block = helper_fn.add_entry_block()
+        wrapped_args = tuple(
+            wrap_like_surface_value(template, value)
+            for template, value in zip(arg_templates, entry_block.arguments)
         )
-        helper_fn, created = self.get_or_create_kernel_module_primary_function(
-            helper_spec,
-            compiler._module_spec,
-        )
-
-        if created:
-            entry_block = helper_fn.add_entry_block()
-            wrapped_args = tuple(
-                wrap_like_surface_value(template, value)
-                for template, value in zip(arg_templates, entry_block.arguments)
-            )
-            with (
-                self.enter_function(helper_fn, owner_symbol_name=helper_fn.name.value),
-                self.suspend_subkernel_scope(),
-                InsertionPoint(entry_block),
-            ):
-                compiler.tracing_callback()(*wrapped_args)
-                func.ReturnOp([])
-
-        caller_symbol_name = self.current_function_owner_symbol_name
-        import_fn, _ = self.get_or_create_kernel_module_import_declaration(
-            caller_symbol_name,
-            helper_spec,
-        )
-        self.record_kernel_module_dependency(caller_symbol_name, helper_spec.symbol_name)
-        call_args = [unwrap_surface_value(arg) for arg in arg_templates]
-        func.CallOp(import_fn, call_args)
+        with (
+            self.enter_function(helper_fn, owner_symbol_name=helper_fn.name.value),
+            self.suspend_subkernel_scope(),
+            InsertionPoint(entry_block),
+        ):
+            compiler.tracing_callback()(*wrapped_args)
+            func.ReturnOp([])
 
     def lookup_helper(self, symbol_name: str):
         """Return a previously declared helper function, or ``None``."""
