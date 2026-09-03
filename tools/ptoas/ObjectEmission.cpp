@@ -711,12 +711,19 @@ static bool compileDeviceLLVMToObjectWithBridgeLink(
   if (!bridgeBitcodePath.empty()) {
     std::string linkedPath = (outObjPath + ".linked.bc").str();
     if (!linkDeviceLLVMBitcode(llPath, bridgeBitcodePath, linkedPath,
-                               toolchain, stderrPath, diagOS))
+                               toolchain, stderrPath, diagOS)) {
+      llvm::sys::fs::remove(linkedPath);
       return false;
+    }
     compileInput = linkedPath;
   }
-  return compileDeviceLLVMToObject(compileInput, outObjPath, targetCPU,
-                                   toolchain.bishengPath, stderrPath, diagOS);
+  bool result = compileDeviceLLVMToObject(compileInput, outObjPath, targetCPU,
+                                          toolchain.bishengPath, stderrPath,
+                                          diagOS);
+  if (!bridgeBitcodePath.empty()) {
+    llvm::sys::fs::remove(compileInput);
+  }
+  return result;
 }
 
 static bool compileCppDeviceSourceToObject(
@@ -1069,6 +1076,11 @@ mlir::pto::CANNToolchain::validate(llvm::raw_ostream &diagOS) const {
   }
   if (ldLldPath.empty() || !llvm::sys::fs::exists(ldLldPath)) {
     diagOS << "Error: unable to locate ld.lld.\n";
+    return failure();
+  }
+  std::string llvmLinkPath = joinPath(bishengCompilerBinDirPath, "llvm-link");
+  if (!llvm::sys::fs::exists(llvmLinkPath)) {
+    diagOS << "Error: unable to locate llvm-link: " << llvmLinkPath << "\n";
     return failure();
   }
   return success();
