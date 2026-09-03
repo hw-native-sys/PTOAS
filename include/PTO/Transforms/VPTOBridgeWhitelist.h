@@ -28,6 +28,36 @@
 namespace mlir {
 namespace pto {
 
+/// Route selection for one compiler-owned bridge family. `enabled` selects
+/// the complete family; `enabledOps` selects individual registered ops.
+struct BridgeFamilyPolicy {
+  bool enabled = false;
+  std::vector<std::string> enabledOps;
+};
+
+struct BridgePolicyFamilies {
+  BridgeFamilyPolicy pipe;
+  BridgeFamilyPolicy cube;
+};
+
+/// Versioned external bridge policy. It intentionally contains no ABI,
+/// symbol, operand mapping, include, or C++ template information.
+struct BridgeRoutePolicy {
+  uint32_t version = 1;
+  BridgePolicyFamilies families;
+
+  bool routesFamily(llvm::StringRef family) const;
+  bool routesOp(llvm::StringRef family, llvm::StringRef opName) const;
+};
+
+FailureOr<BridgeRoutePolicy>
+parseBridgeRoutePolicyFromBuffer(llvm::StringRef content,
+                                 llvm::StringRef sourceName,
+                                 llvm::raw_ostream &diagOS);
+FailureOr<BridgeRoutePolicy> loadBridgeRoutePolicy(
+    llvm::StringRef optionValue, llvm::raw_ostream &diagOS,
+    std::string *sourceName = nullptr);
+
 /// ABI argument of a wrapper entry. `type` is one of the supported carrier
 /// tokens: "ptr", "i64", or "i32" (declarative entries may omit it, the
 /// parser fills in the "i64" tile-address default). Declarative entries

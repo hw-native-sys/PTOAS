@@ -181,15 +181,18 @@ public:
       return failure();
     }
 
+    // A stateful bridge call has a pseudo result used only to carry the
+    // synthesized storage SSA value. The wrapper init entry itself is void.
     SmallVector<Type> resultTypes;
-    for (Type resultType : op.getResultTypes()) {
-      Type converted = getTypeConverter()->convertType(resultType);
-      if (!converted) {
-        return op.emitError()
-               << "VPTO bridge call result type " << resultType
-               << " has no bridge conversion";
+    if (!hasStorage) {
+      for (Type resultType : op.getResultTypes()) {
+        Type converted = getTypeConverter()->convertType(resultType);
+        if (!converted) {
+          return op.emitError() << "VPTO bridge call result type " << resultType
+                                << " has no bridge conversion";
+        }
+        resultTypes.push_back(converted);
       }
-      resultTypes.push_back(converted);
     }
 
     func::CallOp call = rewriter.create<func::CallOp>(

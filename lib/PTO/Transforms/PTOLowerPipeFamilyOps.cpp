@@ -36,6 +36,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
 
 namespace mlir {
@@ -112,6 +113,17 @@ struct PTOLowerPipeFamilyOpsPass final
         decls.push_back(decl);
       }
     });
+
+    // Only tile handles participating in the pipe protocol belong to this
+    // family lowering. Unrelated tiles in a mixed kernel continue through
+    // the regular VPTO lowering path.
+    llvm::DenseSet<Value> bridgedTiles;
+    for (TPushOp push : pushes) {
+      bridgedTiles.insert(push.getTile());
+    }
+    for (TPopOp pop : pops) {
+      bridgedTiles.insert(pop.getTile());
+    }
 
     // Whitelist-driven routing: the pass only acts on functions that carry
     // pipe family ops. Tile handles of pipe-less functions keep flowing
@@ -271,6 +283,9 @@ struct PTOLowerPipeFamilyOpsPass final
 
     // Phase 3: tile_buf_addr -> bridge_inttoptr on the resolved address.
     for (TileBufAddrOp addr : addrs) {
+      if (!bridgedTiles.contains(addr.getSrc())) {
+        continue;
+      }
       Value address = resolveTileAddress(addr.getSrc(), builder, popAddresses);
       if (!address) {
         addr.emitError(
@@ -347,6 +362,9 @@ struct PTOLowerPipeFamilyOpsPass final
 
     // Phase 6: erase tile handles whose consumers are all bridged now.
     for (AllocTileOp alloc : allocs) {
+      if (!bridgedTiles.contains(alloc.getResult())) {
+        continue;
+      }
       if (!alloc.use_empty()) {
         alloc.emitError("VPTO pipe bridge: alloc_tile still has users after "
                         "pipe family lowering");
@@ -356,6 +374,9 @@ struct PTOLowerPipeFamilyOpsPass final
       alloc.erase();
     }
     for (DeclareTileOp decl : decls) {
+      if (!bridgedTiles.contains(decl.getResult())) {
+        continue;
+      }
       if (!decl.use_empty()) {
         decl.emitError("VPTO pipe bridge: declare_tile still has users after "
                        "pipe family lowering");
