@@ -13,18 +13,18 @@
 // RUN: pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist.yaml" "-vpto-resolve-bridge-instances" "-vpto-bridge-lowering=whitelist-path=%S/Inputs/vpto-bridge-whitelist.yaml" | FileCheck %s --check-prefix=LOWER
 
 // FAMILY-LABEL: func.func private @bridge_cube
-// FAMILY: pto.bridge_object_create "pipe.init"
+// FAMILY: pto.bridge_object_create <pipe_init>
 // FAMILY-SAME: -> !pto.pipe
-// FAMILY: pto.bridge_call "pipe.push"
+// FAMILY: pto.bridge_call <pipe_push>
 // FAMILY-NOT: pto.alloc_tile
 // FAMILY-NOT: pto.tpush
 
 // FAMILY-LABEL: func.func private @bridge_vector
-// FAMILY: pto.bridge_object_create "pipe.init"
-// FAMILY: pto.bridge_call "pipe.pop"
+// FAMILY: pto.bridge_object_create <pipe_init>
+// FAMILY: pto.bridge_call <pipe_pop>
 // FAMILY-SAME: -> i64
 // FAMILY: pto.bridge_inttoptr
-// FAMILY: pto.bridge_call "pipe.free"
+// FAMILY: pto.bridge_call <pipe_free>
 // FAMILY-NOT: pto.declare_tile
 // FAMILY-NOT: pto.tpop
 // FAMILY-NOT: pto.tile_buf_addr

@@ -1239,6 +1239,20 @@ def TileBufConfigAttr : AttrDef<PTO_Dialect, "TileBufConfig"> {
   }];
 }
 
+def PTO_BridgeEntryEnum : PTO_I32Enum<
+  "BridgeEntry", "VPTO bridge logical entry", [
+    I32EnumAttrCase<"PipeInit", 0, "pipe_init">,
+    I32EnumAttrCase<"PipeSize", 1, "pipe_size">,
+    I32EnumAttrCase<"PipePush", 2, "pipe_push">,
+    I32EnumAttrCase<"PipePop", 3, "pipe_pop">,
+    I32EnumAttrCase<"PipeFree", 4, "pipe_free">,
+    I32EnumAttrCase<"CubeTMatmul", 5, "cube_tmatmul">,
+    I32EnumAttrCase<"CubeTgemv", 6, "cube_tgemv">
+  ]>;
+def PTO_BridgeEntryAttr : EnumAttr<PTO_Dialect, PTO_BridgeEntryEnum, "bridge_entry"> {
+  let assemblyFormat = "`<` params `>`";
+}
+
 // Structured specialization carried by a Cube bridge call. The payload is
 // compiler-produced and remains typed at the IR boundary; conversion to C++
 // template spelling is deferred to the bridge renderer.

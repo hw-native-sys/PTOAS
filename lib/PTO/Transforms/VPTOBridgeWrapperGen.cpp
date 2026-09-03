@@ -154,10 +154,10 @@ static FailureOr<std::string> renderPipeSplit(IntegerAttr split) {
 static FailureOr<std::string> renderCubeInstance(BridgeCallOp call,
                                                  llvm::StringRef symbol,
                                                  unsigned instanceId) {
-  StringAttr entryId = call.getEntryAttr();
+  BridgeEntryId entryId = call.getEntry();
   auto specAttr = dyn_cast_or_null<BridgeCubeSpecAttr>(call.getSpecAttr());
   DictionaryAttr spec = specAttr ? specAttr.getValue() : DictionaryAttr();
-  if (!entryId || !spec) {
+  if (!spec) {
     return failure();
   }
   auto result = renderStructuredTile(spec.getAs<DictionaryAttr>("result_tile"));
@@ -166,7 +166,7 @@ static FailureOr<std::string> renderCubeInstance(BridgeCallOp call,
   if (failed(result) || failed(left) || failed(right)) {
     return failure();
   }
-  const BridgeFunctionDesc *desc = findBridgeFunctionById(entryId.getValue());
+  const BridgeFunctionDesc *desc = findBridgeFunction(entryId);
   if (!desc || desc->core != BridgeCoreKind::Cube ||
       desc->renderer != BridgeRendererKind::CubeDirect ||
       desc->callSpelling.empty()) {
@@ -231,13 +231,10 @@ renderPipeInstance(BridgeObjectCreateOp create,
   bool needsPop = false;
   bool needsFree = false;
   for (BridgeCallOp call : calls) {
-    StringAttr entryId = call.getEntryAttr();
-    if (!entryId) {
-      return call.emitError("Pipe bridge call is missing its logical entry ID");
-    }
-    needsPush |= entryId.getValue() == "pipe.push";
-    needsPop |= entryId.getValue() == "pipe.pop";
-    needsFree |= entryId.getValue() == "pipe.free";
+    BridgeEntryId entryId = call.getEntry();
+    needsPush |= entryId == BridgeEntryId::PipePush;
+    needsPop |= entryId == BridgeEntryId::PipePop;
+    needsFree |= entryId == BridgeEntryId::PipeFree;
   }
   bool needsSplit = needsPush || needsPop || needsFree;
   if (needsSplit && failed(split)) {
@@ -326,7 +323,7 @@ static FailureOr<std::string> renderPipeInstances(ModuleOp module) {
   unsigned nextId = 0;
   bool failedRender = false;
   module.walk([&](BridgeObjectCreateOp create) {
-    bool isPipeInit = create.getEntry() == "pipe.init";
+    bool isPipeInit = create.getEntry() == BridgeEntryId::PipeInit;
     if (!isPipeInit) {
       return;
     }
@@ -353,12 +350,12 @@ static FailureOr<std::string> renderPipeInstances(ModuleOp module) {
         return;
       }
       calls.push_back(call);
-      bool isPush = call.getEntry() == "pipe.push";
+      bool isPush = call.getEntry() == BridgeEntryId::PipePush;
       if (isPush) {
         symbols.push = call.getCalleeAttr().getValue().str();
-      } else if (call.getEntry() == "pipe.pop") {
+      } else if (call.getEntry() == BridgeEntryId::PipePop) {
         symbols.pop = call.getCalleeAttr().getValue().str();
-      } else if (call.getEntry() == "pipe.free") {
+      } else if (call.getEntry() == BridgeEntryId::PipeFree) {
         symbols.free = call.getCalleeAttr().getValue().str();
       }
     }
@@ -394,7 +391,7 @@ static FailureOr<std::string> renderCubeInstances(ModuleOp module) {
   unsigned nextId = 0;
   bool failedRender = false;
   module.walk([&](BridgeCallOp call) {
-    const BridgeFunctionDesc *desc = findBridgeFunctionById(call.getEntry());
+    const BridgeFunctionDesc *desc = findBridgeFunction(call.getEntry());
     if (!desc || desc->family != BridgeFamily::Cube) {
       return;
     }

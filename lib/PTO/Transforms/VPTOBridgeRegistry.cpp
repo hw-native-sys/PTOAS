@@ -128,13 +128,6 @@ const BridgeFunctionDesc *pto::findBridgeFunction(BridgeEntryId id) {
   return it == std::end(kRegistry) ? nullptr : &*it;
 }
 
-const BridgeFunctionDesc *pto::findBridgeFunctionById(llvm::StringRef id) {
-  auto it = llvm::find_if(kRegistry, [id](const BridgeFunctionDesc &desc) {
-    return stringifyBridgeEntryId(desc.id) == id;
-  });
-  return it == std::end(kRegistry) ? nullptr : &*it;
-}
-
 const BridgeFunctionDesc *pto::findBridgeFunctionByOp(llvm::StringRef opName) {
   auto it = llvm::find_if(kRegistry, [opName](const BridgeFunctionDesc &desc) {
     return desc.opName == opName;

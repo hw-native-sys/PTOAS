@@ -192,26 +192,27 @@ public:
   LogicalResult
   matchAndRewrite(BridgeObjectCreateOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    StringRef entryId = op.getEntryAttr().getValue();
-    const BridgeFunctionDesc *desc = findBridgeFunctionById(entryId);
+    BridgeEntryId entryId = op.getEntry();
+    StringRef entryName = stringifyBridgeEntryId(entryId);
+    const BridgeFunctionDesc *desc = findBridgeFunction(entryId);
     StringRef symbol =
         op.getCalleeAttr() ? op.getCalleeAttr().getValue() : StringRef();
     if (!desc || !desc->createsObject || symbol.empty()) {
       return op.emitError() << "bridge object requires a resolved registered "
                                "entry and callee: "
-                            << entryId;
+                            << entryName;
     }
     if (!isResolvedSymbolForEntry(symbol, *desc)) {
       return op.emitError()
              << "resolved callee '" << symbol
-             << "' does not belong to bridge entry '" << entryId << "'";
+             << "' does not belong to bridge entry '" << entryName << "'";
     }
     if (desc->arguments.size() != adaptor.getArgs().size() ||
         desc->results.size() != 1 ||
         desc->results.front() != BridgeValueKind::PipeObject) {
       return op.emitError()
              << "bridge object operands/results do not match registry entry "
-             << entryId;
+             << entryName;
     }
     if (failed(validateRegistryAbi(op, *desc, adaptor.getArgs()))) {
       return failure();
@@ -270,22 +271,23 @@ public:
   matchAndRewrite(BridgeCallOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
-    StringRef entryId = op.getEntryAttr().getValue();
+    BridgeEntryId entryId = op.getEntry();
+    StringRef entryName = stringifyBridgeEntryId(entryId);
     auto calleeAttr = op.getCalleeAttr();
     if (!calleeAttr) {
-      return op.emitError() << "bridge call '" << entryId
+      return op.emitError() << "bridge call '" << entryName
                             << "' has no resolved concrete callee";
     }
     StringRef callee = calleeAttr.getValue();
-    const BridgeFunctionDesc *registryDesc = findBridgeFunctionById(entryId);
+    const BridgeFunctionDesc *registryDesc = findBridgeFunction(entryId);
     if (!registryDesc) {
-      return op.emitError() << "VPTO bridge entry '" << entryId
+      return op.emitError() << "VPTO bridge entry '" << entryName
                             << "' has no registered ABI entry";
     }
     if (!isResolvedSymbolForEntry(callee, *registryDesc)) {
       return op.emitError()
              << "resolved callee '" << callee
-             << "' does not belong to bridge entry '" << entryId << "'";
+             << "' does not belong to bridge entry '" << entryName << "'";
     }
     ModuleOp module = op->getParentOfType<ModuleOp>();
     ValueRange callArgs = adaptor.getArgs();

@@ -20,6 +20,7 @@
 #ifndef MLIR_DIALECT_PTO_TRANSFORMS_VPTOBRIDGEREGISTRY_H
 #define MLIR_DIALECT_PTO_TRANSFORMS_VPTOBRIDGEREGISTRY_H
 
+#include "PTO/IR/PTO.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
 #include <cstdint>
@@ -43,15 +44,7 @@ enum class BridgeRendererKind : uint8_t {
   CubeDirect,
 };
 
-enum class BridgeEntryId : uint8_t {
-  PipeInit,
-  PipeSize,
-  PipePush,
-  PipePop,
-  PipeFree,
-  CubeTMatmul,
-  CubeTgemv,
-};
+using BridgeEntryId = BridgeEntry;
 
 struct BridgeAbiBinding {
   BridgeValueKind kind;
@@ -78,7 +71,6 @@ struct BridgeFunctionDesc {
 llvm::ArrayRef<BridgeFunctionDesc> getBridgeFunctionRegistry();
 
 const BridgeFunctionDesc *findBridgeFunction(BridgeEntryId id);
-const BridgeFunctionDesc *findBridgeFunctionById(llvm::StringRef id);
 const BridgeFunctionDesc *findBridgeFunctionByOp(llvm::StringRef opName);
 const BridgeFunctionDesc *findBridgeFunctionBySymbol(llvm::StringRef symbol);
 

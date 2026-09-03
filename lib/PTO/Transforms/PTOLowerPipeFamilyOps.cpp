@@ -55,7 +55,7 @@ namespace {
 static BridgeCallOp emitVoidBridgeCall(OpBuilder &builder, Location loc,
                                        BridgeEntryId entry, ValueRange args) {
   return builder.create<BridgeCallOp>(
-      loc, /*results=*/TypeRange{}, stringifyBridgeEntryId(entry),
+      loc, /*results=*/TypeRange{}, entry,
       /*callee=*/nullptr, /*spec=*/nullptr, /*instanceKey=*/nullptr, args);
 }
 
@@ -218,7 +218,7 @@ struct PTOLowerPipeFamilyOpsPass final
       builder.setInsertionPoint(init);
       BridgeObjectCreateOp call = builder.create<BridgeObjectCreateOp>(
           init.getLoc(), init.getPipe().getType(),
-          stringifyBridgeEntryId(entry->id), /*callee=*/nullptr,
+          entry->id, /*callee=*/nullptr,
           /*sizeCallee=*/nullptr, /*spec=*/nullptr, /*instanceKey=*/nullptr,
           ValueRange{init.getLocalAddr()});
       call->setAttr("pipe_config", buildPipeConfigSpec(builder, init));
@@ -277,7 +277,7 @@ struct PTOLowerPipeFamilyOpsPass final
       builder.setInsertionPoint(pop);
       BridgeCallOp call = builder.create<BridgeCallOp>(
           pop.getLoc(), /*results=*/TypeRange{builder.getI64Type()},
-          stringifyBridgeEntryId(entry->id), /*callee=*/nullptr,
+          entry->id, /*callee=*/nullptr,
           /*spec=*/nullptr, /*instanceKey=*/nullptr,
           ValueRange{pop.getPipeHandle()});
       call->setAttr("split", builder.getI32IntegerAttr(pop.getSplit()));

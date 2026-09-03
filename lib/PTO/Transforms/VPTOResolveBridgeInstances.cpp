@@ -81,7 +81,7 @@ static LogicalResult resolvePipeInstances(ModuleOp module) {
   llvm::StringMap<PipeSymbols> instances;
   unsigned nextId = 0;
   WalkResult result = module.walk([&](BridgeObjectCreateOp create) {
-    bool isPipeInit = create.getEntry() == "pipe.init";
+    bool isPipeInit = create.getEntry() == BridgeEntryId::PipeInit;
     if (!isPipeInit) {
       return WalkResult::advance();
     }
@@ -102,16 +102,17 @@ static LogicalResult resolvePipeInstances(ModuleOp module) {
         create.emitError("Pipe bridge object has a non-bridge lifecycle user");
         return WalkResult::interrupt();
       }
-      if (!call.getEntry().starts_with("pipe.")) {
+      const BridgeFunctionDesc *callDesc = findBridgeFunction(call.getEntry());
+      if (!callDesc || callDesc->family != BridgeFamily::Pipe) {
         call.emitError("Pipe bridge object is used by another bridge family");
         return WalkResult::interrupt();
       }
       calls.push_back(call);
-      lifecycle.push_back(call.getEntry());
+      lifecycle.push_back(stringifyBridgeEntryId(call.getEntry()));
     }
     llvm::sort(lifecycle);
-    std::string key =
-        buildInstanceKey(create.getEntry(), spec, *core, lifecycle);
+    std::string key = buildInstanceKey(
+        stringifyBridgeEntryId(create.getEntry()), spec, *core, lifecycle);
     auto found = instances.find(key);
     if (found == instances.end()) {
       unsigned id = nextId++;
@@ -134,12 +135,12 @@ static LogicalResult resolvePipeInstances(ModuleOp module) {
         StringAttr::get(module.getContext(), symbols.size));
     for (BridgeCallOp call : calls) {
       StringRef symbol;
-      bool isPush = call.getEntry() == "pipe.push";
+      bool isPush = call.getEntry() == BridgeEntryId::PipePush;
       if (isPush) {
         symbol = symbols.push;
-      } else if (call.getEntry() == "pipe.pop") {
+      } else if (call.getEntry() == BridgeEntryId::PipePop) {
         symbol = symbols.pop;
-      } else if (call.getEntry() == "pipe.free") {
+      } else if (call.getEntry() == BridgeEntryId::PipeFree) {
         symbol = symbols.free;
       } else {
         call.emitError("unsupported Pipe bridge lifecycle entry");
@@ -158,7 +159,7 @@ static LogicalResult resolveCubeInstances(ModuleOp module) {
   llvm::StringMap<std::string> instances;
   unsigned nextId = 0;
   WalkResult result = module.walk([&](BridgeCallOp call) {
-    const BridgeFunctionDesc *desc = findBridgeFunctionById(call.getEntry());
+    const BridgeFunctionDesc *desc = findBridgeFunction(call.getEntry());
     if (!desc || desc->family != BridgeFamily::Cube) {
       return WalkResult::advance();
     }
@@ -172,7 +173,8 @@ static LogicalResult resolveCubeInstances(ModuleOp module) {
           "Cube bridge call requires its registered core and structured spec");
       return WalkResult::interrupt();
     }
-    std::string key = buildInstanceKey(call.getEntry(), spec, *core);
+    std::string key =
+        buildInstanceKey(stringifyBridgeEntryId(call.getEntry()), spec, *core);
     auto found = instances.find(key);
     if (found == instances.end()) {
       found = instances.try_emplace(key, instanceSymbol(*desc, nextId++)).first;

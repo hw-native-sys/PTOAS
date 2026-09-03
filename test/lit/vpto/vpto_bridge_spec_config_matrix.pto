@@ -21,20 +21,20 @@
 // RUN: pto-test-opt %s "-pto-lower-pipe-family-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-variant.yaml" -vpto-resolve-bridge-instances -pto-emit-vpto-bridge-wrapper | FileCheck %s --check-prefix=WRAP
 
 // SPEC-LABEL: func.func private @variant_bridge_cube
-// SPEC: pto.bridge_object_create "pipe.init"
+// SPEC: pto.bridge_object_create <pipe_init>
 // SPEC-SAME: spec = #pto.bridge_pipe_spec<{{.*}}pipe = {dir_mask = 1 : i32, flag_base = 8 : i32{{.*}}slot_size = 2048 : i32}{{.*}}producer_tile = {b_layout = 1 : i32, element_type = f16{{.*}}shape = array<i64: 32, 16>
-// SPEC: pto.bridge_call "pipe.push"
+// SPEC: pto.bridge_call <pipe_push>
 // SPEC-SAME: : !pto.pipe, i64
 // SPEC-NOT: pto.alloc_tile
 // SPEC-NOT: pto.tpush
 
 // SPEC-LABEL: func.func private @variant_bridge_vector
-// SPEC: pto.bridge_object_create "pipe.init"
+// SPEC: pto.bridge_object_create <pipe_init>
 // SPEC-SAME: spec = #pto.bridge_pipe_spec<{{.*}}consumer_tile = {b_layout = 0 : i32, element_type = f16{{.*}}shape = array<i64: 4, 16>{{.*}}pipe = {dir_mask = 1 : i32, flag_base = 8 : i32{{.*}}slot_size = 2048 : i32}
-// SPEC: pto.bridge_call "pipe.pop"
+// SPEC: pto.bridge_call <pipe_pop>
 // SPEC-SAME: -> i64
 // SPEC: pto.bridge_inttoptr
-// SPEC: pto.bridge_call "pipe.free"
+// SPEC: pto.bridge_call <pipe_free>
 // SPEC-NOT: pto.declare_tile
 // SPEC-NOT: pto.tpop
 // SPEC-NOT: pto.tfree

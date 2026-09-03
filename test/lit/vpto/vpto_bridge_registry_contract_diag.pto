@@ -13,7 +13,7 @@
 module {
   func.func private @pto_vpto_pipe_push(i32)
   func.func private @signature_conflict(%storage: !pto.pipe, %addr: i64) {
-    pto.bridge_call "pipe.push" (%storage, %addr : !pto.pipe, i64) {callee = "pto_vpto_pipe_push"}
+    pto.bridge_call <pipe_push> (%storage, %addr : !pto.pipe, i64) {callee = "pto_vpto_pipe_push"}
     return
   }
 }
@@ -25,7 +25,7 @@ module {
 
 module {
   func.func private @bad_object_create(%addr: i64) {
-    %pipe = pto.bridge_object_create "pipe.init"(%addr : i64) {callee = "pto_vpto_pipe_init", size_callee = "pto_vpto_pipe_size"} -> !pto.pipe
+    %pipe = pto.bridge_object_create <pipe_init>(%addr : i64) {callee = "pto_vpto_pipe_init"} -> !pto.pipe
     return
   }
 }
@@ -37,7 +37,7 @@ module {
 
 module {
   func.func private @bad_result_abi(%storage: !pto.pipe) {
-    %bad = pto.bridge_call "pipe.pop" (%storage : !pto.pipe) {callee = "pto_vpto_pipe_pop"} -> i32
+    %bad = pto.bridge_call <pipe_pop> (%storage : !pto.pipe) {callee = "pto_vpto_pipe_pop"} -> i32
     return
   }
 }
@@ -49,7 +49,7 @@ module {
 
 module {
   func.func private @wrong_entry_symbol(%storage: !pto.pipe) {
-    pto.bridge_call "pipe.free" (%storage : !pto.pipe) {callee = "pto_vpto_pipe_push__0"}
+    pto.bridge_call <pipe_free> (%storage : !pto.pipe) {callee = "pto_vpto_pipe_push__0"}
     return
   }
 }

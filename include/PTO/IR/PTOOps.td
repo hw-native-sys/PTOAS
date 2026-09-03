@@ -2695,7 +2695,7 @@ def BridgeCallOp : PTO_Op<"bridge_call", [
   let summary = "Generic call into an externally linked C++ wrapper entry";
 
   let arguments = (ins
-      StrAttr:$entry,
+      PTO_BridgeEntryAttr:$entry,
       OptionalAttr<StrAttr>:$callee,
       OptionalAttr<AnyAttr>:$spec,
       OptionalAttr<StrAttr>:$instance_key,
@@ -2717,7 +2717,7 @@ def BridgeObjectCreateOp : PTO_Op<"bridge_object_create", [
 ]> {
   let summary = "Create a stateful object owned by a bridge wrapper";
   let arguments = (ins
-      StrAttr:$entry,
+      PTO_BridgeEntryAttr:$entry,
       OptionalAttr<StrAttr>:$callee,
       OptionalAttr<StrAttr>:$size_callee,
       OptionalAttr<AnyAttr>:$spec,

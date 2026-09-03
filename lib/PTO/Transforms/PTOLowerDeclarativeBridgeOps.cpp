@@ -143,10 +143,10 @@ public:
         rewriter.getNamedAttr("acc_phase", Adapter::getAccPhase(op)));
     DictionaryAttr spec =
         DictionaryAttr::get(rewriter.getContext(), structuredSpec);
-    StringRef entryId = stringifyBridgeEntryId(desc.id);
+    BridgeEntryId entryId = desc.id;
     auto bridgeSpec = BridgeCubeSpecAttr::get(rewriter.getContext(), spec);
-    auto instanceKey =
-        rewriter.getStringAttr(canonicalBridgeInstanceKey(entryId, spec));
+    auto instanceKey = rewriter.getStringAttr(
+        canonicalBridgeInstanceKey(stringifyBridgeEntryId(entryId), spec));
     rewriter.create<BridgeCallOp>(op.getLoc(), TypeRange{}, entryId,
                                   /*callee=*/nullptr, bridgeSpec, instanceKey,
                                   callArgs);

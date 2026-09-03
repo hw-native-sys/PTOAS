@@ -19,9 +19,9 @@
 // RESOLVE-SAME: pto::TPUSH<Pipe__0, {{.*}}pto::TileSplitAxis::TILE_UP_DOWN
 // RESOLVE-SAME: using Pipe__1 = pto::TPipe<4, pto::Direction::DIR_C2V, 2048, 4, 2, false>;
 // RESOLVE-SAME: pto::TPUSH<Pipe__1, {{.*}}pto::TileSplitAxis::TILE_LEFT_RIGHT
-// RESOLVE: pto.bridge_object_create "pipe.init"{{.*}}callee = "pto_vpto_pipe_init__0"
-// RESOLVE: pto.bridge_object_create "pipe.init"{{.*}}callee = "pto_vpto_pipe_init__1"
-// RESOLVE: pto.bridge_object_create "pipe.init"{{.*}}callee = "pto_vpto_pipe_init__0"
+// RESOLVE: pto.bridge_object_create <pipe_init>{{.*}}callee = "pto_vpto_pipe_init__0"
+// RESOLVE: pto.bridge_object_create <pipe_init>{{.*}}callee = "pto_vpto_pipe_init__1"
+// RESOLVE: pto.bridge_object_create <pipe_init>{{.*}}callee = "pto_vpto_pipe_init__0"
 
 
 module {

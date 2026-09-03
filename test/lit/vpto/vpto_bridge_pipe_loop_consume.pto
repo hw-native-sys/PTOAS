@@ -79,14 +79,14 @@ module {
 
 // BRIDGE-LABEL: func.func @probe_cube
 // BRIDGE: scf.for
-// BRIDGE: pto.bridge_call "pipe.push"{{.*}}callee = "pto_vpto_pipe_push__0"
+// BRIDGE: pto.bridge_call <pipe_push>{{.*}}callee = "pto_vpto_pipe_push__0"
 
 // BRIDGE-LABEL: func.func @probe_vector
 // BRIDGE: scf.for
-// BRIDGE: [[POP:%.+]] = pto.bridge_call "pipe.pop"{{.*}}callee = "pto_vpto_pipe_pop__1"{{.*}}-> i64
+// BRIDGE: [[POP:%.+]] = pto.bridge_call <pipe_pop>{{.*}}callee = "pto_vpto_pipe_pop__1"{{.*}}-> i64
 // BRIDGE: [[PTR:%.+]] = pto.bridge_inttoptr [[POP]] : i64 -> !pto.ptr<f32, ub>
 // BRIDGE: pto.store_scalar {{%.+}}, [[PTR]]
-// BRIDGE: pto.bridge_call "pipe.free"{{.*}}callee = "pto_vpto_pipe_free__1"
+// BRIDGE: pto.bridge_call <pipe_free>{{.*}}callee = "pto_vpto_pipe_free__1"
 
 // EMITC-LABEL: AICORE void probe_cube
 // EMITC: for (
