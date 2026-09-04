@@ -28,6 +28,44 @@ static LogicalResult finishPostUpdateStore(
   return success();
 }
 
+static func::CallOp createPlannedCall(Location loc, StringRef callee,
+                                      TypeRange resultTypes, ValueRange args,
+                                      ConversionPatternRewriter &rewriter,
+                                      LoweringState &state) {
+  SmallVector<Type> argTypes;
+  argTypes.reserve(args.size());
+  for (Value arg : args) {
+    argTypes.push_back(arg.getType());
+  }
+  auto funcType = rewriter.getFunctionType(argTypes, resultTypes);
+  auto call = rewriter.create<func::CallOp>(loc, callee, resultTypes, args);
+  state.plannedDecls.push_back(PlannedDecl{callee.str(), funcType});
+  return call;
+}
+
+static func::CallOp createElementOffsetCall(
+    Location loc, StringRef callee, const VPTOLoweredAddressOffset &offset,
+    Value distValue, Value postValue, TypeRange resultTypes,
+    ConversionPatternRewriter &rewriter, LoweringState &state) {
+  return createPlannedCall(loc, callee, resultTypes,
+                           ValueRange{offset.base, offset.intrinsicOffset,
+                                      distValue, postValue},
+                           rewriter, state);
+}
+
+template <typename Op>
+static LogicalResult finishPostUpdateLoad(Op op,
+                                          ConversionPatternRewriter &rewriter,
+                                          Value updatedBase, func::CallOp call,
+                                          bool usePostIntrinsic) {
+  if (usePostIntrinsic && updatedBase) {
+    rewriter.replaceOp(op, ValueRange{call.getResult(0), updatedBase});
+  } else {
+    rewriter.replaceOp(op, call.getResults());
+  }
+  return success();
+}
+
 static bool isLowpPayloadElementType(Type type) {
   return pto::isPTOFloat8Type(type) || pto::isPTOHiFloat8Type(type) ||
          pto::isPTOFloat4PackedType(type);
@@ -500,6 +538,50 @@ static FailureOr<StringRef> buildVsstbCallee(MLIRContext *context,
   return buildBlockStridedMemoryCallee(context, valueType, "vsstb", post);
 }
 
+struct VldsCallPlan {
+  SmallVector<Type> callResultTypes;
+  Type abiResultType;
+  bool usePostIntrinsic;
+  FailureOr<StringRef> calleeName;
+};
+
+static FailureOr<VldsCallPlan>
+planVldsCall(pto::VldsOp op, Type sourceType, Type ptoResultType,
+             const TypeConverter *typeConverter,
+             ConversionPatternRewriter &rewriter) {
+  VldsCallPlan plan;
+  plan.usePostIntrinsic = static_cast<bool>(op.getUpdatedBase());
+  SmallVector<Type> resultTypes;
+  if (failed(typeConverter->convertTypes(op->getResultTypes(), resultTypes))) {
+    (void)rewriter.notifyMatchFailure(op, "failed to convert vlds result types");
+    return failure();
+  }
+  if (plan.usePostIntrinsic) {
+    if (resultTypes.size() != 2 || resultTypes[1] != sourceType) {
+      (void)rewriter.notifyMatchFailure(op, "unsupported vlds post-update results");
+      return failure();
+    }
+  } else if (resultTypes.size() != 1) {
+    (void)rewriter.notifyMatchFailure(op, "unsupported vlds result count");
+    return failure();
+  }
+  plan.calleeName =
+      plan.usePostIntrinsic
+          ? buildVldsPostCallee(op.getContext(), ptoResultType)
+          : buildVldsCallee(op.getContext(), ptoResultType);
+  if (failed(plan.calleeName)) {
+    (void)rewriter.notifyMatchFailure(op, "unsupported vlds signature");
+    return failure();
+  }
+  plan.abiResultType = resultTypes[0];
+  plan.callResultTypes.push_back(getPayloadABIType(
+      ptoResultType, resultTypes[0], rewriter.getContext()));
+  if (plan.usePostIntrinsic) {
+    plan.callResultTypes.push_back(resultTypes[1]);
+  }
+  return plan;
+}
+
 class LowerVldsOpPattern final : public OpConversionPattern<pto::VldsOp> {
 public:
   explicit LowerVldsOpPattern(TypeConverter &typeConverter, MLIRContext *context,
@@ -521,60 +603,26 @@ public:
         usePostIntrinsic, rewriter);
     auto dist =
         parseLoadDistImmediate(op.getDist().value_or("NORM"), elementType);
-    bool invalidAddress = failed(loweredOffset) || !dist;
-    if (invalidAddress) {
+    if (failed(loweredOffset) || !dist) {
       return rewriter.notifyMatchFailure(op, "failed to materialize vlds operands");
     }
-
-    SmallVector<Type> resultTypes;
-    if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(), resultTypes)))
+    FailureOr<VldsCallPlan> plan = planVldsCall(
+        op, adaptor.getSource().getType(), ptoResultType,
+        this->getTypeConverter(), rewriter);
+    if (failed(plan))
     {
-      return rewriter.notifyMatchFailure(op, "failed to convert vlds result types");
+      return failure();
     }
-
-    if (usePostIntrinsic) {
-      if (resultTypes.size() != 2 || resultTypes[1] != adaptor.getSource().getType()) {
-        return rewriter.notifyMatchFailure(op,
-                                           "unsupported vlds post-update results");
-      }
-    } else if (resultTypes.size() != 1) {
-      return rewriter.notifyMatchFailure(op, "unsupported vlds result count");
-    }
-
-    FailureOr<StringRef> calleeName =
-        usePostIntrinsic
-            ? buildVldsPostCallee(op.getContext(), ptoResultType)
-            : buildVldsCallee(op.getContext(), ptoResultType);
-    if (failed(calleeName))
-    {
-      return rewriter.notifyMatchFailure(op, "unsupported vlds signature");
-    }
-
-    Type callValueType = getPayloadABIType(
-        ptoResultType, resultTypes[0], rewriter.getContext());
-    SmallVector<Type> callResultTypes{callValueType};
-    if (usePostIntrinsic)
-    {
-      callResultTypes.push_back(resultTypes[1]);
-    }
-
     Value distValue = getI32Constant(rewriter, op.getLoc(), *dist);
-    Value postValue = buildPostModeValue(rewriter, op.getLoc(), usePostIntrinsic);
-    SmallVector<Value> args{loweredOffset->base,
-                            loweredOffset->intrinsicOffset, distValue,
-                            postValue};
-    auto funcType = rewriter.getFunctionType(
-        TypeRange{loweredOffset->base.getType(),
-                  loweredOffset->intrinsicOffset.getType(),
-                  distValue.getType(), postValue.getType()},
-        callResultTypes);
-    auto call = rewriter.create<func::CallOp>(op.getLoc(), *calleeName,
-                                              callResultTypes, args);
-    state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
-    Value loaded = castFromPayloadABI(
-        op.getLoc(), call.getResult(0), ptoResultType, resultTypes[0],
-        rewriter);
-    if (usePostIntrinsic) {
+    Value postValue =
+        buildPostModeValue(rewriter, op.getLoc(), plan->usePostIntrinsic);
+    auto call = createElementOffsetCall(
+        op.getLoc(), *plan->calleeName, *loweredOffset, distValue, postValue,
+        plan->callResultTypes, rewriter, state);
+    Value loaded = castFromPayloadABI(op.getLoc(), call.getResult(0),
+                                      ptoResultType, plan->abiResultType,
+                                      rewriter);
+    if (plan->usePostIntrinsic) {
       Value updatedBase = loweredOffset->updatedBase
                               ? loweredOffset->updatedBase
                               : call.getResult(1);
@@ -588,6 +636,44 @@ public:
 private:
   LoweringState &state;
 };
+
+struct Vldsx2CallPlan {
+  SmallVector<Type> callResultTypes;
+  Type lowAbiResultType;
+  Type highAbiResultType;
+  bool usePostIntrinsic;
+  FailureOr<StringRef> calleeName;
+};
+
+static FailureOr<Vldsx2CallPlan>
+planVldsx2Call(pto::Vldsx2Op op, Type lowType, Type highType,
+               const TypeConverter *typeConverter,
+               ConversionPatternRewriter &rewriter) {
+  Vldsx2CallPlan plan;
+  plan.usePostIntrinsic = static_cast<bool>(op.getUpdatedBase());
+  SmallVector<Type> resultTypes;
+  if (failed(typeConverter->convertTypes(op->getResultTypes(), resultTypes)) ||
+      resultTypes.size() != (plan.usePostIntrinsic ? 3u : 2u)) {
+    (void)rewriter.notifyMatchFailure(op, "failed to convert vldsx2 result types");
+    return failure();
+  }
+  plan.calleeName = buildVldsx2Callee(op.getContext(), lowType,
+                                      plan.usePostIntrinsic);
+  if (failed(plan.calleeName)) {
+    (void)rewriter.notifyMatchFailure(op, "unsupported vldsx2 signature");
+    return failure();
+  }
+  plan.lowAbiResultType = resultTypes[0];
+  plan.highAbiResultType = resultTypes[1];
+  plan.callResultTypes.push_back(getPayloadABIType(
+      lowType, resultTypes[0], rewriter.getContext()));
+  plan.callResultTypes.push_back(getPayloadABIType(
+      highType, resultTypes[1], rewriter.getContext()));
+  if (plan.usePostIntrinsic) {
+    plan.callResultTypes.push_back(resultTypes[2]);
+  }
+  return plan;
+}
 
 class LowerVldsx2OpPattern final : public OpConversionPattern<pto::Vldsx2Op> {
 public:
@@ -604,65 +690,35 @@ public:
     {
       return rewriter.notifyMatchFailure(op, "unsupported vldsx2 element type");
     }
-
-    bool usePostIntrinsic = op.getUpdatedBase() != nullptr;
+    bool usePostIntrinsic = static_cast<bool>(op.getUpdatedBase());
     auto loweredOffset = lowerVPTOElementOffsetForIntrinsic(
         op, adaptor.getSource(), adaptor.getOffset(), elementType,
         usePostIntrinsic, rewriter);
     auto dist = parseLoadX2DistImmediate(op.getDist(), elementType);
-    bool invalidAddress = failed(loweredOffset) || !dist;
-    if (invalidAddress) {
+    if (failed(loweredOffset) || !dist) {
       return rewriter.notifyMatchFailure(op,
                                          "failed to materialize vldsx2 operands");
     }
-
-    SmallVector<Type> resultTypes;
-    if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
-                                                      resultTypes)) ||
-        resultTypes.size() != (usePostIntrinsic ? 3u : 2u)) {
-      return rewriter.notifyMatchFailure(op,
-                                         "failed to convert vldsx2 result types");
-    }
-
-    FailureOr<StringRef> calleeName =
-        buildVldsx2Callee(op.getContext(), op.getLow().getType(),
-                          usePostIntrinsic);
-    if (failed(calleeName))
+    FailureOr<Vldsx2CallPlan> x2plan = planVldsx2Call(
+        op, op.getLow().getType(), op.getHigh().getType(),
+        this->getTypeConverter(), rewriter);
+    if (failed(x2plan))
     {
-      return rewriter.notifyMatchFailure(op, "unsupported vldsx2 signature");
+      return failure();
     }
-
-    Type lowCallType = getPayloadABIType(
-        op.getLow().getType(), resultTypes[0], rewriter.getContext());
-    Type highCallType = getPayloadABIType(
-        op.getHigh().getType(), resultTypes[1], rewriter.getContext());
-    SmallVector<Type> callResultTypes{lowCallType, highCallType};
-    if (usePostIntrinsic)
-    {
-      callResultTypes.push_back(resultTypes[2]);
-    }
-
     Value distValue = getI32Constant(rewriter, op.getLoc(), *dist);
     Value postValue =
-        getI32Constant(rewriter, op.getLoc(), usePostIntrinsic ? 1 : 0);
-    SmallVector<Value> args{loweredOffset->base,
-                            loweredOffset->intrinsicOffset, distValue,
-                            postValue};
-    auto funcType = rewriter.getFunctionType(
-        TypeRange{loweredOffset->base.getType(),
-                  loweredOffset->intrinsicOffset.getType(),
-                  distValue.getType(), postValue.getType()},
-        callResultTypes);
-    auto call = rewriter.create<func::CallOp>(op.getLoc(), *calleeName,
-                                              callResultTypes, args);
-    state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
-    Value low = castFromPayloadABI(
-        op.getLoc(), call.getResult(0), op.getLow().getType(), resultTypes[0],
-        rewriter);
-    Value high = castFromPayloadABI(
-        op.getLoc(), call.getResult(1), op.getHigh().getType(), resultTypes[1],
-        rewriter);
-    if (usePostIntrinsic) {
+        buildPostModeValue(rewriter, op.getLoc(), x2plan->usePostIntrinsic);
+    auto call = createElementOffsetCall(
+        op.getLoc(), *x2plan->calleeName, *loweredOffset, distValue, postValue,
+        x2plan->callResultTypes, rewriter, state);
+    Value low = castFromPayloadABI(op.getLoc(), call.getResult(0),
+                                   op.getLow().getType(),
+                                   x2plan->lowAbiResultType, rewriter);
+    Value high = castFromPayloadABI(op.getLoc(), call.getResult(1),
+                                    op.getHigh().getType(),
+                                    x2plan->highAbiResultType, rewriter);
+    if (x2plan->usePostIntrinsic) {
       Value updatedBase = loweredOffset->updatedBase
                               ? loweredOffset->updatedBase
                               : call.getResult(2);
@@ -719,15 +775,10 @@ public:
     }
     Value postValue =
         getI32Constant(rewriter, op.getLoc(), usePostIntrinsic ? 1 : 0);
-    SmallVector<Value> args{adaptor.getSource(), packedStride, postValue,
-                            adaptor.getMask()};
-    auto funcType = rewriter.getFunctionType(
-        TypeRange{adaptor.getSource().getType(), packedStride.getType(),
-                  postValue.getType(), adaptor.getMask().getType()},
-        callResultTypes);
-    auto call = rewriter.create<func::CallOp>(op.getLoc(), *calleeName,
-                                              callResultTypes, args);
-    state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
+    auto call = createPlannedCall(op.getLoc(), *calleeName, callResultTypes,
+                                  ValueRange{adaptor.getSource(), packedStride,
+                                             postValue, adaptor.getMask()},
+                                  rewriter, state);
     Value result = castFromPayloadABI(
         op.getLoc(), call.getResult(0), op.getResult().getType(), resultTypes[0],
         rewriter);
@@ -806,6 +857,23 @@ private:
   LoweringState &state;
 };
 
+static LogicalResult finishVldusCall(pto::VldusOp op,
+                                     ConversionPatternRewriter &rewriter,
+                                     func::CallOp call, bool usePostIntrinsic,
+                                     Value explicitUpdatedBase,
+                                     Type abiResultType) {
+  Value loaded = castFromPayloadABI(op.getLoc(), call.getResult(0),
+                                    op.getResult().getType(), abiResultType,
+                                    rewriter);
+  SmallVector<Value> replacements{loaded, call.getResult(1)};
+  if (usePostIntrinsic) {
+    replacements.push_back(explicitUpdatedBase ? explicitUpdatedBase
+                                               : call.getResult(2));
+  }
+  rewriter.replaceOp(op, replacements);
+  return success();
+}
+
 class LowerVldusOpPattern final : public OpConversionPattern<pto::VldusOp> {
 public:
   explicit LowerVldusOpPattern(TypeConverter &typeConverter,
@@ -857,26 +925,10 @@ public:
       args.push_back(loweredIncrement->intrinsicOffset);
       explicitUpdatedBase = loweredIncrement->updatedBase;
     }
-    SmallVector<Type> argTypes;
-    for (Value arg : args)
-    {
-      argTypes.push_back(arg.getType());
-    }
-    auto funcType = rewriter.getFunctionType(argTypes, intrinsicResultTypes);
-    auto call = rewriter.create<func::CallOp>(
-        op.getLoc(), *calleeName, intrinsicResultTypes, args);
-    state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
-    Value loaded = castFromPayloadABI(
-        op.getLoc(), call.getResult(0), op.getResult().getType(),
-        resultTypes[0], rewriter);
-    SmallVector<Value> replacements{loaded, call.getResult(1)};
-    if (usePostIntrinsic)
-    {
-      replacements.push_back(explicitUpdatedBase ? explicitUpdatedBase
-                                                 : call.getResult(2));
-    }
-    rewriter.replaceOp(op, replacements);
-    return success();
+    auto call = createPlannedCall(op.getLoc(), *calleeName,
+                                  intrinsicResultTypes, args, rewriter, state);
+    return finishVldusCall(op, rewriter, call, usePostIntrinsic,
+                           explicitUpdatedBase, resultTypes[0]);
   }
 
 private:
@@ -950,29 +1002,70 @@ public:
         op.getLoc(), rewriter.getI16IntegerAttr(*spr));
     Value postValue = rewriter.create<arith::ConstantOp>(
         op.getLoc(), rewriter.getI32IntegerAttr(usePostIntrinsic ? 1 : 0));
-    SmallVector<Value> args{sprValue, adaptor.getDestination(),
-                            adaptor.getOffset(), postValue};
-    auto funcType = rewriter.getFunctionType(
-        TypeRange{sprValue.getType(), adaptor.getDestination().getType(),
-                  adaptor.getOffset().getType(), postValue.getType()},
-        resultTypes);
-    auto call = rewriter.create<func::CallOp>(op.getLoc(), calleeName,
-                                              resultTypes, args);
-    state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
-    if (usePostIntrinsic)
-    {
-      rewriter.replaceOp(op, call.getResults());
-    }
-    else
-    {
-      rewriter.eraseOp(op);
-    }
-    return success();
+    auto call = createPlannedCall(
+        op.getLoc(), calleeName, resultTypes,
+        ValueRange{sprValue, adaptor.getDestination(), adaptor.getOffset(),
+                   postValue},
+        rewriter, state);
+    return finishPostUpdateStore(op, rewriter, Value(), call.getOperation(),
+                                 usePostIntrinsic);
   }
 
 private:
   LoweringState &state;
 };
+
+static Value buildVstsMask(pto::VstsOp op, pto::VstsOp::Adaptor adaptor,
+                           ConversionPatternRewriter &rewriter) {
+  Value mask = adaptor.getMask();
+  // The 1PT store forms keep a mask operand in the LLVM ABI, but the
+  // hardware ignores it.  Do not materialize a pset/pge mask solely for
+  // this dead operand; an LLVM undef is sufficient at this boundary.
+  StringRef distToken = op.getDist().value_or("");
+  if (isOnePointStoreDist(distToken))
+  {
+    mask = rewriter.create<LLVM::UndefOp>(op.getLoc(), mask.getType());
+  }
+  return mask;
+}
+
+struct VstsCallPlan {
+  SmallVector<Type> resultTypes;
+  FailureOr<StringRef> calleeName;
+};
+
+static FailureOr<VstsCallPlan>
+planVstsCall(pto::VstsOp op, pto::VstsOp::Adaptor adaptor,
+             const TypeConverter *typeConverter,
+             ConversionPatternRewriter &rewriter) {
+  VstsCallPlan plan;
+  plan.calleeName = op.getUpdatedBase()
+                        ? buildVstsPostCallee(op.getContext(),
+                                              op.getValue().getType())
+                        : buildVstsCallee(op.getContext(),
+                                          op.getValue().getType());
+  if (failed(plan.calleeName)) {
+    (void)rewriter.notifyMatchFailure(op, "unsupported vsts signature");
+    return failure();
+  }
+  if (failed(typeConverter->convertTypes(op->getResultTypes(),
+                                        plan.resultTypes))) {
+    (void)rewriter.notifyMatchFailure(op, "failed to convert vsts result types");
+    return failure();
+  }
+  bool usePostIntrinsic = static_cast<bool>(op.getUpdatedBase());
+  if (usePostIntrinsic) {
+    if (plan.resultTypes.size() != 1 ||
+        plan.resultTypes[0] != adaptor.getDestination().getType()) {
+      (void)rewriter.notifyMatchFailure(op, "unsupported vsts post-update result");
+      return failure();
+    }
+  } else if (!plan.resultTypes.empty()) {
+    (void)rewriter.notifyMatchFailure(op, "unsupported vsts result count");
+    return failure();
+  }
+  return plan;
+}
 
 class LowerVstsOpPattern final : public OpConversionPattern<pto::VstsOp> {
 public:
@@ -1006,30 +1099,13 @@ public:
       return rewriter.notifyMatchFailure(op, "failed to materialize vsts operands");
     }
 
-    FailureOr<StringRef> calleeName =
-        op.getUpdatedBase()
-            ? buildVstsPostCallee(op.getContext(), op.getValue().getType())
-            : buildVstsCallee(op.getContext(), op.getValue().getType());
-    if (failed(calleeName))
+    FailureOr<VstsCallPlan> plan = planVstsCall(op, adaptor,
+                                                this->getTypeConverter(),
+                                                rewriter);
+    if (failed(plan))
     {
-      return rewriter.notifyMatchFailure(op, "unsupported vsts signature");
+      return failure();
     }
-
-    SmallVector<Type> resultTypes;
-    if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
-                                                      resultTypes))) {
-      return rewriter.notifyMatchFailure(op, "failed to convert vsts result types");
-    }
-    if (usePostIntrinsic) {
-      if (resultTypes.size() != 1 ||
-          resultTypes[0] != adaptor.getDestination().getType()) {
-        return rewriter.notifyMatchFailure(op,
-                                           "unsupported vsts post-update result");
-      }
-    } else if (!resultTypes.empty()) {
-      return rewriter.notifyMatchFailure(op, "unsupported vsts result count");
-    }
-
     Value distValue = rewriter.create<arith::ConstantOp>(
         op.getLoc(), rewriter.getI32IntegerAttr(*dist));
     Value zero = rewriter.create<arith::ConstantOp>(op.getLoc(),
@@ -1037,26 +1113,12 @@ public:
                                                         usePostIntrinsic ? 1 : 0));
     Value value = castToPayloadABI(
         op.getLoc(), adaptor.getValue(), op.getValue().getType(), rewriter);
-    Value mask = adaptor.getMask();
-    // The 1PT store forms keep a mask operand in the LLVM ABI, but the
-    // hardware ignores it.  Do not materialize a pset/pge mask solely for
-    // this dead operand; an LLVM undef is sufficient at this boundary.
-    StringRef distToken = op.getDist().value_or("");
-    if (isOnePointStoreDist(distToken))
-    {
-      mask = rewriter.create<LLVM::UndefOp>(op.getLoc(), mask.getType());
-    }
-    SmallVector<Value> args{value, loweredOffset->base,
-                            loweredOffset->intrinsicOffset, distValue, zero,
-                            mask};
-    auto funcType = rewriter.getFunctionType(
-        TypeRange{value.getType(), loweredOffset->base.getType(),
-                  rewriter.getI32Type(), rewriter.getI32Type(),
-                  rewriter.getI32Type(), mask.getType()},
-        resultTypes);
-    auto call = rewriter.create<func::CallOp>(op.getLoc(), *calleeName,
-                                              resultTypes, args);
-    state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
+    Value mask = buildVstsMask(op, adaptor, rewriter);
+    auto call = createPlannedCall(
+        op.getLoc(), *plan->calleeName, plan->resultTypes,
+        ValueRange{value, loweredOffset->base, loweredOffset->intrinsicOffset,
+                   distValue, zero, mask},
+        rewriter, state);
     return finishPostUpdateStore(op, rewriter, loweredOffset->updatedBase,
                                  call.getOperation(), usePostIntrinsic);
   }
@@ -1286,21 +1348,10 @@ public:
     SmallVector<Value> args{value, loweredOffset->base,
                             loweredOffset->intrinsicOffset,
                             adaptor.getAlignIn()};
-    auto funcType = rewriter.getFunctionType(
-        TypeRange{value.getType(), loweredOffset->base.getType(),
-                  loweredOffset->intrinsicOffset.getType(),
-                  adaptor.getAlignIn().getType()},
-        resultTypes);
-    auto call = rewriter.create<func::CallOp>(op.getLoc(), *calleeName,
-                                              resultTypes, args);
-    state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
-    if (usePostIntrinsic && loweredOffset->updatedBase) {
-      rewriter.replaceOp(
-          op, ValueRange{call.getResult(0), loweredOffset->updatedBase});
-    } else {
-      rewriter.replaceOp(op, call.getResults());
-    }
-    return success();
+    auto call = createPlannedCall(op.getLoc(), *calleeName, resultTypes, args,
+                                  rewriter, state);
+    return finishPostUpdateLoad(op, rewriter, loweredOffset->updatedBase, call,
+                                usePostIntrinsic);
   }
 
 private:
@@ -1493,26 +1544,10 @@ public:
     args.push_back(rewriter.create<arith::ConstantOp>(
         op.getLoc(),
         rewriter.getI32IntegerAttr(usePostIntrinsic ? 1 : 0)));
-    auto funcType = rewriter.getFunctionType(
-        TypeRange{valueType, llvmDestType, rewriter.getI32Type(),
-                  rewriter.getI32Type(), rewriter.getI32Type()},
-        resultTypes);
-    auto call = rewriter.create<func::CallOp>(op.getLoc(), calleeName,
-                                              resultTypes, args);
-    state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
-    if (usePostIntrinsic)
-    {
-      if (loweredOffset->updatedBase) {
-        rewriter.replaceOp(op, loweredOffset->updatedBase);
-      } else {
-        rewriter.replaceOp(op, call.getResults());
-      }
-    }
-    else
-    {
-      rewriter.eraseOp(op);
-    }
-    return success();
+    auto call = createPlannedCall(op.getLoc(), calleeName, resultTypes, args,
+                                  rewriter, state);
+    return finishPostUpdateStore(op, rewriter, loweredOffset->updatedBase,
+                                 call.getOperation(), usePostIntrinsic);
   }
 
 private:
@@ -1569,20 +1604,10 @@ public:
     args.push_back(rewriter.create<arith::ConstantOp>(
         op.getLoc(),
         rewriter.getI32IntegerAttr(usePostIntrinsic ? 1 : 0)));
-    auto funcType = rewriter.getFunctionType(
-        TypeRange{llvmSourceType, rewriter.getI32Type(), rewriter.getI32Type(),
-                  rewriter.getI32Type()},
-        resultTypes);
-    auto call = rewriter.create<func::CallOp>(op.getLoc(), calleeName,
-                                              resultTypes, args);
-    state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
-    if (loweredOffset->updatedBase) {
-      rewriter.replaceOp(
-          op, ValueRange{call.getResult(0), loweredOffset->updatedBase});
-    } else {
-      rewriter.replaceOp(op, call.getResults());
-    }
-    return success();
+    auto call = createPlannedCall(op.getLoc(), calleeName, resultTypes, args,
+                                  rewriter, state);
+    return finishPostUpdateLoad(op, rewriter, loweredOffset->updatedBase, call,
+                                usePostIntrinsic);
   }
 
 private:

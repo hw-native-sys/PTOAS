@@ -9,6 +9,7 @@
 #include "PTO/IR/VPTOMemoryDist.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "llvm/ADT/SmallString.h"
 
 namespace mlir::pto {
 namespace {
@@ -52,16 +53,21 @@ static bool isCompatibleScalarForSemanticType(Type semanticType, Type scalarType
   }
   auto semanticInt = dyn_cast<IntegerType>(semanticType);
   auto scalarInt = dyn_cast<IntegerType>(scalarType);
-  if (!semanticInt || !scalarInt || semanticInt.getWidth() != scalarInt.getWidth()) {
+  if (!semanticInt || !scalarInt) {
     return false;
   }
+  if (semanticInt.getWidth() != scalarInt.getWidth()) {
+    return false;
+  }
+  bool compatible;
   if (semanticInt.isSigned()) {
-    return scalarInt.isSigned() || scalarInt.isSignless();
+    compatible = scalarInt.isSigned() || scalarInt.isSignless();
+  } else if (semanticInt.isUnsigned()) {
+    compatible = scalarInt.isUnsigned() || scalarInt.isSignless();
+  } else {
+    compatible = scalarInt.isSignless();
   }
-  if (semanticInt.isUnsigned()) {
-    return scalarInt.isUnsigned() || scalarInt.isSignless();
-  }
-  return scalarInt.isSignless();
+  return compatible;
 }
 
 static Type getLowpPayloadCarrierType(Type vectorLikeType, MLIRContext *context) {
@@ -327,6 +333,127 @@ template <> StringRef buildPgeCallee<pto::PgeB32Op>(MLIRContext *context) {
   return StringAttr::get(context, "llvm.hivm.pge.b32").getValue();
 }
 
+static func::CallOp createPlannedCall(Location loc, StringRef callee,
+                                      Type resultType, ValueRange args,
+                                      ConversionPatternRewriter &rewriter,
+                                      LoweringState &state) {
+  auto call = rewriter.create<func::CallOp>(loc, callee, TypeRange{resultType}, args);
+  state.plannedDecls.push_back(PlannedDecl{callee.str(), call.getCalleeType()});
+  return call;
+}
+
+static FailureOr<func::CallOp>
+buildVdupPlannedCall(pto::VdupOp op, pto::VdupOp::Adaptor adaptor,
+                     ConversionPatternRewriter &rewriter, LoweringState &state,
+                     StringRef callee, Type resultType, Type maskType,
+                     SmallString<64> &reason) {
+  Value mask = adaptor.getMask();
+  if (!mask || mask.getType() != maskType) {
+    reason = "unexpected converted vdup mask type";
+    return failure();
+  }
+
+  SmallVector<Value> callArgs;
+  bool vectorInput = isa<VectorType, pto::VRegType>(op.getInput().getType());
+  if (vectorInput) {
+    Value input = adaptor.getInput();
+    if (!input || input.getType() != resultType) {
+      reason = "vector-input vdup requires matching result type";
+      return failure();
+    }
+    callArgs.push_back(input);
+  } else {
+    Type scalarType = getElementTypeFromVectorLike(op.getResult().getType());
+    if (!scalarType ||
+        (op.getInput().getType() != scalarType &&
+         !isCompatibleScalarForSemanticType(scalarType,
+                                            op.getInput().getType()))) {
+      reason = "unexpected scalar-input vdup type";
+      return failure();
+    }
+    FailureOr<Value> normalizedScalar =
+        normalizeVdupScalarOperand(rewriter, op.getLoc(), adaptor.getInput(),
+                                   op.getResult().getType());
+    if (failed(normalizedScalar)) {
+      reason = "failed to normalize scalar vdup input";
+      return failure();
+    }
+    callArgs.push_back(normalizeByteScalarOperandForHivmCall(
+        rewriter, op.getLoc(), *normalizedScalar, scalarType));
+  }
+
+  callArgs.push_back(mask);
+  callArgs.push_back(getI32Constant(rewriter, op.getLoc(), 1));
+  return createPlannedCall(op.getLoc(), callee, resultType, callArgs, rewriter,
+                           state);
+}
+
+static FailureOr<Type>
+getVselrIntrinsicResultType(pto::VselrOp op, ConversionPatternRewriter &rewriter,
+                            Type resultType, Type resultElementType,
+                            std::optional<int64_t> lanes) {
+  Type intrinsicResultType = resultType;
+  if (auto floatType = dyn_cast<FloatType>(resultElementType);
+      floatType && floatType.isF32()) {
+    intrinsicResultType = VectorType::get({*lanes}, rewriter.getI32Type());
+  }
+  if (Type carrierType =
+          getLowpPayloadCarrierType(op.getResult().getType(), rewriter.getContext())) {
+    intrinsicResultType = carrierType;
+  }
+  return intrinsicResultType;
+}
+
+static FailureOr<func::CallOp>
+materializeVselrCall(pto::VselrOp op, pto::VselrOp::Adaptor adaptor,
+                     ConversionPatternRewriter &rewriter, LoweringState &state,
+                     StringRef callee, Type resultType,
+                     Type intrinsicResultType, Type indexType,
+                     SmallString<64> &reason) {
+  Value src0 = adaptor.getSrc0();
+  Value src1 = adaptor.getSrc1();
+  if (!src0 || !src1 || src1.getType() != indexType) {
+    reason = "unexpected converted vselr operand types";
+    return failure();
+  }
+  if (src0.getType() != intrinsicResultType) {
+    if (src0.getType() != resultType) {
+      reason = "unexpected converted vselr source type";
+      return failure();
+    }
+    src0 = rewriter.create<LLVM::BitcastOp>(op.getLoc(), intrinsicResultType, src0);
+  }
+  return createPlannedCall(op.getLoc(), callee, intrinsicResultType,
+                           ValueRange{src0, src1}, rewriter, state);
+}
+
+template <typename CmpOp>
+static FailureOr<SmallVector<Value>> collectCompareCallArgs(
+    CmpOp op, typename CmpOp::Adaptor adaptor,
+    ConversionPatternRewriter &rewriter, Type maskType,
+    SmallString<64> &reason) {
+  SmallVector<Value> callArgs;
+  callArgs.append(adaptor.getOperands().begin(), adaptor.getOperands().end());
+  if constexpr (std::is_same_v<CmpOp, pto::VcmpsOp>) {
+    if (callArgs.size() != 3 || !callArgs[0] || !callArgs[1] || !callArgs[2] ||
+        callArgs[2].getType() != maskType) {
+      reason = "unexpected converted scalar-compare operand types";
+      return failure();
+    }
+    callArgs[1] = normalizeByteScalarOperandForHivmCall(
+        rewriter, op.getLoc(), callArgs[1],
+        cast<pto::VRegType>(op.getSrc().getType()).getElementType());
+  } else {
+    if (callArgs.size() != 3 || !callArgs[0] || !callArgs[1] || !callArgs[2] ||
+        callArgs[0].getType() != callArgs[1].getType() ||
+        callArgs[2].getType() != maskType) {
+      reason = "unexpected converted compare operand types";
+      return failure();
+    }
+  }
+  return callArgs;
+}
+
 class LowerVselOpPattern final : public OpConversionPattern<pto::VselOp> {
 public:
   explicit LowerVselOpPattern(TypeConverter &typeConverter, MLIRContext *context,
@@ -394,50 +521,15 @@ public:
       return rewriter.notifyMatchFailure(op, "failed to convert vdup result type");
     }
 
-    Value mask = adaptor.getMask();
-    if (!mask || mask.getType() != maskType) {
-      return rewriter.notifyMatchFailure(op,
-                                         "unexpected converted vdup mask type");
+    SmallString<64> failureReason;
+    FailureOr<func::CallOp> call = buildVdupPlannedCall(
+        op, adaptor, rewriter, state, *calleeName, resultType, maskType,
+        failureReason);
+    if (failed(call))
+    {
+      return rewriter.notifyMatchFailure(op, failureReason);
     }
-
-    SmallVector<Value> callArgs;
-    bool vectorInput = isa<VectorType, pto::VRegType>(op.getInput().getType());
-    if (vectorInput) {
-      Value input = adaptor.getInput();
-      if (!input || input.getType() != resultType) {
-        return rewriter.notifyMatchFailure(
-            op, "vector-input vdup requires matching result type");
-      }
-      callArgs.push_back(input);
-    } else {
-      Type scalarType = getElementTypeFromVectorLike(op.getResult().getType());
-      if (!scalarType ||
-          (op.getInput().getType() != scalarType &&
-           !isCompatibleScalarForSemanticType(scalarType,
-                                              op.getInput().getType()))) {
-        return rewriter.notifyMatchFailure(op,
-                                           "unexpected scalar-input vdup type");
-      }
-      FailureOr<Value> normalizedScalar =
-          normalizeVdupScalarOperand(rewriter, op.getLoc(), adaptor.getInput(),
-                                     op.getResult().getType());
-      if (failed(normalizedScalar)) {
-        return rewriter.notifyMatchFailure(op,
-                                           "failed to normalize scalar vdup input");
-      }
-      Value scalarForCall = normalizeByteScalarOperandForHivmCall(
-          rewriter, op.getLoc(), *normalizedScalar, scalarType);
-      callArgs.push_back(scalarForCall);
-    }
-
-    callArgs.push_back(mask);
-    callArgs.push_back(getI32Constant(rewriter, op.getLoc(), 1));
-
-    auto call = rewriter.create<func::CallOp>(
-        op.getLoc(), *calleeName, TypeRange{resultType}, callArgs);
-    state.plannedDecls.push_back(
-        PlannedDecl{calleeName->str(), call.getCalleeType()});
-    rewriter.replaceOp(op, call.getResults());
+    rewriter.replaceOp(op, call->getResults());
     return success();
   }
 
@@ -522,46 +614,29 @@ public:
                                          "unexpected converted vselr result type");
     }
 
-    Type intrinsicResultType = resultType;
-    if (auto floatType = dyn_cast<FloatType>(resultElementType);
-        floatType && floatType.isF32()) {
-      intrinsicResultType = VectorType::get({*lanes}, rewriter.getI32Type());
+    FailureOr<Type> intrinsicResultType = getVselrIntrinsicResultType(
+        op, rewriter, resultType, resultElementType, lanes);
+    if (failed(intrinsicResultType)) {
+      return rewriter.notifyMatchFailure(op,
+                                         "failed to convert vselr result type");
     }
-    if (Type carrierType = getLowpPayloadCarrierType(
-            op.getResult().getType(), rewriter.getContext())) {
-      intrinsicResultType = carrierType;
-    }
-
     Type indexType = this->getTypeConverter()->convertType(op.getSrc1().getType());
     if (!indexType) {
       return rewriter.notifyMatchFailure(op,
                                          "failed to convert vselr index type");
     }
 
-    Value src0 = adaptor.getSrc0();
-    Value src1 = adaptor.getSrc1();
-    if (!src0 || !src1 || src1.getType() != indexType) {
-      return rewriter.notifyMatchFailure(op,
-                                         "unexpected converted vselr operand types");
+    SmallString<64> failureReason;
+    FailureOr<func::CallOp> call = materializeVselrCall(
+        op, adaptor, rewriter, state, *calleeName, resultType,
+        *intrinsicResultType, indexType, failureReason);
+    if (failed(call))
+    {
+      return rewriter.notifyMatchFailure(op, failureReason);
     }
 
-    if (src0.getType() != intrinsicResultType) {
-      if (src0.getType() != resultType) {
-        return rewriter.notifyMatchFailure(op,
-                                           "unexpected converted vselr source type");
-      }
-      src0 = rewriter.create<LLVM::BitcastOp>(op.getLoc(), intrinsicResultType, src0);
-    }
-
-    auto funcType = rewriter.getFunctionType(
-        TypeRange{intrinsicResultType, indexType}, TypeRange{intrinsicResultType});
-    auto call = rewriter.create<func::CallOp>(
-        op.getLoc(), *calleeName, TypeRange{intrinsicResultType},
-        ValueRange{src0, src1});
-    state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
-
-    Value result = call.getResult(0);
-    if (intrinsicResultType != resultType)
+    Value result = call->getResult(0);
+    if (*intrinsicResultType != resultType)
     {
       result = rewriter.create<LLVM::BitcastOp>(op.getLoc(), resultType, result);
     }
@@ -741,11 +816,8 @@ public:
       return rewriter.notifyMatchFailure(op, "failed to materialize unpack part");
     }
 
-    auto funcType = rewriter.getFunctionType(TypeRange{srcType, part.getType()},
-                                             TypeRange{resultType});
-    auto call = rewriter.create<func::CallOp>(
-        op.getLoc(), *calleeName, TypeRange{resultType}, ValueRange{src, part});
-    state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
+    auto call = createPlannedCall(op.getLoc(), *calleeName, resultType,
+                                  ValueRange{src, part}, rewriter, state);
     rewriter.replaceOp(op, call.getResults());
     return success();
   }
@@ -792,11 +864,8 @@ public:
     }
 
     Value part = getI32Constant(rewriter, op.getLoc(), *partImm);
-    auto funcType = rewriter.getFunctionType(TypeRange{srcType, part.getType()},
-                                             TypeRange{resultType});
-    auto call = rewriter.create<func::CallOp>(
-        op.getLoc(), *calleeName, TypeRange{resultType}, ValueRange{src, part});
-    state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
+    auto call = createPlannedCall(op.getLoc(), *calleeName, resultType,
+                                  ValueRange{src, part}, rewriter, state);
     rewriter.replaceOp(op, call.getResults());
     return success();
   }
@@ -932,30 +1001,15 @@ public:
                                          "unexpected compare mask conversion");
     }
 
-    SmallVector<Value> callArgs;
-    callArgs.append(adaptor.getOperands().begin(), adaptor.getOperands().end());
-    if constexpr (isScalarCompare) {
-      if (callArgs.size() != 3 || !callArgs[0] || !callArgs[1] || !callArgs[2] ||
-          callArgs[2].getType() != maskType) {
-        return rewriter.notifyMatchFailure(
-            op, "unexpected converted scalar-compare operand types");
-      }
-      callArgs[1] = normalizeByteScalarOperandForHivmCall(
-          rewriter, op.getLoc(), callArgs[1],
-          cast<pto::VRegType>(op.getSrc().getType()).getElementType());
-    } else {
-      if (callArgs.size() != 3 || !callArgs[0] || !callArgs[1] || !callArgs[2] ||
-          callArgs[0].getType() != callArgs[1].getType() ||
-          callArgs[2].getType() != maskType) {
-        return rewriter.notifyMatchFailure(
-            op, "unexpected converted compare operand types");
-      }
+    SmallString<64> failureReason;
+    FailureOr<SmallVector<Value>> callArgs =
+        collectCompareCallArgs(op, adaptor, rewriter, maskType, failureReason);
+    if (failed(callArgs)) {
+      return rewriter.notifyMatchFailure(op, failureReason);
     }
 
-    auto call = rewriter.create<func::CallOp>(op.getLoc(), *calleeName,
-                                              TypeRange{resultType}, callArgs);
-    state.plannedDecls.push_back(
-        PlannedDecl{calleeName->str(), call.getCalleeType()});
+    auto call = createPlannedCall(op.getLoc(), *calleeName, resultType,
+                                  *callArgs, rewriter, state);
     rewriter.replaceOp(op, call.getResults());
     return success();
   }

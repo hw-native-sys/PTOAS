@@ -34,6 +34,15 @@ static FailureOr<StringRef> buildLaneTypedCallee(MLIRContext *context,
   return buildLaneTypedCalleeFromInput(context, resultType, stem, suffix);
 }
 
+static func::CallOp createPlannedCall(Location loc, StringRef callee,
+                                      Type resultType, ValueRange args,
+                                      ConversionPatternRewriter &rewriter,
+                                      LoweringState &state) {
+  auto call = rewriter.create<func::CallOp>(loc, callee, TypeRange{resultType}, args);
+  state.plannedDecls.push_back(PlannedDecl{callee.str(), call.getCalleeType()});
+  return call;
+}
+
 template <typename VecScalarOp>
 static StringRef getVecScalarMaskedStem() {
   if constexpr (std::is_same_v<VecScalarOp, pto::VmulsOp>)
@@ -220,11 +229,8 @@ public:
           op, "unexpected converted reduction operand types");
     }
 
-    auto call = rewriter.create<func::CallOp>(op.getLoc(), *calleeName,
-                                              TypeRange{resultType},
-                                              ValueRange{input, mask});
-    state.plannedDecls.push_back(
-        PlannedDecl{calleeName->str(), call.getCalleeType()});
+    auto call = createPlannedCall(op.getLoc(), *calleeName, resultType,
+                                  ValueRange{input, mask}, rewriter, state);
     rewriter.replaceOp(op, call.getResults());
     return success();
   }
@@ -373,11 +379,8 @@ public:
           op, "unexpected converted widening reduction operand types");
     }
 
-    auto call = rewriter.create<func::CallOp>(op.getLoc(), *calleeName,
-                                              TypeRange{resultType},
-                                              ValueRange{input, mask});
-    state.plannedDecls.push_back(
-        PlannedDecl{calleeName->str(), call.getCalleeType()});
+    auto call = createPlannedCall(op.getLoc(), *calleeName, resultType,
+                                  ValueRange{input, mask}, rewriter, state);
     rewriter.replaceOp(op, call.getResults());
     return success();
   }

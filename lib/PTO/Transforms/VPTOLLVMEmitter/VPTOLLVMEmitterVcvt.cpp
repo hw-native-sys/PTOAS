@@ -15,22 +15,22 @@ namespace mlir::pto {
 namespace {
 
 enum class VcvtElemKind {
-  Invalid,
-  F16,
-  BF16,
-  F32,
-  F8E4M3,
-  F8E5M2,
-  HiF8,
-  F4E1M2x2,
-  F4E2M1x2,
-  S8,
-  U8,
-  S16,
-  U16,
-  S32,
-  U32,
-  S64,
+  Invalid = 0,
+  F16 = 1,
+  BF16 = 2,
+  F32 = 3,
+  F8E4M3 = 4,
+  F8E5M2 = 5,
+  HiF8 = 6,
+  F4E1M2x2 = 7,
+  F4E2M1x2 = 8,
+  S8 = 9,
+  U8 = 10,
+  S16 = 11,
+  U16 = 12,
+  S32 = 13,
+  U32 = 14,
+  S64 = 15,
 };
 
 struct VcvtContract {
@@ -85,15 +85,16 @@ static VcvtElemKind classifyVcvtElemType(Type type) {
     return VcvtElemKind::F4E2M1x2;
   }
   if (auto intType = dyn_cast<IntegerType>(type)) {
+    bool isUnsigned = intType.isUnsigned();
     switch (intType.getWidth()) {
     case 8:
-      return intType.isUnsigned() ? VcvtElemKind::U8 : VcvtElemKind::S8;
+      return isUnsigned ? VcvtElemKind::U8 : VcvtElemKind::S8;
     case 16:
-      return intType.isUnsigned() ? VcvtElemKind::U16 : VcvtElemKind::S16;
+      return isUnsigned ? VcvtElemKind::U16 : VcvtElemKind::S16;
     case 32:
-      return intType.isUnsigned() ? VcvtElemKind::U32 : VcvtElemKind::S32;
+      return isUnsigned ? VcvtElemKind::U32 : VcvtElemKind::S32;
     case 64:
-      return intType.isUnsigned() ? VcvtElemKind::Invalid : VcvtElemKind::S64;
+      return isUnsigned ? VcvtElemKind::Invalid : VcvtElemKind::S64;
     default:
       return VcvtElemKind::Invalid;
     }
@@ -221,6 +222,39 @@ static LogicalResult appendVcvtImmediate(pto::VcvtOp op,
   return success();
 }
 
+static LogicalResult appendVcvtAttributeImmediates(
+    pto::VcvtOp op, ConversionPatternRewriter &rewriter,
+    const VcvtContract &contract, std::optional<uint64_t> rnd,
+    std::optional<uint64_t> sat, SmallVector<Value> &callArgs,
+    SmallVector<Type> &argTypes) {
+  if (contract.satBeforeRnd) {
+    if (failed(appendVcvtImmediate(op, rewriter, "sat", contract.requiresSat,
+                                   sat, callArgs, argTypes)))
+      return failure();
+    if (failed(appendVcvtImmediate(op, rewriter, "rnd", contract.requiresRnd,
+                                   rnd, callArgs, argTypes)))
+      return failure();
+  } else {
+    if (failed(appendVcvtImmediate(op, rewriter, "rnd", contract.requiresRnd,
+                                   rnd, callArgs, argTypes)))
+      return failure();
+    if (failed(appendVcvtImmediate(op, rewriter, "sat", contract.requiresSat,
+                                   sat, callArgs, argTypes)))
+      return failure();
+  }
+  if (contract.requiresPart) {
+    auto part =
+        op.getPartAttr() ? parseVcvtPartImmediate(*op.getPart()) : std::nullopt;
+    if (!part) {
+      return rewriter.notifyMatchFailure(op, "vcvt requires valid part attr");
+    }
+    Value partValue = getI32Constant(rewriter, op.getLoc(), *part);
+    callArgs.push_back(partValue);
+    argTypes.push_back(partValue.getType());
+  }
+  return success();
+}
+
 class LowerVcvtOpPattern final : public OpConversionPattern<pto::VcvtOp> {
 public:
   explicit LowerVcvtOpPattern(TypeConverter &typeConverter,
@@ -258,40 +292,10 @@ public:
       sat = parseSaturationImmediate(*op.getSat());
     }
 
-    if ((*contract).satBeforeRnd) {
-      if (failed(appendVcvtImmediate(op, rewriter, "sat", (*contract).requiresSat,
-                                     sat, callArgs, argTypes)))
-      {
-        return failure();
-      }
-      if (failed(appendVcvtImmediate(op, rewriter, "rnd", (*contract).requiresRnd,
-                                     rnd, callArgs, argTypes)))
-      {
-        return failure();
-      }
-    } else {
-      if (failed(appendVcvtImmediate(op, rewriter, "rnd", (*contract).requiresRnd,
-                                     rnd, callArgs, argTypes)))
-      {
-        return failure();
-      }
-      if (failed(appendVcvtImmediate(op, rewriter, "sat", (*contract).requiresSat,
-                                     sat, callArgs, argTypes)))
-      {
-        return failure();
-      }
-    }
-
-    if ((*contract).requiresPart) {
-      auto part =
-          op.getPartAttr() ? parseVcvtPartImmediate(*op.getPart()) : std::nullopt;
-      if (!part)
-      {
-        return rewriter.notifyMatchFailure(op, "vcvt requires valid part attr");
-      }
-      Value partValue = getI32Constant(rewriter, op.getLoc(), *part);
-      callArgs.push_back(partValue);
-      argTypes.push_back(partValue.getType());
+    if (failed(appendVcvtAttributeImmediates(op, rewriter, *contract, rnd, sat,
+                                             callArgs, argTypes)))
+    {
+      return failure();
     }
 
     auto funcType = rewriter.getFunctionType(argTypes, TypeRange{resultType});
@@ -307,24 +311,27 @@ private:
   LoweringState &state;
 };
 
-
+static bool vcvtRequiresSatMode(pto::VcvtOp op) {
+  FailureOr<VcvtContract> contract = buildVcvtContract(op);
+  return succeeded(contract) && (*contract).requiresSat;
+}
 } // namespace
 
 bool needsV300CtrlModeForVPTOFunc(func::FuncOp funcOp) {
-  if (!pto::isPTOEntryFunction(funcOp) || funcOp.getBlocks().empty()) {
+  if (!pto::isPTOEntryFunction(funcOp) || funcOp.getBlocks().empty())
+  {
     return false;
   }
 
-  bool needsCtrlSetup = false;
+  bool needsSat = false;
   funcOp.walk([&](pto::VcvtOp vcvtOp) {
-    FailureOr<VcvtContract> contract = buildVcvtContract(vcvtOp);
-    if (succeeded(contract) && (*contract).requiresSat) {
-      needsCtrlSetup = true;
+    if (vcvtRequiresSatMode(vcvtOp)) {
+      needsSat = true;
       return WalkResult::interrupt();
     }
     return WalkResult::advance();
   });
-  return needsCtrlSetup;
+  return needsSat;
 }
 
 void populateVPTOVcvtPatterns(TypeConverter &typeConverter,

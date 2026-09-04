@@ -10,78 +10,58 @@
 
 namespace mlir::pto {
 
-std::optional<uint64_t> parseRoundModeImmediate(StringRef roundMode) {
-  static constexpr StringLiteral shortModes[] = {"R", "A", "F", "C", "Z", "O", "H"};
-  static constexpr StringLiteral longModes[] = {
-      "ROUND_R", "ROUND_A", "ROUND_F", "ROUND_C",
-      "ROUND_Z", "ROUND_O", "ROUND_H"};
-  for (uint64_t index = 0; index < 7; ++index) {
-    if (roundMode == shortModes[index] || roundMode == longModes[index]) {
-      return index;
+static std::optional<uint64_t> parseNamedImmediate(
+    StringRef token, ArrayRef<std::pair<StringRef, uint64_t>> names) {
+  for (auto [name, value] : names) {
+    if (token == name) {
+      return value;
     }
   }
   return std::nullopt;
 }
 
+std::optional<uint64_t> parseRoundModeImmediate(StringRef roundMode) {
+  static constexpr std::pair<StringRef, uint64_t> roundModeValues[] = {
+      {"R", 0},       {"ROUND_R", 0}, {"A", 1},       {"ROUND_A", 1},
+      {"F", 2},       {"ROUND_F", 2}, {"C", 3},       {"ROUND_C", 3},
+      {"Z", 4},       {"ROUND_Z", 4}, {"O", 5},       {"ROUND_O", 5},
+      {"H", 6},       {"ROUND_H", 6}};
+  return parseNamedImmediate(roundMode, roundModeValues);
+}
+
 std::optional<uint64_t> parsePartImmediate(StringRef part) {
-  if (part == "EVEN" || part == "PART_EVEN") {
-    return 0;
-  }
-  if (part == "ODD" || part == "PART_ODD") {
-    return 1;
-  }
-  return std::nullopt;
+  static constexpr std::pair<StringRef, uint64_t> partValues[] = {
+      {"EVEN", 0}, {"PART_EVEN", 0}, {"ODD", 1}, {"PART_ODD", 1}};
+  return parseNamedImmediate(part, partValues);
 }
 
 std::optional<uint64_t> parseVcvtPartImmediate(StringRef part) {
-  if (part == "EVEN" || part == "PART_EVEN" || part == "P0" ||
-      part == "PART_P0") {
-    return 0;
-  }
-  if (part == "ODD" || part == "PART_ODD" || part == "P1" ||
-      part == "PART_P1") {
-    return 1;
-  }
-  if (part == "P2" || part == "PART_P2") {
-    return 2;
-  }
-  if (part == "P3" || part == "PART_P3") {
-    return 3;
-  }
-  return std::nullopt;
+  static constexpr std::pair<StringRef, uint64_t> vcvtPartValues[] = {
+      {"EVEN", 0},       {"PART_EVEN", 0}, {"ODD", 1},
+      {"PART_ODD", 1},   {"P2", 2},        {"PART_P2", 2},
+      {"P3", 3},         {"PART_P3", 3}};
+  return parseNamedImmediate(part, vcvtPartValues);
 }
 
 std::optional<uint64_t> parseSaturationImmediate(StringRef sat) {
-  if (sat == "SAT") {
-    return 1;
-  }
-  if (sat == "NOSAT") {
-    return 0;
-  }
-  return std::nullopt;
+  static constexpr std::pair<StringRef, uint64_t> saturationValues[] = {
+      {"SAT", 1}, {"NOSAT", 0}};
+  return parseNamedImmediate(sat, saturationValues);
 }
 
 std::optional<uint64_t> parsePredicateStoreDistImmediate(StringRef dist) {
-  if (dist == "NORM") {
-    return 0;
-  }
-  if (dist == "PK") {
-    return 1;
-  }
-  return std::nullopt;
+  static constexpr std::pair<StringRef, uint64_t> storeDistValues[] = {
+      {"NORM", 0}, {"PK", 1}};
+  return parseNamedImmediate(dist, storeDistValues);
 }
 
 std::optional<uint64_t> parsePredicateLoadDistImmediate(StringRef dist) {
-  if (dist.empty() || dist == "NORM") {
+  if (dist.empty()) {
     return 0;
   }
-  if (dist == "US") {
-    return 1;
-  }
-  if (dist == "DS") {
-    return 2;
-  }
-  return std::nullopt;
+  static constexpr std::pair<StringRef, uint64_t> loadDistValues[] = {
+      {"NORM", 0}, {"US", 1}, {"DS", 2}};
+  return parseNamedImmediate(dist, loadDistValues);
 }
 
 Value getI64Constant(OpBuilder &builder, Location loc, uint64_t value) {
@@ -358,19 +338,15 @@ std::string getDn2NzCopyElementFragment(Type type) {
 }
 
 std::string getMadLhsFragment(Type type) {
-  if (type.isF16()) {
-    return "f16";
+  if (auto intType = dyn_cast<IntegerType>(type)) {
+    if (intType.getWidth() == 8 &&
+        (intType.isSigned() || intType.isSignless())) {
+      return "s8";
+    }
+    return {};
   }
-  if (type.isBF16()) {
-    return "bf16";
-  }
-  if (type.isF32()) {
-    return "f32";
-  }
-  if (auto intType = dyn_cast<IntegerType>(type);
-      intType && intType.getWidth() == 8 &&
-      (intType.isSigned() || intType.isSignless())) {
-    return "s8";
+  if (std::string fragment = getElementTypeFragment(type); !fragment.empty()) {
+    return fragment;
   }
   if (pto::isPTOFloat8E4M3LikeType(type)) {
     return "e4m3";

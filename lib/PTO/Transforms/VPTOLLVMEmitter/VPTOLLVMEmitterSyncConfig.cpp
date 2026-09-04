@@ -204,24 +204,18 @@ StringRef buildNullaryConfigCallee<pto::SetAtomicS8Op>(MLIRContext *context) {
 static FailureOr<Value> encodeMovPadValue(Location loc, Value value,
                                           ConversionPatternRewriter &rewriter) {
   Type type = value.getType();
+  if (!isa<IntegerType>(type) && !isa<FloatType>(type)) {
+    return failure();
+  }
+  unsigned bitWidth = type.getIntOrFloatBitWidth();
+  if (bitWidth != 8 && bitWidth != 16 && bitWidth != 32) {
+    return failure();
+  }
   Value payload = value;
-  unsigned bitWidth = 0;
-
-  if (auto intType = dyn_cast<IntegerType>(type)) {
-    bitWidth = intType.getWidth();
-  } else if (auto floatType = dyn_cast<FloatType>(type)) {
-    bitWidth = floatType.getWidth();
-    auto intType = rewriter.getIntegerType(bitWidth);
-    payload = rewriter.create<arith::BitcastOp>(loc, intType, value);
-  } else {
-    return failure();
+  if (auto floatType = dyn_cast<FloatType>(type)) {
+    payload = rewriter.create<arith::BitcastOp>(
+        loc, rewriter.getIntegerType(floatType.getWidth()), value);
   }
-
-  if (bitWidth != 8 && bitWidth != 16 && bitWidth != 32)
-  {
-    return failure();
-  }
-
   return rewriter.create<arith::ExtUIOp>(loc, rewriter.getI64Type(), payload)
       .getResult();
 }
@@ -275,39 +269,27 @@ StringRef buildSyncCallee<pto::WaitIntraBlockOp>(MLIRContext *context) {
 }
 
 static StringRef buildMemBarCallee(MemBarKind kind, MLIRContext *context) {
-  switch (kind) {
-  case MemBarKind::VV_ALL:
-    return StringAttr::get(context, "llvm.hivm.mem.bar.vv.all").getValue();
-  case MemBarKind::VST_VLD:
-    return StringAttr::get(context, "llvm.hivm.mem.bar.vst.vld").getValue();
-  case MemBarKind::VLD_VST:
-    return StringAttr::get(context, "llvm.hivm.mem.bar.vld.vst").getValue();
-  case MemBarKind::VST_VST:
-    return StringAttr::get(context, "llvm.hivm.mem.bar.vst.vst").getValue();
-  case MemBarKind::VS_ALL:
-    return StringAttr::get(context, "llvm.hivm.mem.bar.vs.all").getValue();
-  case MemBarKind::VST_LD:
-    return StringAttr::get(context, "llvm.hivm.mem.bar.vst.ld").getValue();
-  case MemBarKind::VLD_ST:
-    return StringAttr::get(context, "llvm.hivm.mem.bar.vld.st").getValue();
-  case MemBarKind::VST_ST:
-    return StringAttr::get(context, "llvm.hivm.mem.bar.vst.st").getValue();
-  case MemBarKind::SV_ALL:
-    return StringAttr::get(context, "llvm.hivm.mem.bar.sv.all").getValue();
-  case MemBarKind::ST_VLD:
-    return StringAttr::get(context, "llvm.hivm.mem.bar.st.vld").getValue();
-  case MemBarKind::LD_VST:
-    return StringAttr::get(context, "llvm.hivm.mem.bar.ld.vst").getValue();
-  case MemBarKind::ST_VST:
-    return StringAttr::get(context, "llvm.hivm.mem.bar.st.vst").getValue();
-  case MemBarKind::SS_ALL:
-    return StringAttr::get(context, "llvm.hivm.mem.bar.ss.all").getValue();
-  case MemBarKind::ST_LD:
-    return StringAttr::get(context, "llvm.hivm.mem.bar.st.ld").getValue();
-  case MemBarKind::LD_ST:
-    return StringAttr::get(context, "llvm.hivm.mem.bar.ld.st").getValue();
-  case MemBarKind::ST_ST:
-    return StringAttr::get(context, "llvm.hivm.mem.bar.st.st").getValue();
+  static constexpr std::pair<MemBarKind, StringLiteral> kMemBarCallees[] = {
+      {MemBarKind::VV_ALL, "llvm.hivm.mem.bar.vv.all"},
+      {MemBarKind::VST_VLD, "llvm.hivm.mem.bar.vst.vld"},
+      {MemBarKind::VLD_VST, "llvm.hivm.mem.bar.vld.vst"},
+      {MemBarKind::VST_VST, "llvm.hivm.mem.bar.vst.vst"},
+      {MemBarKind::VS_ALL, "llvm.hivm.mem.bar.vs.all"},
+      {MemBarKind::VST_LD, "llvm.hivm.mem.bar.vst.ld"},
+      {MemBarKind::VLD_ST, "llvm.hivm.mem.bar.vld.st"},
+      {MemBarKind::VST_ST, "llvm.hivm.mem.bar.vst.st"},
+      {MemBarKind::SV_ALL, "llvm.hivm.mem.bar.sv.all"},
+      {MemBarKind::ST_VLD, "llvm.hivm.mem.bar.st.vld"},
+      {MemBarKind::LD_VST, "llvm.hivm.mem.bar.ld.vst"},
+      {MemBarKind::ST_VST, "llvm.hivm.mem.bar.st.vst"},
+      {MemBarKind::SS_ALL, "llvm.hivm.mem.bar.ss.all"},
+      {MemBarKind::ST_LD, "llvm.hivm.mem.bar.st.ld"},
+      {MemBarKind::LD_ST, "llvm.hivm.mem.bar.ld.st"},
+      {MemBarKind::ST_ST, "llvm.hivm.mem.bar.st.st"}};
+  for (auto [memKind, callee] : kMemBarCallees) {
+    if (memKind == kind) {
+      return StringAttr::get(context, callee).getValue();
+    }
   }
   llvm_unreachable("unexpected membar kind");
 }
@@ -856,6 +838,41 @@ public:
   }
 };
 
+static LogicalResult lowerSimtResumeAsmResults(
+    pto::ResumeOp op, ArrayRef<pto::ResumeOp> resumeOps,
+    LLVM::InlineAsmOp asmOp, const TypeConverter *typeConverter,
+    ConversionPatternRewriter &rewriter) {
+  if (resumeOps.size() == 1) {
+    Type resultType = typeConverter->convertType(op.getType());
+    Value result = unpackSimtKeepResumePayload(op.getLoc(), asmOp.getRes(),
+                                               resultType, rewriter);
+    if (!result) {
+      return rewriter.notifyMatchFailure(op, "failed to unpack result");
+    }
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+  rewriter.setInsertionPointAfter(asmOp);
+  SmallVector<Value, 4> results;
+  for (auto [index, resume] : llvm::enumerate(resumeOps)) {
+    pto::ResumeOp resumeOp = resume;
+    auto extract = rewriter.create<LLVM::ExtractValueOp>(
+        resumeOp.getLoc(), asmOp.getRes(),
+        ArrayRef<int64_t>{static_cast<int64_t>(index)});
+    Type resultType = typeConverter->convertType(resumeOp.getType());
+    Value result = unpackSimtKeepResumePayload(
+        resumeOp.getLoc(), extract.getRes(), resultType, rewriter);
+    if (!result) {
+      return rewriter.notifyMatchFailure(resumeOp, "failed to unpack result");
+    }
+    results.push_back(result);
+  }
+  for (auto [resume, result] : llvm::zip(resumeOps, results)) {
+    rewriter.replaceOp(resume, result);
+  }
+  return success();
+}
+
 class LowerResumeOpPattern final : public OpConversionPattern<pto::ResumeOp> {
 public:
   explicit LowerResumeOpPattern(TypeConverter &typeConverter,
@@ -896,39 +913,8 @@ public:
         buildSimtKeepResumeConstraints(*physicalRegs, false), true, false,
         LLVM::AsmDialectAttr::get(op.getContext(), LLVM::AsmDialect::AD_ATT),
         ArrayAttr{});
-
-    if (resumeOps.size() == 1) {
-      Type resultType = getTypeConverter()->convertType(op.getType());
-      Value result = unpackSimtKeepResumePayload(op.getLoc(), asmOp.getRes(),
-                                                 resultType, rewriter);
-      if (!result)
-      {
-        return rewriter.notifyMatchFailure(op, "failed to unpack result");
-      }
-      rewriter.replaceOp(op, result);
-      return success();
-    }
-
-    rewriter.setInsertionPointAfter(asmOp);
-    SmallVector<Value, 4> results;
-    for (auto [index, resume] : llvm::enumerate(resumeOps)) {
-      auto extract = rewriter.create<LLVM::ExtractValueOp>(
-          resume.getLoc(), asmOp.getRes(),
-          ArrayRef<int64_t>{static_cast<int64_t>(index)});
-      Type resultType = getTypeConverter()->convertType(resume.getType());
-      Value result = unpackSimtKeepResumePayload(
-          resume.getLoc(), extract.getRes(), resultType, rewriter);
-      if (!result)
-      {
-        return rewriter.notifyMatchFailure(resume, "failed to unpack result");
-      }
-      results.push_back(result);
-    }
-    for (auto [resume, result] : llvm::zip(resumeOps, results))
-    {
-      rewriter.replaceOp(resume, result);
-    }
-    return success();
+    return lowerSimtResumeAsmResults(op, resumeOps, asmOp,
+                                     getTypeConverter(), rewriter);
   }
 };
 
@@ -958,6 +944,21 @@ private:
 };
 
 template <typename SyncOp>
+static void lowerTripleI64SyncCall(SyncOp op, StringRef calleeName,
+                                   Value first, Value second, Value third,
+                                   ConversionPatternRewriter &rewriter,
+                                   LoweringState &state) {
+  auto funcType = rewriter.getFunctionType(
+      TypeRange{rewriter.getI64Type(), rewriter.getI64Type(),
+                rewriter.getI64Type()},
+      TypeRange{});
+  rewriter.create<func::CallOp>(op.getLoc(), calleeName, TypeRange{},
+                                ValueRange{first, second, third});
+  state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
+  rewriter.eraseOp(op);
+}
+
+template <typename SyncOp>
 class LowerPipeEventSyncOpPattern final : public OpConversionPattern<SyncOp> {
 public:
   explicit LowerPipeEventSyncOpPattern(TypeConverter &typeConverter,
@@ -981,14 +982,8 @@ public:
     Value srcValue = getI64Constant(rewriter, op.getLoc(), *src);
     Value dstValue = getI64Constant(rewriter, op.getLoc(), *dst);
     Value eventValue = getI64Constant(rewriter, op.getLoc(), *event);
-    auto funcType = rewriter.getFunctionType(
-        TypeRange{rewriter.getI64Type(), rewriter.getI64Type(),
-                  rewriter.getI64Type()},
-        TypeRange{});
-    rewriter.create<func::CallOp>(op.getLoc(), calleeName, TypeRange{},
-                                  ValueRange{srcValue, dstValue, eventValue});
-    state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
-    rewriter.eraseOp(op);
+    lowerTripleI64SyncCall(op, calleeName, srcValue, dstValue, eventValue,
+                           rewriter, state);
     return success();
   }
 
@@ -1086,14 +1081,8 @@ public:
       return rewriter.notifyMatchFailure(op, "unexpected event_id type");
     }
 
-    auto funcType = rewriter.getFunctionType(
-        TypeRange{rewriter.getI64Type(), rewriter.getI64Type(),
-                  rewriter.getI64Type()},
-        TypeRange{});
-    rewriter.create<func::CallOp>(op.getLoc(), calleeName, TypeRange{},
-                                  ValueRange{srcValue, dstValue, eventValue});
-    state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
-    rewriter.eraseOp(op);
+    lowerTripleI64SyncCall(op, calleeName, srcValue, dstValue, eventValue,
+                           rewriter, state);
     return success();
   }
 
@@ -1313,6 +1302,30 @@ private:
 };
 
 template <typename BufSyncOp>
+static FailureOr<PIPE> resolveBufSyncPipe(BufSyncOp op,
+                                          ConversionPatternRewriter &rewriter) {
+  if (auto pipeAttr = dyn_cast<PipeAttr>(op.getOpTypeAttr())) {
+    PIPE pipe = pipeAttr.getPipe();
+    if (!isConcreteSyncPipe(pipe)) {
+      return rewriter.notifyMatchFailure(
+          op, "buffer sync op_type cannot map to concrete pipe");
+    }
+    return pipe;
+  }
+  auto opTypeOr = parseSyncOpTypeLikeAttr(op.getOpTypeAttr());
+  if (failed(opTypeOr)) {
+    return rewriter.notifyMatchFailure(
+        op, "buffer sync expects pipe/sync_op_type/pipe_event_type attr");
+  }
+  PIPE pipe = mapSyncOpTypeToPipe(*opTypeOr);
+  if (!isConcreteSyncPipe(pipe)) {
+    return rewriter.notifyMatchFailure(
+        op, "buffer sync op_type cannot map to concrete pipe");
+  }
+  return pipe;
+}
+
+template <typename BufSyncOp>
 class LowerBufSyncOpPattern final : public OpConversionPattern<BufSyncOp> {
 public:
   explicit LowerBufSyncOpPattern(TypeConverter &typeConverter,
@@ -1323,23 +1336,11 @@ public:
   matchAndRewrite(BufSyncOp op, typename BufSyncOp::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     (void)adaptor;
-    PIPE pipe = PIPE::PIPE_UNASSIGNED;
-    if (auto pipeAttr = dyn_cast<PipeAttr>(op.getOpTypeAttr())) {
-      pipe = pipeAttr.getPipe();
-    } else {
-      auto opTypeOr = parseSyncOpTypeLikeAttr(op.getOpTypeAttr());
-      if (failed(opTypeOr)) {
-        return rewriter.notifyMatchFailure(
-            op, "buffer sync expects pipe/sync_op_type/pipe_event_type attr");
-      }
-      pipe = mapSyncOpTypeToPipe(*opTypeOr);
+    FailureOr<PIPE> pipe = resolveBufSyncPipe(op, rewriter);
+    if (failed(pipe)) {
+      return failure();
     }
-    if (!isConcreteSyncPipe(pipe)) {
-      return rewriter.notifyMatchFailure(op,
-                                         "buffer sync op_type cannot map to concrete pipe");
-    }
-
-    auto pipeImm = parsePipeImmediate(stringifyPIPE(pipe));
+    auto pipeImm = parsePipeImmediate(stringifyPIPE(*pipe));
     if (!pipeImm)
     {
       return rewriter.notifyMatchFailure(op, "unsupported buffer sync pipe");
@@ -1351,14 +1352,8 @@ public:
         getI64Constant(rewriter, op.getLoc(), op.getBufIdAttr().getInt());
     Value modeValue =
         getI64Constant(rewriter, op.getLoc(), op.getModeAttr().getInt());
-    auto funcType = rewriter.getFunctionType(
-        TypeRange{rewriter.getI64Type(), rewriter.getI64Type(),
-                  rewriter.getI64Type()},
-        TypeRange{});
-    rewriter.create<func::CallOp>(op.getLoc(), calleeName, TypeRange{},
-                                  ValueRange{pipeValue, bufIdValue, modeValue});
-    state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
-    rewriter.eraseOp(op);
+    lowerTripleI64SyncCall(op, calleeName, pipeValue, bufIdValue, modeValue,
+                           rewriter, state);
     return success();
   }
 
@@ -1378,23 +1373,11 @@ public:
   LogicalResult
   matchAndRewrite(BufDynSyncOp op, typename BufDynSyncOp::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    PIPE pipe = PIPE::PIPE_UNASSIGNED;
-    if (auto pipeAttr = dyn_cast<PipeAttr>(op.getOpTypeAttr())) {
-      pipe = pipeAttr.getPipe();
-    } else {
-      auto opTypeOr = parseSyncOpTypeLikeAttr(op.getOpTypeAttr());
-      if (failed(opTypeOr)) {
-        return rewriter.notifyMatchFailure(
-            op, "buffer sync expects pipe/sync_op_type/pipe_event_type attr");
-      }
-      pipe = mapSyncOpTypeToPipe(*opTypeOr);
+    FailureOr<PIPE> pipe = resolveBufSyncPipe(op, rewriter);
+    if (failed(pipe)) {
+      return failure();
     }
-    if (!isConcreteSyncPipe(pipe)) {
-      return rewriter.notifyMatchFailure(
-          op, "buffer sync op_type cannot map to concrete pipe");
-    }
-
-    auto pipeImm = parsePipeImmediate(stringifyPIPE(pipe));
+    auto pipeImm = parsePipeImmediate(stringifyPIPE(*pipe));
     if (!pipeImm)
     {
       return rewriter.notifyMatchFailure(op, "unsupported buffer sync pipe");
@@ -1418,14 +1401,8 @@ public:
         buildBufDynSyncCallee(op.getContext(), isGetBuf);
     Value modeValue =
         getI64Constant(rewriter, op.getLoc(), op.getModeAttr().getInt());
-    auto funcType = rewriter.getFunctionType(
-        TypeRange{rewriter.getI64Type(), rewriter.getI64Type(),
-                  rewriter.getI64Type()},
-        TypeRange{});
-    rewriter.create<func::CallOp>(op.getLoc(), calleeName, TypeRange{},
-                                  ValueRange{pipeValue, bufIdValue, modeValue});
-    state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
-    rewriter.eraseOp(op);
+    lowerTripleI64SyncCall(op, calleeName, pipeValue, bufIdValue, modeValue,
+                           rewriter, state);
     return success();
   }
 

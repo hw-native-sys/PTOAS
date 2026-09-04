@@ -84,24 +84,17 @@ static FailureOr<StringRef> buildVgather2Callee(MLIRContext *context,
   Type sourceElemType = getVgather2SourceElementType(sourceType);
   Type resultElemType = getElementTypeFromVectorLike(resultType);
   auto lanes = getElementCountFromVectorLike(resultType);
-  if (!sourceElemType || !resultElemType || !lanes)
-  {
+  if (!sourceElemType || !resultElemType || !lanes) {
     return failure();
   }
 
-  std::string vec;
-  int64_t intrinsicLanes = *lanes;
-  if (pto::getPTOStorageElemBitWidth(sourceElemType) == 8) {
-    vec = getElementTypeFragment(sourceElemType);
-    intrinsicLanes *= 2;
-  } else {
-    vec = getElementTypeFragment(resultElemType);
-  }
-  if (vec.empty())
-  {
+  bool widenLanes = pto::getPTOStorageElemBitWidth(sourceElemType) == 8;
+  std::string vec =
+      getElementTypeFragment(widenLanes ? sourceElemType : resultElemType);
+  if (vec.empty()) {
     return failure();
   }
-
+  int64_t intrinsicLanes = widenLanes ? *lanes * 2 : *lanes;
   return StringAttr::get(context, "llvm.hivm.vgather2.v300.v" +
                                       std::to_string(intrinsicLanes) + vec)
       .getValue();

@@ -21,68 +21,52 @@ static std::string getAtomicElementTypeFragment(Type type,
     if (vecType.getRank() != 1 || vecType.getDimSize(0) != 2) {
       return {};
     }
-    if (vecType.getElementType().isF16())
-    {
+    Type elementType = vecType.getElementType();
+    if (elementType.isF16()) {
       return "f16x2";
     }
-    if (vecType.getElementType().isBF16())
-    {
+    if (elementType.isBF16()) {
       return "bf16x2";
     }
     return {};
   }
-  if (type.isF16())
-  {
-    return "fp16";
-  }
-  if (type.isBF16())
-  {
-    return "bf16";
-  }
-  if (type.isF32())
-  {
+  if (type.isF32()) {
     return "fp32";
   }
+  if (type.isBF16()) {
+    return "bf16";
+  }
+  if (type.isF16()) {
+    return "fp16";
+  }
   auto intType = dyn_cast<IntegerType>(type);
-  if (!intType) {
+  if (!intType || (intType.getWidth() != 32 && intType.getWidth() != 64)) {
     return {};
   }
-  if (intType.getWidth() != 32 && intType.getWidth() != 64) {
-    return {};
-  }
+  bool isUnsigned = intType.isUnsigned();
   if (signednessAttr) {
-    auto signedness = cast<pto::SignednessAttr>(signednessAttr).getValue();
-    return std::string(signedness == pto::Signedness::Unsigned ? "u" : "s") +
-           std::to_string(intType.getWidth());
+    isUnsigned = cast<pto::SignednessAttr>(signednessAttr).getValue() ==
+                 pto::Signedness::Unsigned;
   }
-  return std::string(intType.isUnsigned() ? "u" : "s") +
+  return std::string(isUnsigned ? "u" : "s") +
          std::to_string(intType.getWidth());
 }
 
 static std::string getShuffleIntrinsicTypeFragment(Type type) {
-  if (auto intType = dyn_cast<IntegerType>(type)) {
-    switch (intType.getWidth()) {
-    case 32:
-      return "i32";
-    case 64:
-      return "i64";
-    default:
-      return {};
-    }
-  }
-  if (type.isF16())
-  {
+  if (type.isF16()) {
     return "f16";
   }
-  if (type.isF32())
-  {
+  if (type.isF32()) {
     return "f32";
   }
-  if (auto vecType = dyn_cast<VectorType>(type)) {
-    if (vecType.getRank() == 1 && vecType.getDimSize(0) == 2 &&
-        vecType.getElementType().isF16()) {
-      return "v2f16";
-    }
+  if (auto intType = dyn_cast<IntegerType>(type);
+      intType && (intType.getWidth() == 32 || intType.getWidth() == 64)) {
+    return "i" + std::to_string(intType.getWidth());
+  }
+  if (auto vecType = dyn_cast<VectorType>(type);
+      vecType && vecType.getRank() == 1 && vecType.getDimSize(0) == 2 &&
+      vecType.getElementType().isF16()) {
+    return "v2f16";
   }
   return {};
 }
@@ -109,6 +93,17 @@ static std::string getReduxIntrinsicTypeFragment(Type type,
     return "f32";
   }
   return {};
+}
+
+static LogicalResult replaceWithPlannedCall(
+    Operation *op, StringRef callee, Type resultType, ValueRange args,
+    FunctionType functionType, ConversionPatternRewriter &rewriter,
+    LoweringState &state) {
+  auto call = rewriter.create<func::CallOp>(op->getLoc(), callee,
+                                            TypeRange{resultType}, args);
+  state.plannedDecls.push_back(PlannedDecl{callee.str(), functionType});
+  rewriter.replaceOp(op, call.getResults());
+  return success();
 }
 
 
@@ -995,12 +990,9 @@ public:
 
     auto funcType = rewriter.getFunctionType(TypeRange{resultType},
                                              TypeRange{resultType});
-    auto call = rewriter.create<func::CallOp>(op.getLoc(), *calleeName,
-                                              TypeRange{resultType},
-                                              ValueRange{adaptor.getValue()});
-    state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
-    rewriter.replaceOp(op, call.getResults());
-    return success();
+    return replaceWithPlannedCall(op, *calleeName, resultType,
+                                  ValueRange{adaptor.getValue()}, funcType,
+                                  rewriter, state);
   }
 
 private:
@@ -1264,12 +1256,9 @@ public:
 
     auto funcType =
         rewriter.getFunctionType(TypeRange{lhsType, rhsType}, TypeRange{resultType});
-    auto call = rewriter.create<func::CallOp>(
-        op.getLoc(), *calleeName, TypeRange{resultType},
-        ValueRange{adaptor.getLhs(), adaptor.getRhs()});
-    state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
-    rewriter.replaceOp(op, call.getResults());
-    return success();
+    return replaceWithPlannedCall(op, *calleeName, resultType,
+                                  ValueRange{adaptor.getLhs(), adaptor.getRhs()},
+                                  funcType, rewriter, state);
   }
 
 private:
@@ -1300,13 +1289,10 @@ public:
     }
 
     auto funcType = rewriter.getFunctionType(TypeRange{valueType},
-                                             TypeRange{resultType});
-    auto call = rewriter.create<func::CallOp>(op.getLoc(), *calleeName,
-                                              TypeRange{resultType},
-                                              ValueRange{adaptor.getValue()});
-    state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
-    rewriter.replaceOp(op, call.getResults());
-    return success();
+                                             TypeRange{valueType});
+    return replaceWithPlannedCall(op, *calleeName, resultType,
+                                  ValueRange{adaptor.getValue()}, funcType,
+                                  rewriter, state);
   }
 
 private:
@@ -1340,12 +1326,9 @@ public:
 
     auto funcType = rewriter.getFunctionType(TypeRange{valueType},
                                              TypeRange{resultType});
-    auto call = rewriter.create<func::CallOp>(op.getLoc(), *calleeName,
-                                              TypeRange{resultType},
-                                              ValueRange{adaptor.getValue()});
-    state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
-    rewriter.replaceOp(op, call.getResults());
-    return success();
+    return replaceWithPlannedCall(op, *calleeName, resultType,
+                                  ValueRange{adaptor.getValue()}, funcType,
+                                  rewriter, state);
   }
 
 private:
@@ -1380,12 +1363,9 @@ public:
 
     auto funcType = rewriter.getFunctionType(TypeRange{lhsType, rhsType},
                                              TypeRange{resultType});
-    auto call = rewriter.create<func::CallOp>(
-        op.getLoc(), *calleeName, TypeRange{resultType},
-        ValueRange{adaptor.getLhs(), adaptor.getRhs()});
-    state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
-    rewriter.replaceOp(op, call.getResults());
-    return success();
+    return replaceWithPlannedCall(op, *calleeName, resultType,
+                                  ValueRange{adaptor.getLhs(), adaptor.getRhs()},
+                                  funcType, rewriter, state);
   }
 
 private:

@@ -83,21 +83,6 @@ packCopyGmToUbCfgV220(Operation *anchor, ValueRange operands) {
   return packCopyV220Config(anchor, operands, 11);
 }
 
-[[maybe_unused]] static FailureOr<Value>
-packCopyGmToUbConfig0(Operation *anchor, Value sid, Value nBurst,
-                      Value lenBurst, Value leftPadding, Value rightPadding,
-                      Value dataSelect, Value cacheCtl) {
-  SmallVector<Value, 11> operands(11);
-  operands[2] = sid;
-  operands[3] = nBurst;
-  operands[4] = lenBurst;
-  operands[5] = leftPadding;
-  operands[6] = rightPadding;
-  operands[7] = dataSelect;
-  operands[8] = cacheCtl;
-  return packCopyGmToUbConfig0(anchor, operands);
-}
-
 static FailureOr<Value>
 packCopyUbToGmConfig0(Operation *anchor, ValueRange operands) {
   if (operands.size() != 8)
@@ -132,78 +117,6 @@ packCopyUbToGmConfig1(Operation *anchor, ValueRange operands) {
 static FailureOr<Value>
 packCopyUbToGmCfgV220(Operation *anchor, ValueRange operands) {
   return packCopyV220Config(anchor, operands, 8);
-}
-
-[[maybe_unused]] static FailureOr<Value>
-packCopyUbToGmConfig0(Operation *anchor, Value sid, Value nBurst,
-                      Value lenBurst, Value l2CacheCtl) {
-  SmallVector<Value, 8> operands(8);
-  operands[2] = sid;
-  operands[3] = nBurst;
-  operands[4] = lenBurst;
-  operands[5] = l2CacheCtl;
-  return packCopyUbToGmConfig0(anchor, operands);
-}
-
-static FailureOr<Value>
-packCopyUbToUbConfig(Operation *anchor, ValueRange operands) {
-  if (operands.size() != 7)
-  {
-    return failure();
-  }
-  OpBuilder builder(anchor);
-  builder.setInsertionPoint(anchor);
-  Location loc = anchor->getLoc();
-
-  auto values = castIntegerLikeOperands(anchor, operands, {3u, 4u, 5u, 6u},
-                                        builder.getI64Type());
-  if (failed(values))
-  {
-    return failure();
-  }
-
-  return packShiftedI64Fields(builder, loc, (*values)[0],
-                              {{(*values)[1], 16}, {(*values)[2], 32},
-                               {(*values)[3], 48}});
-}
-
-static FailureOr<Value> packCopyCbufUbConfig(Operation *anchor,
-                                             ValueRange operands) {
-  if (operands.size() != 7)
-  {
-    return failure();
-  }
-  OpBuilder builder(anchor);
-  builder.setInsertionPoint(anchor);
-  Location loc = anchor->getLoc();
-
-  auto getI64Operand = [&](unsigned idx) -> Value {
-    return castIntegerLikeTo(anchor, operands[idx], builder.getI64Type());
-  };
-
-  Value sid = getI64Operand(2);
-  Value nBurst = getI64Operand(3);
-  Value lenBurst = getI64Operand(4);
-  Value srcStride = getI64Operand(5);
-  Value dstStride = getI64Operand(6);
-  if (!sid || !nBurst || !lenBurst || !srcStride || !dstStride)
-  {
-    return failure();
-  }
-
-  return packShiftedI64Fields(builder, loc, sid,
-                              {{nBurst, 4}, {lenBurst, 16},
-                               {srcStride, 32}, {dstStride, 48}});
-}
-
-static FailureOr<Value>
-packCopyCbufToUbConfig(Operation *anchor, ValueRange operands) {
-  return packCopyCbufUbConfig(anchor, operands);
-}
-
-static FailureOr<Value>
-packCopyUbToCbufConfig(Operation *anchor, ValueRange operands) {
-  return packCopyCbufUbConfig(anchor, operands);
 }
 
 static FailureOr<Value> buildUbufUnaryConfig(Operation *anchor,
@@ -307,18 +220,173 @@ static StringRef buildCopyUbToGmCallee(MLIRContext *context,
       .getValue();
 }
 
-static StringRef buildCopyUbToUbCallee(MLIRContext *context) {
-  return StringAttr::get(context, "llvm.hivm.MOV.UB.TO.UB.v310").getValue();
+// Creates a call to a planned function and records the declaration that must
+// be emitted alongside the lowered module.
+static void planVPTOLLVMCall(Location loc, StringRef calleeName,
+                             TypeRange argTypes, ValueRange args,
+                             ConversionPatternRewriter &rewriter,
+                             LoweringState &state) {
+  auto funcType = rewriter.getFunctionType(argTypes, TypeRange{});
+  rewriter.create<func::CallOp>(loc, calleeName, TypeRange{}, args);
+  state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
 }
 
-static StringRef buildCopyCbufToUbCallee(MLIRContext *context) {
-  return StringAttr::get(context, "llvm.hivm.MOV.L1.TO.UB.v310").getValue();
+// Callee selection for the GM<->UBUF copy ops.
+template <typename CopyOp>
+static FailureOr<StringRef> getCopyOpCallee(CopyOp op,
+                                            const std::string &march,
+                                            bool hasPadding) {
+  if constexpr (std::is_same_v<CopyOp, pto::CopyGmToUbufOp>) {
+    return buildCopyGmToUbCallee(op.getContext(), op.getSource().getType(),
+                                 march, hasPadding);
+  }
+  return buildCopyUbToGmCallee(op.getContext(), march);
 }
 
-static StringRef buildCopyUbToCbufCallee(MLIRContext *context) {
-  return StringAttr::get(context, "llvm.hivm.MOV.UB.TO.L1.v310").getValue();
+struct CopyGmUbConfigs {
+  Value config0;
+  Value config1;
+  bool singleConfig;
+};
+
+// Materializes the packed config arguments for a GM<->UBUF copy op. The c220
+// signatures take a single config while the legacy ones need two configs.
+template <typename CopyOp>
+static FailureOr<CopyGmUbConfigs>
+materializeCopyGmUbConfigs(CopyOp op, typename CopyOp::Adaptor adaptor,
+                           const std::string &march, bool hasPadding) {
+  constexpr bool isGmUb = std::is_same_v<CopyOp, pto::CopyGmToUbufOp>;
+  bool isC220 = march == "dav-c220-vec" || march == "dav-c220-cube";
+  bool useA3NonPadded = isC220 && isGmUb && !hasPadding;
+  bool useA3UbGm = isC220 && !isGmUb;
+  bool useSingleConfig = useA3NonPadded || useA3UbGm;
+  FailureOr<Value> config0 = failure();
+  FailureOr<Value> config1 = failure();
+  if (useA3NonPadded)
+  {
+    config0 = packCopyGmToUbCfgV220(op, adaptor.getOperands());
+  } else if (useA3UbGm) {
+    config0 = packCopyUbToGmCfgV220(op, adaptor.getOperands());
+  } else if constexpr (isGmUb) {
+    config0 = packCopyGmToUbConfig0(op, adaptor.getOperands());
+    config1 = packCopyGmToUbConfig1(op, adaptor.getOperands());
+  } else {
+    config0 = packCopyUbToGmConfig0(op, adaptor.getOperands());
+    config1 = packCopyUbToGmConfig1(op, adaptor.getOperands());
+  }
+  if (failed(config0) || (!useSingleConfig && failed(config1)))
+    return failure();
+  return CopyGmUbConfigs{*config0, useSingleConfig ? Value() : *config1,
+                         useSingleConfig};
 }
 
+// Callee name builders for the ubuf shift/scalar/unary arithmetic families.
+template <typename ShiftOp>
+static FailureOr<std::string> buildShiftOpCallee(StringRef elemFrag) {
+  StringRef suffix = elemFrag;
+  if (suffix == "s16")
+    suffix = "u16";
+  else if (suffix == "s32")
+    suffix = "u32";
+  StringRef stem;
+  if constexpr (std::is_same_v<ShiftOp, pto::UBVshlOp>) stem = "VSHL";
+  if constexpr (std::is_same_v<ShiftOp, pto::UBVshrOp>) stem = "VSHR";
+  if (stem.empty())
+    return failure();
+  return std::string("llvm.hivm.") + stem.str() + "." + suffix.str();
+}
+
+template <typename ScalarOp>
+static FailureOr<std::string> buildScalarBinaryOpCallee(StringRef elemFrag) {
+  StringRef stem;
+  if constexpr (std::is_same_v<ScalarOp, pto::UBVmulSOp>) stem = "VMULS";
+  else if constexpr (std::is_same_v<ScalarOp, pto::UBVaddSOp>) stem = "VADDS";
+  else if constexpr (std::is_same_v<ScalarOp, pto::UBVmaxSOp>) stem = "VMAXS";
+  else if constexpr (std::is_same_v<ScalarOp, pto::UBVminSOp>) stem = "VMINS";
+  if (stem.empty())
+    return failure();
+  return std::string("llvm.hivm.") + stem.str() + "." + elemFrag.str();
+}
+
+template <typename UnaryOp>
+static FailureOr<std::string> buildUnaryOpCallee(StringRef elemFrag) {
+  StringRef suffix = elemFrag;
+  if (suffix == "s16")
+    suffix = "u16";
+  StringRef stem;
+  if constexpr (std::is_same_v<UnaryOp, pto::UBVnotOp>) stem = "VNOT";
+  else if constexpr (std::is_same_v<UnaryOp, pto::UBVabsOp>) stem = "VABS";
+  else if constexpr (std::is_same_v<UnaryOp, pto::UBVreluOp>) {
+    if (suffix == "u16" || suffix == "u32")
+      return failure();
+    stem = "VRELU";
+  } else if constexpr (std::is_same_v<UnaryOp, pto::UBVexpOp>) {
+    stem = "VEXP";
+  } else if constexpr (std::is_same_v<UnaryOp, pto::UBVlnOp>) {
+    stem = "VLN";
+  } else if constexpr (std::is_same_v<UnaryOp, pto::UBVsqrtOp>) {
+    stem = "VSQRT";
+  } else if constexpr (std::is_same_v<UnaryOp, pto::UBVrsqrtOp>) {
+    stem = "VRSQRT";
+  }
+  if (stem.empty())
+    return failure();
+  return std::string("llvm.hivm.") + stem.str() + "." + suffix.str();
+}
+
+// Shared materialization of the unary-style config (repeat/block/repeat
+// strides) used by the shift, scalar-binary and unary op families.
+template <typename VecOp, typename Adaptor>
+static FailureOr<Value> materializeUbufUnaryConfig(
+    VecOp op, Adaptor adaptor, ConversionPatternRewriter &rewriter) {
+  return buildUbufUnaryConfig(op, rewriter, adaptor.getRepeat(),
+                              adaptor.getDstBlockStride(),
+                              adaptor.getSrcBlockStride(),
+                              adaptor.getDstRepeatStride(),
+                              adaptor.getSrcRepeatStride());
+}
+
+// pto.ub.vgatherb -> llvm.hivm.VGATHERB.b16/.b32 helpers.
+static FailureOr<std::string> buildVgatherbCallee(pto::UBVgatherbOp op) {
+  auto ptrType = mlir::cast<pto::PtrType>(op.getDst().getType());
+  Type elemType = ptrType.getElementType();
+  unsigned width = pto::getPTOStorageElemBitWidth(elemType);
+  if (width != 16 && width != 32)
+    return failure();
+  return std::string("llvm.hivm.VGATHERB.") + (width == 16 ? "b16" : "b32");
+}
+
+static Value buildVgatherbConfig(pto::UBVgatherbOp op,
+                                 pto::UBVgatherbOp::Adaptor adaptor,
+                                 ConversionPatternRewriter &rewriter) {
+  Location loc = op.getLoc();
+  Type i64Ty = rewriter.getI64Type();
+  auto constI64 = [&](uint64_t v) -> Value {
+    return rewriter.create<arith::ConstantOp>(loc,
+                                              rewriter.getI64IntegerAttr(v));
+  };
+  auto getI64 = [&](Value v) -> Value {
+    return castIntegerLikeTo(op, v, i64Ty);
+  };
+  // config[31:0] = source data address (low 32 bits of the src pointer).
+  // Trace back through castptr to get the planned UB offset.
+  Value srcAddr;
+  if (auto *defOp = op.getSrc().getDefiningOp()) {
+    if (auto castOp = dyn_cast<pto::CastPtrOp>(defOp)) {
+      srcAddr = castOp.getOperand();
+    }
+  }
+  if (!srcAddr)
+    srcAddr = rewriter.create<LLVM::PtrToIntOp>(loc, i64Ty, adaptor.getSrc());
+  Value config =
+      rewriter.create<arith::AndIOp>(loc, srcAddr, constI64(0xffffffff));
+  return packMaskedI64Fields(
+      rewriter, loc, config,
+      {{getI64(adaptor.getDstRepeatStride()), 32},
+       {getI64(adaptor.getDstBlockStride()), 40},
+       {getI64(adaptor.getRepeat()), 56}},
+      0xff);
+}
 
 template <typename CopyOp>
 class LowerCopyOpPattern final : public OpConversionPattern<CopyOp> {
@@ -339,13 +407,7 @@ public:
       hasPadding = op->hasAttr("has_pad");
     }
 
-    FailureOr<StringRef> calleeName = failure();
-    if constexpr (isGmUb) {
-      calleeName = buildCopyGmToUbCallee(op.getContext(), op.getSource().getType(),
-                                         march, hasPadding);
-    } else {
-      calleeName = buildCopyUbToGmCallee(op.getContext(), march);
-    }
+    FailureOr<StringRef> calleeName = getCopyOpCallee(op, march, hasPadding);
     if (failed(calleeName))
     {
       return rewriter.notifyMatchFailure(op, "unsupported copy VPTO signature");
@@ -360,45 +422,24 @@ public:
       return rewriter.notifyMatchFailure(op, "expected LLVM pointer copy operands");
     }
 
-    bool isC220 = march == "dav-c220-vec" || march == "dav-c220-cube";
-    bool useA3NonPadded = isC220 && isGmUb && !hasPadding;
-    bool useA3UbGm = isC220 && !isGmUb;
-    bool useSingleConfig = useA3NonPadded || useA3UbGm;
-
-    FailureOr<Value> config0 = failure();
-    FailureOr<Value> config1 = failure();
-    if (useA3NonPadded)
-    {
-      config0 = packCopyGmToUbCfgV220(op, adaptor.getOperands());
-    } else if (useA3UbGm) {
-      config0 = packCopyUbToGmCfgV220(op, adaptor.getOperands());
-    } else if constexpr (isGmUb) {
-      config0 = packCopyGmToUbConfig0(op, adaptor.getOperands());
-      config1 = packCopyGmToUbConfig1(op, adaptor.getOperands());
-    } else {
-      config0 = packCopyUbToGmConfig0(op, adaptor.getOperands());
-      config1 = packCopyUbToGmConfig1(op, adaptor.getOperands());
-    }
-    if (failed(config0) || (!useSingleConfig && failed(config1)))
+    FailureOr<CopyGmUbConfigs> configs =
+        materializeCopyGmUbConfigs(op, adaptor, march, hasPadding);
+    if (failed(configs))
     {
       return rewriter.notifyMatchFailure(op, "failed to materialize copy config");
     }
 
     SmallVector<Value> args{adaptor.getOperands()[1], adaptor.getOperands()[0],
-                            *config0};
+                            configs->config0};
     SmallVector<Type> argTypes{llvmDestType, llvmSourceType,
                                rewriter.getI64Type()};
-    if (!useSingleConfig) {
-      args.push_back(*config1);
+    if (!configs->singleConfig) {
+      args.push_back(configs->config1);
       argTypes.push_back(rewriter.getI64Type());
     }
 
-    auto funcType = rewriter.getFunctionType(argTypes, TypeRange{});
-    auto call = rewriter.create<func::CallOp>(op.getLoc(), *calleeName,
-                                              TypeRange{}, args);
-    state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
+    planVPTOLLVMCall(op.getLoc(), *calleeName, argTypes, args, rewriter, state);
     rewriter.eraseOp(op);
-    (void)call;
     return success();
   }
 
@@ -513,52 +554,18 @@ public:
           op, "unexpected converted ub.vgatherb operand types");
     }
 
-    auto ptrType = mlir::cast<pto::PtrType>(op.getDst().getType());
-    Type elemType = ptrType.getElementType();
-    unsigned width = pto::getPTOStorageElemBitWidth(elemType);
-    if (width != 16 && width != 32) {
+    FailureOr<std::string> calleeName = buildVgatherbCallee(op);
+    if (failed(calleeName)) {
       return rewriter.notifyMatchFailure(
           op, "unsupported element width for ub.vgatherb");
     }
-    std::string calleeName =
-        std::string("llvm.hivm.VGATHERB.") + ((width == 16) ? "b16" : "b32");
 
     Location loc = op.getLoc();
-    Type i64Ty = rewriter.getI64Type();
-    auto constI64 = [&](uint64_t v) -> Value {
-      return rewriter.create<arith::ConstantOp>(loc,
-                                                rewriter.getI64IntegerAttr(v));
-    };
-    auto getI64 = [&](Value v) -> Value {
-      return castIntegerLikeTo(op, v, i64Ty);
-    };
-    // config[31:0] = source data address (low 32 bits of the src pointer).
-    // Trace back through castptr to get the planned UB offset, matching the
-    // address loaded from Tile host_ptr metadata by the PTO-ISA reference.
-    Value srcAddr;
-    if (auto *defOp = op.getSrc().getDefiningOp()) {
-      if (auto castOp = dyn_cast<pto::CastPtrOp>(defOp)) {
-        srcAddr = castOp.getOperand();
-      }
-    }
-    if (!srcAddr) {
-      srcAddr = rewriter.create<LLVM::PtrToIntOp>(loc, i64Ty, src);
-    }
-    Value config =
-        rewriter.create<arith::AndIOp>(loc, srcAddr, constI64(0xffffffff));
-    config = packMaskedI64Fields(
-        rewriter, loc, config,
-        {{getI64(adaptor.getDstRepeatStride()), 32},
-         {getI64(adaptor.getDstBlockStride()), 40},
-         {getI64(adaptor.getRepeat()), 56}},
-        0xff);
-
-    auto funcType = rewriter.getFunctionType(
-        TypeRange{dst.getType(), offset.getType(), rewriter.getI64Type()},
-        TypeRange{});
-    rewriter.create<func::CallOp>(op.getLoc(), calleeName, TypeRange{},
-                                  ValueRange{dst, offset, config});
-    state.plannedDecls.push_back(PlannedDecl{calleeName, funcType});
+    Value config = buildVgatherbConfig(op, adaptor, rewriter);
+    planVPTOLLVMCall(loc, *calleeName,
+                     TypeRange{dst.getType(), offset.getType(),
+                               rewriter.getI64Type()},
+                     ValueRange{dst, offset, config}, rewriter, state);
     rewriter.eraseOp(op);
     return success();
   }
@@ -653,20 +660,8 @@ public:
           op, "unsupported element type for ubuf shift op");
     }
 
-    if (elemFrag == "s16")
-    {
-      elemFrag = "u16";
-    } else if (elemFrag == "s32") {
-      elemFrag = "u32";
-    }
-
-    std::string calleeName;
-    if constexpr (std::is_same_v<ShiftOp, pto::UBVshlOp>)
-    {
-      calleeName = "llvm.hivm.VSHL." + elemFrag;
-    } else if constexpr (std::is_same_v<ShiftOp, pto::UBVshrOp>) {
-      calleeName = "llvm.hivm.VSHR." + elemFrag;
-    } else {
+    FailureOr<std::string> calleeName = buildShiftOpCallee<ShiftOp>(elemFrag);
+    if (failed(calleeName)) {
       return rewriter.notifyMatchFailure(op, "unsupported ubuf shift op");
     }
 
@@ -680,40 +675,27 @@ public:
     }
 
     Location loc = op.getLoc();
-    // Unary config layout (same as VABS):
-    //   repeat[63:56], dstBlkStride[15:0], srcBlkStride[31:16],
-    //   dstRepStride[39:32], srcRepStride[51:40]
     Type i64Ty = rewriter.getI64Type();
-    auto getI64 = [&](Value v) -> Value {
-      return castIntegerLikeTo(op, v, i64Ty);
-    };
-    FailureOr<Value> config = buildUbufUnaryConfig(
-        op, rewriter, adaptor.getRepeat(), adaptor.getDstBlockStride(),
-        adaptor.getSrcBlockStride(), adaptor.getDstRepeatStride(),
-        adaptor.getSrcRepeatStride());
+    FailureOr<Value> config = materializeUbufUnaryConfig(op, adaptor, rewriter);
     if (failed(config)) {
       return rewriter.notifyMatchFailure(op, "invalid ubuf shift config operands");
     }
 
-    Value shiftDist = getI64(adaptor.getShiftDist());
+    Value shiftDist = castIntegerLikeTo(op, adaptor.getShiftDist(), i64Ty);
 
     if constexpr (std::is_same_v<ShiftOp, pto::UBVshlOp>) {
-      auto funcType = rewriter.getFunctionType(
-          TypeRange{dst.getType(), src.getType(), i64Ty, i64Ty},
-          TypeRange{});
-      rewriter.create<func::CallOp>(loc, calleeName, TypeRange{},
-                                    ValueRange{dst, src, shiftDist, *config});
-      state.plannedDecls.push_back(PlannedDecl{calleeName, funcType});
+      planVPTOLLVMCall(loc, *calleeName,
+                       TypeRange{dst.getType(), src.getType(), i64Ty, i64Ty},
+                       ValueRange{dst, src, shiftDist, *config}, rewriter,
+                       state);
     } else {
       Value roundZero = rewriter.create<arith::ConstantOp>(
           loc, rewriter.getI64IntegerAttr(0));
-      auto funcType = rewriter.getFunctionType(
-          TypeRange{dst.getType(), src.getType(), i64Ty, i64Ty, i64Ty},
-          TypeRange{});
-      rewriter.create<func::CallOp>(loc, calleeName, TypeRange{},
-                                               ValueRange{dst, src, shiftDist, *config,
-                                               roundZero});
-      state.plannedDecls.push_back(PlannedDecl{calleeName, funcType});
+      planVPTOLLVMCall(loc, *calleeName,
+                       TypeRange{dst.getType(), src.getType(), i64Ty, i64Ty,
+                                 i64Ty},
+                       ValueRange{dst, src, shiftDist, *config, roundZero},
+                       rewriter, state);
     }
 
     rewriter.eraseOp(op);
@@ -745,18 +727,8 @@ public:
           op, "unsupported element type for ubuf scalar mul op");
     }
 
-    // Scalar-tile ops keep signed intrinsic names (s16/s32).
-    std::string calleeName;
-    if constexpr (std::is_same_v<ScalarOp, pto::UBVmulSOp>)
-    {
-      calleeName = "llvm.hivm.VMULS." + elemFrag;
-    } else if constexpr (std::is_same_v<ScalarOp, pto::UBVaddSOp>) {
-      calleeName = "llvm.hivm.VADDS." + elemFrag;
-    } else if constexpr (std::is_same_v<ScalarOp, pto::UBVmaxSOp>) {
-      calleeName = "llvm.hivm.VMAXS." + elemFrag;
-    } else if constexpr (std::is_same_v<ScalarOp, pto::UBVminSOp>) {
-      calleeName = "llvm.hivm.VMINS." + elemFrag;
-    } else {
+    FailureOr<std::string> calleeName = buildScalarBinaryOpCallee<ScalarOp>(elemFrag);
+    if (failed(calleeName)) {
       return rewriter.notifyMatchFailure(op, "unsupported ubuf scalar binary op");
     }
 
@@ -771,22 +743,13 @@ public:
 
     Location loc = op.getLoc();
     Type i64Ty = rewriter.getI64Type();
-    auto getI64 = [&](Value v) -> Value {
-      return castIntegerLikeTo(op, v, i64Ty);
-    };
-    // Unary config layout (same as VABS/VSHR): repeat[63:56]
-    FailureOr<Value> config = buildUbufUnaryConfig(
-        op, rewriter, adaptor.getRepeat(), adaptor.getDstBlockStride(),
-        adaptor.getSrcBlockStride(), adaptor.getDstRepeatStride(),
-        adaptor.getSrcRepeatStride());
+    FailureOr<Value> config = materializeUbufUnaryConfig(op, adaptor, rewriter);
     if (failed(config)) {
       return rewriter.notifyMatchFailure(op, "invalid ubuf unary config operands");
     }
 
-    Value scalarI64 = getI64(adaptor.getShiftDist());
+    Value scalarI64 = castIntegerLikeTo(op, adaptor.getShiftDist(), i64Ty);
 
-    // For float element types, the scalar was bitcast to i64 for the UB IR.
-    // Recover the float value via trunc + bitcast.
     if (elemType.isF32() || elemType.isF16()) {
       unsigned width = elemType.isF32() ? 32 : 16;
       Type intTy = rewriter.getIntegerType(width);
@@ -795,20 +758,15 @@ public:
                           : rewriter.getF16Type();
       Value trunced = rewriter.create<arith::TruncIOp>(loc, intTy, scalarI64);
       Value scalarFloat = rewriter.create<LLVM::BitcastOp>(loc, floatTy, trunced);
-      auto funcType = rewriter.getFunctionType(
-          TypeRange{dst.getType(), src.getType(), floatTy, i64Ty},
-          TypeRange{});
-      rewriter.create<func::CallOp>(loc, calleeName, TypeRange{},
-                                    ValueRange{dst, src, scalarFloat, *config});
-      state.plannedDecls.push_back(PlannedDecl{calleeName, funcType});
+      planVPTOLLVMCall(loc, *calleeName,
+                       TypeRange{dst.getType(), src.getType(), floatTy, i64Ty},
+                       ValueRange{dst, src, scalarFloat, *config}, rewriter,
+                       state);
     } else {
-      // Integer: VMULS/VADDS/etc .s16/s32 takes i64 scalar directly.
-      auto funcType = rewriter.getFunctionType(
-          TypeRange{dst.getType(), src.getType(), i64Ty, i64Ty},
-          TypeRange{});
-      rewriter.create<func::CallOp>(loc, calleeName, TypeRange{},
-                                    ValueRange{dst, src, scalarI64, *config});
-      state.plannedDecls.push_back(PlannedDecl{calleeName, funcType});
+      planVPTOLLVMCall(loc, *calleeName,
+                       TypeRange{dst.getType(), src.getType(), i64Ty, i64Ty},
+                       ValueRange{dst, src, scalarI64, *config}, rewriter,
+                       state);
     }
 
     rewriter.eraseOp(op);
@@ -837,32 +795,8 @@ public:
           op, "unsupported element type for ubuf unary op");
     }
 
-    if (elemFrag == "s16")
-    {
-      elemFrag = "u16";
-    }
-
-    std::string calleeName;
-    if constexpr (std::is_same_v<UnaryOp, pto::UBVnotOp>)
-    {
-      calleeName = "llvm.hivm.VNOT." + elemFrag;
-    } else if constexpr (std::is_same_v<UnaryOp, pto::UBVabsOp>) {
-      calleeName = "llvm.hivm.VABS." + elemFrag;
-    } else if constexpr (std::is_same_v<UnaryOp, pto::UBVreluOp>) {
-      if (elemFrag == "u16" || elemFrag == "u32") {
-        return rewriter.notifyMatchFailure(
-            op, "VRELU not available for unsigned integer types");
-      }
-      calleeName = "llvm.hivm.VRELU." + elemFrag;
-    } else if constexpr (std::is_same_v<UnaryOp, pto::UBVexpOp>) {
-      calleeName = "llvm.hivm.VEXP." + elemFrag;
-    } else if constexpr (std::is_same_v<UnaryOp, pto::UBVlnOp>) {
-      calleeName = "llvm.hivm.VLN." + elemFrag;
-    } else if constexpr (std::is_same_v<UnaryOp, pto::UBVsqrtOp>) {
-      calleeName = "llvm.hivm.VSQRT." + elemFrag;
-    } else if constexpr (std::is_same_v<UnaryOp, pto::UBVrsqrtOp>) {
-      calleeName = "llvm.hivm.VRSQRT." + elemFrag;
-    } else {
+    FailureOr<std::string> calleeName = buildUnaryOpCallee<UnaryOp>(elemFrag);
+    if (failed(calleeName)) {
       return rewriter.notifyMatchFailure(op, "unsupported ubuf unary op");
     }
 
@@ -877,23 +811,15 @@ public:
 
     Location loc = op.getLoc();
     Type i64Ty = rewriter.getI64Type();
-    // Unary config layout (same as VABS/VSHR): repeat[63:56]
-    FailureOr<Value> config = buildUbufUnaryConfig(
-        op, rewriter, adaptor.getRepeat(), adaptor.getDstBlockStride(),
-        adaptor.getSrcBlockStride(), adaptor.getDstRepeatStride(),
-        adaptor.getSrcRepeatStride());
+    FailureOr<Value> config = materializeUbufUnaryConfig(op, adaptor, rewriter);
     if (failed(config)) {
       return rewriter.notifyMatchFailure(op,
                                          "invalid ubuf unary config operands");
     }
 
-    auto funcType = rewriter.getFunctionType(
-        TypeRange{dst.getType(), src.getType(), i64Ty},
-        TypeRange{});
-    rewriter.create<func::CallOp>(loc, calleeName, TypeRange{},
-                                  ValueRange{dst, src, *config});
-    state.plannedDecls.push_back(PlannedDecl{calleeName, funcType});
-
+    planVPTOLLVMCall(loc, *calleeName,
+                     TypeRange{dst.getType(), src.getType(), i64Ty},
+                     ValueRange{dst, src, *config}, rewriter, state);
     rewriter.eraseOp(op);
     return success();
   }
@@ -901,258 +827,6 @@ public:
 private:
   LoweringState &state;
 };
-
-class LowerUBSetMaskOpPattern final
-    : public OpConversionPattern<pto::UBSetMaskOp> {
-public:
-  explicit LowerUBSetMaskOpPattern(TypeConverter &typeConverter,
-                                   MLIRContext *context, LoweringState &state)
-      : OpConversionPattern<pto::UBSetMaskOp>(typeConverter, context),
-        state(state) {}
-
-  LogicalResult
-  matchAndRewrite(pto::UBSetMaskOp op, typename pto::UBSetMaskOp::Adaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    StringRef calleeName = "llvm.hivm.MOVEMASK";
-    Location loc = op.getLoc();
-
-    auto funcType = rewriter.getFunctionType(
-        TypeRange{rewriter.getI64Type(), rewriter.getI64Type()}, TypeRange{});
-
-    Value c0Idx = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getI64IntegerAttr(0));
-    rewriter.create<func::CallOp>(loc, calleeName, TypeRange{},
-                                  ValueRange{c0Idx, adaptor.getMask0()});
-
-    Value c1Idx = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getI64IntegerAttr(1));
-    rewriter.create<func::CallOp>(loc, calleeName, TypeRange{},
-                                  ValueRange{c1Idx, adaptor.getMask1()});
-
-    state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
-    rewriter.eraseOp(op);
-    return success();
-  }
-
-private:
-  LoweringState &state;
-};
-
-class LowerUBSetMaskCountOpPattern final
-    : public OpConversionPattern<pto::UBSetMaskCountOp> {
-public:
-  explicit LowerUBSetMaskCountOpPattern(TypeConverter &typeConverter,
-                                        MLIRContext *context)
-      : OpConversionPattern<pto::UBSetMaskCountOp>(typeConverter, context) {}
-
-  LogicalResult
-  matchAndRewrite(pto::UBSetMaskCountOp op,
-                  typename pto::UBSetMaskCountOp::Adaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-    auto i64Ty = rewriter.getI64Type();
-    Value ctrl = rewriter.create<pto::GetCtrlOp>(loc, i64Ty).getResult();
-    Value bit56 = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getI64IntegerAttr(56));
-    Value set = rewriter
-                    .create<pto::Sbitset1Op>(loc, i64Ty, ctrl, bit56)
-                    .getResult();
-    rewriter.create<pto::SetCtrlOp>(loc, set);
-    rewriter.eraseOp(op);
-    return success();
-  }
-};
-
-class LowerUBSetMaskNormOpPattern final
-    : public OpConversionPattern<pto::UBSetMaskNormOp> {
-public:
-  explicit LowerUBSetMaskNormOpPattern(TypeConverter &typeConverter,
-                                       MLIRContext *context)
-      : OpConversionPattern<pto::UBSetMaskNormOp>(typeConverter, context) {}
-
-  LogicalResult
-  matchAndRewrite(pto::UBSetMaskNormOp op,
-                  typename pto::UBSetMaskNormOp::Adaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-    auto i64Ty = rewriter.getI64Type();
-    Value ctrl = rewriter.create<pto::GetCtrlOp>(loc, i64Ty).getResult();
-    Value bit56 = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getI64IntegerAttr(56));
-    Value reset = rewriter
-                      .create<pto::Sbitset0Op>(loc, i64Ty, ctrl, bit56)
-                      .getResult();
-    rewriter.create<pto::SetCtrlOp>(loc, reset);
-    rewriter.eraseOp(op);
-    return success();
-  }
-};
-
-class LowerCopyUbufToUbufOpPattern final
-    : public OpConversionPattern<pto::CopyUbufToUbufOp> {
-public:
-  explicit LowerCopyUbufToUbufOpPattern(TypeConverter &typeConverter,
-                                        MLIRContext *context,
-                                        LoweringState &state)
-      : OpConversionPattern<pto::CopyUbufToUbufOp>(typeConverter, context),
-        state(state) {}
-
-  LogicalResult
-  matchAndRewrite(pto::CopyUbufToUbufOp op,
-                  pto::CopyUbufToUbufOp::Adaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    auto llvmSourceType =
-        dyn_cast<LLVM::LLVMPointerType>(adaptor.getOperands()[0].getType());
-    auto llvmDestType =
-        dyn_cast<LLVM::LLVMPointerType>(adaptor.getOperands()[1].getType());
-    if (!llvmSourceType || !llvmDestType)
-    {
-      return rewriter.notifyMatchFailure(op, "expected LLVM pointer copy operands");
-    }
-
-    FailureOr<Value> config = packCopyUbToUbConfig(op, adaptor.getOperands());
-    if (failed(config))
-    {
-      return rewriter.notifyMatchFailure(op, "failed to materialize copy config");
-    }
-
-    StringRef calleeName = buildCopyUbToUbCallee(op.getContext());
-    SmallVector<Value> args{adaptor.getOperands()[1], adaptor.getOperands()[0],
-                            *config};
-    auto funcType = rewriter.getFunctionType(
-        TypeRange{llvmDestType, llvmSourceType, rewriter.getI64Type()},
-        TypeRange{});
-    auto call = rewriter.create<func::CallOp>(op.getLoc(), calleeName,
-                                              TypeRange{}, args);
-    state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
-    rewriter.eraseOp(op);
-    (void)call;
-    return success();
-  }
-
-private:
-  LoweringState &state;
-};
-
-class LowerCopyCbufToUbufOpPattern final
-    : public OpConversionPattern<pto::CopyCbufToUbufOp> {
-public:
-  explicit LowerCopyCbufToUbufOpPattern(TypeConverter &typeConverter,
-                                        MLIRContext *context,
-                                        LoweringState &state)
-      : OpConversionPattern<pto::CopyCbufToUbufOp>(typeConverter, context),
-        state(state) {}
-
-  LogicalResult
-  matchAndRewrite(pto::CopyCbufToUbufOp op,
-                  pto::CopyCbufToUbufOp::Adaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    Value sourceRaw = adaptor.getSource();
-    Value destinationRaw = adaptor.getDestination();
-    if (!sourceRaw || !destinationRaw)
-    {
-      return rewriter.notifyMatchFailure(op, "expected converted operands");
-    }
-    if (!isa<LLVM::LLVMPointerType>(sourceRaw.getType()) ||
-        !isa<LLVM::LLVMPointerType>(destinationRaw.getType())) {
-      return rewriter.notifyMatchFailure(op, "expected LLVM pointer src/dst");
-    }
-
-    constexpr unsigned cbufAddressSpace =
-        static_cast<unsigned>(pto::AddressSpace::MAT);
-    constexpr unsigned ubufAddressSpace =
-        static_cast<unsigned>(pto::AddressSpace::VEC);
-    FailureOr<Value> source =
-        reinterpretPointerToAddrSpace(op, sourceRaw, cbufAddressSpace);
-    FailureOr<Value> destination =
-        reinterpretPointerToAddrSpace(op, destinationRaw, ubufAddressSpace);
-    if (failed(source) || failed(destination))
-    {
-      return rewriter.notifyMatchFailure(op, "failed to map cbuf/ubuf pointer spaces");
-    }
-
-    FailureOr<Value> config = packCopyCbufToUbConfig(op, adaptor.getOperands());
-    if (failed(config))
-    {
-      return rewriter.notifyMatchFailure(op, "failed to materialize copy config");
-    }
-
-    StringRef calleeName = buildCopyCbufToUbCallee(op.getContext());
-    auto funcType = rewriter.getFunctionType(
-        TypeRange{destination->getType(), source->getType(),
-                  rewriter.getI64Type()},
-        TypeRange{});
-    rewriter.create<func::CallOp>(op.getLoc(), calleeName, TypeRange{},
-                                  ValueRange{*destination, *source, *config});
-    state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
-    rewriter.eraseOp(op);
-    return success();
-  }
-
-private:
-  LoweringState &state;
-};
-
-class LowerCopyUbufToCbufOpPattern final
-    : public OpConversionPattern<pto::CopyUbufToCbufOp> {
-public:
-  explicit LowerCopyUbufToCbufOpPattern(TypeConverter &typeConverter,
-                                        MLIRContext *context,
-                                        LoweringState &state)
-      : OpConversionPattern<pto::CopyUbufToCbufOp>(typeConverter, context),
-        state(state) {}
-
-  LogicalResult
-  matchAndRewrite(pto::CopyUbufToCbufOp op,
-                  pto::CopyUbufToCbufOp::Adaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    Value sourceRaw = adaptor.getSource();
-    Value destinationRaw = adaptor.getDestination();
-    if (!sourceRaw || !destinationRaw)
-    {
-      return rewriter.notifyMatchFailure(op, "expected converted operands");
-    }
-    if (!isa<LLVM::LLVMPointerType>(sourceRaw.getType()) ||
-        !isa<LLVM::LLVMPointerType>(destinationRaw.getType())) {
-      return rewriter.notifyMatchFailure(op, "expected LLVM pointer src/dst");
-    }
-
-    constexpr unsigned ubufAddressSpace =
-        static_cast<unsigned>(pto::AddressSpace::VEC);
-    constexpr unsigned cbufAddressSpace =
-        static_cast<unsigned>(pto::AddressSpace::MAT);
-    FailureOr<Value> source =
-        reinterpretPointerToAddrSpace(op, sourceRaw, ubufAddressSpace);
-    FailureOr<Value> destination =
-        reinterpretPointerToAddrSpace(op, destinationRaw, cbufAddressSpace);
-    if (failed(source) || failed(destination))
-    {
-      return rewriter.notifyMatchFailure(op, "failed to map ubuf/cbuf pointer spaces");
-    }
-
-    FailureOr<Value> config = packCopyUbToCbufConfig(op, adaptor.getOperands());
-    if (failed(config))
-    {
-      return rewriter.notifyMatchFailure(op, "failed to materialize copy config");
-    }
-
-    StringRef calleeName = buildCopyUbToCbufCallee(op.getContext());
-    auto funcType = rewriter.getFunctionType(
-        TypeRange{destination->getType(), source->getType(),
-                  rewriter.getI64Type()},
-        TypeRange{});
-    rewriter.create<func::CallOp>(op.getLoc(), calleeName, TypeRange{},
-                                  ValueRange{*destination, *source, *config});
-    state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
-    rewriter.eraseOp(op);
-    return success();
-  }
-
-private:
-  LoweringState &state;
-};
-
-
 
 } // namespace
 
