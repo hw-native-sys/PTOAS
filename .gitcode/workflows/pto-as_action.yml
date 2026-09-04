@@ -118,9 +118,12 @@ stages:
               export CANN_HOME="${CANN_HOME:-/home/jenkins/Ascend/cann-9.2.0}"
               bash "${{ steps.process_checkout.outputs.path }}/.gitcode/scripts/vpto_sim.sh" \
                 "${{ steps.process_checkout.outputs.path }}"
-        runs-on: ['self-hosted','npu=1','smoke=204']
+        runs-on:
+          - self-hosted
+          - arch=x64
+          - spec=xlarge
         container:
-          image: swr.cn-south-1.myhuaweicloud.com/pre_smoke/${{ jobs.JOB_image.outputs.PreSmoke_A900 }}
+          image: swr.cn-north-4.myhuaweicloud.com/ci_cann/${{ jobs.JOB_image.outputs.Compile_Ascend_X86 }}
           env:
             CANN_HOME: /home/jenkins/Ascend/cann-9.2.0
     pre:
