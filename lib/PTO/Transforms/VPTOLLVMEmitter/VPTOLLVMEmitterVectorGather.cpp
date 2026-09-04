@@ -29,50 +29,6 @@ static FailureOr<StringRef> buildLaneTypedCallee(MLIRContext *context,
       .getValue();
 }
 
-static std::optional<uint64_t> parseRoundModeImmediate(StringRef roundMode) {
-  if (roundMode == "R" || roundMode == "ROUND_R")
-  {
-    return 0;
-  }
-  if (roundMode == "A" || roundMode == "ROUND_A")
-  {
-    return 1;
-  }
-  if (roundMode == "F" || roundMode == "ROUND_F")
-  {
-    return 2;
-  }
-  if (roundMode == "C" || roundMode == "ROUND_C")
-  {
-    return 3;
-  }
-  if (roundMode == "Z" || roundMode == "ROUND_Z")
-  {
-    return 4;
-  }
-  if (roundMode == "O" || roundMode == "ROUND_O")
-  {
-    return 5;
-  }
-  if (roundMode == "H" || roundMode == "ROUND_H")
-  {
-    return 6;
-  }
-  return std::nullopt;
-}
-
-static std::optional<uint64_t> parsePartImmediate(StringRef part) {
-  if (part == "EVEN" || part == "PART_EVEN")
-  {
-    return 0;
-  }
-  if (part == "ODD" || part == "PART_ODD")
-  {
-    return 1;
-  }
-  return std::nullopt;
-}
-
 static std::optional<uint64_t> parseOrderImmediate(StringRef order) {
   if (order.empty() || order == "ASC")
   {

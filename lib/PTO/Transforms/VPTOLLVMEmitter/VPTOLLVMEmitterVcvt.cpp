@@ -51,38 +51,6 @@ struct VcvtContract {
       .getResult();
 }
 
-static std::optional<uint64_t> parseRoundModeImmediate(StringRef roundMode) {
-  if (roundMode == "R" || roundMode == "ROUND_R")
-  {
-    return 0;
-  }
-  if (roundMode == "A" || roundMode == "ROUND_A")
-  {
-    return 1;
-  }
-  if (roundMode == "F" || roundMode == "ROUND_F")
-  {
-    return 2;
-  }
-  if (roundMode == "C" || roundMode == "ROUND_C")
-  {
-    return 3;
-  }
-  if (roundMode == "Z" || roundMode == "ROUND_Z")
-  {
-    return 4;
-  }
-  if (roundMode == "O" || roundMode == "ROUND_O")
-  {
-    return 5;
-  }
-  if (roundMode == "H" || roundMode == "ROUND_H")
-  {
-    return 6;
-  }
-  return std::nullopt;
-}
-
 static std::optional<uint64_t> parseSaturationImmediate(StringRef sat) {
   if (sat == "SAT")
   {
@@ -95,25 +63,6 @@ static std::optional<uint64_t> parseSaturationImmediate(StringRef sat) {
   return std::nullopt;
 }
 
-static std::optional<uint64_t> parseVcvtPartImmediate(StringRef part) {
-  if (part == "EVEN" || part == "PART_EVEN" || part == "P0" ||
-      part == "PART_P0") {
-    return 0;
-  }
-  if (part == "ODD" || part == "PART_ODD" || part == "P1" ||
-      part == "PART_P1") {
-    return 1;
-  }
-  if (part == "P2" || part == "PART_P2")
-  {
-    return 2;
-  }
-  if (part == "P3" || part == "PART_P3")
-  {
-    return 3;
-  }
-  return std::nullopt;
-}
 static VcvtElemKind classifyVcvtElemType(Type type) {
   if (type.isF16())
   {

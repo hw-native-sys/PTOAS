@@ -10,6 +10,47 @@
 
 namespace mlir::pto {
 
+std::optional<uint64_t> parseRoundModeImmediate(StringRef roundMode) {
+  static constexpr StringLiteral shortModes[] = {"R", "A", "F", "C", "Z", "O", "H"};
+  static constexpr StringLiteral longModes[] = {
+      "ROUND_R", "ROUND_A", "ROUND_F", "ROUND_C",
+      "ROUND_Z", "ROUND_O", "ROUND_H"};
+  for (uint64_t index = 0; index < 7; ++index) {
+    if (roundMode == shortModes[index] || roundMode == longModes[index]) {
+      return index;
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<uint64_t> parsePartImmediate(StringRef part) {
+  if (part == "EVEN" || part == "PART_EVEN") {
+    return 0;
+  }
+  if (part == "ODD" || part == "PART_ODD") {
+    return 1;
+  }
+  return std::nullopt;
+}
+
+std::optional<uint64_t> parseVcvtPartImmediate(StringRef part) {
+  if (part == "EVEN" || part == "PART_EVEN" || part == "P0" ||
+      part == "PART_P0") {
+    return 0;
+  }
+  if (part == "ODD" || part == "PART_ODD" || part == "P1" ||
+      part == "PART_P1") {
+    return 1;
+  }
+  if (part == "P2" || part == "PART_P2") {
+    return 2;
+  }
+  if (part == "P3" || part == "PART_P3") {
+    return 3;
+  }
+  return std::nullopt;
+}
+
 Value getI64Constant(OpBuilder &builder, Location loc, uint64_t value) {
   return builder.create<arith::ConstantOp>(loc, builder.getI64IntegerAttr(value));
 }

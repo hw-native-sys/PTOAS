@@ -42,6 +42,9 @@ std::string getDn2NzCopyElementFragment(Type type);
 Type getElementTypeFromVectorLike(Type type);
 std::optional<int64_t> getElementCountFromVectorLike(Type type);
 bool isOnePointStoreDist(StringRef dist);
+std::optional<uint64_t> parseRoundModeImmediate(StringRef roundMode);
+std::optional<uint64_t> parsePartImmediate(StringRef part);
+std::optional<uint64_t> parseVcvtPartImmediate(StringRef part);
 Value castIntegerLikeTo(Operation *anchor, Value value, Type targetType);
 FailureOr<SmallVector<Value, 7>>
 castIntegerLikeOperands(Operation *anchor, ValueRange operands,
