@@ -20,57 +20,16 @@ namespace mlir::pto {
 namespace {
 
 static std::optional<uint64_t> parsePipeImmediate(StringRef pipe) {
-  if (pipe == "PIPE_S")
-  {
-    return 0;
-  }
-  if (pipe == "PIPE_V")
-  {
-    return 1;
-  }
-  if (pipe == "PIPE_M")
-  {
-    return 2;
-  }
-  if (pipe == "PIPE_MTE1")
-  {
-    return 3;
-  }
-  if (pipe == "PIPE_MTE2")
-  {
-    return 4;
-  }
-  if (pipe == "PIPE_MTE3")
-  {
-    return 5;
-  }
-  if (pipe == "PIPE_ALL")
-  {
-    return 6;
-  }
-  if (pipe == "PIPE_MTE4")
-  {
-    return 7;
-  }
-  if (pipe == "PIPE_MTE5")
-  {
-    return 8;
-  }
-  if (pipe == "PIPE_V2")
-  {
-    return 9;
-  }
-  if (pipe == "PIPE_FIX")
-  {
-    return 10;
-  }
-  if (pipe == "VIRTUAL_PIPE_MTE2_L1A")
-  {
-    return 11;
-  }
-  if (pipe == "VIRTUAL_PIPE_MTE2_L1B")
-  {
-    return 12;
+  static constexpr std::pair<StringLiteral, uint64_t> pipes[] = {
+      {"PIPE_S", 0}, {"PIPE_V", 1}, {"PIPE_M", 2}, {"PIPE_MTE1", 3},
+      {"PIPE_MTE2", 4}, {"PIPE_MTE3", 5}, {"PIPE_ALL", 6},
+      {"PIPE_MTE4", 7}, {"PIPE_MTE5", 8}, {"PIPE_V2", 9},
+      {"PIPE_FIX", 10}, {"VIRTUAL_PIPE_MTE2_L1A", 11},
+      {"VIRTUAL_PIPE_MTE2_L1B", 12}};
+  for (auto [name, value] : pipes) {
+    if (pipe == name) {
+      return value;
+    }
   }
   return std::nullopt;
 }
