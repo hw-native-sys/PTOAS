@@ -329,6 +329,48 @@ std::string getDn2NzCopyElementFragment(Type type) {
   return {};
 }
 
+std::string getMadLhsFragment(Type type) {
+  if (type.isF16()) {
+    return "f16";
+  }
+  if (type.isBF16()) {
+    return "bf16";
+  }
+  if (type.isF32()) {
+    return "f32";
+  }
+  if (auto intType = dyn_cast<IntegerType>(type);
+      intType && intType.getWidth() == 8 &&
+      (intType.isSigned() || intType.isSignless())) {
+    return "s8";
+  }
+  if (pto::isPTOFloat8E4M3LikeType(type)) {
+    return "e4m3";
+  }
+  if (pto::isPTOFloat8E5M2LikeType(type)) {
+    return "e5m2";
+  }
+  if (pto::isPTOHiFloat8Type(type)) {
+    return "hif8";
+  }
+  return {};
+}
+
+std::string getMadDstFragment(Type type) {
+  if (type.isF16()) {
+    return "f16";
+  }
+  if (type.isF32()) {
+    return "f32";
+  }
+  if (auto intType = dyn_cast<IntegerType>(type);
+      intType && intType.getWidth() == 32 &&
+      (intType.isSigned() || intType.isSignless())) {
+    return "s32";
+  }
+  return {};
+}
+
 Type getElementTypeFromVectorLike(Type type) {
   if (auto vecType = dyn_cast<pto::VRegType>(type)) {
     return vecType.getElementType();

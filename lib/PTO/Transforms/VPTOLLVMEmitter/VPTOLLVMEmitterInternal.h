@@ -39,6 +39,8 @@ std::string getLowPrecisionElementFragment(Type type);
 std::string getMemoryElementTypeFragment(Type type);
 std::string getCopyElementFragment(Type type);
 std::string getDn2NzCopyElementFragment(Type type);
+std::string getMadLhsFragment(Type type);
+std::string getMadDstFragment(Type type);
 Type getElementTypeFromVectorLike(Type type);
 std::optional<int64_t> getElementCountFromVectorLike(Type type);
 bool isOnePointStoreDist(StringRef dist);

@@ -124,57 +124,6 @@ static std::string getMadRhsFragment(Type type) {
   return {};
 }
 
-static bool isMadE4M3ElementType(Type type) {
-  return pto::isPTOFloat8E4M3LikeType(type);
-}
-
-static bool isMadE5M2ElementType(Type type) {
-  return pto::isPTOFloat8E5M2LikeType(type);
-}
-
-static std::string getMadDstFragment(Type type) {
-  if (type.isF16())
-  {
-    return "f16";
-  }
-  if (type.isF32())
-  {
-    return "f32";
-  }
-  if (auto intType = dyn_cast<IntegerType>(type)) {
-    if (isSignedOrSignlessInteger(intType, 32))
-    {
-      return "s32";
-    }
-  }
-  return {};
-}
-
-static std::string getMadLhsFragment(Type type) {
-  if (type.isF16()) {
-    return "f16";
-  }
-  if (type.isBF16()) {
-    return "bf16";
-  }
-  if (type.isF32()) {
-    return "f32";
-  }
-  if (isSignedOrSignlessInteger(dyn_cast<IntegerType>(type), 8)) {
-    return "s8";
-  }
-  if (isMadE4M3ElementType(type)) {
-    return "e4m3";
-  }
-  if (isMadE5M2ElementType(type)) {
-    return "e5m2";
-  }
-  if (pto::isPTOHiFloat8Type(type)) {
-    return "hif8";
-  }
-  return {};
-}
-
 static FailureOr<StringRef> buildMadTypedCalleeName(MLIRContext *context,
                                                      Type lhsElem, Type rhsElem,
                                                      Type dstElem) {
