@@ -95,34 +95,6 @@ static Value castFromPayloadABI(
   return rewriter.create<LLVM::BitcastOp>(loc, convertedType, value);
 }
 
-static std::optional<uint64_t> parsePredicateStoreDistImmediate(StringRef dist) {
-  if (dist == "NORM")
-  {
-    return 0;
-  }
-  if (dist == "PK")
-  {
-    return 1;
-  }
-  return std::nullopt;
-}
-
-static std::optional<uint64_t> parsePredicateLoadDistImmediate(StringRef dist) {
-  if (dist.empty() || dist == "NORM")
-  {
-    return 0;
-  }
-  if (dist == "US")
-  {
-    return 1;
-  }
-  if (dist == "DS")
-  {
-    return 2;
-  }
-  return std::nullopt;
-}
-
 static std::optional<int32_t> parsePostModeImmediate(StringRef mode) {
   if (mode == "NO_POST_UPDATE")
   {

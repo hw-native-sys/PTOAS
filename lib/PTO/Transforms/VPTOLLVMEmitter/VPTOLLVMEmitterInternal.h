@@ -47,6 +47,9 @@ bool isOnePointStoreDist(StringRef dist);
 std::optional<uint64_t> parseRoundModeImmediate(StringRef roundMode);
 std::optional<uint64_t> parsePartImmediate(StringRef part);
 std::optional<uint64_t> parseVcvtPartImmediate(StringRef part);
+std::optional<uint64_t> parseSaturationImmediate(StringRef sat);
+std::optional<uint64_t> parsePredicateStoreDistImmediate(StringRef dist);
+std::optional<uint64_t> parsePredicateLoadDistImmediate(StringRef dist);
 Value castIntegerLikeTo(Operation *anchor, Value value, Type targetType);
 FailureOr<SmallVector<Value, 7>>
 castIntegerLikeOperands(Operation *anchor, ValueRange operands,

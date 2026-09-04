@@ -51,18 +51,6 @@ struct VcvtContract {
       .getResult();
 }
 
-static std::optional<uint64_t> parseSaturationImmediate(StringRef sat) {
-  if (sat == "SAT")
-  {
-    return 1;
-  }
-  if (sat == "NOSAT")
-  {
-    return 0;
-  }
-  return std::nullopt;
-}
-
 static VcvtElemKind classifyVcvtElemType(Type type) {
   if (type.isF16())
   {

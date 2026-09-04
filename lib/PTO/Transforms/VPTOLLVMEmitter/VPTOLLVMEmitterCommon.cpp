@@ -51,6 +51,39 @@ std::optional<uint64_t> parseVcvtPartImmediate(StringRef part) {
   return std::nullopt;
 }
 
+std::optional<uint64_t> parseSaturationImmediate(StringRef sat) {
+  if (sat == "SAT") {
+    return 1;
+  }
+  if (sat == "NOSAT") {
+    return 0;
+  }
+  return std::nullopt;
+}
+
+std::optional<uint64_t> parsePredicateStoreDistImmediate(StringRef dist) {
+  if (dist == "NORM") {
+    return 0;
+  }
+  if (dist == "PK") {
+    return 1;
+  }
+  return std::nullopt;
+}
+
+std::optional<uint64_t> parsePredicateLoadDistImmediate(StringRef dist) {
+  if (dist.empty() || dist == "NORM") {
+    return 0;
+  }
+  if (dist == "US") {
+    return 1;
+  }
+  if (dist == "DS") {
+    return 2;
+  }
+  return std::nullopt;
+}
+
 Value getI64Constant(OpBuilder &builder, Location loc, uint64_t value) {
   return builder.create<arith::ConstantOp>(loc, builder.getI64IntegerAttr(value));
 }
