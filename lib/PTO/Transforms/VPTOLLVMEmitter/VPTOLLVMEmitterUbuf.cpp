@@ -18,19 +18,12 @@ namespace {
 
 static FailureOr<SmallVector<Value, 7>> castCopyGmToUbConfig0Operands(
     Operation *anchor, ValueRange operands, Type i64Type) {
-  if (operands.size() != 11) {
+  if (operands.size() != 11)
+  {
     return failure();
   }
-
-  SmallVector<Value, 7> values;
-  for (unsigned index : {2u, 3u, 4u, 5u, 6u, 7u, 8u}) {
-    Value value = castIntegerLikeTo(anchor, operands[index], i64Type);
-    if (!value) {
-      return failure();
-    }
-    values.push_back(value);
-  }
-  return values;
+  return castIntegerLikeOperands(anchor, operands,
+                                 {2u, 3u, 4u, 5u, 6u, 7u, 8u}, i64Type);
 }
 
 static FailureOr<Value>
@@ -41,7 +34,9 @@ packCopyGmToUbConfig0(Operation *anchor, ValueRange operands) {
   FailureOr<SmallVector<Value, 7>> values =
       castCopyGmToUbConfig0Operands(anchor, operands, builder.getI64Type());
   if (failed(values))
+  {
     return failure();
+  }
   return packShiftedI64Fields(
       builder, loc, (*values)[0],
       {{(*values)[1], 4}, {(*values)[2], 25}, {(*values)[3], 46},
@@ -59,17 +54,17 @@ packCopyGmToUbConfig1(Operation *anchor, ValueRange operands) {
 
 static FailureOr<Value>
 packCopyGmToUbCfgV220(Operation *anchor, ValueRange operands) {
+  if (operands.size() != 11)
+  {
+    return failure();
+  }
   OpBuilder builder(anchor);
   builder.setInsertionPoint(anchor);
   Location loc = anchor->getLoc();
 
-  auto getI64Operand = [&](unsigned idx) -> Value {
-    return castIntegerLikeTo(anchor, operands[idx], builder.getI64Type());
-  };
-
-  Value sid = getI64Operand(2);
-  Value lenBurst = getI64Operand(4);
-  if (!sid || !lenBurst)
+  auto values = castIntegerLikeOperands(anchor, operands, {2u, 4u},
+                                        builder.getI64Type());
+  if (failed(values))
   {
     return failure();
   }
@@ -77,8 +72,8 @@ packCopyGmToUbCfgV220(Operation *anchor, ValueRange operands) {
   Value oneI64 = getI64Constant(builder, loc, 1);
   Value bytesPer32B = getI64Constant(builder, loc, 5);
   auto lenIn32B =
-      builder.create<arith::ShRUIOp>(loc, lenBurst, bytesPer32B).getResult();
-  return packShiftedI64Fields(builder, loc, sid,
+      builder.create<arith::ShRUIOp>(loc, (*values)[1], bytesPer32B).getResult();
+  return packShiftedI64Fields(builder, loc, (*values)[0],
                               {{oneI64, 4}, {lenIn32B, 16}});
 }
 
@@ -108,22 +103,15 @@ packCopyUbToGmConfig0(Operation *anchor, ValueRange operands) {
   builder.setInsertionPoint(anchor);
   Location loc = anchor->getLoc();
 
-  auto getI64Operand = [&](unsigned idx) -> Value {
-    return castIntegerLikeTo(anchor, operands[idx], builder.getI64Type());
-  };
-
-  Value sid = getI64Operand(2);
-  Value nBurst = getI64Operand(3);
-  Value lenBurst = getI64Operand(4);
-  Value l2CacheCtl = getI64Operand(5);
-  if (!sid || !nBurst || !lenBurst || !l2CacheCtl)
+  auto values = castIntegerLikeOperands(anchor, operands, {2u, 3u, 4u, 5u},
+                                        builder.getI64Type());
+  if (failed(values))
   {
     return failure();
   }
-
-  return packShiftedI64Fields(builder, loc, sid,
-                              {{nBurst, 4}, {lenBurst, 25},
-                               {l2CacheCtl, 60}});
+  return packShiftedI64Fields(builder, loc, (*values)[0],
+                              {{(*values)[1], 4}, {(*values)[2], 25},
+                               {(*values)[3], 60}});
 }
 
 static FailureOr<Value>
@@ -146,13 +134,9 @@ packCopyUbToGmCfgV220(Operation *anchor, ValueRange operands) {
   builder.setInsertionPoint(anchor);
   Location loc = anchor->getLoc();
 
-  auto getI64Operand = [&](unsigned idx) -> Value {
-    return castIntegerLikeTo(anchor, operands[idx], builder.getI64Type());
-  };
-
-  Value sid = getI64Operand(2);
-  Value lenBurst = getI64Operand(4);
-  if (!sid || !lenBurst)
+  auto values = castIntegerLikeOperands(anchor, operands, {2u, 4u},
+                                        builder.getI64Type());
+  if (failed(values))
   {
     return failure();
   }
@@ -160,8 +144,8 @@ packCopyUbToGmCfgV220(Operation *anchor, ValueRange operands) {
   Value oneI64 = getI64Constant(builder, loc, 1);
   Value bytesPer32B = getI64Constant(builder, loc, 5);
   auto lenIn32B =
-      builder.create<arith::ShRUIOp>(loc, lenBurst, bytesPer32B).getResult();
-  return packShiftedI64Fields(builder, loc, sid,
+      builder.create<arith::ShRUIOp>(loc, (*values)[1], bytesPer32B).getResult();
+  return packShiftedI64Fields(builder, loc, (*values)[0],
                               {{oneI64, 4}, {lenIn32B, 16}});
 }
 
@@ -186,22 +170,16 @@ packCopyUbToUbConfig(Operation *anchor, ValueRange operands) {
   builder.setInsertionPoint(anchor);
   Location loc = anchor->getLoc();
 
-  auto getI64Operand = [&](unsigned idx) -> Value {
-    return castIntegerLikeTo(anchor, operands[idx], builder.getI64Type());
-  };
-
-  Value nBurst = getI64Operand(3);
-  Value lenBurst = getI64Operand(4);
-  Value srcStride = getI64Operand(5);
-  Value dstStride = getI64Operand(6);
-  if (!nBurst || !lenBurst || !srcStride || !dstStride)
+  auto values = castIntegerLikeOperands(anchor, operands, {3u, 4u, 5u, 6u},
+                                        builder.getI64Type());
+  if (failed(values))
   {
     return failure();
   }
 
-  return packShiftedI64Fields(builder, loc, nBurst,
-                              {{lenBurst, 16}, {srcStride, 32},
-                               {dstStride, 48}});
+  return packShiftedI64Fields(builder, loc, (*values)[0],
+                              {{(*values)[1], 16}, {(*values)[2], 32},
+                               {(*values)[3], 48}});
 }
 
 static FailureOr<Value>

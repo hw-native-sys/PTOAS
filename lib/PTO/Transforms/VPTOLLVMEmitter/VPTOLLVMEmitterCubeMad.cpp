@@ -269,11 +269,10 @@ struct MadConvertedOperands {
 };
 
 static FailureOr<MadConvertedOperands>
-prepareMadConvertedOperands(pto::MadRawOpInterface op,
-                            ValueRange convertedOperands,
-                            ConversionPatternRewriter &rewriter) {
+extractMadOperands(pto::MadRawOpInterface op, ValueRange convertedOperands) {
   const bool hasBias = op.hasBiasOperand();
-  if (convertedOperands.size() < (hasBias ? 5U : 4U)) {
+  if (convertedOperands.size() < (hasBias ? 5U : 4U))
+  {
     return failure();
   }
 
@@ -282,17 +281,25 @@ prepareMadConvertedOperands(pto::MadRawOpInterface op,
                                 hasBias ? convertedOperands[3] : Value(),
                                 convertedOperands[hasBias ? 4 : 3]};
   if (!operands.lhs || !operands.rhs || !operands.dst || !operands.xt ||
-      (hasBias && !operands.bias)) {
+      (hasBias && !operands.bias))
+  {
     return failure();
   }
 
   if (!isa<LLVM::LLVMPointerType>(operands.lhs.getType()) ||
       !isa<LLVM::LLVMPointerType>(operands.rhs.getType()) ||
       !isa<LLVM::LLVMPointerType>(operands.dst.getType()) ||
-      (operands.bias && !isa<LLVM::LLVMPointerType>(operands.bias.getType()))) {
+      (operands.bias && !isa<LLVM::LLVMPointerType>(operands.bias.getType())))
+  {
     return failure();
   }
 
+  return operands;
+}
+
+static FailureOr<MadConvertedOperands>
+reinterpretMadOperands(pto::MadRawOpInterface op,
+                       const MadConvertedOperands &operands) {
   constexpr unsigned caAddressSpace =
       static_cast<unsigned>(pto::AddressSpace::LEFT);
   constexpr unsigned cbAddressSpace =
@@ -307,16 +314,34 @@ prepareMadConvertedOperands(pto::MadRawOpInterface op,
       op, operands.rhs, cbAddressSpace);
   FailureOr<Value> dst = reinterpretPointerToAddrSpace(
       op, operands.dst, ccAddressSpace);
-  FailureOr<Value> bias;
-  if (operands.bias) {
-    bias = reinterpretPointerToAddrSpace(op, operands.bias, btAddressSpace);
-  }
-  if (failed(lhs) || failed(rhs) || failed(dst) ||
-      (operands.bias && failed(bias))) {
+  if (failed(lhs) || failed(rhs) || failed(dst))
+  {
     return failure();
   }
-  return MadConvertedOperands{*lhs, *rhs, *dst,
-                              operands.bias ? *bias : Value(), operands.xt};
+  Value bias;
+  if (operands.bias)
+  {
+    FailureOr<Value> convertedBias = reinterpretPointerToAddrSpace(
+        op, operands.bias, btAddressSpace);
+    if (failed(convertedBias))
+    {
+      return failure();
+    }
+    bias = *convertedBias;
+  }
+  return MadConvertedOperands{*lhs, *rhs, *dst, bias, operands.xt};
+}
+
+static FailureOr<MadConvertedOperands>
+prepareMadConvertedOperands(pto::MadRawOpInterface op,
+                            ValueRange convertedOperands) {
+  FailureOr<MadConvertedOperands> operands =
+      extractMadOperands(op, convertedOperands);
+  if (failed(operands))
+  {
+    return failure();
+  }
+  return reinterpretMadOperands(op, *operands);
 }
 
 static LogicalResult lowerMadRawOp(pto::MadRawOpInterface op,
@@ -324,7 +349,7 @@ static LogicalResult lowerMadRawOp(pto::MadRawOpInterface op,
                                    ConversionPatternRewriter &rewriter,
                                    LoweringState &state) {
   FailureOr<MadConvertedOperands> operands =
-      prepareMadConvertedOperands(op, convertedOperands, rewriter);
+      prepareMadConvertedOperands(op, convertedOperands);
   if (failed(operands)) {
     return rewriter.notifyMatchFailure(op,
                                        "invalid converted mad raw operands");

@@ -68,6 +68,24 @@ Value castIntegerLikeTo(Operation *anchor, Value value, Type targetType) {
   return {};
 }
 
+FailureOr<SmallVector<Value, 7>>
+castIntegerLikeOperands(Operation *anchor, ValueRange operands,
+                        ArrayRef<unsigned> indices, Type targetType) {
+  SmallVector<Value, 7> converted;
+  converted.reserve(indices.size());
+  for (unsigned index : indices) {
+    if (index >= operands.size()) {
+      return failure();
+    }
+    Value value = castIntegerLikeTo(anchor, operands[index], targetType);
+    if (!value) {
+      return failure();
+    }
+    converted.push_back(value);
+  }
+  return converted;
+}
+
 FailureOr<Value> reinterpretPointerToAddrSpace(Operation *anchor, Value value,
                                                 unsigned targetAddressSpace) {
   auto sourcePtrType = dyn_cast<LLVM::LLVMPointerType>(value.getType());

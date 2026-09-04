@@ -42,6 +42,9 @@ Type getElementTypeFromVectorLike(Type type);
 std::optional<int64_t> getElementCountFromVectorLike(Type type);
 bool isOnePointStoreDist(StringRef dist);
 Value castIntegerLikeTo(Operation *anchor, Value value, Type targetType);
+FailureOr<SmallVector<Value, 7>>
+castIntegerLikeOperands(Operation *anchor, ValueRange operands,
+                        ArrayRef<unsigned> indices, Type targetType);
 FailureOr<Value> reinterpretPointerToAddrSpace(Operation *anchor, Value value,
                                                 unsigned targetAddressSpace);
 FailureOr<Value> packLoopPair(Operation *anchor, Value low, Value high);
