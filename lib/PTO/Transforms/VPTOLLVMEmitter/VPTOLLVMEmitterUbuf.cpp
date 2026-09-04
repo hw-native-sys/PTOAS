@@ -52,9 +52,10 @@ packCopyGmToUbConfig1(Operation *anchor, ValueRange operands) {
   return packLoopPair(anchor, operands[9], operands[10]);
 }
 
-static FailureOr<Value>
-packCopyGmToUbCfgV220(Operation *anchor, ValueRange operands) {
-  if (operands.size() != 11)
+static FailureOr<Value> packCopyV220Config(Operation *anchor,
+                                           ValueRange operands,
+                                           unsigned expectedSize) {
+  if (operands.size() != expectedSize)
   {
     return failure();
   }
@@ -75,6 +76,11 @@ packCopyGmToUbCfgV220(Operation *anchor, ValueRange operands) {
       builder.create<arith::ShRUIOp>(loc, (*values)[1], bytesPer32B).getResult();
   return packShiftedI64Fields(builder, loc, (*values)[0],
                               {{oneI64, 4}, {lenIn32B, 16}});
+}
+
+static FailureOr<Value>
+packCopyGmToUbCfgV220(Operation *anchor, ValueRange operands) {
+  return packCopyV220Config(anchor, operands, 11);
 }
 
 [[maybe_unused]] static FailureOr<Value>
@@ -125,28 +131,7 @@ packCopyUbToGmConfig1(Operation *anchor, ValueRange operands) {
 
 static FailureOr<Value>
 packCopyUbToGmCfgV220(Operation *anchor, ValueRange operands) {
-  if (operands.size() != 8)
-  {
-    return failure();
-  }
-
-  OpBuilder builder(anchor);
-  builder.setInsertionPoint(anchor);
-  Location loc = anchor->getLoc();
-
-  auto values = castIntegerLikeOperands(anchor, operands, {2u, 4u},
-                                        builder.getI64Type());
-  if (failed(values))
-  {
-    return failure();
-  }
-
-  Value oneI64 = getI64Constant(builder, loc, 1);
-  Value bytesPer32B = getI64Constant(builder, loc, 5);
-  auto lenIn32B =
-      builder.create<arith::ShRUIOp>(loc, (*values)[1], bytesPer32B).getResult();
-  return packShiftedI64Fields(builder, loc, (*values)[0],
-                              {{oneI64, 4}, {lenIn32B, 16}});
+  return packCopyV220Config(anchor, operands, 8);
 }
 
 [[maybe_unused]] static FailureOr<Value>
@@ -182,8 +167,8 @@ packCopyUbToUbConfig(Operation *anchor, ValueRange operands) {
                                {(*values)[3], 48}});
 }
 
-static FailureOr<Value>
-packCopyCbufToUbConfig(Operation *anchor, ValueRange operands) {
+static FailureOr<Value> packCopyCbufUbConfig(Operation *anchor,
+                                             ValueRange operands) {
   if (operands.size() != 7)
   {
     return failure();
@@ -212,32 +197,13 @@ packCopyCbufToUbConfig(Operation *anchor, ValueRange operands) {
 }
 
 static FailureOr<Value>
+packCopyCbufToUbConfig(Operation *anchor, ValueRange operands) {
+  return packCopyCbufUbConfig(anchor, operands);
+}
+
+static FailureOr<Value>
 packCopyUbToCbufConfig(Operation *anchor, ValueRange operands) {
-  if (operands.size() != 7)
-  {
-    return failure();
-  }
-  OpBuilder builder(anchor);
-  builder.setInsertionPoint(anchor);
-  Location loc = anchor->getLoc();
-
-  auto getI64Operand = [&](unsigned idx) -> Value {
-    return castIntegerLikeTo(anchor, operands[idx], builder.getI64Type());
-  };
-
-  Value sid = getI64Operand(2);
-  Value nBurst = getI64Operand(3);
-  Value lenBurst = getI64Operand(4);
-  Value srcStride = getI64Operand(5);
-  Value dstStride = getI64Operand(6);
-  if (!sid || !nBurst || !lenBurst || !srcStride || !dstStride)
-  {
-    return failure();
-  }
-
-  return packShiftedI64Fields(builder, loc, sid,
-                              {{nBurst, 4}, {lenBurst, 16},
-                               {srcStride, 32}, {dstStride, 48}});
+  return packCopyCbufUbConfig(anchor, operands);
 }
 
 static FailureOr<Value> buildUbufUnaryConfig(Operation *anchor,
