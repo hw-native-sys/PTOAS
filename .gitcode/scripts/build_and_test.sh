@@ -30,6 +30,8 @@ echo "Build-and-test workspace: ${WORKSPACE}"
 echo "LLVM cache root: ${ASCEND_3RD_LIB_PATH}"
 echo "Parallel jobs: ${BUILD_JOBS}"
 
+bash "${WORKSPACE}/.gitcode/scripts/probe_vpto_sim_env.sh"
+
 if [[ ! -d "${ASCEND_3RD_LIB_PATH}/llvm-19" ]]; then
   echo "ERROR: the compile image does not provide the LLVM cache at ${ASCEND_3RD_LIB_PATH}/llvm-19" >&2
   exit 1
