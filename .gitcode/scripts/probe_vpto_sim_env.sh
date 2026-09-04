@@ -10,6 +10,24 @@
 set -euo pipefail
 
 echo "=== VPTO SIM environment probe ==="
+echo "CPU parallelism:"
+if command -v nproc >/dev/null 2>&1; then
+  echo "  nproc: $(nproc)"
+else
+  echo "  nproc: unavailable"
+fi
+if command -v getconf >/dev/null 2>&1; then
+  echo "  online processors: $(getconf _NPROCESSORS_ONLN 2>/dev/null || echo unavailable)"
+else
+  echo "  online processors: unavailable"
+fi
+if [[ -r /sys/fs/cgroup/cpu.max ]]; then
+  echo "  cgroup CPU quota: $(tr ' ' '/' < /sys/fs/cgroup/cpu.max)"
+elif [[ -r /sys/fs/cgroup/cpu/cpu.cfs_quota_us && -r /sys/fs/cgroup/cpu/cpu.cfs_period_us ]]; then
+  echo "  cgroup CPU quota: $(cat /sys/fs/cgroup/cpu/cpu.cfs_quota_us)/$(cat /sys/fs/cgroup/cpu/cpu.cfs_period_us)"
+else
+  echo "  cgroup CPU quota: unavailable"
+fi
 printf 'python: '
 command -v python3 || true
 python3 --version || true
