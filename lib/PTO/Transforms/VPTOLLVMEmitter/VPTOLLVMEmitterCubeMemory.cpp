@@ -249,6 +249,25 @@ packLoadCbufToL0Config1(Operation *anchor, Value srcStride, Value dstStride) {
                               {{dstStrideI64, 16}});
 }
 
+// Pack the two common L0 load configuration words used by Ca/Cb variants.
+// Keeping this sequence in one place avoids subtle divergence between
+// lowering patterns while keeping each rewrite focused on operand mapping and
+// call emission.
+static LogicalResult packLoadCbufToL0Configs(Operation *anchor, Value mStart,
+                                            Value kStart, Value mStep,
+                                            Value kStep, Value srcStride,
+                                            Value dstStride, Value &config0,
+                                            Value &config1) {
+  FailureOr<Value> packed0 =
+      packLoadCbufToL0Config0(anchor, mStart, kStart, mStep, kStep);
+  FailureOr<Value> packed1 = packLoadCbufToL0Config1(anchor, srcStride, dstStride);
+  if (failed(packed0) || failed(packed1))
+    return failure();
+  config0 = *packed0;
+  config1 = *packed1;
+  return success();
+}
+
 static FailureOr<StringRef> buildCopyGmToCbufCallee(MLIRContext *context,
                                                     Type sourceType) {
   auto ptrType = dyn_cast<pto::PtrType>(sourceType);
@@ -841,11 +860,9 @@ public:
       return rewriter.notifyMatchFailure(op, "failed to map cbuf/ca pointer spaces");
     }
 
-    FailureOr<Value> config0 =
-        packLoadCbufToL0Config0(op, mStart, kStart, mStep, kStep);
-    FailureOr<Value> config1 =
-        packLoadCbufToL0Config1(op, srcStride, dstStride);
-    if (failed(config0) || failed(config1))
+    Value config0, config1;
+    if (failed(packLoadCbufToL0Configs(op, mStart, kStart, mStep, kStep,
+                                       srcStride, dstStride, config0, config1)))
     {
       return rewriter.notifyMatchFailure(op, "failed to pack load_cbuf_to_ca config");
     }
@@ -863,8 +880,8 @@ public:
                   i64Ty},
         TypeRange{});
     rewriter.create<func::CallOp>(op.getLoc(), *calleeName, TypeRange{},
-                                  ValueRange{(*pointers)[1], (*pointers)[0], *config0,
-                                             *config1, transpose});
+                                  ValueRange{(*pointers)[1], (*pointers)[0], config0,
+                                             config1, transpose});
     state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
     rewriter.eraseOp(op);
     return success();
@@ -911,13 +928,11 @@ public:
       return rewriter.notifyMatchFailure(op, "failed to map cbuf/cube pointer spaces");
     }
 
-    FailureOr<Value> config0 = packLoadCbufToL0Config0(
-        op, adaptor.getMStart(), adaptor.getKStart(), adaptor.getMStep(),
-        adaptor.getKStep());
-    FailureOr<Value> config1 =
-        packLoadCbufToL0Config1(op, adaptor.getSrcStride(),
-                                adaptor.getDstStride());
-    if (failed(config0) || failed(config1))
+    Value config0, config1;
+    if (failed(packLoadCbufToL0Configs(
+            op, adaptor.getMStart(), adaptor.getKStart(), adaptor.getMStep(),
+            adaptor.getKStep(), adaptor.getSrcStride(), adaptor.getDstStride(),
+            config0, config1)))
     {
       return rewriter.notifyMatchFailure(op, "failed to pack load_cbuf_to_*_s4 config");
     }
@@ -946,7 +961,7 @@ public:
         TypeRange{});
     rewriter.create<func::CallOp>(
         op.getLoc(), *calleeName, TypeRange{},
-        ValueRange{*destination, *source, *config0, *config1, transpose});
+        ValueRange{*destination, *source, config0, config1, transpose});
     state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
     rewriter.eraseOp(op);
     return success();
@@ -1001,11 +1016,9 @@ public:
     }
 
     bool transpose = op.getTranspose();
-    FailureOr<Value> config0 =
-        packLoadCbufToL0Config0(op, mStart, kStart, mStep, kStep);
-    FailureOr<Value> config1 =
-        packLoadCbufToL0Config1(op, srcStride, dstStride);
-    if (failed(config0) || failed(config1))
+    Value config0, config1;
+    if (failed(packLoadCbufToL0Configs(op, mStart, kStart, mStep, kStep,
+                                       srcStride, dstStride, config0, config1)))
     {
       return rewriter.notifyMatchFailure(op, "failed to pack load_cbuf_to_cb config");
     }
@@ -1023,8 +1036,8 @@ public:
                   i64Ty},
         TypeRange{});
     rewriter.create<func::CallOp>(op.getLoc(), *calleeName, TypeRange{},
-                                  ValueRange{*destination, *source, *config0,
-                                             *config1, transposeValue});
+                                  ValueRange{*destination, *source, config0,
+                                             config1, transposeValue});
     state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
     rewriter.eraseOp(op);
     return success();
