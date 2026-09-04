@@ -1154,60 +1154,45 @@ private:
 
 } // namespace
 
+static void populateVPTOUbufArithmeticPatterns(TypeConverter &typeConverter,
+                                                RewritePatternSet &patterns,
+                                                LoweringState &state) {
+  patterns.add<LowerUBufBinaryOpPattern<pto::UBVaddOp>,
+               LowerUBufBinaryOpPattern<pto::UBVsubOp>,
+               LowerUBufBinaryOpPattern<pto::UBVmulOp>,
+               LowerUBufBinaryOpPattern<pto::UBVdivOp>,
+               LowerUBufBinaryOpPattern<pto::UBVmaxOp>,
+               LowerUBufBinaryOpPattern<pto::UBVminOp>,
+               LowerUBufBinaryOpPattern<pto::UBVandOp>,
+               LowerUBufBinaryOpPattern<pto::UBVorOp>,
+               LowerUBufBinaryOpPattern<pto::UBVaddReluOp>,
+               LowerUBufUnaryOpPattern<pto::UBVnotOp>,
+               LowerUBufUnaryOpPattern<pto::UBVabsOp>,
+               LowerUBufUnaryOpPattern<pto::UBVreluOp>,
+               LowerUBufUnaryOpPattern<pto::UBVexpOp>,
+               LowerUBufUnaryOpPattern<pto::UBVlnOp>,
+               LowerUBufUnaryOpPattern<pto::UBVsqrtOp>,
+               LowerUBufUnaryOpPattern<pto::UBVrsqrtOp>,
+               LowerUBufShiftOpPattern<pto::UBVshlOp>,
+               LowerUBufShiftOpPattern<pto::UBVshrOp>,
+               LowerUBufScalarBinaryPattern<pto::UBVmulSOp>,
+               LowerUBufScalarBinaryPattern<pto::UBVaddSOp>,
+               LowerUBufScalarBinaryPattern<pto::UBVmaxSOp>,
+               LowerUBufScalarBinaryPattern<pto::UBVminSOp>>(
+      typeConverter, patterns.getContext(), state);
+}
+
 void populateVPTOUbufPatterns(TypeConverter &typeConverter,
-                               RewritePatternSet &patterns,
-                               LoweringState &state,
-                               const std::string &march) {
+                              RewritePatternSet &patterns,
+                              LoweringState &state,
+                              const std::string &march) {
   patterns.add<LowerCopyOpPattern<pto::CopyGmToUbufOp>>(
       typeConverter, patterns.getContext(), state, march);
   patterns.add<LowerCopyOpPattern<pto::CopyUbufToGmOp>>(
       typeConverter, patterns.getContext(), state, march);
 
   if (march == "dav-c220-vec") {
-    patterns.add<LowerUBufBinaryOpPattern<pto::UBVaddOp>>(
-        typeConverter, patterns.getContext(), state);
-    patterns.add<LowerUBufBinaryOpPattern<pto::UBVsubOp>>(
-        typeConverter, patterns.getContext(), state);
-    patterns.add<LowerUBufBinaryOpPattern<pto::UBVmulOp>>(
-        typeConverter, patterns.getContext(), state);
-    patterns.add<LowerUBufBinaryOpPattern<pto::UBVdivOp>>(
-        typeConverter, patterns.getContext(), state);
-    patterns.add<LowerUBufBinaryOpPattern<pto::UBVmaxOp>>(
-        typeConverter, patterns.getContext(), state);
-    patterns.add<LowerUBufBinaryOpPattern<pto::UBVminOp>>(
-        typeConverter, patterns.getContext(), state);
-    patterns.add<LowerUBufBinaryOpPattern<pto::UBVandOp>>(
-        typeConverter, patterns.getContext(), state);
-    patterns.add<LowerUBufBinaryOpPattern<pto::UBVorOp>>(
-        typeConverter, patterns.getContext(), state);
-    patterns.add<LowerUBufBinaryOpPattern<pto::UBVaddReluOp>>(
-        typeConverter, patterns.getContext(), state);
-    patterns.add<LowerUBufUnaryOpPattern<pto::UBVnotOp>>(
-        typeConverter, patterns.getContext(), state);
-    patterns.add<LowerUBufUnaryOpPattern<pto::UBVabsOp>>(
-        typeConverter, patterns.getContext(), state);
-    patterns.add<LowerUBufUnaryOpPattern<pto::UBVreluOp>>(
-        typeConverter, patterns.getContext(), state);
-    patterns.add<LowerUBufUnaryOpPattern<pto::UBVexpOp>>(
-        typeConverter, patterns.getContext(), state);
-    patterns.add<LowerUBufUnaryOpPattern<pto::UBVlnOp>>(
-        typeConverter, patterns.getContext(), state);
-    patterns.add<LowerUBufUnaryOpPattern<pto::UBVsqrtOp>>(
-        typeConverter, patterns.getContext(), state);
-    patterns.add<LowerUBufUnaryOpPattern<pto::UBVrsqrtOp>>(
-        typeConverter, patterns.getContext(), state);
-    patterns.add<LowerUBufShiftOpPattern<pto::UBVshlOp>>(
-        typeConverter, patterns.getContext(), state);
-    patterns.add<LowerUBufShiftOpPattern<pto::UBVshrOp>>(
-        typeConverter, patterns.getContext(), state);
-    patterns.add<LowerUBufScalarBinaryPattern<pto::UBVmulSOp>>(
-        typeConverter, patterns.getContext(), state);
-    patterns.add<LowerUBufScalarBinaryPattern<pto::UBVaddSOp>>(
-        typeConverter, patterns.getContext(), state);
-    patterns.add<LowerUBufScalarBinaryPattern<pto::UBVmaxSOp>>(
-        typeConverter, patterns.getContext(), state);
-    patterns.add<LowerUBufScalarBinaryPattern<pto::UBVminSOp>>(
-        typeConverter, patterns.getContext(), state);
+    populateVPTOUbufArithmeticPatterns(typeConverter, patterns, state);
     populateVPTOMemoryUbufPatterns(typeConverter, patterns, state);
     patterns.add<LowerUBVgatherbOpPattern>(
         typeConverter, patterns.getContext(), state);
