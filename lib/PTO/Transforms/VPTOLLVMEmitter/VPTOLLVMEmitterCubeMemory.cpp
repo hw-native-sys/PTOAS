@@ -606,10 +606,9 @@ public:
         static_cast<unsigned>(pto::AddressSpace::GM);
     constexpr unsigned cbufAddressSpace =
         static_cast<unsigned>(pto::AddressSpace::MAT);
-    FailureOr<Value> source = reinterpretPointerToAddrSpace(op, sourceRaw, gmAddressSpace);
-    FailureOr<Value> destination =
-        reinterpretPointerToAddrSpace(op, destinationRaw, cbufAddressSpace);
-    if (failed(source) || failed(destination))
+    FailureOr<SmallVector<Value, 2>> pointers = reinterpretPointerOperands(
+        op, {sourceRaw, destinationRaw}, {gmAddressSpace, cbufAddressSpace});
+    if (failed(pointers))
     {
       return rewriter.notifyMatchFailure(op, "failed to map cbuf/gm pointer spaces");
     }
@@ -630,11 +629,12 @@ public:
     }
 
     auto funcType = rewriter.getFunctionType(
-        TypeRange{destination->getType(), source->getType(), i64Ty, i64Ty},
+        TypeRange{(*pointers)[1].getType(), (*pointers)[0].getType(), i64Ty,
+                  i64Ty},
         TypeRange{});
     rewriter.create<func::CallOp>(
         op.getLoc(), *calleeName, TypeRange{},
-        ValueRange{*destination, *source, *config0, *config1});
+        ValueRange{(*pointers)[1], (*pointers)[0], *config0, *config1});
     state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
     rewriter.eraseOp(op);
     return success();
@@ -747,11 +747,9 @@ public:
         static_cast<unsigned>(pto::AddressSpace::MAT);
     constexpr unsigned btAddressSpace =
         static_cast<unsigned>(pto::AddressSpace::BIAS);
-    FailureOr<Value> source =
-        reinterpretPointerToAddrSpace(op, sourceRaw, cbufAddressSpace);
-    FailureOr<Value> destinationPtr =
-        reinterpretPointerToAddrSpace(op, destinationRaw, btAddressSpace);
-    if (failed(source) || failed(destinationPtr))
+    FailureOr<SmallVector<Value, 2>> pointers = reinterpretPointerOperands(
+        op, {sourceRaw, destinationRaw}, {cbufAddressSpace, btAddressSpace});
+    if (failed(pointers))
     {
       return rewriter.notifyMatchFailure(op, "failed to map cbuf/bt pointer spaces");
     }
@@ -766,16 +764,16 @@ public:
 
     Type i64Ty = rewriter.getI64Type();
     Value destination =
-        rewriter.create<LLVM::PtrToIntOp>(op.getLoc(), i64Ty, *destinationPtr);
+        rewriter.create<LLVM::PtrToIntOp>(op.getLoc(), i64Ty, (*pointers)[1]);
     FailureOr<StringRef> calleeName = buildCopyCbufToBtCallee(op);
     if (failed(calleeName))
     {
       return rewriter.notifyMatchFailure(op, "unsupported copy_cbuf_to_bt source element type");
     }
     auto funcType = rewriter.getFunctionType(
-        TypeRange{i64Ty, source->getType(), i64Ty}, TypeRange{});
+        TypeRange{i64Ty, (*pointers)[0].getType(), i64Ty}, TypeRange{});
     rewriter.create<func::CallOp>(op.getLoc(), *calleeName, TypeRange{},
-                                  ValueRange{destination, *source, *config});
+                                  ValueRange{destination, (*pointers)[0], *config});
     state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
     rewriter.eraseOp(op);
     return success();
@@ -879,10 +877,9 @@ public:
         static_cast<unsigned>(pto::AddressSpace::MAT);
     constexpr unsigned caAddressSpace =
         static_cast<unsigned>(pto::AddressSpace::LEFT);
-    FailureOr<Value> source = reinterpretPointerToAddrSpace(op, sourceRaw, cbufAddressSpace);
-    FailureOr<Value> destination =
-        reinterpretPointerToAddrSpace(op, destinationRaw, caAddressSpace);
-    if (failed(source) || failed(destination))
+    FailureOr<SmallVector<Value, 2>> pointers = reinterpretPointerOperands(
+        op, {sourceRaw, destinationRaw}, {cbufAddressSpace, caAddressSpace});
+    if (failed(pointers))
     {
       return rewriter.notifyMatchFailure(op, "failed to map cbuf/ca pointer spaces");
     }
@@ -905,11 +902,11 @@ public:
                                          "unsupported load_cbuf_to_ca element type");
     }
     auto funcType = rewriter.getFunctionType(
-        TypeRange{destination->getType(), source->getType(), i64Ty, i64Ty,
+        TypeRange{(*pointers)[1].getType(), (*pointers)[0].getType(), i64Ty, i64Ty,
                   i64Ty},
         TypeRange{});
     rewriter.create<func::CallOp>(op.getLoc(), *calleeName, TypeRange{},
-                                  ValueRange{*destination, *source, *config0,
+                                  ValueRange{(*pointers)[1], (*pointers)[0], *config0,
                                              *config1, transpose});
     state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
     rewriter.eraseOp(op);
