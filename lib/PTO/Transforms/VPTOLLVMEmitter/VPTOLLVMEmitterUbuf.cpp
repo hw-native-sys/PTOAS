@@ -237,6 +237,21 @@ static FailureOr<Value> buildUbufUnaryConfig(Operation *anchor,
       0xff);
 }
 
+template <typename UBOp>
+static std::string getUBufBinaryCallee(StringRef elemFrag) {
+  StringRef stem;
+  if constexpr (std::is_same_v<UBOp, pto::UBVaddOp>) stem = "VADD";
+  else if constexpr (std::is_same_v<UBOp, pto::UBVsubOp>) stem = "VSUB";
+  else if constexpr (std::is_same_v<UBOp, pto::UBVmulOp>) stem = "VMUL";
+  else if constexpr (std::is_same_v<UBOp, pto::UBVdivOp>) stem = "VDIV";
+  else if constexpr (std::is_same_v<UBOp, pto::UBVmaxOp>) stem = "VMAX";
+  else if constexpr (std::is_same_v<UBOp, pto::UBVminOp>) stem = "VMIN";
+  else if constexpr (std::is_same_v<UBOp, pto::UBVandOp>) stem = "VAND";
+  else if constexpr (std::is_same_v<UBOp, pto::UBVorOp>) stem = "VOR";
+  else if constexpr (std::is_same_v<UBOp, pto::UBVaddReluOp>) stem = "VADDRELU";
+  return stem.empty() ? std::string() : ("llvm.hivm." + stem.str() + "." + elemFrag.str());
+}
+
 
 static FailureOr<StringRef> buildCopyGmToUbCallee(MLIRContext *context,
                                                   Type sourceType,
@@ -410,27 +425,8 @@ public:
           op, "unsupported element type for ubuf binary op");
     }
 
-    std::string calleeName;
-    if constexpr (std::is_same_v<UBOp, pto::UBVaddOp>)
-    {
-      calleeName = "llvm.hivm.VADD." + elemFrag;
-    } else if constexpr (std::is_same_v<UBOp, pto::UBVsubOp>) {
-      calleeName = "llvm.hivm.VSUB." + elemFrag;
-    } else if constexpr (std::is_same_v<UBOp, pto::UBVmulOp>) {
-      calleeName = "llvm.hivm.VMUL." + elemFrag;
-    } else if constexpr (std::is_same_v<UBOp, pto::UBVdivOp>) {
-      calleeName = "llvm.hivm.VDIV." + elemFrag;
-    } else if constexpr (std::is_same_v<UBOp, pto::UBVmaxOp>) {
-      calleeName = "llvm.hivm.VMAX." + elemFrag;
-    } else if constexpr (std::is_same_v<UBOp, pto::UBVminOp>) {
-      calleeName = "llvm.hivm.VMIN." + elemFrag;
-    } else if constexpr (std::is_same_v<UBOp, pto::UBVandOp>) {
-      calleeName = "llvm.hivm.VAND." + elemFrag;
-    } else if constexpr (std::is_same_v<UBOp, pto::UBVorOp>) {
-      calleeName = "llvm.hivm.VOR." + elemFrag;
-    } else if constexpr (std::is_same_v<UBOp, pto::UBVaddReluOp>) {
-      calleeName = "llvm.hivm.VADDRELU." + elemFrag;
-    } else {
+    std::string calleeName = getUBufBinaryCallee<UBOp>(elemFrag);
+    if (calleeName.empty()) {
       return rewriter.notifyMatchFailure(op, "unsupported ubuf binary op");
     }
 
