@@ -201,6 +201,25 @@ static FailureOr<VcvtContract> buildVcvtContract(pto::VcvtOp op) {
   return *contract;
 }
 
+static LogicalResult appendVcvtImmediate(pto::VcvtOp op,
+                                         ConversionPatternRewriter &rewriter,
+                                         StringRef attrName, bool required,
+                                         std::optional<uint64_t> value,
+                                         SmallVector<Value> &args,
+                                         SmallVector<Type> &types) {
+  if (!required) {
+    return success();
+  }
+  if (!value) {
+    return rewriter.notifyMatchFailure(op,
+                                       "vcvt requires valid " + attrName + " attr");
+  }
+  Value immediate = getI32Constant(rewriter, op.getLoc(), *value);
+  args.push_back(immediate);
+  types.push_back(immediate.getType());
+  return success();
+}
+
 class LowerVcvtOpPattern final : public OpConversionPattern<pto::VcvtOp> {
 public:
   explicit LowerVcvtOpPattern(TypeConverter &typeConverter,
@@ -229,47 +248,34 @@ public:
     callArgs.push_back(adaptor.getMask());
     argTypes.push_back(adaptor.getMask().getType());
 
-    auto appendRndArg = [&]() -> LogicalResult {
-      auto roundMode =
-          op.getRndAttr() ? parseRoundModeImmediate(*op.getRnd()) : std::nullopt;
-      if (!roundMode)
-      {
-        return rewriter.notifyMatchFailure(op, "vcvt requires valid rnd attr");
-      }
-      Value roundValue = getI32Constant(rewriter, op.getLoc(), *roundMode);
-      callArgs.push_back(roundValue);
-      argTypes.push_back(roundValue.getType());
-      return success();
-    };
-
-    auto appendSatArg = [&]() -> LogicalResult {
-      auto saturation =
-          op.getSatAttr() ? parseSaturationImmediate(*op.getSat()) : std::nullopt;
-      if (!saturation)
-      {
-        return rewriter.notifyMatchFailure(op, "vcvt requires valid sat attr");
-      }
-      Value satValue = getI32Constant(rewriter, op.getLoc(), *saturation);
-      callArgs.push_back(satValue);
-      argTypes.push_back(satValue.getType());
-      return success();
-    };
+    std::optional<uint64_t> rnd = std::nullopt;
+    if (op.getRndAttr()) {
+      rnd = parseRoundModeImmediate(*op.getRnd());
+    }
+    std::optional<uint64_t> sat = std::nullopt;
+    if (op.getSatAttr()) {
+      sat = parseSaturationImmediate(*op.getSat());
+    }
 
     if ((*contract).satBeforeRnd) {
-      if ((*contract).requiresSat && failed(appendSatArg()))
+      if (failed(appendVcvtImmediate(op, rewriter, "sat", (*contract).requiresSat,
+                                     sat, callArgs, argTypes)))
       {
         return failure();
       }
-      if ((*contract).requiresRnd && failed(appendRndArg()))
+      if (failed(appendVcvtImmediate(op, rewriter, "rnd", (*contract).requiresRnd,
+                                     rnd, callArgs, argTypes)))
       {
         return failure();
       }
     } else {
-      if ((*contract).requiresRnd && failed(appendRndArg()))
+      if (failed(appendVcvtImmediate(op, rewriter, "rnd", (*contract).requiresRnd,
+                                     rnd, callArgs, argTypes)))
       {
         return failure();
       }
-      if ((*contract).requiresSat && failed(appendSatArg()))
+      if (failed(appendVcvtImmediate(op, rewriter, "sat", (*contract).requiresSat,
+                                     sat, callArgs, argTypes)))
       {
         return failure();
       }
