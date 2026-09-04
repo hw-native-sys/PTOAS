@@ -12628,9 +12628,10 @@ struct OneToNVMIFPToUIOpPattern
       for (auto [chunkIndex, resultType] : llvm::enumerate(resultVRegTypes)) {
         FailureOr<Value> resultMask =
             createAllTrueMaskForVReg(op.getLoc(), resultType, rewriter);
-        if (failed(resultMask))
+        if (failed(resultMask)) {
           return rewriter.notifyMatchFailure(
               op, "failed to build narrow fptoui result mask");
+        }
 
         SmallVector<Value> partials;
         partials.reserve(sourceFactor);
@@ -13400,8 +13401,9 @@ LogicalResult checkSupportedFPToSIShape(VMIFPToSIOp op,
   auto resultType = cast<VMIVRegType>(op.getResult().getType());
   VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();
   VMILayoutAttr resultLayout = resultType.getLayoutAttr();
-  if (!sourceLayout || !resultLayout)
+  if (!sourceLayout || !resultLayout) {
     return fail("requires assigned source/result layouts");
+  }
 
   Type srcElem = sourceType.getElementType();
   Type dstElem = resultType.getElementType();
