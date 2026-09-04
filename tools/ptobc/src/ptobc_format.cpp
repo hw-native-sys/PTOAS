@@ -210,7 +210,10 @@ std::string canonicalizeIoPath(const std::string& path) {
   // Lexically collapse "./", "foo/../" and redundant separators. This is a
   // pure string rewrite: symlink/absolute resolution is intentionally left to
   // the stream open below, which still reports unreachable paths.
-  llvm::SmallString<128> normalized(path);
+  // Inline capacity sized to cover typical PTOBC file paths without a heap
+  // allocation.
+  constexpr unsigned kIoPathInlineCapacity = 128;
+  llvm::SmallString<kIoPathInlineCapacity> normalized(path);
   llvm::sys::path::remove_dots(normalized, /*remove_dot_dot=*/true);
   return std::string(normalized);
 }
