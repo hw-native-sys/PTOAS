@@ -37,6 +37,12 @@ if [[ -n "${ASCEND_HOME_PATH:-}" && -d "${ASCEND_HOME_PATH}" ]]; then
 else
   echo "ASCEND_HOME_PATH is not set"
 fi
+if [[ -d /usr/local/Ascend ]]; then
+  echo "/usr/local/Ascend entries:"
+  find /usr/local/Ascend -maxdepth 1 -mindepth 1 -printf '  %f\n' 2>/dev/null | sort
+else
+  echo "/usr/local/Ascend: unavailable"
+fi
 
 for tool in bisheng msprof npu-smi; do
   if command -v "${tool}" >/dev/null 2>&1; then
