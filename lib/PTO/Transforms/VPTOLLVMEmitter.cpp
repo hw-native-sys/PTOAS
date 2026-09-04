@@ -67,56 +67,6 @@ namespace {
 constexpr llvm::StringLiteral kVectorSuffix = "_mix_aiv";
 constexpr llvm::StringLiteral kCubeSuffix = "_mix_aic";
 
-static Value getI32Constant(OpBuilder &builder, Location loc, uint64_t value) {
-  return builder.create<arith::ConstantOp>(loc, builder.getI32IntegerAttr(value))
-      .getResult();
-}
-
-[[maybe_unused]] static FailureOr<Value>
-materializeDynamicPltMask(ConversionPatternRewriter &rewriter,
-                          LoweringState &state, Location loc, Value laneCount,
-                          Type vectorElemType) {
-  Type i32Type = rewriter.getI32Type();
-  Value laneCountI32 = laneCount;
-  if (laneCountI32.getType() != i32Type) {
-    laneCountI32 = castIntegerLikeTo(rewriter.getInsertionBlock()->getParentOp(),
-                                     laneCountI32, i32Type);
-    if (!laneCountI32)
-    {
-      return failure();
-    }
-  }
-
-  StringRef calleeName;
-  if (vectorElemType.isF32()) {
-    calleeName = StringRef("llvm.hivm.plt.b32.v300");
-  } else if (vectorElemType.isF16() || vectorElemType.isBF16()) {
-    calleeName = StringRef("llvm.hivm.plt.b16.v300");
-  } else if (auto intType = dyn_cast<IntegerType>(vectorElemType)) {
-    if (intType.getWidth() == 32)
-    {
-      calleeName = StringRef("llvm.hivm.plt.b32.v300");
-    } else if (intType.getWidth() == 16) {
-      calleeName = StringRef("llvm.hivm.plt.b16.v300");
-    } else if (intType.getWidth() == 8) {
-      calleeName = StringRef("llvm.hivm.plt.b8.v300");
-    }
-  }
-  if (calleeName.empty())
-  {
-    return failure();
-  }
-
-  Type maskType = VectorType::get({256}, rewriter.getI1Type());
-  auto funcType =
-      rewriter.getFunctionType(TypeRange{i32Type}, TypeRange{maskType, i32Type});
-  auto call = rewriter.create<func::CallOp>(loc, calleeName, funcType.getResults(),
-                                            ValueRange{laneCountI32});
-  state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
-  return call.getResult(0);
-}
-
-
 static FailureOr<StringRef> buildL1CacheLoadCallee(MLIRContext *context,
                                                    Type resultType,
                                                    pto::L1Cache l1cache) {

@@ -56,50 +56,6 @@ static FailureOr<Value> packVbitsortConfig(Operation *anchor, Value repeatTimes)
       .getResult();
 }
 
-[[maybe_unused]] static FailureOr<Value>
-materializeDynamicPltMask(ConversionPatternRewriter &rewriter,
-                          LoweringState &state, Location loc, Value laneCount,
-                          Type vectorElemType) {
-  Type i32Type = rewriter.getI32Type();
-  Value laneCountI32 = laneCount;
-  if (laneCountI32.getType() != i32Type) {
-    laneCountI32 = castIntegerLikeTo(rewriter.getInsertionBlock()->getParentOp(),
-                                     laneCountI32, i32Type);
-    if (!laneCountI32)
-    {
-      return failure();
-    }
-  }
-
-  StringRef calleeName;
-  if (vectorElemType.isF32()) {
-    calleeName = StringRef("llvm.hivm.plt.b32.v300");
-  } else if (vectorElemType.isF16() || vectorElemType.isBF16()) {
-    calleeName = StringRef("llvm.hivm.plt.b16.v300");
-  } else if (auto intType = dyn_cast<IntegerType>(vectorElemType)) {
-    if (intType.getWidth() == 32)
-    {
-      calleeName = StringRef("llvm.hivm.plt.b32.v300");
-    } else if (intType.getWidth() == 16) {
-      calleeName = StringRef("llvm.hivm.plt.b16.v300");
-    } else if (intType.getWidth() == 8) {
-      calleeName = StringRef("llvm.hivm.plt.b8.v300");
-    }
-  }
-  if (calleeName.empty())
-  {
-    return failure();
-  }
-
-  Type maskType = VectorType::get({256}, rewriter.getI1Type());
-  auto funcType =
-      rewriter.getFunctionType(TypeRange{i32Type}, TypeRange{maskType, i32Type});
-  auto call = rewriter.create<func::CallOp>(loc, calleeName, funcType.getResults(),
-                                            ValueRange{laneCountI32});
-  state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
-  return call.getResult(0);
-}
-
 static Type getVgather2SourceElementType(Type sourceType) {
   if (auto ptrType = dyn_cast<pto::PtrType>(sourceType))
   {
