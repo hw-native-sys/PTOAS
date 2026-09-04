@@ -199,10 +199,11 @@ static bool isSameLayoutOp(Operation *op) {
   return isa<VMIAddFOp, VMIAddIOp, VMISubFOp, VMISubIOp, VMIMulFOp, VMIMulIOp,
              VMIVaddcOp, VMIVaddcsOp, VMIAddSOp, VMIMulSOp, VMIMaxSOp,
              VMIMinSOp, VMIShlSOp, VMIShrSOp, VMIVmullOp, VMIFmaOp, VMIDivFOp,
-             VMIMinFOp, VMIMinIOp, VMIMaxFOp, VMIMaxIOp, VMINegFOp, VMIAbsFOp,
-             VMIAbsIOp, VMISqrtOp, VMIExpOp, VMILnOp, VMIReluOp, VMIFPToSIOp,
-             VMISIToFPOp, VMIAndIOp, VMIOrIOp, VMIXOrIOp, VMIShLIOp, VMIShRUIOp,
-             VMIShRSIOp, VMINotOp, VMICmpFOp, VMICmpIOp, VMISelectOp,
+             VMIMinFOp, VMIMinIOp, VMIMaxFOp, VMIMaxIOp, VMINegFOp, VMINegIOp,
+             VMIAbsFOp, VMIAbsIOp, VMISqrtOp, VMIExpOp, VMILnOp, VMIReluOp,
+             VMIFPToSIOp, VMISIToFPOp, VMIAndIOp, VMIOrIOp, VMIXOrIOp,
+             VMIShLIOp, VMIShRUIOp, VMIShRSIOp, VMINotOp, VMICmpFOp, VMICmpIOp,
+             VMISelectOp,
              VMIMaskAndOp, VMIMaskOrOp, VMIMaskXOrOp, VMIMaskNotOp,
              VMIActivePrefixIndexOp, VMICompressOp, VMIExpandLoadOp>(op);
 }
