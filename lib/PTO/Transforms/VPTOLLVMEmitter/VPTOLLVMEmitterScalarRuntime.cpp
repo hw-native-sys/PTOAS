@@ -486,6 +486,21 @@ static std::string getScalarFloatBuiltinFragment(Type type) {
   return {};
 }
 
+static std::string getV2FloatBuiltinFragment(Type type, StringRef suffix) {
+  auto vecType = dyn_cast<VectorType>(type);
+  if (!vecType || vecType.getRank() != 1 || vecType.getDimSize(0) != 2) {
+    return {};
+  }
+  Type elementType = vecType.getElementType();
+  if (elementType.isF16()) {
+    return suffix == "x2" ? "f16x2" : "v2f16";
+  }
+  if (elementType.isBF16()) {
+    return suffix == "x2" ? "bf16x2" : "v2bf16";
+  }
+  return {};
+}
+
 static std::string getLLVMFloatBuiltinFragment(Type type) {
   std::string scalar = getScalarFloatBuiltinFragment(type);
   if (!scalar.empty())
@@ -493,20 +508,7 @@ static std::string getLLVMFloatBuiltinFragment(Type type) {
     return scalar;
   }
 
-  auto vecType = dyn_cast<VectorType>(type);
-  if (!vecType || vecType.getRank() != 1 || vecType.getDimSize(0) != 2) {
-    return {};
-  }
-  Type elementType = vecType.getElementType();
-  if (elementType.isF16())
-  {
-    return "v2f16";
-  }
-  if (elementType.isBF16())
-  {
-    return "v2bf16";
-  }
-  return {};
+  return getV2FloatBuiltinFragment(type, "v2");
 }
 
 static std::string getHIVMFloatBuiltinFragment(Type type) {
@@ -516,20 +518,7 @@ static std::string getHIVMFloatBuiltinFragment(Type type) {
     return scalar;
   }
 
-  auto vecType = dyn_cast<VectorType>(type);
-  if (!vecType || vecType.getRank() != 1 || vecType.getDimSize(0) != 2) {
-    return {};
-  }
-  Type elementType = vecType.getElementType();
-  if (elementType.isF16())
-  {
-    return "f16x2";
-  }
-  if (elementType.isBF16())
-  {
-    return "bf16x2";
-  }
-  return {};
+  return getV2FloatBuiltinFragment(type, "x2");
 }
 
 static FailureOr<StringRef> buildSqrtCallee(MLIRContext *context, Type valueType) {
