@@ -1554,11 +1554,10 @@ private:
 
 } // namespace
 
-void populateVPTOScalarAndRuntimePatterns(TypeConverter &typeConverter,
-                                          RewritePatternSet &patterns,
-                                          LoweringState &state) {
-  patterns.add<
-               LowerRuntimeQueryOpPattern<pto::GetCtrlOp>,
+static void addRuntimeQueryPatterns(TypeConverter &typeConverter,
+                                    RewritePatternSet &patterns,
+                                    LoweringState &state) {
+  patterns.add<LowerRuntimeQueryOpPattern<pto::GetCtrlOp>,
                LowerGetVms4SrOpPattern,
                LowerRuntimeQueryOpPattern<pto::GetTidXOp>,
                LowerRuntimeQueryOpPattern<pto::GetTidYOp>,
@@ -1581,7 +1580,17 @@ void populateVPTOScalarAndRuntimePatterns(TypeConverter &typeConverter,
                LowerRuntimeQueryOpPattern<pto::GetLaneMaskLtOp>,
                LowerRuntimeQueryOpPattern<pto::GetLaneMaskGeOp>,
                LowerRuntimeQueryOpPattern<pto::GetLaneMaskGtOp>,
-               LowerVoteOpPattern<pto::VoteAllOp>,
+               LowerBlockRuntimeQueryOpPattern<pto::GetBlockIdxOp>,
+               LowerRuntimeQueryOpPattern<pto::GetSubBlockIdxOp>,
+               LowerBlockRuntimeQueryOpPattern<pto::GetBlockNumOp>,
+               LowerRuntimeQueryOpPattern<pto::GetSubBlockNumOp>>(
+      typeConverter, patterns.getContext(), state);
+}
+
+static void addScalarCollectivePatterns(TypeConverter &typeConverter,
+                                        RewritePatternSet &patterns,
+                                        LoweringState &state) {
+  patterns.add<LowerVoteOpPattern<pto::VoteAllOp>,
                LowerVoteOpPattern<pto::VoteAnyOp>,
                LowerVoteOpPattern<pto::VoteUniOp>,
                LowerVoteOpPattern<pto::VoteBallotOp>,
@@ -1600,10 +1609,15 @@ void populateVPTOScalarAndRuntimePatterns(TypeConverter &typeConverter,
                LowerAtomicBinaryOpPattern<pto::AtomicMaxOp>,
                LowerAtomicBinaryOpPattern<pto::AtomicAndOp>,
                LowerAtomicBinaryOpPattern<pto::AtomicOrOp>,
-               LowerAtomicBinaryOpPattern<pto::AtomicXorOp>,
-               LowerScalarIntrinsicOpPattern<pto::PrmtOp>,
-               LowerMulhiOpPattern,
-               LowerMulI32ToI64OpPattern,
+               LowerAtomicBinaryOpPattern<pto::AtomicXorOp>>(
+      typeConverter, patterns.getContext(), state);
+}
+
+static void addScalarMathPatterns(TypeConverter &typeConverter,
+                                  RewritePatternSet &patterns,
+                                  LoweringState &state) {
+  patterns.add<LowerScalarIntrinsicOpPattern<pto::PrmtOp>,
+               LowerMulhiOpPattern, LowerMulI32ToI64OpPattern,
                LowerSqrtOpPattern,
                LowerUnaryScalarMathOpPattern<pto::AbsFOp>,
                LowerUnaryScalarMathOpPattern<pto::ExpOp>,
@@ -1614,15 +1628,18 @@ void populateVPTOScalarAndRuntimePatterns(TypeConverter &typeConverter,
                LowerUnaryScalarMathOpPattern<pto::RoundOp>,
                LowerBinaryScalarMathOpPattern<pto::FMinOp>,
                LowerBinaryScalarMathOpPattern<pto::FMaxOp>,
-               LowerBinaryScalarMathOpPattern<pto::PowOp>,
-               LowerFmaOpPattern,
+               LowerBinaryScalarMathOpPattern<pto::PowOp>, LowerFmaOpPattern,
                LowerConvertOpPattern,
                LowerBinaryI64PureOpPattern<pto::Sbitset0Op>,
-               LowerBinaryI64PureOpPattern<pto::Sbitset1Op>,
-               LowerBlockRuntimeQueryOpPattern<pto::GetBlockIdxOp>,
-               LowerRuntimeQueryOpPattern<pto::GetSubBlockIdxOp>,
-               LowerBlockRuntimeQueryOpPattern<pto::GetBlockNumOp>,
-               LowerRuntimeQueryOpPattern<pto::GetSubBlockNumOp>>(
+               LowerBinaryI64PureOpPattern<pto::Sbitset1Op>>(
       typeConverter, patterns.getContext(), state);
+}
+
+void populateVPTOScalarAndRuntimePatterns(TypeConverter &typeConverter,
+                                          RewritePatternSet &patterns,
+                                          LoweringState &state) {
+  addRuntimeQueryPatterns(typeConverter, patterns, state);
+  addScalarCollectivePatterns(typeConverter, patterns, state);
+  addScalarMathPatterns(typeConverter, patterns, state);
 }
 } // namespace mlir::pto
