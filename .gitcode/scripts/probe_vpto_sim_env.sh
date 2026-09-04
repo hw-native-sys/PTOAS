@@ -45,9 +45,14 @@ import importlib.util
 for name in ("torch", "torch_npu"):
     spec = importlib.util.find_spec(name)
     print(f"{name}: {'available' if spec else 'unavailable'}")
-    if spec:
+    if not spec:
+        continue
+    try:
         module = __import__(name)
-        print(f"{name} version: {getattr(module, '__version__', 'unknown')}")
+    except Exception as exc:  # Environment probe must never fail the build gate.
+        print(f"{name} import failed: {exc}")
+        continue
+    print(f"{name} version: {getattr(module, '__version__', 'unknown')}")
 PY
 
 echo "=== VPTO SIM environment probe complete ==="
