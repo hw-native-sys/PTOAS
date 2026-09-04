@@ -107,6 +107,11 @@ static std::optional<int32_t> parsePostModeImmediate(StringRef mode) {
   return std::nullopt;
 }
 
+static Value buildPostModeValue(ConversionPatternRewriter &rewriter,
+                                Location loc, bool enabled) {
+  return getI32Constant(rewriter, loc, enabled ? 1 : 0);
+}
+
 static std::optional<unsigned> getDistElementWidth(Type type) {
   if (auto intType = dyn_cast<IntegerType>(type))
   {
@@ -554,7 +559,7 @@ public:
     }
 
     Value distValue = getI32Constant(rewriter, op.getLoc(), *dist);
-    Value postValue = getI32Constant(rewriter, op.getLoc(), usePostIntrinsic ? 1 : 0);
+    Value postValue = buildPostModeValue(rewriter, op.getLoc(), usePostIntrinsic);
     SmallVector<Value> args{loweredOffset->base,
                             loweredOffset->intrinsicOffset, distValue,
                             postValue};
