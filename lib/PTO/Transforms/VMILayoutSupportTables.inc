@@ -21,10 +21,13 @@ struct EnsureLayoutPattern {
 };
 
 static constexpr EnsureLayoutPattern kEnsureLayoutPatterns[] = {
-    // A one-element dense value and a one-group, one-slot value select the
-    // same sole physical carrier lane.
-    {bits<8, 16, 32, 64>(), N<1>(), c(), gs(1)},
-    {bits<8, 16, 32, 64>(), N<1>(), gs(1), c()},
+    // A group packet whose groups fit in one physical chunk and a dense short
+    // vector select the same lanes of the same sole physical carrier, so the
+    // conversion forwards the register unchanged in either direction.  This
+    // covers the one-group/one-slot case and every group count the compact
+    // load/store alias emits, without enumerating those counts.
+    {bits<8, 16, 32, 64>(), anyN(), gsFit(), c()},
+    {bits<8, 16, 32, 64>(), anyN(), c(), gsFit()},
 
     {bits<16>(), N<256>(), c(), d(2)},
     {bits<32>(), N<128, 256>(), c(), d(2)},

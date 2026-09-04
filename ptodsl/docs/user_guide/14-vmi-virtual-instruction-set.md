@@ -1124,6 +1124,9 @@ producing a 256-bin unsigned 16-bit result.
 **Constraints**:
 - PTODSL infers the result vector type from `acc`; it must be the matching
   256×ui16 histogram accumulator layout.
+- Short source vectors are supported whenever the lanes fit in one physical
+  vector register, which covers the 1/2/4/8 lane counts a compact grouped
+  load produces; lowering masks physical padding lanes.
 
 ---
 
@@ -1150,6 +1153,9 @@ as `vdhist` but each bin accumulates the sum of counts for all bins ≤ its inde
 **Constraints**:
 - PTODSL infers the result vector type from `acc`; it must be the matching
   256×ui16 histogram accumulator layout.
+- Short source vectors are supported whenever the lanes fit in one physical
+  vector register, which covers the 1/2/4/8 lane counts a compact grouped
+  load produces; lowering masks physical padding lanes.
 
 ---
 
@@ -1222,6 +1228,12 @@ irregular memory locations using per-lane element offsets.
 | `pmode` | `str` or `None` | Optional predicate mode: `"merge"` keeps predicate-inactive lanes at their prior value; `"zero"` writes 0 |
 
 **Returns**: None (side-effect operation).
+
+**Constraints**:
+- Current PTOAS lowering requires the value, offsets, and mask to use
+  contiguous layouts with the same number of complete physical chunks.
+  Partial vectors, including `f32`/`i32` VL=1/2/4/8, are rejected with
+  `VMI-UNSUPPORTED`.
 
 **Example**:
 

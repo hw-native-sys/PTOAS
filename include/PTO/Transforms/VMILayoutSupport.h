@@ -22,6 +22,27 @@
 
 namespace mlir::pto {
 
+/// True when `layout` is a group-slot packet that lives in a single physical
+/// chunk and puts logical lane i on physical lane i.
+///
+/// A `num_groups = G, slots = S, lane_stride = 1` layout places logical lane i
+/// at {part 0, chunk i / S, lane i % S}.  With `G <= S` every lane lands in
+/// chunk 0 at lane i, and `G <= lanesPerPart` keeps that lane inside the
+/// carrier, so the value occupies exactly one physical register whose live
+/// lanes are 0..G-1.
+bool isVMISingleCarrierGroupSlots(VMILayoutAttr layout, int64_t lanesPerPart);
+
+/// True when a group-slot packet and a dense contiguous vector describe exactly
+/// the same physical lanes of a single carrier, so converting between them is a
+/// pure register forward with no pack/zip/shuffle.  Symmetric in `lhs`/`rhs`:
+/// the relation holds in both directions.
+///
+/// This states the physical invariant instead of enumerating the group counts
+/// that today's compact load/store alias happens to emit, so it stays correct
+/// when that alias changes.
+bool isVMISingleCarrierGroupSlotAlias(VMILayoutAttr lhs, VMILayoutAttr rhs,
+                                      int64_t lanesPerPart);
+
 struct VMILoadLayoutFact {
   VMILayoutAttr resultLayout;
 };

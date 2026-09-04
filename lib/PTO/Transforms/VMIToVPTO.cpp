@@ -3974,18 +3974,18 @@ FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
     return SmallVector<Value>(sourceParts.begin(), sourceParts.end());
   }
 
-  bool oneLaneContiguousToGroup =
-      sourceLayout.isContiguous() && sourceLayout.getLaneStride() == 1 &&
-      resultLayout.isGroupSlots() && resultLayout.getNumGroups() == 1 &&
-      resultLayout.getSlots() == 1;
-  bool oneLaneGroupToContiguous =
-      sourceLayout.isGroupSlots() && sourceLayout.getNumGroups() == 1 &&
-      sourceLayout.getSlots() == 1 && resultLayout.isContiguous() &&
-      resultLayout.getLaneStride() == 1;
-  if (oneLaneContiguousToGroup || oneLaneGroupToContiguous) {
+  // A group packet that fits in one physical chunk and a dense short vector
+  // occupy the same carrier lanes, so either direction forwards the register
+  // unchanged.  verifyIdentityPartForwarding confirms the physical arity and
+  // part types agree; the same relation gates the ensure_layout support table.
+  FailureOr<int64_t> carrierLanes = getDataLanesPerPart(sourceVMIElementType);
+  if (succeeded(carrierLanes) &&
+      isVMISingleCarrierGroupSlotAlias(sourceLayout, resultLayout,
+                                       *carrierLanes)) {
     if (failed(verifyIdentityPartForwarding(op, sourceParts, resultTypes,
-                                            rewriter)))
+                                            rewriter))) {
       return failure();
+    }
     return SmallVector<Value>(sourceParts.begin(), sourceParts.end());
   }
 

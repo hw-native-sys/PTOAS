@@ -19,6 +19,10 @@ enum class LayoutPatternKind {
   Deinterleaved,
   BlockDeinterleaved,
   GroupSlots,
+  // Any group_slots layout whose groups fit in one physical chunk at lane i.
+  // Unlike GroupSlots this key does not pin `slots`; it selects the family of
+  // group packets that share a carrier with a dense short vector.
+  SingleCarrierGroupSlots,
 };
 
 enum class CastTypeClass {
@@ -194,14 +198,22 @@ static VMILayoutAttr materializeLayoutPattern(MLIRContext *ctx,
                ? VMILayoutAttr::getGroupSlots(ctx, numGroups, pattern.value,
                                               pattern.laneStride)
                : VMILayoutAttr();
+  case LayoutPatternKind::SingleCarrierGroupSlots:
+    // Matched by predicate in matchesLayoutPattern; `slots` is not pinned so
+    // there is no single attribute to materialize.
+    return VMILayoutAttr();
   }
   llvm_unreachable("unknown layout pattern kind");
 }
 
 static bool matchesLayoutPattern(MLIRContext *ctx, LayoutPattern pattern,
-                                 VMILayoutAttr layout, int64_t numGroups = 0) {
+                                 VMILayoutAttr layout, int64_t numGroups = 0,
+                                 int64_t lanesPerPart = 0) {
   if (!layout) {
     return false;
+  }
+  if (pattern.kind == LayoutPatternKind::SingleCarrierGroupSlots) {
+    return isVMISingleCarrierGroupSlots(layout, lanesPerPart);
   }
   return materializeLayoutPattern(ctx, pattern, numGroups) == layout;
 }
@@ -224,6 +236,13 @@ static constexpr LayoutPattern bd(int64_t factor) {
 
 static constexpr LayoutPattern gs(int64_t slots, int64_t laneStride = 1) {
   return {LayoutPatternKind::GroupSlots, slots, laneStride};
+}
+
+/// Group packets whose groups all fit in one physical chunk (num_groups <=
+/// slots, lane_stride = 1).  Rows keyed on `gsFit()` hold for every `slots`
+/// value, so they express a physical property instead of a group count list.
+static constexpr LayoutPattern gsFit() {
+  return {LayoutPatternKind::SingleCarrierGroupSlots, 0, 1};
 }
 
 static constexpr GroupMemoryPattern memAny() {

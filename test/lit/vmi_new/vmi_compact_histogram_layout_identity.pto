@@ -1,0 +1,265 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=LAYOUT
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -pto-validate-vmi-layout-ir -vmi-to-vpto | FileCheck %s --check-prefix=LOWER --implicit-check-not=pto.vmi. --implicit-check-not=unrealized_conversion_cast
+
+module {
+  func.func @compact_vdhist_vl1(
+      %src: !pto.ptr<ui8, ub>,
+      %acc: !pto.vmi.vreg<256xui16>) -> !pto.vmi.vreg<256xui16> {
+    %c0 = arith.constant 0 : index
+    %active = arith.constant 1 : index
+    %source = pto.vmi.vload %src[%c0]
+        : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<1xui8>
+    %mask = pto.vmi.create_mask %active
+        : index -> !pto.vmi.mask<1xpred>
+    %hist = pto.vmi.vdhist %acc, %source, %mask
+        : !pto.vmi.vreg<256xui16>, !pto.vmi.vreg<1xui8>,
+          !pto.vmi.mask<1xpred> -> !pto.vmi.vreg<256xui16>
+    return %hist : !pto.vmi.vreg<256xui16>
+  }
+
+  func.func @compact_vdhist_vl2(
+      %src: !pto.ptr<ui8, ub>,
+      %acc: !pto.vmi.vreg<256xui16>) -> !pto.vmi.vreg<256xui16> {
+    %c0 = arith.constant 0 : index
+    %active = arith.constant 2 : index
+    %source = pto.vmi.vload %src[%c0]
+        : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<2xui8>
+    %mask = pto.vmi.create_mask %active
+        : index -> !pto.vmi.mask<2xpred>
+    %hist = pto.vmi.vdhist %acc, %source, %mask
+        : !pto.vmi.vreg<256xui16>, !pto.vmi.vreg<2xui8>,
+          !pto.vmi.mask<2xpred> -> !pto.vmi.vreg<256xui16>
+    return %hist : !pto.vmi.vreg<256xui16>
+  }
+
+  func.func @compact_vdhist_vl4(
+      %src: !pto.ptr<ui8, ub>,
+      %acc: !pto.vmi.vreg<256xui16>) -> !pto.vmi.vreg<256xui16> {
+    %c0 = arith.constant 0 : index
+    %active = arith.constant 4 : index
+    %source = pto.vmi.vload %src[%c0]
+        : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<4xui8>
+    %mask = pto.vmi.create_mask %active
+        : index -> !pto.vmi.mask<4xpred>
+    %hist = pto.vmi.vdhist %acc, %source, %mask
+        : !pto.vmi.vreg<256xui16>, !pto.vmi.vreg<4xui8>,
+          !pto.vmi.mask<4xpred> -> !pto.vmi.vreg<256xui16>
+    return %hist : !pto.vmi.vreg<256xui16>
+  }
+
+  func.func @compact_vdhist_vl8(
+      %src: !pto.ptr<ui8, ub>,
+      %acc: !pto.vmi.vreg<256xui16>) -> !pto.vmi.vreg<256xui16> {
+    %c0 = arith.constant 0 : index
+    %active = arith.constant 8 : index
+    %source = pto.vmi.vload %src[%c0]
+        : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<8xui8>
+    %mask = pto.vmi.create_mask %active
+        : index -> !pto.vmi.mask<8xpred>
+    %hist = pto.vmi.vdhist %acc, %source, %mask
+        : !pto.vmi.vreg<256xui16>, !pto.vmi.vreg<8xui8>,
+          !pto.vmi.mask<8xpred> -> !pto.vmi.vreg<256xui16>
+    return %hist : !pto.vmi.vreg<256xui16>
+  }
+
+  func.func @compact_vchist_vl1(
+      %src: !pto.ptr<ui8, ub>,
+      %acc: !pto.vmi.vreg<256xui16>) -> !pto.vmi.vreg<256xui16> {
+    %c0 = arith.constant 0 : index
+    %active = arith.constant 1 : index
+    %source = pto.vmi.vload %src[%c0]
+        : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<1xui8>
+    %mask = pto.vmi.create_mask %active
+        : index -> !pto.vmi.mask<1xpred>
+    %hist = pto.vmi.vchist %acc, %source, %mask
+        : !pto.vmi.vreg<256xui16>, !pto.vmi.vreg<1xui8>,
+          !pto.vmi.mask<1xpred> -> !pto.vmi.vreg<256xui16>
+    return %hist : !pto.vmi.vreg<256xui16>
+  }
+
+  func.func @compact_vchist_vl2(
+      %src: !pto.ptr<ui8, ub>,
+      %acc: !pto.vmi.vreg<256xui16>) -> !pto.vmi.vreg<256xui16> {
+    %c0 = arith.constant 0 : index
+    %active = arith.constant 2 : index
+    %source = pto.vmi.vload %src[%c0]
+        : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<2xui8>
+    %mask = pto.vmi.create_mask %active
+        : index -> !pto.vmi.mask<2xpred>
+    %hist = pto.vmi.vchist %acc, %source, %mask
+        : !pto.vmi.vreg<256xui16>, !pto.vmi.vreg<2xui8>,
+          !pto.vmi.mask<2xpred> -> !pto.vmi.vreg<256xui16>
+    return %hist : !pto.vmi.vreg<256xui16>
+  }
+
+  func.func @compact_vchist_vl4(
+      %src: !pto.ptr<ui8, ub>,
+      %acc: !pto.vmi.vreg<256xui16>) -> !pto.vmi.vreg<256xui16> {
+    %c0 = arith.constant 0 : index
+    %active = arith.constant 4 : index
+    %source = pto.vmi.vload %src[%c0]
+        : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<4xui8>
+    %mask = pto.vmi.create_mask %active
+        : index -> !pto.vmi.mask<4xpred>
+    %hist = pto.vmi.vchist %acc, %source, %mask
+        : !pto.vmi.vreg<256xui16>, !pto.vmi.vreg<4xui8>,
+          !pto.vmi.mask<4xpred> -> !pto.vmi.vreg<256xui16>
+    return %hist : !pto.vmi.vreg<256xui16>
+  }
+
+  func.func @compact_vchist_vl8(
+      %src: !pto.ptr<ui8, ub>,
+      %acc: !pto.vmi.vreg<256xui16>) -> !pto.vmi.vreg<256xui16> {
+    %c0 = arith.constant 0 : index
+    %active = arith.constant 8 : index
+    %source = pto.vmi.vload %src[%c0]
+        : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<8xui8>
+    %mask = pto.vmi.create_mask %active
+        : index -> !pto.vmi.mask<8xpred>
+    %hist = pto.vmi.vchist %acc, %source, %mask
+        : !pto.vmi.vreg<256xui16>, !pto.vmi.vreg<8xui8>,
+          !pto.vmi.mask<8xpred> -> !pto.vmi.vreg<256xui16>
+    return %hist : !pto.vmi.vreg<256xui16>
+  }
+
+  // 128-bin accumulators lower through the Bin_N0-only half, which is the
+  // shape reported in issue #1377.
+  func.func @compact_vchist_b128_vl1(
+      %src: !pto.ptr<ui8, ub>,
+      %acc: !pto.vmi.vreg<128xui16>) -> !pto.vmi.vreg<128xui16> {
+    %c0 = arith.constant 0 : index
+    %active = arith.constant 1 : index
+    %source = pto.vmi.vload %src[%c0]
+        : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<1xui8>
+    %mask = pto.vmi.create_mask %active
+        : index -> !pto.vmi.mask<1xpred>
+    %hist = pto.vmi.vchist %acc, %source, %mask
+        : !pto.vmi.vreg<128xui16>, !pto.vmi.vreg<1xui8>,
+          !pto.vmi.mask<1xpred> -> !pto.vmi.vreg<128xui16>
+    return %hist : !pto.vmi.vreg<128xui16>
+  }
+
+  func.func @compact_vdhist_b128_vl1(
+      %src: !pto.ptr<ui8, ub>,
+      %acc: !pto.vmi.vreg<128xui16>) -> !pto.vmi.vreg<128xui16> {
+    %c0 = arith.constant 0 : index
+    %active = arith.constant 1 : index
+    %source = pto.vmi.vload %src[%c0]
+        : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<1xui8>
+    %mask = pto.vmi.create_mask %active
+        : index -> !pto.vmi.mask<1xpred>
+    %hist = pto.vmi.vdhist %acc, %source, %mask
+        : !pto.vmi.vreg<128xui16>, !pto.vmi.vreg<1xui8>,
+          !pto.vmi.mask<1xpred> -> !pto.vmi.vreg<128xui16>
+    return %hist : !pto.vmi.vreg<128xui16>
+  }
+
+  // An explicit grouped load with a group count outside {1, 2, 4, 8} produces
+  // the same single-carrier packet and must reach the histogram the same way.
+  func.func @compact_vdhist_group3(
+      %src: !pto.ptr<ui8, ub>,
+      %acc: !pto.vmi.vreg<256xui16>) -> !pto.vmi.vreg<256xui16> {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %active = arith.constant 3 : index
+    %source = pto.vmi.vload %src[%c0], %c1 {group = 3}
+        : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<3xui8>
+    %mask = pto.vmi.create_mask %active
+        : index -> !pto.vmi.mask<3xpred>
+    %hist = pto.vmi.vdhist %acc, %source, %mask
+        : !pto.vmi.vreg<256xui16>, !pto.vmi.vreg<3xui8>,
+          !pto.vmi.mask<3xpred> -> !pto.vmi.vreg<256xui16>
+    return %hist : !pto.vmi.vreg<256xui16>
+  }
+}
+
+// LAYOUT-LABEL: func.func @compact_vdhist_vl1(
+// LAYOUT: pto.vmi.group_slot_load
+// LAYOUT: pto.vmi.ensure_layout
+// LAYOUT: pto.vmi.vdhist
+// LAYOUT-LABEL: func.func @compact_vdhist_vl2(
+// LAYOUT: pto.vmi.group_slot_load
+// LAYOUT: pto.vmi.ensure_layout
+// LAYOUT: pto.vmi.vdhist
+// LAYOUT-LABEL: func.func @compact_vdhist_vl4(
+// LAYOUT: pto.vmi.group_slot_load
+// LAYOUT: pto.vmi.ensure_layout
+// LAYOUT: pto.vmi.vdhist
+// LAYOUT-LABEL: func.func @compact_vdhist_vl8(
+// LAYOUT: pto.vmi.group_slot_load
+// LAYOUT: pto.vmi.ensure_layout
+// LAYOUT: pto.vmi.vdhist
+
+// LAYOUT-LABEL: func.func @compact_vchist_vl1(
+// LAYOUT: pto.vmi.group_slot_load
+// LAYOUT: pto.vmi.ensure_layout
+// LAYOUT: pto.vmi.vchist
+// LAYOUT-LABEL: func.func @compact_vchist_vl2(
+// LAYOUT: pto.vmi.group_slot_load
+// LAYOUT: pto.vmi.ensure_layout
+// LAYOUT: pto.vmi.vchist
+// LAYOUT-LABEL: func.func @compact_vchist_vl4(
+// LAYOUT: pto.vmi.group_slot_load
+// LAYOUT: pto.vmi.ensure_layout
+// LAYOUT: pto.vmi.vchist
+// LAYOUT-LABEL: func.func @compact_vchist_vl8(
+// LAYOUT: pto.vmi.group_slot_load
+// LAYOUT: pto.vmi.ensure_layout
+// LAYOUT: pto.vmi.vchist
+
+// LAYOUT-LABEL: func.func @compact_vchist_b128_vl1(
+// LAYOUT: pto.vmi.group_slot_load
+// LAYOUT: pto.vmi.ensure_layout
+// LAYOUT: pto.vmi.vchist
+// LAYOUT-LABEL: func.func @compact_vdhist_b128_vl1(
+// LAYOUT: pto.vmi.group_slot_load
+// LAYOUT: pto.vmi.ensure_layout
+// LAYOUT: pto.vmi.vdhist
+// LAYOUT-LABEL: func.func @compact_vdhist_group3(
+// LAYOUT: pto.vmi.group_slot_load
+// LAYOUT: pto.vmi.ensure_layout
+// LAYOUT: pto.vmi.vdhist
+
+// LOWER-LABEL: func.func @compact_vdhist_vl1(
+// LOWER: pto.pand
+// LOWER: pto.dhistv2
+// LOWER-LABEL: func.func @compact_vdhist_vl2(
+// LOWER: pto.pand
+// LOWER: pto.dhistv2
+// LOWER-LABEL: func.func @compact_vdhist_vl4(
+// LOWER: pto.pand
+// LOWER: pto.dhistv2
+// LOWER-LABEL: func.func @compact_vdhist_vl8(
+// LOWER: pto.pand
+// LOWER: pto.dhistv2
+
+// LOWER-LABEL: func.func @compact_vchist_vl1(
+// LOWER: pto.pand
+// LOWER: pto.chistv2
+// LOWER-LABEL: func.func @compact_vchist_vl2(
+// LOWER: pto.pand
+// LOWER: pto.chistv2
+// LOWER-LABEL: func.func @compact_vchist_vl4(
+// LOWER: pto.pand
+// LOWER: pto.chistv2
+// LOWER-LABEL: func.func @compact_vchist_vl8(
+// LOWER: pto.pand
+// LOWER: pto.chistv2
+
+// LOWER-LABEL: func.func @compact_vchist_b128_vl1(
+// LOWER: pto.pand
+// LOWER: pto.chistv2
+// LOWER-LABEL: func.func @compact_vdhist_b128_vl1(
+// LOWER: pto.pand
+// LOWER: pto.dhistv2
+// LOWER-LABEL: func.func @compact_vdhist_group3(
+// LOWER: pto.pand
+// LOWER: pto.dhistv2

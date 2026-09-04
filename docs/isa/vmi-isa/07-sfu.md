@@ -309,6 +309,9 @@
 - **datatypes:** Source bin index: `ui8` or signless `i8`. Accumulator / result:
   `ui16` or signless `i16`. All are interpreted as
   unsigned; signed types (`si8` / `si16`) are rejected by the verifier.
+- **source length:** Any positive logical lane count accepted by the VMI type,
+  including short vectors such as VL=1/2/4/8 that a compact grouped load
+  produces. Lowering masks physical padding lanes.
 - **lowering to `pto.mi`:**
   ```
   chistv2 Bin_N0 + Bin_N1 (two-half fanout) + widen/accumulate
@@ -379,6 +382,9 @@
 - **datatypes:** Source bin index: `ui8` or signless `i8`. Accumulator / result:
   `ui16` or signless `i16`. All are interpreted as
   unsigned; signed types (`si8` / `si16`) are rejected by the verifier.
+- **source length:** Any positive logical lane count accepted by the VMI type,
+  including short vectors such as VL=1/2/4/8 that a compact grouped load
+  produces. Lowering masks physical padding lanes.
 - **lowering to `pto.mi`:**
   ```
   distribution histogram accumulate (no half-axis fanout)
@@ -498,6 +504,10 @@
 - **results:** *(none)*
 - **attributes:** `pmode`
 - **datatypes:** `i8`–`i32`, `f16`, `bf16`, `f32`
+- **lowering constraints:** Current PTOAS VPTO lowering requires contiguous
+  value, offset, and mask layouts with the same number of complete physical
+  chunks. Partial vectors, including B32 VL=1/2/4/8, are rejected with a
+  stable `VMI-UNSUPPORTED` diagnostic.
 - **lowering to `pto.mi`:**
   ```
   K × pto.vscatter

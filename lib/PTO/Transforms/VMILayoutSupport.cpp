@@ -45,6 +45,24 @@
 namespace mlir {
 namespace pto {
 
+bool isVMISingleCarrierGroupSlots(VMILayoutAttr layout, int64_t lanesPerPart) {
+  return layout && layout.isGroupSlots() && layout.getSlots() > 0 &&
+         layout.getLaneStride() == 1 &&
+         layout.getNumGroups() <= layout.getSlots() &&
+         layout.getNumGroups() <= lanesPerPart;
+}
+
+bool isVMISingleCarrierGroupSlotAlias(VMILayoutAttr lhs, VMILayoutAttr rhs,
+                                      int64_t lanesPerPart) {
+  auto isDenseCarrier = [](VMILayoutAttr layout) {
+    return layout && layout.isContiguous() && layout.getLaneStride() == 1;
+  };
+  return (isVMISingleCarrierGroupSlots(lhs, lanesPerPart) &&
+          isDenseCarrier(rhs)) ||
+         (isDenseCarrier(lhs) &&
+          isVMISingleCarrierGroupSlots(rhs, lanesPerPart));
+}
+
 namespace {
 
 constexpr int64_t kLayoutBlockBitWidth = 256;
@@ -1593,6 +1611,12 @@ static LogicalResult matchEnsureLayoutPattern(VMIVRegType sourceType,
           ? sourceLayout.getNumGroups()
           : (resultLayout.isGroupSlots() ? resultLayout.getNumGroups() : 0);
 
+  // Rows keyed on gsFit() reason about the carrier the value lives in, so they
+  // need the physical lane width of the element type.
+  FailureOr<int64_t> lanesPerPart =
+      getDataLanesPerPart(sourceType.getElementType());
+  int64_t carrierLanes = succeeded(lanesPerPart) ? *lanesPerPart : 0;
+
   for (const EnsureLayoutPattern &pattern : kEnsureLayoutPatterns) {
     if (!matchesElementBitsPattern(pattern.elementBits,
                                    sourceType.getElementType())) {
@@ -1603,11 +1627,11 @@ static LogicalResult matchEnsureLayoutPattern(VMIVRegType sourceType,
       continue;
     }
     if (!matchesLayoutPattern(sourceType.getContext(), pattern.sourceLayout,
-                              sourceLayout, numGroups)) {
+                              sourceLayout, numGroups, carrierLanes)) {
       continue;
     }
     if (!matchesLayoutPattern(resultType.getContext(), pattern.resultLayout,
-                              resultLayout, numGroups)) {
+                              resultLayout, numGroups, carrierLanes)) {
       continue;
     }
     return success();

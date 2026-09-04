@@ -1,0 +1,109 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -pto-validate-vmi-layout-ir -vmi-to-vpto | FileCheck %s --implicit-check-not=pto.vmi. --implicit-check-not=unrealized_conversion_cast --implicit-check-not=pto.vpack --implicit-check-not=pto.vzunpack --implicit-check-not=pto.vintlv --implicit-check-not=pto.vdintlv
+
+module {
+  func.func @compact_gs8_to_contiguous_vl1_ui8(
+      %value: !pto.vmi.vreg<1xui8,
+          #pto.vmi.layout<num_groups = 1, slots = 8>>)
+      -> !pto.vmi.vreg<1xui8, #pto.vmi.layout<contiguous>> {
+    %dense = pto.vmi.ensure_layout %value
+        : !pto.vmi.vreg<1xui8,
+            #pto.vmi.layout<num_groups = 1, slots = 8>>
+          -> !pto.vmi.vreg<1xui8, #pto.vmi.layout<contiguous>>
+    return %dense : !pto.vmi.vreg<1xui8, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @compact_gs8_to_contiguous_vl2_ui16(
+      %value: !pto.vmi.vreg<2xui16,
+          #pto.vmi.layout<num_groups = 2, slots = 8>>)
+      -> !pto.vmi.vreg<2xui16, #pto.vmi.layout<contiguous>> {
+    %dense = pto.vmi.ensure_layout %value
+        : !pto.vmi.vreg<2xui16,
+            #pto.vmi.layout<num_groups = 2, slots = 8>>
+          -> !pto.vmi.vreg<2xui16, #pto.vmi.layout<contiguous>>
+    return %dense : !pto.vmi.vreg<2xui16, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @compact_gs8_to_contiguous_vl4_f32(
+      %value: !pto.vmi.vreg<4xf32,
+          #pto.vmi.layout<num_groups = 4, slots = 8>>)
+      -> !pto.vmi.vreg<4xf32, #pto.vmi.layout<contiguous>> {
+    %dense = pto.vmi.ensure_layout %value
+        : !pto.vmi.vreg<4xf32,
+            #pto.vmi.layout<num_groups = 4, slots = 8>>
+          -> !pto.vmi.vreg<4xf32, #pto.vmi.layout<contiguous>>
+    return %dense : !pto.vmi.vreg<4xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @compact_gs8_to_contiguous_vl8_ui32(
+      %value: !pto.vmi.vreg<8xui32,
+          #pto.vmi.layout<num_groups = 8, slots = 8>>)
+      -> !pto.vmi.vreg<8xui32, #pto.vmi.layout<contiguous>> {
+    %dense = pto.vmi.ensure_layout %value
+        : !pto.vmi.vreg<8xui32,
+            #pto.vmi.layout<num_groups = 8, slots = 8>>
+          -> !pto.vmi.vreg<8xui32, #pto.vmi.layout<contiguous>>
+    return %dense : !pto.vmi.vreg<8xui32, #pto.vmi.layout<contiguous>>
+  }
+
+  // A group count outside the compact load alias set still fits in one chunk,
+  // so it forwards the same carrier.
+  func.func @compact_gs8_to_contiguous_vl3_ui8(
+      %value: !pto.vmi.vreg<3xui8,
+          #pto.vmi.layout<num_groups = 3, slots = 8>>)
+      -> !pto.vmi.vreg<3xui8, #pto.vmi.layout<contiguous>> {
+    %dense = pto.vmi.ensure_layout %value
+        : !pto.vmi.vreg<3xui8,
+            #pto.vmi.layout<num_groups = 3, slots = 8>>
+          -> !pto.vmi.vreg<3xui8, #pto.vmi.layout<contiguous>>
+    return %dense : !pto.vmi.vreg<3xui8, #pto.vmi.layout<contiguous>>
+  }
+
+  // The relation is symmetric: a dense short vector forwards into a group
+  // packet that fits in one chunk.
+  func.func @contiguous_to_compact_gs8_vl8_f32(
+      %value: !pto.vmi.vreg<8xf32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>> {
+    %packet = pto.vmi.ensure_layout %value
+        : !pto.vmi.vreg<8xf32, #pto.vmi.layout<contiguous>>
+          -> !pto.vmi.vreg<8xf32,
+              #pto.vmi.layout<num_groups = 8, slots = 8>>
+    return %packet : !pto.vmi.vreg<8xf32,
+        #pto.vmi.layout<num_groups = 8, slots = 8>>
+  }
+
+  // One group in one slot is the same relation with slots = 1.
+  func.func @contiguous_to_gs1_vl1_f32(
+      %value: !pto.vmi.vreg<1xf32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<1xf32, #pto.vmi.layout<num_groups = 1, slots = 1>> {
+    %packet = pto.vmi.ensure_layout %value
+        : !pto.vmi.vreg<1xf32, #pto.vmi.layout<contiguous>>
+          -> !pto.vmi.vreg<1xf32,
+              #pto.vmi.layout<num_groups = 1, slots = 1>>
+    return %packet : !pto.vmi.vreg<1xf32,
+        #pto.vmi.layout<num_groups = 1, slots = 1>>
+  }
+}
+
+// CHECK-LABEL: func.func @compact_gs8_to_contiguous_vl1_ui8(
+// CHECK-SAME: %[[VL1:.*]]: !pto.vreg<256xui8>
+// CHECK: return %[[VL1]] : !pto.vreg<256xui8>
+
+// CHECK-LABEL: func.func @compact_gs8_to_contiguous_vl2_ui16(
+// CHECK-SAME: %[[VL2:.*]]: !pto.vreg<128xui16>
+// CHECK: return %[[VL2]] : !pto.vreg<128xui16>
+
+// CHECK-LABEL: func.func @compact_gs8_to_contiguous_vl4_f32(
+// CHECK-SAME: %[[VL4:.*]]: !pto.vreg<64xf32>
+// CHECK: return %[[VL4]] : !pto.vreg<64xf32>
+
+// CHECK-LABEL: func.func @compact_gs8_to_contiguous_vl8_ui32(
+// CHECK-SAME: %[[VL8:.*]]: !pto.vreg<64xui32>
+// CHECK: return %[[VL8]] : !pto.vreg<64xui32>

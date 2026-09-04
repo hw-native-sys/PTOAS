@@ -1,0 +1,81 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not pto-test-opt %s -split-input-file -pto-validate-vmi-layout-ir 2>&1 | FileCheck %s
+
+module {
+  func.func @group_count_16_invalid(
+      %value: !pto.vmi.vreg<16xf32,
+          #pto.vmi.layout<num_groups = 16, slots = 8>>) {
+    %bad = pto.vmi.ensure_layout %value
+        : !pto.vmi.vreg<16xf32,
+            #pto.vmi.layout<num_groups = 16, slots = 8>>
+          -> !pto.vmi.vreg<16xf32, #pto.vmi.layout<contiguous>>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @group_count_64_invalid(
+      %value: !pto.vmi.vreg<64xf32,
+          #pto.vmi.layout<num_groups = 64, slots = 8>>) {
+    %bad = pto.vmi.ensure_layout %value
+        : !pto.vmi.vreg<64xf32,
+            #pto.vmi.layout<num_groups = 64, slots = 8>>
+          -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return
+  }
+}
+
+// -----
+
+module {
+  // The groups fit in one chunk, but the chunk itself no longer fits in one
+  // f32 carrier, so lane 64 and beyond have no physical home.
+  func.func @group_count_exceeds_carrier_invalid(
+      %value: !pto.vmi.vreg<128xf32,
+          #pto.vmi.layout<num_groups = 128, slots = 128>>) {
+    %bad = pto.vmi.ensure_layout %value
+        : !pto.vmi.vreg<128xf32,
+            #pto.vmi.layout<num_groups = 128, slots = 128>>
+          -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @lane_stride_2_invalid(
+      %value: !pto.vmi.vreg<8xf32,
+          #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>) {
+    %bad = pto.vmi.ensure_layout %value
+        : !pto.vmi.vreg<8xf32,
+            #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
+          -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<contiguous>>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @slots_1_invalid(
+      %value: !pto.vmi.vreg<8xf32,
+          #pto.vmi.layout<num_groups = 8, slots = 1>>) {
+    %bad = pto.vmi.ensure_layout %value
+        : !pto.vmi.vreg<8xf32,
+            #pto.vmi.layout<num_groups = 8, slots = 1>>
+          -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<contiguous>>
+    return
+  }
+}
+
+// CHECK-COUNT-5: VMI-LAYOUT-CONTRACT: pto.vmi.ensure_layout has no registered materialization support: source/result layouts do not match a supported ensure_layout table row

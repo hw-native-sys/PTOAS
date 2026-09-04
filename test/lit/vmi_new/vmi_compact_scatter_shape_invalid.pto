@@ -1,0 +1,93 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not pto-test-opt %s -split-input-file -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -pto-validate-vmi-layout-ir -vmi-to-vpto 2>&1 | FileCheck %s --implicit-check-not=VMI-LAYOUT-CONTRACT --implicit-check-not="ensure_layout has no registered materialization support"
+
+module {
+  func.func @compact_vscatter_vl1(
+      %value_src: !pto.ptr<f32, ub>, %index_src: !pto.ptr<i32, ub>,
+      %dst: !pto.ptr<f32, ub>) {
+    %c0 = arith.constant 0 : index
+    %active = arith.constant 1 : index
+    %value = pto.vmi.vload %value_src[%c0]
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<1xf32>
+    %indices = pto.vmi.vload %index_src[%c0]
+        : !pto.ptr<i32, ub> -> !pto.vmi.vreg<1xi32>
+    %mask = pto.vmi.create_mask %active
+        : index -> !pto.vmi.mask<1xpred>
+    pto.vmi.vscatter %value, %dst, %indices, %mask
+        : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>,
+          !pto.vmi.vreg<1xi32>, !pto.vmi.mask<1xpred>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @compact_vscatter_vl2(
+      %value_src: !pto.ptr<f32, ub>, %index_src: !pto.ptr<i32, ub>,
+      %dst: !pto.ptr<f32, ub>) {
+    %c0 = arith.constant 0 : index
+    %active = arith.constant 2 : index
+    %value = pto.vmi.vload %value_src[%c0]
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<2xf32>
+    %indices = pto.vmi.vload %index_src[%c0]
+        : !pto.ptr<i32, ub> -> !pto.vmi.vreg<2xi32>
+    %mask = pto.vmi.create_mask %active
+        : index -> !pto.vmi.mask<2xpred>
+    pto.vmi.vscatter %value, %dst, %indices, %mask
+        : !pto.vmi.vreg<2xf32>, !pto.ptr<f32, ub>,
+          !pto.vmi.vreg<2xi32>, !pto.vmi.mask<2xpred>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @compact_vscatter_vl4(
+      %value_src: !pto.ptr<f32, ub>, %index_src: !pto.ptr<i32, ub>,
+      %dst: !pto.ptr<f32, ub>) {
+    %c0 = arith.constant 0 : index
+    %active = arith.constant 4 : index
+    %value = pto.vmi.vload %value_src[%c0]
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<4xf32>
+    %indices = pto.vmi.vload %index_src[%c0]
+        : !pto.ptr<i32, ub> -> !pto.vmi.vreg<4xi32>
+    %mask = pto.vmi.create_mask %active
+        : index -> !pto.vmi.mask<4xpred>
+    pto.vmi.vscatter %value, %dst, %indices, %mask
+        : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>,
+          !pto.vmi.vreg<4xi32>, !pto.vmi.mask<4xpred>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @compact_vscatter_vl8(
+      %value_src: !pto.ptr<f32, ub>, %index_src: !pto.ptr<i32, ub>,
+      %dst: !pto.ptr<f32, ub>) {
+    %c0 = arith.constant 0 : index
+    %active = arith.constant 8 : index
+    %value = pto.vmi.vload %value_src[%c0]
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
+    %indices = pto.vmi.vload %index_src[%c0]
+        : !pto.ptr<i32, ub> -> !pto.vmi.vreg<8xi32>
+    %mask = pto.vmi.create_mask %active
+        : index -> !pto.vmi.mask<8xpred>
+    pto.vmi.vscatter %value, %dst, %indices, %mask
+        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>,
+          !pto.vmi.vreg<8xi32>, !pto.vmi.mask<8xpred>
+    return
+  }
+}
+
+// CHECK-COUNT-4: VMI{{-}}UNSUPPORTED{{:}} pto.vmi.scatter{{.*}}value requires full physical chunks; found padding lane in physical chunk
