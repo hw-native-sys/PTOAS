@@ -9,6 +9,13 @@
 # -----------------------------------------------------------------------------------------------------------
 
 if(NOT PROJECT_SOURCE_DIR)
+    # Keep fetched dependencies in the writable build tree when callers do not
+    # provide the optional shared third-party cache path. This is required for
+    # isolated CI configure checks and avoids falling back to "/cann-cmake".
+    if(NOT CANN_3RD_LIB_PATH AND NOT CMAKE_SCRIPT_MODE_FILE)
+        set(CANN_3RD_LIB_PATH "${CMAKE_BINARY_DIR}/_cann_3rd" CACHE PATH
+            "Directory used for fetched CANN third-party sources")
+    endif()
     # Temporary test pin for cann/cmake MR !277. Revert this URL/ref pair
     # after validation and switch to the released cann/cmake tag once MR !277
     # is merged.
