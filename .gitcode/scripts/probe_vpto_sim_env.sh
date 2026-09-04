@@ -43,6 +43,22 @@ if [[ -d /usr/local/Ascend ]]; then
 else
   echo "/usr/local/Ascend: unavailable"
 fi
+if [[ -d /home/jenkins/Ascend ]]; then
+  echo "/home/jenkins/Ascend entries:"
+  find /home/jenkins/Ascend -maxdepth 1 -mindepth 1 -printf '  %f\n' 2>/dev/null | sort
+  for tool in bisheng msprof; do
+    found_tool="$(find /home/jenkins/Ascend -type f -name "${tool}" -perm -u+x 2>/dev/null | sort | head -n 1)"
+    if [[ -n "${found_tool}" ]]; then
+      echo "${tool} under /home/jenkins/Ascend: ${found_tool}"
+    fi
+  done
+  sim_path="$(find /home/jenkins/Ascend -type d -path '*/simulator/dav_3510/lib' 2>/dev/null | sort | head -n 1)"
+  if [[ -n "${sim_path}" ]]; then
+    echo "dav_3510 under /home/jenkins/Ascend: ${sim_path}"
+  fi
+else
+  echo "/home/jenkins/Ascend: unavailable"
+fi
 
 for tool in bisheng msprof npu-smi; do
   if command -v "${tool}" >/dev/null 2>&1; then
