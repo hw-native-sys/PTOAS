@@ -1,6 +1,0 @@
-version: 1
-families:
-  pipe:
-    enabled: true
-  cube:
-    enabled_ops: []
