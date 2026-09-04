@@ -408,6 +408,28 @@ private:
 };
 
 template <typename UBOp>
+static FailureOr<Value> materializeUBufBinaryConfig(
+    UBOp op, typename UBOp::Adaptor adaptor,
+    ConversionPatternRewriter &rewriter) {
+  Location loc = op.getLoc();
+  Type i64Ty = rewriter.getI64Type();
+  Value config = getI64Constant(rewriter, loc, 1ULL << 56);
+  SmallVector<std::pair<Value, uint64_t>> fields = {
+      {adaptor.getRepeat(), 0}, {adaptor.getDstBlockStride(), 8},
+      {adaptor.getSrc0BlockStride(), 16}, {adaptor.getSrc1BlockStride(), 24},
+      {adaptor.getDstRepeatStride(), 32}, {adaptor.getSrc0RepeatStride(), 40},
+      {adaptor.getSrc1RepeatStride(), 48}};
+  SmallVector<std::pair<Value, uint64_t>> converted;
+  for (auto [value, amount] : fields) {
+    Value casted = castIntegerLikeTo(op, value, i64Ty);
+    if (!casted)
+      return failure();
+    converted.push_back({casted, amount});
+  }
+  return packMaskedI64Fields(rewriter, loc, config, converted, 0xff);
+}
+
+template <typename UBOp>
 class LowerUBufBinaryOpPattern final : public OpConversionPattern<UBOp> {
 public:
   explicit LowerUBufBinaryOpPattern(TypeConverter &typeConverter,
@@ -441,26 +463,10 @@ public:
           op, "unexpected converted ubuf binary operand types");
     }
 
-    Location loc = op.getLoc();
-    Type i64Ty = rewriter.getI64Type();
-    Value config = getI64Constant(rewriter, loc, 1ULL << 56);
-    SmallVector<std::pair<Value, uint64_t>> fields = {
-        {adaptor.getRepeat(), 0},
-        {adaptor.getDstBlockStride(), 8},
-        {adaptor.getSrc0BlockStride(), 16},
-        {adaptor.getSrc1BlockStride(), 24},
-        {adaptor.getDstRepeatStride(), 32},
-        {adaptor.getSrc0RepeatStride(), 40},
-        {adaptor.getSrc1RepeatStride(), 48}};
-    SmallVector<std::pair<Value, uint64_t>> convertedFields;
-    for (auto [value, amount] : fields) {
-      Value converted = castIntegerLikeTo(op, value, i64Ty);
-      if (!converted) {
-        return rewriter.notifyMatchFailure(op, "invalid ubuf binary config operand");
-      }
-      convertedFields.push_back({converted, amount});
-    }
-    config = packMaskedI64Fields(rewriter, loc, config, convertedFields, 0xff);
+    FailureOr<Value> config =
+        materializeUBufBinaryConfig(op, adaptor, rewriter);
+    if (failed(config))
+      return rewriter.notifyMatchFailure(op, "invalid ubuf binary config operand");
 
     auto funcType = rewriter.getFunctionType(
         TypeRange{dst.getType(), src0.getType(), src1.getType(),
@@ -468,7 +474,7 @@ public:
         TypeRange{});
     auto call = rewriter.create<func::CallOp>(
         op.getLoc(), calleeName, TypeRange{},
-        ValueRange{dst, src0, src1, config});
+        ValueRange{dst, src0, src1, *config});
     (void)call;
     state.plannedDecls.push_back(PlannedDecl{calleeName, funcType});
     rewriter.eraseOp(op);
