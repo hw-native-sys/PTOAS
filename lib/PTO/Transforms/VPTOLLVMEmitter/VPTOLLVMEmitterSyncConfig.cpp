@@ -397,6 +397,41 @@ static StringRef buildBufDynSyncCallee(MLIRContext *context, bool isGetBuf) {
       .getValue();
 }
 
+template <typename SyncOp>
+static FailureOr<Value>
+buildInterCoreEventValue(SyncOp op, typename SyncOp::Adaptor adaptor,
+                         ConversionPatternRewriter &rewriter) {
+  if (IntegerAttr eventIdAttr = op.getEventIdAttr()) {
+    return getI64Constant(rewriter, op.getLoc(), eventIdAttr.getInt());
+  }
+  Value eventIdDyn = adaptor.getEventIdDyn();
+  if (!eventIdDyn) {
+    return failure();
+  }
+  Value eventValue = castIntegerLikeTo(op, eventIdDyn, rewriter.getI64Type());
+  if (!eventValue) {
+    return failure();
+  }
+  return eventValue;
+}
+
+static Value buildSyncSetMessage(Operation *op, Value eventValue, int64_t mode,
+                                 ConversionPatternRewriter &rewriter) {
+  Location loc = op->getLoc();
+  Value one = getI64Constant(rewriter, loc, 1);
+  Value modeMask = getI64Constant(rewriter, loc, 0x3);
+  Value eventMask = getI64Constant(rewriter, loc, 0xf);
+  Value modeValue = rewriter.create<arith::AndIOp>(
+      loc, getI64Constant(rewriter, loc, mode), modeMask);
+  Value maskedEvent = rewriter.create<arith::AndIOp>(loc, eventValue, eventMask);
+  Value modeShift = rewriter.create<arith::ShLIOp>(
+      loc, modeValue, getI64Constant(rewriter, loc, 4));
+  Value eventShift = rewriter.create<arith::ShLIOp>(
+      loc, maskedEvent, getI64Constant(rewriter, loc, 8));
+  Value message = rewriter.create<arith::OrIOp>(loc, one, modeShift);
+  return rewriter.create<arith::OrIOp>(loc, message, eventShift);
+}
+
 template <typename LoopOp>
 class LowerSetLoopConfigOpPattern final : public OpConversionPattern<LoopOp> {
 public:
@@ -1108,45 +1143,21 @@ public:
     }
 
     Value pipeValue = getI64Constant(rewriter, op.getLoc(), *pipe);
-    Value eventValue;
-    if (IntegerAttr eventIdAttr = op.getEventIdAttr()) {
-      eventValue = getI64Constant(rewriter, op.getLoc(), eventIdAttr.getInt());
-    } else {
-      Value eventIdDyn = adaptor.getEventIdDyn();
-      if (!eventIdDyn) {
-        return rewriter.notifyMatchFailure(
-            op, "expected static or dynamic event-id operand");
-      }
-
-      eventValue = castIntegerLikeTo(op, eventIdDyn, rewriter.getI64Type());
-      if (!eventValue) {
-        return rewriter.notifyMatchFailure(
-            op, "failed to cast dynamic event-id to i64");
-      }
+    FailureOr<Value> eventValue =
+        buildInterCoreEventValue(op, adaptor, rewriter);
+    if (failed(eventValue)) {
+      return rewriter.notifyMatchFailure(
+          op, "expected valid static or dynamic event-id operand");
     }
 
     StringRef calleeName = buildSyncCallee<SyncOp>(op.getContext());
-    SmallVector<Value> args{pipeValue, eventValue};
+    SmallVector<Value> args{pipeValue, *eventValue};
     if constexpr (std::is_same_v<SyncOp, pto::SyncSetOp>) {
       int64_t mode = 2;
       if (IntegerAttr attr = op.getFftsModeAttr()) {
         mode = attr.getInt();
       }
-      Value modeValue = getI64Constant(rewriter, op.getLoc(), mode);
-      Value one = getI64Constant(rewriter, op.getLoc(), 1);
-      Value modeMask = getI64Constant(rewriter, op.getLoc(), 0x3);
-      Value eventMask = getI64Constant(rewriter, op.getLoc(), 0xf);
-      modeValue = rewriter.create<arith::AndIOp>(op.getLoc(), modeValue,
-                                                  modeMask);
-      eventValue = rewriter.create<arith::AndIOp>(op.getLoc(), eventValue,
-                                                   eventMask);
-      Value modeShift = rewriter.create<arith::ShLIOp>(op.getLoc(), modeValue,
-          getI64Constant(rewriter, op.getLoc(), 4));
-      Value eventShift = rewriter.create<arith::ShLIOp>(op.getLoc(), eventValue,
-          getI64Constant(rewriter, op.getLoc(), 8));
-      Value msg = rewriter.create<arith::OrIOp>(op.getLoc(), one, modeShift);
-      msg = rewriter.create<arith::OrIOp>(op.getLoc(), msg, eventShift);
-      args = {pipeValue, msg};
+      args = {pipeValue, buildSyncSetMessage(op, *eventValue, mode, rewriter)};
     } else if constexpr (std::is_same_v<SyncOp, pto::SyncWaitOp>) {
       calleeName = op.getEventIdAttr()
                        ? StringAttr::get(op.getContext(),
