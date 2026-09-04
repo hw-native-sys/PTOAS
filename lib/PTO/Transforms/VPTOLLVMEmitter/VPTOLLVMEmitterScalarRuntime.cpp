@@ -1203,24 +1203,34 @@ public:
         ValueRange{adaptor.getLhs(), adaptor.getRhs()});
     state.plannedDecls.push_back(PlannedDecl{unsignedCalleeName->str(), funcType});
 
-    Value zero = getI64Constant(rewriter, op.getLoc(), 0);
-    Value lhsNeg = rewriter.create<LLVM::ICmpOp>(
-        op.getLoc(), LLVM::ICmpPredicate::slt, adaptor.getLhs(), zero);
-    Value rhsNeg = rewriter.create<LLVM::ICmpOp>(
-        op.getLoc(), LLVM::ICmpPredicate::slt, adaptor.getRhs(), zero);
-    Value subRhs = rewriter.create<LLVM::SubOp>(
-        op.getLoc(), unsignedCall.getResult(0), adaptor.getRhs());
-    Value correctedLhs = rewriter.create<LLVM::SelectOp>(
-        op.getLoc(), resultType, lhsNeg, subRhs, unsignedCall.getResult(0));
-    Value subLhs = rewriter.create<LLVM::SubOp>(
-        op.getLoc(), correctedLhs, adaptor.getLhs());
-    Value corrected = rewriter.create<LLVM::SelectOp>(
-        op.getLoc(), resultType, rhsNeg, subLhs, correctedLhs);
+    Value corrected = buildSignedMulhiCorrection(
+        op.getLoc(), rewriter, unsignedCall.getResult(0), adaptor.getLhs(),
+        adaptor.getRhs(), resultType);
     rewriter.replaceOp(op, corrected);
     return success();
   }
 
 private:
+  static Value buildSignedMulhiCorrection(Location loc,
+                                          ConversionPatternRewriter &rewriter,
+                                          Value unsignedResult, Value lhs,
+                                          Value rhs, Type resultType) {
+    Value zero = getI64Constant(rewriter, loc, 0);
+    Value lhsNeg = rewriter.create<LLVM::ICmpOp>(
+        loc, LLVM::ICmpPredicate::slt, lhs, zero);
+    Value rhsNeg = rewriter.create<LLVM::ICmpOp>(
+        loc, LLVM::ICmpPredicate::slt, rhs, zero);
+    Value subRhs = rewriter.create<LLVM::SubOp>(
+        loc, unsignedResult, rhs);
+    Value correctedLhs = rewriter.create<LLVM::SelectOp>(
+        loc, resultType, lhsNeg, subRhs, unsignedResult);
+    Value subLhs = rewriter.create<LLVM::SubOp>(
+        loc, correctedLhs, lhs);
+    Value corrected = rewriter.create<LLVM::SelectOp>(
+        loc, resultType, rhsNeg, subLhs, correctedLhs);
+    return corrected;
+  }
+
   LoweringState &state;
 };
 

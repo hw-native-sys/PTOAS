@@ -101,11 +101,9 @@ static VcvtElemKind classifyVcvtElemType(Type type) {
   return VcvtElemKind::Invalid;
 }
 
-static std::optional<VcvtContract> lookupVcvtContract(VcvtElemKind src,
-                                                        VcvtElemKind dst) {
-  static const llvm::DenseMap<VcvtElemKind, llvm::DenseMap<VcvtElemKind,
+static const llvm::DenseMap<VcvtElemKind, llvm::DenseMap<VcvtElemKind,
                                                                VcvtContract>>
-      contracts = {
+    kVcvtContracts = {
           {VcvtElemKind::F32,
            {{VcvtElemKind::F8E4M3, {"llvm.hivm.vcvtff.f322f8e4m3.x", true, true, true, 32}},
             {VcvtElemKind::F8E5M2, {"llvm.hivm.vcvtff.f322f8e5m2.x", true, true, true, 32}},
@@ -174,8 +172,11 @@ static std::optional<VcvtContract> lookupVcvtContract(VcvtElemKind src,
           {VcvtElemKind::F4E2M1x2,
            {{VcvtElemKind::BF16, {"llvm.hivm.vcvtff2.f4e2m1x22bf16.x", false, false, true, 8}}}}};
 
-  auto source = contracts.find(src);
-  if (source == contracts.end()) {
+static std::optional<VcvtContract> lookupVcvtContract(VcvtElemKind src,
+                                                        VcvtElemKind dst) {
+
+  auto source = kVcvtContracts.find(src);
+  if (source == kVcvtContracts.end()) {
     return std::nullopt;
   }
   auto destination = source->second.find(dst);
