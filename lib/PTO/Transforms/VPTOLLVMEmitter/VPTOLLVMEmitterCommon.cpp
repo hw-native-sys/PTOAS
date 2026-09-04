@@ -251,6 +251,42 @@ std::string getCopyElementFragment(Type elementType) {
   return {};
 }
 
+std::string getDn2NzCopyElementFragment(Type type) {
+  auto ptrType = dyn_cast<pto::PtrType>(type);
+  if (!ptrType) {
+    return {};
+  }
+  Type elementType = ptrType.getElementType();
+  std::string typeText;
+  llvm::raw_string_ostream os(typeText);
+  elementType.print(os);
+  os.flush();
+  StringRef lower = StringRef(typeText).lower();
+  if (lower.contains("e4m3") || lower.contains("e5m2") ||
+      lower.contains("e8m0") || lower.contains("hif8")) {
+    return "u8";
+  }
+  if (elementType.isF16() || elementType.isBF16()) {
+    return "u16";
+  }
+  if (elementType.isF32()) {
+    return "u32";
+  }
+  if (auto intType = dyn_cast<IntegerType>(elementType)) {
+    switch (intType.getWidth()) {
+    case 8:
+      return "u8";
+    case 16:
+      return "u16";
+    case 32:
+      return "u32";
+    default:
+      return {};
+    }
+  }
+  return {};
+}
+
 Type getElementTypeFromVectorLike(Type type) {
   if (auto vecType = dyn_cast<pto::VRegType>(type)) {
     return vecType.getElementType();

@@ -269,7 +269,6 @@ FailureOr<StringRef> buildOrdinaryMadCallee(MLIRContext *context, pto::MadRawOpI
 FailureOr<StringRef> buildMxMadCallee(MLIRContext *context, pto::MadRawOpInterface op);
 FailureOr<StringRef> buildCopyGmToCbufCallee(MLIRContext *context, Type sourceType);
 FailureOr<StringRef> buildCopyGmToCbufMultiNd2NzCallee(MLIRContext *context, Type sourceType);
-std::string getDn2NzCopyElementFragment(Type type);
 FailureOr<StringRef> buildCopyGmToCbufMultiDn2NzCallee(MLIRContext *context, Type sourceType);
 FailureOr<StringRef> buildLoadCbufToCaCallee(MLIRContext *context, Type sourceType);
 FailureOr<StringRef> buildLoadCbufToCbCallee(MLIRContext *context, Type sourceType);
