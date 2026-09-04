@@ -758,6 +758,32 @@ static bool isValidSimtKeepResumeSlot(int64_t slot, unsigned registerCount) {
   return true;
 }
 
+struct ResumeInputData {
+  SmallVector<std::pair<int64_t, unsigned>, 4> logicalSlots;
+  SmallVector<Type, 4> resultTypes;
+};
+
+static FailureOr<ResumeInputData>
+collectResumeInputData(ArrayRef<pto::ResumeOp> resumeOps,
+                       const TypeConverter *typeConverter,
+                       ConversionPatternRewriter &rewriter) {
+  ResumeInputData data;
+  for (pto::ResumeOp resume : resumeOps) {
+    Type resultType = typeConverter->convertType(resume.getType());
+    if (!resultType || !getSimtKeepResumeBitWidth(resultType)) {
+      return failure();
+    }
+    unsigned registerCount = getSimtKeepResumeRegisterCount(resultType);
+    if (!isValidSimtKeepResumeSlot(resume.getSlot(), registerCount)) {
+      return failure();
+    }
+    data.logicalSlots.push_back({resume.getSlot(), registerCount});
+    data.resultTypes.push_back(rewriter.getIntegerType(
+        *getSimtKeepResumeBitWidth(resultType) > 32 ? 64 : 32));
+  }
+  return data;
+}
+
 class LowerKeepOpPattern final : public OpConversionPattern<pto::KeepOp> {
 public:
   explicit LowerKeepOpPattern(TypeConverter &typeConverter,
@@ -842,36 +868,23 @@ public:
     }
 
     SmallVector<pto::ResumeOp, 4> resumeOps = collectConsecutiveOps(op);
-    SmallVector<std::pair<int64_t, unsigned>, 4> logicalSlots;
-    SmallVector<Type, 4> asmResultTypes;
-    for (pto::ResumeOp resume : resumeOps) {
-      Type resultType = getTypeConverter()->convertType(resume.getType());
-      if (!resultType || !getSimtKeepResumeBitWidth(resultType)) {
-        return rewriter.notifyMatchFailure(
-            resume, "expected integer scalar up to 64 bits or f16/bf16/f32");
-      }
-      int64_t slot = resume.getSlot();
-      unsigned registerCount = getSimtKeepResumeRegisterCount(resultType);
-      if (!isValidSimtKeepResumeSlot(slot, registerCount)) {
-        return rewriter.notifyMatchFailure(
-            resume,
-            "slot must be in range [0, 122] and 64-bit slots must be even");
-      }
-      logicalSlots.push_back({slot, registerCount});
-      asmResultTypes.push_back(rewriter.getIntegerType(
-          *getSimtKeepResumeBitWidth(resultType) > 32 ? 64 : 32));
+    FailureOr<ResumeInputData> inputData = collectResumeInputData(
+        resumeOps, getTypeConverter(), rewriter);
+    if (failed(inputData)) {
+      return rewriter.notifyMatchFailure(
+          op, "invalid resume type or slot");
     }
     FailureOr<SmallVector<SimtKeepResumePhysicalRegister, 4>> physicalRegs =
-        computeSimtKeepResumePhysicalRegs(logicalSlots);
+        computeSimtKeepResumePhysicalRegs(inputData->logicalSlots);
     if (failed(physicalRegs)) {
       return rewriter.notifyMatchFailure(
           op, "resume slots must map to valid non-overlapping SIMT registers");
     }
 
-    Type asmResultType = asmResultTypes.front();
-    if (asmResultTypes.size() > 1) {
+    Type asmResultType = inputData->resultTypes.front();
+    if (inputData->resultTypes.size() > 1) {
       asmResultType =
-          LLVM::LLVMStructType::getLiteral(op.getContext(), asmResultTypes);
+          LLVM::LLVMStructType::getLiteral(op.getContext(), inputData->resultTypes);
     }
     rewriter.setInsertionPoint(op);
     auto asmOp = rewriter.create<LLVM::InlineAsmOp>(
