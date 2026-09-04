@@ -47,6 +47,8 @@ castIntegerLikeOperands(Operation *anchor, ValueRange operands,
                         ArrayRef<unsigned> indices, Type targetType);
 FailureOr<Value> reinterpretPointerToAddrSpace(Operation *anchor, Value value,
                                                 unsigned targetAddressSpace);
+FailureOr<SmallVector<Value, 2>> reinterpretPointerOperands(
+    Operation *anchor, ArrayRef<Value> values, ArrayRef<unsigned> addressSpaces);
 FailureOr<Value> packLoopPair(Operation *anchor, Value low, Value high);
 FailureOr<Value> packLoopSize(Operation *anchor, Value loop2, Value loop1);
 void populateVPTOBasicPatterns(TypeConverter &typeConverter,

@@ -104,6 +104,24 @@ FailureOr<Value> reinterpretPointerToAddrSpace(Operation *anchor, Value value,
   return builder.create<LLVM::IntToPtrOp>(loc, targetPtrType, asInt).getResult();
 }
 
+FailureOr<SmallVector<Value, 2>> reinterpretPointerOperands(
+    Operation *anchor, ArrayRef<Value> values, ArrayRef<unsigned> addressSpaces) {
+  if (values.size() != addressSpaces.size()) {
+    return failure();
+  }
+  SmallVector<Value, 2> converted;
+  converted.reserve(values.size());
+  for (auto [value, addressSpace] : llvm::zip(values, addressSpaces)) {
+    FailureOr<Value> result =
+        reinterpretPointerToAddrSpace(anchor, value, addressSpace);
+    if (failed(result)) {
+      return failure();
+    }
+    converted.push_back(*result);
+  }
+  return converted;
+}
+
 FailureOr<Value> packLoopPair(Operation *anchor, Value low, Value high) {
   OpBuilder builder(anchor);
   builder.setInsertionPoint(anchor);
