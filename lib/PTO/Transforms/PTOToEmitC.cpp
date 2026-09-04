@@ -12451,6 +12451,27 @@ struct PTOPrintOpToEmitC : public OpConversionPattern<pto::PrintOp> {
   }
 };
 
+// pto.assert -> PTOAS_ASSERT(condition)
+struct PTOAssertOpToEmitC : public OpConversionPattern<pto::AssertOp> {
+  using OpConversionPattern<pto::AssertOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::AssertOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    SmallVector<Attribute, 1> args;
+    if (auto message = op->getAttrOfType<StringAttr>("message")) {
+      args.push_back(emitc::OpaqueAttr::get(rewriter.getContext(),
+                                             "\"" + message.getValue().str() + "\""));
+    }
+    rewriter.create<emitc::CallOpaqueOp>(op.getLoc(), TypeRange{},
+                                          "PTOAS_ASSERT",
+                                          rewriter.getArrayAttr(args),
+                                          ArrayAttr{},
+                                          ValueRange{adaptor.getCondition()});
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 // pto.trap -> TRAP()
 struct PTOTrapOpToEmitC : public OpConversionPattern<pto::TrapOp> {
   using OpConversionPattern<pto::TrapOp>::OpConversionPattern;
@@ -13712,6 +13733,7 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTOPrintToTPRINT>(typeConverter, ctx);
   patterns.add<PTOPrintOpToEmitC>(typeConverter, ctx);
   patterns.add<PTOTrapOpToEmitC>(typeConverter, ctx);
+  patterns.add<PTOAssertOpToEmitC>(typeConverter, ctx);
   patterns.add<
     PTOTMatmulBiasToTMATMUL_BIAS,
     PTOTMatmulMXToTMATMUL_MX,

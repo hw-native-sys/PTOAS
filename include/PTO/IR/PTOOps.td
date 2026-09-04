@@ -3096,6 +3096,16 @@ def TrapOp : PTO_Op<"trap", [MicroOpInterface, SimtOpInterface]> {
   let assemblyFormat = "attr-dict";
 }
 
+def AssertOp : PTO_Op<"assert", [MicroOpInterface, SimtOpInterface,
+                                   MemoryEffects<[MemRead, MemWrite]>]> {
+  let summary = "Abort execution when a scalar predicate is false.";
+  let arguments = (ins I1:$condition);
+  let results = (outs);
+  let assemblyFormat = [{
+    `ins` `(` $condition `:` type($condition) `)` attr-dict
+  }];
+}
+
 // ---- tile-world TOp version (with 't') ----
 // pto.tmgather ins(%mem, %idx) outs(%dst) [ ...] -> tensor?
 def MGatherOp : PTO_TOp<"mgather", [
