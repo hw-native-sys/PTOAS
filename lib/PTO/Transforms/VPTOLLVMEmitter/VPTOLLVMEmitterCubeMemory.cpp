@@ -13,23 +13,28 @@
 namespace mlir::pto {
 namespace {
 
+static bool isPackedFloatTypeName(StringRef lower) {
+  return lower.contains("e4m3") || lower.contains("e5m2") ||
+         lower.contains("e8m0") || lower.contains("hif8") ||
+         lower.contains("e1m2x2") || lower.contains("e2m1x2");
+}
+
+static std::string getLowerTypeText(Type type) {
+  std::string typeText;
+  llvm::raw_string_ostream os(typeText);
+  type.print(os);
+  os.flush();
+  return StringRef(typeText).lower();
+}
+
 static std::string getL0LoadElementFragment(Type type) {
   std::string elem = getElementTypeFragment(type);
   if (!elem.empty()) {
     return elem;
   }
 
-  std::string typeText;
-  llvm::raw_string_ostream os(typeText);
-  type.print(os);
-  os.flush();
-  std::string lower = StringRef(typeText).lower();
-  if (StringRef(lower).contains("e4m3") ||
-      StringRef(lower).contains("e5m2") ||
-      StringRef(lower).contains("e8m0") ||
-      StringRef(lower).contains("hif8") ||
-      StringRef(lower).contains("e1m2x2") ||
-      StringRef(lower).contains("e2m1x2")) {
+  std::string lower = getLowerTypeText(type);
+  if (isPackedFloatTypeName(lower)) {
     return "s8";
   }
   return {};
@@ -39,17 +44,8 @@ static std::string getNd2NzCopyElementFragment(Type elementType) {
   if (!elementType) {
     return {};
   }
-  std::string typeText;
-  llvm::raw_string_ostream os(typeText);
-  elementType.print(os);
-  os.flush();
-  std::string lower = StringRef(typeText).lower();
-  if (StringRef(lower).contains("e4m3") || StringRef(lower).contains("e5m2") ||
-      StringRef(lower).contains("e8m0") || StringRef(lower).contains("hif8")) {
-    return "U8";
-  }
-  if (StringRef(lower).contains("e1m2x2") || StringRef(lower).contains("e2m1x2"))
-  {
+  std::string lower = getLowerTypeText(elementType);
+  if (isPackedFloatTypeName(lower)) {
     return "U8";
   }
 
