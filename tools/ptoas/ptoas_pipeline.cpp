@@ -80,9 +80,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
-#include <csignal>
 #include <cstdlib>
-#include <cstring>
 #include <memory>
 #include <optional>
 #include <set>
@@ -90,8 +88,6 @@
 #include <thread>
 
 #include <sys/types.h>
-#include <unistd.h>
-
 
 using namespace mlir;
 using namespace pto;
@@ -434,7 +430,6 @@ static LogicalResult reorderEmitCFunctions(ModuleOp module) {
 
 // --------------------------------------------------------------------------
 // Command Line Options
-
 
 enum class PTOBuildLevel {
   Level1,

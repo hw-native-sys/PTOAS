@@ -534,17 +534,17 @@ struct Encoder {
   }
 
   void encodeCmpPredicateImmediate(mlir::Operation &op, Buffer &out,
-                                   llvm::SmallVectorImpl<uint64_t> &imms);
+                                   llvm::SmallVectorImpl<uint64_t> &imms) const;
   void encodeEventImmediate(mlir::Operation &op, Buffer &out,
-                            llvm::SmallVectorImpl<uint64_t> &imms);
+                            llvm::SmallVectorImpl<uint64_t> &imms) const;
   void encodeConstantImmediate(mlir::Operation &op, Buffer &out,
                                llvm::SmallVectorImpl<uint64_t> &imms);
   void encodeMakeTensorViewImmediate(mlir::Operation &op, Buffer &out,
-                                     llvm::SmallVectorImpl<uint64_t> &imms);
+                                     llvm::SmallVectorImpl<uint64_t> &imms) const;
   void encodePartitionViewImmediate(mlir::Operation &op, Buffer &out,
-                                    llvm::SmallVectorImpl<uint64_t> &imms);
+                                    llvm::SmallVectorImpl<uint64_t> &imms) const;
   void encodeAllocTileImmediate(mlir::Operation &op, Buffer &out,
-                                llvm::SmallVectorImpl<uint64_t> &imms);
+                                llvm::SmallVectorImpl<uint64_t> &imms) const;
 
   void encodeKnownOpImmediates(mlir::Operation &op, Buffer &out,
                                const ptobc::v0::OpInfo &info,
@@ -616,7 +616,7 @@ void Encoder::encodeBlock(mlir::Block &block, Buffer &out) {
 }
 
 void Encoder::encodeCmpPredicateImmediate(
-    mlir::Operation &op, Buffer &out, llvm::SmallVectorImpl<uint64_t> &imms) {
+    mlir::Operation &op, Buffer &out, llvm::SmallVectorImpl<uint64_t> &imms) const {
   auto cmp = llvm::dyn_cast<mlir::arith::CmpIOp>(&op);
   if (!cmp) {
     throw std::runtime_error("imm_kind=cmpi_pred but op is not arith.cmpi");
@@ -631,7 +631,7 @@ void Encoder::encodeCmpPredicateImmediate(
 }
 
 void Encoder::encodeEventImmediate(mlir::Operation &op, Buffer &out,
-                                   llvm::SmallVectorImpl<uint64_t> &imms) {
+                                   llvm::SmallVectorImpl<uint64_t> &imms) const {
   auto src = op.getAttrOfType<mlir::pto::SyncOpTypeAttr>("src_op");
   auto dst = op.getAttrOfType<mlir::pto::SyncOpTypeAttr>("dst_op");
   auto event = op.getAttrOfType<mlir::pto::EventAttr>("event_id");
@@ -674,7 +674,7 @@ void Encoder::encodeConstantImmediate(mlir::Operation &op, Buffer &out,
 }
 
 void Encoder::encodeMakeTensorViewImmediate(
-    mlir::Operation &op, Buffer &out, llvm::SmallVectorImpl<uint64_t> &imms) {
+    mlir::Operation &op, Buffer &out, llvm::SmallVectorImpl<uint64_t> &imms) const {
   auto mtv = llvm::dyn_cast<mlir::pto::MakeTensorViewOp>(&op);
   if (!mtv) {
     throw std::runtime_error(
@@ -690,7 +690,7 @@ void Encoder::encodeMakeTensorViewImmediate(
 }
 
 void Encoder::encodePartitionViewImmediate(
-    mlir::Operation &op, Buffer &out, llvm::SmallVectorImpl<uint64_t> &imms) {
+    mlir::Operation &op, Buffer &out, llvm::SmallVectorImpl<uint64_t> &imms) const {
   auto pv = llvm::dyn_cast<mlir::pto::PartitionViewOp>(&op);
   if (!pv) {
     throw std::runtime_error(
@@ -706,7 +706,7 @@ void Encoder::encodePartitionViewImmediate(
 }
 
 void Encoder::encodeAllocTileImmediate(mlir::Operation &op, Buffer &out,
-                                       llvm::SmallVectorImpl<uint64_t> &imms) {
+                                       llvm::SmallVectorImpl<uint64_t> &imms) const {
   auto at = llvm::dyn_cast<mlir::pto::AllocTileOp>(&op);
   if (!at) {
     throw std::runtime_error(
@@ -937,7 +937,7 @@ void Encoder::encodeKnownOp(mlir::Operation &op, Buffer &out,
   dict = dropDefaultZeroPipeIdForV0Encoding(op, dict);
   writeULEB128(internAttr(file, dict), out.bytes);
 
-  if (info.has_variant_u8) {
+  if (info.has_variant_u8 != 0) {
     out.appendU8(variantInfo.variant);
   }
 

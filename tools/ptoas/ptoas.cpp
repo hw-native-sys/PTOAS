@@ -73,27 +73,17 @@
 #include "ptobc/ptobc_decode.h"
 
 #include <algorithm>
-#include <cctype>
 #include <chrono>
-#include <csignal>
-#include <cstdlib>
-#include <cstring>
 #include <memory>
 #include <optional>
 #include <set>
 #include <string>
 #include <thread>
 
-#include <sys/types.h>
-#include <unistd.h>
-
 using namespace mlir;
 using namespace pto;
 
 namespace {
-
-
-
 
 /// LLVM 19's Func inliner interface accepts every call and callable, including
 /// operations carrying the standard `no_inline` attribute. Keep the upstream

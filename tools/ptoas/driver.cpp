@@ -1226,7 +1226,6 @@ static LogicalResult appendBackendChildJob(
 // PTOAS driver job topology: one .pto input feeds EmitC and VPTO jobs, plus
 // per-child backend jobs in mixed assemblies; child jobs produce fatobj pieces
 // that the fatobj link job merges into the final artifact.
-//
 // +----------------------------------------------------------+
 // |                        .pto                              |
 // +----------------------------------------------------------+

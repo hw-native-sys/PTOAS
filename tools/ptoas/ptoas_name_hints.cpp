@@ -27,7 +27,6 @@
 #include "mlir/Conversion/Passes.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Arith/Transforms/BufferizableOpInterfaceImpl.h"
 #include "mlir/Dialect/Arith/Transforms/Passes.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
@@ -44,7 +43,6 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/SCF/Transforms/Passes.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
-#include "mlir/Dialect/Tensor/Transforms/BufferizableOpInterfaceImpl.h"
 #include "mlir/Dialect/Tensor/Transforms/Passes.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -91,7 +89,6 @@
 
 #include <sys/types.h>
 #include <unistd.h>
-
 
 using namespace mlir;
 using namespace pto;
@@ -802,16 +799,20 @@ static int decodeNameHintHexDigit(char c) {
 }
 
 static std::string decodeNameHintMarkerToken(llvm::StringRef token) {
+  // An encoded escape is '%' plus exactly two hex digits.
+  constexpr size_t kHexEscapeTokenLength = 3;
+  constexpr size_t kHexEscapeDigitOffset = 2;
   std::string decoded;
   decoded.reserve(token.size());
   for (size_t i = 0; i < token.size();) {
-    if (token[i] == '%' && i + 2 < token.size()) {
+    if (token[i] == '%' && i + kHexEscapeDigitOffset < token.size()) {
       int hi = decodeNameHintHexDigit(token[i + 1]);
       int lo = decodeNameHintHexDigit(token[i + 2]);
       if (hi >= 0 && lo >= 0) {
-        decoded.push_back(static_cast<char>(
-            (static_cast<unsigned>(hi) << kHexNibbleBitWidth) | lo));
-        i += 3;
+        decoded.push_back(static_cast<char>((static_cast<unsigned>(hi)
+                                               << kHexNibbleBitWidth) |
+                                              static_cast<unsigned>(lo)));
+        i += kHexEscapeTokenLength;
         continue;
       }
     }
@@ -823,7 +824,6 @@ static std::string decodeNameHintMarkerToken(llvm::StringRef token) {
 
 static std::optional<llvm::SmallVector<std::string, kNameHintInlineCapacity>>
 parseNameHintMarker(llvm::StringRef markerBody) {
-
   llvm::SmallVector<std::string, kNameHintInlineCapacity> hints;
   markerBody = markerBody.trim();
   if (markerBody.empty()) {

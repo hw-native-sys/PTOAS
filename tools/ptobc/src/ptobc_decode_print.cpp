@@ -35,6 +35,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 
@@ -604,10 +605,11 @@ materializeOperands(const BuildCtx &bc, llvm::ArrayRef<uint64_t> operandIds) {
 static void
 normalizeLegacyFpOperandOrder(uint16_t opcode,
                               llvm::SmallVectorImpl<mlir::Value> &operands) {
-  if (const bool hasExtractFpLayout =
-          (opcode == kTExtractFpWireOpcode || opcode == kTInsertFpWireOpcode) &&
-          operands.size() == mlir::pto::kValue5;
-      hasExtractFpLayout) {
+  const bool isExtractOrInsertFpWire =
+      opcode == kTExtractFpWireOpcode || opcode == kTInsertFpWireOpcode;
+  const bool hasExtractFpLayout =
+      isExtractOrInsertFpWire && operands.size() == mlir::pto::kValue5;
+  if (hasExtractFpLayout) {
     // Legacy wire order: src, fp, row, col, dst.
     llvm::SmallVector<mlir::Value, mlir::pto::kValue5> reordered{
         operands[0], operands[2], operands[3], operands[4], operands[1]};
@@ -881,7 +883,9 @@ static void buildRegionInto(BuildCtx &bc, Reader &r, mlir::Region &region) {
     if (dbg) {
       llvm::errs() << "[ptobc]  block[" << bi << "]...\n";
     }
-    auto *block = new mlir::Block();
+    // Region owns its blocks after push_back; if decoding below throws, the
+    // raw block would leak, so take ownership until it is handed over.
+    std::unique_ptr<mlir::Block> block = std::make_unique<mlir::Block>();
 
     uint64_t nargs = r.readULEB();
     if (dbg) {
@@ -895,7 +899,7 @@ static void buildRegionInto(BuildCtx &bc, Reader &r, mlir::Region &region) {
     }
 
     buildOpList(bc, r, *block);
-    region.push_back(block);
+    region.push_back(block.release());
   }
 }
 
