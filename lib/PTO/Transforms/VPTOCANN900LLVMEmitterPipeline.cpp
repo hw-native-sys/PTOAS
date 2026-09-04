@@ -90,6 +90,9 @@ void configureVPTOOpLoweringTarget(ConversionTarget &target, VPTOTypeConverter &
   target.addLegalDialect<arith::ArithDialect, cf::ControlFlowDialect, LLVM::LLVMDialect, func::FuncDialect,
                          scf::SCFDialect>();
   target.addLegalOp<UnrealizedConversionCastOp>();
+  target.addIllegalOp<pto::AllocTileOp, pto::DeclareTileOp,
+                      pto::InitializeL2LPipeOp, pto::TPushOp, pto::TPopOp,
+                      pto::TFreeOp, pto::TileBufAddrOp>();
   markIllegalVPTOSyncOps(target);
   markIllegalVPTOSimtOps(target);
   markIllegalVPTOConfigOps(target);
@@ -509,6 +512,7 @@ template <typename EmitFn> LogicalResult runPipeline(ModuleOp module, llvm::raw_
   pm.enableVerifier();
   auto &kernelModulePM = pm.nest<ModuleOp>();
   kernelModulePM.addPass(std::make_unique<PrepareVPTOLLVMLoweringPass>());
+  kernelModulePM.addPass(pto::createVPTOBridgeLoweringPass());
   kernelModulePM.addPass(std::make_unique<LowerVPTOOpsPass>());
   kernelModulePM.addPass(std::make_unique<LowerVPTOTypesPass>());
   kernelModulePM.addPass(std::make_unique<NormalizeFuncSignaturesForLLVMLoweringPass>());

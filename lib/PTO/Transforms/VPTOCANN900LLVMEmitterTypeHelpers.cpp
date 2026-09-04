@@ -118,7 +118,10 @@ Type convertVPTOType(Type type, Builder &builder) {
   if (isa<pto::AlignType>(type)) {
     return VectorType::get({32}, builder.getI8Type());
   }
-  if (isa<pto::StructType>(type)) {
+  if (isa<pto::TileBufType>(type)) {
+    return builder.getI64Type();
+  }
+  if (isa<pto::StructType, pto::PipeType>(type)) {
     return LLVM::LLVMPointerType::get(builder.getContext());
   }
   if (auto ptrType = dyn_cast<pto::PtrType>(type)) {
@@ -175,7 +178,8 @@ bool hasVPTOConvertibleType(Type type) {
   if (!type) {
     return false;
   }
-  if (isa<pto::VRegType, pto::MaskType, pto::AlignType, pto::PtrType, pto::StructType>(type) ||
+  if (isa<pto::VRegType, pto::MaskType, pto::AlignType, pto::PtrType,
+          pto::StructType, pto::PipeType, pto::TileBufType>(type) ||
       pto::isPTOLowPrecisionType(type)) {
     return true;
   }
