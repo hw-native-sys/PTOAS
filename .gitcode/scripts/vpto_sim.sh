@@ -13,6 +13,7 @@ WORKSPACE="${1:-${WORKSPACE:-$(pwd)}}"
 WORKSPACE="$(cd "${WORKSPACE}" && pwd)"
 BUILD_ROOT="${BUILD_ROOT:-${WORKSPACE}/.work/gitcode-vpto-sim}"
 ASCEND_3RD_LIB_PATH="${ASCEND_3RD_LIB_PATH:-/home/opensource}"
+CANN_HOME="${CANN_HOME:-/home/jenkins/Ascend/cann-9.2.0}"
 CASE_PREFIX="${VPTO_SIM_CASE_PREFIX:-}"
 JOBS="${VPTO_SIM_JOBS:-$(nproc 2>/dev/null || printf '4')}"
 
@@ -24,10 +25,12 @@ JOBS="${VPTO_SIM_JOBS:-$(nproc 2>/dev/null || printf '4')}"
 mkdir -p "${BUILD_ROOT}"
 exec > >(tee "${BUILD_ROOT}/vpto-sim.log") 2>&1
 
-if [[ -f "${ASCEND_HOME_PATH:-}/bin/setenv.bash" ]]; then
+if [[ -f "${CANN_HOME}/set_env.sh" ]]; then
   # shellcheck disable=SC1091
-  source "${ASCEND_HOME_PATH}/bin/setenv.bash"
+  source "${CANN_HOME}/set_env.sh"
 fi
+
+ASCEND_HOME_PATH="${ASCEND_HOME_PATH:-${CANN_HOME}}"
 
 [[ -n "${ASCEND_HOME_PATH:-}" && -d "${ASCEND_HOME_PATH}" ]] || {
   echo "ERROR: ASCEND_HOME_PATH is required" >&2

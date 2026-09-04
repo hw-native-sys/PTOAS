@@ -115,12 +115,14 @@ stages:
             timeout-minutes: 300
             run: |
               set -euo pipefail
-              export ASCEND_HOME_PATH="${ASCEND_HOME_PATH:-/usr/local/Ascend/cann}"
+              export CANN_HOME="${CANN_HOME:-/home/jenkins/Ascend/cann-9.2.0}"
               bash "${{ steps.process_checkout.outputs.path }}/.gitcode/scripts/vpto_sim.sh" \
                 "${{ steps.process_checkout.outputs.path }}"
         runs-on: ['self-hosted','npu=1','smoke=204']
         container:
           image: swr.cn-south-1.myhuaweicloud.com/pre_smoke/${{ jobs.JOB_image.outputs.PreSmoke_A900 }}
+          env:
+            CANN_HOME: /home/jenkins/Ascend/cann-9.2.0
     pre:
     - type: auto
     fail-fast: false
