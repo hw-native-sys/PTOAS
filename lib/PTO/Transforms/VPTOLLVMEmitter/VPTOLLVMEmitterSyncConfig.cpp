@@ -763,6 +763,33 @@ struct ResumeInputData {
   SmallVector<Type, 4> resultTypes;
 };
 
+struct KeepInputData {
+  SmallVector<Value, 4> payloads;
+  SmallVector<Type, 4> resultTypes;
+  SmallVector<std::pair<int64_t, unsigned>, 4> logicalSlots;
+};
+
+static FailureOr<KeepInputData>
+collectKeepInputData(ArrayRef<pto::KeepOp> keepOps,
+                     ConversionPatternRewriter &rewriter) {
+  KeepInputData data;
+  for (pto::KeepOp keep : keepOps) {
+    Value payload = rewriter.getRemappedValue(keep.getPayload());
+    if (!payload)
+      return failure();
+    payload = packSimtKeepResumePayload(keep.getLoc(), payload, rewriter);
+    if (!payload)
+      return failure();
+    unsigned registerCount = getSimtKeepResumeRegisterCount(payload.getType());
+    if (!isValidSimtKeepResumeSlot(keep.getSlot(), registerCount))
+      return failure();
+    data.logicalSlots.push_back({keep.getSlot(), registerCount});
+    data.payloads.push_back(payload);
+    data.resultTypes.push_back(payload.getType());
+  }
+  return data;
+}
+
 static FailureOr<ResumeInputData>
 collectResumeInputData(ArrayRef<pto::ResumeOp> resumeOps,
                        const TypeConverter *typeConverter,
@@ -800,47 +827,24 @@ public:
     }
 
     SmallVector<pto::KeepOp, 4> keepOps = collectConsecutiveOps(op);
-    SmallVector<Value, 4> payloads;
-    SmallVector<Type, 4> asmResultTypes;
-    SmallVector<std::pair<int64_t, unsigned>, 4> logicalSlots;
-    for (pto::KeepOp keep : keepOps) {
-      Value payload = rewriter.getRemappedValue(keep.getPayload());
-      if (!payload)
-      {
-        return rewriter.notifyMatchFailure(keep, "payload is not remapped");
-      }
-      payload = packSimtKeepResumePayload(keep.getLoc(), payload, rewriter);
-      if (!payload) {
-        return rewriter.notifyMatchFailure(
-            keep, "expected integer scalar up to 64 bits or f16/bf16/f32");
-      }
-      int64_t slot = keep.getSlot();
-      unsigned registerCount =
-          getSimtKeepResumeRegisterCount(payload.getType());
-      if (!isValidSimtKeepResumeSlot(slot, registerCount)) {
-        return rewriter.notifyMatchFailure(
-            keep,
-            "slot must be in range [0, 122] and 64-bit slots must be even");
-      }
-      logicalSlots.push_back({slot, registerCount});
-      payloads.push_back(payload);
-      asmResultTypes.push_back(payload.getType());
-    }
+    FailureOr<KeepInputData> inputData = collectKeepInputData(keepOps, rewriter);
+    if (failed(inputData))
+      return rewriter.notifyMatchFailure(op, "invalid keep payload or slot");
     FailureOr<SmallVector<SimtKeepResumePhysicalRegister, 4>> physicalRegs =
-        computeSimtKeepResumePhysicalRegs(logicalSlots);
+        computeSimtKeepResumePhysicalRegs(inputData->logicalSlots);
     if (failed(physicalRegs)) {
       return rewriter.notifyMatchFailure(
           op, "keep slots must map to valid non-overlapping SIMT registers");
     }
 
-    Type asmResultType = asmResultTypes.front();
-    if (asmResultTypes.size() > 1) {
+    Type asmResultType = inputData->resultTypes.front();
+    if (inputData->resultTypes.size() > 1) {
       asmResultType =
-          LLVM::LLVMStructType::getLiteral(op.getContext(), asmResultTypes);
+        LLVM::LLVMStructType::getLiteral(op.getContext(), inputData->resultTypes);
     }
     rewriter.setInsertionPoint(op);
     rewriter.create<LLVM::InlineAsmOp>(
-        op.getLoc(), TypeRange{asmResultType}, payloads, "",
+        op.getLoc(), TypeRange{asmResultType}, inputData->payloads, "",
         buildSimtKeepResumeConstraints(*physicalRegs, true), true, false,
         LLVM::AsmDialectAttr::get(op.getContext(), LLVM::AsmDialect::AD_ATT),
         ArrayAttr{});
