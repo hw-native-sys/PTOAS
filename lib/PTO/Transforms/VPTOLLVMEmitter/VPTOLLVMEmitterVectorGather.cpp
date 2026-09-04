@@ -13,6 +13,16 @@
 namespace mlir::pto {
 namespace {
 
+static func::CallOp createPlannedCall(Location loc, StringRef callee,
+                                      Type resultType, ValueRange args,
+                                      FunctionType functionType,
+                                      ConversionPatternRewriter &rewriter,
+                                      LoweringState &state) {
+  auto call = rewriter.create<func::CallOp>(loc, callee, TypeRange{resultType}, args);
+  state.plannedDecls.push_back(PlannedDecl{callee.str(), functionType});
+  return call;
+}
+
 static FailureOr<StringRef> buildLaneTypedCallee(MLIRContext *context,
                                                  Type resultType,
                                                  StringRef stem,
@@ -367,10 +377,10 @@ public:
         TypeRange{adaptor.getSource().getType(), *offsetsCarrierType,
                   adaptor.getMask().getType()},
         TypeRange{resultType});
-    auto call = rewriter.create<func::CallOp>(
-        op.getLoc(), *calleeName, TypeRange{resultType},
-        ValueRange{adaptor.getSource(), offsets, adaptor.getMask()});
-    state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
+    auto call = createPlannedCall(op.getLoc(), *calleeName, resultType,
+                                  ValueRange{adaptor.getSource(), offsets,
+                                             adaptor.getMask()},
+                                  funcType, rewriter, state);
     rewriter.replaceOp(op, call.getResults());
     return success();
   }
@@ -408,10 +418,10 @@ public:
         TypeRange{adaptor.getSource().getType(), adaptor.getOffsets().getType(),
                   adaptor.getMask().getType()},
         TypeRange{resultType});
-    auto call = rewriter.create<func::CallOp>(
-        op.getLoc(), *calleeName, TypeRange{resultType},
-        ValueRange{adaptor.getSource(), adaptor.getOffsets(), adaptor.getMask()});
-    state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
+    auto call = createPlannedCall(
+        op.getLoc(), *calleeName, resultType,
+        ValueRange{adaptor.getSource(), adaptor.getOffsets(), adaptor.getMask()},
+        funcType, rewriter, state);
     rewriter.replaceOp(op, call.getResults());
     return success();
   }
@@ -449,10 +459,10 @@ public:
         TypeRange{adaptor.getSource().getType(), adaptor.getOffsets().getType(),
                   adaptor.getMask().getType()},
         TypeRange{resultType});
-    auto call = rewriter.create<func::CallOp>(
-        op.getLoc(), *calleeName, TypeRange{resultType},
-        ValueRange{adaptor.getSource(), adaptor.getOffsets(), adaptor.getMask()});
-    state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
+    auto call = createPlannedCall(
+        op.getLoc(), *calleeName, resultType,
+        ValueRange{adaptor.getSource(), adaptor.getOffsets(), adaptor.getMask()},
+        funcType, rewriter, state);
     rewriter.replaceOp(op, call.getResults());
     return success();
   }
