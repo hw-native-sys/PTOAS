@@ -1,7 +1,9 @@
 diff --git a/pyproject.toml b/pyproject.toml
 --- a/pyproject.toml
 +++ b/pyproject.toml
-@@ -18,7 +18,7 @@ build-backend = "scikit_build_core.build"
+@@ -16,11 +16,11 @@
+ build-backend = "scikit_build_core.build"
+ 
  [project]
 -name = "ptoas"
 -dynamic = ["version"]
@@ -10,20 +12,25 @@ diff --git a/pyproject.toml b/pyproject.toml
 +version = "0.1.6"
 +description = "PTO Assembler & Optimizer with VMI support"
  readme = "README.md"
- requires-python = ">=3.10"
+-requires-python = ">=3.7"
++requires-python = ">=3.10"
  license = "Apache-2.0"
-@@ -43,4 +43,5 @@ cmake.version = "CMakeLists.txt"
+ dependencies = [
+     "numpy",
+@@ -43,6 +43,7 @@
  ninja.version = ">=1.10"
  build.verbose = false
  editable.mode = "redirect"
 +sdist.inclusion-mode = "manual"
  install.components = ["PTOAS_Python"]
-@@ -53,3 +54,4 @@ TileOps = "lib/TileOps"
+ 
+ [tool.scikit-build.wheel.packages]
+@@ -53,8 +54,5 @@
+ 
  [tool.scikit-build.cmake.define]
  PTOAS_RELEASE_VERSION_OVERRIDE = { env = "PTOAS_RELEASE_VERSION_OVERRIDE", default = "" }
 +PTOAS_CLI_VERSION_LABEL = "vmi"
-
-@@ -56,4 +58,0 @@ PTOAS_RELEASE_VERSION_OVERRIDE = { env = "PTOAS_RELEASE_VERSION_OVERRIDE", default = "" }
+ 
 -[tool.scikit-build.metadata.version]
 -provider = "scikit_build_core.metadata.regex"
 -input = "CMakeLists.txt"

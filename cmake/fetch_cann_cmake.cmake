@@ -1,4 +1,3 @@
-# -----------------------------------------------------------------------------------------------------------
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -6,9 +5,15 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-# -----------------------------------------------------------------------------------------------------------
 
 if(NOT PROJECT_SOURCE_DIR)
+    # Standalone builds may configure without a pre-seeded CANN third-party
+    # directory (e.g. CI). Keep FetchContent's declared SOURCE_DIR inside the
+    # writable CMake binary tree instead of resolving an empty variable to the
+    # filesystem root. Script-mode packaging still requires an explicit path.
+    if(NOT CANN_3RD_LIB_PATH AND CMAKE_BINARY_DIR)
+        set(CANN_3RD_LIB_PATH "${CMAKE_BINARY_DIR}/cann-3rd-lib")
+    endif()
     # Temporary test pin for cann/cmake MR !277. Revert this URL/ref pair
     # after validation and switch to the released cann/cmake tag once MR !277
     # is merged.
