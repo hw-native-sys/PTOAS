@@ -261,7 +261,8 @@ std::string getDn2NzCopyElementFragment(Type type) {
   llvm::raw_string_ostream os(typeText);
   elementType.print(os);
   os.flush();
-  StringRef lower = StringRef(typeText).lower();
+  std::string lowerText = StringRef(typeText).lower();
+  StringRef lower(lowerText);
   if (lower.contains("e4m3") || lower.contains("e5m2") ||
       lower.contains("e8m0") || lower.contains("hif8")) {
     return "u8";

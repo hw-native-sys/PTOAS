@@ -203,7 +203,7 @@ static FailureOr<StringRef> buildMadTypedCalleeName(MLIRContext *context,
       {"f16", "e8m0", "", "llvm.hivm.MAD.f16e8m0.c310"},
   };
 
-  StringRef lhs = getMadLhsFragment(lhsElem);
+  std::string lhs = getMadLhsFragment(lhsElem);
   std::string rhs = getMadRhsFragment(rhsElem);
   std::string dst = getMadDstFragment(dstElem);
   for (const MadContract &contract : contracts) {
