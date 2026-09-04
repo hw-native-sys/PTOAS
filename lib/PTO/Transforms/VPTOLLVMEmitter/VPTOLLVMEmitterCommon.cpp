@@ -276,6 +276,23 @@ std::string getMemoryElementTypeFragment(Type type) {
   return getLowPrecisionElementFragment(type);
 }
 
+static std::string getLowerTypeText(Type type) {
+  std::string text;
+  llvm::raw_string_ostream os(text);
+  type.print(os);
+  os.flush();
+  return StringRef(text).lower();
+}
+
+static std::string getLowPrecisionCopyFragment(StringRef lower) {
+  if (lower.contains("e4m3")) return "e4m3";
+  if (lower.contains("e5m2")) return "e5m2";
+  if (lower.contains("e8m0")) return "e8m0";
+  if (lower.contains("hif8")) return "hif8";
+  if (lower.contains("e1m2x2") || lower.contains("e2m1x2")) return "u8";
+  return {};
+}
+
 std::string getCopyElementFragment(Type elementType) {
   if (!elementType) {
     return {};
@@ -289,27 +306,9 @@ std::string getCopyElementFragment(Type elementType) {
   if (elementType.isF32()) {
     return "f32";
   }
-  std::string typeText;
-  llvm::raw_string_ostream os(typeText);
-  elementType.print(os);
-  os.flush();
-  std::string lower = StringRef(typeText).lower();
-  if (StringRef(lower).contains("e4m3")) {
-    return "e4m3";
-  }
-  if (StringRef(lower).contains("e5m2")) {
-    return "e5m2";
-  }
-  if (StringRef(lower).contains("e8m0")) {
-    return "e8m0";
-  }
-  if (StringRef(lower).contains("hif8")) {
-    return "hif8";
-  }
-  if (StringRef(lower).contains("e1m2x2") ||
-      StringRef(lower).contains("e2m1x2")) {
-    return "u8";
-  }
+  std::string lower = getLowerTypeText(elementType);
+  if (std::string fragment = getLowPrecisionCopyFragment(lower);
+      !fragment.empty()) return fragment;
   if (auto intType = dyn_cast<IntegerType>(elementType)) {
     switch (intType.getWidth()) {
     case 8:
@@ -331,11 +330,7 @@ std::string getDn2NzCopyElementFragment(Type type) {
     return {};
   }
   Type elementType = ptrType.getElementType();
-  std::string typeText;
-  llvm::raw_string_ostream os(typeText);
-  elementType.print(os);
-  os.flush();
-  std::string lowerText = StringRef(typeText).lower();
+  std::string lowerText = getLowerTypeText(elementType);
   StringRef lower(lowerText);
   if (lower.contains("e4m3") || lower.contains("e5m2") ||
       lower.contains("e8m0") || lower.contains("hif8")) {
