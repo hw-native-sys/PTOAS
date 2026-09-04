@@ -102,6 +102,25 @@ stages:
         with:
           precommit_image_version: ${{ jobs.JOB_image.outputs.precommit }}
           codecheck_image_version: ${{ jobs.JOB_image.outputs.codecheck }}
+      JOB_vpto_sim:
+        name: VPTO_SIM
+        steps:
+          - name: Checkout
+            identifier: process_checkout
+            uses: checkout
+            with:
+              ref: ${{ atomgit.event.pull_request.merge_commit_sha }}
+              token: ${{ secrets.GIT_TOKEN }}
+          - name: Run VPTO simulator validation
+            timeout-minutes: 300
+            run: |
+              set -euo pipefail
+              export ASCEND_HOME_PATH="${ASCEND_HOME_PATH:-/usr/local/Ascend/cann}"
+              bash "${{ steps.process_checkout.outputs.path }}/.gitcode/scripts/vpto_sim.sh" \
+                "${{ steps.process_checkout.outputs.path }}"
+        runs-on: ['self-hosted','npu=1','smoke=204']
+        container:
+          image: swr.cn-south-1.myhuaweicloud.com/pre_smoke/${{ jobs.JOB_image.outputs.PreSmoke_A900 }}
     pre:
     - type: auto
     fail-fast: false
@@ -158,26 +177,6 @@ stages:
               secret-key: ${{ secrets.SK }}
               artifact-path: "${{ steps.process_checkout.outputs.path }}/slog*.tar.gz"
               object-prefix: ${obs_smoke_path}/plog/
-        if: env.TARGET_BRANCH == 'master'
-        runs-on: ['self-hosted','npu=1','smoke=204']
-        container:
-          image: swr.cn-south-1.myhuaweicloud.com/pre_smoke/${{ jobs.JOB_image.outputs.PreSmoke_A900 }}
-      JOB_vpto_sim:
-        name: VPTO_SIM
-        steps:
-          - name: Checkout
-            identifier: process_checkout
-            uses: checkout
-            with:
-              ref: ${{ atomgit.event.pull_request.merge_commit_sha }}
-              token: ${{ secrets.GIT_TOKEN }}
-          - name: Run VPTO simulator validation
-            timeout-minutes: 300
-            run: |
-              set -euo pipefail
-              export ASCEND_HOME_PATH="${ASCEND_HOME_PATH:-/usr/local/Ascend/cann}"
-              bash "${{ steps.process_checkout.outputs.path }}/.gitcode/scripts/vpto_sim.sh" \
-                "${{ steps.process_checkout.outputs.path }}"
         if: env.TARGET_BRANCH == 'master'
         runs-on: ['self-hosted','npu=1','smoke=204']
         container:
