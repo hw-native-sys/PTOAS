@@ -14,6 +14,7 @@
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 
 namespace mlir {
@@ -44,9 +45,8 @@ static FailureOr<BridgeCoreKind> getBridgeCore(Operation *op) {
     return BridgeCoreKind::Cube;
   case FunctionKernelKind::Vector:
     return BridgeCoreKind::Vector;
-  default:
-    return failure();
   }
+  llvm_unreachable("unsupported function kernel kind");
 }
 
 static std::string buildInstanceKey(StringRef entry, Attribute spec,
