@@ -15,6 +15,19 @@
 namespace mlir::pto {
 namespace {
 
+template <typename Op>
+static LogicalResult finishPostUpdateStore(
+    Op op, ConversionPatternRewriter &rewriter, Value updatedBase,
+    Operation *call, bool usePostIntrinsic) {
+  if (usePostIntrinsic) {
+    Value result = updatedBase ? updatedBase : call->getResult(0);
+    rewriter.replaceOp(op, result);
+  } else {
+    rewriter.eraseOp(op);
+  }
+  return success();
+}
+
 static bool isLowpPayloadElementType(Type type) {
   return pto::isPTOFloat8Type(type) || pto::isPTOHiFloat8Type(type) ||
          pto::isPTOFloat4PackedType(type);
@@ -1067,18 +1080,8 @@ public:
     auto call = rewriter.create<func::CallOp>(op.getLoc(), *calleeName,
                                               resultTypes, args);
     state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
-    if (usePostIntrinsic)
-    {
-      Value updatedBase = loweredOffset->updatedBase
-                              ? loweredOffset->updatedBase
-                              : call.getResult(0);
-      rewriter.replaceOp(op, updatedBase);
-    }
-    else
-    {
-      rewriter.eraseOp(op);
-    }
-    return success();
+    return finishPostUpdateStore(op, rewriter, loweredOffset->updatedBase,
+                                 call.getOperation(), usePostIntrinsic);
   }
 
 private:
@@ -1139,15 +1142,8 @@ public:
     auto call = rewriter.create<func::CallOp>(op.getLoc(), *calleeName,
                                               resultTypes, args);
     state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
-    if (usePostIntrinsic)
-    {
-      rewriter.replaceOp(op, call.getResults());
-    }
-    else
-    {
-      rewriter.eraseOp(op);
-    }
-    return success();
+    return finishPostUpdateStore(op, rewriter, Value(), call.getOperation(),
+                                 usePostIntrinsic);
   }
 
 private:
@@ -1459,18 +1455,8 @@ public:
     auto call = rewriter.create<func::CallOp>(op.getLoc(), calleeName,
                                               resultTypes, args);
     state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
-    if (usePostIntrinsic)
-    {
-      Value updatedBase = loweredOffset->updatedBase
-                              ? loweredOffset->updatedBase
-                              : call.getResult(0);
-      rewriter.replaceOp(op, updatedBase);
-    }
-    else
-    {
-      rewriter.eraseOp(op);
-    }
-    return success();
+    return finishPostUpdateStore(op, rewriter, loweredOffset->updatedBase,
+                                 call.getOperation(), usePostIntrinsic);
   }
 
 private:
