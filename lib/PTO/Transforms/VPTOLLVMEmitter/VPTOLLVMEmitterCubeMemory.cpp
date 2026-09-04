@@ -809,11 +809,9 @@ public:
     constexpr unsigned cbufAddressSpace =
         static_cast<unsigned>(pto::AddressSpace::MAT);
     constexpr unsigned fbufAddressSpace = 7;
-    FailureOr<Value> source =
-        reinterpretPointerToAddrSpace(op, sourceRaw, cbufAddressSpace);
-    FailureOr<Value> destination =
-        reinterpretPointerToAddrSpace(op, destinationRaw, fbufAddressSpace);
-    if (failed(source) || failed(destination))
+    FailureOr<SmallVector<Value, 2>> pointers = reinterpretPointerOperands(
+        op, {sourceRaw, destinationRaw}, {cbufAddressSpace, fbufAddressSpace});
+    if (failed(pointers))
     {
       return rewriter.notifyMatchFailure(op, "failed to map cbuf/fbuf pointer spaces");
     }
@@ -829,9 +827,9 @@ public:
     Type i64Ty = rewriter.getI64Type();
     StringRef calleeName = buildCopyCbufToFbufCallee(op.getContext());
     auto funcType = rewriter.getFunctionType(
-        TypeRange{destination->getType(), source->getType(), i64Ty}, TypeRange{});
+        TypeRange{(*pointers)[1].getType(), (*pointers)[0].getType(), i64Ty}, TypeRange{});
     rewriter.create<func::CallOp>(op.getLoc(), calleeName, TypeRange{},
-                                  ValueRange{*destination, *source, *config});
+                                  ValueRange{(*pointers)[1], (*pointers)[0], *config});
     state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
     rewriter.eraseOp(op);
     return success();
