@@ -7757,6 +7757,76 @@ private:
     return success();
   }
 
+  LogicalResult lowerBlockF32(
+      VMIGroupLoadOp op, OneToNPatternRewriter &rewriter, Value source,
+      Value offset, Value rowStride, VMIVRegType resultVMIType,
+      VMILayoutAttr resultLayout) const {
+    FailureOr<int64_t> groupSize = getGroupSizeFromNumGroups(
+        resultVMIType, op.getNumGroupsAttr().getInt());
+    if (failed(groupSize)) {
+      return rewriter.notifyMatchFailure(
+          op, "group_load requires num_groups to evenly divide lane count");
+    }
+    bool validFactorShape =
+        (*groupSize == 16 && resultLayout.getFactor() == 2) ||
+        (*groupSize == 32 && resultLayout.getFactor() == 4);
+    if (!validFactorShape) {
+      return rewriter.notifyMatchFailure(
+          op, "block_deinterleaved group_load requires S=16/factor=2 or "
+              "S=32/factor=4");
+    }
+    bool validGroupCount = op.getNumGroupsAttr().getInt() % 8 == 0;
+    if (!validGroupCount) {
+      return rewriter.notifyMatchFailure(
+          op, "block_deinterleaved group_load requires num_groups multiple "
+              "of 8");
+    }
+    std::optional<int64_t> constantRowStride =
+        getConstantIndexValue(op.getRowStride());
+    bool validRowStride = constantRowStride && *constantRowStride > 0 &&
+                          *constantRowStride % 8 == 0;
+    if (!validRowStride) {
+      return rewriter.notifyMatchFailure(
+          op, "block_deinterleaved group_load requires constant positive "
+              "row_stride divisible by 8 f32 elements");
+    }
+    if (!isa<PtrType>(source.getType())) {
+      return rewriter.notifyMatchFailure(
+          op, "block_deinterleaved group_load requires !pto.ptr source");
+    }
+    FailureOr<SmallVector<Type>> maybeResultTypes =
+        getConvertedResultTypes(op, 0, *this->getTypeConverter());
+    if (failed(maybeResultTypes)) {
+      return failure();
+    }
+    SmallVector<Type> resultTypes = std::move(*maybeResultTypes);
+    int64_t factor = resultLayout.getFactor();
+    FailureOr<int64_t> blockElems = getVMILayoutBlockElems(resultVMIType);
+    FailureOr<int64_t> chunksPerPart =
+        getDataChunksInPart(resultVMIType, 0);
+    bool invalidChunks = failed(blockElems) || failed(chunksPerPart) ||
+                         *chunksPerPart <= 0;
+    if (invalidChunks) {
+      return rewriter.notifyMatchFailure(
+          op, "block_deinterleaved group_load requires known block and "
+              "chunks per part");
+    }
+    for (int64_t part = 1; part < factor; ++part) {
+      FailureOr<int64_t> currentChunks =
+          getDataChunksInPart(resultVMIType, part);
+      bool nonUniformChunks =
+          failed(currentChunks) || *currentChunks != *chunksPerPart;
+      if (nonUniformChunks) {
+        return rewriter.notifyMatchFailure(
+            op, "block_deinterleaved group_load requires uniform chunks per "
+                "part");
+      }
+    }
+    return lowerBlockDeinterleaved(
+        op, rewriter, source, offset, rowStride, resultVMIType, resultTypes,
+        resultLayout, factor, *blockElems, *chunksPerPart, *constantRowStride);
+  }
+
 public:
 
   LogicalResult
@@ -7782,63 +7852,8 @@ public:
     bool isBlockF32 = resultLayout && resultLayout.isBlockDeinterleaved() &&
                       resultVMIType.getElementType().isF32();
     if (isBlockF32) {
-      FailureOr<int64_t> groupSize = getGroupSizeFromNumGroups(
-          resultVMIType, op.getNumGroupsAttr().getInt());
-      if (failed(groupSize)) {
-        return rewriter.notifyMatchFailure(
-            op, "group_load requires num_groups to evenly divide lane count");
-      }
-      if ((*groupSize != 16 || resultLayout.getFactor() != 2) &&
-          (*groupSize != 32 || resultLayout.getFactor() != 4))
-        return rewriter.notifyMatchFailure(
-            op, "block_deinterleaved group_load requires S=16/factor=2 or "
-                "S=32/factor=4");
-      if (op.getNumGroupsAttr().getInt() % 8 != 0)
-        return rewriter.notifyMatchFailure(
-            op, "block_deinterleaved group_load requires num_groups multiple "
-                "of 8");
-      std::optional<int64_t> constantRowStride =
-          getConstantIndexValue(op.getRowStride());
-      if (!constantRowStride || *constantRowStride <= 0 ||
-          *constantRowStride % 8 != 0)
-        return rewriter.notifyMatchFailure(
-            op, "block_deinterleaved group_load requires constant positive "
-                "row_stride "
-                "divisible by 8 f32 elements");
-      if (!isa<PtrType>((*source).getType()))
-        return rewriter.notifyMatchFailure(
-            op, "block_deinterleaved group_load requires !pto.ptr source");
-
-      FailureOr<SmallVector<Type>> maybe_resultTypes =
-
-          getConvertedResultTypes(op, 0, *this->getTypeConverter());
-
-      if (failed(maybe_resultTypes))
-
-        return failure();
-
-      SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-      int64_t factor = resultLayout.getFactor();
-      FailureOr<int64_t> blockElems =
-          getVMILayoutBlockElems(resultVMIType);
-      FailureOr<int64_t> chunksPerPart = getDataChunksInPart(resultVMIType, 0);
-      if (failed(blockElems) || failed(chunksPerPart) ||
-          *chunksPerPart <= 0)
-        return rewriter.notifyMatchFailure(
-            op, "block_deinterleaved group_load requires known block and "
-                "chunks per part");
-      for (int64_t part = 1; part < factor; ++part) {
-        FailureOr<int64_t> currentChunks =
-            getDataChunksInPart(resultVMIType, part);
-        if (failed(currentChunks) || *currentChunks != *chunksPerPart)
-          return rewriter.notifyMatchFailure(
-              op, "block_deinterleaved group_load requires uniform chunks "
-                  "per part");
-      }
-      return lowerBlockDeinterleaved(
-          op, rewriter, *source, *offset, *rowStride, resultVMIType, resultTypes,
-          resultLayout, factor, *blockElems, *chunksPerPart,
-          *constantRowStride);
+      return lowerBlockF32(op, rewriter, *source, *offset, *rowStride,
+                           resultVMIType, resultLayout);
     }
 
     if (resultLayout && resultLayout.isContiguous()) {
@@ -9776,11 +9791,13 @@ public:
           return rewriter.notifyMatchFailure(
               op, "aligned compact group_store requires a supported vreg "
                   "element type");
+        }
         FailureOr<MaskType> maskType =
             getMaskTypeForVReg(compactType, rewriter.getContext());
-        if (failed(maskType))
+        if (failed(maskType)) {
           return rewriter.notifyMatchFailure(
               op, "failed to derive aligned compact group_store mask type");
+        }
         FailureOr<Value> storeMask = createPrefixMaskForActiveLanes(
             op.getLoc(), *maskType, valueVMIType.getElementCount(), rewriter);
         if (failed(storeMask)) {

@@ -511,6 +511,14 @@ iota lowering 回归通过。
 合规检查为 `errors=0 warnings=0`，`git diff --check` 通过；interleave memory 与连续
 load/store lowering 回归通过。
 
+本轮将 `OneToNVMIGroupLoadOpPattern` 的 block-deinterleaved f32 参数校验与 chunk
+一致性检查抽取为 `lowerBlockF32`。helper 负责 group size/factor、num_groups、row
+stride、pointer、result arity、block elements 以及各 part chunk uniformity 校验，随后
+调用既有 `lowerBlockDeinterleaved` 发射 `vsldb`；主 pattern 只保留布局识别和操作数归一化。
+该拆分不改变 block load 的布局约束、stride 语义或结果顺序。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续 load/store 与
+group-store 代表性 lowering 均成功。
+
 本轮将 `OneToNVMITruncFOpPattern` 的 factor narrowing（按 result lane stride 选择
 source factor，逐 chunk 执行 `VcvtOp` 并用 `VorOp` 合并）抽取为 `lowerNarrow`。helper
 统一负责 source/result mask、BF16x2 source view、part 索引和结果替换；主 pattern 仅
