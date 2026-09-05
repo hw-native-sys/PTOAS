@@ -671,3 +671,10 @@ contiguous group chunk 计算、结果 arity/layout 契约、row-reduction 类�
 语义。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；`vmi_layout_assignment_f32_f8_store_reduce.pto` 完成
 lowering 回归。
+
+本轮将 `checkSupportedGatherShape` 的结果/索引元素宽度与 mask granularity 契约抽取
+为 `checkGatherElementContract`。该 helper 只负责 `ui8/ui16/i8/i16/f16/bf16` 与
+`b16/b32` 的组合判定及统一诊断；主函数保留 layout、pointer 和 physical arity/full
+chunk 检查。这样避免把 gather 的类型能力矩阵与物理承载检查耦合，支持范围和失败
+顺序保持不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；gather 与 group-store 代表性 lowering 命令可正常执行。
