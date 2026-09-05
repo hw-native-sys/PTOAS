@@ -1768,3 +1768,12 @@ mask part 校验及逐 chunk `VaddcOp` 发射抽取为 `lowerParts`。入口继�
 类型转换、carry/result 容器准备与最终扁平化替换；carry 结果排布（所有 result 后接所有
 carry）、mask 合同、结果顺序和诊断语义保持不变。增量 `check_changed_code.py` 结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
+
+# vmull physical chunk lowering 职责整改
+
+本轮将 `OneToNVMIVmullOpPattern::matchAndRewrite` 中单个 physical part 的 64-lane data、
+i32/ui32 element、b32 mask 合同校验及 `VmullOp` 发射抽取为 `lowerPart`。入口继续负责
+low/high result type 获取、跨 operand arity 校验和结果扁平化；low 结果在前、high 结果在后
+的排布、mask 语义、失败诊断和结果顺序保持不变。为相邻 reduce-add 入口补齐控制流大括号
+以满足 `G.FMT.11-CPP`。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。

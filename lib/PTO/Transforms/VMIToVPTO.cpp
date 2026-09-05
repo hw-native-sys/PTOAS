@@ -11874,6 +11874,41 @@ public:
 struct OneToNVMIVmullOpPattern : OneToNOpConversionPattern<VMIVmullOp> {
   using OneToNOpConversionPattern<VMIVmullOp>::OneToNOpConversionPattern;
 
+private:
+  LogicalResult lowerPart(VMIVmullOp op, Value lhs, Value rhs, Value mask,
+                          Type lowType, Type highType,
+                          SmallVectorImpl<Value> &lows,
+                          SmallVectorImpl<Value> &highs,
+                          OneToNPatternRewriter &rewriter) const {
+    auto dataType = dyn_cast<VRegType>(lowType);
+    auto maskType = dyn_cast<MaskType>(mask.getType());
+    const bool invalidShape =
+        !dataType || dataType.getElementCount() != 64 || lowType != highType ||
+        lhs.getType() != lowType || rhs.getType() != lowType;
+    if (invalidShape) {
+      return rewriter.notifyMatchFailure(
+          op, "vmull requires matching 64-lane physical data part types");
+    }
+    auto elementType = dyn_cast<IntegerType>(dataType.getElementType());
+    const bool invalidElementType =
+        !elementType || elementType.getWidth() != 32 ||
+        (!elementType.isSignless() && !elementType.isUnsigned());
+    if (invalidElementType) {
+      return rewriter.notifyMatchFailure(
+          op, "vmull requires physical i32 or ui32 data parts");
+    }
+    if (!maskType || !maskType.isB32()) {
+      return rewriter.notifyMatchFailure(
+          op, "vmull requires a corresponding b32 mask part");
+    }
+    auto vmull = rewriter.create<VmullOp>(op.getLoc(), lowType, highType, lhs,
+                                          rhs, mask);
+    lows.push_back(vmull.getLow());
+    highs.push_back(vmull.getHigh());
+    return success();
+  }
+
+public:
   LogicalResult
   matchAndRewrite(VMIVmullOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -11884,45 +11919,33 @@ struct OneToNVMIVmullOpPattern : OneToNOpConversionPattern<VMIVmullOp> {
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
     FailureOr<SmallVector<Type>> maybeHighTypes =
         getConvertedResultTypes(op, 1, *this->getTypeConverter());
-    if (failed(maybeLowTypes) || failed(maybeHighTypes))
+    const bool conversionFailed =
+        failed(maybeLowTypes) || failed(maybeHighTypes);
+    if (conversionFailed) {
       return failure();
+    }
     SmallVector<Type> lowTypes = std::move(*maybeLowTypes);
     SmallVector<Type> highTypes = std::move(*maybeHighTypes);
 
     size_t arity = aParts.size();
-    if (arity == 0 || bParts.size() != arity || maskParts.size() != arity ||
-        lowTypes.size() != arity || highTypes.size() != arity)
+    const bool invalidArity =
+        arity == 0 || bParts.size() != arity || maskParts.size() != arity ||
+        lowTypes.size() != arity || highTypes.size() != arity;
+    if (invalidArity) {
       return rewriter.notifyMatchFailure(
           op, "physical vmull arity mismatch across a, b, mask, low, and high");
+    }
 
     SmallVector<Value> lows;
     SmallVector<Value> highs;
     lows.reserve(arity);
     highs.reserve(arity);
     for (size_t index = 0; index < arity; ++index) {
-      Type lowType = lowTypes[index];
-      Type highType = highTypes[index];
-      auto dataType = dyn_cast<VRegType>(lowType);
-      auto maskType = dyn_cast<MaskType>(maskParts[index].getType());
-      if (!dataType || dataType.getElementCount() != 64 ||
-          lowType != highType || aParts[index].getType() != lowType ||
-          bParts[index].getType() != lowType)
-        return rewriter.notifyMatchFailure(
-            op, "vmull requires matching 64-lane physical data part types");
-      auto elementType = dyn_cast<IntegerType>(dataType.getElementType());
-      if (!elementType || elementType.getWidth() != 32 ||
-          (!elementType.isSignless() && !elementType.isUnsigned()))
-        return rewriter.notifyMatchFailure(
-            op, "vmull requires physical i32 or ui32 data parts");
-      if (!maskType || !maskType.isB32())
-        return rewriter.notifyMatchFailure(
-            op, "vmull requires a corresponding b32 mask part");
-
-      auto vmull = rewriter.create<VmullOp>(op.getLoc(), lowType, highType,
-                                            aParts[index], bParts[index],
-                                            maskParts[index]);
-      lows.push_back(vmull.getLow());
-      highs.push_back(vmull.getHigh());
+      if (failed(lowerPart(op, aParts[index], bParts[index], maskParts[index],
+                           lowTypes[index], highTypes[index], lows, highs,
+                           rewriter))) {
+        return failure();
+      }
     }
 
     SmallVector<Value> results;
@@ -12802,8 +12825,9 @@ struct OneToNVMIReduceAddIOpPattern
     ValueRange maskParts = adaptor.getMask();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    if (failed(maybe_resultTypes)) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     FailureOr<ReduceAddPhysicalPlan> plan = buildReduceAddPhysicalPlan(
         op, sourceParts, maskParts, resultTypes, rewriter, "reduce_addi");
@@ -12873,8 +12897,9 @@ struct OneToNVMIReduceAddFOpPattern
     ValueRange maskParts = adaptor.getMask();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    if (failed(maybe_resultTypes)) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     FailureOr<ReduceAddPhysicalPlan> plan = buildReduceAddPhysicalPlan(
         op, sourceParts, maskParts, resultTypes, rewriter, "reduce_addf");
