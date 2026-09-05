@@ -8551,9 +8551,10 @@ public:
               op, "failed to derive aligned compact group_store mask type");
         FailureOr<Value> storeMask = createPrefixMaskForActiveLanes(
             op.getLoc(), *maskType, valueVMIType.getElementCount(), rewriter);
-        if (failed(storeMask))
+        if (failed(storeMask)) {
           return rewriter.notifyMatchFailure(
               op, "failed to create aligned compact group_store mask");
+        }
         rewriter.create<VstsOp>(
             op.getLoc(), /*updated_base=*/Type{}, compactValue, *destination,
             *offset, rewriter.getStringAttr(*normalDist), *storeMask);
@@ -8577,8 +8578,10 @@ public:
       return success();
     }
 
-    if (layout && layout.isGroupSlots() && layout.getSlots() == 1 &&
-        layout.getNumGroups() == op.getNumGroupsAttr().getInt()) {
+    bool isSlots1Layout =
+        layout && layout.isGroupSlots() && layout.getSlots() == 1 &&
+        layout.getNumGroups() == op.getNumGroupsAttr().getInt();
+    if (isSlots1Layout) {
       return lowerSlots1(op, adaptor, rewriter, valueVMIType, layout,
                          *destination, *offset, *rowStride);
     }
@@ -14860,6 +14863,13 @@ WalkResult verifySupportedVecScalarOp(VecScalarOp op, StringRef opName,
                        cast<VMIVRegType>(op.getResult().getType()));
 }
 
+template <typename MaskableOp, typename MaskableCheck>
+WalkResult verifySupportedMaskableOp(MaskableOp op, StringRef opName,
+                                     MaskableCheck checkMaskable) {
+  return checkMaskable(op.getOperation(), opName,
+                       cast<VMIVRegType>(op.getResult().getType()));
+}
+
 LogicalResult
 verifySupportedVMIToVPTOOps(ModuleOp module,
                             bool enableStableGatherMaskedLoad) {
@@ -14953,23 +14963,23 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
     }
 
     if (auto addf = dyn_cast<VMIAddFOp>(op))
-      return emitMaskableUnsupported(
-          op, "pto.vmi.addf", cast<VMIVRegType>(addf.getResult().getType()));
+      return verifySupportedMaskableOp(addf, "pto.vmi.addf",
+                                       emitMaskableUnsupported);
     if (auto addi = dyn_cast<VMIAddIOp>(op))
-      return emitMaskableUnsupported(
-          op, "pto.vmi.addi", cast<VMIVRegType>(addi.getResult().getType()));
+      return verifySupportedMaskableOp(addi, "pto.vmi.addi",
+                                       emitMaskableUnsupported);
     if (auto subf = dyn_cast<VMISubFOp>(op))
-      return emitMaskableUnsupported(
-          op, "pto.vmi.subf", cast<VMIVRegType>(subf.getResult().getType()));
+      return verifySupportedMaskableOp(subf, "pto.vmi.subf",
+                                       emitMaskableUnsupported);
     if (auto subi = dyn_cast<VMISubIOp>(op))
-      return emitMaskableUnsupported(
-          op, "pto.vmi.subi", cast<VMIVRegType>(subi.getResult().getType()));
+      return verifySupportedMaskableOp(subi, "pto.vmi.subi",
+                                       emitMaskableUnsupported);
     if (auto mulf = dyn_cast<VMIMulFOp>(op))
-      return emitMaskableUnsupported(
-          op, "pto.vmi.mulf", cast<VMIVRegType>(mulf.getResult().getType()));
+      return verifySupportedMaskableOp(mulf, "pto.vmi.mulf",
+                                       emitMaskableUnsupported);
     if (auto muli = dyn_cast<VMIMulIOp>(op))
-      return emitMaskableUnsupported(
-          op, "pto.vmi.muli", cast<VMIVRegType>(muli.getResult().getType()));
+      return verifySupportedMaskableOp(muli, "pto.vmi.muli",
+                                       emitMaskableUnsupported);
     if (auto addc = dyn_cast<VMIVaddcOp>(op)) {
       std::string reason;
       if (succeeded(checkSupportedVMIAddcShape(addc, &reason)))
@@ -15021,42 +15031,42 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
       return WalkResult::interrupt();
     }
     if (auto divf = dyn_cast<VMIDivFOp>(op))
-      return emitMaskableUnsupported(
-          op, "pto.vmi.divf", cast<VMIVRegType>(divf.getResult().getType()));
+      return verifySupportedMaskableOp(divf, "pto.vmi.divf",
+                                       emitMaskableUnsupported);
     if (auto minf = dyn_cast<VMIMinFOp>(op))
-      return emitMaskableUnsupported(
-          op, "pto.vmi.minf", cast<VMIVRegType>(minf.getResult().getType()));
+      return verifySupportedMaskableOp(minf, "pto.vmi.minf",
+                                       emitMaskableUnsupported);
     if (auto mini = dyn_cast<VMIMinIOp>(op))
-      return emitMaskableUnsupported(
-          op, "pto.vmi.mini", cast<VMIVRegType>(mini.getResult().getType()));
+      return verifySupportedMaskableOp(mini, "pto.vmi.mini",
+                                       emitMaskableUnsupported);
     if (auto maxf = dyn_cast<VMIMaxFOp>(op))
-      return emitMaskableUnsupported(
-          op, "pto.vmi.maxf", cast<VMIVRegType>(maxf.getResult().getType()));
+      return verifySupportedMaskableOp(maxf, "pto.vmi.maxf",
+                                       emitMaskableUnsupported);
     if (auto maxi = dyn_cast<VMIMaxIOp>(op))
-      return emitMaskableUnsupported(
-          op, "pto.vmi.maxi", cast<VMIVRegType>(maxi.getResult().getType()));
+      return verifySupportedMaskableOp(maxi, "pto.vmi.maxi",
+                                       emitMaskableUnsupported);
     if (auto negf = dyn_cast<VMINegFOp>(op))
-      return emitMaskableUnsupported(
-          op, "pto.vmi.negf", cast<VMIVRegType>(negf.getResult().getType()));
+      return verifySupportedMaskableOp(negf, "pto.vmi.negf",
+                                       emitMaskableUnsupported);
     if (auto negi = dyn_cast<VMINegIOp>(op)) {
-      return emitMaskableUnsupported(
-          op, "pto.vmi.negi", cast<VMIVRegType>(negi.getResult().getType()));
+      return verifySupportedMaskableOp(negi, "pto.vmi.negi",
+                                       emitMaskableUnsupported);
     }
     if (auto absf = dyn_cast<VMIAbsFOp>(op))
-      return emitMaskableUnsupported(
-          op, "pto.vmi.absf", cast<VMIVRegType>(absf.getResult().getType()));
+      return verifySupportedMaskableOp(absf, "pto.vmi.absf",
+                                       emitMaskableUnsupported);
     if (auto absi = dyn_cast<VMIAbsIOp>(op))
-      return emitMaskableUnsupported(
-          op, "pto.vmi.absi", cast<VMIVRegType>(absi.getResult().getType()));
+      return verifySupportedMaskableOp(absi, "pto.vmi.absi",
+                                       emitMaskableUnsupported);
     if (auto sqrt = dyn_cast<VMISqrtOp>(op))
-      return emitMaskableUnsupported(
-          op, "pto.vmi.sqrt", cast<VMIVRegType>(sqrt.getResult().getType()));
+      return verifySupportedMaskableOp(sqrt, "pto.vmi.sqrt",
+                                       emitMaskableUnsupported);
     if (auto exp = dyn_cast<VMIExpOp>(op))
-      return emitMaskableUnsupported(
-          op, "pto.vmi.exp", cast<VMIVRegType>(exp.getResult().getType()));
+      return verifySupportedMaskableOp(exp, "pto.vmi.exp",
+                                       emitMaskableUnsupported);
     if (auto ln = dyn_cast<VMILnOp>(op))
-      return emitMaskableUnsupported(
-          op, "pto.vmi.ln", cast<VMIVRegType>(ln.getResult().getType()));
+      return verifySupportedMaskableOp(ln, "pto.vmi.ln",
+                                       emitMaskableUnsupported);
     if (auto relu = dyn_cast<VMIReluOp>(op)) {
       std::string reason;
       if (succeeded(checkSupportedReluShape(relu, &reason)))
