@@ -2095,6 +2095,16 @@ block 顺序、offset、mask、dist token 和 direct/fallback 选择语义不变
 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
 通过；本轮未新增可独立覆盖该分支的 runtime case，未虚构额外回归结果。
 
+# one-block group store 单 part 发射职责整改
+
+本轮在 `OneToNVMIGroupStoreOpPattern::lowerOneBlockGroupStore` 中引入
+`emitOneBlockGroupStorePart`，将单个 physical part 的 vreg 校验、contiguous store mask、
+group offset/base 计算和 `VsstbOp` 发射抽取为独立 helper。主函数继续负责 one-block plan、
+arity 合约、stride 常量和 part 遍历；保持 part 顺序、block/repeat stride、地址计算、mask
+语义、诊断和替换行为不变。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_layout_assignment_group_store_slots1_unit_stride.pto` 完整 lowering pipeline exit=0。
+
 # one-block group-reduce 单结果构造职责整改
 
 本轮在 `OneToNVMIGroupReduceOpPattern::lowerOneBlock` 中引入

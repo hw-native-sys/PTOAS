@@ -10378,6 +10378,34 @@ private:
     return success();
   }
 
+  LogicalResult emitOneBlockGroupStorePart(
+      VMIGroupStoreOp op, Value value, int64_t part,
+      VMIVRegType valueVMIType, const OneBlockGroupStorePlan &plan,
+      Value destination, Value offset, Value rowStride, Value blockStride,
+      Value repeatStride, OneToNPatternRewriter &rewriter) const {
+    auto vregType = dyn_cast<VRegType>(value.getType());
+    if (!vregType) {
+      return rewriter.notifyMatchFailure(
+          op, "one-block group_store value must be vreg");
+    }
+    FailureOr<Value> mask = createContiguousStoreMask(
+        op.getLoc(), valueVMIType, part, vregType, rewriter);
+    if (failed(mask)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to create one-block group_store mask");
+    }
+    Value partOffset = createGroupChunkOffset(
+        op.getLoc(), offset, rowStride, part * plan.groupsPerPart,
+        /*inGroupLaneOffset=*/0, rewriter);
+    Value base = rewriter
+                     .create<AddPtrOp>(op.getLoc(), destination.getType(),
+                                       destination, partOffset)
+                     .getResult();
+    rewriter.create<VsstbOp>(op.getLoc(), /*updated_base=*/Type{}, value, base,
+                             blockStride, repeatStride, *mask);
+    return success();
+  }
+
   LogicalResult lowerOneBlockGroupStore(
       VMIGroupStoreOp op, OpAdaptor adaptor, OneToNPatternRewriter &rewriter,
       VMIVRegType valueVMIType, const VMIGroupStoreLayoutFact &fact,
@@ -10402,26 +10430,11 @@ private:
     Value repeatStride = rewriter.create<arith::ConstantIntOp>(
         op.getLoc(), 0, 16);
     for (auto [part, value] : llvm::enumerate(valueParts)) {
-      auto vregType = dyn_cast<VRegType>(value.getType());
-      if (!vregType) {
-        return rewriter.notifyMatchFailure(
-            op, "one-block group_store value must be vreg");
+      if (failed(emitOneBlockGroupStorePart(
+              op, value, part, valueVMIType, *plan, destination, offset,
+              rowStride, blockStride, repeatStride, rewriter))) {
+        return failure();
       }
-      FailureOr<Value> mask = createContiguousStoreMask(
-          op.getLoc(), valueVMIType, part, vregType, rewriter);
-      if (failed(mask)) {
-        return rewriter.notifyMatchFailure(
-            op, "failed to create one-block group_store mask");
-      }
-      Value partOffset = createGroupChunkOffset(
-          op.getLoc(), offset, rowStride, part * plan->groupsPerPart,
-          /*inGroupLaneOffset=*/0, rewriter);
-      Value base = rewriter
-                       .create<AddPtrOp>(op.getLoc(), destination.getType(),
-                                         destination, partOffset)
-                       .getResult();
-      rewriter.create<VsstbOp>(op.getLoc(), /*updated_base=*/Type{}, value, base,
-                               blockStride, repeatStride, *mask);
     }
     rewriter.eraseOp(op);
     return success();
