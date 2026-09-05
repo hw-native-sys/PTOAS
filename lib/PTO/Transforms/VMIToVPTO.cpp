@@ -4169,6 +4169,33 @@ static FailureOr<unsigned> validateDenseLaneStrideShape(
   return elementBits;
 }
 
+static FailureOr<Value> materializeContiguousLaneStridePart(
+    Operation *op, Value source, Type resultType, unsigned elementBits,
+    VRegType inputCarrier, int64_t laneStride, int64_t part,
+    PatternRewriter &rewriter) {
+  FailureOr<Value> current =
+      bitcastVReg(op->getLoc(), source, inputCarrier, rewriter);
+  if (failed(current)) {
+    return failure();
+  }
+  FailureOr<Value> unpacked = unpackToNextCarrier(
+      op->getLoc(), *current, elementBits,
+      laneStride == 4 ? part / 2 : part, rewriter);
+  if (failed(unpacked)) {
+    return failure();
+  }
+  current = *unpacked;
+  if (laneStride == 4) {
+    unpacked = unpackToNextCarrier(op->getLoc(), *current, elementBits * 2,
+                                   part % 2, rewriter);
+    if (failed(unpacked)) {
+      return failure();
+    }
+    current = *unpacked;
+  }
+  return bitcastVReg(op->getLoc(), *current, resultType, rewriter);
+}
+
 FailureOr<SmallVector<Value>> materializeContiguousToLaneStride(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     Type elementType, int64_t laneStride, PatternRewriter &rewriter) {
@@ -4188,31 +4215,16 @@ FailureOr<SmallVector<Value>> materializeContiguousToLaneStride(
   results.reserve(resultTypes.size());
   for (auto [resultIndex, resultType] : llvm::enumerate(resultTypes)) {
     int64_t sourceIndex = resultIndex / laneStride;
-    if (sourceIndex >= static_cast<int64_t>(sourceParts.size()))
+    if (sourceIndex >= static_cast<int64_t>(sourceParts.size())) {
       return failure();
-    Value source = sourceParts[sourceIndex];
-    FailureOr<Value> current =
-        bitcastVReg(op->getLoc(), source, *inputCarrier, rewriter);
-    if (failed(current))
-      return failure();
-    int64_t part = resultIndex % laneStride;
-    FailureOr<Value> unpacked =
-        unpackToNextCarrier(op->getLoc(), *current, *elementBits,
-                            laneStride == 4 ? part / 2 : part, rewriter);
-    if (failed(unpacked))
-      return failure();
-    current = *unpacked;
-    if (laneStride == 4) {
-      unpacked = unpackToNextCarrier(op->getLoc(), *current, *elementBits * 2,
-                                     part % 2, rewriter);
-      if (failed(unpacked))
-        return failure();
-      current = *unpacked;
     }
-    FailureOr<Value> result =
-        bitcastVReg(op->getLoc(), *current, resultType, rewriter);
-    if (failed(result))
+    int64_t part = resultIndex % laneStride;
+    FailureOr<Value> result = materializeContiguousLaneStridePart(
+        op, sourceParts[sourceIndex], resultType, *elementBits, *inputCarrier,
+        laneStride, part, rewriter);
+    if (failed(result)) {
       return failure();
+    }
     results.push_back(*result);
   }
   return results;
