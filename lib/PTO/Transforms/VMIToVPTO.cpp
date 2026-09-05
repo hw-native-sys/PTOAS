@@ -4165,6 +4165,36 @@ FailureOr<std::optional<SmallVector<Value>>> materializeDeinterleaved2Layout(
   return std::optional<SmallVector<Value>>(std::move(results));
 }
 
+FailureOr<std::optional<SmallVector<Value>>> materializeDataLaneStrideConversion(
+    Operation *op, ValueRange sourceParts, TypeRange resultTypes,
+    VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
+    Type sourceVMIElementType, PatternRewriter &rewriter) {
+  if (!sourceLayout || !resultLayout) {
+    return std::nullopt;
+  }
+  if (sourceLayout.isContiguous() && sourceLayout.getLaneStride() == 1 &&
+      resultLayout.isContiguous() && resultLayout.getLaneStride() != 1) {
+    FailureOr<SmallVector<Value>> result = materializeContiguousToLaneStride(
+        op, sourceParts, resultTypes, sourceVMIElementType,
+        resultLayout.getLaneStride(), rewriter);
+    if (failed(result)) {
+      return failure();
+    }
+    return std::optional<SmallVector<Value>>(std::move(*result));
+  }
+  if (sourceLayout.isContiguous() && sourceLayout.getLaneStride() != 1 &&
+      resultLayout.isContiguous() && resultLayout.getLaneStride() == 1) {
+    FailureOr<SmallVector<Value>> result = materializeLaneStrideToContiguous(
+        op, sourceParts, resultTypes, sourceVMIElementType,
+        sourceLayout.getLaneStride(), rewriter);
+    if (failed(result)) {
+      return failure();
+    }
+    return std::optional<SmallVector<Value>>(std::move(*result));
+  }
+  return std::nullopt;
+}
+
 FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
@@ -4188,6 +4218,17 @@ FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
   }
   if (deinterleaved2->has_value()) {
     return std::move(**deinterleaved2);
+  }
+
+  FailureOr<std::optional<SmallVector<Value>>> laneStride =
+      materializeDataLaneStrideConversion(
+          op, sourceParts, resultTypes, sourceLayout, resultLayout,
+          sourceVMIElementType, rewriter);
+  if (failed(laneStride)) {
+    return failure();
+  }
+  if (laneStride->has_value()) {
+    return std::move(**laneStride);
   }
 
   auto isElementDeinterleaved = [](VMILayoutAttr layout, int64_t factor) {
@@ -4361,20 +4402,6 @@ FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
       results.append(part3);
     }
     return results;
-  }
-
-  if (sourceLayout.isContiguous() && sourceLayout.getLaneStride() == 1 &&
-      resultLayout.isContiguous() && resultLayout.getLaneStride() != 1) {
-    return materializeContiguousToLaneStride(
-        op, sourceParts, resultTypes, sourceVMIElementType,
-        resultLayout.getLaneStride(), rewriter);
-  }
-
-  if (sourceLayout.isContiguous() && sourceLayout.getLaneStride() != 1 &&
-      resultLayout.isContiguous() && resultLayout.getLaneStride() == 1) {
-    return materializeLaneStrideToContiguous(
-        op, sourceParts, resultTypes, sourceVMIElementType,
-        sourceLayout.getLaneStride(), rewriter);
   }
 
   VMILayoutAttr contiguous =
