@@ -599,6 +599,12 @@ create-group-mask lowering 回归通过。
 增量合规检查为 `errors=0 warnings=0`，`git diff --check` 通过；mask granularity
 lowering 回归通过。
 
+本轮将 `getContiguousMaterializationPartCount` 的 VMI layout 提取与 dense-split
+part/chunk 一致性检查抽取为 `getMaterializationLayout` 和
+`verifyMaterializationPartCounts`。主函数仅负责 contiguous 类型构造及最终 physical
+arity 计算，错误文本和 layout 支持范围保持不变。增量合规检查为
+`errors=0 warnings=0`，`git diff --check` 通过；连续 load/store lowering 回归通过。
+
 本轮将 `lowerGroupBroadcastParts` 的单个结果 chunk 定位、slots=1 特殊合并、selector
 映射验证和普通 selector 物化抽取为 `lowerGroupBroadcastChunk`。外层仅负责 layout
 fact、context 初始化及 part/chunk 枚举；source chunk 边界、结果顺序和 selector cache

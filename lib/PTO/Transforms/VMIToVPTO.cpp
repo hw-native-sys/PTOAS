@@ -960,6 +960,59 @@ LogicalResult checkFullVMIPhysicalChunks(Type type, std::string *reason) {
 FailureOr<int64_t> getContiguousMaterializationPartCount(Type type,
                                                          std::string *reason);
 
+static FailureOr<VMILayoutAttr> getMaterializationLayout(
+    Type type, std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> FailureOr<VMILayoutAttr> {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  Attribute layoutAttr;
+  if (auto vregType = dyn_cast<VMIVRegType>(type)) {
+    layoutAttr = vregType.getLayout();
+  } else if (auto maskType = dyn_cast<VMIMaskType>(type)) {
+    layoutAttr = maskType.getLayout();
+  } else {
+    return fail("requires VMI data or mask type");
+  }
+  auto layout = dyn_cast_or_null<VMILayoutAttr>(layoutAttr);
+  if (!layout) {
+    return fail("requires assigned layout");
+  }
+  return layout;
+}
+
+static LogicalResult verifyMaterializationPartCounts(
+    Type type, VMILayoutAttr layout, int64_t factor, std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  FailureOr<int64_t> chunksPerGroup = getVMITypeChunksInPart(type, 0);
+  if (failed(chunksPerGroup)) {
+    return fail("requires known physical chunks per part");
+  }
+  if (*chunksPerGroup == 0) {
+    return fail("requires at least one physical chunk per part");
+  }
+  for (int64_t part = 1; part < factor; ++part) {
+    FailureOr<int64_t> chunks = getVMITypeChunksInPart(type, part);
+    if (failed(chunks)) {
+      return fail("requires known physical chunks per part");
+    }
+    bool mismatchedFactor2Chunks =
+        layout.getFactor() == 2 && *chunks != *chunksPerGroup;
+    if (mismatchedFactor2Chunks) {
+      return fail("requires every deinterleaved part to have the same "
+                  "physical chunk count");
+    }
+  }
+  return success();
+}
+
 FailureOr<int64_t> getContiguousMaterializationPartCount(Type type,
                                                          std::string *reason) {
   auto fail = [&reason](const Twine &message) -> FailureOr<int64_t> {
@@ -971,40 +1024,30 @@ FailureOr<int64_t> getContiguousMaterializationPartCount(Type type,
 
   FailureOr<int64_t> arity = getVMIPhysicalArity(type);
   FailureOr<int64_t> factor = getVMITypeLayoutFactor(type);
-  if (failed(arity) || failed(factor))
+  bool missingMaterializationCounts = failed(arity) || failed(factor);
+  if (missingMaterializationCounts) {
     return fail("requires computable physical arity and assigned layout");
+  }
 
-  Attribute layoutAttr;
-  if (auto vregType = dyn_cast<VMIVRegType>(type))
-    layoutAttr = vregType.getLayout();
-  else if (auto maskType = dyn_cast<VMIMaskType>(type))
-    layoutAttr = maskType.getLayout();
-  else
-    return fail("requires VMI data or mask type");
-
-  auto layout = dyn_cast_or_null<VMILayoutAttr>(layoutAttr);
-  if (!layout)
-    return fail("requires assigned layout");
-  if (layout.isContiguous() && layout.getLaneStride() == 1)
+  FailureOr<VMILayoutAttr> layout = getMaterializationLayout(type, reason);
+  if (failed(layout)) {
+    return failure();
+  }
+  bool isContiguousLayout =
+      layout->isContiguous() && layout->getLaneStride() == 1;
+  if (isContiguousLayout) {
     return *arity;
-  if (!layout.isDenseSplit() ||
-      (layout.getFactor() != 2 && layout.getFactor() != 4))
+  }
+  bool unsupportedSplitLayout =
+      !layout->isDenseSplit() ||
+      (layout->getFactor() != 2 && layout->getFactor() != 4);
+  if (unsupportedSplitLayout) {
     return fail("requires contiguous, deinterleaved=2/4, or "
                 "block_deinterleaved=2/4 layout");
+  }
 
-  FailureOr<int64_t> chunksPerGroup = getVMITypeChunksInPart(type, 0);
-  if (failed(chunksPerGroup))
-    return fail("requires known physical chunks per part");
-  if (*chunksPerGroup == 0)
-    return fail("requires at least one physical chunk per part");
-
-  for (int64_t part = 1; part < *factor; ++part) {
-    FailureOr<int64_t> chunks = getVMITypeChunksInPart(type, part);
-    if (failed(chunks))
-      return fail("requires known physical chunks per part");
-    if (layout.getFactor() == 2 && *chunks != *chunksPerGroup)
-      return fail("requires every deinterleaved part to have the same "
-                  "physical chunk count");
+  if (failed(verifyMaterializationPartCounts(type, *layout, *factor, reason))) {
+    return failure();
   }
 
   VMILayoutAttr contiguous = VMILayoutAttr::getContiguous(type.getContext());
@@ -1577,8 +1620,9 @@ checkSupportedLoadShape(VMIVRegType type, Value source, Type sourceType,
                         std::optional<int64_t> constantOffset,
                         std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
@@ -3422,8 +3466,9 @@ std::optional<int64_t> getPrefixActiveLaneCount(ArrayRef<int8_t> activeLanes) {
   int64_t activeCount = 0;
   for (int8_t active : activeLanes) {
     if (active) {
-      if (seenInactive)
+      if (seenInactive) {
         return std::nullopt;
+      }
       ++activeCount;
       continue;
     }
