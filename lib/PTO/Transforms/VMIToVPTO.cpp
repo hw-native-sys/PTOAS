@@ -2078,6 +2078,28 @@ FailureOr<OneBlockGroupStorePlan> getOneBlockGroupStorePlan(
 }
 
 LogicalResult
+checkSupportedCompactSmallGroupStoreShape(VMIGroupStoreOp op,
+                                           VMIVRegType valueType,
+                                           std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  if (!isa<PtrType>(op.getDestination().getType())) {
+    return fail("compact small group_store requires !pto.ptr destination");
+  }
+  VMIMemoryAccessPlan accessPlan =
+      buildWriteAccessPlan(op.getDestination(), op.getOffset(), valueType,
+                           VMIMemoryCoverageKind::Dense);
+  if (!accessPlan.layoutSupport.isSupported()) {
+    return fail(accessPlan.layoutSupport.reason);
+  }
+  return success();
+}
+
+LogicalResult
 checkSupportedGroupSlotsStoreShape(VMIGroupStoreOp op, VMIVRegType valueType,
                                     std::optional<int64_t> rowStride,
                                     std::string *reason) {
@@ -2139,14 +2161,7 @@ checkSupportedGroupStoreShape(VMIGroupStoreOp op, std::string *reason) {
   std::optional<int64_t> rowStride = getConstantIndexValue(op.getRowStride());
   if (isCompactSmallGroupStore(layout, valueType,
                                op.getNumGroupsAttr().getInt(), rowStride)) {
-    if (!isa<PtrType>(op.getDestination().getType()))
-      return fail("compact small group_store requires !pto.ptr destination");
-    VMIMemoryAccessPlan accessPlan =
-        buildWriteAccessPlan(op.getDestination(), op.getOffset(), valueType,
-                             VMIMemoryCoverageKind::Dense);
-    if (!accessPlan.layoutSupport.isSupported())
-      return fail(accessPlan.layoutSupport.reason);
-    return success();
+    return checkSupportedCompactSmallGroupStoreShape(op, valueType, reason);
   }
   if (layout && layout.isGroupSlots()) {
     return checkSupportedGroupSlotsStoreShape(op, valueType, rowStride, reason);
@@ -5943,8 +5958,9 @@ FailureOr<SmallVector<Value>> materializeStagingContiguousToDeintMaskLayout(
     return failure();
   };
   if ((factor != 2 && factor != 4) || sourceParts.empty() ||
-      resultTypes.size() % factor != 0)
+      resultTypes.size() % factor != 0) {
     return fail("staging contiguous mask layout requires grouped result parts");
+  }
 
   int64_t groups = resultTypes.size() / factor;
   if (sourceParts.size() > static_cast<size_t>(groups * factor))
@@ -7915,9 +7931,10 @@ public:
       return failure();
     }
     SmallVector<Type> highTypes = std::move(*maybe_highTypes);
-    if (lowTypes.size() != highTypes.size())
+    if (lowTypes.size() != highTypes.size()) {
       return rewriter.notifyMatchFailure(
           op, "deinterleave_load requires matching low/high physical arity");
+    }
 
     auto firstType =
         lowTypes.empty() ? VRegType{} : dyn_cast<VRegType>(lowTypes.front());
