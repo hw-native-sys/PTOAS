@@ -8171,6 +8171,24 @@ private:
     return success();
   }
 
+  LogicalResult emitPackedByteStoreStream(
+      VMIGroupStoreOp op, OneToNPatternRewriter &rewriter, Value destination,
+      Value offset, ArrayRef<Value> values, ArrayRef<int64_t> advances) const {
+    Type destinationElementType = getMemoryElementType(destination.getType());
+    Value storeBase = materializeBufferPointer(
+        destination, destinationElementType,
+        getMemorySpace(destination.getType()), rewriter, op.getLoc());
+    if (!storeBase) {
+      return rewriter.notifyMatchFailure(
+          op, "unaligned packed byte group_store requires a ptr-compatible destination");
+    }
+    storeBase = rewriter
+                    .create<AddPtrOp>(op.getLoc(), storeBase.getType(),
+                                      storeBase, offset)
+                    .getResult();
+    return emitStatefulStoreStream(op, storeBase, values, advances, rewriter);
+  }
+
   LogicalResult lowerSlots1(VMIGroupStoreOp op, OpAdaptor adaptor,
                             OneToNPatternRewriter &rewriter,
                             VMIVRegType valueVMIType, VMILayoutAttr layout,
@@ -8585,23 +8603,9 @@ public:
           }
 
           if (!useDirectPack4) {
-            Type destinationElementType =
-                getMemoryElementType((*destination).getType());
-            Value storeBase = materializeBufferPointer(
-                *destination, destinationElementType,
-                getMemorySpace((*destination).getType()), rewriter,
-                op.getLoc());
-            if (!storeBase) {
-              return rewriter.notifyMatchFailure(
-                  op, "unaligned packed byte group_store requires a "
-                      "ptr-compatible destination");
-            }
-            storeBase = rewriter
-                            .create<AddPtrOp>(op.getLoc(), storeBase.getType(),
-                                              storeBase, *offset)
-                            .getResult();
-            if (failed(emitStatefulStoreStream(op, storeBase, statefulValues,
-                                               statefulAdvances, rewriter)))
+            if (failed(emitPackedByteStoreStream(
+                    op, rewriter, *destination, *offset, statefulValues,
+                    statefulAdvances)))
               return failure();
           }
 
