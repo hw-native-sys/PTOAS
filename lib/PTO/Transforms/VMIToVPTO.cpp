@@ -6190,16 +6190,16 @@ materializeMaskGranularityCastLayoutFallback(
 
   bool requiresContiguousFallback =
       sourceLayout.isDenseSplit() || resultLayout.isDenseSplit();
-  if (requiresContiguousFallback) {
-    FailureOr<SmallVector<Value>> contiguous =
-        materializeMaskGranularityCastLayoutConversionViaContiguous(
-            op, sourceType, resultType, sourceParts, resultTypes, rewriter);
-    if (failed(contiguous)) {
-      return failure();
-    }
-    return std::optional<SmallVector<Value>>(std::move(*contiguous));
+  if (!requiresContiguousFallback) {
+    return std::nullopt;
   }
-  return std::nullopt;
+  FailureOr<SmallVector<Value>> contiguous =
+      materializeMaskGranularityCastLayoutConversionViaContiguous(
+          op, sourceType, resultType, sourceParts, resultTypes, rewriter);
+  if (failed(contiguous)) {
+    return failure();
+  }
+  return std::optional<SmallVector<Value>>(std::move(*contiguous));
 }
 
 FailureOr<SmallVector<Value>>

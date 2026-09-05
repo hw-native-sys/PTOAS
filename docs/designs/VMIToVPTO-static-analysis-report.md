@@ -221,6 +221,14 @@ mask 的语义差异只存在于 active-lane 判定。补齐该批代码及 scal
 触及的控制语句大括号后，增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过。
 
+# mask cast fallback 分派整改
+
+本轮整理 `materializeMaskGranularityCastLayoutFallback` 的 fallback 控制流：明确
+layout conversion、staging conversion 和 dense-split contiguous fallback 的优先级，
+将无需 contiguous fallback 的路径提前返回。保持三类转换的调用顺序、失败传播和
+`std::optional` 结果语义不变。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
+
 # mask granularity cast 分阶段物化整改
 
 本轮将 `materializeMaskGranularityCastConversion` 的 physical layout 分派、granularity
