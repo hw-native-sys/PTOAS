@@ -708,6 +708,13 @@ pattern 现在仅负责结果类型转换、factor-4 block 特例和路径分派
 `git diff --check` 通过；`vmi_to_vpto_create_group_mask_block8_dynamic.pto`
 lowering exit=0。
 
+本轮继续整理 channel split/merge 的布局判定：将 source/result layout 的复合条件拆成
+具名布尔变量，并为 split/merge 的 channel layout 显式标注 `VMILayoutAttr` 类型；同时
+补齐这两条 pattern 的控制流大括号。该调整仅改善 verifier/lowering 的职责可读性，保持
+channel 数量支持矩阵、layout 转换方向和结果顺序不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；interleave/channel
+相关 lowering exit=0。
+
 复核 interleave 模板的 contiguous lowering 时发现 `invalidSingleChunkTypes` 条件缺少
 闭合大括号，导致直接 `TargetOp` 构造语句错误地落入失败分支。已补齐控制流边界，恢复
 contiguous interleave 的正常 lowering；该修复不改变支持矩阵或结果语义。增量合规检查

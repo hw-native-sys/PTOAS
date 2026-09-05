@@ -15021,14 +15021,17 @@ struct OneToNVMIChannelSplitOpPattern
 
     auto sourceType = cast<VMIVRegType>(op.getSource().getType());
     VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();
-    auto channelLayout =
+    VMILayoutAttr channelLayout =
         VMILayoutAttr::getDeinterleaved(rewriter.getContext(), channels);
-    if (!sourceLayout ||
-        (!sourceLayout.isContiguous() && sourceLayout != channelLayout))
+    bool invalidSourceLayout =
+        !sourceLayout ||
+        (!sourceLayout.isContiguous() && sourceLayout != channelLayout);
+    if (invalidSourceLayout) {
       return rewriter.notifyMatchFailure(
           op,
           "channel_split requires contiguous or matching deinterleaved source "
           "layout");
+    }
     for (Value result : op.getResults()) {
       auto resultType = cast<VMIVRegType>(result.getType());
       VMILayoutAttr resultLayout = resultType.getLayoutAttr();
@@ -15085,12 +15088,15 @@ struct OneToNVMIChannelMergeOpPattern
     VMILayoutAttr resultLayout = resultType.getLayoutAttr();
     auto channelLayout =
         VMILayoutAttr::getDeinterleaved(rewriter.getContext(), channels);
-    if (!resultLayout ||
-        (!resultLayout.isContiguous() && resultLayout != channelLayout))
+    bool invalidResultLayout =
+        !resultLayout ||
+        (!resultLayout.isContiguous() && resultLayout != channelLayout);
+    if (invalidResultLayout) {
       return rewriter.notifyMatchFailure(
           op,
           "channel_merge requires contiguous or matching deinterleaved result "
           "layout");
+    }
 
     FailureOr<SmallVector<Type>> maybeResultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
