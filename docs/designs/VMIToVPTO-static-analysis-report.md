@@ -1871,3 +1871,12 @@ arity 限制、converted result type 获取与结果替换；保持压缩语义�
 原有诊断不变。增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；`vmi_to_vpto_compress.pto` 当前在既有 VMI pack/unpack
 pipeline invariant 处提前失败，未进入本轮 helper，不能将该失败归因于本轮改动。
+
+# compress_store lowering 职责整改
+
+本轮将 `OneToNVMICompressStoreOpPattern::matchAndRewrite` 中 physical value/mask/ptr 类型
+校验、地址计算、`VsqzOp` 压缩、align 初始化及 `VsturOp`/`VstarOp` 发射抽取为
+`lowerStore`。入口继续负责 destination/offset 单值归一化和 one-part arity 校验；保持
+`POST_UPDATE` stream 语义、align 状态更新顺序、store base 计算、结果擦除和原有诊断不变。
+增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_to_vpto_compress_store.pto` lowering exit=0。

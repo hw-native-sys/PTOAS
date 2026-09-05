@@ -12915,6 +12915,37 @@ struct OneToNVMICompressStoreOpPattern
   using OneToNOpConversionPattern<
       VMICompressStoreOp>::OneToNOpConversionPattern;
 
+private:
+  LogicalResult lowerStore(VMICompressStoreOp op, Value destination,
+                           Value offset, Value value, Value mask,
+                           OneToNPatternRewriter &rewriter) const {
+    auto valueType = dyn_cast<VRegType>(value.getType());
+    auto destinationType = dyn_cast<PtrType>(destination.getType());
+    const bool invalidTypes =
+        !valueType || !isa<MaskType>(mask.getType()) || !destinationType;
+    if (invalidTypes) {
+      return rewriter.notifyMatchFailure(
+          op, "compress_store requires physical value/mask and ptr "
+              "destination");
+    }
+    Value storeBase =
+        rewriter
+            .create<AddPtrOp>(op.getLoc(), destination.getType(), destination,
+                              offset)
+            .getResult();
+    Value squeezed =
+        rewriter.create<VsqzOp>(op.getLoc(), valueType, value, mask).getResult();
+    auto align = rewriter.create<InitAlignOp>(
+        op.getLoc(), AlignType::get(rewriter.getContext()));
+    auto store = rewriter.create<VsturOp>(
+        op.getLoc(), align.getResult().getType(), align.getResult(), squeezed,
+        storeBase, rewriter.getStringAttr("POST_UPDATE"));
+    rewriter.create<VstarOp>(op.getLoc(), store.getAlignOut(), storeBase);
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+public:
   LogicalResult
   matchAndRewrite(VMICompressStoreOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -12924,39 +12955,21 @@ struct OneToNVMICompressStoreOpPattern
     FailureOr<Value> offset = getSingleValue(
         op, adaptor.getOffset(),
         "compress_store offset must convert to one value", rewriter);
-    if (failed(destination) || failed(offset))
+    const bool failedAddress = failed(destination) || failed(offset);
+    if (failedAddress) {
       return failure();
+    }
 
     ValueRange valueParts = adaptor.getValue();
     ValueRange maskParts = adaptor.getMask();
-    if (valueParts.size() != 1 || maskParts.size() != 1)
+    const bool invalidArity = valueParts.size() != 1 || maskParts.size() != 1;
+    if (invalidArity) {
       return rewriter.notifyMatchFailure(
           op, "compress_store supports only one physical part");
+    }
 
-    auto valueType = dyn_cast<VRegType>(valueParts.front().getType());
-    if (!valueType || !isa<MaskType>(maskParts.front().getType()) ||
-        !isa<PtrType>((*destination).getType()))
-      return rewriter.notifyMatchFailure(
-          op, "compress_store requires physical value/mask and ptr "
-              "destination");
-
-    Value storeBase =
-        rewriter
-            .create<AddPtrOp>(op.getLoc(), (*destination).getType(),
-                              *destination, *offset)
-            .getResult();
-    Value squeezed = rewriter
-                         .create<VsqzOp>(op.getLoc(), valueType,
-                                         valueParts.front(), maskParts.front())
-                         .getResult();
-    auto align = rewriter.create<InitAlignOp>(
-        op.getLoc(), AlignType::get(rewriter.getContext()));
-    auto store = rewriter.create<VsturOp>(
-        op.getLoc(), align.getResult().getType(), align.getResult(), squeezed,
-        storeBase, rewriter.getStringAttr("POST_UPDATE"));
-    rewriter.create<VstarOp>(op.getLoc(), store.getAlignOut(), storeBase);
-    rewriter.eraseOp(op);
-    return success();
+    return lowerStore(op, *destination, *offset, valueParts.front(),
+                      maskParts.front(), rewriter);
   }
 };
 
