@@ -900,6 +900,13 @@ group-slot 的 `Vsunpack/Vzunpack` 与 `Vcvt` 路径仍由主模式独立负责�
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；完整构建和完整静态
 报告仍未宣称清零。
 
+本轮将 `materializeMaskLayoutConversion` 的 identity forwarding 分支抽取为
+`materializeIdentityMaskLayout`。该 helper 只负责相同 layout 的 physical part 合法性
+校验和无变换转发；`deinterleaved=2` 及 lane-stride 的实际 mask 物化仍由各自 helper
+负责。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
+通过；`vmi_to_vpto_ensure_mask_granularity.pto` lowering exit=0，输出仍包含预期的
+`pdintlv/ppack/pintlv` 序列。
+
 本轮将 `lowerGroupSlotLoadParts` 的布局、指针、结果 arity 和 slots 支持矩阵校验抽取
 为 `getGroupSlotLoadSlots`。该 helper 只建立合法的 slots plan，slots=1/8 的具体地址
 物化与 `vsldb` 发射仍由原有专用 helper 负责；失败诊断和分派顺序保持不变。增量合规

@@ -5227,6 +5227,21 @@ FailureOr<std::optional<SmallVector<Value>>> materializeMaskLaneStrideLayout(
 
 }
 
+static FailureOr<std::optional<SmallVector<Value>>> materializeIdentityMaskLayout(
+    Operation *op, ValueRange sourceParts, TypeRange resultTypes,
+    VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
+    PatternRewriter &rewriter) {
+  if (sourceLayout != resultLayout) {
+    return std::nullopt;
+  }
+  if (failed(verifyIdentityPartForwarding(op, sourceParts, resultTypes,
+                                          rewriter))) {
+    return failure();
+  }
+  return std::optional<SmallVector<Value>>(
+      SmallVector<Value>(sourceParts.begin(), sourceParts.end()));
+}
+
 FailureOr<SmallVector<Value>> materializeMaskLayoutConversion(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
@@ -5238,11 +5253,14 @@ FailureOr<SmallVector<Value>> materializeMaskLayoutConversion(
     return failure();
   }
 
-  if (sourceLayout == resultLayout) {
-    if (failed(verifyIdentityPartForwarding(op, sourceParts, resultTypes,
-                                            rewriter)))
-      return failure();
-    return SmallVector<Value>(sourceParts.begin(), sourceParts.end());
+  FailureOr<std::optional<SmallVector<Value>>> identity =
+      materializeIdentityMaskLayout(op, sourceParts, resultTypes, sourceLayout,
+                                    resultLayout, rewriter);
+  if (failed(identity)) {
+    return failure();
+  }
+  if (identity->has_value()) {
+    return std::move(**identity);
   }
 
   FailureOr<std::optional<SmallVector<Value>>> deinterleaved2 =
