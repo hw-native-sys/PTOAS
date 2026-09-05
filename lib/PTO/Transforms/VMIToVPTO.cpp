@@ -6111,6 +6111,22 @@ static FailureOr<SmallVector<Value>> flattenStagingMaskParts(
   return results;
 }
 
+static LogicalResult materializeStagingMaskGroup(
+    Operation *op, ValueRange sourceParts, TypeRange resultTypes, int64_t factor,
+    int64_t groups, int64_t groupIndex,
+    SmallVectorImpl<SmallVector<Value, 4>> &parts, PatternRewriter &rewriter) {
+  FailureOr<SmallVector<Value, 4>> materialized =
+      materializeContiguousToDeintMaskGroup(
+          op, sourceParts, resultTypes, factor, groups, groupIndex, rewriter);
+  if (failed(materialized)) {
+    return failure();
+  }
+  for (int64_t part = 0; part < factor; ++part) {
+    parts[part].push_back((*materialized)[part]);
+  }
+  return success();
+}
+
 FailureOr<SmallVector<Value>> materializeStagingContiguousToDeintMaskLayout(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     int64_t factor, PatternRewriter &rewriter) {
@@ -6137,14 +6153,10 @@ FailureOr<SmallVector<Value>> materializeStagingContiguousToDeintMaskLayout(
     parts[part].reserve(groups);
 
   for (int64_t i = 0; i < groups; ++i) {
-    FailureOr<SmallVector<Value, 4>> materialized =
-        materializeContiguousToDeintMaskGroup(
-            op, sourceParts, resultTypes, factor, groups, i, rewriter);
-    if (failed(materialized)) {
+    if (failed(materializeStagingMaskGroup(
+            op, sourceParts, resultTypes, factor, groups, i, parts,
+            rewriter))) {
       return failure();
-    }
-    for (int64_t part = 0; part < factor; ++part) {
-      parts[part].push_back((*materialized)[part]);
     }
   }
 

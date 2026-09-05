@@ -221,6 +221,14 @@ mask 的语义差异只存在于 active-lane 判定。补齐该批代码及 scal
 触及的控制语句大括号后，增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过。
 
+# staging mask group loop 整改
+
+本轮将 `materializeStagingContiguousToDeintMaskLayout` 的单 group materialization 与
+factor 路由写入抽取为 `materializeStagingMaskGroup`。外层函数保留 shape 校验、group
+规划和最终 flatten；group 顺序、factor=2/4 part 收集、padding 及失败语义保持不变。
+增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过。
+
 # staging contiguous mask 结果汇总整改
 
 本轮将 `materializeStagingContiguousToDeintMaskLayout` 的 part arity 校验与结果扁平化
