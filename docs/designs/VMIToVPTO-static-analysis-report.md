@@ -144,3 +144,8 @@ vmi_layout_assignment_group_store_slots1_unit_stride.pto               exit=0
 `checkSupportedGroupSlotsStoreShape`（提交 `f330e7ecb`），集中处理布局事实、dense
 memory access proof、slots=1 的 1PT 约束和 slots=8 的 unit-stride 约束；通用
 group-store（one-block/deinterleaved）检查流程保持原顺序。
+
+本轮再将 `checkSupportedGroupLoadShape` 的 block-deinterleaved f32 专用校验抽取为
+`checkSupportedBlockDeinterleavedGroupLoadShape`（提交 `acf22e584`）。该 helper
+封装 layout fact、dense read proof、指针/组数/row-stride 约束和 full physical chunk
+检查；contiguous group-load 路径保持原有判断顺序。相关新增代码合规检查通过。
