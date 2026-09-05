@@ -284,6 +284,14 @@ factor 路由写入抽取为 `materializeStagingMaskGroup`。外层函数保留 
 入口的命名化 arity 判断。增量 `check_changed_code.py` 结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
 
+# vaddcs physical chunk lowering 职责整改
+
+本轮将 `OneToNVMIVaddcsOpPattern::matchAndRewrite` 中 physical arity、carry-in/mask/carry
+的 b32 合同、32-bit data 校验及逐 chunk `VaddcsOp` 发射抽取为 `lowerParts`。入口继续负责
+converted result/carry type 获取和最终结果扁平化；carry-in 透传、carry 结果排布、mask
+语义、结果顺序和诊断保持不变。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
+
 # mask cast fallback 分派整改
 
 本轮整理 `materializeMaskGranularityCastLayoutFallback` 的 fallback 控制流：明确

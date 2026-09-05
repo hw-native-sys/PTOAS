@@ -11790,6 +11790,52 @@ public:
 struct OneToNVMIVaddcsOpPattern : OneToNOpConversionPattern<VMIVaddcsOp> {
   using OneToNOpConversionPattern<VMIVaddcsOp>::OneToNOpConversionPattern;
 
+private:
+  LogicalResult lowerParts(VMIVaddcsOp op, ValueRange lhsParts,
+                           ValueRange rhsParts, ValueRange carryInParts,
+                           ValueRange maskParts, ArrayRef<Type> resultTypes,
+                           ArrayRef<Type> carryTypes,
+                           SmallVectorImpl<Value> &results,
+                           SmallVectorImpl<Value> &carries,
+                           OneToNPatternRewriter &rewriter) const {
+    const bool invalidArity =
+        lhsParts.empty() || rhsParts.size() != lhsParts.size() ||
+        carryInParts.size() != lhsParts.size() ||
+        maskParts.size() != lhsParts.size() ||
+        resultTypes.size() != lhsParts.size() ||
+        carryTypes.size() != lhsParts.size();
+    if (invalidArity) {
+      return rewriter.notifyMatchFailure(op,
+                                         "vaddcs physical arity mismatch");
+    }
+    for (auto [lhs, rhs, carryIn, mask, resultType, carryType] :
+         llvm::zip_equal(lhsParts, rhsParts, carryInParts, maskParts,
+                         resultTypes, carryTypes)) {
+      auto dataType = dyn_cast<VRegType>(resultType);
+      auto integerType = dataType
+                             ? dyn_cast<IntegerType>(dataType.getElementType())
+                             : IntegerType();
+      const bool invalidPart =
+          !dataType || !integerType || integerType.getWidth() != 32 ||
+          !isa<MaskType>(carryIn.getType()) || !isa<MaskType>(mask.getType()) ||
+          !isa<MaskType>(carryType) ||
+          !cast<MaskType>(carryIn.getType()).isB32() ||
+          !cast<MaskType>(mask.getType()).isB32() ||
+          !cast<MaskType>(carryType).isB32() || lhs.getType() != resultType ||
+          rhs.getType() != resultType;
+      if (invalidPart) {
+        return rewriter.notifyMatchFailure(
+            op, "vaddcs requires matching 32-bit data and b32 mask parts");
+      }
+      auto addcs = rewriter.create<VaddcsOp>(
+          op.getLoc(), resultType, carryType, lhs, rhs, carryIn, mask);
+      results.push_back(addcs.getResult());
+      carries.push_back(addcs.getCarry());
+    }
+    return success();
+  }
+
+public:
   LogicalResult matchAndRewrite(VMIVaddcsOp op, OpAdaptor adaptor,
                                 OneToNPatternRewriter &rewriter) const override {
     ValueRange lhsParts = adaptor.getLhs();
@@ -11800,43 +11846,22 @@ struct OneToNVMIVaddcsOpPattern : OneToNOpConversionPattern<VMIVaddcsOp> {
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
     FailureOr<SmallVector<Type>> maybeCarryTypes =
         getConvertedResultTypes(op, 1, *this->getTypeConverter());
-    if (failed(maybeResultTypes) || failed(maybeCarryTypes))
+    const bool conversionFailed =
+        failed(maybeResultTypes) || failed(maybeCarryTypes);
+    if (conversionFailed) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybeResultTypes);
     SmallVector<Type> carryTypes = std::move(*maybeCarryTypes);
-
-    if (lhsParts.empty() || rhsParts.size() != lhsParts.size() ||
-        carryInParts.size() != lhsParts.size() ||
-        maskParts.size() != lhsParts.size() ||
-        resultTypes.size() != lhsParts.size() ||
-        carryTypes.size() != lhsParts.size())
-      return rewriter.notifyMatchFailure(op, "vaddcs physical arity mismatch");
 
     SmallVector<Value> results;
     SmallVector<Value> carries;
     results.reserve(lhsParts.size());
     carries.reserve(lhsParts.size());
-    for (auto [lhs, rhs, carryIn, mask, resultType, carryType] :
-         llvm::zip_equal(lhsParts, rhsParts, carryInParts, maskParts,
-                         resultTypes, carryTypes)) {
-      auto dataType = dyn_cast<VRegType>(resultType);
-      auto integerType = dataType
-                             ? dyn_cast<IntegerType>(dataType.getElementType())
-                             : IntegerType();
-      if (!dataType || !integerType || integerType.getWidth() != 32 ||
-          !isa<MaskType>(carryIn.getType()) || !isa<MaskType>(mask.getType()) ||
-          !isa<MaskType>(carryType) ||
-          !cast<MaskType>(carryIn.getType()).isB32() ||
-          !cast<MaskType>(mask.getType()).isB32() ||
-          !cast<MaskType>(carryType).isB32() ||
-          lhs.getType() != resultType || rhs.getType() != resultType)
-        return rewriter.notifyMatchFailure(
-            op, "vaddcs requires matching 32-bit data and b32 mask parts");
-
-      auto addcs = rewriter.create<VaddcsOp>(op.getLoc(), resultType, carryType,
-                                             lhs, rhs, carryIn, mask);
-      results.push_back(addcs.getResult());
-      carries.push_back(addcs.getCarry());
+    if (failed(lowerParts(op, lhsParts, rhsParts, carryInParts, maskParts,
+                          resultTypes, carryTypes, results, carries,
+                          rewriter))) {
+      return failure();
     }
 
     results.append(carries);
