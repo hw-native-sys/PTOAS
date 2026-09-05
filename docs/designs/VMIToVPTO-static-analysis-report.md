@@ -526,6 +526,12 @@ stride、pointer、result arity、block elements 以及各 part chunk uniformity
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续 load/store 与
 group-store 代表性 lowering 均成功。
 
+随后复核 `OneToNVMIStoreOpPattern` 时发现其两个输入校验分支缺少闭合大括号，导致
+后续 store lowering 语句在源码结构上落入错误作用域。已补齐 `lanesPerPart` 与地址
+operand 校验分支的大括号；这是格式/控制流正确性修复，不改变 store lowering 语义。
+增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+连续与 interleave memory lowering 均成功。
+
 本轮将 `fptosi`/`fptoui` 的 widen（Even/Odd）物理发射路径统一抽取为
 `lowerWidenFpToInt`。helper 负责 source/result physical arity、all-true mask、part
 索引和逐 chunk `VcvtOp`/结果替换；两个 pattern 保留各自的 conversion contract 与
