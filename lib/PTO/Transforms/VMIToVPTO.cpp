@@ -8132,6 +8132,141 @@ struct OneToNVMIGroupStoreOpPattern
     : OneToNOpConversionPattern<VMIGroupStoreOp> {
   using OneToNOpConversionPattern<VMIGroupStoreOp>::OneToNOpConversionPattern;
 
+private:
+  LogicalResult lowerSlots1(VMIGroupStoreOp op, OpAdaptor adaptor,
+                            OneToNPatternRewriter &rewriter,
+                            VMIVRegType valueVMIType, VMILayoutAttr layout,
+                            Value destination, Value offset,
+                            Value rowStride) const {
+    ValueRange valueParts = adaptor.getValue();
+    bool hasExpectedArity =
+        static_cast<int64_t>(valueParts.size()) == layout.getNumGroups();
+    if (!hasExpectedArity) {
+      return rewriter.notifyMatchFailure(op,
+                                         "slots=1 group_store arity mismatch");
+    }
+    unsigned elementBits =
+        pto::getPTOStorageElemBitWidth(valueVMIType.getElementType());
+    if (elementBits == 0 || 256 % elementBits != 0) {
+      return rewriter.notifyMatchFailure(
+          op, "slots=1 group_store requires supported element width");
+    }
+    std::optional<int64_t> constantRowStride =
+        getConstantIndexValue(op.getRowStride());
+    FailureOr<int64_t> lanesPerPart =
+        getDataLanesPerPart(valueVMIType.getElementType());
+    if (constantRowStride && *constantRowStride == 1 &&
+        succeeded(lanesPerPart) && layout.getNumGroups() <= *lanesPerPart) {
+      auto firstType = dyn_cast<VRegType>(valueParts.front().getType());
+      if (!firstType) {
+        return rewriter.notifyMatchFailure(op, "group_store value must be vreg");
+      }
+      FailureOr<MaskType> maskType =
+          getMaskTypeForVReg(firstType, rewriter.getContext());
+      FailureOr<Value> allMask =
+          createAllTrueMaskForVReg(op.getLoc(), firstType, rewriter);
+      bool masksSupported = succeeded(maskType) && succeeded(allMask);
+      if (!masksSupported) {
+        return rewriter.notifyMatchFailure(
+            op, "unsupported element type for packed group_store mask");
+      }
+      Value packed = rewriter
+                         .create<VdupOp>(op.getLoc(), firstType,
+                                         valueParts.front(), *allMask,
+                                         rewriter.getStringAttr("LOWEST"))
+                         .getResult();
+      for (int64_t group = 1; group < layout.getNumGroups(); ++group) {
+        auto vregType = dyn_cast<VRegType>(valueParts[group].getType());
+        if (!vregType || vregType != firstType) {
+          return rewriter.notifyMatchFailure(
+              op, "packed group_store requires uniform vreg parts");
+        }
+        Value splat = rewriter
+                          .create<VdupOp>(op.getLoc(), firstType,
+                                          valueParts[group], *allMask,
+                                          rewriter.getStringAttr("LOWEST"))
+                          .getResult();
+        FailureOr<Value> laneMask = createLaneRangeMask(
+            op.getLoc(), *maskType, group, group + 1, rewriter);
+        if (failed(laneMask)) {
+          return rewriter.notifyMatchFailure(
+              op, "failed to create packed group_store lane mask");
+        }
+        packed = rewriter
+                     .create<VselOp>(op.getLoc(), firstType, splat, packed,
+                                     *laneMask)
+                     .getResult();
+      }
+      if (isKnownAddressAligned(destination, offset,
+                                valueVMIType.getElementType(), 32)) {
+        FailureOr<Value> storeMask = createPrefixMaskForActiveLanes(
+            op.getLoc(), *maskType, layout.getNumGroups(), rewriter);
+        if (failed(storeMask)) {
+          return rewriter.notifyMatchFailure(
+              op, "failed to create packed group_store store mask");
+        }
+        rewriter.create<VstsOp>(op.getLoc(), Type{}, packed, destination, offset,
+                                nullptr, *storeMask);
+      } else {
+        Value storeBase = materializeBufferPointer(
+            destination, valueVMIType.getElementType(),
+            getMemorySpace(destination.getType()), rewriter, op.getLoc());
+        if (!storeBase) {
+          return rewriter.notifyMatchFailure(
+              op, "packed unaligned group_store requires a ptr-compatible destination");
+        }
+        storeBase = rewriter
+                        .create<AddPtrOp>(op.getLoc(), storeBase.getType(),
+                                          storeBase, offset)
+                        .getResult();
+        SmallVector<Value> streamValues{packed};
+        SmallVector<int64_t> streamAdvances{layout.getNumGroups()};
+        if (failed(emitStatefulStoreStream(op, storeBase, streamValues,
+                                           streamAdvances, rewriter))) {
+          return failure();
+        }
+      }
+      rewriter.eraseOp(op);
+      return success();
+    }
+    if (constantRowStride && *constantRowStride <= 0) {
+      return rewriter.notifyMatchFailure(
+          op, "slots=1 group_store requires positive row_stride when row_stride is constant");
+    }
+    std::optional<std::string> pointDist =
+        getPointStoreDistToken(valueVMIType.getElementType());
+    if (!pointDist) {
+      return rewriter.notifyMatchFailure(
+          op, "slots=1 group_store requires 1PT_B8/B16/B32 store support");
+    }
+    for (auto [group, value] : llvm::enumerate(valueParts)) {
+      auto vregType = dyn_cast<VRegType>(value.getType());
+      if (!vregType) {
+        return rewriter.notifyMatchFailure(op, "group_store value must be vreg");
+      }
+      FailureOr<MaskType> maskType =
+          getMaskTypeForVReg(vregType, rewriter.getContext());
+      if (failed(maskType)) {
+        return rewriter.notifyMatchFailure(
+            op, "unsupported element type for group_store mask");
+      }
+      FailureOr<Value> mask =
+          createPrefixMask(op.getLoc(), *maskType, "PAT_VL1", rewriter);
+      if (failed(mask)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to create slots=1 group_store mask");
+      }
+      Value groupOffset = createGroupChunkOffset(
+          op.getLoc(), offset, rowStride, group, 0, rewriter);
+      rewriter.create<VstsOp>(op.getLoc(), Type{}, value, destination,
+                              groupOffset, rewriter.getStringAttr(*pointDist),
+                              *mask);
+    }
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+public:
   LogicalResult
   matchAndRewrite(VMIGroupStoreOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -8267,129 +8402,8 @@ struct OneToNVMIGroupStoreOpPattern
 
     if (layout && layout.isGroupSlots() && layout.getSlots() == 1 &&
         layout.getNumGroups() == op.getNumGroupsAttr().getInt()) {
-      ValueRange valueParts = adaptor.getValue();
-      if (static_cast<int64_t>(valueParts.size()) != layout.getNumGroups())
-        return rewriter.notifyMatchFailure(
-            op, "slots=1 group_store arity mismatch");
-      unsigned elementBits =
-          pto::getPTOStorageElemBitWidth(valueVMIType.getElementType());
-      if (elementBits == 0 || 256 % elementBits != 0)
-        return rewriter.notifyMatchFailure(
-            op, "slots=1 group_store requires supported element width");
-      std::optional<int64_t> constantRowStride =
-          getConstantIndexValue(op.getRowStride());
-      FailureOr<int64_t> lanesPerPart =
-          getDataLanesPerPart(valueVMIType.getElementType());
-      if (constantRowStride && *constantRowStride == 1 &&
-          succeeded(lanesPerPart) && layout.getNumGroups() <= *lanesPerPart) {
-        auto firstType = dyn_cast<VRegType>(valueParts.front().getType());
-        if (!firstType)
-          return rewriter.notifyMatchFailure(op,
-                                             "group_store value must be vreg");
-        FailureOr<MaskType> maskType =
-            getMaskTypeForVReg(firstType, rewriter.getContext());
-        FailureOr<Value> allMask =
-            createAllTrueMaskForVReg(op.getLoc(), firstType, rewriter);
-        if (failed(maskType) || failed(allMask))
-          return rewriter.notifyMatchFailure(
-              op, "unsupported element type for packed group_store mask");
-
-        Value packed =
-            rewriter
-                .create<VdupOp>(op.getLoc(), firstType, valueParts.front(),
-                                *allMask, rewriter.getStringAttr("LOWEST"))
-                .getResult();
-        for (int64_t group = 1; group < layout.getNumGroups(); ++group) {
-          auto vregType = dyn_cast<VRegType>(valueParts[group].getType());
-          if (!vregType || vregType != firstType)
-            return rewriter.notifyMatchFailure(
-                op, "packed group_store requires uniform vreg parts");
-          Value splat =
-              rewriter
-                  .create<VdupOp>(op.getLoc(), firstType, valueParts[group],
-                                  *allMask, rewriter.getStringAttr("LOWEST"))
-                  .getResult();
-          FailureOr<Value> laneMask = createLaneRangeMask(
-              op.getLoc(), *maskType, group, group + 1, rewriter);
-          if (failed(laneMask))
-            return rewriter.notifyMatchFailure(
-                op, "failed to create packed group_store lane mask");
-          packed = rewriter
-                       .create<VselOp>(op.getLoc(), firstType, splat, packed,
-                                       *laneMask)
-                       .getResult();
-        }
-
-        if (isKnownAddressAligned(*destination, *offset,
-                                  valueVMIType.getElementType(), 32)) {
-          FailureOr<Value> storeMask = createPrefixMaskForActiveLanes(
-              op.getLoc(), *maskType, layout.getNumGroups(), rewriter);
-          if (failed(storeMask)) {
-            return rewriter.notifyMatchFailure(
-                op, "failed to create packed group_store store mask");
-          }
-          rewriter.create<VstsOp>(op.getLoc(),
-                                  /*updated_base=*/Type{}, packed, *destination,
-                                  *offset, /*dist=*/nullptr, *storeMask);
-        } else {
-          Value storeBase = materializeBufferPointer(
-              *destination, valueVMIType.getElementType(),
-              getMemorySpace((*destination).getType()), rewriter, op.getLoc());
-          if (!storeBase) {
-            return rewriter.notifyMatchFailure(
-                op, "packed unaligned group_store requires a ptr-compatible "
-                    "destination");
-          }
-          storeBase = rewriter
-                          .create<AddPtrOp>(op.getLoc(), storeBase.getType(),
-                                            storeBase, *offset)
-                          .getResult();
-          SmallVector<Value> streamValues{packed};
-          SmallVector<int64_t> streamAdvances{layout.getNumGroups()};
-          if (failed(emitStatefulStoreStream(op, storeBase, streamValues,
-                                              streamAdvances, rewriter))) {
-            return failure();
-          }
-        }
-        rewriter.eraseOp(op);
-        return success();
-      }
-      if (constantRowStride && *constantRowStride <= 0)
-        return rewriter.notifyMatchFailure(
-            op, "slots=1 group_store requires positive row_stride when "
-                "row_stride is constant");
-      std::optional<std::string> pointDist =
-          getPointStoreDistToken(valueVMIType.getElementType());
-      if (!pointDist)
-        return rewriter.notifyMatchFailure(
-            op, "slots=1 group_store requires 1PT_B8/B16/B32 store support");
-
-      for (auto [group, value] : llvm::enumerate(valueParts)) {
-        auto vregType = dyn_cast<VRegType>(value.getType());
-        if (!vregType)
-          return rewriter.notifyMatchFailure(op,
-                                             "group_store value must be vreg");
-        FailureOr<MaskType> maskType =
-            getMaskTypeForVReg(vregType, rewriter.getContext());
-        if (failed(maskType))
-          return rewriter.notifyMatchFailure(
-              op, "unsupported element type for group_store mask");
-        FailureOr<Value> mask =
-            createPrefixMask(op.getLoc(), *maskType, "PAT_VL1", rewriter);
-        if (failed(mask))
-          return rewriter.notifyMatchFailure(
-              op, "failed to create slots=1 group_store mask");
-        Value groupOffset =
-            createGroupChunkOffset(op.getLoc(), *offset, *rowStride, group,
-                                   /*chunkLaneOffset=*/0, rewriter);
-        rewriter.create<VstsOp>(op.getLoc(),
-                                /*updated_base=*/Type{}, value, *destination,
-                                groupOffset, rewriter.getStringAttr(*pointDist),
-                                *mask);
-      }
-
-      rewriter.eraseOp(op);
-      return success();
+      return lowerSlots1(op, adaptor, rewriter, valueVMIType, layout,
+                         *destination, *offset, *rowStride);
     }
 
     if (layout && layout.isGroupSlots() && layout.getSlots() == 8 &&
