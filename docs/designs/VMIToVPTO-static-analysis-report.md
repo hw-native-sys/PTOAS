@@ -1961,3 +1961,12 @@ accumulator 类型、source lane 数以及 Bin_N0/Bin_N1 常量准备从 lowerin
 mask 语义、单结果布局和诊断不变。增量 `check_changed_code.py` 结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_reduce_extended.pto` lowering exit=0。
+
+# group-reduce plan 分派控制流整改
+
+本轮将 `OneToNVM​​IGroupReduceOpPattern::lowerByPlan` 的多段 plan 条件改为带显式
+`default` 的 `switch` 分派。每个 `GroupReduceLoweringPlan` 仍调用原有对应 lowering，
+包括 OneBlock、TwoBlock、FourBlock、FullDeinterleaved2 和 ContiguousRows；非法枚举值
+继续返回相同的 match failure 诊断。该改动仅收敛控制流，未改变 lowering 顺序或物理结果
+语义。增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_layout_assignment_group_slots_fanout.pto` lowering exit=0。

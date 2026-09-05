@@ -13656,28 +13656,26 @@ private:
       ValueRange sourceParts, ValueRange maskParts, TypeRange resultTypes,
       OneToNPatternRewriter &rewriter) const {
     int64_t numGroups = op.getNumGroupsAttr().getInt();
-    if (plan == GroupReduceLoweringPlan::OneBlockVcgadd) {
+    switch (plan) {
+    case GroupReduceLoweringPlan::OneBlockVcgadd:
       return lowerOneBlock(op, sourceParts, maskParts, resultTypes, rewriter);
-    }
-    if (plan == GroupReduceLoweringPlan::TwoBlockDeinterleaved2VcgaddVadd) {
+    case GroupReduceLoweringPlan::TwoBlockDeinterleaved2VcgaddVadd:
       return lowerTwoBlock(op, sourceParts, maskParts, resultTypes, numGroups,
                            rewriter);
-    }
-    if (plan == GroupReduceLoweringPlan::FourBlockDeinterleaved4VcgaddTree) {
+    case GroupReduceLoweringPlan::FourBlockDeinterleaved4VcgaddTree:
       return lowerFourBlock(op, sourceParts, maskParts, resultTypes, numGroups,
                             rewriter);
-    }
-    if (plan == GroupReduceLoweringPlan::FullDeinterleaved2VcaddRows) {
+    case GroupReduceLoweringPlan::FullDeinterleaved2VcaddRows:
       return lowerFullDeinterleaved2(
           op, sourceVMIType, resultVMIType, sourceParts, maskParts, resultTypes,
           groupSize, rewriter);
-    }
-    if (plan != GroupReduceLoweringPlan::ContiguousVcaddRows) {
+    case GroupReduceLoweringPlan::ContiguousVcaddRows:
+      return lowerContiguousRows(op, sourceVMIType, resultVMIType, sourceParts,
+                                 maskParts, resultTypes, groupSize, rewriter);
+    default:
       return rewriter.notifyMatchFailure(op,
                                          "unknown group_reduce lowering plan");
     }
-    return lowerContiguousRows(op, sourceVMIType, resultVMIType, sourceParts,
-                               maskParts, resultTypes, groupSize, rewriter);
   }
 
   FailureOr<VRegType> getRowResultType(VRegType sourceType,
