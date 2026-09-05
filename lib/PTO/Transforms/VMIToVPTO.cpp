@@ -5938,9 +5938,9 @@ struct OneToNVMIIotaOpPattern : OneToNOpConversionPattern<IotaOp> {
 
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
 
-    if (failed(maybe_resultTypes))
-
+    if (failed(maybe_resultTypes)) {
       return failure();
+    }
 
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     SmallVector<Value> results;
