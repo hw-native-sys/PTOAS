@@ -9031,14 +9031,64 @@ public:
 struct OneToNVMIGatherOpPattern : OneToNOpConversionPattern<VMIGatherOp> {
   using OneToNOpConversionPattern<VMIGatherOp>::OneToNOpConversionPattern;
 
+private:
+  LogicalResult lowerPhysicalParts(
+      VMIGatherOp op, OneToNPatternRewriter &rewriter, Value source,
+      ValueRange indicesParts, ValueRange maskParts, ValueRange passthruParts,
+      ArrayRef<Type> resultTypes, bool allActive) const {
+    bool arityMismatch = indicesParts.size() != maskParts.size() ||
+                         indicesParts.size() != passthruParts.size() ||
+                         indicesParts.size() != resultTypes.size();
+    if (arityMismatch) {
+      return rewriter.notifyMatchFailure(op, "gather physical arity mismatch");
+    }
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (auto [indices, mask, passthru, resultType] :
+         llvm::zip_equal(indicesParts, maskParts, passthruParts, resultTypes)) {
+      bool invalidPartTypes =
+          !isa<VRegType>(indices.getType()) || !isa<MaskType>(mask.getType()) ||
+          passthru.getType() != resultType || !isa<VRegType>(resultType);
+      if (invalidPartTypes) {
+        return rewriter.notifyMatchFailure(
+            op, "gather physical part type mismatch");
+      }
+      unsigned resultBits = pto::getPTOStorageElemBitWidth(
+          cast<VRegType>(resultType).getElementType());
+      Value gathered =
+          resultBits == 16
+              ? rewriter
+                    .create<Vgather2Op>(op.getLoc(), resultType, source, indices,
+                                        mask)
+                    .getResult()
+              : rewriter
+                    .create<Vgather2BcOp>(op.getLoc(), resultType, source,
+                                          indices, mask)
+                    .getResult();
+      results.push_back(
+          allActive
+              ? gathered
+              : rewriter
+                    .create<VselOp>(op.getLoc(), resultType, gathered, passthru,
+                                    mask)
+                    .getResult());
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
+public:
+
   LogicalResult
   matchAndRewrite(VMIGatherOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
     FailureOr<Value> source =
         getSingleValue(op, adaptor.getSource(),
                        "gather source must convert to one value", rewriter);
-    if (failed(source))
+    if (failed(source)) {
       return failure();
+    }
 
     ValueRange indicesParts = adaptor.getIndices();
     ValueRange maskParts = adaptor.getMask();
@@ -9050,10 +9100,7 @@ struct OneToNVMIGatherOpPattern : OneToNOpConversionPattern<VMIGatherOp> {
       return failure();
     }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-    if (indicesParts.size() != maskParts.size() ||
-        indicesParts.size() != passthruParts.size() ||
-        indicesParts.size() != resultTypes.size())
-      return rewriter.notifyMatchFailure(op, "gather physical arity mismatch");
+
     // Static all-active masks select gathered[0] for every lane, so the
     // trailing vsel is a semantic no-op. Skip it and keep gathered directly.
     // Non-static masks still take the original gather + vsel path.
@@ -9062,38 +9109,8 @@ struct OneToNVMIGatherOpPattern : OneToNOpConversionPattern<VMIGatherOp> {
                                            resultVMIType.getElementCount());
 
 
-    SmallVector<Value> results;
-    results.reserve(resultTypes.size());
-    for (auto [indices, mask, passthru, resultType] :
-         llvm::zip_equal(indicesParts, maskParts, passthruParts, resultTypes)) {
-      if (!isa<VRegType>(indices.getType()) || !isa<MaskType>(mask.getType()) ||
-          passthru.getType() != resultType || !isa<VRegType>(resultType))
-        return rewriter.notifyMatchFailure(
-            op, "gather physical part type mismatch");
-
-      unsigned resultBits = pto::getPTOStorageElemBitWidth(
-          cast<VRegType>(resultType).getElementType());
-      Value gathered = resultBits == 16
-                           ? rewriter
-                                 .create<Vgather2Op>(op.getLoc(), resultType,
-                                                     *source, indices, mask)
-                                 .getResult()
-                           : rewriter
-                                 .create<Vgather2BcOp>(op.getLoc(), resultType,
-                                                       *source, indices, mask)
-                                 .getResult();
-      if (allActive) {
-        results.push_back(gathered);
-      } else {
-        results.push_back(
-            rewriter
-                .create<VselOp>(op.getLoc(), resultType, gathered, passthru, mask)
-                .getResult());
-      }
-    }
-
-    replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
-    return success();
+    return lowerPhysicalParts(op, rewriter, *source, indicesParts, maskParts,
+                              passthruParts, resultTypes, allActive);
   }
 };
 

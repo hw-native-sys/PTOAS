@@ -721,6 +721,13 @@ physical arity 和 chunk 校验补齐大括号，并将多条件失败判断命�
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续 load/store
 lowering exit=0。
 
+本轮将 `OneToNVMIGatherOpPattern` 的逐 physical chunk 发射抽取为
+`lowerPhysicalParts`，集中处理 arity/type 校验、`Vgather2/Vgather2Bc` 选择以及静态
+all-active 时跳过 `VselOp` 的优化；主 pattern 只保留 source/result 准备和策略判定。
+保持 gather 的 passthru 语义、结果顺序和 16-bit/其它位宽指令选择不变。增量合规检查
+结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续 load/store
+lowering exit=0。
+
 本轮为 `OneToNVMIExtFOpPattern` 引入 `ExtFPhysicalPlan`/`buildPhysicalPlan`，统一负责
 source physical part 一致性、result vreg 类型和 BF16x2/F32 结果契约；主 pattern 仅
 负责 packed view 规划及 lane-stride/factor 发射分派。同步将 vmull verifier 的复合物理
