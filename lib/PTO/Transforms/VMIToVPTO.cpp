@@ -6041,8 +6041,9 @@ struct OneToNVMIEnsureMaskLayoutOpPattern
     ValueRange sourceParts = adaptor.getSource();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    if (failed(maybe_resultTypes)) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     FailureOr<SmallVector<Value>> results = materializeMaskLayoutConversion(
         op, sourceParts, resultTypes, sourceLayout, resultLayout, rewriter);
@@ -12022,6 +12023,129 @@ private:
     return success();
   }
 
+  LogicalResult lowerFullDeinterleaved2(
+      OpTy op, VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
+      ValueRange sourceParts, ValueRange maskParts, TypeRange resultTypes,
+      int64_t groupSize, OneToNPatternRewriter &rewriter) const {
+    VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
+    bool rowLocalSlots1Result = resultLayout && resultLayout.isGroupSlots() &&
+                                resultLayout.getSlots() == 1;
+    if (!rowLocalSlots1Result) {
+      return rewriter.notifyMatchFailure(
+          op, "deinterleaved=2 full group_reduce requires slots=1 result");
+    }
+    FailureOr<int64_t> lanesPerPart =
+        getDataLanesPerPart(sourceVMIType.getElementType());
+    if (failed(lanesPerPart)) {
+      return rewriter.notifyMatchFailure(
+          op, "deinterleaved=2 group_reduce requires known physical lanes");
+    }
+    bool invalidGroupSize = *groupSize % (2 * *lanesPerPart) != 0;
+    if (invalidGroupSize) {
+      return rewriter.notifyMatchFailure(
+          op, "deinterleaved=2 group_reduce requires group size to be a "
+              "multiple of two physical chunks");
+    }
+    int64_t groupCount = sourceVMIType.getElementCount() / groupSize;
+    int64_t chunksPerGroupPerPart = groupSize / (2 * *lanesPerPart);
+    int64_t chunksPerPart = groupCount * chunksPerGroupPerPart;
+    bool invalidArity = sourceParts.size() != maskParts.size() ||
+                        static_cast<int64_t>(sourceParts.size()) !=
+                            2 * chunksPerPart ||
+                        static_cast<int64_t>(resultTypes.size()) != groupCount;
+    if (invalidArity) {
+      return rewriter.notifyMatchFailure(
+          op, "deinterleaved=2 group_reduce arity mismatch");
+    }
+    SmallVector<Value> results(resultTypes.size());
+    for (Type resultType : resultTypes) {
+      if (!isa<VRegType>(resultType)) {
+        return rewriter.notifyMatchFailure(
+            op, "deinterleaved=2 group_reduce result must be vreg");
+      }
+    }
+    auto resultType = dyn_cast<VRegType>(resultTypes.front());
+    auto maskType = dyn_cast<MaskType>(maskParts.front().getType());
+    if (!resultType || !maskType) {
+      return rewriter.notifyMatchFailure(
+          op, "deinterleaved=2 group_reduce requires physical vreg/mask");
+    }
+    auto sourcePartType = dyn_cast<VRegType>(sourceParts.front().getType());
+    if (!sourcePartType) {
+      return rewriter.notifyMatchFailure(
+          op, "deinterleaved=2 group_reduce source must be vreg");
+    }
+    FailureOr<VRegType> rowResultType =
+        getRowResultType(sourcePartType, resultType);
+    if (failed(rowResultType)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to derive deinterleaved=2 row-reduction type");
+    }
+    FailureOr<MaskType> rowMaskType =
+        getMaskTypeForVReg(*rowResultType, rewriter.getContext());
+    if (failed(rowMaskType)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to derive deinterleaved=2 combine mask type");
+    }
+    FailureOr<Value> firstLaneMask =
+        createPrefixMask(op.getLoc(), *rowMaskType, "PAT_VL1", rewriter);
+    if (failed(firstLaneMask)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to create deinterleaved=2 group_reduce lane mask");
+    }
+    for (int64_t group = 0; group < groupCount; ++group) {
+      Value accumulator;
+      for (int64_t chunk = 0; chunk < chunksPerGroupPerPart; ++chunk) {
+        int64_t loIndex = group * chunksPerGroupPerPart + chunk;
+        int64_t hiIndex = chunksPerPart + loIndex;
+        bool mismatchedTypes =
+            sourceParts[loIndex].getType() != sourcePartType ||
+            sourceParts[hiIndex].getType() != sourcePartType ||
+            maskParts[loIndex].getType() != maskType ||
+            maskParts[hiIndex].getType() != maskType;
+        if (mismatchedTypes) {
+          return rewriter.notifyMatchFailure(
+              op, "deinterleaved=2 group_reduce requires uniform physical "
+                  "chunk types");
+        }
+        Value loReduced =
+            rewriter
+                .create<RowReduceOpTy>(op.getLoc(), *rowResultType,
+                                       sourceParts[loIndex], maskParts[loIndex])
+                .getResult();
+        Value hiReduced =
+            rewriter
+                .create<RowReduceOpTy>(op.getLoc(), *rowResultType,
+                                       sourceParts[hiIndex], maskParts[hiIndex])
+                .getResult();
+        Value pairReduced =
+            rewriter
+                .create<CombineOpTy>(op.getLoc(), *rowResultType, loReduced,
+                                     hiReduced, *firstLaneMask)
+                .getResult();
+        if (!accumulator) {
+          accumulator = pairReduced;
+        } else {
+          accumulator =
+              rewriter
+                  .create<CombineOpTy>(op.getLoc(), *rowResultType,
+                                       pairReduced, accumulator, *firstLaneMask)
+                  .getResult();
+        }
+      }
+      FailureOr<Value> finalResult =
+          bitcastVReg(op.getLoc(), accumulator, resultType, rewriter);
+      if (failed(finalResult)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to restore deinterleaved=2 group result type");
+      }
+      results[group] = *finalResult;
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
 public:
 
   LogicalResult
@@ -12040,24 +12164,27 @@ public:
 
     VMILayoutSupport supports;
     std::string supportReason;
-    if (failed(getSupport(supports, op, &supportReason)))
+    if (failed(getSupport(supports, op, &supportReason))) {
       return rewriter.notifyMatchFailure(
           op, Twine(op->getName().getStringRef()) +
                   " has no layout support: " + supportReason);
+    }
     auto maskVMIType = cast<VMIMaskType>(op.getMask().getType());
     FailureOr<GroupReduceLoweringPlan> plan = classifyGroupReduceLoweringPlan(
         sourceVMIType, maskVMIType, resultVMIType,
         op.getNumGroupsAttr().getInt(), &supportReason);
-    if (failed(plan))
+    if (failed(plan)) {
       return rewriter.notifyMatchFailure(
           op, Twine(op->getName().getStringRef()) +
                   " has no lowering plan: " + supportReason);
+    }
 
     FailureOr<int64_t> groupSize = getGroupSizeFromNumGroups(
         sourceVMIType, op.getNumGroupsAttr().getInt());
-    if (failed(groupSize))
+    if (failed(groupSize)) {
       return rewriter.notifyMatchFailure(
           op, "group reduce requires num_groups to evenly divide lane count");
+    }
 
     if (*plan == GroupReduceLoweringPlan::OneBlockVcgadd) {
       return lowerOneBlock(op, sourceParts, maskParts, resultTypes, rewriter);
@@ -12074,133 +12201,9 @@ public:
     }
 
     if (*plan == GroupReduceLoweringPlan::FullDeinterleaved2VcaddRows) {
-      VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
-      bool rowLocalSlots1Result = resultLayout && resultLayout.isGroupSlots() &&
-                                  resultLayout.getSlots() == 1;
-      if (!rowLocalSlots1Result)
-        return rewriter.notifyMatchFailure(
-            op, "deinterleaved=2 full group_reduce requires slots=1 result");
-
-      FailureOr<int64_t> lanesPerPart =
-          getDataLanesPerPart(sourceVMIType.getElementType());
-      if (failed(lanesPerPart))
-        return rewriter.notifyMatchFailure(
-            op, "deinterleaved=2 group_reduce requires known physical lanes");
-      if (*groupSize % (2 * *lanesPerPart) != 0)
-        return rewriter.notifyMatchFailure(
-            op, "deinterleaved=2 group_reduce requires group size to be a "
-                "multiple of two physical chunks");
-      int64_t groupCount = sourceVMIType.getElementCount() / *groupSize;
-      int64_t chunksPerGroupPerPart = *groupSize / (2 * *lanesPerPart);
-      int64_t chunksPerPart = groupCount * chunksPerGroupPerPart;
-      if (sourceParts.size() != maskParts.size() ||
-          static_cast<int64_t>(sourceParts.size()) != 2 * chunksPerPart ||
-          static_cast<int64_t>(resultTypes.size()) != groupCount)
-        return rewriter.notifyMatchFailure(
-            op, "deinterleaved=2 group_reduce arity mismatch");
-
-      SmallVector<Value> results(resultTypes.size());
-      for (Type resultType : resultTypes) {
-        if (!isa<VRegType>(resultType))
-          return rewriter.notifyMatchFailure(
-              op, "deinterleaved=2 group_reduce result must be vreg");
-      }
-
-      auto resultType = dyn_cast<VRegType>(resultTypes.front());
-      auto maskType = dyn_cast<MaskType>(maskParts.front().getType());
-      if (!resultType || !maskType)
-        return rewriter.notifyMatchFailure(
-            op, "deinterleaved=2 group_reduce requires physical vreg/mask");
-      auto sourcePartType = dyn_cast<VRegType>(sourceParts.front().getType());
-      if (!sourcePartType)
-        return rewriter.notifyMatchFailure(
-            op, "deinterleaved=2 group_reduce source must be vreg");
-      FailureOr<VRegType> rowResultType =
-          getRowResultType(sourcePartType, resultType);
-      if (failed(rowResultType))
-        return rewriter.notifyMatchFailure(
-            op, "failed to derive deinterleaved=2 row-reduction type");
-      FailureOr<MaskType> rowMaskType =
-          getMaskTypeForVReg(*rowResultType, rewriter.getContext());
-      if (failed(rowMaskType))
-        return rewriter.notifyMatchFailure(
-            op, "failed to derive deinterleaved=2 combine mask type");
-      FailureOr<Value> firstLaneMask = createPrefixMask(
-          op.getLoc(), *rowMaskType, "PAT_VL1", rewriter);
-      if (failed(firstLaneMask))
-        return rewriter.notifyMatchFailure(
-            op, "failed to create deinterleaved=2 group_reduce lane mask");
-
-      for (int64_t group = 0; group < groupCount; ++group) {
-        SmallVector<Value> groupSources;
-        SmallVector<Value> groupMasks;
-        groupSources.reserve(2 * chunksPerGroupPerPart);
-        groupMasks.reserve(2 * chunksPerGroupPerPart);
-        for (int64_t chunk = 0; chunk < chunksPerGroupPerPart; ++chunk) {
-          int64_t loIndex = group * chunksPerGroupPerPart + chunk;
-          int64_t hiIndex = chunksPerPart + loIndex;
-          if (sourceParts[loIndex].getType() != sourcePartType ||
-              sourceParts[hiIndex].getType() != sourcePartType ||
-              maskParts[loIndex].getType() != maskType ||
-              maskParts[hiIndex].getType() != maskType)
-            return rewriter.notifyMatchFailure(
-                op, "deinterleaved=2 group_reduce requires uniform physical "
-                    "chunk types");
-          groupSources.push_back(sourceParts[loIndex]);
-          groupSources.push_back(sourceParts[hiIndex]);
-          groupMasks.push_back(maskParts[loIndex]);
-          groupMasks.push_back(maskParts[hiIndex]);
-        }
-        Value accumulator;
-        for (int64_t chunk = 0; chunk < chunksPerGroupPerPart; ++chunk) {
-          int64_t loIndex = group * chunksPerGroupPerPart + chunk;
-          int64_t hiIndex = chunksPerPart + loIndex;
-          if (sourceParts[loIndex].getType() != sourcePartType ||
-              sourceParts[hiIndex].getType() != sourcePartType ||
-              maskParts[loIndex].getType() != maskType ||
-              maskParts[hiIndex].getType() != maskType)
-            return rewriter.notifyMatchFailure(
-                op, "deinterleaved=2 group_reduce requires uniform physical "
-                    "chunk types");
-
-          Value loReduced =
-              rewriter
-                  .create<RowReduceOpTy>(op.getLoc(), *rowResultType,
-                                         sourceParts[loIndex],
-                                         maskParts[loIndex])
-                  .getResult();
-          Value hiReduced =
-              rewriter
-                  .create<RowReduceOpTy>(op.getLoc(), *rowResultType,
-                                         sourceParts[hiIndex],
-                                         maskParts[hiIndex])
-                  .getResult();
-          Value pairReduced =
-              rewriter
-                  .create<CombineOpTy>(op.getLoc(), *rowResultType, loReduced,
-                                       hiReduced, *firstLaneMask)
-                  .getResult();
-          if (!accumulator) {
-            accumulator = pairReduced;
-            continue;
-          }
-          accumulator =
-              rewriter
-                  .create<CombineOpTy>(op.getLoc(), *rowResultType, pairReduced,
-                                       accumulator, *firstLaneMask)
-                  .getResult();
-        }
-        FailureOr<Value> finalResult =
-            bitcastVReg(op.getLoc(), accumulator, resultType, rewriter);
-        if (failed(finalResult))
-          return rewriter.notifyMatchFailure(
-              op, "failed to restore deinterleaved=2 group result type");
-        results[group] = *finalResult;
-      }
-
-      replaceOpWithFlatConvertedValues(rewriter, op, results,
-                                       *this->getTypeConverter());
-      return success();
+      return lowerFullDeinterleaved2(
+          op, sourceVMIType, resultVMIType, sourceParts, maskParts,
+          resultTypes, *groupSize, rewriter);
     }
 
     if (*plan != GroupReduceLoweringPlan::ContiguousVcaddRows)
