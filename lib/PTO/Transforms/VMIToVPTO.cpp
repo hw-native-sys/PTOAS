@@ -15865,65 +15865,104 @@ checkSupportedGroupReduceShape(OpTy op, std::string *reason = nullptr) {
   return failure();
 }
 
-LogicalResult checkSupportedGroupBroadcastShape(
-    VMIGroupBroadcastOp op,
-    std::string *reason = nullptr) {
+struct GroupBroadcastShapePlan {
+  VMILayoutAttr sourceLayout;
+  VMILayoutAttr resultLayout;
+  int64_t numGroups;
+  int64_t lanesPerPart;
+  int64_t groupSize;
+  int64_t resultFactor;
+};
+
+static FailureOr<GroupBroadcastShapePlan> buildGroupBroadcastShapePlan(
+    VMIGroupBroadcastOp op, std::string *reason) {
+  auto fail = [&reason](const Twine &message)
+      -> FailureOr<GroupBroadcastShapePlan> {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
   auto sourceType = cast<VMIVRegType>(op.getSource().getType());
   auto resultType = cast<VMIVRegType>(op.getResult().getType());
   if (sourceType.getElementType() != resultType.getElementType()) {
-    if (reason)
-      *reason = "requires source/result element type to match";
-    return failure();
+    return fail("requires source/result element type to match");
   }
-  auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason)
-      *reason = message.str();
-    return failure();
-  };
-
   VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();
   VMILayoutAttr resultLayout = resultType.getLayoutAttr();
-  if (!sourceLayout || !resultLayout)
+  if (!sourceLayout || !resultLayout) {
     return fail("requires assigned source/result layouts");
+  }
   int64_t numGroups = op.getNumGroupsAttr().getInt();
-  if (numGroups <= 0)
+  if (numGroups <= 0) {
     return fail("requires positive num_groups");
-  if (sourceType.getElementCount() != numGroups)
+  }
+  bool sourceLaneCountMismatch = sourceType.getElementCount() != numGroups;
+  if (sourceLaneCountMismatch) {
     return fail("requires source lane count to match num_groups");
-  if (resultType.getElementCount() % numGroups != 0)
+  }
+  bool resultLaneCountMismatch = resultType.getElementCount() % numGroups != 0;
+  if (resultLaneCountMismatch) {
     return fail("requires num_groups to evenly divide result lane count");
-  if (!sourceLayout.isGroupSlots() || sourceLayout.getNumGroups() != numGroups)
+  }
+  bool sourceLayoutMismatch =
+      !sourceLayout.isGroupSlots() || sourceLayout.getNumGroups() != numGroups;
+  if (sourceLayoutMismatch) {
     return fail("requires matching num_groups source layout");
-  if (resultLayout.isGroupSlots())
+  }
+  if (resultLayout.isGroupSlots()) {
     return fail("requires dense result layout");
+  }
 
   if (sourceLayout.getSlots() > 0 && sourceLayout.getSlots() != 8 &&
-      sourceLayout.getSlots() != 1)
+      sourceLayout.getSlots() != 1) {
     return fail("supports only slots=8 or slots=1 group_broadcast source "
                 "layouts");
+  }
   VMILayoutSupport supports;
   std::string supportReason;
-  if (failed(supports.getGroupBroadcastSupport(op, &supportReason)))
+  if (failed(supports.getGroupBroadcastSupport(op, &supportReason))) {
     return fail(supportReason);
+  }
 
   FailureOr<int64_t> lanesPerPart =
       getDataLanesPerPart(sourceType.getElementType());
   FailureOr<int64_t> resultLanesPerPart =
       getDataLanesPerPart(resultType.getElementType());
   if (failed(lanesPerPart) || failed(resultLanesPerPart) ||
-      *lanesPerPart != *resultLanesPerPart)
+      *lanesPerPart != *resultLanesPerPart) {
     return fail("requires matching physical lanes per part");
+  }
   FailureOr<int64_t> groupSize = getGroupSizeFromNumGroups(
       resultType, numGroups, reason);
-  if (failed(groupSize))
+  if (failed(groupSize)) {
     return failure();
-  if (*lanesPerPart % *groupSize != 0 && *groupSize % *lanesPerPart != 0)
+  }
+  if (*lanesPerPart % *groupSize != 0 && *groupSize % *lanesPerPart != 0) {
     return fail("requires derived group size to divide or be a multiple of "
                 "physical lanes per part");
+  }
 
   FailureOr<int64_t> resultFactor = getDataLayoutFactor(resultType);
-  if (failed(resultFactor))
+  if (failed(resultFactor)) {
     return fail("requires known result layout factor");
+  }
+  return GroupBroadcastShapePlan{sourceLayout, resultLayout, numGroups,
+                                 *lanesPerPart, *groupSize, *resultFactor};
+}
+
+LogicalResult checkSupportedGroupBroadcastShape(
+    VMIGroupBroadcastOp op,
+    std::string *reason = nullptr) {
+  FailureOr<GroupBroadcastShapePlan> plan =
+      buildGroupBroadcastShapePlan(op, reason);
+  if (failed(plan)) {
+    return failure();
+  }
+  VMILayoutAttr resultLayout = plan->resultLayout;
+  int64_t groupSize = plan->groupSize;
+  int64_t lanesPerPart = plan->lanesPerPart;
+  int64_t resultFactor = plan->resultFactor;
   bool laneStridedDense =
       resultLayout.isDense() && resultLayout.getLaneStride() > 1;
   if (!laneStridedDense) {
@@ -15932,8 +15971,9 @@ LogicalResult checkSupportedGroupBroadcastShape(
       return fail(Twine("requires full result physical chunks; ") +
                   fullChunkReason);
   }
-  if (*resultFactor == 1)
+  if (resultFactor == 1) {
     return success();
+  }
   FailureOr<int64_t> resultBlockElems =
       getVMILayoutBlockElems(resultType);
   bool blockFragmentSmallGroup =
@@ -15944,9 +15984,10 @@ LogicalResult checkSupportedGroupBroadcastShape(
       *groupSize < *lanesPerPart && *groupSize >= *resultFactor &&
       *groupSize % *resultFactor == 0 &&
       *lanesPerPart % (*groupSize / *resultFactor) == 0;
-  if (blockFragmentSmallGroup || deinterleavedSmallGroup)
+  if (blockFragmentSmallGroup || deinterleavedSmallGroup) {
     return success();
-  int64_t logicalSpanPerResultChunk = *lanesPerPart * *resultFactor;
+  }
+  int64_t logicalSpanPerResultChunk = lanesPerPart * resultFactor;
   if (*groupSize < *lanesPerPart || *groupSize % logicalSpanPerResultChunk != 0)
     return fail("deinterleaved result requires every physical result chunk to "
                 "stay within one logical group");

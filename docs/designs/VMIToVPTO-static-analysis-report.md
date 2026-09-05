@@ -952,3 +952,10 @@ narrowing materializer 及最终 arity 校验；相邻粒度的语义和错误�
 mask carrier、物理 arity 或 fallback 语义。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_ensure_mask_granularity.pto` lowering exit=0。
+本轮将 `checkSupportedGroupBroadcastShape` 的基础契约校验抽取为
+`GroupBroadcastShapePlan`/`buildGroupBroadcastShapePlan`。该 plan 集中保存 source/result
+layout、num_groups、physical lanes、derived group size 和 result factor；主校验函数现在
+只负责 full-chunk 约束及 block/deinterleaved 小组形状判定。BRC/E2B/group-slot 支持
+矩阵、诊断文本和成功条件保持不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_layout_assignment_group_broadcast_load_e2b_b16.pto` lowering exit=0。
