@@ -13880,32 +13880,17 @@ private:
     return results;
   }
 
-  LogicalResult lowerContiguousRows(
-      OpTy op, VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
-      ValueRange sourceParts, ValueRange maskParts, TypeRange resultTypes,
-      int64_t groupSize, OneToNPatternRewriter &rewriter) const {
-    int64_t lanesPerPart = 0;
-    int64_t groupCount = 0;
-    int64_t chunksPerGroup = 0;
-    if (failed(checkContiguousFullGroupChunks(op, sourceVMIType, groupSize,
-                                              &lanesPerPart, &groupCount,
-                                              &chunksPerGroup, rewriter))) {
-      return failure();
-    }
-    VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
-    bool rowLocalSlots1Result = resultLayout && resultLayout.isGroupSlots() &&
-                                resultLayout.getNumGroups() == groupCount &&
-                                resultLayout.getSlots() == 1;
-    int64_t expectedResultParts =
-        rowLocalSlots1Result ? groupCount : groupCount * chunksPerGroup;
-    bool invalidArity =
-        sourceParts.size() != maskParts.size() ||
-        static_cast<int64_t>(sourceParts.size()) != groupCount * chunksPerGroup ||
-        static_cast<int64_t>(resultTypes.size()) != expectedResultParts;
-    if (invalidArity) {
-      return rewriter.notifyMatchFailure(
-          op, "group_reduce requires matching source/mask/result arity");
-    }
+  struct ContiguousGroupReduceTypes {
+    VRegType resultType;
+    MaskType maskType;
+    VRegType sourcePartType;
+    VRegType rowResultType;
+    MaskType rowMaskType;
+  };
+
+  FailureOr<ContiguousGroupReduceTypes> getContiguousGroupReduceTypes(
+      OpTy op, ValueRange sourceParts, ValueRange maskParts,
+      TypeRange resultTypes, OneToNPatternRewriter &rewriter) const {
     for (Type resultType : resultTypes) {
       if (!isa<VRegType>(resultType)) {
         return rewriter.notifyMatchFailure(
@@ -13935,8 +13920,44 @@ private:
       return rewriter.notifyMatchFailure(
           op, "failed to derive group combine mask type");
     }
+    return ContiguousGroupReduceTypes{
+        *resultType, *maskType, *sourcePartType, *rowResultType, *rowMaskType};
+  }
+
+  LogicalResult lowerContiguousRows(
+      OpTy op, VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
+      ValueRange sourceParts, ValueRange maskParts, TypeRange resultTypes,
+      int64_t groupSize, OneToNPatternRewriter &rewriter) const {
+    int64_t lanesPerPart = 0;
+    int64_t groupCount = 0;
+    int64_t chunksPerGroup = 0;
+    if (failed(checkContiguousFullGroupChunks(op, sourceVMIType, groupSize,
+                                              &lanesPerPart, &groupCount,
+                                              &chunksPerGroup, rewriter))) {
+      return failure();
+    }
+    VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
+    bool rowLocalSlots1Result = resultLayout && resultLayout.isGroupSlots() &&
+                                resultLayout.getNumGroups() == groupCount &&
+                                resultLayout.getSlots() == 1;
+    int64_t expectedResultParts =
+        rowLocalSlots1Result ? groupCount : groupCount * chunksPerGroup;
+    bool invalidArity =
+        sourceParts.size() != maskParts.size() ||
+        static_cast<int64_t>(sourceParts.size()) != groupCount * chunksPerGroup ||
+        static_cast<int64_t>(resultTypes.size()) != expectedResultParts;
+    if (invalidArity) {
+      return rewriter.notifyMatchFailure(
+          op, "group_reduce requires matching source/mask/result arity");
+    }
+    FailureOr<ContiguousGroupReduceTypes> types =
+        getContiguousGroupReduceTypes(op, sourceParts, maskParts, resultTypes,
+                                      rewriter);
+    if (failed(types)) {
+      return failure();
+    }
     FailureOr<Value> firstLaneMask =
-        createPrefixMask(op.getLoc(), *rowMaskType, "PAT_VL1", rewriter);
+        createPrefixMask(op.getLoc(), types->rowMaskType, "PAT_VL1", rewriter);
     if (failed(firstLaneMask)) {
       return rewriter.notifyMatchFailure(op,
                                          "failed to create group_reduce masks");
@@ -13944,13 +13965,14 @@ private:
     FailureOr<SmallVector<Value>> reducedResults =
         buildContiguousGroupReduceResults(
             op, sourceParts, maskParts, groupCount, chunksPerGroup,
-            *sourcePartType, *rowResultType, *maskType, *firstLaneMask,
+            types->sourcePartType, types->rowResultType, types->maskType,
+            *firstLaneMask,
             rewriter);
     if (failed(reducedResults)) {
       return failure();
     }
     FailureOr<SmallVector<Value>> results = restoreContiguousGroupResults(
-        op, *reducedResults, resultTypes, resultType, groupCount,
+        op, *reducedResults, resultTypes, types->resultType, groupCount,
         chunksPerGroup, rowLocalSlots1Result, rewriter);
     if (failed(results)) {
       return failure();

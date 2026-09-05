@@ -2290,6 +2290,16 @@ mask 语义、group 顺序及失败传播不变。增量 `check_changed_code.py`
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_layout_assignment_group_reduce_s256.pto` 完整 lowering pipeline exit=0。
 
+# contiguous group reduce 类型合同职责整改
+
+本轮在 `OneToNVMIGroupReduceOpPattern::lowerContiguousRows` 中引入
+`ContiguousGroupReduceTypes` 与 `getContiguousGroupReduceTypes`，将结果 vreg、mask、
+source chunk、行归约结果及 combine mask 的物理类型合同集中校验和推导。主函数继续负责
+contiguous chunk shape、结果布局/arity、首 lane mask、归约构造和结果恢复；保持 slots=1
+与重复结果布局语义、诊断顺序及失败传播不变。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_layout_assignment_group_reduce_s256.pto` 完整 lowering pipeline exit=0。
+
 # zero-copy interleave 结果合同职责整改
 
 本轮在 `OneToNVMIInterleaveOpPattern::materializeZeroCopyResults` 中引入
