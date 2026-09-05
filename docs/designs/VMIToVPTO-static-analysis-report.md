@@ -205,3 +205,6 @@ abs、sqrt、exp、ln 等重复 dispatch；`pmode` 特殊处理仍仅位于 vect
 本轮继续将 `extsi`、`extui`、`trunci` 的 conversion shape 分支改用
 `verifySupportedShapeOp`（提交 `b13d8f42f`），各自保留详细布局/宽度支持描述；同时
 修复 expand-load 操作数失败路径的大括号（提交 `02a3be5d7`）。合规检查通过。
+本轮将 `channel_split` 与 `channel_merge` 的 channel 数量判定、shape checker
+调用和失败诊断抽取为 `verifySupportedChannelOp`（提交 `b3b17704e`），保留 2/4
+channel 的专用能力提示和各自 layout 约束；合规检查通过。
