@@ -1880,3 +1880,11 @@ pipeline invariant 处提前失败，未进入本轮 helper，不能将该失败
 `POST_UPDATE` stream 语义、align 状态更新顺序、store base 计算、结果擦除和原有诊断不变。
 增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；`vmi_to_vpto_compress_store.pto` lowering exit=0。
+
+# compare verifier 分派职责整改
+
+本轮将 `verifySupportedVMICompareOp` 中 cmpf/cmpi 重复的 physical mask 检查、predicate
+合法性结果处理和 WalkResult 分派抽取为 `verifySupportedCompareValue`。入口仅负责区分
+cmpf/cmpi、传递对应 op 名称和 predicate checker；保持原有检查顺序、错误诊断来源、
+predicate 支持集合及 `WalkResult` 语义不变。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。

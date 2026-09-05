@@ -18051,32 +18051,34 @@ std::optional<WalkResult> verifySupportedVMILayoutOp(Operation *op) {
 }
 
 template <typename MaskCheck>
+WalkResult verifySupportedCompareValue(Operation *op, StringRef opName,
+                                       VMIVRegType lhsType, MaskCheck checkMaskable,
+                                       LogicalResult predicateCheck) {
+  WalkResult physical = checkMaskable(op, opName, lhsType);
+  if (physical.wasInterrupted()) {
+    return physical;
+  }
+  if (succeeded(predicateCheck)) {
+    return WalkResult::advance();
+  }
+  return WalkResult::interrupt();
+}
+
+template <typename MaskCheck>
 std::optional<WalkResult> verifySupportedVMICompareOp(Operation *op,
                                                       MaskCheck checkMaskable) {
   if (auto cmpf = dyn_cast<VMICmpFOp>(op)) {
-    WalkResult physical = checkMaskable(
-        op, "pto.vmi.cmpf", cast<VMIVRegType>(cmpf.getLhs().getType()));
-    if (physical.wasInterrupted()) {
-      return physical;
-    }
-    if (succeeded(checkSupportedComparePredicate<VMICmpFOp>(
-            op, cmpf.getPredicate()))) {
-      return WalkResult::advance();
-    }
-    return WalkResult::interrupt();
+    return verifySupportedCompareValue(
+        op, "pto.vmi.cmpf", cast<VMIVRegType>(cmpf.getLhs().getType()),
+        checkMaskable,
+        checkSupportedComparePredicate<VMICmpFOp>(op, cmpf.getPredicate()));
   }
 
   if (auto cmpi = dyn_cast<VMICmpIOp>(op)) {
-    WalkResult physical = checkMaskable(
-        op, "pto.vmi.cmpi", cast<VMIVRegType>(cmpi.getLhs().getType()));
-    if (physical.wasInterrupted()) {
-      return physical;
-    }
-    if (succeeded(checkSupportedComparePredicate<VMICmpIOp>(
-            op, cmpi.getPredicate()))) {
-      return WalkResult::advance();
-    }
-    return WalkResult::interrupt();
+    return verifySupportedCompareValue(
+        op, "pto.vmi.cmpi", cast<VMIVRegType>(cmpi.getLhs().getType()),
+        checkMaskable,
+        checkSupportedComparePredicate<VMICmpIOp>(op, cmpi.getPredicate()));
   }
 
   return std::nullopt;
