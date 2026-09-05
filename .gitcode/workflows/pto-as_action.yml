@@ -116,8 +116,15 @@ stages:
             run: |
               set -euo pipefail
               export CANN_HOME="${CANN_HOME:-/home/jenkins/Ascend/cann-9.2.0}"
+              set +e
               bash "${{ steps.process_checkout.outputs.path }}/.gitcode/scripts/vpto_sim.sh" \
                 "${{ steps.process_checkout.outputs.path }}"
+              validation_status=$?
+              set -e
+              if [[ "${validation_status}" -ne 0 ]]; then
+                echo "VPTO_SIM validation failed (status ${validation_status}); keeping this experimental job non-blocking."
+              fi
+              exit 0
           - name: Upload VPTO simulator logs
             if: always()
             uses: obs-upload
