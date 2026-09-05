@@ -700,3 +700,12 @@ pairing bitcast，并在必要时构造 native BF16 `VbitcastOp`；truncf 的 gr
 same-width 和 factor 分派保持不变。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续 load/store 与
 reduction 代表性 lowering 均通过。
+
+本轮将 `OneToNVMICreateGroupMaskOpPattern` 的 block-deinterleaved factor=4
+“先 contiguous 物化、再布局转换”路径抽取为 `lowerFactor4Block`。helper 独立负责
+常量/动态 active-lane 物化、contiguous physical arity 校验和最终 mask layout
+conversion；主 pattern 保留普通 constant/dynamic 路径分派。该拆分保持 mask part
+顺序、失败诊断和 factor=4 语义不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_layout_assignment_create_group_mask_s32_dynamic.pto` 与连续 load/store
+代表性 lowering 均通过。
