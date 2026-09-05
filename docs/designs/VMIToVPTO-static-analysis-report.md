@@ -765,3 +765,12 @@ pto-test-opt` 受现有 CMake 外部依赖尝试创建 `/cann-cmake` 的权限�
 随后补充了该共享布局 factor helper 的前置声明，确保其在 interleave pattern 使用前
 满足 C++ 声明顺序要求；不改变任何 lowering 行为。增量合规检查仍为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
+
+本轮将 `OneToNVMIGroupStoreOpPattern` 的 deinterleaved=2 `vstsx2` 发射路径抽取为
+`lowerDeinterleaved2GroupStore`。helper 独立负责 chunk-shape、INTLV dist、双路物理
+arity/type、all-true mask 和 group/chunk offset 计算；主 `matchAndRewrite` 只保留布局
+事实判定及路径分派，普通 contiguous store 逻辑不变。同时将本轮触及的 lane-stride
+条件整理为具名布尔变量以满足格式规则。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_layout_assignment_group_store_slots1_unit_stride.pto` lowering exit=0，输出仍含
+预期 `vsts`。

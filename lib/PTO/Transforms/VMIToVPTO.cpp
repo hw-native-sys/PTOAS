@@ -9465,6 +9465,67 @@ private:
     return success();
   }
 
+  LogicalResult lowerDeinterleaved2GroupStore(
+      VMIGroupStoreOp op, OpAdaptor adaptor, OneToNPatternRewriter &rewriter,
+      VMIVRegType valueVMIType, const VMIGroupStoreLayoutFact &fact,
+      Value destination, Value offset, Value rowStride) const {
+    int64_t lanesPerPart = 0;
+    int64_t groupCount = 0;
+    int64_t chunksPerGroup = 0;
+    std::string reason;
+    if (failed(checkDeinterleaved2GroupStoreChunkShape(
+            valueVMIType, fact.groupSize, &lanesPerPart, &groupCount,
+            &chunksPerGroup, &reason))) {
+      return failure();
+    }
+    std::optional<std::string> dist =
+        getX2MemoryDistToken(valueVMIType.getElementType(), "INTLV");
+    if (!dist) {
+      return rewriter.notifyMatchFailure(
+          op, "group_store requires vstsx2 INTLV element support");
+    }
+    ValueRange valueParts = adaptor.getValue();
+    int64_t chunksPerPart = groupCount * chunksPerGroup;
+    bool hasExpectedArity =
+        static_cast<int64_t>(valueParts.size()) == 2 * chunksPerPart;
+    if (!hasExpectedArity) {
+      return rewriter.notifyMatchFailure(
+          op, "deinterleaved=2 group_store arity mismatch");
+    }
+    for (int64_t group = 0; group < groupCount; ++group) {
+      for (int64_t chunk = 0; chunk < chunksPerGroup; ++chunk) {
+        int64_t lowIndex = group * chunksPerGroup + chunk;
+        int64_t highIndex = chunksPerPart + lowIndex;
+        Value low = valueParts[lowIndex];
+        Value high = valueParts[highIndex];
+        bool matchingTypes = low.getType() == high.getType();
+        if (!matchingTypes) {
+          return rewriter.notifyMatchFailure(
+              op, "vstsx2 group_store requires matching low/high types");
+        }
+        auto vregType = dyn_cast<VRegType>(low.getType());
+        if (!vregType) {
+          return rewriter.notifyMatchFailure(op,
+                                             "group_store value must be vreg");
+        }
+        FailureOr<Value> mask =
+            createAllTrueMaskForVReg(op.getLoc(), vregType, rewriter);
+        if (failed(mask)) {
+          return rewriter.notifyMatchFailure(
+              op, "unsupported element type for group_store mask");
+        }
+        Value chunkOffset = createGroupChunkOffset(
+            op.getLoc(), offset, rowStride, group,
+            chunk * 2 * lanesPerPart, rewriter);
+        rewriter.create<Vstsx2Op>(op.getLoc(), low, high, destination,
+                                  chunkOffset, rewriter.getStringAttr(*dist),
+                                  *mask);
+      }
+    }
+    rewriter.eraseOp(op);
+    return success();
+  }
+
 public:
   LogicalResult
   matchAndRewrite(VMIGroupStoreOp op, OpAdaptor adaptor,
@@ -9521,7 +9582,8 @@ public:
       }
 
       Value compactValue = valueParts.front();
-      if (layout.getLaneStride() != 1) {
+      bool needsCompactLayout = layout.getLaneStride() != 1;
+      if (needsCompactLayout) {
         VMILayoutAttr compactLayout = VMILayoutAttr::getGroupSlots(
             rewriter.getContext(), layout.getNumGroups(), layout.getSlots());
         auto compactVMIType = VMIVRegType::get(
@@ -9941,50 +10003,13 @@ public:
     int64_t d2GroupCount = 0;
     int64_t d2ChunksPerGroupPerPart = 0;
     std::string d2Reason;
-    if (succeeded(checkDeinterleaved2GroupStoreChunkShape(
-            valueVMIType, fact->groupSize, &d2LanesPerPart, &d2GroupCount,
-            &d2ChunksPerGroupPerPart, &d2Reason))) {
-      std::optional<std::string> dist =
-          getX2MemoryDistToken(valueVMIType.getElementType(), "INTLV");
-      if (!dist)
-        return rewriter.notifyMatchFailure(
-            op, "group_store requires vstsx2 INTLV element support");
-
-      ValueRange valueParts = adaptor.getValue();
-      int64_t chunksPerPart = d2GroupCount * d2ChunksPerGroupPerPart;
-      if (static_cast<int64_t>(valueParts.size()) != 2 * chunksPerPart)
-        return rewriter.notifyMatchFailure(
-            op, "deinterleaved=2 group_store arity mismatch");
-
-      for (int64_t group = 0; group < d2GroupCount; ++group) {
-        for (int64_t chunk = 0; chunk < d2ChunksPerGroupPerPart; ++chunk) {
-          int64_t lowIndex = group * d2ChunksPerGroupPerPart + chunk;
-          int64_t highIndex = chunksPerPart + lowIndex;
-          Value low = valueParts[lowIndex];
-          Value high = valueParts[highIndex];
-          if (low.getType() != high.getType())
-            return rewriter.notifyMatchFailure(
-                op, "vstsx2 group_store requires matching low/high types");
-          auto vregType = dyn_cast<VRegType>(low.getType());
-          if (!vregType)
-            return rewriter.notifyMatchFailure(op,
-                                               "group_store value must be vreg");
-          FailureOr<Value> mask =
-              createAllTrueMaskForVReg(op.getLoc(), vregType, rewriter);
-          if (failed(mask))
-            return rewriter.notifyMatchFailure(
-                op, "unsupported element type for group_store mask");
-          Value chunkOffset = createGroupChunkOffset(
-              op.getLoc(), *offset, *rowStride, group,
-              chunk * 2 * d2LanesPerPart, rewriter);
-          rewriter.create<Vstsx2Op>(op.getLoc(), low, high, *destination,
-                                    chunkOffset, rewriter.getStringAttr(*dist),
-                                    *mask);
-        }
-      }
-
-      rewriter.eraseOp(op);
-      return success();
+    bool hasDeinterleaved2Shape = succeeded(checkDeinterleaved2GroupStoreChunkShape(
+        valueVMIType, fact->groupSize, &d2LanesPerPart, &d2GroupCount,
+        &d2ChunksPerGroupPerPart, &d2Reason));
+    if (hasDeinterleaved2Shape) {
+      return lowerDeinterleaved2GroupStore(
+          op, adaptor, rewriter, valueVMIType, *fact, *destination, *offset,
+          *rowStride);
     }
 
     if (failed(checkContiguousFullGroupChunks(op, valueVMIType, fact->groupSize,
