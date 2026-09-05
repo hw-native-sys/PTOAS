@@ -8561,8 +8561,10 @@ struct OneToNVMIMaskedLoadOpPattern
     ValueRange passthruParts = adaptor.getPassthru();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    bool failedResultTypeConversion = failed(maybe_resultTypes);
+    if (failedResultTypeConversion) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     if (maskParts.size() != passthruParts.size() ||
         passthruParts.size() != resultTypes.size())
@@ -8615,8 +8617,10 @@ struct OneToNVMIGatherOpPattern : OneToNOpConversionPattern<VMIGatherOp> {
     ValueRange passthruParts = adaptor.getPassthru();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    bool failedResultTypeConversion = failed(maybe_resultTypes);
+    if (failedResultTypeConversion) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     if (indicesParts.size() != maskParts.size() ||
         indicesParts.size() != passthruParts.size() ||
