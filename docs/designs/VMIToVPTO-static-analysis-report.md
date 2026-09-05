@@ -1190,3 +1190,12 @@ dist、deinterleaved `vstsx2`、对齐 `vsts` 与非对齐 stateful stream。同
 float truncation 的复合条件命名化并补齐大括号。保持 store 地址、mask、stream state
 和 dist 语义不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；连续 load/store lowering exit=0。
+
+本轮继续拆分 `OneToNVMIStoreOpPattern` 的 contiguous fallback：新增
+`emitAlignedContiguousStoreParts` 与 `collectUnalignedStoreValues`，分别负责对齐
+`vsts`（含尾 chunk mask）和非对齐 stateful stream 的 physical part 收集；外层
+`lowerContiguousStoreParts` 仅负责地址合法性分派、stream base 物化及最终
+`emitStatefulStoreStream` 调用。非对齐路径仍以单一 `align/base` 状态贯穿全部
+`vstus`，最后发射一个 `vstas`，没有退化为独立单轮访存。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续、交错和
+group-slot 相关 lowering case 均 exit=0。

@@ -9258,6 +9258,119 @@ private:
     return std::move(*contiguousTypes);
   }
 
+  LogicalResult emitAlignedContiguousStoreParts(
+      VMIStoreOp op, Value destination, Value offset, ValueRange storeParts,
+      VMIVRegType valueVMIType, int64_t lanesPerPart, bool fullPhysicalChunks,
+      OneToNPatternRewriter &rewriter) const {
+    for (auto [index, value] : llvm::enumerate(storeParts)) {
+      auto vregType = dyn_cast<VRegType>(value.getType());
+      if (!vregType) {
+        return rewriter.notifyMatchFailure(op, "store value must be vreg");
+      }
+      if (!fullPhysicalChunks) {
+        FailureOr<int64_t> activeLanes =
+            getContiguousActiveDataLanes(valueVMIType, index);
+        if (failed(activeLanes)) {
+          return rewriter.notifyMatchFailure(
+              op, "failed to compute store active lanes");
+        }
+        if (*activeLanes == 0) {
+          continue;
+        }
+      }
+      FailureOr<Value> mask =
+          fullPhysicalChunks
+              ? createAllTrueMaskForVReg(op.getLoc(), vregType, rewriter)
+              : createContiguousStoreMask(op.getLoc(), valueVMIType, index,
+                                          vregType, rewriter);
+      if (failed(mask)) {
+        return rewriter.notifyMatchFailure(
+            op, "unsupported element type for store mask");
+      }
+      Value chunkOffset = createChunkOffset(op.getLoc(), offset,
+                                            index * lanesPerPart, rewriter);
+      rewriter.create<VstsOp>(op.getLoc(), /*updated_base=*/Type{}, value,
+                              destination, chunkOffset, /*dist=*/nullptr,
+                              *mask);
+    }
+    return success();
+  }
+
+  FailureOr<SmallVector<Value>> collectUnalignedStoreValues(
+      VMIStoreOp op, ValueRange storeParts, VMIVRegType valueVMIType,
+      int64_t lanesPerPart, bool fullPhysicalChunks,
+      SmallVectorImpl<int64_t> &advances,
+      OneToNPatternRewriter &rewriter) const {
+    SmallVector<Value> values;
+    for (auto [index, value] : llvm::enumerate(storeParts)) {
+      if (!isa<VRegType>(value.getType())) {
+        (void)rewriter.notifyMatchFailure(op, "store value must be vreg");
+        return failure();
+      }
+      if (!fullPhysicalChunks) {
+        FailureOr<int64_t> maybeActiveLanes =
+            getContiguousActiveDataLanes(valueVMIType, index);
+        if (failed(maybeActiveLanes)) {
+          return rewriter.notifyMatchFailure(
+              op, "failed to compute unaligned store active lanes");
+          return failure();
+        }
+        if (*maybeActiveLanes == 0) {
+          continue;
+        }
+        values.push_back(value);
+        advances.push_back(*maybeActiveLanes);
+        continue;
+      }
+      values.push_back(value);
+      advances.push_back(lanesPerPart);
+    }
+    return values;
+  }
+
+  LogicalResult lowerContiguousStoreParts(
+      VMIStoreOp op, Value destination, Value offset, ValueRange storeParts,
+      VMIVRegType valueVMIType, int64_t lanesPerPart, bool fullPhysicalChunks,
+      OneToNPatternRewriter &rewriter) const {
+    auto firstStoreType =
+        storeParts.empty() ? VRegType{}
+                           : dyn_cast<VRegType>(storeParts.front().getType());
+    bool useAlignedAccess =
+        firstStoreType &&
+        isDirectMemoryDistAddressLegal(
+            op.getDestination(), op.getOffset(), valueVMIType.getElementType(),
+            firstStoreType, VPTOMemoryOpFamily::Store, "");
+    if (useAlignedAccess) {
+      return emitAlignedContiguousStoreParts(
+          op, destination, offset, storeParts, valueVMIType, lanesPerPart,
+          fullPhysicalChunks, rewriter);
+    }
+
+    Value storeBase = materializeBufferPointer(
+        destination, valueVMIType.getElementType(),
+        getMemorySpace(destination.getType()), rewriter, op.getLoc());
+    if (!storeBase) {
+      return rewriter.notifyMatchFailure(
+          op, "continuous unaligned store requires a ptr-compatible destination");
+    }
+    storeBase = rewriter
+                    .create<AddPtrOp>(op.getLoc(), storeBase.getType(),
+                                      storeBase, offset)
+                    .getResult();
+    SmallVector<int64_t> advances;
+    FailureOr<SmallVector<Value>> values = collectUnalignedStoreValues(
+        op, storeParts, valueVMIType, lanesPerPart, fullPhysicalChunks, advances,
+        rewriter);
+    if (failed(values)) {
+      return failure();
+    }
+    if (failed(emitStatefulStoreStream(op, storeBase, *values, advances,
+                                       rewriter))) {
+      return failure();
+    }
+    return success();
+  }
+
 public:
 
   static LogicalResult emitLaneStrideStore(
@@ -9395,20 +9508,24 @@ public:
     SmallVector<Type> contiguousTypes = std::move(*maybeContiguousTypes);
     SmallVector<Type> valuePartTypes;
     valuePartTypes.reserve(valueParts.size());
-    for (Value value : valueParts)
+    for (Value value : valueParts) {
       valuePartTypes.push_back(value.getType());
+    }
     FailureOr<bool> noWiderThanContiguous =
         hasNoWiderFootprintThanContiguous(valuePartTypes, contiguousTypes);
-    if (failed(noWiderThanContiguous))
+    if (failed(noWiderThanContiguous)) {
       return rewriter.notifyMatchFailure(
           op, "failed to compare store physical footprint");
+    }
 
     VMILayoutSupport localSupports;
     FailureOr<VMIStoreLayoutFact> storeFact =
         localSupports.getStoreLayoutFact(valueVMIType);
-    if (succeeded(storeFact) && storeFact->valueLayout.isDeinterleaved() &&
+    bool canUseDeinterleavedStore =
+        succeeded(storeFact) && storeFact->valueLayout.isDeinterleaved() &&
         storeFact->valueLayout.getFactor() == 2 && fullPhysicalChunks &&
-        *noWiderThanContiguous) {
+        *noWiderThanContiguous;
+    if (canUseDeinterleavedStore) {
       std::optional<std::string> dist =
           getX2MemoryDistToken(valueVMIType.getElementType(), "INTLV");
       auto firstType = valueParts.empty()
@@ -9434,83 +9551,13 @@ public:
     FailureOr<SmallVector<Value>> storeParts = materializeDataLayoutConversion(
         op, valueParts, contiguousTypes, valueVMIType.getLayoutAttr(),
         contiguousLayout, valueVMIType.getElementType(), rewriter);
-    if (failed(storeParts))
+    if (failed(storeParts)) {
       return failure();
-
-    auto firstStoreType =
-        storeParts->empty() ? VRegType{}
-                            : dyn_cast<VRegType>(storeParts->front().getType());
-    bool useAlignedAccess =
-        firstStoreType &&
-        isDirectMemoryDistAddressLegal(
-            op.getDestination(), op.getOffset(), valueVMIType.getElementType(),
-            firstStoreType, VPTOMemoryOpFamily::Store, "");
-    Value storeBase;
-    if (!useAlignedAccess) {
-      storeBase = materializeBufferPointer(
-          *destination, valueVMIType.getElementType(),
-          getMemorySpace((*destination).getType()), rewriter, op.getLoc());
-      if (!storeBase) {
-        return rewriter.notifyMatchFailure(
-            op,
-            "continuous unaligned store requires a ptr-compatible destination");
-      }
-      storeBase = rewriter
-                      .create<AddPtrOp>(op.getLoc(), storeBase.getType(),
-                                        storeBase, *offset)
-                      .getResult();
     }
 
-    SmallVector<Value> unalignedValues;
-    SmallVector<int64_t> unalignedAdvances;
-    for (auto [index, value] : llvm::enumerate(*storeParts)) {
-      auto vregType = dyn_cast<VRegType>(value.getType());
-      if (!vregType)
-        return rewriter.notifyMatchFailure(op, "store value must be vreg");
-      if (!fullPhysicalChunks) {
-        FailureOr<int64_t> activeLanes =
-            getContiguousActiveDataLanes(valueVMIType, index);
-        if (failed(activeLanes))
-          return rewriter.notifyMatchFailure(
-              op, "failed to compute store active lanes");
-        if (*activeLanes == 0)
-          continue;
-      }
-      if (useAlignedAccess) {
-        FailureOr<Value> mask =
-            fullPhysicalChunks
-                ? createAllTrueMaskForVReg(op.getLoc(), vregType, rewriter)
-                : createContiguousStoreMask(op.getLoc(), valueVMIType, index,
-                                            vregType, rewriter);
-        if (failed(mask)) {
-          return rewriter.notifyMatchFailure(
-              op, "unsupported element type for store mask");
-        }
-        Value chunkOffset = createChunkOffset(op.getLoc(), *offset,
-                                              index * *lanesPerPart, rewriter);
-        rewriter.create<VstsOp>(op.getLoc(),
-                                /*updated_base=*/Type{}, value, *destination,
-                                chunkOffset, /*dist=*/nullptr, *mask);
-        continue;
-      }
-
-      int64_t activeLanes = *lanesPerPart;
-      if (!fullPhysicalChunks) {
-        FailureOr<int64_t> maybeActiveLanes =
-            getContiguousActiveDataLanes(valueVMIType, index);
-        if (failed(maybeActiveLanes)) {
-          return rewriter.notifyMatchFailure(
-              op, "failed to compute unaligned store active lanes");
-        }
-        activeLanes = *maybeActiveLanes;
-      }
-      unalignedValues.push_back(value);
-      unalignedAdvances.push_back(activeLanes);
-    }
-
-    if (!useAlignedAccess &&
-        failed(emitStatefulStoreStream(op, storeBase, unalignedValues,
-                                        unalignedAdvances, rewriter))) {
+    if (failed(lowerContiguousStoreParts(
+            op, *destination, *offset, *storeParts, valueVMIType,
+            *lanesPerPart, fullPhysicalChunks, rewriter))) {
       return failure();
     }
 
