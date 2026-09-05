@@ -15079,9 +15079,8 @@ std::optional<WalkResult> verifySupportedVMIMemoryStoreOp(Operation *op) {
   return std::nullopt;
 }
 
-std::optional<WalkResult> verifySupportedVMIMemoryOp(
+std::optional<WalkResult> verifySupportedVMIMemoryLoadOp(
     Operation *op, bool enableStableGatherMaskedLoad) {
-
   if (auto load = dyn_cast<VMILoadOp>(op)) {
     return emitMemoryUnsupported(
         op, "pto.vmi.load", cast<VMIVRegType>(load.getResult().getType()),
@@ -15201,11 +15200,17 @@ std::optional<WalkResult> verifySupportedVMIMemoryOp(
         << reason << ")";
     return WalkResult::interrupt();
   }
-  if (auto storeResult = verifySupportedVMIMemoryStoreOp(op);
-      storeResult.has_value()) {
-    return *storeResult;
-  }
   return std::nullopt;
+}
+
+std::optional<WalkResult> verifySupportedVMIMemoryOp(
+    Operation *op, bool enableStableGatherMaskedLoad) {
+  if (auto loadResult = verifySupportedVMIMemoryLoadOp(
+          op, enableStableGatherMaskedLoad);
+      loadResult.has_value()) {
+    return *loadResult;
+  }
+  return verifySupportedVMIMemoryStoreOp(op);
 }
 
 std::optional<WalkResult> verifySupportedVMIEnsureLayoutOp(Operation *op) {

@@ -422,3 +422,10 @@ group-store lowering 回归均通过。
 `verifySupportedVMILayoutOp` 仅按原顺序串联三类检查。数据 layout、mask layout 和
 granularity cast 的诊断及支持关系保持不变。源码增量合规检查、`git diff --check`，
 连续 load/store、mask-granularity 和 group-store lowering 回归均通过。
+
+本轮继续将 `verifySupportedVMIMemoryOp` 按读写方向拆分为
+`verifySupportedVMIMemoryLoadOp` 与 `verifySupportedVMIMemoryStoreOp`，顶层 helper
+只负责保持 load→store 的检查顺序。load 中的 stable masked-load 选项仍在原位置
+优先诊断，store 的 shape checker 与诊断保持不变。源码增量合规检查、`git diff --check`
+及连续 load/store、interleave、group-store lowering 回归均通过；masked-load 专项样例
+按其既有测试约束失败，未显示本轮读写分派变化。
