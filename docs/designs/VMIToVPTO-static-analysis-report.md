@@ -989,3 +989,10 @@ arity 和诊断语义不变。增量合规检查结果为 `checked_files=1 error
 checker 仅负责 plan 构建结果转换。该拆分保持 active-prefix 的跨 chunk 限制与诊断
 语义不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过。
+本轮将 `checkSupportedFPToSIShape` 与 `checkSupportedFPToUIShape` 的重复 verifier
+逻辑抽取为模板 helper `checkSupportedFPToIntShape`。调用点仅提供 signed/unsigned
+contract lookup 和 conversion 名称；同宽 layout/arity 及非同宽 cast-layout framework
+检查统一实现，保留原有诊断前缀和支持矩阵。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
+整数 cast lit 在测试自身的 VMI pack/unpack pipeline invariant 处提前失败，未进入
+本轮 verifier/lowering 路径。

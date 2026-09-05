@@ -15465,8 +15465,10 @@ LogicalResult checkSupportedTruncIShape(VMITruncIOp op,
   return success();
 }
 
-LogicalResult checkSupportedFPToSIShape(VMIFPToSIOp op,
-                                        std::string *reason = nullptr) {
+template <typename OpTy, typename ContractLookup>
+LogicalResult checkSupportedFPToIntShape(OpTy op, StringRef conversionName,
+                                         ContractLookup lookup,
+                                         std::string *reason = nullptr) {
   auto fail = [&reason](const Twine &message) {
     if (reason)
       *reason = message.str();
@@ -15482,9 +15484,10 @@ LogicalResult checkSupportedFPToSIShape(VMIFPToSIOp op,
 
   Type srcElem = sourceType.getElementType();
   Type dstElem = resultType.getElementType();
-  auto contract = lookupVMIFpToSiContract(srcElem, dstElem);
+  auto contract = lookup(srcElem, dstElem);
   if (!contract)
-    return fail("unsupported fp-to-si conversion element type pair");
+    return fail(Twine("unsupported ") + conversionName +
+                " conversion element type pair");
 
   unsigned srcBits = pto::getPTOStorageElemBitWidth(srcElem);
   unsigned dstBits = pto::getPTOStorageElemBitWidth(dstElem);
@@ -15492,12 +15495,14 @@ LogicalResult checkSupportedFPToSIShape(VMIFPToSIOp op,
   if (srcBits == dstBits) {
     // Same-width (f32→s32, f16→s16): layout equality + arity equality.
     if (sourceLayout != resultLayout)
-      return fail("same-width fp-to-si requires matching layouts");
+      return fail(Twine("same-width ") + conversionName +
+                  " requires matching layouts");
     FailureOr<int64_t> sourceArity = getVMIPhysicalArity(sourceType);
     FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
     if (failed(sourceArity) || failed(resultArity) ||
         *sourceArity != *resultArity)
-      return fail("same-width fp-to-si requires matching physical arity");
+      return fail(Twine("same-width ") + conversionName +
+                  " requires matching physical arity");
   } else {
     // Widen or narrow: use the cast-layout framework (same as extf/truncf).
     VMILayoutSupport layoutSupport;
@@ -15511,50 +15516,24 @@ LogicalResult checkSupportedFPToSIShape(VMIFPToSIOp op,
   return success();
 }
 
+LogicalResult checkSupportedFPToSIShape(VMIFPToSIOp op,
+                                        std::string *reason = nullptr) {
+  return checkSupportedFPToIntShape(
+      op, "fp-to-si",
+      [](Type source, Type result) {
+        return lookupVMIFpToSiContract(source, result);
+      },
+      reason);
+}
+
 LogicalResult checkSupportedFPToUIShape(VMIFPToUIOp op,
                                         std::string *reason = nullptr) {
-  auto fail = [&reason](const Twine &message) {
-    if (reason)
-      *reason = message.str();
-    return failure();
-  };
-
-  auto sourceType = cast<VMIVRegType>(op.getSource().getType());
-  auto resultType = cast<VMIVRegType>(op.getResult().getType());
-  VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();
-  VMILayoutAttr resultLayout = resultType.getLayoutAttr();
-  if (!sourceLayout || !resultLayout)
-    return fail("requires assigned source/result layouts");
-
-  Type srcElem = sourceType.getElementType();
-  Type dstElem = resultType.getElementType();
-  auto contract = lookupVMIFpToUIContract(srcElem, dstElem);
-  if (!contract)
-    return fail("unsupported fp-to-ui conversion element type pair");
-
-  unsigned srcBits = pto::getPTOStorageElemBitWidth(srcElem);
-  unsigned dstBits = pto::getPTOStorageElemBitWidth(dstElem);
-
-  if (srcBits == dstBits) {
-    // Same-width: layout equality + arity equality.
-    if (sourceLayout != resultLayout)
-      return fail("same-width fp-to-ui requires matching layouts");
-    FailureOr<int64_t> sourceArity = getVMIPhysicalArity(sourceType);
-    FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
-    if (failed(sourceArity) || failed(resultArity) ||
-        *sourceArity != *resultArity)
-      return fail("same-width fp-to-ui requires matching physical arity");
-  } else {
-    // Widen or narrow: use the cast-layout framework.
-    VMILayoutSupport layoutSupport;
-    FailureOr<VMICastLayoutFact> fact =
-        layoutSupport.getCastLayoutFactForLayouts(
-            sourceType, resultType, sourceLayout, resultLayout, reason);
-    if (failed(fact))
-      return failure();
-  }
-
-  return success();
+  return checkSupportedFPToIntShape(
+      op, "fp-to-ui",
+      [](Type source, Type result) {
+        return lookupVMIFpToUIContract(source, result);
+      },
+      reason);
 }
 
 LogicalResult checkSupportedSIToFPShape(VMISIToFPOp op,
