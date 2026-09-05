@@ -1705,3 +1705,13 @@ pipeline invariant 处提前失败，未进入本轮 helper。
 增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_reduce_addi_multichunk.pto` 仍在既有 pack/unpack pipeline invariant 处
 提前失败，未进入本轮 helper。
+
+# group_reduce lowering plan 分派整改
+
+本轮将 `OneToNVMIGroupReduceOpPattern::matchAndRewrite` 中按
+`GroupReduceLoweringPlan` 选择具体 lowering 的分支抽取为 `lowerByPlan`。入口继续负责
+source/result/mask 类型取得、layout support 查询、plan 分类和 group size 推导；
+OneBlock、TwoBlock、FourBlock、deinterleaved-2 及 contiguous rows 的执行顺序和失败
+语义保持不变。另补齐 `classifyGroupReduceLoweringPlan` 中相邻的控制流大括号，避免
+触发 `G.FMT.11-CPP`。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_layout_assignment_group_slots_fanout.pto` lowering exit=0。

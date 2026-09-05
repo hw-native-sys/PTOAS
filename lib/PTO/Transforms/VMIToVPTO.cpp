@@ -12872,9 +12872,12 @@ classifyGroupReduceLoweringPlan(VMIVRegType sourceType, VMIMaskType maskType,
   case VMIGroupBlockClass::FourBlock:
     return GroupReduceLoweringPlan::FourBlockDeinterleaved4VcgaddTree;
   case VMIGroupBlockClass::FullPartMultiple:
-    if (fact->sourceLayout && fact->sourceLayout.isDeinterleaved() &&
-        fact->sourceLayout.getFactor() == 2)
+    bool deinterleavedSource =
+        fact->sourceLayout && fact->sourceLayout.isDeinterleaved() &&
+        fact->sourceLayout.getFactor() == 2;
+    if (deinterleavedSource) {
       return GroupReduceLoweringPlan::FullDeinterleaved2VcaddRows;
+    }
     return GroupReduceLoweringPlan::ContiguousVcaddRows;
   }
   llvm_unreachable("unknown group block class");
@@ -13365,36 +13368,41 @@ public:
           op, "group reduce requires num_groups to evenly divide lane count");
     }
 
-    if (*plan == GroupReduceLoweringPlan::OneBlockVcgadd) {
+    return lowerByPlan(op, *plan, *groupSize, sourceVMIType, resultVMIType,
+                       sourceParts, maskParts, resultTypes, rewriter);
+  }
+
+private:
+  LogicalResult lowerByPlan(
+      OpTy op, GroupReduceLoweringPlan plan, int64_t groupSize,
+      VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
+      ValueRange sourceParts, ValueRange maskParts, TypeRange resultTypes,
+      OneToNPatternRewriter &rewriter) const {
+    int64_t numGroups = op.getNumGroupsAttr().getInt();
+    if (plan == GroupReduceLoweringPlan::OneBlockVcgadd) {
       return lowerOneBlock(op, sourceParts, maskParts, resultTypes, rewriter);
     }
-
-    if (*plan == GroupReduceLoweringPlan::TwoBlockDeinterleaved2VcgaddVadd) {
-      return lowerTwoBlock(op, sourceParts, maskParts, resultTypes,
-                           op.getNumGroupsAttr().getInt(), rewriter);
+    if (plan == GroupReduceLoweringPlan::TwoBlockDeinterleaved2VcgaddVadd) {
+      return lowerTwoBlock(op, sourceParts, maskParts, resultTypes, numGroups,
+                           rewriter);
     }
-
-    if (*plan == GroupReduceLoweringPlan::FourBlockDeinterleaved4VcgaddTree) {
-      return lowerFourBlock(op, sourceParts, maskParts, resultTypes,
-                            op.getNumGroupsAttr().getInt(), rewriter);
+    if (plan == GroupReduceLoweringPlan::FourBlockDeinterleaved4VcgaddTree) {
+      return lowerFourBlock(op, sourceParts, maskParts, resultTypes, numGroups,
+                            rewriter);
     }
-
-    if (*plan == GroupReduceLoweringPlan::FullDeinterleaved2VcaddRows) {
+    if (plan == GroupReduceLoweringPlan::FullDeinterleaved2VcaddRows) {
       return lowerFullDeinterleaved2(
-          op, sourceVMIType, resultVMIType, sourceParts, maskParts,
-          resultTypes, *groupSize, rewriter);
+          op, sourceVMIType, resultVMIType, sourceParts, maskParts, resultTypes,
+          groupSize, rewriter);
     }
-
-    bool unknownPlan = *plan != GroupReduceLoweringPlan::ContiguousVcaddRows;
-    if (unknownPlan) {
+    if (plan != GroupReduceLoweringPlan::ContiguousVcaddRows) {
       return rewriter.notifyMatchFailure(op,
                                          "unknown group_reduce lowering plan");
     }
     return lowerContiguousRows(op, sourceVMIType, resultVMIType, sourceParts,
-                               maskParts, resultTypes, *groupSize, rewriter);
+                               maskParts, resultTypes, groupSize, rewriter);
   }
 
-private:
   FailureOr<VRegType> getRowResultType(VRegType sourceType,
                                        VRegType resultType) const {
     if constexpr (std::is_same_v<OpTy, VMIGroupReduceAddIOp>)
