@@ -6093,6 +6093,24 @@ static FailureOr<SmallVector<Value, 4>> materializeContiguousToDeintMaskGroup(
   return results;
 }
 
+static FailureOr<SmallVector<Value>> flattenStagingMaskParts(
+    Operation *op, ArrayRef<SmallVector<Value, 4>> parts, int64_t factor,
+    int64_t groups, TypeRange resultTypes, PatternRewriter &rewriter) {
+  SmallVector<Value> results;
+  results.reserve(resultTypes.size());
+  for (int64_t part = 0; part < factor; ++part) {
+    bool invalidPartArity =
+        parts[part].size() != static_cast<size_t>(groups);
+    if (invalidPartArity) {
+      (void)rewriter.notifyMatchFailure(
+          op, "staging contiguous mask layout result arity mismatch");
+      return failure();
+    }
+    results.append(parts[part]);
+  }
+  return results;
+}
+
 FailureOr<SmallVector<Value>> materializeStagingContiguousToDeintMaskLayout(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     int64_t factor, PatternRewriter &rewriter) {
@@ -6130,17 +6148,8 @@ FailureOr<SmallVector<Value>> materializeStagingContiguousToDeintMaskLayout(
     }
   }
 
-  SmallVector<Value> results;
-  results.reserve(resultTypes.size());
-  for (int64_t part = 0; part < factor; ++part) {
-    bool invalidPartArity =
-        parts[part].size() != static_cast<size_t>(groups);
-    if (invalidPartArity) {
-      return fail("staging contiguous mask layout result arity mismatch");
-    }
-    results.append(parts[part]);
-  }
-  return results;
+  return flattenStagingMaskParts(op, parts, factor, groups, resultTypes,
+                                 rewriter);
 }
 
 FailureOr<SmallVector<Value>> materializeMaskGranularityCastLayoutConversion(
@@ -6591,9 +6600,11 @@ struct OneToNVMIBroadcastOpPattern : OneToNOpConversionPattern<VMIBroadcastOp> {
   matchAndRewrite(VMIBroadcastOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
     ValueRange inputParts = adaptor.getValue();
-    if (inputParts.size() != 1)
+    bool invalidInputArity = inputParts.size() != 1;
+    if (invalidInputArity) {
       return rewriter.notifyMatchFailure(
           op, "broadcast input must convert to one value");
+    }
     bool inputIsVReg = isa<VMIVRegType>(op.getValue().getType());
 
     FailureOr<SmallVector<Type>> maybe_resultTypes =

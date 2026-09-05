@@ -221,6 +221,14 @@ mask 的语义差异只存在于 active-lane 判定。补齐该批代码及 scal
 触及的控制语句大括号后，增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过。
 
+# staging contiguous mask 结果汇总整改
+
+本轮将 `materializeStagingContiguousToDeintMaskLayout` 的 part arity 校验与结果扁平化
+抽取为 `flattenStagingMaskParts`，外层仅负责 factor/group 规划、单组 materialization
+和 part 收集；factor=2/4 顺序、padding 及失败诊断保持不变。同时补齐相邻 broadcast
+入口的命名化 arity 判断。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
+
 # mask cast fallback 分派整改
 
 本轮整理 `materializeMaskGranularityCastLayoutFallback` 的 fallback 控制流：明确
