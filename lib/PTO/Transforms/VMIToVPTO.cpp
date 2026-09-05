@@ -13905,6 +13905,45 @@ struct OneToNVMIReduceMinMaxOpPattern : OneToNOpConversionPattern<SourceOp> {
   using OneToNOpConversionPattern<SourceOp>::OneToNOpConversionPattern;
 
 private:
+  LogicalResult lowerSequentialReduction(
+      SourceOp op, ValueRange sourceParts, ValueRange maskParts,
+      VRegType resultType, MaskType maskType,
+      OneToNPatternRewriter &rewriter) const {
+    Value accumulator =
+        rewriter
+            .create<ChunkReduceOp>(op.getLoc(), resultType, sourceParts.front(),
+                                   maskParts.front())
+            .getResult();
+    const bool singlePart = sourceParts.size() == 1;
+    if (singlePart) {
+      replaceOpWithFlatConvertedValues(
+          rewriter, op, SmallVector<Value>{accumulator},
+          *this->getTypeConverter());
+      return success();
+    }
+    FailureOr<Value> firstLaneMask =
+        createPrefixMask(op.getLoc(), maskType, "PAT_VL1", rewriter);
+    if (failed(firstLaneMask)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to create min/max reduction first-lane mask");
+    }
+    for (size_t part = 1; part < sourceParts.size(); ++part) {
+      Value reduced = rewriter
+                          .create<ChunkReduceOp>(op.getLoc(), resultType,
+                                                 sourceParts[part],
+                                                 maskParts[part])
+                          .getResult();
+      accumulator = rewriter
+                        .create<CombineOp>(op.getLoc(), resultType, reduced,
+                                           accumulator, *firstLaneMask)
+                        .getResult();
+    }
+    replaceOpWithFlatConvertedValues(
+        rewriter, op, SmallVector<Value>{accumulator},
+        *this->getTypeConverter());
+    return success();
+  }
+
   FailureOr<std::pair<VRegType, MaskType>> validatePhysicalParts(
       SourceOp op, ValueRange sourceParts, ValueRange maskParts,
       TypeRange resultTypes, OneToNPatternRewriter &rewriter) const {
@@ -13954,38 +13993,8 @@ private:
       return success();
     }
 
-    Value accumulator = rewriter
-                            .create<ChunkReduceOp>(op.getLoc(), resultType,
-                                                   sourceParts.front(),
-                                                   maskParts.front())
-                            .getResult();
-    if (sourceParts.size() == 1) {
-      replaceOpWithFlatConvertedValues(
-          rewriter, op, SmallVector<Value>{accumulator},
-          *this->getTypeConverter());
-      return success();
-    }
-    FailureOr<Value> firstLaneMask =
-        createPrefixMask(op.getLoc(), maskType, "PAT_VL1", rewriter);
-    if (failed(firstLaneMask)) {
-      return rewriter.notifyMatchFailure(
-          op, "failed to create min/max reduction first-lane mask");
-    }
-    for (size_t part = 1; part < sourceParts.size(); ++part) {
-      Value reduced = rewriter
-                          .create<ChunkReduceOp>(op.getLoc(), resultType,
-                                                 sourceParts[part],
-                                                 maskParts[part])
-                          .getResult();
-      accumulator = rewriter
-                        .create<CombineOp>(op.getLoc(), resultType, reduced,
-                                           accumulator, *firstLaneMask)
-                        .getResult();
-    }
-    replaceOpWithFlatConvertedValues(
-        rewriter, op, SmallVector<Value>{accumulator},
-        *this->getTypeConverter());
-    return success();
+    return lowerSequentialReduction(op, sourceParts, maskParts, resultType,
+                                    maskType, rewriter);
   }
 
 public:

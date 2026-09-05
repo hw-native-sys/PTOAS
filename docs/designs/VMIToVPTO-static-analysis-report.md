@@ -1951,3 +1951,13 @@ accumulator 类型、source lane 数以及 Bin_N0/Bin_N1 常量准备从 lowerin
 `WalkResult` 返回路径。各分支仍保留原有操作识别顺序、shape checker 和完整诊断文本，
 不改变成功/失败语义；未使用默认 lambda 捕获。增量 `check_changed_code.py` 结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
+
+# reduce min/max 顺序累加路径整改
+
+本轮将模板 `OneToNVMIReduceMinMaxOpPattern::lowerReduction` 中非等价 mask 合并场景的
+首 chunk reduction、单 chunk 快路径、首 lane mask 构造、多 chunk `ChunkReduceOp`/
+`CombineOp` 顺序累加和结果替换抽取为 `lowerSequentialReduction`。`lowerReduction` 继续
+负责等价 masked parts 快路径并在失败后转入该 helper；保持 min/max 操作选择、累加顺序、
+mask 语义、单结果布局和诊断不变。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_reduce_extended.pto` lowering exit=0。
