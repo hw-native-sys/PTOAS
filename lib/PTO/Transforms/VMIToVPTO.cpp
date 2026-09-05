@@ -15039,6 +15039,52 @@ static LogicalResult lowerWidenFpToInt(
 struct OneToNVMIFPToSIOpPattern : OneToNOpConversionPattern<VMIFPToSIOp> {
   using OneToNOpConversionPattern<VMIFPToSIOp>::OneToNOpConversionPattern;
 
+private:
+  FailureOr<VRegType> validateSourceParts(
+      VMIFPToSIOp op, ValueRange sourceParts,
+      OneToNPatternRewriter &rewriter) const {
+    if (sourceParts.empty()) {
+      return rewriter.notifyMatchFailure(
+          op, "fptosi requires at least one physical source chunk");
+    }
+    auto sourceType = dyn_cast<VRegType>(sourceParts.front().getType());
+    if (!sourceType) {
+      return rewriter.notifyMatchFailure(op,
+                                         "expected physical fptosi source type");
+    }
+    for (Value sourcePart : sourceParts) {
+      auto currentType = dyn_cast<VRegType>(sourcePart.getType());
+      bool mismatchedType = !currentType || currentType != sourceType;
+      if (mismatchedType) {
+        return rewriter.notifyMatchFailure(
+            op, "fptosi source physical parts must have matching type");
+      }
+    }
+    return sourceType;
+  }
+
+  FailureOr<SmallVector<VRegType>> validateResultParts(
+      VMIFPToSIOp op, TypeRange resultTypes,
+      OneToNPatternRewriter &rewriter) const {
+    if (resultTypes.empty()) {
+      return rewriter.notifyMatchFailure(
+          op, "fptosi requires at least one physical result chunk");
+    }
+    SmallVector<VRegType> resultVRegTypes;
+    resultVRegTypes.reserve(resultTypes.size());
+    for (Type physicalResultType : resultTypes) {
+      auto resultType = dyn_cast<VRegType>(physicalResultType);
+      if (!resultType) {
+        return rewriter.notifyMatchFailure(
+            op, "unsupported physical fptosi result type");
+      }
+      resultVRegTypes.push_back(resultType);
+    }
+    return resultVRegTypes;
+  }
+
+public:
+
   LogicalResult
   matchAndRewrite(VMIFPToSIOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -15060,38 +15106,16 @@ struct OneToNVMIFPToSIOpPattern : OneToNOpConversionPattern<VMIFPToSIOp> {
           op, "unsupported fp-to-si conversion element type pair");
     }
 
-    // Validate source physical part types.
-    if (sourceParts.empty()) {
-      return rewriter.notifyMatchFailure(
-          op, "fptosi requires at least one physical source chunk");
-    }
-    auto sourceType0 = dyn_cast<VRegType>(sourceParts.front().getType());
-    if (!sourceType0) {
-      return rewriter.notifyMatchFailure(
-          op, "expected physical fptosi source type");
-    }
-    for (Value sourcePart : sourceParts) {
-      auto currentSourceType = dyn_cast<VRegType>(sourcePart.getType());
-      if (!currentSourceType || currentSourceType != sourceType0) {
-        return rewriter.notifyMatchFailure(
-            op, "fptosi source physical parts must have matching type");
-      }
+    FailureOr<VRegType> sourceType0 =
+        validateSourceParts(op, sourceParts, rewriter);
+    if (failed(sourceType0)) {
+      return failure();
     }
 
-    // Validate result physical part types.
-    if (resultTypes.empty()) {
-      return rewriter.notifyMatchFailure(
-          op, "fptosi requires at least one physical result chunk");
-    }
-    SmallVector<VRegType> resultVRegTypes;
-    resultVRegTypes.reserve(resultTypes.size());
-    for (Type physicalResultType : resultTypes) {
-      auto resultType = dyn_cast<VRegType>(physicalResultType);
-      if (!resultType) {
-        return rewriter.notifyMatchFailure(
-            op, "unsupported physical fptosi result type");
-      }
-      resultVRegTypes.push_back(resultType);
+    FailureOr<SmallVector<VRegType>> resultVRegTypes =
+        validateResultParts(op, resultTypes, rewriter);
+    if (failed(resultVRegTypes)) {
+      return failure();
     }
 
     StringAttr rnd = op->getAttrOfType<StringAttr>("rounding");
@@ -15106,7 +15130,7 @@ struct OneToNVMIFPToSIOpPattern : OneToNOpConversionPattern<VMIFPToSIOp> {
     if (!contract->requiresPart) {
       // Same-width (f32→s32, f16→s16): 1:1 mapping, no part.
       return lowerSameWidthFpToInt(
-          op, sourceParts, resultVRegTypes, rnd, sat,
+          op, sourceParts, *resultVRegTypes, rnd, sat,
           "same-width fptosi requires matching physical arity",
           "failed to build fptosi mask", *this->getTypeConverter(), rewriter);
     }
@@ -15127,7 +15151,7 @@ struct OneToNVMIFPToSIOpPattern : OneToNOpConversionPattern<VMIFPToSIOp> {
         // Dense 1:1: each source chunk → 1 result chunk (single part).
         StringRef part = srcBits == 16 ? StringRef("EVEN") : StringRef("P0");
         FailureOr<Value> mask =
-            createAllTrueMaskForVReg(op.getLoc(), sourceType0, rewriter);
+            createAllTrueMaskForVReg(op.getLoc(), *sourceType0, rewriter);
         if (failed(mask)) {
           return rewriter.notifyMatchFailure(
               op, "failed to build fptosi widen 1:1 mask");
@@ -15135,7 +15159,7 @@ struct OneToNVMIFPToSIOpPattern : OneToNOpConversionPattern<VMIFPToSIOp> {
         SmallVector<Value> results;
         results.reserve(resultTypes.size());
         for (auto [sourcePart, resultType] :
-             llvm::zip_equal(sourceParts, resultVRegTypes)) {
+             llvm::zip_equal(sourceParts, *resultVRegTypes)) {
           results.push_back(
               rewriter
                   .create<VcvtOp>(op.getLoc(), resultType, sourcePart, *mask,
@@ -15150,7 +15174,7 @@ struct OneToNVMIFPToSIOpPattern : OneToNOpConversionPattern<VMIFPToSIOp> {
 
       static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
       return lowerWidenFpToInt(
-          op, sourceParts, resultVRegTypes, kEvenOddParts, rnd, sat,
+          op, sourceParts, *resultVRegTypes, kEvenOddParts, rnd, sat,
           "widen fptosi requires result arity = 2 × source arity",
           "failed to build fptosi widen mask", *this->getTypeConverter(),
           rewriter);
@@ -15182,7 +15206,7 @@ struct OneToNVMIFPToSIOpPattern : OneToNOpConversionPattern<VMIFPToSIOp> {
                                     ? ArrayRef<StringRef>(kEvenOddParts)
                                     : ArrayRef<StringRef>(kPacked4Parts);
     return lowerNarrowFpToInt(
-        op, sourceParts, resultVRegTypes, sourceFactor, resultLaneStride, parts,
+        op, sourceParts, *resultVRegTypes, sourceFactor, resultLaneStride, parts,
         rnd, sat,
         "failed to build fptosi source mask",
         "failed to build narrow fptosi result mask",

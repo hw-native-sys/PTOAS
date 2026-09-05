@@ -1481,3 +1481,12 @@ data-layout materialization 和结果替换抽取为 `lowerChannelMerge`。主�
 和转换分派；结果类型一致性诊断、位宽读取和 `lowerConversion` 的转换语义保持不变。
 增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过。现有 sitofp 相关抽样未发现新的 lowering 诊断。
+
+# fptosi physical part 校验整改
+
+本轮将 `OneToNVMIFPToSIOpPattern::matchAndRewrite` 中 source physical part 一致性校验
+与 result physical vreg 类型收集分别抽取为 `validateSourceParts` 和
+`validateResultParts`。入口函数继续负责 fp-to-si contract、round/saturate 属性、
+宽度/布局分派及 mask 构造；保持诊断文本、source/result arity、widen/narrow 选择和
+结果顺序不变。增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过。
