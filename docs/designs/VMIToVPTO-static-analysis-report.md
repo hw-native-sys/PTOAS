@@ -1002,3 +1002,10 @@ signed/unsigned contract 与非同宽 cast-layout 检查保持原有独立语义
 conversion verifier 中重复的同宽契约代码。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；mask/layout lowering
 代表性 case exit=0。
+本轮将 `checkSupportedSIToFPShape` 的同宽 layout/physical arity 校验改为复用
+`checkSameWidthConversionArity`，整数→浮点 verifier 仍保留 `si32→f32` 与 `si8→f16`
+的元素类型/宽度契约以及非同宽 cast-layout 检查。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
+尝试使用 `vmi_vcvt_s8_to_f16_lower.pto` 回归时，输入在既有 VMI verifier 处因
+`sitofp` 的 `si8` source element contract 提前失败，未进入本轮共享 helper 路径，
+因此不将其记为 lowering 通过。

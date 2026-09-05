@@ -15577,18 +15577,12 @@ LogicalResult checkSupportedSIToFPShape(VMISIToFPOp op,
   unsigned srcBits = pto::getPTOStorageElemBitWidth(sourceType.getElementType());
   unsigned dstBits = pto::getPTOStorageElemBitWidth(resultType.getElementType());
   if (srcBits == 32 && dstBits == 32) {
-    if (sourceLayout != resultLayout) {
-      return fail("si32->f32 requires matching layouts");
-    }
     if (!resultType.getElementType().isF32()) {
       return fail("requires f32 result element type");
     }
-    FailureOr<int64_t> sourceArity = getVMIPhysicalArity(sourceType);
-    FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
-    bool aritiesOk = succeeded(sourceArity) && succeeded(resultArity) &&
-                     *sourceArity == *resultArity;
-    if (!aritiesOk) {
-      return fail("requires matching computable physical arity");
+    if (failed(checkSameWidthConversionArity(sourceType, resultType,
+                                             "si32->f32", reason))) {
+      return failure();
     }
   } else if (srcBits == 8 && dstBits == 16) {
     if (!resultType.getElementType().isF16()) {
