@@ -15894,6 +15894,52 @@ std::optional<WalkResult> verifySupportedVMIMiscOp(Operation *op) {
   return std::nullopt;
 }
 
+std::optional<WalkResult>
+verifySupportedVMIChannelShuffleOp(Operation *op) {
+  if (auto split = dyn_cast<VMIChannelSplitOp>(op)) {
+    return verifySupportedChannelOp(
+        split, split.getNumResults(), checkSupportedChannelSplitShape,
+        "pto.vmi.channel_split supports only 2 or 4 channels",
+        "pto.vmi.channel_split requires source layout to be contiguous or "
+        "matching deinterleaved channel layout, every result layout to be "
+        "contiguous, and complete physical channel groups (");
+  }
+  if (auto merge = dyn_cast<VMIChannelMergeOp>(op)) {
+    return verifySupportedChannelOp(
+        merge, merge.getInputs().size(), checkSupportedChannelMergeShape,
+        "pto.vmi.channel_merge supports only 2 or 4 channels",
+        "pto.vmi.channel_merge requires every input layout to be contiguous "
+        "and result layout to be contiguous or matching deinterleaved "
+        "channel layout, with complete physical channel groups (");
+  }
+  if (auto shuffle = dyn_cast<VMIShuffleOp>(op)) {
+    std::string reason;
+    if (succeeded(computeShuffleForwardingSourceParts(shuffle, &reason))) {
+      return WalkResult::advance();
+    }
+    std::string splatReason;
+    if (succeeded(computeShuffleLane0SplatSourcePart(shuffle, &splatReason))) {
+      return WalkResult::advance();
+    }
+    std::string vselrReason;
+    if (succeeded(computeShuffleVselrPlans(shuffle, &vselrReason))) {
+      return WalkResult::advance();
+    }
+
+    shuffle.emitError()
+        << kVMIDiagUnsupportedPrefix
+        << "pto.vmi.shuffle requires physical chunk forwarding or "
+           "lane0 splat or vci-materializable vselr indices (forwarding: "
+        << reason << "; lane0 splat: " << splatReason
+        << "; vselr: " << vselrReason << ")";
+    return WalkResult::interrupt();
+  }
+  if (auto constantMask = dyn_cast<VMIConstantMaskOp>(op)) {
+    return verifySupportedConstantMaskOp(constantMask);
+  }
+  return std::nullopt;
+}
+
 LogicalResult
 verifySupportedVMIToVPTOOps(ModuleOp module,
                             bool enableStableGatherMaskedLoad) {
@@ -15945,46 +15991,9 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
       return *conversionResult;
     }
 
-    if (auto split = dyn_cast<VMIChannelSplitOp>(op)) {
-      return verifySupportedChannelOp(
-          split, split.getNumResults(), checkSupportedChannelSplitShape,
-          "pto.vmi.channel_split supports only 2 or 4 channels",
-          "pto.vmi.channel_split requires source layout to be contiguous or "
-          "matching deinterleaved channel layout, every result layout to be "
-          "contiguous, and complete physical channel groups (");
-    }
-
-    if (auto merge = dyn_cast<VMIChannelMergeOp>(op)) {
-      return verifySupportedChannelOp(
-          merge, merge.getInputs().size(), checkSupportedChannelMergeShape,
-          "pto.vmi.channel_merge supports only 2 or 4 channels",
-          "pto.vmi.channel_merge requires every input layout to be contiguous "
-          "and result layout to be contiguous or matching deinterleaved "
-          "channel layout, with complete physical channel groups (");
-    }
-
-    if (auto shuffle = dyn_cast<VMIShuffleOp>(op)) {
-      std::string reason;
-      if (succeeded(computeShuffleForwardingSourceParts(shuffle, &reason)))
-        return WalkResult::advance();
-      std::string splatReason;
-      if (succeeded(computeShuffleLane0SplatSourcePart(shuffle, &splatReason)))
-        return WalkResult::advance();
-      std::string vselrReason;
-      if (succeeded(computeShuffleVselrPlans(shuffle, &vselrReason)))
-        return WalkResult::advance();
-
-      shuffle.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.shuffle requires physical chunk forwarding or "
-             "lane0 splat or vci-materializable vselr indices (forwarding: "
-          << reason << "; lane0 splat: " << splatReason
-          << "; vselr: " << vselrReason << ")";
-      return WalkResult::interrupt();
-    }
-
-    if (auto constantMask = dyn_cast<VMIConstantMaskOp>(op)) {
-      return verifySupportedConstantMaskOp(constantMask);
+    if (auto channelShuffleResult = verifySupportedVMIChannelShuffleOp(op);
+        channelShuffleResult.has_value()) {
+      return *channelShuffleResult;
     }
 
     return WalkResult::advance();

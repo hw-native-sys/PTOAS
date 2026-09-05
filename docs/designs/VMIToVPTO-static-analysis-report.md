@@ -467,3 +467,9 @@ helper 只负责这些操作各自的支持性验证与原有诊断，主 verifi
 compare、misc、arithmetic 等既有检查顺序，避免将不相关的操作契约混在同一巨大函数中。
 增量合规检查为 `errors=0 warnings=0`，`git diff --check` 通过；group-broadcast、
 连续 load/store 和 interleave memory lowering 回归通过。
+
+本轮再将 channel split/merge、shuffle 及 constant-mask 的检查抽取为
+`verifySupportedVMIChannelShuffleOp`。其中 shuffle 的 forwarding、lane0 splat 和
+vselr 三种候选路径及组合诊断保持原顺序，主 verifier 仅负责分类分派。增量合规检查为
+`errors=0 warnings=0`，`git diff --check` 通过；连续 load/store 与 interleave memory
+lowering 回归通过。
