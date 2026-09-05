@@ -13685,6 +13685,48 @@ private:
     return success();
   }
 
+  FailureOr<Value> buildNarrowTruncResult(
+      VMITruncFOp op, ValueRange sourceParts, VRegType resultType,
+      ArrayRef<StringRef> allParts, int64_t chunkIndex, int64_t sourceFactor,
+      int64_t resultLaneStride, VRegType sourceViewType,
+      bool sourceIsPackedBF16x2, Value sourceMask, StringAttr rnd,
+      StringAttr sat, OneToNPatternRewriter &rewriter) const {
+    FailureOr<Value> resultMask =
+        createAllTrueMaskForVReg(op.getLoc(), resultType, rewriter);
+    if (failed(resultMask)) {
+      return failure();
+    }
+    SmallVector<Value> partials;
+    partials.reserve(sourceFactor);
+    for (int64_t partIndex = 0; partIndex < sourceFactor; ++partIndex) {
+      Value sourcePart =
+          sourceParts[partIndex * (sourceParts.size() / sourceFactor) +
+                      chunkIndex];
+      bool hasIndexedPart =
+          partIndex * resultLaneStride < static_cast<int64_t>(allParts.size());
+      StringRef part =
+          hasIndexedPart ? allParts[partIndex * resultLaneStride]
+                         : allParts[partIndex];
+      partials.push_back(
+          rewriter
+              .create<VcvtOp>(
+                  op.getLoc(), resultType,
+                  makeVcvtSourceView(op.getLoc(), sourcePart,
+                                     sourceIsPackedBF16x2, sourceViewType,
+                                     rewriter),
+                  sourceMask, rnd, sat, rewriter.getStringAttr(part))
+              .getResult());
+    }
+    Value merged = partials.front();
+    for (Value partial : llvm::drop_begin(partials)) {
+      merged = rewriter
+                   .create<VorOp>(op.getLoc(), resultType, merged, partial,
+                                  *resultMask)
+                   .getResult();
+    }
+    return merged;
+  }
+
   LogicalResult lowerNarrow(
       VMITruncFOp op, ValueRange sourceParts,
       ArrayRef<VRegType> resultTypes, ArrayRef<StringRef> allParts,
@@ -13706,39 +13748,15 @@ private:
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
     for (auto [chunkIndex, resultType] : llvm::enumerate(resultTypes)) {
-      FailureOr<Value> resultMask =
-          createAllTrueMaskForVReg(op.getLoc(), resultType, rewriter);
-      if (failed(resultMask)) {
+      FailureOr<Value> result = buildNarrowTruncResult(
+          op, sourceParts, resultType, allParts, chunkIndex, sourceFactor,
+          resultLaneStride, sourceViewType, sourceIsPackedBF16x2, *sourceMask,
+          rnd, sat, rewriter);
+      if (failed(result)) {
         return rewriter.notifyMatchFailure(
             op, "failed to build truncf result mask");
       }
-      SmallVector<Value> partials;
-      partials.reserve(sourceFactor);
-      for (int64_t partIndex = 0; partIndex < sourceFactor; ++partIndex) {
-        Value sourcePart =
-            sourceParts[partIndex * resultTypes.size() + chunkIndex];
-        partials.push_back(
-            rewriter
-                .create<VcvtOp>(
-                    op.getLoc(), resultType,
-                    makeVcvtSourceView(op.getLoc(), sourcePart,
-                                       sourceIsPackedBF16x2, sourceViewType,
-                                       rewriter),
-                    *sourceMask, rnd, sat,
-                    rewriter.getStringAttr(partIndex * resultLaneStride <
-                                                   static_cast<int64_t>(allParts.size())
-                                               ? allParts[partIndex * resultLaneStride]
-                                               : allParts[partIndex]))
-                .getResult());
-      }
-      Value merged = partials.front();
-      for (Value partial : llvm::drop_begin(partials)) {
-        merged = rewriter
-                     .create<VorOp>(op.getLoc(), resultType, merged, partial,
-                                    *resultMask)
-                     .getResult();
-      }
-      results.push_back(merged);
+      results.push_back(*result);
     }
     replaceOpWithFlatConvertedValues(rewriter, op, results,
                                      *this->getTypeConverter());
@@ -13964,12 +13982,14 @@ public:
     if (invalidResultLaneStride) {
       return rewriter.notifyMatchFailure(
           op, "unsupported physical truncf result lane stride");
+    }
     int64_t sourceFactor = factor / resultLaneStride;
     bool sourceArityMismatch =
         sourceParts.size() != sourceFactor * resultTypes.size();
     if (sourceArityMismatch) {
       return rewriter.notifyMatchFailure(
           op, "unsupported physical truncf source/result arity relation");
+    }
 
     StringAttr rnd = rewriter.getStringAttr(
         getTruncFRoundMode(op, resultVRegTypes.front().getElementType()));

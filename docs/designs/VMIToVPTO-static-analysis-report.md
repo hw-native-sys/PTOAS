@@ -1369,3 +1369,14 @@ pipeline invariant 处提前失败，未进入本轮路径。
 语义或后续 saturating narrowing 路径。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_layout_assignment_trunci_lane_stride.pto` lowering exit=0。
+
+# truncf narrow result 整改
+
+本轮将 `OneToNVMITruncFOpPattern::lowerNarrow` 中单个结果 chunk 的 source part
+索引、`VcvtOp` partial 发射、part token 选择和 `VorOp` 合并抽取为
+`buildNarrowTruncResult`。外层函数继续负责 source/result arity 校验、source mask
+构造、结果循环及最终替换；保持 `partIndex * resultLaneStride` 映射、packed BF16
+source view、result mask 和 partial 合并顺序不变。同时补齐该路径缺失的控制流大括号。
+`check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
+通过。增量 native 构建尝试被既有 CMake 外部依赖 `/cann-cmake` 权限错误阻断，未能进入
+源码编译阶段。
