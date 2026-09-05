@@ -11505,6 +11505,42 @@ template <typename SourceOp, typename TargetOp>
 struct OneToNVMIBinaryOpPattern : OneToNOpConversionPattern<SourceOp> {
   using OneToNOpConversionPattern<SourceOp>::OneToNOpConversionPattern;
 
+private:
+  LogicalResult lowerBinaryParts(
+      SourceOp op, ValueRange lhsParts, ValueRange rhsParts,
+      ArrayRef<Type> resultTypes, OneToNPatternRewriter &rewriter) const {
+    bool invalidArity = lhsParts.size() != rhsParts.size() ||
+                        lhsParts.size() != resultTypes.size();
+    if (invalidArity) {
+      return rewriter.notifyMatchFailure(op, "physical binary arity mismatch");
+    }
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (auto [lhs, rhs, resultType] :
+         llvm::zip_equal(lhsParts, rhsParts, resultTypes)) {
+      auto vregType = dyn_cast<VRegType>(resultType);
+      bool invalidTypes = !vregType || lhs.getType() != resultType ||
+                          rhs.getType() != resultType;
+      if (invalidTypes) {
+        return rewriter.notifyMatchFailure(
+            op, "physical binary part type mismatch");
+      }
+      FailureOr<Value> mask =
+          createAllTrueMaskForVReg(op.getLoc(), vregType, rewriter);
+      if (failed(mask)) {
+        return rewriter.notifyMatchFailure(
+            op, "unsupported element type for all-true binary mask");
+      }
+      results.push_back(
+          rewriter.create<TargetOp>(op.getLoc(), resultType, lhs, rhs, *mask)
+              .getResult());
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
+public:
   LogicalResult matchAndRewrite(
       SourceOp op,
       typename OneToNOpConversionPattern<SourceOp>::OpAdaptor adaptor,
@@ -11517,31 +11553,7 @@ struct OneToNVMIBinaryOpPattern : OneToNOpConversionPattern<SourceOp> {
       return failure();
     }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-    if (lhsParts.size() != rhsParts.size() ||
-        lhsParts.size() != resultTypes.size())
-      return rewriter.notifyMatchFailure(op, "physical binary arity mismatch");
-
-    SmallVector<Value> results;
-    results.reserve(resultTypes.size());
-    for (auto [lhs, rhs, resultType] :
-         llvm::zip_equal(lhsParts, rhsParts, resultTypes)) {
-      auto vregType = dyn_cast<VRegType>(resultType);
-      if (!vregType || lhs.getType() != resultType ||
-          rhs.getType() != resultType)
-        return rewriter.notifyMatchFailure(
-            op, "physical binary part type mismatch");
-      FailureOr<Value> mask =
-          createAllTrueMaskForVReg(op.getLoc(), vregType, rewriter);
-      if (failed(mask))
-        return rewriter.notifyMatchFailure(
-            op, "unsupported element type for all-true binary mask");
-      results.push_back(
-          rewriter.create<TargetOp>(op.getLoc(), resultType, lhs, rhs, *mask)
-              .getResult());
-    }
-
-    replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
-    return success();
+    return lowerBinaryParts(op, lhsParts, rhsParts, resultTypes, rewriter);
   }
 };
 

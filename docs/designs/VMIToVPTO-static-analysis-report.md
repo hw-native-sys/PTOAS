@@ -1724,3 +1724,12 @@ OneBlock、TwoBlock、FourBlock、deinterleaved-2 及 contiguous rows 的执行�
 `CombineOp` lowering；max/min 操作选择、等价 mask 合并、多 chunk 累加和原有诊断保持
 不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
 通过；`vmi_to_vpto_reduce_extended.pto` lowering exit=0。
+
+# binary elementwise lowering 职责整改
+
+本轮将模板 `OneToNVMIBinaryOpPattern::matchAndRewrite` 中 physical arity/type 校验、
+all-true mask 构造、目标二元 op 发射和结果替换抽取为 `lowerBinaryParts`。入口现在只
+负责取得 lhs/rhs 与 converted result types；具体 `VaddOp/VsubOp/VmulOp` 等 TargetOp
+实例化方式、mask 语义、结果顺序和诊断保持不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_sub_mul.pto` lowering exit=0。
