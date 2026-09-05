@@ -7318,17 +7318,10 @@ private:
                                                    factor, part, rewriter);
       for (int64_t chunk = 0; chunk < chunksPerPart; ++chunk) {
         Type resultType = resultTypes[part * chunksPerPart + chunk];
-        auto maskType = dyn_cast<MaskType>(resultType);
-        if (!maskType) {
-          return rewriter.notifyMatchFailure(
-              op, "create_mask result must be mask");
-        }
         FailureOr<std::pair<Value, Value>> maskAndRemaining =
-            createRuntimePrefixMask(op.getLoc(), maskType, remaining,
-                                    rewriter);
+            buildDynamicMaskChunk(op, resultType, remaining, rewriter);
         if (failed(maskAndRemaining)) {
-          return rewriter.notifyMatchFailure(
-              op, "unsupported mask type for dynamic create_mask");
+          return failure();
         }
         results.push_back(maskAndRemaining->first);
         remaining = maskAndRemaining->second;
@@ -7365,6 +7358,22 @@ private:
       }
     }
     return std::make_pair(anyLane, activeInChunk);
+  }
+
+  FailureOr<std::pair<Value, Value>> buildDynamicMaskChunk(
+      VMICreateMaskOp op, Type resultType, Value remaining,
+      OneToNPatternRewriter &rewriter) const {
+    auto maskType = dyn_cast<MaskType>(resultType);
+    if (!maskType) {
+      return rewriter.notifyMatchFailure(op, "create_mask result must be mask");
+    }
+    FailureOr<std::pair<Value, Value>> maskAndRemaining =
+        createRuntimePrefixMask(op.getLoc(), maskType, remaining, rewriter);
+    if (failed(maskAndRemaining)) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported mask type for dynamic create_mask");
+    }
+    return *maskAndRemaining;
   }
 
   LogicalResult lowerConstantMask(

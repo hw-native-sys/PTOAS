@@ -2096,6 +2096,16 @@ runtime prefix fallback 生成、结果 arity 校验；保持 physical part/chun
 `vmi_to_vpto_create_mask.pto` 在既有 VMI pack/unpack pipeline invariant 处提前失败，未
 进入本轮 helper，不能将该失败归因于本轮改动。
 
+# create_mask 动态 chunk mask 构造职责整改
+
+本轮在 `OneToNVMICreateMaskOpPattern::lowerDynamicMask` 中引入
+`buildDynamicMaskChunk`，将单个 physical result 的 mask 类型校验和 runtime prefix mask
+构造抽取为独立 helper。主函数继续负责 active lane clamp、part 分区、remaining 状态串接
+和结果顺序；保持动态 mask 的 remaining 传递、factor/chunk 索引、诊断及输出语义不变。
+增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_to_vpto_create_mask_dynamic.pto` 在既有 VMI pack/unpack
+pipeline invariant 处提前失败，未进入本轮 helper，不能将该失败归因于本轮改动。
+
 # group broadcast load E2B 结果复用职责整改
 
 本轮在 `OneToNVMIGroupBroadcastLoadOpPattern::lowerDirectE2B` 中引入 `buildE2BResults`，
