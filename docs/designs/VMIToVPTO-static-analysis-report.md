@@ -258,6 +258,16 @@ shape 校验、mask 构造、物理 `vcvt` 发射和结果替换抽取为
 `git diff --check` 通过；`vmi_zero_gap_extui_load.pto` 与
 `vmi_layout_assignment_trunci_lane_stride.pto` lowering 均 exit=0。
 
+# integer extension 物理结果校验整改
+
+本轮将 `OneToNVMIExtIOpPattern::matchAndRewrite` 中 contiguous/deinterleaved 路径共用的
+physical result vreg 收集与一致性校验抽取为 `collectExtensionResultTypes`。入口现在只
+负责 source/result VMI 类型取得、source part 基本校验和 group-slot/普通路径分派；结果
+类型统一性、integer element 约束和原有诊断保持不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_zero_gap_extui_load.pto` 与 `vmi_to_vpto_group_slot_integer_unpack.pto` lowering
+均 exit=0。
+
 # staging mask group loop 整改
 
 本轮将 `materializeStagingContiguousToDeintMaskLayout` 的单 group materialization 与

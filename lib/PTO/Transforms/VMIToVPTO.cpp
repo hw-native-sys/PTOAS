@@ -14422,6 +14422,26 @@ private:
                                *mask, rewriter);
   }
 
+  FailureOr<SmallVector<VRegType>> collectExtensionResultTypes(
+      OpT op, ArrayRef<Type> resultTypes,
+      OneToNPatternRewriter &rewriter) const {
+    SmallVector<VRegType> resultVRegTypes;
+    resultVRegTypes.reserve(resultTypes.size());
+    for (Type resultType : resultTypes) {
+      auto resultVRegType = dyn_cast<VRegType>(resultType);
+      bool invalidType =
+          !resultVRegType || !isa<IntegerType>(resultVRegType.getElementType()) ||
+          (!resultVRegTypes.empty() &&
+           resultVRegType != resultVRegTypes.front());
+      if (invalidType) {
+        return rewriter.notifyMatchFailure(
+            op, "unsupported physical integer extension result type");
+      }
+      resultVRegTypes.push_back(resultVRegType);
+    }
+    return resultVRegTypes;
+  }
+
 public:
   LogicalResult
   matchAndRewrite(OpT op,
@@ -14492,18 +14512,12 @@ public:
           sourceLayout, resultLayout, sourceBits, resultBits, rewriter);
     }
 
-    SmallVector<VRegType> resultVRegTypes;
-    resultVRegTypes.reserve(resultTypes.size());
-    for (Type resultType : resultTypes) {
-      auto resultVRegType = dyn_cast<VRegType>(resultType);
-      if (!resultVRegType ||
-          !isa<IntegerType>(resultVRegType.getElementType()) ||
-          (!resultVRegTypes.empty() &&
-           resultVRegType != resultVRegTypes.front()))
-        return rewriter.notifyMatchFailure(
-            op, "unsupported physical integer extension result type");
-      resultVRegTypes.push_back(resultVRegType);
+    FailureOr<SmallVector<VRegType>> maybeResultVRegTypes =
+        collectExtensionResultTypes(op, resultTypes, rewriter);
+    if (failed(maybeResultVRegTypes)) {
+      return failure();
     }
+    SmallVector<VRegType> resultVRegTypes = std::move(*maybeResultVRegTypes);
 
     unsigned sourceBits =
         pto::getPTOStorageElemBitWidth(sourceType.getElementType());
