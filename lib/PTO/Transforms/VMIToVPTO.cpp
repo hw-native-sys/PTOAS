@@ -6937,8 +6937,10 @@ struct OneToNVMICreateGroupMaskOpPattern
                   OneToNPatternRewriter &rewriter) const override {
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    bool failedResultTypeConversion = failed(maybe_resultTypes);
+    if (failedResultTypeConversion) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     auto resultVMIType = cast<VMIMaskType>(op.getResult().getType());
     VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
@@ -7478,8 +7480,10 @@ public:
     SmallVector<Type> lowTypes = std::move(*maybe_lowTypes);
     FailureOr<SmallVector<Type>> maybe_highTypes =
         getConvertedResultTypes(op, 1, *this->getTypeConverter());
-    if (failed(maybe_highTypes))
+    bool failedHighTypeConversion = failed(maybe_highTypes);
+    if (failedHighTypeConversion) {
       return failure();
+    }
     SmallVector<Type> highTypes = std::move(*maybe_highTypes);
     if (lowTypes.size() != highTypes.size())
       return rewriter.notifyMatchFailure(
@@ -12161,8 +12165,10 @@ public:
     ValueRange maskParts = adaptor.getMask();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    bool failedResultTypeConversion = failed(maybe_resultTypes);
+    if (failedResultTypeConversion) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
 
     VMILayoutSupport supports;
