@@ -197,3 +197,7 @@ abs、sqrt、exp、ln 等重复 dispatch；`pmode` 特殊处理仍仅位于 vect
 为模板 helper `verifySupportedShapeOp`（提交 `013a971e5`）。helper 只负责 reason
 传播和 WalkResult 转换，具体 support checker 与每个操作的能力描述仍在调用点明确
 指定；增量合规检查通过。
+
+本轮进一步复用 `verifySupportedShapeOp` 处理 `fptosi`、`fptoui`、`sitofp` 和
+`bitcast` 的 conversion shape 验证（提交 `5dff6114a`），仅保留各操作独立的能力
+描述与 checker，删除重复的 reason/WalkResult 样板代码；增量合规检查通过。
