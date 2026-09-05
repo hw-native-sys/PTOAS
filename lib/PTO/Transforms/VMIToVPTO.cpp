@@ -14128,24 +14128,234 @@ void emitEnsureLayoutMaterializationError(VMIEnsureLayoutOp ensure,
          "packing plan";
 }
 
-LogicalResult
-verifySupportedVMIToVPTOOps(ModuleOp module,
-                            bool enableStableGatherMaskedLoad) {
+std::optional<WalkResult> verifySupportedVMIMemoryOp(
+    Operation *op, bool enableStableGatherMaskedLoad) {
   auto emitMemoryUnsupported =
-      [](Operation *op, StringRef opName, VMIVRegType type, Value source,
-         std::optional<int64_t> constantOffset) -> WalkResult {
+      [](Operation *memoryOp, StringRef opName, VMIVRegType type,
+         Value source, std::optional<int64_t> constantOffset) -> WalkResult {
     std::string reason;
-    if (succeeded(checkSupportedLoadShape(type, source,
-                                          source.getType(), constantOffset,
-                                          &reason)))
+    if (succeeded(checkSupportedLoadShape(type, source, source.getType(),
+                                          constantOffset, &reason))) {
       return WalkResult::advance();
+    }
 
-    op->emitError() << kVMIDiagUnsupportedPrefix << opName
-                    << " direct lowering requires a supported memory source ("
-                    << reason << ")";
+    memoryOp->emitError()
+        << kVMIDiagUnsupportedPrefix << opName
+        << " direct lowering requires a supported memory source (" << reason
+        << ")";
     return WalkResult::interrupt();
   };
 
+  if (auto load = dyn_cast<VMILoadOp>(op)) {
+    return emitMemoryUnsupported(
+        op, "pto.vmi.load", cast<VMIVRegType>(load.getResult().getType()),
+        load.getSource(), getConstantIndexValue(load.getOffset()));
+  }
+  if (auto load = dyn_cast<VMIDeinterleaveLoadOp>(op)) {
+    std::string reason;
+    if (succeeded(checkSupportedDeinterleaveLoadShape(load, &reason))) {
+      return WalkResult::advance();
+    }
+    load.emitError()
+        << kVMIDiagUnsupportedPrefix
+        << "pto.vmi.deinterleave_load lowers through pto.vldsx2 only for "
+           "matching contiguous full low/high result chunks with a supported "
+           "UB source and 8/16/32-bit element type ("
+        << reason << ")";
+    return WalkResult::interrupt();
+  }
+  if (auto load = dyn_cast<VMIStrideLoadOp>(op)) {
+    std::string reason;
+    if (succeeded(checkSupportedStrideLoadShape(load, &reason))) {
+      return WalkResult::advance();
+    }
+    load.emitError()
+        << kVMIDiagUnsupportedPrefix
+        << "pto.vmi.stride_load lowers through pto.vsldb only for one "
+           "contiguous physical result/mask chunk and a supported UB source ("
+        << reason << ")";
+    return WalkResult::interrupt();
+  }
+  if (auto load = dyn_cast<VMIGroupLoadOp>(op)) {
+    std::string reason;
+    if (succeeded(checkSupportedGroupLoadShape(load, &reason))) {
+      return WalkResult::advance();
+    }
+    load.emitError()
+        << kVMIDiagUnsupportedPrefix
+        << "pto.vmi.group_load requires contiguous full result chunks, a "
+           "supported UB source, and num_groups deriving a group size "
+           "aligned to physical chunks ("
+        << reason << ")";
+    return WalkResult::interrupt();
+  }
+  if (auto load = dyn_cast<VMIGroupSlotLoadOp>(op)) {
+    std::string reason;
+    if (succeeded(checkSupportedGroupSlotLoadShape(load, &reason))) {
+      return WalkResult::advance();
+    }
+    load.emitError()
+        << kVMIDiagUnsupportedPrefix
+        << "pto.vmi.group_slot_load requires explicit group_slots result "
+           "layout matching num_groups, a supported UB pointer source, "
+           "and either slots=8 with constant unit source_group_stride or "
+           "slots=1 row-local lowering ("
+        << reason << ")";
+    return WalkResult::interrupt();
+  }
+  if (auto load = dyn_cast<VMIGroupBroadcastLoadOp>(op)) {
+    std::string reason;
+    if (succeeded(checkSupportedGroupBroadcastLoadShape(load, &reason))) {
+      return WalkResult::advance();
+    }
+    load.emitError()
+        << kVMIDiagUnsupportedPrefix
+        << "pto.vmi.group_broadcast_load requires either the BRC full-group "
+           "chunk form, the E2B packet form for b16/b32 direct or split "
+           "group size, or the generic group-slot-load then group-broadcast "
+           "fallback with supported UB pointer source and source_group_stride ("
+        << reason << ")";
+    return WalkResult::interrupt();
+  }
+  if (auto load = dyn_cast<VMIMaskedLoadOp>(op)) {
+    if (enableStableGatherMaskedLoad) {
+      load.emitError()
+          << kVMIDiagUnsupportedPrefix
+          << "pto.vmi.masked_load stable VGATHER-based lowering is reserved "
+             "for strict masked/tail loads but is not implemented yet";
+      return WalkResult::interrupt();
+    }
+    std::string reason;
+    if (succeeded(checkSupportedMaskedLoadShape(load, &reason))) {
+      return WalkResult::advance();
+    }
+    load.emitError()
+        << kVMIDiagUnsupportedPrefix
+        << "pto.vmi.masked_load direct lowering requires a supported memory "
+           "source, contiguous result/passthru/mask layouts, and either "
+           "full physical chunks or a statically safe full-read footprint ("
+        << reason << ")";
+    return WalkResult::interrupt();
+  }
+  if (auto gather = dyn_cast<VMIGatherOp>(op)) {
+    std::string reason;
+    if (succeeded(checkSupportedGatherShape(gather, &reason))) {
+      return WalkResult::advance();
+    }
+    gather.emitError()
+        << kVMIDiagUnsupportedPrefix
+        << "pto.vmi.gather lowers through pto.vgather2/pto.vgather2_bc + pto.vsel "
+           "only for UB pointer sources, contiguous full physical chunks, "
+           "ui16/i16/f16/bf16 results with ui16 indices and b16 masks, "
+           "or 32-bit results with i32 indices and b32 masks ("
+        << reason << ")";
+    return WalkResult::interrupt();
+  }
+  if (auto load = dyn_cast<VMIExpandLoadOp>(op)) {
+    std::string reason;
+    if (succeeded(checkSupportedExpandLoadShape(load, &reason))) {
+      return WalkResult::advance();
+    }
+    load.emitError()
+        << kVMIDiagUnsupportedPrefix
+        << "pto.vmi.expand_load direct lowering is currently supported for "
+           "either a static all-active mask lowered as pto.vlds, or a "
+           "one-full-chunk 32-bit UB runtime mask lowered through pto.vusqz "
+           "+ pto.vgather2_bc + pto.vsel ("
+        << reason << ")";
+    return WalkResult::interrupt();
+  }
+  if (auto store = dyn_cast<VMIStoreOp>(op)) {
+    std::string reason;
+    if (succeeded(checkSupportedStoreShape(
+            cast<VMIVRegType>(store.getValue().getType()),
+            store.getDestination(), store.getDestination().getType(),
+            &reason))) {
+      return WalkResult::advance();
+    }
+    store.emitError()
+        << kVMIDiagUnsupportedPrefix
+        << "pto.vmi.store requires an 8/16/32-bit predicate-maskable element "
+           "type and either full physical chunks or contiguous tail-store "
+           "layout, with UB-backed destination ("
+        << reason << ")";
+    return WalkResult::interrupt();
+  }
+  if (auto store = dyn_cast<VMIInterleaveStoreOp>(op)) {
+    std::string reason;
+    if (succeeded(checkSupportedInterleaveStoreShape(store, &reason))) {
+      return WalkResult::advance();
+    }
+    store.emitError()
+        << kVMIDiagUnsupportedPrefix
+        << "pto.vmi.interleave_store lowers through pto.vstsx2 only for "
+           "matching contiguous full low/high input chunks with a supported "
+           "UB destination and 8/16/32-bit element type ("
+        << reason << ")";
+    return WalkResult::interrupt();
+  }
+  if (auto store = dyn_cast<VMIGroupStoreOp>(op)) {
+    std::string reason;
+    if (succeeded(checkSupportedGroupStoreShape(store, &reason))) {
+      return WalkResult::advance();
+    }
+    store.emitError()
+        << kVMIDiagUnsupportedPrefix
+        << "pto.vmi.group_store requires a supported UB destination and a "
+           "table-supported value layout lowering through one-block vsstb, "
+           "full-chunk vsts, or deinterleaved vstsx2 ("
+        << reason << ")";
+    return WalkResult::interrupt();
+  }
+  if (auto store = dyn_cast<VMIMaskedStoreOp>(op)) {
+    std::string reason;
+    if (succeeded(checkSupportedMaskedStoreShape(
+            cast<VMIVRegType>(store.getValue().getType()),
+            cast<VMIMaskType>(store.getMask().getType()),
+            store.getDestination(), store.getDestination().getType(),
+            &reason))) {
+      return WalkResult::advance();
+    }
+    store.emitError()
+        << kVMIDiagUnsupportedPrefix
+        << "pto.vmi.masked_store requires either full physical chunks or "
+           "contiguous tail-store value/mask layout, with UB-backed "
+           "destination ("
+        << reason << ")";
+    return WalkResult::interrupt();
+  }
+  if (auto store = dyn_cast<VMIStrideStoreOp>(op)) {
+    std::string reason;
+    if (succeeded(checkSupportedStrideStoreShape(store, &reason))) {
+      return WalkResult::advance();
+    }
+    store.emitError()
+        << kVMIDiagUnsupportedPrefix
+        << "pto.vmi.stride_store lowers through pto.vsstb only for one "
+           "contiguous physical value/mask chunk and a supported UB "
+           "destination ("
+        << reason << ")";
+    return WalkResult::interrupt();
+  }
+  if (auto scatter = dyn_cast<VMIScatterOp>(op)) {
+    std::string reason;
+    if (succeeded(checkSupportedScatterShape(scatter, &reason))) {
+      return WalkResult::advance();
+    }
+    scatter.emitError()
+        << kVMIDiagUnsupportedPrefix
+        << "pto.vmi.scatter lowers through pto.vscatter only with a UB "
+           "pointer destination, contiguous full physical chunks, 32-bit "
+           "value elements, i32 indices, and b32 masks ("
+        << reason << ")";
+    return WalkResult::interrupt();
+  }
+  return std::nullopt;
+}
+
+LogicalResult
+verifySupportedVMIToVPTOOps(ModuleOp module,
+                            bool enableStableGatherMaskedLoad) {
   auto emitMaskableUnsupported = [](Operation *op, StringRef opName,
                                      VMIVRegType type) -> WalkResult {
     std::string reason;
@@ -14161,8 +14371,13 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
   };
 
   WalkResult result = module.walk([&enableStableGatherMaskedLoad,
-                                   &emitMemoryUnsupported,
                                    &emitMaskableUnsupported](Operation *op) {
+    if (auto memoryResult = verifySupportedVMIMemoryOp(
+            op, enableStableGatherMaskedLoad);
+        memoryResult.has_value()) {
+      return *memoryResult;
+    }
+
     if (auto constant = dyn_cast<VMIConstantOp>(op)) {
       auto denseAttr = dyn_cast<DenseElementsAttr>(constant.getValue());
       if (!denseAttr || !denseAttr.isSplat()) {
@@ -14219,200 +14434,6 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
       return WalkResult::interrupt();
     }
 
-    if (auto load = dyn_cast<VMILoadOp>(op)) {
-      return emitMemoryUnsupported(
-          op, "pto.vmi.load", cast<VMIVRegType>(load.getResult().getType()),
-          load.getSource(), getConstantIndexValue(load.getOffset()));
-    }
-    if (auto load = dyn_cast<VMIDeinterleaveLoadOp>(op)) {
-      std::string reason;
-      if (succeeded(
-              checkSupportedDeinterleaveLoadShape(load, &reason)))
-        return WalkResult::advance();
-      load.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.deinterleave_load lowers through pto.vldsx2 only for "
-             "matching contiguous full low/high result chunks with a supported "
-             "UB source and 8/16/32-bit element type ("
-          << reason << ")";
-      return WalkResult::interrupt();
-    }
-    if (auto load = dyn_cast<VMIStrideLoadOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedStrideLoadShape(load, &reason)))
-        return WalkResult::advance();
-      load.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.stride_load lowers through pto.vsldb only for one "
-             "contiguous physical result/mask chunk and a supported UB source ("
-          << reason << ")";
-      return WalkResult::interrupt();
-    }
-    if (auto load = dyn_cast<VMIGroupLoadOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedGroupLoadShape(load, &reason)))
-        return WalkResult::advance();
-      load.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.group_load requires contiguous full result chunks, a "
-             "supported UB source, and num_groups deriving a group size "
-             "aligned to physical chunks ("
-          << reason << ")";
-      return WalkResult::interrupt();
-    }
-    if (auto load = dyn_cast<VMIGroupSlotLoadOp>(op)) {
-      std::string reason;
-      if (succeeded(
-              checkSupportedGroupSlotLoadShape(load, &reason)))
-        return WalkResult::advance();
-      load.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.group_slot_load requires explicit group_slots result "
-             "layout matching num_groups, a supported UB pointer source, "
-             "and either slots=8 with constant unit source_group_stride or "
-             "slots=1 row-local lowering ("
-          << reason << ")";
-      return WalkResult::interrupt();
-    }
-    if (auto load = dyn_cast<VMIGroupBroadcastLoadOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedGroupBroadcastLoadShape(load,
-                                                          &reason)))
-        return WalkResult::advance();
-      load.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.group_broadcast_load requires either the BRC full-group "
-             "chunk form, the E2B packet form for b16/b32 direct or split "
-             "group size, or the generic group-slot-load then group-broadcast "
-             "fallback with supported UB pointer source and source_group_stride ("
-          << reason << ")";
-      return WalkResult::interrupt();
-    }
-    if (auto load = dyn_cast<VMIMaskedLoadOp>(op)) {
-      if (enableStableGatherMaskedLoad) {
-        load.emitError()
-            << kVMIDiagUnsupportedPrefix
-            << "pto.vmi.masked_load stable VGATHER-based lowering is reserved "
-               "for strict masked/tail loads but is not implemented yet";
-        return WalkResult::interrupt();
-      }
-      std::string reason;
-      if (succeeded(checkSupportedMaskedLoadShape(load, &reason)))
-        return WalkResult::advance();
-      load.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.masked_load direct lowering requires a supported memory "
-             "source, contiguous result/passthru/mask layouts, and either "
-             "full physical chunks or a statically safe full-read footprint ("
-          << reason << ")";
-      return WalkResult::interrupt();
-    }
-    if (auto gather = dyn_cast<VMIGatherOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedGatherShape(gather, &reason)))
-        return WalkResult::advance();
-      gather.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.gather lowers through pto.vgather2/pto.vgather2_bc + pto.vsel only "
-             "for UB pointer sources, contiguous full physical chunks, "
-             "ui16/i16/f16/bf16 results with ui16 indices and b16 masks, "
-             "or 32-bit results with i32 indices and b32 masks ("
-          << reason << ")";
-      return WalkResult::interrupt();
-    }
-    if (auto load = dyn_cast<VMIExpandLoadOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedExpandLoadShape(load, &reason)))
-        return WalkResult::advance();
-      load.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.expand_load direct lowering is currently supported for "
-             "either a static all-active mask lowered as pto.vlds, or a "
-             "one-full-chunk 32-bit UB runtime mask lowered through pto.vusqz "
-             "+ pto.vgather2_bc + pto.vsel ("
-          << reason << ")";
-      return WalkResult::interrupt();
-    }
-    if (auto store = dyn_cast<VMIStoreOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedStoreShape(cast<VMIVRegType>(store.getValue().getType()),
-              store.getDestination(), store.getDestination().getType(),
-              &reason)))
-        return WalkResult::advance();
-      store.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.store requires an 8/16/32-bit predicate-maskable "
-             "element type and either full physical chunks or contiguous "
-             "tail-store layout, with UB-backed destination ("
-          << reason << ")";
-      return WalkResult::interrupt();
-    }
-    if (auto store = dyn_cast<VMIInterleaveStoreOp>(op)) {
-      std::string reason;
-      if (succeeded(
-              checkSupportedInterleaveStoreShape(store, &reason)))
-        return WalkResult::advance();
-      store.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.interleave_store lowers through pto.vstsx2 only for "
-             "matching contiguous full low/high input chunks with a supported "
-             "UB destination and 8/16/32-bit element type ("
-          << reason << ")";
-      return WalkResult::interrupt();
-    }
-    if (auto store = dyn_cast<VMIGroupStoreOp>(op)) {
-      std::string reason;
-      if (succeeded(
-              checkSupportedGroupStoreShape(store, &reason)))
-        return WalkResult::advance();
-      store.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.group_store requires a supported UB destination and a "
-             "table-supported value layout lowering through one-block vsstb, "
-             "full-chunk vsts, or deinterleaved vstsx2 ("
-          << reason << ")";
-      return WalkResult::interrupt();
-    }
-    if (auto store = dyn_cast<VMIMaskedStoreOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedMaskedStoreShape(cast<VMIVRegType>(store.getValue().getType()),
-              cast<VMIMaskType>(store.getMask().getType()),
-              store.getDestination(), store.getDestination().getType(),
-              &reason)))
-        return WalkResult::advance();
-      store.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.masked_store requires either full physical chunks or "
-             "contiguous tail-store value/mask layout, with UB-backed "
-             "destination ("
-          << reason << ")";
-      return WalkResult::interrupt();
-    }
-    if (auto store = dyn_cast<VMIStrideStoreOp>(op)) {
-      std::string reason;
-      if (succeeded(
-              checkSupportedStrideStoreShape(store, &reason)))
-        return WalkResult::advance();
-      store.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.stride_store lowers through pto.vsstb only for one "
-             "contiguous physical value/mask chunk and a supported UB "
-             "destination ("
-          << reason << ")";
-      return WalkResult::interrupt();
-    }
-    if (auto scatter = dyn_cast<VMIScatterOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedScatterShape(scatter, &reason)))
-        return WalkResult::advance();
-      scatter.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.scatter lowers through pto.vscatter only with a UB "
-             "pointer destination, contiguous full physical chunks, 32-bit "
-             "value elements, i32 indices, and b32 masks ("
-          << reason << ")";
-      return WalkResult::interrupt();
-    }
     if (auto ensure = dyn_cast<VMIEnsureLayoutOp>(op)) {
       auto sourceType = cast<VMIVRegType>(ensure.getSource().getType());
       auto resultType = cast<VMIVRegType>(ensure.getResult().getType());
