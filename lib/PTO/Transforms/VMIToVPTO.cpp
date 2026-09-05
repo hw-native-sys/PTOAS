@@ -5410,6 +5410,29 @@ FailureOr<SmallVector<Value>> materializeNarrowingMaskGranularityPart(
   return results;
 }
 
+static FailureOr<SmallVector<Value>> materializeAdjacentMaskGranularityPart(
+    Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
+    ValueRange sourceParts, int sourceRank, int resultRank,
+    MaskType resultMaskType, int64_t part, int64_t sourceOffset,
+    PatternRewriter &rewriter) {
+  FailureOr<int64_t> sourceChunks = getVMITypeChunksInPart(sourceType, part);
+  FailureOr<int64_t> resultChunks = getVMITypeChunksInPart(resultType, part);
+  bool invalidChunkCounts = failed(sourceChunks) || failed(resultChunks);
+  if (invalidChunkCounts) {
+    (void)rewriter.notifyMatchFailure(
+        op, "requires computable source/result chunks per layout part");
+    return failure();
+  }
+  if (resultRank > sourceRank) {
+    return materializeWideningMaskGranularityPart(
+        op, resultMaskType, sourceParts, sourceOffset, *sourceChunks,
+        *resultChunks, rewriter);
+  }
+  return materializeNarrowingMaskGranularityPart(
+      op, resultMaskType, sourceParts, sourceOffset, *sourceChunks,
+      *resultChunks, rewriter);
+}
+
 FailureOr<SmallVector<Value>> materializeAdjacentMaskGranularityConversion(
     Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
     ValueRange sourceParts, PatternRewriter &rewriter) {
@@ -5436,30 +5459,14 @@ FailureOr<SmallVector<Value>> materializeAdjacentMaskGranularityConversion(
   int64_t sourceOffset = 0;
   for (int64_t part = 0; part < *factor; ++part) {
     FailureOr<int64_t> sourceChunks = getVMITypeChunksInPart(sourceType, part);
-    FailureOr<int64_t> resultChunks = getVMITypeChunksInPart(resultType, part);
-    if (failed(sourceChunks) || failed(resultChunks))
-      return fail("requires computable source/result chunks per layout part");
-
-    if (resultRank > sourceRank) {
-      FailureOr<SmallVector<Value>> partResults =
-          materializeWideningMaskGranularityPart(
-              op, resultMaskType, sourceParts, sourceOffset, *sourceChunks,
-              *resultChunks, rewriter);
-      if (failed(partResults)) {
-        return failure();
-      }
-      results.append(*partResults);
-    } else {
-      FailureOr<SmallVector<Value>> partResults =
-          materializeNarrowingMaskGranularityPart(
-              op, resultMaskType, sourceParts, sourceOffset, *sourceChunks,
-              *resultChunks, rewriter);
-      if (failed(partResults)) {
-        return failure();
-      }
-      results.append(*partResults);
+    FailureOr<SmallVector<Value>> partResults =
+        materializeAdjacentMaskGranularityPart(
+            op, sourceType, resultType, sourceParts, sourceRank, resultRank,
+            resultMaskType, part, sourceOffset, rewriter);
+    if (failed(partResults)) {
+      return failure();
     }
-
+    results.append(*partResults);
     sourceOffset += *sourceChunks;
   }
 

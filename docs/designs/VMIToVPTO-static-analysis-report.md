@@ -774,3 +774,12 @@ arity/type、all-true mask 和 group/chunk offset 计算；主 `matchAndRewrite`
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_layout_assignment_group_store_slots1_unit_stride.pto` lowering exit=0，输出仍含
 预期 `vsts`。
+
+本轮将 `materializeAdjacentMaskGranularityConversion` 的单 layout-part 转换抽取为
+`materializeAdjacentMaskGranularityPart`。该 helper 负责计算 source/result chunks 并
+选择 widening 或 narrowing 的 chunk materializer；外层函数只负责 physical factor 的
+part 遍历、source offset 累加和最终 arity 校验。这样直接降低了相邻 mask granularity
+转换的职责复杂度，保持 ppack/por 与 part 顺序不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_ensure_mask_granularity.pto` lowering exit=0，输出仍包含预期的
+`pdintlv/ppack/pintlv` 序列。
