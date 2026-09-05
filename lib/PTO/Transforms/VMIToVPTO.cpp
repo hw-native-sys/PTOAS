@@ -34,6 +34,7 @@
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
@@ -9780,9 +9781,11 @@ public:
               firstType, VPTOMemoryOpFamily::Load, e2bDist);
     }
 
-    if (failed(directFact) ||
+    bool useGroupSlotFallback =
+        failed(directFact) ||
         directFact->kind != VMIGroupBroadcastLoadDirectKind::E2B ||
-        !canUseDirectE2B) {
+        !canUseDirectE2B;
+    if (useGroupSlotFallback) {
       return lowerGroupSlotFallback(
           op, rewriter, *source, *offset, *sourceGroupStride, resultVMIType,
           resultTypes, numGroups);
@@ -15203,6 +15206,75 @@ WalkResult verifySupportedMaskableOp(MaskableOp op, StringRef opName,
                        cast<VMIVRegType>(op.getResult().getType()));
 }
 
+WalkResult emitMaskableUnsupported(Operation *op, StringRef opName,
+                                   VMIVRegType type) {
+  std::string reason;
+  if (succeeded(checkSupportedMaskableVReg(type, &reason))) {
+    return WalkResult::advance();
+  }
+  op->emitError()
+      << kVMIDiagUnsupportedPrefix << opName
+      << " direct lowering requires physical vreg parts with b8/b16/b32 "
+         "predicate masks ("
+      << reason << ")";
+  return WalkResult::interrupt();
+}
+
+template <typename MaskableCheck>
+std::optional<WalkResult> verifySupportedVMIArithmeticOp(Operation *op,
+                                                         MaskableCheck check) {
+#define PTO_VERIFY_MASKABLE(Op, Name)                                      \
+  if (auto value = dyn_cast<Op>(op)) {                                    \
+    return verifySupportedMaskableOp(value, Name, check);                  \
+  }
+  PTO_VERIFY_MASKABLE(VMIAddFOp, "pto.vmi.addf");
+  PTO_VERIFY_MASKABLE(VMIAddIOp, "pto.vmi.addi");
+  PTO_VERIFY_MASKABLE(VMISubFOp, "pto.vmi.subf");
+  PTO_VERIFY_MASKABLE(VMISubIOp, "pto.vmi.subi");
+  PTO_VERIFY_MASKABLE(VMIMulFOp, "pto.vmi.mulf");
+  PTO_VERIFY_MASKABLE(VMIMulIOp, "pto.vmi.muli");
+  PTO_VERIFY_MASKABLE(VMIDivFOp, "pto.vmi.divf");
+  PTO_VERIFY_MASKABLE(VMIMinFOp, "pto.vmi.minf");
+  PTO_VERIFY_MASKABLE(VMIMinIOp, "pto.vmi.mini");
+  PTO_VERIFY_MASKABLE(VMIMaxFOp, "pto.vmi.maxf");
+  PTO_VERIFY_MASKABLE(VMIMaxIOp, "pto.vmi.maxi");
+  PTO_VERIFY_MASKABLE(VMINegFOp, "pto.vmi.negf");
+  PTO_VERIFY_MASKABLE(VMINegIOp, "pto.vmi.negi");
+  PTO_VERIFY_MASKABLE(VMIAbsFOp, "pto.vmi.absf");
+  PTO_VERIFY_MASKABLE(VMIAbsIOp, "pto.vmi.absi");
+  PTO_VERIFY_MASKABLE(VMISqrtOp, "pto.vmi.sqrt");
+  PTO_VERIFY_MASKABLE(VMIExpOp, "pto.vmi.exp");
+  PTO_VERIFY_MASKABLE(VMILnOp, "pto.vmi.ln");
+  PTO_VERIFY_MASKABLE(VMIAndIOp, "pto.vmi.andi");
+  PTO_VERIFY_MASKABLE(VMIOrIOp, "pto.vmi.ori");
+  PTO_VERIFY_MASKABLE(VMIXOrIOp, "pto.vmi.xori");
+  PTO_VERIFY_MASKABLE(VMIShLIOp, "pto.vmi.shli");
+  PTO_VERIFY_MASKABLE(VMIShRUIOp, "pto.vmi.shrui");
+  PTO_VERIFY_MASKABLE(VMIShRSIOp, "pto.vmi.shrsi");
+  PTO_VERIFY_MASKABLE(VMINotOp, "pto.vmi.not");
+  PTO_VERIFY_MASKABLE(VMISelectOp, "pto.vmi.select");
+#undef PTO_VERIFY_MASKABLE
+  if (auto value = dyn_cast<VMIAddSOp>(op)) {
+    return verifySupportedVecScalarOp(value, "pto.vmi.vadds", check);
+  }
+  if (auto value = dyn_cast<VMIMulSOp>(op)) {
+    return verifySupportedVecScalarOp(value, "pto.vmi.vmuls", check);
+  }
+  if (auto value = dyn_cast<VMIMaxSOp>(op)) {
+    return verifySupportedVecScalarOp(value, "pto.vmi.vmaxs", check);
+  }
+  if (auto value = dyn_cast<VMIMinSOp>(op)) {
+    return verifySupportedVecScalarOp(value, "pto.vmi.vmins", check);
+  }
+  if (auto value = dyn_cast<VMIShlSOp>(op)) {
+    return verifySupportedVecScalarOp(value, "pto.vmi.vshls", check);
+  }
+  if (auto value = dyn_cast<VMIShrSOp>(op)) {
+    return verifySupportedVecScalarOp(value, "pto.vmi.vshrs", check);
+  }
+  return std::nullopt;
+}
+
 template <typename ReduceOp>
 WalkResult verifySupportedReduceOp(ReduceOp op, bool requiresReassoc,
                                    StringRef diagnostic) {
@@ -15267,24 +15339,7 @@ WalkResult verifySupportedChannelOp(ChannelOp op, int64_t channels,
 LogicalResult
 verifySupportedVMIToVPTOOps(ModuleOp module,
                             bool enableStableGatherMaskedLoad) {
-  auto emitMaskableUnsupported = [](Operation *op, StringRef opName,
-                                     VMIVRegType type) -> WalkResult {
-    std::string reason;
-    bool supported = succeeded(checkSupportedMaskableVReg(type, &reason));
-    if (supported) {
-      return WalkResult::advance();
-    }
-
-    op->emitError()
-        << kVMIDiagUnsupportedPrefix << opName
-        << " direct lowering requires physical vreg parts with b8/b16/b32 "
-           "predicate masks ("
-        << reason << ")";
-    return WalkResult::interrupt();
-  };
-
-  WalkResult result = module.walk([&enableStableGatherMaskedLoad,
-                                   &emitMaskableUnsupported](Operation *op) {
+  WalkResult result = module.walk([&enableStableGatherMaskedLoad](Operation *op) {
     if (auto memoryResult = verifySupportedVMIMemoryOp(
             op, enableStableGatherMaskedLoad);
         memoryResult.has_value()) {
@@ -15340,24 +15395,12 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
           "b8 mask, and contiguous 256x{ui16|i16} acc/result (");
     }
 
-    if (auto addf = dyn_cast<VMIAddFOp>(op))
-      return verifySupportedMaskableOp(addf, "pto.vmi.addf",
-                                       emitMaskableUnsupported);
-    if (auto addi = dyn_cast<VMIAddIOp>(op))
-      return verifySupportedMaskableOp(addi, "pto.vmi.addi",
-                                       emitMaskableUnsupported);
-    if (auto subf = dyn_cast<VMISubFOp>(op))
-      return verifySupportedMaskableOp(subf, "pto.vmi.subf",
-                                       emitMaskableUnsupported);
-    if (auto subi = dyn_cast<VMISubIOp>(op))
-      return verifySupportedMaskableOp(subi, "pto.vmi.subi",
-                                       emitMaskableUnsupported);
-    if (auto mulf = dyn_cast<VMIMulFOp>(op))
-      return verifySupportedMaskableOp(mulf, "pto.vmi.mulf",
-                                       emitMaskableUnsupported);
-    if (auto muli = dyn_cast<VMIMulIOp>(op))
-      return verifySupportedMaskableOp(muli, "pto.vmi.muli",
-                                       emitMaskableUnsupported);
+    if (auto arithmeticResult = verifySupportedVMIArithmeticOp(
+            op, emitMaskableUnsupported);
+        arithmeticResult.has_value()) {
+      return *arithmeticResult;
+    }
+
     if (auto addc = dyn_cast<VMIVaddcOp>(op)) {
       std::string reason;
       if (succeeded(checkSupportedVMIAddcShape(addc, &reason)))
@@ -15378,24 +15421,6 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
                         << reason << ")";
       return WalkResult::interrupt();
     }
-    if (auto vecScalar = dyn_cast<VMIAddSOp>(op))
-      return verifySupportedVecScalarOp(vecScalar, "pto.vmi.vadds",
-                                        emitMaskableUnsupported);
-    if (auto vecScalar = dyn_cast<VMIMulSOp>(op))
-      return verifySupportedVecScalarOp(vecScalar, "pto.vmi.vmuls",
-                                        emitMaskableUnsupported);
-    if (auto vecScalar = dyn_cast<VMIMaxSOp>(op))
-      return verifySupportedVecScalarOp(vecScalar, "pto.vmi.vmaxs",
-                                        emitMaskableUnsupported);
-    if (auto vecScalar = dyn_cast<VMIMinSOp>(op))
-      return verifySupportedVecScalarOp(vecScalar, "pto.vmi.vmins",
-                                        emitMaskableUnsupported);
-    if (auto vecScalar = dyn_cast<VMIShlSOp>(op))
-      return verifySupportedVecScalarOp(vecScalar, "pto.vmi.vshls",
-                                        emitMaskableUnsupported);
-    if (auto vecScalar = dyn_cast<VMIShrSOp>(op))
-      return verifySupportedVecScalarOp(vecScalar, "pto.vmi.vshrs",
-                                        emitMaskableUnsupported);
     if (auto vmull = dyn_cast<VMIVmullOp>(op)) {
       std::string reason;
       if (succeeded(checkSupportedVmullShape(vmull, &reason)))
@@ -15408,43 +15433,6 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
           << reason << ")";
       return WalkResult::interrupt();
     }
-    if (auto divf = dyn_cast<VMIDivFOp>(op))
-      return verifySupportedMaskableOp(divf, "pto.vmi.divf",
-                                       emitMaskableUnsupported);
-    if (auto minf = dyn_cast<VMIMinFOp>(op))
-      return verifySupportedMaskableOp(minf, "pto.vmi.minf",
-                                       emitMaskableUnsupported);
-    if (auto mini = dyn_cast<VMIMinIOp>(op))
-      return verifySupportedMaskableOp(mini, "pto.vmi.mini",
-                                       emitMaskableUnsupported);
-    if (auto maxf = dyn_cast<VMIMaxFOp>(op))
-      return verifySupportedMaskableOp(maxf, "pto.vmi.maxf",
-                                       emitMaskableUnsupported);
-    if (auto maxi = dyn_cast<VMIMaxIOp>(op))
-      return verifySupportedMaskableOp(maxi, "pto.vmi.maxi",
-                                       emitMaskableUnsupported);
-    if (auto negf = dyn_cast<VMINegFOp>(op))
-      return verifySupportedMaskableOp(negf, "pto.vmi.negf",
-                                       emitMaskableUnsupported);
-    if (auto negi = dyn_cast<VMINegIOp>(op)) {
-      return verifySupportedMaskableOp(negi, "pto.vmi.negi",
-                                       emitMaskableUnsupported);
-    }
-    if (auto absf = dyn_cast<VMIAbsFOp>(op))
-      return verifySupportedMaskableOp(absf, "pto.vmi.absf",
-                                       emitMaskableUnsupported);
-    if (auto absi = dyn_cast<VMIAbsIOp>(op))
-      return verifySupportedMaskableOp(absi, "pto.vmi.absi",
-                                       emitMaskableUnsupported);
-    if (auto sqrt = dyn_cast<VMISqrtOp>(op))
-      return verifySupportedMaskableOp(sqrt, "pto.vmi.sqrt",
-                                       emitMaskableUnsupported);
-    if (auto exp = dyn_cast<VMIExpOp>(op))
-      return verifySupportedMaskableOp(exp, "pto.vmi.exp",
-                                       emitMaskableUnsupported);
-    if (auto ln = dyn_cast<VMILnOp>(op))
-      return verifySupportedMaskableOp(ln, "pto.vmi.ln",
-                                       emitMaskableUnsupported);
     if (auto relu = dyn_cast<VMIReluOp>(op)) {
       std::string reason;
       if (succeeded(checkSupportedReluShape(relu, &reason)))
@@ -15457,30 +15445,6 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
           << reason << ")";
       return WalkResult::interrupt();
     }
-    if (auto andi = dyn_cast<VMIAndIOp>(op))
-      return verifySupportedMaskableOp(andi, "pto.vmi.andi",
-                                       emitMaskableUnsupported);
-    if (auto ori = dyn_cast<VMIOrIOp>(op))
-      return verifySupportedMaskableOp(ori, "pto.vmi.ori",
-                                       emitMaskableUnsupported);
-    if (auto xori = dyn_cast<VMIXOrIOp>(op))
-      return verifySupportedMaskableOp(xori, "pto.vmi.xori",
-                                       emitMaskableUnsupported);
-    if (auto shli = dyn_cast<VMIShLIOp>(op))
-      return verifySupportedMaskableOp(shli, "pto.vmi.shli",
-                                       emitMaskableUnsupported);
-    if (auto shrui = dyn_cast<VMIShRUIOp>(op))
-      return verifySupportedMaskableOp(shrui, "pto.vmi.shrui",
-                                       emitMaskableUnsupported);
-    if (auto shrsi = dyn_cast<VMIShRSIOp>(op))
-      return verifySupportedMaskableOp(shrsi, "pto.vmi.shrsi",
-                                       emitMaskableUnsupported);
-    if (auto notOp = dyn_cast<VMINotOp>(op))
-      return verifySupportedMaskableOp(notOp, "pto.vmi.not",
-                                       emitMaskableUnsupported);
-    if (auto select = dyn_cast<VMISelectOp>(op))
-      return verifySupportedMaskableOp(select, "pto.vmi.select",
-                                       emitMaskableUnsupported);
     if (auto vselr = dyn_cast<VMIVselrOp>(op)) {
       std::string reason;
       if (succeeded(checkSupportedVselrShape(vselr, &reason)))

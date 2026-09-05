@@ -310,6 +310,20 @@ block stride、part/chunk offset、结果 vreg/mask 校验和结果替换；主 
 `vmi_layout_assignment_group_broadcast_load_e2b_b16.pto` 回归通过，增量合规检查和
 `git diff --check` 通过。
 
+本轮将 verifier 中重复的普通算术、向量标量算术、位运算、比较选择等 maskable
+操作分派收敛到 `verifySupportedVMIArithmeticOp`，并将统一的物理 vreg/mask 能力
+检查提取为 `emitMaskableUnsupported`。该 helper 只负责按操作类别选择既有
+`verifySupportedMaskableOp`/`verifySupportedVecScalarOp`，保留每个操作的诊断名称、
+`pmode=merge` 检查以及原 verifier 的 memory/layout/compare 优先顺序；`vaddc`、
+`vmull`、`relu` 等具有独立 shape 契约的操作仍保持专用分支。相关源码增量检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
+
+本轮回归了 `vmi_interleaved_memory_ops.pto`、
+`vmi_to_vpto_load_store_contiguous.pto` 和
+`vmi_layout_assignment_group_broadcast_load_e2b_b16.pto`，均以 `pto-test-opt` 完整
+lowering 成功。尝试增量编译时仍被工作区既有 CMake 外部依赖配置阻断：构建系统尝试
+创建 `/cann-cmake` 而权限不足，未产生 C++ 编译诊断。
+
 随后将该 pattern 的 group-slot fallback 抽取为 `lowerGroupSlotFallback`，集中负责
 根据 unit-stride 选择 slots=8/1、构造物理 source 类型、生成 source part 类型以及调用
 group-slot load 与广播物化。主分派函数只保留 direct BRC/E2B 能力判断和 fallback 选择，
