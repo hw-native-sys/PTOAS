@@ -1896,3 +1896,11 @@ active_prefix_index、compress 和 compress_store 的 shape check、reason 收�
 `WalkResult` 处理。各操作仍保留原有 shape checker、诊断正文、操作识别顺序和成功/失败
 语义，避免重复控制流。增量 `check_changed_code.py` 结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
+
+# add-carry verifier 分派职责整改
+
+本轮为 `verifySupportedVMIAddCarryOp` 引入模板 helper `verifyAddCarryShape`，统一
+`vaddc`/`vaddcs` 的 shape checker、reason 收集、诊断前缀和 `WalkResult` 处理。两种操作
+仍使用各自的 shape checker、诊断名称和原有识别顺序，保持成功/失败语义不变。增量
+`check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
+通过。

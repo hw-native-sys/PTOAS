@@ -18291,28 +18291,27 @@ std::optional<WalkResult> verifySupportedVMIConversionOp(Operation *op) {
   return std::nullopt;
 }
 
+template <typename CarryOp, typename ShapeCheck>
+std::optional<WalkResult> verifyAddCarryShape(CarryOp op, ShapeCheck check,
+                                               StringRef diagnostic) {
+  std::string reason;
+  if (succeeded(check(op, &reason))) {
+    return WalkResult::advance();
+  }
+  op.emitError() << kVMIDiagUnsupportedPrefix << diagnostic << reason << ")";
+  return WalkResult::interrupt();
+}
+
 std::optional<WalkResult> verifySupportedVMIAddCarryOp(Operation *op) {
   if (auto addc = dyn_cast<VMIVaddcOp>(op)) {
-    std::string reason;
-    if (succeeded(checkSupportedVMIAddcShape(addc, &reason))) {
-      return WalkResult::advance();
-    }
-    addc.emitError() << kVMIDiagUnsupportedPrefix
-                     << "pto.vmi.vaddc requires matching 32-bit data and "
-                        "b32 mask parts ("
-                     << reason << ")";
-    return WalkResult::interrupt();
+    return verifyAddCarryShape(
+        addc, checkSupportedVMIAddcShape,
+        "pto.vmi.vaddc requires matching 32-bit data and b32 mask parts (");
   }
   if (auto addcs = dyn_cast<VMIVaddcsOp>(op)) {
-    std::string reason;
-    if (succeeded(checkSupportedVMIAddcsShape(addcs, &reason))) {
-      return WalkResult::advance();
-    }
-    addcs.emitError() << kVMIDiagUnsupportedPrefix
-                      << "pto.vmi.vaddcs requires matching 32-bit data and "
-                         "b32 mask parts ("
-                      << reason << ")";
-    return WalkResult::interrupt();
+    return verifyAddCarryShape(
+        addcs, checkSupportedVMIAddcsShape,
+        "pto.vmi.vaddcs requires matching 32-bit data and b32 mask parts (");
   }
   return std::nullopt;
 }
