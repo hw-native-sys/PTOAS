@@ -1752,3 +1752,11 @@ scalar 单值语义、mask 透传、TargetOp 选择、结果顺序和原有诊�
 大括号以满足 `G.FMT.11-CPP`。增量 `check_changed_code.py` 结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_vector_scalar_ops.pto` lowering exit=0。
+
+# vaddc physical chunk lowering 职责整改
+
+本轮将 `OneToNVMIVaddcOpPattern::matchAndRewrite` 中 physical arity、32-bit data/b32
+mask part 校验及逐 chunk `VaddcOp` 发射抽取为 `lowerParts`。入口继续负责两个结果组的
+类型转换、carry/result 容器准备与最终扁平化替换；carry 结果排布（所有 result 后接所有
+carry）、mask 合同、结果顺序和诊断语义保持不变。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
