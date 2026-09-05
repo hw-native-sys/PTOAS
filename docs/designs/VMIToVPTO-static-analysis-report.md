@@ -1149,3 +1149,10 @@ physical types 的转换与失败处理。主分派不再重复调用 type conve
 layout 判定、地址计算、结果顺序和指令选择不变。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续 load/store
 lowering exit=0。
+
+本轮进一步将 group-load 的 contiguous 路径抽取为 `lowerContiguousPath`，集中完成
+group size/row stride 判定、result physical type 准备，以及 unit-stride 与普通 chunk
+lowering 的选择；主 pattern 只保留 block-deinterleaved 特例和 contiguous fallback
+分派。保持地址计算、对齐语义、结果顺序和指令选择不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续 load/store
+lowering exit=0。

@@ -7927,6 +7927,31 @@ private:
     return std::move(*resultTypes);
   }
 
+  LogicalResult lowerContiguousPath(
+      VMIGroupLoadOp op, OneToNPatternRewriter &rewriter, Value source,
+      Value offset, Value rowStride, VMIVRegType resultVMIType,
+      VMILayoutAttr resultLayout) const {
+    FailureOr<int64_t> groupSize = getGroupSizeFromNumGroups(
+        resultVMIType, op.getNumGroupsAttr().getInt());
+    if (failed(groupSize)) {
+      return rewriter.notifyMatchFailure(
+          op, "group_load requires num_groups to evenly divide lane count");
+    }
+    std::optional<int64_t> constantRowStride =
+        getConstantIndexValue(op.getRowStride());
+    FailureOr<SmallVector<Type>> resultTypes = getResultTypes(op, rewriter);
+    if (failed(resultTypes)) {
+      return failure();
+    }
+    bool unitStride = constantRowStride && *constantRowStride == *groupSize;
+    if (unitStride && resultLayout && resultLayout.isContiguous()) {
+      return lowerContiguousUnitStride(op, rewriter, source, offset,
+                                       resultVMIType, *resultTypes);
+    }
+    return lowerContiguousChunks(op, rewriter, source, offset, rowStride,
+                                 resultVMIType, *resultTypes);
+  }
+
   LogicalResult lowerContiguousUnitStride(
       VMIGroupLoadOp op, OneToNPatternRewriter &rewriter, Value source,
       Value offset, VMIVRegType resultVMIType, ArrayRef<Type> resultTypes) const {
@@ -8154,36 +8179,8 @@ public:
                            resultVMIType, resultLayout);
     }
 
-    if (resultLayout && resultLayout.isContiguous()) {
-      FailureOr<int64_t> groupSize = getGroupSizeFromNumGroups(
-          resultVMIType, op.getNumGroupsAttr().getInt());
-      if (failed(groupSize)) {
-        return rewriter.notifyMatchFailure(
-            op, "group_load requires num_groups to evenly divide lane count");
-      }
-      std::optional<int64_t> constantRowStride =
-          getConstantIndexValue(op.getRowStride());
-      if (constantRowStride && *constantRowStride == *groupSize) {
-        FailureOr<SmallVector<Type>> maybe_resultTypes =
-            getResultTypes(op, rewriter);
-        if (failed(maybe_resultTypes)) {
-          return failure();
-        }
-        SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-        return lowerContiguousUnitStride(
-            op, rewriter, *source, *offset, resultVMIType, resultTypes);
-      }
-    }
-
-    FailureOr<SmallVector<Type>> maybe_resultTypes =
-        getResultTypes(op, rewriter);
-    if (failed(maybe_resultTypes)) {
-      return failure();
-    }
-
-    SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-    return lowerContiguousChunks(op, rewriter, *source, *offset, *rowStride,
-                                 resultVMIType, resultTypes);
+    return lowerContiguousPath(op, rewriter, *source, *offset, *rowStride,
+                               resultVMIType, resultLayout);
   }
 };
 
