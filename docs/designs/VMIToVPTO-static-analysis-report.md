@@ -847,6 +847,13 @@ part 遍历、source offset 累加和最终 arity 校验。这样直接降低了
 `vmi_to_vpto_ensure_mask_granularity.pto` lowering exit=0，输出仍包含预期的
 `pdintlv/ppack/pintlv` 序列。
 
+本轮将 `materializeStagingDeintToContiguousMaskLayout` 中 factor=2 的内嵌 lambda
+抽取为 `materializeFactor2DeintToContiguousGroup`，使 factor=2 与已有 factor=4
+都通过独立的 group materializer 负责 predicate interleave 和 result type 选择；外层
+函数只负责分组迭代、结果容量和 arity 校验。该拆分保持 mask part 顺序与尾部结果裁剪
+语义不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_to_vpto_ensure_mask_granularity.pto` lowering exit=0。
+
 本轮将 `OneToNVMIGroupStoreOpPattern` 的普通 contiguous full-chunk `vsts` 发射路径
 抽取为 `lowerContiguousGroupStore`。helper 独立负责 contiguous chunk shape、physical
 arity、all-true mask 及 group/chunk offset；主 pattern 保留 deinterleaved=2 与

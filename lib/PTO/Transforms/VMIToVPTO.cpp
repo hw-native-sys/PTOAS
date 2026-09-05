@@ -5744,6 +5744,29 @@ FailureOr<std::array<Value, 4>> materializeFactor4DeintToContiguousGroup(
                               high->second};
 }
 
+static FailureOr<std::array<Value, 2>> materializeFactor2DeintToContiguousGroup(
+    Operation *op, ArrayRef<Value> sources, TypeRange resultTypes,
+    size_t resultOffset, PatternRewriter &rewriter) {
+  auto fail = [&op, &rewriter](const Twine &message)
+      -> FailureOr<std::array<Value, 2>> {
+    (void)rewriter.notifyMatchFailure(op, message);
+    return failure();
+  };
+  bool invalidSources = sources.size() != 2 || resultTypes.empty();
+  if (invalidSources) {
+    return fail("factor-2 staging mask conversion requires two sources");
+  }
+  size_t first = std::min(resultOffset, resultTypes.size() - 1);
+  size_t second = std::min(resultOffset + 1, resultTypes.size() - 1);
+  FailureOr<std::pair<Value, Value>> materialized = createPredicateIntlv(
+      op->getLoc(), resultTypes[first], resultTypes[second], sources[0],
+      sources[1], rewriter);
+  if (failed(materialized)) {
+    return fail("unsupported predicate intlv staging mask type");
+  }
+  return std::array<Value, 2>{materialized->first, materialized->second};
+}
+
 FailureOr<SmallVector<Value>> materializeStagingDeintToContiguousMaskLayout(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     int64_t factor, PatternRewriter &rewriter) {
@@ -5761,31 +5784,21 @@ FailureOr<SmallVector<Value>> materializeStagingDeintToContiguousMaskLayout(
   int64_t groups = sourceParts.size() / factor;
   SmallVector<Value> results;
   results.reserve(resultTypes.size());
-  auto appendFactor2Group = [&](int64_t groupIndex) -> LogicalResult {
-    size_t resultOffset = results.size();
-    auto nextType = [resultOffset, &resultTypes](int64_t offset) -> Type {
-      size_t index = resultOffset + offset;
-      return index < resultTypes.size() ? resultTypes[index]
-                                        : resultTypes[resultOffset];
-    };
-    FailureOr<std::pair<Value, Value>> materialized = createPredicateIntlv(
-        op->getLoc(), nextType(0), nextType(1), sourceParts[groupIndex],
-        sourceParts[groups + groupIndex], rewriter);
-    if (failed(materialized)) {
-      return rewriter.notifyMatchFailure(
-          op, "unsupported predicate intlv staging mask type");
-    }
-    results.push_back(materialized->first);
-    bool hasResultCapacity = results.size() < resultTypes.size();
-    if (hasResultCapacity) {
-      results.push_back(materialized->second);
-    }
-    return success();
-  };
   for (int64_t i = 0; i < groups && results.size() < resultTypes.size(); ++i) {
     if (factor == 2) {
-      if (failed(appendFactor2Group(i))) {
+      SmallVector<Value, 2> sources = {sourceParts[i], sourceParts[groups + i]};
+      FailureOr<std::array<Value, 2>> materialized =
+          materializeFactor2DeintToContiguousGroup(
+              op, sources, resultTypes, results.size(), rewriter);
+      if (failed(materialized)) {
         return failure();
+      }
+      for (Value value : *materialized) {
+        bool resultCapacityReached = results.size() >= resultTypes.size();
+        if (resultCapacityReached) {
+          break;
+        }
+        results.push_back(value);
       }
       continue;
     }
