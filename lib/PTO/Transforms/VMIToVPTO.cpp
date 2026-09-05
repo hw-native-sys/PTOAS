@@ -4199,6 +4199,183 @@ FailureOr<std::optional<SmallVector<Value>>> materializeDataLaneStrideConversion
   return std::nullopt;
 }
 
+FailureOr<std::optional<SmallVector<Value>>> materializeDeinterleaved4Layout(
+    Operation *op, ValueRange sourceParts, TypeRange resultTypes,
+    VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
+    PatternRewriter &rewriter) {
+  auto isElementDeinterleaved = [](VMILayoutAttr layout) {
+    return layout.isDeinterleaved() && layout.getFactor() == 4 &&
+           layout.getLaneStride() == 1;
+  };
+  bool toContiguous = sourceLayout && sourceLayout.isDeinterleaved() &&
+                      isElementDeinterleaved(sourceLayout) && resultLayout &&
+                      resultLayout.isContiguous() &&
+                      resultLayout.getLaneStride() == 1;
+  bool fromContiguous = sourceLayout && sourceLayout.isContiguous() &&
+                        sourceLayout.getLaneStride() == 1 && resultLayout &&
+                        resultLayout.isDeinterleaved() &&
+                        isElementDeinterleaved(resultLayout);
+  if (!toContiguous && !fromContiguous) {
+    return std::nullopt;
+  }
+  if (sourceParts.empty() || resultTypes.empty()) {
+    (void)rewriter.notifyMatchFailure(
+        op, toContiguous
+                ? "deinterleaved=4 to contiguous materialization requires "
+                  "at least one source and result part"
+                : "contiguous to deinterleaved=4 materialization requires "
+                  "at least one source and result part");
+    return failure();
+  }
+
+  auto getPartCounts = [](size_t totalParts) {
+    SmallVector<size_t> counts;
+    counts.reserve(4);
+    size_t base = totalParts / 4;
+    size_t remainder = totalParts % 4;
+    for (size_t part = 0; part < 4; ++part) {
+      counts.push_back(base + (part < remainder ? 1 : 0));
+    }
+    return counts;
+  };
+  auto getPartOffsets = [](ArrayRef<size_t> counts) {
+    SmallVector<size_t> offsets;
+    offsets.reserve(counts.size());
+    size_t offset = 0;
+    for (size_t count : counts) {
+      offsets.push_back(offset);
+      offset += count;
+    }
+    return offsets;
+  };
+
+  if (toContiguous) {
+    if (resultTypes.size() > sourceParts.size()) {
+      (void)rewriter.notifyMatchFailure(
+          op, "deinterleaved=4 to contiguous materialization result arity "
+              "exceeds source footprint");
+      return failure();
+    }
+    SmallVector<size_t> sourceCounts = getPartCounts(sourceParts.size());
+    SmallVector<size_t> sourceOffsets = getPartOffsets(sourceCounts);
+    auto getSourcePart = [&sourceCounts, &sourceOffsets,
+                          &sourceParts](size_t part, size_t group) -> Value {
+      if (group < sourceCounts[part]) {
+        return sourceParts[sourceOffsets[part] + group];
+      }
+      return sourceParts.back();
+    };
+
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    size_t groups = (resultTypes.size() + 3) / 4;
+    for (size_t i = 0; i < groups && results.size() < resultTypes.size();
+         ++i) {
+      Value p0 = getSourcePart(0, i);
+      Value p1 = getSourcePart(1, i);
+      Value p2 = getSourcePart(2, i);
+      Value p3 = getSourcePart(3, i);
+      Type chunkType = p0.getType();
+      bool mismatchedSources = p1.getType() != chunkType ||
+                               p2.getType() != chunkType ||
+                               p3.getType() != chunkType;
+      if (mismatchedSources) {
+        return rewriter.notifyMatchFailure(
+            op, "vintlv deinterleaved=4 requires matching source part types");
+      }
+      for (size_t resultIndex = results.size();
+           resultIndex < resultTypes.size() && resultIndex < results.size() + 4;
+           ++resultIndex) {
+        if (resultTypes[resultIndex] != chunkType) {
+          return rewriter.notifyMatchFailure(
+              op, "vintlv requires operands and results to share one type");
+        }
+      }
+      auto even = rewriter.create<VintlvOp>(op->getLoc(), chunkType, chunkType,
+                                            p0, p2);
+      auto odd = rewriter.create<VintlvOp>(op->getLoc(), chunkType, chunkType,
+                                           p1, p3);
+      auto low = rewriter.create<VintlvOp>(
+          op->getLoc(), chunkType, chunkType, even.getLow(), odd.getLow());
+      auto high = rewriter.create<VintlvOp>(
+          op->getLoc(), chunkType, chunkType, even.getHigh(), odd.getHigh());
+      Value groupResults[] = {low.getLow(), low.getHigh(), high.getLow(),
+                              high.getHigh()};
+      for (Value result : groupResults) {
+        if (results.size() >= resultTypes.size()) {
+          break;
+        }
+        results.push_back(result);
+      }
+    }
+    return std::optional<SmallVector<Value>>(std::move(results));
+  }
+
+  if (sourceParts.size() > resultTypes.size()) {
+    (void)rewriter.notifyMatchFailure(
+        op, "contiguous to deinterleaved=4 materialization source footprint "
+            "exceeds result arity");
+    return failure();
+  }
+  SmallVector<size_t> resultCounts = getPartCounts(resultTypes.size());
+  SmallVector<size_t> resultOffsets = getPartOffsets(resultCounts);
+  auto getSourcePart = [&sourceParts](size_t index) {
+    return sourceParts[std::min(index, sourceParts.size() - 1)];
+  };
+  SmallVector<SmallVector<Value>> parts(4);
+  for (size_t part = 0; part < 4; ++part) {
+    parts[part].reserve(resultCounts[part]);
+  }
+  size_t groups = *std::max_element(resultCounts.begin(), resultCounts.end());
+  for (size_t i = 0; i < groups; ++i) {
+    Value s0 = getSourcePart(4 * i);
+    Value s1 = getSourcePart(4 * i + 1);
+    Value s2 = getSourcePart(4 * i + 2);
+    Value s3 = getSourcePart(4 * i + 3);
+    Type chunkType = s0.getType();
+    bool mismatchedSources = s1.getType() != chunkType ||
+                             s2.getType() != chunkType ||
+                             s3.getType() != chunkType;
+    if (mismatchedSources) {
+      return rewriter.notifyMatchFailure(
+          op, "vdintlv deinterleaved=4 requires matching source part types");
+    }
+    for (size_t part = 0; part < 4; ++part) {
+      if (i < resultCounts[part] &&
+          resultTypes[resultOffsets[part] + i] != chunkType) {
+        return rewriter.notifyMatchFailure(
+            op, "vdintlv requires operands and results to share one type");
+      }
+    }
+    auto low = rewriter.create<VdintlvOp>(op->getLoc(), chunkType, chunkType,
+                                          s0, s1);
+    auto high = rewriter.create<VdintlvOp>(op->getLoc(), chunkType, chunkType,
+                                           s2, s3);
+    auto even = rewriter.create<VdintlvOp>(
+        op->getLoc(), chunkType, chunkType, low.getLow(), high.getLow());
+    auto odd = rewriter.create<VdintlvOp>(
+        op->getLoc(), chunkType, chunkType, low.getHigh(), high.getHigh());
+    if (i < resultCounts[0]) {
+      parts[0].push_back(even.getLow());
+    }
+    if (i < resultCounts[1]) {
+      parts[1].push_back(odd.getLow());
+    }
+    if (i < resultCounts[2]) {
+      parts[2].push_back(even.getHigh());
+    }
+    if (i < resultCounts[3]) {
+      parts[3].push_back(odd.getHigh());
+    }
+  }
+  SmallVector<Value> results;
+  results.reserve(resultTypes.size());
+  for (auto &part : parts) {
+    results.append(part);
+  }
+  return std::optional<SmallVector<Value>>(std::move(results));
+}
+
 FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
@@ -4235,179 +4412,9 @@ FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
     return std::move(**laneStride);
   }
 
-  auto isElementDeinterleaved = [](VMILayoutAttr layout, int64_t factor) {
-    return layout.isDeinterleaved() && layout.getFactor() == factor &&
-           layout.getLaneStride() == 1;
-  };
   auto isBlockDeinterleaved = [](VMILayoutAttr layout, int64_t factor) {
     return layout.isBlockDeinterleaved() && layout.getFactor() == factor;
   };
-
-  bool deint4ToContiguous = sourceLayout.isDeinterleaved() &&
-                            isElementDeinterleaved(sourceLayout, 4) &&
-                            resultLayout.isContiguous() &&
-                            resultLayout.getLaneStride() == 1;
-  bool contiguousToDeint4 =
-      sourceLayout.isContiguous() && sourceLayout.getLaneStride() == 1 &&
-      resultLayout.isDeinterleaved() && isElementDeinterleaved(resultLayout, 4);
-  if (deint4ToContiguous || contiguousToDeint4) {
-    auto getPartCounts = [](size_t totalParts,
-                            int64_t factor) -> SmallVector<size_t> {
-      SmallVector<size_t> counts;
-      counts.reserve(factor);
-      size_t base = totalParts / static_cast<size_t>(factor);
-      size_t remainder = totalParts % static_cast<size_t>(factor);
-      for (int64_t part = 0; part < factor; ++part)
-        counts.push_back(base + (static_cast<size_t>(part) < remainder ? 1 : 0));
-      return counts;
-    };
-    auto getPartOffsets = [](ArrayRef<size_t> counts) -> SmallVector<size_t> {
-      SmallVector<size_t> offsets;
-      offsets.reserve(counts.size());
-      size_t offset = 0;
-      for (size_t count : counts) {
-        offsets.push_back(offset);
-        offset += count;
-      }
-      return offsets;
-    };
-
-    SmallVector<Value> results;
-    if (deint4ToContiguous) {
-      if (sourceParts.empty() || resultTypes.empty()) {
-        (void)rewriter.notifyMatchFailure(
-            op, "deinterleaved=4 to contiguous materialization requires "
-                "at least one source and result part");
-        return failure();
-      }
-      if (resultTypes.size() > sourceParts.size()) {
-        (void)rewriter.notifyMatchFailure(
-            op, "deinterleaved=4 to contiguous materialization result arity "
-                "exceeds source footprint");
-        return failure();
-      }
-
-      SmallVector<size_t> sourceCounts = getPartCounts(sourceParts.size(), 4);
-      SmallVector<size_t> sourceOffsets = getPartOffsets(sourceCounts);
-      auto getSourcePart = [&sourceCounts, &sourceOffsets,
-                            &sourceParts](size_t part, size_t group) -> Value {
-        if (group < sourceCounts[part])
-          return sourceParts[sourceOffsets[part] + group];
-        return sourceParts.back();
-      };
-
-      results.reserve(resultTypes.size());
-      size_t groups = (resultTypes.size() + 3) / 4;
-      for (size_t i = 0; i < groups && results.size() < resultTypes.size();
-           ++i) {
-        Value p0 = getSourcePart(0, i);
-        Value p1 = getSourcePart(1, i);
-        Value p2 = getSourcePart(2, i);
-        Value p3 = getSourcePart(3, i);
-        Type chunkType = p0.getType();
-        if (p1.getType() != chunkType || p2.getType() != chunkType ||
-            p3.getType() != chunkType)
-          return rewriter.notifyMatchFailure(
-              op, "vintlv deinterleaved=4 requires matching source part "
-                  "types");
-        for (size_t resultIndex = results.size();
-             resultIndex < resultTypes.size() && resultIndex < results.size() + 4;
-             ++resultIndex) {
-          if (resultTypes[resultIndex] != chunkType)
-            return rewriter.notifyMatchFailure(
-                op, "vintlv requires operands and results to share one type");
-        }
-
-        auto even = rewriter.create<VintlvOp>(op->getLoc(), chunkType,
-                                              chunkType, p0, p2);
-        auto odd = rewriter.create<VintlvOp>(op->getLoc(), chunkType,
-                                             chunkType, p1, p3);
-        auto low = rewriter.create<VintlvOp>(op->getLoc(), chunkType, chunkType,
-                                             even.getLow(), odd.getLow());
-        auto high = rewriter.create<VintlvOp>(op->getLoc(), chunkType,
-                                              chunkType, even.getHigh(),
-                                              odd.getHigh());
-        Value groupResults[] = {low.getLow(), low.getHigh(), high.getLow(),
-                                high.getHigh()};
-        for (Value result : groupResults) {
-          if (results.size() >= resultTypes.size())
-            break;
-          results.push_back(result);
-        }
-      }
-    } else {
-      if (sourceParts.empty() || resultTypes.empty()) {
-        (void)rewriter.notifyMatchFailure(
-            op, "contiguous to deinterleaved=4 materialization requires "
-                "at least one source and result part");
-        return failure();
-      }
-      if (sourceParts.size() > resultTypes.size()) {
-        (void)rewriter.notifyMatchFailure(
-            op, "contiguous to deinterleaved=4 materialization source "
-                "footprint exceeds result arity");
-        return failure();
-      }
-
-      SmallVector<size_t> resultCounts = getPartCounts(resultTypes.size(), 4);
-      SmallVector<size_t> resultOffsets = getPartOffsets(resultCounts);
-      auto getContiguousSourcePart = [&sourceParts](size_t index) {
-        return sourceParts[std::min(index, sourceParts.size() - 1)];
-      };
-      SmallVector<Value> part0;
-      SmallVector<Value> part1;
-      SmallVector<Value> part2;
-      SmallVector<Value> part3;
-      part0.reserve(resultCounts[0]);
-      part1.reserve(resultCounts[1]);
-      part2.reserve(resultCounts[2]);
-      part3.reserve(resultCounts[3]);
-      size_t groups =
-          *std::max_element(resultCounts.begin(), resultCounts.end());
-      for (size_t i = 0; i < groups; ++i) {
-        Value s0 = getContiguousSourcePart(4 * i);
-        Value s1 = getContiguousSourcePart(4 * i + 1);
-        Value s2 = getContiguousSourcePart(4 * i + 2);
-        Value s3 = getContiguousSourcePart(4 * i + 3);
-        Type chunkType = s0.getType();
-        if (s0.getType() != s1.getType() || s0.getType() != s2.getType() ||
-            s0.getType() != s3.getType())
-          return rewriter.notifyMatchFailure(
-              op, "vdintlv deinterleaved=4 requires matching source part "
-                  "types");
-        for (int64_t part = 0; part < 4; ++part) {
-          if (i < resultCounts[part] &&
-              resultTypes[resultOffsets[part] + i] != chunkType)
-            return rewriter.notifyMatchFailure(
-                op, "vdintlv requires operands and results to share one type");
-        }
-
-        auto low = rewriter.create<VdintlvOp>(
-            op->getLoc(), chunkType, chunkType, s0, s1);
-        auto high = rewriter.create<VdintlvOp>(op->getLoc(), chunkType,
-                                               chunkType, s2, s3);
-        auto even = rewriter.create<VdintlvOp>(
-            op->getLoc(), chunkType, chunkType, low.getLow(), high.getLow());
-        auto odd = rewriter.create<VdintlvOp>(
-            op->getLoc(), chunkType, chunkType, low.getHigh(), high.getHigh());
-        if (i < resultCounts[0])
-          part0.push_back(even.getLow());
-        if (i < resultCounts[1])
-          part1.push_back(odd.getLow());
-        if (i < resultCounts[2])
-          part2.push_back(even.getHigh());
-        if (i < resultCounts[3])
-          part3.push_back(odd.getHigh());
-      }
-      results.reserve(resultTypes.size());
-      results.append(part0);
-      results.append(part1);
-      results.append(part2);
-      results.append(part3);
-    }
-    return results;
-  }
-
   VMILayoutAttr contiguous =
       VMILayoutAttr::getContiguous(rewriter.getContext());
   bool deint2ToLaneStride =
