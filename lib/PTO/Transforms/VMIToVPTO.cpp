@@ -7030,6 +7030,65 @@ struct OneToNVMIDeinterleaveLoadOpPattern
   using OneToNOpConversionPattern<
       VMIDeinterleaveLoadOp>::OneToNOpConversionPattern;
 
+private:
+  LogicalResult lowerUnaligned(
+      VMIDeinterleaveLoadOp op, OneToNPatternRewriter &rewriter,
+      Value source, Value offset, ArrayRef<Type> lowTypes,
+      ArrayRef<Type> highTypes, int64_t lanesPerPart) const {
+    Value streamBase = materializeBufferPointer(
+        source, getMemoryElementType(source.getType()),
+        getMemorySpace(source.getType()), rewriter, op.getLoc());
+    if (!streamBase) {
+      return rewriter.notifyMatchFailure(
+          op, "unaligned deinterleave_load requires a ptr-compatible source");
+    }
+    streamBase = rewriter
+                     .create<AddPtrOp>(op.getLoc(), streamBase.getType(),
+                                       streamBase, offset)
+                     .getResult();
+    Value streamAlign = rewriter
+                            .create<VldasOp>(
+                                op.getLoc(), AlignType::get(rewriter.getContext()),
+                                streamBase)
+                            .getResult();
+    Value increment =
+        rewriter.create<arith::ConstantIndexOp>(op.getLoc(), lanesPerPart);
+    SmallVector<Value> lows;
+    SmallVector<Value> highs;
+    lows.reserve(lowTypes.size());
+    highs.reserve(highTypes.size());
+    for (size_t index = 0; index < lowTypes.size(); ++index) {
+      Type lowType = lowTypes[index];
+      Type highType = highTypes[index];
+      if (lowType != highType) {
+        return rewriter.notifyMatchFailure(
+            op, "deinterleave_load requires matching low/high physical types");
+      }
+      auto first = rewriter.create<VldusOp>(
+          op.getLoc(), lowType, streamAlign.getType(), streamBase.getType(),
+          streamBase, streamAlign, increment);
+      auto second = rewriter.create<VldusOp>(
+          op.getLoc(), highType, first.getUpdatedAlign().getType(),
+          first.getUpdatedBase().getType(), first.getUpdatedBase(),
+          first.getUpdatedAlign(), increment);
+      auto deinterleaved = rewriter.create<VdintlvOp>(
+          op.getLoc(), lowType, highType, first.getResult(), second.getResult());
+      lows.push_back(deinterleaved.getLow());
+      highs.push_back(deinterleaved.getHigh());
+      streamBase = second.getUpdatedBase();
+      streamAlign = second.getUpdatedAlign();
+    }
+    SmallVector<Value> results;
+    results.reserve(lows.size() + highs.size());
+    results.append(lows);
+    results.append(highs);
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
+public:
+
   LogicalResult
   matchAndRewrite(VMIDeinterleaveLoadOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -7080,26 +7139,9 @@ struct OneToNVMIDeinterleaveLoadOpPattern
         isDirectMemoryDistAddressLegal(op.getSource(), op.getOffset(),
                                        lowVMIType.getElementType(), firstType,
                                        VPTOMemoryOpFamily::LoadX2, *dist);
-    Value streamBase;
-    Value streamAlign;
     if (!useDirectAccess) {
-      streamBase = materializeBufferPointer(
-          *source, lowVMIType.getElementType(),
-          getMemorySpace((*source).getType()), rewriter, op.getLoc());
-      if (!streamBase) {
-        return rewriter.notifyMatchFailure(
-            op, "unaligned deinterleave_load requires a ptr-compatible "
-                "source");
-      }
-      streamBase = rewriter
-                       .create<AddPtrOp>(op.getLoc(), streamBase.getType(),
-                                         streamBase, *offset)
-                       .getResult();
-      streamAlign = rewriter
-                        .create<VldasOp>(op.getLoc(),
-                                         AlignType::get(rewriter.getContext()),
-                                         streamBase)
-                        .getResult();
+      return lowerUnaligned(op, rewriter, *source, *offset, lowTypes,
+                            highTypes, *lanesPerPart);
     }
 
     SmallVector<Value> lows;
@@ -7112,34 +7154,14 @@ struct OneToNVMIDeinterleaveLoadOpPattern
       if (lowType != highType)
         return rewriter.notifyMatchFailure(
             op, "deinterleave_load requires matching low/high physical types");
-      if (useDirectAccess) {
-        Value chunkOffset = createChunkOffset(
-            op.getLoc(), *offset,
-            static_cast<int64_t>(index) * 2 * *lanesPerPart, rewriter);
-        auto load = rewriter.create<Vldsx2Op>(
-            op.getLoc(), lowType, highType, /*updated_base=*/Type{}, *source,
-            chunkOffset, rewriter.getStringAttr(*dist));
-        lows.push_back(load.getLow());
-        highs.push_back(load.getHigh());
-        continue;
-      }
-
-      Value increment =
-          rewriter.create<arith::ConstantIndexOp>(op.getLoc(), *lanesPerPart);
-      auto first = rewriter.create<VldusOp>(
-          op.getLoc(), lowType, streamAlign.getType(), streamBase.getType(),
-          streamBase, streamAlign, increment);
-      auto second = rewriter.create<VldusOp>(
-          op.getLoc(), highType, first.getUpdatedAlign().getType(),
-          first.getUpdatedBase().getType(), first.getUpdatedBase(),
-          first.getUpdatedAlign(), increment);
-      auto deinterleaved =
-          rewriter.create<VdintlvOp>(op.getLoc(), lowType, highType,
-                                     first.getResult(), second.getResult());
-      lows.push_back(deinterleaved.getLow());
-      highs.push_back(deinterleaved.getHigh());
-      streamBase = second.getUpdatedBase();
-      streamAlign = second.getUpdatedAlign();
+      Value chunkOffset = createChunkOffset(
+          op.getLoc(), *offset,
+          static_cast<int64_t>(index) * 2 * *lanesPerPart, rewriter);
+      auto load = rewriter.create<Vldsx2Op>(
+          op.getLoc(), lowType, highType, Type{}, *source, chunkOffset,
+          rewriter.getStringAttr(*dist));
+      lows.push_back(load.getLow());
+      highs.push_back(load.getHigh());
     }
 
     SmallVector<Value> results;
