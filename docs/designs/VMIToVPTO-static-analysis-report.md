@@ -737,3 +737,10 @@ lane-stride/deinterleaved 快路径和地址安全证明。该拆分保持非对
 active lane 和地址步长语义不变。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_load_store_contiguous.pto` 完成 lowering 回归。
+
+本轮将 `OneToNVMIGroupLoadOpPattern` 的 contiguous unit-stride direct `vlds` 路径
+抽取为 `lowerContiguousUnitStride`。helper 负责 physical lane 计算、逐 chunk offset
+和 vlds 发射及结果替换；主 pattern 保留 contiguous 布局与 row-stride 识别以及其它
+group-load fallback。该拆分不改变 group size/row stride 约束或结果顺序。增量合规检查
+结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；group-store
+unit-stride 与连续 load/store 代表性 lowering 均通过。
