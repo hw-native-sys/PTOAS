@@ -14865,6 +14865,16 @@ private:
     return success();
   }
 
+  FailureOr<Value> buildDenseLaneExtensionResult(
+      OpT op, Value sourcePart, VRegType resultType, Value mask,
+      StringRef part, OneToNPatternRewriter &rewriter) const {
+    return rewriter
+        .create<VcvtOp>(op.getLoc(), resultType, sourcePart, mask,
+                        /*rnd=*/nullptr, /*sat=*/nullptr,
+                        rewriter.getStringAttr(part))
+        .getResult();
+  }
+
   LogicalResult emitDenseLaneExtension(
       OpT op, ValueRange sourceParts, ArrayRef<VRegType> resultTypes,
       VRegType sourceType, StringRef part,
@@ -14879,12 +14889,12 @@ private:
     results.reserve(resultTypes.size());
     for (auto [sourcePart, resultType] :
          llvm::zip_equal(sourceParts, resultTypes)) {
-      results.push_back(
-          rewriter
-              .create<VcvtOp>(op.getLoc(), resultType, sourcePart, *mask,
-                              /*rnd=*/nullptr, /*sat=*/nullptr,
-                              rewriter.getStringAttr(part))
-              .getResult());
+      FailureOr<Value> result = buildDenseLaneExtensionResult(
+          op, sourcePart, resultType, *mask, part, rewriter);
+      if (failed(result)) {
+        return failure();
+      }
+      results.push_back(*result);
     }
     replaceOpWithFlatConvertedValues(rewriter, op, results,
                                      *this->getTypeConverter());
