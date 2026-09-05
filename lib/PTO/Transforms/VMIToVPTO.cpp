@@ -15405,6 +15405,71 @@ std::optional<WalkResult> verifySupportedVMIConversionOp(Operation *op) {
   return std::nullopt;
 }
 
+std::optional<WalkResult> verifySupportedVMISpecialOp(Operation *op) {
+  if (auto addc = dyn_cast<VMIVaddcOp>(op)) {
+    std::string reason;
+    if (succeeded(checkSupportedVMIAddcShape(addc, &reason))) {
+      return WalkResult::advance();
+    }
+    addc.emitError() << kVMIDiagUnsupportedPrefix
+                     << "pto.vmi.vaddc requires matching 32-bit data and "
+                        "b32 mask parts ("
+                     << reason << ")";
+    return WalkResult::interrupt();
+  }
+  if (auto addcs = dyn_cast<VMIVaddcsOp>(op)) {
+    std::string reason;
+    if (succeeded(checkSupportedVMIAddcsShape(addcs, &reason))) {
+      return WalkResult::advance();
+    }
+    addcs.emitError() << kVMIDiagUnsupportedPrefix
+                      << "pto.vmi.vaddcs requires matching 32-bit data and "
+                         "b32 mask parts ("
+                      << reason << ")";
+    return WalkResult::interrupt();
+  }
+  if (auto vmull = dyn_cast<VMIVmullOp>(op)) {
+    std::string reason;
+    if (succeeded(checkSupportedVmullShape(vmull, &reason))) {
+      return WalkResult::advance();
+    }
+    vmull.emitError()
+        << kVMIDiagUnsupportedPrefix
+        << "pto.vmi.vmull requires equal 64/128/256-lane i32/ui32 data "
+           "ports, a matching b32 mask, and contiguous or deinterleaved "
+           "factor-2/factor-4 lane_stride=1 layout ("
+        << reason << ")";
+    return WalkResult::interrupt();
+  }
+  if (auto relu = dyn_cast<VMIReluOp>(op)) {
+    std::string reason;
+    if (succeeded(checkSupportedReluShape(relu, &reason))) {
+      return WalkResult::advance();
+    }
+    relu.emitError()
+        << kVMIDiagUnsupportedPrefix
+        << "pto.vmi.relu direct lowering requires physical vreg parts with "
+           "b32 predicates for si32 or matching b16/b32 predicates for "
+           "f16/f32 ("
+        << reason << ")";
+    return WalkResult::interrupt();
+  }
+  if (auto vselr = dyn_cast<VMIVselrOp>(op)) {
+    std::string reason;
+    if (succeeded(checkSupportedVselrShape(vselr, &reason))) {
+      return WalkResult::advance();
+    }
+    vselr.emitError()
+        << kVMIDiagUnsupportedPrefix
+        << "pto.vmi.vselr supports only contiguous lane_stride=1 layouts "
+           "with N=64, 128, or 256 for 8-bit, N=64 or 128 for 16-bit, "
+           "or N=64 for 32-bit elements ("
+        << reason << ")";
+    return WalkResult::interrupt();
+  }
+  return std::nullopt;
+}
+
 LogicalResult
 verifySupportedVMIToVPTOOps(ModuleOp module,
                             bool enableStableGatherMaskedLoad) {
@@ -15470,61 +15535,9 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
       return *arithmeticResult;
     }
 
-    if (auto addc = dyn_cast<VMIVaddcOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedVMIAddcShape(addc, &reason)))
-        return WalkResult::advance();
-      addc.emitError() << kVMIDiagUnsupportedPrefix
-                       << "pto.vmi.vaddc requires matching 32-bit data and "
-                          "b32 mask parts ("
-                       << reason << ")";
-      return WalkResult::interrupt();
-    }
-    if (auto addcs = dyn_cast<VMIVaddcsOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedVMIAddcsShape(addcs, &reason)))
-        return WalkResult::advance();
-      addcs.emitError() << kVMIDiagUnsupportedPrefix
-                        << "pto.vmi.vaddcs requires matching 32-bit data and "
-                           "b32 mask parts ("
-                        << reason << ")";
-      return WalkResult::interrupt();
-    }
-    if (auto vmull = dyn_cast<VMIVmullOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedVmullShape(vmull, &reason)))
-        return WalkResult::advance();
-      vmull.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.vmull requires equal 64/128/256-lane i32/ui32 data "
-             "ports, a matching b32 mask, and contiguous or deinterleaved "
-             "factor-2/factor-4 lane_stride=1 layout ("
-          << reason << ")";
-      return WalkResult::interrupt();
-    }
-    if (auto relu = dyn_cast<VMIReluOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedReluShape(relu, &reason)))
-        return WalkResult::advance();
-      relu.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.relu direct lowering requires physical vreg parts with "
-             "b32 predicates for si32 or matching b16/b32 predicates for "
-             "f16/f32 ("
-          << reason << ")";
-      return WalkResult::interrupt();
-    }
-    if (auto vselr = dyn_cast<VMIVselrOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedVselrShape(vselr, &reason)))
-        return WalkResult::advance();
-      vselr.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.vselr supports only contiguous lane_stride=1 layouts "
-             "with N=64, 128, or 256 for 8-bit, N=64 or 128 for 16-bit, "
-             "or N=64 for 32-bit elements ("
-          << reason << ")";
-      return WalkResult::interrupt();
+    if (auto specialResult = verifySupportedVMISpecialOp(op);
+        specialResult.has_value()) {
+      return *specialResult;
     }
 
     if (auto activePrefix = dyn_cast<VMIActivePrefixIndexOp>(op)) {

@@ -356,3 +356,9 @@ compare、算术及专用 shape 检查的先后顺序。源码增量合规检查
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续代表性
 `pto-test-opt` lowering case 通过。`vmi_to_vpto_integer_casts.pto` 在测试自身的
 `unpack` pipeline invariant 处提前失败，未进入本轮 verifier/lowering 变化路径。
+
+本轮将 `vaddc`、`vaddcs`、`vmull`、`relu` 和 `vselr` 等具有独立 shape 契约的
+专用 verifier 分派抽取为 `verifySupportedVMISpecialOp`。helper 只聚合既有 checker
+与错误诊断，未改变这些操作的能力范围、诊断内容或相对于 memory/layout/compare/
+arithmetic 检查的顺序。源码增量合规检查及 `git diff --check` 通过；连续的 load/store、
+interleave memory 和 group-broadcast lowering 回归均通过。
