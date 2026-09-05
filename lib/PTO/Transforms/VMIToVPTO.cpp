@@ -8964,6 +8964,7 @@ struct OneToNVMIStoreOpPattern : OneToNOpConversionPattern<VMIStoreOp> {
     if (unknownLanesPerPart) {
       return rewriter.notifyMatchFailure(
           op, "store requires known physical lanes per part");
+    }
     bool fullPhysicalChunks =
         succeeded(checkFullDataPhysicalChunks(valueVMIType, nullptr));
     FailureOr<Value> destination =
@@ -8975,6 +8976,7 @@ struct OneToNVMIStoreOpPattern : OneToNOpConversionPattern<VMIStoreOp> {
     bool invalidAddressOperands = failed(destination) || failed(offset);
     if (invalidAddressOperands) {
       return failure();
+    }
 
     ValueRange valueParts = adaptor.getValue();
     std::optional<std::string> laneStrideDist =
