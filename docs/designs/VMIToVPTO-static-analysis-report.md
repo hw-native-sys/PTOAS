@@ -159,3 +159,7 @@ unit-stride 判定与 slots=1 1PT 对齐判定具有独立职责；原有 memory
 `checkSupportedScatterPhysicalShape`（提交 `0c463c20e`），把 value/indices/mask
 的 physical arity 一致性及 full-chunk 证明与 scatter 的布局、元素宽度和索引契约
 分离。调用顺序和诊断保持不变，增量合规检查通过。
+随后将 `checkSupportedGatherShape` 的 physical arity、四寄存器上限和 full-chunk
+证明抽取为 `checkSupportedGatherPhysicalShape`（提交 `1cb382b06`），由 gather 主
+检查只负责布局、元素宽度和索引契约。`b16` 单物理 part 的 partial-chunk 例外仍由
+原有条件传入，保持诊断与支持范围不变。
