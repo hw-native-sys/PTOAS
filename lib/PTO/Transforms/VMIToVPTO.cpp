@@ -15311,43 +15311,24 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
     }
 
     if (auto fptosi = dyn_cast<VMIFPToSIOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedFPToSIShape(fptosi, &reason)))
-        return WalkResult::advance();
-
-      fptosi.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.fptosi supports fp-to-signed-int conversion pairs "
-             "listed in the VPTO vcvt contract; check lookupVMIFpToSiContract ("
-          << reason << ")";
-      return WalkResult::interrupt();
+      return verifySupportedShapeOp(
+          fptosi, checkSupportedFPToSIShape,
+          "pto.vmi.fptosi supports fp-to-signed-int conversion pairs listed in "
+          "the VPTO vcvt contract; check lookupVMIFpToSiContract (");
     }
 
     if (auto fptoui = dyn_cast<VMIFPToUIOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedFPToUIShape(fptoui, &reason)))
-        return WalkResult::advance();
-
-      fptoui.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.fptoui supports fp-to-unsigned-int conversion pairs "
-             "listed in the VPTO vcvt contract (e.g. f16 → u8); "
-             "check lookupVMIFpToUIContract ("
-          << reason << ")";
-      return WalkResult::interrupt();
+      return verifySupportedShapeOp(
+          fptoui, checkSupportedFPToUIShape,
+          "pto.vmi.fptoui supports fp-to-unsigned-int conversion pairs listed "
+          "in the VPTO vcvt contract (e.g. f16 → u8); "
+          "check lookupVMIFpToUIContract (");
     }
 
     if (auto sitofp = dyn_cast<VMISIToFPOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedSIToFPShape(sitofp, &reason))) {
-        return WalkResult::advance();
-      }
-
-      sitofp.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.sitofp supports si32->f32 or si8->f16 conversion shapes ("
-          << reason << ")";
-      return WalkResult::interrupt();
+      return verifySupportedShapeOp(
+          sitofp, checkSupportedSIToFPShape,
+          "pto.vmi.sitofp supports si32->f32 or si8->f16 conversion shapes (");
     }
 
     if (auto extsi = dyn_cast<VMIExtSIOp>(op)) {
@@ -15403,17 +15384,10 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
     }
 
     if (auto bitcast = dyn_cast<VMIBitcastOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedBitcastShape(bitcast, &reason))) {
-        return WalkResult::advance();
-      }
-
-      bitcast.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.bitcast requires matching source/result layouts with "
-             "width-changing forms restricted to supported layout table rows ("
-          << reason << ")";
-      return WalkResult::interrupt();
+      return verifySupportedShapeOp(
+          bitcast, checkSupportedBitcastShape,
+          "pto.vmi.bitcast requires matching source/result layouts with "
+          "width-changing forms restricted to supported layout table rows (");
     }
 
     if (auto split = dyn_cast<VMIChannelSplitOp>(op)) {
