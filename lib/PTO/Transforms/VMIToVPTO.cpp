@@ -14413,6 +14413,38 @@ std::optional<WalkResult> verifySupportedVMILayoutOp(Operation *op) {
   return std::nullopt;
 }
 
+template <typename MaskCheck>
+std::optional<WalkResult> verifySupportedVMICompareOp(Operation *op,
+                                                      MaskCheck checkMaskable) {
+  if (auto cmpf = dyn_cast<VMICmpFOp>(op)) {
+    WalkResult physical = checkMaskable(
+        op, "pto.vmi.cmpf", cast<VMIVRegType>(cmpf.getLhs().getType()));
+    if (physical.wasInterrupted()) {
+      return physical;
+    }
+    if (succeeded(checkSupportedComparePredicate<VMICmpFOp>(
+            op, cmpf.getPredicate()))) {
+      return WalkResult::advance();
+    }
+    return WalkResult::interrupt();
+  }
+
+  if (auto cmpi = dyn_cast<VMICmpIOp>(op)) {
+    WalkResult physical = checkMaskable(
+        op, "pto.vmi.cmpi", cast<VMIVRegType>(cmpi.getLhs().getType()));
+    if (physical.wasInterrupted()) {
+      return physical;
+    }
+    if (succeeded(checkSupportedComparePredicate<VMICmpIOp>(
+            op, cmpi.getPredicate()))) {
+      return WalkResult::advance();
+    }
+    return WalkResult::interrupt();
+  }
+
+  return std::nullopt;
+}
+
 LogicalResult
 verifySupportedVMIToVPTOOps(ModuleOp module,
                             bool enableStableGatherMaskedLoad) {
@@ -14440,6 +14472,11 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
     if (auto layoutResult = verifySupportedVMILayoutOp(op);
         layoutResult.has_value()) {
       return *layoutResult;
+    }
+    auto compareResult = verifySupportedVMICompareOp(
+        op, emitMaskableUnsupported);
+    if (compareResult.has_value()) {
+      return *compareResult;
     }
 
     if (auto constant = dyn_cast<VMIConstantOp>(op)) {
@@ -14656,28 +14693,6 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
              "with N=64, 128, or 256 for 8-bit, N=64 or 128 for 16-bit, "
              "or N=64 for 32-bit elements ("
           << reason << ")";
-      return WalkResult::interrupt();
-    }
-
-    if (auto cmpf = dyn_cast<VMICmpFOp>(op)) {
-      WalkResult physical = emitMaskableUnsupported(
-          op, "pto.vmi.cmpf", cast<VMIVRegType>(cmpf.getLhs().getType()));
-      if (physical.wasInterrupted())
-        return physical;
-      if (succeeded(checkSupportedComparePredicate<VMICmpFOp>(
-              op, cmpf.getPredicate())))
-        return WalkResult::advance();
-      return WalkResult::interrupt();
-    }
-
-    if (auto cmpi = dyn_cast<VMICmpIOp>(op)) {
-      WalkResult physical = emitMaskableUnsupported(
-          op, "pto.vmi.cmpi", cast<VMIVRegType>(cmpi.getLhs().getType()));
-      if (physical.wasInterrupted())
-        return physical;
-      if (succeeded(checkSupportedComparePredicate<VMICmpIOp>(
-              op, cmpi.getPredicate())))
-        return WalkResult::advance();
       return WalkResult::interrupt();
     }
 
