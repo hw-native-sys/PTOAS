@@ -6340,6 +6340,49 @@ struct OneToNVMIEnsureMaskGranularityOpPattern
   }
 
 private:
+  struct ExtFPhysicalPlan {
+    VRegType sourceType;
+    SmallVector<VRegType> resultTypes;
+  };
+
+  FailureOr<ExtFPhysicalPlan> buildPhysicalPlan(
+      VMIExtFOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes,
+      OneToNPatternRewriter &rewriter) const {
+    if (sourceParts.empty()) {
+      return rewriter.notifyMatchFailure(
+          op, "extf requires at least one physical source chunk");
+    }
+    auto sourceType = dyn_cast<VRegType>(sourceParts.front().getType());
+    if (!sourceType) {
+      return rewriter.notifyMatchFailure(op, "expected physical extf source");
+    }
+    for (Value sourcePart : sourceParts) {
+      auto currentSourceType = dyn_cast<VRegType>(sourcePart.getType());
+      if (!currentSourceType || currentSourceType != sourceType) {
+        return rewriter.notifyMatchFailure(
+            op, "extf source physical parts must have matching type");
+      }
+    }
+    SmallVector<VRegType> resultVRegTypes;
+    resultVRegTypes.reserve(resultTypes.size());
+    for (Type resultType : resultTypes) {
+      auto resultVRegType = dyn_cast<VRegType>(resultType);
+      bool invalidFirstResult =
+          resultVRegTypes.empty() &&
+          (!resultVRegType ||
+           !(resultVRegType.getElementType().isF32() ||
+             pto::isPTOBF16x2Type(resultVRegType.getElementType())));
+      bool mismatchedResult =
+          !resultVRegTypes.empty() && resultVRegType != resultVRegTypes.front();
+      if (invalidFirstResult || mismatchedResult) {
+        return rewriter.notifyMatchFailure(
+            op, "unsupported physical extf result type");
+      }
+      resultVRegTypes.push_back(resultVRegType);
+    }
+    return ExtFPhysicalPlan{sourceType, std::move(resultVRegTypes)};
+  }
+
   ;
 };
 
@@ -13223,40 +13266,17 @@ public:
     ValueRange sourceParts = adaptor.getSource();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    if (failed(maybe_resultTypes)) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-    if (sourceParts.empty()) {
-      return rewriter.notifyMatchFailure(
-          op, "extf requires at least one physical source chunk");
+    FailureOr<ExtFPhysicalPlan> plan =
+        buildPhysicalPlan(op, sourceParts, resultTypes, rewriter);
+    if (failed(plan)) {
+      return failure();
     }
-
-    auto sourceType = dyn_cast<VRegType>(sourceParts.front().getType());
-    if (!sourceType) {
-      return rewriter.notifyMatchFailure(op, "expected physical extf source");
-    }
-    for (Value sourcePart : sourceParts) {
-      auto currentSourceType = dyn_cast<VRegType>(sourcePart.getType());
-      if (!currentSourceType || currentSourceType != sourceType) {
-        return rewriter.notifyMatchFailure(
-            op, "extf source physical parts must have matching type");
-      }
-    }
-
-    SmallVector<VRegType> resultVRegTypes;
-    resultVRegTypes.reserve(resultTypes.size());
-    for (Type resultType : resultTypes) {
-      auto resultVRegType = dyn_cast<VRegType>(resultType);
-      if (!resultVRegType ||
-          (resultVRegTypes.empty()
-               ? !(resultVRegType.getElementType().isF32() ||
-                   pto::isPTOBF16x2Type(
-                       resultVRegType.getElementType()))
-               : resultVRegType != resultVRegTypes.front()))
-        return rewriter.notifyMatchFailure(
-            op, "unsupported physical extf result type");
-      resultVRegTypes.push_back(resultVRegType);
-    }
+    VRegType sourceType = plan->sourceType;
+    ArrayRef<VRegType> resultVRegTypes = plan->resultTypes;
 
     unsigned sourceBits =
         pto::getPTOStorageElemBitWidth(sourceType.getElementType());
@@ -16474,11 +16494,14 @@ LogicalResult checkSupportedVmullShape(VMIVmullOp op,
   Type physicalElementType = getVMIPhysicalDataElementType(aType);
   FailureOr<StringRef> physicalMaskGranularity =
       getVMIMaskPhysicalGranularity(maskType);
-  if (failed(lanesPerPart) || *lanesPerPart != 64 ||
+  bool invalidPhysicalShape =
+      failed(lanesPerPart) || *lanesPerPart != 64 ||
       physicalElementType != aType.getElementType() ||
-      failed(physicalMaskGranularity) || *physicalMaskGranularity != "b32")
+      failed(physicalMaskGranularity) || *physicalMaskGranularity != "b32";
+  if (invalidPhysicalShape) {
     return fail("requires 64xi32/ui32 data parts with corresponding b32 mask "
                 "parts");
+  }
 
   return success();
 }

@@ -708,6 +708,13 @@ pattern 现在仅负责结果类型转换、factor-4 block 特例和路径分派
 `git diff --check` 通过；`vmi_to_vpto_create_group_mask_block8_dynamic.pto`
 lowering exit=0。
 
+本轮为 `OneToNVMIExtFOpPattern` 引入 `ExtFPhysicalPlan`/`buildPhysicalPlan`，统一负责
+source physical part 一致性、result vreg 类型和 BF16x2/F32 结果契约；主 pattern 仅
+负责 packed view 规划及 lane-stride/factor 发射分派。同步将 vmull verifier 的复合物理
+形状条件改为具名布尔变量。保持 extf/vmull 的支持矩阵、Vcvt part、结果 arity 和诊断
+语义不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
+通过；连续 load/store lowering exit=0。
+
 本轮继续整理 channel split/merge 的布局判定：将 source/result layout 的复合条件拆成
 具名布尔变量，并为 split/merge 的 channel layout 显式标注 `VMILayoutAttr` 类型；同时
 补齐这两条 pattern 的控制流大括号。该调整仅改善 verifier/lowering 的职责可读性，保持
