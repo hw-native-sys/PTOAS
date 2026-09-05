@@ -13530,11 +13530,15 @@ public:
     int64_t resultLaneStride = resultLayout && resultLayout.isContiguous()
                                    ? resultLayout.getLaneStride()
                                    : 1;
-    if (resultLaneStride <= 0 || factor % resultLaneStride != 0)
+    bool invalidResultLaneStride =
+        resultLaneStride <= 0 || factor % resultLaneStride != 0;
+    if (invalidResultLaneStride) {
       return rewriter.notifyMatchFailure(
           op, "unsupported physical truncf result lane stride");
     int64_t sourceFactor = factor / resultLaneStride;
-    if (sourceParts.size() != sourceFactor * resultTypes.size())
+    bool sourceArityMismatch =
+        sourceParts.size() != sourceFactor * resultTypes.size();
+    if (sourceArityMismatch) {
       return rewriter.notifyMatchFailure(
           op, "unsupported physical truncf source/result arity relation");
 
@@ -15609,26 +15613,51 @@ LogicalResult checkSupportedBitcastShape(VMIBitcastOp op, std::string *reason) {
 
 
 
-LogicalResult
-checkSupportedChannelSplitShape(VMIChannelSplitOp op,
-                                std::string *reason = nullptr) {
-  auto fail = [&reason](const Twine &message) -> LogicalResult {
+struct ChannelShapePlan {
+  int64_t channels;
+  VMILayoutAttr expectedLayout;
+};
+
+template <typename ChannelOp>
+static FailureOr<ChannelShapePlan> buildChannelShapePlan(
+    ChannelOp op, int64_t channels, StringRef operationName,
+    std::string *reason) {
+  auto fail = [&reason](const Twine &message)
+      -> FailureOr<ChannelShapePlan> {
     if (reason)
       *reason = message.str();
     return failure();
   };
+  if (channels != 2 && channels != 4) {
+    return fail(Twine("pto.vmi.") + operationName +
+                " supports only 2 or 4 channels");
+  }
+  return ChannelShapePlan{
+      channels, VMILayoutAttr::getDeinterleaved(op.getContext(), channels)};
+}
 
-  int64_t channels = op.getNumResults();
-  if (channels != 2 && channels != 4)
-    return fail("pto.vmi.channel_split supports only 2 or 4 channels");
+LogicalResult checkSupportedChannelSplitShape(VMIChannelSplitOp op,
+                                              std::string *reason = nullptr) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  FailureOr<ChannelShapePlan> plan =
+      buildChannelShapePlan(op, op.getNumResults(), "channel_split", reason);
+  if (failed(plan)) {
+    return failure();
+  }
+  int64_t channels = plan->channels;
 
   auto sourceType = cast<VMIVRegType>(op.getSource().getType());
   VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();
   if (!sourceLayout)
     return fail("requires assigned source layout");
-  auto expectedLayout =
-      VMILayoutAttr::getDeinterleaved(op.getContext(), channels);
-  if (!sourceLayout.isContiguous() && sourceLayout != expectedLayout)
+  bool invalidSourceLayout =
+      !sourceLayout.isContiguous() && sourceLayout != plan->expectedLayout;
+  if (invalidSourceLayout) {
     return fail("requires source layout to be contiguous or matching "
                 "deinterleaved channel layout");
 
@@ -15656,18 +15685,20 @@ checkSupportedChannelSplitShape(VMIChannelSplitOp op,
   return success();
 }
 
-LogicalResult
-checkSupportedChannelMergeShape(VMIChannelMergeOp op,
-                                std::string *reason = nullptr) {
+LogicalResult checkSupportedChannelMergeShape(VMIChannelMergeOp op,
+                                              std::string *reason = nullptr) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
   };
 
-  int64_t channels = op.getInputs().size();
-  if (channels != 2 && channels != 4)
-    return fail("pto.vmi.channel_merge supports only 2 or 4 channels");
+  FailureOr<ChannelShapePlan> plan = buildChannelShapePlan(
+      op, op.getInputs().size(), "channel_merge", reason);
+  if (failed(plan)) {
+    return failure();
+  }
+  int64_t channels = plan->channels;
 
   int64_t inputArity = 0;
   for (Value input : op.getInputs()) {
@@ -15685,9 +15716,9 @@ checkSupportedChannelMergeShape(VMIChannelMergeOp op,
   VMILayoutAttr resultLayout = resultType.getLayoutAttr();
   if (!resultLayout)
     return fail("requires assigned result layout");
-  auto expectedLayout =
-      VMILayoutAttr::getDeinterleaved(op.getContext(), channels);
-  if (!resultLayout.isContiguous() && resultLayout != expectedLayout)
+  bool invalidResultLayout =
+      !resultLayout.isContiguous() && resultLayout != plan->expectedLayout;
+  if (invalidResultLayout) {
     return fail("requires result layout to be contiguous or matching "
                 "deinterleaved channel layout");
 

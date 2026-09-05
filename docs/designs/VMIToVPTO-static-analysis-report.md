@@ -1009,3 +1009,8 @@ conversion verifier 中重复的同宽契约代码。增量合规检查结果为
 尝试使用 `vmi_vcvt_s8_to_f16_lower.pto` 回归时，输入在既有 VMI verifier 处因
 `sitofp` 的 `si8` source element contract 提前失败，未进入本轮共享 helper 路径，
 因此不将其记为 lowering 通过。
+本轮将 `channel_split` 与 `channel_merge` 的共同 channel 数量和 expected
+deinterleaved layout 判定抽取为 `ChannelShapePlan`/`buildChannelShapePlan`；两条
+checker 继续各自负责输入/输出 layout、physical arity 汇总及方向性诊断。2/4 channel
+支持范围和结果 arity 语义保持不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
