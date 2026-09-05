@@ -227,6 +227,7 @@ mask 的语义差异只存在于 active-lane 判定。补齐该批代码及 scal
 lane_stride=2/4 的物理 part 顺序与诊断文本不变；相关 mask granularity 和 group-store
 回归通过，增量合规检查与 `git diff --check` 通过。
 
+
 另外将 `computeShuffleVselrPlans` 的单个 result physical chunk 规划抽取为
 `computeShuffleVselrPlanForChunk`。外层函数现在只负责布局因子和 chunk 枚举，辅助函数
 集中处理 padding、logical-to-physical lane 映射、单 source chunk 约束及升序/降序 affine
