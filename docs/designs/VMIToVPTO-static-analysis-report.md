@@ -168,3 +168,8 @@ unit-stride 判定与 slots=1 1PT 对齐判定具有独立职责；原有 memory
 单 physical chunk 校验抽取为 `checkSinglePhysicalStrideAccess`（提交 `1454cdbba`），
 通过调用方传入的方向性诊断区分 store/load；同时修正了该批新增代码触及的单行控制
 语句大括号。合规检查通过。
+
+针对 `expand_load`，将静态 all-active mask 下的多 chunk 普通 `vlds` lowering 抽取为
+`OneToNVMIExpandLoadOpPattern::lowerStaticExpandLoad`（提交 `0f4eee56c`）。runtime-mask
+路径仍保留 prefix-index、`vgather2_bc` 和 `vsel` 的 expand 语义，两条路径没有被
+错误合并；增量合规检查通过。
