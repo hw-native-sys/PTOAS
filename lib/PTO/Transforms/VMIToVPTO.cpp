@@ -4904,29 +4904,48 @@ static FailureOr<SmallVector<Value>> materializeContiguousToDeinterleaved4(
   return results;
 }
 
+enum class Deinterleaved4LayoutDirection {
+  Unsupported,
+  ToContiguous,
+  FromContiguous
+};
+
+static Deinterleaved4LayoutDirection getDeinterleaved4LayoutDirection(
+    VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout) {
+  bool sourceIsDeinterleaved4 =
+      sourceLayout && sourceLayout.isDeinterleaved() &&
+      sourceLayout.getFactor() == 4 && sourceLayout.getLaneStride() == 1;
+  bool resultIsDeinterleaved4 =
+      resultLayout && resultLayout.isDeinterleaved() &&
+      resultLayout.getFactor() == 4 && resultLayout.getLaneStride() == 1;
+  bool toContiguous = sourceIsDeinterleaved4 && resultLayout &&
+                      resultLayout.isContiguous() &&
+                      resultLayout.getLaneStride() == 1;
+  if (toContiguous) {
+    return Deinterleaved4LayoutDirection::ToContiguous;
+  }
+  bool fromContiguous = sourceLayout && sourceLayout.isContiguous() &&
+                        sourceLayout.getLaneStride() == 1 &&
+                        resultIsDeinterleaved4;
+  if (fromContiguous) {
+    return Deinterleaved4LayoutDirection::FromContiguous;
+  }
+  return Deinterleaved4LayoutDirection::Unsupported;
+}
+
 FailureOr<std::optional<SmallVector<Value>>> materializeDeinterleaved4Layout(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
     PatternRewriter &rewriter) {
-  auto isElementDeinterleaved = [](VMILayoutAttr layout) {
-    return layout.isDeinterleaved() && layout.getFactor() == 4 &&
-           layout.getLaneStride() == 1;
-  };
-  bool toContiguous = sourceLayout && sourceLayout.isDeinterleaved() &&
-                      isElementDeinterleaved(sourceLayout) && resultLayout &&
-                      resultLayout.isContiguous() &&
-                      resultLayout.getLaneStride() == 1;
-  bool fromContiguous = sourceLayout && sourceLayout.isContiguous() &&
-                        sourceLayout.getLaneStride() == 1 && resultLayout &&
-                        resultLayout.isDeinterleaved() &&
-                        isElementDeinterleaved(resultLayout);
-  if (!toContiguous && !fromContiguous) {
+  Deinterleaved4LayoutDirection direction =
+      getDeinterleaved4LayoutDirection(sourceLayout, resultLayout);
+  if (direction == Deinterleaved4LayoutDirection::Unsupported) {
     return std::nullopt;
   }
   bool missingParts = sourceParts.empty() || resultTypes.empty();
   if (missingParts) {
     (void)rewriter.notifyMatchFailure(
-        op, toContiguous
+        op, direction == Deinterleaved4LayoutDirection::ToContiguous
                 ? "deinterleaved=4 to contiguous materialization requires "
                   "at least one source and result part"
                 : "contiguous to deinterleaved=4 materialization requires "
@@ -4934,7 +4953,7 @@ FailureOr<std::optional<SmallVector<Value>>> materializeDeinterleaved4Layout(
     return failure();
   }
 
-  if (toContiguous) {
+  if (direction == Deinterleaved4LayoutDirection::ToContiguous) {
     FailureOr<SmallVector<Value>> results =
         materializeDeinterleaved4ToContiguous(op, sourceParts, resultTypes,
                                               rewriter);

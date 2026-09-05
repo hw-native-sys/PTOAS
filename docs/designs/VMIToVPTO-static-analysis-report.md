@@ -228,6 +228,17 @@ mask 的语义差异只存在于 active-lane 判定。补齐该批代码及 scal
 `vmi_to_vpto_expand_load_runtime_mask.pto` 回归时，在本轮逻辑前由既有
 `VMI-PASS-INVARIANT`（pack/unpack helper 提前物化）终止，未将该失败归因于本轮修改。
 
+# deinterleaved=4 布局方向分类职责整改
+
+本轮在 `materializeDeinterleaved4Layout` 中引入
+`Deinterleaved4LayoutDirection` 与 `getDeinterleaved4LayoutDirection`，将
+deinterleaved=4→contiguous 和 contiguous→deinterleaved=4 的布局方向识别从具体结果
+物化中分离。物化 helper 仍负责缺失 part 诊断、`vdintlv` 发射、结果顺序和失败传播，
+保持原有分派优先级与布局条件不变。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；尝试
+`vmi_to_vpto_vdintlv.pto` 时同样在既有 pack/unpack invariant 处提前终止，未将该失败归因
+于本轮方向分类变更。
+
 # create_mask 分派整改
 
 本轮将 `OneToNVMICreateMaskOpPattern` 中动态与常量 `create_mask` 的结果类型获取、
