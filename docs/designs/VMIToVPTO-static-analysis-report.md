@@ -1912,3 +1912,14 @@ active_prefix_index、compress 和 compress_store 的 shape check、reason 收�
 `WalkResult` 处理。两种操作仍保留各自的 shape checker、支持条件文本和操作识别顺序，
 不改变成功/失败语义。增量 `check_changed_code.py` 结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
+
+# reduce_add 物理累加路径共性整改
+
+本轮将 `reduce_addi` 与 `reduce_addf` 中重复的等价 mask 合并、首 chunk `vcadd`、多
+chunk 首 lane mask 构造、逐 chunk `vcadd`/`vadd` 累加和结果替换抽取为共享模板
+`lowerReduceAddParts`。两个入口仍分别负责 converted result type 获取和
+`ReduceAddPhysicalPlan` 构建，并传递各自诊断文本；保持整数/浮点操作选择、单 chunk
+快路径、累加顺序、mask 语义及结果布局不变。为 helper 相关控制流补齐具名条件和大括号。
+增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；现有 reduce_add cases 在既有 VMI pack/unpack pipeline invariant
+处提前失败，未进入本轮 helper，不能将该失败归因于本轮改动。

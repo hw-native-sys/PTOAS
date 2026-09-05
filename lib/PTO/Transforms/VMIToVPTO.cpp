@@ -13016,6 +13016,56 @@ static FailureOr<ReduceAddPhysicalPlan> buildReduceAddPhysicalPlan(
   return ReduceAddPhysicalPlan{*resultType, *maskType};
 }
 
+template <typename ReduceOp>
+static LogicalResult lowerReduceAddParts(
+    ReduceOp op, ValueRange sourceParts, ValueRange maskParts,
+    VRegType resultType, MaskType maskType, StringRef firstLaneDiagnostic,
+    OneToNPatternRewriter &rewriter, const TypeConverter &typeConverter) {
+  FailureOr<Value> combined = combineEquivalentMaskedParts<VaddOp>(
+      op.getLoc(), sourceParts, maskParts, resultType, rewriter);
+  if (succeeded(combined)) {
+    Value reduced = rewriter
+                        .create<VcaddOp>(op.getLoc(), resultType, *combined,
+                                         maskParts.front())
+                        .getResult();
+    replaceOpWithFlatConvertedValues(rewriter, op, SmallVector<Value>{reduced},
+                                     typeConverter);
+    return success();
+  }
+
+  Value accumulator = rewriter
+                          .create<VcaddOp>(op.getLoc(), resultType,
+                                           sourceParts.front(),
+                                           maskParts.front())
+                          .getResult();
+  const bool singlePart = sourceParts.size() == 1;
+  if (singlePart) {
+    replaceOpWithFlatConvertedValues(rewriter, op,
+                                     SmallVector<Value>{accumulator},
+                                     typeConverter);
+    return success();
+  }
+  FailureOr<Value> firstLaneMask =
+      createPrefixMask(op.getLoc(), maskType, "PAT_VL1", rewriter);
+  if (failed(firstLaneMask)) {
+    return rewriter.notifyMatchFailure(op, firstLaneDiagnostic);
+  }
+  for (size_t part = 1; part < sourceParts.size(); ++part) {
+    Value reduced = rewriter
+                        .create<VcaddOp>(op.getLoc(), resultType,
+                                         sourceParts[part], maskParts[part])
+                        .getResult();
+    accumulator = rewriter
+                      .create<VaddOp>(op.getLoc(), resultType, reduced,
+                                      accumulator, *firstLaneMask)
+                      .getResult();
+  }
+  replaceOpWithFlatConvertedValues(rewriter, op,
+                                   SmallVector<Value>{accumulator},
+                                   typeConverter);
+  return success();
+}
+
 struct OneToNVMIReduceAddIOpPattern
     : OneToNOpConversionPattern<VMIReduceAddIOp> {
   using OneToNOpConversionPattern<VMIReduceAddIOp>::OneToNOpConversionPattern;
@@ -13036,55 +13086,10 @@ struct OneToNVMIReduceAddIOpPattern
     if (failed(plan)) {
       return failure();
     }
-    VRegType resultType = plan->resultType;
-    MaskType maskType = plan->maskType;
-
-    FailureOr<Value> combined = combineEquivalentMaskedParts<VaddOp>(
-        op.getLoc(), sourceParts, maskParts, resultType, rewriter);
-    if (succeeded(combined)) {
-      Value reduced =
-          rewriter
-              .create<VcaddOp>(op.getLoc(), resultType, *combined,
-                               maskParts.front())
-              .getResult();
-      replaceOpWithFlatConvertedValues(
-          rewriter, op, SmallVector<Value>{reduced},
-          *this->getTypeConverter());
-      return success();
-    }
-
-    Value accumulator = rewriter
-                            .create<VcaddOp>(op.getLoc(), resultType,
-                                             sourceParts.front(),
-                                             maskParts.front())
-                            .getResult();
-    if (sourceParts.size() == 1) {
-      replaceOpWithFlatConvertedValues(
-          rewriter, op, SmallVector<Value>{accumulator},
-          *this->getTypeConverter());
-      return success();
-    }
-    FailureOr<Value> firstLaneMask =
-        createPrefixMask(op.getLoc(), maskType, "PAT_VL1", rewriter);
-    if (failed(firstLaneMask))
-      return rewriter.notifyMatchFailure(
-          op, "failed to create reduce_addi first-lane mask");
-    for (size_t part = 1; part < sourceParts.size(); ++part) {
-      Value reduced =
-          rewriter
-              .create<VcaddOp>(op.getLoc(), resultType, sourceParts[part],
-                               maskParts[part])
-              .getResult();
-      accumulator = rewriter
-                        .create<VaddOp>(op.getLoc(), resultType, reduced,
-                                        accumulator, *firstLaneMask)
-                        .getResult();
-    }
-
-    replaceOpWithFlatConvertedValues(
-            rewriter, op, SmallVector<Value>{accumulator},
-            *this->getTypeConverter());
-    return success();
+    return lowerReduceAddParts(
+        op, sourceParts, maskParts, plan->resultType, plan->maskType,
+        "failed to create reduce_addi first-lane mask", rewriter,
+        *this->getTypeConverter());
   }
 };
 
@@ -13108,55 +13113,10 @@ struct OneToNVMIReduceAddFOpPattern
     if (failed(plan)) {
       return failure();
     }
-    VRegType resultType = plan->resultType;
-    MaskType maskType = plan->maskType;
-
-    FailureOr<Value> combined = combineEquivalentMaskedParts<VaddOp>(
-        op.getLoc(), sourceParts, maskParts, resultType, rewriter);
-    if (succeeded(combined)) {
-      Value reduced =
-          rewriter
-              .create<VcaddOp>(op.getLoc(), resultType, *combined,
-                               maskParts.front())
-              .getResult();
-      replaceOpWithFlatConvertedValues(
-          rewriter, op, SmallVector<Value>{reduced},
-          *this->getTypeConverter());
-      return success();
-    }
-
-    Value accumulator = rewriter
-                            .create<VcaddOp>(op.getLoc(), resultType,
-                                             sourceParts.front(),
-                                             maskParts.front())
-                            .getResult();
-    if (sourceParts.size() == 1) {
-      replaceOpWithFlatConvertedValues(
-          rewriter, op, SmallVector<Value>{accumulator},
-          *this->getTypeConverter());
-      return success();
-    }
-    FailureOr<Value> firstLaneMask =
-        createPrefixMask(op.getLoc(), maskType, "PAT_VL1", rewriter);
-    if (failed(firstLaneMask))
-      return rewriter.notifyMatchFailure(
-          op, "failed to create reduce_addf first-lane mask");
-    for (size_t part = 1; part < sourceParts.size(); ++part) {
-      Value reduced =
-          rewriter
-              .create<VcaddOp>(op.getLoc(), resultType, sourceParts[part],
-                               maskParts[part])
-              .getResult();
-      accumulator = rewriter
-                        .create<VaddOp>(op.getLoc(), resultType, reduced,
-                                        accumulator, *firstLaneMask)
-                        .getResult();
-    }
-
-    replaceOpWithFlatConvertedValues(
-            rewriter, op, SmallVector<Value>{accumulator},
-            *this->getTypeConverter());
-    return success();
+    return lowerReduceAddParts(
+        op, sourceParts, maskParts, plan->resultType, plan->maskType,
+        "failed to create reduce_addf first-lane mask", rewriter,
+        *this->getTypeConverter());
   }
 };
 
