@@ -9042,6 +9042,53 @@ struct OneToNVMIGroupBroadcastLoadOpPattern
     : OneToNOpConversionPattern<VMIGroupBroadcastLoadOp> {
   using OneToNOpConversionPattern<VMIGroupBroadcastLoadOp>::OneToNOpConversionPattern;
 
+private:
+  LogicalResult lowerDirectBRC(
+      VMIGroupBroadcastLoadOp op, OneToNPatternRewriter &rewriter,
+      Value source, Value offset, Value sourceGroupStride,
+      ArrayRef<Type> resultTypes, int64_t numGroups,
+      StringRef brcDist) const {
+    if (numGroups <= 0 ||
+        static_cast<int64_t>(resultTypes.size()) % numGroups != 0) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast_load BRC result arity is not divisible by num_groups");
+    }
+    int64_t chunksPerGroup =
+        static_cast<int64_t>(resultTypes.size()) / numGroups;
+    if (!isa<PtrType>(source.getType())) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast_load BRC lowering requires !pto.ptr source");
+    }
+    if (chunksPerGroup <= 0 ||
+        static_cast<int64_t>(resultTypes.size()) !=
+            numGroups * chunksPerGroup) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast_load BRC physical arity mismatch");
+    }
+
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (auto [index, resultType] : llvm::enumerate(resultTypes)) {
+      auto vregType = dyn_cast<VRegType>(resultType);
+      if (!vregType) {
+        return rewriter.notifyMatchFailure(
+            op, "group_broadcast_load BRC result must be vreg");
+      }
+      int64_t group = static_cast<int64_t>(index) / chunksPerGroup;
+      Value groupOffset = createGroupChunkOffset(
+          op.getLoc(), offset, sourceGroupStride, group, 0, rewriter);
+      results.push_back(
+          rewriter
+              .create<VldsOp>(op.getLoc(), resultType, Type{}, source,
+                              groupOffset, rewriter.getStringAttr(brcDist))
+              .getResult());
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
+public:
   LogicalResult
   matchAndRewrite(VMIGroupBroadcastLoadOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -9107,53 +9154,13 @@ struct OneToNVMIGroupBroadcastLoadOpPattern
         succeeded(directFact) &&
         directFact->kind == VMIGroupBroadcastLoadDirectKind::BRC &&
         canUseDirectBRC) {
-      if (numGroups <= 0 ||
-          static_cast<int64_t>(resultTypes.size()) % numGroups != 0) {
-        return rewriter.notifyMatchFailure(
-            op, "group_broadcast_load BRC result arity is not divisible by "
-                "num_groups");
-      }
-      // BRC duplicates the scalar independently into every physical result
-      // chunk. Derive the chunk count from the assigned result arity so
-      // deinterleaved scalar-broadcast layouts (d2/d4) remain valid even
-      // when their logical group size is only one full part.
-      int64_t chunksPerGroup =
-          static_cast<int64_t>(resultTypes.size()) / numGroups;
       std::optional<StringRef> brcDist = getBRCDist();
       if (!brcDist)
         return rewriter.notifyMatchFailure(
             op, "group_broadcast_load BRC lowering requires b8/b16/b32 "
                 "element type");
-      if (!isa<PtrType>((*source).getType()))
-        return rewriter.notifyMatchFailure(
-            op, "group_broadcast_load BRC lowering requires !pto.ptr source");
-      if (chunksPerGroup <= 0 ||
-          static_cast<int64_t>(resultTypes.size()) !=
-              numGroups * chunksPerGroup)
-        return rewriter.notifyMatchFailure(
-            op, "group_broadcast_load BRC physical arity mismatch");
-
-      SmallVector<Value> results;
-      results.reserve(resultTypes.size());
-      for (auto [index, resultType] : llvm::enumerate(resultTypes)) {
-        auto vregType = dyn_cast<VRegType>(resultType);
-        if (!vregType)
-          return rewriter.notifyMatchFailure(
-              op, "group_broadcast_load BRC result must be vreg");
-        int64_t group = static_cast<int64_t>(index) / chunksPerGroup;
-        Value groupOffset =
-            createGroupChunkOffset(op.getLoc(), *offset, *sourceGroupStride,
-                                   group, /*inGroupLaneOffset=*/0, rewriter);
-        results.push_back(rewriter
-                              .create<VldsOp>(op.getLoc(), resultType,
-                                              /*updated_base=*/Type{}, *source,
-                                              groupOffset,
-                                              rewriter.getStringAttr(*brcDist))
-                              .getResult());
-      }
-      replaceOpWithFlatConvertedValues(rewriter, op, results,
-                                       *this->getTypeConverter());
-      return success();
+      return lowerDirectBRC(op, rewriter, *source, *offset, *sourceGroupStride,
+                            resultTypes, numGroups, *brcDist);
     }
 
     bool canUseDirectE2B = false;
