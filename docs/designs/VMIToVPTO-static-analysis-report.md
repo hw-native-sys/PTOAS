@@ -693,3 +693,10 @@ chunk 检查。这样避免把 gather 的类型能力矩阵与物理承载检查
 顺序，未改变 extf 支持范围。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续 load/store
 与 reduction 代表性 lowering 均通过。
+
+本轮对称地将 `OneToNVMITruncFOpPattern` 的 BF16x2 source view 逻辑抽取为
+`makeVcvtSourceView`，去除默认捕获 lambda。helper 负责识别可直接复用的 BF16
+pairing bitcast，并在必要时构造 native BF16 `VbitcastOp`；truncf 的 group-slot、
+same-width 和 factor 分派保持不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续 load/store 与
+reduction 代表性 lowering 均通过。
