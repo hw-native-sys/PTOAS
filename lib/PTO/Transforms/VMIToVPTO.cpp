@@ -9709,6 +9709,84 @@ private:
     return success();
   }
 
+  LogicalResult lowerSlots8LaneStride(
+      VMIGroupStoreOp op, OpAdaptor adaptor, OneToNPatternRewriter &rewriter,
+      VMIVRegType valueVMIType, VMILayoutAttr layout, Value destination,
+      Value offset, Value rowStride, int64_t numGroups) const {
+    std::optional<std::string> dist =
+        getLaneStrideStoreDistToken(layout, valueVMIType.getElementType());
+    std::optional<StringRef> maskGranularity =
+        getLaneStrideStoreMaskGranularity(layout,
+                                          valueVMIType.getElementType());
+    if (!dist || !maskGranularity) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported slots=8 lane_stride group_store packing");
+    }
+    ValueRange valueParts = adaptor.getValue();
+    auto maskType = MaskType::get(rewriter.getContext(), *maskGranularity);
+    SmallVector<Value> groupOffsets;
+    bool useDirectAccess = true;
+    for (auto [slotBlock, value] : llvm::enumerate(valueParts)) {
+      auto vregType = dyn_cast<VRegType>(value.getType());
+      if (!vregType) {
+        return rewriter.notifyMatchFailure(op,
+                                           "group_store value must be vreg");
+      }
+      Value groupOffset = createGroupChunkOffset(
+          op.getLoc(), offset, rowStride, slotBlock * 8, 0, rewriter);
+      groupOffsets.push_back(groupOffset);
+      useDirectAccess &= isDirectMemoryDistAddressLegal(
+          op.getDestination(), groupOffset,
+          getMemoryElementType(op.getDestination().getType()), vregType,
+          VPTOMemoryOpFamily::Store, *dist);
+    }
+    if (!useDirectAccess) {
+      VMILayoutAttr compactLayout = VMILayoutAttr::getGroupSlots(
+          rewriter.getContext(), layout.getNumGroups(), layout.getSlots());
+      auto compactType = VMIVRegType::get(
+          rewriter.getContext(), valueVMIType.getElementCount(),
+          valueVMIType.getElementType(), compactLayout);
+      FailureOr<SmallVector<Value>> compactValues = materializeEnsureLayoutConversion(
+          op, valueParts, valueVMIType, compactType,
+          *this->getTypeConverter(), rewriter);
+      bool invalidCompactValues = failed(compactValues) ||
+                                  compactValues->size() != valueParts.size();
+      if (invalidCompactValues) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to compact unaligned slots=8 group_store");
+      }
+      SmallVector<int64_t> advances;
+      for (size_t slotBlock = 0; slotBlock < compactValues->size();
+           ++slotBlock) {
+        advances.push_back(std::min<int64_t>(8, numGroups - slotBlock * 8));
+      }
+      if (failed(emitGroupStoreStream(op, destination, offset, *compactValues,
+                                      advances, rewriter))) {
+        return failure();
+      }
+      rewriter.eraseOp(op);
+      return success();
+    }
+    for (auto [slotBlock, value] : llvm::enumerate(valueParts)) {
+      if (!isa<VRegType>(value.getType())) {
+        return rewriter.notifyMatchFailure(op,
+                                           "group_store value must be vreg");
+      }
+      int64_t activeGroups = std::min<int64_t>(8, numGroups - slotBlock * 8);
+      FailureOr<Value> mask = createPrefixMaskForActiveLanes(
+          op.getLoc(), maskType, activeGroups, rewriter);
+      if (failed(mask)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to create packed slots=8 group_store mask");
+      }
+      rewriter.create<VstsOp>(op.getLoc(), /*updated_base=*/Type{}, value,
+                              destination, groupOffsets[slotBlock],
+                              rewriter.getStringAttr(*dist), *mask);
+    }
+    rewriter.eraseOp(op);
+    return success();
+  }
+
 public:
   LogicalResult
   matchAndRewrite(VMIGroupStoreOp op, OpAdaptor adaptor,
@@ -9999,82 +10077,9 @@ public:
       }
 
       if (layout.hasLaneStride()) {
-        std::optional<std::string> dist = getLaneStrideStoreDistToken(
-            layout, valueVMIType.getElementType());
-        std::optional<StringRef> maskGranularity =
-            getLaneStrideStoreMaskGranularity(
-                layout, valueVMIType.getElementType());
-        if (!dist || !maskGranularity)
-          return rewriter.notifyMatchFailure(
-              op, "unsupported slots=8 lane_stride group_store packing");
-
-        auto maskType = MaskType::get(rewriter.getContext(), *maskGranularity);
-        SmallVector<Value> groupOffsets;
-        bool useDirectAccess = true;
-        for (auto [slotBlock, value] : llvm::enumerate(valueParts)) {
-          auto vregType = dyn_cast<VRegType>(value.getType());
-          if (!vregType) {
-            return rewriter.notifyMatchFailure(
-                op, "group_store value must be vreg");
-          }
-          Value groupOffset = createGroupChunkOffset(
-              op.getLoc(), *offset, *rowStride, slotBlock * 8,
-              /*chunkLaneOffset=*/0, rewriter);
-          groupOffsets.push_back(groupOffset);
-          useDirectAccess &= isDirectMemoryDistAddressLegal(
-              op.getDestination(), groupOffset,
-              getMemoryElementType(op.getDestination().getType()), vregType,
-              VPTOMemoryOpFamily::Store, *dist);
-        }
-
-        if (!useDirectAccess) {
-          VMILayoutAttr compactLayout = VMILayoutAttr::getGroupSlots(
-              rewriter.getContext(), layout.getNumGroups(), layout.getSlots());
-          auto compactType = VMIVRegType::get(
-              rewriter.getContext(), valueVMIType.getElementCount(),
-              valueVMIType.getElementType(), compactLayout);
-          FailureOr<SmallVector<Value>> compactValues =
-              materializeEnsureLayoutConversion(
-                  op, valueParts, valueVMIType, compactType,
-                  *this->getTypeConverter(), rewriter);
-          if (
-              failed(compactValues) ||
-              compactValues->size() != valueParts.size()) {
-            return rewriter.notifyMatchFailure(
-                op, "failed to compact unaligned slots=8 group_store");
-          }
-
-          SmallVector<int64_t> advances;
-          for (size_t slotBlock = 0; slotBlock < compactValues->size();
-               ++slotBlock) {
-            advances.push_back(std::min<int64_t>(8, numGroups - slotBlock * 8));
-          }
-          if (failed(emitGroupStoreStream(
-                  op, *destination, *offset, *compactValues, advances,
-                  rewriter)))
-            return failure();
-          rewriter.eraseOp(op);
-          return success();
-        }
-
-        for (auto [slotBlock, value] : llvm::enumerate(valueParts)) {
-          if (!isa<VRegType>(value.getType()))
-            return rewriter.notifyMatchFailure(
-                op, "group_store value must be vreg");
-          int64_t activeGroups =
-              std::min<int64_t>(8, numGroups - slotBlock * 8);
-          FailureOr<Value> mask = createPrefixMaskForActiveLanes(
-              op.getLoc(), maskType, activeGroups, rewriter);
-          if (failed(mask))
-            return rewriter.notifyMatchFailure(
-                op, "failed to create packed slots=8 group_store mask");
-          rewriter.create<VstsOp>(op.getLoc(), /*updated_base=*/Type{}, value,
-                                  *destination, groupOffsets[slotBlock],
-                                  rewriter.getStringAttr(*dist), *mask);
-        }
-
-        rewriter.eraseOp(op);
-        return success();
+        return lowerSlots8LaneStride(
+            op, adaptor, rewriter, valueVMIType, layout, *destination, *offset,
+            *rowStride, numGroups);
       }
 
       return lowerSlots8Contiguous(op, adaptor, rewriter, valueVMIType,

@@ -511,6 +511,13 @@ iota lowering 回归通过。
 合规检查为 `errors=0 warnings=0`，`git diff --check` 通过；interleave memory 与连续
 load/store lowering 回归通过。
 
+本轮将 `OneToNVMIGroupStoreOpPattern` 的 `slots=8 + lane_stride` 路径抽取为
+`lowerSlots8LaneStride`。helper 独立负责 lane-stride dist/mask granularity、每个 slot
+block 的地址合法性、未对齐 compact + stateful stream fallback，以及对齐逐块 `vsts`
+和 active-lane mask；主 pattern 仅做布局分派。该拆分保持 dist token、stream advances、
+mask 和 offset 语义不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；group-store 与连续 load/store 代表性 lowering 均成功。
+
 本轮将 `OneToNVMITruncIOpPattern` 的 factor narrowing（多个 source physical chunks
 转换后合并到单个 result chunk）抽取为 `lowerFactorTrunc`。helper 负责 source/result
 mask、按 factor 选择 part、`VcvtOp`/`VorOp` 合并以及 alias 结果收尾；主 pattern 保留
