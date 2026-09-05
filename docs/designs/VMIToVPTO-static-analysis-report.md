@@ -1390,3 +1390,12 @@ part 索引、`VcvtOp` partial 发射和 `VorOp` 合并抽取为
 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
 通过。相关 `fptosi` lowering 抽样仍在既有 VMI pack/unpack pipeline invariant 处提前
 失败，未进入本轮 helper 路径；该阻塞与本轮修改无关。
+
+# shuffle vselr 结果构造整改
+
+本轮将 `OneToNVMIShuffleOpPattern::lowerVselr` 中单个结果 chunk 的 source 范围、
+physical 类型、index 位宽校验，以及 `VciOp`/`VselrOp` 构造抽取为
+`buildShuffleVselrResult`。外层只负责 plans/result arity、结果遍历和最终替换；
+descending 顺序、base lane、索引向量类型及原有诊断保持不变。增量
+`check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
+通过。尚未重新构建 native target，当前构建仍受 `/cann-cmake` 外部依赖权限问题影响。
