@@ -1724,6 +1724,16 @@ OneBlock、TwoBlock、FourBlock、deinterleaved-2 及 contiguous rows 的执行�
 触发 `G.FMT.11-CPP`。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；`vmi_layout_assignment_group_slots_fanout.pto` lowering exit=0。
 
+# extf result view 规划整改
+
+本轮将 `OneToNVMIExtFOpPattern::matchAndRewrite` 中 packed BF16x2 结果的物理 view 类型
+规划抽取为 `ResultViewPlan`/`buildResultViewPlan`。入口仍负责 source/result layout、
+physical plan、lane-stride/factor 分派和 mask 构造；保持 packed BF16x2 的 BF16 view
+扩展、后续 `VbitcastOp` 物理无副作用语义、结果顺序和普通结果类型不变。增量
+`check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
+通过；`vmi_to_vpto_extf_f4x2_to_bf16x2_ls4.pto` lowering exit=0；另一个 extf case
+仍在既有 VMI pack/unpack pipeline invariant 处提前失败。
+
 # reduce_min/max physical 校验整改
 
 本轮将模板 `OneToNVMIReduceMinMaxOpPattern::matchAndRewrite` 中 min/max reduction 共用

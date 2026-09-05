@@ -14024,6 +14024,24 @@ struct OneToNVMIExtFOpPattern : OneToNOpConversionPattern<VMIExtFOp> {
   using OneToNOpConversionPattern<VMIExtFOp>::OneToNOpConversionPattern;
 
 private:
+  struct ResultViewPlan {
+    bool isPackedBF16x2;
+    VRegType vcvtResultType;
+  };
+
+  ResultViewPlan buildResultViewPlan(ArrayRef<VRegType> resultTypes,
+                                     OneToNPatternRewriter &rewriter) const {
+    bool isPackedBF16x2 =
+        pto::isPTOBF16x2Type(resultTypes.front().getElementType());
+    VRegType vcvtResultType = resultTypes.front();
+    if (isPackedBF16x2) {
+      vcvtResultType = VRegType::get(
+          rewriter.getContext(), resultTypes.front().getElementCount() * 2,
+          BFloat16Type::get(rewriter.getContext()));
+    }
+    return ResultViewPlan{isPackedBF16x2, vcvtResultType};
+  }
+
   static Value createVcvtResult(Location loc, VRegType resultType,
                                 Value sourcePart, Value mask, StringAttr rnd,
                                 StringAttr sat, StringAttr part,
@@ -14111,15 +14129,8 @@ public:
     // lanes per bf16x2 lane) and reinterpret each vcvt result with a
     // physical-noop VbitcastOp, mirroring the source-side reinterpret in
     // OneToNVMITruncFOpPattern (viewVcvtSource).
-    bool resultIsPackedBF16x2 =
-        pto::isPTOBF16x2Type(resultVRegTypes.front().getElementType());
-    VRegType vcvtResultVRegType = resultVRegTypes.front();
-    if (resultIsPackedBF16x2) {
-      vcvtResultVRegType =
-          VRegType::get(rewriter.getContext(),
-                        resultVRegTypes.front().getElementCount() * 2,
-                        BFloat16Type::get(rewriter.getContext()));
-    }
+    ResultViewPlan viewPlan =
+        buildResultViewPlan(resultVRegTypes, rewriter);
     VMILayoutAttr sourceLayout = sourceVMIType.getLayoutAttr();
     VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
     if (sourceLayout && resultLayout && sourceLayout.isContiguous() &&
@@ -14136,8 +14147,8 @@ public:
       }
 
       return lowerLaneStride(op, rewriter, sourceParts, resultVRegTypes,
-                             *mask, part, resultIsPackedBF16x2,
-                             vcvtResultVRegType);
+                             *mask, part, viewPlan.isPackedBF16x2,
+                             viewPlan.vcvtResultType);
     }
 
     ArrayRef<StringRef> parts;
@@ -14165,8 +14176,8 @@ public:
     }
 
     return lowerFactor(op, rewriter, sourceParts, resultVRegTypes, parts,
-                       factor, *mask, resultIsPackedBF16x2,
-                       vcvtResultVRegType);
+                       factor, *mask, viewPlan.isPackedBF16x2,
+                       viewPlan.vcvtResultType);
   }
 };
 
