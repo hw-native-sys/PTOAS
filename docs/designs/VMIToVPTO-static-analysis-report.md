@@ -1089,3 +1089,11 @@ physical arity、channel 数量、layout、转换结果和错误回调中的控�
 并将多行条件改为具名布尔变量。调整不改变 bitcast、channel split/merge、shuffle 或
 compress 的支持矩阵与结果语义。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过。
+
+本轮为 `OneToNVMILoadOpPattern` 引入 `LoadPhysicalPlan`，由 `buildPhysicalPlan` 统一
+完成 source/offset 归一化、result/contiguous physical type 计算、read footprint 校验
+和 `lanesPerPart` 推导。主 lowering 仅负责 lane-stride dist、direct deinterleaved 与
+contiguous fallback 的路径选择，避免重复准备逻辑并保持对齐/非对齐访存语义不变。同步
+将该 helper 的多条件失败判断命名化。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_load_store_contiguous.pto` lowering exit=0。

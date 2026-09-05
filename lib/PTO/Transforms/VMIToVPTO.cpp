@@ -7372,6 +7372,66 @@ struct OneToNVMILoadOpPattern : OneToNOpConversionPattern<VMILoadOp> {
   using OneToNOpConversionPattern<VMILoadOp>::OneToNOpConversionPattern;
 
 private:
+  struct LoadPhysicalPlan {
+    Value source;
+    Value offset;
+    SmallVector<Type> resultTypes;
+    SmallVector<Type> contiguousTypes;
+    VMILayoutAttr resultLayout;
+    int64_t lanesPerPart;
+    bool noWiderThanContiguous;
+  };
+
+  FailureOr<LoadPhysicalPlan> buildPhysicalPlan(
+      VMILoadOp op, OpAdaptor adaptor,
+      OneToNPatternRewriter &rewriter) const {
+    FailureOr<Value> source = getSingleValue(
+        op, adaptor.getSource(), "load source must convert to one value",
+        rewriter);
+    FailureOr<Value> offset = getSingleValue(
+        op, adaptor.getOffset(), "load offset must convert to one value",
+        rewriter);
+    bool failedOperands = failed(source) || failed(offset);
+    if (failedOperands) {
+      return failure();
+    }
+    FailureOr<SmallVector<Type>> maybeResultTypes =
+        getConvertedResultTypes(op, 0, *this->getTypeConverter());
+    if (failed(maybeResultTypes)) {
+      return failure();
+    }
+    auto resultVMIType = cast<VMIVRegType>(op.getResult().getType());
+    FailureOr<int64_t> lanesPerPart = verifyFullOrSafeReadVRegChunks(
+        op, resultVMIType, op.getSource(), op.getOffset(), rewriter);
+    if (failed(lanesPerPart)) {
+      return failure();
+    }
+    VMILayoutAttr contiguousLayout =
+        VMILayoutAttr::getContiguous(rewriter.getContext());
+    FailureOr<SmallVector<Type>> maybeContiguousTypes =
+        getConvertedVRegTypesWithLayout(resultVMIType, contiguousLayout,
+                                        *this->getTypeConverter());
+    if (failed(maybeContiguousTypes)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to compute contiguous load footprint");
+    }
+    SmallVector<Type> resultTypes = std::move(*maybeResultTypes);
+    SmallVector<Type> contiguousTypes = std::move(*maybeContiguousTypes);
+    FailureOr<bool> noWiderThanContiguous =
+        hasNoWiderFootprintThanContiguous(resultTypes, contiguousTypes);
+    if (failed(noWiderThanContiguous)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to compare load physical footprint");
+    }
+    return LoadPhysicalPlan{*source,
+                           *offset,
+                           std::move(resultTypes),
+                           std::move(contiguousTypes),
+                           resultVMIType.getLayoutAttr(),
+                           *lanesPerPart,
+                           *noWiderThanContiguous};
+  }
+
   FailureOr<SmallVector<Value>> materializeLaneStrideParts(
       VMILoadOp op, OneToNPatternRewriter &rewriter, Value source, Value offset,
       VMIVRegType resultVMIType, ArrayRef<Type> resultTypes, StringRef dist,
@@ -7618,71 +7678,41 @@ public:
   matchAndRewrite(VMILoadOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
     auto resultVMIType = cast<VMIVRegType>(op.getResult().getType());
-    FailureOr<Value> source =
-        getSingleValue(op, adaptor.getSource(),
-                       "load source must convert to one value", rewriter);
-    FailureOr<Value> offset =
-        getSingleValue(op, adaptor.getOffset(),
-                       "load offset must convert to one value", rewriter);
-    bool operandsConverted = succeeded(source) && succeeded(offset);
-    if (!operandsConverted) {
-      return failure();
-    }
-    FailureOr<SmallVector<Type>> maybe_resultTypes =
-        getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    bool failedResultTypeConversion = failed(maybe_resultTypes);
-    if (failedResultTypeConversion) {
-      return failure();
-    }
-    SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-    VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
-    FailureOr<int64_t> lanesPerPart = verifyFullOrSafeReadVRegChunks(
-        op, resultVMIType, op.getSource(), op.getOffset(), rewriter);
-    if (failed(lanesPerPart)) {
+    FailureOr<LoadPhysicalPlan> plan = buildPhysicalPlan(op, adaptor, rewriter);
+    if (failed(plan)) {
       return failure();
     }
     std::optional<std::string> laneStrideDist =
         getDenseLaneStrideLoadDistToken(resultVMIType);
     auto laneStrideResultType =
-        resultTypes.empty() ? VRegType{} : dyn_cast<VRegType>(resultTypes[0]);
+        plan->resultTypes.empty()
+            ? VRegType{}
+            : dyn_cast<VRegType>(plan->resultTypes[0]);
     bool canUseLaneStrideDist =
         laneStrideDist && laneStrideResultType &&
         isDirectMemoryDistAddressLegal(
             op.getSource(), op.getOffset(), resultVMIType.getElementType(),
             laneStrideResultType, VPTOMemoryOpFamily::Load, *laneStrideDist);
     if (canUseLaneStrideDist) {
-      return lowerLaneStride(op, rewriter, *source, *offset, resultVMIType,
-                             resultTypes, *laneStrideDist, *lanesPerPart);
-    }
-
-    VMILayoutAttr contiguousLayout =
-        VMILayoutAttr::getContiguous(rewriter.getContext());
-    FailureOr<SmallVector<Type>> maybeContiguousTypes =
-        getConvertedVRegTypesWithLayout(resultVMIType, contiguousLayout,
-                                        *this->getTypeConverter());
-    if (failed(maybeContiguousTypes)) {
-      return rewriter.notifyMatchFailure(
-          op, "failed to compute contiguous load footprint");
-    }
-    SmallVector<Type> contiguousTypes = std::move(*maybeContiguousTypes);
-    FailureOr<bool> noWiderThanContiguous =
-        hasNoWiderFootprintThanContiguous(resultTypes, contiguousTypes);
-    if (failed(noWiderThanContiguous)) {
-      return rewriter.notifyMatchFailure(
-          op, "failed to compare load physical footprint");
+      return lowerLaneStride(op, rewriter, plan->source, plan->offset,
+                             resultVMIType, plan->resultTypes, *laneStrideDist,
+                             plan->lanesPerPart);
     }
 
     std::optional<LogicalResult> deinterleavedResult =
-        lowerDirectDeinterleaved(op, rewriter, *source, *offset, resultVMIType,
-                                 resultLayout, resultTypes, *lanesPerPart,
-                                 *noWiderThanContiguous);
+        lowerDirectDeinterleaved(op, rewriter, plan->source, plan->offset,
+                                 resultVMIType, plan->resultLayout,
+                                 plan->resultTypes, plan->lanesPerPart,
+                                 plan->noWiderThanContiguous);
     if (deinterleavedResult) {
       return *deinterleavedResult;
     }
 
-    return lowerContiguous(op, rewriter, *source, *offset, resultVMIType,
-                            resultTypes, contiguousTypes, *lanesPerPart,
-                            contiguousLayout);
+    return lowerContiguous(op, rewriter, plan->source, plan->offset,
+                            resultVMIType, plan->resultTypes,
+                            plan->contiguousTypes, plan->lanesPerPart,
+                            VMILayoutAttr::getContiguous(
+                                rewriter.getContext()));
   }
 };
 
