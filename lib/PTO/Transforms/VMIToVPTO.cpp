@@ -10111,29 +10111,40 @@ private:
           op, "slots=1 group_store requires 1PT_B8/B16/B32 store support");
     }
     for (auto [group, value] : llvm::enumerate(valueParts)) {
-      auto vregType = dyn_cast<VRegType>(value.getType());
-      if (!vregType) {
-        return rewriter.notifyMatchFailure(op, "group_store value must be vreg");
+      if (failed(emitSlots1PointStore(op, value, group, destination, offset,
+                                      rowStride,
+                                      *pointDist, rewriter))) {
+        return failure();
       }
-      FailureOr<MaskType> maskType =
-          getMaskTypeForVReg(vregType, rewriter.getContext());
-      if (failed(maskType)) {
-        return rewriter.notifyMatchFailure(
-            op, "unsupported element type for group_store mask");
-      }
-      FailureOr<Value> mask =
-          createPrefixMask(op.getLoc(), *maskType, "PAT_VL1", rewriter);
-      if (failed(mask)) {
-        return rewriter.notifyMatchFailure(
-            op, "failed to create slots=1 group_store mask");
-      }
-      Value groupOffset = createGroupChunkOffset(
-          op.getLoc(), offset, rowStride, group, 0, rewriter);
-      rewriter.create<VstsOp>(op.getLoc(), Type{}, value, destination,
-                              groupOffset, rewriter.getStringAttr(*pointDist),
-                              *mask);
     }
     rewriter.eraseOp(op);
+    return success();
+  }
+
+  LogicalResult emitSlots1PointStore(
+      VMIGroupStoreOp op, Value value, int64_t group, Value destination,
+      Value offset, Value rowStride, StringRef pointDist,
+      OneToNPatternRewriter &rewriter) const {
+    auto vregType = dyn_cast<VRegType>(value.getType());
+    if (!vregType) {
+      return rewriter.notifyMatchFailure(op, "group_store value must be vreg");
+    }
+    FailureOr<MaskType> maskType =
+        getMaskTypeForVReg(vregType, rewriter.getContext());
+    if (failed(maskType)) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported element type for group_store mask");
+    }
+    FailureOr<Value> mask =
+        createPrefixMask(op.getLoc(), *maskType, "PAT_VL1", rewriter);
+    if (failed(mask)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to create slots=1 group_store mask");
+    }
+    Value groupOffset = createGroupChunkOffset(
+        op.getLoc(), offset, rowStride, group, 0, rewriter);
+    rewriter.create<VstsOp>(op.getLoc(), Type{}, value, destination, groupOffset,
+                            rewriter.getStringAttr(pointDist), *mask);
     return success();
   }
 

@@ -2105,6 +2105,16 @@ arity 合约、stride 常量和 part 遍历；保持 part 顺序、block/repeat 
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_layout_assignment_group_store_slots1_unit_stride.pto` 完整 lowering pipeline exit=0。
 
+# slots=1 group store point-store 单组发射职责整改
+
+本轮在 `OneToNVMIGroupStoreOpPattern::lowerSlots1PointStores` 中引入
+`emitSlots1PointStore`，将单个 group 的 vreg 校验、`PAT_VL1` mask 构造、group offset 计算
+和 point-store `VstsOp` 发射抽取为独立 helper。主函数继续负责 point-store dist 能力
+检查及 group 遍历；保持 row stride、地址偏移、mask、dist token、group 顺序和诊断语义不变。
+增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
+通过；`vmi_layout_assignment_group_store_slots1_unit_stride.pto` 完整 lowering pipeline
+exit=0。
+
 # slots=1 packed group store 值构造职责整改
 
 本轮在 `OneToNVMIGroupStoreOpPattern::lowerSlots1PackedUnitStride` 中引入
