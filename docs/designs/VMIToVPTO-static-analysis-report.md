@@ -181,3 +181,7 @@ walk lambda 的重复分支；新增代码合规检查通过。
 `verifySupportedMaskableOp`（提交 `eb6a4f802`），覆盖 add/sub/mul、div/min/max、
 abs、sqrt、exp、ln 等重复 dispatch；`pmode` 特殊处理仍仅位于 vector-scalar helper。
 同时修复了本批新增代码触及的控制语句大括号，合规检查通过。
+本轮又将位运算、移位、一元 not 和 select 的 verifier dispatch 全部改用
+`verifySupportedMaskableOp`（提交 `ad0189d3f`），进一步消除同构分支；随后按
+`G.FMT.11-CPP` 补齐了 `getMaskGranularityRank` 的控制语句大括号（提交
+`ab7407a2f`）。两次增量合规检查均通过。
