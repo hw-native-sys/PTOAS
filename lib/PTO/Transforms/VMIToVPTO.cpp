@@ -15470,6 +15470,97 @@ std::optional<WalkResult> verifySupportedVMISpecialOp(Operation *op) {
   return std::nullopt;
 }
 
+std::optional<WalkResult> verifySupportedVMIReductionOp(Operation *op) {
+  if (auto reduce = dyn_cast<VMIReduceAddIOp>(op)) {
+    return verifySupportedReduceOp(
+        reduce, false,
+        "pto.vmi.reduce_addi lowers through pto.vcadd only for contiguous "
+        "full 32-bit integer source chunks with matching mask chunks and one "
+        "init/result chunk (");
+  }
+  if (auto reduce = dyn_cast<VMIReduceAddFOp>(op)) {
+    return verifySupportedReduceOp(
+        reduce, true,
+        "pto.vmi.reduce_addf lowers through pto.vcadd only with reassoc, "
+        "f32 contiguous full source chunks, matching mask chunks, and one "
+        "init/result chunk (");
+  }
+  if (auto reduce = dyn_cast<VMIReduceMaxFOp>(op)) {
+    return verifySupportedReduceOp(
+        reduce, false,
+        "pto.vmi.reduce_maxf lowers through pto.vcmax only for f16/f32 "
+        "contiguous full source chunks with matching mask chunks and one "
+        "init/result chunk (");
+  }
+  if (auto reduce = dyn_cast<VMIReduceMinFOp>(op)) {
+    return verifySupportedReduceOp(
+        reduce, false,
+        "pto.vmi.reduce_minf lowers through pto.vcmin only for f16/f32 "
+        "contiguous full source chunks with matching mask chunks and one "
+        "init/result chunk (");
+  }
+  if (auto reduce = dyn_cast<VMIReduceMaxIOp>(op)) {
+    return verifySupportedReduceOp(
+        reduce, false,
+        "pto.vmi.reduce_maxi lowers through pto.vcmax only for contiguous "
+        "full integer source chunks with matching mask chunks and one "
+        "init/result chunk (");
+  }
+  if (auto reduce = dyn_cast<VMIReduceMinIOp>(op)) {
+    return verifySupportedReduceOp(
+        reduce, false,
+        "pto.vmi.reduce_mini lowers through pto.vcmin only for contiguous "
+        "full integer source chunks with matching mask chunks and one "
+        "init/result chunk (");
+  }
+  if (auto reduce = dyn_cast<VMIGroupReduceAddFOp>(op)) {
+    return verifySupportedGroupReduceOp(
+        reduce,
+        "pto.vmi.group_reduce_addf lowers through pto.vcgadd for 32B blocks "
+        "or through pto.vcadd for contiguous full source/mask chunks, "
+        "#pto.vmi.layout<num_groups = G, slots = K> result chunks, and "
+        "num_groups deriving a group size aligned to physical chunks (");
+  }
+  if (auto reduce = dyn_cast<VMIGroupReduceAddIOp>(op)) {
+    return verifySupportedGroupReduceOp(
+        reduce,
+        "pto.vmi.group_reduce_addi lowers through pto.vcgadd/vadd for "
+        "supported 32B block classes or through an internal widening "
+        "pto.vcadd path for aligned full chunks (");
+  }
+  if (auto reduce = dyn_cast<VMIGroupReduceMaxIOp>(op)) {
+    return verifySupportedGroupReduceOp(
+        reduce,
+        "pto.vmi.group_reduce_maxi lowers through pto.vcgmax/vmax for "
+        "supported 32B block classes or through pto.vcmax for aligned full "
+        "chunks (");
+  }
+  if (auto reduce = dyn_cast<VMIGroupReduceMaxFOp>(op)) {
+    return verifySupportedGroupReduceOp(
+        reduce,
+        "pto.vmi.group_reduce_maxf lowers through pto.vcgmax/vmax for 32B "
+        "blocks or through pto.vcmax for contiguous full chunks, matching "
+        "source/mask chunks, #pto.vmi.layout<num_groups = G, slots = K> "
+        "result chunks, and num_groups deriving a group size aligned to "
+        "physical chunks (");
+  }
+  if (auto reduce = dyn_cast<VMIGroupReduceMinFOp>(op)) {
+    return verifySupportedGroupReduceOp(
+        reduce,
+        "pto.vmi.group_reduce_minf lowers through pto.vcgmin/vmin for "
+        "supported 32B block classes or through pto.vcmin for aligned full "
+        "chunks (");
+  }
+  if (auto reduce = dyn_cast<VMIGroupReduceMinIOp>(op)) {
+    return verifySupportedGroupReduceOp(
+        reduce,
+        "pto.vmi.group_reduce_mini lowers through pto.vcgmin/vmin for "
+        "supported 32B block classes or through pto.vcmin for aligned full "
+        "chunks (");
+  }
+  return std::nullopt;
+}
+
 LogicalResult
 verifySupportedVMIToVPTOOps(ModuleOp module,
                             bool enableStableGatherMaskedLoad) {
@@ -15578,103 +15669,9 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
       return WalkResult::interrupt();
     }
 
-    if (auto reduce = dyn_cast<VMIReduceAddIOp>(op)) {
-      return verifySupportedReduceOp(
-          reduce, false,
-          "pto.vmi.reduce_addi lowers through pto.vcadd only for "
-          "contiguous full 32-bit integer source chunks with matching mask "
-          "chunks and one init/result chunk (");
-    }
-
-    if (auto reduce = dyn_cast<VMIReduceAddFOp>(op)) {
-      return verifySupportedReduceOp(
-          reduce, true,
-          "pto.vmi.reduce_addf lowers through pto.vcadd only with reassoc, "
-          "f32 contiguous full source chunks, matching mask chunks, and one "
-          "init/result chunk (");
-    }
-
-    if (auto reduce = dyn_cast<VMIGroupReduceAddFOp>(op)) {
-      return verifySupportedGroupReduceOp(
-          reduce,
-          "pto.vmi.group_reduce_addf lowers through pto.vcgadd for 32B blocks "
-          "or through pto.vcadd for contiguous full source/mask chunks, "
-          "#pto.vmi.layout<num_groups = G, slots = K> result chunks, and "
-          "num_groups deriving a group size aligned to physical chunks (");
-    }
-
-    if (auto reduce = dyn_cast<VMIGroupReduceAddIOp>(op)) {
-      return verifySupportedGroupReduceOp(
-          reduce,
-          "pto.vmi.group_reduce_addi lowers through pto.vcgadd/vadd for "
-          "supported 32B block classes or through an internal widening "
-          "pto.vcadd path for aligned full chunks (");
-    }
-
-    if (auto reduce = dyn_cast<VMIGroupReduceMaxIOp>(op)) {
-      return verifySupportedGroupReduceOp(
-          reduce,
-          "pto.vmi.group_reduce_maxi lowers through pto.vcgmax/vmax for "
-          "supported 32B block classes or through pto.vcmax for aligned full "
-          "chunks (");
-    }
-
-    if (auto reduce = dyn_cast<VMIGroupReduceMaxFOp>(op)) {
-      return verifySupportedGroupReduceOp(
-          reduce,
-          "pto.vmi.group_reduce_maxf lowers through pto.vcgmax/vmax for 32B "
-          "blocks or through pto.vcmax for contiguous full chunks, matching "
-          "source/mask chunks, #pto.vmi.layout<num_groups = G, slots = K> "
-          "result chunks, and num_groups deriving a group size aligned to "
-          "physical chunks (");
-    }
-
-    if (auto reduce = dyn_cast<VMIGroupReduceMinFOp>(op)) {
-      return verifySupportedGroupReduceOp(
-          reduce,
-          "pto.vmi.group_reduce_minf lowers through pto.vcgmin/vmin for "
-          "supported 32B block classes or through pto.vcmin for aligned full "
-          "chunks (");
-    }
-
-    if (auto reduce = dyn_cast<VMIGroupReduceMinIOp>(op)) {
-      return verifySupportedGroupReduceOp(
-          reduce,
-          "pto.vmi.group_reduce_mini lowers through pto.vcgmin/vmin for "
-          "supported 32B block classes or through pto.vcmin for aligned full "
-          "chunks (");
-    }
-
-    if (auto reduce = dyn_cast<VMIReduceMaxFOp>(op)) {
-      return verifySupportedReduceOp(
-          reduce, false,
-          "pto.vmi.reduce_maxf lowers through pto.vcmax only for f16/f32 "
-          "contiguous full source chunks with matching mask chunks and one "
-          "init/result chunk (");
-    }
-
-    if (auto reduce = dyn_cast<VMIReduceMinFOp>(op)) {
-      return verifySupportedReduceOp(
-          reduce, false,
-          "pto.vmi.reduce_minf lowers through pto.vcmin only for f16/f32 "
-          "contiguous full source chunks with matching mask chunks and one "
-          "init/result chunk (");
-    }
-
-    if (auto reduce = dyn_cast<VMIReduceMaxIOp>(op)) {
-      return verifySupportedReduceOp(
-          reduce, false,
-          "pto.vmi.reduce_maxi lowers through pto.vcmax only for contiguous "
-          "full integer source chunks with matching mask chunks and one "
-          "init/result chunk (");
-    }
-
-    if (auto reduce = dyn_cast<VMIReduceMinIOp>(op)) {
-      return verifySupportedReduceOp(
-          reduce, false,
-          "pto.vmi.reduce_mini lowers through pto.vcmin only for contiguous "
-          "full integer source chunks with matching mask chunks and one "
-          "init/result chunk (");
+    if (auto reductionResult = verifySupportedVMIReductionOp(op);
+        reductionResult.has_value()) {
+      return *reductionResult;
     }
 
     if (auto fma = dyn_cast<VMIFmaOp>(op)) {

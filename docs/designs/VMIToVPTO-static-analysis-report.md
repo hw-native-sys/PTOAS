@@ -362,3 +362,11 @@ compare、算术及专用 shape 检查的先后顺序。源码增量合规检查
 与错误诊断，未改变这些操作的能力范围、诊断内容或相对于 memory/layout/compare/
 arithmetic 检查的顺序。源码增量合规检查及 `git diff --check` 通过；连续的 load/store、
 interleave memory 和 group-broadcast lowering 回归均通过。
+
+本轮将普通 reduce 与 group-reduce 的 verifier 分派抽取为
+`verifySupportedVMIReductionOp`。helper 保留 `reduce_addf` 的 `reassoc` 要求、各
+整数/浮点 reduce 的具体诊断，以及 group-reduce 的独立支持说明；主 walk 只负责按
+memory/layout/compare、算术、专用 shape、归约的顺序调用分类 helper。源码增量合规
+检查和 `git diff --check` 通过；`vmi_group_reduce_addi_i16.pto` lowering 通过。
+两个普通 reduce 样例仍在测试自身 `unpack` pipeline invariant 处提前失败，未进入本轮
+verifier/lowering 变化路径。
