@@ -1923,3 +1923,14 @@ chunk 首 lane mask 构造、逐 chunk `vcadd`/`vadd` 累加和结果替换抽�
 增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；现有 reduce_add cases 在既有 VMI pack/unpack pipeline invariant
 处提前失败，未进入本轮 helper，不能将该失败归因于本轮改动。
+
+# histogram lowering 物理计划整改
+
+本轮为共享模板 `lowerVMIHistogramToVPTO` 引入 `HistogramPhysicalPlan` 与
+`prepareHistogramPhysicalPlan`，将 accumulator half 数量、source/mask arity、ui16
+accumulator 类型、source lane 数以及 Bin_N0/Bin_N1 常量准备从 lowering 遍历中分离。主
+函数现在只负责按物理 chunk 调用 `lowerHistogramChunk` 和结果扁平化；保持一/两 half
+支持、tail b8 mask、bin 常量、dhistv2/chistv2 TargetOp 选择和结果顺序不变。增量
+`check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
+通过；现有 vdhist/vchist cases 在既有 VMI pack/unpack pipeline invariant 处提前失败，
+未进入本轮 helper，不能将该失败归因于本轮改动。

@@ -13790,58 +13790,90 @@ static LogicalResult lowerHistogramChunk(
 }
 
 template <typename VMIOp, typename VPTOHistOp>
+struct HistogramPhysicalPlan {
+  ValueRange sourceParts;
+  ValueRange maskParts;
+  SmallVector<Value, 2> halves;
+  SmallVector<Value, 2> binConsts;
+  VRegType partType;
+  int64_t lanesPerPart;
+  size_t halfCount;
+};
+
+template <typename VMIOp>
+static FailureOr<HistogramPhysicalPlan<VMIOp>> prepareHistogramPhysicalPlan(
+    VMIOp op,
+    typename OneToNOpConversionPattern<VMIOp>::OpAdaptor adaptor,
+    OneToNPatternRewriter &rewriter) {
+  ValueRange accParts = adaptor.getAcc();
+  ValueRange sourceParts = adaptor.getSource();
+  ValueRange maskParts = adaptor.getMask();
+  size_t halfCount = accParts.size();
+  const bool invalidHalfCount = halfCount != 1 && halfCount != 2;
+  if (invalidHalfCount) {
+    return rewriter.notifyMatchFailure(
+        op, "expected one or two accumulator parts");
+  }
+  const bool invalidSourceMaskArity =
+      sourceParts.empty() || sourceParts.size() != maskParts.size();
+  if (invalidSourceMaskArity) {
+    return rewriter.notifyMatchFailure(
+        op, "expected matching source/mask chunks");
+  }
+  auto partType = dyn_cast<VRegType>(accParts.front().getType());
+  if (!partType) {
+    return rewriter.notifyMatchFailure(op, "expected ui16 acc parts");
+  }
+  const bool mismatchedSecondHalf =
+      halfCount == 2 && accParts[1].getType() != partType;
+  if (mismatchedSecondHalf) {
+    return rewriter.notifyMatchFailure(op,
+                                       "expected matching ui16 acc parts");
+  }
+  auto sourceType = cast<VMIVRegType>(op.getSource().getType());
+  FailureOr<int64_t> lanesPerPart =
+      getDataLanesPerPart(sourceType.getElementType());
+  if (failed(lanesPerPart)) {
+    return rewriter.notifyMatchFailure(op, "failed to compute source lanes");
+  }
+  Location loc = op.getLoc();
+  SmallVector<Value, 2> binConsts;
+  binConsts.push_back(createI32Constant(loc, 0, rewriter));
+  if (halfCount == 2) {
+    binConsts.push_back(createI32Constant(loc, 1, rewriter));
+  }
+  return HistogramPhysicalPlan<VMIOp>{
+      sourceParts, maskParts, SmallVector<Value, 2>(accParts.begin(), accParts.end()),
+      std::move(binConsts), *partType, *lanesPerPart, halfCount};
+}
+
+template <typename VMIOp, typename VPTOHistOp>
 static LogicalResult
 lowerVMIHistogramToVPTO(VMIOp op,
                         typename OneToNOpConversionPattern<VMIOp>::OpAdaptor
                             adaptor,
                         TypeConverter *typeConverter,
                         OneToNPatternRewriter &rewriter) {
-  ValueRange accParts    = adaptor.getAcc();
-  ValueRange sourceParts = adaptor.getSource();
-  ValueRange maskParts   = adaptor.getMask();
+  FailureOr<HistogramPhysicalPlan<VMIOp>> plan =
+      prepareHistogramPhysicalPlan(op, adaptor, rewriter);
+  if (failed(plan)) {
+    return failure();
+  }
 
-  // Allow 1 (Bin_N0-only, 128×ui16) or 2 (Bin_N0+Bin_N1, 256×ui16) halves
-  size_t halfCount = accParts.size();
-  if (halfCount != 1 && halfCount != 2)
-    return rewriter.notifyMatchFailure(
-        op, "expected one or two accumulator parts");
-  if (sourceParts.empty() || sourceParts.size() != maskParts.size())
-    return rewriter.notifyMatchFailure(
-        op, "expected matching source/mask chunks");
-
-  auto partType = dyn_cast<VRegType>(accParts[0].getType());
-  if (!partType)
-    return rewriter.notifyMatchFailure(op, "expected ui16 acc parts");
-  if (halfCount == 2 && accParts[1].getType() != partType)
-    return rewriter.notifyMatchFailure(op,
-                                       "expected matching ui16 acc parts");
-
-  auto sourceType = cast<VMIVRegType>(op.getSource().getType());
-  FailureOr<int64_t> lanesPerPart =
-      getDataLanesPerPart(sourceType.getElementType());
-  if (failed(lanesPerPart))
-    return rewriter.notifyMatchFailure(op, "failed to compute source lanes");
-
-  Location loc = op.getLoc();
-  SmallVector<Value, 2> binConsts;
-  binConsts.push_back(createI32Constant(loc, 0, rewriter));
-  if (halfCount == 2)
-    binConsts.push_back(createI32Constant(loc, 1, rewriter));
-
-  SmallVector<Value, 2> halves(accParts.begin(), accParts.end());
-
-  for (size_t index = 0, e = sourceParts.size(); index < e; ++index) {
+  for (size_t index = 0, e = plan->sourceParts.size(); index < e; ++index) {
     if (failed(lowerHistogramChunk<VMIOp, VPTOHistOp>(
-            op, sourceParts[index], maskParts[index],
-            static_cast<int64_t>(index) * *lanesPerPart, *lanesPerPart, halves,
-            binConsts, partType, rewriter))) {
+            op, plan->sourceParts[index], plan->maskParts[index],
+            static_cast<int64_t>(index) * plan->lanesPerPart,
+            plan->lanesPerPart, plan->halves, plan->binConsts, plan->partType,
+            rewriter))) {
       return failure();
     }
   }
 
   replaceOpWithFlatConvertedValues(
       rewriter, op,
-      SmallVector<Value>(halves.begin(), halves.begin() + halfCount),
+      SmallVector<Value>(plan->halves.begin(),
+                         plan->halves.begin() + plan->halfCount),
       *typeConverter);
   return success();
 }
