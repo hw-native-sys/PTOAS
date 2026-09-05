@@ -8951,6 +8951,48 @@ struct OneToNVMIMaskedLoadOpPattern
     : OneToNOpConversionPattern<VMIMaskedLoadOp> {
   using OneToNOpConversionPattern<VMIMaskedLoadOp>::OneToNOpConversionPattern;
 
+private:
+  LogicalResult lowerPhysicalParts(
+      VMIMaskedLoadOp op, OneToNPatternRewriter &rewriter, Value source,
+      Value offset, ValueRange maskParts, ValueRange passthruParts,
+      ArrayRef<Type> resultTypes, int64_t lanesPerPart) const {
+    bool arityMismatch = maskParts.size() != passthruParts.size() ||
+                         passthruParts.size() != resultTypes.size();
+    if (arityMismatch) {
+      return rewriter.notifyMatchFailure(op,
+                                         "masked_load physical arity mismatch");
+    }
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (auto [index, maskPassthruAndType] : llvm::enumerate(
+             llvm::zip_equal(maskParts, passthruParts, resultTypes))) {
+      auto [mask, passthru, resultType] = maskPassthruAndType;
+      bool invalidPartTypes = !isa<MaskType>(mask.getType()) ||
+                              passthru.getType() != resultType ||
+                              !isa<VRegType>(resultType);
+      if (invalidPartTypes) {
+        return rewriter.notifyMatchFailure(
+            op, "masked_load physical part type mismatch");
+      }
+      Value chunkOffset = createChunkOffset(
+          op.getLoc(), offset, index * lanesPerPart, rewriter);
+      Value loaded = rewriter
+                         .create<VldsOp>(op.getLoc(), resultType,
+                                         /*updated_base=*/Type{}, source,
+                                         chunkOffset, /*dist=*/nullptr)
+                         .getResult();
+      results.push_back(rewriter
+                            .create<VselOp>(op.getLoc(), resultType, loaded,
+                                            passthru, mask)
+                            .getResult());
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
+public:
+
   LogicalResult
   matchAndRewrite(VMIMaskedLoadOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -8981,39 +9023,8 @@ struct OneToNVMIMaskedLoadOpPattern
       return failure();
     }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-    bool arityMismatch = maskParts.size() != passthruParts.size() ||
-                         passthruParts.size() != resultTypes.size();
-    if (arityMismatch) {
-      return rewriter.notifyMatchFailure(op,
-                                         "masked_load physical arity mismatch");
-    }
-
-    SmallVector<Value> results;
-    results.reserve(resultTypes.size());
-    for (auto [index, maskPassthruAndType] : llvm::enumerate(
-             llvm::zip_equal(maskParts, passthruParts, resultTypes))) {
-      auto [mask, passthru, resultType] = maskPassthruAndType;
-      if (!isa<MaskType>(mask.getType()) || passthru.getType() != resultType ||
-          !isa<VRegType>(resultType))
-        return rewriter.notifyMatchFailure(
-            op, "masked_load physical part type mismatch");
-
-      Value chunkOffset = createChunkOffset(op.getLoc(), *offset,
-                                            index * *lanesPerPart, rewriter);
-      Value loaded =
-          rewriter
-              .create<VldsOp>(op.getLoc(), resultType,
-                              /*updated_base=*/Type{}, *source, chunkOffset,
-                              /*dist=*/nullptr)
-              .getResult();
-      results.push_back(
-          rewriter
-              .create<VselOp>(op.getLoc(), resultType, loaded, passthru, mask)
-              .getResult());
-    }
-
-    replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
-    return success();
+    return lowerPhysicalParts(op, rewriter, *source, *offset, maskParts,
+                              passthruParts, resultTypes, *lanesPerPart);
   }
 };
 

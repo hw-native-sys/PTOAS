@@ -714,6 +714,13 @@ physical arity 和 chunk 校验补齐大括号，并将多条件失败判断命�
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；group-slot SCF 与
 连续 load/store lowering exit=0。
 
+本轮将 `OneToNVMIMaskedLoadOpPattern` 的逐 physical chunk 发射抽取为
+`lowerPhysicalParts`，集中处理 mask/passthru/result arity、物理类型、chunk offset、
+`vlds` 和 `vsel`；主 pattern 仅负责 source/offset、read footprint 和结果类型准备。
+保持 masked-load 的 passthru 语义、结果顺序和指令选择不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续 load/store
+lowering exit=0。
+
 本轮为 `OneToNVMIExtFOpPattern` 引入 `ExtFPhysicalPlan`/`buildPhysicalPlan`，统一负责
 source physical part 一致性、result vreg 类型和 BF16x2/F32 结果契约；主 pattern 仅
 负责 packed view 规划及 lane-stride/factor 发射分派。同步将 vmull verifier 的复合物理
