@@ -1083,3 +1083,9 @@ arity 和 widen arity 检查补齐大括号，并将多行条件整理为具名�
 `exti` 的 group-slot layout 判断命名化，避免静态检查器误报。所有调整仅影响控制流
 表达和可读性，不改变 conversion 的 part、mask、arity 或诊断语义。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
+
+本轮继续清理 bitcast/channel/shuffle 及 verifier 相关的 `G.FMT.11-CPP` 问题：为
+physical arity、channel 数量、layout、转换结果和错误回调中的控制语句补齐大括号，
+并将多行条件改为具名布尔变量。调整不改变 bitcast、channel split/merge、shuffle 或
+compress 的支持矩阵与结果语义。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过。

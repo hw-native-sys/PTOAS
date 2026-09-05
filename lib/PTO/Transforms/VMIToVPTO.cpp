@@ -1702,8 +1702,9 @@ LogicalResult checkSupportedStoreShape(VMIVRegType type, Value destination,
     return success();
 
   auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
@@ -1728,8 +1729,9 @@ LogicalResult checkSupportedInterleaveStoreShape(
     VMIInterleaveStoreOp op,
     std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
@@ -1764,8 +1766,9 @@ FailureOr<int64_t> getGroupSizeFromNumGroups(VMIVRegType type,
                                              int64_t numGroups,
                                              std::string *reason = nullptr) {
   auto fail = [&reason](const Twine &message) -> FailureOr<int64_t> {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
   if (numGroups <= 0)
@@ -1778,8 +1781,9 @@ FailureOr<int64_t> getGroupSizeFromNumGroups(VMIVRegType type,
 LogicalResult checkSupportedGroupChunkShape(VMIVRegType type, int64_t groupSize,
                                             std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
@@ -2316,8 +2320,9 @@ checkGatherElementContract(VMIVRegType resultType, VMIVRegType indicesType,
 LogicalResult
 checkSupportedGatherShape(VMIGatherOp op, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
@@ -11916,8 +11921,9 @@ struct OneToNVMISelectOpPattern : OneToNOpConversionPattern<VMISelectOp> {
     ValueRange falseParts = adaptor.getFalseValue();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    if (failed(maybe_resultTypes)) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     if (maskParts.size() != trueParts.size() ||
         trueParts.size() != falseParts.size() ||
@@ -11995,8 +12001,9 @@ struct OneToNVMIActivePrefixIndexOpPattern
     ValueRange maskParts = adaptor.getMask();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    if (failed(maybe_resultTypes)) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     if (maskParts.size() != 1 || resultTypes.size() != 1)
       return rewriter.notifyMatchFailure(
@@ -14312,7 +14319,9 @@ public:
           op, "unsupported dense lane_stride trunci result layout");
     }
 
-    if (isDenseLaneStrideNarrowing && sat && sat.getValue() == "NOSAT") {
+    bool useNoSatCarrier =
+        isDenseLaneStrideNarrowing && sat && sat.getValue() == "NOSAT";
+    if (useNoSatCarrier) {
       SmallVector<Value> results;
       results.reserve(resultTypes.size());
       for (auto [sourcePart, resultType] :
@@ -14928,19 +14937,25 @@ struct OneToNVMIBitcastOpPattern : OneToNOpConversionPattern<VMIBitcastOp> {
     ValueRange sourceParts = adaptor.getSource();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    if (failed(maybe_resultTypes)) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-    if (sourceParts.size() != resultTypes.size())
+    bool arityMismatch = sourceParts.size() != resultTypes.size();
+    if (arityMismatch) {
       return rewriter.notifyMatchFailure(op, "physical bitcast arity mismatch");
+    }
 
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
     for (auto [sourcePart, resultType] :
          llvm::zip_equal(sourceParts, resultTypes)) {
-      if (!isa<VRegType>(sourcePart.getType()) || !isa<VRegType>(resultType))
+      bool invalidPartTypes = !isa<VRegType>(sourcePart.getType()) ||
+                              !isa<VRegType>(resultType);
+      if (invalidPartTypes) {
         return rewriter.notifyMatchFailure(
             op, "physical bitcast part type mismatch");
+      }
       results.push_back(
           rewriter.create<VbitcastOp>(op.getLoc(), resultType, sourcePart)
               .getResult());
@@ -14959,9 +14974,11 @@ struct OneToNVMIChannelSplitOpPattern
   matchAndRewrite(VMIChannelSplitOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
     int64_t channels = op.getNumResults();
-    if (channels != 2 && channels != 4)
+    bool unsupportedChannels = channels != 2 && channels != 4;
+    if (unsupportedChannels) {
       return rewriter.notifyMatchFailure(
           op, "channel_split only supports 2 or 4 channels");
+    }
 
     auto sourceType = cast<VMIVRegType>(op.getSource().getType());
     VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();
@@ -14976,22 +14993,26 @@ struct OneToNVMIChannelSplitOpPattern
     for (Value result : op.getResults()) {
       auto resultType = cast<VMIVRegType>(result.getType());
       VMILayoutAttr resultLayout = resultType.getLayoutAttr();
-      if (!resultLayout || !resultLayout.isContiguous())
+      bool invalidResultLayout = !resultLayout || !resultLayout.isContiguous();
+      if (invalidResultLayout) {
         return rewriter.notifyMatchFailure(
             op, "channel_split requires contiguous result layouts");
+      }
     }
 
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    if (failed(maybe_resultTypes)) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     FailureOr<SmallVector<Value>> results =
         materializeDataLayoutConversion(op, adaptor.getSource(), resultTypes,
                                         sourceLayout, channelLayout,
                                         sourceType.getElementType(), rewriter);
-    if (failed(results))
+    if (failed(results)) {
       return failure();
+    }
 
     replaceOpWithFlatConvertedValues(rewriter, op, *results, *this->getTypeConverter());
     return success();
@@ -15006,16 +15027,20 @@ struct OneToNVMIChannelMergeOpPattern
   matchAndRewrite(VMIChannelMergeOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
     int64_t channels = op.getInputs().size();
-    if (channels != 2 && channels != 4)
+    bool unsupportedChannels = channels != 2 && channels != 4;
+    if (unsupportedChannels) {
       return rewriter.notifyMatchFailure(
           op, "channel_merge only supports 2 or 4 channels");
+    }
 
     for (Value input : op.getInputs()) {
       auto inputType = cast<VMIVRegType>(input.getType());
       VMILayoutAttr inputLayout = inputType.getLayoutAttr();
-      if (!inputLayout || !inputLayout.isContiguous())
+      bool invalidInputLayout = !inputLayout || !inputLayout.isContiguous();
+      if (invalidInputLayout) {
         return rewriter.notifyMatchFailure(
             op, "channel_merge requires contiguous input layouts");
+      }
     }
     auto resultType = cast<VMIVRegType>(op.getResult().getType());
     VMILayoutAttr resultLayout = resultType.getLayoutAttr();
@@ -15030,15 +15055,17 @@ struct OneToNVMIChannelMergeOpPattern
 
     FailureOr<SmallVector<Type>> maybeResultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybeResultTypes))
+    if (failed(maybeResultTypes)) {
       return failure();
+    }
     FailureOr<SmallVector<Value>> results =
         materializeDataLayoutConversion(
             op, flattenOneToNOperands(adaptor.getOperands()),
             *maybeResultTypes, channelLayout, resultLayout,
             resultType.getElementType(), rewriter);
-    if (failed(results))
+    if (failed(results)) {
       return failure();
+    }
 
     replaceOpWithFlatConvertedValues(rewriter, op, *results, *this->getTypeConverter());
     return success();
@@ -15564,8 +15591,9 @@ LogicalResult checkSupportedFPToIntShape(OpTy op, StringRef conversionName,
                                          ContractLookup lookup,
                                          std::string *reason = nullptr) {
   auto fail = [&reason](const Twine &message) {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
@@ -15741,8 +15769,9 @@ static FailureOr<ChannelShapePlan> buildChannelShapePlan(
     std::string *reason) {
   auto fail = [&reason](const Twine &message)
       -> FailureOr<ChannelShapePlan> {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
   if (channels != 2 && channels != 4) {
@@ -15944,8 +15973,9 @@ static FailureOr<CompressPhysicalShapePlan> buildCompressPhysicalShapePlan(
 LogicalResult checkSupportedCompressShape(VMICompressOp op,
                                           std::string *reason = nullptr) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
