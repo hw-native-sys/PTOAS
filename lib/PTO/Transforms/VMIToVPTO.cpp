@@ -13490,6 +13490,24 @@ struct OneToNVMIExtIOpPattern : OneToNOpConversionPattern<OpT> {
 struct OneToNVMITruncIOpPattern : OneToNOpConversionPattern<VMITruncIOp> {
   using OneToNOpConversionPattern<VMITruncIOp>::OneToNOpConversionPattern;
 
+private:
+  void finalizeResults(VMITruncIOp op, SmallVectorImpl<Value> &results,
+                       bool s32ToS8Alias, ArrayRef<Type> originalResultTypes,
+                       OneToNPatternRewriter &rewriter) const {
+    if (s32ToS8Alias) {
+      for (auto &&[index, result] : llvm::enumerate(results)) {
+        result = rewriter
+                     .create<VbitcastOp>(op.getLoc(), originalResultTypes[index],
+                                         result)
+                     .getResult();
+      }
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+  }
+
+public:
+
   LogicalResult
   matchAndRewrite(VMITruncIOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -13716,18 +13734,6 @@ struct OneToNVMITruncIOpPattern : OneToNOpConversionPattern<VMITruncIOp> {
       resultType0 = cast<VRegType>(resultTypes.front());
     }
 
-    auto finalize = [&s32ToS8Alias, &originalResultTypes, &rewriter, &op](
-                        SmallVector<Value> &results) {
-      if (s32ToS8Alias) {
-        for (auto &&[i, r] : llvm::enumerate(results))
-          r = rewriter
-                  .create<VbitcastOp>(op.getLoc(), originalResultTypes[i], r)
-                  .getResult();
-      }
-      replaceOpWithFlatConvertedValues(rewriter, op, results,
-                                       *this->getTypeConverter());
-    };
-
     if (isDenseLaneStrideNarrowing) {
       StringAttr part = rewriter.getStringAttr(factor == 2 ? "EVEN" : "P0");
       FailureOr<Value> sourceMask =
@@ -13745,7 +13751,8 @@ struct OneToNVMITruncIOpPattern : OneToNOpConversionPattern<VMITruncIOp> {
                                               /*rnd=*/nullptr, sat, part)
                               .getResult());
       }
-      finalize(results);
+      finalizeResults(op, results, s32ToS8Alias, originalResultTypes,
+                      rewriter);
       return success();
     }
 
@@ -13799,7 +13806,7 @@ struct OneToNVMITruncIOpPattern : OneToNOpConversionPattern<VMITruncIOp> {
       results.push_back(merged);
     }
 
-    finalize(results);
+    finalizeResults(op, results, s32ToS8Alias, originalResultTypes, rewriter);
     return success();
   }
 };
