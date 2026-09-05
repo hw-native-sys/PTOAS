@@ -13957,6 +13957,66 @@ private:
     return success();
   }
 
+  LogicalResult lowerGroupSlotTrunc(
+      VMITruncFOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes,
+      VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
+      VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
+      OneToNPatternRewriter &rewriter) const {
+    unsigned resultBits =
+        pto::getPTOStorageElemBitWidth(resultVMIType.getElementType());
+    bool invalidShape =
+        sourceLayout.getNumGroups() != resultLayout.getNumGroups() ||
+        sourceLayout.getSlots() != resultLayout.getSlots() ||
+        (sourceLayout.getSlots() != 1 && sourceLayout.getSlots() != 8) ||
+        !sourceVMIType.getElementType().isF32() ||
+        (resultBits != 16 && resultBits != 8) ||
+        sourceParts.size() != resultTypes.size();
+    if (invalidShape) {
+      return rewriter.notifyMatchFailure(op, "unsupported group-slot truncf shape");
+    }
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    const char *activeSlotPattern =
+        sourceLayout.getSlots() == 1 ? "PAT_VL1" : "PAT_VL8";
+    FailureOr<Value> activeSlotMask = createPrefixMask(
+        op.getLoc(), MaskType::get(rewriter.getContext(), "b32"),
+        activeSlotPattern, rewriter);
+    if (failed(activeSlotMask)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to build group-slot truncf active slot mask");
+    }
+    StringAttr sat = op->getAttrOfType<StringAttr>("saturate");
+    for (auto [sourcePart, physicalResultType] :
+         llvm::zip_equal(sourceParts, resultTypes)) {
+      auto sourceType = dyn_cast<VRegType>(sourcePart.getType());
+      auto resultType = dyn_cast<VRegType>(physicalResultType);
+      bool invalidTypes =
+          !sourceType || !sourceType.getElementType().isF32() || !resultType;
+      if (invalidTypes) {
+        return rewriter.notifyMatchFailure(
+            op, "unsupported group-slot truncf physical type");
+      }
+      unsigned physicalResultBits =
+          pto::getPTOStorageElemBitWidth(resultType.getElementType());
+      bool unsupportedResultBits = physicalResultBits != 16 && physicalResultBits != 8;
+      if (unsupportedResultBits) {
+        return rewriter.notifyMatchFailure(
+            op, "unsupported group-slot truncf physical type");
+      }
+      StringAttr part = rewriter.getStringAttr(
+          physicalResultBits == 16 ? "EVEN" : "P0");
+      StringAttr rnd = rewriter.getStringAttr(
+          getTruncFRoundMode(op, resultType.getElementType()));
+      results.push_back(rewriter
+                            .create<VcvtOp>(op.getLoc(), resultType, sourcePart,
+                                           *activeSlotMask, rnd, sat, part)
+                            .getResult());
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
 public:
 
   LogicalResult
@@ -13988,58 +14048,9 @@ public:
         sourceLayout && resultLayout && sourceLayout.isGroupSlots() &&
         resultLayout.isGroupSlots();
     if (groupSlotLayouts) {
-      unsigned logicalResultBits =
-          pto::getPTOStorageElemBitWidth(resultVMIType.getElementType());
-      if (sourceLayout.getNumGroups() != resultLayout.getNumGroups() ||
-          sourceLayout.getSlots() != resultLayout.getSlots() ||
-          (sourceLayout.getSlots() != 1 && sourceLayout.getSlots() != 8) ||
-          !sourceVMIType.getElementType().isF32() ||
-          (logicalResultBits != 16 && logicalResultBits != 8) ||
-          sourceParts.size() != resultTypes.size())
-        return rewriter.notifyMatchFailure(
-            op, "unsupported group-slot truncf shape");
-
-      SmallVector<Value> results;
-      results.reserve(resultTypes.size());
-      const char *activeSlotPattern =
-          sourceLayout.getSlots() == 1 ? "PAT_VL1" : "PAT_VL8";
-      FailureOr<Value> activeSlotMask = createPrefixMask(
-          op.getLoc(), MaskType::get(rewriter.getContext(), "b32"),
-          activeSlotPattern, rewriter);
-      if (failed(activeSlotMask)) {
-        return rewriter.notifyMatchFailure(
-            op, "failed to build group-slot truncf active slot mask");
-      }
-      StringAttr sat = op->getAttrOfType<StringAttr>("saturate");
-      for (auto [sourcePart, physicalResultType] :
-           llvm::zip_equal(sourceParts, resultTypes)) {
-        auto sourceType = dyn_cast<VRegType>(sourcePart.getType());
-        auto resultType = dyn_cast<VRegType>(physicalResultType);
-        if (!sourceType || !sourceType.getElementType().isF32() ||
-            !resultType)
-          return rewriter.notifyMatchFailure(
-              op, "unsupported group-slot truncf physical type");
-        unsigned physicalResultBits =
-            pto::getPTOStorageElemBitWidth(resultType.getElementType());
-        StringAttr part;
-        if (physicalResultBits == 16) {
-          part = rewriter.getStringAttr("EVEN");
-        } else if (physicalResultBits == 8) {
-          part = rewriter.getStringAttr("P0");
-        } else {
-          return rewriter.notifyMatchFailure(
-              op, "unsupported group-slot truncf physical type");
-        }
-        StringAttr rnd = rewriter.getStringAttr(
-            getTruncFRoundMode(op, resultType.getElementType()));
-        results.push_back(rewriter
-                              .create<VcvtOp>(op.getLoc(), resultType,
-                                              sourcePart, *activeSlotMask, rnd,
-                                              sat, part)
-                              .getResult());
-      }
-      replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
-      return success();
+      return lowerGroupSlotTrunc(op, sourceParts, resultTypes, sourceLayout,
+                                 resultLayout, sourceVMIType, resultVMIType,
+                                 rewriter);
     }
 
     if (resultTypes.empty()) {

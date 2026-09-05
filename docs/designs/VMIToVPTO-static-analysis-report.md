@@ -1686,3 +1686,12 @@ base 指针构造、`vsldb` 发射和结果替换抽取为 `lowerStrideLoad`。�
 变更继续触发 `G.FMT.11-CPP`。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；`vmi_to_vpto_stride_load.pto` 仍在既有 VMI pack/unpack
 pipeline invariant 处提前失败，未进入本轮 helper。
+
+# truncf group-slot 路径整改
+
+本轮将 `OneToNVMITruncFOpPattern::matchAndRewrite` 中 group-slot truncation 的 shape
+校验、active slot mask 构造、`EVEN/P0` 选择、物理 `vcvt` 发射和结果替换抽取为
+`lowerGroupSlotTrunc`。普通 contiguous、same-width、dense lane-stride 与 narrow 路径
+仍由入口按原顺序分派；f32 到 f16/f8 的 group-slot 语义、slot mask、round/saturate
+属性和诊断保持不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；本轮未发现可用的独立 group-slot truncf lowering case。
