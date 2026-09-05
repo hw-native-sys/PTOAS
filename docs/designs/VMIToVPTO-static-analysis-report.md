@@ -1695,3 +1695,13 @@ pipeline invariant 处提前失败，未进入本轮 helper。
 仍由入口按原顺序分派；f32 到 f16/f8 的 group-slot 语义、slot mask、round/saturate
 属性和诊断保持不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；本轮未发现可用的独立 group-slot truncf lowering case。
+
+# reduce_add physical plan 共性整改
+
+本轮为 `reduce_addi` 与 `reduce_addf` 引入共享的 `ReduceAddPhysicalPlan` 及
+`buildReduceAddPhysicalPlan`，统一承载 source/mask/result physical arity、vreg/mask
+类型和各 chunk 类型一致性校验。两个 pattern 保留各自的 `vcadd`、等价 mask 合并和
+多 chunk 累加逻辑，仅复用相同的输入契约检查；诊断前缀、结果顺序及整数/浮点语义不变。
+增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_reduce_addi_multichunk.pto` 仍在既有 pack/unpack pipeline invariant 处
+提前失败，未进入本轮 helper。

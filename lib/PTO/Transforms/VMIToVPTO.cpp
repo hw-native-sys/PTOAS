@@ -12658,6 +12658,49 @@ struct OneToNVMICompressStoreOpPattern
   }
 };
 
+struct ReduceAddPhysicalPlan {
+  VRegType resultType;
+  MaskType maskType;
+};
+
+template <typename OpTy>
+static FailureOr<ReduceAddPhysicalPlan> buildReduceAddPhysicalPlan(
+    OpTy op, ValueRange sourceParts, ValueRange maskParts,
+    TypeRange resultTypes, OneToNPatternRewriter &rewriter,
+    StringRef diagnostic) {
+  bool invalidArity = sourceParts.empty() || sourceParts.size() != maskParts.size() ||
+                      resultTypes.size() != 1;
+  if (invalidArity) {
+    return rewriter.notifyMatchFailure(
+        op, Twine(diagnostic) +
+                " requires matching source/mask chunks and one result chunk");
+  }
+  auto resultType = dyn_cast<VRegType>(resultTypes.front());
+  auto maskType = dyn_cast<MaskType>(maskParts.front().getType());
+  if (!resultType || !maskType) {
+    return rewriter.notifyMatchFailure(
+        op, Twine(diagnostic) +
+                " requires matching physical source/result vregs and one mask");
+  }
+  for (Value sourcePart : sourceParts) {
+    bool sourceTypeMismatch = sourcePart.getType() != resultType;
+    if (sourceTypeMismatch) {
+      return rewriter.notifyMatchFailure(
+          op, Twine(diagnostic) +
+                  " requires every source chunk to match result vreg type");
+    }
+  }
+  for (Value maskPart : maskParts) {
+    bool maskTypeMismatch = maskPart.getType() != maskType;
+    if (maskTypeMismatch) {
+      return rewriter.notifyMatchFailure(
+          op, Twine(diagnostic) +
+                  " requires every mask chunk to have the same predicate type");
+    }
+  }
+  return ReduceAddPhysicalPlan{*resultType, *maskType};
+}
+
 struct OneToNVMIReduceAddIOpPattern
     : OneToNOpConversionPattern<VMIReduceAddIOp> {
   using OneToNOpConversionPattern<VMIReduceAddIOp>::OneToNOpConversionPattern;
@@ -12672,29 +12715,13 @@ struct OneToNVMIReduceAddIOpPattern
     if (failed(maybe_resultTypes))
       return failure();
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-    if (sourceParts.empty() || sourceParts.size() != maskParts.size() ||
-        resultTypes.size() != 1)
-      return rewriter.notifyMatchFailure(
-          op, "reduce_addi requires matching source/mask chunks and one result "
-              "chunk");
-
-    auto resultType = dyn_cast<VRegType>(resultTypes.front());
-    auto maskType = dyn_cast<MaskType>(maskParts.front().getType());
-    if (!resultType || !maskType)
-      return rewriter.notifyMatchFailure(
-          op, "reduce_addi requires matching physical source/result vregs and "
-              "one mask");
-
-    for (Value sourcePart : sourceParts)
-      if (sourcePart.getType() != resultType)
-        return rewriter.notifyMatchFailure(
-            op, "reduce_addi requires every source chunk to match result "
-                "vreg type");
-    for (Value maskPart : maskParts)
-      if (maskPart.getType() != maskType)
-        return rewriter.notifyMatchFailure(
-            op, "reduce_addi requires every mask chunk to have the same "
-                "predicate type");
+    FailureOr<ReduceAddPhysicalPlan> plan = buildReduceAddPhysicalPlan(
+        op, sourceParts, maskParts, resultTypes, rewriter, "reduce_addi");
+    if (failed(plan)) {
+      return failure();
+    }
+    VRegType resultType = plan->resultType;
+    MaskType maskType = plan->maskType;
 
     FailureOr<Value> combined = combineEquivalentMaskedParts<VaddOp>(
         op.getLoc(), sourceParts, maskParts, resultType, rewriter);
@@ -12759,29 +12786,13 @@ struct OneToNVMIReduceAddFOpPattern
     if (failed(maybe_resultTypes))
       return failure();
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-    if (sourceParts.empty() || sourceParts.size() != maskParts.size() ||
-        resultTypes.size() != 1)
-      return rewriter.notifyMatchFailure(
-          op, "reduce_addf requires matching source/mask chunks and one result "
-              "chunk");
-
-    auto resultType = dyn_cast<VRegType>(resultTypes.front());
-    auto maskType = dyn_cast<MaskType>(maskParts.front().getType());
-    if (!resultType || !maskType)
-      return rewriter.notifyMatchFailure(
-          op, "reduce_addf requires matching physical source/result vregs and "
-              "one mask");
-
-    for (Value sourcePart : sourceParts)
-      if (sourcePart.getType() != resultType)
-        return rewriter.notifyMatchFailure(
-            op, "reduce_addf requires every source chunk to match result "
-                "vreg type");
-    for (Value maskPart : maskParts)
-      if (maskPart.getType() != maskType)
-        return rewriter.notifyMatchFailure(
-            op, "reduce_addf requires every mask chunk to have the same "
-                "predicate type");
+    FailureOr<ReduceAddPhysicalPlan> plan = buildReduceAddPhysicalPlan(
+        op, sourceParts, maskParts, resultTypes, rewriter, "reduce_addf");
+    if (failed(plan)) {
+      return failure();
+    }
+    VRegType resultType = plan->resultType;
+    MaskType maskType = plan->maskType;
 
     FailureOr<Value> combined = combineEquivalentMaskedParts<VaddOp>(
         op.getLoc(), sourceParts, maskParts, resultType, rewriter);
