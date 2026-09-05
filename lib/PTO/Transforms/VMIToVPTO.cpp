@@ -1189,8 +1189,9 @@ buildContiguousIdentityLaneAddressMap(int64_t constantOffset,
                                       VMIVRegType resultType,
                                       std::string *reason = nullptr) {
   auto fail = [&reason](const Twine &message) -> FailureOr<VMIMemoryLaneAddressMap> {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
@@ -2854,6 +2855,80 @@ struct ShuffleVselrPlan {
   bool descending = false;
 };
 
+FailureOr<ShuffleVselrPlan> computeShuffleVselrPlanForChunk(
+    VMIVRegType sourceType, VMIVRegType resultType, ArrayRef<int64_t> indices,
+    int64_t resultPart, int64_t resultChunk, int64_t lanesPerPart,
+    std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> FailureOr<ShuffleVselrPlan> {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  std::optional<int64_t> sourcePart;
+  std::optional<int64_t> sourceChunk;
+  std::optional<int64_t> baseLane;
+  std::optional<bool> descending;
+  for (int64_t lane = 0; lane < lanesPerPart; ++lane) {
+    FailureOr<bool> padding =
+        isPaddingLane(resultType, resultPart, resultChunk, lane);
+    bool hasPadding = succeeded(padding) && *padding;
+    if (failed(padding)) {
+      return fail("requires full physical result chunks");
+    }
+    if (hasPadding) {
+      return fail("requires full physical result chunks");
+    }
+    FailureOr<int64_t> resultLogicalLane =
+        mapPhysicalLaneToLogical(resultType, resultPart, resultChunk, lane);
+    bool resultLaneOutOfRange =
+        succeeded(resultLogicalLane) &&
+        *resultLogicalLane >= static_cast<int64_t>(indices.size());
+    if (failed(resultLogicalLane)) {
+      return fail("failed to map result lane");
+    }
+    if (resultLaneOutOfRange) {
+      return fail("failed to map result lane");
+    }
+    FailureOr<VMIPhysicalLane> sourcePhysical =
+        mapLogicalLaneToPhysical(sourceType, indices[*resultLogicalLane]);
+    if (failed(sourcePhysical)) {
+      return fail("failed to map source lane");
+    }
+    if (!sourcePart) {
+      sourcePart = sourcePhysical->part;
+      sourceChunk = sourcePhysical->chunk;
+      baseLane = sourcePhysical->lane;
+      continue;
+    }
+    if (*sourcePart != sourcePhysical->part ||
+        *sourceChunk != sourcePhysical->chunk) {
+      return fail("requires one source chunk per result chunk");
+    }
+    int64_t ascExpected = *baseLane + lane;
+    int64_t descExpected = *baseLane - lane;
+    bool asc = sourcePhysical->lane == ascExpected;
+    bool desc = sourcePhysical->lane == descExpected;
+    if (!asc && !desc) {
+      return fail("requires ASC or DESC affine source lane indices");
+    }
+    bool laneDescending = desc && !asc;
+    if (!descending) {
+      descending = laneDescending;
+      continue;
+    }
+    if (*descending != laneDescending) {
+      return fail("requires one index order per result chunk");
+    }
+  }
+  FailureOr<int64_t> sourceFlatIndex =
+      getDataFlatPartIndex(sourceType, *sourcePart, *sourceChunk);
+  if (failed(sourceFlatIndex)) {
+    return fail("source part range is out of bounds");
+  }
+  return ShuffleVselrPlan{*sourceFlatIndex, *baseLane, descending.value_or(false)};
+}
+
 FailureOr<int64_t> computeShuffleLane0SplatSourcePart(VMIShuffleOp op,
                                                       std::string *reason) {
   auto fail = [&reason](const Twine &message) -> FailureOr<int64_t> {
@@ -2912,60 +2987,13 @@ computeShuffleVselrPlans(VMIShuffleOp op, std::string *reason) {
       return fail("requires known result physical chunks");
 
     for (int64_t resultChunk = 0; resultChunk < *resultChunks; ++resultChunk) {
-      std::optional<int64_t> sourcePart;
-      std::optional<int64_t> sourceChunk;
-      std::optional<int64_t> baseLane;
-      std::optional<bool> descending;
-      for (int64_t lane = 0; lane < *lanesPerPart; ++lane) {
-        FailureOr<bool> padding =
-            isPaddingLane(resultType, resultPart, resultChunk, lane);
-        if (failed(padding) || *padding)
-          return fail("requires full physical result chunks");
-
-        FailureOr<int64_t> resultLogicalLane =
-            mapPhysicalLaneToLogical(resultType, resultPart, resultChunk, lane);
-        if (failed(resultLogicalLane) ||
-            *resultLogicalLane >= static_cast<int64_t>(indices.size()))
-          return fail("failed to map result lane");
-
-        FailureOr<VMIPhysicalLane> sourcePhysical =
-            mapLogicalLaneToPhysical(sourceType, indices[*resultLogicalLane]);
-        if (failed(sourcePhysical))
-          return fail("failed to map source lane");
-
-        if (!sourcePart) {
-          sourcePart = sourcePhysical->part;
-          sourceChunk = sourcePhysical->chunk;
-          baseLane = sourcePhysical->lane;
-          continue;
-        }
-
-        if (*sourcePart != sourcePhysical->part ||
-            *sourceChunk != sourcePhysical->chunk)
-          return fail("requires one source chunk per result chunk");
-
-        int64_t ascExpected = *baseLane + lane;
-        int64_t descExpected = *baseLane - lane;
-        bool asc = sourcePhysical->lane == ascExpected;
-        bool desc = sourcePhysical->lane == descExpected;
-        if (!asc && !desc)
-          return fail("requires ASC or DESC affine source lane indices");
-
-        bool laneDescending = desc && !asc;
-        if (!descending) {
-          descending = laneDescending;
-          continue;
-        }
-        if (*descending != laneDescending)
-          return fail("requires one index order per result chunk");
+      FailureOr<ShuffleVselrPlan> plan = computeShuffleVselrPlanForChunk(
+          sourceType, resultType, indices, resultPart, resultChunk,
+          *lanesPerPart, reason);
+      if (failed(plan)) {
+        return failure();
       }
-
-      FailureOr<int64_t> sourceFlatIndex =
-          getDataFlatPartIndex(sourceType, *sourcePart, *sourceChunk);
-      if (failed(sourceFlatIndex))
-        return fail("source part range is out of bounds");
-      plans.push_back(ShuffleVselrPlan{*sourceFlatIndex, *baseLane,
-                                       descending.value_or(false)});
+      plans.push_back(*plan);
     }
   }
 

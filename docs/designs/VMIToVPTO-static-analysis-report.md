@@ -220,3 +220,9 @@ physical-to-logical lane 映射及 `ConstantMaskChunkMaterialization` 构造，�
 mask 的语义差异只存在于 active-lane 判定。补齐该批代码及 scalar group-store 路径
 触及的控制语句大括号后，增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过。
+
+另外将 `computeShuffleVselrPlans` 的单个 result physical chunk 规划抽取为
+`computeShuffleVselrPlanForChunk`。外层函数现在只负责布局因子和 chunk 枚举，辅助函数
+集中处理 padding、logical-to-physical lane 映射、单 source chunk 约束及升序/降序 affine
+索引判定；失败原因仍通过原有 `reason` 通道传播。为满足本文件的控制语句规范，复合
+`FailureOr` 条件拆成具名状态并保持原短路语义；增量合规检查和 `git diff --check` 均通过。
