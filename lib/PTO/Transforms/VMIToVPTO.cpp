@@ -7992,9 +7992,10 @@ struct OneToNVMIStoreOpPattern : OneToNOpConversionPattern<VMIStoreOp> {
     if (canUseLaneStrideDist) {
       std::optional<StringRef> maskGranularity =
           getDenseLaneStrideStoreMaskGranularity(valueVMIType);
-      if (!maskGranularity)
+      if (!maskGranularity) {
         return rewriter.notifyMatchFailure(
             op, "unsupported lane_stride store mask granularity");
+      }
       if (failed(emitLaneStrideStore(
               op, *destination, *offset, valueParts, valueVMIType,
               *laneStrideDist, *maskGranularity, rewriter))) {
@@ -9307,10 +9308,11 @@ public:
         directFact->kind == VMIGroupBroadcastLoadDirectKind::BRC &&
         canUseDirectBRC) {
       std::optional<StringRef> brcDist = getBRCDist();
-      if (!brcDist)
+      if (!brcDist) {
         return rewriter.notifyMatchFailure(
             op, "group_broadcast_load BRC lowering requires b8/b16/b32 "
                 "element type");
+      }
       return lowerDirectBRC(op, rewriter, *source, *offset, *sourceGroupStride,
                             resultTypes, numGroups, *brcDist);
     }
@@ -14905,6 +14907,19 @@ WalkResult verifySupportedShapeOp(ShapeOp op, ShapeCheck check,
   return WalkResult::interrupt();
 }
 
+WalkResult verifySupportedConstantMaskOp(VMIConstantMaskOp op) {
+  std::string reason;
+  if (succeeded(computeConstantMaskMaterialization(op, &reason))) {
+    return WalkResult::advance();
+  }
+  op.emitError()
+      << kVMIDiagUnsupportedPrefix
+      << "pto.vmi.constant_mask requires a dense bool constant with concrete "
+         "layout and b8/b16/b32 granularity ("
+      << reason << ")";
+  return WalkResult::interrupt();
+}
+
 template <typename ChannelOp, typename ShapeCheck>
 WalkResult verifySupportedChannelOp(ChannelOp op, int64_t channels,
                                      ShapeCheck check, StringRef supportedText,
@@ -15428,16 +15443,7 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
     }
 
     if (auto constantMask = dyn_cast<VMIConstantMaskOp>(op)) {
-      std::string reason;
-      if (succeeded(computeConstantMaskMaterialization(constantMask, &reason)))
-        return WalkResult::advance();
-
-      constantMask.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.constant_mask requires a dense bool constant with "
-             "concrete layout and b8/b16/b32 granularity ("
-          << reason << ")";
-      return WalkResult::interrupt();
+      return verifySupportedConstantMaskOp(constantMask);
     }
 
     return WalkResult::advance();
