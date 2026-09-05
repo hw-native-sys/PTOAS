@@ -4990,11 +4990,6 @@ FailureOr<SmallVector<Value>> materializeMaskLayoutConversion(
     return std::move(**laneStride);
   }
 
-  auto isElementDeinterleaved = [](VMILayoutAttr layout, int64_t factor) {
-    return layout.isDeinterleaved() && layout.getFactor() == factor &&
-           layout.getLaneStride() == 1;
-  };
-
   (void)rewriter.notifyMatchFailure(
       op, "unsupported VMI mask layout materialization");
   return failure();
