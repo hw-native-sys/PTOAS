@@ -11131,6 +11131,25 @@ private:
     return packets;
   }
 
+  FailureOr<SmallVector<Value>> buildE2BResults(
+      VMIGroupBroadcastLoadOp op, ArrayRef<Value> packets,
+      ArrayRef<Type> resultTypes, int64_t factor, int64_t chunksPerPart,
+      OneToNPatternRewriter &rewriter) const {
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (int64_t part = 0; part < factor; ++part) {
+      for (int64_t chunk = 0; chunk < chunksPerPart; ++chunk) {
+        int64_t flatIndex = part * chunksPerPart + chunk;
+        if (resultTypes[flatIndex] != resultTypes[chunk]) {
+          return rewriter.notifyMatchFailure(
+              op, "group_broadcast_load E2B reused packet type mismatch");
+        }
+        results.push_back(packets[chunk]);
+      }
+    }
+    return results;
+  }
+
   LogicalResult lowerDirectE2B(
       VMIGroupBroadcastLoadOp op, OneToNPatternRewriter &rewriter,
       Value source, Value offset, VMIVRegType resultVMIType,
@@ -11200,19 +11219,12 @@ private:
     if (failed(packets)) {
       return failure();
     }
-    SmallVector<Value> results;
-    results.reserve(resultTypes.size());
-    for (int64_t part = 0; part < factor; ++part) {
-      for (int64_t chunk = 0; chunk < *chunksPerPart; ++chunk) {
-        int64_t flatIndex = part * *chunksPerPart + chunk;
-        if (resultTypes[flatIndex] != resultTypes[chunk]) {
-          return rewriter.notifyMatchFailure(
-              op, "group_broadcast_load E2B reused packet type mismatch");
-        }
-        results.push_back((*packets)[chunk]);
-      }
+    FailureOr<SmallVector<Value>> results = buildE2BResults(
+        op, *packets, resultTypes, factor, *chunksPerPart, rewriter);
+    if (failed(results)) {
+      return failure();
     }
-    replaceOpWithFlatConvertedValues(rewriter, op, results,
+    replaceOpWithFlatConvertedValues(rewriter, op, *results,
                                      *this->getTypeConverter());
     return success();
   }

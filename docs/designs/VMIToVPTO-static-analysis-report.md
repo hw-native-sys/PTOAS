@@ -2085,6 +2085,15 @@ mask、结果顺序和诊断语义不变。增量 `check_changed_code.py` 结果
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；本轮未新增可独立进入该
 helper 的 runtime case，未虚构额外回归结果。
 
+# group broadcast load E2B 结果复用职责整改
+
+本轮在 `OneToNVMIGroupBroadcastLoadOpPattern::lowerDirectE2B` 中引入 `buildE2BResults`，
+将 E2B packet 复用时的 part/chunk 结果类型一致性校验与扁平结果收集抽取为独立 helper。
+主函数继续负责 E2B layout、stride、arity 合约和 packet 发射；保持 packet 复用规则、part/
+chunk 顺序、诊断及结果替换语义不变。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_group_broadcast_load_e2b_b16.pto` lowering exit=0。
+
 # slots=8 lane-stride group store direct 发射职责整改
 
 本轮在 `OneToNVMIGroupStoreOpPattern::lowerSlots8LaneStride` 中引入
