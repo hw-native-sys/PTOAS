@@ -761,3 +761,7 @@ unit-stride 与连续 load/store 代表性 lowering 均通过。
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；本地 `ninja -C build
 pto-test-opt` 受现有 CMake 外部依赖尝试创建 `/cann-cmake` 的权限错误阻断，未报告源码
 编译错误。
+
+随后补充了该共享布局 factor helper 的前置声明，确保其在 interleave pattern 使用前
+满足 C++ 声明顺序要求；不改变任何 lowering 行为。增量合规检查仍为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
