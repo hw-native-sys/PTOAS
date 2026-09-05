@@ -5244,6 +5244,65 @@ materializeMaskGranularityCastLayoutConversionViaContiguous(
       op, contiguousType, resultType, *contiguousParts, resultTypes, rewriter);
 }
 
+FailureOr<std::optional<SmallVector<Value>>>
+materializeMaskGranularityCastStagingLayout(
+    Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
+    ValueRange sourceParts, TypeRange resultTypes, PatternRewriter &rewriter) {
+  VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();
+  VMILayoutAttr resultLayout = resultType.getLayoutAttr();
+  bool sourceContiguous =
+      sourceLayout && sourceLayout.isContiguous() &&
+      sourceLayout.getLaneStride() == 1;
+  bool resultContiguous =
+      resultLayout && resultLayout.isContiguous() &&
+      resultLayout.getLaneStride() == 1;
+  bool sourceDeinterleaved2 =
+      isElementDeinterleavedLayout(sourceLayout, 2) && resultContiguous;
+  if (sourceDeinterleaved2) {
+    FailureOr<SmallVector<Value>> result =
+        materializeStagingDeintToContiguousMaskLayout(
+            op, sourceParts, resultTypes, /*factor=*/2, rewriter);
+    if (failed(result)) {
+      return failure();
+    }
+    return std::optional<SmallVector<Value>>(std::move(*result));
+  }
+  bool resultDeinterleaved2 =
+      sourceContiguous && isElementDeinterleavedLayout(resultLayout, 2);
+  if (resultDeinterleaved2) {
+    FailureOr<SmallVector<Value>> result =
+        materializeStagingContiguousToDeintMaskLayout(
+            op, sourceParts, resultTypes, /*factor=*/2, rewriter);
+    if (failed(result)) {
+      return failure();
+    }
+    return std::optional<SmallVector<Value>>(std::move(*result));
+  }
+  bool sourceDeinterleaved4 =
+      isElementDeinterleavedLayout(sourceLayout, 4) && resultContiguous;
+  if (sourceDeinterleaved4) {
+    FailureOr<SmallVector<Value>> result =
+        materializeStagingDeintToContiguousMaskLayout(
+            op, sourceParts, resultTypes, /*factor=*/4, rewriter);
+    if (failed(result)) {
+      return failure();
+    }
+    return std::optional<SmallVector<Value>>(std::move(*result));
+  }
+  bool resultDeinterleaved4 =
+      sourceContiguous && isElementDeinterleavedLayout(resultLayout, 4);
+  if (resultDeinterleaved4) {
+    FailureOr<SmallVector<Value>> result =
+        materializeStagingContiguousToDeintMaskLayout(
+            op, sourceParts, resultTypes, /*factor=*/4, rewriter);
+    if (failed(result)) {
+      return failure();
+    }
+    return std::optional<SmallVector<Value>>(std::move(*result));
+  }
+  return std::nullopt;
+}
+
 FailureOr<SmallVector<Value>> materializeMaskGranularityCastLayoutConversion(
     Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
     ValueRange sourceParts, TypeRange resultTypes, PatternRewriter &rewriter) {
@@ -5269,20 +5328,15 @@ FailureOr<SmallVector<Value>> materializeMaskGranularityCastLayoutConversion(
   if (succeeded(layoutParts))
     return layoutParts;
 
-  bool sourceC = sourceLayout.isContiguous() && sourceLayout.getLaneStride() == 1;
-  bool resultC = resultLayout.isContiguous() && resultLayout.getLaneStride() == 1;
-  if (isElementDeinterleavedLayout(sourceLayout, 2) && resultC)
-    return materializeStagingDeintToContiguousMaskLayout(
-        op, sourceParts, resultTypes, /*factor=*/2, rewriter);
-  if (sourceC && isElementDeinterleavedLayout(resultLayout, 2))
-    return materializeStagingContiguousToDeintMaskLayout(
-        op, sourceParts, resultTypes, /*factor=*/2, rewriter);
-  if (isElementDeinterleavedLayout(sourceLayout, 4) && resultC)
-    return materializeStagingDeintToContiguousMaskLayout(
-        op, sourceParts, resultTypes, /*factor=*/4, rewriter);
-  if (sourceC && isElementDeinterleavedLayout(resultLayout, 4))
-    return materializeStagingContiguousToDeintMaskLayout(
-        op, sourceParts, resultTypes, /*factor=*/4, rewriter);
+  FailureOr<std::optional<SmallVector<Value>>> staging =
+      materializeMaskGranularityCastStagingLayout(
+          op, sourceType, resultType, sourceParts, resultTypes, rewriter);
+  if (failed(staging)) {
+    return failure();
+  }
+  if (staging->has_value()) {
+    return std::move(**staging);
+  }
 
   if (sourceLayout.isDenseSplit() || resultLayout.isDenseSplit())
     return materializeMaskGranularityCastLayoutConversionViaContiguous(
