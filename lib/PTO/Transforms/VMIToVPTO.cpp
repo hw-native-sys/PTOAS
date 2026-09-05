@@ -12627,8 +12627,10 @@ public:
     ValueRange maskParts = adaptor.getMask();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    bool failedResultTypeConversion = failed(maybe_resultTypes);
+    if (failedResultTypeConversion) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     bool invalidArity = sourceParts.empty() || sourceParts.size() != maskParts.size() ||
                         resultTypes.size() != 1;
@@ -12648,14 +12650,16 @@ public:
     }
 
     for (Value sourcePart : sourceParts) {
-      if (sourcePart.getType() != resultType) {
+      bool mismatchedSourceType = sourcePart.getType() != resultType;
+      if (mismatchedSourceType) {
         return rewriter.notifyMatchFailure(
             op, "min/max reduction requires every source chunk to "
                 "match result vreg type");
       }
     }
     for (Value maskPart : maskParts) {
-      if (maskPart.getType() != maskType) {
+      bool mismatchedMaskType = maskPart.getType() != maskType;
+      if (mismatchedMaskType) {
         return rewriter.notifyMatchFailure(
             op, "min/max reduction requires every mask chunk to have "
                 "the same predicate type");
