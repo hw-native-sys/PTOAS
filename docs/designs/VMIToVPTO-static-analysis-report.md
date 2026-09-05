@@ -564,3 +564,8 @@ lowering 回归通过。
 抽取为 `validateDenseLaneStrideShape`。两个方向的 materialization 函数分别保留
 carrier 变换和结果枚举职责，统一校验不改变原有诊断与支持范围。增量合规检查为
 `errors=0 warnings=0`，`git diff --check` 通过；连续 load/store lowering 回归通过。
+
+本轮继续整理 `materializeStagingDeintToContiguousMaskLayout`，将 factor=2 的单 group
+`pintlv` 物化与结果容量处理抽取为局部 `appendFactor2Group`，factor=4 仍通过既有
+专用 helper 处理。staging 分组顺序、尾部容量语义和失败诊断保持不变。增量合规检查为
+`errors=0 warnings=0`，`git diff --check` 通过；mask granularity lowering 回归通过。

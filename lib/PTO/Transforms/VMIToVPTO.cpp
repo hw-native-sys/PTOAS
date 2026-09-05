@@ -5479,21 +5479,32 @@ FailureOr<SmallVector<Value>> materializeStagingDeintToContiguousMaskLayout(
   int64_t groups = sourceParts.size() / factor;
   SmallVector<Value> results;
   results.reserve(resultTypes.size());
-  for (int64_t i = 0; i < groups && results.size() < resultTypes.size(); ++i) {
-    auto nextType = [&results, &resultTypes](int64_t offset) -> Type {
-      size_t index = results.size() + offset;
+  auto appendFactor2Group = [&](int64_t groupIndex) -> LogicalResult {
+    size_t resultOffset = results.size();
+    auto nextType = [resultOffset, &resultTypes](int64_t offset) -> Type {
+      size_t index = resultOffset + offset;
       return index < resultTypes.size() ? resultTypes[index]
-                                        : resultTypes[results.size()];
+                                        : resultTypes[resultOffset];
     };
+    FailureOr<std::pair<Value, Value>> materialized = createPredicateIntlv(
+        op->getLoc(), nextType(0), nextType(1), sourceParts[groupIndex],
+        sourceParts[groups + groupIndex], rewriter);
+    if (failed(materialized)) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported predicate intlv staging mask type");
+    }
+    results.push_back(materialized->first);
+    bool hasResultCapacity = results.size() < resultTypes.size();
+    if (hasResultCapacity) {
+      results.push_back(materialized->second);
+    }
+    return success();
+  };
+  for (int64_t i = 0; i < groups && results.size() < resultTypes.size(); ++i) {
     if (factor == 2) {
-      FailureOr<std::pair<Value, Value>> materialized = createPredicateIntlv(
-          op->getLoc(), nextType(0), nextType(1), sourceParts[i],
-          sourceParts[groups + i], rewriter);
-      if (failed(materialized))
-        return fail("unsupported predicate intlv staging mask type");
-      results.push_back(materialized->first);
-      if (results.size() < resultTypes.size())
-        results.push_back(materialized->second);
+      if (failed(appendFactor2Group(i))) {
+        return failure();
+      }
       continue;
     }
 
