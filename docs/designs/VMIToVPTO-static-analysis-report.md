@@ -900,6 +900,14 @@ group-slot 的 `Vsunpack/Vzunpack` 与 `Vcvt` 路径仍由主模式独立负责�
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；完整构建和完整静态
 报告仍未宣称清零。
 
+本轮进一步将 `materializeSimpleDataLayoutConversion` 中两个独立的转换类别拆开：
+`materializeGroupSlotLaneStrideLayout` 负责 slots=8 的 group-slot lane-stride 物化，
+`materializeBlockLayoutForwarding` 负责 block-deinterleaved 与 contiguous 之间的
+cast-input/identity forwarding。simple conversion 主函数现在只执行类别分派，未改变
+转换优先级、physical part arity 或失败诊断。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；mask/layout 相关
+`pto-test-opt` lowering exit=0。
+
 本轮将 `materializeMaskLayoutConversion` 的 identity forwarding 分支抽取为
 `materializeIdentityMaskLayout`。该 helper 只负责相同 layout 的 physical part 合法性
 校验和无变换转发；`deinterleaved=2` 及 lane-stride 的实际 mask 物化仍由各自 helper

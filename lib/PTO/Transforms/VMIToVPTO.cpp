@@ -4314,6 +4314,54 @@ forwardBlockLayoutCastInputs(ValueRange sourceParts, TypeRange resultTypes) {
 }
 
 static FailureOr<std::optional<SmallVector<Value>>>
+materializeGroupSlotLaneStrideLayout(
+    Operation *op, ValueRange sourceParts, TypeRange resultTypes,
+    VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
+    Type sourceVMIElementType, PatternRewriter &rewriter) {
+  bool supported =
+      sourceLayout.isGroupSlots() && resultLayout.isGroupSlots() &&
+      sourceLayout.getNumGroups() == resultLayout.getNumGroups() &&
+      sourceLayout.getSlots() == 8 && resultLayout.getSlots() == 8;
+  if (!supported) {
+    return std::nullopt;
+  }
+  FailureOr<SmallVector<Value>> result = materializeGroupSlotLaneStride(
+      op, sourceParts, resultTypes, sourceVMIElementType,
+      sourceLayout.getLaneStride(), resultLayout.getLaneStride(), rewriter);
+  if (failed(result)) {
+    return failure();
+  }
+  return std::optional<SmallVector<Value>>(std::move(*result));
+}
+
+static FailureOr<std::optional<SmallVector<Value>>>
+materializeBlockLayoutForwarding(Operation *op, ValueRange sourceParts,
+                                 TypeRange resultTypes,
+                                 VMILayoutAttr sourceLayout,
+                                 VMILayoutAttr resultLayout,
+                                 PatternRewriter &rewriter) {
+  auto isBlockDeinterleaved = [](VMILayoutAttr layout, int64_t factor) {
+    return layout.isBlockDeinterleaved() && layout.getFactor() == factor;
+  };
+  bool contiguousToBlock =
+      sourceLayout.isContiguous() && sourceLayout.getLaneStride() == 1 &&
+      (isBlockDeinterleaved(resultLayout, 2) ||
+       isBlockDeinterleaved(resultLayout, 4));
+  bool blockToContiguous =
+      resultLayout.isContiguous() && resultLayout.getLaneStride() == 1 &&
+      (isBlockDeinterleaved(sourceLayout, 2) ||
+       isBlockDeinterleaved(sourceLayout, 4));
+  if (!contiguousToBlock && !blockToContiguous) {
+    return std::nullopt;
+  }
+  if (std::optional<SmallVector<Value>> castInputs =
+          forwardBlockLayoutCastInputs(sourceParts, resultTypes)) {
+    return std::move(*castInputs);
+  }
+  return forwardIdentityLayoutParts(op, sourceParts, resultTypes, rewriter);
+}
+
+static FailureOr<std::optional<SmallVector<Value>>>
 materializeSimpleDataLayoutConversion(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
@@ -4340,35 +4388,25 @@ materializeSimpleDataLayoutConversion(
     return forwardIdentityLayoutParts(op, sourceParts, resultTypes, rewriter);
   }
 
-  if (sourceLayout.isGroupSlots() && resultLayout.isGroupSlots() &&
-      sourceLayout.getNumGroups() == resultLayout.getNumGroups() &&
-      sourceLayout.getSlots() == 8 && resultLayout.getSlots() == 8) {
-    FailureOr<SmallVector<Value>> result = materializeGroupSlotLaneStride(
-        op, sourceParts, resultTypes, sourceVMIElementType,
-        sourceLayout.getLaneStride(), resultLayout.getLaneStride(), rewriter);
-    if (failed(result)) {
-      return failure();
-    }
-    return std::optional<SmallVector<Value>>(std::move(*result));
+  FailureOr<std::optional<SmallVector<Value>>> groupSlot =
+      materializeGroupSlotLaneStrideLayout(
+          op, sourceParts, resultTypes, sourceLayout, resultLayout,
+          sourceVMIElementType, rewriter);
+  if (failed(groupSlot)) {
+    return failure();
+  }
+  if (groupSlot->has_value()) {
+    return std::move(**groupSlot);
   }
 
-  auto isBlockDeinterleaved = [](VMILayoutAttr layout, int64_t factor) {
-    return layout.isBlockDeinterleaved() && layout.getFactor() == factor;
-  };
-  bool contiguousToBlock =
-      sourceLayout.isContiguous() && sourceLayout.getLaneStride() == 1 &&
-      (isBlockDeinterleaved(resultLayout, 2) ||
-       isBlockDeinterleaved(resultLayout, 4));
-  bool blockToContiguous =
-      resultLayout.isContiguous() && resultLayout.getLaneStride() == 1 &&
-      (isBlockDeinterleaved(sourceLayout, 2) ||
-       isBlockDeinterleaved(sourceLayout, 4));
-  if (contiguousToBlock || blockToContiguous) {
-    if (std::optional<SmallVector<Value>> castInputs =
-            forwardBlockLayoutCastInputs(sourceParts, resultTypes)) {
-      return std::move(*castInputs);
-    }
-    return forwardIdentityLayoutParts(op, sourceParts, resultTypes, rewriter);
+  FailureOr<std::optional<SmallVector<Value>>> block =
+      materializeBlockLayoutForwarding(op, sourceParts, resultTypes,
+                                       sourceLayout, resultLayout, rewriter);
+  if (failed(block)) {
+    return failure();
+  }
+  if (block->has_value()) {
+    return std::move(**block);
   }
 
   return std::nullopt;
@@ -5461,14 +5499,19 @@ FailureOr<SmallVector<Value>> materializeAdjacentMaskGranularityConversion(
 
   int sourceRank = getMaskGranularityRank(sourceType.getGranularity());
   int resultRank = getMaskGranularityRank(resultType.getGranularity());
-  if (std::abs(sourceRank - resultRank) != 1)
+  bool nonAdjacentGranularity = std::abs(sourceRank - resultRank) != 1;
+  if (nonAdjacentGranularity) {
     return fail("mask granularity conversion must be adjacent");
+  }
 
   FailureOr<int64_t> sourceArity = getVMIPhysicalArity(sourceType);
   FailureOr<int64_t> factor = getVMITypeLayoutFactor(sourceType);
-  if (failed(sourceArity) || failed(factor) ||
-      static_cast<int64_t>(sourceParts.size()) != *sourceArity)
+  bool sourceArityMismatch =
+      failed(sourceArity) || failed(factor) ||
+      static_cast<int64_t>(sourceParts.size()) != *sourceArity;
+  if (sourceArityMismatch) {
     return fail("source mask part count does not match source VMI type");
+  }
 
   MLIRContext *ctx = op->getContext();
   auto resultMaskType = MaskType::get(ctx, resultType.getGranularity());
@@ -7877,16 +7920,18 @@ public:
     if (resultLayout && resultLayout.isContiguous()) {
       FailureOr<int64_t> groupSize = getGroupSizeFromNumGroups(
           resultVMIType, op.getNumGroupsAttr().getInt());
-      if (failed(groupSize))
+      if (failed(groupSize)) {
         return rewriter.notifyMatchFailure(
             op, "group_load requires num_groups to evenly divide lane count");
+      }
       std::optional<int64_t> constantRowStride =
           getConstantIndexValue(op.getRowStride());
       if (constantRowStride && *constantRowStride == *groupSize) {
         FailureOr<SmallVector<Type>> maybe_resultTypes =
             getConvertedResultTypes(op, 0, *this->getTypeConverter());
-        if (failed(maybe_resultTypes))
+        if (failed(maybe_resultTypes)) {
           return failure();
+        }
         SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
         return lowerContiguousUnitStride(
             op, rewriter, *source, *offset, resultVMIType, resultTypes);
