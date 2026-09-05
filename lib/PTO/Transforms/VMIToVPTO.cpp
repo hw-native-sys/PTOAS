@@ -15834,24 +15834,27 @@ LogicalResult checkSupportedTruncFShape(VMITruncFOp op,
 LogicalResult checkSupportedExtSIShape(VMIExtSIOp op,
                                        std::string *reason = nullptr) {
   VMILayoutSupport supports;
-  if (failed(supports.getExtSISupport(op, reason)))
+  if (failed(supports.getExtSISupport(op, reason))) {
     return failure();
+  }
   return success();
 }
 
 LogicalResult checkSupportedExtUIShape(VMIExtUIOp op,
                                        std::string *reason = nullptr) {
   VMILayoutSupport supports;
-  if (failed(supports.getExtUISupport(op, reason)))
+  if (failed(supports.getExtUISupport(op, reason))) {
     return failure();
+  }
   return success();
 }
 
 LogicalResult checkSupportedTruncIShape(VMITruncIOp op,
                                         std::string *reason = nullptr) {
   VMILayoutSupport supports;
-  if (failed(supports.getTruncISupport(op, reason)))
+  if (failed(supports.getTruncISupport(op, reason))) {
     return failure();
+  }
   return success();
 }
 
@@ -17549,7 +17552,7 @@ std::optional<WalkResult> verifySupportedVMIFloatOp(Operation *op) {
   return std::nullopt;
 }
 
-std::optional<WalkResult> verifySupportedVMIMiscOp(Operation *op) {
+std::optional<WalkResult> verifySupportedVMIBasicMiscOp(Operation *op) {
   if (auto constant = dyn_cast<VMIConstantOp>(op)) {
     auto denseAttr = dyn_cast<DenseElementsAttr>(constant.getValue());
     if (!denseAttr || !denseAttr.isSplat()) {
@@ -17568,6 +17571,10 @@ std::optional<WalkResult> verifySupportedVMIMiscOp(Operation *op) {
         op, "pto.vmi.broadcast",
         cast<VMIVRegType>(broadcast.getResult().getType()));
   }
+  return std::nullopt;
+}
+
+std::optional<WalkResult> verifySupportedVMIHistogramOp(Operation *op) {
   if (auto broadcast = dyn_cast<VMIGroupBroadcastOp>(op)) {
     return verifySupportedShapeOp(
         broadcast, checkSupportedGroupBroadcastShape,
@@ -17588,6 +17595,10 @@ std::optional<WalkResult> verifySupportedVMIMiscOp(Operation *op) {
         "pto.vmi.vchist requires contiguous Nx{ui8|i8} source, contiguous "
         "b8 mask, and contiguous 256x{ui16|i16} acc/result (");
   }
+  return std::nullopt;
+}
+
+std::optional<WalkResult> verifySupportedVMICompressionOp(Operation *op) {
   if (auto activePrefix = dyn_cast<VMIActivePrefixIndexOp>(op)) {
     std::string reason;
     if (succeeded(checkSupportedActivePrefixIndexShape(activePrefix, &reason))) {
@@ -17626,6 +17637,16 @@ std::optional<WalkResult> verifySupportedVMIMiscOp(Operation *op) {
     return WalkResult::interrupt();
   }
   return std::nullopt;
+}
+
+std::optional<WalkResult> verifySupportedVMIMiscOp(Operation *op) {
+  if (auto result = verifySupportedVMIBasicMiscOp(op); result.has_value()) {
+    return *result;
+  }
+  if (auto result = verifySupportedVMIHistogramOp(op); result.has_value()) {
+    return *result;
+  }
+  return verifySupportedVMICompressionOp(op);
 }
 
 std::optional<WalkResult>

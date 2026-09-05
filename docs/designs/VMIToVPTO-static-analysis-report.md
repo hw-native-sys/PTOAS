@@ -1255,3 +1255,9 @@ lowering case exit=0。两个普通 reduce case 在既有 VMI pack/unpack pipeli
 外层只进行三类分派。各 shape checker、支持矩阵和诊断文本保持不变。增量合规检查
 结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；vmull contiguous/
 deinterleaved 和 vselr lowering case 均 exit=0。
+本轮将 `verifySupportedVMIMiscOp` 按职责拆分为基础 scalar misc、histogram/group
+broadcast 和 compression/active-prefix 三组 verifier helper，外层只负责顺序分派。
+同时修复本次触及的三个 conversion-shape helper 控制流大括号。支持矩阵、诊断和
+检查顺序保持不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；compress/active-prefix 样例在既有 VMI pack/unpack pipeline
+invariant 处提前失败，未进入本轮 verifier 路径。
