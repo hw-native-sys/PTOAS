@@ -6975,23 +6975,15 @@ struct OneToNVMIGroupLoadOpPattern : OneToNOpConversionPattern<VMIGroupLoadOp> {
   }
 };
 
-static LogicalResult lowerGroupSlotLoadParts(
+static LogicalResult lowerGroupSlotLoadSlots8(
     Operation *op, Value source, Value offset, Value sourceGroupStride,
     VMIVRegType resultVMIType, TypeRange resultTypes, int64_t numGroups,
     OneToNPatternRewriter &rewriter, SmallVectorImpl<Value> &results) {
-  VMILayoutAttr layout = resultVMIType.getLayoutAttr();
-  if (!layout || !layout.isGroupSlots() || layout.getSlots() <= 0)
+  std::optional<int64_t> stride = getConstantIndexValue(sourceGroupStride);
+  if (!stride || *stride != 1) {
     return rewriter.notifyMatchFailure(
-        op, "group_slot_load requires explicit group_slots layout");
-  if (!isa<PtrType>(source.getType()))
-    return rewriter.notifyMatchFailure(
-        op, "group_slot_load requires !pto.ptr source");
-
-  int64_t slots = layout.getSlots();
-  int64_t expectedArity = ceilDivNonNegative(numGroups, slots);
-  if (static_cast<int64_t>(resultTypes.size()) != expectedArity)
-    return rewriter.notifyMatchFailure(op, "group_slot_load arity mismatch");
-
+        op, "slots=8 group_slot_load requires constant unit stride");
+  }
   auto makeI16 = [&rewriter, &op](int64_t value) -> Value {
     return rewriter.create<arith::ConstantIntOp>(op->getLoc(), value, 16);
   };
@@ -7001,110 +6993,110 @@ static LogicalResult lowerGroupSlotLoadParts(
         .create<AddPtrOp>(op->getLoc(), source.getType(), source, elementOffset)
         .getResult();
   };
-
-  results.reserve(results.size() + resultTypes.size());
-
-  if (slots == 8) {
-    std::optional<int64_t> stride = getConstantIndexValue(sourceGroupStride);
-    if (!stride || *stride != 1)
+  if (numGroups == 1) {
+    std::optional<std::string> dist =
+        getScalarBroadcastLoadDistToken(resultVMIType.getElementType());
+    if (!dist) {
       return rewriter.notifyMatchFailure(
-          op, "slots=8 group_slot_load requires constant unit stride");
-
-    // A single logical group only needs one scalar source element.  VSLDB is
-    // a 32B block load and requires its base operand to be 32B aligned, which
-    // is too strong for a valid element-aligned pointer such as base + k.
-    // VLD BRC loads that scalar from the effective element address and
-    // broadcasts it; only lane 0 is semantically live in this layout.
-    if (numGroups == 1) {
-      std::optional<std::string> dist =
-          getScalarBroadcastLoadDistToken(resultVMIType.getElementType());
-      if (!dist)
-        return rewriter.notifyMatchFailure(
-            op, "single-slot group_slot_load requires supported BRC load "
-                "element width");
-      if (resultTypes.size() != 1)
-        return rewriter.notifyMatchFailure(
-            op, "single-slot group_slot_load arity mismatch");
-      auto vregType = dyn_cast<VRegType>(resultTypes.front());
-      if (!vregType)
-        return rewriter.notifyMatchFailure(
-            op, "single-slot group_slot_load result must be vreg");
-      results.push_back(rewriter
-                            .create<VldsOp>(op->getLoc(), vregType,
-                                            /*updated_base=*/Type{}, source,
-                                            offset,
-                                            rewriter.getStringAttr(*dist))
-                            .getResult());
-      return success();
+          op, "single-slot group_slot_load requires supported BRC load element width");
     }
-
-    for (auto [chunk, resultType] : llvm::enumerate(resultTypes)) {
-      auto vregType = dyn_cast<VRegType>(resultType);
-      if (!vregType)
-        return rewriter.notifyMatchFailure(
-            op, "group_slot_load result must be vreg");
-      FailureOr<MaskType> maskType =
-          getMaskTypeForVReg(vregType, rewriter.getContext());
-      if (failed(maskType))
-        return rewriter.notifyMatchFailure(
-            op, "unsupported element type for group_slot_load mask");
-      int64_t groupBegin = static_cast<int64_t>(chunk) * slots;
-      int64_t activeGroups = std::min<int64_t>(slots, numGroups - groupBegin);
-      if (activeGroups <= 0)
-        return rewriter.notifyMatchFailure(
-            op, "slots=8 group_slot_load has no active groups for chunk");
-      std::string pattern = (Twine("PAT_VL") + Twine(activeGroups)).str();
-      FailureOr<Value> slotMask =
-          createPrefixMask(op->getLoc(), *maskType, pattern, rewriter);
-      if (failed(slotMask))
-        return rewriter.notifyMatchFailure(
-            op, "failed to create slots=8 group_slot_load mask");
-      Value groupOffset =
-          createChunkOffset(op->getLoc(), offset, groupBegin, rewriter);
-      Value slotBase = makePtr(groupOffset);
-      results.push_back(rewriter
-                            .create<VsldbOp>(op->getLoc(), vregType,
-                                             /*updated_base=*/Type{}, slotBase,
-                                             zeroI16, zeroI16, *slotMask)
-                            .getResult());
+    auto vregType = dyn_cast<VRegType>(resultTypes.front());
+    if (!vregType) {
+      return rewriter.notifyMatchFailure(
+          op, "single-slot group_slot_load result must be vreg");
     }
+    results.push_back(rewriter
+                          .create<VldsOp>(op->getLoc(), vregType,
+                                          /*updated_base=*/Type{}, source,
+                                          offset, rewriter.getStringAttr(*dist))
+                          .getResult());
     return success();
   }
+  for (auto [chunk, resultType] : llvm::enumerate(resultTypes)) {
+    auto vregType = dyn_cast<VRegType>(resultType);
+    if (!vregType) {
+      return rewriter.notifyMatchFailure(
+          op, "group_slot_load result must be vreg");
+    }
+    FailureOr<MaskType> maskType =
+        getMaskTypeForVReg(vregType, rewriter.getContext());
+    if (failed(maskType)) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported element type for group_slot_load mask");
+    }
+    int64_t groupBegin = static_cast<int64_t>(chunk) * 8;
+    int64_t activeGroups = std::min<int64_t>(8, numGroups - groupBegin);
+    if (activeGroups <= 0) {
+      return rewriter.notifyMatchFailure(
+          op, "slots=8 group_slot_load has no active groups for chunk");
+    }
+    std::string pattern = (Twine("PAT_VL") + Twine(activeGroups)).str();
+    FailureOr<Value> slotMask =
+        createPrefixMask(op->getLoc(), *maskType, pattern, rewriter);
+    if (failed(slotMask)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to create slots=8 group_slot_load mask");
+    }
+    Value groupOffset = createChunkOffset(op->getLoc(), offset, groupBegin,
+                                          rewriter);
+    Value slotBase = makePtr(groupOffset);
+    results.push_back(rewriter
+                          .create<VsldbOp>(op->getLoc(), vregType,
+                                           /*updated_base=*/Type{}, slotBase,
+                                           zeroI16, zeroI16, *slotMask)
+                          .getResult());
+  }
+  return success();
+}
 
-  if (slots != 1)
-    return rewriter.notifyMatchFailure(
-        op, "group_slot_load supports only slots=8 or slots=1");
+static LogicalResult lowerGroupSlotLoadSlots1(
+    Operation *op, Value source, Value offset, Value sourceGroupStride,
+    VMIVRegType resultVMIType, TypeRange resultTypes,
+    OneToNPatternRewriter &rewriter, SmallVectorImpl<Value> &results) {
   unsigned elementBits =
       pto::getPTOStorageElemBitWidth(resultVMIType.getElementType());
-  if (elementBits == 0 || 256 % elementBits != 0)
+  if (elementBits == 0 || 256 % elementBits != 0) {
     return rewriter.notifyMatchFailure(
         op, "slots=1 group_slot_load requires supported element width");
+  }
   int64_t alignedStrideElems = 256 / elementBits;
   std::optional<int64_t> constantStride =
       getConstantIndexValue(sourceGroupStride);
   if (!constantStride || *constantStride <= 0 ||
-      *constantStride % alignedStrideElems != 0)
+      *constantStride % alignedStrideElems != 0) {
     return rewriter.notifyMatchFailure(
         op, Twine("slots=1 group_slot_load requires constant positive "
                   "source_group_stride divisible by ") +
                 Twine(alignedStrideElems) +
                 " elements for 32B lane-0 vsldb alignment");
-
+  }
+  auto makeI16 = [&rewriter, &op](int64_t value) -> Value {
+    return rewriter.create<arith::ConstantIntOp>(op->getLoc(), value, 16);
+  };
+  auto makePtr = [&rewriter, &source, &op](Value elementOffset) -> Value {
+    return rewriter
+        .create<AddPtrOp>(op->getLoc(), source.getType(), source, elementOffset)
+        .getResult();
+  };
+  Value zeroI16 = makeI16(0);
   for (auto [group, resultType] : llvm::enumerate(resultTypes)) {
     auto vregType = dyn_cast<VRegType>(resultType);
-    if (!vregType)
+    if (!vregType) {
       return rewriter.notifyMatchFailure(op,
                                          "group_slot_load result must be vreg");
+    }
     FailureOr<MaskType> maskType =
         getMaskTypeForVReg(vregType, rewriter.getContext());
-    if (failed(maskType))
+    if (failed(maskType)) {
       return rewriter.notifyMatchFailure(
           op, "unsupported element type for group_slot_load mask");
+    }
     FailureOr<Value> oneBlockMask =
         createPrefixMask(op->getLoc(), *maskType, "PAT_VL1", rewriter);
-    if (failed(oneBlockMask))
+    if (failed(oneBlockMask)) {
       return rewriter.notifyMatchFailure(
           op, "failed to create group_slot_load mask");
+    }
     Value groupOffset = offset;
     if (group != 0) {
       Value groupIndex =
@@ -7125,6 +7117,41 @@ static LogicalResult lowerGroupSlotLoadParts(
                           .getResult());
   }
   return success();
+}
+
+static LogicalResult lowerGroupSlotLoadParts(
+    Operation *op, Value source, Value offset, Value sourceGroupStride,
+    VMIVRegType resultVMIType, TypeRange resultTypes, int64_t numGroups,
+    OneToNPatternRewriter &rewriter, SmallVectorImpl<Value> &results) {
+  VMILayoutAttr layout = resultVMIType.getLayoutAttr();
+  bool invalidLayout = !layout || !layout.isGroupSlots() || layout.getSlots() <= 0;
+  if (invalidLayout) {
+    return rewriter.notifyMatchFailure(
+        op, "group_slot_load requires explicit group_slots layout");
+  }
+  if (!isa<PtrType>(source.getType())) {
+    return rewriter.notifyMatchFailure(
+        op, "group_slot_load requires !pto.ptr source");
+  }
+  int64_t slots = layout.getSlots();
+  int64_t expectedArity = ceilDivNonNegative(numGroups, slots);
+  bool arityMismatch = static_cast<int64_t>(resultTypes.size()) != expectedArity;
+  if (arityMismatch) {
+    return rewriter.notifyMatchFailure(op, "group_slot_load arity mismatch");
+  }
+  results.reserve(results.size() + resultTypes.size());
+  if (slots == 8) {
+    return lowerGroupSlotLoadSlots8(op, source, offset, sourceGroupStride,
+                                    resultVMIType, resultTypes, numGroups,
+                                    rewriter, results);
+  }
+  if (slots == 1) {
+    return lowerGroupSlotLoadSlots1(op, source, offset, sourceGroupStride,
+                                    resultVMIType, resultTypes, rewriter,
+                                    results);
+  }
+  return rewriter.notifyMatchFailure(
+      op, "group_slot_load supports only slots=8 or slots=1");
 }
 
 static LogicalResult lowerGroupBroadcastParts(
@@ -14611,8 +14638,10 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
   auto emitMaskableUnsupported = [](Operation *op, StringRef opName,
                                      VMIVRegType type) -> WalkResult {
     std::string reason;
-    if (succeeded(checkSupportedMaskableVReg(type, &reason)))
+    bool supported = succeeded(checkSupportedMaskableVReg(type, &reason));
+    if (supported) {
       return WalkResult::advance();
+    }
 
     op->emitError()
         << kVMIDiagUnsupportedPrefix << opName
