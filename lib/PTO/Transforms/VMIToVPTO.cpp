@@ -13229,6 +13229,44 @@ private:
     return success();
   }
 
+  FailureOr<Value> buildTwoBlockGroupResult(
+      OpTy op, ValueRange sourceParts, ValueRange maskParts,
+      TypeRange resultTypes, int64_t resultIndex, int64_t resultPartCount,
+      int64_t numGroups, VRegType resultType, MaskType maskType,
+      OneToNPatternRewriter &rewriter) const {
+    Value loSource = sourceParts[resultIndex];
+    Value hiSource = sourceParts[resultPartCount + resultIndex];
+    Value loMask = maskParts[resultIndex];
+    Value hiMask = maskParts[resultPartCount + resultIndex];
+    bool mismatchedTypes = resultTypes[resultIndex] != resultType ||
+                           loSource.getType() != resultType ||
+                           hiSource.getType() != resultType ||
+                           loMask.getType() != maskType ||
+                           hiMask.getType() != maskType;
+    if (mismatchedTypes) {
+      return rewriter.notifyMatchFailure(
+          op, "two-block group_reduce requires uniform physical types");
+    }
+    int64_t activeGroups = std::min<int64_t>(8, numGroups - resultIndex * 8);
+    FailureOr<Value> combineMask = createPrefixMaskForActiveLanes(
+        op.getLoc(), maskType, activeGroups, rewriter);
+    if (failed(combineMask)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to create two-block group_reduce combine mask");
+    }
+    Value lo = rewriter
+                   .create<GroupReduceOpTy>(op.getLoc(), resultType, loSource,
+                                            loMask)
+                   .getResult();
+    Value hi = rewriter
+                   .create<GroupReduceOpTy>(op.getLoc(), resultType, hiSource,
+                                            hiMask)
+                   .getResult();
+    return rewriter
+        .create<CombineOpTy>(op.getLoc(), resultType, lo, hi, *combineMask)
+        .getResult();
+  }
+
   LogicalResult lowerTwoBlock(
       OpTy op, ValueRange sourceParts, ValueRange maskParts,
       TypeRange resultTypes, int64_t numGroups,
@@ -13252,38 +13290,13 @@ private:
     results.reserve(resultPartCount);
     for (int64_t resultIndex = 0; resultIndex < resultPartCount;
          ++resultIndex) {
-      Value loSource = sourceParts[resultIndex];
-      Value hiSource = sourceParts[resultPartCount + resultIndex];
-      Value loMask = maskParts[resultIndex];
-      Value hiMask = maskParts[resultPartCount + resultIndex];
-      bool mismatchedTypes = resultTypes[resultIndex] != resultType ||
-                             loSource.getType() != resultType ||
-                             hiSource.getType() != resultType ||
-                             loMask.getType() != maskType ||
-                             hiMask.getType() != maskType;
-      if (mismatchedTypes) {
-        return rewriter.notifyMatchFailure(
-            op, "two-block group_reduce requires uniform physical types");
+      FailureOr<Value> result = buildTwoBlockGroupResult(
+          op, sourceParts, maskParts, resultTypes, resultIndex, resultPartCount,
+          numGroups, *resultType, *maskType, rewriter);
+      if (failed(result)) {
+        return failure();
       }
-      int64_t activeGroups = std::min<int64_t>(8, numGroups - resultIndex * 8);
-      FailureOr<Value> combineMask = createPrefixMaskForActiveLanes(
-          op.getLoc(), maskType, activeGroups, rewriter);
-      if (failed(combineMask)) {
-        return rewriter.notifyMatchFailure(
-            op, "failed to create two-block group_reduce combine mask");
-      }
-      Value lo = rewriter
-                     .create<GroupReduceOpTy>(op.getLoc(), resultType, loSource,
-                                              loMask)
-                     .getResult();
-      Value hi = rewriter
-                     .create<GroupReduceOpTy>(op.getLoc(), resultType, hiSource,
-                                              hiMask)
-                     .getResult();
-      results.push_back(rewriter
-                            .create<CombineOpTy>(op.getLoc(), resultType, lo,
-                                                 hi, *combineMask)
-                            .getResult());
+      results.push_back(*result);
     }
     replaceOpWithFlatConvertedValues(rewriter, op, results,
                                      *this->getTypeConverter());
