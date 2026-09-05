@@ -619,3 +619,11 @@ carrier 类型计算和结果 part 枚举。该拆分对应 source-part 拼接�
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_load_store_contiguous.pto`、`vmi_interleaved_memory_ops.pto` 和
 `vmi_layout_assignment_group_store_slots1_unit_stride.pto` 均完成 lowering 回归。
+
+本轮将 `checkSupportedExpandLoadShape` 的 runtime-mask 路径契约抽取为
+`checkSupportedExpandLoadRuntimePath`。辅助函数集中负责 `!pto.ptr`、b32 结果/mask、
+单 physical chunk 以及 result/passthru/mask full-chunk 校验；主函数保留 access-plan、
+静态 all-active 快路径和 runtime-mask/all-active 诊断拼接。该拆分保持 expand 的
+prefix/gather 语义和原有失败顺序不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续 load/store
+lowering 回归通过。
