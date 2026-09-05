@@ -649,3 +649,10 @@ lowering plan 分类以及其它 two/four-block 与 row-reduction 路径。该�
 继续只做 lowering plan 分派。原有四路 source 顺序、诊断文本和结果替换语义保持不变。
 增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_group_reduce_addi_i16.pto` 完成 lowering 回归。
+
+本轮将 full `deinterleaved=2` row-reduction 路径抽取为
+`lowerFullDeinterleaved2`。辅助函数集中负责 slots=1 结果契约、物理 lane/group 与
+arity 推导、row reduction 类型/mask 构造、双路 chunk 合并及每组结果回填；主 pattern
+仅保留 plan 分派。原有 chunk 顺序、uniform physical type 诊断和结果替换语义保持不变。
+增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_group_reduce_addi_i16.pto` 完成 lowering 回归。
