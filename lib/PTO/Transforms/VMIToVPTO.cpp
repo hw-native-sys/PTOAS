@@ -1852,6 +1852,9 @@ checkSupportedGroupLoadShape(VMIGroupLoadOp op, std::string *reason) {
       "requires contiguous or block_deinterleaved f32 result layout");
 }
 
+LogicalResult checkSupportedSlots1GroupSlotLoadShape(
+    VMIGroupSlotLoadOp op, VMIVRegType resultType, std::string *reason);
+
 LogicalResult checkSupportedGroupSlotLoadShape(
     VMIGroupSlotLoadOp op,
     std::string *reason) {
@@ -1883,6 +1886,18 @@ LogicalResult checkSupportedGroupSlotLoadShape(
                   "source_group_stride");
     return success();
   }
+
+  return checkSupportedSlots1GroupSlotLoadShape(op, resultType, reason);
+}
+
+LogicalResult checkSupportedSlots1GroupSlotLoadShape(
+    VMIGroupSlotLoadOp op, VMIVRegType resultType, std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
 
   unsigned elementBits =
       pto::getPTOStorageElemBitWidth(resultType.getElementType());
