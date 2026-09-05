@@ -2085,6 +2085,15 @@ mask、结果顺序和诊断语义不变。增量 `check_changed_code.py` 结果
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；本轮未新增可独立进入该
 helper 的 runtime case，未虚构额外回归结果。
 
+# zero-copy interleave 结果重排职责整改
+
+本轮在 `OneToNVMIInterleaveOpPattern::materializeZeroCopyResults` 中引入
+`appendVintlvZeroCopyResults` 与 `appendVdintlvZeroCopyResults`，分别封装 vintlv/vdintlv
+布局的 slice 重排逻辑。主函数继续负责输入 group 合约、结果 arity/type 校验；保持两种
+布局的 group/chunk 顺序、offset 计算、结果类型检查和诊断语义不变。增量
+`check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
+通过；本轮尝试的占位文件不存在，未虚构 interleave runtime 回归结果。
+
 # compact small group store 布局物化职责整改
 
 本轮在 `OneToNVMIGroupStoreOpPattern::lowerCompactSmallGroupStore` 中引入

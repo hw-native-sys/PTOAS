@@ -12189,6 +12189,40 @@ private:
     return success();
   }
 
+  void appendVintlvZeroCopyResults(SmallVectorImpl<Value> &results,
+                                   ValueRange lhsParts, ValueRange rhsParts,
+                                   int64_t inputFactor) const {
+    size_t groupChunks = lhsParts.size() / inputFactor;
+    size_t halfGroupChunks = groupChunks / 2;
+    for (int64_t group = 0; group < inputFactor; ++group) {
+      size_t offset = group * groupChunks;
+      llvm::append_range(results, lhsParts.slice(offset, halfGroupChunks));
+      llvm::append_range(results, rhsParts.slice(offset, halfGroupChunks));
+    }
+    for (int64_t group = 0; group < inputFactor; ++group) {
+      size_t offset = group * groupChunks + halfGroupChunks;
+      llvm::append_range(results, lhsParts.slice(offset, halfGroupChunks));
+      llvm::append_range(results, rhsParts.slice(offset, halfGroupChunks));
+    }
+  }
+
+  void appendVdintlvZeroCopyResults(SmallVectorImpl<Value> &results,
+                                    ValueRange lhsParts, ValueRange rhsParts,
+                                    int64_t inputFactor,
+                                    int64_t outputFactor) const {
+    size_t groupChunks = lhsParts.size() / inputFactor;
+    for (int64_t group = 0; group < outputFactor; ++group) {
+      size_t offset = 2 * group * groupChunks;
+      llvm::append_range(results, lhsParts.slice(offset, groupChunks));
+      llvm::append_range(results, rhsParts.slice(offset, groupChunks));
+    }
+    for (int64_t group = 0; group < outputFactor; ++group) {
+      size_t offset = (2 * group + 1) * groupChunks;
+      llvm::append_range(results, lhsParts.slice(offset, groupChunks));
+      llvm::append_range(results, rhsParts.slice(offset, groupChunks));
+    }
+  }
+
   FailureOr<SmallVector<Value>> materializeZeroCopyResults(
       SourceOp op, ValueRange lhsParts, ValueRange rhsParts,
       TypeRange lowTypes, TypeRange highTypes, int64_t inputFactor,
@@ -12203,18 +12237,7 @@ private:
         return rewriter.notifyMatchFailure(
             op, "zero-copy vintlv expects input groups with even chunk count");
       }
-      size_t groupChunks = lhsParts.size() / inputFactor;
-      size_t halfGroupChunks = groupChunks / 2;
-      for (int64_t group = 0; group < inputFactor; ++group) {
-        size_t offset = group * groupChunks;
-        llvm::append_range(results, lhsParts.slice(offset, halfGroupChunks));
-        llvm::append_range(results, rhsParts.slice(offset, halfGroupChunks));
-      }
-      for (int64_t group = 0; group < inputFactor; ++group) {
-        size_t offset = group * groupChunks + halfGroupChunks;
-        llvm::append_range(results, lhsParts.slice(offset, halfGroupChunks));
-        llvm::append_range(results, rhsParts.slice(offset, halfGroupChunks));
-      }
+      appendVintlvZeroCopyResults(results, lhsParts, rhsParts, inputFactor);
     } else {
       bool invalidGroupCount =
           lhsParts.empty() || lhsParts.size() % inputFactor != 0;
@@ -12222,17 +12245,8 @@ private:
         return rewriter.notifyMatchFailure(
             op, "zero-copy vdintlv expects complete input layout groups");
       }
-      size_t groupChunks = lhsParts.size() / inputFactor;
-      for (int64_t group = 0; group < outputFactor; ++group) {
-        size_t offset = 2 * group * groupChunks;
-        llvm::append_range(results, lhsParts.slice(offset, groupChunks));
-        llvm::append_range(results, rhsParts.slice(offset, groupChunks));
-      }
-      for (int64_t group = 0; group < outputFactor; ++group) {
-        size_t offset = (2 * group + 1) * groupChunks;
-        llvm::append_range(results, lhsParts.slice(offset, groupChunks));
-        llvm::append_range(results, rhsParts.slice(offset, groupChunks));
-      }
+      appendVdintlvZeroCopyResults(results, lhsParts, rhsParts, inputFactor,
+                                   outputFactor);
     }
 
     SmallVector<Type> resultTypes;
