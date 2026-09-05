@@ -14890,6 +14890,17 @@ WalkResult verifySupportedGroupReduceOp(GroupReduceOp op, StringRef diagnostic) 
   return WalkResult::interrupt();
 }
 
+template <typename ShapeOp, typename ShapeCheck>
+WalkResult verifySupportedShapeOp(ShapeOp op, ShapeCheck check,
+                                  StringRef diagnostic) {
+  std::string reason;
+  if (succeeded(check(op, &reason))) {
+    return WalkResult::advance();
+  }
+  op.emitError() << kVMIDiagUnsupportedPrefix << diagnostic << reason << ")";
+  return WalkResult::interrupt();
+}
+
 LogicalResult
 verifySupportedVMIToVPTOOps(ModuleOp module,
                             bool enableStableGatherMaskedLoad) {
@@ -14940,46 +14951,30 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
           cast<VMIVRegType>(constant.getResult().getType()));
     }
 
-    if (auto broadcast = dyn_cast<VMIBroadcastOp>(op))
+    if (auto broadcast = dyn_cast<VMIBroadcastOp>(op)) {
       return emitMaskableUnsupported(
           op, "pto.vmi.broadcast",
           cast<VMIVRegType>(broadcast.getResult().getType()));
+    }
     if (auto broadcast = dyn_cast<VMIGroupBroadcastOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedGroupBroadcastShape(broadcast,
-                                                      &reason)))
-        return WalkResult::advance();
-      broadcast.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.group_broadcast requires "
-             "#pto.vmi.layout<num_groups = G, slots = K> source, a dense full "
-             "result layout, "
-             "and num_groups deriving a group size that divides or is a "
-             "multiple of physical chunk lanes ("
-          << reason << ")";
-      return WalkResult::interrupt();
+      return verifySupportedShapeOp(
+          broadcast, checkSupportedGroupBroadcastShape,
+          "pto.vmi.group_broadcast requires #pto.vmi.layout<num_groups = G, "
+          "slots = K> source, a dense full result layout, and num_groups "
+          "deriving a group size that divides or is a multiple of physical "
+          "chunk lanes (");
     }
     if (auto hist = dyn_cast<VMIVdhistOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedVdhistShape(hist, &reason)))
-        return WalkResult::advance();
-      hist.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.vdhist requires contiguous Nx{ui8|i8} source, contiguous b8 "
-             "mask, and contiguous 256x{ui16|i16} acc/result ("
-          << reason << ")";
-      return WalkResult::interrupt();
+      return verifySupportedShapeOp(
+          hist, checkSupportedVdhistShape,
+          "pto.vmi.vdhist requires contiguous Nx{ui8|i8} source, contiguous "
+          "b8 mask, and contiguous 256x{ui16|i16} acc/result (");
     }
     if (auto hist = dyn_cast<VMIVchistOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedVchistShape(hist, &reason)))
-        return WalkResult::advance();
-      hist.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.vchist requires contiguous Nx{ui8|i8} source, contiguous b8 "
-             "mask, and contiguous 256x{ui16|i16} acc/result ("
-          << reason << ")";
-      return WalkResult::interrupt();
+      return verifySupportedShapeOp(
+          hist, checkSupportedVchistShape,
+          "pto.vmi.vchist requires contiguous Nx{ui8|i8} source, contiguous "
+          "b8 mask, and contiguous 256x{ui16|i16} acc/result (");
     }
 
     if (auto addf = dyn_cast<VMIAddFOp>(op))
