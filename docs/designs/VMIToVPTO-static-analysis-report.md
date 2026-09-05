@@ -1934,3 +1934,12 @@ accumulator 类型、source lane 数以及 Bin_N0/Bin_N1 常量准备从 lowerin
 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
 通过；现有 vdhist/vchist cases 在既有 VMI pack/unpack pipeline invariant 处提前失败，
 未进入本轮 helper，不能将该失败归因于本轮改动。
+
+# VMI-to-VPTO verifier walk 职责整改
+
+本轮将 `verifySupportedVMIToVPTOOps` 的单 operation 标准分派、channel/shuffle 分派和
+默认通过逻辑抽取为 `verifySupportedVMIToVPTOOp`。模块 walk 入口现在只负责遍历与最终
+`WalkResult` 汇总，保留原有标准检查优先于 channel shuffle 的顺序、稳定 gather 选项
+透传和失败语义；lambda 使用显式捕获，未引入 warning suppression。增量
+`check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
+通过；`vmi_to_vpto_abs.pto` lowering exit=0。

@@ -18667,23 +18667,27 @@ std::optional<WalkResult> verifySupportedVMIStandardOp(
   return verifySupportedVMIConversionOp(op);
 }
 
+static WalkResult verifySupportedVMIToVPTOOp(
+    Operation *op, bool enableStableGatherMaskedLoad) {
+  if (auto standardResult = verifySupportedVMIStandardOp(
+          op, enableStableGatherMaskedLoad);
+      standardResult.has_value()) {
+    return *standardResult;
+  }
+  if (auto channelShuffleResult = verifySupportedVMIChannelShuffleOp(op);
+      channelShuffleResult.has_value()) {
+    return *channelShuffleResult;
+  }
+  return WalkResult::advance();
+}
+
 LogicalResult
 verifySupportedVMIToVPTOOps(ModuleOp module,
                             bool enableStableGatherMaskedLoad) {
-  WalkResult result = module.walk([&enableStableGatherMaskedLoad](Operation *op) {
-    if (auto standardResult = verifySupportedVMIStandardOp(
-            op, enableStableGatherMaskedLoad);
-        standardResult.has_value()) {
-      return *standardResult;
-    }
-
-    if (auto channelShuffleResult = verifySupportedVMIChannelShuffleOp(op);
-        channelShuffleResult.has_value()) {
-      return *channelShuffleResult;
-    }
-
-    return WalkResult::advance();
-  });
+  WalkResult result = module.walk(
+      [&enableStableGatherMaskedLoad](Operation *op) {
+        return verifySupportedVMIToVPTOOp(op, enableStableGatherMaskedLoad);
+      });
   return failure(result.wasInterrupted());
 }
 
