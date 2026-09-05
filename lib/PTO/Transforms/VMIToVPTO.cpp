@@ -7764,6 +7764,36 @@ struct OneToNVMIExpandLoadOpPattern
     : OneToNOpConversionPattern<VMIExpandLoadOp> {
   using OneToNOpConversionPattern<VMIExpandLoadOp>::OneToNOpConversionPattern;
 
+private:
+  LogicalResult lowerStaticExpandLoad(
+      VMIExpandLoadOp op, OneToNPatternRewriter &rewriter, Value source,
+      Value offset, VMIVRegType resultVMIType, ArrayRef<Type> resultTypes) const {
+    FailureOr<int64_t> lanesPerPart = verifyFullOrSafeReadVRegChunks(
+        op, resultVMIType, op.getSource(), op.getOffset(), rewriter);
+    if (failed(lanesPerPart)) {
+      return failure();
+    }
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (auto [index, resultType] : llvm::enumerate(resultTypes)) {
+      if (!isa<VRegType>(resultType)) {
+        return rewriter.notifyMatchFailure(op, "expand_load result must be vreg");
+      }
+      Value chunkOffset = createChunkOffset(
+          op.getLoc(), offset, index * *lanesPerPart, rewriter);
+      results.push_back(
+          rewriter
+              .create<VldsOp>(op.getLoc(), resultType, Type{}, source,
+                              chunkOffset, nullptr)
+              .getResult());
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
+public:
+
   LogicalResult
   matchAndRewrite(VMIExpandLoadOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -7787,29 +7817,8 @@ struct OneToNVMIExpandLoadOpPattern
 
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     if (isStaticAllActiveMask(op.getMask(), resultVMIType.getElementCount())) {
-      FailureOr<int64_t> lanesPerPart = verifyFullOrSafeReadVRegChunks(
-          op, resultVMIType, op.getSource(), op.getOffset(), rewriter);
-      if (failed(lanesPerPart))
-        return failure();
-
-      SmallVector<Value> results;
-      results.reserve(resultTypes.size());
-      for (auto [index, resultType] : llvm::enumerate(resultTypes)) {
-        if (!isa<VRegType>(resultType))
-          return rewriter.notifyMatchFailure(op,
-                                             "expand_load result must be vreg");
-        Value chunkOffset = createChunkOffset(op.getLoc(), *offset,
-                                              index * *lanesPerPart, rewriter);
-        results.push_back(rewriter
-                              .create<VldsOp>(op.getLoc(), resultType,
-                                              /*updated_base=*/Type{}, *source,
-                                              chunkOffset,
-                                              /*dist=*/nullptr)
-                              .getResult());
-      }
-
-      replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
-      return success();
+      return lowerStaticExpandLoad(op, rewriter, *source, *offset,
+                                   resultVMIType, resultTypes);
     }
 
     ValueRange maskParts = adaptor.getMask();
