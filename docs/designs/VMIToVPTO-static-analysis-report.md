@@ -511,6 +511,13 @@ iota lowering 回归通过。
 合规检查为 `errors=0 warnings=0`，`git diff --check` 通过；interleave memory 与连续
 load/store lowering 回归通过。
 
+本轮将 `OneToNVMITruncFOpPattern` 的 contiguous same-width `VcvtOp` 路径抽取为
+`lowerSameWidth`。helper 负责 source mask、rounding mode、逐 physical chunk 转换和
+结果替换；主 pattern 保留 packed BF16x2 source view、布局判定以及其它 narrowing
+路径。该拆分不改变 same-width fp-to-fp 的 round/saturate contract 或结果顺序。增量
+合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续
+group-store 与 load/store 代表性 lowering 均成功。
+
 本轮进一步将 `lowerGroupBroadcastParts` 的源布局、selector plan、shift 合法性及
 index mask 初始化抽取为 `createGroupBroadcastLoweringContext`，并以
 `GroupBroadcastLoweringContext` 传递真实的 lowering 状态。主函数仅保留结果 chunk

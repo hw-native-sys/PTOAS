@@ -12953,6 +12953,32 @@ private:
         .getResult();
   }
 
+  LogicalResult lowerSameWidth(
+      VMITruncFOp op, ValueRange sourceParts, ArrayRef<VRegType> resultTypes,
+      VRegType sourceViewType, StringAttr sat,
+      OneToNPatternRewriter &rewriter) const {
+    FailureOr<Value> sourceMask =
+        createAllTrueMaskForVReg(op.getLoc(), sourceViewType, rewriter);
+    if (failed(sourceMask)) {
+      return rewriter.notifyMatchFailure(op, "failed to build truncf masks");
+    }
+    StringAttr rnd = rewriter.getStringAttr(
+        getTruncFRoundMode(op, resultTypes.front().getElementType()));
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (auto [sourcePart, resultType] :
+         llvm::zip_equal(sourceParts, resultTypes)) {
+      results.push_back(rewriter
+                            .create<VcvtOp>(op.getLoc(), resultType, sourcePart,
+                                            *sourceMask, rnd, sat,
+                                            /*part=*/nullptr)
+                            .getResult());
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
 public:
 
   LogicalResult
@@ -13087,27 +13113,9 @@ public:
         sourceLayout.isContiguous() && sourceLayout.getLaneStride() == 1 &&
         resultLayout.isContiguous() && resultLayout.getLaneStride() == 1 &&
         sourceParts.size() == resultTypes.size()) {
-      FailureOr<Value> sourceMask =
-          createAllTrueMaskForVReg(op.getLoc(), vcvtSourceVRegType, rewriter);
-      if (failed(sourceMask)) {
-        return rewriter.notifyMatchFailure(op, "failed to build truncf masks");
-      }
-      StringAttr rnd = rewriter.getStringAttr(
-          getTruncFRoundMode(op, resultVRegTypes.front().getElementType()));
       StringAttr sat = op->getAttrOfType<StringAttr>("saturate");
-      SmallVector<Value> results;
-      results.reserve(resultTypes.size());
-      for (auto [sourcePart, resultType] :
-           llvm::zip_equal(sourceParts, resultVRegTypes)) {
-        results.push_back(rewriter
-                              .create<VcvtOp>(op.getLoc(), resultType,
-                                              sourcePart, *sourceMask, rnd, sat,
-                                              /*part=*/nullptr)
-                              .getResult());
-      }
-      replaceOpWithFlatConvertedValues(rewriter, op, results,
-                                       *this->getTypeConverter());
-      return success();
+      return lowerSameWidth(op, sourceParts, resultVRegTypes,
+                            vcvtSourceVRegType, sat, rewriter);
     }
 
     if (sourceLayout && resultLayout && sourceLayout.isContiguous() &&
@@ -13740,9 +13748,11 @@ public:
                                  resultTypes);
     }
 
-    if (sourceParts.empty() || resultTypes.empty())
+    bool emptyPhysicalParts = sourceParts.empty() || resultTypes.empty();
+    if (emptyPhysicalParts) {
       return rewriter.notifyMatchFailure(
           op, "trunci requires non-empty physical source and result parts");
+    }
 
     auto sourceType0 = dyn_cast<VRegType>(sourceParts.front().getType());
     auto resultType0 = dyn_cast<VRegType>(resultTypes.front());
