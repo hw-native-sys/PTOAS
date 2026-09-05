@@ -750,3 +750,14 @@ unit-stride 与连续 load/store 代表性 lowering 均通过。
 恢复及统一 physical replacement；trunci 的 group-slot、dense lane-stride 和 factor
 2/4 合并路径保持不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；连续 load/store 与 group-store 代表性 lowering 均通过。
+
+本轮将 `fptosi`/`fptoui` 的 narrow physical conversion（按 Even/Odd 或 packed part
+执行 `VcvtOp`，再以 `VorOp` 合并）抽取为共享 helper `lowerNarrowFpToInt`。helper
+统一维护 source/result mask、source-factor 与 lane-stride 对应的 part 选择、物理 chunk
+索引和最终结果替换；两个 pattern 仅保留各自的类型 contract、factor 推导和诊断文本。
+同时把 interleave 中重复的 contiguous/deinterleaved factor 判断提升为具名函数
+`getElementDeinterleaveFactor`，避免局部 lambda 重复定义。两处重构均保持原有 part 顺序、
+结果 arity 和 signed/unsigned 支持矩阵不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；本地 `ninja -C build
+pto-test-opt` 受现有 CMake 外部依赖尝试创建 `/cann-cmake` 的权限错误阻断，未报告源码
+编译错误。

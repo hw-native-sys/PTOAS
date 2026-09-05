@@ -7427,23 +7427,26 @@ public:
 
     FailureOr<int64_t> lanesPerPart = verifyFullOrSafeReadVRegChunks(
         op, resultVMIType, op.getSource(), op.getOffset(), rewriter);
-    if (failed(lanesPerPart))
+    if (failed(lanesPerPart)) {
       return failure();
+    }
 
     VMILayoutAttr contiguousLayout =
         VMILayoutAttr::getContiguous(rewriter.getContext());
     FailureOr<SmallVector<Type>> maybeContiguousTypes =
         getConvertedVRegTypesWithLayout(resultVMIType, contiguousLayout,
                                         *this->getTypeConverter());
-    if (failed(maybeContiguousTypes))
+    if (failed(maybeContiguousTypes)) {
       return rewriter.notifyMatchFailure(
           op, "failed to compute contiguous load footprint");
+    }
     SmallVector<Type> contiguousTypes = std::move(*maybeContiguousTypes);
     FailureOr<bool> noWiderThanContiguous =
         hasNoWiderFootprintThanContiguous(resultTypes, contiguousTypes);
-    if (failed(noWiderThanContiguous))
+    if (failed(noWiderThanContiguous)) {
       return rewriter.notifyMatchFailure(
           op, "failed to compare load physical footprint");
+    }
 
     std::optional<LogicalResult> deinterleavedResult =
         lowerDirectDeinterleaved(op, rewriter, *source, *offset, resultVMIType,
@@ -11123,14 +11126,6 @@ public:
     auto isContiguous = [](VMILayoutAttr layout) {
       return layout && layout.isContiguous() && layout.getLaneStride() == 1;
     };
-    auto getElementDeintFactor = [](VMILayoutAttr layout) -> int64_t {
-      if (layout && layout.isContiguous() && layout.getLaneStride() == 1)
-        return 1;
-      if (layout && layout.isDeinterleaved() && layout.getLaneStride() == 1)
-        return layout.getFactor();
-      return 0;
-    };
-
     bool allSameLaneStride = fact->lhsLayout == fact->rhsLayout &&
                              fact->lhsLayout == fact->maskLayout &&
                              fact->lhsLayout == fact->lowLayout &&
@@ -11173,8 +11168,8 @@ public:
       return success();
     }
 
-    int64_t inputFactor = getElementDeintFactor(fact->lhsLayout);
-    int64_t outputFactor = getElementDeintFactor(fact->lowLayout);
+    int64_t inputFactor = getElementDeinterleaveFactor(fact->lhsLayout);
+    int64_t outputFactor = getElementDeinterleaveFactor(fact->lowLayout);
     bool zeroCopyVintlv = std::is_same_v<SourceOp, VMIVintlvOp> &&
                           inputFactor > 0 &&
                           fact->rhsLayout == fact->lhsLayout &&
@@ -13839,6 +13834,81 @@ static LogicalResult lowerSameWidthFpToInt(
   return success();
 }
 
+static LogicalResult lowerNarrowFpToInt(
+    Operation *op, ValueRange sourceParts, ArrayRef<VRegType> resultTypes,
+    int64_t sourceFactor, int64_t partStride, ArrayRef<StringRef> parts,
+    StringAttr rnd, StringAttr sat,
+    StringRef sourceMaskDiagnostic, StringRef resultMaskDiagnostic,
+    TypeConverter *typeConverter, OneToNPatternRewriter &rewriter) {
+  if (sourceFactor <= 0 || partStride <= 0 ||
+      (sourceFactor - 1) * partStride >= static_cast<int64_t>(parts.size()) ||
+      sourceParts.size() !=
+                              static_cast<size_t>(sourceFactor) *
+                                  resultTypes.size()) {
+    return rewriter.notifyMatchFailure(
+        op, "narrow fp-to-int source arity does not match conversion factor");
+  }
+
+  auto sourceType = dyn_cast<VRegType>(sourceParts.front().getType());
+  if (!sourceType) {
+    return rewriter.notifyMatchFailure(op, "expected physical fp source type");
+  }
+  FailureOr<Value> sourceMask =
+      createAllTrueMaskForVReg(op->getLoc(), sourceType, rewriter);
+  if (failed(sourceMask)) {
+    return rewriter.notifyMatchFailure(op, sourceMaskDiagnostic);
+  }
+
+  SmallVector<Value> results;
+  results.reserve(resultTypes.size());
+  for (auto [chunkIndex, resultType] : llvm::enumerate(resultTypes)) {
+    FailureOr<Value> resultMask =
+        createAllTrueMaskForVReg(op->getLoc(), resultType, rewriter);
+    if (failed(resultMask)) {
+      return rewriter.notifyMatchFailure(op, resultMaskDiagnostic);
+    }
+
+    SmallVector<Value> partials;
+    partials.reserve(sourceFactor);
+    for (int64_t partIndex = 0; partIndex < sourceFactor; ++partIndex) {
+      Value sourcePart =
+          sourceParts[partIndex * resultTypes.size() + chunkIndex];
+      partials.push_back(
+          rewriter
+              .create<VcvtOp>(op->getLoc(), resultType, sourcePart, *sourceMask,
+                              rnd, sat,
+                              rewriter.getStringAttr(
+                                  parts[partIndex * partStride]))
+              .getResult());
+    }
+
+    Value merged = partials.front();
+    for (Value partial : llvm::drop_begin(partials)) {
+      merged = rewriter
+                   .create<VorOp>(op->getLoc(), resultType, merged, partial,
+                                  *resultMask)
+                   .getResult();
+    }
+    results.push_back(merged);
+  }
+
+  replaceOpWithFlatConvertedValues(rewriter, op, results, *typeConverter);
+  return success();
+}
+
+static int64_t getElementDeinterleaveFactor(VMILayoutAttr layout) {
+  bool contiguous = layout && layout.isContiguous() && layout.getLaneStride() == 1;
+  if (contiguous) {
+    return 1;
+  }
+  bool deinterleaved =
+      layout && layout.isDeinterleaved() && layout.getLaneStride() == 1;
+  if (deinterleaved) {
+    return layout.getFactor();
+  }
+  return 0;
+}
+
 struct OneToNVMIFPToSIOpPattern : OneToNOpConversionPattern<VMIFPToSIOp> {
   using OneToNOpConversionPattern<VMIFPToSIOp>::OneToNOpConversionPattern;
 
@@ -13990,47 +14060,17 @@ struct OneToNVMIFPToSIOpPattern : OneToNOpConversionPattern<VMIFPToSIOp> {
       return rewriter.notifyMatchFailure(
           op, "narrow fptosi: source arity != sourceFactor × result arity");
 
-    FailureOr<Value> sourceMask =
-        createAllTrueMaskForVReg(op.getLoc(), sourceType0, rewriter);
-    if (failed(sourceMask))
-      return rewriter.notifyMatchFailure(
-          op, "failed to build truncf source mask");
-
     static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
-    SmallVector<Value> results;
-    results.reserve(resultTypes.size());
-    for (auto [chunkIndex, resultType] : llvm::enumerate(resultVRegTypes)) {
-      FailureOr<Value> resultMask =
-          createAllTrueMaskForVReg(op.getLoc(), resultType, rewriter);
-      if (failed(resultMask))
-        return rewriter.notifyMatchFailure(
-            op, "failed to build narrow fptosi result mask");
-
-      SmallVector<Value> partials;
-      partials.reserve(sourceFactor);
-      for (int64_t partIndex = 0; partIndex < sourceFactor; ++partIndex) {
-        Value sourcePart =
-            sourceParts[partIndex * resultTypes.size() + chunkIndex];
-        partials.push_back(
-            rewriter
-                .create<VcvtOp>(
-                    op.getLoc(), resultType, sourcePart, *sourceMask, rnd, sat,
-                    rewriter.getStringAttr(kEvenOddParts[partIndex]))
-                .getResult());
-      }
-
-      Value merged = partials.front();
-      for (Value partial : llvm::drop_begin(partials))
-        merged = rewriter
-                     .create<VorOp>(op.getLoc(), resultType, merged, partial,
-                                    *resultMask)
-                     .getResult();
-      results.push_back(merged);
-    }
-
-    replaceOpWithFlatConvertedValues(rewriter, op, results,
-                                     *this->getTypeConverter());
-    return success();
+    static constexpr StringRef kPacked4Parts[] = {"P0", "P1", "P2", "P3"};
+    ArrayRef<StringRef> parts = factor == 2
+                                    ? ArrayRef<StringRef>(kEvenOddParts)
+                                    : ArrayRef<StringRef>(kPacked4Parts);
+    return lowerNarrowFpToInt(
+        op, sourceParts, resultVRegTypes, sourceFactor, resultLaneStride, parts,
+        rnd, sat,
+        "failed to build fptosi source mask",
+        "failed to build narrow fptosi result mask",
+        *this->getTypeConverter(), rewriter);
   }
 };
 
@@ -14156,47 +14196,13 @@ struct OneToNVMIFPToUIOpPattern
         return rewriter.notifyMatchFailure(
             op, "narrow fptoui: source arity != sourceFactor × result arity");
 
-      FailureOr<Value> sourceMask =
-          createAllTrueMaskForVReg(op.getLoc(), sourceType0, rewriter);
-      if (failed(sourceMask))
-        return rewriter.notifyMatchFailure(
-            op, "failed to build fptoui source mask");
-
       static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
-      SmallVector<Value> results;
-      results.reserve(resultTypes.size());
-      for (auto [chunkIndex, resultType] : llvm::enumerate(resultVRegTypes)) {
-        FailureOr<Value> resultMask =
-            createAllTrueMaskForVReg(op.getLoc(), resultType, rewriter);
-        if (failed(resultMask))
-          return rewriter.notifyMatchFailure(
-              op, "failed to build narrow fptoui result mask");
-
-        SmallVector<Value> partials;
-        partials.reserve(sourceFactor);
-        for (int64_t partIndex = 0; partIndex < sourceFactor; ++partIndex) {
-          Value sourcePart =
-              sourceParts[partIndex * resultTypes.size() + chunkIndex];
-          partials.push_back(
-              rewriter
-                  .create<VcvtOp>(op.getLoc(), resultType, sourcePart, *sourceMask,
-                                  rnd, sat,
-                                  rewriter.getStringAttr(kEvenOddParts[partIndex]))
-                  .getResult());
-        }
-
-        Value merged = partials.front();
-        for (Value partial : llvm::drop_begin(partials))
-          merged = rewriter
-                       .create<VorOp>(op.getLoc(), resultType, merged, partial,
-                                      *resultMask)
-                       .getResult();
-        results.push_back(merged);
-      }
-
-      replaceOpWithFlatConvertedValues(rewriter, op, results,
-                                       *this->getTypeConverter());
-      return success();
+      return lowerNarrowFpToInt(
+          op, sourceParts, resultVRegTypes, sourceFactor, resultLaneStride,
+          kEvenOddParts, rnd, sat,
+          "failed to build fptoui source mask",
+          "failed to build narrow fptoui result mask",
+          *this->getTypeConverter(), rewriter);
     }
 
     return failure();
