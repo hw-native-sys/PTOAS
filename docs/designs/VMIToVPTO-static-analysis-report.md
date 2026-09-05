@@ -441,3 +441,9 @@ load/store、interleave memory、group-reduce lowering 回归均通过。
 前者只负责 `vintlv`，后者只负责 `vdintlv` 和结果 part 分配；外层仅负责布局方向
 判定及结果转发。同步补齐本轮触及的 group-load 控制语句大括号。源码增量合规检查、
 `git diff --check` 及连续 load/store、interleave memory lowering 回归通过。
+
+本轮将 `materializeMaskGranularityConversion` 的多级 granularity 递进循环抽取为
+`materializeMaskGranularitySteps`；顶层函数保留支持性校验、相邻转换快路径和最终
+方向选择。每一步仍复用 `materializeAdjacentMaskGranularityConversion`，保持
+b8/b16/b32 的递进顺序、布局属性和失败诊断不变。源码增量合规检查、`git diff --check`
+及 `vmi_to_vpto_ensure_mask_granularity.pto` 回归通过。
