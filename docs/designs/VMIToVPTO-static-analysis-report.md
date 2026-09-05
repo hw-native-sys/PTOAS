@@ -2064,3 +2064,13 @@ pipeline invariant 处提前失败，未进入本轮 helper，不能将该失败
 诊断和替换语义不变。增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；`vmi_to_vpto_group_reduce_typed.pto` 在既有 VMI pack/unpack
 pipeline invariant 处提前失败，未进入本轮 helper，不能将该失败归因于本轮改动。
+
+# four-block group-reduce 单结果构造职责整改
+
+本轮在 `OneToNVMIGroupReduceOpPattern::lowerFourBlock` 中引入
+`buildFourBlockGroupResult`，将单个结果块的 4 路 `GroupReduceOp`、physical 类型校验、
+combine mask 构造以及 `sum01/sum23/final` 树形合并抽取为独立 helper。主函数继续负责
+整体 arity/基础类型校验、结果遍历和替换；保持 `part * resultPartCount + resultIndex`
+源索引、树形合并顺序、active group mask、结果顺序和诊断语义不变。增量
+`check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
+通过；本轮未新增可独立进入该 helper 的 runtime case，未虚构额外回归结果。

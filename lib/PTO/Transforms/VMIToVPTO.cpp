@@ -13290,6 +13290,50 @@ private:
     return success();
   }
 
+  FailureOr<Value> buildFourBlockGroupResult(
+      OpTy op, ValueRange sourceParts, ValueRange maskParts,
+      TypeRange resultTypes, int64_t resultIndex, int64_t resultPartCount,
+      int64_t numGroups, VRegType resultType, MaskType maskType,
+      OneToNPatternRewriter &rewriter) const {
+    SmallVector<Value, 4> partials;
+    partials.reserve(4);
+    for (int64_t part = 0; part < 4; ++part) {
+      int64_t sourceIndex = part * resultPartCount + resultIndex;
+      Value source = sourceParts[sourceIndex];
+      Value mask = maskParts[sourceIndex];
+      bool mismatchedTypes = resultTypes[resultIndex] != resultType ||
+                             source.getType() != resultType ||
+                             mask.getType() != maskType;
+      if (mismatchedTypes) {
+        return rewriter.notifyMatchFailure(
+            op, "four-block group_reduce requires uniform physical types");
+      }
+      partials.push_back(rewriter
+                             .create<GroupReduceOpTy>(op.getLoc(), resultType,
+                                                      source, mask)
+                             .getResult());
+    }
+    int64_t activeGroups = std::min<int64_t>(8, numGroups - resultIndex * 8);
+    FailureOr<Value> combineMask = createPrefixMaskForActiveLanes(
+        op.getLoc(), maskType, activeGroups, rewriter);
+    if (failed(combineMask)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to create four-block group_reduce combine mask");
+    }
+    Value sum01 = rewriter
+                      .create<CombineOpTy>(op.getLoc(), resultType, partials[0],
+                                           partials[1], *combineMask)
+                      .getResult();
+    Value sum23 = rewriter
+                      .create<CombineOpTy>(op.getLoc(), resultType, partials[2],
+                                           partials[3], *combineMask)
+                      .getResult();
+    return rewriter
+        .create<CombineOpTy>(op.getLoc(), resultType, sum01, sum23,
+                             *combineMask)
+        .getResult();
+  }
+
   LogicalResult lowerFourBlock(
       OpTy op, ValueRange sourceParts, ValueRange maskParts,
       TypeRange resultTypes, int64_t numGroups,
@@ -13313,43 +13357,13 @@ private:
     results.reserve(resultPartCount);
     for (int64_t resultIndex = 0; resultIndex < resultPartCount;
          ++resultIndex) {
-      SmallVector<Value, 4> partials;
-      partials.reserve(4);
-      for (int64_t part = 0; part < 4; ++part) {
-        int64_t sourceIndex = part * resultPartCount + resultIndex;
-        Value source = sourceParts[sourceIndex];
-        Value mask = maskParts[sourceIndex];
-        bool mismatchedTypes = resultTypes[resultIndex] != resultType ||
-                               source.getType() != resultType ||
-                               mask.getType() != maskType;
-        if (mismatchedTypes) {
-          return rewriter.notifyMatchFailure(
-              op, "four-block group_reduce requires uniform physical types");
-        }
-        partials.push_back(rewriter
-                               .create<GroupReduceOpTy>(op.getLoc(), resultType,
-                                                        source, mask)
-                               .getResult());
+      FailureOr<Value> result = buildFourBlockGroupResult(
+          op, sourceParts, maskParts, resultTypes, resultIndex,
+          resultPartCount, numGroups, *resultType, *maskType, rewriter);
+      if (failed(result)) {
+        return failure();
       }
-      int64_t activeGroups = std::min<int64_t>(8, numGroups - resultIndex * 8);
-      FailureOr<Value> combineMask = createPrefixMaskForActiveLanes(
-          op.getLoc(), maskType, activeGroups, rewriter);
-      if (failed(combineMask)) {
-        return rewriter.notifyMatchFailure(
-            op, "failed to create four-block group_reduce combine mask");
-      }
-      Value sum01 = rewriter
-                        .create<CombineOpTy>(op.getLoc(), resultType, partials[0],
-                                             partials[1], *combineMask)
-                        .getResult();
-      Value sum23 = rewriter
-                        .create<CombineOpTy>(op.getLoc(), resultType, partials[2],
-                                             partials[3], *combineMask)
-                        .getResult();
-      results.push_back(rewriter
-                            .create<CombineOpTy>(op.getLoc(), resultType, sum01,
-                                                 sum23, *combineMask)
-                            .getResult());
+      results.push_back(*result);
     }
     replaceOpWithFlatConvertedValues(rewriter, op, results,
                                      *this->getTypeConverter());
