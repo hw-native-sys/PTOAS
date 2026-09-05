@@ -799,3 +799,11 @@ contiguous 路径的互斥判定和分派。该拆分不改变 chunk 顺序、of
 具名布尔变量，保持格式规则一致。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_layout_assignment_group_store_slots1_unit_stride.pto` lowering exit=0。
+
+本轮将 `OneToNVMITruncIOpPattern` 的 group-slots 专用 lowering 抽取为
+`lowerGroupSlotTrunc`。helper 统一处理 slots=1/8 的支持矩阵、active-slot mask、
+packed carrier、lane-stride carrier、physical type 校验及 `VcvtOp` 发射；主 pattern
+继续负责非 group-slots 的 dense lane-stride、alias 和 factor 合并路径。该拆分保持
+group-slot 的 part 选择、结果 carrier 和诊断语义不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续 group-store 与
+load/store lowering 回归通过。

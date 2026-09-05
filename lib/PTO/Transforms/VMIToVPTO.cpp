@@ -10678,8 +10678,9 @@ struct OneToNVMIBinaryOpPattern : OneToNOpConversionPattern<SourceOp> {
     ValueRange rhsParts = adaptor.getRhs();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    if (failed(maybe_resultTypes)) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     if (lhsParts.size() != rhsParts.size() ||
         lhsParts.size() != resultTypes.size())
@@ -11270,8 +11271,9 @@ struct OneToNVMIFmaOpPattern : OneToNOpConversionPattern<VMIFmaOp> {
     ValueRange accParts = adaptor.getAcc();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    if (failed(maybe_resultTypes)) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     if (lhsParts.size() != rhsParts.size() ||
         lhsParts.size() != accParts.size() ||
@@ -13561,6 +13563,125 @@ private:
                                      *this->getTypeConverter());
   }
 
+  LogicalResult lowerGroupSlotTrunc(
+      VMITruncIOp op, OpAdaptor adaptor, OneToNPatternRewriter &rewriter,
+      VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
+      VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
+      ArrayRef<Type> resultTypes) const {
+    unsigned sourceLogicalBits =
+        pto::getPTOStorageElemBitWidth(sourceVMIType.getElementType());
+    unsigned resultLogicalBits =
+        pto::getPTOStorageElemBitWidth(resultVMIType.getElementType());
+    bool supportsDirect =
+        (sourceLogicalBits == 32 &&
+         (resultLogicalBits == 16 || resultLogicalBits == 8)) ||
+        (sourceLogicalBits == 16 && resultLogicalBits == 8 &&
+         sourceLayout.getSlots() == 1);
+    bool supportsPacked =
+        sourceLogicalBits == 16 && resultLogicalBits == 8 &&
+        sourceLayout.getSlots() == 8 && resultLayout.getSlots() == 8 &&
+        resultLayout.hasLaneStride() && resultLayout.getLaneStride() == 2;
+    ValueRange sourceParts = adaptor.getSource();
+    bool invalidShape =
+        sourceLayout.getNumGroups() != resultLayout.getNumGroups() ||
+        sourceLayout.getSlots() != resultLayout.getSlots() ||
+        (sourceLayout.getSlots() != 1 && sourceLayout.getSlots() != 8) ||
+        (!supportsDirect && !supportsPacked) ||
+        sourceParts.size() != resultTypes.size();
+    if (invalidShape) {
+      return rewriter.notifyMatchFailure(op, "unsupported group-slot trunci shape");
+    }
+
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    StringAttr sat = op->getAttrOfType<StringAttr>("saturate");
+    const char *activeSlotPattern =
+        sourceLayout.getSlots() == 1 ? "PAT_VL1" : "PAT_VL8";
+    StringRef activeSlotGranularity = sourceLogicalBits == 16 ? "b16" : "b32";
+    FailureOr<Value> activeSlotMask = createPrefixMask(
+        op.getLoc(), MaskType::get(rewriter.getContext(), activeSlotGranularity),
+        activeSlotPattern, rewriter);
+    if (failed(activeSlotMask)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to build group-slot trunci active slot mask");
+    }
+    for (auto [sourcePart, physicalResultType] :
+         llvm::zip_equal(sourceParts, resultTypes)) {
+      auto sourceType = dyn_cast<VRegType>(sourcePart.getType());
+      auto resultType = dyn_cast<VRegType>(physicalResultType);
+      bool validPhysicalTypes =
+          sourceType &&
+          pto::getPTOStorageElemBitWidth(sourceType.getElementType()) ==
+              sourceLogicalBits &&
+          resultType;
+      if (!validPhysicalTypes) {
+        return rewriter.notifyMatchFailure(
+            op, "unsupported group-slot trunci physical type");
+      }
+      if (supportsPacked) {
+        results.push_back(rewriter
+                              .create<VcvtOp>(op.getLoc(), resultType, sourcePart,
+                                              *activeSlotMask, nullptr, sat,
+                                              rewriter.getStringAttr("EVEN"))
+                              .getResult());
+        continue;
+      }
+      unsigned physicalResultBits =
+          pto::getPTOStorageElemBitWidth(resultType.getElementType());
+      bool directCarrier =
+          resultLayout.hasLaneStride() && resultLayout.getLaneStride() == 4 &&
+          resultLogicalBits == 8 && physicalResultBits == 32;
+      if (directCarrier) {
+        results.push_back(sourcePart.getType() == resultType
+                              ? sourcePart
+                              : rewriter.create<VbitcastOp>(op.getLoc(), resultType,
+                                                             sourcePart)
+                                    .getResult());
+        continue;
+      }
+      bool wideCarrier = resultLayout.hasLaneStride() &&
+                         resultLayout.getLaneStride() == 2 &&
+                         resultLogicalBits == 16 && physicalResultBits == 32;
+      if (wideCarrier) {
+        FailureOr<int64_t> lanes =
+            getDataLanesPerPart(resultVMIType.getElementType());
+        if (failed(lanes)) {
+          return rewriter.notifyMatchFailure(
+              op, "failed to derive group-slot trunci conversion lanes");
+        }
+        auto conversionType = VRegType::get(
+            rewriter.getContext(), *lanes, resultVMIType.getElementType());
+        Value converted = rewriter
+                              .create<VcvtOp>(op.getLoc(), conversionType,
+                                              sourcePart, *activeSlotMask,
+                                              nullptr, sat,
+                                              rewriter.getStringAttr("EVEN"))
+                              .getResult();
+        FailureOr<Value> carrier =
+            bitcastVReg(op.getLoc(), converted, resultType, rewriter);
+        if (failed(carrier)) {
+          return rewriter.notifyMatchFailure(
+              op, "failed to expose group-slot trunci result carrier");
+        }
+        results.push_back(*carrier);
+        continue;
+      }
+      bool validNarrowResult = physicalResultBits == 16 || physicalResultBits == 8;
+      if (!validNarrowResult) {
+        return rewriter.notifyMatchFailure(
+            op, "unsupported group-slot trunci physical type");
+      }
+      StringAttr part = rewriter.getStringAttr(
+          sourceLogicalBits == 2 * resultLogicalBits ? "EVEN" : "P0");
+      results.push_back(rewriter
+                            .create<VcvtOp>(op.getLoc(), resultType, sourcePart,
+                                            *activeSlotMask, nullptr, sat, part)
+                            .getResult());
+    }
+    finalizeResults(op, results, false, resultTypes, rewriter);
+    return success();
+  }
+
 public:
 
   LogicalResult
@@ -13579,118 +13700,9 @@ public:
     VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
     if (sourceLayout && resultLayout && sourceLayout.isGroupSlots() &&
         resultLayout.isGroupSlots()) {
-      unsigned sourceLogicalBits =
-          pto::getPTOStorageElemBitWidth(sourceVMIType.getElementType());
-      unsigned resultLogicalBits =
-          pto::getPTOStorageElemBitWidth(resultVMIType.getElementType());
-      bool supportsDirectGroupSlotTrunc =
-          (sourceLogicalBits == 32 &&
-           (resultLogicalBits == 16 || resultLogicalBits == 8)) ||
-          (sourceLogicalBits == 16 && resultLogicalBits == 8 &&
-           sourceLayout.getSlots() == 1);
-      bool supportsPackedU16ToU8GroupSlotTrunc =
-          sourceLogicalBits == 16 && resultLogicalBits == 8 &&
-          sourceLayout.getSlots() == 8 && resultLayout.getSlots() == 8 &&
-          resultLayout.hasLaneStride() && resultLayout.getLaneStride() == 2;
-      if (sourceLayout.getNumGroups() != resultLayout.getNumGroups() ||
-          sourceLayout.getSlots() != resultLayout.getSlots() ||
-          (sourceLayout.getSlots() != 1 && sourceLayout.getSlots() != 8) ||
-          (!supportsDirectGroupSlotTrunc &&
-           !supportsPackedU16ToU8GroupSlotTrunc) ||
-          sourceParts.size() != resultTypes.size())
-        return rewriter.notifyMatchFailure(
-            op, "unsupported group-slot trunci shape");
-
-      SmallVector<Value> results;
-      results.reserve(resultTypes.size());
-      StringAttr sat = op->getAttrOfType<StringAttr>("saturate");
-      const char *activeSlotPattern =
-          sourceLayout.getSlots() == 1 ? "PAT_VL1" : "PAT_VL8";
-      StringRef activeSlotGranularity = sourceLogicalBits == 16 ? "b16" : "b32";
-      FailureOr<Value> activeSlotMask = createPrefixMask(
-          op.getLoc(), MaskType::get(rewriter.getContext(), activeSlotGranularity),
-          activeSlotPattern, rewriter);
-      if (failed(activeSlotMask))
-        return rewriter.notifyMatchFailure(
-            op, "failed to build group-slot trunci active slot mask");
-      for (auto [sourcePart, physicalResultType] :
-           llvm::zip_equal(sourceParts, resultTypes)) {
-        auto sourceType = dyn_cast<VRegType>(sourcePart.getType());
-        auto resultType = dyn_cast<VRegType>(physicalResultType);
-        if (!sourceType ||
-            pto::getPTOStorageElemBitWidth(sourceType.getElementType()) !=
-                sourceLogicalBits ||
-            !resultType)
-          return rewriter.notifyMatchFailure(
-              op, "unsupported group-slot trunci physical type");
-
-        if (supportsPackedU16ToU8GroupSlotTrunc) {
-          results.push_back(rewriter
-                                .create<VcvtOp>(op.getLoc(), resultType,
-                                                sourcePart, *activeSlotMask,
-                                                /*rnd=*/nullptr, sat,
-                                                rewriter.getStringAttr("EVEN"))
-                                .getResult());
-          continue;
-        }
-
-        unsigned physicalResultBits =
-            pto::getPTOStorageElemBitWidth(resultType.getElementType());
-        if (resultLayout.hasLaneStride() && resultLayout.getLaneStride() == 4 &&
-            pto::getPTOStorageElemBitWidth(resultVMIType.getElementType()) ==
-                8 &&
-            physicalResultBits == 32) {
-          if (sourcePart.getType() == resultType) {
-            results.push_back(sourcePart);
-          } else {
-            results.push_back(
-                rewriter.create<VbitcastOp>(op.getLoc(), resultType, sourcePart)
-                    .getResult());
-          }
-          continue;
-        }
-
-        if (resultLayout.hasLaneStride() && resultLayout.getLaneStride() == 2 &&
-            resultLogicalBits == 16 && physicalResultBits == 32) {
-          FailureOr<int64_t> conversionResultLanes =
-              getDataLanesPerPart(resultVMIType.getElementType());
-          if (failed(conversionResultLanes))
-            return rewriter.notifyMatchFailure(
-                op, "failed to derive group-slot trunci conversion lanes");
-          auto conversionResultType =
-              VRegType::get(rewriter.getContext(), *conversionResultLanes,
-                            resultVMIType.getElementType());
-          Value converted =
-              rewriter
-                  .create<VcvtOp>(op.getLoc(), conversionResultType, sourcePart,
-                                  *activeSlotMask,
-                                  /*rnd=*/nullptr, sat,
-                                  rewriter.getStringAttr("EVEN"))
-                  .getResult();
-          FailureOr<Value> carrier =
-              bitcastVReg(op.getLoc(), converted, resultType, rewriter);
-          if (failed(carrier))
-            return rewriter.notifyMatchFailure(
-                op, "failed to expose group-slot trunci result carrier");
-          results.push_back(*carrier);
-          continue;
-        }
-
-        if (physicalResultBits != 16 && physicalResultBits != 8)
-          return rewriter.notifyMatchFailure(
-              op, "unsupported group-slot trunci physical type");
-
-        StringAttr part = sourceLogicalBits == 2 * resultLogicalBits
-                              ? rewriter.getStringAttr("EVEN")
-                              : rewriter.getStringAttr("P0");
-        results.push_back(rewriter
-                              .create<VcvtOp>(op.getLoc(), resultType,
-                                              sourcePart, *activeSlotMask,
-                                              /*rnd=*/nullptr, sat, part)
-                              .getResult());
-      }
-      replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
-      return success();
+      return lowerGroupSlotTrunc(op, adaptor, rewriter, sourceVMIType,
+                                 resultVMIType, sourceLayout, resultLayout,
+                                 resultTypes);
     }
 
     if (sourceParts.empty() || resultTypes.empty())
@@ -13980,8 +13992,9 @@ struct OneToNVMIFPToSIOpPattern : OneToNOpConversionPattern<VMIFPToSIOp> {
     ValueRange sourceParts = adaptor.getSource();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    if (failed(maybe_resultTypes)) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
 
     Type srcElem = sourceVMIType.getElementType();
