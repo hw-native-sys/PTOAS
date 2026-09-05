@@ -15037,6 +15037,41 @@ WalkResult emitMemoryUnsupported(Operation *memoryOp, StringRef opName,
     return WalkResult::interrupt();
 }
 
+std::optional<WalkResult> verifySupportedVMIMemoryAdvancedLoadOp(
+    Operation *op, bool enableStableGatherMaskedLoad) {
+  if (auto load = dyn_cast<VMIMaskedLoadOp>(op)) {
+    if (enableStableGatherMaskedLoad) {
+      load.emitError() << kVMIDiagUnsupportedPrefix
+                       << "pto.vmi.masked_load stable VGATHER-based lowering "
+                          "is reserved for strict masked/tail loads but is "
+                          "not implemented yet";
+      return WalkResult::interrupt();
+    }
+    return verifySupportedShapeOp(
+        load, checkSupportedMaskedLoadShape,
+        "pto.vmi.masked_load direct lowering requires a supported memory source, "
+        "contiguous result/passthru/mask layouts, and either full physical "
+        "chunks or a statically safe full-read footprint (");
+  }
+  if (auto gather = dyn_cast<VMIGatherOp>(op)) {
+    return verifySupportedShapeOp(
+        gather, checkSupportedGatherShape,
+        "pto.vmi.gather lowers through pto.vgather2/pto.vgather2_bc + pto.vsel "
+        "only for UB pointer sources, contiguous full physical chunks, "
+        "ui16/i16/f16/bf16 results with ui16 indices and b16 masks, or "
+        "32-bit results with i32 indices and b32 masks (");
+  }
+  if (auto load = dyn_cast<VMIExpandLoadOp>(op)) {
+    return verifySupportedShapeOp(
+        load, checkSupportedExpandLoadShape,
+        "pto.vmi.expand_load direct lowering is currently supported for either "
+        "a static all-active mask lowered as pto.vlds, or a one-full-chunk "
+        "32-bit UB runtime mask lowered through pto.vusqz + pto.vgather2_bc + "
+        "pto.vsel (");
+  }
+  return std::nullopt;
+}
+
 std::optional<WalkResult> verifySupportedVMIMemoryStoreOp(Operation *op) {
   if (auto store = dyn_cast<VMIStoreOp>(op)) {
     std::string reason;
@@ -15174,53 +15209,10 @@ std::optional<WalkResult> verifySupportedVMIMemoryLoadOp(
         << reason << ")";
     return WalkResult::interrupt();
   }
-  if (auto load = dyn_cast<VMIMaskedLoadOp>(op)) {
-    if (enableStableGatherMaskedLoad) {
-      load.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.masked_load stable VGATHER-based lowering is reserved "
-             "for strict masked/tail loads but is not implemented yet";
-      return WalkResult::interrupt();
-    }
-    std::string reason;
-    if (succeeded(checkSupportedMaskedLoadShape(load, &reason))) {
-      return WalkResult::advance();
-    }
-    load.emitError()
-        << kVMIDiagUnsupportedPrefix
-        << "pto.vmi.masked_load direct lowering requires a supported memory "
-           "source, contiguous result/passthru/mask layouts, and either "
-           "full physical chunks or a statically safe full-read footprint ("
-        << reason << ")";
-    return WalkResult::interrupt();
-  }
-  if (auto gather = dyn_cast<VMIGatherOp>(op)) {
-    std::string reason;
-    if (succeeded(checkSupportedGatherShape(gather, &reason))) {
-      return WalkResult::advance();
-    }
-    gather.emitError()
-        << kVMIDiagUnsupportedPrefix
-        << "pto.vmi.gather lowers through pto.vgather2/pto.vgather2_bc + pto.vsel "
-           "only for UB pointer sources, contiguous full physical chunks, "
-           "ui16/i16/f16/bf16 results with ui16 indices and b16 masks, "
-           "or 32-bit results with i32 indices and b32 masks ("
-        << reason << ")";
-    return WalkResult::interrupt();
-  }
-  if (auto load = dyn_cast<VMIExpandLoadOp>(op)) {
-    std::string reason;
-    if (succeeded(checkSupportedExpandLoadShape(load, &reason))) {
-      return WalkResult::advance();
-    }
-    load.emitError()
-        << kVMIDiagUnsupportedPrefix
-        << "pto.vmi.expand_load direct lowering is currently supported for "
-           "either a static all-active mask lowered as pto.vlds, or a "
-           "one-full-chunk 32-bit UB runtime mask lowered through pto.vusqz "
-           "+ pto.vgather2_bc + pto.vsel ("
-        << reason << ")";
-    return WalkResult::interrupt();
+  if (auto advancedResult = verifySupportedVMIMemoryAdvancedLoadOp(
+          op, enableStableGatherMaskedLoad);
+      advancedResult.has_value()) {
+    return *advancedResult;
   }
   return std::nullopt;
 }

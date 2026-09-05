@@ -423,6 +423,12 @@ group-store lowering 回归均通过。
 granularity cast 的诊断及支持关系保持不变。源码增量合规检查、`git diff --check`，
 连续 load/store、mask-granularity 和 group-store lowering 回归均通过。
 
+本轮进一步将 masked-load、gather 和 expand-load 的高级读路径抽取为
+`verifySupportedVMIMemoryAdvancedLoadOp`，使 `verifySupportedVMIMemoryLoadOp` 只
+负责基础 load/group-load 分类与检查。stable masked-load 的保留策略、各 fallback
+支持描述和诊断优先级均保持不变；源码增量合规检查、`git diff --check` 及连续
+load/store、interleave memory、group-reduce lowering 回归均通过。
+
 本轮继续将 `verifySupportedVMIMemoryOp` 按读写方向拆分为
 `verifySupportedVMIMemoryLoadOp` 与 `verifySupportedVMIMemoryStoreOp`，顶层 helper
 只负责保持 load→store 的检查顺序。load 中的 stable masked-load 选项仍在原位置
