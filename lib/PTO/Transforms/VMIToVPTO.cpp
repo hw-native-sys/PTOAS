@@ -7807,8 +7807,10 @@ public:
     FailureOr<Value> offset = getSingleValue(
         op, adaptor.getOffset(), "expand_load offset must convert to one value",
         rewriter);
-    if (failed(source) || failed(offset))
+    bool operandsConverted = succeeded(source) && succeeded(offset);
+    if (!operandsConverted) {
       return failure();
+    }
 
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
