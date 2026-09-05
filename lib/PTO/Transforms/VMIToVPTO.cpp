@@ -8751,7 +8751,8 @@ public:
             materializeEnsureLayoutConversion(
                 op, valueParts, valueVMIType, compactVMIType,
                 *this->getTypeConverter(), rewriter);
-        if (failed(packed) || packed->size() != 1)
+        bool invalidPacked = failed(packed) || packed->size() != 1;
+        if (invalidPacked) {
           return rewriter.notifyMatchFailure(
               op, "failed to materialize compact group_store layout");
         compactValue = packed->front();
@@ -8762,7 +8763,7 @@ public:
         auto compactType = dyn_cast<VRegType>(compactValue.getType());
         std::optional<std::string> normalDist =
             getX2MemoryDistToken(valueVMIType.getElementType(), "NORM");
-        if (!compactType || !normalDist)
+        if (!compactType || !normalDist) {
           return rewriter.notifyMatchFailure(
               op, "aligned compact group_store requires a supported vreg "
                   "element type");
@@ -9414,6 +9415,103 @@ struct OneToNVMIGroupBroadcastLoadOpPattern
   using OneToNOpConversionPattern<VMIGroupBroadcastLoadOp>::OneToNOpConversionPattern;
 
 private:
+  LogicalResult lowerDirectE2B(
+      VMIGroupBroadcastLoadOp op, OneToNPatternRewriter &rewriter,
+      Value source, Value offset, VMIVRegType resultVMIType,
+      ArrayRef<Type> resultTypes, int64_t numGroups, unsigned elementBits,
+      VMILayoutAttr layout) const {
+    bool contiguousPacketLayout = layout && layout.isContiguous();
+    bool splitPacketLayout = layout && layout.isDeinterleaved() &&
+                             (layout.getFactor() == 2 ||
+                              layout.getFactor() == 4) &&
+                             layout.getLaneStride() == 1;
+    if (!contiguousPacketLayout && !splitPacketLayout) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast_load E2B lowering requires contiguous result "
+              "layout for direct group size or deinterleaved=2/4 result "
+              "layout for split group size");
+    }
+    if (elementBits != 16 && elementBits != 32) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast_load E2B lowering requires b16 or b32 element "
+              "type");
+    }
+    StringRef e2bDist = elementBits == 16 ? "E2B_B16" : "E2B_B32";
+    std::optional<int64_t> stride =
+        getConstantIndexValue(op.getSourceGroupStride());
+    if (!stride || *stride != 1) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast_load E2B lowering requires constant unit "
+              "source_group_stride");
+    }
+    if (!isa<PtrType>(source.getType())) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast_load E2B lowering requires !pto.ptr source");
+    }
+    if (numGroups != 8) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast_load E2B lowering requires num_groups = 8");
+    }
+    FailureOr<int64_t> chunksPerPart = getDataChunksInPart(resultVMIType, 0);
+    bool invalidChunks = failed(chunksPerPart) || *chunksPerPart <= 0;
+    if (invalidChunks) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast_load requires known chunks per part");
+    }
+    int64_t factor = layout.getFactor();
+    for (int64_t part = 1; part < factor; ++part) {
+      FailureOr<int64_t> currentChunks =
+          getDataChunksInPart(resultVMIType, part);
+      bool nonUniformChunks =
+          failed(currentChunks) || *currentChunks != *chunksPerPart;
+      if (nonUniformChunks) {
+        return rewriter.notifyMatchFailure(
+            op, "group_broadcast_load requires uniform chunks per part");
+      }
+    }
+    bool invalidArity =
+        static_cast<int64_t>(resultTypes.size()) != factor * *chunksPerPart;
+    if (invalidArity) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast_load physical arity mismatch");
+    }
+    if (*chunksPerPart != 1) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast_load expected one E2B packet in each part");
+    }
+    SmallVector<Value> packets;
+    packets.reserve(*chunksPerPart);
+    for (int64_t chunk = 0; chunk < *chunksPerPart; ++chunk) {
+      Type packetType = resultTypes[chunk];
+      if (!isa<VRegType>(packetType)) {
+        return rewriter.notifyMatchFailure(
+            op, "group_broadcast_load result must be vreg");
+      }
+      Value packetOffset =
+          createChunkOffset(op.getLoc(), offset, chunk * 8, rewriter);
+      packets.push_back(rewriter
+                            .create<VldsOp>(op.getLoc(), packetType, Type{},
+                                            source, packetOffset,
+                                            rewriter.getStringAttr(e2bDist))
+                            .getResult());
+    }
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (int64_t part = 0; part < factor; ++part) {
+      for (int64_t chunk = 0; chunk < *chunksPerPart; ++chunk) {
+        int64_t flatIndex = part * *chunksPerPart + chunk;
+        if (resultTypes[flatIndex] != resultTypes[chunk]) {
+          return rewriter.notifyMatchFailure(
+              op, "group_broadcast_load E2B reused packet type mismatch");
+        }
+        results.push_back(packets[chunk]);
+      }
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
   LogicalResult lowerDirectBRC(
       VMIGroupBroadcastLoadOp op, OneToNPatternRewriter &rewriter,
       Value source, Value offset, Value sourceGroupStride,
@@ -9596,92 +9694,9 @@ public:
     }
 
     VMILayoutAttr layout = resultVMIType.getLayoutAttr();
-    bool contiguousPacketLayout = layout && layout.isContiguous();
-    bool splitPacketLayout = layout && layout.isDeinterleaved() &&
-                             (layout.getFactor() == 2 ||
-                              layout.getFactor() == 4) &&
-                             layout.getLaneStride() == 1;
-    if (!contiguousPacketLayout && !splitPacketLayout)
-      return rewriter.notifyMatchFailure(
-          op, "group_broadcast_load E2B lowering requires "
-              "contiguous result layout for direct group size or "
-              "deinterleaved=2/4 result layout for split "
-              "group size");
-
     unsigned elementBits = directFact->layout.elementBits;
-    if (elementBits != 16 && elementBits != 32)
-      return rewriter.notifyMatchFailure(
-          op, "group_broadcast_load E2B lowering requires b16 or b32 "
-              "element type");
-    StringRef e2bDist = elementBits == 16 ? "E2B_B16" : "E2B_B32";
-
-    std::optional<int64_t> stride =
-        getConstantIndexValue(op.getSourceGroupStride());
-    if (!stride || *stride != 1)
-      return rewriter.notifyMatchFailure(
-          op, "group_broadcast_load E2B lowering requires constant unit "
-              "source_group_stride");
-
-    if (!isa<PtrType>((*source).getType()))
-      return rewriter.notifyMatchFailure(
-          op, "group_broadcast_load E2B lowering requires !pto.ptr source");
-
-    if (numGroups != 8)
-      return rewriter.notifyMatchFailure(
-          op, "group_broadcast_load E2B lowering requires num_groups = 8");
-
-    FailureOr<int64_t> chunksPerPart = getDataChunksInPart(resultVMIType, 0);
-    if (failed(chunksPerPart) || *chunksPerPart <= 0)
-      return rewriter.notifyMatchFailure(
-          op, "group_broadcast_load requires known chunks per part");
-    int64_t factor = layout.getFactor();
-    for (int64_t part = 1; part < factor; ++part) {
-      FailureOr<int64_t> currentChunks =
-          getDataChunksInPart(resultVMIType, part);
-      if (failed(currentChunks) || *currentChunks != *chunksPerPart)
-        return rewriter.notifyMatchFailure(
-            op, "group_broadcast_load requires uniform chunks per part");
-    }
-    if (static_cast<int64_t>(resultTypes.size()) != factor * *chunksPerPart)
-      return rewriter.notifyMatchFailure(
-          op, "group_broadcast_load physical arity mismatch");
-    if (*chunksPerPart != 1)
-      return rewriter.notifyMatchFailure(
-          op,
-          "group_broadcast_load expected one E2B packet in each part");
-
-    SmallVector<Value> packets;
-    packets.reserve(*chunksPerPart);
-    for (int64_t chunk = 0; chunk < *chunksPerPart; ++chunk) {
-      Type packetType = resultTypes[chunk];
-      auto vregType = dyn_cast<VRegType>(packetType);
-      if (!vregType)
-        return rewriter.notifyMatchFailure(
-            op, "group_broadcast_load result must be vreg");
-      Value packetOffset =
-          createChunkOffset(op.getLoc(), *offset, chunk * 8, rewriter);
-      packets.push_back(rewriter
-                            .create<VldsOp>(op.getLoc(), packetType,
-                                            /*updated_base=*/Type{}, *source,
-                                            packetOffset,
-                                            rewriter.getStringAttr(e2bDist))
-                            .getResult());
-    }
-
-    SmallVector<Value> results;
-    results.reserve(resultTypes.size());
-    for (int64_t part = 0; part < factor; ++part) {
-      for (int64_t chunk = 0; chunk < *chunksPerPart; ++chunk) {
-        int64_t flatIndex = part * *chunksPerPart + chunk;
-        if (resultTypes[flatIndex] != resultTypes[chunk])
-          return rewriter.notifyMatchFailure(
-              op, "group_broadcast_load E2B reused packet type mismatch");
-        results.push_back(packets[chunk]);
-      }
-    }
-
-    replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
-    return success();
+    return lowerDirectE2B(op, rewriter, *source, *offset, resultVMIType,
+                          resultTypes, numGroups, elementBits, layout);
   }
 
 private:

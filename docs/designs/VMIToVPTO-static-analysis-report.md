@@ -260,6 +260,13 @@ element-deinterleaved factor=2/4 的方向判断及失败传播，外层只遍�
 `vmi_to_vpto_ensure_mask_granularity.pto` 继续通过完整 lowering，增量合规检查与
 `git diff --check` 通过。
 
+本轮将 `OneToNVMIGroupBroadcastLoadOpPattern` 的 E2B lowering 抽取为
+`lowerDirectE2B`。helper 集中负责 E2B layout/element/stride/arity 契约、packet
+`vlds` 生成和跨 dense-split part 的结果复用；主 `matchAndRewrite` 仅保留 BRC、E2B
+与 group-slot fallback 的能力分派，原有优先级和诊断保持不变。
+`vmi_layout_assignment_group_broadcast_load_e2b_b16.pto` 回归通过，增量合规检查和
+`git diff --check` 通过。
+
 随后对称地将 factor=4 contiguous→deinterleaved staging 的两级 `predicate dintlv`
 组合抽取为 `materializeFactor4ContiguousToDeintGroup`。该 helper 负责四个 source 的
 分组校验、低/高半部交织以及最终四路结果顺序；外层函数只负责补齐缺失 source、维护
