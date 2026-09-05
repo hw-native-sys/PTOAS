@@ -709,3 +709,10 @@ conversion；主 pattern 保留普通 constant/dynamic 路径分派。该拆分�
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_layout_assignment_create_group_mask_s32_dynamic.pto` 与连续 load/store
 代表性 lowering 均通过。
+
+本轮将 `materializeMaskLaneStridePack` 的单个结果 chunk 组装抽取为
+`materializeMaskLaneStridePackChunk`，去除局部默认捕获 lambda。helper 只负责
+lane_stride=2/4 下 source mask 的低/高 half `ppack` 与 `por` 合并；外层继续负责
+source/result arity、mask 类型和 chunk 枚举。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；mask granularity 与
+group-store 代表性 lowering 均通过。
