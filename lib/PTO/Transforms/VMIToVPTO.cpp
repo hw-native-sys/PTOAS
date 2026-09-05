@@ -4325,6 +4325,27 @@ static FailureOr<Value> materializeGroupSlotLaneStridePart(
   return bitcastVReg(op->getLoc(), *current, resultType, rewriter);
 }
 
+static FailureOr<SmallVector<Value>> materializeLaneStrideResultList(
+    Operation *op, ValueRange sourceParts, TypeRange resultTypes,
+    unsigned elementBits, unsigned carrierBits, VRegType sourceCarrier,
+    int64_t laneStride, PatternRewriter &rewriter) {
+  SmallVector<Value> results;
+  results.reserve(resultTypes.size());
+  for (auto [resultIndex, resultType] : llvm::enumerate(resultTypes)) {
+    size_t sourceBegin = resultIndex * laneStride;
+    size_t sourceEnd =
+        std::min<size_t>(sourceBegin + laneStride, sourceParts.size());
+    FailureOr<Value> result = materializeLaneStrideResultPart(
+        op, sourceParts, resultType, sourceBegin, sourceEnd, elementBits,
+        carrierBits, sourceCarrier, rewriter);
+    if (failed(result)) {
+      return failure();
+    }
+    results.push_back(*result);
+  }
+  return results;
+}
+
 FailureOr<SmallVector<Value>> materializeLaneStrideToContiguous(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     Type elementType, int64_t laneStride, PatternRewriter &rewriter) {
@@ -4338,23 +4359,13 @@ FailureOr<SmallVector<Value>> materializeLaneStrideToContiguous(
       static_cast<unsigned>(*elementBits * static_cast<unsigned>(laneStride));
   FailureOr<VRegType> sourceCarrier =
       getUnsignedCarrierVRegType(rewriter.getContext(), carrierBits);
-  if (failed(sourceCarrier))
+  if (failed(sourceCarrier)) {
     return failure();
-
-  SmallVector<Value> results;
-  results.reserve(resultTypes.size());
-  for (auto [resultIndex, resultType] : llvm::enumerate(resultTypes)) {
-    size_t sourceBegin = resultIndex * laneStride;
-    size_t sourceEnd =
-        std::min<size_t>(sourceBegin + laneStride, sourceParts.size());
-    FailureOr<Value> result = materializeLaneStrideResultPart(
-        op, sourceParts, resultType, sourceBegin, sourceEnd, *elementBits,
-        carrierBits, *sourceCarrier, rewriter);
-    if (failed(result)) {
-      return failure();
-    results.push_back(*result);
   }
-  return results;
+
+  return materializeLaneStrideResultList(
+      op, sourceParts, resultTypes, *elementBits, carrierBits, *sourceCarrier,
+      laneStride, rewriter);
 }
 
 FailureOr<SmallVector<Value>> materializeGroupSlotLaneStride(

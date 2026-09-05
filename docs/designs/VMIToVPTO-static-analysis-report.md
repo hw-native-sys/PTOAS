@@ -221,6 +221,14 @@ mask 的语义差异只存在于 active-lane 判定。补齐该批代码及 scal
 触及的控制语句大括号后，增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过。
 
+# lane_stride 到 contiguous 结果遍历整改
+
+本轮将 `materializeLaneStrideToContiguous` 的结果 range 计算、逐结果 part 物化和
+结果收集抽取为 `materializeLaneStrideResultList`。主函数保留 dense lane-stride
+shape 校验与 source carrier 推导；source range 截断、pack/combine 顺序及失败语义
+保持不变。增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过。
+
 # mask granularity 多步转换整改
 
 本轮将 `materializeMaskGranularitySteps` 中单步中间 mask 类型构造与 adjacent conversion
