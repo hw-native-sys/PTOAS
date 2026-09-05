@@ -11855,8 +11855,9 @@ struct OneToNVMICmpOpPattern : OneToNOpConversionPattern<SourceOp> {
     ValueRange rhsParts = adaptor.getRhs();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    if (failed(maybe_resultTypes)) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     if (lhsParts.size() != rhsParts.size() ||
         lhsParts.size() != resultTypes.size())
@@ -14550,36 +14551,42 @@ struct OneToNVMIFPToSIOpPattern : OneToNOpConversionPattern<VMIFPToSIOp> {
     Type srcElem = sourceVMIType.getElementType();
     Type dstElem = resultVMIType.getElementType();
     auto contract = lookupVMIFpToSiContract(srcElem, dstElem);
-    if (!contract)
+    if (!contract) {
       return rewriter.notifyMatchFailure(
           op, "unsupported fp-to-si conversion element type pair");
+    }
 
     // Validate source physical part types.
-    if (sourceParts.empty())
+    if (sourceParts.empty()) {
       return rewriter.notifyMatchFailure(
           op, "fptosi requires at least one physical source chunk");
+    }
     auto sourceType0 = dyn_cast<VRegType>(sourceParts.front().getType());
-    if (!sourceType0)
+    if (!sourceType0) {
       return rewriter.notifyMatchFailure(
           op, "expected physical fptosi source type");
+    }
     for (Value sourcePart : sourceParts) {
       auto currentSourceType = dyn_cast<VRegType>(sourcePart.getType());
-      if (!currentSourceType || currentSourceType != sourceType0)
+      if (!currentSourceType || currentSourceType != sourceType0) {
         return rewriter.notifyMatchFailure(
             op, "fptosi source physical parts must have matching type");
+      }
     }
 
     // Validate result physical part types.
-    if (resultTypes.empty())
+    if (resultTypes.empty()) {
       return rewriter.notifyMatchFailure(
           op, "fptosi requires at least one physical result chunk");
+    }
     SmallVector<VRegType> resultVRegTypes;
     resultVRegTypes.reserve(resultTypes.size());
     for (Type physicalResultType : resultTypes) {
       auto resultType = dyn_cast<VRegType>(physicalResultType);
-      if (!resultType)
+      if (!resultType) {
         return rewriter.notifyMatchFailure(
             op, "unsupported physical fptosi result type");
+      }
       resultVRegTypes.push_back(resultType);
     }
 
@@ -14691,36 +14698,42 @@ struct OneToNVMIFPToUIOpPattern
     Type srcElem = sourceVMIType.getElementType();
     Type dstElem = resultVMIType.getElementType();
     auto contract = lookupVMIFpToUIContract(srcElem, dstElem);
-    if (!contract)
+    if (!contract) {
       return rewriter.notifyMatchFailure(
           op, "unsupported fp-to-ui conversion element type pair");
+    }
 
     // Validate source physical part types.
-    if (sourceParts.empty())
+    if (sourceParts.empty()) {
       return rewriter.notifyMatchFailure(
           op, "fptoui requires at least one physical source chunk");
+    }
     auto sourceType0 = dyn_cast<VRegType>(sourceParts.front().getType());
-    if (!sourceType0)
+    if (!sourceType0) {
       return rewriter.notifyMatchFailure(
           op, "expected physical fptoui source type");
+    }
     for (Value sourcePart : sourceParts) {
       auto currentSourceType = dyn_cast<VRegType>(sourcePart.getType());
-      if (!currentSourceType || currentSourceType != sourceType0)
+      if (!currentSourceType || currentSourceType != sourceType0) {
         return rewriter.notifyMatchFailure(
             op, "fptoui source physical parts must have matching type");
+      }
     }
 
     // Validate result physical part types.
-    if (resultTypes.empty())
+    if (resultTypes.empty()) {
       return rewriter.notifyMatchFailure(
           op, "fptoui requires at least one physical result chunk");
+    }
     SmallVector<VRegType> resultVRegTypes;
     resultVRegTypes.reserve(resultTypes.size());
     for (Type physicalResultType : resultTypes) {
       auto resultType = dyn_cast<VRegType>(physicalResultType);
-      if (!resultType)
+      if (!resultType) {
         return rewriter.notifyMatchFailure(
             op, "unsupported physical fptoui result type");
+      }
       resultVRegTypes.push_back(resultType);
     }
 

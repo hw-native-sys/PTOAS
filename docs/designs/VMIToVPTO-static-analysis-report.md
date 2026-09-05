@@ -1071,3 +1071,9 @@ NOSAT alias 及 factor=2/4 lowering 语义不变。增量合规检查结果为
 控制流边界，并将 bitcast verifier 的元素类型比较改为具名布尔条件，避免静态规则将
 多行条件误判为无大括号控制语句。该修复不改变支持矩阵、诊断或 lowering 结果。增量
 合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
+
+本轮补齐 `OneToNVMIFPToSIOpPattern` 与 `OneToNVMIFPToUIOpPattern` 入口的 conversion
+contract、source/result physical part 校验大括号，覆盖 `fptosi/fptoui` 的同宽、拓宽和
+窄化分支。该调整仅修复控制流边界，保持 `VcvtOp` part 选择、mask、arity 和诊断语义
+不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
+通过。
