@@ -1862,3 +1862,12 @@ signless integer 校验、seed mask、零值 `VdupOp` 和 `VusqzOp` 发射抽取
 诊断不变。增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；`vmi_to_vpto_active_prefix_index.pto` 当前在既有 VMI pack/unpack
 pipeline invariant 处提前失败，未进入本轮 helper，不能将该失败归因于本轮改动。
+
+# compress physical part lowering 职责整改
+
+本轮将 `OneToNVMICompressOpPattern::matchAndRewrite` 中单 physical part 的
+source/mask/result 合同校验和 `VsqzOp` 发射抽取为 `lowerPart`。入口继续负责 one-part
+arity 限制、converted result type 获取与结果替换；保持压缩语义、结果类型、结果顺序和
+原有诊断不变。增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_to_vpto_compress.pto` 当前在既有 VMI pack/unpack
+pipeline invariant 处提前失败，未进入本轮 helper，不能将该失败归因于本轮改动。

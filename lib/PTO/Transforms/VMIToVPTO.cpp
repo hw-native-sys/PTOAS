@@ -12861,6 +12861,25 @@ public:
 struct OneToNVMICompressOpPattern : OneToNOpConversionPattern<VMICompressOp> {
   using OneToNOpConversionPattern<VMICompressOp>::OneToNOpConversionPattern;
 
+private:
+  FailureOr<Value> lowerPart(VMICompressOp op, Value source, Value mask,
+                             Type resultType,
+                             OneToNPatternRewriter &rewriter) const {
+    auto resultVRegType = dyn_cast<VRegType>(resultType);
+    const bool invalidPart =
+        !resultVRegType || source.getType() != resultType ||
+        !isa<MaskType>(mask.getType());
+    if (invalidPart) {
+      rewriter.notifyMatchFailure(
+          op, "compress requires physical source/mask/result parts");
+      return failure();
+    }
+    return rewriter
+        .create<VsqzOp>(op.getLoc(), resultVRegType, source, mask)
+        .getResult();
+  }
+
+public:
   LogicalResult
   matchAndRewrite(VMICompressOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -12872,22 +12891,20 @@ struct OneToNVMICompressOpPattern : OneToNOpConversionPattern<VMICompressOp> {
       return failure();
     }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-    if (sourceParts.size() != 1 || maskParts.size() != 1 ||
-        resultTypes.size() != 1)
+    const bool invalidArity = sourceParts.size() != 1 ||
+                              maskParts.size() != 1 || resultTypes.size() != 1;
+    if (invalidArity) {
       return rewriter.notifyMatchFailure(
           op, "compress supports only one physical part");
+    }
 
-    auto resultType = dyn_cast<VRegType>(resultTypes.front());
-    if (!resultType || sourceParts.front().getType() != resultType ||
-        !isa<MaskType>(maskParts.front().getType()))
-      return rewriter.notifyMatchFailure(
-          op, "compress requires physical source/mask/result parts");
-
-    Value result = rewriter
-                       .create<VsqzOp>(op.getLoc(), resultType,
-                                       sourceParts.front(), maskParts.front())
-                       .getResult();
-    replaceOpWithFlatConvertedValues(rewriter, op, SmallVector<Value>{result},
+    FailureOr<Value> result = lowerPart(op, sourceParts.front(),
+                                        maskParts.front(), resultTypes.front(),
+                                        rewriter);
+    if (failed(result)) {
+      return failure();
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, SmallVector<Value>{*result},
                                      *this->getTypeConverter());
     return success();
   }
