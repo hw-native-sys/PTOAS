@@ -7874,6 +7874,16 @@ struct OneToNVMIGroupLoadOpPattern : OneToNOpConversionPattern<VMIGroupLoadOp> {
   using OneToNOpConversionPattern<VMIGroupLoadOp>::OneToNOpConversionPattern;
 
 private:
+  FailureOr<SmallVector<Type>> getResultTypes(
+      VMIGroupLoadOp op, OneToNPatternRewriter &rewriter) const {
+    FailureOr<SmallVector<Type>> resultTypes =
+        getConvertedResultTypes(op, 0, *this->getTypeConverter());
+    if (failed(resultTypes)) {
+      return failure();
+    }
+    return std::move(*resultTypes);
+  }
+
   LogicalResult lowerContiguousUnitStride(
       VMIGroupLoadOp op, OneToNPatternRewriter &rewriter, Value source,
       Value offset, VMIVRegType resultVMIType, ArrayRef<Type> resultTypes) const {
@@ -8040,8 +8050,7 @@ private:
       return rewriter.notifyMatchFailure(
           op, "block_deinterleaved group_load requires !pto.ptr source");
     }
-    FailureOr<SmallVector<Type>> maybeResultTypes =
-        getConvertedResultTypes(op, 0, *this->getTypeConverter());
+    FailureOr<SmallVector<Type>> maybeResultTypes = getResultTypes(op, rewriter);
     if (failed(maybeResultTypes)) {
       return failure();
     }
@@ -8113,7 +8122,7 @@ public:
           getConstantIndexValue(op.getRowStride());
       if (constantRowStride && *constantRowStride == *groupSize) {
         FailureOr<SmallVector<Type>> maybe_resultTypes =
-            getConvertedResultTypes(op, 0, *this->getTypeConverter());
+            getResultTypes(op, rewriter);
         if (failed(maybe_resultTypes)) {
           return failure();
         }
@@ -8124,7 +8133,7 @@ public:
     }
 
     FailureOr<SmallVector<Type>> maybe_resultTypes =
-        getConvertedResultTypes(op, 0, *this->getTypeConverter());
+        getResultTypes(op, rewriter);
     if (failed(maybe_resultTypes)) {
       return failure();
     }

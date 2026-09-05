@@ -1097,3 +1097,10 @@ contiguous fallback 的路径选择，避免重复准备逻辑并保持对齐/�
 将该 helper 的多条件失败判断命名化。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_load_store_contiguous.pto` lowering exit=0。
+
+本轮在 `OneToNVMIGroupLoadOpPattern` 中新增 `getResultTypes`，统一 group-load 三条
+路径（block-deinterleaved、unit-stride contiguous、普通 contiguous）对 one-to-N result
+physical types 的转换与失败处理。主分派不再重复调用 type converter，保持各路径的
+layout 判定、地址计算、结果顺序和指令选择不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续 load/store
+lowering exit=0。
