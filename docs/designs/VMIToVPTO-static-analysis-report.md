@@ -2105,6 +2105,16 @@ arity 合约、stride 常量和 part 遍历；保持 part 顺序、block/repeat 
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_layout_assignment_group_store_slots1_unit_stride.pto` 完整 lowering pipeline exit=0。
 
+# slots=1 packed group store 值构造职责整改
+
+本轮在 `OneToNVMIGroupStoreOpPattern::lowerSlots1PackedUnitStride` 中引入
+`buildPackedSlots1Value`，将每个 group 的 `VdupOp`、lane mask 构造与 `VselOp` 累积抽取
+为独立 helper。主函数继续负责 mask 类型/all-mask 准备、地址对齐判断以及 aligned
+`VstsOp` 或 unaligned stateful stream 分支；保持 group 顺序、LOWEST splat 语义、lane
+选择、store mask、stream advance 和诊断语义不变。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_layout_assignment_group_store_slots1_unit_stride.pto` 完整 lowering pipeline exit=0。
+
 # one-block group-reduce 单结果构造职责整改
 
 本轮在 `OneToNVMIGroupReduceOpPattern::lowerOneBlock` 中引入

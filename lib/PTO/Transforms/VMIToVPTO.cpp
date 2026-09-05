@@ -10011,6 +10011,40 @@ private:
     return emitStatefulStoreStream(op, storeBase, values, advances, rewriter);
   }
 
+  FailureOr<Value> buildPackedSlots1Value(
+      VMIGroupStoreOp op, OneToNPatternRewriter &rewriter,
+      ValueRange valueParts, VMILayoutAttr layout, VRegType firstType,
+      MaskType maskType, Value allMask) const {
+    Value packed = rewriter
+                       .create<VdupOp>(op.getLoc(), firstType,
+                                       valueParts.front(), allMask,
+                                       rewriter.getStringAttr("LOWEST"))
+                       .getResult();
+    for (int64_t group = 1; group < layout.getNumGroups(); ++group) {
+      auto vregType = dyn_cast<VRegType>(valueParts[group].getType());
+      if (!vregType || vregType != firstType) {
+        return rewriter.notifyMatchFailure(
+            op, "packed group_store requires uniform vreg parts");
+      }
+      Value splat = rewriter
+                        .create<VdupOp>(op.getLoc(), firstType, valueParts[group],
+                                        allMask,
+                                        rewriter.getStringAttr("LOWEST"))
+                        .getResult();
+      FailureOr<Value> laneMask = createLaneRangeMask(
+          op.getLoc(), maskType, group, group + 1, rewriter);
+      if (failed(laneMask)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to create packed group_store lane mask");
+      }
+      packed = rewriter
+                   .create<VselOp>(op.getLoc(), firstType, splat, packed,
+                                   *laneMask)
+                   .getResult();
+    }
+    return packed;
+  }
+
   LogicalResult lowerSlots1PackedUnitStride(
       VMIGroupStoreOp op, OneToNPatternRewriter &rewriter,
       ValueRange valueParts, VMIVRegType valueVMIType, VMILayoutAttr layout,
@@ -10028,32 +10062,10 @@ private:
       return rewriter.notifyMatchFailure(
           op, "unsupported element type for packed group_store mask");
     }
-    Value packed = rewriter
-                       .create<VdupOp>(op.getLoc(), firstType,
-                                       valueParts.front(), *allMask,
-                                       rewriter.getStringAttr("LOWEST"))
-                       .getResult();
-    for (int64_t group = 1; group < layout.getNumGroups(); ++group) {
-      auto vregType = dyn_cast<VRegType>(valueParts[group].getType());
-      if (!vregType || vregType != firstType) {
-        return rewriter.notifyMatchFailure(
-            op, "packed group_store requires uniform vreg parts");
-      }
-      Value splat = rewriter
-                        .create<VdupOp>(op.getLoc(), firstType,
-                                        valueParts[group], *allMask,
-                                        rewriter.getStringAttr("LOWEST"))
-                        .getResult();
-      FailureOr<Value> laneMask = createLaneRangeMask(
-          op.getLoc(), *maskType, group, group + 1, rewriter);
-      if (failed(laneMask)) {
-        return rewriter.notifyMatchFailure(
-            op, "failed to create packed group_store lane mask");
-      }
-      packed = rewriter
-                   .create<VselOp>(op.getLoc(), firstType, splat, packed,
-                                   *laneMask)
-                   .getResult();
+    FailureOr<Value> packed = buildPackedSlots1Value(
+        op, rewriter, valueParts, layout, *firstType, *maskType, *allMask);
+    if (failed(packed)) {
+      return failure();
     }
     if (isKnownAddressAligned(destination, offset,
                                valueVMIType.getElementType(), 32)) {
@@ -10063,7 +10075,7 @@ private:
         return rewriter.notifyMatchFailure(
             op, "failed to create packed group_store store mask");
       }
-      rewriter.create<VstsOp>(op.getLoc(), Type{}, packed, destination, offset,
+      rewriter.create<VstsOp>(op.getLoc(), Type{}, *packed, destination, offset,
                               nullptr, *storeMask);
     } else {
       Value storeBase = materializeBufferPointer(
@@ -10077,7 +10089,7 @@ private:
                       .create<AddPtrOp>(op.getLoc(), storeBase.getType(),
                                         storeBase, offset)
                       .getResult();
-      SmallVector<Value> streamValues{packed};
+      SmallVector<Value> streamValues{*packed};
       SmallVector<int64_t> streamAdvances{layout.getNumGroups()};
       if (failed(emitStatefulStoreStream(op, storeBase, streamValues,
                                          streamAdvances, rewriter))) {
