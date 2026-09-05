@@ -1408,3 +1408,14 @@ power-of-two 周期模式的快速路径抽取为 `createSubVLPeriodicFastPath`�
 优化选择和失败语义保持不变。增量 `check_changed_code.py` 结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。native 构建仍受
 既有 `/cann-cmake` 外部依赖权限问题阻断。
+
+# interleave store chunk 发射整改
+
+本轮将 `OneToNVMIInterleaveStoreOpPattern::matchAndRewrite` 中单个 low/high physical
+chunk 的类型检查、direct `Vstsx2Op` 发射和 stream `VintlvOp`/advance 收集抽取为
+`emitInterleaveStoreChunk`。主函数保留 dist 合法性、地址模式选择、stream base 物化和
+最终 stream 提交；`INTLV` offset 递增、packet 顺序、每个 lane 的 advance 以及 direct
+路径 mask 语义保持不变。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
+`vmi_interleaved_memory_ops.pto` lowering exit=0，invalid case 仍按原有 VMI operand
+lane-count verifier 失败。

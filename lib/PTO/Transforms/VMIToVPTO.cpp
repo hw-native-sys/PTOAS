@@ -9692,6 +9692,48 @@ struct OneToNVMIInterleaveStoreOpPattern
   using OneToNOpConversionPattern<
       VMIInterleaveStoreOp>::OneToNOpConversionPattern;
 
+private:
+  LogicalResult emitInterleaveStoreChunk(
+      VMIInterleaveStoreOp op, Value low, Value high, size_t index,
+      int64_t lanesPerPart, Value destination, Value offset, StringRef dist,
+      bool useDirectAccess, SmallVectorImpl<Value> &streamValues,
+      SmallVectorImpl<int64_t> &streamAdvances,
+      OneToNPatternRewriter &rewriter) const {
+    bool mismatchedTypes = low.getType() != high.getType();
+    if (mismatchedTypes) {
+      return rewriter.notifyMatchFailure(
+          op, "interleave_store requires matching low/high physical types");
+    }
+    auto vregType = dyn_cast<VRegType>(low.getType());
+    if (!vregType) {
+      return rewriter.notifyMatchFailure(
+          op, "interleave_store value must be vreg");
+    }
+    if (useDirectAccess) {
+      FailureOr<Value> mask =
+          createAllTrueMaskForVReg(op.getLoc(), vregType, rewriter);
+      if (failed(mask)) {
+        return rewriter.notifyMatchFailure(
+            op, "unsupported element type for interleave_store mask");
+      }
+      Value chunkOffset = createChunkOffset(
+          op.getLoc(), offset, static_cast<int64_t>(index) * 2 * lanesPerPart,
+          rewriter);
+      rewriter.create<Vstsx2Op>(op.getLoc(), low, high, destination, chunkOffset,
+                                rewriter.getStringAttr(dist), *mask);
+      return success();
+    }
+    auto packets =
+        rewriter.create<VintlvOp>(op.getLoc(), vregType, vregType, low, high);
+    streamValues.push_back(packets.getLow());
+    streamValues.push_back(packets.getHigh());
+    streamAdvances.push_back(lanesPerPart);
+    streamAdvances.push_back(lanesPerPart);
+    return success();
+  }
+
+public:
+
   LogicalResult
   matchAndRewrite(VMIInterleaveStoreOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -9699,14 +9741,17 @@ struct OneToNVMIInterleaveStoreOpPattern
     FailureOr<int64_t> lanesPerPart =
         getDataLanesPerPart(lowVMIType.getElementType());
     if (failed(lanesPerPart))
+    {
       return rewriter.notifyMatchFailure(
           op, "interleave_store requires known physical lanes per part");
+    }
 
     std::optional<std::string> dist =
         getX2MemoryDistToken(lowVMIType.getElementType(), "INTLV");
-    if (!dist)
+    if (!dist) {
       return rewriter.notifyMatchFailure(
           op, "interleave_store requires vstsx2 INTLV element support");
+    }
 
     FailureOr<Value> destination = getSingleValue(
         op, adaptor.getDestination(),
@@ -9715,13 +9760,17 @@ struct OneToNVMIInterleaveStoreOpPattern
         op, adaptor.getOffset(),
         "interleave_store offset must convert to one value", rewriter);
     if (failed(destination) || failed(offset))
+    {
       return failure();
+    }
 
     ValueRange lowParts = adaptor.getLow();
     ValueRange highParts = adaptor.getHigh();
     if (lowParts.size() != highParts.size())
+    {
       return rewriter.notifyMatchFailure(
           op, "interleave_store requires matching low/high physical arity");
+    }
 
     auto firstType = lowParts.empty()
                          ? VRegType{}
@@ -9750,37 +9799,12 @@ struct OneToNVMIInterleaveStoreOpPattern
     }
 
     for (size_t index = 0, e = lowParts.size(); index < e; ++index) {
-      Value low = lowParts[index];
-      Value high = highParts[index];
-      if (low.getType() != high.getType())
-        return rewriter.notifyMatchFailure(
-            op, "interleave_store requires matching low/high physical types");
-      auto vregType = dyn_cast<VRegType>(low.getType());
-      if (!vregType)
-        return rewriter.notifyMatchFailure(
-            op, "interleave_store value must be vreg");
-      if (useDirectAccess) {
-        FailureOr<Value> mask =
-            createAllTrueMaskForVReg(op.getLoc(), vregType, rewriter);
-        if (failed(mask)) {
-          return rewriter.notifyMatchFailure(
-              op, "unsupported element type for interleave_store mask");
-        }
-        Value chunkOffset = createChunkOffset(
-            op.getLoc(), *offset,
-            static_cast<int64_t>(index) * 2 * *lanesPerPart, rewriter);
-        rewriter.create<Vstsx2Op>(op.getLoc(), low, high, *destination,
-                                  chunkOffset, rewriter.getStringAttr(*dist),
-                                  *mask);
-        continue;
+      if (failed(emitInterleaveStoreChunk(
+              op, lowParts[index], highParts[index], index, *lanesPerPart,
+              *destination, *offset, *dist, useDirectAccess, streamValues,
+              streamAdvances, rewriter))) {
+        return failure();
       }
-
-      auto packets =
-          rewriter.create<VintlvOp>(op.getLoc(), vregType, vregType, low, high);
-      streamValues.push_back(packets.getLow());
-      streamValues.push_back(packets.getHigh());
-      streamAdvances.push_back(*lanesPerPart);
-      streamAdvances.push_back(*lanesPerPart);
     }
 
     if (!useDirectAccess &&
