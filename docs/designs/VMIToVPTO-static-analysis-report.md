@@ -397,3 +397,8 @@ load/store 回归通过。现有三个独立浮点样例均在测试自身 `unpa
 该 helper 单独负责跨物理 source chunk 的 lane-mask 构造，主 lowering 继续负责布局
 selector 选择、常量路径和 `vselr` 路径；未改变 group broadcast 的结果顺序或错误诊断。
 源码增量合规检查、`git diff --check` 及 group-broadcast lowering 回归均通过。
+
+本轮将 memory verifier 中重复的 load shape 诊断闭包抽取为具名 helper
+`emitMemoryUnsupported`，使 `verifySupportedVMIMemoryOp` 只负责操作分类和能力
+检查；诊断内容及 stable masked-load 选项语义保持不变。源码增量合规检查、
+`git diff --check` 和连续 load/store lowering 回归通过。

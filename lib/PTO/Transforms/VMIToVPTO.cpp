@@ -14943,11 +14943,9 @@ void emitEnsureLayoutMaterializationError(VMIEnsureLayoutOp ensure,
          "packing plan";
 }
 
-std::optional<WalkResult> verifySupportedVMIMemoryOp(
-    Operation *op, bool enableStableGatherMaskedLoad) {
-  auto emitMemoryUnsupported =
-      [](Operation *memoryOp, StringRef opName, VMIVRegType type,
-         Value source, std::optional<int64_t> constantOffset) -> WalkResult {
+WalkResult emitMemoryUnsupported(Operation *memoryOp, StringRef opName,
+                                 VMIVRegType type, Value source,
+                                 std::optional<int64_t> constantOffset) {
     std::string reason;
     if (succeeded(checkSupportedLoadShape(type, source, source.getType(),
                                           constantOffset, &reason))) {
@@ -14959,7 +14957,10 @@ std::optional<WalkResult> verifySupportedVMIMemoryOp(
         << " direct lowering requires a supported memory source (" << reason
         << ")";
     return WalkResult::interrupt();
-  };
+}
+
+std::optional<WalkResult> verifySupportedVMIMemoryOp(
+    Operation *op, bool enableStableGatherMaskedLoad) {
 
   if (auto load = dyn_cast<VMILoadOp>(op)) {
     return emitMemoryUnsupported(
