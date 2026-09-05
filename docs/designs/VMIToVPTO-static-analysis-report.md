@@ -227,6 +227,12 @@ mask 的语义差异只存在于 active-lane 判定。补齐该批代码及 scal
 语义与 slots=8/packed-byte 路径。`vmi_to_vpto_group_store_slots1_1pt.pto` 回归通过，
 增量合规检查和 `git diff --check` 通过。
 
+本轮又将 slots=8 普通/lane-stride 两条非对齐 store stream 的 destination pointer
+物化、offset 合成和 `emitStatefulStoreStream` 调用统一抽取为
+`emitGroupStoreStream`。该 helper 只封装地址与 stream 生命周期，保留 packed-byte
+专用 stream 和对齐 `vsts` 路径的独立选择；packed-byte 与 scalar 代表性 group-store
+case 均回归通过，增量合规检查和 `git diff --check` 通过。
+
 本轮继续整理 `materializeMaskLaneStrideLayout`：将 contiguous lane-stride unpack
 分支前置为独立方向路径，集中处理结果 arity、`punpack` 层级和 mask 类型校验，pack
 路径只保留 `ppack`/`por` 合并逻辑。这样降低了同一函数中双向控制流的嵌套，同时保持

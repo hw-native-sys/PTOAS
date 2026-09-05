@@ -98,6 +98,25 @@ static LogicalResult emitStatefulStoreStream(Operation *op, Value base,
   return success();
 }
 
+static LogicalResult emitGroupStoreStream(Operation *op, Value destination,
+                                           Value offset, ValueRange values,
+                                           ArrayRef<int64_t> advances,
+                                           OneToNPatternRewriter &rewriter) {
+  Type destinationElementType = getMemoryElementType(destination.getType());
+  Value storeBase = materializeBufferPointer(
+      destination, destinationElementType,
+      getMemorySpace(destination.getType()), rewriter, op->getLoc());
+  if (!storeBase) {
+    return rewriter.notifyMatchFailure(
+        op, "unaligned group_store requires a ptr-compatible destination");
+  }
+  storeBase = rewriter
+                  .create<AddPtrOp>(op->getLoc(), storeBase.getType(),
+                                    storeBase, offset)
+                  .getResult();
+  return emitStatefulStoreStream(op, storeBase, values, advances, rewriter);
+}
+
 bool isVMIType(Type type) { return isa<VMIVRegType, VMIMaskType>(type); }
 
 bool containsVMIType(Type type) {
@@ -9032,22 +9051,9 @@ public:
                ++slotBlock) {
             advances.push_back(std::min<int64_t>(8, numGroups - slotBlock * 8));
           }
-          Type destinationElementType =
-              getMemoryElementType((*destination).getType());
-          Value storeBase = materializeBufferPointer(
-              *destination, destinationElementType,
-              getMemorySpace((*destination).getType()), rewriter, op.getLoc());
-          if (!storeBase) {
-            return rewriter.notifyMatchFailure(
-                op, "unaligned slots=8 group_store requires a ptr-compatible "
-                    "destination");
-          }
-          storeBase = rewriter
-                          .create<AddPtrOp>(op.getLoc(), storeBase.getType(),
-                                            storeBase, *offset)
-                          .getResult();
-          if (failed(emitStatefulStoreStream(op, storeBase, *compactValues,
-                                             advances, rewriter)))
+          if (failed(emitGroupStoreStream(
+                  op, *destination, *offset, *compactValues, advances,
+                  rewriter)))
             return failure();
           rewriter.eraseOp(op);
           return success();
@@ -9095,22 +9101,8 @@ public:
         for (size_t slotBlock = 0; slotBlock < valueParts.size(); ++slotBlock) {
           advances.push_back(std::min<int64_t>(8, numGroups - slotBlock * 8));
         }
-        Type destinationElementType =
-            getMemoryElementType((*destination).getType());
-        Value storeBase = materializeBufferPointer(
-            *destination, destinationElementType,
-            getMemorySpace((*destination).getType()), rewriter, op.getLoc());
-        if (!storeBase) {
-          return rewriter.notifyMatchFailure(
-              op, "unaligned slots=8 group_store requires a ptr-compatible "
-                  "destination");
-        }
-        storeBase = rewriter
-                        .create<AddPtrOp>(op.getLoc(), storeBase.getType(),
-                                          storeBase, *offset)
-                        .getResult();
-        if (failed(emitStatefulStoreStream(op, storeBase, valueParts, advances,
-                                           rewriter)))
+        if (failed(emitGroupStoreStream(op, *destination, *offset, valueParts,
+                                        advances, rewriter)))
           return failure();
         rewriter.eraseOp(op);
         return success();
