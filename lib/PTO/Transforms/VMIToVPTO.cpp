@@ -4176,7 +4176,8 @@ FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
 
       SmallVector<size_t> sourceCounts = getPartCounts(sourceParts.size(), 4);
       SmallVector<size_t> sourceOffsets = getPartOffsets(sourceCounts);
-      auto getSourcePart = [&](size_t part, size_t group) -> Value {
+      auto getSourcePart = [&sourceCounts, &sourceOffsets,
+                            &sourceParts](size_t part, size_t group) -> Value {
         if (group < sourceCounts[part])
           return sourceParts[sourceOffsets[part] + group];
         return sourceParts.back();
@@ -4237,7 +4238,7 @@ FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
 
       SmallVector<size_t> resultCounts = getPartCounts(resultTypes.size(), 4);
       SmallVector<size_t> resultOffsets = getPartOffsets(resultCounts);
-      auto getContiguousSourcePart = [&](size_t index) {
+      auto getContiguousSourcePart = [&sourceParts](size_t index) {
         return sourceParts[std::min(index, sourceParts.size() - 1)];
       };
       SmallVector<Value> part0;
@@ -4658,7 +4659,8 @@ FailureOr<SmallVector<Value>> materializeMaskLayoutConversion(
     auto lower = rewriter.getStringAttr("LOWER");
     auto higher = rewriter.getStringAttr("HIGHER");
     Value allTrue;
-    auto mergeMasks = [&](Value lhs, Value rhs) -> FailureOr<Value> {
+    auto mergeMasks = [&allTrue, &op, &rewriter](Value lhs,
+                                                  Value rhs) -> FailureOr<Value> {
       if (!allTrue) {
         FailureOr<Value> mask = createAllTrueMask(
             op->getLoc(), cast<MaskType>(lhs.getType()), rewriter);
@@ -4670,7 +4672,8 @@ FailureOr<SmallVector<Value>> materializeMaskLayoutConversion(
                                     allTrue)
           .getResult();
     };
-    auto packPair = [&](Value lowSource, std::optional<Value> highSource,
+    auto packPair = [&mergeMasks, &lower, &rewriter, &op](
+                        Value lowSource, std::optional<Value> highSource,
                         MaskType maskType) -> FailureOr<Value> {
       Value packed =
           rewriter.create<PpackOp>(op->getLoc(), maskType, lowSource, lower);
@@ -4802,7 +4805,7 @@ FailureOr<SmallVector<Value>> materializeAdjacentMaskGranularityConversion(
     return fail("source mask part count does not match source VMI type");
 
   MLIRContext *ctx = op->getContext();
-  auto partAttr = [&](StringRef part) { return StringAttr::get(ctx, part); };
+  auto partAttr = [&ctx](StringRef part) { return StringAttr::get(ctx, part); };
   auto resultMaskType = MaskType::get(ctx, resultType.getGranularity());
   SmallVector<Value> results;
 
@@ -4995,7 +4998,7 @@ FailureOr<SmallVector<Value>> materializeStagingDeintToContiguousMaskLayout(
   SmallVector<Value> results;
   results.reserve(resultTypes.size());
   for (int64_t i = 0; i < groups && results.size() < resultTypes.size(); ++i) {
-    auto nextType = [&](int64_t offset) -> Type {
+    auto nextType = [&results, &resultTypes](int64_t offset) -> Type {
       size_t index = results.size() + offset;
       return index < resultTypes.size() ? resultTypes[index]
                                         : resultTypes[results.size()];
@@ -6675,12 +6678,12 @@ struct OneToNVMIGroupLoadOpPattern : OneToNOpConversionPattern<VMIGroupLoadOp> {
                                            "block_deinterleaved group_load "
                                            "arity mismatch");
 
-      auto makeI16 = [&](int64_t value) -> Value {
+      auto makeI16 = [&rewriter, &op](int64_t value) -> Value {
         return rewriter.create<arith::ConstantIntOp>(op.getLoc(), value, 16);
       };
       Value blockStride = makeI16(*constantRowStride / 8);
       Value zeroI16 = makeI16(0);
-      auto makePtr = [&](Value elementOffset) -> Value {
+      auto makePtr = [&rewriter, &source, &op](Value elementOffset) -> Value {
         return rewriter
             .create<AddPtrOp>(op.getLoc(), (*source).getType(), *source,
                               elementOffset)
@@ -6829,11 +6832,11 @@ static LogicalResult lowerGroupSlotLoadParts(
   if (static_cast<int64_t>(resultTypes.size()) != expectedArity)
     return rewriter.notifyMatchFailure(op, "group_slot_load arity mismatch");
 
-  auto makeI16 = [&](int64_t value) -> Value {
+  auto makeI16 = [&rewriter, &op](int64_t value) -> Value {
     return rewriter.create<arith::ConstantIntOp>(op->getLoc(), value, 16);
   };
   Value zeroI16 = makeI16(0);
-  auto makePtr = [&](Value elementOffset) -> Value {
+  auto makePtr = [&rewriter, &source, &op](Value elementOffset) -> Value {
     return rewriter
         .create<AddPtrOp>(op->getLoc(), source.getType(), source, elementOffset)
         .getResult();
@@ -7054,7 +7057,9 @@ static LogicalResult lowerGroupBroadcastParts(
 
   Value sharedRamp;
   llvm::DenseMap<int64_t, Value> selectorByBaseIndex;
-  auto getSelector = [&](int64_t baseSlot) -> FailureOr<Value> {
+  auto getSelector = [&selectorByBaseIndex, &sourceLaneStride, &selectorKind,
+                      &indexScalarType, &indexType, &allMask, &op, &rewriter](
+                         int64_t baseSlot) -> FailureOr<Value> {
     int64_t baseIndex = baseSlot * sourceLaneStride;
     auto cached = selectorByBaseIndex.find(baseIndex);
     if (cached != selectorByBaseIndex.end())
@@ -7200,7 +7205,8 @@ static LogicalResult lowerGroupBroadcastParts(
           return rewriter.notifyMatchFailure(
               op, "group_broadcast result chunk has no active lanes");
 
-        auto splatSource = [&](int64_t chunkIndex) {
+        auto splatSource = [&rewriter, &op, &resultType, &sourceParts,
+                            &allMask](int64_t chunkIndex) {
           return rewriter
               .create<VdupOp>(op->getLoc(), resultType,
                               sourceParts[chunkIndex], *allMask,
@@ -8831,7 +8837,7 @@ struct OneToNVMIGroupBroadcastLoadOpPattern
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     FailureOr<VMIGroupBroadcastLoadDirectFact> directFact =
         supports.getGroupBroadcastLoadDirectFact(op);
-    auto getBRCDist = [&]() -> std::optional<StringRef> {
+    auto getBRCDist = [&resultVMIType]() -> std::optional<StringRef> {
       unsigned elementBits =
           pto::getPTOStorageElemBitWidth(resultVMIType.getElementType());
       if (elementBits == 8)
@@ -11263,7 +11269,8 @@ struct OneToNVMIExtFOpPattern : OneToNOpConversionPattern<VMIExtFOp> {
                         resultVRegTypes.front().getElementCount() * 2,
                         BFloat16Type::get(rewriter.getContext()));
     }
-    auto viewVcvtResult = [&](VRegType resultType, Value sourcePart,
+    auto viewVcvtResult = [&resultIsPackedBF16x2, &vcvtResultVRegType,
+                           &rewriter, &op](VRegType resultType, Value sourcePart,
                               Value mask, StringAttr rnd, StringAttr sat,
                               StringAttr part) -> Value {
       VRegType vcvtType =
@@ -11444,7 +11451,8 @@ struct OneToNVMITruncFOpPattern : OneToNOpConversionPattern<VMITruncFOp> {
           VRegType::get(rewriter.getContext(), sourceType0.getElementCount() * 2,
                         BFloat16Type::get(rewriter.getContext()));
     }
-    auto viewVcvtSource = [&](Value sourcePart) -> Value {
+    auto viewVcvtSource = [&sourceIsPackedBF16x2, &vcvtSourceVRegType,
+                           &rewriter, &op](Value sourcePart) -> Value {
       if (!sourceIsPackedBF16x2)
         return sourcePart;
       // If the source part is the physical noop pairing bitcast produced by
@@ -12172,7 +12180,8 @@ struct OneToNVMITruncIOpPattern : OneToNOpConversionPattern<VMITruncIOp> {
       resultType0 = cast<VRegType>(resultTypes.front());
     }
 
-    auto finalize = [&](SmallVector<Value> &results) {
+    auto finalize = [&s32ToS8Alias, &originalResultTypes, &rewriter, &op](
+                        SmallVector<Value> &results) {
       if (s32ToS8Alias) {
         for (auto &&[i, r] : llvm::enumerate(results))
           r = rewriter
