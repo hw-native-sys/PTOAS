@@ -5502,8 +5502,11 @@ FailureOr<SmallVector<Value>> materializeStagingContiguousToDeintMaskLayout(
   SmallVector<Value> results;
   results.reserve(resultTypes.size());
   for (int64_t part = 0; part < factor; ++part) {
-    if (parts[part].size() != static_cast<size_t>(groups))
+    bool invalidPartArity =
+        parts[part].size() != static_cast<size_t>(groups);
+    if (invalidPartArity) {
       return fail("staging contiguous mask layout result arity mismatch");
+    }
     results.append(parts[part]);
   }
   return results;
@@ -8655,6 +8658,46 @@ private:
     return success();
   }
 
+  LogicalResult lowerScalarGroupStore(
+      VMIGroupStoreOp op, OpAdaptor adaptor,
+      OneToNPatternRewriter &rewriter, VMIVRegType valueVMIType,
+      Value destination, Value offset) const {
+    ValueRange valueParts = adaptor.getValue();
+    bool invalidValueArity = valueParts.size() != 1;
+    if (invalidValueArity) {
+      return rewriter.notifyMatchFailure(
+          op, "scalar group_store requires one physical value part");
+    }
+    auto valueType = dyn_cast<VRegType>(valueParts.front().getType());
+    if (!valueType) {
+      return rewriter.notifyMatchFailure(
+          op, "scalar group_store value must be vreg");
+    }
+    std::optional<std::string> pointDist =
+        getPointStoreDistToken(valueVMIType.getElementType());
+    if (!pointDist) {
+      return rewriter.notifyMatchFailure(
+          op, "scalar group_store requires point-store support");
+    }
+    FailureOr<MaskType> maskType =
+        getMaskTypeForVReg(valueType, rewriter.getContext());
+    if (failed(maskType)) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported element type for scalar group_store mask");
+    }
+    FailureOr<Value> mask =
+        createPrefixMask(op.getLoc(), *maskType, "PAT_VL1", rewriter);
+    if (failed(mask)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to create scalar group_store mask");
+    }
+    rewriter.create<VstsOp>(op.getLoc(), Type{}, valueParts.front(),
+                            destination, offset,
+                            rewriter.getStringAttr(*pointDist), *mask);
+    rewriter.eraseOp(op);
+    return success();
+  }
+
 public:
   LogicalResult
   matchAndRewrite(VMIGroupStoreOp op, OpAdaptor adaptor,
@@ -8689,40 +8732,8 @@ public:
     bool isScalarGroupStore = op.getNumGroupsAttr().getInt() == 1 &&
                               valueVMIType.getElementCount() == 1;
     if (isScalarGroupStore) {
-      ValueRange valueParts = adaptor.getValue();
-      bool hasScalarPart = valueParts.size() == 1;
-      if (!hasScalarPart) {
-        return rewriter.notifyMatchFailure(
-            op, "scalar group_store requires one physical value part");
-      }
-      auto valueType = dyn_cast<VRegType>(valueParts.front().getType());
-      if (!valueType) {
-        return rewriter.notifyMatchFailure(
-            op, "scalar group_store value must be vreg");
-      }
-      std::optional<std::string> pointDist =
-          getPointStoreDistToken(valueVMIType.getElementType());
-      if (!pointDist) {
-        return rewriter.notifyMatchFailure(
-            op, "scalar group_store requires point-store support");
-      }
-      FailureOr<MaskType> maskType =
-          getMaskTypeForVReg(valueType, rewriter.getContext());
-      if (failed(maskType)) {
-        return rewriter.notifyMatchFailure(
-            op, "unsupported element type for scalar group_store mask");
-      }
-      FailureOr<Value> mask =
-          createPrefixMask(op.getLoc(), *maskType, "PAT_VL1", rewriter);
-      if (failed(mask)) {
-        return rewriter.notifyMatchFailure(
-            op, "failed to create scalar group_store mask");
-      }
-      rewriter.create<VstsOp>(op.getLoc(), /*updated_base=*/Type{},
-                              valueParts.front(), *destination, *offset,
-                              rewriter.getStringAttr(*pointDist), *mask);
-      rewriter.eraseOp(op);
-      return success();
+      return lowerScalarGroupStore(op, adaptor, rewriter, valueVMIType,
+                                   *destination, *offset);
     }
 
     if (compactSmallGroupStore) {
