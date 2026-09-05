@@ -2054,3 +2054,13 @@ combine 的校验及发射职责；保持结果组顺序、目标类型、诊断
 增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；`vmi_to_vpto_group_reduce_slots8.pto` 在既有 VMI pack/unpack
 pipeline invariant 处提前失败，未进入本轮 helper，不能将该失败归因于本轮改动。
+
+# contiguous group-reduce 结果恢复职责整改
+
+本轮在 `OneToNVM​​IGroupReduceOpPattern::lowerContiguousRows` 中引入
+`restoreContiguousGroupResults`，将每组 reduction 结果的目标类型 bitcast、slots=1 与
+重复 chunk 结果布局恢复抽取为独立 helper。主 lowering 继续负责 contiguous chunk 合约、
+物理类型/arity 校验、row reduction 与 combine；保持结果组顺序、目标布局、结果复制规则、
+诊断和替换语义不变。增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_to_vpto_group_reduce_typed.pto` 在既有 VMI pack/unpack
+pipeline invariant 处提前失败，未进入本轮 helper，不能将该失败归因于本轮改动。

@@ -13544,6 +13544,31 @@ private:
     return results;
   }
 
+  FailureOr<SmallVector<Value>> restoreContiguousGroupResults(
+      OpTy op, ArrayRef<Value> reducedResults, TypeRange resultTypes,
+      VRegType resultType, int64_t groupCount, int64_t chunksPerGroup,
+      bool rowLocalSlots1Result,
+      OneToNPatternRewriter &rewriter) const {
+    SmallVector<Value> results(resultTypes.size());
+    for (int64_t group = 0; group < groupCount; ++group) {
+      FailureOr<Value> finalResult =
+          bitcastVReg(op.getLoc(), reducedResults[group], resultType, rewriter);
+      if (failed(finalResult)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to restore group result type");
+      }
+      int64_t destChunk = rowLocalSlots1Result ? group : group * chunksPerGroup;
+      if (rowLocalSlots1Result) {
+        results[destChunk] = *finalResult;
+      } else {
+        for (int64_t chunk = 0; chunk < chunksPerGroup; ++chunk) {
+          results[destChunk + chunk] = *finalResult;
+        }
+      }
+    }
+    return results;
+  }
+
   LogicalResult lowerContiguousRows(
       OpTy op, VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
       ValueRange sourceParts, ValueRange maskParts, TypeRange resultTypes,
@@ -13613,25 +13638,13 @@ private:
     if (failed(reducedResults)) {
       return failure();
     }
-    SmallVector<Value> results(resultTypes.size());
-    for (int64_t group = 0; group < groupCount; ++group) {
-      FailureOr<Value> finalResult =
-          bitcastVReg(op.getLoc(), (*reducedResults)[group], resultType,
-                      rewriter);
-      if (failed(finalResult)) {
-        return rewriter.notifyMatchFailure(
-            op, "failed to restore group result type");
-      }
-      int64_t destChunk = rowLocalSlots1Result ? group : group * chunksPerGroup;
-      if (rowLocalSlots1Result) {
-        results[destChunk] = *finalResult;
-      } else {
-        for (int64_t chunk = 0; chunk < chunksPerGroup; ++chunk) {
-          results[destChunk + chunk] = *finalResult;
-        }
-      }
+    FailureOr<SmallVector<Value>> results = restoreContiguousGroupResults(
+        op, *reducedResults, resultTypes, resultType, groupCount,
+        chunksPerGroup, rowLocalSlots1Result, rewriter);
+    if (failed(results)) {
+      return failure();
     }
-    replaceOpWithFlatConvertedValues(rewriter, op, results,
+    replaceOpWithFlatConvertedValues(rewriter, op, *results,
                                      *this->getTypeConverter());
     return success();
   }
