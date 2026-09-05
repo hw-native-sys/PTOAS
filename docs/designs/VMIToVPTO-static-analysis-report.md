@@ -663,3 +663,11 @@ contiguous group chunk 计算、结果 arity/layout 契约、row-reduction 类�
 结果广播、chunk 顺序和失败诊断语义。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_group_reduce_addi_i16.pto` 完成 lowering 回归。
+
+本轮将模板化 histogram lowering 的单 physical chunk 处理抽取为
+`lowerHistogramChunk`。辅助函数集中负责 b8 mask 校验、尾部 active-lane mask 修正、
+以及各 histogram half 的 `Dhistv2Op`/`Chistv2Op` 发射；外层函数保留 accumulator
+契约、source lane 计算和最终结果替换。该拆分不改变 bin 常量、chunk 顺序或 tail mask
+语义。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_layout_assignment_f32_f8_store_reduce.pto` 完成
+lowering 回归。
