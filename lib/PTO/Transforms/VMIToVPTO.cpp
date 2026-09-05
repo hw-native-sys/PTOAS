@@ -812,8 +812,9 @@ FailureOr<int64_t> getDataFlatPartIndex(VMIVRegType type, int64_t part,
 FailureOr<int64_t> checkFullDataPhysicalChunks(VMIVRegType type,
                                                std::string *reason) {
   auto fail = [&reason](const Twine &message) -> FailureOr<int64_t> {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
@@ -907,8 +908,9 @@ FailureOr<int64_t> getVMITypeChunksInPart(Type type, int64_t part) {
 
 LogicalResult checkFullVMIPhysicalChunks(Type type, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
@@ -941,8 +943,9 @@ FailureOr<int64_t> getContiguousMaterializationPartCount(Type type,
 FailureOr<int64_t> getContiguousMaterializationPartCount(Type type,
                                                          std::string *reason) {
   auto fail = [&reason](const Twine &message) -> FailureOr<int64_t> {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
@@ -3023,8 +3026,9 @@ FailureOr<SmallVector<ConstantMaskChunkMaterialization>>
 computeConstantMaskMaterialization(VMIConstantMaskOp op, std::string *reason) {
   auto fail = [&reason](const Twine &message)
       -> FailureOr<SmallVector<ConstantMaskChunkMaterialization>> {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
@@ -3036,8 +3040,9 @@ computeConstantMaskMaterialization(VMIConstantMaskOp op, std::string *reason) {
   auto resultVMIType = cast<VMIMaskType>(op.getResult().getType());
   VMILayoutAttr layout = resultVMIType.getLayoutAttr();
   if (!layout ||
-      !VMIMaskType::isConcreteGranularity(resultVMIType.getGranularity()))
+      !VMIMaskType::isConcreteGranularity(resultVMIType.getGranularity())) {
     return fail("requires concrete layout and granularity");
+  }
 
   FailureOr<StringRef> physicalGranularity =
       getVMIMaskPhysicalGranularity(resultVMIType);
@@ -3062,18 +3067,21 @@ computeGroupMaskMaterializationForType(VMICreateGroupMaskOp op,
                                        std::string *reason) {
   auto fail = [&reason](const Twine &message)
       -> FailureOr<SmallVector<ConstantMaskChunkMaterialization>> {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
   auto activeConstant =
       op.getActiveElemsPerGroup().getDefiningOp<arith::ConstantOp>();
-  if (!activeConstant)
+  if (!activeConstant) {
     return fail("requires constant active_elems_per_group");
+  }
   auto activeAttr = dyn_cast<IntegerAttr>(activeConstant.getValue());
-  if (!activeAttr)
+  if (!activeAttr) {
     return fail("active_elems_per_group must be an integer constant");
+  }
 
   VMILayoutAttr layout = resultVMIType.getLayoutAttr();
   if (!layout ||
@@ -3086,20 +3094,24 @@ computeGroupMaskMaterializationForType(VMICreateGroupMaskOp op,
       failed(physicalGranularity)
           ? FailureOr<int64_t>(failure())
           : getMaskLanesPerPart(*physicalGranularity);
-  if (failed(lanesPerPart))
+  if (failed(lanesPerPart)) {
     return fail("requires known physical mask lanes per part");
+  }
 
   int64_t numGroups = op.getNumGroupsAttr().getInt();
   int64_t groupSize = op.getGroupSizeAttr().getInt();
   if (numGroups <= 0 || groupSize <= 0 ||
-      resultVMIType.getElementCount() != numGroups * groupSize)
+      resultVMIType.getElementCount() != numGroups * groupSize) {
     return fail("requires result lane count to match num_groups * group_size");
+  }
 
   int64_t activeElems = activeAttr.getInt();
-  if (activeElems < 0)
+  if (activeElems < 0) {
     activeElems = 0;
-  if (activeElems > groupSize)
+  }
+  if (activeElems > groupSize) {
     activeElems = groupSize;
+  }
 
   return materializeMaskChunks(
       resultVMIType, *lanesPerPart,
@@ -8477,24 +8489,28 @@ public:
             op, "scalar group_store requires one physical value part");
       }
       auto valueType = dyn_cast<VRegType>(valueParts.front().getType());
-      if (!valueType)
+      if (!valueType) {
         return rewriter.notifyMatchFailure(
             op, "scalar group_store value must be vreg");
+      }
       std::optional<std::string> pointDist =
           getPointStoreDistToken(valueVMIType.getElementType());
-      if (!pointDist)
+      if (!pointDist) {
         return rewriter.notifyMatchFailure(
             op, "scalar group_store requires point-store support");
+      }
       FailureOr<MaskType> maskType =
           getMaskTypeForVReg(valueType, rewriter.getContext());
-      if (failed(maskType))
+      if (failed(maskType)) {
         return rewriter.notifyMatchFailure(
             op, "unsupported element type for scalar group_store mask");
+      }
       FailureOr<Value> mask =
           createPrefixMask(op.getLoc(), *maskType, "PAT_VL1", rewriter);
-      if (failed(mask))
+      if (failed(mask)) {
         return rewriter.notifyMatchFailure(
             op, "failed to create scalar group_store mask");
+      }
       rewriter.create<VstsOp>(op.getLoc(), /*updated_base=*/Type{},
                               valueParts.front(), *destination, *offset,
                               rewriter.getStringAttr(*pointDist), *mask);

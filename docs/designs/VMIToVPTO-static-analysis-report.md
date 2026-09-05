@@ -212,3 +212,11 @@ channel 的专用能力提示和各自 layout 约束；合规检查通过。
 本轮将 `constant_mask` 的 materialization checker 与统一错误诊断抽取为
 `verifySupportedConstantMaskOp`（提交 `3abab5964`），使 verifier walk 只负责操作
 分派；同时修复了本轮相邻修改路径中的两个单行控制语句大括号。增量合规检查通过。
+
+随后将常量 mask 与 group mask 的物理 chunk 遍历统一收敛到模板辅助函数
+`materializeMaskChunks`（提交 `de5e92069`）。调用方分别提供 dense mask 值谓词和
+group active-lane 谓词；helper 统一处理 physical part/chunk/lane 遍历、padding、
+physical-to-logical lane 映射及 `ConstantMaskChunkMaterialization` 构造，保持两类
+mask 的语义差异只存在于 active-lane 判定。补齐该批代码及 scalar group-store 路径
+触及的控制语句大括号后，增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过。
