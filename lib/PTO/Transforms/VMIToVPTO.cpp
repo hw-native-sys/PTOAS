@@ -4047,6 +4047,114 @@ FailureOr<std::optional<SmallVector<Value>>> materializeSimpleDataLayoutConversi
   return std::nullopt;
 }
 
+FailureOr<std::optional<SmallVector<Value>>> materializeDeinterleaved2Layout(
+    Operation *op, ValueRange sourceParts, TypeRange resultTypes,
+    VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
+    PatternRewriter &rewriter) {
+  auto isElementDeinterleaved = [](VMILayoutAttr layout) {
+    return layout.isDeinterleaved() && layout.getFactor() == 2 &&
+           layout.getLaneStride() == 1;
+  };
+  bool toContiguous = sourceLayout && sourceLayout.isDeinterleaved() &&
+                      isElementDeinterleaved(sourceLayout) && resultLayout &&
+                      resultLayout.isContiguous() &&
+                      resultLayout.getLaneStride() == 1;
+  bool fromContiguous = sourceLayout && sourceLayout.isContiguous() &&
+                        sourceLayout.getLaneStride() == 1 && resultLayout &&
+                        resultLayout.isDeinterleaved() &&
+                        isElementDeinterleaved(resultLayout);
+  if (!toContiguous && !fromContiguous) {
+    return std::nullopt;
+  }
+
+  SmallVector<Value> results;
+  if (toContiguous) {
+    if (sourceParts.empty() || sourceParts.size() % 2 != 0 ||
+        resultTypes.empty()) {
+      (void)rewriter.notifyMatchFailure(
+          op, "deinterleaved=2 to contiguous materialization requires "
+              "2*N source parts and at least one result part");
+      return failure();
+    }
+    int64_t groups = sourceParts.size() / 2;
+    if (resultTypes.size() > static_cast<size_t>(2 * groups)) {
+      (void)rewriter.notifyMatchFailure(
+          op, "deinterleaved=2 to contiguous materialization result arity "
+              "exceeds source footprint");
+      return failure();
+    }
+    results.reserve(resultTypes.size());
+    for (int64_t i = 0; i < groups && results.size() < resultTypes.size();
+         ++i) {
+      Value lhs = sourceParts[i];
+      Value rhs = sourceParts[groups + i];
+      if (lhs.getType() != rhs.getType()) {
+        return rewriter.notifyMatchFailure(
+            op, "vintlv requires matching source part types");
+      }
+      Type lowType = resultTypes[results.size()];
+      Type highType = results.size() + 1 < resultTypes.size()
+                          ? resultTypes[results.size() + 1]
+                          : lowType;
+      if (lhs.getType() != lowType || lhs.getType() != highType) {
+        return rewriter.notifyMatchFailure(
+            op, "vintlv requires operands and results to share one type");
+      }
+      auto materialize = rewriter.create<VintlvOp>(
+          op->getLoc(), lowType, highType, lhs, rhs);
+      results.push_back(materialize.getLow());
+      if (results.size() < resultTypes.size()) {
+        results.push_back(materialize.getHigh());
+      }
+    }
+  } else {
+    if (sourceParts.empty() || resultTypes.empty() ||
+        resultTypes.size() % 2 != 0) {
+      (void)rewriter.notifyMatchFailure(
+          op, "contiguous to deinterleaved=2 materialization requires "
+              "at least one source part and 2*N result parts");
+      return failure();
+    }
+    int64_t groups = resultTypes.size() / 2;
+    if (sourceParts.size() > static_cast<size_t>(2 * groups)) {
+      (void)rewriter.notifyMatchFailure(
+          op, "contiguous to deinterleaved=2 materialization source "
+              "footprint exceeds result arity");
+      return failure();
+    }
+    SmallVector<Value> part0;
+    SmallVector<Value> part1;
+    part0.reserve(groups);
+    part1.reserve(groups);
+    for (int64_t i = 0; i < groups; ++i) {
+      size_t lhsIndex = 2 * i;
+      if (lhsIndex >= sourceParts.size()) {
+        return rewriter.notifyMatchFailure(
+            op, "contiguous to deinterleaved=2 materialization missing "
+                "source part");
+      }
+      size_t rhsIndex = lhsIndex + 1 < sourceParts.size() ? lhsIndex + 1
+                                                            : lhsIndex;
+      Value lhs = sourceParts[lhsIndex];
+      Value rhs = sourceParts[rhsIndex];
+      if (lhs.getType() != rhs.getType() ||
+          lhs.getType() != resultTypes[i] ||
+          lhs.getType() != resultTypes[groups + i]) {
+        return rewriter.notifyMatchFailure(
+            op, "vdintlv requires operands and results to share one type");
+      }
+      auto materialize = rewriter.create<VdintlvOp>(
+          op->getLoc(), resultTypes[i], resultTypes[groups + i], lhs, rhs);
+      part0.push_back(materialize.getLow());
+      part1.push_back(materialize.getHigh());
+    }
+    results.reserve(resultTypes.size());
+    results.append(part0);
+    results.append(part1);
+  }
+  return std::optional<SmallVector<Value>>(std::move(results));
+}
+
 FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
@@ -4062,6 +4170,16 @@ FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
     return std::move(**simple);
   }
 
+  FailureOr<std::optional<SmallVector<Value>>> deinterleaved2 =
+      materializeDeinterleaved2Layout(op, sourceParts, resultTypes,
+                                      sourceLayout, resultLayout, rewriter);
+  if (failed(deinterleaved2)) {
+    return failure();
+  }
+  if (deinterleaved2->has_value()) {
+    return std::move(**deinterleaved2);
+  }
+
   auto isElementDeinterleaved = [](VMILayoutAttr layout, int64_t factor) {
     return layout.isDeinterleaved() && layout.getFactor() == factor &&
            layout.getLaneStride() == 1;
@@ -4069,100 +4187,6 @@ FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
   auto isBlockDeinterleaved = [](VMILayoutAttr layout, int64_t factor) {
     return layout.isBlockDeinterleaved() && layout.getFactor() == factor;
   };
-
-  bool deint2ToContiguous = sourceLayout.isDeinterleaved() &&
-                            isElementDeinterleaved(sourceLayout, 2) &&
-                            resultLayout.isContiguous() &&
-                            resultLayout.getLaneStride() == 1;
-  bool contiguousToDeint2 =
-      sourceLayout.isContiguous() && sourceLayout.getLaneStride() == 1 &&
-      resultLayout.isDeinterleaved() && isElementDeinterleaved(resultLayout, 2);
-  if (deint2ToContiguous || contiguousToDeint2) {
-    SmallVector<Value> results;
-    if (deint2ToContiguous) {
-      if (sourceParts.empty() || sourceParts.size() % 2 != 0 ||
-          resultTypes.empty()) {
-        (void)rewriter.notifyMatchFailure(
-            op, "deinterleaved=2 to contiguous materialization requires "
-                "2*N source parts and at least one result part");
-        return failure();
-      }
-      int64_t groups = sourceParts.size() / 2;
-      if (resultTypes.size() > static_cast<size_t>(2 * groups)) {
-        (void)rewriter.notifyMatchFailure(
-            op, "deinterleaved=2 to contiguous materialization result arity "
-                "exceeds source footprint");
-        return failure();
-      }
-
-      results.reserve(resultTypes.size());
-      for (int64_t i = 0; i < groups && results.size() < resultTypes.size();
-           ++i) {
-        Value lhs = sourceParts[i];
-        Value rhs = sourceParts[groups + i];
-        if (lhs.getType() != rhs.getType())
-          return rewriter.notifyMatchFailure(
-              op, "vintlv requires matching source part types");
-        Type lowType = resultTypes[results.size()];
-        Type highType = results.size() + 1 < resultTypes.size()
-                            ? resultTypes[results.size() + 1]
-                            : lowType;
-        if (lhs.getType() != lowType || lhs.getType() != highType)
-          return rewriter.notifyMatchFailure(
-              op, "vintlv requires operands and results to share one type");
-        auto materialize = rewriter.create<VintlvOp>(
-            op->getLoc(), lowType, highType, lhs, rhs);
-        results.push_back(materialize.getLow());
-        if (results.size() < resultTypes.size())
-          results.push_back(materialize.getHigh());
-      }
-    } else {
-      if (sourceParts.empty() || resultTypes.empty() ||
-          resultTypes.size() % 2 != 0) {
-        (void)rewriter.notifyMatchFailure(
-            op, "contiguous to deinterleaved=2 materialization requires "
-                "at least one source part and 2*N result parts");
-        return failure();
-      }
-      int64_t groups = resultTypes.size() / 2;
-      if (sourceParts.size() > static_cast<size_t>(2 * groups)) {
-        (void)rewriter.notifyMatchFailure(
-            op, "contiguous to deinterleaved=2 materialization source "
-                "footprint exceeds result arity");
-        return failure();
-      }
-
-      SmallVector<Value> part0;
-      SmallVector<Value> part1;
-      part0.reserve(groups);
-      part1.reserve(groups);
-      for (int64_t i = 0; i < groups; ++i) {
-        size_t lhsIndex = 2 * i;
-        if (lhsIndex >= sourceParts.size())
-          return rewriter.notifyMatchFailure(
-              op, "contiguous to deinterleaved=2 materialization missing "
-                  "source part");
-        size_t rhsIndex = lhsIndex + 1 < sourceParts.size() ? lhsIndex + 1
-                                                            : lhsIndex;
-        Value lhs = sourceParts[lhsIndex];
-        Value rhs = sourceParts[rhsIndex];
-        if (lhs.getType() != rhs.getType() ||
-            lhs.getType() != resultTypes[i] ||
-            lhs.getType() != resultTypes[groups + i])
-          return rewriter.notifyMatchFailure(
-              op, "vdintlv requires operands and results to share one type");
-        auto materialize = rewriter.create<VdintlvOp>(
-            op->getLoc(), resultTypes[i], resultTypes[groups + i],
-            lhs, rhs);
-        part0.push_back(materialize.getLow());
-        part1.push_back(materialize.getHigh());
-      }
-      results.reserve(resultTypes.size());
-      results.append(part0);
-      results.append(part1);
-    }
-    return results;
-  }
 
   bool deint4ToContiguous = sourceLayout.isDeinterleaved() &&
                             isElementDeinterleaved(sourceLayout, 4) &&
