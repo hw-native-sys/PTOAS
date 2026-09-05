@@ -11433,6 +11433,40 @@ private:
     return results;
   }
 
+  LogicalResult lowerContiguous(
+      SourceOp op, OneToNPatternRewriter &rewriter, ValueRange lhsParts,
+      ValueRange rhsParts, ValueRange maskParts, ArrayRef<Type> lowTypes,
+      ArrayRef<Type> highTypes) const {
+    bool singleChunk = lhsParts.size() == 1 && rhsParts.size() == 1 &&
+                       lowTypes.size() == 1 && highTypes.size() == 1;
+    if (!singleChunk) {
+      return rewriter.notifyMatchFailure(
+          op, "single-chunk interleave expects one physical part");
+    }
+    bool invalidMaskPart =
+        !maskParts.empty() && !isa<MaskType>(maskParts.front().getType());
+    if (invalidMaskPart) {
+      return rewriter.notifyMatchFailure(
+          op, "single-chunk interleave mask part type mismatch");
+    }
+    bool invalidTypes =
+        !isa<VRegType>(lowTypes.front()) || !isa<VRegType>(highTypes.front()) ||
+        lhsParts.front().getType() != lowTypes.front() ||
+        rhsParts.front().getType() != lowTypes.front() ||
+        highTypes.front() != lowTypes.front();
+    if (invalidTypes) {
+      return rewriter.notifyMatchFailure(
+          op, "single-chunk interleave part type mismatch");
+    }
+    auto interleave = rewriter.create<TargetOp>(
+        op.getLoc(), lowTypes.front(), highTypes.front(), lhsParts.front(),
+        rhsParts.front());
+    SmallVector<Value, 2> results = {interleave.getLow(), interleave.getHigh()};
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
 public:
 
   LogicalResult matchAndRewrite(
@@ -11506,31 +11540,8 @@ public:
                          isContiguous(fact->lowLayout) &&
                          isContiguous(fact->highLayout);
     if (allContiguous) {
-      if (lhsParts.size() != 1 || rhsParts.size() != 1 ||
-          lowTypes.size() != 1 || highTypes.size() != 1)
-        return rewriter.notifyMatchFailure(
-            op, "single-chunk interleave expects one physical part");
-      if (!maskParts.empty() && !isa<MaskType>(maskParts.front().getType()))
-        return rewriter.notifyMatchFailure(
-            op, "single-chunk interleave mask part type mismatch");
-      bool invalidSingleChunkTypes =
-          !isa<VRegType>(lowTypes.front()) ||
-          !isa<VRegType>(highTypes.front()) ||
-          lhsParts.front().getType() != lowTypes.front() ||
-          rhsParts.front().getType() != lowTypes.front() ||
-          highTypes.front() != lowTypes.front();
-      if (invalidSingleChunkTypes) {
-        return rewriter.notifyMatchFailure(
-            op, "single-chunk interleave part type mismatch");
-      }
-      auto interleave = rewriter.create<TargetOp>(
-          op.getLoc(), lowTypes.front(), highTypes.front(), lhsParts.front(),
-          rhsParts.front());
-      SmallVector<Value, 2> directResults = {interleave.getLow(),
-                                             interleave.getHigh()};
-      replaceOpWithFlatConvertedValues(rewriter, op, directResults,
-                                       *this->getTypeConverter());
-      return success();
+      return lowerContiguous(op, rewriter, lhsParts, rhsParts, maskParts,
+                             lowTypes, highTypes);
     }
 
     int64_t inputFactor = getElementDeinterleaveFactor(fact->lhsLayout);
@@ -11748,8 +11759,9 @@ struct OneToNVMIMaskBinaryOpPattern : OneToNOpConversionPattern<SourceOp> {
     ValueRange rhsParts = adaptor.getRhs();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    if (failed(maybe_resultTypes)) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     if (lhsParts.size() != rhsParts.size() ||
         lhsParts.size() != resultTypes.size())
@@ -13126,9 +13138,10 @@ public:
     if (failed(maybe_resultTypes))
       return failure();
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-    if (sourceParts.empty())
+    if (sourceParts.empty()) {
       return rewriter.notifyMatchFailure(
           op, "extf requires at least one physical source chunk");
+    }
 
     auto sourceType = dyn_cast<VRegType>(sourceParts.front().getType());
     if (!sourceType)

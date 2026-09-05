@@ -714,6 +714,12 @@ contiguous interleave 的正常 lowering；该修复不改变支持矩阵或结�
 结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_interleaved_memory_ops.pto` lowering exit=0。
 
+本轮将 `OneToNVMIInterleaveOpPattern` 的 contiguous 单 chunk 物化抽取为
+`lowerContiguous`，统一处理单物理 part、mask 类型、carrier 类型和结果替换；主模板仅
+负责 layout fact 判定及 lane-stride/zero-copy 路径分派。同时修复该区域以及 `extf`
+入口中发现的缺失大括号控制语句。新增代码通过增量合规检查，`git diff --check` 通过，
+`vmi_interleaved_memory_ops.pto` lowering exit=0。
+
 本轮继续将 two-block `deinterleaved=2` 的 `vcgadd`/combine 路径抽取为
 `lowerTwoBlock`。该 helper 独立维护双物理块 arity、source/mask/result 类型一致性、
 尾部 active-group mask 和两路 group-reduce 后的 combine；主 pattern 仅负责 plan 分派。
