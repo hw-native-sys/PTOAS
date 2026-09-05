@@ -118,6 +118,18 @@ stages:
               export CANN_HOME="${CANN_HOME:-/home/jenkins/Ascend/cann-9.2.0}"
               bash "${{ steps.process_checkout.outputs.path }}/.gitcode/scripts/vpto_sim.sh" \
                 "${{ steps.process_checkout.outputs.path }}"
+          - name: Upload VPTO simulator logs
+            if: always()
+            uses: obs-upload
+            with:
+              endpoint: "https://obs.cn-north-4.myhuaweicloud.com"
+              bucket: "ascend-ci"
+              access-key: ${{ secrets.AK }}
+              secret-key: ${{ secrets.SK }}
+              artifact-path: |
+                ${{ steps.process_checkout.outputs.path }}/.work/gitcode-vpto-sim/vpto-sim.log
+                ${{ steps.process_checkout.outputs.path }}/.work/gitcode-vpto-sim/cases/**
+              object-prefix: ${{ env.obs_path }}/vpto-sim/
         runs-on:
           - self-hosted
           - arch=x64
