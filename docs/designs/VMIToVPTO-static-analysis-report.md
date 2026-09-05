@@ -1733,3 +1733,12 @@ all-true mask 构造、目标二元 op 发射和结果替换抽取为 `lowerBina
 实例化方式、mask 语义、结果顺序和诊断保持不变。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_sub_mul.pto` lowering exit=0。
+
+# shift physical chunk lowering 职责整改
+
+本轮将模板 `OneToNVMIIShiftOpPattern::matchAndRewrite` 中单个 physical chunk 的
+shift-count signed carrier 归一化、vreg/mask 校验、all-true mask 构造和目标 shift
+发射抽取为 `lowerShiftPart`。入口只保留 physical arity 校验、结果类型转换和 chunk
+遍历；保持 shift count bitcast、结果顺序、mask 语义和原有诊断不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_shrsi.pto` 与 `vmi_to_vpto_shli.pto` lowering 均 exit=0。

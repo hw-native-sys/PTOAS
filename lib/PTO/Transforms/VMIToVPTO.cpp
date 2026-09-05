@@ -11564,6 +11564,44 @@ template <typename SourceOp, typename TargetOp>
 struct OneToNVMIShiftOpPattern : OneToNOpConversionPattern<SourceOp> {
   using OneToNOpConversionPattern<SourceOp>::OneToNOpConversionPattern;
 
+private:
+  FailureOr<Value> lowerShiftPart(
+      SourceOp op, Value lhs, Value rhs, Type resultType,
+      OneToNPatternRewriter &rewriter) const {
+    auto resultVRegType = dyn_cast<VRegType>(resultType);
+    auto rhsVRegType = dyn_cast<VRegType>(rhs.getType());
+    auto rhsElementType =
+        rhsVRegType ? dyn_cast<IntegerType>(rhsVRegType.getElementType())
+                    : IntegerType();
+    bool invalidPhysicalPart =
+        !resultVRegType || lhs.getType() != resultType || !rhsElementType;
+    if (invalidPhysicalPart) {
+      return rewriter.notifyMatchFailure(op, "physical shift part type mismatch");
+    }
+    auto signedElementType = IntegerType::get(
+        rewriter.getContext(), rhsElementType.getWidth(),
+        IntegerType::SignednessSemantics::Signed);
+    auto signedRhsType = VRegType::get(
+        rewriter.getContext(), rhsVRegType.getElementCount(), signedElementType);
+    FailureOr<Value> signedRhs =
+        bitcastVReg(op.getLoc(), rhs, signedRhsType, rewriter);
+    if (failed(signedRhs)) {
+      return rewriter.notifyMatchFailure(
+          op, "unable to normalize physical shift-count type");
+    }
+    FailureOr<Value> mask =
+        createAllTrueMaskForVReg(op.getLoc(), resultVRegType, rewriter);
+    if (failed(mask)) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported element type for all-true shift mask");
+    }
+    return rewriter
+        .create<TargetOp>(op.getLoc(), resultType, lhs, *signedRhs, *mask)
+        .getResult();
+  }
+
+public:
+
   LogicalResult matchAndRewrite(
       SourceOp op,
       typename OneToNOpConversionPattern<SourceOp>::OpAdaptor adaptor,
@@ -11587,41 +11625,12 @@ struct OneToNVMIShiftOpPattern : OneToNOpConversionPattern<SourceOp> {
     results.reserve(resultTypes.size());
     for (auto [lhs, rhs, resultType] :
          llvm::zip_equal(lhsParts, rhsParts, resultTypes)) {
-      auto resultVRegType = dyn_cast<VRegType>(resultType);
-      auto rhsVRegType = dyn_cast<VRegType>(rhs.getType());
-      auto rhsElementType =
-          rhsVRegType ? dyn_cast<IntegerType>(rhsVRegType.getElementType())
-                      : IntegerType();
-      const bool hasInvalidPhysicalPart =
-          !resultVRegType || lhs.getType() != resultType || !rhsElementType;
-      if (hasInvalidPhysicalPart) {
-        return rewriter.notifyMatchFailure(
-            op, "physical shift part type mismatch");
+      FailureOr<Value> shifted =
+          lowerShiftPart(op, lhs, rhs, resultType, rewriter);
+      if (failed(shifted)) {
+        return failure();
       }
-
-      auto signedElementType = IntegerType::get(
-          rewriter.getContext(), rhsElementType.getWidth(),
-          IntegerType::SignednessSemantics::Signed);
-      auto signedRhsType = VRegType::get(
-          rewriter.getContext(), rhsVRegType.getElementCount(),
-          signedElementType);
-      FailureOr<Value> signedRhs =
-          bitcastVReg(op.getLoc(), rhs, signedRhsType, rewriter);
-      if (failed(signedRhs)) {
-        return rewriter.notifyMatchFailure(
-            op, "unable to normalize physical shift-count type");
-      }
-
-      FailureOr<Value> mask =
-          createAllTrueMaskForVReg(op.getLoc(), resultVRegType, rewriter);
-      if (failed(mask)) {
-        return rewriter.notifyMatchFailure(
-            op, "unsupported element type for all-true shift mask");
-      }
-      results.push_back(
-          rewriter
-              .create<TargetOp>(op.getLoc(), resultType, lhs, *signedRhs, *mask)
-              .getResult());
+      results.push_back(*shifted);
     }
 
     replaceOpWithFlatConvertedValues(rewriter, op, results,
