@@ -14905,6 +14905,22 @@ WalkResult verifySupportedShapeOp(ShapeOp op, ShapeCheck check,
   return WalkResult::interrupt();
 }
 
+template <typename ChannelOp, typename ShapeCheck>
+WalkResult verifySupportedChannelOp(ChannelOp op, int64_t channels,
+                                     ShapeCheck check, StringRef supportedText,
+                                     StringRef shapeText) {
+  std::string reason;
+  if (succeeded(check(op, &reason))) {
+    return WalkResult::advance();
+  }
+  if (channels != 2 && channels != 4) {
+    op.emitError() << kVMIDiagUnsupportedPrefix << supportedText;
+  } else {
+    op.emitError() << kVMIDiagUnsupportedPrefix << shapeText << reason << ")";
+  }
+  return WalkResult::interrupt();
+}
+
 LogicalResult
 verifySupportedVMIToVPTOOps(ModuleOp module,
                             bool enableStableGatherMaskedLoad) {
@@ -15374,46 +15390,21 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
     }
 
     if (auto split = dyn_cast<VMIChannelSplitOp>(op)) {
-      int64_t channels = split.getNumResults();
-      std::string reason;
-      if (succeeded(
-              checkSupportedChannelSplitShape(split, &reason)))
-        return WalkResult::advance();
-
-      if (channels != 2 && channels != 4)
-        split.emitError()
-            << kVMIDiagUnsupportedPrefix
-            << "pto.vmi.channel_split supports only 2 or 4 channels";
-      else
-        split.emitError()
-            << kVMIDiagUnsupportedPrefix
-            << "pto.vmi.channel_split requires source layout to be contiguous "
-               "or matching deinterleaved channel layout, every result layout "
-               "to be contiguous, and complete physical channel groups ("
-            << reason << ")";
-      return WalkResult::interrupt();
+      return verifySupportedChannelOp(
+          split, split.getNumResults(), checkSupportedChannelSplitShape,
+          "pto.vmi.channel_split supports only 2 or 4 channels",
+          "pto.vmi.channel_split requires source layout to be contiguous or "
+          "matching deinterleaved channel layout, every result layout to be "
+          "contiguous, and complete physical channel groups (");
     }
 
     if (auto merge = dyn_cast<VMIChannelMergeOp>(op)) {
-      int64_t channels = merge.getInputs().size();
-      std::string reason;
-      if (succeeded(
-              checkSupportedChannelMergeShape(merge, &reason)))
-        return WalkResult::advance();
-
-      if (channels != 2 && channels != 4)
-        merge.emitError()
-            << kVMIDiagUnsupportedPrefix
-            << "pto.vmi.channel_merge supports only 2 or 4 channels";
-      else
-        merge.emitError()
-            << kVMIDiagUnsupportedPrefix
-            << "pto.vmi.channel_merge requires every input layout to be "
-               "contiguous and result layout to be contiguous or matching "
-               "deinterleaved channel layout, with complete physical channel "
-               "groups ("
-            << reason << ")";
-      return WalkResult::interrupt();
+      return verifySupportedChannelOp(
+          merge, merge.getInputs().size(), checkSupportedChannelMergeShape,
+          "pto.vmi.channel_merge supports only 2 or 4 channels",
+          "pto.vmi.channel_merge requires every input layout to be contiguous "
+          "and result layout to be contiguous or matching deinterleaved "
+          "channel layout, with complete physical channel groups (");
     }
 
     if (auto shuffle = dyn_cast<VMIShuffleOp>(op)) {
