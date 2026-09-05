@@ -1357,6 +1357,17 @@ struct VMIStatefulOffsetRange {
   int64_t maximum;
 };
 
+static std::optional<int64_t> convertFiniteRangeBound(
+    const APInt &bound, bool unsignedInterpretation) {
+  if (unsignedInterpretation) {
+    return bound.getActiveBits() > 63
+               ? std::nullopt
+               : std::optional<int64_t>(bound.getZExtValue());
+  }
+  return bound.isSignedIntN(64) ? std::optional<int64_t>(bound.getSExtValue())
+                                : std::nullopt;
+}
+
 static FailureOr<VMIStatefulOffsetRange>
 getStatefulOffsetRange(Value source, Value offset, std::string *reason) {
   auto fail = [&reason](const Twine &message)
@@ -1384,25 +1395,10 @@ getStatefulOffsetRange(Value source, Value offset, std::string *reason) {
       PTOAnalysisResult<PTOFiniteRange> range =
           valueEvolution.getRange(offset, loop);
       if (range) {
-        auto convertBound =
-            [](const APInt &bound,
-               bool unsignedInterpretation) -> std::optional<int64_t> {
-          if (unsignedInterpretation) {
-            bool exceedsSignedInt64 = bound.getActiveBits() > 63;
-            if (exceedsSignedInt64) {
-              return std::nullopt;
-            }
-            return static_cast<int64_t>(bound.getZExtValue());
-          }
-          if (!bound.isSignedIntN(64)) {
-            return std::nullopt;
-          }
-          return bound.getSExtValue();
-        };
-        minOffset = convertBound(range.value->lowerInclusive,
-                                 range.value->unsignedInterpretation);
-        maxOffset = convertBound(range.value->upperInclusive,
-                                 range.value->unsignedInterpretation);
+        minOffset = convertFiniteRangeBound(
+            range.value->lowerInclusive, range.value->unsignedInterpretation);
+        maxOffset = convertFiniteRangeBound(
+            range.value->upperInclusive, range.value->unsignedInterpretation);
       }
     }
   }

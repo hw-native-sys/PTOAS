@@ -2300,6 +2300,14 @@ contiguous chunk shape、结果布局/arity、首 lane mask、归约构造和结
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_layout_assignment_group_reduce_s256.pto` 完整 lowering pipeline exit=0。
 
+# stateful offset 范围边界转换职责整改
+
+本轮将 `getStatefulOffsetRange` 内嵌的 APInt 上下界转换 lambda 抽取为
+`convertFiniteRangeBound`，集中处理有符号/无符号解释和 int64 可表示性边界。范围分析、
+循环归纳变量查找、非负性校验和失败诊断保持不变；显式捕获与控制流大括号要求也得到统一。
+增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过。
+
 # zero-copy interleave 结果合同职责整改
 
 本轮在 `OneToNVMIInterleaveOpPattern::materializeZeroCopyResults` 中引入
