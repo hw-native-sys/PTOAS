@@ -1638,3 +1638,12 @@ data-layout materialization 和结果替换抽取为 `lowerChannelMerge`。主�
 宽度/布局分派及 mask 构造；保持诊断文本、source/result arity、widen/narrow 选择和
 结果顺序不变。增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过。
+
+# group_broadcast_load 后端分派整改
+
+本轮将 `OneToNVMIVMIGroupBroadcastLoadOpPattern::matchAndRewrite` 中 BRC、E2B 与
+group-slot fallback 的地址合法性判断和后端选择抽取为 `lowerDirectOrFallback`。入口
+现在只负责 operand 归一化、layout support 查询和 physical result type 获取；BRC/E2B
+dist 选择、静态地址合法性检查、direct lowering 以及 fallback 优先级保持不变。
+增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_layout_assignment_group_broadcast_load_e2b_b16.pto` lowering exit=0。

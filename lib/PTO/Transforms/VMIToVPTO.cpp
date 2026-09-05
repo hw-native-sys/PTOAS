@@ -11216,6 +11216,64 @@ private:
     return success();
   }
 
+  LogicalResult lowerDirectOrFallback(
+      VMIGroupBroadcastLoadOp op, OneToNPatternRewriter &rewriter,
+      Value source, Value offset, Value sourceGroupStride,
+      VMIVRegType resultVMIType, ArrayRef<Type> resultTypes, int64_t numGroups,
+      FailureOr<VMIGroupBroadcastLoadDirectFact> &directFact) const {
+    auto getBRCDist = [&resultVMIType]() -> std::optional<StringRef> {
+      unsigned bits =
+          pto::getPTOStorageElemBitWidth(resultVMIType.getElementType());
+      if (bits == 8) {
+        return StringRef("BRC_B8");
+      }
+      if (bits == 16) {
+        return StringRef("BRC_B16");
+      }
+      if (bits == 32) {
+        return StringRef("BRC_B32");
+      }
+      return std::nullopt;
+    };
+    bool canUseBRC = succeeded(directFact) &&
+                     directFact->kind == VMIGroupBroadcastLoadDirectKind::BRC &&
+                     !resultTypes.empty();
+    if (canUseBRC) {
+      std::optional<StringRef> dist = getBRCDist();
+      auto firstType = dyn_cast<VRegType>(resultTypes.front());
+      canUseBRC = dist && firstType && isDirectMemoryDistAddressLegal(
+                                      op.getSource(), op.getOffset(),
+                                      resultVMIType.getElementType(), firstType,
+                                      VPTOMemoryOpFamily::Load, *dist);
+      if (canUseBRC) {
+        return lowerDirectBRC(op, rewriter, source, offset, sourceGroupStride,
+                              resultTypes, numGroups, *dist);
+      }
+    }
+
+    bool canUseE2B = succeeded(directFact) &&
+                     directFact->kind == VMIGroupBroadcastLoadDirectKind::E2B &&
+                     !resultTypes.empty();
+    if (canUseE2B) {
+      unsigned bits = directFact->layout.elementBits;
+      StringRef dist = bits == 16 ? StringRef("E2B_B16") : StringRef("E2B_B32");
+      auto firstType = dyn_cast<VRegType>(resultTypes.front());
+      canUseE2B = (bits == 16 || bits == 32) && firstType &&
+                  isDirectMemoryDistAddressLegal(
+                      op.getSource(), op.getOffset(),
+                      resultVMIType.getElementType(), firstType,
+                      VPTOMemoryOpFamily::Load, dist);
+      if (canUseE2B) {
+        return lowerDirectE2B(op, rewriter, source, offset, resultVMIType,
+                              resultTypes, numGroups, bits,
+                              resultVMIType.getLayoutAttr());
+      }
+    }
+    return lowerGroupSlotFallback(op, rewriter, source, offset,
+                                  sourceGroupStride, resultVMIType, resultTypes,
+                                  numGroups);
+  }
+
 public:
   LogicalResult
   matchAndRewrite(VMIGroupBroadcastLoadOp op, OpAdaptor adaptor,
@@ -11257,83 +11315,10 @@ public:
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     FailureOr<VMIGroupBroadcastLoadDirectFact> directFact =
         supports.getGroupBroadcastLoadDirectFact(op);
-    auto getBRCDist = [&resultVMIType]() -> std::optional<StringRef> {
-      unsigned elementBits =
-          pto::getPTOStorageElemBitWidth(resultVMIType.getElementType());
-      if (elementBits == 8) {
-        return StringRef("BRC_B8");
-      }
-      if (elementBits == 16) {
-        return StringRef("BRC_B16");
-      }
-      if (elementBits == 32) {
-        return StringRef("BRC_B32");
-      }
-      return std::nullopt;
-    };
-
-    bool canUseDirectBRC = false;
-    if (
-        succeeded(directFact) &&
-        directFact->kind == VMIGroupBroadcastLoadDirectKind::BRC &&
-        !resultTypes.empty()) {
-      std::optional<StringRef> brcDist = getBRCDist();
-      auto firstType = dyn_cast<VRegType>(resultTypes.front());
-      canUseDirectBRC =
-          brcDist && firstType &&
-          isDirectMemoryDistAddressLegal(
-              op.getSource(), op.getOffset(), resultVMIType.getElementType(),
-              firstType, VPTOMemoryOpFamily::Load, *brcDist);
-    }
-
-    if (
-        succeeded(directFact) &&
-        directFact->kind == VMIGroupBroadcastLoadDirectKind::BRC &&
-        canUseDirectBRC) {
-      std::optional<StringRef> brcDist = getBRCDist();
-      if (!brcDist) {
-        return rewriter.notifyMatchFailure(
-            op, "group_broadcast_load BRC lowering requires b8/b16/b32 "
-                "element type");
-      }
-      return lowerDirectBRC(op, rewriter, *source, *offset, *sourceGroupStride,
-                            resultTypes, numGroups, *brcDist);
-    }
-
-    bool canUseDirectE2B = false;
-    if (
-        succeeded(directFact) &&
-        directFact->kind == VMIGroupBroadcastLoadDirectKind::E2B &&
-        !resultTypes.empty()) {
-      unsigned elementBits = directFact->layout.elementBits;
-      StringRef e2bDist =
-          elementBits == 16 ? StringRef("E2B_B16") : StringRef("E2B_B32");
-      auto firstType = dyn_cast<VRegType>(resultTypes.front());
-      canUseDirectE2B =
-          (elementBits == 16 || elementBits == 32) && firstType &&
-          isDirectMemoryDistAddressLegal(
-              op.getSource(), op.getOffset(), resultVMIType.getElementType(),
-              firstType, VPTOMemoryOpFamily::Load, e2bDist);
-    }
-
-    bool useGroupSlotFallback =
-        failed(directFact) ||
-        directFact->kind != VMIGroupBroadcastLoadDirectKind::E2B ||
-        !canUseDirectE2B;
-    if (useGroupSlotFallback) {
-      return lowerGroupSlotFallback(
-          op, rewriter, *source, *offset, *sourceGroupStride, resultVMIType,
-          resultTypes, numGroups);
-    }
-
-    VMILayoutAttr layout = resultVMIType.getLayoutAttr();
-    unsigned elementBits = directFact->layout.elementBits;
-    return lowerDirectE2B(op, rewriter, *source, *offset, resultVMIType,
-                          resultTypes, numGroups, elementBits, layout);
+    return lowerDirectOrFallback(op, rewriter, *source, *offset,
+                                 *sourceGroupStride, resultVMIType, resultTypes,
+                                 numGroups, directFact);
   }
-
-private:
-  ;
 };
 
 struct OneToNVMIStrideLoadOpPattern
