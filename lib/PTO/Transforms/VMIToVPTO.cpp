@@ -14220,28 +14220,45 @@ void populateVMIConversionPatterns(
 
 #pragma GCC diagnostic pop
 
+static WalkResult verifyNoResidualCreateMask(Operation *op) {
+  if (auto createMask = dyn_cast<VMICreateMaskOp>(op)) {
+    if (!createMask.getActiveLanes().getDefiningOp<arith::ConstantOp>()) {
+      createMask.emitError()
+          << kVMIDiagUnsupportedPrefix
+          << "dynamic pto.vmi.create_mask active_lanes could not be lowered "
+             "by the current runtime predicate generation plan";
+      return WalkResult::interrupt();
+    }
+  }
+  return WalkResult::advance();
+}
+
+static WalkResult verifyNoResidualConstant(Operation *op) {
+  if (auto constant = dyn_cast<VMIConstantOp>(op)) {
+    auto denseAttr = dyn_cast<DenseElementsAttr>(constant.getValue());
+    if (denseAttr && !denseAttr.isSplat()) {
+      constant.emitError()
+          << kVMIDiagUnsupportedPrefix
+          << "non-splat pto.vmi.constant requires a vreg immediate or "
+             "scratch materialization plan";
+      return WalkResult::interrupt();
+    }
+  }
+  return WalkResult::advance();
+}
+
 LogicalResult verifyNoResidualVMIIR(ModuleOp module) {
   WalkResult result = module.walk([](Operation *op) {
-    if (auto createMask = dyn_cast<VMICreateMaskOp>(op)) {
-      if (!createMask.getActiveLanes().getDefiningOp<arith::ConstantOp>()) {
-        createMask.emitError()
-            << kVMIDiagUnsupportedPrefix
-            << "dynamic pto.vmi.create_mask active_lanes could not be lowered "
-               "by the current runtime predicate generation plan";
-        return WalkResult::interrupt();
-      }
+    if (WalkResult result = verifyNoResidualCreateMask(op);
+        result.wasInterrupted()) {
+      return result;
     }
-    if (auto constant = dyn_cast<VMIConstantOp>(op)) {
-      auto denseAttr = dyn_cast<DenseElementsAttr>(constant.getValue());
-      if (denseAttr && !denseAttr.isSplat()) {
-        constant.emitError()
-            << kVMIDiagUnsupportedPrefix
-            << "non-splat pto.vmi.constant requires a vreg immediate or "
-               "scratch materialization plan";
-        return WalkResult::interrupt();
-      }
+    if (WalkResult result = verifyNoResidualConstant(op);
+        result.wasInterrupted()) {
+      return result;
     }
-    if (isVMIOp(op) || hasVMIType(op)) {
+    bool hasResidualVMI = isVMIOp(op) || hasVMIType(op);
+    if (hasResidualVMI) {
       op->emitError() << kVMIDiagResidualOpPrefix
                       << "failed to convert all VMI ops/types to VPTO";
       return WalkResult::interrupt();

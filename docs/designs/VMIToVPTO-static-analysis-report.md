@@ -447,3 +447,8 @@ load/store、interleave memory、group-reduce lowering 回归均通过。
 方向选择。每一步仍复用 `materializeAdjacentMaskGranularityConversion`，保持
 b8/b16/b32 的递进顺序、布局属性和失败诊断不变。源码增量合规检查、`git diff --check`
 及 `vmi_to_vpto_ensure_mask_granularity.pto` 回归通过。
+
+本轮将 `verifyNoResidualVMIIR` 的 create-mask、constant 和 residual VMI 检查拆分为
+`verifyNoResidualCreateMask`、`verifyNoResidualConstant` 及显式的 residual 判定，
+使最终 IR 检查的各类失败职责独立。错误文本、遍历顺序和 pass failure 行为保持不变。
+源码增量合规检查、`git diff --check` 及连续 load/store lowering 回归通过。
