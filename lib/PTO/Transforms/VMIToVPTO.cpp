@@ -5268,6 +5268,52 @@ FailureOr<Value> createAllFalseMaskLike(Location loc, Value value,
   return createPrefixMask(loc, maskType, "PAT_ALLF", rewriter);
 }
 
+FailureOr<std::array<Value, 4>> materializeFactor4DeintToContiguousGroup(
+    Operation *op, ArrayRef<Value> sources, TypeRange resultTypes,
+    size_t resultOffset, PatternRewriter &rewriter) {
+  auto fail = [&op, &rewriter](const Twine &message)
+      -> FailureOr<std::array<Value, 4>> {
+    (void)rewriter.notifyMatchFailure(op, message);
+    return failure();
+  };
+  bool invalidSources = sources.size() != 4;
+  bool missingResultTypes = resultTypes.empty();
+  if (invalidSources || missingResultTypes) {
+    return fail("factor-4 staging mask conversion requires four sources");
+  }
+  auto resultTypeAt = [resultTypes, resultOffset](size_t offset) -> Type {
+    size_t index = resultOffset + offset;
+    return index < resultTypes.size() ? resultTypes[index]
+                                      : resultTypes[resultTypes.size() - 1];
+  };
+  FailureOr<std::pair<Value, Value>> even = createPredicateIntlv(
+      op->getLoc(), resultTypeAt(0), resultTypeAt(1), sources[0], sources[2],
+      rewriter);
+  FailureOr<std::pair<Value, Value>> odd = createPredicateIntlv(
+      op->getLoc(), resultTypeAt(0), resultTypeAt(1), sources[1], sources[3],
+      rewriter);
+  if (failed(even)) {
+    return fail("unsupported predicate intlv staging mask type");
+  }
+  if (failed(odd)) {
+    return fail("unsupported predicate intlv staging mask type");
+  }
+  FailureOr<std::pair<Value, Value>> low = createPredicateIntlv(
+      op->getLoc(), resultTypeAt(0), resultTypeAt(1), even->first, odd->first,
+      rewriter);
+  FailureOr<std::pair<Value, Value>> high = createPredicateIntlv(
+      op->getLoc(), resultTypeAt(2), resultTypeAt(3), even->second,
+      odd->second, rewriter);
+  if (failed(low)) {
+    return fail("unsupported predicate intlv staging mask type");
+  }
+  if (failed(high)) {
+    return fail("unsupported predicate intlv staging mask type");
+  }
+  return std::array<Value, 4>{low->first, low->second, high->first,
+                              high->second};
+}
+
 FailureOr<SmallVector<Value>> materializeStagingDeintToContiguousMaskLayout(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     int64_t factor, PatternRewriter &rewriter) {
@@ -5301,33 +5347,22 @@ FailureOr<SmallVector<Value>> materializeStagingDeintToContiguousMaskLayout(
       continue;
     }
 
-    Value p0 = sourceParts[i];
-    Value p1 = sourceParts[groups + i];
-    Value p2 = sourceParts[2 * groups + i];
-    Value p3 = sourceParts[3 * groups + i];
-    FailureOr<std::pair<Value, Value>> even =
-        createPredicateIntlv(op->getLoc(), nextType(0), nextType(1), p0, p2,
-                             rewriter);
-    FailureOr<std::pair<Value, Value>> odd =
-        createPredicateIntlv(op->getLoc(), nextType(0), nextType(1), p1, p3,
-                             rewriter);
-    if (failed(even) || failed(odd))
-      return fail("unsupported predicate intlv staging mask type");
-    FailureOr<std::pair<Value, Value>> low = createPredicateIntlv(
-        op->getLoc(), nextType(0), nextType(1), even->first, odd->first,
-        rewriter);
-    FailureOr<std::pair<Value, Value>> high = createPredicateIntlv(
-        op->getLoc(), nextType(2), nextType(3), even->second, odd->second,
-        rewriter);
-    if (failed(low) || failed(high))
-      return fail("unsupported predicate intlv staging mask type");
-    results.push_back(low->first);
-    if (results.size() < resultTypes.size())
-      results.push_back(low->second);
-    if (results.size() < resultTypes.size())
-      results.push_back(high->first);
-    if (results.size() < resultTypes.size())
-      results.push_back(high->second);
+    SmallVector<Value, 4> sources = {
+        sourceParts[i], sourceParts[groups + i], sourceParts[2 * groups + i],
+        sourceParts[3 * groups + i]};
+    FailureOr<std::array<Value, 4>> materialized =
+        materializeFactor4DeintToContiguousGroup(
+            op, sources, resultTypes, results.size(), rewriter);
+    if (failed(materialized)) {
+      return failure();
+    }
+    for (Value value : *materialized) {
+      bool resultCapacityReached = results.size() >= resultTypes.size();
+      if (resultCapacityReached) {
+        break;
+      }
+      results.push_back(value);
+    }
   }
   if (results.size() != resultTypes.size())
     return fail("staging deinterleaved mask layout result arity mismatch");

@@ -235,6 +235,11 @@ mask 的语义差异只存在于 active-lane 判定。补齐该批代码及 scal
 仍受测试自身的 pack/unpack 顺序 invariant 约束。增量合规检查与 `git diff --check`
 均通过。
 
+本轮将 factor=4 的 deinterleaved→contiguous mask staging 组合抽取为
+`materializeFactor4DeintToContiguousGroup`，集中封装两级 `predicate intlv` 及四个
+结果的顺序化构造；外层函数继续负责 source group 遍历和结果 arity 截断，factor=2
+路径保持原有直接转换。增量合规检查和 `git diff --check` 通过。
+
 本轮又将 mask granularity cast 的 staging layout 分派抽取为
 `materializeMaskGranularityCastStagingForFactor`。该 helper 统一处理 contiguous 与
 element-deinterleaved factor=2/4 的方向判断及失败传播，外层只遍历受支持的 factor，
