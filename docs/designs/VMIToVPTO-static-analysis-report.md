@@ -227,6 +227,13 @@ mask 的语义差异只存在于 active-lane 判定。补齐该批代码及 scal
 语义与 slots=8/packed-byte 路径。`vmi_to_vpto_group_store_slots1_1pt.pto` 回归通过，
 增量合规检查和 `git diff --check` 通过。
 
+本轮将 `createSubVLGroupPeriodicChunk` 的非 power-of-two residual lane 拼接抽取为
+`createResidualSubVLGroupPeriodicChunk`。该 helper 负责按 ASC/DESC 公式生成每个
+sub-group 的调整向量、构造 lane-range mask 并完成 `vsel` 合并；原函数保留 vreg、
+sub-VL、all-mask、group-size 校验及 power-of-two 快路径。`iota_group_subvl`、
+`iota_group_vl_half` 和 `iota_group2` 三个 case 均通过完整 lowering，增量合规检查和
+`git diff --check` 通过。
+
 本轮又将 slots=8 普通/lane-stride 两条非对齐 store stream 的 destination pointer
 物化、offset 合成和 `emitStatefulStoreStream` 调用统一抽取为
 `emitGroupStoreStream`。该 helper 只封装地址与 stream 生命周期，保留 packed-byte

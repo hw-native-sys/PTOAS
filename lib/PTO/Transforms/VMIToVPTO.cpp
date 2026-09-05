@@ -6003,6 +6003,57 @@ FailureOr<std::optional<Value>> createPowerOfTwoSubVLChunk(
 /// lane-range vsel. Index iota is integer-only in practice.
 ///
 /// When S == physVL this is just `vci(base)` (single group fills the VL).
+FailureOr<Value> createResidualSubVLGroupPeriodicChunk(
+    Location loc, Type resultType, Value base, StringRef order,
+    Value full, MaskType maskType, Value zeroScalar, Value allMask,
+    int64_t groupSize,
+    int64_t groupsPerChunk, PatternRewriter &rewriter) {
+  Value result =
+      rewriter
+          .create<VdupOp>(loc, resultType, zeroScalar,
+                          allMask,
+                          /*position=*/nullptr)
+          .getResult();
+  for (int64_t localGroup = 0; localGroup < groupsPerChunk; ++localGroup) {
+    Value adjusted = full;
+    if (localGroup != 0) {
+      int64_t delta = localGroup * groupSize;
+      FailureOr<Value> offsetScalar =
+          createScalarOffsetConstant(loc, base.getType(), delta, rewriter);
+      if (failed(offsetScalar)) {
+        return failure();
+      }
+      if (order == "DESC") {
+        adjusted = rewriter
+                       .create<VaddsOp>(loc, resultType, full, *offsetScalar,
+                                        allMask)
+                       .getResult();
+      } else {
+        Value negOffset =
+            isa<FloatType>(base.getType())
+                ? rewriter.create<arith::NegFOp>(loc, *offsetScalar).getResult()
+                : rewriter
+                      .create<arith::SubIOp>(loc, zeroScalar, *offsetScalar)
+                      .getResult();
+        adjusted = rewriter
+                       .create<VaddsOp>(loc, resultType, full, negOffset,
+                                        allMask)
+                       .getResult();
+      }
+    }
+    FailureOr<Value> laneMask = createLaneRangeMask(
+        loc, maskType, localGroup * groupSize, (localGroup + 1) * groupSize,
+        rewriter);
+    if (failed(laneMask)) {
+      return failure();
+    }
+    result = rewriter
+                 .create<VselOp>(loc, resultType, adjusted, result, *laneMask)
+                 .getResult();
+  }
+  return result;
+}
+
 FailureOr<Value> createSubVLGroupPeriodicChunk(Location loc, Type resultType,
                                                Value base, int64_t groupSize,
                                                StringAttr orderAttr,
@@ -6055,50 +6106,9 @@ FailureOr<Value> createSubVLGroupPeriodicChunk(Location loc, Type resultType,
   if (failed(full) || failed(maskType) || failed(zeroScalar))
     return failure();
 
-  Value result = rewriter
-                     .create<VdupOp>(loc, resultType, *zeroScalar, *allMask,
-                                     /*position=*/nullptr)
-                     .getResult();
-  for (int64_t localGroup = 0; localGroup < groupsPerChunk; ++localGroup) {
-    Value adjusted = *full;
-    if (localGroup != 0) {
-      int64_t delta = localGroup * groupSize;
-      FailureOr<Value> offsetScalar =
-          createScalarOffsetConstant(loc, base.getType(), delta, rewriter);
-      if (failed(offsetScalar))
-        return failure();
-      // ASC continuous is base+i; lane (g*S+j) holds base+g*S+j, want base+j
-      // → subtract g*S. DESC continuous is base-i; want base-j → add g*S.
-      if (order == "DESC") {
-        adjusted = rewriter
-                       .create<VaddsOp>(loc, resultType, *full, *offsetScalar,
-                                        *allMask)
-                       .getResult();
-      } else {
-        Value negOffset =
-            isa<FloatType>(base.getType())
-                ? rewriter
-                      .create<arith::NegFOp>(loc, *offsetScalar)
-                      .getResult()
-                : rewriter
-                      .create<arith::SubIOp>(loc, *zeroScalar, *offsetScalar)
-                      .getResult();
-        adjusted = rewriter
-                       .create<VaddsOp>(loc, resultType, *full, negOffset,
-                                        *allMask)
-                       .getResult();
-      }
-    }
-    FailureOr<Value> laneMask =
-        createLaneRangeMask(loc, *maskType, localGroup * groupSize,
-                            (localGroup + 1) * groupSize, rewriter);
-    if (failed(laneMask))
-      return failure();
-    result = rewriter
-                 .create<VselOp>(loc, resultType, adjusted, result, *laneMask)
-                 .getResult();
-  }
-  return result;
+  return createResidualSubVLGroupPeriodicChunk(
+      loc, resultType, base, order, *full, *maskType, *zeroScalar, *allMask,
+      groupSize, groupsPerChunk, rewriter);
 }
 
 FailureOr<Value> createIotaDeinterleavedChunk(Location loc, Type resultType,
