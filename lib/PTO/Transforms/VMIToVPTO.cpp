@@ -6129,6 +6129,36 @@ FailureOr<SmallVector<Value>> materializeMaskGranularityCastLayoutConversion(
   return fail("unsupported mask granularity cast layout conversion");
 }
 
+struct MaskGranularityCastPlan {
+  VMIMaskType physicalSourceType;
+  VMIMaskType physicalResultType;
+};
+
+static FailureOr<MaskGranularityCastPlan> buildMaskGranularityCastPlan(
+    Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
+    PatternRewriter &rewriter) {
+  auto fail = [&op, &rewriter](const Twine &message)
+      -> FailureOr<MaskGranularityCastPlan> {
+    (void)rewriter.notifyMatchFailure(op, message);
+    return failure();
+  };
+  bool laneCountMismatch =
+      sourceType.getElementCount() != resultType.getElementCount();
+  if (laneCountMismatch) {
+    return fail("requires source and result mask lane counts to match");
+  }
+  FailureOr<VMIMaskType> physicalSourceType =
+      getVMIMaskPhysicalCarrierType(sourceType);
+  FailureOr<VMIMaskType> physicalResultType =
+      getVMIMaskPhysicalCarrierType(resultType);
+  bool missingCarrierType =
+      failed(physicalSourceType) || failed(physicalResultType);
+  if (missingCarrierType) {
+    return fail("requires source/result mask physical carrier types");
+  }
+  return MaskGranularityCastPlan{*physicalSourceType, *physicalResultType};
+}
+
 FailureOr<SmallVector<Value>> materializeMaskGranularityCastConversion(
     Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
     ValueRange sourceParts, TypeRange resultTypes, PatternRewriter &rewriter) {
@@ -6137,40 +6167,40 @@ FailureOr<SmallVector<Value>> materializeMaskGranularityCastConversion(
     return failure();
   };
 
-  if (sourceType.getElementCount() != resultType.getElementCount())
-    return fail("requires source and result mask lane counts to match");
+  FailureOr<MaskGranularityCastPlan> plan =
+      buildMaskGranularityCastPlan(op, sourceType, resultType, rewriter);
+  if (failed(plan)) {
+    return failure();
+  }
 
-  FailureOr<VMIMaskType> physicalSourceType =
-      getVMIMaskPhysicalCarrierType(sourceType);
-  FailureOr<VMIMaskType> physicalResultType =
-      getVMIMaskPhysicalCarrierType(resultType);
-  if (failed(physicalSourceType) || failed(physicalResultType))
-    return fail("requires source/result mask physical carrier types");
-
-  if (*physicalSourceType == *physicalResultType) {
+  if (plan->physicalSourceType == plan->physicalResultType) {
     if (failed(verifyIdentityPartForwarding(op, sourceParts, resultTypes,
                                             rewriter)))
       return failure();
     return SmallVector<Value>(sourceParts.begin(), sourceParts.end());
   }
 
-  if (physicalSourceType->getLayoutAttr() == physicalResultType->getLayoutAttr())
-    return materializeMaskGranularityConversion(op, *physicalSourceType,
-                                                *physicalResultType,
+  bool samePhysicalLayout =
+      plan->physicalSourceType.getLayoutAttr() ==
+      plan->physicalResultType.getLayoutAttr();
+  if (samePhysicalLayout) {
+    return materializeMaskGranularityConversion(op, plan->physicalSourceType,
+                                                plan->physicalResultType,
                                                 sourceParts, rewriter);
 
   VMIMaskType granularityType =
       VMIMaskType::get(op->getContext(), sourceType.getElementCount(),
-                       physicalResultType->getGranularity(),
-                       physicalSourceType->getLayoutAttr());
+                       plan->physicalResultType.getGranularity(),
+                       plan->physicalSourceType.getLayoutAttr());
   FailureOr<SmallVector<Value>> granularityParts =
-      materializeMaskGranularityConversion(op, *physicalSourceType,
+      materializeMaskGranularityConversion(op, plan->physicalSourceType,
                                            granularityType, sourceParts,
                                            rewriter);
-  if (failed(granularityParts))
+  if (failed(granularityParts)) {
     return failure();
+  }
   return materializeMaskGranularityCastLayoutConversion(
-      op, granularityType, *physicalResultType, *granularityParts, resultTypes,
+      op, granularityType, plan->physicalResultType, *granularityParts, resultTypes,
       rewriter);
 }
 

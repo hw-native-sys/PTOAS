@@ -946,3 +946,9 @@ narrowing materializer 及最终 arity 校验；相邻粒度的语义和错误�
 保持 `dintlv` 操作顺序与 all-false 补齐语义不变。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_ensure_mask_granularity.pto` lowering exit=0。
+本轮将 `materializeMaskGranularityCastConversion` 的 physical carrier 解析和基础契约
+校验抽取为 `MaskGranularityCastPlan`/`buildMaskGranularityCastPlan`。执行函数现在只
+负责 identity、同 layout 粒度转换，以及“先统一粒度、再转换 layout”的顺序；没有改变
+mask carrier、物理 arity 或 fallback 语义。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_ensure_mask_granularity.pto` lowering exit=0。
