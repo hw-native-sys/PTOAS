@@ -208,3 +208,7 @@ abs、sqrt、exp、ln 等重复 dispatch；`pmode` 特殊处理仍仅位于 vect
 本轮将 `channel_split` 与 `channel_merge` 的 channel 数量判定、shape checker
 调用和失败诊断抽取为 `verifySupportedChannelOp`（提交 `b3b17704e`），保留 2/4
 channel 的专用能力提示和各自 layout 约束；合规检查通过。
+
+本轮将 `constant_mask` 的 materialization checker 与统一错误诊断抽取为
+`verifySupportedConstantMaskOp`（提交 `3abab5964`），使 verifier walk 只负责操作
+分派；同时修复了本轮相邻修改路径中的两个单行控制语句大括号。增量合规检查通过。
