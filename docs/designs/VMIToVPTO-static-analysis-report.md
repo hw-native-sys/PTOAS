@@ -1888,3 +1888,11 @@ pipeline invariant 处提前失败，未进入本轮 helper，不能将该失败
 cmpf/cmpi、传递对应 op 名称和 predicate checker；保持原有检查顺序、错误诊断来源、
 predicate 支持集合及 `WalkResult` 语义不变。增量 `check_changed_code.py` 结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
+
+# compression verifier 分派职责整改
+
+本轮为 `verifySupportedVMICompressionOp` 引入模板 helper `verifyCompressionShape`，统一
+active_prefix_index、compress 和 compress_store 的 shape check、reason 收集、诊断前缀和
+`WalkResult` 处理。各操作仍保留原有 shape checker、诊断正文、操作识别顺序和成功/失败
+语义，避免重复控制流。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。

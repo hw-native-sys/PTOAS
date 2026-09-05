@@ -18549,43 +18549,35 @@ std::optional<WalkResult> verifySupportedVMIHistogramOp(Operation *op) {
   return std::nullopt;
 }
 
+template <typename CompressionOp, typename ShapeCheck>
+std::optional<WalkResult> verifyCompressionShape(
+    CompressionOp op, ShapeCheck check, StringRef diagnostic) {
+  std::string reason;
+  if (succeeded(check(op, &reason))) {
+    return WalkResult::advance();
+  }
+  op.emitError() << kVMIDiagUnsupportedPrefix << diagnostic << reason << ")";
+  return WalkResult::interrupt();
+}
+
 std::optional<WalkResult> verifySupportedVMICompressionOp(Operation *op) {
   if (auto activePrefix = dyn_cast<VMIActivePrefixIndexOp>(op)) {
-    std::string reason;
-    if (succeeded(checkSupportedActivePrefixIndexShape(activePrefix, &reason))) {
-      return WalkResult::advance();
-    }
-    activePrefix.emitError()
-        << kVMIDiagUnsupportedPrefix
-        << "pto.vmi.active_prefix_index lowers through pto.vusqz only for "
-           "one contiguous physical chunk ("
-        << reason << ")";
-    return WalkResult::interrupt();
+    return verifyCompressionShape(
+        activePrefix, checkSupportedActivePrefixIndexShape,
+        "pto.vmi.active_prefix_index lowers through pto.vusqz only for one "
+        "contiguous physical chunk (");
   }
   if (auto compress = dyn_cast<VMICompressOp>(op)) {
-    std::string reason;
-    if (succeeded(checkSupportedCompressShape(compress, &reason))) {
-      return WalkResult::advance();
-    }
-    compress.emitError()
-        << kVMIDiagUnsupportedPrefix
-        << "pto.vmi.compress lowers through pto.vsqz only for one "
-           "contiguous full physical chunk ("
-        << reason << ")";
-    return WalkResult::interrupt();
+    return verifyCompressionShape(
+        compress, checkSupportedCompressShape,
+        "pto.vmi.compress lowers through pto.vsqz only for one contiguous "
+        "full physical chunk (");
   }
   if (auto compressStore = dyn_cast<VMICompressStoreOp>(op)) {
-    std::string reason;
-    if (succeeded(checkSupportedCompressStoreShape(compressStore, &reason))) {
-      return WalkResult::advance();
-    }
-    compressStore.emitError()
-        << kVMIDiagUnsupportedPrefix
-        << "pto.vmi.compress_store lowers through pto.vsqz + pto.vstur "
-           "only for one contiguous full physical chunk with a UB pointer "
-           "destination ("
-        << reason << ")";
-    return WalkResult::interrupt();
+    return verifyCompressionShape(
+        compressStore, checkSupportedCompressStoreShape,
+        "pto.vmi.compress_store lowers through pto.vsqz + pto.vstur only for "
+        "one contiguous full physical chunk with a UB pointer destination (");
   }
   return std::nullopt;
 }
