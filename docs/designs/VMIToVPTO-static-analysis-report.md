@@ -473,3 +473,9 @@ compare、misc、arithmetic 等既有检查顺序，避免将不相关的操作�
 vselr 三种候选路径及组合诊断保持原顺序，主 verifier 仅负责分类分派。增量合规检查为
 `errors=0 warnings=0`，`git diff --check` 通过；连续 load/store 与 interleave memory
 lowering 回归通过。
+
+本轮将 memory、layout、compare、misc、arithmetic、special、reduction、float 和
+conversion 的标准检查顺序封装为 `verifySupportedVMIStandardOp`。`verifySupportedVMIToVPTOOps`
+仅保留标准分类、channel/shuffle 收尾分类和 walk 结果处理，既有检查优先级与诊断路径
+不变。增量合规检查为 `errors=0 warnings=0`，`git diff --check` 通过；连续 load/store
+与 interleave memory lowering 回归通过。

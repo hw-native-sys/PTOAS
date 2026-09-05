@@ -15940,55 +15940,54 @@ verifySupportedVMIChannelShuffleOp(Operation *op) {
   return std::nullopt;
 }
 
+std::optional<WalkResult> verifySupportedVMIStandardOp(
+    Operation *op, bool enableStableGatherMaskedLoad) {
+  if (auto memoryResult = verifySupportedVMIMemoryOp(
+          op, enableStableGatherMaskedLoad);
+      memoryResult.has_value()) {
+    return *memoryResult;
+  }
+  if (auto layoutResult = verifySupportedVMILayoutOp(op);
+      layoutResult.has_value()) {
+    return *layoutResult;
+  }
+  auto compareResult = verifySupportedVMICompareOp(
+      op, emitMaskableUnsupported);
+  if (compareResult.has_value()) {
+    return *compareResult;
+  }
+  if (auto miscResult = verifySupportedVMIMiscOp(op);
+      miscResult.has_value()) {
+    return *miscResult;
+  }
+  if (auto arithmeticResult = verifySupportedVMIArithmeticOp(
+          op, emitMaskableUnsupported);
+      arithmeticResult.has_value()) {
+    return *arithmeticResult;
+  }
+  if (auto specialResult = verifySupportedVMISpecialOp(op);
+      specialResult.has_value()) {
+    return *specialResult;
+  }
+  if (auto reductionResult = verifySupportedVMIReductionOp(op);
+      reductionResult.has_value()) {
+    return *reductionResult;
+  }
+  if (auto floatResult = verifySupportedVMIFloatOp(op);
+      floatResult.has_value()) {
+    return *floatResult;
+  }
+  return verifySupportedVMIConversionOp(op);
+}
+
 LogicalResult
 verifySupportedVMIToVPTOOps(ModuleOp module,
                             bool enableStableGatherMaskedLoad) {
   WalkResult result = module.walk([&enableStableGatherMaskedLoad](Operation *op) {
-    if (auto memoryResult = verifySupportedVMIMemoryOp(
+    if (auto standardResult = verifySupportedVMIStandardOp(
             op, enableStableGatherMaskedLoad);
-        memoryResult.has_value()) {
-      return *memoryResult;
-    }
-    if (auto layoutResult = verifySupportedVMILayoutOp(op);
-        layoutResult.has_value()) {
-      return *layoutResult;
-    }
-    auto compareResult = verifySupportedVMICompareOp(
-        op, emitMaskableUnsupported);
-    if (compareResult.has_value()) {
-      return *compareResult;
-    }
-
-    if (auto miscResult = verifySupportedVMIMiscOp(op);
-        miscResult.has_value()) {
-      return *miscResult;
-    }
-
-    if (auto arithmeticResult = verifySupportedVMIArithmeticOp(
-            op, emitMaskableUnsupported);
-        arithmeticResult.has_value()) {
-      return *arithmeticResult;
-    }
-
-    if (auto specialResult = verifySupportedVMISpecialOp(op);
-        specialResult.has_value()) {
-      return *specialResult;
-    }
-
-
-    if (auto reductionResult = verifySupportedVMIReductionOp(op);
-        reductionResult.has_value()) {
-      return *reductionResult;
-    }
-
-    if (auto floatResult = verifySupportedVMIFloatOp(op);
-        floatResult.has_value()) {
-      return *floatResult;
-    }
-
-    if (auto conversionResult = verifySupportedVMIConversionOp(op);
-        conversionResult.has_value()) {
-      return *conversionResult;
+        standardResult.has_value()) {
+      return *standardResult;
     }
 
     if (auto channelShuffleResult = verifySupportedVMIChannelShuffleOp(op);
