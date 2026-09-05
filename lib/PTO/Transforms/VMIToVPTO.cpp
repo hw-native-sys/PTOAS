@@ -10290,6 +10290,136 @@ private:
     return success();
   }
 
+  LogicalResult lowerPackedByteSlots8(
+      VMIGroupStoreOp op, OneToNPatternRewriter &rewriter,
+      ValueRange valueParts, VMIVRegType valueVMIType, VMILayoutAttr layout,
+      Value destination, Value offset, Value rowStride, int64_t numGroups,
+      VRegType firstVRegType) const {
+    bool laneStrided = layout.hasLaneStride();
+    for (Value value : valueParts) {
+      auto vregType = dyn_cast<VRegType>(value.getType());
+      if (!vregType || vregType != firstVRegType) {
+        return rewriter.notifyMatchFailure(
+            op, "packed slots=8 group_store requires uniform vreg parts");
+      }
+    }
+    FailureOr<MaskType> maskType =
+        getMaskTypeForVReg(firstVRegType, rewriter.getContext());
+    if (failed(maskType)) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported element type for packed group_store mask");
+    }
+    bool alignedSinglePart =
+        !laneStrided && numGroups == 8 && valueParts.size() == 1 &&
+        isKnownAddressAligned(destination, offset,
+                              valueVMIType.getElementType(), 32);
+    if (alignedSinglePart) {
+      if (failed(lowerAlignedPackedByteStore(
+              op, rewriter, valueParts, destination, offset, numGroups))) {
+        return failure();
+      }
+      rewriter.eraseOp(op);
+      return success();
+    }
+
+    auto indexElementType = IntegerType::get(
+        rewriter.getContext(),
+        pto::getPTOStorageElemBitWidth(firstVRegType.getElementType()));
+    auto indexType = VRegType::get(rewriter.getContext(),
+                                   firstVRegType.getElementCount(),
+                                   indexElementType);
+    FailureOr<Value> slotIndex = createGroupSlotIndexVector(
+        op.getLoc(), indexType, /*groupSize=*/8, /*baseGroupSlot=*/0,
+        rewriter);
+    FailureOr<Value> allMask =
+        createAllTrueMaskForVReg(op.getLoc(), firstVRegType, rewriter);
+    bool failedLaneSelectors = failed(slotIndex) || failed(allMask);
+    if (failedLaneSelectors) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to create packed group_store lane selector");
+    }
+    SmallVector<Value> statefulValues;
+    SmallVector<int64_t> statefulAdvances;
+    bool useDirectPack4 = isDirectMemoryDistAddressLegal(
+        op.getDestination(), op.getOffset(),
+        getMemoryElementType(op.getDestination().getType()), firstVRegType,
+        VPTOMemoryOpFamily::Store, "PK4_B32");
+    for (int64_t blockStart = 0; blockStart < numGroups; blockStart += 32) {
+      FailureOr<Value> zero =
+          createZeroVector(op.getLoc(), firstVRegType, rewriter);
+      if (failed(zero)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to create packed group_store accumulator");
+      }
+      Value merged = *zero;
+      for (int64_t localPart = 0; localPart < 4; ++localPart) {
+        int64_t partIndex = blockStart / 8 + localPart;
+        if (partIndex >= static_cast<int64_t>(valueParts.size())) {
+          break;
+        }
+        int64_t activeGroups =
+            std::min<int64_t>(8, numGroups - partIndex * 8);
+        if (activeGroups <= 0) {
+          break;
+        }
+        Value selected = rewriter
+                             .create<VselrOp>(op.getLoc(), firstVRegType,
+                                              valueParts[partIndex], *slotIndex)
+                             .getResult();
+        FailureOr<Value> laneMask = createLaneRangeMask(
+            op.getLoc(), *maskType, localPart * 8,
+            localPart * 8 + activeGroups, rewriter);
+        if (failed(laneMask)) {
+          return rewriter.notifyMatchFailure(
+              op, "failed to create packed group_store lane mask");
+        }
+        merged = rewriter
+                     .create<VselOp>(op.getLoc(), firstVRegType, selected,
+                                     merged, *laneMask)
+                     .getResult();
+      }
+      int64_t activeGroups = std::min<int64_t>(32, numGroups - blockStart);
+      FailureOr<Value> storeMask = createPrefixMaskForActiveLanes(
+          op.getLoc(), *maskType, activeGroups, rewriter);
+      if (failed(storeMask)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to create packed group_store store mask");
+      }
+      Value groupOffset = createGroupChunkOffset(
+          op.getLoc(), offset, rowStride, blockStart, 0, rewriter);
+      if (useDirectPack4) {
+        rewriter.create<VstsOp>(op.getLoc(), /*updated_base=*/Type{}, merged,
+                                destination, groupOffset,
+                                rewriter.getStringAttr("PK4_B32"), *storeMask);
+        continue;
+      }
+      MLIRContext *ctx = rewriter.getContext();
+      auto ui16 = IntegerType::get(
+          ctx, 16, IntegerType::SignednessSemantics::Unsigned);
+      auto ui8 = IntegerType::get(
+          ctx, 8, IntegerType::SignednessSemantics::Unsigned);
+      auto packed16Type = VRegType::get(ctx, 128, ui16);
+      auto packed8Type = VRegType::get(ctx, 256, ui8);
+      Value packed16 = rewriter
+                           .create<VpackOp>(op.getLoc(), packed16Type, merged,
+                                            rewriter.getStringAttr("LOWER"))
+                           .getResult();
+      statefulValues.push_back(
+          rewriter
+              .create<VpackOp>(op.getLoc(), packed8Type, packed16,
+                               rewriter.getStringAttr("LOWER"))
+              .getResult());
+      statefulAdvances.push_back(activeGroups);
+    }
+    if (!useDirectPack4 &&
+        failed(emitPackedByteStoreStream(op, rewriter, destination, offset,
+                                         statefulValues, statefulAdvances))) {
+      return failure();
+    }
+    rewriter.eraseOp(op);
+    return success();
+  }
+
 public:
   LogicalResult
   matchAndRewrite(VMIGroupStoreOp op, OpAdaptor adaptor,
@@ -10371,134 +10501,9 @@ public:
         bool packedByteStore = isPackedByteGroupStore(
             op.getDestination().getType(), firstVRegType);
         if (packedByteStore) {
-          bool laneStridedPackedByteStore = layout.hasLaneStride();
-          for (Value value : valueParts) {
-            auto vregType = dyn_cast<VRegType>(value.getType());
-            if (!vregType || vregType != firstVRegType) {
-              return rewriter.notifyMatchFailure(
-                  op, "packed slots=8 group_store requires uniform vreg parts");
-            }
-          }
-
-          FailureOr<MaskType> maskType =
-              getMaskTypeForVReg(firstVRegType, rewriter.getContext());
-          if (failed(maskType)) {
-            return rewriter.notifyMatchFailure(
-                op, "unsupported element type for packed group_store mask");
-          }
-          if (!laneStridedPackedByteStore && numGroups == 8 &&
-              valueParts.size() == 1 &&
-              isKnownAddressAligned(*destination, *offset,
-                                    valueVMIType.getElementType(), 32)) {
-            if (failed(lowerAlignedPackedByteStore(
-                    op, rewriter, valueParts, *destination, *offset,
-                    numGroups))) {
-              return failure();
-            }
-            rewriter.eraseOp(op);
-            return success();
-          }
-
-          auto indexElementType = IntegerType::get(
-              rewriter.getContext(),
-              pto::getPTOStorageElemBitWidth(firstVRegType.getElementType()));
-          auto indexType =
-              VRegType::get(rewriter.getContext(),
-                            firstVRegType.getElementCount(), indexElementType);
-          FailureOr<Value> slotIndex = createGroupSlotIndexVector(
-              op.getLoc(), indexType, /*groupSize=*/8, /*baseGroupSlot=*/0,
-              rewriter);
-          FailureOr<Value> allMask =
-              createAllTrueMaskForVReg(op.getLoc(), firstVRegType, rewriter);
-          if (failed(slotIndex) || failed(allMask))
-            return rewriter.notifyMatchFailure(
-                op, "failed to create packed group_store lane selector");
-
-          SmallVector<Value> statefulValues;
-          SmallVector<int64_t> statefulAdvances;
-          bool useDirectPack4 = isDirectMemoryDistAddressLegal(
-              op.getDestination(), op.getOffset(),
-              getMemoryElementType(op.getDestination().getType()),
-              firstVRegType, VPTOMemoryOpFamily::Store, "PK4_B32");
-          for (int64_t blockStart = 0; blockStart < numGroups;
-               blockStart += 32) {
-            FailureOr<Value> zero =
-                createZeroVector(op.getLoc(), firstVRegType, rewriter);
-            if (failed(zero))
-              return rewriter.notifyMatchFailure(
-                  op, "failed to create packed group_store accumulator");
-            Value merged = *zero;
-            for (int64_t localPart = 0; localPart < 4; ++localPart) {
-              int64_t partIndex = blockStart / 8 + localPart;
-              if (partIndex >= static_cast<int64_t>(valueParts.size()))
-                break;
-              int64_t remainingGroups = numGroups - partIndex * 8;
-              int64_t activeGroups = std::min<int64_t>(8, remainingGroups);
-              if (activeGroups <= 0)
-                break;
-              Value selected =
-                  rewriter
-                      .create<VselrOp>(op.getLoc(), firstVRegType,
-                                       valueParts[partIndex], *slotIndex)
-                      .getResult();
-              FailureOr<Value> laneMask =
-                  createLaneRangeMask(op.getLoc(), *maskType, localPart * 8,
-                                      localPart * 8 + activeGroups, rewriter);
-              if (failed(laneMask))
-                return rewriter.notifyMatchFailure(
-                    op, "failed to create packed group_store lane mask");
-              merged = rewriter
-                           .create<VselOp>(op.getLoc(), firstVRegType, selected,
-                                           merged, *laneMask)
-                           .getResult();
-            }
-
-            int64_t activeGroups =
-                std::min<int64_t>(32, numGroups - blockStart);
-            FailureOr<Value> storeMask = createPrefixMaskForActiveLanes(
-                op.getLoc(), *maskType, activeGroups, rewriter);
-            if (failed(storeMask))
-              return rewriter.notifyMatchFailure(
-                  op, "failed to create packed group_store store mask");
-            Value groupOffset = createGroupChunkOffset(
-                op.getLoc(), *offset, *rowStride, blockStart,
-                /*chunkLaneOffset=*/0, rewriter);
-            if (useDirectPack4) {
-              rewriter.create<VstsOp>(
-                  op.getLoc(), /*updated_base=*/Type{}, merged, *destination,
-                  groupOffset, rewriter.getStringAttr("PK4_B32"), *storeMask);
-              continue;
-            }
-
-            MLIRContext *ctx = rewriter.getContext();
-            auto ui16 = IntegerType::get(
-                ctx, 16, IntegerType::SignednessSemantics::Unsigned);
-            auto ui8 = IntegerType::get(
-                ctx, 8, IntegerType::SignednessSemantics::Unsigned);
-            auto packed16Type = VRegType::get(ctx, 128, ui16);
-            auto packed8Type = VRegType::get(ctx, 256, ui8);
-            Value packed16 =
-                rewriter
-                    .create<VpackOp>(op.getLoc(), packed16Type, merged,
-                                     rewriter.getStringAttr("LOWER"))
-                    .getResult();
-            statefulValues.push_back(
-                rewriter
-                    .create<VpackOp>(op.getLoc(), packed8Type, packed16,
-                                     rewriter.getStringAttr("LOWER"))
-                    .getResult());
-            statefulAdvances.push_back(activeGroups);
-          }
-
-          if (!useDirectPack4) {
-            if (failed(emitPackedByteStoreStream(
-                    op, rewriter, *destination, *offset, statefulValues,
-                    statefulAdvances)))
-              return failure();
-          }
-
-          rewriter.eraseOp(op);
-          return success();
+          return lowerPackedByteSlots8(
+              op, rewriter, valueParts, valueVMIType, layout, *destination,
+              *offset, *rowStride, numGroups, *firstVRegType);
         }
       }
 
