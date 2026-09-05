@@ -9,10 +9,6 @@
 //===- VMIToVPTO.cpp - Convert VMI to physical VPTO IR -------------------===//
 //===----------------------------------------------------------------------===//
 
-// https://discourse.llvm.org/t/matchandrewrite-hiding-virtual-functions/84933/8
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Woverloaded-virtual"
-
 #include "PTO/Analysis/PTOAddressAnalysis.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
@@ -3623,8 +3619,9 @@ LogicalResult checkSupportedComparePredicate(Operation *op,
          << getSupportedComparePredicateMessage<SourceOp>();
 }
 
-// MLIR's OneToN conversion patterns intentionally hide a base overload. Keep
-// this narrowly scoped suppression around the pattern declarations only.
+// MLIR's OneToN conversion patterns intentionally hide a base overload.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Woverloaded-virtual"
 struct OneToNVMIUnpackOpPattern : OneToNOpConversionPattern<VMIUnpackOp> {
   using OneToNOpConversionPattern<VMIUnpackOp>::OneToNOpConversionPattern;
 
@@ -13320,6 +13317,8 @@ void populateVMIConversionPatterns(
       typeConverter, patterns.getContext());
 }
 
+#pragma GCC diagnostic pop
+
 LogicalResult verifyNoResidualVMIIR(ModuleOp module) {
   WalkResult result = module.walk([](Operation *op) {
     if (auto createMask = dyn_cast<VMICreateMaskOp>(op)) {
@@ -15113,8 +15112,6 @@ struct VMIToVPTOPass : public mlir::pto::impl::VMIToVPTOBase<VMIToVPTOPass> {
     }
   }
 };
-
-#pragma GCC diagnostic pop
 
 } // namespace
 
