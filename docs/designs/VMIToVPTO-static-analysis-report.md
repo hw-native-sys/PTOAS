@@ -800,6 +800,13 @@ contiguous 路径的互斥判定和分派。该拆分不改变 chunk 顺序、of
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_layout_assignment_group_store_slots1_unit_stride.pto` lowering exit=0。
 
+本轮将 `OneToNVMITruncIOpPattern` 的 dense contiguous lane-stride narrowing 路径抽取为
+`lowerDenseLaneStrideTrunc`。helper 负责 source mask、`EVEN/P0` part 选择、逐 physical
+chunk 的 `VcvtOp` 以及 signed alias 结果收尾；主 pattern 保留布局识别、NOSAT carrier
+快路径和后续多 part 合并。该拆分保持 SAT/NOSAT 语义、结果顺序与 alias bitcast 行为不变。
+增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+连续 group-store 与 load/store 代表性 lowering 均成功。
+
 本轮将 `OneToNVMITruncIOpPattern` 的 group-slots 专用 lowering 抽取为
 `lowerGroupSlotTrunc`。helper 统一处理 slots=1/8 的支持矩阵、active-slot mask、
 packed carrier、lane-stride carrier、physical type 校验及 `VcvtOp` 发射；主 pattern

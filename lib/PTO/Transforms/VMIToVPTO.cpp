@@ -13682,6 +13682,41 @@ private:
     return success();
   }
 
+  LogicalResult lowerDenseLaneStrideTrunc(
+      VMITruncIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes,
+      int64_t factor, StringAttr sat, bool s32ToS8Alias,
+      ArrayRef<Type> originalResultTypes,
+      OneToNPatternRewriter &rewriter) const {
+    StringAttr part = rewriter.getStringAttr(factor == 2 ? "EVEN" : "P0");
+    auto sourceType = dyn_cast<VRegType>(sourceParts.front().getType());
+    if (!sourceType) {
+      return rewriter.notifyMatchFailure(op,
+                                         "unsupported dense trunci source type");
+    }
+    FailureOr<Value> sourceMask =
+        createAllTrueMaskForVReg(op.getLoc(), sourceType, rewriter);
+    if (failed(sourceMask)) {
+      return rewriter.notifyMatchFailure(op, "failed to build trunci masks");
+    }
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (auto [sourcePart, resultType] :
+         llvm::zip_equal(sourceParts, resultTypes)) {
+      auto resultVRegType = dyn_cast<VRegType>(resultType);
+      if (!resultVRegType) {
+        return rewriter.notifyMatchFailure(
+            op, "unsupported dense trunci result type");
+      }
+      results.push_back(rewriter
+                            .create<VcvtOp>(op.getLoc(), resultVRegType,
+                                            sourcePart, *sourceMask,
+                                            /*rnd=*/nullptr, sat, part)
+                            .getResult());
+    }
+    finalizeResults(op, results, s32ToS8Alias, originalResultTypes, rewriter);
+    return success();
+  }
+
 public:
 
   LogicalResult
@@ -13802,25 +13837,9 @@ public:
     }
 
     if (isDenseLaneStrideNarrowing) {
-      StringAttr part = rewriter.getStringAttr(factor == 2 ? "EVEN" : "P0");
-      FailureOr<Value> sourceMask =
-          createAllTrueMaskForVReg(op.getLoc(), sourceType0, rewriter);
-      if (failed(sourceMask))
-        return rewriter.notifyMatchFailure(op, "failed to build trunci masks");
-
-      SmallVector<Value> results;
-      results.reserve(resultTypes.size());
-      for (auto [sourcePart, resultType] :
-           llvm::zip_equal(sourceParts, resultTypes)) {
-        results.push_back(rewriter
-                              .create<VcvtOp>(op.getLoc(), resultType,
-                                              sourcePart, *sourceMask,
-                                              /*rnd=*/nullptr, sat, part)
-                              .getResult());
-      }
-      finalizeResults(op, results, s32ToS8Alias, originalResultTypes,
-                      rewriter);
-      return success();
+      return lowerDenseLaneStrideTrunc(
+          op, sourceParts, resultTypes, factor, sat, s32ToS8Alias,
+          originalResultTypes, rewriter);
     }
 
     if ((factor != 2 && factor != 4) ||
