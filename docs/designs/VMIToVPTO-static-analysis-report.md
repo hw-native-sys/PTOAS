@@ -1834,3 +1834,13 @@ predicate mode、signedness bitcast、结果顺序、mask 语义和原有诊断�
 大括号。增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；现有 compare cases 在既有 VMI pack/unpack pipeline invariant
 处提前失败，未进入本轮 helper，不能将该失败归因于本轮改动。
+
+# select physical chunk lowering 职责整改
+
+本轮将 `OneToNVMISelectOpPattern::matchAndRewrite` 中 physical part 的 mask/data 类型
+校验和 `VselOp` 发射抽取为 `lowerPart`。入口继续负责 mask、true/false value 与 result
+的 physical arity 校验和结果扁平化；保持 `VselOp(true, false, mask)` operand 顺序、
+结果顺序、mask 语义和原有诊断不变。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_cmp_select.pto` 当前在既有 VMI pack/unpack pipeline invariant 处提前失败，
+未进入本轮 helper，不能将该失败归因于本轮改动。

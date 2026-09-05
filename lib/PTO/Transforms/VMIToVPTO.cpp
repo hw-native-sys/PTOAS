@@ -12675,6 +12675,23 @@ public:
 struct OneToNVMISelectOpPattern : OneToNOpConversionPattern<VMISelectOp> {
   using OneToNOpConversionPattern<VMISelectOp>::OneToNOpConversionPattern;
 
+private:
+  FailureOr<Value> lowerPart(VMISelectOp op, Value mask, Value trueValue,
+                             Value falseValue, Type resultType,
+                             OneToNPatternRewriter &rewriter) const {
+    const bool invalidPart =
+        !isa<MaskType>(mask.getType()) || trueValue.getType() != resultType ||
+        falseValue.getType() != resultType || !isa<VRegType>(resultType);
+    if (invalidPart) {
+      rewriter.notifyMatchFailure(op, "physical select part type mismatch");
+      return failure();
+    }
+    return rewriter
+        .create<VselOp>(op.getLoc(), resultType, trueValue, falseValue, mask)
+        .getResult();
+  }
+
+public:
   LogicalResult
   matchAndRewrite(VMISelectOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -12687,23 +12704,24 @@ struct OneToNVMISelectOpPattern : OneToNOpConversionPattern<VMISelectOp> {
       return failure();
     }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-    if (maskParts.size() != trueParts.size() ||
+    const bool invalidArity =
+        maskParts.size() != trueParts.size() ||
         trueParts.size() != falseParts.size() ||
-        trueParts.size() != resultTypes.size())
+        trueParts.size() != resultTypes.size();
+    if (invalidArity) {
       return rewriter.notifyMatchFailure(op, "physical select arity mismatch");
+    }
 
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
     for (auto [mask, trueValue, falseValue, resultType] :
          llvm::zip_equal(maskParts, trueParts, falseParts, resultTypes)) {
-      if (!isa<MaskType>(mask.getType()) || trueValue.getType() != resultType ||
-          falseValue.getType() != resultType || !isa<VRegType>(resultType))
-        return rewriter.notifyMatchFailure(
-            op, "physical select part type mismatch");
-      results.push_back(rewriter
-                            .create<VselOp>(op.getLoc(), resultType, trueValue,
-                                            falseValue, mask)
-                            .getResult());
+      FailureOr<Value> result =
+          lowerPart(op, mask, trueValue, falseValue, resultType, rewriter);
+      if (failed(result)) {
+        return failure();
+      }
+      results.push_back(*result);
     }
 
     replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
