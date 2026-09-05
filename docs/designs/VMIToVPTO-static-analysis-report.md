@@ -2000,3 +2000,15 @@ mask 语义、单结果布局和诊断不变。增量 `check_changed_code.py` �
 继续返回相同的 match failure 诊断。该改动仅收敛控制流，未改变 lowering 顺序或物理结果
 语义。增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；`vmi_layout_assignment_group_slots_fanout.pto` lowering exit=0。
+
+# trunci factor 结果块 lowering 职责整改
+
+本轮在 `OneToNVMITruncIOpPattern` 中引入 `buildFactorTruncResult`，将
+`lowerFactorTrunc` 内单个结果块的多路 `VcvtOp` 发射、源 physical part 索引校验以及按
+原顺序的 `VorOp` 合并抽取为独立 helper。`lowerFactorTrunc` 仍负责 source/result 类型和
+mask 准备、结果块遍历及最终 `s32ToS8Alias` 处理；保持 `resultIndex * factor + partIndex`
+索引关系、P0/P1/P2/P3 等 part 顺序、source/result mask、结果顺序、诊断和 fallback 语义
+不变。helper 额外在使用 source part 前验证索引范围，避免物理 arity 不一致时越界访问。
+增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_to_vpto_trunci_s32_to_s8_nosat.pto` lowering exit=0，输出
+仍包含 4 个按 P0/P1/P2/P3 顺序的 `vcvt`、3 个 `vor` 以及末尾 signed bitcast。

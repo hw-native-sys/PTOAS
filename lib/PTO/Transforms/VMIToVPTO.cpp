@@ -15242,6 +15242,50 @@ private:
     return success();
   }
 
+  FailureOr<Value> buildFactorTruncResult(
+      VMITruncIOp op, ValueRange sourceParts, Type resultType,
+      int64_t resultIndex, int64_t factor, ArrayRef<StringRef> parts,
+      StringAttr sat, Value sourceMask, Value resultMask,
+      OneToNPatternRewriter &rewriter) const {
+    bool invalidFactor =
+        factor <= 0 || static_cast<size_t>(factor) > parts.size();
+    if (invalidFactor) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported physical trunci conversion factor");
+    }
+    auto resultVRegType = dyn_cast<VRegType>(resultType);
+    if (!resultVRegType) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported physical trunci result type");
+    }
+
+    SmallVector<Value> partials;
+    partials.reserve(static_cast<size_t>(factor));
+    for (int64_t partIndex = 0; partIndex < factor; ++partIndex) {
+      int64_t sourceIndex = resultIndex * factor + partIndex;
+      if (sourceIndex < 0 ||
+          sourceIndex >= static_cast<int64_t>(sourceParts.size())) {
+        return rewriter.notifyMatchFailure(
+            op, "trunci source part index exceeds physical arity");
+      }
+      partials.push_back(
+          rewriter
+              .create<VcvtOp>(op.getLoc(), resultVRegType,
+                              sourceParts[sourceIndex], sourceMask, nullptr, sat,
+                              rewriter.getStringAttr(parts[partIndex]))
+              .getResult());
+    }
+
+    Value merged = partials.front();
+    for (Value partial : llvm::drop_begin(partials)) {
+      merged = rewriter
+                   .create<VorOp>(op.getLoc(), resultVRegType, merged, partial,
+                                  resultMask)
+                   .getResult();
+    }
+    return merged;
+  }
+
   LogicalResult lowerFactorTrunc(
       VMITruncIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes,
       ArrayRef<StringRef> parts, int64_t factor, StringAttr sat,
@@ -15265,26 +15309,13 @@ private:
     results.reserve(resultTypes.size());
     for (int64_t resultIndex = 0;
          resultIndex < static_cast<int64_t>(resultTypes.size()); ++resultIndex) {
-      Type currentResultType = resultTypes[resultIndex];
-      SmallVector<Value> partials;
-      partials.reserve(parts.size());
-      for (int64_t partIndex = 0; partIndex < factor; ++partIndex) {
-        Value sourcePart = sourceParts[resultIndex * factor + partIndex];
-        partials.push_back(
-            rewriter
-                .create<VcvtOp>(op.getLoc(), currentResultType, sourcePart,
-                                *sourceMask, nullptr, sat,
-                                rewriter.getStringAttr(parts[partIndex]))
-                .getResult());
+      FailureOr<Value> result = buildFactorTruncResult(
+          op, sourceParts, resultTypes[resultIndex], resultIndex, factor, parts,
+          sat, *sourceMask, *resultMask, rewriter);
+      if (failed(result)) {
+        return failure();
       }
-      Value merged = partials.front();
-      for (Value partial : llvm::drop_begin(partials)) {
-        merged = rewriter
-                     .create<VorOp>(op.getLoc(), currentResultType, merged,
-                                    partial, *resultMask)
-                     .getResult();
-      }
-      results.push_back(merged);
+      results.push_back(*result);
     }
     finalizeResults(op, results, s32ToS8Alias, originalResultTypes, rewriter);
     return success();
