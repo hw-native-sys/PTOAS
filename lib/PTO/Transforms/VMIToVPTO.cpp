@@ -4069,15 +4069,18 @@ FailureOr<std::optional<SmallVector<Value>>> materializeDeinterleaved2Layout(
 
   SmallVector<Value> results;
   if (toContiguous) {
-    if (sourceParts.empty() || sourceParts.size() % 2 != 0 ||
-        resultTypes.empty()) {
+    bool invalidSource = sourceParts.empty() || sourceParts.size() % 2 != 0 ||
+                         resultTypes.empty();
+    if (invalidSource) {
       (void)rewriter.notifyMatchFailure(
           op, "deinterleaved=2 to contiguous materialization requires "
               "2*N source parts and at least one result part");
       return failure();
     }
     int64_t groups = sourceParts.size() / 2;
-    if (resultTypes.size() > static_cast<size_t>(2 * groups)) {
+    bool resultExceedsSource =
+        resultTypes.size() > static_cast<size_t>(2 * groups);
+    if (resultExceedsSource) {
       (void)rewriter.notifyMatchFailure(
           op, "deinterleaved=2 to contiguous materialization result arity "
               "exceeds source footprint");
@@ -4108,15 +4111,18 @@ FailureOr<std::optional<SmallVector<Value>>> materializeDeinterleaved2Layout(
       }
     }
   } else {
-    if (sourceParts.empty() || resultTypes.empty() ||
-        resultTypes.size() % 2 != 0) {
+    bool invalidResult = sourceParts.empty() || resultTypes.empty() ||
+                         resultTypes.size() % 2 != 0;
+    if (invalidResult) {
       (void)rewriter.notifyMatchFailure(
           op, "contiguous to deinterleaved=2 materialization requires "
               "at least one source part and 2*N result parts");
       return failure();
     }
     int64_t groups = resultTypes.size() / 2;
-    if (sourceParts.size() > static_cast<size_t>(2 * groups)) {
+    bool sourceExceedsResult =
+        sourceParts.size() > static_cast<size_t>(2 * groups);
+    if (sourceExceedsResult) {
       (void)rewriter.notifyMatchFailure(
           op, "contiguous to deinterleaved=2 materialization source "
               "footprint exceeds result arity");
@@ -4137,9 +4143,10 @@ FailureOr<std::optional<SmallVector<Value>>> materializeDeinterleaved2Layout(
                                                             : lhsIndex;
       Value lhs = sourceParts[lhsIndex];
       Value rhs = sourceParts[rhsIndex];
-      if (lhs.getType() != rhs.getType() ||
-          lhs.getType() != resultTypes[i] ||
-          lhs.getType() != resultTypes[groups + i]) {
+      bool mismatchedTypes = lhs.getType() != rhs.getType() ||
+                             lhs.getType() != resultTypes[i] ||
+                             lhs.getType() != resultTypes[groups + i];
+      if (mismatchedTypes) {
         return rewriter.notifyMatchFailure(
             op, "vdintlv requires operands and results to share one type");
       }
