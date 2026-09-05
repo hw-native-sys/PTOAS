@@ -4648,26 +4648,34 @@ FailureOr<SmallVector<Value>> materializeMaskLayoutConversion(
            layout.getLaneStride() == 1;
   };
 
-  if (sourceLayout.isContiguous() && sourceLayout.getLaneStride() == 1 &&
-      resultLayout.isContiguous() && resultLayout.getLaneStride() != 1) {
+  bool contiguousToLaneStride =
+      sourceLayout.isContiguous() && sourceLayout.getLaneStride() == 1 &&
+      resultLayout.isContiguous() && resultLayout.getLaneStride() != 1;
+  if (contiguousToLaneStride) {
     int64_t laneStride = resultLayout.getLaneStride();
-    if (laneStride != 2 && laneStride != 4)
+    bool unsupportedStride = laneStride != 2 && laneStride != 4;
+    if (unsupportedStride) {
       return rewriter.notifyMatchFailure(
           op, "unsupported dense mask lane_stride unpack factor");
-    if (static_cast<int64_t>(resultTypes.size()) >
-        static_cast<int64_t>(sourceParts.size()) * laneStride)
+    }
+    bool resultExceedsSource =
+        static_cast<int64_t>(resultTypes.size()) >
+        static_cast<int64_t>(sourceParts.size()) * laneStride;
+    if (resultExceedsSource) {
       return rewriter.notifyMatchFailure(
           op, "dense mask lane_stride unpack materialization result arity "
               "does not fit source arity");
+    }
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
     auto lower = rewriter.getStringAttr("LOWER");
     auto higher = rewriter.getStringAttr("HIGHER");
     for (auto [resultIndex, resultType] : llvm::enumerate(resultTypes)) {
       auto maskType = dyn_cast<MaskType>(resultType);
-      if (!maskType)
+      if (!maskType) {
         return rewriter.notifyMatchFailure(
             op, "dense mask lane_stride unpack requires mask result type");
+      }
       int64_t sourceIndex = resultIndex / laneStride;
       int64_t part = resultIndex % laneStride;
       Value source = sourceParts[sourceIndex];
@@ -4675,9 +4683,10 @@ FailureOr<SmallVector<Value>> materializeMaskLayoutConversion(
                                              : (part == 1 ? higher : lower);
       Value current =
           rewriter.create<PunpackOp>(op->getLoc(), maskType, source, firstPart);
-      if (laneStride == 4)
+      if (laneStride == 4) {
         current = rewriter.create<PunpackOp>(op->getLoc(), maskType, current,
                                              part % 2 == 0 ? lower : higher);
+      }
       results.push_back(current);
     }
     return results;
