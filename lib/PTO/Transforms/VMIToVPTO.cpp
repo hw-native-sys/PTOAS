@@ -4780,16 +4780,16 @@ FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
     VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
     Type sourceVMIElementType, PatternRewriter &rewriter);
 
-FailureOr<std::optional<SmallVector<Value>>>
-materializeDataLayoutViaContiguous(
-    Operation *op, ValueRange sourceParts, TypeRange resultTypes,
-    VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
-    Type sourceVMIElementType, PatternRewriter &rewriter) {
-  auto isBlockDeinterleaved = [](VMILayoutAttr layout, int64_t factor) {
-    return layout.isBlockDeinterleaved() && layout.getFactor() == factor;
-  };
-  VMILayoutAttr contiguous =
-      VMILayoutAttr::getContiguous(rewriter.getContext());
+struct DataLayoutIntermediatePlan {
+  enum class Kind { Contiguous, Deinterleaved };
+  Kind kind;
+  size_t intermediateCount;
+};
+
+static std::optional<DataLayoutIntermediatePlan>
+getDataLayoutIntermediatePlan(VMILayoutAttr sourceLayout,
+                              VMILayoutAttr resultLayout,
+                              size_t sourcePartCount) {
   bool deint2ToLaneStride =
       sourceLayout.isDeinterleaved() && sourceLayout.getFactor() == 2 &&
       sourceLayout.getLaneStride() == 1 && resultLayout.isContiguous() &&
@@ -4807,19 +4807,44 @@ materializeDataLayoutViaContiguous(
   bool useContiguousIntermediate =
       deint2ToLaneStride || laneStrideToDeint2 || laneStride2ToLaneStride4 ||
       laneStride4ToLaneStride2;
+  if (useContiguousIntermediate) {
+    bool needsPacking = !deint2ToLaneStride;
+    size_t intermediateCount = needsPacking ? (sourcePartCount + 1) / 2
+                                            : sourcePartCount;
+    return DataLayoutIntermediatePlan{
+        DataLayoutIntermediatePlan::Kind::Contiguous, intermediateCount};
+  }
+
   bool useDeinterleavedIntermediate =
       sourceLayout.isDeinterleaved() && resultLayout.isDeinterleaved() &&
       sourceLayout.getLaneStride() == 1 && resultLayout.getLaneStride() == 1 &&
       (sourceLayout.getFactor() == 2 || sourceLayout.getFactor() == 4) &&
       (resultLayout.getFactor() == 2 || resultLayout.getFactor() == 4);
-  if (!useContiguousIntermediate && !useDeinterleavedIntermediate) {
+  if (useDeinterleavedIntermediate) {
+    return DataLayoutIntermediatePlan{
+        DataLayoutIntermediatePlan::Kind::Deinterleaved, sourcePartCount};
+  }
+  return std::nullopt;
+}
+
+FailureOr<std::optional<SmallVector<Value>>>
+materializeDataLayoutViaContiguous(
+    Operation *op, ValueRange sourceParts, TypeRange resultTypes,
+    VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
+    Type sourceVMIElementType, PatternRewriter &rewriter) {
+  VMILayoutAttr contiguous =
+      VMILayoutAttr::getContiguous(rewriter.getContext());
+  std::optional<DataLayoutIntermediatePlan> plan =
+      getDataLayoutIntermediatePlan(sourceLayout, resultLayout,
+                                    sourceParts.size());
+  if (!plan) {
     return std::nullopt;
   }
   if (sourceParts.empty()) {
     return failure();
   }
 
-  if (useDeinterleavedIntermediate) {
+  if (plan->kind == DataLayoutIntermediatePlan::Kind::Deinterleaved) {
     FailureOr<SmallVector<Value>> dense = materializeDataLayoutConversion(
         op, sourceParts, resultTypes, sourceLayout, contiguous,
         sourceVMIElementType, rewriter);
@@ -4831,11 +4856,7 @@ materializeDataLayoutViaContiguous(
         sourceVMIElementType, rewriter);
   }
 
-  size_t intermediateCount = sourceParts.size();
-  bool needsPacking = !deint2ToLaneStride;
-  if (needsPacking) {
-    intermediateCount = (sourceParts.size() + 1) / 2;
-  }
+  size_t intermediateCount = plan->intermediateCount;
   SmallVector<Type> intermediateTypes(intermediateCount,
                                       sourceParts.front().getType());
   FailureOr<SmallVector<Value>> dense = materializeDataLayoutConversion(
@@ -14065,19 +14086,21 @@ public:
 
     auto sourceType0 = dyn_cast<VRegType>(sourceParts.front().getType());
     auto resultType0 = dyn_cast<VRegType>(resultTypes.front());
-    if (!sourceType0 || !isa<IntegerType>(sourceType0.getElementType()) ||
-        !resultType0 || !isa<IntegerType>(resultType0.getElementType()))
+    bool invalidPhysicalTypes =
+        !sourceType0 || !isa<IntegerType>(sourceType0.getElementType()) ||
+        !resultType0 || !isa<IntegerType>(resultType0.getElementType());
+    if (invalidPhysicalTypes) {
       return rewriter.notifyMatchFailure(
           op, "unsupported physical trunci source/result type");
     for (Value sourcePart : sourceParts) {
       auto sourceType = dyn_cast<VRegType>(sourcePart.getType());
-      if (!sourceType || sourceType != sourceType0)
+      if (!sourceType || sourceType != sourceType0) {
         return rewriter.notifyMatchFailure(
             op, "trunci source physical parts must have matching integer type");
     }
     for (Type resultType : resultTypes) {
       auto resultVRegType = dyn_cast<VRegType>(resultType);
-      if (!resultVRegType || resultVRegType != resultType0)
+      if (!resultVRegType || resultVRegType != resultType0) {
         return rewriter.notifyMatchFailure(
             op, "trunci result physical parts must have matching integer type");
     }
@@ -14086,7 +14109,9 @@ public:
         pto::getPTOStorageElemBitWidth(sourceType0.getElementType());
     unsigned resultBits =
         pto::getPTOStorageElemBitWidth(resultType0.getElementType());
-    if (sourceBits == 0 || resultBits == 0 || sourceBits % resultBits != 0)
+    bool invalidWidth = sourceBits == 0 || resultBits == 0 ||
+                        sourceBits % resultBits != 0;
+    if (invalidWidth) {
       return rewriter.notifyMatchFailure(
           op, "unsupported physical trunci source/result width relation");
 
@@ -14099,7 +14124,9 @@ public:
         sourceLayout.getLaneStride() == 1 && resultLayout.isContiguous() &&
         resultLayout.getLaneStride() == factor &&
         sourceParts.size() == resultTypes.size();
-    if (isDenseLaneStrideNarrowing && factor != 2 && factor != 4)
+    bool unsupportedDenseFactor =
+        isDenseLaneStrideNarrowing && factor != 2 && factor != 4;
+    if (unsupportedDenseFactor) {
       return rewriter.notifyMatchFailure(
           op, "unsupported dense lane_stride trunci result layout");
 

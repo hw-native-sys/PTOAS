@@ -908,6 +908,12 @@ cast-input/identity forwarding。simple conversion 主函数现在只执行类�
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；mask/layout 相关
 `pto-test-opt` lowering exit=0。
 
+本轮将 `materializeDataLayoutViaContiguous` 的中间布局识别与中间 part 数量计算抽取
+为 `getDataLayoutIntermediatePlan`，使用 `DataLayoutIntermediatePlan` 显式表达 contiguous
+或 deinterleaved 中间态及其 arity。实际递归物化仍由原 conversion dispatcher 执行，
+因此不改变转换优先级、padding/part 顺序或中间类型。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
+
 本轮将 `materializeMaskLayoutConversion` 的 identity forwarding 分支抽取为
 `materializeIdentityMaskLayout`。该 helper 只负责相同 layout 的 physical part 合法性
 校验和无变换转发；`deinterleaved=2` 及 lane-stride 的实际 mask 物化仍由各自 helper
