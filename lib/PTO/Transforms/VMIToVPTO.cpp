@@ -6293,13 +6293,9 @@ FailureOr<SmallVector<Value>> materializeMaskGranularityCastLayoutConversion(
     return fail("mask granularity cast layout conversion requires layouts");
   }
 
-  if (sourceLayout == resultLayout) {
-    FailureOr<SmallVector<Value>> identity =
-        forwardIdentityMaskParts(op, sourceParts, resultTypes, rewriter);
-    if (failed(identity)) {
-      return failure();
-    }
-    return std::move(*identity);
+  bool identityLayout = sourceLayout == resultLayout;
+  if (identityLayout) {
+    return forwardIdentityMaskParts(op, sourceParts, resultTypes, rewriter);
   }
 
   FailureOr<std::optional<SmallVector<Value>>> fallback =

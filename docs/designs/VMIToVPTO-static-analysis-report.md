@@ -221,6 +221,14 @@ mask 的语义差异只存在于 active-lane 判定。补齐该批代码及 scal
 触及的控制语句大括号后，增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过。
 
+# mask layout identity 分派整改
+
+本轮将 `materializeMaskGranularityCastLayoutConversion` 的 identity layout 判断命名为
+`identityLayout`，并直接复用 `forwardIdentityMaskParts`；fallback 分派顺序和
+unsupported 诊断保持不变。该轮主要消除重复控制流样板，使函数职责更聚焦于 layout
+合同与 fallback 选择。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
+
 # lane_stride 到 contiguous 结果遍历整改
 
 本轮将 `materializeLaneStrideToContiguous` 的结果 range 计算、逐结果 part 物化和
