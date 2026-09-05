@@ -1943,3 +1943,11 @@ accumulator 类型、source lane 数以及 Bin_N0/Bin_N1 常量准备从 lowerin
 透传和失败语义；lambda 使用显式捕获，未引入 warning suppression。增量
 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
 通过；`vmi_to_vpto_abs.pto` lowering exit=0。
+
+# group-reduction verifier 分派职责整改
+
+本轮在 `verifySupportedVMIGroupReductionOp` 中引入显式捕获的局部 helper
+`verifyGroupReduction`，统一六类 group reduction 的 shape checker 调用与
+`WalkResult` 返回路径。各分支仍保留原有操作识别顺序、shape checker 和完整诊断文本，
+不改变成功/失败语义；未使用默认 lambda 捕获。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
