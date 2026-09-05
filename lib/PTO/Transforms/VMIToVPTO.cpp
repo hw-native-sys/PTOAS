@@ -4218,7 +4218,8 @@ FailureOr<std::optional<SmallVector<Value>>> materializeDeinterleaved4Layout(
   if (!toContiguous && !fromContiguous) {
     return std::nullopt;
   }
-  if (sourceParts.empty() || resultTypes.empty()) {
+  bool missingParts = sourceParts.empty() || resultTypes.empty();
+  if (missingParts) {
     (void)rewriter.notifyMatchFailure(
         op, toContiguous
                 ? "deinterleaved=4 to contiguous materialization requires "
@@ -4250,7 +4251,8 @@ FailureOr<std::optional<SmallVector<Value>>> materializeDeinterleaved4Layout(
   };
 
   if (toContiguous) {
-    if (resultTypes.size() > sourceParts.size()) {
+    bool resultExceedsSource = resultTypes.size() > sourceParts.size();
+    if (resultExceedsSource) {
       (void)rewriter.notifyMatchFailure(
           op, "deinterleaved=4 to contiguous materialization result arity "
               "exceeds source footprint");
@@ -4302,7 +4304,8 @@ FailureOr<std::optional<SmallVector<Value>>> materializeDeinterleaved4Layout(
       Value groupResults[] = {low.getLow(), low.getHigh(), high.getLow(),
                               high.getHigh()};
       for (Value result : groupResults) {
-        if (results.size() >= resultTypes.size()) {
+        bool resultLimitReached = results.size() >= resultTypes.size();
+        if (resultLimitReached) {
           break;
         }
         results.push_back(result);
@@ -4311,7 +4314,8 @@ FailureOr<std::optional<SmallVector<Value>>> materializeDeinterleaved4Layout(
     return std::optional<SmallVector<Value>>(std::move(results));
   }
 
-  if (sourceParts.size() > resultTypes.size()) {
+  bool sourceExceedsResult = sourceParts.size() > resultTypes.size();
+  if (sourceExceedsResult) {
     (void)rewriter.notifyMatchFailure(
         op, "contiguous to deinterleaved=4 materialization source footprint "
             "exceeds result arity");
