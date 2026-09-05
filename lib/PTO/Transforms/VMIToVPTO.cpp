@@ -10621,6 +10621,49 @@ private:
     return packed->front();
   }
 
+  LogicalResult emitAlignedCompactSmallGroupStore(
+      VMIGroupStoreOp op, Value compactValue, VMIVRegType valueVMIType,
+      Value destination, Value offset,
+      OneToNPatternRewriter &rewriter) const {
+    auto compactType = dyn_cast<VRegType>(compactValue.getType());
+    std::optional<std::string> normalDist =
+        getX2MemoryDistToken(valueVMIType.getElementType(), "NORM");
+    if (!compactType || !normalDist) {
+      return rewriter.notifyMatchFailure(
+          op, "aligned compact group_store requires a supported vreg element type");
+    }
+    FailureOr<MaskType> maskType =
+        getMaskTypeForVReg(compactType, rewriter.getContext());
+    if (failed(maskType)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to derive aligned compact group_store mask type");
+    }
+    FailureOr<Value> storeMask = createPrefixMaskForActiveLanes(
+        op.getLoc(), *maskType, valueVMIType.getElementCount(), rewriter);
+    if (failed(storeMask)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to create aligned compact group_store mask");
+    }
+    rewriter.create<VstsOp>(op.getLoc(), /*updated_base=*/Type{}, compactValue,
+                            destination, offset,
+                            rewriter.getStringAttr(*normalDist), *storeMask);
+    return success();
+  }
+
+  LogicalResult emitUnalignedCompactSmallGroupStore(
+      VMIGroupStoreOp op, Value compactValue, VMIVRegType valueVMIType,
+      Value destination, Value offset,
+      OneToNPatternRewriter &rewriter) const {
+    Value elementBase =
+        rewriter.create<AddPtrOp>(op.getLoc(), destination.getType(),
+                                  destination, offset)
+            .getResult();
+    SmallVector<Value> streamValues{compactValue};
+    SmallVector<int64_t> streamAdvances{valueVMIType.getElementCount()};
+    return emitStatefulStoreStream(op, elementBase, streamValues, streamAdvances,
+                                   rewriter);
+  }
+
   LogicalResult lowerCompactSmallGroupStore(
       VMIGroupStoreOp op, OpAdaptor adaptor,
       OneToNPatternRewriter &rewriter, VMIVRegType valueVMIType,
@@ -10645,40 +10688,16 @@ private:
 
     if (isKnownAddressAligned(destination, offset,
                               valueVMIType.getElementType(), 32)) {
-      auto compactType = dyn_cast<VRegType>(compactValue->getType());
-      std::optional<std::string> normalDist =
-          getX2MemoryDistToken(valueVMIType.getElementType(), "NORM");
-      if (!compactType || !normalDist) {
-        return rewriter.notifyMatchFailure(
-            op, "aligned compact group_store requires a supported vreg element type");
+      if (failed(emitAlignedCompactSmallGroupStore(
+              op, *compactValue, valueVMIType, destination, offset, rewriter))) {
+        return failure();
       }
-      FailureOr<MaskType> maskType =
-          getMaskTypeForVReg(compactType, rewriter.getContext());
-      if (failed(maskType)) {
-        return rewriter.notifyMatchFailure(
-            op, "failed to derive aligned compact group_store mask type");
-      }
-      FailureOr<Value> storeMask = createPrefixMaskForActiveLanes(
-          op.getLoc(), *maskType, valueVMIType.getElementCount(), rewriter);
-      if (failed(storeMask)) {
-        return rewriter.notifyMatchFailure(
-            op, "failed to create aligned compact group_store mask");
-      }
-      rewriter.create<VstsOp>(
-          op.getLoc(), /*updated_base=*/Type{}, *compactValue, destination,
-          offset, rewriter.getStringAttr(*normalDist), *storeMask);
       rewriter.eraseOp(op);
       return success();
     }
 
-    Value elementBase =
-        rewriter.create<AddPtrOp>(op.getLoc(), destination.getType(),
-                                  destination, offset)
-            .getResult();
-    SmallVector<Value> streamValues{*compactValue};
-    SmallVector<int64_t> streamAdvances{valueVMIType.getElementCount()};
-    if (failed(emitStatefulStoreStream(op, elementBase, streamValues,
-                                       streamAdvances, rewriter))) {
+    if (failed(emitUnalignedCompactSmallGroupStore(
+            op, *compactValue, valueVMIType, destination, offset, rewriter))) {
       return failure();
     }
     rewriter.eraseOp(op);
