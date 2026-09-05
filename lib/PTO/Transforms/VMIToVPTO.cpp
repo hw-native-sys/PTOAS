@@ -4924,12 +4924,15 @@ FailureOr<SmallVector<Value>> materializeMaskLayoutConversion(
 }
 
 int getMaskGranularityRank(StringRef granularity) {
-  if (granularity == "b8")
+  if (granularity == "b8") {
     return 0;
-  if (granularity == "b16")
+  }
+  if (granularity == "b16") {
     return 1;
-  if (granularity == "b32")
+  }
+  if (granularity == "b32") {
     return 2;
+  }
   return -1;
 }
 
