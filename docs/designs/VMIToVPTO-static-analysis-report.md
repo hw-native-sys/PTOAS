@@ -116,3 +116,9 @@ git diff --check  # passed
 处理。使用现有 `build/tools/pto-test-opt/pto-test-opt` 对
 `vmi_layout_assignment_group_broadcast_load_e2b_b16.pto` 的 lowering 运行成功，输出仍
 包含预期的 `vlds {dist = "E2B_B32"}`/BRC 路径。
+
+本轮又将 `OneToNVMIGroupStoreOpPattern` 中已证明 32-byte 对齐的 packed-byte
+快路径抽取为 `lowerAlignedPackedByteStore`（提交 `dcc8387bc`）。该 helper 只构造
+`vpack` 链、有效 lane mask 和 `NORM_B8` store；未对齐路径仍进入原有 PK4 或
+stateful stream 逻辑。抽取后增量合规检查仍为 `errors=0 warnings=0`，GitCode push
+hook 通过。
