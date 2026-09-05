@@ -708,6 +708,12 @@ pattern 现在仅负责结果类型转换、factor-4 block 特例和路径分派
 `git diff --check` 通过；`vmi_to_vpto_create_group_mask_block8_dynamic.pto`
 lowering exit=0。
 
+本轮清理 `group_slot_load` 与 `masked_load` pattern 的入口控制流：为 layout、operand、
+physical arity 和 chunk 校验补齐大括号，并将多条件失败判断命名化。该调整保持 slots=1/8
+的 `vsldb` 选择、mask/passthru 语义、结果顺序和原有诊断不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；group-slot SCF 与
+连续 load/store lowering exit=0。
+
 本轮为 `OneToNVMIExtFOpPattern` 引入 `ExtFPhysicalPlan`/`buildPhysicalPlan`，统一负责
 source physical part 一致性、result vreg 类型和 BF16x2/F32 结果契约；主 pattern 仅
 负责 packed view 规划及 lane-stride/factor 发射分派。同步将 vmull verifier 的复合物理

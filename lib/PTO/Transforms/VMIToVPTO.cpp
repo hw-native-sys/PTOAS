@@ -8904,9 +8904,12 @@ struct OneToNVMIGroupSlotLoadOpPattern
                   OneToNPatternRewriter &rewriter) const override {
     auto resultVMIType = cast<VMIVRegType>(op.getResult().getType());
     VMILayoutAttr layout = resultVMIType.getLayoutAttr();
-    if (!layout || !layout.isGroupSlots() || layout.getSlots() <= 0)
+    bool invalidLayout =
+        !layout || !layout.isGroupSlots() || layout.getSlots() <= 0;
+    if (invalidLayout) {
       return rewriter.notifyMatchFailure(
           op, "group_slot_load requires explicit group_slots layout");
+    }
 
     FailureOr<Value> source = getSingleValue(
         op, adaptor.getSource(),
@@ -8925,12 +8928,10 @@ struct OneToNVMIGroupSlotLoadOpPattern
     }
 
     FailureOr<SmallVector<Type>> maybe_resultTypes =
-
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-
-    if (failed(maybe_resultTypes))
-
+    if (failed(maybe_resultTypes)) {
       return failure();
+    }
 
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     int64_t numGroups = op.getNumGroupsAttr().getInt();
@@ -8938,8 +8939,9 @@ struct OneToNVMIGroupSlotLoadOpPattern
     SmallVector<Value> results;
     if (failed(lowerGroupSlotLoadParts(op, *source, *offset, *sourceGroupStride,
                                        resultVMIType, resultTypes, numGroups,
-                                       rewriter, results)))
+                                       rewriter, results))) {
       return failure();
+    }
     replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
     return success();
   }
@@ -8959,13 +8961,16 @@ struct OneToNVMIMaskedLoadOpPattern
     FailureOr<Value> offset = getSingleValue(
         op, adaptor.getOffset(), "masked_load offset must convert to one value",
         rewriter);
-    if (failed(source) || failed(offset))
+    bool failedOperands = failed(source) || failed(offset);
+    if (failedOperands) {
       return failure();
+    }
 
     FailureOr<int64_t> lanesPerPart = verifyFullOrSafeReadVRegChunks(
         op, resultVMIType, op.getSource(), op.getOffset(), rewriter);
-    if (failed(lanesPerPart))
+    if (failed(lanesPerPart)) {
       return failure();
+    }
 
     ValueRange maskParts = adaptor.getMask();
     ValueRange passthruParts = adaptor.getPassthru();
@@ -8976,10 +8981,12 @@ struct OneToNVMIMaskedLoadOpPattern
       return failure();
     }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-    if (maskParts.size() != passthruParts.size() ||
-        passthruParts.size() != resultTypes.size())
+    bool arityMismatch = maskParts.size() != passthruParts.size() ||
+                         passthruParts.size() != resultTypes.size();
+    if (arityMismatch) {
       return rewriter.notifyMatchFailure(op,
                                          "masked_load physical arity mismatch");
+    }
 
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
