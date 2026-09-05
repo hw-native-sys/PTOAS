@@ -13985,6 +13985,29 @@ struct OneToNVMIExtIOpPattern : OneToNOpConversionPattern<OpT> {
   using OneToNOpConversionPattern<OpT>::OneToNOpConversionPattern;
 
 private:
+  LogicalResult emitFactorExtension(
+      OpT op, ValueRange sourceParts, ArrayRef<VRegType> resultVRegTypes,
+      ArrayRef<StringRef> parts, int64_t factor, Value mask,
+      OneToNPatternRewriter &rewriter) const {
+    SmallVector<Value> results;
+    results.reserve(resultVRegTypes.size());
+    for (int64_t partIndex = 0; partIndex < factor; ++partIndex) {
+      for (auto [chunkIndex, sourcePart] : llvm::enumerate(sourceParts)) {
+        VRegType resultType =
+            resultVRegTypes[partIndex * sourceParts.size() + chunkIndex];
+        results.push_back(
+            rewriter
+                .create<VcvtOp>(op.getLoc(), resultType, sourcePart, mask,
+                                /*rnd=*/nullptr, /*sat=*/nullptr,
+                                rewriter.getStringAttr(parts[partIndex]))
+                .getResult());
+      }
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
   LogicalResult lowerPhysicalExtension(
       OpT op, ValueRange sourceParts, ArrayRef<VRegType> resultVRegTypes,
       ArrayRef<Type> resultTypes, VRegType sourceType, unsigned sourceBits,
@@ -14047,24 +14070,8 @@ private:
           op, "failed to build integer extension seed mask");
     }
 
-    SmallVector<Value> results;
-    results.reserve(resultTypes.size());
-    for (int64_t partIndex = 0; partIndex < factor; ++partIndex) {
-      for (auto [chunkIndex, sourcePart] : llvm::enumerate(sourceParts)) {
-        VRegType resultType =
-            resultVRegTypes[partIndex * sourceParts.size() + chunkIndex];
-        results.push_back(
-            rewriter
-                .create<VcvtOp>(op.getLoc(), resultType, sourcePart, *mask,
-                                /*rnd=*/nullptr, /*sat=*/nullptr,
-                                rewriter.getStringAttr(parts[partIndex]))
-                .getResult());
-      }
-    }
-
-    replaceOpWithFlatConvertedValues(rewriter, op, results,
-                                     *this->getTypeConverter());
-    return success();
+    return emitFactorExtension(op, sourceParts, resultVRegTypes, parts, factor,
+                               *mask, rewriter);
   }
 
 public:

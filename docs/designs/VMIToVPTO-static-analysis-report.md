@@ -1337,3 +1337,10 @@ group mask 的 lane 映射、`vcmps` 谓词及 padding 语义不变。增量合�
 arity 和 packet type 约束，以及 packet 复用结果构造；指令顺序和 E2B dist 保持不变。
 增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_layout_assignment_group_broadcast_load_e2b_b16.pto` lowering exit=0。
+# integer extension lowering 整改
+
+本轮将 `OneToNVMIExtIOpPattern::lowerPhysicalExtension` 的 factor=2/4 多 physical
+part `vcvt` 发射抽取为 `emitFactorExtension`。主函数继续负责 contiguous lane
+extension、factor/width/arity 选择和 mask 构造；EVEN/ODD/P0…P3 顺序、result part
+布局和替换语义保持不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_zero_gap_extui_load.pto` lowering exit=0。
