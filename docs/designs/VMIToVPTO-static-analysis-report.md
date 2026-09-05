@@ -627,3 +627,11 @@ carrier 类型计算和结果 part 枚举。该拆分对应 source-part 拼接�
 prefix/gather 语义和原有失败顺序不变。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续 load/store
 lowering 回归通过。
+
+本轮将模板化 group-reduce lowering 的 one-block `vcgadd` 分支抽取为
+`lowerOneBlock`。辅助函数独立负责 source/mask/result physical arity、统一物理类型
+校验和逐 part 的 group-reduce 指令构造；主 `matchAndRewrite` 继续负责支持表查询、
+lowering plan 分类以及其它 two/four-block 与 row-reduction 路径。该拆分不改变
+`GroupReduceLoweringPlan::OneBlockVcgadd` 的诊断和结果替换语义。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_group_reduce_addi_i16.pto` 完成完整 lowering 回归。
