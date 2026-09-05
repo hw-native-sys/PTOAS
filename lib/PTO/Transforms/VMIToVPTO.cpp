@@ -2142,6 +2142,57 @@ checkSupportedMaskedLoadShape(VMIMaskedLoadOp op, std::string *reason) {
               "; fallback unavailable: " + fallbackReason);
 }
 
+LogicalResult checkSupportedGatherPhysicalShape(
+    VMIVRegType resultType, VMIVRegType indicesType, VMIVRegType passthruType,
+    VMIMaskType maskType, bool requiresFullChunks, std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
+  FailureOr<int64_t> indicesArity = getVMIPhysicalArity(indicesType);
+  FailureOr<int64_t> passthruArity = getVMIPhysicalArity(passthruType);
+  FailureOr<int64_t> maskArity = getVMIPhysicalArity(maskType);
+  bool hasPhysicalArity = succeeded(resultArity) && succeeded(indicesArity) &&
+                          succeeded(passthruArity) && succeeded(maskArity);
+  if (!hasPhysicalArity) {
+    return fail("requires computable physical arity");
+  }
+  if (*resultArity != *indicesArity || *resultArity != *passthruArity ||
+      *resultArity != *maskArity) {
+    return fail("requires result, indices, passthru, and mask to have the "
+                "same physical arity");
+  }
+  if (*resultArity > mlir::pto::kValue4) {
+    return fail("gather exceeds the 4 physical register limit per VMI "
+                "instruction");
+  }
+  if (!requiresFullChunks) {
+    return success();
+  }
+  std::string resultReason;
+  std::string indicesReason;
+  std::string passthruReason;
+  std::string maskReason;
+  if (failed(checkFullDataPhysicalChunks(resultType, &resultReason))) {
+    return fail(Twine("result requires full physical chunks; ") + resultReason);
+  }
+  if (failed(checkFullDataPhysicalChunks(indicesType, &indicesReason))) {
+    return fail(Twine("indices require full physical chunks; ") +
+                indicesReason);
+  }
+  if (failed(checkFullDataPhysicalChunks(passthruType, &passthruReason))) {
+    return fail(Twine("passthru requires full physical chunks; ") +
+                passthruReason);
+  }
+  if (failed(checkFullVMIPhysicalChunks(maskType, &maskReason))) {
+    return fail(Twine("mask requires full physical chunks; ") + maskReason);
+  }
+  return success();
+}
+
 LogicalResult
 checkSupportedGatherShape(VMIGatherOp op, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
@@ -2208,45 +2259,13 @@ checkSupportedGatherShape(VMIGatherOp op, std::string *reason) {
   }
 
   FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
-  FailureOr<int64_t> indicesArity = getVMIPhysicalArity(indicesType);
-  FailureOr<int64_t> passthruArity = getVMIPhysicalArity(passthruType);
-  FailureOr<int64_t> maskArity = getVMIPhysicalArity(maskType);
-  if (failed(resultArity) || failed(indicesArity) || failed(passthruArity) ||
-      failed(maskArity))
-    return fail("requires computable physical arity");
-  if (*resultArity != *indicesArity || *resultArity != *passthruArity ||
-      *resultArity != *maskArity)
-    return fail("requires result, indices, passthru, and mask to have the "
-                "same physical arity");
-
-  // Each pto.vgather2/pto.vgather2_bc emits one physical vector register per
-  // result part. The ISA has a hard limit of four physical registers per
-  // pto.vmi instruction, so reject anything above that instead of silently
-  // lowering to five or more physical gathers.
-  if (*resultArity > mlir::pto::kValue4) {
-    return fail("gather exceeds the 4 physical register limit per VMI "
-                "instruction");
+  bool requiresFullChunks = isB32Gather;
+  if (isB16Gather && succeeded(resultArity)) {
+    requiresFullChunks = *resultArity != 1;
   }
-
-  if (isB32Gather || (isB16Gather && *resultArity != 1)) {
-    std::string resultReason;
-    std::string indicesReason;
-    std::string passthruReason;
-    std::string maskReason;
-    if (failed(checkFullDataPhysicalChunks(resultType, &resultReason)))
-      return fail(Twine("result requires full physical chunks; ") +
-                  resultReason);
-    if (failed(checkFullDataPhysicalChunks(indicesType, &indicesReason)))
-      return fail(Twine("indices require full physical chunks; ") +
-                  indicesReason);
-    if (failed(checkFullDataPhysicalChunks(passthruType, &passthruReason)))
-      return fail(Twine("passthru requires full physical chunks; ") +
-                  passthruReason);
-    if (failed(checkFullVMIPhysicalChunks(maskType, &maskReason)))
-      return fail(Twine("mask requires full physical chunks; ") + maskReason);
-  }
-
-  return success();
+  return checkSupportedGatherPhysicalShape(
+      resultType, indicesType, passthruType, maskType, requiresFullChunks,
+      reason);
 }
 
 LogicalResult checkSupportedScatterPhysicalShape(
@@ -5385,8 +5404,10 @@ FailureOr<SmallVector<Value>> materializeMaskGranularityCastLayoutConversion(
 
   VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();
   VMILayoutAttr resultLayout = resultType.getLayoutAttr();
-  if (!sourceLayout || !resultLayout)
+  bool hasLayouts = sourceLayout && resultLayout;
+  if (!hasLayouts) {
     return fail("mask granularity cast layout conversion requires layouts");
+  }
 
   if (sourceLayout == resultLayout) {
     if (failed(verifyIdentityPartForwarding(op, sourceParts, resultTypes,
