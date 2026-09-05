@@ -12092,8 +12092,9 @@ struct OneToNVMICompressOpPattern : OneToNOpConversionPattern<VMICompressOp> {
     ValueRange maskParts = adaptor.getMask();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    if (failed(maybe_resultTypes)) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     if (sourceParts.size() != 1 || maskParts.size() != 1 ||
         resultTypes.size() != 1)
@@ -13231,13 +13232,15 @@ public:
     }
 
     auto sourceType = dyn_cast<VRegType>(sourceParts.front().getType());
-    if (!sourceType)
+    if (!sourceType) {
       return rewriter.notifyMatchFailure(op, "expected physical extf source");
+    }
     for (Value sourcePart : sourceParts) {
       auto currentSourceType = dyn_cast<VRegType>(sourcePart.getType());
-      if (!currentSourceType || currentSourceType != sourceType)
+      if (!currentSourceType || currentSourceType != sourceType) {
         return rewriter.notifyMatchFailure(
             op, "extf source physical parts must have matching type");
+      }
     }
 
     SmallVector<VRegType> resultVRegTypes;
@@ -13282,9 +13285,10 @@ public:
       StringRef part = sourceBits == 16 ? StringRef("EVEN") : StringRef("P0");
       FailureOr<Value> mask =
           createAllTrueMaskForVReg(op.getLoc(), sourceType, rewriter);
-      if (failed(mask))
+      if (failed(mask)) {
         return rewriter.notifyMatchFailure(op,
                                            "failed to build extf seed mask");
+      }
 
       return lowerLaneStride(op, rewriter, sourceParts, resultVRegTypes,
                              *mask, part, resultIsPackedBF16x2,
@@ -13472,9 +13476,10 @@ public:
       FailureOr<Value> activeSlotMask = createPrefixMask(
           op.getLoc(), MaskType::get(rewriter.getContext(), "b32"),
           activeSlotPattern, rewriter);
-      if (failed(activeSlotMask))
+      if (failed(activeSlotMask)) {
         return rewriter.notifyMatchFailure(
             op, "failed to build group-slot truncf active slot mask");
+      }
       StringAttr sat = op->getAttrOfType<StringAttr>("saturate");
       for (auto [sourcePart, physicalResultType] :
            llvm::zip_equal(sourceParts, resultTypes)) {
@@ -13507,17 +13512,20 @@ public:
       return success();
     }
 
-    if (resultTypes.empty())
+    if (resultTypes.empty()) {
       return rewriter.notifyMatchFailure(op, "truncf requires result chunks");
+    }
 
     auto sourceType0 = dyn_cast<VRegType>(sourceParts.front().getType());
     if (!sourceType0) {
       return rewriter.notifyMatchFailure(op, "unsupported physical truncf source type");
     }
     unsigned sourceBits = pto::getPTOStorageElemBitWidth(sourceType0.getElementType());
-    if (sourceBits != 32 && sourceBits != 16)
+    bool unsupportedSourceBits = sourceBits != 32 && sourceBits != 16;
+    if (unsupportedSourceBits) {
       return rewriter.notifyMatchFailure(
           op, "truncf source bit width must be 32 or 16");
+    }
     // A packed bf16x2 physical source is consumed by pto.vcvt as raw bf16
     // lanes (2 bf16 per bf16x2). Build the bf16 view type used for the source
     // mask and for reinterpreting each source part before the VcvtOp. The
@@ -13532,14 +13540,17 @@ public:
     }
     // A packed bf16x2 source is consumed through its native bf16 view.
     // Group-slot layout for non-f32 sources is not supported yet.
-    if (sourceLayout && sourceLayout.isGroupSlots())
+    bool unsupportedGroupSlotLayout = sourceLayout && sourceLayout.isGroupSlots();
+    if (unsupportedGroupSlotLayout) {
       return rewriter.notifyMatchFailure(
           op, "group-slot layout for non-f32 truncf not supported");
+    }
     for (Value sourcePart : sourceParts) {
       auto sourceType = dyn_cast<VRegType>(sourcePart.getType());
-      if (!sourceType || sourceType != sourceType0)
+      if (!sourceType || sourceType != sourceType0) {
         return rewriter.notifyMatchFailure(
             op, "truncf source physical parts must have matching type");
+      }
     }
 
     SmallVector<VRegType> resultVRegTypes;

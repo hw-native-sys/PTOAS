@@ -734,6 +734,12 @@ forwarding → lane0 splat → vselr 的策略优先级。该拆分减少重复�
 顺序、诊断文本和原有优先级不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；interleave/shuffle lowering exit=0。
 
+本轮继续清理 `VMIExtF`/`VMITruncF` conversion pattern 中遗留的 `G.FMT.11-CPP` 问题：
+为 result/source physical type、mask、位宽及 group-slot layout 分支补齐控制流大括号，
+并将多行条件整理为具名布尔变量。该调整不改变 BF16x2 view、Vcvt part、mask、arity
+及诊断语义。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过。
+
 复核 interleave 模板的 contiguous lowering 时发现 `invalidSingleChunkTypes` 条件缺少
 闭合大括号，导致直接 `TargetOp` 构造语句错误地落入失败分支。已补齐控制流边界，恢复
 contiguous interleave 的正常 lowering；该修复不改变支持矩阵或结果语义。增量合规检查
