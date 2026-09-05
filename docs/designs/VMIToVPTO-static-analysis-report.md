@@ -192,3 +192,8 @@ abs、sqrt、exp、ln 等重复 dispatch；`pmode` 特殊处理仍仅位于 vect
 随后将六个 group-reduce verifier 分支统一抽取为 `verifySupportedGroupReduceOp`
 （提交 `c7dea762c`）。helper 只封装 support check、reason 传播和 WalkResult，调用方
 保留每个 group-reduce 的后端能力描述；新增代码合规检查通过。
+
+本轮再将 group-broadcast、`vdhist` 和 `vchist` 的同构 shape-check + 诊断流程抽取
+为模板 helper `verifySupportedShapeOp`（提交 `013a971e5`）。helper 只负责 reason
+传播和 WalkResult 转换，具体 support checker 与每个操作的能力描述仍在调用点明确
+指定；增量合规检查通过。
