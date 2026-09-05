@@ -15080,30 +15080,29 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
       return WalkResult::interrupt();
     }
     if (auto andi = dyn_cast<VMIAndIOp>(op))
-      return emitMaskableUnsupported(
-          op, "pto.vmi.andi", cast<VMIVRegType>(andi.getResult().getType()));
+      return verifySupportedMaskableOp(andi, "pto.vmi.andi",
+                                       emitMaskableUnsupported);
     if (auto ori = dyn_cast<VMIOrIOp>(op))
-      return emitMaskableUnsupported(
-          op, "pto.vmi.ori", cast<VMIVRegType>(ori.getResult().getType()));
+      return verifySupportedMaskableOp(ori, "pto.vmi.ori",
+                                       emitMaskableUnsupported);
     if (auto xori = dyn_cast<VMIXOrIOp>(op))
-      return emitMaskableUnsupported(
-          op, "pto.vmi.xori", cast<VMIVRegType>(xori.getResult().getType()));
+      return verifySupportedMaskableOp(xori, "pto.vmi.xori",
+                                       emitMaskableUnsupported);
     if (auto shli = dyn_cast<VMIShLIOp>(op))
-      return emitMaskableUnsupported(
-          op, "pto.vmi.shli", cast<VMIVRegType>(shli.getResult().getType()));
+      return verifySupportedMaskableOp(shli, "pto.vmi.shli",
+                                       emitMaskableUnsupported);
     if (auto shrui = dyn_cast<VMIShRUIOp>(op))
-      return emitMaskableUnsupported(
-          op, "pto.vmi.shrui", cast<VMIVRegType>(shrui.getResult().getType()));
+      return verifySupportedMaskableOp(shrui, "pto.vmi.shrui",
+                                       emitMaskableUnsupported);
     if (auto shrsi = dyn_cast<VMIShRSIOp>(op))
-      return emitMaskableUnsupported(
-          op, "pto.vmi.shrsi", cast<VMIVRegType>(shrsi.getResult().getType()));
+      return verifySupportedMaskableOp(shrsi, "pto.vmi.shrsi",
+                                       emitMaskableUnsupported);
     if (auto notOp = dyn_cast<VMINotOp>(op))
-      return emitMaskableUnsupported(
-          op, "pto.vmi.not", cast<VMIVRegType>(notOp.getResult().getType()));
+      return verifySupportedMaskableOp(notOp, "pto.vmi.not",
+                                       emitMaskableUnsupported);
     if (auto select = dyn_cast<VMISelectOp>(op))
-      return emitMaskableUnsupported(
-          op, "pto.vmi.select",
-          cast<VMIVRegType>(select.getResult().getType()));
+      return verifySupportedMaskableOp(select, "pto.vmi.select",
+                                       emitMaskableUnsupported);
     if (auto vselr = dyn_cast<VMIVselrOp>(op)) {
       std::string reason;
       if (succeeded(checkSupportedVselrShape(vselr, &reason)))
