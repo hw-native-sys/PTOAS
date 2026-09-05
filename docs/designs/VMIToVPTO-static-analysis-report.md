@@ -479,3 +479,9 @@ conversion 的标准检查顺序封装为 `verifySupportedVMIStandardOp`。`veri
 仅保留标准分类、channel/shuffle 收尾分类和 walk 结果处理，既有检查优先级与诊断路径
 不变。增量合规检查为 `errors=0 warnings=0`，`git diff --check` 通过；连续 load/store
 与 interleave memory lowering 回归通过。
+
+本轮抽取 `verifyGroupBroadcastChunkMapping`，统一 group-broadcast 普通 chunk 与
+slots=1 特殊 chunk 共用的 padding/lane 映射、selector 预期 group 及 source chunk
+校验。`lowerGroupBroadcastParts` 不再重复维护该契约，selector 生成和结果分派语义不变。
+增量合规检查为 `errors=0 warnings=0`，`git diff --check` 通过；group-broadcast 与
+连续 load/store lowering 回归通过。

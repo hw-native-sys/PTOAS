@@ -7744,6 +7744,43 @@ struct GroupBroadcastSelectorPlan {
   int64_t period;
 };
 
+static LogicalResult verifyGroupBroadcastChunkMapping(
+    Operation *op, VMIVRegType resultVMIType,
+    GroupBroadcastSelectorKind selectorKind, int64_t selectorPeriod,
+    int64_t sourceSlots, int64_t groupSize, int64_t part, int64_t chunk,
+    int64_t firstGroup, int64_t sourceChunk, int64_t lanesPerPart,
+    OneToNPatternRewriter &rewriter) {
+  for (int64_t lane = 0; lane < lanesPerPart; ++lane) {
+    FailureOr<bool> padding =
+        isPaddingLane(resultVMIType, part, chunk, lane);
+    if (failed(padding)) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast failed to map result padding lanes");
+    }
+    if (*padding) {
+      continue;
+    }
+    FailureOr<int64_t> logical =
+        mapPhysicalLaneToLogical(resultVMIType, part, chunk, lane);
+    if (failed(logical)) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast failed to map a result lane");
+    }
+    int64_t actualGroup = *logical / groupSize;
+    int64_t expectedGroup = firstGroup;
+    if (selectorKind != GroupBroadcastSelectorKind::Constant) {
+      expectedGroup += lane / selectorPeriod;
+    }
+    if (actualGroup != expectedGroup ||
+        actualGroup / sourceSlots != sourceChunk) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast layout table row does not match its selector "
+              "lowering plan");
+    }
+  }
+  return success();
+}
+
 static FailureOr<GroupBroadcastSelectorPlan> chooseGroupBroadcastSelectorPlan(
     Operation *op, const VMIGroupBroadcastLayoutFact &fact,
     VMILayoutAttr resultLayout, OneToNPatternRewriter &rewriter) {
@@ -7872,34 +7909,11 @@ static FailureOr<Value> materializeGroupBroadcastChunk(
     return rewriter.notifyMatchFailure(
         op, "group_broadcast requires uniform physical vreg types");
   }
-  for (int64_t lane = 0; lane < lanesPerPart; ++lane) {
-    FailureOr<bool> padding =
-        isPaddingLane(resultVMIType, part, chunk, lane);
-    if (failed(padding)) {
-      return rewriter.notifyMatchFailure(
-          op, "group_broadcast failed to map result padding lanes");
-    }
-    if (*padding) {
-      continue;
-    }
-    FailureOr<int64_t> logical =
-        mapPhysicalLaneToLogical(resultVMIType, part, chunk, lane);
-    if (failed(logical)) {
-      return rewriter.notifyMatchFailure(
-          op, "group_broadcast failed to map a result lane");
-    }
-    int64_t actualGroup = *logical / groupSize;
-    int64_t expectedGroup = firstGroup;
-    if (selectorKind != GroupBroadcastSelectorKind::Constant) {
-      expectedGroup += lane / selectorPeriod;
-    }
-    bool invalidGroup = actualGroup != expectedGroup ||
-                        actualGroup / sourceSlots != sourceChunk;
-    if (invalidGroup) {
-      return rewriter.notifyMatchFailure(
-          op, "group_broadcast layout table row does not match its selector "
-              "lowering plan");
-    }
+  if (failed(verifyGroupBroadcastChunkMapping(
+          op, resultVMIType, selectorKind, selectorPeriod, sourceSlots,
+          groupSize, part, chunk, firstGroup, sourceChunk, lanesPerPart,
+          rewriter))) {
+    return failure();
   }
 
   if (selectorKind == GroupBroadcastSelectorKind::Constant && sourceSlots == 1) {
@@ -8069,29 +8083,11 @@ static LogicalResult lowerGroupBroadcastParts(
       // The support table selects one of the three affine selector forms.
       // Check the table property against the canonical lane map so new table
       // rows cannot silently reuse an incompatible lowering plan.
-      for (int64_t lane = 0; lane < fact->lanesPerPart; ++lane) {
-        FailureOr<bool> padding =
-            isPaddingLane(resultVMIType, part, chunk, lane);
-        if (failed(padding))
-          return rewriter.notifyMatchFailure(
-              op, "group_broadcast failed to map result padding lanes");
-        if (*padding)
-          continue;
-        FailureOr<int64_t> logical =
-            mapPhysicalLaneToLogical(resultVMIType, part, chunk, lane);
-        if (failed(logical))
-          return rewriter.notifyMatchFailure(
-              op, "group_broadcast failed to map a result lane");
-        int64_t actualGroup = *logical / fact->groupSize;
-        int64_t expectedGroup = firstGroup;
-        if (selectorKind != GroupBroadcastSelectorKind::Constant) {
-          expectedGroup += lane / selectorPeriod;
-        }
-        if (actualGroup != expectedGroup ||
-            actualGroup / sourceSlots != sourceChunk)
-          return rewriter.notifyMatchFailure(
-              op, "group_broadcast layout table row does not match its "
-                  "selector lowering plan");
+      if (failed(verifyGroupBroadcastChunkMapping(
+              op, resultVMIType, selectorKind, selectorPeriod, sourceSlots,
+              fact->groupSize, part, chunk, firstGroup, sourceChunk,
+              fact->lanesPerPart, rewriter))) {
+        return failure();
       }
 
       FailureOr<Value> chunkResult = materializeGroupBroadcastChunk(
