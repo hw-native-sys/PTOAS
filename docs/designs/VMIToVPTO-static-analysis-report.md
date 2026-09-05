@@ -1306,3 +1306,11 @@ row-reduce 与 combine 循环抽取为 `buildContiguousGroupReduceResults`。外
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；group_reduce partial
 slots=8 case exit=0。其他两个 group-reduce case 在既有 VMI pack/unpack pipeline
 invariant 处提前失败，未进入本轮 lowering 路径。
+# deinterleaved group reduction 整改
+
+本轮将 `OneToNVMIGroupReduceOpPattern::lowerFullDeinterleaved2` 中按 group/chunk
+执行 low/high row reduction、pair combine 和 accumulator 的循环抽取为
+`buildDeinterleaved2GroupResults`。外层函数继续负责 slots=1、group/chunk arity、
+row 类型/mask 准备和最终结果 bitcast；low/high 配对顺序、`PAT_VL1` mask 及诊断
+保持不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
+通过；group-reduce partial slots=8 case exit=0。
