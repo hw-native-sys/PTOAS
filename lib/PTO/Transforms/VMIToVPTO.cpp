@@ -2249,6 +2249,46 @@ checkSupportedGatherShape(VMIGatherOp op, std::string *reason) {
   return success();
 }
 
+LogicalResult checkSupportedScatterPhysicalShape(
+    VMIVRegType valueType, VMIVRegType indicesType, VMIMaskType maskType,
+    bool requiresFullChunks, std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  FailureOr<int64_t> valueArity = getVMIPhysicalArity(valueType);
+  FailureOr<int64_t> indicesArity = getVMIPhysicalArity(indicesType);
+  FailureOr<int64_t> maskArity = getVMIPhysicalArity(maskType);
+  bool hasPhysicalArity = succeeded(valueArity) && succeeded(indicesArity) &&
+                          succeeded(maskArity);
+  if (!hasPhysicalArity) {
+    return fail("requires computable physical arity");
+  }
+  if (*valueArity != *indicesArity || *valueArity != *maskArity) {
+    return fail("requires value, indices, and mask to have the same physical "
+                "arity");
+  }
+  if (!requiresFullChunks) {
+    return success();
+  }
+  std::string valueReason;
+  std::string indicesReason;
+  std::string maskReason;
+  if (failed(checkFullDataPhysicalChunks(valueType, &valueReason))) {
+    return fail(Twine("value requires full physical chunks; ") + valueReason);
+  }
+  if (failed(checkFullDataPhysicalChunks(indicesType, &indicesReason))) {
+    return fail(Twine("indices require full physical chunks; ") +
+                indicesReason);
+  }
+  if (failed(checkFullVMIPhysicalChunks(maskType, &maskReason))) {
+    return fail(Twine("mask requires full physical chunks; ") + maskReason);
+  }
+  return success();
+}
+
 LogicalResult
 checkSupportedScatterShape(VMIScatterOp op, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
@@ -2292,27 +2332,8 @@ checkSupportedScatterShape(VMIScatterOp op, std::string *reason) {
                 "mask, or 8-bit values with 16-bit indices and b16 "
                 "mask");
 
-  FailureOr<int64_t> valueArity = getVMIPhysicalArity(valueType);
-  FailureOr<int64_t> indicesArity = getVMIPhysicalArity(indicesType);
-  FailureOr<int64_t> maskArity = getVMIPhysicalArity(maskType);
-  if (failed(valueArity) || failed(indicesArity) || failed(maskArity))
-    return fail("requires computable physical arity");
-  if (*valueArity != *indicesArity || *valueArity != *maskArity)
-    return fail("requires value, indices, and mask to have the same physical "
-                "arity");
-
-  std::string valueReason;
-  std::string indicesReason;
-  std::string maskReason;
-  if (failed(checkFullDataPhysicalChunks(valueType, &valueReason)))
-    return fail(Twine("value requires full physical chunks; ") + valueReason);
-  if (failed(checkFullDataPhysicalChunks(indicesType, &indicesReason)))
-    return fail(Twine("indices require full physical chunks; ") +
-                indicesReason);
-  if (failed(checkFullVMIPhysicalChunks(maskType, &maskReason)))
-    return fail(Twine("mask requires full physical chunks; ") + maskReason);
-
-  return success();
+  return checkSupportedScatterPhysicalShape(valueType, indicesType, maskType,
+                                            true, reason);
 }
 
 LogicalResult
@@ -8389,8 +8410,11 @@ public:
     FailureOr<Value> rowStride = getSingleValue(
         op, adaptor.getRowStride(),
         "group_store row_stride must convert to one value", rewriter);
-    if (failed(destination) || failed(offset) || failed(rowStride))
+    bool operandsConverted = succeeded(destination) && succeeded(offset) &&
+                             succeeded(rowStride);
+    if (!operandsConverted) {
       return failure();
+    }
 
     bool compactSmallGroupStore = isCompactSmallGroupStore(
         layout, valueVMIType, op.getNumGroupsAttr().getInt(),
@@ -8401,12 +8425,15 @@ public:
     // layout selected by group_slot_load, even though the logical operation
     // still writes one scalar.  Preserve the scalar memory semantics here;
     // a masked ordinary vsts would require a 32-byte-aligned destination.
-    if (op.getNumGroupsAttr().getInt() == 1 &&
-        valueVMIType.getElementCount() == 1) {
+    bool isScalarGroupStore = op.getNumGroupsAttr().getInt() == 1 &&
+                              valueVMIType.getElementCount() == 1;
+    if (isScalarGroupStore) {
       ValueRange valueParts = adaptor.getValue();
-      if (valueParts.size() != 1)
+      bool hasScalarPart = valueParts.size() == 1;
+      if (!hasScalarPart) {
         return rewriter.notifyMatchFailure(
             op, "scalar group_store requires one physical value part");
+      }
       auto valueType = dyn_cast<VRegType>(valueParts.front().getType());
       if (!valueType)
         return rewriter.notifyMatchFailure(
