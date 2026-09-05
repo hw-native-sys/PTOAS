@@ -1352,3 +1352,12 @@ extension、factor/width/arity 选择和 mask 构造；EVEN/ODD/P0…P3 顺序�
 交给 `emitFactorExtension`。保持 EVEN/P0 选择及结果顺序不变。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_zero_gap_extui_load.pto` lowering exit=0。
+# group-slot truncation 整改
+
+本轮将 `OneToNVMITruncIOpPattern::lowerGroupSlotTrunc` 的逐 physical part 转换
+逻辑抽取为 `lowerGroupSlotTruncPart`，统一处理 direct carrier、wide carrier、
+普通窄化和对应的 bitcast/vcvt。外层保留 group-slot 支持矩阵、active slot mask
+构造和结果收集；`EVEN/P0` 选择、carrier lane 校验和 saturate 语义保持不变。
+增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+truncf 相关 lane-stride case exit=0；其他两个 trunci case 在既有 VMI pack/unpack
+pipeline invariant 处提前失败，未进入本轮路径。

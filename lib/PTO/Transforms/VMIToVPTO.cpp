@@ -14416,6 +14416,63 @@ private:
                                      *this->getTypeConverter());
   }
 
+  FailureOr<Value> lowerGroupSlotTruncPart(
+      VMITruncIOp op, Value sourcePart, VRegType sourceType,
+      VRegType resultType, VMIVRegType resultVMIType,
+      VMILayoutAttr resultLayout, unsigned sourceLogicalBits,
+      unsigned resultLogicalBits, Value activeSlotMask, StringAttr sat,
+      OneToNPatternRewriter &rewriter) const {
+    unsigned physicalResultBits =
+        pto::getPTOStorageElemBitWidth(resultType.getElementType());
+    bool directCarrier = resultLayout.hasLaneStride() &&
+                         resultLayout.getLaneStride() == 4 &&
+                         resultLogicalBits == 8 && physicalResultBits == 32;
+    if (directCarrier) {
+      bool identicalCarrierType = sourcePart.getType() == resultType;
+      if (identicalCarrierType) {
+        return sourcePart;
+      }
+      return rewriter.create<VbitcastOp>(op.getLoc(), resultType, sourcePart)
+          .getResult();
+    }
+    bool wideCarrier = resultLayout.hasLaneStride() &&
+                       resultLayout.getLaneStride() == 2 &&
+                       resultLogicalBits == 16 && physicalResultBits == 32;
+    if (wideCarrier) {
+      FailureOr<int64_t> lanes =
+          getDataLanesPerPart(resultVMIType.getElementType());
+      if (failed(lanes)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to derive group-slot trunci conversion lanes");
+      }
+      auto conversionType = VRegType::get(
+          rewriter.getContext(), *lanes, resultVMIType.getElementType());
+      Value converted = rewriter
+                            .create<VcvtOp>(op.getLoc(), conversionType,
+                                            sourcePart, activeSlotMask, nullptr,
+                                            sat, rewriter.getStringAttr("EVEN"))
+                            .getResult();
+      FailureOr<Value> carrier =
+          bitcastVReg(op.getLoc(), converted, resultType, rewriter);
+      if (failed(carrier)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to expose group-slot trunci result carrier");
+      }
+      return *carrier;
+    }
+    bool validNarrowResult = physicalResultBits == 16 || physicalResultBits == 8;
+    if (!validNarrowResult) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported group-slot trunci physical type");
+    }
+    StringAttr part = rewriter.getStringAttr(
+        sourceLogicalBits == 2 * resultLogicalBits ? "EVEN" : "P0");
+    return rewriter
+        .create<VcvtOp>(op.getLoc(), resultType, sourcePart, activeSlotMask,
+                        nullptr, sat, part)
+        .getResult();
+  }
+
   LogicalResult lowerGroupSlotTrunc(
       VMITruncIOp op, OpAdaptor adaptor, OneToNPatternRewriter &rewriter,
       VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
@@ -14479,57 +14536,13 @@ private:
                               .getResult());
         continue;
       }
-      unsigned physicalResultBits =
-          pto::getPTOStorageElemBitWidth(resultType.getElementType());
-      bool directCarrier =
-          resultLayout.hasLaneStride() && resultLayout.getLaneStride() == 4 &&
-          resultLogicalBits == 8 && physicalResultBits == 32;
-      if (directCarrier) {
-        results.push_back(sourcePart.getType() == resultType
-                              ? sourcePart
-                              : rewriter.create<VbitcastOp>(op.getLoc(), resultType,
-                                                             sourcePart)
-                                    .getResult());
-        continue;
+      FailureOr<Value> lowered = lowerGroupSlotTruncPart(
+          op, sourcePart, sourceType, resultType, resultVMIType, resultLayout,
+          sourceLogicalBits, resultLogicalBits, *activeSlotMask, sat, rewriter);
+      if (failed(lowered)) {
+        return failure();
       }
-      bool wideCarrier = resultLayout.hasLaneStride() &&
-                         resultLayout.getLaneStride() == 2 &&
-                         resultLogicalBits == 16 && physicalResultBits == 32;
-      if (wideCarrier) {
-        FailureOr<int64_t> lanes =
-            getDataLanesPerPart(resultVMIType.getElementType());
-        if (failed(lanes)) {
-          return rewriter.notifyMatchFailure(
-              op, "failed to derive group-slot trunci conversion lanes");
-        }
-        auto conversionType = VRegType::get(
-            rewriter.getContext(), *lanes, resultVMIType.getElementType());
-        Value converted = rewriter
-                              .create<VcvtOp>(op.getLoc(), conversionType,
-                                              sourcePart, *activeSlotMask,
-                                              nullptr, sat,
-                                              rewriter.getStringAttr("EVEN"))
-                              .getResult();
-        FailureOr<Value> carrier =
-            bitcastVReg(op.getLoc(), converted, resultType, rewriter);
-        if (failed(carrier)) {
-          return rewriter.notifyMatchFailure(
-              op, "failed to expose group-slot trunci result carrier");
-        }
-        results.push_back(*carrier);
-        continue;
-      }
-      bool validNarrowResult = physicalResultBits == 16 || physicalResultBits == 8;
-      if (!validNarrowResult) {
-        return rewriter.notifyMatchFailure(
-            op, "unsupported group-slot trunci physical type");
-      }
-      StringAttr part = rewriter.getStringAttr(
-          sourceLogicalBits == 2 * resultLogicalBits ? "EVEN" : "P0");
-      results.push_back(rewriter
-                            .create<VcvtOp>(op.getLoc(), resultType, sourcePart,
-                                            *activeSlotMask, nullptr, sat, part)
-                            .getResult());
+      results.push_back(*lowered);
     }
     finalizeResults(op, results, false, resultTypes, rewriter);
     return success();
