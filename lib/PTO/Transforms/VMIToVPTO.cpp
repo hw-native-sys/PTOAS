@@ -9533,6 +9533,49 @@ private:
     return success();
   }
 
+  LogicalResult lowerContiguousGroupStore(
+      VMIGroupStoreOp op, OpAdaptor adaptor, OneToNPatternRewriter &rewriter,
+      VMIVRegType valueVMIType, const VMIGroupStoreLayoutFact &fact,
+      Value destination, Value offset, Value rowStride) const {
+    int64_t lanesPerPart = 0;
+    int64_t groupCount = 0;
+    int64_t chunksPerGroup = 0;
+    if (failed(checkContiguousFullGroupChunks(
+            op, valueVMIType, fact.groupSize, &lanesPerPart, &groupCount,
+            &chunksPerGroup, rewriter))) {
+      return failure();
+    }
+    ValueRange valueParts = adaptor.getValue();
+    bool hasExpectedArity = static_cast<int64_t>(valueParts.size()) ==
+                            groupCount * chunksPerGroup;
+    if (!hasExpectedArity) {
+      return rewriter.notifyMatchFailure(op, "group_store arity mismatch");
+    }
+    for (auto [index, value] : llvm::enumerate(valueParts)) {
+      auto vregType = dyn_cast<VRegType>(value.getType());
+      if (!vregType) {
+        return rewriter.notifyMatchFailure(op,
+                                           "group_store value must be vreg");
+      }
+      FailureOr<Value> mask =
+          createAllTrueMaskForVReg(op.getLoc(), vregType, rewriter);
+      if (failed(mask)) {
+        return rewriter.notifyMatchFailure(
+            op, "unsupported element type for group_store mask");
+      }
+      int64_t group = index / chunksPerGroup;
+      int64_t chunkInGroup = index % chunksPerGroup;
+      Value chunkOffset = createGroupChunkOffset(
+          op.getLoc(), offset, rowStride, group, chunkInGroup * lanesPerPart,
+          rewriter);
+      rewriter.create<VstsOp>(op.getLoc(), /*updated_base=*/Type{}, value,
+                              destination, chunkOffset, /*dist=*/nullptr,
+                              *mask);
+    }
+    rewriter.eraseOp(op);
+    return success();
+  }
+
 public:
   LogicalResult
   matchAndRewrite(VMIGroupStoreOp op, OpAdaptor adaptor,
@@ -10002,10 +10045,6 @@ public:
       return success();
     }
 
-    int64_t lanesPerPart = 0;
-    int64_t groupCount = 0;
-    int64_t chunksPerGroup = 0;
-
     int64_t d2LanesPerPart = 0;
     int64_t d2GroupCount = 0;
     int64_t d2ChunksPerGroupPerPart = 0;
@@ -10019,37 +10058,9 @@ public:
           *rowStride);
     }
 
-    if (failed(checkContiguousFullGroupChunks(op, valueVMIType, fact->groupSize,
-                                              &lanesPerPart, &groupCount,
-                                              &chunksPerGroup, rewriter)))
-      return failure();
-
-    ValueRange valueParts = adaptor.getValue();
-    if (static_cast<int64_t>(valueParts.size()) != groupCount * chunksPerGroup)
-      return rewriter.notifyMatchFailure(op, "group_store arity mismatch");
-
-    for (auto [index, value] : llvm::enumerate(valueParts)) {
-      auto vregType = dyn_cast<VRegType>(value.getType());
-      if (!vregType)
-        return rewriter.notifyMatchFailure(op,
-                                           "group_store value must be vreg");
-      FailureOr<Value> mask =
-          createAllTrueMaskForVReg(op.getLoc(), vregType, rewriter);
-      if (failed(mask))
-        return rewriter.notifyMatchFailure(
-            op, "unsupported element type for group_store mask");
-      int64_t group = index / chunksPerGroup;
-      int64_t chunkInGroup = index % chunksPerGroup;
-      Value chunkOffset =
-          createGroupChunkOffset(op.getLoc(), *offset, *rowStride, group,
-                                 chunkInGroup * lanesPerPart, rewriter);
-      rewriter.create<VstsOp>(op.getLoc(),
-                              /*updated_base=*/Type{}, value, *destination,
-                              chunkOffset, /*dist=*/nullptr, *mask);
-    }
-
-    rewriter.eraseOp(op);
-    return success();
+    return lowerContiguousGroupStore(
+        op, adaptor, rewriter, valueVMIType, *fact, *destination, *offset,
+        *rowStride);
   }
 };
 
