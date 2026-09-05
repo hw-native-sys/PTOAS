@@ -10755,6 +10755,14 @@ private:
         .getResult();
   }
 
+  void emitPackedByteDirectStore(
+      VMIGroupStoreOp op, OneToNPatternRewriter &rewriter, Value merged,
+      Value destination, Value groupOffset, Value storeMask) const {
+    rewriter.create<VstsOp>(op.getLoc(), /*updated_base=*/Type{}, merged,
+                            destination, groupOffset,
+                            rewriter.getStringAttr("PK4_B32"), storeMask);
+  }
+
   LogicalResult lowerPackedByteSlots8(
       VMIGroupStoreOp op, OneToNPatternRewriter &rewriter,
       ValueRange valueParts, VMIVRegType valueVMIType, VMILayoutAttr layout,
@@ -10821,9 +10829,8 @@ private:
       Value storeMask = std::get<1>(*block);
       Value groupOffset = std::get<2>(*block);
       if (useDirectPack4) {
-        rewriter.create<VstsOp>(op.getLoc(), /*updated_base=*/Type{}, merged,
-                                destination, groupOffset,
-                                rewriter.getStringAttr("PK4_B32"), storeMask);
+        emitPackedByteDirectStore(op, rewriter, merged, destination,
+                                  groupOffset, storeMask);
         continue;
       }
       FailureOr<Value> statefulValue = buildPackedByteStatefulValue(
@@ -10832,7 +10839,8 @@ private:
         return failure();
       }
       statefulValues.push_back(*statefulValue);
-      statefulAdvances.push_back(activeGroups);
+      statefulAdvances.push_back(
+          std::min<int64_t>(32, numGroups - blockStart));
     }
     if (!useDirectPack4 &&
         failed(emitPackedByteStoreStream(op, rewriter, destination, offset,

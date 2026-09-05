@@ -2104,6 +2104,16 @@ stream advance、诊断和 direct/fallback 语义不变。增量 `check_changed_
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_layout_assignment_group_store_slots1_unit_stride.pto` 完整 lowering pipeline exit=0。
 
+# packed-byte group store direct 发射职责整改
+
+本轮在 `OneToNVMIGroupStoreOpPattern::lowerPackedByteSlots8` 中引入
+`emitPackedByteDirectStore`，将 direct `PK4_B32` 的单 block `VstsOp` 发射抽取为独立 helper；
+同时显式在 fallback stream 中按 block 计算 advance，保持原有 32-group block 步长语义。
+主函数继续负责 block 构造、direct/fallback 选择和 stream 收尾；保持 payload、mask、offset、
+结果顺序、诊断和 direct/fallback 语义不变。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_layout_assignment_group_store_slots1_unit_stride.pto` 完整 lowering pipeline exit=0。
+
 # contiguous group store 单 chunk 发射职责整改
 
 本轮在 `OneToNVMIGroupStoreOpPattern::lowerContiguousGroupStore` 中引入
