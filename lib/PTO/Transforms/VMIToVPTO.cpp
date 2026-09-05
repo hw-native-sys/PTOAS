@@ -7617,6 +7617,36 @@ struct OneToNVMIGroupLoadOpPattern : OneToNOpConversionPattern<VMIGroupLoadOp> {
   using OneToNOpConversionPattern<VMIGroupLoadOp>::OneToNOpConversionPattern;
 
 private:
+  LogicalResult lowerContiguousUnitStride(
+      VMIGroupLoadOp op, OneToNPatternRewriter &rewriter, Value source,
+      Value offset, VMIVRegType resultVMIType, ArrayRef<Type> resultTypes) const {
+    FailureOr<int64_t> lanesPerPart =
+        getDataLanesPerPart(resultVMIType.getElementType());
+    if (failed(lanesPerPart)) {
+      return rewriter.notifyMatchFailure(
+          op, "contiguous group_load requires known physical lanes");
+    }
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (auto [index, resultType] : llvm::enumerate(resultTypes)) {
+      if (!isa<VRegType>(resultType)) {
+        return rewriter.notifyMatchFailure(
+            op, "contiguous group_load result must be vreg");
+      }
+      Value chunkOffset = createChunkOffset(
+          op.getLoc(), offset, static_cast<int64_t>(index) * *lanesPerPart,
+          rewriter);
+      results.push_back(rewriter
+                            .create<VldsOp>(op.getLoc(), resultType,
+                                            /*updated_base=*/Type{}, source,
+                                            chunkOffset, /*dist=*/nullptr)
+                            .getResult());
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
   LogicalResult lowerBlockDeinterleaved(
       VMIGroupLoadOp op, OneToNPatternRewriter &rewriter, Value source,
       Value offset, Value rowStride, VMIVRegType resultVMIType,
@@ -7763,37 +7793,13 @@ public:
       std::optional<int64_t> constantRowStride =
           getConstantIndexValue(op.getRowStride());
       if (constantRowStride && *constantRowStride == *groupSize) {
-        FailureOr<int64_t> lanesPerPart =
-            getDataLanesPerPart(resultVMIType.getElementType());
-        if (failed(lanesPerPart))
-          return rewriter.notifyMatchFailure(
-              op, "contiguous group_load requires known physical lanes");
-
         FailureOr<SmallVector<Type>> maybe_resultTypes =
             getConvertedResultTypes(op, 0, *this->getTypeConverter());
         if (failed(maybe_resultTypes))
           return failure();
         SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-        SmallVector<Value> results;
-        results.reserve(resultTypes.size());
-        for (auto [index, resultType] : llvm::enumerate(resultTypes)) {
-          auto vregType = dyn_cast<VRegType>(resultType);
-          if (!vregType)
-            return rewriter.notifyMatchFailure(
-                op, "contiguous group_load result must be vreg");
-          Value chunkOffset = createChunkOffset(
-              op.getLoc(), *offset, static_cast<int64_t>(index) * *lanesPerPart,
-              rewriter);
-          results.push_back(rewriter
-                                .create<VldsOp>(op.getLoc(), resultType,
-                                                /*updated_base=*/Type{},
-                                                *source, chunkOffset,
-                                                /*dist=*/nullptr)
-                                .getResult());
-        }
-        replaceOpWithFlatConvertedValues(rewriter, op, results,
-                                         *this->getTypeConverter());
-        return success();
+        return lowerContiguousUnitStride(
+            op, rewriter, *source, *offset, resultVMIType, resultTypes);
       }
     }
 
