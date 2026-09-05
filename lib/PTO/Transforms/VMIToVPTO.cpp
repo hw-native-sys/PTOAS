@@ -7764,6 +7764,43 @@ struct OneToNVMIExpandLoadOpPattern
 struct OneToNVMIStoreOpPattern : OneToNOpConversionPattern<VMIStoreOp> {
   using OneToNOpConversionPattern<VMIStoreOp>::OneToNOpConversionPattern;
 
+  static LogicalResult emitLaneStrideStore(
+      VMIStoreOp op, Value destination, Value offset, ValueRange valueParts,
+      VMIVRegType valueVMIType, StringRef laneStrideDist,
+      StringRef maskGranularity, OneToNPatternRewriter &rewriter) {
+    int64_t semanticOffset = 0;
+    for (auto [index, value] : llvm::enumerate(valueParts)) {
+      (void)index;
+      auto vregType = dyn_cast<VRegType>(value.getType());
+      if (!vregType) {
+        return rewriter.notifyMatchFailure(op, "store value must be vreg");
+      }
+      FailureOr<int64_t> activeLanes =
+          getActiveDataLanesInPhysicalChunk(valueVMIType, index);
+      if (failed(activeLanes)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to compute lane_stride store active lanes");
+      }
+      if (*activeLanes == 0) {
+        continue;
+      }
+      auto maskType = MaskType::get(rewriter.getContext(), maskGranularity);
+      FailureOr<Value> mask = createPrefixMaskForActiveLanes(
+          op.getLoc(), maskType, *activeLanes, rewriter);
+      if (failed(mask)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to create lane_stride store mask");
+      }
+      Value chunkOffset =
+          createChunkOffset(op.getLoc(), offset, semanticOffset, rewriter);
+      rewriter.create<VstsOp>(op.getLoc(), /*updated_base=*/Type{}, value,
+                              destination, chunkOffset,
+                              rewriter.getStringAttr(laneStrideDist), *mask);
+      semanticOffset += *activeLanes;
+    }
+    return success();
+  }
+
   LogicalResult
   matchAndRewrite(VMIStoreOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -7801,31 +7838,10 @@ struct OneToNVMIStoreOpPattern : OneToNOpConversionPattern<VMIStoreOp> {
       if (!maskGranularity)
         return rewriter.notifyMatchFailure(
             op, "unsupported lane_stride store mask granularity");
-      int64_t semanticOffset = 0;
-      for (auto [index, value] : llvm::enumerate(valueParts)) {
-        auto vregType = dyn_cast<VRegType>(value.getType());
-        if (!vregType)
-          return rewriter.notifyMatchFailure(op, "store value must be vreg");
-        FailureOr<int64_t> activeLanes =
-            getActiveDataLanesInPhysicalChunk(valueVMIType, index);
-        if (failed(activeLanes))
-          return rewriter.notifyMatchFailure(
-              op, "failed to compute lane_stride store active lanes");
-        if (*activeLanes == 0)
-          continue;
-        auto maskType = MaskType::get(rewriter.getContext(), *maskGranularity);
-        FailureOr<Value> mask = createPrefixMaskForActiveLanes(
-            op.getLoc(), maskType, *activeLanes, rewriter);
-        if (failed(mask))
-          return rewriter.notifyMatchFailure(
-              op, "failed to create lane_stride store mask");
-        Value chunkOffset =
-            createChunkOffset(op.getLoc(), *offset, semanticOffset, rewriter);
-        rewriter.create<VstsOp>(op.getLoc(),
-                                /*updated_base=*/Type{}, value, *destination,
-                                chunkOffset,
-                                rewriter.getStringAttr(*laneStrideDist), *mask);
-        semanticOffset += *activeLanes;
+      if (failed(emitLaneStrideStore(
+              op, *destination, *offset, valueParts, valueVMIType,
+              *laneStrideDist, *maskGranularity, rewriter))) {
+        return failure();
       }
       rewriter.eraseOp(op);
       return success();
