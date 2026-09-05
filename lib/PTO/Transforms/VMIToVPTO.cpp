@@ -6518,6 +6518,7 @@ struct OneToNVMIConstantMaskOpPattern
     if (resultArityMismatch) {
       return rewriter.notifyMatchFailure(
           op, "constant_mask physical result count mismatch");
+    }
     replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
     return success();
   }
