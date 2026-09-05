@@ -3439,6 +3439,73 @@ FailureOr<Value> materializeDynamicGroupMaskChunk(
   return *paddedPredicate;
 }
 
+struct DynamicGroupMaskPlan {
+  VMILayoutAttr layout;
+  int64_t factor;
+  int64_t blockElems;
+  int64_t lanesPerPart;
+  int64_t arity;
+};
+
+static FailureOr<DynamicGroupMaskPlan> buildDynamicGroupMaskPlan(
+    VMICreateGroupMaskOp op, VMIMaskType resultVMIType, TypeRange resultTypes,
+    std::string *reason) {
+  auto fail = [&reason](const Twine &message)
+      -> FailureOr<DynamicGroupMaskPlan> {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  VMILayoutAttr layout = resultVMIType.getLayoutAttr();
+  if (!layout) {
+    return fail("dynamic create_group_mask requires assigned layout");
+  }
+  bool unsupportedLaneStride = layout.getLaneStride() != 1;
+  if (unsupportedLaneStride) {
+    return fail("dynamic create_group_mask requires lane_stride=1 layout");
+  }
+  bool unsupportedMaskGranularity = resultVMIType.getGranularity() != "b32";
+  if (unsupportedMaskGranularity) {
+    return fail("dynamic create_group_mask currently requires b32 granularity");
+  }
+  int64_t numGroups = op.getNumGroupsAttr().getInt();
+  int64_t groupSize = op.getGroupSizeAttr().getInt();
+  if (numGroups <= 0 || groupSize <= 0 ||
+      resultVMIType.getElementCount() != numGroups * groupSize) {
+    return fail("dynamic create_group_mask requires result lane count to match "
+                "num_groups * group_size");
+  }
+  FailureOr<StringRef> physicalGranularity =
+      getVMIMaskPhysicalGranularity(resultVMIType);
+  FailureOr<int64_t> lanesPerPart =
+      failed(physicalGranularity)
+          ? FailureOr<int64_t>(failure())
+          : getMaskLanesPerPart(*physicalGranularity);
+  FailureOr<int64_t> arity = getVMIPhysicalArity(resultVMIType);
+  bool missingPhysicalShape = failed(lanesPerPart) || failed(arity) || *arity < 1;
+  if (missingPhysicalShape) {
+    return fail("dynamic create_group_mask requires computable physical mask chunks");
+  }
+  bool resultArityMismatch = static_cast<int64_t>(resultTypes.size()) != *arity;
+  if (resultArityMismatch) {
+    return fail("dynamic create_group_mask physical result count mismatch");
+  }
+  if (!getPowerOfTwoLog2(groupSize)) {
+    return fail("dynamic create_group_mask currently requires power-of-two group_size");
+  }
+  int64_t factor = layout.isDenseSplit() ? layout.getFactor() : 1;
+  FailureOr<int64_t> blockElems = getVMILayoutBlockElems(resultVMIType);
+  if (factor <= 0 || failed(blockElems) || *blockElems <= 0 ||
+      static_cast<int64_t>(resultTypes.size()) % factor != 0) {
+    return fail("dynamic create_group_mask physical result count does not match layout factor");
+  }
+  if (!getPowerOfTwoLog2(*blockElems)) {
+    return fail("dynamic create_group_mask requires a power-of-two physical block element count");
+  }
+  return DynamicGroupMaskPlan{layout, factor, *blockElems, *lanesPerPart, *arity};
+}
+
 static FailureOr<SmallVector<Value>> materializeDynamicGroupMaskChunks(
     VMICreateGroupMaskOp op, Value activeI32, VMIMaskType resultVMIType,
     TypeRange resultTypes, int64_t factor, int64_t blockElems,
@@ -3469,62 +3536,19 @@ FailureOr<SmallVector<Value>> materializeDynamicGroupMaskForType(
     return failure();
   };
 
-  VMILayoutAttr layout = resultVMIType.getLayoutAttr();
-  if (!layout) {
-    return fail("dynamic create_group_mask requires assigned layout");
-  }
-  bool unsupportedLaneStride = layout.getLaneStride() != 1;
-  if (unsupportedLaneStride) {
-    return fail("dynamic create_group_mask requires lane_stride=1 layout");
-  }
-  bool unsupportedMaskGranularity = resultVMIType.getGranularity() != "b32";
-  if (unsupportedMaskGranularity) {
-    return fail("dynamic create_group_mask currently requires b32 "
-                "granularity");
-  }
-
-  int64_t numGroups = op.getNumGroupsAttr().getInt();
-  int64_t groupSize = op.getGroupSizeAttr().getInt();
-  if (numGroups <= 0 || groupSize <= 0 ||
-      resultVMIType.getElementCount() != numGroups * groupSize)
-    return fail("dynamic create_group_mask requires result lane count to "
-                "match num_groups * group_size");
-
-  FailureOr<StringRef> physicalGranularity =
-      getVMIMaskPhysicalGranularity(resultVMIType);
-  FailureOr<int64_t> lanesPerPart =
-      failed(physicalGranularity)
-          ? FailureOr<int64_t>(failure())
-          : getMaskLanesPerPart(*physicalGranularity);
-  FailureOr<int64_t> arity = getVMIPhysicalArity(resultVMIType);
-  if (failed(lanesPerPart) || failed(arity) || *arity < 1)
-    return fail("dynamic create_group_mask requires computable physical "
-                "mask chunks");
-  if (static_cast<int64_t>(resultTypes.size()) != *arity)
-    return fail("dynamic create_group_mask physical result count mismatch");
-
-  std::optional<int64_t> groupShift = getPowerOfTwoLog2(groupSize);
-  if (!groupShift)
-    return fail("dynamic create_group_mask currently requires power-of-two "
-                "group_size");
-
-  int64_t factor = layout.isDenseSplit() ? layout.getFactor() : 1;
-  FailureOr<int64_t> blockElems = getVMILayoutBlockElems(resultVMIType);
-  if (factor <= 0 || failed(blockElems) || *blockElems <= 0 ||
-      static_cast<int64_t>(resultTypes.size()) % factor != 0)
-    return fail("dynamic create_group_mask physical result count does not "
-                "match layout factor");
-  if (!getPowerOfTwoLog2(*blockElems))
-    return fail("dynamic create_group_mask requires a power-of-two physical "
-                "block element count");
-
   Location loc = op.getLoc();
+  FailureOr<DynamicGroupMaskPlan> plan =
+      buildDynamicGroupMaskPlan(op, resultVMIType, resultTypes, nullptr);
+  if (failed(plan)) {
+    return failure();
+  }
   Value activeI32 =
-      clampDynamicActiveLanes(loc, activeElemsPerGroup, groupSize, rewriter);
+      clampDynamicActiveLanes(loc, activeElemsPerGroup,
+                              op.getGroupSizeAttr().getInt(), rewriter);
 
   return materializeDynamicGroupMaskChunks(
-      op, activeI32, resultVMIType, resultTypes, factor, *blockElems,
-      *lanesPerPart, rewriter);
+      op, activeI32, resultVMIType, resultTypes, plan->factor,
+      plan->blockElems, plan->lanesPerPart, rewriter);
 }
 
 std::optional<int64_t> getPrefixActiveLaneCount(ArrayRef<int8_t> activeLanes) {

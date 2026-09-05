@@ -971,3 +971,10 @@ contiguous value/mask、full physical chunk 和单 chunk arity 契约抽取为
 的 result 或 destination 专属约束；支持矩阵和诊断语义保持不变。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；已有 mask/layout
 lowering 回归 exit=0。
+本轮将动态 `create_group_mask` 的全局契约校验抽取为
+`DynamicGroupMaskPlan`/`buildDynamicGroupMaskPlan`，集中表达 layout、factor、block
+元素数、physical lanes 和 arity。`materializeDynamicGroupMaskForType` 现在只负责
+active lane clamp 与按 plan 调用 chunk materializer；单 chunk 的 index/比较/padding
+逻辑保持不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_to_vpto_create_group_mask_block8_dynamic.pto` 完整
+lowering 成功。
