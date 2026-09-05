@@ -227,6 +227,14 @@ mask 的语义差异只存在于 active-lane 判定。补齐该批代码及 scal
 索引判定；失败原因仍通过原有 `reason` 通道传播。为满足本文件的控制语句规范，复合
 `FailureOr` 条件拆成具名状态并保持原短路语义；增量合规检查和 `git diff --check` 均通过。
 
+本轮将相邻 mask granularity 转换按方向拆分为
+`materializeWideningMaskGranularityPart` 与 `materializeNarrowingMaskGranularityPart`
+两个职责明确的 helper，分别封装 `punpack` 展开和 `ppack`/`por` 合并；外层转换只负责
+每个 layout part 的 chunk 计数、方向选择及最终 arity 校验，保持多步转换的顺序和错误
+诊断不变。`vmi_to_vpto_ensure_mask_granularity.pto` 回归通过；多步/identity 相关 case
+仍受测试自身的 pack/unpack 顺序 invariant 约束。增量合规检查与 `git diff --check`
+均通过。
+
 本轮进一步将动态 `create_group_mask` 的单个物理 chunk 生成抽取为
 `materializeDynamicGroupMaskChunk`。辅助函数负责 index/块内 lane 推导、active-lane
 比较、padding mask 合并和结果类型检查；外层 `materializeDynamicGroupMaskForType`

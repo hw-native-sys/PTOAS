@@ -5025,6 +5025,91 @@ LogicalResult checkSupportedMaskGranularityMaterialization(
   return success();
 }
 
+FailureOr<SmallVector<Value>> materializeWideningMaskGranularityPart(
+    Operation *op, MaskType resultMaskType, ValueRange sourceParts,
+    int64_t sourceOffset, int64_t sourceChunks, int64_t resultChunks,
+    PatternRewriter &rewriter) {
+  SmallVector<Value> results;
+  auto partAttr = StringAttr::get(op->getContext(), "LOWER");
+  auto higherAttr = StringAttr::get(op->getContext(), "HIGHER");
+  int64_t produced = 0;
+  for (int64_t chunk = 0; chunk < sourceChunks && produced < resultChunks;
+       ++chunk) {
+    Value source = sourceParts[sourceOffset + chunk];
+    results.push_back(rewriter
+                          .create<PunpackOp>(op->getLoc(), resultMaskType,
+                                             source, partAttr)
+                          .getResult());
+    ++produced;
+    if (produced < resultChunks) {
+      results.push_back(rewriter
+                            .create<PunpackOp>(op->getLoc(), resultMaskType,
+                                               source, higherAttr)
+                            .getResult());
+      ++produced;
+    }
+  }
+  if (produced != resultChunks) {
+    (void)rewriter.notifyMatchFailure(
+        op, "widening mask granularity conversion produced the wrong number "
+            "of result chunks");
+    return failure();
+  }
+  return results;
+}
+
+FailureOr<SmallVector<Value>> materializeNarrowingMaskGranularityPart(
+    Operation *op, MaskType resultMaskType, ValueRange sourceParts,
+    int64_t sourceOffset, int64_t sourceChunks, int64_t resultChunks,
+    PatternRewriter &rewriter) {
+  auto fail = [&op, &rewriter](const Twine &message)
+      -> FailureOr<SmallVector<Value>> {
+    (void)rewriter.notifyMatchFailure(op, message);
+    return failure();
+  };
+  auto lowerAttr = StringAttr::get(op->getContext(), "LOWER");
+  auto higherAttr = StringAttr::get(op->getContext(), "HIGHER");
+  SmallVector<Value> results;
+  Value allTrue;
+  int64_t consumed = 0;
+  for (int64_t chunk = 0; chunk < resultChunks; ++chunk) {
+    if (consumed >= sourceChunks) {
+      return fail("narrowing mask granularity conversion ran out of source "
+                  "chunks");
+    }
+    Value lowerSource = sourceParts[sourceOffset + consumed++];
+    Value packed = rewriter
+                       .create<PpackOp>(op->getLoc(), resultMaskType,
+                                        lowerSource, lowerAttr)
+                       .getResult();
+    if (consumed < sourceChunks) {
+      Value higherSource = sourceParts[sourceOffset + consumed++];
+      Value higher = rewriter
+                         .create<PpackOp>(op->getLoc(), resultMaskType,
+                                          higherSource, higherAttr)
+                         .getResult();
+      if (!allTrue) {
+        FailureOr<Value> mask =
+            createAllTrueMask(op->getLoc(), resultMaskType, rewriter);
+        if (failed(mask)) {
+          return fail("failed to create all-true mask for ppack merge");
+        }
+        allTrue = *mask;
+      }
+      packed = rewriter
+                   .create<PorOp>(op->getLoc(), resultMaskType, packed, higher,
+                                  allTrue)
+                   .getResult();
+    }
+    results.push_back(packed);
+  }
+  if (consumed != sourceChunks) {
+    return fail("narrowing mask granularity conversion left unused source "
+                "chunks");
+  }
+  return results;
+}
+
 FailureOr<SmallVector<Value>> materializeAdjacentMaskGranularityConversion(
     Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
     ValueRange sourceParts, PatternRewriter &rewriter) {
@@ -5045,7 +5130,6 @@ FailureOr<SmallVector<Value>> materializeAdjacentMaskGranularityConversion(
     return fail("source mask part count does not match source VMI type");
 
   MLIRContext *ctx = op->getContext();
-  auto partAttr = [&ctx](StringRef part) { return StringAttr::get(ctx, part); };
   auto resultMaskType = MaskType::get(ctx, resultType.getGranularity());
   SmallVector<Value> results;
 
@@ -5057,61 +5141,23 @@ FailureOr<SmallVector<Value>> materializeAdjacentMaskGranularityConversion(
       return fail("requires computable source/result chunks per layout part");
 
     if (resultRank > sourceRank) {
-      int64_t produced = 0;
-      for (int64_t chunk = 0; chunk < *sourceChunks && produced < *resultChunks;
-           ++chunk) {
-        Value source = sourceParts[sourceOffset + chunk];
-        results.push_back(rewriter
-                              .create<PunpackOp>(op->getLoc(), resultMaskType,
-                                                 source, partAttr("LOWER"))
-                              .getResult());
-        ++produced;
-        if (produced >= *resultChunks)
-          break;
-        results.push_back(rewriter
-                              .create<PunpackOp>(op->getLoc(), resultMaskType,
-                                                 source, partAttr("HIGHER"))
-                              .getResult());
-        ++produced;
+      FailureOr<SmallVector<Value>> partResults =
+          materializeWideningMaskGranularityPart(
+              op, resultMaskType, sourceParts, sourceOffset, *sourceChunks,
+              *resultChunks, rewriter);
+      if (failed(partResults)) {
+        return failure();
       }
-      if (produced != *resultChunks)
-        return fail("widening mask granularity conversion produced the wrong "
-                    "number of result chunks");
+      results.append(*partResults);
     } else {
-      Value allTrue;
-      int64_t consumed = 0;
-      for (int64_t chunk = 0; chunk < *resultChunks; ++chunk) {
-        if (consumed >= *sourceChunks)
-          return fail("narrowing mask granularity conversion ran out of "
-                      "source chunks");
-        Value lowerSource = sourceParts[sourceOffset + consumed++];
-        Value packed = rewriter
-                           .create<PpackOp>(op->getLoc(), resultMaskType,
-                                            lowerSource, partAttr("LOWER"))
-                           .getResult();
-        if (consumed < *sourceChunks) {
-          Value higherSource = sourceParts[sourceOffset + consumed++];
-          Value higher = rewriter
-                             .create<PpackOp>(op->getLoc(), resultMaskType,
-                                              higherSource, partAttr("HIGHER"))
-                             .getResult();
-          if (!allTrue) {
-            FailureOr<Value> mask =
-                createAllTrueMask(op->getLoc(), resultMaskType, rewriter);
-            if (failed(mask))
-              return fail("failed to create all-true mask for ppack merge");
-            allTrue = *mask;
-          }
-          packed = rewriter
-                       .create<PorOp>(op->getLoc(), resultMaskType, packed,
-                                      higher, allTrue)
-                       .getResult();
-        }
-        results.push_back(packed);
+      FailureOr<SmallVector<Value>> partResults =
+          materializeNarrowingMaskGranularityPart(
+              op, resultMaskType, sourceParts, sourceOffset, *sourceChunks,
+              *resultChunks, rewriter);
+      if (failed(partResults)) {
+        return failure();
       }
-      if (consumed != *sourceChunks)
-        return fail("narrowing mask granularity conversion left unused source "
-                    "chunks");
+      results.append(*partResults);
     }
 
     sourceOffset += *sourceChunks;
