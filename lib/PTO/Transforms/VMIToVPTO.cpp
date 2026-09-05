@@ -12579,18 +12579,67 @@ template <typename SourceOp>
 struct OneToNVMICmpOpPattern : OneToNOpConversionPattern<SourceOp> {
   using OneToNOpConversionPattern<SourceOp>::OneToNOpConversionPattern;
 
+private:
+  FailureOr<Value> lowerPart(
+      SourceOp op, Value lhs, Value rhs, Type resultType,
+      const VPTOCmpMode &cmpMode,
+      OneToNPatternRewriter &rewriter) const {
+    auto maskType = dyn_cast<MaskType>(resultType);
+    auto lhsType = dyn_cast<VRegType>(lhs.getType());
+    const bool invalidPart =
+        !maskType || lhs.getType() != rhs.getType() || !lhsType;
+    if (invalidPart) {
+      rewriter.notifyMatchFailure(op, "physical cmp part type mismatch");
+      return failure();
+    }
+    FailureOr<Value> seedMask =
+        createAllTrueMask(op.getLoc(), maskType, rewriter);
+    if (failed(seedMask)) {
+      rewriter.notifyMatchFailure(
+          op, "unsupported mask type for all-true cmp seed");
+      return failure();
+    }
+    if (cmpMode.signedness) {
+      FailureOr<VRegType> carrierType =
+          getSignednessCarrierVRegType(lhsType, *cmpMode.signedness);
+      if (failed(carrierType)) {
+        rewriter.notifyMatchFailure(
+            op, "unsupported integer compare signedness carrier");
+        return failure();
+      }
+      FailureOr<Value> carrierLhs =
+          bitcastVReg(op.getLoc(), lhs, *carrierType, rewriter);
+      FailureOr<Value> carrierRhs =
+          bitcastVReg(op.getLoc(), rhs, *carrierType, rewriter);
+      const bool failedCarriers = failed(carrierLhs) || failed(carrierRhs);
+      if (failedCarriers) {
+        rewriter.notifyMatchFailure(
+            op, "failed to materialize integer compare signedness carrier");
+        return failure();
+      }
+      lhs = *carrierLhs;
+      rhs = *carrierRhs;
+    }
+    return rewriter
+        .create<VcmpOp>(op.getLoc(), resultType, lhs, rhs, *seedMask,
+                        rewriter.getStringAttr(cmpMode.mode))
+        .getResult();
+  }
+
+public:
   LogicalResult matchAndRewrite(
       SourceOp op,
       typename OneToNOpConversionPattern<SourceOp>::OpAdaptor adaptor,
       OneToNPatternRewriter &rewriter) const override {
     std::optional<VPTOCmpMode> cmpMode =
         getVPTOCmpMode<SourceOp>(op.getPredicate());
-    if (!cmpMode)
+    if (!cmpMode) {
       return op.emitOpError()
              << kVMIDiagUnsupportedPrefix << "compare predicate "
              << op.getPredicate()
              << " cannot be lowered to pto.vcmp; supported predicates are "
              << getSupportedComparePredicateMessage<SourceOp>();
+    }
 
     ValueRange lhsParts = adaptor.getLhs();
     ValueRange rhsParts = adaptor.getRhs();
@@ -12600,45 +12649,22 @@ struct OneToNVMICmpOpPattern : OneToNOpConversionPattern<SourceOp> {
       return failure();
     }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-    if (lhsParts.size() != rhsParts.size() ||
-        lhsParts.size() != resultTypes.size())
+    const bool invalidArity = lhsParts.size() != rhsParts.size() ||
+                              lhsParts.size() != resultTypes.size();
+    if (invalidArity) {
       return rewriter.notifyMatchFailure(op, "physical cmp arity mismatch");
+    }
 
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
     for (auto [lhs, rhs, resultType] :
          llvm::zip_equal(lhsParts, rhsParts, resultTypes)) {
-      auto maskType = dyn_cast<MaskType>(resultType);
-      auto lhsType = dyn_cast<VRegType>(lhs.getType());
-      if (!maskType || lhs.getType() != rhs.getType() || !lhsType)
-        return rewriter.notifyMatchFailure(op,
-                                           "physical cmp part type mismatch");
-      FailureOr<Value> seedMask =
-          createAllTrueMask(op.getLoc(), maskType, rewriter);
-      if (failed(seedMask))
-        return rewriter.notifyMatchFailure(
-            op, "unsupported mask type for all-true cmp seed");
-      if (cmpMode->signedness) {
-        FailureOr<VRegType> carrierType =
-            getSignednessCarrierVRegType(lhsType, *cmpMode->signedness);
-        if (failed(carrierType))
-          return rewriter.notifyMatchFailure(
-              op, "unsupported integer compare signedness carrier");
-        FailureOr<Value> carrierLhs =
-            bitcastVReg(op.getLoc(), lhs, *carrierType, rewriter);
-        FailureOr<Value> carrierRhs =
-            bitcastVReg(op.getLoc(), rhs, *carrierType, rewriter);
-        if (failed(carrierLhs) || failed(carrierRhs))
-          return rewriter.notifyMatchFailure(
-              op, "failed to materialize integer compare signedness carrier");
-        lhs = *carrierLhs;
-        rhs = *carrierRhs;
+      FailureOr<Value> result =
+          lowerPart(op, lhs, rhs, resultType, *cmpMode, rewriter);
+      if (failed(result)) {
+        return failure();
       }
-      results.push_back(rewriter
-                            .create<VcmpOp>(op.getLoc(), resultType, lhs, rhs,
-                                            *seedMask,
-                                            rewriter.getStringAttr(cmpMode->mode))
-                            .getResult());
+      results.push_back(*result);
     }
 
     replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());

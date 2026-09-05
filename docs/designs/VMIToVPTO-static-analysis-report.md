@@ -1824,3 +1824,13 @@ all-true seed mask 构造、目标 mask unary op 发射和结果替换抽取为 
 原有诊断语义不变。增量 `check_changed_code.py` 结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_mask_logic.pto` lowering exit=0。
+
+# compare physical chunk lowering 职责整改
+
+本轮将模板 `OneToNVMICmpOpPattern::matchAndRewrite` 中 physical part 的 mask/type 合同、
+all-true seed mask、整数 signedness carrier 物化和 `VcmpOp` 发射抽取为 `lowerPart`。入口
+继续负责 predicate 支持检查、converted result type 获取和 physical arity 校验；保持
+predicate mode、signedness bitcast、结果顺序、mask 语义和原有诊断不变，并补齐控制流
+大括号。增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；现有 compare cases 在既有 VMI pack/unpack pipeline invariant
+处提前失败，未进入本轮 helper，不能将该失败归因于本轮改动。
