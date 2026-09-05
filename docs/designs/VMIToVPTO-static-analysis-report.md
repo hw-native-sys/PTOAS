@@ -1066,3 +1066,8 @@ part 校验和宽度/布局分支中存在多处缺失闭合大括号，已补�
 避免后续 narrowing 逻辑错误地落入前置失败条件，保持原有 group-slot、lane-stride、
 NOSAT alias 及 factor=2/4 lowering 语义不变。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
+
+本轮继续复核 truncation 与 verifier 代码时，补齐 `trunci` physical type 检查遗漏的
+控制流边界，并将 bitcast verifier 的元素类型比较改为具名布尔条件，避免静态规则将
+多行条件误判为无大括号控制语句。该修复不改变支持矩阵、诊断或 lowering 结果。增量
+合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。

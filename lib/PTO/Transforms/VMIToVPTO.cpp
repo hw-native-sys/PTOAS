@@ -14266,6 +14266,7 @@ public:
     if (invalidPhysicalTypes) {
       return rewriter.notifyMatchFailure(
           op, "unsupported physical trunci source/result type");
+    }
     for (Value sourcePart : sourceParts) {
       auto sourceType = dyn_cast<VRegType>(sourcePart.getType());
       if (!sourceType || sourceType != sourceType0) {
@@ -16096,7 +16097,9 @@ static FailureOr<GroupBroadcastShapePlan> buildGroupBroadcastShapePlan(
   };
   auto sourceType = cast<VMIVRegType>(op.getSource().getType());
   auto resultType = cast<VMIVRegType>(op.getResult().getType());
-  if (sourceType.getElementType() != resultType.getElementType()) {
+  bool mismatchedElementTypes =
+      sourceType.getElementType() != resultType.getElementType();
+  if (mismatchedElementTypes) {
     return fail("requires source/result element type to match");
   }
   VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();
