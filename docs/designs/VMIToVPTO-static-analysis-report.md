@@ -699,6 +699,15 @@ lowering plan 分类以及其它 two/four-block 与 row-reduction 路径。该�
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_group_reduce_addi_i16.pto` 完成完整 lowering 回归。
 
+本轮将 `OneToNVMICreateGroupMaskOpPattern::matchAndRewrite` 的 dynamic 与 constant
+active-lanes 路径分别抽取为 `lowerDynamicMask` 和 `lowerConstantMask`。dynamic helper
+统一负责单值 active 参数、deinterleaved 到 contiguous 的中间物化及最终 layout 转换；
+constant helper 统一负责 materialization 结果、mask 类型和 physical arity 收尾。主
+pattern 现在仅负责结果类型转换、factor-4 block 特例和路径分派，保持原有 layout 转换
+顺序、结果顺序与诊断语义不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_to_vpto_create_group_mask_block8_dynamic.pto`
+lowering exit=0。
+
 本轮继续将 two-block `deinterleaved=2` 的 `vcgadd`/combine 路径抽取为
 `lowerTwoBlock`。该 helper 独立维护双物理块 arity、source/mask/result 类型一致性、
 尾部 active-group mask 和两路 group-reduce 后的 combine；主 pattern 仅负责 plan 分派。

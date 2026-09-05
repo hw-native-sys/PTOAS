@@ -7166,6 +7166,95 @@ struct OneToNVMICreateGroupMaskOpPattern
       VMICreateGroupMaskOp>::OneToNOpConversionPattern;
 
 private:
+  LogicalResult lowerDynamicMask(
+      VMICreateGroupMaskOp op, OpAdaptor adaptor,
+      OneToNPatternRewriter &rewriter, VMIMaskType resultVMIType,
+      VMILayoutAttr resultLayout, ArrayRef<Type> resultTypes) const {
+    FailureOr<Value> active = getSingleValue(
+        op, adaptor.getActiveElemsPerGroup(),
+        "create_group_mask active_elems_per_group must convert to one value",
+        rewriter);
+    if (failed(active)) {
+      return failure();
+    }
+
+    if (resultLayout && resultLayout.isDeinterleaved()) {
+      VMILayoutAttr contiguousLayout =
+          VMILayoutAttr::getContiguous(op.getContext());
+      auto contiguousType = VMIMaskType::get(
+          op.getContext(), resultVMIType.getElementCount(),
+          resultVMIType.getGranularity(), contiguousLayout);
+      FailureOr<SmallVector<Value>> contiguousParts =
+          materializeDynamicGroupMaskForType(op, *active, contiguousType,
+                                             resultTypes, rewriter);
+      if (failed(contiguousParts)) {
+        return failure();
+      }
+      FailureOr<SmallVector<Value>> results = materializeMaskLayoutConversion(
+          op, *contiguousParts, resultTypes, contiguousLayout, resultLayout,
+          rewriter);
+      if (failed(results)) {
+        return failure();
+      }
+      replaceOpWithFlatConvertedValues(rewriter, op, *results,
+                                       *this->getTypeConverter());
+      return success();
+    }
+
+    FailureOr<SmallVector<Value>> results = materializeDynamicGroupMaskForType(
+        op, *active, resultVMIType, resultTypes, rewriter);
+    if (failed(results)) {
+      return failure();
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, *results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
+  LogicalResult lowerConstantMask(
+      VMICreateGroupMaskOp op, OneToNPatternRewriter &rewriter,
+      ArrayRef<Type> resultTypes) const {
+    std::string reason;
+    FailureOr<SmallVector<ConstantMaskChunkMaterialization>> materializations =
+        computeGroupMaskMaterialization(op, &reason);
+    if (failed(materializations)) {
+      return rewriter.notifyMatchFailure(
+          op, Twine("create_group_mask ") + reason);
+    }
+
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (const ConstantMaskChunkMaterialization &materialization :
+         *materializations) {
+      bool tooManyMasks = results.size() >= resultTypes.size();
+      if (tooManyMasks) {
+        return rewriter.notifyMatchFailure(
+            op, "create_group_mask produced too many physical masks");
+      }
+      auto maskType = dyn_cast<MaskType>(resultTypes[results.size()]);
+      if (!maskType) {
+        return rewriter.notifyMatchFailure(
+            op, "create_group_mask result must be mask");
+      }
+      FailureOr<Value> mask = materializeConstantMaskChunk(
+          op.getLoc(), maskType, materialization.activeLanes, rewriter);
+      if (failed(mask)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to materialize create_group_mask physical chunk");
+      }
+      results.push_back(*mask);
+    }
+
+    bool resultArityMismatch = results.size() != resultTypes.size();
+    if (resultArityMismatch) {
+      return rewriter.notifyMatchFailure(
+          op, "create_group_mask physical result count mismatch");
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
   LogicalResult lowerFactor4Block(
       VMICreateGroupMaskOp op, OpAdaptor adaptor,
       OneToNPatternRewriter &rewriter, VMIMaskType resultVMIType,
@@ -7267,77 +7356,10 @@ public:
     auto activeConstant =
         op.getActiveElemsPerGroup().getDefiningOp<arith::ConstantOp>();
     if (!activeConstant) {
-      FailureOr<Value> active = getSingleValue(
-          op, adaptor.getActiveElemsPerGroup(),
-          "create_group_mask active_elems_per_group must convert to one value",
-          rewriter);
-      if (failed(active))
-        return failure();
-
-      VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
-      if (resultLayout && resultLayout.isDeinterleaved()) {
-        VMILayoutAttr contiguousLayout =
-            VMILayoutAttr::getContiguous(op.getContext());
-        auto contiguousType =
-            VMIMaskType::get(op.getContext(), resultVMIType.getElementCount(),
-                             resultVMIType.getGranularity(), contiguousLayout);
-        FailureOr<SmallVector<Value>> contiguousParts =
-            materializeDynamicGroupMaskForType(op, *active, contiguousType,
-                                               resultTypes, rewriter);
-        if (failed(contiguousParts))
-          return failure();
-        FailureOr<SmallVector<Value>> results = materializeMaskLayoutConversion(
-            op, *contiguousParts, resultTypes, contiguousLayout, resultLayout,
-            rewriter);
-        if (failed(results))
-          return failure();
-        replaceOpWithFlatConvertedValues(rewriter, op, *results,
-                                         *this->getTypeConverter());
-        return success();
-      }
-
-      FailureOr<SmallVector<Value>> results =
-          materializeDynamicGroupMaskForType(op, *active, resultVMIType,
-                                             resultTypes, rewriter);
-      if (failed(results))
-        return failure();
-      replaceOpWithFlatConvertedValues(rewriter, op, *results, *this->getTypeConverter());
-      return success();
+      return lowerDynamicMask(op, adaptor, rewriter, resultVMIType,
+                              resultLayout, resultTypes);
     }
-
-    std::string reason;
-    FailureOr<SmallVector<ConstantMaskChunkMaterialization>> materializations =
-        computeGroupMaskMaterialization(op, &reason);
-    if (failed(materializations))
-      return rewriter.notifyMatchFailure(op,
-                                         Twine("create_group_mask ") + reason);
-
-    SmallVector<Value> results;
-    results.reserve(resultTypes.size());
-    for (const ConstantMaskChunkMaterialization &materialization :
-         *materializations) {
-      if (results.size() >= resultTypes.size())
-        return rewriter.notifyMatchFailure(
-            op, "create_group_mask produced too many physical masks");
-      auto maskType = dyn_cast<MaskType>(resultTypes[results.size()]);
-      if (!maskType)
-        return rewriter.notifyMatchFailure(
-            op, "create_group_mask result must be mask");
-      FailureOr<Value> mask = materializeConstantMaskChunk(
-          op.getLoc(), maskType, materialization.activeLanes, rewriter);
-      if (failed(mask))
-        return rewriter.notifyMatchFailure(
-            op, "failed to materialize create_group_mask physical chunk");
-      results.push_back(*mask);
-    }
-
-    bool resultArityMismatch = results.size() != resultTypes.size();
-    if (resultArityMismatch) {
-      return rewriter.notifyMatchFailure(
-          op, "create_group_mask physical result count mismatch");
-    }
-    replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
-    return success();
+    return lowerConstantMask(op, rewriter, resultTypes);
   }
 };
 
