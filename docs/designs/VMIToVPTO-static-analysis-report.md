@@ -1299,3 +1299,10 @@ selector context 和两阶段分派；selector cache、结果顺序、BRC/E2B/fa
 诊断保持不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；`vmi_layout_assignment_group_broadcast_load_e2b_b16.pto`
 lowering exit=0。
+本轮将 `OneToNVMIGroupReduceOpPattern::lowerContiguousRows` 的每 group/chunk
+row-reduce 与 combine 循环抽取为 `buildContiguousGroupReduceResults`。外层现在只
+负责 contiguous shape/类型契约、row result 类型准备及 slots=1/多 chunk 结果布局
+写回；累积顺序和 `PAT_VL1` combine mask 保持不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；group_reduce partial
+slots=8 case exit=0。其他两个 group-reduce case 在既有 VMI pack/unpack pipeline
+invariant 处提前失败，未进入本轮 lowering 路径。
