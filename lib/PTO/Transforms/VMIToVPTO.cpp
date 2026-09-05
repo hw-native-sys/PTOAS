@@ -13125,6 +13125,46 @@ private:
     return rewriter.create<VbitcastOp>(loc, resultType, vcvt).getResult();
   }
 
+  LogicalResult lowerLaneStride(
+      VMIExtFOp op, OneToNPatternRewriter &rewriter, ValueRange sourceParts,
+      ArrayRef<VRegType> resultTypes, Value mask, StringRef part,
+      bool resultIsPackedBF16x2, VRegType vcvtResultVRegType) const {
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (auto [sourcePart, resultType] :
+         llvm::zip_equal(sourceParts, resultTypes)) {
+      results.push_back(createVcvtResult(
+          op.getLoc(), resultType, sourcePart, mask, /*rnd=*/nullptr,
+          /*sat=*/nullptr, rewriter.getStringAttr(part),
+          resultIsPackedBF16x2, vcvtResultVRegType, rewriter));
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
+  LogicalResult lowerFactor(
+      VMIExtFOp op, OneToNPatternRewriter &rewriter, ValueRange sourceParts,
+      ArrayRef<VRegType> resultTypes, ArrayRef<StringRef> parts,
+      int64_t factor, Value mask, bool resultIsPackedBF16x2,
+      VRegType vcvtResultVRegType) const {
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (int64_t partIndex = 0; partIndex < factor; ++partIndex) {
+      for (auto [chunkIndex, sourcePart] : llvm::enumerate(sourceParts)) {
+        VRegType resultType =
+            resultTypes[partIndex * sourceParts.size() + chunkIndex];
+        results.push_back(createVcvtResult(
+            op.getLoc(), resultType, sourcePart, mask, /*rnd=*/nullptr,
+            /*sat=*/nullptr, rewriter.getStringAttr(parts[partIndex]),
+            resultIsPackedBF16x2, vcvtResultVRegType, rewriter));
+      }
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
 public:
 
   LogicalResult
@@ -13199,17 +13239,9 @@ public:
         return rewriter.notifyMatchFailure(op,
                                            "failed to build extf seed mask");
 
-      SmallVector<Value> results;
-      results.reserve(resultTypes.size());
-      for (auto [sourcePart, resultType] :
-           llvm::zip_equal(sourceParts, resultVRegTypes)) {
-        results.push_back(createVcvtResult(
-            op.getLoc(), resultType, sourcePart, *mask, /*rnd=*/nullptr,
-            /*sat=*/nullptr, rewriter.getStringAttr(part),
-            resultIsPackedBF16x2, vcvtResultVRegType, rewriter));
-      }
-      replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
-      return success();
+      return lowerLaneStride(op, rewriter, sourceParts, resultVRegTypes,
+                             *mask, part, resultIsPackedBF16x2,
+                             vcvtResultVRegType);
     }
 
     ArrayRef<StringRef> parts;
@@ -13234,21 +13266,9 @@ public:
       return rewriter.notifyMatchFailure(op, "failed to build extf seed mask");
     }
 
-    SmallVector<Value> results;
-    results.reserve(resultTypes.size());
-    for (int64_t partIndex = 0; partIndex < factor; ++partIndex) {
-      for (auto [chunkIndex, sourcePart] : llvm::enumerate(sourceParts)) {
-        VRegType resultType =
-            resultVRegTypes[partIndex * sourceParts.size() + chunkIndex];
-        results.push_back(createVcvtResult(
-            op.getLoc(), resultType, sourcePart, *mask, /*rnd=*/nullptr,
-            /*sat=*/nullptr, rewriter.getStringAttr(parts[partIndex]),
-            resultIsPackedBF16x2, vcvtResultVRegType, rewriter));
-      }
-    }
-
-    replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
-    return success();
+    return lowerFactor(op, rewriter, sourceParts, resultVRegTypes, parts,
+                       factor, *mask, resultIsPackedBF16x2,
+                       vcvtResultVRegType);
   }
 };
 
@@ -13685,20 +13705,23 @@ public:
       return failure();
     }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-    if (sourceParts.empty())
+    if (sourceParts.empty()) {
       return rewriter.notifyMatchFailure(
           op, "integer extension requires at least one physical source chunk");
+    }
 
     auto sourceType = dyn_cast<VRegType>(sourceParts.front().getType());
-    if (!sourceType)
+    if (!sourceType) {
       return rewriter.notifyMatchFailure(
           op, "expected physical integer extension source");
+    }
     for (Value sourcePart : sourceParts) {
       auto currentSourceType = dyn_cast<VRegType>(sourcePart.getType());
-      if (!currentSourceType || currentSourceType != sourceType)
+      if (!currentSourceType || currentSourceType != sourceType) {
         return rewriter.notifyMatchFailure(
             op, "integer extension source physical parts must have matching "
                 "type");
+      }
     }
 
     VMILayoutAttr sourceLayout = sourceVMIType.getLayoutAttr();

@@ -727,6 +727,14 @@ contiguous interleave 的正常 lowering；该修复不改变支持矩阵或结�
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_load_store_contiguous.pto` lowering exit=0。
 
+本轮将 `OneToNVMIExtFOpPattern` 的物理发射拆分为 `lowerLaneStride` 与 `lowerFactor`：
+前者负责 contiguous lane-stride 的单 part `VcvtOp`，后者负责 factor=2/4 的
+`EVEN/ODD` 或 `P0..P3` 展开；主 pattern 继续负责输入/结果 physical type 契约、packed
+BF16x2 view 规划和支持矩阵选择。同时补齐整数 extension 入口的控制语句大括号。该重构
+保持 `Vbitcast` 结果 view、part 顺序和 arity 语义不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续 load/store
+lowering exit=0。
+
 本轮继续将 two-block `deinterleaved=2` 的 `vcgadd`/combine 路径抽取为
 `lowerTwoBlock`。该 helper 独立维护双物理块 arity、source/mask/result 类型一致性、
 尾部 active-group mask 和两路 group-reduce 后的 combine；主 pattern 仅负责 plan 分派。
