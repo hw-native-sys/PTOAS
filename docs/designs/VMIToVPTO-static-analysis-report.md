@@ -2221,3 +2221,12 @@ mask、pair 顺序和诊断语义不变。增量 `check_changed_code.py` 结果�
 结果遍历和替换；保持 source/mask 对应关系、结果顺序、诊断和 lowering 语义不变。增量
 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
 通过；本轮未新增可独立进入该 helper 的 runtime case，未虚构额外回归结果。
+# legacy group-slot extension 单结果发射职责整改
+
+本轮在 `OneToNVMIExtIOpPattern::lowerLegacyGroupSlotExtension` 中引入
+`buildLegacyGroupSlotExtensionResult`，将单 physical result 的结果类型校验、source
+bitcast 和 `VcvtOp` 发射抽取为独立 helper。主函数继续负责 layout/width/arity 合约、
+source lane 与 slot mask 准备及结果替换；保持 EVEN/P0 part、slot mask、结果顺序、诊断
+和 lowering 语义不变。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_group_slot_integer_extension_matrix.pto` lowering exit=0。

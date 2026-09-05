@@ -14959,6 +14959,31 @@ private:
     return success();
   }
 
+  FailureOr<Value> buildLegacyGroupSlotExtensionResult(
+      OpT op, Value sourcePart, Type resultType, VRegType conversionSourceType,
+      Value slotMask, StringAttr part, unsigned resultBits,
+      OneToNPatternRewriter &rewriter) const {
+    auto resultVRegType = dyn_cast<VRegType>(resultType);
+    bool invalidResultType =
+        !resultVRegType ||
+        pto::getPTOStorageElemBitWidth(resultVRegType.getElementType()) !=
+            resultBits;
+    if (invalidResultType) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported group-slot integer extension result type");
+    }
+    FailureOr<Value> conversionSource = bitcastVReg(
+        op.getLoc(), sourcePart, conversionSourceType, rewriter);
+    if (failed(conversionSource)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to expose group-slot extension source elements");
+    }
+    return rewriter
+        .create<VcvtOp>(op.getLoc(), resultVRegType, *conversionSource, slotMask,
+                        /*rnd=*/nullptr, /*sat=*/nullptr, part)
+        .getResult();
+  }
+
   LogicalResult lowerLegacyGroupSlotExtension(
       OpT op, ValueRange sourceParts, ArrayRef<Type> resultTypes,
       VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
@@ -15008,27 +15033,13 @@ private:
     results.reserve(resultTypes.size());
     for (auto [sourcePart, resultType] :
          llvm::zip_equal(sourceParts, resultTypes)) {
-      auto resultVRegType = dyn_cast<VRegType>(resultType);
-      bool invalidResultType =
-          !resultVRegType ||
-          pto::getPTOStorageElemBitWidth(resultVRegType.getElementType()) !=
-              resultBits;
-      if (invalidResultType) {
-        return rewriter.notifyMatchFailure(
-            op, "unsupported group-slot integer extension result type");
+      FailureOr<Value> result = buildLegacyGroupSlotExtensionResult(
+          op, sourcePart, resultType, conversionSourceType, *slotMask, part,
+          resultBits, rewriter);
+      if (failed(result)) {
+        return failure();
       }
-      FailureOr<Value> conversionSource = bitcastVReg(
-          op.getLoc(), sourcePart, conversionSourceType, rewriter);
-      if (failed(conversionSource)) {
-        return rewriter.notifyMatchFailure(
-            op, "failed to expose group-slot extension source elements");
-      }
-      results.push_back(rewriter
-                            .create<VcvtOp>(op.getLoc(), resultVRegType,
-                                           *conversionSource, *slotMask,
-                                           /*rnd=*/nullptr, /*sat=*/nullptr,
-                                           part)
-                            .getResult());
+      results.push_back(*result);
     }
     replaceOpWithFlatConvertedValues(rewriter, op, results,
                                      *this->getTypeConverter());
