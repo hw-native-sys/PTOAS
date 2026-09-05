@@ -1904,3 +1904,11 @@ active_prefix_index、compress 和 compress_store 的 shape check、reason 收�
 仍使用各自的 shape checker、诊断名称和原有识别顺序，保持成功/失败语义不变。增量
 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
 通过。
+
+# special-unary verifier 分派职责整改
+
+本轮为 `verifySupportedVMISpecialUnaryOp` 引入模板 helper
+`verifySpecialUnaryShape`，统一 `relu`/`vselr` 的 shape checker、reason 收集、诊断前缀和
+`WalkResult` 处理。两种操作仍保留各自的 shape checker、支持条件文本和操作识别顺序，
+不改变成功/失败语义。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。

@@ -18333,32 +18333,30 @@ std::optional<WalkResult> verifySupportedVMIMultiplyLongOp(Operation *op) {
   return std::nullopt;
 }
 
+template <typename SpecialOp, typename ShapeCheck>
+std::optional<WalkResult> verifySpecialUnaryShape(
+    SpecialOp op, ShapeCheck check, StringRef diagnostic) {
+  std::string reason;
+  if (succeeded(check(op, &reason))) {
+    return WalkResult::advance();
+  }
+  op.emitError() << kVMIDiagUnsupportedPrefix << diagnostic << reason << ")";
+  return WalkResult::interrupt();
+}
+
 std::optional<WalkResult> verifySupportedVMISpecialUnaryOp(Operation *op) {
   if (auto relu = dyn_cast<VMIReluOp>(op)) {
-    std::string reason;
-    if (succeeded(checkSupportedReluShape(relu, &reason))) {
-      return WalkResult::advance();
-    }
-    relu.emitError()
-        << kVMIDiagUnsupportedPrefix
-        << "pto.vmi.relu direct lowering requires physical vreg parts with "
-           "b32 predicates for si32 or matching b16/b32 predicates for "
-           "f16/f32 ("
-        << reason << ")";
-    return WalkResult::interrupt();
+    return verifySpecialUnaryShape(
+        relu, checkSupportedReluShape,
+        "pto.vmi.relu direct lowering requires physical vreg parts with b32 "
+        "predicates for si32 or matching b16/b32 predicates for f16/f32 (");
   }
   if (auto vselr = dyn_cast<VMIVselrOp>(op)) {
-    std::string reason;
-    if (succeeded(checkSupportedVselrShape(vselr, &reason))) {
-      return WalkResult::advance();
-    }
-    vselr.emitError()
-        << kVMIDiagUnsupportedPrefix
-        << "pto.vmi.vselr supports only contiguous lane_stride=1 layouts "
-           "with N=64, 128, or 256 for 8-bit, N=64 or 128 for 16-bit, "
-           "or N=64 for 32-bit elements ("
-        << reason << ")";
-    return WalkResult::interrupt();
+    return verifySpecialUnaryShape(
+        vselr, checkSupportedVselrShape,
+        "pto.vmi.vselr supports only contiguous lane_stride=1 layouts with "
+        "N=64, 128, or 256 for 8-bit, N=64 or 128 for 16-bit, or N=64 for "
+        "32-bit elements (");
   }
   return std::nullopt;
 }
