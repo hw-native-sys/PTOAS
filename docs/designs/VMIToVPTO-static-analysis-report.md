@@ -730,3 +730,10 @@ lane-stride/deinterleaved 快路径和地址安全证明。该拆分保持非对
 优先级、full/safe-read 证明和 contiguous fallback。非对齐路径选择及结果顺序不变。
 增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 连续 load/store 与 interleave memory lowering 回归通过。
+
+本轮将 load 的 dense lane-stride physical part 构造抽取为
+`materializeLaneStrideParts`。helper 负责逐 part 的 semantic offset 累加、active-lane
+计算和 `vlds` 发射；`lowerLaneStride` 只负责结果替换。该拆分保持 dist token、尾部
+active lane 和地址步长语义不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_load_store_contiguous.pto` 完成 lowering 回归。
