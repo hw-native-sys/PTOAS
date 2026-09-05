@@ -226,3 +226,11 @@ mask 的语义差异只存在于 active-lane 判定。补齐该批代码及 scal
 集中处理 padding、logical-to-physical lane 映射、单 source chunk 约束及升序/降序 affine
 索引判定；失败原因仍通过原有 `reason` 通道传播。为满足本文件的控制语句规范，复合
 `FailureOr` 条件拆成具名状态并保持原短路语义；增量合规检查和 `git diff --check` 均通过。
+
+本轮进一步将动态 `create_group_mask` 的单个物理 chunk 生成抽取为
+`materializeDynamicGroupMaskChunk`。辅助函数负责 index/块内 lane 推导、active-lane
+比较、padding mask 合并和结果类型检查；外层 `materializeDynamicGroupMaskForType`
+仅负责全局 layout/arity 校验、active-lane 限幅以及 part/chunk 枚举，避免把不同层次的
+契约混在一个循环中。`vmi_to_vpto_create_group_mask_block8_dynamic.pto` 与
+`vmi_layout_assignment_create_group_mask_s32_dynamic.pto` 均通过完整 lowering 回归，
+增量合规检查和 `git diff --check` 通过。
