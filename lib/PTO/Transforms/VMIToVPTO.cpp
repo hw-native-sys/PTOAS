@@ -15618,6 +15618,33 @@ struct ChannelShapePlan {
   VMILayoutAttr expectedLayout;
 };
 
+static FailureOr<int64_t> getContiguousChannelInputArity(
+    ValueRange inputs, std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> FailureOr<int64_t> {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  int64_t inputArity = 0;
+  for (Value input : inputs) {
+    auto inputType = dyn_cast<VMIVRegType>(input.getType());
+    if (!inputType) {
+      return fail("requires every input to be a VMI vreg");
+    }
+    VMILayoutAttr inputLayout = inputType.getLayoutAttr();
+    if (!inputLayout || !inputLayout.isContiguous()) {
+      return fail("requires every input layout to be contiguous");
+    }
+    FailureOr<int64_t> arity = getVMIPhysicalArity(inputType);
+    if (failed(arity)) {
+      return fail("requires computable input physical arity");
+    }
+    inputArity += *arity;
+  }
+  return inputArity;
+}
+
 template <typename ChannelOp>
 static FailureOr<ChannelShapePlan> buildChannelShapePlan(
     ChannelOp op, int64_t channels, StringRef operationName,
@@ -15700,16 +15727,10 @@ LogicalResult checkSupportedChannelMergeShape(VMIChannelMergeOp op,
   }
   int64_t channels = plan->channels;
 
-  int64_t inputArity = 0;
-  for (Value input : op.getInputs()) {
-    auto inputType = cast<VMIVRegType>(input.getType());
-    VMILayoutAttr inputLayout = inputType.getLayoutAttr();
-    if (!inputLayout || !inputLayout.isContiguous())
-      return fail("requires every input layout to be contiguous");
-    FailureOr<int64_t> arity = getVMIPhysicalArity(inputType);
-    if (failed(arity))
-      return fail("requires computable input physical arity");
-    inputArity += *arity;
+  FailureOr<int64_t> inputArity =
+      getContiguousChannelInputArity(op.getInputs(), reason);
+  if (failed(inputArity)) {
+    return failure();
   }
 
   auto resultType = cast<VMIVRegType>(op.getResult().getType());
@@ -15725,7 +15746,8 @@ LogicalResult checkSupportedChannelMergeShape(VMIChannelMergeOp op,
   FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
   if (failed(resultArity))
     return fail("requires computable result physical arity");
-  if (*resultArity != inputArity)
+  bool resultArityMismatch = *resultArity != *inputArity;
+  if (resultArityMismatch) {
     return fail("requires source and result to have the same physical arity");
 
   return success();

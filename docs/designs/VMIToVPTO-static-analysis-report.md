@@ -1014,3 +1014,8 @@ deinterleaved layout 判定抽取为 `ChannelShapePlan`/`buildChannelShapePlan`�
 checker 继续各自负责输入/输出 layout、physical arity 汇总及方向性诊断。2/4 channel
 支持范围和结果 arity 语义保持不变。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
+本轮继续整理 channel verifier：新增 `getContiguousChannelInputArity`，统一
+`channel_merge` 输入 vreg、contiguous layout 和 physical arity 汇总；channel split/merge
+仍分别负责结果/源布局及方向性约束。该拆分保持 channel 数量、expected layout 和
+source/result arity 语义不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过。
