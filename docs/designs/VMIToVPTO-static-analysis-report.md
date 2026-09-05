@@ -2240,6 +2240,15 @@ source lane 与 slot mask 准备及结果替换；保持 EVEN/P0 part、slot mas
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_group_slot_integer_extension_matrix.pto` lowering exit=0。
 
+# ExtI factor conversion 单结果发射职责整改
+
+本轮在模板 `OneToNVMIExtIOpPattern::emitFactorExtension` 中引入
+`buildFactorExtensionResult`，将单个 source chunk/factor part 的 `VcvtOp` 发射抽取为独立
+helper。主函数继续负责 part-major/chunk-major 结果遍历、physical result type 选择和结果
+替换；保持 part 顺序、mask、结果扁平顺序、诊断及 lowering 语义不变。增量
+`check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
+通过；`vmi_to_vpto_group_slot_integer_extension_matrix.pto` lowering exit=0。
+
 # ExtI factor part plan 职责整改
 
 本轮在模板 `OneToNVMIExtIOpPattern::lowerPhysicalExtension` 中引入

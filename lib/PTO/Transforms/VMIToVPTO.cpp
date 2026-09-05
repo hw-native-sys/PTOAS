@@ -14832,6 +14832,16 @@ struct OneToNVMIExtIOpPattern : OneToNOpConversionPattern<OpT> {
   using OneToNOpConversionPattern<OpT>::OneToNOpConversionPattern;
 
 private:
+  FailureOr<Value> buildFactorExtensionResult(
+      OpT op, Value sourcePart, VRegType resultType, Value mask,
+      StringRef part, OneToNPatternRewriter &rewriter) const {
+    return rewriter
+        .create<VcvtOp>(op.getLoc(), resultType, sourcePart, mask,
+                        /*rnd=*/nullptr, /*sat=*/nullptr,
+                        rewriter.getStringAttr(part))
+        .getResult();
+  }
+
   LogicalResult emitFactorExtension(
       OpT op, ValueRange sourceParts, ArrayRef<VRegType> resultVRegTypes,
       ArrayRef<StringRef> parts, int64_t factor, Value mask,
@@ -14842,12 +14852,12 @@ private:
       for (auto [chunkIndex, sourcePart] : llvm::enumerate(sourceParts)) {
         VRegType resultType =
             resultVRegTypes[partIndex * sourceParts.size() + chunkIndex];
-        results.push_back(
-            rewriter
-                .create<VcvtOp>(op.getLoc(), resultType, sourcePart, mask,
-                                /*rnd=*/nullptr, /*sat=*/nullptr,
-                                rewriter.getStringAttr(parts[partIndex]))
-                .getResult());
+        FailureOr<Value> result = buildFactorExtensionResult(
+            op, sourcePart, resultType, mask, parts[partIndex], rewriter);
+        if (failed(result)) {
+          return failure();
+        }
+        results.push_back(*result);
       }
     }
     replaceOpWithFlatConvertedValues(rewriter, op, results,
