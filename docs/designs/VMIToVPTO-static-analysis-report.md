@@ -534,3 +534,10 @@ interleave memory 与连续 load/store lowering 回归通过。
 这是正确性修复，不改变 constant-mask 的物化算法。增量合规检查为
 `errors=0 warnings=0`，`git diff --check` 通过；受测 constant-mask 样例在既有
 `unpack` pipeline invariant 处提前失败，未进入该 pattern。
+
+本轮将 `OneToNVMICreateMaskOpPattern` 的 dynamic 与 constant active-lanes 物化分别
+抽取为 `lowerDynamicMask` 与 `lowerConstantMask`。前者负责 runtime prefix mask 和
+partition remaining，后者负责 padding/lane 映射、prefix pattern 与 PLT fallback；主
+pattern 仅负责输入归一化和路径选择。mask part 顺序、active-lanes 限幅及错误诊断保持
+不变。增量合规检查为 `errors=0 warnings=0`，`git diff --check` 通过；create-mask
+样例在既有 `unpack` pipeline invariant 处提前失败，未进入该 pattern。

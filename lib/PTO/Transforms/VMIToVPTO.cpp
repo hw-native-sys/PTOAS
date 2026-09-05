@@ -6528,6 +6528,126 @@ struct OneToNVMICreateMaskOpPattern
     : OneToNOpConversionPattern<VMICreateMaskOp> {
   using OneToNOpConversionPattern<VMICreateMaskOp>::OneToNOpConversionPattern;
 
+private:
+  LogicalResult lowerDynamicMask(
+      VMICreateMaskOp op, Value active, VMIMaskType resultVMIType,
+      VMILayoutAttr layout, TypeRange resultTypes, int64_t lanesPerPart,
+      OneToNPatternRewriter &rewriter,
+      SmallVectorImpl<Value> &results) const {
+    int64_t factor = layout.isDenseSplit() ? layout.getFactor() : 1;
+    bool resultFactorMismatch = resultTypes.size() % factor != 0;
+    if (resultFactorMismatch) {
+      return rewriter.notifyMatchFailure(
+          op, "dynamic create_mask physical result count does not match "
+              "layout factor");
+    }
+    int64_t chunksPerPart = resultTypes.size() / factor;
+    Value activeI32 = clampDynamicActiveLanes(
+        op.getLoc(), active, resultVMIType.getElementCount(), rewriter);
+    results.reserve(resultTypes.size());
+    for (int64_t part = 0; part < factor; ++part) {
+      Value remaining = createPartitionActiveLanes(op.getLoc(), activeI32,
+                                                   factor, part, rewriter);
+      for (int64_t chunk = 0; chunk < chunksPerPart; ++chunk) {
+        Type resultType = resultTypes[part * chunksPerPart + chunk];
+        auto maskType = dyn_cast<MaskType>(resultType);
+        if (!maskType) {
+          return rewriter.notifyMatchFailure(
+              op, "create_mask result must be mask");
+        }
+        FailureOr<std::pair<Value, Value>> maskAndRemaining =
+            createRuntimePrefixMask(op.getLoc(), maskType, remaining,
+                                    rewriter);
+        if (failed(maskAndRemaining)) {
+          return rewriter.notifyMatchFailure(
+              op, "unsupported mask type for dynamic create_mask");
+        }
+        results.push_back(maskAndRemaining->first);
+        remaining = maskAndRemaining->second;
+      }
+    }
+    return success();
+  }
+
+  LogicalResult lowerConstantMask(
+      VMICreateMaskOp op, int64_t activeLanes, VMIMaskType resultVMIType,
+      VMILayoutAttr layout, TypeRange resultTypes, int64_t lanesPerPart,
+      OneToNPatternRewriter &rewriter,
+      SmallVectorImpl<Value> &results) const {
+    int64_t factor = layout.isDenseSplit() ? layout.getFactor() : 1;
+    results.reserve(resultTypes.size());
+    for (int64_t part = 0; part < factor; ++part) {
+      for (int64_t chunk = 0;; ++chunk) {
+        bool anyLane = false;
+        int64_t activeInChunk = 0;
+        for (int64_t lane = 0; lane < lanesPerPart; ++lane) {
+          FailureOr<bool> padding =
+              isPaddingLane(resultVMIType, part, chunk, lane);
+          if (failed(padding)) {
+            return rewriter.notifyMatchFailure(
+                op, "failed to map create_mask physical padding lane");
+          }
+          if (*padding) {
+            continue;
+          }
+          anyLane = true;
+          FailureOr<int64_t> logicalLane =
+              mapPhysicalLaneToLogical(resultVMIType, part, chunk, lane);
+          if (failed(logicalLane)) {
+            return rewriter.notifyMatchFailure(
+                op, "failed to map create_mask physical lane");
+          }
+          if (*logicalLane < activeLanes) {
+            ++activeInChunk;
+          }
+        }
+        if (!anyLane) {
+          break;
+        }
+        bool tooManyResults = results.size() >= resultTypes.size();
+        if (tooManyResults) {
+          return rewriter.notifyMatchFailure(
+              op, "create_mask produced too many physical masks");
+        }
+        auto maskType = dyn_cast<MaskType>(resultTypes[results.size()]);
+        if (!maskType) {
+          return rewriter.notifyMatchFailure(
+              op, "create_mask result must be mask");
+        }
+        std::optional<std::string> pattern =
+            getPrefixPattern(activeInChunk, lanesPerPart);
+        if (pattern) {
+          FailureOr<Value> mask =
+              createPrefixMask(op.getLoc(), maskType, *pattern, rewriter);
+          if (failed(mask)) {
+            return rewriter.notifyMatchFailure(
+                op, "unsupported mask type for create_mask");
+          }
+          results.push_back(*mask);
+          continue;
+        }
+        FailureOr<std::pair<Value, Value>> maskAndRemaining =
+            createRuntimePrefixMask(
+                op.getLoc(), maskType,
+                createI32Constant(op.getLoc(), activeInChunk, rewriter),
+                rewriter);
+        if (failed(maskAndRemaining)) {
+          return rewriter.notifyMatchFailure(
+              op, "unsupported mask type for create_mask plt fallback");
+        }
+        results.push_back(maskAndRemaining->first);
+      }
+    }
+    bool resultArityMismatch = results.size() != resultTypes.size();
+    if (resultArityMismatch) {
+      return rewriter.notifyMatchFailure(
+          op, "create_mask physical result count mismatch");
+    }
+    return success();
+  }
+
+public:
+
   LogicalResult
   matchAndRewrite(VMICreateMaskOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -6545,55 +6665,32 @@ struct OneToNVMICreateMaskOpPattern
         failed(physicalGranularity)
             ? FailureOr<int64_t>(failure())
             : getMaskLanesPerPart(*physicalGranularity);
-    if (failed(lanesPerPart))
+    if (failed(lanesPerPart)) {
       return rewriter.notifyMatchFailure(
           op, "create_mask requires known physical mask lanes per part");
+    }
 
     if (!activeConstant) {
       FailureOr<Value> active = getSingleValue(
           op, adaptor.getActiveLanes(),
           "create_mask active_lanes must convert to one value", rewriter);
-      if (failed(active))
+      if (failed(active)) {
         return failure();
+      }
 
       FailureOr<SmallVector<Type>> maybe_resultTypes =
 
           getConvertedResultTypes(op, 0, *this->getTypeConverter());
 
-      if (failed(maybe_resultTypes))
-
+      if (failed(maybe_resultTypes)) {
         return failure();
+      }
 
       SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-      int64_t factor = layout.isDenseSplit() ? layout.getFactor() : 1;
-      if (resultTypes.size() % factor != 0)
-        return rewriter.notifyMatchFailure(
-            op, "dynamic create_mask physical result count does not match "
-                "layout factor");
-      int64_t chunksPerPart = resultTypes.size() / factor;
-      Value activeI32 = clampDynamicActiveLanes(
-          op.getLoc(), *active, resultVMIType.getElementCount(), rewriter);
-
       SmallVector<Value> results;
-      results.reserve(resultTypes.size());
-      for (int64_t part = 0; part < factor; ++part) {
-        Value remaining = createPartitionActiveLanes(op.getLoc(), activeI32,
-                                                     factor, part, rewriter);
-        for (int64_t chunk = 0; chunk < chunksPerPart; ++chunk) {
-          Type resultType = resultTypes[part * chunksPerPart + chunk];
-          auto maskType = dyn_cast<MaskType>(resultType);
-          if (!maskType)
-            return rewriter.notifyMatchFailure(
-                op, "create_mask result must be mask");
-          FailureOr<std::pair<Value, Value>> maskAndRemaining =
-              createRuntimePrefixMask(op.getLoc(), maskType, remaining,
-                                      rewriter);
-          if (failed(maskAndRemaining))
-            return rewriter.notifyMatchFailure(
-                op, "unsupported mask type for dynamic create_mask");
-          results.push_back(maskAndRemaining->first);
-          remaining = maskAndRemaining->second;
-        }
+      if (failed(lowerDynamicMask(op, *active, resultVMIType, layout, resultTypes,
+                                  *lanesPerPart, rewriter, results))) {
+        return failure();
       }
 
       replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
@@ -6601,15 +6698,18 @@ struct OneToNVMICreateMaskOpPattern
     }
 
     auto activeAttr = dyn_cast<IntegerAttr>(activeConstant.getValue());
-    if (!activeAttr)
+    if (!activeAttr) {
       return rewriter.notifyMatchFailure(
           op, "create_mask active_lanes must be an integer constant");
+    }
 
     int64_t activeLanes = activeAttr.getInt();
-    if (activeLanes < 0)
+    if (activeLanes < 0) {
       activeLanes = 0;
-    if (activeLanes > resultVMIType.getElementCount())
+    }
+    if (activeLanes > resultVMIType.getElementCount()) {
       activeLanes = resultVMIType.getElementCount();
+    }
 
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
@@ -6618,68 +6718,12 @@ struct OneToNVMICreateMaskOpPattern
     }
 
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-    int64_t factor = layout.isDenseSplit() ? layout.getFactor() : 1;
     SmallVector<Value> results;
-    results.reserve(resultTypes.size());
-
-    for (int64_t part = 0; part < factor; ++part) {
-      for (int64_t chunk = 0;; ++chunk) {
-        bool anyLane = false;
-        int64_t activeInChunk = 0;
-        for (int64_t lane = 0; lane < *lanesPerPart; ++lane) {
-          FailureOr<bool> padding =
-              isPaddingLane(resultVMIType, part, chunk, lane);
-          if (failed(padding))
-            return rewriter.notifyMatchFailure(
-                op, "failed to map create_mask physical padding lane");
-          if (*padding)
-            continue;
-          anyLane = true;
-          FailureOr<int64_t> logicalLane =
-              mapPhysicalLaneToLogical(resultVMIType, part, chunk, lane);
-          if (failed(logicalLane))
-            return rewriter.notifyMatchFailure(
-                op, "failed to map create_mask physical lane");
-          if (*logicalLane < activeLanes)
-            ++activeInChunk;
-        }
-        if (!anyLane)
-          break;
-
-        if (results.size() >= resultTypes.size())
-          return rewriter.notifyMatchFailure(
-              op, "create_mask produced too many physical masks");
-        auto maskType = dyn_cast<MaskType>(resultTypes[results.size()]);
-        if (!maskType)
-          return rewriter.notifyMatchFailure(op,
-                                             "create_mask result must be mask");
-        std::optional<std::string> pattern =
-            getPrefixPattern(activeInChunk, *lanesPerPart);
-        if (pattern) {
-          FailureOr<Value> mask =
-              createPrefixMask(op.getLoc(), maskType, *pattern, rewriter);
-          if (failed(mask))
-            return rewriter.notifyMatchFailure(
-                op, "unsupported mask type for create_mask");
-          results.push_back(*mask);
-          continue;
-        }
-
-        FailureOr<std::pair<Value, Value>> maskAndRemaining =
-            createRuntimePrefixMask(
-                op.getLoc(), maskType,
-                createI32Constant(op.getLoc(), activeInChunk, rewriter),
-                rewriter);
-        if (failed(maskAndRemaining))
-          return rewriter.notifyMatchFailure(
-              op, "unsupported mask type for create_mask plt fallback");
-        results.push_back(maskAndRemaining->first);
-      }
+    if (failed(lowerConstantMask(op, activeLanes, resultVMIType, layout,
+                                 resultTypes, *lanesPerPart, rewriter,
+                                 results))) {
+      return failure();
     }
-
-    if (results.size() != resultTypes.size())
-      return rewriter.notifyMatchFailure(
-          op, "create_mask physical result count mismatch");
     replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
     return success();
   }
@@ -10714,9 +10758,10 @@ public:
       fact = supports.getVdintlvLayoutFactForLayouts(
           lhsType, rhsType, maskType, lowType, highType);
     }
-    if (failed(fact))
+    if (failed(fact)) {
       return rewriter.notifyMatchFailure(
           op, "unsupported interleave layout relation");
+    }
 
     auto isContiguous = [](VMILayoutAttr layout) {
       return layout && layout.isContiguous() && layout.getLaneStride() == 1;
