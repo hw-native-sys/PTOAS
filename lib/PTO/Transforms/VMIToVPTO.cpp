@@ -2263,54 +2263,34 @@ LogicalResult checkSupportedGatherPhysicalShape(
 }
 
 LogicalResult
-checkSupportedGatherShape(VMIGatherOp op, std::string *reason) {
-  auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason)
+checkGatherElementContract(VMIVRegType resultType, VMIVRegType indicesType,
+                            VMIMaskType maskType, Type sourceElemType,
+                            std::string *reason) {
+  auto fail = [&reason](const Twine &message) {
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
-
-  auto resultType = cast<VMIVRegType>(op.getResult().getType());
-  auto indicesType = cast<VMIVRegType>(op.getIndices().getType());
-  auto passthruType = cast<VMIVRegType>(op.getPassthru().getType());
-  auto maskType = cast<VMIMaskType>(op.getMask().getType());
-  VMILayoutAttr resultLayout = resultType.getLayoutAttr();
-  VMILayoutAttr indicesLayout = indicesType.getLayoutAttr();
-  VMILayoutAttr passthruLayout = passthruType.getLayoutAttr();
-  VMILayoutAttr maskLayout = maskType.getLayoutAttr();
-  if (!resultLayout || !indicesLayout || !passthruLayout || !maskLayout)
-    return fail("requires assigned result, indices, passthru, and mask "
-                "layouts");
-  if (!resultLayout.isContiguous() || !indicesLayout.isContiguous() ||
-      !passthruLayout.isContiguous() || !maskLayout.isContiguous())
-    return fail("requires contiguous result, indices, passthru, and mask "
-                "layouts");
-
-  if (!isa<PtrType>(op.getSource().getType()))
-    return fail("requires !pto.ptr source because pto.vgather2_bc is "
-                "pointer-only");
-
   unsigned resultBits =
       pto::getPTOStorageElemBitWidth(resultType.getElementType());
   auto indexElementType = dyn_cast<IntegerType>(indicesType.getElementType());
-  if (!indexElementType || indexElementType.isSigned())
+  if (!indexElementType || indexElementType.isSigned()) {
     return fail("requires signless or unsigned integer indices");
-  Type sourceElemType = getMemoryElementType(op.getSource().getType());
+  }
   auto sourceInt = dyn_cast<IntegerType>(sourceElemType);
   auto resultInt = dyn_cast<IntegerType>(resultType.getElementType());
   bool isB8To16Gather =
       resultBits == 16 && sourceInt && resultInt &&
       sourceInt.getWidth() == mlir::pto::kValue8 &&
       resultInt.getWidth() == mlir::pto::kValue16 &&
-      indexElementType.isUnsigned() &&
-      indexElementType.getWidth() == 16 &&
+      indexElementType.isUnsigned() && indexElementType.getWidth() == 16 &&
       maskType.getGranularity() == "b16" &&
       ((sourceInt.isUnsigned() && resultInt.isUnsigned()) ||
        (!sourceInt.isUnsigned() && !resultInt.isUnsigned()));
   bool isSameWidth16Gather =
       resultBits == 16 && indexElementType.isUnsigned() &&
-      indexElementType.getWidth() == 16 &&
-      maskType.getGranularity() == "b16" &&
+      indexElementType.getWidth() == 16 && maskType.getGranularity() == "b16" &&
       ((sourceInt && resultInt &&
         sourceInt.getWidth() == mlir::pto::kValue16 &&
         resultInt.getWidth() == mlir::pto::kValue16 &&
@@ -2326,6 +2306,55 @@ checkSupportedGatherShape(VMIGatherOp op, std::string *reason) {
                 "mask, or ui16/i16/f16/bf16 results with ui16 indices and "
                 "b16 mask (including i8/ui8 -> i16/ui16 promotion)");
   }
+  return success();
+}
+
+LogicalResult
+checkSupportedGatherShape(VMIGatherOp op, std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
+    if (reason)
+      *reason = message.str();
+    return failure();
+  };
+
+  auto resultType = cast<VMIVRegType>(op.getResult().getType());
+  auto indicesType = cast<VMIVRegType>(op.getIndices().getType());
+  auto passthruType = cast<VMIVRegType>(op.getPassthru().getType());
+  auto maskType = cast<VMIMaskType>(op.getMask().getType());
+  VMILayoutAttr resultLayout = resultType.getLayoutAttr();
+  VMILayoutAttr indicesLayout = indicesType.getLayoutAttr();
+  VMILayoutAttr passthruLayout = passthruType.getLayoutAttr();
+  VMILayoutAttr maskLayout = maskType.getLayoutAttr();
+  if (!resultLayout || !indicesLayout || !passthruLayout || !maskLayout) {
+    return fail("requires assigned result, indices, passthru, and mask "
+                "layouts");
+  }
+  bool nonContiguousLayout =
+      !resultLayout.isContiguous() || !indicesLayout.isContiguous() ||
+      !passthruLayout.isContiguous() || !maskLayout.isContiguous();
+  if (nonContiguousLayout) {
+    return fail("requires contiguous result, indices, passthru, and mask "
+                "layouts");
+  }
+
+  if (!isa<PtrType>(op.getSource().getType())) {
+    return fail("requires !pto.ptr source because pto.vgather2_bc is "
+                "pointer-only");
+  }
+
+  Type sourceElemType = getMemoryElementType(op.getSource().getType());
+  std::string elementReason;
+  if (failed(checkGatherElementContract(resultType, indicesType, maskType,
+                                        sourceElemType, &elementReason))) {
+    return fail(elementReason);
+  }
+
+  unsigned resultBits =
+      pto::getPTOStorageElemBitWidth(resultType.getElementType());
+  auto indexElementType = dyn_cast<IntegerType>(indicesType.getElementType());
+  bool isB16Gather = resultBits == 16 && indexElementType &&
+                     indexElementType.getWidth() == 16 &&
+                     maskType.getGranularity() == "b16";
 
   FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
   bool requiresFullChunks = isB32Gather;
@@ -2380,8 +2409,9 @@ LogicalResult checkSupportedScatterPhysicalShape(
 LogicalResult
 checkSupportedScatterShape(VMIScatterOp op, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
@@ -5601,10 +5631,12 @@ FailureOr<SmallVector<Value>> materializeStagingDeintToContiguousMaskLayout(
     (void)rewriter.notifyMatchFailure(op, message);
     return failure();
   };
-  if ((factor != 2 && factor != 4) || sourceParts.empty() ||
-      sourceParts.size() % factor != 0)
+  bool invalidGroups = (factor != 2 && factor != 4) || sourceParts.empty() ||
+                       sourceParts.size() % factor != 0;
+  if (invalidGroups) {
     return fail("staging deinterleaved mask layout requires grouped source "
                 "parts");
+  }
 
   int64_t groups = sourceParts.size() / factor;
   SmallVector<Value> results;
@@ -6944,8 +6976,10 @@ struct OneToNVMICreateGroupMaskOpPattern
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     auto resultVMIType = cast<VMIMaskType>(op.getResult().getType());
     VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
-    if (resultLayout && resultLayout.isBlockDeinterleaved() &&
-        resultLayout.getFactor() == 4) {
+    bool needsFactor4ContiguousMaterialization =
+        resultLayout && resultLayout.isBlockDeinterleaved() &&
+        resultLayout.getFactor() == 4;
+    if (needsFactor4ContiguousMaterialization) {
       VMILayoutAttr contiguousLayout =
           VMILayoutAttr::getContiguous(op.getContext());
       auto contiguousType =
@@ -6959,9 +6993,10 @@ struct OneToNVMICreateGroupMaskOpPattern
         FailureOr<SmallVector<ConstantMaskChunkMaterialization>>
             contiguousMaterializations = computeGroupMaskMaterializationForType(
                 op, contiguousType, &contiguousReason);
-        if (failed(contiguousMaterializations))
+        if (failed(contiguousMaterializations)) {
           return rewriter.notifyMatchFailure(op, Twine("create_group_mask ") +
                                                      contiguousReason);
+        }
 
         contiguousParts.reserve(contiguousMaterializations->size());
         for (const ConstantMaskChunkMaterialization &materialization :
