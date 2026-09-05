@@ -10782,6 +10782,46 @@ private:
                             rewriter.getStringAttr("PK4_B32"), storeMask);
   }
 
+  LogicalResult emitPackedByteStoreBlocks(
+      VMIGroupStoreOp op, OneToNPatternRewriter &rewriter,
+      ValueRange valueParts, VRegType firstVRegType, MaskType maskType,
+      Value slotIndex, Value destination, Value offset, Value rowStride,
+      int64_t numGroups, bool useDirectPack4) const {
+    SmallVector<Value> statefulValues;
+    SmallVector<int64_t> statefulAdvances;
+    for (int64_t blockStart = 0; blockStart < numGroups; blockStart += 32) {
+      FailureOr<std::tuple<Value, Value, Value>> block =
+          buildPackedByteStoreBlock(
+              op, rewriter, valueParts, firstVRegType, maskType, slotIndex,
+              destination, offset, rowStride, numGroups, blockStart);
+      if (failed(block)) {
+        return failure();
+      }
+      Value merged = std::get<0>(*block);
+      Value storeMask = std::get<1>(*block);
+      Value groupOffset = std::get<2>(*block);
+      if (useDirectPack4) {
+        emitPackedByteDirectStore(op, rewriter, merged, destination,
+                                  groupOffset, storeMask);
+        continue;
+      }
+      FailureOr<Value> statefulValue =
+          buildPackedByteStatefulValue(op, merged, rewriter);
+      if (failed(statefulValue)) {
+        return failure();
+      }
+      statefulValues.push_back(*statefulValue);
+      statefulAdvances.push_back(
+          std::min<int64_t>(32, numGroups - blockStart));
+    }
+    if (!useDirectPack4 &&
+        failed(emitPackedByteStoreStream(op, rewriter, destination, offset,
+                                         statefulValues, statefulAdvances))) {
+      return failure();
+    }
+    return success();
+  }
+
   LogicalResult lowerPackedByteSlots8(
       VMIGroupStoreOp op, OneToNPatternRewriter &rewriter,
       ValueRange valueParts, VMIVRegType valueVMIType, VMILayoutAttr layout,
@@ -10830,40 +10870,13 @@ private:
       return rewriter.notifyMatchFailure(
           op, "failed to create packed group_store lane selector");
     }
-    SmallVector<Value> statefulValues;
-    SmallVector<int64_t> statefulAdvances;
     bool useDirectPack4 = isDirectMemoryDistAddressLegal(
         op.getDestination(), op.getOffset(),
         getMemoryElementType(op.getDestination().getType()), firstVRegType,
         VPTOMemoryOpFamily::Store, "PK4_B32");
-    for (int64_t blockStart = 0; blockStart < numGroups; blockStart += 32) {
-      FailureOr<std::tuple<Value, Value, Value>> block =
-          buildPackedByteStoreBlock(
-              op, rewriter, valueParts, firstVRegType, *maskType, *slotIndex,
-              destination, offset, rowStride, numGroups, blockStart);
-      if (failed(block)) {
-        return failure();
-      }
-      Value merged = std::get<0>(*block);
-      Value storeMask = std::get<1>(*block);
-      Value groupOffset = std::get<2>(*block);
-      if (useDirectPack4) {
-        emitPackedByteDirectStore(op, rewriter, merged, destination,
-                                  groupOffset, storeMask);
-        continue;
-      }
-      FailureOr<Value> statefulValue = buildPackedByteStatefulValue(
-          op, merged, rewriter);
-      if (failed(statefulValue)) {
-        return failure();
-      }
-      statefulValues.push_back(*statefulValue);
-      statefulAdvances.push_back(
-          std::min<int64_t>(32, numGroups - blockStart));
-    }
-    if (!useDirectPack4 &&
-        failed(emitPackedByteStoreStream(op, rewriter, destination, offset,
-                                         statefulValues, statefulAdvances))) {
+    if (failed(emitPackedByteStoreBlocks(
+            op, rewriter, valueParts, firstVRegType, *maskType, *slotIndex,
+            destination, offset, rowStride, numGroups, useDirectPack4))) {
       return failure();
     }
     rewriter.eraseOp(op);

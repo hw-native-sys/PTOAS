@@ -2269,6 +2269,17 @@ source lane 与 slot mask 准备及结果替换；保持 EVEN/P0 part、slot mas
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_group_slot_integer_extension_matrix.pto` lowering exit=0。
 
+# packed-byte group store 块发射职责整改
+
+本轮在 `OneToNVMIGroupStoreOpPattern::lowerPackedByteSlots8` 中引入
+`emitPackedByteStoreBlocks`，将每个 32-group block 的 packed value 构造结果分派、直接
+`PK4_B32` 发射以及 stateful stream value/advance 收集抽取为独立 helper。入口继续负责
+uniform vreg、mask/index 准备、对齐单 part 快路径和 direct-memory 合法性判断；保持 block
+顺序、active lane mask、group offset、PK4_B32 与 `vstus`/`vstas` 选择及失败传播语义不变。
+增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_to_vpto_group_store_slots8_packed_byte.pto` 完整 lowering
+pipeline exit=0，输出仍包含 `PK4_B32`、stateful `vstus` 和 `NORM_B8` 路径。
+
 # zero-copy interleave 结果合同职责整改
 
 本轮在 `OneToNVMIInterleaveOpPattern::materializeZeroCopyResults` 中引入
