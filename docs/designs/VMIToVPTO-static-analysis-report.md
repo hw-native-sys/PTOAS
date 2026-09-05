@@ -221,6 +221,15 @@ mask 的语义差异只存在于 active-lane 判定。补齐该批代码及 scal
 触及的控制语句大括号后，增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过。
 
+# fptoui physical part 校验整改
+
+本轮将 `OneToNVMIFPToUIOpPattern::matchAndRewrite` 中 source physical part 一致性校验
+与 result physical vreg 类型收集分别抽取为同名职责 helper，并将 factor=2 判定命名化
+以避免静态检查误报。入口继续负责 fp-to-ui contract、round/saturate 属性和
+widen/narrow 分派；保持 unsigned conversion 的诊断、arity、EVEN/ODD part 选择和结果
+顺序不变。增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过。
+
 本轮将 `OneToNVMIDeinterleaveLoadOpPattern` 的非对齐两轮 `vldus` 与 `vdintlv` 组合
 抽取为 `lowerUnaligned`。helper 显式维护 `streamBase/streamAlign` 的更新链，负责
 ptr 物化、offset 合成、每轮增量和 low/high 结果重排；direct `vldsx2` 路径保持独立。

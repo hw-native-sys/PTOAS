@@ -13670,7 +13670,9 @@ public:
 
     ArrayRef<StringRef> parts;
     int64_t factor = 0;
-    if (sourceBits == 16 && resultTypes.size() == 2 * sourceParts.size()) {
+    bool isFactor2 =
+        sourceBits == 16 && resultTypes.size() == 2 * sourceParts.size();
+    if (isFactor2) {
       static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
       parts = kEvenOddParts;
       factor = 2;
@@ -15218,6 +15220,52 @@ struct OneToNVMIFPToUIOpPattern
     : OneToNOpConversionPattern<VMIFPToUIOp> {
   using OneToNOpConversionPattern<VMIFPToUIOp>::OneToNOpConversionPattern;
 
+private:
+  FailureOr<VRegType> validateSourceParts(
+      VMIFPToUIOp op, ValueRange sourceParts,
+      OneToNPatternRewriter &rewriter) const {
+    if (sourceParts.empty()) {
+      return rewriter.notifyMatchFailure(
+          op, "fptoui requires at least one physical source chunk");
+    }
+    auto sourceType = dyn_cast<VRegType>(sourceParts.front().getType());
+    if (!sourceType) {
+      return rewriter.notifyMatchFailure(op,
+                                         "expected physical fptoui source type");
+    }
+    for (Value sourcePart : sourceParts) {
+      auto currentType = dyn_cast<VRegType>(sourcePart.getType());
+      bool mismatchedType = !currentType || currentType != sourceType;
+      if (mismatchedType) {
+        return rewriter.notifyMatchFailure(
+            op, "fptoui source physical parts must have matching type");
+      }
+    }
+    return sourceType;
+  }
+
+  FailureOr<SmallVector<VRegType>> validateResultParts(
+      VMIFPToUIOp op, TypeRange resultTypes,
+      OneToNPatternRewriter &rewriter) const {
+    if (resultTypes.empty()) {
+      return rewriter.notifyMatchFailure(
+          op, "fptoui requires at least one physical result chunk");
+    }
+    SmallVector<VRegType> resultVRegTypes;
+    resultVRegTypes.reserve(resultTypes.size());
+    for (Type physicalResultType : resultTypes) {
+      auto resultType = dyn_cast<VRegType>(physicalResultType);
+      if (!resultType) {
+        return rewriter.notifyMatchFailure(
+            op, "unsupported physical fptoui result type");
+      }
+      resultVRegTypes.push_back(resultType);
+    }
+    return resultVRegTypes;
+  }
+
+public:
+
   LogicalResult
   matchAndRewrite(VMIFPToUIOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -15239,38 +15287,16 @@ struct OneToNVMIFPToUIOpPattern
           op, "unsupported fp-to-ui conversion element type pair");
     }
 
-    // Validate source physical part types.
-    if (sourceParts.empty()) {
-      return rewriter.notifyMatchFailure(
-          op, "fptoui requires at least one physical source chunk");
-    }
-    auto sourceType0 = dyn_cast<VRegType>(sourceParts.front().getType());
-    if (!sourceType0) {
-      return rewriter.notifyMatchFailure(
-          op, "expected physical fptoui source type");
-    }
-    for (Value sourcePart : sourceParts) {
-      auto currentSourceType = dyn_cast<VRegType>(sourcePart.getType());
-      if (!currentSourceType || currentSourceType != sourceType0) {
-        return rewriter.notifyMatchFailure(
-            op, "fptoui source physical parts must have matching type");
-      }
+    FailureOr<VRegType> sourceType0 =
+        validateSourceParts(op, sourceParts, rewriter);
+    if (failed(sourceType0)) {
+      return failure();
     }
 
-    // Validate result physical part types.
-    if (resultTypes.empty()) {
-      return rewriter.notifyMatchFailure(
-          op, "fptoui requires at least one physical result chunk");
-    }
-    SmallVector<VRegType> resultVRegTypes;
-    resultVRegTypes.reserve(resultTypes.size());
-    for (Type physicalResultType : resultTypes) {
-      auto resultType = dyn_cast<VRegType>(physicalResultType);
-      if (!resultType) {
-        return rewriter.notifyMatchFailure(
-            op, "unsupported physical fptoui result type");
-      }
-      resultVRegTypes.push_back(resultType);
+    FailureOr<SmallVector<VRegType>> resultVRegTypes =
+        validateResultParts(op, resultTypes, rewriter);
+    if (failed(resultVRegTypes)) {
+      return failure();
     }
 
     StringAttr rnd = op->getAttrOfType<StringAttr>("rounding");
@@ -15284,7 +15310,7 @@ struct OneToNVMIFPToUIOpPattern
     if (!contract->requiresPart) {
       // Same-width: 1:1 mapping, no part.
       return lowerSameWidthFpToInt(
-          op, sourceParts, resultVRegTypes, rnd, sat,
+          op, sourceParts, *resultVRegTypes, rnd, sat,
           "same-width fptoui requires matching physical arity",
           "failed to build fptoui mask", *this->getTypeConverter(), rewriter);
     }
@@ -15304,7 +15330,7 @@ struct OneToNVMIFPToUIOpPattern
 
       static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
       return lowerWidenFpToInt(
-          op, sourceParts, resultVRegTypes, kEvenOddParts, rnd, sat,
+          op, sourceParts, *resultVRegTypes, kEvenOddParts, rnd, sat,
           "widen fptoui requires result arity = 2 × source arity",
           "failed to build fptoui widen mask", *this->getTypeConverter(),
           rewriter);
@@ -15334,7 +15360,7 @@ struct OneToNVMIFPToUIOpPattern
 
       static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
       return lowerNarrowFpToInt(
-          op, sourceParts, resultVRegTypes, sourceFactor, resultLaneStride,
+          op, sourceParts, *resultVRegTypes, sourceFactor, resultLaneStride,
           kEvenOddParts, rnd, sat,
           "failed to build fptoui source mask",
           "failed to build narrow fptoui result mask",
