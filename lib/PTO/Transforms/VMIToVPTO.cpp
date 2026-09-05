@@ -667,7 +667,8 @@ createRuntimePrefixMask(Location loc, MaskType maskType, Value activeLanes,
 
 LogicalResult
 checkSupportedMaskableVReg(VMIVRegType type, std::string *reason = nullptr) {
-  auto fail = [&reason](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message)
+      -> FailureOr<ReducePhysicalShapePlan> {
     if (reason) {
       *reason = message.str();
     }
@@ -15851,18 +15852,24 @@ LogicalResult checkSupportedCompressStoreShape(
   return success();
 }
 
+struct ReducePhysicalShapePlan {
+  VMILayoutAttr sourceLayout;
+  VMILayoutAttr maskLayout;
+  VMILayoutAttr resultLayout;
+  int64_t sourceArity;
+  int64_t resultArity;
+};
+
 template <typename OpTy>
-LogicalResult
-checkSupportedReduceShape(OpTy op, bool requiresReassoc,
-                          std::string *reason = nullptr) {
-  auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason)
+static FailureOr<ReducePhysicalShapePlan> buildReducePhysicalShapePlan(
+    OpTy op, std::string *reason) {
+  auto fail = [&reason](const Twine &message)
+      -> FailureOr<ReducePhysicalShapePlan> {
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
-
-  if (requiresReassoc && !op->hasAttr("reassoc"))
-    return fail("requires reassoc attr for pair-wise floating-point vcadd");
 
   auto sourceType = cast<VMIVRegType>(op.getSource().getType());
   auto maskType = cast<VMIMaskType>(op.getMask().getType());
@@ -15893,6 +15900,28 @@ checkSupportedReduceShape(OpTy op, bool requiresReassoc,
   if (*resultArity != 1)
     return fail("requires one result physical chunk");
 
+  return ReducePhysicalShapePlan{sourceLayout, maskLayout, resultLayout,
+                                 *sourceArity, *resultArity};
+}
+
+template <typename OpTy>
+LogicalResult
+checkSupportedReduceShape(OpTy op, bool requiresReassoc,
+                          std::string *reason = nullptr) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  if (requiresReassoc && !op->hasAttr("reassoc")) {
+    return fail("requires reassoc attr for pair-wise floating-point vcadd");
+  }
+  FailureOr<ReducePhysicalShapePlan> plan =
+      buildReducePhysicalShapePlan(op, reason);
+  if (failed(plan)) {
+    return failure();
+  }
   return success();
 }
 

@@ -978,3 +978,8 @@ active lane clamp 与按 plan 调用 chunk materializer；单 chunk 的 index/�
 逻辑保持不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；`vmi_to_vpto_create_group_mask_block8_dynamic.pto` 完整
 lowering 成功。
+本轮将普通 reduce verifier 的公共 source/mask/result layout、full-chunk 和 physical
+arity 契约抽取为 `ReducePhysicalShapePlan`/`buildReducePhysicalShapePlan`。模板入口
+现在仅处理 `reassoc` 专属约束并调用公共 plan，保持整数/浮点 reduce 的支持矩阵、结果
+arity 和诊断语义不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过。
