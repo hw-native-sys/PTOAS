@@ -221,6 +221,12 @@ mask 的语义差异只存在于 active-lane 判定。补齐该批代码及 scal
 触及的控制语句大括号后，增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过。
 
+本轮继续整理 `materializeMaskLaneStrideLayout`：将 contiguous lane-stride unpack
+分支前置为独立方向路径，集中处理结果 arity、`punpack` 层级和 mask 类型校验，pack
+路径只保留 `ppack`/`por` 合并逻辑。这样降低了同一函数中双向控制流的嵌套，同时保持
+lane_stride=2/4 的物理 part 顺序与诊断文本不变；相关 mask granularity 和 group-store
+回归通过，增量合规检查与 `git diff --check` 通过。
+
 另外将 `computeShuffleVselrPlans` 的单个 result physical chunk 规划抽取为
 `computeShuffleVselrPlanForChunk`。外层函数现在只负责布局因子和 chunk 枚举，辅助函数
 集中处理 padding、logical-to-physical lane 映射、单 source chunk 约束及升序/降序 affine
