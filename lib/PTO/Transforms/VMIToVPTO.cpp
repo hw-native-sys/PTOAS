@@ -7249,6 +7249,54 @@ struct OneToNVMICreateMaskOpPattern
   using OneToNOpConversionPattern<VMICreateMaskOp>::OneToNOpConversionPattern;
 
 private:
+  FailureOr<SmallVector<Type>> getResultTypes(VMICreateMaskOp op) const {
+    return getConvertedResultTypes(op, 0, *this->getTypeConverter());
+  }
+
+  LogicalResult lowerDynamicCreateMask(
+      VMICreateMaskOp op, OpAdaptor adaptor, VMIMaskType resultVMIType,
+      VMILayoutAttr layout, int64_t lanesPerPart,
+      OneToNPatternRewriter &rewriter) const {
+    FailureOr<Value> active = getSingleValue(
+        op, adaptor.getActiveLanes(),
+        "create_mask active_lanes must convert to one value", rewriter);
+    if (failed(active)) {
+      return failure();
+    }
+    FailureOr<SmallVector<Type>> maybeResultTypes = getResultTypes(op);
+    if (failed(maybeResultTypes)) {
+      return failure();
+    }
+    SmallVector<Value> results;
+    if (failed(lowerDynamicMask(op, *active, resultVMIType, layout,
+                                *maybeResultTypes, lanesPerPart, rewriter,
+                                results))) {
+      return failure();
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
+  LogicalResult lowerConstantCreateMask(
+      VMICreateMaskOp op, int64_t activeLanes, VMIMaskType resultVMIType,
+      VMILayoutAttr layout, int64_t lanesPerPart,
+      OneToNPatternRewriter &rewriter) const {
+    FailureOr<SmallVector<Type>> maybeResultTypes = getResultTypes(op);
+    if (failed(maybeResultTypes)) {
+      return failure();
+    }
+    SmallVector<Value> results;
+    if (failed(lowerConstantMask(op, activeLanes, resultVMIType, layout,
+                                 *maybeResultTypes, lanesPerPart, rewriter,
+                                 results))) {
+      return failure();
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
   LogicalResult lowerDynamicMask(
       VMICreateMaskOp op, Value active, VMIMaskType resultVMIType,
       VMILayoutAttr layout, TypeRange resultTypes, int64_t lanesPerPart,
@@ -7391,30 +7439,8 @@ public:
     }
 
     if (!activeConstant) {
-      FailureOr<Value> active = getSingleValue(
-          op, adaptor.getActiveLanes(),
-          "create_mask active_lanes must convert to one value", rewriter);
-      if (failed(active)) {
-        return failure();
-      }
-
-      FailureOr<SmallVector<Type>> maybe_resultTypes =
-
-          getConvertedResultTypes(op, 0, *this->getTypeConverter());
-
-      if (failed(maybe_resultTypes)) {
-        return failure();
-      }
-
-      SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-      SmallVector<Value> results;
-      if (failed(lowerDynamicMask(op, *active, resultVMIType, layout, resultTypes,
-                                  *lanesPerPart, rewriter, results))) {
-        return failure();
-      }
-
-      replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
-      return success();
+      return lowerDynamicCreateMask(op, adaptor, resultVMIType, layout,
+                                    *lanesPerPart, rewriter);
     }
 
     auto activeAttr = dyn_cast<IntegerAttr>(activeConstant.getValue());
@@ -7431,21 +7457,8 @@ public:
       activeLanes = resultVMIType.getElementCount();
     }
 
-    FailureOr<SmallVector<Type>> maybe_resultTypes =
-        getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes)) {
-      return failure();
-    }
-
-    SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-    SmallVector<Value> results;
-    if (failed(lowerConstantMask(op, activeLanes, resultVMIType, layout,
-                                 resultTypes, *lanesPerPart, rewriter,
-                                 results))) {
-      return failure();
-    }
-    replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
-    return success();
+    return lowerConstantCreateMask(op, activeLanes, resultVMIType, layout,
+                                   *lanesPerPart, rewriter);
   }
 };
 

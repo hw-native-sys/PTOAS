@@ -221,6 +221,15 @@ mask 的语义差异只存在于 active-lane 判定。补齐该批代码及 scal
 触及的控制语句大括号后，增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过。
 
+# create_mask 分派整改
+
+本轮将 `OneToNVMICreateMaskOpPattern` 中动态与常量 `create_mask` 的结果类型获取、
+lowering 调用及结果替换分别抽取为 `lowerDynamicCreateMask` 与
+`lowerConstantCreateMask`，并统一复用 `getResultTypes`。入口现在只负责布局/粒度、
+物理 mask lane 数和 active-lanes 常量识别；动态 prefix mask、常量 padding/lane 映射、
+结果顺序和诊断语义保持不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；native 构建仍需在 `/cann-cmake` 权限问题修复后补跑。
+
 # staging mask group loop 整改
 
 本轮将 `materializeStagingContiguousToDeintMaskLayout` 的单 group materialization 与
