@@ -12674,6 +12674,26 @@ public:
 struct OneToNVMIExtFOpPattern : OneToNOpConversionPattern<VMIExtFOp> {
   using OneToNOpConversionPattern<VMIExtFOp>::OneToNOpConversionPattern;
 
+private:
+  static Value createVcvtResult(Location loc, VRegType resultType,
+                                Value sourcePart, Value mask, StringAttr rnd,
+                                StringAttr sat, StringAttr part,
+                                bool resultIsPackedBF16x2,
+                                VRegType vcvtResultVRegType,
+                                OneToNPatternRewriter &rewriter) {
+    VRegType vcvtType = resultIsPackedBF16x2 ? vcvtResultVRegType : resultType;
+    Value vcvt = rewriter
+                     .create<VcvtOp>(loc, vcvtType, sourcePart, mask, rnd, sat,
+                                     part)
+                     .getResult();
+    if (!resultIsPackedBF16x2) {
+      return vcvt;
+    }
+    return rewriter.create<VbitcastOp>(loc, resultType, vcvt).getResult();
+  }
+
+public:
+
   LogicalResult
   matchAndRewrite(VMIExtFOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -12731,22 +12751,6 @@ struct OneToNVMIExtFOpPattern : OneToNOpConversionPattern<VMIExtFOp> {
                         resultVRegTypes.front().getElementCount() * 2,
                         BFloat16Type::get(rewriter.getContext()));
     }
-    auto viewVcvtResult = [&resultIsPackedBF16x2, &vcvtResultVRegType,
-                           &rewriter, &op](VRegType resultType, Value sourcePart,
-                              Value mask, StringAttr rnd, StringAttr sat,
-                              StringAttr part) -> Value {
-      VRegType vcvtType =
-          resultIsPackedBF16x2 ? vcvtResultVRegType : resultType;
-      Value vcvt = rewriter
-                       .create<VcvtOp>(op.getLoc(), vcvtType, sourcePart, mask,
-                                       rnd, sat, part)
-                       .getResult();
-      if (!resultIsPackedBF16x2)
-        return vcvt;
-      return rewriter.create<VbitcastOp>(op.getLoc(), resultType, vcvt)
-          .getResult();
-    };
-
     VMILayoutAttr sourceLayout = sourceVMIType.getLayoutAttr();
     VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
     if (sourceLayout && resultLayout && sourceLayout.isContiguous() &&
@@ -12765,9 +12769,10 @@ struct OneToNVMIExtFOpPattern : OneToNOpConversionPattern<VMIExtFOp> {
       results.reserve(resultTypes.size());
       for (auto [sourcePart, resultType] :
            llvm::zip_equal(sourceParts, resultVRegTypes)) {
-        results.push_back(viewVcvtResult(
-            resultType, sourcePart, *mask, /*rnd=*/nullptr, /*sat=*/nullptr,
-            rewriter.getStringAttr(part)));
+        results.push_back(createVcvtResult(
+            op.getLoc(), resultType, sourcePart, *mask, /*rnd=*/nullptr,
+            /*sat=*/nullptr, rewriter.getStringAttr(part),
+            resultIsPackedBF16x2, vcvtResultVRegType, rewriter));
       }
       replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
       return success();
@@ -12800,9 +12805,10 @@ struct OneToNVMIExtFOpPattern : OneToNOpConversionPattern<VMIExtFOp> {
       for (auto [chunkIndex, sourcePart] : llvm::enumerate(sourceParts)) {
         VRegType resultType =
             resultVRegTypes[partIndex * sourceParts.size() + chunkIndex];
-        results.push_back(viewVcvtResult(
-            resultType, sourcePart, *mask, /*rnd=*/nullptr, /*sat=*/nullptr,
-            rewriter.getStringAttr(parts[partIndex])));
+        results.push_back(createVcvtResult(
+            op.getLoc(), resultType, sourcePart, *mask, /*rnd=*/nullptr,
+            /*sat=*/nullptr, rewriter.getStringAttr(parts[partIndex]),
+            resultIsPackedBF16x2, vcvtResultVRegType, rewriter));
       }
     }
 
