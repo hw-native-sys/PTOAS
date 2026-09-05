@@ -2240,6 +2240,16 @@ source lane 与 slot mask 准备及结果替换；保持 EVEN/P0 part、slot mas
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_group_slot_integer_extension_matrix.pto` lowering exit=0。
 
+# zero-copy interleave 结果合同职责整改
+
+本轮在 `OneToNVMIInterleaveOpPattern::materializeZeroCopyResults` 中引入
+`validateZeroCopyResultParts`，将 low/high result type 合并、结果 arity 校验和 physical
+part 类型校验抽取为独立 helper。主函数继续负责 vintlv/vdintlv 的 zero-copy 重排；保持
+结果顺序、slice 布局、诊断及失败语义不变。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_vdintlv.pto` lowering exit=0（仅有 unified op 无 legacy equivalent 的既有
+remark）。
+
 # ExtI dense lane-stride 单结果发射职责整改
 
 本轮在模板 `OneToNVMIExtIOpPattern::emitDenseLaneExtension` 中引入

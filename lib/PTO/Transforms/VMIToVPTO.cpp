@@ -12223,6 +12223,28 @@ private:
     }
   }
 
+  LogicalResult validateZeroCopyResultParts(
+      SourceOp op, ArrayRef<Value> results, TypeRange lowTypes,
+      TypeRange highTypes, OneToNPatternRewriter &rewriter) const {
+    SmallVector<Type> resultTypes;
+    resultTypes.reserve(lowTypes.size() + highTypes.size());
+    llvm::append_range(resultTypes, lowTypes);
+    llvm::append_range(resultTypes, highTypes);
+    bool resultArityMismatch = results.size() != resultTypes.size();
+    if (resultArityMismatch) {
+      return rewriter.notifyMatchFailure(
+          op, "zero-copy interleave result arity mismatch");
+    }
+    for (auto [value, resultType] : llvm::zip_equal(results, resultTypes)) {
+      bool resultTypeMismatch = value.getType() != resultType;
+      if (resultTypeMismatch) {
+        return rewriter.notifyMatchFailure(
+            op, "zero-copy interleave part type mismatch");
+      }
+    }
+    return success();
+  }
+
   FailureOr<SmallVector<Value>> materializeZeroCopyResults(
       SourceOp op, ValueRange lhsParts, ValueRange rhsParts,
       TypeRange lowTypes, TypeRange highTypes, int64_t inputFactor,
@@ -12249,21 +12271,9 @@ private:
                                    outputFactor);
     }
 
-    SmallVector<Type> resultTypes;
-    resultTypes.reserve(lowTypes.size() + highTypes.size());
-    llvm::append_range(resultTypes, lowTypes);
-    llvm::append_range(resultTypes, highTypes);
-    bool resultArityMismatch = results.size() != resultTypes.size();
-    if (resultArityMismatch) {
-      return rewriter.notifyMatchFailure(
-          op, "zero-copy interleave result arity mismatch");
-    }
-    for (auto [value, resultType] : llvm::zip_equal(results, resultTypes)) {
-      bool resultTypeMismatch = value.getType() != resultType;
-      if (resultTypeMismatch) {
-        return rewriter.notifyMatchFailure(
-            op, "zero-copy interleave part type mismatch");
-      }
+    if (failed(validateZeroCopyResultParts(op, results, lowTypes, highTypes,
+                                           rewriter))) {
+      return failure();
     }
     return results;
   }
