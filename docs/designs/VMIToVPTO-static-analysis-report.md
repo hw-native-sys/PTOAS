@@ -1380,3 +1380,13 @@ source view、result mask 和 partial 合并顺序不变。同时补齐该路径
 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
 通过。增量 native 构建尝试被既有 CMake 外部依赖 `/cann-cmake` 权限错误阻断，未能进入
 源码编译阶段。
+
+# narrow fp-to-int 结果构造整改
+
+本轮将共享 helper `lowerNarrowFpToInt` 中每个结果 chunk 的 result mask 构造、source
+part 索引、`VcvtOp` partial 发射和 `VorOp` 合并抽取为
+`buildNarrowFpToIntResult`。外层继续负责转换因子/arity 校验、source 类型与 mask
+准备以及最终替换；`partStride` 选择、结果顺序和失败诊断保持不变。增量
+`check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
+通过。相关 `fptosi` lowering 抽样仍在既有 VMI pack/unpack pipeline invariant 处提前
+失败，未进入本轮 helper 路径；该阻塞与本轮修改无关。

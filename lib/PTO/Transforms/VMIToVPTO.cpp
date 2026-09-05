@@ -14854,6 +14854,40 @@ static LogicalResult lowerSameWidthFpToInt(
   return success();
 }
 
+static FailureOr<Value> buildNarrowFpToIntResult(
+    Operation *op, ValueRange sourceParts, VRegType resultType,
+    int64_t chunkIndex, int64_t sourceFactor, int64_t partStride,
+    ArrayRef<StringRef> parts, StringAttr rnd, StringAttr sat,
+    Value sourceMask, OneToNPatternRewriter &rewriter) {
+  FailureOr<Value> resultMask =
+      createAllTrueMaskForVReg(op->getLoc(), resultType, rewriter);
+  if (failed(resultMask)) {
+    return failure();
+  }
+
+  SmallVector<Value> partials;
+  partials.reserve(sourceFactor);
+  int64_t resultCount = sourceParts.size() / sourceFactor;
+  for (int64_t partIndex = 0; partIndex < sourceFactor; ++partIndex) {
+    Value sourcePart = sourceParts[partIndex * resultCount + chunkIndex];
+    partials.push_back(
+        rewriter
+            .create<VcvtOp>(op->getLoc(), resultType, sourcePart, sourceMask,
+                            rnd, sat, rewriter.getStringAttr(
+                                          parts[partIndex * partStride]))
+            .getResult());
+  }
+
+  Value merged = partials.front();
+  for (Value partial : llvm::drop_begin(partials)) {
+    merged = rewriter
+                 .create<VorOp>(op->getLoc(), resultType, merged, partial,
+                                *resultMask)
+                 .getResult();
+  }
+  return merged;
+}
+
 static LogicalResult lowerNarrowFpToInt(
     Operation *op, ValueRange sourceParts, ArrayRef<VRegType> resultTypes,
     int64_t sourceFactor, int64_t partStride, ArrayRef<StringRef> parts,
@@ -14882,34 +14916,13 @@ static LogicalResult lowerNarrowFpToInt(
   SmallVector<Value> results;
   results.reserve(resultTypes.size());
   for (auto [chunkIndex, resultType] : llvm::enumerate(resultTypes)) {
-    FailureOr<Value> resultMask =
-        createAllTrueMaskForVReg(op->getLoc(), resultType, rewriter);
-    if (failed(resultMask)) {
+    FailureOr<Value> result = buildNarrowFpToIntResult(
+        op, sourceParts, resultType, chunkIndex, sourceFactor, partStride,
+        parts, rnd, sat, *sourceMask, rewriter);
+    if (failed(result)) {
       return rewriter.notifyMatchFailure(op, resultMaskDiagnostic);
     }
-
-    SmallVector<Value> partials;
-    partials.reserve(sourceFactor);
-    for (int64_t partIndex = 0; partIndex < sourceFactor; ++partIndex) {
-      Value sourcePart =
-          sourceParts[partIndex * resultTypes.size() + chunkIndex];
-      partials.push_back(
-          rewriter
-              .create<VcvtOp>(op->getLoc(), resultType, sourcePart, *sourceMask,
-                              rnd, sat,
-                              rewriter.getStringAttr(
-                                  parts[partIndex * partStride]))
-              .getResult());
-    }
-
-    Value merged = partials.front();
-    for (Value partial : llvm::drop_begin(partials)) {
-      merged = rewriter
-                   .create<VorOp>(op->getLoc(), resultType, merged, partial,
-                                  *resultMask)
-                   .getResult();
-    }
-    results.push_back(merged);
+    results.push_back(*result);
   }
 
   replaceOpWithFlatConvertedValues(rewriter, op, results, *typeConverter);
