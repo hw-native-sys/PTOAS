@@ -485,3 +485,10 @@ slots=1 特殊 chunk 共用的 padding/lane 映射、selector 预期 group 及 s
 校验。`lowerGroupBroadcastParts` 不再重复维护该契约，selector 生成和结果分派语义不变。
 增量合规检查为 `errors=0 warnings=0`，`git diff --check` 通过；group-broadcast 与
 连续 load/store lowering 回归通过。
+
+本轮继续拆分 `OneToNVMIGroupStoreOpPattern::lowerSlots1`：将 unit-stride 的多源
+value 拼接及 aligned/unaligned store 选择抽取为 `lowerSlots1PackedUnitStride`，将
+逐 group 的 1PT fallback 抽取为 `lowerSlots1PointStores`。两个 helper 分别承担 packed
+stream 与 point-store 语义，原有对齐判定、mask 和诊断保持不变。增量合规检查为
+`errors=0 warnings=0`，`git diff --check` 通过；group-store 与连续 load/store
+lowering 回归通过。
