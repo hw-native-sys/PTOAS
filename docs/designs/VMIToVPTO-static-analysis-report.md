@@ -2085,6 +2085,16 @@ mask、结果顺序和诊断语义不变。增量 `check_changed_code.py` 结果
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；本轮未新增可独立进入该
 helper 的 runtime case，未虚构额外回归结果。
 
+# slots=8 lane-stride group store direct 发射职责整改
+
+本轮在 `OneToNVMIGroupStoreOpPattern::lowerSlots8LaneStride` 中引入
+`emitAlignedSlots8LaneStride`，将 direct 路径每个 slot block 的 vreg 校验、active group
+mask 构造和带 dist 的 `VstsOp` 发射抽取为独立 helper。主函数继续负责 dist/mask
+granularity 选择、地址合法性判断、unaligned compact fallback 与 stateful stream；保持
+block 顺序、offset、mask、dist token 和 direct/fallback 选择语义不变。增量
+`check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
+通过；本轮未新增可独立覆盖该分支的 runtime case，未虚构额外回归结果。
+
 # one-block group-reduce 单结果构造职责整改
 
 本轮在 `OneToNVMIGroupReduceOpPattern::lowerOneBlock` 中引入

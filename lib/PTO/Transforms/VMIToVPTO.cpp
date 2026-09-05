@@ -10427,6 +10427,29 @@ private:
     return success();
   }
 
+  LogicalResult emitAlignedSlots8LaneStride(
+      VMIGroupStoreOp op, OneToNPatternRewriter &rewriter,
+      ValueRange valueParts, ArrayRef<Value> groupOffsets, Value destination,
+      MaskType maskType, int64_t numGroups, StringRef dist) const {
+    for (auto [slotBlock, value] : llvm::enumerate(valueParts)) {
+      if (!isa<VRegType>(value.getType())) {
+        return rewriter.notifyMatchFailure(op,
+                                           "group_store value must be vreg");
+      }
+      int64_t activeGroups = std::min<int64_t>(8, numGroups - slotBlock * 8);
+      FailureOr<Value> mask = createPrefixMaskForActiveLanes(
+          op.getLoc(), maskType, activeGroups, rewriter);
+      if (failed(mask)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to create packed slots=8 group_store mask");
+      }
+      rewriter.create<VstsOp>(op.getLoc(), /*updated_base=*/Type{}, value,
+                              destination, groupOffsets[slotBlock],
+                              rewriter.getStringAttr(dist), *mask);
+    }
+    return success();
+  }
+
   LogicalResult lowerSlots8LaneStride(
       VMIGroupStoreOp op, OpAdaptor adaptor, OneToNPatternRewriter &rewriter,
       VMIVRegType valueVMIType, VMILayoutAttr layout, Value destination,
@@ -10485,21 +10508,10 @@ private:
       rewriter.eraseOp(op);
       return success();
     }
-    for (auto [slotBlock, value] : llvm::enumerate(valueParts)) {
-      if (!isa<VRegType>(value.getType())) {
-        return rewriter.notifyMatchFailure(op,
-                                           "group_store value must be vreg");
-      }
-      int64_t activeGroups = std::min<int64_t>(8, numGroups - slotBlock * 8);
-      FailureOr<Value> mask = createPrefixMaskForActiveLanes(
-          op.getLoc(), maskType, activeGroups, rewriter);
-      if (failed(mask)) {
-        return rewriter.notifyMatchFailure(
-            op, "failed to create packed slots=8 group_store mask");
-      }
-      rewriter.create<VstsOp>(op.getLoc(), /*updated_base=*/Type{}, value,
-                              destination, groupOffsets[slotBlock],
-                              rewriter.getStringAttr(*dist), *mask);
+    if (failed(emitAlignedSlots8LaneStride(
+            op, rewriter, valueParts, groupOffsets, destination, maskType,
+            numGroups, *dist))) {
+      return failure();
     }
     rewriter.eraseOp(op);
     return success();
