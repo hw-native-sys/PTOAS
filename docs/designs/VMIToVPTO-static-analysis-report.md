@@ -154,3 +154,8 @@ group-store（one-block/deinterleaved）检查流程保持原顺序。
 抽取为 `checkSupportedSlots1GroupSlotLoadShape`（提交 `dc240eceb`），使 slots=8
 unit-stride 判定与 slots=1 1PT 对齐判定具有独立职责；原有 memory proof、指针类型
 和 layout fact 检查顺序保持不变。
+
+本轮将 `checkSupportedScatterShape` 的物理承载检查抽取为
+`checkSupportedScatterPhysicalShape`（提交 `0c463c20e`），把 value/indices/mask
+的 physical arity 一致性及 full-chunk 证明与 scatter 的布局、元素宽度和索引契约
+分离。调用顺序和诊断保持不变，增量合规检查通过。
