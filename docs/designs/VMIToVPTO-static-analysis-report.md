@@ -1361,3 +1361,11 @@ extension、factor/width/arity 选择和 mask 构造；EVEN/ODD/P0…P3 顺序�
 增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 truncf 相关 lane-stride case exit=0；其他两个 trunci case 在既有 VMI pack/unpack
 pipeline invariant 处提前失败，未进入本轮路径。
+# trunci dense carrier 整改
+
+本轮将 `OneToNVMITruncIOpPattern::matchAndRewrite` 的 NOSAT dense lane-stride carrier
+转发抽取为 `lowerNoSatDenseCarrier`，统一负责 physical part bitcast 和结果替换。
+主函数继续负责 alias、width/factor、layout 和 arity 判定；不改变 NOSAT bit-pattern
+语义或后续 saturating narrowing 路径。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_layout_assignment_trunci_lane_stride.pto` lowering exit=0。

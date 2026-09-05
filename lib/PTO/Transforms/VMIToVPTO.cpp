@@ -14583,6 +14583,26 @@ private:
     return success();
   }
 
+  LogicalResult lowerNoSatDenseCarrier(
+      VMITruncIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes,
+      OneToNPatternRewriter &rewriter) const {
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (auto [sourcePart, resultType] :
+         llvm::zip_equal(sourceParts, resultTypes)) {
+      FailureOr<Value> result =
+          bitcastVReg(op.getLoc(), sourcePart, resultType, rewriter);
+      if (failed(result)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to forward NOSAT trunci carrier");
+      }
+      results.push_back(*result);
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
   LogicalResult lowerFactorTrunc(
       VMITruncIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes,
       ArrayRef<StringRef> parts, int64_t factor, StringAttr sat,
@@ -14717,20 +14737,7 @@ public:
     bool useNoSatCarrier =
         isDenseLaneStrideNarrowing && sat && sat.getValue() == "NOSAT";
     if (useNoSatCarrier) {
-      SmallVector<Value> results;
-      results.reserve(resultTypes.size());
-      for (auto [sourcePart, resultType] :
-           llvm::zip_equal(sourceParts, resultTypes)) {
-        FailureOr<Value> result =
-            bitcastVReg(op.getLoc(), sourcePart, resultType, rewriter);
-        if (failed(result))
-          return rewriter.notifyMatchFailure(
-              op, "failed to forward NOSAT trunci carrier");
-        results.push_back(*result);
-      }
-      replaceOpWithFlatConvertedValues(rewriter, op, results,
-                                       *this->getTypeConverter());
-      return success();
+      return lowerNoSatDenseCarrier(op, sourceParts, resultTypes, rewriter);
     }
 
     // s32 -> s8 alias: borrow ui32 -> ui8 physical path (NOSAT bit-pattern
