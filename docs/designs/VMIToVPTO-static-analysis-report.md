@@ -656,3 +656,10 @@ arity 推导、row reduction 类型/mask 构造、双路 chunk 合并及每组�
 仅保留 plan 分派。原有 chunk 顺序、uniform physical type 诊断和结果替换语义保持不变。
 增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_group_reduce_addi_i16.pto` 完成 lowering 回归。
+
+本轮将 contiguous `Vcadd` rows 路径抽取为 `lowerContiguousRows`。辅助函数独立负责
+contiguous group chunk 计算、结果 arity/layout 契约、row-reduction 类型与 mask 构造、
+每组累积以及 slots=1/多 chunk 结果回填；主 pattern 现在仅执行 plan 分派。保持原有
+结果广播、chunk 顺序和失败诊断语义。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_group_reduce_addi_i16.pto` 完成 lowering 回归。
