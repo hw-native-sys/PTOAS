@@ -983,3 +983,9 @@ arity 契约抽取为 `ReducePhysicalShapePlan`/`buildReducePhysicalShapePlan`�
 现在仅处理 `reassoc` 专属约束并调用公共 plan，保持整数/浮点 reduce 的支持矩阵、结果
 arity 和诊断语义不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过。
+本轮将 `checkSupportedActivePrefixIndexShape` 的 shape 契约抽取为
+`ActivePrefixIndexShapePlan`/`buildActivePrefixIndexShapePlan`，集中保存 mask/result
+类型并完成 contiguous layout、full physical chunks 及 single-chunk carry 约束；公开
+checker 仅负责 plan 构建结果转换。该拆分保持 active-prefix 的跨 chunk 限制与诊断
+语义不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过。

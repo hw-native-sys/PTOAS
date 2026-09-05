@@ -1648,9 +1648,11 @@ checkSupportedLoadShape(VMIVRegType type, Value source, Type sourceType,
 LogicalResult checkSupportedDeinterleaveLoadShape(
     VMIDeinterleaveLoadOp op,
     std::string *reason) {
-  auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason)
+  auto fail = [&reason](const Twine &message)
+      -> FailureOr<ActivePrefixIndexShapePlan> {
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
@@ -15703,12 +15705,18 @@ checkSupportedChannelMergeShape(VMIChannelMergeOp op,
   return success();
 }
 
-LogicalResult
-checkSupportedActivePrefixIndexShape(VMIActivePrefixIndexOp op,
-                                     std::string *reason = nullptr) {
-  auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason)
+struct ActivePrefixIndexShapePlan {
+  VMIMaskType maskType;
+  VMIVRegType resultType;
+};
+
+static FailureOr<ActivePrefixIndexShapePlan> buildActivePrefixIndexShapePlan(
+    VMIActivePrefixIndexOp op, std::string *reason) {
+  auto fail = [&reason](const Twine &message)
+      -> FailureOr<ActivePrefixIndexShapePlan> {
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
@@ -15741,6 +15749,17 @@ checkSupportedActivePrefixIndexShape(VMIActivePrefixIndexOp op,
     return fail("requires a single physical chunk; multi-chunk prefix needs "
                 "cross-chunk carry");
 
+  return ActivePrefixIndexShapePlan{maskType, resultType};
+}
+
+LogicalResult
+checkSupportedActivePrefixIndexShape(VMIActivePrefixIndexOp op,
+                                     std::string *reason = nullptr) {
+  FailureOr<ActivePrefixIndexShapePlan> plan =
+      buildActivePrefixIndexShapePlan(op, reason);
+  if (failed(plan)) {
+    return failure();
+  }
   return success();
 }
 
