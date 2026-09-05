@@ -1199,3 +1199,10 @@ float truncation 的复合条件命名化并补齐大括号。保持 store 地�
 `vstus`，最后发射一个 `vstas`，没有退化为独立单轮访存。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续、交错和
 group-slot 相关 lowering case 均 exit=0。
+
+本轮将 `OneToNVMIGroupStoreOpPattern` 的 compact-small 分支抽取为
+`lowerCompactSmallGroupStore`，把 compact layout 物化、对齐 `NORM` store 和非对齐
+单 stream 发射封装为独立职责；主 pattern 仅保留 scalar/compact/slots/普通布局的
+顶层分派。对齐判断、prefix mask、`align/base` 状态和诊断文本保持不变。增量合规
+检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；packed-byte、
+slots=1 及 group-store lowering case 均 exit=0。
