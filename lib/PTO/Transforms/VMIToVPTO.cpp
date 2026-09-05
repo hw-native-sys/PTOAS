@@ -60,6 +60,7 @@ std::optional<std::string> getX2MemoryDistToken(Type elementType,
 std::optional<std::string> getDenseLaneStrideLoadDistToken(VMIVRegType type);
 std::optional<std::string> getDenseLaneStrideStoreDistToken(VMIVRegType type);
 std::optional<std::string> getPointStoreDistToken(Type elementType);
+static int64_t getElementDeinterleaveFactor(VMILayoutAttr layout);
 
 static LogicalResult emitStatefulStoreStream(Operation *op, Value base,
                                               ValueRange values,
