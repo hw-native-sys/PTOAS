@@ -1200,6 +1200,14 @@ float truncation 的复合条件命名化并补齐大括号。保持 store 地�
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续、交错和
 group-slot 相关 lowering case 均 exit=0。
 
+本轮将 `OneToNVMIGroupStoreOpPattern` 的 slots=8 packed-byte 分支抽取为
+`lowerPackedByteSlots8`，集中处理 uniform physical part 校验、slot selector、每
+32 个 group 的向量合并，以及 `PK4_B32` 对齐直写或 packed-byte stateful stream
+选择。顶层 pattern 只保留 slots=8 的 arity/row-stride 校验和后端分派；没有改变
+`vselr/vsel` 拼接顺序、尾部 mask、PK4 条件或 stream 的 align/base 生命周期。
+增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+packed-byte、slots=1 和 group-store lowering case 均 exit=0。
+
 本轮将 `OneToNVMIGroupStoreOpPattern` 的 compact-small 分支抽取为
 `lowerCompactSmallGroupStore`，把 compact layout 物化、对齐 `NORM` store 和非对齐
 单 stream 发射封装为独立职责；主 pattern 仅保留 scalar/compact/slots/普通布局的
