@@ -8874,6 +8874,92 @@ static FailureOr<Value> lowerGroupBroadcastChunk(
       rewriter);
 }
 
+static FailureOr<VRegType> validateGroupBroadcastSources(
+    Operation *op, ValueRange sourceParts,
+    const VMIGroupBroadcastLayoutFact &fact,
+    OneToNPatternRewriter &rewriter) {
+  auto firstSourceType = dyn_cast<VRegType>(sourceParts.front().getType());
+  if (!firstSourceType) {
+    return rewriter.notifyMatchFailure(op,
+                                       "group_broadcast source must be vreg");
+  }
+  bool hasNonUniformSourceType =
+      llvm::any_of(sourceParts, [&firstSourceType](Value sourcePart) {
+        return sourcePart.getType() != firstSourceType;
+      });
+  if (hasNonUniformSourceType) {
+    return rewriter.notifyMatchFailure(
+        op, "group_broadcast requires uniform physical source vreg types");
+  }
+  bool sourceLaneCountMismatch =
+      firstSourceType.getElementCount() != fact.lanesPerPart;
+  if (sourceLaneCountMismatch) {
+    return rewriter.notifyMatchFailure(
+        op, "group_broadcast physical source lanes do not match the supported "
+            "layout row");
+  }
+  unsigned indexBits =
+      pto::getPTOStorageElemBitWidth(firstSourceType.getElementType());
+  bool unsupportedIndexBits =
+      indexBits != 8 && indexBits != 16 && indexBits != 32;
+  if (unsupportedIndexBits) {
+    return rewriter.notifyMatchFailure(
+        op, "group_broadcast requires 8/16/32-bit index elements");
+  }
+  return firstSourceType;
+}
+
+static LogicalResult lowerGroupBroadcastResultChunks(
+    Operation *op, ValueRange sourceParts, VMIVRegType resultVMIType,
+    TypeRange resultTypes, const VMIGroupBroadcastLayoutFact &fact,
+    GroupBroadcastLoweringContext &context, VRegType expectedSourceType,
+    OneToNPatternRewriter &rewriter, SmallVectorImpl<Value> &results) {
+  FailureOr<int64_t> resultLayoutFactor = getDataLayoutFactor(resultVMIType);
+  if (failed(resultLayoutFactor)) {
+    return rewriter.notifyMatchFailure(
+        op, "group_broadcast requires a computable result layout factor");
+  }
+  results.clear();
+  results.resize(resultTypes.size());
+  int64_t flatIndex = 0;
+  for (int64_t part = 0; part < *resultLayoutFactor; ++part) {
+    FailureOr<int64_t> chunks =
+        *resultLayoutFactor == 1
+            ? FailureOr<int64_t>(resultTypes.size())
+            : getDataChunksInPart(resultVMIType, part);
+    if (failed(chunks)) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast failed to enumerate result chunks");
+    }
+    for (int64_t chunk = 0; chunk < *chunks; ++chunk, ++flatIndex) {
+      if (flatIndex >= static_cast<int64_t>(resultTypes.size())) {
+        return rewriter.notifyMatchFailure(
+            op, "group_broadcast physical result count is too small");
+      }
+      Type resultType = resultTypes[flatIndex];
+      auto resultVRegType = dyn_cast<VRegType>(resultType);
+      bool mismatchedResultType =
+          !resultVRegType || resultVRegType != expectedSourceType;
+      if (mismatchedResultType) {
+        return rewriter.notifyMatchFailure(
+            op, "group_broadcast requires uniform physical vreg types");
+      }
+      FailureOr<Value> chunkResult = lowerGroupBroadcastChunk(
+          op, resultType, resultVMIType, sourceParts, fact, context, part, chunk,
+          rewriter);
+      if (failed(chunkResult)) {
+        return failure();
+      }
+      results[flatIndex] = *chunkResult;
+    }
+  }
+  if (flatIndex != static_cast<int64_t>(resultTypes.size())) {
+    return rewriter.notifyMatchFailure(
+        op, "group_broadcast physical result count is too large");
+  }
+  return success();
+}
+
 static LogicalResult lowerGroupBroadcastParts(
     Operation *op, ValueRange sourceParts, VMIVRegType sourceVMIType,
     VMIVRegType resultVMIType, TypeRange resultTypes, int64_t numGroups,
@@ -8894,97 +8980,21 @@ static LogicalResult lowerGroupBroadcastParts(
                 layoutReason);
   }
 
-  auto firstSourceType = dyn_cast<VRegType>(sourceParts.front().getType());
-  if (!firstSourceType) {
-    return rewriter.notifyMatchFailure(op,
-                                       "group_broadcast source must be vreg");
-  }
-  bool hasNonUniformSourceType =
-      llvm::any_of(sourceParts, [&firstSourceType](Value sourcePart) {
-        return sourcePart.getType() != firstSourceType;
-      });
-  if (hasNonUniformSourceType) {
-    return rewriter.notifyMatchFailure(
-        op, "group_broadcast requires uniform physical source vreg types");
-  }
-  bool sourceLaneCountMismatch =
-      firstSourceType.getElementCount() != fact->lanesPerPart;
-  if (sourceLaneCountMismatch) {
-    return rewriter.notifyMatchFailure(
-        op, "group_broadcast physical source lanes do not match the supported "
-            "layout row");
-  }
-  unsigned indexBits =
-      pto::getPTOStorageElemBitWidth(firstSourceType.getElementType());
-  bool unsupportedIndexBits =
-      indexBits != 8 && indexBits != 16 && indexBits != 32;
-  if (unsupportedIndexBits) {
-    return rewriter.notifyMatchFailure(
-        op, "group_broadcast requires 8/16/32-bit index elements");
+  FailureOr<VRegType> firstSourceType =
+      validateGroupBroadcastSources(op, sourceParts, *fact, rewriter);
+  if (failed(firstSourceType)) {
+    return failure();
   }
   FailureOr<GroupBroadcastLoweringContext> loweringContext =
       createGroupBroadcastLoweringContext(
-          op, sourceVMIType, resultVMIType, *fact, firstSourceType, rewriter);
+          op, sourceVMIType, resultVMIType, *fact, *firstSourceType, rewriter);
   if (failed(loweringContext)) {
     return failure();
   }
   GroupBroadcastLoweringContext &context = *loweringContext;
-  GroupBroadcastSelectorContext &selectorContext = context.selector;
-  Value allMask = selectorContext.allMask;
-  auto getSelector = [&selectorContext, &rewriter](int64_t baseSlot) {
-    return getGroupBroadcastSelector(selectorContext, baseSlot, rewriter);
-  };
-
-  results.clear();
-  results.resize(resultTypes.size());
-  FailureOr<int64_t> resultLayoutFactor = getDataLayoutFactor(resultVMIType);
-  if (failed(resultLayoutFactor)) {
-    return rewriter.notifyMatchFailure(
-        op, "group_broadcast requires a computable result layout factor");
-  }
-
-  int64_t flatIndex = 0;
-  for (int64_t part = 0; part < *resultLayoutFactor; ++part) {
-    FailureOr<int64_t> chunks = *resultLayoutFactor == 1
-                                    ? FailureOr<int64_t>(resultTypes.size())
-                                    : getDataChunksInPart(resultVMIType, part);
-    if (failed(chunks)) {
-      return rewriter.notifyMatchFailure(
-          op, "group_broadcast failed to enumerate result chunks");
-    }
-    for (int64_t chunk = 0; chunk < *chunks; ++chunk, ++flatIndex) {
-      bool resultCountTooSmall =
-          flatIndex >= static_cast<int64_t>(resultTypes.size());
-      if (resultCountTooSmall) {
-        return rewriter.notifyMatchFailure(
-            op, "group_broadcast physical result count is too small");
-      }
-
-      Type resultType = resultTypes[flatIndex];
-      auto resultVRegType = dyn_cast<VRegType>(resultType);
-      bool mismatchedResultType =
-          !resultVRegType || resultVRegType != firstSourceType;
-      if (mismatchedResultType) {
-        return rewriter.notifyMatchFailure(
-            op, "group_broadcast requires uniform physical vreg types");
-      }
-
-      FailureOr<Value> chunkResult = lowerGroupBroadcastChunk(
-          op, resultType, resultVMIType, sourceParts, *fact, context, part,
-          chunk, rewriter);
-      if (failed(chunkResult)) {
-        return failure();
-      }
-      results[flatIndex] = *chunkResult;
-    }
-  }
-  bool resultArityMismatch =
-      flatIndex != static_cast<int64_t>(resultTypes.size());
-  if (resultArityMismatch) {
-    return rewriter.notifyMatchFailure(
-        op, "group_broadcast physical result count is too large");
-  }
-  return success();
+  return lowerGroupBroadcastResultChunks(
+      op, sourceParts, resultVMIType, resultTypes, *fact, context,
+      *firstSourceType, rewriter, results);
 }
 
 struct OneToNVMIGroupSlotLoadOpPattern

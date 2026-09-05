@@ -1290,3 +1290,12 @@ factor=2/4 `intlv` 物化抽取为 `materializeDeintToContiguousMaskGroup`。外
 继续负责结果容量截断和最终 arity 校验，保持 deinterleaved part 顺序、尾部结果
 截断和失败诊断不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；`vmi_to_vpto_ensure_mask_granularity.pto` lowering exit=0。
+# group_broadcast lowering 整改
+
+本轮将 `lowerGroupBroadcastParts` 的 source physical 类型/元素宽度校验抽取为
+`validateGroupBroadcastSources`，将结果 layout factor 枚举、chunk lowering 和结果
+arity 校验抽取为 `lowerGroupBroadcastResultChunks`。主函数现在只负责 layout fact、
+selector context 和两阶段分派；selector cache、结果顺序、BRC/E2B/fallback 选择及
+诊断保持不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_layout_assignment_group_broadcast_load_e2b_b16.pto`
+lowering exit=0。
