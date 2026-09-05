@@ -716,3 +716,10 @@ lane_stride=2/4 下 source mask 的低/高 half `ppack` 与 `por` 合并；外�
 source/result arity、mask 类型和 chunk 枚举。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；mask granularity 与
 group-store 代表性 lowering 均通过。
+
+本轮将 `OneToNVMILoadOpPattern` 的 contiguous 物化阶段抽取为 `lowerContiguous`。
+helper 独立负责 NORM 对齐 `vlds` 与非对齐 `vldas`/多轮 `vldus` 的选择、align/base
+状态链更新、contiguous part 收集及后续 data-layout conversion；主 pattern 保留
+lane-stride/deinterleaved 快路径和地址安全证明。该拆分保持非对齐访存的 align 寄存器
+逐轮传递语义及结果顺序不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；连续 load/store 与 interleave memory lowering 回归通过。
