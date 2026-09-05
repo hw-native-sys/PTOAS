@@ -14867,6 +14867,24 @@ private:
     return success();
   }
 
+  FailureOr<std::pair<ArrayRef<StringRef>, int64_t>> getExtensionPartPlan(
+      OpT op, ArrayRef<Value> sourceParts, ArrayRef<Type> resultTypes,
+      unsigned sourceBits, unsigned resultBits,
+      OneToNPatternRewriter &rewriter) const {
+    if (resultBits == sourceBits * 2 &&
+        resultTypes.size() == 2 * sourceParts.size()) {
+      static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
+      return std::make_pair(ArrayRef<StringRef>(kEvenOddParts), 2);
+    }
+    if (resultBits == sourceBits * 4 &&
+        resultTypes.size() == 4 * sourceParts.size()) {
+      static constexpr StringRef kPacked4Parts[] = {"P0", "P1", "P2", "P3"};
+      return std::make_pair(ArrayRef<StringRef>(kPacked4Parts), 4);
+    }
+    return rewriter.notifyMatchFailure(
+        op, "unsupported physical integer extension source/result width relation");
+  }
+
   FailureOr<Value> buildDenseGroupSlotExtensionResult(
       OpT op, Value sourcePart, Type resultType, VMIVRegType sourceVMIType,
       VMIVRegType resultVMIType, IntegerType resultIntegerType,
@@ -15064,22 +15082,11 @@ private:
                                     sourceType, part, rewriter);
     }
 
-    ArrayRef<StringRef> parts;
-    int64_t factor = 0;
-    if (resultBits == sourceBits * 2 &&
-        resultTypes.size() == 2 * sourceParts.size()) {
-      static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
-      parts = kEvenOddParts;
-      factor = 2;
-    } else if (resultBits == sourceBits * 4 &&
-               resultTypes.size() == 4 * sourceParts.size()) {
-      static constexpr StringRef kPacked4Parts[] = {"P0", "P1", "P2", "P3"};
-      parts = kPacked4Parts;
-      factor = 4;
-    } else {
-      return rewriter.notifyMatchFailure(
-          op, "unsupported physical integer extension source/result width "
-              "relation");
+    FailureOr<std::pair<ArrayRef<StringRef>, int64_t>> partPlan =
+        getExtensionPartPlan(op, sourceParts, resultTypes, sourceBits,
+                             resultBits, rewriter);
+    if (failed(partPlan)) {
+      return failure();
     }
 
     FailureOr<Value> mask =
@@ -15089,7 +15096,8 @@ private:
           op, "failed to build integer extension seed mask");
     }
 
-    return emitFactorExtension(op, sourceParts, resultVRegTypes, parts, factor,
+    return emitFactorExtension(op, sourceParts, resultVRegTypes, partPlan->first,
+                               partPlan->second,
                                *mask, rewriter);
   }
 

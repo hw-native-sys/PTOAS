@@ -2230,3 +2230,13 @@ source lane 与 slot mask 准备及结果替换；保持 EVEN/P0 part、slot mas
 和 lowering 语义不变。增量 `check_changed_code.py` 结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_group_slot_integer_extension_matrix.pto` lowering exit=0。
+
+# ExtI factor part plan 职责整改
+
+本轮在模板 `OneToNVMIExtIOpPattern::lowerPhysicalExtension` 中引入
+`getExtensionPartPlan`，将 source/result width 关系、physical result arity 与 EVEN/ODD 或
+P0/P1/P2/P3 part 表选择抽取为独立 helper。主函数继续保留 dense lane-stride 优先路径、
+mask 构造和 factor extension 发射；保持分派优先级、part 顺序、诊断和 lowering 语义不变。
+增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_to_vpto_group_slot_integer_extension_matrix.pto` lowering
+exit=0。
