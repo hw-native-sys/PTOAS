@@ -2033,3 +2033,14 @@ exit=0，现有 slots=1 的 EVEN/P0 转换输出保持不变。
 布局或诊断语义。增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；`vmi_layout_assignment_group_store_slots1_unit_stride.pto`
 完整 lowering pipeline exit=0。
+
+# group broadcast load BRC 单结果构造职责整改
+
+本轮在 `OneToNVMIGroupBroadcastLoadOpPattern::lowerDirectBRC` 中引入
+`buildDirectBRCResult`，将单个结果块的 physical vreg 校验、group offset 计算和 `VldsOp`
+发射抽取为独立 helper。`lowerDirectBRC` 仍负责 BRC arity/指针合同、结果遍历和扁平化；
+保持 group index 计算、source-group-stride 透传、结果顺序、BRC dist token 和原有诊断语义
+不变。增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过。现有 `vmi_layout_assignment_group_slot_broadcast_load_brc_b32.pto`
+在 group_slot_load 的既有 unsupported-shape 诊断处提前失败，未进入本轮 BRC helper，不能
+将该失败归因于本轮改动。

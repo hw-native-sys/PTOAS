@@ -11169,6 +11169,23 @@ private:
     return success();
   }
 
+  FailureOr<Value> buildDirectBRCResult(
+      VMIGroupBroadcastLoadOp op, OneToNPatternRewriter &rewriter,
+      Value source, Value offset, Value sourceGroupStride, Type resultType,
+      int64_t group, StringRef brcDist) const {
+    auto vregType = dyn_cast<VRegType>(resultType);
+    if (!vregType) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast_load BRC result must be vreg");
+    }
+    Value groupOffset = createGroupChunkOffset(
+        op.getLoc(), offset, sourceGroupStride, group, 0, rewriter);
+    return rewriter
+        .create<VldsOp>(op.getLoc(), resultType, Type{}, source, groupOffset,
+                        rewriter.getStringAttr(brcDist))
+        .getResult();
+  }
+
   LogicalResult lowerDirectBRC(
       VMIGroupBroadcastLoadOp op, OneToNPatternRewriter &rewriter,
       Value source, Value offset, Value sourceGroupStride,
@@ -11195,19 +11212,14 @@ private:
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
     for (auto [index, resultType] : llvm::enumerate(resultTypes)) {
-      auto vregType = dyn_cast<VRegType>(resultType);
-      if (!vregType) {
-        return rewriter.notifyMatchFailure(
-            op, "group_broadcast_load BRC result must be vreg");
-      }
       int64_t group = static_cast<int64_t>(index) / chunksPerGroup;
-      Value groupOffset = createGroupChunkOffset(
-          op.getLoc(), offset, sourceGroupStride, group, 0, rewriter);
-      results.push_back(
-          rewriter
-              .create<VldsOp>(op.getLoc(), resultType, Type{}, source,
-                              groupOffset, rewriter.getStringAttr(brcDist))
-              .getResult());
+      FailureOr<Value> result = buildDirectBRCResult(
+          op, rewriter, source, offset, sourceGroupStride, resultType, group,
+          brcDist);
+      if (failed(result)) {
+        return failure();
+      }
+      results.push_back(*result);
     }
     replaceOpWithFlatConvertedValues(rewriter, op, results,
                                      *this->getTypeConverter());
