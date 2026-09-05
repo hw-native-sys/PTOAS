@@ -1183,3 +1183,10 @@ lowering exit=0。
 operands、lane 数、dist 合法性及对齐与非对齐路径选择，保持 stream 与 dist 语义不变。
 增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 interleave memory lowering exit=0。
+
+本轮为 `OneToNVMIStoreOpPattern` 新增 `getContiguousStoreTypes`，统一 contiguous
+fallback 的 physical type/footprint 计算，主 store lowering 继续独立处理 lane-stride
+dist、deinterleaved `vstsx2`、对齐 `vsts` 与非对齐 stateful stream。同步将 packed
+float truncation 的复合条件命名化并补齐大括号。保持 store 地址、mask、stream state
+和 dist 语义不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；连续 load/store lowering exit=0。

@@ -9242,6 +9242,24 @@ public:
 struct OneToNVMIStoreOpPattern : OneToNOpConversionPattern<VMIStoreOp> {
   using OneToNOpConversionPattern<VMIStoreOp>::OneToNOpConversionPattern;
 
+private:
+  FailureOr<SmallVector<Type>> getContiguousStoreTypes(
+      VMIStoreOp op, VMIVRegType valueVMIType,
+      OneToNPatternRewriter &rewriter) const {
+    VMILayoutAttr contiguousLayout =
+        VMILayoutAttr::getContiguous(rewriter.getContext());
+    FailureOr<SmallVector<Type>> contiguousTypes =
+        getConvertedVRegTypesWithLayout(valueVMIType, contiguousLayout,
+                                        *this->getTypeConverter());
+    if (failed(contiguousTypes)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to compute contiguous store footprint");
+    }
+    return std::move(*contiguousTypes);
+  }
+
+public:
+
   static LogicalResult emitLaneStrideStore(
       VMIStoreOp op, Value destination, Value offset, ValueRange valueParts,
       VMIVRegType valueVMIType, StringRef laneStrideDist,
@@ -9370,11 +9388,10 @@ struct OneToNVMIStoreOpPattern : OneToNOpConversionPattern<VMIStoreOp> {
     VMILayoutAttr contiguousLayout =
         VMILayoutAttr::getContiguous(rewriter.getContext());
     FailureOr<SmallVector<Type>> maybeContiguousTypes =
-        getConvertedVRegTypesWithLayout(valueVMIType, contiguousLayout,
-                                        *this->getTypeConverter());
-    if (failed(maybeContiguousTypes))
-      return rewriter.notifyMatchFailure(
-          op, "failed to compute contiguous store footprint");
+        getContiguousStoreTypes(op, valueVMIType, rewriter);
+    if (failed(maybeContiguousTypes)) {
+      return failure();
+    }
     SmallVector<Type> contiguousTypes = std::move(*maybeContiguousTypes);
     SmallVector<Type> valuePartTypes;
     valuePartTypes.reserve(valueParts.size());
@@ -13500,11 +13517,14 @@ public:
     auto resultVMIType = cast<VMIVRegType>(op.getResult().getType());
     Type sourceElementType = sourceVMIType.getElementType();
     Type resultElementType = resultVMIType.getElementType();
-    if ((isVMIPackedFloatCarrierType(sourceElementType) ||
+    bool unsupportedPackedConversion =
+        (isVMIPackedFloatCarrierType(sourceElementType) ||
          isVMIPackedFloatCarrierType(resultElementType)) &&
-        !lookupVMIFpToFpContract(sourceElementType, resultElementType))
+        !lookupVMIFpToFpContract(sourceElementType, resultElementType);
+    if (unsupportedPackedConversion) {
       return rewriter.notifyMatchFailure(
           op, "unsupported packed fp-to-fp truncf conversion");
+    }
     ValueRange sourceParts = adaptor.getSource();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
