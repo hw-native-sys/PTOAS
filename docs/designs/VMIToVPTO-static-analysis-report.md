@@ -552,3 +552,10 @@ deinterleaved forwarding 的共同契约。layout fallback 选择、unrealized c
 识别抽取为 `forwardBlockLayoutCastInputs`，主函数只负责布局关系选择和普通 identity
 校验。cast 输入数量及类型匹配条件保持不变。增量合规检查为 `errors=0 warnings=0`，
 `git diff --check` 通过；连续 load/store lowering 回归通过。
+
+本轮将 `materializeDeinterleaved2MaskLayout` 的正向与反向 mask 重排分别抽取为
+`materializeDeinterleaved2MaskToContiguous` 和
+`materializeContiguousToDeinterleaved2Mask`。外层仅负责方向识别、2*N arity 与
+identity forwarding 校验；`pintlv/pdintlv` 的 part 顺序和错误诊断保持不变。增量
+合规检查为 `errors=0 warnings=0`，`git diff --check` 通过；mask granularity
+lowering 回归通过。
