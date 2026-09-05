@@ -720,6 +720,13 @@ contiguous interleave 的正常 lowering；该修复不改变支持矩阵或结�
 入口中发现的缺失大括号控制语句。新增代码通过增量合规检查，`git diff --check` 通过，
 `vmi_interleaved_memory_ops.pto` lowering exit=0。
 
+本轮复核 `OneToNVMILoadOpPattern::matchAndRewrite` 时，将 physical chunk 安全校验
+提前到 lane-stride dist 快路径之前，确保所有 load 路径都先获得有效的
+`lanesPerPart`；这修正了快路径对后置变量的依赖，并保持 dist/对齐判断及 fallback
+顺序不变。同时补齐 `extf` 入口剩余的控制语句大括号。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_load_store_contiguous.pto` lowering exit=0。
+
 本轮继续将 two-block `deinterleaved=2` 的 `vcgadd`/combine 路径抽取为
 `lowerTwoBlock`。该 helper 独立维护双物理块 arity、source/mask/result 类型一致性、
 尾部 active-group mask 和两路 group-reduce 后的 combine；主 pattern 仅负责 plan 分派。

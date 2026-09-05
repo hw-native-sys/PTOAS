@@ -7631,6 +7631,11 @@ public:
     }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
+    FailureOr<int64_t> lanesPerPart = verifyFullOrSafeReadVRegChunks(
+        op, resultVMIType, op.getSource(), op.getOffset(), rewriter);
+    if (failed(lanesPerPart)) {
+      return failure();
+    }
     std::optional<std::string> laneStrideDist =
         getDenseLaneStrideLoadDistToken(resultVMIType);
     auto laneStrideResultType =
@@ -7643,12 +7648,6 @@ public:
     if (canUseLaneStrideDist) {
       return lowerLaneStride(op, rewriter, *source, *offset, resultVMIType,
                              resultTypes, *laneStrideDist, *lanesPerPart);
-    }
-
-    FailureOr<int64_t> lanesPerPart = verifyFullOrSafeReadVRegChunks(
-        op, resultVMIType, op.getSource(), op.getOffset(), rewriter);
-    if (failed(lanesPerPart)) {
-      return failure();
     }
 
     VMILayoutAttr contiguousLayout =
@@ -11804,8 +11803,9 @@ struct OneToNVMIMaskUnaryOpPattern : OneToNOpConversionPattern<SourceOp> {
     ValueRange sourceParts = adaptor.getSource();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    if (failed(maybe_resultTypes)) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     if (sourceParts.size() != resultTypes.size())
       return rewriter.notifyMatchFailure(op,
