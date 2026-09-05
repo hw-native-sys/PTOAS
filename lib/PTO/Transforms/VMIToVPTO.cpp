@@ -5623,9 +5623,9 @@ struct OneToNVMIBroadcastOpPattern : OneToNOpConversionPattern<VMIBroadcastOp> {
 
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
 
-    if (failed(maybe_resultTypes))
-
+    if (failed(maybe_resultTypes)) {
       return failure();
+    }
 
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     SmallVector<Value> results;
@@ -14873,6 +14873,17 @@ WalkResult verifySupportedMaskableOp(MaskableOp op, StringRef opName,
                        cast<VMIVRegType>(op.getResult().getType()));
 }
 
+template <typename ReduceOp>
+WalkResult verifySupportedReduceOp(ReduceOp op, bool requiresReassoc,
+                                   StringRef diagnostic) {
+  std::string reason;
+  if (succeeded(checkSupportedReduceShape(op, requiresReassoc, &reason))) {
+    return WalkResult::advance();
+  }
+  op.emitError() << kVMIDiagUnsupportedPrefix << diagnostic << reason << ")";
+  return WalkResult::interrupt();
+}
+
 LogicalResult
 verifySupportedVMIToVPTOOps(ModuleOp module,
                             bool enableStableGatherMaskedLoad) {
@@ -15158,31 +15169,19 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
     }
 
     if (auto reduce = dyn_cast<VMIReduceAddIOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedReduceShape(
-              reduce, /*requiresReassoc=*/false, &reason)))
-        return WalkResult::advance();
-      reduce.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.reduce_addi lowers through pto.vcadd only for "
-             "contiguous full 32-bit integer source chunks with matching "
-             "mask chunks and one init/result chunk ("
-          << reason << ")";
-      return WalkResult::interrupt();
+      return verifySupportedReduceOp(
+          reduce, false,
+          "pto.vmi.reduce_addi lowers through pto.vcadd only for "
+          "contiguous full 32-bit integer source chunks with matching mask "
+          "chunks and one init/result chunk (");
     }
 
     if (auto reduce = dyn_cast<VMIReduceAddFOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedReduceShape(
-              reduce, /*requiresReassoc=*/true, &reason)))
-        return WalkResult::advance();
-      reduce.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.reduce_addf lowers through pto.vcadd only with "
-             "reassoc, f32 contiguous full source chunks, matching mask "
-             "chunks, and one init/result chunk ("
-          << reason << ")";
-      return WalkResult::interrupt();
+      return verifySupportedReduceOp(
+          reduce, true,
+          "pto.vmi.reduce_addf lowers through pto.vcadd only with reassoc, "
+          "f32 contiguous full source chunks, matching mask chunks, and one "
+          "init/result chunk (");
     }
 
     if (auto reduce = dyn_cast<VMIGroupReduceAddFOp>(op)) {
@@ -15273,59 +15272,35 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
     }
 
     if (auto reduce = dyn_cast<VMIReduceMaxFOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedReduceShape(
-              reduce, /*requiresReassoc=*/false, &reason)))
-        return WalkResult::advance();
-      reduce.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.reduce_maxf lowers through pto.vcmax only for f16/f32 "
-             "contiguous full source chunks with matching mask chunks and one "
-             "init/result chunk ("
-          << reason << ")";
-      return WalkResult::interrupt();
+      return verifySupportedReduceOp(
+          reduce, false,
+          "pto.vmi.reduce_maxf lowers through pto.vcmax only for f16/f32 "
+          "contiguous full source chunks with matching mask chunks and one "
+          "init/result chunk (");
     }
 
     if (auto reduce = dyn_cast<VMIReduceMinFOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedReduceShape(
-              reduce, /*requiresReassoc=*/false, &reason)))
-        return WalkResult::advance();
-      reduce.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.reduce_minf lowers through pto.vcmin only for f16/f32 "
-             "contiguous full source chunks with matching mask chunks and one "
-             "init/result chunk ("
-          << reason << ")";
-      return WalkResult::interrupt();
+      return verifySupportedReduceOp(
+          reduce, false,
+          "pto.vmi.reduce_minf lowers through pto.vcmin only for f16/f32 "
+          "contiguous full source chunks with matching mask chunks and one "
+          "init/result chunk (");
     }
 
     if (auto reduce = dyn_cast<VMIReduceMaxIOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedReduceShape(
-              reduce, /*requiresReassoc=*/false, &reason)))
-        return WalkResult::advance();
-      reduce.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.reduce_maxi lowers through pto.vcmax only for "
-             "contiguous full integer source chunks with matching mask "
-             "chunks and one init/result chunk ("
-          << reason << ")";
-      return WalkResult::interrupt();
+      return verifySupportedReduceOp(
+          reduce, false,
+          "pto.vmi.reduce_maxi lowers through pto.vcmax only for contiguous "
+          "full integer source chunks with matching mask chunks and one "
+          "init/result chunk (");
     }
 
     if (auto reduce = dyn_cast<VMIReduceMinIOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedReduceShape(
-              reduce, /*requiresReassoc=*/false, &reason)))
-        return WalkResult::advance();
-      reduce.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.reduce_mini lowers through pto.vcmin only for "
-             "contiguous full integer source chunks with matching mask "
-             "chunks and one init/result chunk ("
-          << reason << ")";
-      return WalkResult::interrupt();
+      return verifySupportedReduceOp(
+          reduce, false,
+          "pto.vmi.reduce_mini lowers through pto.vcmin only for contiguous "
+          "full integer source chunks with matching mask chunks and one "
+          "init/result chunk (");
     }
 
     if (auto fma = dyn_cast<VMIFmaOp>(op)) {
