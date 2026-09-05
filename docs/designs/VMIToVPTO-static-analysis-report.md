@@ -1473,3 +1473,11 @@ data-layout materialization 和结果替换抽取为 `lowerChannelMerge`。主�
 语义保持不变。增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过。现有 channel merge case 仍受既有 VMI layout contract 冲突
 阻断，未进入该 helper。
+
+# sitofp 结果类型收集整改
+
+本轮将 `OneToNVMISIToFPOpPattern::matchAndRewrite` 中 physical result vreg 类型收集与
+一致性校验抽取为 `collectResultTypes`。入口函数保留 source 类型/位宽检查、mask 构造
+和转换分派；结果类型一致性诊断、位宽读取和 `lowerConversion` 的转换语义保持不变。
+增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过。现有 sitofp 相关抽样未发现新的 lowering 诊断。

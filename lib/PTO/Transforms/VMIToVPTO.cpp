@@ -15392,6 +15392,27 @@ private:
     }
   }
 
+  FailureOr<SmallVector<VRegType>> collectResultTypes(
+      VMISIToFPOp op, TypeRange resultTypes,
+      OneToNPatternRewriter &rewriter) const {
+    SmallVector<VRegType> resultVRegTypes;
+    resultVRegTypes.reserve(resultTypes.size());
+    for (Type resultType : resultTypes) {
+      auto resultVRegType = dyn_cast<VRegType>(resultType);
+      bool mismatchedType =
+          !resultVRegType ||
+          (!resultVRegTypes.empty() &&
+           resultVRegType != resultVRegTypes.front());
+      if (mismatchedType) {
+        (void)rewriter.notifyMatchFailure(
+            op, "unsupported physical sitofp result type");
+        return failure();
+      }
+      resultVRegTypes.push_back(resultVRegType);
+    }
+    return resultVRegTypes;
+  }
+
 public:
 
   LogicalResult
@@ -15413,20 +15434,13 @@ public:
     unsigned sourceBits =
         pto::getPTOStorageElemBitWidth(sourceType.getElementType());
 
-    SmallVector<VRegType> resultVRegTypes;
-    resultVRegTypes.reserve(resultTypes.size());
-    for (Type resultType : resultTypes) {
-      auto resultVRegType = dyn_cast<VRegType>(resultType);
-      if (!resultVRegType ||
-          (!resultVRegTypes.empty() &&
-           resultVRegType != resultVRegTypes.front())) {
-        return rewriter.notifyMatchFailure(
-            op, "unsupported physical sitofp result type");
-      }
-      resultVRegTypes.push_back(resultVRegType);
+    FailureOr<SmallVector<VRegType>> resultVRegTypes =
+        collectResultTypes(op, resultTypes, rewriter);
+    if (failed(resultVRegTypes)) {
+      return failure();
     }
     unsigned resultBits = pto::getPTOStorageElemBitWidth(
-        resultVRegTypes.front().getElementType());
+        resultVRegTypes->front().getElementType());
 
     FailureOr<Value> mask =
         createAllTrueMaskForVReg(op.getLoc(), sourceType, rewriter);
@@ -15434,7 +15448,7 @@ public:
       return rewriter.notifyMatchFailure(op, "failed to build sitofp mask");
     }
 
-    return lowerConversion(op, sourceParts, resultVRegTypes, *mask, sourceBits,
+    return lowerConversion(op, sourceParts, *resultVRegTypes, *mask, sourceBits,
                            resultBits, rewriter);
   }
 };
