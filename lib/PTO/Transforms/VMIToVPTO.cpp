@@ -2555,6 +2555,66 @@ bool isStaticAllActiveMask(Value mask, int64_t expectedLanes,
 }
 
 LogicalResult
+checkSupportedExpandLoadRuntimePath(
+    VMIExpandLoadOp op, VMIVRegType resultType, VMIVRegType passthruType,
+    VMIMaskType maskType, StringRef allActivePathReason, std::string *reason) {
+  auto fail = [&reason](const Twine &message) {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+
+  if (!isa<PtrType>(op.getSource().getType())) {
+    return fail(Twine("runtime-mask path requires !pto.ptr source because "
+                      "pto.vgather2_bc is pointer-only; all-active path ") +
+                allActivePathReason);
+  }
+  bool unsupportedResultWidth =
+      pto::getPTOStorageElemBitWidth(resultType.getElementType()) != 32;
+  if (unsupportedResultWidth) {
+    return fail("runtime-mask path currently requires 32-bit result element "
+                "type so prefix indices and gather result lane counts match");
+  }
+  bool unsupportedMaskGranularity = maskType.getGranularity() != "b32";
+  if (unsupportedMaskGranularity) {
+    return fail("runtime-mask path requires b32 mask granularity");
+  }
+
+  FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
+  FailureOr<int64_t> passthruArity = getVMIPhysicalArity(passthruType);
+  FailureOr<int64_t> maskArity = getVMIPhysicalArity(maskType);
+  bool hasComputableArity = succeeded(resultArity) &&
+                            succeeded(passthruArity) && succeeded(maskArity);
+  if (!hasComputableArity) {
+    return fail("runtime-mask path requires computable physical arity");
+  }
+  bool hasSingleChunk = *resultArity == 1 && *passthruArity == 1 &&
+                        *maskArity == 1;
+  if (!hasSingleChunk) {
+    return fail("runtime-mask path currently supports only one physical "
+                "chunk because prefix indices must not reset across chunks");
+  }
+
+  std::string fullChunkReason;
+  std::string passthruReason;
+  std::string maskFullReason;
+  if (failed(checkFullDataPhysicalChunks(resultType, &fullChunkReason))) {
+    return fail(Twine("runtime-mask result requires full physical chunks; ") +
+                fullChunkReason);
+  }
+  if (failed(checkFullDataPhysicalChunks(passthruType, &passthruReason))) {
+    return fail(Twine("runtime-mask passthru requires full physical chunks; ") +
+                passthruReason);
+  }
+  if (failed(checkFullVMIPhysicalChunks(maskType, &maskFullReason))) {
+    return fail(Twine("runtime-mask mask requires full physical chunks; ") +
+                maskFullReason);
+  }
+  return success();
+}
+
+LogicalResult
 checkSupportedExpandLoadShape(VMIExpandLoadOp op, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
@@ -2608,38 +2668,8 @@ checkSupportedExpandLoadShape(VMIExpandLoadOp op, std::string *reason) {
             .str();
   }
 
-  if (!isa<PtrType>(op.getSource().getType()))
-    return fail(Twine("runtime-mask path requires !pto.ptr source because "
-                      "pto.vgather2_bc is pointer-only; all-active path ") +
-                allActivePathReason);
-  if (pto::getPTOStorageElemBitWidth(resultType.getElementType()) != 32)
-    return fail("runtime-mask path currently requires 32-bit result element "
-                "type so prefix indices and gather result lane counts match");
-  if (maskType.getGranularity() != "b32")
-    return fail("runtime-mask path requires b32 mask granularity");
-
-  FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
-  FailureOr<int64_t> passthruArity = getVMIPhysicalArity(passthruType);
-  FailureOr<int64_t> maskArity = getVMIPhysicalArity(maskType);
-  if (failed(resultArity) || failed(passthruArity) || failed(maskArity))
-    return fail("runtime-mask path requires computable physical arity");
-  if (*resultArity != 1 || *passthruArity != 1 || *maskArity != 1)
-    return fail("runtime-mask path currently supports only one physical "
-                "chunk because prefix indices must not reset across chunks");
-
-  std::string passthruReason;
-  std::string maskFullReason;
-  if (failed(checkFullDataPhysicalChunks(resultType, &fullChunkReason)))
-    return fail(Twine("runtime-mask result requires full physical chunks; ") +
-                fullChunkReason);
-  if (failed(checkFullDataPhysicalChunks(passthruType, &passthruReason)))
-    return fail(Twine("runtime-mask passthru requires full physical chunks; ") +
-                passthruReason);
-  if (failed(checkFullVMIPhysicalChunks(maskType, &maskFullReason)))
-    return fail(Twine("runtime-mask mask requires full physical chunks; ") +
-                maskFullReason);
-
-  return success();
+  return checkSupportedExpandLoadRuntimePath(
+      op, resultType, passthruType, maskType, allActivePathReason, reason);
 }
 
 LogicalResult
@@ -3409,13 +3439,17 @@ FailureOr<SmallVector<Value>> materializeDynamicGroupMaskForType(
   };
 
   VMILayoutAttr layout = resultVMIType.getLayoutAttr();
-  if (!layout)
+  if (!layout) {
     return fail("dynamic create_group_mask requires assigned layout");
-  if (layout.getLaneStride() != 1)
+  }
+  if (layout.getLaneStride() != 1) {
     return fail("dynamic create_group_mask requires lane_stride=1 layout");
-  if (resultVMIType.getGranularity() != "b32")
+  }
+  bool unsupportedMaskGranularity = resultVMIType.getGranularity() != "b32";
+  if (unsupportedMaskGranularity) {
     return fail("dynamic create_group_mask currently requires b32 "
                 "granularity");
+  }
 
   int64_t numGroups = op.getNumGroupsAttr().getInt();
   int64_t groupSize = op.getGroupSizeAttr().getInt();
@@ -8361,9 +8395,10 @@ static LogicalResult lowerGroupBroadcastParts(
   results.clear();
   results.resize(resultTypes.size());
   FailureOr<int64_t> resultLayoutFactor = getDataLayoutFactor(resultVMIType);
-  if (failed(resultLayoutFactor))
+  if (failed(resultLayoutFactor)) {
     return rewriter.notifyMatchFailure(
         op, "group_broadcast requires a computable result layout factor");
+  }
 
   int64_t flatIndex = 0;
   for (int64_t part = 0; part < *resultLayoutFactor; ++part) {
