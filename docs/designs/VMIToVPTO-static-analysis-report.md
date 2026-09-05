@@ -528,3 +528,9 @@ carrier 与 direct contiguous 路径维持为独立分支。当前改动只调�
 zero-copy helper 的职责边界，不改变 `vintlv/vdintlv` 的 layout fact、结果顺序或
 目标指令生成。增量合规检查为 `errors=0 warnings=0`，`git diff --check` 通过；
 interleave memory 与连续 load/store lowering 回归通过。
+
+本轮回归检查额外发现 `OneToNVMIConstantMaskOpPattern` 的结果 arity 分支缺少闭合
+大括号，导致后续 physical replacement 语句落入条件块；已补齐该控制流边界并单独提交。
+这是正确性修复，不改变 constant-mask 的物化算法。增量合规检查为
+`errors=0 warnings=0`，`git diff --check` 通过；受测 constant-mask 样例在既有
+`unpack` pipeline invariant 处提前失败，未进入该 pattern。
