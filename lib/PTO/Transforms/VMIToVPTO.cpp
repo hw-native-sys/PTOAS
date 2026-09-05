@@ -1968,6 +1968,55 @@ FailureOr<OneBlockGroupStorePlan> getOneBlockGroupStorePlan(
 }
 
 LogicalResult
+checkSupportedGroupSlotsStoreShape(VMIGroupStoreOp op, VMIVRegType valueType,
+                                    std::optional<int64_t> rowStride,
+                                    std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+
+  VMILayoutSupport supports;
+  FailureOr<VMIGroupSlotLayoutFact> fact = supports.getGroupStoreLayoutFact(
+      valueType, op.getNumGroupsAttr().getInt(), reason);
+  if (failed(fact)) {
+    return failure();
+  }
+
+  VMIMemoryAccessPlan accessPlan =
+      buildWriteAccessPlan(op.getDestination(), op.getOffset(), valueType,
+                           VMIMemoryCoverageKind::Dense);
+  if (!accessPlan.layoutSupport.isSupported()) {
+    return fail(accessPlan.layoutSupport.reason);
+  }
+
+  if (fact->slots == 1) {
+    unsigned elementBits =
+        pto::getPTOStorageElemBitWidth(valueType.getElementType());
+    if (elementBits == 0 || 256 % elementBits != 0) {
+      return fail("slots=1 group_store requires supported element width");
+    }
+    if (rowStride && *rowStride <= 0) {
+      return fail("slots=1 group_store requires positive row_stride when "
+                  "row_stride is constant");
+    }
+    if (!getPointStoreDistToken(valueType.getElementType())) {
+      return fail("slots=1 group_store requires 1PT_B8/B16/B32 store "
+                  "support");
+    }
+    return success();
+  }
+
+  if (!rowStride || *rowStride != 1) {
+    return fail("slots=8 group_store currently requires constant unit "
+                "row_stride");
+  }
+  return success();
+}
+
+LogicalResult
 checkSupportedGroupStoreShape(VMIGroupStoreOp op, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
@@ -1990,38 +2039,7 @@ checkSupportedGroupStoreShape(VMIGroupStoreOp op, std::string *reason) {
     return success();
   }
   if (layout && layout.isGroupSlots()) {
-    VMILayoutSupport supports;
-    FailureOr<VMIGroupSlotLayoutFact> fact = supports.getGroupStoreLayoutFact(
-        valueType, op.getNumGroupsAttr().getInt(), reason);
-    if (failed(fact))
-      return failure();
-
-    VMIMemoryAccessPlan accessPlan =
-        buildWriteAccessPlan(op.getDestination(), op.getOffset(), valueType,
-                             VMIMemoryCoverageKind::Dense);
-    if (!accessPlan.layoutSupport.isSupported())
-      return fail(accessPlan.layoutSupport.reason);
-
-    if (fact->slots == 1) {
-      unsigned elementBits =
-          pto::getPTOStorageElemBitWidth(valueType.getElementType());
-      if (elementBits == 0 || 256 % elementBits != 0)
-        return fail("slots=1 group_store requires supported element width");
-      std::optional<int64_t> rowStride =
-          getConstantIndexValue(op.getRowStride());
-      if (rowStride && *rowStride <= 0)
-        return fail("slots=1 group_store requires positive row_stride when "
-                    "row_stride is constant");
-      if (!getPointStoreDistToken(valueType.getElementType()))
-        return fail("slots=1 group_store requires 1PT_B8/B16/B32 store "
-                    "support");
-      return success();
-    }
-
-    if (!rowStride || *rowStride != 1)
-      return fail("slots=8 group_store currently requires constant unit "
-                  "row_stride");
-    return success();
+    return checkSupportedGroupSlotsStoreShape(op, valueType, rowStride, reason);
   }
 
   VMILayoutSupport supports;
