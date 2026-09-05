@@ -647,8 +647,9 @@ createRuntimePrefixMask(Location loc, MaskType maskType, Value activeLanes,
 LogicalResult
 checkSupportedMaskableVReg(VMIVRegType type, std::string *reason = nullptr) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
@@ -2972,6 +2973,52 @@ struct ConstantMaskChunkMaterialization {
   SmallVector<int8_t> activeLanes;
 };
 
+template <typename LanePredicate>
+FailureOr<SmallVector<ConstantMaskChunkMaterialization>>
+materializeMaskChunks(VMIMaskType resultVMIType, int64_t lanesPerPart,
+                      LanePredicate isActive, std::string *reason) {
+  auto fail = [&reason](const Twine &message)
+      -> FailureOr<SmallVector<ConstantMaskChunkMaterialization>> {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  VMILayoutAttr layout = resultVMIType.getLayoutAttr();
+  int64_t factor = layout.isDenseSplit() ? layout.getFactor() : 1;
+  SmallVector<ConstantMaskChunkMaterialization> materializations;
+  for (int64_t part = 0; part < factor; ++part) {
+    for (int64_t chunk = 0;; ++chunk) {
+      bool anyLane = false;
+      ConstantMaskChunkMaterialization materialization;
+      materialization.activeLanes.reserve(lanesPerPart);
+      for (int64_t lane = 0; lane < lanesPerPart; ++lane) {
+        FailureOr<bool> padding =
+            isPaddingLane(resultVMIType, part, chunk, lane);
+        if (failed(padding)) {
+          return fail("failed to map physical padding lane");
+        }
+        if (*padding) {
+          materialization.activeLanes.push_back(0);
+          continue;
+        }
+        anyLane = true;
+        FailureOr<int64_t> logicalLane =
+            mapPhysicalLaneToLogical(resultVMIType, part, chunk, lane);
+        if (failed(logicalLane)) {
+          return fail("failed to map physical lane");
+        }
+        materialization.activeLanes.push_back(isActive(*logicalLane) ? 1 : 0);
+      }
+      if (!anyLane) {
+        break;
+      }
+      materializations.push_back(std::move(materialization));
+    }
+  }
+  return materializations;
+}
+
 FailureOr<SmallVector<ConstantMaskChunkMaterialization>>
 computeConstantMaskMaterialization(VMIConstantMaskOp op, std::string *reason) {
   auto fail = [&reason](const Twine &message)
@@ -2982,8 +3029,9 @@ computeConstantMaskMaterialization(VMIConstantMaskOp op, std::string *reason) {
   };
 
   auto denseAttr = dyn_cast<DenseIntElementsAttr>(op.getValue());
-  if (!denseAttr)
+  if (!denseAttr) {
     return fail("only dense integer mask constants are supported");
+  }
 
   auto resultVMIType = cast<VMIMaskType>(op.getResult().getType());
   VMILayoutAttr layout = resultVMIType.getLayoutAttr();
@@ -2997,41 +3045,15 @@ computeConstantMaskMaterialization(VMIConstantMaskOp op, std::string *reason) {
       failed(physicalGranularity)
           ? FailureOr<int64_t>(failure())
           : getMaskLanesPerPart(*physicalGranularity);
-  if (failed(lanesPerPart))
+  if (failed(lanesPerPart)) {
     return fail("requires known physical mask lanes per part");
-
-  auto boolValues = denseAttr.getValues<bool>();
-  int64_t factor = layout.isDenseSplit() ? layout.getFactor() : 1;
-  SmallVector<ConstantMaskChunkMaterialization> materializations;
-  for (int64_t part = 0; part < factor; ++part) {
-    for (int64_t chunk = 0;; ++chunk) {
-      bool anyLane = false;
-      ConstantMaskChunkMaterialization materialization;
-      materialization.activeLanes.reserve(*lanesPerPart);
-      for (int64_t lane = 0; lane < *lanesPerPart; ++lane) {
-        FailureOr<bool> padding =
-            isPaddingLane(resultVMIType, part, chunk, lane);
-        if (failed(padding))
-          return fail("failed to map physical padding lane");
-        if (*padding) {
-          materialization.activeLanes.push_back(0);
-          continue;
-        }
-        anyLane = true;
-
-        FailureOr<int64_t> logicalLane =
-            mapPhysicalLaneToLogical(resultVMIType, part, chunk, lane);
-        if (failed(logicalLane))
-          return fail("failed to map physical lane");
-        materialization.activeLanes.push_back(boolValues[*logicalLane] ? 1 : 0);
-      }
-      if (!anyLane)
-        break;
-      materializations.push_back(std::move(materialization));
-    }
   }
 
-  return materializations;
+  auto boolValues = denseAttr.getValues<bool>();
+  return materializeMaskChunks(
+      resultVMIType, *lanesPerPart,
+      [&boolValues](int64_t logicalLane) { return boolValues[logicalLane]; },
+      reason);
 }
 
 FailureOr<SmallVector<ConstantMaskChunkMaterialization>>
@@ -3079,39 +3101,12 @@ computeGroupMaskMaterializationForType(VMICreateGroupMaskOp op,
   if (activeElems > groupSize)
     activeElems = groupSize;
 
-  int64_t factor = layout.isDenseSplit() ? layout.getFactor() : 1;
-  SmallVector<ConstantMaskChunkMaterialization> materializations;
-  for (int64_t part = 0; part < factor; ++part) {
-    for (int64_t chunk = 0;; ++chunk) {
-      bool anyLane = false;
-      ConstantMaskChunkMaterialization materialization;
-      materialization.activeLanes.reserve(*lanesPerPart);
-      for (int64_t lane = 0; lane < *lanesPerPart; ++lane) {
-        FailureOr<bool> padding =
-            isPaddingLane(resultVMIType, part, chunk, lane);
-        if (failed(padding))
-          return fail("failed to map physical padding lane");
-        if (*padding) {
-          materialization.activeLanes.push_back(0);
-          continue;
-        }
-        anyLane = true;
-
-        FailureOr<int64_t> logicalLane =
-            mapPhysicalLaneToLogical(resultVMIType, part, chunk, lane);
-        if (failed(logicalLane))
-          return fail("failed to map physical lane");
-        int64_t laneInGroup = *logicalLane % groupSize;
-        materialization.activeLanes.push_back(laneInGroup < activeElems ? 1
-                                                                        : 0);
-      }
-      if (!anyLane)
-        break;
-      materializations.push_back(std::move(materialization));
-    }
-  }
-
-  return materializations;
+  return materializeMaskChunks(
+      resultVMIType, *lanesPerPart,
+      [groupSize, activeElems](int64_t logicalLane) {
+        return logicalLane % groupSize < activeElems;
+      },
+      reason);
 }
 
 FailureOr<SmallVector<ConstantMaskChunkMaterialization>>
