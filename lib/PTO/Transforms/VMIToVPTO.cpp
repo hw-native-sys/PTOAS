@@ -13784,6 +13784,54 @@ private:
     return success();
   }
 
+  LogicalResult lowerFactorTrunc(
+      VMITruncIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes,
+      ArrayRef<StringRef> parts, int64_t factor, StringAttr sat,
+      bool s32ToS8Alias, ArrayRef<Type> originalResultTypes,
+      OneToNPatternRewriter &rewriter) const {
+    auto sourceType = dyn_cast<VRegType>(sourceParts.front().getType());
+    auto resultType = dyn_cast<VRegType>(resultTypes.front());
+    if (!sourceType || !resultType) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported physical trunci source/result type");
+    }
+    FailureOr<Value> sourceMask =
+        createAllTrueMaskForVReg(op.getLoc(), sourceType, rewriter);
+    FailureOr<Value> resultMask =
+        createAllTrueMaskForVReg(op.getLoc(), resultType, rewriter);
+    bool failedMasks = failed(sourceMask) || failed(resultMask);
+    if (failedMasks) {
+      return rewriter.notifyMatchFailure(op, "failed to build trunci masks");
+    }
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (int64_t resultIndex = 0;
+         resultIndex < static_cast<int64_t>(resultTypes.size()); ++resultIndex) {
+      Type currentResultType = resultTypes[resultIndex];
+      SmallVector<Value> partials;
+      partials.reserve(parts.size());
+      for (int64_t partIndex = 0; partIndex < factor; ++partIndex) {
+        Value sourcePart = sourceParts[resultIndex * factor + partIndex];
+        partials.push_back(
+            rewriter
+                .create<VcvtOp>(op.getLoc(), currentResultType, sourcePart,
+                                *sourceMask, nullptr, sat,
+                                rewriter.getStringAttr(parts[partIndex]))
+                .getResult());
+      }
+      Value merged = partials.front();
+      for (Value partial : llvm::drop_begin(partials)) {
+        merged = rewriter
+                     .create<VorOp>(op.getLoc(), currentResultType, merged,
+                                    partial, *resultMask)
+                     .getResult();
+      }
+      results.push_back(merged);
+    }
+    finalizeResults(op, results, s32ToS8Alias, originalResultTypes, rewriter);
+    return success();
+  }
+
 public:
 
   LogicalResult
@@ -13931,41 +13979,8 @@ public:
           op, "unsupported physical trunci source/result width relation");
     }
 
-    FailureOr<Value> sourceMask =
-        createAllTrueMaskForVReg(op.getLoc(), sourceType0, rewriter);
-    FailureOr<Value> resultMask =
-        createAllTrueMaskForVReg(op.getLoc(), resultType0, rewriter);
-    if (failed(sourceMask) || failed(resultMask))
-      return rewriter.notifyMatchFailure(op, "failed to build trunci masks");
-
-    SmallVector<Value> results;
-    results.reserve(resultTypes.size());
-    for (int64_t resultIndex = 0, resultCount = resultTypes.size();
-         resultIndex < resultCount; ++resultIndex) {
-      Type resultType = resultTypes[resultIndex];
-      SmallVector<Value> partials;
-      partials.reserve(parts.size());
-      for (int64_t partIndex = 0; partIndex < factor; ++partIndex) {
-        Value sourcePart = sourceParts[resultIndex * factor + partIndex];
-        partials.push_back(
-            rewriter
-                .create<VcvtOp>(op.getLoc(), resultType, sourcePart,
-                                *sourceMask, /*rnd=*/nullptr, sat,
-                                rewriter.getStringAttr(parts[partIndex]))
-                .getResult());
-      }
-
-      Value merged = partials.front();
-      for (Value partial : llvm::drop_begin(partials))
-        merged = rewriter
-                     .create<VorOp>(op.getLoc(), resultType, merged, partial,
-                                    *resultMask)
-                     .getResult();
-      results.push_back(merged);
-    }
-
-    finalizeResults(op, results, s32ToS8Alias, originalResultTypes, rewriter);
-    return success();
+    return lowerFactorTrunc(op, sourceParts, resultTypes, parts, factor, sat,
+                            s32ToS8Alias, originalResultTypes, rewriter);
   }
 };
 
