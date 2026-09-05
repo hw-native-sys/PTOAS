@@ -511,6 +511,13 @@ iota lowering 回归通过。
 合规检查为 `errors=0 warnings=0`，`git diff --check` 通过；interleave memory 与连续
 load/store lowering 回归通过。
 
+本轮将 `OneToNVMIMaskedStoreOpPattern` 的普通 contiguous mask/value materialization
+与逐 chunk `vsts` 路径抽取为 `lowerContiguous`。helper 独立负责 data/mask layout
+转换、physical arity、active-lane 与 predicate 构造、地址证明和 store 发射；主 pattern
+继续保留 lane-stride dist 快路径。该拆分保持 masked-store 的 predicate、chunk offset
+和对齐约束语义不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；连续与 interleave memory 代表性 lowering 均成功。
+
 本轮将 `OneToNVMIGroupStoreOpPattern` 的 `slots=8 + lane_stride` 路径抽取为
 `lowerSlots8LaneStride`。helper 独立负责 lane-stride dist/mask granularity、每个 slot
 block 的地址合法性、未对齐 compact + stateful stream fallback，以及对齐逐块 `vsts`

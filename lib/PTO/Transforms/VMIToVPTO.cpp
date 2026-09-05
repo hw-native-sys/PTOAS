@@ -10122,6 +10122,87 @@ struct OneToNVMIMaskedStoreOpPattern
     : OneToNOpConversionPattern<VMIMaskedStoreOp> {
   using OneToNOpConversionPattern<VMIMaskedStoreOp>::OneToNOpConversionPattern;
 
+private:
+  LogicalResult lowerContiguous(
+      VMIMaskedStoreOp op, OneToNPatternRewriter &rewriter,
+      ValueRange valueParts, ValueRange maskParts, VMIVRegType valueVMIType,
+      VMIMaskType maskVMIType, Value destination, Value offset,
+      int64_t lanesPerPart) const {
+    SmallVector<Type> contiguousValueTypes;
+    contiguousValueTypes.reserve(valueParts.size());
+    for (Value value : valueParts) {
+      contiguousValueTypes.push_back(value.getType());
+    }
+    VMILayoutAttr contiguousLayout =
+        VMILayoutAttr::getContiguous(rewriter.getContext());
+    FailureOr<SmallVector<Value>> storeParts = materializeDataLayoutConversion(
+        op, valueParts, contiguousValueTypes, valueVMIType.getLayoutAttr(),
+        contiguousLayout, valueVMIType.getElementType(), rewriter);
+    if (failed(storeParts)) {
+      return failure();
+    }
+
+    SmallVector<Type> contiguousMaskTypes;
+    contiguousMaskTypes.reserve(maskParts.size());
+    for (Value mask : maskParts) {
+      contiguousMaskTypes.push_back(mask.getType());
+    }
+    FailureOr<SmallVector<Value>> storeMasks = materializeMaskLayoutConversion(
+        op, maskParts, contiguousMaskTypes, maskVMIType.getLayoutAttr(),
+        contiguousLayout, rewriter);
+    if (failed(storeMasks)) {
+      return failure();
+    }
+    bool mismatchedArity = storeParts->size() != storeMasks->size();
+    if (mismatchedArity) {
+      return rewriter.notifyMatchFailure(
+          op, "masked_store converted value/mask arity mismatch");
+    }
+
+    for (auto [index, valueAndMask] :
+         llvm::enumerate(llvm::zip_equal(*storeParts, *storeMasks))) {
+      auto [value, mask] = valueAndMask;
+      auto vregType = dyn_cast<VRegType>(value.getType());
+      bool invalidTypes = !vregType || !isa<MaskType>(mask.getType());
+      if (invalidTypes) {
+        return rewriter.notifyMatchFailure(
+            op, "masked_store converted parts must be vreg/mask");
+      }
+      FailureOr<int64_t> activeLanes =
+          getContiguousActiveDataLanes(valueVMIType, index);
+      if (failed(activeLanes)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to compute masked_store active lanes");
+      }
+      if (*activeLanes == 0) {
+        continue;
+      }
+      FailureOr<Value> storeMask = createMaskedStorePredicate(
+          op.getLoc(), valueVMIType, index, mask, vregType, rewriter);
+      if (failed(storeMask)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to materialize masked_store predicate");
+      }
+      Value chunkOffset = createChunkOffset(
+          op.getLoc(), offset, index * lanesPerPart, rewriter);
+      bool illegalAddress = !isDirectMemoryDistAddressLegal(
+          destination, chunkOffset, valueVMIType.getElementType(), vregType,
+          VPTOMemoryOpFamily::Store, /*dist=*/{});
+      if (illegalAddress) {
+        return rewriter.notifyMatchFailure(
+            op, "masked_store requires a proven target alignment for every "
+                "physical store chunk");
+      }
+      rewriter.create<VstsOp>(op.getLoc(), /*updated_base=*/Type{}, value,
+                              destination, chunkOffset, /*dist=*/nullptr,
+                              *storeMask);
+    }
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+public:
+
   LogicalResult
   matchAndRewrite(VMIMaskedStoreOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -10198,76 +10279,8 @@ struct OneToNVMIMaskedStoreOpPattern
       }
     }
 
-    SmallVector<Type> contiguousValueTypes;
-    contiguousValueTypes.reserve(valueParts.size());
-    for (Value value : valueParts) {
-      contiguousValueTypes.push_back(value.getType());
-    }
-    FailureOr<SmallVector<Value>> storeParts = materializeDataLayoutConversion(
-        op, valueParts, contiguousValueTypes, valueVMIType.getLayoutAttr(),
-        VMILayoutAttr::getContiguous(rewriter.getContext()),
-        valueVMIType.getElementType(), rewriter);
-    if (failed(storeParts)) {
-      return failure();
-    }
-
-    SmallVector<Type> contiguousMaskTypes;
-    contiguousMaskTypes.reserve(maskParts.size());
-    for (Value mask : maskParts) {
-      contiguousMaskTypes.push_back(mask.getType());
-    }
-    FailureOr<SmallVector<Value>> storeMasks = materializeMaskLayoutConversion(
-        op, maskParts, contiguousMaskTypes, maskVMIType.getLayoutAttr(),
-        VMILayoutAttr::getContiguous(rewriter.getContext()), rewriter);
-    if (failed(storeMasks)) {
-      return failure();
-    }
-
-    bool mismatchedStoreArity = storeParts->size() != storeMasks->size();
-    if (mismatchedStoreArity) {
-      return rewriter.notifyMatchFailure(
-          op, "masked_store converted value/mask arity mismatch");
-    }
-
-    for (auto [index, valueAndMask] :
-         llvm::enumerate(llvm::zip_equal(*storeParts, *storeMasks))) {
-      auto [value, mask] = valueAndMask;
-      auto vregType = dyn_cast<VRegType>(value.getType());
-      if (!vregType || !isa<MaskType>(mask.getType())) {
-        return rewriter.notifyMatchFailure(
-            op, "masked_store converted parts must be vreg/mask");
-      }
-      FailureOr<int64_t> activeLanes =
-          getContiguousActiveDataLanes(valueVMIType, index);
-      if (failed(activeLanes)) {
-        return rewriter.notifyMatchFailure(
-            op, "failed to compute masked_store active lanes");
-      }
-      if (*activeLanes == 0) {
-        continue;
-      }
-      FailureOr<Value> storeMask = createMaskedStorePredicate(
-          op.getLoc(), valueVMIType, index, mask, vregType, rewriter);
-      if (failed(storeMask)) {
-        return rewriter.notifyMatchFailure(
-            op, "failed to materialize masked_store predicate");
-      }
-      Value chunkOffset = createChunkOffset(op.getLoc(), *offset,
-                                            index * *lanesPerPart, rewriter);
-      if (!isDirectMemoryDistAddressLegal(
-              *destination, chunkOffset, valueVMIType.getElementType(),
-              vregType, VPTOMemoryOpFamily::Store, /*dist=*/{})) {
-        return rewriter.notifyMatchFailure(
-            op, "masked_store requires a proven target alignment for every "
-                "physical store chunk");
-      }
-      rewriter.create<VstsOp>(op.getLoc(),
-                              /*updated_base=*/Type{}, value, *destination,
-                              chunkOffset, /*dist=*/nullptr, *storeMask);
-    }
-
-    rewriter.eraseOp(op);
-    return success();
+    return lowerContiguous(op, rewriter, valueParts, maskParts, valueVMIType,
+                           maskVMIType, *destination, *offset, *lanesPerPart);
   }
 };
 
