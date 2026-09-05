@@ -6231,6 +6231,74 @@ struct OneToNVMIIotaOpPattern : OneToNOpConversionPattern<IotaOp> {
   using OpAdaptor =
       typename OneToNOpConversionPattern<IotaOp>::OpAdaptor;
 
+private:
+  LogicalResult lowerGroupedIota(
+      IotaOp op, Value base, VMIVRegType resultVMIType,
+      VMILayoutAttr layout, TypeRange resultTypes, int64_t lanesPerPart,
+      OneToNPatternRewriter &rewriter, SmallVectorImpl<Value> &results) const {
+    int64_t numGroups = op.getGroupAttr().getInt();
+    int64_t logicalLanes = resultVMIType.getElementCount();
+    if (numGroups <= 0 || logicalLanes % numGroups != 0) {
+      return rewriter.notifyMatchFailure(
+          op, "grouped iota requires group to divide logical lane count");
+    }
+    int64_t groupSize = logicalLanes / numGroups;
+    bool groupSizeMultipleOfPhys = groupSize % lanesPerPart == 0;
+    bool physMultipleOfGroupSize = lanesPerPart % groupSize == 0;
+    if (!groupSizeMultipleOfPhys && !physMultipleOfGroupSize) {
+      return rewriter.notifyMatchFailure(
+          op, "grouped iota requires group_size to divide or be a multiple "
+              "of physical lanes per part");
+    }
+    if (!layout.isContiguous()) {
+      return rewriter.notifyMatchFailure(
+          op, "grouped iota currently supports contiguous layout only; "
+              "ensure_layout to contiguous before lowering");
+    }
+    int64_t expectedArity =
+        (logicalLanes + lanesPerPart - 1) / lanesPerPart;
+    bool resultArityMismatch =
+        static_cast<int64_t>(resultTypes.size()) != expectedArity;
+    if (resultArityMismatch) {
+      return rewriter.notifyMatchFailure(
+          op, "grouped contiguous iota physical result count mismatch");
+    }
+
+    llvm::DenseMap<std::pair<Type, int64_t>, Value> sharedChunks;
+    for (auto [index, resultType] : llvm::enumerate(resultTypes)) {
+      if (!isa<VRegType>(resultType)) {
+        return rewriter.notifyMatchFailure(op, "iota result must be vreg");
+      }
+      int64_t laneOffset = 0;
+      if (groupSizeMultipleOfPhys) {
+        laneOffset = (static_cast<int64_t>(index) * lanesPerPart) % groupSize;
+      }
+      auto key = std::make_pair(resultType, laneOffset);
+      auto it = sharedChunks.find(key);
+      if (it == sharedChunks.end()) {
+        FailureOr<Value> result;
+        if (physMultipleOfGroupSize && groupSize < lanesPerPart) {
+          result = createSubVLGroupPeriodicChunk(
+              op.getLoc(), resultType, base, groupSize, op.getOrderAttr(),
+              rewriter);
+        } else {
+          result = createIotaContiguousChunk(
+              op.getLoc(), resultType, base, laneOffset, op.getOrderAttr(),
+              rewriter);
+        }
+        if (failed(result)) {
+          return rewriter.notifyMatchFailure(
+              op, "failed to materialize grouped iota chunk");
+        }
+        it = sharedChunks.try_emplace(key, *result).first;
+      }
+      results.push_back(it->second);
+    }
+    return success();
+  }
+
+public:
+
   LogicalResult
   matchAndRewrite(IotaOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -6272,67 +6340,9 @@ struct OneToNVMIIotaOpPattern : OneToNOpConversionPattern<IotaOp> {
     //   * S % physVL == 0 → VCI chunk per distinct laneOffset (share parts).
     //   * physVL % S == 0 → sub-VL: vdup (S=1) or vand(vci(0),S-1)+vadds(base).
     if constexpr (std::is_same_v<IotaOp, VMIGroupIotaOp>) {
-      int64_t numGroups = op.getGroupAttr().getInt();
-      int64_t logicalLanes = resultVMIType.getElementCount();
-      if (numGroups <= 0 || logicalLanes % numGroups != 0)
-        return rewriter.notifyMatchFailure(
-            op, "grouped iota requires group to divide logical lane count");
-      int64_t groupSize = logicalLanes / numGroups;
-      bool groupSizeMultipleOfPhys = groupSize % *lanesPerPart == 0;
-      bool physMultipleOfGroupSize = *lanesPerPart % groupSize == 0;
-      if (!groupSizeMultipleOfPhys && !physMultipleOfGroupSize)
-        return rewriter.notifyMatchFailure(
-            op, "grouped iota requires group_size to divide or be a multiple "
-                "of physical lanes per part");
-
-      if (!layout.isContiguous())
-        return rewriter.notifyMatchFailure(
-            op, "grouped iota currently supports contiguous layout only; "
-                "ensure_layout to contiguous before lowering");
-
-      // Allow grouped logical tails: physical arity is ceil(L / physVL), so
-      // capacity may exceed L (e.g. L=32,group=2 → 1×VL64 with lanes 32..63
-      // inactive; L=96,group=3 → 2×VL64 with last chunk partial). Padding
-      // lanes keep the same periodic pattern; consumers/stores apply the
-      // ordinary contiguous tail mask.
-      int64_t expectedArity =
-          (logicalLanes + *lanesPerPart - 1) / *lanesPerPart;
-      if (static_cast<int64_t>(resultTypes.size()) != expectedArity)
-        return rewriter.notifyMatchFailure(
-            op, "grouped contiguous iota physical result count mismatch");
-
-      // Under physVL % S == 0 every part holds the same in-VL pattern
-      // (lane j → base + j%S). Under S % physVL == 0 parts differ by
-      // laneOffset = (p * physVL) % S and are shared by that key.
-      llvm::DenseMap<std::pair<Type, int64_t>, Value> sharedChunks;
-      for (auto [index, resultType] : llvm::enumerate(resultTypes)) {
-        if (!isa<VRegType>(resultType))
-          return rewriter.notifyMatchFailure(op, "iota result must be vreg");
-
-        int64_t laneOffset = 0;
-        if (groupSizeMultipleOfPhys)
-          laneOffset =
-              (static_cast<int64_t>(index) * *lanesPerPart) % groupSize;
-
-        auto key = std::make_pair(resultType, laneOffset);
-        auto it = sharedChunks.find(key);
-        if (it == sharedChunks.end()) {
-          FailureOr<Value> result;
-          if (physMultipleOfGroupSize && groupSize < *lanesPerPart) {
-            result = createSubVLGroupPeriodicChunk(
-                op.getLoc(), resultType, *base, groupSize, op.getOrderAttr(),
-                rewriter);
-          } else {
-            result = createIotaContiguousChunk(op.getLoc(), resultType, *base,
-                                               laneOffset, op.getOrderAttr(),
-                                               rewriter);
-          }
-          if (failed(result))
-            return rewriter.notifyMatchFailure(
-                op, "failed to materialize grouped iota chunk");
-          it = sharedChunks.try_emplace(key, *result).first;
-        }
-        results.push_back(it->second);
+      if (failed(lowerGroupedIota(op, *base, resultVMIType, layout, resultTypes,
+                                  *lanesPerPart, rewriter, results))) {
+        return failure();
       }
       replaceOpWithFlatConvertedValues(rewriter, op, results,
                                        *this->getTypeConverter());
@@ -7163,28 +7173,32 @@ public:
     FailureOr<Value> offset = getSingleValue(
         op, adaptor.getOffset(),
         "deinterleave_load offset must convert to one value", rewriter);
-    if (failed(source) || failed(offset))
+    bool invalidOperands = failed(source) || failed(offset);
+    if (invalidOperands) {
       return failure();
+    }
 
     FailureOr<int64_t> lanesPerPart =
         getDataLanesPerPart(lowVMIType.getElementType());
-    if (failed(lanesPerPart))
+    if (failed(lanesPerPart)) {
       return rewriter.notifyMatchFailure(
           op, "deinterleave_load requires known physical lanes per part");
+    }
 
     std::optional<std::string> dist =
         getX2MemoryDistToken(lowVMIType.getElementType(), "DINTLV");
-    if (!dist)
+    if (!dist) {
       return rewriter.notifyMatchFailure(
           op, "deinterleave_load requires vldsx2 DINTLV element support");
+    }
 
     FailureOr<SmallVector<Type>> maybe_lowTypes =
 
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
 
-    if (failed(maybe_lowTypes))
-
+    if (failed(maybe_lowTypes)) {
       return failure();
+    }
 
     SmallVector<Type> lowTypes = std::move(*maybe_lowTypes);
     FailureOr<SmallVector<Type>> maybe_highTypes =
@@ -7937,32 +7951,42 @@ static LogicalResult lowerGroupBroadcastParts(
     Operation *op, ValueRange sourceParts, VMIVRegType sourceVMIType,
     VMIVRegType resultVMIType, TypeRange resultTypes, int64_t numGroups,
     OneToNPatternRewriter &rewriter, SmallVectorImpl<Value> &results) {
-  if (sourceParts.empty() || resultTypes.empty())
+  bool emptyArity = sourceParts.empty() || resultTypes.empty();
+  if (emptyArity) {
     return rewriter.notifyMatchFailure(op, "group_broadcast arity mismatch");
+  }
 
   std::string layoutReason;
   VMILayoutSupport supports;
   FailureOr<VMIGroupBroadcastLayoutFact> fact =
       supports.getGroupBroadcastLayoutFactForLayouts(
           sourceVMIType, resultVMIType, numGroups, &layoutReason);
-  if (failed(fact))
+  if (failed(fact)) {
     return rewriter.notifyMatchFailure(
         op, Twine("group_broadcast requires a supported layout table row; ") +
                 layoutReason);
+  }
 
   auto firstSourceType = dyn_cast<VRegType>(sourceParts.front().getType());
-  if (!firstSourceType)
+  if (!firstSourceType) {
     return rewriter.notifyMatchFailure(op,
                                        "group_broadcast source must be vreg");
-  if (llvm::any_of(sourceParts, [&firstSourceType](Value sourcePart) {
+  }
+  bool hasNonUniformSourceType =
+      llvm::any_of(sourceParts, [&firstSourceType](Value sourcePart) {
         return sourcePart.getType() != firstSourceType;
-      }))
+      });
+  if (hasNonUniformSourceType) {
     return rewriter.notifyMatchFailure(
         op, "group_broadcast requires uniform physical source vreg types");
-  if (firstSourceType.getElementCount() != fact->lanesPerPart)
+  }
+  bool sourceLaneCountMismatch =
+      firstSourceType.getElementCount() != fact->lanesPerPart;
+  if (sourceLaneCountMismatch) {
     return rewriter.notifyMatchFailure(
         op, "group_broadcast physical source lanes do not match the supported "
             "layout row");
+  }
   unsigned indexBits =
       pto::getPTOStorageElemBitWidth(firstSourceType.getElementType());
   if (indexBits != 8 && indexBits != 16 && indexBits != 32)

@@ -492,3 +492,9 @@ value 拼接及 aligned/unaligned store 选择抽取为 `lowerSlots1PackedUnitSt
 stream 与 point-store 语义，原有对齐判定、mask 和诊断保持不变。增量合规检查为
 `errors=0 warnings=0`，`git diff --check` 通过；group-store 与连续 load/store
 lowering 回归通过。
+
+本轮将模板化 `OneToNVMIIotaOpPattern::matchAndRewrite` 的 grouped-iota 分支抽取为
+`lowerGroupedIota`。该 helper 独立负责 group size 合法性、contiguous layout、物理
+arity、共享 chunk 缓存及 sub-VL/VCI 选择；普通 contiguous 与 deinterleaved iota
+路径保持在主 pattern 中，诊断与结果顺序不变。增量合规检查为 `errors=0 warnings=0`，
+`git diff --check` 通过；group2、group-subvl、group-size1 iota lowering 回归通过。
