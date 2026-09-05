@@ -2135,6 +2135,15 @@ chunk 顺序、诊断及结果替换语义不变。增量 `check_changed_code.py
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_group_broadcast_load_e2b_b16.pto` lowering exit=0。
 
+# group broadcast load BRC shape 校验职责整改
+
+本轮在 `OneToNVMIGroupBroadcastLoadOpPattern::lowerDirectBRC` 中引入
+`validateDirectBRCShape`，将 num_groups、源指针和 physical arity/chunks 合同校验抽取为
+独立 helper。主函数继续负责 BRC 结果遍历、group 索引和 `VldsOp` 发射；保持诊断顺序、
+chunks-per-group 计算、结果顺序和 BRC lowering 语义不变。增量 `check_changed_code.py`
+结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_group_broadcast_load_e2b_b16.pto` lowering exit=0。
+
 # group broadcast load E2B 单 packet 发射职责整改
 
 本轮在 `OneToNVMIGroupBroadcastLoadOpPattern::emitE2BPackets` 中引入 `emitE2BPacket`，

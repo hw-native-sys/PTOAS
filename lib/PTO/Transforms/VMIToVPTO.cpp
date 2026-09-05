@@ -11311,33 +11311,47 @@ private:
         .getResult();
   }
 
+  FailureOr<int64_t> validateDirectBRCShape(
+      VMIGroupBroadcastLoadOp op, Value source, ArrayRef<Type> resultTypes,
+      int64_t numGroups, OneToNPatternRewriter &rewriter) const {
+    bool invalidArity =
+        numGroups <= 0 ||
+        static_cast<int64_t>(resultTypes.size()) % numGroups != 0;
+    if (invalidArity) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast_load BRC result arity is not divisible by num_groups");
+    }
+    if (!isa<PtrType>(source.getType())) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast_load BRC lowering requires !pto.ptr source");
+    }
+    int64_t chunksPerGroup =
+        static_cast<int64_t>(resultTypes.size()) / numGroups;
+    bool invalidChunkArity =
+        chunksPerGroup <= 0 ||
+        static_cast<int64_t>(resultTypes.size()) != numGroups * chunksPerGroup;
+    if (invalidChunkArity) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast_load BRC physical arity mismatch");
+    }
+    return chunksPerGroup;
+  }
+
   LogicalResult lowerDirectBRC(
       VMIGroupBroadcastLoadOp op, OneToNPatternRewriter &rewriter,
       Value source, Value offset, Value sourceGroupStride,
       ArrayRef<Type> resultTypes, int64_t numGroups,
       StringRef brcDist) const {
-    if (numGroups <= 0 ||
-        static_cast<int64_t>(resultTypes.size()) % numGroups != 0) {
-      return rewriter.notifyMatchFailure(
-          op, "group_broadcast_load BRC result arity is not divisible by num_groups");
-    }
-    int64_t chunksPerGroup =
-        static_cast<int64_t>(resultTypes.size()) / numGroups;
-    if (!isa<PtrType>(source.getType())) {
-      return rewriter.notifyMatchFailure(
-          op, "group_broadcast_load BRC lowering requires !pto.ptr source");
-    }
-    if (chunksPerGroup <= 0 ||
-        static_cast<int64_t>(resultTypes.size()) !=
-            numGroups * chunksPerGroup) {
-      return rewriter.notifyMatchFailure(
-          op, "group_broadcast_load BRC physical arity mismatch");
+    FailureOr<int64_t> chunksPerGroup = validateDirectBRCShape(
+        op, source, resultTypes, numGroups, rewriter);
+    if (failed(chunksPerGroup)) {
+      return failure();
     }
 
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
     for (auto [index, resultType] : llvm::enumerate(resultTypes)) {
-      int64_t group = static_cast<int64_t>(index) / chunksPerGroup;
+      int64_t group = static_cast<int64_t>(index) / *chunksPerGroup;
       FailureOr<Value> result = buildDirectBRCResult(
           op, rewriter, source, offset, sourceGroupStride, resultType, group,
           brcDist);
