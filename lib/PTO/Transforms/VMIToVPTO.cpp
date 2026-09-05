@@ -14146,7 +14146,7 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
     return WalkResult::interrupt();
   };
 
-  auto emitMaskableUnsupported = [&](Operation *op, StringRef opName,
+  auto emitMaskableUnsupported = [](Operation *op, StringRef opName,
                                      VMIVRegType type) -> WalkResult {
     std::string reason;
     if (succeeded(checkSupportedMaskableVReg(type, &reason)))
@@ -14507,7 +14507,8 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
                         << reason << ")";
       return WalkResult::interrupt();
     }
-    auto verifyVecScalar = [&](auto vecScalar, StringRef opName) -> WalkResult {
+    auto verifyVecScalar = [&emitMaskableUnsupported](auto vecScalar,
+                                                       StringRef opName) -> WalkResult {
       if (vecScalar.getPmode().has_value() &&
           *vecScalar.getPmode() == "merge") {
         vecScalar.emitError() << kVMIDiagUnsupportedPrefix << opName
