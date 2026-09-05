@@ -248,6 +248,16 @@ physical-part `vunpack/vzunpack`、结果类型校验和 bitcast 收集抽取为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_create_group_mask_block8_dynamic.pto` lowering exit=0。
 
+# integer extension legacy group-slot 路径整改
+
+本轮将 `OneToNVMIExtIOpPattern::matchAndRewrite` 中 legacy group-slot widening 路径的
+shape 校验、mask 构造、物理 `vcvt` 发射和结果替换抽取为
+`lowerLegacyGroupSlotExtension`。入口继续负责识别 dense 快路径、group-slot 支持矩阵
+和其它 contiguous/deinterleaved extension 分派；slot mask、EVEN/P0 选择、bitcast、
+结果顺序和失败诊断保持不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_zero_gap_extui_load.pto` 与
+`vmi_layout_assignment_trunci_lane_stride.pto` lowering 均 exit=0。
+
 # staging mask group loop 整改
 
 本轮将 `materializeStagingContiguousToDeintMaskLayout` 的单 group materialization 与

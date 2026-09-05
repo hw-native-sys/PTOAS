@@ -14084,15 +14084,18 @@ public:
         resultLayout.getLaneStride() != 1 &&
         sourceParts.size() == resultTypes.size()) {
       StringRef part;
-      if (resultBits == 16 && resultLayout.getLaneStride() == 2)
-        part = "EVEN";                                          // 32→16
-      else if (resultBits == 8 && resultLayout.getLaneStride() == 4)
-        part = "P0";                                            // 32→8 (f8/hif8)
-      else if (resultBits == 8 && resultLayout.getLaneStride() == 2)
-        part = "EVEN";                                          // 16→8
-      else
+      bool isEven32To16 =
+          resultBits == 16 && resultLayout.getLaneStride() == 2;
+      bool isPacked32To8 =
+          resultBits == 8 && resultLayout.getLaneStride() == 4;
+      bool isEven16To8 = resultBits == 8 && resultLayout.getLaneStride() == 2;
+      bool unsupportedLayout =
+          !isEven32To16 && !isPacked32To8 && !isEven16To8;
+      if (unsupportedLayout) {
         return rewriter.notifyMatchFailure(
             op, "unsupported dense lane_stride truncf result layout");
+      }
+      part = isPacked32To8 ? "P0" : "EVEN";
 
       FailureOr<Value> sourceMask =
           createAllTrueMaskForVReg(op.getLoc(), vcvtSourceVRegType, rewriter);
@@ -14296,6 +14299,82 @@ private:
     return success();
   }
 
+  LogicalResult lowerLegacyGroupSlotExtension(
+      OpT op, ValueRange sourceParts, ArrayRef<Type> resultTypes,
+      VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
+      VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
+      unsigned sourceBits, unsigned resultBits,
+      OneToNPatternRewriter &rewriter) const {
+    bool invalidShape =
+        sourceLayout.getNumGroups() != resultLayout.getNumGroups() ||
+        sourceLayout.getSlots() != resultLayout.getSlots() ||
+        (sourceLayout.getSlots() != 1 && sourceLayout.getSlots() != 8) ||
+        sourceBits == 0 || sourceBits >= resultBits ||
+        resultBits % sourceBits != 0 ||
+        (resultBits / sourceBits != 2 && resultBits / sourceBits != 4) ||
+        (sourceLayout.getSlots() == 8 &&
+         sourceLayout.getLaneStride() != resultBits / sourceBits) ||
+        resultLayout.getLaneStride() != 1 ||
+        sourceParts.size() != resultTypes.size();
+    if (invalidShape) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported group-slot integer extension shape");
+    }
+    int64_t widenFactor = resultBits / sourceBits;
+    FailureOr<int64_t> sourceLanes =
+        getDataLanesPerPart(sourceVMIType.getElementType());
+    if (failed(sourceLanes)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to derive group-slot integer extension source lanes");
+    }
+    auto conversionSourceType = VRegType::get(
+        rewriter.getContext(), *sourceLanes, sourceVMIType.getElementType());
+    FailureOr<MaskType> maskType =
+        getMaskTypeForVReg(conversionSourceType, rewriter.getContext());
+    if (failed(maskType)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to create group-slot integer extension mask type");
+    }
+    FailureOr<Value> slotMask = createPrefixMaskForActiveLanes(
+        op.getLoc(), *maskType,
+        sourceLayout.getSlots() * sourceLayout.getLaneStride(), rewriter);
+    if (failed(slotMask)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to build group-slot integer extension mask");
+    }
+    StringAttr part =
+        rewriter.getStringAttr(widenFactor == 2 ? "EVEN" : "P0");
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (auto [sourcePart, resultType] :
+         llvm::zip_equal(sourceParts, resultTypes)) {
+      auto resultVRegType = dyn_cast<VRegType>(resultType);
+      bool invalidResultType =
+          !resultVRegType ||
+          pto::getPTOStorageElemBitWidth(resultVRegType.getElementType()) !=
+              resultBits;
+      if (invalidResultType) {
+        return rewriter.notifyMatchFailure(
+            op, "unsupported group-slot integer extension result type");
+      }
+      FailureOr<Value> conversionSource = bitcastVReg(
+          op.getLoc(), sourcePart, conversionSourceType, rewriter);
+      if (failed(conversionSource)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to expose group-slot extension source elements");
+      }
+      results.push_back(rewriter
+                            .create<VcvtOp>(op.getLoc(), resultVRegType,
+                                           *conversionSource, *slotMask,
+                                           /*rnd=*/nullptr, /*sat=*/nullptr,
+                                           part)
+                            .getResult());
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
   LogicalResult lowerPhysicalExtension(
       OpT op, ValueRange sourceParts, ArrayRef<VRegType> resultVRegTypes,
       ArrayRef<Type> resultTypes, VRegType sourceType, unsigned sourceBits,
@@ -14408,67 +14487,9 @@ public:
             op, sourceParts, resultTypes, sourceVMIType, resultVMIType,
             *resultIntegerType, sourceBits, resultBits, rewriter);
       }
-      if (sourceLayout.getNumGroups() != resultLayout.getNumGroups() ||
-          sourceLayout.getSlots() != resultLayout.getSlots() ||
-          (sourceLayout.getSlots() != 1 && sourceLayout.getSlots() != 8) ||
-          sourceBits == 0 || sourceBits >= resultBits ||
-          resultBits % sourceBits != 0 ||
-          (resultBits / sourceBits != 2 && resultBits / sourceBits != 4) ||
-          (sourceLayout.getSlots() == 8 &&
-           sourceLayout.getLaneStride() != resultBits / sourceBits) ||
-          resultLayout.getLaneStride() != 1 ||
-          sourceParts.size() != resultTypes.size())
-        return rewriter.notifyMatchFailure(
-            op, "unsupported group-slot integer extension shape");
-      int64_t widenFactor = resultBits / sourceBits;
-
-      FailureOr<int64_t> sourceLanes =
-          getDataLanesPerPart(sourceVMIType.getElementType());
-      if (failed(sourceLanes))
-        return rewriter.notifyMatchFailure(
-            op, "failed to derive group-slot integer extension source lanes");
-      auto conversionSourceType = VRegType::get(
-          rewriter.getContext(), *sourceLanes, sourceVMIType.getElementType());
-      FailureOr<MaskType> maskType =
-          getMaskTypeForVReg(conversionSourceType, rewriter.getContext());
-      if (failed(maskType))
-        return rewriter.notifyMatchFailure(
-            op, "failed to create group-slot integer extension mask type");
-      FailureOr<Value> slotMask = createPrefixMaskForActiveLanes(
-          op.getLoc(), *maskType,
-          sourceLayout.getSlots() * sourceLayout.getLaneStride(), rewriter);
-      if (failed(slotMask))
-        return rewriter.notifyMatchFailure(
-            op, "failed to build group-slot integer extension mask");
-
-      StringAttr part =
-          rewriter.getStringAttr(widenFactor == 2 ? "EVEN" : "P0");
-
-      SmallVector<Value> results;
-      results.reserve(resultTypes.size());
-      for (auto [sourcePart, resultType] :
-           llvm::zip_equal(sourceParts, resultTypes)) {
-        auto resultVRegType = dyn_cast<VRegType>(resultType);
-        if (!resultVRegType ||
-            pto::getPTOStorageElemBitWidth(resultVRegType.getElementType()) !=
-                resultBits)
-          return rewriter.notifyMatchFailure(
-              op, "unsupported group-slot integer extension result type");
-        FailureOr<Value> conversionSource = bitcastVReg(
-            op.getLoc(), sourcePart, conversionSourceType, rewriter);
-        if (failed(conversionSource))
-          return rewriter.notifyMatchFailure(
-              op, "failed to expose group-slot extension source elements");
-        results.push_back(rewriter
-                              .create<VcvtOp>(op.getLoc(), resultVRegType,
-                                              *conversionSource, *slotMask,
-                                              /*rnd=*/nullptr, /*sat=*/nullptr,
-                                              part)
-                              .getResult());
-      }
-
-      replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
-      return success();
+      return lowerLegacyGroupSlotExtension(
+          op, sourceParts, resultTypes, sourceVMIType, resultVMIType,
+          sourceLayout, resultLayout, sourceBits, resultBits, rewriter);
     }
 
     SmallVector<VRegType> resultVRegTypes;
