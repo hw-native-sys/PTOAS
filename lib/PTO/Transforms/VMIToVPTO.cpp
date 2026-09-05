@@ -13188,6 +13188,23 @@ struct OneToNVMIGroupReduceOpPattern : OneToNOpConversionPattern<OpTy> {
   using OneToNOpConversionPattern<OpTy>::OneToNOpConversionPattern;
 
 private:
+  FailureOr<Value> buildOneBlockGroupResult(
+      OpTy op, Value sourcePart, Value maskPart, Type resultType,
+      VRegType expectedResultType, MaskType expectedMaskType,
+      OneToNPatternRewriter &rewriter) const {
+    bool mismatchedTypes = sourcePart.getType() != expectedResultType ||
+                           maskPart.getType() != expectedMaskType ||
+                           resultType != expectedResultType;
+    if (mismatchedTypes) {
+      return rewriter.notifyMatchFailure(
+          op, "vcg group_reduce path requires uniform physical chunk types");
+    }
+    return rewriter
+        .create<GroupReduceOpTy>(op.getLoc(), expectedResultType, sourcePart,
+                                 maskPart)
+        .getResult();
+  }
+
   LogicalResult lowerOneBlock(
       OpTy op, ValueRange sourceParts, ValueRange maskParts,
       TypeRange resultTypes, OneToNPatternRewriter &rewriter) const {
@@ -13204,25 +13221,16 @@ private:
       return rewriter.notifyMatchFailure(
           op, "vcg group_reduce path requires physical vreg/mask");
     }
-    for (auto [sourcePart, maskPart, physicalResultType] :
-         llvm::zip_equal(sourceParts, maskParts, resultTypes)) {
-      bool mismatchedTypes = sourcePart.getType() != resultType ||
-                             maskPart.getType() != maskType ||
-                             physicalResultType != resultType;
-      if (mismatchedTypes) {
-        return rewriter.notifyMatchFailure(
-            op, "vcg group_reduce path requires uniform physical chunk types");
-      }
-    }
-
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
     for (auto [sourceIndex, sourcePart] : llvm::enumerate(sourceParts)) {
-      results.push_back(rewriter
-                            .create<GroupReduceOpTy>(op.getLoc(), resultType,
-                                                     sourcePart,
-                                                     maskParts[sourceIndex])
-                            .getResult());
+      FailureOr<Value> result = buildOneBlockGroupResult(
+          op, sourcePart, maskParts[sourceIndex], resultTypes[sourceIndex],
+          *resultType, *maskType, rewriter);
+      if (failed(result)) {
+        return failure();
+      }
+      results.push_back(*result);
     }
     replaceOpWithFlatConvertedValues(rewriter, op, results,
                                      *this->getTypeConverter());

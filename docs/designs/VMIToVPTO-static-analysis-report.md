@@ -2084,3 +2084,12 @@ combine mask 构造以及 `sum01/sum23/final` 树形合并抽取为独立 helper
 mask、结果顺序和诊断语义不变。增量 `check_changed_code.py` 结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；本轮未新增可独立进入该
 helper 的 runtime case，未虚构额外回归结果。
+
+# one-block group-reduce 单结果构造职责整改
+
+本轮在 `OneToNVMIGroupReduceOpPattern::lowerOneBlock` 中引入
+`buildOneBlockGroupResult`，将单个 physical chunk 的 source/mask/result 类型合同检查与
+`GroupReduceOp` 发射抽取为独立 helper。主函数继续负责 arity、基础 physical 类型获取、
+结果遍历和替换；保持 source/mask 对应关系、结果顺序、诊断和 lowering 语义不变。增量
+`check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
+通过；本轮未新增可独立进入该 helper 的 runtime case，未虚构额外回归结果。
