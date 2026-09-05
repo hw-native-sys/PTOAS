@@ -7739,6 +7739,125 @@ static FailureOr<Value> materializeSlots1GroupBroadcastChunk(
 
 enum class GroupBroadcastSelectorKind { Constant, LogicalRamp, VCGBlockRamp };
 
+struct GroupBroadcastSelectorPlan {
+  GroupBroadcastSelectorKind kind;
+  int64_t period;
+};
+
+static FailureOr<GroupBroadcastSelectorPlan> chooseGroupBroadcastSelectorPlan(
+    Operation *op, const VMIGroupBroadcastLayoutFact &fact,
+    VMILayoutAttr resultLayout, OneToNPatternRewriter &rewriter) {
+  if (fact.blockClass == VMIGroupBlockClass::FullPartMultiple) {
+    return GroupBroadcastSelectorPlan{GroupBroadcastSelectorKind::Constant, 0};
+  }
+  bool isUnitStrideContiguous =
+      resultLayout.isContiguous() && resultLayout.getLaneStride() == 1;
+  if (isUnitStrideContiguous) {
+    return GroupBroadcastSelectorPlan{GroupBroadcastSelectorKind::LogicalRamp,
+                                      fact.groupSize};
+  }
+  bool isStridedContiguous =
+      resultLayout.isContiguous() && resultLayout.getLaneStride() > 1;
+  if (isStridedContiguous) {
+    return GroupBroadcastSelectorPlan{
+        GroupBroadcastSelectorKind::VCGBlockRamp,
+        fact.groupSize * resultLayout.getLaneStride()};
+  }
+  bool isDeinterleaved =
+      resultLayout.isDeinterleaved() || resultLayout.isBlockDeinterleaved();
+  if (isDeinterleaved) {
+    return GroupBroadcastSelectorPlan{GroupBroadcastSelectorKind::VCGBlockRamp,
+                                      fact.vcgBlockElems};
+  }
+  rewriter.notifyMatchFailure(
+      op, "group_broadcast layout table row has no selector lowering plan");
+  return failure();
+}
+
+struct GroupBroadcastSelectorContext {
+  Operation *op;
+  GroupBroadcastSelectorKind kind;
+  int64_t sourceLaneStride;
+  std::optional<int64_t> selectorShift;
+  std::optional<int64_t> sourceLaneStrideShift;
+  Type indexScalarType;
+  VRegType indexType;
+  Value allMask;
+  Value sharedRamp;
+  llvm::DenseMap<int64_t, Value> selectorByBaseIndex;
+};
+
+static FailureOr<Value> getGroupBroadcastSelector(
+    GroupBroadcastSelectorContext &context, int64_t baseSlot,
+    OneToNPatternRewriter &rewriter) {
+  int64_t baseIndex = baseSlot * context.sourceLaneStride;
+  auto cached = context.selectorByBaseIndex.find(baseIndex);
+  if (cached != context.selectorByBaseIndex.end()) {
+    return cached->second;
+  }
+
+  if (context.kind == GroupBroadcastSelectorKind::Constant) {
+    FailureOr<Value> baseScalar = createScalarOffsetConstant(
+        context.op->getLoc(), context.indexScalarType, baseIndex, rewriter);
+    if (failed(baseScalar)) {
+      return failure();
+    }
+    Value selector =
+        rewriter
+            .create<VdupOp>(context.op->getLoc(), context.indexType,
+                            *baseScalar, context.allMask,
+                            /*position=*/nullptr)
+            .getResult();
+    context.selectorByBaseIndex.try_emplace(baseIndex, selector);
+    return selector;
+  }
+
+  if (!context.sharedRamp) {
+    FailureOr<Value> zero = createScalarOffsetConstant(
+        context.op->getLoc(), context.indexScalarType, 0, rewriter);
+    if (failed(zero)) {
+      return failure();
+    }
+    context.sharedRamp =
+        rewriter.create<VciOp>(context.op->getLoc(), context.indexType,
+                               *zero, StringAttr{})
+            .getResult();
+    if (*context.selectorShift != 0) {
+      Value shift = createI16Constant(context.op->getLoc(),
+                                      *context.selectorShift, rewriter);
+      context.sharedRamp =
+          rewriter
+              .create<VshrsOp>(context.op->getLoc(), context.indexType,
+                               context.sharedRamp, shift, context.allMask)
+              .getResult();
+    }
+    if (*context.sourceLaneStrideShift != 0) {
+      Value shift = createI16Constant(
+          context.op->getLoc(), *context.sourceLaneStrideShift, rewriter);
+      context.sharedRamp =
+          rewriter
+              .create<VshlsOp>(context.op->getLoc(), context.indexType,
+                               context.sharedRamp, shift, context.allMask)
+              .getResult();
+    }
+  }
+
+  Value selector = context.sharedRamp;
+  if (baseIndex != 0) {
+    FailureOr<Value> baseScalar = createScalarOffsetConstant(
+        context.op->getLoc(), context.indexScalarType, baseIndex, rewriter);
+    if (failed(baseScalar)) {
+      return failure();
+    }
+    selector = rewriter
+                   .create<VaddsOp>(context.op->getLoc(), context.indexType,
+                                    selector, *baseScalar, context.allMask)
+                   .getResult();
+  }
+  context.selectorByBaseIndex.try_emplace(baseIndex, selector);
+  return selector;
+}
+
 static FailureOr<Value> materializeGroupBroadcastChunk(
     Operation *op, Type resultType, VMIVRegType resultVMIType,
     ValueRange sourceParts,
@@ -7856,25 +7975,13 @@ static LogicalResult lowerGroupBroadcastParts(
     return rewriter.notifyMatchFailure(
         op, "group_broadcast requires explicit positive source group slots");
 
-  GroupBroadcastSelectorKind selectorKind;
-  int64_t selectorPeriod = 0;
-  if (fact->blockClass == VMIGroupBlockClass::FullPartMultiple) {
-    selectorKind = GroupBroadcastSelectorKind::Constant;
-  } else if (resultLayout.isContiguous() && resultLayout.getLaneStride() == 1) {
-    selectorKind = GroupBroadcastSelectorKind::LogicalRamp;
-    selectorPeriod = fact->groupSize;
-  } else if (resultLayout.isContiguous() &&
-             resultLayout.getLaneStride() > 1) {
-    selectorKind = GroupBroadcastSelectorKind::VCGBlockRamp;
-    selectorPeriod = fact->groupSize * resultLayout.getLaneStride();
-  } else if (resultLayout.isDeinterleaved() ||
-             resultLayout.isBlockDeinterleaved()) {
-    selectorKind = GroupBroadcastSelectorKind::VCGBlockRamp;
-    selectorPeriod = fact->vcgBlockElems;
-  } else {
-    return rewriter.notifyMatchFailure(
-        op, "group_broadcast layout table row has no selector lowering plan");
+  FailureOr<GroupBroadcastSelectorPlan> selectorPlan =
+      chooseGroupBroadcastSelectorPlan(op, *fact, resultLayout, rewriter);
+  if (failed(selectorPlan)) {
+    return failure();
   }
+  GroupBroadcastSelectorKind selectorKind = selectorPlan->kind;
+  int64_t selectorPeriod = selectorPlan->period;
 
   std::optional<int64_t> selectorShift;
   std::optional<int64_t> sourceLaneStrideShift;
@@ -7887,68 +7994,19 @@ static LogicalResult lowerGroupBroadcastParts(
               "and source lane stride");
   }
 
-  Value sharedRamp;
-  llvm::DenseMap<int64_t, Value> selectorByBaseIndex;
-  auto getSelector = [&selectorByBaseIndex, &sourceLaneStride, &selectorKind,
-                      &indexScalarType, &indexType, &allMask, &op, &rewriter](
-                         int64_t baseSlot) -> FailureOr<Value> {
-    int64_t baseIndex = baseSlot * sourceLaneStride;
-    auto cached = selectorByBaseIndex.find(baseIndex);
-    if (cached != selectorByBaseIndex.end())
-      return cached->second;
-
-    if (selectorKind == SelectorKind::Constant) {
-      FailureOr<Value> baseScalar = createScalarOffsetConstant(
-          op->getLoc(), indexScalarType, baseIndex, rewriter);
-      if (failed(baseScalar))
-        return failure();
-      Value selector =
-          rewriter
-              .create<VdupOp>(op->getLoc(), indexType, *baseScalar, *allMask,
-                              /*position=*/nullptr)
-              .getResult();
-      selectorByBaseIndex.try_emplace(baseIndex, selector);
-      return selector;
-    }
-
-    if (!sharedRamp) {
-      FailureOr<Value> zero = createScalarOffsetConstant(
-          op->getLoc(), indexScalarType, 0, rewriter);
-      if (failed(zero))
-        return failure();
-      sharedRamp =
-          rewriter.create<VciOp>(op->getLoc(), indexType, *zero, StringAttr{})
-              .getResult();
-      if (*selectorShift != 0) {
-        Value shift = createI16Constant(op->getLoc(), *selectorShift, rewriter);
-        sharedRamp = rewriter
-                         .create<VshrsOp>(op->getLoc(), indexType, sharedRamp,
-                                          shift, *allMask)
-                         .getResult();
-      }
-      if (*sourceLaneStrideShift != 0) {
-        Value shift =
-            createI16Constant(op->getLoc(), *sourceLaneStrideShift, rewriter);
-        sharedRamp = rewriter
-                         .create<VshlsOp>(op->getLoc(), indexType, sharedRamp,
-                                          shift, *allMask)
-                         .getResult();
-      }
-    }
-
-    Value selector = sharedRamp;
-    if (baseIndex != 0) {
-      FailureOr<Value> baseScalar = createScalarOffsetConstant(
-          op->getLoc(), indexScalarType, baseIndex, rewriter);
-      if (failed(baseScalar))
-        return failure();
-      selector = rewriter
-                     .create<VaddsOp>(op->getLoc(), indexType, selector,
-                                      *baseScalar, *allMask)
-                     .getResult();
-    }
-    selectorByBaseIndex.try_emplace(baseIndex, selector);
-    return selector;
+  GroupBroadcastSelectorContext selectorContext{
+      op,
+      selectorKind,
+      sourceLaneStride,
+      selectorShift,
+      sourceLaneStrideShift,
+      indexScalarType,
+      indexType,
+      *allMask,
+      Value(),
+      {}};
+  auto getSelector = [&selectorContext, &rewriter](int64_t baseSlot) {
+    return getGroupBroadcastSelector(selectorContext, baseSlot, rewriter);
   };
 
   results.clear();
@@ -7995,7 +8053,8 @@ static LogicalResult lowerGroupBroadcastParts(
       // scalar from each source VReg and then merge those splats by lane.  A
       // single vselr cannot express this case because its selector only
       // addresses lanes within one source VReg.
-      if (sourceSlots == 1 && selectorKind != SelectorKind::Constant) {
+      if (sourceSlots == 1 &&
+          selectorKind != GroupBroadcastSelectorKind::Constant) {
         FailureOr<Value> merged = materializeSlots1GroupBroadcastChunk(
             op, resultType, resultVMIType, sourceParts, part, chunk,
             firstGroup, fact->groupSize, selectorPeriod, fact->lanesPerPart,
@@ -8025,8 +8084,9 @@ static LogicalResult lowerGroupBroadcastParts(
               op, "group_broadcast failed to map a result lane");
         int64_t actualGroup = *logical / fact->groupSize;
         int64_t expectedGroup = firstGroup;
-        if (selectorKind != SelectorKind::Constant)
+        if (selectorKind != GroupBroadcastSelectorKind::Constant) {
           expectedGroup += lane / selectorPeriod;
+        }
         if (actualGroup != expectedGroup ||
             actualGroup / sourceSlots != sourceChunk)
           return rewriter.notifyMatchFailure(

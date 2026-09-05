@@ -452,3 +452,11 @@ b8/b16/b32 的递进顺序、布局属性和失败诊断不变。源码增量合
 `verifyNoResidualCreateMask`、`verifyNoResidualConstant` 及显式的 residual 判定，
 使最终 IR 检查的各类失败职责独立。错误文本、遍历顺序和 pass failure 行为保持不变。
 源码增量合规检查、`git diff --check` 及连续 load/store lowering 回归通过。
+
+本轮继续拆分 `lowerGroupBroadcastParts` 的 selector 状态管理。新增
+`GroupBroadcastSelectorContext`，集中表达 selector 类型、源 lane stride、shift、共享
+ramp 与按 base index 的缓存；`getGroupBroadcastSelector` 只负责 selector 的缓存查找、
+constant `vdup` 生成、共享 `vci` ramp 初始化及 base offset 添加。主 lowering 仍负责
+layout fact 选择、物理 lane 校验和结果 chunk 分派，selector 的生成顺序与缓存语义保持
+不变；同时修正该区域残留的枚举名称引用。增量合规检查为 `errors=0 warnings=0`，
+`git diff --check` 通过；group-broadcast 与连续 load/store lowering 回归通过。
