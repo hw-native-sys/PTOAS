@@ -398,6 +398,13 @@ load/store 回归通过。现有三个独立浮点样例均在测试自身 `unpa
 selector 选择、常量路径和 `vselr` 路径；未改变 group broadcast 的结果顺序或错误诊断。
 源码增量合规检查、`git diff --check` 及 group-broadcast lowering 回归均通过。
 
+本轮继续拆分 `lowerGroupBroadcastParts`：将普通结果 chunk 的 lane 映射验证、常量
+`vdup` 路径和 `vselr` 结果生成抽取为 `materializeGroupBroadcastChunk`，并用具名的
+`GroupBroadcastSelectorKind` 表达 selector 计划。slots=1 跨 source 的特殊合并仍由
+`materializeSlots1GroupBroadcastChunk` 处理，避免两种语义重新耦合；布局检查、结果
+顺序和失败诊断保持不变。源码增量合规检查、`git diff --check` 及 group-broadcast
+和连续 load/store lowering 回归均通过。
+
 本轮将 memory verifier 中重复的 load shape 诊断闭包抽取为具名 helper
 `emitMemoryUnsupported`，使 `verifySupportedVMIMemoryOp` 只负责操作分类和能力
 检查；诊断内容及 stable masked-load 选项语义保持不变。源码增量合规检查、

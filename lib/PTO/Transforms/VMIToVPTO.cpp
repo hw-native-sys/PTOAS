@@ -7704,6 +7704,69 @@ static FailureOr<Value> materializeSlots1GroupBroadcastChunk(
   return merged;
 }
 
+enum class GroupBroadcastSelectorKind { Constant, LogicalRamp, VCGBlockRamp };
+
+static FailureOr<Value> materializeGroupBroadcastChunk(
+    Operation *op, Type resultType, VMIVRegType resultVMIType,
+    ValueRange sourceParts,
+    GroupBroadcastSelectorKind selectorKind, int64_t selectorPeriod,
+    int64_t sourceSlots, int64_t groupSize, int64_t part, int64_t chunk,
+    int64_t firstGroup, int64_t sourceChunk, int64_t baseSlot,
+    int64_t lanesPerPart, Value allMask,
+    llvm::function_ref<FailureOr<Value>(int64_t)> getSelector,
+    OneToNPatternRewriter &rewriter) {
+  auto resultVRegType = dyn_cast<VRegType>(resultType);
+  if (!resultVRegType) {
+    return rewriter.notifyMatchFailure(
+        op, "group_broadcast requires uniform physical vreg types");
+  }
+  for (int64_t lane = 0; lane < lanesPerPart; ++lane) {
+    FailureOr<bool> padding =
+        isPaddingLane(resultVMIType, part, chunk, lane);
+    if (failed(padding)) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast failed to map result padding lanes");
+    }
+    if (*padding) {
+      continue;
+    }
+    FailureOr<int64_t> logical =
+        mapPhysicalLaneToLogical(resultVMIType, part, chunk, lane);
+    if (failed(logical)) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast failed to map a result lane");
+    }
+    int64_t actualGroup = *logical / groupSize;
+    int64_t expectedGroup = firstGroup;
+    if (selectorKind != GroupBroadcastSelectorKind::Constant) {
+      expectedGroup += lane / selectorPeriod;
+    }
+    bool invalidGroup = actualGroup != expectedGroup ||
+                        actualGroup / sourceSlots != sourceChunk;
+    if (invalidGroup) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast layout table row does not match its selector "
+              "lowering plan");
+    }
+  }
+
+  if (selectorKind == GroupBroadcastSelectorKind::Constant && sourceSlots == 1) {
+    return rewriter
+        .create<VdupOp>(op->getLoc(), resultType, sourceParts[sourceChunk],
+                        allMask, rewriter.getStringAttr("LOWEST"))
+        .getResult();
+  }
+  FailureOr<Value> selector = getSelector(baseSlot);
+  if (failed(selector)) {
+    return rewriter.notifyMatchFailure(
+        op, "failed to create group_broadcast selector ramp");
+  }
+  return rewriter
+      .create<VselrOp>(op->getLoc(), resultType, sourceParts[sourceChunk],
+                       *selector)
+      .getResult();
+}
+
 static LogicalResult lowerGroupBroadcastParts(
     Operation *op, ValueRange sourceParts, VMIVRegType sourceVMIType,
     VMIVRegType resultVMIType, TypeRange resultTypes, int64_t numGroups,
@@ -7760,21 +7823,20 @@ static LogicalResult lowerGroupBroadcastParts(
     return rewriter.notifyMatchFailure(
         op, "group_broadcast requires explicit positive source group slots");
 
-  enum class SelectorKind { Constant, LogicalRamp, VCGBlockRamp };
-  SelectorKind selectorKind;
+  GroupBroadcastSelectorKind selectorKind;
   int64_t selectorPeriod = 0;
   if (fact->blockClass == VMIGroupBlockClass::FullPartMultiple) {
-    selectorKind = SelectorKind::Constant;
+    selectorKind = GroupBroadcastSelectorKind::Constant;
   } else if (resultLayout.isContiguous() && resultLayout.getLaneStride() == 1) {
-    selectorKind = SelectorKind::LogicalRamp;
+    selectorKind = GroupBroadcastSelectorKind::LogicalRamp;
     selectorPeriod = fact->groupSize;
   } else if (resultLayout.isContiguous() &&
              resultLayout.getLaneStride() > 1) {
-    selectorKind = SelectorKind::VCGBlockRamp;
+    selectorKind = GroupBroadcastSelectorKind::VCGBlockRamp;
     selectorPeriod = fact->groupSize * resultLayout.getLaneStride();
   } else if (resultLayout.isDeinterleaved() ||
              resultLayout.isBlockDeinterleaved()) {
-    selectorKind = SelectorKind::VCGBlockRamp;
+    selectorKind = GroupBroadcastSelectorKind::VCGBlockRamp;
     selectorPeriod = fact->vcgBlockElems;
   } else {
     return rewriter.notifyMatchFailure(
@@ -7783,7 +7845,7 @@ static LogicalResult lowerGroupBroadcastParts(
 
   std::optional<int64_t> selectorShift;
   std::optional<int64_t> sourceLaneStrideShift;
-  if (selectorKind != SelectorKind::Constant) {
+  if (selectorKind != GroupBroadcastSelectorKind::Constant) {
     selectorShift = getPowerOfTwoLog2(selectorPeriod);
     sourceLaneStrideShift = getPowerOfTwoLog2(sourceLaneStride);
     if (!selectorShift || !sourceLaneStrideShift)
@@ -7939,25 +8001,15 @@ static LogicalResult lowerGroupBroadcastParts(
                   "selector lowering plan");
       }
 
-      if (selectorKind == SelectorKind::Constant && sourceSlots == 1) {
-        results[flatIndex] =
-            rewriter
-                .create<VdupOp>(op->getLoc(), resultType,
-                                sourceParts[sourceChunk], *allMask,
-                                rewriter.getStringAttr("LOWEST"))
-                .getResult();
-        continue;
+      FailureOr<Value> chunkResult = materializeGroupBroadcastChunk(
+          op, resultType, resultVMIType, sourceParts,
+          selectorKind, selectorPeriod, sourceSlots, fact->groupSize, part,
+          chunk, firstGroup, sourceChunk, baseSlot, fact->lanesPerPart,
+          *allMask, getSelector, rewriter);
+      if (failed(chunkResult)) {
+        return failure();
       }
-
-      FailureOr<Value> selector = getSelector(baseSlot);
-      if (failed(selector))
-        return rewriter.notifyMatchFailure(
-            op, "failed to create group_broadcast selector ramp");
-      results[flatIndex] =
-          rewriter
-              .create<VselrOp>(op->getLoc(), resultType,
-                               sourceParts[sourceChunk], *selector)
-              .getResult();
+      results[flatIndex] = *chunkResult;
     }
   }
   if (flatIndex != static_cast<int64_t>(resultTypes.size()))
