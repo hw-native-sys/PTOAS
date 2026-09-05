@@ -7264,8 +7264,10 @@ public:
     }
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    bool failedResultTypeConversion = failed(maybe_resultTypes);
+    if (failedResultTypeConversion) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
     std::optional<std::string> laneStrideDist =
@@ -12559,41 +12561,11 @@ template <typename SourceOp, typename ChunkReduceOp, typename CombineOp>
 struct OneToNVMIReduceMinMaxOpPattern : OneToNOpConversionPattern<SourceOp> {
   using OneToNOpConversionPattern<SourceOp>::OneToNOpConversionPattern;
 
-  LogicalResult matchAndRewrite(
-      SourceOp op,
-      typename OneToNOpConversionPattern<SourceOp>::OpAdaptor adaptor,
-      OneToNPatternRewriter &rewriter) const override {
-    ValueRange sourceParts = adaptor.getSource();
-    ValueRange maskParts = adaptor.getMask();
-    FailureOr<SmallVector<Type>> maybe_resultTypes =
-        getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
-      return failure();
-    SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-    if (sourceParts.empty() || sourceParts.size() != maskParts.size() ||
-        resultTypes.size() != 1)
-      return rewriter.notifyMatchFailure(
-          op, "min/max reduction requires matching source/mask chunks "
-              "and one result chunk");
-
-    auto resultType = dyn_cast<VRegType>(resultTypes.front());
-    auto maskType = dyn_cast<MaskType>(maskParts.front().getType());
-    if (!resultType || !maskType)
-      return rewriter.notifyMatchFailure(
-          op, "min/max reduction requires matching physical source/result "
-              "vregs and one mask");
-
-    for (Value sourcePart : sourceParts)
-      if (sourcePart.getType() != resultType)
-        return rewriter.notifyMatchFailure(
-            op, "min/max reduction requires every source chunk to "
-                "match result vreg type");
-    for (Value maskPart : maskParts)
-      if (maskPart.getType() != maskType)
-        return rewriter.notifyMatchFailure(
-            op, "min/max reduction requires every mask chunk to have "
-                "the same predicate type");
-
+private:
+  LogicalResult lowerReduction(SourceOp op, ValueRange sourceParts,
+                               ValueRange maskParts, VRegType resultType,
+                               MaskType maskType,
+                               OneToNPatternRewriter &rewriter) const {
     FailureOr<Value> combined = combineEquivalentMaskedParts<CombineOp>(
         op.getLoc(), sourceParts, maskParts, resultType, rewriter);
     if (succeeded(combined)) {
@@ -12620,9 +12592,10 @@ struct OneToNVMIReduceMinMaxOpPattern : OneToNOpConversionPattern<SourceOp> {
     }
     FailureOr<Value> firstLaneMask =
         createPrefixMask(op.getLoc(), maskType, "PAT_VL1", rewriter);
-    if (failed(firstLaneMask))
+    if (failed(firstLaneMask)) {
       return rewriter.notifyMatchFailure(
           op, "failed to create min/max reduction first-lane mask");
+    }
     for (size_t part = 1; part < sourceParts.size(); ++part) {
       Value reduced = rewriter
                           .create<ChunkReduceOp>(op.getLoc(), resultType,
@@ -12634,11 +12607,59 @@ struct OneToNVMIReduceMinMaxOpPattern : OneToNOpConversionPattern<SourceOp> {
                                            accumulator, *firstLaneMask)
                         .getResult();
     }
-
     replaceOpWithFlatConvertedValues(
-            rewriter, op, SmallVector<Value>{accumulator},
-            *this->getTypeConverter());
+        rewriter, op, SmallVector<Value>{accumulator},
+        *this->getTypeConverter());
     return success();
+  }
+
+public:
+
+  LogicalResult matchAndRewrite(
+      SourceOp op,
+      typename OneToNOpConversionPattern<SourceOp>::OpAdaptor adaptor,
+      OneToNPatternRewriter &rewriter) const override {
+    ValueRange sourceParts = adaptor.getSource();
+    ValueRange maskParts = adaptor.getMask();
+    FailureOr<SmallVector<Type>> maybe_resultTypes =
+        getConvertedResultTypes(op, 0, *this->getTypeConverter());
+    if (failed(maybe_resultTypes))
+      return failure();
+    SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
+    bool invalidArity = sourceParts.empty() || sourceParts.size() != maskParts.size() ||
+                        resultTypes.size() != 1;
+    if (invalidArity) {
+      return rewriter.notifyMatchFailure(
+          op, "min/max reduction requires matching source/mask chunks "
+              "and one result chunk");
+    }
+
+    auto resultType = dyn_cast<VRegType>(resultTypes.front());
+    auto maskType = dyn_cast<MaskType>(maskParts.front().getType());
+    bool invalidPhysicalTypes = !resultType || !maskType;
+    if (invalidPhysicalTypes) {
+      return rewriter.notifyMatchFailure(
+          op, "min/max reduction requires matching physical source/result "
+              "vregs and one mask");
+    }
+
+    for (Value sourcePart : sourceParts) {
+      if (sourcePart.getType() != resultType) {
+        return rewriter.notifyMatchFailure(
+            op, "min/max reduction requires every source chunk to "
+                "match result vreg type");
+      }
+    }
+    for (Value maskPart : maskParts) {
+      if (maskPart.getType() != maskType) {
+        return rewriter.notifyMatchFailure(
+            op, "min/max reduction requires every mask chunk to have "
+                "the same predicate type");
+      }
+    }
+
+    return lowerReduction(op, sourceParts, maskParts, *resultType, *maskType,
+                          rewriter);
   }
 };
 
