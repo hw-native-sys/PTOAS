@@ -3442,7 +3442,8 @@ FailureOr<SmallVector<Value>> materializeDynamicGroupMaskForType(
   if (!layout) {
     return fail("dynamic create_group_mask requires assigned layout");
   }
-  if (layout.getLaneStride() != 1) {
+  bool unsupportedLaneStride = layout.getLaneStride() != 1;
+  if (unsupportedLaneStride) {
     return fail("dynamic create_group_mask requires lane_stride=1 layout");
   }
   bool unsupportedMaskGranularity = resultVMIType.getGranularity() != "b32";
