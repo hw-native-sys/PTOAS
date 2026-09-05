@@ -4272,6 +4272,47 @@ static FailureOr<Value> materializeLaneStrideResultPart(
   return bitcastVReg(op->getLoc(), currentLevel.front(), resultType, rewriter);
 }
 
+static FailureOr<Value> materializeGroupSlotLaneStridePart(
+    Operation *op, Value source, Type resultType, Type elementType,
+    int64_t sourceStride, int64_t resultStride,
+    PatternRewriter &rewriter) {
+  unsigned elementBits = pto::getPTOStorageElemBitWidth(elementType);
+  unsigned carrierBits = elementBits * sourceStride;
+  FailureOr<VRegType> carrierType =
+      getUnsignedCarrierVRegType(rewriter.getContext(), carrierBits);
+  if (failed(carrierType)) {
+    return failure();
+  }
+  FailureOr<Value> current =
+      bitcastVReg(op->getLoc(), source, *carrierType, rewriter);
+  if (failed(current)) {
+    return failure();
+  }
+
+  int64_t currentStride = sourceStride;
+  while (currentStride < resultStride) {
+    FailureOr<Value> unpacked = unpackToNextCarrier(
+        op->getLoc(), *current, carrierBits, /*partIndex=*/0, rewriter);
+    if (failed(unpacked)) {
+      return failure();
+    }
+    current = *unpacked;
+    currentStride *= 2;
+    carrierBits *= 2;
+  }
+  while (currentStride > resultStride) {
+    FailureOr<Value> packed = packToPreviousCarrier(
+        op->getLoc(), *current, carrierBits / 2, "LOWER", rewriter);
+    if (failed(packed)) {
+      return failure();
+    }
+    current = *packed;
+    currentStride /= 2;
+    carrierBits /= 2;
+  }
+  return bitcastVReg(op->getLoc(), *current, resultType, rewriter);
+}
+
 FailureOr<SmallVector<Value>> materializeLaneStrideToContiguous(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     Type elementType, int64_t laneStride, PatternRewriter &rewriter) {
@@ -4330,38 +4371,9 @@ FailureOr<SmallVector<Value>> materializeGroupSlotLaneStride(
   results.reserve(resultTypes.size());
   for (auto [source, resultType] :
        llvm::zip_equal(sourceParts, resultTypes)) {
-    unsigned carrierBits = elementBits * sourceStride;
-    FailureOr<VRegType> carrierType =
-        getUnsignedCarrierVRegType(rewriter.getContext(), carrierBits);
-    if (failed(carrierType))
-      return fail("failed to derive group-slot source carrier type");
-    FailureOr<Value> current =
-        bitcastVReg(op->getLoc(), source, *carrierType, rewriter);
-    if (failed(current))
-      return fail("failed to bitcast group-slot source carrier");
-
-    int64_t currentStride = sourceStride;
-    while (currentStride < resultStride) {
-      FailureOr<Value> unpacked = unpackToNextCarrier(
-          op->getLoc(), *current, carrierBits, /*partIndex=*/0, rewriter);
-      if (failed(unpacked))
-        return fail("failed to unpack group-slot lane_stride carrier");
-      current = *unpacked;
-      currentStride *= 2;
-      carrierBits *= 2;
-    }
-    while (currentStride > resultStride) {
-      FailureOr<Value> packed = packToPreviousCarrier(
-          op->getLoc(), *current, carrierBits / 2, "LOWER", rewriter);
-      if (failed(packed))
-        return fail("failed to pack group-slot lane_stride carrier");
-      current = *packed;
-      currentStride /= 2;
-      carrierBits /= 2;
-    }
-
-    FailureOr<Value> result =
-        bitcastVReg(op->getLoc(), *current, resultType, rewriter);
+    FailureOr<Value> result = materializeGroupSlotLaneStridePart(
+        op, source, resultType, elementType, sourceStride, resultStride,
+        rewriter);
     if (failed(result))
       return fail("failed to bitcast group-slot result carrier");
     results.push_back(*result);

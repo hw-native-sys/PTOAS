@@ -221,6 +221,14 @@ mask 的语义差异只存在于 active-lane 判定。补齐该批代码及 scal
 触及的控制语句大括号后，增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过。
 
+# group-slot lane stride 单 part 物化整改
+
+本轮将 `materializeGroupSlotLaneStride` 中单个 source/result part 的 carrier 类型推导、
+bitcast、pack/unpack 级联和结果 bitcast 抽取为 `materializeGroupSlotLaneStridePart`。
+外层函数继续负责整体 shape/stride 合同、错误诊断和结果收集；source/result part 顺序、
+carrier stride 变化及失败语义保持不变。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
+
 # fptoui physical part 校验整改
 
 本轮将 `OneToNVMIFPToUIOpPattern::matchAndRewrite` 中 source physical part 一致性校验
