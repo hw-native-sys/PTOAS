@@ -4829,67 +4829,49 @@ FailureOr<std::optional<SmallVector<Value>>> materializeDeinterleaved2MaskLayout
   return std::optional<SmallVector<Value>>(std::move(results));
 }
 
-FailureOr<std::optional<SmallVector<Value>>> materializeMaskLaneStrideLayout(
+static FailureOr<SmallVector<Value>> materializeMaskLaneStrideUnpack(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
-    VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
-    PatternRewriter &rewriter) {
-  bool unpack = sourceLayout && sourceLayout.isContiguous() &&
-                sourceLayout.getLaneStride() == 1 && resultLayout &&
-                resultLayout.isContiguous() &&
-                resultLayout.getLaneStride() != 1;
-  bool pack = sourceLayout && sourceLayout.isContiguous() &&
-              sourceLayout.getLaneStride() != 1 && resultLayout &&
-              resultLayout.isContiguous() && resultLayout.getLaneStride() == 1;
-  if (!unpack && !pack) {
-    return std::nullopt;
-  }
-
-  int64_t laneStride =
-      unpack ? resultLayout.getLaneStride() : sourceLayout.getLaneStride();
-  bool unsupportedStride = laneStride != 2 && laneStride != 4;
-  if (unsupportedStride) {
+    int64_t laneStride, PatternRewriter &rewriter) {
+  bool resultExceedsSource =
+      static_cast<int64_t>(resultTypes.size()) >
+      static_cast<int64_t>(sourceParts.size()) * laneStride;
+  if (resultExceedsSource) {
     return rewriter.notifyMatchFailure(
-        op, unpack ? "unsupported dense mask lane_stride unpack factor"
-                   : "unsupported dense mask lane_stride pack factor");
+        op, "dense mask lane_stride unpack materialization result arity "
+            "does not fit source arity");
   }
-
-  if (unpack) {
-    bool resultExceedsSource =
-        static_cast<int64_t>(resultTypes.size()) >
-        static_cast<int64_t>(sourceParts.size()) * laneStride;
-    if (resultExceedsSource) {
+  SmallVector<Value> results;
+  results.reserve(resultTypes.size());
+  StringAttr lower = rewriter.getStringAttr("LOWER");
+  StringAttr higher = rewriter.getStringAttr("HIGHER");
+  for (auto [resultIndex, resultType] : llvm::enumerate(resultTypes)) {
+    auto maskType = dyn_cast<MaskType>(resultType);
+    if (!maskType) {
       return rewriter.notifyMatchFailure(
-          op, "dense mask lane_stride unpack materialization result arity "
-              "does not fit source arity");
+          op, "dense mask lane_stride unpack requires mask result type");
     }
-    SmallVector<Value> results;
-    results.reserve(resultTypes.size());
-    StringAttr lower = rewriter.getStringAttr("LOWER");
-    StringAttr higher = rewriter.getStringAttr("HIGHER");
-    for (auto [resultIndex, resultType] : llvm::enumerate(resultTypes)) {
-      auto maskType = dyn_cast<MaskType>(resultType);
-      if (!maskType) {
-        return rewriter.notifyMatchFailure(
-            op, "dense mask lane_stride unpack requires mask result type");
-      }
-      int64_t sourceIndex = resultIndex / laneStride;
-      int64_t part = resultIndex % laneStride;
-      Value source = sourceParts[sourceIndex];
-      StringAttr firstPart = laneStride == 4 ? (part >= 2 ? higher : lower)
-                                             : (part == 1 ? higher : lower);
-      Value current = rewriter
-                          .create<PunpackOp>(op->getLoc(), maskType, source,
-                                             firstPart)
-                          .getResult();
-      if (laneStride == 4) {
-        current = rewriter.create<PunpackOp>(
-            op->getLoc(), maskType, current, part % 2 == 0 ? lower : higher);
-      }
-      results.push_back(current);
+    int64_t sourceIndex = resultIndex / laneStride;
+    int64_t part = resultIndex % laneStride;
+    Value source = sourceParts[sourceIndex];
+    StringAttr firstPart = laneStride == 4
+                               ? (part >= 2 ? higher : lower)
+                               : (part == 1 ? higher : lower);
+    Value current = rewriter
+                        .create<PunpackOp>(op->getLoc(), maskType, source,
+                                           firstPart)
+                        .getResult();
+    if (laneStride == 4) {
+      current = rewriter.create<PunpackOp>(
+          op->getLoc(), maskType, current, part % 2 == 0 ? lower : higher);
     }
-    return std::optional<SmallVector<Value>>(std::move(results));
+    results.push_back(current);
   }
+  return results;
+}
 
+static FailureOr<SmallVector<Value>> materializeMaskLaneStridePack(
+    Operation *op, ValueRange sourceParts, TypeRange resultTypes,
+    int64_t laneStride, PatternRewriter &rewriter) {
   if (sourceParts.empty()) {
     return rewriter.notifyMatchFailure(
         op, "dense mask lane_stride pack materialization requires source parts");
@@ -4902,7 +4884,6 @@ FailureOr<std::optional<SmallVector<Value>>> materializeMaskLaneStrideLayout(
         op, "dense mask lane_stride pack materialization source arity does "
             "not fit result arity");
   }
-
   SmallVector<Value> results;
   results.reserve(resultTypes.size());
   StringAttr lower = rewriter.getStringAttr("LOWER");
@@ -4925,8 +4906,8 @@ FailureOr<std::optional<SmallVector<Value>>> materializeMaskLaneStrideLayout(
   auto packPair = [&mergeMasks, &lower, &higher, &rewriter, &op](
                       Value lowSource, std::optional<Value> highSource,
                       MaskType maskType) -> FailureOr<Value> {
-    Value packed =
-        rewriter.create<PpackOp>(op->getLoc(), maskType, lowSource, lower);
+    Value packed = rewriter.create<PpackOp>(op->getLoc(), maskType, lowSource,
+                                            lower);
     if (!highSource) {
       return packed;
     }
@@ -4982,7 +4963,48 @@ FailureOr<std::optional<SmallVector<Value>>> materializeMaskLaneStrideLayout(
     return rewriter.notifyMatchFailure(
         op, "dense mask lane_stride pack materialization result arity mismatch");
   }
-  return std::optional<SmallVector<Value>>(std::move(results));
+  return results;
+}
+
+FailureOr<std::optional<SmallVector<Value>>> materializeMaskLaneStrideLayout(
+    Operation *op, ValueRange sourceParts, TypeRange resultTypes,
+    VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
+    PatternRewriter &rewriter) {
+  bool unpack = sourceLayout && sourceLayout.isContiguous() &&
+                sourceLayout.getLaneStride() == 1 && resultLayout &&
+                resultLayout.isContiguous() &&
+                resultLayout.getLaneStride() != 1;
+  bool pack = sourceLayout && sourceLayout.isContiguous() &&
+              sourceLayout.getLaneStride() != 1 && resultLayout &&
+              resultLayout.isContiguous() && resultLayout.getLaneStride() == 1;
+  if (!unpack && !pack) {
+    return std::nullopt;
+  }
+
+  int64_t laneStride =
+      unpack ? resultLayout.getLaneStride() : sourceLayout.getLaneStride();
+  bool unsupportedStride = laneStride != 2 && laneStride != 4;
+  if (unsupportedStride) {
+    return rewriter.notifyMatchFailure(
+        op, unpack ? "unsupported dense mask lane_stride unpack factor"
+                   : "unsupported dense mask lane_stride pack factor");
+  }
+
+  if (unpack) {
+    FailureOr<SmallVector<Value>> results = materializeMaskLaneStrideUnpack(
+        op, sourceParts, resultTypes, laneStride, rewriter);
+    if (failed(results)) {
+      return failure();
+    }
+    return std::optional<SmallVector<Value>>(std::move(*results));
+  }
+  FailureOr<SmallVector<Value>> results = materializeMaskLaneStridePack(
+      op, sourceParts, resultTypes, laneStride, rewriter);
+  if (failed(results)) {
+    return failure();
+  }
+  return std::optional<SmallVector<Value>>(std::move(*results));
+
 }
 
 FailureOr<SmallVector<Value>> materializeMaskLayoutConversion(

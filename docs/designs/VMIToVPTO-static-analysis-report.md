@@ -363,6 +363,13 @@ compare、算术及专用 shape 检查的先后顺序。源码增量合规检查
 arithmetic 检查的顺序。源码增量合规检查及 `git diff --check` 通过；连续的 load/store、
 interleave memory 和 group-broadcast lowering 回归均通过。
 
+本轮将 `materializeMaskLaneStrideLayout` 按方向拆分为
+`materializeMaskLaneStrideUnpack` 与 `materializeMaskLaneStridePack`。前者只负责
+`punpack` 展开，后者只负责 `ppack`/`por` 合并及结果 arity 检查；外层仅保留布局
+方向、lane stride 支持范围和 helper 分派。删除了原函数中已由 helper 取代的重复
+控制流，未改变 mask 物理 part 顺序或转换语义。源码增量合规检查、`git diff --check`
+及连续 load/store lowering 回归通过。
+
 本轮将普通 reduce 与 group-reduce 的 verifier 分派抽取为
 `verifySupportedVMIReductionOp`。helper 保留 `reduce_addf` 的 `reassoc` 要求、各
 整数/浮点 reduce 的具体诊断，以及 group-reduce 的独立支持说明；主 walk 只负责按
