@@ -2023,3 +2023,13 @@ carrier shape/result type 校验、逐级 `VsunpackOp`/`VzunpackOp` 以及最终
 原有诊断语义不变。增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；`vmi_to_vpto_group_slot_integer_extension_matrix.pto` lowering
 exit=0，现有 slots=1 的 EVEN/P0 转换输出保持不变。
+
+# packed-byte group store fallback 构造职责整改
+
+本轮在 `OneToNVMIGroupStoreOpPattern::lowerPackedByteSlots8` 中引入
+`buildPackedByteStatefulValue`，将 fallback 路径单个 block 的两级 `VpackOp` 类型和发射
+抽取出来。主循环继续负责 block 规划、`PK4_B32` direct store 与 stateful stream 分支、
+`activeGroups` advance 以及原有 block 顺序；未改变 direct/fallback 选择、stream payload
+布局或诊断语义。增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_layout_assignment_group_store_slots1_unit_stride.pto`
+完整 lowering pipeline exit=0。

@@ -10632,6 +10632,26 @@ private:
     return std::make_tuple(merged, *storeMask, groupOffset);
   }
 
+  FailureOr<Value> buildPackedByteStatefulValue(
+      VMIGroupStoreOp op, Value merged,
+      OneToNPatternRewriter &rewriter) const {
+    MLIRContext *ctx = rewriter.getContext();
+    auto ui16 = IntegerType::get(
+        ctx, 16, IntegerType::SignednessSemantics::Unsigned);
+    auto ui8 = IntegerType::get(
+        ctx, 8, IntegerType::SignednessSemantics::Unsigned);
+    auto packed16Type = VRegType::get(ctx, 128, ui16);
+    auto packed8Type = VRegType::get(ctx, 256, ui8);
+    Value packed16 = rewriter
+                         .create<VpackOp>(op.getLoc(), packed16Type, merged,
+                                          rewriter.getStringAttr("LOWER"))
+                         .getResult();
+    return rewriter
+        .create<VpackOp>(op.getLoc(), packed8Type, packed16,
+                         rewriter.getStringAttr("LOWER"))
+        .getResult();
+  }
+
   LogicalResult lowerPackedByteSlots8(
       VMIGroupStoreOp op, OneToNPatternRewriter &rewriter,
       ValueRange valueParts, VMIVRegType valueVMIType, VMILayoutAttr layout,
@@ -10703,22 +10723,12 @@ private:
                                 rewriter.getStringAttr("PK4_B32"), storeMask);
         continue;
       }
-      MLIRContext *ctx = rewriter.getContext();
-      auto ui16 = IntegerType::get(
-          ctx, 16, IntegerType::SignednessSemantics::Unsigned);
-      auto ui8 = IntegerType::get(
-          ctx, 8, IntegerType::SignednessSemantics::Unsigned);
-      auto packed16Type = VRegType::get(ctx, 128, ui16);
-      auto packed8Type = VRegType::get(ctx, 256, ui8);
-      Value packed16 = rewriter
-                           .create<VpackOp>(op.getLoc(), packed16Type, merged,
-                                            rewriter.getStringAttr("LOWER"))
-                           .getResult();
-      statefulValues.push_back(
-          rewriter
-              .create<VpackOp>(op.getLoc(), packed8Type, packed16,
-                               rewriter.getStringAttr("LOWER"))
-              .getResult());
+      FailureOr<Value> statefulValue = buildPackedByteStatefulValue(
+          op, merged, rewriter);
+      if (failed(statefulValue)) {
+        return failure();
+      }
+      statefulValues.push_back(*statefulValue);
       statefulAdvances.push_back(activeGroups);
     }
     if (!useDirectPack4 &&
