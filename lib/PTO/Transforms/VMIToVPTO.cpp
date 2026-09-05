@@ -4065,6 +4065,60 @@ FailureOr<SmallVector<Value>> materializeContiguousToLaneStride(
   return results;
 }
 
+static FailureOr<Value> materializeLaneStrideResultPart(
+    Operation *op, ValueRange sourceParts, Type resultType, size_t sourceBegin,
+    size_t sourceEnd, unsigned elementBits, unsigned carrierBits,
+    VRegType sourceCarrier, PatternRewriter &rewriter) {
+  SmallVector<Value> currentLevel;
+  currentLevel.reserve(sourceEnd - sourceBegin);
+  for (Value source : sourceParts.slice(sourceBegin, sourceEnd - sourceBegin)) {
+    FailureOr<Value> carrier =
+        bitcastVReg(op->getLoc(), source, sourceCarrier, rewriter);
+    if (failed(carrier)) {
+      return failure();
+    }
+    currentLevel.push_back(*carrier);
+  }
+
+  unsigned currentBits = carrierBits;
+  while (currentBits > elementBits) {
+    SmallVector<Value> nextLevel;
+    nextLevel.reserve((currentLevel.size() + 1) / 2);
+    for (size_t index = 0; index < currentLevel.size(); index += 2) {
+      FailureOr<Value> low = packToPreviousCarrier(
+          op->getLoc(), currentLevel[index], currentBits / 2, "LOWER",
+          rewriter);
+      if (failed(low)) {
+        return failure();
+      }
+      Value merged = *low;
+      if (index + 1 < currentLevel.size()) {
+        FailureOr<Value> high = packToPreviousCarrier(
+            op->getLoc(), currentLevel[index + 1], currentBits / 2, "HIGHER",
+            rewriter);
+        FailureOr<Value> mask = createAllTrueMaskForVReg(
+            op->getLoc(), cast<VRegType>((*low).getType()), rewriter);
+        bool failedMergeInputs = failed(high) || failed(mask);
+        if (failedMergeInputs) {
+          return failure();
+        }
+        merged = rewriter
+                     .create<VorOp>(op->getLoc(), (*low).getType(), *low,
+                                    *high, *mask)
+                     .getResult();
+      }
+      nextLevel.push_back(merged);
+    }
+    currentLevel = std::move(nextLevel);
+    currentBits /= 2;
+  }
+  bool invalidResultArity = currentLevel.size() != 1;
+  if (invalidResultArity) {
+    return failure();
+  }
+  return bitcastVReg(op->getLoc(), currentLevel.front(), resultType, rewriter);
+}
+
 FailureOr<SmallVector<Value>> materializeLaneStrideToContiguous(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     Type elementType, int64_t laneStride, PatternRewriter &rewriter) {
@@ -4087,50 +4141,10 @@ FailureOr<SmallVector<Value>> materializeLaneStrideToContiguous(
     size_t sourceBegin = resultIndex * laneStride;
     size_t sourceEnd =
         std::min<size_t>(sourceBegin + laneStride, sourceParts.size());
-    SmallVector<Value> currentLevel;
-    currentLevel.reserve(sourceEnd - sourceBegin);
-    for (Value source : sourceParts.slice(sourceBegin, sourceEnd - sourceBegin)) {
-      FailureOr<Value> carrier =
-          bitcastVReg(op->getLoc(), source, *sourceCarrier, rewriter);
-      if (failed(carrier))
-        return failure();
-      currentLevel.push_back(*carrier);
-    }
-
-    unsigned currentBits = carrierBits;
-    while (currentBits > *elementBits) {
-      SmallVector<Value> nextLevel;
-      nextLevel.reserve((currentLevel.size() + 1) / 2);
-      for (size_t index = 0; index < currentLevel.size(); index += 2) {
-        FailureOr<Value> low = packToPreviousCarrier(
-            op->getLoc(), currentLevel[index], currentBits / 2, "LOWER",
-            rewriter);
-        if (failed(low))
-          return failure();
-        Value merged = *low;
-        if (index + 1 < currentLevel.size()) {
-          FailureOr<Value> high = packToPreviousCarrier(
-              op->getLoc(), currentLevel[index + 1], currentBits / 2,
-              "HIGHER", rewriter);
-          FailureOr<Value> mask = createAllTrueMaskForVReg(
-              op->getLoc(), cast<VRegType>((*low).getType()), rewriter);
-          if (failed(high) || failed(mask))
-            return failure();
-          merged = rewriter
-                       .create<VorOp>(op->getLoc(), (*low).getType(), *low,
-                                      *high, *mask)
-                       .getResult();
-        }
-        nextLevel.push_back(merged);
-      }
-      currentLevel = std::move(nextLevel);
-      currentBits /= 2;
-    }
-    if (currentLevel.size() != 1)
-      return failure();
-    FailureOr<Value> result =
-        bitcastVReg(op->getLoc(), currentLevel.front(), resultType, rewriter);
-    if (failed(result))
+    FailureOr<Value> result = materializeLaneStrideResultPart(
+        op, sourceParts, resultType, sourceBegin, sourceEnd, *elementBits,
+        carrierBits, *sourceCarrier, rewriter);
+    if (failed(result)) {
       return failure();
     results.push_back(*result);
   }

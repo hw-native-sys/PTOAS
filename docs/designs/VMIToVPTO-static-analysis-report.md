@@ -610,3 +610,12 @@ arity 计算，错误文本和 layout 支持范围保持不变。增量合规检
 fact、context 初始化及 part/chunk 枚举；source chunk 边界、结果顺序和 selector cache
 语义保持不变。增量合规检查为 `errors=0 warnings=0`，`git diff --check` 通过；
 group-broadcast lowering 回归通过。
+
+本轮将 `materializeLaneStrideToContiguous` 的单个 contiguous result part 物化抽取为
+`materializeLaneStrideResultPart`。辅助函数集中负责 source carrier 收集、多级
+`vpack`/`vor` 合并以及最终 bitcast；外层函数只保留 dense lane-stride shape 校验、
+carrier 类型计算和结果 part 枚举。该拆分对应 source-part 拼接与整体转换编排的真实
+职责边界，未改变 carrier 位宽递进、尾部 part 处理或失败路径。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_load_store_contiguous.pto`、`vmi_interleaved_memory_ops.pto` 和
+`vmi_layout_assignment_group_store_slots1_unit_stride.pto` 均完成 lowering 回归。
