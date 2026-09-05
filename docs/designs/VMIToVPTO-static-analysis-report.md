@@ -109,3 +109,10 @@ git diff --check  # passed
 增量构建仍受工作区既有 CMake 外部依赖配置阻断：构建系统尝试创建
 `/cann-cmake` 并因权限不足失败；该错误未产生 C++ 编译诊断，需在修复构建环境后
 补跑完整编译及 lit 回归。
+
+随后将 `OneToNVMIGroupBroadcastLoadOpPattern` 的直接 BRC 结果构造抽取为
+`lowerDirectBRC`（提交 `8f7456fc7`）。该 helper 只负责 BRC 的物理 arity、指针类型、
+结果 vreg 类型和逐 group offset 构造；E2B 以及 group-slot fallback 仍由原分派函数
+处理。使用现有 `build/tools/pto-test-opt/pto-test-opt` 对
+`vmi_layout_assignment_group_broadcast_load_e2b_b16.pto` 的 lowering 运行成功，输出仍
+包含预期的 `vlds {dist = "E2B_B32"}`/BRC 路径。
