@@ -201,3 +201,7 @@ abs、sqrt、exp、ln 等重复 dispatch；`pmode` 特殊处理仍仅位于 vect
 本轮进一步复用 `verifySupportedShapeOp` 处理 `fptosi`、`fptoui`、`sitofp` 和
 `bitcast` 的 conversion shape 验证（提交 `5dff6114a`），仅保留各操作独立的能力
 描述与 checker，删除重复的 reason/WalkResult 样板代码；增量合规检查通过。
+
+本轮继续将 `extsi`、`extui`、`trunci` 的 conversion shape 分支改用
+`verifySupportedShapeOp`（提交 `b13d8f42f`），各自保留详细布局/宽度支持描述；同时
+修复 expand-load 操作数失败路径的大括号（提交 `02a3be5d7`）。合规检查通过。
