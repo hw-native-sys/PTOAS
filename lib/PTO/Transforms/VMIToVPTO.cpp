@@ -3406,6 +3406,64 @@ static FailureOr<Value> applyGroupMaskPadding(
       .getResult();
 }
 
+static FailureOr<Value> buildDynamicGroupMaskLaneIndex(
+    VMICreateGroupMaskOp op, int64_t factor, int64_t blockElems, int64_t part,
+    int64_t chunk, int64_t lanesPerPart, Value allMask,
+    PatternRewriter &rewriter) {
+  Location loc = op.getLoc();
+  MLIRContext *ctx = rewriter.getContext();
+  Type i32 = rewriter.getI32Type();
+  auto indexVectorType = VRegType::get(ctx, lanesPerPart, i32);
+  Value chunkBase = createI32Constant(loc, chunk * lanesPerPart, rewriter);
+  Value indexInPart =
+      rewriter.create<VciOp>(loc, indexVectorType, chunkBase, StringAttr{})
+          .getResult();
+  Value partBlock = indexInPart;
+  Value inBlockLane = createI32Constant(loc, 0, rewriter);
+  std::optional<int64_t> blockShiftValue = getPowerOfTwoLog2(blockElems);
+  if (blockElems != 1) {
+    Value blockShift = createI16Constant(loc, *blockShiftValue, rewriter);
+    partBlock = rewriter
+                    .create<VshrsOp>(loc, indexVectorType, indexInPart,
+                                     blockShift, allMask)
+                    .getResult();
+    Value blockBase = rewriter
+                          .create<VshlsOp>(loc, indexVectorType, partBlock,
+                                           blockShift, allMask)
+                          .getResult();
+    inBlockLane = rewriter
+                      .create<VsubOp>(loc, indexVectorType, indexInPart,
+                                      blockBase, allMask)
+                      .getResult();
+  }
+  Value factorScalar = createI32Constant(loc, factor, rewriter);
+  Value logicalBlock = rewriter
+                           .create<VmulsOp>(loc, indexVectorType, partBlock,
+                                            factorScalar, allMask)
+                           .getResult();
+  if (part != 0) {
+    Value partScalar = createI32Constant(loc, part, rewriter);
+    logicalBlock = rewriter
+                       .create<VaddsOp>(loc, indexVectorType, logicalBlock,
+                                        partScalar, allMask)
+                       .getResult();
+  }
+  Value logicalLane = logicalBlock;
+  if (blockElems != 1) {
+    Value blockShift = createI16Constant(loc, *blockShiftValue, rewriter);
+    Value logicalBlockBase = rewriter
+                                 .create<VshlsOp>(loc, indexVectorType,
+                                                  logicalBlock, blockShift,
+                                                  allMask)
+                                 .getResult();
+    logicalLane = rewriter
+                      .create<VaddOp>(loc, indexVectorType, logicalBlockBase,
+                                      inBlockLane, allMask)
+                      .getResult();
+  }
+  return logicalLane;
+}
+
 FailureOr<Value> materializeDynamicGroupMaskChunk(
     VMICreateGroupMaskOp op, VMIMaskType resultVMIType, Type resultType,
     Value activeI32, int64_t factor, int64_t blockElems, int64_t part,
@@ -3423,65 +3481,13 @@ FailureOr<Value> materializeDynamicGroupMaskChunk(
   if (failed(allMask)) {
     return fail("failed to create dynamic create_group_mask all mask");
   }
-  MLIRContext *ctx = rewriter.getContext();
-  Type i32 = rewriter.getI32Type();
-  auto indexVectorType = VRegType::get(ctx, lanesPerPart, i32);
-  Value chunkBase = createI32Constant(loc, chunk * lanesPerPart, rewriter);
-  Value indexInPart =
-      rewriter.create<VciOp>(loc, indexVectorType, chunkBase, StringAttr{})
-          .getResult();
-  Value partBlock = indexInPart;
-  Value inBlockLane = createI32Constant(loc, 0, rewriter);
-  std::optional<int64_t> blockShiftValue = getPowerOfTwoLog2(blockElems);
-  if (blockElems != 1) {
-    Value blockShift =
-        createI16Constant(loc, *blockShiftValue, rewriter);
-    partBlock = rewriter
-                    .create<VshrsOp>(loc, indexVectorType, indexInPart,
-                                     blockShift, *allMask)
-                    .getResult();
-    Value blockBase =
-        rewriter
-            .create<VshlsOp>(loc, indexVectorType, partBlock, blockShift,
-                             *allMask)
-            .getResult();
-    inBlockLane =
-        rewriter
-            .create<VsubOp>(loc, indexVectorType, indexInPart, blockBase,
-                            *allMask)
-            .getResult();
-  }
-  Value factorScalar = createI32Constant(loc, factor, rewriter);
-  Value logicalBlock =
-      rewriter
-          .create<VmulsOp>(loc, indexVectorType, partBlock, factorScalar,
-                           *allMask)
-          .getResult();
-  if (part != 0) {
-    Value partScalar = createI32Constant(loc, part, rewriter);
-    logicalBlock =
-        rewriter
-            .create<VaddsOp>(loc, indexVectorType, logicalBlock, partScalar,
-                             *allMask)
-            .getResult();
-  }
-  Value logicalLane = logicalBlock;
-  if (blockElems != 1) {
-    Value blockShift =
-        createI16Constant(loc, *blockShiftValue, rewriter);
-    Value logicalBlockBase =
-        rewriter
-            .create<VshlsOp>(loc, indexVectorType, logicalBlock, blockShift,
-                             *allMask)
-            .getResult();
-    logicalLane =
-        rewriter
-            .create<VaddOp>(loc, indexVectorType, logicalBlockBase, inBlockLane,
-                            *allMask)
-            .getResult();
+  FailureOr<Value> logicalLane = buildDynamicGroupMaskLaneIndex(
+      op, factor, blockElems, part, chunk, lanesPerPart, *allMask, rewriter);
+  if (failed(logicalLane)) {
+    return fail("failed to compute dynamic create_group_mask lane index");
   }
   FailureOr<Value> laneInGroup = createPowerOfTwoRemainder(
-      loc, logicalLane, op.getGroupSizeAttr().getInt(), *allMask, rewriter);
+      loc, *logicalLane, op.getGroupSizeAttr().getInt(), *allMask, rewriter);
   if (failed(laneInGroup)) {
     return fail("failed to compute dynamic create_group_mask lane index");
   }

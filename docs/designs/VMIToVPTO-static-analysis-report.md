@@ -1322,3 +1322,11 @@ row 类型/mask 准备和最终结果 bitcast；low/high 配对顺序、`PAT_VL1
 保持向量拼接顺序、active group mask、offset 和 stream 生命周期不变。增量合规检查
 结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_group_store_slots8_packed_byte.pto` lowering exit=0。
+# dynamic group mask lane index 整改
+
+本轮将 `materializeDynamicGroupMaskChunk` 中 index vector、block lane、factor/part
+映射和逻辑 lane 构造抽取为 `buildDynamicGroupMaskLaneIndex`。chunk helper 现在只
+负责 b32 mask/all-mask 契约、lane-in-group 比较和 padding mask 合并；保持动态
+group mask 的 lane 映射、`vcmps` 谓词及 padding 语义不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_create_group_mask_block8_dynamic.pto` lowering exit=0。
