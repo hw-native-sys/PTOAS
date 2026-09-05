@@ -6317,6 +6317,35 @@ struct MaskGranularityCastPlan {
   VMIMaskType physicalResultType;
 };
 
+static FailureOr<SmallVector<Value>> materializeMaskGranularityCastParts(
+    Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
+    ValueRange sourceParts, TypeRange resultTypes,
+    const MaskGranularityCastPlan &plan, PatternRewriter &rewriter) {
+  bool samePhysicalLayout =
+      plan.physicalSourceType.getLayoutAttr() ==
+      plan.physicalResultType.getLayoutAttr();
+  if (samePhysicalLayout) {
+    return materializeMaskGranularityConversion(
+        op, plan.physicalSourceType, plan.physicalResultType, sourceParts,
+        rewriter);
+  }
+
+  VMIMaskType granularityType = VMIMaskType::get(
+      op->getContext(), sourceType.getElementCount(),
+      plan.physicalResultType.getGranularity(),
+      plan.physicalSourceType.getLayoutAttr());
+  FailureOr<SmallVector<Value>> granularityParts =
+      materializeMaskGranularityConversion(op, plan.physicalSourceType,
+                                           granularityType, sourceParts,
+                                           rewriter);
+  if (failed(granularityParts)) {
+    return failure();
+  }
+  return materializeMaskGranularityCastLayoutConversion(
+      op, granularityType, plan.physicalResultType, *granularityParts,
+      resultTypes, rewriter);
+}
+
 static FailureOr<MaskGranularityCastPlan> buildMaskGranularityCastPlan(
     Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
     PatternRewriter &rewriter) {
@@ -6365,28 +6394,8 @@ FailureOr<SmallVector<Value>> materializeMaskGranularityCastConversion(
     return std::move(*identity);
   }
 
-  bool samePhysicalLayout =
-      plan->physicalSourceType.getLayoutAttr() ==
-      plan->physicalResultType.getLayoutAttr();
-  if (samePhysicalLayout) {
-    return materializeMaskGranularityConversion(op, plan->physicalSourceType,
-                                                plan->physicalResultType,
-                                                sourceParts, rewriter);
-
-  VMIMaskType granularityType =
-      VMIMaskType::get(op->getContext(), sourceType.getElementCount(),
-                       plan->physicalResultType.getGranularity(),
-                       plan->physicalSourceType.getLayoutAttr());
-  FailureOr<SmallVector<Value>> granularityParts =
-      materializeMaskGranularityConversion(op, plan->physicalSourceType,
-                                           granularityType, sourceParts,
-                                           rewriter);
-  if (failed(granularityParts)) {
-    return failure();
-  }
-  return materializeMaskGranularityCastLayoutConversion(
-      op, granularityType, plan->physicalResultType, *granularityParts, resultTypes,
-      rewriter);
+  return materializeMaskGranularityCastParts(
+      op, sourceType, resultType, sourceParts, resultTypes, *plan, rewriter);
 }
 
 struct OneToNVMIEnsureLayoutOpPattern

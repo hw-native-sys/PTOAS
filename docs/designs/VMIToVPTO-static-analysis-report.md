@@ -221,6 +221,15 @@ mask 的语义差异只存在于 active-lane 判定。补齐该批代码及 scal
 触及的控制语句大括号后，增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过。
 
+# mask granularity cast 分阶段物化整改
+
+本轮将 `materializeMaskGranularityCastConversion` 的 physical layout 分派、granularity
+中间类型构造和两阶段 materialization 抽取为 `materializeMaskGranularityCastParts`。
+主函数保留 cast plan 校验与 identity forwarding；保持 physical layout 相同的直接路径、
+layout 不同的“先 granularity、后 layout”顺序及错误传播语义不变。增量
+`check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
+通过。
+
 # mask layout identity 分派整改
 
 本轮将 `materializeMaskGranularityCastLayoutConversion` 的 identity layout 判断命名为
