@@ -7801,6 +7801,39 @@ struct OneToNVMIStoreOpPattern : OneToNOpConversionPattern<VMIStoreOp> {
     return success();
   }
 
+  static LogicalResult emitDeinterleavedStore(
+      VMIStoreOp op, Value destination, Value offset, ValueRange valueParts,
+      VMIVRegType valueVMIType, int64_t lanesPerPart, StringRef dist,
+      OneToNPatternRewriter &rewriter) {
+    if (valueParts.size() % 2 != 0) {
+      return failure();
+    }
+    int64_t groups = valueParts.size() / 2;
+    for (int64_t group = 0; group < groups; ++group) {
+      Value low = valueParts[group];
+      Value high = valueParts[groups + group];
+      if (low.getType() != high.getType()) {
+        return rewriter.notifyMatchFailure(
+            op, "vstsx2 requires matching low/high value types");
+      }
+      auto vregType = dyn_cast<VRegType>(low.getType());
+      if (!vregType) {
+        return rewriter.notifyMatchFailure(op, "store value must be vreg");
+      }
+      FailureOr<Value> mask =
+          createAllTrueMaskForVReg(op.getLoc(), vregType, rewriter);
+      if (failed(mask)) {
+        return rewriter.notifyMatchFailure(
+            op, "unsupported element type for store mask");
+      }
+      Value chunkOffset = createChunkOffset(
+          op.getLoc(), offset, group * 2 * lanesPerPart, rewriter);
+      rewriter.create<Vstsx2Op>(op.getLoc(), low, high, destination, chunkOffset,
+                                rewriter.getStringAttr(dist), *mask);
+    }
+    return success();
+  }
+
   LogicalResult
   matchAndRewrite(VMIStoreOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -7882,28 +7915,11 @@ struct OneToNVMIStoreOpPattern : OneToNOpConversionPattern<VMIStoreOp> {
                             op.getDestination(), op.getOffset(),
                             valueVMIType.getElementType(), firstType,
                             VPTOMemoryOpFamily::StoreX2, *dist);
-      if (canUseDist &&
-          valueParts.size() % 2 == 0) {
-        int64_t groups = valueParts.size() / 2;
-        for (int64_t group = 0; group < groups; ++group) {
-          Value low = valueParts[group];
-          Value high = valueParts[groups + group];
-          if (low.getType() != high.getType())
-            return rewriter.notifyMatchFailure(
-                op, "vstsx2 requires matching low/high value types");
-          auto vregType = dyn_cast<VRegType>(low.getType());
-          if (!vregType)
-            return rewriter.notifyMatchFailure(op, "store value must be vreg");
-          FailureOr<Value> mask =
-              createAllTrueMaskForVReg(op.getLoc(), vregType, rewriter);
-          if (failed(mask))
-            return rewriter.notifyMatchFailure(
-                op, "unsupported element type for store mask");
-          Value chunkOffset = createChunkOffset(
-              op.getLoc(), *offset, group * 2 * *lanesPerPart, rewriter);
-          rewriter.create<Vstsx2Op>(op.getLoc(), low, high, *destination,
-                                    chunkOffset, rewriter.getStringAttr(*dist),
-                                    *mask);
+      if (canUseDist && valueParts.size() % 2 == 0) {
+        if (failed(emitDeinterleavedStore(
+                op, *destination, *offset, valueParts, valueVMIType,
+                *lanesPerPart, *dist, rewriter))) {
+          return failure();
         }
         rewriter.eraseOp(op);
         return success();
