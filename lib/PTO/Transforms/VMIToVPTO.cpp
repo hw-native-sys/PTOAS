@@ -4091,22 +4091,25 @@ FailureOr<std::optional<SmallVector<Value>>> materializeDeinterleaved2Layout(
          ++i) {
       Value lhs = sourceParts[i];
       Value rhs = sourceParts[groups + i];
-      if (lhs.getType() != rhs.getType()) {
+      Type lhsType = lhs.getType();
+      Type rhsType = rhs.getType();
+      if (lhsType != rhsType) {
         return rewriter.notifyMatchFailure(
             op, "vintlv requires matching source part types");
       }
       Type lowType = resultTypes[results.size()];
-      Type highType = results.size() + 1 < resultTypes.size()
+      bool hasHighResult = results.size() + 1 < resultTypes.size();
+      Type highType = hasHighResult
                           ? resultTypes[results.size() + 1]
                           : lowType;
-      if (lhs.getType() != lowType || lhs.getType() != highType) {
+      if (lhsType != lowType || lhsType != highType) {
         return rewriter.notifyMatchFailure(
             op, "vintlv requires operands and results to share one type");
       }
       auto materialize = rewriter.create<VintlvOp>(
           op->getLoc(), lowType, highType, lhs, rhs);
       results.push_back(materialize.getLow());
-      if (results.size() < resultTypes.size()) {
+      if (hasHighResult) {
         results.push_back(materialize.getHigh());
       }
     }
