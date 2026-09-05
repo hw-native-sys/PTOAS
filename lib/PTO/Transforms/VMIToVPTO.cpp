@@ -7557,6 +7557,57 @@ private:
     return success();
   }
 
+  FailureOr<SmallVector<Value>> buildFactor4ContiguousParts(
+      VMICreateGroupMaskOp op, OpAdaptor adaptor,
+      OneToNPatternRewriter &rewriter, VMIMaskType contiguousType,
+      ArrayRef<Type> resultTypes) const {
+    auto activeConstant =
+        op.getActiveElemsPerGroup().getDefiningOp<arith::ConstantOp>();
+    if (!activeConstant) {
+      FailureOr<Value> active = getSingleValue(
+          op, adaptor.getActiveElemsPerGroup(),
+          "create_group_mask active_elems_per_group must convert to one value",
+          rewriter);
+      if (failed(active)) {
+        return failure();
+      }
+      return materializeDynamicGroupMaskForType(
+          op, *active, contiguousType, resultTypes, rewriter);
+    }
+
+    std::string contiguousReason;
+    FailureOr<SmallVector<ConstantMaskChunkMaterialization>> materializations =
+        computeGroupMaskMaterializationForType(op, contiguousType,
+                                               &contiguousReason);
+    if (failed(materializations)) {
+      return rewriter.notifyMatchFailure(
+          op, Twine("create_group_mask ") + contiguousReason);
+    }
+    SmallVector<Value> contiguousParts;
+    contiguousParts.reserve(materializations->size());
+    for (const ConstantMaskChunkMaterialization &materialization :
+         *materializations) {
+      bool tooManyMasks = contiguousParts.size() >= resultTypes.size();
+      if (tooManyMasks) {
+        return rewriter.notifyMatchFailure(
+            op, "create_group_mask produced too many contiguous masks");
+      }
+      auto maskType = dyn_cast<MaskType>(resultTypes[contiguousParts.size()]);
+      if (!maskType) {
+        return rewriter.notifyMatchFailure(
+            op, "create_group_mask result must be mask");
+      }
+      FailureOr<Value> mask = materializeConstantMaskChunk(
+          op.getLoc(), maskType, materialization.activeLanes, rewriter);
+      if (failed(mask)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to materialize create_group_mask contiguous chunk");
+      }
+      contiguousParts.push_back(*mask);
+    }
+    return contiguousParts;
+  }
+
   LogicalResult lowerFactor4Block(
       VMICreateGroupMaskOp op, OpAdaptor adaptor,
       OneToNPatternRewriter &rewriter, VMIMaskType resultVMIType,
@@ -7566,64 +7617,19 @@ private:
     auto contiguousType =
         VMIMaskType::get(op.getContext(), resultVMIType.getElementCount(),
                          resultVMIType.getGranularity(), contiguousLayout);
-    SmallVector<Value> contiguousParts;
-    auto activeConstant =
-        op.getActiveElemsPerGroup().getDefiningOp<arith::ConstantOp>();
-    if (activeConstant) {
-      std::string contiguousReason;
-      FailureOr<SmallVector<ConstantMaskChunkMaterialization>> materializations =
-          computeGroupMaskMaterializationForType(op, contiguousType,
-                                                 &contiguousReason);
-      if (failed(materializations)) {
-        return rewriter.notifyMatchFailure(op,
-                                           Twine("create_group_mask ") +
-                                               contiguousReason);
-      }
-      contiguousParts.reserve(materializations->size());
-      for (const ConstantMaskChunkMaterialization &materialization :
-           *materializations) {
-        bool tooManyMasks = contiguousParts.size() >= resultTypes.size();
-        if (tooManyMasks) {
-          return rewriter.notifyMatchFailure(
-              op, "create_group_mask produced too many contiguous masks");
-        }
-        auto maskType =
-            dyn_cast<MaskType>(resultTypes[contiguousParts.size()]);
-        if (!maskType) {
-          return rewriter.notifyMatchFailure(
-              op, "create_group_mask result must be mask");
-        }
-        FailureOr<Value> mask = materializeConstantMaskChunk(
-            op.getLoc(), maskType, materialization.activeLanes, rewriter);
-        if (failed(mask)) {
-          return rewriter.notifyMatchFailure(
-              op, "failed to materialize create_group_mask contiguous chunk");
-        }
-        contiguousParts.push_back(*mask);
-      }
-    } else {
-      FailureOr<Value> active = getSingleValue(
-          op, adaptor.getActiveElemsPerGroup(),
-          "create_group_mask active_elems_per_group must convert to one value",
-          rewriter);
-      if (failed(active)) {
-        return failure();
-      }
-      FailureOr<SmallVector<Value>> dynamicParts =
-          materializeDynamicGroupMaskForType(op, *active, contiguousType,
-                                             resultTypes, rewriter);
-      if (failed(dynamicParts)) {
-        return failure();
-      }
-      contiguousParts = std::move(*dynamicParts);
+    FailureOr<SmallVector<Value>> contiguousParts =
+        buildFactor4ContiguousParts(op, adaptor, rewriter, contiguousType,
+                                    resultTypes);
+    if (failed(contiguousParts)) {
+      return failure();
     }
-    bool resultCountMismatch = contiguousParts.size() != resultTypes.size();
+    bool resultCountMismatch = contiguousParts->size() != resultTypes.size();
     if (resultCountMismatch) {
       return rewriter.notifyMatchFailure(
           op, "create_group_mask contiguous physical result count mismatch");
     }
     FailureOr<SmallVector<Value>> results = materializeMaskLayoutConversion(
-        op, contiguousParts, resultTypes, contiguousLayout, resultLayout,
+        op, *contiguousParts, resultTypes, contiguousLayout, resultLayout,
         rewriter);
     if (failed(results)) {
       return failure();

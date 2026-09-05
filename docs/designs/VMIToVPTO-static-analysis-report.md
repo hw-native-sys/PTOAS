@@ -239,6 +239,15 @@ physical-part `vunpack/vzunpack`、结果类型校验和 bitcast 收集抽取为
 保持不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
 通过。
 
+# create_group_mask factor-4 中间构造整改
+
+本轮将 `OneToNVMICreateGroupMaskOpPattern::lowerFactor4Block` 中连续中间 mask 的常量
+与动态构造抽取为 `buildFactor4ContiguousParts`。factor-4 主函数现在只负责建立连续
+中间类型、检查结果数量、执行 mask layout conversion 和替换结果；active-lanes 获取、
+常量 materialization、结果 mask 类型校验和诊断保持原语义。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_create_group_mask_block8_dynamic.pto` lowering exit=0。
+
 # staging mask group loop 整改
 
 本轮将 `materializeStagingContiguousToDeintMaskLayout` 的单 group materialization 与
