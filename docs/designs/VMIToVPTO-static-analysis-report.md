@@ -959,3 +959,9 @@ layout、num_groups、physical lanes、derived group size 和 result factor；�
 矩阵、诊断文本和成功条件保持不变。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_layout_assignment_group_broadcast_load_e2b_b16.pto` lowering exit=0。
+本轮将 `checkSupportedVmullShape` 的公共输入契约抽取为 `VmullShapePlan` 与
+`buildVmullShapePlan`，集中验证四个数据端口、mask layout/granularity、逻辑 lane 数和
+physical arity；主函数仅保留 vmull 特有的 64xi32/ui32 carrier 与 b32 mask 校验。
+该拆分保持原有支持矩阵及诊断语义不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_layout_assignment_group_broadcast_load_e2b_b16.pto` lowering exit=0。

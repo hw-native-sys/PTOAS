@@ -11498,7 +11498,8 @@ public:
                            fact->maskLayout == fact->lhsLayout &&
                            fact->highLayout == fact->lowLayout &&
                            inputFactor == 2 * outputFactor;
-    if (!zeroCopyVintlv && !zeroCopyVdintlv)
+    bool unsupportedZeroCopyRelation = !zeroCopyVintlv && !zeroCopyVdintlv;
+    if (unsupportedZeroCopyRelation) {
       return rewriter.notifyMatchFailure(
           op, "unsupported interleave physical layout relation");
 
@@ -13864,7 +13865,7 @@ public:
 
     FailureOr<Value> mask =
         createAllTrueMaskForVReg(op.getLoc(), sourceType, rewriter);
-    if (failed(mask))
+    if (failed(mask)) {
       return rewriter.notifyMatchFailure(
           op, "failed to build integer extension seed mask");
 
@@ -16010,14 +16011,21 @@ LogicalResult checkSupportedVchistShape(VMIVchistOp op,
   return failure();
 }
 
-LogicalResult checkSupportedVmullShape(VMIVmullOp op,
-                                       std::string *reason = nullptr) {
-  auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason)
+struct VmullShapePlan {
+  VMIVRegType dataType;
+  VMILayoutAttr layout;
+  int64_t arity;
+};
+
+static FailureOr<VmullShapePlan> buildVmullShapePlan(
+    VMIVmullOp op, std::string *reason) {
+  auto fail = [&reason](const Twine &message)
+      -> FailureOr<VmullShapePlan> {
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
-
   auto aType = cast<VMIVRegType>(op.getA().getType());
   auto bType = cast<VMIVRegType>(op.getB().getType());
   auto lowType = cast<VMIVRegType>(op.getLow().getType());
@@ -16028,42 +16036,70 @@ LogicalResult checkSupportedVmullShape(VMIVmullOp op,
   if (!elementType || elementType.getWidth() != 32 ||
       (!elementType.isSignless() && !elementType.isUnsigned()))
     return fail("requires element type to be exactly i32 or ui32");
-  if (aType != bType || aType != lowType || aType != highType)
+  if (aType != bType || aType != lowType || aType != highType) {
     return fail("requires identical a, b, low, and high VMI vreg types");
+  }
 
   int64_t lanes = aType.getElementCount();
-  if (lanes != 64 && lanes != 128 && lanes != 256)
+  if (lanes != 64 && lanes != 128 && lanes != 256) {
     return fail("requires logical lane count 64, 128, or 256");
+  }
 
   VMILayoutAttr layout = aType.getLayoutAttr();
-  if (!layout)
+  if (!layout) {
     return fail("requires an assigned data layout");
+  }
   bool supportedLayout =
       layout.getLaneStride() == 1 &&
       (layout.isContiguous() ||
        (layout.isDeinterleaved() &&
         (layout.getFactor() == 2 || layout.getFactor() == 4)));
-  if (!supportedLayout)
+  if (!supportedLayout) {
     return fail("requires contiguous or deinterleaved factor 2/4 layout with "
                 "lane_stride=1");
-  if (maskType.getLayoutAttr() != layout)
+  }
+  bool maskLayoutMismatch = maskType.getLayoutAttr() != layout;
+  if (maskLayoutMismatch) {
     return fail("requires the mask and all four data values to share one "
                 "layout");
-  if (maskType.getGranularity() != "b32")
+  }
+  bool unsupportedMaskGranularity = maskType.getGranularity() != "b32";
+  if (unsupportedMaskGranularity) {
     return fail("requires b32 mask granularity");
+  }
 
   FailureOr<int64_t> aArity = getVMIPhysicalArity(aType);
   FailureOr<int64_t> bArity = getVMIPhysicalArity(bType);
   FailureOr<int64_t> lowArity = getVMIPhysicalArity(lowType);
   FailureOr<int64_t> highArity = getVMIPhysicalArity(highType);
   FailureOr<int64_t> maskArity = getVMIPhysicalArity(maskType);
-  if (failed(aArity) || failed(bArity) || failed(lowArity) ||
-      failed(highArity) || failed(maskArity) || *aArity < 1)
+  bool missingArity =
+      failed(aArity) || failed(bArity) || failed(lowArity) ||
+      failed(highArity) || failed(maskArity) || *aArity < 1;
+  if (missingArity) {
     return fail("requires computable non-empty physical arity on every port");
-  if (*aArity != *bArity || *aArity != *lowArity || *aArity != *highArity ||
-      *aArity != *maskArity)
+  }
+  bool arityMismatch =
+      *aArity != *bArity || *aArity != *lowArity || *aArity != *highArity ||
+      *aArity != *maskArity;
+  if (arityMismatch) {
     return fail("requires matching physical arity on a, b, mask, low, and "
                 "high");
+  }
+  return VmullShapePlan{aType, layout, *aArity};
+}
+
+LogicalResult checkSupportedVmullShape(VMIVmullOp op,
+                                       std::string *reason = nullptr) {
+  FailureOr<VmullShapePlan> plan = buildVmullShapePlan(op, reason);
+  if (failed(plan)) {
+    return failure();
+  }
+  VMIVRegType aType = plan->dataType;
+  VMILayoutAttr layout = plan->layout;
+  int64_t arity = plan->arity;
+  auto resultType = cast<VMIVRegType>(op.getLow().getType());
+  auto maskType = cast<VMIMaskType>(op.getMask().getType());
 
   FailureOr<int64_t> lanesPerPart = getDataLanesPerPart(aType.getElementType());
   Type physicalElementType = getVMIPhysicalDataElementType(aType);
@@ -16075,6 +16111,8 @@ LogicalResult checkSupportedVmullShape(VMIVmullOp op,
     return fail("requires 64xi32/ui32 data parts with corresponding b32 mask "
                 "parts");
 
+  (void)layout;
+  (void)arity;
   return success();
 }
 
