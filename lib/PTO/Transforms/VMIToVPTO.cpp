@@ -10278,33 +10278,42 @@ private:
       for (int64_t chunk = 0; chunk < chunksPerGroup; ++chunk) {
         int64_t lowIndex = group * chunksPerGroup + chunk;
         int64_t highIndex = chunksPerPart + lowIndex;
-        Value low = valueParts[lowIndex];
-        Value high = valueParts[highIndex];
-        bool matchingTypes = low.getType() == high.getType();
-        if (!matchingTypes) {
-          return rewriter.notifyMatchFailure(
-              op, "vstsx2 group_store requires matching low/high types");
+        if (failed(emitDeinterleaved2GroupStorePair(
+                op, valueParts[lowIndex], valueParts[highIndex], group, chunk,
+                lanesPerPart, destination, offset, rowStride, *dist,
+                rewriter))) {
+          return failure();
         }
-        auto vregType = dyn_cast<VRegType>(low.getType());
-        if (!vregType) {
-          return rewriter.notifyMatchFailure(op,
-                                             "group_store value must be vreg");
-        }
-        FailureOr<Value> mask =
-            createAllTrueMaskForVReg(op.getLoc(), vregType, rewriter);
-        if (failed(mask)) {
-          return rewriter.notifyMatchFailure(
-              op, "unsupported element type for group_store mask");
-        }
-        Value chunkOffset = createGroupChunkOffset(
-            op.getLoc(), offset, rowStride, group,
-            chunk * 2 * lanesPerPart, rewriter);
-        rewriter.create<Vstsx2Op>(op.getLoc(), low, high, destination,
-                                  chunkOffset, rewriter.getStringAttr(*dist),
-                                  *mask);
       }
     }
     rewriter.eraseOp(op);
+    return success();
+  }
+
+  LogicalResult emitDeinterleaved2GroupStorePair(
+      VMIGroupStoreOp op, Value low, Value high, int64_t group, int64_t chunk,
+      int64_t lanesPerPart, Value destination, Value offset, Value rowStride,
+      StringRef dist, OneToNPatternRewriter &rewriter) const {
+    bool mismatchedTypes = low.getType() != high.getType();
+    if (mismatchedTypes) {
+      return rewriter.notifyMatchFailure(
+          op, "vstsx2 group_store requires matching low/high types");
+    }
+    auto vregType = dyn_cast<VRegType>(low.getType());
+    if (!vregType) {
+      return rewriter.notifyMatchFailure(op, "group_store value must be vreg");
+    }
+    FailureOr<Value> mask =
+        createAllTrueMaskForVReg(op.getLoc(), vregType, rewriter);
+    if (failed(mask)) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported element type for group_store mask");
+    }
+    Value chunkOffset = createGroupChunkOffset(
+        op.getLoc(), offset, rowStride, group, chunk * 2 * lanesPerPart,
+        rewriter);
+    rewriter.create<Vstsx2Op>(op.getLoc(), low, high, destination, chunkOffset,
+                              rewriter.getStringAttr(dist), *mask);
     return success();
   }
 

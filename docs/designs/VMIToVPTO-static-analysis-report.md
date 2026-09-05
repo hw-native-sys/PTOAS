@@ -2165,6 +2165,16 @@ arity 合约、stride 常量和 part 遍历；保持 part 顺序、block/repeat 
 通过；`vmi_layout_assignment_group_store_slots1_unit_stride.pto` 完整 lowering pipeline
 exit=0。
 
+# deinterleaved=2 group store low/high pair 发射职责整改
+
+本轮在 `OneToNVMIGroupStoreOpPattern::lowerDeinterleaved2GroupStore` 中引入
+`emitDeinterleaved2GroupStorePair`，将单个 low/high pair 的类型合同、all-true mask、
+chunk offset 和 `Vstsx2Op` 发射抽取为独立 helper。主函数继续负责 chunk shape、dist 能力、
+physical arity 及双层 group/chunk 遍历；保持 low/high 索引、INTLV dist、lane offset、
+mask、pair 顺序和诊断语义不变。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；本轮未新增可独立覆盖该
+分支的 runtime case，未虚构额外回归结果。
+
 # slots=1 packed group store 值构造职责整改
 
 本轮在 `OneToNVMIGroupStoreOpPattern::lowerSlots1PackedUnitStride` 中引入
