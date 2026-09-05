@@ -173,3 +173,7 @@ unit-stride 判定与 slots=1 1PT 对齐判定具有独立职责；原有 memory
 `OneToNVMIExpandLoadOpPattern::lowerStaticExpandLoad`（提交 `0f4eee56c`）。runtime-mask
 路径仍保留 prefix-index、`vgather2_bc` 和 `vsel` 的 expand 语义，两条路径没有被
 错误合并；增量合规检查通过。
+另外将 verifier 中六个 vector-scalar 算术操作共享的 pmode 检查和 maskable
+physical-vreg 检查抽取为模板 helper `verifySupportedVecScalarOp`（提交
+`9f997d659`）。它保留每个操作原有 op name 和 `pmode=merge` 诊断，降低主 verifier
+walk lambda 的重复分支；新增代码合规检查通过。
