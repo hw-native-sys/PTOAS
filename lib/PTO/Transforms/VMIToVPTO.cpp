@@ -14212,6 +14212,84 @@ private:
     return success();
   }
 
+  LogicalResult lowerDenseGroupSlotExtension(
+      OpT op, ValueRange sourceParts, ArrayRef<Type> resultTypes,
+      VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
+      IntegerType resultIntegerType, unsigned sourceBits, unsigned resultBits,
+      OneToNPatternRewriter &rewriter) const {
+    FailureOr<int64_t> sourceLanes =
+        getDataLanesPerPart(sourceVMIType.getElementType());
+    FailureOr<int64_t> resultLanes =
+        getDataLanesPerPart(resultVMIType.getElementType());
+    bool carrierShapeMismatch =
+        failed(sourceLanes) || failed(resultLanes) ||
+        *sourceLanes != *resultLanes * static_cast<int64_t>(resultBits / sourceBits);
+    if (carrierShapeMismatch) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported dense group-slot integer extension carrier shape");
+    }
+
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (auto [sourcePart, resultType] :
+         llvm::zip_equal(sourceParts, resultTypes)) {
+      auto physicalResultType = dyn_cast<VRegType>(resultType);
+      bool invalidResultType =
+          !physicalResultType ||
+          physicalResultType.getElementCount() != *resultLanes ||
+          pto::getPTOStorageElemBitWidth(physicalResultType.getElementType()) !=
+              resultBits;
+      if (invalidResultType) {
+        return rewriter.notifyMatchFailure(
+            op, "unsupported dense group-slot integer extension result type");
+      }
+
+      Value current = sourcePart;
+      unsigned currentBits = sourceBits;
+      while (currentBits < resultBits) {
+        unsigned nextBits = currentBits * 2;
+        auto nextElementType = IntegerType::get(
+            rewriter.getContext(), nextBits, resultIntegerType.getSignedness());
+        FailureOr<int64_t> nextLanes =
+            getDataLanesPerPart(nextElementType);
+        if (failed(nextLanes)) {
+          return rewriter.notifyMatchFailure(
+              op, "failed to derive dense group-slot unpack result lanes");
+        }
+        auto nextType =
+            VRegType::get(rewriter.getContext(), *nextLanes, nextElementType);
+        bool unpackLaneMismatch =
+            cast<VRegType>(current.getType()).getElementCount() !=
+            *nextLanes * 2;
+        if (unpackLaneMismatch) {
+          return rewriter.notifyMatchFailure(
+              op, "dense group-slot unpack source/result lane mismatch");
+        }
+        Value part = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
+        if constexpr (std::is_same_v<OpT, VMIExtSIOp>) {
+          current = rewriter.create<VsunpackOp>(op.getLoc(), nextType, current,
+                                                part)
+                        .getResult();
+        } else {
+          current = rewriter.create<VzunpackOp>(op.getLoc(), nextType, current,
+                                                part)
+                        .getResult();
+        }
+        currentBits = nextBits;
+      }
+      FailureOr<Value> result =
+          bitcastVReg(op.getLoc(), current, physicalResultType, rewriter);
+      if (failed(result)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to materialize dense group-slot unpack result");
+      }
+      results.push_back(*result);
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
   LogicalResult lowerPhysicalExtension(
       OpT op, ValueRange sourceParts, ArrayRef<VRegType> resultVRegTypes,
       ArrayRef<Type> resultTypes, VRegType sourceType, unsigned sourceBits,
@@ -14320,80 +14398,9 @@ public:
           (resultBits / sourceBits == 2 || resultBits / sourceBits == 4) &&
           sourceParts.size() == resultTypes.size();
       if (denseGroupSlotExtension) {
-        FailureOr<int64_t> sourceLanes =
-            getDataLanesPerPart(sourceVMIType.getElementType());
-        FailureOr<int64_t> resultLanes =
-            getDataLanesPerPart(resultVMIType.getElementType());
-        bool carrierShapeMismatch =
-            failed(sourceLanes) || failed(resultLanes) ||
-            *sourceLanes != *resultLanes *
-                                static_cast<int64_t>(resultBits / sourceBits);
-        if (carrierShapeMismatch) {
-          return rewriter.notifyMatchFailure(
-              op, "unsupported dense group-slot integer extension carrier shape");
-        }
-
-        SmallVector<Value> results;
-        results.reserve(resultTypes.size());
-        for (auto [sourcePart, resultType] :
-             llvm::zip_equal(sourceParts, resultTypes)) {
-          auto physicalResultType = dyn_cast<VRegType>(resultType);
-          if (!physicalResultType ||
-              physicalResultType.getElementCount() != *resultLanes ||
-              pto::getPTOStorageElemBitWidth(
-                  physicalResultType.getElementType()) != resultBits) {
-            return rewriter.notifyMatchFailure(
-                op, "unsupported dense group-slot integer extension result type");
-          }
-
-          Value current = sourcePart;
-          unsigned currentBits = sourceBits;
-          while (currentBits < resultBits) {
-            unsigned nextBits = currentBits * 2;
-            auto nextElementType = IntegerType::get(
-                rewriter.getContext(), nextBits,
-                resultIntegerType.getSignedness());
-            FailureOr<int64_t> nextLanes =
-                getDataLanesPerPart(nextElementType);
-            if (failed(nextLanes)) {
-              return rewriter.notifyMatchFailure(
-                  op, "failed to derive dense group-slot unpack result lanes");
-            }
-            auto nextType =
-                VRegType::get(rewriter.getContext(), *nextLanes, nextElementType);
-            bool unpackLaneMismatch =
-                cast<VRegType>(current.getType()).getElementCount() !=
-                *nextLanes * 2;
-            if (unpackLaneMismatch) {
-              return rewriter.notifyMatchFailure(
-                  op, "dense group-slot unpack source/result lane mismatch");
-            }
-            Value part =
-                rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
-            if constexpr (std::is_same_v<OpT, VMIExtSIOp>) {
-              current = rewriter
-                            .create<VsunpackOp>(op.getLoc(), nextType, current,
-                                               part)
-                            .getResult();
-            } else {
-              current = rewriter
-                            .create<VzunpackOp>(op.getLoc(), nextType, current,
-                                               part)
-                            .getResult();
-            }
-            currentBits = nextBits;
-          }
-          FailureOr<Value> result =
-              bitcastVReg(op.getLoc(), current, physicalResultType, rewriter);
-          if (failed(result)) {
-            return rewriter.notifyMatchFailure(
-                op, "failed to materialize dense group-slot unpack result");
-          }
-          results.push_back(*result);
-        }
-        replaceOpWithFlatConvertedValues(rewriter, op, results,
-                                         *this->getTypeConverter());
-        return success();
+        return lowerDenseGroupSlotExtension(
+            op, sourceParts, resultTypes, sourceVMIType, resultVMIType,
+            *resultIntegerType, sourceBits, resultBits, rewriter);
       }
       if (sourceLayout.getNumGroups() != resultLayout.getNumGroups() ||
           sourceLayout.getSlots() != resultLayout.getSlots() ||

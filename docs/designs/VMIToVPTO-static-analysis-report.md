@@ -230,6 +230,15 @@ lowering 调用及结果替换分别抽取为 `lowerDynamicCreateMask` 与
 结果顺序和诊断语义保持不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；native 构建仍需在 `/cann-cmake` 权限问题修复后补跑。
 
+# integer extension group-slot 快路径整改
+
+本轮将 `OneToNVMIExtIOpPattern::matchAndRewrite` 中 dense group-slot carrier 的逐
+physical-part `vunpack/vzunpack`、结果类型校验和 bitcast 收集抽取为
+`lowerDenseGroupSlotExtension`。入口继续负责 group-slot 支持矩阵、宽度/因子判断和
+其它 extension 路径分派；signed/unsigned unpack 选择、lane 校验、结果顺序和诊断语义
+保持不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
+通过。
+
 # staging mask group loop 整改
 
 本轮将 `materializeStagingContiguousToDeintMaskLayout` 的单 group materialization 与
