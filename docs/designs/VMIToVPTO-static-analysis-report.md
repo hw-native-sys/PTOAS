@@ -2085,6 +2085,17 @@ mask、结果顺序和诊断语义不变。增量 `check_changed_code.py` 结果
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；本轮未新增可独立进入该
 helper 的 runtime case，未虚构额外回归结果。
 
+# create_mask 常量 chunk 活跃度计算职责整改
+
+本轮在 `OneToNVMICreateMaskOpPattern::lowerConstantMask` 中引入
+`getConstantMaskChunkActivity`，将 physical chunk 的 padding lane 过滤、logical lane 映射
+和 active lane 计数抽取为独立 helper。主函数继续负责 chunk 结束判定、prefix mask 与
+runtime prefix fallback 生成、结果 arity 校验；保持 physical part/chunk 顺序、padding
+语义、mask pattern 选择、诊断和结果顺序不变。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_create_mask.pto` 在既有 VMI pack/unpack pipeline invariant 处提前失败，未
+进入本轮 helper，不能将该失败归因于本轮改动。
+
 # group broadcast load E2B 结果复用职责整改
 
 本轮在 `OneToNVMIGroupBroadcastLoadOpPattern::lowerDirectE2B` 中引入 `buildE2BResults`，

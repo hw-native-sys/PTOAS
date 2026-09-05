@@ -7337,6 +7337,36 @@ private:
     return success();
   }
 
+  FailureOr<std::pair<bool, int64_t>> getConstantMaskChunkActivity(
+      VMICreateMaskOp op, VMIMaskType resultVMIType, int64_t part,
+      int64_t chunk, int64_t activeLanes, int64_t lanesPerPart,
+      OneToNPatternRewriter &rewriter) const {
+    bool anyLane = false;
+    int64_t activeInChunk = 0;
+    for (int64_t lane = 0; lane < lanesPerPart; ++lane) {
+      FailureOr<bool> padding =
+          isPaddingLane(resultVMIType, part, chunk, lane);
+      if (failed(padding)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to map create_mask physical padding lane");
+      }
+      if (*padding) {
+        continue;
+      }
+      anyLane = true;
+      FailureOr<int64_t> logicalLane =
+          mapPhysicalLaneToLogical(resultVMIType, part, chunk, lane);
+      if (failed(logicalLane)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to map create_mask physical lane");
+      }
+      if (*logicalLane < activeLanes) {
+        ++activeInChunk;
+      }
+    }
+    return std::make_pair(anyLane, activeInChunk);
+  }
+
   LogicalResult lowerConstantMask(
       VMICreateMaskOp op, int64_t activeLanes, VMIMaskType resultVMIType,
       VMILayoutAttr layout, TypeRange resultTypes, int64_t lanesPerPart,
@@ -7346,29 +7376,14 @@ private:
     results.reserve(resultTypes.size());
     for (int64_t part = 0; part < factor; ++part) {
       for (int64_t chunk = 0;; ++chunk) {
-        bool anyLane = false;
-        int64_t activeInChunk = 0;
-        for (int64_t lane = 0; lane < lanesPerPart; ++lane) {
-          FailureOr<bool> padding =
-              isPaddingLane(resultVMIType, part, chunk, lane);
-          if (failed(padding)) {
-            return rewriter.notifyMatchFailure(
-                op, "failed to map create_mask physical padding lane");
-          }
-          if (*padding) {
-            continue;
-          }
-          anyLane = true;
-          FailureOr<int64_t> logicalLane =
-              mapPhysicalLaneToLogical(resultVMIType, part, chunk, lane);
-          if (failed(logicalLane)) {
-            return rewriter.notifyMatchFailure(
-                op, "failed to map create_mask physical lane");
-          }
-          if (*logicalLane < activeLanes) {
-            ++activeInChunk;
-          }
+        FailureOr<std::pair<bool, int64_t>> activity =
+            getConstantMaskChunkActivity(op, resultVMIType, part, chunk,
+                                         activeLanes, lanesPerPart, rewriter);
+        if (failed(activity)) {
+          return failure();
         }
+        bool anyLane = activity->first;
+        int64_t activeInChunk = activity->second;
         if (!anyLane) {
           break;
         }
