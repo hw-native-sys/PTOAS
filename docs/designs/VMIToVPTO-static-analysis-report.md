@@ -122,3 +122,8 @@ git diff --check  # passed
 `vpack` 链、有效 lane mask 和 `NORM_B8` store；未对齐路径仍进入原有 PK4 或
 stateful stream 逻辑。抽取后增量合规检查仍为 `errors=0 warnings=0`，GitCode push
 hook 通过。
+
+随后将同一 packed-byte 分支的非对齐 stateful stream 地址物化与发射抽取为
+`emitPackedByteStoreStream`（提交 `19289e5b0`）。该 helper 统一处理 destination
+指针转换、offset 合成和 stream 发射，调用方仅准备 packed values 与 lane advances；
+`PK4_B32` 直写仍保持独立路径。增量合规检查继续通过。
