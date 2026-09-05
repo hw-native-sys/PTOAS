@@ -6252,12 +6252,10 @@ struct OneToNVMICreateMaskOpPattern
       activeLanes = resultVMIType.getElementCount();
 
     FailureOr<SmallVector<Type>> maybe_resultTypes =
-
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-
-    if (failed(maybe_resultTypes))
-
+    if (failed(maybe_resultTypes)) {
       return failure();
+    }
 
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     int64_t factor = layout.isDenseSplit() ? layout.getFactor() : 1;
