@@ -1457,3 +1457,10 @@ invariant 处提前失败。
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。现有 mask layout case
 分别在已有 layout contract 冲突或 VMI pack/unpack pipeline invariant 处提前失败，未
 进入本轮 identity 路径。
+本轮将 `OneToNVMIChannelMergeOpPattern::matchAndRewrite` 的输入 contiguous layout 校验
+和结果 layout 兼容性校验分别抽取为 `validateInputLayouts` 与
+`validateResultLayout`。merge 主流程只保留通道数分派、physical result 类型转换和
+layout materialization；输入/结果 layout 支持矩阵、诊断文本与结果顺序保持不变。
+增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过。现有 channel merge case 仍在既有 VMI layout contract 冲突处
+提前失败。

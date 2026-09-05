@@ -15561,6 +15561,39 @@ struct OneToNVMIChannelMergeOpPattern
     : OneToNOpConversionPattern<VMIChannelMergeOp> {
   using OneToNOpConversionPattern<VMIChannelMergeOp>::OneToNOpConversionPattern;
 
+private:
+  LogicalResult validateInputLayouts(
+      VMIChannelMergeOp op, OneToNPatternRewriter &rewriter) const {
+    for (Value input : op.getInputs()) {
+      auto inputType = cast<VMIVRegType>(input.getType());
+      VMILayoutAttr inputLayout = inputType.getLayoutAttr();
+      bool invalidInputLayout = !inputLayout || !inputLayout.isContiguous();
+      if (invalidInputLayout) {
+        return rewriter.notifyMatchFailure(
+            op, "channel_merge requires contiguous input layouts");
+      }
+    }
+    return success();
+  }
+
+  LogicalResult validateResultLayout(
+      VMIChannelMergeOp op, VMILayoutAttr resultLayout,
+      VMILayoutAttr channelLayout,
+      OneToNPatternRewriter &rewriter) const {
+    bool invalidResultLayout =
+        !resultLayout ||
+        (!resultLayout.isContiguous() && resultLayout != channelLayout);
+    if (invalidResultLayout) {
+      return rewriter.notifyMatchFailure(
+          op,
+          "channel_merge requires contiguous or matching deinterleaved result "
+          "layout");
+    }
+    return success();
+  }
+
+public:
+
   LogicalResult
   matchAndRewrite(VMIChannelMergeOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -15571,27 +15604,15 @@ struct OneToNVMIChannelMergeOpPattern
           op, "channel_merge only supports 2 or 4 channels");
     }
 
-    for (Value input : op.getInputs()) {
-      auto inputType = cast<VMIVRegType>(input.getType());
-      VMILayoutAttr inputLayout = inputType.getLayoutAttr();
-      bool invalidInputLayout = !inputLayout || !inputLayout.isContiguous();
-      if (invalidInputLayout) {
-        return rewriter.notifyMatchFailure(
-            op, "channel_merge requires contiguous input layouts");
-      }
+    if (failed(validateInputLayouts(op, rewriter))) {
+      return failure();
     }
     auto resultType = cast<VMIVRegType>(op.getResult().getType());
     VMILayoutAttr resultLayout = resultType.getLayoutAttr();
     auto channelLayout =
         VMILayoutAttr::getDeinterleaved(rewriter.getContext(), channels);
-    bool invalidResultLayout =
-        !resultLayout ||
-        (!resultLayout.isContiguous() && resultLayout != channelLayout);
-    if (invalidResultLayout) {
-      return rewriter.notifyMatchFailure(
-          op,
-          "channel_merge requires contiguous or matching deinterleaved result "
-          "layout");
+    if (failed(validateResultLayout(op, resultLayout, channelLayout, rewriter))) {
+      return failure();
     }
 
     FailureOr<SmallVector<Type>> maybeResultTypes =
