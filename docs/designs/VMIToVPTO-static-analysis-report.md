@@ -149,3 +149,8 @@ group-store（one-block/deinterleaved）检查流程保持原顺序。
 `checkSupportedBlockDeinterleavedGroupLoadShape`（提交 `acf22e584`）。该 helper
 封装 layout fact、dense read proof、指针/组数/row-stride 约束和 full physical chunk
 检查；contiguous group-load 路径保持原有判断顺序。相关新增代码合规检查通过。
+
+同时将 `checkSupportedGroupSlotLoadShape` 的 `slots=1` 元素宽度和对齐步长约束
+抽取为 `checkSupportedSlots1GroupSlotLoadShape`（提交 `dc240eceb`），使 slots=8
+unit-stride 判定与 slots=1 1PT 对齐判定具有独立职责；原有 memory proof、指针类型
+和 layout fact 检查顺序保持不变。
