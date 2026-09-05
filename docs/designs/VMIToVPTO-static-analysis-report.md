@@ -177,3 +177,7 @@ unit-stride 判定与 slots=1 1PT 对齐判定具有独立职责；原有 memory
 physical-vreg 检查抽取为模板 helper `verifySupportedVecScalarOp`（提交
 `9f997d659`）。它保留每个操作原有 op name 和 `pmode=merge` 诊断，降低主 verifier
 walk lambda 的重复分支；新增代码合规检查通过。
+本轮继续将普通 maskable 向量操作的结果类型提取为模板 helper
+`verifySupportedMaskableOp`（提交 `eb6a4f802`），覆盖 add/sub/mul、div/min/max、
+abs、sqrt、exp、ln 等重复 dispatch；`pmode` 特殊处理仍仅位于 vector-scalar helper。
+同时修复了本批新增代码触及的控制语句大括号，合规检查通过。
