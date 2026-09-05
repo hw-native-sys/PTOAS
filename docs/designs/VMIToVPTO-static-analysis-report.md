@@ -1420,6 +1420,16 @@ chunk 的类型检查、direct `Vstsx2Op` 发射和 stream `VintlvOp`/advance �
 `vmi_interleaved_memory_ops.pto` lowering exit=0，invalid case 仍按原有 VMI operand
 lane-count verifier 失败。
 
+# sitofp conversion 分派整改
+
+本轮将 `OneToNVMISIToFPOpPattern::lowerConversion` 中 same-width 与 widen 两类物理
+`VcvtOp` 发射分别抽取为 `lowerSameWidth` 和 `lowerWiden`。主函数现在只负责 source/
+result 位宽分派及 unsupported 诊断；保持物理 arity 约束、EVEN/ODD 顺序、mask 传递和
+结果替换语义不变。增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0
+warnings=0`，`git diff --check` 通过。相关 integer-cast 抽样中 `vmi_zero_gap_extui_load`
+仍可正常 lowering；`vmi_to_vpto_integer_casts` 仍在已有 VMI pack/unpack pipeline
+invariant 处提前失败。
+
 # mask identity forwarding 整改
 
 本轮将 mask granularity/layout cast 中重复的 identity physical-part 校验与 forwarding

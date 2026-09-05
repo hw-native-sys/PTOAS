@@ -15325,53 +15325,71 @@ struct OneToNVMISIToFPOpPattern : OneToNOpConversionPattern<VMISIToFPOp> {
   using OneToNOpConversionPattern<VMISIToFPOp>::OneToNOpConversionPattern;
 
 private:
-  LogicalResult lowerConversion(
-      VMISIToFPOp op, ValueRange sourceParts,
-      ArrayRef<VRegType> resultTypes, Value mask, unsigned sourceBits,
-      unsigned resultBits, OneToNPatternRewriter &rewriter) const {
+  LogicalResult lowerSameWidth(
+      VMISIToFPOp op, ValueRange sourceParts, ArrayRef<VRegType> resultTypes,
+      Value mask, OneToNPatternRewriter &rewriter) const {
+    bool invalidArity = sourceParts.size() != resultTypes.size();
+    if (invalidArity) {
+      return rewriter.notifyMatchFailure(
+          op, "si32->f32 requires matching physical arity");
+    }
+    StringAttr rnd = rewriter.getStringAttr("R");
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
-    if (sourceBits == 32 && resultBits == 32) {
-      bool invalidArity = sourceParts.size() != resultTypes.size();
-      if (invalidArity) {
-        return rewriter.notifyMatchFailure(
-            op, "si32->f32 requires matching physical arity");
-      }
-      StringAttr rnd = rewriter.getStringAttr("R");
-      for (auto [sourcePart, resultType] :
-           llvm::zip_equal(sourceParts, resultTypes)) {
-        results.push_back(rewriter
-                              .create<VcvtOp>(op.getLoc(), resultType, sourcePart,
-                                              mask, rnd, nullptr, nullptr)
-                              .getResult());
-      }
-    } else if (sourceBits == 8 && resultBits == 16) {
-      bool invalidWidenArity = resultTypes.size() != 2 * sourceParts.size();
-      if (invalidWidenArity) {
-        return rewriter.notifyMatchFailure(
-            op, "si8->f16 requires result arity = 2 x source arity");
-      }
-      static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
-      for (int64_t partIndex = 0; partIndex < 2; ++partIndex) {
-        for (auto [chunkIndex, sourcePart] :
-             llvm::enumerate(sourceParts)) {
-          VRegType resultType =
-              resultTypes[partIndex * sourceParts.size() + chunkIndex];
-          results.push_back(
-              rewriter
-                  .create<VcvtOp>(op.getLoc(), resultType, sourcePart, mask,
-                                  nullptr, nullptr,
-                                  rewriter.getStringAttr(kEvenOddParts[partIndex]))
-                  .getResult());
-        }
-      }
-    } else {
-      return rewriter.notifyMatchFailure(
-          op, "unsupported sitofp source/result width relation");
+    for (auto [sourcePart, resultType] :
+         llvm::zip_equal(sourceParts, resultTypes)) {
+      results.push_back(
+          rewriter
+              .create<VcvtOp>(op.getLoc(), resultType, sourcePart, mask, rnd,
+                              nullptr, nullptr)
+              .getResult());
     }
     replaceOpWithFlatConvertedValues(rewriter, op, results,
                                      *this->getTypeConverter());
     return success();
+  }
+
+  LogicalResult lowerWiden(
+      VMISIToFPOp op, ValueRange sourceParts, ArrayRef<VRegType> resultTypes,
+      Value mask, OneToNPatternRewriter &rewriter) const {
+    bool invalidArity = resultTypes.size() != 2 * sourceParts.size();
+    if (invalidArity) {
+      return rewriter.notifyMatchFailure(
+          op, "si8->f16 requires result arity = 2 x source arity");
+    }
+    static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (int64_t partIndex = 0; partIndex < 2; ++partIndex) {
+      for (auto [chunkIndex, sourcePart] :
+           llvm::enumerate(sourceParts)) {
+        VRegType resultType =
+            resultTypes[partIndex * sourceParts.size() + chunkIndex];
+        results.push_back(
+            rewriter
+                .create<VcvtOp>(op.getLoc(), resultType, sourcePart, mask,
+                                nullptr, nullptr,
+                                rewriter.getStringAttr(kEvenOddParts[partIndex]))
+                .getResult());
+      }
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
+  LogicalResult lowerConversion(
+      VMISIToFPOp op, ValueRange sourceParts,
+      ArrayRef<VRegType> resultTypes, Value mask, unsigned sourceBits,
+      unsigned resultBits, OneToNPatternRewriter &rewriter) const {
+    if (sourceBits == 32 && resultBits == 32) {
+      return lowerSameWidth(op, sourceParts, resultTypes, mask, rewriter);
+    } else if (sourceBits == 8 && resultBits == 16) {
+      return lowerWiden(op, sourceParts, resultTypes, mask, rewriter);
+    } else {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported sitofp source/result width relation");
+    }
   }
 
 public:
