@@ -891,3 +891,11 @@ packed carrier、lane-stride carrier、physical type 校验及 `VcvtOp` 发射�
 group-slot 的 part 选择、结果 carrier 和诊断语义不变。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续 group-store 与
 load/store lowering 回归通过。
+
+本轮将 `OneToNVMIExtIOpPattern` 的非 group-slot 整数 extension 物理发射抽取为
+`lowerPhysicalExtension`。该 helper 统一处理 contiguous lane-stride 的单 part 快路径、
+按 2/4 倍 factor 的 `EVEN/ODD` 或 `P0..P3` 展开、all-true mask 构造和结果替换；
+group-slot 的 `Vsunpack/Vzunpack` 与 `Vcvt` 路径仍由主模式独立负责。该拆分保持物理
+结果顺序、mask 语义和诊断文本不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；完整构建和完整静态
+报告仍未宣称清零。

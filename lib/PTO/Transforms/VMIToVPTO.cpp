@@ -13332,6 +13332,90 @@ template <typename OpT>
 struct OneToNVMIExtIOpPattern : OneToNOpConversionPattern<OpT> {
   using OneToNOpConversionPattern<OpT>::OneToNOpConversionPattern;
 
+private:
+  LogicalResult lowerPhysicalExtension(
+      OpT op, ValueRange sourceParts, ArrayRef<VRegType> resultVRegTypes,
+      ArrayRef<Type> resultTypes, VRegType sourceType, unsigned sourceBits,
+      unsigned resultBits, VMILayoutAttr sourceLayout,
+      VMILayoutAttr resultLayout, OneToNPatternRewriter &rewriter) const {
+    bool denseLaneExtension =
+        sourceLayout && resultLayout && sourceLayout.isContiguous() &&
+        resultLayout.isContiguous() && resultLayout.getLaneStride() == 1 &&
+        ((resultBits == sourceBits * 2 && sourceLayout.getLaneStride() == 2) ||
+         (resultBits == sourceBits * 4 && sourceLayout.getLaneStride() == 4)) &&
+        resultTypes.size() == sourceParts.size();
+    if (denseLaneExtension) {
+      StringRef part = resultBits == sourceBits * 2 ? StringRef("EVEN")
+                                                    : StringRef("P0");
+      FailureOr<Value> mask =
+          createAllTrueMaskForVReg(op.getLoc(), sourceType, rewriter);
+      if (failed(mask)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to build integer extension seed mask");
+      }
+
+      SmallVector<Value> results;
+      results.reserve(resultTypes.size());
+      for (auto [sourcePart, resultType] :
+           llvm::zip_equal(sourceParts, resultVRegTypes)) {
+        results.push_back(
+            rewriter
+                .create<VcvtOp>(op.getLoc(), resultType, sourcePart, *mask,
+                                /*rnd=*/nullptr, /*sat=*/nullptr,
+                                rewriter.getStringAttr(part))
+                .getResult());
+      }
+      replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                       *this->getTypeConverter());
+      return success();
+    }
+
+    ArrayRef<StringRef> parts;
+    int64_t factor = 0;
+    if (resultBits == sourceBits * 2 &&
+        resultTypes.size() == 2 * sourceParts.size()) {
+      static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
+      parts = kEvenOddParts;
+      factor = 2;
+    } else if (resultBits == sourceBits * 4 &&
+               resultTypes.size() == 4 * sourceParts.size()) {
+      static constexpr StringRef kPacked4Parts[] = {"P0", "P1", "P2", "P3"};
+      parts = kPacked4Parts;
+      factor = 4;
+    } else {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported physical integer extension source/result width "
+              "relation");
+    }
+
+    FailureOr<Value> mask =
+        createAllTrueMaskForVReg(op.getLoc(), sourceType, rewriter);
+    if (failed(mask)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to build integer extension seed mask");
+    }
+
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (int64_t partIndex = 0; partIndex < factor; ++partIndex) {
+      for (auto [chunkIndex, sourcePart] : llvm::enumerate(sourceParts)) {
+        VRegType resultType =
+            resultVRegTypes[partIndex * sourceParts.size() + chunkIndex];
+        results.push_back(
+            rewriter
+                .create<VcvtOp>(op.getLoc(), resultType, sourcePart, *mask,
+                                /*rnd=*/nullptr, /*sat=*/nullptr,
+                                rewriter.getStringAttr(parts[partIndex]))
+                .getResult());
+      }
+    }
+
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
+public:
   LogicalResult
   matchAndRewrite(OpT op,
                   typename OneToNOpConversionPattern<OpT>::OpAdaptor adaptor,
