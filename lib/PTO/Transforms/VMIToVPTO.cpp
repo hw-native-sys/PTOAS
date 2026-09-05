@@ -9423,6 +9423,7 @@ public:
         if (invalidPacked) {
           return rewriter.notifyMatchFailure(
               op, "failed to materialize compact group_store layout");
+        }
         compactValue = packed->front();
       }
 
