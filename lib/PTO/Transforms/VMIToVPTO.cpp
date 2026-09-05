@@ -9557,6 +9557,52 @@ private:
     return success();
   }
 
+  LogicalResult lowerGroupSlotFallback(
+      VMIGroupBroadcastLoadOp op, OneToNPatternRewriter &rewriter,
+      Value source, Value offset, Value sourceGroupStride,
+      VMIVRegType resultVMIType, ArrayRef<Type> resultTypes,
+      int64_t numGroups) const {
+    std::optional<int64_t> stride =
+        getConstantIndexValue(op.getSourceGroupStride());
+    int64_t slots = (stride && *stride == 1) ? 8 : 1;
+    auto sourceVMIType = VMIVRegType::get(
+        rewriter.getContext(), numGroups, resultVMIType.getElementType(),
+        VMILayoutAttr::getGroupSlots(rewriter.getContext(), numGroups, slots));
+    FailureOr<int64_t> sourceArity = getVMIPhysicalArity(sourceVMIType);
+    if (failed(sourceArity)) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast_load fallback cannot derive physical types");
+    }
+    Type sourceElementType = getVMIPhysicalDataElementType(sourceVMIType);
+    FailureOr<int64_t> sourceLanesPerPart =
+        getDataLanesPerPart(sourceElementType);
+    if (failed(sourceLanesPerPart)) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast_load fallback cannot derive source lanes");
+    }
+    SmallVector<Type> sourceTypes;
+    sourceTypes.reserve(*sourceArity);
+    for (int64_t i = 0; i < *sourceArity; ++i) {
+      sourceTypes.push_back(VRegType::get(
+          rewriter.getContext(), *sourceLanesPerPart, sourceElementType));
+    }
+    SmallVector<Value> sourceParts;
+    if (failed(lowerGroupSlotLoadParts(
+            op, source, offset, sourceGroupStride, sourceVMIType, sourceTypes,
+            numGroups, rewriter, sourceParts))) {
+      return failure();
+    }
+    SmallVector<Value> results;
+    if (failed(lowerGroupBroadcastParts(
+            op, sourceParts, sourceVMIType, resultVMIType, resultTypes,
+            numGroups, rewriter, results))) {
+      return failure();
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
 public:
   LogicalResult
   matchAndRewrite(VMIGroupBroadcastLoadOp op, OpAdaptor adaptor,
@@ -9652,45 +9698,9 @@ public:
     if (failed(directFact) ||
         directFact->kind != VMIGroupBroadcastLoadDirectKind::E2B ||
         !canUseDirectE2B) {
-      std::optional<int64_t> stride =
-          getConstantIndexValue(op.getSourceGroupStride());
-      int64_t slots = (stride && *stride == 1) ? 8 : 1;
-      auto sourceVMIType = VMIVRegType::get(
-          rewriter.getContext(), numGroups, resultVMIType.getElementType(),
-          VMILayoutAttr::getGroupSlots(rewriter.getContext(), numGroups,
-                                       slots));
-
-      FailureOr<int64_t> sourceArity = getVMIPhysicalArity(sourceVMIType);
-      Type sourceElementType = getVMIPhysicalDataElementType(sourceVMIType);
-      if (failed(sourceArity))
-        return rewriter.notifyMatchFailure(
-            op, "group_broadcast_load fallback cannot derive physical types");
-
-      SmallVector<Type> sourceTypes;
-      sourceTypes.reserve(*sourceArity);
-      FailureOr<int64_t> sourceLanesPerPart =
-          getDataLanesPerPart(sourceElementType);
-      if (failed(sourceLanesPerPart))
-        return rewriter.notifyMatchFailure(
-            op, "group_broadcast_load fallback cannot derive source lanes");
-      for (int64_t i = 0; i < *sourceArity; ++i)
-        sourceTypes.push_back(VRegType::get(
-            rewriter.getContext(), *sourceLanesPerPart, sourceElementType));
-
-      SmallVector<Value> sourceParts;
-      if (failed(lowerGroupSlotLoadParts(
-              op, *source, *offset, *sourceGroupStride, sourceVMIType,
-              sourceTypes, numGroups, rewriter, sourceParts)))
-        return failure();
-
-      SmallVector<Value> results;
-      if (failed(lowerGroupBroadcastParts(op, sourceParts, sourceVMIType,
-                                          resultVMIType, resultTypes, numGroups,
-                                          rewriter, results)))
-        return failure();
-      replaceOpWithFlatConvertedValues(rewriter, op, results,
-                                       *this->getTypeConverter());
-      return success();
+      return lowerGroupSlotFallback(
+          op, rewriter, *source, *offset, *sourceGroupStride, resultVMIType,
+          resultTypes, numGroups);
     }
 
     VMILayoutAttr layout = resultVMIType.getLayoutAttr();

@@ -267,6 +267,11 @@ element-deinterleaved factor=2/4 的方向判断及失败传播，外层只遍�
 `vmi_layout_assignment_group_broadcast_load_e2b_b16.pto` 回归通过，增量合规检查和
 `git diff --check` 通过。
 
+随后将该 pattern 的 group-slot fallback 抽取为 `lowerGroupSlotFallback`，集中负责
+根据 unit-stride 选择 slots=8/1、构造物理 source 类型、生成 source part 类型以及调用
+group-slot load 与广播物化。主分派函数只保留 direct BRC/E2B 能力判断和 fallback 选择，
+保持原有 lowering 顺序与诊断；相关 E2B 代表性 case 和增量合规检查均通过。
+
 随后对称地将 factor=4 contiguous→deinterleaved staging 的两级 `predicate dintlv`
 组合抽取为 `materializeFactor4ContiguousToDeintGroup`。该 helper 负责四个 source 的
 分组校验、低/高半部交织以及最终四路结果顺序；外层函数只负责补齐缺失 source、维护
