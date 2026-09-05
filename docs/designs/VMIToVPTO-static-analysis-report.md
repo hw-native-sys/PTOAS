@@ -348,3 +348,11 @@ layout/store/shuffle 代表性 case 回归通过，增量合规检查和 `git di
 契约混在一个循环中。`vmi_to_vpto_create_group_mask_block8_dynamic.pto` 与
 `vmi_layout_assignment_create_group_mask_s32_dynamic.pto` 均通过完整 lowering 回归，
 增量合规检查和 `git diff --check` 通过。
+
+本轮继续将整数/浮点转换与 bitcast 的 verifier 分派抽取为
+`verifySupportedVMIConversionOp`。该 helper 仅聚合共享的 shape-check 与诊断模板，
+每个转换操作仍显式绑定原 checker 和完整支持说明，主 walk 保留 memory、layout、
+compare、算术及专用 shape 检查的先后顺序。源码增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续代表性
+`pto-test-opt` lowering case 通过。`vmi_to_vpto_integer_casts.pto` 在测试自身的
+`unpack` pipeline invariant 处提前失败，未进入本轮 verifier/lowering 变化路径。

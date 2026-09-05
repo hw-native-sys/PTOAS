@@ -7928,8 +7928,11 @@ struct OneToNVMIGroupSlotLoadOpPattern
         op, adaptor.getSourceGroupStride(),
         "group_slot_load source_group_stride must convert to one value",
         rewriter);
-    if (failed(source) || failed(offset) || failed(sourceGroupStride))
+    bool invalidOperands =
+        failed(source) || failed(offset) || failed(sourceGroupStride);
+    if (invalidOperands) {
       return failure();
+    }
 
     FailureOr<SmallVector<Type>> maybe_resultTypes =
 
@@ -8844,9 +8847,11 @@ public:
       // lane_stride=1 carrier as ensure_layout before selecting either an
       // aligned NORM store or an unaligned contiguous store stream.
       ValueRange valueParts = adaptor.getValue();
-      if (valueParts.size() != 1)
+      bool invalidValueArity = valueParts.size() != 1;
+      if (invalidValueArity) {
         return rewriter.notifyMatchFailure(
             op, "compact small group_store requires one physical value part");
+      }
       auto valueType = dyn_cast<VRegType>(valueParts.front().getType());
       if (!valueType || !isa<PtrType>((*destination).getType())) {
         return rewriter.notifyMatchFailure(
@@ -9705,22 +9710,27 @@ public:
         op, adaptor.getSourceGroupStride(),
         "group_broadcast_load source_group_stride must convert to one value",
         rewriter);
-    if (failed(source) || failed(offset) || failed(sourceGroupStride))
+    bool invalidOperands =
+        failed(source) || failed(offset) || failed(sourceGroupStride);
+    if (invalidOperands) {
       return failure();
+    }
 
     VMILayoutSupport supports;
     std::string supportReason;
     FailureOr<VMIGroupBroadcastLoadLayoutFact> loadFact =
         supports.getGroupBroadcastLoadLayoutFact(op, &supportReason);
-    if (failed(loadFact))
+    if (failed(loadFact)) {
       return rewriter.notifyMatchFailure(
           op, Twine("group_broadcast_load has no registered support: ") +
                   supportReason);
+    }
 
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    if (failed(maybe_resultTypes)) {
       return failure();
+    }
 
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     FailureOr<VMIGroupBroadcastLoadDirectFact> directFact =
@@ -9728,12 +9738,15 @@ public:
     auto getBRCDist = [&resultVMIType]() -> std::optional<StringRef> {
       unsigned elementBits =
           pto::getPTOStorageElemBitWidth(resultVMIType.getElementType());
-      if (elementBits == 8)
+      if (elementBits == 8) {
         return StringRef("BRC_B8");
-      if (elementBits == 16)
+      }
+      if (elementBits == 16) {
         return StringRef("BRC_B16");
-      if (elementBits == 32)
+      }
+      if (elementBits == 32) {
         return StringRef("BRC_B32");
+      }
       return std::nullopt;
     };
 
@@ -15336,6 +15349,62 @@ WalkResult verifySupportedChannelOp(ChannelOp op, int64_t channels,
   return WalkResult::interrupt();
 }
 
+std::optional<WalkResult> verifySupportedVMIConversionOp(Operation *op) {
+  if (auto fptosi = dyn_cast<VMIFPToSIOp>(op)) {
+    return verifySupportedShapeOp(
+        fptosi, checkSupportedFPToSIShape,
+        "pto.vmi.fptosi supports fp-to-signed-int conversion pairs listed in "
+        "the VPTO vcvt contract; check lookupVMIFpToSiContract (");
+  }
+  if (auto fptoui = dyn_cast<VMIFPToUIOp>(op)) {
+    return verifySupportedShapeOp(
+        fptoui, checkSupportedFPToUIShape,
+        "pto.vmi.fptoui supports fp-to-unsigned-int conversion pairs listed "
+        "in the VPTO vcvt contract (e.g. f16 → u8); "
+        "check lookupVMIFpToUIContract (");
+  }
+  if (auto sitofp = dyn_cast<VMISIToFPOp>(op)) {
+    return verifySupportedShapeOp(
+        sitofp, checkSupportedSIToFPShape,
+        "pto.vmi.sitofp supports si32->f32 or si8->f16 conversion shapes (");
+  }
+  if (auto extsi = dyn_cast<VMIExtSIOp>(op)) {
+    return verifySupportedShapeOp(
+        extsi, checkSupportedExtSIShape,
+        "pto.vmi.extsi supports contiguous signed/signless 8-bit or 16-bit "
+        "integer physical source chunks to 2x/4x wider integer "
+        "deinterleaved results, or matching group_slots(num_groups=G, "
+        "slots=1) layouts and natural group_slots(num_groups=G, slots=8, "
+        "lane_stride=2/4) to group_slots(num_groups=G, slots=8) widening "
+        "layouts (");
+  }
+  if (auto extui = dyn_cast<VMIExtUIOp>(op)) {
+    return verifySupportedShapeOp(
+        extui, checkSupportedExtUIShape,
+        "pto.vmi.extui supports contiguous unsigned 8-bit or 16-bit integer "
+        "physical source chunks to 2x/4x wider unsigned integer "
+        "deinterleaved results, or matching group_slots(num_groups=G, "
+        "slots=1) layouts and natural group_slots(num_groups=G, slots=8, "
+        "lane_stride=2/4) to group_slots(num_groups=G, slots=8) widening "
+        "layouts (");
+  }
+  if (auto trunci = dyn_cast<VMITruncIOp>(op)) {
+    return verifySupportedShapeOp(
+        trunci, checkSupportedTruncIShape,
+        "pto.vmi.trunci supports integer deinterleaved source layouts whose "
+        "factor is the 2x/4x narrowing multiple of the contiguous or "
+        "deinterleaved result layout factor, or matching group_slots "
+        "layouts and natural slots=8 narrowing layouts (");
+  }
+  if (auto bitcast = dyn_cast<VMIBitcastOp>(op)) {
+    return verifySupportedShapeOp(
+        bitcast, checkSupportedBitcastShape,
+        "pto.vmi.bitcast requires matching source/result layouts with "
+        "width-changing forms restricted to supported layout table rows (");
+  }
+  return std::nullopt;
+}
+
 LogicalResult
 verifySupportedVMIToVPTOOps(ModuleOp module,
                             bool enableStableGatherMaskedLoad) {
@@ -15637,63 +15706,9 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
       return WalkResult::interrupt();
     }
 
-    if (auto fptosi = dyn_cast<VMIFPToSIOp>(op)) {
-      return verifySupportedShapeOp(
-          fptosi, checkSupportedFPToSIShape,
-          "pto.vmi.fptosi supports fp-to-signed-int conversion pairs listed in "
-          "the VPTO vcvt contract; check lookupVMIFpToSiContract (");
-    }
-
-    if (auto fptoui = dyn_cast<VMIFPToUIOp>(op)) {
-      return verifySupportedShapeOp(
-          fptoui, checkSupportedFPToUIShape,
-          "pto.vmi.fptoui supports fp-to-unsigned-int conversion pairs listed "
-          "in the VPTO vcvt contract (e.g. f16 → u8); "
-          "check lookupVMIFpToUIContract (");
-    }
-
-    if (auto sitofp = dyn_cast<VMISIToFPOp>(op)) {
-      return verifySupportedShapeOp(
-          sitofp, checkSupportedSIToFPShape,
-          "pto.vmi.sitofp supports si32->f32 or si8->f16 conversion shapes (");
-    }
-
-    if (auto extsi = dyn_cast<VMIExtSIOp>(op)) {
-      return verifySupportedShapeOp(
-          extsi, checkSupportedExtSIShape,
-          "pto.vmi.extsi supports contiguous signed/signless 8-bit or 16-bit "
-          "integer physical source chunks to 2x/4x wider integer "
-          "deinterleaved results, or matching group_slots(num_groups=G, "
-          "slots=1) layouts and natural group_slots(num_groups=G, slots=8, "
-          "lane_stride=2/4) to group_slots(num_groups=G, slots=8) widening "
-          "layouts (");
-    }
-
-    if (auto extui = dyn_cast<VMIExtUIOp>(op)) {
-      return verifySupportedShapeOp(
-          extui, checkSupportedExtUIShape,
-          "pto.vmi.extui supports contiguous unsigned 8-bit or 16-bit integer "
-          "physical source chunks to 2x/4x wider unsigned integer "
-          "deinterleaved results, or matching group_slots(num_groups=G, "
-          "slots=1) layouts and natural group_slots(num_groups=G, slots=8, "
-          "lane_stride=2/4) to group_slots(num_groups=G, slots=8) widening "
-          "layouts (");
-    }
-
-    if (auto trunci = dyn_cast<VMITruncIOp>(op)) {
-      return verifySupportedShapeOp(
-          trunci, checkSupportedTruncIShape,
-          "pto.vmi.trunci supports integer deinterleaved source layouts whose "
-          "factor is the 2x/4x narrowing multiple of the contiguous or "
-          "deinterleaved result layout factor, or matching group_slots "
-          "layouts and natural slots=8 narrowing layouts (");
-    }
-
-    if (auto bitcast = dyn_cast<VMIBitcastOp>(op)) {
-      return verifySupportedShapeOp(
-          bitcast, checkSupportedBitcastShape,
-          "pto.vmi.bitcast requires matching source/result layouts with "
-          "width-changing forms restricted to supported layout table rows (");
+    if (auto conversionResult = verifySupportedVMIConversionOp(op);
+        conversionResult.has_value()) {
+      return *conversionResult;
     }
 
     if (auto split = dyn_cast<VMIChannelSplitOp>(op)) {
