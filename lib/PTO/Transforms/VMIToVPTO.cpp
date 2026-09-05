@@ -3334,6 +3334,27 @@ FailureOr<Value> materializeDynamicGroupMaskChunk(
   return *paddedPredicate;
 }
 
+static FailureOr<SmallVector<Value>> materializeDynamicGroupMaskChunks(
+    VMICreateGroupMaskOp op, Value activeI32, VMIMaskType resultVMIType,
+    TypeRange resultTypes, int64_t factor, int64_t blockElems,
+    int64_t lanesPerPart, PatternRewriter &rewriter) {
+  SmallVector<Value> results;
+  results.reserve(resultTypes.size());
+  int64_t chunksPerPart = resultTypes.size() / factor;
+  for (int64_t part = 0; part < factor; ++part) {
+    for (int64_t chunk = 0; chunk < chunksPerPart; ++chunk) {
+      FailureOr<Value> predicate = materializeDynamicGroupMaskChunk(
+          op, resultVMIType, resultTypes[part * chunksPerPart + chunk],
+          activeI32, factor, blockElems, part, chunk, lanesPerPart, rewriter);
+      if (failed(predicate)) {
+        return failure();
+      }
+      results.push_back(*predicate);
+    }
+  }
+  return results;
+}
+
 FailureOr<SmallVector<Value>> materializeDynamicGroupMaskForType(
     VMICreateGroupMaskOp op, Value activeElemsPerGroup,
     VMIMaskType resultVMIType, TypeRange resultTypes,
@@ -3391,22 +3412,9 @@ FailureOr<SmallVector<Value>> materializeDynamicGroupMaskForType(
   Value activeI32 =
       clampDynamicActiveLanes(loc, activeElemsPerGroup, groupSize, rewriter);
 
-  SmallVector<Value> results;
-  results.reserve(resultTypes.size());
-  int64_t chunksPerPart = resultTypes.size() / factor;
-  for (int64_t part = 0; part < factor; ++part) {
-    for (int64_t chunk = 0; chunk < chunksPerPart; ++chunk) {
-      FailureOr<Value> predicate = materializeDynamicGroupMaskChunk(
-          op, resultVMIType, resultTypes[part * chunksPerPart + chunk],
-          activeI32, factor, *blockElems, part, chunk, *lanesPerPart, rewriter);
-      if (failed(predicate)) {
-        return failure();
-      }
-      results.push_back(*predicate);
-    }
-  }
-
-  return results;
+  return materializeDynamicGroupMaskChunks(
+      op, activeI32, resultVMIType, resultTypes, factor, *blockElems,
+      *lanesPerPart, rewriter);
 }
 
 std::optional<int64_t> getPrefixActiveLaneCount(ArrayRef<int8_t> activeLanes) {
@@ -5378,8 +5386,11 @@ FailureOr<SmallVector<Type>> getConvertedMaskPartTypes(VMIMaskType type) {
   FailureOr<int64_t> arity = getVMIPhysicalArity(type);
   FailureOr<StringRef> physicalGranularity =
       getVMIMaskPhysicalGranularity(type);
-  if (failed(arity) || failed(physicalGranularity) || *arity < 0)
+  bool invalidMaskTypes =
+      failed(arity) || failed(physicalGranularity) || *arity < 0;
+  if (invalidMaskTypes) {
     return failure();
+  }
   SmallVector<Type> types;
   types.reserve(*arity);
   Type partType = MaskType::get(type.getContext(), *physicalGranularity);
@@ -6432,19 +6443,22 @@ public:
                   OneToNPatternRewriter &rewriter) const override {
     auto resultVMIType = cast<VMIVRegType>(op.getResult().getType());
     VMILayoutAttr layout = resultVMIType.getLayoutAttr();
-    if (!layout)
+    if (!layout) {
       return rewriter.notifyMatchFailure(op, "iota requires assigned layout");
+    }
 
     FailureOr<int64_t> lanesPerPart =
         getDataLanesPerPart(resultVMIType.getElementType());
-    if (failed(lanesPerPart))
+    if (failed(lanesPerPart)) {
       return rewriter.notifyMatchFailure(
           op, "iota requires known physical lanes per part");
+    }
 
     FailureOr<Value> base = getSingleValue(
         op, adaptor.getBase(), "iota base must convert to one value", rewriter);
-    if (failed(base))
+    if (failed(base)) {
       return failure();
+    }
 
     FailureOr<SmallVector<Type>> maybe_resultTypes =
 
@@ -6525,8 +6539,9 @@ struct OneToNVMIConstantOpPattern : OneToNOpConversionPattern<VMIConstantOp> {
         rewriter.create<arith::ConstantOp>(op.getLoc(), splatAttr).getResult();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    if (failed(maybe_resultTypes)) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
@@ -8308,9 +8323,12 @@ static LogicalResult lowerGroupBroadcastParts(
       results[flatIndex] = *chunkResult;
     }
   }
-  if (flatIndex != static_cast<int64_t>(resultTypes.size()))
+  bool resultArityMismatch =
+      flatIndex != static_cast<int64_t>(resultTypes.size());
+  if (resultArityMismatch) {
     return rewriter.notifyMatchFailure(
         op, "group_broadcast physical result count is too large");
+  }
   return success();
 }
 

@@ -587,6 +587,12 @@ padding mask 的构造、`pand` 合并及失败诊断保持不变。增量合规
 `errors=0 warnings=0`，`git diff --check` 通过；dynamic create-group-mask lowering
 回归通过。
 
+本轮将 `materializeDynamicGroupMaskForType` 的 part/chunk 枚举与单 chunk helper 调用
+抽取为 `materializeDynamicGroupMaskChunks`，顶层函数仅保留 layout、group size、物理
+arity 和 power-of-two block 校验。chunk 顺序、active-lanes 限幅和失败传播保持不变。
+增量合规检查为 `errors=0 warnings=0`，`git diff --check` 通过；dynamic
+create-group-mask lowering 回归通过。
+
 本轮将 `lowerGroupBroadcastParts` 的单个结果 chunk 定位、slots=1 特殊合并、selector
 映射验证和普通 selector 物化抽取为 `lowerGroupBroadcastChunk`。外层仅负责 layout
 fact、context 初始化及 part/chunk 枚举；source chunk 边界、结果顺序和 selector cache
