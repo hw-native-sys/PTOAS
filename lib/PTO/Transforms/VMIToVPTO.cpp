@@ -14880,6 +14880,16 @@ WalkResult verifySupportedReduceOp(ReduceOp op, bool requiresReassoc,
   return WalkResult::interrupt();
 }
 
+template <typename GroupReduceOp>
+WalkResult verifySupportedGroupReduceOp(GroupReduceOp op, StringRef diagnostic) {
+  std::string reason;
+  if (succeeded(checkSupportedGroupReduceShape(op, &reason))) {
+    return WalkResult::advance();
+  }
+  op.emitError() << kVMIDiagUnsupportedPrefix << diagnostic << reason << ")";
+  return WalkResult::interrupt();
+}
+
 LogicalResult
 verifySupportedVMIToVPTOOps(ModuleOp module,
                             bool enableStableGatherMaskedLoad) {
@@ -15181,90 +15191,54 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
     }
 
     if (auto reduce = dyn_cast<VMIGroupReduceAddFOp>(op)) {
-      std::string reason;
-      if (succeeded(
-              checkSupportedGroupReduceShape(reduce, &reason)))
-        return WalkResult::advance();
-      reduce.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.group_reduce_addf lowers through pto.vcgadd for 32B "
-             "blocks or through pto.vcadd for contiguous full "
-             "source/mask chunks, #pto.vmi.layout<num_groups = G, slots = K> "
-             "result "
-             "chunks, and num_groups deriving a group size aligned to "
-             "physical chunks ("
-          << reason << ")";
-      return WalkResult::interrupt();
+      return verifySupportedGroupReduceOp(
+          reduce,
+          "pto.vmi.group_reduce_addf lowers through pto.vcgadd for 32B blocks "
+          "or through pto.vcadd for contiguous full source/mask chunks, "
+          "#pto.vmi.layout<num_groups = G, slots = K> result chunks, and "
+          "num_groups deriving a group size aligned to physical chunks (");
     }
 
     if (auto reduce = dyn_cast<VMIGroupReduceAddIOp>(op)) {
-      std::string reason;
-      if (succeeded(
-              checkSupportedGroupReduceShape(reduce, &reason)))
-        return WalkResult::advance();
-      reduce.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.group_reduce_addi lowers through pto.vcgadd/vadd for "
-             "supported 32B block classes or through an internal widening "
-             "pto.vcadd path for aligned full chunks ("
-          << reason << ")";
-      return WalkResult::interrupt();
+      return verifySupportedGroupReduceOp(
+          reduce,
+          "pto.vmi.group_reduce_addi lowers through pto.vcgadd/vadd for "
+          "supported 32B block classes or through an internal widening "
+          "pto.vcadd path for aligned full chunks (");
     }
 
     if (auto reduce = dyn_cast<VMIGroupReduceMaxIOp>(op)) {
-      std::string reason;
-      if (succeeded(
-              checkSupportedGroupReduceShape(reduce, &reason)))
-        return WalkResult::advance();
-      reduce.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.group_reduce_maxi lowers through pto.vcgmax/vmax for "
-             "supported 32B block classes or through pto.vcmax for aligned "
-             "full chunks ("
-          << reason << ")";
-      return WalkResult::interrupt();
+      return verifySupportedGroupReduceOp(
+          reduce,
+          "pto.vmi.group_reduce_maxi lowers through pto.vcgmax/vmax for "
+          "supported 32B block classes or through pto.vcmax for aligned full "
+          "chunks (");
     }
 
     if (auto reduce = dyn_cast<VMIGroupReduceMaxFOp>(op)) {
-      std::string reason;
-      if (succeeded(
-              checkSupportedGroupReduceShape(reduce, &reason)))
-        return WalkResult::advance();
-      reduce.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.group_reduce_maxf lowers through pto.vcgmax/vmax for "
-             "32B blocks or through pto.vcmax for contiguous full chunks, "
-             "matching source/mask chunks, "
-             "#pto.vmi.layout<num_groups = G, slots = K> result chunks, and "
-             "num_groups deriving a group size aligned to physical chunks ("
-          << reason << ")";
-      return WalkResult::interrupt();
+      return verifySupportedGroupReduceOp(
+          reduce,
+          "pto.vmi.group_reduce_maxf lowers through pto.vcgmax/vmax for 32B "
+          "blocks or through pto.vcmax for contiguous full chunks, matching "
+          "source/mask chunks, #pto.vmi.layout<num_groups = G, slots = K> "
+          "result chunks, and num_groups deriving a group size aligned to "
+          "physical chunks (");
     }
 
     if (auto reduce = dyn_cast<VMIGroupReduceMinFOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedGroupReduceShape(reduce, &reason)))
-        return WalkResult::advance();
-      reduce.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.group_reduce_minf lowers through pto.vcgmin/vmin for "
-             "supported 32B block classes or through pto.vcmin for aligned "
-             "full chunks ("
-          << reason << ")";
-      return WalkResult::interrupt();
+      return verifySupportedGroupReduceOp(
+          reduce,
+          "pto.vmi.group_reduce_minf lowers through pto.vcgmin/vmin for "
+          "supported 32B block classes or through pto.vcmin for aligned full "
+          "chunks (");
     }
 
     if (auto reduce = dyn_cast<VMIGroupReduceMinIOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedGroupReduceShape(reduce, &reason)))
-        return WalkResult::advance();
-      reduce.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.group_reduce_mini lowers through pto.vcgmin/vmin for "
-             "supported 32B block classes or through pto.vcmin for aligned "
-             "full chunks ("
-          << reason << ")";
-      return WalkResult::interrupt();
+      return verifySupportedGroupReduceOp(
+          reduce,
+          "pto.vmi.group_reduce_mini lowers through pto.vcgmin/vmin for "
+          "supported 32B block classes or through pto.vcmin for aligned full "
+          "chunks (");
     }
 
     if (auto reduce = dyn_cast<VMIReduceMaxFOp>(op)) {
