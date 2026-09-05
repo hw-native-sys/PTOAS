@@ -1330,3 +1330,10 @@ row 类型/mask 准备和最终结果 bitcast；low/high 配对顺序、`PAT_VL1
 group mask 的 lane 映射、`vcmps` 谓词及 padding 语义不变。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_create_group_mask_block8_dynamic.pto` lowering exit=0。
+# group_broadcast E2B 整改
+
+本轮将 `lowerDirectE2B` 中逐 packet 的 `vlds` 发射抽取为 `emitE2BPackets`。E2B
+主函数继续负责 contiguous/deinterleaved layout、element width、stride、source、
+arity 和 packet type 约束，以及 packet 复用结果构造；指令顺序和 E2B dist 保持不变。
+增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_layout_assignment_group_broadcast_load_e2b_b16.pto` lowering exit=0。

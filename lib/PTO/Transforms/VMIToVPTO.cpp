@@ -10854,6 +10854,29 @@ struct OneToNVMIGroupBroadcastLoadOpPattern
   using OneToNOpConversionPattern<VMIGroupBroadcastLoadOp>::OneToNOpConversionPattern;
 
 private:
+  FailureOr<SmallVector<Value>> emitE2BPackets(
+      VMIGroupBroadcastLoadOp op, OneToNPatternRewriter &rewriter,
+      Value source, Value offset, ArrayRef<Type> resultTypes,
+      int64_t chunksPerPart, StringRef e2bDist) const {
+    SmallVector<Value> packets;
+    packets.reserve(chunksPerPart);
+    for (int64_t chunk = 0; chunk < chunksPerPart; ++chunk) {
+      Type packetType = resultTypes[chunk];
+      if (!isa<VRegType>(packetType)) {
+        return rewriter.notifyMatchFailure(
+            op, "group_broadcast_load result must be vreg");
+      }
+      Value packetOffset =
+          createChunkOffset(op.getLoc(), offset, chunk * 8, rewriter);
+      packets.push_back(rewriter
+                            .create<VldsOp>(op.getLoc(), packetType, Type{},
+                                            source, packetOffset,
+                                            rewriter.getStringAttr(e2bDist))
+                            .getResult());
+    }
+    return packets;
+  }
+
   LogicalResult lowerDirectE2B(
       VMIGroupBroadcastLoadOp op, OneToNPatternRewriter &rewriter,
       Value source, Value offset, VMIVRegType resultVMIType,
@@ -10918,21 +10941,10 @@ private:
       return rewriter.notifyMatchFailure(
           op, "group_broadcast_load expected one E2B packet in each part");
     }
-    SmallVector<Value> packets;
-    packets.reserve(*chunksPerPart);
-    for (int64_t chunk = 0; chunk < *chunksPerPart; ++chunk) {
-      Type packetType = resultTypes[chunk];
-      if (!isa<VRegType>(packetType)) {
-        return rewriter.notifyMatchFailure(
-            op, "group_broadcast_load result must be vreg");
-      }
-      Value packetOffset =
-          createChunkOffset(op.getLoc(), offset, chunk * 8, rewriter);
-      packets.push_back(rewriter
-                            .create<VldsOp>(op.getLoc(), packetType, Type{},
-                                            source, packetOffset,
-                                            rewriter.getStringAttr(e2bDist))
-                            .getResult());
+    FailureOr<SmallVector<Value>> packets = emitE2BPackets(
+        op, rewriter, source, offset, resultTypes, *chunksPerPart, e2bDist);
+    if (failed(packets)) {
+      return failure();
     }
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
@@ -10943,7 +10955,7 @@ private:
           return rewriter.notifyMatchFailure(
               op, "group_broadcast_load E2B reused packet type mismatch");
         }
-        results.push_back(packets[chunk]);
+        results.push_back((*packets)[chunk]);
       }
     }
     replaceOpWithFlatConvertedValues(rewriter, op, results,
