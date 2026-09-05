@@ -2135,6 +2135,16 @@ chunk 顺序、诊断及结果替换语义不变。增量 `check_changed_code.py
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_group_broadcast_load_e2b_b16.pto` lowering exit=0。
 
+# group broadcast load fallback source plan 职责整改
+
+本轮在 `OneToNVMIGroupBroadcastLoadOpPattern::lowerGroupSlotFallback` 中引入
+`buildGroupBroadcastFallbackSourcePlan`，将 source slots 选择、source VMI type、physical
+arity、lane 数和 source part type 构造抽取为独立计划 helper。主函数继续负责调用
+`lowerGroupSlotLoadParts`、`lowerGroupBroadcastParts` 和结果替换；保持 stride 到 slots 的
+映射、source type 顺序、诊断及 fallback lowering 语义不变。增量 `check_changed_code.py`
+结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_group_broadcast_load_e2b_b16.pto` lowering exit=0。
+
 # group broadcast load BRC shape 校验职责整改
 
 本轮在 `OneToNVMIGroupBroadcastLoadOpPattern::lowerDirectBRC` 中引入
