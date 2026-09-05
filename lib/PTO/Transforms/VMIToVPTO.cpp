@@ -5957,8 +5957,10 @@ FailureOr<SmallVector<Value>> materializeStagingContiguousToDeintMaskLayout(
     (void)rewriter.notifyMatchFailure(op, message);
     return failure();
   };
-  if ((factor != 2 && factor != 4) || sourceParts.empty() ||
-      resultTypes.size() % factor != 0) {
+  bool invalidGroupedParts =
+      (factor != 2 && factor != 4) || sourceParts.empty() ||
+      resultTypes.size() % factor != 0;
+  if (invalidGroupedParts) {
     return fail("staging contiguous mask layout requires grouped result parts");
   }
 
@@ -7931,7 +7933,8 @@ public:
       return failure();
     }
     SmallVector<Type> highTypes = std::move(*maybe_highTypes);
-    if (lowTypes.size() != highTypes.size()) {
+    bool mismatchedLowHighArity = lowTypes.size() != highTypes.size();
+    if (mismatchedLowHighArity) {
       return rewriter.notifyMatchFailure(
           op, "deinterleave_load requires matching low/high physical arity");
     }

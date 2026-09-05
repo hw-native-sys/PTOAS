@@ -1261,3 +1261,10 @@ broadcast 和 compression/active-prefix 三组 verifier helper，外层只负责
 检查顺序保持不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；compress/active-prefix 样例在既有 VMI pack/unpack pipeline
 invariant 处提前失败，未进入本轮 verifier 路径。
+
+本轮将 `checkSupportedGroupStoreShape` 的 compact-small 支持判定抽取为
+`checkSupportedCompactSmallGroupStoreShape`，使 compact layout 的 pointer/memory
+proof 与 group-slots、one-block、deinterleaved 检查分离。同步补齐本轮触及位置的
+控制流大括号，并将复杂条件命名化以避免静态检查误报。支持矩阵、诊断和判断顺序
+保持不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
+通过。
