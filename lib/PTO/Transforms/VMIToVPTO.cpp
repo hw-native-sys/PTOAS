@@ -17337,7 +17337,7 @@ std::optional<WalkResult> verifySupportedVMIConversionOp(Operation *op) {
   return std::nullopt;
 }
 
-std::optional<WalkResult> verifySupportedVMISpecialOp(Operation *op) {
+std::optional<WalkResult> verifySupportedVMIAddCarryOp(Operation *op) {
   if (auto addc = dyn_cast<VMIVaddcOp>(op)) {
     std::string reason;
     if (succeeded(checkSupportedVMIAddcShape(addc, &reason))) {
@@ -17360,6 +17360,10 @@ std::optional<WalkResult> verifySupportedVMISpecialOp(Operation *op) {
                       << reason << ")";
     return WalkResult::interrupt();
   }
+  return std::nullopt;
+}
+
+std::optional<WalkResult> verifySupportedVMIMultiplyLongOp(Operation *op) {
   if (auto vmull = dyn_cast<VMIVmullOp>(op)) {
     std::string reason;
     if (succeeded(checkSupportedVmullShape(vmull, &reason))) {
@@ -17373,6 +17377,10 @@ std::optional<WalkResult> verifySupportedVMISpecialOp(Operation *op) {
         << reason << ")";
     return WalkResult::interrupt();
   }
+  return std::nullopt;
+}
+
+std::optional<WalkResult> verifySupportedVMISpecialUnaryOp(Operation *op) {
   if (auto relu = dyn_cast<VMIReluOp>(op)) {
     std::string reason;
     if (succeeded(checkSupportedReluShape(relu, &reason))) {
@@ -17400,6 +17408,16 @@ std::optional<WalkResult> verifySupportedVMISpecialOp(Operation *op) {
     return WalkResult::interrupt();
   }
   return std::nullopt;
+}
+
+std::optional<WalkResult> verifySupportedVMISpecialOp(Operation *op) {
+  if (auto result = verifySupportedVMIAddCarryOp(op); result.has_value()) {
+    return *result;
+  }
+  if (auto result = verifySupportedVMIMultiplyLongOp(op); result.has_value()) {
+    return *result;
+  }
+  return verifySupportedVMISpecialUnaryOp(op);
 }
 
 std::optional<WalkResult> verifySupportedVMINormalReductionOp(Operation *op) {

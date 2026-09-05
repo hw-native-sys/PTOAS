@@ -1248,3 +1248,10 @@ reassoc 要求、操作支持矩阵和错误文本保持不变。增量合规检
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；group-reduce
 lowering case exit=0。两个普通 reduce case 在既有 VMI pack/unpack pipeline invariant
 处提前失败，未进入本轮 verifier 路径。
+
+本轮将 `verifySupportedVMISpecialOp` 按算子契约拆为
+`verifySupportedVMIAddCarryOp`、`verifySupportedVMIMultiplyLongOp` 和
+`verifySupportedVMISpecialUnaryOp`，分别负责 addc/addcs、vmull 以及 relu/vselr；
+外层只进行三类分派。各 shape checker、支持矩阵和诊断文本保持不变。增量合规检查
+结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；vmull contiguous/
+deinterleaved 和 vselr lowering case 均 exit=0。
