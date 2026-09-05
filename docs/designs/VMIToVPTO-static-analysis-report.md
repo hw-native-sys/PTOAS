@@ -460,3 +460,10 @@ constant `vdup` 生成、共享 `vci` ramp 初始化及 base offset 添加。主
 layout fact 选择、物理 lane 校验和结果 chunk 分派，selector 的生成顺序与缓存语义保持
 不变；同时修正该区域残留的枚举名称引用。增量合规检查为 `errors=0 warnings=0`，
 `git diff --check` 通过；group-broadcast 与连续 load/store lowering 回归通过。
+
+本轮将 `verifySupportedVMIToVPTOOps` 中常量、broadcast、group-broadcast、直方图、
+active-prefix 和 compress 相关的杂项 shape 检查抽取为 `verifySupportedVMIMiscOp`。该
+helper 只负责这些操作各自的支持性验证与原有诊断，主 verifier 保留 memory、layout、
+compare、misc、arithmetic 等既有检查顺序，避免将不相关的操作契约混在同一巨大函数中。
+增量合规检查为 `errors=0 warnings=0`，`git diff --check` 通过；group-broadcast、
+连续 load/store 和 interleave memory lowering 回归通过。

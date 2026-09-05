@@ -15815,6 +15815,85 @@ std::optional<WalkResult> verifySupportedVMIFloatOp(Operation *op) {
   return std::nullopt;
 }
 
+std::optional<WalkResult> verifySupportedVMIMiscOp(Operation *op) {
+  if (auto constant = dyn_cast<VMIConstantOp>(op)) {
+    auto denseAttr = dyn_cast<DenseElementsAttr>(constant.getValue());
+    if (!denseAttr || !denseAttr.isSplat()) {
+      constant.emitError()
+          << kVMIDiagUnsupportedPrefix
+          << "non-splat pto.vmi.constant requires a vreg immediate or "
+             "scratch materialization plan";
+      return WalkResult::interrupt();
+    }
+    return emitMaskableUnsupported(
+        op, "pto.vmi.constant",
+        cast<VMIVRegType>(constant.getResult().getType()));
+  }
+  if (auto broadcast = dyn_cast<VMIBroadcastOp>(op)) {
+    return emitMaskableUnsupported(
+        op, "pto.vmi.broadcast",
+        cast<VMIVRegType>(broadcast.getResult().getType()));
+  }
+  if (auto broadcast = dyn_cast<VMIGroupBroadcastOp>(op)) {
+    return verifySupportedShapeOp(
+        broadcast, checkSupportedGroupBroadcastShape,
+        "pto.vmi.group_broadcast requires #pto.vmi.layout<num_groups = G, "
+        "slots = K> source, a dense full result layout, and num_groups "
+        "deriving a group size that divides or is a multiple of physical "
+        "chunk lanes (");
+  }
+  if (auto hist = dyn_cast<VMIVdhistOp>(op)) {
+    return verifySupportedShapeOp(
+        hist, checkSupportedVdhistShape,
+        "pto.vmi.vdhist requires contiguous Nx{ui8|i8} source, contiguous "
+        "b8 mask, and contiguous 256x{ui16|i16} acc/result (");
+  }
+  if (auto hist = dyn_cast<VMIVchistOp>(op)) {
+    return verifySupportedShapeOp(
+        hist, checkSupportedVchistShape,
+        "pto.vmi.vchist requires contiguous Nx{ui8|i8} source, contiguous "
+        "b8 mask, and contiguous 256x{ui16|i16} acc/result (");
+  }
+  if (auto activePrefix = dyn_cast<VMIActivePrefixIndexOp>(op)) {
+    std::string reason;
+    if (succeeded(checkSupportedActivePrefixIndexShape(activePrefix, &reason))) {
+      return WalkResult::advance();
+    }
+    activePrefix.emitError()
+        << kVMIDiagUnsupportedPrefix
+        << "pto.vmi.active_prefix_index lowers through pto.vusqz only for "
+           "one contiguous physical chunk ("
+        << reason << ")";
+    return WalkResult::interrupt();
+  }
+  if (auto compress = dyn_cast<VMICompressOp>(op)) {
+    std::string reason;
+    if (succeeded(checkSupportedCompressShape(compress, &reason))) {
+      return WalkResult::advance();
+    }
+    compress.emitError()
+        << kVMIDiagUnsupportedPrefix
+        << "pto.vmi.compress lowers through pto.vsqz only for one "
+           "contiguous full physical chunk ("
+        << reason << ")";
+    return WalkResult::interrupt();
+  }
+  if (auto compressStore = dyn_cast<VMICompressStoreOp>(op)) {
+    std::string reason;
+    if (succeeded(checkSupportedCompressStoreShape(compressStore, &reason))) {
+      return WalkResult::advance();
+    }
+    compressStore.emitError()
+        << kVMIDiagUnsupportedPrefix
+        << "pto.vmi.compress_store lowers through pto.vsqz + pto.vstur "
+           "only for one contiguous full physical chunk with a UB pointer "
+           "destination ("
+        << reason << ")";
+    return WalkResult::interrupt();
+  }
+  return std::nullopt;
+}
+
 LogicalResult
 verifySupportedVMIToVPTOOps(ModuleOp module,
                             bool enableStableGatherMaskedLoad) {
@@ -15834,44 +15913,9 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
       return *compareResult;
     }
 
-    if (auto constant = dyn_cast<VMIConstantOp>(op)) {
-      auto denseAttr = dyn_cast<DenseElementsAttr>(constant.getValue());
-      if (!denseAttr || !denseAttr.isSplat()) {
-        constant.emitError()
-            << kVMIDiagUnsupportedPrefix
-            << "non-splat pto.vmi.constant requires a vreg immediate or "
-               "scratch materialization plan";
-        return WalkResult::interrupt();
-      }
-      return emitMaskableUnsupported(
-          op, "pto.vmi.constant",
-          cast<VMIVRegType>(constant.getResult().getType()));
-    }
-
-    if (auto broadcast = dyn_cast<VMIBroadcastOp>(op)) {
-      return emitMaskableUnsupported(
-          op, "pto.vmi.broadcast",
-          cast<VMIVRegType>(broadcast.getResult().getType()));
-    }
-    if (auto broadcast = dyn_cast<VMIGroupBroadcastOp>(op)) {
-      return verifySupportedShapeOp(
-          broadcast, checkSupportedGroupBroadcastShape,
-          "pto.vmi.group_broadcast requires #pto.vmi.layout<num_groups = G, "
-          "slots = K> source, a dense full result layout, and num_groups "
-          "deriving a group size that divides or is a multiple of physical "
-          "chunk lanes (");
-    }
-    if (auto hist = dyn_cast<VMIVdhistOp>(op)) {
-      return verifySupportedShapeOp(
-          hist, checkSupportedVdhistShape,
-          "pto.vmi.vdhist requires contiguous Nx{ui8|i8} source, contiguous "
-          "b8 mask, and contiguous 256x{ui16|i16} acc/result (");
-    }
-    if (auto hist = dyn_cast<VMIVchistOp>(op)) {
-      return verifySupportedShapeOp(
-          hist, checkSupportedVchistShape,
-          "pto.vmi.vchist requires contiguous Nx{ui8|i8} source, contiguous "
-          "b8 mask, and contiguous 256x{ui16|i16} acc/result (");
+    if (auto miscResult = verifySupportedVMIMiscOp(op);
+        miscResult.has_value()) {
+      return *miscResult;
     }
 
     if (auto arithmeticResult = verifySupportedVMIArithmeticOp(
@@ -15885,43 +15929,6 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
       return *specialResult;
     }
 
-    if (auto activePrefix = dyn_cast<VMIActivePrefixIndexOp>(op)) {
-      std::string reason;
-      if (succeeded(
-              checkSupportedActivePrefixIndexShape(activePrefix, &reason)))
-        return WalkResult::advance();
-      activePrefix.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.active_prefix_index lowers through pto.vusqz only for "
-             "one contiguous physical chunk ("
-          << reason << ")";
-      return WalkResult::interrupt();
-    }
-
-    if (auto compress = dyn_cast<VMICompressOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedCompressShape(compress, &reason)))
-        return WalkResult::advance();
-      compress.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.compress lowers through pto.vsqz only for one "
-             "contiguous full physical chunk ("
-          << reason << ")";
-      return WalkResult::interrupt();
-    }
-
-    if (auto compressStore = dyn_cast<VMICompressStoreOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedCompressStoreShape(compressStore, &reason)))
-        return WalkResult::advance();
-      compressStore.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.compress_store lowers through pto.vsqz + pto.vstur "
-             "only for one contiguous full physical chunk with a UB pointer "
-             "destination ("
-          << reason << ")";
-      return WalkResult::interrupt();
-    }
 
     if (auto reductionResult = verifySupportedVMIReductionOp(op);
         reductionResult.has_value()) {
