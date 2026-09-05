@@ -12455,6 +12455,44 @@ template <typename SourceOp, typename TargetOp>
 struct OneToNVMIMaskBinaryOpPattern : OneToNOpConversionPattern<SourceOp> {
   using OneToNOpConversionPattern<SourceOp>::OneToNOpConversionPattern;
 
+private:
+  LogicalResult lowerParts(SourceOp op, ValueRange lhsParts,
+                           ValueRange rhsParts, ArrayRef<Type> resultTypes,
+                           OneToNPatternRewriter &rewriter) const {
+    const bool invalidArity = lhsParts.size() != rhsParts.size() ||
+                              lhsParts.size() != resultTypes.size();
+    if (invalidArity) {
+      return rewriter.notifyMatchFailure(
+          op, "physical mask binary arity mismatch");
+    }
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (auto [lhs, rhs, resultType] :
+         llvm::zip_equal(lhsParts, rhsParts, resultTypes)) {
+      auto maskType = dyn_cast<MaskType>(resultType);
+      const bool invalidPart = !maskType || lhs.getType() != resultType ||
+                               rhs.getType() != resultType;
+      if (invalidPart) {
+        return rewriter.notifyMatchFailure(
+            op, "physical mask binary part type mismatch");
+      }
+      FailureOr<Value> seedMask =
+          createAllTrueMask(op.getLoc(), maskType, rewriter);
+      if (failed(seedMask)) {
+        return rewriter.notifyMatchFailure(
+            op, "unsupported mask type for all-true mask binary seed");
+      }
+      results.push_back(
+          rewriter
+              .create<TargetOp>(op.getLoc(), resultType, lhs, rhs, *seedMask)
+              .getResult());
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
+public:
   LogicalResult matchAndRewrite(
       SourceOp op,
       typename OneToNOpConversionPattern<SourceOp>::OpAdaptor adaptor,
@@ -12467,33 +12505,7 @@ struct OneToNVMIMaskBinaryOpPattern : OneToNOpConversionPattern<SourceOp> {
       return failure();
     }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-    if (lhsParts.size() != rhsParts.size() ||
-        lhsParts.size() != resultTypes.size())
-      return rewriter.notifyMatchFailure(op,
-                                         "physical mask binary arity mismatch");
-
-    SmallVector<Value> results;
-    results.reserve(resultTypes.size());
-    for (auto [lhs, rhs, resultType] :
-         llvm::zip_equal(lhsParts, rhsParts, resultTypes)) {
-      auto maskType = dyn_cast<MaskType>(resultType);
-      if (!maskType || lhs.getType() != resultType ||
-          rhs.getType() != resultType)
-        return rewriter.notifyMatchFailure(
-            op, "physical mask binary part type mismatch");
-      FailureOr<Value> seedMask =
-          createAllTrueMask(op.getLoc(), maskType, rewriter);
-      if (failed(seedMask))
-        return rewriter.notifyMatchFailure(
-            op, "unsupported mask type for all-true mask binary seed");
-      results.push_back(
-          rewriter
-              .create<TargetOp>(op.getLoc(), resultType, lhs, rhs, *seedMask)
-              .getResult());
-    }
-
-    replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
-    return success();
+    return lowerParts(op, lhsParts, rhsParts, resultTypes, rewriter);
   }
 };
 

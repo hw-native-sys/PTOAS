@@ -1797,3 +1797,12 @@ predicate mode 拒绝、输入 arity、源元素类型和结果组数判定；�
 同时补齐本入口控制流大括号。增量 `check_changed_code.py` 结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_vexpdif_f16.pto` 与 `vmi_to_vpto_vexpdif_f32.pto` lowering 均 exit=0。
+
+# mask binary physical chunk lowering 职责整改
+
+本轮将模板 `OneToNVMIMaskBinaryOpPattern::matchAndRewrite` 中 physical arity/type 校验、
+all-true seed mask 构造、目标 mask binary op 发射和结果替换抽取为 `lowerParts`。入口
+现在只负责 operand 归一化和 converted result type 获取；保持 seed mask 生成、TargetOp
+选择、结果顺序、mask 语义和原有诊断不变。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；仓库当前没有针对该
+模板的独立 `vmi_to_vpto` lit case，未虚构额外测试结果。
