@@ -377,6 +377,14 @@ verifier/lowering 变化路径。
 load/store 回归通过。现有三个独立浮点样例均在测试自身 `unpack` pipeline invariant
 处提前失败，未进入本轮 verifier/lowering 变化路径。
 
+本轮将 `materializeDeinterleaved4Layout` 的两个方向拆分为
+`materializeDeinterleaved4ToContiguous` 与 `materializeContiguousToDeinterleaved4`。
+前者独立负责四路 `vintlv` 重排，后者独立负责两级 `vdintlv` 及结果 part 分配；外层
+只负责布局方向判定、空输入诊断和结果转发，避免一个函数同时维护两套相反的数据布局
+算法。源码增量合规检查和 `git diff --check` 通过；连续 load/store 与 group-store
+回归通过。factor=4 专项样例在既有 `unpack` pipeline invariant 处提前失败，未进入
+本轮转换逻辑。
+
 本轮将 `lowerGroupBroadcastParts` 中 slots=1 且结果 chunk 覆盖多个 group 的 lane
 映射、splat 和 `vsel` 合并逻辑抽取为 `materializeSlots1GroupBroadcastChunk`。
 该 helper 单独负责跨物理 source chunk 的 lane-mask 构造，主 lowering 继续负责布局
