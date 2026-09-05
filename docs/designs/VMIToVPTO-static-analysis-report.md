@@ -1420,6 +1420,15 @@ chunk 的类型检查、direct `Vstsx2Op` 发射和 stream `VintlvOp`/advance �
 `vmi_interleaved_memory_ops.pto` lowering exit=0，invalid case 仍按原有 VMI operand
 lane-count verifier 失败。
 
+# bitcast physical part 构造整改
+
+本轮将 `OneToNVMIBitcastOpPattern::matchAndRewrite` 的单 physical part 类型校验与
+`VbitcastOp` 构造抽取为 `buildBitcastPart`。外层函数保留 converted result arity
+校验、结果遍历和最终替换；保持 source/result 必须为 vreg、part 顺序及原有诊断不变。
+增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过。相关 bitcast 抽样仍按既有 VMI verifier/invariant 规则失败，
+未观察到本轮 helper 引入的新错误。
+
 # sitofp conversion 分派整改
 
 本轮将 `OneToNVMISIToFPOpPattern::lowerConversion` 中 same-width 与 widen 两类物理

@@ -15442,6 +15442,22 @@ public:
 struct OneToNVMIBitcastOpPattern : OneToNOpConversionPattern<VMIBitcastOp> {
   using OneToNOpConversionPattern<VMIBitcastOp>::OneToNOpConversionPattern;
 
+private:
+  FailureOr<Value> buildBitcastPart(
+      VMIBitcastOp op, Value sourcePart, Type resultType,
+      OneToNPatternRewriter &rewriter) const {
+    bool invalidPartTypes = !isa<VRegType>(sourcePart.getType()) ||
+                            !isa<VRegType>(resultType);
+    if (invalidPartTypes) {
+      return rewriter.notifyMatchFailure(
+          op, "physical bitcast part type mismatch");
+    }
+    return rewriter.create<VbitcastOp>(op.getLoc(), resultType, sourcePart)
+        .getResult();
+  }
+
+public:
+
   LogicalResult
   matchAndRewrite(VMIBitcastOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -15461,15 +15477,12 @@ struct OneToNVMIBitcastOpPattern : OneToNOpConversionPattern<VMIBitcastOp> {
     results.reserve(resultTypes.size());
     for (auto [sourcePart, resultType] :
          llvm::zip_equal(sourceParts, resultTypes)) {
-      bool invalidPartTypes = !isa<VRegType>(sourcePart.getType()) ||
-                              !isa<VRegType>(resultType);
-      if (invalidPartTypes) {
-        return rewriter.notifyMatchFailure(
-            op, "physical bitcast part type mismatch");
+      FailureOr<Value> result =
+          buildBitcastPart(op, sourcePart, resultType, rewriter);
+      if (failed(result)) {
+        return failure();
       }
-      results.push_back(
-          rewriter.create<VbitcastOp>(op.getLoc(), resultType, sourcePart)
-              .getResult());
+      results.push_back(*result);
     }
 
     replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
