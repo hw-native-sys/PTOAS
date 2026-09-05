@@ -13811,6 +13811,34 @@ public:
   }
 };
 
+static LogicalResult lowerSameWidthFpToInt(
+    Operation *op, ValueRange sourceParts, ArrayRef<VRegType> resultTypes,
+    StringAttr rnd, StringAttr sat, StringRef arityDiagnostic,
+    StringRef maskDiagnostic, TypeConverter *typeConverter,
+    OneToNPatternRewriter &rewriter) {
+  bool invalidArity = sourceParts.size() != resultTypes.size();
+  if (invalidArity) {
+    return rewriter.notifyMatchFailure(op, arityDiagnostic);
+  }
+  SmallVector<Value> results;
+  results.reserve(resultTypes.size());
+  for (auto [sourcePart, resultType] :
+       llvm::zip_equal(sourceParts, resultTypes)) {
+    FailureOr<Value> mask = createAllTrueMaskForVReg(
+        op->getLoc(), cast<VRegType>(sourcePart.getType()), rewriter);
+    if (failed(mask)) {
+      return rewriter.notifyMatchFailure(op, maskDiagnostic);
+    }
+    results.push_back(
+        rewriter
+            .create<VcvtOp>(op->getLoc(), resultType, sourcePart, *mask, rnd,
+                            sat, /*part=*/nullptr)
+            .getResult());
+  }
+  replaceOpWithFlatConvertedValues(rewriter, op, results, *typeConverter);
+  return success();
+}
+
 struct OneToNVMIFPToSIOpPattern : OneToNOpConversionPattern<VMIFPToSIOp> {
   using OneToNOpConversionPattern<VMIFPToSIOp>::OneToNOpConversionPattern;
 
@@ -13873,30 +13901,10 @@ struct OneToNVMIFPToSIOpPattern : OneToNOpConversionPattern<VMIFPToSIOp> {
 
     if (!contract->requiresPart) {
       // Same-width (f32→s32, f16→s16): 1:1 mapping, no part.
-      if (sourceParts.size() != resultTypes.size())
-        return rewriter.notifyMatchFailure(
-            op, "same-width fptosi requires matching physical arity");
-
-      SmallVector<Value> results;
-      results.reserve(resultTypes.size());
-      for (auto [sourcePart, resultType] :
-           llvm::zip_equal(sourceParts, resultVRegTypes)) {
-        FailureOr<Value> mask =
-            createAllTrueMaskForVReg(op.getLoc(),
-                                     cast<VRegType>(sourcePart.getType()),
-                                     rewriter);
-        if (failed(mask))
-          return rewriter.notifyMatchFailure(
-              op, "failed to build fptosi mask");
-        results.push_back(
-            rewriter
-                .create<VcvtOp>(op.getLoc(), resultType, sourcePart, *mask,
-                                rnd, sat, /*part=*/nullptr)
-                .getResult());
-      }
-      replaceOpWithFlatConvertedValues(rewriter, op, results,
-                                       *this->getTypeConverter());
-      return success();
+      return lowerSameWidthFpToInt(
+          op, sourceParts, resultVRegTypes, rnd, sat,
+          "same-width fptosi requires matching physical arity",
+          "failed to build fptosi mask", *this->getTypeConverter(), rewriter);
     }
 
     // requiresPart: widen (f16→s32, bf16→s32) or narrow (f32→s16, f16→s8).
@@ -14088,30 +14096,10 @@ struct OneToNVMIFPToUIOpPattern
 
     if (!contract->requiresPart) {
       // Same-width: 1:1 mapping, no part.
-      if (sourceParts.size() != resultTypes.size())
-        return rewriter.notifyMatchFailure(
-            op, "same-width fptoui requires matching physical arity");
-
-      SmallVector<Value> results;
-      results.reserve(resultTypes.size());
-      for (auto [sourcePart, resultType] :
-           llvm::zip_equal(sourceParts, resultVRegTypes)) {
-        FailureOr<Value> mask =
-            createAllTrueMaskForVReg(op.getLoc(),
-                                     cast<VRegType>(sourcePart.getType()),
-                                     rewriter);
-        if (failed(mask))
-          return rewriter.notifyMatchFailure(
-              op, "failed to build fptoui mask");
-        results.push_back(
-            rewriter
-                .create<VcvtOp>(op.getLoc(), resultType, sourcePart, *mask,
-                                rnd, sat, /*part=*/nullptr)
-                .getResult());
-      }
-      replaceOpWithFlatConvertedValues(rewriter, op, results,
-                                       *this->getTypeConverter());
-      return success();
+      return lowerSameWidthFpToInt(
+          op, sourceParts, resultVRegTypes, rnd, sat,
+          "same-width fptoui requires matching physical arity",
+          "failed to build fptoui mask", *this->getTypeConverter(), rewriter);
     }
 
     // requiresPart: narrow (f16→u8).
