@@ -1667,3 +1667,13 @@ value/mask layout 校验、active lane 计算、mask 压缩、地址合法性证
 padding/zero-active-lane 和失败诊断语义保持不变。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_masked_store.pto` lowering exit=0。
+
+# stride_load 物理发射整改
+
+本轮将 `OneToNVMIStrideLoadOpPattern::matchAndRewrite` 中 physical arity/type 校验、
+base 指针构造、`vsldb` 发射和结果替换抽取为 `lowerStrideLoad`。入口继续负责 operand
+归一化、repeat stride 常量和结果类型转换；单 chunk vreg/mask 合同、地址计算及
+`vsldb` 语义保持不变。检查过程中同时补齐了该入口相邻的历史控制流大括号，避免本轮
+变更继续触发 `G.FMT.11-CPP`。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_to_vpto_stride_load.pto` 仍在既有 VMI pack/unpack
+pipeline invariant 处提前失败，未进入本轮 helper。

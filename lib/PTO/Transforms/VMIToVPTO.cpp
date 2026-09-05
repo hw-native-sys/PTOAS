@@ -10830,9 +10830,10 @@ public:
     VMILayoutSupport supports;
     FailureOr<VMIGroupStoreLayoutFact> fact =
         supports.getGroupStoreLayoutFact(op, valueVMIType);
-    if (failed(fact))
+    if (failed(fact)) {
       return rewriter.notifyMatchFailure(
           op, "group_store layout does not match the support table");
+    }
 
     if (fact->blockClass == VMIGroupBlockClass::OneBlock) {
       return lowerOneBlockGroupStore(
@@ -11004,9 +11005,10 @@ public:
     auto valueVMIType = cast<VMIVRegType>(op.getValue().getType());
     FailureOr<int64_t> lanesPerPart =
         getDataLanesPerPart(valueVMIType.getElementType());
-    if (failed(lanesPerPart))
+    if (failed(lanesPerPart)) {
       return rewriter.notifyMatchFailure(
           op, "masked_store requires known physical lanes per part");
+    }
 
     FailureOr<Value> destination = getSingleValue(
         op, adaptor.getDestination(),
@@ -11014,14 +11016,18 @@ public:
     FailureOr<Value> offset = getSingleValue(
         op, adaptor.getOffset(),
         "masked_store offset must convert to one value", rewriter);
-    if (failed(destination) || failed(offset))
+    bool invalidAddressOperands = failed(destination) || failed(offset);
+    if (invalidAddressOperands) {
       return failure();
+    }
 
     ValueRange valueParts = adaptor.getValue();
     ValueRange maskParts = adaptor.getMask();
-    if (valueParts.size() != maskParts.size())
+    bool arityMismatch = valueParts.size() != maskParts.size();
+    if (arityMismatch) {
       return rewriter.notifyMatchFailure(
           op, "masked_store value/mask physical arity mismatch");
+    }
 
     auto maskVMIType = cast<VMIMaskType>(op.getMask().getType());
     if (std::optional<std::string> dist =
@@ -11354,6 +11360,38 @@ struct OneToNVMIStrideLoadOpPattern
     : OneToNOpConversionPattern<VMIStrideLoadOp> {
   using OneToNOpConversionPattern<VMIStrideLoadOp>::OneToNOpConversionPattern;
 
+private:
+  LogicalResult lowerStrideLoad(
+      VMIStrideLoadOp op, OneToNPatternRewriter &rewriter, Value source,
+      Value offset, Value blockStride, Value repeatStride, ValueRange maskParts,
+      ArrayRef<Type> resultTypes) const {
+    bool invalidPhysicalArity = resultTypes.size() != 1 || maskParts.size() != 1;
+    if (invalidPhysicalArity) {
+      return rewriter.notifyMatchFailure(
+          op, "stride_load supports one physical result/mask chunk");
+    }
+    auto resultType = dyn_cast<VRegType>(resultTypes.front());
+    if (!resultType || !isa<MaskType>(maskParts.front().getType())) {
+      return rewriter.notifyMatchFailure(
+          op, "stride_load requires physical vreg/mask parts");
+    }
+    Value base = rewriter
+                     .create<AddPtrOp>(op.getLoc(), source.getType(), source,
+                                       offset)
+                     .getResult();
+    Value loaded = rewriter
+                       .create<VsldbOp>(op.getLoc(), resultType,
+                                        /*updated_base=*/Type{}, base,
+                                        blockStride, repeatStride,
+                                        maskParts.front())
+                       .getResult();
+    replaceOpWithFlatConvertedValues(rewriter, op, SmallVector<Value>{loaded},
+                                     *this->getTypeConverter());
+    return success();
+  }
+
+public:
+
   LogicalResult
   matchAndRewrite(VMIStrideLoadOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -11381,29 +11419,8 @@ struct OneToNVMIStrideLoadOpPattern
       return failure();
     }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-    bool invalidPhysicalArity = resultTypes.size() != 1 || maskParts.size() != 1;
-    if (invalidPhysicalArity) {
-      return rewriter.notifyMatchFailure(
-          op, "stride_load supports one physical result/mask chunk");
-    }
-    auto resultType = dyn_cast<VRegType>(resultTypes.front());
-    if (!resultType || !isa<MaskType>(maskParts.front().getType()))
-      return rewriter.notifyMatchFailure(
-          op, "stride_load requires physical vreg/mask parts");
-
-    Value base = rewriter
-                     .create<AddPtrOp>(op.getLoc(), (*source).getType(),
-                                       *source, *offset)
-                     .getResult();
-    Value loaded =
-        rewriter
-            .create<VsldbOp>(op.getLoc(), resultType,
-                             /*updated_base=*/Type{}, base, *blockStride,
-                             *repeatStride, maskParts.front())
-            .getResult();
-    replaceOpWithFlatConvertedValues(rewriter, op, SmallVector<Value>{loaded},
-                                     *this->getTypeConverter());
-    return success();
+    return lowerStrideLoad(op, rewriter, *source, *offset, *blockStride,
+                           *repeatStride, maskParts, resultTypes);
   }
 };
 
