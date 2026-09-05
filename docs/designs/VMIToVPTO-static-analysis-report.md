@@ -1787,3 +1787,13 @@ physical arity 检查与结果收集；保持 `VmulaOp(acc, lhs, rhs, mask)` ope
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
 `vmi_to_vpto_fma.pto` 当前在既有 VMI pack/unpack pipeline invariant 处提前失败，未进入
 本轮 helper，不能将该失败归因于本轮改动。
+
+# vexpdif physical chunk lowering 职责整改
+
+本轮将 `OneToNVMIVexpdifOpPattern::matchAndRewrite` 的 f32 与 f16 两类 physical chunk
+校验和目标指令发射分别抽取为 `lowerF32Part`、`lowerF16Part`。入口继续负责 merge
+predicate mode 拒绝、输入 arity、源元素类型和结果组数判定；保持 f32 使用 ODD、f16
+按 EVEN/ODD 展开、结果顺序、mask 粒度（b32/b16）和原有诊断不变。为满足 `G.FMT.11-CPP`
+同时补齐本入口控制流大括号。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_vexpdif_f16.pto` 与 `vmi_to_vpto_vexpdif_f32.pto` lowering 均 exit=0。

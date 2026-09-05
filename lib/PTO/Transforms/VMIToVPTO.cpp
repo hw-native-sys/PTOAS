@@ -12291,22 +12291,72 @@ public:
 struct OneToNVMIVexpdifOpPattern : OneToNOpConversionPattern<VMIVexpdifOp> {
   using OneToNOpConversionPattern<VMIVexpdifOp>::OneToNOpConversionPattern;
 
+private:
+  FailureOr<Value> lowerF32Part(VMIVexpdifOp op, Value x, Value max,
+                                Value mask, Type resultType,
+                                OneToNPatternRewriter &rewriter) const {
+    auto vregType = dyn_cast<VRegType>(resultType);
+    auto maskType = dyn_cast<MaskType>(mask.getType());
+    const bool invalidPart =
+        !vregType || !maskType || !vregType.getElementType().isF32() ||
+        x.getType() != resultType || max.getType() != resultType ||
+        maskType.getGranularity() != "b32";
+    if (invalidPart) {
+      rewriter.notifyMatchFailure(
+          op, "f32 vexpdif requires matching f32 parts and b32 masks");
+      return failure();
+    }
+    return rewriter
+        .create<VexpdifOp>(op.getLoc(), resultType, x, max, mask,
+                           rewriter.getStringAttr("ODD"))
+        .getResult();
+  }
+
+  FailureOr<Value> lowerF16Part(VMIVexpdifOp op, Value x, Value max,
+                                Value mask, Type resultType, StringRef part,
+                                OneToNPatternRewriter &rewriter) const {
+    auto xType = dyn_cast<VRegType>(x.getType());
+    auto resultVRegType = dyn_cast<VRegType>(resultType);
+    auto maskType = dyn_cast<MaskType>(mask.getType());
+    const bool invalidPart =
+        !xType || !resultVRegType || !maskType ||
+        !xType.getElementType().isF16() ||
+        !resultVRegType.getElementType().isF32() ||
+        max.getType() != x.getType() || maskType.getGranularity() != "b16";
+    if (invalidPart) {
+      rewriter.notifyMatchFailure(
+          op, "f16 vexpdif requires matching f16 parts and b16 masks");
+      return failure();
+    }
+    return rewriter
+        .create<VexpdifOp>(op.getLoc(), resultType, x, max, mask,
+                           rewriter.getStringAttr(part))
+        .getResult();
+  }
+
+public:
   LogicalResult
   matchAndRewrite(VMIVexpdifOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
-    if (op.getPmode().has_value() && *op.getPmode() == "merge")
+    const bool requiresPassthru =
+        op.getPmode().has_value() && *op.getPmode() == "merge";
+    if (requiresPassthru) {
       return rewriter.notifyMatchFailure(
           op, "merge predicate mode requires an explicit passthru lowering");
+    }
 
     ValueRange xParts = adaptor.getX();
     ValueRange maxParts = adaptor.getMax();
     ValueRange maskParts = adaptor.getMask();
     FailureOr<SmallVector<Type>> maybeResultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybeResultTypes))
+    if (failed(maybeResultTypes)) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybeResultTypes);
-    if (xParts.size() != maxParts.size() || xParts.size() != maskParts.size()) {
+    const bool invalidInputArity =
+        xParts.size() != maxParts.size() || xParts.size() != maskParts.size();
+    if (invalidInputArity) {
       return rewriter.notifyMatchFailure(op, "vexpdif physical arity mismatch");
     }
 
@@ -12315,29 +12365,25 @@ struct OneToNVMIVexpdifOpPattern : OneToNOpConversionPattern<VMIVexpdifOp> {
     results.reserve(resultTypes.size());
 
     if (sourceVMIType.getElementType().isF32()) {
-      if (xParts.size() != resultTypes.size()) {
+      const bool invalidF32Arity = xParts.size() != resultTypes.size();
+      if (invalidF32Arity) {
         return rewriter.notifyMatchFailure(
             op, "f32 vexpdif requires one result per source part");
       }
       for (auto [x, max, mask, resultType] :
            llvm::zip_equal(xParts, maxParts, maskParts, resultTypes)) {
-        auto vregType = dyn_cast<VRegType>(resultType);
-        auto maskType = dyn_cast<MaskType>(mask.getType());
-        if (!vregType || !maskType || !vregType.getElementType().isF32() ||
-            x.getType() != resultType || max.getType() != resultType ||
-            maskType.getGranularity() != "b32") {
-          return rewriter.notifyMatchFailure(
-              op, "f32 vexpdif requires matching f32 parts and b32 masks");
+        FailureOr<Value> result =
+            lowerF32Part(op, x, max, mask, resultType, rewriter);
+        if (failed(result)) {
+          return failure();
         }
-        results.push_back(rewriter
-                              .create<VexpdifOp>(op.getLoc(), resultType, x,
-                                                 max, mask,
-                                                 rewriter.getStringAttr("ODD"))
-                              .getResult());
+        results.push_back(*result);
       }
     } else {
-      if (!sourceVMIType.getElementType().isF16() ||
-          resultTypes.size() != 2 * xParts.size()) {
+      const bool invalidF16Arity =
+          !sourceVMIType.getElementType().isF16() ||
+          resultTypes.size() != 2 * xParts.size();
+      if (invalidF16Arity) {
         return rewriter.notifyMatchFailure(
             op, "f16 vexpdif requires EVEN/ODD f32 result parts");
       }
@@ -12348,21 +12394,12 @@ struct OneToNVMIVexpdifOpPattern : OneToNOpConversionPattern<VMIVexpdifOp> {
           Value max = maxParts[chunkIndex];
           Value mask = maskParts[chunkIndex];
           Type resultType = resultTypes[partIndex * xParts.size() + chunkIndex];
-          auto xType = dyn_cast<VRegType>(x.getType());
-          auto resultVRegType = dyn_cast<VRegType>(resultType);
-          auto maskType = dyn_cast<MaskType>(mask.getType());
-          if (!xType || !resultVRegType || !maskType ||
-              !xType.getElementType().isF16() ||
-              !resultVRegType.getElementType().isF32() ||
-              max.getType() != x.getType() ||
-              maskType.getGranularity() != "b16")
-            return rewriter.notifyMatchFailure(
-                op, "f16 vexpdif requires matching f16 parts and b16 masks");
-          results.push_back(rewriter
-                                .create<VexpdifOp>(op.getLoc(), resultType, x,
-                                                   max, mask,
-                                                   rewriter.getStringAttr(part))
-                                .getResult());
+          FailureOr<Value> result = lowerF16Part(
+              op, x, max, mask, resultType, part, rewriter);
+          if (failed(result)) {
+            return failure();
+          }
+          results.push_back(*result);
         }
       }
     }
