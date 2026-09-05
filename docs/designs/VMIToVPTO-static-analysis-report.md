@@ -2144,6 +2144,15 @@ chunk 顺序、诊断及结果替换语义不变。增量 `check_changed_code.py
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_group_broadcast_load_e2b_b16.pto` lowering exit=0。
 
+# group broadcast load direct/fallback 分派职责整改
+
+本轮在 `OneToNVMIGroupBroadcastLoadOpPattern::lowerDirectOrFallback` 中引入
+`tryLowerDirectBRC` 与 `tryLowerDirectE2B`，分别封装 BRC/E2B candidate、dist token、地址
+合法性判断和 direct lowering 调用。主函数现在只负责 BRC→E2B→group-slot fallback 的优先
+级分派；保持 directFact 条件、地址分析、失败传播、结果顺序、诊断和 fallback 语义不变。
+增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_to_vpto_group_broadcast_load_e2b_b16.pto` lowering exit=0。
+
 # group broadcast load fallback source plan 职责整改
 
 本轮在 `OneToNVMIGroupBroadcastLoadOpPattern::lowerGroupSlotFallback` 中引入

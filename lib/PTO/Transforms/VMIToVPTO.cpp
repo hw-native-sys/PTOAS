@@ -11424,58 +11424,95 @@ private:
     return success();
   }
 
+  FailureOr<bool> tryLowerDirectBRC(
+      VMIGroupBroadcastLoadOp op, OneToNPatternRewriter &rewriter,
+      Value source, Value offset, Value sourceGroupStride,
+      VMIVRegType resultVMIType, ArrayRef<Type> resultTypes, int64_t numGroups,
+      FailureOr<VMIGroupBroadcastLoadDirectFact> &directFact) const {
+    bool candidate = succeeded(directFact) &&
+                     directFact->kind == VMIGroupBroadcastLoadDirectKind::BRC &&
+                     !resultTypes.empty();
+    if (!candidate) {
+      return false;
+    }
+    unsigned bits =
+        pto::getPTOStorageElemBitWidth(resultVMIType.getElementType());
+    std::optional<StringRef> dist;
+    if (bits == 8) {
+      dist = StringRef("BRC_B8");
+    } else if (bits == 16) {
+      dist = StringRef("BRC_B16");
+    } else if (bits == 32) {
+      dist = StringRef("BRC_B32");
+    }
+    auto firstType = dyn_cast<VRegType>(resultTypes.front());
+    bool legal = dist && firstType && isDirectMemoryDistAddressLegal(
+                                  op.getSource(), op.getOffset(),
+                                  resultVMIType.getElementType(), firstType,
+                                  VPTOMemoryOpFamily::Load, *dist);
+    if (!legal) {
+      return false;
+    }
+    if (failed(lowerDirectBRC(op, rewriter, source, offset, sourceGroupStride,
+                              resultTypes, numGroups, *dist))) {
+      return failure();
+    }
+    return true;
+  }
+
+  FailureOr<bool> tryLowerDirectE2B(
+      VMIGroupBroadcastLoadOp op, OneToNPatternRewriter &rewriter,
+      Value source, Value offset, VMIVRegType resultVMIType,
+      ArrayRef<Type> resultTypes, int64_t numGroups,
+      FailureOr<VMIGroupBroadcastLoadDirectFact> &directFact) const {
+    bool candidate = succeeded(directFact) &&
+                     directFact->kind == VMIGroupBroadcastLoadDirectKind::E2B &&
+                     !resultTypes.empty();
+    if (!candidate) {
+      return false;
+    }
+    unsigned bits = directFact->layout.elementBits;
+    StringRef dist = bits == 16 ? StringRef("E2B_B16") : StringRef("E2B_B32");
+    auto firstType = dyn_cast<VRegType>(resultTypes.front());
+    bool legal = (bits == 16 || bits == 32) && firstType &&
+                 isDirectMemoryDistAddressLegal(
+                     op.getSource(), op.getOffset(),
+                     resultVMIType.getElementType(), firstType,
+                     VPTOMemoryOpFamily::Load, dist);
+    if (!legal) {
+      return false;
+    }
+    if (failed(lowerDirectE2B(op, rewriter, source, offset, resultVMIType,
+                              resultTypes, numGroups, bits,
+                              resultVMIType.getLayoutAttr()))) {
+      return failure();
+    }
+    return true;
+  }
+
   LogicalResult lowerDirectOrFallback(
       VMIGroupBroadcastLoadOp op, OneToNPatternRewriter &rewriter,
       Value source, Value offset, Value sourceGroupStride,
       VMIVRegType resultVMIType, ArrayRef<Type> resultTypes, int64_t numGroups,
       FailureOr<VMIGroupBroadcastLoadDirectFact> &directFact) const {
-    auto getBRCDist = [&resultVMIType]() -> std::optional<StringRef> {
-      unsigned bits =
-          pto::getPTOStorageElemBitWidth(resultVMIType.getElementType());
-      if (bits == 8) {
-        return StringRef("BRC_B8");
-      }
-      if (bits == 16) {
-        return StringRef("BRC_B16");
-      }
-      if (bits == 32) {
-        return StringRef("BRC_B32");
-      }
-      return std::nullopt;
-    };
-    bool canUseBRC = succeeded(directFact) &&
-                     directFact->kind == VMIGroupBroadcastLoadDirectKind::BRC &&
-                     !resultTypes.empty();
-    if (canUseBRC) {
-      std::optional<StringRef> dist = getBRCDist();
-      auto firstType = dyn_cast<VRegType>(resultTypes.front());
-      canUseBRC = dist && firstType && isDirectMemoryDistAddressLegal(
-                                      op.getSource(), op.getOffset(),
-                                      resultVMIType.getElementType(), firstType,
-                                      VPTOMemoryOpFamily::Load, *dist);
-      if (canUseBRC) {
-        return lowerDirectBRC(op, rewriter, source, offset, sourceGroupStride,
-                              resultTypes, numGroups, *dist);
-      }
+    FailureOr<bool> loweredBRC = tryLowerDirectBRC(
+        op, rewriter, source, offset, sourceGroupStride, resultVMIType,
+        resultTypes, numGroups, directFact);
+    if (failed(loweredBRC)) {
+      return failure();
+    }
+    if (*loweredBRC) {
+      return success();
     }
 
-    bool canUseE2B = succeeded(directFact) &&
-                     directFact->kind == VMIGroupBroadcastLoadDirectKind::E2B &&
-                     !resultTypes.empty();
-    if (canUseE2B) {
-      unsigned bits = directFact->layout.elementBits;
-      StringRef dist = bits == 16 ? StringRef("E2B_B16") : StringRef("E2B_B32");
-      auto firstType = dyn_cast<VRegType>(resultTypes.front());
-      canUseE2B = (bits == 16 || bits == 32) && firstType &&
-                  isDirectMemoryDistAddressLegal(
-                      op.getSource(), op.getOffset(),
-                      resultVMIType.getElementType(), firstType,
-                      VPTOMemoryOpFamily::Load, dist);
-      if (canUseE2B) {
-        return lowerDirectE2B(op, rewriter, source, offset, resultVMIType,
-                              resultTypes, numGroups, bits,
-                              resultVMIType.getLayoutAttr());
-      }
+    FailureOr<bool> loweredE2B = tryLowerDirectE2B(
+        op, rewriter, source, offset, resultVMIType, resultTypes, numGroups,
+        directFact);
+    if (failed(loweredE2B)) {
+      return failure();
+    }
+    if (*loweredE2B) {
+      return success();
     }
     return lowerGroupSlotFallback(op, rewriter, source, offset,
                                   sourceGroupStride, resultVMIType, resultTypes,
