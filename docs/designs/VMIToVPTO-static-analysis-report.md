@@ -996,3 +996,9 @@ contract lookup 和 conversion 名称；同宽 layout/arity 及非同宽 cast-la
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
 整数 cast lit 在测试自身的 VMI pack/unpack pipeline invariant 处提前失败，未进入
 本轮 verifier/lowering 路径。
+本轮将 FP→整数 verifier 的同宽 layout/physical arity 检查进一步抽取为
+`checkSameWidthConversionArity`，并由共享的 `checkSupportedFPToIntShape` 调用；
+signed/unsigned contract 与非同宽 cast-layout 检查保持原有独立语义。这样消除了
+conversion verifier 中重复的同宽契约代码。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；mask/layout lowering
+代表性 case exit=0。

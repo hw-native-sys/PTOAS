@@ -15494,15 +15494,10 @@ LogicalResult checkSupportedFPToIntShape(OpTy op, StringRef conversionName,
 
   if (srcBits == dstBits) {
     // Same-width (f32→s32, f16→s16): layout equality + arity equality.
-    if (sourceLayout != resultLayout)
-      return fail(Twine("same-width ") + conversionName +
-                  " requires matching layouts");
-    FailureOr<int64_t> sourceArity = getVMIPhysicalArity(sourceType);
-    FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
-    if (failed(sourceArity) || failed(resultArity) ||
-        *sourceArity != *resultArity)
-      return fail(Twine("same-width ") + conversionName +
-                  " requires matching physical arity");
+    if (failed(checkSameWidthConversionArity(sourceType, resultType,
+                                             conversionName, reason))) {
+      return failure();
+    }
   } else {
     // Widen or narrow: use the cast-layout framework (same as extf/truncf).
     VMILayoutSupport layoutSupport;
@@ -15513,6 +15508,33 @@ LogicalResult checkSupportedFPToIntShape(OpTy op, StringRef conversionName,
       return failure();
   }
 
+  return success();
+}
+
+static LogicalResult checkSameWidthConversionArity(
+    VMIVRegType sourceType, VMIVRegType resultType, StringRef conversionName,
+    std::string *reason) {
+  bool layoutMismatch = sourceType.getLayoutAttr() != resultType.getLayoutAttr();
+  if (layoutMismatch) {
+    if (reason) {
+      *reason = (Twine("same-width ") + conversionName +
+                 " requires matching layouts")
+                    .str();
+    }
+    return failure();
+  }
+  FailureOr<int64_t> sourceArity = getVMIPhysicalArity(sourceType);
+  FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
+  bool arityMismatch = failed(sourceArity) || failed(resultArity) ||
+                       *sourceArity != *resultArity;
+  if (arityMismatch) {
+    if (reason) {
+      *reason = (Twine("same-width ") + conversionName +
+                 " requires matching physical arity")
+                    .str();
+    }
+    return failure();
+  }
   return success();
 }
 
@@ -15564,7 +15586,7 @@ LogicalResult checkSupportedSIToFPShape(VMISIToFPOp op,
     FailureOr<int64_t> sourceArity = getVMIPhysicalArity(sourceType);
     FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
     bool aritiesOk = succeeded(sourceArity) && succeeded(resultArity) &&
-        *sourceArity == *resultArity;
+                     *sourceArity == *resultArity;
     if (!aritiesOk) {
       return fail("requires matching computable physical arity");
     }
