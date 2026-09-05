@@ -6100,6 +6100,16 @@ materializeMaskGranularityCastStagingLayout(
     Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
     ValueRange sourceParts, TypeRange resultTypes, PatternRewriter &rewriter);
 
+static FailureOr<SmallVector<Value>> forwardIdentityMaskParts(
+    Operation *op, ValueRange sourceParts, TypeRange resultTypes,
+    PatternRewriter &rewriter) {
+  if (failed(verifyIdentityPartForwarding(op, sourceParts, resultTypes,
+                                          rewriter))) {
+    return failure();
+  }
+  return SmallVector<Value>(sourceParts.begin(), sourceParts.end());
+}
+
 FailureOr<std::optional<SmallVector<Value>>>
 materializeMaskGranularityCastLayoutFallback(
     Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
@@ -6227,10 +6237,12 @@ FailureOr<SmallVector<Value>> materializeMaskGranularityCastLayoutConversion(
   }
 
   if (sourceLayout == resultLayout) {
-    if (failed(verifyIdentityPartForwarding(op, sourceParts, resultTypes,
-                                            rewriter)))
+    FailureOr<SmallVector<Value>> identity =
+        forwardIdentityMaskParts(op, sourceParts, resultTypes, rewriter);
+    if (failed(identity)) {
       return failure();
-    return SmallVector<Value>(sourceParts.begin(), sourceParts.end());
+    }
+    return std::move(*identity);
   }
 
   FailureOr<std::optional<SmallVector<Value>>> fallback =
@@ -6292,10 +6304,12 @@ FailureOr<SmallVector<Value>> materializeMaskGranularityCastConversion(
   }
 
   if (plan->physicalSourceType == plan->physicalResultType) {
-    if (failed(verifyIdentityPartForwarding(op, sourceParts, resultTypes,
-                                            rewriter)))
+    FailureOr<SmallVector<Value>> identity =
+        forwardIdentityMaskParts(op, sourceParts, resultTypes, rewriter);
+    if (failed(identity)) {
       return failure();
-    return SmallVector<Value>(sourceParts.begin(), sourceParts.end());
+    }
+    return std::move(*identity);
   }
 
   bool samePhysicalLayout =

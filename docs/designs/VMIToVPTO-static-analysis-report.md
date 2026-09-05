@@ -1419,3 +1419,13 @@ chunk 的类型检查、direct `Vstsx2Op` 发射和 stream `VintlvOp`/advance �
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
 `vmi_interleaved_memory_ops.pto` lowering exit=0，invalid case 仍按原有 VMI operand
 lane-count verifier 失败。
+
+# mask identity forwarding 整改
+
+本轮将 mask granularity/layout cast 中重复的 identity physical-part 校验与 forwarding
+抽取为 `forwardIdentityMaskParts`，复用于相同逻辑 layout 和相同 physical carrier 的
+两条路径。该 helper 只统一 arity/type 校验和 `SmallVector<Value>` 返回，未改变 layout
+转换分派、失败诊断或 mask granularity 语义。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。现有 mask layout case
+分别在已有 layout contract 冲突或 VMI pack/unpack pipeline invariant 处提前失败，未
+进入本轮 identity 路径。
