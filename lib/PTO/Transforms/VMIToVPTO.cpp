@@ -14353,6 +14353,66 @@ std::optional<WalkResult> verifySupportedVMIMemoryOp(
   return std::nullopt;
 }
 
+std::optional<WalkResult> verifySupportedVMILayoutOp(Operation *op) {
+  if (auto ensure = dyn_cast<VMIEnsureLayoutOp>(op)) {
+    auto sourceType = cast<VMIVRegType>(ensure.getSource().getType());
+    auto resultType = cast<VMIVRegType>(ensure.getResult().getType());
+    std::string reason;
+    VMILayoutSupport supports;
+    if (succeeded(supports.getEnsureLayoutFact(sourceType, resultType,
+                                               &reason))) {
+      return WalkResult::advance();
+    }
+
+    emitEnsureLayoutMaterializationError(ensure, sourceType, resultType,
+                                         reason);
+    return WalkResult::interrupt();
+  }
+
+  if (auto ensure = dyn_cast<VMIEnsureMaskLayoutOp>(op)) {
+    auto sourceType = cast<VMIMaskType>(ensure.getSource().getType());
+    auto resultType = cast<VMIMaskType>(ensure.getResult().getType());
+    std::string reason;
+    VMILayoutSupport supports;
+    if (succeeded(supports.getEnsureMaskLayoutFact(sourceType, resultType,
+                                                   &reason))) {
+      return WalkResult::advance();
+    }
+
+    ensure.emitError()
+        << kVMIDiagUnsupportedPrefix
+        << "pto.vmi.ensure_mask_layout cannot materialize the requested mask "
+           "layout conversion ("
+        << reason
+        << "); partial/tail predicate layout materialization requires an "
+           "explicit packing plan";
+    return WalkResult::interrupt();
+  }
+
+  if (auto ensure = dyn_cast<VMIEnsureMaskGranularityOp>(op)) {
+    auto sourceType = cast<VMIMaskType>(ensure.getSource().getType());
+    auto resultType = cast<VMIMaskType>(ensure.getResult().getType());
+    bool identity = sourceType.getGranularity() == resultType.getGranularity() &&
+                    sourceType.getLayoutAttr() == resultType.getLayoutAttr();
+    if (!identity) {
+      VMILayoutSupport supports;
+      std::string reason;
+      if (failed(supports.getMaskGranularityCastLayoutFactForLayouts(
+              sourceType, resultType, sourceType.getLayoutAttr(),
+              resultType.getLayoutAttr(), &reason))) {
+        ensure.emitError()
+            << kVMIDiagUnsupportedPrefix
+            << "mask granularity cast layout relation is unsupported ("
+            << reason << ")";
+        return WalkResult::interrupt();
+      }
+    }
+    return WalkResult::advance();
+  }
+
+  return std::nullopt;
+}
+
 LogicalResult
 verifySupportedVMIToVPTOOps(ModuleOp module,
                             bool enableStableGatherMaskedLoad) {
@@ -14376,6 +14436,10 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
             op, enableStableGatherMaskedLoad);
         memoryResult.has_value()) {
       return *memoryResult;
+    }
+    if (auto layoutResult = verifySupportedVMILayoutOp(op);
+        layoutResult.has_value()) {
+      return *layoutResult;
     }
 
     if (auto constant = dyn_cast<VMIConstantOp>(op)) {
@@ -14432,62 +14496,6 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
              "mask, and contiguous 256x{ui16|i16} acc/result ("
           << reason << ")";
       return WalkResult::interrupt();
-    }
-
-    if (auto ensure = dyn_cast<VMIEnsureLayoutOp>(op)) {
-      auto sourceType = cast<VMIVRegType>(ensure.getSource().getType());
-      auto resultType = cast<VMIVRegType>(ensure.getResult().getType());
-      std::string reason;
-      VMILayoutSupport supports;
-      if (succeeded(
-              supports.getEnsureLayoutFact(sourceType, resultType, &reason)))
-        return WalkResult::advance();
-
-      emitEnsureLayoutMaterializationError(ensure, sourceType, resultType,
-                                           reason);
-      return WalkResult::interrupt();
-    }
-
-    if (auto ensure = dyn_cast<VMIEnsureMaskLayoutOp>(op)) {
-      auto sourceType = cast<VMIMaskType>(ensure.getSource().getType());
-      auto resultType = cast<VMIMaskType>(ensure.getResult().getType());
-      std::string reason;
-      VMILayoutSupport supports;
-      if (succeeded(supports.getEnsureMaskLayoutFact(sourceType, resultType,
-                                                     &reason)))
-        return WalkResult::advance();
-
-      ensure.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.ensure_mask_layout cannot materialize the requested "
-             "mask layout conversion ("
-          << reason
-          << "); partial/tail predicate layout materialization requires an "
-             "explicit packing plan";
-      return WalkResult::interrupt();
-    }
-
-    if (auto ensure = dyn_cast<VMIEnsureMaskGranularityOp>(op)) {
-      auto sourceType = cast<VMIMaskType>(ensure.getSource().getType());
-      auto resultType = cast<VMIMaskType>(ensure.getResult().getType());
-      bool identity =
-          sourceType.getGranularity() == resultType.getGranularity() &&
-          sourceType.getLayoutAttr() == resultType.getLayoutAttr();
-      if (!identity) {
-        VMILayoutSupport supports;
-        std::string reason;
-        if (failed(supports.getMaskGranularityCastLayoutFactForLayouts(
-                sourceType, resultType, sourceType.getLayoutAttr(),
-                resultType.getLayoutAttr(), &reason))) {
-          ensure.emitError()
-              << kVMIDiagUnsupportedPrefix
-              << "mask granularity cast layout relation is unsupported ("
-              << reason << ")";
-          return WalkResult::interrupt();
-        }
-      }
-
-      return WalkResult::advance();
     }
 
     if (auto addf = dyn_cast<VMIAddFOp>(op))
