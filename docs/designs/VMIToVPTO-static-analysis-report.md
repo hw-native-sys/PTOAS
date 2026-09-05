@@ -723,3 +723,10 @@ helper 独立负责 NORM 对齐 `vlds` 与非对齐 `vldas`/多轮 `vldus` 的�
 lane-stride/deinterleaved 快路径和地址安全证明。该拆分保持非对齐访存的 align 寄存器
 逐轮传递语义及结果顺序不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；连续 load/store 与 interleave memory lowering 回归通过。
+
+本轮将 load lowering 中 deinterleaved factor=2/4 的 direct `vldsx2` 能力判断抽取为
+`lowerDirectDeinterleaved`。helper 统一处理布局 factor、DINTLV dist token、地址合法性
+和 physical arity，再分别调用 factor=2/4 物化 helper；主 pattern 保留 lane-stride
+优先级、full/safe-read 证明和 contiguous fallback。非对齐路径选择及结果顺序不变。
+增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+连续 load/store 与 interleave memory lowering 回归通过。
