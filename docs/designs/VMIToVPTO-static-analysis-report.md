@@ -139,3 +139,8 @@ vmi_layout_assignment_group_store_slots1_unit_stride.pto               exit=0
 ```
 
 这组 case 覆盖了本轮抽取涉及的三种后端选择，未观察到 lowering 失败。
+
+另外将 `checkSupportedGroupStoreShape` 的 `group_slots` 支持判定抽取为
+`checkSupportedGroupSlotsStoreShape`（提交 `f330e7ecb`），集中处理布局事实、dense
+memory access proof、slots=1 的 1PT 约束和 slots=8 的 unit-stride 约束；通用
+group-store（one-block/deinterleaved）检查流程保持原顺序。
