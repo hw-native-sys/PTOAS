@@ -15320,8 +15320,9 @@ Block *convertBranchDestBlock(Block *block, OneToNPatternRewriter &rewriter,
                               OneToNTypeConverter &typeConverter,
                               llvm::DenseMap<Block *, Block *> &converted) {
   auto [it, inserted] = converted.try_emplace(block, nullptr);
-  if (!inserted)
+  if (!inserted) {
     return it->second;
+  }
 
   OneToNTypeMapping argMapping(block->getArgumentTypes());
   if (failed(typeConverter.computeTypeMapping(block->getArgumentTypes(),
@@ -15375,9 +15376,11 @@ struct OneToNCFCondBranchOpPattern
       return failure();
 
     ValueRange condition = adaptor.getCondition();
-    if (condition.size() != 1)
+    bool conditionArityMismatch = condition.size() != 1;
+    if (conditionArityMismatch) {
       return rewriter.notifyMatchFailure(
           op, "condition converted to multiple values");
+    }
 
     SmallVector<Value> trueOperands;
     SmallVector<Value> falseOperands;
@@ -15420,13 +15423,16 @@ struct OneToNCFSwitchOpPattern : OneToNOpConversionPattern<cf::SwitchOp> {
          llvm::zip(op.getCaseDestinations(), caseDests))
       changed |= oldDest != newDest;
     changed |= adaptor.getOperandMapping().hasNonIdentityConversion();
-    if (!changed)
+    if (!changed) {
       return failure();
+    }
 
     ValueRange flag = adaptor.getFlag();
-    if (flag.size() != 1)
+    bool flagArityMismatch = flag.size() != 1;
+    if (flagArityMismatch) {
       return rewriter.notifyMatchFailure(op,
                                          "flag converted to multiple values");
+    }
 
     SmallVector<Value> defaultOperands;
     SmallVector<SmallVector<Value>> caseOperandStorage;
@@ -15469,8 +15475,9 @@ struct OneToNSCFExecuteRegionOpPattern
     const OneToNTypeMapping &resultMapping = adaptor.getResultMapping();
     for (unsigned i = 0, e = op->getNumResults(); i < e; ++i)
       llvm::append_range(resultTypes, resultMapping.getConvertedTypes(i));
-    if (resultTypes == op->getResultTypes())
+    if (resultTypes == op->getResultTypes()) {
       return failure();
+    }
 
     auto newOp =
         rewriter.create<scf::ExecuteRegionOp>(op.getLoc(), resultTypes);
@@ -15491,16 +15498,19 @@ struct OneToNSCFIndexSwitchOpPattern
   matchAndRewrite(scf::IndexSwitchOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
     ValueRange arg = adaptor.getArg();
-    if (arg.size() != 1)
+    bool selectorArityMismatch = arg.size() != 1;
+    if (selectorArityMismatch) {
       return rewriter.notifyMatchFailure(
           op, "index_switch selector converted to multiple values");
+    }
 
     SmallVector<Type> resultTypes;
     const OneToNTypeMapping &resultMapping = adaptor.getResultMapping();
     for (unsigned i = 0, e = op->getNumResults(); i < e; ++i)
       llvm::append_range(resultTypes, resultMapping.getConvertedTypes(i));
-    if (resultTypes == op->getResultTypes())
+    if (resultTypes == op->getResultTypes()) {
       return failure();
+    }
 
     auto newOp = rewriter.create<scf::IndexSwitchOp>(
         op.getLoc(), resultTypes, arg.front(), op.getCases(), op.getNumCases());
