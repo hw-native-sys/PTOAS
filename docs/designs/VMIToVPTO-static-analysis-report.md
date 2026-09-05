@@ -1657,3 +1657,13 @@ dist 选择、静态地址合法性检查、direct lowering 以及 fallback 优�
 行为。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
 通过。`vmi_to_vpto_memory_x2_widths.pto` 抽样仍在既有 VMI pack/unpack pipeline invariant
 处提前失败，未进入本轮 helper。
+
+# masked_store lane-stride 路径整改
+
+本轮将 `OneToNVMIMaskedStoreOpPattern::matchAndRewrite` 中 lane-stride masked store 的
+value/mask layout 校验、active lane 计算、mask 压缩、地址合法性证明和 `vsts` 发射抽取
+为 `lowerLaneStride`。入口继续负责 operand/arity 校验、lane-stride dist 与 mask 粒度
+探测，并在不满足条件时回到 contiguous layout conversion；原有 semantic offset、
+padding/zero-active-lane 和失败诊断语义保持不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_masked_store.pto` lowering exit=0。

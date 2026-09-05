@@ -10864,6 +10864,60 @@ struct OneToNVMIMaskedStoreOpPattern
   using OneToNOpConversionPattern<VMIMaskedStoreOp>::OneToNOpConversionPattern;
 
 private:
+  LogicalResult lowerLaneStride(
+      VMIMaskedStoreOp op, OneToNPatternRewriter &rewriter,
+      ValueRange valueParts, ValueRange maskParts, VMIVRegType valueVMIType,
+      VMIMaskType maskVMIType, Value destination, Value offset,
+      StringRef dist, StringRef maskGranularity) const {
+    VMILayoutAttr valueLayout = valueVMIType.getLayoutAttr();
+    VMILayoutAttr maskLayout = maskVMIType.getLayoutAttr();
+    if (!valueLayout || !maskLayout || valueLayout != maskLayout) {
+      return rewriter.notifyMatchFailure(
+          op, "lane_stride masked_store requires matching value/mask layouts");
+    }
+    int64_t semanticOffset = 0;
+    for (auto [index, valueAndMask] :
+         llvm::enumerate(llvm::zip_equal(valueParts, maskParts))) {
+      auto [value, mask] = valueAndMask;
+      auto vregType = dyn_cast<VRegType>(value.getType());
+      if (!vregType || !isa<MaskType>(mask.getType())) {
+        return rewriter.notifyMatchFailure(
+            op, "lane_stride masked_store parts must be vreg/mask");
+      }
+      FailureOr<int64_t> activeLanes =
+          getActiveDataLanesInPhysicalChunk(valueVMIType, index);
+      if (failed(activeLanes)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to compute lane_stride masked_store active lanes");
+      }
+      if (*activeLanes == 0) {
+        continue;
+      }
+      FailureOr<Value> storeMask = createDenseLaneStrideStorePredicate(
+          op.getLoc(), valueVMIType, index, mask, maskGranularity, rewriter);
+      if (failed(storeMask)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to compact lane_stride masked_store predicate");
+      }
+      Value chunkOffset =
+          createChunkOffset(op.getLoc(), offset, semanticOffset, rewriter);
+      bool illegalAddress = !isDirectMemoryDistAddressLegal(
+          destination, chunkOffset, valueVMIType.getElementType(), vregType,
+          VPTOMemoryOpFamily::Store, dist);
+      if (illegalAddress) {
+        return rewriter.notifyMatchFailure(
+            op, "lane_stride masked_store requires a proven target alignment "
+                "for every physical store chunk");
+      }
+      rewriter.create<VstsOp>(op.getLoc(), /*updated_base=*/Type{}, value,
+                              destination, chunkOffset,
+                              rewriter.getStringAttr(dist), *storeMask);
+      semanticOffset += *activeLanes;
+    }
+    rewriter.eraseOp(op);
+    return success();
+  }
+
   LogicalResult lowerContiguous(
       VMIMaskedStoreOp op, OneToNPatternRewriter &rewriter,
       ValueRange valueParts, ValueRange maskParts, VMIVRegType valueVMIType,
@@ -10974,49 +11028,10 @@ public:
             getDenseLaneStrideStoreDistToken(valueVMIType)) {
       std::optional<StringRef> maskGranularity =
           getDenseLaneStrideMaskedStoreMaskGranularity(valueVMIType);
-      VMILayoutAttr valueLayout = valueVMIType.getLayoutAttr();
-      VMILayoutAttr maskLayout = maskVMIType.getLayoutAttr();
-      if (maskGranularity && valueLayout && maskLayout &&
-          valueLayout == maskLayout) {
-        int64_t semanticOffset = 0;
-        for (auto [index, valueAndMask] :
-             llvm::enumerate(llvm::zip_equal(valueParts, maskParts))) {
-          auto [value, mask] = valueAndMask;
-          auto vregType = dyn_cast<VRegType>(value.getType());
-          if (!vregType || !isa<MaskType>(mask.getType()))
-            return rewriter.notifyMatchFailure(
-                op, "lane_stride masked_store parts must be vreg/mask");
-          FailureOr<int64_t> activeLanes =
-              getActiveDataLanesInPhysicalChunk(valueVMIType, index);
-          if (failed(activeLanes))
-            return rewriter.notifyMatchFailure(
-                op, "failed to compute lane_stride masked_store active lanes");
-          if (*activeLanes == 0)
-            continue;
-          FailureOr<Value> storeMask = createDenseLaneStrideStorePredicate(
-              op.getLoc(), valueVMIType, index, mask, *maskGranularity,
-              rewriter);
-          if (failed(storeMask))
-            return rewriter.notifyMatchFailure(
-                op, "failed to compact lane_stride masked_store predicate");
-          Value chunkOffset =
-              createChunkOffset(op.getLoc(), *offset, semanticOffset, rewriter);
-          if (!isDirectMemoryDistAddressLegal(
-                  *destination, chunkOffset, valueVMIType.getElementType(),
-                  vregType, VPTOMemoryOpFamily::Store, *dist)) {
-            return rewriter.notifyMatchFailure(
-                op, "lane_stride masked_store requires a proven target "
-                    "alignment for every physical store chunk");
-          }
-          rewriter.create<VstsOp>(op.getLoc(),
-                                  /*updated_base=*/Type{}, value, *destination,
-                                  chunkOffset, rewriter.getStringAttr(*dist),
-                                  *storeMask);
-          semanticOffset += *activeLanes;
-        }
-
-        rewriter.eraseOp(op);
-        return success();
+      if (maskGranularity) {
+        return lowerLaneStride(op, rewriter, valueParts, maskParts,
+                               valueVMIType, maskVMIType, *destination, *offset,
+                               *dist, *maskGranularity);
       }
     }
 
