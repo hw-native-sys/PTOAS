@@ -522,3 +522,9 @@ index mask 初始化抽取为 `createGroupBroadcastLoweringContext`，并以
 及 `por` 合并；外层仅负责结果类型、source/result arity 和 chunk 枚举。mask 语义与
 pack 顺序保持不变。增量合规检查为 `errors=0 warnings=0`，`git diff --check` 通过；
 mask granularity lowering 回归通过。
+
+本轮继续拆分模板化 interleave pattern，保留 zero-copy 重排 helper，并将 lane-stride
+carrier 与 direct contiguous 路径维持为独立分支。当前改动只调整前置检查的具名条件和
+zero-copy helper 的职责边界，不改变 `vintlv/vdintlv` 的 layout fact、结果顺序或
+目标指令生成。增量合规检查为 `errors=0 warnings=0`，`git diff --check` 通过；
+interleave memory 与连续 load/store lowering 回归通过。
