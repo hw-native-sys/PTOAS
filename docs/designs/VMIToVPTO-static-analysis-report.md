@@ -235,6 +235,13 @@ mask 的语义差异只存在于 active-lane 判定。补齐该批代码及 scal
 仍受测试自身的 pack/unpack 顺序 invariant 约束。增量合规检查与 `git diff --check`
 均通过。
 
+本轮又将 mask granularity cast 的 staging layout 分派抽取为
+`materializeMaskGranularityCastStagingForFactor`。该 helper 统一处理 contiguous 与
+element-deinterleaved factor=2/4 的方向判断及失败传播，外层只遍历受支持的 factor，
+消除了四组重复的 layout 条件和调用样板；转换优先级及结果保持不变。
+`vmi_to_vpto_ensure_mask_granularity.pto` 继续通过完整 lowering，增量合规检查与
+`git diff --check` 通过。
+
 本轮进一步将动态 `create_group_mask` 的单个物理 chunk 生成抽取为
 `materializeDynamicGroupMaskChunk`。辅助函数负责 index/块内 lane 推导、active-lane
 比较、padding mask 合并和结果类型检查；外层 `materializeDynamicGroupMaskForType`

@@ -5445,60 +5445,53 @@ materializeMaskGranularityCastLayoutConversionViaContiguous(
 }
 
 FailureOr<std::optional<SmallVector<Value>>>
-materializeMaskGranularityCastStagingLayout(
-    Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
-    ValueRange sourceParts, TypeRange resultTypes, PatternRewriter &rewriter) {
-  VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();
-  VMILayoutAttr resultLayout = resultType.getLayoutAttr();
+materializeMaskGranularityCastStagingForFactor(
+    Operation *op, VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
+    ValueRange sourceParts, TypeRange resultTypes, int64_t factor,
+    PatternRewriter &rewriter) {
   bool sourceContiguous =
       sourceLayout && sourceLayout.isContiguous() &&
       sourceLayout.getLaneStride() == 1;
   bool resultContiguous =
       resultLayout && resultLayout.isContiguous() &&
       resultLayout.getLaneStride() == 1;
-  bool sourceDeinterleaved2 =
-      isElementDeinterleavedLayout(sourceLayout, 2) && resultContiguous;
-  if (sourceDeinterleaved2) {
-    FailureOr<SmallVector<Value>> result =
-        materializeStagingDeintToContiguousMaskLayout(
-            op, sourceParts, resultTypes, /*factor=*/2, rewriter);
-    if (failed(result)) {
-      return failure();
-    }
-    return std::optional<SmallVector<Value>>(std::move(*result));
+  bool sourceDeinterleaved =
+      isElementDeinterleavedLayout(sourceLayout, factor) && resultContiguous;
+  bool resultDeinterleaved =
+      sourceContiguous && isElementDeinterleavedLayout(resultLayout, factor);
+  if (!sourceDeinterleaved && !resultDeinterleaved) {
+    return std::nullopt;
   }
-  bool resultDeinterleaved2 =
-      sourceContiguous && isElementDeinterleavedLayout(resultLayout, 2);
-  if (resultDeinterleaved2) {
-    FailureOr<SmallVector<Value>> result =
-        materializeStagingContiguousToDeintMaskLayout(
-            op, sourceParts, resultTypes, /*factor=*/2, rewriter);
-    if (failed(result)) {
-      return failure();
-    }
-    return std::optional<SmallVector<Value>>(std::move(*result));
+
+  FailureOr<SmallVector<Value>> result =
+      sourceDeinterleaved
+          ? materializeStagingDeintToContiguousMaskLayout(
+                op, sourceParts, resultTypes, factor, rewriter)
+          : materializeStagingContiguousToDeintMaskLayout(
+                op, sourceParts, resultTypes, factor, rewriter);
+  if (failed(result)) {
+    return failure();
   }
-  bool sourceDeinterleaved4 =
-      isElementDeinterleavedLayout(sourceLayout, 4) && resultContiguous;
-  if (sourceDeinterleaved4) {
-    FailureOr<SmallVector<Value>> result =
-        materializeStagingDeintToContiguousMaskLayout(
-            op, sourceParts, resultTypes, /*factor=*/4, rewriter);
+  return std::optional<SmallVector<Value>>(std::move(*result));
+}
+
+FailureOr<std::optional<SmallVector<Value>>>
+materializeMaskGranularityCastStagingLayout(
+    Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
+    ValueRange sourceParts, TypeRange resultTypes, PatternRewriter &rewriter) {
+  VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();
+  VMILayoutAttr resultLayout = resultType.getLayoutAttr();
+  for (int64_t factor : {2L, 4L}) {
+    FailureOr<std::optional<SmallVector<Value>>> result =
+        materializeMaskGranularityCastStagingForFactor(
+            op, sourceLayout, resultLayout, sourceParts, resultTypes, factor,
+            rewriter);
     if (failed(result)) {
       return failure();
     }
-    return std::optional<SmallVector<Value>>(std::move(*result));
-  }
-  bool resultDeinterleaved4 =
-      sourceContiguous && isElementDeinterleavedLayout(resultLayout, 4);
-  if (resultDeinterleaved4) {
-    FailureOr<SmallVector<Value>> result =
-        materializeStagingContiguousToDeintMaskLayout(
-            op, sourceParts, resultTypes, /*factor=*/4, rewriter);
-    if (failed(result)) {
-      return failure();
+    if (result->has_value()) {
+      return std::move(*result);
     }
-    return std::optional<SmallVector<Value>>(std::move(*result));
   }
   return std::nullopt;
 }
