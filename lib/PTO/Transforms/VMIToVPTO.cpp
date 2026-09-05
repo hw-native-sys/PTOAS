@@ -7268,6 +7268,76 @@ private:
     return success();
   }
 
+  LogicalResult lowerContiguous(
+      VMILoadOp op, OneToNPatternRewriter &rewriter, Value source,
+      Value offset, VMIVRegType resultVMIType, ArrayRef<Type> resultTypes,
+      ArrayRef<Type> contiguousTypes, int64_t lanesPerPart,
+      VMILayoutAttr contiguousLayout) const {
+    SmallVector<Value> contiguousParts;
+    contiguousParts.reserve(contiguousTypes.size());
+    auto firstContiguousType = contiguousTypes.empty()
+                                    ? VRegType{}
+                                    : dyn_cast<VRegType>(contiguousTypes.front());
+    bool useAlignedAccess =
+        firstContiguousType &&
+        isDirectMemoryDistAddressLegal(
+            op.getSource(), op.getOffset(), resultVMIType.getElementType(),
+            firstContiguousType, VPTOMemoryOpFamily::Load, "NORM");
+    Value unalignedBase;
+    Value unalignedAlign;
+    if (!useAlignedAccess) {
+      unalignedBase = materializeBufferPointer(
+          source, resultVMIType.getElementType(),
+          getMemorySpace(source.getType()), rewriter, op.getLoc());
+      if (!unalignedBase) {
+        return rewriter.notifyMatchFailure(
+            op, "continuous unaligned load requires a ptr-compatible source");
+      }
+      unalignedBase = rewriter
+                          .create<AddPtrOp>(op.getLoc(), unalignedBase.getType(),
+                                            unalignedBase, offset)
+                          .getResult();
+      unalignedAlign = rewriter
+                           .create<VldasOp>(
+                               op.getLoc(), AlignType::get(rewriter.getContext()),
+                               unalignedBase)
+                           .getResult();
+    }
+    for (auto [index, resultType] : llvm::enumerate(contiguousTypes)) {
+      if (!isa<VRegType>(resultType)) {
+        return rewriter.notifyMatchFailure(op, "load result must be vreg");
+      }
+      if (useAlignedAccess) {
+        Value chunkOffset = createChunkOffset(
+            op.getLoc(), offset, index * lanesPerPart, rewriter);
+        contiguousParts.push_back(
+            rewriter
+                .create<VldsOp>(op.getLoc(), resultType, /*updated_base=*/Type{},
+                                source, chunkOffset, /*dist=*/nullptr)
+                .getResult());
+        continue;
+      }
+      Value increment =
+          rewriter.create<arith::ConstantIndexOp>(op.getLoc(), lanesPerPart);
+      auto load = rewriter.create<VldusOp>(
+          op.getLoc(), resultType, unalignedAlign.getType(),
+          unalignedBase.getType(), unalignedBase, unalignedAlign, increment);
+      contiguousParts.push_back(load.getResult());
+      unalignedAlign = load.getUpdatedAlign();
+      unalignedBase = load.getUpdatedBase();
+    }
+    FailureOr<SmallVector<Value>> results = materializeDataLayoutConversion(
+        op, contiguousParts, resultTypes, contiguousLayout,
+        resultVMIType.getLayoutAttr(), resultVMIType.getElementType(),
+        rewriter);
+    if (failed(results)) {
+      return failure();
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, *results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
 public:
 
   LogicalResult
@@ -7365,73 +7435,9 @@ public:
       }
     }
 
-    SmallVector<Value> contiguousParts;
-    contiguousParts.reserve(contiguousTypes.size());
-    auto firstContiguousType =
-        contiguousTypes.empty() ? VRegType{}
-                                : dyn_cast<VRegType>(contiguousTypes.front());
-    bool useAlignedAccess =
-        firstContiguousType &&
-        isDirectMemoryDistAddressLegal(
-            op.getSource(), op.getOffset(), resultVMIType.getElementType(),
-            firstContiguousType, VPTOMemoryOpFamily::Load, "NORM");
-    Value unalignedBase;
-    Value unalignedAlign;
-    if (!useAlignedAccess) {
-      unalignedBase = materializeBufferPointer(
-          *source, resultVMIType.getElementType(),
-          getMemorySpace((*source).getType()), rewriter, op.getLoc());
-      if (!unalignedBase) {
-        return rewriter.notifyMatchFailure(
-            op, "continuous unaligned load requires a ptr-compatible source");
-      }
-      unalignedBase =
-          rewriter
-              .create<AddPtrOp>(op.getLoc(), unalignedBase.getType(),
-                                unalignedBase, *offset)
-              .getResult();
-      unalignedAlign =
-          rewriter
-              .create<VldasOp>(op.getLoc(),
-                               AlignType::get(rewriter.getContext()),
-                               unalignedBase)
-              .getResult();
-    }
-    for (auto [index, resultType] : llvm::enumerate(contiguousTypes)) {
-      auto vregType = dyn_cast<VRegType>(resultType);
-      if (!vregType)
-        return rewriter.notifyMatchFailure(op, "load result must be vreg");
-      if (useAlignedAccess) {
-        Value chunkOffset = createChunkOffset(op.getLoc(), *offset,
-                                              index * *lanesPerPart, rewriter);
-        contiguousParts.push_back(rewriter
-                                      .create<VldsOp>(op.getLoc(), resultType,
-                                                      /*updated_base=*/Type{},
-                                                      *source, chunkOffset,
-                                                      /*dist=*/nullptr)
-                                      .getResult());
-        continue;
-      }
-
-      Value increment = rewriter.create<arith::ConstantIndexOp>(
-          op.getLoc(), *lanesPerPart);
-      auto load = rewriter.create<VldusOp>(
-          op.getLoc(), resultType, unalignedAlign.getType(),
-          unalignedBase.getType(), unalignedBase, unalignedAlign, increment);
-      contiguousParts.push_back(load.getResult());
-      unalignedAlign = load.getUpdatedAlign();
-      unalignedBase = load.getUpdatedBase();
-    }
-
-    FailureOr<SmallVector<Value>> results = materializeDataLayoutConversion(
-        op, contiguousParts, resultTypes, contiguousLayout,
-        resultVMIType.getLayoutAttr(), resultVMIType.getElementType(),
-        rewriter);
-    if (failed(results))
-      return failure();
-
-    replaceOpWithFlatConvertedValues(rewriter, op, *results, *this->getTypeConverter());
-    return success();
+    return lowerContiguous(op, rewriter, *source, *offset, resultVMIType,
+                            resultTypes, contiguousTypes, *lanesPerPart,
+                            contiguousLayout);
   }
 };
 
