@@ -221,6 +221,16 @@ mask 的语义差异只存在于 active-lane 判定。补齐该批代码及 scal
 触及的控制语句大括号后，增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过。
 
+# deinterleaved=4 到 contiguous 物化整改
+
+本轮将 `materializeDeinterleaved4ToContiguous` 的单组四路 source fallback、类型校验、
+四次 `VintlvOp` 组合和结果截断抽取为 `emitContiguousToDeinterleaved4Group`。外层函数
+继续负责 source footprint、part count/offset 规划和最终结果拼接；不等长 part 的尾部
+fallback、输出顺序和失败诊断保持不变。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
+`vmi_layout_assignment_iota_remat.pto` 与 `vmi_to_vpto_iota_group_deint.pto` lowering
+均 exit=0。
+
 # contiguous 到 deinterleaved=4 物化整改
 
 本轮将 `materializeContiguousToDeinterleaved4` 中单组四路 source 选择、类型检查、

@@ -4762,6 +4762,56 @@ static FailureOr<SmallVector<Value>> materializeDeinterleaved4ToContiguous(
   return results;
 }
 
+static LogicalResult emitContiguousToDeinterleaved4Group(
+    Operation *op, ValueRange sourceParts, TypeRange resultTypes,
+    ArrayRef<size_t> counts, ArrayRef<size_t> offsets, size_t group,
+    SmallVectorImpl<SmallVector<Value>> &parts, PatternRewriter &rewriter) {
+  auto getSourcePart = [&sourceParts](size_t index) {
+    return sourceParts[std::min(index, sourceParts.size() - 1)];
+  };
+  Value s0 = getSourcePart(4 * group);
+  Value s1 = getSourcePart(4 * group + 1);
+  Value s2 = getSourcePart(4 * group + 2);
+  Value s3 = getSourcePart(4 * group + 3);
+  Type chunkType = s0.getType();
+  bool mismatchedSources = s1.getType() != chunkType ||
+                           s2.getType() != chunkType ||
+                           s3.getType() != chunkType;
+  if (mismatchedSources) {
+    return rewriter.notifyMatchFailure(
+        op, "vdintlv deinterleaved=4 requires matching source part types");
+  }
+  for (size_t part = 0; part < 4; ++part) {
+    bool invalidResultType =
+        group < counts[part] && resultTypes[offsets[part] + group] != chunkType;
+    if (invalidResultType) {
+      return rewriter.notifyMatchFailure(
+          op, "vdintlv requires operands and results to share one type");
+    }
+  }
+  auto low = rewriter.create<VdintlvOp>(op->getLoc(), chunkType, chunkType,
+                                        s0, s1);
+  auto high = rewriter.create<VdintlvOp>(op->getLoc(), chunkType, chunkType,
+                                         s2, s3);
+  auto even = rewriter.create<VdintlvOp>(
+      op->getLoc(), chunkType, chunkType, low.getLow(), high.getLow());
+  auto odd = rewriter.create<VdintlvOp>(
+      op->getLoc(), chunkType, chunkType, low.getHigh(), high.getHigh());
+  if (group < counts[0]) {
+    parts[0].push_back(even.getLow());
+  }
+  if (group < counts[1]) {
+    parts[1].push_back(odd.getLow());
+  }
+  if (group < counts[2]) {
+    parts[2].push_back(even.getHigh());
+  }
+  if (group < counts[3]) {
+    parts[3].push_back(odd.getHigh());
+  }
+  return success();
+}
+
 static FailureOr<SmallVector<Value>> materializeContiguousToDeinterleaved4(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     PatternRewriter &rewriter) {
@@ -4782,65 +4832,16 @@ static FailureOr<SmallVector<Value>> materializeContiguousToDeinterleaved4(
     offsets.push_back(offset);
     offset += counts.back();
   }
-  auto getSourcePart = [&sourceParts](size_t index) {
-    return sourceParts[std::min(index, sourceParts.size() - 1)];
-  };
   SmallVector<SmallVector<Value>> parts(4);
   for (size_t part = 0; part < 4; ++part) {
     parts[part].reserve(counts[part]);
   }
   size_t groups = *std::max_element(counts.begin(), counts.end());
 
-  auto emitGroup = [&counts, &offsets, &resultTypes, &parts, &sourceParts, op,
-                    &rewriter](size_t group) -> LogicalResult {
-    auto getSourcePart = [&sourceParts](size_t index) {
-      return sourceParts[std::min(index, sourceParts.size() - 1)];
-    };
-    Value s0 = getSourcePart(4 * group);
-    Value s1 = getSourcePart(4 * group + 1);
-    Value s2 = getSourcePart(4 * group + 2);
-    Value s3 = getSourcePart(4 * group + 3);
-    Type chunkType = s0.getType();
-    bool mismatchedSources = s1.getType() != chunkType ||
-                             s2.getType() != chunkType ||
-                             s3.getType() != chunkType;
-    if (mismatchedSources) {
-      return rewriter.notifyMatchFailure(
-          op, "vdintlv deinterleaved=4 requires matching source part types");
-    }
-    for (size_t part = 0; part < 4; ++part) {
-      bool invalidResultType =
-          group < counts[part] && resultTypes[offsets[part] + group] != chunkType;
-      if (invalidResultType) {
-        return rewriter.notifyMatchFailure(
-            op, "vdintlv requires operands and results to share one type");
-      }
-    }
-    auto low = rewriter.create<VdintlvOp>(op->getLoc(), chunkType, chunkType,
-                                          s0, s1);
-    auto high = rewriter.create<VdintlvOp>(op->getLoc(), chunkType, chunkType,
-                                           s2, s3);
-    auto even = rewriter.create<VdintlvOp>(
-        op->getLoc(), chunkType, chunkType, low.getLow(), high.getLow());
-    auto odd = rewriter.create<VdintlvOp>(
-        op->getLoc(), chunkType, chunkType, low.getHigh(), high.getHigh());
-    if (group < counts[0]) {
-      parts[0].push_back(even.getLow());
-    }
-    if (group < counts[1]) {
-      parts[1].push_back(odd.getLow());
-    }
-    if (group < counts[2]) {
-      parts[2].push_back(even.getHigh());
-    }
-    if (group < counts[3]) {
-      parts[3].push_back(odd.getHigh());
-    }
-    return success();
-  };
-
   for (size_t i = 0; i < groups; ++i) {
-    if (failed(emitGroup(i))) {
+    if (failed(emitContiguousToDeinterleaved4Group(
+            op, sourceParts, resultTypes, counts, offsets, i, parts,
+            rewriter))) {
       return failure();
     }
   }
