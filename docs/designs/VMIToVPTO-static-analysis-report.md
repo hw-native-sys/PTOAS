@@ -2044,3 +2044,13 @@ exit=0，现有 slots=1 的 EVEN/P0 转换输出保持不变。
 `git diff --check` 通过。现有 `vmi_layout_assignment_group_slot_broadcast_load_brc_b32.pto`
 在 group_slot_load 的既有 unsupported-shape 诊断处提前失败，未进入本轮 BRC helper，不能
 将该失败归因于本轮改动。
+
+# group-reduce deinterleaved=2 结果恢复职责整改
+
+本轮在 `OneToNVMIGroupReduceOpPattern::lowerFullDeinterleaved2` 中引入
+`restoreDeinterleaved2GroupResults`，将 reduction 结果到目标 physical vreg 的逐组 bitcast
+与结果收集抽取为独立 helper。主 lowering 保留布局、lane/arity、mask、row reduction 和
+combine 的校验及发射职责；保持结果组顺序、目标类型、诊断和替换语义不变。
+增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_to_vpto_group_reduce_slots8.pto` 在既有 VMI pack/unpack
+pipeline invariant 处提前失败，未进入本轮 helper，不能将该失败归因于本轮改动。

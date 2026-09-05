@@ -13405,6 +13405,23 @@ private:
     return results;
   }
 
+  FailureOr<SmallVector<Value>> restoreDeinterleaved2GroupResults(
+      OpTy op, ArrayRef<Value> reducedResults, TypeRange resultTypes,
+      VRegType resultType, OneToNPatternRewriter &rewriter) const {
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (Value reducedResult : reducedResults) {
+      FailureOr<Value> finalResult =
+          bitcastVReg(op.getLoc(), reducedResult, resultType, rewriter);
+      if (failed(finalResult)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to restore deinterleaved=2 group result type");
+      }
+      results.push_back(*finalResult);
+    }
+    return results;
+  }
+
   LogicalResult lowerFullDeinterleaved2(
       OpTy op, VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
       ValueRange sourceParts, ValueRange maskParts, TypeRange resultTypes,
@@ -13482,18 +13499,12 @@ private:
     if (failed(reducedResults)) {
       return failure();
     }
-    SmallVector<Value> results(resultTypes.size());
-    for (int64_t group = 0; group < groupCount; ++group) {
-      FailureOr<Value> finalResult =
-          bitcastVReg(op.getLoc(), (*reducedResults)[group], resultType,
-                      rewriter);
-      if (failed(finalResult)) {
-        return rewriter.notifyMatchFailure(
-            op, "failed to restore deinterleaved=2 group result type");
-      }
-      results[group] = *finalResult;
+    FailureOr<SmallVector<Value>> results = restoreDeinterleaved2GroupResults(
+        op, *reducedResults, resultTypes, resultType, rewriter);
+    if (failed(results)) {
+      return failure();
     }
-    replaceOpWithFlatConvertedValues(rewriter, op, results,
+    replaceOpWithFlatConvertedValues(rewriter, op, *results,
                                      *this->getTypeConverter());
     return success();
   }
