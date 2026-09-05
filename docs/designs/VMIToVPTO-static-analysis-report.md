@@ -541,3 +541,9 @@ partition remaining，后者负责 padding/lane 映射、prefix pattern 与 PLT 
 pattern 仅负责输入归一化和路径选择。mask part 顺序、active-lanes 限幅及错误诊断保持
 不变。增量合规检查为 `errors=0 warnings=0`，`git diff --check` 通过；create-mask
 样例在既有 `unpack` pipeline invariant 处提前失败，未进入该 pattern。
+
+本轮将 `materializeSimpleDataLayoutConversion` 中重复的 identity part forwarding
+抽取为 `forwardIdentityLayoutParts`，统一处理 identity、单 lane group 和 block-
+deinterleaved forwarding 的共同契约。layout fallback 选择、unrealized cast 优化及
+错误诊断保持不变。增量合规检查为 `errors=0 warnings=0`，`git diff --check` 通过；
+连续 load/store lowering 回归通过。

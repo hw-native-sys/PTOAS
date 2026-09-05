@@ -4128,7 +4128,19 @@ FailureOr<SmallVector<Value>> materializeGroupSlotLaneStride(
   return results;
 }
 
-FailureOr<std::optional<SmallVector<Value>>> materializeSimpleDataLayoutConversion(
+static FailureOr<std::optional<SmallVector<Value>>> forwardIdentityLayoutParts(
+    Operation *op, ValueRange sourceParts, TypeRange resultTypes,
+    PatternRewriter &rewriter) {
+  if (failed(verifyIdentityPartForwarding(op, sourceParts, resultTypes,
+                                          rewriter))) {
+    return failure();
+  }
+  return std::optional<SmallVector<Value>>(
+      SmallVector<Value>(sourceParts.begin(), sourceParts.end()));
+}
+
+static FailureOr<std::optional<SmallVector<Value>>>
+materializeSimpleDataLayoutConversion(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
     Type sourceVMIElementType, PatternRewriter &rewriter) {
@@ -4139,12 +4151,7 @@ FailureOr<std::optional<SmallVector<Value>>> materializeSimpleDataLayoutConversi
   }
 
   if (sourceLayout == resultLayout) {
-    if (failed(verifyIdentityPartForwarding(op, sourceParts, resultTypes,
-                                            rewriter))) {
-      return failure();
-    }
-    return std::optional<SmallVector<Value>>(
-        SmallVector<Value>(sourceParts.begin(), sourceParts.end()));
+    return forwardIdentityLayoutParts(op, sourceParts, resultTypes, rewriter);
   }
 
   bool oneLaneContiguousToGroup =
@@ -4156,12 +4163,7 @@ FailureOr<std::optional<SmallVector<Value>>> materializeSimpleDataLayoutConversi
       sourceLayout.getSlots() == 1 && resultLayout.isContiguous() &&
       resultLayout.getLaneStride() == 1;
   if (oneLaneContiguousToGroup || oneLaneGroupToContiguous) {
-    if (failed(verifyIdentityPartForwarding(op, sourceParts, resultTypes,
-                                            rewriter))) {
-      return failure();
-    }
-    return std::optional<SmallVector<Value>>(
-        SmallVector<Value>(sourceParts.begin(), sourceParts.end()));
+    return forwardIdentityLayoutParts(op, sourceParts, resultTypes, rewriter);
   }
 
   if (sourceLayout.isGroupSlots() && resultLayout.isGroupSlots() &&
@@ -4207,12 +4209,7 @@ FailureOr<std::optional<SmallVector<Value>>> materializeSimpleDataLayoutConversi
         }
       }
     }
-    if (failed(verifyIdentityPartForwarding(op, sourceParts, resultTypes,
-                                            rewriter))) {
-      return failure();
-    }
-    return std::optional<SmallVector<Value>>(
-        SmallVector<Value>(sourceParts.begin(), sourceParts.end()));
+    return forwardIdentityLayoutParts(op, sourceParts, resultTypes, rewriter);
   }
 
   return std::nullopt;
