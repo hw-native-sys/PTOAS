@@ -791,3 +791,11 @@ contiguous 路径的互斥判定和分派。该拆分不改变 chunk 顺序、of
 语义。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
 通过；`vmi_layout_assignment_group_store_slots1_unit_stride.pto` 与
 `vmi_group_reduce_addi_i16.pto` lowering 均 exit=0。
+
+本轮将 `slots=8` 普通 contiguous group-store（非 packed-byte、非 lane-stride）路径
+抽取为 `lowerSlots8Contiguous`。helper 独立处理每个 slot block 的地址合法性判定、
+非对齐 stateful stream fallback、active-lane mask 和对齐 `vsts` 发射；主 pattern 继续
+负责 packed-byte/lane-stride 路径分派。同步将本轮触及的 stride-load 控制条件整理为
+具名布尔变量，保持格式规则一致。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_layout_assignment_group_store_slots1_unit_stride.pto` lowering exit=0。

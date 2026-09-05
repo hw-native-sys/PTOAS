@@ -9576,6 +9576,65 @@ private:
     return success();
   }
 
+  LogicalResult lowerSlots8Contiguous(
+      VMIGroupStoreOp op, OpAdaptor adaptor, OneToNPatternRewriter &rewriter,
+      VMIVRegType valueVMIType, Value destination, Value offset,
+      Value rowStride, int64_t numGroups) const {
+    ValueRange valueParts = adaptor.getValue();
+    SmallVector<Value> groupOffsets;
+    bool useDirectAccess = true;
+    for (auto [slotBlock, value] : llvm::enumerate(valueParts)) {
+      auto vregType = dyn_cast<VRegType>(value.getType());
+      if (!vregType) {
+        return rewriter.notifyMatchFailure(op,
+                                           "group_store value must be vreg");
+      }
+      Value groupOffset = createGroupChunkOffset(
+          op.getLoc(), offset, rowStride, slotBlock * 8,
+          /*chunkLaneOffset=*/0, rewriter);
+      groupOffsets.push_back(groupOffset);
+      useDirectAccess &= isDirectMemoryDistAddressLegal(
+          op.getDestination(), groupOffset,
+          getMemoryElementType(op.getDestination().getType()), vregType,
+          VPTOMemoryOpFamily::Store, "");
+    }
+
+    if (!useDirectAccess) {
+      SmallVector<int64_t> advances;
+      for (size_t slotBlock = 0; slotBlock < valueParts.size(); ++slotBlock) {
+        advances.push_back(std::min<int64_t>(8, numGroups - slotBlock * 8));
+      }
+      if (failed(emitGroupStoreStream(op, destination, offset, valueParts,
+                                      advances, rewriter))) {
+        return failure();
+      }
+      rewriter.eraseOp(op);
+      return success();
+    }
+
+    for (auto [slotBlock, value] : llvm::enumerate(valueParts)) {
+      auto vregType = cast<VRegType>(value.getType());
+      FailureOr<MaskType> maskType =
+          getMaskTypeForVReg(vregType, rewriter.getContext());
+      if (failed(maskType)) {
+        return rewriter.notifyMatchFailure(
+            op, "unsupported element type for group_store mask");
+      }
+      int64_t activeGroups = std::min<int64_t>(8, numGroups - slotBlock * 8);
+      FailureOr<Value> mask = createPrefixMaskForActiveLanes(
+          op.getLoc(), *maskType, activeGroups, rewriter);
+      if (failed(mask)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to create slots=8 group_store mask");
+      }
+      rewriter.create<VstsOp>(op.getLoc(), /*updated_base=*/Type{}, value,
+                              destination, groupOffsets[slotBlock],
+                              /*dist=*/nullptr, *mask);
+    }
+    rewriter.eraseOp(op);
+    return success();
+  }
+
 public:
   LogicalResult
   matchAndRewrite(VMIGroupStoreOp op, OpAdaptor adaptor,
@@ -9942,56 +10001,8 @@ public:
         return success();
       }
 
-      SmallVector<Value> groupOffsets;
-      bool useDirectAccess = true;
-      for (auto [slotBlock, value] : llvm::enumerate(valueParts)) {
-        auto vregType = dyn_cast<VRegType>(value.getType());
-        if (!vregType)
-          return rewriter.notifyMatchFailure(op,
-                                             "group_store value must be vreg");
-        Value groupOffset = createGroupChunkOffset(
-            op.getLoc(), *offset, *rowStride, slotBlock * 8,
-            /*chunkLaneOffset=*/0, rewriter);
-        groupOffsets.push_back(groupOffset);
-        useDirectAccess &= isDirectMemoryDistAddressLegal(
-            op.getDestination(), groupOffset,
-            getMemoryElementType(op.getDestination().getType()), vregType,
-            VPTOMemoryOpFamily::Store, "");
-      }
-
-      if (!useDirectAccess) {
-        SmallVector<int64_t> advances;
-        for (size_t slotBlock = 0; slotBlock < valueParts.size(); ++slotBlock) {
-          advances.push_back(std::min<int64_t>(8, numGroups - slotBlock * 8));
-        }
-        if (failed(emitGroupStoreStream(op, *destination, *offset, valueParts,
-                                        advances, rewriter)))
-          return failure();
-        rewriter.eraseOp(op);
-        return success();
-      }
-
-      for (auto [slotBlock, value] : llvm::enumerate(valueParts)) {
-        auto vregType = cast<VRegType>(value.getType());
-        FailureOr<MaskType> maskType =
-            getMaskTypeForVReg(vregType, rewriter.getContext());
-        if (failed(maskType))
-          return rewriter.notifyMatchFailure(
-              op, "unsupported element type for group_store mask");
-        int64_t activeGroups = std::min<int64_t>(8, numGroups - slotBlock * 8);
-        FailureOr<Value> mask = createPrefixMaskForActiveLanes(
-            op.getLoc(), *maskType, activeGroups, rewriter);
-        if (failed(mask))
-          return rewriter.notifyMatchFailure(
-              op, "failed to create slots=8 group_store mask");
-        rewriter.create<VstsOp>(op.getLoc(),
-                                /*updated_base=*/Type{}, value, *destination,
-                                groupOffsets[slotBlock], /*dist=*/nullptr,
-                                *mask);
-      }
-
-      rewriter.eraseOp(op);
-      return success();
+      return lowerSlots8Contiguous(op, adaptor, rewriter, valueVMIType,
+                                   *destination, *offset, *rowStride, numGroups);
     }
 
     VMILayoutSupport supports;
@@ -10538,19 +10549,24 @@ struct OneToNVMIStrideLoadOpPattern
         "stride_load block_stride must convert to one value", rewriter);
     FailureOr<Value> repeatStride = Value(
         rewriter.create<arith::ConstantIntOp>(op.getLoc(), 0, 16));
-    if (failed(source) || failed(offset) || failed(blockStride) ||
-        failed(repeatStride))
+    bool invalidOperands = failed(source) || failed(offset) ||
+                           failed(blockStride) || failed(repeatStride);
+    if (invalidOperands) {
       return failure();
+    }
 
     ValueRange maskParts = adaptor.getMask();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    if (failed(maybe_resultTypes)) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-    if (resultTypes.size() != 1 || maskParts.size() != 1)
+    bool invalidPhysicalArity = resultTypes.size() != 1 || maskParts.size() != 1;
+    if (invalidPhysicalArity) {
       return rewriter.notifyMatchFailure(
           op, "stride_load supports one physical result/mask chunk");
+    }
     auto resultType = dyn_cast<VRegType>(resultTypes.front());
     if (!resultType || !isa<MaskType>(maskParts.front().getType()))
       return rewriter.notifyMatchFailure(
