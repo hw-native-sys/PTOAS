@@ -2775,7 +2775,7 @@ FailureOr<int64_t> computeShuffleLane0SplatSourcePart(VMIShuffleOp op,
 FailureOr<SmallVector<ShuffleVselrPlan>>
 computeShuffleVselrPlans(VMIShuffleOp op, std::string *reason) {
   auto fail =
-      [&](const Twine &message) -> FailureOr<SmallVector<ShuffleVselrPlan>> {
+      [&reason](const Twine &message) -> FailureOr<SmallVector<ShuffleVselrPlan>> {
     if (reason)
       *reason = message.str();
     return failure();
@@ -6988,7 +6988,7 @@ static LogicalResult lowerGroupBroadcastParts(
   if (!firstSourceType)
     return rewriter.notifyMatchFailure(op,
                                        "group_broadcast source must be vreg");
-  if (llvm::any_of(sourceParts, [&](Value sourcePart) {
+  if (llvm::any_of(sourceParts, [&firstSourceType](Value sourcePart) {
         return sourcePart.getType() != firstSourceType;
       }))
     return rewriter.notifyMatchFailure(
@@ -14132,8 +14132,8 @@ LogicalResult
 verifySupportedVMIToVPTOOps(ModuleOp module,
                             bool enableStableGatherMaskedLoad) {
   auto emitMemoryUnsupported =
-      [&](Operation *op, StringRef opName, VMIVRegType type, Value source,
-          std::optional<int64_t> constantOffset) -> WalkResult {
+      [](Operation *op, StringRef opName, VMIVRegType type, Value source,
+         std::optional<int64_t> constantOffset) -> WalkResult {
     std::string reason;
     if (succeeded(checkSupportedLoadShape(type, source,
                                           source.getType(), constantOffset,
