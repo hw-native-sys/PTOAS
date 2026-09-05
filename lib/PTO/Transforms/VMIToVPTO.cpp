@@ -8152,6 +8152,50 @@ static FailureOr<Value> materializeGroupBroadcastChunk(
       .getResult();
 }
 
+static FailureOr<Value> lowerGroupBroadcastChunk(
+    Operation *op, Type resultType, VMIVRegType resultVMIType,
+    ValueRange sourceParts, const VMIGroupBroadcastLayoutFact &fact,
+    GroupBroadcastLoweringContext &context, int64_t part, int64_t chunk,
+    OneToNPatternRewriter &rewriter) {
+  FailureOr<int64_t> firstLogical =
+      mapPhysicalLaneToLogical(resultVMIType, part, chunk, 0);
+  if (failed(firstLogical)) {
+    return rewriter.notifyMatchFailure(
+        op, "group_broadcast failed to map the first result lane");
+  }
+  int64_t firstGroup = *firstLogical / fact.groupSize;
+  int64_t sourceChunk = firstGroup / context.sourceSlots;
+  int64_t baseSlot = firstGroup % context.sourceSlots;
+  bool sourceChunkOutOfRange =
+      sourceChunk < 0 || sourceChunk >= static_cast<int64_t>(sourceParts.size());
+  if (sourceChunkOutOfRange) {
+    return rewriter.notifyMatchFailure(
+        op, "group_broadcast source chunk is out of range");
+  }
+  Value allMask = context.selector.allMask;
+  if (context.sourceSlots == 1 &&
+      context.selector.kind != GroupBroadcastSelectorKind::Constant) {
+    return materializeSlots1GroupBroadcastChunk(
+        op, resultType, resultVMIType, sourceParts, part, chunk, firstGroup,
+        fact.groupSize, context.selectorPeriod, fact.lanesPerPart, rewriter,
+        allMask);
+  }
+  if (failed(verifyGroupBroadcastChunkMapping(
+          op, resultVMIType, context.selector.kind, context.selectorPeriod,
+          context.sourceSlots, fact.groupSize, part, chunk, firstGroup,
+          sourceChunk, fact.lanesPerPart, rewriter))) {
+    return failure();
+  }
+  auto getSelector = [&context, &rewriter](int64_t slot) {
+    return getGroupBroadcastSelector(context.selector, slot, rewriter);
+  };
+  return materializeGroupBroadcastChunk(
+      op, resultType, resultVMIType, sourceParts, context.selector.kind,
+      context.selectorPeriod, context.sourceSlots, fact.groupSize, part, chunk,
+      firstGroup, sourceChunk, baseSlot, fact.lanesPerPart, allMask, getSelector,
+      rewriter);
+}
+
 static LogicalResult lowerGroupBroadcastParts(
     Operation *op, ValueRange sourceParts, VMIVRegType sourceVMIType,
     VMIVRegType resultVMIType, TypeRange resultTypes, int64_t numGroups,
@@ -8239,55 +8283,9 @@ static LogicalResult lowerGroupBroadcastParts(
         return rewriter.notifyMatchFailure(
             op, "group_broadcast requires uniform physical vreg types");
 
-      FailureOr<int64_t> firstLogical =
-          mapPhysicalLaneToLogical(resultVMIType, part, chunk, 0);
-      if (failed(firstLogical))
-        return rewriter.notifyMatchFailure(
-            op, "group_broadcast failed to map the first result lane");
-      int64_t firstGroup = *firstLogical / fact->groupSize;
-      int64_t sourceChunk = firstGroup / context.sourceSlots;
-      int64_t baseSlot = firstGroup % context.sourceSlots;
-      if (sourceChunk < 0 ||
-          sourceChunk >= static_cast<int64_t>(sourceParts.size()))
-        return rewriter.notifyMatchFailure(
-            op, "group_broadcast source chunk is out of range");
-
-      // A slots=1 source stores every logical group in a separate physical
-      // VReg.  When a result chunk contains multiple groups, first splat the
-      // scalar from each source VReg and then merge those splats by lane.  A
-      // single vselr cannot express this case because its selector only
-      // addresses lanes within one source VReg.
-      if (context.sourceSlots == 1 &&
-          selectorContext.kind != GroupBroadcastSelectorKind::Constant) {
-        FailureOr<Value> merged = materializeSlots1GroupBroadcastChunk(
-            op, resultType, resultVMIType, sourceParts, part, chunk,
-            firstGroup, fact->groupSize, context.selectorPeriod,
-            fact->lanesPerPart,
-            rewriter, allMask);
-        if (failed(merged)) {
-          return failure();
-        }
-        results[flatIndex] = *merged;
-        continue;
-      }
-
-      // The support table selects one of the three affine selector forms.
-      // Check the table property against the canonical lane map so new table
-      // rows cannot silently reuse an incompatible lowering plan.
-      if (failed(verifyGroupBroadcastChunkMapping(
-              op, resultVMIType, selectorContext.kind,
-          context.selectorPeriod, context.sourceSlots,
-              fact->groupSize, part, chunk, firstGroup, sourceChunk,
-              fact->lanesPerPart, rewriter))) {
-        return failure();
-      }
-
-      FailureOr<Value> chunkResult = materializeGroupBroadcastChunk(
-          op, resultType, resultVMIType, sourceParts,
-          selectorContext.kind, context.selectorPeriod, context.sourceSlots,
-          fact->groupSize, part,
-          chunk, firstGroup, sourceChunk, baseSlot, fact->lanesPerPart,
-          allMask, getSelector, rewriter);
+      FailureOr<Value> chunkResult = lowerGroupBroadcastChunk(
+          op, resultType, resultVMIType, sourceParts, *fact, context, part,
+          chunk, rewriter);
       if (failed(chunkResult)) {
         return failure();
       }
