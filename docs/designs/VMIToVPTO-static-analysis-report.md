@@ -728,6 +728,12 @@ forwarding → lane0 splat → vselr 的策略优先级。该拆分减少重复�
 语义与诊断不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；interleave/shuffle lowering exit=0。
 
+本轮将 shuffle 的 `vselr` 路径抽取为 `lowerVselr`，集中处理 plan arity、source part
+范围、source/result 类型、索引位宽、`VciOp` 索引向量和 `VselrOp` 发射；主 pattern 现在
+只负责 forwarding、lane0 splat、vselr 三种策略的识别与分派。该拆分保持索引方向、结果
+顺序、诊断文本和原有优先级不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；interleave/shuffle lowering exit=0。
+
 复核 interleave 模板的 contiguous lowering 时发现 `invalidSingleChunkTypes` 条件缺少
 闭合大括号，导致直接 `TargetOp` 构造语句错误地落入失败分支。已补齐控制流边界，恢复
 contiguous interleave 的正常 lowering；该修复不改变支持矩阵或结果语义。增量合规检查

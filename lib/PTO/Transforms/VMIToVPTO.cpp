@@ -15181,6 +15181,70 @@ private:
     return success();
   }
 
+  LogicalResult lowerVselr(
+      VMIShuffleOp op, OneToNPatternRewriter &rewriter, ValueRange sourceParts,
+      ArrayRef<Type> resultTypes, ArrayRef<ShuffleVselrPlan> plans) const {
+    bool arityMismatch = plans.size() != resultTypes.size();
+    if (arityMismatch) {
+      return rewriter.notifyMatchFailure(op, "shuffle vselr arity mismatch");
+    }
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (auto [plan, resultType] : llvm::zip_equal(plans, resultTypes)) {
+      bool sourceOutOfBounds =
+          plan.sourceFlatIndex < 0 ||
+          plan.sourceFlatIndex >= static_cast<int64_t>(sourceParts.size());
+      if (sourceOutOfBounds) {
+        return rewriter.notifyMatchFailure(
+            op, "shuffle vselr source part range is out of bounds");
+      }
+      auto sourceVRegType =
+          dyn_cast<VRegType>(sourceParts[plan.sourceFlatIndex].getType());
+      auto resultVRegType = dyn_cast<VRegType>(resultType);
+      bool invalidTypes = !sourceVRegType || !resultVRegType ||
+                          sourceVRegType.getElementCount() !=
+                              resultVRegType.getElementCount() ||
+                          sourceVRegType.getElementType() !=
+                              resultVRegType.getElementType();
+      if (invalidTypes) {
+        return rewriter.notifyMatchFailure(
+            op, "shuffle vselr source/result type mismatch");
+      }
+      unsigned indexBits =
+          pto::getPTOStorageElemBitWidth(sourceVRegType.getElementType());
+      bool unsupportedIndexBits = indexBits != 8 && indexBits != 16 &&
+                                  indexBits != 32;
+      if (unsupportedIndexBits) {
+        return rewriter.notifyMatchFailure(
+            op, "shuffle vselr requires 8/16/32-bit index elements");
+      }
+      auto indexElementType =
+          IntegerType::get(rewriter.getContext(), indexBits);
+      Type indexType = VRegType::get(rewriter.getContext(),
+                                     sourceVRegType.getElementCount(),
+                                     indexElementType);
+      FailureOr<Value> base = createScalarOffsetConstant(
+          op.getLoc(), indexElementType, plan.baseLane, rewriter);
+      if (failed(base)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to materialize shuffle vselr index base");
+      }
+      StringAttr orderAttr =
+          plan.descending ? rewriter.getStringAttr("DESC") : StringAttr{};
+      Value indexVector =
+          rewriter.create<VciOp>(op.getLoc(), indexType, *base, orderAttr)
+              .getResult();
+      results.push_back(rewriter
+                           .create<VselrOp>(
+                               op.getLoc(), resultType,
+                               sourceParts[plan.sourceFlatIndex], indexVector)
+                           .getResult());
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
 public:
 
   LogicalResult
@@ -15212,60 +15276,12 @@ public:
     std::string vselrReason;
     FailureOr<SmallVector<ShuffleVselrPlan>> vselrPlans =
         computeShuffleVselrPlans(op, &vselrReason);
-    if (failed(vselrPlans))
+    if (failed(vselrPlans)) {
       return rewriter.notifyMatchFailure(op,
                                          Twine("shuffle vselr ") + vselrReason);
-
-    if (vselrPlans->size() != resultTypes.size())
-      return rewriter.notifyMatchFailure(op, "shuffle vselr arity mismatch");
-
-    SmallVector<Value> results;
-    results.reserve(resultTypes.size());
-    for (auto [plan, resultType] : llvm::zip_equal(*vselrPlans, resultTypes)) {
-      if (plan.sourceFlatIndex >= static_cast<int64_t>(sourceParts.size()))
-        return rewriter.notifyMatchFailure(
-            op, "shuffle vselr source part range is out of bounds");
-
-      auto sourceVRegType =
-          dyn_cast<VRegType>(sourceParts[plan.sourceFlatIndex].getType());
-      auto resultVRegType = dyn_cast<VRegType>(resultType);
-      if (!sourceVRegType || !resultVRegType ||
-          sourceVRegType.getElementCount() !=
-              resultVRegType.getElementCount() ||
-          sourceVRegType.getElementType() != resultVRegType.getElementType())
-        return rewriter.notifyMatchFailure(
-            op, "shuffle vselr source/result type mismatch");
-
-      unsigned indexBits =
-          pto::getPTOStorageElemBitWidth(sourceVRegType.getElementType());
-      if (indexBits != 8 && indexBits != 16 && indexBits != 32)
-        return rewriter.notifyMatchFailure(
-            op, "shuffle vselr requires 8/16/32-bit index elements");
-
-      auto indexElementType =
-          IntegerType::get(rewriter.getContext(), indexBits);
-      Type indexType =
-          VRegType::get(rewriter.getContext(), sourceVRegType.getElementCount(),
-                        indexElementType);
-      FailureOr<Value> base = createScalarOffsetConstant(
-          op.getLoc(), indexElementType, plan.baseLane, rewriter);
-      if (failed(base))
-        return rewriter.notifyMatchFailure(
-            op, "failed to materialize shuffle vselr index base");
-      StringAttr orderAttr =
-          plan.descending ? rewriter.getStringAttr("DESC") : StringAttr{};
-      Value indexVector =
-          rewriter.create<VciOp>(op.getLoc(), indexType, *base, orderAttr)
-              .getResult();
-      results.push_back(rewriter
-                            .create<VselrOp>(op.getLoc(), resultType,
-                                             sourceParts[plan.sourceFlatIndex],
-                                             indexVector)
-                            .getResult());
     }
 
-    replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
-    return success();
+    return lowerVselr(op, rewriter, sourceParts, resultTypes, *vselrPlans);
   }
 };
 
