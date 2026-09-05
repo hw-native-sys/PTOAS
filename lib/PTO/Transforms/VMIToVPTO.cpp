@@ -1351,23 +1351,20 @@ computeSafeFullReadProof(Type sourceType, std::optional<int64_t> constantOffset,
   return proof;
 }
 
-static VMIMemorySafeReadProof
-computeSafeStatefulReadProof(Value source, Value offset,
-                             VMIVRegType resultType) {
-  VMIMemorySafeReadProof proof;
+struct VMIStatefulOffsetRange {
+  int64_t minimum;
+  int64_t maximum;
+};
 
-  auto fail = [&proof](const Twine &message) {
-    proof.proven = false;
-    proof.reason = message.str();
-    return proof;
+static FailureOr<VMIStatefulOffsetRange>
+getStatefulOffsetRange(Value source, Value offset, std::string *reason) {
+  auto fail = [&reason](const Twine &message)
+      -> FailureOr<VMIStatefulOffsetRange> {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
   };
-
-  FailureOr<int64_t> staticElements =
-      getStaticMemRefElementCount(source.getType());
-  if (failed(staticElements)) {
-    return fail("requires statically shaped memref source");
-  }
-
   std::optional<int64_t> minOffset = getConstantIndexValue(offset);
   std::optional<int64_t> maxOffset = minOffset;
   if (!minOffset) {
@@ -1409,11 +1406,36 @@ computeSafeStatefulReadProof(Value source, Value offset,
     }
   }
   if (!minOffset || !maxOffset) {
-    return fail(
-        "requires a constant offset or proven finite loop offset range");
+    return fail("requires a constant offset or proven finite loop offset range");
   }
   if (*minOffset < 0 || *maxOffset < *minOffset) {
     return fail("requires a non-negative valid offset range");
+  }
+  return VMIStatefulOffsetRange{*minOffset, *maxOffset};
+}
+
+static VMIMemorySafeReadProof
+computeSafeStatefulReadProof(Value source, Value offset,
+                             VMIVRegType resultType) {
+  VMIMemorySafeReadProof proof;
+
+  auto fail = [&proof](const Twine &message) {
+    proof.proven = false;
+    proof.reason = message.str();
+    return proof;
+  };
+
+  FailureOr<int64_t> staticElements =
+      getStaticMemRefElementCount(source.getType());
+  if (failed(staticElements)) {
+    return fail("requires statically shaped memref source");
+  }
+
+  std::string rangeReason;
+  FailureOr<VMIStatefulOffsetRange> offsetRange =
+      getStatefulOffsetRange(source, offset, &rangeReason);
+  if (failed(offsetRange)) {
+    return fail(rangeReason);
   }
 
   unsigned elementBits =
@@ -1444,8 +1466,8 @@ computeSafeStatefulReadProof(Value source, Value offset,
   int64_t footprintElements;
   int64_t footprintBytes;
   bool envelopeOverflows =
-      llvm::MulOverflow(*minOffset, elementBytes, minOffsetBytes) ||
-      llvm::MulOverflow(*maxOffset, elementBytes, maxOffsetBytes) ||
+      llvm::MulOverflow(offsetRange->minimum, elementBytes, minOffsetBytes) ||
+      llvm::MulOverflow(offsetRange->maximum, elementBytes, maxOffsetBytes) ||
       llvm::MulOverflow(*staticElements, elementBytes, allocationBytes) ||
       llvm::MulOverflow(*arity, *lanesPerPart, footprintElements) ||
       llvm::MulOverflow(footprintElements, elementBytes, footprintBytes);
@@ -5965,8 +5987,11 @@ FailureOr<SmallVector<Value>> materializeStagingContiguousToDeintMaskLayout(
   }
 
   int64_t groups = resultTypes.size() / factor;
-  if (sourceParts.size() > static_cast<size_t>(groups * factor))
+  bool tooManySourceParts =
+      sourceParts.size() > static_cast<size_t>(groups * factor);
+  if (tooManySourceParts) {
     return fail("staging contiguous mask layout has too many source parts");
+  }
 
   SmallVector<SmallVector<Value, 4>, 4> parts(factor);
   for (int64_t part = 0; part < factor; ++part)

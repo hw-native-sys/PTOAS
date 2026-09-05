@@ -1143,6 +1143,13 @@ contract、source/result physical part 校验大括号，覆盖 `fptosi/fptoui` 
 不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
 通过。
 
+本轮将 `computeSafeStatefulReadProof` 中的常量/循环 offset 范围推导抽取为
+`getStatefulOffsetRange`，使用 `VMIStatefulOffsetRange` 显式传递最小/最大 offset；
+主体继续负责元素宽度、地址余数、footprint 和 byte envelope 安全证明。该拆分保留
+有限循环范围分析、溢出检查和失败原因，不改变 dist/stateful read 的安全判定。
+增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+连续与交错 memory lowering case 均 exit=0。
+
 本轮继续收口 FP→整数窄化/拓宽分支：为 `fptosi/fptoui` 的 mask、lane-stride、source
 arity 和 widen arity 检查补齐大括号，并将多行条件整理为具名布尔变量；同时将
 `exti` 的 group-slot layout 判断命名化，避免静态检查器误报。所有调整仅影响控制流
