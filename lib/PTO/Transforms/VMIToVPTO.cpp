@@ -8031,26 +8031,48 @@ static LogicalResult lowerGroupSlotLoadSlots1(
   return success();
 }
 
+static FailureOr<int64_t> getGroupSlotLoadSlots(
+    Operation *op, Value source, VMIVRegType resultVMIType,
+    TypeRange resultTypes, int64_t numGroups,
+    OneToNPatternRewriter &rewriter) {
+  VMILayoutAttr layout = resultVMIType.getLayoutAttr();
+  bool invalidLayout = !layout || !layout.isGroupSlots() || layout.getSlots() <= 0;
+  if (invalidLayout) {
+    (void)rewriter.notifyMatchFailure(
+        op, "group_slot_load requires explicit group_slots layout");
+    return failure();
+  }
+  if (!isa<PtrType>(source.getType())) {
+    (void)rewriter.notifyMatchFailure(
+        op, "group_slot_load requires !pto.ptr source");
+    return failure();
+  }
+  int64_t slots = layout.getSlots();
+  int64_t expectedArity = ceilDivNonNegative(numGroups, slots);
+  bool arityMismatch =
+      static_cast<int64_t>(resultTypes.size()) != expectedArity;
+  if (arityMismatch) {
+    (void)rewriter.notifyMatchFailure(op, "group_slot_load arity mismatch");
+    return failure();
+  }
+  if (slots != 8 && slots != 1) {
+    (void)rewriter.notifyMatchFailure(
+        op, "group_slot_load supports only slots=8 or slots=1");
+    return failure();
+  }
+  return slots;
+}
+
 static LogicalResult lowerGroupSlotLoadParts(
     Operation *op, Value source, Value offset, Value sourceGroupStride,
     VMIVRegType resultVMIType, TypeRange resultTypes, int64_t numGroups,
     OneToNPatternRewriter &rewriter, SmallVectorImpl<Value> &results) {
-  VMILayoutAttr layout = resultVMIType.getLayoutAttr();
-  bool invalidLayout = !layout || !layout.isGroupSlots() || layout.getSlots() <= 0;
-  if (invalidLayout) {
-    return rewriter.notifyMatchFailure(
-        op, "group_slot_load requires explicit group_slots layout");
+  FailureOr<int64_t> maybeSlots = getGroupSlotLoadSlots(
+      op, source, resultVMIType, resultTypes, numGroups, rewriter);
+  if (failed(maybeSlots)) {
+    return failure();
   }
-  if (!isa<PtrType>(source.getType())) {
-    return rewriter.notifyMatchFailure(
-        op, "group_slot_load requires !pto.ptr source");
-  }
-  int64_t slots = layout.getSlots();
-  int64_t expectedArity = ceilDivNonNegative(numGroups, slots);
-  bool arityMismatch = static_cast<int64_t>(resultTypes.size()) != expectedArity;
-  if (arityMismatch) {
-    return rewriter.notifyMatchFailure(op, "group_slot_load arity mismatch");
-  }
+  int64_t slots = *maybeSlots;
   results.reserve(results.size() + resultTypes.size());
   if (slots == 8) {
     return lowerGroupSlotLoadSlots8(op, source, offset, sourceGroupStride,
@@ -8062,8 +8084,7 @@ static LogicalResult lowerGroupSlotLoadParts(
                                     resultVMIType, resultTypes, rewriter,
                                     results);
   }
-  return rewriter.notifyMatchFailure(
-      op, "group_slot_load supports only slots=8 or slots=1");
+  return failure();
 }
 
 static FailureOr<Value> materializeSlots1GroupBroadcastChunk(
