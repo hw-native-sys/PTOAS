@@ -292,6 +292,12 @@ pattern 仅负责 footprint、地址 dist 合法性和路径选择。普通 load
 回归通过，涉及 pack/unpack 的多 chunk 测试仍受既有 pipeline invariant 约束；增量
 合规检查与 `git diff --check` 通过。
 
+本轮将 `OneToNVMIDeinterleaveLoadOpPattern` 之外的 group-load
+block-deinterleaved f32 物理 `vsldb` 构造抽取为 `lowerBlockDeinterleaved`，集中处理
+block stride、part/chunk offset、结果 vreg/mask 校验和结果替换；主 pattern 保留布局
+契约、arity 和 row-stride 检查。新增代码的增量合规检查和 `git diff --check` 通过，
+相关 layout-assignment pipeline 未产生该 direct lowering 路径，未将其误报为功能回归。
+
 本轮将 `OneToNVMIGroupBroadcastLoadOpPattern` 的 E2B lowering 抽取为
 `lowerDirectE2B`。helper 集中负责 E2B layout/element/stride/arity 契约、packet
 `vlds` 生成和跨 dense-split part 的结果复用；主 `matchAndRewrite` 仅保留 BRC、E2B

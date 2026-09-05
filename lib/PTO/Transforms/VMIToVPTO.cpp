@@ -6408,7 +6408,8 @@ struct OneToNVMIConstantMaskOpPattern
       results.push_back(*mask);
     }
 
-    if (results.size() != resultTypes.size())
+    bool resultArityMismatch = results.size() != resultTypes.size();
+    if (resultArityMismatch) {
       return rewriter.notifyMatchFailure(
           op, "constant_mask physical result count mismatch");
     replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
@@ -6724,9 +6725,11 @@ struct OneToNVMICreateGroupMaskOpPattern
       results.push_back(*mask);
     }
 
-    if (results.size() != resultTypes.size())
+    bool resultArityMismatch = results.size() != resultTypes.size();
+    if (resultArityMismatch) {
       return rewriter.notifyMatchFailure(
           op, "create_group_mask physical result count mismatch");
+    }
     replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
     return success();
   }
@@ -7151,6 +7154,62 @@ struct OneToNVMIDeinterleaveLoadOpPattern
 struct OneToNVMIGroupLoadOpPattern : OneToNOpConversionPattern<VMIGroupLoadOp> {
   using OneToNOpConversionPattern<VMIGroupLoadOp>::OneToNOpConversionPattern;
 
+private:
+  LogicalResult lowerBlockDeinterleaved(
+      VMIGroupLoadOp op, OneToNPatternRewriter &rewriter, Value source,
+      Value offset, Value rowStride, VMIVRegType resultVMIType,
+      ArrayRef<Type> resultTypes, VMILayoutAttr resultLayout,
+      int64_t factor, int64_t blockElems, int64_t chunksPerPart,
+      int64_t constantRowStride) const {
+    bool invalidResultArity =
+        static_cast<int64_t>(resultTypes.size()) != factor * chunksPerPart;
+    if (invalidResultArity) {
+      return rewriter.notifyMatchFailure(
+          op, "block_deinterleaved group_load arity mismatch");
+    }
+    auto makeI16 = [&rewriter, &op](int64_t value) -> Value {
+      return rewriter.create<arith::ConstantIntOp>(op.getLoc(), value, 16);
+    };
+    Value blockStride = makeI16(constantRowStride / 8);
+    Value zeroI16 = makeI16(0);
+    constexpr int64_t kGroupsPerBlockLoad = 8;
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (int64_t part = 0; part < factor; ++part) {
+      for (int64_t chunk = 0; chunk < chunksPerPart; ++chunk) {
+        int64_t flatIndex = part * chunksPerPart + chunk;
+        auto vregType = dyn_cast<VRegType>(resultTypes[flatIndex]);
+        if (!vregType) {
+          return rewriter.notifyMatchFailure(
+              op, "block_deinterleaved group_load result must be vreg");
+        }
+        FailureOr<Value> allMask =
+            createAllTrueMaskForVReg(op.getLoc(), vregType, rewriter);
+        if (failed(allMask)) {
+          return rewriter.notifyMatchFailure(
+              op, "failed to create block_deinterleaved group_load mask");
+        }
+        Value chunkOffset = createGroupChunkOffset(
+            op.getLoc(), offset, rowStride, chunk * kGroupsPerBlockLoad,
+            part * blockElems, rewriter);
+        Value chunkBase = rewriter
+                              .create<AddPtrOp>(op.getLoc(), source.getType(),
+                                                source, chunkOffset)
+                              .getResult();
+        results.push_back(rewriter
+                              .create<VsldbOp>(op.getLoc(), vregType, Type{},
+                                               chunkBase, blockStride, zeroI16,
+                                               *allMask)
+                              .getResult());
+      }
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
+public:
+
   LogicalResult
   matchAndRewrite(VMIGroupLoadOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -7222,53 +7281,10 @@ struct OneToNVMIGroupLoadOpPattern : OneToNOpConversionPattern<VMIGroupLoadOp> {
               op, "block_deinterleaved group_load requires uniform chunks "
                   "per part");
       }
-      if (static_cast<int64_t>(resultTypes.size()) != factor * *chunksPerPart)
-        return rewriter.notifyMatchFailure(op,
-                                           "block_deinterleaved group_load "
-                                           "arity mismatch");
-
-      auto makeI16 = [&rewriter, &op](int64_t value) -> Value {
-        return rewriter.create<arith::ConstantIntOp>(op.getLoc(), value, 16);
-      };
-      Value blockStride = makeI16(*constantRowStride / 8);
-      Value zeroI16 = makeI16(0);
-      auto makePtr = [&rewriter, &source, &op](Value elementOffset) -> Value {
-        return rewriter
-            .create<AddPtrOp>(op.getLoc(), (*source).getType(), *source,
-                              elementOffset)
-            .getResult();
-      };
-
-      SmallVector<Value> results;
-      results.reserve(resultTypes.size());
-      constexpr int64_t kGroupsPerBlockLoad = 8;
-      for (int64_t part = 0; part < factor; ++part) {
-        for (int64_t chunk = 0; chunk < *chunksPerPart; ++chunk) {
-          int64_t flatIndex = part * *chunksPerPart + chunk;
-          auto vregType = dyn_cast<VRegType>(resultTypes[flatIndex]);
-          if (!vregType)
-            return rewriter.notifyMatchFailure(
-                op, "block_deinterleaved group_load result must be vreg");
-          FailureOr<Value> allMask =
-              createAllTrueMaskForVReg(op.getLoc(), vregType, rewriter);
-          if (failed(allMask))
-            return rewriter.notifyMatchFailure(
-                op, "failed to create block_deinterleaved group_load mask");
-          Value chunkOffset = createGroupChunkOffset(
-              op.getLoc(), *offset, *rowStride, chunk * kGroupsPerBlockLoad,
-              part * *blockElems, rewriter);
-          Value chunkBase = makePtr(chunkOffset);
-          results.push_back(rewriter
-                                .create<VsldbOp>(op.getLoc(), vregType,
-                                                 /*updated_base=*/Type{},
-                                                 chunkBase, blockStride,
-                                                 zeroI16, *allMask)
-                                .getResult());
-        }
-      }
-
-      replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
-      return success();
+      return lowerBlockDeinterleaved(
+          op, rewriter, *source, *offset, *rowStride, resultVMIType, resultTypes,
+          resultLayout, factor, *blockElems, *chunksPerPart,
+          *constantRowStride);
     }
 
     if (resultLayout && resultLayout.isContiguous()) {
