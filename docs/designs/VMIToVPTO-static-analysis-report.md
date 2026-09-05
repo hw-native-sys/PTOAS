@@ -678,3 +678,11 @@ lowering 回归。
 chunk 检查。这样避免把 gather 的类型能力矩阵与物理承载检查耦合，支持范围和失败
 顺序保持不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；gather 与 group-store 代表性 lowering 命令可正常执行。
+
+本轮将模板化 `OneToNVMIReduceMinMaxOpPattern` 的实际归约流程抽取为
+`lowerReduction`。辅助函数负责等价 masked-part 合并快路径、逐 physical chunk 的
+`ChunkReduceOp`/`CombineOp` 累积以及结果替换；主 pattern 保留 source/mask/result
+物理 arity、vreg/mask 类型和统一性校验。这样将输入契约与归约算法分离，min/max
+支持范围和诊断语义不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_group_reduce_addi_i16.pto` 与
+`vmi_layout_assignment_reduce_addf.pto` 均完成 lowering 回归。
