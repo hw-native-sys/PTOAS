@@ -7147,10 +7147,10 @@ struct OneToNVMILoadOpPattern : OneToNOpConversionPattern<VMILoadOp> {
   using OneToNOpConversionPattern<VMILoadOp>::OneToNOpConversionPattern;
 
 private:
-  LogicalResult lowerLaneStride(
+  FailureOr<SmallVector<Value>> materializeLaneStrideParts(
       VMILoadOp op, OneToNPatternRewriter &rewriter, Value source, Value offset,
-      VMIVRegType resultVMIType, ArrayRef<Type> resultTypes,
-      StringRef dist, int64_t lanesPerPart) const {
+      VMIVRegType resultVMIType, ArrayRef<Type> resultTypes, StringRef dist,
+      int64_t lanesPerPart) const {
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
     int64_t semanticOffset = 0;
@@ -7161,8 +7161,9 @@ private:
       Value chunkOffset =
           createChunkOffset(op.getLoc(), offset, semanticOffset, rewriter);
       results.push_back(rewriter
-                            .create<VldsOp>(op.getLoc(), resultType, Type{},
-                                            source, chunkOffset,
+                            .create<VldsOp>(op.getLoc(), resultType,
+                                            /*updated_base=*/Type{}, source,
+                                            chunkOffset,
                                             rewriter.getStringAttr(dist))
                             .getResult());
       FailureOr<int64_t> activeLanes =
@@ -7173,7 +7174,20 @@ private:
       }
       semanticOffset += *activeLanes;
     }
-    replaceOpWithFlatConvertedValues(rewriter, op, results,
+    return results;
+  }
+
+  LogicalResult lowerLaneStride(
+      VMILoadOp op, OneToNPatternRewriter &rewriter, Value source, Value offset,
+      VMIVRegType resultVMIType, ArrayRef<Type> resultTypes,
+      StringRef dist, int64_t lanesPerPart) const {
+    FailureOr<SmallVector<Value>> results = materializeLaneStrideParts(
+        op, rewriter, source, offset, resultVMIType, resultTypes, dist,
+        lanesPerPart);
+    if (failed(results)) {
+      return failure();
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, *results,
                                      *this->getTypeConverter());
     return success();
   }
