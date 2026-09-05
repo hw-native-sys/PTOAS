@@ -14943,6 +14943,10 @@ void emitEnsureLayoutMaterializationError(VMIEnsureLayoutOp ensure,
          "packing plan";
 }
 
+template <typename ShapeOp, typename ShapeCheck>
+WalkResult verifySupportedShapeOp(ShapeOp op, ShapeCheck check,
+                                  StringRef diagnostic);
+
 WalkResult emitMemoryUnsupported(Operation *memoryOp, StringRef opName,
                                  VMIVRegType type, Value source,
                                  std::optional<int64_t> constantOffset) {
@@ -14957,6 +14961,70 @@ WalkResult emitMemoryUnsupported(Operation *memoryOp, StringRef opName,
         << " direct lowering requires a supported memory source (" << reason
         << ")";
     return WalkResult::interrupt();
+}
+
+std::optional<WalkResult> verifySupportedVMIMemoryStoreOp(Operation *op) {
+  if (auto store = dyn_cast<VMIStoreOp>(op)) {
+    std::string reason;
+    if (succeeded(checkSupportedStoreShape(
+            cast<VMIVRegType>(store.getValue().getType()),
+            store.getDestination(), store.getDestination().getType(),
+            &reason))) {
+      return WalkResult::advance();
+    }
+    store.emitError()
+        << kVMIDiagUnsupportedPrefix
+        << "pto.vmi.store requires an 8/16/32-bit predicate-maskable element "
+           "type and either full physical chunks or contiguous tail-store "
+           "layout, with UB-backed destination ("
+        << reason << ")";
+    return WalkResult::interrupt();
+  }
+  if (auto store = dyn_cast<VMIInterleaveStoreOp>(op)) {
+    return verifySupportedShapeOp(
+        store, checkSupportedInterleaveStoreShape,
+        "pto.vmi.interleave_store lowers through pto.vstsx2 only for matching "
+        "contiguous full low/high input chunks with a supported UB destination "
+        "and 8/16/32-bit element type (");
+  }
+  if (auto store = dyn_cast<VMIGroupStoreOp>(op)) {
+    return verifySupportedShapeOp(
+        store, checkSupportedGroupStoreShape,
+        "pto.vmi.group_store requires a supported UB destination and a table-"
+        "supported value layout lowering through one-block vsstb, full-chunk "
+        "vsts, or deinterleaved vstsx2 (");
+  }
+  if (auto store = dyn_cast<VMIMaskedStoreOp>(op)) {
+    std::string reason;
+    if (succeeded(checkSupportedMaskedStoreShape(
+            cast<VMIVRegType>(store.getValue().getType()),
+            cast<VMIMaskType>(store.getMask().getType()),
+            store.getDestination(), store.getDestination().getType(),
+            &reason))) {
+      return WalkResult::advance();
+    }
+    store.emitError()
+        << kVMIDiagUnsupportedPrefix
+        << "pto.vmi.masked_store requires either full physical chunks or "
+           "contiguous tail-store value/mask layout, with UB-backed "
+           "destination ("
+        << reason << ")";
+    return WalkResult::interrupt();
+  }
+  if (auto store = dyn_cast<VMIStrideStoreOp>(op)) {
+    return verifySupportedShapeOp(
+        store, checkSupportedStrideStoreShape,
+        "pto.vmi.stride_store lowers through pto.vsstb only for one contiguous "
+        "physical value/mask chunk and a supported UB destination (");
+  }
+  if (auto scatter = dyn_cast<VMIScatterOp>(op)) {
+    return verifySupportedShapeOp(
+        scatter, checkSupportedScatterShape,
+        "pto.vmi.scatter lowers through pto.vscatter only with a UB pointer "
+        "destination, contiguous full physical chunks, 32-bit value elements, "
+        "i32 indices, and b32 masks (");
+  }
+  return std::nullopt;
 }
 
 std::optional<WalkResult> verifySupportedVMIMemoryOp(
@@ -15081,90 +15149,9 @@ std::optional<WalkResult> verifySupportedVMIMemoryOp(
         << reason << ")";
     return WalkResult::interrupt();
   }
-  if (auto store = dyn_cast<VMIStoreOp>(op)) {
-    std::string reason;
-    if (succeeded(checkSupportedStoreShape(
-            cast<VMIVRegType>(store.getValue().getType()),
-            store.getDestination(), store.getDestination().getType(),
-            &reason))) {
-      return WalkResult::advance();
-    }
-    store.emitError()
-        << kVMIDiagUnsupportedPrefix
-        << "pto.vmi.store requires an 8/16/32-bit predicate-maskable element "
-           "type and either full physical chunks or contiguous tail-store "
-           "layout, with UB-backed destination ("
-        << reason << ")";
-    return WalkResult::interrupt();
-  }
-  if (auto store = dyn_cast<VMIInterleaveStoreOp>(op)) {
-    std::string reason;
-    if (succeeded(checkSupportedInterleaveStoreShape(store, &reason))) {
-      return WalkResult::advance();
-    }
-    store.emitError()
-        << kVMIDiagUnsupportedPrefix
-        << "pto.vmi.interleave_store lowers through pto.vstsx2 only for "
-           "matching contiguous full low/high input chunks with a supported "
-           "UB destination and 8/16/32-bit element type ("
-        << reason << ")";
-    return WalkResult::interrupt();
-  }
-  if (auto store = dyn_cast<VMIGroupStoreOp>(op)) {
-    std::string reason;
-    if (succeeded(checkSupportedGroupStoreShape(store, &reason))) {
-      return WalkResult::advance();
-    }
-    store.emitError()
-        << kVMIDiagUnsupportedPrefix
-        << "pto.vmi.group_store requires a supported UB destination and a "
-           "table-supported value layout lowering through one-block vsstb, "
-           "full-chunk vsts, or deinterleaved vstsx2 ("
-        << reason << ")";
-    return WalkResult::interrupt();
-  }
-  if (auto store = dyn_cast<VMIMaskedStoreOp>(op)) {
-    std::string reason;
-    if (succeeded(checkSupportedMaskedStoreShape(
-            cast<VMIVRegType>(store.getValue().getType()),
-            cast<VMIMaskType>(store.getMask().getType()),
-            store.getDestination(), store.getDestination().getType(),
-            &reason))) {
-      return WalkResult::advance();
-    }
-    store.emitError()
-        << kVMIDiagUnsupportedPrefix
-        << "pto.vmi.masked_store requires either full physical chunks or "
-           "contiguous tail-store value/mask layout, with UB-backed "
-           "destination ("
-        << reason << ")";
-    return WalkResult::interrupt();
-  }
-  if (auto store = dyn_cast<VMIStrideStoreOp>(op)) {
-    std::string reason;
-    if (succeeded(checkSupportedStrideStoreShape(store, &reason))) {
-      return WalkResult::advance();
-    }
-    store.emitError()
-        << kVMIDiagUnsupportedPrefix
-        << "pto.vmi.stride_store lowers through pto.vsstb only for one "
-           "contiguous physical value/mask chunk and a supported UB "
-           "destination ("
-        << reason << ")";
-    return WalkResult::interrupt();
-  }
-  if (auto scatter = dyn_cast<VMIScatterOp>(op)) {
-    std::string reason;
-    if (succeeded(checkSupportedScatterShape(scatter, &reason))) {
-      return WalkResult::advance();
-    }
-    scatter.emitError()
-        << kVMIDiagUnsupportedPrefix
-        << "pto.vmi.scatter lowers through pto.vscatter only with a UB "
-           "pointer destination, contiguous full physical chunks, 32-bit "
-           "value elements, i32 indices, and b32 masks ("
-        << reason << ")";
-    return WalkResult::interrupt();
+  if (auto storeResult = verifySupportedVMIMemoryStoreOp(op);
+      storeResult.has_value()) {
+    return *storeResult;
   }
   return std::nullopt;
 }

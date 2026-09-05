@@ -402,3 +402,10 @@ selector 选择、常量路径和 `vselr` 路径；未改变 group broadcast 的
 `emitMemoryUnsupported`，使 `verifySupportedVMIMemoryOp` 只负责操作分类和能力
 检查；诊断内容及 stable masked-load 选项语义保持不变。源码增量合规检查、
 `git diff --check` 和连续 load/store lowering 回归通过。
+
+本轮将 memory verifier 的写路径分派抽取为 `verifySupportedVMIMemoryStoreOp`，
+统一承载 store、interleave_store、group_store、masked_store、stride_store 和
+scatter 的 shape checker 与诊断；load、expand-load 及 stable masked-load 选项仍由
+原 helper 按原顺序处理。该拆分只改变职责边界，不改变 lowering 能力或错误文本。
+源码增量合规检查、`git diff --check` 通过；连续 load/store、interleave memory 和
+group-store lowering 回归均通过。
