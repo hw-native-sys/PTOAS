@@ -581,6 +581,12 @@ interleave 指令生成；主 pattern 继续负责 layout fact 查询及 contigu
 路径分派。增量合规检查为 `errors=0 warnings=0`，`git diff --check` 通过；interleave
 memory lowering 回归通过。
 
+本轮将 `materializeDynamicGroupMaskChunk` 的 padding lane 分类与有效 mask 合并抽取
+为 `applyGroupMaskPadding`，chunk 主体只负责 index/ramp 计算和 active-lane 比较；
+padding mask 的构造、`pand` 合并及失败诊断保持不变。增量合规检查为
+`errors=0 warnings=0`，`git diff --check` 通过；dynamic create-group-mask lowering
+回归通过。
+
 本轮将 `lowerGroupBroadcastParts` 的单个结果 chunk 定位、slots=1 特殊合并、selector
 映射验证和普通 selector 物化抽取为 `lowerGroupBroadcastChunk`。外层仅负责 layout
 fact、context 初始化及 part/chunk 枚举；source chunk 边界、结果顺序和 selector cache

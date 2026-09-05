@@ -3210,6 +3210,37 @@ FailureOr<Value> createPowerOfTwoRemainder(Location loc, Value value,
       .getResult();
 }
 
+static FailureOr<Value> applyGroupMaskPadding(
+    VMICreateGroupMaskOp op, VMIMaskType resultVMIType, MaskType maskType,
+    Value predicate, int64_t part, int64_t chunk, int64_t lanesPerPart,
+    Value allMask, PatternRewriter &rewriter) {
+  SmallVector<int8_t> validLanes;
+  validLanes.reserve(lanesPerPart);
+  bool hasPadding = false;
+  for (int64_t lane = 0; lane < lanesPerPart; ++lane) {
+    FailureOr<bool> padding =
+        isPaddingLane(resultVMIType, part, chunk, lane);
+    if (failed(padding)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to classify dynamic create_group_mask padding");
+    }
+    validLanes.push_back(*padding ? 0 : 1);
+    hasPadding |= *padding;
+  }
+  if (!hasPadding) {
+    return predicate;
+  }
+  FailureOr<Value> validMask = materializeConstantMaskChunk(
+      op.getLoc(), maskType, validLanes, rewriter);
+  if (failed(validMask)) {
+    return rewriter.notifyMatchFailure(
+        op, "failed to materialize dynamic create_group_mask padding mask");
+  }
+  return rewriter
+      .create<PandOp>(op.getLoc(), maskType, predicate, *validMask, allMask)
+      .getResult();
+}
+
 FailureOr<Value> materializeDynamicGroupMaskChunk(
     VMICreateGroupMaskOp op, VMIMaskType resultVMIType, Type resultType,
     Value activeI32, int64_t factor, int64_t blockElems, int64_t part,
@@ -3294,30 +3325,13 @@ FailureOr<Value> materializeDynamicGroupMaskChunk(
           .create<VcmpsOp>(loc, maskType, *laneInGroup, activeI32, *allMask,
                            rewriter.getStringAttr("lt"))
           .getResult();
-  SmallVector<int8_t> validLanes;
-  validLanes.reserve(lanesPerPart);
-  bool hasPadding = false;
-  for (int64_t lane = 0; lane < lanesPerPart; ++lane) {
-    FailureOr<bool> padding =
-        isPaddingLane(resultVMIType, part, chunk, lane);
-    if (failed(padding)) {
-      return fail("failed to classify dynamic create_group_mask padding");
-    }
-    validLanes.push_back(*padding ? 0 : 1);
-    hasPadding |= *padding;
+  FailureOr<Value> paddedPredicate = applyGroupMaskPadding(
+      op, resultVMIType, *maskType, predicate, part, chunk, lanesPerPart,
+      *allMask, rewriter);
+  if (failed(paddedPredicate)) {
+    return failure();
   }
-  if (hasPadding) {
-    FailureOr<Value> validMask =
-        materializeConstantMaskChunk(loc, maskType, validLanes, rewriter);
-    if (failed(validMask)) {
-      return fail("failed to materialize dynamic create_group_mask padding mask");
-    }
-    predicate = rewriter
-                    .create<PandOp>(loc, maskType, predicate, *validMask,
-                                    *allMask)
-                    .getResult();
-  }
-  return predicate;
+  return *paddedPredicate;
 }
 
 FailureOr<SmallVector<Value>> materializeDynamicGroupMaskForType(
@@ -5525,8 +5539,10 @@ FailureOr<SmallVector<Value>> materializeStagingDeintToContiguousMaskLayout(
       results.push_back(value);
     }
   }
-  if (results.size() != resultTypes.size())
+  bool resultArityMismatch = results.size() != resultTypes.size();
+  if (resultArityMismatch) {
     return fail("staging deinterleaved mask layout result arity mismatch");
+  }
   return results;
 }
 
