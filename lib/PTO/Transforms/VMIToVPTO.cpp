@@ -7711,6 +7711,52 @@ private:
     return success();
   }
 
+  LogicalResult lowerContiguousChunks(
+      VMIGroupLoadOp op, OneToNPatternRewriter &rewriter, Value source,
+      Value offset, Value rowStride, VMIVRegType resultVMIType,
+      ArrayRef<Type> resultTypes) const {
+    int64_t lanesPerPart = 0;
+    int64_t groupCount = 0;
+    int64_t chunksPerGroup = 0;
+    FailureOr<int64_t> groupSize = getGroupSizeFromNumGroups(
+        resultVMIType, op.getNumGroupsAttr().getInt());
+    if (failed(groupSize)) {
+      return rewriter.notifyMatchFailure(
+          op, "group_load requires num_groups to evenly divide lane count");
+    }
+    if (failed(checkContiguousFullGroupChunks(
+            op, resultVMIType, *groupSize, &lanesPerPart, &groupCount,
+            &chunksPerGroup, rewriter))) {
+      return failure();
+    }
+    bool invalidArity = static_cast<int64_t>(resultTypes.size()) !=
+                        groupCount * chunksPerGroup;
+    if (invalidArity) {
+      return rewriter.notifyMatchFailure(op, "group_load arity mismatch");
+    }
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (auto [index, resultType] : llvm::enumerate(resultTypes)) {
+      if (!isa<VRegType>(resultType)) {
+        return rewriter.notifyMatchFailure(op,
+                                           "group_load result must be vreg");
+      }
+      int64_t group = index / chunksPerGroup;
+      int64_t chunkInGroup = index % chunksPerGroup;
+      Value chunkOffset = createGroupChunkOffset(
+          op.getLoc(), offset, rowStride, group, chunkInGroup * lanesPerPart,
+          rewriter);
+      results.push_back(rewriter
+                            .create<VldsOp>(op.getLoc(), resultType,
+                                            /*updated_base=*/Type{}, source,
+                                            chunkOffset, /*dist=*/nullptr)
+                            .getResult());
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
 public:
 
   LogicalResult
@@ -7814,53 +7860,15 @@ public:
       }
     }
 
-    int64_t lanesPerPart = 0;
-    int64_t groupCount = 0;
-    int64_t chunksPerGroup = 0;
-    FailureOr<int64_t> groupSize = getGroupSizeFromNumGroups(
-        resultVMIType, op.getNumGroupsAttr().getInt());
-    if (failed(groupSize))
-      return rewriter.notifyMatchFailure(
-          op, "group_load requires num_groups to evenly divide lane count");
-    if (failed(checkContiguousFullGroupChunks(op, resultVMIType, *groupSize,
-                                              &lanesPerPart, &groupCount,
-                                              &chunksPerGroup, rewriter)))
-      return failure();
-
     FailureOr<SmallVector<Type>> maybe_resultTypes =
-
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-
-    if (failed(maybe_resultTypes))
-
+    if (failed(maybe_resultTypes)) {
       return failure();
-
-    SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-    if (static_cast<int64_t>(resultTypes.size()) != groupCount * chunksPerGroup)
-      return rewriter.notifyMatchFailure(op, "group_load arity mismatch");
-
-    SmallVector<Value> results;
-    results.reserve(resultTypes.size());
-    for (auto [index, resultType] : llvm::enumerate(resultTypes)) {
-      auto vregType = dyn_cast<VRegType>(resultType);
-      if (!vregType)
-        return rewriter.notifyMatchFailure(op,
-                                           "group_load result must be vreg");
-      int64_t group = index / chunksPerGroup;
-      int64_t chunkInGroup = index % chunksPerGroup;
-      Value chunkOffset =
-          createGroupChunkOffset(op.getLoc(), *offset, *rowStride, group,
-                                 chunkInGroup * lanesPerPart, rewriter);
-      results.push_back(rewriter
-                            .create<VldsOp>(op.getLoc(), resultType,
-                                            /*updated_base=*/Type{}, *source,
-                                            chunkOffset,
-                                            /*dist=*/nullptr)
-                            .getResult());
     }
 
-    replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
-    return success();
+    SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
+    return lowerContiguousChunks(op, rewriter, *source, *offset, *rowStride,
+                                 resultVMIType, resultTypes);
   }
 };
 
