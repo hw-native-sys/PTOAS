@@ -127,3 +127,15 @@ hook 通过。
 `emitPackedByteStoreStream`（提交 `19289e5b0`）。该 helper 统一处理 destination
 指针转换、offset 合成和 stream 发射，调用方仅准备 packed values 与 lane advances；
 `PK4_B32` 直写仍保持独立路径。增量合规检查继续通过。
+
+回归抽样使用现有 `build/tools/pto-test-opt/pto-test-opt` 运行：
+
+```text
+vmi_to_vpto_group_store_slots8_packed_byte.pto                         exit=0
+  输出包含 PK4_B32、vstus stream 以及 NORM_B8 路径
+vmi_to_vpto_group_store_slots1_unit_stride_alignment.pto               exit=0
+  输出包含对齐 vsts 与非对齐 vstus 路径
+vmi_layout_assignment_group_store_slots1_unit_stride.pto               exit=0
+```
+
+这组 case 覆盖了本轮抽取涉及的三种后端选择，未观察到 lowering 失败。
