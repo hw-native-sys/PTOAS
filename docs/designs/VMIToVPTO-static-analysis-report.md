@@ -1668,6 +1668,15 @@ padding/zero-active-lane 和失败诊断语义保持不变。增量合规检查�
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_masked_store.pto` lowering exit=0。
 
+# group_store slots=8 分派整改
+
+本轮将 `OneToNVMIGroupStoreOpPattern::matchAndRewrite` 中 slots=8 的 row_stride/arity
+校验、packed-byte 快路径识别以及 lane-stride/contiguous 后端选择抽取为
+`lowerSlots8Dispatch`。group_store 主入口继续负责 scalar、compact、slots=1 和通用
+layout support 分派；slots=8 的路径优先级、类型校验、PK4/stateful 选择和诊断语义保持
+不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
+通过；`vmi_to_vpto_group_store_slots1_1pt.pto` lowering exit=0。
+
 # stride_load 物理发射整改
 
 本轮将 `OneToNVMIStrideLoadOpPattern::matchAndRewrite` 中 physical arity/type 校验、

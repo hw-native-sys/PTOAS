@@ -10730,6 +10730,43 @@ private:
     return success();
   }
 
+  LogicalResult lowerSlots8Dispatch(
+      VMIGroupStoreOp op, OpAdaptor adaptor, OneToNPatternRewriter &rewriter,
+      VMIVRegType valueVMIType, VMILayoutAttr layout, Value destination,
+      Value offset, Value rowStride) const {
+    int64_t numGroups = layout.getNumGroups();
+    std::optional<int64_t> constantRowStride =
+        getConstantIndexValue(op.getRowStride());
+    bool hasUnitRowStride = constantRowStride && *constantRowStride == 1;
+    if (!hasUnitRowStride) {
+      return rewriter.notifyMatchFailure(
+          op, "slots=8 group_store requires constant unit row_stride");
+    }
+    ValueRange valueParts = adaptor.getValue();
+    bool hasExpectedArity = static_cast<int64_t>(valueParts.size()) ==
+                            ceilDivNonNegative(numGroups, 8);
+    if (!hasExpectedArity) {
+      return rewriter.notifyMatchFailure(op, "slots=8 group_store arity mismatch");
+    }
+    if (!valueParts.empty()) {
+      auto firstVRegType = dyn_cast<VRegType>(valueParts.front().getType());
+      if (!firstVRegType) {
+        return rewriter.notifyMatchFailure(op, "group_store value must be vreg");
+      }
+      if (isPackedByteGroupStore(op.getDestination().getType(), firstVRegType)) {
+        return lowerPackedByteSlots8(
+            op, rewriter, valueParts, valueVMIType, layout, destination, offset,
+            rowStride, numGroups, *firstVRegType);
+      }
+    }
+    if (layout.hasLaneStride()) {
+      return lowerSlots8LaneStride(op, adaptor, rewriter, valueVMIType, layout,
+                                   destination, offset, rowStride, numGroups);
+    }
+    return lowerSlots8Contiguous(op, adaptor, rewriter, valueVMIType, destination,
+                                 offset, rowStride, numGroups);
+  }
+
 public:
   LogicalResult
   matchAndRewrite(VMIGroupStoreOp op, OpAdaptor adaptor,
@@ -10785,46 +10822,8 @@ public:
         layout && layout.isGroupSlots() && layout.getSlots() == 8 &&
         layout.getNumGroups() == op.getNumGroupsAttr().getInt();
     if (isSlots8Layout) {
-      int64_t numGroups = layout.getNumGroups();
-      std::optional<int64_t> constantRowStride =
-          getConstantIndexValue(op.getRowStride());
-      bool hasUnitRowStride = constantRowStride && *constantRowStride == 1;
-      if (!hasUnitRowStride) {
-        return rewriter.notifyMatchFailure(
-            op, "slots=8 group_store requires constant unit row_stride");
-      }
-
-      ValueRange valueParts = adaptor.getValue();
-      bool hasExpectedArity = static_cast<int64_t>(valueParts.size()) ==
-                              ceilDivNonNegative(numGroups, 8);
-      if (!hasExpectedArity) {
-        return rewriter.notifyMatchFailure(
-            op, "slots=8 group_store arity mismatch");
-      }
-
-      if (!valueParts.empty()) {
-        auto firstVRegType = dyn_cast<VRegType>(valueParts.front().getType());
-        if (!firstVRegType) {
-          return rewriter.notifyMatchFailure(op,
-                                             "group_store value must be vreg");
-        }
-        bool packedByteStore = isPackedByteGroupStore(
-            op.getDestination().getType(), firstVRegType);
-        if (packedByteStore) {
-          return lowerPackedByteSlots8(
-              op, rewriter, valueParts, valueVMIType, layout, *destination,
-              *offset, *rowStride, numGroups, *firstVRegType);
-        }
-      }
-
-      if (layout.hasLaneStride()) {
-        return lowerSlots8LaneStride(
-            op, adaptor, rewriter, valueVMIType, layout, *destination, *offset,
-            *rowStride, numGroups);
-      }
-
-      return lowerSlots8Contiguous(op, adaptor, rewriter, valueVMIType,
-                                   *destination, *offset, *rowStride, numGroups);
+      return lowerSlots8Dispatch(op, adaptor, rewriter, valueVMIType, layout,
+                                 *destination, *offset, *rowStride);
     }
 
     VMILayoutSupport supports;
