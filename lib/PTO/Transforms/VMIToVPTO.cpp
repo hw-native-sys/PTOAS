@@ -15120,14 +15120,56 @@ struct OneToNVMIChannelMergeOpPattern
 struct OneToNVMIShuffleOpPattern : OneToNOpConversionPattern<VMIShuffleOp> {
   using OneToNOpConversionPattern<VMIShuffleOp>::OneToNOpConversionPattern;
 
+private:
+  LogicalResult lowerLane0Splat(
+      VMIShuffleOp op, OneToNPatternRewriter &rewriter, ValueRange sourceParts,
+      ArrayRef<Type> resultTypes, int64_t sourceIndex) const {
+    bool sourceOutOfBounds =
+        sourceIndex < 0 || sourceIndex >= static_cast<int64_t>(sourceParts.size());
+    if (sourceOutOfBounds) {
+      return rewriter.notifyMatchFailure(
+          op, "shuffle lane0 splat source part range is out of bounds");
+    }
+    Value sourcePart = sourceParts[sourceIndex];
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (Type resultType : resultTypes) {
+      auto sourceVRegType = dyn_cast<VRegType>(sourcePart.getType());
+      auto resultVRegType = dyn_cast<VRegType>(resultType);
+      bool invalidTypes = !sourceVRegType || !resultVRegType ||
+                          sourceVRegType != resultVRegType;
+      if (invalidTypes) {
+        return rewriter.notifyMatchFailure(
+            op, "shuffle lane0 splat requires matching physical vreg type");
+      }
+      FailureOr<Value> mask =
+          createAllTrueMaskForVReg(op.getLoc(), resultVRegType, rewriter);
+      if (failed(mask)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to create shuffle lane0 splat mask");
+      }
+      results.push_back(rewriter
+                           .create<VdupOp>(op.getLoc(), resultType, sourcePart,
+                                           *mask,
+                                           rewriter.getStringAttr("LOWEST"))
+                           .getResult());
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
+public:
+
   LogicalResult
   matchAndRewrite(VMIShuffleOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
     ValueRange sourceParts = adaptor.getSource();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    if (failed(maybe_resultTypes)) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     std::string reason;
     FailureOr<SmallVector<int64_t>> sourceFlatIndices =
@@ -15154,34 +15196,8 @@ struct OneToNVMIShuffleOpPattern : OneToNOpConversionPattern<VMIShuffleOp> {
     FailureOr<int64_t> splatSource =
         computeShuffleLane0SplatSourcePart(op, &splatReason);
     if (succeeded(splatSource)) {
-      if (*splatSource >= static_cast<int64_t>(sourceParts.size()))
-        return rewriter.notifyMatchFailure(
-            op, "shuffle lane0 splat source part range is out of bounds");
-
-      SmallVector<Value> results;
-      results.reserve(resultTypes.size());
-      Value sourcePart = sourceParts[*splatSource];
-      for (Type resultType : resultTypes) {
-        auto sourceVRegType = dyn_cast<VRegType>(sourcePart.getType());
-        auto resultVRegType = dyn_cast<VRegType>(resultType);
-        if (!sourceVRegType || !resultVRegType ||
-            sourceVRegType != resultVRegType)
-          return rewriter.notifyMatchFailure(
-              op, "shuffle lane0 splat requires matching physical vreg type");
-        FailureOr<Value> mask =
-            createAllTrueMaskForVReg(op.getLoc(), resultVRegType, rewriter);
-        if (failed(mask))
-          return rewriter.notifyMatchFailure(
-              op, "failed to create shuffle lane0 splat mask");
-        results.push_back(rewriter
-                              .create<VdupOp>(op.getLoc(), resultType,
-                                              sourcePart, *mask,
-                                              rewriter.getStringAttr("LOWEST"))
-                              .getResult());
-      }
-
-      replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
-      return success();
+      return lowerLane0Splat(op, rewriter, sourceParts, resultTypes,
+                             *splatSource);
     }
 
     std::string vselrReason;
