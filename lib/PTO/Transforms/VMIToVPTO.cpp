@@ -11522,6 +11522,7 @@ public:
       if (invalidSingleChunkTypes) {
         return rewriter.notifyMatchFailure(
             op, "single-chunk interleave part type mismatch");
+      }
       auto interleave = rewriter.create<TargetOp>(
           op.getLoc(), lowTypes.front(), highTypes.front(), lhsParts.front(),
           rhsParts.front());

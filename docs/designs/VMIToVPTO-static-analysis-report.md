@@ -708,6 +708,12 @@ pattern 现在仅负责结果类型转换、factor-4 block 特例和路径分派
 `git diff --check` 通过；`vmi_to_vpto_create_group_mask_block8_dynamic.pto`
 lowering exit=0。
 
+复核 interleave 模板的 contiguous lowering 时发现 `invalidSingleChunkTypes` 条件缺少
+闭合大括号，导致直接 `TargetOp` 构造语句错误地落入失败分支。已补齐控制流边界，恢复
+contiguous interleave 的正常 lowering；该修复不改变支持矩阵或结果语义。增量合规检查
+结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_interleaved_memory_ops.pto` lowering exit=0。
+
 本轮继续将 two-block `deinterleaved=2` 的 `vcgadd`/combine 路径抽取为
 `lowerTwoBlock`。该 helper 独立维护双物理块 arity、source/mask/result 类型一致性、
 尾部 active-group mask 和两路 group-reduce 后的 combine；主 pattern 仅负责 plan 分派。
