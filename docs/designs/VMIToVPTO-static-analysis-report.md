@@ -1176,3 +1176,10 @@ lowering 的选择；主 pattern 只保留 block-deinterleaved 特例和 contigu
 分派。保持地址计算、对齐语义、结果顺序和指令选择不变。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续 load/store
 lowering exit=0。
+
+本轮将 `OneToNVMIDeinterleaveLoadOpPattern` 的对齐 `vldsx2` 发射抽取为 `lowerDirect`，
+集中负责 low/high physical type、chunk offset、结果收集和替换；非对齐路径仍由
+`lowerUnaligned` 独立管理 `vldas`/`vldus` 的 align/base 状态。主 pattern 只负责
+operands、lane 数、dist 合法性及对齐与非对齐路径选择，保持 stream 与 dist 语义不变。
+增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+interleave memory lowering exit=0。

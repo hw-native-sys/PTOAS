@@ -6340,6 +6340,39 @@ struct OneToNVMIEnsureMaskGranularityOpPattern
   }
 
 private:
+  LogicalResult lowerDirect(
+      VMIDeinterleaveLoadOp op, OneToNPatternRewriter &rewriter, Value source,
+      Value offset, ArrayRef<Type> lowTypes, ArrayRef<Type> highTypes,
+      int64_t lanesPerPart, StringRef dist) const {
+    SmallVector<Value> lows;
+    SmallVector<Value> highs;
+    lows.reserve(lowTypes.size());
+    highs.reserve(highTypes.size());
+    for (size_t index = 0; index < lowTypes.size(); ++index) {
+      Type lowType = lowTypes[index];
+      Type highType = highTypes[index];
+      if (lowType != highType) {
+        return rewriter.notifyMatchFailure(
+            op, "deinterleave_load requires matching low/high physical types");
+      }
+      Value chunkOffset = createChunkOffset(
+          op.getLoc(), offset, static_cast<int64_t>(index) * 2 * lanesPerPart,
+          rewriter);
+      auto load = rewriter.create<Vldsx2Op>(
+          op.getLoc(), lowType, highType, Type{}, source, chunkOffset,
+          rewriter.getStringAttr(dist));
+      lows.push_back(load.getLow());
+      highs.push_back(load.getHigh());
+    }
+    SmallVector<Value> results;
+    results.reserve(lows.size() + highs.size());
+    results.append(lows);
+    results.append(highs);
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
   struct ExtFPhysicalPlan {
     VRegType sourceType;
     SmallVector<VRegType> resultTypes;
@@ -7884,32 +7917,8 @@ public:
                             highTypes, *lanesPerPart);
     }
 
-    SmallVector<Value> lows;
-    SmallVector<Value> highs;
-    lows.reserve(lowTypes.size());
-    highs.reserve(highTypes.size());
-    for (size_t index = 0, e = lowTypes.size(); index < e; ++index) {
-      Type lowType = lowTypes[index];
-      Type highType = highTypes[index];
-      if (lowType != highType)
-        return rewriter.notifyMatchFailure(
-            op, "deinterleave_load requires matching low/high physical types");
-      Value chunkOffset = createChunkOffset(
-          op.getLoc(), *offset,
-          static_cast<int64_t>(index) * 2 * *lanesPerPart, rewriter);
-      auto load = rewriter.create<Vldsx2Op>(
-          op.getLoc(), lowType, highType, Type{}, *source, chunkOffset,
-          rewriter.getStringAttr(*dist));
-      lows.push_back(load.getLow());
-      highs.push_back(load.getHigh());
-    }
-
-    SmallVector<Value> results;
-    results.reserve(lows.size() + highs.size());
-    results.append(lows);
-    results.append(highs);
-    replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
-    return success();
+    return lowerDirect(op, rewriter, *source, *offset, lowTypes, highTypes,
+                       *lanesPerPart, *dist);
   }
 };
 
