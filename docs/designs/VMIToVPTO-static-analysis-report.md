@@ -1227,3 +1227,10 @@ active constant、mask layout/granularity、physical lanes、group shape 和 cla
 active 元素数；原函数仅调用 plan 并生成逻辑 lane predicate。该拆分不改变 mask
 chunk 顺序、padding 处理或失败诊断。增量合规检查结果为 `checked_files=1 errors=0
 warnings=0`，`git diff --check` 通过；动态 group-mask lowering case exit=0。
+
+本轮将 `verifySupportedVMIMemoryLoadOp` 中的 deinterleave、stride、group、group-slot
+和 group-broadcast shape verifier 分派抽取为 `verifySupportedVMIStructuredLoadOp`。
+基础 `load` 与 masked/gather/expand advanced load 的处理顺序保持不变；各结构化
+load 的 verifier、诊断文本和返回状态均原样保留。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续、交错和
+group-slot lowering case 均 exit=0。

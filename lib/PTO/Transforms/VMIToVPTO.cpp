@@ -16912,13 +16912,7 @@ std::optional<WalkResult> verifySupportedVMIMemoryStoreOp(Operation *op) {
   return std::nullopt;
 }
 
-std::optional<WalkResult> verifySupportedVMIMemoryLoadOp(
-    Operation *op, bool enableStableGatherMaskedLoad) {
-  if (auto load = dyn_cast<VMILoadOp>(op)) {
-    return emitMemoryUnsupported(
-        op, "pto.vmi.load", cast<VMIVRegType>(load.getResult().getType()),
-        load.getSource(), getConstantIndexValue(load.getOffset()));
-  }
+std::optional<WalkResult> verifySupportedVMIStructuredLoadOp(Operation *op) {
   if (auto load = dyn_cast<VMIDeinterleaveLoadOp>(op)) {
     std::string reason;
     if (succeeded(checkSupportedDeinterleaveLoadShape(load, &reason))) {
@@ -16984,6 +16978,20 @@ std::optional<WalkResult> verifySupportedVMIMemoryLoadOp(
            "fallback with supported UB pointer source and source_group_stride ("
         << reason << ")";
     return WalkResult::interrupt();
+  }
+  return std::nullopt;
+}
+
+std::optional<WalkResult> verifySupportedVMIMemoryLoadOp(
+    Operation *op, bool enableStableGatherMaskedLoad) {
+  if (auto load = dyn_cast<VMILoadOp>(op)) {
+    return emitMemoryUnsupported(
+        op, "pto.vmi.load", cast<VMIVRegType>(load.getResult().getType()),
+        load.getSource(), getConstantIndexValue(load.getOffset()));
+  }
+  if (auto structuredResult = verifySupportedVMIStructuredLoadOp(op);
+      structuredResult.has_value()) {
+    return *structuredResult;
   }
   if (auto advancedResult = verifySupportedVMIMemoryAdvancedLoadOp(
           op, enableStableGatherMaskedLoad);
