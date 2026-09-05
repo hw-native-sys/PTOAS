@@ -1647,3 +1647,13 @@ group-slot fallback 的地址合法性判断和后端选择抽取为 `lowerDirec
 dist 选择、静态地址合法性检查、direct lowering 以及 fallback 优先级保持不变。
 增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_layout_assignment_group_broadcast_load_e2b_b16.pto` lowering exit=0。
+
+# store lane-stride direct 路径整改
+
+本轮将 `OneToNVMIStoreOpPattern::matchAndRewrite` 中 dense lane-stride store 的 dist
+推导、地址合法性检查、mask 粒度获取和 `emitLaneStrideStore` 调用抽取为
+`tryLowerLaneStrideStore`。普通 store 主流程继续负责 direct 路径优先级、连续布局
+转换、deinterleaved x2 选择以及最终 contiguous/stateful fallback；未改变失败时回退的
+行为。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
+通过。`vmi_to_vpto_memory_x2_widths.pto` 抽样仍在既有 VMI pack/unpack pipeline invariant
+处提前失败，未进入本轮 helper。

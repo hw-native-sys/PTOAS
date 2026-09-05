@@ -9497,6 +9497,37 @@ private:
     return std::move(*contiguousTypes);
   }
 
+  FailureOr<bool> tryLowerLaneStrideStore(
+      VMIStoreOp op, Value destination, Value offset, ValueRange valueParts,
+      VMIVRegType valueVMIType, OneToNPatternRewriter &rewriter) const {
+    std::optional<std::string> dist =
+        getDenseLaneStrideStoreDistToken(valueVMIType);
+    auto valueType = valueParts.empty()
+                         ? VRegType{}
+                         : dyn_cast<VRegType>(valueParts.front().getType());
+    bool canUseDist =
+        dist && valueType && isDirectMemoryDistAddressLegal(
+                                  op.getDestination(), op.getOffset(),
+                                  valueVMIType.getElementType(), valueType,
+                                  VPTOMemoryOpFamily::Store, *dist);
+    if (!canUseDist) {
+      return false;
+    }
+    std::optional<StringRef> maskGranularity =
+        getDenseLaneStrideStoreMaskGranularity(valueVMIType);
+    if (!maskGranularity) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported lane_stride store mask granularity");
+    }
+    if (failed(emitLaneStrideStore(op, destination, offset, valueParts,
+                                   valueVMIType, *dist, *maskGranularity,
+                                   rewriter))) {
+      return failure();
+    }
+    rewriter.eraseOp(op);
+    return true;
+  }
+
   LogicalResult emitAlignedContiguousStoreParts(
       VMIStoreOp op, Value destination, Value offset, ValueRange storeParts,
       VMIVRegType valueVMIType, int64_t lanesPerPart, bool fullPhysicalChunks,
@@ -9711,29 +9742,12 @@ public:
     }
 
     ValueRange valueParts = adaptor.getValue();
-    std::optional<std::string> laneStrideDist =
-        getDenseLaneStrideStoreDistToken(valueVMIType);
-    auto laneStrideValueType =
-        valueParts.empty() ? VRegType{}
-                           : dyn_cast<VRegType>(valueParts.front().getType());
-    bool canUseLaneStrideDist =
-        laneStrideDist && laneStrideValueType &&
-        isDirectMemoryDistAddressLegal(
-            op.getDestination(), op.getOffset(), valueVMIType.getElementType(),
-            laneStrideValueType, VPTOMemoryOpFamily::Store, *laneStrideDist);
-    if (canUseLaneStrideDist) {
-      std::optional<StringRef> maskGranularity =
-          getDenseLaneStrideStoreMaskGranularity(valueVMIType);
-      if (!maskGranularity) {
-        return rewriter.notifyMatchFailure(
-            op, "unsupported lane_stride store mask granularity");
-      }
-      if (failed(emitLaneStrideStore(
-              op, *destination, *offset, valueParts, valueVMIType,
-              *laneStrideDist, *maskGranularity, rewriter))) {
-        return failure();
-      }
-      rewriter.eraseOp(op);
+    FailureOr<bool> laneStrideStore = tryLowerLaneStrideStore(
+        op, *destination, *offset, valueParts, valueVMIType, rewriter);
+    if (failed(laneStrideStore)) {
+      return failure();
+    }
+    if (*laneStrideStore) {
       return success();
     }
 
