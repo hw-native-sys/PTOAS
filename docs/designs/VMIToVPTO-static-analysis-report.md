@@ -163,3 +163,8 @@ unit-stride 判定与 slots=1 1PT 对齐判定具有独立职责；原有 memory
 证明抽取为 `checkSupportedGatherPhysicalShape`（提交 `1cb382b06`），由 gather 主
 检查只负责布局、元素宽度和索引契约。`b16` 单物理 part 的 partial-chunk 例外仍由
 原有条件传入，保持诊断与支持范围不变。
+
+本轮还将 `checkSupportedStrideStoreShape` 与 `checkSupportedStrideLoadShape` 共享的
+单 physical chunk 校验抽取为 `checkSinglePhysicalStrideAccess`（提交 `1454cdbba`），
+通过调用方传入的方向性诊断区分 store/load；同时修正了该批新增代码触及的单行控制
+语句大括号。合规检查通过。
