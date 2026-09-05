@@ -371,6 +371,12 @@ memory/layout/compare、算术、专用 shape、归约的顺序调用分类 help
 两个普通 reduce 样例仍在测试自身 `unpack` pipeline invariant 处提前失败，未进入本轮
 verifier/lowering 变化路径。
 
+本轮将 `fma`、`extf` 和 `truncf` 的浮点 shape verifier 分派抽取为
+`verifySupportedVMIFloatOp`，保留各自的支持描述和 checker 绑定，主 walk 不再混合
+浮点转换与其它操作类别。源码增量合规检查和 `git diff --check` 通过；普通连续
+load/store 回归通过。现有三个独立浮点样例均在测试自身 `unpack` pipeline invariant
+处提前失败，未进入本轮 verifier/lowering 变化路径。
+
 本轮将 `lowerGroupBroadcastParts` 中 slots=1 且结果 chunk 覆盖多个 group 的 lane
 映射、splat 和 `vsel` 合并逻辑抽取为 `materializeSlots1GroupBroadcastChunk`。
 该 helper 单独负责跨物理 source chunk 的 lane-mask 构造，主 lowering 继续负责布局

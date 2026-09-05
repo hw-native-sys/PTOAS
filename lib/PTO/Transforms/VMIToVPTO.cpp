@@ -15588,6 +15588,32 @@ std::optional<WalkResult> verifySupportedVMIReductionOp(Operation *op) {
   return std::nullopt;
 }
 
+std::optional<WalkResult> verifySupportedVMIFloatOp(Operation *op) {
+  if (auto fma = dyn_cast<VMIFmaOp>(op)) {
+    return verifySupportedShapeOp(
+        fma, checkSupportedFmaShape,
+        "pto.vmi.fma lowers through pto.vmula only for f16/bf16/f32 element "
+        "types (");
+  }
+  if (auto extf = dyn_cast<VMIExtFOp>(op)) {
+    return verifySupportedShapeOp(
+        extf, checkSupportedExtFShape,
+        "pto.vmi.extf supports contiguous 16-bit float-like or fp8-like "
+        "physical source chunks to f32 deinterleaved=2/4 results; "
+        "partial/tail is allowed only when source padding maps to result "
+        "padding (");
+  }
+  if (auto truncf = dyn_cast<VMITruncFOp>(op)) {
+    return verifySupportedShapeOp(
+        truncf, checkSupportedTruncFShape,
+        "pto.vmi.truncf supports f32/f16/bf16 source narrowing (dense "
+        "EvenOdd, Packed4, or f32 group_slots(num_groups=G, slots=1) to "
+        "f16 group_slots(num_groups=G, slots=1)); non-f32 sources currently "
+        "require dense contiguous layouts (");
+  }
+  return std::nullopt;
+}
+
 LogicalResult
 verifySupportedVMIToVPTOOps(ModuleOp module,
                             bool enableStableGatherMaskedLoad) {
@@ -15701,46 +15727,9 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
       return *reductionResult;
     }
 
-    if (auto fma = dyn_cast<VMIFmaOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedFmaShape(fma, &reason)))
-        return WalkResult::advance();
-      fma.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.fma lowers through pto.vmula only for f16/bf16/f32 "
-             "element types ("
-          << reason << ")";
-      return WalkResult::interrupt();
-    }
-
-    if (auto extf = dyn_cast<VMIExtFOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedExtFShape(extf, &reason)))
-        return WalkResult::advance();
-
-      extf.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.extf supports contiguous 16-bit float-like or fp8-like "
-             "physical source chunks to f32 deinterleaved=2/4 results; "
-             "partial/tail is allowed only when source padding maps to result "
-             "padding ("
-          << reason << ")";
-      return WalkResult::interrupt();
-    }
-
-    if (auto truncf = dyn_cast<VMITruncFOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedTruncFShape(truncf, &reason)))
-        return WalkResult::advance();
-
-      truncf.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.truncf supports f32/f16/bf16 source narrowing (dense "
-             "EvenOdd, Packed4, or f32 group_slots(num_groups=G, slots=1) to "
-             "f16 group_slots(num_groups=G, slots=1)); non-f32 sources "
-             "currently require dense contiguous layouts ("
-          << reason << ")";
-      return WalkResult::interrupt();
+    if (auto floatResult = verifySupportedVMIFloatOp(op);
+        floatResult.has_value()) {
+      return *floatResult;
     }
 
     if (auto conversionResult = verifySupportedVMIConversionOp(op);
