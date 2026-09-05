@@ -1234,3 +1234,10 @@ warnings=0`，`git diff --check` 通过；动态 group-mask lowering case exit=0
 load 的 verifier、诊断文本和返回状态均原样保留。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续、交错和
 group-slot lowering case 均 exit=0。
+
+本轮将 `verifySupportedVMIMemoryStoreOp` 中的 interleave、group、masked、stride 和
+scatter shape 校验抽取为 `verifySupportedVMIStructuredStoreOp`；普通 `store` 保留在
+入口处理，随后统一调用结构化 store 分派。该调整只改变 verifier 的职责边界，保持
+所有支持条件、诊断文本和返回状态不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；interleave memory
+lowering case exit=0。

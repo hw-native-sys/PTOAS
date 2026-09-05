@@ -16848,23 +16848,7 @@ std::optional<WalkResult> verifySupportedVMIMemoryAdvancedLoadOp(
   return std::nullopt;
 }
 
-std::optional<WalkResult> verifySupportedVMIMemoryStoreOp(Operation *op) {
-  if (auto store = dyn_cast<VMIStoreOp>(op)) {
-    std::string reason;
-    if (succeeded(checkSupportedStoreShape(
-            cast<VMIVRegType>(store.getValue().getType()),
-            store.getDestination(), store.getDestination().getType(),
-            &reason))) {
-      return WalkResult::advance();
-    }
-    store.emitError()
-        << kVMIDiagUnsupportedPrefix
-        << "pto.vmi.store requires an 8/16/32-bit predicate-maskable element "
-           "type and either full physical chunks or contiguous tail-store "
-           "layout, with UB-backed destination ("
-        << reason << ")";
-    return WalkResult::interrupt();
-  }
+std::optional<WalkResult> verifySupportedVMIStructuredStoreOp(Operation *op) {
   if (auto store = dyn_cast<VMIInterleaveStoreOp>(op)) {
     return verifySupportedShapeOp(
         store, checkSupportedInterleaveStoreShape,
@@ -16908,6 +16892,30 @@ std::optional<WalkResult> verifySupportedVMIMemoryStoreOp(Operation *op) {
         "pto.vmi.scatter lowers through pto.vscatter only with a UB pointer "
         "destination, contiguous full physical chunks, 32-bit value elements, "
         "i32 indices, and b32 masks (");
+  }
+  return std::nullopt;
+}
+
+std::optional<WalkResult> verifySupportedVMIMemoryStoreOp(Operation *op) {
+  if (auto store = dyn_cast<VMIStoreOp>(op)) {
+    std::string reason;
+    if (succeeded(checkSupportedStoreShape(
+            cast<VMIVRegType>(store.getValue().getType()),
+            store.getDestination(), store.getDestination().getType(),
+            &reason))) {
+      return WalkResult::advance();
+    }
+    store.emitError()
+        << kVMIDiagUnsupportedPrefix
+        << "pto.vmi.store requires an 8/16/32-bit predicate-maskable element "
+           "type and either full physical chunks or contiguous tail-store "
+           "layout, with UB-backed destination ("
+        << reason << ")";
+    return WalkResult::interrupt();
+  }
+  if (auto structuredResult = verifySupportedVMIStructuredStoreOp(op);
+      structuredResult.has_value()) {
+    return *structuredResult;
   }
   return std::nullopt;
 }
