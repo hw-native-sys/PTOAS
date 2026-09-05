@@ -4506,6 +4506,73 @@ createPredicateIntlv(Location loc, Type lowType, Type highType, Value lhs,
   return failure();
 }
 
+FailureOr<std::optional<SmallVector<Value>>> materializeDeinterleaved2MaskLayout(
+    Operation *op, ValueRange sourceParts, TypeRange resultTypes,
+    VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
+    PatternRewriter &rewriter) {
+  auto isElementDeinterleaved = [](VMILayoutAttr layout) {
+    return layout.isDeinterleaved() && layout.getFactor() == 2 &&
+           layout.getLaneStride() == 1;
+  };
+  bool toContiguous = sourceLayout && sourceLayout.isDeinterleaved() &&
+                      isElementDeinterleaved(sourceLayout) && resultLayout &&
+                      resultLayout.isContiguous() &&
+                      resultLayout.getLaneStride() == 1;
+  bool fromContiguous = sourceLayout && sourceLayout.isContiguous() &&
+                        sourceLayout.getLaneStride() == 1 && resultLayout &&
+                        resultLayout.isDeinterleaved() &&
+                        isElementDeinterleaved(resultLayout);
+  if (!toContiguous && !fromContiguous) {
+    return std::nullopt;
+  }
+  bool invalidArity = sourceParts.size() != resultTypes.size() ||
+                      sourceParts.empty() || sourceParts.size() % 2 != 0;
+  if (invalidArity) {
+    (void)rewriter.notifyMatchFailure(
+        op, "deinterleaved=2 mask layout materialization requires 2*N parts");
+    return failure();
+  }
+  if (failed(verifyIdentityPartForwarding(op, sourceParts, resultTypes,
+                                          rewriter))) {
+    return failure();
+  }
+
+  int64_t groups = sourceParts.size() / 2;
+  SmallVector<Value> results;
+  results.reserve(sourceParts.size());
+  if (toContiguous) {
+    for (int64_t i = 0; i < groups; ++i) {
+      FailureOr<std::pair<Value, Value>> materialize = createPredicateIntlv(
+          op->getLoc(), resultTypes[2 * i], resultTypes[2 * i + 1],
+          sourceParts[i], sourceParts[groups + i], rewriter);
+      if (failed(materialize)) {
+        return rewriter.notifyMatchFailure(
+            op, "unsupported predicate intlv mask type");
+      }
+      results.append({materialize->first, materialize->second});
+    }
+  } else {
+    SmallVector<Value> part0;
+    SmallVector<Value> part1;
+    part0.reserve(groups);
+    part1.reserve(groups);
+    for (int64_t i = 0; i < groups; ++i) {
+      FailureOr<std::pair<Value, Value>> materialize = createPredicateDintlv(
+          op->getLoc(), resultTypes[i], resultTypes[groups + i],
+          sourceParts[2 * i], sourceParts[2 * i + 1], rewriter);
+      if (failed(materialize)) {
+        return rewriter.notifyMatchFailure(
+            op, "unsupported predicate dintlv mask type");
+      }
+      part0.push_back(materialize->first);
+      part1.push_back(materialize->second);
+    }
+    results.append(part0);
+    results.append(part1);
+  }
+  return std::optional<SmallVector<Value>>(std::move(results));
+}
+
 FailureOr<SmallVector<Value>> materializeMaskLayoutConversion(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
@@ -4522,6 +4589,16 @@ FailureOr<SmallVector<Value>> materializeMaskLayoutConversion(
                                             rewriter)))
       return failure();
     return SmallVector<Value>(sourceParts.begin(), sourceParts.end());
+  }
+
+  FailureOr<std::optional<SmallVector<Value>>> deinterleaved2 =
+      materializeDeinterleaved2MaskLayout(
+          op, sourceParts, resultTypes, sourceLayout, resultLayout, rewriter);
+  if (failed(deinterleaved2)) {
+    return failure();
+  }
+  if (deinterleaved2->has_value()) {
+    return std::move(**deinterleaved2);
   }
 
   auto isElementDeinterleaved = [](VMILayoutAttr layout, int64_t factor) {
