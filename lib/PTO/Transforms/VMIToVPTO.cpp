@@ -5500,7 +5500,8 @@ static FailureOr<SmallVector<Value>> materializeAdjacentMaskGranularityPart(
         op, "requires computable source/result chunks per layout part");
     return failure();
   }
-  if (resultRank > sourceRank) {
+  bool widening = resultRank > sourceRank;
+  if (widening) {
     return materializeWideningMaskGranularityPart(
         op, resultMaskType, sourceParts, sourceOffset, *sourceChunks,
         *resultChunks, rewriter);
@@ -5510,21 +5511,29 @@ static FailureOr<SmallVector<Value>> materializeAdjacentMaskGranularityPart(
       *resultChunks, rewriter);
 }
 
-FailureOr<SmallVector<Value>> materializeAdjacentMaskGranularityConversion(
+struct MaskGranularityConversionPlan {
+  int sourceRank;
+  int resultRank;
+  int64_t sourceArity;
+  int64_t layoutFactor;
+  MaskType resultMaskType;
+};
+
+static FailureOr<MaskGranularityConversionPlan>
+buildMaskGranularityConversionPlan(
     Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
     ValueRange sourceParts, PatternRewriter &rewriter) {
-  auto fail = [&op, &rewriter](const Twine &message) -> FailureOr<SmallVector<Value>> {
+  auto fail = [&op, &rewriter](const Twine &message)
+      -> FailureOr<MaskGranularityConversionPlan> {
     (void)rewriter.notifyMatchFailure(op, message);
     return failure();
   };
-
   int sourceRank = getMaskGranularityRank(sourceType.getGranularity());
   int resultRank = getMaskGranularityRank(resultType.getGranularity());
-  bool nonAdjacentGranularity = std::abs(sourceRank - resultRank) != 1;
-  if (nonAdjacentGranularity) {
+  bool nonAdjacent = std::abs(sourceRank - resultRank) != 1;
+  if (nonAdjacent) {
     return fail("mask granularity conversion must be adjacent");
   }
-
   FailureOr<int64_t> sourceArity = getVMIPhysicalArity(sourceType);
   FailureOr<int64_t> factor = getVMITypeLayoutFactor(sourceType);
   bool sourceArityMismatch =
@@ -5533,18 +5542,34 @@ FailureOr<SmallVector<Value>> materializeAdjacentMaskGranularityConversion(
   if (sourceArityMismatch) {
     return fail("source mask part count does not match source VMI type");
   }
+  return MaskGranularityConversionPlan{
+      sourceRank, resultRank, *sourceArity, *factor,
+      MaskType::get(op->getContext(), resultType.getGranularity())};
+}
 
-  MLIRContext *ctx = op->getContext();
-  auto resultMaskType = MaskType::get(ctx, resultType.getGranularity());
+FailureOr<SmallVector<Value>> materializeAdjacentMaskGranularityConversion(
+    Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
+    ValueRange sourceParts, PatternRewriter &rewriter) {
+  auto fail = [&op, &rewriter](const Twine &message) -> FailureOr<SmallVector<Value>> {
+    (void)rewriter.notifyMatchFailure(op, message);
+    return failure();
+  };
+  FailureOr<MaskGranularityConversionPlan> plan =
+      buildMaskGranularityConversionPlan(op, sourceType, resultType,
+                                          sourceParts, rewriter);
+  if (failed(plan)) {
+    return failure();
+  }
   SmallVector<Value> results;
 
   int64_t sourceOffset = 0;
-  for (int64_t part = 0; part < *factor; ++part) {
+  for (int64_t part = 0; part < plan->layoutFactor; ++part) {
     FailureOr<int64_t> sourceChunks = getVMITypeChunksInPart(sourceType, part);
     FailureOr<SmallVector<Value>> partResults =
         materializeAdjacentMaskGranularityPart(
-            op, sourceType, resultType, sourceParts, sourceRank, resultRank,
-            resultMaskType, part, sourceOffset, rewriter);
+            op, sourceType, resultType, sourceParts, plan->sourceRank,
+            plan->resultRank, plan->resultMaskType, part, sourceOffset,
+            rewriter);
     if (failed(partResults)) {
       return failure();
     }
@@ -5553,9 +5578,11 @@ FailureOr<SmallVector<Value>> materializeAdjacentMaskGranularityConversion(
   }
 
   FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
-  if (failed(resultArity) ||
-      static_cast<int64_t>(results.size()) != *resultArity)
+  bool resultArityMismatch =
+      failed(resultArity) || static_cast<int64_t>(results.size()) != *resultArity;
+  if (resultArityMismatch) {
     return fail("mask granularity conversion result count mismatch");
+  }
   return results;
 }
 

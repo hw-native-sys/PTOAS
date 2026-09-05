@@ -926,3 +926,10 @@ cast-input/identity forwarding。simple conversion 主函数现在只执行类�
 物化与 `vsldb` 发射仍由原有专用 helper 负责；失败诊断和分派顺序保持不变。增量合规
 检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。完整构建仍
 需在修复 `/cann-cmake` 外部依赖权限后补跑。
+本轮将 `materializeAdjacentMaskGranularityConversion` 的方向、物理 arity、layout factor
+和结果 mask 类型计算抽取为 `MaskGranularityConversionPlan` 与
+`buildMaskGranularityConversionPlan`。转换函数现在只负责按 layout part 调用 widening/
+narrowing materializer 及最终 arity 校验；相邻粒度的语义和错误诊断保持不变。增量合规
+检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_ensure_mask_granularity.pto` lowering exit=0，仍生成预期的
+`pdintlv/ppack/pintlv` 序列。
