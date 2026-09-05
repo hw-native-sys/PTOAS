@@ -526,6 +526,13 @@ stride、pointer、result arity、block elements 以及各 part chunk uniformity
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续 load/store 与
 group-store 代表性 lowering 均成功。
 
+本轮将 `OneToNVMISIToFPOpPattern` 的 same-width 与 widening 物理转换发射抽取为
+`lowerConversion`。helper 统一负责物理 arity、`VcvtOp` part 选择及结果替换；主 pattern
+保留 source/result element contract 与 mask 构造。该拆分保持 `si32→f32` 与 `si8→f16`
+的支持矩阵、rounding/part 语义和诊断文本不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续 load/store 与
+group-store 代表性 lowering 均成功。
+
 本轮将 `OneToNVMITruncFOpPattern` 的 factor narrowing（按 result lane stride 选择
 source factor，逐 chunk 执行 `VcvtOp` 并用 `VorOp` 合并）抽取为 `lowerNarrow`。helper
 统一负责 source/result mask、BF16x2 source view、part 索引和结果替换；主 pattern 仅

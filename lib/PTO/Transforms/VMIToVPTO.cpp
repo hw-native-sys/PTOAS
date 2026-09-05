@@ -10193,48 +10193,58 @@ struct OneToNVMIMaskedStoreOpPattern
 
     SmallVector<Type> contiguousValueTypes;
     contiguousValueTypes.reserve(valueParts.size());
-    for (Value value : valueParts)
+    for (Value value : valueParts) {
       contiguousValueTypes.push_back(value.getType());
+    }
     FailureOr<SmallVector<Value>> storeParts = materializeDataLayoutConversion(
         op, valueParts, contiguousValueTypes, valueVMIType.getLayoutAttr(),
         VMILayoutAttr::getContiguous(rewriter.getContext()),
         valueVMIType.getElementType(), rewriter);
-    if (failed(storeParts))
+    if (failed(storeParts)) {
       return failure();
+    }
 
     SmallVector<Type> contiguousMaskTypes;
     contiguousMaskTypes.reserve(maskParts.size());
-    for (Value mask : maskParts)
+    for (Value mask : maskParts) {
       contiguousMaskTypes.push_back(mask.getType());
+    }
     FailureOr<SmallVector<Value>> storeMasks = materializeMaskLayoutConversion(
         op, maskParts, contiguousMaskTypes, maskVMIType.getLayoutAttr(),
         VMILayoutAttr::getContiguous(rewriter.getContext()), rewriter);
-    if (failed(storeMasks))
+    if (failed(storeMasks)) {
       return failure();
+    }
 
-    if (storeParts->size() != storeMasks->size())
+    bool mismatchedStoreArity = storeParts->size() != storeMasks->size();
+    if (mismatchedStoreArity) {
       return rewriter.notifyMatchFailure(
           op, "masked_store converted value/mask arity mismatch");
+    }
 
     for (auto [index, valueAndMask] :
          llvm::enumerate(llvm::zip_equal(*storeParts, *storeMasks))) {
       auto [value, mask] = valueAndMask;
       auto vregType = dyn_cast<VRegType>(value.getType());
-      if (!vregType || !isa<MaskType>(mask.getType()))
+      if (!vregType || !isa<MaskType>(mask.getType())) {
         return rewriter.notifyMatchFailure(
             op, "masked_store converted parts must be vreg/mask");
+      }
       FailureOr<int64_t> activeLanes =
           getContiguousActiveDataLanes(valueVMIType, index);
-      if (failed(activeLanes))
+      if (failed(activeLanes)) {
         return rewriter.notifyMatchFailure(
             op, "failed to compute masked_store active lanes");
-      if (*activeLanes == 0)
+      }
+      if (*activeLanes == 0) {
         continue;
+      }
       FailureOr<Value> storeMask = createMaskedStorePredicate(
           op.getLoc(), valueVMIType, index, mask, vregType, rewriter);
-      if (failed(storeMask))
+      if (failed(storeMask)) {
         return rewriter.notifyMatchFailure(
             op, "failed to materialize masked_store predicate");
+      }
       Value chunkOffset = createChunkOffset(op.getLoc(), *offset,
                                             index * *lanesPerPart, rewriter);
       if (!isDirectMemoryDistAddressLegal(
@@ -12948,8 +12958,9 @@ public:
 
     FailureOr<Value> mask =
         createAllTrueMaskForVReg(op.getLoc(), sourceType, rewriter);
-    if (failed(mask))
+    if (failed(mask)) {
       return rewriter.notifyMatchFailure(op, "failed to build extf seed mask");
+    }
 
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
@@ -14391,6 +14402,58 @@ struct OneToNVMIFPToUIOpPattern
 struct OneToNVMISIToFPOpPattern : OneToNOpConversionPattern<VMISIToFPOp> {
   using OneToNOpConversionPattern<VMISIToFPOp>::OneToNOpConversionPattern;
 
+private:
+  LogicalResult lowerConversion(
+      VMISIToFPOp op, ValueRange sourceParts,
+      ArrayRef<VRegType> resultTypes, Value mask, unsigned sourceBits,
+      unsigned resultBits, OneToNPatternRewriter &rewriter) const {
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    if (sourceBits == 32 && resultBits == 32) {
+      bool invalidArity = sourceParts.size() != resultTypes.size();
+      if (invalidArity) {
+        return rewriter.notifyMatchFailure(
+            op, "si32->f32 requires matching physical arity");
+      }
+      StringAttr rnd = rewriter.getStringAttr("R");
+      for (auto [sourcePart, resultType] :
+           llvm::zip_equal(sourceParts, resultTypes)) {
+        results.push_back(rewriter
+                              .create<VcvtOp>(op.getLoc(), resultType, sourcePart,
+                                              mask, rnd, nullptr, nullptr)
+                              .getResult());
+      }
+    } else if (sourceBits == 8 && resultBits == 16) {
+      bool invalidWidenArity = resultTypes.size() != 2 * sourceParts.size();
+      if (invalidWidenArity) {
+        return rewriter.notifyMatchFailure(
+            op, "si8->f16 requires result arity = 2 x source arity");
+      }
+      static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
+      for (int64_t partIndex = 0; partIndex < 2; ++partIndex) {
+        for (auto [chunkIndex, sourcePart] :
+             llvm::enumerate(sourceParts)) {
+          VRegType resultType =
+              resultTypes[partIndex * sourceParts.size() + chunkIndex];
+          results.push_back(
+              rewriter
+                  .create<VcvtOp>(op.getLoc(), resultType, sourcePart, mask,
+                                  nullptr, nullptr,
+                                  rewriter.getStringAttr(kEvenOddParts[partIndex]))
+                  .getResult());
+        }
+      }
+    } else {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported sitofp source/result width relation");
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
+public:
+
   LogicalResult
   matchAndRewrite(VMISIToFPOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -14431,62 +14494,8 @@ struct OneToNVMISIToFPOpPattern : OneToNOpConversionPattern<VMISIToFPOp> {
       return rewriter.notifyMatchFailure(op, "failed to build sitofp mask");
     }
 
-    SmallVector<Value> results;
-    results.reserve(resultTypes.size());
-
-    // si32 -> f32: same-width 1:1, no part, rnd=R.
-    if (sourceBits == 32 && resultBits == 32) {
-      size_t srcArity = sourceParts.size();
-      size_t dstArity = resultTypes.size();
-      if (srcArity != dstArity) {
-        return rewriter.notifyMatchFailure(
-            op, "si32->f32 requires matching physical arity");
-      }
-      StringAttr rnd = rewriter.getStringAttr("R");
-      for (auto [sourcePart, resultVRegType] :
-           llvm::zip_equal(sourceParts, resultVRegTypes)) {
-        results.push_back(rewriter
-                              .create<VcvtOp>(op.getLoc(), resultVRegType,
-                                              sourcePart, *mask, rnd,
-                                              /*sat=*/nullptr,
-                                              /*part=*/nullptr)
-                              .getResult());
-      }
-      replaceOpWithFlatConvertedValues(rewriter, op, results,
-                                       *this->getTypeConverter());
-      return success();
-    }
-
-    // si8 -> f16: 8->16 widening, EvenOdd parts, no rnd/sat.
-    if (sourceBits == 8 && resultBits == 16) {
-      size_t expectedResults = 2 * sourceParts.size();
-      size_t actualResults = resultTypes.size();
-      if (actualResults != expectedResults) {
-        return rewriter.notifyMatchFailure(
-            op, "si8->f16 requires result arity = 2 x source arity");
-      }
-      static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
-      for (int64_t partIndex = 0; partIndex < 2; ++partIndex) {
-        for (auto [chunkIndex, sourcePart] :
-             llvm::enumerate(sourceParts)) {
-          VRegType resultType =
-              resultVRegTypes[partIndex * sourceParts.size() + chunkIndex];
-          results.push_back(
-              rewriter
-                  .create<VcvtOp>(op.getLoc(), resultType, sourcePart, *mask,
-                                  /*rnd=*/nullptr, /*sat=*/nullptr,
-                                  rewriter.getStringAttr(
-                                      kEvenOddParts[partIndex]))
-                  .getResult());
-        }
-      }
-      replaceOpWithFlatConvertedValues(rewriter, op, results,
-                                       *this->getTypeConverter());
-      return success();
-    }
-
-    return rewriter.notifyMatchFailure(
-        op, "unsupported sitofp source/result width relation");
+    return lowerConversion(op, sourceParts, resultVRegTypes, *mask, sourceBits,
+                           resultBits, rewriter);
   }
 };
 
