@@ -1934,7 +1934,7 @@ struct OneBlockGroupStorePlan {
 FailureOr<OneBlockGroupStorePlan> getOneBlockGroupStorePlan(
     VMIGroupStoreOp op, VMIVRegType valueType,
     const VMIGroupStoreLayoutFact &fact, std::string *reason) {
-  auto fail = [&](const Twine &message)
+  auto fail = [&reason](const Twine &message)
       -> FailureOr<OneBlockGroupStorePlan> {
     if (reason)
       *reason = message.str();
@@ -2300,7 +2300,7 @@ checkSupportedStrideStoreShape(VMIStrideStoreOp op, std::string *reason) {
 
 LogicalResult
 checkSupportedStrideLoadShape(VMIStrideLoadOp op, std::string *reason) {
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
@@ -2344,7 +2344,7 @@ Value stripMaskMaterialization(Value value) {
 bool isStaticAllActiveMask(Value mask, int64_t expectedLanes,
                            std::string *reason = nullptr) {
   mask = stripMaskMaterialization(mask);
-  auto fail = [&](const Twine &message) {
+  auto fail = [&reason](const Twine &message) {
     if (reason)
       *reason = message.str();
     return false;
@@ -2383,7 +2383,7 @@ bool isStaticAllActiveMask(Value mask, int64_t expectedLanes,
 
 LogicalResult
 checkSupportedExpandLoadShape(VMIExpandLoadOp op, std::string *reason) {
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
@@ -2488,7 +2488,7 @@ checkSupportedMaskedStoreShape(VMIVRegType valueType, VMIMaskType maskType,
       succeeded(checkFullVMIPhysicalChunks(maskType, &maskReason)))
     return success();
 
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
@@ -2665,7 +2665,7 @@ FailureOr<Value> createDenseLaneStrideStorePredicate(
 
 FailureOr<SmallVector<int64_t>>
 computeShuffleForwardingSourceParts(VMIShuffleOp op, std::string *reason) {
-  auto fail = [&](const Twine &message) -> FailureOr<SmallVector<int64_t>> {
+  auto fail = [&reason](const Twine &message) -> FailureOr<SmallVector<int64_t>> {
     if (reason)
       *reason = message.str();
     return failure();
@@ -2870,7 +2870,7 @@ struct ConstantMaskChunkMaterialization {
 
 FailureOr<SmallVector<ConstantMaskChunkMaterialization>>
 computeConstantMaskMaterialization(VMIConstantMaskOp op, std::string *reason) {
-  auto fail = [&](const Twine &message)
+  auto fail = [&reason](const Twine &message)
       -> FailureOr<SmallVector<ConstantMaskChunkMaterialization>> {
     if (reason)
       *reason = message.str();
@@ -2934,7 +2934,7 @@ FailureOr<SmallVector<ConstantMaskChunkMaterialization>>
 computeGroupMaskMaterializationForType(VMICreateGroupMaskOp op,
                                        VMIMaskType resultVMIType,
                                        std::string *reason) {
-  auto fail = [&](const Twine &message)
+  auto fail = [&reason](const Twine &message)
       -> FailureOr<SmallVector<ConstantMaskChunkMaterialization>> {
     if (reason)
       *reason = message.str();
@@ -3055,7 +3055,7 @@ FailureOr<SmallVector<Value>> materializeDynamicGroupMaskForType(
     VMICreateGroupMaskOp op, Value activeElemsPerGroup,
     VMIMaskType resultVMIType, TypeRange resultTypes,
     PatternRewriter &rewriter) {
-  auto fail = [&](const Twine &message) -> FailureOr<SmallVector<Value>> {
+  auto fail = [&op, &rewriter](const Twine &message) -> FailureOr<SmallVector<Value>> {
     (void)rewriter.notifyMatchFailure(op, message);
     return failure();
   };
@@ -3347,7 +3347,7 @@ Value createGroupChunkOffset(Location loc, Value baseOffset, Value rowStride,
 LogicalResult checkContiguousFullGroupChunks(
     Operation *op, VMIVRegType type, int64_t groupSize, int64_t *lanesPerPart,
     int64_t *groupCount, int64_t *chunksPerGroup, PatternRewriter &rewriter) {
-  auto fail = [&](const Twine &message) {
+  auto fail = [&reason](const Twine &message) {
     return rewriter.notifyMatchFailure(op, message);
   };
 
@@ -3896,7 +3896,7 @@ FailureOr<SmallVector<Value>> materializeGroupSlotLaneStride(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     Type elementType, int64_t sourceStride, int64_t resultStride,
     PatternRewriter &rewriter) {
-  auto fail = [&](const Twine &message) -> FailureOr<SmallVector<Value>> {
+  auto fail = [&op, &rewriter](const Twine &message) -> FailureOr<SmallVector<Value>> {
     (void)rewriter.notifyMatchFailure(op, message);
     return failure();
   };
@@ -4785,7 +4785,7 @@ LogicalResult checkSupportedMaskGranularityMaterialization(
 FailureOr<SmallVector<Value>> materializeAdjacentMaskGranularityConversion(
     Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
     ValueRange sourceParts, PatternRewriter &rewriter) {
-  auto fail = [&](const Twine &message) -> FailureOr<SmallVector<Value>> {
+  auto fail = [&op, &rewriter](const Twine &message) -> FailureOr<SmallVector<Value>> {
     (void)rewriter.notifyMatchFailure(op, message);
     return failure();
   };
@@ -4982,7 +4982,7 @@ FailureOr<Value> createAllFalseMaskLike(Location loc, Value value,
 FailureOr<SmallVector<Value>> materializeStagingDeintToContiguousMaskLayout(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     int64_t factor, PatternRewriter &rewriter) {
-  auto fail = [&](const Twine &message) -> FailureOr<SmallVector<Value>> {
+  auto fail = [&op, &rewriter](const Twine &message) -> FailureOr<SmallVector<Value>> {
     (void)rewriter.notifyMatchFailure(op, message);
     return failure();
   };
@@ -5048,7 +5048,7 @@ FailureOr<SmallVector<Value>> materializeStagingDeintToContiguousMaskLayout(
 FailureOr<SmallVector<Value>> materializeStagingContiguousToDeintMaskLayout(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     int64_t factor, PatternRewriter &rewriter) {
-  auto fail = [&](const Twine &message) -> FailureOr<SmallVector<Value>> {
+  auto fail = [&op, &rewriter](const Twine &message) -> FailureOr<SmallVector<Value>> {
     (void)rewriter.notifyMatchFailure(op, message);
     return failure();
   };
@@ -5158,7 +5158,7 @@ materializeMaskGranularityCastLayoutConversionViaContiguous(
 FailureOr<SmallVector<Value>> materializeMaskGranularityCastLayoutConversion(
     Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
     ValueRange sourceParts, TypeRange resultTypes, PatternRewriter &rewriter) {
-  auto fail = [&](const Twine &message) -> FailureOr<SmallVector<Value>> {
+  auto fail = [&op, &rewriter](const Twine &message) -> FailureOr<SmallVector<Value>> {
     (void)rewriter.notifyMatchFailure(op, message);
     return failure();
   };
@@ -5205,7 +5205,7 @@ FailureOr<SmallVector<Value>> materializeMaskGranularityCastLayoutConversion(
 FailureOr<SmallVector<Value>> materializeMaskGranularityCastConversion(
     Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
     ValueRange sourceParts, TypeRange resultTypes, PatternRewriter &rewriter) {
-  auto fail = [&](const Twine &message) -> FailureOr<SmallVector<Value>> {
+  auto fail = [&op, &rewriter](const Twine &message) -> FailureOr<SmallVector<Value>> {
     (void)rewriter.notifyMatchFailure(op, message);
     return failure();
   };
@@ -13392,7 +13392,7 @@ LogicalResult checkSupportedTruncIShape(VMITruncIOp op,
 
 LogicalResult checkSupportedFPToSIShape(VMIFPToSIOp op,
                                         std::string *reason = nullptr) {
-  auto fail = [&](const Twine &message) {
+  auto fail = [&reason](const Twine &message) {
     if (reason)
       *reason = message.str();
     return failure();
@@ -13438,7 +13438,7 @@ LogicalResult checkSupportedFPToSIShape(VMIFPToSIOp op,
 
 LogicalResult checkSupportedFPToUIShape(VMIFPToUIOp op,
                                         std::string *reason = nullptr) {
-  auto fail = [&](const Twine &message) {
+  auto fail = [&reason](const Twine &message) {
     if (reason)
       *reason = message.str();
     return failure();
@@ -13484,7 +13484,7 @@ LogicalResult checkSupportedFPToUIShape(VMIFPToUIOp op,
 
 LogicalResult checkSupportedSIToFPShape(VMISIToFPOp op,
                                         std::string *reason = nullptr) {
-  auto fail = [&](const Twine &message) {
+  auto fail = [&reason](const Twine &message) {
     if (reason) {
       *reason = message.str();
     }
@@ -13589,7 +13589,7 @@ checkSupportedChannelSplitShape(VMIChannelSplitOp op,
 LogicalResult
 checkSupportedChannelMergeShape(VMIChannelMergeOp op,
                                 std::string *reason = nullptr) {
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
@@ -13633,7 +13633,7 @@ checkSupportedChannelMergeShape(VMIChannelMergeOp op,
 LogicalResult
 checkSupportedActivePrefixIndexShape(VMIActivePrefixIndexOp op,
                                      std::string *reason = nullptr) {
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
@@ -13673,7 +13673,7 @@ checkSupportedActivePrefixIndexShape(VMIActivePrefixIndexOp op,
 
 LogicalResult checkSupportedCompressShape(VMICompressOp op,
                                           std::string *reason = nullptr) {
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
@@ -13712,7 +13712,7 @@ LogicalResult checkSupportedCompressShape(VMICompressOp op,
 LogicalResult checkSupportedCompressStoreShape(
     VMICompressStoreOp op,
     std::string *reason = nullptr) {
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
@@ -13753,7 +13753,7 @@ template <typename OpTy>
 LogicalResult
 checkSupportedReduceShape(OpTy op, bool requiresReassoc,
                           std::string *reason = nullptr) {
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
@@ -13830,7 +13830,7 @@ LogicalResult checkSupportedGroupBroadcastShape(
       *reason = "requires source/result element type to match";
     return failure();
   }
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
@@ -13926,7 +13926,7 @@ LogicalResult checkSupportedVchistShape(VMIVchistOp op,
 
 LogicalResult checkSupportedVmullShape(VMIVmullOp op,
                                        std::string *reason = nullptr) {
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
@@ -13997,7 +13997,7 @@ checkSupportedVMIAddCarryPorts(VMIVRegType lhsType, VMIVRegType rhsType,
                                VMIVRegType resultType,
                                ArrayRef<VMIMaskType> maskTypes,
                                std::string *reason = nullptr) {
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
@@ -14060,7 +14060,7 @@ LogicalResult checkSupportedVMIAddcsShape(VMIVaddcsOp op,
 
 LogicalResult
 checkSupportedFmaShape(VMIFmaOp op, std::string *reason = nullptr) {
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
