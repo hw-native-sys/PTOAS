@@ -15156,7 +15156,7 @@ std::optional<WalkResult> verifySupportedVMIMemoryOp(
   return std::nullopt;
 }
 
-std::optional<WalkResult> verifySupportedVMILayoutOp(Operation *op) {
+std::optional<WalkResult> verifySupportedVMIEnsureLayoutOp(Operation *op) {
   if (auto ensure = dyn_cast<VMIEnsureLayoutOp>(op)) {
     auto sourceType = cast<VMIVRegType>(ensure.getSource().getType());
     auto resultType = cast<VMIVRegType>(ensure.getResult().getType());
@@ -15172,6 +15172,10 @@ std::optional<WalkResult> verifySupportedVMILayoutOp(Operation *op) {
     return WalkResult::interrupt();
   }
 
+  return std::nullopt;
+}
+
+std::optional<WalkResult> verifySupportedVMIMaskLayoutOp(Operation *op) {
   if (auto ensure = dyn_cast<VMIEnsureMaskLayoutOp>(op)) {
     auto sourceType = cast<VMIMaskType>(ensure.getSource().getType());
     auto resultType = cast<VMIMaskType>(ensure.getResult().getType());
@@ -15192,6 +15196,10 @@ std::optional<WalkResult> verifySupportedVMILayoutOp(Operation *op) {
     return WalkResult::interrupt();
   }
 
+  return std::nullopt;
+}
+
+std::optional<WalkResult> verifySupportedVMIMaskGranularityOp(Operation *op) {
   if (auto ensure = dyn_cast<VMIEnsureMaskGranularityOp>(op)) {
     auto sourceType = cast<VMIMaskType>(ensure.getSource().getType());
     auto resultType = cast<VMIMaskType>(ensure.getResult().getType());
@@ -15214,6 +15222,17 @@ std::optional<WalkResult> verifySupportedVMILayoutOp(Operation *op) {
   }
 
   return std::nullopt;
+}
+
+std::optional<WalkResult> verifySupportedVMILayoutOp(Operation *op) {
+  if (auto result = verifySupportedVMIEnsureLayoutOp(op);
+      result.has_value()) {
+    return *result;
+  }
+  if (auto result = verifySupportedVMIMaskLayoutOp(op); result.has_value()) {
+    return *result;
+  }
+  return verifySupportedVMIMaskGranularityOp(op);
 }
 
 template <typename MaskCheck>

@@ -409,3 +409,9 @@ scatter 的 shape checker 与诊断；load、expand-load 及 stable masked-load 
 原 helper 按原顺序处理。该拆分只改变职责边界，不改变 lowering 能力或错误文本。
 源码增量合规检查、`git diff --check` 通过；连续 load/store、interleave memory 和
 group-store lowering 回归均通过。
+
+本轮将 layout verifier 按职责拆分为 `verifySupportedVMIEnsureLayoutOp`、
+`verifySupportedVMIMaskLayoutOp` 和 `verifySupportedVMIMaskGranularityOp`，外层
+`verifySupportedVMILayoutOp` 仅按原顺序串联三类检查。数据 layout、mask layout 和
+granularity cast 的诊断及支持关系保持不变。源码增量合规检查、`git diff --check`，
+连续 load/store、mask-granularity 和 group-store lowering 回归均通过。
