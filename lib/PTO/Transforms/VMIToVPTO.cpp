@@ -6964,6 +6964,85 @@ struct OneToNVMICreateGroupMaskOpPattern
   using OneToNOpConversionPattern<
       VMICreateGroupMaskOp>::OneToNOpConversionPattern;
 
+private:
+  LogicalResult lowerFactor4Block(
+      VMICreateGroupMaskOp op, OpAdaptor adaptor,
+      OneToNPatternRewriter &rewriter, VMIMaskType resultVMIType,
+      VMILayoutAttr resultLayout, ArrayRef<Type> resultTypes) const {
+    VMILayoutAttr contiguousLayout =
+        VMILayoutAttr::getContiguous(op.getContext());
+    auto contiguousType =
+        VMIMaskType::get(op.getContext(), resultVMIType.getElementCount(),
+                         resultVMIType.getGranularity(), contiguousLayout);
+    SmallVector<Value> contiguousParts;
+    auto activeConstant =
+        op.getActiveElemsPerGroup().getDefiningOp<arith::ConstantOp>();
+    if (activeConstant) {
+      std::string contiguousReason;
+      FailureOr<SmallVector<ConstantMaskChunkMaterialization>> materializations =
+          computeGroupMaskMaterializationForType(op, contiguousType,
+                                                 &contiguousReason);
+      if (failed(materializations)) {
+        return rewriter.notifyMatchFailure(op,
+                                           Twine("create_group_mask ") +
+                                               contiguousReason);
+      }
+      contiguousParts.reserve(materializations->size());
+      for (const ConstantMaskChunkMaterialization &materialization :
+           *materializations) {
+        bool tooManyMasks = contiguousParts.size() >= resultTypes.size();
+        if (tooManyMasks) {
+          return rewriter.notifyMatchFailure(
+              op, "create_group_mask produced too many contiguous masks");
+        }
+        auto maskType =
+            dyn_cast<MaskType>(resultTypes[contiguousParts.size()]);
+        if (!maskType) {
+          return rewriter.notifyMatchFailure(
+              op, "create_group_mask result must be mask");
+        }
+        FailureOr<Value> mask = materializeConstantMaskChunk(
+            op.getLoc(), maskType, materialization.activeLanes, rewriter);
+        if (failed(mask)) {
+          return rewriter.notifyMatchFailure(
+              op, "failed to materialize create_group_mask contiguous chunk");
+        }
+        contiguousParts.push_back(*mask);
+      }
+    } else {
+      FailureOr<Value> active = getSingleValue(
+          op, adaptor.getActiveElemsPerGroup(),
+          "create_group_mask active_elems_per_group must convert to one value",
+          rewriter);
+      if (failed(active)) {
+        return failure();
+      }
+      FailureOr<SmallVector<Value>> dynamicParts =
+          materializeDynamicGroupMaskForType(op, *active, contiguousType,
+                                             resultTypes, rewriter);
+      if (failed(dynamicParts)) {
+        return failure();
+      }
+      contiguousParts = std::move(*dynamicParts);
+    }
+    bool resultCountMismatch = contiguousParts.size() != resultTypes.size();
+    if (resultCountMismatch) {
+      return rewriter.notifyMatchFailure(
+          op, "create_group_mask contiguous physical result count mismatch");
+    }
+    FailureOr<SmallVector<Value>> results = materializeMaskLayoutConversion(
+        op, contiguousParts, resultTypes, contiguousLayout, resultLayout,
+        rewriter);
+    if (failed(results)) {
+      return failure();
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, *results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
+public:
+
   LogicalResult
   matchAndRewrite(VMICreateGroupMaskOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -6980,68 +7059,8 @@ struct OneToNVMICreateGroupMaskOpPattern
         resultLayout && resultLayout.isBlockDeinterleaved() &&
         resultLayout.getFactor() == 4;
     if (needsFactor4ContiguousMaterialization) {
-      VMILayoutAttr contiguousLayout =
-          VMILayoutAttr::getContiguous(op.getContext());
-      auto contiguousType =
-          VMIMaskType::get(op.getContext(), resultVMIType.getElementCount(),
-                           resultVMIType.getGranularity(), contiguousLayout);
-      SmallVector<Value> contiguousParts;
-      auto activeConstant =
-          op.getActiveElemsPerGroup().getDefiningOp<arith::ConstantOp>();
-      if (activeConstant) {
-        std::string contiguousReason;
-        FailureOr<SmallVector<ConstantMaskChunkMaterialization>>
-            contiguousMaterializations = computeGroupMaskMaterializationForType(
-                op, contiguousType, &contiguousReason);
-        if (failed(contiguousMaterializations)) {
-          return rewriter.notifyMatchFailure(op, Twine("create_group_mask ") +
-                                                     contiguousReason);
-        }
-
-        contiguousParts.reserve(contiguousMaterializations->size());
-        for (const ConstantMaskChunkMaterialization &materialization :
-             *contiguousMaterializations) {
-          if (contiguousParts.size() >= resultTypes.size())
-            return rewriter.notifyMatchFailure(
-                op, "create_group_mask produced too many contiguous masks");
-          auto maskType =
-              dyn_cast<MaskType>(resultTypes[contiguousParts.size()]);
-          if (!maskType)
-            return rewriter.notifyMatchFailure(
-                op, "create_group_mask result must be mask");
-          FailureOr<Value> mask = materializeConstantMaskChunk(
-              op.getLoc(), maskType, materialization.activeLanes, rewriter);
-          if (failed(mask))
-            return rewriter.notifyMatchFailure(
-                op, "failed to materialize create_group_mask contiguous chunk");
-          contiguousParts.push_back(*mask);
-        }
-      } else {
-        FailureOr<Value> active = getSingleValue(
-            op, adaptor.getActiveElemsPerGroup(),
-            "create_group_mask active_elems_per_group must convert to one "
-            "value",
-            rewriter);
-        if (failed(active))
-          return failure();
-        FailureOr<SmallVector<Value>> dynamicParts =
-            materializeDynamicGroupMaskForType(op, *active, contiguousType,
-                                               resultTypes, rewriter);
-        if (failed(dynamicParts))
-          return failure();
-        contiguousParts = std::move(*dynamicParts);
-      }
-
-      if (contiguousParts.size() != resultTypes.size())
-        return rewriter.notifyMatchFailure(
-            op, "create_group_mask contiguous physical result count mismatch");
-      FailureOr<SmallVector<Value>> results = materializeMaskLayoutConversion(
-          op, contiguousParts, resultTypes, contiguousLayout, resultLayout,
-          rewriter);
-      if (failed(results))
-        return failure();
-      replaceOpWithFlatConvertedValues(rewriter, op, *results, *this->getTypeConverter());
-      return success();
+      return lowerFactor4Block(op, adaptor, rewriter, resultVMIType,
+                               resultLayout, resultTypes);
     }
 
     auto activeConstant =
@@ -8456,15 +8475,21 @@ static LogicalResult lowerGroupBroadcastParts(
           op, "group_broadcast failed to enumerate result chunks");
     }
     for (int64_t chunk = 0; chunk < *chunks; ++chunk, ++flatIndex) {
-      if (flatIndex >= static_cast<int64_t>(resultTypes.size()))
+      bool resultCountTooSmall =
+          flatIndex >= static_cast<int64_t>(resultTypes.size());
+      if (resultCountTooSmall) {
         return rewriter.notifyMatchFailure(
             op, "group_broadcast physical result count is too small");
+      }
 
       Type resultType = resultTypes[flatIndex];
       auto resultVRegType = dyn_cast<VRegType>(resultType);
-      if (!resultVRegType || resultVRegType != firstSourceType)
+      bool mismatchedResultType =
+          !resultVRegType || resultVRegType != firstSourceType;
+      if (mismatchedResultType) {
         return rewriter.notifyMatchFailure(
             op, "group_broadcast requires uniform physical vreg types");
+      }
 
       FailureOr<Value> chunkResult = lowerGroupBroadcastChunk(
           op, resultType, resultVMIType, sourceParts, *fact, context, part,
