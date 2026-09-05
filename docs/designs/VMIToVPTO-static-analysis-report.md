@@ -559,3 +559,8 @@ deinterleaved forwarding 的共同契约。layout fallback 选择、unrealized c
 identity forwarding 校验；`pintlv/pdintlv` 的 part 顺序和错误诊断保持不变。增量
 合规检查为 `errors=0 warnings=0`，`git diff --check` 通过；mask granularity
 lowering 回归通过。
+
+本轮将 dense lane-stride pack/unpack 共用的 arity、元素宽度和 stride 合法性检查
+抽取为 `validateDenseLaneStrideShape`。两个方向的 materialization 函数分别保留
+carrier 变换和结果枚举职责，统一校验不改变原有诊断与支持范围。增量合规检查为
+`errors=0 warnings=0`，`git diff --check` 通过；连续 load/store lowering 回归通过。

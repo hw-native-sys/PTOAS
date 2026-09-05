@@ -3918,30 +3918,49 @@ FailureOr<Value> packToPreviousCarrier(Location loc, Value source,
       .getResult();
 }
 
+static FailureOr<unsigned> validateDenseLaneStrideShape(
+    Operation *op, ValueRange sourceParts, TypeRange resultTypes,
+    Type elementType, int64_t laneStride, bool unpack,
+    PatternRewriter &rewriter) {
+  bool emptyParts = sourceParts.empty() || resultTypes.empty();
+  bool arityMismatch = unpack
+                           ? (resultTypes.size() + laneStride - 1) / laneStride !=
+                                 sourceParts.size()
+                           : (sourceParts.size() + laneStride - 1) / laneStride !=
+                                 resultTypes.size();
+  if (emptyParts || arityMismatch) {
+    StringRef direction = unpack ? "unpack" : "pack";
+    return rewriter.notifyMatchFailure(
+        op, Twine("dense lane_stride ") + direction +
+                " materialization requires one partial or complete stride "
+                "group per physical part");
+  }
+  unsigned elementBits = pto::getPTOStorageElemBitWidth(elementType);
+  bool unsupportedShape =
+      (laneStride != 2 && laneStride != 4) ||
+      (laneStride == 4 && elementBits != 8) ||
+      (elementBits != 8 && elementBits != 16);
+  if (unsupportedShape) {
+    StringRef direction = unpack ? "unpack" : "pack";
+    return rewriter.notifyMatchFailure(
+        op, Twine("unsupported dense lane_stride ") + direction +
+                " carrier shape");
+  }
+  return elementBits;
+}
+
 FailureOr<SmallVector<Value>> materializeContiguousToLaneStride(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     Type elementType, int64_t laneStride, PatternRewriter &rewriter) {
-  if (sourceParts.empty() || resultTypes.empty() ||
-      (resultTypes.size() + laneStride - 1) / laneStride !=
-          sourceParts.size()) {
-    (void)rewriter.notifyMatchFailure(
-        op, "dense lane_stride unpack materialization requires result parts "
-            "to form one partial or complete stride group per source part");
-    return failure();
-  }
-
-  unsigned elementBits = pto::getPTOStorageElemBitWidth(elementType);
-  if ((laneStride != 2 && laneStride != 4) ||
-      (laneStride == 4 && elementBits != 8) ||
-      (elementBits != 8 && elementBits != 16)) {
-    (void)rewriter.notifyMatchFailure(
-        op, "unsupported dense lane_stride unpack carrier shape");
+  FailureOr<unsigned> elementBits = validateDenseLaneStrideShape(
+      op, sourceParts, resultTypes, elementType, laneStride, true, rewriter);
+  if (failed(elementBits)) {
     return failure();
   }
 
   MLIRContext *ctx = rewriter.getContext();
   FailureOr<VRegType> inputCarrier =
-      getUnsignedCarrierVRegType(ctx, elementBits);
+      getUnsignedCarrierVRegType(ctx, *elementBits);
   if (failed(inputCarrier))
     return failure();
 
@@ -3958,13 +3977,13 @@ FailureOr<SmallVector<Value>> materializeContiguousToLaneStride(
       return failure();
     int64_t part = resultIndex % laneStride;
     FailureOr<Value> unpacked =
-        unpackToNextCarrier(op->getLoc(), *current, elementBits,
+        unpackToNextCarrier(op->getLoc(), *current, *elementBits,
                             laneStride == 4 ? part / 2 : part, rewriter);
     if (failed(unpacked))
       return failure();
     current = *unpacked;
     if (laneStride == 4) {
-      unpacked = unpackToNextCarrier(op->getLoc(), *current, elementBits * 2,
+      unpacked = unpackToNextCarrier(op->getLoc(), *current, *elementBits * 2,
                                      part % 2, rewriter);
       if (failed(unpacked))
         return failure();
@@ -3982,26 +4001,14 @@ FailureOr<SmallVector<Value>> materializeContiguousToLaneStride(
 FailureOr<SmallVector<Value>> materializeLaneStrideToContiguous(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     Type elementType, int64_t laneStride, PatternRewriter &rewriter) {
-  if (sourceParts.empty() || resultTypes.empty() ||
-      (sourceParts.size() + laneStride - 1) / laneStride !=
-          resultTypes.size()) {
-    (void)rewriter.notifyMatchFailure(
-        op, "dense lane_stride pack materialization requires one partial or "
-            "complete stride group of source parts per result part");
-    return failure();
-  }
-
-  unsigned elementBits = pto::getPTOStorageElemBitWidth(elementType);
-  if ((laneStride != 2 && laneStride != 4) ||
-      (laneStride == 4 && elementBits != 8) ||
-      (elementBits != 8 && elementBits != 16)) {
-    (void)rewriter.notifyMatchFailure(
-        op, "unsupported dense lane_stride pack carrier shape");
+  FailureOr<unsigned> elementBits = validateDenseLaneStrideShape(
+      op, sourceParts, resultTypes, elementType, laneStride, false, rewriter);
+  if (failed(elementBits)) {
     return failure();
   }
 
   unsigned carrierBits =
-      static_cast<unsigned>(elementBits * static_cast<unsigned>(laneStride));
+      static_cast<unsigned>(*elementBits * static_cast<unsigned>(laneStride));
   FailureOr<VRegType> sourceCarrier =
       getUnsignedCarrierVRegType(rewriter.getContext(), carrierBits);
   if (failed(sourceCarrier))
@@ -4024,7 +4031,7 @@ FailureOr<SmallVector<Value>> materializeLaneStrideToContiguous(
     }
 
     unsigned currentBits = carrierBits;
-    while (currentBits > elementBits) {
+    while (currentBits > *elementBits) {
       SmallVector<Value> nextLevel;
       nextLevel.reserve((currentLevel.size() + 1) / 2);
       for (size_t index = 0; index < currentLevel.size(); index += 2) {
