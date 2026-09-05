@@ -1399,3 +1399,12 @@ physical 类型、index 位宽校验，以及 `VciOp`/`VselrOp` 构造抽取为
 descending 顺序、base lane、索引向量类型及原有诊断保持不变。增量
 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
 通过。尚未重新构建 native target，当前构建仍受 `/cann-cmake` 外部依赖权限问题影响。
+
+# grouped iota 周期块整改
+
+本轮将 `createSubVLGroupPeriodicChunk` 中 group size=1 广播、单组连续 iota 和
+power-of-two 周期模式的快速路径抽取为 `createSubVLPeriodicFastPath`。主函数继续
+负责输入 vreg/物理 lane 校验以及 residual 周期构造；广播、ASC/DESC 顺序、power-of-two
+优化选择和失败语义保持不变。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。native 构建仍受
+既有 `/cann-cmake` 外部依赖权限问题阻断。

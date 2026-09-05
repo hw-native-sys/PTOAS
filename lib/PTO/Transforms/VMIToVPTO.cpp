@@ -6719,6 +6719,40 @@ FailureOr<Value> createResidualSubVLGroupPeriodicChunk(
   return result;
 }
 
+static FailureOr<std::optional<Value>> createSubVLPeriodicFastPath(
+    Location loc, Type resultType, Value base, int64_t groupSize,
+    StringAttr orderAttr, StringRef order, Value allMask,
+    PatternRewriter &rewriter) {
+  if (groupSize == 1) {
+    return std::optional<Value>(
+        rewriter
+            .create<VdupOp>(loc, resultType, base, allMask,
+                            /*position=*/nullptr)
+            .getResult());
+  }
+
+  auto vregType = dyn_cast<VRegType>(resultType);
+  if (!vregType) {
+    return failure();
+  }
+  int64_t groupsPerChunk = vregType.getElementCount() / groupSize;
+  if (groupsPerChunk == 1) {
+    FailureOr<Value> result = createIotaContiguousChunk(
+        loc, resultType, base, /*laneOffset=*/0, orderAttr, rewriter);
+    if (failed(result)) {
+      return failure();
+    }
+    return std::optional<Value>(*result);
+  }
+
+  FailureOr<std::optional<Value>> powerOfTwo = createPowerOfTwoSubVLChunk(
+      loc, resultType, base, groupSize, order, allMask, rewriter);
+  if (failed(powerOfTwo)) {
+    return failure();
+  }
+  return *powerOfTwo;
+}
+
 FailureOr<Value> createSubVLGroupPeriodicChunk(Location loc, Type resultType,
                                                Value base, int64_t groupSize,
                                                StringAttr orderAttr,
@@ -6739,31 +6773,17 @@ FailureOr<Value> createSubVLGroupPeriodicChunk(Location loc, Type resultType,
     return failure();
   }
 
-  // group_size==1: dst[i] = base for every lane — broadcast, not a ramp pack.
-  if (groupSize == 1) {
-    return rewriter
-        .create<VdupOp>(loc, resultType, base, *allMask,
-                        /*position=*/nullptr)
-        .getResult();
-  }
-
   StringRef order = orderAttr ? orderAttr.getValue() : StringRef("ASC");
-  int64_t groupsPerChunk = lanesPerPart / groupSize;
-  if (groupsPerChunk == 1) {
-    return createIotaContiguousChunk(loc, resultType, base, /*laneOffset=*/0,
-                                     orderAttr, rewriter);
-
-  // Power-of-2 S: dst[i] = base ± (i % S) via AND-mask (beats O(G) vsel pack
-  // and VL/2 VOR/mask duplication). Lane ids are always an ascending vci(0).
-  FailureOr<std::optional<Value>> powerOfTwo = createPowerOfTwoSubVLChunk(
-      loc, resultType, base, groupSize, order, *allMask, rewriter);
-  if (failed(powerOfTwo)) {
+  FailureOr<std::optional<Value>> fastPath = createSubVLPeriodicFastPath(
+      loc, resultType, base, groupSize, orderAttr, order, *allMask, rewriter);
+  if (failed(fastPath)) {
     return failure();
   }
-  if (powerOfTwo->has_value()) {
-    return **powerOfTwo;
+  if (fastPath->has_value()) {
+    return **fastPath;
   }
 
+  int64_t groupsPerChunk = lanesPerPart / groupSize;
   FailureOr<Value> full =
       createIotaContiguousChunk(loc, resultType, base, /*laneOffset=*/0,
                                 orderAttr, rewriter);
