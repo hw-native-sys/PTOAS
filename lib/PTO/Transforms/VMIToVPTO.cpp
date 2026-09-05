@@ -4790,11 +4790,16 @@ static FailureOr<SmallVector<Value>> materializeContiguousToDeinterleaved4(
     parts[part].reserve(counts[part]);
   }
   size_t groups = *std::max_element(counts.begin(), counts.end());
-  for (size_t i = 0; i < groups; ++i) {
-    Value s0 = getSourcePart(4 * i);
-    Value s1 = getSourcePart(4 * i + 1);
-    Value s2 = getSourcePart(4 * i + 2);
-    Value s3 = getSourcePart(4 * i + 3);
+
+  auto emitGroup = [&counts, &offsets, &resultTypes, &parts, &sourceParts, op,
+                    &rewriter](size_t group) -> LogicalResult {
+    auto getSourcePart = [&sourceParts](size_t index) {
+      return sourceParts[std::min(index, sourceParts.size() - 1)];
+    };
+    Value s0 = getSourcePart(4 * group);
+    Value s1 = getSourcePart(4 * group + 1);
+    Value s2 = getSourcePart(4 * group + 2);
+    Value s3 = getSourcePart(4 * group + 3);
     Type chunkType = s0.getType();
     bool mismatchedSources = s1.getType() != chunkType ||
                              s2.getType() != chunkType ||
@@ -4804,8 +4809,9 @@ static FailureOr<SmallVector<Value>> materializeContiguousToDeinterleaved4(
           op, "vdintlv deinterleaved=4 requires matching source part types");
     }
     for (size_t part = 0; part < 4; ++part) {
-      if (i < counts[part] &&
-          resultTypes[offsets[part] + i] != chunkType) {
+      bool invalidResultType =
+          group < counts[part] && resultTypes[offsets[part] + group] != chunkType;
+      if (invalidResultType) {
         return rewriter.notifyMatchFailure(
             op, "vdintlv requires operands and results to share one type");
       }
@@ -4818,17 +4824,24 @@ static FailureOr<SmallVector<Value>> materializeContiguousToDeinterleaved4(
         op->getLoc(), chunkType, chunkType, low.getLow(), high.getLow());
     auto odd = rewriter.create<VdintlvOp>(
         op->getLoc(), chunkType, chunkType, low.getHigh(), high.getHigh());
-    if (i < counts[0]) {
+    if (group < counts[0]) {
       parts[0].push_back(even.getLow());
     }
-    if (i < counts[1]) {
+    if (group < counts[1]) {
       parts[1].push_back(odd.getLow());
     }
-    if (i < counts[2]) {
+    if (group < counts[2]) {
       parts[2].push_back(even.getHigh());
     }
-    if (i < counts[3]) {
+    if (group < counts[3]) {
       parts[3].push_back(odd.getHigh());
+    }
+    return success();
+  };
+
+  for (size_t i = 0; i < groups; ++i) {
+    if (failed(emitGroup(i))) {
+      return failure();
     }
   }
   SmallVector<Value> results;

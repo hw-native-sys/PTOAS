@@ -221,6 +221,14 @@ mask 的语义差异只存在于 active-lane 判定。补齐该批代码及 scal
 触及的控制语句大括号后，增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过。
 
+# contiguous 到 deinterleaved=4 物化整改
+
+本轮将 `materializeContiguousToDeinterleaved4` 中单组四路 source 选择、类型检查、
+四次 `VdintlvOp` 组合以及按尾部计数收集结果抽取为局部 `emitGroup` 逻辑。外层函数
+继续负责 footprint/计数规划、part 容器和最终拼接；source fallback、part 顺序、尾部
+截断及失败诊断保持不变。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
+
 # contiguous 到 lane_stride 单 part 物化整改
 
 本轮将 `materializeContiguousToLaneStride` 中单个结果 part 的 source 索引、carrier
