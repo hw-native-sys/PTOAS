@@ -1715,3 +1715,12 @@ OneBlock、TwoBlock、FourBlock、deinterleaved-2 及 contiguous rows 的执行�
 语义保持不变。另补齐 `classifyGroupReduceLoweringPlan` 中相邻的控制流大括号，避免
 触发 `G.FMT.11-CPP`。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；`vmi_layout_assignment_group_slots_fanout.pto` lowering exit=0。
+
+# reduce_min/max physical 校验整改
+
+本轮将模板 `OneToNVMIReduceMinMaxOpPattern::matchAndRewrite` 中 min/max reduction 共用
+的 physical arity、vreg/mask 类型和 source/mask chunk 一致性校验抽取为
+`validatePhysicalParts`。入口现在只负责结果类型转换和调用具体 `ChunkReduceOp`/
+`CombineOp` lowering；max/min 操作选择、等价 mask 合并、多 chunk 累加和原有诊断保持
+不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
+通过；`vmi_to_vpto_reduce_extended.pto` lowering exit=0。

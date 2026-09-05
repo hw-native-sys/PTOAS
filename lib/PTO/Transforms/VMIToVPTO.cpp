@@ -13596,6 +13596,38 @@ struct OneToNVMIReduceMinMaxOpPattern : OneToNOpConversionPattern<SourceOp> {
   using OneToNOpConversionPattern<SourceOp>::OneToNOpConversionPattern;
 
 private:
+  FailureOr<std::pair<VRegType, MaskType>> validatePhysicalParts(
+      SourceOp op, ValueRange sourceParts, ValueRange maskParts,
+      TypeRange resultTypes, OneToNPatternRewriter &rewriter) const {
+    bool invalidArity = sourceParts.empty() || sourceParts.size() != maskParts.size() ||
+                        resultTypes.size() != 1;
+    if (invalidArity) {
+      return rewriter.notifyMatchFailure(
+          op, "min/max reduction requires matching source/mask chunks and one result chunk");
+    }
+    auto resultType = dyn_cast<VRegType>(resultTypes.front());
+    auto maskType = dyn_cast<MaskType>(maskParts.front().getType());
+    if (!resultType || !maskType) {
+      return rewriter.notifyMatchFailure(
+          op, "min/max reduction requires matching physical source/result vregs and one mask");
+    }
+    for (Value sourcePart : sourceParts) {
+      bool mismatch = sourcePart.getType() != resultType;
+      if (mismatch) {
+        return rewriter.notifyMatchFailure(
+            op, "min/max reduction requires every source chunk to match result vreg type");
+      }
+    }
+    for (Value maskPart : maskParts) {
+      bool mismatch = maskPart.getType() != maskType;
+      if (mismatch) {
+        return rewriter.notifyMatchFailure(
+            op, "min/max reduction requires every mask chunk to have the same predicate type");
+      }
+    }
+    return std::make_pair(*resultType, *maskType);
+  }
+
   LogicalResult lowerReduction(SourceOp op, ValueRange sourceParts,
                                ValueRange maskParts, VRegType resultType,
                                MaskType maskType,
@@ -13662,42 +13694,13 @@ public:
       return failure();
     }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-    bool invalidArity = sourceParts.empty() || sourceParts.size() != maskParts.size() ||
-                        resultTypes.size() != 1;
-    if (invalidArity) {
-      return rewriter.notifyMatchFailure(
-          op, "min/max reduction requires matching source/mask chunks "
-              "and one result chunk");
+    FailureOr<std::pair<VRegType, MaskType>> physical =
+        validatePhysicalParts(op, sourceParts, maskParts, resultTypes, rewriter);
+    if (failed(physical)) {
+      return failure();
     }
-
-    auto resultType = dyn_cast<VRegType>(resultTypes.front());
-    auto maskType = dyn_cast<MaskType>(maskParts.front().getType());
-    bool invalidPhysicalTypes = !resultType || !maskType;
-    if (invalidPhysicalTypes) {
-      return rewriter.notifyMatchFailure(
-          op, "min/max reduction requires matching physical source/result "
-              "vregs and one mask");
-    }
-
-    for (Value sourcePart : sourceParts) {
-      bool mismatchedSourceType = sourcePart.getType() != resultType;
-      if (mismatchedSourceType) {
-        return rewriter.notifyMatchFailure(
-            op, "min/max reduction requires every source chunk to "
-                "match result vreg type");
-      }
-    }
-    for (Value maskPart : maskParts) {
-      bool mismatchedMaskType = maskPart.getType() != maskType;
-      if (mismatchedMaskType) {
-        return rewriter.notifyMatchFailure(
-            op, "min/max reduction requires every mask chunk to have "
-                "the same predicate type");
-      }
-    }
-
-    return lowerReduction(op, sourceParts, maskParts, *resultType, *maskType,
-                          rewriter);
+    return lowerReduction(op, sourceParts, maskParts, physical->first,
+                          physical->second, rewriter);
   }
 };
 
