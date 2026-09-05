@@ -227,6 +227,12 @@ mask 的语义差异只存在于 active-lane 判定。补齐该批代码及 scal
 lane_stride=2/4 的物理 part 顺序与诊断文本不变；相关 mask granularity 和 group-store
 回归通过，增量合规检查与 `git diff --check` 通过。
 
+本轮将 `materializeMaskGranularityCastLayoutConversion` 的 layout、staging 和
+contiguous fallback 分派抽取为 `materializeMaskGranularityCastLayoutFallback`。主函数
+保留 layout 存在性与 identity forwarding 检查，并统一处理 fallback 成功、失败和最终
+诊断；helper 保持原有 layout→staging→dense-split contiguous 的尝试顺序，未改变转换
+语义。相关 mask granularity case 回归通过，增量合规检查与 `git diff --check` 通过。
+
 
 另外将 `computeShuffleVselrPlans` 的单个 result physical chunk 规划抽取为
 `computeShuffleVselrPlanForChunk`。外层函数现在只负责布局因子和 chunk 枚举，辅助函数

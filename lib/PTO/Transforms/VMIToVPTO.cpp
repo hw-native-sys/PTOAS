@@ -5516,6 +5516,51 @@ FailureOr<SmallVector<Value>> materializeMaskGranularityCastLayoutConversion(
 FailureOr<SmallVector<Value>>
 materializeMaskGranularityCastLayoutConversionViaContiguous(
     Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
+    ValueRange sourceParts, TypeRange resultTypes, PatternRewriter &rewriter);
+
+FailureOr<std::optional<SmallVector<Value>>>
+materializeMaskGranularityCastStagingLayout(
+    Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
+    ValueRange sourceParts, TypeRange resultTypes, PatternRewriter &rewriter);
+
+FailureOr<std::optional<SmallVector<Value>>>
+materializeMaskGranularityCastLayoutFallback(
+    Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
+    ValueRange sourceParts, TypeRange resultTypes, VMILayoutAttr sourceLayout,
+    VMILayoutAttr resultLayout, PatternRewriter &rewriter) {
+  FailureOr<SmallVector<Value>> layoutParts = materializeMaskLayoutConversion(
+      op, sourceParts, resultTypes, sourceLayout, resultLayout, rewriter);
+  if (succeeded(layoutParts)) {
+    return std::optional<SmallVector<Value>>(std::move(*layoutParts));
+  }
+
+  FailureOr<std::optional<SmallVector<Value>>> staging =
+      materializeMaskGranularityCastStagingLayout(
+          op, sourceType, resultType, sourceParts, resultTypes, rewriter);
+  if (failed(staging)) {
+    return failure();
+  }
+  if (staging->has_value()) {
+    return std::move(*staging);
+  }
+
+  bool requiresContiguousFallback =
+      sourceLayout.isDenseSplit() || resultLayout.isDenseSplit();
+  if (requiresContiguousFallback) {
+    FailureOr<SmallVector<Value>> contiguous =
+        materializeMaskGranularityCastLayoutConversionViaContiguous(
+            op, sourceType, resultType, sourceParts, resultTypes, rewriter);
+    if (failed(contiguous)) {
+      return failure();
+    }
+    return std::optional<SmallVector<Value>>(std::move(*contiguous));
+  }
+  return std::nullopt;
+}
+
+FailureOr<SmallVector<Value>>
+materializeMaskGranularityCastLayoutConversionViaContiguous(
+    Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
     ValueRange sourceParts, TypeRange resultTypes, PatternRewriter &rewriter) {
   VMILayoutAttr contiguous = VMILayoutAttr::getContiguous(op->getContext());
   VMIMaskType contiguousType =
@@ -5609,24 +5654,16 @@ FailureOr<SmallVector<Value>> materializeMaskGranularityCastLayoutConversion(
     return SmallVector<Value>(sourceParts.begin(), sourceParts.end());
   }
 
-  FailureOr<SmallVector<Value>> layoutParts = materializeMaskLayoutConversion(
-      op, sourceParts, resultTypes, sourceLayout, resultLayout, rewriter);
-  if (succeeded(layoutParts))
-    return layoutParts;
-
-  FailureOr<std::optional<SmallVector<Value>>> staging =
-      materializeMaskGranularityCastStagingLayout(
-          op, sourceType, resultType, sourceParts, resultTypes, rewriter);
-  if (failed(staging)) {
+  FailureOr<std::optional<SmallVector<Value>>> fallback =
+      materializeMaskGranularityCastLayoutFallback(
+          op, sourceType, resultType, sourceParts, resultTypes, sourceLayout,
+          resultLayout, rewriter);
+  if (failed(fallback)) {
     return failure();
   }
-  if (staging->has_value()) {
-    return std::move(**staging);
+  if (fallback->has_value()) {
+    return std::move(**fallback);
   }
-
-  if (sourceLayout.isDenseSplit() || resultLayout.isDenseSplit())
-    return materializeMaskGranularityCastLayoutConversionViaContiguous(
-        op, sourceType, resultType, sourceParts, resultTypes, rewriter);
 
   return fail("unsupported mask granularity cast layout conversion");
 }
