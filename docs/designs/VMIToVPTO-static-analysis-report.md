@@ -1221,3 +1221,9 @@ packed-byte、slots=1 和 group-store lowering case 均 exit=0。
 顶层分派。对齐判断、prefix mask、`align/base` 状态和诊断文本保持不变。增量合规
 检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；packed-byte、
 slots=1 及 group-store lowering case 均 exit=0。
+本轮为 `computeGroupMaskMaterializationForType` 引入
+`GroupMaskMaterializationPlan` 与 `buildGroupMaskMaterializationPlan`，集中表达
+active constant、mask layout/granularity、physical lanes、group shape 和 clamp 后的
+active 元素数；原函数仅调用 plan 并生成逻辑 lane predicate。该拆分不改变 mask
+chunk 顺序、padding 处理或失败诊断。增量合规检查结果为 `checked_files=1 errors=0
+warnings=0`，`git diff --check` 通过；动态 group-mask lowering case exit=0。

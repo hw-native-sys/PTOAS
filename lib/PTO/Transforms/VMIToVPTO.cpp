@@ -3222,12 +3222,18 @@ computeConstantMaskMaterialization(VMIConstantMaskOp op, std::string *reason) {
       reason);
 }
 
-FailureOr<SmallVector<ConstantMaskChunkMaterialization>>
-computeGroupMaskMaterializationForType(VMICreateGroupMaskOp op,
-                                       VMIMaskType resultVMIType,
-                                       std::string *reason) {
+struct GroupMaskMaterializationPlan {
+  int64_t lanesPerPart;
+  int64_t groupSize;
+  int64_t activeElems;
+};
+
+static FailureOr<GroupMaskMaterializationPlan>
+buildGroupMaskMaterializationPlan(VMICreateGroupMaskOp op,
+                                  VMIMaskType resultVMIType,
+                                  std::string *reason) {
   auto fail = [&reason](const Twine &message)
-      -> FailureOr<SmallVector<ConstantMaskChunkMaterialization>> {
+      -> FailureOr<GroupMaskMaterializationPlan> {
     if (reason) {
       *reason = message.str();
     }
@@ -3243,12 +3249,13 @@ computeGroupMaskMaterializationForType(VMICreateGroupMaskOp op,
   if (!activeAttr) {
     return fail("active_elems_per_group must be an integer constant");
   }
-
   VMILayoutAttr layout = resultVMIType.getLayoutAttr();
-  if (!layout ||
-      !VMIMaskType::isConcreteGranularity(resultVMIType.getGranularity()))
+  bool invalidMaskType =
+      !layout || !VMIMaskType::isConcreteGranularity(
+                     resultVMIType.getGranularity());
+  if (invalidMaskType) {
     return fail("requires concrete layout and granularity");
-
+  }
   FailureOr<StringRef> physicalGranularity =
       getVMIMaskPhysicalGranularity(resultVMIType);
   FailureOr<int64_t> lanesPerPart =
@@ -3258,25 +3265,32 @@ computeGroupMaskMaterializationForType(VMICreateGroupMaskOp op,
   if (failed(lanesPerPart)) {
     return fail("requires known physical mask lanes per part");
   }
-
   int64_t numGroups = op.getNumGroupsAttr().getInt();
   int64_t groupSize = op.getGroupSizeAttr().getInt();
-  if (numGroups <= 0 || groupSize <= 0 ||
-      resultVMIType.getElementCount() != numGroups * groupSize) {
+  bool invalidShape =
+      numGroups <= 0 || groupSize <= 0 ||
+      resultVMIType.getElementCount() != numGroups * groupSize;
+  if (invalidShape) {
     return fail("requires result lane count to match num_groups * group_size");
   }
+  int64_t activeElems = std::clamp<int64_t>(activeAttr.getInt(), 0, groupSize);
+  return GroupMaskMaterializationPlan{*lanesPerPart, groupSize, activeElems};
+}
 
-  int64_t activeElems = activeAttr.getInt();
-  if (activeElems < 0) {
-    activeElems = 0;
-  }
-  if (activeElems > groupSize) {
-    activeElems = groupSize;
+FailureOr<SmallVector<ConstantMaskChunkMaterialization>>
+computeGroupMaskMaterializationForType(VMICreateGroupMaskOp op,
+                                       VMIMaskType resultVMIType,
+                                       std::string *reason) {
+  FailureOr<GroupMaskMaterializationPlan> plan =
+      buildGroupMaskMaterializationPlan(op, resultVMIType, reason);
+  if (failed(plan)) {
+    return failure();
   }
 
   return materializeMaskChunks(
-      resultVMIType, *lanesPerPart,
-      [groupSize, activeElems](int64_t logicalLane) {
+      resultVMIType, plan->lanesPerPart,
+      [groupSize = plan->groupSize,
+       activeElems = plan->activeElems](int64_t logicalLane) {
         return logicalLane % groupSize < activeElems;
       },
       reason);
