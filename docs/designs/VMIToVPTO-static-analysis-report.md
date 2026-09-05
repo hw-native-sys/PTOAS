@@ -189,3 +189,6 @@ abs、sqrt、exp、ln 等重复 dispatch；`pmode` 特殊处理仍仅位于 vect
 `verifySupportedReduceOp`（提交 `03fc8ef6f`），保留 `requiresReassoc` 和每个
 操作原有提示文本。另将 expand-load 路径中被此次重构触及的结果类型失败分支统一
 为带大括号形式（提交 `c0d2922d9`）。增量合规检查通过。
+随后将六个 group-reduce verifier 分支统一抽取为 `verifySupportedGroupReduceOp`
+（提交 `c7dea762c`）。helper 只封装 support check、reason 传播和 WalkResult，调用方
+保留每个 group-reduce 的后端能力描述；新增代码合规检查通过。
