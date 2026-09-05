@@ -6493,8 +6493,10 @@ struct OneToNVMILoadOpPattern : OneToNOpConversionPattern<VMILoadOp> {
     FailureOr<Value> offset =
         getSingleValue(op, adaptor.getOffset(),
                        "load offset must convert to one value", rewriter);
-    if (failed(source) || failed(offset))
+    bool operandsConverted = succeeded(source) && succeeded(offset);
+    if (!operandsConverted) {
       return failure();
+    }
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
     if (failed(maybe_resultTypes))
@@ -15332,55 +15334,34 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
     }
 
     if (auto extsi = dyn_cast<VMIExtSIOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedExtSIShape(extsi, &reason)))
-        return WalkResult::advance();
-
-      extsi.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.extsi supports contiguous signed/signless 8-bit or "
-             "16-bit integer physical source chunks to 2x/4x wider integer "
-             "deinterleaved results, or matching "
-             "group_slots(num_groups=G, slots=1) layouts and natural "
-             "group_slots(num_groups=G, slots=8, lane_stride=2/4) to "
-             "group_slots(num_groups=G, slots=8) widening layouts ("
-          << reason << ")";
-      return WalkResult::interrupt();
+      return verifySupportedShapeOp(
+          extsi, checkSupportedExtSIShape,
+          "pto.vmi.extsi supports contiguous signed/signless 8-bit or 16-bit "
+          "integer physical source chunks to 2x/4x wider integer "
+          "deinterleaved results, or matching group_slots(num_groups=G, "
+          "slots=1) layouts and natural group_slots(num_groups=G, slots=8, "
+          "lane_stride=2/4) to group_slots(num_groups=G, slots=8) widening "
+          "layouts (");
     }
 
     if (auto extui = dyn_cast<VMIExtUIOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedExtUIShape(extui, &reason)))
-        return WalkResult::advance();
-
-      extui.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.extui supports contiguous unsigned 8-bit or 16-bit "
-             "integer physical source chunks to 2x/4x wider unsigned integer "
-             "deinterleaved results, or matching "
-             "group_slots(num_groups=G, slots=1) layouts and natural "
-             "group_slots(num_groups=G, slots=8, lane_stride=2/4) to "
-             "group_slots(num_groups=G, slots=8) widening layouts ("
-          << reason << ")";
-      return WalkResult::interrupt();
+      return verifySupportedShapeOp(
+          extui, checkSupportedExtUIShape,
+          "pto.vmi.extui supports contiguous unsigned 8-bit or 16-bit integer "
+          "physical source chunks to 2x/4x wider unsigned integer "
+          "deinterleaved results, or matching group_slots(num_groups=G, "
+          "slots=1) layouts and natural group_slots(num_groups=G, slots=8, "
+          "lane_stride=2/4) to group_slots(num_groups=G, slots=8) widening "
+          "layouts (");
     }
 
     if (auto trunci = dyn_cast<VMITruncIOp>(op)) {
-      std::string reason;
-      if (succeeded(checkSupportedTruncIShape(trunci, &reason)))
-        return WalkResult::advance();
-
-      trunci.emitError()
-          << kVMIDiagUnsupportedPrefix
-          << "pto.vmi.trunci supports integer deinterleaved source layouts "
-             "whose factor is the 2x/4x narrowing multiple of the contiguous "
-             "or deinterleaved result layout factor, or matching "
-             "group_slots(num_groups=G, slots=1) layouts and natural "
-             "group_slots(num_groups=G, slots=8) to "
-             "group_slots(num_groups=G, slots=8, lane_stride=2/4) narrowing "
-             "layouts ("
-          << reason << ")";
-      return WalkResult::interrupt();
+      return verifySupportedShapeOp(
+          trunci, checkSupportedTruncIShape,
+          "pto.vmi.trunci supports integer deinterleaved source layouts whose "
+          "factor is the 2x/4x narrowing multiple of the contiguous or "
+          "deinterleaved result layout factor, or matching group_slots "
+          "layouts and natural slots=8 narrowing layouts (");
     }
 
     if (auto bitcast = dyn_cast<VMIBitcastOp>(op)) {
