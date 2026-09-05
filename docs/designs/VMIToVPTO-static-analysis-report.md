@@ -1853,3 +1853,12 @@ predicate mode、signedness bitcast、结果顺序、mask 语义和原有诊断�
 同时将相邻 `active_prefix_index` 的条件判断改为具名布尔值并补齐大括号，以满足
 `G.FMT.11-CPP`。增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；`vmi_to_vpto_vselr.pto` lowering exit=0。
+
+# active_prefix_index physical part lowering 职责整改
+
+本轮将 `OneToNVMIActivePrefixIndexOpPattern::matchAndRewrite` 中 physical vreg/mask 合同、
+signless integer 校验、seed mask、零值 `VdupOp` 和 `VusqzOp` 发射抽取为 `lowerPart`。入口
+继续负责 one-part arity 与结果替换；保持零值宽度、mask 语义、指令顺序、结果类型和原有
+诊断不变。增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_to_vpto_active_prefix_index.pto` 当前在既有 VMI pack/unpack
+pipeline invariant 处提前失败，未进入本轮 helper，不能将该失败归因于本轮改动。

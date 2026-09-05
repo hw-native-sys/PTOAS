@@ -9472,7 +9472,7 @@ public:
                        .create<VselOp>(op.getLoc(), resultType, gathered,
                                        passthruParts.front(), maskParts.front())
                        .getResult();
-    replaceOpWithFlatConvertedValues(rewriter, op, SmallVector<Value>{result},
+    replaceOpWithFlatConvertedValues(rewriter, op, SmallVector<Value>{*result},
                                      *this->getTypeConverter());
     return success();
   }
@@ -12792,6 +12792,45 @@ struct OneToNVMIActivePrefixIndexOpPattern
   using OneToNOpConversionPattern<
       VMIActivePrefixIndexOp>::OneToNOpConversionPattern;
 
+private:
+  FailureOr<Value> lowerPart(VMIActivePrefixIndexOp op, Value mask,
+                             Type resultType,
+                             OneToNPatternRewriter &rewriter) const {
+    auto vregType = dyn_cast<VRegType>(resultType);
+    auto maskType = dyn_cast<MaskType>(mask.getType());
+    const bool invalidPartTypes = !vregType || !maskType;
+    if (invalidPartTypes) {
+      rewriter.notifyMatchFailure(
+          op, "active_prefix_index requires physical vreg/mask parts");
+      return failure();
+    }
+    auto intType = dyn_cast<IntegerType>(vregType.getElementType());
+    const bool invalidElementType = !intType || !intType.isSignless();
+    if (invalidElementType) {
+      rewriter.notifyMatchFailure(
+          op, "active_prefix_index requires signless integer result part");
+      return failure();
+    }
+    FailureOr<Value> seedMask =
+        createAllTrueMaskForVReg(op.getLoc(), vregType, rewriter);
+    if (failed(seedMask)) {
+      rewriter.notifyMatchFailure(
+          op, "unsupported element type for active_prefix_index seed mask");
+      return failure();
+    }
+    Value zero = rewriter.create<arith::ConstantIntOp>(op.getLoc(), 0,
+                                                       intType.getWidth());
+    Value carrier =
+        rewriter
+            .create<VdupOp>(op.getLoc(), resultType, zero, *seedMask,
+                            /*position=*/nullptr)
+            .getResult();
+    return rewriter
+        .create<VusqzOp>(op.getLoc(), resultType, carrier, mask)
+        .getResult();
+  }
+
+public:
   LogicalResult
   matchAndRewrite(VMIActivePrefixIndexOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -12808,39 +12847,11 @@ struct OneToNVMIActivePrefixIndexOpPattern
           op, "active_prefix_index supports only one physical part");
     }
 
-    auto resultType = dyn_cast<VRegType>(resultTypes.front());
-    auto maskType = dyn_cast<MaskType>(maskParts.front().getType());
-    const bool invalidPartTypes = !resultType || !maskType;
-    if (invalidPartTypes) {
-      return rewriter.notifyMatchFailure(
-          op, "active_prefix_index requires physical vreg/mask parts");
+    FailureOr<Value> result =
+        lowerPart(op, maskParts.front(), resultTypes.front(), rewriter);
+    if (failed(result)) {
+      return failure();
     }
-
-    auto intType = dyn_cast<IntegerType>(resultType.getElementType());
-    const bool invalidElementType = !intType || !intType.isSignless();
-    if (invalidElementType) {
-      return rewriter.notifyMatchFailure(
-          op, "active_prefix_index requires signless integer result part");
-    }
-
-    FailureOr<Value> seedMask =
-        createAllTrueMaskForVReg(op.getLoc(), resultType, rewriter);
-    if (failed(seedMask)) {
-      return rewriter.notifyMatchFailure(
-          op, "unsupported element type for active_prefix_index seed mask");
-    }
-
-    Value zero = rewriter.create<arith::ConstantIntOp>(op.getLoc(), 0,
-                                                       intType.getWidth());
-    Value carrier =
-        rewriter
-            .create<VdupOp>(op.getLoc(), resultType, zero, *seedMask,
-                            /*position=*/nullptr)
-            .getResult();
-    Value result = rewriter
-                       .create<VusqzOp>(op.getLoc(), resultType, carrier,
-                                        maskParts.front())
-                       .getResult();
     replaceOpWithFlatConvertedValues(rewriter, op, SmallVector<Value>{result},
                                      *this->getTypeConverter());
     return success();
