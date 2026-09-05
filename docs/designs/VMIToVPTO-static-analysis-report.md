@@ -185,3 +185,7 @@ abs、sqrt、exp、ln 等重复 dispatch；`pmode` 特殊处理仍仅位于 vect
 `verifySupportedMaskableOp`（提交 `ad0189d3f`），进一步消除同构分支；随后按
 `G.FMT.11-CPP` 补齐了 `getMaskGranularityRank` 的控制语句大括号（提交
 `ab7407a2f`）。两次增量合规检查均通过。
+本轮将普通 reduce（addi/addf/max/min，整数与浮点）的重复验证与诊断流程抽取为
+`verifySupportedReduceOp`（提交 `03fc8ef6f`），保留 `requiresReassoc` 和每个
+操作原有提示文本。另将 expand-load 路径中被此次重构触及的结果类型失败分支统一
+为带大括号形式（提交 `c0d2922d9`）。增量合规检查通过。
