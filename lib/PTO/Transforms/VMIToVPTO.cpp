@@ -2356,6 +2356,27 @@ checkSupportedScatterShape(VMIScatterOp op, std::string *reason) {
 }
 
 LogicalResult
+checkSinglePhysicalStrideAccess(Type dataType, Type maskType,
+                                StringRef errorMessage, std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  FailureOr<int64_t> dataArity = getVMIPhysicalArity(dataType);
+  FailureOr<int64_t> maskArity = getVMIPhysicalArity(maskType);
+  bool hasArity = succeeded(dataArity) && succeeded(maskArity);
+  if (!hasArity) {
+    return fail("requires computable physical arity");
+  }
+  if (*dataArity != 1 || *maskArity != 1) {
+    return fail(errorMessage);
+  }
+  return success();
+}
+
+LogicalResult
 checkSupportedStrideStoreShape(VMIStrideStoreOp op, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
@@ -2380,13 +2401,9 @@ checkSupportedStrideStoreShape(VMIStrideStoreOp op, std::string *reason) {
                                       op.getDestination().getType(), reason)))
     return failure();
 
-  FailureOr<int64_t> valueArity = getVMIPhysicalArity(valueType);
-  FailureOr<int64_t> maskArity = getVMIPhysicalArity(maskType);
-  if (failed(valueArity) || failed(maskArity))
-    return fail("requires computable physical arity");
-  if (*valueArity != 1 || *maskArity != 1)
-    return fail("currently supports one physical value/mask chunk");
-  return success();
+  return checkSinglePhysicalStrideAccess(
+      valueType, maskType,
+      "currently supports one physical value/mask chunk", reason);
 }
 
 LogicalResult
@@ -2409,13 +2426,9 @@ checkSupportedStrideLoadShape(VMIStrideLoadOp op, std::string *reason) {
   if (!isa<PtrType>(op.getSource().getType()))
     return fail("requires !pto.ptr source because pto.vsldb is pointer-only");
 
-  FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
-  FailureOr<int64_t> maskArity = getVMIPhysicalArity(maskType);
-  if (failed(resultArity) || failed(maskArity))
-    return fail("requires computable physical arity");
-  if (*resultArity != 1 || *maskArity != 1)
-    return fail("currently supports one physical result/mask chunk");
-  return success();
+  return checkSinglePhysicalStrideAccess(
+      resultType, maskType,
+      "currently supports one physical result/mask chunk", reason);
 }
 
 Value stripMaskMaterialization(Value value) {
@@ -14402,16 +14415,20 @@ checkSupportedVMIAddCarryPorts(VMIVRegType lhsType, VMIVRegType rhsType,
     if (maskType.getGranularity() != "b32")
       return fail("requires b32 mask granularity");
     FailureOr<int64_t> maskArity = getVMIPhysicalArity(maskType);
-    if (failed(maskArity) || *maskArity != *dataArity)
+    bool hasMatchingArity = succeeded(maskArity) && *maskArity == *dataArity;
+    if (!hasMatchingArity) {
       return fail("requires matching physical arity on data and mask ports");
+    }
     FailureOr<StringRef> physicalGranularity =
         getVMIMaskPhysicalGranularity(maskType);
     if (failed(physicalGranularity) || *physicalGranularity != "b32")
       return fail("requires physical b32 mask parts");
   }
   FailureOr<int64_t> lanesPerPart = getDataLanesPerPart(lhsType.getElementType());
-  if (failed(lanesPerPart) || *lanesPerPart != 64)
+  bool hasExpectedLanes = succeeded(lanesPerPart) && *lanesPerPart == 64;
+  if (!hasExpectedLanes) {
     return fail("requires 64-lane 32-bit data parts");
+  }
   return success();
 }
 
@@ -14441,15 +14458,18 @@ LogicalResult checkSupportedVMIAddcsShape(VMIVaddcsOp op,
 LogicalResult
 checkSupportedFmaShape(VMIFmaOp op, std::string *reason = nullptr) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
   auto lhsType = cast<VMIVRegType>(op.getLhs().getType());
   FailureOr<int64_t> arity = getVMIPhysicalArity(lhsType);
-  if (failed(arity) || *arity < 1)
+  bool hasNonEmptyArity = succeeded(arity) && *arity >= 1;
+  if (!hasNonEmptyArity) {
     return fail("requires computable non-empty physical arity");
+  }
 
   return success();
 }
@@ -14457,8 +14477,9 @@ checkSupportedFmaShape(VMIFmaOp op, std::string *reason = nullptr) {
 LogicalResult
 checkSupportedReluShape(VMIReluOp op, std::string *reason = nullptr) {
   auto resultType = cast<VMIVRegType>(op.getResult().getType());
-  if (failed(checkSupportedMaskableVReg(resultType, reason)))
+  if (failed(checkSupportedMaskableVReg(resultType, reason))) {
     return failure();
+  }
 
   return success();
 }
