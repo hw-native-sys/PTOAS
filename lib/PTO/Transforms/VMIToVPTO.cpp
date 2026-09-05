@@ -12732,6 +12732,30 @@ public:
 struct OneToNVMIVselrOpPattern : OneToNOpConversionPattern<VMIVselrOp> {
   using OneToNOpConversionPattern<VMIVselrOp>::OneToNOpConversionPattern;
 
+private:
+  FailureOr<Value> lowerPart(VMIVselrOp op, Value source, Value index,
+                             Type resultType,
+                             OneToNPatternRewriter &rewriter) const {
+    auto sourceType = dyn_cast<VRegType>(source.getType());
+    auto indexType = dyn_cast<VRegType>(index.getType());
+    auto resultVRegType = dyn_cast<VRegType>(resultType);
+    const bool invalidPart =
+        !sourceType || !indexType || !resultVRegType ||
+        sourceType != resultVRegType ||
+        sourceType.getElementCount() != indexType.getElementCount() ||
+        pto::getPTOStorageElemBitWidth(sourceType.getElementType()) !=
+            pto::getPTOStorageElemBitWidth(indexType.getElementType());
+    if (invalidPart) {
+      rewriter.notifyMatchFailure(
+          op, "vselr physical source/index/result type mismatch");
+      return failure();
+    }
+    return rewriter
+        .create<VselrOp>(op.getLoc(), resultVRegType, source, index)
+        .getResult();
+  }
+
+public:
   LogicalResult
   matchAndRewrite(VMIVselrOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -12739,32 +12763,25 @@ struct OneToNVMIVselrOpPattern : OneToNOpConversionPattern<VMIVselrOp> {
     ValueRange indexParts = adaptor.getIndex();
     FailureOr<SmallVector<Type>> maybeResultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybeResultTypes))
+    if (failed(maybeResultTypes)) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybeResultTypes);
 
-    if (sourceParts.size() != 1 || indexParts.size() != 1 ||
-        resultTypes.size() != 1)
+    const bool invalidArity = sourceParts.size() != 1 ||
+                              indexParts.size() != 1 || resultTypes.size() != 1;
+    if (invalidArity) {
       return rewriter.notifyMatchFailure(
           op, "vselr supports only one physical source/index/result part");
+    }
 
-    Value source = sourceParts.front();
-    Value index = indexParts.front();
-    auto sourceType = dyn_cast<VRegType>(source.getType());
-    auto indexType = dyn_cast<VRegType>(index.getType());
-    auto resultType = dyn_cast<VRegType>(resultTypes.front());
-    if (!sourceType || !indexType || !resultType ||
-        sourceType != resultType ||
-        sourceType.getElementCount() != indexType.getElementCount() ||
-        pto::getPTOStorageElemBitWidth(sourceType.getElementType()) !=
-            pto::getPTOStorageElemBitWidth(indexType.getElementType()))
-      return rewriter.notifyMatchFailure(
-          op, "vselr physical source/index/result type mismatch");
-
-    Value result =
-        rewriter.create<VselrOp>(op.getLoc(), resultType, source, index)
-            .getResult();
-    replaceOpWithFlatConvertedValues(rewriter, op, result,
+    FailureOr<Value> result = lowerPart(op, sourceParts.front(),
+                                        indexParts.front(), resultTypes.front(),
+                                        rewriter);
+    if (failed(result)) {
+      return failure();
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, *result,
                                      *this->getTypeConverter());
     return success();
   }
@@ -12785,26 +12802,33 @@ struct OneToNVMIActivePrefixIndexOpPattern
       return failure();
     }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-    if (maskParts.size() != 1 || resultTypes.size() != 1)
+    const bool invalidArity = maskParts.size() != 1 || resultTypes.size() != 1;
+    if (invalidArity) {
       return rewriter.notifyMatchFailure(
           op, "active_prefix_index supports only one physical part");
+    }
 
     auto resultType = dyn_cast<VRegType>(resultTypes.front());
     auto maskType = dyn_cast<MaskType>(maskParts.front().getType());
-    if (!resultType || !maskType)
+    const bool invalidPartTypes = !resultType || !maskType;
+    if (invalidPartTypes) {
       return rewriter.notifyMatchFailure(
           op, "active_prefix_index requires physical vreg/mask parts");
+    }
 
     auto intType = dyn_cast<IntegerType>(resultType.getElementType());
-    if (!intType || !intType.isSignless())
+    const bool invalidElementType = !intType || !intType.isSignless();
+    if (invalidElementType) {
       return rewriter.notifyMatchFailure(
           op, "active_prefix_index requires signless integer result part");
+    }
 
     FailureOr<Value> seedMask =
         createAllTrueMaskForVReg(op.getLoc(), resultType, rewriter);
-    if (failed(seedMask))
+    if (failed(seedMask)) {
       return rewriter.notifyMatchFailure(
           op, "unsupported element type for active_prefix_index seed mask");
+    }
 
     Value zero = rewriter.create<arith::ConstantIntOp>(op.getLoc(), 0,
                                                        intType.getWidth());

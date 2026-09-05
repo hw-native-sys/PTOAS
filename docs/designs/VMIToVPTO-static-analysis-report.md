@@ -1844,3 +1844,12 @@ predicate mode、signedness bitcast、结果顺序、mask 语义和原有诊断�
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_cmp_select.pto` 当前在既有 VMI pack/unpack pipeline invariant 处提前失败，
 未进入本轮 helper，不能将该失败归因于本轮改动。
+
+# vselr physical part lowering 职责整改
+
+本轮将 `OneToNVMIVselrOpPattern::matchAndRewrite` 中单 physical part 的 source/index/result
+类型合同与 `VselrOp` 发射抽取为 `lowerPart`。入口继续负责 one-part arity 限制和结果
+替换；保持 element-count/storage-width 匹配规则、结果类型、结果顺序和原有诊断不变。
+同时将相邻 `active_prefix_index` 的条件判断改为具名布尔值并补齐大括号，以满足
+`G.FMT.11-CPP`。增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_to_vpto_vselr.pto` lowering exit=0。
