@@ -10577,6 +10577,30 @@ private:
     return success();
   }
 
+  FailureOr<Value> materializeCompactSmallGroupValue(
+      VMIGroupStoreOp op, ValueRange valueParts, VMIVRegType valueVMIType,
+      VMILayoutAttr layout, OneToNPatternRewriter &rewriter) const {
+    Value compactValue = valueParts.front();
+    bool alreadyCompact = layout.getLaneStride() == 1;
+    if (alreadyCompact) {
+      return compactValue;
+    }
+    VMILayoutAttr compactLayout = VMILayoutAttr::getGroupSlots(
+        rewriter.getContext(), layout.getNumGroups(), layout.getSlots());
+    auto compactVMIType = VMIVRegType::get(
+        rewriter.getContext(), valueVMIType.getElementCount(),
+        valueVMIType.getElementType(), compactLayout);
+    FailureOr<SmallVector<Value>> packed = materializeEnsureLayoutConversion(
+        op, valueParts, valueVMIType, compactVMIType,
+        *this->getTypeConverter(), rewriter);
+    bool invalidPacked = failed(packed) || packed->size() != 1;
+    if (invalidPacked) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to materialize compact group_store layout");
+    }
+    return packed->front();
+  }
+
   LogicalResult lowerCompactSmallGroupStore(
       VMIGroupStoreOp op, OpAdaptor adaptor,
       OneToNPatternRewriter &rewriter, VMIVRegType valueVMIType,
@@ -10593,28 +10617,15 @@ private:
           op, "compact small group_store requires vreg and ptr operands");
     }
 
-    Value compactValue = valueParts.front();
-    bool needsCompactLayout = layout.getLaneStride() != 1;
-    if (needsCompactLayout) {
-      VMILayoutAttr compactLayout = VMILayoutAttr::getGroupSlots(
-          rewriter.getContext(), layout.getNumGroups(), layout.getSlots());
-      auto compactVMIType = VMIVRegType::get(
-          rewriter.getContext(), valueVMIType.getElementCount(),
-          valueVMIType.getElementType(), compactLayout);
-      FailureOr<SmallVector<Value>> packed = materializeEnsureLayoutConversion(
-          op, valueParts, valueVMIType, compactVMIType,
-          *this->getTypeConverter(), rewriter);
-      bool invalidPacked = failed(packed) || packed->size() != 1;
-      if (invalidPacked) {
-        return rewriter.notifyMatchFailure(
-            op, "failed to materialize compact group_store layout");
-      }
-      compactValue = packed->front();
+    FailureOr<Value> compactValue = materializeCompactSmallGroupValue(
+        op, valueParts, valueVMIType, layout, rewriter);
+    if (failed(compactValue)) {
+      return failure();
     }
 
     if (isKnownAddressAligned(destination, offset,
                               valueVMIType.getElementType(), 32)) {
-      auto compactType = dyn_cast<VRegType>(compactValue.getType());
+      auto compactType = dyn_cast<VRegType>(compactValue->getType());
       std::optional<std::string> normalDist =
           getX2MemoryDistToken(valueVMIType.getElementType(), "NORM");
       if (!compactType || !normalDist) {
@@ -10634,7 +10645,7 @@ private:
             op, "failed to create aligned compact group_store mask");
       }
       rewriter.create<VstsOp>(
-          op.getLoc(), /*updated_base=*/Type{}, compactValue, destination,
+          op.getLoc(), /*updated_base=*/Type{}, *compactValue, destination,
           offset, rewriter.getStringAttr(*normalDist), *storeMask);
       rewriter.eraseOp(op);
       return success();
@@ -10644,7 +10655,7 @@ private:
         rewriter.create<AddPtrOp>(op.getLoc(), destination.getType(),
                                   destination, offset)
             .getResult();
-    SmallVector<Value> streamValues{compactValue};
+    SmallVector<Value> streamValues{*compactValue};
     SmallVector<int64_t> streamAdvances{valueVMIType.getElementCount()};
     if (failed(emitStatefulStoreStream(op, elementBase, streamValues,
                                        streamAdvances, rewriter))) {

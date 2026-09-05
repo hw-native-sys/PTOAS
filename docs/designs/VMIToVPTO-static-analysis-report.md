@@ -2085,6 +2085,16 @@ mask、结果顺序和诊断语义不变。增量 `check_changed_code.py` 结果
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；本轮未新增可独立进入该
 helper 的 runtime case，未虚构额外回归结果。
 
+# compact small group store 布局物化职责整改
+
+本轮在 `OneToNVMIGroupStoreOpPattern::lowerCompactSmallGroupStore` 中引入
+`materializeCompactSmallGroupValue`，将 lane-stride 判断、compact group-slots 类型构造及
+`materializeEnsureLayoutConversion` 结果校验抽取为独立 helper。主函数继续负责输入 arity/
+指针合同、对齐 `VstsOp` 与非对齐 stateful stream 分支；保持 compact value、地址、mask、
+stream advance、诊断和 direct/fallback 语义不变。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_layout_assignment_group_store_slots1_unit_stride.pto` 完整 lowering pipeline exit=0。
+
 # create_mask 常量 chunk 活跃度计算职责整改
 
 本轮在 `OneToNVMICreateMaskOpPattern::lowerConstantMask` 中引入
