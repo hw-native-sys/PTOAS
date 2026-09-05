@@ -7803,26 +7803,30 @@ struct OneToNVMIStoreOpPattern : OneToNOpConversionPattern<VMIStoreOp> {
 
   static LogicalResult emitDeinterleavedStore(
       VMIStoreOp op, Value destination, Value offset, ValueRange valueParts,
-      VMIVRegType valueVMIType, int64_t lanesPerPart, StringRef dist,
+      int64_t lanesPerPart, StringRef dist,
       OneToNPatternRewriter &rewriter) {
-    if (valueParts.size() % 2 != 0) {
+    bool oddValuePartCount = valueParts.size() % 2 != 0;
+    if (oddValuePartCount) {
       return failure();
     }
     int64_t groups = valueParts.size() / 2;
     for (int64_t group = 0; group < groups; ++group) {
       Value low = valueParts[group];
       Value high = valueParts[groups + group];
-      if (low.getType() != high.getType()) {
+      bool mismatchedTypes = low.getType() != high.getType();
+      if (mismatchedTypes) {
         return rewriter.notifyMatchFailure(
             op, "vstsx2 requires matching low/high value types");
       }
       auto vregType = dyn_cast<VRegType>(low.getType());
-      if (!vregType) {
+      bool invalidValueType = !vregType;
+      if (invalidValueType) {
         return rewriter.notifyMatchFailure(op, "store value must be vreg");
       }
       FailureOr<Value> mask =
           createAllTrueMaskForVReg(op.getLoc(), vregType, rewriter);
-      if (failed(mask)) {
+      bool maskFailed = failed(mask);
+      if (maskFailed) {
         return rewriter.notifyMatchFailure(
             op, "unsupported element type for store mask");
       }
@@ -7840,7 +7844,8 @@ struct OneToNVMIStoreOpPattern : OneToNOpConversionPattern<VMIStoreOp> {
     auto valueVMIType = cast<VMIVRegType>(op.getValue().getType());
     FailureOr<int64_t> lanesPerPart =
         getDataLanesPerPart(valueVMIType.getElementType());
-    if (failed(lanesPerPart))
+    bool unknownLanesPerPart = failed(lanesPerPart);
+    if (unknownLanesPerPart) {
       return rewriter.notifyMatchFailure(
           op, "store requires known physical lanes per part");
     bool fullPhysicalChunks =
@@ -7851,7 +7856,8 @@ struct OneToNVMIStoreOpPattern : OneToNOpConversionPattern<VMIStoreOp> {
     FailureOr<Value> offset =
         getSingleValue(op, adaptor.getOffset(),
                        "store offset must convert to one value", rewriter);
-    if (failed(destination) || failed(offset))
+    bool invalidAddressOperands = failed(destination) || failed(offset);
+    if (invalidAddressOperands) {
       return failure();
 
     ValueRange valueParts = adaptor.getValue();
@@ -7915,10 +7921,11 @@ struct OneToNVMIStoreOpPattern : OneToNOpConversionPattern<VMIStoreOp> {
                             op.getDestination(), op.getOffset(),
                             valueVMIType.getElementType(), firstType,
                             VPTOMemoryOpFamily::StoreX2, *dist);
-      if (canUseDist && valueParts.size() % 2 == 0) {
+      bool evenValuePartCount = valueParts.size() % 2 == 0;
+      if (canUseDist && evenValuePartCount) {
         if (failed(emitDeinterleavedStore(
-                op, *destination, *offset, valueParts, valueVMIType,
-                *lanesPerPart, *dist, rewriter))) {
+                op, *destination, *offset, valueParts, *lanesPerPart, *dist,
+                rewriter))) {
           return failure();
         }
         rewriter.eraseOp(op);
