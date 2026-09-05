@@ -295,7 +295,7 @@ LogicalResult verifyVMIToVPTOInputTypes(Operation *op) {
 }
 
 LogicalResult verifyVMIToVPTOInputIR(ModuleOp module) {
-  WalkResult result = module.walk([&](Operation *op) {
+  WalkResult result = module.walk([](Operation *op) {
     if (auto cast = dyn_cast<UnrealizedConversionCastOp>(op)) {
       bool carriesVMIType = llvm::any_of(cast->getOperandTypes(), isVMIType) ||
                             llvm::any_of(cast->getResultTypes(), isVMIType);
@@ -601,7 +601,7 @@ bool areEquivalentReductionMasks(Value lhs, Value rhs) {
 
 bool haveEquivalentReductionMasks(ValueRange masks) {
   return !masks.empty() &&
-         llvm::all_of(masks.drop_front(), [&](Value mask) {
+         llvm::all_of(masks.drop_front(), [&masks](Value mask) {
            return areEquivalentReductionMasks(masks.front(), mask);
          });
 }
@@ -13318,7 +13318,7 @@ void populateVMIConversionPatterns(
 }
 
 LogicalResult verifyNoResidualVMIIR(ModuleOp module) {
-  WalkResult result = module.walk([&](Operation *op) {
+  WalkResult result = module.walk([](Operation *op) {
     if (auto createMask = dyn_cast<VMICreateMaskOp>(op)) {
       if (!createMask.getActiveLanes().getDefiningOp<arith::ConstantOp>()) {
         createMask.emitError()
@@ -14149,7 +14149,9 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
     return WalkResult::interrupt();
   };
 
-  WalkResult result = module.walk([&](Operation *op) {
+  WalkResult result = module.walk([&enableStableGatherMaskedLoad,
+                                   &emitMemoryUnsupported,
+                                   &emitMaskableUnsupported](Operation *op) {
     if (auto constant = dyn_cast<VMIConstantOp>(op)) {
       auto denseAttr = dyn_cast<DenseElementsAttr>(constant.getValue());
       if (!denseAttr || !denseAttr.isSplat()) {
