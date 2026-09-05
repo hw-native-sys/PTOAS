@@ -1275,3 +1275,11 @@ proof 与 group-slots、one-block、deinterleaved 检查分离。同步补齐本
 控制流大括号，并将复杂条件命名化以避免静态检查误报。支持矩阵、诊断和判断顺序
 保持不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
 通过。
+# 本轮 layout staging 整改
+
+本轮将 `materializeStagingContiguousToDeintMaskLayout` 的 source group 构造、缺失
+part 的 all-false 补齐以及 factor=2/4 单组物化抽取为
+`materializeContiguousToDeintMaskGroup`。外层函数只负责分组循环、part 收集和最终
+arity 校验；`dintlv` 发射顺序与 mask padding 语义保持不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_ensure_mask_granularity.pto` lowering exit=0。

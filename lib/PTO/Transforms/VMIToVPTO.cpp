@@ -5972,6 +5972,53 @@ static FailureOr<std::array<Value, 2>> materializeFactor2ContiguousToDeintGroup(
   return std::array<Value, 2>{materialized->first, materialized->second};
 }
 
+static FailureOr<SmallVector<Value, 4>> materializeContiguousToDeintMaskGroup(
+    Operation *op, ValueRange sourceParts, TypeRange resultTypes, int64_t factor,
+    int64_t groups, int64_t groupIndex, PatternRewriter &rewriter) {
+  SmallVector<Value, 4> sources;
+  size_t sourceBase = static_cast<size_t>(groupIndex * factor);
+  if (sourceBase >= sourceParts.size()) {
+    (void)rewriter.notifyMatchFailure(
+        op, "staging contiguous mask layout ran out of source parts");
+    return failure();
+  }
+  sources.reserve(factor);
+  for (int64_t lane = 0; lane < factor; ++lane) {
+    size_t index = sourceBase + lane;
+    if (index < sourceParts.size()) {
+      sources.push_back(sourceParts[index]);
+      continue;
+    }
+    FailureOr<Value> zero = createAllFalseMaskLike(
+        op->getLoc(), sourceParts[sourceBase], rewriter);
+    if (failed(zero)) {
+      (void)rewriter.notifyMatchFailure(
+          op, "failed to create all-false staging mask");
+      return failure();
+    }
+    sources.push_back(*zero);
+  }
+  SmallVector<Value, 4> results;
+  if (factor == 2) {
+    FailureOr<std::array<Value, 2>> materialized =
+        materializeFactor2ContiguousToDeintGroup(
+            op, sources, resultTypes, groups, groupIndex, rewriter);
+    if (failed(materialized)) {
+      return failure();
+    }
+    results.append(*materialized);
+    return results;
+  }
+  FailureOr<std::array<Value, 4>> materialized =
+      materializeFactor4ContiguousToDeintGroup(
+          op, sources, resultTypes, groups, groupIndex, rewriter);
+  if (failed(materialized)) {
+    return failure();
+  }
+  results.append(*materialized);
+  return results;
+}
+
 FailureOr<SmallVector<Value>> materializeStagingContiguousToDeintMaskLayout(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     int64_t factor, PatternRewriter &rewriter) {
@@ -5998,41 +6045,9 @@ FailureOr<SmallVector<Value>> materializeStagingContiguousToDeintMaskLayout(
     parts[part].reserve(groups);
 
   for (int64_t i = 0; i < groups; ++i) {
-    size_t sourceBase = static_cast<size_t>(i * factor);
-    if (sourceBase >= sourceParts.size())
-      return fail("staging contiguous mask layout ran out of source parts");
-
-    SmallVector<Value, 4> sources;
-    sources.reserve(factor);
-    for (int64_t lane = 0; lane < factor; ++lane) {
-      size_t index = sourceBase + lane;
-      if (index < sourceParts.size()) {
-        sources.push_back(sourceParts[index]);
-        continue;
-      }
-      FailureOr<Value> zero =
-          createAllFalseMaskLike(op->getLoc(), sourceParts[sourceBase],
-                                 rewriter);
-      if (failed(zero))
-        return fail("failed to create all-false staging mask");
-      sources.push_back(*zero);
-    }
-
-    if (factor == 2) {
-      FailureOr<std::array<Value, 2>> materialized =
-          materializeFactor2ContiguousToDeintGroup(
-              op, sources, resultTypes, groups, i, rewriter);
-      if (failed(materialized)) {
-        return failure();
-      }
-      parts[0].push_back((*materialized)[0]);
-      parts[1].push_back((*materialized)[1]);
-      continue;
-    }
-
-    FailureOr<std::array<Value, 4>> materialized =
-        materializeFactor4ContiguousToDeintGroup(op, sources, resultTypes,
-                                                 groups, i, rewriter);
+    FailureOr<SmallVector<Value, 4>> materialized =
+        materializeContiguousToDeintMaskGroup(
+            op, sourceParts, resultTypes, factor, groups, i, rewriter);
     if (failed(materialized)) {
       return failure();
     }
