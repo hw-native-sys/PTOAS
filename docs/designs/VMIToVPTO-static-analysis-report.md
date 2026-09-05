@@ -547,3 +547,8 @@ pattern 仅负责输入归一化和路径选择。mask part 顺序、active-lane
 deinterleaved forwarding 的共同契约。layout fallback 选择、unrealized cast 优化及
 错误诊断保持不变。增量合规检查为 `errors=0 warnings=0`，`git diff --check` 通过；
 连续 load/store lowering 回归通过。
+
+本轮进一步将 block-deinterleaved 与 contiguous 转换中的 unrealized-cast 输入直通
+识别抽取为 `forwardBlockLayoutCastInputs`，主函数只负责布局关系选择和普通 identity
+校验。cast 输入数量及类型匹配条件保持不变。增量合规检查为 `errors=0 warnings=0`，
+`git diff --check` 通过；连续 load/store lowering 回归通过。

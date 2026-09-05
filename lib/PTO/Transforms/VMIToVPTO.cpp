@@ -4139,6 +4139,26 @@ static FailureOr<std::optional<SmallVector<Value>>> forwardIdentityLayoutParts(
       SmallVector<Value>(sourceParts.begin(), sourceParts.end()));
 }
 
+static std::optional<SmallVector<Value>>
+forwardBlockLayoutCastInputs(ValueRange sourceParts, TypeRange resultTypes) {
+  bool invalidSourceArity = sourceParts.size() != 1;
+  if (invalidSourceArity) {
+    return std::nullopt;
+  }
+  auto cast = sourceParts.front().getDefiningOp<UnrealizedConversionCastOp>();
+  bool invalidCast = !cast || cast.getInputs().size() != resultTypes.size();
+  if (invalidCast) {
+    return std::nullopt;
+  }
+  for (auto [input, resultType] : llvm::zip_equal(cast.getInputs(), resultTypes)) {
+    bool typeMismatch = input.getType() != resultType;
+    if (typeMismatch) {
+      return std::nullopt;
+    }
+  }
+  return SmallVector<Value>(cast.getInputs().begin(), cast.getInputs().end());
+}
+
 static FailureOr<std::optional<SmallVector<Value>>>
 materializeSimpleDataLayoutConversion(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
@@ -4190,24 +4210,9 @@ materializeSimpleDataLayoutConversion(
       (isBlockDeinterleaved(sourceLayout, 2) ||
        isBlockDeinterleaved(sourceLayout, 4));
   if (contiguousToBlock || blockToContiguous) {
-    if (sourceParts.size() == 1) {
-      if (auto cast =
-              sourceParts.front().getDefiningOp<UnrealizedConversionCastOp>()) {
-        ValueRange inputs = cast.getInputs();
-        if (inputs.size() == resultTypes.size()) {
-          bool typesMatch = true;
-          for (auto [input, resultType] : llvm::zip_equal(inputs, resultTypes)) {
-            if (input.getType() != resultType) {
-              typesMatch = false;
-              break;
-            }
-          }
-          if (typesMatch) {
-            return std::optional<SmallVector<Value>>(
-                SmallVector<Value>(inputs.begin(), inputs.end()));
-          }
-        }
-      }
+    if (std::optional<SmallVector<Value>> castInputs =
+            forwardBlockLayoutCastInputs(sourceParts, resultTypes)) {
+      return std::move(*castInputs);
     }
     return forwardIdentityLayoutParts(op, sourceParts, resultTypes, rewriter);
   }
