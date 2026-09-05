@@ -574,3 +574,9 @@ carrier 变换和结果枚举职责，统一校验不改变原有诊断与支持
 `pdintlv` 物化抽取为局部 `appendFactor2Group`，factor=4 继续复用既有四路 helper；
 source 补零、part 聚合和结果 arity 检查保持不变。增量合规检查为
 `errors=0 warnings=0`，`git diff --check` 通过；mask granularity lowering 回归通过。
+
+本轮将模板化 interleave pattern 的 lane-stride carrier 路径抽取为
+`lowerLaneStrideInterleave`，集中处理 carrier 宽度校验、输入/输出 bitcast 和目标
+interleave 指令生成；主 pattern 继续负责 layout fact 查询及 contiguous/zero-copy
+路径分派。增量合规检查为 `errors=0 warnings=0`，`git diff --check` 通过；interleave
+memory lowering 回归通过。
