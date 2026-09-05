@@ -1815,3 +1815,12 @@ source 与 converted result types；保持 TargetOp 选择、mask 语义、结�
 增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；`vmi_to_vpto_abs.pto` 与 `vmi_to_vpto_negf.pto` lowering 均
 exit=0。
+
+# mask unary physical chunk lowering 职责整改
+
+本轮将模板 `OneToNVMIMaskUnaryOpPattern::matchAndRewrite` 中 physical arity/type 校验、
+all-true seed mask 构造、目标 mask unary op 发射和结果替换抽取为 `lowerParts`。入口只
+负责 source 与 converted result type 获取；保持 seed mask、TargetOp 选择、结果顺序和
+原有诊断语义不变。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_mask_logic.pto` lowering exit=0。
