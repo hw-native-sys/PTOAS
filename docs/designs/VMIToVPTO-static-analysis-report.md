@@ -635,3 +635,10 @@ lowering plan 分类以及其它 two/four-block 与 row-reduction 路径。该�
 `GroupReduceLoweringPlan::OneBlockVcgadd` 的诊断和结果替换语义。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_group_reduce_addi_i16.pto` 完成完整 lowering 回归。
+
+本轮继续将 two-block `deinterleaved=2` 的 `vcgadd`/combine 路径抽取为
+`lowerTwoBlock`。该 helper 独立维护双物理块 arity、source/mask/result 类型一致性、
+尾部 active-group mask 和两路 group-reduce 后的 combine；主 pattern 仅负责 plan 分派。
+保留原有 two-block 诊断文本、结果顺序和 physical replacement 语义。增量合规检查结果
+为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_group_reduce_addi_i16.pto` 完成 lowering 回归。
