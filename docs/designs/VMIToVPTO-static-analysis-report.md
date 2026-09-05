@@ -744,3 +744,9 @@ active lane 和地址步长语义不变。增量合规检查结果为
 group-load fallback。该拆分不改变 group size/row stride 约束或结果顺序。增量合规检查
 结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；group-store
 unit-stride 与连续 load/store 代表性 lowering 均通过。
+
+本轮将 `OneToNVMITruncIOpPattern` 中 s32→s8 alias 恢复与结果替换的默认捕获 lambda
+抽取为具名 `finalizeResults` helper。helper 集中负责 alias 场景的结果 `VbitcastOp`
+恢复及统一 physical replacement；trunci 的 group-slot、dense lane-stride 和 factor
+2/4 合并路径保持不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；连续 load/store 与 group-store 代表性 lowering 均通过。
