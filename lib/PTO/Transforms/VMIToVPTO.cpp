@@ -10027,6 +10027,36 @@ private:
     return success();
   }
 
+  LogicalResult emitAlignedSlots8Contiguous(
+      VMIGroupStoreOp op, OneToNPatternRewriter &rewriter,
+      ValueRange valueParts, ArrayRef<Value> groupOffsets, Value destination,
+      int64_t numGroups) const {
+    for (auto [slotBlock, value] : llvm::enumerate(valueParts)) {
+      auto vregType = dyn_cast<VRegType>(value.getType());
+      if (!vregType) {
+        return rewriter.notifyMatchFailure(op,
+                                           "group_store value must be vreg");
+      }
+      FailureOr<MaskType> maskType =
+          getMaskTypeForVReg(vregType, rewriter.getContext());
+      if (failed(maskType)) {
+        return rewriter.notifyMatchFailure(
+            op, "unsupported element type for group_store mask");
+      }
+      int64_t activeGroups = std::min<int64_t>(8, numGroups - slotBlock * 8);
+      FailureOr<Value> mask = createPrefixMaskForActiveLanes(
+          op.getLoc(), *maskType, activeGroups, rewriter);
+      if (failed(mask)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to create slots=8 group_store mask");
+      }
+      rewriter.create<VstsOp>(op.getLoc(), /*updated_base=*/Type{}, value,
+                              destination, groupOffsets[slotBlock],
+                              /*dist=*/nullptr, *mask);
+    }
+    return success();
+  }
+
   LogicalResult lowerSlots8Contiguous(
       VMIGroupStoreOp op, OpAdaptor adaptor, OneToNPatternRewriter &rewriter,
       VMIVRegType valueVMIType, Value destination, Value offset,
@@ -10063,24 +10093,9 @@ private:
       return success();
     }
 
-    for (auto [slotBlock, value] : llvm::enumerate(valueParts)) {
-      auto vregType = cast<VRegType>(value.getType());
-      FailureOr<MaskType> maskType =
-          getMaskTypeForVReg(vregType, rewriter.getContext());
-      if (failed(maskType)) {
-        return rewriter.notifyMatchFailure(
-            op, "unsupported element type for group_store mask");
-      }
-      int64_t activeGroups = std::min<int64_t>(8, numGroups - slotBlock * 8);
-      FailureOr<Value> mask = createPrefixMaskForActiveLanes(
-          op.getLoc(), *maskType, activeGroups, rewriter);
-      if (failed(mask)) {
-        return rewriter.notifyMatchFailure(
-            op, "failed to create slots=8 group_store mask");
-      }
-      rewriter.create<VstsOp>(op.getLoc(), /*updated_base=*/Type{}, value,
-                              destination, groupOffsets[slotBlock],
-                              /*dist=*/nullptr, *mask);
+    if (failed(emitAlignedSlots8Contiguous(
+            op, rewriter, valueParts, groupOffsets, destination, numGroups))) {
+      return failure();
     }
     rewriter.eraseOp(op);
     return success();

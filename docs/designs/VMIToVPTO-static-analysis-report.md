@@ -1208,6 +1208,13 @@ group-slot 相关 lowering case 均 exit=0。
 增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 packed-byte、slots=1 和 group-store lowering case 均 exit=0。
 
+本轮将 `lowerSlots8Contiguous` 的对齐 physical-part 发射抽取为
+`emitAlignedSlots8Contiguous`。前者继续负责所有 chunk 的 direct-address 判定和
+非对齐 stateful stream 的 advances 计算，后者只负责尾部 active-group mask 与
+逐块 `vsts`；因此不会把 stream 拆成独立访存，也不改变 chunk 顺序。增量合规检查
+结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；slots=1
+对齐相关 lowering case exit=0。
+
 本轮将 `OneToNVMIGroupStoreOpPattern` 的 compact-small 分支抽取为
 `lowerCompactSmallGroupStore`，把 compact layout 物化、对齐 `NORM` store 和非对齐
 单 stream 发射封装为独立职责；主 pattern 仅保留 scalar/compact/slots/普通布局的
