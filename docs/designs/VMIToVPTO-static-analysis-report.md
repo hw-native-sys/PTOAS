@@ -1420,6 +1420,15 @@ chunk 的类型检查、direct `Vstsx2Op` 发射和 stream `VintlvOp`/advance �
 `vmi_interleaved_memory_ops.pto` lowering exit=0，invalid case 仍按原有 VMI operand
 lane-count verifier 失败。
 
+# channel split 结果布局校验整改
+
+本轮将 `OneToNVMIChannelSplitOpPattern::matchAndRewrite` 中逐结果 contiguous layout
+校验抽取为 `validateResultLayouts`，使主函数只负责通道数、source layout、物理类型
+转换和结果替换。通道数支持矩阵、诊断文本及 `materializeDataLayoutConversion` 调用
+保持不变。增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过。channel merge 抽样仍在既有 VMI layout contract 冲突处提前
+失败，未进入本轮 split lowering。
+
 # bitcast physical part 构造整改
 
 本轮将 `OneToNVMIBitcastOpPattern::matchAndRewrite` 的单 physical part 类型校验与

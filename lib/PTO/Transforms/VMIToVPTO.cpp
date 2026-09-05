@@ -15494,6 +15494,23 @@ struct OneToNVMIChannelSplitOpPattern
     : OneToNOpConversionPattern<VMIChannelSplitOp> {
   using OneToNOpConversionPattern<VMIChannelSplitOp>::OneToNOpConversionPattern;
 
+private:
+  LogicalResult validateResultLayouts(
+      VMIChannelSplitOp op, OneToNPatternRewriter &rewriter) const {
+    for (Value result : op.getResults()) {
+      auto resultType = cast<VMIVRegType>(result.getType());
+      VMILayoutAttr resultLayout = resultType.getLayoutAttr();
+      bool invalidResultLayout = !resultLayout || !resultLayout.isContiguous();
+      if (invalidResultLayout) {
+        return rewriter.notifyMatchFailure(
+            op, "channel_split requires contiguous result layouts");
+      }
+    }
+    return success();
+  }
+
+public:
+
   LogicalResult
   matchAndRewrite(VMIChannelSplitOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -15517,14 +15534,8 @@ struct OneToNVMIChannelSplitOpPattern
           "channel_split requires contiguous or matching deinterleaved source "
           "layout");
     }
-    for (Value result : op.getResults()) {
-      auto resultType = cast<VMIVRegType>(result.getType());
-      VMILayoutAttr resultLayout = resultType.getLayoutAttr();
-      bool invalidResultLayout = !resultLayout || !resultLayout.isContiguous();
-      if (invalidResultLayout) {
-        return rewriter.notifyMatchFailure(
-            op, "channel_split requires contiguous result layouts");
-      }
+    if (failed(validateResultLayouts(op, rewriter))) {
+      return failure();
     }
 
     FailureOr<SmallVector<Type>> maybe_resultTypes =
