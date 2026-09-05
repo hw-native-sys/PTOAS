@@ -1742,3 +1742,13 @@ shift-count signed carrier 归一化、vreg/mask 校验、all-true mask 构造�
 遍历；保持 shift count bitcast、结果顺序、mask 语义和原有诊断不变。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_shrsi.pto` 与 `vmi_to_vpto_shli.pto` lowering 均 exit=0。
+
+# vector-scalar lowering 职责整改
+
+本轮将模板 `OneToNVMIVecScalarOpPattern::matchAndRewrite` 中 physical arity/type 校验、
+单个 vector-scalar chunk 的目标 op 构造和结果替换抽取为 `lowerVectorScalarParts`。入口
+继续负责 merge predicate mode 拒绝、scalar 归一化及 converted result type 获取；保持
+scalar 单值语义、mask 透传、TargetOp 选择、结果顺序和原有诊断不变，并为控制流补齐
+大括号以满足 `G.FMT.11-CPP`。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_vector_scalar_ops.pto` lowering exit=0。

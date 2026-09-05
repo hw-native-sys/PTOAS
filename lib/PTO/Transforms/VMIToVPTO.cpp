@@ -11643,13 +11643,51 @@ template <typename SourceOp, typename TargetOp>
 struct OneToNVMIVecScalarOpPattern : OneToNOpConversionPattern<SourceOp> {
   using OneToNOpConversionPattern<SourceOp>::OneToNOpConversionPattern;
 
+private:
+  LogicalResult lowerVectorScalarParts(
+      SourceOp op, ValueRange sourceParts, Value scalar,
+      ValueRange maskParts, ArrayRef<Type> resultTypes,
+      OneToNPatternRewriter &rewriter) const {
+    if (sourceParts.empty() || sourceParts.size() != maskParts.size() ||
+        sourceParts.size() != resultTypes.size()) {
+      return rewriter.notifyMatchFailure(
+          op, "physical vector-scalar arity mismatch");
+    }
+
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (auto [source, mask, resultType] :
+         llvm::zip_equal(sourceParts, maskParts, resultTypes)) {
+      auto vregType = dyn_cast<VRegType>(resultType);
+      auto maskType = dyn_cast<MaskType>(mask.getType());
+      const bool hasMismatchedPartType =
+          !vregType || !maskType || source.getType() != resultType;
+      if (hasMismatchedPartType) {
+        return rewriter.notifyMatchFailure(
+            op, "physical vector-scalar part type mismatch");
+      }
+      results.push_back(rewriter
+                            .create<TargetOp>(op.getLoc(), resultType, source,
+                                              scalar, mask)
+                            .getResult());
+    }
+
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
+public:
   LogicalResult matchAndRewrite(
       SourceOp op,
       typename OneToNOpConversionPattern<SourceOp>::OpAdaptor adaptor,
       OneToNPatternRewriter &rewriter) const override {
-    if (op.getPmode().has_value() && *op.getPmode() == "merge")
+    const bool requiresPassthru =
+        op.getPmode().has_value() && *op.getPmode() == "merge";
+    if (requiresPassthru) {
       return rewriter.notifyMatchFailure(
           op, "merge predicate mode requires an explicit passthru lowering");
+    }
 
     ValueRange sourceParts = adaptor.getSrc();
     FailureOr<Value> scalar =
@@ -11659,33 +11697,14 @@ struct OneToNVMIVecScalarOpPattern : OneToNOpConversionPattern<SourceOp> {
     ValueRange maskParts = adaptor.getMask();
     FailureOr<SmallVector<Type>> maybeResultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(scalar) || failed(maybeResultTypes))
+    const bool conversionFailed = failed(scalar) || failed(maybeResultTypes);
+    if (conversionFailed) {
       return failure();
+    }
     Value scalarValue = *scalar;
     SmallVector<Type> resultTypes = std::move(*maybeResultTypes);
-    if (sourceParts.empty() || sourceParts.size() != maskParts.size() ||
-        sourceParts.size() != resultTypes.size())
-      return rewriter.notifyMatchFailure(
-          op, "physical vector-scalar arity mismatch");
-
-    SmallVector<Value> results;
-    results.reserve(resultTypes.size());
-    for (auto [source, mask, resultType] :
-         llvm::zip_equal(sourceParts, maskParts, resultTypes)) {
-      auto vregType = dyn_cast<VRegType>(resultType);
-      auto maskType = dyn_cast<MaskType>(mask.getType());
-      if (!vregType || !maskType || source.getType() != resultType)
-        return rewriter.notifyMatchFailure(
-            op, "physical vector-scalar part type mismatch");
-      results.push_back(rewriter
-                            .create<TargetOp>(op.getLoc(), resultType, source,
-                                              scalarValue, mask)
-                            .getResult());
-    }
-
-    replaceOpWithFlatConvertedValues(rewriter, op, results,
-                                     *this->getTypeConverter());
-    return success();
+    return lowerVectorScalarParts(op, sourceParts, scalarValue, maskParts,
+                                  resultTypes, rewriter);
   }
 };
 
