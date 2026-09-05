@@ -14185,6 +14185,39 @@ struct OneToNVMITruncFOpPattern : OneToNOpConversionPattern<VMITruncFOp> {
   using OneToNOpConversionPattern<VMITruncFOp>::OneToNOpConversionPattern;
 
 private:
+  LogicalResult lowerDenseLaneStride(
+      VMITruncFOp op, ValueRange sourceParts,
+      ArrayRef<VRegType> resultTypes, StringRef part,
+      bool sourceIsPackedBF16x2, VRegType vcvtSourceVRegType,
+      OneToNPatternRewriter &rewriter) const {
+    FailureOr<Value> sourceMask =
+        createAllTrueMaskForVReg(op.getLoc(), vcvtSourceVRegType, rewriter);
+    if (failed(sourceMask)) {
+      return rewriter.notifyMatchFailure(op, "failed to build truncf masks");
+    }
+    StringAttr rnd = rewriter.getStringAttr(
+        getTruncFRoundMode(op, resultTypes.front().getElementType()));
+    StringAttr sat = op->getAttrOfType<StringAttr>("saturate");
+    StringAttr partAttr = rewriter.getStringAttr(part);
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (auto [sourcePart, resultType] :
+         llvm::zip_equal(sourceParts, resultTypes)) {
+      results.push_back(rewriter
+                            .create<VcvtOp>(
+                                op.getLoc(), resultType,
+                                makeVcvtSourceView(
+                                    op.getLoc(), sourcePart,
+                                    sourceIsPackedBF16x2, vcvtSourceVRegType,
+                                    rewriter),
+                                *sourceMask, rnd, sat, partAttr)
+                            .getResult());
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
   FailureOr<Value> lowerGroupSlotTruncPart(
       VMITruncFOp op, Value sourcePart, Type physicalResultType,
       Value activeSlotMask, StringAttr sat,
@@ -14487,7 +14520,6 @@ public:
         sourceLayout.getLaneStride() == 1 && resultLayout.isContiguous() &&
         resultLayout.getLaneStride() != 1 &&
         sourceParts.size() == resultTypes.size()) {
-      StringRef part;
       bool isEven32To16 =
           resultBits == 16 && resultLayout.getLaneStride() == 2;
       bool isPacked32To8 =
@@ -14499,33 +14531,10 @@ public:
         return rewriter.notifyMatchFailure(
             op, "unsupported dense lane_stride truncf result layout");
       }
-      part = isPacked32To8 ? "P0" : "EVEN";
-
-      FailureOr<Value> sourceMask =
-          createAllTrueMaskForVReg(op.getLoc(), vcvtSourceVRegType, rewriter);
-      if (failed(sourceMask)) {
-        return rewriter.notifyMatchFailure(op, "failed to build truncf masks");
-      }
-
-      StringAttr rnd = rewriter.getStringAttr(
-          getTruncFRoundMode(op, resultVRegTypes.front().getElementType()));
-      StringAttr sat = op->getAttrOfType<StringAttr>("saturate");
-      StringAttr partAttr = rewriter.getStringAttr(part);
-      SmallVector<Value> results;
-      results.reserve(resultTypes.size());
-      for (auto [sourcePart, resultType] :
-           llvm::zip_equal(sourceParts, resultVRegTypes)) {
-        results.push_back(rewriter
-                              .create<VcvtOp>(op.getLoc(), resultType,
-                                              makeVcvtSourceView(
-                                                  op.getLoc(), sourcePart,
-                                                  sourceIsPackedBF16x2,
-                                                  vcvtSourceVRegType, rewriter),
-                                              *sourceMask, rnd, sat, partAttr)
-                              .getResult());
-      }
-      replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
-      return success();
+      StringRef part = isPacked32To8 ? "P0" : "EVEN";
+      return lowerDenseLaneStride(op, sourceParts, resultVRegTypes, part,
+                                  sourceIsPackedBF16x2, vcvtSourceVRegType,
+                                  rewriter);
     }
 
     ArrayRef<StringRef> allParts;

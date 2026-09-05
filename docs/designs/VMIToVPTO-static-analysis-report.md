@@ -1744,6 +1744,16 @@ result 类型校验、结果位宽判断、EVEN/P0 选择、round mode 计算和
 `git diff --check` 通过；现有 group-slot truncf cases 在既有 VMI pack/unpack pipeline
 invariant 处提前失败，未进入本轮 helper。
 
+# truncf dense lane-stride 发射整改
+
+本轮将 `OneToNVMITruncFOpPattern::matchAndRewrite` 中 dense contiguous→lane_stride 路径
+的 all-true source mask、round/saturate、EVEN/P0 part 属性、packed BF16x2 source view、
+逐 chunk `VcvtOp` 发射和结果替换抽取为 `lowerDenseLaneStride`。入口继续负责识别
+32→16、32→8、16→8 的布局关系并选择 part；保持 source view、mask、round/saturate、
+结果顺序和诊断语义不变。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_truncf_bf16x2_d2_lane_stride2.pto` lowering exit=0。
+
 # reduce_min/max physical 校验整改
 
 本轮将模板 `OneToNVMIReduceMinMaxOpPattern::matchAndRewrite` 中 min/max reduction 共用
