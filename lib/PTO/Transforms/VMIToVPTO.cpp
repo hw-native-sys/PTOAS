@@ -5369,6 +5369,48 @@ FailureOr<SmallVector<Value>> materializeStagingDeintToContiguousMaskLayout(
   return results;
 }
 
+FailureOr<std::array<Value, 4>> materializeFactor4ContiguousToDeintGroup(
+    Operation *op, ArrayRef<Value> sources, TypeRange resultTypes,
+    int64_t groups, int64_t groupIndex, PatternRewriter &rewriter) {
+  auto fail = [&op, &rewriter](const Twine &message)
+      -> FailureOr<std::array<Value, 4>> {
+    (void)rewriter.notifyMatchFailure(op, message);
+    return failure();
+  };
+  bool invalidSources = sources.size() != 4;
+  bool insufficientResults =
+      resultTypes.size() < static_cast<size_t>(4 * groups);
+  if (invalidSources || insufficientResults) {
+    return fail("factor-4 staging mask conversion requires four grouped results");
+  }
+  FailureOr<std::pair<Value, Value>> low = createPredicateDintlv(
+      op->getLoc(), resultTypes[groupIndex], resultTypes[groups + groupIndex],
+      sources[0], sources[1], rewriter);
+  FailureOr<std::pair<Value, Value>> high = createPredicateDintlv(
+      op->getLoc(), resultTypes[2 * groups + groupIndex],
+      resultTypes[3 * groups + groupIndex], sources[2], sources[3], rewriter);
+  if (failed(low)) {
+    return fail("unsupported predicate dintlv staging mask type");
+  }
+  if (failed(high)) {
+    return fail("unsupported predicate dintlv staging mask type");
+  }
+  FailureOr<std::pair<Value, Value>> even = createPredicateDintlv(
+      op->getLoc(), resultTypes[groupIndex], resultTypes[2 * groups + groupIndex],
+      low->first, high->first, rewriter);
+  FailureOr<std::pair<Value, Value>> odd = createPredicateDintlv(
+      op->getLoc(), resultTypes[groups + groupIndex],
+      resultTypes[3 * groups + groupIndex], low->second, high->second, rewriter);
+  if (failed(even)) {
+    return fail("unsupported predicate dintlv staging mask type");
+  }
+  if (failed(odd)) {
+    return fail("unsupported predicate dintlv staging mask type");
+  }
+  return std::array<Value, 4>{even->first, odd->first, even->second,
+                              odd->second};
+}
+
 FailureOr<SmallVector<Value>> materializeStagingContiguousToDeintMaskLayout(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     int64_t factor, PatternRewriter &rewriter) {
@@ -5421,26 +5463,15 @@ FailureOr<SmallVector<Value>> materializeStagingContiguousToDeintMaskLayout(
       continue;
     }
 
-    FailureOr<std::pair<Value, Value>> low = createPredicateDintlv(
-        op->getLoc(), resultTypes[i], resultTypes[groups + i], sources[0],
-        sources[1], rewriter);
-    FailureOr<std::pair<Value, Value>> high = createPredicateDintlv(
-        op->getLoc(), resultTypes[2 * groups + i],
-        resultTypes[3 * groups + i], sources[2], sources[3], rewriter);
-    if (failed(low) || failed(high))
-      return fail("unsupported predicate dintlv staging mask type");
-    FailureOr<std::pair<Value, Value>> even = createPredicateDintlv(
-        op->getLoc(), resultTypes[i], resultTypes[2 * groups + i], low->first,
-        high->first, rewriter);
-    FailureOr<std::pair<Value, Value>> odd = createPredicateDintlv(
-        op->getLoc(), resultTypes[groups + i], resultTypes[3 * groups + i],
-        low->second, high->second, rewriter);
-    if (failed(even) || failed(odd))
-      return fail("unsupported predicate dintlv staging mask type");
-    parts[0].push_back(even->first);
-    parts[1].push_back(odd->first);
-    parts[2].push_back(even->second);
-    parts[3].push_back(odd->second);
+    FailureOr<std::array<Value, 4>> materialized =
+        materializeFactor4ContiguousToDeintGroup(op, sources, resultTypes,
+                                                 groups, i, rewriter);
+    if (failed(materialized)) {
+      return failure();
+    }
+    for (int64_t part = 0; part < factor; ++part) {
+      parts[part].push_back((*materialized)[part]);
+    }
   }
 
   SmallVector<Value> results;

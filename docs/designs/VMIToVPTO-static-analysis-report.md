@@ -247,6 +247,12 @@ element-deinterleaved factor=2/4 的方向判断及失败传播，外层只遍�
 `vmi_to_vpto_ensure_mask_granularity.pto` 继续通过完整 lowering，增量合规检查与
 `git diff --check` 通过。
 
+随后对称地将 factor=4 contiguous→deinterleaved staging 的两级 `predicate dintlv`
+组合抽取为 `materializeFactor4ContiguousToDeintGroup`。该 helper 负责四个 source 的
+分组校验、低/高半部交织以及最终四路结果顺序；外层函数只负责补齐缺失 source、维护
+part 分组和结果 arity。转换语义与原有 factor=2 路径保持不变，增量合规检查、
+`git diff --check` 及 mask granularity 回归均通过。
+
 本轮进一步将动态 `create_group_mask` 的单个物理 chunk 生成抽取为
 `materializeDynamicGroupMaskChunk`。辅助函数负责 index/块内 lane 推导、active-lane
 比较、padding mask 合并和结果类型检查；外层 `materializeDynamicGroupMaskForType`
