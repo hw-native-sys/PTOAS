@@ -686,3 +686,10 @@ chunk 检查。这样避免把 gather 的类型能力矩阵与物理承载检查
 支持范围和诊断语义不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；`vmi_group_reduce_addi_i16.pto` 与
 `vmi_layout_assignment_reduce_addf.pto` 均完成 lowering 回归。
+
+本轮将 `OneToNVMIExtFOpPattern` 中 BF16x2 结果视图与 `VcvtOp` 发射逻辑抽取为
+具名 helper `createVcvtResult`，消除默认捕获 lambda，并集中处理 native BF16 转换后
+的物理 `VbitcastOp`。主 pattern 保留源/结果 physical layout、factor=2/4 分派和结果
+顺序，未改变 extf 支持范围。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续 load/store
+与 reduction 代表性 lowering 均通过。
