@@ -504,3 +504,9 @@ arity、共享 chunk 缓存及 sub-VL/VCI 选择；普通 contiguous 与 deinter
 分派和结果替换。物理 chunk 顺序、factor 校验和诊断文本保持不变；增量合规检查为
 `errors=0 warnings=0`，`git diff --check` 通过；group2、group-subvl、group-deint
 iota lowering 回归通过。
+
+本轮将模板化 interleave pattern 的 zero-copy `vintlv/vdintlv` chunk 重排与结果类型
+校验抽取为 `materializeZeroCopyResults`。该 helper 只负责两类 zero-copy 布局的 chunk
+顺序及 arity/type 契约，lane-stride carrier 与单 chunk direct path 保持原实现。增量
+合规检查为 `errors=0 warnings=0`，`git diff --check` 通过；interleave memory 与连续
+load/store lowering 回归通过。

@@ -8030,9 +8030,10 @@ static LogicalResult lowerGroupBroadcastParts(
                     indexElementType);
   FailureOr<Value> allMask =
       createAllTrueMaskForVReg(op->getLoc(), indexType, rewriter);
-  if (failed(allMask))
+  if (failed(allMask)) {
     return rewriter.notifyMatchFailure(
         op, "failed to create group_broadcast all mask");
+  }
 
   VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
   VMILayoutAttr sourceLayout = sourceVMIType.getLayoutAttr();
@@ -10563,6 +10564,74 @@ template <typename SourceOp, typename TargetOp>
 struct OneToNVMIInterleaveOpPattern : OneToNOpConversionPattern<SourceOp> {
   using OneToNOpConversionPattern<SourceOp>::OneToNOpConversionPattern;
 
+private:
+  FailureOr<SmallVector<Value>> materializeZeroCopyResults(
+      SourceOp op, ValueRange lhsParts, ValueRange rhsParts,
+      TypeRange lowTypes, TypeRange highTypes, int64_t inputFactor,
+      int64_t outputFactor, bool zeroCopyVintlv,
+      OneToNPatternRewriter &rewriter) const {
+    SmallVector<Value> results;
+    results.reserve(lhsParts.size() + rhsParts.size());
+    if (zeroCopyVintlv) {
+      bool invalidGroupCount =
+          lhsParts.empty() || lhsParts.size() % (2 * inputFactor) != 0;
+      if (invalidGroupCount) {
+        return rewriter.notifyMatchFailure(
+            op, "zero-copy vintlv expects input groups with even chunk count");
+      }
+      size_t groupChunks = lhsParts.size() / inputFactor;
+      size_t halfGroupChunks = groupChunks / 2;
+      for (int64_t group = 0; group < inputFactor; ++group) {
+        size_t offset = group * groupChunks;
+        llvm::append_range(results, lhsParts.slice(offset, halfGroupChunks));
+        llvm::append_range(results, rhsParts.slice(offset, halfGroupChunks));
+      }
+      for (int64_t group = 0; group < inputFactor; ++group) {
+        size_t offset = group * groupChunks + halfGroupChunks;
+        llvm::append_range(results, lhsParts.slice(offset, halfGroupChunks));
+        llvm::append_range(results, rhsParts.slice(offset, halfGroupChunks));
+      }
+    } else {
+      bool invalidGroupCount =
+          lhsParts.empty() || lhsParts.size() % inputFactor != 0;
+      if (invalidGroupCount) {
+        return rewriter.notifyMatchFailure(
+            op, "zero-copy vdintlv expects complete input layout groups");
+      }
+      size_t groupChunks = lhsParts.size() / inputFactor;
+      for (int64_t group = 0; group < outputFactor; ++group) {
+        size_t offset = 2 * group * groupChunks;
+        llvm::append_range(results, lhsParts.slice(offset, groupChunks));
+        llvm::append_range(results, rhsParts.slice(offset, groupChunks));
+      }
+      for (int64_t group = 0; group < outputFactor; ++group) {
+        size_t offset = (2 * group + 1) * groupChunks;
+        llvm::append_range(results, lhsParts.slice(offset, groupChunks));
+        llvm::append_range(results, rhsParts.slice(offset, groupChunks));
+      }
+    }
+
+    SmallVector<Type> resultTypes;
+    resultTypes.reserve(lowTypes.size() + highTypes.size());
+    llvm::append_range(resultTypes, lowTypes);
+    llvm::append_range(resultTypes, highTypes);
+    bool resultArityMismatch = results.size() != resultTypes.size();
+    if (resultArityMismatch) {
+      return rewriter.notifyMatchFailure(
+          op, "zero-copy interleave result arity mismatch");
+    }
+    for (auto [value, resultType] : llvm::zip_equal(results, resultTypes)) {
+      bool resultTypeMismatch = value.getType() != resultType;
+      if (resultTypeMismatch) {
+        return rewriter.notifyMatchFailure(
+            op, "zero-copy interleave part type mismatch");
+      }
+    }
+    return results;
+  }
+
+public:
+
   LogicalResult matchAndRewrite(
       SourceOp op,
       typename OneToNOpConversionPattern<SourceOp>::OpAdaptor adaptor,
@@ -10574,18 +10643,25 @@ struct OneToNVMIInterleaveOpPattern : OneToNOpConversionPattern<SourceOp> {
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
     FailureOr<SmallVector<Type>> maybeHighTypes =
         getConvertedResultTypes(op, 1, *this->getTypeConverter());
-    if (failed(maybeLowTypes) || failed(maybeHighTypes))
+    bool failedResultTypes = failed(maybeLowTypes) || failed(maybeHighTypes);
+    if (failedResultTypes) {
       return failure();
+    }
     SmallVector<Type> lowTypes = std::move(*maybeLowTypes);
     SmallVector<Type> highTypes = std::move(*maybeHighTypes);
-    if (lhsParts.size() != rhsParts.size() ||
+    bool arityMismatch = lhsParts.size() != rhsParts.size() ||
         lhsParts.size() != lowTypes.size() ||
-        lhsParts.size() != highTypes.size())
+        lhsParts.size() != highTypes.size();
+    if (arityMismatch) {
       return rewriter.notifyMatchFailure(op,
                                          "physical interleave arity mismatch");
-    if (!maskParts.empty() && maskParts.size() != lhsParts.size())
+    }
+    bool maskArityMismatch =
+        !maskParts.empty() && maskParts.size() != lhsParts.size();
+    if (maskArityMismatch) {
       return rewriter.notifyMatchFailure(
           op, "physical interleave mask arity mismatch");
+    }
 
     auto lhsType = cast<VMIVRegType>(op.getLhs().getType());
     auto rhsType = cast<VMIVRegType>(op.getRhs().getType());
@@ -10715,63 +10791,14 @@ struct OneToNVMIInterleaveOpPattern : OneToNOpConversionPattern<SourceOp> {
       return rewriter.notifyMatchFailure(
           op, "unsupported interleave physical layout relation");
 
-    SmallVector<Value> results;
-    results.reserve(lhsParts.size() + rhsParts.size());
-    if (zeroCopyVintlv) {
-      if (lhsParts.empty() || lhsParts.size() % (2 * inputFactor) != 0)
-        return rewriter.notifyMatchFailure(
-            op, "zero-copy vintlv expects input groups with even chunk count");
-      size_t groupChunks = lhsParts.size() / inputFactor;
-      size_t halfGroupChunks = groupChunks / 2;
-      for (int64_t group = 0; group < inputFactor; ++group) {
-        size_t offset = group * groupChunks;
-        llvm::append_range(
-            results,
-            lhsParts.slice(offset, halfGroupChunks));
-        llvm::append_range(
-            results,
-            rhsParts.slice(offset, halfGroupChunks));
-      }
-      for (int64_t group = 0; group < inputFactor; ++group) {
-        size_t offset = group * groupChunks + halfGroupChunks;
-        llvm::append_range(
-            results,
-            lhsParts.slice(offset, halfGroupChunks));
-        llvm::append_range(
-            results,
-            rhsParts.slice(offset, halfGroupChunks));
-      }
-    } else {
-      if (lhsParts.empty() || lhsParts.size() % inputFactor != 0)
-        return rewriter.notifyMatchFailure(
-            op, "zero-copy vdintlv expects complete input layout groups");
-      size_t groupChunks = lhsParts.size() / inputFactor;
-      for (int64_t group = 0; group < outputFactor; ++group) {
-        size_t offset = 2 * group * groupChunks;
-        llvm::append_range(results, lhsParts.slice(offset, groupChunks));
-        llvm::append_range(results, rhsParts.slice(offset, groupChunks));
-      }
-      for (int64_t group = 0; group < outputFactor; ++group) {
-        size_t offset = (2 * group + 1) * groupChunks;
-        llvm::append_range(results, lhsParts.slice(offset, groupChunks));
-        llvm::append_range(results, rhsParts.slice(offset, groupChunks));
-      }
+    FailureOr<SmallVector<Value>> zeroCopyResults = materializeZeroCopyResults(
+        op, lhsParts, rhsParts, lowTypes, highTypes, inputFactor, outputFactor,
+        zeroCopyVintlv, rewriter);
+    if (failed(zeroCopyResults)) {
+      return failure();
     }
 
-    SmallVector<Type> resultTypes;
-    resultTypes.reserve(lowTypes.size() + highTypes.size());
-    llvm::append_range(resultTypes, lowTypes);
-    llvm::append_range(resultTypes, highTypes);
-    if (results.size() != resultTypes.size())
-      return rewriter.notifyMatchFailure(
-          op, "zero-copy interleave result arity mismatch");
-    for (auto [value, resultType] : llvm::zip_equal(results, resultTypes)) {
-      if (value.getType() != resultType)
-        return rewriter.notifyMatchFailure(
-            op, "zero-copy interleave part type mismatch");
-    }
-
-    replaceOpWithFlatConvertedValues(rewriter, op, results,
+    replaceOpWithFlatConvertedValues(rewriter, op, *zeroCopyResults,
                                      *this->getTypeConverter());
     return success();
   }
