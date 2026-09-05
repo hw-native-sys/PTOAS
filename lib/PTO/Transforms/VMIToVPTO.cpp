@@ -12820,6 +12820,26 @@ public:
 struct OneToNVMITruncFOpPattern : OneToNOpConversionPattern<VMITruncFOp> {
   using OneToNOpConversionPattern<VMITruncFOp>::OneToNOpConversionPattern;
 
+private:
+  static Value makeVcvtSourceView(Location loc, Value sourcePart,
+                                  bool sourceIsPackedBF16x2,
+                                  VRegType vcvtSourceVRegType,
+                                  OneToNPatternRewriter &rewriter) {
+    if (!sourceIsPackedBF16x2) {
+      return sourcePart;
+    }
+    if (auto vbc = sourcePart.getDefiningOp<VbitcastOp>()) {
+      if (auto srcVReg = dyn_cast<VRegType>(vbc.getInput().getType());
+          srcVReg && srcVReg.getElementType().isBF16()) {
+        return vbc.getInput();
+      }
+    }
+    return rewriter.create<VbitcastOp>(loc, vcvtSourceVRegType, sourcePart)
+        .getResult();
+  }
+
+public:
+
   LogicalResult
   matchAndRewrite(VMITruncFOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -12919,24 +12939,7 @@ struct OneToNVMITruncFOpPattern : OneToNOpConversionPattern<VMITruncFOp> {
           VRegType::get(rewriter.getContext(), sourceType0.getElementCount() * 2,
                         BFloat16Type::get(rewriter.getContext()));
     }
-    auto viewVcvtSource = [&sourceIsPackedBF16x2, &vcvtSourceVRegType,
-                           &rewriter, &op](Value sourcePart) -> Value {
-      if (!sourceIsPackedBF16x2)
-        return sourcePart;
-      // If the source part is the physical noop pairing bitcast produced by
-      // VMIBitcastOp lowering (bf16 vreg -> bf16x2 vreg), reuse the original
-      // bf16 value directly instead of re-viewing it. This avoids emitting a
-      // redundant view vbitcast and leaves the pairing bitcast dead so the
-      // emitter can erase it.
-      if (auto vbc = sourcePart.getDefiningOp<VbitcastOp>()) {
-        if (auto srcVReg = dyn_cast<VRegType>(vbc.getInput().getType());
-            srcVReg && srcVReg.getElementType().isBF16())
-          return vbc.getInput();
-      }
-      return rewriter
-          .create<VbitcastOp>(op.getLoc(), vcvtSourceVRegType, sourcePart)
-          .getResult();
-    };
+    // A packed bf16x2 source is consumed through its native bf16 view.
     // Group-slot layout for non-f32 sources is not supported yet.
     if (sourceLayout && sourceLayout.isGroupSlots())
       return rewriter.notifyMatchFailure(
@@ -13023,7 +13026,10 @@ struct OneToNVMITruncFOpPattern : OneToNOpConversionPattern<VMITruncFOp> {
            llvm::zip_equal(sourceParts, resultVRegTypes)) {
         results.push_back(rewriter
                               .create<VcvtOp>(op.getLoc(), resultType,
-                                              viewVcvtSource(sourcePart),
+                                              makeVcvtSourceView(
+                                                  op.getLoc(), sourcePart,
+                                                  sourceIsPackedBF16x2,
+                                                  vcvtSourceVRegType, rewriter),
                                               *sourceMask, rnd, sat, partAttr)
                               .getResult());
       }
@@ -13085,7 +13091,11 @@ struct OneToNVMITruncFOpPattern : OneToNOpConversionPattern<VMITruncFOp> {
         partials.push_back(
             rewriter
                 .create<VcvtOp>(op.getLoc(), resultType,
-                                viewVcvtSource(sourcePart), *sourceMask, rnd,
+                                makeVcvtSourceView(
+                                    op.getLoc(), sourcePart,
+                                    sourceIsPackedBF16x2, vcvtSourceVRegType,
+                                    rewriter),
+                                *sourceMask, rnd,
                                 sat,
                                 rewriter.getStringAttr(
                                     allParts[partIndex * resultLaneStride]))
