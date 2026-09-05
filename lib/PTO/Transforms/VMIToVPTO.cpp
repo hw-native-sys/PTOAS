@@ -12404,6 +12404,44 @@ struct OneToNVMIGroupBroadcastOpPattern
 //===----------------------------------------------------------------------===//
 
 template <typename VMIOp, typename VPTOHistOp>
+static LogicalResult lowerHistogramChunk(
+    VMIOp op, Value source, Value userMask, int64_t firstLane,
+    int64_t lanesPerPart, SmallVectorImpl<Value> &halves,
+    ArrayRef<Value> binConsts, VRegType partType,
+    OneToNPatternRewriter &rewriter) {
+  auto maskType = dyn_cast<MaskType>(userMask.getType());
+  if (!maskType || !maskType.isB8()) {
+    return rewriter.notifyMatchFailure(op, "expected b8 source mask");
+  }
+  Value chunkMask = userMask;
+  int64_t activeLanes = std::min<int64_t>(
+      lanesPerPart,
+      cast<VMIVRegType>(op.getSource().getType()).getElementCount() - firstLane);
+  if (activeLanes < lanesPerPart) {
+    FailureOr<Value> validMask = createPrefixMaskForActiveLanes(
+        op.getLoc(), maskType, activeLanes, rewriter);
+    FailureOr<Value> allMask =
+        createAllTrueMask(op.getLoc(), maskType, rewriter);
+    bool failedMask = failed(validMask) || failed(allMask);
+    if (failedMask) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to materialize tail-valid b8 mask");
+    }
+    chunkMask = rewriter
+                    .create<PandOp>(op.getLoc(), maskType, chunkMask, *validMask,
+                                    *allMask)
+                    .getResult();
+  }
+  for (size_t half = 0; half < halves.size(); ++half) {
+    halves[half] = rewriter
+                       .create<VPTOHistOp>(op.getLoc(), partType, halves[half],
+                                            source, chunkMask, binConsts[half])
+                       .getResult();
+  }
+  return success();
+}
+
+template <typename VMIOp, typename VPTOHistOp>
 static LogicalResult
 lowerVMIHistogramToVPTO(VMIOp op,
                         typename OneToNOpConversionPattern<VMIOp>::OpAdaptor
@@ -12445,33 +12483,12 @@ lowerVMIHistogramToVPTO(VMIOp op,
   SmallVector<Value, 2> halves(accParts.begin(), accParts.end());
 
   for (size_t index = 0, e = sourceParts.size(); index < e; ++index) {
-    Value source   = sourceParts[index];
-    Value userMask = maskParts[index];
-    auto maskType  = dyn_cast<MaskType>(userMask.getType());
-    if (!maskType || !maskType.isB8())
-      return rewriter.notifyMatchFailure(op, "expected b8 source mask");
-
-    Value chunkMask = userMask;
-    int64_t firstLane   = int64_t(index) * *lanesPerPart;
-    int64_t activeLanes = std::min<int64_t>(
-        *lanesPerPart, sourceType.getElementCount() - firstLane);
-    if (activeLanes < *lanesPerPart) {
-      FailureOr<Value> validMask = createPrefixMaskForActiveLanes(
-          loc, maskType, activeLanes, rewriter);
-      FailureOr<Value> allMask = createAllTrueMask(loc, maskType, rewriter);
-      if (failed(validMask) || failed(allMask))
-        return rewriter.notifyMatchFailure(
-            op, "failed to materialize tail-valid b8 mask");
-      chunkMask =
-          rewriter
-              .create<PandOp>(loc, maskType, chunkMask, *validMask, *allMask)
-              .getResult();
+    if (failed(lowerHistogramChunk<VMIOp, VPTOHistOp>(
+            op, sourceParts[index], maskParts[index],
+            static_cast<int64_t>(index) * *lanesPerPart, *lanesPerPart, halves,
+            binConsts, partType, rewriter))) {
+      return failure();
     }
-
-    for (size_t h = 0; h < halfCount; ++h)
-      halves[h] = rewriter.create<VPTOHistOp>(loc, partType, halves[h],
-                                               source, chunkMask, binConsts[h])
-                      .getResult();
   }
 
   replaceOpWithFlatConvertedValues(
