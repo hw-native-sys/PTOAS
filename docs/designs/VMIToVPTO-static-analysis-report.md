@@ -1777,3 +1777,13 @@ low/high result type 获取、跨 operand arity 校验和结果扁平化；low �
 的排布、mask 语义、失败诊断和结果顺序保持不变。为相邻 reduce-add 入口补齐控制流大括号
 以满足 `G.FMT.11-CPP`。增量 `check_changed_code.py` 结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
+
+# fma physical chunk lowering 职责整改
+
+本轮将 `OneToNVMIFmaOpPattern::matchAndRewrite` 中单个 physical part 的 vreg 类型合同、
+all-true mask 构造及 `VmulaOp` 发射抽取为 `lowerPart`。入口继续负责 lhs/rhs/acc/result
+physical arity 检查与结果收集；保持 `VmulaOp(acc, lhs, rhs, mask)` operand 顺序、mask
+语义、结果顺序和诊断不变。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
+`vmi_to_vpto_fma.pto` 当前在既有 VMI pack/unpack pipeline invariant 处提前失败，未进入
+本轮 helper，不能将该失败归因于本轮改动。

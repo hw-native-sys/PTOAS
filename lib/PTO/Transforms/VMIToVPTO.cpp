@@ -12226,6 +12226,31 @@ public:
 struct OneToNVMIFmaOpPattern : OneToNOpConversionPattern<VMIFmaOp> {
   using OneToNOpConversionPattern<VMIFmaOp>::OneToNOpConversionPattern;
 
+private:
+  FailureOr<Value> lowerPart(VMIFmaOp op, Value lhs, Value rhs, Value acc,
+                             Type resultType,
+                             OneToNPatternRewriter &rewriter) const {
+    auto vregType = dyn_cast<VRegType>(resultType);
+    const bool invalidPart =
+        !vregType || lhs.getType() != resultType || rhs.getType() != resultType ||
+        acc.getType() != resultType;
+    if (invalidPart) {
+      rewriter.notifyMatchFailure(op,
+                                  "fma requires matching physical vreg parts");
+      return failure();
+    }
+    FailureOr<Value> mask =
+        createAllTrueMaskForVReg(op.getLoc(), vregType, rewriter);
+    if (failed(mask)) {
+      rewriter.notifyMatchFailure(op, "unsupported element type for fma");
+      return failure();
+    }
+    return rewriter
+        .create<VmulaOp>(op.getLoc(), resultType, acc, lhs, rhs, *mask)
+        .getResult();
+  }
+
+public:
   LogicalResult
   matchAndRewrite(VMIFmaOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -12238,29 +12263,24 @@ struct OneToNVMIFmaOpPattern : OneToNOpConversionPattern<VMIFmaOp> {
       return failure();
     }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-    if (lhsParts.size() != rhsParts.size() ||
+    const bool invalidArity =
+        lhsParts.size() != rhsParts.size() ||
         lhsParts.size() != accParts.size() ||
-        lhsParts.size() != resultTypes.size())
+        lhsParts.size() != resultTypes.size();
+    if (invalidArity) {
       return rewriter.notifyMatchFailure(op, "fma physical arity mismatch");
+    }
 
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
     for (auto [lhs, rhs, acc, resultType] :
          llvm::zip_equal(lhsParts, rhsParts, accParts, resultTypes)) {
-      auto vregType = dyn_cast<VRegType>(resultType);
-      if (!vregType || lhs.getType() != resultType ||
-          rhs.getType() != resultType || acc.getType() != resultType)
-        return rewriter.notifyMatchFailure(
-            op, "fma requires matching physical vreg parts");
-      FailureOr<Value> mask =
-          createAllTrueMaskForVReg(op.getLoc(), vregType, rewriter);
-      if (failed(mask))
-        return rewriter.notifyMatchFailure(op,
-                                           "unsupported element type for fma");
-      results.push_back(
-          rewriter
-              .create<VmulaOp>(op.getLoc(), resultType, acc, lhs, rhs, *mask)
-              .getResult());
+      FailureOr<Value> result =
+          lowerPart(op, lhs, rhs, acc, resultType, rewriter);
+      if (failed(result)) {
+        return failure();
+      }
+      results.push_back(*result);
     }
 
     replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
