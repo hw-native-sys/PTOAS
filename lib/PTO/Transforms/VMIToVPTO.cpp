@@ -6682,8 +6682,10 @@ struct OneToNVMIConstantMaskOpPattern
                   OneToNPatternRewriter &rewriter) const override {
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    bool failedResultTypeConversion = failed(maybe_resultTypes);
+    if (failedResultTypeConversion) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     std::string reason;
     FailureOr<SmallVector<ConstantMaskChunkMaterialization>> materializations =
