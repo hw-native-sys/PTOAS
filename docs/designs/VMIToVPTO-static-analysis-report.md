@@ -1344,3 +1344,11 @@ part `vcvt` 发射抽取为 `emitFactorExtension`。主函数继续负责 contig
 extension、factor/width/arity 选择和 mask 构造；EVEN/ODD/P0…P3 顺序、result part
 布局和替换语义保持不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；`vmi_zero_gap_extui_load.pto` lowering exit=0。
+# integer extension dense lane 整改
+
+本轮将 `OneToNVMIExtIOpPattern::lowerPhysicalExtension` 的 contiguous lane extension
+路径抽取为 `emitDenseLaneExtension`，统一负责 all-true mask、逐 physical part 的
+`vcvt` 和结果替换；主函数保留 layout/width/arity 判定，并继续将 factor=2/4 路径
+交给 `emitFactorExtension`。保持 EVEN/P0 选择及结果顺序不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_zero_gap_extui_load.pto` lowering exit=0。

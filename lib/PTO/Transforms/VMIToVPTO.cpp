@@ -14008,6 +14008,32 @@ private:
     return success();
   }
 
+  LogicalResult emitDenseLaneExtension(
+      OpT op, ValueRange sourceParts, ArrayRef<VRegType> resultTypes,
+      VRegType sourceType, StringRef part,
+      OneToNPatternRewriter &rewriter) const {
+    FailureOr<Value> mask =
+        createAllTrueMaskForVReg(op.getLoc(), sourceType, rewriter);
+    if (failed(mask)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to build integer extension seed mask");
+    }
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (auto [sourcePart, resultType] :
+         llvm::zip_equal(sourceParts, resultTypes)) {
+      results.push_back(
+          rewriter
+              .create<VcvtOp>(op.getLoc(), resultType, sourcePart, *mask,
+                              /*rnd=*/nullptr, /*sat=*/nullptr,
+                              rewriter.getStringAttr(part))
+              .getResult());
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
   LogicalResult lowerPhysicalExtension(
       OpT op, ValueRange sourceParts, ArrayRef<VRegType> resultVRegTypes,
       ArrayRef<Type> resultTypes, VRegType sourceType, unsigned sourceBits,
@@ -14022,27 +14048,8 @@ private:
     if (denseLaneExtension) {
       StringRef part = resultBits == sourceBits * 2 ? StringRef("EVEN")
                                                     : StringRef("P0");
-      FailureOr<Value> mask =
-          createAllTrueMaskForVReg(op.getLoc(), sourceType, rewriter);
-      if (failed(mask)) {
-        return rewriter.notifyMatchFailure(
-            op, "failed to build integer extension seed mask");
-      }
-
-      SmallVector<Value> results;
-      results.reserve(resultTypes.size());
-      for (auto [sourcePart, resultType] :
-           llvm::zip_equal(sourceParts, resultVRegTypes)) {
-        results.push_back(
-            rewriter
-                .create<VcvtOp>(op.getLoc(), resultType, sourcePart, *mask,
-                                /*rnd=*/nullptr, /*sat=*/nullptr,
-                                rewriter.getStringAttr(part))
-                .getResult());
-      }
-      replaceOpWithFlatConvertedValues(rewriter, op, results,
-                                       *this->getTypeConverter());
-      return success();
+      return emitDenseLaneExtension(op, sourceParts, resultVRegTypes,
+                                    sourceType, part, rewriter);
     }
 
     ArrayRef<StringRef> parts;
