@@ -1771,6 +1771,46 @@ LogicalResult checkDeinterleaved2GroupStoreChunkShape(
   return success();
 }
 
+LogicalResult checkSupportedBlockDeinterleavedGroupLoadShape(
+    VMIGroupLoadOp op, VMIVRegType resultType, std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+
+  VMILayoutSupport supports;
+  if (failed(supports.getGroupLoadLayoutFact(op, reason))) {
+    return failure();
+  }
+  VMIMemoryAccessPlan accessPlan =
+      buildReadAccessPlan(op.getSource(), op.getOffset(), resultType,
+                          VMIMemoryCoverageKind::Dense);
+  if (!accessPlan.layoutSupport.isSupported()) {
+    return fail(accessPlan.layoutSupport.reason);
+  }
+  if (!isa<PtrType>(op.getSource().getType())) {
+    return fail("block_deinterleaved group_load requires !pto.ptr source");
+  }
+  bool hasGroupMultiple = op.getNumGroupsAttr().getInt() % 8 == 0;
+  if (!hasGroupMultiple) {
+    return fail("block_deinterleaved group_load requires num_groups multiple of 8");
+  }
+  std::optional<int64_t> rowStride = getConstantIndexValue(op.getRowStride());
+  if (!rowStride || *rowStride <= 0 || *rowStride % 8 != 0) {
+    return fail("block_deinterleaved group_load requires constant positive "
+                "row_stride divisible by 8 f32 elements");
+  }
+  std::string fullChunkReason;
+  if (failed(checkFullDataPhysicalChunks(resultType, &fullChunkReason))) {
+    return fail(Twine("block_deinterleaved group_load requires full physical "
+                      "result chunks; ") +
+                fullChunkReason);
+  }
+  return success();
+}
+
 LogicalResult
 checkSupportedGroupLoadShape(VMIGroupLoadOp op, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
@@ -1804,30 +1844,8 @@ checkSupportedGroupLoadShape(VMIGroupLoadOp op, std::string *reason) {
 
   if (resultLayout.isBlockDeinterleaved() &&
       resultType.getElementType().isF32()) {
-    VMILayoutSupport supports;
-    if (failed(supports.getGroupLoadLayoutFact(op, reason)))
-      return failure();
-    VMIMemoryAccessPlan accessPlan =
-        buildReadAccessPlan(op.getSource(), op.getOffset(), resultType,
-                            VMIMemoryCoverageKind::Dense);
-    if (!accessPlan.layoutSupport.isSupported())
-      return fail(accessPlan.layoutSupport.reason);
-    if (!isa<PtrType>(op.getSource().getType()))
-      return fail(
-          "block_deinterleaved group_load requires !pto.ptr source");
-    if (op.getNumGroupsAttr().getInt() % 8 != 0)
-      return fail(
-          "block_deinterleaved group_load requires num_groups multiple of 8");
-    std::optional<int64_t> rowStride = getConstantIndexValue(op.getRowStride());
-    if (!rowStride || *rowStride <= 0 || *rowStride % 8 != 0)
-      return fail("block_deinterleaved group_load requires constant positive "
-                  "row_stride divisible by 8 f32 elements");
-    std::string fullChunkReason;
-    if (failed(checkFullDataPhysicalChunks(resultType, &fullChunkReason)))
-      return fail(Twine("block_deinterleaved group_load requires full physical "
-                        "result chunks; ") +
-                  fullChunkReason);
-    return success();
+    return checkSupportedBlockDeinterleavedGroupLoadShape(op, resultType,
+                                                          reason);
   }
 
   return fail(
@@ -8480,42 +8498,51 @@ public:
                          *destination, *offset, *rowStride);
     }
 
-    if (layout && layout.isGroupSlots() && layout.getSlots() == 8 &&
-        layout.getNumGroups() == op.getNumGroupsAttr().getInt()) {
+    bool isSlots8Layout =
+        layout && layout.isGroupSlots() && layout.getSlots() == 8 &&
+        layout.getNumGroups() == op.getNumGroupsAttr().getInt();
+    if (isSlots8Layout) {
       int64_t numGroups = layout.getNumGroups();
       std::optional<int64_t> constantRowStride =
           getConstantIndexValue(op.getRowStride());
-      if (!constantRowStride || *constantRowStride != 1)
+      bool hasUnitRowStride = constantRowStride && *constantRowStride == 1;
+      if (!hasUnitRowStride) {
         return rewriter.notifyMatchFailure(
             op, "slots=8 group_store requires constant unit row_stride");
+      }
 
       ValueRange valueParts = adaptor.getValue();
-      if (static_cast<int64_t>(valueParts.size()) !=
-          ceilDivNonNegative(numGroups, 8))
+      bool hasExpectedArity = static_cast<int64_t>(valueParts.size()) ==
+                              ceilDivNonNegative(numGroups, 8);
+      if (!hasExpectedArity) {
         return rewriter.notifyMatchFailure(
             op, "slots=8 group_store arity mismatch");
+      }
 
       if (!valueParts.empty()) {
         auto firstVRegType = dyn_cast<VRegType>(valueParts.front().getType());
-        if (!firstVRegType)
+        if (!firstVRegType) {
           return rewriter.notifyMatchFailure(op,
                                              "group_store value must be vreg");
+        }
         bool packedByteStore = isPackedByteGroupStore(
             op.getDestination().getType(), firstVRegType);
         if (packedByteStore) {
           bool laneStridedPackedByteStore = layout.hasLaneStride();
           for (Value value : valueParts) {
             auto vregType = dyn_cast<VRegType>(value.getType());
-            if (!vregType || vregType != firstVRegType)
+            if (!vregType || vregType != firstVRegType) {
               return rewriter.notifyMatchFailure(
                   op, "packed slots=8 group_store requires uniform vreg parts");
+            }
           }
 
           FailureOr<MaskType> maskType =
               getMaskTypeForVReg(firstVRegType, rewriter.getContext());
-          if (failed(maskType))
+          if (failed(maskType)) {
             return rewriter.notifyMatchFailure(
                 op, "unsupported element type for packed group_store mask");
+          }
           if (!laneStridedPackedByteStore && numGroups == 8 &&
               valueParts.size() == 1 &&
               isKnownAddressAligned(*destination, *offset,
