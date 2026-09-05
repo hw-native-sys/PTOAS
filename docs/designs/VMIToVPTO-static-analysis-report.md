@@ -370,3 +370,9 @@ memory/layout/compare、算术、专用 shape、归约的顺序调用分类 help
 检查和 `git diff --check` 通过；`vmi_group_reduce_addi_i16.pto` lowering 通过。
 两个普通 reduce 样例仍在测试自身 `unpack` pipeline invariant 处提前失败，未进入本轮
 verifier/lowering 变化路径。
+
+本轮将 `lowerGroupBroadcastParts` 中 slots=1 且结果 chunk 覆盖多个 group 的 lane
+映射、splat 和 `vsel` 合并逻辑抽取为 `materializeSlots1GroupBroadcastChunk`。
+该 helper 单独负责跨物理 source chunk 的 lane-mask 构造，主 lowering 继续负责布局
+selector 选择、常量路径和 `vselr` 路径；未改变 group broadcast 的结果顺序或错误诊断。
+源码增量合规检查、`git diff --check` 及 group-broadcast lowering 回归均通过。

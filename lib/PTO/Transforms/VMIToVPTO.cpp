@@ -7582,6 +7582,93 @@ static LogicalResult lowerGroupSlotLoadParts(
       op, "group_slot_load supports only slots=8 or slots=1");
 }
 
+static FailureOr<Value> materializeSlots1GroupBroadcastChunk(
+    Operation *op, Type resultType, VMIVRegType resultVMIType,
+    ValueRange sourceParts, int64_t part, int64_t chunk, int64_t firstGroup,
+    int64_t groupSize, int64_t selectorPeriod, int64_t lanesPerPart,
+    OneToNPatternRewriter &rewriter, Value allMask) {
+  auto resultVRegType = dyn_cast<VRegType>(resultType);
+  if (!resultVRegType) {
+    return rewriter.notifyMatchFailure(
+        op, "group_broadcast requires uniform physical vreg types");
+  }
+  FailureOr<MaskType> resultMaskType =
+      getMaskTypeForVReg(resultVRegType, rewriter.getContext());
+  if (failed(resultMaskType)) {
+    return rewriter.notifyMatchFailure(
+        op, "group_broadcast cannot derive result mask type");
+  }
+  SmallVector<int64_t> laneSourceChunks(lanesPerPart, -1);
+  SmallVector<int64_t> activeSourceChunks;
+  for (int64_t lane = 0; lane < lanesPerPart; ++lane) {
+    FailureOr<bool> padding =
+        isPaddingLane(resultVMIType, part, chunk, lane);
+    if (failed(padding)) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast failed to map result padding lanes");
+    }
+    if (*padding) {
+      continue;
+    }
+    FailureOr<int64_t> logical =
+        mapPhysicalLaneToLogical(resultVMIType, part, chunk, lane);
+    if (failed(logical)) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast failed to map a result lane");
+    }
+    int64_t actualGroup = *logical / groupSize;
+    int64_t expectedGroup = firstGroup + lane / selectorPeriod;
+    if (actualGroup != expectedGroup) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast layout table row does not match its selector "
+              "lowering plan");
+    }
+    if (actualGroup < 0 ||
+        actualGroup >= static_cast<int64_t>(sourceParts.size())) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast source chunk is out of range");
+    }
+    laneSourceChunks[lane] = actualGroup;
+    bool isNewSourceChunk =
+        llvm::find(activeSourceChunks, actualGroup) == activeSourceChunks.end();
+    if (isNewSourceChunk) {
+      activeSourceChunks.push_back(actualGroup);
+    }
+  }
+  if (activeSourceChunks.empty()) {
+    return rewriter.notifyMatchFailure(
+        op, "group_broadcast result chunk has no active lanes");
+  }
+  auto splatSource = [&rewriter, &op, &resultType, &sourceParts, &allMask](
+                         int64_t chunkIndex) {
+    return rewriter
+        .create<VdupOp>(op->getLoc(), resultType, sourceParts[chunkIndex],
+                        allMask, rewriter.getStringAttr("LOWEST"))
+        .getResult();
+  };
+  Value merged = splatSource(activeSourceChunks.front());
+  for (int64_t chunkIndex : llvm::drop_begin(activeSourceChunks)) {
+    SmallVector<int8_t> laneMaskBits(lanesPerPart, 0);
+    for (auto [lane, laneSourceChunk] : llvm::enumerate(laneSourceChunks)) {
+      if (laneSourceChunk == chunkIndex) {
+        laneMaskBits[lane] = 1;
+      }
+    }
+    FailureOr<Value> laneMask = materializeConstantMaskChunk(
+        op->getLoc(), *resultMaskType, laneMaskBits, rewriter);
+    if (failed(laneMask)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to create group_broadcast source merge mask");
+    }
+    Value splat = splatSource(chunkIndex);
+    merged = rewriter
+                 .create<VselOp>(op->getLoc(), resultType, splat, merged,
+                                 *laneMask)
+                 .getResult();
+  }
+  return merged;
+}
+
 static LogicalResult lowerGroupBroadcastParts(
     Operation *op, ValueRange sourceParts, VMIVRegType sourceVMIType,
     VMIVRegType resultVMIType, TypeRange resultTypes, int64_t numGroups,
@@ -7779,74 +7866,14 @@ static LogicalResult lowerGroupBroadcastParts(
       // single vselr cannot express this case because its selector only
       // addresses lanes within one source VReg.
       if (sourceSlots == 1 && selectorKind != SelectorKind::Constant) {
-        FailureOr<MaskType> resultMaskType =
-            getMaskTypeForVReg(resultVRegType, rewriter.getContext());
-        if (failed(resultMaskType))
-          return rewriter.notifyMatchFailure(
-              op, "group_broadcast cannot derive result mask type");
-
-        SmallVector<int64_t> laneSourceChunks(fact->lanesPerPart, -1);
-        SmallVector<int64_t> activeSourceChunks;
-        for (int64_t lane = 0; lane < fact->lanesPerPart; ++lane) {
-          FailureOr<bool> padding =
-              isPaddingLane(resultVMIType, part, chunk, lane);
-          if (failed(padding))
-            return rewriter.notifyMatchFailure(
-                op, "group_broadcast failed to map result padding lanes");
-          if (*padding)
-            continue;
-          FailureOr<int64_t> logical =
-              mapPhysicalLaneToLogical(resultVMIType, part, chunk, lane);
-          if (failed(logical))
-            return rewriter.notifyMatchFailure(
-                op, "group_broadcast failed to map a result lane");
-          int64_t actualGroup = *logical / fact->groupSize;
-          int64_t expectedGroup = firstGroup + lane / selectorPeriod;
-          if (actualGroup != expectedGroup)
-            return rewriter.notifyMatchFailure(
-                op, "group_broadcast layout table row does not match its "
-                    "selector lowering plan");
-          int64_t laneSourceChunk = actualGroup;
-          if (laneSourceChunk < 0 ||
-              laneSourceChunk >= static_cast<int64_t>(sourceParts.size()))
-            return rewriter.notifyMatchFailure(
-                op, "group_broadcast source chunk is out of range");
-          laneSourceChunks[lane] = laneSourceChunk;
-          if (llvm::find(activeSourceChunks, laneSourceChunk) ==
-              activeSourceChunks.end())
-            activeSourceChunks.push_back(laneSourceChunk);
+        FailureOr<Value> merged = materializeSlots1GroupBroadcastChunk(
+            op, resultType, resultVMIType, sourceParts, part, chunk,
+            firstGroup, fact->groupSize, selectorPeriod, fact->lanesPerPart,
+            rewriter, *allMask);
+        if (failed(merged)) {
+          return failure();
         }
-        if (activeSourceChunks.empty())
-          return rewriter.notifyMatchFailure(
-              op, "group_broadcast result chunk has no active lanes");
-
-        auto splatSource = [&rewriter, &op, &resultType, &sourceParts,
-                            &allMask](int64_t chunkIndex) {
-          return rewriter
-              .create<VdupOp>(op->getLoc(), resultType,
-                              sourceParts[chunkIndex], *allMask,
-                              rewriter.getStringAttr("LOWEST"))
-              .getResult();
-        };
-        Value merged = splatSource(activeSourceChunks.front());
-        for (int64_t chunkIndex : llvm::drop_begin(activeSourceChunks)) {
-          SmallVector<int8_t> laneMaskBits(fact->lanesPerPart, 0);
-          for (auto [lane, laneSourceChunk] : llvm::enumerate(laneSourceChunks))
-            if (laneSourceChunk == chunkIndex)
-              laneMaskBits[lane] = 1;
-          FailureOr<Value> laneMask = materializeConstantMaskChunk(
-              op->getLoc(), *resultMaskType, laneMaskBits, rewriter);
-          if (failed(laneMask))
-            return rewriter.notifyMatchFailure(
-                op, "failed to create group_broadcast source merge mask");
-          Value splat = splatSource(chunkIndex);
-          merged =
-              rewriter
-                  .create<VselOp>(op->getLoc(), resultType, splat, merged,
-                                  *laneMask)
-                  .getResult();
-        }
-        results[flatIndex] = merged;
+        results[flatIndex] = *merged;
         continue;
       }
 
