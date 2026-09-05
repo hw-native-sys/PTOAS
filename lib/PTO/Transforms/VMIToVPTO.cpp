@@ -15592,6 +15592,26 @@ private:
     return success();
   }
 
+  LogicalResult lowerChannelMerge(
+      VMIChannelMergeOp op, OpAdaptor adaptor, VMILayoutAttr channelLayout,
+      VMILayoutAttr resultLayout, Type resultElementType,
+      OneToNPatternRewriter &rewriter) const {
+    FailureOr<SmallVector<Type>> maybeResultTypes =
+        getConvertedResultTypes(op, 0, *this->getTypeConverter());
+    if (failed(maybeResultTypes)) {
+      return failure();
+    }
+    FailureOr<SmallVector<Value>> results = materializeDataLayoutConversion(
+        op, flattenOneToNOperands(adaptor.getOperands()), *maybeResultTypes,
+        channelLayout, resultLayout, resultElementType, rewriter);
+    if (failed(results)) {
+      return failure();
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, *results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
 public:
 
   LogicalResult
@@ -15615,22 +15635,8 @@ public:
       return failure();
     }
 
-    FailureOr<SmallVector<Type>> maybeResultTypes =
-        getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybeResultTypes)) {
-      return failure();
-    }
-    FailureOr<SmallVector<Value>> results =
-        materializeDataLayoutConversion(
-            op, flattenOneToNOperands(adaptor.getOperands()),
-            *maybeResultTypes, channelLayout, resultLayout,
-            resultType.getElementType(), rewriter);
-    if (failed(results)) {
-      return failure();
-    }
-
-    replaceOpWithFlatConvertedValues(rewriter, op, *results, *this->getTypeConverter());
-    return success();
+    return lowerChannelMerge(op, adaptor, channelLayout, resultLayout,
+                             resultType.getElementType(), rewriter);
   }
 };
 

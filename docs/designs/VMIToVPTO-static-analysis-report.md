@@ -1464,3 +1464,12 @@ layout materialization；输入/结果 layout 支持矩阵、诊断文本与结�
 增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过。现有 channel merge case 仍在既有 VMI layout contract 冲突处
 提前失败。
+
+# channel merge 结果物化整改
+
+本轮将 `OneToNVMIChannelMergeOpPattern::matchAndRewrite` 中 converted result types 获取、
+data-layout materialization 和结果替换抽取为 `lowerChannelMerge`。主函数继续负责通道
+数量与 source/result layout 合同校验；输入展平顺序、layout conversion 路径和最终结果
+语义保持不变。增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过。现有 channel merge case 仍受既有 VMI layout contract 冲突
+阻断，未进入该 helper。
