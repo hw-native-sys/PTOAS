@@ -4172,8 +4172,10 @@ FailureOr<std::optional<SmallVector<Value>>> materializeDataLaneStrideConversion
   if (!sourceLayout || !resultLayout) {
     return std::nullopt;
   }
-  if (sourceLayout.isContiguous() && sourceLayout.getLaneStride() == 1 &&
-      resultLayout.isContiguous() && resultLayout.getLaneStride() != 1) {
+  bool contiguousToLaneStride =
+      sourceLayout.isContiguous() && sourceLayout.getLaneStride() == 1 &&
+      resultLayout.isContiguous() && resultLayout.getLaneStride() != 1;
+  if (contiguousToLaneStride) {
     FailureOr<SmallVector<Value>> result = materializeContiguousToLaneStride(
         op, sourceParts, resultTypes, sourceVMIElementType,
         resultLayout.getLaneStride(), rewriter);
@@ -4182,8 +4184,10 @@ FailureOr<std::optional<SmallVector<Value>>> materializeDataLaneStrideConversion
     }
     return std::optional<SmallVector<Value>>(std::move(*result));
   }
-  if (sourceLayout.isContiguous() && sourceLayout.getLaneStride() != 1 &&
-      resultLayout.isContiguous() && resultLayout.getLaneStride() == 1) {
+  bool laneStrideToContiguous =
+      sourceLayout.isContiguous() && sourceLayout.getLaneStride() != 1 &&
+      resultLayout.isContiguous() && resultLayout.getLaneStride() == 1;
+  if (laneStrideToContiguous) {
     FailureOr<SmallVector<Value>> result = materializeLaneStrideToContiguous(
         op, sourceParts, resultTypes, sourceVMIElementType,
         sourceLayout.getLaneStride(), rewriter);
