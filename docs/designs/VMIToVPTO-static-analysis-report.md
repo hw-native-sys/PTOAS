@@ -511,6 +511,13 @@ iota lowering 回归通过。
 合规检查为 `errors=0 warnings=0`，`git diff --check` 通过；interleave memory 与连续
 load/store lowering 回归通过。
 
+本轮将 `OneToNVMITruncFOpPattern` 的 factor narrowing（按 result lane stride 选择
+source factor，逐 chunk 执行 `VcvtOp` 并用 `VorOp` 合并）抽取为 `lowerNarrow`。helper
+统一负责 source/result mask、BF16x2 source view、part 索引和结果替换；主 pattern 仅
+保留 width/factor 推导及其它布局路径。该拆分保持 truncf 的 rounding/saturate contract、
+part 顺序和物理 arity 语义不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；连续 group-store 与 load/store 代表性 lowering 均成功。
+
 本轮将 `OneToNVMITruncFOpPattern` 的 contiguous same-width `VcvtOp` 路径抽取为
 `lowerSameWidth`。helper 负责 source mask、rounding mode、逐 physical chunk 转换和
 结果替换；主 pattern 保留 packed BF16x2 source view、布局判定以及其它 narrowing

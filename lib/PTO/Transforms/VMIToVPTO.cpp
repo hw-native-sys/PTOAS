@@ -11401,8 +11401,9 @@ struct OneToNVMIUnaryOpPattern : OneToNOpConversionPattern<SourceOp> {
     ValueRange sourceParts = adaptor.getSource();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    if (failed(maybe_resultTypes)) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     if (sourceParts.size() != resultTypes.size())
       return rewriter.notifyMatchFailure(op, "physical unary arity mismatch");
@@ -12979,6 +12980,66 @@ private:
     return success();
   }
 
+  LogicalResult lowerNarrow(
+      VMITruncFOp op, ValueRange sourceParts,
+      ArrayRef<VRegType> resultTypes, ArrayRef<StringRef> allParts,
+      int64_t sourceFactor, int64_t resultLaneStride,
+      VRegType sourceViewType, bool sourceIsPackedBF16x2,
+      StringAttr rnd, StringAttr sat,
+      OneToNPatternRewriter &rewriter) const {
+    if (sourceFactor <= 0 || resultLaneStride <= 0 ||
+        sourceParts.size() !=
+            static_cast<size_t>(sourceFactor) * resultTypes.size()) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported physical truncf source/result arity relation");
+    }
+    FailureOr<Value> sourceMask =
+        createAllTrueMaskForVReg(op.getLoc(), sourceViewType, rewriter);
+    if (failed(sourceMask)) {
+      return rewriter.notifyMatchFailure(op, "failed to build truncf masks");
+    }
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (auto [chunkIndex, resultType] : llvm::enumerate(resultTypes)) {
+      FailureOr<Value> resultMask =
+          createAllTrueMaskForVReg(op.getLoc(), resultType, rewriter);
+      if (failed(resultMask)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to build truncf result mask");
+      }
+      SmallVector<Value> partials;
+      partials.reserve(sourceFactor);
+      for (int64_t partIndex = 0; partIndex < sourceFactor; ++partIndex) {
+        Value sourcePart =
+            sourceParts[partIndex * resultTypes.size() + chunkIndex];
+        partials.push_back(
+            rewriter
+                .create<VcvtOp>(
+                    op.getLoc(), resultType,
+                    makeVcvtSourceView(op.getLoc(), sourcePart,
+                                       sourceIsPackedBF16x2, sourceViewType,
+                                       rewriter),
+                    *sourceMask, rnd, sat,
+                    rewriter.getStringAttr(partIndex * resultLaneStride <
+                                                   static_cast<int64_t>(allParts.size())
+                                               ? allParts[partIndex * resultLaneStride]
+                                               : allParts[partIndex]))
+                .getResult());
+      }
+      Value merged = partials.front();
+      for (Value partial : llvm::drop_begin(partials)) {
+        merged = rewriter
+                     .create<VorOp>(op.getLoc(), resultType, merged, partial,
+                                    *resultMask)
+                     .getResult();
+      }
+      results.push_back(merged);
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
 public:
 
   LogicalResult
@@ -12996,14 +13057,17 @@ public:
     ValueRange sourceParts = adaptor.getSource();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    if (failed(maybe_resultTypes)) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
 
     VMILayoutAttr sourceLayout = sourceVMIType.getLayoutAttr();
     VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
-    if (sourceLayout && resultLayout && sourceLayout.isGroupSlots() &&
-        resultLayout.isGroupSlots()) {
+    bool groupSlotLayouts =
+        sourceLayout && resultLayout && sourceLayout.isGroupSlots() &&
+        resultLayout.isGroupSlots();
+    if (groupSlotLayouts) {
       unsigned logicalResultBits =
           pto::getPTOStorageElemBitWidth(resultVMIType.getElementType());
       if (sourceLayout.getNumGroups() != resultLayout.getNumGroups() ||
@@ -13188,54 +13252,12 @@ public:
       return rewriter.notifyMatchFailure(
           op, "unsupported physical truncf source/result arity relation");
 
-    FailureOr<Value> sourceMask =
-        createAllTrueMaskForVReg(op.getLoc(), vcvtSourceVRegType, rewriter);
-    if (failed(sourceMask)) {
-      return rewriter.notifyMatchFailure(op, "failed to build truncf masks");
-    }
-
     StringAttr rnd = rewriter.getStringAttr(
         getTruncFRoundMode(op, resultVRegTypes.front().getElementType()));
     StringAttr sat = op->getAttrOfType<StringAttr>("saturate");
-    SmallVector<Value> results;
-    results.reserve(resultTypes.size());
-    for (auto [chunkIndex, resultType] : llvm::enumerate(resultVRegTypes)) {
-      FailureOr<Value> resultMask =
-          createAllTrueMaskForVReg(op.getLoc(), resultType, rewriter);
-      if (failed(resultMask))
-        return rewriter.notifyMatchFailure(
-            op, "failed to build truncf result mask");
-
-      SmallVector<Value> partials;
-      partials.reserve(sourceFactor);
-      for (int64_t partIndex = 0; partIndex < sourceFactor; ++partIndex) {
-        Value sourcePart =
-            sourceParts[partIndex * resultTypes.size() + chunkIndex];
-        partials.push_back(
-            rewriter
-                .create<VcvtOp>(op.getLoc(), resultType,
-                                makeVcvtSourceView(
-                                    op.getLoc(), sourcePart,
-                                    sourceIsPackedBF16x2, vcvtSourceVRegType,
-                                    rewriter),
-                                *sourceMask, rnd,
-                                sat,
-                                rewriter.getStringAttr(
-                                    allParts[partIndex * resultLaneStride]))
-                .getResult());
-      }
-
-      Value merged = partials.front();
-      for (Value partial : llvm::drop_begin(partials))
-        merged = rewriter
-                     .create<VorOp>(op.getLoc(), resultType, merged, partial,
-                                    *resultMask)
-                     .getResult();
-      results.push_back(merged);
-    }
-
-    replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
-    return success();
+    return lowerNarrow(op, sourceParts, resultVRegTypes, allParts,
+                       sourceFactor, resultLaneStride, vcvtSourceVRegType,
+                       sourceIsPackedBF16x2, rnd, sat, rewriter);
   }
 };
 
@@ -13252,8 +13274,9 @@ struct OneToNVMIExtIOpPattern : OneToNOpConversionPattern<OpT> {
     ValueRange sourceParts = adaptor.getSource();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    if (failed(maybe_resultTypes)) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     if (sourceParts.empty())
       return rewriter.notifyMatchFailure(
@@ -13735,14 +13758,17 @@ public:
     ValueRange sourceParts = adaptor.getSource();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    if (failed(maybe_resultTypes)) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
 
     VMILayoutAttr sourceLayout = sourceVMIType.getLayoutAttr();
     VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
-    if (sourceLayout && resultLayout && sourceLayout.isGroupSlots() &&
-        resultLayout.isGroupSlots()) {
+    bool groupSlotLayouts =
+        sourceLayout && resultLayout && sourceLayout.isGroupSlots() &&
+        resultLayout.isGroupSlots();
+    if (groupSlotLayouts) {
       return lowerGroupSlotTrunc(op, adaptor, rewriter, sourceVMIType,
                                  resultVMIType, sourceLayout, resultLayout,
                                  resultTypes);
