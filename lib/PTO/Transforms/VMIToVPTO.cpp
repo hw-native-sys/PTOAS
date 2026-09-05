@@ -5591,6 +5591,20 @@ FailureOr<SmallVector<Value>> materializeStagingContiguousToDeintMaskLayout(
   for (int64_t part = 0; part < factor; ++part)
     parts[part].reserve(groups);
 
+  auto appendFactor2Group = [&](int64_t groupIndex,
+                                ArrayRef<Value> sources) -> LogicalResult {
+    FailureOr<std::pair<Value, Value>> materialized = createPredicateDintlv(
+        op->getLoc(), resultTypes[groupIndex], resultTypes[groups + groupIndex],
+        sources[0], sources[1], rewriter);
+    if (failed(materialized)) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported predicate dintlv staging mask type");
+    }
+    parts[0].push_back(materialized->first);
+    parts[1].push_back(materialized->second);
+    return success();
+  };
+
   for (int64_t i = 0; i < groups; ++i) {
     size_t sourceBase = static_cast<size_t>(i * factor);
     if (sourceBase >= sourceParts.size())
@@ -5613,14 +5627,9 @@ FailureOr<SmallVector<Value>> materializeStagingContiguousToDeintMaskLayout(
     }
 
     if (factor == 2) {
-      FailureOr<std::pair<Value, Value>> materialized =
-          createPredicateDintlv(op->getLoc(), resultTypes[i],
-                                resultTypes[groups + i], sources[0],
-                                sources[1], rewriter);
-      if (failed(materialized))
-        return fail("unsupported predicate dintlv staging mask type");
-      parts[0].push_back(materialized->first);
-      parts[1].push_back(materialized->second);
+      if (failed(appendFactor2Group(i, sources))) {
+        return failure();
+      }
       continue;
     }
 
