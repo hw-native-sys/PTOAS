@@ -1019,3 +1019,8 @@ checker 继续各自负责输入/输出 layout、physical arity 汇总及方向�
 仍分别负责结果/源布局及方向性约束。该拆分保持 channel 数量、expected layout 和
 source/result arity 语义不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过。
+本轮移除了文件级 `-Woverloaded-virtual` warning suppression（原先从第一个 OneToN
+pattern 覆盖至 pattern 注册结束）。这些 pattern 已通过显式的
+`using OneToNOpConversionPattern<...>::OneToNOpConversionPattern` 构造函数继承和
+`override` 实现，当前增量合规检查未报告新的 suppression 或格式错误；实际编译器
+warning 仍需在 CMake 外部依赖权限修复后通过完整构建确认。

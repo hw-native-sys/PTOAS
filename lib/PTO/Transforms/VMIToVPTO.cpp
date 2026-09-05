@@ -3950,9 +3950,6 @@ LogicalResult checkSupportedComparePredicate(Operation *op,
          << getSupportedComparePredicateMessage<SourceOp>();
 }
 
-// MLIR's OneToN conversion patterns intentionally hide a base overload.
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Woverloaded-virtual"
 struct OneToNVMIUnpackOpPattern : OneToNOpConversionPattern<VMIUnpackOp> {
   using OneToNOpConversionPattern<VMIUnpackOp>::OneToNOpConversionPattern;
 
@@ -15378,8 +15375,6 @@ void populateVMIConversionPatterns(
   patterns.add<OneToNVMIEnsureMaskGranularityOpPattern>(
       typeConverter, patterns.getContext());
 }
-
-#pragma GCC diagnostic pop
 
 static WalkResult verifyNoResidualCreateMask(Operation *op) {
   if (auto createMask = dyn_cast<VMICreateMaskOp>(op)) {
