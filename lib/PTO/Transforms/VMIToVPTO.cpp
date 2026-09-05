@@ -11852,6 +11852,50 @@ template <typename OpTy, typename GroupReduceOpTy, typename RowReduceOpTy,
 struct OneToNVMIGroupReduceOpPattern : OneToNOpConversionPattern<OpTy> {
   using OneToNOpConversionPattern<OpTy>::OneToNOpConversionPattern;
 
+private:
+  LogicalResult lowerOneBlock(
+      OpTy op, ValueRange sourceParts, ValueRange maskParts,
+      TypeRange resultTypes, OneToNPatternRewriter &rewriter) const {
+    bool invalidArity = sourceParts.size() != maskParts.size() ||
+                        sourceParts.size() != resultTypes.size() ||
+                        sourceParts.empty();
+    if (invalidArity) {
+      return rewriter.notifyMatchFailure(
+          op, "vcg group_reduce path requires matching physical arity");
+    }
+    auto resultType = dyn_cast<VRegType>(resultTypes.front());
+    auto maskType = dyn_cast<MaskType>(maskParts.front().getType());
+    if (!resultType || !maskType) {
+      return rewriter.notifyMatchFailure(
+          op, "vcg group_reduce path requires physical vreg/mask");
+    }
+    for (auto [sourcePart, maskPart, physicalResultType] :
+         llvm::zip_equal(sourceParts, maskParts, resultTypes)) {
+      bool mismatchedTypes = sourcePart.getType() != resultType ||
+                             maskPart.getType() != maskType ||
+                             physicalResultType != resultType;
+      if (mismatchedTypes) {
+        return rewriter.notifyMatchFailure(
+            op, "vcg group_reduce path requires uniform physical chunk types");
+      }
+    }
+
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (auto [sourceIndex, sourcePart] : llvm::enumerate(sourceParts)) {
+      results.push_back(rewriter
+                            .create<GroupReduceOpTy>(op.getLoc(), resultType,
+                                                     sourcePart,
+                                                     maskParts[sourceIndex])
+                            .getResult());
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
+public:
+
   LogicalResult
   matchAndRewrite(OpTy op,
                   typename OneToNOpConversionPattern<OpTy>::OpAdaptor adaptor,
@@ -11888,37 +11932,7 @@ struct OneToNVMIGroupReduceOpPattern : OneToNOpConversionPattern<OpTy> {
           op, "group reduce requires num_groups to evenly divide lane count");
 
     if (*plan == GroupReduceLoweringPlan::OneBlockVcgadd) {
-      if (sourceParts.size() != maskParts.size() ||
-          sourceParts.size() != resultTypes.size() || sourceParts.empty())
-        return rewriter.notifyMatchFailure(
-            op, "vcg group_reduce path requires matching physical "
-                "arity");
-      auto resultType = dyn_cast<VRegType>(resultTypes.front());
-      auto maskType = dyn_cast<MaskType>(maskParts.front().getType());
-      if (!resultType || !maskType)
-        return rewriter.notifyMatchFailure(
-            op, "vcg group_reduce path requires physical vreg/mask");
-      for (auto [sourcePart, maskPart, physicalResultType] :
-           llvm::zip_equal(sourceParts, maskParts, resultTypes)) {
-        if (sourcePart.getType() != resultType ||
-            maskPart.getType() != maskType || physicalResultType != resultType)
-          return rewriter.notifyMatchFailure(
-              op, "vcg group_reduce path requires uniform physical "
-                  "chunk types");
-      }
-
-      SmallVector<Value> results;
-      results.reserve(resultTypes.size());
-      for (auto [sourceIndex, sourcePart] : llvm::enumerate(sourceParts)) {
-        results.push_back(rewriter
-                              .create<GroupReduceOpTy>(op.getLoc(), resultType,
-                                                       sourcePart,
-                                                       maskParts[sourceIndex])
-                              .getResult());
-      }
-
-      replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
-      return success();
+      return lowerOneBlock(op, sourceParts, maskParts, resultTypes, rewriter);
     }
 
     if (*plan == GroupReduceLoweringPlan::TwoBlockDeinterleaved2VcgaddVadd) {
