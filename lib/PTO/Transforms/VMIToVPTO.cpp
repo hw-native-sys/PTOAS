@@ -8406,9 +8406,10 @@ static LogicalResult lowerGroupBroadcastParts(
     FailureOr<int64_t> chunks = *resultLayoutFactor == 1
                                     ? FailureOr<int64_t>(resultTypes.size())
                                     : getDataChunksInPart(resultVMIType, part);
-    if (failed(chunks))
+    if (failed(chunks)) {
       return rewriter.notifyMatchFailure(
           op, "group_broadcast failed to enumerate result chunks");
+    }
     for (int64_t chunk = 0; chunk < *chunks; ++chunk, ++flatIndex) {
       if (flatIndex >= static_cast<int64_t>(resultTypes.size()))
         return rewriter.notifyMatchFailure(
@@ -11955,6 +11956,72 @@ private:
     return success();
   }
 
+  LogicalResult lowerFourBlock(
+      OpTy op, ValueRange sourceParts, ValueRange maskParts,
+      TypeRange resultTypes, int64_t numGroups,
+      OneToNPatternRewriter &rewriter) const {
+    int64_t resultPartCount = resultTypes.size();
+    bool invalidArity = static_cast<int64_t>(sourceParts.size()) !=
+                            resultPartCount * 4 ||
+                        maskParts.size() != sourceParts.size();
+    if (invalidArity) {
+      return rewriter.notifyMatchFailure(op,
+                                         "four-block group_reduce arity mismatch");
+    }
+    auto resultType = dyn_cast<VRegType>(resultTypes.front());
+    auto maskType = dyn_cast<MaskType>(maskParts.front().getType());
+    if (!resultType || !maskType) {
+      return rewriter.notifyMatchFailure(
+          op, "four-block group_reduce requires physical vreg/mask");
+    }
+
+    SmallVector<Value> results;
+    results.reserve(resultPartCount);
+    for (int64_t resultIndex = 0; resultIndex < resultPartCount;
+         ++resultIndex) {
+      SmallVector<Value, 4> partials;
+      partials.reserve(4);
+      for (int64_t part = 0; part < 4; ++part) {
+        int64_t sourceIndex = part * resultPartCount + resultIndex;
+        Value source = sourceParts[sourceIndex];
+        Value mask = maskParts[sourceIndex];
+        bool mismatchedTypes = resultTypes[resultIndex] != resultType ||
+                               source.getType() != resultType ||
+                               mask.getType() != maskType;
+        if (mismatchedTypes) {
+          return rewriter.notifyMatchFailure(
+              op, "four-block group_reduce requires uniform physical types");
+        }
+        partials.push_back(rewriter
+                               .create<GroupReduceOpTy>(op.getLoc(), resultType,
+                                                        source, mask)
+                               .getResult());
+      }
+      int64_t activeGroups = std::min<int64_t>(8, numGroups - resultIndex * 8);
+      FailureOr<Value> combineMask = createPrefixMaskForActiveLanes(
+          op.getLoc(), maskType, activeGroups, rewriter);
+      if (failed(combineMask)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to create four-block group_reduce combine mask");
+      }
+      Value sum01 = rewriter
+                        .create<CombineOpTy>(op.getLoc(), resultType, partials[0],
+                                             partials[1], *combineMask)
+                        .getResult();
+      Value sum23 = rewriter
+                        .create<CombineOpTy>(op.getLoc(), resultType, partials[2],
+                                             partials[3], *combineMask)
+                        .getResult();
+      results.push_back(rewriter
+                            .create<CombineOpTy>(op.getLoc(), resultType, sum01,
+                                                 sum23, *combineMask)
+                            .getResult());
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
 public:
 
   LogicalResult
@@ -12002,73 +12069,8 @@ public:
     }
 
     if (*plan == GroupReduceLoweringPlan::FourBlockDeinterleaved4VcgaddTree) {
-      int64_t resultPartCount = resultTypes.size();
-      if (static_cast<int64_t>(sourceParts.size()) != resultPartCount * 4 ||
-          maskParts.size() != sourceParts.size())
-        return rewriter.notifyMatchFailure(
-            op, "four-block group_reduce arity mismatch");
-
-      SmallVector<Value> results;
-      results.reserve(resultPartCount);
-      auto resultType = dyn_cast<VRegType>(resultTypes.front());
-      auto maskType = dyn_cast<MaskType>(maskParts.front().getType());
-      if (!resultType || !maskType)
-        return rewriter.notifyMatchFailure(
-            op, "four-block group_reduce requires physical vreg/mask");
-      int64_t numGroups = op.getNumGroupsAttr().getInt();
-
-      for (int64_t resultIndex = 0; resultIndex < resultPartCount;
-           ++resultIndex) {
-        SmallVector<Value, 4> sources;
-        SmallVector<Value, 4> masks;
-        sources.reserve(4);
-        masks.reserve(4);
-        SmallVector<Value, 4> partials;
-        partials.reserve(4);
-        for (int64_t part = 0; part < 4; ++part) {
-          int64_t sourceIndex = part * resultPartCount + resultIndex;
-          Value source = sourceParts[sourceIndex];
-          Value mask = maskParts[sourceIndex];
-          Type physicalResultType = resultTypes[resultIndex];
-          if (physicalResultType != resultType ||
-              source.getType() != resultType || mask.getType() != maskType)
-            return rewriter.notifyMatchFailure(
-                op, "four-block group_reduce requires uniform physical "
-                    "types");
-          sources.push_back(source);
-          masks.push_back(mask);
-        }
-
-        int64_t activeGroups =
-            std::min<int64_t>(8, numGroups - resultIndex * 8);
-        FailureOr<Value> combineMask = createPrefixMaskForActiveLanes(
-            op.getLoc(), maskType, activeGroups, rewriter);
-        if (failed(combineMask))
-          return rewriter.notifyMatchFailure(
-              op, "failed to create four-block group_reduce combine mask");
-        for (auto [source, mask] : llvm::zip_equal(sources, masks))
-          partials.push_back(rewriter
-                                 .create<GroupReduceOpTy>(
-                                     op.getLoc(), resultType, source, mask)
-                                 .getResult());
-        Value sum01 =
-            rewriter
-                .create<CombineOpTy>(op.getLoc(), resultType, partials[0],
-                                     partials[1], *combineMask)
-                .getResult();
-        Value sum23 =
-            rewriter
-                .create<CombineOpTy>(op.getLoc(), resultType, partials[2],
-                                     partials[3], *combineMask)
-                .getResult();
-        results.push_back(rewriter
-                              .create<CombineOpTy>(op.getLoc(), resultType,
-                                                   sum01, sum23, *combineMask)
-                              .getResult());
-      }
-
-      replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
-      return success();
+      return lowerFourBlock(op, sourceParts, maskParts, resultTypes,
+                            op.getNumGroupsAttr().getInt(), rewriter);
     }
 
     if (*plan == GroupReduceLoweringPlan::FullDeinterleaved2VcaddRows) {
