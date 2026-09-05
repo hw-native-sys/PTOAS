@@ -5847,6 +5847,36 @@ static FailureOr<std::array<Value, 2>> materializeFactor2DeintToContiguousGroup(
   return std::array<Value, 2>{materialized->first, materialized->second};
 }
 
+static FailureOr<SmallVector<Value, 4>> materializeDeintToContiguousMaskGroup(
+    Operation *op, ValueRange sourceParts, TypeRange resultTypes, int64_t factor,
+    int64_t groups, int64_t groupIndex, size_t resultOffset,
+    PatternRewriter &rewriter) {
+  SmallVector<Value, 4> sources;
+  sources.reserve(factor);
+  for (int64_t part = 0; part < factor; ++part) {
+    sources.push_back(sourceParts[part * groups + groupIndex]);
+  }
+  SmallVector<Value, 4> results;
+  if (factor == 2) {
+    FailureOr<std::array<Value, 2>> materialized =
+        materializeFactor2DeintToContiguousGroup(
+            op, sources, resultTypes, resultOffset, rewriter);
+    if (failed(materialized)) {
+      return failure();
+    }
+    results.append(*materialized);
+    return results;
+  }
+    FailureOr<std::array<Value, 4>> materialized =
+        materializeFactor4DeintToContiguousGroup(
+            op, sources, resultTypes, resultOffset, rewriter);
+  if (failed(materialized)) {
+    return failure();
+  }
+  results.append(*materialized);
+  return results;
+}
+
 FailureOr<SmallVector<Value>> materializeStagingDeintToContiguousMaskLayout(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     int64_t factor, PatternRewriter &rewriter) {
@@ -5865,30 +5895,10 @@ FailureOr<SmallVector<Value>> materializeStagingDeintToContiguousMaskLayout(
   SmallVector<Value> results;
   results.reserve(resultTypes.size());
   for (int64_t i = 0; i < groups && results.size() < resultTypes.size(); ++i) {
-    if (factor == 2) {
-      SmallVector<Value, 2> sources = {sourceParts[i], sourceParts[groups + i]};
-      FailureOr<std::array<Value, 2>> materialized =
-          materializeFactor2DeintToContiguousGroup(
-              op, sources, resultTypes, results.size(), rewriter);
-      if (failed(materialized)) {
-        return failure();
-      }
-      for (Value value : *materialized) {
-        bool resultCapacityReached = results.size() >= resultTypes.size();
-        if (resultCapacityReached) {
-          break;
-        }
-        results.push_back(value);
-      }
-      continue;
-    }
-
-    SmallVector<Value, 4> sources = {
-        sourceParts[i], sourceParts[groups + i], sourceParts[2 * groups + i],
-        sourceParts[3 * groups + i]};
-    FailureOr<std::array<Value, 4>> materialized =
-        materializeFactor4DeintToContiguousGroup(
-            op, sources, resultTypes, results.size(), rewriter);
+    FailureOr<SmallVector<Value, 4>> materialized =
+        materializeDeintToContiguousMaskGroup(
+            op, sourceParts, resultTypes, factor, groups, i, results.size(),
+            rewriter);
     if (failed(materialized)) {
       return failure();
     }

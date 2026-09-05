@@ -1283,3 +1283,10 @@ part 的 all-false 补齐以及 factor=2/4 单组物化抽取为
 arity 校验；`dintlv` 发射顺序与 mask padding 语义保持不变。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_ensure_mask_granularity.pto` lowering exit=0。
+# mask staging 方向对称整改
+
+本轮将 `materializeStagingDeintToContiguousMaskLayout` 的单组 source 收集和
+factor=2/4 `intlv` 物化抽取为 `materializeDeintToContiguousMaskGroup`。外层函数
+继续负责结果容量截断和最终 arity 校验，保持 deinterleaved part 顺序、尾部结果
+截断和失败诊断不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_to_vpto_ensure_mask_granularity.pto` lowering exit=0。
