@@ -1077,3 +1077,9 @@ contract、source/result physical part 校验大括号，覆盖 `fptosi/fptoui` 
 窄化分支。该调整仅修复控制流边界，保持 `VcvtOp` part 选择、mask、arity 和诊断语义
 不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
 通过。
+
+本轮继续收口 FP→整数窄化/拓宽分支：为 `fptosi/fptoui` 的 mask、lane-stride、source
+arity 和 widen arity 检查补齐大括号，并将多行条件整理为具名布尔变量；同时将
+`exti` 的 group-slot layout 判断命名化，避免静态检查器误报。所有调整仅影响控制流
+表达和可读性，不改变 conversion 的 part、mask、arity 或诊断语义。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。

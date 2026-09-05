@@ -13727,8 +13727,10 @@ public:
 
     VMILayoutAttr sourceLayout = sourceVMIType.getLayoutAttr();
     VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
-    if (sourceLayout && resultLayout && sourceLayout.isGroupSlots() &&
-        resultLayout.isGroupSlots()) {
+    bool groupSlotLayouts = sourceLayout && resultLayout &&
+                            sourceLayout.isGroupSlots() &&
+                            resultLayout.isGroupSlots();
+    if (groupSlotLayouts) {
       unsigned sourceBits =
           pto::getPTOStorageElemBitWidth(sourceVMIType.getElementType());
       unsigned resultBits =
@@ -14624,9 +14626,10 @@ struct OneToNVMIFPToSIOpPattern : OneToNOpConversionPattern<VMIFPToSIOp> {
         StringRef part = srcBits == 16 ? StringRef("EVEN") : StringRef("P0");
         FailureOr<Value> mask =
             createAllTrueMaskForVReg(op.getLoc(), sourceType0, rewriter);
-        if (failed(mask))
+        if (failed(mask)) {
           return rewriter.notifyMatchFailure(
               op, "failed to build fptosi widen 1:1 mask");
+        }
         SmallVector<Value> results;
         results.reserve(resultTypes.size());
         for (auto [sourcePart, resultType] :
@@ -14657,13 +14660,19 @@ struct OneToNVMIFPToSIOpPattern : OneToNOpConversionPattern<VMIFPToSIOp> {
     int64_t resultLaneStride = resultLayout && resultLayout.isContiguous()
                                    ? resultLayout.getLaneStride()
                                    : 1;
-    if (resultLaneStride <= 0 || factor % resultLaneStride != 0)
+    bool invalidResultLaneStride =
+        resultLaneStride <= 0 || factor % resultLaneStride != 0;
+    if (invalidResultLaneStride) {
       return rewriter.notifyMatchFailure(
           op, "narrow fptosi: unsupported result lane stride");
+    }
     int64_t sourceFactor = factor / resultLaneStride;
-    if (sourceParts.size() != sourceFactor * resultTypes.size())
+    bool invalidSourceArity =
+        sourceParts.size() != sourceFactor * resultTypes.size();
+    if (invalidSourceArity) {
       return rewriter.notifyMatchFailure(
           op, "narrow fptosi: source arity != sourceFactor × result arity");
+    }
 
     static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
     static constexpr StringRef kPacked4Parts[] = {"P0", "P1", "P2", "P3"};
@@ -14691,8 +14700,9 @@ struct OneToNVMIFPToUIOpPattern
     ValueRange sourceParts = adaptor.getSource();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    if (failed(maybe_resultTypes)) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
 
     Type srcElem = sourceVMIType.getElementType();
@@ -14760,9 +14770,11 @@ struct OneToNVMIFPToUIOpPattern
     if (dstBits > srcBits) {
       // Widen: 2× EvenOdd (currently no fp→ui widen paths, but handle
       // generically).
-      if (resultTypes.size() != 2 * sourceParts.size())
+      bool invalidWidenArity = resultTypes.size() != 2 * sourceParts.size();
+      if (invalidWidenArity) {
         return rewriter.notifyMatchFailure(
             op, "widen fptoui requires result arity = 2 × source arity");
+      }
 
       static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
       return lowerWidenFpToInt(
@@ -14780,13 +14792,19 @@ struct OneToNVMIFPToUIOpPattern
       int64_t resultLaneStride = resultLayout && resultLayout.isContiguous()
                                      ? resultLayout.getLaneStride()
                                      : 1;
-      if (resultLaneStride <= 0 || factor % resultLaneStride != 0)
+      bool invalidResultLaneStride =
+          resultLaneStride <= 0 || factor % resultLaneStride != 0;
+      if (invalidResultLaneStride) {
         return rewriter.notifyMatchFailure(
             op, "narrow fptoui: unsupported result lane stride");
+      }
       int64_t sourceFactor = factor / resultLaneStride;
-      if (sourceParts.size() != sourceFactor * resultTypes.size())
+      bool invalidSourceArity =
+          sourceParts.size() != sourceFactor * resultTypes.size();
+      if (invalidSourceArity) {
         return rewriter.notifyMatchFailure(
             op, "narrow fptoui: source arity != sourceFactor × result arity");
+      }
 
       static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
       return lowerNarrowFpToInt(
