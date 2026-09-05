@@ -1368,6 +1368,59 @@ static std::optional<int64_t> convertFiniteRangeBound(
                                 : std::nullopt;
 }
 
+struct VMIStatefulReadEnvelopes {
+  VMIByteInterval readable;
+  VMIByteInterval candidate;
+};
+
+static FailureOr<VMIStatefulReadEnvelopes> buildStatefulReadEnvelopes(
+    int64_t staticElements, VMIStatefulOffsetRange offsetRange,
+    int64_t elementBytes, int64_t physicalFootprint, int64_t remainder,
+    std::string *reason) {
+  auto fail = [&reason](const Twine &message)
+      -> FailureOr<VMIStatefulReadEnvelopes> {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  int64_t minOffsetBytes;
+  int64_t maxOffsetBytes;
+  int64_t allocationBytes;
+  int64_t footprintBytes;
+  bool envelopeOverflows =
+      llvm::MulOverflow(offsetRange.minimum, elementBytes, minOffsetBytes) ||
+      llvm::MulOverflow(offsetRange.maximum, elementBytes, maxOffsetBytes) ||
+      llvm::MulOverflow(staticElements, elementBytes, allocationBytes) ||
+      llvm::MulOverflow(physicalFootprint, elementBytes, footprintBytes);
+  if (envelopeOverflows) {
+    return fail("stateful byte read envelope overflows int64");
+  }
+
+  constexpr int64_t blockBytes = 32;
+  int64_t roundedInput;
+  int64_t roundedEnd;
+  bool roundedEndOverflows =
+      llvm::AddOverflow(footprintBytes, remainder, roundedInput) ||
+      llvm::AddOverflow(roundedInput, blockBytes - 1, roundedEnd);
+  if (roundedEndOverflows) {
+    return fail("stateful byte read envelope overflows int64");
+  }
+  roundedEnd = roundedEnd / blockBytes * blockBytes - remainder;
+
+  int64_t physicalBegin;
+  int64_t physicalEnd;
+  bool physicalEnvelopeOverflows =
+      llvm::SubOverflow(minOffsetBytes, remainder, physicalBegin) ||
+      llvm::AddOverflow(maxOffsetBytes, roundedEnd, physicalEnd);
+  if (physicalEnvelopeOverflows) {
+    return fail("stateful byte read envelope overflows int64");
+  }
+  return VMIStatefulReadEnvelopes{
+      VMIByteInterval{0, allocationBytes},
+      VMIByteInterval{physicalBegin, physicalEnd}};
+}
+
 static FailureOr<VMIStatefulOffsetRange>
 getStatefulOffsetRange(Value source, Value offset, std::string *reason) {
   auto fail = [&reason](const Twine &message)
@@ -1457,41 +1510,19 @@ computeSafeStatefulReadProof(Value source, Value offset,
     return fail("requires computable physical read footprint");
   }
 
-  int64_t minOffsetBytes;
-  int64_t maxOffsetBytes;
-  int64_t allocationBytes;
   int64_t footprintElements;
-  int64_t footprintBytes;
-  bool envelopeOverflows =
-      llvm::MulOverflow(offsetRange->minimum, elementBytes, minOffsetBytes) ||
-      llvm::MulOverflow(offsetRange->maximum, elementBytes, maxOffsetBytes) ||
-      llvm::MulOverflow(*staticElements, elementBytes, allocationBytes) ||
-      llvm::MulOverflow(*arity, *lanesPerPart, footprintElements) ||
-      llvm::MulOverflow(footprintElements, elementBytes, footprintBytes);
-  if (envelopeOverflows) {
+  if (llvm::MulOverflow(*arity, *lanesPerPart, footprintElements)) {
     return fail("stateful byte read envelope overflows int64");
   }
-
-  int64_t roundedInput;
-  int64_t roundedEnd;
-  bool roundedEndOverflows =
-      llvm::AddOverflow(footprintBytes, *remainder, roundedInput) ||
-      llvm::AddOverflow(roundedInput, blockBytes - 1, roundedEnd);
-  if (roundedEndOverflows) {
-    return fail("stateful byte read envelope overflows int64");
+  std::string envelopeReason;
+  FailureOr<VMIStatefulReadEnvelopes> envelopes = buildStatefulReadEnvelopes(
+      *staticElements, *offsetRange, elementBytes, footprintElements,
+      *remainder, &envelopeReason);
+  if (failed(envelopes)) {
+    return fail(envelopeReason);
   }
-  roundedEnd = roundedEnd / blockBytes * blockBytes - *remainder;
-
-  int64_t physicalBegin;
-  int64_t physicalEnd;
-  bool physicalEnvelopeOverflows =
-      llvm::SubOverflow(minOffsetBytes, *remainder, physicalBegin) ||
-      llvm::AddOverflow(maxOffsetBytes, roundedEnd, physicalEnd);
-  if (physicalEnvelopeOverflows) {
-    return fail("stateful byte read envelope overflows int64");
-  }
-  proof.readableEnvelope = VMIByteInterval{0, allocationBytes};
-  proof.candidateReadEnvelope = VMIByteInterval{physicalBegin, physicalEnd};
+  proof.readableEnvelope = envelopes->readable;
+  proof.candidateReadEnvelope = envelopes->candidate;
   proof.proven = proof.readableEnvelope->contains(*proof.candidateReadEnvelope);
   if (!proof.proven) {
     proof.reason = (Twine("stateful physical read envelope [") +
@@ -1910,8 +1941,9 @@ LogicalResult checkSupportedBlockDeinterleavedGroupLoadShape(
 LogicalResult
 checkSupportedGroupLoadShape(VMIGroupLoadOp op, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
@@ -1955,8 +1987,9 @@ LogicalResult checkSupportedGroupSlotLoadShape(
     VMIGroupSlotLoadOp op,
     std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
@@ -2170,8 +2203,9 @@ checkSupportedGroupSlotsStoreShape(VMIGroupStoreOp op, VMIVRegType valueType,
 LogicalResult
 checkSupportedGroupStoreShape(VMIGroupStoreOp op, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
@@ -2229,13 +2263,18 @@ checkSupportedMaskedLoadShape(VMIMaskedLoadOp op, std::string *reason) {
   VMIMemoryAccessPlan accessPlan =
       buildReadAccessPlan(op.getSource(), op.getOffset(), resultType,
                           VMIMemoryCoverageKind::Predicate);
-  if (!accessPlan.layoutSupport.isSupported())
+  if (!accessPlan.layoutSupport.isSupported()) {
     return fail(accessPlan.layoutSupport.reason);
-  if (!resultLayout || !passthruLayout || !maskLayout)
+  }
+  if (!resultLayout || !passthruLayout || !maskLayout) {
     return fail("requires assigned result, passthru, and mask layouts");
-  if (!resultLayout.isContiguous() || !passthruLayout.isContiguous() ||
-      !maskLayout.isContiguous())
+  }
+  bool nonContiguousLayout = !resultLayout.isContiguous() ||
+                             !passthruLayout.isContiguous() ||
+                             !maskLayout.isContiguous();
+  if (nonContiguousLayout) {
     return fail("requires contiguous result, passthru, and mask layouts");
+  }
 
   std::string fullChunkReason;
   if (succeeded(checkFullDataPhysicalChunks(resultType, &fullChunkReason)))
@@ -2257,9 +2296,8 @@ LogicalResult checkSupportedGatherPhysicalShape(
     VMIVRegType resultType, VMIVRegType indicesType, VMIVRegType passthruType,
     VMIMaskType maskType, bool requiresFullChunks, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason) {
+    if (reason)
       *reason = message.str();
-    }
     return failure();
   };
   FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
@@ -2690,8 +2728,9 @@ checkSupportedExpandLoadRuntimePath(
 LogicalResult
 checkSupportedExpandLoadShape(VMIExpandLoadOp op, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
@@ -2704,13 +2743,18 @@ checkSupportedExpandLoadShape(VMIExpandLoadOp op, std::string *reason) {
   VMIMemoryAccessPlan accessPlan =
       buildReadAccessPlan(op.getSource(), op.getOffset(), resultType,
                           VMIMemoryCoverageKind::Predicate);
-  if (!accessPlan.layoutSupport.isSupported())
+  if (!accessPlan.layoutSupport.isSupported()) {
     return fail(accessPlan.layoutSupport.reason);
-  if (!resultLayout || !passthruLayout || !maskLayout)
+  }
+  if (!resultLayout || !passthruLayout || !maskLayout) {
     return fail("requires assigned result, passthru, and mask layouts");
-  if (!resultLayout.isContiguous() || !passthruLayout.isContiguous() ||
-      !maskLayout.isContiguous())
+  }
+  bool nonContiguousLayout = !resultLayout.isContiguous() ||
+                             !passthruLayout.isContiguous() ||
+                             !maskLayout.isContiguous();
+  if (nonContiguousLayout) {
     return fail("requires contiguous result, passthru, and mask layouts");
+  }
 
   std::string maskReason;
   bool staticAllActive = isStaticAllActiveMask(

@@ -221,6 +221,13 @@ mask 的语义差异只存在于 active-lane 判定。补齐该批代码及 scal
 触及的控制语句大括号后，增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过。
 
+本轮还将 `computeSafeStatefulReadProof` 中的字节范围乘法、32-byte rounding 和物理访问
+包络计算抽取为 `buildStatefulReadEnvelopes`，使安全证明入口只负责静态 shape、offset
+范围、元素宽度与 footprint 前置条件。所有 `MulOverflow`/`AddOverflow`/`SubOverflow`
+检查、包络边界和失败原因保持不变；新增代码增量合规检查通过。尝试使用
+`vmi_to_vpto_expand_load_runtime_mask.pto` 回归时，在本轮逻辑前由既有
+`VMI-PASS-INVARIANT`（pack/unpack helper 提前物化）终止，未将该失败归因于本轮修改。
+
 # create_mask 分派整改
 
 本轮将 `OneToNVMICreateMaskOpPattern` 中动态与常量 `create_mask` 的结果类型获取、
