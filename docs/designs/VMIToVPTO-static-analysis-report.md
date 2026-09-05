@@ -1734,6 +1734,16 @@ physical plan、lane-stride/factor 分派和 mask 构造；保持 packed BF16x2 
 通过；`vmi_to_vpto_extf_f4x2_to_bf16x2_ls4.pto` lowering exit=0；另一个 extf case
 仍在既有 VMI pack/unpack pipeline invariant 处提前失败。
 
+# truncf group-slot physical chunk 发射整改
+
+本轮将 `OneToNVMITruncFOpPattern::lowerGroupSlotTrunc` 中单个 physical part 的 source/
+result 类型校验、结果位宽判断、EVEN/P0 选择、round mode 计算和 `VcvtOp` 发射抽取为
+`lowerGroupSlotTruncPart`。外层继续负责 group-slot shape、slots=1/8 active mask 和结果
+收集；保持 f32 source、f16/f8 result、active slot mask、saturate、round 和结果顺序不变。
+增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；现有 group-slot truncf cases 在既有 VMI pack/unpack pipeline
+invariant 处提前失败，未进入本轮 helper。
+
 # reduce_min/max physical 校验整改
 
 本轮将模板 `OneToNVMIReduceMinMaxOpPattern::matchAndRewrite` 中 min/max reduction 共用

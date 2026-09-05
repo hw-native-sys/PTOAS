@@ -14185,6 +14185,37 @@ struct OneToNVMITruncFOpPattern : OneToNOpConversionPattern<VMITruncFOp> {
   using OneToNOpConversionPattern<VMITruncFOp>::OneToNOpConversionPattern;
 
 private:
+  FailureOr<Value> lowerGroupSlotTruncPart(
+      VMITruncFOp op, Value sourcePart, Type physicalResultType,
+      Value activeSlotMask, StringAttr sat,
+      OneToNPatternRewriter &rewriter) const {
+    auto sourceType = dyn_cast<VRegType>(sourcePart.getType());
+    auto resultType = dyn_cast<VRegType>(physicalResultType);
+    const bool invalidTypes =
+        !sourceType || !sourceType.getElementType().isF32() || !resultType;
+    if (invalidTypes) {
+      rewriter.notifyMatchFailure(
+          op, "unsupported group-slot truncf physical type");
+      return failure();
+    }
+    unsigned resultBits =
+        pto::getPTOStorageElemBitWidth(resultType.getElementType());
+    const bool unsupportedResultBits = resultBits != 16 && resultBits != 8;
+    if (unsupportedResultBits) {
+      rewriter.notifyMatchFailure(
+          op, "unsupported group-slot truncf physical type");
+      return failure();
+    }
+    StringAttr part =
+        rewriter.getStringAttr(resultBits == 16 ? "EVEN" : "P0");
+    StringAttr rnd = rewriter.getStringAttr(
+        getTruncFRoundMode(op, resultType.getElementType()));
+    return rewriter
+        .create<VcvtOp>(op.getLoc(), resultType, sourcePart, activeSlotMask,
+                        rnd, sat, part)
+        .getResult();
+  }
+
   static Value makeVcvtSourceView(Location loc, Value sourcePart,
                                   bool sourceIsPackedBF16x2,
                                   VRegType vcvtSourceVRegType,
@@ -14337,29 +14368,12 @@ private:
     StringAttr sat = op->getAttrOfType<StringAttr>("saturate");
     for (auto [sourcePart, physicalResultType] :
          llvm::zip_equal(sourceParts, resultTypes)) {
-      auto sourceType = dyn_cast<VRegType>(sourcePart.getType());
-      auto resultType = dyn_cast<VRegType>(physicalResultType);
-      bool invalidTypes =
-          !sourceType || !sourceType.getElementType().isF32() || !resultType;
-      if (invalidTypes) {
-        return rewriter.notifyMatchFailure(
-            op, "unsupported group-slot truncf physical type");
+      FailureOr<Value> result = lowerGroupSlotTruncPart(
+          op, sourcePart, physicalResultType, *activeSlotMask, sat, rewriter);
+      if (failed(result)) {
+        return failure();
       }
-      unsigned physicalResultBits =
-          pto::getPTOStorageElemBitWidth(resultType.getElementType());
-      bool unsupportedResultBits = physicalResultBits != 16 && physicalResultBits != 8;
-      if (unsupportedResultBits) {
-        return rewriter.notifyMatchFailure(
-            op, "unsupported group-slot truncf physical type");
-      }
-      StringAttr part = rewriter.getStringAttr(
-          physicalResultBits == 16 ? "EVEN" : "P0");
-      StringAttr rnd = rewriter.getStringAttr(
-          getTruncFRoundMode(op, resultType.getElementType()));
-      results.push_back(rewriter
-                            .create<VcvtOp>(op.getLoc(), resultType, sourcePart,
-                                           *activeSlotMask, rnd, sat, part)
-                            .getResult());
+      results.push_back(*result);
     }
     replaceOpWithFlatConvertedValues(rewriter, op, results,
                                      *this->getTypeConverter());
