@@ -6729,6 +6729,40 @@ struct OneToNVMICreateGroupMaskOpPattern
 struct OneToNVMILoadOpPattern : OneToNOpConversionPattern<VMILoadOp> {
   using OneToNOpConversionPattern<VMILoadOp>::OneToNOpConversionPattern;
 
+private:
+  LogicalResult lowerLaneStride(
+      VMILoadOp op, OneToNPatternRewriter &rewriter, Value source, Value offset,
+      VMIVRegType resultVMIType, ArrayRef<Type> resultTypes,
+      StringRef dist, int64_t lanesPerPart) const {
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    int64_t semanticOffset = 0;
+    for (auto [index, resultType] : llvm::enumerate(resultTypes)) {
+      if (!isa<VRegType>(resultType)) {
+        return rewriter.notifyMatchFailure(op, "load result must be vreg");
+      }
+      Value chunkOffset =
+          createChunkOffset(op.getLoc(), offset, semanticOffset, rewriter);
+      results.push_back(rewriter
+                            .create<VldsOp>(op.getLoc(), resultType, Type{},
+                                            source, chunkOffset,
+                                            rewriter.getStringAttr(dist))
+                            .getResult());
+      FailureOr<int64_t> activeLanes =
+          getActiveDataLanesInPhysicalChunk(resultVMIType, index);
+      if (failed(activeLanes)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to compute lane_stride load active lanes");
+      }
+      semanticOffset += *activeLanes;
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
+public:
+
   LogicalResult
   matchAndRewrite(VMILoadOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -6759,29 +6793,8 @@ struct OneToNVMILoadOpPattern : OneToNOpConversionPattern<VMILoadOp> {
             op.getSource(), op.getOffset(), resultVMIType.getElementType(),
             laneStrideResultType, VPTOMemoryOpFamily::Load, *laneStrideDist);
     if (canUseLaneStrideDist) {
-      SmallVector<Value> results;
-      results.reserve(resultTypes.size());
-      int64_t semanticOffset = 0;
-      for (auto [index, resultType] : llvm::enumerate(resultTypes)) {
-        if (!isa<VRegType>(resultType))
-          return rewriter.notifyMatchFailure(op, "load result must be vreg");
-        Value chunkOffset =
-            createChunkOffset(op.getLoc(), *offset, semanticOffset, rewriter);
-        results.push_back(
-            rewriter
-                .create<VldsOp>(op.getLoc(), resultType,
-                                /*updated_base=*/Type{}, *source, chunkOffset,
-                                rewriter.getStringAttr(*laneStrideDist))
-                .getResult());
-        FailureOr<int64_t> activeLanes =
-            getActiveDataLanesInPhysicalChunk(resultVMIType, index);
-        if (failed(activeLanes))
-          return rewriter.notifyMatchFailure(
-              op, "failed to compute lane_stride load active lanes");
-        semanticOffset += *activeLanes;
-      }
-      replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
-      return success();
+      return lowerLaneStride(op, rewriter, *source, *offset, resultVMIType,
+                             resultTypes, *laneStrideDist, *lanesPerPart);
     }
 
     FailureOr<int64_t> lanesPerPart = verifyFullOrSafeReadVRegChunks(

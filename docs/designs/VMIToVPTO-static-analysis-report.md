@@ -234,6 +234,12 @@ sub-VL、all-mask、group-size 校验及 power-of-two 快路径。`iota_group_su
 `iota_group_vl_half` 和 `iota_group2` 三个 case 均通过完整 lowering，增量合规检查和
 `git diff --check` 通过。
 
+本轮将 `OneToNVMILoadOpPattern` 的 dense lane-stride direct load 路径抽取为
+`lowerLaneStride`。helper 负责逐 physical chunk 的 `vlds`、semantic offset 累加、
+active-lane 计算和结果替换；主函数保留 dist 合法性判断及 contiguous/deinterleaved
+fallback，未改变 load 路径选择顺序。`vmi_to_vpto_load_store_contiguous.pto` 回归
+通过，增量合规检查和 `git diff --check` 通过。
+
 本轮又将 slots=8 普通/lane-stride 两条非对齐 store stream 的 destination pointer
 物化、offset 合成和 `emitStatefulStoreStream` 调用统一抽取为
 `emitGroupStoreStream`。该 helper 只封装地址与 stream 生命周期，保留 packed-byte
