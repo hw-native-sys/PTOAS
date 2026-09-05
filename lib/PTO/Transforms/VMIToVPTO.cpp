@@ -14271,12 +14271,14 @@ public:
       if (!sourceType || sourceType != sourceType0) {
         return rewriter.notifyMatchFailure(
             op, "trunci source physical parts must have matching integer type");
+      }
     }
     for (Type resultType : resultTypes) {
       auto resultVRegType = dyn_cast<VRegType>(resultType);
       if (!resultVRegType || resultVRegType != resultType0) {
         return rewriter.notifyMatchFailure(
             op, "trunci result physical parts must have matching integer type");
+      }
     }
 
     unsigned sourceBits =
@@ -14288,6 +14290,7 @@ public:
     if (invalidWidth) {
       return rewriter.notifyMatchFailure(
           op, "unsupported physical trunci source/result width relation");
+    }
 
     int64_t factor = sourceBits / resultBits;
 
@@ -14303,6 +14306,7 @@ public:
     if (unsupportedDenseFactor) {
       return rewriter.notifyMatchFailure(
           op, "unsupported dense lane_stride trunci result layout");
+    }
 
     if (isDenseLaneStrideNarrowing && sat && sat.getValue() == "NOSAT") {
       SmallVector<Value> results;

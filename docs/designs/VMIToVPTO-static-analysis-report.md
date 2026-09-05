@@ -1060,3 +1060,9 @@ pattern 覆盖至 pattern 注册结束）。这些 pattern 已通过显式的
 `using OneToNOpConversionPattern<...>::OneToNOpConversionPattern` 构造函数继承和
 `override` 实现，当前增量合规检查未报告新的 suppression 或格式错误；实际编译器
 warning 仍需在 CMake 外部依赖权限修复后通过完整构建确认。
+
+本轮复核 `OneToNVMITruncIOpPattern::matchAndRewrite` 时发现 source/result physical
+part 校验和宽度/布局分支中存在多处缺失闭合大括号，已补齐这些控制流边界；该修复
+避免后续 narrowing 逻辑错误地落入前置失败条件，保持原有 group-slot、lane-stride、
+NOSAT alias 及 factor=2/4 lowering 语义不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
