@@ -965,3 +965,9 @@ physical arity；主函数仅保留 vmull 特有的 64xi32/ui32 carrier 与 b32 
 该拆分保持原有支持矩阵及诊断语义不变。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_layout_assignment_group_broadcast_load_e2b_b16.pto` lowering exit=0。
+本轮将 `checkSupportedCompressShape` 与 `checkSupportedCompressStoreShape` 的公共
+contiguous value/mask、full physical chunk 和单 chunk arity 契约抽取为
+`CompressPhysicalShapePlan`/`buildCompressPhysicalShapePlan`。两个 verifier 只保留各自
+的 result 或 destination 专属约束；支持矩阵和诊断语义保持不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；已有 mask/layout
+lowering 回归 exit=0。

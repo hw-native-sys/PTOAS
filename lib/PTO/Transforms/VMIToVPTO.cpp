@@ -11467,11 +11467,13 @@ public:
       if (!maskParts.empty() && !isa<MaskType>(maskParts.front().getType()))
         return rewriter.notifyMatchFailure(
             op, "single-chunk interleave mask part type mismatch");
-      if (!isa<VRegType>(lowTypes.front()) ||
+      bool invalidSingleChunkTypes =
+          !isa<VRegType>(lowTypes.front()) ||
           !isa<VRegType>(highTypes.front()) ||
           lhsParts.front().getType() != lowTypes.front() ||
           rhsParts.front().getType() != lowTypes.front() ||
-          highTypes.front() != lowTypes.front())
+          highTypes.front() != lowTypes.front();
+      if (invalidSingleChunkTypes) {
         return rewriter.notifyMatchFailure(
             op, "single-chunk interleave part type mismatch");
       auto interleave = rewriter.create<TargetOp>(
@@ -15717,6 +15719,46 @@ checkSupportedActivePrefixIndexShape(VMIActivePrefixIndexOp op,
   return success();
 }
 
+struct CompressPhysicalShapePlan {
+  VMIVRegType valueType;
+  VMIMaskType maskType;
+};
+
+static FailureOr<CompressPhysicalShapePlan> buildCompressPhysicalShapePlan(
+    VMIVRegType valueType, VMIMaskType maskType, StringRef fullChunkSuffix,
+    StringRef arityMessage, std::string *reason) {
+  auto fail = [&reason](const Twine &message)
+      -> FailureOr<CompressPhysicalShapePlan> {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  VMILayoutAttr valueLayout = valueType.getLayoutAttr();
+  VMILayoutAttr maskLayout = maskType.getLayoutAttr();
+  if (!valueLayout || !maskLayout) {
+    return fail("requires assigned value and mask layouts");
+  }
+  bool nonContiguousInputs =
+      !valueLayout.isContiguous() || !maskLayout.isContiguous();
+  if (nonContiguousInputs) {
+    return fail("requires contiguous value and mask layouts");
+  }
+  std::string fullChunkReason;
+  if (failed(checkFullDataPhysicalChunks(valueType, &fullChunkReason))) {
+    return fail(Twine("requires full physical chunks so padding mask lanes ") +
+                fullChunkSuffix + "; " + fullChunkReason);
+  }
+  FailureOr<int64_t> valueArity = getVMIPhysicalArity(valueType);
+  FailureOr<int64_t> maskArity = getVMIPhysicalArity(maskType);
+  bool invalidArity = failed(valueArity) || failed(maskArity) ||
+                      *valueArity != 1 || *maskArity != 1;
+  if (invalidArity) {
+    return fail(arityMessage);
+  }
+  return CompressPhysicalShapePlan{valueType, maskType};
+}
+
 LogicalResult checkSupportedCompressShape(VMICompressOp op,
                                           std::string *reason = nullptr) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
@@ -15728,29 +15770,32 @@ LogicalResult checkSupportedCompressShape(VMICompressOp op,
   auto sourceType = cast<VMIVRegType>(op.getSource().getType());
   auto maskType = cast<VMIMaskType>(op.getMask().getType());
   auto resultType = cast<VMIVRegType>(op.getResult().getType());
-  VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();
-  VMILayoutAttr maskLayout = maskType.getLayoutAttr();
+  FailureOr<CompressPhysicalShapePlan> plan = buildCompressPhysicalShapePlan(
+      sourceType, maskType,
+      "lanes cannot be squeezed into the result",
+      "requires a single physical chunk; multi-chunk compress needs cross-"
+      "chunk compaction",
+      reason);
+  if (failed(plan)) {
+    return failure();
+  }
   VMILayoutAttr resultLayout = resultType.getLayoutAttr();
-  if (!sourceLayout || !maskLayout || !resultLayout)
-    return fail("requires assigned source, mask, and result layouts");
-  if (!sourceLayout.isContiguous() || !maskLayout.isContiguous() ||
-      !resultLayout.isContiguous())
-    return fail("requires contiguous source, mask, and result layouts");
-
-  std::string fullChunkReason;
-  if (failed(checkFullDataPhysicalChunks(sourceType, &fullChunkReason)))
-    return fail(Twine("requires full source physical chunks so padding mask "
-                      "lanes cannot be squeezed into the result; ") +
-                fullChunkReason);
-
-  FailureOr<int64_t> sourceArity = getVMIPhysicalArity(sourceType);
-  FailureOr<int64_t> maskArity = getVMIPhysicalArity(maskType);
+  if (!resultLayout) {
+    return fail("requires assigned result layouts");
+  }
+  if (!resultLayout.isContiguous()) {
+    return fail("requires contiguous result layouts");
+  }
+  FailureOr<int64_t> sourceArity = getVMIPhysicalArity(plan->valueType);
+  FailureOr<int64_t> maskArity = getVMIPhysicalArity(plan->maskType);
   FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
-  if (failed(sourceArity) || failed(maskArity) || failed(resultArity))
+  if (failed(resultArity)) {
     return fail("requires computable source, mask, and result physical arity");
-  if (*sourceArity != 1 || *maskArity != 1 || *resultArity != 1)
+  }
+  if (*resultArity != 1) {
     return fail("requires a single physical chunk; multi-chunk compress needs "
                 "cross-chunk compaction");
+  }
 
   return success();
 }
@@ -15766,31 +15811,18 @@ LogicalResult checkSupportedCompressStoreShape(
 
   auto valueType = cast<VMIVRegType>(op.getValue().getType());
   auto maskType = cast<VMIMaskType>(op.getMask().getType());
-  VMILayoutAttr valueLayout = valueType.getLayoutAttr();
-  VMILayoutAttr maskLayout = maskType.getLayoutAttr();
-  if (!valueLayout || !maskLayout)
-    return fail("requires assigned value and mask layouts");
-  if (!valueLayout.isContiguous() || !maskLayout.isContiguous())
-    return fail("requires contiguous value and mask layouts");
+  FailureOr<CompressPhysicalShapePlan> plan = buildCompressPhysicalShapePlan(
+      valueType, maskType, "lanes cannot be squeezed into memory",
+      "requires a single physical chunk; multi-chunk compress_store needs "
+      "cross-chunk compaction and SQZN state planning",
+      reason);
+  if (failed(plan)) {
+    return failure();
+  }
 
   if (!isa<PtrType>(op.getDestination().getType()))
     return fail("requires !pto.ptr destination because pto.vstur is "
                 "pointer-only");
-
-  std::string fullChunkReason;
-  if (failed(checkFullDataPhysicalChunks(valueType, &fullChunkReason)))
-    return fail(Twine("requires full physical chunks so padding mask lanes "
-                      "cannot be squeezed into memory; ") +
-                fullChunkReason);
-
-  FailureOr<int64_t> valueArity = getVMIPhysicalArity(valueType);
-  FailureOr<int64_t> maskArity = getVMIPhysicalArity(maskType);
-  if (failed(valueArity) || failed(maskArity))
-    return fail("requires computable value and mask physical arity");
-  if (*valueArity != 1 || *maskArity != 1)
-    return fail("requires a single physical chunk; multi-chunk "
-                "compress_store needs cross-chunk compaction and SQZN "
-                "state planning");
 
   return success();
 }
