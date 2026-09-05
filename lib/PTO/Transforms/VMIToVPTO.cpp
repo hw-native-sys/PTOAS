@@ -7864,6 +7864,76 @@ struct GroupBroadcastSelectorContext {
   llvm::DenseMap<int64_t, Value> selectorByBaseIndex;
 };
 
+struct GroupBroadcastLoweringContext {
+  GroupBroadcastSelectorContext selector;
+  int64_t sourceSlots;
+  int64_t selectorPeriod;
+};
+
+static FailureOr<GroupBroadcastLoweringContext>
+createGroupBroadcastLoweringContext(
+    Operation *op, VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
+    const VMIGroupBroadcastLayoutFact &fact, VRegType sourceType,
+    OneToNPatternRewriter &rewriter) {
+  VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
+  VMILayoutAttr sourceLayout = sourceVMIType.getLayoutAttr();
+  int64_t sourceSlots = sourceLayout.getSlots();
+  int64_t sourceLaneStride = sourceLayout.getLaneStride();
+  bool invalidSourceLayout = sourceSlots <= 0 || sourceLaneStride <= 0;
+  if (invalidSourceLayout) {
+    return rewriter.notifyMatchFailure(
+        op, "group_broadcast requires explicit positive source group slots");
+  }
+
+  FailureOr<GroupBroadcastSelectorPlan> selectorPlan =
+      chooseGroupBroadcastSelectorPlan(op, fact, resultLayout, rewriter);
+  if (failed(selectorPlan)) {
+    return failure();
+  }
+  GroupBroadcastSelectorKind selectorKind = selectorPlan->kind;
+  int64_t selectorPeriod = selectorPlan->period;
+  std::optional<int64_t> selectorShift;
+  std::optional<int64_t> sourceLaneStrideShift;
+  if (selectorKind != GroupBroadcastSelectorKind::Constant) {
+    selectorShift = getPowerOfTwoLog2(selectorPeriod);
+    sourceLaneStrideShift = getPowerOfTwoLog2(sourceLaneStride);
+    bool invalidRamp = !selectorShift || !sourceLaneStrideShift;
+    if (invalidRamp) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast ramp requires power-of-two selector period "
+              "and source lane stride");
+    }
+  }
+
+  unsigned indexBits = pto::getPTOStorageElemBitWidth(
+      sourceType.getElementType());
+  auto indexElementType = IntegerType::get(
+      rewriter.getContext(), indexBits,
+      IntegerType::SignednessSemantics::Unsigned);
+  auto indexScalarType = IntegerType::get(rewriter.getContext(), indexBits);
+  auto indexType = VRegType::get(rewriter.getContext(),
+                                 sourceType.getElementCount(), indexElementType);
+  FailureOr<Value> allMask =
+      createAllTrueMaskForVReg(op->getLoc(), indexType, rewriter);
+  if (failed(allMask)) {
+    return rewriter.notifyMatchFailure(
+        op, "failed to create group_broadcast all mask");
+  }
+  GroupBroadcastSelectorContext selectorContext{
+      op,
+      selectorKind,
+      sourceLaneStride,
+      selectorShift,
+      sourceLaneStrideShift,
+      indexScalarType,
+      indexType,
+      *allMask,
+      Value(),
+      {}};
+  return GroupBroadcastLoweringContext{std::move(selectorContext), sourceSlots,
+                                       selectorPeriod};
+}
+
 static FailureOr<Value> getGroupBroadcastSelector(
     GroupBroadcastSelectorContext &context, int64_t baseSlot,
     OneToNPatternRewriter &rewriter) {
@@ -8021,58 +8091,15 @@ static LogicalResult lowerGroupBroadcastParts(
     return rewriter.notifyMatchFailure(
         op, "group_broadcast requires 8/16/32-bit index elements");
   }
-  auto indexElementType =
-      IntegerType::get(rewriter.getContext(), indexBits,
-                       IntegerType::SignednessSemantics::Unsigned);
-  auto indexScalarType = IntegerType::get(rewriter.getContext(), indexBits);
-  auto indexType =
-      VRegType::get(rewriter.getContext(), firstSourceType.getElementCount(),
-                    indexElementType);
-  FailureOr<Value> allMask =
-      createAllTrueMaskForVReg(op->getLoc(), indexType, rewriter);
-  if (failed(allMask)) {
-    return rewriter.notifyMatchFailure(
-        op, "failed to create group_broadcast all mask");
-  }
-
-  VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
-  VMILayoutAttr sourceLayout = sourceVMIType.getLayoutAttr();
-  int64_t sourceSlots = sourceLayout.getSlots();
-  int64_t sourceLaneStride = sourceLayout.getLaneStride();
-  if (sourceSlots <= 0 || sourceLaneStride <= 0)
-    return rewriter.notifyMatchFailure(
-        op, "group_broadcast requires explicit positive source group slots");
-
-  FailureOr<GroupBroadcastSelectorPlan> selectorPlan =
-      chooseGroupBroadcastSelectorPlan(op, *fact, resultLayout, rewriter);
-  if (failed(selectorPlan)) {
+  FailureOr<GroupBroadcastLoweringContext> loweringContext =
+      createGroupBroadcastLoweringContext(
+          op, sourceVMIType, resultVMIType, *fact, firstSourceType, rewriter);
+  if (failed(loweringContext)) {
     return failure();
   }
-  GroupBroadcastSelectorKind selectorKind = selectorPlan->kind;
-  int64_t selectorPeriod = selectorPlan->period;
-
-  std::optional<int64_t> selectorShift;
-  std::optional<int64_t> sourceLaneStrideShift;
-  if (selectorKind != GroupBroadcastSelectorKind::Constant) {
-    selectorShift = getPowerOfTwoLog2(selectorPeriod);
-    sourceLaneStrideShift = getPowerOfTwoLog2(sourceLaneStride);
-    if (!selectorShift || !sourceLaneStrideShift)
-      return rewriter.notifyMatchFailure(
-          op, "group_broadcast ramp requires power-of-two selector period "
-              "and source lane stride");
-  }
-
-  GroupBroadcastSelectorContext selectorContext{
-      op,
-      selectorKind,
-      sourceLaneStride,
-      selectorShift,
-      sourceLaneStrideShift,
-      indexScalarType,
-      indexType,
-      *allMask,
-      Value(),
-      {}};
+  GroupBroadcastLoweringContext &context = *loweringContext;
+  GroupBroadcastSelectorContext &selectorContext = context.selector;
+  Value allMask = selectorContext.allMask;
   auto getSelector = [&selectorContext, &rewriter](int64_t baseSlot) {
     return getGroupBroadcastSelector(selectorContext, baseSlot, rewriter);
   };
@@ -8109,8 +8136,8 @@ static LogicalResult lowerGroupBroadcastParts(
         return rewriter.notifyMatchFailure(
             op, "group_broadcast failed to map the first result lane");
       int64_t firstGroup = *firstLogical / fact->groupSize;
-      int64_t sourceChunk = firstGroup / sourceSlots;
-      int64_t baseSlot = firstGroup % sourceSlots;
+      int64_t sourceChunk = firstGroup / context.sourceSlots;
+      int64_t baseSlot = firstGroup % context.sourceSlots;
       if (sourceChunk < 0 ||
           sourceChunk >= static_cast<int64_t>(sourceParts.size()))
         return rewriter.notifyMatchFailure(
@@ -8121,12 +8148,13 @@ static LogicalResult lowerGroupBroadcastParts(
       // scalar from each source VReg and then merge those splats by lane.  A
       // single vselr cannot express this case because its selector only
       // addresses lanes within one source VReg.
-      if (sourceSlots == 1 &&
-          selectorKind != GroupBroadcastSelectorKind::Constant) {
+      if (context.sourceSlots == 1 &&
+          selectorContext.kind != GroupBroadcastSelectorKind::Constant) {
         FailureOr<Value> merged = materializeSlots1GroupBroadcastChunk(
             op, resultType, resultVMIType, sourceParts, part, chunk,
-            firstGroup, fact->groupSize, selectorPeriod, fact->lanesPerPart,
-            rewriter, *allMask);
+            firstGroup, fact->groupSize, context.selectorPeriod,
+            fact->lanesPerPart,
+            rewriter, allMask);
         if (failed(merged)) {
           return failure();
         }
@@ -8138,7 +8166,8 @@ static LogicalResult lowerGroupBroadcastParts(
       // Check the table property against the canonical lane map so new table
       // rows cannot silently reuse an incompatible lowering plan.
       if (failed(verifyGroupBroadcastChunkMapping(
-              op, resultVMIType, selectorKind, selectorPeriod, sourceSlots,
+              op, resultVMIType, selectorContext.kind,
+          context.selectorPeriod, context.sourceSlots,
               fact->groupSize, part, chunk, firstGroup, sourceChunk,
               fact->lanesPerPart, rewriter))) {
         return failure();
@@ -8146,9 +8175,10 @@ static LogicalResult lowerGroupBroadcastParts(
 
       FailureOr<Value> chunkResult = materializeGroupBroadcastChunk(
           op, resultType, resultVMIType, sourceParts,
-          selectorKind, selectorPeriod, sourceSlots, fact->groupSize, part,
+          selectorContext.kind, context.selectorPeriod, context.sourceSlots,
+          fact->groupSize, part,
           chunk, firstGroup, sourceChunk, baseSlot, fact->lanesPerPart,
-          *allMask, getSelector, rewriter);
+          allMask, getSelector, rewriter);
       if (failed(chunkResult)) {
         return failure();
       }

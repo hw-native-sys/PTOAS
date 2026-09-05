@@ -510,3 +510,9 @@ iota lowering 回归通过。
 顺序及 arity/type 契约，lane-stride carrier 与单 chunk direct path 保持原实现。增量
 合规检查为 `errors=0 warnings=0`，`git diff --check` 通过；interleave memory 与连续
 load/store lowering 回归通过。
+
+本轮进一步将 `lowerGroupBroadcastParts` 的源布局、selector plan、shift 合法性及
+index mask 初始化抽取为 `createGroupBroadcastLoweringContext`，并以
+`GroupBroadcastLoweringContext` 传递真实的 lowering 状态。主函数仅保留结果 chunk
+枚举与分派，selector 生成顺序、缓存和错误诊断保持不变。增量合规检查为
+`errors=0 warnings=0`，`git diff --check` 通过；group-broadcast lowering 回归通过。
