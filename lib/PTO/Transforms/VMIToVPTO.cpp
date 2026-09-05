@@ -4218,6 +4218,103 @@ FailureOr<std::optional<SmallVector<Value>>> materializeSimpleDataLayoutConversi
   return std::nullopt;
 }
 
+static FailureOr<SmallVector<Value>> materializeDeinterleaved2ToContiguous(
+    Operation *op, ValueRange sourceParts, TypeRange resultTypes,
+    PatternRewriter &rewriter) {
+  bool invalidSource = sourceParts.empty() || sourceParts.size() % 2 != 0 ||
+                       resultTypes.empty();
+  if (invalidSource) {
+    return rewriter.notifyMatchFailure(
+        op, "deinterleaved=2 to contiguous materialization requires 2*N "
+            "source parts and at least one result part");
+  }
+  int64_t groups = sourceParts.size() / 2;
+  bool resultExceedsSource =
+      resultTypes.size() > static_cast<size_t>(2 * groups);
+  if (resultExceedsSource) {
+    return rewriter.notifyMatchFailure(
+        op, "deinterleaved=2 to contiguous materialization result arity "
+            "exceeds source footprint");
+  }
+  SmallVector<Value> results;
+  results.reserve(resultTypes.size());
+  for (int64_t i = 0; i < groups && results.size() < resultTypes.size(); ++i) {
+    Value lhs = sourceParts[i];
+    Value rhs = sourceParts[groups + i];
+    Type lhsType = lhs.getType();
+    if (lhsType != rhs.getType()) {
+      return rewriter.notifyMatchFailure(
+          op, "vintlv requires matching source part types");
+    }
+    Type lowType = resultTypes[results.size()];
+    bool hasHighResult = results.size() + 1 < resultTypes.size();
+    Type highType = hasHighResult ? resultTypes[results.size() + 1] : lowType;
+    if (lhsType != lowType || lhsType != highType) {
+      return rewriter.notifyMatchFailure(
+          op, "vintlv requires operands and results to share one type");
+    }
+    auto materialize = rewriter.create<VintlvOp>(
+        op->getLoc(), lowType, highType, lhs, rhs);
+    results.push_back(materialize.getLow());
+    if (hasHighResult) {
+      results.push_back(materialize.getHigh());
+    }
+  }
+  return results;
+}
+
+static FailureOr<SmallVector<Value>> materializeContiguousToDeinterleaved2(
+    Operation *op, ValueRange sourceParts, TypeRange resultTypes,
+    PatternRewriter &rewriter) {
+  bool invalidResult = sourceParts.empty() || resultTypes.empty() ||
+                       resultTypes.size() % 2 != 0;
+  if (invalidResult) {
+    return rewriter.notifyMatchFailure(
+        op, "contiguous to deinterleaved=2 materialization requires at least "
+            "one source part and 2*N result parts");
+  }
+  int64_t groups = resultTypes.size() / 2;
+  bool sourceExceedsResult =
+      sourceParts.size() > static_cast<size_t>(2 * groups);
+  if (sourceExceedsResult) {
+    return rewriter.notifyMatchFailure(
+        op, "contiguous to deinterleaved=2 materialization source footprint "
+            "exceeds result arity");
+  }
+  SmallVector<Value> part0;
+  SmallVector<Value> part1;
+  part0.reserve(groups);
+  part1.reserve(groups);
+  for (int64_t i = 0; i < groups; ++i) {
+    size_t lhsIndex = 2 * i;
+    if (lhsIndex >= sourceParts.size()) {
+      return rewriter.notifyMatchFailure(
+          op, "contiguous to deinterleaved=2 materialization missing source "
+              "part");
+    }
+    size_t rhsIndex = lhsIndex + 1 < sourceParts.size() ? lhsIndex + 1
+                                                          : lhsIndex;
+    Value lhs = sourceParts[lhsIndex];
+    Value rhs = sourceParts[rhsIndex];
+    bool mismatchedTypes = lhs.getType() != rhs.getType() ||
+                           lhs.getType() != resultTypes[i] ||
+                           lhs.getType() != resultTypes[groups + i];
+    if (mismatchedTypes) {
+      return rewriter.notifyMatchFailure(
+          op, "vdintlv requires operands and results to share one type");
+    }
+    auto materialize = rewriter.create<VdintlvOp>(
+        op->getLoc(), resultTypes[i], resultTypes[groups + i], lhs, rhs);
+    part0.push_back(materialize.getLow());
+    part1.push_back(materialize.getHigh());
+  }
+  SmallVector<Value> results;
+  results.reserve(resultTypes.size());
+  results.append(part0);
+  results.append(part1);
+  return results;
+}
+
 FailureOr<std::optional<SmallVector<Value>>> materializeDeinterleaved2Layout(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
@@ -4238,102 +4335,22 @@ FailureOr<std::optional<SmallVector<Value>>> materializeDeinterleaved2Layout(
     return std::nullopt;
   }
 
-  SmallVector<Value> results;
   if (toContiguous) {
-    bool invalidSource = sourceParts.empty() || sourceParts.size() % 2 != 0 ||
-                         resultTypes.empty();
-    if (invalidSource) {
-      (void)rewriter.notifyMatchFailure(
-          op, "deinterleaved=2 to contiguous materialization requires "
-              "2*N source parts and at least one result part");
+    FailureOr<SmallVector<Value>> results = materializeDeinterleaved2ToContiguous(
+        op, sourceParts, resultTypes, rewriter);
+    if (failed(results)) {
       return failure();
     }
-    int64_t groups = sourceParts.size() / 2;
-    bool resultExceedsSource =
-        resultTypes.size() > static_cast<size_t>(2 * groups);
-    if (resultExceedsSource) {
-      (void)rewriter.notifyMatchFailure(
-          op, "deinterleaved=2 to contiguous materialization result arity "
-              "exceeds source footprint");
-      return failure();
-    }
-    results.reserve(resultTypes.size());
-    for (int64_t i = 0; i < groups && results.size() < resultTypes.size();
-         ++i) {
-      Value lhs = sourceParts[i];
-      Value rhs = sourceParts[groups + i];
-      Type lhsType = lhs.getType();
-      Type rhsType = rhs.getType();
-      if (lhsType != rhsType) {
-        return rewriter.notifyMatchFailure(
-            op, "vintlv requires matching source part types");
-      }
-      Type lowType = resultTypes[results.size()];
-      bool hasHighResult = results.size() + 1 < resultTypes.size();
-      Type highType = hasHighResult
-                          ? resultTypes[results.size() + 1]
-                          : lowType;
-      if (lhsType != lowType || lhsType != highType) {
-        return rewriter.notifyMatchFailure(
-            op, "vintlv requires operands and results to share one type");
-      }
-      auto materialize = rewriter.create<VintlvOp>(
-          op->getLoc(), lowType, highType, lhs, rhs);
-      results.push_back(materialize.getLow());
-      if (hasHighResult) {
-        results.push_back(materialize.getHigh());
-      }
-    }
+    return std::optional<SmallVector<Value>>(std::move(*results));
   } else {
-    bool invalidResult = sourceParts.empty() || resultTypes.empty() ||
-                         resultTypes.size() % 2 != 0;
-    if (invalidResult) {
-      (void)rewriter.notifyMatchFailure(
-          op, "contiguous to deinterleaved=2 materialization requires "
-              "at least one source part and 2*N result parts");
+    FailureOr<SmallVector<Value>> results =
+        materializeContiguousToDeinterleaved2(op, sourceParts, resultTypes,
+                                              rewriter);
+    if (failed(results)) {
       return failure();
     }
-    int64_t groups = resultTypes.size() / 2;
-    bool sourceExceedsResult =
-        sourceParts.size() > static_cast<size_t>(2 * groups);
-    if (sourceExceedsResult) {
-      (void)rewriter.notifyMatchFailure(
-          op, "contiguous to deinterleaved=2 materialization source "
-              "footprint exceeds result arity");
-      return failure();
-    }
-    SmallVector<Value> part0;
-    SmallVector<Value> part1;
-    part0.reserve(groups);
-    part1.reserve(groups);
-    for (int64_t i = 0; i < groups; ++i) {
-      size_t lhsIndex = 2 * i;
-      if (lhsIndex >= sourceParts.size()) {
-        return rewriter.notifyMatchFailure(
-            op, "contiguous to deinterleaved=2 materialization missing "
-                "source part");
-      }
-      size_t rhsIndex = lhsIndex + 1 < sourceParts.size() ? lhsIndex + 1
-                                                            : lhsIndex;
-      Value lhs = sourceParts[lhsIndex];
-      Value rhs = sourceParts[rhsIndex];
-      bool mismatchedTypes = lhs.getType() != rhs.getType() ||
-                             lhs.getType() != resultTypes[i] ||
-                             lhs.getType() != resultTypes[groups + i];
-      if (mismatchedTypes) {
-        return rewriter.notifyMatchFailure(
-            op, "vdintlv requires operands and results to share one type");
-      }
-      auto materialize = rewriter.create<VdintlvOp>(
-          op->getLoc(), resultTypes[i], resultTypes[groups + i], lhs, rhs);
-      part0.push_back(materialize.getLow());
-      part1.push_back(materialize.getHigh());
-    }
-    results.reserve(resultTypes.size());
-    results.append(part0);
-    results.append(part1);
+    return std::optional<SmallVector<Value>>(std::move(*results));
   }
-  return std::optional<SmallVector<Value>>(std::move(results));
 }
 
 FailureOr<std::optional<SmallVector<Value>>> materializeDataLaneStrideConversion(
@@ -7281,17 +7298,22 @@ public:
     FailureOr<Value> rowStride = getSingleValue(
         op, adaptor.getRowStride(),
         "group_load row_stride must convert to one value", rewriter);
-    if (failed(source) || failed(offset) || failed(rowStride))
+    bool invalidOperands =
+        failed(source) || failed(offset) || failed(rowStride);
+    if (invalidOperands) {
       return failure();
+    }
 
     VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
-    if (resultLayout && resultLayout.isBlockDeinterleaved() &&
-        resultVMIType.getElementType().isF32()) {
+    bool isBlockF32 = resultLayout && resultLayout.isBlockDeinterleaved() &&
+                      resultVMIType.getElementType().isF32();
+    if (isBlockF32) {
       FailureOr<int64_t> groupSize = getGroupSizeFromNumGroups(
           resultVMIType, op.getNumGroupsAttr().getInt());
-      if (failed(groupSize))
+      if (failed(groupSize)) {
         return rewriter.notifyMatchFailure(
             op, "group_load requires num_groups to evenly divide lane count");
+      }
       if ((*groupSize != 16 || resultLayout.getFactor() != 2) &&
           (*groupSize != 32 || resultLayout.getFactor() != 4))
         return rewriter.notifyMatchFailure(

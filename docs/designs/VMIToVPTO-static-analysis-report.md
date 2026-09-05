@@ -429,3 +429,9 @@ granularity cast 的诊断及支持关系保持不变。源码增量合规检查
 优先诊断，store 的 shape checker 与诊断保持不变。源码增量合规检查、`git diff --check`
 及连续 load/store、interleave、group-store lowering 回归均通过；masked-load 专项样例
 按其既有测试约束失败，未显示本轮读写分派变化。
+
+本轮将 `materializeDeinterleaved2Layout` 的两个方向拆分为
+`materializeDeinterleaved2ToContiguous` 与 `materializeContiguousToDeinterleaved2`。
+前者只负责 `vintlv`，后者只负责 `vdintlv` 和结果 part 分配；外层仅负责布局方向
+判定及结果转发。同步补齐本轮触及的 group-load 控制语句大括号。源码增量合规检查、
+`git diff --check` 及连续 load/store、interleave memory lowering 回归通过。
