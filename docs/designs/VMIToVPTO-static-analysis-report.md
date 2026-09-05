@@ -2012,3 +2012,14 @@ mask 准备、结果块遍历及最终 `s32ToS8Alias` 处理；保持 `resultInd
 增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；`vmi_to_vpto_trunci_s32_to_s8_nosat.pto` lowering exit=0，输出
 仍包含 4 个按 P0/P1/P2/P3 顺序的 `vcvt`、3 个 `vor` 以及末尾 signed bitcast。
+
+# exti dense group-slot 单结果 lowering 职责整改
+
+本轮在模板 `OneToNVMIExtIOpPattern` 中引入
+`buildDenseGroupSlotExtensionResult`，将 dense group-slot 路径中单个 physical result 的
+carrier shape/result type 校验、逐级 `VsunpackOp`/`VzunpackOp` 以及最终 carrier bitcast
+抽取为独立 helper。`lowerDenseGroupSlotExtension` 现在只负责结果遍历和扁平化；保持有符号
+与无符号 unpack 指令选择、每级 bit width/lane 校验、source/result 类型关系、结果顺序和
+原有诊断语义不变。增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_to_vpto_group_slot_integer_extension_matrix.pto` lowering
+exit=0，现有 slots=1 的 EVEN/P0 转换输出保持不变。
