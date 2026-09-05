@@ -6059,17 +6059,20 @@ FailureOr<Value> createSubVLGroupPeriodicChunk(Location loc, Type resultType,
                                                StringAttr orderAttr,
                                                PatternRewriter &rewriter) {
   auto vregType = dyn_cast<VRegType>(resultType);
-  if (!vregType)
+  if (!vregType) {
     return failure();
+  }
 
   int64_t lanesPerPart = vregType.getElementCount();
-  if (groupSize <= 0 || lanesPerPart % groupSize != 0)
+  if (groupSize <= 0 || lanesPerPart % groupSize != 0) {
     return failure();
+  }
 
   FailureOr<Value> allMask =
       createAllTrueMaskForVReg(loc, vregType, rewriter);
-  if (failed(allMask))
+  if (failed(allMask)) {
     return failure();
+  }
 
   // group_size==1: dst[i] = base for every lane — broadcast, not a ramp pack.
   if (groupSize == 1) {
@@ -6081,7 +6084,7 @@ FailureOr<Value> createSubVLGroupPeriodicChunk(Location loc, Type resultType,
 
   StringRef order = orderAttr ? orderAttr.getValue() : StringRef("ASC");
   int64_t groupsPerChunk = lanesPerPart / groupSize;
-  if (groupsPerChunk == 1)
+  if (groupsPerChunk == 1) {
     return createIotaContiguousChunk(loc, resultType, base, /*laneOffset=*/0,
                                      orderAttr, rewriter);
 
@@ -6103,8 +6106,11 @@ FailureOr<Value> createSubVLGroupPeriodicChunk(Location loc, Type resultType,
       getMaskTypeForVReg(vregType, rewriter.getContext());
   FailureOr<Value> zeroScalar =
       createScalarOffsetConstant(loc, base.getType(), 0, rewriter);
-  if (failed(full) || failed(maskType) || failed(zeroScalar))
+  bool failedResidualInputs =
+      failed(full) || failed(maskType) || failed(zeroScalar);
+  if (failedResidualInputs) {
     return failure();
+  }
 
   return createResidualSubVLGroupPeriodicChunk(
       loc, resultType, base, order, *full, *maskType, *zeroScalar, *allMask,
@@ -6761,6 +6767,96 @@ private:
     return success();
   }
 
+  LogicalResult lowerDeinterleaved2(
+      VMILoadOp op, OneToNPatternRewriter &rewriter, Value source, Value offset,
+      ArrayRef<Type> resultTypes, int64_t lanesPerPart, StringRef dist) const {
+    bool invalidFactor2Arity = resultTypes.size() % 2 != 0;
+    if (invalidFactor2Arity) {
+      return rewriter.notifyMatchFailure(
+          op, "vldsx2 deinterleaved=2 load requires even physical arity");
+    }
+    int64_t groups = resultTypes.size() / 2;
+    SmallVector<Value> lows;
+    SmallVector<Value> highs;
+    lows.reserve(groups);
+    highs.reserve(groups);
+    for (int64_t group = 0; group < groups; ++group) {
+      Type lowType = resultTypes[group];
+      Type highType = resultTypes[groups + group];
+      if (lowType != highType) {
+        return rewriter.notifyMatchFailure(
+            op, "vldsx2 requires matching low/high result types");
+      }
+      Value chunkOffset = createChunkOffset(
+          op.getLoc(), offset, group * 2 * lanesPerPart, rewriter);
+      auto load = rewriter.create<Vldsx2Op>(
+          op.getLoc(), lowType, highType, Type{}, source, chunkOffset,
+          rewriter.getStringAttr(dist));
+      lows.push_back(load.getLow());
+      highs.push_back(load.getHigh());
+    }
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    results.append(lows);
+    results.append(highs);
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
+  LogicalResult lowerDeinterleaved4(
+      VMILoadOp op, OneToNPatternRewriter &rewriter, Value source, Value offset,
+      ArrayRef<Type> resultTypes, int64_t lanesPerPart, StringRef dist) const {
+    bool invalidFactor4Arity = resultTypes.size() % 4 != 0;
+    if (invalidFactor4Arity) {
+      return rewriter.notifyMatchFailure(
+          op, "vldsx2 deinterleaved=4 load requires physical arity divisible by 4");
+    }
+    int64_t groups = resultTypes.size() / 4;
+    SmallVector<Value> parts[4];
+    for (auto &part : parts) {
+      part.reserve(groups);
+    }
+    for (int64_t group = 0; group < groups; ++group) {
+      Type types[4] = {resultTypes[group], resultTypes[groups + group],
+                       resultTypes[2 * groups + group],
+                       resultTypes[3 * groups + group]};
+      bool mismatchedTypes = types[0] != types[1] || types[0] != types[2] ||
+                             types[0] != types[3];
+      if (mismatchedTypes) {
+        return rewriter.notifyMatchFailure(
+            op, "vldsx2 deinterleaved=4 load requires matching part types");
+      }
+      Value firstOffset =
+          createChunkOffset(op.getLoc(), offset, group * 4 * lanesPerPart,
+                            rewriter);
+      Value secondOffset = createChunkOffset(
+          op.getLoc(), offset, (group * 4 + 2) * lanesPerPart, rewriter);
+      auto first = rewriter.create<Vldsx2Op>(
+          op.getLoc(), types[0], types[1], Type{}, source, firstOffset,
+          rewriter.getStringAttr(dist));
+      auto second = rewriter.create<Vldsx2Op>(
+          op.getLoc(), types[2], types[3], Type{}, source, secondOffset,
+          rewriter.getStringAttr(dist));
+      auto even = rewriter.create<VdintlvOp>(
+          op.getLoc(), types[0], types[2], first.getLow(), second.getLow());
+      auto odd = rewriter.create<VdintlvOp>(
+          op.getLoc(), types[1], types[3], first.getHigh(), second.getHigh());
+      parts[0].push_back(even.getLow());
+      parts[1].push_back(odd.getLow());
+      parts[2].push_back(even.getHigh());
+      parts[3].push_back(odd.getHigh());
+    }
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (auto &part : parts) {
+      results.append(part);
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
 public:
 
   LogicalResult
@@ -6831,32 +6927,8 @@ public:
               firstType, VPTOMemoryOpFamily::LoadX2, *dist);
       if (canUseDist &&
           resultTypes.size() % 2 == 0) {
-        int64_t groups = resultTypes.size() / 2;
-        SmallVector<Value> lows;
-        SmallVector<Value> highs;
-        lows.reserve(groups);
-        highs.reserve(groups);
-        for (int64_t group = 0; group < groups; ++group) {
-          Type lowType = resultTypes[group];
-          Type highType = resultTypes[groups + group];
-          if (lowType != highType)
-            return rewriter.notifyMatchFailure(
-                op, "vldsx2 requires matching low/high result types");
-          Value chunkOffset = createChunkOffset(
-              op.getLoc(), *offset, group * 2 * *lanesPerPart, rewriter);
-          auto load = rewriter.create<Vldsx2Op>(op.getLoc(), lowType, highType,
-                                                /*updated_base=*/Type{},
-                                                *source, chunkOffset,
-                                                rewriter.getStringAttr(*dist));
-          lows.push_back(load.getLow());
-          highs.push_back(load.getHigh());
-        }
-        SmallVector<Value> results;
-        results.reserve(resultTypes.size());
-        results.append(lows);
-        results.append(highs);
-        replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
-        return success();
+        return lowerDeinterleaved2(op, rewriter, *source, *offset, resultTypes,
+                                   *lanesPerPart, *dist);
       }
     }
 
@@ -6875,59 +6947,8 @@ public:
               firstType, VPTOMemoryOpFamily::LoadX2, *dist);
       if (canUseDist &&
           resultTypes.size() % 4 == 0) {
-        int64_t groups = resultTypes.size() / 4;
-        SmallVector<Value> part0;
-        SmallVector<Value> part1;
-        SmallVector<Value> part2;
-        SmallVector<Value> part3;
-        part0.reserve(groups);
-        part1.reserve(groups);
-        part2.reserve(groups);
-        part3.reserve(groups);
-        for (int64_t group = 0; group < groups; ++group) {
-          Type part0Type = resultTypes[group];
-          Type part1Type = resultTypes[groups + group];
-          Type part2Type = resultTypes[2 * groups + group];
-          Type part3Type = resultTypes[3 * groups + group];
-          if (part0Type != part1Type || part0Type != part2Type ||
-              part0Type != part3Type)
-            return rewriter.notifyMatchFailure(
-                op, "vldsx2 deinterleaved=4 load requires matching part "
-                    "types");
-
-          Value firstOffset = createChunkOffset(
-              op.getLoc(), *offset, group * 4 * *lanesPerPart, rewriter);
-          Value secondOffset = createChunkOffset(
-              op.getLoc(), *offset, (group * 4 + 2) * *lanesPerPart, rewriter);
-          auto first = rewriter.create<Vldsx2Op>(
-              op.getLoc(), part0Type, part1Type, /*updated_base=*/Type{},
-              *source, firstOffset,
-              rewriter.getStringAttr(*dist));
-          auto second = rewriter.create<Vldsx2Op>(
-              op.getLoc(), part2Type, part3Type, /*updated_base=*/Type{},
-              *source, secondOffset,
-              rewriter.getStringAttr(*dist));
-
-          auto even =
-              rewriter.create<VdintlvOp>(op.getLoc(), part0Type, part2Type,
-                                         first.getLow(), second.getLow());
-          auto odd =
-              rewriter.create<VdintlvOp>(op.getLoc(), part1Type, part3Type,
-                                         first.getHigh(), second.getHigh());
-          part0.push_back(even.getLow());
-          part1.push_back(odd.getLow());
-          part2.push_back(even.getHigh());
-          part3.push_back(odd.getHigh());
-        }
-
-        SmallVector<Value> results;
-        results.reserve(resultTypes.size());
-        results.append(part0);
-        results.append(part1);
-        results.append(part2);
-        results.append(part3);
-        replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
-        return success();
+        return lowerDeinterleaved4(op, rewriter, *source, *offset, resultTypes,
+                                   *lanesPerPart, *dist);
       }
     }
 

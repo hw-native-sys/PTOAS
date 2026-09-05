@@ -285,6 +285,13 @@ element-deinterleaved factor=2/4 的方向判断及失败传播，外层只遍�
 `vmi_to_vpto_ensure_mask_granularity.pto` 继续通过完整 lowering，增量合规检查与
 `git diff --check` 通过。
 
+本轮进一步将 direct deinterleaved load 的 factor=2/4 物理构造分别抽取为
+`lowerDeinterleaved2` 与 `lowerDeinterleaved4`。两个 helper 分别封装 `vldsx2` 的
+chunk offset、结果类型一致性、factor=4 的两级 `vdintlv` 重排及结果替换；主 load
+pattern 仅负责 footprint、地址 dist 合法性和路径选择。普通 load/store 代表性 case
+回归通过，涉及 pack/unpack 的多 chunk 测试仍受既有 pipeline invariant 约束；增量
+合规检查与 `git diff --check` 通过。
+
 本轮将 `OneToNVMIGroupBroadcastLoadOpPattern` 的 E2B lowering 抽取为
 `lowerDirectE2B`。helper 集中负责 E2B layout/element/stride/arity 契约、packet
 `vlds` 生成和跨 dense-split part 的结果复用；主 `matchAndRewrite` 仅保留 BRC、E2B
