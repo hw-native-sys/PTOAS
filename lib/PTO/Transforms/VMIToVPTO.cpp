@@ -7338,6 +7338,41 @@ private:
     return success();
   }
 
+  std::optional<LogicalResult> lowerDirectDeinterleaved(
+      VMILoadOp op, OneToNPatternRewriter &rewriter, Value source, Value offset,
+      VMIVRegType resultVMIType, VMILayoutAttr resultLayout,
+      ArrayRef<Type> resultTypes, int64_t lanesPerPart,
+      bool noWiderThanContiguous) const {
+    bool unsupportedLayout = !resultLayout || !resultLayout.isDeinterleaved();
+    if (unsupportedLayout || !noWiderThanContiguous) {
+      return std::nullopt;
+    }
+    int64_t factor = resultLayout.getFactor();
+    bool supportedFactor = factor == 2 || factor == 4;
+    if (!supportedFactor) {
+      return std::nullopt;
+    }
+    std::optional<std::string> dist =
+        getX2MemoryDistToken(resultVMIType.getElementType(), "DINTLV");
+    auto firstType =
+        resultTypes.empty() ? VRegType{} : dyn_cast<VRegType>(resultTypes.front());
+    bool canUseDist =
+        dist && firstType &&
+        isDirectMemoryDistAddressLegal(
+            op.getSource(), op.getOffset(), resultVMIType.getElementType(),
+            firstType, VPTOMemoryOpFamily::LoadX2, *dist);
+    bool validArity = resultTypes.size() % static_cast<size_t>(factor) == 0;
+    if (!canUseDist || !validArity) {
+      return std::nullopt;
+    }
+    if (factor == 2) {
+      return lowerDeinterleaved2(op, rewriter, source, offset, resultTypes,
+                                 lanesPerPart, *dist);
+    }
+    return lowerDeinterleaved4(op, rewriter, source, offset, resultTypes,
+                               lanesPerPart, *dist);
+  }
+
 public:
 
   LogicalResult
@@ -7396,43 +7431,12 @@ public:
       return rewriter.notifyMatchFailure(
           op, "failed to compare load physical footprint");
 
-    if (resultLayout && resultLayout.isDeinterleaved() &&
-        resultLayout.getFactor() == 2 && *noWiderThanContiguous) {
-      std::optional<std::string> dist =
-          getX2MemoryDistToken(resultVMIType.getElementType(), "DINTLV");
-      auto firstType = resultTypes.empty()
-                           ? VRegType{}
-                           : dyn_cast<VRegType>(resultTypes.front());
-      bool canUseDist =
-          dist && firstType &&
-          isDirectMemoryDistAddressLegal(
-              op.getSource(), op.getOffset(), resultVMIType.getElementType(),
-              firstType, VPTOMemoryOpFamily::LoadX2, *dist);
-      if (canUseDist &&
-          resultTypes.size() % 2 == 0) {
-        return lowerDeinterleaved2(op, rewriter, *source, *offset, resultTypes,
-                                   *lanesPerPart, *dist);
-      }
-    }
-
-    if (resultLayout && resultLayout.isDeinterleaved() &&
-        resultLayout.getFactor() == 4 &&
-        *noWiderThanContiguous) {
-      std::optional<std::string> dist =
-          getX2MemoryDistToken(resultVMIType.getElementType(), "DINTLV");
-      auto firstType = resultTypes.empty()
-                           ? VRegType{}
-                           : dyn_cast<VRegType>(resultTypes.front());
-      bool canUseDist =
-          dist && firstType &&
-          isDirectMemoryDistAddressLegal(
-              op.getSource(), op.getOffset(), resultVMIType.getElementType(),
-              firstType, VPTOMemoryOpFamily::LoadX2, *dist);
-      if (canUseDist &&
-          resultTypes.size() % 4 == 0) {
-        return lowerDeinterleaved4(op, rewriter, *source, *offset, resultTypes,
-                                   *lanesPerPart, *dist);
-      }
+    std::optional<LogicalResult> deinterleavedResult =
+        lowerDirectDeinterleaved(op, rewriter, *source, *offset, resultVMIType,
+                                 resultLayout, resultTypes, *lanesPerPart,
+                                 *noWiderThanContiguous);
+    if (deinterleavedResult) {
+      return *deinterleavedResult;
     }
 
     return lowerContiguous(op, rewriter, *source, *offset, resultVMIType,
