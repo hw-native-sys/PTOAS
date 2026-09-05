@@ -5637,6 +5637,50 @@ FailureOr<Value> createIotaContiguousChunk(Location loc, Type resultType,
       .getResult();
 }
 
+FailureOr<std::optional<Value>> createPowerOfTwoSubVLChunk(
+    Location loc, Type resultType, Value base, int64_t groupSize,
+    StringRef order, Value allMask, PatternRewriter &rewriter) {
+  bool unsupportedShape =
+      !llvm::isPowerOf2_64(static_cast<uint64_t>(groupSize)) ||
+      !isa<IntegerType>(base.getType());
+  if (unsupportedShape) {
+    return std::nullopt;
+  }
+
+  FailureOr<Value> zeroScalar =
+      createScalarOffsetConstant(loc, base.getType(), 0, rewriter);
+  FailureOr<Value> maskScalar = createScalarOffsetConstant(
+      loc, base.getType(), groupSize - 1, rewriter);
+  bool failedScalars = failed(zeroScalar) || failed(maskScalar);
+  if (failedScalars) {
+    return failure();
+  }
+
+  Value laneIds =
+      rewriter.create<VciOp>(loc, resultType, *zeroScalar, StringAttr{})
+          .getResult();
+  Value maskVec =
+      rewriter
+          .create<VdupOp>(loc, resultType, *maskScalar, allMask,
+                          /*position=*/nullptr)
+          .getResult();
+  Value rem = rewriter
+                  .create<VandOp>(loc, resultType, laneIds, maskVec, allMask)
+                  .getResult();
+  if (order == "DESC") {
+    Value baseVec =
+        rewriter
+            .create<VdupOp>(loc, resultType, base, allMask,
+                            /*position=*/nullptr)
+            .getResult();
+    return std::optional<Value>(
+        rewriter.create<VsubOp>(loc, resultType, baseVec, rem, allMask)
+            .getResult());
+  }
+  return std::optional<Value>(
+      rewriter.create<VaddsOp>(loc, resultType, rem, base, allMask).getResult());
+}
+
 /// Pack group-periodic ramps inside one physical VL when S < physVL and
 /// physVL % S == 0 (e.g. i32 L=64,group=2 → [base..base+31 | base..base+31]).
 ///
@@ -5683,37 +5727,13 @@ FailureOr<Value> createSubVLGroupPeriodicChunk(Location loc, Type resultType,
 
   // Power-of-2 S: dst[i] = base ± (i % S) via AND-mask (beats O(G) vsel pack
   // and VL/2 VOR/mask duplication). Lane ids are always an ascending vci(0).
-  if (llvm::isPowerOf2_64(static_cast<uint64_t>(groupSize)) &&
-      isa<IntegerType>(base.getType())) {
-    FailureOr<Value> zeroScalar =
-        createScalarOffsetConstant(loc, base.getType(), 0, rewriter);
-    FailureOr<Value> maskScalar = createScalarOffsetConstant(
-        loc, base.getType(), groupSize - 1, rewriter);
-    if (failed(zeroScalar) || failed(maskScalar))
-      return failure();
-
-    Value laneIds =
-        rewriter.create<VciOp>(loc, resultType, *zeroScalar, StringAttr{})
-            .getResult();
-    Value maskVec =
-        rewriter
-            .create<VdupOp>(loc, resultType, *maskScalar, *allMask,
-                            /*position=*/nullptr)
-            .getResult();
-    Value rem = rewriter
-                    .create<VandOp>(loc, resultType, laneIds, maskVec, *allMask)
-                    .getResult();
-    if (order == "DESC") {
-      Value baseVec =
-          rewriter
-              .create<VdupOp>(loc, resultType, base, *allMask,
-                              /*position=*/nullptr)
-              .getResult();
-      return rewriter.create<VsubOp>(loc, resultType, baseVec, rem, *allMask)
-          .getResult();
-    }
-    return rewriter.create<VaddsOp>(loc, resultType, rem, base, *allMask)
-        .getResult();
+  FailureOr<std::optional<Value>> powerOfTwo = createPowerOfTwoSubVLChunk(
+      loc, resultType, base, groupSize, order, *allMask, rewriter);
+  if (failed(powerOfTwo)) {
+    return failure();
+  }
+  if (powerOfTwo->has_value()) {
+    return **powerOfTwo;
   }
 
   FailureOr<Value> full =
