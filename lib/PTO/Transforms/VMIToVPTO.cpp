@@ -13973,10 +13973,13 @@ public:
           originalResultTypes, rewriter);
     }
 
-    if ((factor != 2 && factor != 4) ||
-        sourceParts.size() != resultTypes.size() * factor)
+    bool invalidFactorArity =
+        (factor != 2 && factor != 4) ||
+        sourceParts.size() != resultTypes.size() * factor;
+    if (invalidFactorArity) {
       return rewriter.notifyMatchFailure(
           op, "unsupported physical trunci source/result arity relation");
+    }
 
     ArrayRef<StringRef> parts;
     if (factor == 2) {
@@ -14098,6 +14101,42 @@ static int64_t getElementDeinterleaveFactor(VMILayoutAttr layout) {
   return 0;
 }
 
+static LogicalResult lowerWidenFpToInt(
+    Operation *op, ValueRange sourceParts, ArrayRef<VRegType> resultTypes,
+    ArrayRef<StringRef> parts, StringAttr rnd, StringAttr sat,
+    StringRef arityDiagnostic, StringRef maskDiagnostic,
+    TypeConverter *typeConverter, OneToNPatternRewriter &rewriter) {
+  bool invalidArity =
+      parts.empty() || resultTypes.size() != parts.size() * sourceParts.size();
+  if (invalidArity) {
+    return rewriter.notifyMatchFailure(op, arityDiagnostic);
+  }
+  auto sourceType = dyn_cast<VRegType>(sourceParts.front().getType());
+  if (!sourceType) {
+    return rewriter.notifyMatchFailure(op, maskDiagnostic);
+  }
+  FailureOr<Value> mask =
+      createAllTrueMaskForVReg(op->getLoc(), sourceType, rewriter);
+  if (failed(mask)) {
+    return rewriter.notifyMatchFailure(op, maskDiagnostic);
+  }
+  SmallVector<Value> results;
+  results.reserve(resultTypes.size());
+  for (size_t partIndex = 0; partIndex < parts.size(); ++partIndex) {
+    for (auto [chunkIndex, sourcePart] : llvm::enumerate(sourceParts)) {
+      VRegType resultType =
+          resultTypes[partIndex * sourceParts.size() + chunkIndex];
+      results.push_back(
+          rewriter
+              .create<VcvtOp>(op->getLoc(), resultType, sourcePart, *mask, rnd,
+                              sat, rewriter.getStringAttr(parts[partIndex]))
+              .getResult());
+    }
+  }
+  replaceOpWithFlatConvertedValues(rewriter, op, results, *typeConverter);
+  return success();
+}
+
 struct OneToNVMIFPToSIOpPattern : OneToNOpConversionPattern<VMIFPToSIOp> {
   using OneToNOpConversionPattern<VMIFPToSIOp>::OneToNOpConversionPattern;
 
@@ -14203,37 +14242,12 @@ struct OneToNVMIFPToSIOpPattern : OneToNOpConversionPattern<VMIFPToSIOp> {
         return success();
       }
 
-      // Standard 2× EvenOdd: 1 source chunk → 2 result chunks.
-      if (resultTypes.size() != 2 * sourceParts.size())
-        return rewriter.notifyMatchFailure(
-            op, "widen fptosi requires result arity = 2 × source arity");
-
       static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
-      SmallVector<Value> results;
-      results.reserve(resultTypes.size());
-      for (int64_t partIndex = 0; partIndex < 2; ++partIndex) {
-        for (auto [chunkIndex, sourcePart] : llvm::enumerate(sourceParts)) {
-          VRegType resultType =
-              resultVRegTypes[partIndex * sourceParts.size() + chunkIndex];
-          FailureOr<Value> mask =
-              createAllTrueMaskForVReg(op.getLoc(),
-                                       cast<VRegType>(sourcePart.getType()),
-                                       rewriter);
-          if (failed(mask))
-            return rewriter.notifyMatchFailure(
-                op, "failed to build fptosi mask");
-          results.push_back(
-              rewriter
-                  .create<VcvtOp>(op.getLoc(), resultType, sourcePart, *mask,
-                                  rnd, sat,
-                                  rewriter.getStringAttr(
-                                      kEvenOddParts[partIndex]))
-                  .getResult());
-        }
-      }
-      replaceOpWithFlatConvertedValues(rewriter, op, results,
-                                       *this->getTypeConverter());
-      return success();
+      return lowerWidenFpToInt(
+          op, sourceParts, resultVRegTypes, kEvenOddParts, rnd, sat,
+          "widen fptosi requires result arity = 2 × source arity",
+          "failed to build fptosi widen mask", *this->getTypeConverter(),
+          rewriter);
     }
 
     // Narrow: sourceFactor source chunks merge into 1 result chunk.
@@ -14344,30 +14358,11 @@ struct OneToNVMIFPToUIOpPattern
             op, "widen fptoui requires result arity = 2 × source arity");
 
       static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
-      SmallVector<Value> results;
-      results.reserve(resultTypes.size());
-      for (int64_t partIndex = 0; partIndex < 2; ++partIndex) {
-        for (auto [chunkIndex, sourcePart] : llvm::enumerate(sourceParts)) {
-          VRegType resultType =
-              resultVRegTypes[partIndex * sourceParts.size() + chunkIndex];
-          FailureOr<Value> mask =
-              createAllTrueMaskForVReg(op.getLoc(),
-                                       cast<VRegType>(sourcePart.getType()),
-                                       rewriter);
-          if (failed(mask))
-            return rewriter.notifyMatchFailure(
-                op, "failed to build fptoui widen mask");
-          results.push_back(
-              rewriter
-                  .create<VcvtOp>(op.getLoc(), resultType, sourcePart, *mask,
-                                  rnd, sat,
-                                  rewriter.getStringAttr(kEvenOddParts[partIndex]))
-                  .getResult());
-        }
-      }
-      replaceOpWithFlatConvertedValues(rewriter, op, results,
-                                       *this->getTypeConverter());
-      return success();
+      return lowerWidenFpToInt(
+          op, sourceParts, resultVRegTypes, kEvenOddParts, rnd, sat,
+          "widen fptoui requires result arity = 2 × source arity",
+          "failed to build fptoui widen mask", *this->getTypeConverter(),
+          rewriter);
     }
 
     // Narrow (f16→u8): EvenOdd — source parts are grouped by EvenOdd factor,

@@ -526,6 +526,13 @@ stride、pointer、result arity、block elements 以及各 part chunk uniformity
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续 load/store 与
 group-store 代表性 lowering 均成功。
 
+本轮将 `fptosi`/`fptoui` 的 widen（Even/Odd）物理发射路径统一抽取为
+`lowerWidenFpToInt`。helper 负责 source/result physical arity、all-true mask、part
+索引和逐 chunk `VcvtOp`/结果替换；两个 pattern 保留各自的 conversion contract 与
+诊断文本。该拆分保持 signed/unsigned widen 支持矩阵和结果顺序不变。增量合规检查结果
+为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续 load/store 与
+group-store 代表性 lowering 均成功。
+
 本轮将 `OneToNVMISIToFPOpPattern` 的 same-width 与 widening 物理转换发射抽取为
 `lowerConversion`。helper 统一负责物理 arity、`VcvtOp` part 选择及结果替换；主 pattern
 保留 source/result element contract 与 mask 构造。该拆分保持 `si32→f32` 与 `si8→f16`
