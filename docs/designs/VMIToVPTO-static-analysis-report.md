@@ -722,6 +722,12 @@ mask 语义、诊断文本和其它路径不变。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；interleave/shuffle
 相关 lowering exit=0。
 
+本轮进一步将 shuffle 的零拷贝 forwarding 路径抽取为 `lowerForwarding`，集中处理源
+physical part 范围检查、identity forwarding 校验和结果替换；主 pattern 继续保持
+forwarding → lane0 splat → vselr 的策略优先级。该拆分减少重复控制流并保持 shuffle
+语义与诊断不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；interleave/shuffle lowering exit=0。
+
 复核 interleave 模板的 contiguous lowering 时发现 `invalidSingleChunkTypes` 条件缺少
 闭合大括号，导致直接 `TargetOp` 构造语句错误地落入失败分支。已补齐控制流边界，恢复
 contiguous interleave 的正常 lowering；该修复不改变支持矩阵或结果语义。增量合规检查

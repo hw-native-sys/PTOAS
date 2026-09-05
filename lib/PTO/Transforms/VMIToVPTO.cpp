@@ -15121,6 +15121,28 @@ struct OneToNVMIShuffleOpPattern : OneToNOpConversionPattern<VMIShuffleOp> {
   using OneToNOpConversionPattern<VMIShuffleOp>::OneToNOpConversionPattern;
 
 private:
+  LogicalResult lowerForwarding(
+      VMIShuffleOp op, OneToNPatternRewriter &rewriter, ValueRange sourceParts,
+      ArrayRef<Type> resultTypes, ArrayRef<int64_t> sourceIndices) const {
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (int64_t sourceIndex : sourceIndices) {
+      bool sourceOutOfBounds =
+          sourceIndex < 0 || sourceIndex >= static_cast<int64_t>(sourceParts.size());
+      if (sourceOutOfBounds) {
+        return rewriter.notifyMatchFailure(
+            op, "shuffle forwarding source part range is out of bounds");
+      }
+      results.push_back(sourceParts[sourceIndex]);
+    }
+    if (failed(verifyIdentityPartForwarding(op, results, resultTypes, rewriter))) {
+      return failure();
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
   LogicalResult lowerLane0Splat(
       VMIShuffleOp op, OneToNPatternRewriter &rewriter, ValueRange sourceParts,
       ArrayRef<Type> resultTypes, int64_t sourceIndex) const {
@@ -15175,21 +15197,8 @@ public:
     FailureOr<SmallVector<int64_t>> sourceFlatIndices =
         computeShuffleForwardingSourceParts(op, &reason);
     if (succeeded(sourceFlatIndices)) {
-      SmallVector<Value> results;
-      results.reserve(resultTypes.size());
-      for (int64_t sourceFlatIndex : *sourceFlatIndices) {
-        if (sourceFlatIndex >= static_cast<int64_t>(sourceParts.size()))
-          return rewriter.notifyMatchFailure(
-              op, "shuffle forwarding source part range is out of bounds");
-        results.push_back(sourceParts[sourceFlatIndex]);
-      }
-
-      if (failed(
-              verifyIdentityPartForwarding(op, results, resultTypes, rewriter)))
-        return failure();
-
-      replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
-      return success();
+      return lowerForwarding(op, rewriter, sourceParts, resultTypes,
+                             *sourceFlatIndices);
     }
 
     std::string splatReason;
