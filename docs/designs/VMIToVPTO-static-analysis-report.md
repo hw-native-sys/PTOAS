@@ -593,6 +593,12 @@ arity 和 power-of-two block 校验。chunk 顺序、active-lanes 限幅和失�
 增量合规检查为 `errors=0 warnings=0`，`git diff --check` 通过；dynamic
 create-group-mask lowering 回归通过。
 
+本轮将 `materializeMaskLaneStridePack` 的 `ppack`/`por` 状态封装为
+`MaskLaneStridePackContext`，集中管理 all-true mask 缓存、低/高 half pack 及 mask 合并；
+外层仅负责 source/result arity 和 chunk 枚举。pack 顺序与 lane_stride=2/4 语义保持不变。
+增量合规检查为 `errors=0 warnings=0`，`git diff --check` 通过；mask granularity
+lowering 回归通过。
+
 本轮将 `lowerGroupBroadcastParts` 的单个结果 chunk 定位、slots=1 特殊合并、selector
 映射验证和普通 selector 物化抽取为 `lowerGroupBroadcastChunk`。外层仅负责 layout
 fact、context 初始化及 part/chunk 枚举；source chunk 边界、结果顺序和 selector cache

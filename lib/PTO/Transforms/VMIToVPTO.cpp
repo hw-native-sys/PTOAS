@@ -4944,6 +4944,40 @@ static FailureOr<SmallVector<Value>> materializeMaskLaneStrideUnpack(
   return results;
 }
 
+struct MaskLaneStridePackContext {
+  Operation *op;
+  PatternRewriter &rewriter;
+  StringAttr lower;
+  StringAttr higher;
+  Value allTrue;
+
+  FailureOr<Value> merge(Value lhs, Value rhs) {
+    if (!allTrue) {
+      FailureOr<Value> mask = createAllTrueMask(
+          op->getLoc(), cast<MaskType>(lhs.getType()), rewriter);
+      if (failed(mask)) {
+        return failure();
+      }
+      allTrue = *mask;
+    }
+    return rewriter
+        .create<PorOp>(op->getLoc(), lhs.getType(), lhs, rhs, allTrue)
+        .getResult();
+  }
+
+  FailureOr<Value> packPair(Value lowSource, std::optional<Value> highSource,
+                            MaskType maskType) {
+    Value packed = rewriter.create<PpackOp>(op->getLoc(), maskType, lowSource,
+                                            lower);
+    if (!highSource) {
+      return packed;
+    }
+    Value higherPacked = rewriter.create<PpackOp>(
+        op->getLoc(), maskType, *highSource, higher);
+    return merge(packed, higherPacked);
+  }
+};
+
 static FailureOr<SmallVector<Value>> materializeMaskLaneStridePack(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     int64_t laneStride, PatternRewriter &rewriter) {
@@ -4959,35 +4993,9 @@ static FailureOr<SmallVector<Value>> materializeMaskLaneStridePack(
         op, "dense mask lane_stride pack materialization source arity does "
             "not fit result arity");
   }
-  StringAttr lower = rewriter.getStringAttr("LOWER");
-  StringAttr higher = rewriter.getStringAttr("HIGHER");
-  Value allTrue;
-  auto mergeMasks = [&allTrue, &op, &rewriter](Value lhs,
-                                                Value rhs) -> FailureOr<Value> {
-    if (!allTrue) {
-      FailureOr<Value> mask = createAllTrueMask(
-          op->getLoc(), cast<MaskType>(lhs.getType()), rewriter);
-      if (failed(mask)) {
-        return failure();
-      }
-      allTrue = *mask;
-    }
-    return rewriter.create<PorOp>(op->getLoc(), lhs.getType(), lhs, rhs,
-                                  allTrue)
-        .getResult();
-  };
-  auto packPair = [&mergeMasks, &lower, &higher, &rewriter, &op](
-                      Value lowSource, std::optional<Value> highSource,
-                      MaskType maskType) -> FailureOr<Value> {
-    Value packed = rewriter.create<PpackOp>(op->getLoc(), maskType, lowSource,
-                                            lower);
-    if (!highSource) {
-      return packed;
-    }
-    Value higherPacked = rewriter.create<PpackOp>(
-        op->getLoc(), maskType, *highSource, higher);
-    return mergeMasks(packed, higherPacked);
-  };
+  MaskLaneStridePackContext context{
+      op, rewriter, rewriter.getStringAttr("LOWER"),
+      rewriter.getStringAttr("HIGHER"), Value()};
 
   auto materializeChunk = [&](size_t base,
                               MaskType maskType) -> FailureOr<Value> {
@@ -4995,7 +5003,8 @@ static FailureOr<SmallVector<Value>> materializeMaskLaneStridePack(
     if (base + 1 < sourceParts.size()) {
       source1 = sourceParts[base + 1];
     }
-    FailureOr<Value> lowHalf = packPair(sourceParts[base], source1, maskType);
+    FailureOr<Value> lowHalf =
+        context.packPair(sourceParts[base], source1, maskType);
     if (failed(lowHalf)) {
       return failure();
     }
@@ -5003,7 +5012,8 @@ static FailureOr<SmallVector<Value>> materializeMaskLaneStridePack(
     if (laneStride != 4) {
       return current;
     }
-    current = rewriter.create<PpackOp>(op->getLoc(), maskType, current, lower);
+    current = rewriter.create<PpackOp>(op->getLoc(), maskType, current,
+                                       context.lower);
     if (base + 2 >= sourceParts.size()) {
       return current;
     }
@@ -5012,13 +5022,14 @@ static FailureOr<SmallVector<Value>> materializeMaskLaneStridePack(
       source3 = sourceParts[base + 3];
     }
     FailureOr<Value> highHalf =
-        packPair(sourceParts[base + 2], source3, maskType);
+        context.packPair(sourceParts[base + 2], source3, maskType);
     if (failed(highHalf)) {
       return failure();
     }
     Value higherPacked =
-        rewriter.create<PpackOp>(op->getLoc(), maskType, *highHalf, higher);
-    return mergeMasks(current, higherPacked);
+        rewriter.create<PpackOp>(op->getLoc(), maskType, *highHalf,
+                                 context.higher);
+    return context.merge(current, higherPacked);
   };
 
   SmallVector<Value> results;
