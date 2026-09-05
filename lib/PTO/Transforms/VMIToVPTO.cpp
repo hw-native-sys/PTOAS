@@ -9635,6 +9635,55 @@ private:
     return success();
   }
 
+  LogicalResult lowerOneBlockGroupStore(
+      VMIGroupStoreOp op, OpAdaptor adaptor, OneToNPatternRewriter &rewriter,
+      VMIVRegType valueVMIType, const VMIGroupStoreLayoutFact &fact,
+      Value destination, Value offset, Value rowStride) const {
+    FailureOr<OneBlockGroupStorePlan> plan =
+        getOneBlockGroupStorePlan(op, valueVMIType, fact, nullptr);
+    if (failed(plan)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to build one-block group_store vsstb plan");
+    }
+    ValueRange valueParts = adaptor.getValue();
+    int64_t numGroups = op.getNumGroupsAttr().getInt();
+    bool hasExpectedArity =
+        static_cast<int64_t>(valueParts.size()) ==
+        ceilDivNonNegative(numGroups, plan->groupsPerPart);
+    if (!hasExpectedArity) {
+      return rewriter.notifyMatchFailure(
+          op, "one-block group_store physical arity mismatch");
+    }
+    Value blockStride =
+        rewriter.create<arith::ConstantIntOp>(op.getLoc(), plan->blockStride, 16);
+    Value repeatStride = rewriter.create<arith::ConstantIntOp>(
+        op.getLoc(), 0, 16);
+    for (auto [part, value] : llvm::enumerate(valueParts)) {
+      auto vregType = dyn_cast<VRegType>(value.getType());
+      if (!vregType) {
+        return rewriter.notifyMatchFailure(
+            op, "one-block group_store value must be vreg");
+      }
+      FailureOr<Value> mask = createContiguousStoreMask(
+          op.getLoc(), valueVMIType, part, vregType, rewriter);
+      if (failed(mask)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to create one-block group_store mask");
+      }
+      Value partOffset = createGroupChunkOffset(
+          op.getLoc(), offset, rowStride, part * plan->groupsPerPart,
+          /*inGroupLaneOffset=*/0, rewriter);
+      Value base = rewriter
+                       .create<AddPtrOp>(op.getLoc(), destination.getType(),
+                                         destination, partOffset)
+                       .getResult();
+      rewriter.create<VsstbOp>(op.getLoc(), /*updated_base=*/Type{}, value, base,
+                               blockStride, repeatStride, *mask);
+    }
+    rewriter.eraseOp(op);
+    return success();
+  }
+
 public:
   LogicalResult
   matchAndRewrite(VMIGroupStoreOp op, OpAdaptor adaptor,
@@ -10013,47 +10062,9 @@ public:
           op, "group_store layout does not match the support table");
 
     if (fact->blockClass == VMIGroupBlockClass::OneBlock) {
-      FailureOr<OneBlockGroupStorePlan> plan =
-          getOneBlockGroupStorePlan(op, valueVMIType, *fact, nullptr);
-      if (failed(plan))
-        return rewriter.notifyMatchFailure(
-            op, "failed to build one-block group_store vsstb plan");
-
-      ValueRange valueParts = adaptor.getValue();
-      int64_t numGroups = op.getNumGroupsAttr().getInt();
-      if (static_cast<int64_t>(valueParts.size()) !=
-          ceilDivNonNegative(numGroups, plan->groupsPerPart))
-        return rewriter.notifyMatchFailure(
-            op, "one-block group_store physical arity mismatch");
-
-      Value blockStride = rewriter.create<arith::ConstantIntOp>(
-          op.getLoc(), plan->blockStride, 16);
-      Value repeatStride =
-          rewriter.create<arith::ConstantIntOp>(op.getLoc(), 0, 16);
-      for (auto [part, value] : llvm::enumerate(valueParts)) {
-        auto vregType = dyn_cast<VRegType>(value.getType());
-        if (!vregType)
-          return rewriter.notifyMatchFailure(
-              op, "one-block group_store value must be vreg");
-        FailureOr<Value> mask = createContiguousStoreMask(
-            op.getLoc(), valueVMIType, part, vregType, rewriter);
-        if (failed(mask))
-          return rewriter.notifyMatchFailure(
-              op, "failed to create one-block group_store mask");
-
-        Value partOffset = createGroupChunkOffset(
-            op.getLoc(), *offset, *rowStride, part * plan->groupsPerPart,
-            /*inGroupLaneOffset=*/0, rewriter);
-        Value base = rewriter
-                         .create<AddPtrOp>(op.getLoc(), (*destination).getType(),
-                                           *destination, partOffset)
-                         .getResult();
-        rewriter.create<VsstbOp>(op.getLoc(), /*updated_base=*/Type{}, value,
-                                 base, blockStride, repeatStride, *mask);
-      }
-
-      rewriter.eraseOp(op);
-      return success();
+      return lowerOneBlockGroupStore(
+          op, adaptor, rewriter, valueVMIType, *fact, *destination, *offset,
+          *rowStride);
     }
 
     int64_t d2LanesPerPart = 0;

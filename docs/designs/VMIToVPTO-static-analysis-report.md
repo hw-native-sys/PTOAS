@@ -806,6 +806,13 @@ contiguous 路径的互斥判定和分派。该拆分不改变 chunk 顺序、of
 通过；`vmi_layout_assignment_group_store_slots1_unit_stride.pto` 与
 `vmi_group_reduce_addi_i16.pto` lowering 均 exit=0。
 
+本轮将 `OneToNVMIGroupStoreOpPattern` 的 one-block `vsstb` 路径抽取为
+`lowerOneBlockGroupStore`。helper 独立负责 one-block plan、physical arity、block/repeat
+stride、contiguous mask、part offset 和 `vsstb` 发射；主 pattern 仅保留 block class
+分派及 deinterleaved/contiguous fallback。该拆分保持计划参数、结果顺序和诊断语义不变。
+增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+group-store 与 reduction 代表性 lowering 均成功。
+
 本轮将 `slots=8` 普通 contiguous group-store（非 packed-byte、非 lane-stride）路径
 抽取为 `lowerSlots8Contiguous`。helper 独立处理每个 slot block 的地址合法性判定、
 非对齐 stateful stream fallback、active-lane mask 和对齐 `vsts` 发射；主 pattern 继续
