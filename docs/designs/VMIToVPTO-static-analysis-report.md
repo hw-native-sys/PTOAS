@@ -940,3 +940,9 @@ narrowing materializer 及最终 arity 校验；相邻粒度的语义和错误�
 检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_ensure_mask_granularity.pto` lowering exit=0，仍生成预期的
 `pdintlv/ppack/pintlv` 序列。
+本轮将 `materializeStagingContiguousToDeintMaskLayout` 中 factor=2 的内嵌 lambda
+抽取为 `materializeFactor2ContiguousToDeintGroup`，与 factor=4 的现有 helper 形成对称
+的 group 物化边界。外层函数继续负责 source padding、part 收集和最终 arity 校验，
+保持 `dintlv` 操作顺序与 all-false 补齐语义不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_ensure_mask_granularity.pto` lowering exit=0。

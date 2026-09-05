@@ -5869,6 +5869,29 @@ FailureOr<std::array<Value, 4>> materializeFactor4ContiguousToDeintGroup(
                               odd->second};
 }
 
+static FailureOr<std::array<Value, 2>> materializeFactor2ContiguousToDeintGroup(
+    Operation *op, ArrayRef<Value> sources, TypeRange resultTypes,
+    int64_t groups, int64_t groupIndex, PatternRewriter &rewriter) {
+  auto fail = [&op, &rewriter](const Twine &message)
+      -> FailureOr<std::array<Value, 2>> {
+    (void)rewriter.notifyMatchFailure(op, message);
+    return failure();
+  };
+  bool invalidGroup =
+      sources.size() != 2 ||
+      resultTypes.size() < static_cast<size_t>(2 * groups);
+  if (invalidGroup) {
+    return fail("factor-2 staging mask conversion requires two grouped results");
+  }
+  FailureOr<std::pair<Value, Value>> materialized = createPredicateDintlv(
+      op->getLoc(), resultTypes[groupIndex], resultTypes[groups + groupIndex],
+      sources[0], sources[1], rewriter);
+  if (failed(materialized)) {
+    return fail("unsupported predicate dintlv staging mask type");
+  }
+  return std::array<Value, 2>{materialized->first, materialized->second};
+}
+
 FailureOr<SmallVector<Value>> materializeStagingContiguousToDeintMaskLayout(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     int64_t factor, PatternRewriter &rewriter) {
@@ -5887,20 +5910,6 @@ FailureOr<SmallVector<Value>> materializeStagingContiguousToDeintMaskLayout(
   SmallVector<SmallVector<Value, 4>, 4> parts(factor);
   for (int64_t part = 0; part < factor; ++part)
     parts[part].reserve(groups);
-
-  auto appendFactor2Group = [&](int64_t groupIndex,
-                                ArrayRef<Value> sources) -> LogicalResult {
-    FailureOr<std::pair<Value, Value>> materialized = createPredicateDintlv(
-        op->getLoc(), resultTypes[groupIndex], resultTypes[groups + groupIndex],
-        sources[0], sources[1], rewriter);
-    if (failed(materialized)) {
-      return rewriter.notifyMatchFailure(
-          op, "unsupported predicate dintlv staging mask type");
-    }
-    parts[0].push_back(materialized->first);
-    parts[1].push_back(materialized->second);
-    return success();
-  };
 
   for (int64_t i = 0; i < groups; ++i) {
     size_t sourceBase = static_cast<size_t>(i * factor);
@@ -5924,9 +5933,14 @@ FailureOr<SmallVector<Value>> materializeStagingContiguousToDeintMaskLayout(
     }
 
     if (factor == 2) {
-      if (failed(appendFactor2Group(i, sources))) {
+      FailureOr<std::array<Value, 2>> materialized =
+          materializeFactor2ContiguousToDeintGroup(
+              op, sources, resultTypes, groups, i, rewriter);
+      if (failed(materialized)) {
         return failure();
       }
+      parts[0].push_back((*materialized)[0]);
+      parts[1].push_back((*materialized)[1]);
       continue;
     }
 
