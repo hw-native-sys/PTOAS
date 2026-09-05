@@ -8133,6 +8133,44 @@ struct OneToNVMIGroupStoreOpPattern
   using OneToNOpConversionPattern<VMIGroupStoreOp>::OneToNOpConversionPattern;
 
 private:
+  LogicalResult lowerAlignedPackedByteStore(
+      VMIGroupStoreOp op, OneToNPatternRewriter &rewriter,
+      ValueRange valueParts, Value destination, Value offset,
+      int64_t numGroups) const {
+    MLIRContext *ctx = rewriter.getContext();
+    auto ui16 = IntegerType::get(
+        ctx, 16, IntegerType::SignednessSemantics::Unsigned);
+    auto ui8 = IntegerType::get(
+        ctx, 8, IntegerType::SignednessSemantics::Unsigned);
+    auto packed16Type = VRegType::get(ctx, 128, ui16);
+    auto packed8Type = VRegType::get(ctx, 256, ui8);
+    Value packed16 =
+        rewriter
+            .create<VpackOp>(op.getLoc(), packed16Type, valueParts.front(),
+                             rewriter.getStringAttr("LOWER"))
+            .getResult();
+    Value packed8 =
+        rewriter
+            .create<VpackOp>(op.getLoc(), packed8Type, packed16,
+                             rewriter.getStringAttr("LOWER"))
+            .getResult();
+    FailureOr<MaskType> packedMaskType =
+        getMaskTypeForVReg(packed8Type, ctx);
+    if (failed(packedMaskType)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to create packed byte group_store mask type");
+    }
+    FailureOr<Value> storeMask = createPrefixMaskForActiveLanes(
+        op.getLoc(), *packedMaskType, numGroups, rewriter);
+    if (failed(storeMask)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to create packed byte group_store mask");
+    }
+    rewriter.create<VstsOp>(op.getLoc(), Type{}, packed8, destination, offset,
+                            rewriter.getStringAttr("NORM_B8"), *storeMask);
+    return success();
+  }
+
   LogicalResult lowerSlots1(VMIGroupStoreOp op, OpAdaptor adaptor,
                             OneToNPatternRewriter &rewriter,
                             VMIVRegType valueVMIType, VMILayoutAttr layout,
@@ -8446,37 +8484,11 @@ public:
               valueParts.size() == 1 &&
               isKnownAddressAligned(*destination, *offset,
                                     valueVMIType.getElementType(), 32)) {
-            MLIRContext *ctx = rewriter.getContext();
-            auto ui16 = IntegerType::get(
-                ctx, 16, IntegerType::SignednessSemantics::Unsigned);
-            auto ui8 = IntegerType::get(
-                ctx, 8, IntegerType::SignednessSemantics::Unsigned);
-            auto packed16Type = VRegType::get(ctx, 128, ui16);
-            auto packed8Type = VRegType::get(ctx, 256, ui8);
-            Value packed16 =
-                rewriter
-                    .create<VpackOp>(op.getLoc(), packed16Type,
-                                     valueParts.front(),
-                                     rewriter.getStringAttr("LOWER"))
-                    .getResult();
-            Value packed8 =
-                rewriter
-                    .create<VpackOp>(op.getLoc(), packed8Type, packed16,
-                                     rewriter.getStringAttr("LOWER"))
-                    .getResult();
-            FailureOr<MaskType> packedMaskType =
-                getMaskTypeForVReg(packed8Type, ctx);
-            if (failed(packedMaskType))
-              return rewriter.notifyMatchFailure(
-                  op, "failed to create packed byte group_store mask type");
-            FailureOr<Value> storeMask = createPrefixMaskForActiveLanes(
-                op.getLoc(), *packedMaskType, numGroups, rewriter);
-            if (failed(storeMask))
-              return rewriter.notifyMatchFailure(
-                  op, "failed to create packed byte group_store mask");
-            rewriter.create<VstsOp>(
-                op.getLoc(), /*updated_base=*/Type{}, packed8, *destination,
-                *offset, rewriter.getStringAttr("NORM_B8"), *storeMask);
+            if (failed(lowerAlignedPackedByteStore(
+                    op, rewriter, valueParts, *destination, *offset,
+                    numGroups))) {
+              return failure();
+            }
             rewriter.eraseOp(op);
             return success();
           }
