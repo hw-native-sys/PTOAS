@@ -14846,6 +14846,20 @@ std::optional<WalkResult> verifySupportedVMICompareOp(Operation *op,
   return std::nullopt;
 }
 
+template <typename VecScalarOp, typename MaskableCheck>
+WalkResult verifySupportedVecScalarOp(VecScalarOp op, StringRef opName,
+                                      MaskableCheck checkMaskable) {
+  bool requiresPassthru =
+      op.getPmode().has_value() && *op.getPmode() == "merge";
+  if (requiresPassthru) {
+    op.emitError() << kVMIDiagUnsupportedPrefix << opName
+                   << " with pmode=merge requires an explicit passthru lowering";
+    return WalkResult::interrupt();
+  }
+  return checkMaskable(op, opName,
+                       cast<VMIVRegType>(op.getResult().getType()));
+}
+
 LogicalResult
 verifySupportedVMIToVPTOOps(ModuleOp module,
                             bool enableStableGatherMaskedLoad) {
@@ -14976,30 +14990,24 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
                         << reason << ")";
       return WalkResult::interrupt();
     }
-    auto verifyVecScalar = [&emitMaskableUnsupported](auto vecScalar,
-                                                       StringRef opName) -> WalkResult {
-      if (vecScalar.getPmode().has_value() &&
-          *vecScalar.getPmode() == "merge") {
-        vecScalar.emitError() << kVMIDiagUnsupportedPrefix << opName
-                              << " with pmode=merge requires an explicit "
-                                 "passthru lowering";
-        return WalkResult::interrupt();
-      }
-      return emitMaskableUnsupported(
-          op, opName, cast<VMIVRegType>(vecScalar.getResult().getType()));
-    };
     if (auto vecScalar = dyn_cast<VMIAddSOp>(op))
-      return verifyVecScalar(vecScalar, "pto.vmi.vadds");
+      return verifySupportedVecScalarOp(vecScalar, "pto.vmi.vadds",
+                                        emitMaskableUnsupported);
     if (auto vecScalar = dyn_cast<VMIMulSOp>(op))
-      return verifyVecScalar(vecScalar, "pto.vmi.vmuls");
+      return verifySupportedVecScalarOp(vecScalar, "pto.vmi.vmuls",
+                                        emitMaskableUnsupported);
     if (auto vecScalar = dyn_cast<VMIMaxSOp>(op))
-      return verifyVecScalar(vecScalar, "pto.vmi.vmaxs");
+      return verifySupportedVecScalarOp(vecScalar, "pto.vmi.vmaxs",
+                                        emitMaskableUnsupported);
     if (auto vecScalar = dyn_cast<VMIMinSOp>(op))
-      return verifyVecScalar(vecScalar, "pto.vmi.vmins");
+      return verifySupportedVecScalarOp(vecScalar, "pto.vmi.vmins",
+                                        emitMaskableUnsupported);
     if (auto vecScalar = dyn_cast<VMIShlSOp>(op))
-      return verifyVecScalar(vecScalar, "pto.vmi.vshls");
+      return verifySupportedVecScalarOp(vecScalar, "pto.vmi.vshls",
+                                        emitMaskableUnsupported);
     if (auto vecScalar = dyn_cast<VMIShrSOp>(op))
-      return verifyVecScalar(vecScalar, "pto.vmi.vshrs");
+      return verifySupportedVecScalarOp(vecScalar, "pto.vmi.vshrs",
+                                        emitMaskableUnsupported);
     if (auto vmull = dyn_cast<VMIVmullOp>(op)) {
       std::string reason;
       if (succeeded(checkSupportedVmullShape(vmull, &reason)))
