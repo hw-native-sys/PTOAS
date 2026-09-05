@@ -1314,3 +1314,11 @@ invariant 处提前失败，未进入本轮 lowering 路径。
 row 类型/mask 准备和最终结果 bitcast；low/high 配对顺序、`PAT_VL1` mask 及诊断
 保持不变。增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
 通过；group-reduce partial slots=8 case exit=0。
+# packed-byte group store 二次拆分
+
+本轮继续拆分 `lowerPackedByteSlots8`：新增 `buildPackedByteStoreBlock`，集中负责
+每 32 个 group 的 `vselr/vsel` 合并、尾部 store mask 和 group offset 构造；外层只
+负责 physical selector 初始化、`PK4_B32` 直写或 packed-byte stream 的后端选择。
+保持向量拼接顺序、active group mask、offset 和 stream 生命周期不变。增量合规检查
+结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_group_store_slots8_packed_byte.pto` lowering exit=0。

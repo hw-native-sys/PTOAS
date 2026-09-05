@@ -41,6 +41,7 @@
 #include <cassert>
 #include <numeric>
 #include <type_traits>
+#include <tuple>
 #include <variant>
 
 namespace mlir {
@@ -10399,6 +10400,56 @@ private:
     return success();
   }
 
+  FailureOr<std::tuple<Value, Value, Value>> buildPackedByteStoreBlock(
+      VMIGroupStoreOp op, OneToNPatternRewriter &rewriter,
+      ValueRange valueParts,
+      VRegType firstVRegType, MaskType maskType, Value slotIndex,
+      Value destination, Value offset, Value rowStride, int64_t numGroups,
+      int64_t blockStart) const {
+    FailureOr<Value> zero =
+        createZeroVector(op.getLoc(), firstVRegType, rewriter);
+    if (failed(zero)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to create packed group_store accumulator");
+    }
+    Value merged = *zero;
+    for (int64_t localPart = 0; localPart < 4; ++localPart) {
+      int64_t partIndex = blockStart / 8 + localPart;
+      if (partIndex >= static_cast<int64_t>(valueParts.size())) {
+        break;
+      }
+      int64_t activeGroups = std::min<int64_t>(8, numGroups - partIndex * 8);
+      if (activeGroups <= 0) {
+        break;
+      }
+      Value selected = rewriter
+                           .create<VselrOp>(op.getLoc(), firstVRegType,
+                                            valueParts[partIndex], slotIndex)
+                           .getResult();
+      FailureOr<Value> laneMask = createLaneRangeMask(
+          op.getLoc(), maskType, localPart * 8,
+          localPart * 8 + activeGroups, rewriter);
+      if (failed(laneMask)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to create packed group_store lane mask");
+      }
+      merged = rewriter
+                   .create<VselOp>(op.getLoc(), firstVRegType, selected, merged,
+                                   *laneMask)
+                   .getResult();
+    }
+    int64_t activeGroups = std::min<int64_t>(32, numGroups - blockStart);
+    FailureOr<Value> storeMask = createPrefixMaskForActiveLanes(
+        op.getLoc(), maskType, activeGroups, rewriter);
+    if (failed(storeMask)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to create packed group_store store mask");
+    }
+    Value groupOffset = createGroupChunkOffset(
+        op.getLoc(), offset, rowStride, blockStart, 0, rewriter);
+    return std::make_tuple(merged, *storeMask, groupOffset);
+  }
+
   LogicalResult lowerPackedByteSlots8(
       VMIGroupStoreOp op, OneToNPatternRewriter &rewriter,
       ValueRange valueParts, VMIVRegType valueVMIType, VMILayoutAttr layout,
@@ -10454,52 +10505,20 @@ private:
         getMemoryElementType(op.getDestination().getType()), firstVRegType,
         VPTOMemoryOpFamily::Store, "PK4_B32");
     for (int64_t blockStart = 0; blockStart < numGroups; blockStart += 32) {
-      FailureOr<Value> zero =
-          createZeroVector(op.getLoc(), firstVRegType, rewriter);
-      if (failed(zero)) {
-        return rewriter.notifyMatchFailure(
-            op, "failed to create packed group_store accumulator");
+      FailureOr<std::tuple<Value, Value, Value>> block =
+          buildPackedByteStoreBlock(
+              op, rewriter, valueParts, firstVRegType, *maskType, *slotIndex,
+              destination, offset, rowStride, numGroups, blockStart);
+      if (failed(block)) {
+        return failure();
       }
-      Value merged = *zero;
-      for (int64_t localPart = 0; localPart < 4; ++localPart) {
-        int64_t partIndex = blockStart / 8 + localPart;
-        if (partIndex >= static_cast<int64_t>(valueParts.size())) {
-          break;
-        }
-        int64_t activeGroups =
-            std::min<int64_t>(8, numGroups - partIndex * 8);
-        if (activeGroups <= 0) {
-          break;
-        }
-        Value selected = rewriter
-                             .create<VselrOp>(op.getLoc(), firstVRegType,
-                                              valueParts[partIndex], *slotIndex)
-                             .getResult();
-        FailureOr<Value> laneMask = createLaneRangeMask(
-            op.getLoc(), *maskType, localPart * 8,
-            localPart * 8 + activeGroups, rewriter);
-        if (failed(laneMask)) {
-          return rewriter.notifyMatchFailure(
-              op, "failed to create packed group_store lane mask");
-        }
-        merged = rewriter
-                     .create<VselOp>(op.getLoc(), firstVRegType, selected,
-                                     merged, *laneMask)
-                     .getResult();
-      }
-      int64_t activeGroups = std::min<int64_t>(32, numGroups - blockStart);
-      FailureOr<Value> storeMask = createPrefixMaskForActiveLanes(
-          op.getLoc(), *maskType, activeGroups, rewriter);
-      if (failed(storeMask)) {
-        return rewriter.notifyMatchFailure(
-            op, "failed to create packed group_store store mask");
-      }
-      Value groupOffset = createGroupChunkOffset(
-          op.getLoc(), offset, rowStride, blockStart, 0, rewriter);
+      Value merged = std::get<0>(*block);
+      Value storeMask = std::get<1>(*block);
+      Value groupOffset = std::get<2>(*block);
       if (useDirectPack4) {
         rewriter.create<VstsOp>(op.getLoc(), /*updated_base=*/Type{}, merged,
                                 destination, groupOffset,
-                                rewriter.getStringAttr("PK4_B32"), *storeMask);
+                                rewriter.getStringAttr("PK4_B32"), storeMask);
         continue;
       }
       MLIRContext *ctx = rewriter.getContext();
