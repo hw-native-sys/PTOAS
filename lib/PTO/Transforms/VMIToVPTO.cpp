@@ -4534,6 +4534,80 @@ FailureOr<std::optional<SmallVector<Value>>> materializeDeinterleaved4Layout(
 FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
+    Type sourceVMIElementType, PatternRewriter &rewriter);
+
+FailureOr<std::optional<SmallVector<Value>>>
+materializeDataLayoutViaContiguous(
+    Operation *op, ValueRange sourceParts, TypeRange resultTypes,
+    VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
+    Type sourceVMIElementType, PatternRewriter &rewriter) {
+  auto isBlockDeinterleaved = [](VMILayoutAttr layout, int64_t factor) {
+    return layout.isBlockDeinterleaved() && layout.getFactor() == factor;
+  };
+  VMILayoutAttr contiguous =
+      VMILayoutAttr::getContiguous(rewriter.getContext());
+  bool deint2ToLaneStride =
+      sourceLayout.isDeinterleaved() && sourceLayout.getFactor() == 2 &&
+      sourceLayout.getLaneStride() == 1 && resultLayout.isContiguous() &&
+      resultLayout.getLaneStride() == 2;
+  bool laneStrideToDeint2 =
+      sourceLayout.isContiguous() && sourceLayout.getLaneStride() == 2 &&
+      resultLayout.isDeinterleaved() && resultLayout.getFactor() == 2 &&
+      resultLayout.getLaneStride() == 1;
+  bool laneStride2ToLaneStride4 =
+      sourceLayout.isContiguous() && sourceLayout.getLaneStride() == 2 &&
+      resultLayout.isContiguous() && resultLayout.getLaneStride() == 4;
+  bool laneStride4ToLaneStride2 =
+      sourceLayout.isContiguous() && sourceLayout.getLaneStride() == 4 &&
+      resultLayout.isContiguous() && resultLayout.getLaneStride() == 2;
+  bool useContiguousIntermediate =
+      deint2ToLaneStride || laneStrideToDeint2 || laneStride2ToLaneStride4 ||
+      laneStride4ToLaneStride2;
+  bool useDeinterleavedIntermediate =
+      sourceLayout.isDeinterleaved() && resultLayout.isDeinterleaved() &&
+      sourceLayout.getLaneStride() == 1 && resultLayout.getLaneStride() == 1 &&
+      (sourceLayout.getFactor() == 2 || sourceLayout.getFactor() == 4) &&
+      (resultLayout.getFactor() == 2 || resultLayout.getFactor() == 4);
+  if (!useContiguousIntermediate && !useDeinterleavedIntermediate) {
+    return std::nullopt;
+  }
+  if (sourceParts.empty()) {
+    return failure();
+  }
+
+  if (useDeinterleavedIntermediate) {
+    FailureOr<SmallVector<Value>> dense = materializeDataLayoutConversion(
+        op, sourceParts, resultTypes, sourceLayout, contiguous,
+        sourceVMIElementType, rewriter);
+    if (failed(dense)) {
+      return failure();
+    }
+    return materializeDataLayoutConversion(
+        op, *dense, resultTypes, contiguous, resultLayout,
+        sourceVMIElementType, rewriter);
+  }
+
+  size_t intermediateCount = sourceParts.size();
+  bool needsPacking = !deint2ToLaneStride;
+  if (needsPacking) {
+    intermediateCount = (sourceParts.size() + 1) / 2;
+  }
+  SmallVector<Type> intermediateTypes(intermediateCount,
+                                      sourceParts.front().getType());
+  FailureOr<SmallVector<Value>> dense = materializeDataLayoutConversion(
+      op, sourceParts, intermediateTypes, sourceLayout, contiguous,
+      sourceVMIElementType, rewriter);
+  if (failed(dense)) {
+    return failure();
+  }
+  return materializeDataLayoutConversion(
+      op, *dense, resultTypes, contiguous, resultLayout, sourceVMIElementType,
+      rewriter);
+}
+
+FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
+    Operation *op, ValueRange sourceParts, TypeRange resultTypes,
+    VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
     Type sourceVMIElementType, PatternRewriter &rewriter) {
   FailureOr<std::optional<SmallVector<Value>>> simple =
       materializeSimpleDataLayoutConversion(
@@ -4567,59 +4641,15 @@ FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
     return std::move(**laneStride);
   }
 
-  auto isBlockDeinterleaved = [](VMILayoutAttr layout, int64_t factor) {
-    return layout.isBlockDeinterleaved() && layout.getFactor() == factor;
-  };
-  VMILayoutAttr contiguous =
-      VMILayoutAttr::getContiguous(rewriter.getContext());
-  bool deint2ToLaneStride =
-      sourceLayout.isDeinterleaved() && sourceLayout.getFactor() == 2 &&
-      sourceLayout.getLaneStride() == 1 && resultLayout.isContiguous() &&
-      resultLayout.getLaneStride() == 2;
-  bool laneStrideToDeint2 =
-      sourceLayout.isContiguous() && sourceLayout.getLaneStride() == 2 &&
-      resultLayout.isDeinterleaved() && resultLayout.getFactor() == 2 &&
-      resultLayout.getLaneStride() == 1;
-  bool laneStride2ToLaneStride4 =
-      sourceLayout.isContiguous() && sourceLayout.getLaneStride() == 2 &&
-      resultLayout.isContiguous() && resultLayout.getLaneStride() == 4;
-  bool laneStride4ToLaneStride2 =
-      sourceLayout.isContiguous() && sourceLayout.getLaneStride() == 4 &&
-      resultLayout.isContiguous() && resultLayout.getLaneStride() == 2;
-  if (deint2ToLaneStride || laneStrideToDeint2 ||
-      laneStride2ToLaneStride4 || laneStride4ToLaneStride2) {
-    size_t intermediateCount = sourceParts.size();
-    if (!deint2ToLaneStride) {
-      intermediateCount = (sourceParts.size() + 1) / 2;
-    }
-    if (sourceParts.empty()) {
-      return failure();
-    }
-    SmallVector<Type> intermediateTypes(intermediateCount,
-                                        sourceParts.front().getType());
-    FailureOr<SmallVector<Value>> dense = materializeDataLayoutConversion(
-        op, sourceParts, intermediateTypes, sourceLayout, contiguous,
-        sourceVMIElementType, rewriter);
-    if (failed(dense)) {
-      return failure();
-    }
-    return materializeDataLayoutConversion(
-        op, *dense, resultTypes, contiguous, resultLayout,
-        sourceVMIElementType, rewriter);
+  FailureOr<std::optional<SmallVector<Value>>> viaContiguous =
+      materializeDataLayoutViaContiguous(
+          op, sourceParts, resultTypes, sourceLayout, resultLayout,
+          sourceVMIElementType, rewriter);
+  if (failed(viaContiguous)) {
+    return failure();
   }
-
-  if (sourceLayout.isDeinterleaved() && resultLayout.isDeinterleaved() &&
-      sourceLayout.getLaneStride() == 1 && resultLayout.getLaneStride() == 1 &&
-      (sourceLayout.getFactor() == 2 || sourceLayout.getFactor() == 4) &&
-      (resultLayout.getFactor() == 2 || resultLayout.getFactor() == 4)) {
-    FailureOr<SmallVector<Value>> dense = materializeDataLayoutConversion(
-        op, sourceParts, resultTypes, sourceLayout, contiguous,
-        sourceVMIElementType, rewriter);
-    if (failed(dense))
-      return failure();
-    return materializeDataLayoutConversion(op, *dense, resultTypes, contiguous,
-                                           resultLayout, sourceVMIElementType,
-                                           rewriter);
+  if (viaContiguous->has_value()) {
+    return std::move(**viaContiguous);
   }
 
   (void)rewriter.notifyMatchFailure(

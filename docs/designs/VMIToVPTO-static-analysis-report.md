@@ -253,6 +253,12 @@ element-deinterleaved factor=2/4 的方向判断及失败传播，外层只遍�
 part 分组和结果 arity。转换语义与原有 factor=2 路径保持不变，增量合规检查、
 `git diff --check` 及 mask granularity 回归均通过。
 
+本轮将 `materializeDataLayoutConversion` 中多组经 contiguous 中间布局的 fallback
+判定和递归转换抽取为 `materializeDataLayoutViaContiguous`。该 helper 负责 lane-stride
+与 deinterleaved 组合的识别、中间 part 类型数量计算及两阶段转换；主函数保留 simple、
+专用 deinterleave、lane-stride 和最终失败路径，fallback 优先级与输出语义不变。相关
+layout/store/shuffle 代表性 case 回归通过，增量合规检查和 `git diff --check` 通过。
+
 本轮进一步将动态 `create_group_mask` 的单个物理 chunk 生成抽取为
 `materializeDynamicGroupMaskChunk`。辅助函数负责 index/块内 lane 推导、active-lane
 比较、padding mask 合并和结果类型检查；外层 `materializeDynamicGroupMaskForType`
