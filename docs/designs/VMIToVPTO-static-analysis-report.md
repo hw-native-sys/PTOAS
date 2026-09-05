@@ -87,3 +87,25 @@
 3. 对重复参数组设计语义明确的上下文类型，避免隐藏状态和无约束的大型参数对象。
 4. 单独处理 lambda 捕获、文件级可见性和 warning suppression；这些规则不能通过简单格式化解决。
 5. 每个重构 MR 保持小范围，分别记录功能回归、静态指标变化和未处理的历史问题。
+
+## 本轮整改记录（2026-09-05）
+
+`OneToNVMIGroupStoreOpPattern::matchAndRewrite` 中的 `group_slots(slots=1)`
+路径已抽取为 `lowerSlots1` 私有辅助方法（提交 `e16d9868f`）。该方法集中负责
+slots=1 的物理 arity/元素宽度校验、unit-stride 打包到连续 `vsts` 或非对齐
+stateful stream 的选择，以及非 unit-stride 的 1PT fallback；主 `matchAndRewrite`
+仅保留操作数归一化和布局分派。拆分保持原有诊断顺序与 lowering 语义，避免通过
+无意义切割或全局状态规避复杂度指标。
+
+本轮复核：
+
+```text
+python3 .agents/skills/enforce-ptoas-code-compliance/scripts/check_changed_code.py \
+  --repo . --base origin/master --fail-on none
+checked_files=1 errors=0 warnings=0
+git diff --check  # passed
+```
+
+增量构建仍受工作区既有 CMake 外部依赖配置阻断：构建系统尝试创建
+`/cann-cmake` 并因权限不足失败；该错误未产生 C++ 编译诊断，需在修复构建环境后
+补跑完整编译及 lit 回归。
