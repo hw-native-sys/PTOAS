@@ -1241,3 +1241,10 @@ scatter shape 校验抽取为 `verifySupportedVMIStructuredStoreOp`；普通 `st
 所有支持条件、诊断文本和返回状态不变。增量合规检查结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；interleave memory
 lowering case exit=0。
+本轮将 `verifySupportedVMIReductionOp` 按语义拆为
+`verifySupportedVMINormalReductionOp` 与 `verifySupportedVMIGroupReductionOp`，分别
+处理普通 reduce 和 group-reduce 的 shape contract/诊断，外层仅做类别分派。原有
+reassoc 要求、操作支持矩阵和错误文本保持不变。增量合规检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；group-reduce
+lowering case exit=0。两个普通 reduce case 在既有 VMI pack/unpack pipeline invariant
+处提前失败，未进入本轮 verifier 路径。

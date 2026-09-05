@@ -17402,7 +17402,7 @@ std::optional<WalkResult> verifySupportedVMISpecialOp(Operation *op) {
   return std::nullopt;
 }
 
-std::optional<WalkResult> verifySupportedVMIReductionOp(Operation *op) {
+std::optional<WalkResult> verifySupportedVMINormalReductionOp(Operation *op) {
   if (auto reduce = dyn_cast<VMIReduceAddIOp>(op)) {
     return verifySupportedReduceOp(
         reduce, false,
@@ -17445,6 +17445,10 @@ std::optional<WalkResult> verifySupportedVMIReductionOp(Operation *op) {
         "full integer source chunks with matching mask chunks and one "
         "init/result chunk (");
   }
+  return std::nullopt;
+}
+
+std::optional<WalkResult> verifySupportedVMIGroupReductionOp(Operation *op) {
   if (auto reduce = dyn_cast<VMIGroupReduceAddFOp>(op)) {
     return verifySupportedGroupReduceOp(
         reduce,
@@ -17491,6 +17495,14 @@ std::optional<WalkResult> verifySupportedVMIReductionOp(Operation *op) {
         "chunks (");
   }
   return std::nullopt;
+}
+
+std::optional<WalkResult> verifySupportedVMIReductionOp(Operation *op) {
+  if (auto normalResult = verifySupportedVMINormalReductionOp(op);
+      normalResult.has_value()) {
+    return *normalResult;
+  }
+  return verifySupportedVMIGroupReductionOp(op);
 }
 
 std::optional<WalkResult> verifySupportedVMIFloatOp(Operation *op) {
