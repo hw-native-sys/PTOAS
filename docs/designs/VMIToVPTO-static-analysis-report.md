@@ -2135,6 +2135,15 @@ chunk 顺序、诊断及结果替换语义不变。增量 `check_changed_code.py
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_group_broadcast_load_e2b_b16.pto` lowering exit=0。
 
+# group broadcast load E2B 单 packet 发射职责整改
+
+本轮在 `OneToNVMIGroupBroadcastLoadOpPattern::emitE2BPackets` 中引入 `emitE2BPacket`，
+将单 packet 的结果 vreg 校验、chunk offset 计算和 `VldsOp` 发射抽取为独立 helper。主
+函数继续负责 packet 数量与 result type 选择；保持 E2B dist、chunk 步长、packet 顺序、
+诊断和结果复用语义不变。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_group_broadcast_load_e2b_b16.pto` lowering exit=0。
+
 # slots=8 lane-stride group store direct 发射职责整改
 
 本轮在 `OneToNVMIGroupStoreOpPattern::lowerSlots8LaneStride` 中引入

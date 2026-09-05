@@ -11163,6 +11163,22 @@ struct OneToNVMIGroupBroadcastLoadOpPattern
   using OneToNOpConversionPattern<VMIGroupBroadcastLoadOp>::OneToNOpConversionPattern;
 
 private:
+  FailureOr<Value> emitE2BPacket(
+      VMIGroupBroadcastLoadOp op, OneToNPatternRewriter &rewriter,
+      Value source, Value offset, Type packetType, int64_t chunk,
+      StringRef e2bDist) const {
+    if (!isa<VRegType>(packetType)) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast_load result must be vreg");
+    }
+    Value packetOffset =
+        createChunkOffset(op.getLoc(), offset, chunk * 8, rewriter);
+    return rewriter
+        .create<VldsOp>(op.getLoc(), packetType, Type{}, source, packetOffset,
+                        rewriter.getStringAttr(e2bDist))
+        .getResult();
+  }
+
   FailureOr<SmallVector<Value>> emitE2BPackets(
       VMIGroupBroadcastLoadOp op, OneToNPatternRewriter &rewriter,
       Value source, Value offset, ArrayRef<Type> resultTypes,
@@ -11170,18 +11186,12 @@ private:
     SmallVector<Value> packets;
     packets.reserve(chunksPerPart);
     for (int64_t chunk = 0; chunk < chunksPerPart; ++chunk) {
-      Type packetType = resultTypes[chunk];
-      if (!isa<VRegType>(packetType)) {
-        return rewriter.notifyMatchFailure(
-            op, "group_broadcast_load result must be vreg");
+      FailureOr<Value> packet = emitE2BPacket(
+          op, rewriter, source, offset, resultTypes[chunk], chunk, e2bDist);
+      if (failed(packet)) {
+        return failure();
       }
-      Value packetOffset =
-          createChunkOffset(op.getLoc(), offset, chunk * 8, rewriter);
-      packets.push_back(rewriter
-                            .create<VldsOp>(op.getLoc(), packetType, Type{},
-                                            source, packetOffset,
-                                            rewriter.getStringAttr(e2bDist))
-                            .getResult());
+      packets.push_back(*packet);
     }
     return packets;
   }
