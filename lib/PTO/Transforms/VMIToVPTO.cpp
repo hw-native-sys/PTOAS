@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 // https://discourse.llvm.org/t/matchandrewrite-hiding-virtual-functions/84933/8
+#pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Woverloaded-virtual"
 
 #include "PTO/Analysis/PTOAddressAnalysis.h"
@@ -3622,6 +3623,8 @@ LogicalResult checkSupportedComparePredicate(Operation *op,
          << getSupportedComparePredicateMessage<SourceOp>();
 }
 
+// MLIR's OneToN conversion patterns intentionally hide a base overload. Keep
+// this narrowly scoped suppression around the pattern declarations only.
 struct OneToNVMIUnpackOpPattern : OneToNOpConversionPattern<VMIUnpackOp> {
   using OneToNOpConversionPattern<VMIUnpackOp>::OneToNOpConversionPattern;
 
@@ -15110,6 +15113,8 @@ struct VMIToVPTOPass : public mlir::pto::impl::VMIToVPTOBase<VMIToVPTOPass> {
     }
   }
 };
+
+#pragma GCC diagnostic pop
 
 } // namespace
 
