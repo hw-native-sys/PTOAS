@@ -6297,6 +6297,54 @@ private:
     return success();
   }
 
+  LogicalResult lowerContiguousIota(
+      IotaOp op, Value base, TypeRange resultTypes, int64_t lanesPerPart,
+      OneToNPatternRewriter &rewriter, SmallVectorImpl<Value> &results) const {
+    for (auto [index, resultType] : llvm::enumerate(resultTypes)) {
+      if (!isa<VRegType>(resultType)) {
+        return rewriter.notifyMatchFailure(op, "iota result must be vreg");
+      }
+      FailureOr<Value> result = createIotaContiguousChunk(
+          op.getLoc(), resultType, base,
+          static_cast<int64_t>(index) * lanesPerPart, op.getOrderAttr(),
+          rewriter);
+      if (failed(result)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to materialize contiguous iota chunk");
+      }
+      results.push_back(*result);
+    }
+    return success();
+  }
+
+  LogicalResult lowerDeinterleavedIota(
+      IotaOp op, Value base, VMILayoutAttr layout, TypeRange resultTypes,
+      int64_t lanesPerPart, OneToNPatternRewriter &rewriter,
+      SmallVectorImpl<Value> &results) const {
+    int64_t factor = layout.getFactor();
+    bool resultFactorMismatch = resultTypes.size() % factor != 0;
+    if (resultFactorMismatch) {
+      return rewriter.notifyMatchFailure(
+          op, "deinterleaved iota physical result count does not match "
+              "layout factor");
+    }
+    int64_t chunksPerPart = resultTypes.size() / factor;
+    for (int64_t part = 0; part < factor; ++part) {
+      for (int64_t chunk = 0; chunk < chunksPerPart; ++chunk) {
+        Type resultType = resultTypes[part * chunksPerPart + chunk];
+        FailureOr<Value> result = createIotaDeinterleavedChunk(
+            op.getLoc(), resultType, base, factor, part, chunk, lanesPerPart,
+            op.getOrderAttr(), rewriter);
+        if (failed(result)) {
+          return rewriter.notifyMatchFailure(
+              op, "failed to materialize deinterleaved iota chunk");
+        }
+        results.push_back(*result);
+      }
+    }
+    return success();
+  }
+
 public:
 
   LogicalResult
@@ -6350,40 +6398,18 @@ public:
     }
 
     if (layout.isContiguous()) {
-      for (auto [index, resultType] : llvm::enumerate(resultTypes)) {
-        if (!isa<VRegType>(resultType))
-          return rewriter.notifyMatchFailure(op, "iota result must be vreg");
-        FailureOr<Value> result = createIotaContiguousChunk(
-            op.getLoc(), resultType, *base,
-            static_cast<int64_t>(index) * *lanesPerPart, op.getOrderAttr(),
-            rewriter);
-        if (failed(result))
-          return rewriter.notifyMatchFailure(
-              op, "failed to materialize contiguous iota chunk");
-        results.push_back(*result);
+      if (failed(lowerContiguousIota(op, *base, resultTypes, *lanesPerPart,
+                                     rewriter, results))) {
+        return failure();
       }
       replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
       return success();
     }
 
-    int64_t factor = layout.getFactor();
-    if (resultTypes.size() % factor != 0)
-      return rewriter.notifyMatchFailure(
-          op, "deinterleaved iota physical result count does not match "
-              "layout factor");
-    int64_t chunksPerPart = resultTypes.size() / factor;
-    for (int64_t part = 0; part < factor; ++part) {
-      for (int64_t chunk = 0; chunk < chunksPerPart; ++chunk) {
-        Type resultType = resultTypes[part * chunksPerPart + chunk];
-        FailureOr<Value> result = createIotaDeinterleavedChunk(
-            op.getLoc(), resultType, *base, factor, part, chunk, *lanesPerPart,
-            op.getOrderAttr(), rewriter);
-        if (failed(result))
-          return rewriter.notifyMatchFailure(
-              op, "failed to materialize deinterleaved iota chunk");
-        results.push_back(*result);
+    if (failed(lowerDeinterleavedIota(op, *base, layout, resultTypes,
+                                      *lanesPerPart, rewriter, results))) {
+      return failure();
       }
-    }
 
     replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
     return success();
@@ -7989,9 +8015,12 @@ static LogicalResult lowerGroupBroadcastParts(
   }
   unsigned indexBits =
       pto::getPTOStorageElemBitWidth(firstSourceType.getElementType());
-  if (indexBits != 8 && indexBits != 16 && indexBits != 32)
+  bool unsupportedIndexBits =
+      indexBits != 8 && indexBits != 16 && indexBits != 32;
+  if (unsupportedIndexBits) {
     return rewriter.notifyMatchFailure(
         op, "group_broadcast requires 8/16/32-bit index elements");
+  }
   auto indexElementType =
       IntegerType::get(rewriter.getContext(), indexBits,
                        IntegerType::SignednessSemantics::Unsigned);

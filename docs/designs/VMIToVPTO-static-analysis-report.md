@@ -498,3 +498,9 @@ lowering 回归通过。
 arity、共享 chunk 缓存及 sub-VL/VCI 选择；普通 contiguous 与 deinterleaved iota
 路径保持在主 pattern 中，诊断与结果顺序不变。增量合规检查为 `errors=0 warnings=0`，
 `git diff --check` 通过；group2、group-subvl、group-size1 iota lowering 回归通过。
+
+本轮进一步将普通 contiguous 与 deinterleaved iota 物化分别抽取为
+`lowerContiguousIota` 与 `lowerDeinterleavedIota`，主 pattern 仅保留输入检查、布局
+分派和结果替换。物理 chunk 顺序、factor 校验和诊断文本保持不变；增量合规检查为
+`errors=0 warnings=0`，`git diff --check` 通过；group2、group-subvl、group-deint
+iota lowering 回归通过。
