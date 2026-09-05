@@ -13710,6 +13710,51 @@ private:
     return results;
   }
 
+  struct Deinterleaved2GroupReduceTypes {
+    VRegType resultType;
+    MaskType maskType;
+    VRegType sourcePartType;
+    VRegType rowResultType;
+    MaskType rowMaskType;
+  };
+
+  FailureOr<Deinterleaved2GroupReduceTypes>
+  getDeinterleaved2GroupReduceTypes(
+      OpTy op, ValueRange sourceParts, ValueRange maskParts,
+      TypeRange resultTypes, OneToNPatternRewriter &rewriter) const {
+    for (Type resultType : resultTypes) {
+      if (!isa<VRegType>(resultType)) {
+        return rewriter.notifyMatchFailure(
+            op, "deinterleaved=2 group_reduce result must be vreg");
+      }
+    }
+    auto resultType = dyn_cast<VRegType>(resultTypes.front());
+    auto maskType = dyn_cast<MaskType>(maskParts.front().getType());
+    if (!resultType || !maskType) {
+      return rewriter.notifyMatchFailure(
+          op, "deinterleaved=2 group_reduce requires physical vreg/mask");
+    }
+    auto sourcePartType = dyn_cast<VRegType>(sourceParts.front().getType());
+    if (!sourcePartType) {
+      return rewriter.notifyMatchFailure(
+          op, "deinterleaved=2 group_reduce source must be vreg");
+    }
+    FailureOr<VRegType> rowResultType =
+        getRowResultType(sourcePartType, resultType);
+    if (failed(rowResultType)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to derive deinterleaved=2 row-reduction type");
+    }
+    FailureOr<MaskType> rowMaskType =
+        getMaskTypeForVReg(*rowResultType, rewriter.getContext());
+    if (failed(rowMaskType)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to derive deinterleaved=2 combine mask type");
+    }
+    return Deinterleaved2GroupReduceTypes{
+        *resultType, *maskType, *sourcePartType, *rowResultType, *rowMaskType};
+  }
+
   LogicalResult lowerFullDeinterleaved2(
       OpTy op, VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
       ValueRange sourceParts, ValueRange maskParts, TypeRange resultTypes,
@@ -13744,37 +13789,14 @@ private:
       return rewriter.notifyMatchFailure(
           op, "deinterleaved=2 group_reduce arity mismatch");
     }
-    for (Type resultType : resultTypes) {
-      if (!isa<VRegType>(resultType)) {
-        return rewriter.notifyMatchFailure(
-            op, "deinterleaved=2 group_reduce result must be vreg");
-      }
-    }
-    auto resultType = dyn_cast<VRegType>(resultTypes.front());
-    auto maskType = dyn_cast<MaskType>(maskParts.front().getType());
-    if (!resultType || !maskType) {
-      return rewriter.notifyMatchFailure(
-          op, "deinterleaved=2 group_reduce requires physical vreg/mask");
-    }
-    auto sourcePartType = dyn_cast<VRegType>(sourceParts.front().getType());
-    if (!sourcePartType) {
-      return rewriter.notifyMatchFailure(
-          op, "deinterleaved=2 group_reduce source must be vreg");
-    }
-    FailureOr<VRegType> rowResultType =
-        getRowResultType(sourcePartType, resultType);
-    if (failed(rowResultType)) {
-      return rewriter.notifyMatchFailure(
-          op, "failed to derive deinterleaved=2 row-reduction type");
-    }
-    FailureOr<MaskType> rowMaskType =
-        getMaskTypeForVReg(*rowResultType, rewriter.getContext());
-    if (failed(rowMaskType)) {
-      return rewriter.notifyMatchFailure(
-          op, "failed to derive deinterleaved=2 combine mask type");
+    FailureOr<Deinterleaved2GroupReduceTypes> types =
+        getDeinterleaved2GroupReduceTypes(op, sourceParts, maskParts,
+                                          resultTypes, rewriter);
+    if (failed(types)) {
+      return failure();
     }
     FailureOr<Value> firstLaneMask =
-        createPrefixMask(op.getLoc(), *rowMaskType, "PAT_VL1", rewriter);
+        createPrefixMask(op.getLoc(), types->rowMaskType, "PAT_VL1", rewriter);
     if (failed(firstLaneMask)) {
       return rewriter.notifyMatchFailure(
           op, "failed to create deinterleaved=2 group_reduce lane mask");
@@ -13782,13 +13804,14 @@ private:
     FailureOr<SmallVector<Value>> reducedResults =
         buildDeinterleaved2GroupResults(
             op, sourceParts, maskParts, groupCount, chunksPerGroupPerPart,
-            chunksPerPart, *sourcePartType, *rowResultType, *maskType,
+            chunksPerPart, types->sourcePartType, types->rowResultType,
+            types->maskType,
             *firstLaneMask, rewriter);
     if (failed(reducedResults)) {
       return failure();
     }
     FailureOr<SmallVector<Value>> results = restoreDeinterleaved2GroupResults(
-        op, *reducedResults, resultTypes, resultType, rewriter);
+        op, *reducedResults, resultTypes, types->resultType, rewriter);
     if (failed(results)) {
       return failure();
     }

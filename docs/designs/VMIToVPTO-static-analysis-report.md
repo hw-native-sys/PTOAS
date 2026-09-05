@@ -2280,6 +2280,16 @@ uniform vreg、mask/index 准备、对齐单 part 快路径和 direct-memory 合
 `git diff --check` 通过；`vmi_to_vpto_group_store_slots8_packed_byte.pto` 完整 lowering
 pipeline exit=0，输出仍包含 `PK4_B32`、stateful `vstus` 和 `NORM_B8` 路径。
 
+# deinterleaved=2 group reduce 类型合同职责整改
+
+本轮在 `OneToNVMIGroupReduceOpPattern::lowerFullDeinterleaved2` 中引入
+`Deinterleaved2GroupReduceTypes` 与 `getDeinterleaved2GroupReduceTypes`，将结果 vreg、
+mask、source chunk、行归约结果及 combine mask 的物理类型合同集中校验和推导。主函数继续
+负责 slots=1 结果约束、group/chunk arity、首 lane mask、归约构造和结果恢复；保持诊断顺序、
+mask 语义、group 顺序及失败传播不变。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_layout_assignment_group_reduce_s256.pto` 完整 lowering pipeline exit=0。
+
 # zero-copy interleave 结果合同职责整改
 
 本轮在 `OneToNVMIInterleaveOpPattern::materializeZeroCopyResults` 中引入
