@@ -16200,8 +16200,6 @@ LogicalResult checkSupportedVmullShape(VMIVmullOp op,
     return failure();
   }
   VMIVRegType aType = plan->dataType;
-  VMILayoutAttr layout = plan->layout;
-  int64_t arity = plan->arity;
   auto resultType = cast<VMIVRegType>(op.getLow().getType());
   auto maskType = cast<VMIMaskType>(op.getMask().getType());
 
@@ -16215,8 +16213,6 @@ LogicalResult checkSupportedVmullShape(VMIVmullOp op,
     return fail("requires 64xi32/ui32 data parts with corresponding b32 mask "
                 "parts");
 
-  (void)layout;
-  (void)arity;
   return success();
 }
 
