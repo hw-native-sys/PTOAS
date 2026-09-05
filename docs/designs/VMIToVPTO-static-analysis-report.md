@@ -2095,6 +2095,16 @@ stream advance、诊断和 direct/fallback 语义不变。增量 `check_changed_
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_layout_assignment_group_store_slots1_unit_stride.pto` 完整 lowering pipeline exit=0。
 
+# contiguous group store 单 chunk 发射职责整改
+
+本轮在 `OneToNVMIGroupStoreOpPattern::lowerContiguousGroupStore` 中引入
+`emitContiguousGroupStorePart`，将单 physical chunk 的 vreg 校验、all-true mask、group/
+chunk 索引及 offset 计算和 `VstsOp` 发射抽取为独立 helper。主函数继续负责 contiguous
+layout 的 chunk shape/arity 合约和遍历；保持 `index / chunksPerGroup`、`index % chunksPerGroup`
+地址映射、lane offset、结果顺序、诊断和 store 语义不变。增量 `check_changed_code.py`
+结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_layout_assignment_group_store_slots1_unit_stride.pto` 完整 lowering pipeline exit=0。
+
 # create_mask 常量 chunk 活跃度计算职责整改
 
 本轮在 `OneToNVMICreateMaskOpPattern::lowerConstantMask` 中引入

@@ -10308,6 +10308,31 @@ private:
     return success();
   }
 
+  LogicalResult emitContiguousGroupStorePart(
+      VMIGroupStoreOp op, Value value, int64_t index, int64_t chunksPerGroup,
+      int64_t lanesPerPart, Value destination, Value offset, Value rowStride,
+      OneToNPatternRewriter &rewriter) const {
+    auto vregType = dyn_cast<VRegType>(value.getType());
+    if (!vregType) {
+      return rewriter.notifyMatchFailure(op,
+                                         "group_store value must be vreg");
+    }
+    FailureOr<Value> mask =
+        createAllTrueMaskForVReg(op.getLoc(), vregType, rewriter);
+    if (failed(mask)) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported element type for group_store mask");
+    }
+    int64_t group = index / chunksPerGroup;
+    int64_t chunkInGroup = index % chunksPerGroup;
+    Value chunkOffset = createGroupChunkOffset(
+        op.getLoc(), offset, rowStride, group, chunkInGroup * lanesPerPart,
+        rewriter);
+    rewriter.create<VstsOp>(op.getLoc(), /*updated_base=*/Type{}, value,
+                            destination, chunkOffset, /*dist=*/nullptr, *mask);
+    return success();
+  }
+
   LogicalResult lowerContiguousGroupStore(
       VMIGroupStoreOp op, OpAdaptor adaptor, OneToNPatternRewriter &rewriter,
       VMIVRegType valueVMIType, const VMIGroupStoreLayoutFact &fact,
@@ -10327,25 +10352,11 @@ private:
       return rewriter.notifyMatchFailure(op, "group_store arity mismatch");
     }
     for (auto [index, value] : llvm::enumerate(valueParts)) {
-      auto vregType = dyn_cast<VRegType>(value.getType());
-      if (!vregType) {
-        return rewriter.notifyMatchFailure(op,
-                                           "group_store value must be vreg");
+      if (failed(emitContiguousGroupStorePart(
+              op, value, index, chunksPerGroup, lanesPerPart, destination,
+              offset, rowStride, rewriter))) {
+        return failure();
       }
-      FailureOr<Value> mask =
-          createAllTrueMaskForVReg(op.getLoc(), vregType, rewriter);
-      if (failed(mask)) {
-        return rewriter.notifyMatchFailure(
-            op, "unsupported element type for group_store mask");
-      }
-      int64_t group = index / chunksPerGroup;
-      int64_t chunkInGroup = index % chunksPerGroup;
-      Value chunkOffset = createGroupChunkOffset(
-          op.getLoc(), offset, rowStride, group, chunkInGroup * lanesPerPart,
-          rewriter);
-      rewriter.create<VstsOp>(op.getLoc(), /*updated_base=*/Type{}, value,
-                              destination, chunkOffset, /*dist=*/nullptr,
-                              *mask);
     }
     rewriter.eraseOp(op);
     return success();
