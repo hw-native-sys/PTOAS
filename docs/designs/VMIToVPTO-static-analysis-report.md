@@ -221,6 +221,14 @@ mask 的语义差异只存在于 active-lane 判定。补齐该批代码及 scal
 触及的控制语句大括号后，增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过。
 
+# mask granularity 多步转换整改
+
+本轮将 `materializeMaskGranularitySteps` 中单步中间 mask 类型构造与 adjacent conversion
+调用抽取为 `materializeMaskGranularityStep`，并将 rank 方向判断命名化。外层继续负责
+多步循环、rank 边界和当前 part 状态；b8/b16/b32 的升降序、layout 保持及失败诊断不变。
+增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过。
+
 # deinterleaved=4 到 contiguous 物化整改
 
 本轮将 `materializeDeinterleaved4ToContiguous` 的单组四路 source fallback、类型校验、

@@ -5711,6 +5711,16 @@ FailureOr<SmallVector<Value>> materializeAdjacentMaskGranularityConversion(
   return results;
 }
 
+static FailureOr<SmallVector<Value>> materializeMaskGranularityStep(
+    Operation *op, VMIMaskType currentType, StringRef nextGranularity,
+    ValueRange currentParts, PatternRewriter &rewriter) {
+  VMIMaskType nextType = VMIMaskType::get(
+      op->getContext(), currentType.getElementCount(), nextGranularity,
+      currentType.getLayoutAttr());
+  return materializeAdjacentMaskGranularityConversion(
+      op, currentType, nextType, currentParts, rewriter);
+}
+
 static FailureOr<SmallVector<Value>> materializeMaskGranularitySteps(
     Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
     ValueRange sourceParts, int sourceRank, int resultRank,
@@ -5718,23 +5728,21 @@ static FailureOr<SmallVector<Value>> materializeMaskGranularitySteps(
   VMIMaskType currentType = sourceType;
   SmallVector<Value> currentParts(sourceParts.begin(), sourceParts.end());
   while (currentRank != resultRank) {
-    currentRank += currentRank < resultRank ? 1 : -1;
+    bool ascending = currentRank < resultRank;
+    currentRank += ascending ? 1 : -1;
     StringRef nextGranularity = getMaskGranularityForRank(currentRank);
     if (nextGranularity.empty()) {
       (void)rewriter.notifyMatchFailure(
           op, "invalid target mask granularity rank");
       return failure();
     }
-    VMIMaskType nextType = VMIMaskType::get(
-        op->getContext(), currentType.getElementCount(), nextGranularity,
-        currentType.getLayoutAttr());
-    FailureOr<SmallVector<Value>> nextParts =
-        materializeAdjacentMaskGranularityConversion(
-            op, currentType, nextType, currentParts, rewriter);
+    FailureOr<SmallVector<Value>> nextParts = materializeMaskGranularityStep(
+        op, currentType, nextGranularity, currentParts, rewriter);
     if (failed(nextParts)) {
       return failure();
     }
-    currentType = nextType;
+    currentType = VMIMaskType::get(op->getContext(), currentType.getElementCount(),
+                                   nextGranularity, currentType.getLayoutAttr());
     currentParts = std::move(*nextParts);
   }
   return currentParts;
