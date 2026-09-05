@@ -516,3 +516,9 @@ index mask 初始化抽取为 `createGroupBroadcastLoweringContext`，并以
 `GroupBroadcastLoweringContext` 传递真实的 lowering 状态。主函数仅保留结果 chunk
 枚举与分派，selector 生成顺序、缓存和错误诊断保持不变。增量合规检查为
 `errors=0 warnings=0`，`git diff --check` 通过；group-broadcast lowering 回归通过。
+
+本轮将 `materializeMaskLaneStridePack` 的单个结果 chunk 组装逻辑抽取为局部
+`materializeChunk`：该逻辑统一处理低/高 half 的 `ppack`、lane-stride=4 的二级 pack
+及 `por` 合并；外层仅负责结果类型、source/result arity 和 chunk 枚举。mask 语义与
+pack 顺序保持不变。增量合规检查为 `errors=0 warnings=0`，`git diff --check` 通过；
+mask granularity lowering 回归通过。

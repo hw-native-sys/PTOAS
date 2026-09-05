@@ -4901,8 +4901,6 @@ static FailureOr<SmallVector<Value>> materializeMaskLaneStridePack(
         op, "dense mask lane_stride pack materialization source arity does "
             "not fit result arity");
   }
-  SmallVector<Value> results;
-  results.reserve(resultTypes.size());
   StringAttr lower = rewriter.getStringAttr("LOWER");
   StringAttr higher = rewriter.getStringAttr("HIGHER");
   Value allTrue;
@@ -4932,6 +4930,41 @@ static FailureOr<SmallVector<Value>> materializeMaskLaneStridePack(
         op->getLoc(), maskType, *highSource, higher);
     return mergeMasks(packed, higherPacked);
   };
+
+  auto materializeChunk = [&](size_t base,
+                              MaskType maskType) -> FailureOr<Value> {
+    std::optional<Value> source1;
+    if (base + 1 < sourceParts.size()) {
+      source1 = sourceParts[base + 1];
+    }
+    FailureOr<Value> lowHalf = packPair(sourceParts[base], source1, maskType);
+    if (failed(lowHalf)) {
+      return failure();
+    }
+    Value current = *lowHalf;
+    if (laneStride != 4) {
+      return current;
+    }
+    current = rewriter.create<PpackOp>(op->getLoc(), maskType, current, lower);
+    if (base + 2 >= sourceParts.size()) {
+      return current;
+    }
+    std::optional<Value> source3;
+    if (base + 3 < sourceParts.size()) {
+      source3 = sourceParts[base + 3];
+    }
+    FailureOr<Value> highHalf =
+        packPair(sourceParts[base + 2], source3, maskType);
+    if (failed(highHalf)) {
+      return failure();
+    }
+    Value higherPacked =
+        rewriter.create<PpackOp>(op->getLoc(), maskType, *highHalf, higher);
+    return mergeMasks(current, higherPacked);
+  };
+
+  SmallVector<Value> results;
+  results.reserve(resultTypes.size());
   for (auto [resultIndex, resultType] : llvm::enumerate(resultTypes)) {
     auto maskType = dyn_cast<MaskType>(resultType);
     if (!maskType) {
@@ -4942,38 +4975,11 @@ static FailureOr<SmallVector<Value>> materializeMaskLaneStridePack(
     if (base >= sourceParts.size()) {
       break;
     }
-    std::optional<Value> source1;
-    if (base + 1 < sourceParts.size()) {
-      source1 = sourceParts[base + 1];
-    }
-    FailureOr<Value> lowHalf = packPair(sourceParts[base], source1, *maskType);
-    if (failed(lowHalf)) {
+    FailureOr<Value> current = materializeChunk(base, *maskType);
+    if (failed(current)) {
       return failure();
     }
-    Value current = *lowHalf;
-    if (laneStride == 4) {
-      current = rewriter.create<PpackOp>(op->getLoc(), *maskType, current,
-                                         lower);
-      if (base + 2 < sourceParts.size()) {
-        std::optional<Value> source3;
-        if (base + 3 < sourceParts.size()) {
-          source3 = sourceParts[base + 3];
-        }
-        FailureOr<Value> highHalf =
-            packPair(sourceParts[base + 2], source3, *maskType);
-        if (failed(highHalf)) {
-          return failure();
-        }
-        Value higherPacked = rewriter.create<PpackOp>(
-            op->getLoc(), *maskType, *highHalf, higher);
-        FailureOr<Value> merged = mergeMasks(current, higherPacked);
-        if (failed(merged)) {
-          return failure();
-        }
-        current = *merged;
-      }
-    }
-    results.push_back(current);
+    results.push_back(*current);
   }
   bool resultArityMismatch = results.size() != resultTypes.size();
   if (resultArityMismatch) {
