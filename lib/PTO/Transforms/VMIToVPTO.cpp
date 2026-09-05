@@ -3957,7 +3957,7 @@ FailureOr<SmallVector<Value>> materializeGroupSlotLaneStride(
   return results;
 }
 
-FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
+FailureOr<std::optional<SmallVector<Value>>> materializeSimpleDataLayoutConversion(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
     Type sourceVMIElementType, PatternRewriter &rewriter) {
@@ -3969,9 +3969,11 @@ FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
 
   if (sourceLayout == resultLayout) {
     if (failed(verifyIdentityPartForwarding(op, sourceParts, resultTypes,
-                                            rewriter)))
+                                            rewriter))) {
       return failure();
-    return SmallVector<Value>(sourceParts.begin(), sourceParts.end());
+    }
+    return std::optional<SmallVector<Value>>(
+        SmallVector<Value>(sourceParts.begin(), sourceParts.end()));
   }
 
   bool oneLaneContiguousToGroup =
@@ -3984,27 +3986,28 @@ FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
       resultLayout.getLaneStride() == 1;
   if (oneLaneContiguousToGroup || oneLaneGroupToContiguous) {
     if (failed(verifyIdentityPartForwarding(op, sourceParts, resultTypes,
-                                            rewriter)))
+                                            rewriter))) {
       return failure();
-    return SmallVector<Value>(sourceParts.begin(), sourceParts.end());
+    }
+    return std::optional<SmallVector<Value>>(
+        SmallVector<Value>(sourceParts.begin(), sourceParts.end()));
   }
 
   if (sourceLayout.isGroupSlots() && resultLayout.isGroupSlots() &&
       sourceLayout.getNumGroups() == resultLayout.getNumGroups() &&
       sourceLayout.getSlots() == 8 && resultLayout.getSlots() == 8) {
-    return materializeGroupSlotLaneStride(
+    FailureOr<SmallVector<Value>> result = materializeGroupSlotLaneStride(
         op, sourceParts, resultTypes, sourceVMIElementType,
         sourceLayout.getLaneStride(), resultLayout.getLaneStride(), rewriter);
+    if (failed(result)) {
+      return failure();
+    }
+    return std::optional<SmallVector<Value>>(std::move(*result));
   }
 
-  auto isElementDeinterleaved = [](VMILayoutAttr layout, int64_t factor) {
-    return layout.isDeinterleaved() && layout.getFactor() == factor &&
-           layout.getLaneStride() == 1;
-  };
   auto isBlockDeinterleaved = [](VMILayoutAttr layout, int64_t factor) {
     return layout.isBlockDeinterleaved() && layout.getFactor() == factor;
   };
-
   bool contiguousToBlock =
       sourceLayout.isContiguous() && sourceLayout.getLaneStride() == 1 &&
       (isBlockDeinterleaved(resultLayout, 2) ||
@@ -4020,21 +4023,52 @@ FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
         ValueRange inputs = cast.getInputs();
         if (inputs.size() == resultTypes.size()) {
           bool typesMatch = true;
-          for (auto [input, resultType] : llvm::zip_equal(inputs, resultTypes))
+          for (auto [input, resultType] : llvm::zip_equal(inputs, resultTypes)) {
             if (input.getType() != resultType) {
               typesMatch = false;
               break;
             }
-          if (typesMatch)
-            return SmallVector<Value>(inputs.begin(), inputs.end());
+          }
+          if (typesMatch) {
+            return std::optional<SmallVector<Value>>(
+                SmallVector<Value>(inputs.begin(), inputs.end()));
+          }
         }
       }
     }
     if (failed(verifyIdentityPartForwarding(op, sourceParts, resultTypes,
-                                            rewriter)))
+                                            rewriter))) {
       return failure();
-    return SmallVector<Value>(sourceParts.begin(), sourceParts.end());
+    }
+    return std::optional<SmallVector<Value>>(
+        SmallVector<Value>(sourceParts.begin(), sourceParts.end()));
   }
+
+  return std::nullopt;
+}
+
+FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
+    Operation *op, ValueRange sourceParts, TypeRange resultTypes,
+    VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
+    Type sourceVMIElementType, PatternRewriter &rewriter) {
+  FailureOr<std::optional<SmallVector<Value>>> simple =
+      materializeSimpleDataLayoutConversion(
+          op, sourceParts, resultTypes, sourceLayout, resultLayout,
+          sourceVMIElementType, rewriter);
+  if (failed(simple)) {
+    return failure();
+  }
+  if (simple->has_value()) {
+    return std::move(**simple);
+  }
+
+  auto isElementDeinterleaved = [](VMILayoutAttr layout, int64_t factor) {
+    return layout.isDeinterleaved() && layout.getFactor() == factor &&
+           layout.getLaneStride() == 1;
+  };
+  auto isBlockDeinterleaved = [](VMILayoutAttr layout, int64_t factor) {
+    return layout.isBlockDeinterleaved() && layout.getFactor() == factor;
+  };
 
   bool deint2ToContiguous = sourceLayout.isDeinterleaved() &&
                             isElementDeinterleaved(sourceLayout, 2) &&
