@@ -12153,6 +12153,113 @@ private:
     return success();
   }
 
+  LogicalResult lowerContiguousRows(
+      OpTy op, VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
+      ValueRange sourceParts, ValueRange maskParts, TypeRange resultTypes,
+      int64_t groupSize, OneToNPatternRewriter &rewriter) const {
+    int64_t lanesPerPart = 0;
+    int64_t groupCount = 0;
+    int64_t chunksPerGroup = 0;
+    if (failed(checkContiguousFullGroupChunks(op, sourceVMIType, groupSize,
+                                              &lanesPerPart, &groupCount,
+                                              &chunksPerGroup, rewriter))) {
+      return failure();
+    }
+    VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
+    bool rowLocalSlots1Result = resultLayout && resultLayout.isGroupSlots() &&
+                                resultLayout.getNumGroups() == groupCount &&
+                                resultLayout.getSlots() == 1;
+    int64_t expectedResultParts =
+        rowLocalSlots1Result ? groupCount : groupCount * chunksPerGroup;
+    bool invalidArity =
+        sourceParts.size() != maskParts.size() ||
+        static_cast<int64_t>(sourceParts.size()) != groupCount * chunksPerGroup ||
+        static_cast<int64_t>(resultTypes.size()) != expectedResultParts;
+    if (invalidArity) {
+      return rewriter.notifyMatchFailure(
+          op, "group_reduce requires matching source/mask/result arity");
+    }
+    SmallVector<Value> results(resultTypes.size());
+    for (Type resultType : resultTypes) {
+      if (!isa<VRegType>(resultType)) {
+        return rewriter.notifyMatchFailure(
+            op, "group_reduce result must be vreg");
+      }
+    }
+    auto resultType = dyn_cast<VRegType>(resultTypes.front());
+    auto maskType = dyn_cast<MaskType>(maskParts.front().getType());
+    if (!resultType || !maskType) {
+      return rewriter.notifyMatchFailure(
+          op, "group_reduce requires physical vreg result and mask");
+    }
+    auto sourcePartType = dyn_cast<VRegType>(sourceParts.front().getType());
+    if (!sourcePartType) {
+      return rewriter.notifyMatchFailure(op,
+                                         "group_reduce source must be vreg");
+    }
+    FailureOr<VRegType> rowResultType =
+        getRowResultType(sourcePartType, resultType);
+    if (failed(rowResultType)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to derive group row-reduction type");
+    }
+    FailureOr<MaskType> rowMaskType =
+        getMaskTypeForVReg(*rowResultType, rewriter.getContext());
+    if (failed(rowMaskType)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to derive group combine mask type");
+    }
+    FailureOr<Value> firstLaneMask =
+        createPrefixMask(op.getLoc(), *rowMaskType, "PAT_VL1", rewriter);
+    if (failed(firstLaneMask)) {
+      return rewriter.notifyMatchFailure(op,
+                                         "failed to create group_reduce masks");
+    }
+    for (int64_t group = 0; group < groupCount; ++group) {
+      Value accumulator;
+      for (int64_t chunk = 0; chunk < chunksPerGroup; ++chunk) {
+        int64_t index = group * chunksPerGroup + chunk;
+        bool mismatchedTypes = sourceParts[index].getType() != sourcePartType ||
+                               maskParts[index].getType() != maskType;
+        if (mismatchedTypes) {
+          return rewriter.notifyMatchFailure(
+              op, "group_reduce requires uniform physical chunk types");
+        }
+        Value reduced =
+            rewriter
+                .create<RowReduceOpTy>(op.getLoc(), *rowResultType,
+                                       sourceParts[index], maskParts[index])
+                .getResult();
+        if (!accumulator) {
+          accumulator = reduced;
+        } else {
+          accumulator =
+              rewriter
+                  .create<CombineOpTy>(op.getLoc(), *rowResultType, reduced,
+                                       accumulator, *firstLaneMask)
+                  .getResult();
+        }
+      }
+      FailureOr<Value> finalResult =
+          bitcastVReg(op.getLoc(), accumulator, resultType, rewriter);
+      if (failed(finalResult)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to restore group result type");
+      }
+      int64_t destChunk = rowLocalSlots1Result ? group : group * chunksPerGroup;
+      if (rowLocalSlots1Result) {
+        results[destChunk] = *finalResult;
+      } else {
+        for (int64_t chunk = 0; chunk < chunksPerGroup; ++chunk) {
+          results[destChunk + chunk] = *finalResult;
+        }
+      }
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
 public:
 
   LogicalResult
@@ -12215,113 +12322,13 @@ public:
           resultTypes, *groupSize, rewriter);
     }
 
-    if (*plan != GroupReduceLoweringPlan::ContiguousVcaddRows)
+    bool unknownPlan = *plan != GroupReduceLoweringPlan::ContiguousVcaddRows;
+    if (unknownPlan) {
       return rewriter.notifyMatchFailure(op,
                                          "unknown group_reduce lowering plan");
-
-    int64_t lanesPerPart = 0;
-    int64_t groupCount = 0;
-    int64_t chunksPerGroup = 0;
-    if (failed(checkContiguousFullGroupChunks(op, sourceVMIType, *groupSize,
-                                              &lanesPerPart, &groupCount,
-                                              &chunksPerGroup, rewriter)))
-      return failure();
-    VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
-    bool rowLocalSlots1Result = resultLayout && resultLayout.isGroupSlots() &&
-                                resultLayout.getNumGroups() == groupCount &&
-                                resultLayout.getSlots() == 1;
-    int64_t expectedResultParts =
-        rowLocalSlots1Result ? groupCount : groupCount * chunksPerGroup;
-    if (sourceParts.size() != maskParts.size() ||
-        static_cast<int64_t>(sourceParts.size()) !=
-            groupCount * chunksPerGroup ||
-        static_cast<int64_t>(resultTypes.size()) != expectedResultParts)
-      return rewriter.notifyMatchFailure(
-          op, "group_reduce requires matching source/mask/result arity");
-
-    SmallVector<Value> results(resultTypes.size());
-    for (Type resultType : resultTypes) {
-      if (!isa<VRegType>(resultType))
-        return rewriter.notifyMatchFailure(
-            op, "group_reduce result must be vreg");
     }
-
-    auto resultType = dyn_cast<VRegType>(resultTypes.front());
-    auto maskType = dyn_cast<MaskType>(maskParts.front().getType());
-    if (!resultType || !maskType)
-      return rewriter.notifyMatchFailure(
-          op, "group_reduce requires physical vreg result and mask");
-
-    auto sourcePartType = dyn_cast<VRegType>(sourceParts.front().getType());
-    if (!sourcePartType)
-      return rewriter.notifyMatchFailure(op,
-                                         "group_reduce source must be vreg");
-    FailureOr<VRegType> rowResultType =
-        getRowResultType(sourcePartType, resultType);
-    if (failed(rowResultType))
-      return rewriter.notifyMatchFailure(
-          op, "failed to derive group row-reduction type");
-    FailureOr<MaskType> rowMaskType =
-        getMaskTypeForVReg(*rowResultType, rewriter.getContext());
-    if (failed(rowMaskType))
-      return rewriter.notifyMatchFailure(
-          op, "failed to derive group combine mask type");
-    FailureOr<Value> firstLaneMask = createPrefixMask(
-        op.getLoc(), *rowMaskType, "PAT_VL1", rewriter);
-    if (failed(firstLaneMask))
-      return rewriter.notifyMatchFailure(
-          op, "failed to create group_reduce masks");
-
-    for (int64_t group = 0; group < groupCount; ++group) {
-      Value accumulator;
-
-      int64_t firstIndex = group * chunksPerGroup;
-      ValueRange groupSources = sourceParts.slice(firstIndex, chunksPerGroup);
-      ValueRange groupMasks = maskParts.slice(firstIndex, chunksPerGroup);
-      for (auto [source, mask] : llvm::zip_equal(groupSources, groupMasks)) {
-        if (source.getType() != sourcePartType || mask.getType() != maskType)
-          return rewriter.notifyMatchFailure(
-              op, "group_reduce requires uniform physical chunk types");
-      }
-      for (int64_t chunk = 0; chunk < chunksPerGroup; ++chunk) {
-        int64_t index = group * chunksPerGroup + chunk;
-        if (sourceParts[index].getType() != sourcePartType ||
-            maskParts[index].getType() != maskType)
-          return rewriter.notifyMatchFailure(
-              op, "group_reduce requires uniform physical chunk types");
-        Value reduced =
-            rewriter
-                .create<RowReduceOpTy>(op.getLoc(), *rowResultType,
-                                       sourceParts[index], maskParts[index])
-                .getResult();
-        if (!accumulator) {
-          accumulator = reduced;
-          continue;
-        }
-        accumulator =
-            rewriter
-                .create<CombineOpTy>(op.getLoc(), *rowResultType, reduced,
-                                     accumulator, *firstLaneMask)
-                .getResult();
-      }
-
-      FailureOr<Value> finalResult =
-          bitcastVReg(op.getLoc(), accumulator, resultType, rewriter);
-      if (failed(finalResult))
-        return rewriter.notifyMatchFailure(
-            op, "failed to restore group result type");
-
-      int64_t destChunk = rowLocalSlots1Result ? group : group * chunksPerGroup;
-      if (rowLocalSlots1Result) {
-        results[destChunk] = *finalResult;
-      } else {
-        for (int64_t chunk = 0; chunk < chunksPerGroup; ++chunk)
-          results[destChunk + chunk] = *finalResult;
-      }
-    }
-
-    replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
-    return success();
+    return lowerContiguousRows(op, sourceVMIType, resultVMIType, sourceParts,
+                               maskParts, resultTypes, *groupSize, rewriter);
   }
 
 private:
