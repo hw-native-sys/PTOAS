@@ -5102,6 +5102,43 @@ struct MaskLaneStridePackContext {
   }
 };
 
+static FailureOr<Value> materializeMaskLaneStridePackChunk(
+    Operation *op, ValueRange sourceParts, size_t base, int64_t laneStride,
+    MaskType maskType, MaskLaneStridePackContext &context,
+    PatternRewriter &rewriter) {
+  std::optional<Value> source1;
+  if (base + 1 < sourceParts.size()) {
+    source1 = sourceParts[base + 1];
+  }
+  FailureOr<Value> lowHalf =
+      context.packPair(sourceParts[base], source1, maskType);
+  if (failed(lowHalf)) {
+    return failure();
+  }
+  Value current = *lowHalf;
+  if (laneStride != 4) {
+    return current;
+  }
+  current = rewriter.create<PpackOp>(op->getLoc(), maskType, current,
+                                     context.lower);
+  if (base + 2 >= sourceParts.size()) {
+    return current;
+  }
+  std::optional<Value> source3;
+  if (base + 3 < sourceParts.size()) {
+    source3 = sourceParts[base + 3];
+  }
+  FailureOr<Value> highHalf =
+      context.packPair(sourceParts[base + 2], source3, maskType);
+  if (failed(highHalf)) {
+    return failure();
+  }
+  Value higherPacked =
+      rewriter.create<PpackOp>(op->getLoc(), maskType, *highHalf,
+                                context.higher);
+  return context.merge(current, higherPacked);
+}
+
 static FailureOr<SmallVector<Value>> materializeMaskLaneStridePack(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     int64_t laneStride, PatternRewriter &rewriter) {
@@ -5121,41 +5158,6 @@ static FailureOr<SmallVector<Value>> materializeMaskLaneStridePack(
       op, rewriter, rewriter.getStringAttr("LOWER"),
       rewriter.getStringAttr("HIGHER"), Value()};
 
-  auto materializeChunk = [&](size_t base,
-                              MaskType maskType) -> FailureOr<Value> {
-    std::optional<Value> source1;
-    if (base + 1 < sourceParts.size()) {
-      source1 = sourceParts[base + 1];
-    }
-    FailureOr<Value> lowHalf =
-        context.packPair(sourceParts[base], source1, maskType);
-    if (failed(lowHalf)) {
-      return failure();
-    }
-    Value current = *lowHalf;
-    if (laneStride != 4) {
-      return current;
-    }
-    current = rewriter.create<PpackOp>(op->getLoc(), maskType, current,
-                                       context.lower);
-    if (base + 2 >= sourceParts.size()) {
-      return current;
-    }
-    std::optional<Value> source3;
-    if (base + 3 < sourceParts.size()) {
-      source3 = sourceParts[base + 3];
-    }
-    FailureOr<Value> highHalf =
-        context.packPair(sourceParts[base + 2], source3, maskType);
-    if (failed(highHalf)) {
-      return failure();
-    }
-    Value higherPacked =
-        rewriter.create<PpackOp>(op->getLoc(), maskType, *highHalf,
-                                 context.higher);
-    return context.merge(current, higherPacked);
-  };
-
   SmallVector<Value> results;
   results.reserve(resultTypes.size());
   for (auto [resultIndex, resultType] : llvm::enumerate(resultTypes)) {
@@ -5168,7 +5170,8 @@ static FailureOr<SmallVector<Value>> materializeMaskLaneStridePack(
     if (base >= sourceParts.size()) {
       break;
     }
-    FailureOr<Value> current = materializeChunk(base, *maskType);
+    FailureOr<Value> current = materializeMaskLaneStridePackChunk(
+        op, sourceParts, base, laneStride, *maskType, context, rewriter);
     if (failed(current)) {
       return failure();
     }
