@@ -646,7 +646,7 @@ createRuntimePrefixMask(Location loc, MaskType maskType, Value activeLanes,
 
 LogicalResult
 checkSupportedMaskableVReg(VMIVRegType type, std::string *reason = nullptr) {
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
@@ -810,7 +810,7 @@ FailureOr<int64_t> getDataFlatPartIndex(VMIVRegType type, int64_t part,
 
 FailureOr<int64_t> checkFullDataPhysicalChunks(VMIVRegType type,
                                                std::string *reason) {
-  auto fail = [&](const Twine &message) -> FailureOr<int64_t> {
+  auto fail = [&reason](const Twine &message) -> FailureOr<int64_t> {
     if (reason)
       *reason = message.str();
     return failure();
@@ -905,7 +905,7 @@ FailureOr<int64_t> getVMITypeChunksInPart(Type type, int64_t part) {
 }
 
 LogicalResult checkFullVMIPhysicalChunks(Type type, std::string *reason) {
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
@@ -939,7 +939,7 @@ FailureOr<int64_t> getContiguousMaterializationPartCount(Type type,
 
 FailureOr<int64_t> getContiguousMaterializationPartCount(Type type,
                                                          std::string *reason) {
-  auto fail = [&](const Twine &message) -> FailureOr<int64_t> {
+  auto fail = [&reason](const Twine &message) -> FailureOr<int64_t> {
     if (reason)
       *reason = message.str();
     return failure();
@@ -1184,7 +1184,7 @@ FailureOr<VMIMemoryLaneAddressMap>
 buildContiguousIdentityLaneAddressMap(int64_t constantOffset,
                                       VMIVRegType resultType,
                                       std::string *reason = nullptr) {
-  auto fail = [&](const Twine &message) -> FailureOr<VMIMemoryLaneAddressMap> {
+  auto fail = [&reason](const Twine &message) -> FailureOr<VMIMemoryLaneAddressMap> {
     if (reason)
       *reason = message.str();
     return failure();
@@ -1224,7 +1224,7 @@ computeSafeFullReadProof(Type sourceType, std::optional<int64_t> constantOffset,
   VMIMemorySafeReadProof proof;
   proof.constantOffset = constantOffset;
 
-  auto fail = [&](const Twine &message) {
+  auto fail = [&proof](const Twine &message) {
     proof.proven = false;
     proof.reason = message.str();
     return proof;
@@ -1286,7 +1286,7 @@ computeSafeStatefulReadProof(Value source, Value offset,
                              VMIVRegType resultType) {
   VMIMemorySafeReadProof proof;
 
-  auto fail = [&](const Twine &message) {
+  auto fail = [&proof](const Twine &message) {
     proof.proven = false;
     proof.reason = message.str();
     return proof;
@@ -1551,7 +1551,7 @@ LogicalResult
 checkSupportedLoadShape(VMIVRegType type, Value source, Type sourceType,
                         std::optional<int64_t> constantOffset,
                         std::string *reason) {
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
@@ -1577,7 +1577,7 @@ checkSupportedLoadShape(VMIVRegType type, Value source, Type sourceType,
 LogicalResult checkSupportedDeinterleaveLoadShape(
     VMIDeinterleaveLoadOp op,
     std::string *reason) {
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
@@ -1628,7 +1628,7 @@ LogicalResult checkSupportedStoreShape(VMIVRegType type, Value destination,
   if (succeeded(checkFullDataPhysicalChunks(type, &fullChunkReason)))
     return success();
 
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
@@ -1654,7 +1654,7 @@ LogicalResult checkSupportedStoreShape(VMIVRegType type, Value destination,
 LogicalResult checkSupportedInterleaveStoreShape(
     VMIInterleaveStoreOp op,
     std::string *reason) {
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
@@ -1690,7 +1690,7 @@ LogicalResult checkSupportedInterleaveStoreShape(
 FailureOr<int64_t> getGroupSizeFromNumGroups(VMIVRegType type,
                                              int64_t numGroups,
                                              std::string *reason = nullptr) {
-  auto fail = [&](const Twine &message) -> FailureOr<int64_t> {
+  auto fail = [&reason](const Twine &message) -> FailureOr<int64_t> {
     if (reason)
       *reason = message.str();
     return failure();
@@ -1704,7 +1704,7 @@ FailureOr<int64_t> getGroupSizeFromNumGroups(VMIVRegType type,
 
 LogicalResult checkSupportedGroupChunkShape(VMIVRegType type, int64_t groupSize,
                                             std::string *reason) {
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
@@ -1732,7 +1732,7 @@ LogicalResult checkDeinterleaved2GroupStoreChunkShape(
     VMIVRegType type, int64_t groupSize, int64_t *lanesPerPart,
     int64_t *groupCount, int64_t *chunksPerGroupPerPart,
     std::string *reason) {
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
@@ -1773,7 +1773,7 @@ LogicalResult checkDeinterleaved2GroupStoreChunkShape(
 
 LogicalResult
 checkSupportedGroupLoadShape(VMIGroupLoadOp op, std::string *reason) {
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
@@ -1837,7 +1837,7 @@ checkSupportedGroupLoadShape(VMIGroupLoadOp op, std::string *reason) {
 LogicalResult checkSupportedGroupSlotLoadShape(
     VMIGroupSlotLoadOp op,
     std::string *reason) {
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
@@ -1887,7 +1887,7 @@ LogicalResult checkSupportedGroupSlotLoadShape(
 LogicalResult checkSupportedGroupBroadcastLoadShape(
     VMIGroupBroadcastLoadOp op,
     std::string *reason) {
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
@@ -1969,7 +1969,7 @@ FailureOr<OneBlockGroupStorePlan> getOneBlockGroupStorePlan(
 
 LogicalResult
 checkSupportedGroupStoreShape(VMIGroupStoreOp op, std::string *reason) {
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
@@ -2052,7 +2052,7 @@ checkSupportedGroupStoreShape(VMIGroupStoreOp op, std::string *reason) {
 
 LogicalResult
 checkSupportedMaskedLoadShape(VMIMaskedLoadOp op, std::string *reason) {
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
@@ -2093,7 +2093,7 @@ checkSupportedMaskedLoadShape(VMIMaskedLoadOp op, std::string *reason) {
 
 LogicalResult
 checkSupportedGatherShape(VMIGatherOp op, std::string *reason) {
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
@@ -2200,7 +2200,7 @@ checkSupportedGatherShape(VMIGatherOp op, std::string *reason) {
 
 LogicalResult
 checkSupportedScatterShape(VMIScatterOp op, std::string *reason) {
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
@@ -2266,7 +2266,7 @@ checkSupportedScatterShape(VMIScatterOp op, std::string *reason) {
 
 LogicalResult
 checkSupportedStrideStoreShape(VMIStrideStoreOp op, std::string *reason) {
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
@@ -2748,7 +2748,7 @@ struct ShuffleVselrPlan {
 
 FailureOr<int64_t> computeShuffleLane0SplatSourcePart(VMIShuffleOp op,
                                                       std::string *reason) {
-  auto fail = [&](const Twine &message) -> FailureOr<int64_t> {
+  auto fail = [&reason](const Twine &message) -> FailureOr<int64_t> {
     if (reason)
       *reason = message.str();
     return failure();
@@ -4756,7 +4756,7 @@ StringRef getMaskGranularityForRank(int rank) {
 LogicalResult checkSupportedMaskGranularityMaterialization(
     VMIMaskType sourceType,
     VMIMaskType resultType, std::string *reason) {
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
@@ -13542,7 +13542,7 @@ LogicalResult checkSupportedBitcastShape(VMIBitcastOp op, std::string *reason) {
 LogicalResult
 checkSupportedChannelSplitShape(VMIChannelSplitOp op,
                                 std::string *reason = nullptr) {
-  auto fail = [&](const Twine &message) -> LogicalResult {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason)
       *reason = message.str();
     return failure();
