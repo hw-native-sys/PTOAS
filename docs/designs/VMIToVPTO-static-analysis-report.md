@@ -2141,6 +2141,17 @@ mask、地址步长和失败诊断。增量
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_load_store_contiguous.pto` lowering exit=0。
 
+# interleave store 地址与直写路由职责整改
+
+本轮在 `OneToNVMIInterleaveStoreOpPattern` 中新增 `canUseDirectAccess` 与
+`getUnalignedBase`，将 `vstsx2` 直写地址合法性判断和非对齐 stateful stream 的 base
+物化从主入口独立出来。入口继续负责 dist/lane/arity 合同、逐 chunk 的 `vintlv`/`vstsx2`
+选择及 stream 收尾；保持 INTLV dist、low/high 顺序、每个 chunk 的 lane advance、align/base
+状态和失败诊断不变。增量
+`check_changed_code.py --base origin/master --fail-on none` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_interleaved_memory_ops.pto` lowering exit=0。
+
 # group load 布局分派职责整改
 
 本轮将 `OneToNVMIGroupLoadOpPattern::matchAndRewrite` 中 block-deinterleaved f32 特殊路径

@@ -10462,6 +10462,37 @@ private:
     return success();
   }
 
+  FailureOr<bool> canUseDirectAccess(
+      VMIInterleaveStoreOp op, ValueRange lowParts,
+      VMIVRegType lowVMIType, StringRef dist) const {
+    auto firstType = lowParts.empty()
+                         ? VRegType{}
+                         : dyn_cast<VRegType>(lowParts.front().getType());
+    if (!firstType) {
+      return false;
+    }
+    return isDirectMemoryDistAddressLegal(
+        op.getDestination(), op.getOffset(), lowVMIType.getElementType(),
+        firstType, VPTOMemoryOpFamily::StoreX2, dist);
+  }
+
+  FailureOr<Value> getUnalignedBase(
+      VMIInterleaveStoreOp op, Value destination, Value offset,
+      VMIVRegType lowVMIType, OneToNPatternRewriter &rewriter) const {
+    Value streamBase = materializeBufferPointer(
+        destination, lowVMIType.getElementType(),
+        getMemorySpace(destination.getType()), rewriter, op.getLoc());
+    if (!streamBase) {
+      return rewriter.notifyMatchFailure(
+          op, "unaligned interleave_store requires a ptr-compatible "
+              "destination");
+    }
+    return rewriter
+        .create<AddPtrOp>(op.getLoc(), streamBase.getType(), streamBase,
+                          offset)
+        .getResult();
+  }
+
 public:
 
   LogicalResult
@@ -10470,8 +10501,7 @@ public:
     auto lowVMIType = cast<VMIVRegType>(op.getLow().getType());
     FailureOr<int64_t> lanesPerPart =
         getDataLanesPerPart(lowVMIType.getElementType());
-    if (failed(lanesPerPart))
-    {
+    if (failed(lanesPerPart)) {
       return rewriter.notifyMatchFailure(
           op, "interleave_store requires known physical lanes per part");
     }
@@ -10489,43 +10519,35 @@ public:
     FailureOr<Value> offset = getSingleValue(
         op, adaptor.getOffset(),
         "interleave_store offset must convert to one value", rewriter);
-    if (failed(destination) || failed(offset))
-    {
+    bool invalidAddressOperands = failed(destination) || failed(offset);
+    if (invalidAddressOperands) {
       return failure();
     }
 
     ValueRange lowParts = adaptor.getLow();
     ValueRange highParts = adaptor.getHigh();
-    if (lowParts.size() != highParts.size())
-    {
+    bool arityMismatch = lowParts.size() != highParts.size();
+    if (arityMismatch) {
       return rewriter.notifyMatchFailure(
           op, "interleave_store requires matching low/high physical arity");
     }
 
-    auto firstType = lowParts.empty()
-                         ? VRegType{}
-                         : dyn_cast<VRegType>(lowParts.front().getType());
-    bool useDirectAccess =
-        firstType &&
-        isDirectMemoryDistAddressLegal(op.getDestination(), op.getOffset(),
-                                       lowVMIType.getElementType(), firstType,
-                                       VPTOMemoryOpFamily::StoreX2, *dist);
+    FailureOr<bool> directAccess =
+        canUseDirectAccess(op, lowParts, lowVMIType, *dist);
+    if (failed(directAccess)) {
+      return failure();
+    }
+    bool useDirectAccess = *directAccess;
     SmallVector<Value> streamValues;
     SmallVector<int64_t> streamAdvances;
     Value streamBase;
     if (!useDirectAccess) {
-      streamBase = materializeBufferPointer(
-          *destination, lowVMIType.getElementType(),
-          getMemorySpace((*destination).getType()), rewriter, op.getLoc());
-      if (!streamBase) {
-        return rewriter.notifyMatchFailure(
-            op, "unaligned interleave_store requires a ptr-compatible "
-                "destination");
+      FailureOr<Value> base = getUnalignedBase(
+          op, *destination, *offset, lowVMIType, rewriter);
+      if (failed(base)) {
+        return failure();
       }
-      streamBase = rewriter
-                       .create<AddPtrOp>(op.getLoc(), streamBase.getType(),
-                                         streamBase, *offset)
-                       .getResult();
+      streamBase = *base;
     }
 
     for (size_t index = 0, e = lowParts.size(); index < e; ++index) {
@@ -10537,10 +10559,11 @@ public:
       }
     }
 
-    if (!useDirectAccess &&
-        failed(emitStatefulStoreStream(op, streamBase, streamValues,
-                                       streamAdvances, rewriter))) {
-      return failure();
+    if (!useDirectAccess) {
+      if (failed(emitStatefulStoreStream(op, streamBase, streamValues,
+                                         streamAdvances, rewriter))) {
+        return failure();
+      }
     }
 
     rewriter.eraseOp(op);
