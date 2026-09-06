@@ -2330,6 +2330,16 @@ checked_files=1 errors=0 warnings=0
 报告中的 AST 级超大函数、圈复杂度和历史数据泥团仍不能据此宣称全部清零，后续需在
 保持 lowering 分派和物理结果语义不变的前提下继续按职责边界拆分。
 
+# mask granularity 多步物化状态修复（2026-09-06）
+
+复核多步 mask granularity conversion 时发现 `materializeMaskGranularitySteps` 使用了未
+初始化的 `currentRank`，会使非相邻粒度转换的状态推进不具备确定语义。现以已分类的
+`sourceRank` 初始化当前状态，保持逐级升/降粒度顺序和每一步的物化调用不变。增量合规
+检查与 `git diff --check` 均通过；`vmi_to_vpto_ensure_layout_dense_composed.pto`
+完整 lowering exit=0。`vmi_to_vpto_ensure_mask_granularity_multistep.pto` 仍在测试自身
+既有 `VMI-PASS-INVARIANT`（pack/unpack helper 提前物化）处终止，未进入该路径，不能将
+该失败归因于本修复。
+
 # compact small group store 分支发射职责整改
 
 本轮在 `OneToNVMIGroupStoreOpPattern::lowerCompactSmallGroupStore` 中引入
