@@ -2022,16 +2022,28 @@ LogicalResult checkSupportedSlots8GroupSlotLoadShape(
   return success();
 }
 
-LogicalResult checkSupportedGroupSlotLoadShape(
-    VMIGroupSlotLoadOp op,
-    std::string *reason) {
+static LogicalResult checkGroupSlotLoadMemoryContract(
+    VMIGroupSlotLoadOp op, VMIVRegType resultType, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason) {
       *reason = message.str();
     }
     return failure();
   };
+  VMIMemoryAccessPlan accessPlan = buildReadAccessPlan(
+      op.getSource(), op.getOffset(), resultType, VMIMemoryCoverageKind::Dense);
+  if (!accessPlan.layoutSupport.isSupported()) {
+    return fail(accessPlan.layoutSupport.reason);
+  }
+  if (!isa<PtrType>(op.getSource().getType())) {
+    return fail("group_slot_load requires !pto.ptr source");
+  }
+  return success();
+}
 
+LogicalResult checkSupportedGroupSlotLoadShape(
+    VMIGroupSlotLoadOp op,
+    std::string *reason) {
   auto resultType = cast<VMIVRegType>(op.getResult().getType());
   VMILayoutSupport supports;
   FailureOr<VMIGroupSlotLayoutFact> fact = supports.getGroupSlotLoadLayoutFact(
@@ -2040,13 +2052,8 @@ LogicalResult checkSupportedGroupSlotLoadShape(
     return failure();
   }
 
-  VMIMemoryAccessPlan accessPlan = buildReadAccessPlan(
-      op.getSource(), op.getOffset(), resultType, VMIMemoryCoverageKind::Dense);
-  if (!accessPlan.layoutSupport.isSupported()) {
-    return fail(accessPlan.layoutSupport.reason);
-  }
-  if (!isa<PtrType>(op.getSource().getType())) {
-    return fail("group_slot_load requires !pto.ptr source");
+  if (failed(checkGroupSlotLoadMemoryContract(op, resultType, reason))) {
+    return failure();
   }
 
   if (fact->slots == 8) {
@@ -3020,8 +3027,9 @@ FailureOr<int64_t> getContiguousActiveDataLanes(VMIVRegType vmiType,
                                                 int64_t chunk) {
   FailureOr<int64_t> lanesPerPart =
       getDataLanesPerPart(vmiType.getElementType());
-  if (failed(lanesPerPart))
+  if (failed(lanesPerPart)) {
     return failure();
+  }
 
   int64_t remaining = vmiType.getElementCount() - chunk * *lanesPerPart;
   return std::clamp<int64_t>(remaining, 0, *lanesPerPart);

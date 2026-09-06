@@ -2422,6 +2422,15 @@ memory access proof 及两阶段失败回退，保持 masked-store 的支持范�
 `vmi_to_vpto_load_store_contiguous.pto` lowering exit=0。lane-stride masked-store 样例在
 既有 `ensure_mask_layout` 前置约束处终止，未进入本轮 helper。
 
+# group-slot load memory 合同职责整改（2026-09-06）
+
+本轮将 `checkSupportedGroupSlotLoadShape` 的 dense memory access proof 与 UB pointer
+校验抽取为 `checkGroupSlotLoadMemoryContract`，主函数只负责 layout fact 获取及 slots=1/8
+分派。source stride 约束、对齐要求、诊断和失败传播保持不变；同时补齐相邻的
+`getContiguousActiveDataLanes` 控制流大括号。增量检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续 load/store case
+仍按既有测试约束验证，未观察到本轮 helper 引入的新 lowering 错误。
+
 # scatter shape 合同职责整改（2026-09-06）
 
 本轮将 `checkSupportedScatterShape` 的布局/目标指针校验抽取为
