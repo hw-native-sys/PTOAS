@@ -2256,10 +2256,9 @@ checkSupportedGroupSlotsStoreShape(VMIGroupStoreOp op, VMIVRegType valueType,
 }
 
 LogicalResult
-checkSupportedGroupStoreByLayout(VMIGroupStoreOp op, VMIVRegType valueType,
-                                 VMILayoutAttr layout,
-                                 std::optional<int64_t> rowStride,
-                                 std::string *reason) {
+checkSupportedGroupStorePhysicalShape(
+    VMIGroupStoreOp op, VMIVRegType valueType,
+    const VMIGroupStoreLayoutFact &fact, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason) {
       *reason = message.str();
@@ -2267,6 +2266,35 @@ checkSupportedGroupStoreByLayout(VMIGroupStoreOp op, VMIVRegType valueType,
     return failure();
   };
 
+  if (failed(checkSupportedStoreShape(valueType,
+                                      op.getDestination(),
+                                      op.getDestination().getType(), reason))) {
+    return failure();
+  }
+  if (fact.blockClass == VMIGroupBlockClass::OneBlock) {
+    if (failed(getOneBlockGroupStorePlan(op, valueType, fact, reason))) {
+      return failure();
+    }
+    return success();
+  }
+  if (succeeded(checkSupportedGroupChunkShape(valueType, fact.groupSize,
+                                              reason))) {
+    return success();
+  }
+
+  int64_t lanesPerPart = 0;
+  int64_t groupCount = 0;
+  int64_t chunksPerGroupPerPart = 0;
+  return checkDeinterleaved2GroupStoreChunkShape(
+      valueType, fact.groupSize, &lanesPerPart, &groupCount,
+      &chunksPerGroupPerPart, reason);
+}
+
+LogicalResult
+checkSupportedGroupStoreByLayout(VMIGroupStoreOp op, VMIVRegType valueType,
+                                 VMILayoutAttr layout,
+                                 std::optional<int64_t> rowStride,
+                                 std::string *reason) {
   if (isCompactSmallGroupStore(layout, valueType,
                                op.getNumGroupsAttr().getInt(), rowStride)) {
     return checkSupportedCompactSmallGroupStoreShape(op, valueType, reason);
@@ -2281,28 +2309,7 @@ checkSupportedGroupStoreByLayout(VMIGroupStoreOp op, VMIVRegType valueType,
   if (failed(fact)) {
     return failure();
   }
-  if (failed(checkSupportedStoreShape(valueType,
-                                      op.getDestination(),
-                                      op.getDestination().getType(), reason))) {
-    return failure();
-  }
-  if (fact->blockClass == VMIGroupBlockClass::OneBlock) {
-    if (failed(getOneBlockGroupStorePlan(op, valueType, *fact, reason))) {
-      return failure();
-    }
-    return success();
-  }
-  if (succeeded(
-          checkSupportedGroupChunkShape(valueType, fact->groupSize, reason))) {
-    return success();
-  }
-
-  int64_t lanesPerPart = 0;
-  int64_t groupCount = 0;
-  int64_t chunksPerGroupPerPart = 0;
-  return checkDeinterleaved2GroupStoreChunkShape(
-      valueType, fact->groupSize, &lanesPerPart, &groupCount,
-      &chunksPerGroupPerPart, reason);
+  return checkSupportedGroupStorePhysicalShape(op, valueType, *fact, reason);
 }
 
 LogicalResult

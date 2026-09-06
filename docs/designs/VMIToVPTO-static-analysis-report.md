@@ -3066,3 +3066,19 @@ ASC/DESC 方向推导，抽取没有改变失败诊断、迭代顺序或最终 `
 
 随后补齐 shuffle VSEL 规划失败诊断 lambda 的大括号；该修改仅满足控制流可读性约束，
 不改变诊断文本或失败传播。
+
+# group store physical shape 职责拆分（2026-09-06）
+
+本轮将 `checkSupportedGroupStoreByLayout` 中通用 physical shape 合同校验抽取为
+`checkSupportedGroupStorePhysicalShape`。布局分派 helper 现在只负责 compact-small、
+group-slots 和通用 layout-fact 路由；physical helper 负责 destination shape、one-block
+plan、full group chunk 与 deinterleaved=2 fallback 的顺序。支持范围、失败诊断和原有
+优先级保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_layout_assignment_group_store_slots1_unit_stride.pto # exit=0
+```
