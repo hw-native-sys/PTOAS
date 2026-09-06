@@ -1,5 +1,20 @@
 # VMIToVPTO 静态分析报告记录
 
+## normal-reduction verifier 浮点/整数分派拆分（2026-09-06）
+
+本轮将 `verifySupportedVMINormalReductionOp` 拆为
+`verifySupportedVMINormalFloatReductionOp` 与
+`verifySupportedVMINormalIntegerReductionOp`，分别维护 add/max/min 浮点和整数 reduction
+的 shape check 与诊断。入口只负责两类分派，保持原有 op 顺序、reassoc 要求、诊断文本和
+`WalkResult` 语义。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
 ## group-reduction verifier 浮点/整数分派拆分（2026-09-06）
 
 本轮将 `verifySupportedVMIGroupReductionOp` 拆为

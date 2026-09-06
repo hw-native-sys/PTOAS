@@ -21104,14 +21104,8 @@ std::optional<WalkResult> verifySupportedVMISpecialOp(Operation *op) {
   return verifySupportedVMISpecialUnaryOp(op);
 }
 
-std::optional<WalkResult> verifySupportedVMINormalReductionOp(Operation *op) {
-  if (auto reduce = dyn_cast<VMIReduceAddIOp>(op)) {
-    return verifySupportedReduceOp(
-        reduce, false,
-        "pto.vmi.reduce_addi lowers through pto.vcadd only for contiguous "
-        "full 32-bit integer source chunks with matching mask chunks and one "
-        "init/result chunk (");
-  }
+static std::optional<WalkResult> verifySupportedVMINormalFloatReductionOp(
+    Operation *op) {
   if (auto reduce = dyn_cast<VMIReduceAddFOp>(op)) {
     return verifySupportedReduceOp(
         reduce, true,
@@ -21133,6 +21127,18 @@ std::optional<WalkResult> verifySupportedVMINormalReductionOp(Operation *op) {
         "contiguous full source chunks with matching mask chunks and one "
         "init/result chunk (");
   }
+  return std::nullopt;
+}
+
+static std::optional<WalkResult> verifySupportedVMINormalIntegerReductionOp(
+    Operation *op) {
+  if (auto reduce = dyn_cast<VMIReduceAddIOp>(op)) {
+    return verifySupportedReduceOp(
+        reduce, false,
+        "pto.vmi.reduce_addi lowers through pto.vcadd only for contiguous "
+        "full 32-bit integer source chunks with matching mask chunks and one "
+        "init/result chunk (");
+  }
   if (auto reduce = dyn_cast<VMIReduceMaxIOp>(op)) {
     return verifySupportedReduceOp(
         reduce, false,
@@ -21148,6 +21154,15 @@ std::optional<WalkResult> verifySupportedVMINormalReductionOp(Operation *op) {
         "init/result chunk (");
   }
   return std::nullopt;
+}
+
+static std::optional<WalkResult> verifySupportedVMINormalReductionOp(
+    Operation *op) {
+  if (auto result = verifySupportedVMINormalFloatReductionOp(op);
+      result.has_value()) {
+    return result;
+  }
+  return verifySupportedVMINormalIntegerReductionOp(op);
 }
 
 static std::optional<WalkResult> verifySupportedVMIGroupFloatReductionOp(
