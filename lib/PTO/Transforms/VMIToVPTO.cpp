@@ -12259,6 +12259,47 @@ private:
     return success();
   }
 
+  LogicalResult emitContiguousMaskedStorePart(
+      VMIMaskedStoreOp op, OneToNPatternRewriter &rewriter, Value value,
+      Value mask, VMIVRegType valueVMIType, Value destination, Value offset,
+      int64_t index, int64_t lanesPerPart) const {
+    auto vregType = dyn_cast<VRegType>(value.getType());
+    bool invalidTypes = !vregType || !isa<MaskType>(mask.getType());
+    if (invalidTypes) {
+      return rewriter.notifyMatchFailure(
+          op, "masked_store converted parts must be vreg/mask");
+    }
+    FailureOr<int64_t> activeLanes =
+        getContiguousActiveDataLanes(valueVMIType, index);
+    if (failed(activeLanes)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to compute masked_store active lanes");
+    }
+    if (*activeLanes == 0) {
+      return success();
+    }
+    FailureOr<Value> storeMask = createMaskedStorePredicate(
+        op.getLoc(), valueVMIType, index, mask, vregType, rewriter);
+    if (failed(storeMask)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to materialize masked_store predicate");
+    }
+    Value chunkOffset =
+        createChunkOffset(op.getLoc(), offset, index * lanesPerPart, rewriter);
+    bool illegalAddress = !isDirectMemoryDistAddressLegal(
+        destination, chunkOffset, valueVMIType.getElementType(), vregType,
+        VPTOMemoryOpFamily::Store, /*dist=*/{});
+    if (illegalAddress) {
+      return rewriter.notifyMatchFailure(
+          op, "masked_store requires a proven target alignment for every "
+              "physical store chunk");
+    }
+    rewriter.create<VstsOp>(op.getLoc(), /*updated_base=*/Type{}, value,
+                            destination, chunkOffset, /*dist=*/nullptr,
+                            *storeMask);
+    return success();
+  }
+
   LogicalResult lowerContiguous(
       VMIMaskedStoreOp op, OneToNPatternRewriter &rewriter,
       ValueRange valueParts, ValueRange maskParts, VMIVRegType valueVMIType,
@@ -12298,40 +12339,11 @@ private:
     for (auto [index, valueAndMask] :
          llvm::enumerate(llvm::zip_equal(*storeParts, *storeMasks))) {
       auto [value, mask] = valueAndMask;
-      auto vregType = dyn_cast<VRegType>(value.getType());
-      bool invalidTypes = !vregType || !isa<MaskType>(mask.getType());
-      if (invalidTypes) {
-        return rewriter.notifyMatchFailure(
-            op, "masked_store converted parts must be vreg/mask");
+      if (failed(emitContiguousMaskedStorePart(
+              op, rewriter, value, mask, valueVMIType, destination, offset,
+              index, lanesPerPart))) {
+        return failure();
       }
-      FailureOr<int64_t> activeLanes =
-          getContiguousActiveDataLanes(valueVMIType, index);
-      if (failed(activeLanes)) {
-        return rewriter.notifyMatchFailure(
-            op, "failed to compute masked_store active lanes");
-      }
-      if (*activeLanes == 0) {
-        continue;
-      }
-      FailureOr<Value> storeMask = createMaskedStorePredicate(
-          op.getLoc(), valueVMIType, index, mask, vregType, rewriter);
-      if (failed(storeMask)) {
-        return rewriter.notifyMatchFailure(
-            op, "failed to materialize masked_store predicate");
-      }
-      Value chunkOffset = createChunkOffset(
-          op.getLoc(), offset, index * lanesPerPart, rewriter);
-      bool illegalAddress = !isDirectMemoryDistAddressLegal(
-          destination, chunkOffset, valueVMIType.getElementType(), vregType,
-          VPTOMemoryOpFamily::Store, /*dist=*/{});
-      if (illegalAddress) {
-        return rewriter.notifyMatchFailure(
-            op, "masked_store requires a proven target alignment for every "
-                "physical store chunk");
-      }
-      rewriter.create<VstsOp>(op.getLoc(), /*updated_base=*/Type{}, value,
-                              destination, chunkOffset, /*dist=*/nullptr,
-                              *storeMask);
     }
     rewriter.eraseOp(op);
     return success();

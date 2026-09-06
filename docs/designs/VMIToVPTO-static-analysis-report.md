@@ -3544,6 +3544,21 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_to_vpto_vintlv_d2_to_d4.pto                        # blocked by pre-existing VMI-PASS-INVARIANT
 ```
 
+# masked-store contiguous chunk 发射拆分（2026-09-06）
+
+本轮将 `OneToNVMIMaskedStoreOpPattern::lowerContiguous` 中逐 physical chunk 的 value/mask
+类型检查、active lane 计算、predicate 物化、地址对齐校验和 `vsts` 发射抽取为
+`emitContiguousMaskedStorePart`。主函数继续负责 value/mask layout conversion、arity
+检查和 chunk 遍历，零 active lane、诊断文本及 store 顺序保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_masked_store.pto                           # exit=0
+```
+
 # load physical plan 构造职责拆分（2026-09-06）
 
 本轮将 `OneToNVMILoadOpPattern::buildPhysicalPlan` 中 converted result type 获取与
