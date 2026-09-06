@@ -3471,6 +3471,20 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_layout_assignment_trunci_lane_stride.pto           # exit=0
 ```
 
+# vmull logical shape 与 physical arity 拆分（2026-09-06）
+
+本轮将 `buildVmullShapePlan` 中 element type、lane 数量、layout 和 mask 合同抽取为
+`validateVmullLogicalShape`；原函数继续负责各端口 physical arity 计算与一致性检查。
+`VmullShapePlan` 的 data/layout/arity 内容、失败诊断和支持矩阵保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_vmull_deinterleaved.pto                    # exit=0
+```
+
 # load physical plan 构造职责拆分（2026-09-06）
 
 本轮将 `OneToNVMILoadOpPattern::buildPhysicalPlan` 中 converted result type 获取与
