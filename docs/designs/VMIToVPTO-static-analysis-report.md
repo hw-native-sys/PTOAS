@@ -3368,6 +3368,21 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_to_vpto_load_store_contiguous.pto                  # exit=0
 ```
 
+# interleave lowering 入口合同与布局查询拆分（2026-09-06）
+
+本轮将模板 `OneToNVMIInterleaveOpPattern::matchAndRewrite` 中的结果物理类型/输入输出
+arity 合同检查抽取为 `getInterleaveResultTypes`，并将 vintlv/vdintlv 布局事实查询抽取为
+`getInterleaveLayoutFact`。入口继续保持 lane-stride、contiguous 与 zero-copy 的分派顺序，
+结果替换、失败传播及诊断语义不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_vintlv.pto                                 # blocked by pre-existing VMI-PASS-INVARIANT
+```
+
 # slots=8 group-store 输入合同拆分（2026-09-06）
 
 本轮将 `lowerSlots8Dispatch` 中的物理 value arity 与首个 vreg 类型检查抽取为

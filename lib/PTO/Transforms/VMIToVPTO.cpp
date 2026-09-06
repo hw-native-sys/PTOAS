@@ -8994,6 +8994,54 @@ private:
     return success();
   }
 
+  FailureOr<std::pair<SmallVector<Type>, SmallVector<Type>>>
+  getInterleaveResultTypes(
+      SourceOp op, ValueRange lhsParts, ValueRange rhsParts,
+      ValueRange maskParts, OneToNPatternRewriter &rewriter) const {
+    FailureOr<SmallVector<Type>> maybeLowTypes =
+        getConvertedResultTypes(op, 0, *this->getTypeConverter());
+    FailureOr<SmallVector<Type>> maybeHighTypes =
+        getConvertedResultTypes(op, 1, *this->getTypeConverter());
+    bool failedResultTypes = failed(maybeLowTypes) || failed(maybeHighTypes);
+    if (failedResultTypes) {
+      return failure();
+    }
+    bool arityMismatch = lhsParts.size() != rhsParts.size() ||
+                         lhsParts.size() != maybeLowTypes->size() ||
+                         lhsParts.size() != maybeHighTypes->size();
+    if (arityMismatch) {
+      rewriter.notifyMatchFailure(op, "physical interleave arity mismatch");
+      return failure();
+    }
+    bool maskArityMismatch =
+        !maskParts.empty() && maskParts.size() != lhsParts.size();
+    if (maskArityMismatch) {
+      rewriter.notifyMatchFailure(op, "physical interleave mask arity mismatch");
+      return failure();
+    }
+    return std::make_pair(std::move(*maybeLowTypes),
+                          std::move(*maybeHighTypes));
+  }
+
+  FailureOr<VMIInterleaveLayoutFact> getInterleaveLayoutFact(
+      SourceOp op, VMIVRegType lhsType, VMIVRegType rhsType,
+      VMIMaskType maskType, VMIVRegType lowType, VMIVRegType highType,
+      OneToNPatternRewriter &rewriter) const {
+    VMILayoutSupport supports;
+    FailureOr<VMIInterleaveLayoutFact> fact;
+    if constexpr (std::is_same_v<SourceOp, VMIVintlvOp>) {
+      fact = supports.getVintlvLayoutFactForLayouts(
+          lhsType, rhsType, maskType, lowType, highType);
+    } else {
+      fact = supports.getVdintlvLayoutFactForLayouts(
+          lhsType, rhsType, maskType, lowType, highType);
+    }
+    if (failed(fact)) {
+      rewriter.notifyMatchFailure(op, "unsupported interleave layout relation");
+    }
+    return fact;
+  }
+
 public:
 
   LogicalResult
@@ -13436,47 +13484,23 @@ public:
     ValueRange lhsParts = adaptor.getLhs();
     ValueRange rhsParts = adaptor.getRhs();
     ValueRange maskParts = adaptor.getMask();
-    FailureOr<SmallVector<Type>> maybeLowTypes =
-        getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    FailureOr<SmallVector<Type>> maybeHighTypes =
-        getConvertedResultTypes(op, 1, *this->getTypeConverter());
-    bool failedResultTypes = failed(maybeLowTypes) || failed(maybeHighTypes);
-    if (failedResultTypes) {
+    FailureOr<std::pair<SmallVector<Type>, SmallVector<Type>>> resultTypes =
+        getInterleaveResultTypes(op, lhsParts, rhsParts, maskParts, rewriter);
+    if (failed(resultTypes)) {
       return failure();
     }
-    SmallVector<Type> lowTypes = std::move(*maybeLowTypes);
-    SmallVector<Type> highTypes = std::move(*maybeHighTypes);
-    bool arityMismatch = lhsParts.size() != rhsParts.size() ||
-        lhsParts.size() != lowTypes.size() ||
-        lhsParts.size() != highTypes.size();
-    if (arityMismatch) {
-      return rewriter.notifyMatchFailure(op,
-                                         "physical interleave arity mismatch");
-    }
-    bool maskArityMismatch =
-        !maskParts.empty() && maskParts.size() != lhsParts.size();
-    if (maskArityMismatch) {
-      return rewriter.notifyMatchFailure(
-          op, "physical interleave mask arity mismatch");
-    }
+    SmallVector<Type> lowTypes = std::move(resultTypes->first);
+    SmallVector<Type> highTypes = std::move(resultTypes->second);
 
     auto lhsType = cast<VMIVRegType>(op.getLhs().getType());
     auto rhsType = cast<VMIVRegType>(op.getRhs().getType());
     auto maskType = cast<VMIMaskType>(op.getMask().getType());
     auto lowType = cast<VMIVRegType>(op.getLow().getType());
     auto highType = cast<VMIVRegType>(op.getHigh().getType());
-    VMILayoutSupport supports;
-    FailureOr<VMIInterleaveLayoutFact> fact;
-    if constexpr (std::is_same_v<SourceOp, VMIVintlvOp>) {
-      fact = supports.getVintlvLayoutFactForLayouts(
-          lhsType, rhsType, maskType, lowType, highType);
-    } else {
-      fact = supports.getVdintlvLayoutFactForLayouts(
-          lhsType, rhsType, maskType, lowType, highType);
-    }
+    FailureOr<VMIInterleaveLayoutFact> fact = getInterleaveLayoutFact(
+        op, lhsType, rhsType, maskType, lowType, highType, rewriter);
     if (failed(fact)) {
-      return rewriter.notifyMatchFailure(
-          op, "unsupported interleave layout relation");
+      return failure();
     }
 
     auto isContiguous = [](VMILayoutAttr layout) {
