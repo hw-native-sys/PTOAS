@@ -3413,6 +3413,21 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_layout_assignment_intlv.pto                        # exit=0
 ```
 
+# group-broadcast slots=1 lane 映射拆分（2026-09-06）
+
+本轮将 `materializeSlots1GroupBroadcastChunk` 中按物理 lane 映射 source chunk、校验布局
+selector 关系并收集 active source 的逻辑抽取为 `mapSlots1GroupBroadcastSources`。原 helper
+继续负责结果 mask 构造、Vdup/VSEL 合并和结果返回；padding lane、越界检查、诊断文本及
+合并顺序保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_layout_assignment_group_broadcast_load_e2b_b16.pto # exit=0
+```
+
 # load physical plan 构造职责拆分（2026-09-06）
 
 本轮将 `OneToNVMILoadOpPattern::buildPhysicalPlan` 中 converted result type 获取与

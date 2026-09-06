@@ -9656,22 +9656,12 @@ static LogicalResult lowerGroupSlotLoadParts(
   return failure();
 }
 
-static FailureOr<Value> materializeSlots1GroupBroadcastChunk(
-    Operation *op, Type resultType, VMIVRegType resultVMIType,
+static FailureOr<std::pair<SmallVector<int64_t>, SmallVector<int64_t>>>
+mapSlots1GroupBroadcastSources(
+    Operation *op, VMIVRegType resultVMIType,
     ValueRange sourceParts, int64_t part, int64_t chunk, int64_t firstGroup,
     int64_t groupSize, int64_t selectorPeriod, int64_t lanesPerPart,
-    OneToNPatternRewriter &rewriter, Value allMask) {
-  auto resultVRegType = dyn_cast<VRegType>(resultType);
-  if (!resultVRegType) {
-    return rewriter.notifyMatchFailure(
-        op, "group_broadcast requires uniform physical vreg types");
-  }
-  FailureOr<MaskType> resultMaskType =
-      getMaskTypeForVReg(resultVRegType, rewriter.getContext());
-  if (failed(resultMaskType)) {
-    return rewriter.notifyMatchFailure(
-        op, "group_broadcast cannot derive result mask type");
-  }
+    OneToNPatternRewriter &rewriter) {
   SmallVector<int64_t> laneSourceChunks(lanesPerPart, -1);
   SmallVector<int64_t> activeSourceChunks;
   for (int64_t lane = 0; lane < lanesPerPart; ++lane) {
@@ -9713,6 +9703,35 @@ static FailureOr<Value> materializeSlots1GroupBroadcastChunk(
     return rewriter.notifyMatchFailure(
         op, "group_broadcast result chunk has no active lanes");
   }
+  return std::make_pair(std::move(laneSourceChunks),
+                        std::move(activeSourceChunks));
+}
+
+static FailureOr<Value> materializeSlots1GroupBroadcastChunk(
+    Operation *op, Type resultType, VMIVRegType resultVMIType,
+    ValueRange sourceParts, int64_t part, int64_t chunk, int64_t firstGroup,
+    int64_t groupSize, int64_t selectorPeriod, int64_t lanesPerPart,
+    OneToNPatternRewriter &rewriter, Value allMask) {
+  auto resultVRegType = dyn_cast<VRegType>(resultType);
+  if (!resultVRegType) {
+    return rewriter.notifyMatchFailure(
+        op, "group_broadcast requires uniform physical vreg types");
+  }
+  FailureOr<MaskType> resultMaskType =
+      getMaskTypeForVReg(resultVRegType, rewriter.getContext());
+  if (failed(resultMaskType)) {
+    return rewriter.notifyMatchFailure(
+        op, "group_broadcast cannot derive result mask type");
+  }
+  FailureOr<std::pair<SmallVector<int64_t>, SmallVector<int64_t>>> mapping =
+      mapSlots1GroupBroadcastSources(op, resultVMIType, sourceParts,
+                                     part, chunk, firstGroup, groupSize,
+                                     selectorPeriod, lanesPerPart, rewriter);
+  if (failed(mapping)) {
+    return failure();
+  }
+  SmallVector<int64_t> laneSourceChunks = std::move(mapping->first);
+  SmallVector<int64_t> activeSourceChunks = std::move(mapping->second);
   auto splatSource = [&rewriter, &op, &resultType, &sourceParts, &allMask](
                          int64_t chunkIndex) {
     return rewriter
