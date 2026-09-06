@@ -3113,3 +3113,18 @@ git diff --check                                      # passed
 check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
 vmi_to_vpto_truncf_bf16x2_d4_packed4.pto               # exit=0
 ```
+
+# scatter shape 类型上下文整改（2026-09-06）
+
+本轮引入 `ScatterShapeTypes`，集中承载 scatter 的 value、indices 和 mask 物理类型，
+并由 `getScatterShapeTypes` 统一执行类型提取。`checkSupportedScatterShape` 现在只负责编
+排验证顺序：布局/目的地址合同 → 元素合同 → physical chunk 合同；没有改变 arity、类型
+支持矩阵、失败诊断或 physical lowering 语义。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_layout_assignment_scatter.pto                      # exit=0
+```

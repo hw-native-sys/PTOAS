@@ -2652,6 +2652,19 @@ checkScatterElementContract(VMIVRegType valueType, VMIVRegType indicesType,
   return success();
 }
 
+struct ScatterShapeTypes {
+  VMIVRegType value;
+  VMIVRegType indices;
+  VMIMaskType mask;
+};
+
+static ScatterShapeTypes getScatterShapeTypes(VMIScatterOp op) {
+  return ScatterShapeTypes{
+      cast<VMIVRegType>(op.getValue().getType()),
+      cast<VMIVRegType>(op.getIndices().getType()),
+      cast<VMIMaskType>(op.getMask().getType())};
+}
+
 LogicalResult
 checkSupportedScatterShape(VMIScatterOp op, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
@@ -2661,20 +2674,18 @@ checkSupportedScatterShape(VMIScatterOp op, std::string *reason) {
     return failure();
   };
 
-  auto valueType = cast<VMIVRegType>(op.getValue().getType());
-  auto indicesType = cast<VMIVRegType>(op.getIndices().getType());
-  auto maskType = cast<VMIMaskType>(op.getMask().getType());
-  if (failed(checkScatterLayoutAndDestination(op, valueType, indicesType,
-                                              maskType, reason))) {
+  ScatterShapeTypes types = getScatterShapeTypes(op);
+  if (failed(checkScatterLayoutAndDestination(op, types.value, types.indices,
+                                              types.mask, reason))) {
     return failure();
   }
-  if (failed(checkScatterElementContract(valueType, indicesType, maskType,
-                                         reason))) {
+  if (failed(checkScatterElementContract(types.value, types.indices,
+                                         types.mask, reason))) {
     return failure();
   }
 
-  return checkSupportedScatterPhysicalShape(valueType, indicesType, maskType,
-                                            true, reason);
+  return checkSupportedScatterPhysicalShape(types.value, types.indices,
+                                            types.mask, true, reason);
 }
 
 LogicalResult
