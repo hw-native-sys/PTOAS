@@ -2347,6 +2347,16 @@ layout/arity 汇总；保持 deinterleaved 期望布局、诊断顺序及失败�
 `git diff --check` 通过；channel merge 正常样例在既有 layout contract 冲突处提前失败，
 未进入本轮 helper。
 
+# shuffle forwarding 单 chunk 映射职责整改
+
+本轮在 `computeShuffleForwardingSourceParts` 中引入
+`computeShuffleForwardingSourceChunk`，将单个 result physical chunk 的 padding/lane 映射、
+same-lane 约束、source chunk 一致性和 flat-part 索引计算抽取为独立 helper。主函数继续
+负责 source/result 类型前置条件、result factor/chunk 遍历和 source part 结果收集；保持
+forwarding fallback 的优先级、结果顺序和所有失败诊断不变。增量
+`check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_to_vpto_shuffle_forwarding.pto` lowering exit=0。
+
 # channel split 结果布局与 arity 合同职责整改
 
 本轮在 `checkSupportedChannelSplitShape` 中引入
