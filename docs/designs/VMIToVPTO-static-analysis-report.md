@@ -3338,3 +3338,17 @@ git diff --check                                      # passed
 check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
 vmi_to_vpto_compress_store.pto                         # exit=0
 ```
+
+# reduce source full-chunk 合同拆分（2026-09-06）
+
+本轮将 `buildReducePhysicalShapePlan` 中 source full physical chunk/padding lane 安全检查
+抽取为模板 helper `checkReduceSourceChunks`。plan builder 继续负责 layout 与 physical
+arity plan 组合；full-chunk 失败诊断、mask/source arity 合同及 result chunk 要求保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_group_reduce_addi_i16.pto                          # exit=0
+```

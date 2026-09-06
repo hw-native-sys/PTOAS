@@ -18932,6 +18932,22 @@ static LogicalResult checkReducePhysicalArity(
 }
 
 template <typename OpTy>
+static LogicalResult checkReduceSourceChunks(OpTy op, VMIVRegType sourceType,
+                                             std::string *reason) {
+  std::string fullChunkReason;
+  if (succeeded(checkFullDataPhysicalChunks(sourceType, &fullChunkReason))) {
+    return success();
+  }
+  if (reason) {
+    *reason = (Twine("requires full source physical chunks so padding lanes "
+                    "do not participate in the reduction; ") +
+               fullChunkReason)
+                  .str();
+  }
+  return failure();
+}
+
+template <typename OpTy>
 static FailureOr<ReducePhysicalShapePlan> buildReducePhysicalShapePlan(
     OpTy op, std::string *reason) {
   auto fail = [&reason](const Twine &message)
@@ -18953,11 +18969,8 @@ static FailureOr<ReducePhysicalShapePlan> buildReducePhysicalShapePlan(
     return failure();
   }
 
-  std::string fullChunkReason;
-  if (failed(checkFullDataPhysicalChunks(sourceType, &fullChunkReason))) {
-    return fail(Twine("requires full source physical chunks so padding lanes "
-                      "do not participate in the reduction; ") +
-                fullChunkReason);
+  if (failed(checkReduceSourceChunks(op, sourceType, reason))) {
+    return failure();
   }
 
   int64_t sourceArity;
