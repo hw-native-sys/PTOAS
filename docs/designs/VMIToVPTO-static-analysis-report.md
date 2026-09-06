@@ -1,5 +1,19 @@
 # VMIToVPTO 静态分析报告记录
 
+## contiguous masked-store layout conversion 拆分（2026-09-06）
+
+本轮将 `OneToNVMIMaskedStoreOpPattern::lowerContiguous` 中 value/mask 的 contiguous layout
+物化、类型列表构造及 arity 合同抽取为 `materializeContiguousMaskedStoreParts`。外层函数
+继续负责 converted part 遍历及单 chunk store 发射；value/mask 配对顺序、布局转换、失败
+诊断和 `vsts` 语义保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
 ## lane-stride masked-store 单 chunk 发射拆分（2026-09-06）
 
 本轮将 `OneToNVMIMaskedStoreOpPattern::lowerLaneStride` 中单 physical chunk 的类型/active

@@ -12807,11 +12807,11 @@ private:
     return success();
   }
 
-  LogicalResult lowerContiguous(
+  FailureOr<std::pair<SmallVector<Value>, SmallVector<Value>>>
+  materializeContiguousMaskedStoreParts(
       VMIMaskedStoreOp op, OneToNPatternRewriter &rewriter,
       ValueRange valueParts, ValueRange maskParts, VMIVRegType valueVMIType,
-      VMIMaskType maskVMIType, Value destination, Value offset,
-      int64_t lanesPerPart) const {
+      VMIMaskType maskVMIType) const {
     SmallVector<Type> contiguousValueTypes;
     contiguousValueTypes.reserve(valueParts.size());
     for (Value value : valueParts) {
@@ -12825,7 +12825,6 @@ private:
     if (failed(storeParts)) {
       return failure();
     }
-
     SmallVector<Type> contiguousMaskTypes;
     contiguousMaskTypes.reserve(maskParts.size());
     for (Value mask : maskParts) {
@@ -12842,9 +12841,25 @@ private:
       return rewriter.notifyMatchFailure(
           op, "masked_store converted value/mask arity mismatch");
     }
+    return std::make_pair(std::move(*storeParts), std::move(*storeMasks));
+  }
+
+  LogicalResult lowerContiguous(
+      VMIMaskedStoreOp op, OneToNPatternRewriter &rewriter,
+      ValueRange valueParts, ValueRange maskParts, VMIVRegType valueVMIType,
+      VMIMaskType maskVMIType, Value destination, Value offset,
+      int64_t lanesPerPart) const {
+    FailureOr<std::pair<SmallVector<Value>, SmallVector<Value>>> converted =
+        materializeContiguousMaskedStoreParts(op, rewriter, valueParts,
+                                              maskParts, valueVMIType,
+                                              maskVMIType);
+    if (failed(converted)) {
+      return failure();
+    }
 
     for (auto [index, valueAndMask] :
-         llvm::enumerate(llvm::zip_equal(*storeParts, *storeMasks))) {
+         llvm::enumerate(llvm::zip_equal(converted->first,
+                                         converted->second))) {
       auto [value, mask] = valueAndMask;
       if (failed(emitContiguousMaskedStorePart(
               op, rewriter, value, mask, valueVMIType, destination, offset,
