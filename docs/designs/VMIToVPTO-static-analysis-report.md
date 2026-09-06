@@ -2411,6 +2411,17 @@ stride 规则、诊断和失败传播保持不变。增量检查结果为 `check
 `git diff --check` 通过。现有 group-slot load 样例分别在既有 pack/unpack 或测试 region
 前置约束处终止，未进入本轮 helper，未归因于本轮修改。
 
+# masked-store shape 合同职责整改（2026-09-06）
+
+本轮将 `checkSupportedMaskedStoreShape` 的完整 physical chunk 快路径抽取为
+`checkMaskedStoreFullChunks`，将 layout/arity、dense-lane-stride support 和 contiguous
+materialization arity 检查抽取为 `checkMaskedStoreLayoutAndArity`。主函数继续负责 predicate
+memory access proof 及两阶段失败回退，保持 masked-store 的支持范围、诊断和失败传播不变；
+同时清理相邻 shuffle helper 的控制流大括号。增量检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_load_store_contiguous.pto` lowering exit=0。lane-stride masked-store 样例在
+既有 `ensure_mask_layout` 前置约束处终止，未进入本轮 helper。
+
 # scatter shape 合同职责整改（2026-09-06）
 
 本轮将 `checkSupportedScatterShape` 的布局/目标指针校验抽取为

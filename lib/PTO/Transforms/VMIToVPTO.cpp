@@ -2932,6 +2932,65 @@ checkSupportedExpandLoadShape(VMIExpandLoadOp op, std::string *reason) {
       op, resultType, passthruType, maskType, allActivePathReason, reason);
 }
 
+static LogicalResult checkMaskedStoreFullChunks(VMIVRegType valueType,
+                                                VMIMaskType maskType,
+                                                std::string &valueReason,
+                                                std::string &maskReason) {
+  return succeeded(checkFullDataPhysicalChunks(valueType, &valueReason)) &&
+                 succeeded(checkFullVMIPhysicalChunks(maskType, &maskReason))
+             ? success()
+             : failure();
+}
+
+static LogicalResult checkMaskedStoreLayoutAndArity(
+    VMIVRegType valueType, VMIMaskType maskType, std::string &valueReason,
+    std::string &maskReason, std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  VMILayoutAttr valueLayout = valueType.getLayoutAttr();
+  VMILayoutAttr maskLayout = maskType.getLayoutAttr();
+  if (!valueLayout || !maskLayout) {
+    return fail("requires assigned value and mask layouts");
+  }
+  FailureOr<int64_t> valueArity = getVMIPhysicalArity(valueType);
+  FailureOr<int64_t> maskArity = getVMIPhysicalArity(maskType);
+  bool mismatchedArity = failed(valueArity) || failed(maskArity) ||
+                         *valueArity != *maskArity;
+  if (mismatchedArity) {
+    return fail("requires matching value/mask physical arity");
+  }
+  if (valueLayout.hasDenseLaneStride()) {
+    VMILayoutSupport supports;
+    if (succeeded(supports.getMaskedStoreLayoutFact(valueType, maskType,
+                                                    reason))) {
+      return success();
+    }
+  }
+  std::string valueMaterializationReason;
+  FailureOr<int64_t> valueParts = getContiguousMaterializationPartCount(
+      valueType, &valueMaterializationReason);
+  if (failed(valueParts)) {
+    return fail(Twine("value cannot materialize to contiguous; value ") +
+                valueReason + ", materialization " +
+                valueMaterializationReason);
+  }
+  std::string maskMaterializationReason;
+  FailureOr<int64_t> maskParts = getContiguousMaterializationPartCount(
+      maskType, &maskMaterializationReason);
+  if (failed(maskParts)) {
+    return fail(Twine("mask cannot materialize to contiguous; mask ") +
+                maskReason + ", materialization " + maskMaterializationReason);
+  }
+  if (*valueParts != *maskParts) {
+    return fail("requires value/mask contiguous materialization arity to match");
+  }
+  return success();
+}
+
 LogicalResult
 checkSupportedMaskedStoreShape(VMIVRegType valueType, VMIMaskType maskType,
                                Value destination, Type destinationType,
@@ -2940,58 +2999,21 @@ checkSupportedMaskedStoreShape(VMIVRegType valueType, VMIMaskType maskType,
       buildWriteAccessPlan(destination, destinationType, valueType,
                            VMIMemoryCoverageKind::Predicate);
   if (!accessPlan.layoutSupport.isSupported()) {
-    if (reason)
+    if (reason) {
       *reason = accessPlan.layoutSupport.reason;
+    }
     return failure();
   }
 
   std::string valueReason;
   std::string maskReason;
-  if (succeeded(checkFullDataPhysicalChunks(valueType, &valueReason)) &&
-      succeeded(checkFullVMIPhysicalChunks(maskType, &maskReason)))
+  if (succeeded(checkMaskedStoreFullChunks(valueType, maskType, valueReason,
+                                            maskReason))) {
     return success();
-
-  auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason)
-      *reason = message.str();
-    return failure();
-  };
-
-  VMILayoutAttr valueLayout = valueType.getLayoutAttr();
-  VMILayoutAttr maskLayout = maskType.getLayoutAttr();
-  if (!valueLayout || !maskLayout)
-    return fail("requires assigned value and mask layouts");
-
-  FailureOr<int64_t> valueArity = getVMIPhysicalArity(valueType);
-  FailureOr<int64_t> maskArity = getVMIPhysicalArity(maskType);
-  if (failed(valueArity) || failed(maskArity) || *valueArity != *maskArity)
-    return fail("requires matching value/mask physical arity");
-
-  if (valueLayout.hasDenseLaneStride()) {
-    VMILayoutSupport supports;
-    if (succeeded(
-            supports.getMaskedStoreLayoutFact(valueType, maskType, reason)))
-      return success();
   }
 
-  std::string valueMaterializationReason;
-  FailureOr<int64_t> valueParts = getContiguousMaterializationPartCount(
-      valueType, &valueMaterializationReason);
-  if (failed(valueParts))
-    return fail(Twine("value cannot materialize to contiguous; value ") +
-                valueReason + ", materialization " +
-                valueMaterializationReason);
-
-  std::string maskMaterializationReason;
-  FailureOr<int64_t> maskParts = getContiguousMaterializationPartCount(
-      maskType, &maskMaterializationReason);
-  if (failed(maskParts))
-    return fail(Twine("mask cannot materialize to contiguous; mask ") +
-                maskReason + ", materialization " + maskMaterializationReason);
-  if (*valueParts != *maskParts)
-    return fail(
-        "requires value/mask contiguous materialization arity to match");
-  return success();
+  return checkMaskedStoreLayoutAndArity(valueType, maskType, valueReason,
+                                        maskReason, reason);
 }
 
 FailureOr<int64_t> getContiguousActiveDataLanes(VMIVRegType vmiType,
@@ -3188,8 +3210,9 @@ static FailureOr<int64_t> computeShuffleForwardingSourceChunk(
 FailureOr<SmallVector<int64_t>>
 computeShuffleForwardingSourceParts(VMIShuffleOp op, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> FailureOr<SmallVector<int64_t>> {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
