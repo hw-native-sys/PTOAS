@@ -5048,9 +5048,9 @@ static FailureOr<SmallVector<Value>> materializeDeinterleaved2ToContiguous(
   return results;
 }
 
-static FailureOr<SmallVector<Value>> materializeContiguousToDeinterleaved2(
+static LogicalResult validateContiguousToDeinterleaved2Shape(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
-    PatternRewriter &rewriter) {
+    PatternRewriter &rewriter, int64_t &groups) {
   bool invalidResult = sourceParts.empty() || resultTypes.empty() ||
                        resultTypes.size() % 2 != 0;
   if (invalidResult) {
@@ -5058,13 +5058,38 @@ static FailureOr<SmallVector<Value>> materializeContiguousToDeinterleaved2(
         op, "contiguous to deinterleaved=2 materialization requires at least "
             "one source part and 2*N result parts");
   }
-  int64_t groups = resultTypes.size() / 2;
+  groups = resultTypes.size() / 2;
   bool sourceExceedsResult =
       sourceParts.size() > static_cast<size_t>(2 * groups);
   if (sourceExceedsResult) {
     return rewriter.notifyMatchFailure(
         op, "contiguous to deinterleaved=2 materialization source footprint "
             "exceeds result arity");
+  }
+  return success();
+}
+
+static FailureOr<std::pair<Value, Value>> materializeContiguousToDeinterleaved2Group(
+    Operation *op, Value lhs, Value rhs, Type lowType, Type highType,
+    PatternRewriter &rewriter) {
+  bool mismatchedTypes = lhs.getType() != rhs.getType() ||
+                         lhs.getType() != lowType || lhs.getType() != highType;
+  if (mismatchedTypes) {
+    return rewriter.notifyMatchFailure(
+        op, "vdintlv requires operands and results to share one type");
+  }
+  auto materialize = rewriter.create<VdintlvOp>(op->getLoc(), lowType, highType,
+                                                 lhs, rhs);
+  return std::make_pair(materialize.getLow(), materialize.getHigh());
+}
+
+static FailureOr<SmallVector<Value>> materializeContiguousToDeinterleaved2(
+    Operation *op, ValueRange sourceParts, TypeRange resultTypes,
+    PatternRewriter &rewriter) {
+  int64_t groups = 0;
+  if (failed(validateContiguousToDeinterleaved2Shape(
+          op, sourceParts, resultTypes, rewriter, groups))) {
+    return failure();
   }
   SmallVector<Value> part0;
   SmallVector<Value> part1;
@@ -5081,17 +5106,14 @@ static FailureOr<SmallVector<Value>> materializeContiguousToDeinterleaved2(
                                                           : lhsIndex;
     Value lhs = sourceParts[lhsIndex];
     Value rhs = sourceParts[rhsIndex];
-    bool mismatchedTypes = lhs.getType() != rhs.getType() ||
-                           lhs.getType() != resultTypes[i] ||
-                           lhs.getType() != resultTypes[groups + i];
-    if (mismatchedTypes) {
-      return rewriter.notifyMatchFailure(
-          op, "vdintlv requires operands and results to share one type");
+    FailureOr<std::pair<Value, Value>> materialize =
+        materializeContiguousToDeinterleaved2Group(
+            op, lhs, rhs, resultTypes[i], resultTypes[groups + i], rewriter);
+    if (failed(materialize)) {
+      return failure();
     }
-    auto materialize = rewriter.create<VdintlvOp>(
-        op->getLoc(), resultTypes[i], resultTypes[groups + i], lhs, rhs);
-    part0.push_back(materialize.getLow());
-    part1.push_back(materialize.getHigh());
+    part0.push_back(materialize->first);
+    part1.push_back(materialize->second);
   }
   SmallVector<Value> results;
   results.reserve(resultTypes.size());

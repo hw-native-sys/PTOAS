@@ -3893,3 +3893,21 @@ git diff --check                                      # passed
 check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
 vmi_layout_assignment_group_broadcast_load_e2b_b16.pto # exit=0
 ```
+
+# contiguous-to-deinterleaved 转换职责拆分（2026-09-06）
+
+本轮将 `materializeContiguousToDeinterleaved2` 的输入 shape 合同和单个 source pair 的
+`vdintlv` 发射分别抽取为 `validateContiguousToDeinterleaved2Shape` 与
+`materializeContiguousToDeinterleaved2Group`。主函数只负责按 group 遍历、结果分区和物理
+结果收集；source 缺失、arity、类型检查、`vdintlv` 发射及失败传播语义保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_vdintlv.pto                               # reaches existing pack/unpack invariant
+```
+
+该 case 在本轮转换前即会因测试输入中的 VMI `unpack` 出现在 VMI-to-VPTO physicalization
+之前而触发 `VMI-PASS-INVARIANT`；这不是本轮 `vdintlv` helper 改动引入的失败。
