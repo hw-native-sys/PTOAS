@@ -2721,3 +2721,14 @@ factor/group 合同、逐组调用具体的 factor=2/4 物化逻辑和最终结�
 `git diff --check` 通过。`vmi_to_vpto_ensure_mask_granularity_multistep.pto` 尝试
 lowering 时在既有 VMI pack/unpack pipeline invariant 处提前失败，未进入本轮 staging
 helper，不能将该失败归因于本轮改动。
+
+# group store 布局分派职责整改
+
+本轮将 `OneToNVMIGroupStoreOpPattern::matchAndRewrite` 中的布局分类与后端选择抽取为
+`lowerByLayout`。入口现在只负责 destination/offset/row_stride 的单值归一化并保留统一
+scalar `group_store` 的注释上下文，helper 负责 compact-small、slots=1、slots=8、one-block、
+deinterleaved=2 与 contiguous 路径的优先级分派。support-table 查询、deinterleaved shape
+探测、失败诊断和所有具体 lowering 的参数/结果语义均保持不变。增量
+`check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_layout_assignment_group_store_slots1_unit_stride.pto`
+完整 lowering pipeline exit=0。

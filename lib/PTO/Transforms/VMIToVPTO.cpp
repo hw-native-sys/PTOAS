@@ -11365,6 +11365,70 @@ private:
                                  offset, rowStride, numGroups);
   }
 
+  LogicalResult lowerByLayout(
+      VMIGroupStoreOp op, OpAdaptor adaptor,
+      OneToNPatternRewriter &rewriter, VMIVRegType valueVMIType,
+      VMILayoutAttr layout, Value destination, Value offset,
+      Value rowStride) const {
+    bool compactSmallGroupStore = isCompactSmallGroupStore(
+        layout, valueVMIType, op.getNumGroupsAttr().getInt(),
+        getConstantIndexValue(op.getRowStride()));
+    bool isScalarGroupStore = op.getNumGroupsAttr().getInt() == 1 &&
+                              valueVMIType.getElementCount() == 1;
+    if (isScalarGroupStore) {
+      return lowerScalarGroupStore(op, adaptor, rewriter, valueVMIType,
+                                   destination, offset);
+    }
+    if (compactSmallGroupStore) {
+      return lowerCompactSmallGroupStore(op, adaptor, rewriter, valueVMIType,
+                                         layout, destination, offset);
+    }
+
+    bool isSlots1Layout =
+        layout && layout.isGroupSlots() && layout.getSlots() == 1 &&
+        layout.getNumGroups() == op.getNumGroupsAttr().getInt();
+    if (isSlots1Layout) {
+      return lowerSlots1(op, adaptor, rewriter, valueVMIType, layout,
+                         destination, offset, rowStride);
+    }
+    bool isSlots8Layout =
+        layout && layout.isGroupSlots() && layout.getSlots() == 8 &&
+        layout.getNumGroups() == op.getNumGroupsAttr().getInt();
+    if (isSlots8Layout) {
+      return lowerSlots8Dispatch(op, adaptor, rewriter, valueVMIType, layout,
+                                 destination, offset, rowStride);
+    }
+
+    VMILayoutSupport supports;
+    FailureOr<VMIGroupStoreLayoutFact> fact =
+        supports.getGroupStoreLayoutFact(op, valueVMIType);
+    if (failed(fact)) {
+      return rewriter.notifyMatchFailure(
+          op, "group_store layout does not match the support table");
+    }
+    if (fact->blockClass == VMIGroupBlockClass::OneBlock) {
+      return lowerOneBlockGroupStore(
+          op, adaptor, rewriter, valueVMIType, *fact, destination, offset,
+          rowStride);
+    }
+
+    int64_t d2LanesPerPart = 0;
+    int64_t d2GroupCount = 0;
+    int64_t d2ChunksPerGroupPerPart = 0;
+    std::string d2Reason;
+    bool hasDeinterleaved2Shape = succeeded(checkDeinterleaved2GroupStoreChunkShape(
+        valueVMIType, fact->groupSize, &d2LanesPerPart, &d2GroupCount,
+        &d2ChunksPerGroupPerPart, &d2Reason));
+    if (hasDeinterleaved2Shape) {
+      return lowerDeinterleaved2GroupStore(
+          op, adaptor, rewriter, valueVMIType, *fact, destination, offset,
+          rowStride);
+    }
+    return lowerContiguousGroupStore(
+        op, adaptor, rewriter, valueVMIType, *fact, destination, offset,
+        rowStride);
+  }
+
 public:
   LogicalResult
   matchAndRewrite(VMIGroupStoreOp op, OpAdaptor adaptor,
@@ -11387,73 +11451,13 @@ public:
       return failure();
     }
 
-    bool compactSmallGroupStore = isCompactSmallGroupStore(
-        layout, valueVMIType, op.getNumGroupsAttr().getInt(),
-        getConstantIndexValue(op.getRowStride()));
-
     // Unified scalar vstore is lowered to group_store(num_groups=1) before
     // layout assignment.  The producer may therefore carry the slots=8
     // layout selected by group_slot_load, even though the logical operation
     // still writes one scalar.  Preserve the scalar memory semantics here;
     // a masked ordinary vsts would require a 32-byte-aligned destination.
-    bool isScalarGroupStore = op.getNumGroupsAttr().getInt() == 1 &&
-                              valueVMIType.getElementCount() == 1;
-    if (isScalarGroupStore) {
-      return lowerScalarGroupStore(op, adaptor, rewriter, valueVMIType,
-                                   *destination, *offset);
-    }
-
-    if (compactSmallGroupStore) {
-      return lowerCompactSmallGroupStore(op, adaptor, rewriter, valueVMIType,
-                                         layout, *destination, *offset);
-    }
-
-    bool isSlots1Layout =
-        layout && layout.isGroupSlots() && layout.getSlots() == 1 &&
-        layout.getNumGroups() == op.getNumGroupsAttr().getInt();
-    if (isSlots1Layout) {
-      return lowerSlots1(op, adaptor, rewriter, valueVMIType, layout,
+    return lowerByLayout(op, adaptor, rewriter, valueVMIType, layout,
                          *destination, *offset, *rowStride);
-    }
-
-    bool isSlots8Layout =
-        layout && layout.isGroupSlots() && layout.getSlots() == 8 &&
-        layout.getNumGroups() == op.getNumGroupsAttr().getInt();
-    if (isSlots8Layout) {
-      return lowerSlots8Dispatch(op, adaptor, rewriter, valueVMIType, layout,
-                                 *destination, *offset, *rowStride);
-    }
-
-    VMILayoutSupport supports;
-    FailureOr<VMIGroupStoreLayoutFact> fact =
-        supports.getGroupStoreLayoutFact(op, valueVMIType);
-    if (failed(fact)) {
-      return rewriter.notifyMatchFailure(
-          op, "group_store layout does not match the support table");
-    }
-
-    if (fact->blockClass == VMIGroupBlockClass::OneBlock) {
-      return lowerOneBlockGroupStore(
-          op, adaptor, rewriter, valueVMIType, *fact, *destination, *offset,
-          *rowStride);
-    }
-
-    int64_t d2LanesPerPart = 0;
-    int64_t d2GroupCount = 0;
-    int64_t d2ChunksPerGroupPerPart = 0;
-    std::string d2Reason;
-    bool hasDeinterleaved2Shape = succeeded(checkDeinterleaved2GroupStoreChunkShape(
-        valueVMIType, fact->groupSize, &d2LanesPerPart, &d2GroupCount,
-        &d2ChunksPerGroupPerPart, &d2Reason));
-    if (hasDeinterleaved2Shape) {
-      return lowerDeinterleaved2GroupStore(
-          op, adaptor, rewriter, valueVMIType, *fact, *destination, *offset,
-          *rowStride);
-    }
-
-    return lowerContiguousGroupStore(
-        op, adaptor, rewriter, valueVMIType, *fact, *destination, *offset,
-        *rowStride);
   }
 };
 
