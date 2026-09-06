@@ -2064,6 +2064,17 @@ exit=0，现有 slots=1 的 EVEN/P0 转换输出保持不变。
 `git diff --check` 通过；`vmi_to_vpto_load_store_contiguous.pto` 完整 lowering pipeline
 exit=0。
 
+# group load 布局分派职责整改
+
+本轮将 `OneToNVMIGroupLoadOpPattern::matchAndRewrite` 中 block-deinterleaved f32 特殊路径
+判断抽取为 `lowerByLayout`。入口现在只负责 source/offset/row_stride 的单值归一化，
+helper 负责在保持原优先级下选择 block-f32 或 contiguous lowering；group size、结果类型、
+row stride、`vsldb`/`vlds` 发射、结果顺序和失败诊断均保持不变。增量
+`check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过。`vmi_to_vpto_group_load_support.pto` 尝试 lowering 时在既有
+VMI pack/unpack pipeline invariant 处提前失败，未进入本轮 helper，不能将该失败归因于
+本轮改动。
+
 # truncf 物理类型合同职责整改
 
 本轮在 `OneToNVMITruncFOpPattern` 中新增 `getUniformSourceType` 与

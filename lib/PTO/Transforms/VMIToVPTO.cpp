@@ -8867,6 +8867,20 @@ private:
         resultLayout, factor, *blockElems, *chunksPerPart, *constantRowStride);
   }
 
+  LogicalResult lowerByLayout(
+      VMIGroupLoadOp op, OneToNPatternRewriter &rewriter, Value source,
+      Value offset, Value rowStride, VMIVRegType resultVMIType,
+      VMILayoutAttr resultLayout) const {
+    bool isBlockF32 = resultLayout && resultLayout.isBlockDeinterleaved() &&
+                      resultVMIType.getElementType().isF32();
+    if (isBlockF32) {
+      return lowerBlockF32(op, rewriter, source, offset, rowStride,
+                           resultVMIType, resultLayout);
+    }
+    return lowerContiguousPath(op, rewriter, source, offset, rowStride,
+                               resultVMIType, resultLayout);
+  }
+
 public:
 
   LogicalResult
@@ -8888,16 +8902,8 @@ public:
       return failure();
     }
 
-    VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
-    bool isBlockF32 = resultLayout && resultLayout.isBlockDeinterleaved() &&
-                      resultVMIType.getElementType().isF32();
-    if (isBlockF32) {
-      return lowerBlockF32(op, rewriter, *source, *offset, *rowStride,
-                           resultVMIType, resultLayout);
-    }
-
-    return lowerContiguousPath(op, rewriter, *source, *offset, *rowStride,
-                               resultVMIType, resultLayout);
+    return lowerByLayout(op, rewriter, *source, *offset, *rowStride,
+                         resultVMIType, resultVMIType.getLayoutAttr());
   }
 };
 
