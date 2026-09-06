@@ -3312,20 +3312,30 @@ computeShuffleForwardingSourceParts(VMIShuffleOp op, std::string *reason) {
 
   auto sourceType = cast<VMIVRegType>(op.getSource().getType());
   auto resultType = cast<VMIVRegType>(op.getResult().getType());
-  FailureOr<int64_t> lanesPerPart =
-      getDataLanesPerPart(sourceType.getElementType());
+  auto validateInputs = [&sourceType, &resultType, &op, &fail]()
+      -> FailureOr<int64_t> {
+    FailureOr<int64_t> lanes =
+        getDataLanesPerPart(sourceType.getElementType());
+    if (failed(lanes)) {
+      return fail("requires known lanes per physical part");
+    }
+    if (op.getIndices().empty()) {
+      return fail("requires non-empty indices");
+    }
+    FailureOr<int64_t> factor = getDataLayoutFactor(resultType);
+    if (failed(factor)) {
+      return fail("requires assigned result layout");
+    }
+    return *lanes;
+  };
+  FailureOr<int64_t> lanesPerPart = validateInputs();
   if (failed(lanesPerPart)) {
-    return fail("requires known lanes per physical part");
+    return failure();
   }
-
   ArrayRef<int64_t> indices = op.getIndices();
-  if (indices.empty()) {
-    return fail("requires non-empty indices");
-  }
-
   FailureOr<int64_t> resultFactor = getDataLayoutFactor(resultType);
   if (failed(resultFactor)) {
-    return fail("requires assigned result layout");
+    return failure();
   }
 
   SmallVector<int64_t> sourceFlatIndices;
