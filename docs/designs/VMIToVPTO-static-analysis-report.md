@@ -2524,6 +2524,15 @@ exit=0。
 `git diff --check` 通过。native 增量构建仍被工作区既有 CMake 外部依赖尝试创建
 `/cann-cmake` 的权限错误阻断，未产生本轮 C++ 编译诊断。
 
+# group broadcast 结果 shape 合同职责整改
+
+本轮新增 `checkGroupBroadcastResultShape`，将 group broadcast 的结果 physical chunk 完整性、
+factor=1 快路径、block/deinterleaved 小 group 例外及 logical span 合同从入口分派中抽取。
+plan builder 仍负责输入类型/layout、组数、lanes-per-part 和 group size 推导；原有检查顺序、
+诊断文本、结果布局例外与 lowering 语义保持不变。增量检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；E2B group-broadcast
+case lowering exit=0。
+
 # group broadcast shape 重构回归修复
 
 复核既有 group-broadcast shape 拆分时发现入口遗漏了结果类型和诊断闭包定义，导致该

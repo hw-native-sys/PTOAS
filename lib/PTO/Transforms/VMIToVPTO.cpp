@@ -18276,32 +18276,23 @@ static FailureOr<GroupBroadcastShapePlan> buildGroupBroadcastShapePlan(
                                  *lanesPerPart, *groupSize, *resultFactor};
 }
 
-LogicalResult checkSupportedGroupBroadcastShape(
-    VMIGroupBroadcastOp op,
-    std::string *reason = nullptr) {
+static LogicalResult checkGroupBroadcastResultShape(
+    VMIVRegType resultType, VMILayoutAttr resultLayout, int64_t groupSize,
+    int64_t lanesPerPart, int64_t resultFactor, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason) {
       *reason = message.str();
     }
     return failure();
   };
-  FailureOr<GroupBroadcastShapePlan> plan =
-      buildGroupBroadcastShapePlan(op, reason);
-  if (failed(plan)) {
-    return failure();
-  }
-  auto resultType = cast<VMIVRegType>(op.getResult().getType());
-  VMILayoutAttr resultLayout = plan->resultLayout;
-  int64_t groupSize = plan->groupSize;
-  int64_t lanesPerPart = plan->lanesPerPart;
-  int64_t resultFactor = plan->resultFactor;
   bool laneStridedDense =
       resultLayout.isDense() && resultLayout.getLaneStride() > 1;
   if (!laneStridedDense) {
     std::string fullChunkReason;
-    if (failed(checkFullDataPhysicalChunks(resultType, &fullChunkReason)))
+    if (failed(checkFullDataPhysicalChunks(resultType, &fullChunkReason))) {
       return fail(Twine("requires full result physical chunks; ") +
                   fullChunkReason);
+    }
   }
   if (resultFactor == 1) {
     return success();
@@ -18320,10 +18311,27 @@ LogicalResult checkSupportedGroupBroadcastShape(
     return success();
   }
   int64_t logicalSpanPerResultChunk = lanesPerPart * resultFactor;
-  if (*groupSize < *lanesPerPart || *groupSize % logicalSpanPerResultChunk != 0)
+  bool groupSpansMultipleChunks =
+      groupSize < lanesPerPart || groupSize % logicalSpanPerResultChunk != 0;
+  if (groupSpansMultipleChunks) {
     return fail("deinterleaved result requires every physical result chunk to "
                 "stay within one logical group");
+  }
   return success();
+}
+
+LogicalResult checkSupportedGroupBroadcastShape(
+    VMIGroupBroadcastOp op,
+    std::string *reason = nullptr) {
+  FailureOr<GroupBroadcastShapePlan> plan =
+      buildGroupBroadcastShapePlan(op, reason);
+  if (failed(plan)) {
+    return failure();
+  }
+  auto resultType = cast<VMIVRegType>(op.getResult().getType());
+  return checkGroupBroadcastResultShape(
+      resultType, plan->resultLayout, plan->groupSize, plan->lanesPerPart,
+      plan->resultFactor, reason);
 }
 
 LogicalResult checkSupportedVdhistShape(VMIVdhistOp op,
