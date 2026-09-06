@@ -3159,6 +3159,23 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_layout_assignment_group_load.pto                    # exit=0
 ```
 
+# group-store slots=1 非对齐 stream 发射职责拆分（2026-09-06）
+
+本轮将 `lowerSlots1PackedUnitStride` 中非对齐 destination 的 pointer 物化、offset 合成、
+单 packed value 的 stream advance 准备及 stateful store 发射抽取为
+`emitPackedSlots1StoreStream`。主函数继续负责 packed value 构造、对齐 `vsts` 路径、
+对齐 mask 及最终 op 删除；aligned/unaligned 路由、`numGroups` advance 和 `vstus/vstas`
+语义保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_layout_assignment_group_store_slots1_unit_stride.pto # exit=0
+vmi_to_vpto_group_store_slots1_unit_stride_alignment.pto # exit=0
+```
+
 # contiguous group-load 单 chunk 物化职责拆分（2026-09-06）
 
 本轮将 `OneToNVMIGroupLoadOpPattern::lowerContiguousChunks` 中单个 group/chunk 的

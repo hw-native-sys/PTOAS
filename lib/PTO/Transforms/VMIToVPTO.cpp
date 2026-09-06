@@ -11511,27 +11511,34 @@ private:
       }
       rewriter.create<VstsOp>(op.getLoc(), Type{}, *packed, destination, offset,
                               nullptr, *storeMask);
-    } else {
-      Value storeBase = materializeBufferPointer(
-          destination, valueVMIType.getElementType(),
-          getMemorySpace(destination.getType()), rewriter, op.getLoc());
-      if (!storeBase) {
-        return rewriter.notifyMatchFailure(
-            op, "packed unaligned group_store requires a ptr-compatible destination");
-      }
-      storeBase = rewriter
-                      .create<AddPtrOp>(op.getLoc(), storeBase.getType(),
-                                        storeBase, offset)
-                      .getResult();
-      SmallVector<Value> streamValues{*packed};
-      SmallVector<int64_t> streamAdvances{layout.getNumGroups()};
-      if (failed(emitStatefulStoreStream(op, storeBase, streamValues,
-                                         streamAdvances, rewriter))) {
+    } else if (failed(emitPackedSlots1StoreStream(
+                   op, rewriter, destination, offset, valueVMIType, *packed,
+                   layout.getNumGroups()))) {
         return failure();
-      }
     }
     rewriter.eraseOp(op);
     return success();
+  }
+
+  LogicalResult emitPackedSlots1StoreStream(
+      VMIGroupStoreOp op, OneToNPatternRewriter &rewriter, Value destination,
+      Value offset, VMIVRegType valueVMIType, Value packed,
+      int64_t numGroups) const {
+    Value storeBase = materializeBufferPointer(
+        destination, valueVMIType.getElementType(),
+        getMemorySpace(destination.getType()), rewriter, op.getLoc());
+    if (!storeBase) {
+      return rewriter.notifyMatchFailure(
+          op, "packed unaligned group_store requires a ptr-compatible destination");
+    }
+    storeBase = rewriter
+                    .create<AddPtrOp>(op.getLoc(), storeBase.getType(), storeBase,
+                                      offset)
+                    .getResult();
+    SmallVector<Value> streamValues{packed};
+    SmallVector<int64_t> streamAdvances{numGroups};
+    return emitStatefulStoreStream(op, storeBase, streamValues, streamAdvances,
+                                   rewriter);
   }
 
   LogicalResult lowerSlots1PointStores(
