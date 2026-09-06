@@ -9871,6 +9871,67 @@ struct GroupBroadcastLoweringContext {
   int64_t selectorPeriod;
 };
 
+static FailureOr<Value> materializeConstantGroupBroadcastSelector(
+    GroupBroadcastSelectorContext &context, int64_t baseIndex,
+    OneToNPatternRewriter &rewriter) {
+  FailureOr<Value> baseScalar = createScalarOffsetConstant(
+      context.op->getLoc(), context.indexScalarType, baseIndex, rewriter);
+  if (failed(baseScalar)) {
+    return failure();
+  }
+  return rewriter
+      .create<VdupOp>(context.op->getLoc(), context.indexType, *baseScalar,
+                      context.allMask, /*position=*/nullptr)
+      .getResult();
+}
+
+static FailureOr<Value> materializeGroupBroadcastRamp(
+    GroupBroadcastSelectorContext &context, int64_t baseIndex,
+    OneToNPatternRewriter &rewriter) {
+  if (!context.sharedRamp) {
+    FailureOr<Value> zero = createScalarOffsetConstant(
+        context.op->getLoc(), context.indexScalarType, 0, rewriter);
+    if (failed(zero)) {
+      return failure();
+    }
+    context.sharedRamp =
+        rewriter.create<VciOp>(context.op->getLoc(), context.indexType, *zero,
+                               StringAttr{})
+            .getResult();
+    if (*context.selectorShift != 0) {
+      Value shift = createI16Constant(context.op->getLoc(),
+                                      *context.selectorShift, rewriter);
+      context.sharedRamp =
+          rewriter
+              .create<VshrsOp>(context.op->getLoc(), context.indexType,
+                               context.sharedRamp, shift, context.allMask)
+              .getResult();
+    }
+    if (*context.sourceLaneStrideShift != 0) {
+      Value shift = createI16Constant(
+          context.op->getLoc(), *context.sourceLaneStrideShift, rewriter);
+      context.sharedRamp =
+          rewriter
+              .create<VshlsOp>(context.op->getLoc(), context.indexType,
+                               context.sharedRamp, shift, context.allMask)
+              .getResult();
+    }
+  }
+  Value selector = context.sharedRamp;
+  if (baseIndex != 0) {
+    FailureOr<Value> baseScalar = createScalarOffsetConstant(
+        context.op->getLoc(), context.indexScalarType, baseIndex, rewriter);
+    if (failed(baseScalar)) {
+      return failure();
+    }
+    selector = rewriter
+                   .create<VaddsOp>(context.op->getLoc(), context.indexType,
+                                    selector, *baseScalar, context.allMask)
+                   .getResult();
+  }
+  return selector;
+}
+
 static FailureOr<GroupBroadcastLoweringContext>
 createGroupBroadcastLoweringContext(
     Operation *op, VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
@@ -9945,62 +10006,18 @@ static FailureOr<Value> getGroupBroadcastSelector(
   }
 
   if (context.kind == GroupBroadcastSelectorKind::Constant) {
-    FailureOr<Value> baseScalar = createScalarOffsetConstant(
-        context.op->getLoc(), context.indexScalarType, baseIndex, rewriter);
-    if (failed(baseScalar)) {
+    FailureOr<Value> selector = materializeConstantGroupBroadcastSelector(
+        context, baseIndex, rewriter);
+    if (failed(selector)) {
       return failure();
     }
-    Value selector =
-        rewriter
-            .create<VdupOp>(context.op->getLoc(), context.indexType,
-                            *baseScalar, context.allMask,
-                            /*position=*/nullptr)
-            .getResult();
     context.selectorByBaseIndex.try_emplace(baseIndex, selector);
     return selector;
   }
-
-  if (!context.sharedRamp) {
-    FailureOr<Value> zero = createScalarOffsetConstant(
-        context.op->getLoc(), context.indexScalarType, 0, rewriter);
-    if (failed(zero)) {
-      return failure();
-    }
-    context.sharedRamp =
-        rewriter.create<VciOp>(context.op->getLoc(), context.indexType,
-                               *zero, StringAttr{})
-            .getResult();
-    if (*context.selectorShift != 0) {
-      Value shift = createI16Constant(context.op->getLoc(),
-                                      *context.selectorShift, rewriter);
-      context.sharedRamp =
-          rewriter
-              .create<VshrsOp>(context.op->getLoc(), context.indexType,
-                               context.sharedRamp, shift, context.allMask)
-              .getResult();
-    }
-    if (*context.sourceLaneStrideShift != 0) {
-      Value shift = createI16Constant(
-          context.op->getLoc(), *context.sourceLaneStrideShift, rewriter);
-      context.sharedRamp =
-          rewriter
-              .create<VshlsOp>(context.op->getLoc(), context.indexType,
-                               context.sharedRamp, shift, context.allMask)
-              .getResult();
-    }
-  }
-
-  Value selector = context.sharedRamp;
-  if (baseIndex != 0) {
-    FailureOr<Value> baseScalar = createScalarOffsetConstant(
-        context.op->getLoc(), context.indexScalarType, baseIndex, rewriter);
-    if (failed(baseScalar)) {
-      return failure();
-    }
-    selector = rewriter
-                   .create<VaddsOp>(context.op->getLoc(), context.indexType,
-                                    selector, *baseScalar, context.allMask)
-                   .getResult();
+  FailureOr<Value> selector =
+      materializeGroupBroadcastRamp(context, baseIndex, rewriter);
+  if (failed(selector)) {
+    return failure();
   }
   context.selectorByBaseIndex.try_emplace(baseIndex, selector);
   return selector;

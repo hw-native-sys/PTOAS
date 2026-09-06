@@ -3485,6 +3485,21 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_to_vpto_vmull_deinterleaved.pto                    # exit=0
 ```
 
+# group-broadcast selector 物化拆分（2026-09-06）
+
+本轮将 `getGroupBroadcastSelector` 中 constant selector 与共享 ramp 的构造逻辑分别抽取
+为 `materializeConstantGroupBroadcastSelector` 和 `materializeGroupBroadcastRamp`。缓存、
+base index 偏移、shift 顺序以及 selector kind 分派保持不变，避免在入口混合不同 selector
+物化策略。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_layout_assignment_group_broadcast_load_e2b_b16.pto # exit=0
+```
+
 # load physical plan 构造职责拆分（2026-09-06）
 
 本轮将 `OneToNVMILoadOpPattern::buildPhysicalPlan` 中 converted result type 获取与
