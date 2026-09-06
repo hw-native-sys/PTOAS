@@ -2052,6 +2052,19 @@ exit=0，现有 slots=1 的 EVEN/P0 转换输出保持不变。
 `git diff --check` 通过；`vmi_layout_assignment_group_store_slots1_unit_stride.pto`
 完整 lowering pipeline exit=0。
 
+# iota 物化上下文数据泥团整改
+
+本轮引入轻量 `IotaMaterializationContext`，统一携带 iota 三类物化路径共同需要的
+`Location`、base、order attribute 和 rewriter；新增 `getIotaOrder` 统一 ASC 默认值处理。
+`createIotaContiguousChunk`、`createSubVLGroupPeriodicChunk` 与
+`createIotaDeinterleavedChunk` 的 contiguous、group-periodic、deinterleaved lane 计算仍
+保持独立，未合并不同布局算法。共享 chunk、power-of-two fast path、残余 vsel、part/chunk
+偏移、ASC/DESC 方向和结果顺序均保持不变。增量
+`check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_to_vpto_iota_group2.pto`、
+`vmi_to_vpto_iota_group_subvl.pto` 和 `vmi_to_vpto_iota_group_deint.pto` lowering 均
+exit=0，普通 iota case 仍在既有 pack/unpack invariant 处提前终止。
+
 # vmull 物理 shape 合同职责整改
 
 本轮新增 `checkVmullPhysicalShape`，将 vmull 的 physical lane 数、physical data element
