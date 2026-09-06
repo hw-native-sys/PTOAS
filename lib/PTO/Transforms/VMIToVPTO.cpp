@@ -19133,6 +19133,39 @@ LogicalResult checkSupportedVmullShape(VMIVmullOp op,
   return checkVmullPhysicalShape(aType, maskType, reason);
 }
 
+static LogicalResult checkAddCarryMaskPort(VMIMaskType maskType,
+                                           VMILayoutAttr dataLayout,
+                                           int64_t dataArity,
+                                           std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  bool layoutMismatch = maskType.getLayoutAttr() != dataLayout;
+  if (layoutMismatch) {
+    return fail("requires all data and mask ports to share one layout");
+  }
+  bool unsupportedGranularity = maskType.getGranularity() != "b32";
+  if (unsupportedGranularity) {
+    return fail("requires b32 mask granularity");
+  }
+  FailureOr<int64_t> maskArity = getVMIPhysicalArity(maskType);
+  bool hasMatchingArity = succeeded(maskArity) && *maskArity == dataArity;
+  if (!hasMatchingArity) {
+    return fail("requires matching physical arity on data and mask ports");
+  }
+  FailureOr<StringRef> physicalGranularity =
+      getVMIMaskPhysicalGranularity(maskType);
+  bool unsupportedPhysicalGranularity = failed(physicalGranularity) ||
+                                        *physicalGranularity != "b32";
+  if (unsupportedPhysicalGranularity) {
+    return fail("requires physical b32 mask parts");
+  }
+  return success();
+}
+
 static LogicalResult
 checkSupportedVMIAddCarryPorts(VMIVRegType lhsType, VMIVRegType rhsType,
                                VMIVRegType resultType,
@@ -19158,19 +19191,10 @@ checkSupportedVMIAddCarryPorts(VMIVRegType lhsType, VMIVRegType rhsType,
   if (failed(dataArity) || *dataArity < 1)
     return fail("requires non-empty physical data parts");
   for (VMIMaskType maskType : maskTypes) {
-    if (maskType.getLayoutAttr() != lhsType.getLayoutAttr())
-      return fail("requires all data and mask ports to share one layout");
-    if (maskType.getGranularity() != "b32")
-      return fail("requires b32 mask granularity");
-    FailureOr<int64_t> maskArity = getVMIPhysicalArity(maskType);
-    bool hasMatchingArity = succeeded(maskArity) && *maskArity == *dataArity;
-    if (!hasMatchingArity) {
-      return fail("requires matching physical arity on data and mask ports");
+    if (failed(checkAddCarryMaskPort(maskType, lhsType.getLayoutAttr(),
+                                     *dataArity, reason))) {
+      return failure();
     }
-    FailureOr<StringRef> physicalGranularity =
-        getVMIMaskPhysicalGranularity(maskType);
-    if (failed(physicalGranularity) || *physicalGranularity != "b32")
-      return fail("requires physical b32 mask parts");
   }
   FailureOr<int64_t> lanesPerPart = getDataLanesPerPart(lhsType.getElementType());
   bool hasExpectedLanes = succeeded(lanesPerPart) && *lanesPerPart == 64;

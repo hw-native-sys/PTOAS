@@ -2440,6 +2440,14 @@ memory access proof 及两阶段失败回退，保持 masked-store 的支持范�
 保持不变。增量检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 scatter 正常 case lowering 成功，非法 gather/scatter case 仍在预期 shape 诊断处失败。
 
+# add-carry mask port 合同职责整改（2026-09-06）
+
+本轮将 `checkSupportedVMIAddCarryPorts` 中每个 mask/carry port 的 layout、b32 粒度、
+physical arity 和 physical mask granularity 校验抽取为 `checkAddCarryMaskPort`。共享
+数据 port 的 32-bit、同类型、布局及 64-lane 合同仍由主 helper 负责，`vaddc`/`vaddcs`
+的 mask 列表顺序、支持范围、诊断和失败传播保持不变；同时补齐新 helper 中的控制流
+条件命名。增量检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
+
 # scatter shape 合同职责整改（2026-09-06）
 
 本轮将 `checkSupportedScatterShape` 的布局/目标指针校验抽取为
