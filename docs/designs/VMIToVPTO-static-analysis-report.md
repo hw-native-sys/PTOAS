@@ -3082,3 +3082,18 @@ git diff --check                                      # passed
 check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
 vmi_layout_assignment_group_store_slots1_unit_stride.pto # exit=0
 ```
+
+# mask layout materializer 路由职责拆分（2026-09-06）
+
+本轮将 `materializeMaskLayoutConversion` 中 identity → deinterleaved=2 → lane-stride
+的顺序尝试抽取为 `tryMaskLayoutMaterializers`。入口现在只负责布局存在性检查、context
+构造和最终 unsupported 诊断；materializer 的 optional/failure 传播、优先级、结果顺序
+均保持不变，未改变任何 mask layout 指令生成。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_ensure_mask_granularity.pto                # exit=0
+```
