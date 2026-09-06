@@ -6865,8 +6865,9 @@ struct OneToNVMIEnsureLayoutOpPattern
     FailureOr<SmallVector<Value>> results = materializeEnsureLayoutConversion(
         op, adaptor.getSource(), sourceType, resultType,
         *this->getTypeConverter(), rewriter);
-    if (failed(results))
+    if (failed(results)) {
       return failure();
+    }
     replaceOpWithFlatConvertedValues(rewriter, op, *results, *this->getTypeConverter());
     return success();
   }
@@ -6885,14 +6886,18 @@ struct OneToNVMIEnsureMaskLayoutOpPattern
     VMILayoutSupport supports;
     std::string supportReason;
     if (failed(supports.getEnsureMaskLayoutFact(sourceType, resultType,
-                                                &supportReason)))
+                                                &supportReason))) {
       return rewriter.notifyMatchFailure(
           op, Twine("ensure_mask_layout has no registered materialization "
                     "support: ") +
                   supportReason);
-    if (sourceType.getGranularity() != resultType.getGranularity())
+    }
+    bool granularityMismatch =
+        sourceType.getGranularity() != resultType.getGranularity();
+    if (granularityMismatch) {
       return rewriter.notifyMatchFailure(
           op, "mask layout helper cannot also change granularity");
+    }
     VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();
     VMILayoutAttr resultLayout = resultType.getLayoutAttr();
 
@@ -6905,8 +6910,9 @@ struct OneToNVMIEnsureMaskLayoutOpPattern
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     FailureOr<SmallVector<Value>> results = materializeMaskLayoutConversion(
         op, sourceParts, resultTypes, sourceLayout, resultLayout, rewriter);
-    if (failed(results))
+    if (failed(results)) {
       return failure();
+    }
     replaceOpWithFlatConvertedValues(rewriter, op, *results, *this->getTypeConverter());
     return success();
   }
@@ -6945,15 +6951,21 @@ struct OneToNVMIEnsureMaskGranularityOpPattern
     FailureOr<SmallVector<Value>> results =
         materializeMaskGranularityCastConversion(
             op, sourceType, resultType, sourceParts, resultTypes, rewriter);
-    if (failed(results))
+    if (failed(results)) {
       return failure();
-    if (results->size() != resultTypes.size())
+    }
+    bool resultArityMismatch = results->size() != resultTypes.size();
+    if (resultArityMismatch) {
       return rewriter.notifyMatchFailure(
           op, "mask granularity cast result arity mismatch");
-    for (auto [result, type] : llvm::zip_equal(*results, resultTypes))
-      if (result.getType() != type)
+    }
+    for (auto [result, type] : llvm::zip_equal(*results, resultTypes)) {
+      bool resultTypeMismatch = result.getType() != type;
+      if (resultTypeMismatch) {
         return rewriter.notifyMatchFailure(
             op, "mask granularity cast result type mismatch");
+      }
+    }
     replaceOpWithFlatConvertedValues(rewriter, op, *results,
                                      *this->getTypeConverter());
     return success();
@@ -7066,13 +7078,15 @@ struct OneToNVMIBroadcastOpPattern : OneToNOpConversionPattern<VMIBroadcastOp> {
     results.reserve(resultTypes.size());
     for (Type resultType : resultTypes) {
       auto vregType = dyn_cast<VRegType>(resultType);
-      if (!vregType)
+      if (!vregType) {
         return rewriter.notifyMatchFailure(op, "broadcast result must be vreg");
+      }
       FailureOr<Value> mask =
           createAllTrueMaskForVReg(op.getLoc(), vregType, rewriter);
-      if (failed(mask))
+      if (failed(mask)) {
         return rewriter.notifyMatchFailure(
             op, "unsupported element type for broadcast mask");
+      }
       StringAttr position =
           inputIsVReg ? rewriter.getStringAttr("LOWEST") : StringAttr{};
       results.push_back(rewriter
@@ -7106,22 +7120,26 @@ FailureOr<Value> createScalarOffsetConstant(Location loc, Type type,
 FailureOr<Value> createIotaChunkBase(Location loc, Value base,
                                      int64_t laneOffset, StringRef order,
                                      PatternRewriter &rewriter) {
-  if (laneOffset == 0)
+  if (laneOffset == 0) {
     return base;
+  }
 
   FailureOr<Value> offset =
       createScalarOffsetConstant(loc, base.getType(), laneOffset, rewriter);
-  if (failed(offset))
+  if (failed(offset)) {
     return failure();
+  }
 
   if (isa<IntegerType>(base.getType())) {
-    if (order == "DESC")
+    if (order == "DESC") {
       return rewriter.create<arith::SubIOp>(loc, base, *offset).getResult();
+    }
     return rewriter.create<arith::AddIOp>(loc, base, *offset).getResult();
   }
   if (isa<FloatType>(base.getType())) {
-    if (order == "DESC")
+    if (order == "DESC") {
       return rewriter.create<arith::SubFOp>(loc, base, *offset).getResult();
+    }
     return rewriter.create<arith::AddFOp>(loc, base, *offset).getResult();
   }
 
@@ -15117,6 +15135,47 @@ private:
     return resultVRegTypes;
   }
 
+  FailureOr<TruncFPhysicalPlan> buildPhysicalPlan(
+      VMITruncFOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes,
+      OneToNPatternRewriter &rewriter) const {
+    if (resultTypes.empty()) {
+      return rewriter.notifyMatchFailure(op, "truncf requires result chunks");
+    }
+    FailureOr<VRegType> sourceType =
+        getUniformSourceType(op, sourceParts, rewriter);
+    if (failed(sourceType)) {
+      return failure();
+    }
+    unsigned sourceBits =
+        pto::getPTOStorageElemBitWidth(sourceType->getElementType());
+    if (sourceBits != 32 && sourceBits != 16) {
+      return rewriter.notifyMatchFailure(
+          op, "truncf source bit width must be 32 or 16");
+    }
+    FailureOr<SmallVector<VRegType>> resultVRegTypes =
+        getUniformResultTypes(op, resultTypes, rewriter);
+    if (failed(resultVRegTypes)) {
+      return failure();
+    }
+    unsigned resultBits = pto::getPTOStorageElemBitWidth(
+        resultVRegTypes->front().getElementType());
+    if (resultBits == 0) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported physical truncf result type");
+    }
+    bool sourceIsPackedBF16x2 =
+        pto::isPTOBF16x2Type(sourceType->getElementType());
+    VRegType sourceViewType = *sourceType;
+    if (sourceIsPackedBF16x2) {
+      sourceViewType = VRegType::get(
+          rewriter.getContext(), sourceType->getElementCount() * 2,
+          BFloat16Type::get(rewriter.getContext()));
+    }
+    return TruncFPhysicalPlan{*sourceType, std::move(*resultVRegTypes),
+                              sourceViewType, sourceBits, resultBits,
+                              sourceIsPackedBF16x2};
+  }
+
   LogicalResult lowerDenseLaneStride(
       VMITruncFOp op, ValueRange sourceParts,
       ArrayRef<VRegType> resultTypes, StringRef part,
@@ -15381,34 +15440,15 @@ public:
                                  rewriter);
     }
 
-    if (resultTypes.empty()) {
-      return rewriter.notifyMatchFailure(op, "truncf requires result chunks");
-    }
-
-    FailureOr<VRegType> sourceType =
-        getUniformSourceType(op, sourceParts, rewriter);
-    if (failed(sourceType)) {
+    FailureOr<TruncFPhysicalPlan> physicalPlan =
+        buildPhysicalPlan(op, sourceParts, resultTypes, rewriter);
+    if (failed(physicalPlan)) {
       return failure();
     }
-    VRegType sourceType0 = *sourceType;
-    unsigned sourceBits = pto::getPTOStorageElemBitWidth(sourceType0.getElementType());
-    bool unsupportedSourceBits = sourceBits != 32 && sourceBits != 16;
-    if (unsupportedSourceBits) {
-      return rewriter.notifyMatchFailure(
-          op, "truncf source bit width must be 32 or 16");
-    }
-    // A packed bf16x2 physical source is consumed by pto.vcvt as raw bf16
-    // lanes (2 bf16 per bf16x2). Build the bf16 view type used for the source
-    // mask and for reinterpreting each source part before the VcvtOp. The
-    // logical lane count stays bf16x2-based; only the physical view widens.
-    bool sourceIsPackedBF16x2 =
-        pto::isPTOBF16x2Type(sourceType0.getElementType());
-    VRegType vcvtSourceVRegType = sourceType0;
-    if (sourceIsPackedBF16x2) {
-      vcvtSourceVRegType =
-          VRegType::get(rewriter.getContext(), sourceType0.getElementCount() * 2,
-                        BFloat16Type::get(rewriter.getContext()));
-    }
+    VRegType sourceType0 = physicalPlan->sourceType;
+    unsigned sourceBits = physicalPlan->sourceBits;
+    VRegType vcvtSourceVRegType = physicalPlan->sourceViewType;
+    bool sourceIsPackedBF16x2 = physicalPlan->sourceIsPackedBF16x2;
     // A packed bf16x2 source is consumed through its native bf16 view.
     // Group-slot layout for non-f32 sources is not supported yet.
     bool unsupportedGroupSlotLayout = sourceLayout && sourceLayout.isGroupSlots();
@@ -15416,20 +15456,8 @@ public:
       return rewriter.notifyMatchFailure(
           op, "group-slot layout for non-f32 truncf not supported");
     }
-    FailureOr<SmallVector<VRegType>> uniformResultTypes =
-        getUniformResultTypes(op, resultTypes, rewriter);
-    if (failed(uniformResultTypes)) {
-      return failure();
-    }
-    SmallVector<VRegType> resultVRegTypes = std::move(*uniformResultTypes);
-    if (pto::getPTOStorageElemBitWidth(
-            resultVRegTypes.front().getElementType()) == 0) {
-      return rewriter.notifyMatchFailure(
-          op, "unsupported physical truncf result type");
-    }
-
-    unsigned resultBits = pto::getPTOStorageElemBitWidth(
-        resultVRegTypes.front().getElementType());
+    SmallVector<VRegType> resultVRegTypes = physicalPlan->resultTypes;
+    unsigned resultBits = physicalPlan->resultBits;
     // Same-width fp->fp (bf16 -> f16, f16 -> bf16): dense contiguous 1:1,
     // no part; rnd always, sat follows the fp-to-fp contract.
     if (sourceBits == resultBits && sourceLayout && resultLayout &&

@@ -2087,6 +2087,18 @@ mask 和失败语义不变。增量
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_load_store_contiguous.pto` lowering exit=0。
 
+# truncf 物理计划职责整改
+
+本轮新增 `TruncFPhysicalPlan` 与 `buildPhysicalPlan`，将 `truncf` 主入口中的 source/result
+physical part 统一类型、源/结果 storage bit width、packed bf16x2 的 bf16 view 构造集中到
+一个 plan builder。主入口仍保留 group-slot 特殊路径、同宽转换、dense lane-stride 和
+factor 窄化的 lowering 优先级及各自 arity/layout 合同；没有把不同 conversion 语义强行
+合并。结果顺序、mask、round/saturate、诊断和失败传播保持不变。增量
+`check_changed_code.py --base origin/master --fail-on none` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
+`vmi_to_vpto_truncf_f16_to_f8e4m3.pto` 尝试 lowering 时在既有 VMI pack/unpack invariant
+处提前失败，未进入本轮 plan builder，不能将该失败归因于本轮改动。
+
 # group load 布局分派职责整改
 
 本轮将 `OneToNVMIGroupLoadOpPattern::matchAndRewrite` 中 block-deinterleaved f32 特殊路径
