@@ -2349,6 +2349,14 @@ checked_files=1 errors=0 warnings=0
 `git diff --check` 通过；group-slot store、dense layout 和 interleaved memory lowering
 case 均 exit=0。
 
+# stride/scatter memory lowering 控制流整改（2026-09-06）
+
+本轮在完整分支增量检查中发现 `VMIStrideStoreOp` 与 `VMIScatterOp` lowering 仍有历史的
+无大括号控制语句。现将多操作数失败、physical arity 和 part 类型条件命名并补齐大括号，
+保持 `vsstb`/`vscatter` 发射顺序、操作数归一化、诊断文本和失败传播不变。增量
+`check_changed_code.py --base origin/master` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过。
+
 本轮尝试重新构建 `pto-test-opt` 时，CMake 仍因工作区既有的 `cann-cmake` 外部依赖
 配置尝试创建 `/cann-cmake` 且权限不足而无法重新配置；该环境问题未产生新的 C++ 编译
 诊断，未删除或重置现有 build tree。

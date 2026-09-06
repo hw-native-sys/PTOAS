@@ -2202,7 +2202,10 @@ checkSupportedGroupSlotsStoreShape(VMIGroupStoreOp op, VMIVRegType valueType,
 }
 
 LogicalResult
-checkSupportedGroupStoreShape(VMIGroupStoreOp op, std::string *reason) {
+checkSupportedGroupStoreByLayout(VMIGroupStoreOp op, VMIVRegType valueType,
+                                 VMILayoutAttr layout,
+                                 std::optional<int64_t> rowStride,
+                                 std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason) {
       *reason = message.str();
@@ -2210,9 +2213,6 @@ checkSupportedGroupStoreShape(VMIGroupStoreOp op, std::string *reason) {
     return failure();
   };
 
-  auto valueType = cast<VMIVRegType>(op.getValue().getType());
-  VMILayoutAttr layout = valueType.getLayoutAttr();
-  std::optional<int64_t> rowStride = getConstantIndexValue(op.getRowStride());
   if (isCompactSmallGroupStore(layout, valueType,
                                op.getNumGroupsAttr().getInt(), rowStride)) {
     return checkSupportedCompactSmallGroupStoreShape(op, valueType, reason);
@@ -2245,6 +2245,15 @@ checkSupportedGroupStoreShape(VMIGroupStoreOp op, std::string *reason) {
   return checkDeinterleaved2GroupStoreChunkShape(
       valueType, fact->groupSize, &lanesPerPart, &groupCount,
       &chunksPerGroupPerPart, reason);
+}
+
+LogicalResult
+checkSupportedGroupStoreShape(VMIGroupStoreOp op, std::string *reason) {
+  auto valueType = cast<VMIVRegType>(op.getValue().getType());
+  VMILayoutAttr layout = valueType.getLayoutAttr();
+  std::optional<int64_t> rowStride = getConstantIndexValue(op.getRowStride());
+  return checkSupportedGroupStoreByLayout(op, valueType, layout, rowStride,
+                                          reason);
 }
 
 LogicalResult
@@ -12332,19 +12341,25 @@ struct OneToNVMIStrideStoreOpPattern
         "stride_store block_stride must convert to one value", rewriter);
     FailureOr<Value> repeatStride = Value(
         rewriter.create<arith::ConstantIntOp>(op.getLoc(), 0, 16));
-    if (failed(destination) || failed(offset) || failed(blockStride) ||
-        failed(repeatStride))
+    bool failedOperands = failed(destination) || failed(offset) ||
+                          failed(blockStride) || failed(repeatStride);
+    if (failedOperands) {
       return failure();
+    }
 
     ValueRange valueParts = adaptor.getValue();
     ValueRange maskParts = adaptor.getMask();
-    if (valueParts.size() != 1 || maskParts.size() != 1)
+    bool invalidArity = valueParts.size() != 1 || maskParts.size() != 1;
+    if (invalidArity) {
       return rewriter.notifyMatchFailure(
           op, "stride_store supports one physical value/mask chunk");
-    if (!isa<VRegType>(valueParts.front().getType()) ||
-        !isa<MaskType>(maskParts.front().getType()))
+    }
+    bool invalidTypes = !isa<VRegType>(valueParts.front().getType()) ||
+                        !isa<MaskType>(maskParts.front().getType());
+    if (invalidTypes) {
       return rewriter.notifyMatchFailure(
           op, "stride_store requires physical vreg/mask parts");
+    }
 
     Value base = rewriter
                      .create<AddPtrOp>(op.getLoc(), (*destination).getType(),
@@ -12367,22 +12382,28 @@ struct OneToNVMIScatterOpPattern : OneToNOpConversionPattern<VMIScatterOp> {
     FailureOr<Value> destination = getSingleValue(
         op, adaptor.getDestination(),
         "scatter destination must convert to one value", rewriter);
-    if (failed(destination))
+    if (failed(destination)) {
       return failure();
+    }
 
     ValueRange valueParts = adaptor.getValue();
     ValueRange indicesParts = adaptor.getIndices();
     ValueRange maskParts = adaptor.getMask();
-    if (valueParts.size() != indicesParts.size() ||
-        valueParts.size() != maskParts.size())
+    bool invalidArity = valueParts.size() != indicesParts.size() ||
+                        valueParts.size() != maskParts.size();
+    if (invalidArity) {
       return rewriter.notifyMatchFailure(op, "scatter physical arity mismatch");
+    }
 
     for (auto [value, indices, mask] :
          llvm::zip_equal(valueParts, indicesParts, maskParts)) {
-      if (!isa<VRegType>(value.getType()) ||
-          !isa<VRegType>(indices.getType()) || !isa<MaskType>(mask.getType()))
+      bool invalidTypes = !isa<VRegType>(value.getType()) ||
+                          !isa<VRegType>(indices.getType()) ||
+                          !isa<MaskType>(mask.getType());
+      if (invalidTypes) {
         return rewriter.notifyMatchFailure(
             op, "scatter physical part type mismatch");
+      }
       rewriter.create<VscatterOp>(op.getLoc(), value, *destination, indices,
                                   mask);
     }
