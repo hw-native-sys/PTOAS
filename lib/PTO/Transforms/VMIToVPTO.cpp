@@ -3297,7 +3297,8 @@ static FailureOr<bool> getShuffleLaneDirection(
   };
   bool ascending = sourceLane == baseLane + resultLane;
   bool descending = sourceLane == baseLane - resultLane;
-  if (!ascending && !descending) {
+  bool unsupportedDirection = !ascending && !descending;
+  if (unsupportedDirection) {
     return fail("requires ASC or DESC affine source lane indices");
   }
   return descending && !ascending;
@@ -3349,8 +3350,10 @@ FailureOr<ShuffleVselrPlan> computeShuffleVselrPlanForChunk(
       baseLane = sourcePhysical->lane;
       continue;
     }
-    if (*sourcePart != sourcePhysical->part ||
-        *sourceChunk != sourcePhysical->chunk) {
+    bool sourceChunkMismatch =
+        *sourcePart != sourcePhysical->part ||
+        *sourceChunk != sourcePhysical->chunk;
+    if (sourceChunkMismatch) {
       return fail("requires one source chunk per result chunk");
     }
     FailureOr<bool> laneDescending = getShuffleLaneDirection(
@@ -3362,7 +3365,8 @@ FailureOr<ShuffleVselrPlan> computeShuffleVselrPlanForChunk(
       descending = *laneDescending;
       continue;
     }
-    if (*descending != *laneDescending) {
+    bool laneOrderMismatch = *descending != *laneDescending;
+    if (laneOrderMismatch) {
       return fail("requires one index order per result chunk");
     }
   }
