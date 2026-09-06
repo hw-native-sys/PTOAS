@@ -10,7 +10,7 @@ diff --git a/pyproject.toml b/pyproject.toml
 +version = "0.1.6"
 +description = "PTO Assembler & Optimizer with VMI support"
  readme = "README.md"
- requires-python = ">=3.10"
+ requires-python = ">=3.7"
  license = "Apache-2.0"
 @@ -43,4 +43,5 @@ cmake.version = "CMakeLists.txt"
  ninja.version = ">=1.10"

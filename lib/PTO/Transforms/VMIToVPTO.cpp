@@ -5458,6 +5458,51 @@ FailureOr<Value> createIotaContiguousChunk(Location loc, Type resultType,
       .getResult();
 }
 
+// Materialize a contiguous logical iota into a lane-strided physical chunk.
+// On the A5 VPTO path VCI over a narrow floating-point carrier advances in
+// physical lanes.  The lane-stride store then selects every `laneStride`-th
+// lane, so the VCI ramp has to be scaled by the reciprocal stride to preserve
+// a unit logical increment.
+FailureOr<Value> createIotaLaneStrideChunk(
+    Location loc, Type resultType, Value base, int64_t laneStride, int64_t laneOffset, StringAttr orderAttr,
+    PatternRewriter& rewriter)
+{
+    auto vregType = dyn_cast<VRegType>(resultType);
+    if (!vregType || (laneStride != 2 && laneStride != 4)) {
+        return failure();
+    }
+    FailureOr<Value> mask = createAllTrueMaskForVReg(loc, vregType, rewriter);
+    FailureOr<Value> zero = createScalarOffsetConstant(loc, base.getType(), 0, rewriter);
+    // This materialization is needed for narrow floating-point carriers (the
+    // f16 PK_B32 case in particular).  Integer VCI uses its native unit-lane
+    // semantics and must not be scaled here.
+    int64_t scale = 1;
+    if (isa<FloatType>(base.getType()))
+        scale = laneStride;
+    FailureOr<Value> factor;
+    if (isa<FloatType>(base.getType())) {
+        auto floatType = cast<FloatType>(base.getType());
+        factor = rewriter.create<arith::ConstantOp>(loc, rewriter.getFloatAttr(floatType, 1.0 / scale)).getResult();
+    } else {
+        factor = createScalarOffsetConstant(loc, base.getType(), 1, rewriter);
+    }
+    if (failed(mask) || failed(zero) || failed(factor)) {
+        return failure();
+    }
+    Value indices = rewriter.create<VciOp>(loc, resultType, *zero, StringAttr{}).getResult();
+    Value scaled = rewriter.create<VmulsOp>(loc, resultType, indices, *factor, *mask).getResult();
+    StringRef order = orderAttr ? orderAttr.getValue() : StringRef("ASC");
+    FailureOr<Value> chunkBase = createIotaChunkBase(loc, base, laneOffset, order, rewriter);
+    if (failed(chunkBase)) {
+        return failure();
+    }
+    if (order == "DESC") {
+        Value baseVector = rewriter.create<VdupOp>(loc, resultType, *chunkBase, *mask, nullptr).getResult();
+        return rewriter.create<VsubOp>(loc, resultType, baseVector, scaled, *mask).getResult();
+    }
+    return rewriter.create<VaddsOp>(loc, resultType, scaled, *chunkBase, *mask).getResult();
+}
+
 /// Pack group-periodic ramps inside one physical VL when S < physVL and
 /// physVL % S == 0 (e.g. i32 L=64,group=2 → [base..base+31 | base..base+31]).
 ///
@@ -5749,6 +5794,28 @@ struct OneToNVMIIotaOpPattern : OneToNOpConversionPattern<IotaOp> {
       replaceOpWithFlatConvertedValues(rewriter, op, results,
                                        *this->getTypeConverter());
       return success();
+    }
+
+    if (layout.isContiguous() && layout.getLaneStride() != 1) {
+        int64_t laneStride = layout.getLaneStride();
+        if (laneStride != 2 && laneStride != 4) {
+            return rewriter.notifyMatchFailure(op, "unsupported contiguous iota lane_stride");
+        }
+        int64_t logicalLanesPerChunk = *lanesPerPart / laneStride;
+        for (auto [index, resultType] : llvm::enumerate(resultTypes)) {
+            if (!isa<VRegType>(resultType)) {
+                return rewriter.notifyMatchFailure(op, "iota result must be vreg");
+            }
+            FailureOr<Value> result = createIotaLaneStrideChunk(
+                op.getLoc(), resultType, *base, laneStride, static_cast<int64_t>(index) * logicalLanesPerChunk,
+                op.getOrderAttr(), rewriter);
+            if (failed(result)) {
+                return rewriter.notifyMatchFailure(op, "failed to materialize lane-strided iota chunk");
+            }
+            results.push_back(*result);
+        }
+        replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
+        return success();
     }
 
     if (layout.isContiguous()) {
