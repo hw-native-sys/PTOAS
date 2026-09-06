@@ -3316,6 +3316,42 @@ static FailureOr<int64_t> computeShuffleForwardingSourceChunk(
   return *sourceFlatIndex;
 }
 
+struct ShuffleForwardingInputPlan {
+  VMIVRegType sourceType;
+  VMIVRegType resultType;
+  int64_t lanesPerPart;
+  int64_t resultFactor;
+};
+
+static FailureOr<ShuffleForwardingInputPlan>
+getShuffleForwardingInputPlan(VMIShuffleOp op, std::string *reason) {
+  auto sourceType = cast<VMIVRegType>(op.getSource().getType());
+  auto resultType = cast<VMIVRegType>(op.getResult().getType());
+  if (op.getIndices().empty()) {
+    if (reason) {
+      *reason = "requires non-empty indices";
+    }
+    return failure();
+  }
+  FailureOr<int64_t> lanesPerPart =
+      getDataLanesPerPart(sourceType.getElementType());
+  if (failed(lanesPerPart)) {
+    if (reason) {
+      *reason = "requires known lanes per physical part";
+    }
+    return failure();
+  }
+  FailureOr<int64_t> resultFactor = getDataLayoutFactor(resultType);
+  if (failed(resultFactor)) {
+    if (reason) {
+      *reason = "requires assigned result layout";
+    }
+    return failure();
+  }
+  return ShuffleForwardingInputPlan{sourceType, resultType, *lanesPerPart,
+                                    *resultFactor};
+}
+
 FailureOr<SmallVector<int64_t>>
 computeShuffleForwardingSourceParts(VMIShuffleOp op, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> FailureOr<SmallVector<int64_t>> {
@@ -3324,37 +3360,17 @@ computeShuffleForwardingSourceParts(VMIShuffleOp op, std::string *reason) {
     }
     return failure();
   };
-
-  auto sourceType = cast<VMIVRegType>(op.getSource().getType());
-  auto resultType = cast<VMIVRegType>(op.getResult().getType());
-  auto validateInputs = [&sourceType, &resultType, &op, &fail]()
-      -> FailureOr<int64_t> {
-    FailureOr<int64_t> lanes =
-        getDataLanesPerPart(sourceType.getElementType());
-    if (failed(lanes)) {
-      return fail("requires known lanes per physical part");
-    }
-    if (op.getIndices().empty()) {
-      return fail("requires non-empty indices");
-    }
-    FailureOr<int64_t> factor = getDataLayoutFactor(resultType);
-    if (failed(factor)) {
-      return fail("requires assigned result layout");
-    }
-    return *lanes;
-  };
-  FailureOr<int64_t> lanesPerPart = validateInputs();
-  if (failed(lanesPerPart)) {
+  FailureOr<ShuffleForwardingInputPlan> input =
+      getShuffleForwardingInputPlan(op, reason);
+  if (failed(input)) {
     return failure();
   }
+  auto sourceType = input->sourceType;
+  auto resultType = input->resultType;
+  int64_t lanesPerPart = input->lanesPerPart;
   ArrayRef<int64_t> indices = op.getIndices();
-  FailureOr<int64_t> resultFactor = getDataLayoutFactor(resultType);
-  if (failed(resultFactor)) {
-    return failure();
-  }
-
   SmallVector<int64_t> sourceFlatIndices;
-  for (int64_t resultPart = 0; resultPart < *resultFactor; ++resultPart) {
+  for (int64_t resultPart = 0; resultPart < input->resultFactor; ++resultPart) {
     FailureOr<int64_t> resultChunks =
         getDataChunksInPart(resultType, resultPart);
     if (failed(resultChunks)) {
@@ -3365,7 +3381,7 @@ computeShuffleForwardingSourceParts(VMIShuffleOp op, std::string *reason) {
       FailureOr<int64_t> sourceFlatIndex =
           computeShuffleForwardingSourceChunk(
               sourceType, resultType, indices, resultPart, resultChunk,
-              *lanesPerPart, reason);
+              lanesPerPart, reason);
       if (failed(sourceFlatIndex)) {
         return failure();
       }
@@ -4235,8 +4251,9 @@ FailureOr<Value> createScalarOffsetConstant(Location loc, Type type,
 
 Value createChunkOffset(Location loc, Value baseOffset, int64_t laneOffset,
                         PatternRewriter &rewriter) {
-  if (laneOffset == 0)
+  if (laneOffset == 0) {
     return baseOffset;
+  }
   Value delta = rewriter.create<arith::ConstantIndexOp>(loc, laneOffset);
   return rewriter.create<arith::AddIOp>(loc, baseOffset, delta).getResult();
 }

@@ -1,5 +1,20 @@
 # VMIToVPTO 静态分析报告记录
 
+## shuffle forwarding 输入计划拆分（2026-09-06）
+
+本轮将 `computeShuffleForwardingSourceParts` 的输入合法性与 forwarding 遍历分离，新增
+`ShuffleForwardingInputPlan`/`getShuffleForwardingInputPlan`，集中保存 source/result 类型、
+每个 physical part 的 lane 数和 result layout factor。主函数只负责按 result part/chunk
+计算 source flat index；索引非空、lane 数可知和 result layout 已分配等合同及原有错误文本
+保持不变。同时补齐本轮触及的控制语句大括号。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
 ## trunci group-slot carrier 路由拆分（2026-09-06）
 
 本轮将 `lowerGroupSlotTruncPart` 的三种物化策略拆为独立 helper：
