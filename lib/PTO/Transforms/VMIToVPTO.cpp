@@ -12539,6 +12539,42 @@ struct OneToNVMIGroupBroadcastLoadOpPattern
   using OneToNOpConversionPattern<VMIGroupBroadcastLoadOp>::OneToNOpConversionPattern;
 
 private:
+  LogicalResult validateDirectE2BBasicContract(
+      VMIGroupBroadcastLoadOp op, Value source, int64_t numGroups,
+      unsigned elementBits, VMILayoutAttr layout,
+      OneToNPatternRewriter &rewriter) const {
+    bool contiguousPacketLayout = layout && layout.isContiguous();
+    bool splitPacketLayout = layout && layout.isDeinterleaved() &&
+                             (layout.getFactor() == 2 ||
+                              layout.getFactor() == 4) &&
+                             layout.getLaneStride() == 1;
+    if (!contiguousPacketLayout && !splitPacketLayout) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast_load E2B lowering requires contiguous result "
+              "layout for direct group size or deinterleaved=2/4 result "
+              "layout for split group size");
+    }
+    if (elementBits != 16 && elementBits != 32) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast_load E2B lowering requires b16 or b32 element type");
+    }
+    std::optional<int64_t> stride =
+        getConstantIndexValue(op.getSourceGroupStride());
+    if (!stride || *stride != 1) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast_load E2B lowering requires constant unit source_group_stride");
+    }
+    if (!isa<PtrType>(source.getType())) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast_load E2B lowering requires !pto.ptr source");
+    }
+    if (numGroups != 8) {
+      return rewriter.notifyMatchFailure(
+          op, "group_broadcast_load E2B lowering requires num_groups = 8");
+    }
+    return success();
+  }
+
   FailureOr<Value> emitE2BPacket(
       VMIGroupBroadcastLoadOp op, OneToNPatternRewriter &rewriter,
       Value source, Value offset, Type packetType, int64_t chunk,
@@ -12596,36 +12632,9 @@ private:
       VMIVRegType resultVMIType, ArrayRef<Type> resultTypes,
       int64_t numGroups, unsigned elementBits, VMILayoutAttr layout,
       OneToNPatternRewriter &rewriter) const {
-    bool contiguousPacketLayout = layout && layout.isContiguous();
-    bool splitPacketLayout = layout && layout.isDeinterleaved() &&
-                             (layout.getFactor() == 2 ||
-                              layout.getFactor() == 4) &&
-                             layout.getLaneStride() == 1;
-    if (!contiguousPacketLayout && !splitPacketLayout) {
-      return rewriter.notifyMatchFailure(
-          op, "group_broadcast_load E2B lowering requires contiguous result "
-              "layout for direct group size or deinterleaved=2/4 result "
-              "layout for split group size");
-    }
-    if (elementBits != 16 && elementBits != 32) {
-      return rewriter.notifyMatchFailure(
-          op, "group_broadcast_load E2B lowering requires b16 or b32 element "
-              "type");
-    }
-    std::optional<int64_t> stride =
-        getConstantIndexValue(op.getSourceGroupStride());
-    if (!stride || *stride != 1) {
-      return rewriter.notifyMatchFailure(
-          op, "group_broadcast_load E2B lowering requires constant unit "
-              "source_group_stride");
-    }
-    if (!isa<PtrType>(source.getType())) {
-      return rewriter.notifyMatchFailure(
-          op, "group_broadcast_load E2B lowering requires !pto.ptr source");
-    }
-    if (numGroups != 8) {
-      return rewriter.notifyMatchFailure(
-          op, "group_broadcast_load E2B lowering requires num_groups = 8");
+    if (failed(validateDirectE2BBasicContract(op, source, numGroups,
+                                              elementBits, layout, rewriter))) {
+      return failure();
     }
     FailureOr<int64_t> chunksPerPart = getDataChunksInPart(resultVMIType, 0);
     bool invalidChunks = failed(chunksPerPart) || *chunksPerPart <= 0;

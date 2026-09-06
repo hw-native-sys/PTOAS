@@ -3877,3 +3877,19 @@ git diff --check                                      # passed
 check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
 vmi_to_vpto_load_store_contiguous.pto                  # exit=0
 ```
+
+# group-broadcast E2B 基础合同拆分（2026-09-06）
+
+本轮将 `validateDirectE2BShape` 中 direct E2B lowering 的基础合同检查抽取为
+`validateDirectE2BBasicContract`。该 helper 统一检查 result layout、b16/b32 element
+width、unit `source_group_stride`、pointer source 和 `num_groups = 8`；原函数继续负责
+physical chunk 数量、packet type、offset 计算及 E2B packet 发射。检查顺序、失败诊断和
+contiguous/deinterleaved 路由语义保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_layout_assignment_group_broadcast_load_e2b_b16.pto # exit=0
+```
