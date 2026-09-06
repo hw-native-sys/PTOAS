@@ -3063,3 +3063,6 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 source lane 映射抽取为 `getShuffleSourceLane`。规划函数继续负责 source chunk 一致性与
 ASC/DESC 方向推导，抽取没有改变失败诊断、迭代顺序或最终 `ShuffleVselrPlan` 内容；增量
 检查仍为 `errors=0 warnings=0`，scatter lowering case exit=0。
+
+随后补齐 shuffle VSEL 规划失败诊断 lambda 的大括号；该修改仅满足控制流可读性约束，
+不改变诊断文本或失败传播。
