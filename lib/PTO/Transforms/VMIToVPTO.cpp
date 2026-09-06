@@ -11699,6 +11699,29 @@ private:
     return success();
   }
 
+  FailureOr<std::pair<SmallVector<Value>, bool>> buildLaneStrideGroupOffsets(
+      VMIGroupStoreOp op, ValueRange valueParts, Value destination,
+      Value offset, Value rowStride, int64_t numGroups, StringRef dist,
+      OneToNPatternRewriter &rewriter) const {
+    SmallVector<Value> groupOffsets;
+    bool useDirectAccess = true;
+    for (auto [slotBlock, value] : llvm::enumerate(valueParts)) {
+      auto vregType = dyn_cast<VRegType>(value.getType());
+      if (!vregType) {
+        rewriter.notifyMatchFailure(op, "group_store value must be vreg");
+        return failure();
+      }
+      Value groupOffset = createGroupChunkOffset(
+          op.getLoc(), offset, rowStride, slotBlock * 8, 0, rewriter);
+      groupOffsets.push_back(groupOffset);
+      useDirectAccess &= isDirectMemoryDistAddressLegal(
+          op.getDestination(), groupOffset,
+          getMemoryElementType(destination.getType()), vregType,
+          VPTOMemoryOpFamily::Store, dist);
+    }
+    return std::make_pair(std::move(groupOffsets), useDirectAccess);
+  }
+
   LogicalResult lowerSlots8LaneStride(
       VMIGroupStoreOp op, OpAdaptor adaptor, OneToNPatternRewriter &rewriter,
       VMIVRegType valueVMIType, VMILayoutAttr layout, Value destination,
@@ -11714,22 +11737,14 @@ private:
     }
     ValueRange valueParts = adaptor.getValue();
     auto maskType = MaskType::get(rewriter.getContext(), *maskGranularity);
-    SmallVector<Value> groupOffsets;
-    bool useDirectAccess = true;
-    for (auto [slotBlock, value] : llvm::enumerate(valueParts)) {
-      auto vregType = dyn_cast<VRegType>(value.getType());
-      if (!vregType) {
-        return rewriter.notifyMatchFailure(op,
-                                           "group_store value must be vreg");
-      }
-      Value groupOffset = createGroupChunkOffset(
-          op.getLoc(), offset, rowStride, slotBlock * 8, 0, rewriter);
-      groupOffsets.push_back(groupOffset);
-      useDirectAccess &= isDirectMemoryDistAddressLegal(
-          op.getDestination(), groupOffset,
-          getMemoryElementType(op.getDestination().getType()), vregType,
-          VPTOMemoryOpFamily::Store, *dist);
+    FailureOr<std::pair<SmallVector<Value>, bool>> offsetPlan =
+        buildLaneStrideGroupOffsets(op, valueParts, destination, offset,
+                                     rowStride, numGroups, *dist, rewriter);
+    if (failed(offsetPlan)) {
+      return failure();
     }
+    SmallVector<Value> groupOffsets = std::move(offsetPlan->first);
+    bool useDirectAccess = offsetPlan->second;
     if (!useDirectAccess) {
       VMILayoutAttr compactLayout = VMILayoutAttr::getGroupSlots(
           rewriter.getContext(), layout.getNumGroups(), layout.getSlots());

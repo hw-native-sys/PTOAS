@@ -3573,6 +3573,21 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_to_vpto_group_broadcast_load_e2b_b16.pto           # blocked by pre-existing VMI-PASS-INVARIANT
 ```
 
+# slots=8 lane-stride group-store 地址规划拆分（2026-09-06）
+
+本轮将 `lowerSlots8LaneStride` 中每个 slot block 的 vreg 合同、group offset 构造和
+direct-memory 合法性汇总抽取为 `buildLaneStrideGroupOffsets`。主函数继续负责 dist/mask
+选择、unaligned compact stream fallback 和 aligned 发射；地址顺序、stream advances、
+失败诊断及 direct/stream 路由保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_layout_assignment_group_store_slots1_unit_stride.pto # exit=0
+```
+
 # load physical plan 构造职责拆分（2026-09-06）
 
 本轮将 `OneToNVMILoadOpPattern::buildPhysicalPlan` 中 converted result type 获取与
