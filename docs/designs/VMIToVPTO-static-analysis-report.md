@@ -2382,6 +2382,16 @@ slots=1 group-slot-load 元素宽度检查的大括号。增量检查结果为
 `vmi_to_vpto_load_store_contiguous.pto` lowering exit=0；两个 group-load stride store
 样例在既有测试 IR 的整体 region/前置约束处终止，未进入本轮 helper，不能归因于本轮修改。
 
+# expand-load shape 公共合同整改（2026-09-06）
+
+本轮将 `checkSupportedExpandLoadShape` 中 memory access plan、result/passthru/mask layout
+存在性及 contiguous 合同抽取为 `checkSupportedExpandLoadCommonShape`。主函数现在只负责
+静态 all-active mask 判定、full-chunk/read-safety 快路径和 runtime-mask fallback；同时将
+静态 full-chunk 条件命名，补齐控制流大括号。expand 语义、runtime 路径支持范围、诊断和
+失败传播保持不变。增量检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
+通过；`vmi_to_vpto_load_store_contiguous.pto` lowering exit=0。runtime expand-load 样例在
+既有 VMI pack/unpack invariant 处提前终止，未进入本轮 helper。
+
 本轮尝试重新构建 `pto-test-opt` 时，CMake 仍因工作区既有的 `cann-cmake` 外部依赖
 配置尝试创建 `/cann-cmake` 且权限不足而无法重新配置；该环境问题未产生新的 C++ 编译
 诊断，未删除或重置现有 build tree。

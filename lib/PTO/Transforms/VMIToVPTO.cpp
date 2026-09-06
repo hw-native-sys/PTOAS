@@ -2775,6 +2775,39 @@ checkSupportedExpandLoadRuntimePath(
 }
 
 LogicalResult
+checkSupportedExpandLoadCommonShape(VMIExpandLoadOp op,
+                                     VMIVRegType resultType,
+                                     VMIVRegType passthruType,
+                                     VMIMaskType maskType,
+                                     VMIMemoryAccessPlan &accessPlan,
+                                     std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  accessPlan = buildReadAccessPlan(op.getSource(), op.getOffset(), resultType,
+                                   VMIMemoryCoverageKind::Predicate);
+  if (!accessPlan.layoutSupport.isSupported()) {
+    return fail(accessPlan.layoutSupport.reason);
+  }
+  bool missingLayout = !resultType.getLayoutAttr() ||
+                       !passthruType.getLayoutAttr() ||
+                       !maskType.getLayoutAttr();
+  if (missingLayout) {
+    return fail("requires assigned result, passthru, and mask layouts");
+  }
+  bool nonContiguousLayout = !resultType.getLayoutAttr().isContiguous() ||
+                             !passthruType.getLayoutAttr().isContiguous() ||
+                             !maskType.getLayoutAttr().isContiguous();
+  if (nonContiguousLayout) {
+    return fail("requires contiguous result, passthru, and mask layouts");
+  }
+  return success();
+}
+
+LogicalResult
 checkSupportedExpandLoadShape(VMIExpandLoadOp op, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason) {
@@ -2786,23 +2819,10 @@ checkSupportedExpandLoadShape(VMIExpandLoadOp op, std::string *reason) {
   auto resultType = cast<VMIVRegType>(op.getResult().getType());
   auto passthruType = cast<VMIVRegType>(op.getPassthru().getType());
   auto maskType = cast<VMIMaskType>(op.getMask().getType());
-  VMILayoutAttr resultLayout = resultType.getLayoutAttr();
-  VMILayoutAttr passthruLayout = passthruType.getLayoutAttr();
-  VMILayoutAttr maskLayout = maskType.getLayoutAttr();
-  VMIMemoryAccessPlan accessPlan =
-      buildReadAccessPlan(op.getSource(), op.getOffset(), resultType,
-                          VMIMemoryCoverageKind::Predicate);
-  if (!accessPlan.layoutSupport.isSupported()) {
-    return fail(accessPlan.layoutSupport.reason);
-  }
-  if (!resultLayout || !passthruLayout || !maskLayout) {
-    return fail("requires assigned result, passthru, and mask layouts");
-  }
-  bool nonContiguousLayout = !resultLayout.isContiguous() ||
-                             !passthruLayout.isContiguous() ||
-                             !maskLayout.isContiguous();
-  if (nonContiguousLayout) {
-    return fail("requires contiguous result, passthru, and mask layouts");
+  VMIMemoryAccessPlan accessPlan;
+  if (failed(checkSupportedExpandLoadCommonShape(
+          op, resultType, passthruType, maskType, accessPlan, reason))) {
+    return failure();
   }
 
   std::string maskReason;
@@ -2810,9 +2830,12 @@ checkSupportedExpandLoadShape(VMIExpandLoadOp op, std::string *reason) {
       op.getMask(), resultType.getElementCount(), &maskReason);
 
   std::string fullChunkReason;
-  if (staticAllActive &&
-      succeeded(checkFullDataPhysicalChunks(resultType, &fullChunkReason)))
+  bool staticFullChunks =
+      staticAllActive &&
+      succeeded(checkFullDataPhysicalChunks(resultType, &fullChunkReason));
+  if (staticFullChunks) {
     return success();
+  }
 
   if (staticAllActive && accessPlan.front().readSafety.proven) {
     return success();
