@@ -16752,25 +16752,22 @@ private:
         .getResult();
   }
 
-  LogicalResult lowerGroupSlotTrunc(
-      VMITruncIOp op, OpAdaptor adaptor, OneToNPatternRewriter &rewriter,
-      VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
+  FailureOr<std::pair<bool, bool>> getGroupSlotTruncModes(
+      VMITruncIOp op, VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
       VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
-      ArrayRef<Type> resultTypes) const {
-    unsigned sourceLogicalBits =
+      ValueRange sourceParts, ArrayRef<Type> resultTypes,
+      OneToNPatternRewriter &rewriter) const {
+    unsigned sourceBits =
         pto::getPTOStorageElemBitWidth(sourceVMIType.getElementType());
-    unsigned resultLogicalBits =
+    unsigned resultBits =
         pto::getPTOStorageElemBitWidth(resultVMIType.getElementType());
     bool supportsDirect =
-        (sourceLogicalBits == 32 &&
-         (resultLogicalBits == 16 || resultLogicalBits == 8)) ||
-        (sourceLogicalBits == 16 && resultLogicalBits == 8 &&
-         sourceLayout.getSlots() == 1);
+        (sourceBits == 32 && (resultBits == 16 || resultBits == 8)) ||
+        (sourceBits == 16 && resultBits == 8 && sourceLayout.getSlots() == 1);
     bool supportsPacked =
-        sourceLogicalBits == 16 && resultLogicalBits == 8 &&
-        sourceLayout.getSlots() == 8 && resultLayout.getSlots() == 8 &&
-        resultLayout.hasLaneStride() && resultLayout.getLaneStride() == 2;
-    ValueRange sourceParts = adaptor.getSource();
+        sourceBits == 16 && resultBits == 8 && sourceLayout.getSlots() == 8 &&
+        resultLayout.getSlots() == 8 && resultLayout.hasLaneStride() &&
+        resultLayout.getLaneStride() == 2;
     bool invalidShape =
         sourceLayout.getNumGroups() != resultLayout.getNumGroups() ||
         sourceLayout.getSlots() != resultLayout.getSlots() ||
@@ -16778,8 +16775,29 @@ private:
         (!supportsDirect && !supportsPacked) ||
         sourceParts.size() != resultTypes.size();
     if (invalidShape) {
-      return rewriter.notifyMatchFailure(op, "unsupported group-slot trunci shape");
+      rewriter.notifyMatchFailure(op, "unsupported group-slot trunci shape");
+      return failure();
     }
+    return std::make_pair(supportsDirect, supportsPacked);
+  }
+
+  LogicalResult lowerGroupSlotTrunc(
+      VMITruncIOp op, OpAdaptor adaptor, OneToNPatternRewriter &rewriter,
+      VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
+      VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
+      ArrayRef<Type> resultTypes) const {
+    ValueRange sourceParts = adaptor.getSource();
+    FailureOr<std::pair<bool, bool>> modes = getGroupSlotTruncModes(
+        op, sourceVMIType, resultVMIType, sourceLayout, resultLayout,
+        sourceParts, resultTypes, rewriter);
+    if (failed(modes)) {
+      return failure();
+    }
+    unsigned sourceLogicalBits =
+        pto::getPTOStorageElemBitWidth(sourceVMIType.getElementType());
+    unsigned resultLogicalBits =
+        pto::getPTOStorageElemBitWidth(resultVMIType.getElementType());
+    bool supportsPacked = modes->second;
 
     SmallVector<Value> results;
     results.reserve(resultTypes.size());

@@ -3456,6 +3456,21 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_layout_assignment_group_slot_load.pto              # lowering output generated; command returned an existing test diagnostic
 ```
 
+# group-slot truncation shape 合同拆分（2026-09-06）
+
+本轮将 `lowerGroupSlotTrunc` 中 source/result logical bits、slots/group 数量、支持的
+direct/packed 模式以及 physical arity 合同抽取为 `getGroupSlotTruncModes`。主 lowering
+继续负责 active-slot mask、packed/direct 逐 part 发射和结果收敛；NOSAT/SAT 选择、carrier
+处理、诊断文本及结果顺序保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_layout_assignment_trunci_lane_stride.pto           # exit=0
+```
+
 # load physical plan 构造职责拆分（2026-09-06）
 
 本轮将 `OneToNVMILoadOpPattern::buildPhysicalPlan` 中 converted result type 获取与
