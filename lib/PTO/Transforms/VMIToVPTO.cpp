@@ -12598,6 +12598,39 @@ private:
     return slots8 ? GroupStoreLayoutKind::Slots8 : GroupStoreLayoutKind::General;
   }
 
+  LogicalResult lowerGeneralGroupStore(
+      VMIGroupStoreOp op, OpAdaptor adaptor,
+      OneToNPatternRewriter &rewriter, VMIVRegType valueVMIType,
+      Value destination, Value offset, Value rowStride) const {
+    VMILayoutSupport supports;
+    FailureOr<VMIGroupStoreLayoutFact> fact =
+        supports.getGroupStoreLayoutFact(op, valueVMIType);
+    if (failed(fact)) {
+      return rewriter.notifyMatchFailure(
+          op, "group_store layout does not match the support table");
+    }
+    if (fact->blockClass == VMIGroupBlockClass::OneBlock) {
+      return lowerOneBlockGroupStore(
+          op, adaptor, rewriter, valueVMIType, *fact, destination, offset,
+          rowStride);
+    }
+    int64_t d2LanesPerPart = 0;
+    int64_t d2GroupCount = 0;
+    int64_t d2ChunksPerGroupPerPart = 0;
+    std::string d2Reason;
+    bool hasDeinterleaved2Shape = succeeded(checkDeinterleaved2GroupStoreChunkShape(
+        valueVMIType, fact->groupSize, &d2LanesPerPart, &d2GroupCount,
+        &d2ChunksPerGroupPerPart, &d2Reason));
+    if (hasDeinterleaved2Shape) {
+      return lowerDeinterleaved2GroupStore(
+          op, adaptor, rewriter, valueVMIType, *fact, destination, offset,
+          rowStride);
+    }
+    return lowerContiguousGroupStore(
+        op, adaptor, rewriter, valueVMIType, *fact, destination, offset,
+        rowStride);
+  }
+
   LogicalResult lowerByLayout(
       VMIGroupStoreOp op, OpAdaptor adaptor,
       OneToNPatternRewriter &rewriter, VMIVRegType valueVMIType,
@@ -12623,34 +12656,8 @@ private:
                                  destination, offset, rowStride);
     }
 
-    VMILayoutSupport supports;
-    FailureOr<VMIGroupStoreLayoutFact> fact =
-        supports.getGroupStoreLayoutFact(op, valueVMIType);
-    if (failed(fact)) {
-      return rewriter.notifyMatchFailure(
-          op, "group_store layout does not match the support table");
-    }
-    if (fact->blockClass == VMIGroupBlockClass::OneBlock) {
-      return lowerOneBlockGroupStore(
-          op, adaptor, rewriter, valueVMIType, *fact, destination, offset,
-          rowStride);
-    }
-
-    int64_t d2LanesPerPart = 0;
-    int64_t d2GroupCount = 0;
-    int64_t d2ChunksPerGroupPerPart = 0;
-    std::string d2Reason;
-    bool hasDeinterleaved2Shape = succeeded(checkDeinterleaved2GroupStoreChunkShape(
-        valueVMIType, fact->groupSize, &d2LanesPerPart, &d2GroupCount,
-        &d2ChunksPerGroupPerPart, &d2Reason));
-    if (hasDeinterleaved2Shape) {
-      return lowerDeinterleaved2GroupStore(
-          op, adaptor, rewriter, valueVMIType, *fact, destination, offset,
-          rowStride);
-    }
-    return lowerContiguousGroupStore(
-        op, adaptor, rewriter, valueVMIType, *fact, destination, offset,
-        rowStride);
+    return lowerGeneralGroupStore(op, adaptor, rewriter, valueVMIType,
+                                  destination, offset, rowStride);
   }
 
 public:

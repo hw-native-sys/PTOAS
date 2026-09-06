@@ -1,5 +1,19 @@
 # VMIToVPTO 静态分析报告记录
 
+## group-store 通用布局 lowering 拆分（2026-09-06）
+
+本轮将 `OneToNVMIGroupStoreOpPattern::lowerByLayout` 中 general layout 的 support fact
+查询、one-block/deinterleaved-2/contiguous 路由抽取为 `lowerGeneralGroupStore`。布局分类
+函数继续负责 scalar、compact、slots=1、slots=8 快路径；通用 helper 负责 support table
+事实与后端选择。deinterleaved-2 检查、fallback 顺序、地址/stride 传递和失败诊断保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
 ## residual sub-VL 单 group 物化拆分（2026-09-06）
 
 本轮将 `createResidualSubVLGroupPeriodicChunk` 内部 lambda 的单 group 偏移、方向计算、
