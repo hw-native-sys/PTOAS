@@ -4679,6 +4679,29 @@ FailureOr<SmallVector<Value>> materializeContiguousToLaneStride(
   return results;
 }
 
+static FailureOr<Value> mergeLaneStrideCarrierPair(
+    Operation *op, Value lowCarrier, Value highCarrier, unsigned carrierBits,
+    PatternRewriter &rewriter) {
+  FailureOr<Value> low = packToPreviousCarrier(
+      op->getLoc(), lowCarrier, carrierBits / 2, "LOWER", rewriter);
+  if (failed(low)) {
+    return failure();
+  }
+  FailureOr<Value> high = packToPreviousCarrier(
+      op->getLoc(), highCarrier, carrierBits / 2, "HIGHER", rewriter);
+  if (failed(high)) {
+    return failure();
+  }
+  FailureOr<Value> mask = createAllTrueMaskForVReg(
+      op->getLoc(), cast<VRegType>((*low).getType()), rewriter);
+  if (failed(mask)) {
+    return failure();
+  }
+  return rewriter.create<VorOp>(op->getLoc(), (*low).getType(), *low, *high,
+                                *mask)
+      .getResult();
+}
+
 static FailureOr<Value> materializeLaneStrideResultPart(
     Operation *op, ValueRange sourceParts, Type resultType, size_t sourceBegin,
     size_t sourceEnd, unsigned elementBits, unsigned carrierBits,
@@ -4699,27 +4722,23 @@ static FailureOr<Value> materializeLaneStrideResultPart(
     SmallVector<Value> nextLevel;
     nextLevel.reserve((currentLevel.size() + 1) / 2);
     for (size_t index = 0; index < currentLevel.size(); index += 2) {
-      FailureOr<Value> low = packToPreviousCarrier(
-          op->getLoc(), currentLevel[index], currentBits / 2, "LOWER",
-          rewriter);
-      if (failed(low)) {
-        return failure();
-      }
-      Value merged = *low;
+      Value merged;
       if (index + 1 < currentLevel.size()) {
-        FailureOr<Value> high = packToPreviousCarrier(
-            op->getLoc(), currentLevel[index + 1], currentBits / 2, "HIGHER",
+        FailureOr<Value> pair = mergeLaneStrideCarrierPair(
+            op, currentLevel[index], currentLevel[index + 1], currentBits,
             rewriter);
-        FailureOr<Value> mask = createAllTrueMaskForVReg(
-            op->getLoc(), cast<VRegType>((*low).getType()), rewriter);
-        bool failedMergeInputs = failed(high) || failed(mask);
-        if (failedMergeInputs) {
+        if (failed(pair)) {
           return failure();
         }
-        merged = rewriter
-                     .create<VorOp>(op->getLoc(), (*low).getType(), *low,
-                                    *high, *mask)
-                     .getResult();
+        merged = *pair;
+      } else {
+        FailureOr<Value> low = packToPreviousCarrier(
+            op->getLoc(), currentLevel[index], currentBits / 2, "LOWER",
+            rewriter);
+        if (failed(low)) {
+          return failure();
+        }
+        merged = *low;
       }
       nextLevel.push_back(merged);
     }
