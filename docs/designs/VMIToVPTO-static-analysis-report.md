@@ -3176,6 +3176,21 @@ vmi_layout_assignment_group_store_slots1_unit_stride.pto # exit=0
 vmi_to_vpto_group_store_slots1_unit_stride_alignment.pto # exit=0
 ```
 
+# group-store slots=1 packed value 单 group 物化职责拆分（2026-09-06）
+
+本轮将 `buildPackedSlots1Value` 中单个 group 的 value 类型合同、LOWEST `vdup`、lane
+range mask 构造和 `vsel` 合并抽取为 `materializePackedSlots1Group`。外层 helper 继续负责
+首 group 初始化、group 遍历和 packed value 累积；group 顺序、lane mask 范围、packed
+value 语义及失败诊断保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_layout_assignment_group_store_slots1_unit_stride.pto # exit=0
+```
+
 # contiguous group-load 单 chunk 物化职责拆分（2026-09-06）
 
 本轮将 `OneToNVMIGroupLoadOpPattern::lowerContiguousChunks` 中单个 group/chunk 的
