@@ -2431,6 +2431,15 @@ memory access proof 及两阶段失败回退，保持 masked-store 的支持范�
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；连续 load/store case
 仍按既有测试约束验证，未观察到本轮 helper 引入的新 lowering 错误。
 
+# gather physical chunk 条件职责整改（2026-09-06）
+
+本轮将 `checkSupportedGatherShape` 中 b16 单 physical chunk 例外与 b32 full-chunk 要求
+抽取为 `checkGatherPhysicalChunkRequirement`。入口保留 layout/source 与 element contract
+校验，helper 统一根据 element contract 和 physical arity 选择 `requiresFullChunks`，再
+调用已有 physical shape checker；gather 的支持矩阵、b16 单 chunk 例外、诊断和失败传播
+保持不变。增量检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+scatter 正常 case lowering 成功，非法 gather/scatter case 仍在预期 shape 诊断处失败。
+
 # scatter shape 合同职责整改（2026-09-06）
 
 本轮将 `checkSupportedScatterShape` 的布局/目标指针校验抽取为

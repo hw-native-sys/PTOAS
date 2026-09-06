@@ -2487,6 +2487,26 @@ checkGatherLayoutAndSource(VMIGatherOp op, VMIVRegType resultType,
 }
 
 LogicalResult
+checkGatherPhysicalChunkRequirement(VMIVRegType resultType,
+                                    VMIVRegType indicesType,
+                                    VMIVRegType passthruType,
+                                    VMIMaskType maskType,
+                                    bool isB16Gather, bool isB32Gather,
+                                    std::string *reason) {
+  FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
+  if (failed(resultArity)) {
+    return failure();
+  }
+  bool requiresFullChunks = isB32Gather;
+  if (isB16Gather) {
+    requiresFullChunks = *resultArity != 1;
+  }
+  return checkSupportedGatherPhysicalShape(
+      resultType, indicesType, passthruType, maskType, requiresFullChunks,
+      reason);
+}
+
+LogicalResult
 checkSupportedGatherShape(VMIGatherOp op, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason) {
@@ -2518,14 +2538,9 @@ checkSupportedGatherShape(VMIGatherOp op, std::string *reason) {
                      indexElementType.getWidth() == 16 &&
                      maskType.getGranularity() == "b16";
 
-  FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
-  bool requiresFullChunks = isB32Gather;
-  if (isB16Gather && succeeded(resultArity)) {
-    requiresFullChunks = *resultArity != 1;
-  }
-  return checkSupportedGatherPhysicalShape(
-      resultType, indicesType, passthruType, maskType, requiresFullChunks,
-      reason);
+  return checkGatherPhysicalChunkRequirement(
+      resultType, indicesType, passthruType, maskType, isB16Gather,
+      isB32Gather, reason);
 }
 
 LogicalResult checkSupportedScatterPhysicalShape(
