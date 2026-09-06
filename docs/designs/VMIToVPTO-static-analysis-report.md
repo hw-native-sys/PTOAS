@@ -1,5 +1,19 @@
 # VMIToVPTO 静态分析报告记录
 
+## group-reduction verifier 分派清理（2026-09-06）
+
+本轮清理 `verifySupportedVMIGroupReductionOp` 中仅转发参数的默认捕获 lambda，直接使用
+现有 `verifySupportedGroupReduceOp` 模板，避免无意义的间接层；各 group-reduction op 的
+诊断文本、support check 和 `WalkResult` 语义保持不变。同时将本轮触及的复杂条件提取为
+命名布尔量，满足控制语句大括号规则并提升可读性。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
 ## structured-store verifier masked-store 分支拆分（2026-09-06）
 
 本轮将 `verifySupportedVMIStructuredStoreOp` 中 masked-store 的专用 shape 检查及诊断抽取
