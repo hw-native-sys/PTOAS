@@ -1,5 +1,18 @@
 # VMIToVPTO 静态分析报告记录
 
+## residual sub-VL lambda 捕获审计（2026-09-06）
+
+本轮复核 `createResidualSubVLGroupPeriodicChunk` 的显式 lambda 捕获，补齐其实际使用的
+`allMask` 捕获项。该修复消除了隐式依赖，保持每个 group 的偏移、方向、lane mask 和
+`vsel` 结果语义不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
 ## arithmetic verifier 分派拆分（2026-09-06）
 
 本轮将 `verifySupportedVMIArithmeticOp` 拆为普通 unary/binary maskable 算术分派与
