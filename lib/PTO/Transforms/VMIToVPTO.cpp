@@ -3171,36 +3171,50 @@ FailureOr<Value> createMaskedStorePredicate(Location loc, VMIVRegType vmiType,
       .getResult();
 }
 
+static FailureOr<Value> compactDenseLaneStrideStorePredicate(
+    Location loc, Value userMask, VMILayoutAttr layout, StringRef targetGranularity,
+    PatternRewriter &rewriter) {
+  auto sourceMaskType = dyn_cast<MaskType>(userMask.getType());
+  if (!sourceMaskType || !layout) {
+    return failure();
+  }
+  auto targetMaskType = MaskType::get(rewriter.getContext(), targetGranularity);
+  Value compactMask = userMask;
+  StringRef sourceGranularity = sourceMaskType.getGranularity();
+  StringAttr lower = rewriter.getStringAttr("LOWER");
+  if (sourceGranularity == targetGranularity) {
+    return compactMask;
+  }
+  bool unpackLaneStride2 = layout.getLaneStride() == 2;
+  if (unpackLaneStride2) {
+    Value unpacked = rewriter
+                         .create<PunpackOp>(loc, targetMaskType, compactMask,
+                                            lower)
+                         .getResult();
+    return unpacked;
+  }
+  bool supportsLaneStride4 = layout.getLaneStride() == 4 &&
+                             sourceGranularity == "b8" &&
+                             targetGranularity == "b32";
+  if (!supportsLaneStride4) {
+    return failure();
+  }
+  auto b16MaskType = MaskType::get(rewriter.getContext(), "b16");
+  compactMask = rewriter
+                    .create<PunpackOp>(loc, b16MaskType, compactMask, lower)
+                    .getResult();
+  return rewriter
+      .create<PunpackOp>(loc, targetMaskType, compactMask, lower)
+      .getResult();
+}
+
 FailureOr<Value> createDenseLaneStrideStorePredicate(
     Location loc, VMIVRegType vmiType, int64_t chunk, Value userMask,
     StringRef targetGranularity, PatternRewriter &rewriter) {
-  auto sourceMaskType = dyn_cast<MaskType>(userMask.getType());
-  if (!sourceMaskType)
-    return failure();
-  auto targetMaskType = MaskType::get(rewriter.getContext(), targetGranularity);
-  Value compactMask = userMask;
   VMILayoutAttr layout = vmiType.getLayoutAttr();
-  if (!layout)
-    return failure();
-
-  auto lower = rewriter.getStringAttr("LOWER");
-  StringRef sourceGranularity = sourceMaskType.getGranularity();
-  if (sourceGranularity == targetGranularity) {
-    compactMask = userMask;
-  } else if (layout.getLaneStride() == 2) {
-    compactMask =
-        rewriter.create<PunpackOp>(loc, targetMaskType, compactMask, lower)
-            .getResult();
-  } else if (layout.getLaneStride() == 4 && sourceGranularity == "b8" &&
-             targetGranularity == "b32") {
-    auto b16MaskType = MaskType::get(rewriter.getContext(), "b16");
-    compactMask =
-        rewriter.create<PunpackOp>(loc, b16MaskType, compactMask, lower)
-            .getResult();
-    compactMask =
-        rewriter.create<PunpackOp>(loc, targetMaskType, compactMask, lower)
-            .getResult();
-  } else {
+  FailureOr<Value> compactMask = compactDenseLaneStrideStorePredicate(
+      loc, userMask, layout, targetGranularity, rewriter);
+  if (failed(compactMask)) {
     return failure();
   }
 
@@ -3210,15 +3224,16 @@ FailureOr<Value> createDenseLaneStrideStorePredicate(
   if (failed(activeLanes) || failed(maskLanes))
     return failure();
   if (*activeLanes == *maskLanes)
-    return compactMask;
+    return *compactMask;
 
+  auto targetMaskType = MaskType::get(rewriter.getContext(), targetGranularity);
   FailureOr<Value> tailMask = createPrefixMaskForActiveLanes(
       loc, targetMaskType, *activeLanes, rewriter);
   FailureOr<Value> allTrue = createAllTrueMask(loc, targetMaskType, rewriter);
   if (failed(tailMask) || failed(allTrue))
     return failure();
   return rewriter
-      .create<PandOp>(loc, targetMaskType, compactMask, *tailMask, *allTrue)
+      .create<PandOp>(loc, targetMaskType, *compactMask, *tailMask, *allTrue)
       .getResult();
 }
 
@@ -4657,8 +4672,9 @@ FailureOr<SmallVector<Value>> materializeContiguousToLaneStride(
   MLIRContext *ctx = rewriter.getContext();
   FailureOr<VRegType> inputCarrier =
       getUnsignedCarrierVRegType(ctx, *elementBits);
-  if (failed(inputCarrier))
+  if (failed(inputCarrier)) {
     return failure();
+  }
 
   SmallVector<Value> results;
   results.reserve(resultTypes.size());

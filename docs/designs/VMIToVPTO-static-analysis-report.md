@@ -3059,6 +3059,23 @@ git diff --check                                      # passed
 check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
 ```
 
+# dense lane-stride store predicate 压缩职责拆分（2026-09-06）
+
+本轮将 `createDenseLaneStrideStorePredicate` 中 source mask/layout 合同和 lane-stride
+对应的 `punpack` 压缩逻辑抽取为 `compactDenseLaneStrideStorePredicate`。主函数继续负责
+active-lane 计算、尾部 mask 生成和最终 `pand`；b8→b32 的两级压缩、lane_stride=2 路径、
+全 active 快路径及失败语义保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
+`vmi_lane_stride_masked_store.pto` 在测试自身的 conflicting mask layout contract 处提前
+失败，未进入本轮 predicate helper。
+
 # narrowing mask granularity 单 chunk 物化职责拆分（2026-09-06）
 
 本轮将 `materializeNarrowingMaskGranularityPart` 中单个结果 chunk 的 source 消耗、
