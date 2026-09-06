@@ -15274,6 +15274,36 @@ private:
     return success();
   }
 
+  FailureOr<Value> buildContiguousGroupReduceResult(
+      OpTy op, ValueRange sourceParts, ValueRange maskParts, int64_t group,
+      int64_t chunksPerGroup, VRegType sourcePartType, VRegType rowResultType,
+      MaskType maskType, Value firstLaneMask,
+      OneToNPatternRewriter &rewriter) const {
+    Value accumulator;
+    for (int64_t chunk = 0; chunk < chunksPerGroup; ++chunk) {
+      int64_t index = group * chunksPerGroup + chunk;
+      bool mismatchedTypes = sourceParts[index].getType() != sourcePartType ||
+                             maskParts[index].getType() != maskType;
+      if (mismatchedTypes) {
+        return rewriter.notifyMatchFailure(
+            op, "group_reduce requires uniform physical chunk types");
+      }
+      Value reduced = rewriter
+                          .create<RowReduceOpTy>(op.getLoc(), rowResultType,
+                                                 sourceParts[index],
+                                                 maskParts[index])
+                          .getResult();
+      accumulator = accumulator
+                        ? rewriter
+                              .create<CombineOpTy>(op.getLoc(), rowResultType,
+                                                   reduced, accumulator,
+                                                   firstLaneMask)
+                              .getResult()
+                        : reduced;
+    }
+    return accumulator;
+  }
+
   FailureOr<SmallVector<Value>> buildContiguousGroupReduceResults(
       OpTy op, ValueRange sourceParts, ValueRange maskParts,
       int64_t groupCount, int64_t chunksPerGroup, VRegType sourcePartType,
@@ -15282,29 +15312,13 @@ private:
     SmallVector<Value> results;
     results.reserve(groupCount);
     for (int64_t group = 0; group < groupCount; ++group) {
-      Value accumulator;
-      for (int64_t chunk = 0; chunk < chunksPerGroup; ++chunk) {
-        int64_t index = group * chunksPerGroup + chunk;
-        bool mismatchedTypes = sourceParts[index].getType() != sourcePartType ||
-                               maskParts[index].getType() != maskType;
-        if (mismatchedTypes) {
-          return rewriter.notifyMatchFailure(
-              op, "group_reduce requires uniform physical chunk types");
-        }
-        Value reduced =
-            rewriter
-                .create<RowReduceOpTy>(op.getLoc(), rowResultType,
-                                       sourceParts[index], maskParts[index])
-                .getResult();
-        accumulator =
-            accumulator
-                ? rewriter
-                      .create<CombineOpTy>(op.getLoc(), rowResultType, reduced,
-                                           accumulator, firstLaneMask)
-                      .getResult()
-                : reduced;
+      FailureOr<Value> result = buildContiguousGroupReduceResult(
+          op, sourceParts, maskParts, group, chunksPerGroup, sourcePartType,
+          rowResultType, maskType, firstLaneMask, rewriter);
+      if (failed(result)) {
+        return failure();
       }
-      results.push_back(accumulator);
+      results.push_back(*result);
     }
     return results;
   }

@@ -3201,6 +3201,21 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 现有 static/runtime expand-load case 在测试自身的 VMI `unpack` 前置 invariant 处提前
 失败，未进入本轮 chunk helper。
 
+# contiguous group-reduce 单 group 物化职责拆分（2026-09-06）
+
+本轮将 `buildContiguousGroupReduceResults` 中单个 group 的 source/mask 类型检查、逐
+chunk `RowReduceOpTy` 发射和 combine 累积抽取为 `buildContiguousGroupReduceResult`。
+外层 helper 继续负责 group 遍历和结果收集；归约顺序、首 lane mask、combine 顺序、失败
+诊断和 slots=1/slots=8 结果恢复语义保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_layout_assignment_group_reduce_s256.pto             # exit=0
+```
+
 # deinterleave-load 结果类型合同拆分（2026-09-06）
 
 本轮将 `OneToNVMIDeinterleaveLoadOpPattern::matchAndRewrite` 中 low/high physical result
