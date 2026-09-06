@@ -18420,6 +18420,31 @@ static FailureOr<VmullShapePlan> buildVmullShapePlan(
   return VmullShapePlan{aType, layout, *aArity};
 }
 
+static LogicalResult checkVmullPhysicalShape(VMIVRegType dataType,
+                                             VMIMaskType maskType,
+                                             std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  FailureOr<int64_t> lanesPerPart =
+      getDataLanesPerPart(dataType.getElementType());
+  Type physicalElementType = getVMIPhysicalDataElementType(dataType);
+  FailureOr<StringRef> physicalMaskGranularity =
+      getVMIMaskPhysicalGranularity(maskType);
+  bool invalidPhysicalShape =
+      failed(lanesPerPart) || *lanesPerPart != 64 ||
+      physicalElementType != dataType.getElementType() ||
+      failed(physicalMaskGranularity) || *physicalMaskGranularity != "b32";
+  if (invalidPhysicalShape) {
+    return fail("requires 64xi32/ui32 data parts with corresponding b32 mask "
+                "parts");
+  }
+  return success();
+}
+
 LogicalResult checkSupportedVmullShape(VMIVmullOp op,
                                        std::string *reason = nullptr) {
   FailureOr<VmullShapePlan> plan = buildVmullShapePlan(op, reason);
@@ -18427,23 +18452,8 @@ LogicalResult checkSupportedVmullShape(VMIVmullOp op,
     return failure();
   }
   VMIVRegType aType = plan->dataType;
-  auto resultType = cast<VMIVRegType>(op.getLow().getType());
   auto maskType = cast<VMIMaskType>(op.getMask().getType());
-
-  FailureOr<int64_t> lanesPerPart = getDataLanesPerPart(aType.getElementType());
-  Type physicalElementType = getVMIPhysicalDataElementType(aType);
-  FailureOr<StringRef> physicalMaskGranularity =
-      getVMIMaskPhysicalGranularity(maskType);
-  bool invalidPhysicalShape =
-      failed(lanesPerPart) || *lanesPerPart != 64 ||
-      physicalElementType != aType.getElementType() ||
-      failed(physicalMaskGranularity) || *physicalMaskGranularity != "b32";
-  if (invalidPhysicalShape) {
-    return fail("requires 64xi32/ui32 data parts with corresponding b32 mask "
-                "parts");
-  }
-
-  return success();
+  return checkVmullPhysicalShape(aType, maskType, reason);
 }
 
 static LogicalResult

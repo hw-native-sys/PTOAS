@@ -2052,6 +2052,15 @@ exit=0，现有 slots=1 的 EVEN/P0 转换输出保持不变。
 `git diff --check` 通过；`vmi_layout_assignment_group_store_slots1_unit_stride.pto`
 完整 lowering pipeline exit=0。
 
+# vmull 物理 shape 合同职责整改
+
+本轮新增 `checkVmullPhysicalShape`，将 vmull 的 physical lane 数、physical data element
+type 和 mask granularity 合同从 `checkSupportedVmullShape` 中独立出来。原有四个输入
+类型一致性、逻辑 lane 数、layout、mask layout/granularity、physical arity 检查及诊断
+顺序保持不变；主函数只负责 shape plan 构建后调用物理合同检查。增量
+`check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_to_vpto_vmull_contiguous.pto` lowering exit=0。
+
 # group broadcast load BRC 单结果构造职责整改
 
 本轮在 `OneToNVMIGroupBroadcastLoadOpPattern::lowerDirectBRC` 中引入
