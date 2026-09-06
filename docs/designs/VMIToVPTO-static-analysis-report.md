@@ -3382,6 +3382,21 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_to_vpto_group_store_slots8_packed_byte.pto         # exit=0
 ```
 
+# legacy group-slot extension 准备阶段拆分（2026-09-06）
+
+本轮将 `lowerLegacyGroupSlotExtension` 中 group/slots/lane_stride shape 合同、conversion
+source vreg 类型和 active slot mask 构造抽取为 `prepareLegacyGroupSlotExtension`。主函数
+继续负责 `EVEN/P0` part 选择、逐 physical part `Vcvt` 和结果替换；扩展因子、mask 语义、
+诊断文本及结果顺序保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_group_slot_integer_extension_matrix.pto   # exit=0
+```
+
 # interleave lowering 入口合同与布局查询拆分（2026-09-06）
 
 本轮将模板 `OneToNVMIInterleaveOpPattern::matchAndRewrite` 中的结果物理类型/输入输出

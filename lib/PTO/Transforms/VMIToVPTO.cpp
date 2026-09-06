@@ -16430,11 +16430,10 @@ private:
         .getResult();
   }
 
-  LogicalResult lowerLegacyGroupSlotExtension(
+  FailureOr<std::tuple<int64_t, VRegType, Value>> prepareLegacyGroupSlotExtension(
       OpT op, ValueRange sourceParts, ArrayRef<Type> resultTypes,
-      VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
-      VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
-      unsigned sourceBits, unsigned resultBits,
+      VMIVRegType sourceVMIType, VMILayoutAttr sourceLayout,
+      VMILayoutAttr resultLayout, unsigned sourceBits, unsigned resultBits,
       OneToNPatternRewriter &rewriter) const {
     bool invalidShape =
         sourceLayout.getNumGroups() != resultLayout.getNumGroups() ||
@@ -16451,7 +16450,6 @@ private:
       return rewriter.notifyMatchFailure(
           op, "unsupported group-slot integer extension shape");
     }
-    int64_t widenFactor = resultBits / sourceBits;
     FailureOr<int64_t> sourceLanes =
         getDataLanesPerPart(sourceVMIType.getElementType());
     if (failed(sourceLanes)) {
@@ -16473,6 +16471,26 @@ private:
       return rewriter.notifyMatchFailure(
           op, "failed to build group-slot integer extension mask");
     }
+    return std::make_tuple(resultBits / sourceBits, conversionSourceType,
+                           *slotMask);
+  }
+
+  LogicalResult lowerLegacyGroupSlotExtension(
+      OpT op, ValueRange sourceParts, ArrayRef<Type> resultTypes,
+      VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
+      VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
+      unsigned sourceBits, unsigned resultBits,
+      OneToNPatternRewriter &rewriter) const {
+    FailureOr<std::tuple<int64_t, VRegType, Value>> preparation =
+        prepareLegacyGroupSlotExtension(
+            op, sourceParts, resultTypes, sourceVMIType, sourceLayout,
+            resultLayout, sourceBits, resultBits, rewriter);
+    if (failed(preparation)) {
+      return failure();
+    }
+    int64_t widenFactor = std::get<0>(*preparation);
+    VRegType conversionSourceType = std::get<1>(*preparation);
+    Value slotMask = std::get<2>(*preparation);
     StringAttr part =
         rewriter.getStringAttr(widenFactor == 2 ? "EVEN" : "P0");
     SmallVector<Value> results;
@@ -16480,7 +16498,7 @@ private:
     for (auto [sourcePart, resultType] :
          llvm::zip_equal(sourceParts, resultTypes)) {
       FailureOr<Value> result = buildLegacyGroupSlotExtensionResult(
-          op, sourcePart, resultType, conversionSourceType, *slotMask, part,
+          op, sourcePart, resultType, conversionSourceType, slotMask, part,
           resultBits, rewriter);
       if (failed(result)) {
         return failure();
