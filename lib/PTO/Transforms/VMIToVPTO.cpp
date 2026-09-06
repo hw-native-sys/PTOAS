@@ -7969,6 +7969,40 @@ struct OneToNVMICreateGroupMaskOpPattern
       VMICreateGroupMaskOp>::OneToNOpConversionPattern;
 
 private:
+  FailureOr<SmallVector<Value>> materializeGroupMaskResults(
+      VMICreateGroupMaskOp op,
+      ArrayRef<ConstantMaskChunkMaterialization> materializations,
+      ArrayRef<Type> resultTypes, StringRef overflowDiagnostic,
+      OneToNPatternRewriter &rewriter) const {
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (const ConstantMaskChunkMaterialization &materialization :
+         materializations) {
+      bool tooManyMasks = results.size() >= resultTypes.size();
+      if (tooManyMasks) {
+        return rewriter.notifyMatchFailure(op, overflowDiagnostic);
+      }
+      auto maskType = dyn_cast<MaskType>(resultTypes[results.size()]);
+      if (!maskType) {
+        return rewriter.notifyMatchFailure(
+            op, "create_group_mask result must be mask");
+      }
+      FailureOr<Value> mask = materializeConstantMaskChunk(
+          op.getLoc(), maskType, materialization.activeLanes, rewriter);
+      if (failed(mask)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to materialize create_group_mask physical chunk");
+      }
+      results.push_back(*mask);
+    }
+    bool resultArityMismatch = results.size() != resultTypes.size();
+    if (resultArityMismatch) {
+      return rewriter.notifyMatchFailure(
+          op, "create_group_mask physical result count mismatch");
+    }
+    return results;
+  }
+
   LogicalResult lowerDynamicMask(
       VMICreateGroupMaskOp op, OpAdaptor adaptor,
       OneToNPatternRewriter &rewriter, VMIMaskType resultVMIType,
@@ -8025,33 +8059,11 @@ private:
           op, Twine("create_group_mask ") + reason);
     }
 
-    SmallVector<Value> results;
-    results.reserve(resultTypes.size());
-    for (const ConstantMaskChunkMaterialization &materialization :
-         *materializations) {
-      bool tooManyMasks = results.size() >= resultTypes.size();
-      if (tooManyMasks) {
-        return rewriter.notifyMatchFailure(
-            op, "create_group_mask produced too many physical masks");
-      }
-      auto maskType = dyn_cast<MaskType>(resultTypes[results.size()]);
-      if (!maskType) {
-        return rewriter.notifyMatchFailure(
-            op, "create_group_mask result must be mask");
-      }
-      FailureOr<Value> mask = materializeConstantMaskChunk(
-          op.getLoc(), maskType, materialization.activeLanes, rewriter);
-      if (failed(mask)) {
-        return rewriter.notifyMatchFailure(
-            op, "failed to materialize create_group_mask physical chunk");
-      }
-      results.push_back(*mask);
-    }
-
-    bool resultArityMismatch = results.size() != resultTypes.size();
-    if (resultArityMismatch) {
-      return rewriter.notifyMatchFailure(
-          op, "create_group_mask physical result count mismatch");
+    FailureOr<SmallVector<Value>> results = materializeGroupMaskResults(
+        op, *materializations, resultTypes,
+        "create_group_mask produced too many physical masks", rewriter);
+    if (failed(results)) {
+      return failure();
     }
     replaceOpWithFlatConvertedValues(rewriter, op, results,
                                      *this->getTypeConverter());
@@ -8084,29 +8096,9 @@ private:
       return rewriter.notifyMatchFailure(
           op, Twine("create_group_mask ") + contiguousReason);
     }
-    SmallVector<Value> contiguousParts;
-    contiguousParts.reserve(materializations->size());
-    for (const ConstantMaskChunkMaterialization &materialization :
-         *materializations) {
-      bool tooManyMasks = contiguousParts.size() >= resultTypes.size();
-      if (tooManyMasks) {
-        return rewriter.notifyMatchFailure(
-            op, "create_group_mask produced too many contiguous masks");
-      }
-      auto maskType = dyn_cast<MaskType>(resultTypes[contiguousParts.size()]);
-      if (!maskType) {
-        return rewriter.notifyMatchFailure(
-            op, "create_group_mask result must be mask");
-      }
-      FailureOr<Value> mask = materializeConstantMaskChunk(
-          op.getLoc(), maskType, materialization.activeLanes, rewriter);
-      if (failed(mask)) {
-        return rewriter.notifyMatchFailure(
-            op, "failed to materialize create_group_mask contiguous chunk");
-      }
-      contiguousParts.push_back(*mask);
-    }
-    return contiguousParts;
+    return materializeGroupMaskResults(
+        op, *materializations, resultTypes,
+        "create_group_mask produced too many contiguous masks", rewriter);
   }
 
   LogicalResult lowerFactor4Block(

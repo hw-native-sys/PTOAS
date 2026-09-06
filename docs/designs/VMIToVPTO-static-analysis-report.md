@@ -2152,6 +2152,16 @@ mask、地址步长和失败诊断。增量
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_interleaved_memory_ops.pto` lowering exit=0。
 
+# create_group_mask 常量结果物化职责整改
+
+本轮在 `OneToNVMICreateGroupMaskOpPattern` 中新增
+`materializeGroupMaskResults`，统一普通 constant group-mask 与 factor-4 contiguous
+中间路径的 physical mask 类型校验、chunk 物化和结果 arity 校验。两条路径仍分别提供
+自己的 overflow 诊断文本，动态路径、layout conversion、结果顺序和失败传播保持不变。
+增量 `check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_to_vpto_create_group_mask_block8_dynamic.pto` lowering
+exit=0。
+
 # group load 布局分派职责整改
 
 本轮将 `OneToNVMIGroupLoadOpPattern::matchAndRewrite` 中 block-deinterleaved f32 特殊路径
