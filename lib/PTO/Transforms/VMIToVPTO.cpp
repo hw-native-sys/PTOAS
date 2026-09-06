@@ -18814,6 +18814,17 @@ static LogicalResult checkSupportedCompressResultShape(
   return success();
 }
 
+static LogicalResult checkCompressStoreDestination(VMICompressStoreOp op,
+                                                   std::string *reason) {
+  if (isa<PtrType>(op.getDestination().getType())) {
+    return success();
+  }
+  if (reason) {
+    *reason = "requires !pto.ptr destination because pto.vstur is pointer-only";
+  }
+  return failure();
+}
+
 LogicalResult checkSupportedCompressShape(VMICompressOp op,
                                           std::string *reason = nullptr) {
   auto sourceType = cast<VMIVRegType>(op.getSource().getType());
@@ -18839,13 +18850,6 @@ LogicalResult checkSupportedCompressShape(VMICompressOp op,
 LogicalResult checkSupportedCompressStoreShape(
     VMICompressStoreOp op,
     std::string *reason = nullptr) {
-  auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason) {
-      *reason = message.str();
-    }
-    return failure();
-  };
-
   auto valueType = cast<VMIVRegType>(op.getValue().getType());
   auto maskType = cast<VMIMaskType>(op.getMask().getType());
   FailureOr<CompressPhysicalShapePlan> plan = buildCompressPhysicalShapePlan(
@@ -18857,12 +18861,7 @@ LogicalResult checkSupportedCompressStoreShape(
     return failure();
   }
 
-  if (!isa<PtrType>(op.getDestination().getType())) {
-    return fail("requires !pto.ptr destination because pto.vstur is "
-                "pointer-only");
-  }
-
-  return success();
+  return checkCompressStoreDestination(op, reason);
 }
 
 struct ReducePhysicalShapePlan {

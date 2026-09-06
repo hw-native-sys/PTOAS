@@ -3323,3 +3323,18 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 
 active-prefix/compress 代表性测试在既有 VMI pack/unpack pipeline invariant 处提前失败，未
 进入本轮 helper。
+
+# compress-store destination 合同拆分（2026-09-06）
+
+本轮将 `checkSupportedCompressStoreShape` 中 `!pto.ptr` destination 检查抽取为
+`checkCompressStoreDestination`，使 compress physical plan 合同与 `vstur` pointer 合同
+分离。原有 source/mask full-chunk、单 physical chunk 限制、SQZN 相关诊断和失败顺序保持
+不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_compress_store.pto                         # exit=0
+```
