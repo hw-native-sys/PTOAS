@@ -2004,6 +2004,24 @@ checkSupportedGroupLoadShape(VMIGroupLoadOp op, std::string *reason) {
 LogicalResult checkSupportedSlots1GroupSlotLoadShape(
     VMIGroupSlotLoadOp op, VMIVRegType resultType, std::string *reason);
 
+LogicalResult checkSupportedSlots8GroupSlotLoadShape(
+    VMIGroupSlotLoadOp op, std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  std::optional<int64_t> sourceGroupStride =
+      getConstantIndexValue(op.getSourceGroupStride());
+  bool nonUnitSourceStride = !sourceGroupStride || *sourceGroupStride != 1;
+  if (nonUnitSourceStride) {
+    return fail("slots=8 group_slot_load requires constant unit "
+                "source_group_stride");
+  }
+  return success();
+}
+
 LogicalResult checkSupportedGroupSlotLoadShape(
     VMIGroupSlotLoadOp op,
     std::string *reason) {
@@ -2032,14 +2050,7 @@ LogicalResult checkSupportedGroupSlotLoadShape(
   }
 
   if (fact->slots == 8) {
-    std::optional<int64_t> sourceGroupStride =
-        getConstantIndexValue(op.getSourceGroupStride());
-    bool nonUnitSourceStride = !sourceGroupStride || *sourceGroupStride != 1;
-    if (nonUnitSourceStride) {
-      return fail("slots=8 group_slot_load requires constant unit "
-                  "source_group_stride");
-    }
-    return success();
+    return checkSupportedSlots8GroupSlotLoadShape(op, reason);
   }
 
   return checkSupportedSlots1GroupSlotLoadShape(op, resultType, reason);

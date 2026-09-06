@@ -2402,6 +2402,15 @@ table 查询并调用 memory helper。group broadcast 的支持矩阵、地址�
 `vmi_layout_assignment_group_broadcast_load_e2b_b16.pto` 与
 `vmi_to_vpto_load_store_contiguous.pto` lowering 均 exit=0。
 
+# group-slot load stride 合同职责整改（2026-09-06）
+
+本轮将 `checkSupportedGroupSlotLoadShape` 的 slots=8 unit-stride 合同抽取为
+`checkSupportedSlots8GroupSlotLoadShape`，与已有 slots=1 对齐步长校验形成对称的独立
+职责。主函数仍负责 layout fact、dense memory proof、指针校验和 slots 分派；source
+stride 规则、诊断和失败传播保持不变。增量检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过。现有 group-slot load 样例分别在既有 pack/unpack 或测试 region
+前置约束处终止，未进入本轮 helper，未归因于本轮修改。
+
 # scatter shape 合同职责整改（2026-09-06）
 
 本轮将 `checkSupportedScatterShape` 的布局/目标指针校验抽取为
