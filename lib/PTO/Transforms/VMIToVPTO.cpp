@@ -2073,8 +2073,9 @@ LogicalResult checkSupportedGroupBroadcastLoadShape(
     VMIGroupBroadcastLoadOp op,
     std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
@@ -2537,6 +2538,68 @@ LogicalResult checkSupportedScatterPhysicalShape(
 }
 
 LogicalResult
+checkScatterLayoutAndDestination(VMIScatterOp op, VMIVRegType valueType,
+                                 VMIVRegType indicesType, VMIMaskType maskType,
+                                 std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  VMILayoutAttr valueLayout = valueType.getLayoutAttr();
+  VMILayoutAttr indicesLayout = indicesType.getLayoutAttr();
+  VMILayoutAttr maskLayout = maskType.getLayoutAttr();
+  bool missingLayout = !valueLayout || !indicesLayout || !maskLayout;
+  if (missingLayout) {
+    return fail("requires assigned value, indices, and mask layouts");
+  }
+  bool nonContiguousLayout = !valueLayout.isContiguous() ||
+                             !indicesLayout.isContiguous() ||
+                             !maskLayout.isContiguous();
+  if (nonContiguousLayout) {
+    return fail("requires contiguous value, indices, and mask layouts");
+  }
+  if (!isa<PtrType>(op.getDestination().getType())) {
+    return fail("requires !pto.ptr destination because pto.vscatter is "
+                "pointer-only");
+  }
+  return success();
+}
+
+LogicalResult
+checkScatterElementContract(VMIVRegType valueType, VMIVRegType indicesType,
+                            VMIMaskType maskType,
+                            std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  unsigned valueBits =
+      pto::getPTOStorageElemBitWidth(valueType.getElementType());
+  auto indexElementType = dyn_cast<IntegerType>(indicesType.getElementType());
+  if (!indexElementType || indexElementType.isSigned()) {
+    return fail("requires signless or unsigned integer indices");
+  }
+  bool isB8Scatter = valueBits == 8 && indexElementType.getWidth() == 16 &&
+                     maskType.getGranularity() == "b16";
+  bool isB16Scatter = valueBits == 16 && indexElementType.getWidth() == 16 &&
+                      maskType.getGranularity() == "b16";
+  bool isB32Scatter = valueBits == 32 && indexElementType.getWidth() == 32 &&
+                      maskType.getGranularity() == "b32";
+  bool unsupportedContract = !isB8Scatter && !isB16Scatter && !isB32Scatter;
+  if (unsupportedContract) {
+    return fail("requires either 32-bit values with 32-bit indices and b32 "
+                "mask, 16-bit values with 16-bit indices and b16 "
+                "mask, or 8-bit values with 16-bit indices and b16 "
+                "mask");
+  }
+  return success();
+}
+
+LogicalResult
 checkSupportedScatterShape(VMIScatterOp op, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason) {
@@ -2548,37 +2611,14 @@ checkSupportedScatterShape(VMIScatterOp op, std::string *reason) {
   auto valueType = cast<VMIVRegType>(op.getValue().getType());
   auto indicesType = cast<VMIVRegType>(op.getIndices().getType());
   auto maskType = cast<VMIMaskType>(op.getMask().getType());
-  VMILayoutAttr valueLayout = valueType.getLayoutAttr();
-  VMILayoutAttr indicesLayout = indicesType.getLayoutAttr();
-  VMILayoutAttr maskLayout = maskType.getLayoutAttr();
-  if (!valueLayout || !indicesLayout || !maskLayout)
-    return fail("requires assigned value, indices, and mask layouts");
-  if (!valueLayout.isContiguous() || !indicesLayout.isContiguous() ||
-      !maskLayout.isContiguous())
-    return fail("requires contiguous value, indices, and mask layouts");
-
-  if (!isa<PtrType>(op.getDestination().getType()))
-    return fail("requires !pto.ptr destination because pto.vscatter is "
-                "pointer-only");
-
-  unsigned valueBits =
-      pto::getPTOStorageElemBitWidth(valueType.getElementType());
-  auto indexElementType = dyn_cast<IntegerType>(indicesType.getElementType());
-  if (!indexElementType || indexElementType.isSigned())
-    return fail("requires signless or unsigned integer indices");
-  bool isB8Scatter = valueBits == 8 &&
-                     indexElementType.getWidth() == 16 &&
-                     maskType.getGranularity() == "b16";
-  bool isB16Scatter = valueBits == 16 &&
-                      indexElementType.getWidth() == 16 &&
-                      maskType.getGranularity() == "b16";
-  bool isB32Scatter = valueBits == 32 && indexElementType.getWidth() == 32 &&
-                      maskType.getGranularity() == "b32";
-  if (!isB8Scatter && !isB16Scatter && !isB32Scatter)
-    return fail("requires either 32-bit values with 32-bit indices and b32 "
-                "mask, 16-bit values with 16-bit indices and b16 "
-                "mask, or 8-bit values with 16-bit indices and b16 "
-                "mask");
+  if (failed(checkScatterLayoutAndDestination(op, valueType, indicesType,
+                                              maskType, reason))) {
+    return failure();
+  }
+  if (failed(checkScatterElementContract(valueType, indicesType, maskType,
+                                         reason))) {
+    return failure();
+  }
 
   return checkSupportedScatterPhysicalShape(valueType, indicesType, maskType,
                                             true, reason);
@@ -2608,8 +2648,9 @@ checkSinglePhysicalStrideAccess(Type dataType, Type maskType,
 LogicalResult
 checkSupportedStrideStoreShape(VMIStrideStoreOp op, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
@@ -2617,14 +2658,19 @@ checkSupportedStrideStoreShape(VMIStrideStoreOp op, std::string *reason) {
   auto maskType = cast<VMIMaskType>(op.getMask().getType());
   VMILayoutAttr valueLayout = valueType.getLayoutAttr();
   VMILayoutAttr maskLayout = maskType.getLayoutAttr();
-  if (!valueLayout || !maskLayout)
+  if (!valueLayout || !maskLayout) {
     return fail("requires assigned value and mask layouts");
-  if (!valueLayout.isContiguous() || !maskLayout.isContiguous())
+  }
+  bool nonContiguousLayout = !valueLayout.isContiguous() ||
+                             !maskLayout.isContiguous();
+  if (nonContiguousLayout) {
     return fail("requires contiguous value and mask layouts");
+  }
 
-  if (!isa<PtrType>(op.getDestination().getType()))
+  if (!isa<PtrType>(op.getDestination().getType())) {
     return fail("requires !pto.ptr destination because pto.vsstb is "
                 "pointer-only");
+  }
   if (failed(checkSupportedStoreShape(valueType,
                                       op.getDestination(),
                                       op.getDestination().getType(), reason)))
@@ -2638,8 +2684,9 @@ checkSupportedStrideStoreShape(VMIStrideStoreOp op, std::string *reason) {
 LogicalResult
 checkSupportedStrideLoadShape(VMIStrideLoadOp op, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 

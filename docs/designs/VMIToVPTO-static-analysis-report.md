@@ -2392,6 +2392,16 @@ slots=1 group-slot-load 元素宽度检查的大括号。增量检查结果为
 通过；`vmi_to_vpto_load_store_contiguous.pto` lowering exit=0。runtime expand-load 样例在
 既有 VMI pack/unpack invariant 处提前终止，未进入本轮 helper。
 
+# scatter shape 合同职责整改（2026-09-06）
+
+本轮将 `checkSupportedScatterShape` 的布局/目标指针校验抽取为
+`checkScatterLayoutAndDestination`，将 value/index 位宽、索引 signedness 和 mask 粒度
+组合合同抽取为 `checkScatterElementContract`。主检查函数保留 physical arity/full-chunk
+检查及原有分派顺序；`vscatter` 支持矩阵、诊断和失败传播保持不变。同步补齐 stride-store
+shape helper 的控制流大括号。增量检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_layout_assignment_scatter.pto` 与 `vmi_to_vpto_scatter.pto`
+均 lowering exit=0。
+
 本轮尝试重新构建 `pto-test-opt` 时，CMake 仍因工作区既有的 `cann-cmake` 外部依赖
 配置尝试创建 `/cann-cmake` 且权限不足而无法重新配置；该环境问题未产生新的 C++ 编译
 诊断，未删除或重置现有 build tree。
