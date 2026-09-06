@@ -3184,6 +3184,23 @@ vmi_layout_assignment_masked_load.pto                  # reaches existing residu
 该 layout case 在测试输入的既有 residual `pto.vmi.load` 问题处失败，未归因于本轮
 masked-load helper。
 
+# expand-load static chunk 物化职责拆分（2026-09-06）
+
+本轮将 `OneToNVMIExpandLoadOpPattern::lowerStaticExpandLoad` 中单个 result chunk 的
+vreg 合同校验、offset 计算和 `vlds` 发射抽取为 `materializeStaticExpandLoadPart`。外层
+函数继续负责 full/safe-read 合同、结果遍历和替换；static all-active 路径的访问步进、
+结果顺序、失败诊断以及与 runtime gather 路径的分派保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
+现有 static/runtime expand-load case 在测试自身的 VMI `unpack` 前置 invariant 处提前
+失败，未进入本轮 chunk helper。
+
 # deinterleave-load 结果类型合同拆分（2026-09-06）
 
 本轮将 `OneToNVMIDeinterleaveLoadOpPattern::matchAndRewrite` 中 low/high physical result

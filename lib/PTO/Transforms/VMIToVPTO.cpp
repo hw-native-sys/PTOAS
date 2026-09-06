@@ -10665,6 +10665,20 @@ struct OneToNVMIExpandLoadOpPattern
   using OneToNOpConversionPattern<VMIExpandLoadOp>::OneToNOpConversionPattern;
 
 private:
+  FailureOr<Value> materializeStaticExpandLoadPart(
+      VMIExpandLoadOp op, OneToNPatternRewriter &rewriter, Value source,
+      Value offset, Type resultType, int64_t index, int64_t lanesPerPart) const {
+    if (!isa<VRegType>(resultType)) {
+      return rewriter.notifyMatchFailure(op, "expand_load result must be vreg");
+    }
+    Value chunkOffset = createChunkOffset(
+        op.getLoc(), offset, index * lanesPerPart, rewriter);
+    return rewriter
+        .create<VldsOp>(op.getLoc(), resultType, Type{}, source, chunkOffset,
+                        nullptr)
+        .getResult();
+  }
+
   LogicalResult lowerRuntimeExpandLoad(
       VMIExpandLoadOp op, OneToNPatternRewriter &rewriter, Value source,
       Value offset, ValueRange maskParts, ValueRange passthruParts,
@@ -10732,16 +10746,12 @@ private:
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
     for (auto [index, resultType] : llvm::enumerate(resultTypes)) {
-      if (!isa<VRegType>(resultType)) {
-        return rewriter.notifyMatchFailure(op, "expand_load result must be vreg");
+      FailureOr<Value> result = materializeStaticExpandLoadPart(
+          op, rewriter, source, offset, resultType, index, *lanesPerPart);
+      if (failed(result)) {
+        return failure();
       }
-      Value chunkOffset = createChunkOffset(
-          op.getLoc(), offset, index * *lanesPerPart, rewriter);
-      results.push_back(
-          rewriter
-              .create<VldsOp>(op.getLoc(), resultType, Type{}, source,
-                              chunkOffset, nullptr)
-              .getResult());
+      results.push_back(*result);
     }
     replaceOpWithFlatConvertedValues(rewriter, op, results,
                                      *this->getTypeConverter());
