@@ -2408,6 +2408,15 @@ load 检查处终止，未进入本轮 materializer。
 `vmi_to_vpto_ensure_layout_dense_composed.pto` lowering exit=0，deinterleaved case 在
 既有 pack/unpack invariant 处提前终止。
 
+# data layout conversion 路径尝试职责整改
+
+本轮在 `materializeDataLayoutConversion` 中统一封装四种 materializer 的
+`FailureOr<optional>` 尝试与失败传播，保持 simple → deinterleaved2 → lane-stride →
+intermediate 的严格优先级。各 lambda 使用显式捕获；主函数仍负责最终 unsupported 诊断，
+不改变布局转换结果、递归顺序或失败语义。增量 `check_changed_code.py --base HEAD` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_ensure_layout_dense_composed.pto` lowering exit=0。
+
 # channel split 结果布局与 arity 合同职责整改
 
 本轮在 `checkSupportedChannelSplitShape` 中引入

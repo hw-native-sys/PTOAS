@@ -5152,42 +5152,55 @@ FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
     Type sourceVMIElementType, PatternRewriter &rewriter) {
-  FailureOr<std::optional<SmallVector<Value>>> simple =
-      materializeSimpleDataLayoutConversion(
+  auto tryMaterializer =
+      [](auto materializer) -> FailureOr<std::optional<SmallVector<Value>>> {
+    return materializer();
+  };
+  FailureOr<std::optional<SmallVector<Value>>> simple = tryMaterializer(
+      [op, sourceParts, resultTypes, sourceLayout, resultLayout,
+       sourceVMIElementType, &rewriter]() {
+        return materializeSimpleDataLayoutConversion(
           op, sourceParts, resultTypes, sourceLayout, resultLayout,
           sourceVMIElementType, rewriter);
+      });
   if (failed(simple)) {
     return failure();
   }
   if (simple->has_value()) {
     return std::move(**simple);
   }
-
   FailureOr<std::optional<SmallVector<Value>>> deinterleaved2 =
-      materializeDeinterleaved2Layout(op, sourceParts, resultTypes,
-                                      sourceLayout, resultLayout, rewriter);
+      tryMaterializer([op, sourceParts, resultTypes, sourceLayout, resultLayout,
+                       &rewriter]() {
+        return materializeDeinterleaved2Layout(
+            op, sourceParts, resultTypes, sourceLayout, resultLayout, rewriter);
+      });
   if (failed(deinterleaved2)) {
     return failure();
   }
   if (deinterleaved2->has_value()) {
     return std::move(**deinterleaved2);
   }
-
-  FailureOr<std::optional<SmallVector<Value>>> laneStride =
-      materializeDataLaneStrideConversion(
+  FailureOr<std::optional<SmallVector<Value>>> laneStride = tryMaterializer(
+      [op, sourceParts, resultTypes, sourceLayout, resultLayout,
+       sourceVMIElementType, &rewriter]() {
+        return materializeDataLaneStrideConversion(
           op, sourceParts, resultTypes, sourceLayout, resultLayout,
           sourceVMIElementType, rewriter);
+      });
   if (failed(laneStride)) {
     return failure();
   }
   if (laneStride->has_value()) {
     return std::move(**laneStride);
   }
-
-  FailureOr<std::optional<SmallVector<Value>>> viaContiguous =
-      materializeDataLayoutViaContiguous(
+  FailureOr<std::optional<SmallVector<Value>>> viaContiguous = tryMaterializer(
+      [op, sourceParts, resultTypes, sourceLayout, resultLayout,
+       sourceVMIElementType, &rewriter]() {
+        return materializeDataLayoutViaContiguous(
           op, sourceParts, resultTypes, sourceLayout, resultLayout,
           sourceVMIElementType, rewriter);
+      });
   if (failed(viaContiguous)) {
     return failure();
   }
