@@ -6119,18 +6119,23 @@ FailureOr<SmallVector<Type>> getConvertedMaskPartTypes(VMIMaskType type) {
 static FailureOr<VMILayoutAttr>
 getVMIMaskPhysicalCarrierLayout(VMIMaskType type) {
   VMILayoutAttr layout = type.getLayoutAttr();
-  if (!layout)
+  if (!layout) {
     return failure();
+  }
   MLIRContext *ctx = type.getContext();
-  if (layout.isContiguous())
+  if (layout.isContiguous()) {
     return VMILayoutAttr::getContiguous(ctx);
-  if (layout.isDeinterleaved())
+  }
+  if (layout.isDeinterleaved()) {
     return VMILayoutAttr::getDeinterleaved(ctx, layout.getFactor());
-  if (layout.isBlockDeinterleaved())
+  }
+  if (layout.isBlockDeinterleaved()) {
     return VMILayoutAttr::getBlockDeinterleaved(ctx, layout.getFactor());
-  if (layout.isGroupSlots())
+  }
+  if (layout.isGroupSlots()) {
     return VMILayoutAttr::getGroupSlots(ctx, layout.getNumGroups(),
                                         layout.getSlots());
+  }
   return failure();
 }
 
@@ -6140,8 +6145,11 @@ getVMIMaskPhysicalCarrierType(VMIMaskType type) {
       getVMIMaskPhysicalGranularity(type);
   FailureOr<VMILayoutAttr> physicalLayout =
       getVMIMaskPhysicalCarrierLayout(type);
-  if (failed(physicalGranularity) || failed(physicalLayout))
+  bool missingPhysicalCarrier = failed(physicalGranularity) ||
+                                failed(physicalLayout);
+  if (missingPhysicalCarrier) {
     return failure();
+  }
   return VMIMaskType::get(type.getContext(), type.getElementCount(),
                           *physicalGranularity, *physicalLayout);
 }
