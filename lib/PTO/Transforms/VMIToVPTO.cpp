@@ -17959,15 +17959,35 @@ static FailureOr<CompressPhysicalShapePlan> buildCompressPhysicalShapePlan(
   return CompressPhysicalShapePlan{valueType, maskType};
 }
 
-LogicalResult checkSupportedCompressShape(VMICompressOp op,
-                                          std::string *reason = nullptr) {
+static LogicalResult checkSupportedCompressResultShape(
+    VMIVRegType resultType, StringRef layoutMessage,
+    StringRef computableArityMessage, StringRef arityMessage,
+    std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason) {
       *reason = message.str();
     }
     return failure();
   };
+  VMILayoutAttr resultLayout = resultType.getLayoutAttr();
+  if (!resultLayout) {
+    return fail(layoutMessage);
+  }
+  if (!resultLayout.isContiguous()) {
+    return fail("requires contiguous result layouts");
+  }
+  FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
+  if (failed(resultArity)) {
+    return fail(computableArityMessage);
+  }
+  if (*resultArity != 1) {
+    return fail(arityMessage);
+  }
+  return success();
+}
 
+LogicalResult checkSupportedCompressShape(VMICompressOp op,
+                                          std::string *reason = nullptr) {
   auto sourceType = cast<VMIVRegType>(op.getSource().getType());
   auto maskType = cast<VMIMaskType>(op.getMask().getType());
   auto resultType = cast<VMIVRegType>(op.getResult().getType());
@@ -17980,25 +18000,12 @@ LogicalResult checkSupportedCompressShape(VMICompressOp op,
   if (failed(plan)) {
     return failure();
   }
-  VMILayoutAttr resultLayout = resultType.getLayoutAttr();
-  if (!resultLayout) {
-    return fail("requires assigned result layouts");
-  }
-  if (!resultLayout.isContiguous()) {
-    return fail("requires contiguous result layouts");
-  }
-  FailureOr<int64_t> sourceArity = getVMIPhysicalArity(plan->valueType);
-  FailureOr<int64_t> maskArity = getVMIPhysicalArity(plan->maskType);
-  FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
-  if (failed(resultArity)) {
-    return fail("requires computable source, mask, and result physical arity");
-  }
-  if (*resultArity != 1) {
-    return fail("requires a single physical chunk; multi-chunk compress needs "
-                "cross-chunk compaction");
-  }
-
-  return success();
+  return checkSupportedCompressResultShape(
+      resultType, "requires assigned result layouts",
+      "requires computable source, mask, and result physical arity",
+      "requires a single physical chunk; multi-chunk compress needs "
+      "cross-chunk compaction",
+      reason);
 }
 
 LogicalResult checkSupportedCompressStoreShape(

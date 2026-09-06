@@ -2500,3 +2500,7 @@ mask 构造和 factor extension 发射；保持分派优先级、part 顺序、�
 增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；`vmi_to_vpto_group_slot_integer_extension_matrix.pto` lowering
 exit=0。
+
+# compress 结果 shape 合同职责整改
+
+本轮新增 `checkSupportedCompressResultShape`，将 `compress` 的结果 layout 存在性、contiguous 合同、物理 arity 可计算性及单 chunk 约束从入口校验中独立出来。`buildCompressPhysicalShapePlan` 继续只负责 source/mask 的输入合同，`compress_store` 保持独立诊断和 destination `!pto.ptr` 合同；结果布局校验顺序、错误文本、物理 chunk 限制及 lowering 语义均保持不变。增量 `check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；`vmi_to_vpto_compress_store.pto` lowering exit=0，普通 compress case 在既有 pack/unpack invariant 处提前终止。
