@@ -3427,8 +3427,9 @@ FailureOr<SmallVector<ShuffleVselrPlan>>
 computeShuffleVselrPlans(VMIShuffleOp op, std::string *reason) {
   auto fail =
       [&reason](const Twine &message) -> FailureOr<SmallVector<ShuffleVselrPlan>> {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
