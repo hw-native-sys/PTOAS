@@ -3644,8 +3644,7 @@ static LogicalResult checkDynamicGroupMaskLayout(
 }
 
 static FailureOr<std::pair<int64_t, int64_t>>
-getDynamicGroupMaskPhysicalShape(VMICreateGroupMaskOp op,
-                                 VMIMaskType resultVMIType,
+getDynamicGroupMaskPhysicalShape(VMIMaskType resultVMIType,
                                  TypeRange resultTypes,
                                  std::string *reason) {
   auto fail = [&reason](const Twine &message)
@@ -3688,7 +3687,7 @@ static FailureOr<DynamicGroupMaskPlan> buildDynamicGroupMaskPlan(
     return failure();
   }
   FailureOr<std::pair<int64_t, int64_t>> physicalShape =
-      getDynamicGroupMaskPhysicalShape(op, resultVMIType, resultTypes, reason);
+      getDynamicGroupMaskPhysicalShape(resultVMIType, resultTypes, reason);
   if (failed(physicalShape)) {
     return failure();
   }
