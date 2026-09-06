@@ -6085,6 +6085,7 @@ static FailureOr<SmallVector<Value>> materializeMaskGranularitySteps(
     int sourceRank, int resultRank, PatternRewriter &rewriter) {
   VMIMaskType currentType = sourceType;
   SmallVector<Value> currentParts(sourceParts.begin(), sourceParts.end());
+  int currentRank = sourceRank;
   while (currentRank != resultRank) {
     bool ascending = currentRank < resultRank;
     currentRank += ascending ? 1 : -1;
