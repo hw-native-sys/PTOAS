@@ -2708,3 +2708,16 @@ direct layout conversion → staging factor route → dense-split contiguous con
 尝试顺序；direct conversion 失败后继续尝试的语义、optional/failure 传播和结果顺序不变。
 增量 `check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；mask granularity direct/multistep case 均 exit=0。
+
+# staging mask part 累积职责整改
+
+本轮引入 `StagingMaskPartAccumulator`，将 contiguous→deinterleaved staging mask 转换中
+physical part 容器的初始化、每组结果的 arity 校验与追加、以及 part-major 扁平化集中到
+一个有明确所有权的累积对象。`materializeStagingContiguousToDeintMaskLayout` 现在只负责
+factor/group 合同、逐组调用具体的 factor=2/4 物化逻辑和最终结果返回；没有把 factor=2
+与 factor=4 的 `pdintlv` 语义强行合并，仍保持源 part 补齐、group 顺序、part-major 结果
+顺序、结果 arity 诊断及失败传播不变。增量
+`check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过。`vmi_to_vpto_ensure_mask_granularity_multistep.pto` 尝试
+lowering 时在既有 VMI pack/unpack pipeline invariant 处提前失败，未进入本轮 staging
+helper，不能将该失败归因于本轮改动。
