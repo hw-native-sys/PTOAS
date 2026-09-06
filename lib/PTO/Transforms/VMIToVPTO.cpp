@@ -11884,6 +11884,27 @@ private:
     return success();
   }
 
+  FailureOr<std::optional<VRegType>> getSlots8FirstVRegType(
+      VMIGroupStoreOp op, OpAdaptor adaptor, VMILayoutAttr layout,
+      OneToNPatternRewriter &rewriter) const {
+    ValueRange valueParts = adaptor.getValue();
+    bool hasExpectedArity = static_cast<int64_t>(valueParts.size()) ==
+                            ceilDivNonNegative(layout.getNumGroups(), 8);
+    if (!hasExpectedArity) {
+      rewriter.notifyMatchFailure(op, "slots=8 group_store arity mismatch");
+      return failure();
+    }
+    if (valueParts.empty()) {
+      return std::optional<VRegType>();
+    }
+    auto firstVRegType = dyn_cast<VRegType>(valueParts.front().getType());
+    if (!firstVRegType) {
+      rewriter.notifyMatchFailure(op, "group_store value must be vreg");
+      return failure();
+    }
+    return std::optional<VRegType>(firstVRegType);
+  }
+
   LogicalResult lowerSlots8Dispatch(
       VMIGroupStoreOp op, OpAdaptor adaptor, OneToNPatternRewriter &rewriter,
       VMIVRegType valueVMIType, VMILayoutAttr layout, Value destination,
@@ -11896,22 +11917,16 @@ private:
       return rewriter.notifyMatchFailure(
           op, "slots=8 group_store requires constant unit row_stride");
     }
-    ValueRange valueParts = adaptor.getValue();
-    bool hasExpectedArity = static_cast<int64_t>(valueParts.size()) ==
-                            ceilDivNonNegative(numGroups, 8);
-    if (!hasExpectedArity) {
-      return rewriter.notifyMatchFailure(op, "slots=8 group_store arity mismatch");
+    FailureOr<std::optional<VRegType>> firstVRegType =
+        getSlots8FirstVRegType(op, adaptor, layout, rewriter);
+    if (failed(firstVRegType)) {
+      return failure();
     }
-    if (!valueParts.empty()) {
-      auto firstVRegType = dyn_cast<VRegType>(valueParts.front().getType());
-      if (!firstVRegType) {
-        return rewriter.notifyMatchFailure(op, "group_store value must be vreg");
-      }
-      if (isPackedByteGroupStore(op.getDestination().getType(), firstVRegType)) {
-        return lowerPackedByteSlots8(
-            op, rewriter, valueParts, valueVMIType, layout, destination, offset,
-            rowStride, numGroups, *firstVRegType);
-      }
+    if (*firstVRegType && isPackedByteGroupStore(
+                               op.getDestination().getType(), **firstVRegType)) {
+      return lowerPackedByteSlots8(
+            op, rewriter, adaptor.getValue(), valueVMIType, layout, destination,
+            offset, rowStride, numGroups, **firstVRegType);
     }
     if (layout.hasLaneStride()) {
       return lowerSlots8LaneStride(op, adaptor, rewriter, valueVMIType, layout,

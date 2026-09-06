@@ -3368,6 +3368,21 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_to_vpto_load_store_contiguous.pto                  # exit=0
 ```
 
+# slots=8 group-store 输入合同拆分（2026-09-06）
+
+本轮将 `lowerSlots8Dispatch` 中的物理 value arity 与首个 vreg 类型检查抽取为
+`getSlots8FirstVRegType`。分派入口继续负责 constant unit `row_stride` 检查，并保持
+packed-byte、lane-stride、contiguous 三条 lowering 路径的顺序、诊断文本和失败传播不变；
+空输入仍保留原有后续分派行为。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_group_store_slots8_packed_byte.pto         # exit=0
+```
+
 # load physical plan 构造职责拆分（2026-09-06）
 
 本轮将 `OneToNVMILoadOpPattern::buildPhysicalPlan` 中 converted result type 获取与
