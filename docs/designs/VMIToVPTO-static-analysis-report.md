@@ -2357,6 +2357,16 @@ forwarding fallback 的优先级、结果顺序和所有失败诊断不变。增
 `check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；`vmi_to_vpto_shuffle_forwarding.pto` lowering exit=0。
 
+# shuffle vselr lane 方向职责整改
+
+本轮在 `computeShuffleVselrPlanForChunk` 中引入 `getShuffleLaneDirection`，将单 lane 的
+ASC/DESC affine 关系判定与错误诊断抽取为独立 helper。chunk plan 主函数继续负责 padding、
+logical→physical 映射、source chunk 一致性、方向一致性和 flat index 组装；保持 vselr
+fallback 的 plan 字段、结果顺序和失败语义不变。增量 `check_changed_code.py --base HEAD`
+结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_shuffle_forwarding.pto` 与 `vmi_to_vpto_shuffle_lane0_splat.pto` 均 lowering
+exit=0。
+
 # channel split 结果布局与 arity 合同职责整改
 
 本轮在 `checkSupportedChannelSplitShape` 中引入

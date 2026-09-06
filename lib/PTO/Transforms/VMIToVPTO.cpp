@@ -3106,6 +3106,23 @@ struct ShuffleVselrPlan {
   bool descending = false;
 };
 
+static FailureOr<bool> getShuffleLaneDirection(
+    int64_t baseLane, int64_t resultLane, int64_t sourceLane,
+    std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> FailureOr<bool> {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  bool ascending = sourceLane == baseLane + resultLane;
+  bool descending = sourceLane == baseLane - resultLane;
+  if (!ascending && !descending) {
+    return fail("requires ASC or DESC affine source lane indices");
+  }
+  return descending && !ascending;
+}
+
 FailureOr<ShuffleVselrPlan> computeShuffleVselrPlanForChunk(
     VMIVRegType sourceType, VMIVRegType resultType, ArrayRef<int64_t> indices,
     int64_t resultPart, int64_t resultChunk, int64_t lanesPerPart,
@@ -3156,19 +3173,16 @@ FailureOr<ShuffleVselrPlan> computeShuffleVselrPlanForChunk(
         *sourceChunk != sourcePhysical->chunk) {
       return fail("requires one source chunk per result chunk");
     }
-    int64_t ascExpected = *baseLane + lane;
-    int64_t descExpected = *baseLane - lane;
-    bool asc = sourcePhysical->lane == ascExpected;
-    bool desc = sourcePhysical->lane == descExpected;
-    if (!asc && !desc) {
-      return fail("requires ASC or DESC affine source lane indices");
+    FailureOr<bool> laneDescending = getShuffleLaneDirection(
+        *baseLane, lane, sourcePhysical->lane, reason);
+    if (failed(laneDescending)) {
+      return failure();
     }
-    bool laneDescending = desc && !asc;
     if (!descending) {
-      descending = laneDescending;
+      descending = *laneDescending;
       continue;
     }
-    if (*descending != laneDescending) {
+    if (*descending != *laneDescending) {
       return fail("requires one index order per result chunk");
     }
   }
