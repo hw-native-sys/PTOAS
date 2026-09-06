@@ -20503,21 +20503,8 @@ std::optional<WalkResult> verifySupportedVMIMemoryAdvancedLoadOp(
   return std::nullopt;
 }
 
-std::optional<WalkResult> verifySupportedVMIStructuredStoreOp(Operation *op) {
-  if (auto store = dyn_cast<VMIInterleaveStoreOp>(op)) {
-    return verifySupportedShapeOp(
-        store, checkSupportedInterleaveStoreShape,
-        "pto.vmi.interleave_store lowers through pto.vstsx2 only for matching "
-        "contiguous full low/high input chunks with a supported UB destination "
-        "and 8/16/32-bit element type (");
-  }
-  if (auto store = dyn_cast<VMIGroupStoreOp>(op)) {
-    return verifySupportedShapeOp(
-        store, checkSupportedGroupStoreShape,
-        "pto.vmi.group_store requires a supported UB destination and a table-"
-        "supported value layout lowering through one-block vsstb, full-chunk "
-        "vsts, or deinterleaved vstsx2 (");
-  }
+static std::optional<WalkResult> verifySupportedVMIStructuredMaskedStoreOp(
+    Operation *op) {
   if (auto store = dyn_cast<VMIMaskedStoreOp>(op)) {
     std::string reason;
     if (succeeded(checkSupportedMaskedStoreShape(
@@ -20534,6 +20521,28 @@ std::optional<WalkResult> verifySupportedVMIStructuredStoreOp(Operation *op) {
            "destination ("
         << reason << ")";
     return WalkResult::interrupt();
+  }
+  return std::nullopt;
+}
+
+std::optional<WalkResult> verifySupportedVMIStructuredStoreOp(Operation *op) {
+  if (auto maskedStore = verifySupportedVMIStructuredMaskedStoreOp(op);
+      maskedStore.has_value()) {
+    return maskedStore;
+  }
+  if (auto store = dyn_cast<VMIInterleaveStoreOp>(op)) {
+    return verifySupportedShapeOp(
+        store, checkSupportedInterleaveStoreShape,
+        "pto.vmi.interleave_store lowers through pto.vstsx2 only for matching "
+        "contiguous full low/high input chunks with a supported UB destination "
+        "and 8/16/32-bit element type (");
+  }
+  if (auto store = dyn_cast<VMIGroupStoreOp>(op)) {
+    return verifySupportedShapeOp(
+        store, checkSupportedGroupStoreShape,
+        "pto.vmi.group_store requires a supported UB destination and a table-"
+        "supported value layout lowering through one-block vsstb, full-chunk "
+        "vsts, or deinterleaved vstsx2 (");
   }
   if (auto store = dyn_cast<VMIStrideStoreOp>(op)) {
     return verifySupportedShapeOp(

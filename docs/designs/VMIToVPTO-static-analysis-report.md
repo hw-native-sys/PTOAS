@@ -1,5 +1,19 @@
 # VMIToVPTO 静态分析报告记录
 
+## structured-store verifier masked-store 分支拆分（2026-09-06）
+
+本轮将 `verifySupportedVMIStructuredStoreOp` 中 masked-store 的专用 shape 检查及诊断抽取
+为 `verifySupportedVMIStructuredMaskedStoreOp`。structured-store 主分派继续负责
+interleave/group/stride/scatter 等 op；masked-store 的支持合同、错误文本和 interrupt
+行为保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
 ## contiguous masked-store layout conversion 拆分（2026-09-06）
 
 本轮将 `OneToNVMIMaskedStoreOpPattern::lowerContiguous` 中 value/mask 的 contiguous layout
