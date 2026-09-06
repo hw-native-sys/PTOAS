@@ -4085,6 +4085,52 @@ static FailureOr<int64_t> validateConstantMaskChunk(
   return *lanesPerPart;
 }
 
+static FailureOr<Value> materializeNonPrefixConstantMask(
+    Location loc, MaskType maskType, ArrayRef<int8_t> activeLanes,
+    int64_t lanesPerPart, Value allTrue, PatternRewriter &rewriter) {
+  Value result;
+  for (int64_t lane = 0; lane < lanesPerPart;) {
+    while (lane < lanesPerPart && !activeLanes[lane]) {
+      ++lane;
+    }
+    if (lane >= lanesPerPart) {
+      break;
+    }
+    int64_t runBegin = lane;
+    while (lane < lanesPerPart && activeLanes[lane]) {
+      ++lane;
+    }
+    int64_t runEnd = lane;
+    FailureOr<Value> prefixEnd =
+        materializePrefixMask(loc, maskType, runEnd, lanesPerPart, rewriter);
+    if (failed(prefixEnd)) {
+      return failure();
+    }
+    Value runMask = *prefixEnd;
+    if (runBegin != 0) {
+      FailureOr<Value> prefixBegin = materializePrefixMask(
+          loc, maskType, runBegin, lanesPerPart, rewriter);
+      if (failed(prefixBegin)) {
+        return failure();
+      }
+      Value notPrefixBegin =
+          rewriter.create<PnotOp>(loc, maskType, *prefixBegin, allTrue)
+              .getResult();
+      runMask = rewriter
+                    .create<PandOp>(loc, maskType, *prefixEnd, notPrefixBegin,
+                                    allTrue)
+                    .getResult();
+    }
+    if (!result) {
+      result = runMask;
+    } else {
+      result = rewriter.create<PorOp>(loc, maskType, result, runMask, allTrue)
+                   .getResult();
+    }
+  }
+  return result;
+}
+
 FailureOr<Value> materializeConstantMaskChunk(Location loc, MaskType maskType,
                                               ArrayRef<int8_t> activeLanes,
                                               PatternRewriter &rewriter) {
@@ -4100,61 +4146,19 @@ FailureOr<Value> materializeConstantMaskChunk(Location loc, MaskType maskType,
                                  rewriter);
 
   FailureOr<Value> allTrue = createAllTrueMask(loc, maskType, rewriter);
-  if (failed(allTrue))
+  if (failed(allTrue)) {
     return failure();
-
-  auto materializeRun = [loc, maskType, lanesPerPart, &rewriter, &allTrue](
-                            int64_t runBegin,
-                            int64_t runEnd) -> FailureOr<Value> {
-    FailureOr<Value> prefixEnd =
-        materializePrefixMask(loc, maskType, runEnd, *lanesPerPart, rewriter);
-    if (failed(prefixEnd)) {
-      return failure();
-    }
-    if (runBegin == 0) {
-      return *prefixEnd;
-    }
-    FailureOr<Value> prefixBegin = materializePrefixMask(
-        loc, maskType, runBegin, *lanesPerPart, rewriter);
-    if (failed(prefixBegin)) {
-      return failure();
-    }
-    Value notPrefixBegin =
-        rewriter.create<PnotOp>(loc, maskType, *prefixBegin, *allTrue)
-            .getResult();
-    return rewriter
-        .create<PandOp>(loc, maskType, *prefixEnd, notPrefixBegin, *allTrue)
-        .getResult();
-  };
-
-  Value result;
-  int64_t lane = 0;
-  while (lane < *lanesPerPart) {
-    while (lane < *lanesPerPart && !activeLanes[lane])
-      ++lane;
-    if (lane >= *lanesPerPart)
-      break;
-
-    int64_t runBegin = lane;
-    while (lane < *lanesPerPart && activeLanes[lane])
-      ++lane;
-    int64_t runEnd = lane;
-
-    FailureOr<Value> runMask = materializeRun(runBegin, runEnd);
-    if (failed(runMask)) {
-      return failure();
-    }
-
-    if (!result) {
-      result = *runMask;
-      continue;
-    }
-    result = rewriter.create<PorOp>(loc, maskType, result, *runMask, *allTrue)
-                 .getResult();
   }
 
-  if (result)
-    return result;
+  FailureOr<Value> result = materializeNonPrefixConstantMask(
+      loc, maskType, activeLanes, *lanesPerPart, *allTrue, rewriter);
+  if (failed(result)) {
+    return failure();
+  }
+
+  if (*result) {
+    return *result;
+  }
   return materializePrefixMask(loc, maskType, 0, *lanesPerPart, rewriter);
 }
 
