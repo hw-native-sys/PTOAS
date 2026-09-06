@@ -17027,6 +17027,28 @@ static LogicalResult lowerWidenFpToInt(
   return success();
 }
 
+template <typename OpTy>
+static FailureOr<VRegType> validateFpToIntSourceParts(
+    OpTy op, ValueRange sourceParts, StringRef emptyDiagnostic,
+    StringRef expectedTypeDiagnostic, StringRef mismatchDiagnostic,
+    OneToNPatternRewriter &rewriter) {
+  if (sourceParts.empty()) {
+    return rewriter.notifyMatchFailure(op, emptyDiagnostic);
+  }
+  auto sourceType = dyn_cast<VRegType>(sourceParts.front().getType());
+  if (!sourceType) {
+    return rewriter.notifyMatchFailure(op, expectedTypeDiagnostic);
+  }
+  for (Value sourcePart : sourceParts) {
+    auto currentType = dyn_cast<VRegType>(sourcePart.getType());
+    bool mismatchedType = !currentType || currentType != sourceType;
+    if (mismatchedType) {
+      return rewriter.notifyMatchFailure(op, mismatchDiagnostic);
+    }
+  }
+  return sourceType;
+}
+
 struct OneToNVMIFPToSIOpPattern : OneToNOpConversionPattern<VMIFPToSIOp> {
   using OneToNOpConversionPattern<VMIFPToSIOp>::OneToNOpConversionPattern;
 
@@ -17034,24 +17056,10 @@ private:
   FailureOr<VRegType> validateSourceParts(
       VMIFPToSIOp op, ValueRange sourceParts,
       OneToNPatternRewriter &rewriter) const {
-    if (sourceParts.empty()) {
-      return rewriter.notifyMatchFailure(
-          op, "fptosi requires at least one physical source chunk");
-    }
-    auto sourceType = dyn_cast<VRegType>(sourceParts.front().getType());
-    if (!sourceType) {
-      return rewriter.notifyMatchFailure(op,
-                                         "expected physical fptosi source type");
-    }
-    for (Value sourcePart : sourceParts) {
-      auto currentType = dyn_cast<VRegType>(sourcePart.getType());
-      bool mismatchedType = !currentType || currentType != sourceType;
-      if (mismatchedType) {
-        return rewriter.notifyMatchFailure(
-            op, "fptosi source physical parts must have matching type");
-      }
-    }
-    return sourceType;
+    return validateFpToIntSourceParts(
+        op, sourceParts, "fptosi requires at least one physical source chunk",
+        "expected physical fptosi source type",
+        "fptosi source physical parts must have matching type", rewriter);
   }
 
   FailureOr<SmallVector<VRegType>> validateResultParts(
@@ -17213,24 +17221,10 @@ private:
   FailureOr<VRegType> validateSourceParts(
       VMIFPToUIOp op, ValueRange sourceParts,
       OneToNPatternRewriter &rewriter) const {
-    if (sourceParts.empty()) {
-      return rewriter.notifyMatchFailure(
-          op, "fptoui requires at least one physical source chunk");
-    }
-    auto sourceType = dyn_cast<VRegType>(sourceParts.front().getType());
-    if (!sourceType) {
-      return rewriter.notifyMatchFailure(op,
-                                         "expected physical fptoui source type");
-    }
-    for (Value sourcePart : sourceParts) {
-      auto currentType = dyn_cast<VRegType>(sourcePart.getType());
-      bool mismatchedType = !currentType || currentType != sourceType;
-      if (mismatchedType) {
-        return rewriter.notifyMatchFailure(
-            op, "fptoui source physical parts must have matching type");
-      }
-    }
-    return sourceType;
+    return validateFpToIntSourceParts(
+        op, sourceParts, "fptoui requires at least one physical source chunk",
+        "expected physical fptoui source type",
+        "fptoui source physical parts must have matching type", rewriter);
   }
 
   FailureOr<SmallVector<VRegType>> validateResultParts(

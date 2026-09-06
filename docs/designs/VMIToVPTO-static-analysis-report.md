@@ -3174,3 +3174,20 @@ git diff --check                                      # passed
 check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
 vmi_to_vpto_truncf_bf16x2_d4_packed4.pto               # exit=0
 ```
+
+# fp-to-int source 校验复用（2026-09-06）
+
+本轮将 `fptosi` 与 `fptoui` 两个 pattern 重复的 source physical chunks 校验统一为模板
+helper `validateFpToIntSourceParts`；helper 保留各操作独立的空输入、期望类型和类型不一
+致诊断文本，调用方仍负责各自的元素合同、宽窄转换及 part 规划。未改变转换支持矩阵、
+mask 语义或结果顺序。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
+`vmi_to_vpto_fptosi_*` 代表性输入在既有 VMI pack/unpack pipeline invariant 处提前失败，
+未进入本轮 helper，不能将该既有测试前置失败归因于本次重构。
