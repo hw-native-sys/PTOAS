@@ -8499,6 +8499,31 @@ private:
     bool noWiderThanContiguous;
   };
 
+  FailureOr<SmallVector<Type>> getLoadResultTypes(
+      VMILoadOp op) const {
+    FailureOr<SmallVector<Type>> resultTypes =
+        getConvertedResultTypes(op, 0, *this->getTypeConverter());
+    if (failed(resultTypes)) {
+      return failure();
+    }
+    return std::move(*resultTypes);
+  }
+
+  FailureOr<SmallVector<Type>> getContiguousLoadTypes(
+      VMILoadOp op, VMIVRegType resultVMIType,
+      OneToNPatternRewriter &rewriter) const {
+    VMILayoutAttr contiguousLayout =
+        VMILayoutAttr::getContiguous(rewriter.getContext());
+    FailureOr<SmallVector<Type>> contiguousTypes =
+        getConvertedVRegTypesWithLayout(resultVMIType, contiguousLayout,
+                                        *this->getTypeConverter());
+    if (failed(contiguousTypes)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to compute contiguous load footprint");
+    }
+    return std::move(*contiguousTypes);
+  }
+
   FailureOr<LoadPhysicalPlan> buildPhysicalPlan(
       VMILoadOp op, OpAdaptor adaptor,
       OneToNPatternRewriter &rewriter) const {
@@ -8512,9 +8537,9 @@ private:
     if (failedOperands) {
       return failure();
     }
-    FailureOr<SmallVector<Type>> maybeResultTypes =
-        getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybeResultTypes)) {
+    FailureOr<SmallVector<Type>> resultTypes =
+        getLoadResultTypes(op);
+    if (failed(resultTypes)) {
       return failure();
     }
     auto resultVMIType = cast<VMIVRegType>(op.getResult().getType());
@@ -8525,25 +8550,21 @@ private:
     }
     VMILayoutAttr contiguousLayout =
         VMILayoutAttr::getContiguous(rewriter.getContext());
-    FailureOr<SmallVector<Type>> maybeContiguousTypes =
-        getConvertedVRegTypesWithLayout(resultVMIType, contiguousLayout,
-                                        *this->getTypeConverter());
-    if (failed(maybeContiguousTypes)) {
-      return rewriter.notifyMatchFailure(
-          op, "failed to compute contiguous load footprint");
+    FailureOr<SmallVector<Type>> contiguousTypes =
+        getContiguousLoadTypes(op, resultVMIType, rewriter);
+    if (failed(contiguousTypes)) {
+      return failure();
     }
-    SmallVector<Type> resultTypes = std::move(*maybeResultTypes);
-    SmallVector<Type> contiguousTypes = std::move(*maybeContiguousTypes);
     FailureOr<bool> noWiderThanContiguous =
-        hasNoWiderFootprintThanContiguous(resultTypes, contiguousTypes);
+        hasNoWiderFootprintThanContiguous(*resultTypes, *contiguousTypes);
     if (failed(noWiderThanContiguous)) {
       return rewriter.notifyMatchFailure(
           op, "failed to compare load physical footprint");
     }
     return LoadPhysicalPlan{*source,
                            *offset,
-                           std::move(resultTypes),
-                           std::move(contiguousTypes),
+                           std::move(*resultTypes),
+                           std::move(*contiguousTypes),
                            resultVMIType.getLayoutAttr(),
                            *lanesPerPart,
                            *noWiderThanContiguous};

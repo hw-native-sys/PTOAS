@@ -3367,3 +3367,18 @@ git diff --check                                      # passed
 check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
 vmi_to_vpto_load_store_contiguous.pto                  # exit=0
 ```
+
+# load physical plan 构造职责拆分（2026-09-06）
+
+本轮将 `OneToNVMILoadOpPattern::buildPhysicalPlan` 中 converted result type 获取与
+contiguous footprint type 获取分别抽取为 `getLoadResultTypes` 和
+`getContiguousLoadTypes`。plan builder 继续负责 source/offset 归一化、read-safety
+验证和 footprint 比较；地址语义、layout conversion 顺序及失败诊断保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_load_store_contiguous.pto                  # exit=0
+```
