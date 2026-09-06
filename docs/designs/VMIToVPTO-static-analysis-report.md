@@ -3045,3 +3045,16 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_layout_assignment_group_broadcast_load_e2b_b16.pto # exit=0
 vmi_layout_assignment_scatter.pto                      # exit=0
 ```
+
+# shuffle splat 与 VSEL 规划控制流整改（2026-09-06）
+
+本轮继续为 shuffle lane-0 splat 和 VSEL 规划补齐显式控制流边界，并将“存在非零索引”
+条件命名。source lane 映射、物理 part/chunk 枚举、失败诊断及结果计划顺序均保持不变，
+仅消除单语句控制流歧义。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```

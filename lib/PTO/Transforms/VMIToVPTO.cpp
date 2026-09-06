@@ -3383,20 +3383,26 @@ FailureOr<int64_t> computeShuffleLane0SplatSourcePart(VMIShuffleOp op,
   };
 
   ArrayRef<int64_t> indices = op.getIndices();
-  if (indices.empty())
+  if (indices.empty()) {
     return fail("requires non-empty indices");
-  if (!llvm::all_of(indices, [](int64_t index) { return index == 0; }))
+  }
+  bool hasNonZeroIndex =
+      !llvm::all_of(indices, [](int64_t index) { return index == 0; });
+  if (hasNonZeroIndex) {
     return fail("requires every result lane to select source lane 0");
+  }
 
   auto sourceType = cast<VMIVRegType>(op.getSource().getType());
   FailureOr<VMIPhysicalLane> sourceLane =
       mapLogicalLaneToPhysical(sourceType, 0);
-  if (failed(sourceLane))
+  if (failed(sourceLane)) {
     return fail("failed to map source lane 0");
+  }
   FailureOr<int64_t> sourceFlatIndex =
       getDataFlatPartIndex(sourceType, sourceLane->part, sourceLane->chunk);
-  if (failed(sourceFlatIndex))
+  if (failed(sourceFlatIndex)) {
     return fail("source lane 0 part range is out of bounds");
+  }
   return *sourceFlatIndex;
 }
 
@@ -3413,23 +3419,27 @@ computeShuffleVselrPlans(VMIShuffleOp op, std::string *reason) {
   auto resultType = cast<VMIVRegType>(op.getResult().getType());
   FailureOr<int64_t> lanesPerPart =
       getDataLanesPerPart(sourceType.getElementType());
-  if (failed(lanesPerPart))
+  if (failed(lanesPerPart)) {
     return fail("requires known lanes per physical part");
+  }
 
   ArrayRef<int64_t> indices = op.getIndices();
-  if (indices.empty())
+  if (indices.empty()) {
     return fail("requires non-empty indices");
+  }
 
   FailureOr<int64_t> resultFactor = getDataLayoutFactor(resultType);
-  if (failed(resultFactor))
+  if (failed(resultFactor)) {
     return fail("requires assigned result layout");
+  }
 
   SmallVector<ShuffleVselrPlan> plans;
   for (int64_t resultPart = 0; resultPart < *resultFactor; ++resultPart) {
     FailureOr<int64_t> resultChunks =
         getDataChunksInPart(resultType, resultPart);
-    if (failed(resultChunks))
+    if (failed(resultChunks)) {
       return fail("requires known result physical chunks");
+    }
 
     for (int64_t resultChunk = 0; resultChunk < *resultChunks; ++resultChunk) {
       FailureOr<ShuffleVselrPlan> plan = computeShuffleVselrPlanForChunk(
