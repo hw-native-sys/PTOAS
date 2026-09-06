@@ -3433,6 +3433,50 @@ static FailureOr<VMIPhysicalLane> getShuffleSourceLane(
   return *sourceLane;
 }
 
+struct ShuffleChunkLaneState {
+  int64_t sourcePart = 0;
+  int64_t sourceChunk = 0;
+  int64_t baseLane = 0;
+  std::optional<bool> descending;
+};
+
+static FailureOr<ShuffleChunkLaneState> updateShuffleChunkLaneState(
+    VMIVRegType sourceType, VMIVRegType resultType, ArrayRef<int64_t> indices,
+    int64_t resultPart, int64_t resultChunk, int64_t lane,
+    std::optional<ShuffleChunkLaneState> state,
+    std::string *reason) {
+  FailureOr<VMIPhysicalLane> sourcePhysical = getShuffleSourceLane(
+      sourceType, resultType, indices, resultPart, resultChunk, lane, reason);
+  if (failed(sourcePhysical)) {
+    return failure();
+  }
+  if (!state) {
+    return ShuffleChunkLaneState{sourcePhysical->part, sourcePhysical->chunk,
+                                 sourcePhysical->lane, false};
+  }
+  bool sourceChunkMismatch = state->sourcePart != sourcePhysical->part ||
+                             state->sourceChunk != sourcePhysical->chunk;
+  if (sourceChunkMismatch) {
+    if (reason) {
+      *reason = "requires one source chunk per result chunk";
+    }
+    return failure();
+  }
+  FailureOr<bool> laneDescending = getShuffleLaneDirection(
+      state->baseLane, lane, sourcePhysical->lane, reason);
+  if (failed(laneDescending)) {
+    return failure();
+  }
+  if (state->descending && *laneDescending != *state->descending) {
+    if (reason) {
+      *reason = "requires one index order per result chunk";
+    }
+    return failure();
+  }
+  state->descending = *laneDescending;
+  return *state;
+}
+
 FailureOr<ShuffleVselrPlan> computeShuffleVselrPlanForChunk(
     VMIVRegType sourceType, VMIVRegType resultType, ArrayRef<int64_t> indices,
     int64_t resultPart, int64_t resultChunk, int64_t lanesPerPart,
@@ -3443,48 +3487,23 @@ FailureOr<ShuffleVselrPlan> computeShuffleVselrPlanForChunk(
     }
     return failure();
   };
-  std::optional<int64_t> sourcePart;
-  std::optional<int64_t> sourceChunk;
-  std::optional<int64_t> baseLane;
-  std::optional<bool> descending;
+  std::optional<ShuffleChunkLaneState> state;
   for (int64_t lane = 0; lane < lanesPerPart; ++lane) {
-    FailureOr<VMIPhysicalLane> sourcePhysical = getShuffleSourceLane(
-        sourceType, resultType, indices, resultPart, resultChunk, lane, reason);
-    if (failed(sourcePhysical)) {
+    FailureOr<ShuffleChunkLaneState> nextState = updateShuffleChunkLaneState(
+        sourceType, resultType, indices, resultPart, resultChunk, lane,
+        state, reason);
+    if (failed(nextState)) {
       return failure();
     }
-    if (!sourcePart) {
-      sourcePart = sourcePhysical->part;
-      sourceChunk = sourcePhysical->chunk;
-      baseLane = sourcePhysical->lane;
-      continue;
-    }
-    bool sourceChunkMismatch =
-        *sourcePart != sourcePhysical->part ||
-        *sourceChunk != sourcePhysical->chunk;
-    if (sourceChunkMismatch) {
-      return fail("requires one source chunk per result chunk");
-    }
-    FailureOr<bool> laneDescending = getShuffleLaneDirection(
-        *baseLane, lane, sourcePhysical->lane, reason);
-    if (failed(laneDescending)) {
-      return failure();
-    }
-    if (!descending) {
-      descending = *laneDescending;
-      continue;
-    }
-    bool laneOrderMismatch = *descending != *laneDescending;
-    if (laneOrderMismatch) {
-      return fail("requires one index order per result chunk");
-    }
+    state = *nextState;
   }
   FailureOr<int64_t> sourceFlatIndex =
-      getDataFlatPartIndex(sourceType, *sourcePart, *sourceChunk);
+      getDataFlatPartIndex(sourceType, state->sourcePart, state->sourceChunk);
   if (failed(sourceFlatIndex)) {
     return fail("source part range is out of bounds");
   }
-  return ShuffleVselrPlan{*sourceFlatIndex, *baseLane, descending.value_or(false)};
+  return ShuffleVselrPlan{*sourceFlatIndex, state->baseLane,
+                          state->descending.value_or(false)};
 }
 
 FailureOr<int64_t> computeShuffleLane0SplatSourcePart(VMIShuffleOp op,

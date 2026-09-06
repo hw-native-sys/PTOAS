@@ -3076,6 +3076,21 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 `vmi_lane_stride_masked_store.pto` 在测试自身的 conflicting mask layout contract 处提前
 失败，未进入本轮 predicate helper。
 
+# shuffle vselr 单 lane 状态更新职责拆分（2026-09-06）
+
+本轮将 `computeShuffleVselrPlanForChunk` 中单 lane 的 source physical 映射、单 source
+chunk 合同和 ASC/DESC 状态更新抽取为 `ShuffleChunkLaneState`/
+`updateShuffleChunkLaneState`。主函数继续负责 lane 遍历、source flat index 计算和最终
+plan 组装；padding/越界诊断、lane 顺序约束及 vselr 支持矩阵保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_shuffle_forwarding.pto                     # exit=0
+```
+
 # narrowing mask granularity 单 chunk 物化职责拆分（2026-09-06）
 
 本轮将 `materializeNarrowingMaskGranularityPart` 中单个结果 chunk 的 source 消耗、
