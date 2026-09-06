@@ -1,5 +1,22 @@
 # VMIToVPTO 静态分析报告记录
 
+## 动态 group-mask lane index 职责拆分（2026-09-06）
+
+本轮将 `buildDynamicGroupMaskLaneIndex` 的索引构造拆为两个明确阶段：
+`buildDynamicGroupMaskBlockIndex` 负责 chunk 内索引、block 编号和 block 内 lane，
+`buildDynamicGroupMaskLogicalLane` 负责 factor/part 映射及最终 logical lane 合成。
+同时把 block size 的幂次约束从隐含解引用改为显式诊断，避免非法布局在创建 shift 前触发
+未定义状态。动态 mask 的 lane 结果、padding 处理和失败传播保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+ninja -C build pto-test-opt                            # blocked by existing /cann-cmake permission
+```
+
+
 ## 报告来源与范围
 
 本文记录 2026-09-05 从内部静态分析报告导入的结果，目标文件为
