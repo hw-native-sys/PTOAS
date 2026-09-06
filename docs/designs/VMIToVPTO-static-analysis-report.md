@@ -2377,6 +2377,16 @@ exit=0。
 `git diff --check` 通过；尝试的 mask granularity cases 在既有 pack/unpack invariant 或
 layout contract 处提前终止，未进入本轮 helper。
 
+# mask layout materializer 分派职责整改
+
+本轮在 `materializeMaskLayoutConversion` 中引入 `tryMaskLayoutMaterializer`，统一封装
+identity、deinterleaved=2 和 dense lane-stride 三类 materializer 的 `FailureOr<optional>`
+传播。入口保留 assigned-layout 前置检查、三类转换的原优先级以及最终 unsupported 诊断；
+lambda 使用显式捕获，未改变 mask layout 或 padding 语义。增量
+`check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_layout_assignment_masked_load.pto` 在既有 residual VMI
+load 检查处终止，未进入本轮 materializer。
+
 # channel split 结果布局与 arity 合同职责整改
 
 本轮在 `checkSupportedChannelSplitShape` 中引入
