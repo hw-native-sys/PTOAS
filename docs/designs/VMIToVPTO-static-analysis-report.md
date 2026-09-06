@@ -2110,6 +2110,17 @@ dist/factor/chunk 参数、发射 E2B packets 和复用结果；B16/B32 dist、f
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_layout_assignment_group_broadcast_load_e2b_b16.pto` lowering exit=0。
 
+# masked store 布局分派职责整改
+
+本轮将 `OneToNVMIMaskedStoreOpPattern::matchAndRewrite` 中 lane-stride dist/mask-granularity
+候选判断与 contiguous fallback 分派抽取为 `lowerByLayout`。入口现在只负责 physical
+lane 数、地址操作数和 value/mask arity 合同；helper 按原顺序优先选择 lane-stride
+`vsts`，否则进入 contiguous layout materialization。对齐证明、mask 转换、结果顺序、
+失败诊断和 lowering 语义保持不变。增量
+`check_changed_code.py --base origin/master --fail-on none` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_masked_store.pto` lowering exit=0。
+
 # group load 布局分派职责整改
 
 本轮将 `OneToNVMIGroupLoadOpPattern::matchAndRewrite` 中 block-deinterleaved f32 特殊路径

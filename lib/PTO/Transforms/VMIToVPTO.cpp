@@ -8454,6 +8454,26 @@ private:
     return success();
   }
 
+  LogicalResult lowerByLayout(
+      VMIMaskedStoreOp op, OneToNPatternRewriter &rewriter,
+      ValueRange valueParts, ValueRange maskParts, VMIVRegType valueVMIType,
+      VMIMaskType maskVMIType, Value destination, Value offset,
+      int64_t lanesPerPart) const {
+    std::optional<std::string> dist =
+        getDenseLaneStrideStoreDistToken(valueVMIType);
+    if (dist) {
+      std::optional<StringRef> maskGranularity =
+          getDenseLaneStrideMaskedStoreMaskGranularity(valueVMIType);
+      if (maskGranularity) {
+        return lowerLaneStride(op, rewriter, valueParts, maskParts,
+                               valueVMIType, maskVMIType, destination, offset,
+                               *dist, *maskGranularity);
+      }
+    }
+    return lowerContiguous(op, rewriter, valueParts, maskParts, valueVMIType,
+                           maskVMIType, destination, offset, lanesPerPart);
+  }
+
   std::optional<LogicalResult> lowerDirectDeinterleaved(
       VMILoadOp op, OneToNPatternRewriter &rewriter, Value source, Value offset,
       VMIVRegType resultVMIType, VMILayoutAttr resultLayout,
@@ -11712,19 +11732,8 @@ public:
     }
 
     auto maskVMIType = cast<VMIMaskType>(op.getMask().getType());
-    if (std::optional<std::string> dist =
-            getDenseLaneStrideStoreDistToken(valueVMIType)) {
-      std::optional<StringRef> maskGranularity =
-          getDenseLaneStrideMaskedStoreMaskGranularity(valueVMIType);
-      if (maskGranularity) {
-        return lowerLaneStride(op, rewriter, valueParts, maskParts,
-                               valueVMIType, maskVMIType, *destination, *offset,
-                               *dist, *maskGranularity);
-      }
-    }
-
-    return lowerContiguous(op, rewriter, valueParts, maskParts, valueVMIType,
-                           maskVMIType, *destination, *offset, *lanesPerPart);
+    return lowerByLayout(op, rewriter, valueParts, maskParts, valueVMIType,
+                         maskVMIType, *destination, *offset, *lanesPerPart);
   }
 };
 
