@@ -12140,36 +12140,51 @@ private:
                                  offset, rowStride, numGroups);
   }
 
+  enum class GroupStoreLayoutKind { Scalar, Compact, Slots1, Slots8, General };
+
+  GroupStoreLayoutKind classifyGroupStoreLayout(
+      VMIGroupStoreOp op, VMIVRegType valueVMIType, VMILayoutAttr layout) const {
+    int64_t numGroups = op.getNumGroupsAttr().getInt();
+    bool scalar = numGroups == 1 && valueVMIType.getElementCount() == 1;
+    if (scalar) {
+      return GroupStoreLayoutKind::Scalar;
+    }
+    bool compact = isCompactSmallGroupStore(
+        layout, valueVMIType, numGroups, getConstantIndexValue(op.getRowStride()));
+    if (compact) {
+      return GroupStoreLayoutKind::Compact;
+    }
+    bool slots1 = layout && layout.isGroupSlots() && layout.getSlots() == 1 &&
+                  layout.getNumGroups() == numGroups;
+    if (slots1) {
+      return GroupStoreLayoutKind::Slots1;
+    }
+    bool slots8 = layout && layout.isGroupSlots() && layout.getSlots() == 8 &&
+                  layout.getNumGroups() == numGroups;
+    return slots8 ? GroupStoreLayoutKind::Slots8 : GroupStoreLayoutKind::General;
+  }
+
   LogicalResult lowerByLayout(
       VMIGroupStoreOp op, OpAdaptor adaptor,
       OneToNPatternRewriter &rewriter, VMIVRegType valueVMIType,
       VMILayoutAttr layout, Value destination, Value offset,
       Value rowStride) const {
-    bool compactSmallGroupStore = isCompactSmallGroupStore(
-        layout, valueVMIType, op.getNumGroupsAttr().getInt(),
-        getConstantIndexValue(op.getRowStride()));
-    bool isScalarGroupStore = op.getNumGroupsAttr().getInt() == 1 &&
-                              valueVMIType.getElementCount() == 1;
-    if (isScalarGroupStore) {
+    GroupStoreLayoutKind layoutKind =
+        classifyGroupStoreLayout(op, valueVMIType, layout);
+    if (layoutKind == GroupStoreLayoutKind::Scalar) {
       return lowerScalarGroupStore(op, adaptor, rewriter, valueVMIType,
                                    destination, offset);
     }
-    if (compactSmallGroupStore) {
+    if (layoutKind == GroupStoreLayoutKind::Compact) {
       return lowerCompactSmallGroupStore(op, adaptor, rewriter, valueVMIType,
                                          layout, destination, offset);
     }
 
-    bool isSlots1Layout =
-        layout && layout.isGroupSlots() && layout.getSlots() == 1 &&
-        layout.getNumGroups() == op.getNumGroupsAttr().getInt();
-    if (isSlots1Layout) {
+    if (layoutKind == GroupStoreLayoutKind::Slots1) {
       return lowerSlots1(op, adaptor, rewriter, valueVMIType, layout,
                          destination, offset, rowStride);
     }
-    bool isSlots8Layout =
-        layout && layout.isGroupSlots() && layout.getSlots() == 8 &&
-        layout.getNumGroups() == op.getNumGroupsAttr().getInt();
-    if (isSlots8Layout) {
+    if (layoutKind == GroupStoreLayoutKind::Slots8) {
       return lowerSlots8Dispatch(op, adaptor, rewriter, valueVMIType, layout,
                                  destination, offset, rowStride);
     }

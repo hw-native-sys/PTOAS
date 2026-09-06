@@ -3382,6 +3382,21 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_to_vpto_group_store_slots8_packed_byte.pto         # exit=0
 ```
 
+# group-store layout 分类职责拆分（2026-09-06）
+
+本轮将 `OneToNVMIGroupStoreOpPattern::lowerByLayout` 中 scalar、compact、slots=1、
+slots=8 和 general layout 的分类条件抽取为 `classifyGroupStoreLayout`。主函数继续负责
+按分类调用对应 lowering、general support fact 查询及 deinterleaved/contiguous fallback；
+分派顺序、支持矩阵和失败传播保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_layout_assignment_group_store_slots1_unit_stride.pto # exit=0
+```
+
 # legacy group-slot extension 准备阶段拆分（2026-09-06）
 
 本轮将 `lowerLegacyGroupSlotExtension` 中 group/slots/lane_stride shape 合同、conversion
