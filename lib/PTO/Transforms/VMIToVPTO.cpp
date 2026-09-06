@@ -10231,6 +10231,44 @@ public:
     return success();
   }
 
+  FailureOr<bool> tryLowerDeinterleavedStore(
+      VMIStoreOp op, Value destination, Value offset, ValueRange valueParts,
+      VMIVRegType valueVMIType, int64_t lanesPerPart,
+      bool fullPhysicalChunks, bool noWiderThanContiguous,
+      OneToNPatternRewriter &rewriter) const {
+    VMILayoutSupport supports;
+    FailureOr<VMIStoreLayoutFact> storeFact =
+        supports.getStoreLayoutFact(valueVMIType);
+    bool candidate = succeeded(storeFact) &&
+                     storeFact->valueLayout.isDeinterleaved() &&
+                     storeFact->valueLayout.getFactor() == 2 &&
+                     fullPhysicalChunks && noWiderThanContiguous;
+    if (!candidate) {
+      return false;
+    }
+    std::optional<std::string> dist =
+        getX2MemoryDistToken(valueVMIType.getElementType(), "INTLV");
+    auto firstType = valueParts.empty()
+                         ? VRegType{}
+                         : dyn_cast<VRegType>(valueParts.front().getType());
+    bool canUseDist = dist && firstType &&
+                      isDirectMemoryDistAddressLegal(
+                          op.getDestination(), op.getOffset(),
+                          valueVMIType.getElementType(), firstType,
+                          VPTOMemoryOpFamily::StoreX2, *dist);
+    bool evenValuePartCount = valueParts.size() % 2 == 0;
+    if (!canUseDist || !evenValuePartCount) {
+      return false;
+    }
+    if (failed(emitDeinterleavedStore(
+            op, destination, offset, valueParts, lanesPerPart, *dist,
+            rewriter))) {
+      return failure();
+    }
+    rewriter.eraseOp(op);
+    return true;
+  }
+
   LogicalResult
   matchAndRewrite(VMIStoreOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -10285,34 +10323,14 @@ public:
           op, "failed to compare store physical footprint");
     }
 
-    VMILayoutSupport localSupports;
-    FailureOr<VMIStoreLayoutFact> storeFact =
-        localSupports.getStoreLayoutFact(valueVMIType);
-    bool canUseDeinterleavedStore =
-        succeeded(storeFact) && storeFact->valueLayout.isDeinterleaved() &&
-        storeFact->valueLayout.getFactor() == 2 && fullPhysicalChunks &&
-        *noWiderThanContiguous;
-    if (canUseDeinterleavedStore) {
-      std::optional<std::string> dist =
-          getX2MemoryDistToken(valueVMIType.getElementType(), "INTLV");
-      auto firstType = valueParts.empty()
-                           ? VRegType{}
-                           : dyn_cast<VRegType>(valueParts.front().getType());
-      bool canUseDist = dist && firstType &&
-                        isDirectMemoryDistAddressLegal(
-                            op.getDestination(), op.getOffset(),
-                            valueVMIType.getElementType(), firstType,
-                            VPTOMemoryOpFamily::StoreX2, *dist);
-      bool evenValuePartCount = valueParts.size() % 2 == 0;
-      if (canUseDist && evenValuePartCount) {
-        if (failed(emitDeinterleavedStore(
-                op, *destination, *offset, valueParts, *lanesPerPart, *dist,
-                rewriter))) {
-          return failure();
-        }
-        rewriter.eraseOp(op);
-        return success();
-      }
+    FailureOr<bool> deinterleavedStore = tryLowerDeinterleavedStore(
+        op, *destination, *offset, valueParts, valueVMIType, *lanesPerPart,
+        fullPhysicalChunks, *noWiderThanContiguous, rewriter);
+    if (failed(deinterleavedStore)) {
+      return failure();
+    }
+    if (*deinterleavedStore) {
+      return success();
     }
 
     FailureOr<SmallVector<Value>> storeParts = materializeDataLayoutConversion(

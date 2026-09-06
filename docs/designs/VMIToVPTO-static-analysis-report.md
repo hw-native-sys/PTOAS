@@ -2075,6 +2075,18 @@ channel split/merge 合同和 `compress_store` destination 校验。对复杂条
 `check_changed_code.py --fail-on none` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过。
 
+# scalar store deinterleaved 候选职责整改
+
+本轮在 `OneToNVM​​IStoreOpPattern` 中新增 `tryLowerDeinterleavedStore`，将普通
+`vmi.store` 的 deinterleaved=2 layout fact、full-physical-footprint、INTLV dist 合法性、
+偶数 physical part arity 和实际 `vstsx2` 发射从主 `matchAndRewrite` 中独立出来。helper
+采用明确的 candidate/不可用返回值：不满足候选条件时继续 contiguous materialization，
+真正发射失败时传播 failure；保持 lane-stride 优先级、contiguous fallback、地址/part 顺序、
+mask 和失败语义不变。增量
+`check_changed_code.py --base origin/master --fail-on none` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_load_store_contiguous.pto` lowering exit=0。
+
 # group load 布局分派职责整改
 
 本轮将 `OneToNVMIGroupLoadOpPattern::matchAndRewrite` 中 block-deinterleaved f32 特殊路径
