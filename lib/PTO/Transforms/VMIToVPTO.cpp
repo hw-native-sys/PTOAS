@@ -18429,29 +18429,17 @@ std::optional<WalkResult> verifySupportedVMIMemoryStoreOp(Operation *op) {
 
 std::optional<WalkResult> verifySupportedVMIStructuredLoadOp(Operation *op) {
   if (auto load = dyn_cast<VMIDeinterleaveLoadOp>(op)) {
-    std::string reason;
-    if (succeeded(checkSupportedDeinterleaveLoadShape(load, &reason))) {
-      return WalkResult::advance();
-    }
-    load.emitError()
-        << kVMIDiagUnsupportedPrefix
-        << "pto.vmi.deinterleave_load lowers through pto.vldsx2 only for "
-           "matching contiguous full low/high result chunks with a supported "
-           "UB source and 8/16/32-bit element type ("
-        << reason << ")";
-    return WalkResult::interrupt();
+    return verifySupportedShapeOp(
+        load, checkSupportedDeinterleaveLoadShape,
+        "pto.vmi.deinterleave_load lowers through pto.vldsx2 only for "
+        "matching contiguous full low/high result chunks with a supported "
+        "UB source and 8/16/32-bit element type (");
   }
   if (auto load = dyn_cast<VMIStrideLoadOp>(op)) {
-    std::string reason;
-    if (succeeded(checkSupportedStrideLoadShape(load, &reason))) {
-      return WalkResult::advance();
-    }
-    load.emitError()
-        << kVMIDiagUnsupportedPrefix
-        << "pto.vmi.stride_load lowers through pto.vsldb only for one "
-           "contiguous physical result/mask chunk and a supported UB source ("
-        << reason << ")";
-    return WalkResult::interrupt();
+    return verifySupportedShapeOp(
+        load, checkSupportedStrideLoadShape,
+        "pto.vmi.stride_load lowers through pto.vsldb only for one "
+        "contiguous physical result/mask chunk and a supported UB source (");
   }
   if (auto load = dyn_cast<VMIGroupLoadOp>(op)) {
     std::string reason;

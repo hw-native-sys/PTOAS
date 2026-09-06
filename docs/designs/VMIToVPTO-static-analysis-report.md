@@ -2308,6 +2308,16 @@ mask 语义、group 顺序及失败传播不变。增量 `check_changed_code.py`
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_layout_assignment_group_reduce_s256.pto` 完整 lowering pipeline exit=0。
 
+# structured load verifier 分派职责整改
+
+本轮将 `verifySupportedVMIStructuredLoadOp` 中 deinterleave_load 与 stride_load 的重复
+shape-check、reason 传播和 `WalkResult` 错误处理统一改用已有的
+`verifySupportedShapeOp`。两个分支仍按原顺序识别，并保留各自完整的 VPTO 能力诊断文本；
+不改变 checker、失败语义或后续 group-load 分支。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_deinterleave_load_layout_propagation.pto` lowering exit=0。
+`vmi_to_vpto_stride_load.pto` 在既有 pack/unpack invariant 处提前终止，未进入本轮 helper。
+
 # contiguous group reduce 类型合同职责整改
 
 本轮在 `OneToNVMIGroupReduceOpPattern::lowerContiguousRows` 中引入
