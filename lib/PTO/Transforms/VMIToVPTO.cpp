@@ -9444,6 +9444,37 @@ private:
     return success();
   }
 
+  FailureOr<Value> materializeBlockDeinterleavedChunk(
+      VMIGroupLoadOp op, OneToNPatternRewriter &rewriter, Value source,
+      Value offset, Value rowStride, Type resultType, int64_t part,
+      int64_t chunk, int64_t blockElems, int64_t constantRowStride) const {
+    auto vregType = dyn_cast<VRegType>(resultType);
+    if (!vregType) {
+      return rewriter.notifyMatchFailure(
+          op, "block_deinterleaved group_load result must be vreg");
+    }
+    FailureOr<Value> allMask =
+        createAllTrueMaskForVReg(op.getLoc(), vregType, rewriter);
+    if (failed(allMask)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to create block_deinterleaved group_load mask");
+    }
+    Value blockStride = rewriter.create<arith::ConstantIntOp>(
+        op.getLoc(), constantRowStride / 8, 16);
+    Value zeroI16 = rewriter.create<arith::ConstantIntOp>(op.getLoc(), 0, 16);
+    Value chunkOffset = createGroupChunkOffset(
+        op.getLoc(), offset, rowStride, chunk * 8, part * blockElems,
+        rewriter);
+    Value chunkBase = rewriter
+                          .create<AddPtrOp>(op.getLoc(), source.getType(), source,
+                                            chunkOffset)
+                          .getResult();
+    return rewriter
+        .create<VsldbOp>(op.getLoc(), vregType, Type{}, chunkBase, blockStride,
+                         zeroI16, *allMask)
+        .getResult();
+  }
+
   LogicalResult lowerBlockDeinterleaved(
       VMIGroupLoadOp op, OneToNPatternRewriter &rewriter, Value source,
       Value offset, Value rowStride, VMIVRegType resultVMIType,
@@ -9456,40 +9487,19 @@ private:
       return rewriter.notifyMatchFailure(
           op, "block_deinterleaved group_load arity mismatch");
     }
-    auto makeI16 = [&rewriter, &op](int64_t value) -> Value {
-      return rewriter.create<arith::ConstantIntOp>(op.getLoc(), value, 16);
-    };
-    Value blockStride = makeI16(constantRowStride / 8);
-    Value zeroI16 = makeI16(0);
     constexpr int64_t kGroupsPerBlockLoad = 8;
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
     for (int64_t part = 0; part < factor; ++part) {
       for (int64_t chunk = 0; chunk < chunksPerPart; ++chunk) {
         int64_t flatIndex = part * chunksPerPart + chunk;
-        auto vregType = dyn_cast<VRegType>(resultTypes[flatIndex]);
-        if (!vregType) {
-          return rewriter.notifyMatchFailure(
-              op, "block_deinterleaved group_load result must be vreg");
+        FailureOr<Value> result = materializeBlockDeinterleavedChunk(
+            op, rewriter, source, offset, rowStride, resultTypes[flatIndex],
+            part, chunk, blockElems, constantRowStride);
+        if (failed(result)) {
+          return failure();
         }
-        FailureOr<Value> allMask =
-            createAllTrueMaskForVReg(op.getLoc(), vregType, rewriter);
-        if (failed(allMask)) {
-          return rewriter.notifyMatchFailure(
-              op, "failed to create block_deinterleaved group_load mask");
-        }
-        Value chunkOffset = createGroupChunkOffset(
-            op.getLoc(), offset, rowStride, chunk * kGroupsPerBlockLoad,
-            part * blockElems, rewriter);
-        Value chunkBase = rewriter
-                              .create<AddPtrOp>(op.getLoc(), source.getType(),
-                                                source, chunkOffset)
-                              .getResult();
-        results.push_back(rewriter
-                              .create<VsldbOp>(op.getLoc(), vregType, Type{},
-                                               chunkBase, blockStride, zeroI16,
-                                               *allMask)
-                              .getResult());
+        results.push_back(*result);
       }
     }
     replaceOpWithFlatConvertedValues(rewriter, op, results,

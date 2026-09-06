@@ -3127,6 +3127,23 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_layout_assignment_intlv_lane_stride.pto            # exit=0
 ```
 
+# block-deinterleaved group-load 单 chunk 物化职责拆分（2026-09-06）
+
+本轮将 `OneToNVMIGroupLoadOpPattern::lowerBlockDeinterleaved` 中单个 part/chunk 的
+result vreg 与 all-true mask 合同、block offset/base 构造和 `vsldb` 发射抽取为
+`materializeBlockDeinterleavedChunk`。外层函数继续负责 block arity、part/chunk 遍历和
+结果替换；block stride、8-group 访问步长、part 顺序和失败诊断保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
+相关 block group-load case 在测试自身的 ensure_layout/truncf 不支持输入处提前失败，未
+进入本轮 chunk helper。
+
 部分 direct interleave lit case 仍会在测试自身的 VMI `unpack` 前置 invariant 处提前失败，
 未进入本轮分类逻辑。
 
