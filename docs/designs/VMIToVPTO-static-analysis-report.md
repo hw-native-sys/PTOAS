@@ -2392,6 +2392,16 @@ slots=1 group-slot-load 元素宽度检查的大括号。增量检查结果为
 通过；`vmi_to_vpto_load_store_contiguous.pto` lowering exit=0。runtime expand-load 样例在
 既有 VMI pack/unpack invariant 处提前终止，未进入本轮 helper。
 
+# group-broadcast load memory 合同职责整改（2026-09-06）
+
+本轮将 `checkSupportedGroupBroadcastLoadShape` 的 memory access plan、UB pointer 和
+memory 合同抽取为 `checkSupportedGroupBroadcastLoadMemory`；入口只保留 layout-support
+table 查询并调用 memory helper。group broadcast 的支持矩阵、地址空间要求、诊断和失败
+传播保持不变，同时补齐 group-slot-load 相关控制流大括号。增量检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_layout_assignment_group_broadcast_load_e2b_b16.pto` 与
+`vmi_to_vpto_load_store_contiguous.pto` lowering 均 exit=0。
+
 # scatter shape 合同职责整改（2026-09-06）
 
 本轮将 `checkSupportedScatterShape` 的布局/目标指针校验抽取为

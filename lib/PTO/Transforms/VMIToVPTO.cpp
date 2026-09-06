@@ -2018,22 +2018,27 @@ LogicalResult checkSupportedGroupSlotLoadShape(
   VMILayoutSupport supports;
   FailureOr<VMIGroupSlotLayoutFact> fact = supports.getGroupSlotLoadLayoutFact(
       resultType, op.getNumGroupsAttr().getInt(), reason);
-  if (failed(fact))
+  if (failed(fact)) {
     return failure();
+  }
 
   VMIMemoryAccessPlan accessPlan = buildReadAccessPlan(
       op.getSource(), op.getOffset(), resultType, VMIMemoryCoverageKind::Dense);
-  if (!accessPlan.layoutSupport.isSupported())
+  if (!accessPlan.layoutSupport.isSupported()) {
     return fail(accessPlan.layoutSupport.reason);
-  if (!isa<PtrType>(op.getSource().getType()))
+  }
+  if (!isa<PtrType>(op.getSource().getType())) {
     return fail("group_slot_load requires !pto.ptr source");
+  }
 
   if (fact->slots == 8) {
     std::optional<int64_t> sourceGroupStride =
         getConstantIndexValue(op.getSourceGroupStride());
-    if (!sourceGroupStride || *sourceGroupStride != 1)
+    bool nonUnitSourceStride = !sourceGroupStride || *sourceGroupStride != 1;
+    if (nonUnitSourceStride) {
       return fail("slots=8 group_slot_load requires constant unit "
                   "source_group_stride");
+    }
     return success();
   }
 
@@ -2059,19 +2064,19 @@ LogicalResult checkSupportedSlots1GroupSlotLoadShape(
   std::optional<int64_t> sourceGroupStride =
       getConstantIndexValue(op.getSourceGroupStride());
   if (!sourceGroupStride || *sourceGroupStride <= 0 ||
-      *sourceGroupStride % alignedStrideElems != 0)
+      *sourceGroupStride % alignedStrideElems != 0) {
     return fail(Twine("slots=1 group_slot_load currently lowers as one "
                       "lane-0 vsldb per group and requires constant "
                       "positive source_group_stride divisible by ") +
                 Twine(alignedStrideElems) +
                 " elements for 32B load alignment; packed or unaligned "
                 "scalar load lowering is not implemented");
+  }
   return success();
 }
 
-LogicalResult checkSupportedGroupBroadcastLoadShape(
-    VMIGroupBroadcastLoadOp op,
-    std::string *reason) {
+LogicalResult checkSupportedGroupBroadcastLoadMemory(
+    VMIGroupBroadcastLoadOp op, VMIVRegType resultType, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason) {
       *reason = message.str();
@@ -2079,18 +2084,26 @@ LogicalResult checkSupportedGroupBroadcastLoadShape(
     return failure();
   };
 
-  VMILayoutSupport supports;
-  if (failed(supports.getGroupBroadcastLoadSupport(op, reason)))
-    return failure();
   VMIMemoryAccessPlan accessPlan =
-      buildReadAccessPlan(op.getSource(), op.getOffset(),
-                          cast<VMIVRegType>(op.getResult().getType()),
+      buildReadAccessPlan(op.getSource(), op.getOffset(), resultType,
                           VMIMemoryCoverageKind::Dense);
-  if (!accessPlan.layoutSupport.isSupported())
+  if (!accessPlan.layoutSupport.isSupported()) {
     return fail(accessPlan.layoutSupport.reason);
-  if (!isa<PtrType>(op.getSource().getType()))
+  }
+  if (!isa<PtrType>(op.getSource().getType())) {
     return fail("group_broadcast_load requires !pto.ptr source");
+  }
   return success();
+}
+
+LogicalResult checkSupportedGroupBroadcastLoadShape(
+    VMIGroupBroadcastLoadOp op, std::string *reason) {
+  VMILayoutSupport supports;
+  if (failed(supports.getGroupBroadcastLoadSupport(op, reason))) {
+    return failure();
+  }
+  return checkSupportedGroupBroadcastLoadMemory(
+      op, cast<VMIVRegType>(op.getResult().getType()), reason);
 }
 
 static bool isCompactSmallGroupStore(VMILayoutAttr layout,
