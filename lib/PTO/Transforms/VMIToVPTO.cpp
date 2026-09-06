@@ -8226,6 +8226,35 @@ private:
     return *maskAndRemaining;
   }
 
+  FailureOr<Value> materializeConstantMaskValue(
+      VMICreateMaskOp op, Type resultType, int64_t activeInChunk,
+      int64_t lanesPerPart, OneToNPatternRewriter &rewriter) const {
+    auto maskType = dyn_cast<MaskType>(resultType);
+    if (!maskType) {
+      return rewriter.notifyMatchFailure(op, "create_mask result must be mask");
+    }
+    std::optional<std::string> pattern =
+        getPrefixPattern(activeInChunk, lanesPerPart);
+    if (pattern) {
+      FailureOr<Value> mask =
+          createPrefixMask(op.getLoc(), maskType, *pattern, rewriter);
+      if (failed(mask)) {
+        return rewriter.notifyMatchFailure(
+            op, "unsupported mask type for create_mask");
+      }
+      return *mask;
+    }
+    FailureOr<std::pair<Value, Value>> maskAndRemaining =
+        createRuntimePrefixMask(
+            op.getLoc(), maskType,
+            createI32Constant(op.getLoc(), activeInChunk, rewriter), rewriter);
+    if (failed(maskAndRemaining)) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported mask type for create_mask plt fallback");
+    }
+    return maskAndRemaining->first;
+  }
+
   LogicalResult lowerConstantMask(
       VMICreateMaskOp op, int64_t activeLanes, VMIMaskType resultVMIType,
       VMILayoutAttr layout, TypeRange resultTypes, int64_t lanesPerPart,
@@ -8251,33 +8280,13 @@ private:
           return rewriter.notifyMatchFailure(
               op, "create_mask produced too many physical masks");
         }
-        auto maskType = dyn_cast<MaskType>(resultTypes[results.size()]);
-        if (!maskType) {
-          return rewriter.notifyMatchFailure(
-              op, "create_mask result must be mask");
+        FailureOr<Value> mask = materializeConstantMaskValue(
+            op, resultTypes[results.size()], activeInChunk, lanesPerPart,
+            rewriter);
+        if (failed(mask)) {
+          return failure();
         }
-        std::optional<std::string> pattern =
-            getPrefixPattern(activeInChunk, lanesPerPart);
-        if (pattern) {
-          FailureOr<Value> mask =
-              createPrefixMask(op.getLoc(), maskType, *pattern, rewriter);
-          if (failed(mask)) {
-            return rewriter.notifyMatchFailure(
-                op, "unsupported mask type for create_mask");
-          }
-          results.push_back(*mask);
-          continue;
-        }
-        FailureOr<std::pair<Value, Value>> maskAndRemaining =
-            createRuntimePrefixMask(
-                op.getLoc(), maskType,
-                createI32Constant(op.getLoc(), activeInChunk, rewriter),
-                rewriter);
-        if (failed(maskAndRemaining)) {
-          return rewriter.notifyMatchFailure(
-              op, "unsupported mask type for create_mask plt fallback");
-        }
-        results.push_back(maskAndRemaining->first);
+        results.push_back(*mask);
       }
     }
     bool resultArityMismatch = results.size() != resultTypes.size();

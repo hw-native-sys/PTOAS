@@ -3499,6 +3499,21 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_to_vpto_shuffle_forwarding.pto                     # exit=0
 ```
 
+# constant create-mask chunk 物化拆分（2026-09-06）
+
+本轮将 `lowerConstantMask` 中单个 physical chunk 的 mask result 类型校验、prefix pattern
+快路径和 runtime prefix fallback 抽取为 `materializeConstantMaskValue`。主函数继续负责
+layout factor 遍历、padding/active lane 计算、结果 arity 检查和结果累积；mask 语义与失败
+诊断保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_create_mask_plt_fallback.pto              # invalid/invariant diagnostic retained
+```
+
 # interleave lowering 入口合同与布局查询拆分（2026-09-06）
 
 本轮将模板 `OneToNVMIInterleaveOpPattern::matchAndRewrite` 中的结果物理类型/输入输出
