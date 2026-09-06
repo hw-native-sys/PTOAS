@@ -3059,6 +3059,24 @@ git diff --check                                      # passed
 check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
 ```
 
+# narrowing mask granularity 单 chunk 物化职责拆分（2026-09-06）
+
+本轮将 `materializeNarrowingMaskGranularityPart` 中单个结果 chunk 的 source 消耗、
+`ppack` 及可选 `por` 合并抽取为 `materializeNarrowingMaskChunk`。外层 helper 继续负责
+结果 chunk 遍历、source 消耗总量检查和结果收集；`allTrue` 延迟创建、LOWER/HIGHER
+顺序、尾部奇数 source chunk 语义以及失败诊断保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_ensure_mask_granularity_multistep.pto      # reaches existing pack/unpack invariant
+```
+
+该多步 granularity case 在测试自身的 VMI `unpack` 前置 invariant 处提前失败，未进入
+本轮 helper；该既有输入限制已如实记录。
+
 随后将 `computeShuffleVselrPlanForChunk` 中的结果物理 lane 校验、逻辑 lane 越界检查和
 source lane 映射抽取为 `getShuffleSourceLane`。规划函数继续负责 source chunk 一致性与
 ASC/DESC 方向推导，抽取没有改变失败诊断、迭代顺序或最终 `ShuffleVselrPlan` 内容；增量
