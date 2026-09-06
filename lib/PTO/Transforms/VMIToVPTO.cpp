@@ -18403,22 +18403,20 @@ std::optional<WalkResult> verifySupportedVMIStructuredStoreOp(Operation *op) {
   return std::nullopt;
 }
 
+static LogicalResult checkSupportedVMIStoreShape(VMIStoreOp op,
+                                                 std::string *reason) {
+  return checkSupportedStoreShape(
+      cast<VMIVRegType>(op.getValue().getType()), op.getDestination(),
+      op.getDestination().getType(), reason);
+}
+
 std::optional<WalkResult> verifySupportedVMIMemoryStoreOp(Operation *op) {
   if (auto store = dyn_cast<VMIStoreOp>(op)) {
-    std::string reason;
-    if (succeeded(checkSupportedStoreShape(
-            cast<VMIVRegType>(store.getValue().getType()),
-            store.getDestination(), store.getDestination().getType(),
-            &reason))) {
-      return WalkResult::advance();
-    }
-    store.emitError()
-        << kVMIDiagUnsupportedPrefix
-        << "pto.vmi.store requires an 8/16/32-bit predicate-maskable element "
-           "type and either full physical chunks or contiguous tail-store "
-           "layout, with UB-backed destination ("
-        << reason << ")";
-    return WalkResult::interrupt();
+    return verifySupportedShapeOp(
+        store, checkSupportedVMIStoreShape,
+        "pto.vmi.store requires an 8/16/32-bit predicate-maskable element "
+        "type and either full physical chunks or contiguous tail-store "
+        "layout, with UB-backed destination (");
   }
   if (auto structuredResult = verifySupportedVMIStructuredStoreOp(op);
       structuredResult.has_value()) {

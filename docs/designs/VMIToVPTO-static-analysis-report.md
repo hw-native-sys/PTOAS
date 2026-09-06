@@ -2328,6 +2328,15 @@ group_broadcast_load 的重复 shape-check 和失败诊断统一改用 `verifySu
 `vmi_layout_assignment_group_load_s16_unaligned_stride_invalid.pto` 仍按预期在既有
 layout contract invalid 处失败，诊断未改变。
 
+# scalar store verifier 分派职责整改
+
+本轮将 `verifySupportedVMIMemoryStoreOp` 中普通 `store` 的重复 shape-check 与错误诊断
+改为复用 `verifySupportedShapeOp`，新增 `checkSupportedVMIStoreShape` 仅负责把 operation
+operand 适配到既有 `checkSupportedStoreShape`。structured store（包括 masked_store）的
+分派顺序和特殊诊断保持不变。增量 `check_changed_code.py` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_group_store_slots1_1pt.pto` lowering exit=0。
+
 # contiguous group reduce 类型合同职责整改
 
 本轮在 `OneToNVMIGroupReduceOpPattern::lowerContiguousRows` 中引入
