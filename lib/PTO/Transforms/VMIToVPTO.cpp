@@ -7111,11 +7111,12 @@ static FailureOr<std::optional<Value>> createSubVLPeriodicFastPath(
   return *powerOfTwo;
 }
 
-FailureOr<Value> createSubVLGroupPeriodicChunk(Location loc, Type resultType,
-                                               Value base, int64_t groupSize,
-                                               StringAttr orderAttr,
-                                               PatternRewriter &rewriter) {
-  IotaMaterializationContext context{loc, base, orderAttr, rewriter};
+FailureOr<Value> createSubVLGroupPeriodicChunk(
+    const IotaMaterializationContext &context, Type resultType,
+    int64_t groupSize) {
+  Location loc = context.loc;
+  Value base = context.base;
+  PatternRewriter &rewriter = context.rewriter;
   auto vregType = dyn_cast<VRegType>(resultType);
   if (!vregType) {
     return failure();
@@ -7132,7 +7133,7 @@ FailureOr<Value> createSubVLGroupPeriodicChunk(Location loc, Type resultType,
     return failure();
   }
 
-  StringRef order = orderAttr ? orderAttr.getValue() : StringRef("ASC");
+  StringRef order = getIotaOrder(context);
   FailureOr<std::optional<Value>> fastPath = createSubVLPeriodicFastPath(
       context, resultType, groupSize, order, *allMask);
   if (failed(fastPath)) {
@@ -7260,9 +7261,8 @@ private:
                                           op.getOrderAttr(), rewriter};
         FailureOr<Value> result;
         if (physMultipleOfGroupSize && groupSize < lanesPerPart) {
-          result = createSubVLGroupPeriodicChunk(
-              op.getLoc(), resultType, base, groupSize, op.getOrderAttr(),
-              rewriter);
+          result = createSubVLGroupPeriodicChunk(context, resultType,
+                                                 groupSize);
         } else {
           result = createIotaContiguousChunk(context, resultType, laneOffset);
         }
@@ -7284,10 +7284,10 @@ private:
       if (!isa<VRegType>(resultType)) {
         return rewriter.notifyMatchFailure(op, "iota result must be vreg");
       }
+      IotaMaterializationContext context{op.getLoc(), base, op.getOrderAttr(),
+                                         rewriter};
       FailureOr<Value> result = createIotaContiguousChunk(
-          IotaMaterializationContext{op.getLoc(), base, op.getOrderAttr(),
-                                     rewriter},
-          resultType, static_cast<int64_t>(index) * lanesPerPart);
+          context, resultType, static_cast<int64_t>(index) * lanesPerPart);
       if (failed(result)) {
         return rewriter.notifyMatchFailure(
             op, "failed to materialize contiguous iota chunk");
@@ -7312,10 +7312,10 @@ private:
     for (int64_t part = 0; part < factor; ++part) {
       for (int64_t chunk = 0; chunk < chunksPerPart; ++chunk) {
         Type resultType = resultTypes[part * chunksPerPart + chunk];
+        IotaMaterializationContext context{op.getLoc(), base,
+                                           op.getOrderAttr(), rewriter};
         FailureOr<Value> result = createIotaDeinterleavedChunk(
-            IotaMaterializationContext{op.getLoc(), base, op.getOrderAttr(),
-                                       rewriter},
-            resultType, factor, part, chunk, lanesPerPart);
+            context, resultType, factor, part, chunk, lanesPerPart);
         if (failed(result)) {
           return rewriter.notifyMatchFailure(
               op, "failed to materialize deinterleaved iota chunk");

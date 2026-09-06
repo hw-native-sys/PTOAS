@@ -2065,6 +2065,12 @@ exit=0，现有 slots=1 的 EVEN/P0 转换输出保持不变。
 `vmi_to_vpto_iota_group_subvl.pto` 和 `vmi_to_vpto_iota_group_deint.pto` lowering 均
 exit=0，普通 iota case 仍在既有 pack/unpack invariant 处提前终止。
 
+随后复核发现 `createSubVLGroupPeriodicChunk` 仍在入口重新组装相同的 iota 上下文，且
+调用方存在临时聚合对象，未完全落实数据泥团收敛。本轮将该 helper 也改为直接接收
+`IotaMaterializationContext`，并在各分派循环中复用具名 context；不改变任何算法或结果
+顺序。增量 `check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；三组 iota lowering case 均 exit=0。
+
 # vmull 物理 shape 合同职责整改
 
 本轮新增 `checkVmullPhysicalShape`，将 vmull 的 physical lane 数、physical data element
