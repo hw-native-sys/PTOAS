@@ -1,5 +1,20 @@
 # VMIToVPTO 静态分析报告记录
 
+## contiguous group-reduce shape 计划拆分（2026-09-06）
+
+本轮将 `lowerContiguousRows` 中的 chunk 形状推导、group 数量/每组 chunk 数、slots=1
+结果布局识别和 source/mask/result arity 合同抽取为
+`getContiguousGroupReduceShape` 与 `ContiguousGroupReduceShape`。主 lowering 继续负责
+physical type 合同、first-lane mask、逐 group reduction 和结果恢复；group 顺序、slots=1
+结果映射、失败诊断及 reduction 语义保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
 ## shuffle vselr source 合同拆分（2026-09-06）
 
 本轮将 `buildShuffleVselrResult` 中 source part 边界及 source/result vreg 类型合同抽取为
