@@ -2613,3 +2613,14 @@ exit=0。
 physical part type 选择。补齐循环大括号并保持 part 数量、类型和失败语义不变。增量
 `check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；direct/multistep mask granularity lowering case 均 exit=0。
+
+# data layout materialization context 数据泥团整改
+
+本轮引入 `DataLayoutMaterializationContext` 与 `tryDataLayoutMaterializer`，统一承载
+data-layout conversion 四路 materializer 共同使用的 operation、source/result parts、
+layout、source element type 和 rewriter。入口仍严格按 simple → deinterleaved2 →
+lane-stride → intermediate 顺序尝试，保持 optional/failure 传播、递归转换和 unsupported
+诊断不变；lambda 改为显式接收 context，避免重复默认捕获和参数泥团。增量
+`check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_to_vpto_ensure_layout_dense_composed.pto` 与 mask
+conversion case lowering 均 exit=0。

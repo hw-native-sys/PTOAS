@@ -5187,20 +5187,36 @@ materializeDataLayoutViaContiguous(
   return std::optional<SmallVector<Value>>(std::move(*results));
 }
 
+struct DataLayoutMaterializationContext {
+  Operation *op;
+  ValueRange sourceParts;
+  TypeRange resultTypes;
+  VMILayoutAttr sourceLayout;
+  VMILayoutAttr resultLayout;
+  Type sourceVMIElementType;
+  PatternRewriter &rewriter;
+};
+
+template <typename Materializer>
+static FailureOr<std::optional<SmallVector<Value>>>
+tryDataLayoutMaterializer(const DataLayoutMaterializationContext &context,
+                          Materializer materializer) {
+  return materializer(context);
+}
+
 FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
     Type sourceVMIElementType, PatternRewriter &rewriter) {
-  auto tryMaterializer =
-      [](auto materializer) -> FailureOr<std::optional<SmallVector<Value>>> {
-    return materializer();
-  };
-  FailureOr<std::optional<SmallVector<Value>>> simple = tryMaterializer(
-      [op, sourceParts, resultTypes, sourceLayout, resultLayout,
-       sourceVMIElementType, &rewriter]() {
+  DataLayoutMaterializationContext context{
+      op, sourceParts, resultTypes, sourceLayout, resultLayout,
+      sourceVMIElementType, rewriter};
+  FailureOr<std::optional<SmallVector<Value>>> simple = tryDataLayoutMaterializer(
+      context, [](const DataLayoutMaterializationContext &context) {
         return materializeSimpleDataLayoutConversion(
-          op, sourceParts, resultTypes, sourceLayout, resultLayout,
-          sourceVMIElementType, rewriter);
+            context.op, context.sourceParts, context.resultTypes,
+            context.sourceLayout, context.resultLayout,
+            context.sourceVMIElementType, context.rewriter);
       });
   if (failed(simple)) {
     return failure();
@@ -5209,10 +5225,10 @@ FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
     return std::move(**simple);
   }
   FailureOr<std::optional<SmallVector<Value>>> deinterleaved2 =
-      tryMaterializer([op, sourceParts, resultTypes, sourceLayout, resultLayout,
-                       &rewriter]() {
+      tryDataLayoutMaterializer(context, [](const DataLayoutMaterializationContext &context) {
         return materializeDeinterleaved2Layout(
-            op, sourceParts, resultTypes, sourceLayout, resultLayout, rewriter);
+            context.op, context.sourceParts, context.resultTypes,
+            context.sourceLayout, context.resultLayout, context.rewriter);
       });
   if (failed(deinterleaved2)) {
     return failure();
@@ -5220,12 +5236,12 @@ FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
   if (deinterleaved2->has_value()) {
     return std::move(**deinterleaved2);
   }
-  FailureOr<std::optional<SmallVector<Value>>> laneStride = tryMaterializer(
-      [op, sourceParts, resultTypes, sourceLayout, resultLayout,
-       sourceVMIElementType, &rewriter]() {
+  FailureOr<std::optional<SmallVector<Value>>> laneStride =
+      tryDataLayoutMaterializer(context, [](const DataLayoutMaterializationContext &context) {
         return materializeDataLaneStrideConversion(
-          op, sourceParts, resultTypes, sourceLayout, resultLayout,
-          sourceVMIElementType, rewriter);
+            context.op, context.sourceParts, context.resultTypes,
+            context.sourceLayout, context.resultLayout,
+            context.sourceVMIElementType, context.rewriter);
       });
   if (failed(laneStride)) {
     return failure();
@@ -5233,12 +5249,12 @@ FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
   if (laneStride->has_value()) {
     return std::move(**laneStride);
   }
-  FailureOr<std::optional<SmallVector<Value>>> viaContiguous = tryMaterializer(
-      [op, sourceParts, resultTypes, sourceLayout, resultLayout,
-       sourceVMIElementType, &rewriter]() {
+  FailureOr<std::optional<SmallVector<Value>>> viaContiguous =
+      tryDataLayoutMaterializer(context, [](const DataLayoutMaterializationContext &context) {
         return materializeDataLayoutViaContiguous(
-          op, sourceParts, resultTypes, sourceLayout, resultLayout,
-          sourceVMIElementType, rewriter);
+            context.op, context.sourceParts, context.resultTypes,
+            context.sourceLayout, context.resultLayout,
+            context.sourceVMIElementType, context.rewriter);
       });
   if (failed(viaContiguous)) {
     return failure();
