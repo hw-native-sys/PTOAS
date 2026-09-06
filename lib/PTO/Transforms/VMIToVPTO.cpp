@@ -6061,6 +6061,15 @@ FailureOr<SmallVector<Value>> materializeMaskGranularityConversion(
                                          rewriter);
 }
 
+static SmallVector<Type> repeatMaskPartType(Type partType, int64_t arity) {
+  SmallVector<Type> types;
+  types.reserve(arity);
+  for (int64_t i = 0; i < arity; ++i) {
+    types.push_back(partType);
+  }
+  return types;
+}
+
 FailureOr<SmallVector<Type>> getConvertedMaskPartTypes(VMIMaskType type) {
   FailureOr<int64_t> arity = getVMIPhysicalArity(type);
   FailureOr<StringRef> physicalGranularity =
@@ -6070,12 +6079,8 @@ FailureOr<SmallVector<Type>> getConvertedMaskPartTypes(VMIMaskType type) {
   if (invalidMaskTypes) {
     return failure();
   }
-  SmallVector<Type> types;
-  types.reserve(*arity);
   Type partType = MaskType::get(type.getContext(), *physicalGranularity);
-  for (int64_t i = 0; i < *arity; ++i)
-    types.push_back(partType);
-  return types;
+  return repeatMaskPartType(partType, *arity);
 }
 
 static FailureOr<VMILayoutAttr>

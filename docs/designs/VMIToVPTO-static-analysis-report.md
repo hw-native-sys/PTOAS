@@ -2605,3 +2605,11 @@ exit=0。
 `check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；`vmi_layout_assignment_group_broadcast_load_e2b_b16.pto`
 完整 lowering pipeline exit=0。
+
+# mask physical part type 构造职责整改
+
+本轮新增 `repeatMaskPartType`，将按 physical arity 重复构造 `MaskType` part 列表的职责
+从 `getConvertedMaskPartTypes` 中独立出来；入口继续负责 arity/granularity 合同查询和
+physical part type 选择。补齐循环大括号并保持 part 数量、类型和失败语义不变。增量
+`check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；direct/multistep mask granularity lowering case 均 exit=0。
