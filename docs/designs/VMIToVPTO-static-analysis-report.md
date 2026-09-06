@@ -2635,6 +2635,16 @@ lane-stride 顺序分派，optional/failure 传播、identity forwarding 合同�
 `check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；layout 和 mask granularity 相关 lowering case 均 exit=0。
 
+# deinterleaved=2 mask layout 路由职责整改
+
+本轮新增 `Deinterleaved2MaskLayoutDirection` 与
+`getDeinterleaved2MaskDirection`，将 source/result layout 的方向识别从
+`materializeDeinterleaved2MaskLayout` 中独立出来。物化函数现在只负责 arity、identity
+part forwarding 和方向对应的 intlv/dintlv 发射；to-contiguous/from-contiguous 的判定、
+结果顺序及失败诊断保持不变。增量 `check_changed_code.py --base HEAD` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；dense layout 与 vdintlv
+相关 case lowering 均 exit=0。
+
 # predicate interleave 分派职责整改
 
 本轮引入 `PredicateInterleaveKind` 与 `createPredicateInterleave`，统一 b8/b16/b32

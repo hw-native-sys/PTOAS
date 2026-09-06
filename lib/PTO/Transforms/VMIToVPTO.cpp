@@ -5395,24 +5395,43 @@ static FailureOr<SmallVector<Value>> materializeContiguousToDeinterleaved2Mask(
   return results;
 }
 
+enum class Deinterleaved2MaskLayoutDirection {
+  Unsupported,
+  ToContiguous,
+  FromContiguous
+};
+
+static Deinterleaved2MaskLayoutDirection getDeinterleaved2MaskDirection(
+    VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout) {
+  bool sourceIsDeinterleaved2 =
+      sourceLayout && sourceLayout.isDeinterleaved() &&
+      sourceLayout.getFactor() == 2 && sourceLayout.getLaneStride() == 1;
+  bool resultIsDeinterleaved2 =
+      resultLayout && resultLayout.isDeinterleaved() &&
+      resultLayout.getFactor() == 2 && resultLayout.getLaneStride() == 1;
+  bool toContiguous = sourceIsDeinterleaved2 && resultLayout &&
+                      resultLayout.isContiguous() &&
+                      resultLayout.getLaneStride() == 1;
+  bool fromContiguous = sourceLayout && sourceLayout.isContiguous() &&
+                        sourceLayout.getLaneStride() == 1 &&
+                        resultIsDeinterleaved2;
+  if (toContiguous) {
+    return Deinterleaved2MaskLayoutDirection::ToContiguous;
+  }
+  if (fromContiguous) {
+    return Deinterleaved2MaskLayoutDirection::FromContiguous;
+  }
+  return Deinterleaved2MaskLayoutDirection::Unsupported;
+}
+
 static FailureOr<std::optional<SmallVector<Value>>>
 materializeDeinterleaved2MaskLayout(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
     PatternRewriter &rewriter) {
-  auto isElementDeinterleaved = [](VMILayoutAttr layout) {
-    return layout.isDeinterleaved() && layout.getFactor() == 2 &&
-           layout.getLaneStride() == 1;
-  };
-  bool toContiguous = sourceLayout && sourceLayout.isDeinterleaved() &&
-                      isElementDeinterleaved(sourceLayout) && resultLayout &&
-                      resultLayout.isContiguous() &&
-                      resultLayout.getLaneStride() == 1;
-  bool fromContiguous = sourceLayout && sourceLayout.isContiguous() &&
-                        sourceLayout.getLaneStride() == 1 && resultLayout &&
-                        resultLayout.isDeinterleaved() &&
-                        isElementDeinterleaved(resultLayout);
-  if (!toContiguous && !fromContiguous) {
+  Deinterleaved2MaskLayoutDirection direction =
+      getDeinterleaved2MaskDirection(sourceLayout, resultLayout);
+  if (direction == Deinterleaved2MaskLayoutDirection::Unsupported) {
     return std::nullopt;
   }
   bool invalidArity = sourceParts.size() != resultTypes.size() ||
@@ -5427,7 +5446,7 @@ materializeDeinterleaved2MaskLayout(
     return failure();
   }
 
-  if (toContiguous) {
+  if (direction == Deinterleaved2MaskLayoutDirection::ToContiguous) {
     FailureOr<SmallVector<Value>> results =
         materializeDeinterleaved2MaskToContiguous(op, sourceParts, resultTypes,
                                                   rewriter);
