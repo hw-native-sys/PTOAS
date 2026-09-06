@@ -5977,28 +5977,38 @@ static FailureOr<SmallVector<Value>> materializeMaskGranularityStep(
       op, currentType, nextType, currentParts, rewriter);
 }
 
+static FailureOr<VMIMaskType> buildNextMaskGranularityType(
+    VMIMaskType currentType, int rank, PatternRewriter &rewriter,
+    Operation *op) {
+  StringRef granularity = getMaskGranularityForRank(rank);
+  if (granularity.empty()) {
+    (void)rewriter.notifyMatchFailure(
+        op, "invalid target mask granularity rank");
+    return failure();
+  }
+  return VMIMaskType::get(op->getContext(), currentType.getElementCount(),
+                          granularity, currentType.getLayoutAttr());
+}
+
 static FailureOr<SmallVector<Value>> materializeMaskGranularitySteps(
-    Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
-    ValueRange sourceParts, int sourceRank, int resultRank,
-    PatternRewriter &rewriter) {
+    Operation *op, VMIMaskType sourceType, ValueRange sourceParts,
+    int sourceRank, int resultRank, PatternRewriter &rewriter) {
   VMIMaskType currentType = sourceType;
   SmallVector<Value> currentParts(sourceParts.begin(), sourceParts.end());
   while (currentRank != resultRank) {
     bool ascending = currentRank < resultRank;
     currentRank += ascending ? 1 : -1;
-    StringRef nextGranularity = getMaskGranularityForRank(currentRank);
-    if (nextGranularity.empty()) {
-      (void)rewriter.notifyMatchFailure(
-          op, "invalid target mask granularity rank");
+    FailureOr<VMIMaskType> nextType = buildNextMaskGranularityType(
+        currentType, currentRank, rewriter, op);
+    if (failed(nextType)) {
       return failure();
     }
     FailureOr<SmallVector<Value>> nextParts = materializeMaskGranularityStep(
-        op, currentType, nextGranularity, currentParts, rewriter);
+        op, currentType, nextType->getGranularity(), currentParts, rewriter);
     if (failed(nextParts)) {
       return failure();
     }
-    currentType = VMIMaskType::get(op->getContext(), currentType.getElementCount(),
-                                   nextGranularity, currentType.getLayoutAttr());
+    currentType = *nextType;
     currentParts = std::move(*nextParts);
   }
   return currentParts;
@@ -6021,9 +6031,8 @@ FailureOr<SmallVector<Value>> materializeMaskGranularityConversion(
         op, sourceType, resultType, sourceParts, rewriter);
   }
 
-  return materializeMaskGranularitySteps(op, sourceType, resultType,
-                                         sourceParts, currentRank, resultRank,
-                                         rewriter);
+  return materializeMaskGranularitySteps(op, sourceType, sourceParts,
+                                         currentRank, resultRank, rewriter);
 }
 
 FailureOr<SmallVector<Type>> getConvertedMaskPartTypes(VMIMaskType type) {

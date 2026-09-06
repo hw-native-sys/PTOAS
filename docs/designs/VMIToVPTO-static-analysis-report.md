@@ -2076,6 +2076,16 @@ exit=0，普通 iota case 仍在既有 pack/unpack invariant 处提前终止。
 不改变 chunk 共享 key、布局分派、偏移计算或结果顺序；增量检查及三组 iota lowering
 case 均继续通过。
 
+# mask granularity 多步转换职责整改
+
+本轮将多步 mask granularity 转换中的“下一步类型构造”抽取为
+`buildNextMaskGranularityType`。`materializeMaskGranularitySteps` 现在只负责 rank 方向、
+逐步 part 转换和 current state 推进；保持 adjacent conversion 的调用顺序、b8/b16/b32
+rank 语义、layout/element count 传播及错误诊断不变。并移除未使用的最终 result type
+参数，避免数据泥团和误导性输入。增量 `check_changed_code.py --base HEAD` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_ensure_mask_granularity_multistep.pto` 与直接转换 case lowering 均 exit=0。
+
 # vmull 物理 shape 合同职责整改
 
 本轮新增 `checkVmullPhysicalShape`，将 vmull 的 physical lane 数、physical data element
