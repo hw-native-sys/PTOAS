@@ -2340,6 +2340,10 @@ checked_files=1 errors=0 warnings=0
 既有 `VMI-PASS-INVARIANT`（pack/unpack helper 提前物化）处终止，未进入该路径，不能将
 该失败归因于本修复。
 
+本轮尝试重新构建 `pto-test-opt` 时，CMake 仍因工作区既有的 `cann-cmake` 外部依赖
+配置尝试创建 `/cann-cmake` 且权限不足而无法重新配置；该环境问题未产生新的 C++ 编译
+诊断，未删除或重置现有 build tree。
+
 # compact small group store 分支发射职责整改
 
 本轮在 `OneToNVMIGroupStoreOpPattern::lowerCompactSmallGroupStore` 中引入
