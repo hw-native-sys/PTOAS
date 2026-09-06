@@ -14294,8 +14294,9 @@ classifyGroupReduceLoweringPlan(VMIVRegType sourceType, VMIMaskType maskType,
   FailureOr<VMIGroupReduceLayoutFact> fact =
       supports.getGroupReduceLayoutFactForLayouts(
           sourceType, maskType, resultType, numGroups, reason);
-  if (failed(fact))
+  if (failed(fact)) {
     return failure();
+  }
 
   switch (fact->blockClass) {
   case VMIGroupBlockClass::QuarterBlock:
@@ -15395,11 +15396,13 @@ public:
         buildResultViewPlan(resultVRegTypes, rewriter);
     VMILayoutAttr sourceLayout = sourceVMIType.getLayoutAttr();
     VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
-    if (sourceLayout && resultLayout && sourceLayout.isContiguous() &&
+    bool denseLaneStrideExtension =
+        sourceLayout && resultLayout && sourceLayout.isContiguous() &&
         resultLayout.isContiguous() && resultLayout.getLaneStride() == 1 &&
         ((sourceBits == 16 && sourceLayout.getLaneStride() == 2) ||
          (sourceBits == 8 && sourceLayout.getLaneStride() == 4)) &&
-        resultTypes.size() == sourceParts.size()) {
+        resultTypes.size() == sourceParts.size();
+    if (denseLaneStrideExtension) {
       StringRef part = sourceBits == 16 ? StringRef("EVEN") : StringRef("P0");
       FailureOr<Value> mask =
           createAllTrueMaskForVReg(op.getLoc(), sourceType, rewriter);
@@ -15822,19 +15825,23 @@ public:
     unsigned resultBits = physicalPlan->resultBits;
     // Same-width fp->fp (bf16 -> f16, f16 -> bf16): dense contiguous 1:1,
     // no part; rnd always, sat follows the fp-to-fp contract.
-    if (sourceBits == resultBits && sourceLayout && resultLayout &&
+    bool sameWidthContiguous =
+        sourceBits == resultBits && sourceLayout && resultLayout &&
         sourceLayout.isContiguous() && sourceLayout.getLaneStride() == 1 &&
         resultLayout.isContiguous() && resultLayout.getLaneStride() == 1 &&
-        sourceParts.size() == resultTypes.size()) {
+        sourceParts.size() == resultTypes.size();
+    if (sameWidthContiguous) {
       StringAttr sat = op->getAttrOfType<StringAttr>("saturate");
       return lowerSameWidth(op, sourceParts, resultVRegTypes,
                             vcvtSourceVRegType, sat, rewriter);
     }
 
-    if (sourceLayout && resultLayout && sourceLayout.isContiguous() &&
+    bool denseLaneStrideNarrowing =
+        sourceLayout && resultLayout && sourceLayout.isContiguous() &&
         sourceLayout.getLaneStride() == 1 && resultLayout.isContiguous() &&
         resultLayout.getLaneStride() != 1 &&
-        sourceParts.size() == resultTypes.size()) {
+        sourceParts.size() == resultTypes.size();
+    if (denseLaneStrideNarrowing) {
       bool isEven32To16 =
           resultBits == 16 && resultLayout.getLaneStride() == 2;
       bool isPacked32To8 =
@@ -16420,6 +16427,40 @@ struct OneToNVMITruncIOpPattern : OneToNOpConversionPattern<VMITruncIOp> {
   using OneToNOpConversionPattern<VMITruncIOp>::OneToNOpConversionPattern;
 
 private:
+  FailureOr<std::pair<VRegType, VRegType>> getUniformTruncTypes(
+      VMITruncIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes,
+      OneToNPatternRewriter &rewriter) const {
+    bool emptyPhysicalParts = sourceParts.empty() || resultTypes.empty();
+    if (emptyPhysicalParts) {
+      return rewriter.notifyMatchFailure(
+          op, "trunci requires non-empty physical source and result parts");
+    }
+    auto sourceType = dyn_cast<VRegType>(sourceParts.front().getType());
+    auto resultType = dyn_cast<VRegType>(resultTypes.front());
+    bool invalidTypes =
+        !sourceType || !isa<IntegerType>(sourceType.getElementType()) ||
+        !resultType || !isa<IntegerType>(resultType.getElementType());
+    if (invalidTypes) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported physical trunci source/result type");
+    }
+    for (Value sourcePart : sourceParts) {
+      auto currentType = dyn_cast<VRegType>(sourcePart.getType());
+      if (!currentType || currentType != sourceType) {
+        return rewriter.notifyMatchFailure(
+            op, "trunci source physical parts must have matching integer type");
+      }
+    }
+    for (Type physicalResultType : resultTypes) {
+      auto currentType = dyn_cast<VRegType>(physicalResultType);
+      if (!currentType || currentType != resultType) {
+        return rewriter.notifyMatchFailure(
+            op, "trunci result physical parts must have matching integer type");
+      }
+    }
+    return std::make_pair(*sourceType, *resultType);
+  }
+
   void finalizeResults(VMITruncIOp op, SmallVectorImpl<Value> &results,
                        bool s32ToS8Alias, ArrayRef<Type> originalResultTypes,
                        OneToNPatternRewriter &rewriter) const {
@@ -16727,35 +16768,13 @@ public:
                                  resultTypes);
     }
 
-    bool emptyPhysicalParts = sourceParts.empty() || resultTypes.empty();
-    if (emptyPhysicalParts) {
-      return rewriter.notifyMatchFailure(
-          op, "trunci requires non-empty physical source and result parts");
+    FailureOr<std::pair<VRegType, VRegType>> uniformTypes =
+        getUniformTruncTypes(op, sourceParts, resultTypes, rewriter);
+    if (failed(uniformTypes)) {
+      return failure();
     }
-
-    auto sourceType0 = dyn_cast<VRegType>(sourceParts.front().getType());
-    auto resultType0 = dyn_cast<VRegType>(resultTypes.front());
-    bool invalidPhysicalTypes =
-        !sourceType0 || !isa<IntegerType>(sourceType0.getElementType()) ||
-        !resultType0 || !isa<IntegerType>(resultType0.getElementType());
-    if (invalidPhysicalTypes) {
-      return rewriter.notifyMatchFailure(
-          op, "unsupported physical trunci source/result type");
-    }
-    for (Value sourcePart : sourceParts) {
-      auto sourceType = dyn_cast<VRegType>(sourcePart.getType());
-      if (!sourceType || sourceType != sourceType0) {
-        return rewriter.notifyMatchFailure(
-            op, "trunci source physical parts must have matching integer type");
-      }
-    }
-    for (Type resultType : resultTypes) {
-      auto resultVRegType = dyn_cast<VRegType>(resultType);
-      if (!resultVRegType || resultVRegType != resultType0) {
-        return rewriter.notifyMatchFailure(
-            op, "trunci result physical parts must have matching integer type");
-      }
-    }
+    VRegType sourceType0 = uniformTypes->first;
+    VRegType resultType0 = uniformTypes->second;
 
     unsigned sourceBits =
         pto::getPTOStorageElemBitWidth(sourceType0.getElementType());

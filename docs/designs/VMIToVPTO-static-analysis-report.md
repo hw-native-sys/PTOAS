@@ -3159,3 +3159,18 @@ git diff --check                                      # passed
 check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
 vmi_to_vpto_reduce_extended.pto                       # exit=0
 ```
+
+# trunci physical 类型与路径条件整改（2026-09-06）
+
+本轮将 `OneToNVMITruncIOpPattern::matchAndRewrite` 中 source/result physical vreg 的非空、
+整数元素类型和跨 chunk 一致性检查抽取为 `getUniformTruncTypes`；同时为 exti/truncf
+入口中触及的 dense lane-stride、same-width 条件命名，避免复杂布尔表达式直接控制分派。
+不改变 s32→s8 alias、NOSAT carrier、factor=2/4 narrowing 的路径优先级或结果顺序。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_truncf_bf16x2_d4_packed4.pto               # exit=0
+```
