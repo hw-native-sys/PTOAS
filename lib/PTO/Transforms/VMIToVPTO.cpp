@@ -16899,6 +16899,47 @@ private:
     return std::make_pair(supportsDirect, supportsPacked);
   }
 
+  FailureOr<SmallVector<Value>> lowerGroupSlotTruncParts(
+      VMITruncIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes,
+      VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
+      VMILayoutAttr resultLayout, unsigned sourceBits, unsigned resultBits,
+      bool supportsPacked, Value activeSlotMask, StringAttr sat,
+      OneToNPatternRewriter &rewriter) const {
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (auto [sourcePart, physicalResultType] :
+         llvm::zip_equal(sourceParts, resultTypes)) {
+      auto sourceType = dyn_cast<VRegType>(sourcePart.getType());
+      auto resultType = dyn_cast<VRegType>(physicalResultType);
+      bool validPhysicalTypes =
+          sourceType &&
+          pto::getPTOStorageElemBitWidth(sourceType.getElementType()) ==
+              sourceBits &&
+          resultType;
+      if (!validPhysicalTypes) {
+        rewriter.notifyMatchFailure(
+            op, "unsupported group-slot trunci physical type");
+        return failure();
+      }
+      if (supportsPacked) {
+        results.push_back(rewriter
+                              .create<VcvtOp>(op.getLoc(), resultType, sourcePart,
+                                              activeSlotMask, nullptr, sat,
+                                              rewriter.getStringAttr("EVEN"))
+                              .getResult());
+        continue;
+      }
+      FailureOr<Value> lowered = lowerGroupSlotTruncPart(
+          op, sourcePart, sourceType, resultType, resultVMIType, resultLayout,
+          sourceBits, resultBits, activeSlotMask, sat, rewriter);
+      if (failed(lowered)) {
+        return failure();
+      }
+      results.push_back(*lowered);
+    }
+    return results;
+  }
+
   LogicalResult lowerGroupSlotTrunc(
       VMITruncIOp op, OpAdaptor adaptor, OneToNPatternRewriter &rewriter,
       VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
@@ -16917,8 +16958,6 @@ private:
         pto::getPTOStorageElemBitWidth(resultVMIType.getElementType());
     bool supportsPacked = modes->second;
 
-    SmallVector<Value> results;
-    results.reserve(resultTypes.size());
     StringAttr sat = op->getAttrOfType<StringAttr>("saturate");
     const char *activeSlotPattern =
         sourceLayout.getSlots() == 1 ? "PAT_VL1" : "PAT_VL8";
@@ -16930,36 +16969,14 @@ private:
       return rewriter.notifyMatchFailure(
           op, "failed to build group-slot trunci active slot mask");
     }
-    for (auto [sourcePart, physicalResultType] :
-         llvm::zip_equal(sourceParts, resultTypes)) {
-      auto sourceType = dyn_cast<VRegType>(sourcePart.getType());
-      auto resultType = dyn_cast<VRegType>(physicalResultType);
-      bool validPhysicalTypes =
-          sourceType &&
-          pto::getPTOStorageElemBitWidth(sourceType.getElementType()) ==
-              sourceLogicalBits &&
-          resultType;
-      if (!validPhysicalTypes) {
-        return rewriter.notifyMatchFailure(
-            op, "unsupported group-slot trunci physical type");
-      }
-      if (supportsPacked) {
-        results.push_back(rewriter
-                              .create<VcvtOp>(op.getLoc(), resultType, sourcePart,
-                                              *activeSlotMask, nullptr, sat,
-                                              rewriter.getStringAttr("EVEN"))
-                              .getResult());
-        continue;
-      }
-      FailureOr<Value> lowered = lowerGroupSlotTruncPart(
-          op, sourcePart, sourceType, resultType, resultVMIType, resultLayout,
-          sourceLogicalBits, resultLogicalBits, *activeSlotMask, sat, rewriter);
-      if (failed(lowered)) {
-        return failure();
-      }
-      results.push_back(*lowered);
+    FailureOr<SmallVector<Value>> results = lowerGroupSlotTruncParts(
+        op, sourceParts, resultTypes, sourceVMIType, resultVMIType,
+        resultLayout, sourceLogicalBits, resultLogicalBits, supportsPacked,
+        *activeSlotMask, sat, rewriter);
+    if (failed(results)) {
+      return failure();
     }
-    finalizeResults(op, results, false, resultTypes, rewriter);
+    finalizeResults(op, *results, false, resultTypes, rewriter);
     return success();
   }
 

@@ -3397,6 +3397,21 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_to_vpto_group_slot_integer_extension_matrix.pto   # exit=0
 ```
 
+# group-slot truncation physical parts 拆分（2026-09-06）
+
+本轮将 `lowerGroupSlotTrunc` 中逐 physical part 的 source/result 类型合同、packed
+`Vcvt` 快路径和通用 `lowerGroupSlotTruncPart` 调用抽取为
+`lowerGroupSlotTruncParts`。主函数继续负责模式准备、active-slot mask 和结果收敛；
+packed/direct 分派、SAT 属性传递、诊断文本及结果顺序保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_layout_assignment_trunci_lane_stride.pto           # exit=0
+```
+
 # interleave lowering 入口合同与布局查询拆分（2026-09-06）
 
 本轮将模板 `OneToNVMIInterleaveOpPattern::matchAndRewrite` 中的结果物理类型/输入输出
