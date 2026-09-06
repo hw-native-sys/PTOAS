@@ -4043,14 +4043,26 @@ FailureOr<Value> materializePrefixMask(Location loc, MaskType maskType,
   return maskAndRemaining->first;
 }
 
+static FailureOr<int64_t> validateConstantMaskChunk(
+    MaskType maskType, ArrayRef<int8_t> activeLanes) {
+  FailureOr<int64_t> lanesPerPart =
+      getMaskLanesPerPart(maskType.getGranularity());
+  bool invalidShape = failed(lanesPerPart) ||
+                      static_cast<int64_t>(activeLanes.size()) != *lanesPerPart;
+  if (invalidShape) {
+    return failure();
+  }
+  return *lanesPerPart;
+}
+
 FailureOr<Value> materializeConstantMaskChunk(Location loc, MaskType maskType,
                                               ArrayRef<int8_t> activeLanes,
                                               PatternRewriter &rewriter) {
   FailureOr<int64_t> lanesPerPart =
-      getMaskLanesPerPart(maskType.getGranularity());
-  if (failed(lanesPerPart) ||
-      static_cast<int64_t>(activeLanes.size()) != *lanesPerPart)
+      validateConstantMaskChunk(maskType, activeLanes);
+  if (failed(lanesPerPart)) {
     return failure();
+  }
 
   if (std::optional<int64_t> prefixCount =
           getPrefixActiveLaneCount(activeLanes))
