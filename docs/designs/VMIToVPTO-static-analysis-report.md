@@ -2624,3 +2624,13 @@ lane-stride → intermediate 顺序尝试，保持 optional/failure 传播、递
 `check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；`vmi_to_vpto_ensure_layout_dense_composed.pto` 与 mask
 conversion case lowering 均 exit=0。
+
+# mask layout materialization context 数据泥团整改
+
+本轮引入 `MaskLayoutMaterializationContext`，统一承载 identity、deinterleaved2 和
+lane-stride 三路 mask layout materializer 共享的 operation、parts、source/result layout
+及 rewriter。`materializeMaskLayoutConversion` 仍按 identity → deinterleaved2 →
+lane-stride 顺序分派，optional/failure 传播、identity forwarding 合同和 unsupported
+诊断保持不变；lambda 改为显式接收 context，避免重复参数捕获与默认捕获风险。增量
+`check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；layout 和 mask granularity 相关 lowering case 均 exit=0。

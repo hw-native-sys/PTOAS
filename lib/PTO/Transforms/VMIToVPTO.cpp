@@ -5660,14 +5660,21 @@ static FailureOr<std::optional<SmallVector<Value>>> materializeIdentityMaskLayou
       SmallVector<Value>(sourceParts.begin(), sourceParts.end()));
 }
 
+struct MaskLayoutMaterializationContext {
+  Operation *op;
+  ValueRange sourceParts;
+  TypeRange resultTypes;
+  VMILayoutAttr sourceLayout;
+  VMILayoutAttr resultLayout;
+  PatternRewriter &rewriter;
+};
+
 template <typename Materializer>
-static FailureOr<std::optional<SmallVector<Value>>> tryMaskLayoutMaterializer(
+static FailureOr<std::optional<SmallVector<Value>>>
+tryMaskLayoutMaterializer(
+    const MaskLayoutMaterializationContext &context,
     Materializer materializer) {
-  FailureOr<std::optional<SmallVector<Value>>> result = materializer();
-  if (failed(result)) {
-    return failure();
-  }
-  return result;
+  return materializer(context);
 }
 
 FailureOr<SmallVector<Value>> materializeMaskLayoutConversion(
@@ -5681,12 +5688,13 @@ FailureOr<SmallVector<Value>> materializeMaskLayoutConversion(
     return failure();
   }
 
+  MaskLayoutMaterializationContext context{
+      op, sourceParts, resultTypes, sourceLayout, resultLayout, rewriter};
   FailureOr<std::optional<SmallVector<Value>>> identity =
-      tryMaskLayoutMaterializer([op, sourceParts, resultTypes, sourceLayout,
-                                 resultLayout, &rewriter]() {
-        return materializeIdentityMaskLayout(op, sourceParts, resultTypes,
-                                             sourceLayout, resultLayout,
-                                             rewriter);
+      tryMaskLayoutMaterializer(context, [](const MaskLayoutMaterializationContext &context) {
+        return materializeIdentityMaskLayout(
+            context.op, context.sourceParts, context.resultTypes,
+            context.sourceLayout, context.resultLayout, context.rewriter);
       });
   if (failed(identity)) {
     return failure();
@@ -5696,11 +5704,10 @@ FailureOr<SmallVector<Value>> materializeMaskLayoutConversion(
   }
 
   FailureOr<std::optional<SmallVector<Value>>> deinterleaved2 =
-      tryMaskLayoutMaterializer([op, sourceParts, resultTypes, sourceLayout,
-                                 resultLayout, &rewriter]() {
+      tryMaskLayoutMaterializer(context, [](const MaskLayoutMaterializationContext &context) {
         return materializeDeinterleaved2MaskLayout(
-            op, sourceParts, resultTypes, sourceLayout, resultLayout,
-            rewriter);
+            context.op, context.sourceParts, context.resultTypes,
+            context.sourceLayout, context.resultLayout, context.rewriter);
       });
   if (failed(deinterleaved2)) {
     return failure();
@@ -5710,11 +5717,10 @@ FailureOr<SmallVector<Value>> materializeMaskLayoutConversion(
   }
 
   FailureOr<std::optional<SmallVector<Value>>> laneStride =
-      tryMaskLayoutMaterializer([op, sourceParts, resultTypes, sourceLayout,
-                                 resultLayout, &rewriter]() {
+      tryMaskLayoutMaterializer(context, [](const MaskLayoutMaterializationContext &context) {
         return materializeMaskLaneStrideLayout(
-            op, sourceParts, resultTypes, sourceLayout, resultLayout,
-            rewriter);
+            context.op, context.sourceParts, context.resultTypes,
+            context.sourceLayout, context.resultLayout, context.rewriter);
       });
   if (failed(laneStride)) {
     return failure();
