@@ -1,5 +1,18 @@
 # VMIToVPTO 静态分析报告记录
 
+## structured-load verifier 语义族拆分（2026-09-06）
+
+本轮将 `verifySupportedVMIStructuredLoadOp` 按 deinterleave、stride、group、group-slot 和
+group-broadcast 五类 op 拆为独立 helper，入口仅按原顺序分派。每类继续使用原有 shape
+check、诊断文本和 `WalkResult` 行为，未改变 structured-load 支持矩阵或 lowering 语义。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
 ## structured-store verifier 语义族拆分（2026-09-06）
 
 本轮将 `verifySupportedVMIStructuredStoreOp` 按 interleave、group、stride、scatter 四类

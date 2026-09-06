@@ -20632,7 +20632,8 @@ std::optional<WalkResult> verifySupportedVMIMemoryStoreOp(Operation *op) {
   return std::nullopt;
 }
 
-std::optional<WalkResult> verifySupportedVMIStructuredLoadOp(Operation *op) {
+static std::optional<WalkResult> verifySupportedVMIDeinterleaveLoadOp(
+    Operation *op) {
   if (auto load = dyn_cast<VMIDeinterleaveLoadOp>(op)) {
     return verifySupportedShapeOp(
         load, checkSupportedDeinterleaveLoadShape,
@@ -20640,12 +20641,20 @@ std::optional<WalkResult> verifySupportedVMIStructuredLoadOp(Operation *op) {
         "matching contiguous full low/high result chunks with a supported "
         "UB source and 8/16/32-bit element type (");
   }
+  return std::nullopt;
+}
+
+static std::optional<WalkResult> verifySupportedVMIStrideLoadOp(Operation *op) {
   if (auto load = dyn_cast<VMIStrideLoadOp>(op)) {
     return verifySupportedShapeOp(
         load, checkSupportedStrideLoadShape,
         "pto.vmi.stride_load lowers through pto.vsldb only for one "
         "contiguous physical result/mask chunk and a supported UB source (");
   }
+  return std::nullopt;
+}
+
+static std::optional<WalkResult> verifySupportedVMIGroupLoadOp(Operation *op) {
   if (auto load = dyn_cast<VMIGroupLoadOp>(op)) {
     return verifySupportedShapeOp(
         load, checkSupportedGroupLoadShape,
@@ -20653,6 +20662,11 @@ std::optional<WalkResult> verifySupportedVMIStructuredLoadOp(Operation *op) {
         "supported UB source, and num_groups deriving a group size aligned "
         "to physical chunks (");
   }
+  return std::nullopt;
+}
+
+static std::optional<WalkResult> verifySupportedVMIGroupSlotLoadOp(
+    Operation *op) {
   if (auto load = dyn_cast<VMIGroupSlotLoadOp>(op)) {
     return verifySupportedShapeOp(
         load, checkSupportedGroupSlotLoadShape,
@@ -20661,6 +20675,11 @@ std::optional<WalkResult> verifySupportedVMIStructuredLoadOp(Operation *op) {
         "slots=8 with constant unit source_group_stride or slots=1 row-local "
         "lowering (");
   }
+  return std::nullopt;
+}
+
+static std::optional<WalkResult> verifySupportedVMIGroupBroadcastLoadOp(
+    Operation *op) {
   if (auto load = dyn_cast<VMIGroupBroadcastLoadOp>(op)) {
     return verifySupportedShapeOp(
         load, checkSupportedGroupBroadcastLoadShape,
@@ -20670,6 +20689,24 @@ std::optional<WalkResult> verifySupportedVMIStructuredLoadOp(Operation *op) {
         "with supported UB pointer source and source_group_stride (");
   }
   return std::nullopt;
+}
+
+std::optional<WalkResult> verifySupportedVMIStructuredLoadOp(Operation *op) {
+  if (auto result = verifySupportedVMIDeinterleaveLoadOp(op);
+      result.has_value()) {
+    return result;
+  }
+  if (auto result = verifySupportedVMIStrideLoadOp(op); result.has_value()) {
+    return result;
+  }
+  if (auto result = verifySupportedVMIGroupLoadOp(op); result.has_value()) {
+    return result;
+  }
+  if (auto result = verifySupportedVMIGroupSlotLoadOp(op);
+      result.has_value()) {
+    return result;
+  }
+  return verifySupportedVMIGroupBroadcastLoadOp(op);
 }
 
 std::optional<WalkResult> verifySupportedVMIMemoryLoadOp(
