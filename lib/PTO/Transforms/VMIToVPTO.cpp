@@ -5117,6 +5117,38 @@ FailureOr<std::optional<SmallVector<Value>>> materializeDataLaneStrideConversion
   return std::nullopt;
 }
 
+static FailureOr<SmallVector<Value>> materializeDeinterleaved4Group(
+    Operation *op, ArrayRef<Value> groupParts, TypeRange resultTypes,
+    PatternRewriter &rewriter, size_t resultStart) {
+  Type chunkType = groupParts.front().getType();
+  bool mismatchedSources = llvm::any_of(
+      groupParts, [chunkType](Value part) { return part.getType() != chunkType; });
+  if (mismatchedSources) {
+    return rewriter.notifyMatchFailure(
+        op, "vintlv deinterleaved=4 requires matching source part types");
+  }
+  size_t resultEnd = std::min(resultTypes.size(), resultStart + 4);
+  for (size_t resultIndex = resultStart; resultIndex < resultEnd;
+       ++resultIndex) {
+    if (resultTypes[resultIndex] != chunkType) {
+      return rewriter.notifyMatchFailure(
+          op, "vintlv requires operands and results to share one type");
+    }
+  }
+  auto even = rewriter.create<VintlvOp>(op->getLoc(), chunkType, chunkType,
+                                        groupParts[0], groupParts[2]);
+  auto odd = rewriter.create<VintlvOp>(op->getLoc(), chunkType, chunkType,
+                                       groupParts[1], groupParts[3]);
+  auto low = rewriter.create<VintlvOp>(
+      op->getLoc(), chunkType, chunkType, even.getLow(), odd.getLow());
+  auto high = rewriter.create<VintlvOp>(
+      op->getLoc(), chunkType, chunkType, even.getHigh(), odd.getHigh());
+  SmallVector<Value> results = {low.getLow(), low.getHigh(), high.getLow(),
+                                high.getHigh()};
+  results.resize(resultEnd - resultStart);
+  return results;
+}
+
 static FailureOr<SmallVector<Value>> materializeDeinterleaved4ToContiguous(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     PatternRewriter &rewriter) {
@@ -5150,39 +5182,14 @@ static FailureOr<SmallVector<Value>> materializeDeinterleaved4ToContiguous(
     Value p1 = getSourcePart(1, i);
     Value p2 = getSourcePart(2, i);
     Value p3 = getSourcePart(3, i);
-    Type chunkType = p0.getType();
-    bool mismatchedSources = p1.getType() != chunkType ||
-                             p2.getType() != chunkType ||
-                             p3.getType() != chunkType;
-    if (mismatchedSources) {
-      return rewriter.notifyMatchFailure(
-          op, "vintlv deinterleaved=4 requires matching source part types");
+    SmallVector<Value> groupParts = {p0, p1, p2, p3};
+    FailureOr<SmallVector<Value>> groupResults =
+        materializeDeinterleaved4Group(op, groupParts, resultTypes, rewriter,
+                                       results.size());
+    if (failed(groupResults)) {
+      return failure();
     }
-    for (size_t resultIndex = results.size();
-         resultIndex < resultTypes.size() && resultIndex < results.size() + 4;
-         ++resultIndex) {
-      if (resultTypes[resultIndex] != chunkType) {
-        return rewriter.notifyMatchFailure(
-            op, "vintlv requires operands and results to share one type");
-      }
-    }
-    auto even = rewriter.create<VintlvOp>(op->getLoc(), chunkType, chunkType,
-                                          p0, p2);
-    auto odd = rewriter.create<VintlvOp>(op->getLoc(), chunkType, chunkType,
-                                         p1, p3);
-    auto low = rewriter.create<VintlvOp>(
-        op->getLoc(), chunkType, chunkType, even.getLow(), odd.getLow());
-    auto high = rewriter.create<VintlvOp>(
-        op->getLoc(), chunkType, chunkType, even.getHigh(), odd.getHigh());
-    Value groupResults[] = {low.getLow(), low.getHigh(), high.getLow(),
-                            high.getHigh()};
-    for (Value result : groupResults) {
-      bool resultLimitReached = results.size() >= resultTypes.size();
-      if (resultLimitReached) {
-        break;
-      }
-      results.push_back(result);
-    }
+    llvm::append_range(results, *groupResults);
   }
   return results;
 }

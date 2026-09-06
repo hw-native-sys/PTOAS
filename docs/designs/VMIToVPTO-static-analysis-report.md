@@ -3529,6 +3529,21 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_to_vpto_group_slot_integer_extension_matrix.pto   # exit=0
 ```
 
+# deinterleaved=4 contiguous 组物化拆分（2026-09-06）
+
+本轮将 `materializeDeinterleaved4ToContiguous` 的单组 source 类型/结果类型合同检查和
+四路 `vintlv` 物化抽取为 `materializeDeinterleaved4Group`。主函数继续负责 footprint
+arity、组分片和结果累积；source fallback、结果截断顺序、诊断文本及 `vintlv` 组合语义
+保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_vintlv_d2_to_d4.pto                        # blocked by pre-existing VMI-PASS-INVARIANT
+```
+
 # load physical plan 构造职责拆分（2026-09-06）
 
 本轮将 `OneToNVMILoadOpPattern::buildPhysicalPlan` 中 converted result type 获取与
