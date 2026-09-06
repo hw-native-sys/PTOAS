@@ -11754,6 +11754,36 @@ private:
     return std::make_pair(std::move(groupOffsets), useDirectAccess);
   }
 
+  FailureOr<SmallVector<Value>> materializeLaneStrideStreamValues(
+      VMIGroupStoreOp op, ValueRange valueParts, VMIVRegType valueVMIType,
+      VMILayoutAttr layout, OneToNPatternRewriter &rewriter) const {
+    VMILayoutAttr compactLayout = VMILayoutAttr::getGroupSlots(
+        rewriter.getContext(), layout.getNumGroups(), layout.getSlots());
+    auto compactType = VMIVRegType::get(
+        rewriter.getContext(), valueVMIType.getElementCount(),
+        valueVMIType.getElementType(), compactLayout);
+    FailureOr<SmallVector<Value>> compactValues = materializeEnsureLayoutConversion(
+        op, valueParts, valueVMIType, compactType,
+        *this->getTypeConverter(), rewriter);
+    bool invalidCompactValues = failed(compactValues) ||
+                                compactValues->size() != valueParts.size();
+    if (invalidCompactValues) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to compact unaligned slots=8 group_store");
+    }
+    return *compactValues;
+  }
+
+  SmallVector<int64_t> buildLaneStrideStreamAdvances(
+      int64_t numGroups, size_t valueCount) const {
+    SmallVector<int64_t> advances;
+    advances.reserve(valueCount);
+    for (size_t slotBlock = 0; slotBlock < valueCount; ++slotBlock) {
+      advances.push_back(std::min<int64_t>(8, numGroups - slotBlock * 8));
+    }
+    return advances;
+  }
+
   LogicalResult lowerSlots8LaneStride(
       VMIGroupStoreOp op, OpAdaptor adaptor, OneToNPatternRewriter &rewriter,
       VMIVRegType valueVMIType, VMILayoutAttr layout, Value destination,
@@ -11778,25 +11808,14 @@ private:
     SmallVector<Value> groupOffsets = std::move(offsetPlan->first);
     bool useDirectAccess = offsetPlan->second;
     if (!useDirectAccess) {
-      VMILayoutAttr compactLayout = VMILayoutAttr::getGroupSlots(
-          rewriter.getContext(), layout.getNumGroups(), layout.getSlots());
-      auto compactType = VMIVRegType::get(
-          rewriter.getContext(), valueVMIType.getElementCount(),
-          valueVMIType.getElementType(), compactLayout);
-      FailureOr<SmallVector<Value>> compactValues = materializeEnsureLayoutConversion(
-          op, valueParts, valueVMIType, compactType,
-          *this->getTypeConverter(), rewriter);
-      bool invalidCompactValues = failed(compactValues) ||
-                                  compactValues->size() != valueParts.size();
-      if (invalidCompactValues) {
-        return rewriter.notifyMatchFailure(
-            op, "failed to compact unaligned slots=8 group_store");
+      FailureOr<SmallVector<Value>> compactValues =
+          materializeLaneStrideStreamValues(op, valueParts, valueVMIType,
+                                            layout, rewriter);
+      if (failed(compactValues)) {
+        return failure();
       }
-      SmallVector<int64_t> advances;
-      for (size_t slotBlock = 0; slotBlock < compactValues->size();
-           ++slotBlock) {
-        advances.push_back(std::min<int64_t>(8, numGroups - slotBlock * 8));
-      }
+      SmallVector<int64_t> advances =
+          buildLaneStrideStreamAdvances(numGroups, compactValues->size());
       if (failed(emitGroupStoreStream(op, destination, offset, *compactValues,
                                       advances, rewriter))) {
         return failure();

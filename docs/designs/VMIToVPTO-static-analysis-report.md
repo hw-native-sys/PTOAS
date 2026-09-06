@@ -3469,6 +3469,21 @@ git diff --check                                      # passed
 check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
 ```
 
+# slots=8 lane-stride stream materialization 拆分（2026-09-06）
+
+本轮将 `lowerSlots8LaneStride` 的 unaligned fallback 中 compact layout 转换和 stream
+advance 计算抽取为 `materializeLaneStrideStreamValues` 与
+`buildLaneStrideStreamAdvances`。主函数继续负责 direct-memory 判定、stream 发射和 op
+生命周期；compact value 顺序、advance 语义、失败传播及 aligned 路径保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_group_store_slots8_packed_byte.pto         # exit=0
+```
+
 # interleave lowering 入口合同与布局查询拆分（2026-09-06）
 
 本轮将模板 `OneToNVMIInterleaveOpPattern::matchAndRewrite` 中的结果物理类型/输入输出
