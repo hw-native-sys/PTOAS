@@ -9237,14 +9237,18 @@ private:
     return fact;
   }
 
-  LogicalResult lowerInterleaveByLayout(
-      SourceOp op, OneToNPatternRewriter &rewriter, ValueRange lhsParts,
-      ValueRange rhsParts, ValueRange maskParts, ArrayRef<Type> lowTypes,
-      ArrayRef<Type> highTypes, Type elementType,
-      const VMIInterleaveLayoutFact &fact) const {
-    auto isContiguous = [](VMILayoutAttr layout) {
-      return layout && layout.isContiguous() && layout.getLaneStride() == 1;
-    };
+  enum class InterleaveLoweringKind { LaneStride, Contiguous, ZeroCopy };
+
+  struct InterleaveLoweringPlan {
+    InterleaveLoweringKind kind;
+    int64_t inputFactor = 0;
+    int64_t outputFactor = 0;
+    bool zeroCopyVintlv = false;
+  };
+
+  FailureOr<InterleaveLoweringPlan> classifyInterleaveLowering(
+      SourceOp op, const VMIInterleaveLayoutFact &fact,
+      OneToNPatternRewriter &rewriter) const {
     bool allSameLaneStride = fact.lhsLayout == fact.rhsLayout &&
                              fact.lhsLayout == fact.maskLayout &&
                              fact.lhsLayout == fact.lowLayout &&
@@ -9252,17 +9256,18 @@ private:
                              fact.lhsLayout.isContiguous() &&
                              fact.lhsLayout.getLaneStride() > 1;
     if (allSameLaneStride) {
-      return lowerLaneStrideInterleave(op, rewriter, lhsParts, rhsParts,
-                                       lowTypes, highTypes, elementType, fact);
+      return InterleaveLoweringPlan{InterleaveLoweringKind::LaneStride};
     }
+    auto isContiguous = [](VMILayoutAttr layout) {
+      return layout && layout.isContiguous() && layout.getLaneStride() == 1;
+    };
     bool allContiguous = isContiguous(fact.lhsLayout) &&
                          isContiguous(fact.rhsLayout) &&
                          isContiguous(fact.maskLayout) &&
                          isContiguous(fact.lowLayout) &&
                          isContiguous(fact.highLayout);
     if (allContiguous) {
-      return lowerContiguous(op, rewriter, lhsParts, rhsParts, maskParts,
-                             lowTypes, highTypes);
+      return InterleaveLoweringPlan{InterleaveLoweringKind::Contiguous};
     }
     int64_t inputFactor = getElementDeinterleaveFactor(fact.lhsLayout);
     int64_t outputFactor = getElementDeinterleaveFactor(fact.lowLayout);
@@ -9281,9 +9286,31 @@ private:
       return rewriter.notifyMatchFailure(
           op, "unsupported interleave physical layout relation");
     }
+    return InterleaveLoweringPlan{InterleaveLoweringKind::ZeroCopy, inputFactor,
+                                  outputFactor, zeroCopyVintlv};
+  }
+
+  LogicalResult lowerInterleaveByLayout(
+      SourceOp op, OneToNPatternRewriter &rewriter, ValueRange lhsParts,
+      ValueRange rhsParts, ValueRange maskParts, ArrayRef<Type> lowTypes,
+      ArrayRef<Type> highTypes, Type elementType,
+      const VMIInterleaveLayoutFact &fact) const {
+    FailureOr<InterleaveLoweringPlan> plan =
+        classifyInterleaveLowering(op, fact, rewriter);
+    if (failed(plan)) {
+      return failure();
+    }
+    if (plan->kind == InterleaveLoweringKind::LaneStride) {
+      return lowerLaneStrideInterleave(op, rewriter, lhsParts, rhsParts,
+                                       lowTypes, highTypes, elementType, fact);
+    }
+    if (plan->kind == InterleaveLoweringKind::Contiguous) {
+      return lowerContiguous(op, rewriter, lhsParts, rhsParts, maskParts,
+                             lowTypes, highTypes);
+    }
     FailureOr<SmallVector<Value>> zeroCopyResults = materializeZeroCopyResults(
-        op, lhsParts, rhsParts, lowTypes, highTypes, inputFactor, outputFactor,
-        zeroCopyVintlv, rewriter);
+        op, lhsParts, rhsParts, lowTypes, highTypes, plan->inputFactor,
+        plan->outputFactor, plan->zeroCopyVintlv, rewriter);
     if (failed(zeroCopyResults)) {
       return failure();
     }

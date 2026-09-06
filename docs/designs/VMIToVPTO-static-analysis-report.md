@@ -3111,6 +3111,25 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_deinterleave_load_layout_propagation.pto           # exit=0
 ```
 
+# interleave layout 路由计划拆分（2026-09-06）
+
+本轮将 `lowerInterleaveByLayout` 中 lane-stride、全 contiguous 和 zero-copy layout 关系
+分类抽取为 `InterleaveLoweringPlan`/`classifyInterleaveLowering`。主函数现在只负责依据
+计划调用对应 lowering，或执行 zero-copy 结果物化；layout 关系判断、factor 推导和不支持
+诊断集中在分类 helper 中。原有路由优先级、zero-copy vintlv/vdintlv 条件、结果顺序和
+失败语义保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_layout_assignment_intlv_lane_stride.pto            # exit=0
+```
+
+部分 direct interleave lit case 仍会在测试自身的 VMI `unpack` 前置 invariant 处提前失败，
+未进入本轮分类逻辑。
+
 # deinterleave-load 结果类型合同拆分（2026-09-06）
 
 本轮将 `OneToNVMIDeinterleaveLoadOpPattern::matchAndRewrite` 中 low/high physical result
