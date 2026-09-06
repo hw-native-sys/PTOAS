@@ -16314,9 +16314,10 @@ public:
           resultBits == sourceBits * 2 ? StringRef("EVEN") : StringRef("P0");
       FailureOr<Value> mask =
           createAllTrueMaskForVReg(op.getLoc(), sourceType, rewriter);
-      if (failed(mask))
+      if (failed(mask)) {
         return rewriter.notifyMatchFailure(
             op, "failed to build integer extension seed mask");
+      }
 
       SmallVector<Value> results;
       results.reserve(resultTypes.size());
@@ -18944,29 +18945,27 @@ struct GroupBroadcastShapePlan {
   int64_t resultFactor;
 };
 
-static FailureOr<GroupBroadcastShapePlan> buildGroupBroadcastShapePlan(
-    VMIGroupBroadcastOp op, std::string *reason) {
-  auto fail = [&reason](const Twine &message)
-      -> FailureOr<GroupBroadcastShapePlan> {
+static LogicalResult checkGroupBroadcastLogicalContract(
+    VMIGroupBroadcastOp op, VMIVRegType sourceType, VMIVRegType resultType,
+    VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
+    int64_t numGroups, std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason) {
       *reason = message.str();
     }
     return failure();
   };
-  auto sourceType = cast<VMIVRegType>(op.getSource().getType());
-  auto resultType = cast<VMIVRegType>(op.getResult().getType());
   bool mismatchedElementTypes =
       sourceType.getElementType() != resultType.getElementType();
   if (mismatchedElementTypes) {
     return fail("requires source/result element type to match");
   }
-  VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();
-  VMILayoutAttr resultLayout = resultType.getLayoutAttr();
-  if (!sourceLayout || !resultLayout) {
+  bool missingLayouts = !sourceLayout || !resultLayout;
+  if (missingLayouts) {
     return fail("requires assigned source/result layouts");
   }
-  int64_t numGroups = op.getNumGroupsAttr().getInt();
-  if (numGroups <= 0) {
+  bool invalidGroupCount = numGroups <= 0;
+  if (invalidGroupCount) {
     return fail("requires positive num_groups");
   }
   bool sourceLaneCountMismatch = sourceType.getElementCount() != numGroups;
@@ -18982,12 +18981,14 @@ static FailureOr<GroupBroadcastShapePlan> buildGroupBroadcastShapePlan(
   if (sourceLayoutMismatch) {
     return fail("requires matching num_groups source layout");
   }
-  if (resultLayout.isGroupSlots()) {
+  bool resultUsesGroupSlots = resultLayout.isGroupSlots();
+  if (resultUsesGroupSlots) {
     return fail("requires dense result layout");
   }
-
-  if (sourceLayout.getSlots() > 0 && sourceLayout.getSlots() != 8 &&
-      sourceLayout.getSlots() != 1) {
+  bool unsupportedSlots = sourceLayout.getSlots() > 0 &&
+                          sourceLayout.getSlots() != 8 &&
+                          sourceLayout.getSlots() != 1;
+  if (unsupportedSlots) {
     return fail("supports only slots=8 or slots=1 group_broadcast source "
                 "layouts");
   }
@@ -18995,6 +18996,28 @@ static FailureOr<GroupBroadcastShapePlan> buildGroupBroadcastShapePlan(
   std::string supportReason;
   if (failed(supports.getGroupBroadcastSupport(op, &supportReason))) {
     return fail(supportReason);
+  }
+  return success();
+}
+
+static FailureOr<GroupBroadcastShapePlan> buildGroupBroadcastShapePlan(
+    VMIGroupBroadcastOp op, std::string *reason) {
+  auto fail = [&reason](const Twine &message)
+      -> FailureOr<GroupBroadcastShapePlan> {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  auto sourceType = cast<VMIVRegType>(op.getSource().getType());
+  auto resultType = cast<VMIVRegType>(op.getResult().getType());
+  VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();
+  VMILayoutAttr resultLayout = resultType.getLayoutAttr();
+  int64_t numGroups = op.getNumGroupsAttr().getInt();
+  if (failed(checkGroupBroadcastLogicalContract(
+          op, sourceType, resultType, sourceLayout, resultLayout, numGroups,
+          reason))) {
+    return failure();
   }
 
   FailureOr<int64_t> lanesPerPart =

@@ -3128,3 +3128,19 @@ git diff --check                                      # passed
 check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
 vmi_layout_assignment_scatter.pto                      # exit=0
 ```
+
+# group broadcast shape 合同分层整改（2026-09-06）
+
+本轮将 `buildGroupBroadcastShapePlan` 中 source/result 基础合同、num_groups、布局类型及
+layout-support 查询抽取为 `checkGroupBroadcastLogicalContract`。plan builder 现在只负责
+physical lanes、group size 和 result factor 推导；结果 chunk 合同仍由既有
+`checkGroupBroadcastResultShape` 负责。该拆分保持 group size 推导、布局优先级、失败诊断
+和 lowering 结果不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_layout_assignment_group_broadcast_load_e2b_b16.pto # exit=0
+```
