@@ -4504,27 +4504,45 @@ FailureOr<SmallVector<Value>> materializeLaneStrideToContiguous(
       laneStride, rewriter);
 }
 
+static LogicalResult checkGroupSlotLaneStrideContract(
+    Operation *op, ValueRange sourceParts, TypeRange resultTypes,
+    Type elementType, int64_t sourceStride, int64_t resultStride,
+    PatternRewriter &rewriter) {
+  auto fail = [&op, &rewriter](const Twine &message) {
+    (void)rewriter.notifyMatchFailure(op, message);
+    return failure();
+  };
+  bool invalidArity = sourceParts.size() != resultTypes.size() ||
+                     sourceParts.empty();
+  if (invalidArity) {
+    return fail("group-slot lane_stride materialization requires matching "
+                "non-empty source/result physical arity");
+  }
+  bool unsupportedStride =
+      (sourceStride != 1 && sourceStride != 2 && sourceStride != 4) ||
+      (resultStride != 1 && resultStride != 2 && resultStride != 4);
+  if (unsupportedStride) {
+    return fail("unsupported group-slot lane_stride factor");
+  }
+  unsigned elementBits = pto::getPTOStorageElemBitWidth(elementType);
+  int64_t maxStride = std::max(sourceStride, resultStride);
+  bool unsupportedCarrier =
+      (elementBits != 8 && elementBits != 16) || elementBits * maxStride > 32;
+  if (unsupportedCarrier) {
+    return fail("unsupported group-slot lane_stride carrier shape");
+  }
+  return success();
+}
+
 FailureOr<SmallVector<Value>> materializeGroupSlotLaneStride(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     Type elementType, int64_t sourceStride, int64_t resultStride,
     PatternRewriter &rewriter) {
-  auto fail = [&op, &rewriter](const Twine &message) -> FailureOr<SmallVector<Value>> {
-    (void)rewriter.notifyMatchFailure(op, message);
+  if (failed(checkGroupSlotLaneStrideContract(
+          op, sourceParts, resultTypes, elementType, sourceStride, resultStride,
+          rewriter))) {
     return failure();
-  };
-
-  if (sourceParts.size() != resultTypes.size() || sourceParts.empty())
-    return fail("group-slot lane_stride materialization requires matching "
-                "non-empty source/result physical arity");
-  if ((sourceStride != 1 && sourceStride != 2 && sourceStride != 4) ||
-      (resultStride != 1 && resultStride != 2 && resultStride != 4))
-    return fail("unsupported group-slot lane_stride factor");
-
-  unsigned elementBits = pto::getPTOStorageElemBitWidth(elementType);
-  int64_t maxStride = std::max(sourceStride, resultStride);
-  if ((elementBits != 8 && elementBits != 16) ||
-      elementBits * maxStride > 32)
-    return fail("unsupported group-slot lane_stride carrier shape");
+  }
 
   SmallVector<Value> results;
   results.reserve(resultTypes.size());
@@ -4533,8 +4551,10 @@ FailureOr<SmallVector<Value>> materializeGroupSlotLaneStride(
     FailureOr<Value> result = materializeGroupSlotLaneStridePart(
         op, source, resultType, elementType, sourceStride, resultStride,
         rewriter);
-    if (failed(result))
-      return fail("failed to bitcast group-slot result carrier");
+    if (failed(result)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to bitcast group-slot result carrier");
+    }
     results.push_back(*result);
   }
   return results;

@@ -2340,6 +2340,15 @@ checked_files=1 errors=0 warnings=0
 既有 `VMI-PASS-INVARIANT`（pack/unpack helper 提前物化）处终止，未进入该路径，不能将
 该失败归因于本修复。
 
+# group-slot lane-stride 合同职责整改（2026-09-06）
+
+本轮将 `materializeGroupSlotLaneStride` 的输入 arity、stride 范围及 carrier 位宽校验抽取
+为 `checkGroupSlotLaneStrideContract`。物化主体只负责逐 physical part 调用已有的单 part
+转换并收集结果；失败诊断、source/result 顺序、stride 语义和结果数量保持不变，同时补齐
+循环控制语句大括号。增量静态检查结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；group-slot store、dense layout 和 interleaved memory lowering
+case 均 exit=0。
+
 本轮尝试重新构建 `pto-test-opt` 时，CMake 仍因工作区既有的 `cann-cmake` 外部依赖
 配置尝试创建 `/cann-cmake` 且权限不足而无法重新配置；该环境问题未产生新的 C++ 编译
 诊断，未删除或重置现有 build tree。
