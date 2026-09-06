@@ -18279,11 +18279,18 @@ static FailureOr<GroupBroadcastShapePlan> buildGroupBroadcastShapePlan(
 LogicalResult checkSupportedGroupBroadcastShape(
     VMIGroupBroadcastOp op,
     std::string *reason = nullptr) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
   FailureOr<GroupBroadcastShapePlan> plan =
       buildGroupBroadcastShapePlan(op, reason);
   if (failed(plan)) {
     return failure();
   }
+  auto resultType = cast<VMIVRegType>(op.getResult().getType());
   VMILayoutAttr resultLayout = plan->resultLayout;
   int64_t groupSize = plan->groupSize;
   int64_t lanesPerPart = plan->lanesPerPart;

@@ -2514,3 +2514,12 @@ exit=0。
 `check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过。native 增量构建仍被工作区既有 CMake 外部依赖尝试创建
 `/cann-cmake` 的权限错误阻断，未产生本轮 C++ 编译诊断。
+
+# group broadcast shape 重构回归修复
+
+复核既有 group-broadcast shape 拆分时发现入口遗漏了结果类型和诊断闭包定义，导致该
+路径无法通过 C++ 编译。现已补齐 `resultType` 的操作数类型提取及局部 `fail` 诊断 helper，
+不改变任何 shape 判定、错误文本或 lowering 分派。增量
+`check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_layout_assignment_group_broadcast_load_e2b_b16.pto`
+完整 lowering pipeline exit=0。
