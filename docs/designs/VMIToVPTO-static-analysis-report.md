@@ -2369,6 +2369,19 @@ case 均 exit=0。
 `check_changed_code.py --base origin/master` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过。
 
+# group-load contiguous shape 职责整改（2026-09-06）
+
+本轮将 `checkSupportedGroupLoadShape` 中 contiguous result layout 的 memory support、
+full-chunk/group-row 合同抽取为 `checkSupportedContiguousGroupLoadShape`，入口现在只负责
+result layout 分类、group size 推导及 block-deinterleaved 分派。contiguous 与
+block-deinterleaved 的支持优先级、row-stride 规则、诊断和失败传播保持不变；同时补齐
+slots=1 group-slot-load 元素宽度检查的大括号。增量检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
+
+`vmi_layout_assignment_group_store_slots1_unit_stride.pto` 与
+`vmi_to_vpto_load_store_contiguous.pto` lowering exit=0；两个 group-load stride store
+样例在既有测试 IR 的整体 region/前置约束处终止，未进入本轮 helper，不能归因于本轮修改。
+
 本轮尝试重新构建 `pto-test-opt` 时，CMake 仍因工作区既有的 `cann-cmake` 外部依赖
 配置尝试创建 `/cann-cmake` 且权限不足而无法重新配置；该环境问题未产生新的 C++ 编译
 诊断，未删除或重置现有 build tree。

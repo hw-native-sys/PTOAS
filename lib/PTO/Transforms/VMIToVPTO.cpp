@@ -1940,6 +1940,33 @@ LogicalResult checkSupportedBlockDeinterleavedGroupLoadShape(
 }
 
 LogicalResult
+checkSupportedContiguousGroupLoadShape(VMIGroupLoadOp op,
+                                       VMIVRegType resultType,
+                                       int64_t groupSize, std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+
+  VMILayoutSupport supports;
+  if (failed(supports.getGroupLoadLayoutFact(op, reason))) {
+    return failure();
+  }
+  if (failed(checkSupportedLoadShape(resultType, op.getSource(),
+                                     op.getSource().getType(), std::nullopt,
+                                     reason))) {
+    return failure();
+  }
+  std::optional<int64_t> rowStride = getConstantIndexValue(op.getRowStride());
+  if (rowStride && *rowStride == groupSize) {
+    return success();
+  }
+  return checkSupportedGroupChunkShape(resultType, groupSize, reason);
+}
+
+LogicalResult
 checkSupportedGroupLoadShape(VMIGroupLoadOp op, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason) {
@@ -1950,25 +1977,18 @@ checkSupportedGroupLoadShape(VMIGroupLoadOp op, std::string *reason) {
 
   auto resultType = cast<VMIVRegType>(op.getResult().getType());
   VMILayoutAttr resultLayout = resultType.getLayoutAttr();
-  if (!resultLayout)
+  if (!resultLayout) {
     return fail("requires assigned result layout");
+  }
   FailureOr<int64_t> groupSize = getGroupSizeFromNumGroups(
       resultType, op.getNumGroupsAttr().getInt(), reason);
-  if (failed(groupSize))
+  if (failed(groupSize)) {
     return failure();
+  }
 
   if (resultLayout.isContiguous()) {
-    VMILayoutSupport supports;
-    if (failed(supports.getGroupLoadLayoutFact(op, reason)))
-      return failure();
-    if (failed(checkSupportedLoadShape(resultType, op.getSource(),
-                                       op.getSource().getType(), std::nullopt,
-                                       reason)))
-      return failure();
-    std::optional<int64_t> rowStride = getConstantIndexValue(op.getRowStride());
-    if (rowStride && *rowStride == *groupSize)
-      return success();
-    return checkSupportedGroupChunkShape(resultType, *groupSize, reason);
+    return checkSupportedContiguousGroupLoadShape(op, resultType, *groupSize,
+                                                  reason);
   }
 
   if (resultLayout.isBlockDeinterleaved() &&
@@ -2031,8 +2051,10 @@ LogicalResult checkSupportedSlots1GroupSlotLoadShape(
 
   unsigned elementBits =
       pto::getPTOStorageElemBitWidth(resultType.getElementType());
-  if (elementBits == 0 || 256 % elementBits != 0)
+  bool unsupportedElementWidth = elementBits == 0 || 256 % elementBits != 0;
+  if (unsupportedElementWidth) {
     return fail("slots=1 group_slot_load requires supported element width");
+  }
   int64_t alignedStrideElems = 256 / elementBits;
   std::optional<int64_t> sourceGroupStride =
       getConstantIndexValue(op.getSourceGroupStride());
