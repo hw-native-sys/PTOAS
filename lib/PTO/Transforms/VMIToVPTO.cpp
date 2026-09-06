@@ -17049,6 +17049,25 @@ static FailureOr<VRegType> validateFpToIntSourceParts(
   return sourceType;
 }
 
+template <typename OpTy>
+static FailureOr<SmallVector<VRegType>> validateFpToIntResultParts(
+    OpTy op, TypeRange resultTypes, StringRef emptyDiagnostic,
+    StringRef typeDiagnostic, OneToNPatternRewriter &rewriter) {
+  if (resultTypes.empty()) {
+    return rewriter.notifyMatchFailure(op, emptyDiagnostic);
+  }
+  SmallVector<VRegType> resultVRegTypes;
+  resultVRegTypes.reserve(resultTypes.size());
+  for (Type physicalResultType : resultTypes) {
+    auto resultType = dyn_cast<VRegType>(physicalResultType);
+    if (!resultType) {
+      return rewriter.notifyMatchFailure(op, typeDiagnostic);
+    }
+    resultVRegTypes.push_back(resultType);
+  }
+  return resultVRegTypes;
+}
+
 struct OneToNVMIFPToSIOpPattern : OneToNOpConversionPattern<VMIFPToSIOp> {
   using OneToNOpConversionPattern<VMIFPToSIOp>::OneToNOpConversionPattern;
 
@@ -17065,21 +17084,9 @@ private:
   FailureOr<SmallVector<VRegType>> validateResultParts(
       VMIFPToSIOp op, TypeRange resultTypes,
       OneToNPatternRewriter &rewriter) const {
-    if (resultTypes.empty()) {
-      return rewriter.notifyMatchFailure(
-          op, "fptosi requires at least one physical result chunk");
-    }
-    SmallVector<VRegType> resultVRegTypes;
-    resultVRegTypes.reserve(resultTypes.size());
-    for (Type physicalResultType : resultTypes) {
-      auto resultType = dyn_cast<VRegType>(physicalResultType);
-      if (!resultType) {
-        return rewriter.notifyMatchFailure(
-            op, "unsupported physical fptosi result type");
-      }
-      resultVRegTypes.push_back(resultType);
-    }
-    return resultVRegTypes;
+    return validateFpToIntResultParts(
+        op, resultTypes, "fptosi requires at least one physical result chunk",
+        "unsupported physical fptosi result type", rewriter);
   }
 
 public:
@@ -17230,21 +17237,9 @@ private:
   FailureOr<SmallVector<VRegType>> validateResultParts(
       VMIFPToUIOp op, TypeRange resultTypes,
       OneToNPatternRewriter &rewriter) const {
-    if (resultTypes.empty()) {
-      return rewriter.notifyMatchFailure(
-          op, "fptoui requires at least one physical result chunk");
-    }
-    SmallVector<VRegType> resultVRegTypes;
-    resultVRegTypes.reserve(resultTypes.size());
-    for (Type physicalResultType : resultTypes) {
-      auto resultType = dyn_cast<VRegType>(physicalResultType);
-      if (!resultType) {
-        return rewriter.notifyMatchFailure(
-            op, "unsupported physical fptoui result type");
-      }
-      resultVRegTypes.push_back(resultType);
-    }
-    return resultVRegTypes;
+    return validateFpToIntResultParts(
+        op, resultTypes, "fptoui requires at least one physical result chunk",
+        "unsupported physical fptoui result type", rewriter);
   }
 
 public:

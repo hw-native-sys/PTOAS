@@ -3191,3 +3191,19 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 
 `vmi_to_vpto_fptosi_*` 代表性输入在既有 VMI pack/unpack pipeline invariant 处提前失败，
 未进入本轮 helper，不能将该既有测试前置失败归因于本次重构。
+
+# fp-to-int result 校验复用（2026-09-06）
+
+本轮进一步将 `fptosi` 与 `fptoui` 重复的 result physical chunk 非空及 `VRegType` 校验
+统一为 `validateFpToIntResultParts`。helper 通过参数保留两种操作各自的诊断文本，调用方
+仍分别负责转换合同和 lowering 路径；不改变 result arity、mask 或 part 顺序。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
+`vmi_to_vpto_fptoui_f16_to_u8.pto` 同样在既有 pack/unpack pipeline invariant 处提前失败，
+未进入本轮 helper。
