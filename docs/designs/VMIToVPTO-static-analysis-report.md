@@ -1,5 +1,19 @@
 # VMIToVPTO 静态分析报告记录
 
+## lambda 显式捕获整改（2026-09-06）
+
+本轮处理报告中的 `G.RES.06-CPP` 风险：将
+`createResidualSubVLGroupPeriodicChunk` 内部 `materializeGroup` lambda 从默认引用捕获
+改为显式捕获实际使用的局部对象和值。lambda 的行为、算术方向、lane mask 生成和失败
+传播保持不变；文件中不再保留 `[&]`/`[=]` 默认捕获。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
 ## shuffle vselr chunk 计数职责拆分（2026-09-06）
 
 本轮将 `computeShuffleVselrPlans` 中 result physical chunk 数量查询与计划遍历分离，

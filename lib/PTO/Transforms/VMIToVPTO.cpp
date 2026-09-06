@@ -7779,7 +7779,9 @@ FailureOr<Value> createResidualSubVLGroupPeriodicChunk(
                           allMask,
                           /*position=*/nullptr)
           .getResult();
-  auto materializeGroup = [&](int64_t localGroup) -> FailureOr<Value> {
+  auto materializeGroup =
+      [&loc, resultType, base, order, full, maskType, zeroScalar, groupSize,
+       &rewriter](int64_t localGroup) -> FailureOr<Value> {
     Value adjusted = full;
     if (localGroup != 0) {
       int64_t delta = localGroup * groupSize;
