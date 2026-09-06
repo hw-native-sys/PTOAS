@@ -9467,6 +9467,29 @@ static FailureOr<GroupSlotLoadResultPart> getGroupSlotLoadResultPart(
   return GroupSlotLoadResultPart{*vregType, *maskType};
 }
 
+static LogicalResult lowerSingleGroupSlotLoad(
+    Operation *op, Value source, Value offset, VMIVRegType resultVMIType,
+    TypeRange resultTypes, OneToNPatternRewriter &rewriter,
+    SmallVectorImpl<Value> &results) {
+  std::optional<std::string> dist =
+      getScalarBroadcastLoadDistToken(resultVMIType.getElementType());
+  if (!dist) {
+    return rewriter.notifyMatchFailure(
+        op, "single-slot group_slot_load requires supported BRC load element width");
+  }
+  auto vregType = dyn_cast<VRegType>(resultTypes.front());
+  if (!vregType) {
+    return rewriter.notifyMatchFailure(
+        op, "single-slot group_slot_load result must be vreg");
+  }
+  results.push_back(rewriter
+                       .create<VldsOp>(op->getLoc(), vregType,
+                                       /*updated_base=*/Type{}, source, offset,
+                                       rewriter.getStringAttr(*dist))
+                       .getResult());
+  return success();
+}
+
 static LogicalResult lowerGroupSlotLoadSlots8(
     Operation *op, Value source, Value offset, Value sourceGroupStride,
     VMIVRegType resultVMIType, TypeRange resultTypes, int64_t numGroups,
@@ -9486,23 +9509,8 @@ static LogicalResult lowerGroupSlotLoadSlots8(
         .getResult();
   };
   if (numGroups == 1) {
-    std::optional<std::string> dist =
-        getScalarBroadcastLoadDistToken(resultVMIType.getElementType());
-    if (!dist) {
-      return rewriter.notifyMatchFailure(
-          op, "single-slot group_slot_load requires supported BRC load element width");
-    }
-    auto vregType = dyn_cast<VRegType>(resultTypes.front());
-    if (!vregType) {
-      return rewriter.notifyMatchFailure(
-          op, "single-slot group_slot_load result must be vreg");
-    }
-    results.push_back(rewriter
-                          .create<VldsOp>(op->getLoc(), vregType,
-                                          /*updated_base=*/Type{}, source,
-                                          offset, rewriter.getStringAttr(*dist))
-                          .getResult());
-    return success();
+    return lowerSingleGroupSlotLoad(op, source, offset, resultVMIType,
+                                    resultTypes, rewriter, results);
   }
   for (auto [chunk, resultType] : llvm::enumerate(resultTypes)) {
     FailureOr<GroupSlotLoadResultPart> resultPart =

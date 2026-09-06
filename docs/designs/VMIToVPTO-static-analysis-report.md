@@ -3428,6 +3428,20 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_layout_assignment_group_broadcast_load_e2b_b16.pto # exit=0
 ```
 
+# group-slot-load 单组 BRC 路径拆分（2026-09-06）
+
+本轮将 `lowerGroupSlotLoadSlots8` 中 `numGroups == 1` 的 BRC 结果类型、dist 查询和
+`vlds` 构造抽取为 `lowerSingleGroupSlotLoad`。slots=8 多组 `vsldb` 路径、mask 构造、
+offset 计算和支持矩阵保持不变；单组路径的诊断和结果顺序保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_group_slot_load.pto                        # blocked by pre-existing VMI-PASS-INVARIANT
+```
+
 # load physical plan 构造职责拆分（2026-09-06）
 
 本轮将 `OneToNVMILoadOpPattern::buildPhysicalPlan` 中 converted result type 获取与
