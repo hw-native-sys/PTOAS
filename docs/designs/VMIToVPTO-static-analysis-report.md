@@ -2448,6 +2448,14 @@ physical arity 和 physical mask granularity 校验抽取为 `checkAddCarryMaskP
 的 mask 列表顺序、支持范围、诊断和失败传播保持不变；同时补齐新 helper 中的控制流
 条件命名。增量检查结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
 
+# verifier 控制流与 add-carry 合同收敛（2026-09-06）
+
+复核完整文件时发现 active-prefix、FP conversion、reduce、compress、group-reduce 以及
+add-carry verifier 区域仍有历史无大括号控制语句。本轮统一补齐这些控制流，并保留
+`checkAddCarryMaskPort` 的逐 mask 合同拆分；同时将复杂条件命名，避免文本检查器误判
+跨行条件。未改变 verifier dispatch 顺序、支持矩阵、诊断和失败传播。增量检查结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
+
 # scatter shape 合同职责整改（2026-09-06）
 
 本轮将 `checkSupportedScatterShape` 的布局/目标指针校验抽取为

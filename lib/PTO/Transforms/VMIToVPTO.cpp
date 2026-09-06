@@ -18134,16 +18134,18 @@ LogicalResult verifyNoResidualVMIIR(ModuleOp module) {
 LogicalResult checkSupportedExtFShape(VMIExtFOp op,
                                       std::string *reason = nullptr) {
   VMILayoutSupport supports;
-  if (failed(supports.getExtFSupport(op, reason)))
+  if (failed(supports.getExtFSupport(op, reason))) {
     return failure();
+  }
   return success();
 }
 
 LogicalResult checkSupportedTruncFShape(VMITruncFOp op,
                                         std::string *reason = nullptr) {
   VMILayoutSupport supports;
-  if (failed(supports.getTruncFSupport(op, reason)))
+  if (failed(supports.getTruncFSupport(op, reason))) {
     return failure();
+  }
   return success();
 }
 
@@ -18189,15 +18191,17 @@ LogicalResult checkSupportedFPToIntShape(OpTy op, StringRef conversionName,
   auto resultType = cast<VMIVRegType>(op.getResult().getType());
   VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();
   VMILayoutAttr resultLayout = resultType.getLayoutAttr();
-  if (!sourceLayout || !resultLayout)
+  if (!sourceLayout || !resultLayout) {
     return fail("requires assigned source/result layouts");
+  }
 
   Type srcElem = sourceType.getElementType();
   Type dstElem = resultType.getElementType();
   auto contract = lookup(srcElem, dstElem);
-  if (!contract)
+  if (!contract) {
     return fail(Twine("unsupported ") + conversionName +
                 " conversion element type pair");
+  }
 
   unsigned srcBits = pto::getPTOStorageElemBitWidth(srcElem);
   unsigned dstBits = pto::getPTOStorageElemBitWidth(dstElem);
@@ -18214,8 +18218,9 @@ LogicalResult checkSupportedFPToIntShape(OpTy op, StringRef conversionName,
     FailureOr<VMICastLayoutFact> fact =
         layoutSupport.getCastLayoutFactForLayouts(
             sourceType, resultType, sourceLayout, resultLayout, reason);
-    if (failed(fact))
+    if (failed(fact)) {
       return failure();
+    }
   }
 
   return success();
@@ -18509,12 +18514,12 @@ static LogicalResult checkActivePrefixIndexLayouts(
   };
   VMILayoutAttr maskLayout = maskType.getLayoutAttr();
   VMILayoutAttr resultLayout = resultType.getLayoutAttr();
-  if (!maskLayout || !resultLayout)
-  {
+  if (!maskLayout || !resultLayout) {
     return fail("requires assigned mask and result layouts");
   }
-  if (!maskLayout.isContiguous() || !resultLayout.isContiguous())
-  {
+  bool nonContiguousLayout = !maskLayout.isContiguous() ||
+                             !resultLayout.isContiguous();
+  if (nonContiguousLayout) {
     return fail("requires contiguous mask and result layouts");
   }
   return success();
@@ -18542,8 +18547,8 @@ static LogicalResult checkActivePrefixIndexPhysicalChunks(
   }
   FailureOr<int64_t> maskArity = getVMIPhysicalArity(maskType);
   FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
-  if (failed(maskArity) || failed(resultArity))
-  {
+  bool missingArity = failed(maskArity) || failed(resultArity);
+  if (missingArity) {
     return fail("requires computable mask and result physical arity");
   }
   if (*maskArity != 1 || *resultArity != 1) {
@@ -18680,8 +18685,9 @@ LogicalResult checkSupportedCompressStoreShape(
     VMICompressStoreOp op,
     std::string *reason = nullptr) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
@@ -18794,7 +18800,7 @@ static FailureOr<ReducePhysicalShapePlan> buildReducePhysicalShapePlan(
   }
 
   std::string fullChunkReason;
-  if (failed(checkFullDataPhysicalChunks(sourceType, &fullChunkReason)))
+  if (failed(checkFullDataPhysicalChunks(sourceType, &fullChunkReason))) {
     return fail(Twine("requires full source physical chunks so padding lanes "
                       "do not participate in the reduction; ") +
                 fullChunkReason);
@@ -18836,23 +18842,29 @@ LogicalResult
 checkSupportedGroupReduceShape(OpTy op, std::string *reason = nullptr) {
   VMILayoutSupport supports;
   if constexpr (std::is_same_v<OpTy, VMIGroupReduceAddFOp>) {
-    if (succeeded(supports.getGroupReduceAddFSupport(op, reason)))
+    if (succeeded(supports.getGroupReduceAddFSupport(op, reason))) {
       return success();
+    }
   } else if constexpr (std::is_same_v<OpTy, VMIGroupReduceMaxFOp>) {
-    if (succeeded(supports.getGroupReduceMaxFSupport(op, reason)))
+    if (succeeded(supports.getGroupReduceMaxFSupport(op, reason))) {
       return success();
+    }
   } else if constexpr (std::is_same_v<OpTy, VMIGroupReduceMaxIOp>) {
-    if (succeeded(supports.getGroupReduceMaxISupport(op, reason)))
+    if (succeeded(supports.getGroupReduceMaxISupport(op, reason))) {
       return success();
+    }
   } else if constexpr (std::is_same_v<OpTy, VMIGroupReduceMinFOp>) {
-    if (succeeded(supports.getGroupReduceMinFSupport(op, reason)))
+    if (succeeded(supports.getGroupReduceMinFSupport(op, reason))) {
       return success();
+    }
   } else if constexpr (std::is_same_v<OpTy, VMIGroupReduceMinIOp>) {
-    if (succeeded(supports.getGroupReduceMinISupport(op, reason)))
+    if (succeeded(supports.getGroupReduceMinISupport(op, reason))) {
       return success();
+    }
   } else {
-    if (succeeded(supports.getGroupReduceAddISupport(op, reason)))
+    if (succeeded(supports.getGroupReduceAddISupport(op, reason))) {
       return success();
+    }
   }
   return failure();
 }
