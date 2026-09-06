@@ -14961,7 +14961,7 @@ private:
         *resultType, *maskType, *sourcePartType, *rowResultType, *rowMaskType};
   }
 
-  LogicalResult lowerFullDeinterleaved2(
+  FailureOr<std::pair<int64_t, int64_t>> validateFullDeinterleaved2Shape(
       OpTy op, VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
       ValueRange sourceParts, ValueRange maskParts, TypeRange resultTypes,
       int64_t groupSize, OneToNPatternRewriter &rewriter) const {
@@ -14985,8 +14985,8 @@ private:
               "multiple of two physical chunks");
     }
     int64_t groupCount = sourceVMIType.getElementCount() / groupSize;
-    int64_t chunksPerGroupPerPart = groupSize / (2 * *lanesPerPart);
-    int64_t chunksPerPart = groupCount * chunksPerGroupPerPart;
+    int64_t chunksPerGroup = groupSize / (2 * *lanesPerPart);
+    int64_t chunksPerPart = groupCount * chunksPerGroup;
     bool invalidArity = sourceParts.size() != maskParts.size() ||
                         static_cast<int64_t>(sourceParts.size()) !=
                             2 * chunksPerPart ||
@@ -14995,6 +14995,23 @@ private:
       return rewriter.notifyMatchFailure(
           op, "deinterleaved=2 group_reduce arity mismatch");
     }
+    return std::make_pair(groupCount, chunksPerGroup);
+  }
+
+  LogicalResult lowerFullDeinterleaved2(
+      OpTy op, VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
+      ValueRange sourceParts, ValueRange maskParts, TypeRange resultTypes,
+      int64_t groupSize, OneToNPatternRewriter &rewriter) const {
+    FailureOr<std::pair<int64_t, int64_t>> shape =
+        validateFullDeinterleaved2Shape(
+            op, sourceVMIType, resultVMIType, sourceParts, maskParts,
+            resultTypes, groupSize, rewriter);
+    if (failed(shape)) {
+      return failure();
+    }
+    int64_t groupCount = shape->first;
+    int64_t chunksPerGroupPerPart = shape->second;
+    int64_t chunksPerPart = groupCount * chunksPerGroupPerPart;
     FailureOr<Deinterleaved2GroupReduceTypes> types =
         getDeinterleaved2GroupReduceTypes(op, sourceParts, maskParts,
                                           resultTypes, rewriter);

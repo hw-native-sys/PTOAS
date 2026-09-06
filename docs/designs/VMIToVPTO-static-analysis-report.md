@@ -3427,6 +3427,20 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_layout_assignment_trunci_lane_stride.pto           # exit=0
 ```
 
+# deinterleaved=2 full group-reduce shape 拆分（2026-09-06）
+
+本轮将 `lowerFullDeinterleaved2` 中 result slots、物理 lane、group/chunk 数量及 source/
+mask/result arity 合同抽取为 `validateFullDeinterleaved2Shape`。主函数继续负责 reduce
+类型准备、lane mask、结果归并与恢复；group/chunk 计算、失败诊断和结果语义保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_layout_assignment_group_reduce_s256.pto            # exit=0
+```
+
 # interleave lowering 入口合同与布局查询拆分（2026-09-06）
 
 本轮将模板 `OneToNVMIInterleaveOpPattern::matchAndRewrite` 中的结果物理类型/输入输出
