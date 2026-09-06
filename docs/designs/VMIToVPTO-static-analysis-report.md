@@ -3911,3 +3911,16 @@ vmi_to_vpto_vdintlv.pto                               # reaches existing pack/un
 
 该 case 在本轮转换前即会因测试输入中的 VMI `unpack` 出现在 VMI-to-VPTO physicalization
 之前而触发 `VMI-PASS-INVARIANT`；这不是本轮 `vdintlv` helper 改动引入的失败。
+
+# lane-stride carrier 合并职责拆分（2026-09-06）
+
+本轮将 `materializeLaneStrideResultPart` 中两个 carrier 的 pack、all-true mask 和 `vor`
+合并抽取为 `mergeLaneStrideCarrierPair`。原函数继续负责 lane-stride source slice、逐层
+carrier 收缩和最终 bitcast；奇数尾 carrier 的 LOWER 路径、结果顺序和失败传播保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
