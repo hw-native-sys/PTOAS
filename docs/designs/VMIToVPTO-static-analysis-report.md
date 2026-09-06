@@ -2318,6 +2318,15 @@ shape-check、reason 传播和 `WalkResult` 错误处理统一改用已有的
 `vmi_deinterleave_load_layout_propagation.pto` lowering exit=0。
 `vmi_to_vpto_stride_load.pto` 在既有 pack/unpack invariant 处提前终止，未进入本轮 helper。
 
+# gather 布局与源地址合同职责整改
+
+本轮在 `checkSupportedGatherShape` 中引入 `checkGatherLayoutAndSource`，将四路 contiguous
+布局检查与 `!pto.ptr` 源地址约束从元素类型/physical arity 合同中分离。主 checker 继续
+负责 source element、index/mask/result 类型关系、B16/B32 选择及 physical chunk 限制，保持
+检查顺序、诊断文本和失败语义不变。增量检查以 `HEAD` 为基线结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；尝试的 gather cases
+在既有 VMI op verifier 的输入类型合同处提前失败，未进入本轮 helper。
+
 # structured group load verifier 分派职责整改
 
 本轮继续将 `verifySupportedVMIStructuredLoadOp` 中 group_load、group_slot_load 与

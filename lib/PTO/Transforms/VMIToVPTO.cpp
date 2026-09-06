@@ -2390,6 +2390,35 @@ checkGatherElementContract(VMIVRegType resultType, VMIVRegType indicesType,
 }
 
 LogicalResult
+checkGatherLayoutAndSource(VMIGatherOp op, VMIVRegType resultType,
+                            VMIVRegType indicesType, VMIVRegType passthruType,
+                            VMIMaskType maskType, std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  VMILayoutAttr resultLayout = resultType.getLayoutAttr();
+  VMILayoutAttr indicesLayout = indicesType.getLayoutAttr();
+  VMILayoutAttr passthruLayout = passthruType.getLayoutAttr();
+  VMILayoutAttr maskLayout = maskType.getLayoutAttr();
+  if (!resultLayout || !indicesLayout || !passthruLayout || !maskLayout) {
+    return fail("requires assigned result, indices, passthru, and mask layouts");
+  }
+  bool nonContiguousLayout =
+      !resultLayout.isContiguous() || !indicesLayout.isContiguous() ||
+      !passthruLayout.isContiguous() || !maskLayout.isContiguous();
+  if (nonContiguousLayout) {
+    return fail("requires contiguous result, indices, passthru, and mask layouts");
+  }
+  if (!isa<PtrType>(op.getSource().getType())) {
+    return fail("requires !pto.ptr source because pto.vgather2_bc is pointer-only");
+  }
+  return success();
+}
+
+LogicalResult
 checkSupportedGatherShape(VMIGatherOp op, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason) {
@@ -2402,25 +2431,9 @@ checkSupportedGatherShape(VMIGatherOp op, std::string *reason) {
   auto indicesType = cast<VMIVRegType>(op.getIndices().getType());
   auto passthruType = cast<VMIVRegType>(op.getPassthru().getType());
   auto maskType = cast<VMIMaskType>(op.getMask().getType());
-  VMILayoutAttr resultLayout = resultType.getLayoutAttr();
-  VMILayoutAttr indicesLayout = indicesType.getLayoutAttr();
-  VMILayoutAttr passthruLayout = passthruType.getLayoutAttr();
-  VMILayoutAttr maskLayout = maskType.getLayoutAttr();
-  if (!resultLayout || !indicesLayout || !passthruLayout || !maskLayout) {
-    return fail("requires assigned result, indices, passthru, and mask "
-                "layouts");
-  }
-  bool nonContiguousLayout =
-      !resultLayout.isContiguous() || !indicesLayout.isContiguous() ||
-      !passthruLayout.isContiguous() || !maskLayout.isContiguous();
-  if (nonContiguousLayout) {
-    return fail("requires contiguous result, indices, passthru, and mask "
-                "layouts");
-  }
-
-  if (!isa<PtrType>(op.getSource().getType())) {
-    return fail("requires !pto.ptr source because pto.vgather2_bc is "
-                "pointer-only");
+  if (failed(checkGatherLayoutAndSource(op, resultType, indicesType,
+                                        passthruType, maskType, reason))) {
+    return failure();
   }
 
   Type sourceElemType = getMemoryElementType(op.getSource().getType());
