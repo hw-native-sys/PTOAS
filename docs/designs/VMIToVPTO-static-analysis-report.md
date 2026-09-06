@@ -2699,3 +2699,12 @@ deinterleaved layout 方向识别从 `materializeMaskGranularityCastStagingLayou
 contiguous→deint 的发射语义、factor 优先级、结果顺序及失败传播保持不变。增量
 `check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；mask granularity direct/multistep 和 dense layout case 均 exit=0。
+
+# mask granularity fallback 路由职责整改
+
+本轮新增 `requiresMaskDenseSplitFallback`，将 dense-split contiguous fallback 的触发条件
+从 `materializeMaskGranularityCastLayoutFallback` 中独立出来。fallback 入口仍严格保持
+direct layout conversion → staging factor route → dense-split contiguous conversion 的
+尝试顺序；direct conversion 失败后继续尝试的语义、optional/failure 传播和结果顺序不变。
+增量 `check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；mask granularity direct/multistep case 均 exit=0。

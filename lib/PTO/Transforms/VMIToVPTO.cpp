@@ -6555,6 +6555,11 @@ static FailureOr<SmallVector<Value>> forwardIdentityMaskParts(
   return SmallVector<Value>(sourceParts.begin(), sourceParts.end());
 }
 
+static bool requiresMaskDenseSplitFallback(VMILayoutAttr sourceLayout,
+                                           VMILayoutAttr resultLayout) {
+  return sourceLayout.isDenseSplit() || resultLayout.isDenseSplit();
+}
+
 FailureOr<std::optional<SmallVector<Value>>>
 materializeMaskGranularityCastLayoutFallback(
     Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
@@ -6576,9 +6581,7 @@ materializeMaskGranularityCastLayoutFallback(
     return std::move(*staging);
   }
 
-  bool requiresContiguousFallback =
-      sourceLayout.isDenseSplit() || resultLayout.isDenseSplit();
-  if (!requiresContiguousFallback) {
+  if (!requiresMaskDenseSplitFallback(sourceLayout, resultLayout)) {
     return std::nullopt;
   }
   FailureOr<SmallVector<Value>> contiguous =
