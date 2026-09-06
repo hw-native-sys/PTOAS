@@ -2367,6 +2367,16 @@ fallback 的 plan 字段、结果顺序和失败语义不变。增量 `check_cha
 `vmi_to_vpto_shuffle_forwarding.pto` 与 `vmi_to_vpto_shuffle_lane0_splat.pto` 均 lowering
 exit=0。
 
+# mask granularity 分片物化职责整改
+
+本轮在 `materializeAdjacentMaskGranularityConversion` 中引入
+`materializeMaskGranularityParts`，将按 layout factor 遍历、source chunk offset 推进和
+各 part 结果汇总抽取为独立 helper。主函数继续负责 conversion plan 构建、结果 arity
+校验和最终返回；widening/narrowing 的 pack/unpack 语义、part 顺序及失败诊断保持不变。
+增量 `check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；尝试的 mask granularity cases 在既有 pack/unpack invariant 或
+layout contract 处提前终止，未进入本轮 helper。
+
 # channel split 结果布局与 arity 合同职责整改
 
 本轮在 `checkSupportedChannelSplitShape` 中引入

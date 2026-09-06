@@ -5796,6 +5796,32 @@ buildMaskGranularityConversionPlan(
       MaskType::get(op->getContext(), resultType.getGranularity())};
 }
 
+static FailureOr<SmallVector<Value>> materializeMaskGranularityParts(
+    Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
+    ValueRange sourceParts, const MaskGranularityConversionPlan &plan,
+    PatternRewriter &rewriter) {
+  SmallVector<Value> results;
+  int64_t sourceOffset = 0;
+  for (int64_t part = 0; part < plan.layoutFactor; ++part) {
+    FailureOr<int64_t> sourceChunks = getVMITypeChunksInPart(sourceType, part);
+    if (failed(sourceChunks)) {
+      (void)rewriter.notifyMatchFailure(
+          op, "requires computable source chunks per layout part");
+      return failure();
+    }
+    FailureOr<SmallVector<Value>> partResults =
+        materializeAdjacentMaskGranularityPart(
+            op, sourceType, resultType, sourceParts, plan.sourceRank,
+            plan.resultRank, plan.resultMaskType, part, sourceOffset, rewriter);
+    if (failed(partResults)) {
+      return failure();
+    }
+    results.append(*partResults);
+    sourceOffset += *sourceChunks;
+  }
+  return results;
+}
+
 FailureOr<SmallVector<Value>> materializeAdjacentMaskGranularityConversion(
     Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
     ValueRange sourceParts, PatternRewriter &rewriter) {
@@ -5809,30 +5835,20 @@ FailureOr<SmallVector<Value>> materializeAdjacentMaskGranularityConversion(
   if (failed(plan)) {
     return failure();
   }
-  SmallVector<Value> results;
-
-  int64_t sourceOffset = 0;
-  for (int64_t part = 0; part < plan->layoutFactor; ++part) {
-    FailureOr<int64_t> sourceChunks = getVMITypeChunksInPart(sourceType, part);
-    FailureOr<SmallVector<Value>> partResults =
-        materializeAdjacentMaskGranularityPart(
-            op, sourceType, resultType, sourceParts, plan->sourceRank,
-            plan->resultRank, plan->resultMaskType, part, sourceOffset,
-            rewriter);
-    if (failed(partResults)) {
-      return failure();
-    }
-    results.append(*partResults);
-    sourceOffset += *sourceChunks;
+  FailureOr<SmallVector<Value>> results = materializeMaskGranularityParts(
+      op, sourceType, resultType, sourceParts, *plan, rewriter);
+  if (failed(results)) {
+    return failure();
   }
 
   FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
   bool resultArityMismatch =
-      failed(resultArity) || static_cast<int64_t>(results.size()) != *resultArity;
+      failed(resultArity) ||
+      static_cast<int64_t>(results->size()) != *resultArity;
   if (resultArityMismatch) {
     return fail("mask granularity conversion result count mismatch");
   }
-  return results;
+  return *results;
 }
 
 static FailureOr<SmallVector<Value>> materializeMaskGranularityStep(
