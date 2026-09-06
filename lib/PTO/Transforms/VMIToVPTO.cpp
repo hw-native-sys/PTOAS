@@ -5127,10 +5127,10 @@ static FailureOr<SmallVector<Value>> materializeDeinterleaved4ToContiguous(
             "exceeds source footprint");
     return failure();
   }
-  SmallVector<size_t> counts;
-  SmallVector<size_t> offsets;
   size_t base = sourceParts.size() / 4;
   size_t remainder = sourceParts.size() % 4;
+  SmallVector<size_t> counts;
+  SmallVector<size_t> offsets;
   size_t offset = 0;
   for (size_t part = 0; part < 4; ++part) {
     counts.push_back(base + (part < remainder ? 1 : 0));
@@ -9335,10 +9335,9 @@ private:
     return success();
   }
 
-  LogicalResult lowerBlockF32(
-      VMIGroupLoadOp op, OneToNPatternRewriter &rewriter, Value source,
-      Value offset, Value rowStride, VMIVRegType resultVMIType,
-      VMILayoutAttr resultLayout) const {
+  FailureOr<std::pair<int64_t, int64_t>> validateBlockF32Shape(
+      VMIGroupLoadOp op, Value source, VMIVRegType resultVMIType,
+      VMILayoutAttr resultLayout, OneToNPatternRewriter &rewriter) const {
     FailureOr<int64_t> groupSize = getGroupSizeFromNumGroups(
         resultVMIType, op.getNumGroupsAttr().getInt());
     if (failed(groupSize)) {
@@ -9348,36 +9347,43 @@ private:
     bool validFactorShape =
         (*groupSize == 16 && resultLayout.getFactor() == 2) ||
         (*groupSize == 32 && resultLayout.getFactor() == 4);
-    if (!validFactorShape) {
-      return rewriter.notifyMatchFailure(
-          op, "block_deinterleaved group_load requires S=16/factor=2 or "
-              "S=32/factor=4");
-    }
-    bool validGroupCount = op.getNumGroupsAttr().getInt() % 8 == 0;
-    if (!validGroupCount) {
-      return rewriter.notifyMatchFailure(
-          op, "block_deinterleaved group_load requires num_groups multiple "
-              "of 8");
-    }
     std::optional<int64_t> constantRowStride =
         getConstantIndexValue(op.getRowStride());
     bool validRowStride = constantRowStride && *constantRowStride > 0 &&
                           *constantRowStride % 8 == 0;
-    if (!validRowStride) {
+    bool validGroupCount = op.getNumGroupsAttr().getInt() % 8 == 0;
+    if (!validFactorShape || !validGroupCount || !validRowStride ||
+        !isa<PtrType>(source.getType())) {
       return rewriter.notifyMatchFailure(
-          op, "block_deinterleaved group_load requires constant positive "
-              "row_stride divisible by 8 f32 elements");
+          op, !validFactorShape
+                  ? "block_deinterleaved group_load requires S=16/factor=2 or S=32/factor=4"
+                  : !validGroupCount
+                        ? "block_deinterleaved group_load requires num_groups multiple of 8"
+                        : !validRowStride
+                              ? "block_deinterleaved group_load requires constant positive "
+                                "row_stride divisible by 8 f32 elements"
+                              : "block_deinterleaved group_load requires !pto.ptr source");
     }
-    if (!isa<PtrType>(source.getType())) {
-      return rewriter.notifyMatchFailure(
-          op, "block_deinterleaved group_load requires !pto.ptr source");
+    return std::make_pair(*constantRowStride, resultLayout.getFactor());
+  }
+
+  LogicalResult lowerBlockF32(
+      VMIGroupLoadOp op, OneToNPatternRewriter &rewriter, Value source,
+      Value offset, Value rowStride, VMIVRegType resultVMIType,
+      VMILayoutAttr resultLayout) const {
+    FailureOr<std::pair<int64_t, int64_t>> shape =
+        validateBlockF32Shape(op, source, resultVMIType, resultLayout,
+                              rewriter);
+    if (failed(shape)) {
+      return failure();
     }
+    int64_t constantRowStride = shape->first;
+    int64_t factor = shape->second;
     FailureOr<SmallVector<Type>> maybeResultTypes = getResultTypes(op, rewriter);
     if (failed(maybeResultTypes)) {
       return failure();
     }
     SmallVector<Type> resultTypes = std::move(*maybeResultTypes);
-    int64_t factor = resultLayout.getFactor();
     FailureOr<int64_t> blockElems = getVMILayoutBlockElems(resultVMIType);
     FailureOr<int64_t> chunksPerPart =
         getDataChunksInPart(resultVMIType, 0);
@@ -9401,7 +9407,7 @@ private:
     }
     return lowerBlockDeinterleaved(
         op, rewriter, source, offset, rowStride, resultVMIType, resultTypes,
-        resultLayout, factor, *blockElems, *chunksPerPart, *constantRowStride);
+        resultLayout, factor, *blockElems, *chunksPerPart, constantRowStride);
   }
 
   LogicalResult lowerByLayout(

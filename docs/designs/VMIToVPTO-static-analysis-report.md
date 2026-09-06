@@ -3500,6 +3500,20 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_layout_assignment_group_broadcast_load_e2b_b16.pto # exit=0
 ```
 
+# block-deinterleaved group-load shape 合同拆分（2026-09-06）
+
+本轮将 `lowerBlockF32` 中 group size/factor、num_groups、row_stride、pointer 类型等
+入口 shape 合同抽取为 `validateBlockF32Shape`。主函数继续负责结果类型获取、block/chunk
+均匀性检查和实际 lowering；原有检查顺序、诊断语义及 block-deinterleaved 发射保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_load_store_contiguous.pto                  # exit=0
+```
+
 # load physical plan 构造职责拆分（2026-09-06）
 
 本轮将 `OneToNVMILoadOpPattern::buildPhysicalPlan` 中 converted result type 获取与
