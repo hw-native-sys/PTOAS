@@ -12188,21 +12188,13 @@ private:
       if (activeGroups <= 0) {
         break;
       }
-      Value selected = rewriter
-                           .create<VselrOp>(op.getLoc(), firstVRegType,
-                                            valueParts[partIndex], slotIndex)
-                           .getResult();
-      FailureOr<Value> laneMask = createLaneRangeMask(
-          op.getLoc(), maskType, localPart * 8,
-          localPart * 8 + activeGroups, rewriter);
-      if (failed(laneMask)) {
-        return rewriter.notifyMatchFailure(
-            op, "failed to create packed group_store lane mask");
+      FailureOr<Value> nextMerged = mergePackedByteStoreBlockPart(
+          op, rewriter, valueParts[partIndex], slotIndex, merged,
+          firstVRegType, maskType, localPart * 8, activeGroups);
+      if (failed(nextMerged)) {
+        return failure();
       }
-      merged = rewriter
-                   .create<VselOp>(op.getLoc(), firstVRegType, selected, merged,
-                                   *laneMask)
-                   .getResult();
+      merged = *nextMerged;
     }
     int64_t activeGroups = std::min<int64_t>(32, numGroups - blockStart);
     FailureOr<Value> storeMask = createPrefixMaskForActiveLanes(
@@ -12214,6 +12206,24 @@ private:
     Value groupOffset = createGroupChunkOffset(
         op.getLoc(), offset, rowStride, blockStart, 0, rewriter);
     return std::make_tuple(merged, *storeMask, groupOffset);
+  }
+
+  FailureOr<Value> mergePackedByteStoreBlockPart(
+      VMIGroupStoreOp op, OneToNPatternRewriter &rewriter, Value value,
+      Value slotIndex, Value merged, VRegType valueType, MaskType maskType,
+      int64_t laneStart, int64_t activeGroups) const {
+    Value selected = rewriter
+                         .create<VselrOp>(op.getLoc(), valueType, value, slotIndex)
+                         .getResult();
+    FailureOr<Value> laneMask = createLaneRangeMask(
+        op.getLoc(), maskType, laneStart, laneStart + activeGroups, rewriter);
+    if (failed(laneMask)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to create packed group_store lane mask");
+    }
+    return rewriter
+        .create<VselOp>(op.getLoc(), valueType, selected, merged, *laneMask)
+        .getResult();
   }
 
   FailureOr<Value> buildPackedByteStatefulValue(

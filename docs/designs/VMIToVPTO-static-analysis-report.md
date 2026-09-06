@@ -3191,6 +3191,22 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_layout_assignment_group_store_slots1_unit_stride.pto # exit=0
 ```
 
+# slots=8 packed-byte group-store 单 part 合并职责拆分（2026-09-06）
+
+本轮将 `buildPackedByteStoreBlock` 中单个 local part 的 `vselr` 选择、lane range mask
+构造和 `vsel` 合并抽取为 `mergePackedByteStoreBlockPart`。block helper 继续负责 part
+索引/尾部 active-group 判断、block accumulator、store mask 和 group offset；`PK4_B32`
+直写、stateful packed-byte stream、尾部 mask 和结果顺序语义保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_group_store_slots8_packed_byte.pto          # exit=0
+vmi_to_vpto_group_store_lane_stride.pto                 # exit=0
+```
+
 # contiguous group-load 单 chunk 物化职责拆分（2026-09-06）
 
 本轮将 `OneToNVMIGroupLoadOpPattern::lowerContiguousChunks` 中单个 group/chunk 的
