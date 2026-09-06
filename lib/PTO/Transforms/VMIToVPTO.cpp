@@ -15035,6 +15035,47 @@ struct OneToNVMITruncFOpPattern : OneToNOpConversionPattern<VMITruncFOp> {
   using OneToNOpConversionPattern<VMITruncFOp>::OneToNOpConversionPattern;
 
 private:
+  FailureOr<VRegType> getUniformSourceType(
+      VMITruncFOp op, ValueRange sourceParts,
+      OneToNPatternRewriter &rewriter) const {
+    if (sourceParts.empty()) {
+      return rewriter.notifyMatchFailure(op,
+                                         "truncf requires source chunks");
+    }
+    auto firstType = dyn_cast<VRegType>(sourceParts.front().getType());
+    if (!firstType) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported physical truncf source type");
+    }
+    for (Value sourcePart : sourceParts) {
+      auto sourceType = dyn_cast<VRegType>(sourcePart.getType());
+      if (!sourceType || sourceType != firstType) {
+        return rewriter.notifyMatchFailure(
+            op, "truncf source physical parts must have matching type");
+      }
+    }
+    return firstType;
+  }
+
+  FailureOr<SmallVector<VRegType>> getUniformResultTypes(
+      VMITruncFOp op, ArrayRef<Type> resultTypes,
+      OneToNPatternRewriter &rewriter) const {
+    SmallVector<VRegType> resultVRegTypes;
+    resultVRegTypes.reserve(resultTypes.size());
+    for (Type physicalResultType : resultTypes) {
+      auto resultType = dyn_cast<VRegType>(physicalResultType);
+      bool invalidType = !resultType ||
+                         (!resultVRegTypes.empty() &&
+                          resultType != resultVRegTypes.front());
+      if (invalidType) {
+        return rewriter.notifyMatchFailure(
+            op, "unsupported physical truncf result type");
+      }
+      resultVRegTypes.push_back(resultType);
+    }
+    return resultVRegTypes;
+  }
+
   LogicalResult lowerDenseLaneStride(
       VMITruncFOp op, ValueRange sourceParts,
       ArrayRef<VRegType> resultTypes, StringRef part,
@@ -15303,10 +15344,12 @@ public:
       return rewriter.notifyMatchFailure(op, "truncf requires result chunks");
     }
 
-    auto sourceType0 = dyn_cast<VRegType>(sourceParts.front().getType());
-    if (!sourceType0) {
-      return rewriter.notifyMatchFailure(op, "unsupported physical truncf source type");
+    FailureOr<VRegType> sourceType =
+        getUniformSourceType(op, sourceParts, rewriter);
+    if (failed(sourceType)) {
+      return failure();
     }
+    VRegType sourceType0 = *sourceType;
     unsigned sourceBits = pto::getPTOStorageElemBitWidth(sourceType0.getElementType());
     bool unsupportedSourceBits = sourceBits != 32 && sourceBits != 16;
     if (unsupportedSourceBits) {
@@ -15332,25 +15375,16 @@ public:
       return rewriter.notifyMatchFailure(
           op, "group-slot layout for non-f32 truncf not supported");
     }
-    for (Value sourcePart : sourceParts) {
-      auto sourceType = dyn_cast<VRegType>(sourcePart.getType());
-      if (!sourceType || sourceType != sourceType0) {
-        return rewriter.notifyMatchFailure(
-            op, "truncf source physical parts must have matching type");
-      }
+    FailureOr<SmallVector<VRegType>> uniformResultTypes =
+        getUniformResultTypes(op, resultTypes, rewriter);
+    if (failed(uniformResultTypes)) {
+      return failure();
     }
-
-    SmallVector<VRegType> resultVRegTypes;
-    resultVRegTypes.reserve(resultTypes.size());
-    for (Type physicalResultType : resultTypes) {
-      auto resultType = dyn_cast<VRegType>(physicalResultType);
-      if (!resultType ||
-          (resultVRegTypes.empty() ? pto::getPTOStorageElemBitWidth(
-                                         resultType.getElementType()) == 0
-                                   : resultType != resultVRegTypes.front()))
-        return rewriter.notifyMatchFailure(
-            op, "unsupported physical truncf result type");
-      resultVRegTypes.push_back(resultType);
+    SmallVector<VRegType> resultVRegTypes = std::move(*uniformResultTypes);
+    if (pto::getPTOStorageElemBitWidth(
+            resultVRegTypes.front().getElementType()) == 0) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported physical truncf result type");
     }
 
     unsigned resultBits = pto::getPTOStorageElemBitWidth(

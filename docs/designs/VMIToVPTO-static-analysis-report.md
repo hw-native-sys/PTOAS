@@ -2064,6 +2064,18 @@ exit=0，现有 slots=1 的 EVEN/P0 转换输出保持不变。
 `git diff --check` 通过；`vmi_to_vpto_load_store_contiguous.pto` 完整 lowering pipeline
 exit=0。
 
+# truncf 物理类型合同职责整改
+
+本轮在 `OneToNVMITruncFOpPattern` 中新增 `getUniformSourceType` 与
+`getUniformResultTypes`，将源 physical part 的非空/vreg/统一类型校验和结果 physical
+part 的统一类型校验从主 lowering 分派中独立出来。主函数仍保留 packed bf16x2 视图构造、
+group-slot 特殊路径、同宽转换、dense lane-stride 与 factor 窄化路径的优先级；结果宽度
+有效性仍在原位置检查，避免把不同的 width contract 与“类型一致性”错误合并。源/结果
+arity、part 顺序、mask、诊断和 lowering 语义保持不变。增量
+`check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过。尝试的 truncf case 在现有 pipeline 的依赖覆盖检查处失败，
+未产生本轮 helper 的编译或 lowering 诊断，不能将该失败归因于本轮改动。
+
 # iota 物化上下文数据泥团整改
 
 本轮引入轻量 `IotaMaterializationContext`，统一携带 iota 三类物化路径共同需要的
