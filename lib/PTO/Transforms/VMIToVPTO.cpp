@@ -15048,8 +15048,9 @@ struct OneToNVMIGroupBroadcastOpPattern
     ValueRange sourceParts = adaptor.getSource();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes))
+    if (failed(maybe_resultTypes)) {
       return failure();
+    }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     SmallVector<Value> results;
     if (failed(lowerGroupBroadcastParts(
@@ -18685,6 +18686,17 @@ static LogicalResult checkActivePrefixIndexPhysicalChunks(
                       "lanes cannot affect the observable prefix; ") +
                 maskFullReason);
   }
+  return success();
+}
+
+static LogicalResult checkActivePrefixIndexSingleChunk(
+    VMIMaskType maskType, VMIVRegType resultType, std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
   FailureOr<int64_t> maskArity = getVMIPhysicalArity(maskType);
   FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
   bool missingArity = failed(maskArity) || failed(resultArity);
@@ -18710,11 +18722,14 @@ static FailureOr<ActivePrefixIndexShapePlan> buildActivePrefixIndexShapePlan(
 
   auto maskType = cast<VMIMaskType>(op.getMask().getType());
   auto resultType = cast<VMIVRegType>(op.getResult().getType());
-  bool invalidActivePrefixShape =
-      failed(checkActivePrefixIndexLayouts(maskType, resultType, reason)) ||
-      failed(checkActivePrefixIndexPhysicalChunks(maskType, resultType,
-                                                  reason));
-  if (invalidActivePrefixShape) {
+  if (failed(checkActivePrefixIndexLayouts(maskType, resultType, reason))) {
+    return failure();
+  }
+  if (failed(checkActivePrefixIndexPhysicalChunks(maskType, resultType,
+                                                  reason))) {
+    return failure();
+  }
+  if (failed(checkActivePrefixIndexSingleChunk(maskType, resultType, reason))) {
     return failure();
   }
 

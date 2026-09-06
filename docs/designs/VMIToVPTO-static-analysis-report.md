@@ -3306,3 +3306,20 @@ vmi_to_vpto_stride_store.pto                           # exit=0
 
 `vmi_to_vpto_stride_load.pto` 在既有 VMI pack/unpack pipeline invariant 处提前失败，未进入
 本轮 stride helper。
+
+# active-prefix physical arity 合同拆分（2026-09-06）
+
+本轮将 active-prefix index shape plan 中 single-physical-chunk 的 arity 合同抽取为
+`checkActivePrefixIndexSingleChunk`，使 layout 合同、full physical chunk 合同和跨 chunk
+carry 限制分别表达。原有 mask/result layout 要求、padding lane 安全条件和失败诊断顺序
+保持不变；同时补齐本轮触及的控制流大括号。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
+active-prefix/compress 代表性测试在既有 VMI pack/unpack pipeline invariant 处提前失败，未
+进入本轮 helper。
