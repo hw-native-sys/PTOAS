@@ -1,5 +1,20 @@
 # VMIToVPTO 静态分析报告记录
 
+## arithmetic verifier 分派拆分（2026-09-06）
+
+本轮将 `verifySupportedVMIArithmeticOp` 拆为普通 unary/binary maskable 算术分派与
+vector-scalar 算术分派：`verifySupportedVMIUnaryBinaryArithmeticOp` 维护原有普通向量
+op 表，`verifySupportedVMIVecScalarArithmeticOp` 维护 `vadds/vmuls/vmaxs/vmins/vshls/
+vshrs` 表，入口只负责两组分派。所有 op 名称、maskable 检查、`pmode=merge` 诊断及
+`std::optional<WalkResult>` 语义保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
 ## conversion verifier 分派拆分（2026-09-06）
 
 本轮将 `verifySupportedVMIConversionOp` 按语义拆为

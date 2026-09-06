@@ -20751,8 +20751,8 @@ WalkResult emitMaskableUnsupported(Operation *op, StringRef opName,
 }
 
 template <typename MaskableCheck>
-std::optional<WalkResult> verifySupportedVMIArithmeticOp(Operation *op,
-                                                         MaskableCheck check) {
+static std::optional<WalkResult> verifySupportedVMIUnaryBinaryArithmeticOp(
+    Operation *op, MaskableCheck check) {
 #define PTO_VERIFY_MASKABLE(Op, Name)                                      \
   if (auto value = dyn_cast<Op>(op)) {                                    \
     return verifySupportedMaskableOp(value, Name, check);                  \
@@ -20784,6 +20784,12 @@ std::optional<WalkResult> verifySupportedVMIArithmeticOp(Operation *op,
   PTO_VERIFY_MASKABLE(VMINotOp, "pto.vmi.not");
   PTO_VERIFY_MASKABLE(VMISelectOp, "pto.vmi.select");
 #undef PTO_VERIFY_MASKABLE
+  return std::nullopt;
+}
+
+template <typename MaskableCheck>
+static std::optional<WalkResult> verifySupportedVMIVecScalarArithmeticOp(
+    Operation *op, MaskableCheck check) {
   if (auto value = dyn_cast<VMIAddSOp>(op)) {
     return verifySupportedVecScalarOp(value, "pto.vmi.vadds", check);
   }
@@ -20803,6 +20809,16 @@ std::optional<WalkResult> verifySupportedVMIArithmeticOp(Operation *op,
     return verifySupportedVecScalarOp(value, "pto.vmi.vshrs", check);
   }
   return std::nullopt;
+}
+
+template <typename MaskableCheck>
+std::optional<WalkResult> verifySupportedVMIArithmeticOp(Operation *op,
+                                                         MaskableCheck check) {
+  if (auto result = verifySupportedVMIUnaryBinaryArithmeticOp(op, check);
+      result.has_value()) {
+    return result;
+  }
+  return verifySupportedVMIVecScalarArithmeticOp(op, check);
 }
 
 template <typename ReduceOp>
