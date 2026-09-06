@@ -10043,6 +10043,48 @@ struct OneToNVMIStoreOpPattern : OneToNOpConversionPattern<VMIStoreOp> {
   using OneToNOpConversionPattern<VMIStoreOp>::OneToNOpConversionPattern;
 
 private:
+  struct StorePhysicalPlan {
+    SmallVector<Type> contiguousTypes;
+    VMILayoutAttr contiguousLayout;
+    int64_t lanesPerPart;
+    bool fullPhysicalChunks;
+    bool noWiderThanContiguous;
+  };
+
+  FailureOr<StorePhysicalPlan> buildPhysicalPlan(
+      VMIStoreOp op, ValueRange valueParts, VMIVRegType valueVMIType,
+      OneToNPatternRewriter &rewriter) const {
+    FailureOr<int64_t> lanesPerPart =
+        getDataLanesPerPart(valueVMIType.getElementType());
+    if (failed(lanesPerPart)) {
+      return rewriter.notifyMatchFailure(
+          op, "store requires known physical lanes per part");
+    }
+    VMILayoutAttr contiguousLayout =
+        VMILayoutAttr::getContiguous(rewriter.getContext());
+    FailureOr<SmallVector<Type>> contiguousTypes =
+        getContiguousStoreTypes(op, valueVMIType, rewriter);
+    if (failed(contiguousTypes)) {
+      return failure();
+    }
+    SmallVector<Type> valuePartTypes;
+    valuePartTypes.reserve(valueParts.size());
+    for (Value value : valueParts) {
+      valuePartTypes.push_back(value.getType());
+    }
+    FailureOr<bool> noWiderThanContiguous =
+        hasNoWiderFootprintThanContiguous(valuePartTypes, *contiguousTypes);
+    if (failed(noWiderThanContiguous)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to compare store physical footprint");
+    }
+    return StorePhysicalPlan{std::move(*contiguousTypes), contiguousLayout,
+                             *lanesPerPart,
+                             succeeded(checkFullDataPhysicalChunks(
+                                 valueVMIType, nullptr)),
+                             *noWiderThanContiguous};
+  }
+
   FailureOr<SmallVector<Type>> getContiguousStoreTypes(
       VMIStoreOp op, VMIVRegType valueVMIType,
       OneToNPatternRewriter &rewriter) const {
@@ -10320,15 +10362,6 @@ public:
   matchAndRewrite(VMIStoreOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
     auto valueVMIType = cast<VMIVRegType>(op.getValue().getType());
-    FailureOr<int64_t> lanesPerPart =
-        getDataLanesPerPart(valueVMIType.getElementType());
-    bool unknownLanesPerPart = failed(lanesPerPart);
-    if (unknownLanesPerPart) {
-      return rewriter.notifyMatchFailure(
-          op, "store requires known physical lanes per part");
-    }
-    bool fullPhysicalChunks =
-        succeeded(checkFullDataPhysicalChunks(valueVMIType, nullptr));
     FailureOr<Value> destination =
         getSingleValue(op, adaptor.getDestination(),
                        "store destination must convert to one value", rewriter);
@@ -10341,6 +10374,11 @@ public:
     }
 
     ValueRange valueParts = adaptor.getValue();
+    FailureOr<StorePhysicalPlan> plan =
+        buildPhysicalPlan(op, valueParts, valueVMIType, rewriter);
+    if (failed(plan)) {
+      return failure();
+    }
     FailureOr<bool> laneStrideStore = tryLowerLaneStrideStore(
         op, *destination, *offset, valueParts, valueVMIType, rewriter);
     if (failed(laneStrideStore)) {
@@ -10350,29 +10388,10 @@ public:
       return success();
     }
 
-    VMILayoutAttr contiguousLayout =
-        VMILayoutAttr::getContiguous(rewriter.getContext());
-    FailureOr<SmallVector<Type>> maybeContiguousTypes =
-        getContiguousStoreTypes(op, valueVMIType, rewriter);
-    if (failed(maybeContiguousTypes)) {
-      return failure();
-    }
-    SmallVector<Type> contiguousTypes = std::move(*maybeContiguousTypes);
-    SmallVector<Type> valuePartTypes;
-    valuePartTypes.reserve(valueParts.size());
-    for (Value value : valueParts) {
-      valuePartTypes.push_back(value.getType());
-    }
-    FailureOr<bool> noWiderThanContiguous =
-        hasNoWiderFootprintThanContiguous(valuePartTypes, contiguousTypes);
-    if (failed(noWiderThanContiguous)) {
-      return rewriter.notifyMatchFailure(
-          op, "failed to compare store physical footprint");
-    }
-
     FailureOr<bool> deinterleavedStore = tryLowerDeinterleavedStore(
-        op, *destination, *offset, valueParts, valueVMIType, *lanesPerPart,
-        fullPhysicalChunks, *noWiderThanContiguous, rewriter);
+        op, *destination, *offset, valueParts, valueVMIType,
+        plan->lanesPerPart, plan->fullPhysicalChunks,
+        plan->noWiderThanContiguous, rewriter);
     if (failed(deinterleavedStore)) {
       return failure();
     }
@@ -10381,15 +10400,15 @@ public:
     }
 
     FailureOr<SmallVector<Value>> storeParts = materializeDataLayoutConversion(
-        op, valueParts, contiguousTypes, valueVMIType.getLayoutAttr(),
-        contiguousLayout, valueVMIType.getElementType(), rewriter);
+        op, valueParts, plan->contiguousTypes, valueVMIType.getLayoutAttr(),
+        plan->contiguousLayout, valueVMIType.getElementType(), rewriter);
     if (failed(storeParts)) {
       return failure();
     }
 
     if (failed(lowerContiguousStoreParts(
             op, *destination, *offset, *storeParts, valueVMIType,
-            *lanesPerPart, fullPhysicalChunks, rewriter))) {
+            plan->lanesPerPart, plan->fullPhysicalChunks, rewriter))) {
       return failure();
     }
 

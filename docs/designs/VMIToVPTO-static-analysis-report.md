@@ -2130,6 +2130,17 @@ lane 数、地址操作数和 value/mask arity 合同；helper 按原顺序优�
 `check_changed_code.py --base origin/master --fail-on none` 结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
 
+# scalar store physical plan 职责整改
+
+本轮在 `OneToNVM​​IStoreOpPattern` 中引入 `StorePhysicalPlan` 与 `buildPhysicalPlan`，将
+普通 `store` 的 physical lanes、contiguous 目标类型、full-chunk 标志和 physical footprint
+比较集中到统一计划对象。主入口现在只负责地址归一化、lane-stride/deinterleaved 候选
+路由及 contiguous fallback；不改变原有候选优先级、layout conversion、stateful stream、
+mask、地址步长和失败诊断。增量
+`check_changed_code.py --base origin/master --fail-on none` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_load_store_contiguous.pto` lowering exit=0。
+
 # group load 布局分派职责整改
 
 本轮将 `OneToNVMIGroupLoadOpPattern::matchAndRewrite` 中 block-deinterleaved f32 特殊路径
