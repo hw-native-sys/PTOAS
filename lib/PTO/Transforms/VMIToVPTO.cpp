@@ -6705,6 +6705,25 @@ struct MaskGranularityCastPlan {
   VMIMaskType physicalResultType;
 };
 
+static FailureOr<SmallVector<Value>> materializeMaskGranularityCastThroughLayout(
+    Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
+    ValueRange sourceParts, TypeRange resultTypes,
+    const MaskGranularityCastPlan &plan, PatternRewriter &rewriter) {
+  VMIMaskType granularityType = VMIMaskType::get(
+      op->getContext(), sourceType.getElementCount(),
+      plan.physicalResultType.getGranularity(),
+      plan.physicalSourceType.getLayoutAttr());
+  FailureOr<SmallVector<Value>> granularityParts =
+      materializeMaskGranularityConversion(
+          op, plan.physicalSourceType, granularityType, sourceParts, rewriter);
+  if (failed(granularityParts)) {
+    return failure();
+  }
+  return materializeMaskGranularityCastLayoutConversion(
+      op, granularityType, plan.physicalResultType, *granularityParts,
+      resultTypes, rewriter);
+}
+
 static FailureOr<SmallVector<Value>> materializeMaskGranularityCastParts(
     Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
     ValueRange sourceParts, TypeRange resultTypes,
@@ -6718,20 +6737,8 @@ static FailureOr<SmallVector<Value>> materializeMaskGranularityCastParts(
         rewriter);
   }
 
-  VMIMaskType granularityType = VMIMaskType::get(
-      op->getContext(), sourceType.getElementCount(),
-      plan.physicalResultType.getGranularity(),
-      plan.physicalSourceType.getLayoutAttr());
-  FailureOr<SmallVector<Value>> granularityParts =
-      materializeMaskGranularityConversion(op, plan.physicalSourceType,
-                                           granularityType, sourceParts,
-                                           rewriter);
-  if (failed(granularityParts)) {
-    return failure();
-  }
-  return materializeMaskGranularityCastLayoutConversion(
-      op, granularityType, plan.physicalResultType, *granularityParts,
-      resultTypes, rewriter);
+  return materializeMaskGranularityCastThroughLayout(
+      op, sourceType, resultType, sourceParts, resultTypes, plan, rewriter);
 }
 
 static FailureOr<MaskGranularityCastPlan> buildMaskGranularityCastPlan(

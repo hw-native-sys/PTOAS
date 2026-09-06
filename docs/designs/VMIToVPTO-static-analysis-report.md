@@ -2681,3 +2681,12 @@ granularity lowering case 均 exit=0。
 序列、mask merge 和结果 arity 检查保持在各自路径中，未改变 lowering 语义。增量
 `check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；layout 与 mask granularity lowering case 均 exit=0。
+
+# mask granularity cast layout 中间路径职责整改
+
+本轮新增 `materializeMaskGranularityCastThroughLayout`，将 physical granularity 转换后
+再执行 layout conversion 的两阶段路径独立出来。`materializeMaskGranularityCastParts`
+现在只负责判断 physical layout 是否相同并选择 direct 或 through-layout 路径；保持
+physical carrier 类型、granularity/layout 传播、转换顺序、结果 arity 及失败诊断不变。
+增量 `check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；mask granularity direct/multistep 与 dense layout case 均 exit=0。
