@@ -1,5 +1,20 @@
 # VMIToVPTO 静态分析报告记录
 
+## group-broadcast 支持合同拆分（2026-09-06）
+
+本轮将 `checkGroupBroadcastLogicalContract` 中通用布局/元素/group 合同与
+`VMILayoutSupport::getGroupBroadcastSupport` 查询分离，新增
+`checkGroupBroadcastSupportContract`。前者只验证逻辑 shape，后者负责注册的支持矩阵及
+诊断透传；`buildGroupBroadcastShapePlan` 保持原检查顺序和失败传播，未改变支持范围或
+group-broadcast lowering 语义。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
 ## lambda 显式捕获整改（2026-09-06）
 
 本轮处理报告中的 `G.RES.06-CPP` 风险：将

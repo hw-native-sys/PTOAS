@@ -19964,10 +19964,18 @@ static LogicalResult checkGroupBroadcastLogicalContract(
     return fail("supports only slots=8 or slots=1 group_broadcast source "
                 "layouts");
   }
+  return success();
+}
+
+static LogicalResult checkGroupBroadcastSupportContract(
+    VMIGroupBroadcastOp op, std::string *reason) {
   VMILayoutSupport supports;
   std::string supportReason;
   if (failed(supports.getGroupBroadcastSupport(op, &supportReason))) {
-    return fail(supportReason);
+    if (reason) {
+      *reason = supportReason;
+    }
+    return failure();
   }
   return success();
 }
@@ -19989,6 +19997,9 @@ static FailureOr<GroupBroadcastShapePlan> buildGroupBroadcastShapePlan(
   if (failed(checkGroupBroadcastLogicalContract(
           op, sourceType, resultType, sourceLayout, resultLayout, numGroups,
           reason))) {
+    return failure();
+  }
+  if (failed(checkGroupBroadcastSupportContract(op, reason))) {
     return failure();
   }
 
