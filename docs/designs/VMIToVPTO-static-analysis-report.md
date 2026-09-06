@@ -3058,3 +3058,8 @@ vmi_layout_assignment_scatter.pto                      # exit=0
 git diff --check                                      # passed
 check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
 ```
+
+随后将 `computeShuffleVselrPlanForChunk` 中的结果物理 lane 校验、逻辑 lane 越界检查和
+source lane 映射抽取为 `getShuffleSourceLane`。规划函数继续负责 source chunk 一致性与
+ASC/DESC 方向推导，抽取没有改变失败诊断、迭代顺序或最终 `ShuffleVselrPlan` 内容；增量
+检查仍为 `errors=0 warnings=0`，scatter lowering case exit=0。
