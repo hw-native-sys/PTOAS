@@ -2071,6 +2071,11 @@ exit=0，普通 iota case 仍在既有 pack/unpack invariant 处提前终止。
 顺序。增量 `check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；三组 iota lowering case 均 exit=0。
 
+进一步将同一 context 提升到 grouped、contiguous 和 deinterleaved iota 各自的循环外，
+避免每个物理 chunk 重复构造临时 context。该调整只改变对象生命周期与参数传递方式，
+不改变 chunk 共享 key、布局分派、偏移计算或结果顺序；增量检查及三组 iota lowering
+case 均继续通过。
+
 # vmull 物理 shape 合同职责整改
 
 本轮新增 `checkVmullPhysicalShape`，将 vmull 的 physical lane 数、physical data element
