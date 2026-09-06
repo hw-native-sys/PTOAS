@@ -3397,3 +3397,18 @@ git diff --check                                      # passed
 check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
 vmi_to_vpto_load_store_contiguous.pto                  # exit=0
 ```
+
+# contiguous store unaligned base 职责拆分（2026-09-06）
+
+本轮将 `OneToNVMIStoreOpPattern::lowerContiguousStoreParts` 中 unaligned destination 的
+buffer pointer 物化和 offset 合成抽取为 `materializeUnalignedStoreBase`。store 主路径仍
+负责 aligned `vsts` 与 unaligned stateful stream 的选择、active-lane advances 收集和
+stream 发射；base 生命周期、offset 语义及失败诊断保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_stride_store.pto                           # exit=0
+```

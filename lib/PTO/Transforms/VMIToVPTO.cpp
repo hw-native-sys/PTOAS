@@ -10558,6 +10558,21 @@ private:
     return values;
   }
 
+  FailureOr<Value> materializeUnalignedStoreBase(
+      VMIStoreOp op, Value destination, Value offset,
+      VMIVRegType valueVMIType, OneToNPatternRewriter &rewriter) const {
+    Value storeBase = materializeBufferPointer(
+        destination, valueVMIType.getElementType(),
+        getMemorySpace(destination.getType()), rewriter, op.getLoc());
+    if (!storeBase) {
+      return rewriter.notifyMatchFailure(
+          op, "continuous unaligned store requires a ptr-compatible destination");
+    }
+    return rewriter
+        .create<AddPtrOp>(op.getLoc(), storeBase.getType(), storeBase, offset)
+        .getResult();
+  }
+
   LogicalResult lowerContiguousStoreParts(
       VMIStoreOp op, Value destination, Value offset, ValueRange storeParts,
       VMIVRegType valueVMIType, int64_t lanesPerPart, bool fullPhysicalChunks,
@@ -10576,17 +10591,11 @@ private:
           fullPhysicalChunks, rewriter);
     }
 
-    Value storeBase = materializeBufferPointer(
-        destination, valueVMIType.getElementType(),
-        getMemorySpace(destination.getType()), rewriter, op.getLoc());
-    if (!storeBase) {
-      return rewriter.notifyMatchFailure(
-          op, "continuous unaligned store requires a ptr-compatible destination");
+    FailureOr<Value> storeBase = materializeUnalignedStoreBase(
+        op, destination, offset, valueVMIType, rewriter);
+    if (failed(storeBase)) {
+      return failure();
     }
-    storeBase = rewriter
-                    .create<AddPtrOp>(op.getLoc(), storeBase.getType(),
-                                      storeBase, offset)
-                    .getResult();
     SmallVector<int64_t> advances;
     FailureOr<SmallVector<Value>> values = collectUnalignedStoreValues(
         op, storeParts, valueVMIType, lanesPerPart, fullPhysicalChunks, advances,
@@ -10594,7 +10603,7 @@ private:
     if (failed(values)) {
       return failure();
     }
-    if (failed(emitStatefulStoreStream(op, storeBase, *values, advances,
+    if (failed(emitStatefulStoreStream(op, *storeBase, *values, advances,
                                        rewriter))) {
       return failure();
     }
