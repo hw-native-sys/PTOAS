@@ -221,6 +221,10 @@ mask 的语义差异只存在于 active-lane 判定。补齐该批代码及 scal
 触及的控制语句大括号后，增量合规检查结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过。
 
+相关回归中 `vmi_to_vpto_stride_store.pto` 与 `vmi_layout_assignment_scatter.pto` 完整
+lowering exit=0；其余本轮抽样的 lane-stride 或非法 gather/scatter case 分别在既有
+layout/invariant 或预期的 invalid-shape 诊断处终止，未显示本轮控制流整改引入的新错误。
+
 本轮还将 `computeSafeStatefulReadProof` 中的字节范围乘法、32-byte rounding 和物理访问
 包络计算抽取为 `buildStatefulReadEnvelopes`，使安全证明入口只负责静态 shape、offset
 范围、元素宽度与 footprint 前置条件。所有 `MulOverflow`/`AddOverflow`/`SubOverflow`
