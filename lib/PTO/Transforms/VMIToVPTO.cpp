@@ -6014,6 +6014,29 @@ static FailureOr<SmallVector<Value>> materializeMaskGranularitySteps(
   return currentParts;
 }
 
+struct MaskGranularityRoute {
+  int sourceRank;
+  int resultRank;
+  bool adjacent;
+};
+
+static FailureOr<MaskGranularityRoute> classifyMaskGranularityRoute(
+    Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
+    PatternRewriter &rewriter) {
+  auto fail = [&rewriter, op](const Twine &message)
+      -> FailureOr<MaskGranularityRoute> {
+    (void)rewriter.notifyMatchFailure(op, message);
+    return failure();
+  };
+  int sourceRank = getMaskGranularityRank(sourceType.getGranularity());
+  int resultRank = getMaskGranularityRank(resultType.getGranularity());
+  if (sourceRank < 0 || resultRank < 0) {
+    return fail("requires concrete source and result mask granularity ranks");
+  }
+  return MaskGranularityRoute{sourceRank, resultRank,
+                              std::abs(sourceRank - resultRank) == 1};
+}
+
 FailureOr<SmallVector<Value>> materializeMaskGranularityConversion(
     Operation *op, VMIMaskType sourceType, VMIMaskType resultType, ValueRange sourceParts,
     PatternRewriter &rewriter) {
@@ -6023,16 +6046,19 @@ FailureOr<SmallVector<Value>> materializeMaskGranularityConversion(
     return failure();
   }
 
-  int currentRank = getMaskGranularityRank(sourceType.getGranularity());
-  int resultRank = getMaskGranularityRank(resultType.getGranularity());
-  bool isAdjacent = std::abs(currentRank - resultRank) == 1;
-  if (isAdjacent) {
+  FailureOr<MaskGranularityRoute> route = classifyMaskGranularityRoute(
+      op, sourceType, resultType, rewriter);
+  if (failed(route)) {
+    return failure();
+  }
+  if (route->adjacent) {
     return materializeAdjacentMaskGranularityConversion(
         op, sourceType, resultType, sourceParts, rewriter);
   }
 
   return materializeMaskGranularitySteps(op, sourceType, sourceParts,
-                                         currentRank, resultRank, rewriter);
+                                         route->sourceRank, route->resultRank,
+                                         rewriter);
 }
 
 FailureOr<SmallVector<Type>> getConvertedMaskPartTypes(VMIMaskType type) {
