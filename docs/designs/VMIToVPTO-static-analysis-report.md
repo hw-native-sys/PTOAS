@@ -3130,6 +3130,24 @@ vmi_layout_assignment_intlv_lane_stride.pto            # exit=0
 部分 direct interleave lit case 仍会在测试自身的 VMI `unpack` 前置 invariant 处提前失败，
 未进入本轮分类逻辑。
 
+# expand-load runtime 路径职责拆分（2026-09-06）
+
+本轮将 `OneToNVMIExpandLoadOpPattern::matchAndRewrite` 中 runtime expand-load 的物理
+arity/type 合同、索引载体构造、`vgather2.bc`/`vsel` 发射和结果替换抽取为
+`lowerRuntimeExpandLoad`。入口继续负责 source/offset 归一化、result type 转换和 static
+all-active 快路径选择；runtime gather 的 index 语义、mask/passthru 使用及失败诊断保持
+不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
+`vmi_to_vpto_ensure_mask_granularity_direct.pto` 在测试自身的 VMI `unpack` 前置 invariant
+处提前失败，未进入本轮 runtime expand-load helper。
+
 # deinterleave-load 结果类型合同拆分（2026-09-06）
 
 本轮将 `OneToNVMIDeinterleaveLoadOpPattern::matchAndRewrite` 中 low/high physical result

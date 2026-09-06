@@ -10674,6 +10674,62 @@ struct OneToNVMIExpandLoadOpPattern
   using OneToNOpConversionPattern<VMIExpandLoadOp>::OneToNOpConversionPattern;
 
 private:
+  LogicalResult lowerRuntimeExpandLoad(
+      VMIExpandLoadOp op, OneToNPatternRewriter &rewriter, Value source,
+      Value offset, ValueRange maskParts, ValueRange passthruParts,
+      ArrayRef<Type> resultTypes) const {
+    bool invalidRuntimeArity = resultTypes.size() != 1 || maskParts.size() != 1 ||
+                               passthruParts.size() != 1;
+    if (invalidRuntimeArity) {
+      return rewriter.notifyMatchFailure(
+          op, "runtime expand_load supports only one physical chunk");
+    }
+    auto resultType = dyn_cast<VRegType>(resultTypes.front());
+    auto maskType = dyn_cast<MaskType>(maskParts.front().getType());
+    bool invalidRuntimeTypes =
+        !resultType || !maskType || passthruParts.front().getType() != resultType;
+    if (invalidRuntimeTypes) {
+      return rewriter.notifyMatchFailure(
+          op, "runtime expand_load requires physical result/passthru/mask");
+    }
+    if (!isa<PtrType>(source.getType())) {
+      return rewriter.notifyMatchFailure(op, "runtime expand_load requires ptr");
+    }
+    Value gatherBase = rewriter
+                           .create<AddPtrOp>(op.getLoc(), source.getType(), source,
+                                             offset)
+                           .getResult();
+    auto indexType = VRegType::get(rewriter.getContext(),
+                                   resultType.getElementCount(),
+                                   rewriter.getI32Type());
+    FailureOr<Value> indexSeedMask =
+        createAllTrueMaskForVReg(op.getLoc(), indexType, rewriter);
+    if (failed(indexSeedMask)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to create runtime expand_load index seed mask");
+    }
+    Value zero = rewriter.create<arith::ConstantIntOp>(op.getLoc(), 0, 32);
+    Value carrier = rewriter
+                        .create<VdupOp>(op.getLoc(), indexType, zero,
+                                       *indexSeedMask, /*position=*/nullptr)
+                        .getResult();
+    Value indices = rewriter
+                        .create<VusqzOp>(op.getLoc(), indexType, carrier,
+                                        maskParts.front())
+                        .getResult();
+    Value gathered = rewriter
+                         .create<Vgather2BcOp>(op.getLoc(), resultType, gatherBase,
+                                               indices, maskParts.front())
+                         .getResult();
+    Value result = rewriter
+                       .create<VselOp>(op.getLoc(), resultType, gathered,
+                                       passthruParts.front(), maskParts.front())
+                       .getResult();
+    replaceOpWithFlatConvertedValues(rewriter, op, SmallVector<Value>{result},
+                                     *this->getTypeConverter());
+    return success();
+  }
+
   LogicalResult lowerStaticExpandLoad(
       VMIExpandLoadOp op, OneToNPatternRewriter &rewriter, Value source,
       Value offset, VMIVRegType resultVMIType, ArrayRef<Type> resultTypes) const {
@@ -10730,64 +10786,9 @@ public:
                                    resultVMIType, resultTypes);
     }
 
-    ValueRange maskParts = adaptor.getMask();
-    ValueRange passthruParts = adaptor.getPassthru();
-    bool invalidRuntimeArity = resultTypes.size() != 1 || maskParts.size() != 1 ||
-                               passthruParts.size() != 1;
-    if (invalidRuntimeArity) {
-      return rewriter.notifyMatchFailure(
-          op, "runtime expand_load supports only one physical chunk");
-    }
-
-    auto resultType = dyn_cast<VRegType>(resultTypes.front());
-    auto maskType = dyn_cast<MaskType>(maskParts.front().getType());
-    bool invalidRuntimeTypes =
-        !resultType || !maskType || passthruParts.front().getType() != resultType;
-    if (invalidRuntimeTypes) {
-      return rewriter.notifyMatchFailure(
-          op, "runtime expand_load requires physical result/passthru/mask");
-    }
-
-    auto baseType = dyn_cast<PtrType>((*source).getType());
-    if (!baseType) {
-      return rewriter.notifyMatchFailure(op,
-                                         "runtime expand_load requires ptr");
-    }
-    Value gatherBase = rewriter
-                           .create<AddPtrOp>(op.getLoc(), (*source).getType(),
-                                             *source, *offset)
-                           .getResult();
-    auto indexType =
-        VRegType::get(rewriter.getContext(), resultType.getElementCount(),
-                      rewriter.getI32Type());
-    FailureOr<Value> indexSeedMask =
-        createAllTrueMaskForVReg(op.getLoc(), indexType, rewriter);
-    if (failed(indexSeedMask)) {
-      return rewriter.notifyMatchFailure(
-          op, "failed to create runtime expand_load index seed mask");
-    }
-    Value zero = rewriter.create<arith::ConstantIntOp>(op.getLoc(), 0, 32);
-    Value carrier =
-        rewriter
-            .create<VdupOp>(op.getLoc(), indexType, zero, *indexSeedMask,
-                            /*position=*/nullptr)
-            .getResult();
-    Value indices =
-        rewriter
-            .create<VusqzOp>(op.getLoc(), indexType, carrier, maskParts.front())
-            .getResult();
-    Value gathered =
-        rewriter
-            .create<Vgather2BcOp>(op.getLoc(), resultType, gatherBase, indices,
-                                  maskParts.front())
-            .getResult();
-    Value result = rewriter
-                       .create<VselOp>(op.getLoc(), resultType, gathered,
-                                       passthruParts.front(), maskParts.front())
-                       .getResult();
-    replaceOpWithFlatConvertedValues(rewriter, op, SmallVector<Value>{*result},
-                                     *this->getTypeConverter());
-    return success();
+    return lowerRuntimeExpandLoad(op, rewriter, *source, *offset,
+                                  adaptor.getMask(), adaptor.getPassthru(),
+                                  resultTypes);
   }
 };
 
