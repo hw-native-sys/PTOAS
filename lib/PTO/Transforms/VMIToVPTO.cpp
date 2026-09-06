@@ -9199,6 +9199,25 @@ private:
                           std::move(*maybeHighTypes));
   }
 
+  FailureOr<std::pair<SmallVector<Type>, SmallVector<Type>>>
+  getDeinterleaveLoadResultTypes(
+      VMIDeinterleaveLoadOp op, OneToNPatternRewriter &rewriter) const {
+    FailureOr<SmallVector<Type>> lowTypes =
+        getConvertedResultTypes(op, 0, *this->getTypeConverter());
+    FailureOr<SmallVector<Type>> highTypes =
+        getConvertedResultTypes(op, 1, *this->getTypeConverter());
+    bool failedTypeConversion = failed(lowTypes) || failed(highTypes);
+    if (failedTypeConversion) {
+      return failure();
+    }
+    bool mismatchedArity = lowTypes->size() != highTypes->size();
+    if (mismatchedArity) {
+      return rewriter.notifyMatchFailure(
+          op, "deinterleave_load requires matching low/high physical arity");
+    }
+    return std::make_pair(std::move(*lowTypes), std::move(*highTypes));
+  }
+
   FailureOr<VMIInterleaveLayoutFact> getInterleaveLayoutFact(
       SourceOp op, VMIVRegType lhsType, VMIVRegType rhsType,
       VMIMaskType maskType, VMIVRegType lowType, VMIVRegType highType,
@@ -9304,27 +9323,13 @@ public:
           op, "deinterleave_load requires vldsx2 DINTLV element support");
     }
 
-    FailureOr<SmallVector<Type>> maybe_lowTypes =
-
-        getConvertedResultTypes(op, 0, *this->getTypeConverter());
-
-    if (failed(maybe_lowTypes)) {
+    FailureOr<std::pair<SmallVector<Type>, SmallVector<Type>>> resultTypes =
+        getDeinterleaveLoadResultTypes(op, rewriter);
+    if (failed(resultTypes)) {
       return failure();
     }
-
-    SmallVector<Type> lowTypes = std::move(*maybe_lowTypes);
-    FailureOr<SmallVector<Type>> maybe_highTypes =
-        getConvertedResultTypes(op, 1, *this->getTypeConverter());
-    bool failedHighTypeConversion = failed(maybe_highTypes);
-    if (failedHighTypeConversion) {
-      return failure();
-    }
-    SmallVector<Type> highTypes = std::move(*maybe_highTypes);
-    bool mismatchedLowHighArity = lowTypes.size() != highTypes.size();
-    if (mismatchedLowHighArity) {
-      return rewriter.notifyMatchFailure(
-          op, "deinterleave_load requires matching low/high physical arity");
-    }
+    SmallVector<Type> lowTypes = std::move(resultTypes->first);
+    SmallVector<Type> highTypes = std::move(resultTypes->second);
 
     auto firstType =
         lowTypes.empty() ? VRegType{} : dyn_cast<VRegType>(lowTypes.front());

@@ -3111,6 +3111,21 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_deinterleave_load_layout_propagation.pto           # exit=0
 ```
 
+# deinterleave-load 结果类型合同拆分（2026-09-06）
+
+本轮将 `OneToNVMIDeinterleaveLoadOpPattern::matchAndRewrite` 中 low/high physical result
+type 转换、转换失败和 arity 一致性校验抽取为 `getDeinterleaveLoadResultTypes`。入口继续
+负责 source/offset 归一化、element/distance 合同、direct-access 合法性判断及 aligned 与
+unaligned 路由；结果类型顺序、失败诊断和 `vldsx2`/stateful fallback 语义保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_deinterleave_load_layout_propagation.pto           # exit=0
+```
+
 随后将 `computeShuffleVselrPlanForChunk` 中的结果物理 lane 校验、逻辑 lane 越界检查和
 source lane 映射抽取为 `getShuffleSourceLane`。规划函数继续负责 source chunk 一致性与
 ASC/DESC 方向推导，抽取没有改变失败诊断、迭代顺序或最终 `ShuffleVselrPlan` 内容；增量
