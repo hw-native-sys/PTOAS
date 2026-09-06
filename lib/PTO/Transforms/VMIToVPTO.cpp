@@ -3222,6 +3222,44 @@ FailureOr<Value> createDenseLaneStrideStorePredicate(
       .getResult();
 }
 
+static FailureOr<std::optional<VMIPhysicalLane>> getShuffleSourcePhysicalLane(
+    VMIVRegType sourceType, VMIVRegType resultType,
+    ArrayRef<int64_t> indices, int64_t resultPart, int64_t resultChunk,
+    int64_t lane, std::string *reason) {
+  auto fail = [&reason](const Twine &message)
+      -> FailureOr<std::optional<VMIPhysicalLane>> {
+    if (reason) {
+      *reason = message.str();
+    }
+    return std::optional<VMIPhysicalLane>();
+  };
+  FailureOr<bool> padding =
+      isPaddingLane(resultType, resultPart, resultChunk, lane);
+  if (failed(padding)) {
+    return fail("failed to classify result padding lanes");
+  }
+  if (*padding) {
+    return std::optional<VMIPhysicalLane>();
+  }
+  FailureOr<int64_t> logicalLane =
+      mapPhysicalLaneToLogical(resultType, resultPart, resultChunk, lane);
+  bool logicalLaneOutOfRange =
+      failed(logicalLane) ||
+      *logicalLane >= static_cast<int64_t>(indices.size());
+  if (logicalLaneOutOfRange) {
+    return fail("failed to map result lane");
+  }
+  FailureOr<VMIPhysicalLane> sourcePhysical =
+      mapLogicalLaneToPhysical(sourceType, indices[*logicalLane]);
+  if (failed(sourcePhysical)) {
+    return fail("failed to map source lane");
+  }
+  if (sourcePhysical->lane != lane) {
+    return fail("requires same-lane physical chunks");
+  }
+  return std::optional<VMIPhysicalLane>(*sourcePhysical);
+}
+
 static FailureOr<int64_t> computeShuffleForwardingSourceChunk(
     VMIVRegType sourceType, VMIVRegType resultType, ArrayRef<int64_t> indices,
     int64_t resultPart, int64_t resultChunk, int64_t lanesPerPart,
@@ -3235,38 +3273,20 @@ static FailureOr<int64_t> computeShuffleForwardingSourceChunk(
   std::optional<int64_t> sourcePart;
   std::optional<int64_t> sourceChunk;
   for (int64_t lane = 0; lane < lanesPerPart; ++lane) {
-    FailureOr<bool> padding =
-        isPaddingLane(resultType, resultPart, resultChunk, lane);
-    if (failed(padding)) {
-      return fail("failed to classify result padding lanes");
+    FailureOr<VMIPhysicalLane> sourcePhysical = getShuffleSourcePhysicalLane(
+        sourceType, resultType, indices, resultPart, resultChunk, lane,
+        reason);
+    if (failed(sourcePhysical)) {
+      return failure();
     }
-    if (*padding) {
+    if (!*sourcePhysical) {
       continue;
     }
-    FailureOr<int64_t> logicalLane =
-        mapPhysicalLaneToLogical(resultType, resultPart, resultChunk, lane);
-    bool logicalLaneOutOfRange =
-        succeeded(logicalLane) &&
-        *logicalLane >= static_cast<int64_t>(indices.size());
-    if (failed(logicalLane)) {
-      return fail("failed to map result lane");
-    }
-    if (logicalLaneOutOfRange) {
-      return fail("failed to map result lane");
-    }
-    FailureOr<VMIPhysicalLane> sourcePhysical =
-        mapLogicalLaneToPhysical(sourceType, indices[*logicalLane]);
-    if (failed(sourcePhysical)) {
-      return fail("failed to map source lane");
-    }
-    if (sourcePhysical->lane != lane) {
-      return fail("requires same-lane physical chunks");
-    }
     if (!sourcePart) {
-      sourcePart = sourcePhysical->part;
-      sourceChunk = sourcePhysical->chunk;
-    } else if (*sourcePart != sourcePhysical->part ||
-               *sourceChunk != sourcePhysical->chunk) {
+      sourcePart = sourcePhysical->value().part;
+      sourceChunk = sourcePhysical->value().chunk;
+    } else if (*sourcePart != sourcePhysical->value().part ||
+               *sourceChunk != sourcePhysical->value().chunk) {
       return fail("requires one source chunk per result chunk");
     }
   }

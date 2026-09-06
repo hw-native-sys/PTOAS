@@ -3484,6 +3484,21 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_to_vpto_group_store_slots8_packed_byte.pto         # exit=0
 ```
 
+# shuffle forwarding source lane 映射拆分（2026-09-06）
+
+本轮将 `computeShuffleForwardingSourceChunk` 中单个结果 lane 的 padding 分类、logical
+index 到 source physical lane 映射及 same-lane 合同抽取为
+`getShuffleSourcePhysicalLane`。主函数继续负责 source chunk 一致性汇总和 flat index
+计算；padding 处理、越界诊断、chunk 合同及结果语义保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_shuffle_forwarding.pto                     # exit=0
+```
+
 # interleave lowering 入口合同与布局查询拆分（2026-09-06）
 
 本轮将模板 `OneToNVMIInterleaveOpPattern::matchAndRewrite` 中的结果物理类型/输入输出
