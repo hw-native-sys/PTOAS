@@ -1,5 +1,20 @@
 # VMIToVPTO 静态分析报告记录
 
+## dense group-slot extension carrier 拆分（2026-09-06）
+
+本轮将 `buildDenseGroupSlotExtensionResult` 中单个 carrier 的逐级 unpack 发射与结果
+合同检查拆为 `extendDenseGroupSlotCarrier`。主 helper 负责目标 physical result 合同、
+按位宽推进和最终 bitcast；carrier helper 负责下一层元素类型/车道数推导、lane 合同和
+有符号/无符号 unpack 指令选择。扩展层数、`Vsunpack`/`Vzunpack` 选择、失败诊断和结果
+顺序保持不变，没有改变 lowering 语义。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
 ## 动态 group-mask lane index 职责拆分（2026-09-06）
 
 本轮将 `buildDynamicGroupMaskLaneIndex` 的索引构造拆为两个明确阶段：
