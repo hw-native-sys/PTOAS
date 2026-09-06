@@ -2664,3 +2664,12 @@ block-deinterleaved/group-slots carrier 的映射、granularity 传播和失败�
 增量 `check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；vdintlv case 在既有 pack/unpack invariant 处提前终止，未进入
 本轮 carrier helper。
+
+# mask lane-stride factor 校验职责整改
+
+本轮新增 `checkMaskLaneStrideFactor`，将 lane-stride route 的 factor 合法性（仅支持 2/4）
+及方向相关诊断从 `materializeMaskLaneStrideLayout` 中独立出来。入口现在只负责 route
+查询、factor 校验和 pack/unpack 分派；结果 arity、pack/unpack 指令序列、mask 合并及失败
+传播保持不变。增量 `check_changed_code.py --base HEAD` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；layout 和 mask
+granularity lowering case 均 exit=0。

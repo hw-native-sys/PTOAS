@@ -5642,6 +5642,18 @@ static std::optional<MaskLaneStrideLayoutPlan> getMaskLaneStrideLayoutPlan(
       unpack, unpack ? resultLayout.getLaneStride() : sourceLayout.getLaneStride()};
 }
 
+static LogicalResult checkMaskLaneStrideFactor(
+    Operation *op, const MaskLaneStrideLayoutPlan &plan,
+    PatternRewriter &rewriter) {
+  bool supportedFactor = plan.laneStride == 2 || plan.laneStride == 4;
+  if (supportedFactor) {
+    return success();
+  }
+  return rewriter.notifyMatchFailure(
+      op, plan.unpack ? "unsupported dense mask lane_stride unpack factor"
+                      : "unsupported dense mask lane_stride pack factor");
+}
+
 FailureOr<std::optional<SmallVector<Value>>> materializeMaskLaneStrideLayout(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
@@ -5652,10 +5664,8 @@ FailureOr<std::optional<SmallVector<Value>>> materializeMaskLaneStrideLayout(
     return std::nullopt;
   }
 
-  if (plan->laneStride != 2 && plan->laneStride != 4) {
-    return rewriter.notifyMatchFailure(
-        op, plan->unpack ? "unsupported dense mask lane_stride unpack factor"
-                         : "unsupported dense mask lane_stride pack factor");
+  if (failed(checkMaskLaneStrideFactor(op, *plan, rewriter))) {
+    return failure();
   }
 
   if (plan->unpack) {
@@ -5672,7 +5682,6 @@ FailureOr<std::optional<SmallVector<Value>>> materializeMaskLaneStrideLayout(
     return failure();
   }
   return std::optional<SmallVector<Value>>(std::move(*results));
-
 }
 
 static FailureOr<std::optional<SmallVector<Value>>> materializeIdentityMaskLayout(
