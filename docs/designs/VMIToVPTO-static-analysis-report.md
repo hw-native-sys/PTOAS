@@ -2634,3 +2634,13 @@ lane-stride 顺序分派，optional/failure 传播、identity forwarding 合同�
 诊断保持不变；lambda 改为显式接收 context，避免重复参数捕获与默认捕获风险。增量
 `check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；layout 和 mask granularity 相关 lowering case 均 exit=0。
+
+# predicate interleave 分派职责整改
+
+本轮引入 `PredicateInterleaveKind` 与 `createPredicateInterleave`，统一 b8/b16/b32
+predicate 类型检查及 `pintlv`/`pdintlv` 指令选择；原有 `createPredicateIntlv` 与
+`createPredicateDintlv` 保留为语义清晰的薄包装。保持 low/high 返回顺序、mask 类型合同、
+unsupported 类型失败语义及所有 layout materialization 调用路径不变。增量
+`check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；dense layout、mask granularity 和 vdintlv 相关 case lowering
+均 exit=0。

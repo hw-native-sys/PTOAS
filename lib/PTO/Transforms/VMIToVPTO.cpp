@@ -5298,46 +5298,57 @@ FailureOr<SmallVector<Value>> materializeEnsureLayoutConversion(
                                          sourceType.getElementType(), rewriter);
 }
 
-FailureOr<std::pair<Value, Value>>
-createPredicateDintlv(Location loc, Type lowType, Type highType, Value lhs,
-                      Value rhs, PatternRewriter &rewriter) {
+enum class PredicateInterleaveKind { Interleave, Deinterleave };
+
+static FailureOr<std::pair<Value, Value>> createPredicateInterleave(
+    Location loc, Type lowType, Type highType, Value lhs, Value rhs,
+    PredicateInterleaveKind kind, PatternRewriter &rewriter) {
   auto maskType = dyn_cast<MaskType>(lowType);
-  if (!maskType || highType != lowType)
+  if (!maskType || highType != lowType) {
     return failure();
+  }
+  bool deinterleave = kind == PredicateInterleaveKind::Deinterleave;
   if (maskType.isB8()) {
-    auto op = rewriter.create<PdintlvB8Op>(loc, lowType, highType, lhs, rhs);
+    if (deinterleave) {
+      auto op = rewriter.create<PdintlvB8Op>(loc, lowType, highType, lhs, rhs);
+      return std::make_pair(op.getLow(), op.getHigh());
+    }
+    auto op = rewriter.create<PintlvB8Op>(loc, lowType, highType, lhs, rhs);
     return std::make_pair(op.getLow(), op.getHigh());
   }
   if (maskType.isB16()) {
-    auto op = rewriter.create<PdintlvB16Op>(loc, lowType, highType, lhs, rhs);
+    if (deinterleave) {
+      auto op = rewriter.create<PdintlvB16Op>(loc, lowType, highType, lhs, rhs);
+      return std::make_pair(op.getLow(), op.getHigh());
+    }
+    auto op = rewriter.create<PintlvB16Op>(loc, lowType, highType, lhs, rhs);
     return std::make_pair(op.getLow(), op.getHigh());
   }
   if (maskType.isB32()) {
-    auto op = rewriter.create<PdintlvB32Op>(loc, lowType, highType, lhs, rhs);
+    if (deinterleave) {
+      auto op = rewriter.create<PdintlvB32Op>(loc, lowType, highType, lhs, rhs);
+      return std::make_pair(op.getLow(), op.getHigh());
+    }
+    auto op = rewriter.create<PintlvB32Op>(loc, lowType, highType, lhs, rhs);
     return std::make_pair(op.getLow(), op.getHigh());
   }
   return failure();
 }
 
 FailureOr<std::pair<Value, Value>>
+createPredicateDintlv(Location loc, Type lowType, Type highType, Value lhs,
+                      Value rhs, PatternRewriter &rewriter) {
+  return createPredicateInterleave(loc, lowType, highType, lhs, rhs,
+                                   PredicateInterleaveKind::Deinterleave,
+                                   rewriter);
+}
+
+FailureOr<std::pair<Value, Value>>
 createPredicateIntlv(Location loc, Type lowType, Type highType, Value lhs,
                      Value rhs, PatternRewriter &rewriter) {
-  auto maskType = dyn_cast<MaskType>(lowType);
-  if (!maskType || highType != lowType)
-    return failure();
-  if (maskType.isB8()) {
-    auto op = rewriter.create<PintlvB8Op>(loc, lowType, highType, lhs, rhs);
-    return std::make_pair(op.getLow(), op.getHigh());
-  }
-  if (maskType.isB16()) {
-    auto op = rewriter.create<PintlvB16Op>(loc, lowType, highType, lhs, rhs);
-    return std::make_pair(op.getLow(), op.getHigh());
-  }
-  if (maskType.isB32()) {
-    auto op = rewriter.create<PintlvB32Op>(loc, lowType, highType, lhs, rhs);
-    return std::make_pair(op.getLow(), op.getHigh());
-  }
-  return failure();
+  return createPredicateInterleave(loc, lowType, highType, lhs, rhs,
+                                   PredicateInterleaveKind::Interleave,
+                                   rewriter);
 }
 
 static FailureOr<SmallVector<Value>> materializeDeinterleaved2MaskToContiguous(
