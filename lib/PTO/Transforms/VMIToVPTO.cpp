@@ -2918,6 +2918,30 @@ checkSupportedExpandLoadCommonShape(VMIExpandLoadOp op,
   return success();
 }
 
+static bool hasSafeExpandLoadAllActivePath(
+    VMIVRegType resultType, const VMIMemoryAccessPlan &accessPlan,
+    bool staticAllActive, std::string *pathReason) {
+  if (!staticAllActive) {
+    return false;
+  }
+  std::string fullChunkReason;
+  bool fullChunks =
+      succeeded(checkFullDataPhysicalChunks(resultType, &fullChunkReason));
+  if (fullChunks || accessPlan.front().readSafety.proven) {
+    return true;
+  }
+  std::string fallbackReason =
+      getUnavailableReadFallbackReason(VMIMemoryCoverageKind::Predicate);
+  *pathReason =
+      (Twine("requires full physical chunks or statically safe full-read "
+             "footprint; value ") +
+       fullChunkReason + ", safe-read proof " +
+       accessPlan.front().readSafety.reason +
+       "; fallback unavailable: " + fallbackReason)
+          .str();
+  return false;
+}
+
 LogicalResult
 checkSupportedExpandLoadShape(VMIExpandLoadOp op, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
@@ -2940,32 +2964,16 @@ checkSupportedExpandLoadShape(VMIExpandLoadOp op, std::string *reason) {
   bool staticAllActive = isStaticAllActiveMask(
       op.getMask(), resultType.getElementCount(), &maskReason);
 
-  std::string fullChunkReason;
-  bool staticFullChunks =
-      staticAllActive &&
-      succeeded(checkFullDataPhysicalChunks(resultType, &fullChunkReason));
+  std::string allActivePathReason;
+  bool staticFullChunks = hasSafeExpandLoadAllActivePath(
+      resultType, accessPlan, staticAllActive, &allActivePathReason);
   if (staticFullChunks) {
     return success();
   }
 
-  if (staticAllActive && accessPlan.front().readSafety.proven) {
-    return success();
-  }
-
-  std::string allActivePathReason;
   if (!staticAllActive) {
     allActivePathReason =
         maskReason.empty() ? "requires static all-active mask" : maskReason;
-  } else {
-    std::string fallbackReason =
-        getUnavailableReadFallbackReason(VMIMemoryCoverageKind::Predicate);
-    allActivePathReason =
-        (Twine("requires full physical chunks or statically safe full-read "
-               "footprint; value ") +
-         fullChunkReason + ", safe-read proof " +
-         accessPlan.front().readSafety.reason +
-         "; fallback unavailable: " + fallbackReason)
-            .str();
   }
 
   return checkSupportedExpandLoadRuntimePath(

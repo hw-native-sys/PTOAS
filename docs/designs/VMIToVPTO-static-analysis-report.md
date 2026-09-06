@@ -3237,3 +3237,20 @@ git diff --check                                      # passed
 check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
 vmi_to_vpto_ensure_mask_granularity.pto                # exit=0
 ```
+
+# expand-load all-active 路径判断拆分（2026-09-06）
+
+本轮将 `checkSupportedExpandLoadShape` 中 static all-active mask、full physical chunk 与
+read-safety proof 的组合判断抽取为 `hasSafeExpandLoadAllActivePath`。主 checker 继续负
+责 common shape、runtime-mask fallback 与诊断拼接；full-read 安全条件、fallback reason
+和 runtime path 选择语义保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
+`vmi_to_vpto_expand_load_all_active.pto` 在既有 VMI pack/unpack pipeline invariant 处提
+前失败，未进入本轮 helper。
