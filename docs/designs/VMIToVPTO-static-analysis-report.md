@@ -2417,6 +2417,15 @@ intermediate 的严格优先级。各 lambda 使用显式捕获；主函数仍�
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_ensure_layout_dense_composed.pto` lowering exit=0。
 
+# active-prefix index shape 合同职责整改
+
+本轮将 `buildActivePrefixIndexShapePlan` 的校验拆为
+`checkActivePrefixIndexLayouts` 与 `checkActivePrefixIndexPhysicalChunks`，分别负责
+contiguous mask/result layout、full physical chunk 证明以及单 physical chunk arity 合同。
+plan builder 继续负责物理类型提取和最终 plan 组装，保持原诊断文本、校验顺序和失败语义
+不变。增量 `check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；active-prefix 正常样例在既有 pack/unpack invariant 处提前终止。
+
 # channel split 结果布局与 arity 合同职责整改
 
 本轮在 `checkSupportedChannelSplitShape` 中引入

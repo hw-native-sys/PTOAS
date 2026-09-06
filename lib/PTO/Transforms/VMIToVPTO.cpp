@@ -17831,6 +17831,60 @@ struct ActivePrefixIndexShapePlan {
   VMIVRegType resultType;
 };
 
+static LogicalResult checkActivePrefixIndexLayouts(
+    VMIMaskType maskType, VMIVRegType resultType, std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  VMILayoutAttr maskLayout = maskType.getLayoutAttr();
+  VMILayoutAttr resultLayout = resultType.getLayoutAttr();
+  if (!maskLayout || !resultLayout)
+  {
+    return fail("requires assigned mask and result layouts");
+  }
+  if (!maskLayout.isContiguous() || !resultLayout.isContiguous())
+  {
+    return fail("requires contiguous mask and result layouts");
+  }
+  return success();
+}
+
+static LogicalResult checkActivePrefixIndexPhysicalChunks(
+    VMIMaskType maskType, VMIVRegType resultType, std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  std::string resultFullReason;
+  if (failed(checkFullDataPhysicalChunks(resultType, &resultFullReason))) {
+    return fail(Twine("requires full result physical chunks so padding mask "
+                      "lanes cannot affect the observable prefix; ") +
+                resultFullReason);
+  }
+  std::string maskFullReason;
+  if (failed(checkFullVMIPhysicalChunks(maskType, &maskFullReason))) {
+    return fail(Twine("requires full mask physical chunks so padding mask "
+                      "lanes cannot affect the observable prefix; ") +
+                maskFullReason);
+  }
+  FailureOr<int64_t> maskArity = getVMIPhysicalArity(maskType);
+  FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
+  if (failed(maskArity) || failed(resultArity))
+  {
+    return fail("requires computable mask and result physical arity");
+  }
+  if (*maskArity != 1 || *resultArity != 1) {
+    return fail("requires a single physical chunk; multi-chunk prefix needs "
+                "cross-chunk carry");
+  }
+  return success();
+}
+
 static FailureOr<ActivePrefixIndexShapePlan> buildActivePrefixIndexShapePlan(
     VMIActivePrefixIndexOp op, std::string *reason) {
   auto fail = [&reason](const Twine &message)
@@ -17843,32 +17897,13 @@ static FailureOr<ActivePrefixIndexShapePlan> buildActivePrefixIndexShapePlan(
 
   auto maskType = cast<VMIMaskType>(op.getMask().getType());
   auto resultType = cast<VMIVRegType>(op.getResult().getType());
-  VMILayoutAttr maskLayout = maskType.getLayoutAttr();
-  VMILayoutAttr resultLayout = resultType.getLayoutAttr();
-  if (!maskLayout || !resultLayout)
-    return fail("requires assigned mask and result layouts");
-  if (!maskLayout.isContiguous() || !resultLayout.isContiguous())
-    return fail("requires contiguous mask and result layouts");
-
-  std::string resultFullReason;
-  if (failed(checkFullDataPhysicalChunks(resultType, &resultFullReason)))
-    return fail(Twine("requires full result physical chunks so padding mask "
-                      "lanes cannot affect the observable prefix; ") +
-                resultFullReason);
-
-  std::string maskFullReason;
-  if (failed(checkFullVMIPhysicalChunks(maskType, &maskFullReason)))
-    return fail(Twine("requires full mask physical chunks so padding mask "
-                      "lanes cannot affect the observable prefix; ") +
-                maskFullReason);
-
-  FailureOr<int64_t> maskArity = getVMIPhysicalArity(maskType);
-  FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
-  if (failed(maskArity) || failed(resultArity))
-    return fail("requires computable mask and result physical arity");
-  if (*maskArity != 1 || *resultArity != 1)
-    return fail("requires a single physical chunk; multi-chunk prefix needs "
-                "cross-chunk carry");
+  bool invalidActivePrefixShape =
+      failed(checkActivePrefixIndexLayouts(maskType, resultType, reason)) ||
+      failed(checkActivePrefixIndexPhysicalChunks(maskType, resultType,
+                                                  reason));
+  if (invalidActivePrefixShape) {
+    return failure();
+  }
 
   return ActivePrefixIndexShapePlan{maskType, resultType};
 }
