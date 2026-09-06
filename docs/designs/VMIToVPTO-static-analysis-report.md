@@ -3148,6 +3148,24 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 `vmi_to_vpto_ensure_mask_granularity_direct.pto` 在测试自身的 VMI `unpack` 前置 invariant
 处提前失败，未进入本轮 runtime expand-load helper。
 
+# gather 单 physical part 物化职责拆分（2026-09-06）
+
+本轮将 `OneToNVMIGatherOpPattern::lowerPhysicalParts` 中单个 physical part 的类型合同、
+按 element width 选择 `vgather2`/`vgather2.bc`，以及 all-active 条件下省略 `vsel` 的逻辑
+抽取为 `materializeGatherPart`。外层函数继续负责 arity 校验、part 遍历、结果收集和替换；
+静态 all-active 优化、mask/passthru 语义、指令选择和失败诊断保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_gather_all_active_mask.pto                 # exit=0
+```
+
+普通 gather case 中部分输入在测试自身的 VMI lowering/invariant 处提前失败；all-active
+case 已完整通过。
+
 # deinterleave-load 结果类型合同拆分（2026-09-06）
 
 本轮将 `OneToNVMIDeinterleaveLoadOpPattern::matchAndRewrite` 中 low/high physical result

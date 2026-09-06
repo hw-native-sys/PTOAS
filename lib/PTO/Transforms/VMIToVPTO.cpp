@@ -10507,6 +10507,35 @@ struct OneToNVMIMaskedLoadOpPattern
   using OneToNOpConversionPattern<VMIMaskedLoadOp>::OneToNOpConversionPattern;
 
 private:
+  FailureOr<Value> materializeGatherPart(
+      VMIGatherOp op, OneToNPatternRewriter &rewriter, Value source,
+      Value indices, Value mask, Value passthru, Type resultType,
+      bool allActive) const {
+    bool invalidPartTypes = !isa<VRegType>(indices.getType()) ||
+                            !isa<MaskType>(mask.getType()) ||
+                            passthru.getType() != resultType ||
+                            !isa<VRegType>(resultType);
+    if (invalidPartTypes) {
+      return rewriter.notifyMatchFailure(
+          op, "gather physical part type mismatch");
+    }
+    unsigned resultBits = pto::getPTOStorageElemBitWidth(
+        cast<VRegType>(resultType).getElementType());
+    Value gathered = resultBits == 16
+                         ? rewriter.create<Vgather2Op>(
+                               op.getLoc(), resultType, source, indices, mask)
+                               .getResult()
+                         : rewriter.create<Vgather2BcOp>(
+                               op.getLoc(), resultType, source, indices, mask)
+                               .getResult();
+    if (allActive) {
+      return gathered;
+    }
+    return rewriter
+        .create<VselOp>(op.getLoc(), resultType, gathered, passthru, mask)
+        .getResult();
+  }
+
   LogicalResult lowerPhysicalParts(
       VMIMaskedLoadOp op, OneToNPatternRewriter &rewriter, Value source,
       Value offset, ValueRange maskParts, ValueRange passthruParts,
@@ -10601,32 +10630,12 @@ private:
     results.reserve(resultTypes.size());
     for (auto [indices, mask, passthru, resultType] :
          llvm::zip_equal(indicesParts, maskParts, passthruParts, resultTypes)) {
-      bool invalidPartTypes =
-          !isa<VRegType>(indices.getType()) || !isa<MaskType>(mask.getType()) ||
-          passthru.getType() != resultType || !isa<VRegType>(resultType);
-      if (invalidPartTypes) {
-        return rewriter.notifyMatchFailure(
-            op, "gather physical part type mismatch");
+      FailureOr<Value> result = materializeGatherPart(
+          op, rewriter, source, indices, mask, passthru, resultType, allActive);
+      if (failed(result)) {
+        return failure();
       }
-      unsigned resultBits = pto::getPTOStorageElemBitWidth(
-          cast<VRegType>(resultType).getElementType());
-      Value gathered =
-          resultBits == 16
-              ? rewriter
-                    .create<Vgather2Op>(op.getLoc(), resultType, source, indices,
-                                        mask)
-                    .getResult()
-              : rewriter
-                    .create<Vgather2BcOp>(op.getLoc(), resultType, source,
-                                          indices, mask)
-                    .getResult();
-      results.push_back(
-          allActive
-              ? gathered
-              : rewriter
-                    .create<VselOp>(op.getLoc(), resultType, gathered, passthru,
-                                    mask)
-                    .getResult());
+      results.push_back(*result);
     }
     replaceOpWithFlatConvertedValues(rewriter, op, results,
                                      *this->getTypeConverter());
