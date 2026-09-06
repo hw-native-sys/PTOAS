@@ -9507,6 +9507,22 @@ private:
     return success();
   }
 
+  FailureOr<Value> materializeContiguousGroupLoadChunk(
+      VMIGroupLoadOp op, OneToNPatternRewriter &rewriter, Value source,
+      Value offset, Value rowStride, Type resultType, int64_t group,
+      int64_t chunkInGroup, int64_t lanesPerPart) const {
+    if (!isa<VRegType>(resultType)) {
+      return rewriter.notifyMatchFailure(op, "group_load result must be vreg");
+    }
+    Value chunkOffset = createGroupChunkOffset(
+        op.getLoc(), offset, rowStride, group, chunkInGroup * lanesPerPart,
+        rewriter);
+    return rewriter
+        .create<VldsOp>(op.getLoc(), resultType, Type{}, source, chunkOffset,
+                        nullptr)
+        .getResult();
+  }
+
   LogicalResult lowerContiguousChunks(
       VMIGroupLoadOp op, OneToNPatternRewriter &rewriter, Value source,
       Value offset, Value rowStride, VMIVRegType resultVMIType,
@@ -9533,20 +9549,15 @@ private:
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
     for (auto [index, resultType] : llvm::enumerate(resultTypes)) {
-      if (!isa<VRegType>(resultType)) {
-        return rewriter.notifyMatchFailure(op,
-                                           "group_load result must be vreg");
-      }
       int64_t group = index / chunksPerGroup;
       int64_t chunkInGroup = index % chunksPerGroup;
-      Value chunkOffset = createGroupChunkOffset(
-          op.getLoc(), offset, rowStride, group, chunkInGroup * lanesPerPart,
-          rewriter);
-      results.push_back(rewriter
-                            .create<VldsOp>(op.getLoc(), resultType,
-                                            /*updated_base=*/Type{}, source,
-                                            chunkOffset, /*dist=*/nullptr)
-                            .getResult());
+      FailureOr<Value> result = materializeContiguousGroupLoadChunk(
+          op, rewriter, source, offset, rowStride, resultType, group,
+          chunkInGroup, lanesPerPart);
+      if (failed(result)) {
+        return failure();
+      }
+      results.push_back(*result);
     }
     replaceOpWithFlatConvertedValues(rewriter, op, results,
                                      *this->getTypeConverter());
