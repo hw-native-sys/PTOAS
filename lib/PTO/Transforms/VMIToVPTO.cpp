@@ -3039,6 +3039,19 @@ static LogicalResult checkMaskedStoreLayoutAndArity(
   return success();
 }
 
+static LogicalResult checkMaskedStoreContiguousMaterialization(
+    VMIVRegType valueType, VMIMaskType maskType, StringRef valueReason,
+    StringRef maskReason, std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  return checkMaskedStoreContiguousMaterialization(
+      valueType, maskType, valueReason, maskReason, reason);
+}
+
 LogicalResult
 checkSupportedMaskedStoreShape(VMIVRegType valueType, VMIMaskType maskType,
                                Value destination, Type destinationType,
