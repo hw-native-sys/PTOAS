@@ -8725,6 +8725,12 @@ private:
     return parts;
   }
 
+  struct UnalignedLoadPart {
+    Value result;
+    Value base;
+    Value align;
+  };
+
   FailureOr<SmallVector<Value>> materializeUnalignedContiguousParts(
       VMILoadOp op, OneToNPatternRewriter &rewriter, Value source, Value offset,
       ArrayRef<Type> contiguousTypes, int64_t lanesPerPart) const {
@@ -8748,19 +8754,32 @@ private:
     SmallVector<Value> parts;
     parts.reserve(contiguousTypes.size());
     for (Type resultType : contiguousTypes) {
-      if (!isa<VRegType>(resultType)) {
-        return rewriter.notifyMatchFailure(op, "load result must be vreg");
+      FailureOr<UnalignedLoadPart> updatedState = emitUnalignedLoadPart(
+          op, rewriter, unalignedBase, unalignedAlign, resultType,
+          lanesPerPart);
+      if (failed(updatedState)) {
+        return failure();
       }
-      Value increment =
-          rewriter.create<arith::ConstantIndexOp>(op.getLoc(), lanesPerPart);
-      auto load = rewriter.create<VldusOp>(
-          op.getLoc(), resultType, unalignedAlign.getType(),
-          unalignedBase.getType(), unalignedBase, unalignedAlign, increment);
-      parts.push_back(load.getResult());
-      unalignedAlign = load.getUpdatedAlign();
-      unalignedBase = load.getUpdatedBase();
+      parts.push_back(updatedState->result);
+      unalignedBase = updatedState->base;
+      unalignedAlign = updatedState->align;
     }
     return parts;
+  }
+
+  FailureOr<UnalignedLoadPart> emitUnalignedLoadPart(
+      VMILoadOp op, OneToNPatternRewriter &rewriter, Value base, Value align,
+      Type resultType, int64_t lanesPerPart) const {
+    if (!isa<VRegType>(resultType)) {
+      return rewriter.notifyMatchFailure(op, "load result must be vreg");
+    }
+    Value increment =
+        rewriter.create<arith::ConstantIndexOp>(op.getLoc(), lanesPerPart);
+    auto load = rewriter.create<VldusOp>(
+        op.getLoc(), resultType, align.getType(), base.getType(), base, align,
+        increment);
+    return UnalignedLoadPart{load.getResult(), load.getUpdatedBase(),
+                             load.getUpdatedAlign()};
   }
 
   FailureOr<SmallVector<Value>> materializeContiguousLoadParts(

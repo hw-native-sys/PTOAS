@@ -3412,3 +3412,18 @@ git diff --check                                      # passed
 check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
 vmi_to_vpto_stride_store.pto                           # exit=0
 ```
+
+# unaligned load state 推进职责拆分（2026-09-06）
+
+本轮将 `OneToNVMILoadOpPattern::materializeUnalignedContiguousParts` 中单个 `vldus` 发射
+及 updated base/align 状态封装为 `emitUnalignedLoadPart` 和 `UnalignedLoadPart`。外层
+循环只负责按 contiguous result types 累积结果并推进状态；`vldus` 的 increment、operand
+类型、align/base 更新顺序和 part 顺序保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_load_store_contiguous.pto                  # exit=0
+```
