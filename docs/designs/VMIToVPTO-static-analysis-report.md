@@ -3144,3 +3144,18 @@ git diff --check                                      # passed
 check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
 vmi_layout_assignment_group_broadcast_load_e2b_b16.pto # exit=0
 ```
+
+# integer extension source 合同职责拆分（2026-09-06）
+
+本轮将 `OneToNVMIExtIOpPattern::matchAndRewrite` 中 source physical chunks 的非空、类型
+可转换及跨 chunk 一致性检查抽取为 `getUniformExtensionSourceType`。入口继续负责 VMI
+布局分派、result 类型收集及 factor/lane-stride lowering；source 类型合同、失败诊断和
+物理结果顺序保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_reduce_extended.pto                       # exit=0
+```

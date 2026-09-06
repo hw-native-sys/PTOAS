@@ -16223,6 +16223,29 @@ private:
     return resultVRegTypes;
   }
 
+  FailureOr<VRegType> getUniformExtensionSourceType(
+      OpT op, ValueRange sourceParts,
+      OneToNPatternRewriter &rewriter) const {
+    if (sourceParts.empty()) {
+      return rewriter.notifyMatchFailure(
+          op, "integer extension requires at least one physical source chunk");
+    }
+    auto sourceType = dyn_cast<VRegType>(sourceParts.front().getType());
+    if (!sourceType) {
+      return rewriter.notifyMatchFailure(
+          op, "expected physical integer extension source");
+    }
+    for (Value sourcePart : sourceParts) {
+      auto currentSourceType = dyn_cast<VRegType>(sourcePart.getType());
+      if (!currentSourceType || currentSourceType != sourceType) {
+        return rewriter.notifyMatchFailure(
+            op, "integer extension source physical parts must have matching "
+                "type");
+      }
+    }
+    return sourceType;
+  }
+
 public:
   LogicalResult
   matchAndRewrite(OpT op,
@@ -16237,24 +16260,12 @@ public:
       return failure();
     }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-    if (sourceParts.empty()) {
-      return rewriter.notifyMatchFailure(
-          op, "integer extension requires at least one physical source chunk");
+    FailureOr<VRegType> maybeSourceType =
+        getUniformExtensionSourceType(op, sourceParts, rewriter);
+    if (failed(maybeSourceType)) {
+      return failure();
     }
-
-    auto sourceType = dyn_cast<VRegType>(sourceParts.front().getType());
-    if (!sourceType) {
-      return rewriter.notifyMatchFailure(
-          op, "expected physical integer extension source");
-    }
-    for (Value sourcePart : sourceParts) {
-      auto currentSourceType = dyn_cast<VRegType>(sourcePart.getType());
-      if (!currentSourceType || currentSourceType != sourceType) {
-        return rewriter.notifyMatchFailure(
-            op, "integer extension source physical parts must have matching "
-                "type");
-      }
-    }
+    VRegType sourceType = *maybeSourceType;
 
     VMILayoutAttr sourceLayout = sourceVMIType.getLayoutAttr();
     VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
