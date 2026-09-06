@@ -8831,6 +8831,22 @@ private:
                                lanesPerPart, *dist);
   }
 
+  std::optional<std::string> getLoadLaneStrideDist(
+      VMILoadOp op, VMIVRegType resultVMIType,
+      ArrayRef<Type> resultTypes) const {
+    std::optional<std::string> dist =
+        getDenseLaneStrideLoadDistToken(resultVMIType);
+    auto resultType =
+        resultTypes.empty() ? VRegType{} : dyn_cast<VRegType>(resultTypes.front());
+    if (!dist || !resultType ||
+        !isDirectMemoryDistAddressLegal(
+            op.getSource(), op.getOffset(), resultVMIType.getElementType(),
+            resultType, VPTOMemoryOpFamily::Load, *dist)) {
+      return std::nullopt;
+    }
+    return dist;
+  }
+
 public:
 
   LogicalResult
@@ -8841,18 +8857,9 @@ public:
     if (failed(plan)) {
       return failure();
     }
-    std::optional<std::string> laneStrideDist =
-        getDenseLaneStrideLoadDistToken(resultVMIType);
-    auto laneStrideResultType =
-        plan->resultTypes.empty()
-            ? VRegType{}
-            : dyn_cast<VRegType>(plan->resultTypes[0]);
-    bool canUseLaneStrideDist =
-        laneStrideDist && laneStrideResultType &&
-        isDirectMemoryDistAddressLegal(
-            op.getSource(), op.getOffset(), resultVMIType.getElementType(),
-            laneStrideResultType, VPTOMemoryOpFamily::Load, *laneStrideDist);
-    if (canUseLaneStrideDist) {
+    std::optional<StringRef> laneStrideDist =
+        getLoadLaneStrideDist(op, resultVMIType, plan->resultTypes);
+    if (laneStrideDist) {
       return lowerLaneStride(op, rewriter, plan->source, plan->offset,
                              resultVMIType, plan->resultTypes, *laneStrideDist,
                              plan->lanesPerPart);

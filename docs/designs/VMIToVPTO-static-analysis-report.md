@@ -3352,3 +3352,18 @@ git diff --check                                      # passed
 check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
 vmi_group_reduce_addi_i16.pto                          # exit=0
 ```
+
+# load lane-stride dist 选择职责拆分（2026-09-06）
+
+本轮将 `OneToNVMILoadOpPattern::matchAndRewrite` 中 lane-stride dist 查询、首个 physical
+result 类型检查和 direct-memory 合法性判断抽取为 `getLoadLaneStrideDist`。入口继续保持
+build plan → lane-stride → deinterleaved → contiguous 的 lowering 优先级，dist token 的
+生命周期、地址合同和结果顺序均不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_load_store_contiguous.pto                  # exit=0
+```
