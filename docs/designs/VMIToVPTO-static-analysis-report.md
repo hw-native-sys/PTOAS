@@ -3398,6 +3398,21 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_to_vpto_group_store_slots8_packed_byte.pto         # exit=0
 ```
 
+# interleave 布局路径分派职责拆分（2026-09-06）
+
+本轮将模板 `OneToNVMIInterleaveOpPattern::matchAndRewrite` 中 lane-stride、contiguous
+和 zero-copy 的布局关系判断与 lowering 路由抽取为 `lowerInterleaveByLayout`。入口只保留
+操作数/结果类型获取、布局事实查询和统一调用；各路径的优先级、zero-copy 结果顺序、失败
+诊断和结果替换保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_layout_assignment_intlv.pto                        # exit=0
+```
+
 # load physical plan 构造职责拆分（2026-09-06）
 
 本轮将 `OneToNVMILoadOpPattern::buildPhysicalPlan` 中 converted result type 获取与

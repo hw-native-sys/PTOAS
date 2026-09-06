@@ -9042,6 +9042,61 @@ private:
     return fact;
   }
 
+  LogicalResult lowerInterleaveByLayout(
+      SourceOp op, OneToNPatternRewriter &rewriter, ValueRange lhsParts,
+      ValueRange rhsParts, ValueRange maskParts, ArrayRef<Type> lowTypes,
+      ArrayRef<Type> highTypes, Type elementType,
+      const VMIInterleaveLayoutFact &fact) const {
+    auto isContiguous = [](VMILayoutAttr layout) {
+      return layout && layout.isContiguous() && layout.getLaneStride() == 1;
+    };
+    bool allSameLaneStride = fact.lhsLayout == fact.rhsLayout &&
+                             fact.lhsLayout == fact.maskLayout &&
+                             fact.lhsLayout == fact.lowLayout &&
+                             fact.lhsLayout == fact.highLayout &&
+                             fact.lhsLayout.isContiguous() &&
+                             fact.lhsLayout.getLaneStride() > 1;
+    if (allSameLaneStride) {
+      return lowerLaneStrideInterleave(op, rewriter, lhsParts, rhsParts,
+                                       lowTypes, highTypes, elementType, fact);
+    }
+    bool allContiguous = isContiguous(fact.lhsLayout) &&
+                         isContiguous(fact.rhsLayout) &&
+                         isContiguous(fact.maskLayout) &&
+                         isContiguous(fact.lowLayout) &&
+                         isContiguous(fact.highLayout);
+    if (allContiguous) {
+      return lowerContiguous(op, rewriter, lhsParts, rhsParts, maskParts,
+                             lowTypes, highTypes);
+    }
+    int64_t inputFactor = getElementDeinterleaveFactor(fact.lhsLayout);
+    int64_t outputFactor = getElementDeinterleaveFactor(fact.lowLayout);
+    bool zeroCopyVintlv = std::is_same_v<SourceOp, VMIVintlvOp> &&
+                          inputFactor > 0 && fact.rhsLayout == fact.lhsLayout &&
+                          fact.maskLayout == fact.lhsLayout &&
+                          fact.highLayout == fact.lowLayout &&
+                          outputFactor == 2 * inputFactor;
+    bool zeroCopyVdintlv = std::is_same_v<SourceOp, VMIVdintlvOp> &&
+                           inputFactor > 0 &&
+                           fact.rhsLayout == fact.lhsLayout &&
+                           fact.maskLayout == fact.lhsLayout &&
+                           fact.highLayout == fact.lowLayout &&
+                           inputFactor == 2 * outputFactor;
+    if (!zeroCopyVintlv && !zeroCopyVdintlv) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported interleave physical layout relation");
+    }
+    FailureOr<SmallVector<Value>> zeroCopyResults = materializeZeroCopyResults(
+        op, lhsParts, rhsParts, lowTypes, highTypes, inputFactor, outputFactor,
+        zeroCopyVintlv, rewriter);
+    if (failed(zeroCopyResults)) {
+      return failure();
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, *zeroCopyResults,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
 public:
 
   LogicalResult
@@ -13503,60 +13558,9 @@ public:
       return failure();
     }
 
-    auto isContiguous = [](VMILayoutAttr layout) {
-      return layout && layout.isContiguous() && layout.getLaneStride() == 1;
-    };
-    bool allSameLaneStride = fact->lhsLayout == fact->rhsLayout &&
-                             fact->lhsLayout == fact->maskLayout &&
-                             fact->lhsLayout == fact->lowLayout &&
-                             fact->lhsLayout == fact->highLayout &&
-                             fact->lhsLayout.isContiguous() &&
-                             fact->lhsLayout.getLaneStride() > 1;
-    if (allSameLaneStride) {
-      return lowerLaneStrideInterleave(op, rewriter, lhsParts, rhsParts,
-                                       lowTypes, highTypes,
-                                       lhsType.getElementType(), *fact);
-    }
-
-    bool allContiguous = isContiguous(fact->lhsLayout) &&
-                         isContiguous(fact->rhsLayout) &&
-                         isContiguous(fact->maskLayout) &&
-                         isContiguous(fact->lowLayout) &&
-                         isContiguous(fact->highLayout);
-    if (allContiguous) {
-      return lowerContiguous(op, rewriter, lhsParts, rhsParts, maskParts,
-                             lowTypes, highTypes);
-    }
-
-    int64_t inputFactor = getElementDeinterleaveFactor(fact->lhsLayout);
-    int64_t outputFactor = getElementDeinterleaveFactor(fact->lowLayout);
-    bool zeroCopyVintlv = std::is_same_v<SourceOp, VMIVintlvOp> &&
-                          inputFactor > 0 &&
-                          fact->rhsLayout == fact->lhsLayout &&
-                          fact->maskLayout == fact->lhsLayout &&
-                          fact->highLayout == fact->lowLayout &&
-                          outputFactor == 2 * inputFactor;
-    bool zeroCopyVdintlv = std::is_same_v<SourceOp, VMIVdintlvOp> &&
-                           inputFactor > 0 &&
-                           fact->rhsLayout == fact->lhsLayout &&
-                           fact->maskLayout == fact->lhsLayout &&
-                           fact->highLayout == fact->lowLayout &&
-                           inputFactor == 2 * outputFactor;
-    bool unsupportedZeroCopyRelation = !zeroCopyVintlv && !zeroCopyVdintlv;
-    if (unsupportedZeroCopyRelation) {
-      return rewriter.notifyMatchFailure(
-          op, "unsupported interleave physical layout relation");
-
-    FailureOr<SmallVector<Value>> zeroCopyResults = materializeZeroCopyResults(
-        op, lhsParts, rhsParts, lowTypes, highTypes, inputFactor, outputFactor,
-        zeroCopyVintlv, rewriter);
-    if (failed(zeroCopyResults)) {
-      return failure();
-    }
-
-    replaceOpWithFlatConvertedValues(rewriter, op, *zeroCopyResults,
-                                     *this->getTypeConverter());
-    return success();
+    return lowerInterleaveByLayout(
+        op, rewriter, lhsParts, rhsParts, maskParts, lowTypes, highTypes,
+        lhsType.getElementType(), *fact);
   }
 };
 
