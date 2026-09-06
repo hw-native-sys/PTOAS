@@ -3130,6 +3130,21 @@ vmi_layout_assignment_intlv_lane_stride.pto            # exit=0
 部分 direct interleave lit case 仍会在测试自身的 VMI `unpack` 前置 invariant 处提前失败，
 未进入本轮分类逻辑。
 
+# lane-stride interleave 单 pair 物化职责拆分（2026-09-06）
+
+本轮将 `lowerLaneStrideInterleave` 中 carrier type 构造、lhs/rhs bitcast、目标
+interleave 发射和 low/high 结果 bitcast 抽取为 `materializeLaneStrideInterleavePair`。
+入口继续负责 one-part/stride/carrier 宽度合同和最终结果替换；lane-stride carrier 语义、
+目标 op 类型、结果顺序和失败诊断保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_layout_assignment_intlv_lane_stride.pto            # exit=0
+```
+
 # expand-load runtime 路径职责拆分（2026-09-06）
 
 本轮将 `OneToNVMIExpandLoadOpPattern::matchAndRewrite` 中 runtime expand-load 的物理

@@ -13725,6 +13725,38 @@ struct OneToNVMIInterleaveOpPattern : OneToNOpConversionPattern<SourceOp> {
   using OneToNOpConversionPattern<SourceOp>::OneToNOpConversionPattern;
 
 private:
+  FailureOr<std::pair<Value, Value>> materializeLaneStrideInterleavePair(
+      SourceOp op, OneToNPatternRewriter &rewriter, Value lhs, Value rhs,
+      Type lowType, Type highType, int64_t carrierBits) const {
+    FailureOr<VRegType> carrierType = getUnsignedCarrierVRegType(
+        rewriter.getContext(), static_cast<unsigned>(carrierBits));
+    if (failed(carrierType)) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported lane-stride interleave carrier width");
+    }
+    FailureOr<Value> carrierLhs =
+        bitcastVReg(op.getLoc(), lhs, *carrierType, rewriter);
+    FailureOr<Value> carrierRhs =
+        bitcastVReg(op.getLoc(), rhs, *carrierType, rewriter);
+    bool failedInputs = failed(carrierLhs) || failed(carrierRhs);
+    if (failedInputs) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to bitcast lane-stride interleave inputs");
+    }
+    auto interleave = rewriter.create<TargetOp>(
+        op.getLoc(), *carrierType, *carrierType, *carrierLhs, *carrierRhs);
+    FailureOr<Value> low =
+        bitcastVReg(op.getLoc(), interleave.getLow(), lowType, rewriter);
+    FailureOr<Value> high =
+        bitcastVReg(op.getLoc(), interleave.getHigh(), highType, rewriter);
+    bool failedResults = failed(low) || failed(high);
+    if (failedResults) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to bitcast lane-stride interleave results");
+    }
+    return std::make_pair(*low, *high);
+  }
+
   LogicalResult lowerLaneStrideInterleave(
       SourceOp op, OneToNPatternRewriter &rewriter, ValueRange lhsParts,
       ValueRange rhsParts, TypeRange lowTypes, TypeRange highTypes,
@@ -13745,33 +13777,14 @@ private:
       return rewriter.notifyMatchFailure(
           op, "invalid lane-stride interleave carrier width");
     }
-    FailureOr<VRegType> carrierType = getUnsignedCarrierVRegType(
-        rewriter.getContext(), static_cast<unsigned>(carrierBits));
-    if (failed(carrierType)) {
-      return rewriter.notifyMatchFailure(
-          op, "unsupported lane-stride interleave carrier width");
+    FailureOr<std::pair<Value, Value>> pair =
+        materializeLaneStrideInterleavePair(
+            op, rewriter, lhsParts.front(), rhsParts.front(), lowTypes.front(),
+            highTypes.front(), carrierBits);
+    if (failed(pair)) {
+      return failure();
     }
-    FailureOr<Value> carrierLhs =
-        bitcastVReg(op.getLoc(), lhsParts.front(), *carrierType, rewriter);
-    FailureOr<Value> carrierRhs =
-        bitcastVReg(op.getLoc(), rhsParts.front(), *carrierType, rewriter);
-    bool failedInputs = failed(carrierLhs) || failed(carrierRhs);
-    if (failedInputs) {
-      return rewriter.notifyMatchFailure(
-          op, "failed to bitcast lane-stride interleave inputs");
-    }
-    auto interleave = rewriter.create<TargetOp>(
-        op.getLoc(), *carrierType, *carrierType, *carrierLhs, *carrierRhs);
-    FailureOr<Value> low =
-        bitcastVReg(op.getLoc(), interleave.getLow(), lowTypes.front(), rewriter);
-    FailureOr<Value> high = bitcastVReg(op.getLoc(), interleave.getHigh(),
-                                        highTypes.front(), rewriter);
-    bool failedResults = failed(low) || failed(high);
-    if (failedResults) {
-      return rewriter.notifyMatchFailure(
-          op, "failed to bitcast lane-stride interleave results");
-    }
-    SmallVector<Value, 2> results = {*low, *high};
+    SmallVector<Value, 2> results = {pair->first, pair->second};
     replaceOpWithFlatConvertedValues(rewriter, op, results,
                                      *this->getTypeConverter());
     return success();
