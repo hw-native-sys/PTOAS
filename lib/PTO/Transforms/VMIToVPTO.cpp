@@ -9490,6 +9490,44 @@ static LogicalResult lowerSingleGroupSlotLoad(
   return success();
 }
 
+static LogicalResult emitGroupSlotLoadSlots8Chunk(
+    Operation *op, Value source, Value offset, Type resultType, int64_t chunk,
+    int64_t numGroups,
+    OneToNPatternRewriter &rewriter, SmallVectorImpl<Value> &results) {
+  FailureOr<GroupSlotLoadResultPart> resultPart =
+      getGroupSlotLoadResultPart(op, resultType, rewriter);
+  if (failed(resultPart)) {
+    return failure();
+  }
+  int64_t groupBegin = chunk * 8;
+  int64_t activeGroups = std::min<int64_t>(8, numGroups - groupBegin);
+  if (activeGroups <= 0) {
+    return rewriter.notifyMatchFailure(
+        op, "slots=8 group_slot_load has no active groups for chunk");
+  }
+  std::string pattern = (Twine("PAT_VL") + Twine(activeGroups)).str();
+  FailureOr<Value> slotMask = createPrefixMask(
+      op->getLoc(), resultPart->maskType, pattern, rewriter);
+  if (failed(slotMask)) {
+    return rewriter.notifyMatchFailure(
+        op, "failed to create slots=8 group_slot_load mask");
+  }
+  Value groupOffset =
+      createChunkOffset(op->getLoc(), offset, groupBegin, rewriter);
+  Value slotBase = rewriter
+                       .create<AddPtrOp>(op->getLoc(), source.getType(), source,
+                                         groupOffset)
+                       .getResult();
+  auto zeroI16 = rewriter.create<arith::ConstantIntOp>(op->getLoc(), 0, 16);
+  results.push_back(
+      rewriter
+          .create<VsldbOp>(op->getLoc(), resultPart->valueType,
+                          /*updated_base=*/Type{}, slotBase, zeroI16, zeroI16,
+                          *slotMask)
+          .getResult());
+  return success();
+}
+
 static LogicalResult lowerGroupSlotLoadSlots8(
     Operation *op, Value source, Value offset, Value sourceGroupStride,
     VMIVRegType resultVMIType, TypeRange resultTypes, int64_t numGroups,
@@ -9499,46 +9537,16 @@ static LogicalResult lowerGroupSlotLoadSlots8(
     return rewriter.notifyMatchFailure(
         op, "slots=8 group_slot_load requires constant unit stride");
   }
-  auto makeI16 = [&rewriter, &op](int64_t value) -> Value {
-    return rewriter.create<arith::ConstantIntOp>(op->getLoc(), value, 16);
-  };
-  Value zeroI16 = makeI16(0);
-  auto makePtr = [&rewriter, &source, &op](Value elementOffset) -> Value {
-    return rewriter
-        .create<AddPtrOp>(op->getLoc(), source.getType(), source, elementOffset)
-        .getResult();
-  };
   if (numGroups == 1) {
     return lowerSingleGroupSlotLoad(op, source, offset, resultVMIType,
                                     resultTypes, rewriter, results);
   }
   for (auto [chunk, resultType] : llvm::enumerate(resultTypes)) {
-    FailureOr<GroupSlotLoadResultPart> resultPart =
-        getGroupSlotLoadResultPart(op, resultType, rewriter);
-    if (failed(resultPart)) {
+    if (failed(emitGroupSlotLoadSlots8Chunk(
+            op, source, offset, resultType,
+            static_cast<int64_t>(chunk), numGroups, rewriter, results))) {
       return failure();
     }
-    int64_t groupBegin = static_cast<int64_t>(chunk) * 8;
-    int64_t activeGroups = std::min<int64_t>(8, numGroups - groupBegin);
-    if (activeGroups <= 0) {
-      return rewriter.notifyMatchFailure(
-          op, "slots=8 group_slot_load has no active groups for chunk");
-    }
-    std::string pattern = (Twine("PAT_VL") + Twine(activeGroups)).str();
-    FailureOr<Value> slotMask =
-        createPrefixMask(op->getLoc(), resultPart->maskType, pattern, rewriter);
-    if (failed(slotMask)) {
-      return rewriter.notifyMatchFailure(
-          op, "failed to create slots=8 group_slot_load mask");
-    }
-    Value groupOffset = createChunkOffset(op->getLoc(), offset, groupBegin,
-                                          rewriter);
-    Value slotBase = makePtr(groupOffset);
-    results.push_back(rewriter
-                          .create<VsldbOp>(op->getLoc(), resultPart->valueType,
-                                           /*updated_base=*/Type{}, slotBase,
-                                           zeroI16, zeroI16, *slotMask)
-                          .getResult());
   }
   return success();
 }

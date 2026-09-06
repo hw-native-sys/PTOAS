@@ -3442,6 +3442,20 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_to_vpto_group_slot_load.pto                        # blocked by pre-existing VMI-PASS-INVARIANT
 ```
 
+# group-slot-load slots=8 chunk 发射拆分（2026-09-06）
+
+本轮将 `lowerGroupSlotLoadSlots8` 多组循环中的单个 chunk 合同校验、prefix mask、地址
+偏移和 `vsldb` 发射抽取为 `emitGroupSlotLoadSlots8Chunk`。主函数只保留 unit-stride
+合同、单组 BRC 分派和 chunk 遍历；多组 `vsldb` 的 mask/offset/结果顺序保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_layout_assignment_group_slot_load.pto              # lowering output generated; command returned an existing test diagnostic
+```
+
 # load physical plan 构造职责拆分（2026-09-06）
 
 本轮将 `OneToNVMILoadOpPattern::buildPhysicalPlan` 中 converted result type 获取与
