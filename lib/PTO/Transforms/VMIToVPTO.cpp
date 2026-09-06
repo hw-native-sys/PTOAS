@@ -10507,32 +10507,25 @@ struct OneToNVMIMaskedLoadOpPattern
   using OneToNOpConversionPattern<VMIMaskedLoadOp>::OneToNOpConversionPattern;
 
 private:
-  FailureOr<Value> materializeGatherPart(
-      VMIGatherOp op, OneToNPatternRewriter &rewriter, Value source,
-      Value indices, Value mask, Value passthru, Type resultType,
-      bool allActive) const {
-    bool invalidPartTypes = !isa<VRegType>(indices.getType()) ||
-                            !isa<MaskType>(mask.getType()) ||
+  FailureOr<Value> materializeMaskedLoadPart(
+      VMIMaskedLoadOp op, OneToNPatternRewriter &rewriter, Value source,
+      Value offset, Value mask, Value passthru, Type resultType,
+      int64_t index, int64_t lanesPerPart) const {
+    bool invalidPartTypes = !isa<MaskType>(mask.getType()) ||
                             passthru.getType() != resultType ||
                             !isa<VRegType>(resultType);
     if (invalidPartTypes) {
       return rewriter.notifyMatchFailure(
-          op, "gather physical part type mismatch");
+          op, "masked_load physical part type mismatch");
     }
-    unsigned resultBits = pto::getPTOStorageElemBitWidth(
-        cast<VRegType>(resultType).getElementType());
-    Value gathered = resultBits == 16
-                         ? rewriter.create<Vgather2Op>(
-                               op.getLoc(), resultType, source, indices, mask)
-                               .getResult()
-                         : rewriter.create<Vgather2BcOp>(
-                               op.getLoc(), resultType, source, indices, mask)
-                               .getResult();
-    if (allActive) {
-      return gathered;
-    }
+    Value chunkOffset = createChunkOffset(
+        op.getLoc(), offset, index * lanesPerPart, rewriter);
+    Value loaded = rewriter
+                       .create<VldsOp>(op.getLoc(), resultType, Type{}, source,
+                                       chunkOffset, nullptr)
+                       .getResult();
     return rewriter
-        .create<VselOp>(op.getLoc(), resultType, gathered, passthru, mask)
+        .create<VselOp>(op.getLoc(), resultType, loaded, passthru, mask)
         .getResult();
   }
 
@@ -10551,24 +10544,13 @@ private:
     for (auto [index, maskPassthruAndType] : llvm::enumerate(
              llvm::zip_equal(maskParts, passthruParts, resultTypes))) {
       auto [mask, passthru, resultType] = maskPassthruAndType;
-      bool invalidPartTypes = !isa<MaskType>(mask.getType()) ||
-                              passthru.getType() != resultType ||
-                              !isa<VRegType>(resultType);
-      if (invalidPartTypes) {
-        return rewriter.notifyMatchFailure(
-            op, "masked_load physical part type mismatch");
+      FailureOr<Value> result = materializeMaskedLoadPart(
+          op, rewriter, source, offset, mask, passthru, resultType, index,
+          lanesPerPart);
+      if (failed(result)) {
+        return failure();
       }
-      Value chunkOffset = createChunkOffset(
-          op.getLoc(), offset, index * lanesPerPart, rewriter);
-      Value loaded = rewriter
-                         .create<VldsOp>(op.getLoc(), resultType,
-                                         /*updated_base=*/Type{}, source,
-                                         chunkOffset, /*dist=*/nullptr)
-                         .getResult();
-      results.push_back(rewriter
-                            .create<VselOp>(op.getLoc(), resultType, loaded,
-                                            passthru, mask)
-                            .getResult());
+      results.push_back(*result);
     }
     replaceOpWithFlatConvertedValues(rewriter, op, results,
                                      *this->getTypeConverter());

@@ -3166,6 +3166,24 @@ vmi_to_vpto_gather_all_active_mask.pto                 # exit=0
 普通 gather case 中部分输入在测试自身的 VMI lowering/invariant 处提前失败；all-active
 case 已完整通过。
 
+# masked-load 单 physical part 物化职责拆分（2026-09-06）
+
+本轮将 `OneToNVMIMaskedLoadOpPattern::lowerPhysicalParts` 中单个 physical part 的
+mask/passthru/result 类型校验、chunk offset 计算、`vlds` 和 `vsel` 发射抽取为
+`materializeMaskedLoadPart`。外层函数继续负责 physical arity 校验、part 遍历、结果
+收集和替换；masked-load 的 passthru 语义、访问步进、结果顺序和失败诊断保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_layout_assignment_masked_load.pto                  # reaches existing residual VMI op
+```
+
+该 layout case 在测试输入的既有 residual `pto.vmi.load` 问题处失败，未归因于本轮
+masked-load helper。
+
 # deinterleave-load 结果类型合同拆分（2026-09-06）
 
 本轮将 `OneToNVMIDeinterleaveLoadOpPattern::matchAndRewrite` 中 low/high physical result
