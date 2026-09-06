@@ -1,5 +1,19 @@
 # VMIToVPTO 静态分析报告记录
 
+## advanced-load verifier 分派拆分（2026-09-06）
+
+本轮将 `verifySupportedVMIMemoryAdvancedLoadOp` 按语义拆为
+`verifySupportedVMIMaskedLoadOp`、`verifySupportedVMIGatherOp` 和
+`verifySupportedVMIExpandLoadOp`。入口只负责分派；masked-load 的 stable-gather 开关、
+gather/expand-load 的 support shape 检查、诊断文本和 `WalkResult` 语义均保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
 ## group-reduction verifier 分派清理（2026-09-06）
 
 本轮清理 `verifySupportedVMIGroupReductionOp` 中仅转发参数的默认捕获 lambda，直接使用

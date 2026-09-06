@@ -20470,7 +20470,7 @@ WalkResult emitMemoryUnsupported(Operation *memoryOp, StringRef opName,
     return WalkResult::interrupt();
 }
 
-std::optional<WalkResult> verifySupportedVMIMemoryAdvancedLoadOp(
+static std::optional<WalkResult> verifySupportedVMIMaskedLoadOp(
     Operation *op, bool enableStableGatherMaskedLoad) {
   if (auto load = dyn_cast<VMIMaskedLoadOp>(op)) {
     if (enableStableGatherMaskedLoad) {
@@ -20486,6 +20486,10 @@ std::optional<WalkResult> verifySupportedVMIMemoryAdvancedLoadOp(
         "contiguous result/passthru/mask layouts, and either full physical "
         "chunks or a statically safe full-read footprint (");
   }
+  return std::nullopt;
+}
+
+static std::optional<WalkResult> verifySupportedVMIGatherOp(Operation *op) {
   if (auto gather = dyn_cast<VMIGatherOp>(op)) {
     return verifySupportedShapeOp(
         gather, checkSupportedGatherShape,
@@ -20494,6 +20498,10 @@ std::optional<WalkResult> verifySupportedVMIMemoryAdvancedLoadOp(
         "ui16/i16/f16/bf16 results with ui16 indices and b16 masks, or "
         "32-bit results with i32 indices and b32 masks (");
   }
+  return std::nullopt;
+}
+
+static std::optional<WalkResult> verifySupportedVMIExpandLoadOp(Operation *op) {
   if (auto load = dyn_cast<VMIExpandLoadOp>(op)) {
     return verifySupportedShapeOp(
         load, checkSupportedExpandLoadShape,
@@ -20503,6 +20511,19 @@ std::optional<WalkResult> verifySupportedVMIMemoryAdvancedLoadOp(
         "pto.vsel (");
   }
   return std::nullopt;
+}
+
+std::optional<WalkResult> verifySupportedVMIMemoryAdvancedLoadOp(
+    Operation *op, bool enableStableGatherMaskedLoad) {
+  if (auto result = verifySupportedVMIMaskedLoadOp(
+          op, enableStableGatherMaskedLoad);
+      result.has_value()) {
+    return result;
+  }
+  if (auto result = verifySupportedVMIGatherOp(op); result.has_value()) {
+    return result;
+  }
+  return verifySupportedVMIExpandLoadOp(op);
 }
 
 static std::optional<WalkResult> verifySupportedVMIStructuredMaskedStoreOp(
