@@ -10773,21 +10773,14 @@ struct OneToNVMIExpandLoadOpPattern
   using OneToNOpConversionPattern<VMIExpandLoadOp>::OneToNOpConversionPattern;
 
 private:
-  FailureOr<Value> materializeStaticExpandLoadPart(
-      VMIExpandLoadOp op, OneToNPatternRewriter &rewriter, Value source,
-      Value offset, Type resultType, int64_t index, int64_t lanesPerPart) const {
-    if (!isa<VRegType>(resultType)) {
-      return rewriter.notifyMatchFailure(op, "expand_load result must be vreg");
-    }
-    Value chunkOffset = createChunkOffset(
-        op.getLoc(), offset, index * lanesPerPart, rewriter);
-    return rewriter
-        .create<VldsOp>(op.getLoc(), resultType, Type{}, source, chunkOffset,
-                        nullptr)
-        .getResult();
-  }
+  struct RuntimeExpandLoadPlan {
+    VRegType resultType;
+    Value gatherBase;
+    Value mask;
+    Value passthru;
+  };
 
-  LogicalResult lowerRuntimeExpandLoad(
+  FailureOr<RuntimeExpandLoadPlan> buildRuntimeExpandLoadPlan(
       VMIExpandLoadOp op, OneToNPatternRewriter &rewriter, Value source,
       Value offset, ValueRange maskParts, ValueRange passthruParts,
       ArrayRef<Type> resultTypes) const {
@@ -10812,8 +10805,15 @@ private:
                            .create<AddPtrOp>(op.getLoc(), source.getType(), source,
                                              offset)
                            .getResult();
+    return RuntimeExpandLoadPlan{*resultType, gatherBase, maskParts.front(),
+                                 passthruParts.front()};
+  }
+
+  FailureOr<Value> materializeRuntimeExpandLoad(
+      VMIExpandLoadOp op, OneToNPatternRewriter &rewriter,
+      const RuntimeExpandLoadPlan &plan) const {
     auto indexType = VRegType::get(rewriter.getContext(),
-                                   resultType.getElementCount(),
+                                   plan.resultType.getElementCount(),
                                    rewriter.getI32Type());
     FailureOr<Value> indexSeedMask =
         createAllTrueMaskForVReg(op.getLoc(), indexType, rewriter);
@@ -10828,17 +10828,47 @@ private:
                         .getResult();
     Value indices = rewriter
                         .create<VusqzOp>(op.getLoc(), indexType, carrier,
-                                        maskParts.front())
+                                        plan.mask)
                         .getResult();
     Value gathered = rewriter
-                         .create<Vgather2BcOp>(op.getLoc(), resultType, gatherBase,
-                                               indices, maskParts.front())
+                         .create<Vgather2BcOp>(op.getLoc(), plan.resultType,
+                                               plan.gatherBase, indices,
+                                               plan.mask)
                          .getResult();
-    Value result = rewriter
-                       .create<VselOp>(op.getLoc(), resultType, gathered,
-                                       passthruParts.front(), maskParts.front())
-                       .getResult();
-    replaceOpWithFlatConvertedValues(rewriter, op, SmallVector<Value>{result},
+    return rewriter
+        .create<VselOp>(op.getLoc(), plan.resultType, gathered, plan.passthru,
+                        plan.mask)
+        .getResult();
+  }
+
+  FailureOr<Value> materializeStaticExpandLoadPart(
+      VMIExpandLoadOp op, OneToNPatternRewriter &rewriter, Value source,
+      Value offset, Type resultType, int64_t index, int64_t lanesPerPart) const {
+    if (!isa<VRegType>(resultType)) {
+      return rewriter.notifyMatchFailure(op, "expand_load result must be vreg");
+    }
+    Value chunkOffset = createChunkOffset(
+        op.getLoc(), offset, index * lanesPerPart, rewriter);
+    return rewriter
+        .create<VldsOp>(op.getLoc(), resultType, Type{}, source, chunkOffset,
+                        nullptr)
+        .getResult();
+  }
+
+  LogicalResult lowerRuntimeExpandLoad(
+      VMIExpandLoadOp op, OneToNPatternRewriter &rewriter, Value source,
+      Value offset, ValueRange maskParts, ValueRange passthruParts,
+      ArrayRef<Type> resultTypes) const {
+    FailureOr<RuntimeExpandLoadPlan> plan = buildRuntimeExpandLoadPlan(
+        op, rewriter, source, offset, maskParts, passthruParts, resultTypes);
+    if (failed(plan)) {
+      return failure();
+    }
+    FailureOr<Value> result = materializeRuntimeExpandLoad(op, rewriter, *plan);
+    if (failed(result)) {
+      return failure();
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, SmallVector<Value>{*result},
                                      *this->getTypeConverter());
     return success();
   }

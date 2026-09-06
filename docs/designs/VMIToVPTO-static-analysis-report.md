@@ -1,5 +1,21 @@
 # VMIToVPTO 静态分析报告记录
 
+## runtime expand-load 计划与物化拆分（2026-09-06）
+
+本轮将 `lowerRuntimeExpandLoad` 拆为两个职责明确的阶段：
+`buildRuntimeExpandLoadPlan` 负责单 physical chunk、result/mask/passthru 类型、pointer
+及 `source + offset` 合同，并返回显式的 `RuntimeExpandLoadPlan`；
+`materializeRuntimeExpandLoad` 负责 index carrier、`vusqz`、`vgather2_bc` 和 passthru
+`vsel` 的运行时 expand 语义物化。原有 runtime 只支持单 physical chunk 的限制、动态 mask
+和 passthru 语义、失败诊断及结果替换顺序保持不变；静态 all-active 路径未改变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
 ## dense group-slot extension carrier 拆分（2026-09-06）
 
 本轮将 `buildDenseGroupSlotExtensionResult` 中单个 carrier 的逐级 unpack 发射与结果
