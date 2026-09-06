@@ -8763,25 +8763,35 @@ private:
     return parts;
   }
 
+  FailureOr<SmallVector<Value>> materializeContiguousLoadParts(
+      VMILoadOp op, OneToNPatternRewriter &rewriter, Value source, Value offset,
+      VMIVRegType resultVMIType, ArrayRef<Type> contiguousTypes,
+      int64_t lanesPerPart) const {
+    auto firstType = contiguousTypes.empty()
+                         ? VRegType{}
+                         : dyn_cast<VRegType>(contiguousTypes.front());
+    bool useAlignedAccess =
+        firstType && isDirectMemoryDistAddressLegal(
+                          op.getSource(), op.getOffset(),
+                          resultVMIType.getElementType(), firstType,
+                          VPTOMemoryOpFamily::Load, "NORM");
+    if (useAlignedAccess) {
+      return materializeAlignedContiguousParts(
+          op, rewriter, source, offset, contiguousTypes, lanesPerPart);
+    }
+    return materializeUnalignedContiguousParts(
+        op, rewriter, source, offset, contiguousTypes, lanesPerPart);
+  }
+
   LogicalResult lowerContiguous(
       VMILoadOp op, OneToNPatternRewriter &rewriter, Value source,
       Value offset, VMIVRegType resultVMIType, ArrayRef<Type> resultTypes,
       ArrayRef<Type> contiguousTypes, int64_t lanesPerPart,
       VMILayoutAttr contiguousLayout) const {
-    auto firstContiguousType = contiguousTypes.empty()
-                                    ? VRegType{}
-                                    : dyn_cast<VRegType>(contiguousTypes.front());
-    bool useAlignedAccess =
-        firstContiguousType &&
-        isDirectMemoryDistAddressLegal(
-            op.getSource(), op.getOffset(), resultVMIType.getElementType(),
-            firstContiguousType, VPTOMemoryOpFamily::Load, "NORM");
     FailureOr<SmallVector<Value>> contiguousParts =
-        useAlignedAccess
-            ? materializeAlignedContiguousParts(
-                  op, rewriter, source, offset, contiguousTypes, lanesPerPart)
-            : materializeUnalignedContiguousParts(
-                  op, rewriter, source, offset, contiguousTypes, lanesPerPart);
+        materializeContiguousLoadParts(op, rewriter, source, offset,
+                                       resultVMIType, contiguousTypes,
+                                       lanesPerPart);
     if (failed(contiguousParts)) {
       return failure();
     }

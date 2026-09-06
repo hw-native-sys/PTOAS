@@ -3382,3 +3382,18 @@ git diff --check                                      # passed
 check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
 vmi_to_vpto_load_store_contiguous.pto                  # exit=0
 ```
+
+# contiguous load 访存物化职责拆分（2026-09-06）
+
+本轮将 `OneToNVMILoadOpPattern::lowerContiguous` 中 aligned `vlds` 与 unaligned stateful
+`vldus` 的选择抽取为 `materializeContiguousLoadParts`。helper 只负责根据 direct-memory
+合法性选择物化路径，`lowerContiguous` 继续负责 layout conversion 和结果替换；对齐证明、
+align/base 状态推进、part 顺序及 fallback 语义保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_load_store_contiguous.pto                  # exit=0
+```
