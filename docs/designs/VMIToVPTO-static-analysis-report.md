@@ -2337,6 +2337,16 @@ group_broadcast_load 的重复 shape-check 和失败诊断统一改用 `verifySu
 `vmi_layout_assignment_group_load_s16_unaligned_stride_invalid.pto` 仍按预期在既有
 layout contract invalid 处失败，诊断未改变。
 
+# channel merge 结果合同职责整改
+
+本轮在 `checkSupportedChannelMergeShape` 中引入
+`checkChannelMergeResultShape`，将 result layout、result physical arity 和输入/结果
+arity 一致性校验抽取为独立 helper。主函数继续负责 channel 数量和所有输入 contiguous
+layout/arity 汇总；保持 deinterleaved 期望布局、诊断顺序及失败语义不变。增量
+`check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；channel merge 正常样例在既有 layout contract 冲突处提前失败，
+未进入本轮 helper。
+
 # channel split 结果布局与 arity 合同职责整改
 
 本轮在 `checkSupportedChannelSplitShape` 中引入

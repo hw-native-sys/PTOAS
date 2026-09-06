@@ -17599,6 +17599,36 @@ static FailureOr<int64_t> checkChannelSplitResultShape(
   return resultArity;
 }
 
+static LogicalResult checkChannelMergeResultShape(
+    VMIChannelMergeOp op, VMILayoutAttr expectedLayout, int64_t inputArity,
+    std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  auto resultType = cast<VMIVRegType>(op.getResult().getType());
+  VMILayoutAttr resultLayout = resultType.getLayoutAttr();
+  if (!resultLayout) {
+    return fail("requires assigned result layout");
+  }
+  bool invalidResultLayout =
+      !resultLayout.isContiguous() && resultLayout != expectedLayout;
+  if (invalidResultLayout) {
+    return fail("requires result layout to be contiguous or matching "
+                "deinterleaved channel layout");
+  }
+  FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
+  if (failed(resultArity)) {
+    return fail("requires computable result physical arity");
+  }
+  if (*resultArity != inputArity) {
+    return fail("requires source and result to have the same physical arity");
+  }
+  return success();
+}
+
 LogicalResult checkSupportedChannelSplitShape(VMIChannelSplitOp op,
                                               std::string *reason = nullptr) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
@@ -17655,23 +17685,10 @@ LogicalResult checkSupportedChannelMergeShape(VMIChannelMergeOp op,
     return failure();
   }
 
-  auto resultType = cast<VMIVRegType>(op.getResult().getType());
-  VMILayoutAttr resultLayout = resultType.getLayoutAttr();
-  if (!resultLayout)
-    return fail("requires assigned result layout");
-  bool invalidResultLayout =
-      !resultLayout.isContiguous() && resultLayout != plan->expectedLayout;
-  if (invalidResultLayout) {
-    return fail("requires result layout to be contiguous or matching "
-                "deinterleaved channel layout");
-
-  FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
-  if (failed(resultArity))
-    return fail("requires computable result physical arity");
-  bool resultArityMismatch = *resultArity != *inputArity;
-  if (resultArityMismatch) {
-    return fail("requires source and result to have the same physical arity");
-
+  if (failed(checkChannelMergeResultShape(op, plan->expectedLayout,
+                                          *inputArity, reason))) {
+    return failure();
+  }
   return success();
 }
 
