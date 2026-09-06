@@ -1,5 +1,18 @@
 # VMIToVPTO 静态分析报告记录
 
+## structured-store verifier 语义族拆分（2026-09-06）
+
+本轮将 `verifySupportedVMIStructuredStoreOp` 按 interleave、group、stride、scatter 四类
+op 拆为独立 helper，入口只负责保持 masked-store 优先级并顺序分派。每类仍调用原有
+shape check 和诊断文本，masked-store 优先级、支持矩阵及 `WalkResult` 行为保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
 ## normal-reduction verifier 浮点/整数分派拆分（2026-09-06）
 
 本轮将 `verifySupportedVMINormalReductionOp` 拆为

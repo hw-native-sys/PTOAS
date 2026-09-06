@@ -20548,11 +20548,8 @@ static std::optional<WalkResult> verifySupportedVMIStructuredMaskedStoreOp(
   return std::nullopt;
 }
 
-std::optional<WalkResult> verifySupportedVMIStructuredStoreOp(Operation *op) {
-  if (auto maskedStore = verifySupportedVMIStructuredMaskedStoreOp(op);
-      maskedStore.has_value()) {
-    return maskedStore;
-  }
+static std::optional<WalkResult> verifySupportedVMIInterleaveStoreOp(
+    Operation *op) {
   if (auto store = dyn_cast<VMIInterleaveStoreOp>(op)) {
     return verifySupportedShapeOp(
         store, checkSupportedInterleaveStoreShape,
@@ -20560,6 +20557,10 @@ std::optional<WalkResult> verifySupportedVMIStructuredStoreOp(Operation *op) {
         "contiguous full low/high input chunks with a supported UB destination "
         "and 8/16/32-bit element type (");
   }
+  return std::nullopt;
+}
+
+static std::optional<WalkResult> verifySupportedVMIGroupStoreOp(Operation *op) {
   if (auto store = dyn_cast<VMIGroupStoreOp>(op)) {
     return verifySupportedShapeOp(
         store, checkSupportedGroupStoreShape,
@@ -20567,12 +20568,20 @@ std::optional<WalkResult> verifySupportedVMIStructuredStoreOp(Operation *op) {
         "supported value layout lowering through one-block vsstb, full-chunk "
         "vsts, or deinterleaved vstsx2 (");
   }
+  return std::nullopt;
+}
+
+static std::optional<WalkResult> verifySupportedVMIStrideStoreOp(Operation *op) {
   if (auto store = dyn_cast<VMIStrideStoreOp>(op)) {
     return verifySupportedShapeOp(
         store, checkSupportedStrideStoreShape,
         "pto.vmi.stride_store lowers through pto.vsstb only for one contiguous "
         "physical value/mask chunk and a supported UB destination (");
   }
+  return std::nullopt;
+}
+
+static std::optional<WalkResult> verifySupportedVMIScatterOp(Operation *op) {
   if (auto scatter = dyn_cast<VMIScatterOp>(op)) {
     return verifySupportedShapeOp(
         scatter, checkSupportedScatterShape,
@@ -20581,6 +20590,24 @@ std::optional<WalkResult> verifySupportedVMIStructuredStoreOp(Operation *op) {
         "i32 indices, and b32 masks (");
   }
   return std::nullopt;
+}
+
+std::optional<WalkResult> verifySupportedVMIStructuredStoreOp(Operation *op) {
+  if (auto maskedStore = verifySupportedVMIStructuredMaskedStoreOp(op);
+      maskedStore.has_value()) {
+    return maskedStore;
+  }
+  if (auto result = verifySupportedVMIInterleaveStoreOp(op);
+      result.has_value()) {
+    return result;
+  }
+  if (auto result = verifySupportedVMIGroupStoreOp(op); result.has_value()) {
+    return result;
+  }
+  if (auto result = verifySupportedVMIStrideStoreOp(op); result.has_value()) {
+    return result;
+  }
+  return verifySupportedVMIScatterOp(op);
 }
 
 static LogicalResult checkSupportedVMIStoreShape(VMIStoreOp op,
