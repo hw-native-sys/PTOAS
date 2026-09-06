@@ -3514,6 +3514,19 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_to_vpto_create_mask_plt_fallback.pto              # invalid/invariant diagnostic retained
 ```
 
+# shuffle forwarding 输入合同拆分（2026-09-06）
+
+本轮将 `computeShuffleForwardingSourceParts` 的 physical lanes、indices 非空和 result
+layout factor 输入合同集中到局部 `validateInputs`。主体继续负责按 result factor/chunk
+遍历并调用 source chunk 映射；错误诊断、source flat index 顺序和 forwarding 语义保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
 # interleave lowering 入口合同与布局查询拆分（2026-09-06）
 
 本轮将模板 `OneToNVMIInterleaveOpPattern::matchAndRewrite` 中的结果物理类型/输入输出
