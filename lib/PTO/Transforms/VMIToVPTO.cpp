@@ -9564,6 +9564,47 @@ static LogicalResult lowerGroupSlotLoadSlots8(
   return success();
 }
 
+static LogicalResult emitGroupSlotLoadSlots1Chunk(
+    Operation *op, Value source, Value offset, Value sourceGroupStride,
+    Type resultType, int64_t group, OneToNPatternRewriter &rewriter,
+    SmallVectorImpl<Value> &results) {
+  FailureOr<GroupSlotLoadResultPart> resultPart =
+      getGroupSlotLoadResultPart(op, resultType, rewriter);
+  if (failed(resultPart)) {
+    return failure();
+  }
+  FailureOr<Value> oneBlockMask = createPrefixMask(
+      op->getLoc(), resultPart->maskType, "PAT_VL1", rewriter);
+  if (failed(oneBlockMask)) {
+    return rewriter.notifyMatchFailure(op, "failed to create group_slot_load mask");
+  }
+  Value groupOffset = offset;
+  if (group != 0) {
+    Value groupIndex =
+        rewriter.create<arith::ConstantIndexOp>(op->getLoc(), group);
+    Value rowOffset = rewriter
+                          .create<arith::MulIOp>(op->getLoc(),
+                                                 sourceGroupStride, groupIndex)
+                          .getResult();
+    groupOffset = rewriter
+                      .create<arith::AddIOp>(op->getLoc(), groupOffset,
+                                             rowOffset)
+                      .getResult();
+  }
+  Value slotBase = rewriter
+                       .create<AddPtrOp>(op->getLoc(), source.getType(), source,
+                                         groupOffset)
+                       .getResult();
+  auto zeroI16 = rewriter.create<arith::ConstantIntOp>(op->getLoc(), 0, 16);
+  results.push_back(
+      rewriter
+          .create<VsldbOp>(op->getLoc(), resultPart->valueType,
+                          /*updated_base=*/Type{}, slotBase, zeroI16, zeroI16,
+                          *oneBlockMask)
+          .getResult());
+  return success();
+}
+
 static LogicalResult lowerGroupSlotLoadSlots1(
     Operation *op, Value source, Value offset, Value sourceGroupStride,
     VMIVRegType resultVMIType, TypeRange resultTypes,
@@ -9585,46 +9626,12 @@ static LogicalResult lowerGroupSlotLoadSlots1(
                 Twine(alignedStrideElems) +
                 " elements for 32B lane-0 vsldb alignment");
   }
-  auto makeI16 = [&rewriter, &op](int64_t value) -> Value {
-    return rewriter.create<arith::ConstantIntOp>(op->getLoc(), value, 16);
-  };
-  auto makePtr = [&rewriter, &source, &op](Value elementOffset) -> Value {
-    return rewriter
-        .create<AddPtrOp>(op->getLoc(), source.getType(), source, elementOffset)
-        .getResult();
-  };
-  Value zeroI16 = makeI16(0);
   for (auto [group, resultType] : llvm::enumerate(resultTypes)) {
-    FailureOr<GroupSlotLoadResultPart> resultPart =
-        getGroupSlotLoadResultPart(op, resultType, rewriter);
-    if (failed(resultPart)) {
+    if (failed(emitGroupSlotLoadSlots1Chunk(
+            op, source, offset, sourceGroupStride, resultType,
+            static_cast<int64_t>(group), rewriter, results))) {
       return failure();
     }
-    FailureOr<Value> oneBlockMask =
-        createPrefixMask(op->getLoc(), resultPart->maskType, "PAT_VL1",
-                         rewriter);
-    if (failed(oneBlockMask)) {
-      return rewriter.notifyMatchFailure(
-          op, "failed to create group_slot_load mask");
-    }
-    Value groupOffset = offset;
-    if (group != 0) {
-      Value groupIndex =
-          rewriter.create<arith::ConstantIndexOp>(op->getLoc(), group);
-      Value rowOffset = rewriter
-                            .create<arith::MulIOp>(
-                                op->getLoc(), sourceGroupStride, groupIndex)
-                            .getResult();
-      groupOffset =
-          rewriter.create<arith::AddIOp>(op->getLoc(), groupOffset, rowOffset)
-              .getResult();
-    }
-    Value slotBase = makePtr(groupOffset);
-    results.push_back(rewriter
-                          .create<VsldbOp>(op->getLoc(), resultPart->valueType,
-                                           /*updated_base=*/Type{}, slotBase,
-                                           zeroI16, zeroI16, *oneBlockMask)
-                          .getResult());
   }
   return success();
 }

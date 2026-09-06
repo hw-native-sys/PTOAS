@@ -3588,6 +3588,21 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_layout_assignment_group_store_slots1_unit_stride.pto # exit=0
 ```
 
+# group-slot-load slots=1 chunk 发射拆分（2026-09-06）
+
+本轮将 `lowerGroupSlotLoadSlots1` 循环中的结果类型/mask 合同、group offset 计算、pointer
+构造和 `vsldb` 发射抽取为 `emitGroupSlotLoadSlots1Chunk`。主函数继续负责 element width
+和 source stride 对齐合同及逐 group 遍历；`PAT_VL1` mask、地址步进、结果顺序和失败诊断
+保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_layout_assignment_group_slot_load_slots1_unaligned_stride_invalid.pto # expected invalid-case exit=1
+```
+
 # load physical plan 构造职责拆分（2026-09-06）
 
 本轮将 `OneToNVMILoadOpPattern::buildPhysicalPlan` 中 converted result type 获取与
