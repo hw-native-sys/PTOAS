@@ -3514,6 +3514,21 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_to_vpto_load_store_contiguous.pto                  # exit=0
 ```
 
+# dense group-slot extension 结果合同拆分（2026-09-06）
+
+本轮将 `buildDenseGroupSlotExtensionResult` 中 source/result physical lane 数量、carrier
+比例和结果 vreg 类型检查抽取为 `validateDenseGroupSlotExtensionResult`。主函数继续负责
+逐级 `Vsunpack/Vzunpack` 物化和最终 bitcast；扩展方向、lane 校验、失败诊断及结果语义保持
+不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_group_slot_integer_extension_matrix.pto   # exit=0
+```
+
 # load physical plan 构造职责拆分（2026-09-06）
 
 本轮将 `OneToNVMILoadOpPattern::buildPhysicalPlan` 中 converted result type 获取与

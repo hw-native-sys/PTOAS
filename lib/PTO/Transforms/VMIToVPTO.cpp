@@ -16236,10 +16236,9 @@ private:
         op, "unsupported physical integer extension source/result width relation");
   }
 
-  FailureOr<Value> buildDenseGroupSlotExtensionResult(
-      OpT op, Value sourcePart, Type resultType, VMIVRegType sourceVMIType,
-      VMIVRegType resultVMIType, IntegerType resultIntegerType,
-      unsigned sourceBits, unsigned resultBits,
+  FailureOr<VRegType> validateDenseGroupSlotExtensionResult(
+      OpT op, Type resultType, VMIVRegType sourceVMIType,
+      VMIVRegType resultVMIType, unsigned sourceBits, unsigned resultBits,
       OneToNPatternRewriter &rewriter) const {
     FailureOr<int64_t> sourceLanes =
         getDataLanesPerPart(sourceVMIType.getElementType());
@@ -16249,20 +16248,32 @@ private:
         failed(sourceLanes) || failed(resultLanes) ||
         *sourceLanes !=
             *resultLanes * static_cast<int64_t>(resultBits / sourceBits);
-    if (carrierShapeMismatch) {
-      return rewriter.notifyMatchFailure(
-          op, "unsupported dense group-slot integer extension carrier shape");
-    }
-
     auto physicalResultType = dyn_cast<VRegType>(resultType);
     bool invalidResultType =
-        !physicalResultType ||
+        !physicalResultType || failed(resultLanes) ||
         physicalResultType.getElementCount() != *resultLanes ||
         pto::getPTOStorageElemBitWidth(physicalResultType.getElementType()) !=
             resultBits;
-    if (invalidResultType) {
+    if (carrierShapeMismatch || invalidResultType) {
       return rewriter.notifyMatchFailure(
-          op, "unsupported dense group-slot integer extension result type");
+          op, carrierShapeMismatch
+                  ? "unsupported dense group-slot integer extension carrier shape"
+                  : "unsupported dense group-slot integer extension result type");
+    }
+    return *physicalResultType;
+  }
+
+  FailureOr<Value> buildDenseGroupSlotExtensionResult(
+      OpT op, Value sourcePart, Type resultType, VMIVRegType sourceVMIType,
+      VMIVRegType resultVMIType, IntegerType resultIntegerType,
+      unsigned sourceBits, unsigned resultBits,
+      OneToNPatternRewriter &rewriter) const {
+    FailureOr<VRegType> physicalResultType =
+        validateDenseGroupSlotExtensionResult(
+            op, resultType, sourceVMIType, resultVMIType, sourceBits,
+            resultBits, rewriter);
+    if (failed(physicalResultType)) {
+      return failure();
     }
 
     Value current = sourcePart;
@@ -16298,7 +16309,7 @@ private:
       currentBits = nextBits;
     }
     FailureOr<Value> result =
-        bitcastVReg(op.getLoc(), current, physicalResultType, rewriter);
+        bitcastVReg(op.getLoc(), current, *physicalResultType, rewriter);
     if (failed(result)) {
       return rewriter.notifyMatchFailure(
           op, "failed to materialize dense group-slot unpack result");
