@@ -3304,6 +3304,39 @@ static FailureOr<bool> getShuffleLaneDirection(
   return descending && !ascending;
 }
 
+static FailureOr<VMIPhysicalLane> getShuffleSourceLane(
+    VMIVRegType sourceType, VMIVRegType resultType,
+    ArrayRef<int64_t> indices, int64_t resultPart, int64_t resultChunk,
+    int64_t lane, std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> FailureOr<VMIPhysicalLane> {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  FailureOr<bool> padding =
+      isPaddingLane(resultType, resultPart, resultChunk, lane);
+  bool invalidPadding = failed(padding) || *padding;
+  if (invalidPadding) {
+    return fail("requires full physical result chunks");
+  }
+  FailureOr<int64_t> logicalLane =
+      mapPhysicalLaneToLogical(resultType, resultPart, resultChunk, lane);
+  bool logicalLaneOutOfRange =
+      succeeded(logicalLane) &&
+      *logicalLane >= static_cast<int64_t>(indices.size());
+  bool invalidLogicalLane = failed(logicalLane) || logicalLaneOutOfRange;
+  if (invalidLogicalLane) {
+    return fail("failed to map result lane");
+  }
+  FailureOr<VMIPhysicalLane> sourceLane =
+      mapLogicalLaneToPhysical(sourceType, indices[*logicalLane]);
+  if (failed(sourceLane)) {
+    return fail("failed to map source lane");
+  }
+  return *sourceLane;
+}
+
 FailureOr<ShuffleVselrPlan> computeShuffleVselrPlanForChunk(
     VMIVRegType sourceType, VMIVRegType resultType, ArrayRef<int64_t> indices,
     int64_t resultPart, int64_t resultChunk, int64_t lanesPerPart,
@@ -3319,30 +3352,10 @@ FailureOr<ShuffleVselrPlan> computeShuffleVselrPlanForChunk(
   std::optional<int64_t> baseLane;
   std::optional<bool> descending;
   for (int64_t lane = 0; lane < lanesPerPart; ++lane) {
-    FailureOr<bool> padding =
-        isPaddingLane(resultType, resultPart, resultChunk, lane);
-    bool hasPadding = succeeded(padding) && *padding;
-    if (failed(padding)) {
-      return fail("requires full physical result chunks");
-    }
-    if (hasPadding) {
-      return fail("requires full physical result chunks");
-    }
-    FailureOr<int64_t> resultLogicalLane =
-        mapPhysicalLaneToLogical(resultType, resultPart, resultChunk, lane);
-    bool resultLaneOutOfRange =
-        succeeded(resultLogicalLane) &&
-        *resultLogicalLane >= static_cast<int64_t>(indices.size());
-    if (failed(resultLogicalLane)) {
-      return fail("failed to map result lane");
-    }
-    if (resultLaneOutOfRange) {
-      return fail("failed to map result lane");
-    }
-    FailureOr<VMIPhysicalLane> sourcePhysical =
-        mapLogicalLaneToPhysical(sourceType, indices[*resultLogicalLane]);
+    FailureOr<VMIPhysicalLane> sourcePhysical = getShuffleSourceLane(
+        sourceType, resultType, indices, resultPart, resultChunk, lane, reason);
     if (failed(sourcePhysical)) {
-      return fail("failed to map source lane");
+      return failure();
     }
     if (!sourcePart) {
       sourcePart = sourcePhysical->part;
