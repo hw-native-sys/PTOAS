@@ -2224,20 +2224,24 @@ checkSupportedGroupStoreByLayout(VMIGroupStoreOp op, VMIVRegType valueType,
   VMILayoutSupport supports;
   FailureOr<VMIGroupStoreLayoutFact> fact =
       supports.getGroupStoreLayoutFact(op, valueType, reason);
-  if (failed(fact))
+  if (failed(fact)) {
     return failure();
+  }
   if (failed(checkSupportedStoreShape(valueType,
                                       op.getDestination(),
-                                      op.getDestination().getType(), reason)))
+                                      op.getDestination().getType(), reason))) {
     return failure();
+  }
   if (fact->blockClass == VMIGroupBlockClass::OneBlock) {
-    if (failed(getOneBlockGroupStorePlan(op, valueType, *fact, reason)))
+    if (failed(getOneBlockGroupStorePlan(op, valueType, *fact, reason))) {
       return failure();
+    }
     return success();
   }
   if (succeeded(
-          checkSupportedGroupChunkShape(valueType, fact->groupSize, reason)))
+          checkSupportedGroupChunkShape(valueType, fact->groupSize, reason))) {
     return success();
+  }
 
   int64_t lanesPerPart = 0;
   int64_t groupCount = 0;

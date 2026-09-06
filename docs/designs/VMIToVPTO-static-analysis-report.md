@@ -2311,6 +2311,14 @@ stream advance、诊断和 direct/fallback 语义不变。增量 `check_changed_
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_layout_assignment_group_store_slots1_unit_stride.pto` 完整 lowering pipeline exit=0。
 
+# group-store 通用 shape 校验控制流整改（2026-09-06）
+
+复核 `checkSupportedGroupStoreShape` 拆分后的通用 layout helper 时，补齐了 support-table、
+store-shape、one-block plan 和 contiguous-chunk 检查分支的大括号。该轮只规范失败路径
+控制流，不改变 compact-small、group-slots、one-block、deinterleaved 与 contiguous 的
+检查优先级、诊断和支持范围。增量 `check_changed_code.py --base origin/master` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
+
 # 本轮 G.FMT.11-CPP 增量整改（2026-09-06）
 
 本轮继续清理完整文件增量检查覆盖到的控制语句：为 iota contiguous/deinterleaved
