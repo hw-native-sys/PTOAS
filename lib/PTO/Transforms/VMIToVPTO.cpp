@@ -7694,7 +7694,7 @@ FailureOr<Value> createResidualSubVLGroupPeriodicChunk(
                           allMask,
                           /*position=*/nullptr)
           .getResult();
-  for (int64_t localGroup = 0; localGroup < groupsPerChunk; ++localGroup) {
+  auto materializeGroup = [&](int64_t localGroup) -> FailureOr<Value> {
     Value adjusted = full;
     if (localGroup != 0) {
       int64_t delta = localGroup * groupSize;
@@ -7709,12 +7709,14 @@ FailureOr<Value> createResidualSubVLGroupPeriodicChunk(
                                         allMask)
                        .getResult();
       } else {
-        Value negOffset =
-            isa<FloatType>(base.getType())
-                ? rewriter.create<arith::NegFOp>(loc, *offsetScalar).getResult()
-                : rewriter
-                      .create<arith::SubIOp>(loc, zeroScalar, *offsetScalar)
-                      .getResult();
+        Value negOffset = isa<FloatType>(base.getType())
+                              ? rewriter.create<arith::NegFOp>(
+                                    loc, *offsetScalar)
+                                    .getResult()
+                              : rewriter
+                                    .create<arith::SubIOp>(
+                                        loc, zeroScalar, *offsetScalar)
+                                    .getResult();
         adjusted = rewriter
                        .create<VaddsOp>(loc, resultType, full, negOffset,
                                         allMask)
@@ -7727,9 +7729,16 @@ FailureOr<Value> createResidualSubVLGroupPeriodicChunk(
     if (failed(laneMask)) {
       return failure();
     }
-    result = rewriter
-                 .create<VselOp>(loc, resultType, adjusted, result, *laneMask)
-                 .getResult();
+    return rewriter
+        .create<VselOp>(loc, resultType, adjusted, result, *laneMask)
+        .getResult();
+  };
+  for (int64_t localGroup = 0; localGroup < groupsPerChunk; ++localGroup) {
+    FailureOr<Value> nextResult = materializeGroup(localGroup);
+    if (failed(nextResult)) {
+      return failure();
+    }
+    result = *nextResult;
   }
   return result;
 }

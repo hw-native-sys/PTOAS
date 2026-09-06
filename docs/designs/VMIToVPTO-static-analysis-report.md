@@ -3329,6 +3329,22 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 现有 static/runtime expand-load case 在测试自身的 VMI `unpack` 前置 invariant 处提前
 失败，未进入本轮 chunk helper。
 
+# residual sub-VL grouped-iota 单 group 物化职责拆分（2026-09-06）
+
+本轮将 `createResidualSubVLGroupPeriodicChunk` 中单个 local group 的方向调整、offset
+scalar 构造、lane range mask 和 `vsel` 合并抽取为局部 group 物化步骤。外层函数继续负责
+zero 初始化、group 遍历和结果累积；ASC/DESC 方向、浮点/整数 offset 语义、lane 范围和
+失败传播保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_iota_group2.pto                            # exit=0
+vmi_to_vpto_iota_group_subvl.pto                       # exit=0
+```
+
 # contiguous group-reduce 单 group 物化职责拆分（2026-09-06）
 
 本轮将 `buildContiguousGroupReduceResults` 中单个 group 的 source/mask 类型检查、逐
