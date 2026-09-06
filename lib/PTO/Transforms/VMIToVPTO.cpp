@@ -6645,6 +6645,22 @@ materializeMaskGranularityCastStagingForFactor(
   return std::optional<SmallVector<Value>>(std::move(*result));
 }
 
+static std::optional<bool> getMaskStagingDirection(
+    VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout, int64_t factor) {
+  bool sourceContiguous = sourceLayout && sourceLayout.isContiguous() &&
+                          sourceLayout.getLaneStride() == 1;
+  bool resultContiguous = resultLayout && resultLayout.isContiguous() &&
+                          resultLayout.getLaneStride() == 1;
+  bool sourceDeinterleaved =
+      isElementDeinterleavedLayout(sourceLayout, factor) && resultContiguous;
+  bool resultDeinterleaved =
+      sourceContiguous && isElementDeinterleavedLayout(resultLayout, factor);
+  if (!sourceDeinterleaved && !resultDeinterleaved) {
+    return std::nullopt;
+  }
+  return sourceDeinterleaved;
+}
+
 FailureOr<std::optional<SmallVector<Value>>>
 materializeMaskGranularityCastStagingLayout(
     Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
@@ -6652,10 +6668,22 @@ materializeMaskGranularityCastStagingLayout(
   VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();
   VMILayoutAttr resultLayout = resultType.getLayoutAttr();
   for (int64_t factor : {2L, 4L}) {
+    std::optional<bool> sourceIsDeinterleaved =
+        getMaskStagingDirection(sourceLayout, resultLayout, factor);
+    if (!sourceIsDeinterleaved) {
+      continue;
+    }
+    FailureOr<SmallVector<Value>> materialized =
+        *sourceIsDeinterleaved
+            ? materializeStagingDeintToContiguousMaskLayout(
+                  op, sourceParts, resultTypes, factor, rewriter)
+            : materializeStagingContiguousToDeintMaskLayout(
+                  op, sourceParts, resultTypes, factor, rewriter);
+    if (failed(materialized)) {
+      return failure();
+    }
     FailureOr<std::optional<SmallVector<Value>>> result =
-        materializeMaskGranularityCastStagingForFactor(
-            op, sourceLayout, resultLayout, sourceParts, resultTypes, factor,
-            rewriter);
+        std::optional<SmallVector<Value>>(std::move(*materialized));
     if (failed(result)) {
       return failure();
     }

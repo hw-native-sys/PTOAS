@@ -2690,3 +2690,12 @@ granularity lowering case 均 exit=0。
 physical carrier 类型、granularity/layout 传播、转换顺序、结果 arity 及失败诊断不变。
 增量 `check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；mask granularity direct/multistep 与 dense layout case 均 exit=0。
+
+# staging mask factor 路由职责整改
+
+本轮新增 `getMaskStagingDirection`，将 factor=2/4 staging 路径的 contiguous 与
+deinterleaved layout 方向识别从 `materializeMaskGranularityCastStagingLayout` 中独立出来。
+入口现在只负责按 factor 顺序尝试并调用对应 materializer；deint→contiguous 与
+contiguous→deint 的发射语义、factor 优先级、结果顺序及失败传播保持不变。增量
+`check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；mask granularity direct/multistep 和 dense layout case 均 exit=0。
