@@ -2397,6 +2397,17 @@ lambda 使用显式捕获，未改变 mask layout 或 padding 语义。增量
 `git diff --check` 通过；`vmi_layout_assignment_masked_load.pto` 在既有 residual VMI
 load 检查处终止，未进入本轮 materializer。
 
+# data layout intermediate materializer 职责整改
+
+本轮将 `materializeDataLayoutViaContiguous` 中两种 intermediate kind 的递归转换分别
+抽取为 `materializeDataLayoutThroughContiguous` 与
+`materializeDataLayoutThroughDeinterleaved`。原函数现在只负责 intermediate plan 查询、
+空输入检查和 kind 分派；保持 contiguous/deinterleaved intermediate 的选择、递归转换
+顺序、结果类型数量和失败传播语义不变。增量 `check_changed_code.py --base HEAD` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_to_vpto_ensure_layout_dense_composed.pto` lowering exit=0，deinterleaved case 在
+既有 pack/unpack invariant 处提前终止。
+
 # channel split 结果布局与 arity 合同职责整改
 
 本轮在 `checkSupportedChannelSplitShape` 中引入

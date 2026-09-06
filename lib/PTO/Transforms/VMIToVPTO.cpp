@@ -5076,13 +5076,48 @@ getDataLayoutIntermediatePlan(VMILayoutAttr sourceLayout,
   return std::nullopt;
 }
 
-FailureOr<std::optional<SmallVector<Value>>>
-materializeDataLayoutViaContiguous(
+static FailureOr<SmallVector<Value>> materializeDataLayoutThroughContiguous(
+    Operation *op, ValueRange sourceParts, TypeRange resultTypes,
+    VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
+    Type sourceVMIElementType, PatternRewriter &rewriter,
+    const DataLayoutIntermediatePlan &plan) {
+  VMILayoutAttr contiguous =
+      VMILayoutAttr::getContiguous(rewriter.getContext());
+  SmallVector<Type> intermediateTypes(
+      plan.intermediateCount, sourceParts.front().getType());
+  FailureOr<SmallVector<Value>> dense = materializeDataLayoutConversion(
+      op, sourceParts, intermediateTypes, sourceLayout, contiguous,
+      sourceVMIElementType, rewriter);
+  if (failed(dense)) {
+    return failure();
+  }
+  return materializeDataLayoutConversion(op, *dense, resultTypes, contiguous,
+                                         resultLayout, sourceVMIElementType,
+                                         rewriter);
+}
+
+static FailureOr<SmallVector<Value>> materializeDataLayoutThroughDeinterleaved(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
     Type sourceVMIElementType, PatternRewriter &rewriter) {
   VMILayoutAttr contiguous =
       VMILayoutAttr::getContiguous(rewriter.getContext());
+  FailureOr<SmallVector<Value>> dense = materializeDataLayoutConversion(
+      op, sourceParts, resultTypes, sourceLayout, contiguous,
+      sourceVMIElementType, rewriter);
+  if (failed(dense)) {
+    return failure();
+  }
+  return materializeDataLayoutConversion(op, *dense, resultTypes, contiguous,
+                                         resultLayout, sourceVMIElementType,
+                                         rewriter);
+}
+
+FailureOr<std::optional<SmallVector<Value>>>
+materializeDataLayoutViaContiguous(
+    Operation *op, ValueRange sourceParts, TypeRange resultTypes,
+    VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
+    Type sourceVMIElementType, PatternRewriter &rewriter) {
   std::optional<DataLayoutIntermediatePlan> plan =
       getDataLayoutIntermediatePlan(sourceLayout, resultLayout,
                                     sourceParts.size());
@@ -5094,29 +5129,23 @@ materializeDataLayoutViaContiguous(
   }
 
   if (plan->kind == DataLayoutIntermediatePlan::Kind::Deinterleaved) {
-    FailureOr<SmallVector<Value>> dense = materializeDataLayoutConversion(
-        op, sourceParts, resultTypes, sourceLayout, contiguous,
-        sourceVMIElementType, rewriter);
-    if (failed(dense)) {
+    FailureOr<SmallVector<Value>> results =
+        materializeDataLayoutThroughDeinterleaved(
+            op, sourceParts, resultTypes, sourceLayout, resultLayout,
+            sourceVMIElementType, rewriter);
+    if (failed(results)) {
       return failure();
     }
-    return materializeDataLayoutConversion(
-        op, *dense, resultTypes, contiguous, resultLayout,
-        sourceVMIElementType, rewriter);
+    return std::optional<SmallVector<Value>>(std::move(*results));
   }
 
-  size_t intermediateCount = plan->intermediateCount;
-  SmallVector<Type> intermediateTypes(intermediateCount,
-                                      sourceParts.front().getType());
-  FailureOr<SmallVector<Value>> dense = materializeDataLayoutConversion(
-      op, sourceParts, intermediateTypes, sourceLayout, contiguous,
-      sourceVMIElementType, rewriter);
-  if (failed(dense)) {
+  FailureOr<SmallVector<Value>> results = materializeDataLayoutThroughContiguous(
+      op, sourceParts, resultTypes, sourceLayout, resultLayout,
+      sourceVMIElementType, rewriter, *plan);
+  if (failed(results)) {
     return failure();
   }
-  return materializeDataLayoutConversion(
-      op, *dense, resultTypes, contiguous, resultLayout, sourceVMIElementType,
-      rewriter);
+  return std::optional<SmallVector<Value>>(std::move(*results));
 }
 
 FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
