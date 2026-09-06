@@ -2504,3 +2504,13 @@ exit=0。
 # compress 结果 shape 合同职责整改
 
 本轮新增 `checkSupportedCompressResultShape`，将 `compress` 的结果 layout 存在性、contiguous 合同、物理 arity 可计算性及单 chunk 约束从入口校验中独立出来。`buildCompressPhysicalShapePlan` 继续只负责 source/mask 的输入合同，`compress_store` 保持独立诊断和 destination `!pto.ptr` 合同；结果布局校验顺序、错误文本、物理 chunk 限制及 lowering 语义均保持不变。增量 `check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；`vmi_to_vpto_compress_store.pto` lowering exit=0，普通 compress case 在既有 pack/unpack invariant 处提前终止。
+
+# reduce shape 合同分层整改
+
+本轮将通用 reduce shape plan builder 中的 layout 合同和 physical arity 合同分别抽取为
+`checkReduceLayouts` 与 `checkReducePhysicalArity`。builder 继续负责 source/mask/result
+类型提取、full physical chunk 证明和 plan 组装；原有 contiguous 要求、source/mask arity
+匹配、单 result chunk 约束、诊断顺序及失败传播保持不变。增量
+`check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过。native 增量构建仍被工作区既有 CMake 外部依赖尝试创建
+`/cann-cmake` 的权限错误阻断，未产生本轮 C++ 编译诊断。

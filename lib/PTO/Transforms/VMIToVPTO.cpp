@@ -18044,6 +18044,65 @@ struct ReducePhysicalShapePlan {
 };
 
 template <typename OpTy>
+static LogicalResult checkReduceLayouts(OpTy op, VMILayoutAttr *sourceLayout,
+                                        VMILayoutAttr *maskLayout,
+                                        VMILayoutAttr *resultLayout,
+                                        std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  auto sourceType = cast<VMIVRegType>(op.getSource().getType());
+  auto maskType = cast<VMIMaskType>(op.getMask().getType());
+  auto resultType = cast<VMIVRegType>(op.getResult().getType());
+  *sourceLayout = sourceType.getLayoutAttr();
+  *maskLayout = maskType.getLayoutAttr();
+  *resultLayout = resultType.getLayoutAttr();
+  if (!*sourceLayout || !*maskLayout || !*resultLayout) {
+    return fail("requires assigned source, mask, and result layouts");
+  }
+  bool nonContiguousLayout = !sourceLayout->isContiguous() ||
+                             !maskLayout->isContiguous() ||
+                             !resultLayout->isContiguous();
+  if (nonContiguousLayout) {
+    return fail("requires contiguous source, mask, and result layouts");
+  }
+  return success();
+}
+
+static LogicalResult checkReducePhysicalArity(
+    VMIVRegType sourceType, VMIMaskType maskType, VMIVRegType resultType,
+    int64_t *sourceArity, int64_t *resultArity, std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  FailureOr<int64_t> sourceParts = getVMIPhysicalArity(sourceType);
+  FailureOr<int64_t> maskParts = getVMIPhysicalArity(maskType);
+  FailureOr<int64_t> resultParts = getVMIPhysicalArity(resultType);
+  bool cannotComputeArity = failed(sourceParts) || failed(maskParts) ||
+                            failed(resultParts);
+  if (cannotComputeArity) {
+    return fail("requires computable physical arity");
+  }
+  bool mismatchedInputArity = *sourceParts < 1 || *maskParts != *sourceParts;
+  if (mismatchedInputArity) {
+    return fail("requires source and mask physical arity to match and be "
+                "non-empty");
+  }
+  if (*resultParts != 1) {
+    return fail("requires one result physical chunk");
+  }
+  *sourceArity = *sourceParts;
+  *resultArity = *resultParts;
+  return success();
+}
+
+template <typename OpTy>
 static FailureOr<ReducePhysicalShapePlan> buildReducePhysicalShapePlan(
     OpTy op, std::string *reason) {
   auto fail = [&reason](const Twine &message)
@@ -18057,14 +18116,13 @@ static FailureOr<ReducePhysicalShapePlan> buildReducePhysicalShapePlan(
   auto sourceType = cast<VMIVRegType>(op.getSource().getType());
   auto maskType = cast<VMIMaskType>(op.getMask().getType());
   auto resultType = cast<VMIVRegType>(op.getResult().getType());
-  VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();
-  VMILayoutAttr maskLayout = maskType.getLayoutAttr();
-  VMILayoutAttr resultLayout = resultType.getLayoutAttr();
-  if (!sourceLayout || !maskLayout || !resultLayout)
-    return fail("requires assigned source, mask, and result layouts");
-  if (!sourceLayout.isContiguous() || !maskLayout.isContiguous() ||
-      !resultLayout.isContiguous())
-    return fail("requires contiguous source, mask, and result layouts");
+  VMILayoutAttr sourceLayout;
+  VMILayoutAttr maskLayout;
+  VMILayoutAttr resultLayout;
+  if (failed(checkReduceLayouts(op, &sourceLayout, &maskLayout, &resultLayout,
+                                reason))) {
+    return failure();
+  }
 
   std::string fullChunkReason;
   if (failed(checkFullDataPhysicalChunks(sourceType, &fullChunkReason)))
@@ -18072,19 +18130,15 @@ static FailureOr<ReducePhysicalShapePlan> buildReducePhysicalShapePlan(
                       "do not participate in the reduction; ") +
                 fullChunkReason);
 
-  FailureOr<int64_t> sourceArity = getVMIPhysicalArity(sourceType);
-  FailureOr<int64_t> maskArity = getVMIPhysicalArity(maskType);
-  FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
-  if (failed(sourceArity) || failed(maskArity) || failed(resultArity))
-    return fail("requires computable physical arity");
-  if (*sourceArity < 1 || *maskArity != *sourceArity)
-    return fail("requires source and mask physical arity to match and be "
-                "non-empty");
-  if (*resultArity != 1)
-    return fail("requires one result physical chunk");
+  int64_t sourceArity;
+  int64_t resultArity;
+  if (failed(checkReducePhysicalArity(sourceType, maskType, resultType,
+                                      &sourceArity, &resultArity, reason))) {
+    return failure();
+  }
 
   return ReducePhysicalShapePlan{sourceLayout, maskLayout, resultLayout,
-                                 *sourceArity, *resultArity};
+                                 sourceArity, resultArity};
 }
 
 template <typename OpTy>
