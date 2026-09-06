@@ -2709,42 +2709,45 @@ checkSinglePhysicalStrideAccess(Type dataType, Type maskType,
   return success();
 }
 
+struct StrideMemoryContract {
+  Type dataType;
+  Type maskType;
+  VMILayoutAttr dataLayout;
+  VMILayoutAttr maskLayout;
+  Type pointerType;
+  StringRef dataName;
+  StringRef pointerDiagnostic;
+  StringRef arityDiagnostic;
+};
+
 static LogicalResult checkStrideMemoryContract(
-    Type dataType, Type maskType, VMILayoutAttr dataLayout,
-    VMILayoutAttr maskLayout, Type pointerType, StringRef dataName,
-    StringRef pointerDiagnostic, StringRef arityDiagnostic,
-    std::string *reason) {
+    const StrideMemoryContract &contract, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason) {
       *reason = message.str();
     }
     return failure();
   };
-  if (!dataLayout || !maskLayout) {
-    return fail(Twine("requires assigned ") + dataName + " and mask layouts");
-  }
-  bool nonContiguousLayout =
-      !dataLayout.isContiguous() || !maskLayout.isContiguous();
-  if (nonContiguousLayout) {
-    return fail(Twine("requires contiguous ") + dataName +
+  if (!contract.dataLayout || !contract.maskLayout) {
+    return fail(Twine("requires assigned ") + contract.dataName +
                 " and mask layouts");
   }
-  if (!isa<PtrType>(pointerType)) {
-    return fail(pointerDiagnostic);
+  bool nonContiguousLayout =
+      !contract.dataLayout.isContiguous() ||
+      !contract.maskLayout.isContiguous();
+  if (nonContiguousLayout) {
+    return fail(Twine("requires contiguous ") + contract.dataName +
+                " and mask layouts");
   }
-  return checkSinglePhysicalStrideAccess(dataType, maskType, arityDiagnostic,
-                                         reason);
+  if (!isa<PtrType>(contract.pointerType)) {
+    return fail(contract.pointerDiagnostic);
+  }
+  return checkSinglePhysicalStrideAccess(
+      contract.dataType, contract.maskType, contract.arityDiagnostic, reason);
 }
 
 LogicalResult
 checkSupportedStrideStoreShape(VMIStrideStoreOp op, std::string *reason) {
-  auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason) {
-      *reason = message.str();
-    }
-    return failure();
-  };
-
   auto valueType = cast<VMIVRegType>(op.getValue().getType());
   auto maskType = cast<VMIMaskType>(op.getMask().getType());
   if (failed(checkSupportedStoreShape(valueType, op.getDestination(),
@@ -2752,30 +2755,32 @@ checkSupportedStrideStoreShape(VMIStrideStoreOp op, std::string *reason) {
     return failure();
   }
 
-  return checkStrideMemoryContract(
-      valueType, maskType, valueType.getLayoutAttr(), maskType.getLayoutAttr(),
-      op.getDestination().getType(), "value",
-      "requires !pto.ptr destination because pto.vsstb is "
-      "pointer-only", "currently supports one physical value/mask chunk",
-      reason);
+  StrideMemoryContract contract{
+      valueType,
+      maskType,
+      valueType.getLayoutAttr(),
+      maskType.getLayoutAttr(),
+      op.getDestination().getType(),
+      "value",
+      "requires !pto.ptr destination because pto.vsstb is pointer-only",
+      "currently supports one physical value/mask chunk"};
+  return checkStrideMemoryContract(contract, reason);
 }
 
 LogicalResult
 checkSupportedStrideLoadShape(VMIStrideLoadOp op, std::string *reason) {
-  auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason) {
-      *reason = message.str();
-    }
-    return failure();
-  };
-
   auto resultType = cast<VMIVRegType>(op.getResult().getType());
   auto maskType = cast<VMIMaskType>(op.getMask().getType());
-  return checkStrideMemoryContract(
-      resultType, maskType, resultType.getLayoutAttr(), maskType.getLayoutAttr(),
-      op.getSource().getType(), "result",
+  StrideMemoryContract contract{
+      resultType,
+      maskType,
+      resultType.getLayoutAttr(),
+      maskType.getLayoutAttr(),
+      op.getSource().getType(),
+      "result",
       "requires !pto.ptr source because pto.vsldb is pointer-only",
-      "currently supports one physical result/mask chunk", reason);
+      "currently supports one physical result/mask chunk"};
+  return checkStrideMemoryContract(contract, reason);
 }
 
 Value stripMaskMaterialization(Value value) {
