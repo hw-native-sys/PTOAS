@@ -10878,6 +10878,33 @@ private:
         .getResult();
   }
 
+  struct InterleaveStoreAddressPlan {
+    Value destination;
+    Value offset;
+    Value streamBase;
+    bool useDirectAccess;
+  };
+
+  FailureOr<InterleaveStoreAddressPlan> buildAddressPlan(
+      VMIInterleaveStoreOp op, Value destination, Value offset,
+      ValueRange lowParts, VMIVRegType lowVMIType, StringRef dist,
+      OneToNPatternRewriter &rewriter) const {
+    FailureOr<bool> directAccess =
+        canUseDirectAccess(op, lowParts, lowVMIType, dist);
+    if (failed(directAccess)) {
+      return failure();
+    }
+    if (*directAccess) {
+      return InterleaveStoreAddressPlan{destination, offset, Value{}, true};
+    }
+    FailureOr<Value> base =
+        getUnalignedBase(op, destination, offset, lowVMIType, rewriter);
+    if (failed(base)) {
+      return failure();
+    }
+    return InterleaveStoreAddressPlan{destination, offset, *base, false};
+  }
+
 public:
 
   LogicalResult
@@ -10917,23 +10944,15 @@ public:
           op, "interleave_store requires matching low/high physical arity");
     }
 
-    FailureOr<bool> directAccess =
-        canUseDirectAccess(op, lowParts, lowVMIType, *dist);
-    if (failed(directAccess)) {
+    FailureOr<InterleaveStoreAddressPlan> addressPlan = buildAddressPlan(
+        op, *destination, *offset, lowParts, lowVMIType, *dist, rewriter);
+    if (failed(addressPlan)) {
       return failure();
     }
-    bool useDirectAccess = *directAccess;
+    bool useDirectAccess = addressPlan->useDirectAccess;
     SmallVector<Value> streamValues;
     SmallVector<int64_t> streamAdvances;
-    Value streamBase;
-    if (!useDirectAccess) {
-      FailureOr<Value> base = getUnalignedBase(
-          op, *destination, *offset, lowVMIType, rewriter);
-      if (failed(base)) {
-        return failure();
-      }
-      streamBase = *base;
-    }
+    Value streamBase = addressPlan->streamBase;
 
     for (size_t index = 0, e = lowParts.size(); index < e; ++index) {
       if (failed(emitInterleaveStoreChunk(

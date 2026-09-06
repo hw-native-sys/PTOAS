@@ -3427,3 +3427,18 @@ git diff --check                                      # passed
 check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
 vmi_to_vpto_load_store_contiguous.pto                  # exit=0
 ```
+
+# interleave-store address plan 职责拆分（2026-09-06）
+
+本轮将 `OneToNVMIInterleaveStoreOpPattern::matchAndRewrite` 中 direct `vstsx2` 合法性判定
+与 unaligned stream base 构造抽取为 `InterleaveStoreAddressPlan`/`buildAddressPlan`。入口
+继续负责 operands、low/high arity、chunk 发射和 stream 提交；direct/stream 路由优先级、
+offset 语义、状态对象和失败传播保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_load_store_contiguous.pto                  # exit=0
+```
