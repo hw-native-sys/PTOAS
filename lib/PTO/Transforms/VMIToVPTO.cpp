@@ -7748,10 +7748,10 @@ struct OneToNVMIIotaOpPattern : OneToNOpConversionPattern<IotaOp> {
       typename OneToNOpConversionPattern<IotaOp>::OpAdaptor;
 
 private:
-  LogicalResult lowerGroupedIota(
-      IotaOp op, Value base, VMIVRegType resultVMIType,
-      VMILayoutAttr layout, TypeRange resultTypes, int64_t lanesPerPart,
-      OneToNPatternRewriter &rewriter, SmallVectorImpl<Value> &results) const {
+  FailureOr<std::pair<int64_t, int64_t>> validateGroupedIotaShape(
+      IotaOp op, VMIVRegType resultVMIType, VMILayoutAttr layout,
+      TypeRange resultTypes, int64_t lanesPerPart,
+      OneToNPatternRewriter &rewriter) const {
     int64_t numGroups = op.getGroupAttr().getInt();
     int64_t logicalLanes = resultVMIType.getElementCount();
     if (numGroups <= 0 || logicalLanes % numGroups != 0) {
@@ -7759,17 +7759,15 @@ private:
           op, "grouped iota requires group to divide logical lane count");
     }
     int64_t groupSize = logicalLanes / numGroups;
-    bool groupSizeMultipleOfPhys = groupSize % lanesPerPart == 0;
-    bool physMultipleOfGroupSize = lanesPerPart % groupSize == 0;
-    if (!groupSizeMultipleOfPhys && !physMultipleOfGroupSize) {
+    bool compatibleShape = groupSize % lanesPerPart == 0 ||
+                           lanesPerPart % groupSize == 0;
+    if (!compatibleShape) {
       return rewriter.notifyMatchFailure(
-          op, "grouped iota requires group_size to divide or be a multiple "
-              "of physical lanes per part");
+          op, "grouped iota requires group_size to divide or be a multiple of physical lanes per part");
     }
     if (!layout.isContiguous()) {
       return rewriter.notifyMatchFailure(
-          op, "grouped iota currently supports contiguous layout only; "
-              "ensure_layout to contiguous before lowering");
+          op, "grouped iota currently supports contiguous layout only; ensure_layout to contiguous before lowering");
     }
     int64_t expectedArity =
         (logicalLanes + lanesPerPart - 1) / lanesPerPart;
@@ -7779,6 +7777,21 @@ private:
       return rewriter.notifyMatchFailure(
           op, "grouped contiguous iota physical result count mismatch");
     }
+    return std::make_pair(groupSize, expectedArity);
+  }
+
+  LogicalResult lowerGroupedIota(
+      IotaOp op, Value base, VMIVRegType resultVMIType,
+      VMILayoutAttr layout, TypeRange resultTypes, int64_t lanesPerPart,
+      OneToNPatternRewriter &rewriter, SmallVectorImpl<Value> &results) const {
+    FailureOr<std::pair<int64_t, int64_t>> shape = validateGroupedIotaShape(
+        op, resultVMIType, layout, resultTypes, lanesPerPart, rewriter);
+    if (failed(shape)) {
+      return failure();
+    }
+    int64_t groupSize = shape->first;
+    bool groupSizeMultipleOfPhys = groupSize % lanesPerPart == 0;
+    bool physMultipleOfGroupSize = lanesPerPart % groupSize == 0;
 
     llvm::DenseMap<std::pair<Type, int64_t>, Value> sharedChunks;
     IotaMaterializationContext context{op.getLoc(), base, op.getOrderAttr(),
