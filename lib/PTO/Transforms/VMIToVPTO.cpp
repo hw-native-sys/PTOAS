@@ -11785,11 +11785,11 @@ private:
     return results;
   }
 
-  LogicalResult lowerDirectE2B(
-      VMIGroupBroadcastLoadOp op, OneToNPatternRewriter &rewriter,
-      Value source, Value offset, VMIVRegType resultVMIType,
-      ArrayRef<Type> resultTypes, int64_t numGroups, unsigned elementBits,
-      VMILayoutAttr layout) const {
+  FailureOr<std::tuple<StringRef, int64_t, int64_t>> validateDirectE2BShape(
+      VMIGroupBroadcastLoadOp op, Value source,
+      VMIVRegType resultVMIType, ArrayRef<Type> resultTypes,
+      int64_t numGroups, unsigned elementBits, VMILayoutAttr layout,
+      OneToNPatternRewriter &rewriter) const {
     bool contiguousPacketLayout = layout && layout.isContiguous();
     bool splitPacketLayout = layout && layout.isDeinterleaved() &&
                              (layout.getFactor() == 2 ||
@@ -11806,7 +11806,6 @@ private:
           op, "group_broadcast_load E2B lowering requires b16 or b32 element "
               "type");
     }
-    StringRef e2bDist = elementBits == 16 ? "E2B_B16" : "E2B_B32";
     std::optional<int64_t> stride =
         getConstantIndexValue(op.getSourceGroupStride());
     if (!stride || *stride != 1) {
@@ -11849,13 +11848,31 @@ private:
       return rewriter.notifyMatchFailure(
           op, "group_broadcast_load expected one E2B packet in each part");
     }
+    StringRef e2bDist = elementBits == 16 ? "E2B_B16" : "E2B_B32";
+    return std::make_tuple(e2bDist, factor, *chunksPerPart);
+  }
+
+  LogicalResult lowerDirectE2B(
+      VMIGroupBroadcastLoadOp op, OneToNPatternRewriter &rewriter,
+      Value source, Value offset, VMIVRegType resultVMIType,
+      ArrayRef<Type> resultTypes, int64_t numGroups, unsigned elementBits,
+      VMILayoutAttr layout) const {
+    FailureOr<std::tuple<StringRef, int64_t, int64_t>> shape =
+        validateDirectE2BShape(op, source, resultVMIType, resultTypes,
+                               numGroups, elementBits, layout, rewriter);
+    if (failed(shape)) {
+      return failure();
+    }
+    StringRef e2bDist = std::get<0>(*shape);
+    int64_t factor = std::get<1>(*shape);
+    int64_t chunksPerPart = std::get<2>(*shape);
     FailureOr<SmallVector<Value>> packets = emitE2BPackets(
-        op, rewriter, source, offset, resultTypes, *chunksPerPart, e2bDist);
+        op, rewriter, source, offset, resultTypes, chunksPerPart, e2bDist);
     if (failed(packets)) {
       return failure();
     }
     FailureOr<SmallVector<Value>> results = buildE2BResults(
-        op, *packets, resultTypes, factor, *chunksPerPart, rewriter);
+        op, *packets, resultTypes, factor, chunksPerPart, rewriter);
     if (failed(results)) {
       return failure();
     }

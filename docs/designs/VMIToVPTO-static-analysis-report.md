@@ -2099,6 +2099,17 @@ factor 窄化的 lowering 优先级及各自 arity/layout 合同；没有把不�
 `vmi_to_vpto_truncf_f16_to_f8e4m3.pto` 尝试 lowering 时在既有 VMI pack/unpack invariant
 处提前失败，未进入本轮 plan builder，不能将该失败归因于本轮改动。
 
+# group broadcast E2B 合同职责整改
+
+本轮新增 `validateDirectE2BShape`，将 `group_broadcast_load` E2B 直接路径的 layout、元素
+宽度、unit `source_group_stride`、ptr source、`num_groups=8`、uniform chunks、physical
+arity 和单 packet 合同从 `lowerDirectE2B` 中独立出来。发射函数现在只负责获取已验证的
+dist/factor/chunk 参数、发射 E2B packets 和复用结果；B16/B32 dist、factor=2/4 结果顺序、
+诊断及 fallback 语义保持不变。增量
+`check_changed_code.py --base origin/master --fail-on none` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
+`vmi_layout_assignment_group_broadcast_load_e2b_b16.pto` lowering exit=0。
+
 # group load 布局分派职责整改
 
 本轮将 `OneToNVMIGroupLoadOpPattern::matchAndRewrite` 中 block-deinterleaved f32 特殊路径
