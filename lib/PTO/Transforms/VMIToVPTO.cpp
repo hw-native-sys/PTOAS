@@ -8652,6 +8652,29 @@ public:
   }
 };
 
+struct GroupSlotLoadResultPart {
+  VRegType valueType;
+  MaskType maskType;
+};
+
+static FailureOr<GroupSlotLoadResultPart> getGroupSlotLoadResultPart(
+    Operation *op, Type resultType, OneToNPatternRewriter &rewriter) {
+  auto vregType = dyn_cast<VRegType>(resultType);
+  if (!vregType) {
+    (void)rewriter.notifyMatchFailure(op,
+                                      "group_slot_load result must be vreg");
+    return failure();
+  }
+  FailureOr<MaskType> maskType =
+      getMaskTypeForVReg(vregType, rewriter.getContext());
+  if (failed(maskType)) {
+    (void)rewriter.notifyMatchFailure(
+        op, "unsupported element type for group_slot_load mask");
+    return failure();
+  }
+  return GroupSlotLoadResultPart{*vregType, *maskType};
+}
+
 static LogicalResult lowerGroupSlotLoadSlots8(
     Operation *op, Value source, Value offset, Value sourceGroupStride,
     VMIVRegType resultVMIType, TypeRange resultTypes, int64_t numGroups,
@@ -8690,16 +8713,10 @@ static LogicalResult lowerGroupSlotLoadSlots8(
     return success();
   }
   for (auto [chunk, resultType] : llvm::enumerate(resultTypes)) {
-    auto vregType = dyn_cast<VRegType>(resultType);
-    if (!vregType) {
-      return rewriter.notifyMatchFailure(
-          op, "group_slot_load result must be vreg");
-    }
-    FailureOr<MaskType> maskType =
-        getMaskTypeForVReg(vregType, rewriter.getContext());
-    if (failed(maskType)) {
-      return rewriter.notifyMatchFailure(
-          op, "unsupported element type for group_slot_load mask");
+    FailureOr<GroupSlotLoadResultPart> resultPart =
+        getGroupSlotLoadResultPart(op, resultType, rewriter);
+    if (failed(resultPart)) {
+      return failure();
     }
     int64_t groupBegin = static_cast<int64_t>(chunk) * 8;
     int64_t activeGroups = std::min<int64_t>(8, numGroups - groupBegin);
@@ -8709,7 +8726,7 @@ static LogicalResult lowerGroupSlotLoadSlots8(
     }
     std::string pattern = (Twine("PAT_VL") + Twine(activeGroups)).str();
     FailureOr<Value> slotMask =
-        createPrefixMask(op->getLoc(), *maskType, pattern, rewriter);
+        createPrefixMask(op->getLoc(), resultPart->maskType, pattern, rewriter);
     if (failed(slotMask)) {
       return rewriter.notifyMatchFailure(
           op, "failed to create slots=8 group_slot_load mask");
@@ -8718,7 +8735,7 @@ static LogicalResult lowerGroupSlotLoadSlots8(
                                           rewriter);
     Value slotBase = makePtr(groupOffset);
     results.push_back(rewriter
-                          .create<VsldbOp>(op->getLoc(), vregType,
+                          .create<VsldbOp>(op->getLoc(), resultPart->valueType,
                                            /*updated_base=*/Type{}, slotBase,
                                            zeroI16, zeroI16, *slotMask)
                           .getResult());
@@ -8757,19 +8774,14 @@ static LogicalResult lowerGroupSlotLoadSlots1(
   };
   Value zeroI16 = makeI16(0);
   for (auto [group, resultType] : llvm::enumerate(resultTypes)) {
-    auto vregType = dyn_cast<VRegType>(resultType);
-    if (!vregType) {
-      return rewriter.notifyMatchFailure(op,
-                                         "group_slot_load result must be vreg");
-    }
-    FailureOr<MaskType> maskType =
-        getMaskTypeForVReg(vregType, rewriter.getContext());
-    if (failed(maskType)) {
-      return rewriter.notifyMatchFailure(
-          op, "unsupported element type for group_slot_load mask");
+    FailureOr<GroupSlotLoadResultPart> resultPart =
+        getGroupSlotLoadResultPart(op, resultType, rewriter);
+    if (failed(resultPart)) {
+      return failure();
     }
     FailureOr<Value> oneBlockMask =
-        createPrefixMask(op->getLoc(), *maskType, "PAT_VL1", rewriter);
+        createPrefixMask(op->getLoc(), resultPart->maskType, "PAT_VL1",
+                         rewriter);
     if (failed(oneBlockMask)) {
       return rewriter.notifyMatchFailure(
           op, "failed to create group_slot_load mask");
@@ -8788,7 +8800,7 @@ static LogicalResult lowerGroupSlotLoadSlots1(
     }
     Value slotBase = makePtr(groupOffset);
     results.push_back(rewriter
-                          .create<VsldbOp>(op->getLoc(), vregType,
+                          .create<VsldbOp>(op->getLoc(), resultPart->valueType,
                                            /*updated_base=*/Type{}, slotBase,
                                            zeroI16, zeroI16, *oneBlockMask)
                           .getResult());

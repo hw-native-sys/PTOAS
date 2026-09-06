@@ -2533,6 +2533,16 @@ plan builder 仍负责输入类型/layout、组数、lanes-per-part 和 group si
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；E2B group-broadcast
 case lowering exit=0。
 
+# group slot load 结果类型职责整改
+
+本轮新增 `GroupSlotLoadResultPart` 与 `getGroupSlotLoadResultPart`，统一封装 slots=1/8
+路径重复的物理 vreg 类型和 mask 类型推导。两个 lowering helper 继续分别负责 unit-stride
+slots=8 的 BRC/VS LDB 发射和 slots=1 的单 block VS LDB 地址推进；分派、mask pattern、
+offset 计算、结果顺序及失败诊断保持不变。增量
+`check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；现有 group-slot-load case 在既有 pack/unpack invariant 处
+提前终止，未进入本轮 helper。
+
 # group broadcast shape 重构回归修复
 
 复核既有 group-broadcast shape 拆分时发现入口遗漏了结果类型和诊断闭包定义，导致该
