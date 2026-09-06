@@ -3527,6 +3527,19 @@ git diff --check                                      # passed
 check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
 ```
 
+# constant mask active-run 物化拆分（2026-09-06）
+
+本轮将 `materializeConstantMaskChunk` 中单个连续 active run 的 prefix mask、PAND 差集
+构造抽取为局部 `materializeRun`，主体继续负责 run 扫描、多个 run 的 POR 合并和空 mask
+fallback。捕获集合采用显式列表；mask lane 顺序、结果语义和失败传播保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
 # interleave lowering 入口合同与布局查询拆分（2026-09-06）
 
 本轮将模板 `OneToNVMIInterleaveOpPattern::matchAndRewrite` 中的结果物理类型/输入输出
