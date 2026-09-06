@@ -20866,7 +20866,8 @@ WalkResult verifySupportedChannelOp(ChannelOp op, int64_t channels,
   return WalkResult::interrupt();
 }
 
-std::optional<WalkResult> verifySupportedVMIConversionOp(Operation *op) {
+static std::optional<WalkResult> verifySupportedVMIFloatConversionOp(
+    Operation *op) {
   if (auto fptosi = dyn_cast<VMIFPToSIOp>(op)) {
     return verifySupportedShapeOp(
         fptosi, checkSupportedFPToSIShape,
@@ -20885,6 +20886,11 @@ std::optional<WalkResult> verifySupportedVMIConversionOp(Operation *op) {
         sitofp, checkSupportedSIToFPShape,
         "pto.vmi.sitofp supports si32->f32 or si8->f16 conversion shapes (");
   }
+  return std::nullopt;
+}
+
+static std::optional<WalkResult> verifySupportedVMIIntegerConversionOp(
+    Operation *op) {
   if (auto extsi = dyn_cast<VMIExtSIOp>(op)) {
     return verifySupportedShapeOp(
         extsi, checkSupportedExtSIShape,
@@ -20920,6 +20926,14 @@ std::optional<WalkResult> verifySupportedVMIConversionOp(Operation *op) {
         "width-changing forms restricted to supported layout table rows (");
   }
   return std::nullopt;
+}
+
+std::optional<WalkResult> verifySupportedVMIConversionOp(Operation *op) {
+  if (auto result = verifySupportedVMIFloatConversionOp(op);
+      result.has_value()) {
+    return result;
+  }
+  return verifySupportedVMIIntegerConversionOp(op);
 }
 
 template <typename CarryOp, typename ShapeCheck>

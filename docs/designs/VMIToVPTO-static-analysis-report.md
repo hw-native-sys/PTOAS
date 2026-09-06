@@ -1,5 +1,20 @@
 # VMIToVPTO 静态分析报告记录
 
+## conversion verifier 分派拆分（2026-09-06）
+
+本轮将 `verifySupportedVMIConversionOp` 按语义拆为
+`verifySupportedVMIFloatConversionOp` 与 `verifySupportedVMIIntegerConversionOp`：浮点/整
+数转换分别维护自身的 op 类型、shape check 和诊断文本，入口只负责两组分派。支持矩阵、
+检查顺序、`std::optional<WalkResult>` 行为及错误诊断保持不变，避免继续扩大单一 verifier
+函数的复杂度。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
 ## group-broadcast 单 chunk 物化拆分（2026-09-06）
 
 本轮将 `lowerGroupBroadcastResultChunks` 中单 physical result 的类型合同检查与 chunk
