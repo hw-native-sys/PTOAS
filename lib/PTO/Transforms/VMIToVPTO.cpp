@@ -7176,8 +7176,9 @@ FailureOr<Value> createIotaContiguousChunk(
   FailureOr<Value> chunkBase =
       createIotaChunkBase(context.loc, context.base, laneOffset, order,
                           context.rewriter);
-  if (failed(chunkBase))
+  if (failed(chunkBase)) {
     return failure();
+  }
   return context.rewriter
       .create<VciOp>(context.loc, resultType, *chunkBase, context.orderAttr)
       .getResult();
@@ -7385,16 +7386,19 @@ FailureOr<Value> createIotaDeinterleavedChunk(
   StringAttr orderAttr = context.orderAttr;
   PatternRewriter &rewriter = context.rewriter;
   auto vregType = dyn_cast<VRegType>(resultType);
-  if (!vregType)
+  if (!vregType) {
     return failure();
+  }
 
   FailureOr<Value> mask = createAllTrueMaskForVReg(loc, vregType, rewriter);
   FailureOr<Value> zero =
       createScalarOffsetConstant(loc, base.getType(), 0, rewriter);
   FailureOr<Value> factorScalar =
       createScalarOffsetConstant(loc, base.getType(), factor, rewriter);
-  if (failed(mask) || failed(zero) || failed(factorScalar))
+  bool failedIotaInputs = failed(mask) || failed(zero) || failed(factorScalar);
+  if (failedIotaInputs) {
     return failure();
+  }
 
   Value local =
       rewriter.create<VciOp>(loc, resultType, *zero, StringAttr{}).getResult();
@@ -7406,8 +7410,9 @@ FailureOr<Value> createIotaDeinterleavedChunk(
   int64_t partOffset = part + factor * chunk * lanesPerPart;
   FailureOr<Value> biasedBase =
       createIotaChunkBase(loc, base, partOffset, order, rewriter);
-  if (failed(biasedBase))
+  if (failed(biasedBase)) {
     return failure();
+  }
 
   if (order == "DESC") {
     Value baseVector = rewriter
@@ -7623,12 +7628,14 @@ struct OneToNVMIConstantOpPattern : OneToNOpConversionPattern<VMIConstantOp> {
   matchAndRewrite(VMIConstantOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
     auto denseAttr = dyn_cast<DenseElementsAttr>(op.getValue());
-    if (!denseAttr || !denseAttr.isSplat())
+    if (!denseAttr || !denseAttr.isSplat()) {
       return rewriter.notifyMatchFailure(
           op, "only splat dense data constants are supported");
+    }
     auto splatAttr = dyn_cast<TypedAttr>(denseAttr.getSplatValue<Attribute>());
-    if (!splatAttr)
+    if (!splatAttr) {
       return rewriter.notifyMatchFailure(op, "splat constant must be typed");
+    }
 
     // arith.constant only accepts signless integer types, whereas VMI vregs may
     // carry signed/unsigned element types (e.g. ui16). Remap an unsigned/signed
@@ -7653,13 +7660,15 @@ struct OneToNVMIConstantOpPattern : OneToNOpConversionPattern<VMIConstantOp> {
     results.reserve(resultTypes.size());
     for (Type resultType : resultTypes) {
       auto vregType = dyn_cast<VRegType>(resultType);
-      if (!vregType)
+      if (!vregType) {
         return rewriter.notifyMatchFailure(op, "constant result must be vreg");
+      }
       FailureOr<Value> mask =
           createAllTrueMaskForVReg(op.getLoc(), vregType, rewriter);
-      if (failed(mask))
+      if (failed(mask)) {
         return rewriter.notifyMatchFailure(
             op, "unsupported element type for constant mask");
+      }
       results.push_back(rewriter
                             .create<VdupOp>(op.getLoc(), resultType, scalar,
                                             *mask,
@@ -7689,25 +7698,30 @@ struct OneToNVMIConstantMaskOpPattern
     std::string reason;
     FailureOr<SmallVector<ConstantMaskChunkMaterialization>> materializations =
         computeConstantMaskMaterialization(op, &reason);
-    if (failed(materializations))
+    if (failed(materializations)) {
       return rewriter.notifyMatchFailure(op, Twine("constant_mask ") + reason);
+    }
 
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
     for (const ConstantMaskChunkMaterialization &materialization :
          *materializations) {
-      if (results.size() >= resultTypes.size())
+      bool tooManyMasks = results.size() >= resultTypes.size();
+      if (tooManyMasks) {
         return rewriter.notifyMatchFailure(
             op, "constant_mask produced too many physical masks");
+      }
       auto maskType = dyn_cast<MaskType>(resultTypes[results.size()]);
-      if (!maskType)
+      if (!maskType) {
         return rewriter.notifyMatchFailure(op,
                                            "constant_mask result must be mask");
+      }
       FailureOr<Value> mask = materializeConstantMaskChunk(
           op.getLoc(), maskType, materialization.activeLanes, rewriter);
-      if (failed(mask))
+      if (failed(mask)) {
         return rewriter.notifyMatchFailure(
             op, "failed to materialize constant_mask physical chunk");
+      }
       results.push_back(*mask);
     }
 
@@ -9978,22 +9992,27 @@ public:
 
     ValueRange maskParts = adaptor.getMask();
     ValueRange passthruParts = adaptor.getPassthru();
-    if (resultTypes.size() != 1 || maskParts.size() != 1 ||
-        passthruParts.size() != 1)
+    bool invalidRuntimeArity = resultTypes.size() != 1 || maskParts.size() != 1 ||
+                               passthruParts.size() != 1;
+    if (invalidRuntimeArity) {
       return rewriter.notifyMatchFailure(
           op, "runtime expand_load supports only one physical chunk");
+    }
 
     auto resultType = dyn_cast<VRegType>(resultTypes.front());
     auto maskType = dyn_cast<MaskType>(maskParts.front().getType());
-    if (!resultType || !maskType ||
-        passthruParts.front().getType() != resultType)
+    bool invalidRuntimeTypes =
+        !resultType || !maskType || passthruParts.front().getType() != resultType;
+    if (invalidRuntimeTypes) {
       return rewriter.notifyMatchFailure(
           op, "runtime expand_load requires physical result/passthru/mask");
+    }
 
     auto baseType = dyn_cast<PtrType>((*source).getType());
-    if (!baseType)
+    if (!baseType) {
       return rewriter.notifyMatchFailure(op,
                                          "runtime expand_load requires ptr");
+    }
     Value gatherBase = rewriter
                            .create<AddPtrOp>(op.getLoc(), (*source).getType(),
                                              *source, *offset)
@@ -10003,9 +10022,10 @@ public:
                       rewriter.getI32Type());
     FailureOr<Value> indexSeedMask =
         createAllTrueMaskForVReg(op.getLoc(), indexType, rewriter);
-    if (failed(indexSeedMask))
+    if (failed(indexSeedMask)) {
       return rewriter.notifyMatchFailure(
           op, "failed to create runtime expand_load index seed mask");
+    }
     Value zero = rewriter.create<arith::ConstantIntOp>(op.getLoc(), 0, 32);
     Value carrier =
         rewriter

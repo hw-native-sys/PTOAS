@@ -2307,6 +2307,29 @@ stream advance、诊断和 direct/fallback 语义不变。增量 `check_changed_
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_layout_assignment_group_store_slots1_unit_stride.pto` 完整 lowering pipeline exit=0。
 
+# 本轮 G.FMT.11-CPP 增量整改（2026-09-06）
+
+本轮继续清理完整文件增量检查覆盖到的控制语句：为 iota contiguous/deinterleaved
+物化、constant/constant_mask conversion 以及 runtime `expand_load` 的失败分支补齐
+大括号；对包含多个失败条件和 mask 数量边界的条件引入具名布尔量，避免文本检查器将
+跨行条件误识别为无大括号控制语句。仅调整控制流书写形式和局部条件命名，没有改变
+物化顺序、结果 arity、类型检查、诊断或失败传播。
+
+验证结果：
+
+```text
+git diff --check  # passed
+python3 .agents/skills/enforce-ptoas-code-compliance/scripts/check_changed_code.py \
+  --repo . --base origin/master --fail-on none
+checked_files=1 errors=0 warnings=0
+```
+
+相关 lowering 回归均成功：
+`vmi_to_vpto_create_group_mask_block8_dynamic.pto`、`vmi_interleaved_memory_ops.pto`、
+`vmi_to_vpto_load_store_contiguous.pto` 的 `pto-test-opt` 完整 lowering exit=0。
+报告中的 AST 级超大函数、圈复杂度和历史数据泥团仍不能据此宣称全部清零，后续需在
+保持 lowering 分派和物理结果语义不变的前提下继续按职责边界拆分。
+
 # compact small group store 分支发射职责整改
 
 本轮在 `OneToNVMIGroupStoreOpPattern::lowerCompactSmallGroupStore` 中引入
