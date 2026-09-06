@@ -3077,6 +3077,24 @@ vmi_to_vpto_ensure_mask_granularity_multistep.pto      # reaches existing pack/u
 该多步 granularity case 在测试自身的 VMI `unpack` 前置 invariant 处提前失败，未进入
 本轮 helper；该既有输入限制已如实记录。
 
+# deinterleaved=4 load 单组物化职责拆分（2026-09-06）
+
+本轮将 `OneToNVMIGroupLoadOpPattern::lowerDeinterleaved4` 中单个 logical group 的
+类型一致性检查、两次 `vldsx2`、两次 `vdintlv` 及四路结果整理抽取为
+`materializeDeinterleaved4LoadGroup`。主函数继续负责 physical arity 合同、四路 part
+容器和 group 遍历；访问 offset、part 顺序、dist 传递、失败诊断和结果布局保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_load_deint.pto                            # reaches existing pack/unpack invariant
+```
+
+相关 deinterleaved load case 在测试自身的 VMI `unpack` 前置 invariant 处提前失败，未
+进入本轮单组物化 helper；该既有输入限制已记录。
+
 随后将 `computeShuffleVselrPlanForChunk` 中的结果物理 lane 校验、逻辑 lane 越界检查和
 source lane 映射抽取为 `getShuffleSourceLane`。规划函数继续负责 source chunk 一致性与
 ASC/DESC 方向推导，抽取没有改变失败诊断、迭代顺序或最终 `ShuffleVselrPlan` 内容；增量

@@ -8793,6 +8793,37 @@ private:
     return success();
   }
 
+  FailureOr<std::array<Value, 4>> materializeDeinterleaved4LoadGroup(
+      VMILoadOp op, OneToNPatternRewriter &rewriter, Value source,
+      Value offset, ArrayRef<Type> resultTypes, int64_t groups,
+      int64_t group, int64_t lanesPerPart, StringRef dist) const {
+    Type types[4] = {resultTypes[group], resultTypes[groups + group],
+                     resultTypes[2 * groups + group],
+                     resultTypes[3 * groups + group]};
+    bool mismatchedTypes = types[0] != types[1] || types[0] != types[2] ||
+                           types[0] != types[3];
+    if (mismatchedTypes) {
+      return rewriter.notifyMatchFailure(
+          op, "vldsx2 deinterleaved=4 load requires matching part types");
+    }
+    Value firstOffset = createChunkOffset(
+        op.getLoc(), offset, group * 4 * lanesPerPart, rewriter);
+    Value secondOffset = createChunkOffset(
+        op.getLoc(), offset, (group * 4 + 2) * lanesPerPart, rewriter);
+    auto first = rewriter.create<Vldsx2Op>(
+        op.getLoc(), types[0], types[1], Type{}, source, firstOffset,
+        rewriter.getStringAttr(dist));
+    auto second = rewriter.create<Vldsx2Op>(
+        op.getLoc(), types[2], types[3], Type{}, source, secondOffset,
+        rewriter.getStringAttr(dist));
+    auto even = rewriter.create<VdintlvOp>(
+        op.getLoc(), types[0], types[2], first.getLow(), second.getLow());
+    auto odd = rewriter.create<VdintlvOp>(
+        op.getLoc(), types[1], types[3], first.getHigh(), second.getHigh());
+    return std::array<Value, 4>{even.getLow(), odd.getLow(), even.getHigh(),
+                                odd.getHigh()};
+  }
+
   LogicalResult lowerDeinterleaved4(
       VMILoadOp op, OneToNPatternRewriter &rewriter, Value source, Value offset,
       ArrayRef<Type> resultTypes, int64_t lanesPerPart, StringRef dist) const {
@@ -8807,34 +8838,16 @@ private:
       part.reserve(groups);
     }
     for (int64_t group = 0; group < groups; ++group) {
-      Type types[4] = {resultTypes[group], resultTypes[groups + group],
-                       resultTypes[2 * groups + group],
-                       resultTypes[3 * groups + group]};
-      bool mismatchedTypes = types[0] != types[1] || types[0] != types[2] ||
-                             types[0] != types[3];
-      if (mismatchedTypes) {
-        return rewriter.notifyMatchFailure(
-            op, "vldsx2 deinterleaved=4 load requires matching part types");
+      FailureOr<std::array<Value, 4>> groupValues =
+          materializeDeinterleaved4LoadGroup(
+              op, rewriter, source, offset, resultTypes, groups, group,
+              lanesPerPart, dist);
+      if (failed(groupValues)) {
+        return failure();
       }
-      Value firstOffset =
-          createChunkOffset(op.getLoc(), offset, group * 4 * lanesPerPart,
-                            rewriter);
-      Value secondOffset = createChunkOffset(
-          op.getLoc(), offset, (group * 4 + 2) * lanesPerPart, rewriter);
-      auto first = rewriter.create<Vldsx2Op>(
-          op.getLoc(), types[0], types[1], Type{}, source, firstOffset,
-          rewriter.getStringAttr(dist));
-      auto second = rewriter.create<Vldsx2Op>(
-          op.getLoc(), types[2], types[3], Type{}, source, secondOffset,
-          rewriter.getStringAttr(dist));
-      auto even = rewriter.create<VdintlvOp>(
-          op.getLoc(), types[0], types[2], first.getLow(), second.getLow());
-      auto odd = rewriter.create<VdintlvOp>(
-          op.getLoc(), types[1], types[3], first.getHigh(), second.getHigh());
-      parts[0].push_back(even.getLow());
-      parts[1].push_back(odd.getLow());
-      parts[2].push_back(even.getHigh());
-      parts[3].push_back(odd.getHigh());
+      for (size_t part = 0; part < 4; ++part) {
+        parts[part].push_back((*groupValues)[part]);
+      }
     }
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
