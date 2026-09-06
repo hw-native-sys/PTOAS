@@ -5480,10 +5480,11 @@ static FailureOr<SmallVector<Value>> materializeMaskLaneStrideUnpack(
   StringAttr lower = rewriter.getStringAttr("LOWER");
   StringAttr higher = rewriter.getStringAttr("HIGHER");
   for (auto [resultIndex, resultType] : llvm::enumerate(resultTypes)) {
-    auto maskType = dyn_cast<MaskType>(resultType);
-    if (!maskType) {
-      return rewriter.notifyMatchFailure(
-          op, "dense mask lane_stride unpack requires mask result type");
+    FailureOr<MaskType> maskType = getMaskLaneStrideResultType(
+        op, resultType, "dense mask lane_stride unpack requires mask result type",
+        rewriter);
+    if (failed(maskType)) {
+      return failure();
     }
     int64_t sourceIndex = resultIndex / laneStride;
     int64_t part = resultIndex % laneStride;
@@ -5492,16 +5493,27 @@ static FailureOr<SmallVector<Value>> materializeMaskLaneStrideUnpack(
                                ? (part >= 2 ? higher : lower)
                                : (part == 1 ? higher : lower);
     Value current = rewriter
-                        .create<PunpackOp>(op->getLoc(), maskType, source,
+                        .create<PunpackOp>(op->getLoc(), *maskType, source,
                                            firstPart)
                         .getResult();
     if (laneStride == 4) {
       current = rewriter.create<PunpackOp>(
-          op->getLoc(), maskType, current, part % 2 == 0 ? lower : higher);
+          op->getLoc(), *maskType, current, part % 2 == 0 ? lower : higher);
     }
     results.push_back(current);
   }
   return results;
+}
+
+static FailureOr<MaskType> getMaskLaneStrideResultType(
+    Operation *op, Type resultType, StringRef diagnostic,
+    PatternRewriter &rewriter) {
+  auto maskType = dyn_cast<MaskType>(resultType);
+  if (!maskType) {
+    (void)rewriter.notifyMatchFailure(op, diagnostic);
+    return failure();
+  }
+  return maskType;
 }
 
 struct MaskLaneStridePackContext {
@@ -5597,10 +5609,11 @@ static FailureOr<SmallVector<Value>> materializeMaskLaneStridePack(
   SmallVector<Value> results;
   results.reserve(resultTypes.size());
   for (auto [resultIndex, resultType] : llvm::enumerate(resultTypes)) {
-    auto maskType = dyn_cast<MaskType>(resultType);
-    if (!maskType) {
-      return rewriter.notifyMatchFailure(
-          op, "dense mask lane_stride pack requires mask result type");
+    FailureOr<MaskType> maskType = getMaskLaneStrideResultType(
+        op, resultType, "dense mask lane_stride pack requires mask result type",
+        rewriter);
+    if (failed(maskType)) {
+      return failure();
     }
     size_t base = resultIndex * static_cast<size_t>(laneStride);
     if (base >= sourceParts.size()) {

@@ -2673,3 +2673,11 @@ block-deinterleaved/group-slots carrier 的映射、granularity 传播和失败�
 传播保持不变。增量 `check_changed_code.py --base HEAD` 结果为
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；layout 和 mask
 granularity lowering case 均 exit=0。
+
+# mask lane-stride 结果类型校验职责整改
+
+本轮新增 `getMaskLaneStrideResultType`，统一 pack/unpack 两条路径对 physical result
+`MaskType` 的校验与诊断。实际的 source index、lane-stride part 选择、punpack/ppack
+序列、mask merge 和结果 arity 检查保持在各自路径中，未改变 lowering 语义。增量
+`check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；layout 与 mask granularity lowering case 均 exit=0。
