@@ -2318,6 +2318,16 @@ shape-check、reason 传播和 `WalkResult` 错误处理统一改用已有的
 `vmi_deinterleave_load_layout_propagation.pto` lowering exit=0。
 `vmi_to_vpto_stride_load.pto` 在既有 pack/unpack invariant 处提前终止，未进入本轮 helper。
 
+# structured group load verifier 分派职责整改
+
+本轮继续将 `verifySupportedVMIStructuredLoadOp` 中 group_load、group_slot_load 与
+group_broadcast_load 的重复 shape-check 和失败诊断统一改用 `verifySupportedShapeOp`。
+每个分支的能力说明、识别顺序、checker 选择和失败语义保持不变。增量
+`check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，`git diff --check`
+通过；`vmi_layout_assignment_group_broadcast_load_e2b_b16.pto` lowering exit=0。
+`vmi_layout_assignment_group_load_s16_unaligned_stride_invalid.pto` 仍按预期在既有
+layout contract invalid 处失败，诊断未改变。
+
 # contiguous group reduce 类型合同职责整改
 
 本轮在 `OneToNVMIGroupReduceOpPattern::lowerContiguousRows` 中引入

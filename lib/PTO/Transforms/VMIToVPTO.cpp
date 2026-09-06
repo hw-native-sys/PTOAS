@@ -18442,45 +18442,27 @@ std::optional<WalkResult> verifySupportedVMIStructuredLoadOp(Operation *op) {
         "contiguous physical result/mask chunk and a supported UB source (");
   }
   if (auto load = dyn_cast<VMIGroupLoadOp>(op)) {
-    std::string reason;
-    if (succeeded(checkSupportedGroupLoadShape(load, &reason))) {
-      return WalkResult::advance();
-    }
-    load.emitError()
-        << kVMIDiagUnsupportedPrefix
-        << "pto.vmi.group_load requires contiguous full result chunks, a "
-           "supported UB source, and num_groups deriving a group size "
-           "aligned to physical chunks ("
-        << reason << ")";
-    return WalkResult::interrupt();
+    return verifySupportedShapeOp(
+        load, checkSupportedGroupLoadShape,
+        "pto.vmi.group_load requires contiguous full result chunks, a "
+        "supported UB source, and num_groups deriving a group size aligned "
+        "to physical chunks (");
   }
   if (auto load = dyn_cast<VMIGroupSlotLoadOp>(op)) {
-    std::string reason;
-    if (succeeded(checkSupportedGroupSlotLoadShape(load, &reason))) {
-      return WalkResult::advance();
-    }
-    load.emitError()
-        << kVMIDiagUnsupportedPrefix
-        << "pto.vmi.group_slot_load requires explicit group_slots result "
-           "layout matching num_groups, a supported UB pointer source, "
-           "and either slots=8 with constant unit source_group_stride or "
-           "slots=1 row-local lowering ("
-        << reason << ")";
-    return WalkResult::interrupt();
+    return verifySupportedShapeOp(
+        load, checkSupportedGroupSlotLoadShape,
+        "pto.vmi.group_slot_load requires explicit group_slots result layout "
+        "matching num_groups, a supported UB pointer source, and either "
+        "slots=8 with constant unit source_group_stride or slots=1 row-local "
+        "lowering (");
   }
   if (auto load = dyn_cast<VMIGroupBroadcastLoadOp>(op)) {
-    std::string reason;
-    if (succeeded(checkSupportedGroupBroadcastLoadShape(load, &reason))) {
-      return WalkResult::advance();
-    }
-    load.emitError()
-        << kVMIDiagUnsupportedPrefix
-        << "pto.vmi.group_broadcast_load requires either the BRC full-group "
-           "chunk form, the E2B packet form for b16/b32 direct or split "
-           "group size, or the generic group-slot-load then group-broadcast "
-           "fallback with supported UB pointer source and source_group_stride ("
-        << reason << ")";
-    return WalkResult::interrupt();
+    return verifySupportedShapeOp(
+        load, checkSupportedGroupBroadcastLoadShape,
+        "pto.vmi.group_broadcast_load requires either the BRC full-group "
+        "chunk form, the E2B packet form for b16/b32 direct or split group "
+        "size, or the generic group-slot-load then group-broadcast fallback "
+        "with supported UB pointer source and source_group_stride (");
   }
   return std::nullopt;
 }
