@@ -12013,6 +12013,36 @@ private:
     return success();
   }
 
+  FailureOr<std::pair<MaskType, Value>> buildPackedByteSelectors(
+      VMIGroupStoreOp op, VRegType firstVRegType,
+      OneToNPatternRewriter &rewriter) const {
+    FailureOr<MaskType> maskType =
+        getMaskTypeForVReg(firstVRegType, rewriter.getContext());
+    FailureOr<Value> allMask =
+        createAllTrueMaskForVReg(op.getLoc(), firstVRegType, rewriter);
+    bool failedMasks = failed(maskType) || failed(allMask);
+    if (failedMasks) {
+      rewriter.notifyMatchFailure(
+          op, "unsupported element type for packed group_store mask");
+      return failure();
+    }
+    auto indexElementType = IntegerType::get(
+        rewriter.getContext(),
+        pto::getPTOStorageElemBitWidth(firstVRegType.getElementType()));
+    auto indexType = VRegType::get(rewriter.getContext(),
+                                   firstVRegType.getElementCount(),
+                                   indexElementType);
+    FailureOr<Value> slotIndex = createGroupSlotIndexVector(
+        op.getLoc(), indexType, /*groupSize=*/8, /*baseGroupSlot=*/0,
+        rewriter);
+    if (failed(slotIndex)) {
+      rewriter.notifyMatchFailure(
+          op, "failed to create packed group_store lane selector");
+      return failure();
+    }
+    return std::make_pair(*maskType, *slotIndex);
+  }
+
   LogicalResult lowerPackedByteSlots8(
       VMIGroupStoreOp op, OneToNPatternRewriter &rewriter,
       ValueRange valueParts, VMIVRegType valueVMIType, VMILayoutAttr layout,
@@ -12025,12 +12055,6 @@ private:
         return rewriter.notifyMatchFailure(
             op, "packed slots=8 group_store requires uniform vreg parts");
       }
-    }
-    FailureOr<MaskType> maskType =
-        getMaskTypeForVReg(firstVRegType, rewriter.getContext());
-    if (failed(maskType)) {
-      return rewriter.notifyMatchFailure(
-          op, "unsupported element type for packed group_store mask");
     }
     bool alignedSinglePart =
         !laneStrided && numGroups == 8 && valueParts.size() == 1 &&
@@ -12045,28 +12069,18 @@ private:
       return success();
     }
 
-    auto indexElementType = IntegerType::get(
-        rewriter.getContext(),
-        pto::getPTOStorageElemBitWidth(firstVRegType.getElementType()));
-    auto indexType = VRegType::get(rewriter.getContext(),
-                                   firstVRegType.getElementCount(),
-                                   indexElementType);
-    FailureOr<Value> slotIndex = createGroupSlotIndexVector(
-        op.getLoc(), indexType, /*groupSize=*/8, /*baseGroupSlot=*/0,
-        rewriter);
-    FailureOr<Value> allMask =
-        createAllTrueMaskForVReg(op.getLoc(), firstVRegType, rewriter);
-    bool failedLaneSelectors = failed(slotIndex) || failed(allMask);
-    if (failedLaneSelectors) {
-      return rewriter.notifyMatchFailure(
-          op, "failed to create packed group_store lane selector");
+    FailureOr<std::pair<MaskType, Value>> selectors =
+        buildPackedByteSelectors(op, firstVRegType, rewriter);
+    if (failed(selectors)) {
+      return failure();
     }
     bool useDirectPack4 = isDirectMemoryDistAddressLegal(
         op.getDestination(), op.getOffset(),
         getMemoryElementType(op.getDestination().getType()), firstVRegType,
         VPTOMemoryOpFamily::Store, "PK4_B32");
     if (failed(emitPackedByteStoreBlocks(
-            op, rewriter, valueParts, firstVRegType, *maskType, *slotIndex,
+            op, rewriter, valueParts, firstVRegType, selectors->first,
+            selectors->second,
             destination, offset, rowStride, numGroups, useDirectPack4))) {
       return failure();
     }

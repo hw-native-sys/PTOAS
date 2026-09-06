@@ -3368,6 +3368,20 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_to_vpto_load_store_contiguous.pto                  # exit=0
 ```
 
+# packed-byte slots=8 selector 构造拆分（2026-09-06）
+
+本轮将 `lowerPackedByteSlots8` 中 packed-byte mask 类型、all-true mask、slot index
+向量构造抽取为 `buildPackedByteSelectors`。对齐单 part 快路径、`PK4_B32` direct 判定、
+block 合并和 stateful stream fallback 保持不变；失败诊断和 selector 类型保持一致。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_group_store_slots8_packed_byte.pto         # exit=0
+```
+
 # interleave lowering 入口合同与布局查询拆分（2026-09-06）
 
 本轮将模板 `OneToNVMIInterleaveOpPattern::matchAndRewrite` 中的结果物理类型/输入输出
