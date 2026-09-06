@@ -3456,6 +3456,19 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_to_vpto_iota_group2.pto                            # exit=0
 ```
 
+# constant mask chunk shape 校验拆分（2026-09-06）
+
+本轮将 `materializeConstantMaskChunk` 的 mask lane 数量与 active-lane 输入一致性检查抽取
+为 `validateConstantMaskChunk`。主体继续负责 prefix mask 快路径、非连续 active run 的
+PAND/POR 合并和空 mask fallback；mask lane 顺序、结果语义及失败行为保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
 # interleave lowering 入口合同与布局查询拆分（2026-09-06）
 
 本轮将模板 `OneToNVMIInterleaveOpPattern::matchAndRewrite` 中的结果物理类型/输入输出
