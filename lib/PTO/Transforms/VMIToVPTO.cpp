@@ -5494,10 +5494,13 @@ static FailureOr<SmallVector<Value>> materializeMaskLaneStridePack(
   return results;
 }
 
-FailureOr<std::optional<SmallVector<Value>>> materializeMaskLaneStrideLayout(
-    Operation *op, ValueRange sourceParts, TypeRange resultTypes,
-    VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
-    PatternRewriter &rewriter) {
+struct MaskLaneStrideLayoutPlan {
+  bool unpack;
+  int64_t laneStride;
+};
+
+static std::optional<MaskLaneStrideLayoutPlan> getMaskLaneStrideLayoutPlan(
+    VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout) {
   bool unpack = sourceLayout && sourceLayout.isContiguous() &&
                 sourceLayout.getLaneStride() == 1 && resultLayout &&
                 resultLayout.isContiguous() &&
@@ -5508,26 +5511,36 @@ FailureOr<std::optional<SmallVector<Value>>> materializeMaskLaneStrideLayout(
   if (!unpack && !pack) {
     return std::nullopt;
   }
+  return MaskLaneStrideLayoutPlan{
+      unpack, unpack ? resultLayout.getLaneStride() : sourceLayout.getLaneStride()};
+}
 
-  int64_t laneStride =
-      unpack ? resultLayout.getLaneStride() : sourceLayout.getLaneStride();
-  bool unsupportedStride = laneStride != 2 && laneStride != 4;
-  if (unsupportedStride) {
-    return rewriter.notifyMatchFailure(
-        op, unpack ? "unsupported dense mask lane_stride unpack factor"
-                   : "unsupported dense mask lane_stride pack factor");
+FailureOr<std::optional<SmallVector<Value>>> materializeMaskLaneStrideLayout(
+    Operation *op, ValueRange sourceParts, TypeRange resultTypes,
+    VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
+    PatternRewriter &rewriter) {
+  std::optional<MaskLaneStrideLayoutPlan> plan =
+      getMaskLaneStrideLayoutPlan(sourceLayout, resultLayout);
+  if (!plan) {
+    return std::nullopt;
   }
 
-  if (unpack) {
+  if (plan->laneStride != 2 && plan->laneStride != 4) {
+    return rewriter.notifyMatchFailure(
+        op, plan->unpack ? "unsupported dense mask lane_stride unpack factor"
+                         : "unsupported dense mask lane_stride pack factor");
+  }
+
+  if (plan->unpack) {
     FailureOr<SmallVector<Value>> results = materializeMaskLaneStrideUnpack(
-        op, sourceParts, resultTypes, laneStride, rewriter);
+        op, sourceParts, resultTypes, plan->laneStride, rewriter);
     if (failed(results)) {
       return failure();
     }
     return std::optional<SmallVector<Value>>(std::move(*results));
   }
   FailureOr<SmallVector<Value>> results = materializeMaskLaneStridePack(
-      op, sourceParts, resultTypes, laneStride, rewriter);
+      op, sourceParts, resultTypes, plan->laneStride, rewriter);
   if (failed(results)) {
     return failure();
   }

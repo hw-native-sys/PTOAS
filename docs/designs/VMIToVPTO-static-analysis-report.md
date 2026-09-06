@@ -2347,6 +2347,16 @@ layout/arity 汇总；保持 deinterleaved 期望布局、诊断顺序及失败�
 `git diff --check` 通过；channel merge 正常样例在既有 layout contract 冲突处提前失败，
 未进入本轮 helper。
 
+# mask lane-stride 转换方向职责整改
+
+本轮在 `materializeMaskLaneStrideLayout` 中引入 `MaskLaneStrideLayoutPlan` 与
+`getMaskLaneStrideLayoutPlan`，将 contiguous↔lane-stride 的方向识别及 stride 参数准备
+从具体 `Punpack/Ppack` 物化中分离。主函数继续负责 stride 合法性诊断和选择 unpack/pack
+emitter，保持 factor=2/4 支持范围、结果顺序和失败语义不变。增量
+`check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；现有 mask layout 样例在既有 layout contract 或 pack/unpack
+invariant 处提前终止，未进入本轮 helper。
+
 # shuffle forwarding 单 chunk 映射职责整改
 
 本轮在 `computeShuffleForwardingSourceParts` 中引入
