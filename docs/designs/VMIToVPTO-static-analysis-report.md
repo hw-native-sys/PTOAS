@@ -3559,6 +3559,20 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_to_vpto_masked_store.pto                           # exit=0
 ```
 
+# group-broadcast E2B chunk 合同拆分（2026-09-06）
+
+本轮将 `validateDirectE2BShape` 中各 physical part 的 chunk 数量一致性检查抽取为
+`validateDirectE2BChunks`。E2B 主合同仍负责 layout、element width、stride、pointer、
+group 数量和结果 arity 检查；E2B dist 选择、单 packet 限制与失败诊断保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_group_broadcast_load_e2b_b16.pto           # blocked by pre-existing VMI-PASS-INVARIANT
+```
+
 # load physical plan 构造职责拆分（2026-09-06）
 
 本轮将 `OneToNVMILoadOpPattern::buildPhysicalPlan` 中 converted result type 获取与

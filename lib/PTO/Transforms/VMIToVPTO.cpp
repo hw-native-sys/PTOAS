@@ -12487,15 +12487,10 @@ private:
           op, "group_broadcast_load requires known chunks per part");
     }
     int64_t factor = layout.getFactor();
-    for (int64_t part = 1; part < factor; ++part) {
-      FailureOr<int64_t> currentChunks =
-          getDataChunksInPart(resultVMIType, part);
-      bool nonUniformChunks =
-          failed(currentChunks) || *currentChunks != *chunksPerPart;
-      if (nonUniformChunks) {
-        return rewriter.notifyMatchFailure(
-            op, "group_broadcast_load requires uniform chunks per part");
-      }
+    FailureOr<int64_t> uniformChunks = validateDirectE2BChunks(
+        op, resultVMIType, factor, *chunksPerPart, rewriter);
+    if (failed(uniformChunks)) {
+      return failure();
     }
     bool invalidArity =
         static_cast<int64_t>(resultTypes.size()) != factor * *chunksPerPart;
@@ -12509,6 +12504,22 @@ private:
     }
     StringRef e2bDist = elementBits == 16 ? "E2B_B16" : "E2B_B32";
     return std::make_tuple(e2bDist, factor, *chunksPerPart);
+  }
+
+  FailureOr<int64_t> validateDirectE2BChunks(
+      VMIGroupBroadcastLoadOp op, VMIVRegType resultVMIType, int64_t factor,
+      int64_t chunksPerPart, OneToNPatternRewriter &rewriter) const {
+    for (int64_t part = 1; part < factor; ++part) {
+      FailureOr<int64_t> currentChunks =
+          getDataChunksInPart(resultVMIType, part);
+      bool nonUniformChunks =
+          failed(currentChunks) || *currentChunks != chunksPerPart;
+      if (nonUniformChunks) {
+        return rewriter.notifyMatchFailure(
+            op, "group_broadcast_load requires uniform chunks per part");
+      }
+    }
+    return chunksPerPart;
   }
 
   LogicalResult lowerDirectE2B(
