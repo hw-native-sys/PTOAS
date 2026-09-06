@@ -3028,3 +3028,20 @@ deinterleaved=2 与 contiguous 路径的优先级分派。support-table 查询�
 `check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过；`vmi_layout_assignment_group_store_slots1_unit_stride.pto`
 完整 lowering pipeline exit=0。
+
+# verifier 与 shuffle 规划控制流整改（2026-09-06）
+
+本轮继续清理 verifier/shape-plan 与 shuffle 规划区域：为 reduce physical chunk 检查、
+Vdhist/Vchist/Vmull 及 add-carry 端口校验补齐选择语句大括号，并将 Vmull/add-carry 的
+关键失败条件命名，保持原有支持范围和诊断顺序不变；同时为 shuffle forwarding 规划的
+lanes-per-part、indices、layout factor 和 physical chunk 查询补齐大括号，避免单语句控制
+流在后续维护中产生歧义。未改变物理 lane 映射、chunk 顺序或 lowering 结果。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_layout_assignment_group_broadcast_load_e2b_b16.pto # exit=0
+vmi_layout_assignment_scatter.pto                      # exit=0
+```

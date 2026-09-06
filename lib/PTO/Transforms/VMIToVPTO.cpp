@@ -3243,23 +3243,27 @@ computeShuffleForwardingSourceParts(VMIShuffleOp op, std::string *reason) {
   auto resultType = cast<VMIVRegType>(op.getResult().getType());
   FailureOr<int64_t> lanesPerPart =
       getDataLanesPerPart(sourceType.getElementType());
-  if (failed(lanesPerPart))
+  if (failed(lanesPerPart)) {
     return fail("requires known lanes per physical part");
+  }
 
   ArrayRef<int64_t> indices = op.getIndices();
-  if (indices.empty())
+  if (indices.empty()) {
     return fail("requires non-empty indices");
+  }
 
   FailureOr<int64_t> resultFactor = getDataLayoutFactor(resultType);
-  if (failed(resultFactor))
+  if (failed(resultFactor)) {
     return fail("requires assigned result layout");
+  }
 
   SmallVector<int64_t> sourceFlatIndices;
   for (int64_t resultPart = 0; resultPart < *resultFactor; ++resultPart) {
     FailureOr<int64_t> resultChunks =
         getDataChunksInPart(resultType, resultPart);
-    if (failed(resultChunks))
+    if (failed(resultChunks)) {
       return fail("requires known result physical chunks");
+    }
 
     for (int64_t resultChunk = 0; resultChunk < *resultChunks; ++resultChunk) {
       FailureOr<int64_t> sourceFlatIndex =
@@ -18804,6 +18808,7 @@ static FailureOr<ReducePhysicalShapePlan> buildReducePhysicalShapePlan(
     return fail(Twine("requires full source physical chunks so padding lanes "
                       "do not participate in the reduction; ") +
                 fullChunkReason);
+  }
 
   int64_t sourceArity;
   int64_t resultArity;
@@ -19018,16 +19023,18 @@ LogicalResult checkSupportedGroupBroadcastShape(
 LogicalResult checkSupportedVdhistShape(VMIVdhistOp op,
                                        std::string *reason = nullptr) {
   VMILayoutSupport supports;
-  if (succeeded(supports.getVdhistSupport(op, reason)))
+  if (succeeded(supports.getVdhistSupport(op, reason))) {
     return success();
+  }
   return failure();
 }
 
 LogicalResult checkSupportedVchistShape(VMIVchistOp op,
                                        std::string *reason = nullptr) {
   VMILayoutSupport supports;
-  if (succeeded(supports.getVchistSupport(op, reason)))
+  if (succeeded(supports.getVchistSupport(op, reason))) {
     return success();
+  }
   return failure();
 }
 
@@ -19053,9 +19060,12 @@ static FailureOr<VmullShapePlan> buildVmullShapePlan(
   auto maskType = cast<VMIMaskType>(op.getMask().getType());
 
   auto elementType = dyn_cast<IntegerType>(aType.getElementType());
-  if (!elementType || elementType.getWidth() != 32 ||
-      (!elementType.isSignless() && !elementType.isUnsigned()))
+  bool unsupportedElementType =
+      !elementType || elementType.getWidth() != 32 ||
+      (!elementType.isSignless() && !elementType.isUnsigned());
+  if (unsupportedElementType) {
     return fail("requires element type to be exactly i32 or ui32");
+  }
   if (aType != bType || aType != lowType || aType != highType) {
     return fail("requires identical a, b, low, and high VMI vreg types");
   }
@@ -19184,24 +19194,33 @@ checkSupportedVMIAddCarryPorts(VMIVRegType lhsType, VMIVRegType rhsType,
                                ArrayRef<VMIMaskType> maskTypes,
                                std::string *reason = nullptr) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
   auto integerType = dyn_cast<IntegerType>(lhsType.getElementType());
-  if (!integerType || integerType.getWidth() != 32)
+  bool unsupportedIntegerType = !integerType || integerType.getWidth() != 32;
+  if (unsupportedIntegerType) {
     return fail("requires 32-bit integer data elements");
-  if (lhsType != rhsType || lhsType != resultType)
+  }
+  bool mismatchedTypes = lhsType != rhsType || lhsType != resultType;
+  if (mismatchedTypes) {
     return fail("requires matching lhs, rhs, and result VMI types");
-  if (!lhsType.getLayoutAttr())
+  }
+  if (!lhsType.getLayoutAttr()) {
     return fail("requires assigned data layout");
-  if (failed(checkSupportedMaskableVReg(lhsType)))
+  }
+  if (failed(checkSupportedMaskableVReg(lhsType))) {
     return fail("requires computable physical data parts");
+  }
 
   FailureOr<int64_t> dataArity = getVMIPhysicalArity(lhsType);
-  if (failed(dataArity) || *dataArity < 1)
+  bool invalidDataArity = failed(dataArity) || *dataArity < 1;
+  if (invalidDataArity) {
     return fail("requires non-empty physical data parts");
+  }
   for (VMIMaskType maskType : maskTypes) {
     if (failed(checkAddCarryMaskPort(maskType, lhsType.getLayoutAttr(),
                                      *dataArity, reason))) {
