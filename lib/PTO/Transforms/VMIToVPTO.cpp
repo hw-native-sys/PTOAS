@@ -5452,6 +5452,60 @@ tryDataLayoutMaterializer(const DataLayoutMaterializationContext &context,
   return materializer(context);
 }
 
+static FailureOr<std::optional<SmallVector<Value>>>
+tryDataLayoutMaterializers(const DataLayoutMaterializationContext &context) {
+  auto tryMaterializer =
+      [&context](auto materializer)
+          -> FailureOr<std::optional<SmallVector<Value>>> {
+    FailureOr<std::optional<SmallVector<Value>>> result =
+        tryDataLayoutMaterializer(context, materializer);
+    if (failed(result)) {
+      return failure();
+    }
+    return result;
+  };
+
+  FailureOr<std::optional<SmallVector<Value>>> simple = tryMaterializer(
+      [](const DataLayoutMaterializationContext &context) {
+        return materializeSimpleDataLayoutConversion(
+            context.op, context.sourceParts, context.resultTypes,
+            context.sourceLayout, context.resultLayout,
+            context.sourceVMIElementType, context.rewriter);
+      });
+  bool simpleHandled = failed(simple) || simple->has_value();
+  if (simpleHandled) {
+    return simple;
+  }
+  FailureOr<std::optional<SmallVector<Value>>> deinterleaved2 = tryMaterializer(
+      [](const DataLayoutMaterializationContext &context) {
+        return materializeDeinterleaved2Layout(
+            context.op, context.sourceParts, context.resultTypes,
+            context.sourceLayout, context.resultLayout, context.rewriter);
+      });
+  bool deinterleaved2Handled =
+      failed(deinterleaved2) || deinterleaved2->has_value();
+  if (deinterleaved2Handled) {
+    return deinterleaved2;
+  }
+  FailureOr<std::optional<SmallVector<Value>>> laneStride = tryMaterializer(
+      [](const DataLayoutMaterializationContext &context) {
+        return materializeDataLaneStrideConversion(
+            context.op, context.sourceParts, context.resultTypes,
+            context.sourceLayout, context.resultLayout,
+            context.sourceVMIElementType, context.rewriter);
+      });
+  bool laneStrideHandled = failed(laneStride) || laneStride->has_value();
+  if (laneStrideHandled) {
+    return laneStride;
+  }
+  return tryMaterializer([](const DataLayoutMaterializationContext &context) {
+    return materializeDataLayoutViaContiguous(
+        context.op, context.sourceParts, context.resultTypes,
+        context.sourceLayout, context.resultLayout,
+        context.sourceVMIElementType, context.rewriter);
+  });
+}
+
 FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
@@ -5459,56 +5513,13 @@ FailureOr<SmallVector<Value>> materializeDataLayoutConversion(
   DataLayoutMaterializationContext context{
       op, sourceParts, resultTypes, sourceLayout, resultLayout,
       sourceVMIElementType, rewriter};
-  FailureOr<std::optional<SmallVector<Value>>> simple = tryDataLayoutMaterializer(
-      context, [](const DataLayoutMaterializationContext &context) {
-        return materializeSimpleDataLayoutConversion(
-            context.op, context.sourceParts, context.resultTypes,
-            context.sourceLayout, context.resultLayout,
-            context.sourceVMIElementType, context.rewriter);
-      });
-  if (failed(simple)) {
+  FailureOr<std::optional<SmallVector<Value>>> results =
+      tryDataLayoutMaterializers(context);
+  if (failed(results)) {
     return failure();
   }
-  if (simple->has_value()) {
-    return std::move(**simple);
-  }
-  FailureOr<std::optional<SmallVector<Value>>> deinterleaved2 =
-      tryDataLayoutMaterializer(context, [](const DataLayoutMaterializationContext &context) {
-        return materializeDeinterleaved2Layout(
-            context.op, context.sourceParts, context.resultTypes,
-            context.sourceLayout, context.resultLayout, context.rewriter);
-      });
-  if (failed(deinterleaved2)) {
-    return failure();
-  }
-  if (deinterleaved2->has_value()) {
-    return std::move(**deinterleaved2);
-  }
-  FailureOr<std::optional<SmallVector<Value>>> laneStride =
-      tryDataLayoutMaterializer(context, [](const DataLayoutMaterializationContext &context) {
-        return materializeDataLaneStrideConversion(
-            context.op, context.sourceParts, context.resultTypes,
-            context.sourceLayout, context.resultLayout,
-            context.sourceVMIElementType, context.rewriter);
-      });
-  if (failed(laneStride)) {
-    return failure();
-  }
-  if (laneStride->has_value()) {
-    return std::move(**laneStride);
-  }
-  FailureOr<std::optional<SmallVector<Value>>> viaContiguous =
-      tryDataLayoutMaterializer(context, [](const DataLayoutMaterializationContext &context) {
-        return materializeDataLayoutViaContiguous(
-            context.op, context.sourceParts, context.resultTypes,
-            context.sourceLayout, context.resultLayout,
-            context.sourceVMIElementType, context.rewriter);
-      });
-  if (failed(viaContiguous)) {
-    return failure();
-  }
-  if (viaContiguous->has_value()) {
-    return std::move(**viaContiguous);
+  if (results->has_value()) {
+    return std::move(**results);
   }
 
   (void)rewriter.notifyMatchFailure(

@@ -3207,3 +3207,18 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 
 `vmi_to_vpto_fptoui_f16_to_u8.pto` 同样在既有 pack/unpack pipeline invariant 处提前失败，
 未进入本轮 helper。
+
+# data layout materializer 路由收敛（2026-09-06）
+
+本轮将 `materializeDataLayoutConversion` 中四路 materializer 的重复 optional/failure
+处理收敛到 `tryDataLayoutMaterializers`。helper 严格保持 simple → deinterleaved2 →
+lane-stride → via-contiguous 的尝试顺序；入口只负责 context 构造、最终结果转移和
+unsupported 诊断，不改变递归转换、结果 arity 或失败传播。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_ensure_layout_dense_composed.pto           # exit=0
+```
