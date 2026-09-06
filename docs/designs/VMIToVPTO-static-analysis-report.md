@@ -1,5 +1,19 @@
 # VMIToVPTO 静态分析报告记录
 
+## lane-stride masked-store 单 chunk 发射拆分（2026-09-06）
+
+本轮将 `OneToNVMIMaskedStoreOpPattern::lowerLaneStride` 中单 physical chunk 的类型/active
+lane 检查、predicate 压缩、地址合法性和 `vsts` 发射抽取为
+`emitLaneStrideMaskedStorePart`。外层函数只负责 matching value/mask 遍历和 semantic
+offset 累积；零 active lane、offset 步进、dist 传递、失败诊断及 store 顺序保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
 ## group-store 通用布局 lowering 拆分（2026-09-06）
 
 本轮将 `OneToNVMIGroupStoreOpPattern::lowerByLayout` 中 general layout 的 support fact

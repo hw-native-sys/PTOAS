@@ -12697,6 +12697,48 @@ struct OneToNVMIMaskedStoreOpPattern
   using OneToNOpConversionPattern<VMIMaskedStoreOp>::OneToNOpConversionPattern;
 
 private:
+  FailureOr<int64_t> emitLaneStrideMaskedStorePart(
+      VMIMaskedStoreOp op, OneToNPatternRewriter &rewriter, Value value,
+      Value mask, VMIVRegType valueVMIType, Value destination, Value offset,
+      StringRef dist, StringRef maskGranularity, int64_t index,
+      int64_t semanticOffset) const {
+    auto vregType = dyn_cast<VRegType>(value.getType());
+    bool invalidTypes = !vregType || !isa<MaskType>(mask.getType());
+    if (invalidTypes) {
+      return rewriter.notifyMatchFailure(
+          op, "lane_stride masked_store parts must be vreg/mask");
+    }
+    FailureOr<int64_t> activeLanes =
+        getActiveDataLanesInPhysicalChunk(valueVMIType, index);
+    if (failed(activeLanes)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to compute lane_stride masked_store active lanes");
+    }
+    if (*activeLanes == 0) {
+      return 0;
+    }
+    FailureOr<Value> storeMask = createDenseLaneStrideStorePredicate(
+        op.getLoc(), valueVMIType, index, mask, maskGranularity, rewriter);
+    if (failed(storeMask)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to compact lane_stride masked_store predicate");
+    }
+    Value chunkOffset =
+        createChunkOffset(op.getLoc(), offset, semanticOffset, rewriter);
+    bool illegalAddress = !isDirectMemoryDistAddressLegal(
+        destination, chunkOffset, valueVMIType.getElementType(), vregType,
+        VPTOMemoryOpFamily::Store, dist);
+    if (illegalAddress) {
+      return rewriter.notifyMatchFailure(
+          op, "lane_stride masked_store requires a proven target alignment "
+              "for every physical store chunk");
+    }
+    rewriter.create<VstsOp>(op.getLoc(), /*updated_base=*/Type{}, value,
+                            destination, chunkOffset,
+                            rewriter.getStringAttr(dist), *storeMask);
+    return *activeLanes;
+  }
+
   LogicalResult lowerLaneStride(
       VMIMaskedStoreOp op, OneToNPatternRewriter &rewriter,
       ValueRange valueParts, ValueRange maskParts, VMIVRegType valueVMIType,
@@ -12712,39 +12754,12 @@ private:
     for (auto [index, valueAndMask] :
          llvm::enumerate(llvm::zip_equal(valueParts, maskParts))) {
       auto [value, mask] = valueAndMask;
-      auto vregType = dyn_cast<VRegType>(value.getType());
-      if (!vregType || !isa<MaskType>(mask.getType())) {
-        return rewriter.notifyMatchFailure(
-            op, "lane_stride masked_store parts must be vreg/mask");
-      }
-      FailureOr<int64_t> activeLanes =
-          getActiveDataLanesInPhysicalChunk(valueVMIType, index);
+      FailureOr<int64_t> activeLanes = emitLaneStrideMaskedStorePart(
+          op, rewriter, value, mask, valueVMIType, destination, offset, dist,
+          maskGranularity, index, semanticOffset);
       if (failed(activeLanes)) {
-        return rewriter.notifyMatchFailure(
-            op, "failed to compute lane_stride masked_store active lanes");
+        return failure();
       }
-      if (*activeLanes == 0) {
-        continue;
-      }
-      FailureOr<Value> storeMask = createDenseLaneStrideStorePredicate(
-          op.getLoc(), valueVMIType, index, mask, maskGranularity, rewriter);
-      if (failed(storeMask)) {
-        return rewriter.notifyMatchFailure(
-            op, "failed to compact lane_stride masked_store predicate");
-      }
-      Value chunkOffset =
-          createChunkOffset(op.getLoc(), offset, semanticOffset, rewriter);
-      bool illegalAddress = !isDirectMemoryDistAddressLegal(
-          destination, chunkOffset, valueVMIType.getElementType(), vregType,
-          VPTOMemoryOpFamily::Store, dist);
-      if (illegalAddress) {
-        return rewriter.notifyMatchFailure(
-            op, "lane_stride masked_store requires a proven target alignment "
-                "for every physical store chunk");
-      }
-      rewriter.create<VstsOp>(op.getLoc(), /*updated_base=*/Type{}, value,
-                              destination, chunkOffset,
-                              rewriter.getStringAttr(dist), *storeMask);
       semanticOffset += *activeLanes;
     }
     rewriter.eraseOp(op);
