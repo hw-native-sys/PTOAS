@@ -15432,6 +15432,21 @@ public:
   }
 };
 
+static bool hasUnsupportedPackedTruncFConversion(Type sourceElementType,
+                                                 Type resultElementType) {
+  bool usesPackedCarrier =
+      isVMIPackedFloatCarrierType(sourceElementType) ||
+      isVMIPackedFloatCarrierType(resultElementType);
+  return usesPackedCarrier &&
+         !lookupVMIFpToFpContract(sourceElementType, resultElementType);
+}
+
+static bool hasGroupSlotTruncFLayouts(VMILayoutAttr sourceLayout,
+                                      VMILayoutAttr resultLayout) {
+  return sourceLayout && resultLayout && sourceLayout.isGroupSlots() &&
+         resultLayout.isGroupSlots();
+}
+
 struct OneToNVMITruncFOpPattern : OneToNOpConversionPattern<VMITruncFOp> {
   using OneToNOpConversionPattern<VMITruncFOp>::OneToNOpConversionPattern;
 
@@ -15755,11 +15770,8 @@ public:
     auto resultVMIType = cast<VMIVRegType>(op.getResult().getType());
     Type sourceElementType = sourceVMIType.getElementType();
     Type resultElementType = resultVMIType.getElementType();
-    bool unsupportedPackedConversion =
-        (isVMIPackedFloatCarrierType(sourceElementType) ||
-         isVMIPackedFloatCarrierType(resultElementType)) &&
-        !lookupVMIFpToFpContract(sourceElementType, resultElementType);
-    if (unsupportedPackedConversion) {
+    if (hasUnsupportedPackedTruncFConversion(sourceElementType,
+                                             resultElementType)) {
       return rewriter.notifyMatchFailure(
           op, "unsupported packed fp-to-fp truncf conversion");
     }
@@ -15773,10 +15785,7 @@ public:
 
     VMILayoutAttr sourceLayout = sourceVMIType.getLayoutAttr();
     VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
-    bool groupSlotLayouts =
-        sourceLayout && resultLayout && sourceLayout.isGroupSlots() &&
-        resultLayout.isGroupSlots();
-    if (groupSlotLayouts) {
+    if (hasGroupSlotTruncFLayouts(sourceLayout, resultLayout)) {
       return lowerGroupSlotTrunc(op, sourceParts, resultTypes, sourceLayout,
                                  resultLayout, sourceVMIType, resultVMIType,
                                  rewriter);

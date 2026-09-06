@@ -3097,3 +3097,19 @@ git diff --check                                      # passed
 check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
 vmi_to_vpto_ensure_mask_granularity.pto                # exit=0
 ```
+
+# truncf 合同判断职责拆分（2026-09-06）
+
+本轮将 `OneToNVMITruncFOpPattern::matchAndRewrite` 中 packed-fp 合同判断和 group-slot
+布局识别分别抽取为 `hasUnsupportedPackedTruncFConversion` 与
+`hasGroupSlotTruncFLayouts`。入口继续负责结果类型转换和后续 same-width、lane-stride、
+factor narrowing 分派；packed carrier 支持矩阵、group-slot 优先级及所有 lowering 语义
+保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_truncf_bf16x2_d4_packed4.pto               # exit=0
+```
