@@ -18587,26 +18587,13 @@ private:
       VMIShuffleOp op, ValueRange sourceParts, Type resultType,
       const ShuffleVselrPlan &plan,
       OneToNPatternRewriter &rewriter) const {
-    bool sourceOutOfBounds =
-        plan.sourceFlatIndex < 0 ||
-        plan.sourceFlatIndex >= static_cast<int64_t>(sourceParts.size());
-    if (sourceOutOfBounds) {
-      return rewriter.notifyMatchFailure(
-          op, "shuffle vselr source part range is out of bounds");
-    }
-    auto sourceVRegType =
-        dyn_cast<VRegType>(sourceParts[plan.sourceFlatIndex].getType());
-    auto resultVRegType = dyn_cast<VRegType>(resultType);
-    bool invalidTypes =
-        !sourceVRegType || !resultVRegType ||
-        sourceVRegType.getElementCount() != resultVRegType.getElementCount() ||
-        sourceVRegType.getElementType() != resultVRegType.getElementType();
-    if (invalidTypes) {
-      return rewriter.notifyMatchFailure(
-          op, "shuffle vselr source/result type mismatch");
+    FailureOr<VRegType> sourceVRegType = getShuffleVselrSourceType(
+        op, sourceParts, resultType, plan.sourceFlatIndex, rewriter);
+    if (failed(sourceVRegType)) {
+      return failure();
     }
     unsigned indexBits =
-        pto::getPTOStorageElemBitWidth(sourceVRegType.getElementType());
+        pto::getPTOStorageElemBitWidth(sourceVRegType->getElementType());
     bool unsupportedIndexBits =
         indexBits != 8 && indexBits != 16 && indexBits != 32;
     if (unsupportedIndexBits) {
@@ -18615,7 +18602,7 @@ private:
     }
     auto indexElementType = IntegerType::get(rewriter.getContext(), indexBits);
     Type indexType = VRegType::get(rewriter.getContext(),
-                                   sourceVRegType.getElementCount(),
+                                   sourceVRegType->getElementCount(),
                                    indexElementType);
     FailureOr<Value> base = createScalarOffsetConstant(
         op.getLoc(), indexElementType, plan.baseLane, rewriter);
@@ -18632,6 +18619,29 @@ private:
         .create<VselrOp>(op.getLoc(), resultType,
                          sourceParts[plan.sourceFlatIndex], indexVector)
         .getResult();
+  }
+
+  FailureOr<VRegType> getShuffleVselrSourceType(
+      VMIShuffleOp op, ValueRange sourceParts, Type resultType,
+      int64_t sourceIndex, OneToNPatternRewriter &rewriter) const {
+    bool sourceOutOfBounds =
+        sourceIndex < 0 || sourceIndex >= static_cast<int64_t>(sourceParts.size());
+    if (sourceOutOfBounds) {
+      return rewriter.notifyMatchFailure(
+          op, "shuffle vselr source part range is out of bounds");
+    }
+    auto sourceVRegType =
+        dyn_cast<VRegType>(sourceParts[sourceIndex].getType());
+    auto resultVRegType = dyn_cast<VRegType>(resultType);
+    bool invalidTypes =
+        !sourceVRegType || !resultVRegType ||
+        sourceVRegType.getElementCount() != resultVRegType.getElementCount() ||
+        sourceVRegType.getElementType() != resultVRegType.getElementType();
+    if (invalidTypes) {
+      return rewriter.notifyMatchFailure(
+          op, "shuffle vselr source/result type mismatch");
+    }
+    return *sourceVRegType;
   }
 
   LogicalResult lowerVselr(

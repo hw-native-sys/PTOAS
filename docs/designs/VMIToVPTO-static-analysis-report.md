@@ -1,5 +1,19 @@
 # VMIToVPTO 静态分析报告记录
 
+## shuffle vselr source 合同拆分（2026-09-06）
+
+本轮将 `buildShuffleVselrResult` 中 source part 边界及 source/result vreg 类型合同抽取为
+`getShuffleVselrSourceType`。结果构造 helper 现在专注于 index 类型、`vci` selector 和
+`vselr` 发射；source 索引范围、元素类型/数量匹配仍在独立合同阶段校验。selector 顺序、
+descending 语义、失败诊断和结果替换保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
 ## runtime expand-load 计划与物化拆分（2026-09-06）
 
 本轮将 `lowerRuntimeExpandLoad` 拆为两个职责明确的阶段：
