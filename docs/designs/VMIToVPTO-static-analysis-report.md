@@ -1,5 +1,20 @@
 # VMIToVPTO 静态分析报告记录
 
+## trunci group-slot carrier 路由拆分（2026-09-06）
+
+本轮将 `lowerGroupSlotTruncPart` 的三种物化策略拆为独立 helper：
+`lowerGroupSlotDirectCarrier` 处理 lane-stride=4 的直接 carrier，
+`lowerGroupSlotWideCarrier` 处理 lane-stride=2 的转换后 carrier，入口保留普通窄化
+`vcvt` 路径及策略路由。这样 direct bitcast、wide carrier `vcvt + bitcast` 和普通
+窄化的合同与发射职责明确分离；结果类型、active-slot mask、part 选择和失败诊断保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
 ## contiguous group-reduce shape 计划拆分（2026-09-06）
 
 本轮将 `lowerContiguousRows` 中的 chunk 形状推导、group 数量/每组 chunk 数、slots=1
