@@ -2121,6 +2121,15 @@ lane 数、地址操作数和 value/mask arity 合同；helper 按原顺序优�
 `checked_files=1 errors=0 warnings=0`，`git diff --check` 通过；
 `vmi_to_vpto_masked_store.pto` lowering exit=0。
 
+# ensure_mask_granularity 结果合同职责整改
+
+本轮在 `OneToNVMIEnsureMaskGranularityOpPattern` 中新增 `replaceCheckedResults`，将物化
+结果的 physical arity、逐 part 类型校验以及 One-to-N 替换集中到单一 helper。主入口继续
+负责 source/result 类型、支持关系和 granularity conversion 调用；结果顺序、失败诊断、
+类型合同和替换语义保持不变。增量
+`check_changed_code.py --base origin/master --fail-on none` 结果为
+`checked_files=1 errors=0 warnings=0`，`git diff --check` 通过。
+
 # group load 布局分派职责整改
 
 本轮将 `OneToNVMIGroupLoadOpPattern::matchAndRewrite` 中 block-deinterleaved f32 特殊路径

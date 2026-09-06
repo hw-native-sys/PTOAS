@@ -6923,6 +6923,32 @@ struct OneToNVMIEnsureMaskGranularityOpPattern
   using OneToNOpConversionPattern<
       VMIEnsureMaskGranularityOp>::OneToNOpConversionPattern;
 
+private:
+  LogicalResult replaceCheckedResults(
+      VMIEnsureMaskGranularityOp op, OneToNPatternRewriter &rewriter,
+      FailureOr<SmallVector<Value>> results, ArrayRef<Type> resultTypes) const {
+    if (failed(results)) {
+      return failure();
+    }
+    bool resultArityMismatch = results->size() != resultTypes.size();
+    if (resultArityMismatch) {
+      return rewriter.notifyMatchFailure(
+          op, "mask granularity cast result arity mismatch");
+    }
+    for (auto [result, type] : llvm::zip_equal(*results, resultTypes)) {
+      bool resultTypeMismatch = result.getType() != type;
+      if (resultTypeMismatch) {
+        return rewriter.notifyMatchFailure(
+            op, "mask granularity cast result type mismatch");
+      }
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, *results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
+public:
+
   LogicalResult
   matchAndRewrite(VMIEnsureMaskGranularityOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -6951,24 +6977,7 @@ struct OneToNVMIEnsureMaskGranularityOpPattern
     FailureOr<SmallVector<Value>> results =
         materializeMaskGranularityCastConversion(
             op, sourceType, resultType, sourceParts, resultTypes, rewriter);
-    if (failed(results)) {
-      return failure();
-    }
-    bool resultArityMismatch = results->size() != resultTypes.size();
-    if (resultArityMismatch) {
-      return rewriter.notifyMatchFailure(
-          op, "mask granularity cast result arity mismatch");
-    }
-    for (auto [result, type] : llvm::zip_equal(*results, resultTypes)) {
-      bool resultTypeMismatch = result.getType() != type;
-      if (resultTypeMismatch) {
-        return rewriter.notifyMatchFailure(
-            op, "mask granularity cast result type mismatch");
-      }
-    }
-    replaceOpWithFlatConvertedValues(rewriter, op, *results,
-                                     *this->getTypeConverter());
-    return success();
+    return replaceCheckedResults(op, rewriter, std::move(results), resultTypes);
   }
 
 private:
