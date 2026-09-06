@@ -9426,22 +9426,32 @@ private:
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
     for (auto [index, resultType] : llvm::enumerate(resultTypes)) {
-      if (!isa<VRegType>(resultType)) {
-        return rewriter.notifyMatchFailure(
-            op, "contiguous group_load result must be vreg");
+      FailureOr<Value> result = materializeContiguousUnitStrideChunk(
+          op, rewriter, source, offset, resultType, index, *lanesPerPart);
+      if (failed(result)) {
+        return failure();
       }
-      Value chunkOffset = createChunkOffset(
-          op.getLoc(), offset, static_cast<int64_t>(index) * *lanesPerPart,
-          rewriter);
-      results.push_back(rewriter
-                            .create<VldsOp>(op.getLoc(), resultType,
-                                            /*updated_base=*/Type{}, source,
-                                            chunkOffset, /*dist=*/nullptr)
-                            .getResult());
+      results.push_back(*result);
     }
     replaceOpWithFlatConvertedValues(rewriter, op, results,
                                      *this->getTypeConverter());
     return success();
+  }
+
+  FailureOr<Value> materializeContiguousUnitStrideChunk(
+      VMIGroupLoadOp op, OneToNPatternRewriter &rewriter, Value source,
+      Value offset, Type resultType, size_t index, int64_t lanesPerPart) const {
+    if (!isa<VRegType>(resultType)) {
+      return rewriter.notifyMatchFailure(
+          op, "contiguous group_load result must be vreg");
+    }
+    Value chunkOffset = createChunkOffset(
+        op.getLoc(), offset, static_cast<int64_t>(index) * lanesPerPart,
+        rewriter);
+    return rewriter
+        .create<VldsOp>(op.getLoc(), resultType, Type{}, source, chunkOffset,
+                        nullptr)
+        .getResult();
   }
 
   FailureOr<Value> materializeBlockDeinterleavedChunk(

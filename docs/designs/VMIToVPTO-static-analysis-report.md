@@ -3144,6 +3144,21 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 相关 block group-load case 在测试自身的 ensure_layout/truncf 不支持输入处提前失败，未
 进入本轮 chunk helper。
 
+# group-load unit-stride 单 chunk 物化职责拆分（2026-09-06）
+
+本轮将 `lowerContiguousUnitStride` 中单个 result chunk 的 vreg 合同、连续 offset 计算
+和 `vlds` 发射抽取为 `materializeContiguousUnitStrideChunk`。外层函数继续负责 physical
+lane 推导、chunk 遍历和结果替换；unit-stride 地址步进、结果顺序、普通 load 语义及失败
+诊断保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_layout_assignment_group_load.pto                    # exit=0
+```
+
 # contiguous group-load 单 chunk 物化职责拆分（2026-09-06）
 
 本轮将 `OneToNVMIGroupLoadOpPattern::lowerContiguousChunks` 中单个 group/chunk 的
