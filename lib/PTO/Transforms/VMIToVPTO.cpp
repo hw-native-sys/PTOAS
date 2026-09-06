@@ -18984,6 +18984,32 @@ static FailureOr<int64_t> checkChannelSplitResultShape(
   return resultArity;
 }
 
+static FailureOr<int64_t> checkChannelSplitSourceShape(
+    VMIChannelSplitOp op, VMILayoutAttr expectedLayout,
+    std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> FailureOr<int64_t> {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  auto sourceType = cast<VMIVRegType>(op.getSource().getType());
+  VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();
+  if (!sourceLayout) {
+    return fail("requires assigned source layout");
+  }
+  bool invalidSourceLayout =
+      !sourceLayout.isContiguous() && sourceLayout != expectedLayout;
+  if (invalidSourceLayout) {
+    return fail("requires source layout to be contiguous or matching deinterleaved channel layout");
+  }
+  FailureOr<int64_t> sourceArity = getVMIPhysicalArity(sourceType);
+  if (failed(sourceArity)) {
+    return fail("requires computable source physical arity");
+  }
+  return *sourceArity;
+}
+
 static LogicalResult checkChannelMergeResultShape(
     VMIChannelMergeOp op, VMILayoutAttr expectedLayout, int64_t inputArity,
     std::string *reason) {
@@ -19016,33 +19042,15 @@ static LogicalResult checkChannelMergeResultShape(
 
 LogicalResult checkSupportedChannelSplitShape(VMIChannelSplitOp op,
                                               std::string *reason = nullptr) {
-  auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason) {
-      *reason = message.str();
-    }
-    return failure();
-  };
   FailureOr<ChannelShapePlan> plan =
       buildChannelShapePlan(op, op.getNumResults(), "channel_split", reason);
   if (failed(plan)) {
     return failure();
   }
-  int64_t channels = plan->channels;
-
-  auto sourceType = cast<VMIVRegType>(op.getSource().getType());
-  VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();
-  if (!sourceLayout) {
-    return fail("requires assigned source layout");
-  }
-  bool invalidSourceLayout =
-      !sourceLayout.isContiguous() && sourceLayout != plan->expectedLayout;
-  if (invalidSourceLayout) {
-    return fail("requires source layout to be contiguous or matching "
-                "deinterleaved channel layout");
-
-  FailureOr<int64_t> sourceArity = getVMIPhysicalArity(sourceType);
+  FailureOr<int64_t> sourceArity =
+      checkChannelSplitSourceShape(op, plan->expectedLayout, reason);
   if (failed(sourceArity)) {
-    return fail("requires computable source physical arity");
+    return failure();
   }
   if (failed(checkChannelSplitResultShape(op, *sourceArity, reason))) {
     return failure();

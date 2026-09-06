@@ -3540,6 +3540,20 @@ git diff --check                                      # passed
 check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
 ```
 
+# channel-split source shape 合同拆分（2026-09-06）
+
+本轮将 `checkSupportedChannelSplitShape` 中 source layout 与 physical arity 合同抽取为
+`checkChannelSplitSourceShape`。顶层检查继续负责 channel 数量/layout plan 和 result
+shape 校验；source/result arity 关系、诊断文本和支持矩阵保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_channel_split_merge.pto                    # exit=0
+```
+
 # interleave lowering 入口合同与布局查询拆分（2026-09-06）
 
 本轮将模板 `OneToNVMIInterleaveOpPattern::matchAndRewrite` 中的结果物理类型/输入输出
