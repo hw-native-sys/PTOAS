@@ -2709,6 +2709,33 @@ checkSinglePhysicalStrideAccess(Type dataType, Type maskType,
   return success();
 }
 
+static LogicalResult checkStrideMemoryContract(
+    Type dataType, Type maskType, VMILayoutAttr dataLayout,
+    VMILayoutAttr maskLayout, Type pointerType, StringRef dataName,
+    StringRef pointerDiagnostic, StringRef arityDiagnostic,
+    std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  if (!dataLayout || !maskLayout) {
+    return fail(Twine("requires assigned ") + dataName + " and mask layouts");
+  }
+  bool nonContiguousLayout =
+      !dataLayout.isContiguous() || !maskLayout.isContiguous();
+  if (nonContiguousLayout) {
+    return fail(Twine("requires contiguous ") + dataName +
+                " and mask layouts");
+  }
+  if (!isa<PtrType>(pointerType)) {
+    return fail(pointerDiagnostic);
+  }
+  return checkSinglePhysicalStrideAccess(dataType, maskType, arityDiagnostic,
+                                         reason);
+}
+
 LogicalResult
 checkSupportedStrideStoreShape(VMIStrideStoreOp op, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
@@ -2720,29 +2747,17 @@ checkSupportedStrideStoreShape(VMIStrideStoreOp op, std::string *reason) {
 
   auto valueType = cast<VMIVRegType>(op.getValue().getType());
   auto maskType = cast<VMIMaskType>(op.getMask().getType());
-  VMILayoutAttr valueLayout = valueType.getLayoutAttr();
-  VMILayoutAttr maskLayout = maskType.getLayoutAttr();
-  if (!valueLayout || !maskLayout) {
-    return fail("requires assigned value and mask layouts");
-  }
-  bool nonContiguousLayout = !valueLayout.isContiguous() ||
-                             !maskLayout.isContiguous();
-  if (nonContiguousLayout) {
-    return fail("requires contiguous value and mask layouts");
-  }
-
-  if (!isa<PtrType>(op.getDestination().getType())) {
-    return fail("requires !pto.ptr destination because pto.vsstb is "
-                "pointer-only");
-  }
-  if (failed(checkSupportedStoreShape(valueType,
-                                      op.getDestination(),
-                                      op.getDestination().getType(), reason)))
+  if (failed(checkSupportedStoreShape(valueType, op.getDestination(),
+                                      op.getDestination().getType(), reason))) {
     return failure();
+  }
 
-  return checkSinglePhysicalStrideAccess(
-      valueType, maskType,
-      "currently supports one physical value/mask chunk", reason);
+  return checkStrideMemoryContract(
+      valueType, maskType, valueType.getLayoutAttr(), maskType.getLayoutAttr(),
+      op.getDestination().getType(), "value",
+      "requires !pto.ptr destination because pto.vsstb is "
+      "pointer-only", "currently supports one physical value/mask chunk",
+      reason);
 }
 
 LogicalResult
@@ -2756,18 +2771,10 @@ checkSupportedStrideLoadShape(VMIStrideLoadOp op, std::string *reason) {
 
   auto resultType = cast<VMIVRegType>(op.getResult().getType());
   auto maskType = cast<VMIMaskType>(op.getMask().getType());
-  VMILayoutAttr resultLayout = resultType.getLayoutAttr();
-  VMILayoutAttr maskLayout = maskType.getLayoutAttr();
-  if (!resultLayout || !maskLayout)
-    return fail("requires assigned result and mask layouts");
-  if (!resultLayout.isContiguous() || !maskLayout.isContiguous())
-    return fail("requires contiguous result and mask layouts");
-
-  if (!isa<PtrType>(op.getSource().getType()))
-    return fail("requires !pto.ptr source because pto.vsldb is pointer-only");
-
-  return checkSinglePhysicalStrideAccess(
-      resultType, maskType,
+  return checkStrideMemoryContract(
+      resultType, maskType, resultType.getLayoutAttr(), maskType.getLayoutAttr(),
+      op.getSource().getType(), "result",
+      "requires !pto.ptr source because pto.vsldb is pointer-only",
       "currently supports one physical result/mask chunk", reason);
 }
 

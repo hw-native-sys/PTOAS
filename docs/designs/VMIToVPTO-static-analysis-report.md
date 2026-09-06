@@ -3269,3 +3269,21 @@ git diff --check                                      # passed
 check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
 vmi_to_vpto_masked_store.pto                           # exit=0
 ```
+
+# stride memory 合同复用（2026-09-06）
+
+本轮将 `checkSupportedStrideLoadShape` 与 `checkSupportedStrideStoreShape` 中重复的布局、
+contiguous、UB pointer 和单 physical value/mask chunk 校验统一为
+`checkStrideMemoryContract`；store 入口保留其额外的 `checkSupportedStoreShape`，load/store
+仍使用各自的 source/destination 方向诊断。该重构不改变 `vsldb`/`vsstb` 支持范围或 arity
+语义。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
+`vmi_lane_stride_masked_store.pto` 在测试自身已有的 mask layout contract 冲突处提前失败，
+未进入本轮 stride helper。
