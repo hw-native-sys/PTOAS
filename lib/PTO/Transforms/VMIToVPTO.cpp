@@ -3522,6 +3522,22 @@ FailureOr<ShuffleVselrPlan> computeShuffleVselrPlanForChunk(
                           state->descending.value_or(false)};
 }
 
+static FailureOr<int64_t> getShuffleResultChunkCount(
+    VMIVRegType resultType, int64_t resultPart, std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> FailureOr<int64_t> {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  FailureOr<int64_t> resultChunks =
+      getDataChunksInPart(resultType, resultPart);
+  if (failed(resultChunks)) {
+    return fail("requires known result physical chunks");
+  }
+  return *resultChunks;
+}
+
 FailureOr<int64_t> computeShuffleLane0SplatSourcePart(VMIShuffleOp op,
                                                       std::string *reason) {
   auto fail = [&reason](const Twine &message) -> FailureOr<int64_t> {
@@ -3585,7 +3601,7 @@ computeShuffleVselrPlans(VMIShuffleOp op, std::string *reason) {
   SmallVector<ShuffleVselrPlan> plans;
   for (int64_t resultPart = 0; resultPart < *resultFactor; ++resultPart) {
     FailureOr<int64_t> resultChunks =
-        getDataChunksInPart(resultType, resultPart);
+        getShuffleResultChunkCount(resultType, resultPart, reason);
     if (failed(resultChunks)) {
       return fail("requires known result physical chunks");
     }

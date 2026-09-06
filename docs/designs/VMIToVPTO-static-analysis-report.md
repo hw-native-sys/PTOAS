@@ -1,5 +1,19 @@
 # VMIToVPTO 静态分析报告记录
 
+## shuffle vselr chunk 计数职责拆分（2026-09-06）
+
+本轮将 `computeShuffleVselrPlans` 中 result physical chunk 数量查询与计划遍历分离，
+新增 `getShuffleResultChunkCount` 统一处理 chunk 可计算性及诊断。vselr 的 source lane
+映射、ASC/DESC 方向判断、计划顺序和失败传播保持不变；该调整仅消除重复的 layout
+查询职责，未改变 shuffle lowering 语义。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
 ## shuffle forwarding 输入计划拆分（2026-09-06）
 
 本轮将 `computeShuffleForwardingSourceParts` 的输入合法性与 forwarding 遍历分离，新增
