@@ -3095,6 +3095,22 @@ vmi_to_vpto_load_deint.pto                            # reaches existing pack/un
 相关 deinterleaved load case 在测试自身的 VMI `unpack` 前置 invariant 处提前失败，未
 进入本轮单组物化 helper；该既有输入限制已记录。
 
+# unaligned deinterleave-load 单 pair 物化职责拆分（2026-09-06）
+
+本轮将 `OneToNVMIDeinterleaveLoadOpPattern::lowerUnaligned` 中单个 low/high pair 的
+物理类型校验、两次 `vldus`、`vdintlv` 以及 stateful `base/align` 更新抽取为
+`materializeUnalignedLoadPair` 和 `UnalignedDeinterleaveLoadPair`。外层循环继续负责
+初始化 `vldas` 状态、按 pair 遍历、结果分区和最终替换；stream 状态链、increment、结果
+顺序及失败诊断保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_deinterleave_load_layout_propagation.pto           # exit=0
+```
+
 随后将 `computeShuffleVselrPlanForChunk` 中的结果物理 lane 校验、逻辑 lane 越界检查和
 source lane 映射抽取为 `getShuffleSourceLane`。规划函数继续负责 source chunk 一致性与
 ASC/DESC 方向推导，抽取没有改变失败诊断、迭代顺序或最终 `ShuffleVselrPlan` 内容；增量

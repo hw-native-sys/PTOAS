@@ -9092,6 +9092,36 @@ struct OneToNVMIDeinterleaveLoadOpPattern
       VMIDeinterleaveLoadOp>::OneToNOpConversionPattern;
 
 private:
+  struct UnalignedDeinterleaveLoadPair {
+    Value low;
+    Value high;
+    Value updatedBase;
+    Value updatedAlign;
+  };
+
+  FailureOr<UnalignedDeinterleaveLoadPair> materializeUnalignedLoadPair(
+      VMIDeinterleaveLoadOp op, OneToNPatternRewriter &rewriter,
+      Value streamBase, Value streamAlign, Type lowType, Type highType,
+      Value increment) const {
+    if (lowType != highType) {
+      return rewriter.notifyMatchFailure(
+          op, "deinterleave_load requires matching low/high physical types");
+    }
+    auto first = rewriter.create<VldusOp>(
+        op.getLoc(), lowType, streamAlign.getType(), streamBase.getType(),
+        streamBase, streamAlign, increment);
+    auto second = rewriter.create<VldusOp>(
+        op.getLoc(), highType, first.getUpdatedAlign().getType(),
+        first.getUpdatedBase().getType(), first.getUpdatedBase(),
+        first.getUpdatedAlign(), increment);
+    auto deinterleaved = rewriter.create<VdintlvOp>(
+        op.getLoc(), lowType, highType, first.getResult(), second.getResult());
+    return UnalignedDeinterleaveLoadPair{deinterleaved.getLow(),
+                                         deinterleaved.getHigh(),
+                                         second.getUpdatedBase(),
+                                         second.getUpdatedAlign()};
+  }
+
   LogicalResult lowerUnaligned(
       VMIDeinterleaveLoadOp op, OneToNPatternRewriter &rewriter,
       Value source, Value offset, ArrayRef<Type> lowTypes,
@@ -9119,25 +9149,17 @@ private:
     lows.reserve(lowTypes.size());
     highs.reserve(highTypes.size());
     for (size_t index = 0; index < lowTypes.size(); ++index) {
-      Type lowType = lowTypes[index];
-      Type highType = highTypes[index];
-      if (lowType != highType) {
-        return rewriter.notifyMatchFailure(
-            op, "deinterleave_load requires matching low/high physical types");
+      FailureOr<UnalignedDeinterleaveLoadPair> pair =
+          materializeUnalignedLoadPair(op, rewriter, streamBase, streamAlign,
+                                       lowTypes[index], highTypes[index],
+                                       increment);
+      if (failed(pair)) {
+        return failure();
       }
-      auto first = rewriter.create<VldusOp>(
-          op.getLoc(), lowType, streamAlign.getType(), streamBase.getType(),
-          streamBase, streamAlign, increment);
-      auto second = rewriter.create<VldusOp>(
-          op.getLoc(), highType, first.getUpdatedAlign().getType(),
-          first.getUpdatedBase().getType(), first.getUpdatedBase(),
-          first.getUpdatedAlign(), increment);
-      auto deinterleaved = rewriter.create<VdintlvOp>(
-          op.getLoc(), lowType, highType, first.getResult(), second.getResult());
-      lows.push_back(deinterleaved.getLow());
-      highs.push_back(deinterleaved.getHigh());
-      streamBase = second.getUpdatedBase();
-      streamAlign = second.getUpdatedAlign();
+      lows.push_back(pair->low);
+      highs.push_back(pair->high);
+      streamBase = pair->updatedBase;
+      streamAlign = pair->updatedAlign;
     }
     SmallVector<Value> results;
     results.reserve(lows.size() + highs.size());
