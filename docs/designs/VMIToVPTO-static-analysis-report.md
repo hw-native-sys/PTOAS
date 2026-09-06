@@ -3222,3 +3222,18 @@ git diff --check                                      # passed
 check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
 vmi_to_vpto_ensure_layout_dense_composed.pto           # exit=0
 ```
+
+# adjacent mask granularity 结果合同拆分（2026-09-06）
+
+本轮将 `materializeAdjacentMaskGranularityConversion` 中 result physical arity/count 校验
+抽取为 `checkMaskGranularityResultArity`。相邻 granularity 的 plan 构造、逐 layout part
+物化、结果扁平化和失败传播保持原顺序；入口只负责连接 plan、物化和结果合同，未改变
+ppack/punpack/por 指令语义。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+vmi_to_vpto_ensure_mask_granularity.pto                # exit=0
+```

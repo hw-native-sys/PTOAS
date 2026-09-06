@@ -6290,6 +6290,20 @@ static FailureOr<SmallVector<Value>> materializeMaskGranularityParts(
   return results;
 }
 
+static LogicalResult checkMaskGranularityResultArity(
+    Operation *op, VMIMaskType resultType, size_t resultCount,
+    PatternRewriter &rewriter) {
+  FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
+  bool resultArityMismatch =
+      failed(resultArity) || static_cast<int64_t>(resultCount) != *resultArity;
+  if (resultArityMismatch) {
+    (void)rewriter.notifyMatchFailure(
+        op, "mask granularity conversion result count mismatch");
+    return failure();
+  }
+  return success();
+}
+
 FailureOr<SmallVector<Value>> materializeAdjacentMaskGranularityConversion(
     Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
     ValueRange sourceParts, PatternRewriter &rewriter) {
@@ -6309,12 +6323,9 @@ FailureOr<SmallVector<Value>> materializeAdjacentMaskGranularityConversion(
     return failure();
   }
 
-  FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
-  bool resultArityMismatch =
-      failed(resultArity) ||
-      static_cast<int64_t>(results->size()) != *resultArity;
-  if (resultArityMismatch) {
-    return fail("mask granularity conversion result count mismatch");
+  if (failed(checkMaskGranularityResultArity(op, resultType, results->size(),
+                                             rewriter))) {
+    return failure();
   }
   return *results;
 }
