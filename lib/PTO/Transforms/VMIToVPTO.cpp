@@ -7768,6 +7768,48 @@ FailureOr<std::optional<Value>> createPowerOfTwoSubVLChunk(
 /// lane-range vsel. Index iota is integer-only in practice.
 ///
 /// When S == physVL this is just `vci(base)` (single group fills the VL).
+static FailureOr<Value> materializeResidualSubVLGroup(
+    Location loc, Type resultType, Value base, StringRef order, Value full,
+    MaskType maskType, Value zeroScalar, Value allMask, Value previousResult,
+    int64_t groupSize, int64_t localGroup, PatternRewriter &rewriter) {
+  Value adjusted = full;
+  if (localGroup != 0) {
+    int64_t delta = localGroup * groupSize;
+    FailureOr<Value> offsetScalar =
+        createScalarOffsetConstant(loc, base.getType(), delta, rewriter);
+    if (failed(offsetScalar)) {
+      return failure();
+    }
+    if (order == "DESC") {
+      adjusted = rewriter
+                     .create<VaddsOp>(loc, resultType, full, *offsetScalar,
+                                      allMask)
+                     .getResult();
+    } else {
+      Value negOffset = isa<FloatType>(base.getType())
+                            ? rewriter.create<arith::NegFOp>(
+                                  loc, *offsetScalar)
+                                  .getResult()
+                            : rewriter
+                                  .create<arith::SubIOp>(loc, zeroScalar,
+                                                         *offsetScalar)
+                                  .getResult();
+      adjusted = rewriter
+                     .create<VaddsOp>(loc, resultType, full, negOffset, allMask)
+                     .getResult();
+    }
+  }
+  FailureOr<Value> laneMask = createLaneRangeMask(
+      loc, maskType, localGroup * groupSize, (localGroup + 1) * groupSize,
+      rewriter);
+  if (failed(laneMask)) {
+    return failure();
+  }
+  return rewriter
+      .create<VselOp>(loc, resultType, adjusted, previousResult, *laneMask)
+      .getResult();
+}
+
 FailureOr<Value> createResidualSubVLGroupPeriodicChunk(
     Location loc, Type resultType, Value base, StringRef order,
     Value full, MaskType maskType, Value zeroScalar, Value allMask,
@@ -7779,49 +7821,10 @@ FailureOr<Value> createResidualSubVLGroupPeriodicChunk(
                           allMask,
                           /*position=*/nullptr)
           .getResult();
-  auto materializeGroup =
-      [&loc, resultType, base, order, full, maskType, zeroScalar, allMask,
-       groupSize, &rewriter](int64_t localGroup) -> FailureOr<Value> {
-    Value adjusted = full;
-    if (localGroup != 0) {
-      int64_t delta = localGroup * groupSize;
-      FailureOr<Value> offsetScalar =
-          createScalarOffsetConstant(loc, base.getType(), delta, rewriter);
-      if (failed(offsetScalar)) {
-        return failure();
-      }
-      if (order == "DESC") {
-        adjusted = rewriter
-                       .create<VaddsOp>(loc, resultType, full, *offsetScalar,
-                                        allMask)
-                       .getResult();
-      } else {
-        Value negOffset = isa<FloatType>(base.getType())
-                              ? rewriter.create<arith::NegFOp>(
-                                    loc, *offsetScalar)
-                                    .getResult()
-                              : rewriter
-                                    .create<arith::SubIOp>(
-                                        loc, zeroScalar, *offsetScalar)
-                                    .getResult();
-        adjusted = rewriter
-                       .create<VaddsOp>(loc, resultType, full, negOffset,
-                                        allMask)
-                       .getResult();
-      }
-    }
-    FailureOr<Value> laneMask = createLaneRangeMask(
-        loc, maskType, localGroup * groupSize, (localGroup + 1) * groupSize,
-        rewriter);
-    if (failed(laneMask)) {
-      return failure();
-    }
-    return rewriter
-        .create<VselOp>(loc, resultType, adjusted, result, *laneMask)
-        .getResult();
-  };
   for (int64_t localGroup = 0; localGroup < groupsPerChunk; ++localGroup) {
-    FailureOr<Value> nextResult = materializeGroup(localGroup);
+    FailureOr<Value> nextResult = materializeResidualSubVLGroup(
+        loc, resultType, base, order, full, maskType, zeroScalar, allMask,
+        result, groupSize, localGroup, rewriter);
     if (failed(nextResult)) {
       return failure();
     }

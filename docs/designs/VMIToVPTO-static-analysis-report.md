@@ -1,5 +1,19 @@
 # VMIToVPTO 静态分析报告记录
 
+## residual sub-VL 单 group 物化拆分（2026-09-06）
+
+本轮将 `createResidualSubVLGroupPeriodicChunk` 内部 lambda 的单 group 偏移、方向计算、
+lane mask 和 `vsel` 物化抽取为 `materializeResidualSubVLGroup`。外层函数只负责初始化
+结果并按 local group 顺序累积；显式保留 previous result 作为选择的 passthru，确保 group
+覆盖顺序、ASC/DESC 语义和失败传播不变，同时移除该热点中的 lambda 捕获复杂度。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
 ## residual sub-VL lambda 捕获审计（2026-09-06）
 
 本轮复核 `createResidualSubVLGroupPeriodicChunk` 的显式 lambda 捕获，补齐其实际使用的
