@@ -2052,6 +2052,18 @@ exit=0，现有 slots=1 的 EVEN/P0 转换输出保持不变。
 `git diff --check` 通过；`vmi_layout_assignment_group_store_slots1_unit_stride.pto`
 完整 lowering pipeline exit=0。
 
+# contiguous load 物理发射职责整改
+
+本轮将 `OneToNVMILoadOpPattern::lowerContiguous` 中对齐普通 `vlds` 与非对齐 stateful
+`vldus` 的物理 part 发射分别抽取为 `materializeAlignedContiguousParts` 和
+`materializeUnalignedContiguousParts`。入口现在只负责 direct-access 合法性判断、选择
+发射策略及后续 contiguous→目标 layout 转换；非对齐路径仍由一次 `vldas` 初始化 align，
+逐 chunk 使用 `vldus` 推进 align/base，对齐路径仍按 lane offset 使用普通 `vlds`。结果顺序、
+地址步长、失败诊断和 layout materialization 语义保持不变。增量
+`check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_to_vpto_load_store_contiguous.pto` 完整 lowering pipeline
+exit=0。
+
 # iota 物化上下文数据泥团整改
 
 本轮引入轻量 `IotaMaterializationContext`，统一携带 iota 三类物化路径共同需要的
