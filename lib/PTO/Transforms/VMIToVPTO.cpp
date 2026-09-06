@@ -21150,7 +21150,8 @@ std::optional<WalkResult> verifySupportedVMINormalReductionOp(Operation *op) {
   return std::nullopt;
 }
 
-std::optional<WalkResult> verifySupportedVMIGroupReductionOp(Operation *op) {
+static std::optional<WalkResult> verifySupportedVMIGroupFloatReductionOp(
+    Operation *op) {
   if (auto reduce = dyn_cast<VMIGroupReduceAddFOp>(op)) {
     return verifySupportedGroupReduceOp(
         reduce,
@@ -21159,6 +21160,20 @@ std::optional<WalkResult> verifySupportedVMIGroupReductionOp(Operation *op) {
         "#pto.vmi.layout<num_groups = G, slots = K> result chunks, and "
         "num_groups deriving a group size aligned to physical chunks (");
   }
+  if (auto reduce = dyn_cast<VMIGroupReduceMaxFOp>(op)) {
+    return verifySupportedGroupReduceOp(
+        reduce,
+        "pto.vmi.group_reduce_maxf lowers through pto.vcgmax/vmax for 32B "
+        "blocks or through pto.vcmax for contiguous full chunks, matching "
+        "source/mask chunks, #pto.vmi.layout<num_groups = G, slots = K> "
+        "result chunks, and num_groups deriving a group size aligned to "
+        "physical chunks (");
+  }
+  return std::nullopt;
+}
+
+static std::optional<WalkResult> verifySupportedVMIGroupIntegerReductionOp(
+    Operation *op) {
   if (auto reduce = dyn_cast<VMIGroupReduceAddIOp>(op)) {
     return verifySupportedGroupReduceOp(
         reduce,
@@ -21173,22 +21188,6 @@ std::optional<WalkResult> verifySupportedVMIGroupReductionOp(Operation *op) {
         "supported 32B block classes or through pto.vcmax for aligned full "
         "chunks (");
   }
-  if (auto reduce = dyn_cast<VMIGroupReduceMaxFOp>(op)) {
-    return verifySupportedGroupReduceOp(
-        reduce,
-        "pto.vmi.group_reduce_maxf lowers through pto.vcgmax/vmax for 32B "
-        "blocks or through pto.vcmax for contiguous full chunks, matching "
-        "source/mask chunks, #pto.vmi.layout<num_groups = G, slots = K> "
-        "result chunks, and num_groups deriving a group size aligned to "
-        "physical chunks (");
-  }
-  if (auto reduce = dyn_cast<VMIGroupReduceMinFOp>(op)) {
-    return verifySupportedGroupReduceOp(
-        reduce,
-        "pto.vmi.group_reduce_minf lowers through pto.vcgmin/vmin for "
-        "supported 32B block classes or through pto.vcmin for aligned full "
-        "chunks (");
-  }
   if (auto reduce = dyn_cast<VMIGroupReduceMinIOp>(op)) {
     return verifySupportedGroupReduceOp(
         reduce,
@@ -21197,6 +21196,15 @@ std::optional<WalkResult> verifySupportedVMIGroupReductionOp(Operation *op) {
         "chunks (");
   }
   return std::nullopt;
+}
+
+static std::optional<WalkResult> verifySupportedVMIGroupReductionOp(
+    Operation *op) {
+  if (auto result = verifySupportedVMIGroupFloatReductionOp(op);
+      result.has_value()) {
+    return result;
+  }
+  return verifySupportedVMIGroupIntegerReductionOp(op);
 }
 
 std::optional<WalkResult> verifySupportedVMIReductionOp(Operation *op) {

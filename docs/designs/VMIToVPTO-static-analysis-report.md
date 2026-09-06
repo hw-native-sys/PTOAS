@@ -1,5 +1,20 @@
 # VMIToVPTO 静态分析报告记录
 
+## group-reduction verifier 浮点/整数分派拆分（2026-09-06）
+
+本轮将 `verifySupportedVMIGroupReductionOp` 拆为
+`verifySupportedVMIGroupFloatReductionOp` 与
+`verifySupportedVMIGroupIntegerReductionOp`，分别维护 add/max 浮点和 add/max/min 整数
+group-reduction 的 op 表与诊断。入口只负责语义族分派，support check、诊断文本、原有
+op 顺序和 `WalkResult` 语义保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
 ## advanced-load verifier 分派拆分（2026-09-06）
 
 本轮将 `verifySupportedVMIMemoryAdvancedLoadOp` 按语义拆为
