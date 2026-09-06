@@ -4103,6 +4103,30 @@ FailureOr<Value> materializeConstantMaskChunk(Location loc, MaskType maskType,
   if (failed(allTrue))
     return failure();
 
+  auto materializeRun = [loc, maskType, lanesPerPart, &rewriter, &allTrue](
+                            int64_t runBegin,
+                            int64_t runEnd) -> FailureOr<Value> {
+    FailureOr<Value> prefixEnd =
+        materializePrefixMask(loc, maskType, runEnd, *lanesPerPart, rewriter);
+    if (failed(prefixEnd)) {
+      return failure();
+    }
+    if (runBegin == 0) {
+      return *prefixEnd;
+    }
+    FailureOr<Value> prefixBegin = materializePrefixMask(
+        loc, maskType, runBegin, *lanesPerPart, rewriter);
+    if (failed(prefixBegin)) {
+      return failure();
+    }
+    Value notPrefixBegin =
+        rewriter.create<PnotOp>(loc, maskType, *prefixBegin, *allTrue)
+            .getResult();
+    return rewriter
+        .create<PandOp>(loc, maskType, *prefixEnd, notPrefixBegin, *allTrue)
+        .getResult();
+  };
+
   Value result;
   int64_t lane = 0;
   while (lane < *lanesPerPart) {
@@ -4116,31 +4140,16 @@ FailureOr<Value> materializeConstantMaskChunk(Location loc, MaskType maskType,
       ++lane;
     int64_t runEnd = lane;
 
-    FailureOr<Value> prefixEnd =
-        materializePrefixMask(loc, maskType, runEnd, *lanesPerPart, rewriter);
-    if (failed(prefixEnd))
+    FailureOr<Value> runMask = materializeRun(runBegin, runEnd);
+    if (failed(runMask)) {
       return failure();
-
-    Value runMask = *prefixEnd;
-    if (runBegin != 0) {
-      FailureOr<Value> prefixBegin = materializePrefixMask(
-          loc, maskType, runBegin, *lanesPerPart, rewriter);
-      if (failed(prefixBegin))
-        return failure();
-      Value notPrefixBegin =
-          rewriter.create<PnotOp>(loc, maskType, *prefixBegin, *allTrue)
-              .getResult();
-      runMask = rewriter
-                    .create<PandOp>(loc, maskType, *prefixEnd, notPrefixBegin,
-                                    *allTrue)
-                    .getResult();
     }
 
     if (!result) {
-      result = runMask;
+      result = *runMask;
       continue;
     }
-    result = rewriter.create<PorOp>(loc, maskType, result, runMask, *allTrue)
+    result = rewriter.create<PorOp>(loc, maskType, result, *runMask, *allTrue)
                  .getResult();
   }
 
