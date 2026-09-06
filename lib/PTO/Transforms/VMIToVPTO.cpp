@@ -17571,6 +17571,34 @@ static FailureOr<ChannelShapePlan> buildChannelShapePlan(
       channels, VMILayoutAttr::getDeinterleaved(op.getContext(), channels)};
 }
 
+static FailureOr<int64_t> checkChannelSplitResultShape(
+    VMIChannelSplitOp op, int64_t sourceArity, std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> FailureOr<int64_t> {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  int64_t resultArity = 0;
+  for (Value result : op.getResults()) {
+    VMILayoutAttr resultLayout =
+        cast<VMIVRegType>(result.getType()).getLayoutAttr();
+    if (!resultLayout || !resultLayout.isContiguous()) {
+      return fail("requires every result layout to be contiguous");
+    }
+    FailureOr<int64_t> arity =
+        getVMIPhysicalArity(cast<VMIVRegType>(result.getType()));
+    if (failed(arity)) {
+      return fail("requires computable result physical arity");
+    }
+    resultArity += *arity;
+  }
+  if (sourceArity != resultArity) {
+    return fail("requires source and result to have the same physical arity");
+  }
+  return resultArity;
+}
+
 LogicalResult checkSupportedChannelSplitShape(VMIChannelSplitOp op,
                                               std::string *reason = nullptr) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
@@ -17596,26 +17624,12 @@ LogicalResult checkSupportedChannelSplitShape(VMIChannelSplitOp op,
     return fail("requires source layout to be contiguous or matching "
                 "deinterleaved channel layout");
 
-  for (Value result : op.getResults()) {
-    VMILayoutAttr resultLayout =
-        cast<VMIVRegType>(result.getType()).getLayoutAttr();
-    if (!resultLayout || !resultLayout.isContiguous())
-      return fail("requires every result layout to be contiguous");
-  }
-
   FailureOr<int64_t> sourceArity = getVMIPhysicalArity(sourceType);
-  int64_t resultArity = 0;
-  for (Value result : op.getResults()) {
-    FailureOr<int64_t> arity =
-        getVMIPhysicalArity(cast<VMIVRegType>(result.getType()));
-    if (failed(arity))
-      return fail("requires computable result physical arity");
-    resultArity += *arity;
-  }
   if (failed(sourceArity))
     return fail("requires computable source physical arity");
-  if (*sourceArity != resultArity)
-    return fail("requires source and result to have the same physical arity");
+  if (failed(checkChannelSplitResultShape(op, *sourceArity, reason))) {
+    return failure();
+  }
 
   return success();
 }

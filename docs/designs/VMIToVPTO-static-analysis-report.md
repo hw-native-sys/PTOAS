@@ -2337,6 +2337,16 @@ group_broadcast_load 的重复 shape-check 和失败诊断统一改用 `verifySu
 `vmi_layout_assignment_group_load_s16_unaligned_stride_invalid.pto` 仍按预期在既有
 layout contract invalid 处失败，诊断未改变。
 
+# channel split 结果布局与 arity 合同职责整改
+
+本轮在 `checkSupportedChannelSplitShape` 中引入
+`checkChannelSplitResultShape`，将每个 channel result 的 contiguous layout 检查、物理
+arity 汇总与 source/result arity 一致性校验抽取为独立 helper。主函数继续负责 channel 数
+量、source layout 和期望的 deinterleaved layout 判断；保持诊断顺序、结果顺序及失败语义
+不变。增量检查以 `HEAD` 为基线结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_to_vpto_channel_split_layout_invalid.pto` 仍按预期在原有
+layout contract 处失败。
+
 # scalar store verifier 分派职责整改
 
 本轮将 `verifySupportedVMIMemoryStoreOp` 中普通 `store` 的重复 shape-check 与错误诊断
