@@ -1,5 +1,19 @@
 # VMIToVPTO 静态分析报告记录
 
+## group-broadcast 单 chunk 物化拆分（2026-09-06）
+
+本轮将 `lowerGroupBroadcastResultChunks` 中单 physical result 的类型合同检查与 chunk
+物化抽取为 `lowerGroupBroadcastResultChunk`。外层函数继续负责 result layout factor、
+chunk 枚举、flat result 顺序和数量合同；helper 负责 uniform vreg 合同及单 chunk
+`lowerGroupBroadcastChunk` 调用。结果顺序、诊断和 group-broadcast lowering 语义保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
 ## group-broadcast 支持合同拆分（2026-09-06）
 
 本轮将 `checkGroupBroadcastLogicalContract` 中通用布局/元素/group 合同与

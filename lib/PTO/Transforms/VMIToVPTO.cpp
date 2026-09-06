@@ -10531,17 +10531,9 @@ static LogicalResult lowerGroupBroadcastResultChunks(
         return rewriter.notifyMatchFailure(
             op, "group_broadcast physical result count is too small");
       }
-      Type resultType = resultTypes[flatIndex];
-      auto resultVRegType = dyn_cast<VRegType>(resultType);
-      bool mismatchedResultType =
-          !resultVRegType || resultVRegType != expectedSourceType;
-      if (mismatchedResultType) {
-        return rewriter.notifyMatchFailure(
-            op, "group_broadcast requires uniform physical vreg types");
-      }
-      FailureOr<Value> chunkResult = lowerGroupBroadcastChunk(
-          op, resultType, resultVMIType, sourceParts, fact, context, part, chunk,
-          rewriter);
+      FailureOr<Value> chunkResult = lowerGroupBroadcastResultChunk(
+          op, resultTypes[flatIndex], resultVMIType, sourceParts, fact, context,
+          expectedSourceType, part, chunk, rewriter);
       if (failed(chunkResult)) {
         return failure();
       }
@@ -10553,6 +10545,22 @@ static LogicalResult lowerGroupBroadcastResultChunks(
         op, "group_broadcast physical result count is too large");
   }
   return success();
+}
+
+static FailureOr<Value> lowerGroupBroadcastResultChunk(
+    Operation *op, Type resultType, VMIVRegType resultVMIType,
+    ValueRange sourceParts, const VMIGroupBroadcastLayoutFact &fact,
+    GroupBroadcastLoweringContext &context, VRegType expectedSourceType,
+    int64_t part, int64_t chunk, OneToNPatternRewriter &rewriter) {
+  auto resultVRegType = dyn_cast<VRegType>(resultType);
+  bool mismatchedResultType =
+      !resultVRegType || resultVRegType != expectedSourceType;
+  if (mismatchedResultType) {
+    return rewriter.notifyMatchFailure(
+        op, "group_broadcast requires uniform physical vreg types");
+  }
+  return lowerGroupBroadcastChunk(op, resultType, resultVMIType, sourceParts,
+                                  fact, context, part, chunk, rewriter);
 }
 
 static LogicalResult lowerGroupBroadcastParts(
