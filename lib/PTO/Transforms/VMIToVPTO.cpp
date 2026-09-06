@@ -3607,21 +3607,20 @@ struct DynamicGroupMaskPlan {
   int64_t arity;
 };
 
-static FailureOr<DynamicGroupMaskPlan> buildDynamicGroupMaskPlan(
-    VMICreateGroupMaskOp op, VMIMaskType resultVMIType, TypeRange resultTypes,
-    std::string *reason) {
-  auto fail = [&reason](const Twine &message)
-      -> FailureOr<DynamicGroupMaskPlan> {
+static LogicalResult checkDynamicGroupMaskLayout(
+    VMICreateGroupMaskOp op, VMIMaskType resultVMIType,
+    VMILayoutAttr *layout, std::string *reason) {
+  auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason) {
       *reason = message.str();
     }
     return failure();
   };
-  VMILayoutAttr layout = resultVMIType.getLayoutAttr();
-  if (!layout) {
+  *layout = resultVMIType.getLayoutAttr();
+  if (!*layout) {
     return fail("dynamic create_group_mask requires assigned layout");
   }
-  bool unsupportedLaneStride = layout.getLaneStride() != 1;
+  bool unsupportedLaneStride = layout->getLaneStride() != 1;
   if (unsupportedLaneStride) {
     return fail("dynamic create_group_mask requires lane_stride=1 layout");
   }
@@ -3631,11 +3630,31 @@ static FailureOr<DynamicGroupMaskPlan> buildDynamicGroupMaskPlan(
   }
   int64_t numGroups = op.getNumGroupsAttr().getInt();
   int64_t groupSize = op.getGroupSizeAttr().getInt();
-  if (numGroups <= 0 || groupSize <= 0 ||
-      resultVMIType.getElementCount() != numGroups * groupSize) {
+  bool invalidLogicalShape =
+      numGroups <= 0 || groupSize <= 0 ||
+      resultVMIType.getElementCount() != numGroups * groupSize;
+  if (invalidLogicalShape) {
     return fail("dynamic create_group_mask requires result lane count to match "
                 "num_groups * group_size");
   }
+  if (!getPowerOfTwoLog2(groupSize)) {
+    return fail("dynamic create_group_mask currently requires power-of-two group_size");
+  }
+  return success();
+}
+
+static FailureOr<std::pair<int64_t, int64_t>>
+getDynamicGroupMaskPhysicalShape(VMICreateGroupMaskOp op,
+                                 VMIMaskType resultVMIType,
+                                 TypeRange resultTypes,
+                                 std::string *reason) {
+  auto fail = [&reason](const Twine &message)
+      -> FailureOr<std::pair<int64_t, int64_t>> {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
   FailureOr<StringRef> physicalGranularity =
       getVMIMaskPhysicalGranularity(resultVMIType);
   FailureOr<int64_t> lanesPerPart =
@@ -3651,9 +3670,30 @@ static FailureOr<DynamicGroupMaskPlan> buildDynamicGroupMaskPlan(
   if (resultArityMismatch) {
     return fail("dynamic create_group_mask physical result count mismatch");
   }
-  if (!getPowerOfTwoLog2(groupSize)) {
-    return fail("dynamic create_group_mask currently requires power-of-two group_size");
+  return std::make_pair(*lanesPerPart, *arity);
+}
+
+static FailureOr<DynamicGroupMaskPlan> buildDynamicGroupMaskPlan(
+    VMICreateGroupMaskOp op, VMIMaskType resultVMIType, TypeRange resultTypes,
+    std::string *reason) {
+  auto fail = [&reason](const Twine &message)
+      -> FailureOr<DynamicGroupMaskPlan> {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+  VMILayoutAttr layout;
+  if (failed(checkDynamicGroupMaskLayout(op, resultVMIType, &layout, reason))) {
+    return failure();
   }
+  FailureOr<std::pair<int64_t, int64_t>> physicalShape =
+      getDynamicGroupMaskPhysicalShape(op, resultVMIType, resultTypes, reason);
+  if (failed(physicalShape)) {
+    return failure();
+  }
+  int64_t lanesPerPart = physicalShape->first;
+  int64_t arity = physicalShape->second;
   int64_t factor = layout.isDenseSplit() ? layout.getFactor() : 1;
   FailureOr<int64_t> blockElems = getVMILayoutBlockElems(resultVMIType);
   if (factor <= 0 || failed(blockElems) || *blockElems <= 0 ||
@@ -3663,7 +3703,7 @@ static FailureOr<DynamicGroupMaskPlan> buildDynamicGroupMaskPlan(
   if (!getPowerOfTwoLog2(*blockElems)) {
     return fail("dynamic create_group_mask requires a power-of-two physical block element count");
   }
-  return DynamicGroupMaskPlan{layout, factor, *blockElems, *lanesPerPart, *arity};
+  return DynamicGroupMaskPlan{layout, factor, *blockElems, lanesPerPart, arity};
 }
 
 static FailureOr<SmallVector<Value>> materializeDynamicGroupMaskChunks(

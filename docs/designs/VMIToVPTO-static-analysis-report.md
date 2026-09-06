@@ -2543,6 +2543,17 @@ offset 计算、结果顺序及失败诊断保持不变。增量
 `git diff --check` 通过；现有 group-slot-load case 在既有 pack/unpack invariant 处
 提前终止，未进入本轮 helper。
 
+# dynamic create_group_mask shape 合同职责整改
+
+本轮将 `buildDynamicGroupMaskPlan` 的校验拆为 `checkDynamicGroupMaskLayout` 与
+`getDynamicGroupMaskPhysicalShape`：前者负责 layout、lane_stride、granularity 和
+logical `num_groups * group_size` 合同，后者负责 physical mask granularity、lanes-per-part
+及 result arity。plan builder 继续负责 factor/block 参数推导和 power-of-two block 约束；
+动态 active 元素 clamp、lane index 构造、padding mask 处理、chunk 遍历顺序及诊断语义保持
+不变。增量 `check_changed_code.py --base HEAD` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过；`vmi_to_vpto_create_group_mask_block8_dynamic.pto` lowering
+exit=0。
+
 # group broadcast shape 重构回归修复
 
 复核既有 group-broadcast shape 拆分时发现入口遗漏了结果类型和诊断闭包定义，导致该
