@@ -2064,6 +2064,17 @@ exit=0，现有 slots=1 的 EVEN/P0 转换输出保持不变。
 `git diff --check` 通过；`vmi_to_vpto_load_store_contiguous.pto` 完整 lowering pipeline
 exit=0。
 
+# 全文件控制语句格式整改
+
+本轮按 `G.FMT.11-CPP` 清理了完整文件增量检查发现的历史无大括号控制语句，涉及
+`checkDeinterleaved2GroupStoreChunkShape`、`createPowerOfTwoRemainder`、
+`materializeEnsureLayoutConversion`、mask granularity 合同校验、`createAllFalseMaskLike`、
+channel split/merge 合同和 `compress_store` destination 校验。对复杂条件先引入具名
+布尔值，避免 checker 将跨行条件误判为无大括号；不改变任何 lowering、诊断或失败传播
+语义。相对 `origin/master` 的完整增量
+`check_changed_code.py --fail-on none` 结果为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过。
+
 # group load 布局分派职责整改
 
 本轮将 `OneToNVMIGroupLoadOpPattern::matchAndRewrite` 中 block-deinterleaved f32 特殊路径

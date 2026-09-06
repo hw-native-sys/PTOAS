@@ -1860,8 +1860,9 @@ LogicalResult checkDeinterleaved2GroupStoreChunkShape(
     int64_t *groupCount, int64_t *chunksPerGroupPerPart,
     std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
@@ -3441,12 +3442,14 @@ FailureOr<Value> materializeConstantMaskChunk(Location loc, MaskType maskType,
 FailureOr<Value> createPowerOfTwoRemainder(Location loc, Value value,
                                            int64_t modulus, Value allMask,
                                            PatternRewriter &rewriter) {
-  if (modulus <= 0)
+  if (modulus <= 0) {
     return failure();
+  }
 
   auto vectorType = dyn_cast<VRegType>(value.getType());
-  if (!vectorType)
+  if (!vectorType) {
     return failure();
+  }
 
   std::optional<int64_t> shift = getPowerOfTwoLog2(modulus);
   if (!shift)
@@ -5291,8 +5294,9 @@ FailureOr<SmallVector<Value>> materializeEnsureLayoutConversion(
   }
 
   SmallVector<Type> resultTypes;
-  if (failed(typeConverter.convertType(resultType, resultTypes)))
+  if (failed(typeConverter.convertType(resultType, resultTypes))) {
     return failure();
+  }
   return materializeDataLayoutConversion(op, sourceParts, resultTypes,
                                          sourceLayout, resultLayout,
                                          sourceType.getElementType(), rewriter);
@@ -5816,27 +5820,39 @@ LogicalResult checkSupportedMaskGranularityMaterialization(
     VMIMaskType sourceType,
     VMIMaskType resultType, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
-  if (sourceType.getElementCount() != resultType.getElementCount())
+  bool laneCountMismatch =
+      sourceType.getElementCount() != resultType.getElementCount();
+  if (laneCountMismatch) {
     return fail("requires source and result mask lane counts to match");
-  if (sourceType.getLayoutAttr() != resultType.getLayoutAttr())
+  }
+  bool layoutMismatch = sourceType.getLayoutAttr() != resultType.getLayoutAttr();
+  if (layoutMismatch) {
     return fail("requires source and result mask layouts to match");
+  }
 
-  if (!VMIMaskType::isConcreteGranularity(sourceType.getGranularity()) ||
-      !VMIMaskType::isConcreteGranularity(resultType.getGranularity()))
+  bool nonConcreteGranularity =
+      !VMIMaskType::isConcreteGranularity(sourceType.getGranularity()) ||
+      !VMIMaskType::isConcreteGranularity(resultType.getGranularity());
+  if (nonConcreteGranularity) {
     return fail("requires concrete b8/b16/b32 source and result "
                 "granularities");
+  }
 
   FailureOr<int64_t> sourceArity = getVMIPhysicalArity(sourceType);
   FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
-  if (failed(sourceArity) || failed(resultArity))
+  bool missingArity = failed(sourceArity) || failed(resultArity);
+  if (missingArity) {
     return fail("requires computable source/result physical arity");
-  if (*sourceArity < 1 || *resultArity < 1)
+  }
+  if (*sourceArity < 1 || *resultArity < 1) {
     return fail("requires non-empty source/result physical arity");
+  }
 
   return success();
 }
@@ -6204,8 +6220,9 @@ static bool isElementDeinterleavedLayout(VMILayoutAttr layout,
 FailureOr<Value> createAllFalseMaskLike(Location loc, Value value,
                                         PatternRewriter &rewriter) {
   auto maskType = dyn_cast<MaskType>(value.getType());
-  if (!maskType)
+  if (!maskType) {
     return failure();
+  }
   return createPrefixMask(loc, maskType, "PAT_ALLF", rewriter);
 }
 
@@ -18085,8 +18102,9 @@ LogicalResult checkSupportedChannelSplitShape(VMIChannelSplitOp op,
 
   auto sourceType = cast<VMIVRegType>(op.getSource().getType());
   VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();
-  if (!sourceLayout)
+  if (!sourceLayout) {
     return fail("requires assigned source layout");
+  }
   bool invalidSourceLayout =
       !sourceLayout.isContiguous() && sourceLayout != plan->expectedLayout;
   if (invalidSourceLayout) {
@@ -18094,8 +18112,9 @@ LogicalResult checkSupportedChannelSplitShape(VMIChannelSplitOp op,
                 "deinterleaved channel layout");
 
   FailureOr<int64_t> sourceArity = getVMIPhysicalArity(sourceType);
-  if (failed(sourceArity))
+  if (failed(sourceArity)) {
     return fail("requires computable source physical arity");
+  }
   if (failed(checkChannelSplitResultShape(op, *sourceArity, reason))) {
     return failure();
   }
@@ -18106,8 +18125,9 @@ LogicalResult checkSupportedChannelSplitShape(VMIChannelSplitOp op,
 LogicalResult checkSupportedChannelMergeShape(VMIChannelMergeOp op,
                                               std::string *reason = nullptr) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason)
+    if (reason) {
       *reason = message.str();
+    }
     return failure();
   };
 
@@ -18333,9 +18353,10 @@ LogicalResult checkSupportedCompressStoreShape(
     return failure();
   }
 
-  if (!isa<PtrType>(op.getDestination().getType()))
+  if (!isa<PtrType>(op.getDestination().getType())) {
     return fail("requires !pto.ptr destination because pto.vstur is "
                 "pointer-only");
+  }
 
   return success();
 }
