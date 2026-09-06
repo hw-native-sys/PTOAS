@@ -7246,6 +7246,8 @@ private:
     }
 
     llvm::DenseMap<std::pair<Type, int64_t>, Value> sharedChunks;
+    IotaMaterializationContext context{op.getLoc(), base, op.getOrderAttr(),
+                                       rewriter};
     for (auto [index, resultType] : llvm::enumerate(resultTypes)) {
       if (!isa<VRegType>(resultType)) {
         return rewriter.notifyMatchFailure(op, "iota result must be vreg");
@@ -7257,8 +7259,6 @@ private:
       auto key = std::make_pair(resultType, laneOffset);
       auto it = sharedChunks.find(key);
       if (it == sharedChunks.end()) {
-        IotaMaterializationContext context{op.getLoc(), base,
-                                          op.getOrderAttr(), rewriter};
         FailureOr<Value> result;
         if (physMultipleOfGroupSize && groupSize < lanesPerPart) {
           result = createSubVLGroupPeriodicChunk(context, resultType,
@@ -7280,12 +7280,12 @@ private:
   LogicalResult lowerContiguousIota(
       IotaOp op, Value base, TypeRange resultTypes, int64_t lanesPerPart,
       OneToNPatternRewriter &rewriter, SmallVectorImpl<Value> &results) const {
+    IotaMaterializationContext context{op.getLoc(), base, op.getOrderAttr(),
+                                       rewriter};
     for (auto [index, resultType] : llvm::enumerate(resultTypes)) {
       if (!isa<VRegType>(resultType)) {
         return rewriter.notifyMatchFailure(op, "iota result must be vreg");
       }
-      IotaMaterializationContext context{op.getLoc(), base, op.getOrderAttr(),
-                                         rewriter};
       FailureOr<Value> result = createIotaContiguousChunk(
           context, resultType, static_cast<int64_t>(index) * lanesPerPart);
       if (failed(result)) {
@@ -7309,11 +7309,11 @@ private:
               "layout factor");
     }
     int64_t chunksPerPart = resultTypes.size() / factor;
+    IotaMaterializationContext context{op.getLoc(), base, op.getOrderAttr(),
+                                       rewriter};
     for (int64_t part = 0; part < factor; ++part) {
       for (int64_t chunk = 0; chunk < chunksPerPart; ++chunk) {
         Type resultType = resultTypes[part * chunksPerPart + chunk];
-        IotaMaterializationContext context{op.getLoc(), base,
-                                           op.getOrderAttr(), rewriter};
         FailureOr<Value> result = createIotaDeinterleavedChunk(
             context, resultType, factor, part, chunk, lanesPerPart);
         if (failed(result)) {
