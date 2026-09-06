@@ -3554,6 +3554,20 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_to_vpto_channel_split_merge.pto                    # exit=0
 ```
 
+# non-prefix constant mask 物化拆分（2026-09-06）
+
+本轮将 `materializeConstantMaskChunk` 中非连续 active lane 的 run 扫描、单 run PAND
+差集和多 run POR 合并抽取为 `materializeNonPrefixConstantMask`。主函数继续负责输入
+shape 校验、prefix 快路径和空 mask fallback；显式错误路径、mask lane 顺序和结果语义保持
+不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
 # interleave lowering 入口合同与布局查询拆分（2026-09-06）
 
 本轮将模板 `OneToNVMIInterleaveOpPattern::matchAndRewrite` 中的结果物理类型/输入输出
