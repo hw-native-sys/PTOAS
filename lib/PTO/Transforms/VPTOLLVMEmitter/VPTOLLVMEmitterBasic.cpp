@@ -11,6 +11,7 @@
 #include "PTO/IR/PTO.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 
 namespace mlir::pto {
 
@@ -37,11 +38,45 @@ private:
   LoweringState &state;
 };
 
+// pto.assert -> trap when the condition is false. The optional message
+// attribute is ignored here: the VPTO backend has no device printf channel.
+class LowerAssertOpPattern final : public OpConversionPattern<pto::AssertOp> {
+public:
+  explicit LowerAssertOpPattern(TypeConverter &typeConverter,
+                                MLIRContext *context, LoweringState &state)
+      : OpConversionPattern<pto::AssertOp>(typeConverter, context),
+        state(state) {}
+
+  LogicalResult
+  matchAndRewrite(pto::AssertOp op, pto::AssertOp::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    constexpr StringLiteral calleeName = "llvm.hivm.TRAP";
+    Location loc = op.getLoc();
+    Value trueVal = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getI1Type(), rewriter.getBoolAttr(true));
+    Value notCond =
+        rewriter.create<arith::XOrIOp>(loc, adaptor.getCondition(), trueVal);
+    auto ifOp = rewriter.create<scf::IfOp>(loc, notCond,
+                                           /*withElseRegion=*/false);
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPointToStart(ifOp.thenBlock());
+    rewriter.create<func::CallOp>(loc, calleeName, TypeRange{}, ValueRange{});
+
+    auto funcType = rewriter.getFunctionType({}, {});
+    state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+private:
+  LoweringState &state;
+};
+
 void populateVPTOBasicPatterns(TypeConverter &typeConverter,
                                 RewritePatternSet &patterns,
                                 LoweringState &state) {
-  patterns.add<LowerTrapOpPattern>(typeConverter, patterns.getContext(),
-                                   state);
+  patterns.add<LowerTrapOpPattern, LowerAssertOpPattern>(
+      typeConverter, patterns.getContext(), state);
 }
 
 } // namespace mlir::pto

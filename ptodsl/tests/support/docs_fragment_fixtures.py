@@ -1361,6 +1361,13 @@ FRAGMENT_FIXTURES = {
             {SNIPPET_PLACEHOLDER}
         """
     ),
+    "sync_ops.assert": _fixture(
+        f"""
+        @pto.jit(target="a5")
+        def sync_ops_assert_probe():
+            {SNIPPET_PLACEHOLDER}
+        """
+    ),
     "flash_attention.l1_tensor_views": _fixture(
         f"""
         @pto.jit(target="a5")

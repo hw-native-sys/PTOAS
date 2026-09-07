@@ -153,7 +153,7 @@ from ._ops import (             # noqa: F401
     prmt, mulhi, mul_i32toi64,
     absf, sqrt, exp, log, sin, cos, pow, ceil, floor, rint, round,
     fmin, fmax, fma, convert,
-    syncthreads, threadfence, threadfence_block, trap, keep, resume,
+    syncthreads, threadfence, threadfence_block, trap, assert_, keep, resume,
     pipe_barrier,
     get_buf, rls_buf,
     set_cross_block, wait_cross_block, set_intra_block, wait_intra_block,

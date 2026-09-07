@@ -3102,6 +3102,21 @@ def TrapOp : PTO_Op<"trap", [MicroOpInterface, SimtOpInterface]> {
   let assemblyFormat = "attr-dict";
 }
 
+def AssertOp : PTO_Op<"assert", [MicroOpInterface, SimtOpInterface,
+                                 MemoryEffects<[MemWrite]>]> {
+  let summary = "Assert: abort execution when a scalar i1 condition is false.";
+  let description = [{
+    Conditional device-side abort. If `condition` is false, execution traps.
+    The optional `message` attribute is only consumed by the EmitC backend
+    (printed by DEBUG_CHECK before the trap); the VPTO backend ignores it
+    because it has no device printf channel.
+    Format in IR: `pto.assert %cond {message = "..."} : i1`
+  }];
+  let arguments = (ins I1:$condition, OptionalAttr<StrAttr>:$message);
+  let results = (outs);
+  let assemblyFormat = "$condition attr-dict `:` type($condition)";
+}
+
 // ---- tile-world TOp version (with 't') ----
 // pto.tmgather ins(%mem, %idx) outs(%dst) [ ...] -> tensor?
 def MGatherOp : PTO_TOp<"mgather", [

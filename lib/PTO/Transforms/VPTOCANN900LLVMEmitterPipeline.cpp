@@ -34,7 +34,7 @@ void markIllegalVPTOSimtOps(ConversionTarget &target) {
       pto::GetLaneMaskGtOp, pto::VoteAllOp, pto::VoteAnyOp, pto::VoteUniOp, pto::VoteBallotOp, pto::ShuffleIdxOp,
       pto::ShuffleUpOp, pto::ShuffleDownOp, pto::ShuffleBflyOp, pto::ReduxAddOp, pto::ReduxMaxOp, pto::ReduxMinOp,
       pto::AtomicCasOp, pto::AtomicExchOp, pto::AtomicAddOp, pto::AtomicSubOp, pto::AtomicMinOp, pto::AtomicMaxOp,
-      pto::AtomicAndOp, pto::AtomicOrOp, pto::AtomicXorOp, pto::TrapOp, pto::PrmtOp, pto::MulhiOp, pto::MulI32ToI64Op,
+      pto::AtomicAndOp, pto::AtomicOrOp, pto::AtomicXorOp, pto::TrapOp, pto::AssertOp, pto::PrmtOp, pto::MulhiOp, pto::MulI32ToI64Op,
       pto::SqrtOp, pto::AbsFOp, pto::ExpOp, pto::LogOp, pto::CeilOp, pto::FloorOp, pto::RintOp, pto::RoundOp,
       pto::FMinOp, pto::FMaxOp, pto::PowOp, pto::FmaOp, pto::ConvertOp, pto::SyncthreadsOp, pto::ThreadfenceOp,
       pto::ThreadfenceBlockOp, pto::KeepOp, pto::ResumeOp>();
@@ -96,7 +96,7 @@ void configureVPTOOpLoweringTarget(ConversionTarget &target, VPTOTypeConverter &
   markIllegalVPTOMemoryOps(target);
   markIllegalVPTOPredicateOps(target);
   markIllegalVPTOArithmeticAndCopyOps(target);
-  target.markUnknownOpDynamicallyLegal([](Operation *op) { return !isa<pto::TrapOp>(op); });
+  target.markUnknownOpDynamicallyLegal([](Operation *op) { return !isa<pto::TrapOp, pto::AssertOp>(op); });
 }
 
 void populateVPTOStructuralTypePatterns(VPTOTypeConverter &typeConverter, RewritePatternSet &patterns,
