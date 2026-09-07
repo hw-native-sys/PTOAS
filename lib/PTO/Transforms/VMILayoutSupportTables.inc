@@ -183,6 +183,7 @@ static constexpr PreferredCastLayoutPattern kPreferredCastLayoutPatterns[] = {
     // compact lane-stride form is the natural cast layout.
     {bits<16>(), bits<32>(), 64, ls(2), c()},
     {bits<8>(), bits<32>(), 64, ls(4), c()},
+    {bits<8>(), bits<32>(), 128, ls(4), c()},
     {bits<32>(), bits<16>(), 64, c(), ls(2)},
     {bits<32>(), bits<8>(), 64, c(), ls(4)},
     {bits<32>(), bits<8>(), 128, d(2), ls(2)},
