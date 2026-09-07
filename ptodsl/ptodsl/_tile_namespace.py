@@ -138,6 +138,7 @@ class _TileNamespace:
     neg = staticmethod(_ops.tneg)
     dequant = staticmethod(_ops.tdequant)
     print = staticmethod(_ops.tprint)
+    dump = staticmethod(_ops.tdump)
 
     relu = staticmethod(_ops.trelu)
     lrelu = staticmethod(_ops.tlrelu)

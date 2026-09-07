@@ -856,6 +856,42 @@ def TStoreOp: PTO_TOp<"tstore", [
   }];
 }
 
+def TensorDumpOp : PTO_TOp<"tdump", [
+  OpPipeInterface,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Persistent tensor dump: write a TileBuf to a host-passed GM "
+                "buffer with a self-describing metadata header.";
+  let description = [{
+    VPTO-only debug op. Writes a 64-byte little-endian metadata header
+    (magic, version, element size/type, ndim, shape, valid_shape, data offset)
+    followed by the raw tile data (full tile shape, row-major) into the GM
+    destination, so the host can decode the dump without knowing the tensor
+    shape up front. Not supported by the EmitC backend.
+
+    DPS form:
+      pto.tdump ins(%tile_buf) outs(%partition_view)
+  }];
+
+  let arguments = (ins
+    PTODpsType:$src,
+    PTODpsType:$dst
+  );
+
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `ins` `(` $src `:` qualified(type($src)) `)`
+    `outs` `(` $dst `:` qualified(type($dst)) `)` attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_MTE3; }
+  }];
+}
+
 def TTransOp : PTO_TOp<"ttrans", [
   PTO_DpsInitOpInterface,
   OpPipeInterface,

@@ -1,0 +1,46 @@
+// -----------------------------------------------------------------------------
+// case: kernels/tdump-vec
+// family: kernels
+// target_ops: pto.mte_gm_ub, pto.tdump
+// scenarios: tdump-vec-f32-4x16, header-plus-row-major-payload
+// -----------------------------------------------------------------------------
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @tdump_vec_kernel(%in: !pto.ptr<f32, gm>,
+                              %out: !pto.ptr<f32, gm>) attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c16 = arith.constant 16 : index
+
+    %c0_i64 = arith.constant 0 : i64
+    %c1_i64 = arith.constant 1 : i64
+    %c256_i64 = arith.constant 256 : i64
+
+    // UB workspace at the planned base (address 0) and the tile alias that
+    // pto.tdump reads from.
+    %ub = pto.castptr %c0_i64 : i64 -> !pto.ptr<f32, ub>
+    %tile = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=16, v_row=4, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    // Load 4x16 f32 (256B) from GM into UB base 0.
+    pto.mte_gm_ub %in, %ub, %c0_i64, %c256_i64
+      nburst(%c1_i64, %c256_i64, %c256_i64)
+      : !pto.ptr<f32, gm>, !pto.ptr<f32, ub>, i64, i64, i64, i64, i64
+
+    // Order the MTE2 load against the MTE3 dump.
+    pto.set_flag["PIPE_MTE2", "PIPE_MTE3", "EVENT_ID0"]
+    pto.wait_flag["PIPE_MTE2", "PIPE_MTE3", "EVENT_ID0"]
+
+    // Persistent dump: 64-byte metadata header + raw row-major data.
+    %view = pto.make_tensor_view %out,
+                shape = [%c4, %c16], strides = [%c16, %c1]
+                {layout = #pto.layout<nd>}
+              : !pto.tensor_view<?x?xf32>
+    %part = pto.partition_view %view,
+                offsets = [%c0, %c0], sizes = [%c4, %c16]
+              : !pto.tensor_view<?x?xf32>
+                -> !pto.partition_tensor_view<4x16xf32>
+    pto.tdump ins(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=16, v_row=4, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%part : !pto.partition_tensor_view<4x16xf32>)
+    return
+  }
+}

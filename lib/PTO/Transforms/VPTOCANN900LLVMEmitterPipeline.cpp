@@ -96,7 +96,7 @@ void configureVPTOOpLoweringTarget(ConversionTarget &target, VPTOTypeConverter &
   markIllegalVPTOMemoryOps(target);
   markIllegalVPTOPredicateOps(target);
   markIllegalVPTOArithmeticAndCopyOps(target);
-  target.markUnknownOpDynamicallyLegal([](Operation *op) { return !isa<pto::TrapOp, pto::AssertOp>(op); });
+  target.markUnknownOpDynamicallyLegal([](Operation *op) { return !isa<pto::TrapOp, pto::AssertOp, pto::TensorDumpOp>(op); });
 }
 
 void populateVPTOStructuralTypePatterns(VPTOTypeConverter &typeConverter, RewritePatternSet &patterns,

@@ -1286,6 +1286,22 @@ def print(fmt, scalar):
     _pto.PrintOp(str(fmt), raw_scalar)
 
 
+def _require_vpto_tdump_backend():
+    from ._tracing.active import current_runtime
+
+    runtime = current_runtime()
+    module_spec = getattr(runtime, "module_spec", None)
+    backend = getattr(module_spec, "backend", None)
+    if backend == "emitc":
+        raise ValueError("pto.tdump is supported only by the VPTO backend; got backend='emitc'")
+
+
+def tdump(src, dst):
+    """``pto.tdump ins(src) outs(dst)`` – persistent tile dump to GM."""
+    _require_vpto_tdump_backend()
+    _pto.TensorDumpOp(unwrap_surface_value(src), unwrap_surface_value(dst))
+
+
 def tprint(src, tmp=None, *, print_format=None):
     """``pto.tprint ins(src[, tmp])``."""
     _require_emitc_tprint_backend()

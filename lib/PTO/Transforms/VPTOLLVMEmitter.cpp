@@ -1203,7 +1203,7 @@ static void configureVPTOOpLoweringTarget(ConversionTarget &target,
   }
 
   target.markUnknownOpDynamicallyLegal([](Operation *op) {
-    return !isa<pto::TrapOp, pto::AssertOp>(op);
+    return !isa<pto::TrapOp, pto::AssertOp, pto::TensorDumpOp>(op);
   });
 }
 
