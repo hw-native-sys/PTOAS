@@ -760,6 +760,63 @@ widen/narrow 分派；保持 unsigned conversion 的诊断、arity、EVEN/ODD pa
 顺序不变。增量 `check_changed_code.py` 结果为 `checked_files=1 errors=0 warnings=0`，
 `git diff --check` 通过。
 
+# 编译告警与死代码收敛整改（2026-09-07）
+
+本轮根据真实的 `VMIToVPTO.cpp` 单文件编译日志继续整改，而不是以增量文本检查结果代替
+完整验证。删除了已无调用方的 deinterleaved=4 旧物化 helper、mask staging 旧 helper，
+以及重构后遗留的未使用 `fail` lambda、局部变量和常量；将 `DenseMap` 成员采用明确的默认
+构造，避免显式构造函数告警；所有本轮触及的 `notifyMatchFailure` 调用均显式消费其
+`[[nodiscard]]` 返回值。上述改动不改变 lowering 分派、物理 part 顺序或失败诊断语义。
+
+验证结果：使用 build 目录中 `ninja -t commands` 导出的真实编译命令编译
+`VMIToVPTO.cpp`，编译器告警数为 0；`pto-test-opt` 对 interleave、contiguous load/store、
+group broadcast、group store、unit-stride group store 和 dynamic group mask 六个代表性
+case 均返回 exit=0；`check_changed_code.py` 为 `checked_files=1 errors=0 warnings=0`，
+`git diff --check` 通过。完整内部静态报告的 AST 复杂度/方法规模历史基线仍需专用分析器
+重新扫描确认，不能由上述增量检查替代。
+
+报告明确点名的 `populateVMIConversionPatterns` 也已按职责拆为 structural/memory、
+arithmetic、reduction/conversion 三组注册 helper；公开入口仅按原顺序调用三组 helper。
+pattern 类型集合、构造参数和注册先后关系保持不变，入口方法不再超过报告配置的 50 行
+阈值。拆分后真实单文件编译继续保持 0 warning。
+
+本轮还将 `getContiguousMaterializationPartCount` 的输入/布局获取与布局计数逻辑拆开，
+并将嵌套条件改为命名布尔条件，避免文本规则误判控制语句。该修改只影响诊断前置校验，
+不改变 contiguous/deinterleaved 的 part count 结果。增量 checker、`git diff --check`、
+真实单文件编译和 group-store lowering 回归均通过。
+
+`computeShuffleVselrPlans` 也已拆成输入合同构造和 result part/chunk 遍历两个阶段：
+`ShuffleVselrInputPlan` 仅保存已验证的 source/result 类型、indices、physical lanes 与
+result factor，后续 helper 只负责逐 chunk 生成计划。每个 chunk 仍调用原有
+`computeShuffleVselrPlanForChunk`，因此 source chunk 约束、ASC/DESC 检查和 plan 顺序不变。
+`vmi_to_vpto_shuffle_forwarding.pto` 与 `vmi_to_vpto_shuffle_lane0_splat.pto` 回归通过，
+增量 checker 和真实单文件编译均为 0 warning。
+
+同一 shuffle 家族中的 `computeShuffleForwardingSourceParts` 已复用
+`ShuffleForwardingInputPlan`，将 indices 纳入该已验证输入对象，并把 result part/chunk
+遍历抽为独立 helper。每个 result chunk 仍调用原有 source chunk 映射函数，因此
+forwarding 的 source physical chunk 约束、失败诊断和输出顺序不变。
+`vmi_to_vpto_shuffle_forwarding.pto`、增量 checker、`git diff --check` 与真实单文件编译
+均通过且无 warning。
+
+复核发现原报告点名的 `lowerGroupSlotLoadParts` 已在当前树中收敛为 slots=8/slots=1
+两个既有 helper 的短分派，原始 134 行数据不再适用；未做形式化的继续切割。作为回归，按
+lit 文件的原始 pass pipeline 与 FileCheck 运行了 shuffle forwarding、lane0 splat、
+contiguous load/store、slots=1 unit-stride group store 和 dynamic group mask 五个 case，
+均通过。
+
+`OneToNVMITruncFOpPattern::matchAndRewrite` 的 non-group-slot 分支已抽为
+`lowerNonGroupSlotTrunc`。该 helper 保留原有 physical plan、same-width、dense lane-stride、
+Even/Odd、Packed4、lane-stride、arity 和 `vcvt` round/saturate 分派；入口仅负责 VMI 类型、
+结果类型转换以及 group-slot 快路径选择。真实单文件编译无 warning，
+`vmi_to_vpto_truncf_bf16x2_d2_multichunk.pto` 按其 `LOWER` FileCheck 规则通过。
+
+`OneToNVMIFPToSIOpPattern::matchAndRewrite` 按 three-way conversion strategy 拆为
+dense 1:1 widen、generic Even/Odd widen 和 narrow 三个 helper。每个 helper 保留原有
+mask 创建、physical arity、lane-stride、part 选择、rounding/saturate 与诊断约束；入口
+继续负责 conversion contract、physical type 校验和策略分派。真实单文件编译无 warning，
+`vmi_to_vpto_fptosi_f32_to_i32_default_sat.pto` 的 FileCheck 通过。
+
 本轮将 `OneToNVMIDeinterleaveLoadOpPattern` 的非对齐两轮 `vldus` 与 `vdintlv` 组合
 抽取为 `lowerUnaligned`。helper 显式维护 `streamBase/streamAlign` 的更新链，负责
 ptr 物化、offset 合成、每轮增量和 low/high 结果重排；direct `vldsx2` 路径保持独立。
@@ -3584,6 +3641,33 @@ check_changed_code.py --base origin/master            # checked_files=1 errors=0
 vmi_layout_assignment_group_store_slots1_unit_stride.pto # exit=0
 ```
 
+# group-store routing 条件显式化（2026-09-07）
+
+本轮将 `checkSupportedGroupStorePhysicalShape` 与
+`checkSupportedGroupStoreByLayout` 的 one-block、contiguous-group-chunk 和 compact-small-
+group 路由条件提取为命名布尔值。该修改不改变 routing 顺序：compact group 优先，随后
+group-slots，再查询 layout fact 并依次尝试 one-block、contiguous group chunk 与
+deinterleaved fallback。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+vmi_layout_assignment_group_store_slots1_unit_stride.pto # exit=0
+```
+
+# 非复杂度规则当前状态复核（2026-09-07）
+
+针对原报告中的 `G.RES.06-CPP`、`G.INC.12-CPP` 与 `warning_suppression` 做了当前源码
+复核：`VMIToVPTO.cpp` 的文件私有实现处于 anonymous namespace 内，且源码中未检出 lambda
+默认捕获 (`[&]`/`[=]`)、`#pragma diagnostic`、`NOLINT` 或 `-Wno-*` suppression。此前已删除
+历史 suppression；当前无须为这些规则再增加任何 suppression 或可见性包装。
+
+该结论来自当前工作树的文本检索，不能替代内部分析器对历史 `huge_method`、
+`huge_cyclomatic_complexity` 与 `Data Clumps` 指标的完整 AST 复扫。
+
 # slots=8 packed-byte group-store 单 part 合并职责拆分（2026-09-06）
 
 本轮将 `buildPackedByteStoreBlock` 中单个 local part 的 `vselr` 选择、lane range mask
@@ -4616,3 +4700,935 @@ carrier 收缩和最终 bitcast；奇数尾 carrier 的 LOWER 路径、结果顺
 git diff --check                                      # passed
 check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
 ```
+
+# FP-to-UI physical conversion 分派拆分（2026-09-07）
+
+本轮将 `OneToNVMIFPToUIOpPattern::matchAndRewrite` 中 widening 与 narrowing 的
+physical part 物化分别抽取为 `lowerWiden` 和 `lowerNarrow`。入口现在只保留 source/result
+type、conversion contract、rounding/saturate attribute 的收集，以及 same-width/widen/narrow
+分派。两个 helper 保持原有 physical arity、contiguous result lane stride、all-true mask、
+EVEN/ODD part 顺序和失败诊断；没有引入 warning suppression。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+issue_585_vcvt_round_z.pto (-vmi-lower-unified-to-legacy -vmi-to-vpto)
+                                                     # FileCheck VPTO, exit=0
+```
+
+上述增量检查只验证 changed-code 的基础规则；历史报告中的完整 AST 方法长度、复杂度与数据泥团
+指标仍需使用原始静态分析器重新扫描后确认，不能由该脚本推导为已清零。
+
+# Integer extension physical path 去重（2026-09-07）
+
+`OneToNVMIExtIOpPattern::matchAndRewrite` 原先在已有 `lowerPhysicalExtension` 后再次实现
+contiguous lane-stride alias、2x/4x part plan、mask 构造和 `vcvt` 发射。本轮删去该重复实现，
+让入口在完成 group-slot 分派和 physical type 收集后统一委派给 helper。helper 覆盖相同的
+direct lane-stride fast path 与 general factor path，因此 source/result arity、part 顺序、mask
+及失败诊断保持不变。
+
+复用后真实编译还发现 `getExtensionPartPlan` 的入参声明成了 `ArrayRef<Value>`，但它只读取
+physical part 数量且调用端传入 `ValueRange`；此前未被该 helper 路径实例化。已将接口改为
+`ValueRange`，使声明与调用端及实际需求一致。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+vmi_to_vpto_integer_casts.pto                          # exit=0
+vmi_to_vpto_group_slot_integer_extension_matrix.pto    # exit=0
+```
+
+# mask/materialization 控制流花括号整改（2026-09-07）
+
+本轮继续按 `G.FMT.11-CPP` 清理报告覆盖区域内的单语句控制流，为
+`checkSupportedMaskedLoadShape`、`createPowerOfTwoRemainder`、
+`materializePrefixMask` 与 `getActiveDataLanesInPhysicalChunk` 补齐花括号。
+这是纯控制流边界显式化：failure、full-chunk fast path、prefix fast path 和 active-lane
+累加的返回及执行顺序均保持不变。增量检查同时定位到 `getActiveDataLanesInPhysicalChunk`
+中三处同类遗留问题，已在本轮一并修正。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+vmi_to_vpto_constant_mask_nonprefix.pto                # exit=0
+vmi_to_vpto_iota_group_subvl.pto                       # exit=0
+vmi_to_vpto_masked_load.pto                            # exit=0
+```
+
+`vmi_to_vpto_iota_group_subvl.pto` 运行时的 unified-to-legacy remark 是测试输入中
+`vadds` 尚无 legacy equivalent 的既有提示；它不影响随后的 VPTO lowering 与 FileCheck
+结果。
+
+# type/invariant 遍历控制流花括号整改（2026-09-07）
+
+本轮继续落实 `G.FMT.11-CPP`，清理 `containsVMIType`、`hasVMIType`、
+`isLayoutAssignedVMIType`、`verifyLayoutAssignedVMITypeTree`、
+`verifyVMIToVPTOInputAttribute` 和 `verifyVMIToVPTOInputTypes` 中的 early-return、属性
+递归和 region/block/type 遍历控制流。没有改变遍历范围、短路返回或 layout invariant
+diagnostic。
+
+同时将 `hasVMIType(op->getOperandTypes()) || hasVMIType(op->getResultTypes())` 及 dynamic
+group-mask 的嵌套 `failed(...)` 条件拆为命名布尔值，规避增量检查器无法解析嵌套括号的
+假阳性；表达式仍只由无副作用的 type/layout 查询构成。`computeShuffleLane0SplatSourcePart`
+中实际缺失的一处花括号也已修正。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+vmi_layout_gate_valid.pto                              # exit=0
+vmi_layout_gate_helper_materialization_shape_invalid.pto # exit=0
+```
+
+# physical type/mask utility 控制流花括号整改（2026-09-07）
+
+本轮将 `materializeVPTOToVMI`、`materializeVMIToVPTO`、mask granularity 查询、converted
+result type 获取、physical footprint 校验、operand flattening，以及 all-true/mask-type
+创建 helper 中的单语句条件/循环补齐花括号。所有修改均为行为等价的控制流显式化；没有改变
+unsupported granularity 的 failure、footprint 比较或创建的 predicate 类型。
+
+`hasNoWiderFootprintThanContiguous` 的复合 `failed(...)` 条件也改为命名布尔量，避免增量
+检查器对嵌套调用的误判。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+vmi_to_vpto_constant_mask_nonprefix.pto                # exit=0
+```
+
+# memory/address 查询 helper 控制流整改（2026-09-07）
+
+本轮清理 `getConstantIndexValue`、`getStaticMemRefElementCount`、
+`getMemoryElementType`、`buildContiguousIdentityLaneAddressMap` 和
+`requireIdentityMemRefLayout` 中的单语句条件，并将复合 physical-shape/subview 条件提取
+为命名布尔值。保持常量 offset 识别、静态 memref overflow failure、地址 footprint 计算及
+非 identity/subview 诊断不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+vmi_to_vpto_load_store_contiguous.pto                  # exit=0（按原 RUN 行传入 layout/mask assignment）
+vmi_to_vpto_memory_footprint.pto                       # exit=0
+```
+
+首次手工运行 contiguous case 时遗漏了该测试 RUN 行要求的 assignment passes，得到的是
+layout-assigned invariant 诊断；补齐原 pipeline 后通过，未发现源码回归。
+
+# load/store/interleave support contract 控制流整改（2026-09-07）
+
+本轮为 contiguous/deinterleaved load、contiguous/interleave store 的 support contract
+补齐 early-return 与 layout/arity/physical-chunk 条件的花括号。复合 low/high input 与
+direct contiguous store 条件改为命名布尔值；layout support、dist token、full-chunk 与
+contiguous materialization 的原有优先级不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+vmi_to_vpto_load_store_contiguous.pto                  # exit=0
+vmi_interleaved_memory_ops.pto (ASSIGN)                # exit=0
+vmi_interleaved_memory_ops.pto (LOWER)                 # exit=0
+```
+
+# group chunk support contract 控制流整改（2026-09-07）
+
+本轮将 `getGroupSizeFromNumGroups`、`checkSupportedGroupChunkShape` 与
+`checkDeinterleaved2GroupStoreChunkShape` 的 group-size、layout、full-chunk、dist token
+及 per-part chunk 合同改为显式控制流。复合条件拆为命名布尔值，支持范围、诊断文本、输出的
+lanes/groupCount/chunksPerGroupPerPart 值及失败优先级均保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+vmi_layout_assignment_group_store_slots1_unit_stride.pto # exit=0
+vmi_layout_assignment_group_load_s32_stride_broadcast_reduce.pto (ASSIGN) # exit=0
+vmi_layout_assignment_group_load_s32_stride_broadcast_reduce.pto (LOWERERR) # exit=0
+```
+
+# group-load layout 分派控制流整改（2026-09-07）
+
+本轮将 contiguous group-load 的 unit row-stride fast path 和 group-load 顶层的
+block-deinterleaved f32 分派条件提取为命名布尔值。该改动只显式化既有路由选择；
+contiguous→`checkSupportedContiguousGroupLoadShape`、block-deinterleaved f32→
+`checkSupportedBlockDeinterleavedGroupLoadShape` 与其余布局的拒绝诊断保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+vmi_layout_assignment_group_load.pto                  # exit=0
+vmi_layout_gate_group_load_support_invalid.pto        # exit=0
+```
+
+# one-block group-store plan 控制流整改（2026-09-07）
+
+本轮将 `getOneBlockGroupStorePlan` 的 layout/block-class、VCG block shape、pointer
+destination、row-stride 对齐和 16-bit block-stride 控制字段验证改为显式控制流。复合合同
+均提取为命名布尔量；plan 中的 `groupSize`、`groupsPerPart`、`blockStride` 计算与失败
+诊断保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+vmi_layout_assignment_group_store_slots1_unit_stride.pto # exit=0
+```
+
+# prefix-mask 与 physical-part utility 控制流整改（2026-09-07）
+
+本轮为 `checkSupportedMaskableVReg`、`createPrefixMaskForActiveLanes`、
+`createPartitionActiveLanes`、`getPowerOfTwoLog2` 和 `getPrefixPattern` 中的 early-return、
+dynamic-mask failure、factor/bias 分支补齐花括号。`getPowerOfTwoLog2` 的位运算条件及
+其余复合条件改为命名布尔量，避免文本检查器对嵌套表达式产生误报。mask pattern、active
+lane clamp、partition 计算和失败传播保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+vmi_to_vpto_iota_group_subvl.pto                       # exit=0
+vmi_to_vpto_constant_mask_nonprefix.pto                # exit=0
+```
+
+# predicate construction 控制流花括号整改（2026-09-07）
+
+本轮继续整改 `G.FMT.11-CPP`，为 `createAllTrueMask`、`createPatternMask`、
+`createPrefixMask` 及 reduction predicate equivalence/combine helper 补齐控制流花括号。
+同时将含嵌套 type/operation 查询的复合条件提取为命名布尔值，以免 changed-code 检查器误把
+已带花括号的条件识别为违规。predicate granularity 选择、mask 等价判定、combine 顺序和
+failure 条件均保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+vmi_to_vpto_constant_mask_nonprefix.pto                # exit=0
+```
+
+# store tail-predicate 控制流整改（2026-09-07）
+
+本轮将 contiguous store 和 dense lane-stride store 的 tail-predicate 构造中所有
+early-return 补齐花括号，并将复合失败条件提取为命名布尔值。后者避免增量文本检查器在
+`failed(...)` 的内层右括号处误判控制语句，也直接表达了“tail mask 与 all-true mask
+必须同时可物化”的原有合同。active lane 查询、predicate compact、`pand` 的输入顺序及
+失败传播保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+vmi_to_vpto_memory_footprint.pto                       # exit=0
+vmi_to_vpto_load_store_contiguous.pto                  # exit=0
+```
+
+# slots=8 group-store 地址计划去重（2026-09-07）
+
+本轮将 slots=8 contiguous 与 lane-stride group-store 共同的 group-offset 构造及 direct
+memory legality 判定收敛为 `buildSlots8GroupOffsets`，将共同的每 slot-block stream advance
+计算收敛为 `buildSlots8StreamAdvances`。`dist` 仍是地址计划的显式输入，因而 contiguous
+normal-store 与 lane-stride store 的对齐证明范围不变；原先只透传而未使用的 `numGroups`
+参数被移除。同时删除 non-aligned ordinary store active-lane 失败分支中位于
+`notifyMatchFailure` 直接返回后的不可达 `return failure()`。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+vmi_layout_assignment_group_store_slots1_unit_stride.pto # exit=0
+vmi_to_vpto_group_store_lane_stride.pto               # exit=0
+vmi_to_vpto_group_store_slots8_packed_byte.pto        # exit=0
+```
+
+# data-layout materializer 调度职责整理（2026-09-07）
+
+本轮继续处理报告中 `materializeDataLayoutConversion` 的历史复杂度热点。已有的
+`DataLayoutMaterializationContext` 保留不变；移除了只做转发的泛型 helper 与 lambda
+调度层，改为 simple、deinterleaved=2、lane-stride、via-contiguous 四个具名阶段。新建
+`DataLayoutMaterializationResult` 与 `didHandleDataLayoutMaterialization` 明确每阶段的
+短路合同：失败或已物化即返回，否则尝试下一种布局关系。阶段顺序、失败传播和 fallback
+覆盖范围保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+vmi_to_vpto_load_store_contiguous.pto                  # exit=0
+vmi_interleaved_memory_ops.pto (LOWER)                # exit=0
+```
+
+# mask-layout materializer 调度职责整理（2026-09-07）
+
+本轮将 `MaskLayoutMaterializationContext` 的 identity、deinterleaved=2 与
+lane-stride 三阶段调度从泛型转发 helper/lambda 改为具名调用。
+`MaskLayoutMaterializationResult` 与 `didHandleMaskLayoutMaterialization`
+统一表达原有短路规则：失败或已有物化结果即返回，否则继续下一种布局关系。各 materializer
+的调用顺序、参数、诊断和 fallback 范围保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+```
+
+当前 `build/tools/pto-test-opt` 对 `vmi_to_vpto_ensure_mask_layout.pto` 与
+`vmi_to_vpto_constant_mask_nonprefix.pto` 在本轮修改前的 layout-contract/precheck 阶段即
+失败，未到达 mask-layout materializer；因此未将其作为本轮功能回归证据，也未修改测试来
+规避该既有构建产物与工作树契约不同步的问题。
+
+# staging mask-layout 无效失败路径清理（2026-09-07）
+
+本轮清理 `materializeMaskGranularityCastStagingLayout` 的无效包装：staging materializer
+成功后原先把已有 `SmallVector<Value>` 包装进必定成功、必定含值的 `FailureOr<optional>`，
+再检查不可能触发的失败/空值路径。现在成功时直接返回 `optional` 结果；factor 选择、两种
+staging materializer 的调用、其真实失败传播与未命中时的空 optional fallback 保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+```
+
+# group chunk / dist-token 控制流整改（2026-09-07）
+
+本轮继续清理 `G.FMT.11-CPP`：为 contiguous group chunk 合同、mask lane-range 与
+group-slot selector 物化、load/store dist token、store mask granularity 以及 compare predicate
+映射补齐花括号。含 `layout.getLaneStride()` 等嵌套查询的条件提取为具名布尔值，避免文本检查器
+在内层右括号处误判。支持的 element width、dist token、mask granularity、compare mode 及
+失败返回保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+vmi_to_vpto_integer_casts.pto                          # exit=0
+```
+
+# ExtF physical lowering 分阶段（2026-09-07）
+
+本轮将 `OneToNVMIExtFOpPattern::matchAndRewrite` 的 physical lowering 决策提取为
+`lowerPhysicalExtF`。入口保留 VMI 类型、转换结果类型和 `ExtFPhysicalPlan` 构建；helper
+统一处理 bf16x2 view、all-true mask、dense lane-stride 以及 factor=2/4 路径选择。
+`pto.vcvt` 的 part、bf16x2 bitcast、arity 判断、诊断文本及失败顺序均保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+vmi_to_vpto_extf.pto                                  # exit=0
+vmi_to_vpto_extf_multichunk.pto                       # exit=0
+```
+
+`vmi_to_vpto_extf_f4x2_to_bf16x2_variants.pto` 在当前 `pto-test-opt` 中于
+`vmi-to-vpto` 前的 layout-assignment precheck 失败，且文件没有 `CHECK` 指令；没有将其
+用作本轮回归证据，也没有修改测试来掩盖该既有构建产物与工作树契约不同步问题。
+
+# Vexpdif f32/f16 lowering 职责拆分（2026-09-07）
+
+本轮按 `G.FUN.01-CPP` 将 `OneToNVMIVexpdifOpPattern::matchAndRewrite` 的 f32 与 f16
+physical lowering 分别收敛到 `lowerF32`、`lowerF16`；`lowerBySourceElementType` 只保留
+元素类型分派。入口继续负责 pmode、转换结果类型和输入 arity 合同。f32 的 `ODD` part、f16
+的 EVEN/ODD 再按 chunk 展开、结果扁平化顺序以及所有原诊断文本保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+```
+
+当前 `build/tools/pto-test-opt/pto-test-opt` 的时间戳早于本次对象文件，且
+`vmi_to_vpto_vexpdif_f16.pto`、`vmi_to_vpto_vexpdif_f32.pto` 都在
+layout-assignment precheck 阶段失败，未执行本轮 lowering。未把这些执行结果记作回归通过；
+仍需要能够链接当前 `PTOTransforms` 的测试工具后补齐该两条功能回归。
+
+# FPToSI physical conversion 分阶段（2026-09-07）
+
+本轮将 `OneToNVMIFPToSIOpPattern::matchAndRewrite` 的 conversion contract、source/result
+physical part 校验、rounding/saturate 获取及 same-width/widen/narrow 路由收敛到
+`lowerConversion`。入口仅负责读取 VMI 类型、converted result types 与 source parts。
+已有 `lowerSameWidthFpToInt`、`lowerWiden`、`lowerNarrow` 的调用顺序、layout fast path、
+诊断文本、part 选择与失败传播均保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+```
+
+当前 `pto-test-opt` 仍早于本次对象文件，故未将其执行结果作为本轮当前源码的 lit 回归证据。
+
+# SIToFP physical part 合同与 lowering 分阶段（2026-09-07）
+
+本轮将 `OneToNVMISIToFPOpPattern::matchAndRewrite` 的 physical source/result 收集、
+all-true mask 物化及宽度路由收敛到 `lowerPhysicalConversion`。其中
+`collectSourceType` 明确验证 source parts 非空、为 integer vreg 且类型一致；
+`collectResultTypes` 明确验证 physical result 列表非空并保持既有同构 vreg 合同，避免在
+空列表上访问 `front()`。原有 `si32 -> f32`、`si8 -> f16` lowering、part 顺序、诊断文本与
+失败传播保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+```
+
+# FPToUI physical conversion 分阶段（2026-09-07）
+
+本轮将 `OneToNVMIFPToUIOpPattern::matchAndRewrite` 中的 conversion contract、physical
+part 校验、rounding/saturate 获取以及 same-width/widen/narrow 路由收敛至
+`lowerConversion`。入口仅保留 VMI 类型、converted result types 和 source parts 读取。
+原有 `lowerSameWidthFpToInt`、`lowerWiden`、`lowerNarrow` 的调用条件、part 顺序、诊断及
+失败传播均保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+```
+
+# ConstantMask 计划消费与物化拆分（2026-09-07）
+
+本轮将 `OneToNVMIConstantMaskOpPattern::matchAndRewrite` 中逐 chunk 的结果容量、mask type、
+`materializeConstantMaskChunk` 及最终 arity 合同收敛到 `materializePhysicalMasks`。入口只负责
+converted result types、constant mask materialization plan 的计算和最终替换。物化顺序、
+所有 match failure 诊断、result arity 检查与扁平结果替换保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+```
+
+# Bitcast physical parts lowering 拆分（2026-09-07）
+
+本轮将 `OneToNVMIBitcastOpPattern::matchAndRewrite` 的 physical arity 检查、逐 part
+`VbitcastOp` 物化及结果替换收敛到 `lowerParts`。入口仅负责 converted result types 获取；
+bitcast type 合同、诊断文本、part 顺序和失败传播保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+```
+
+# ConstantMask/CreateMask 物化边界与控制流整改（2026-09-07）
+
+本轮将 `OneToNVMICreateMaskOpPattern` 中 constant-mask 的结果消费职责与既有 dynamic
+lowering 分支保持清晰边界，并为 concrete layout 条件补齐 `G.FMT.11-CPP` 花括号。前者的
+physical mask 物化仍由既有 `lowerConstantMask` 负责，后者的动态路径、active-lane 截断和
+layout factor 语义均未改变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+```
+
+# 全文件控制流花括号复核（2026-09-07）
+
+本轮对 `VMIToVPTO.cpp` 进行完整文本审计，并补齐剩余历史 `G.FMT.11-CPP` 控制流：包括
+input IR/type converter、static-mask 合同、safe-read/gather failure helper，以及
+cf/scf structural conversion 的 branch、case 与 result-type 遍历。复合表达式的内层右括号会
+触发文本检查器假阳性，已改为具名布尔值后保持同一判断语义。switch destination 更新、operand
+展开、type conversion、mask all-active 判断及 early-return 行为均未改变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 全文件控制流文本审计                     # no remaining recognisable unbraced if/for/while
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+```
+
+上述文本审计仅用于 `G.FMT.11-CPP` 复核，不替代内部 AST 分析器对 `huge_method`、
+`huge_cyclomatic_complexity` 与 Data Clumps 的完整复扫。
+
+# Constant splat 解析与 physical 发射拆分（2026-09-07）
+
+本轮将 `OneToNVMIConstantOpPattern::matchAndRewrite` 的 scalar 常量创建、physical vreg
+逐 part 发射及最终替换抽取为 `lowerSplat`。入口保留 dense-splat/typed-attribute 合同与
+有符号整数到 signless scalar 的归一化；`vdup` 顺序、all-true mask 构造、结果 arity 和
+失败诊断均保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+```
+
+# conversion carrier 合同控制流整改（2026-09-07）
+
+本轮为 pack/unpack physical arity、identity part forwarding、unsigned/signed carrier、
+`bitcastVReg`、`getVcaddResultType` 与 carrier pack/unpack helper 补齐控制流花括号。
+带 `.size()`、`.getType()`、`.getWidth()` 的合同改为命名布尔值，避免增量检查器将内层调用
+右括号误识别为控制语句结束。physical arity、signedness carrier、identity bitcast 和失败
+传播保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+```
+
+# group-broadcast direct-fact 只读合同（2026-09-07）
+
+本轮将 group-broadcast-load 的 direct lowering fact 在
+`tryLowerDirectBRC`、`tryLowerDirectE2B` 与 `lowerDirectOrFallback` 三层接口改为
+`const FailureOr<VMIGroupBroadcastLoadDirectFact> &`。该 fact 仅用于选择 BRC/E2B/fallback，
+不应暗示可被 callee 修改；候选条件、地址 legality、direct lowering 和 fallback 顺序保持不变。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+vmi_to_vpto_group_broadcast_load_e2b_b16.pto          # exit=0
+```
+
+# TruncI 非 group-slot lowering 职责拆分（2026-09-07）
+
+本轮将 `OneToNVMITruncIOpPattern::matchAndRewrite` 的非 group-slot 路径收敛到
+`lowerNonGroupSlotTrunc`：该 helper 负责统一物理类型、宽度和 arity 合同、dense
+lane-stride/NOSAT carrier、`s32 -> s8` 的无符号 bit-pattern carrier，以及 factor=2/4 的
+physical conversion 选择。重写入口现在仅负责转换结果类型、布局取得和 group-slot 分派。
+保留了原有的诊断文本、`s32 -> s8` bitcast 顺序、factor part 选择和失败/fallback 顺序。
+
+本轮验证：
+
+```text
+git diff --check                                      # passed
+check_changed_code.py --base origin/master            # checked_files=1 errors=0 warnings=0
+VMIToVPTO.cpp 单文件真实编译                           # exit=0, warning=0, error=0
+vmi_to_vpto_trunci_i32_to_ui16_default_sat.pto        # exit=0
+vmi_to_vpto_trunci_s32_to_s8_nosat.pto                # exit=0
+vmi_to_vpto_integer_casts.pto                          # exit=0
+```
+
+# 当前源码最终编译复核（2026-09-07）
+
+本轮针对最近的 `ConstantOp` 类型修正，重新执行了 `VMIToVPTO.cpp` 的真实单文件编译命令。
+编译器返回 `exit=0`，日志中无 `warning:` 或 `error:`。随后再次运行增量合规检查，结果仍为
+`checked_files=1 errors=0 warnings=0`，并通过 `git diff --check`。
+
+尝试运行 Ninja 目标时，构建系统先触发 CMake 自动重新配置；配置阶段因当前环境无法创建
+`/cann-cmake` 外部依赖目录而失败。这是构建环境权限/路径问题，不是当前源文件编译错误，
+因此本轮以直接复用已生成编译命令的单文件编译作为 C++ 编译证据。
+
+# 全文件控制流 AST 风格复核补漏（2026-09-07）
+
+在先前基于行级正则的花括号复核之外，本轮使用能跨多行条件、`if constexpr` 与 range-for
+语句的轻量语法扫描再次审计 `VMIToVPTO.cpp`。该扫描定位并修复了 6 处遗漏的单语句控制流：
+constant-mask prefix fast path、mask-granularity layout-fact failure、constant integer carrier
+归一化、group-reduce `if constexpr`、group-broadcast failure propagation，以及
+`scf.index_switch` case-region 内联循环。所有这些路径仅增加花括号，未改变条件、发射顺序、
+诊断或返回值。
+
+本轮复核结果：轻量语法扫描的 `unbraced if/for/while` 列表为空；`git diff --check` 通过；
+`check_changed_code.py --base origin/master` 为 `checked_files=1 errors=0 warnings=0`；
+`VMIToVPTO.cpp` 真实单文件编译 `exit=0`，且编译日志无 `warning:`/`error:`。
+
+该审计仍是针对 `G.FMT.11-CPP` 的结构检查，不能替代原内部工具对全文件
+`huge_method`、`huge_cyclomatic_complexity` 与 Data Clumps 的复扫。
+
+# Iota conversion pattern 输入与路由拆分（2026-09-07）
+
+本轮继续处理报告中 `matchAndRewrite()` 的方法规模问题。新增
+`IotaLoweringInput` 与 `getIotaLoweringInput`，集中完成 layout、physical lanes、base
+单值化和 converted result types 的输入合同；新增 `lowerAndReplaceIota`，统一处理
+group/contiguous/deinterleaved 路由及最终 flat replacement。`matchAndRewrite` 仅保留输入
+准备、结果容器初始化和 helper 调用，未改变任何 iota 的 chunk 共享、布局分派、指令顺序、
+诊断文本或失败传播。
+
+本轮验证：
+
+```text
+VMIToVPTO.cpp 真实单文件编译                       # exit=0, warning=0, error=0
+git diff --check                                  # passed
+check_changed_code.py --base origin/master        # checked_files=1 errors=0 warnings=0
+```
+
+代表性 iota lowering 复核中，`vmi_to_vpto_iota_group_subvl.pto`、
+`vmi_to_vpto_iota_group2.pto` 与 `vmi_to_vpto_iota_group1_tail.pto` 均可由现有
+`pto-test-opt` 执行完成；普通 `vmi_to_vpto_iota.pto` 在既有
+`VMI-PASS-INVARIANT`（pack/unpack helper 提前于 VMI physicalization）处终止，属于当前
+测试二进制与工作树 pipeline 不同步，未将其计入本轮回归通过证据。
+
+# 静态 full-read envelope 拆分（2026-09-07）
+
+本轮继续处理 `computeSafeFullReadProof` 的职责混合问题。新增
+`VMIStaticReadEnvelopes` 与 `buildStaticReadEnvelopes`，集中负责 offset、allocation、
+physical footprint 的字节乘法溢出检查及 readable/candidate interval 构造；proof 函数保留
+输入合同、地址映射、元素宽度校验和最终 envelope 包含关系判断。字节范围、溢出诊断、
+`VMIMemorySafeReadProof` 字段赋值与成功条件保持不变。
+
+本轮验证：
+
+```text
+VMIToVPTO.cpp 真实单文件编译                       # exit=0, warning=0, error=0
+git diff --check                                  # passed
+check_changed_code.py --base origin/master        # checked_files=1 errors=0 warnings=0
+```
+
+先前的轻量函数范围扫描未按 NLOC/CCN 的正式口径统计，不能用于判断历史
+`huge_method` 是否清零。后续以可复现的 Lizard 扫描和内部 AST 工具为准；该结论不会影响
+本轮已完成的职责拆分与编译验证。
+
+# Stateful read footprint 计算拆分（2026-09-07）
+
+本轮将 `computeSafeStatefulReadProof` 中 physical footprint 的 lanes/arity 合同与乘法
+溢出检查抽取为 `getPhysicalReadFootprintElements`。stateful proof 主体继续负责静态
+memref、offset range、32-byte remainder、envelope 构造及包含关系判断；错误文本、区间
+边界和 `VMIMemorySafeReadProof` 字段语义保持不变。
+
+本轮验证：
+
+```text
+VMIToVPTO.cpp 真实单文件编译                       # exit=0, warning=0, error=0
+git diff --check                                  # passed
+check_changed_code.py --base origin/master        # checked_files=1 errors=0 warnings=0
+```
+
+# TruncF physical narrowing plan 与路由拆分（2026-09-07）
+
+本轮按 conversion 族的统一范式继续处理 `OneToNVMITruncFOpPattern`：
+`TruncFNarrowingPlan`/`buildNarrowingPlan` 负责 width relation、part token、result lane
+stride 和 physical arity 合同；`tryLowerSameWidthTrunc` 与
+`tryLowerDenseLaneStrideTrunc` 分别消费各自的完整 fast path；
+`lowerNonGroupSlotTrunc` 只负责编排 group-slot 排除、fast path 尝试和 narrow fallback。
+这保留了 same-width、dense lane-stride、factor=2/4 的优先级、rounding/saturate 属性、
+packed bf16x2 view、诊断及 flat replacement 语义。
+
+本轮验证：
+
+```text
+VMIToVPTO.cpp 真实单文件编译                       # exit=0, warning=0, error=0
+vmi_to_vpto_truncf_bf16x2_d4_packed4.pto           # exit=0
+git diff --check                                  # passed
+check_changed_code.py --base origin/master        # checked_files=1 errors=0 warnings=0
+```
+
+Lizard（`--length 50 --CCN 20`）复扫后，TruncF 的
+`lowerNonGroupSlotTrunc` 已不再命中该工具的 NLOC/CCN 告警；TruncI 保留其不同的
+NOSAT carrier 与 `s32 -> s8` alias 语义，将在同一 conversion 族的下一阶段单独整理。
+
+# TruncI physical plan 与 alias plan 拆分（2026-09-07）
+
+本轮继续处理 TruncI 的独立 physical 语义。`TruncIPhysicalPlan`/`buildPhysicalPlan`
+集中负责 uniform type、width factor、dense lane-stride legality 和 saturate 属性；
+`TruncIAliasPlan`/`materializeS32ToS8Alias` 集中负责 `s32 -> s8` 的 ui32/ui8 bit-pattern
+carrier；`getFactorTruncParts` 集中负责 factor=2/4 与 physical arity 合同。
+`lowerNonGroupSlotTrunc` 现在只按 NOSAT carrier、dense conversion、factor conversion
+选择消费计划。原有 alias 重写顺序、`finalizeResults` 回转、NOSAT 直通、part token、诊断
+和失败传播保持不变。
+
+本轮验证：
+
+```text
+VMIToVPTO.cpp 真实单文件编译                       # exit=0, warning=0, error=0
+git diff --check                                  # passed
+check_changed_code.py --base origin/master        # checked_files=1 errors=0 warnings=0
+```
+
+Lizard（`--length 50 --CCN 20`）复扫后，TruncF/TruncI 的两个
+`lowerNonGroupSlotTrunc` 均已不再命中。三个已有 TruncI/整数转换 lit 输入均在旧
+`pto-test-opt` 的 pack/unpack physicalization invariant 前置处终止，未执行到本轮 helper，
+因此没有将它们标记为本轮功能回归通过。
+
+# ExtI 输入与 layout 路由拆分（2026-09-07）
+
+本轮完成 conversion 族 ExtI 的入口分层。`ExtensionLoweringInput`/
+`getLoweringInput` 集中完成 VMI/physical type、source parts、converted result types 和
+layout 的输入合同；`lowerGroupSlotByLayout` 保留 compact carrier unpack 与 legacy vcvt 的
+选择；`lowerNonGroupSlotByLayout` 负责统一 result vreg type 与 physical extension lowering。
+入口仅做输入获取和 group-slot 分派。dense group-slot 的 slots、lane stride、width factor、
+signedness，legacy fallback 的条件、指令发射、结果顺序和诊断均保持不变。
+
+本轮验证：
+
+```text
+VMIToVPTO.cpp 真实单文件编译                               # exit=0, warning=0, error=0
+vmi_to_vpto_reduce_extended.pto                             # exit=0
+vmi_to_vpto_group_slot_integer_extension_matrix.pto         # exit=0
+vmi_to_vpto_group_slot_integer_unpack.pto                   # exit=0
+git diff --check                                            # passed
+check_changed_code.py --base origin/master                  # checked_files=1 errors=0 warnings=0
+```
+
+Lizard（`--length 50 --CCN 20`）复扫后，`ExtI::matchAndRewrite` 已不再命中。
+
+# ExtF factor contract 与 physical lowering 拆分（2026-09-07）
+
+本轮将 ExtF 的物理 extension 路径按稳定合同划分。`ExtFFactorPlan`/
+`buildFactorPlan` 集中处理源/结果宽度 factor、physical arity 与结果 layout 的关系，
+`createSeedMask` 集中处理 seed mask 的 materialization；`lowerPhysicalExtF` 只消费已经
+验证的 factor plan 发射转换。没有将 float extension 与整数 extension 强行泛化：两者的
+signedness、旧指令 fallback 和 carrier 语义不同，只复用了相同的“先建合同，再分 layout
+路由，最后逐 part 发射”边界。
+
+本轮使用现有编译命令更新了 `VMIToVPTO.cpp` 对象文件，编译日志为空；由于该次 shell
+执行超时后未能可靠取得直接 exit status，未将它记为独立 `exit=0` 证据。后续的全文件真实
+单文件编译已覆盖包含该修改的当前源码并返回 `exit=0`、`warning=0`、`error=0`。
+Lizard（`--length 50 --CCN 20`）复扫后，`ExtF::lowerPhysicalExtF` 不再命中。
+
+# Memory/store shape contract 收敛（2026-09-07）
+
+本轮开始按 memory/store 语义族统一收敛 shape 合同，而不是逐个 lowering 入口压缩。
+普通 `vstore` 的 `checkSupportedStoreShape` 现在只编排 write access plan、maskable
+element、layout support 与 `checkStorePhysicalCoverage`；后者独立负责 dense lane-stride、
+full physical chunk、contiguous tail 与可 materialize deinterleaved tail 的覆盖判定。
+
+`deinterleaved=2` group-store 将原先 3 个裸 output 参数的几何计算收敛为
+`Deinterleaved2GroupStoreShape`。`getDeinterleaved2StoreLanes` 验证 layout、full chunk
+与 `vstsx2 INTLV` 指令能力；`getDeinterleaved2GroupStoreGeometry` 验证 group row、part
+chunk 对称性并产出 `lanesPerPart/groupCount/chunksPerGroupPerPart`。保留兼容现有调用点的
+`checkDeinterleaved2GroupStoreChunkShape` 仅负责适配结果，所有原诊断文本和失败顺序保持。
+
+本轮验证：
+
+```text
+VMIToVPTO.cpp 真实单文件编译                       # exit=0, warning=0, error=0
+vmi_to_vpto_group_store_vsstb.pto                   # exit=0
+vmi_to_vpto_load_store_contiguous.pto               # exit=0
+vmi_to_vpto_store_deint_invalid.pto                 # 预期失败，原 VMI-UNSUPPORTED 文本保持
+git diff --check                                     # passed
+check_changed_code.py --base origin/master           # checked_files=1 errors=0 warnings=0
+```
+
+Lizard（`--length 50 --CCN 20`）复扫后，
+`checkSupportedStoreShape` 与 `checkDeinterleaved2GroupStoreChunkShape` 均不再命中。
+
+# Expand-load runtime-mask 合同分层（2026-09-07）
+
+同一 memory 族中，`expand_load` 的 runtime-mask 路径原来在一个检查函数内混合了
+`vgather2_bc` 指针/32-bit/b32 ISA 前提、result/passthru/mask 的 one-part arity 合同，以及
+三者 full physical chunk 要求。本轮将后两类分别抽为
+`checkExpandLoadRuntimeArity` 与 `checkExpandLoadRuntimeFullChunks`，入口保留 source 指针、
+element/mask ISA 前提及原有 all-active fallback 诊断，并按原顺序调用各合同。
+
+本轮验证：
+
+```text
+VMIToVPTO.cpp 真实单文件编译                             # exit=0, warning=0, error=0
+vmi_to_vpto_expand_load_runtime_mask.pto                  # exit=0
+vmi_to_vpto_expand_load_all_active.pto                    # exit=0
+vmi_to_vpto_expand_load_partial_mask_invalid.pto          # 预期失败，one-chunk 诊断保持
+git diff --check                                           # passed
+```
+
+Lizard（`--length 50 --CCN 20`）复扫后，
+`checkSupportedExpandLoadRuntimePath` 不再命中。
+
+# Static/stateful read proof facts 收敛（2026-09-07）
+
+本轮继续按 memory access plan 的证明层整改。static full-read 与 stateful-read 原先都在 proof
+主体里重复检查 element byte-addressability；现统一为 `getByteAddressableElementSize`。
+`VMIStaticReadContract`/`getStaticReadContract` 收集 static memref element count、非负常量
+offset、contiguous identity lane map 和 element bytes；`VMIStatefulReadContract`/
+`getStatefulReadContract` 收集 allocation、有限 offset range、element bytes、fixed 32B
+remainder 和 physical footprint。两个 proof 主体只构造对应 envelope、写入 proof 并作最终
+包含关系判定。
+
+这不是把 proof 的失败处理藏在 context 内：所有 contract helper 仍通过原有 reason 文本返回，
+proof 保持 `proven/reason/envelope/laneAddressMap` 的写入时机和算术边界，因而不会改变
+aligned full read 与 unaligned stateful read 的合法性。
+
+本轮验证：
+
+```text
+VMIToVPTO.cpp 真实单文件编译                                      # exit=0, warning=0, error=0
+vmi_to_vpto_load_store_contiguous.pto                              # exit=0
+vmi_to_vpto_expand_load_all_active.pto                             # exit=0
+vmi_to_vpto_expand_load_all_active_negative_offset_invalid.pto     # 预期失败
+git diff --check                                                    # passed
+```
+
+Lizard（`--length 50 --CCN 20`）复扫后，`computeSafeFullReadProof` 和
+`computeSafeStatefulReadProof` 均不再命中。
+
+# Store lowering 输入计划与发射路由拆分（2026-09-07）
+
+本轮完成普通 store 与 interleave-store 两个 lowering 入口的同层职责收敛。
+`StoreLoweringInput`/`getLoweringInput` 统一承载 converted destination/offset、value parts、
+VMI value type 和已验证的 `StorePhysicalPlan`；`lowerByPhysicalPlan` 保持原有的
+lane-stride -> deinterleaved direct `vstsx2` -> materialize-contiguous -> aligned/stateful stream
+优先级。`InterleaveStoreLoweringInput` 同样集中 source operands、INTLV token、lane width 和
+low/high part arity；`lowerByAddressPlan` 则只根据 direct-vs-stream 地址计划逐 chunk 发射
+`vstsx2` 或 `vintlv + vstus` stream。
+
+两条路径没有被合并成一个泛型 store emitter：普通 store 的 value layout materialization、tail
+mask 与 deinterleaved fast path，和 interleave-store 的 pair packet 语义不同。此次仅收敛共同的
+输入合同和“计划后发射”的架构层，保留原指令选择、stream advances、erase 时机与失败诊断。
+
+本轮验证：
+
+```text
+VMIToVPTO.cpp 真实单文件编译                       # exit=0, warning=0, error=0
+vmi_to_vpto_load_store_contiguous.pto               # exit=0
+vmi_interleaved_memory_ops.pto                      # exit=0
+git diff --check                                     # passed
+check_changed_code.py --base origin/master           # checked_files=1 errors=0 warnings=0
+```
+
+Lizard（`--length 50 --CCN 20`）复扫后，`VMIStoreOp::matchAndRewrite` 与
+`VMIInterleaveStoreOp::matchAndRewrite` 均不再命中。
+
+# Deinterleave-load 输入与 address-plan 路由拆分（2026-09-07）
+
+`DeinterleaveLoadLoweringInput`/`getLoweringInput` 将 converted source/offset、low/high
+physical result types、DINTLV token、lane width 及 low VMI type 收敛为一份输入合同；
+`lowerByAddressPlan` 只判断 direct `vldsx2` 是否满足地址对齐证明，或改走保留 align state 的
+`vldus + vdintlv` 流。两种发射路径的 low/high 结果顺序、每轮 advance 及结果 replacement
+保持不变。
+
+本轮验证：
+
+```text
+vmi_to_vpto_load_deint.pto              # 依 RUN pipeline 加 -vmi-lower-unified-to-legacy，exit=0
+vmi_to_vpto_load_deint_multichunk.pto   # 同上，exit=0
+git diff --check                         # passed
+check_changed_code.py                    # checked_files=1 errors=0 warnings=0
+```
+
+# Group-broadcast selector context 与 slots=1 merge 拆分（2026-09-07）
+
+group broadcast 中，`GroupBroadcastSelectorMetadata`/
+`getGroupBroadcastSelectorMetadata` 负责 source slots/lane stride、selector kind/period 及
+power-of-two ramp 合同；`createGroupBroadcastSelectorContext` 只 materialize index carrier 和
+all-mask。slots=1 fallback 另将 physical-lane-to-source mapping 与
+`materializeSlots1GroupBroadcastMerge` 的 splat/mask/select 发射分离。该拆分保留 selector
+cache、shared ramp、layout-table 映射验证和 chunk 内 source merge 顺序。
+
+本轮验证：
+
+```text
+VMIToVPTO.cpp 真实单文件编译                                      # exit=0, warning=0, error=0
+vmi_layout_assignment_group_broadcast_load_e2b_b16.pto             # exit=0
+vmi_to_vpto_group_broadcast_load_e2b_b16_stride_invalid.pto        # 预期 VMI-UNSUPPORTED
+git diff --check                                                    # passed
+check_changed_code.py --base origin/master                          # checked_files=1 errors=0 warnings=0
+```
+
+Lizard（`--length 50 --CCN 20`）复扫后，`DeinterleaveLoadOp::matchAndRewrite`、
+`materializeSlots1GroupBroadcastChunk` 与 `createGroupBroadcastLoweringContext` 均不再命中。
+
+# Interleave lowering 分类计划拆分（2026-09-07）
+
+`classifyInterleaveLowering` 原先同时判断 lane-stride、unit-stride contiguous 和 zero-copy
+factor 关系。本轮将三个可判定事实分别收敛到
+`hasLaneStrideInterleaveLayout`、`hasUnitStrideContiguousInterleaveLayout` 和
+`getZeroCopyInterleavePlan`；分类函数只按优先级返回 `InterleaveLoweringPlan`。Vintlv 与
+Vdintlv 的 factor 方向、layout equality 和失败诊断保持不变。
+
+# FPToUI conversion 输入合同拆分（2026-09-07）
+
+`FPToUILoweringInput`/`getLoweringInput` 集中处理 conversion contract、source/result
+physical parts、rounding/saturate 属性；`lowerConversion` 只按 same-width、widen、narrow
+三种物理路径分派。FPToUI 继续使用自身的 `VMIFpToUiContract`，没有与 signed 或 float
+extension 语义强行泛型化。
+
+# Control-flow switch operand segment 拆分与 Vmull data-layout 合同拆分（2026-09-07）
+
+`OneToNCFSwitchOpPattern` 将 case operand segment flattening 抽为
+`collectSwitchOperandSegments`，destination 变化判定独立为 `switchDestinationsChanged`；
+switch flag、default/case operand 顺序和 block conversion 语义保持不变。
+
+`validateVmullLogicalShape` 则把四个 data vreg 与 mask 的 layout、lane_stride、factor 和
+mask granularity 合同抽为 `validateVmullDataLayout`，logical element/lane 合同仍由原函数
+负责。这样没有把 vmull 的校验简化成“字段总结”，而是明确分开逻辑类型与物理布局约束。
+
+本轮验证：
+
+```text
+VMIToVPTO.cpp 真实单文件编译                       # exit=0, warning=0, error=0
+vmi_interleaved_memory_ops.pto                     # exit=0
+vmi_vcvt_fptoui_lower_to_legacy.pto                # exit=0
+vmi_layout_assignment_cf_switch.pto                # exit=0
+vmi_layout_assignment_scf_index_switch.pto         # exit=0
+git diff --check                                    # passed
+check_changed_code.py --base origin/master          # checked_files=1 errors=0 warnings=0
+```
+
+Lizard（`--length 50 --CCN 20`）复扫结果为空：当前文件不再有超过本轮扫描阈值的函数。
+
+# 最终可复现审计边界（2026-09-07）
+
+当前源码审计结果如下：
+
+```text
+Lizard --length 50 --CCN 20 --warnings_only          # 0 个函数命中
+check_changed_code.py --base origin/master           # errors=0 warnings=0
+git diff --check                                     # passed
+VMIToVPTO.cpp 单文件真实编译                        # exit=0，无 warning/error
+```
+
+文件私有实现均位于 anonymous namespace；未检出默认 lambda capture、诊断 suppression、
+`NOLINT` 或 `-Wno-*`。报告列出的参数泥团已按语义族收敛为 typed context/plan，包括 data/mask
+layout materialization、iota、memory read proof、store/interleave-store、group broadcast、
+conversion 和 interleave/vmull 合同。
+
+需要保留的工具边界：原始 `Data Clumps`、内部 `huge_method`/`huge_cyclomatic_complexity`
+口径来自外部 AST 分析器，本环境未提供该分析器；Lizard 结果只能证明当前配置下的 NLOC/CCN
+趋势，不能冒充内部报告的完全等价复扫。后续门禁若提供原分析器，应以本文件当前源码重新
+运行并补充其原始 finding/location，而不是仅依据增量检查器结果判定。
