@@ -115,6 +115,10 @@ Python `int` literals can initialize integer and floating-point fields; Python `
 
 Structs cannot be used as `@pto.jit`, `@pto.tileop`, or `@pto.simt` parameters, or as `pto.for_(...).carry(...)` state. A struct declared outside an ordinary `pto.for_` may be read and mutated inside that loop. Struct values also cannot be returned, yielded, or passed as function arguments from their declaring scope.
 
+An async DMA session is not a struct. It is its own opaque type,
+`pto.dma_session_type(engine)`, and only `pto.session_init` produces one. See
+[7.7 GM↔GM SDMA](07-data-movement-ops.md#77-gmgm-sdma-ptosession_init-and-ptosdma_gm_gm).
+
 ## 4.2 Vector register type
 
 Vector registers hold a fixed 256-byte payload. `pto.vreg(dtype)` infers the element count automatically:

@@ -1147,6 +1147,18 @@ FRAGMENT_FIXTURES = {
             {SNIPPET_PLACEHOLDER}
         """
     ),
+    "data_movement.async_comm": _fixture(
+        f"""
+        @pto.jit(target="a5", mode="explicit")
+        def data_movement_async_comm_probe(
+            src: pto.ptr(pto.i8, "gm"),
+            sess_gm: pto.ptr(pto.i8, "gm"),
+            dst: pto.ptr(pto.i8, "gm"),
+            nbytes: pto.i64,
+        ):
+            {SNIPPET_PLACEHOLDER}
+        """
+    ),
     "data_movement.low_precision_vector_memory": _fixture(
         f"""
         @pto.jit(target="a5", mode="explicit")

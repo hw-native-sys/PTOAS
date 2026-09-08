@@ -16,7 +16,7 @@ from ._diagnostics import (
     kernel_module_compile_error,
     kernel_module_launch_error,
 )
-from ._runtime.launch import LaunchHandle, parse_launch_spec
+from ._runtime.launch import LaunchHandle, build_and_load_native_library, parse_launch_spec
 from ._source_loader import SourceModuleLoader
 from ._tracing import ModuleArtifact, SignatureTracingRuntime
 
@@ -39,6 +39,9 @@ class CompiledKernelHandle(ModuleArtifact):
         self._constexpr_bindings = dict(constexpr_bindings)
         self._module_spec = module_spec
         self._kernel_signature = kernel_signature
+        # Set on the first native build; shared by every launch handle over this
+        # specialization and by native_library().
+        self._native_library_cache = None
 
     @property
     def specialization_key(self):
@@ -56,6 +59,26 @@ class CompiledKernelHandle(ModuleArtifact):
     def kernel_module_graph(self):
         """Return traced kernel-module import/dependency metadata for this build."""
         return self.build_metadata().get("kernel_module_graph")
+
+    def native_library(self):
+        """Build this specialization if needed and return the loaded shared library.
+
+        Launching does not need this. It is how a caller reaches a symbol that
+        ``@pto.jit(native_options={"host_sources": ...})`` compiled into the same
+        library, so host setup a kernel depends on can live in C++ next to the
+        kernel rather than in a separately built library.
+        """
+        if self._module_spec.entry is False:
+            raise kernel_module_launch_error(self._py_name)
+        library, _path, _symbol = build_and_load_native_library(self)
+        return library
+
+    def native_library_path(self):
+        """Build this specialization if needed and return its shared library path."""
+        if self._module_spec.entry is False:
+            raise kernel_module_launch_error(self._py_name)
+        _library, path, _symbol = build_and_load_native_library(self)
+        return path
 
     def __getitem__(self, launch_spec):
         if self._module_spec.entry is False:

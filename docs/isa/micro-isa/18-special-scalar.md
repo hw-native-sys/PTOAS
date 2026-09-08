@@ -316,8 +316,8 @@ execution scope and cache-control contract are different.
 - no `l1cache` or `l2cache` policy attribute is accepted;
 - the op must appear in an ordinary AICore entry function, outside both a
   `pto.simt_entry` function and `pto.section.simt`;
-- the supported target profile is A5 with CANN output version 9.0.0 official
-  or newer.
+- `pto.ld_dev` is supported on A2/A3 and on A5 with CANN output version 9.0.0
+  official or newer. `pto.st_dev` is A5-only with that same CANN profile.
 
 Both operations are non-atomic. They do not imply synchronization, memory
 ordering, cache invalidation, cache writeback, or an L2 cache policy. Programs

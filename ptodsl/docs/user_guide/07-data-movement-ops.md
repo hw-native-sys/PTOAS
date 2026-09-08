@@ -1,6 +1,6 @@
 # 7. Data Movement Operations
 
-This chapter covers every operation that moves data between memory spaces in PTODSL — tile-level transfers, DMA micro-instructions, vector loads and stores, and cube data movement. Operations are organized by abstraction level: tile ops for auto mode, DMA orchestration for explicit mode, vector memory ops on the SIMD unit, and cube memory ops on the Cube unit.
+This chapter covers every operation that moves data between memory spaces in PTODSL — tile-level transfers, DMA micro-instructions, vector loads and stores, cube data movement, and GM↔GM engine copies. Operations are organized by abstraction level: tile ops for auto mode, DMA orchestration for explicit mode, vector memory ops on the SIMD unit, cube memory ops on the Cube unit, and session-driven GM↔GM copies.
 
 ## 7.1 Tile-level movement: tile.load and tile.store
 
@@ -1599,4 +1599,150 @@ def vector_consumer(
     pto.tile.load(entry_part, b_tile)
     c2v.free(entry, split=0)
     pto.tile.store(b_tile, b_part)
+```
+
+## 7.7 GM↔GM SDMA: `pto.session_init` and `pto.sdma_gm_gm`
+
+These two operations copy a contiguous GM range through the SDMA engine. They
+are explicit-mode only, must sit in an ordinary AICore `@pto.jit` body, and are
+illegal inside `@pto.simt` or `pto.section.simt`. There is no stride or burst
+model: the transfer is one contiguous byte count.
+
+A transfer needs an engine connection, a queue, and a service class, and those
+travel together as a session. A session cannot be a kernel argument: the host
+writes a GM template and the kernel turns it into a session with
+`pto.session_init`. Template field order and widths are given in the ISA chapter
+[19. Async Communication](../../../../docs/isa/micro-isa/19-async-comm.md).
+
+A session is opaque -- nothing to declare beforehand, no field to read back --
+and its engine is part of its type, so `pto.sdma_gm_gm` accepts only an SDMA
+session. Two consequences replace things an open struct would have allowed:
+
+- **Retuning is per post.** `block_bytes` and `channel_idx` are arguments to
+  `pto.sdma_gm_gm`, which is how a multi-core launch gives each core its own
+  queue without the host naming the core.
+- **Where a transfer lands is your pointer arithmetic.** One session configures
+  every post that uses it, so a per-transfer offset has no place in it. Displace
+  `source` and `destination` with `pto.addptr` instead.
+
+The kick does not wait for the engine except when `soft_put=True` on A5. It
+returns a handle to wait on instead.
+
+#### `pto.dma_session_type(engine="sdma") -> DmaSessionTypeDescriptor`
+
+**Description**: The session type for `engine`, one of `"sdma"`, `"urma"`, or
+`"rdma"` -- that is, `!pto.dma_session<engine>`. This names the type; it does not
+build a session, which only `pto.session_init` does. The ops that post on `urma`
+and `rdma` do not exist yet.
+
+#### `pto.session_init(template_gm, *, engine="sdma") -> Value`
+
+**Description**: Return a session configured by the host-written GM template.
+Each core that runs this gets its own session, even when the template is shared
+and read-only.
+
+**Parameters**:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `template_gm` | `PtrType` in GM | Base of the host template |
+| `engine` | `str` | Engine the session drives; default `"sdma"` |
+
+**Returns**: A `!pto.dma_session<engine>` value.
+
+**Constraints**: `template_gm` must be a GM pointer. `engine` must be a known
+engine name. Explicit mode only.
+
+#### `pto.sdma_gm_gm(destination, source, nbytes, *, session, block_bytes=None, channel_idx=None, soft_put=False) -> Value`
+
+**Description**: Copy `nbytes` contiguous bytes from `source` to `destination`
+through the session. Either pointer may address peer memory; peer-ness is the
+numeric address, not a pointer attribute. Element types need not match; the
+transfer is counted in bytes.
+
+When `block_bytes` is omitted, the split size comes from the session. When
+`channel_idx` is omitted, the channel group comes from the session. `soft_put`
+is for a remote write on A5: that generation's engine does not perform a remote
+write, so this flag makes the copy complete before the call returns. A2/A3
+ignore it and still post to the engine.
+
+Without `soft_put`, returning from the kernel does not mean the destination is
+visible; the returned handle is what says when it is. The handle names the
+channel the post went to, and the channel is complete when it has drained -- so
+a wait is per channel, not per post: a later post on the same channel is waited
+for as well. That is never early, and posts on a channel retire in order. The
+test to apply to the handle is in `PTO/Support/AsyncSessionABI.h`; no operation
+consumes it for you yet.
+
+```text
+if soft_put and target is A5:
+  copy nbytes bytes from source to destination   # finished when the call returns
+  return a null handle
+else:
+  post the copy to the session's engine
+  return the channel it went to, without waiting
+```
+
+**Parameters**:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `destination` | `PtrType` in GM | Destination range |
+| `source` | `PtrType` in GM | Source range |
+| `nbytes` | `i64` | Contiguous byte count |
+| `session` | `!pto.dma_session<sdma>` | Required session, from `pto.session_init` |
+| `block_bytes` | static `int` or `None` | Split size in bytes; omitted uses the session value |
+| `channel_idx` | static `int` or `None` | Channel group for this kick; omitted uses the session value |
+| `soft_put` | `bool` | A5 remote-write completion path; default `False` |
+
+**Returns**: A `!pto.ptr<i64, gm>` handle to wait on, null when the copy is
+already complete.
+
+**Constraints**:
+
+- `destination` and `source` must be GM pointers.
+- `session` must be an SDMA session.
+- `block_bytes`, when present, must be a positive multiple of 64.
+- `channel_idx`, when present, must be in `[0, 39]`.
+- Explicit mode only; ordinary AICore entry, not SIMT.
+
+**Example (local copy):**
+
+<!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"data_movement.async_comm","symbol":"data_movement_async_comm_probe","compile":{}} -->
+```python
+sess = pto.session_init(sess_gm)
+record = pto.sdma_gm_gm(dst, src, nbytes, session=sess)
+```
+
+**Example (A5 remote write):**
+
+<!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"data_movement.async_comm","symbol":"data_movement_async_comm_probe","compile":{}} -->
+```python
+sess = pto.session_init(sess_gm)
+record = pto.sdma_gm_gm(dst, src, nbytes, session=sess, soft_put=True)
+```
+
+**Example (per-core channel):**
+
+<!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"data_movement.async_comm","symbol":"data_movement_async_comm_probe","compile":{}} -->
+```python
+sess = pto.session_init(sess_gm)
+# The channel group is per post, so a core picks its own without the host
+# naming it. It is a static int: the group is part of the posted instruction.
+record = pto.sdma_gm_gm(dst, src, nbytes, session=sess, channel_idx=0)
+```
+
+**Example (per-core slice of one buffer):**
+
+Every core loads the same template and moves its own window, so what differs
+between them is two pointers. The endpoints are `i8`, so an element offset is a
+byte offset.
+
+<!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"data_movement.async_comm","symbol":"data_movement_async_comm_probe","compile":{}} -->
+```python
+sess = pto.session_init(sess_gm)
+offset = pto.get_block_idx() * nbytes
+core_src = pto.addptr(src, offset)
+core_dst = pto.addptr(dst, offset)
+record = pto.sdma_gm_gm(core_dst, core_src, nbytes, session=sess)
 ```

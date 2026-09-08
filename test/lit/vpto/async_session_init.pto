@@ -1,0 +1,60 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-backend=vpto --emit-vpto --mlir-print-ir-before=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=ROUNDTRIP
+// RUN: ptoas --pto-arch=a3 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=EXPAND
+
+// A session cannot reach a kernel as an argument, so the host leaves its values
+// in GM and the kernel builds a session from them. What backs that session is a
+// struct, but the kernel never spells it out: the engine is in the type and the
+// fields are the expansion's business.
+
+module attributes {"pto.target_arch" = "a3", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @session_init_probe(%dst: !pto.ptr<f16, gm>,
+                                %src: !pto.ptr<f16, gm>,
+                                %tmpl: !pto.ptr<i8, gm>) attributes {pto.kernel} {
+    %nbytes = arith.constant 4096 : i64
+
+    %sess = pto.session_init %tmpl
+      : !pto.ptr<i8, gm> -> !pto.dma_session<sdma>
+
+    // The template is a default, not the whole story: a post may still pick a
+    // different channel group. That is an attribute on the post now, because a
+    // session is opaque and there is no field to overwrite.
+    %rec = pto.sdma_gm_gm %dst, %src, %nbytes session(%sess) {channel_idx = 2 : i64}
+      : !pto.ptr<f16, gm>, !pto.ptr<f16, gm>, i64,
+        !pto.dma_session<sdma> -> !pto.ptr<i64, gm>
+
+    return
+  }
+}
+
+// The session is opaque in the IR a user writes: no struct, and the engine is
+// part of the type rather than a field.
+// ROUNDTRIP: pto.session_init %{{.*}} : !pto.ptr<i8, gm> -> !pto.dma_session<sdma>
+// ROUNDTRIP: pto.sdma_gm_gm {{.*}}!pto.dma_session<sdma> -> !pto.ptr<i64, gm>
+
+// After expansion the struct exists, declared by the pass rather than by the
+// kernel. Slots in the template are eight bytes wide regardless of field width,
+// so the offsets run 0, 8, 16 ... up to the tenth field at 72, and a narrow
+// field is read at the base of its slot rather than packed against its
+// neighbour.
+//
+// The slot offsets are checked before anything else because constants are
+// hoisted to the top of the function, which puts them ahead of the struct the
+// pass declares.
+// EXPAND-NOT: pto.session_init
+// EXPAND-DAG: arith.constant 8 : i64
+// EXPAND-DAG: arith.constant 16 : i64
+// EXPAND-DAG: arith.constant 72 : i64
+// EXPAND: pto.declare_struct
+
+// Field 0 is 64-bit and field 2 is 32-bit; both are read with ld_dev because a
+// comm kernel is an ordinary entry function, where ldg is not available.
+// EXPAND: pto.ld_dev %{{.*}} : !pto.ptr<i64, gm> -> i64
+// EXPAND: pto.struct_set %{{.*}}[0]

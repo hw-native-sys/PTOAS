@@ -5,7 +5,7 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-"""Data-movement ops: MTE transfers, mad, accumulator-store attributes."""
+"""Data-movement ops: MTE transfers, async GM copies, mad, accumulator-store attributes."""
 
 from functools import wraps
 import warnings
@@ -51,6 +51,8 @@ from ._types import (
     _normalize_address_space,
     _resolve,
     _strip_integer_signedness,
+    dma_session_type,
+    int64,
     mask_type,
     part_tensor_view_type,
     part_tensor_view_type_from_dims,
@@ -79,6 +81,9 @@ from ptoas.mlir.ir import (
     VectorType,
 )
 
+from ._ops_core import (
+    _require_struct_value,
+)
 from ._ops_common import (
     _coerce_i1,
     _coerce_i32,
@@ -527,6 +532,127 @@ def _require_pto_ptr_operand(value, *, context: str):
     except Exception as exc:
         raise TypeError(f"{context} expects PTO ptr operands, got {raw_value.type}") from exc
     return raw_value
+
+
+def _require_gm_ptr(ptr_value, *, context: str):
+    raw_ptr = unwrap_surface_value(ptr_value)
+    try:
+        ptr_type = _pto.PtrType(raw_ptr.type)
+    except Exception as exc:
+        raise TypeError(f"{context} requires a typed PTO pointer") from exc
+    gm_space = _pto.AddressSpaceAttr.get(_pto.AddressSpace.GM)
+    if ptr_type.memory_space != gm_space:
+        raise TypeError(f"{context} requires a GM pointer, got {raw_ptr.type}")
+    return raw_ptr
+
+
+def _require_sdma_session(session, *, op_name: str):
+    """Check ``session`` is one ``pto.session_init`` built for the SDMA engine."""
+    raw_session = unwrap_surface_value(session)
+    try:
+        session_type = _pto.DmaSessionType(raw_session.type)
+    except Exception as exc:
+        raise TypeError(
+            f"{op_name}: session must come from pto.session_init(...), "
+            f"got {raw_session.type}"
+        ) from exc
+    if session_type.engine != _pto.DmaEngine.Sdma:
+        raise TypeError(
+            f"{op_name}: session drives {raw_session.type}, but this op posts "
+            f"on SDMA"
+        )
+    return raw_session
+
+
+def _optional_static_i64_attr(
+    value,
+    *,
+    context: str,
+    minimum: int | None = None,
+    maximum: int | None = None,
+    alignment: int | None = None,
+):
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{context} expects a static int or None, got {value!r}")
+    if minimum is not None and value < minimum:
+        raise ValueError(f"{context} expects a value >= {minimum}, got {value}")
+    if maximum is not None and value > maximum:
+        raise ValueError(f"{context} expects a value <= {maximum}, got {value}")
+    if alignment is not None and value % alignment != 0:
+        raise ValueError(
+            f"{context} expects a multiple of {alignment} bytes, got {value}"
+        )
+    return IntegerAttr.get(IntegerType.get_signless(64), value)
+
+
+@_explicit_mode_only("pto.session_init(...)")
+def session_init(template_gm, *, engine="sdma"):
+    """Return a DMA session configured from the host-written GM template.
+
+    The session is opaque: what it holds is the expansion's business, so there
+    is nothing to declare beforehand and nothing to read back afterwards.
+    """
+    raw_template = _require_gm_ptr(template_gm, context="pto.session_init(...) template")
+    return wrap_surface_value(
+        _pto.SessionInitOp(
+            _resolve(dma_session_type(engine)), raw_template
+        ).result
+    )
+
+
+@_explicit_mode_only("pto.sdma_gm_gm(...)")
+def sdma_gm_gm(
+    destination,
+    source,
+    nbytes,
+    *,
+    session,
+    block_bytes=None,
+    channel_idx=None,
+    soft_put=False,
+):
+    """Kick a contiguous GM→GM copy through the session.
+
+    Returns the channel record to wait on. The kick does not block, so the copy
+    is not finished when this returns; the record is how a caller finds out that
+    it is. A soft-put copy is already done and gives back a null record.
+    """
+    if not isinstance(soft_put, bool):
+        raise TypeError("pto.sdma_gm_gm(...): soft_put expects a bool")
+    raw_dst = _require_gm_ptr(destination, context="pto.sdma_gm_gm(...) destination")
+    raw_src = _require_gm_ptr(source, context="pto.sdma_gm_gm(...) source")
+    raw_session = _require_sdma_session(session, op_name="pto.sdma_gm_gm(...)")
+    attrs = {}
+    block_bytes_attr = _optional_static_i64_attr(
+        block_bytes,
+        context="pto.sdma_gm_gm(...) block_bytes",
+        minimum=1,
+        alignment=64,
+    )
+    channel_idx_attr = _optional_static_i64_attr(
+        channel_idx,
+        context="pto.sdma_gm_gm(...) channel_idx",
+        minimum=0,
+        maximum=39,
+    )
+    if block_bytes_attr is not None:
+        attrs["block_bytes"] = block_bytes_attr
+    if channel_idx_attr is not None:
+        attrs["channel_idx"] = channel_idx_attr
+    if soft_put:
+        attrs["soft_put"] = UnitAttr.get()
+    return wrap_surface_value(
+        _pto.SdmaGmGmOp(
+            _resolve(ptr(int64, "gm")),
+            raw_dst,
+            raw_src,
+            _coerce_i64(nbytes, context="pto.sdma_gm_gm(...) nbytes"),
+            raw_session,
+            **attrs,
+        ).result
+    )
 
 
 @_explicit_mode_only("pto.mte_load(...)")

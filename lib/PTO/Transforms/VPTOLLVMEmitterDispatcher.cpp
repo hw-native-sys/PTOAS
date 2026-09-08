@@ -20,32 +20,37 @@ static bool usesCANN900Lowering(const VPTOEmissionOptions &options) {
          options.cannVersion >= CANNVersion::release(mlir::pto::kValue9, 0, 0);
 }
 
-static bool containsLdStDev(ModuleOp module) {
+static bool containsOp(ModuleOp module, bool wantLdDev, bool wantStDev) {
   bool found = false;
   module.walk([&](Operation *op) {
-    if (isa<PTOLdDevOp, PTOStDevOp>(op)) {
+    if ((wantLdDev && isa<PTOLdDevOp>(op)) ||
+        (wantStDev && isa<PTOStDevOp>(op))) {
       found = true;
     }
   });
   return found;
 }
 
+// ld_dev is required on A2/A3 for SDMA descriptor reads. st_dev is A5-only:
+// A2/A3 cannot use it to ring the SDMA doorbell, and stores through that path
+// are not reliable on that generation. Other non-c220 targets still need the
+// 9.0.0 official lowering; the 9.0.0-beta.1 intrinsic set has not been checked.
 static LogicalResult verifyLdStDevTarget(ModuleOp module,
                                          const VPTOEmissionOptions &options,
                                          llvm::raw_ostream &diagOS) {
-  if (!containsLdStDev(module) || usesCANN900Lowering(options)) {
+  const bool isC220 = options.march == "dav-c220-vec" ||
+                      options.march == "dav-c220-cube";
+  if (isC220 && containsOp(module, false, true)) {
+    diagOS << "VPTO LLVM emission failed: pto.st_dev is not supported on A2/A3\n";
+    return failure();
+  }
+  if (!containsOp(module, true, true) || isC220 ||
+      usesCANN900Lowering(options)) {
     return success();
   }
 
-  const bool isC220 = options.march == "dav-c220-vec" ||
-                      options.march == "dav-c220-cube";
-  if (isC220) {
-    diagOS << "VPTO LLVM emission failed: pto.ld_dev and pto.st_dev require "
-              "--pto-arch=a5\n";
-  } else {
-    diagOS << "VPTO LLVM emission failed: pto.ld_dev and pto.st_dev require "
-              "CANN 9.0.0 or newer official lowering\n";
-  }
+  diagOS << "VPTO LLVM emission failed: pto.ld_dev and pto.st_dev require "
+            "CANN 9.0.0 or newer official lowering\n";
   return failure();
 }
 

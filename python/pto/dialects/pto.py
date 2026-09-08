@@ -48,6 +48,8 @@ VMIVRegType = _pto_mod.VMIVRegType
 VMIMaskType = _pto_mod.VMIMaskType
 AlignType = _pto_mod.AlignType
 StructType = _export_optional_cext_symbol("StructType")
+DmaEngine = _export_optional_cext_symbol("DmaEngine")
+DmaSessionType = _export_optional_cext_symbol("DmaSessionType")
 AsyncSessionType = _pto_mod.AsyncSessionType
 AsyncEventType = _pto_mod.AsyncEventType
 PrefetchAsyncContextType = _export_optional_cext_symbol("PrefetchAsyncContextType")
@@ -372,6 +374,10 @@ __all__ = [
 
 if PrefetchAsyncContextType is not None:
     __all__.insert(__all__.index("HiF8Type"), "PrefetchAsyncContextType")
+if DmaSessionType is not None:
+    __all__.insert(__all__.index("AsyncSessionType"), "DmaSessionType")
+if DmaEngine is not None:
+    __all__.insert(__all__.index("AsyncSessionType"), "DmaEngine")
 
 # -----------------------------------------------------------------------------
 # Convenience wrappers for high-level sync to allow passing enums directly

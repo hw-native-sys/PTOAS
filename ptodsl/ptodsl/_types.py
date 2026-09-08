@@ -598,6 +598,47 @@ def struct_type(*field_types) -> _StructDescriptor:
     return _StructDescriptor(field_types)
 
 
+# Engines an async session can drive, as named in ``!pto.dma_session<...>``.
+_DMA_ENGINES = ("sdma", "urma", "rdma")
+
+
+class _DmaSessionDescriptor(_DType):
+    """Deferred ``!pto.dma_session<engine>`` type."""
+
+    def __init__(self, engine: str):
+        self._engine = engine
+
+    @property
+    def engine(self) -> str:
+        return self._engine
+
+    def resolve(self) -> Type:
+        session_type_cls = getattr(_pto, "DmaSessionType", None)
+        if session_type_cls is None:
+            raise TypeError(
+                "The current PTO Python bindings do not expose DmaSessionType. "
+                "Rebuild the PTO Python extension before using "
+                "pto.dma_session_type(...)."
+            )
+        engine_enum = getattr(_pto.DmaEngine, self._engine.capitalize())
+        return session_type_cls.get(engine=engine_enum)
+
+
+def dma_session_type(engine: str = "sdma") -> _DmaSessionDescriptor:
+    """Return the session type ``pto.session_init`` produces for ``engine``.
+
+    A session is opaque: what it holds is the expansion's business, and the only
+    way to get one is ``pto.session_init``. This exists to name the type, not to
+    build a session.
+    """
+    if engine not in _DMA_ENGINES:
+        raise ValueError(
+            f"pto.dma_session_type(...): unknown engine '{engine}'; "
+            f"known: {list(_DMA_ENGINES)}"
+        )
+    return _DmaSessionDescriptor(engine)
+
+
 def vmi_vreg_type(lanes: int, elem) -> _VMIVRegDescriptor:
     """Return a lazy descriptor for ``!pto.vmi.vreg<lanesxelem>``."""
     return _VMIVRegDescriptor(lanes, elem)
@@ -714,7 +755,7 @@ __all__ = [
     "si8", "si16", "si32", "si64",
     "ui8", "ui16", "ui32", "ui64",
     "index",
-    "ptr", "vreg_type", "vec_type", "mask_type", "struct_type",
+    "ptr", "vreg_type", "vec_type", "mask_type", "struct_type", "dma_session_type",
     "vmi_vreg_type", "vmi_mask_type",
     "tile_buf_type", "tensor_view_type", "tensor_view_type_from_dims",
     "part_tensor_view_type", "part_tensor_view_type_from_dims",

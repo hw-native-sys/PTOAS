@@ -575,6 +575,8 @@ from ._ops_mte import (  # noqa: F401
     mte_ub_l1,
     mte_ub_ub,
     raw_fill_l1,
+    sdma_gm_gm,
+    session_init,
     set_atomic_add,
     set_atomic_bf16,
     set_atomic_f16,
@@ -687,6 +689,7 @@ from ._ops_simt import (  # noqa: F401
 __all__ = [
     "const",
     "declare_struct", "struct_get", "struct_set",
+    "session_init", "sdma_gm_gm",
     "castptr", "addptr",
     "vlds", "vldas", "vldus", "vldsx2", "vsts", "vstsx2",
     "init_align",

@@ -13,7 +13,7 @@
 // RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/helper.pto -o %t/helper.o 2>&1 | FileCheck %s --check-prefix=HELPER
 // RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %t/policy.pto -o %t/policy.o 2>&1 | FileCheck %s --check-prefix=POLICY
 // RUN: not ptoas --pto-arch=a5 --cann-output-version=9.0.0-beta.1 --pto-backend=vpto --emit-vpto-llvm-ir %t/target.pto -o - 2>&1 | FileCheck %s --check-prefix=BETA
-// RUN: not ptoas --pto-arch=a3 --cann-output-version=9.0.0 --pto-backend=vpto --emit-vpto-llvm-ir %t/target.pto -o - 2>&1 | FileCheck %s --check-prefix=A3
+// RUN: not ptoas --pto-arch=a3 --pto-backend=vpto --emit-vpto-llvm-ir %t/a3_st_dev.pto -o - 2>&1 | FileCheck %s --check-prefix=A3
 
 // SIMT: 'pto.ld_dev' op must be outside pto.simt_entry functions and pto.section.simt
 // UB: 'pto.st_dev' op requires GM pointer
@@ -21,7 +21,7 @@
 // HELPER: 'pto.ld_dev' op requires an enclosing ordinary AICore entry function
 // POLICY: 'pto.ld_dev' op does not accept l1cache or l2cache policy attributes
 // BETA: pto.ld_dev and pto.st_dev require CANN 9.0.0 or newer official lowering
-// A3: pto.ld_dev and pto.st_dev require --pto-arch=a5
+// A3: pto.st_dev is not supported on A2/A3
 
 //--- simt.pto
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
@@ -67,6 +67,16 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
   func.func private @ordinary_helper(%gm: !pto.ptr<i32, gm>) {
     %c0 = arith.constant 0 : index
     %value = pto.ld_dev %gm[%c0] : !pto.ptr<i32, gm> -> i32
+    return
+  }
+}
+
+//--- a3_st_dev.pto
+module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @a3_st_dev(%gm: !pto.ptr<i32, gm>) attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %value = arith.constant 1 : i32
+    pto.st_dev %value, %gm[%c0] : !pto.ptr<i32, gm>, i32
     return
   }
 }

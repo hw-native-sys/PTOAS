@@ -17,6 +17,7 @@
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/IR/VPTOMemoryDist.h"
+#include "PTO/Support/AsyncSessionABI.h"
 #include "PTO/Support/CodeConstants.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -709,6 +710,88 @@ LogicalResult PTOStDevOp::verify() {
                              getValue().getType());
 }
 
+// A session operand needs no check here. Its engine is carried by
+// !pto.dma_session, so the ODS operand constraint already rejects another
+// engine's session, and the physical field layout is built by the wrapper
+// expansion out of PTO/Support/AsyncSessionABI.h rather than written by a
+// caller. Restating that layout as a verifier would only describe how the
+// expansion constructs it.
+
+static LogicalResult verifyAsyncTransferPtr(Operation *op, Type ptrType,
+                                            StringRef role) {
+  auto ptrTy = dyn_cast<PtrType>(ptrType);
+  if (!ptrTy)
+    return op->emitOpError() << role << " must be a !pto.ptr";
+  if (ptrTy.getMemorySpace().getAddressSpace() != AddressSpace::GM)
+    return op->emitOpError() << role << " must be a GM pointer";
+  return success();
+}
+
+LogicalResult SessionInitOp::verify() {
+  if (failed(verifyAsyncTransferPtr(getOperation(), getTemplateGm().getType(),
+                                    "template")))
+    return failure();
+
+  // The fill reads GM with pto.ld_dev, which a SIMT scope does not provide, and
+  // the session it fills is only usable by ops under the same restriction.
+  if (isInsideSimtExecutionScope(getOperation()))
+    return emitOpError()
+           << "must be outside pto.simt_entry functions and pto.section.simt";
+  auto funcOp = getOperation()->getParentOfType<func::FuncOp>();
+  if (!funcOp || !pto::isPTOEntryFunction(funcOp))
+    return emitOpError()
+           << "requires an enclosing ordinary AICore entry function";
+  return success();
+}
+
+LogicalResult SdmaGmGmOp::verify() {
+  if (failed(verifyAsyncTransferPtr(getOperation(), getDestination().getType(),
+                                    "destination")))
+    return failure();
+  if (failed(verifyAsyncTransferPtr(getOperation(), getSource().getType(),
+                                    "source")))
+    return failure();
+  if (failed(verifyAsyncTransferPtr(getOperation(), getCqRecord().getType(),
+                                    "completion record")))
+    return failure();
+
+  // A waiter reads the record as 64-bit words, so the pointer has to say so.
+  auto recordTy = cast<PtrType>(getCqRecord().getType());
+  auto recordElem = dyn_cast<IntegerType>(recordTy.getElementType());
+  if (!recordElem || recordElem.getWidth() != 64)
+    return emitOpError()
+           << "completion record must point at i64, but points at "
+           << recordTy.getElementType();
+
+  // The expansion posts to the queue with scalar GM stores and, on A5, rings the
+  // doorbell with pto.st_dev. None of that is legal under SIMT, so reject here
+  // rather than letting the expansion fail later with a less obvious diagnostic.
+  if (isInsideSimtExecutionScope(getOperation()))
+    return emitOpError()
+           << "must be outside pto.simt_entry functions and pto.section.simt";
+  auto funcOp = getOperation()->getParentOfType<func::FuncOp>();
+  if (!funcOp || !pto::isPTOEntryFunction(funcOp))
+    return emitOpError()
+           << "requires an enclosing ordinary AICore entry function";
+
+  if (auto blockBytes = getBlockBytes()) {
+    if (*blockBytes == 0)
+      return emitOpError() << "block_bytes must be positive";
+    if (*blockBytes % comm::workspace::kMinTransferBytes != 0)
+      return emitOpError() << "block_bytes must be a multiple of "
+                           << comm::workspace::kMinTransferBytes;
+  }
+
+  // Only the first kMaxChannels descriptors are filled in; a group past that
+  // reads whatever the allocation happened to contain.
+  if (auto channelIdx = getChannelIdx()) {
+    if (*channelIdx >= comm::workspace::kMaxChannels)
+      return emitOpError() << "channel_idx must be less than "
+                           << comm::workspace::kMaxChannels;
+  }
+  return success();
+}
+
 LogicalResult ShuffleIdxOp::verify() {
   return verifyShuffleSemanticControl(getOperation(), getIndex().getType(),
                                       getWidthAttr(), "index");
@@ -851,6 +934,26 @@ void PTOStDevOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   effects.emplace_back(MemoryEffects::Write::get(), &getPtrMutable());
+}
+
+void SessionInitOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  // The session is a result now, so the use-def edge to each post is what keeps
+  // this ahead of them; there is no session operand to mark written. A session
+  // nobody uses is genuinely dead and may be dropped.
+  effects.emplace_back(MemoryEffects::Read::get(), &getTemplateGmMutable());
+}
+
+void SdmaGmGmOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable());
+  effects.emplace_back(MemoryEffects::Write::get(), &getDestinationMutable());
+  // The queue tail in the channel descriptor is read and advanced, so two posts
+  // on one session must not be reordered or dropped.
+  effects.emplace_back(MemoryEffects::Read::get(), &getSessionMutable());
+  effects.emplace_back(MemoryEffects::Write::get(), &getSessionMutable());
 }
 
 template <typename OpTy>
