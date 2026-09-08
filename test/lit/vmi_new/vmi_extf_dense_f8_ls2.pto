@@ -21,9 +21,45 @@ module {
        -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
     return %r : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
   }
+
+  func.func @dense_f8e5m2_ls2_to_f32_d2(
+      %x: !pto.vmi.vreg<128xf8E5M2, #pto.vmi.layout<contiguous, lane_stride = 2>>)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> {
+    %r = pto.vmi.vcvt %x
+        : !pto.vmi.vreg<128xf8E5M2, #pto.vmi.layout<contiguous, lane_stride = 2>>
+       -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+    return %r : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+
+  func.func @hif8_ls2_to_f32_d2(
+      %x: !pto.vmi.vreg<128x!pto.hif8, #pto.vmi.layout<contiguous, lane_stride = 2>>)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> {
+    %r = pto.vmi.vcvt %x
+        : !pto.vmi.vreg<128x!pto.hif8, #pto.vmi.layout<contiguous, lane_stride = 2>>
+       -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+    return %r : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+  }
 }
 
 // CHECK-LABEL: func.func @dense_f8_ls2_to_f32_d2(
+// CHECK: pto.vcvt {{.*}} {part = "P0"}
+// CHECK: pto.vcvt {{.*}} {part = "P2"}
+// CHECK-NOT: part = "P1"
+// CHECK-NOT: part = "P3"
+// CHECK-NOT: pto.vmi.
+// CHECK-NOT: !pto.vmi.
+// CHECK-NOT: unrealized_conversion_cast
+
+// CHECK-LABEL: func.func @dense_f8e5m2_ls2_to_f32_d2(
+// CHECK: pto.vcvt {{.*}} {part = "P0"}
+// CHECK: pto.vcvt {{.*}} {part = "P2"}
+// CHECK-NOT: part = "P1"
+// CHECK-NOT: part = "P3"
+// CHECK-NOT: pto.vmi.
+// CHECK-NOT: !pto.vmi.
+// CHECK-NOT: unrealized_conversion_cast
+
+// CHECK-LABEL: func.func @hif8_ls2_to_f32_d2(
 // CHECK: pto.vcvt {{.*}} {part = "P0"}
 // CHECK: pto.vcvt {{.*}} {part = "P2"}
 // CHECK-NOT: part = "P1"

@@ -11348,22 +11348,24 @@ struct OneToNVMIExtFOpPattern : OneToNOpConversionPattern<VMIExtFOp> {
       static constexpr StringRef kPacked4Parts[] = {"P0", "P1", "P2", "P3"};
       static constexpr StringRef kPacked2Parts[] = {"P0", "P2"};
       static constexpr StringRef kPacked1Parts[] = {"P0"};
-      bool isDenseF8LaneStride2 =
-          pto::isPTOFloat8Type(sourceVMIType.getElementType()) &&
+      bool isDenseF8LikeLaneStride2 =
+          (pto::isPTOFloat8Type(sourceVMIType.getElementType()) ||
+           pto::isPTOHiFloat8Type(sourceVMIType.getElementType())) &&
           sourceLayout && sourceLayout.isContiguous() &&
           sourceLayout.getLaneStride() == 2 && resultLayout &&
           resultLayout.isDeinterleaved() && resultLayout.getFactor() == 2 &&
           resultTypes.size() == 2 * sourceParts.size();
       bool isPackedE2M1 =
           isa<pto::F4E2M1x2Type>(sourceVMIType.getElementType());
-      if (!isDenseF8LaneStride2 && !isPackedE2M1 &&
+      if (!isDenseF8LikeLaneStride2 && !isPackedE2M1 &&
           resultTypes.size() != 4 * sourceParts.size()) {
         return rewriter.notifyMatchFailure(
             op, "unsupported physical extf source/result width relation");
       }
-      if (isDenseF8LaneStride2) {
-        // UNPK_B8 places valid f8 bytes at even lanes.  P0/P2 select those
-        // bytes and preserve the two physical source chunks of the d2 result.
+      if (isDenseF8LikeLaneStride2) {
+        // UNPK_B8 places valid FP8/HiF8 bytes at even lanes.  P0/P2 select
+        // those bytes and preserve the two physical source chunks of the d2
+        // result.
         factor = 2;
         parts = kPacked2Parts;
       } else if (!isPackedE2M1) {
