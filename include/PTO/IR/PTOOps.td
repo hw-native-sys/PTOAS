@@ -861,6 +861,42 @@ def TStoreOp: PTO_TOp<"tstore", [
   }];
 }
 
+def TensorDumpOp : PTO_TOp<"tdump", [
+  OpPipeInterface,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Persistent tensor dump: write a TileBuf to a host-passed GM "
+                "buffer with a self-describing metadata header.";
+  let description = [{
+    VPTO-only debug op. Writes a 64-byte little-endian metadata header
+    (magic, version, element size/type, ndim, shape, valid_shape, data offset)
+    followed by the raw tile data (full tile shape, row-major) into the GM
+    destination, so the host can decode the dump without knowing the tensor
+    shape up front. Not supported by the EmitC backend.
+
+    DPS form:
+      pto.tdump ins(%tile_buf) outs(%partition_view)
+  }];
+
+  let arguments = (ins
+    PTODpsType:$src,
+    PTODpsType:$dst
+  );
+
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `ins` `(` $src `:` qualified(type($src)) `)`
+    `outs` `(` $dst `:` qualified(type($dst)) `)` attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_MTE3; }
+  }];
+}
+
 def TTransOp : PTO_TOp<"ttrans", [
   PTO_DpsInitOpInterface,
   OpPipeInterface,
@@ -3105,6 +3141,21 @@ def TrapOp : PTO_Op<"trap", [MicroOpInterface, SimtOpInterface]> {
   let arguments = (ins);
   let results = (outs);
   let assemblyFormat = "attr-dict";
+}
+
+def AssertOp : PTO_Op<"assert", [MicroOpInterface, SimtOpInterface,
+                                 MemoryEffects<[MemWrite]>]> {
+  let summary = "Assert: abort execution when a scalar i1 condition is false.";
+  let description = [{
+    Conditional device-side abort. If `condition` is false, execution traps.
+    The optional `message` attribute is only consumed by the EmitC backend
+    (printed by DEBUG_CHECK before the trap); the VPTO backend ignores it
+    because it has no device printf channel.
+    Format in IR: `pto.assert %cond {message = "..."} : i1`
+  }];
+  let arguments = (ins I1:$condition, OptionalAttr<StrAttr>:$message);
+  let results = (outs);
+  let assemblyFormat = "$condition attr-dict `:` type($condition)";
 }
 
 // ---- tile-world TOp version (with 't') ----

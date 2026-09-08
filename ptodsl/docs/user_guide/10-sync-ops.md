@@ -510,3 +510,28 @@ is not a Python exception and must not be replaced with Python `raise` or
 # higher-level assertion helper; trap itself is unconditional.
 pto.trap()
 ```
+
+## 10.8 Device-side conditional assert
+
+### `pto.assert_(cond, message=None)`
+
+**Description**: Traps when the scalar `i1` condition `cond` is false. This is
+the conditional form of `pto.trap()` for fail-fast invariant checks.
+
+`cond` may be a Python `bool`, a 0/1 integer, or an `i1` scalar (e.g. a
+comparison result). The optional `message` string is a diagnostic consumed
+only by the EmitC backend (printed before the trap via `DEBUG_CHECK`); the
+VPTO backend ignores it because the device has no printf channel.
+
+`pto.assert_` is a device operation emitted while the kernel is being traced.
+It must not be replaced with Python `assert`, which executes during host-side
+tracing instead of on the device.
+
+**Returns**: None. Execution continues only when `cond` is true.
+
+<!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"sync_ops.assert","symbol":"sync_ops_assert_probe","compile":{}} -->
+```python
+# Runtime predicate, e.g. a bounds check on the workitem id.
+cond = pto.get_tid_x() < pto.get_block_dim_x()
+pto.assert_(cond, "tid out of range")
+```

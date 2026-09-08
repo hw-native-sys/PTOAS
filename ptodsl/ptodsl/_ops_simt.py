@@ -618,6 +618,20 @@ def trap():
     _pto.TrapOp()
 
 
+def assert_(cond, message=None):
+    """``pto.assert_`` – trap when ``cond`` is false.
+
+    ``cond`` may be a Python ``bool``/0-1 integer or an i1 scalar. ``message``
+    is an optional diagnostic string consumed only by the EmitC backend.
+    """
+    raw_cond = unwrap_surface_value(
+        coerce_runtime_i1_value(cond, context="assert_(cond)"))
+    if message is None:
+        _pto.AssertOp(raw_cond)
+    else:
+        _pto.AssertOp(raw_cond, message=str(message))
+
+
 def _slot_attr_value(slot, *, context: str):
     if not isinstance(slot, int) or isinstance(slot, bool):
         raise TypeError(f"{context} expects a non-negative Python int slot")

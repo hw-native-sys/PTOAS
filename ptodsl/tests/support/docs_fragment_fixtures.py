@@ -1252,6 +1252,13 @@ FRAGMENT_FIXTURES = {
             {SNIPPET_PLACEHOLDER}
         """
     ),
+    "compute_ops.tdump": _fixture(
+        f"""
+        @pto.jit(target="a5")
+        def compute_ops_tdump_probe(out: pto.ptr(pto.f32, "gm")):
+            {SNIPPET_PLACEHOLDER}
+        """
+    ),
     "compute_ops.tile_window_matmul": _fixture(
         f"""
         @pto.jit(target="a5")
@@ -1358,6 +1365,13 @@ FRAGMENT_FIXTURES = {
         f"""
         @pto.jit(target="a5")
         def sync_ops_trap_probe():
+            {SNIPPET_PLACEHOLDER}
+        """
+    ),
+    "sync_ops.assert": _fixture(
+        f"""
+        @pto.jit(target="a5")
+        def sync_ops_assert_probe():
             {SNIPPET_PLACEHOLDER}
         """
     ),

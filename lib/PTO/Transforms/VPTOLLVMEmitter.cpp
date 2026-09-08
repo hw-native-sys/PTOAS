@@ -1093,7 +1093,8 @@ static void configureVPTOOpLoweringTarget(ConversionTarget &target,
                       pto::AtomicAddOp, pto::AtomicSubOp,
                       pto::AtomicMinOp, pto::AtomicMaxOp,
                       pto::AtomicAndOp, pto::AtomicOrOp,
-                      pto::AtomicXorOp, pto::TrapOp, pto::PrmtOp,
+                      pto::AtomicXorOp, pto::TrapOp, pto::AssertOp,
+                      pto::PrmtOp,
                       pto::MulhiOp, pto::MulI32ToI64Op, pto::SqrtOp,
                       pto::AbsFOp, pto::ExpOp, pto::LogOp, pto::CeilOp,
                       pto::FloorOp, pto::RintOp, pto::RoundOp, pto::FMinOp,
@@ -1202,7 +1203,7 @@ static void configureVPTOOpLoweringTarget(ConversionTarget &target,
   }
 
   target.markUnknownOpDynamicallyLegal([](Operation *op) {
-    return !isa<pto::TrapOp>(op);
+    return !isa<pto::TrapOp, pto::AssertOp, pto::TensorDumpOp>(op);
   });
 }
 

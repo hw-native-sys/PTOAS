@@ -12,6 +12,10 @@
 // Lowers pto.tadd/tsub/tmul/tdiv to pto.ub.vadd/vsub/vmul/vdiv on a3.
 // Uses the full CCE dispatch tree from TBinOp.hpp with all modes.
 //
+// Also lowers pto.tdump (VPTO-only persistent tensor dump) to a 64-byte
+// metadata header written via pto.stg followed by an mte_ub_gm data copy.
+// tdump lowering runs on every architecture, before the A2/A3-only phases.
+//
 //===----------------------------------------------------------------------===//
 
 #include "PTO/Support/CodeConstants.h"
@@ -244,14 +248,35 @@ struct LowerPTOToUBufOpsPass
     if (!mod) {
       return;
     }
-    auto archAttr = mod->getAttrOfType<StringAttr>("pto.target_arch");
-    if (!archAttr ||
-        (archAttr.getValue() != "a2" && archAttr.getValue() != "a3")) {
-      return;
-    }
 
     MLIRContext *ctx = &getContext();
     OpBuilder builder(ctx);
+
+    auto archAttr = mod->getAttrOfType<StringAttr>("pto.target_arch");
+    const bool isA2A3 =
+        archAttr &&
+        (archAttr.getValue() == "a2" || archAttr.getValue() == "a3");
+
+    // ---- pto.tdump → header stg + mte_ub_gm ----
+    // tdump is a VPTO-only debug op and is lowered on every architecture,
+    // before the A2/A3-only phases below. On A2/A3 the src alloc_tile carries
+    // its planned addr; on A5 the address is resolved later by
+    // FoldTileBufIntrinsics via pto.tile_buf_addr.
+    {
+      SmallVector<pto::TensorDumpOp> dumps;
+      func.walk([&](pto::TensorDumpOp op) { dumps.push_back(op); });
+      for (auto op : dumps) {
+        builder.setInsertionPoint(op);
+        if (failed(lowerTensorDump(op, builder, isA2A3))) {
+          signalPassFailure();
+          return;
+        }
+      }
+    }
+
+    if (!isA2A3) {
+      return;
+    }
 
     // A2/A3: consume planned addresses from PTOPlanMemory / PTOMaterializeTileHandles.
     // Each alloc_tile must carry a planned addr operand.
@@ -1875,6 +1900,145 @@ private:
     Value gmPtr = offsetGMPtrByBytes(loc, b, viewInfo->gmPtr, byteOff);
     return emitMteUbGm(loc, b, op.getSrc(), gmPtr, *viewInfo, elemTy,
                        llvm::ArrayRef(it->second.shape));
+  }
+
+  //===--------------------------------------------------------------------===//
+  // pto.tdump → 64-byte header (pto.stg) + mte_ub_gm data copy
+  //===--------------------------------------------------------------------===//
+
+  static FailureOr<DmaViewInfo> extractDumpViewInfo(pto::TensorDumpOp op) {
+    if (op.getDst().getDefiningOp<pto::PartitionViewOp>()) {
+      return extractDirectDmaViewInfo(op.getDst(), op.getOperation());
+    }
+    return extractDmaMemRefViewInfo(op.getLoc(), op.getDst(), op.getContext());
+  }
+
+  static uint32_t dumpElemTypeCode(Type elem) {
+    if (elem.isF16())
+      return 1;
+    if (elem.isBF16())
+      return 2;
+    if (elem.isF32())
+      return 3;
+    if (elem.isInteger(8))
+      return 4;
+    if (elem.isInteger(16))
+      return 5;
+    if (elem.isInteger(32))
+      return 6;
+    if (elem.isInteger(64))
+      return 7;
+    return 0;
+  }
+
+  void emitDumpHeaderWord(Location loc, OpBuilder &b, Value i32Ptr,
+                          int64_t wordIdx, int64_t val) {
+    Value v = b.create<arith::ConstantOp>(loc, b.getI32Type(),
+                                          b.getI32IntegerAttr(val));
+    Value off = idxc(wordIdx, loc, b);
+    b.create<pto::PTOStgOp>(loc, i32Ptr, off, v,
+                            /*l1cache=*/nullptr, /*l2cache=*/nullptr);
+  }
+
+  LogicalResult lowerTensorDump(pto::TensorDumpOp op, OpBuilder &b,
+                                bool isA2A3) {
+    Location loc = op.getLoc();
+    auto tileTy = cast<pto::TileBufType>(op.getSrc().getType());
+    Type elem = tileTy.getElementType();
+    unsigned elemSize = getElementSize(elem);
+    if (elemSize == 0) {
+      return failure();
+    }
+    auto shape = tileTy.getShape();
+    auto valid = tileTy.getValidShape();
+    if (shape.size() < mlir::pto::kValue2) {
+      return failure();
+    }
+
+    auto viewInfo = extractDumpViewInfo(op);
+    if (failed(viewInfo)) {
+      return failure();
+    }
+
+    Value byteOff = computeGMByteOffset(loc, b, *viewInfo, elemSize);
+    Value gmPtr = offsetGMPtrByBytes(loc, b, viewInfo->gmPtr, byteOff);
+
+    MLIRContext *ctx = b.getContext();
+    auto gmSpace = pto::AddressSpaceAttr::get(ctx, pto::AddressSpace::GM);
+
+    // 1. 64-byte little-endian metadata header, 16 x i32 at the buffer base.
+    //    Scalar GM stores are SIMT ops, so they are wrapped in a 1x1x1 SIMT
+    //    section that PTOOutlineSIMTSections turns into a blocking
+    //    simt_entry + simt_launch pair before LLVM emission.
+    auto i32PtrTy = pto::PtrType::get(ctx, b.getI32Type(), gmSpace);
+    Value i32Ptr = b.create<pto::CastPtrOp>(loc, i32PtrTy, gmPtr);
+    auto section = b.create<pto::SectionSimtOp>(
+        loc, b.getI32IntegerAttr(1), b.getI32IntegerAttr(1),
+        b.getI32IntegerAttr(1));
+    {
+      OpBuilder::InsertionGuard guard(b);
+      b.setInsertionPointToStart(&section.getBody().emplaceBlock());
+      emitDumpHeaderWord(loc, b, i32Ptr, 0, 0x50544450);  // magic "PTD0"
+      emitDumpHeaderWord(loc, b, i32Ptr, 1, 1);           // header version
+      emitDumpHeaderWord(loc, b, i32Ptr, 2, elemSize);    // bytes per element
+      emitDumpHeaderWord(loc, b, i32Ptr, 3, dumpElemTypeCode(elem));
+      emitDumpHeaderWord(loc, b, i32Ptr, 4, shape.size()); // ndim
+      emitDumpHeaderWord(loc, b, i32Ptr, 5, shape[0]);
+      emitDumpHeaderWord(loc, b, i32Ptr, 6, shape[1]);
+      auto validWord = [](int64_t dim) {
+        return dim < 0 ? 0xFFFFFFFF
+                       : static_cast<int64_t>(static_cast<uint64_t>(dim));
+      };
+      emitDumpHeaderWord(loc, b, i32Ptr, 7,
+                         valid.size() > 0 ? validWord(valid[0]) : 0);
+      emitDumpHeaderWord(loc, b, i32Ptr, 8,
+                         valid.size() > 1 ? validWord(valid[1]) : 0);
+      emitDumpHeaderWord(loc, b, i32Ptr, 9, 64); // data offset in bytes
+      for (int i = 10; i < 16; ++i) {
+        emitDumpHeaderWord(loc, b, i32Ptr, i, 0);
+      }
+    }
+
+    // 2. src UB pointer: on A2/A3 the alloc_tile carries the planned addr;
+    //    on A5 the address is resolved later by FoldTileBufIntrinsics via
+    //    pto.tile_buf_addr.
+    Value ubPtr;
+    if (isA2A3) {
+      if (auto alloc = op.getSrc().getDefiningOp<pto::AllocTileOp>()) {
+        if (alloc.getAddr()) {
+          auto vecPtrTy = pto::PtrType::get(
+              ctx, elem,
+              pto::AddressSpaceAttr::get(ctx, pto::AddressSpace::VEC));
+          ubPtr = b.create<pto::CastPtrOp>(loc, vecPtrTy, alloc.getAddr());
+        }
+      }
+    }
+    if (!ubPtr) {
+      if (isa<pto::PtrType>(op.getSrc().getType())) {
+        ubPtr = op.getSrc();
+      } else {
+        auto vecPtrTy = pto::PtrType::get(
+            ctx, elem, pto::AddressSpaceAttr::get(ctx, pto::AddressSpace::VEC));
+        ubPtr = b.create<pto::TileBufAddrOp>(loc, vecPtrTy, op.getSrc())
+                    .getDst();
+      }
+    }
+
+    // 3. raw data after the 64-byte header.
+    auto origPtrTy = cast<pto::PtrType>(gmPtr.getType());
+    auto bytePtrTy = pto::PtrType::get(ctx, b.getI8Type(),
+                                       origPtrTy.getMemorySpace());
+    Value bytePtr = b.create<pto::CastPtrOp>(loc, bytePtrTy, gmPtr);
+    Value shifted =
+        b.create<pto::AddPtrOp>(loc, bytePtrTy, bytePtr, idxc(64, loc, b));
+    Value dataPtr = b.create<pto::CastPtrOp>(loc, origPtrTy, shifted);
+
+    if (failed(emitMteUbGm(loc, b, ubPtr, dataPtr, *viewInfo, elem,
+                           llvm::ArrayRef(shape)))) {
+      return failure();
+    }
+    op.erase();
+    return success();
   }
 
   //===--------------------------------------------------------------------===//

@@ -1,0 +1,26 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details in the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See the License for the full text of the License.
+
+// pto.assert must lower to a condition-guarded trap before LLVM export.
+// The message attribute has no device printf channel on the VPTO backend
+// and is dropped by the lowering.
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s
+// RUN: ptoas --cann-output-version=9.0.0 --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @assert_vpto_llvm(%arg0: i1) attributes {pto.entry} {
+    pto.assert %arg0 {message = "bounds check"} : i1
+    return
+  }
+}
+
+// CHECK-DAG: declare void @llvm.hivm.TRAP()
+// CHECK-LABEL: define void @assert_vpto_llvm_mix_aiv
+// CHECK: xor i1 %{{.*}}, true
+// CHECK: br i1 %{{.*}}
+// CHECK: call void @llvm.hivm.TRAP()

@@ -12595,6 +12595,48 @@ struct PTOTrapOpToEmitC : public OpConversionPattern<pto::TrapOp> {
   }
 };
 
+// pto.assert -> DEBUG_CHECK(condition, "message")
+struct PTOAssertOpToEmitC : public OpConversionPattern<pto::AssertOp> {
+  using OpConversionPattern<pto::AssertOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::AssertOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    auto *ctx = rewriter.getContext();
+
+    std::string msg = op.getMessage() ? op.getMessage()->str()
+                                      : "pto.assert failed";
+    // Escape like PTOPrintOpToEmitC above.
+    std::string quoted = "\"";
+    for (char c : msg) {
+      if (c == '"' || c == '\\') {
+        quoted += '\\';
+      } else if (c == '\n') {
+        quoted += "\\n";
+      } else if (c == '\t') {
+        quoted += "\\t";
+      } else {
+        quoted += c;
+      }
+    }
+    quoted += "\"";
+
+    // args encodes the call-site order: the index 0 refers to operand #0
+    // (the condition), followed by the literal message string.
+    auto argsAttr = rewriter.getArrayAttr(
+        {IntegerAttr::get(IndexType::get(ctx), 0),
+         emitc::OpaqueAttr::get(ctx, quoted)});
+    rewriter.create<emitc::CallOpaqueOp>(
+        loc, TypeRange{}, "DEBUG_CHECK",
+        /*args=*/argsAttr,
+        /*templateArgs=*/ArrayAttr{},
+        /*operands=*/ValueRange{adaptor.getCondition()});
+
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 struct PTOAllocTileToEmitC
     : public OpConversionPattern<pto::AllocTileOp> {
   using OpConversionPattern::OpConversionPattern;
@@ -13839,6 +13881,7 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTOPrintToTPRINT>(typeConverter, ctx);
   patterns.add<PTOPrintOpToEmitC>(typeConverter, ctx);
   patterns.add<PTOTrapOpToEmitC>(typeConverter, ctx);
+  patterns.add<PTOAssertOpToEmitC>(typeConverter, ctx);
   patterns.add<
     PTOTMatmulBiasToTMATMUL_BIAS,
     PTOTMatmulMXToTMATMUL_MX,
@@ -13917,11 +13960,14 @@ struct EmitPTOManualPass
         bool needsEventIdArrayHelper = false;
         bool needsTRandomHelper = false;
         bool needsGlobalTensorDataHelper = false;
+        bool needsDebugHeader = false;
         mop.walk([&](Operation *op) {
           if (isa<mlir::pto::DeclareEventIdArrayOp>(op))
             needsEventIdArrayHelper = true;
           if (isa<mlir::pto::TRandomOp>(op))
             needsTRandomHelper = true;
+          if (isa<mlir::pto::AssertOp>(op))
+            needsDebugHeader = true;
           if (auto cmo = dyn_cast<mlir::pto::CmoCacheInvalidOp>(op)) {
             if (cmo.getAddr())
               needsGlobalTensorDataHelper = true;
@@ -13940,6 +13986,9 @@ struct EmitPTOManualPass
 	    builder.setInsertionPointToStart(mop.getBody());
 	    builder.create<emitc::IncludeOp>(
 	        loc, "pto/pto-inst.hpp", /*is_standard_include=*/false);
+    if (needsDebugHeader)
+      builder.create<emitc::IncludeOp>(
+          loc, "pto/common/debug.h", /*is_standard_include=*/false);
 	    builder.create<emitc::VerbatimOp>(
 	        loc, builder.getStringAttr("using namespace pto;"));
 

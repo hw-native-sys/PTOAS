@@ -4688,6 +4688,34 @@ LogicalResult TStoreOp::verify() {
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
+LogicalResult TensorDumpOp::verify() {
+  auto srcTile = dyn_cast<pto::TileBufType>(getSrc().getType());
+  auto dstPart = dyn_cast<pto::PartitionTensorViewType>(getDst().getType());
+  if (!srcTile)
+    return emitOpError("expects src to be !pto.tile_buf");
+  if (!dstPart)
+    return emitOpError("expects dst to be !pto.partition_tensor_view");
+
+  Type elem = srcTile.getElementType();
+  if (!(elem.isF16() || elem.isBF16() || elem.isF32() ||
+        elem.isInteger(8) || elem.isInteger(16) || elem.isInteger(32) ||
+        elem.isInteger(64))) {
+    return emitOpError(
+        "expects dumpable tile element type (f16/bf16/f32/i8/i16/i32/i64)");
+  }
+  auto space = getPTOMemorySpaceEnum(getSrc().getType());
+  if (!space || *space != pto::AddressSpace::VEC) {
+    return emitOpError("v1 expects a vec-space (UB) tile; "
+                       "mat/acc dumps are not yet supported");
+  }
+  for (auto [idx, dim] : llvm::enumerate(dstPart.getShape())) {
+    if (dim != ShapedType::kDynamic && dim <= 0) {
+      return emitOpError() << "expects dst shape[" << idx << "] to be positive";
+    }
+  }
+  return success();
+}
+
 LogicalResult pto::TAbsOp::verify() {
   Type srcTy = getSrc().getType();
   Type dstTy = getDst().getType();
@@ -18233,6 +18261,13 @@ void TStoreOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffe
   if (!preQuantRange.empty()) {
     addEffect(effects, &*preQuantRange.begin(), MemoryEffects::Read::get());
   }
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+}
+
+// === TensorDumpOp ===
+// Read: src, Write: dst (GM)
+void TensorDumpOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  addEffect(effects, &getSrcMutable(), MemoryEffects::Read::get());
   addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
 }
 

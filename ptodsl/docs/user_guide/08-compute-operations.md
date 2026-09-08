@@ -1729,6 +1729,39 @@ pto.tile.print(src_tile)
 pto.tile.print(src_tile, print_format="width10_precision6")
 ```
 
+### `pto.tile.dump(src, dst)`
+
+**Description**: Persistent tensor dump for post-mortem inspection. Writes the
+tile contents to the host-passed GM view `dst` as a 64-byte little-endian
+metadata header (magic, version, element size/type, ndim, shape, valid_shape,
+data offset) followed by the raw row-major data. This maps to `pto.tdump`.
+Unlike `pto.tile.print`, the dump survives kernel completion and the host
+decodes it from the GM buffer without knowing the shape up front. `tdump` is
+currently supported only by the VPTO backend.
+
+**Parameters**:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `src` | `Tile` | Source UB tile (loc=vec) to dump |
+| `dst` | `PartitionTensorView` | GM destination; header is written at the view base |
+
+**Constraints**:
+
+- v1 supports `loc=vec` tiles with dumpable element types
+  (`f16`, `bf16`, `f32`, `i8`, `i16`, `i32`, `i64`).
+- `tdump` is not supported by the EmitC backend; use `@pto.jit(..., backend="vpto")`.
+
+**Example**:
+
+<!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"compute_ops.tdump","symbol":"compute_ops_tdump_probe","compile":{}} -->
+```python
+view = pto.make_tensor_view(out, shape=[8, 16], strides=[16, 1])
+part = pto.partition_view(view, offsets=[0, 0], sizes=[8, 16])
+tile = pto.alloc_tile(shape=[8, 16], dtype=pto.f32)
+pto.tile.dump(tile, part)
+```
+
 ---
 
 ## 8.2 Vector compute (L3 — `@pto.tileop`)

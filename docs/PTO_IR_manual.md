@@ -10195,6 +10195,108 @@ trap(); // does not return
 pto.trap
 ```
 
+##### `pto.assert` - Conditional Abort
+
+**Summary:** Aborts execution when a scalar `i1` condition is false. A conditional form of `pto.trap` intended for fail-fast invariant checks.
+
+**Semantics:**
+
+```c
+if (!condition) {
+  trap(); // does not return
+}
+```
+
+**Arguments:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `condition` | `i1` | Scalar predicate; execution traps when it is false |
+| `message` | optional string attr | Diagnostic text. Consumed only by the EmitC backend (printed by `DEBUG_CHECK` before the trap); the VPTO backend ignores it because it has no device printf channel |
+
+**Results:** None.
+
+**Constraints & Verification:**
+
+- The condition must be a scalar `i1` (enforced by the ODS type constraint; no extra verifier).
+- The `MemoryEffects` trait marks the op as side-effecting so it is never CSE'd or DCE'd.
+
+**Hardware Mapping:**
+
+- VPTO backend: lowered to a negated condition (`xor`) guarding a conditional `call @llvm.hivm.TRAP()`.
+- EmitC backend: lowered to `DEBUG_CHECK(condition, message)` from `pto/common/debug.h`, which prints the message and traps.
+
+**Basic Example:**
+
+```mlir
+// Fail fast when the pointer is null.
+%is_null = arith.cmpi eq, %ptr, %zero : i32
+pto.assert %is_null {message = "null pointer"} : i1
+```
+
+##### `pto.tdump` - Persistent Tensor Dump
+
+**Summary:** Writes a TileBuf to a host-passed GM buffer as a self-describing
+dump: a 64-byte little-endian metadata header followed by the raw tile data.
+The host can decode the dump without knowing the tensor shape up front.
+VPTO backend only.
+
+**Semantics:**
+
+```c
+// Header (16 x u32, little-endian) at the buffer base, then row-major data.
+header[0] = 0x50544450;             // magic "PTD0"
+header[1] = 1;                      // header version
+header[2] = element size in bytes;
+header[3] = element type code;      // 1=f16 2=bf16 3=f32 4=i8 5=i16 6=i32 7=i64
+header[4] = ndim;                   // 2
+header[5..6] = shape[0..1];         // full tile shape
+header[7..8] = valid_shape[0..1];   // kDynamic encoded as 0xFFFFFFFF
+header[9] = 64;                     // data offset in bytes
+header[10..15] = 0;                 // reserved
+data = tile contents, full shape, row-major;
+```
+
+**Arguments:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `src` | `pto.tile_buf` (loc=vec) | UB tile whose contents are dumped |
+| `dst` | `pto.partition_tensor_view` | GM destination; the header is written at the view base |
+
+**Results:** None.
+
+**Constraints & Verification:**
+
+- v1 restricts `src` to vec-space (UB) tiles with dumpable element types
+  (f16/bf16/f32/i8/i16/i32/i64); MAT/ACC staging is not yet supported.
+- `dst` must be a GM `partition_tensor_view` with a unit innermost stride.
+- Supported by the VPTO backend only; the EmitC backend rejects `pto.tdump`.
+
+**Behavior:**
+
+- Runs on the MTE3 pipe; tile-level `set_flag`/`wait_flag` synchronization is
+  inserted automatically like `pto.tstore`.
+- The data copy reuses the tstore DMA chain (whole-burst `mte_ub_gm`
+  transfers), shifted by the 64-byte header.
+- No GM cache invalidation is issued (same visibility caveat as
+  `pto.tstore`); a host reader on real hardware may need an explicit CMO.
+
+**Hardware Mapping:**
+
+- Header: 16 scalar GM stores (`llvm.hivm.stg.cache.b32`).
+- Data: UB-to-GM DMA (`llvm.hivm.MOV.UB.TO.OUT.*`).
+
+**Basic Example:**
+
+```mlir
+// Dump the intermediate tile for post-mortem inspection.
+pto.tdump ins(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16,
+                    v_row=8, v_col=16, blayout=row_major, slayout=none_box,
+                    fractal=512, pad=0>)
+          outs(%part : !pto.partition_tensor_view<8x16xf32>)
+```
+
 ---
 
 ### 4.21 Communication Operations

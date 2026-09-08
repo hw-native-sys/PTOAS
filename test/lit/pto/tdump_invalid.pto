@@ -1,0 +1,33 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// v1 pto.tdump only accepts vec-space (UB) tiles as src.
+// RUN: not ptoas --pto-arch=a3 --pto-backend=vpto %s -o - 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @tdump_invalid(%out: !pto.ptr<f32, gm>) attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %tile = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %view = pto.make_tensor_view %out,
+                shape = [%c8, %c16], strides = [%c16, %c1]
+                {layout = #pto.layout<nd>}
+              : !pto.tensor_view<?x?xf32>
+    %part = pto.partition_view %view,
+                offsets = [%c0, %c0], sizes = [%c8, %c16]
+              : !pto.tensor_view<?x?xf32>
+                -> !pto.partition_tensor_view<8x16xf32>
+    pto.tdump ins(%tile : !pto.tile_buf<loc=mat, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%part : !pto.partition_tensor_view<8x16xf32>)
+    return
+  }
+}
+
+// CHECK: 'pto.tdump' op v1 expects a vec-space (UB) tile

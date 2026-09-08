@@ -29,6 +29,37 @@ private:
   LoweringState &state;
 };
 
+// pto.assert -> trap when the condition is false. The optional message
+// attribute is ignored here: the VPTO backend has no device printf channel.
+class LowerAssertOpPattern final : public OpConversionPattern<pto::AssertOp> {
+public:
+  explicit LowerAssertOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+      : OpConversionPattern<pto::AssertOp>(typeConverter, context), state(state) {}
+
+  LogicalResult matchAndRewrite(pto::AssertOp op, pto::AssertOp::Adaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    constexpr StringLiteral calleeName = "llvm.hivm.TRAP";
+    Location loc = op.getLoc();
+    Value trueVal = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getI1Type(), rewriter.getBoolAttr(true));
+    Value notCond =
+        rewriter.create<arith::XOrIOp>(loc, adaptor.getCondition(), trueVal);
+    auto ifOp = rewriter.create<scf::IfOp>(loc, notCond,
+                                           /*withElseRegion=*/false);
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPointToStart(ifOp.thenBlock());
+    rewriter.create<func::CallOp>(loc, calleeName, TypeRange{}, ValueRange{});
+
+    auto funcType = rewriter.getFunctionType({}, {});
+    state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+private:
+  LoweringState &state;
+};
+
 static LogicalResult appendVcvtImmediate(pto::VcvtOp op, StringRef name, std::optional<uint64_t> immediate,
                                          SmallVectorImpl<Value> &callArgs, SmallVectorImpl<Type> &argTypes,
                                          ConversionPatternRewriter &rewriter) {
@@ -1822,6 +1853,7 @@ static void populateVPTOSIMTAndScalarPatterns(VPTOTypeConverter &typeConverter, 
       LowerAtomicBinaryOpPattern<pto::AtomicSubOp>, LowerAtomicBinaryOpPattern<pto::AtomicMinOp>,
       LowerAtomicBinaryOpPattern<pto::AtomicMaxOp>, LowerAtomicBinaryOpPattern<pto::AtomicAndOp>,
       LowerAtomicBinaryOpPattern<pto::AtomicOrOp>, LowerAtomicBinaryOpPattern<pto::AtomicXorOp>, LowerTrapOpPattern,
+      LowerAssertOpPattern,
       LowerScalarIntrinsicOpPattern<pto::PrmtOp>, LowerMulhiOpPattern, LowerMulI32ToI64OpPattern, LowerSqrtOpPattern,
       LowerUnaryScalarMathOpPattern<pto::AbsFOp>, LowerUnaryScalarMathOpPattern<pto::ExpOp>,
       LowerUnaryScalarMathOpPattern<pto::LogOp>, LowerUnaryScalarMathOpPattern<pto::CeilOp>,

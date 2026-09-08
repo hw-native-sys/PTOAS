@@ -22,7 +22,7 @@ inline bool isTileLibExpandableOp(Operation *op) {
   }
   return !isa<TReshapeOp, TSyncOp, TAllocToAivOp, TAllocToAicOp,
               TPushToAivOp, TPushToAicOp, TPopFromAicOp, TPopFromAivOp,
-              TFreeFromAicOp, TFreeFromAivOp>(op);
+              TFreeFromAicOp, TFreeFromAivOp, TensorDumpOp>(op);
 }
 
 } // namespace mlir::pto
