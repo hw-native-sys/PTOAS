@@ -5404,6 +5404,14 @@ FailureOr<Value> createScalarOffsetConstant(Location loc, Type type,
                                             int64_t value,
                                             PatternRewriter &rewriter) {
   if (auto intType = dyn_cast<IntegerType>(type)) {
+    // arith.constant/arith.addi require signless integer types; unsigned
+    // VMI element bases (e.g. ui16 iota/gather index ramps) must be
+    // materialized as signless constants of the same width (bit-identical
+    // for the add used to advance iota chunk bases), or verification fails
+    // with "integer return type must be signless".
+    if (!intType.isSignless()) {
+      intType = rewriter.getIntegerType(intType.getWidth());
+    }
     return rewriter
         .create<arith::ConstantOp>(loc, IntegerAttr::get(intType, value))
         .getResult();
@@ -5429,6 +5437,30 @@ FailureOr<Value> createIotaChunkBase(Location loc, Value base,
     return failure();
 
   if (isa<IntegerType>(base.getType())) {
+    // arith.addi requires signless operands; a ui16 base (e.g. a gather
+    // index ramp) is advanced through a signless add on the same width —
+    // bit-identical for the modular iota chunk-base arithmetic.
+    if (auto baseIntType = dyn_cast<IntegerType>(base.getType());
+        baseIntType && !baseIntType.isSignless()) {
+      Type signless = rewriter.getIntegerType(baseIntType.getWidth());
+      Value signlessBase =
+          rewriter
+              .create<UnrealizedConversionCastOp>(loc, signless, base)
+              .getResult(0);
+      if (order == "DESC")
+        return rewriter
+            .create<UnrealizedConversionCastOp>(
+                loc, base.getType(),
+                rewriter.create<arith::SubIOp>(loc, signlessBase, *offset)
+                    .getResult())
+            .getResult(0);
+      return rewriter
+          .create<UnrealizedConversionCastOp>(
+              loc, base.getType(),
+              rewriter.create<arith::AddIOp>(loc, signlessBase, *offset)
+                  .getResult())
+          .getResult(0);
+    }
     if (order == "DESC")
       return rewriter.create<arith::SubIOp>(loc, base, *offset).getResult();
     return rewriter.create<arith::AddIOp>(loc, base, *offset).getResult();

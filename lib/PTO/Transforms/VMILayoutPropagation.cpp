@@ -384,12 +384,33 @@ public:
     FailureOr<SmallVector<VMIBitcastLayoutFact, mlir::pto::kValue4>> facts =
         supports.getBitcastLayoutFactsForLayout(sourceType, resultType, port,
                                                 changedLayout);
-    if (failed(facts) || facts->empty()) {
+    SmallVector<VMIBitcastLayoutFact, mlir::pto::kValue4> candidates;
+    if (succeeded(facts)) {
+      candidates.append(facts->begin(), facts->end());
+    }
+    // Opt-in soft preference: a `layout_hint = "contiguous"` (or
+    // "lane_stride_2") attribute on the bitcast (forwarded from
+    // vinterpret_cast) always adds its layout pair as a candidate relation.
+    // This only widens the relation set for this one op; the solver may
+    // still reject it if other constraints conflict.
+    if (auto hint = bitcast->getAttrOfType<StringAttr>("layout_hint")) {
+      VMILayoutAttr hintLayout;
+      if (hint.getValue() == "contiguous") {
+        hintLayout = VMILayoutAttr::getContiguous(op->getContext());
+      } else if (hint.getValue() == "lane_stride_2") {
+        hintLayout =
+            VMILayoutAttr::getContiguous(op->getContext(), /*laneStride=*/2);
+      }
+      if (hintLayout) {
+        candidates.push_back(VMIBitcastLayoutFact{hintLayout, hintLayout});
+      }
+    }
+    if (candidates.empty()) {
       return failure();
     }
 
     SmallVector<VMILayoutRelation, mlir::pto::kValue4> relations;
-    for (const VMIBitcastLayoutFact &fact : *facts) {
+    for (const VMIBitcastLayoutFact &fact : candidates) {
       relations.push_back(makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
           operandFact(bitcast.getSourceMutable(), fact.sourceLayout),
           valueFact(bitcast.getResult(), fact.resultLayout)}));

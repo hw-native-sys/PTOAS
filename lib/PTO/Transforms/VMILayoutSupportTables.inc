@@ -37,6 +37,10 @@ static constexpr EnsureLayoutPattern kEnsureLayoutPatterns[] = {
     {bits<64>(), N<128, 256>(), c(), d(4)},
     {bits<32>(), N<256>(), d(4), c()},
     {bits<64>(), N<128, 256>(), d(4), c()},
+    // Opt-in 128-lane f32 d(4)->contiguous conversion (layout_hint on the
+    // consumer bitcast makes this the preferred path for the 8->32-bit widen
+    // of a 128-element e4m3 load feeding a width-changing bitcast).
+    {bits<32>(), N<128>(), d(4), c()},
 
     {bits<32>(), N<256, 512>(), d(2), d(4)},
     {bits<64>(), N<128, 256>(), d(2), d(4)},

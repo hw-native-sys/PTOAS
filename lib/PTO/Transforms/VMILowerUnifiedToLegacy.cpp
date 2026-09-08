@@ -1192,6 +1192,12 @@ static void lowerInterpretCast(VMIVinterpretCastOp castOp,
                                            castOp.getResult().getType(),
                                            castOp.getSource())
                      .getResult();
+  // Opt-in layout hint: forwarded so the layout propagation pass can treat
+  // this width-changing bitcast as the hinted layout pair (soft preference,
+  // only consulted when the default table yields no relation).
+  if (auto hint = castOp->getAttrOfType<StringAttr>("layout_hint")) {
+    result.getDefiningOp()->setAttr("layout_hint", hint);
+  }
   castOp.getResult().replaceAllUsesWith(result);
   castOp.erase();
 }
