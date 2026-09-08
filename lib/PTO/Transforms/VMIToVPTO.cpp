@@ -11336,9 +11336,7 @@ struct OneToNVMIExtFOpPattern : OneToNOpConversionPattern<VMIExtFOp> {
     } else if (sourceBits == 8) {
       // Dense 8-bit sources (f8*/i8/ui8, and packed f4E1M2x2) keep the stock
       // factor-4 contract: every byte of a dense part is converted by exactly
-      // one of P0-P3.  A sub-byte part selection (factor < 4) would read the
-      // zero-fill gap lanes of an unpack-style distribution and silently emit
-      // wrong output -- the e4m3 "odd columns = 0" regression shape.
+      // one of P0-P3.
       //
       // Packed f4E2M1x2 selects parts by source layout:
       //   - ls(4) (UNPK4): valid bytes sit at lanes 0,4,8,...; P0 covers all
@@ -11350,13 +11348,25 @@ struct OneToNVMIExtFOpPattern : OneToNOpConversionPattern<VMIExtFOp> {
       static constexpr StringRef kPacked4Parts[] = {"P0", "P1", "P2", "P3"};
       static constexpr StringRef kPacked2Parts[] = {"P0", "P2"};
       static constexpr StringRef kPacked1Parts[] = {"P0"};
+      bool isDenseF8LaneStride2 =
+          pto::isPTOFloat8Type(sourceVMIType.getElementType()) &&
+          sourceLayout && sourceLayout.isContiguous() &&
+          sourceLayout.getLaneStride() == 2 && resultLayout &&
+          resultLayout.isDeinterleaved() && resultLayout.getFactor() == 2 &&
+          resultTypes.size() == 2 * sourceParts.size();
       bool isPackedE2M1 =
           isa<pto::F4E2M1x2Type>(sourceVMIType.getElementType());
-      if (!isPackedE2M1 && resultTypes.size() != 4 * sourceParts.size()) {
+      if (!isDenseF8LaneStride2 && !isPackedE2M1 &&
+          resultTypes.size() != 4 * sourceParts.size()) {
         return rewriter.notifyMatchFailure(
             op, "unsupported physical extf source/result width relation");
       }
-      if (!isPackedE2M1) {
+      if (isDenseF8LaneStride2) {
+        // UNPK_B8 places valid f8 bytes at even lanes.  P0/P2 select those
+        // bytes and preserve the two physical source chunks of the d2 result.
+        factor = 2;
+        parts = kPacked2Parts;
+      } else if (!isPackedE2M1) {
         factor = 4;
         parts = kPacked4Parts;
       } else if (sourceLayout && sourceLayout.isContiguous() &&
