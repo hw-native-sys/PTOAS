@@ -46,6 +46,14 @@ def PTO_ScalingPtrType : Type<
   "scaling pointer type">;
 def PTO_BufferLikeType : AnyTypeOf<[AnyMemRef, PTO_BufferType],
                                     "memref or pointer-like buffer type">;
+// A session whose engine parameter is SDMA. Stating the engine in the operand
+// constraint is what keeps another engine's session out of an SDMA kick without
+// a verifier reading the engine back out of a field.
+def PTO_SdmaSessionType : Type<
+  CPred<"::llvm::isa<::mlir::pto::DmaSessionType>($_self) && "
+        "::llvm::cast<::mlir::pto::DmaSessionType>($_self).getEngine() == "
+        "::mlir::pto::DmaEngine::Sdma">,
+  "SDMA async session type">;
 def PTO_AccStorePayloadType : AnyTypeOf<[AnySignlessInteger, AnyFloat, PTO_ScalingPtrType],
                                         "signless integer, float scalar, or scaling pointer">;
 def PTO_AccStoreClipPayloadType : AnyTypeOf<[AnyInteger, AnyFloat],
@@ -3819,6 +3827,119 @@ def PTO_VsturOp : PTO_VectorMicroOp<"vstur", [
 
   let assemblyFormat = [{
     $align_in `,` $value `,` $base `,` $mode attr-dict `:` type($align_in) `,` type($value) `,` type($base) `->` type($align_out)
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// Async communication
+//===----------------------------------------------------------------------===//
+//
+// Asynchronous GM->GM transfers driven by a DMA engine. The kick does not block
+// the scalar stream; ordering against the transfer is the caller's job.
+//
+// A session value is the config half of an async session. Its engine is carried
+// by the type, `!pto.dma_session<sdma>`, and its physical layout is not part of
+// this contract: the struct that PTO/Support/AsyncSessionABI.h describes is
+// materialized during wrapper expansion. The mutable half (queue rings, post
+// ids) stays in the workspace the session's context field points at, because it
+// must survive across kernel launches.
+
+def SessionInitOp : PTO_MicroOp<"session_init", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let summary = "Build an async session from a template in GM.";
+  let description = [{
+    Read the session the host prepared at `template_gm` and produce a session
+    value for this core.
+
+    The result is opaque. What backs it is a per-core copy of the template's
+    fields, which the expansion materializes; a caller cannot address those
+    fields and does not need to know how many there are.
+
+    The template holds one 8-byte slot per field, indexed by the same field
+    enumeration the expansion reads it with, so there is no second list of
+    fields to keep in step. Narrow fields occupy the low half of their slot.
+
+    Each core builds its own session, so a session is per-core state even though
+    the template it came from is shared and read-only.
+
+    The engine comes from the result type rather than from the template, so a
+    template written for one engine cannot be silently accepted by another
+    engine's kick.
+  }];
+
+  let arguments = (ins
+    PTO_BufferType:$template_gm
+  );
+
+  let results = (outs DmaSessionType:$session);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $template_gm attr-dict
+      `:` type($template_gm) `->` qualified(type($session))
+  }];
+}
+
+def SdmaGmGmOp : PTO_MicroOp<"sdma_gm_gm", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let summary = "Kick an asynchronous SDMA copy between two GM ranges.";
+  let description = [{
+    Post a transfer of `nbytes` contiguous bytes from `src` to `dst` to the SDMA
+    engine and continue without waiting. Either side may name peer memory.
+
+    There is no stride or burst model: the transfer is one contiguous range.
+    Splitting it across engine posts is driven by the session's block size, so a
+    caller that wants a specific split sets `block_bytes`.
+
+    `channel_idx` selects a channel group other than the session default, which
+    is the block index. Two cores sharing a group would corrupt each other's
+    queue rings, so an explicit index has to be chosen with that in mind.
+
+    Service class is not a per-post knob: it is fixed for the session when the
+    host builds it, since it describes how these transfers share the memory
+    system rather than what any one of them does.
+
+    The op reads the channel descriptors and advances the queue tail in the
+    workspace, then rings the engine doorbell.
+
+    The result is this channel's record in the session's channel table, which is
+    what a caller waits on. It is not a completion in itself: the kick does not
+    block. The record names the addresses of both the live head, which the
+    engine advances as it retires, and the live tail, which this post advanced,
+    so a waiter reads the two through it and finds the channel drained when they
+    agree. `PTO/Support/AsyncSessionABI.h` spells that out.
+
+    Waiting is therefore per channel, not per post: a later post on the same
+    channel pushes the tail out again, so waiting on the earlier one waits for
+    the later one as well. That is never early, and posts on a channel retire in
+    order.
+
+    The A5 soft-put form copies synchronously rather than posting, and returns a
+    null record to say the transfer is already complete. That form never reads
+    the channel table, so a session used only for soft put need not have one.
+  }];
+
+  let arguments = (ins
+    PTO_BufferType:$destination,
+    PTO_BufferType:$source,
+    I64:$nbytes,
+    PTO_SdmaSessionType:$session,
+    OptionalAttr<I64Attr>:$block_bytes,
+    OptionalAttr<I64Attr>:$channel_idx,
+    OptionalAttr<UnitAttr>:$soft_put
+  );
+
+  let results = (outs PTO_BufferType:$cq_record);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $destination `,` $source `,` $nbytes `session` `(` $session `)` attr-dict
+      `:` type($destination) `,` type($source) `,` type($nbytes) `,`
+      qualified(type($session)) `->` type($cq_record)
   }];
 }
 

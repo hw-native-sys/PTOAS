@@ -1,0 +1,79 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// vpto-expand-wrapper-ops runs per function, so --mlir-print-ir-after emits one
+// dump per function and the pass manager may run the two in either order. Each
+// prefix below therefore carries exactly one CHECK-LABEL: two labels under one
+// prefix would demand an order the output does not promise, and would pass or
+// fail by thread scheduling. Do not merge these RUN lines back together.
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=A5-F16
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=A5-I8
+// RUN: ptoas --pto-arch=a3 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=A3-F16
+// RUN: ptoas --pto-arch=a3 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=A3-I8
+
+// A5 cannot PUT through the engine. {soft_put} turns the kick into a
+// GM→UB→GM copy. A2/A3 ignores the attr and still posts SQEs.
+
+module attributes {"pto.target_arch" = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @sdma_gm_gm_soft_put(%dst: !pto.ptr<f16, gm>,
+                                 %src: !pto.ptr<f16, gm>,
+                                 %tmpl: !pto.ptr<i8, gm>) attributes {pto.kernel} {
+    %nbytes = arith.constant 4096 : i64
+
+    %sess = pto.session_init %tmpl : !pto.ptr<i8, gm> -> !pto.dma_session<sdma>
+
+    %rec = pto.sdma_gm_gm %dst, %src, %nbytes session(%sess) {soft_put}
+      : !pto.ptr<f16, gm>, !pto.ptr<f16, gm>, i64,
+        !pto.dma_session<sdma> -> !pto.ptr<i64, gm>
+
+    return
+  }
+
+  // Peer kernels use i8 endpoints and a runtime byte count. A same-type
+  // pto.castptr is illegal at emission, so this function is the shape that
+  // used to fail VPTO validation.
+  func.func @sdma_gm_gm_soft_put_i8(%dst: !pto.ptr<i8, gm>,
+                                    %src: !pto.ptr<i8, gm>,
+                                    %tmpl: !pto.ptr<i8, gm>,
+                                    %nbytes: i64) attributes {pto.kernel} {
+    %sess = pto.session_init %tmpl : !pto.ptr<i8, gm> -> !pto.dma_session<sdma>
+
+    %rec = pto.sdma_gm_gm %dst, %src, %nbytes session(%sess) {soft_put}
+      : !pto.ptr<i8, gm>, !pto.ptr<i8, gm>, i64,
+        !pto.dma_session<sdma> -> !pto.ptr<i64, gm>
+
+    return
+  }
+}
+
+// A5-F16-LABEL: func.func @sdma_gm_gm_soft_put(
+// A5-F16-NOT: pto.sdma_gm_gm
+// A5-F16: pto.copy_gm_to_ubuf
+// A5-F16: pto.set_flag_dyn[<PIPE_MTE2>, <PIPE_MTE3>
+// A5-F16: pto.wait_flag_dyn[<PIPE_MTE2>, <PIPE_MTE3>
+// A5-F16: pto.copy_ubuf_to_gm
+// No doorbell, because nothing was posted -- and so no channel to drain, which
+// is what the null record the copy hands back says. Neither function in this
+// module posts, so this holds for the rest of the output whichever order the
+// two dumps came out in.
+// A5-F16-NOT: pto.st_dev
+
+// A5-I8-LABEL: func.func @sdma_gm_gm_soft_put_i8(
+// A5-I8-NOT: pto.sdma_gm_gm
+// A5-I8: pto.copy_gm_to_ubuf
+// A5-I8: pto.copy_ubuf_to_gm
+
+// A3 still posts the engine path; the attr is A5-only.
+// A3-F16-LABEL: func.func @sdma_gm_gm_soft_put(
+// A3-F16-NOT: pto.sdma_gm_gm
+// A3-F16: pto.store
+// A3-F16: pto.copy_ubuf_to_gm
+
+// A3-I8-LABEL: func.func @sdma_gm_gm_soft_put_i8(
+// A3-I8-NOT: pto.sdma_gm_gm
+// A3-I8: pto.store

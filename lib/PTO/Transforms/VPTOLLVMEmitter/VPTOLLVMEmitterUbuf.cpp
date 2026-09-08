@@ -122,6 +122,30 @@ packCopyUbToGmCfgV220(Operation *anchor, ValueRange operands) {
   return packCopyV220Config(anchor, operands, 8);
 }
 
+// Same field layout as the block-granular config above, but the length is
+// carried in bytes. Measured on c220: with nBurst at bit 4 and the length at
+// bit 16, asking for 4 bytes moves exactly 4 bytes, while the block-granular
+// form rounds anything under 32 bytes down to a transfer of nothing.
+static FailureOr<Value>
+packCopyUbToGmCfgAlignV220(Operation *anchor, ValueRange operands) {
+  if (operands.size() != 8)
+  {
+    return failure();
+  }
+
+  OpBuilder builder(anchor);
+  builder.setInsertionPoint(anchor);
+
+  auto values = castIntegerLikeOperands(anchor, operands, {2u, 3u, 4u},
+                                        builder.getI64Type());
+  if (failed(values))
+  {
+    return failure();
+  }
+  return packShiftedI64Fields(builder, anchor->getLoc(), (*values)[0],
+                              {{(*values)[1], 4}, {(*values)[2], 16}});
+}
+
 static FailureOr<Value> buildUbufUnaryConfig(Operation *anchor,
                                              ConversionPatternRewriter &rewriter,
                                              Value repeat, Value dstBlockStride,
@@ -234,6 +258,21 @@ static void planVPTOLLVMCall(Location loc, StringRef calleeName,
   state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
 }
 
+// The ordinary c220 UB->GM path carries its length in 32-byte units, so a
+// transfer shorter than a block rounds down to nothing at all. Callers that
+// need a byte-granular store, such as the 4-byte SDMA doorbell write, ask for
+// the ALIGN intrinsic instead. Both the callee and the config packing below
+// have to agree on that, so the decision is made in one place.
+template <typename CopyOp>
+static bool isByteGranularUbToGm(CopyOp op, const std::string &march) {
+  if constexpr (std::is_same_v<CopyOp, pto::CopyGmToUbufOp>) {
+    return false;
+  } else {
+    bool isC220 = march == "dav-c220-vec" || march == "dav-c220-cube";
+    return isC220 && op->hasAttr("vpto.byte_granular");
+  }
+}
+
 // Callee selection for the GM<->UBUF copy ops.
 template <typename CopyOp>
 static FailureOr<StringRef> getCopyOpCallee(CopyOp op,
@@ -242,6 +281,11 @@ static FailureOr<StringRef> getCopyOpCallee(CopyOp op,
   if constexpr (std::is_same_v<CopyOp, pto::CopyGmToUbufOp>) {
     return buildCopyGmToUbCallee(op.getContext(), op.getSource().getType(),
                                  march, hasPadding);
+  }
+  if (isByteGranularUbToGm(op, march)) {
+    return StringAttr::get(op.getContext(),
+                           "llvm.hivm.MOV.UB.TO.OUT.ALIGN.b32.V220")
+        .getValue();
   }
   return buildCopyUbToGmCallee(op.getContext(), march);
 }
@@ -260,12 +304,18 @@ materializeCopyGmUbConfigs(CopyOp op, typename CopyOp::Adaptor adaptor,
                            const std::string &march, bool hasPadding) {
   constexpr bool isGmUb = std::is_same_v<CopyOp, pto::CopyGmToUbufOp>;
   bool isC220 = march == "dav-c220-vec" || march == "dav-c220-cube";
+  bool byteGranular = isByteGranularUbToGm(op, march);
   bool useA3NonPadded = isC220 && isGmUb && !hasPadding;
-  bool useA3UbGm = isC220 && !isGmUb;
+  bool useA3UbGm = isC220 && !isGmUb && !byteGranular;
   bool useSingleConfig = useA3NonPadded || useA3UbGm;
   FailureOr<Value> config0 = failure();
   FailureOr<Value> config1 = failure();
-  if (useA3NonPadded)
+  if (byteGranular) {
+    config0 = packCopyUbToGmCfgAlignV220(op, adaptor.getOperands());
+    // Only exercised with both strides at zero, which is all a single-burst
+    // store needs.
+    config1 = packCopyUbToGmConfig1(op, adaptor.getOperands());
+  } else if (useA3NonPadded)
   {
     config0 = packCopyGmToUbCfgV220(op, adaptor.getOperands());
   } else if (useA3UbGm) {

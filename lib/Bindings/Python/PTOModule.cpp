@@ -152,6 +152,11 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
     .value("BIAS",   MlirPTOAddressSpace_BIAS)
     .value("SCALING", MlirPTOAddressSpace_SCALING)
     .export_values();
+    py::enum_<MlirPTODmaEngine>(m, "DmaEngine")
+    .value("Sdma", MlirPTODmaEngine_Sdma)
+    .value("Urma", MlirPTODmaEngine_Urma)
+    .value("Rdma", MlirPTODmaEngine_Rdma)
+    .export_values();
     py::enum_<MlirPTOFenceScope>(m, "FenceScope")
     .value("LocalMemory", MlirPTOFenceScope_LocalMemory)
     .value("GM", MlirPTOFenceScope_GM)
@@ -1209,6 +1214,23 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
                 return cls.attr("__call__")(t);
             },
             py::arg("cls"), py::arg("context") = py::none());
+
+    mlir_type_subclass(
+        m, "DmaSessionType",
+        [](MlirType type) -> bool { return mlirPTOTypeIsADmaSessionType(type); })
+        .def_classmethod(
+            "get",
+            [](py::object cls, MlirPTODmaEngine engine,
+               MlirContext context) -> py::object {
+                MlirType t = mlirPTODmaSessionTypeGet(context, engine);
+                return cls.attr("__call__")(t);
+            },
+            py::arg("cls"), py::arg("engine"), py::arg("context") = py::none())
+        .def_property_readonly(
+            "engine",
+            [](MlirType self) -> MlirPTODmaEngine {
+                return mlirPTODmaSessionTypeGetEngine(self);
+            });
 
     mlir_type_subclass(
         m, "PrefetchAsyncContextType",

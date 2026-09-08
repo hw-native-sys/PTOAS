@@ -15,6 +15,8 @@ from enum import Enum
 from ptoas.mlir.dialects import func
 from ptoas.mlir.ir import Attribute, InsertionPoint, Module, Operation, StringAttr, UnitAttr
 
+from .._native_options import EMPTY_NATIVE_OPTIONS, NativeBuildOptions
+
 
 class ModuleStyle(str, Enum):
     """Supported top-level PTODSL module layouts."""
@@ -40,6 +42,7 @@ class KernelModuleSpec:
     source_file: str | None = None
     source_line: int | None = None
     jit_source: str | None = None
+    native_options: NativeBuildOptions = EMPTY_NATIVE_OPTIONS
 
 
 def _build_flat_aicore_module(spec: KernelModuleSpec, arg_types):

@@ -1,0 +1,86 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// vpto-expand-wrapper-ops runs per function, so --mlir-print-ir-after emits one
+// dump per function and the pass manager may run the two in either order. Each
+// prefix below therefore carries exactly one CHECK-LABEL: two labels under one
+// prefix would demand an order the output does not promise, and would pass or
+// fail by thread scheduling. Do not merge these RUN lines back together.
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=TEMPLATE
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=PERCORE
+
+// The two kernel shapes the PTODSL ST case ships
+// (test/vpto/cases/async-comm/sdma_gm_gm.py). That case only runs where a
+// device or simulator is available, so the shapes are pinned here as well.
+//
+// The second one is the reason this file exists: it is the multicore shape,
+// where every core loads the same template and takes its own slice. A session
+// is one immutable configuration shared by all of them, so the slicing happens
+// on the endpoints, which is where it belongs -- an offset in the session would
+// have made a per-core value out of something the cores agree on.
+
+module attributes {"pto.target_arch" = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @soft_put_from_template(%src: !pto.ptr<i8, gm>,
+                                    %sess_gm: !pto.ptr<i8, gm>,
+                                    %dst: !pto.ptr<i8, gm>,
+                                    %nbytes: i64) attributes {pto.kernel} {
+    %sess = pto.session_init %sess_gm : !pto.ptr<i8, gm> -> !pto.dma_session<sdma>
+
+    %rec = pto.sdma_gm_gm %dst, %src, %nbytes session(%sess) {soft_put}
+      : !pto.ptr<i8, gm>, !pto.ptr<i8, gm>, i64,
+        !pto.dma_session<sdma> -> !pto.ptr<i64, gm>
+
+    return
+  }
+
+  // Per-core slicing on the endpoints. The cores share one session and move
+  // their own window of it, so what differs between them is two pointers.
+  func.func @soft_put_per_core_offset(%src: !pto.ptr<i8, gm>,
+                                      %sess_gm: !pto.ptr<i8, gm>,
+                                      %dst: !pto.ptr<i8, gm>,
+                                      %chunk: i64) attributes {pto.kernel} {
+    %sess = pto.session_init %sess_gm : !pto.ptr<i8, gm> -> !pto.dma_session<sdma>
+
+    %bid = pto.get_block_idx
+    %off = arith.muli %bid, %chunk : i64
+    %off_idx = arith.index_castui %off : i64 to index
+    // i8 endpoints, so an element offset is a byte offset.
+    %core_src = pto.addptr %src, %off_idx : !pto.ptr<i8, gm> -> !pto.ptr<i8, gm>
+    %core_dst = pto.addptr %dst, %off_idx : !pto.ptr<i8, gm> -> !pto.ptr<i8, gm>
+
+    %rec = pto.sdma_gm_gm %core_dst, %core_src, %chunk session(%sess) {soft_put}
+      : !pto.ptr<i8, gm>, !pto.ptr<i8, gm>, i64,
+        !pto.dma_session<sdma> -> !pto.ptr<i64, gm>
+
+    return
+  }
+}
+
+// The template load survives as one ld_dev per field into a struct the pass
+// declares, and the transfer becomes the GM->UB->GM copy. No doorbell is
+// written, because nothing was posted; neither function here posts, so that
+// holds for the rest of the output whichever order the two dumps came out in.
+// TEMPLATE-LABEL: func.func @soft_put_from_template(
+// TEMPLATE-NOT: pto.session_init
+// TEMPLATE: pto.ld_dev
+// TEMPLATE: pto.struct_set %{{.*}}[0]
+// TEMPLATE-NOT: pto.sdma_gm_gm
+// TEMPLATE: pto.copy_gm_to_ubuf
+// TEMPLATE: pto.copy_ubuf_to_gm
+// TEMPLATE-NOT: pto.st_dev
+
+// The per-core displacement is on the pointers, so it is already folded into
+// the endpoints by the time the copy is formed and the session is untouched.
+// PERCORE-LABEL: func.func @soft_put_per_core_offset(
+// PERCORE: pto.get_block_idx
+// PERCORE: pto.addptr
+// PERCORE: pto.addptr
+// PERCORE-NOT: pto.sdma_gm_gm
+// PERCORE: pto.copy_gm_to_ubuf
+// PERCORE: pto.copy_ubuf_to_gm
+// PERCORE-NOT: pto.st_dev

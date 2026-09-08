@@ -367,6 +367,27 @@ def AsyncSessionType : TypeDef<PTO_Dialect, "AsyncSession"> {
   let summary = "Opaque async DMA session handle type";
 }
 
+// ---- !pto.dma_session<sdma> ----
+//
+// A configured asynchronous session at the micro-instruction layer, as
+// pto.session_init produces it.
+//
+// The engine is a type parameter rather than a session field, so a session
+// built for one engine cannot reach another engine's kick: pto.sdma_gm_gm
+// accepts only !pto.dma_session<sdma>, and that is checked by type equality
+// instead of by a verifier reading a field back out.
+//
+// The type is deliberately opaque. The physical session is a struct whose field
+// order and widths PTO/Support/AsyncSessionABI.h owns; that struct is
+// materialized during wrapper expansion, so it never appears in the IR a user
+// writes and its layout is not part of this contract.
+def DmaSessionType : TypeDef<PTO_Dialect, "DmaSession"> {
+  let mnemonic = "dma_session";
+  let summary = "Configured async DMA session, parameterized by engine";
+  let parameters = (ins EnumParameter<PTO_DmaEngineEnum>:$engine);
+  let assemblyFormat = "`<` params `>`";
+}
+
 def AsyncEventType : TypeDef<PTO_Dialect, "AsyncEvent"> {
   let mnemonic = "async_event";
   let summary = "Opaque async DMA event handle type";

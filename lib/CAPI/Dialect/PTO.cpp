@@ -265,6 +265,20 @@ MlirType mlirPTOAsyncSessionTypeGet(MlirContext ctx) {
   return wrap(mlir::pto::AsyncSessionType::get(unwrap(ctx)));
 }
 
+bool mlirPTOTypeIsADmaSessionType(MlirType type) {
+  return isa<mlir::pto::DmaSessionType>(unwrap(type));
+}
+
+MlirType mlirPTODmaSessionTypeGet(MlirContext ctx, MlirPTODmaEngine engine) {
+  return wrap(mlir::pto::DmaSessionType::get(
+      unwrap(ctx), static_cast<mlir::pto::DmaEngine>(engine)));
+}
+
+MlirPTODmaEngine mlirPTODmaSessionTypeGetEngine(MlirType type) {
+  return static_cast<MlirPTODmaEngine>(
+      cast<mlir::pto::DmaSessionType>(unwrap(type)).getEngine());
+}
+
 bool mlirPTOTypeIsAAsyncEventType(MlirType type) {
   return isa<mlir::pto::AsyncEventType>(unwrap(type));
 }

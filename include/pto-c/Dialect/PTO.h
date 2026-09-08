@@ -36,6 +36,20 @@ MLIR_CAPI_EXPORTED bool mlirPTOTypeIsAAsyncSessionType(MlirType type);
 MLIR_CAPI_EXPORTED MlirType mlirPTOAsyncSessionTypeGet(MlirContext ctx);
 MLIR_CAPI_EXPORTED bool mlirPTOTypeIsAAsyncEventType(MlirType type);
 MLIR_CAPI_EXPORTED MlirType mlirPTOAsyncEventTypeGet(MlirContext ctx);
+
+// ---- !pto.dma_session<sdma|urma|rdma> ----
+// The engine an async session drives. Numbered to match mlir::pto::DmaEngine.
+typedef enum MlirPTODmaEngine {
+  MlirPTODmaEngine_Sdma = 0,
+  MlirPTODmaEngine_Urma = 1,
+  MlirPTODmaEngine_Rdma = 2,
+} MlirPTODmaEngine;
+
+MLIR_CAPI_EXPORTED bool mlirPTOTypeIsADmaSessionType(MlirType type);
+MLIR_CAPI_EXPORTED MlirType mlirPTODmaSessionTypeGet(MlirContext ctx,
+                                                     MlirPTODmaEngine engine);
+MLIR_CAPI_EXPORTED MlirPTODmaEngine
+mlirPTODmaSessionTypeGetEngine(MlirType type);
 MLIR_CAPI_EXPORTED bool mlirPTOTypeIsAPrefetchAsyncContextType(MlirType type);
 MLIR_CAPI_EXPORTED MlirType mlirPTOPrefetchAsyncContextTypeGet(MlirContext ctx);
 
