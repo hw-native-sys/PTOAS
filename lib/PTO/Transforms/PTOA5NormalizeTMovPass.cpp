@@ -9,8 +9,11 @@
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Pass/Pass.h"
+#include "llvm/ADT/SmallPtrSet.h"
 
 namespace mlir {
 namespace pto {
@@ -107,6 +110,83 @@ static pto::TMovOp findMatchingScaleTileTMov(pto::TGetScaleAddrOp op) {
   return {};
 }
 
+static bool isScaleAddrScalarType(Type type) {
+  return isa<IntegerType, IndexType, FloatType>(type);
+}
+
+static bool canHoistScaleAddrDependency(Operation *op) {
+  if (op->getNumRegions() || op->getNumSuccessors()) {
+    return false;
+  }
+  // alloc_tile creates a logical handle, not a data transfer. Its address and
+  // dynamic valid-shape operands are checked recursively before moving it.
+  if (isa<pto::AllocTileOp>(op)) {
+    return true;
+  }
+  return llvm::all_of(op->getOperandTypes(), isScaleAddrScalarType) &&
+         llvm::all_of(op->getResultTypes(), isScaleAddrScalarType) &&
+         isPure(op);
+}
+
+// Collect the complete dependency slice without modifying IR. In particular,
+// a rejected later operand must not leave an earlier allocation half-hoisted.
+static LogicalResult collectScaleAddrDependencies(
+    Value value, Operation *anchor, Operation *scaleAddr,
+    DominanceInfo &dominance, llvm::SmallPtrSetImpl<Operation *> &collected,
+    SmallVectorImpl<Operation *> &dependencies, Operation *&blockingDef) {
+  if (dominance.dominates(value, anchor)) {
+    return success();
+  }
+  Operation *def = value.getDefiningOp();
+  if (!def || def->getBlock() != anchor->getBlock() ||
+      !anchor->isBeforeInBlock(def) || !def->isBeforeInBlock(scaleAddr) ||
+      !canHoistScaleAddrDependency(def)) {
+    blockingDef = def;
+    return failure();
+  }
+  if (collected.contains(def)) {
+    return success();
+  }
+  for (Value operand : def->getOperands()) {
+    if (failed(collectScaleAddrDependencies(operand, anchor, scaleAddr,
+                                           dominance, collected, dependencies,
+                                           blockingDef))) {
+      return failure();
+    }
+  }
+  collected.insert(def);
+  dependencies.push_back(def);
+  return success();
+}
+
+static LogicalResult hoistScaleAddr(pto::TGetScaleAddrOp op,
+                                   pto::TMovOp matchingTMov,
+                                   DominanceInfo &dominance) {
+  llvm::SmallPtrSet<Operation *, kRiskyOpReserveSize> collected;
+  SmallVector<Operation *, kRiskyOpReserveSize> dependencies;
+  Operation *blockingDef = nullptr;
+  for (Value operand : op->getOperands()) {
+    if (failed(collectScaleAddrDependencies(
+            operand, matchingTMov, op, dominance, collected, dependencies,
+            blockingDef))) {
+      auto diagnostic = op.emitOpError(
+          "cannot safely establish scaling address before matching TMOV: "
+          "operand dependency cannot be hoisted");
+      if (blockingDef) {
+        diagnostic.attachNote(blockingDef->getLoc())
+            << "blocking dependency: " << blockingDef->getName();
+      }
+      diagnostic.attachNote(matchingTMov.getLoc()) << "matching TMOV is here";
+      return failure();
+    }
+  }
+  for (Operation *dependency : dependencies) {
+    dependency->moveBefore(matchingTMov);
+  }
+  op->moveBefore(matchingTMov);
+  return success();
+}
+
 template <typename CfgT>
 static auto buildRowMajorConfigImpl(int, MLIRContext *ctx,
                                     pto::BLayoutAttr rowMajor, CfgT cfg)
@@ -190,13 +270,17 @@ struct PTOA5NormalizeTMovPass
     }
 
     SmallVector<pto::TGetScaleAddrOp, kRiskyOpReserveSize> scaleAddrOps;
+    DominanceInfo dominance(func);
     func.walk([&](pto::TGetScaleAddrOp op) { scaleAddrOps.push_back(op); });
     for (pto::TGetScaleAddrOp op : scaleAddrOps) {
       auto matchingTMov = findMatchingScaleTileTMov(op);
       if (!matchingTMov) {
         continue;
       }
-      op->moveBefore(matchingTMov);
+      if (failed(hoistScaleAddr(op, matchingTMov, dominance))) {
+        signalPassFailure();
+        return;
+      }
     }
 
     SmallVector<pto::TMovOp, kRiskyOpReserveSize> riskyOps;
