@@ -1,0 +1,99 @@
+// RUN: pto-test-opt --split-input-file --verify-diagnostics --pto-a5-normalize-tmov %s
+
+!mat = !pto.tile_buf<mat, 1x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!scale = !pto.tile_buf<scaling, 1x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!dynamic = !pto.tile_buf<left, 1x512xf8E4M3FN, valid=?x?, blayout=col_major, slayout=row_major>
+module attributes {pto.target_arch = "a5"} {
+  func.func private @address() -> i64
+  func.func @call_dependency() {
+    %c0 = arith.constant 0 : index
+    %zero = arith.constant 0 : i64
+    %mat = pto.alloc_tile : !mat
+    %dst = pto.alloc_tile : !scale
+    // expected-note@+1 {{matching TMOV is here}}
+    pto.tmov ins(%mat : !mat) outs(%dst : !scale)
+    %c1 = arith.constant 1 : index
+    // expected-note@+1 {{blocking dependency: func.call}}
+    %addr = func.call @address() : () -> i64
+    %src = pto.alloc_tile addr = %addr valid_row = %c1 valid_col = %c1 : !dynamic
+    // expected-error@+1 {{cannot safely establish scaling address before matching TMOV: operand dependency cannot be hoisted}}
+    pto.tget_scale_addr ins(%src : !dynamic) outs(%dst : !scale)
+    return
+  }
+}
+
+// -----
+
+!mat = !pto.tile_buf<mat, 1x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!scale = !pto.tile_buf<scaling, 1x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!dynamic = !pto.tile_buf<left, 1x512xf8E4M3FN, valid=?x?, blayout=col_major, slayout=row_major>
+module attributes {pto.target_arch = "a5"} {
+
+  func.func @load_dependency(%mem : memref<1xi64>) {
+    %c0 = arith.constant 0 : index
+    %zero = arith.constant 0 : i64
+    %mat = pto.alloc_tile : !mat
+    %dst = pto.alloc_tile : !scale
+    // expected-note@+1 {{matching TMOV is here}}
+    pto.tmov ins(%mat : !mat) outs(%dst : !scale)
+    %c1 = arith.constant 1 : index
+    // expected-note@+1 {{blocking dependency: memref.load}}
+    %addr = memref.load %mem[%c0] : memref<1xi64>
+    %src = pto.alloc_tile addr = %addr valid_row = %c1 valid_col = %c1 : !dynamic
+    // expected-error@+1 {{cannot safely establish scaling address before matching TMOV: operand dependency cannot be hoisted}}
+    pto.tget_scale_addr ins(%src : !dynamic) outs(%dst : !scale)
+    return
+  }
+}
+
+// -----
+
+!mat = !pto.tile_buf<mat, 1x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!scale = !pto.tile_buf<scaling, 1x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!dynamic = !pto.tile_buf<left, 1x512xf8E4M3FN, valid=?x?, blayout=col_major, slayout=row_major>
+module attributes {pto.target_arch = "a5"} {
+
+  func.func @region_dependency(%cond : i1) {
+    %c0 = arith.constant 0 : index
+    %zero = arith.constant 0 : i64
+    %mat = pto.alloc_tile : !mat
+    %dst = pto.alloc_tile : !scale
+    // expected-note@+1 {{matching TMOV is here}}
+    pto.tmov ins(%mat : !mat) outs(%dst : !scale)
+    %c1 = arith.constant 1 : index
+    // expected-note@+1 {{blocking dependency: scf.if}}
+    %addr = scf.if %cond -> i64 {
+      scf.yield %zero : i64
+    } else {
+      scf.yield %zero : i64
+    }
+    %src = pto.alloc_tile addr = %addr valid_row = %c1 valid_col = %c1 : !dynamic
+    // expected-error@+1 {{cannot safely establish scaling address before matching TMOV: operand dependency cannot be hoisted}}
+    pto.tget_scale_addr ins(%src : !dynamic) outs(%dst : !scale)
+    return
+  }
+}
+
+// -----
+
+!mat = !pto.tile_buf<mat, 1x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!scale = !pto.tile_buf<scaling, 1x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!dynamic = !pto.tile_buf<left, 1x512xf8E4M3FN, valid=?x?, blayout=col_major, slayout=row_major>
+module attributes {pto.target_arch = "a5"} {
+  func.func @non_speculatable_dependency(%num : i64, %den : i64) {
+    %c0 = arith.constant 0 : index
+    %zero = arith.constant 0 : i64
+    %mat = pto.alloc_tile : !mat
+    %dst = pto.alloc_tile : !scale
+    // expected-note@+1 {{matching TMOV is here}}
+    pto.tmov ins(%mat : !mat) outs(%dst : !scale)
+    %c1 = arith.constant 1 : index
+    // expected-note@+1 {{blocking dependency: arith.divsi}}
+    %addr = arith.divsi %num, %den : i64
+    %src = pto.alloc_tile addr = %addr valid_row = %c1 valid_col = %c1 : !dynamic
+    // expected-error@+1 {{cannot safely establish scaling address before matching TMOV: operand dependency cannot be hoisted}}
+    pto.tget_scale_addr ins(%src : !dynamic) outs(%dst : !scale)
+    return
+  }
+}
+

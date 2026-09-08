@@ -1,0 +1,28 @@
+// RUN: not pto-test-opt --pto-a5-normalize-tmov --mlir-print-ir-after-failure %s 2>&1 | FileCheck %s
+
+!mat = !pto.tile_buf<mat, 1x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!scale = !pto.tile_buf<scaling, 1x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!dynamic = !pto.tile_buf<left, 1x512xf8E4M3FN, valid=?x?, blayout=col_major, slayout=row_major>
+module attributes {pto.target_arch = "a5"} {
+  func.func private @extent() -> index
+  func.func @atomic_failure() {
+    %mat = pto.alloc_tile : !mat
+    %dst = pto.alloc_tile : !scale
+    pto.tmov ins(%mat : !mat) outs(%dst : !scale)
+    // Collected constants must remain here when the later extent is rejected.
+    %c1 = arith.constant 1 : index
+    %addr = arith.constant 1024 : i64
+    %valid = func.call @extent() : () -> index
+    %src = pto.alloc_tile addr = %addr valid_row = %c1 valid_col = %valid : !dynamic
+    pto.tget_scale_addr ins(%src : !dynamic) outs(%dst : !scale)
+    return
+  }
+}
+
+// CHECK: IR Dump After
+// CHECK: pto.tmov
+// CHECK: arith.constant 1
+// CHECK-NEXT: {{.*}}arith.constant 1024
+// CHECK-NEXT: {{.*}}call @extent
+// CHECK-NEXT: {{.*}}pto.alloc_tile addr =
+// CHECK-NEXT: pto.tget_scale_addr
