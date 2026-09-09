@@ -8,6 +8,7 @@
 
 //===- PTOAttrs.cpp ------------------------------------------------*- C++ -*-===//
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/PTOTypeUtils.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "mlir/Parser/Parser.h"          // parseAttribute
@@ -33,7 +34,155 @@ constexpr int32_t kCompactModeNull = static_cast<int32_t>(CompactMode::Null);
 constexpr int32_t kCompactModeRowPlusOne =
     static_cast<int32_t>(CompactMode::RowPlusOne);
 
+static bool isBridgeElementType(Type type) {
+  return type.isF16() || type.isBF16() || type.isF32() || type.isF64() ||
+         type.isInteger(8) || type.isInteger(16) || type.isInteger(32) ||
+         type.isInteger(64) || pto::isPTOFloat8E4M3LikeType(type) ||
+         pto::isPTOFloat8E5M2LikeType(type) || pto::isPTOF8E8M0Type(type) ||
+         isa<pto::HiF8Type, pto::F4E1M2x2Type, pto::F4E2M1x2Type>(type);
+}
+
+struct BridgeTileSpecParts {
+  TypeAttr element;
+  DenseI64ArrayAttr shape;
+  DenseI64ArrayAttr validShape;
+  AddressSpaceAttr memory;
+  IntegerAttr bLayout;
+  IntegerAttr sLayout;
+  IntegerAttr fractal;
+};
+
+static FailureOr<BridgeTileSpecParts>
+getBridgeTileSpecParts(DictionaryAttr tile) {
+  BridgeTileSpecParts parts{};
+  parts.element = tile.getAs<TypeAttr>("element_type");
+  parts.shape = tile.getAs<DenseI64ArrayAttr>("shape");
+  parts.validShape = tile.getAs<DenseI64ArrayAttr>("valid_shape");
+  parts.memory = tile.getAs<AddressSpaceAttr>("memory_space");
+  parts.bLayout = tile.getAs<IntegerAttr>("b_layout");
+  parts.sLayout = tile.getAs<IntegerAttr>("s_layout");
+  parts.fractal = tile.getAs<IntegerAttr>("s_fractal");
+  bool missing = !parts.element || !parts.shape || !parts.validShape ||
+                 !parts.memory || !parts.bLayout || !parts.sLayout ||
+                 !parts.fractal;
+  if (missing) {
+    return failure();
+  }
+  return parts;
+}
+
+static LogicalResult
+verifyBridgeTileSpecLayout(const BridgeTileSpecParts &parts,
+                           function_ref<InFlightDiagnostic()> emitError,
+                           StringRef fieldName) {
+  bool rankMismatch = parts.shape.size() != 2 || parts.validShape.size() != 2;
+  if (rankMismatch) {
+    return emitError() << fieldName << " requires rank-2 shape and valid_shape",
+           failure();
+  }
+  for (auto [extent, valid] :
+       llvm::zip(parts.shape.asArrayRef(), parts.validShape.asArrayRef())) {
+    if (extent <= 0 || valid <= 0 || valid > extent) {
+      return emitError() << fieldName << " has invalid shape/valid_shape",
+             failure();
+    }
+  }
+  bool invalidLayout = parts.bLayout.getInt() < 0 ||
+                       parts.bLayout.getInt() > 1 ||
+                       parts.sLayout.getInt() < 0 ||
+                       parts.sLayout.getInt() > 2 ||
+                       parts.fractal.getInt() <= 0;
+  if (invalidLayout) {
+    return emitError() << fieldName << " has invalid layout or fractal values",
+           failure();
+  }
+  return success();
+}
+
+static LogicalResult
+verifyBridgeTileSpec(DictionaryAttr tile,
+                     function_ref<InFlightDiagnostic()> emitError,
+                     StringRef fieldName) {
+  if (!tile) {
+    return emitError() << fieldName << " must be a dictionary", failure();
+  }
+  for (NamedAttribute field : tile) {
+    StringRef name = field.getName().strref();
+    bool known = name == "element_type" || name == "shape" ||
+                 name == "valid_shape" || name == "memory_space" ||
+                 name == "b_layout" || name == "s_layout" ||
+                 name == "s_fractal";
+    if (!known) {
+      return emitError() << fieldName << " contains unknown field '" << name
+                         << "'",
+             failure();
+    }
+  }
+  FailureOr<BridgeTileSpecParts> parts = getBridgeTileSpecParts(tile);
+  if (failed(parts)) {
+    return emitError() << fieldName
+                       << " has missing or incorrectly typed fields",
+           failure();
+  }
+  if (!isBridgeElementType(parts->element.getValue())) {
+    return emitError() << fieldName << " has unsupported element type "
+                       << parts->element.getValue(),
+           failure();
+  }
+  return verifyBridgeTileSpecLayout(*parts, emitError, fieldName);
+}
+
+static LogicalResult
+verifyPipeConfig(DictionaryAttr config,
+                 function_ref<InFlightDiagnostic()> emitError) {
+  if (!config) {
+    return emitError() << "pipe must be a dictionary", failure();
+  }
+  for (NamedAttribute field : config) {
+    StringRef name = field.getName().strref();
+    bool known = name == "flag_base" || name == "dir_mask" ||
+                 name == "slot_size" || name == "slot_num" ||
+                 name == "local_slot_num" || name == "nosplit";
+    if (!known) {
+      return emitError() << "pipe contains unknown field '" << name << "'",
+             failure();
+    }
+  }
+  auto flagBase = config.getAs<IntegerAttr>("flag_base");
+  auto dirMask = config.getAs<IntegerAttr>("dir_mask");
+  auto slotSize = config.getAs<IntegerAttr>("slot_size");
+  auto slotNum = config.getAs<IntegerAttr>("slot_num");
+  auto localSlotNum = config.getAs<IntegerAttr>("local_slot_num");
+  auto nosplit = config.getAs<BoolAttr>("nosplit");
+  bool missing = !flagBase || !dirMask || !slotSize || !slotNum ||
+                 !localSlotNum || !nosplit;
+  if (missing) {
+    return emitError() << "pipe has missing or incorrectly typed fields",
+           failure();
+  }
+  bool invalid = flagBase.getInt() < 0 ||
+                 (dirMask.getInt() != 1 && dirMask.getInt() != 2) ||
+                 slotSize.getInt() <= 0 || slotNum.getInt() <= 0 ||
+                 localSlotNum.getInt() <= 0;
+  if (invalid) {
+    return emitError() << "pipe has invalid configuration values", failure();
+  }
+  return success();
+}
+
 } // namespace
+
+llvm::StringRef AccPhaseAttr::getEnumCaseSymbol() const {
+  switch (getValue()) {
+  case AccPhase::Unspecified:
+    return "Unspecified";
+  case AccPhase::Partial:
+    return "Partial";
+  case AccPhase::Final:
+    return "Final";
+  }
+  llvm_unreachable("unknown PTO AccPhase case");
+}
 
 TileBufConfigAttr TileBufConfigAttr::getDefault(MLIRContext *ctx) {
   Builder b(ctx);
@@ -268,4 +417,63 @@ void TileBufConfigAttr::print(AsmPrinter &odsPrinter) const {
   odsPrinter << ", pad=" << getPad();
   odsPrinter << ", compact=" << getCompactMode();
   odsPrinter << ">";
+}
+
+LogicalResult
+BridgeCubeSpecAttr::verify(function_ref<InFlightDiagnostic()> emitError,
+                           DictionaryAttr value) {
+  for (NamedAttribute field : value) {
+    StringRef name = field.getName().strref();
+    bool known = name == "result_tile" || name == "left_tile" ||
+                 name == "right_tile" || name == "acc_phase";
+    if (!known) {
+      return emitError() << "Cube bridge spec contains unknown field '" << name
+                         << "'",
+             failure();
+    }
+  }
+  if (!mlir::isa_and_nonnull<AccPhaseAttr>(value.get("acc_phase"))) {
+    return emitError() << "Cube bridge spec requires an acc_phase", failure();
+  }
+  for (StringRef field : {"result_tile", "left_tile", "right_tile"}) {
+    if (failed(verifyBridgeTileSpec(value.getAs<DictionaryAttr>(field),
+                                    emitError, field))) {
+      return failure();
+    }
+  }
+  return success();
+}
+
+LogicalResult
+BridgePipeSpecAttr::verify(function_ref<InFlightDiagnostic()> emitError,
+                           DictionaryAttr value) {
+  for (NamedAttribute field : value) {
+    StringRef name = field.getName().strref();
+    bool known = name == "pipe" || name == "producer_tile" ||
+                 name == "consumer_tile" || name == "split";
+    if (!known) {
+      return emitError() << "Pipe bridge spec contains unknown field '" << name
+                         << "'",
+             failure();
+    }
+  }
+  if (failed(
+          verifyPipeConfig(value.getAs<DictionaryAttr>("pipe"), emitError))) {
+    return failure();
+  }
+  for (StringRef field : {"producer_tile", "consumer_tile"}) {
+    if (Attribute tile = value.get(field)) {
+      if (failed(verifyBridgeTileSpec(mlir::dyn_cast<DictionaryAttr>(tile),
+                                      emitError, field))) {
+        return failure();
+      }
+    }
+  }
+  if (auto split = value.getAs<IntegerAttr>("split")) {
+    bool invalidSplit = split.getInt() < 0 || split.getInt() > 4;
+    if (invalidSplit) {
+      return emitError() << "Pipe bridge split must be in [0, 4]", failure();
+    }
+  }
+  return success();
 }

@@ -19,6 +19,8 @@ using mlir::InFlightDiagnostic;
 using mlir::NamedAttribute;
 using mlir::RankedTensorType;
 using pto::AccPushEpilogueAttr;
+using pto::BridgeCallOp;
+using pto::BridgeObjectCreateOp;
 using pto::classifyTMovForm;
 using pto::DcciCacheLineAttr;
 using pto::DcciDstAttr;

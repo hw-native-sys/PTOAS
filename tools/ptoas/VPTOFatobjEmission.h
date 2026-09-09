@@ -19,6 +19,7 @@ inline LogicalResult emitVPTOFatobj(llvm::Module *cubeModule,
                                     llvm::ToolOutputFile &outputFile,
                                     llvm::raw_ostream &diagOS) {
   return emitFatobjLLVMWithRuntime(cubeModule, vectorModule, stubSource,
+                                   /*bridgeWrapperSource=*/"",
                                    outputFile, VFSIMTSizeFixMode::Auto, diagOS);
 }
 

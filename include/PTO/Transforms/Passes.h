@@ -45,6 +45,11 @@ std::unique_ptr<Pass> createPTOValidatePhysicalSectionBoundariesPass();
 std::unique_ptr<Pass> createPTOMaterializeTileOpSectionsPass();
 std::unique_ptr<Pass> createVPTOSplitCVModulePass();
 std::unique_ptr<Pass> createVPTONormalizeContainerPass();
+std::unique_ptr<Pass> createPTOLowerPipeFamilyOpsPass();
+std::unique_ptr<Pass> createPTOLowerDeclarativeBridgeOpsPass();
+std::unique_ptr<Pass> createVPTOBridgeLoweringPass();
+std::unique_ptr<Pass> createVPTOResolveBridgeInstancesPass();
+std::unique_ptr<Pass> createVPTOBridgeWrapperGenPass();
 std::unique_ptr<Pass> createPTOVerifyTFreePass();
 
 // Creates a pass for ...
@@ -117,6 +122,19 @@ std::unique_ptr<Pass>
 createVPTOSchedulerPass(const VPTOSchedulerOptions &options = {});
 LogicalResult validateVPTOAuthoringIR(ModuleOp module,
                                       llvm::raw_ostream *diagOS = nullptr);
+
+/// Shared emission preamble of the VPTO LLVM pipelines: validates the cloned
+/// authoring IR and emits the common failure diagnostic.
+inline LogicalResult validateVPTOAuthoringIRForEmission(
+    ModuleOp module, llvm::raw_ostream &diagOS) {
+  if (failed(validateVPTOAuthoringIR(module, &diagOS))) {
+    diagOS << "VPTO LLVM emission failed: authoring-stage VPTO legality "
+              "validation failed\n";
+    return failure();
+  }
+  return success();
+}
+
 LogicalResult validateVPTOEmissionIR(ModuleOp module,
                                      llvm::raw_ostream *diagOS = nullptr);
 std::unique_ptr<Pass> createPTOValidateVPTOIRPass();

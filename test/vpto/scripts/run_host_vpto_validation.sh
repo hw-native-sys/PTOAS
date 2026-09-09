@@ -362,9 +362,13 @@ build_one_impl() {
     read -r -a ptoas_args <<< "${PTOAS_FLAGS}"
   fi
 
+  # The bridge wrapper source is generated and compiled by ptoas itself;
+  # routing uses the built-in default whitelist unless the caller exports
+  # PTOAS_VPTO_BRIDGE_WHITELIST or the case passes whitelist-path via
+  # ptoas.flags.
   log "[$case_name] step 1/4: emit kernel fatobj"
   "${PTOAS_BIN}" "${ptoas_args[@]}" \
-    "${case_dir}/kernel.pto" -o "${kernel_fatobj}"
+      "${case_dir}/kernel.pto" -o "${kernel_fatobj}"
 
   log "[$case_name] step 2/4: build launch object"
   build_launch_object "${case_dir}" "${launch_obj}"

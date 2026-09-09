@@ -1179,6 +1179,7 @@ static LogicalResult emitVPTOLLVMFatobj(
   if (failed(mlir::pto::emitFatobjLLVM(
           jobResult.vptoCubeModule.module.get(),
           jobResult.vptoVectorModule.module.get(), stubSource,
+          jobResult.vptoBridgeWrapperSource,
           outputPath, moduleId, *toolchain, context.getTempFiles(),
           context.getVFSIMTSizeFixMode(), llvm::errs()))) {
     return failure();

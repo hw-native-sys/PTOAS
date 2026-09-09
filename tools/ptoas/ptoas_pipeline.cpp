@@ -13,6 +13,21 @@
 
 #include "ptoas_internal.h"
 
+#include "ptoas.h"
+
+#include "PTO/IR/PTO.h"
+#include "PTO/IR/PTOMultiBuffer.h"
+#include "PTO/IR/VMIUtils.h"
+#include "PTO/Transforms/BufferizableOpInterfaceImpl.h"
+#include "PTO/Transforms/CppPostprocess.h"
+#include "PTO/Transforms/Passes.h"
+#include "PTO/Transforms/VPTOLLVMEmitter.h"
+#include "PTO/Transforms/VPTOBridgeTokens.h"
+#include "VPTOHostStubEmission.h"
+#include "mlir/AsmParser/AsmParserState.h"
+#include "mlir/Conversion/Passes.h"
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Arith/Transforms/BufferizableOpInterfaceImpl.h"
 #include "mlir/Dialect/Tensor/Transforms/BufferizableOpInterfaceImpl.h"
 
@@ -865,6 +880,13 @@ static int emitVPTOBackendResult(ModuleOp module, PTOASCompileResult &result,
     }
   }
 
+  std::string bridgeWrapperSource;
+  if (auto wrapperAttr = module->getAttrOfType<StringAttr>(
+          pto::kBridgeWrapperSourceAttrName)) {
+    bridgeWrapperSource = wrapperAttr.getValue().str();
+    module->removeAttr(pto::kBridgeWrapperSourceAttrName);
+  }
+
   if (failed(
           pto::lowerVPTOModuleToLLVMModules(module, options,
                                             result.vptoCubeModule,
@@ -875,6 +897,7 @@ static int emitVPTOBackendResult(ModuleOp module, PTOASCompileResult &result,
   }
 
   result.vptoStubSource = std::move(stubSource);
+  result.vptoBridgeWrapperSource = std::move(bridgeWrapperSource);
   result.kind = PTOASCompileResultKind::VPTOObject;
   return 0;
 }
@@ -886,6 +909,10 @@ static LogicalResult runVPTOBackendPipeline(OwningOpRef<ModuleOp> &module,
   if (!hasTileOpsToExpand) {
     pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOCanonicalizeIRPass());
   }
+  pm.addNestedPass<func::FuncOp>(pto::createPTOLowerDeclarativeBridgeOpsPass());
+  pm.addNestedPass<func::FuncOp>(pto::createPTOLowerPipeFamilyOpsPass());
+  pm.addPass(pto::createVPTOResolveBridgeInstancesPass());
+  pm.addPass(pto::createVPTOBridgeWrapperGenPass());
   pm.addPass(pto::createVPTOSplitCVModulePass());
   pm.addPass(pto::createVPTONormalizeContainerPass());
   if (hasTileOpsToExpand) {

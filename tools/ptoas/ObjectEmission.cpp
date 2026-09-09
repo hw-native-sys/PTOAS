@@ -264,6 +264,23 @@ discoverCppIncludeDirs(llvm::StringRef ascendHome,
     ptoIsaPath = *env;
   }
 
+  if (ptoIsaPath.empty()) {
+    // Probe common development checkouts so the bridge wrapper and C++
+    // device emission find pto/pto-inst.hpp without extra environment setup.
+    if (auto home = llvm::sys::Process::GetEnv("HOME")) {
+      std::string candidates[] = {
+          joinPath(*home, "pto-isa"),
+          joinPath(joinPath(*home, "llvm-workspace"), "pto-isa"),
+      };
+      for (const std::string &candidate : candidates) {
+        if (llvm::sys::fs::is_directory(candidate)) {
+          ptoIsaPath = candidate;
+          break;
+        }
+      }
+    }
+  }
+
   addPTOISAIncludeDirs(includeDirs, ptoIsaPath);
   addExistingIncludeDir(includeDirs, joinPath(ascendHome, "include"));
   std::string driverPath =
@@ -279,6 +296,24 @@ discoverCppIncludeDirs(llvm::StringRef ascendHome,
            << ptoIsaPath << ".\n";
   }
   return includeDirs;
+}
+
+// Merges externally compiled bridge bitcode (e.g. PTO-ISA template
+// instantiation wrappers) into the VPTO device LLVM IR before Bisheng
+// compiles the device object. Both inputs are bitcode/IR of the same LLVM
+// version, linked with the llvm-link shipped with the Bisheng toolchain.
+static bool linkDeviceLLVMBitcode(llvm::StringRef llPath,
+                                  llvm::StringRef bridgePath,
+                                  llvm::StringRef linkedPath,
+                                  const mlir::pto::CANNToolchain &toolchain,
+                                  llvm::StringRef stderrPath,
+                                  llvm::raw_ostream &diagOS) {
+  std::string llvmLinkPath =
+      joinPath(toolchain.bishengCompilerBinDirPath, "llvm-link");
+  llvm::SmallVector<std::string, 8> args = {
+      llvmLinkPath, llPath.str(), bridgePath.str(), "-o", linkedPath.str()};
+  return runCommandWithStderr(llvmLinkPath, args, stderrPath, diagOS,
+                              "device LLVM bridge link");
 }
 
 static bool compileDeviceLLVMToObject(llvm::StringRef llPath,
@@ -325,6 +360,53 @@ static std::string resolveTargetCPU(llvm::Module &module,
   return getTargetCPU(fallback).str();
 }
 
+// Compiles the generated bridge wrapper C++ source to device bitcode for
+// one core kind. The wrapper separates the core entries with __DAV_CUBE__ /
+// __DAV_VEC__ guards, so compiling the same source once per target yields
+// exactly the entries of that core. The command mirrors the former
+// hand-written wrapper build (bisheng -O2 -std=c++17 -c -emit-llvm -xcce
+// --cce-aicore-only -DREGISTER_BASE).
+static bool compileBridgeWrapperToBitcode(
+    llvm::StringRef wrapperSource,
+    mlir::pto::ObjectEmissionDeviceTarget target,
+    const mlir::pto::CANNToolchain &toolchain,
+    mlir::pto::TempFileRegistry &tempFiles, llvm::StringRef stderrPath,
+    std::string &outBitcodePath, llvm::raw_ostream &diagOS) {
+  std::string sourcePath;
+  if (failed(tempFiles.create("ptoas-vpto-bridge-wrapper", ".cpp", sourcePath,
+                              diagOS))) {
+    return false;
+  }
+  if (!writeTextFile(sourcePath, wrapperSource, diagOS)) {
+    return false;
+  }
+  if (failed(tempFiles.create("ptoas-vpto-bridge-wrapper", ".bc",
+                              outBitcodePath, diagOS))) {
+    return false;
+  }
+  llvm::SmallVector<std::string, 32> args = {
+      toolchain.bishengPath,
+      "-O2",
+      "-std=c++17",
+      "-c",
+      "-emit-llvm",
+      "-xcce",
+      "-fenable-matrix",
+      "--cce-aicore-enable-tl",
+      "--cce-aicore-only",
+      std::string("--cce-aicore-arch=") + getTargetCPU(target).str(),
+      "-DREGISTER_BASE",
+  };
+  for (const std::string &includeDir : toolchain.cppIncludeDirs) {
+    args.push_back("-I" + includeDir);
+  }
+  args.push_back(sourcePath);
+  args.push_back("-o");
+  args.push_back(outBitcodePath);
+  return runCommandWithStderr(toolchain.bishengPath, args, stderrPath, diagOS,
+                              "bridge wrapper bitcode compilation");
+}
+
 class VPTOFatobjArtifacts {
 public:
   explicit VPTOFatobjArtifacts(mlir::pto::TempFileRegistry &tempFiles)
@@ -349,6 +431,7 @@ public:
 
   bool emitCubeObject(llvm::Module *module,
                       const mlir::pto::CANNToolchain &toolchain,
+                      llvm::StringRef bridgeBitcodePath,
                       llvm::raw_ostream &diagOS) {
     if (!module) {
       return true;
@@ -360,11 +443,13 @@ public:
       return false;
     }
     return succeeded(mlir::pto::emitVPTOCubeDeviceObject(
-        *module, cubeLLPath, cubeObjPath, toolchain, stderrPath, diagOS));
+        *module, cubeLLPath, cubeObjPath, toolchain, bridgeBitcodePath,
+        stderrPath, diagOS));
   }
 
   bool emitVectorObject(llvm::Module *module,
                         const mlir::pto::CANNToolchain &toolchain,
+                        llvm::StringRef bridgeBitcodePath,
                         mlir::pto::VFSIMTSizeFixMode vfsimtSizeFixMode,
                         llvm::raw_ostream &diagOS) {
     if (!module) {
@@ -379,8 +464,8 @@ public:
       return false;
     }
     if (failed(mlir::pto::emitVPTOVectorDeviceObject(
-            *module, vectorLLPath, rawVectorObjPath, toolchain, stderrPath,
-            diagOS))) {
+            *module, vectorLLPath, rawVectorObjPath, toolchain,
+            bridgeBitcodePath, stderrPath, diagOS))) {
       return false;
     }
     if (vfsimtSizeFixMode == mlir::pto::VFSIMTSizeFixMode::Off) {
@@ -401,6 +486,42 @@ public:
       return false;
     }
     vectorObjPath = std::move(result->objectPath);
+    return true;
+  }
+
+  bool compileBridgeWrapper(llvm::StringRef wrapperSource,
+                            mlir::pto::ObjectEmissionDeviceTarget target,
+                            const mlir::pto::CANNToolchain &toolchain,
+                            std::string &outBitcodePath,
+                            llvm::raw_ostream &diagOS) {
+    if (wrapperSource.empty()) {
+      return true;
+    }
+    return compileBridgeWrapperToBitcode(wrapperSource, target, toolchain,
+                                         tempFiles, stderrPath,
+                                         outBitcodePath, diagOS);
+  }
+
+  // Compiles the generated bridge wrapper source to bitcode for each device
+  // module present, once per core kind (the wrapper guards its entries with
+  // __DAV_CUBE__ / __DAV_VEC__). An empty wrapper source compiles nothing.
+  bool compileBridgeWrappers(llvm::Module *cubeModule,
+                             llvm::Module *vectorModule,
+                             llvm::StringRef wrapperSource,
+                             const mlir::pto::CANNToolchain &toolchain,
+                             std::string &cubeBitcodePath,
+                             std::string &vectorBitcodePath,
+                             llvm::raw_ostream &diagOS) {
+    if (cubeModule &&
+        !compileBridgeWrapper(wrapperSource,
+                              mlir::pto::ObjectEmissionDeviceTarget::Cube,
+                              toolchain, cubeBitcodePath, diagOS))
+      return false;
+    if (vectorModule &&
+        !compileBridgeWrapper(wrapperSource,
+                              mlir::pto::ObjectEmissionDeviceTarget::Vector,
+                              toolchain, vectorBitcodePath, diagOS))
+      return false;
     return true;
   }
 
@@ -487,6 +608,40 @@ private:
   std::string stubPath;
   std::string hostStubObjPath;
 };
+
+/// Runs the shared VPTO fatobj device emission sequence: stub source, command
+/// log, bridge wrapper bitcode compilation, per-core objects, and the device
+/// object merge.
+static bool emitVPTOFatobjDeviceArtifacts(
+    VPTOFatobjArtifacts &artifacts, llvm::Module *cubeModule,
+    llvm::Module *vectorModule, llvm::StringRef stubSource,
+    llvm::StringRef bridgeWrapperSource,
+    const mlir::pto::CANNToolchain &toolchain,
+    mlir::pto::VFSIMTSizeFixMode vfsimtSizeFixMode, llvm::raw_ostream &diagOS) {
+  if (!artifacts.emitStubSource(stubSource, diagOS)) {
+    return false;
+  }
+  if (!artifacts.initCommandLogs(diagOS)) {
+    return false;
+  }
+  std::string cubeBridgeBitcodePath;
+  std::string vectorBridgeBitcodePath;
+  if (!artifacts.compileBridgeWrappers(cubeModule, vectorModule,
+                                       bridgeWrapperSource, toolchain,
+                                       cubeBridgeBitcodePath,
+                                       vectorBridgeBitcodePath, diagOS))
+    return false;
+  if (!artifacts.emitCubeObject(cubeModule, toolchain, cubeBridgeBitcodePath,
+                                diagOS)) {
+    return false;
+  }
+  if (!artifacts.emitVectorObject(vectorModule, toolchain,
+                                  vectorBridgeBitcodePath, vfsimtSizeFixMode,
+                                  diagOS)) {
+    return false;
+  }
+  return artifacts.mergeDeviceObjects(toolchain, diagOS);
+}
 
 static bool runCommandWithStderr(llvm::StringRef program,
                                  llvm::ArrayRef<std::string> ownedArgs,
@@ -594,6 +749,34 @@ static void appendCceAicoreMllvmFlags(
       "-mllvm",
       "-cce-aicore-dcci-insert-for-scalar=false",
   });
+}
+
+// Compiles the written device LLVM IR to an object, linking externally
+// compiled bridge bitcode into the IR first when provided. The linked IR is
+// materialized next to the object file and compiled instead of the original
+// IR, so the original .ll stays a faithful dump of the module.
+static bool compileDeviceLLVMToObjectWithBridgeLink(
+    llvm::StringRef llPath, llvm::StringRef bridgeBitcodePath,
+    llvm::StringRef outObjPath, llvm::StringRef targetCPU,
+    const mlir::pto::CANNToolchain &toolchain, llvm::StringRef stderrPath,
+    llvm::raw_ostream &diagOS) {
+  std::string compileInput = llPath.str();
+  if (!bridgeBitcodePath.empty()) {
+    std::string linkedPath = (outObjPath + ".linked.bc").str();
+    if (!linkDeviceLLVMBitcode(llPath, bridgeBitcodePath, linkedPath,
+                               toolchain, stderrPath, diagOS)) {
+      llvm::sys::fs::remove(linkedPath);
+      return false;
+    }
+    compileInput = linkedPath;
+  }
+  bool result = compileDeviceLLVMToObject(compileInput, outObjPath, targetCPU,
+                                          toolchain.bishengPath, stderrPath,
+                                          diagOS);
+  if (!bridgeBitcodePath.empty()) {
+    llvm::sys::fs::remove(compileInput);
+  }
+  return result;
 }
 
 static bool compileCppDeviceSourceToObject(
@@ -948,6 +1131,11 @@ mlir::pto::CANNToolchain::validate(llvm::raw_ostream &diagOS) const {
     diagOS << "Error: unable to locate ld.lld.\n";
     return failure();
   }
+  std::string llvmLinkPath = joinPath(bishengCompilerBinDirPath, "llvm-link");
+  if (!llvm::sys::fs::exists(llvmLinkPath)) {
+    diagOS << "Error: unable to locate llvm-link: " << llvmLinkPath << "\n";
+    return failure();
+  }
   return success();
 }
 
@@ -1104,8 +1292,8 @@ static mlir::LogicalResult applyVPTOLLVMABINames(llvm::Module &module,
 
 mlir::LogicalResult mlir::pto::emitVPTOVectorDeviceObject(
     llvm::Module &module, llvm::StringRef llPath, llvm::StringRef outObjPath,
-    const CANNToolchain &toolchain, llvm::StringRef stderrPath,
-    llvm::raw_ostream &diagOS) {
+    const CANNToolchain &toolchain, llvm::StringRef bridgeBitcodePath,
+    llvm::StringRef stderrPath, llvm::raw_ostream &diagOS) {
   if (failed(applyVPTOLLVMABINames(
           module,
           toolchain.vptoPublicABISuffix(ObjectEmissionDeviceTarget::Vector),
@@ -1115,18 +1303,18 @@ mlir::LogicalResult mlir::pto::emitVPTOVectorDeviceObject(
   if (failed(writeLLVMModule(module, llPath, diagOS))) {
     return failure();
   }
-  return compileDeviceLLVMToObject(llPath, outObjPath,
-                                   resolveTargetCPU(module,
-                                                    ObjectEmissionDeviceTarget::Vector),
-                                   toolchain.bishengPath, stderrPath, diagOS)
+  return compileDeviceLLVMToObjectWithBridgeLink(
+             llPath, bridgeBitcodePath, outObjPath,
+             resolveTargetCPU(module, ObjectEmissionDeviceTarget::Vector),
+             toolchain, stderrPath, diagOS)
              ? success()
              : failure();
 }
 
 mlir::LogicalResult mlir::pto::emitVPTOCubeDeviceObject(
     llvm::Module &module, llvm::StringRef llPath, llvm::StringRef outObjPath,
-    const CANNToolchain &toolchain, llvm::StringRef stderrPath,
-    llvm::raw_ostream &diagOS) {
+    const CANNToolchain &toolchain, llvm::StringRef bridgeBitcodePath,
+    llvm::StringRef stderrPath, llvm::raw_ostream &diagOS) {
   if (failed(applyVPTOLLVMABINames(
           module,
           toolchain.vptoPublicABISuffix(ObjectEmissionDeviceTarget::Cube),
@@ -1136,17 +1324,18 @@ mlir::LogicalResult mlir::pto::emitVPTOCubeDeviceObject(
   if (failed(writeLLVMModule(module, llPath, diagOS))) {
     return failure();
   }
-  return compileDeviceLLVMToObject(llPath, outObjPath,
-                                   resolveTargetCPU(module,
-                                                    ObjectEmissionDeviceTarget::Cube),
-                                   toolchain.bishengPath, stderrPath, diagOS)
+  return compileDeviceLLVMToObjectWithBridgeLink(
+             llPath, bridgeBitcodePath, outObjPath,
+             resolveTargetCPU(module, ObjectEmissionDeviceTarget::Cube),
+             toolchain, stderrPath, diagOS)
              ? success()
              : failure();
 }
 
 mlir::LogicalResult mlir::pto::emitFatobjLLVM(
     llvm::Module *cubeModule, llvm::Module *vectorModule,
-    llvm::StringRef stubSource, llvm::StringRef outputPath,
+    llvm::StringRef stubSource, llvm::StringRef bridgeWrapperSource,
+    llvm::StringRef outputPath,
     llvm::StringRef moduleId, const CANNToolchain &toolchain,
     TempFileRegistry &tempFiles, VFSIMTSizeFixMode vfsimtSizeFixMode,
     llvm::raw_ostream &diagOS) {
@@ -1156,20 +1345,9 @@ mlir::LogicalResult mlir::pto::emitFatobjLLVM(
   }
 
   VPTOFatobjArtifacts artifacts(tempFiles);
-  if (!artifacts.emitStubSource(stubSource, diagOS)) {
-    return failure();
-  }
-  if (!artifacts.initCommandLogs(diagOS)) {
-    return failure();
-  }
-  if (!artifacts.emitCubeObject(cubeModule, toolchain, diagOS)) {
-    return failure();
-  }
-  if (!artifacts.emitVectorObject(vectorModule, toolchain,
-                                  vfsimtSizeFixMode, diagOS)) {
-    return failure();
-  }
-  if (!artifacts.mergeDeviceObjects(toolchain, diagOS)) {
+  if (!emitVPTOFatobjDeviceArtifacts(artifacts, cubeModule, vectorModule,
+                                     stubSource, bridgeWrapperSource, toolchain,
+                                     vfsimtSizeFixMode, diagOS)) {
     return failure();
   }
 
@@ -1215,7 +1393,8 @@ mlir::LogicalResult mlir::pto::linkFatobjs(
 
 mlir::LogicalResult mlir::pto::emitFatobjLLVMWithRuntime(
     llvm::Module *cubeModule, llvm::Module *vectorModule,
-    llvm::StringRef stubSource, llvm::ToolOutputFile &outputFile,
+    llvm::StringRef stubSource, llvm::StringRef bridgeWrapperSource,
+    llvm::ToolOutputFile &outputFile,
     VFSIMTSizeFixMode vfsimtSizeFixMode,
     llvm::raw_ostream &diagOS) {
   if (!cubeModule && !vectorModule) {
@@ -1230,22 +1409,9 @@ mlir::LogicalResult mlir::pto::emitFatobjLLVMWithRuntime(
 
   TempFileRegistry tempFiles;
   VPTOFatobjArtifacts artifacts(tempFiles);
-  if (!artifacts.emitStubSource(stubSource, diagOS)) {
-    return failure();
-  }
-  if (!artifacts.initCommandLogs(diagOS)) {
-    return failure();
-  }
-
-  if (!artifacts.emitCubeObject(cubeModule, *toolchain, diagOS)) {
-    return failure();
-  }
-  if (!artifacts.emitVectorObject(vectorModule, *toolchain,
-                                  vfsimtSizeFixMode, diagOS)) {
-    return failure();
-  }
-
-  if (!artifacts.mergeDeviceObjects(*toolchain, diagOS)) {
+  if (!emitVPTOFatobjDeviceArtifacts(artifacts, cubeModule, vectorModule,
+                                     stubSource, bridgeWrapperSource,
+                                     *toolchain, vfsimtSizeFixMode, diagOS)) {
     return failure();
   }
 
