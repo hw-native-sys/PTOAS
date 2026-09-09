@@ -533,38 +533,41 @@ inferRawVPTOComputeKind(Operation *op) {
   return std::nullopt;
 }
 
+// Emits the tileop-helper restriction error for forbidden operations.
+// Returns failure when the op is rejected.
+static LogicalResult rejectForbiddenTileHelperOperation(Operation *op) {
+  if (isa<SectionCubeOp, SectionVectorOp>(op)) {
+    return op->emitError(
+        "tileop helpers must not contain pre-existing sections");
+  }
+  if (isMteDataMovementOperation(op)) {
+    return op->emitError("tileop helpers must not contain MTE data movement");
+  }
+  if (isForbiddenPipeOperation(op)) {
+    return op->emitError("tileop helpers must not contain pipe synchronization");
+  }
+  if (isDirectSimtOperation(op)) {
+    return op->emitError("tileop helpers must launch a @pto.simt helper "
+                         "instead of containing SIMT operations directly");
+  }
+  if (isForbiddenTileOperation(op)) {
+    return op->emitError("tileop helpers must not contain Tile allocation "
+                         "or high-level TileOps");
+  }
+  if (isa<func::CallOp>(op)) {
+    return op->emitError("tileop helpers must not call another helper; use "
+                         "pto.simt_launch for SIMT work");
+  }
+  return success();
+}
+
 // Rejects tileop-helper-forbidden operations and records the first Vector /
 // Cube compute op. Returns failure (with an emitted error) for forbidden ops.
 static WalkResult classifyTileOpHelperOperation(
     Operation *op, Operation *&firstVector, Operation *&firstCube,
     LogicalResult &status) {
-  if (isa<SectionCubeOp, SectionVectorOp>(op)) {
-    status = op->emitError(
-        "tileop helpers must not contain pre-existing sections");
-    return WalkResult::interrupt();
-  }
-  if (isMteDataMovementOperation(op)) {
-    status = op->emitError("tileop helpers must not contain MTE data movement");
-    return WalkResult::interrupt();
-  }
-  if (isForbiddenPipeOperation(op)) {
-    status =
-        op->emitError("tileop helpers must not contain pipe synchronization");
-    return WalkResult::interrupt();
-  }
-  if (isDirectSimtOperation(op)) {
-    status = op->emitError("tileop helpers must launch a @pto.simt helper "
-                           "instead of containing SIMT operations directly");
-    return WalkResult::interrupt();
-  }
-  if (isForbiddenTileOperation(op)) {
-    status = op->emitError("tileop helpers must not contain Tile allocation "
-                           "or high-level TileOps");
-    return WalkResult::interrupt();
-  }
-  if (isa<func::CallOp>(op)) {
-    status = op->emitError("tileop helpers must not call another helper; use "
-                           "pto.simt_launch for SIMT work");
+  if (failed(rejectForbiddenTileHelperOperation(op))) {
+    status = failure();
     return WalkResult::interrupt();
   }
   if (isa<SimtLaunchOp>(op)) {

@@ -397,7 +397,7 @@ getLoopAddressCoefficient(Value value, scf::ForOp loop,
     return std::nullopt;
   }
 
-  auto coefficient = [&](Value operand) {
+  auto coefficient = [&loop, &cache, &failed](Value operand) {
     return getLoopAddressCoefficient(operand, loop, cache, failed);
   };
   std::optional<int64_t> result =
