@@ -26,6 +26,7 @@ include "mlir/IR/OpAsmInterface.td"
 include "mlir/IR/SymbolInterfaces.td"
 
 include "mlir/Interfaces/DestinationStyleOpInterface.td"
+include "mlir/Interfaces/InferIntRangeInterface.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Interfaces/ViewLikeInterface.td"
@@ -1427,6 +1428,7 @@ def TMovOp  : PTO_TOp<"tmov", [
 
 def GetBlockIdxOp : PTO_Op<"get_block_idx", [
     Pure,
+    DeclareOpInterfaceMethods<InferIntRangeInterface, ["inferResultRanges"]>,
     MicroOpInterface,
     SimtOpInterface
   ]> {
@@ -1444,6 +1446,7 @@ def GetBlockIdxOp : PTO_Op<"get_block_idx", [
 
 def GetSubBlockIdxOp : PTO_Op<"get_subblock_idx", [
     Pure,
+    DeclareOpInterfaceMethods<InferIntRangeInterface, ["inferResultRanges"]>,
     MicroOpInterface,
     SimtOpInterface
   ]> {
@@ -1461,6 +1464,7 @@ def GetSubBlockIdxOp : PTO_Op<"get_subblock_idx", [
 
 def GetBlockNumOp : PTO_Op<"get_block_num", [
     Pure,
+    DeclareOpInterfaceMethods<InferIntRangeInterface, ["inferResultRanges"]>,
     MicroOpInterface,
     SimtOpInterface
   ]> {
@@ -1477,6 +1481,7 @@ def GetBlockNumOp : PTO_Op<"get_block_num", [
 
 def GetSubBlockNumOp : PTO_Op<"get_subblock_num", [
     Pure,
+    DeclareOpInterfaceMethods<InferIntRangeInterface, ["inferResultRanges"]>,
     MicroOpInterface,
     SimtOpInterface
   ]> {

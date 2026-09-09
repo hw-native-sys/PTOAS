@@ -177,7 +177,8 @@ linear_tid = tid_x + dim_x * (tid_y + dim_y * tid_z)
 - **semantics:** Return the block dimension visible to the current workitem in
   the selected dimension.
 - **inputs:** None.
-- **outputs:** One `i32` block dimension.
+- **outputs:** One `i32` block dimension. The value is a positive count, so
+  `0 < block_dim` always holds.
 - **constraints and limitations:** For single-block VF launches, block
   dimensions match the configured launch dimensions.
 
@@ -187,7 +188,8 @@ linear_tid = tid_x + dim_x * (tid_y + dim_y * tid_z)
 - **semantics:** Return the grid dimension visible to the current workitem in
   the selected dimension.
 - **inputs:** None.
-- **outputs:** One `i32` grid dimension.
+- **outputs:** One `i32` grid dimension. The value is a positive count, so
+  `0 < grid_dim` always holds.
 - **constraints and limitations:** Use grid dimensions with block dimensions and
   block indices when deriving global workitem coordinates.
 
@@ -205,7 +207,8 @@ linear_tid = tid_x + dim_x * (tid_y + dim_y * tid_z)
 - **syntax:** `%core = pto.get_veccoreid : i32`
 - **semantics:** Return the vector-core id visible to the current workitem.
 - **inputs:** None.
-- **outputs:** One `i32` vector-core id.
+- **outputs:** One `i32` vector-core id. The id is an index into the vector
+  cores of the current target, so `0 <= veccoreid` always holds.
 - **constraints and limitations:** The value is target scoped; use it only when
   the algorithm intentionally depends on the executing vector core.
 
@@ -224,7 +227,8 @@ linear_tid = tid_x + dim_x * (tid_y + dim_y * tid_z)
 - **syntax:** `%lane = pto.get_laneid : i32`
 - **semantics:** Return the physical SIMT lane id for the current workitem.
 - **inputs:** None.
-- **outputs:** One `i32` lane id.
+- **outputs:** One `i32` lane id in `[0, 32)`: it indexes the lanes of the
+  executing warp, so `0 <= laneid < 32` always holds.
 - **constraints and limitations:** Use lane id for lane-mask, vote, shuffle,
   and reduction logic. Use `get_tid_x/y/z` for logical tensor indexing.
 

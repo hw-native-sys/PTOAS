@@ -624,6 +624,37 @@ def PTOCanonicalizeIR : Pass<"pto-canonicalize-ir", "func::FuncOp"> {
   ];
 }
 
+def PTOArithRangeOptimize : Pass<"pto-arith-range-optimize", ""> {
+  let summary = "Run integer-range-driven arith optimizations on PTO IR";
+  let description = [{
+    Runs the upstream arith integer-range optimizations
+    (mlir::arith::createIntRangeOptimizationsPass and
+    mlir::arith::createArithUnsignedWhenEquivalentPass) followed by a
+    canonicalization round, then rewrites element-offset chains feeding
+    pto.load/pto.store to i32 where a local recursive range
+    evaluation proves every chain value fits in [0, 2^32) (converted back
+    with arith.index_castui/extui at the anchor or at the provable subchain
+    boundary), finishing with canonicalize + CSE.
+
+    The range facts come from InferIntRangeInterface implementations on the
+    hardware ID queries: the VPTO SIMT queries (pto.get_tid_x/y/z,
+    pto.get_block_idx_x/y/z, pto.get_block_dim_x/y/z, pto.get_grid_dim_x/y/z,
+    pto.get_veccoreid, pto.get_laneid) and the PTO-level i64 runtime queries
+    (pto.get_block_idx, pto.get_subblock_idx, pto.get_block_num,
+    pto.get_subblock_num). Non-negative ranges let the upstream passes prove
+    signed-vs-unsigned equivalence and, for example, rewrite
+    arith.floordivsi/remsi by a power of two into unsigned div/rem forms that
+    the LLVM backend folds into shifts/masks.
+
+    Ops whose range cannot be proven are left unchanged.
+  }];
+  let constructor = "mlir::pto::createPTOArithRangeOptimizePass()";
+  let dependentDialects = [
+    "mlir::pto::PTODialect",
+    "mlir::arith::ArithDialect"
+  ];
+}
+
 def LowerPTOToUBufOps : Pass<"pto-lower-to-ubuf-ops", "mlir::func::FuncOp"> {
   let summary = "Lower eligible pto.tadd/tsub/tmul/tdiv to pto.ub.vadd/vsub/vmul/vdiv on a2a3 targets";
   let description = [{
