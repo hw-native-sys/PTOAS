@@ -48,6 +48,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/IR/PTO.h"
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/Passes.h"
 
 #include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
@@ -187,7 +188,7 @@ struct LowerAnnotatedForPattern : public OpRewritePattern<scf::ForOp> {
     rewriter.setInsertionPointToEnd(lastBodyBlock);
     Value stepped = rewriter.create<arith::AddIOp>(loc, iv, forOp.getStep());
 
-    SmallVector<Value, 8> loopCarried;
+    SmallVector<Value, mlir::pto::kValue8> loopCarried;
     loopCarried.push_back(stepped);
     loopCarried.append(terminator->operand_begin(), terminator->operand_end());
     auto latchBranch =
@@ -217,7 +218,7 @@ struct LowerAnnotatedForPattern : public OpRewritePattern<scf::ForOp> {
 
     // The initial values of loop-carried values are obtained from the
     // operands of the loop operation.
-    SmallVector<Value, 8> destOperands;
+    SmallVector<Value, mlir::pto::kValue8> destOperands;
     destOperands.push_back(lowerBound);
     llvm::append_range(destOperands, forOp.getInitArgs());
     rewriter.create<cf::BranchOp>(loc, conditionBlock, destOperands);
@@ -258,7 +259,7 @@ struct PTOConvertSCFToCFWithLoopHints
     RewritePatternSet patterns(&getContext());
     populateSCFToControlFlowConversionPatterns(patterns);
     patterns.add<LowerAnnotatedForPattern>(patterns.getContext(),
-                                           /*benefit=*/2);
+                                           /*benefit=*/mlir::pto::kValue2);
 
     ConversionTarget target(getContext());
     target.addIllegalOp<scf::ForallOp, scf::ForOp, scf::IfOp,

@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 #include "PTO/IR/PTO.h"
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTOLowerToOpLibCalls.h"
 
@@ -126,14 +127,15 @@ static void eraseDeadBridgeCasts(func::FuncOp func) {
   while (changed) {
     changed = false;
 
-    SmallVector<UnrealizedConversionCastOp, 8> deadUnrealized;
+    SmallVector<UnrealizedConversionCastOp, mlir::pto::kValue8>
+        deadUnrealized;
     func.walk([&](UnrealizedConversionCastOp cast) {
       if (cast->use_empty()) {
         deadUnrealized.push_back(cast);
       }
     });
 
-    SmallVector<memref::CastOp, 8> deadMemrefCasts;
+    SmallVector<memref::CastOp, mlir::pto::kValue8> deadMemrefCasts;
     func.walk([&](memref::CastOp cast) {
       if (cast->use_empty()) {
         deadMemrefCasts.push_back(cast);
@@ -222,8 +224,9 @@ static void emitMissingInstanceBodyError(func::CallOp call, func::FuncOp callee)
   }
 }
 
-static SmallVector<ModuleOp, 4> collectFuncModules(ModuleOp root) {
-  SmallVector<ModuleOp, 4> modules;
+static SmallVector<ModuleOp, mlir::pto::kValue4> collectFuncModules(
+    ModuleOp root) {
+  SmallVector<ModuleOp, mlir::pto::kValue4> modules;
   modules.push_back(root);
   root.walk([&](ModuleOp nested) {
     if (nested != root)
@@ -268,7 +271,7 @@ static LogicalResult validateInlineableCalleesHaveBodies(
 
 static FailureOr<func::CallOp> stageCallWithConcreteOperands(func::CallOp call,
                                                              func::FuncOp callee) {
-  SmallVector<Value, 4> concreteOperands;
+  SmallVector<Value, mlir::pto::kValue4> concreteOperands;
   concreteOperands.reserve(call.getNumOperands());
   for (auto [operand, expectedTy] :
        llvm::zip(call.getOperands(), callee.getFunctionType().getInputs())) {
@@ -342,7 +345,7 @@ static LogicalResult inlineCallsInFunc(
   while (madeProgress) {
     madeProgress = false;
 
-    SmallVector<func::CallOp, 16> calls;
+    SmallVector<func::CallOp, mlir::pto::kValue16> calls;
     func.walk([&](func::CallOp call) { calls.push_back(call); });
 
     for (func::CallOp oldCall : calls) {
@@ -393,7 +396,7 @@ static void eraseDeadMatchingPrivateFuncs(ModuleOp module,
                                           FuncPredicate &&predicate) {
   for (ModuleOp funcModule : collectFuncModules(module)) {
     SymbolTable symbolTable(funcModule);
-    SmallVector<func::FuncOp, 8> deadFuncs;
+    SmallVector<func::FuncOp, mlir::pto::kValue8> deadFuncs;
     for (func::FuncOp func : funcModule.getOps<func::FuncOp>()) {
       if (!predicate(func)) {
         continue;

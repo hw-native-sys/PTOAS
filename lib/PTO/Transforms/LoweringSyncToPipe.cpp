@@ -61,8 +61,9 @@ template <typename HighLevelOp, typename LowLevelOp>
 static LogicalResult lowerEventSyncOp(HighLevelOp op, PatternRewriter &rewriter) {
   auto pipes = getConcretePipePair(op.getOperation(), op.getSrcOpAttr(),
                                    op.getDstOpAttr());
-  if (failed(pipes))
+  if (failed(pipes)) {
     return failure();
+  }
   rewriter.replaceOpWithNewOp<LowLevelOp>(
       op, PipeAttr::get(op.getContext(), pipes->first),
       PipeAttr::get(op.getContext(), pipes->second), op.getEventIdAttr());
@@ -138,8 +139,9 @@ struct LoweringSyncToPipe
     patterns.add<RecordEventLowering, WaitEventLowering, BarrierSyncLowering,
                  BarrierLegalizeForArch>(
         context);
-    if (failed(applyPatternsAndFoldGreedily(func, std::move(patterns))))
+    if (failed(applyPatternsAndFoldGreedily(func, std::move(patterns)))) {
       signalPassFailure();
+    }
   }
 };
 

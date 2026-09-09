@@ -33,14 +33,14 @@
 
 #include <algorithm>
 
-using namespace mlir;
-
 namespace mlir {
 namespace pto {
 #define GEN_PASS_DEF_LOWERPTOTOUBUFOPS
 #include "PTO/Transforms/Passes.h.inc"
 } // namespace pto
 } // namespace mlir
+
+using namespace mlir;
 
 namespace {
 static constexpr int64_t kRepeatMax = 255;
@@ -63,7 +63,7 @@ static unsigned getElementSize(Type elemTy) {
   }
   if (auto intTy = dyn_cast<IntegerType>(elemTy)) {
     unsigned width = intTy.getWidth();
-    if (width == mlir::pto::kValue16 || width == 32) {
+    if (width == mlir::pto::kValue16 || width == mlir::pto::kValue32) {
       return width / mlir::pto::kValue8;
     }
   }
@@ -923,7 +923,7 @@ struct LowerPTOToUBufOpsPass
         // point at a 32B source block; the instruction copies those 8 blocks.
         int64_t numRepeatPerLine = validCol / epr;
         int64_t numRemainPerLine = validCol % epr;
-        constexpr int64_t REPEAT_MAX = 255;
+        constexpr int64_t REPEAT_MAX = kRepeatMax;
         constexpr int64_t ADDRS_PER_REPEAT = 8;
 
         Location loc = op.getLoc();
@@ -1094,7 +1094,8 @@ struct LowerPTOToUBufOpsPass
                 i64c8(loc, builder), i64c8(loc, builder));
             builder.create<pto::BarrierOp>(loc, pipeV);
             builder.create<pto::UBVgatherOp>(
-                loc, dstRow, tmpRow, srcAddr, i64c(8, loc, builder),
+                loc, dstRow, tmpRow, srcAddr,
+                i64c(mlir::pto::kValue8, loc, builder),
                 i64c1(loc, builder));
           }
         }
@@ -1147,68 +1148,55 @@ private:
                    repStride, repStride, i64c0(loc, b));
   }
 
-  void vadd(Location loc, OpBuilder &b, Value dst, Value s0, Value s1,
-            Value repeat, Value repStride) {
-    emitUBBinOp<pto::UBVaddOp>(loc, b, dst, s0, s1, repeat, repStride);
-  }
-  void vsub(Location loc, OpBuilder &b, Value dst, Value s0, Value s1,
-            Value repeat, Value repStride) {
-    emitUBBinOp<pto::UBVsubOp>(loc, b, dst, s0, s1, repeat, repStride);
-  }
-  void vmul(Location loc, OpBuilder &b, Value dst, Value s0, Value s1,
-            Value repeat, Value repStride) {
-    emitUBBinOp<pto::UBVmulOp>(loc, b, dst, s0, s1, repeat, repStride);
-  }
-  void vdiv(Location loc, OpBuilder &b, Value dst, Value s0, Value s1,
-            Value repeat, Value repStride) {
-    emitUBBinOp<pto::UBVdivOp>(loc, b, dst, s0, s1, repeat, repStride);
+  // Shared lowering prologue: compute the element pointer type of the
+  // destination tile and materialize address values for the destination
+  // followed by each tile operand (a raw pto.ptr passes through, a tile_buf
+  // gets a TileBufAddrOp). The destination address is always ptrs.front().
+  SmallVector<Value> lowerTilePtrs(OpBuilder &builder, MLIRContext *ctx,
+                                   Operation *op, Value dstVal,
+                                   ArrayRef<Value> tiles) {
+    Location loc = op->getLoc();
+    builder.setInsertionPoint(op);
+    Type elemTy = getStoredElemType(dstVal.getType());
+    auto ptrType = getUBPtrType(ctx, elemTy);
+
+    auto emitAddr = [&](Value tile) -> Value {
+      if (isa<pto::PtrType>(tile.getType())) {
+        return tile;
+      }
+      auto addrOp = builder.create<pto::TileBufAddrOp>(loc, ptrType, tile);
+      return addrOp.getDst();
+    };
+
+    SmallVector<Value> ptrs;
+    ptrs.reserve(tiles.size() + 1);
+    ptrs.push_back(emitAddr(dstVal));
+    for (Value tile : tiles) {
+      ptrs.push_back(emitAddr(tile));
+    }
+    return ptrs;
   }
 
   std::tuple<Value, Value, Value, pto::PtrType>
   lowerBinaryOpCommon(OpBuilder &builder, MLIRContext *ctx, Operation *op,
                       Value dstVal, Value src0Val, Value src1Val,
                       const TileShapeMap &tileShapes) {
-    Location loc = op->getLoc();
-    builder.setInsertionPoint(op);
     Type elemTy = getStoredElemType(dstVal.getType());
     auto ptrType = getUBPtrType(ctx, elemTy);
-
-    auto emitAddr = [&](Value tile) -> Value {
-      if (isa<pto::PtrType>(tile.getType())) {
-        return tile;
-      }
-      auto addrOp = builder.create<pto::TileBufAddrOp>(loc, ptrType, tile);
-      return addrOp.getDst();
-    };
-
-    Value dstPtr = emitAddr(dstVal);
-    Value src0Ptr = emitAddr(src0Val);
-    Value src1Ptr = emitAddr(src1Val);
-    return {dstPtr, src0Ptr, src1Ptr, ptrType};
+    SmallVector<Value> ptrs = lowerTilePtrs(builder, ctx, op, dstVal,
+                                            {src0Val, src1Val});
+    return {ptrs[0], ptrs[1], ptrs[2], ptrType};
   }
 
   std::tuple<Value, Value, Value, Value, pto::PtrType>
   lowerXorOpCommon(OpBuilder &builder, MLIRContext *ctx, Operation *op,
                    Value dstVal, Value src0Val, Value src1Val, Value tmpVal,
                    const TileShapeMap &tileShapes) {
-    Location loc = op->getLoc();
-    builder.setInsertionPoint(op);
     Type elemTy = getStoredElemType(dstVal.getType());
     auto ptrType = getUBPtrType(ctx, elemTy);
-
-    auto emitAddr = [&](Value tile) -> Value {
-      if (isa<pto::PtrType>(tile.getType())) {
-        return tile;
-      }
-      auto addrOp = builder.create<pto::TileBufAddrOp>(loc, ptrType, tile);
-      return addrOp.getDst();
-    };
-
-    Value dstPtr = emitAddr(dstVal);
-    Value src0Ptr = emitAddr(src0Val);
-    Value src1Ptr = emitAddr(src1Val);
-    Value tmpPtr = emitAddr(tmpVal);
-    return {dstPtr, src0Ptr, src1Ptr, tmpPtr, ptrType};
+    SmallVector<Value> ptrs = lowerTilePtrs(builder, ctx, op, dstVal,
+                                            {src0Val, src1Val, tmpVal});
+    return {ptrs[0], ptrs[1], ptrs[2], ptrs[3], ptrType};
   }
 
   Value convertScalarToI64(OpBuilder &builder, Location loc, Value scalar) {
@@ -1227,22 +1215,11 @@ private:
   std::tuple<Value, Value, pto::PtrType>
   lowerShiftOpCommon(OpBuilder &builder, MLIRContext *ctx, Operation *op,
                      Value dstVal, Value srcVal, const TileShapeMap &tileShapes) {
-    Location loc = op->getLoc();
-    builder.setInsertionPoint(op);
     Type elemTy = getStoredElemType(dstVal.getType());
     auto ptrType = getUBPtrType(ctx, elemTy);
-
-    auto emitAddr = [&](Value tile) -> Value {
-      if (isa<pto::PtrType>(tile.getType())) {
-        return tile;
-      }
-      auto addrOp = builder.create<pto::TileBufAddrOp>(loc, ptrType, tile);
-      return addrOp.getDst();
-    };
-
-    Value dstPtr = emitAddr(dstVal);
-    Value srcPtr = emitAddr(srcVal);
-    return {dstPtr, srcPtr, ptrType};
+    SmallVector<Value> ptrs =
+        lowerTilePtrs(builder, ctx, op, dstVal, {srcVal});
+    return {ptrs[0], ptrs[1], ptrType};
   }
 
   template <typename UBop>
@@ -1542,8 +1519,9 @@ private:
     }
     SmallVector<int64_t> strides;
     int64_t offset = 0;
-    if (failed(pto::getPTOMemRefStridesAndOffset(memTy, strides, offset)))
+    if (failed(pto::getPTOMemRefStridesAndOffset(memTy, strides, offset))) {
       return false;
+    }
     return !strides.empty() && strides.back() == 1;
   }
 

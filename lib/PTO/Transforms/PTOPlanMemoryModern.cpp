@@ -1782,8 +1782,9 @@ static LogicalResult runModernPlanMemory(func::FuncOp func,
       mlir::failed(materializePlannedOffsets(func, buffer2Offsets))) {
     return failure();
   }
-  if (failed(verifySemanticNoAliasRanges(func)))
+  if (failed(verifySemanticNoAliasRanges(func))) {
     return failure();
+  }
 
   bool hasUnplannedAllocTile = false;
   func.walk([&](pto::AllocTileOp op) {

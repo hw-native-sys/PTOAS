@@ -2,12 +2,13 @@
 
 ## 总体方案
 
-PTOAS 当前保留两套 local memory planner：
+> **状态更新**：legacy memplan（`PTOPlanMemory.cpp`）与 `--plan-memory-impl` 开关已删除，
+> `PTOPlanMemoryModern` 成为唯一实现，`pto-plan-memory` 默认走本设计描述的 modern 路径。
+> 下文涉及 legacy memplan 的叙述为设计时的历史语境，仅作背景保留。
 
-- legacy memplan：默认启用，保留旧版 SPEC_LEVEL_0/1/2 三级投机复用，内存不够时回滚的策略。
-- modern memplan：通过 `--plan-memory-impl=modern` 显式启用，当前实现Largest-First-Fit 与四道冲突闸门内存规划设计
+PTOAS 的 local memory planner 采用本设计描述的 Largest-First-Fit 与四道冲突闸门方案（历史上曾与 legacy memplan 并存，通过 `--plan-memory-impl=modern` 显式启用；legacy 删除后为唯一实现）。
 
-PTOAS 当前已经具备 largest-first 风格的规划开关：`--plan-memory-order-by-size`。该选项会让 planner 在同一 AddressSpace 内优先处理更大的 buffer。当用户显式选择 `--plan-memory-impl=modern` 且未显式指定 `--plan-memory-order-by-size` 时，modern memplan 默认开启该排序；legacy memplan 仍保持默认关闭。
+PTOAS 当前已经具备 largest-first 风格的规划开关：`--plan-memory-order-by-size`。该选项会让 planner 在同一 AddressSpace 内优先处理更大的 buffer。该排序为显式 opt-in，默认关闭（默认行为与删除前的默认 pipeline 一致，即基础 SPEC_LEVEL_0 复用策略 + 声明顺序规划）。
 
 当前 `pto.alloc_tile` 的 lowering 路径保持 tile-native：
 
@@ -15,7 +16,7 @@ PTOAS 当前已经具备 largest-first 风格的规划开关：`--plan-memory-or
 pto.alloc_tile(no addr)
   -> PTOViewToMemref 透传，不转换成 memref.alloc
   -> pto-plan-memory 收集为 local allocation root
-  -> modern/legacy memplan 按 level 校验并规划 local addr
+  -> memplan（modern，唯一实现）按 level 校验并规划 local addr
   -> 直接给 pto.alloc_tile 补常量 addr
   -> 后续 pto.t* tile op 继续使用 !pto.tile_buf 形态
 ```
@@ -33,16 +34,14 @@ pto.alloc_tile(no addr)
 - 保持按 AddressSpace 独立规划。
 - 保持不回滚、不降级的 deterministic 策略。
 - 保持 `pto.alloc_tile(no addr)` tile-native 路径：memplan 直接补 `addr`。
-- 保持 legacy memplan 默认行为不变。
 
 ## 非目标
 
-本设计不包含以下内容：
+本设计不包含以下内容（以下两条针对设计时并存的 legacy memplan，legacy 已删除）：
 
-- 不修改 legacy memplan 的 StorageEntry / SPEC_LEVEL_1 / SPEC_LEVEL_2 逻辑。
-- 不在 legacy memplan 中实现四道闸门。
+- ~~不修改 legacy memplan 的 StorageEntry / SPEC_LEVEL_1 / SPEC_LEVEL_2 逻辑。~~
+- ~~不在 legacy memplan 中实现四道闸门。~~
 - 不恢复旧版回滚式投机规划。
-- 不把 modern memplan 作为默认实现。
 - 不在本阶段实现跨函数、跨 module 的全局内存规划。
 
 ## 核心思想
@@ -850,7 +849,7 @@ struct ConflictFacts {
 - `plan_memory_mte3_mte2_reuse_cost.pto`：构造 `tstore` 源 tile 后接 `tload` 目的 tile 的近邻复用场景，验证 planner 优先选择不会制造 `MTE3 -> MTE2` 共址依赖的地址。
 - 暂不新增 `plan_memory_five_gates_pipeline_load.pto`；闸门 4 当前为预留设计。
 
-已有 `plan_memory_*.pto` 应继续保留 legacy + modern 双 RUN。
+已有 `plan_memory_*.pto` 应继续保留默认路径与 `--plan-memory-order-by-size` 双 RUN（历史上为 legacy + modern 双 RUN，legacy 删除后由默认路径替代 legacy 位置）。
 
 ### 验证命令
 
@@ -876,4 +875,4 @@ ctest --test-dir build --output-on-failure -L PTODSL
 - PIPE_V 物理共址模型只是性能排序，不是安全闸门；容量不足时不能因为 cost 高而报错，除非四道安全闸门本身失败。
 - cost 权重会改变 modern memplan 的 offset 选择，测试应只检查关键“不应过度压缩”的相对关系，避免过度绑定完整地址布局。
 - 物理区间必须和 InsertSync 使用的 root/alias/MemoryEffects 视角保持一致；否则 planner 认为低 cost 的地址，后续同步分析仍可能补出强依赖。
-- legacy memplan 不应受该设计影响，默认行为保持不变。
+- 默认规划路径（原 legacy 默认行为）不应受该设计影响；`--plan-memory-order-by-size` 仍为显式 opt-in。

@@ -14,6 +14,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/Passes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -46,10 +47,11 @@ static bool isNestedInVecScope(Operation *op) {
 }
 
 static bool isNarrowableCounterType(Type type) {
-  if (isa<IndexType>(type))
+  if (isa<IndexType>(type)) {
     return true;
+  }
   auto integerType = dyn_cast<IntegerType>(type);
-  return integerType && integerType.getWidth() > 16;
+  return integerType && integerType.getWidth() > mlir::pto::kValue16;
 }
 
 static bool fitsSignedI16(int64_t value) {
@@ -65,8 +67,9 @@ static std::optional<int64_t> getSignedI16Constant(Value value) {
 }
 
 static bool exitValueFitsSignedI16(int64_t lower, int64_t upper, int64_t step) {
-  if (lower >= upper)
+  if (lower >= upper) {
     return true;
+  }
 
   int64_t distance = upper - lower;
   int64_t iterationCount = (distance + step - 1) / step;
@@ -93,19 +96,22 @@ struct NarrowVecScopeLoopCounterPattern : public OpRewritePattern<scf::ForOp> {
 
   LogicalResult matchAndRewrite(scf::ForOp forOp,
                                 PatternRewriter &rewriter) const override {
-    if (!isNestedInVecScope(forOp))
+    if (!isNestedInVecScope(forOp)) {
       return failure();
+    }
 
     Type originalCounterType = forOp.getInductionVar().getType();
-    if (!isNarrowableCounterType(originalCounterType))
+    if (!isNarrowableCounterType(originalCounterType)) {
       return failure();
+    }
 
     std::optional<int64_t> lower = getSignedI16Constant(forOp.getLowerBound());
     std::optional<int64_t> upper = getSignedI16Constant(forOp.getUpperBound());
     std::optional<int64_t> step = getSignedI16Constant(forOp.getStep());
     if (!lower || !upper || !step || *step <= 0 ||
-        !exitValueFitsSignedI16(*lower, *upper, *step))
+        !exitValueFitsSignedI16(*lower, *upper, *step)) {
       return failure();
+    }
 
     Location loc = forOp.getLoc();
     Value newLower = createI16Constant(rewriter, loc, *lower);
@@ -146,8 +152,9 @@ struct PTONarrowVPTOLoopCounters
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
     patterns.add<NarrowVecScopeLoopCounterPattern>(&getContext());
-    if (failed(applyPatternsAndFoldGreedily(getOperation(), std::move(patterns))))
+    if (failed(applyPatternsAndFoldGreedily(getOperation(), std::move(patterns)))) {
       signalPassFailure();
+    }
   }
 };
 

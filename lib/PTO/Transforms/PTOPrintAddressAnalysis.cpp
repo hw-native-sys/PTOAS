@@ -9,6 +9,7 @@
 //===- PTOPrintAddressAnalysis.cpp - Address analysis debug printer ------===//
 
 #include "PTO/Analysis/PTOAddressAnalysis.h"
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/Passes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -211,7 +212,7 @@ struct PTOPrintAddressAnalysisPass
     auto &addressAnalysis = getAnalysis<pto::PTOAddressAnalysis>();
     // Function passes may execute concurrently. Buffer one function's report
     // and publish it atomically so FileCheck sees deterministic whole lines.
-    llvm::SmallString<1024> storage;
+    llvm::SmallString<mlir::pto::kValue1024> storage;
     llvm::raw_svector_ostream os(storage);
 
     os << "address-analysis @" << function.getSymName() << "\n";

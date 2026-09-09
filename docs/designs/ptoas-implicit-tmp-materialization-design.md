@@ -85,11 +85,11 @@ bool requireExplicitAtLevel3;
 ```text
 pto.alloc_tile(no addr)
   -> local allocation root
-  -> legacy/modern memplan 分配 offset
+  -> memplan（modern，唯一实现）分配 offset
   -> pto.alloc_tile addr = ...
 ```
 
-legacy memplan 和 modern memplan 都应把自动生成的 tmp 当成普通 local allocation root。memplan 不应该知道“这是某个 op 的隐式 tmp”，也不应该在内部临时创建 tmp。
+memplan 应把自动生成的 tmp 当成普通 local allocation root。memplan 不应该知道“这是某个 op 的隐式 tmp”，也不应该在内部临时创建 tmp。
 
 memplan 侧需要依赖 op 的 MemoryEffects / semantic no-alias 信息保证正确复用：
 
@@ -349,11 +349,11 @@ CHECK: pto.alloc_tile addr =
 CHECK: pto.tci ins(%{{.*}}, %{{.*}}
 ```
 
-legacy 和 modern 都应覆盖：
+memplan（`PTOPlanMemoryModern`，唯一实现）覆盖：
 
 ```text
-// RUN: ptoas --pto-level=level2 --plan-memory-impl=legacy ...
-// RUN: ptoas --pto-level=level2 --plan-memory-impl=modern ...
+// RUN: ptoas --pto-level=level2 ...
+// RUN: ptoas --pto-level=level2 --plan-memory-order-by-size ...
 ```
 
 #### lit：EmitC 走带 tmp overload
@@ -553,7 +553,7 @@ CHECK: pto.alloc_tile addr =
 CHECK: pto.trowexpand{{.*}} ins(%{{.*}}, %{{.*}}, %{{.*}}
 ```
 
-legacy 和 modern 都应覆盖。
+默认路径与 `--plan-memory-order-by-size` 都应覆盖。
 
 #### lit：level3 负例
 

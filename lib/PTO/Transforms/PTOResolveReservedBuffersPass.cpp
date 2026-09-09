@@ -575,8 +575,9 @@ struct PTOResolveReservedBuffersPass
       if (succeeded(noAliasStatus) && failed(verifySemanticNoAliasRanges(func)))
         noAliasStatus = failure();
     });
-    if (failed(noAliasStatus))
+    if (failed(noAliasStatus)) {
       signalPassFailure();
+    }
   }
 };
 

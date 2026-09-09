@@ -41,8 +41,9 @@ static bool isColMajorNoneBox(pto::TileBufType type) {
 }
 
 static bool isA5RiskyVecVecColMajorTMov(pto::TMovOp op) {
-  if (pto::classifyTMovForm(op.getFp()) == pto::TMovForm::XToZz)
+  if (pto::classifyTMovForm(op.getFp()) == pto::TMovForm::XToZz) {
     return false;
+  }
   auto srcTb = dyn_cast<pto::TileBufType>(op.getSrc().getType());
   auto dstTb = dyn_cast<pto::TileBufType>(op.getDst().getType());
   if (!srcTb || !dstTb) {

@@ -27,6 +27,9 @@ using namespace mlir;
 namespace {
 
 constexpr int64_t kRowMajorNoneBoxSFractalSize = 512;
+// Hardware repeat counter limit (matches the instruction-level repeat max,
+// also spelled REPEAT_MAX in pto-isa common/constants.hpp).
+constexpr int64_t kRepeatMax = 255;
 
 static pto::TileBufConfigAttr makeRowMajorNoneBoxConfig(MLIRContext *ctx) {
   OpBuilder builder(ctx);
@@ -51,9 +54,12 @@ static unsigned getTCIDstBitWidth(pto::TCIOp op) {
 }
 
 static pto::TileBufType makeTCITmpType(MLIRContext *ctx, unsigned dstBitWidth) {
-  // PTO-ISA TCI A2/A3 vector path needs 768B for b32 dst and 1792B for
-  // b16 dst. Use an f32 1xN tmp with the exact minimum capacity.
-  int64_t cols = dstBitWidth == 16 ? 448 : 192;
+  // PTO-ISA TCI A2/A3 vector path minimum tmp sizes (docs/isa/TCI.md):
+  // b32 dst needs 768B = 192 float elements, b16 dst needs 1792B = 448
+  // float elements. Use an f32 1xN tmp with the exact minimum capacity.
+  constexpr int64_t kTciTmpColsB16 = 448;
+  constexpr int64_t kTciTmpColsB32 = 192;
+  int64_t cols = dstBitWidth == 16 ? kTciTmpColsB16 : kTciTmpColsB32;
   return pto::TileBufType::get(
       ctx, {1, cols}, Float32Type::get(ctx),
       pto::AddressSpaceAttr::get(ctx, pto::AddressSpace::VEC), {1, cols},
@@ -737,11 +743,19 @@ static LogicalResult materializeFixedMandatoryTmp(Operation *op,
         if (!elemBytes) {
           return typedOp.emitOpError("failed to infer ttrans element size");
         }
-        int64_t rowStride = *elemBytes == 1 ? 32 : 16;
-        int64_t elemPerBlock = 32 / *elemBytes;
+        // PTO-ISA TTRANS fast path constraints (docs/isa/TTRANS.md): row
+        // stride is 32 for b8 element types (Y_ELEM_B8) and 16 for b16/b32
+        // (Y_ELEM_OTHER); a block is 32 bytes, so ElemPerBlock =
+        // 32 / sizeof(T).
+        constexpr int64_t kTtransRowStrideB8 = 32;
+        constexpr int64_t kTtransRowStrideOther = 16;
+        constexpr int64_t kTtransBlockBytes = 32;
+        int64_t rowStride =
+            *elemBytes == 1 ? kTtransRowStrideB8 : kTtransRowStrideOther;
+        int64_t elemPerBlock = kTtransBlockBytes / *elemBytes;
         bool usesTmp = dstShape[1] % rowStride == 0 &&
                        srcShape[1] % elemPerBlock == 0 &&
-                       srcShape[1] / elemPerBlock <= 255;
+                       srcShape[1] / elemPerBlock <= kRepeatMax;
         FailureOr<pto::TileBufType> type =
             isA5 ? makeA5PlaceholderTmpType(ctx, typedOp.getSrc())
                  : makeSameShapeTmpType(ctx, typedOp.getSrc());
@@ -773,7 +787,8 @@ static bool tcvtNeedsTmp(pto::TCvtOp op) {
   Type dstElem = dstTy.getElementType();
   return (srcElem.isF32() && dstElem.isInteger(mlir::pto::kValue16)) ||
          (srcElem.isF16() &&
-          (dstElem.isInteger(mlir::pto::kValue16) || dstElem.isInteger(8)));
+          (dstElem.isInteger(mlir::pto::kValue16) ||
+           dstElem.isInteger(mlir::pto::kValue8)));
 }
 
 static FailureOr<pto::TileBufType> makeTCvtTmpType(MLIRContext *ctx,
@@ -787,20 +802,33 @@ static FailureOr<pto::TileBufType> makeTCvtTmpType(MLIRContext *ctx,
     return failure();
   }
   int64_t rows = dstValid[0], cols = dstValid[1];
+  // TCVT tmp sizing mirrors docs/isa/TCVT.md: REPEAT_MAX = 255,
+  // BLOCK_BYTE_SIZE = 32, 64 elements per repeat for the float main
+  // region, 8 source elements per 32-byte block.
+  constexpr int64_t kTcvtElemsPerRepeat = 64;
+  constexpr int64_t kTcvtBlockBytes = 32;
+  constexpr int64_t kTcvtSrcElemsPerBlock = 8;
+  constexpr int64_t kTcvtHalfToI8BaseBytes = 128;
   int64_t bytes = 0;
   if (rows > 0 && cols > 0 && srcTy.getElementType().isF32()) {
-    int64_t head = 4 * 64 * std::min<int64_t>(cols / 64, 255);
-    int64_t remainder = cols % 64;
-    int64_t tail = remainder == 0
-                       ? 0
-                       : 32 * ((std::min<int64_t>(rows, 255) - 1) *
-                                   (srcShape[1] / 8) +
-                               ceilDiv(remainder, 8));
+    int64_t head =
+        4 * kTcvtElemsPerRepeat *
+        std::min<int64_t>(cols / kTcvtElemsPerRepeat, kRepeatMax);
+    int64_t remainder = cols % kTcvtElemsPerRepeat;
+    int64_t tail =
+        remainder == 0
+            ? 0
+            : kTcvtBlockBytes *
+                  ((std::min<int64_t>(rows, kRepeatMax) - 1) *
+                       (srcShape[1] / kTcvtSrcElemsPerBlock) +
+                   ceilDiv(remainder, kTcvtSrcElemsPerBlock));
     bytes = std::max(head, tail);
   } else if (cols > 0 && srcTy.getElementType().isF16()) {
-    int64_t width = std::min<int64_t>(cols, 64);
-    int64_t halfToI16 = 32 * ceilDiv(width, 8);
-    int64_t halfToI8 = std::max(halfToI16, 128 + 32 * ceilDiv(width, 16));
+    int64_t width = std::min<int64_t>(cols, kTcvtElemsPerRepeat);
+    int64_t halfToI16 = kTcvtBlockBytes * ceilDiv(width, 8);
+    int64_t halfToI8 =
+        std::max(halfToI16,
+                 kTcvtHalfToI8BaseBytes + kTcvtBlockBytes * ceilDiv(width, 16));
     bytes = dstTy.getElementType().isInteger(mlir::pto::kValue8) ? halfToI8 : halfToI16;
   }
   int64_t allocatedBytes = std::max<int64_t>(32, ceilDiv(bytes, 32) * 32);
