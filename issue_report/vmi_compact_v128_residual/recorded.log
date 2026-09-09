@@ -1,0 +1,30 @@
+=== H=384 128-strip isolate (VMI-RESIDUAL-OP) ===
+任务已提交: task_20260910_025703_2134185 (断开后可用 task-submit --wait task_20260910_025703_2134185 重连)
+等待任务执行: task_20260910_025703_2134185 (Ctrl+C 终止任务)
+[npu-lock] 获取设备 1 的锁 (无超时)...
+[npu-lock] 已获取设备 1 的锁 (pid=2144246)
+===== ISOLATE per_block_cast__block_size=(32,32)_fmt=e4m3_hidden=384_in_dtype=bf16_mode=cast_num_tokens=512_round_sf=True_use_packed_ue8m0=False_use_tma_aligned_col_major_sf=False =====
+/home/jzhuang/.conda/envs/cann91_dev/lib/python3.11/site-packages/torch_npu/utils/_path_manager.py:66: UserWarning: Permission mismatch: The owner of /home/jzhuang/.conda/envs/cann91_dev/lib/python3.11/site-packages/torch_npu/lib/libop_plugin_atb.so does not match.
+  warnings.warn(f"Permission mismatch: The owner of {path} does not match.")
+Loading tilelang libs from dev root: /home/jzhuang/work_dir/vmi_work_0908/tilelang_fp4_0908/build
+CUTLASS is not installed or found in the expected path
+# device=1 name=Ascend950DT_9592
+[1/1] per_block_cast__block_size=(32,32)_fmt=e4m3_hidden=384_in_dtype=bf16_mode=cast_num_tokens=512_round_sf=True_use_packed_ue8m0=False_use_tma_aligned_col_major_sf=False vmi=supported
+2026-09-10 02:59:16  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:142): TileLang begins to compile kernel `per_block_cast_kernel` with `out_idx=None`
+2026-09-10 02:59:21  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:150): TileLang completes to compile kernel `per_block_cast_kernel`
+2026-09-10 02:59:24  [TileLang:tilelang.language.eager.builder:WARNING] (per_block_cast_vmi.py:732): Immutable value `recip` is re-bound; use T.alloc_var to create a mutable variable.
+2026-09-10 02:59:24  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:142): TileLang begins to compile kernel `per_block_cast_kernel` with `out_idx=None`
+RESULT per_block_cast__block_size=(32,32)_fmt=e4m3_hidden=384_in_dtype=bf16_mode=cast_num_tokens=512_round_sf=True_use_packed_ue8m0=False_use_tma_aligned_col_major_sf=False asc_us=None vmi_us=None ratio=None error=RuntimeError: PTO lowering failed for kernels ['per_block_cast_kernel_kernel'].
+Command: ptoas --pto-arch=a5 --pto-backend=vpto --pto-level=level3 --cann-output-version=9.2.0 /tmp/tmpt8f02iul/kernel.pto -o /tmp/tmpt8f02iul/kernel.fatobj.o
+stderr:
+Warning: PTO_ISA_PATH/PTO_ISA_ROOT is not set; C++ device object emission may fail to include pto/pto-inst.hpp.
+loc("62"("/tmp/tmpt8f02iul/kernel.pto":60:19)): error: VMI-RESIDUAL-OP: failed to convert all VMI ops/types to VPTO
+Error: VPTO emission pipeline failed.
+
+stdout:
+
+# skip jsonl upsert (BENCH_SKIP_UPSERT=1)
+[WARN]FormatFeatureList,feature_mgr.cpp:55:Do not support feature: AICORE_SHAPE, log is: It not support feature: AICORE_SHAPE!
+ISOLATE_PER_BLOCK_H384_DONE
+[npu-lock] 已释放设备 1 的锁
+=== 任务完成 (exit=0) ===

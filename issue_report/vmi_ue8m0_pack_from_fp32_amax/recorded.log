@@ -1,0 +1,6 @@
+=== per_block sf_only packed ===
+bf16->e4m3 tma=False mismatch_bytes=0
+bf16->e4m3 tma=True mismatch_bytes=0
+bf16->e2m1 tma=False mismatch_bytes=0
+fp32->e4m3 tma=False mismatch_bytes=1024
+# 2026-09-10 device 0, isolated bitwise vs ASC

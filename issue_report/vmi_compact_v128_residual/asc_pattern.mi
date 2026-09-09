@@ -1,0 +1,22 @@
+// ASC physical pattern for a 128-wide K strip (no host pad).
+// From Nightly per_block_cast_asc at H=384 (asc_reference.cpp).
+// Launch: run_asc.py — ASC_LAUNCH_OK.
+//
+// block_k = align(gcd(limit, hidden), 128)
+// H=384 => three K tiles of 128. GM copy uses src stride 768 (= 384*2 B),
+// dest 256 B (= 128 bf16).
+
+// DMA one 128-col tile (32 tokens x 128 bf16)
+// ASC: asc_copy_gm2ub_align(..., nburst=min(32, remain), len=256,
+//                          src_stride=768, dst_stride=256)
+// x[token_block * 12288 + (block_idx % 3) * 128]  // 12288 = 32*384
+
+// VF: 128-lane NORM load / pack store (not a 256-lane residual)
+%x = pto.mi.vlds %x_ub {dist = "NORM"} : !pto.ptr<bf16, ub> -> !pto.mi.vreg<128 x bf16>
+// ASC: vlds_norm<bfloat16_t>(row * 128)
+%q = pto.mi.vcvt %x {part = P0} : bf16 -> f8e4m3
+pto.mi.vsts %q, %out_ub {dist = "PK4"}
+// ASC: vsts_pack_quarter(vcvt<fp8_e4_t>(...), row * 128)
+
+// Style contrast: desired VMI is V<128 x bf16> + create_mask(128).
+// pto.as must not invent VMI-RESIDUAL-OP; compact vregs are in the spec.

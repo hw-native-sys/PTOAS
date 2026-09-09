@@ -1,0 +1,25 @@
+// ASC physical pattern: amax -> UE8M0 pack, optional payload.
+// From Nightly per_block_cast_asc store_scale_pair when use_packed_ue8m0
+// (per_block_cast_asc.py) and per_token fused pack (asc_reference in
+// vmi_fp8_vbrc_clear_tail shows the same vsts_pack_quarter of the exponent).
+//
+// exponents = (bitcast_u32(scale) >> 23)
+// packed    = lo_byte | (hi_byte << 8)   // two scales per u16
+// store     = vsts ONEPT_B16 (TMA-col) or row-major
+
+%exp = pto.mi.vshr %scale_u32, 23 : !pto.mi.vreg<64 x ui32>
+%hi  = pto.mi.vdupv %exp {pos = HIGHEST}
+%pk  = pto.mi.vor %exp, (vshl %hi, 8)
+pto.mi.vsts %pk, %sf_ub {dist = "ONEPT_B16"}
+// ASC TileLang:
+//   exponents = S.vshrs(T.reinterpret(scale01, 'uint32x64'), 23)
+//   packed    = S.vor(exponents, S.vshls(S.vdupv(exponents, POS_HIGHEST), 8))
+//   S.vsts(sf_ub[sf_row, sf_j // 2], packed, dist='ONEPT_B16')
+
+// Nightly C-API pack of the exponent byte (per_token rescale):
+//   vsts_pack_quarter(*(vector_u8 *)(&scale), sf_ub, mask_b8)
+
+// bf16 sf_only+packed already matches this sequence bitwise.
+// fp32 amax path must produce the same packed bytes as ASC (1024-byte
+// SF mismatch at 512x2048 is the recorded leftover).
+// Style contrast: desired VMI is vcmax + shift + vcvt to u8 + vstore.

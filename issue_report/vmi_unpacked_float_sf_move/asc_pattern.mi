@@ -1,0 +1,22 @@
+// ASC physical pattern for unpacked float SF (no pack, no host permute).
+// From Nightly per_block / per_token / per_channel ASC (sf_ub_dtype = f32
+// when use_packed_ue8m0 is false). Full C++ is Nightly codegen; this is
+// the pto.mi target.
+//
+// Row-major unpacked store of two f32 scales (ONEPT is ASC physical;
+// VMI user code is a plain vstore of V<L x f32>):
+//   S.vsts(sf_ub[sf_row, sf_j], scale01, dist='ONEPT_B32')
+// pto.mi:
+pto.mi.vsts %scale0, %sf_ub {dist = "ONEPT_B32"} : !pto.mi.vreg<64 x f32>
+pto.mi.vsts %scale1, %sf_ub {dist = "ONEPT_B32"}
+
+// TMA-col unpacked: same ONEPT store with transposed (col, row) address.
+//   S.vsts(sf_ub[sf_j, sf_row], scale01, dist='ONEPT_B32')
+// VMI must not require the host to permute GM into that layout.
+
+// Unpacked load (rescale in-SF, per_channel L1):
+%scale = pto.mi.vlds %sf_ub {dist = "BRC_B32"} : !pto.ptr<f32, ub> -> !pto.mi.vreg<64 x f32>
+// ASC: S.vld(sf_ub[0, sf_j], dist='BRC_B32')
+
+// Style contrast: desired VMI is vload/vstore of V<64 x f32>.
+// pto.as owns ONEPT / BRC / TMA address. Host permute is not a port.

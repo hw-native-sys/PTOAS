@@ -2,34 +2,79 @@
 
 PTOAS `b465f26b`, CANN 9.2.0, TileLang `5038c468`, A5.
 
-TileKernels-vmi coverage treats a variant as **ported only when every ASC-supported config of that variant has a working in-kernel VMI counterpart**. Host-pad is not a port unless ASC also host-pads. Shape-specific leftovers and in-code gates therefore stay `TODO(impl)`. Isolated legal-VMI attempts (fused last-wave / even-split / stages=1; compose via `cast_back` TMA npt=1; in-kernel e4m3 tail `vbrc`/`T.clear`) did not close the new rows.
+These reports are **low-level PTOAS bugs**, not one directory per Nightly TileLang leftover class. Each issue has:
 
-The original three `#7` `cast_back` dirs are unchanged. Later dirs record leftovers that in-code gates or the old “any shape pass” rule hid.
+- a short **desired VMI** (logical `V<L×T>`, no PART/ONEPT/PK impersonation)
+- a working **ASC reference** (Nightly C++ that launches, plus `asc_pattern.mi` — the `pto.mi` PTOAS must emit)
+- a table of high-level configs that hit the same bug
 
-Each directory has legal desired VMI (`desired_vmi.ptodsl.py` = production dump), TileLang PTODSL dump, Nightly ASC C++ when available (`asc_reference.cpp`), `run_repro.sh`, and recorded logs.
+Old 1:1 leftover directories are **pointers**; their `recorded.log` files are kept.
 
-| Dir | Variant | Recorded |
-|---|---|---|
-| `cast_back_e4m3_fp32_tma_npt32_h128` | e4m3→fp32 TMA npt=32 H=128 | compile-OK, ACL 507035 |
-| `cast_back_e4m3_fp32_tma_npt1` | e4m3→fp32 TMA npt=1 H=128 | compile-OK, ACL 507035 |
-| `cast_back_row_npt1` | row npt=1 e2m1/e4m3→bf16/fp32 | compile-OK, numerical mismatch |
-| `cast_back_tma_npt1_h2048` | TMA npt=1 e2m1/e4m3→bf16 @ 512×2048 | compile-OK, isolated mismatch (117550 / 124084) |
-| `cast_back_e2m1_fp32_tma_npt32_h2048` | e2m1→fp32 TMA npt=32 @ 512×2048 | compile-OK, isolated mismatch (81987 / 3.0) |
-| `per_channel_tma_in_large_shape` | e4m3 rescale TMA-col **input** SF, large tiles | fused 512×7168 last-wave mismatch; compose inherits TMA npt=1 |
-| `per_token_fp4_rescale_m8001` | fused rescale M=8001 (ASC ceildiv, no host pad) | `vbrc(f8e4m3(0))` / `T.clear` e4m3 UB do not lower |
-| `per_block_h384` | per_block H=384 128-strip (ASC align-128, no host pad) | TileLang OK, PTOAS `VMI-RESIDUAL-OP` |
-| `per_token_h128_h384` | per_token Nightly L1 H=128/384 (ASC `%128`) | `hidden % 256 == 0` assert; no 128-strip |
-| `per_token_tma_unpacked` | per_token TMA-col unpacked SF | assert (packed required); host permute is not a port |
-| `per_token_fp4_unpacked` | per_token FP4 unpacked SF | assert (packed UE8M0 cast only) |
-| `per_token_sf_only_packed` | per_token sf_only+packed | assert (sf_only unpacked only) |
-| `per_token_rescale_row_sf` | per_token rescale non-a5 / row-major | compose SF off-by-one vs ASC fused |
-| `per_channel_rescale_unpacked_in` | per_channel L1 unpacked row-major in-SF | assert (packed input SF required) |
-| `per_block_sf_only_packed_fp32` | per_block sf_only+packed fp32 | launch OK, 1024-byte SF mismatch (bf16 path is ported) |
+Host-pad and host TMA permute are not ports. ASC-illegal / untested guards (per-channel FP4, Ascend `npt≠32`, packed+`round_sf=False`, output TMA) are **not** issues.
 
-Maps to [cann/pto-as issue #7](https://gitcode.com/cann/pto-as/issues/7) for the `cast_back` 1×T leftovers. The per_channel TMA-in large-shape case is a Persistent remainder / periodic-wave lowering leftover on the same legal 1×T unpack (not a VMI host permute).
+Design: [PTO-vmi-design.en.md](../../../kernel_study/PTO-Gym-vmi-design/docs/PTO-vmi-design.en.md), [PTO-vmi-Instruction-SPEC.md](../../../kernel_study/PTO-Gym/docs/PTO-vmi-Instruction-SPEC.md).
 
-Nightly L1 leftovers above are now matrix `TODO(impl)` rows so they cannot be silently dropped. `per_block` bf16 `sf_only+packed` (row and TMA) is a new in-kernel port (bitwise vs ASC); fp32 of that mode stays leftover.
+## Six issues
 
-`per_token` has 12 ASC a5 FP4 TMA rescale rows at M=8001 (`8001 % 16 == 1`). ASC uses in-kernel `ceildiv` (no host pad). VMI cannot lower an e4m3/e2m1 last-tile zero (`vbrc(f8e4m3(0))` / `T.clear` fp8). Those 4 variants are **TODO(impl)** — see `per_token_fp4_rescale_m8001/`.
+| | Dir | Low-level hole | ASC reference | Recorded |
+|---|---|---|---|---|
+| **A** | [`vmi_1xT_ue8m0_scale_apply/`](vmi_1xT_ue8m0_scale_apply/) | 1×T UE8M0 extract + scale apply | Nightly `cast_back_asc` launches; `asc_pattern.mi` is `vlds_brc_elem` + `vshl` + `vmul` | 507035 **or** compile-OK mismatch |
+| **B** | [`vmi_compact_v128_residual/`](vmi_compact_v128_residual/) | Compact `V<128×T>` strip (`create_mask(128)`) | Nightly per_block H=384 launches (128-aligned `block_k`, no host pad) | `VMI-RESIDUAL-OP` / `hidden % 256` assert |
+| **C** | [`vmi_fp8_vbrc_clear_tail/`](vmi_fp8_vbrc_clear_tail/) | `vbrc` / UB clear of fp8 (ceildiv tail) | Nightly fused rescale launches (`ceildiv`, clamped DMA) | `vbrc(f8e4m3(0))` / `T.clear` e4m3 |
+| **D** | [`vmi_unpacked_float_sf_move/`](vmi_unpacked_float_sf_move/) | Unpacked `V<L×f32>` SF load/store (row and TMA-col) | Nightly unpacked path (`ONEPT_B32` / `BRC_B32`); pattern in `asc_pattern.mi` | packed-only adapter assert |
+| **E** | [`vmi_ue8m0_pack_from_fp32_amax/`](vmi_ue8m0_pack_from_fp32_amax/) | amax → UE8M0 pack (sf_only or with payload) | Nightly `store_scale_pair` packed; bf16 sibling already bitwise | 1024-byte SF mismatch (fp32) / assert (per_token) |
+| **F** | [`vmi_persistent_last_wave/`](vmi_persistent_last_wave/) | Last Persistent software-pipeline wave | Nightly fused per_channel TMA-in launches | remainder-wave payload+SF mismatch |
 
-`per_block` ASC a5 includes H=384. ASC uses 128-aligned `block_k` in-kernel. VMI’s H=128 128-strip hits `VMI-RESIDUAL-OP` at H=384. Those variants are **TODO(impl)** — see `per_block_h384/`. Host-pad is not a port.
+Joins checked in TileKernels-vmi:
+
+- `per_token_rescale_row_sf` compose calls `cast_back` → **A**.
+- per_token fp32 packed TMA M=8001 H=16384/65536 isolated 507035 (fresh lock) → **A** (same ACL family, large TMA store).
+- per_channel TMA-in **compose** → **A**; **fused** remainder waves stay **F** (matching waves are bitwise).
+
+## Leftover-class → issue (100% four-kernel ASC-parity blockers)
+
+Every in-matrix `TODO(impl)` row on `per_token_cast` / `per_block_cast` / `per_channel_cast` / `cast_back` maps here. Counts from TileKernels-vmi `kernel_coverage.md` on `per_channel_debug_0909` (459 ASC configs, 135 TODO(impl)).
+
+| Leftover class (rows) | Issue |
+|---|---|
+| per_token hidden 128/384 (40) | B |
+| per_token fused rescale M=8001 (12) | C |
+| per_token sf_only+packed (2) | E |
+| per_token TMA-col unpacked SF (1) | D |
+| per_token FP4 unpacked SF (1) | D |
+| per_token row-major rescale compose (1) | A |
+| per_token fp32 packed TMA M=8001 H=16384/65536 isolated 507035 (2) | A |
+| per_channel large TMA-in fused (7) | F |
+| per_channel large TMA-in compose | A |
+| per_channel unpacked in-SF (2) | D |
+| per_block H=384 (8) | B |
+| per_block sf_only+packed fp32 (4) | E |
+| cast_back npt=1 mismatches (6) + ACL 507035 (48) + e2m1→fp32 TMA launch (1) | A |
+| ASC-illegal / untested guards | not an issue |
+
+## Pointers (old 1:1 dirs)
+
+| Old dir | Now |
+|---|---|
+| `cast_back_e4m3_fp32_tma_npt32_h128/` | A |
+| `cast_back_e4m3_fp32_tma_npt1/` | A |
+| `cast_back_row_npt1/` | A |
+| `cast_back_tma_npt1_h2048/` | A |
+| `cast_back_e2m1_fp32_tma_npt32_h2048/` | A |
+| `per_token_rescale_row_sf/` | A |
+| `per_channel_tma_in_large_shape/` | A compose + F fused |
+| `per_token_h128_h384/` | B |
+| `per_block_h384/` | B |
+| `per_token_fp4_rescale_m8001/` | C |
+| `per_token_tma_unpacked/` | D |
+| `per_token_fp4_unpacked/` | D |
+| `per_channel_rescale_unpacked_in/` | D |
+| `per_token_sf_only_packed/` | E |
+| `per_block_sf_only_packed_fp32/` | E |
+
+## What is not a PTOAS issue
+
+- Host-pad of M or H (ASC uses in-kernel `ceildiv` / 128-aligned tiles).
+- Host permute of row-major SF to look like TMA-col.
+- ASC-illegal combinations (per-channel FP4, Ascend `npt≠32`, packed without round, per-channel **output** TMA).
+- SwiGLU / top-k / fused cast+cast-back (outside the four-kernel parity goal).

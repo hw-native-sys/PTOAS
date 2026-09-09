@@ -1,0 +1,27 @@
+// ASC physical pattern that desired VMI must lower to.
+// Excerpted from Nightly cast_back_asc (asc_reference.cpp), e4m3 -> f32.
+// This kernel launches: run_asc.py prints ASC_LAUNCH_OK.
+//
+// Compact UE8M0 byte is broadcast-loaded, shifted into the f32 exponent
+// field, then multiplied onto the unpacked payload. VMI should emit the
+// same pto.mi sequence without the user writing PART_P0 / BRC_ELEM.
+
+// 1) 1-byte (elem) broadcast load of packed UE8M0
+%packed = pto.mi.vlds %sf_ub {dist = "BRC_ELEM"} : !pto.ptr<ui16, ub> -> !pto.mi.vreg<128 x ui16>
+// ASC C-API: simd_inst::vlds_brc_elem<uint16_t>(sf_ub, 0)
+
+// 2) Place exponent bits (<< 23 for f32, << 15 for bf16) and mask
+%shifted = pto.mi.vshl %packed, %sf_shift : !pto.mi.vreg<64 x ui32>
+%exp     = pto.mi.vand %shifted, %exp_mask
+%scale   = bitcast %exp : f32
+// ASC: vshl(..., sf_shift) ; vand(..., 0x7f800000) ; bitcast to f32
+
+// 3) Unpack e4m3 payload and apply scale
+%x = pto.mi.vlds %x_ub {dist = "UNPK4"} : !pto.ptr<f8e4m3, ub> -> !pto.mi.vreg<64 x f8e4m3>
+%v = pto.mi.vcvt %x {part = P0} : f8e4m3 -> f32
+%y = pto.mi.vmul %v, %scale
+pto.mi.vsts %y, %out_ub {dist = "NORM"}
+// ASC: vlds_unpack4<float8_e4m3_t> ; vcvt<float>(..., PART_P0) ; vmul ; vsts_norm
+
+// Style contrast: desired_vmi.ptodsl.py writes vload(size=1) + vshls + vbrc
+// + vcvt + vmul. pto.as owns BRC_ELEM / UNPK4 / PART_P0.

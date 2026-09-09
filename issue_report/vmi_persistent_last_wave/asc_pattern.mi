@@ -1,0 +1,23 @@
+// ASC physical pattern for fused per_channel TMA-col *input* SF.
+// From Nightly / TileLang ascend codegen (asc_reference.cpp).
+// Launch: run_asc.py — ASC_LAUNCH_OK.
+//
+// Each software-pipeline wave (including the last remainder wave) does
+// the same VF: unpack e4m3, gather TMA-col UE8M0 bytes, shift, vmul.
+
+// Payload unpack (two 64-lane UNPK4 -> vdintlv -> 128-lane bf16)
+%x0 = pto.mi.vlds %x_ub {dist = "UNPK4"}
+%x1 = pto.mi.vlds %x_ub[+64] {dist = "UNPK4"}
+%bf = pto.mi.vdintlv (vcvt %x0), (vcvt %x1)
+// ASC: vlds_unpack4<float8_e4m3_t> ; vcvt<float> PART_P0 ; vdintlv
+
+// TMA-col SF: gather 1-byte exponents at computed offsets, << 7
+%sf = pto.mi.vgather %sf_ub, %sf_offsets
+%sc = pto.mi.vshl %sf, 7
+%y  = pto.mi.vmul %bf, %sc
+pto.mi.vsts %y, %out_ub {dist = "NORM"}
+// ASC: vgather2(sf_ub, sf_offsets) ; vshls(..., 7) ; vmul ; vsts_norm
+
+// Desired VMI is one remainder wave of vload(size=1)+vbrc+vmul.
+// pto.as must apply the same sequence to the last Persistent group;
+// recorded leftover is only those waves (payload+SF), not the full tile.

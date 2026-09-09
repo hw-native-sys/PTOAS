@@ -1,0 +1,22 @@
+// ASC physical pattern for last-tile zero / ceildiv (no host pad).
+// From Nightly per_token_cast_asc fused rescale (asc_reference.cpp).
+// Launch: run_asc.py — ASC_LAUNCH_OK.
+//
+// ASC zeros with vdup of 0.0 in bf16 (after dequant) and clamps DMA
+// length with min(remain, tile). It never host-pads M=8001.
+
+%zero_bf = pto.mi.vdup 0.0 : !pto.mi.vreg<128 x bf16>
+// ASC: simd_inst::vdup<bfloat16_t>(0.0, mask, MODE_ZEROING)
+
+// Token DMA uses ceildiv + clamp, not a host-padded M:
+//   nburst = min(16, max(num_tokens - tile_base, 0))
+// leftover rows are simply not copied; UB lanes that are not written
+// stay the vdup-zero from the previous VF.
+
+// For a native fp8 store of the leftover tile, ASC can vdup/vsts a
+// zero e4m3 vector. VMI should be:
+//   %z = pto.vmi.vbrc 0 : f8e4m3 -> V<64 x f8e4m3>
+//   pto.vmi.vstore %z, %ub
+// pto.as lowering: vdup / vsts_norm on the fp8 carrier.
+// Recorded failure: TypeError f8E4M3FN constructor; T.clear e4m3
+// "Bad bit-width float8_e4m3fn".
