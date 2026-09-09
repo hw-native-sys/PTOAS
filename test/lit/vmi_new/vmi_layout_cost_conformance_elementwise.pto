@@ -1,0 +1,296 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance | FileCheck %s --check-prefix=COST
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance -vmi-to-vpto -test-vmi-layout-lowering-conformance > /dev/null
+
+module {
+  func.func @addf(%a: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+                  %b: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.addf %a, %b {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+        !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @addi(%a: !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>,
+                  %b: !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.addi %a, %b {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>,
+        !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @subi(%a: !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>,
+                  %b: !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.subi %a, %b {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @muli(%a: !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>,
+                  %b: !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.muli %a, %b {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @negi(%a: !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.negi %a {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @absi(%a: !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.absi %a {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @subf(%a: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+                  %b: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.subf %a, %b {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+        !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @mulf(%a: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+                  %b: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.mulf %a, %b {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+        !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @negf(%a: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.negf %a {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @absf(%a: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.absf %a {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @vadds_zero(
+      %a: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+      %m: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> {
+    %s = arith.constant 1.0 : f32
+    %r = pto.vmi.vadds %a, %s, %m {pmode = "zero",
+                                    test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, f32,
+        !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @vmuls_zero(
+      %a: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+      %m: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> {
+    %s = arith.constant 2.0 : f32
+    %r = pto.vmi.vmuls %a, %s, %m {pmode = "zero",
+                                    test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, f32,
+        !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @vmaxs_zero(
+      %a: !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>,
+      %m: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>> {
+    %s = arith.constant 2 : i32
+    %r = pto.vmi.vmaxs %a, %s, %m {pmode = "zero",
+                                    test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>, i32,
+        !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @vmins_zero(
+      %a: !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>,
+      %s: si32,
+      %m: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.vmins %a, %s, %m {pmode = "zero",
+                                    test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>, si32,
+        !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @vshls_zero(
+      %a: !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>,
+      %s: i16,
+      %m: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.vshls %a, %s, %m {pmode = "zero",
+                                    test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>, i16,
+        !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @vshrs_zero(
+      %a: !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>,
+      %s: i16,
+      %m: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.vshrs %a, %s, %m {pmode = "zero",
+                                    test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>, i16,
+        !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @legacy_generic(
+      %f0: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+      %f1: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+      %i0: !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>,
+      %i1: !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>,
+      %u0: !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>,
+      %u1: !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>)
+      -> (!pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>) {
+    %f2 = pto.vmi.divf %f0, %f1 {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    %f3 = pto.vmi.minf %f2, %f1 {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    %f4 = pto.vmi.maxf %f3, %f1 {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    %f5 = pto.vmi.sqrt %f4 {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    %f6 = pto.vmi.exp %f5 {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    %f7 = pto.vmi.ln %f6 {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    %f8 = pto.vmi.relu %f7 {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    %i2 = pto.vmi.mini %i0, %i1 {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>
+    %i3 = pto.vmi.maxi %i2, %i1 {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>
+    %i4 = pto.vmi.andi %i3, %i1 {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>
+    %i5 = pto.vmi.shrsi %i4, %i1 {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>
+    %u2 = pto.vmi.ori %u0, %u1 {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>
+    %u3 = pto.vmi.xori %u2, %u1 {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>
+    %u4 = pto.vmi.shli %u3, %u1 {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>
+    %u5 = pto.vmi.shrui %u4, %u1 {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>
+    %u6 = pto.vmi.not %u5 {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>
+    return %f8, %i5, %u6 : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<64xsi32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @vaddc(
+      %a: !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>>,
+      %b: !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>>,
+      %m: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>)
+      -> (!pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>) {
+    %r, %carry = pto.vmi.vaddc %a, %b, %m
+      {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>>,
+        !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>>,
+        !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>>,
+           !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+    return %r, %carry
+      : !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>>,
+        !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @vaddcs(
+      %a: !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>>,
+      %b: !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>>,
+      %cin: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>,
+      %m: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>)
+      -> (!pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>) {
+    %r, %carry = pto.vmi.vaddcs %a, %b, %cin, %m
+      {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>>,
+        !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>>,
+        !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>,
+        !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>>,
+           !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+    return %r, %carry
+      : !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>>,
+        !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @vmull(
+      %a: !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>,
+      %b: !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>,
+      %m: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>)
+      -> (!pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>) {
+    %low, %high = pto.vmi.vmull %a, %b, %m
+      {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>,
+        !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>,
+        !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>,
+           !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>
+    return %low, %high
+      : !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>,
+        !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>
+  }
+}
+
+// COST: vmi-layout-cost-conformance addf pto.vmi.addf relation=0 cost=0
+// COST: vmi-layout-cost-conformance addi pto.vmi.addi relation=0 cost=0
+// COST: vmi-layout-cost-conformance subi pto.vmi.subi relation=0 cost=0
+// COST: vmi-layout-cost-conformance muli pto.vmi.muli relation=0 cost=0
+// COST: vmi-layout-cost-conformance negi pto.vmi.negi relation=0 cost=0
+// COST: vmi-layout-cost-conformance absi pto.vmi.absi relation=0 cost=0
+// COST: vmi-layout-cost-conformance subf pto.vmi.subf relation=0 cost=0
+// COST: vmi-layout-cost-conformance mulf pto.vmi.mulf relation=0 cost=0
+// COST: vmi-layout-cost-conformance negf pto.vmi.negf relation=0 cost=0
+// COST: vmi-layout-cost-conformance absf pto.vmi.absf relation=0 cost=0
+// COST: vmi-layout-cost-conformance vadds_zero pto.vmi.vadds relation=0 cost=0
+// COST: vmi-layout-cost-conformance vmuls_zero pto.vmi.vmuls relation=0 cost=0
+// COST: vmi-layout-cost-conformance vmaxs_zero pto.vmi.vmaxs relation=0 cost=0
+// COST: vmi-layout-cost-conformance vmins_zero pto.vmi.vmins relation=0 cost=0
+// COST: vmi-layout-cost-conformance vshls_zero pto.vmi.vshls relation=0 cost=0
+// COST: vmi-layout-cost-conformance vshrs_zero pto.vmi.vshrs relation=0 cost=0
+// COST: vmi-layout-cost-conformance legacy_generic pto.vmi.divf relation=0 cost=0
+// COST: vmi-layout-cost-conformance legacy_generic pto.vmi.minf relation=0 cost=0
+// COST: vmi-layout-cost-conformance legacy_generic pto.vmi.maxf relation=0 cost=0
+// COST: vmi-layout-cost-conformance legacy_generic pto.vmi.sqrt relation=0 cost=0
+// COST: vmi-layout-cost-conformance legacy_generic pto.vmi.exp relation=0 cost=0
+// COST: vmi-layout-cost-conformance legacy_generic pto.vmi.ln relation=0 cost=0
+// COST: vmi-layout-cost-conformance legacy_generic pto.vmi.relu relation=0 cost=0
+// COST: vmi-layout-cost-conformance legacy_generic pto.vmi.mini relation=0 cost=0
+// COST: vmi-layout-cost-conformance legacy_generic pto.vmi.maxi relation=0 cost=0
+// COST: vmi-layout-cost-conformance legacy_generic pto.vmi.andi relation=0 cost=0
+// COST: vmi-layout-cost-conformance legacy_generic pto.vmi.shrsi relation=0 cost=0
+// COST: vmi-layout-cost-conformance legacy_generic pto.vmi.ori relation=0 cost=0
+// COST: vmi-layout-cost-conformance legacy_generic pto.vmi.xori relation=0 cost=0
+// COST: vmi-layout-cost-conformance legacy_generic pto.vmi.shli relation=0 cost=0
+// COST: vmi-layout-cost-conformance legacy_generic pto.vmi.shrui relation=0 cost=0
+// COST: vmi-layout-cost-conformance legacy_generic pto.vmi.not relation=0 cost=0
+// COST: vmi-layout-cost-conformance vaddc pto.vmi.vaddc relation=0 cost=0
+// COST: vmi-layout-cost-conformance vaddcs pto.vmi.vaddcs relation=0 cost=0
+// COST: vmi-layout-cost-conformance vmull pto.vmi.vmull relation=0 cost=0

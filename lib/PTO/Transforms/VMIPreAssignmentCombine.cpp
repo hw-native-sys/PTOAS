@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/VMIUtils.h"
 #include "PTO/Transforms/Passes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -89,8 +90,22 @@ static LogicalResult fuseGroupSlotBroadcastLoads(ModuleOp module) {
         broadcast.getNumGroupsAttr().getInt()) {
       return;
     }
+    auto resultType = dyn_cast<VMIVRegType>(broadcast.getResult().getType());
+    FailureOr<int64_t> lanesPerPart =
+        resultType ? getDataLanesPerPart(resultType.getElementType())
+                   : FailureOr<int64_t>(failure());
+    int64_t numGroups = broadcast.getNumGroupsAttr().getInt();
+    bool fullPartBRC = succeeded(lanesPerPart) && numGroups > 0 &&
+                       resultType.getElementCount() / numGroups >=
+                           *lanesPerPart;
+    // Direct lowering covers the E2B eight-group form and BRC forms whose
+    // groups each fill at least one physical part. Partial BRC packets retain
+    // slot-load plus group-broadcast for the vsldb/vselr path.
+    if (numGroups != 8 && !fullPartBRC) {
+      return;
+    }
 
-    if (!isa<VMIVRegType>(broadcast.getResult().getType())) {
+    if (!resultType) {
       return;
     }
     broadcasts.push_back(broadcast);

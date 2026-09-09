@@ -21,6 +21,10 @@
 #include "mlir/InitAllPasses.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 
+namespace mlir::pto {
+void registerTestVMILayoutCostConformancePass();
+}
+
 int main(int argc, char **argv) {
   mlir::DialectRegistry registry;
   registry.insert<mlir::pto::PTODialect, mlir::func::FuncDialect,
@@ -29,6 +33,7 @@ int main(int argc, char **argv) {
 
   mlir::registerAllPasses();
   mlir::pto::registerPTOPasses();
+  mlir::pto::registerTestVMILayoutCostConformancePass();
 
   return failed(mlir::MlirOptMain(argc, argv, "PTO lit pass runner\n",
                                   registry));

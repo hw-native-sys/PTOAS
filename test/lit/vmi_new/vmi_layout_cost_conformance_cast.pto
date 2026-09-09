@@ -1,0 +1,471 @@
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance | FileCheck %s --check-prefix=COST
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance -vmi-to-vpto -test-vmi-layout-lowering-conformance > /dev/null
+
+module {
+  func.func @extf_contiguous_to_deinterleaved(
+      %source: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> {
+    %result = pto.vmi.extf %source {
+        test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+    return %result : !pto.vmi.vreg<128xf32,
+                                   #pto.vmi.layout<deinterleaved = 2>>
+  }
+
+  func.func @truncf_deinterleaved_to_contiguous(
+      %source: !pto.vmi.vreg<128xf32,
+                              #pto.vmi.layout<deinterleaved = 2>>)
+      -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>> {
+    %result = pto.vmi.truncf %source {saturate = "NOSAT",
+        test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+        -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
+    return %result : !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @truncf_f32_f16_group_slots1(
+      %source: !pto.vmi.vreg<8xf32,
+          #pto.vmi.layout<num_groups = 8, slots = 1>>)
+      -> !pto.vmi.vreg<8xf16,
+          #pto.vmi.layout<num_groups = 8, slots = 1>> {
+    %result = pto.vmi.truncf %source {
+        saturate = "SAT", test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<8xf32,
+          #pto.vmi.layout<num_groups = 8, slots = 1>>
+        -> !pto.vmi.vreg<8xf16,
+          #pto.vmi.layout<num_groups = 8, slots = 1>>
+    return %result : !pto.vmi.vreg<8xf16,
+        #pto.vmi.layout<num_groups = 8, slots = 1>>
+  }
+
+  func.func @truncf_f32_f16_group_slots8(
+      %source: !pto.vmi.vreg<8xf32,
+          #pto.vmi.layout<num_groups = 8, slots = 8>>)
+      -> !pto.vmi.vreg<8xf16,
+          #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>> {
+    %result = pto.vmi.truncf %source {
+        saturate = "SAT", test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<8xf32,
+          #pto.vmi.layout<num_groups = 8, slots = 8>>
+        -> !pto.vmi.vreg<8xf16,
+          #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
+    return %result : !pto.vmi.vreg<8xf16,
+        #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
+  }
+
+  func.func @truncf_f32_f8_group_slots1(
+      %source: !pto.vmi.vreg<8xf32,
+          #pto.vmi.layout<num_groups = 8, slots = 1>>)
+      -> !pto.vmi.vreg<8xf8E4M3FN,
+          #pto.vmi.layout<num_groups = 8, slots = 1>> {
+    %result = pto.vmi.truncf %source {
+        saturate = "SAT", test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<8xf32,
+          #pto.vmi.layout<num_groups = 8, slots = 1>>
+        -> !pto.vmi.vreg<8xf8E4M3FN,
+          #pto.vmi.layout<num_groups = 8, slots = 1>>
+    return %result : !pto.vmi.vreg<8xf8E4M3FN,
+        #pto.vmi.layout<num_groups = 8, slots = 1>>
+  }
+
+  func.func @truncf_f32_f8_group_slots8(
+      %source: !pto.vmi.vreg<8xf32,
+          #pto.vmi.layout<num_groups = 8, slots = 8>>)
+      -> !pto.vmi.vreg<8xf8E4M3FN,
+          #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>> {
+    %result = pto.vmi.truncf %source {
+        saturate = "SAT", test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<8xf32,
+          #pto.vmi.layout<num_groups = 8, slots = 8>>
+        -> !pto.vmi.vreg<8xf8E4M3FN,
+          #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>
+    return %result : !pto.vmi.vreg<8xf8E4M3FN,
+        #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>
+  }
+
+  func.func @fptosi_same_width_deinterleaved2(
+      %source: !pto.vmi.vreg<128xf32,
+                              #pto.vmi.layout<deinterleaved = 2>>)
+      -> !pto.vmi.vreg<128xsi32, #pto.vmi.layout<deinterleaved = 2>> {
+    %result = pto.vmi.fptosi %source {
+        saturate = "SAT", test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+        -> !pto.vmi.vreg<128xsi32, #pto.vmi.layout<deinterleaved = 2>>
+    return %result : !pto.vmi.vreg<128xsi32,
+                                   #pto.vmi.layout<deinterleaved = 2>>
+  }
+
+  func.func @fptoui_narrow_deinterleaved2(
+      %source: !pto.vmi.vreg<128xf16,
+                              #pto.vmi.layout<deinterleaved = 2>>)
+      -> !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous>> {
+    %result = pto.vmi.fptoui %source {
+        saturate = "SAT", test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<128xf16, #pto.vmi.layout<deinterleaved = 2>>
+        -> !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous>>
+    return %result : !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @sitofp_same_width_deinterleaved2(
+      %source: !pto.vmi.vreg<128xsi32,
+                              #pto.vmi.layout<deinterleaved = 2>>)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> {
+    %result = pto.vmi.sitofp %source {
+        test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<128xsi32, #pto.vmi.layout<deinterleaved = 2>>
+        -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+    return %result : !pto.vmi.vreg<128xf32,
+                                   #pto.vmi.layout<deinterleaved = 2>>
+  }
+
+  func.func @extsi_lane_stride2_to_contiguous(
+      %source: !pto.vmi.vreg<128xsi16,
+                              #pto.vmi.layout<contiguous, lane_stride = 2>>)
+      -> !pto.vmi.vreg<128xsi32, #pto.vmi.layout<contiguous>> {
+    %result = pto.vmi.extsi %source {
+        test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<128xsi16,
+                        #pto.vmi.layout<contiguous, lane_stride = 2>>
+        -> !pto.vmi.vreg<128xsi32, #pto.vmi.layout<contiguous>>
+    return %result : !pto.vmi.vreg<128xsi32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @extui_contiguous_to_deinterleaved2(
+      %source: !pto.vmi.vreg<128xui16, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<128xui32, #pto.vmi.layout<deinterleaved = 2>> {
+    %result = pto.vmi.extui %source {
+        test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<128xui16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<128xui32, #pto.vmi.layout<deinterleaved = 2>>
+    return %result : !pto.vmi.vreg<128xui32,
+                                   #pto.vmi.layout<deinterleaved = 2>>
+  }
+
+  func.func @trunci_deinterleaved4_to_contiguous(
+      %source: !pto.vmi.vreg<256xsi32,
+                              #pto.vmi.layout<deinterleaved = 4>>)
+      -> !pto.vmi.vreg<256xsi8, #pto.vmi.layout<contiguous>> {
+    %result = pto.vmi.trunci %source {
+        saturate = "NOSAT", test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<256xsi32, #pto.vmi.layout<deinterleaved = 4>>
+        -> !pto.vmi.vreg<256xsi8, #pto.vmi.layout<contiguous>>
+    return %result : !pto.vmi.vreg<256xsi8, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @extui_group_slots1(
+      %source: !pto.vmi.vreg<2xui8,
+                              #pto.vmi.layout<num_groups = 2, slots = 1>>)
+      -> !pto.vmi.vreg<2xui16,
+                       #pto.vmi.layout<num_groups = 2, slots = 1>> {
+    %result = pto.vmi.extui %source {
+        test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<2xui8, #pto.vmi.layout<num_groups = 2, slots = 1>>
+        -> !pto.vmi.vreg<2xui16,
+                         #pto.vmi.layout<num_groups = 2, slots = 1>>
+    return %result : !pto.vmi.vreg<2xui16,
+                                   #pto.vmi.layout<num_groups = 2, slots = 1>>
+  }
+
+  func.func @extui_group_slots8_stride2(
+      %source: !pto.vmi.vreg<2xui8,
+                              #pto.vmi.layout<num_groups = 2, slots = 8,
+                                              lane_stride = 2>>)
+      -> !pto.vmi.vreg<2xui16,
+                       #pto.vmi.layout<num_groups = 2, slots = 8>> {
+    %result = pto.vmi.extui %source {
+        test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<2xui8,
+                        #pto.vmi.layout<num_groups = 2, slots = 8,
+                                        lane_stride = 2>>
+        -> !pto.vmi.vreg<2xui16,
+                         #pto.vmi.layout<num_groups = 2, slots = 8>>
+    return %result : !pto.vmi.vreg<2xui16,
+                                   #pto.vmi.layout<num_groups = 2, slots = 8>>
+  }
+
+  func.func @extui_u8_u16_group_slots2(
+      %source: !pto.vmi.vreg<2xui8,
+                              #pto.vmi.layout<num_groups = 2, slots = 2>>)
+      -> !pto.vmi.vreg<2xui16,
+                       #pto.vmi.layout<num_groups = 2, slots = 2>> {
+    %result = pto.vmi.extui %source {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<2xui8, #pto.vmi.layout<num_groups = 2, slots = 2>>
+        -> !pto.vmi.vreg<2xui16,
+                         #pto.vmi.layout<num_groups = 2, slots = 2>>
+    return %result : !pto.vmi.vreg<2xui16,
+                                   #pto.vmi.layout<num_groups = 2, slots = 2>>
+  }
+
+  func.func @extui_u8_u16_group_slots2_multichunk(
+      %source: !pto.vmi.vreg<16xui8,
+                              #pto.vmi.layout<num_groups = 16, slots = 2>>)
+      -> !pto.vmi.vreg<16xui16,
+                       #pto.vmi.layout<num_groups = 16, slots = 2>> {
+    %result = pto.vmi.extui %source {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<16xui8,
+                         #pto.vmi.layout<num_groups = 16, slots = 2>>
+        -> !pto.vmi.vreg<16xui16,
+                         #pto.vmi.layout<num_groups = 16, slots = 2>>
+    return %result : !pto.vmi.vreg<16xui16,
+                                   #pto.vmi.layout<num_groups = 16, slots = 2>>
+  }
+
+  func.func @extui_u8_u16_group_slots4(
+      %source: !pto.vmi.vreg<2xui8,
+                              #pto.vmi.layout<num_groups = 2, slots = 4>>)
+      -> !pto.vmi.vreg<2xui16,
+                       #pto.vmi.layout<num_groups = 2, slots = 4>> {
+    %result = pto.vmi.extui %source {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<2xui8, #pto.vmi.layout<num_groups = 2, slots = 4>>
+        -> !pto.vmi.vreg<2xui16,
+                         #pto.vmi.layout<num_groups = 2, slots = 4>>
+    return %result : !pto.vmi.vreg<2xui16,
+                                   #pto.vmi.layout<num_groups = 2, slots = 4>>
+  }
+
+  func.func @extui_u8_u16_group_slots8(
+      %source: !pto.vmi.vreg<2xui8,
+                              #pto.vmi.layout<num_groups = 2, slots = 8>>)
+      -> !pto.vmi.vreg<2xui16,
+                       #pto.vmi.layout<num_groups = 2, slots = 8>> {
+    %result = pto.vmi.extui %source {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<2xui8, #pto.vmi.layout<num_groups = 2, slots = 8>>
+        -> !pto.vmi.vreg<2xui16,
+                         #pto.vmi.layout<num_groups = 2, slots = 8>>
+    return %result : !pto.vmi.vreg<2xui16,
+                                   #pto.vmi.layout<num_groups = 2, slots = 8>>
+  }
+
+  func.func @extui_u16_u32_group_slots1(
+      %source: !pto.vmi.vreg<2xui16,
+                              #pto.vmi.layout<num_groups = 2, slots = 1>>)
+      -> !pto.vmi.vreg<2xui32,
+                       #pto.vmi.layout<num_groups = 2, slots = 1>> {
+    %result = pto.vmi.extui %source {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<2xui16, #pto.vmi.layout<num_groups = 2, slots = 1>>
+        -> !pto.vmi.vreg<2xui32,
+                         #pto.vmi.layout<num_groups = 2, slots = 1>>
+    return %result : !pto.vmi.vreg<2xui32,
+                                   #pto.vmi.layout<num_groups = 2, slots = 1>>
+  }
+
+  func.func @extui_u16_u32_group_slots8_stride2(
+      %source: !pto.vmi.vreg<2xui16,
+          #pto.vmi.layout<num_groups = 2, slots = 8, lane_stride = 2>>)
+      -> !pto.vmi.vreg<2xui32,
+                       #pto.vmi.layout<num_groups = 2, slots = 8>> {
+    %result = pto.vmi.extui %source {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<2xui16,
+            #pto.vmi.layout<num_groups = 2, slots = 8, lane_stride = 2>>
+        -> !pto.vmi.vreg<2xui32,
+                         #pto.vmi.layout<num_groups = 2, slots = 8>>
+    return %result : !pto.vmi.vreg<2xui32,
+                                   #pto.vmi.layout<num_groups = 2, slots = 8>>
+  }
+
+  func.func @extui_u16_u32_group_slots2(
+      %source: !pto.vmi.vreg<2xui16,
+                              #pto.vmi.layout<num_groups = 2, slots = 2>>)
+      -> !pto.vmi.vreg<2xui32,
+                       #pto.vmi.layout<num_groups = 2, slots = 2>> {
+    %result = pto.vmi.extui %source {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<2xui16, #pto.vmi.layout<num_groups = 2, slots = 2>>
+        -> !pto.vmi.vreg<2xui32,
+                         #pto.vmi.layout<num_groups = 2, slots = 2>>
+    return %result : !pto.vmi.vreg<2xui32,
+                                   #pto.vmi.layout<num_groups = 2, slots = 2>>
+  }
+
+  func.func @extui_u16_u32_group_slots4(
+      %source: !pto.vmi.vreg<2xui16,
+                              #pto.vmi.layout<num_groups = 2, slots = 4>>)
+      -> !pto.vmi.vreg<2xui32,
+                       #pto.vmi.layout<num_groups = 2, slots = 4>> {
+    %result = pto.vmi.extui %source {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<2xui16, #pto.vmi.layout<num_groups = 2, slots = 4>>
+        -> !pto.vmi.vreg<2xui32,
+                         #pto.vmi.layout<num_groups = 2, slots = 4>>
+    return %result : !pto.vmi.vreg<2xui32,
+                                   #pto.vmi.layout<num_groups = 2, slots = 4>>
+  }
+
+  func.func @extui_u16_u32_group_slots8(
+      %source: !pto.vmi.vreg<2xui16,
+                              #pto.vmi.layout<num_groups = 2, slots = 8>>)
+      -> !pto.vmi.vreg<2xui32,
+                       #pto.vmi.layout<num_groups = 2, slots = 8>> {
+    %result = pto.vmi.extui %source {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<2xui16, #pto.vmi.layout<num_groups = 2, slots = 8>>
+        -> !pto.vmi.vreg<2xui32,
+                         #pto.vmi.layout<num_groups = 2, slots = 8>>
+    return %result : !pto.vmi.vreg<2xui32,
+                                   #pto.vmi.layout<num_groups = 2, slots = 8>>
+  }
+
+  func.func @extui_u8_u32_group_slots1(
+      %source: !pto.vmi.vreg<2xui8,
+                              #pto.vmi.layout<num_groups = 2, slots = 1>>)
+      -> !pto.vmi.vreg<2xui32,
+                       #pto.vmi.layout<num_groups = 2, slots = 1>> {
+    %result = pto.vmi.extui %source {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<2xui8, #pto.vmi.layout<num_groups = 2, slots = 1>>
+        -> !pto.vmi.vreg<2xui32,
+                         #pto.vmi.layout<num_groups = 2, slots = 1>>
+    return %result : !pto.vmi.vreg<2xui32,
+                                   #pto.vmi.layout<num_groups = 2, slots = 1>>
+  }
+
+  func.func @extui_u8_u32_group_slots8_stride4(
+      %source: !pto.vmi.vreg<2xui8,
+          #pto.vmi.layout<num_groups = 2, slots = 8, lane_stride = 4>>)
+      -> !pto.vmi.vreg<2xui32,
+                       #pto.vmi.layout<num_groups = 2, slots = 8>> {
+    %result = pto.vmi.extui %source {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<2xui8,
+            #pto.vmi.layout<num_groups = 2, slots = 8, lane_stride = 4>>
+        -> !pto.vmi.vreg<2xui32,
+                         #pto.vmi.layout<num_groups = 2, slots = 8>>
+    return %result : !pto.vmi.vreg<2xui32,
+                                   #pto.vmi.layout<num_groups = 2, slots = 8>>
+  }
+
+  func.func @extui_u8_u32_group_slots2(
+      %source: !pto.vmi.vreg<2xui8,
+                              #pto.vmi.layout<num_groups = 2, slots = 2>>)
+      -> !pto.vmi.vreg<2xui32,
+                       #pto.vmi.layout<num_groups = 2, slots = 2>> {
+    %result = pto.vmi.extui %source {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<2xui8, #pto.vmi.layout<num_groups = 2, slots = 2>>
+        -> !pto.vmi.vreg<2xui32,
+                         #pto.vmi.layout<num_groups = 2, slots = 2>>
+    return %result : !pto.vmi.vreg<2xui32,
+                                   #pto.vmi.layout<num_groups = 2, slots = 2>>
+  }
+
+  func.func @extui_u8_u32_group_slots4(
+      %source: !pto.vmi.vreg<2xui8,
+                              #pto.vmi.layout<num_groups = 2, slots = 4>>)
+      -> !pto.vmi.vreg<2xui32,
+                       #pto.vmi.layout<num_groups = 2, slots = 4>> {
+    %result = pto.vmi.extui %source {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<2xui8, #pto.vmi.layout<num_groups = 2, slots = 4>>
+        -> !pto.vmi.vreg<2xui32,
+                         #pto.vmi.layout<num_groups = 2, slots = 4>>
+    return %result : !pto.vmi.vreg<2xui32,
+                                   #pto.vmi.layout<num_groups = 2, slots = 4>>
+  }
+
+  func.func @extui_u8_u32_group_slots8(
+      %source: !pto.vmi.vreg<2xui8,
+                              #pto.vmi.layout<num_groups = 2, slots = 8>>)
+      -> !pto.vmi.vreg<2xui32,
+                       #pto.vmi.layout<num_groups = 2, slots = 8>> {
+    %result = pto.vmi.extui %source {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<2xui8, #pto.vmi.layout<num_groups = 2, slots = 8>>
+        -> !pto.vmi.vreg<2xui32,
+                         #pto.vmi.layout<num_groups = 2, slots = 8>>
+    return %result : !pto.vmi.vreg<2xui32,
+                                   #pto.vmi.layout<num_groups = 2, slots = 8>>
+  }
+
+  func.func @trunci_u16_u8_group_slots1(
+      %source: !pto.vmi.vreg<2xui16,
+                              #pto.vmi.layout<num_groups = 2, slots = 1>>)
+      -> !pto.vmi.vreg<2xui8,
+                       #pto.vmi.layout<num_groups = 2, slots = 1>> {
+    %result = pto.vmi.trunci %source {
+        saturate = "NOSAT", test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<2xui16, #pto.vmi.layout<num_groups = 2, slots = 1>>
+        -> !pto.vmi.vreg<2xui8,
+                         #pto.vmi.layout<num_groups = 2, slots = 1>>
+    return %result : !pto.vmi.vreg<2xui8,
+                                   #pto.vmi.layout<num_groups = 2, slots = 1>>
+  }
+
+  func.func @trunci_u16_u8_group_slots8_stride2(
+      %source: !pto.vmi.vreg<2xui16,
+                              #pto.vmi.layout<num_groups = 2, slots = 8>>)
+      -> !pto.vmi.vreg<2xui8,
+          #pto.vmi.layout<num_groups = 2, slots = 8, lane_stride = 2>> {
+    %result = pto.vmi.trunci %source {
+        saturate = "NOSAT", test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<2xui16, #pto.vmi.layout<num_groups = 2, slots = 8>>
+        -> !pto.vmi.vreg<2xui8,
+            #pto.vmi.layout<num_groups = 2, slots = 8, lane_stride = 2>>
+    return %result : !pto.vmi.vreg<2xui8,
+        #pto.vmi.layout<num_groups = 2, slots = 8, lane_stride = 2>>
+  }
+
+  func.func @trunci_u32_u16_group_slots1(
+      %source: !pto.vmi.vreg<2xui32,
+                              #pto.vmi.layout<num_groups = 2, slots = 1>>)
+      -> !pto.vmi.vreg<2xui16,
+                       #pto.vmi.layout<num_groups = 2, slots = 1>> {
+    %result = pto.vmi.trunci %source {
+        saturate = "NOSAT", test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<2xui32, #pto.vmi.layout<num_groups = 2, slots = 1>>
+        -> !pto.vmi.vreg<2xui16,
+                         #pto.vmi.layout<num_groups = 2, slots = 1>>
+    return %result : !pto.vmi.vreg<2xui16,
+                                   #pto.vmi.layout<num_groups = 2, slots = 1>>
+  }
+
+  func.func @trunci_u32_u16_group_slots8_stride2(
+      %source: !pto.vmi.vreg<2xui32,
+                              #pto.vmi.layout<num_groups = 2, slots = 8>>)
+      -> !pto.vmi.vreg<2xui16,
+          #pto.vmi.layout<num_groups = 2, slots = 8, lane_stride = 2>> {
+    %result = pto.vmi.trunci %source {
+        saturate = "NOSAT", test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<2xui32, #pto.vmi.layout<num_groups = 2, slots = 8>>
+        -> !pto.vmi.vreg<2xui16,
+            #pto.vmi.layout<num_groups = 2, slots = 8, lane_stride = 2>>
+    return %result : !pto.vmi.vreg<2xui16,
+        #pto.vmi.layout<num_groups = 2, slots = 8, lane_stride = 2>>
+  }
+
+  func.func @trunci_u32_u8_group_slots1(
+      %source: !pto.vmi.vreg<2xui32,
+                              #pto.vmi.layout<num_groups = 2, slots = 1>>)
+      -> !pto.vmi.vreg<2xui8,
+                       #pto.vmi.layout<num_groups = 2, slots = 1>> {
+    %result = pto.vmi.trunci %source {
+        saturate = "NOSAT", test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<2xui32, #pto.vmi.layout<num_groups = 2, slots = 1>>
+        -> !pto.vmi.vreg<2xui8,
+                         #pto.vmi.layout<num_groups = 2, slots = 1>>
+    return %result : !pto.vmi.vreg<2xui8,
+                                   #pto.vmi.layout<num_groups = 2, slots = 1>>
+  }
+
+  func.func @trunci_u32_u8_group_slots8_stride4(
+      %source: !pto.vmi.vreg<2xui32,
+                              #pto.vmi.layout<num_groups = 2, slots = 8>>)
+      -> !pto.vmi.vreg<2xui8,
+          #pto.vmi.layout<num_groups = 2, slots = 8, lane_stride = 4>> {
+    %result = pto.vmi.trunci %source {
+        saturate = "NOSAT", test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<2xui32, #pto.vmi.layout<num_groups = 2, slots = 8>>
+        -> !pto.vmi.vreg<2xui8,
+            #pto.vmi.layout<num_groups = 2, slots = 8, lane_stride = 4>>
+    return %result : !pto.vmi.vreg<2xui8,
+        #pto.vmi.layout<num_groups = 2, slots = 8, lane_stride = 4>>
+  }
+}
+
+// COST: vmi-layout-cost-conformance extf_contiguous_to_deinterleaved pto.vmi.extf relation=0 cost=0
+// COST: vmi-layout-cost-conformance truncf_deinterleaved_to_contiguous pto.vmi.truncf relation=0 cost=1
+// COST: vmi-layout-cost-conformance truncf_f32_f16_group_slots1 pto.vmi.truncf relation=0 cost=0
+// COST: vmi-layout-cost-conformance truncf_f32_f16_group_slots8 pto.vmi.truncf relation=0 cost=0
+// COST: vmi-layout-cost-conformance truncf_f32_f8_group_slots1 pto.vmi.truncf relation=0 cost=0
+// COST: vmi-layout-cost-conformance truncf_f32_f8_group_slots8 pto.vmi.truncf relation=0 cost=0
+// COST: vmi-layout-cost-conformance fptosi_same_width_deinterleaved2 pto.vmi.fptosi relation=0 cost=0
+// COST: vmi-layout-cost-conformance fptoui_narrow_deinterleaved2 pto.vmi.fptoui relation=0 cost=1
+// COST: vmi-layout-cost-conformance sitofp_same_width_deinterleaved2 pto.vmi.sitofp relation=0 cost=0
+// COST: vmi-layout-cost-conformance extsi_lane_stride2_to_contiguous pto.vmi.extsi relation=0 cost=0
+// COST: vmi-layout-cost-conformance extui_contiguous_to_deinterleaved2 pto.vmi.extui relation=0 cost=0
+// COST: vmi-layout-cost-conformance trunci_deinterleaved4_to_contiguous pto.vmi.trunci relation=0 cost=3
+// COST: vmi-layout-cost-conformance extui_group_slots1 pto.vmi.extui relation=0 cost=0
+// COST: vmi-layout-cost-conformance extui_group_slots8_stride2 pto.vmi.extui relation=0 cost=0
+// COST: vmi-layout-cost-conformance extui_group_slots8_stride2 pto.vmi.extui relation=1 cost=2

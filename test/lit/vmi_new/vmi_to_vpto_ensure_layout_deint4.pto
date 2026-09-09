@@ -7,12 +7,14 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // RUN: pto-test-opt %s -vmi-to-vpto | FileCheck %s
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance | FileCheck %s --check-prefix=COST
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance -vmi-to-vpto -test-vmi-layout-lowering-conformance > /dev/null
 
 module {
   func.func @vmi_to_vpto_ensure_layout_deint4_to_contiguous(
       %input: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>)
       -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>) {
-    %dense = pto.vmi.ensure_layout %input
+    %dense = pto.vmi.ensure_layout %input {test.vmi_layout_cost_conformance}
         : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
         -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
     %p0, %p1, %p2, %p3 = "pto.vmi.unpack"(%dense)
@@ -25,7 +27,7 @@ module {
   func.func @vmi_to_vpto_ensure_layout_contiguous_to_deint4(
       %input: !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>)
       -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>) {
-    %split = pto.vmi.ensure_layout %input
+    %split = pto.vmi.ensure_layout %input {test.vmi_layout_cost_conformance}
         : !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
         -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
     %p0, %p1, %p2, %p3 = "pto.vmi.unpack"(%split)
@@ -38,7 +40,7 @@ module {
   func.func @vmi_to_vpto_ensure_layout_deint2_to_deint4(
       %input: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>)
       -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>) {
-    %split = pto.vmi.ensure_layout %input
+    %split = pto.vmi.ensure_layout %input {test.vmi_layout_cost_conformance}
         : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>
         -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
     %p0, %p1, %p2, %p3 = "pto.vmi.unpack"(%split)
@@ -46,6 +48,31 @@ module {
         -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>)
     return %p0, %p1, %p2, %p3
         : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>
+  }
+
+  func.func @vmi_to_vpto_ensure_layout_deint4_to_deint2(
+      %input: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>)
+      -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>) {
+    %split = pto.vmi.ensure_layout %input {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+        -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>
+    %p0, %p1, %p2, %p3 = "pto.vmi.unpack"(%split)
+        : (!pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>)
+        -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>)
+    return %p0, %p1, %p2, %p3
+        : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>
+  }
+
+  func.func @vmi_to_vpto_ensure_layout_partial_deint4_to_contiguous(
+      %input: !pto.vmi.vreg<256xf16, #pto.vmi.layout<deinterleaved = 4>>)
+      -> (!pto.vreg<128xf16>, !pto.vreg<128xf16>) {
+    %dense = pto.vmi.ensure_layout %input {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<256xf16, #pto.vmi.layout<deinterleaved = 4>>
+        -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>>
+    %p0, %p1 = "pto.vmi.unpack"(%dense)
+        : (!pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>>)
+        -> (!pto.vreg<128xf16>, !pto.vreg<128xf16>)
+    return %p0, %p1 : !pto.vreg<128xf16>, !pto.vreg<128xf16>
   }
 }
 
@@ -59,6 +86,15 @@ module {
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast
 
+// COST-DAG: vmi-layout-cost-conformance vmi_to_vpto_ensure_layout_deint4_to_contiguous pto.vmi.ensure_layout relation=0 cost=4
+// COST-DAG: vmi-layout-cost-conformance vmi_to_vpto_ensure_layout_contiguous_to_deint4 pto.vmi.ensure_layout relation=0 cost=4
+// COST-DAG: vmi-layout-cost-conformance vmi_to_vpto_ensure_layout_deint2_to_deint4 pto.vmi.ensure_layout relation=0 cost=2
+// COST-DAG: vmi-layout-cost-conformance vmi_to_vpto_ensure_layout_partial_deint4_to_contiguous pto.vmi.ensure_layout relation=0 cost=3
+// COST-DAG: vmi-layout-cost-conformance-summary vmi_to_vpto_ensure_layout_deint4_to_contiguous pto.vmi.ensure_layout relations=1
+// COST-DAG: vmi-layout-cost-conformance-summary vmi_to_vpto_ensure_layout_contiguous_to_deint4 pto.vmi.ensure_layout relations=1
+// COST-DAG: vmi-layout-cost-conformance-summary vmi_to_vpto_ensure_layout_deint2_to_deint4 pto.vmi.ensure_layout relations=1
+// COST-DAG: vmi-layout-cost-conformance-summary vmi_to_vpto_ensure_layout_partial_deint4_to_contiguous pto.vmi.ensure_layout relations=1
+
 // CHECK-LABEL: func.func @vmi_to_vpto_ensure_layout_contiguous_to_deint4(
 // CHECK: %[[A0:.*]], %[[B0:.*]] = pto.vdintlv %arg0, %arg1
 // CHECK: %[[A1:.*]], %[[B1:.*]] = pto.vdintlv %arg2, %arg3
@@ -70,12 +106,21 @@ module {
 // CHECK-NOT: unrealized_conversion_cast
 
 // CHECK-LABEL: func.func @vmi_to_vpto_ensure_layout_deint2_to_deint4(
-// CHECK: pto.vintlv
-// CHECK: pto.vintlv
-// CHECK: pto.vdintlv
-// CHECK: pto.vdintlv
-// CHECK: pto.vdintlv
-// CHECK: pto.vdintlv
+// CHECK: %[[P0:.*]], %[[P2:.*]] = pto.vdintlv %arg0, %arg2
+// CHECK: %[[P1:.*]], %[[P3:.*]] = pto.vdintlv %arg1, %arg3
+// CHECK: return %[[P0]], %[[P1]], %[[P2]], %[[P3]]
+// CHECK-NOT: pto.vmi.
+// CHECK-NOT: !pto.vmi.
+// CHECK-NOT: unrealized_conversion_cast
+
+// CHECK-LABEL: func.func @vmi_to_vpto_ensure_layout_deint4_to_deint2(
+// CHECK-COUNT-2: pto.vintlv
+// CHECK-NOT: pto.vmi.
+// CHECK-NOT: !pto.vmi.
+// CHECK-NOT: unrealized_conversion_cast
+
+// CHECK-LABEL: func.func @vmi_to_vpto_ensure_layout_partial_deint4_to_contiguous(
+// CHECK-COUNT-3: pto.vintlv
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast

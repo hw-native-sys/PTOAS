@@ -1,0 +1,18 @@
+// RUN: pto-test-opt %s -vmi-mask-granularity-assignment | FileCheck %s
+
+module {
+  func.func @bitwise(%a: !pto.vmi.vreg<256xui16>, %b: !pto.vmi.vreg<256xui16>,
+                     %m: !pto.vmi.mask<256xb16>) {
+    %x = pto.vmi.vand %a, %b, %m : !pto.vmi.vreg<256xui16>, !pto.vmi.vreg<256xui16>, !pto.vmi.mask<256xb16> -> !pto.vmi.vreg<256xui16>
+    %y = pto.vmi.vor %x, %b, %m : !pto.vmi.vreg<256xui16>, !pto.vmi.vreg<256xui16>, !pto.vmi.mask<256xb16> -> !pto.vmi.vreg<256xui16>
+    %z = pto.vmi.vxor %y, %b, %m : !pto.vmi.vreg<256xui16>, !pto.vmi.vreg<256xui16>, !pto.vmi.mask<256xb16> -> !pto.vmi.vreg<256xui16>
+    return
+  }
+}
+
+// CHECK: pto.vmi.vand
+// CHECK-SAME: !pto.vmi.mask<256xb16>
+// CHECK: pto.vmi.vor
+// CHECK-SAME: !pto.vmi.mask<256xb16>
+// CHECK: pto.vmi.vxor
+// CHECK-SAME: !pto.vmi.mask<256xb16>

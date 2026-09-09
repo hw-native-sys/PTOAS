@@ -27,11 +27,8 @@ module {
 
 // CHECK-LABEL: func.func @vmi_layout_assignment_mask_use_ensure(
 // CHECK-SAME: %[[M:.*]]: !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
-// CHECK: %[[M_D2:.*]] = pto.vmi.ensure_mask_layout %[[M]]
+// CHECK: %[[M16:.*]] = pto.vmi.ensure_mask_granularity %[[M]]
 // CHECK-SAME: !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
-// CHECK-SAME: !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
-// CHECK: %[[M16:.*]] = pto.vmi.ensure_mask_granularity %[[M_D2]]
-// CHECK-SAME: !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
 // CHECK-SAME: !pto.vmi.mask<128xb16, #pto.vmi.layout<contiguous>>
 // CHECK: pto.vmi.select %[[M16]]
 // CHECK-SAME: !pto.vmi.mask<128xb16, #pto.vmi.layout<contiguous>>

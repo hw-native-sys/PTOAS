@@ -1,0 +1,30 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. See LICENSE in the root
+// of the software repository.
+
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance -vmi-lower-unified-to-legacy -vmi-to-vpto -test-vmi-layout-lowering-conformance | FileCheck %s --check-prefix=COST
+
+module {
+  func.func @vsel_zero(
+      %mask: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>,
+      %true: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+      %false: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.vsel %mask, %true, %false
+      {pmode = "zero", test.vmi_layout_cost_conformance}
+      : !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>,
+        !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+        !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+}
+
+// COST: vmi-layout-cost-conformance vsel_zero pto.vmi.vsel relation=0 cost=0
+// COST: vmi-layout-lowering-conformance vsel_zero__vmi_layout_relation_0 cost=0 rearrangements=0

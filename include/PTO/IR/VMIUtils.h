@@ -44,6 +44,10 @@ struct VMIPhysicalLane {
 Type getVMIPhysicalDataElementType(VMIVRegType type);
 FailureOr<int64_t> getDataLanesPerPart(Type elementType);
 FailureOr<int64_t> getMaskLanesPerPart(StringRef granularity);
+int64_t getVMIMaskGranularityBitWidth(StringRef granularity);
+StringRef getVMIMaskGranularityForBitWidth(int64_t bits);
+FailureOr<StringRef> getVMIMaskPhysicalGranularity(VMIMaskType type);
+FailureOr<VMILayoutAttr> getVMIMaskPhysicalCarrierLayout(VMIMaskType type);
 FailureOr<int64_t> getVMILayoutBlockElems(Type type);
 FailureOr<int64_t> getVMIPhysicalArity(Type type);
 FailureOr<VMIPhysicalLane> mapLogicalLaneToPhysical(Type type,

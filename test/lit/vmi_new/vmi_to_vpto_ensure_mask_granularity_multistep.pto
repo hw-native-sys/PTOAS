@@ -7,12 +7,15 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // RUN: pto-test-opt %s -vmi-to-vpto | FileCheck %s
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance | FileCheck %s --check-prefix=COST
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance -vmi-to-vpto -test-vmi-layout-lowering-conformance > /dev/null
 
 module {
   func.func @vmi_to_vpto_ensure_mask_granularity_multistep(
       %m: !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 4>>)
       -> !pto.mask<b8> {
     %result = pto.vmi.ensure_mask_granularity %m
+        {test.vmi_layout_cost_conformance}
         : !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 4>>
         -> !pto.vmi.mask<128xb8, #pto.vmi.layout<contiguous>>
     %part = "pto.vmi.unpack"(%result)
@@ -38,3 +41,5 @@ module {
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast
+
+// COST: vmi-layout-cost-conformance vmi_to_vpto_ensure_mask_granularity_multistep pto.vmi.ensure_mask_granularity relation=0 cost=11

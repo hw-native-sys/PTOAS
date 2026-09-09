@@ -1,0 +1,87 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License.
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance | FileCheck %s
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance -vmi-to-vpto -test-vmi-layout-lowering-conformance > /dev/null
+
+!c1 = !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+!c2 = !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+!d2x2 = !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+!d2x4 = !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>
+!d4x4 = !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+!ls2 = !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+!ls4 = !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>
+!mc1 = !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+!mc2 = !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
+!md2x2 = !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
+!md2x4 = !pto.vmi.mask<256xb32, #pto.vmi.layout<deinterleaved = 2>>
+!md4x4 = !pto.vmi.mask<256xb32, #pto.vmi.layout<deinterleaved = 4>>
+!mls2 = !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+!mls4 = !pto.vmi.mask<64xb8, #pto.vmi.layout<contiguous, lane_stride = 4>>
+
+module {
+  func.func @vd_r01_d2_to_c(%lhs: !d2x2, %rhs: !d2x2, %mask: !md2x2)
+      -> (!c2, !c2) {
+    %low, %high = pto.vmi.vdintlv %lhs, %rhs, %mask {test.vmi_layout_cost_conformance}
+        : !d2x2, !d2x2, !md2x2 -> !c2, !c2
+    return %low, %high : !c2, !c2
+  }
+  func.func @vd_r02_d4_to_d2(%lhs: !d4x4, %rhs: !d4x4, %mask: !md4x4)
+      -> (!d2x4, !d2x4) {
+    %low, %high = pto.vmi.vdintlv %lhs, %rhs, %mask {test.vmi_layout_cost_conformance}
+        : !d4x4, !d4x4, !md4x4 -> !d2x4, !d2x4
+    return %low, %high : !d2x4, !d2x4
+  }
+  func.func @vd_r03_ls2(%lhs: !ls2, %rhs: !ls2, %mask: !mls2)
+      -> (!ls2, !ls2) {
+    %low, %high = pto.vmi.vdintlv %lhs, %rhs, %mask {test.vmi_layout_cost_conformance}
+        : !ls2, !ls2, !mls2 -> !ls2, !ls2
+    return %low, %high : !ls2, !ls2
+  }
+  func.func @vd_r04_ls4(%lhs: !ls4, %rhs: !ls4, %mask: !mls4)
+      -> (!ls4, !ls4) {
+    %low, %high = pto.vmi.vdintlv %lhs, %rhs, %mask {test.vmi_layout_cost_conformance}
+        : !ls4, !ls4, !mls4 -> !ls4, !ls4
+    return %low, %high : !ls4, !ls4
+  }
+  func.func @vd_r05_c(%lhs: !c1, %rhs: !c1, %mask: !mc1)
+      -> (!c1, !c1) {
+    %low, %high = pto.vmi.vdintlv %lhs, %rhs, %mask {test.vmi_layout_cost_conformance}
+        : !c1, !c1, !mc1 -> !c1, !c1
+    return %low, %high : !c1, !c1
+  }
+  func.func @vi_r01_c_to_d2(%lhs: !c2, %rhs: !c2, %mask: !mc2)
+      -> (!d2x2, !d2x2) {
+    %low, %high = pto.vmi.vintlv %lhs, %rhs, %mask {test.vmi_layout_cost_conformance}
+        : !c2, !c2, !mc2 -> !d2x2, !d2x2
+    return %low, %high : !d2x2, !d2x2
+  }
+  func.func @vi_r02_d2_to_d4(%lhs: !d2x4, %rhs: !d2x4, %mask: !md2x4)
+      -> (!d4x4, !d4x4) {
+    %low, %high = pto.vmi.vintlv %lhs, %rhs, %mask {test.vmi_layout_cost_conformance}
+        : !d2x4, !d2x4, !md2x4 -> !d4x4, !d4x4
+    return %low, %high : !d4x4, !d4x4
+  }
+  func.func @vi_r03_ls2(%lhs: !ls2, %rhs: !ls2, %mask: !mls2)
+      -> (!ls2, !ls2) {
+    %low, %high = pto.vmi.vintlv %lhs, %rhs, %mask {test.vmi_layout_cost_conformance}
+        : !ls2, !ls2, !mls2 -> !ls2, !ls2
+    return %low, %high : !ls2, !ls2
+  }
+  func.func @vi_r04_ls4(%lhs: !ls4, %rhs: !ls4, %mask: !mls4)
+      -> (!ls4, !ls4) {
+    %low, %high = pto.vmi.vintlv %lhs, %rhs, %mask {test.vmi_layout_cost_conformance}
+        : !ls4, !ls4, !mls4 -> !ls4, !ls4
+    return %low, %high : !ls4, !ls4
+  }
+  func.func @vi_r05_c(%lhs: !c1, %rhs: !c1, %mask: !mc1)
+      -> (!c1, !c1) {
+    %low, %high = pto.vmi.vintlv %lhs, %rhs, %mask {test.vmi_layout_cost_conformance}
+        : !c1, !c1, !mc1 -> !c1, !c1
+    return %low, %high : !c1, !c1
+  }
+}
+
+// CHECK-COUNT-10: relation=0 cost=0

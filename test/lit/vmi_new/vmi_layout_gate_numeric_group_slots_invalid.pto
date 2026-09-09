@@ -1,0 +1,60 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: split-file %s %t
+// RUN: not pto-test-opt %t/fptosi.pto -pto-validate-vmi-layout-ir 2>&1 | FileCheck %s --check-prefix=FPTOSI
+// RUN: not pto-test-opt %t/fptoui.pto -pto-validate-vmi-layout-ir 2>&1 | FileCheck %s --check-prefix=FPTOUI
+// RUN: not pto-test-opt %t/sitofp.pto -pto-validate-vmi-layout-ir 2>&1 | FileCheck %s --check-prefix=SITOFP
+
+// FPTOSI: VMI-LAYOUT-CONTRACT: pto.vmi.fptosi has no registered layout support
+// FPTOSI-SAME: group-slot cast operation family has no registered lowering
+// FPTOUI: VMI-LAYOUT-CONTRACT: pto.vmi.fptoui has no registered layout support
+// FPTOUI-SAME: group-slot cast operation family has no registered lowering
+// SITOFP: VMI-LAYOUT-CONTRACT: pto.vmi.sitofp has no registered layout support
+// SITOFP-SAME: group-slot cast operation family has no registered lowering
+
+//--- fptosi.pto
+module {
+  func.func @fptosi_group_slots_has_no_lowering(
+      %source: !pto.vmi.vreg<2xf32, #pto.vmi.layout<num_groups = 2, slots = 1>>)
+      -> !pto.vmi.vreg<2xsi32, #pto.vmi.layout<num_groups = 2, slots = 1>> {
+    %result = pto.vmi.fptosi %source {saturate = "SAT"}
+        : !pto.vmi.vreg<2xf32, #pto.vmi.layout<num_groups = 2, slots = 1>>
+        -> !pto.vmi.vreg<2xsi32, #pto.vmi.layout<num_groups = 2, slots = 1>>
+    return %result : !pto.vmi.vreg<2xsi32,
+        #pto.vmi.layout<num_groups = 2, slots = 1>>
+  }
+}
+
+//--- fptoui.pto
+module {
+  func.func @fptoui_group_slots_has_no_lowering(
+      %source: !pto.vmi.vreg<2xf16, #pto.vmi.layout<num_groups = 2, slots = 1>>)
+      -> !pto.vmi.vreg<2xui8, #pto.vmi.layout<num_groups = 2, slots = 1>> {
+    %result = pto.vmi.fptoui %source {saturate = "SAT"}
+        : !pto.vmi.vreg<2xf16, #pto.vmi.layout<num_groups = 2, slots = 1>>
+        -> !pto.vmi.vreg<2xui8, #pto.vmi.layout<num_groups = 2, slots = 1>>
+    return %result : !pto.vmi.vreg<2xui8,
+        #pto.vmi.layout<num_groups = 2, slots = 1>>
+  }
+}
+
+//--- sitofp.pto
+module {
+  func.func @sitofp_group_slots_has_no_lowering(
+      %source: !pto.vmi.vreg<2xsi32, #pto.vmi.layout<num_groups = 2, slots = 1>>)
+      -> !pto.vmi.vreg<2xf32, #pto.vmi.layout<num_groups = 2, slots = 1>> {
+    %result = pto.vmi.sitofp %source
+        : !pto.vmi.vreg<2xsi32, #pto.vmi.layout<num_groups = 2, slots = 1>>
+        -> !pto.vmi.vreg<2xf32, #pto.vmi.layout<num_groups = 2, slots = 1>>
+    return %result : !pto.vmi.vreg<2xf32,
+        #pto.vmi.layout<num_groups = 2, slots = 1>>
+  }
+}

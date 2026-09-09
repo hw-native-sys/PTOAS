@@ -12,6 +12,7 @@ set(LLVM_LINK_COMPONENTS
 
 add_llvm_executable(pto-test-opt
   pto-test-opt.cpp
+  pto-test-vmi-layout-cost-conformance.cpp
   PARTIAL_SOURCES_INTENDED
 )
 

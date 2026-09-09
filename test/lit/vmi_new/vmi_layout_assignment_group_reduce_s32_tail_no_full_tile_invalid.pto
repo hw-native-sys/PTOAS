@@ -15,12 +15,8 @@ module {
       %dst: !pto.ptr<f32, ub>,
       %off: index) {
     %c1 = arith.constant 1 : index
-    // CHECK: VMI{{-}}UNSUPPORTED{{:}} pto.vmi.group_reduce_addf operand #0 has type
-    // CHECK-SAME: #pto.vmi.layout<contiguous>
-    // CHECK-SAME: requires
-    // CHECK-SAME: #pto.vmi.layout<deinterleaved = 4>
-    // CHECK-SAME: pto.vmi.ensure_layout cannot materialize this conversion
-    // CHECK: source/result layouts do not match a supported ensure_layout table row
+    // CHECK: VMI-LAYOUT-CONTRACT: no complete legal VMI layout plan exists for this component
+    // CHECK: note: see current operation: %{{.*}} = "pto.vmi.group_reduce_addf"
     %sum = pto.vmi.vcadd %source, %mask
         {group = 6, reassoc}
         : !pto.vmi.vreg<192xf32>, !pto.vmi.mask<192xpred>

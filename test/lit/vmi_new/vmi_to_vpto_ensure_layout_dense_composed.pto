@@ -1,0 +1,52 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
+// or implied. See LICENSE in the root of the software repository for the full
+// text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -pto-validate-vmi-layout-ir -vmi-to-vpto | FileCheck %s
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance | FileCheck %s --check-prefix=COST
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance -vmi-lower-unified-to-legacy -vmi-to-vpto -test-vmi-layout-lowering-conformance > /dev/null
+
+module {
+  func.func @d2_to_ls2_f16(
+      %v: !pto.vmi.vreg<256xf16, #pto.vmi.layout<deinterleaved = 2>>,
+      %dst: !pto.ptr<f16, ub>, %off: index) {
+    %r = pto.vmi.ensure_layout %v {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<256xf16, #pto.vmi.layout<deinterleaved = 2>>
+        -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+    pto.vmi.vstore %r, %dst[%off]
+        : !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>,
+          !pto.ptr<f16, ub>
+    return
+  }
+
+  func.func @ls2_to_ls4_f8(
+      %v: !pto.vmi.vreg<256xf8E4M3FN, #pto.vmi.layout<contiguous, lane_stride = 2>>,
+      %dst: !pto.ptr<f8E4M3FN, ub>, %off: index) {
+    %r = pto.vmi.ensure_layout %v {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<256xf8E4M3FN, #pto.vmi.layout<contiguous, lane_stride = 2>>
+        -> !pto.vmi.vreg<256xf8E4M3FN, #pto.vmi.layout<contiguous, lane_stride = 4>>
+    pto.vmi.vstore %r, %dst[%off]
+        : !pto.vmi.vreg<256xf8E4M3FN, #pto.vmi.layout<contiguous, lane_stride = 4>>,
+          !pto.ptr<f8E4M3FN, ub>
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @d2_to_ls2_f16
+// CHECK: pto.vintlv
+// CHECK: pto.vzunpack
+// CHECK-NOT: pto.vmi.
+
+// COST-DAG: vmi-layout-cost-conformance d2_to_ls2_f16 pto.vmi.ensure_layout relation=0 cost=5
+// COST-DAG: vmi-layout-cost-conformance ls2_to_ls4_f8 pto.vmi.ensure_layout relation=0 cost=11
+// COST-DAG: vmi-layout-cost-conformance-summary d2_to_ls2_f16 pto.vmi.ensure_layout relations=1
+// COST-DAG: vmi-layout-cost-conformance-summary ls2_to_ls4_f8 pto.vmi.ensure_layout relations=1
+// CHECK-LABEL: func.func @ls2_to_ls4_f8
+// CHECK: pto.vpack
+// CHECK: pto.vzunpack
+// CHECK-NOT: pto.vmi.

@@ -231,6 +231,40 @@ struct MaskGranularitySolver {
         }
         return WalkResult::advance();
       }
+      // Masked bitwise vector operations use the data element granularity,
+      // just like the other masked elementwise families. Keep this rule
+      // shared across the whole family so a mask is never left at the
+      // default b32 when operating on narrower integer elements.
+      if (auto bitwise = dyn_cast<VMIVandOp>(op)) {
+        auto type = dyn_cast<VMIVRegType>(bitwise.getLhs().getType());
+        if (type && failed(requestMaskUse(
+                        bitwise.getMaskMutable()[0],
+                        getMaskGranularityForElement(type.getElementType()),
+                        op))) {
+          return WalkResult::interrupt();
+        }
+        return WalkResult::advance();
+      }
+      if (auto bitwise = dyn_cast<VMIVorOp>(op)) {
+        auto type = dyn_cast<VMIVRegType>(bitwise.getLhs().getType());
+        if (type && failed(requestMaskUse(
+                        bitwise.getMaskMutable()[0],
+                        getMaskGranularityForElement(type.getElementType()),
+                        op))) {
+          return WalkResult::interrupt();
+        }
+        return WalkResult::advance();
+      }
+      if (auto bitwise = dyn_cast<VMIVxorOp>(op)) {
+        auto type = dyn_cast<VMIVRegType>(bitwise.getLhs().getType());
+        if (type && failed(requestMaskUse(
+                        bitwise.getMaskMutable()[0],
+                        getMaskGranularityForElement(type.getElementType()),
+                        op))) {
+          return WalkResult::interrupt();
+        }
+        return WalkResult::advance();
+      }
       if (auto ensure = dyn_cast<VMIEnsureMaskLayoutOp>(op)) {
         if (failed(uniteMask(ensure.getSource(), ensure.getResult(), op))) {
           return WalkResult::interrupt();

@@ -1,0 +1,116 @@
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance | FileCheck %s --check-prefix=COST
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance -vmi-to-vpto -test-vmi-layout-lowering-conformance > /dev/null
+
+module {
+  func.func @stride_load(%src: !pto.ptr<f32, ub>, %off: index,
+                         %mask: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> {
+    %c1 = arith.constant 1 : i16
+    %v = pto.vmi.stride_load %src[%off], %c1, %c1, %mask
+      {test.vmi_layout_cost_conformance}
+      : !pto.ptr<f32, ub>, i16, i16,
+        !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return %v : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @gather(
+      %src: !pto.ptr<f32, ub>,
+      %indices: !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>,
+      %passthru: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> {
+    %v = pto.vmi.gather %src[%indices], %mask, %passthru
+      {test.vmi_layout_cost_conformance}
+      : !pto.ptr<f32, ub>,
+        !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>,
+        !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>,
+        !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return %v : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @stride_store(
+      %v: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+      %dst: !pto.ptr<f32, ub>, %off: index,
+      %mask: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>) {
+    %c1 = arith.constant 1 : i16
+    pto.vmi.stride_store %v, %dst[%off], %c1, %c1, %mask
+      {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+        !pto.ptr<f32, ub>, i16, i16,
+        !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+    return
+  }
+
+  func.func @scatter(
+      %v: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+      %dst: !pto.ptr<f32, ub>,
+      %indices: !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>) {
+    pto.vmi.scatter %v, %dst[%indices], %mask
+      {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+        !pto.ptr<f32, ub>,
+        !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>,
+        !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+    return
+  }
+
+  func.func @compress(
+      %v: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> {
+    %out = pto.vmi.compress %v, %mask
+      {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+        !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return %out : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @active_prefix(
+      %mask: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>> {
+    %out = pto.vmi.active_prefix_index %mask
+      {test.vmi_layout_cost_conformance}
+      : !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>
+    return %out : !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @compress_store(
+      %v: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+      %dst: !pto.ptr<f32, ub>, %off: index,
+      %mask: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>) {
+    pto.vmi.compress_store %v, %dst[%off], %mask
+      {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+        !pto.ptr<f32, ub>,
+        !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+    return
+  }
+
+  func.func @expand_load(
+      %src: !pto.ptr<f32, ub>, %off: index,
+      %mask: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>,
+      %passthru: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> {
+    %out = pto.vmi.expand_load %src[%off], %mask, %passthru
+      {test.vmi_layout_cost_conformance}
+      : !pto.ptr<f32, ub>,
+        !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>,
+        !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return %out : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+}
+
+// COST: vmi-layout-cost-conformance stride_load pto.vmi.stride_load relation=0 cost=0
+// COST: vmi-layout-cost-conformance gather pto.vmi.gather relation=0 cost=0
+// COST: vmi-layout-cost-conformance stride_store pto.vmi.stride_store relation=0 cost=0
+// COST: vmi-layout-cost-conformance scatter pto.vmi.scatter relation=0 cost=0
+// COST: vmi-layout-cost-conformance compress pto.vmi.compress relation=0 cost=0
+// COST: vmi-layout-cost-conformance active_prefix pto.vmi.active_prefix_index relation=0 cost=0
+// COST: vmi-layout-cost-conformance compress_store pto.vmi.compress_store relation=0 cost=0
+// COST: vmi-layout-cost-conformance expand_load pto.vmi.expand_load relation=0 cost=0

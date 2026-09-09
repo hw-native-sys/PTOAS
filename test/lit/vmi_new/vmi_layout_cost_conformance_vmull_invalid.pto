@@ -1,0 +1,35 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. See the License for
+// the specific language governing permissions and limitations under the License.
+
+// RUN: not pto-test-opt %s -test-vmi-layout-cost-conformance 2>&1 | FileCheck %s --check-prefix=COST
+// RUN: not pto-test-opt %s -vmi-to-vpto 2>&1 | FileCheck %s --check-prefix=LOWER
+
+module {
+  func.func @vmull_lane_stride(
+      %a: !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous, lane_stride = 2>>,
+      %b: !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous, lane_stride = 2>>,
+      %m: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous, lane_stride = 2>>)
+      -> (!pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous, lane_stride = 2>>,
+          !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous, lane_stride = 2>>) {
+    %low, %high = pto.vmi.vmull %a, %b, %m
+      {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous, lane_stride = 2>>,
+        !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous, lane_stride = 2>>,
+        !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+        -> !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous, lane_stride = 2>>,
+           !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+    return %low, %high
+      : !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous, lane_stride = 2>>,
+        !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  }
+}
+
+// COST: error: test layout-cost conformance marker has no exposed relation
+// LOWER: requires contiguous or deinterleaved factor 2/4 layout with lane_stride=1

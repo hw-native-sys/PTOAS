@@ -42,21 +42,23 @@ module attributes {pto.target_arch = "a5"} {
   }
 }
 
+// Both preference settings must select the zero-rearrangement cast corridor.
+// The option may only affect equal-cost tie-breaking; it cannot override the
+// cost solver's strictly cheaper contiguous-to-lane-stride relation.
 // COMPACT-LABEL: func.func @truncf_dense_store(
-// COMPACT: pto.vcvt {{.*}} {part = "P0"
-// COMPACT: pto.vcvt {{.*}} {part = "P1"
-// COMPACT: pto.vcvt {{.*}} {part = "P2"
-// COMPACT: pto.vcvt {{.*}} {part = "P3"
-// COMPACT-COUNT-3: pto.vor
-// COMPACT: pto.vsts
-// COMPACT-NOT: dist = "PK4_B32"
+// COMPACT-COUNT-4: pto.vlds
+// COMPACT-COUNT-4: pto.vcvt {{.*}} {part = "P0"
+// COMPACT-NOT: part = "P1"
+// COMPACT-NOT: part = "P2"
+// COMPACT-NOT: part = "P3"
+// COMPACT-COUNT-4: pto.vsts {{.*}} {dist = "PK4_B32"}
 
 // LANE-LABEL: func.func @truncf_dense_store(
+// LANE-COUNT-4: pto.vlds
 // LANE-COUNT-4: pto.vcvt {{.*}} {part = "P0"
 // LANE-NOT: part = "P1"
 // LANE-NOT: part = "P2"
 // LANE-NOT: part = "P3"
-// LANE-NOT: pto.vor
 // LANE-COUNT-4: pto.vsts {{.*}} {dist = "PK4_B32"}
 
 // LANE-LABEL: func.func @trunci_dense_masked_store(
@@ -68,6 +70,9 @@ module attributes {pto.target_arch = "a5"} {
 // LANE-COUNT-4: pto.vsts {{.*}} {dist = "PK4_B32"}
 
 // CLI-LABEL: func.func @truncf_dense_store(
+// CLI-COUNT-4: pto.vlds
 // CLI-COUNT-4: pto.vcvt {{.*}} {part = "P0"
-// CLI-NOT: pto.vor
+// CLI-NOT: part = "P1"
+// CLI-NOT: part = "P2"
+// CLI-NOT: part = "P3"
 // CLI-COUNT-4: pto.vsts {{.*}} {dist = "PK4_B32"}

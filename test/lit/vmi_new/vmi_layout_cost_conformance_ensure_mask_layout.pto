@@ -1,0 +1,148 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance | FileCheck %s
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance -vmi-to-vpto -test-vmi-layout-lowering-conformance > /dev/null
+
+module {
+  func.func @r01_c_to_d2_b16(%x: !pto.vmi.mask<256xb16, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.mask<256xb16, #pto.vmi.layout<deinterleaved = 2>> {
+    %r = pto.vmi.ensure_mask_layout %x {test.vmi_layout_cost_conformance}
+        : !pto.vmi.mask<256xb16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.mask<256xb16, #pto.vmi.layout<deinterleaved = 2>>
+    return %r : !pto.vmi.mask<256xb16, #pto.vmi.layout<deinterleaved = 2>>
+  }
+  func.func @r02_c_to_d4_b16(%x: !pto.vmi.mask<256xb16, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.mask<256xb16, #pto.vmi.layout<deinterleaved = 4>> {
+    %r = pto.vmi.ensure_mask_layout %x {test.vmi_layout_cost_conformance}
+        : !pto.vmi.mask<256xb16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.mask<256xb16, #pto.vmi.layout<deinterleaved = 4>>
+    return %r : !pto.vmi.mask<256xb16, #pto.vmi.layout<deinterleaved = 4>>
+  }
+  func.func @r03_c_to_d2_b32(%x: !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>> {
+    %r = pto.vmi.ensure_mask_layout %x {test.vmi_layout_cost_conformance}
+        : !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
+    return %r : !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+  func.func @r04_c_to_bd2_b32(%x: !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.mask<128xb32, #pto.vmi.layout<block_deinterleaved = 2>> {
+    %r = pto.vmi.ensure_mask_layout %x {test.vmi_layout_cost_conformance}
+        : !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.mask<128xb32, #pto.vmi.layout<block_deinterleaved = 2>>
+    return %r : !pto.vmi.mask<128xb32, #pto.vmi.layout<block_deinterleaved = 2>>
+  }
+  func.func @r05_d2_to_c_b16(%x: !pto.vmi.mask<256xb16, #pto.vmi.layout<deinterleaved = 2>>)
+      -> !pto.vmi.mask<256xb16, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.ensure_mask_layout %x {test.vmi_layout_cost_conformance}
+        : !pto.vmi.mask<256xb16, #pto.vmi.layout<deinterleaved = 2>>
+        -> !pto.vmi.mask<256xb16, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.mask<256xb16, #pto.vmi.layout<contiguous>>
+  }
+  func.func @r06_d4_to_c_b16(%x: !pto.vmi.mask<256xb16, #pto.vmi.layout<deinterleaved = 4>>)
+      -> !pto.vmi.mask<256xb16, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.ensure_mask_layout %x {test.vmi_layout_cost_conformance}
+        : !pto.vmi.mask<256xb16, #pto.vmi.layout<deinterleaved = 4>>
+        -> !pto.vmi.mask<256xb16, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.mask<256xb16, #pto.vmi.layout<contiguous>>
+  }
+  func.func @r07_d2_to_c_b32(%x: !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>)
+      -> !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.ensure_mask_layout %x {test.vmi_layout_cost_conformance}
+        : !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
+        -> !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @r08_bd2_to_c_b32(
+      %x: !pto.vmi.mask<128xb32, #pto.vmi.layout<block_deinterleaved = 2>>)
+      -> !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.ensure_mask_layout %x {test.vmi_layout_cost_conformance}
+        : !pto.vmi.mask<128xb32, #pto.vmi.layout<block_deinterleaved = 2>>
+        -> !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @r09_c_to_d4_b32(%x: !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.mask<256xb32, #pto.vmi.layout<deinterleaved = 4>> {
+    %r = pto.vmi.ensure_mask_layout %x {test.vmi_layout_cost_conformance}
+        : !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.mask<256xb32, #pto.vmi.layout<deinterleaved = 4>>
+    return %r : !pto.vmi.mask<256xb32, #pto.vmi.layout<deinterleaved = 4>>
+  }
+  func.func @r10_c_to_bd4_b32(%x: !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.mask<256xb32, #pto.vmi.layout<block_deinterleaved = 4>> {
+    %r = pto.vmi.ensure_mask_layout %x {test.vmi_layout_cost_conformance}
+        : !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.mask<256xb32, #pto.vmi.layout<block_deinterleaved = 4>>
+    return %r : !pto.vmi.mask<256xb32, #pto.vmi.layout<block_deinterleaved = 4>>
+  }
+  func.func @r11_d4_to_c_b32(%x: !pto.vmi.mask<256xb32, #pto.vmi.layout<deinterleaved = 4>>)
+      -> !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.ensure_mask_layout %x {test.vmi_layout_cost_conformance}
+        : !pto.vmi.mask<256xb32, #pto.vmi.layout<deinterleaved = 4>>
+        -> !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @r12_bd4_to_c_b32(
+      %x: !pto.vmi.mask<256xb32, #pto.vmi.layout<block_deinterleaved = 4>>)
+      -> !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.ensure_mask_layout %x {test.vmi_layout_cost_conformance}
+        : !pto.vmi.mask<256xb32, #pto.vmi.layout<block_deinterleaved = 4>>
+        -> !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @r13_c_to_ls2_b8(%x: !pto.vmi.mask<128xb8, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.mask<128xb8, #pto.vmi.layout<contiguous, lane_stride = 2>> {
+    %r = pto.vmi.ensure_mask_layout %x {test.vmi_layout_cost_conformance}
+        : !pto.vmi.mask<128xb8, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.mask<128xb8, #pto.vmi.layout<contiguous, lane_stride = 2>>
+    return %r : !pto.vmi.mask<128xb8, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  }
+  func.func @r14_c_to_ls2_b16(%x: !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous, lane_stride = 2>> {
+    %r = pto.vmi.ensure_mask_layout %x {test.vmi_layout_cost_conformance}
+        : !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+    return %r : !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  }
+  func.func @r15_ls2_to_c_b8(
+      %x: !pto.vmi.mask<128xb8, #pto.vmi.layout<contiguous, lane_stride = 2>>)
+      -> !pto.vmi.mask<128xb8, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.ensure_mask_layout %x {test.vmi_layout_cost_conformance}
+        : !pto.vmi.mask<128xb8, #pto.vmi.layout<contiguous, lane_stride = 2>>
+        -> !pto.vmi.mask<128xb8, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.mask<128xb8, #pto.vmi.layout<contiguous>>
+  }
+  func.func @r16_ls2_to_c_b16(
+      %x: !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous, lane_stride = 2>>)
+      -> !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.ensure_mask_layout %x {test.vmi_layout_cost_conformance}
+        : !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+        -> !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous>>
+  }
+  func.func @r17_c_to_ls4_b8(%x: !pto.vmi.mask<64xb8, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.mask<64xb8, #pto.vmi.layout<contiguous, lane_stride = 4>> {
+    %r = pto.vmi.ensure_mask_layout %x {test.vmi_layout_cost_conformance}
+        : !pto.vmi.mask<64xb8, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.mask<64xb8, #pto.vmi.layout<contiguous, lane_stride = 4>>
+    return %r : !pto.vmi.mask<64xb8, #pto.vmi.layout<contiguous, lane_stride = 4>>
+  }
+  func.func @r18_ls4_to_c_b8(
+      %x: !pto.vmi.mask<64xb8, #pto.vmi.layout<contiguous, lane_stride = 4>>)
+      -> !pto.vmi.mask<64xb8, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.ensure_mask_layout %x {test.vmi_layout_cost_conformance}
+        : !pto.vmi.mask<64xb8, #pto.vmi.layout<contiguous, lane_stride = 4>>
+        -> !pto.vmi.mask<64xb8, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.mask<64xb8, #pto.vmi.layout<contiguous>>
+  }
+}
+
+// CHECK-COUNT-18: relation=0 cost=

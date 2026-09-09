@@ -1,0 +1,278 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR
+// FITNESS FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software
+// repository for the full text of the License.
+
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance | FileCheck %s --check-prefix=COST
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance -vmi-to-vpto -test-vmi-layout-lowering-conformance > /dev/null
+
+module {
+  func.func @deinterleave_load_contiguous(%src: !pto.ptr<f32, ub>, %off: index)
+      -> (!pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>) {
+    %low, %high = pto.vmi.deinterleave_load %src[%off]
+        {test.vmi_layout_cost_conformance}
+        : !pto.ptr<f32, ub>
+          -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+             !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return %low, %high
+        : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @interleave_store_contiguous(
+      %low: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+      %high: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+      %dst: !pto.ptr<f32, ub>, %off: index) {
+    pto.vmi.interleave_store %low, %high, %dst[%off]
+        {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+          !pto.ptr<f32, ub>
+    return
+  }
+
+  func.func @group_load_contiguous(%src: !pto.ptr<f32, ub>, %off: index)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> {
+    %c64 = arith.constant 64 : index
+    %value = pto.vmi.group_load %src[%off], %c64
+        {num_groups = 2 : i64, test.vmi_layout_cost_conformance}
+        : !pto.ptr<f32, ub>
+          -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+    return %value : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @group_load_contiguous_quarter_block(
+      %src: !pto.ptr<f32, ub>, %off: index)
+      -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> {
+    %c2 = arith.constant 2 : index
+    %value = pto.vmi.group_load %src[%off], %c2
+        {num_groups = 32 : i64, test.vmi_layout_cost_conformance}
+        : !pto.ptr<f32, ub>
+          -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return %value : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @group_load_contiguous_half_block(
+      %src: !pto.ptr<f32, ub>, %off: index)
+      -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> {
+    %c4 = arith.constant 4 : index
+    %value = pto.vmi.group_load %src[%off], %c4
+        {num_groups = 16 : i64, test.vmi_layout_cost_conformance}
+        : !pto.ptr<f32, ub>
+          -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return %value : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @group_load_contiguous_one_block(
+      %src: !pto.ptr<f32, ub>, %off: index)
+      -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> {
+    %c8 = arith.constant 8 : index
+    %value = pto.vmi.group_load %src[%off], %c8
+        {num_groups = 8 : i64, test.vmi_layout_cost_conformance}
+        : !pto.ptr<f32, ub>
+          -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return %value : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @group_load_contiguous_two_blocks(
+      %src: !pto.ptr<f32, ub>, %off: index)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> {
+    %c16 = arith.constant 16 : index
+    %value = pto.vmi.group_load %src[%off], %c16
+        {num_groups = 8 : i64, test.vmi_layout_cost_conformance}
+        : !pto.ptr<f32, ub>
+          -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+    return %value : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @group_load_contiguous_four_blocks(
+      %src: !pto.ptr<f32, ub>, %off: index)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> {
+    %c32 = arith.constant 32 : index
+    %value = pto.vmi.group_load %src[%off], %c32
+        {num_groups = 4 : i64, test.vmi_layout_cost_conformance}
+        : !pto.ptr<f32, ub>
+          -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+    return %value : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @group_load_block_deinterleaved2(
+      %src: !pto.ptr<f32, ub>, %off: index)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<block_deinterleaved = 2>> {
+    %c24 = arith.constant 24 : index
+    %value = pto.vmi.group_load %src[%off], %c24
+        {num_groups = 8 : i64, test.vmi_layout_cost_conformance}
+        : !pto.ptr<f32, ub>
+          -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<block_deinterleaved = 2>>
+    return %value
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<block_deinterleaved = 2>>
+  }
+
+  func.func @group_load_block_deinterleaved4(
+      %src: !pto.ptr<f32, ub>, %off: index)
+      -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<block_deinterleaved = 4>> {
+    %c40 = arith.constant 40 : index
+    %value = pto.vmi.group_load %src[%off], %c40
+        {num_groups = 8 : i64, test.vmi_layout_cost_conformance}
+        : !pto.ptr<f32, ub>
+          -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<block_deinterleaved = 4>>
+    return %value
+        : !pto.vmi.vreg<256xf32, #pto.vmi.layout<block_deinterleaved = 4>>
+  }
+
+  func.func @group_store_contiguous(
+      %value: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>,
+      %dst: !pto.ptr<f32, ub>, %off: index) {
+    %c256 = arith.constant 256 : index
+    pto.vmi.group_store %value, %dst[%off], %c256
+        {num_groups = 16 : i64, test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>,
+          !pto.ptr<f32, ub>
+    return
+  }
+
+  func.func @group_store_deinterleaved2(
+      %value: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>,
+      %dst: !pto.ptr<f32, ub>, %off: index) {
+    %c128 = arith.constant 128 : index
+    pto.vmi.group_store %value, %dst[%off], %c128
+        {num_groups = 1 : i64, test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>,
+          !pto.ptr<f32, ub>
+    return
+  }
+
+  func.func @group_store_contiguous_full_chunk(
+      %value: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>,
+      %dst: !pto.ptr<f32, ub>, %off: index) {
+    %c64 = arith.constant 64 : index
+    pto.vmi.group_store %value, %dst[%off], %c64
+        {num_groups = 2 : i64, test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>,
+          !pto.ptr<f32, ub>
+    return
+  }
+
+  func.func @group_slot_load_slots8(%src: !pto.ptr<f32, ub>, %off: index)
+      -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>> {
+    %c1 = arith.constant 1 : index
+    %value = pto.vmi.group_slot_load %src[%off], %c1
+        {num_groups = 8 : i64, test.vmi_layout_cost_conformance}
+        : !pto.ptr<f32, ub>
+          -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
+    return %value
+        : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
+  }
+
+  func.func @group_slot_load_slots1(%src: !pto.ptr<f32, ub>, %off: index)
+      -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 1>> {
+    %c64 = arith.constant 64 : index
+    %value = pto.vmi.group_slot_load %src[%off], %c64
+        {num_groups = 8 : i64, test.vmi_layout_cost_conformance}
+        : !pto.ptr<f32, ub>
+          -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 1>>
+    return %value
+        : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 1>>
+  }
+
+  func.func @group_slot_load_slots8_lane_stride2(
+      %src: !pto.ptr<ui8, ub>, %off: index)
+      -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>> {
+    %c1 = arith.constant 1 : index
+    %value = pto.vmi.group_slot_load %src[%off], %c1
+        {num_groups = 8 : i64, test.vmi_layout_cost_conformance}
+        : !pto.ptr<ui8, ub>
+          -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
+    return %value
+        : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
+  }
+
+  func.func @group_slot_load_slots8_lane_stride4(
+      %src: !pto.ptr<ui8, ub>, %off: index)
+      -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>> {
+    %c1 = arith.constant 1 : index
+    %value = pto.vmi.group_slot_load %src[%off], %c1
+        {num_groups = 8 : i64, test.vmi_layout_cost_conformance}
+        : !pto.ptr<ui8, ub>
+          -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>
+    return %value
+        : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>
+  }
+
+  func.func @group_store_slots8(
+      %value: !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8>>) {
+    %addr = arith.constant 102400 : i64
+    %dst = pto.castptr %addr : i64 -> !pto.ptr<ui8, ub>
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    pto.vmi.group_store %value, %dst[%c0], %c1
+        {num_groups = 8 : i64, test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8>>,
+          !pto.ptr<ui8, ub>
+    return
+  }
+
+  func.func @group_store_slots8_lane_stride2(
+      %value: !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>) {
+    %addr = arith.constant 102400 : i64
+    %dst = pto.castptr %addr : i64 -> !pto.ptr<ui8, ub>
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    pto.vmi.group_store %value, %dst[%c0], %c1
+        {num_groups = 8 : i64, test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>,
+          !pto.ptr<ui8, ub>
+    return
+  }
+
+  func.func @group_store_slots8_lane_stride4(
+      %value: !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>) {
+    %addr = arith.constant 102400 : i64
+    %dst = pto.castptr %addr : i64 -> !pto.ptr<ui8, ub>
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    pto.vmi.group_store %value, %dst[%c0], %c1
+        {num_groups = 8 : i64, test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>,
+          !pto.ptr<ui8, ub>
+    return
+  }
+}
+
+// COST: vmi-layout-cost-conformance deinterleave_load_contiguous pto.vmi.deinterleave_load relation=0 cost=0
+// COST: vmi-layout-cost-conformance interleave_store_contiguous pto.vmi.interleave_store relation=0 cost=0
+// COST: vmi-layout-cost-conformance group_load_contiguous pto.vmi.group_load relation=0 cost=0
+// COST: vmi-layout-cost-conformance group_load_contiguous_quarter_block pto.vmi.group_load relation=0 cost=0
+// COST: vmi-layout-cost-conformance group_load_contiguous_half_block pto.vmi.group_load relation=0 cost=0
+// COST: vmi-layout-cost-conformance group_load_contiguous_one_block pto.vmi.group_load relation=0 cost=0
+// COST: vmi-layout-cost-conformance group_load_contiguous_two_blocks pto.vmi.group_load relation=0 cost=0
+// COST: vmi-layout-cost-conformance group_load_contiguous_four_blocks pto.vmi.group_load relation=0 cost=0
+// COST: vmi-layout-cost-conformance group_load_block_deinterleaved2 pto.vmi.group_load relation=0 cost=0
+// COST: vmi-layout-cost-conformance group_load_block_deinterleaved4 pto.vmi.group_load relation=0 cost=0
+// COST: vmi-layout-cost-conformance group_store_contiguous pto.vmi.group_store relation=0 cost=0
+// COST: vmi-layout-cost-conformance group_store_deinterleaved2 pto.vmi.group_store relation=0 cost=0
+// COST: vmi-layout-cost-conformance group_store_deinterleaved2 pto.vmi.group_store relation=1 cost=1
+// COST: vmi-layout-cost-conformance-summary group_store_deinterleaved2 pto.vmi.group_store relations=2
+// COST: vmi-layout-cost-conformance group_store_contiguous_full_chunk pto.vmi.group_store relation=0 cost=0
+// COST: vmi-layout-cost-conformance group_slot_load_slots8 pto.vmi.group_slot_load relation=0 cost=0
+// COST: vmi-layout-cost-conformance group_slot_load_slots1 pto.vmi.group_slot_load relation=0 cost=0
+// COST: vmi-layout-cost-conformance group_slot_load_slots8_lane_stride2 pto.vmi.group_slot_load relation=0 cost=0
+// COST: vmi-layout-cost-conformance group_slot_load_slots8_lane_stride4 pto.vmi.group_slot_load relation=0 cost=0
+// COST: vmi-layout-cost-conformance group_store_slots8 pto.vmi.group_store relation=0 cost=0
+// COST: vmi-layout-cost-conformance group_store_slots8 pto.vmi.group_store relation=1 cost=2
+// COST: vmi-layout-cost-conformance group_store_slots8 pto.vmi.group_store relation=2 cost=4
+// COST: vmi-layout-cost-conformance-summary group_store_slots8 pto.vmi.group_store relations=3
+// COST: vmi-layout-cost-conformance group_store_slots8_lane_stride2 pto.vmi.group_store relation=0 cost=1
+// COST: vmi-layout-cost-conformance group_store_slots8_lane_stride2 pto.vmi.group_store relation=1 cost=1
+// COST: vmi-layout-cost-conformance group_store_slots8_lane_stride2 pto.vmi.group_store relation=2 cost=3
+// COST: vmi-layout-cost-conformance-summary group_store_slots8_lane_stride2 pto.vmi.group_store relations=3
+// COST: vmi-layout-cost-conformance group_store_slots8_lane_stride4 pto.vmi.group_store relation=0 cost=2
+// COST: vmi-layout-cost-conformance group_store_slots8_lane_stride4 pto.vmi.group_store relation=1 cost=2
+// COST: vmi-layout-cost-conformance group_store_slots8_lane_stride4 pto.vmi.group_store relation=2 cost=2
+// COST: vmi-layout-cost-conformance-summary group_store_slots8_lane_stride4 pto.vmi.group_store relations=3

@@ -1,0 +1,120 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR
+// FITNESS FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software
+// repository for the full text of the License.
+
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance | FileCheck %s --check-prefix=COST
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance -vmi-to-vpto -test-vmi-layout-lowering-conformance > /dev/null
+
+module {
+  func.func @vdhist_contiguous(
+      %acc: !pto.vmi.vreg<256xui16, #pto.vmi.layout<contiguous>>,
+      %source: !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<256xb8, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<256xui16, #pto.vmi.layout<contiguous>> {
+    %hist = pto.vmi.vdhist %acc, %source, %mask
+        {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<256xui16, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.mask<256xb8, #pto.vmi.layout<contiguous>>
+          -> !pto.vmi.vreg<256xui16, #pto.vmi.layout<contiguous>>
+    return %hist : !pto.vmi.vreg<256xui16, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @vchist_contiguous(
+      %acc: !pto.vmi.vreg<256xui16, #pto.vmi.layout<contiguous>>,
+      %source: !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<256xb8, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<256xui16, #pto.vmi.layout<contiguous>> {
+    %hist = pto.vmi.vchist %acc, %source, %mask
+        {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<256xui16, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.mask<256xb8, #pto.vmi.layout<contiguous>>
+          -> !pto.vmi.vreg<256xui16, #pto.vmi.layout<contiguous>>
+    return %hist : !pto.vmi.vreg<256xui16, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @vselr_contiguous(
+      %source: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>,
+      %index: !pto.vmi.vreg<128xi16, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>> {
+    %result = pto.vmi.vselr %source, %index
+        {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.vreg<128xi16, #pto.vmi.layout<contiguous>>
+          -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
+    return %result : !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @vselr_ui8_64(
+      %source: !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous>>,
+      %index: !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous>> {
+    %result = pto.vmi.vselr %source, %index
+        {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous>>
+          -> !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous>>
+    return %result : !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @vselr_ui8_128(
+      %source: !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous>>,
+      %index: !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous>> {
+    %result = pto.vmi.vselr %source, %index
+        {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous>>
+          -> !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous>>
+    return %result : !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @vselr_ui8_256(
+      %source: !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous>>,
+      %index: !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous>> {
+    %result = pto.vmi.vselr %source, %index
+        {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous>>
+          -> !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous>>
+    return %result : !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @vselr_ui16_64(
+      %source: !pto.vmi.vreg<64xui16, #pto.vmi.layout<contiguous>>,
+      %index: !pto.vmi.vreg<64xui16, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xui16, #pto.vmi.layout<contiguous>> {
+    %result = pto.vmi.vselr %source, %index
+        {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<64xui16, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.vreg<64xui16, #pto.vmi.layout<contiguous>>
+          -> !pto.vmi.vreg<64xui16, #pto.vmi.layout<contiguous>>
+    return %result : !pto.vmi.vreg<64xui16, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @vselr_ui32_64(
+      %source: !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>>,
+      %index: !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>> {
+    %result = pto.vmi.vselr %source, %index
+        {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>>
+          -> !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>>
+    return %result : !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>>
+  }
+}
+
+// COST: vmi-layout-cost-conformance vdhist_contiguous pto.vmi.vdhist relation=0 cost=0
+// COST: vmi-layout-cost-conformance-summary vdhist_contiguous pto.vmi.vdhist relations=1
+// COST: vmi-layout-cost-conformance vchist_contiguous pto.vmi.vchist relation=0 cost=0
+// COST: vmi-layout-cost-conformance-summary vchist_contiguous pto.vmi.vchist relations=1
+// COST-COUNT-6: pto.vmi.vselr relation=0 cost=0

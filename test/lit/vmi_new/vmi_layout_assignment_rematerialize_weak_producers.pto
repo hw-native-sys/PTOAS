@@ -15,13 +15,17 @@
 // naturally contiguous. Weak producer fanout must not connect these layouts.
 module {
   func.func @vmi_layout_assignment_rematerialize_weak_producers(
-      %x: !pto.vmi.vreg<128xf32>,
-      %max: !pto.vmi.vreg<128xf32>,
+      %x_ptr: !pto.ptr<f32, ub>,
+      %max_ptr: !pto.ptr<f32, ub>,
       %scale: f32,
       %dst0: !pto.ptr<f32, ub>,
       %dst1: !pto.ptr<f32, ub>,
       %off: index) {
     %mask = pto.vmi.create_mask %off : index -> !pto.vmi.mask<128xpred>
+    %x = pto.vmi.vload %x_ptr[%off]
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
+    %max = pto.vmi.vload %max_ptr[%off]
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
     %index = pto.vmi.vci %scale : f32 -> !pto.vmi.vreg<128xf32>
     %score_base = pto.vmi.vadd %index, %index
         : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>
@@ -69,7 +73,7 @@ module {
 // LOWER-LABEL: func.func @vmi_layout_assignment_rematerialize_weak_producers(
 // LOWER-NOT: pto.vintlv
 // LOWER-NOT: pto.pintlv_b32
-// LOWER: pto.vdintlv
+// LOWER-COUNT-2: pto.vldsx2
 // LOWER: pto.vexpdif
 // LOWER: pto.vcgadd
 // LOWER-NOT: pto.vmi.

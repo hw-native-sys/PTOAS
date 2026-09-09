@@ -15,7 +15,8 @@ module {
       %dst: !pto.ptr<f32, ub>,
       %off: index) {
     %c1 = arith.constant 1 : index
-    // CHECK: VMI-LAYOUT-CONTRACT: cannot materialize requested VMI operand layout #pto.vmi.layout<num_groups = 8, slots = 8>
+    // CHECK: VMI-LAYOUT-CONTRACT: no complete legal VMI layout plan exists for this component
+    // CHECK: note: see current operation: %{{.*}} = "pto.vmi.group_reduce_addf"
     %sum = pto.vmi.vcadd %source, %mask
         {group = 8, reassoc}
         : !pto.vmi.vreg<96xf32>, !pto.vmi.mask<96xpred>

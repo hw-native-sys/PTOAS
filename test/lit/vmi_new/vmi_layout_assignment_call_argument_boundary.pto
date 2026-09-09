@@ -43,10 +43,10 @@ module {
 // ASSIGN-LABEL: func.func private @consume(
 // ASSIGN-SAME: !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
 // ASSIGN-SAME: !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>>
-// ASSIGN: %[[X_SPLIT:.*]] = pto.vmi.ensure_layout
-// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
 // ASSIGN: %[[MASK_SPLIT:.*]] = pto.vmi.ensure_mask_layout
 // ASSIGN-SAME: -> !pto.vmi.mask<256xb32, #pto.vmi.layout<deinterleaved = 4>>
+// ASSIGN: %[[X_SPLIT:.*]] = pto.vmi.ensure_layout
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
 // ASSIGN: %[[SUM:.*]] = pto.vmi.group_reduce_addf %[[X_SPLIT]], %[[MASK_SPLIT]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
 // ASSIGN: pto.vmi.group_store %[[SUM]]
@@ -62,8 +62,8 @@ module {
 // LOWER-LABEL: func.func private @consume(
 // LOWER-SAME: !pto.vreg<64xf32>
 // LOWER-SAME: !pto.mask<b32>
-// LOWER: pto.vdintlv
-// LOWER: pto.pdintlv_b32
+// LOWER-DAG: pto.vdintlv
+// LOWER-DAG: pto.pdintlv_b32
 // LOWER-COUNT-4: pto.vcgadd
 // LOWER: pto.vsts
 // LOWER-LABEL: func.func @caller(

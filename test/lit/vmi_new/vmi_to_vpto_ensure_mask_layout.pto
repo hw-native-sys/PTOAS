@@ -7,12 +7,14 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // RUN: pto-test-opt %s -vmi-to-vpto | FileCheck %s
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance | FileCheck %s --check-prefix=COST
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance -vmi-to-vpto -test-vmi-layout-lowering-conformance > /dev/null
 
 module {
   func.func @vmi_to_vpto_mask_deint2_to_contiguous(
       %m: !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>)
       -> (!pto.mask<b32>, !pto.mask<b32>) {
-    %dense = pto.vmi.ensure_mask_layout %m
+    %dense = pto.vmi.ensure_mask_layout %m {test.vmi_layout_cost_conformance}
         : !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
         -> !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
     %p0, %p1 = "pto.vmi.unpack"(%dense)
@@ -24,7 +26,7 @@ module {
   func.func @vmi_to_vpto_mask_contiguous_to_deint2(
       %m: !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>)
       -> (!pto.mask<b32>, !pto.mask<b32>) {
-    %deint = pto.vmi.ensure_mask_layout %m
+    %deint = pto.vmi.ensure_mask_layout %m {test.vmi_layout_cost_conformance}
         : !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
         -> !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
     %p0, %p1 = "pto.vmi.unpack"(%deint)
@@ -36,7 +38,7 @@ module {
   func.func @vmi_to_vpto_mask_deint4_to_contiguous(
       %m: !pto.vmi.mask<256xb32, #pto.vmi.layout<deinterleaved = 4>>)
       -> (!pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32>) {
-    %dense = pto.vmi.ensure_mask_layout %m
+    %dense = pto.vmi.ensure_mask_layout %m {test.vmi_layout_cost_conformance}
         : !pto.vmi.mask<256xb32, #pto.vmi.layout<deinterleaved = 4>>
         -> !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>>
     %p0, %p1, %p2, %p3 = "pto.vmi.unpack"(%dense)
@@ -49,7 +51,7 @@ module {
   func.func @vmi_to_vpto_mask_contiguous_to_deint4(
       %m: !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>>)
       -> (!pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32>) {
-    %deint = pto.vmi.ensure_mask_layout %m
+    %deint = pto.vmi.ensure_mask_layout %m {test.vmi_layout_cost_conformance}
         : !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>>
         -> !pto.vmi.mask<256xb32, #pto.vmi.layout<deinterleaved = 4>>
     %p0, %p1, %p2, %p3 = "pto.vmi.unpack"(%deint)
@@ -57,6 +59,31 @@ module {
         -> (!pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32>)
     return %p0, %p1, %p2, %p3
         : !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32>
+  }
+
+  func.func @vmi_to_vpto_mask_partial_contiguous_to_deint4(
+      %m: !pto.vmi.mask<256xb16, #pto.vmi.layout<contiguous>>)
+      -> (!pto.mask<b16>, !pto.mask<b16>, !pto.mask<b16>, !pto.mask<b16>) {
+    %deint = pto.vmi.ensure_mask_layout %m {test.vmi_layout_cost_conformance}
+        : !pto.vmi.mask<256xb16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.mask<256xb16, #pto.vmi.layout<deinterleaved = 4>>
+    %p0, %p1, %p2, %p3 = "pto.vmi.unpack"(%deint)
+        : (!pto.vmi.mask<256xb16, #pto.vmi.layout<deinterleaved = 4>>)
+        -> (!pto.mask<b16>, !pto.mask<b16>, !pto.mask<b16>, !pto.mask<b16>)
+    return %p0, %p1, %p2, %p3
+        : !pto.mask<b16>, !pto.mask<b16>, !pto.mask<b16>, !pto.mask<b16>
+  }
+
+  func.func @vmi_to_vpto_mask_partial_deint4_to_contiguous(
+      %m: !pto.vmi.mask<256xb16, #pto.vmi.layout<deinterleaved = 4>>)
+      -> (!pto.mask<b16>, !pto.mask<b16>) {
+    %dense = pto.vmi.ensure_mask_layout %m {test.vmi_layout_cost_conformance}
+        : !pto.vmi.mask<256xb16, #pto.vmi.layout<deinterleaved = 4>>
+        -> !pto.vmi.mask<256xb16, #pto.vmi.layout<contiguous>>
+    %p0, %p1 = "pto.vmi.unpack"(%dense)
+        : (!pto.vmi.mask<256xb16, #pto.vmi.layout<contiguous>>)
+        -> (!pto.mask<b16>, !pto.mask<b16>)
+    return %p0, %p1 : !pto.mask<b16>, !pto.mask<b16>
   }
 }
 
@@ -66,6 +93,19 @@ module {
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast
+
+// COST-DAG: vmi-layout-cost-conformance vmi_to_vpto_mask_deint2_to_contiguous pto.vmi.ensure_mask_layout relation=0 cost=1
+// COST-DAG: vmi-layout-cost-conformance vmi_to_vpto_mask_contiguous_to_deint2 pto.vmi.ensure_mask_layout relation=0 cost=1
+// COST-DAG: vmi-layout-cost-conformance vmi_to_vpto_mask_deint4_to_contiguous pto.vmi.ensure_mask_layout relation=0 cost=4
+// COST-DAG: vmi-layout-cost-conformance vmi_to_vpto_mask_contiguous_to_deint4 pto.vmi.ensure_mask_layout relation=0 cost=4
+// COST-DAG: vmi-layout-cost-conformance vmi_to_vpto_mask_partial_contiguous_to_deint4 pto.vmi.ensure_mask_layout relation=0 cost=4
+// COST-DAG: vmi-layout-cost-conformance vmi_to_vpto_mask_partial_deint4_to_contiguous pto.vmi.ensure_mask_layout relation=0 cost=3
+// COST-DAG: vmi-layout-cost-conformance-summary vmi_to_vpto_mask_deint2_to_contiguous pto.vmi.ensure_mask_layout relations=1
+// COST-DAG: vmi-layout-cost-conformance-summary vmi_to_vpto_mask_contiguous_to_deint2 pto.vmi.ensure_mask_layout relations=1
+// COST-DAG: vmi-layout-cost-conformance-summary vmi_to_vpto_mask_deint4_to_contiguous pto.vmi.ensure_mask_layout relations=1
+// COST-DAG: vmi-layout-cost-conformance-summary vmi_to_vpto_mask_contiguous_to_deint4 pto.vmi.ensure_mask_layout relations=1
+// COST-DAG: vmi-layout-cost-conformance-summary vmi_to_vpto_mask_partial_contiguous_to_deint4 pto.vmi.ensure_mask_layout relations=1
+// COST-DAG: vmi-layout-cost-conformance-summary vmi_to_vpto_mask_partial_deint4_to_contiguous pto.vmi.ensure_mask_layout relations=1
 
 // CHECK-LABEL: func.func @vmi_to_vpto_mask_contiguous_to_deint2(
 // CHECK: %[[P0:.*]], %[[P1:.*]] = pto.pdintlv_b32 %arg0, %arg1
@@ -90,6 +130,20 @@ module {
 // CHECK: %[[P0:.*]], %[[P2:.*]] = pto.pdintlv_b32 %[[A0]], %[[A1]]
 // CHECK: %[[P1:.*]], %[[P3:.*]] = pto.pdintlv_b32 %[[B0]], %[[B1]]
 // CHECK: return %[[P0]], %[[P1]], %[[P2]], %[[P3]]
+// CHECK-NOT: pto.vmi.
+// CHECK-NOT: !pto.vmi.
+// CHECK-NOT: unrealized_conversion_cast
+
+// CHECK-LABEL: func.func @vmi_to_vpto_mask_partial_contiguous_to_deint4(
+// CHECK: pto.pset_b16 "PAT_ALLF"
+// CHECK: pto.pset_b16 "PAT_ALLF"
+// CHECK-COUNT-4: pto.pdintlv_b16
+// CHECK-NOT: pto.vmi.
+// CHECK-NOT: !pto.vmi.
+// CHECK-NOT: unrealized_conversion_cast
+
+// CHECK-LABEL: func.func @vmi_to_vpto_mask_partial_deint4_to_contiguous(
+// CHECK-COUNT-3: pto.pintlv_b16
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast

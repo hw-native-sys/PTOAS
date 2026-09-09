@@ -1,0 +1,168 @@
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance | FileCheck %s --check-prefix=COST
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance -vmi-lower-unified-to-legacy -vmi-to-vpto -test-vmi-layout-lowering-conformance > /dev/null
+
+module {
+  func.func @vci_contiguous(%base: f32)
+      -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> {
+    %v = pto.vmi.vci %base {test.vmi_layout_cost_conformance}
+      : f32 -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return %v : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @vbrc_contiguous(%value: f32)
+      -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> {
+    %v = pto.vmi.vbrc %value {test.vmi_layout_cost_conformance}
+      : f32 -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return %v : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+
+
+  func.func @constant_deinterleaved2()
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> {
+    %v = "pto.vmi.constant"() {
+      value = dense<1.000000e+00> : tensor<128xf32>,
+      test.vmi_layout_cost_conformance
+    } : () -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+    return %v : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+
+  func.func @broadcast_deinterleaved2(%scalar: f32)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> {
+    %v = pto.vmi.broadcast %scalar {test.vmi_layout_cost_conformance}
+      : f32 -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+    return %v : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+
+  func.func @iota_deinterleaved2(%base: f32)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> {
+    %v = pto.vmi.iota %base {test.vmi_layout_cost_conformance}
+      : f32 -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+    return %v : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+
+  func.func @group_iota_contiguous(%base: f32)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> {
+    %v = pto.vmi.group_iota %base {group = 2 : i64,
+                                   test.vmi_layout_cost_conformance}
+      : f32 -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+    return %v : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @cmpf_contiguous(
+      %lhs: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+      %rhs: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>> {
+    %m = pto.vmi.cmpf "olt", %lhs, %rhs
+      {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+        !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+    return %m : !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @cmpi_contiguous(
+      %lhs: !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>,
+      %rhs: !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>> {
+    %m = pto.vmi.cmpi "ult", %lhs, %rhs
+      {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>,
+        !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+    return %m : !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @pset_deinterleaved2()
+      -> !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>> {
+    %m = pto.vmi.pset "PAT_ALL" {test.vmi_layout_cost_conformance}
+      : !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
+    return %m : !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+
+  func.func @select_deinterleaved2(
+      %m: !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>,
+      %a: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>,
+      %b: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> {
+    %v = pto.vmi.select %m, %a, %b {test.vmi_layout_cost_conformance}
+      : !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>,
+        !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>,
+        !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+        -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+    return %v : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+
+  func.func @mask_and_deinterleaved2(
+      %a: !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>,
+      %b: !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>)
+      -> !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>> {
+    %v = pto.vmi.mask_and %a, %b {test.vmi_layout_cost_conformance}
+      : !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>,
+        !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
+        -> !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
+    return %v : !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+  func.func @mask_logic_deinterleaved2(
+      %a: !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>,
+      %b: !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>)
+      -> !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>> {
+    %o = pto.vmi.mask_or %a, %b {test.vmi_layout_cost_conformance}
+      : !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>,
+        !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
+        -> !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
+    %x = pto.vmi.mask_xor %o, %b {test.vmi_layout_cost_conformance}
+      : !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>,
+        !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
+        -> !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
+    %n = pto.vmi.mask_not %x {test.vmi_layout_cost_conformance}
+      : !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
+        -> !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
+    return %n : !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+
+  func.func @fma_deinterleaved2(
+      %a: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>,
+      %b: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>,
+      %c: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> {
+    %v = pto.vmi.fma %a, %b, %c {test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>,
+        !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>,
+        !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+        -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+    return %v : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+
+  func.func @pge_contiguous()
+      -> !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>> {
+    %m = pto.vmi.pge "PAT_VL16" {test.vmi_layout_cost_conformance}
+      : !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+    return %m : !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @plt_contiguous(%rem: i32)
+      -> (!pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>, i32) {
+    %m, %next = pto.vmi.plt %rem {test.vmi_layout_cost_conformance}
+      : i32 -> !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>, i32
+    return %m, %next : !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>, i32
+  }
+
+}
+
+// COST: vmi-layout-cost-conformance vci_contiguous pto.vmi.vci relation=0 cost=0
+// COST: vmi-layout-cost-conformance vbrc_contiguous pto.vmi.vbrc relation=0 cost=0
+// COST: vmi-layout-cost-conformance constant_deinterleaved2 pto.vmi.constant relation=0 cost=0
+// COST: vmi-layout-cost-conformance broadcast_deinterleaved2 pto.vmi.broadcast relation=0 cost=0
+// COST: vmi-layout-cost-conformance iota_deinterleaved2 pto.vmi.iota relation=0 cost=0
+// COST: vmi-layout-cost-conformance group_iota_contiguous pto.vmi.group_iota relation=0 cost=0
+// COST: vmi-layout-cost-conformance cmpf_contiguous pto.vmi.cmpf relation=0 cost=0
+// COST: vmi-layout-cost-conformance cmpi_contiguous pto.vmi.cmpi relation=0 cost=0
+// COST: vmi-layout-cost-conformance pset_deinterleaved2 pto.vmi.pset relation=0 cost=0
+// COST: vmi-layout-cost-conformance select_deinterleaved2 pto.vmi.select relation=0 cost=0
+// COST: vmi-layout-cost-conformance mask_and_deinterleaved2 pto.vmi.mask_and relation=0 cost=0
+// COST: vmi-layout-cost-conformance mask_logic_deinterleaved2 pto.vmi.mask_or relation=0 cost=0
+// COST: vmi-layout-cost-conformance mask_logic_deinterleaved2 pto.vmi.mask_xor relation=0 cost=0
+// COST: vmi-layout-cost-conformance mask_logic_deinterleaved2 pto.vmi.mask_not relation=0 cost=0
+// COST: vmi-layout-cost-conformance fma_deinterleaved2 pto.vmi.fma relation=0 cost=0
+// COST: vmi-layout-cost-conformance pge_contiguous pto.vmi.pge relation=0 cost=0
+// COST: vmi-layout-cost-conformance plt_contiguous pto.vmi.plt relation=0 cost=0

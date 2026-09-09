@@ -1,0 +1,31 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. See LICENSE in the root
+// of the software repository.
+
+// RUN: not pto-test-opt %s -test-vmi-layout-cost-conformance 2>&1 | FileCheck %s --check-prefix=COST
+// RUN: not pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto 2>&1 | FileCheck %s --check-prefix=LOWER
+
+module {
+  func.func @vcmp_merge(
+      %a: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+      %b: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+      %seed: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.vcmp %a, %b, %seed {cmp = "lt", pmode = "merge",
+                                       test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+        !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+        !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+  }
+}
+
+// COST: error: test layout-cost conformance marker has no exposed relation
+// LOWER: VMI-RESIDUAL-OP: failed to convert all VMI ops/types to VPTO

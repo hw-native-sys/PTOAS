@@ -1,18 +1,21 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 //===- VMILayoutPropagation.cpp - VMI layout request propagation ----------===//
 //===----------------------------------------------------------------------===//
 
 #include "PTO/Transforms/VMILayoutPropagation.h"
 
-#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/VMIUtils.h"
+#include "PTO/Support/CodeConstants.h"
+#include "PTO/Transforms/VMILayoutPlanner.h"
 #include "PTO/Transforms/VMILayoutSupport.h"
 
 using namespace mlir;
@@ -38,7 +41,8 @@ static VMILayoutFact operandFact(OpOperand &operand, VMILayoutAttr layout) {
   return VMILayoutFact{/*value=*/{}, &operand, layout};
 }
 
-static VMILayoutRelation makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4> facts) {
+static VMILayoutRelation
+makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4> facts) {
   VMILayoutRelation relation;
   relation.facts = std::move(facts);
   return relation;
@@ -164,9 +168,8 @@ public:
     VMILayoutSupport supports;
     if (auto sourceVRegType = dyn_cast<VMIVRegType>(sourceAssignedType)) {
       auto resultVRegType = dyn_cast<VMIVRegType>(resultAssignedType);
-      if (!resultVRegType ||
-          failed(supports.getEnsureLayoutFact(sourceVRegType,
-                                              resultVRegType))) {
+      if (!resultVRegType || failed(supports.getEnsureLayoutFact(
+                                 sourceVRegType, resultVRegType))) {
         return failure();
       }
       return makeSingleRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
@@ -175,9 +178,8 @@ public:
 
     if (auto sourceMaskType = dyn_cast<VMIMaskType>(sourceAssignedType)) {
       auto resultMaskType = dyn_cast<VMIMaskType>(resultAssignedType);
-      if (!resultMaskType ||
-          failed(supports.getEnsureMaskLayoutFact(sourceMaskType,
-                                                  resultMaskType))) {
+      if (!resultMaskType || failed(supports.getEnsureMaskLayoutFact(
+                                 sourceMaskType, resultMaskType))) {
         return failure();
       }
       return makeSingleRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
@@ -186,23 +188,6 @@ public:
     return failure();
   }
 };
-
-static bool isSameLayoutOp(Operation *op) {
-  return isa<VMIAddFOp, VMIAddIOp, VMISubFOp, VMISubIOp, VMIMulFOp, VMIMulIOp,
-             VMIVaddcOp, VMIVaddcsOp, VMIAddSOp, VMIMulSOp, VMIMaxSOp,
-             VMIMinSOp, VMIShlSOp, VMIShrSOp, VMIVmullOp, VMIFmaOp, VMIDivFOp,
-             VMIMinFOp, VMIMinIOp, VMIMaxFOp, VMIMaxIOp, VMINegFOp, VMIAbsFOp,
-             VMIAbsIOp, VMISqrtOp, VMIExpOp, VMILnOp, VMIReluOp, VMIFPToSIOp,
-             VMISIToFPOp, VMIAndIOp, VMIOrIOp, VMIXOrIOp, VMIShLIOp, VMIShRUIOp,
-             VMIShRSIOp, VMINotOp, VMICmpFOp, VMICmpIOp, VMISelectOp,
-             VMIMaskAndOp, VMIMaskOrOp, VMIMaskXOrOp, VMIMaskNotOp,
-             VMIActivePrefixIndexOp, VMICompressOp, VMIExpandLoadOp>(op);
-}
-
-static bool isCastOp(Operation *op) {
-  return isa<VMIExtFOp, VMIExtSIOp, VMIExtUIOp, VMITruncFOp, VMITruncIOp,
-               VMIFPToSIOp, VMIFPToUIOp, VMISIToFPOp>(op);
-}
 
 class VMISameLayoutTransfer final : public VMILayoutTransfer {
 public:
@@ -231,48 +216,38 @@ public:
       return failure();
     }
 
-    auto sourceType = dyn_cast<VMIVRegType>(op->getOperand(0).getType());
-    auto resultType = dyn_cast<VMIVRegType>(op->getResult(0).getType());
-    if (!sourceType || !resultType) {
-      return failure();
-    }
-
-    VMILayoutSupport supports;
-
-    if (changedValue == op->getOperand(0)) {
-      FailureOr<SmallVector<VMICastLayoutFact, mlir::pto::kValue4>> facts =
-          supports.getCastLayoutFactsForLayout(
-              sourceType, resultType, VMICastLayoutPort::Source,
-              changedLayout);
-      if (failed(facts) || facts->empty()) {
+    VMILayoutRelationProvider provider;
+    FailureOr<SmallVector<VMILayoutOpRelation, mlir::pto::kValue4>> candidates =
+        provider.enumerateRelations(op, {changedLayout});
+    if (failed(candidates)) {
         return failure();
       }
       SmallVector<VMILayoutRelation, mlir::pto::kValue4> relations;
-      for (const VMICastLayoutFact &fact : *facts) {
-        relations.push_back(makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
-            operandFact(op->getOpOperand(0), fact.sourceLayout),
-            valueFact(op->getResult(0), fact.resultLayout)}));
-      }
-      return relations;
+    for (const VMILayoutOpRelation &candidate : *candidates) {
+      VMILayoutRelation relation;
+      bool matchesChangedPort = false;
+      for (const VMILayoutPortAssignment &port : candidate.ports) {
+        if (port.kind == VMILayoutPortKind::Operand) {
+          OpOperand &operand = op->getOpOperand(port.index);
+          relation.facts.push_back(operandFact(operand, port.layout));
+          matchesChangedPort |=
+              changedValue == operand.get() && port.layout == changedLayout;
+        } else {
+          Value result = op->getResult(port.index);
+          relation.facts.push_back(valueFact(result, port.layout));
+          matchesChangedPort |=
+              changedValue == result && port.layout == changedLayout;
     }
-
-    if (changedValue == op->getResult(0)) {
-      FailureOr<SmallVector<VMICastLayoutFact, mlir::pto::kValue4>> facts =
-          supports.getCastLayoutFactsForLayout(
-              sourceType, resultType, VMICastLayoutPort::Result,
-              changedLayout);
-      if (failed(facts) || facts->empty()) {
-        return failure();
       }
-      SmallVector<VMILayoutRelation, mlir::pto::kValue4> relations;
-      for (const VMICastLayoutFact &fact : *facts) {
-        relations.push_back(makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
-            operandFact(op->getOpOperand(0), fact.sourceLayout),
-            valueFact(op->getResult(0), fact.resultLayout)}));
+      if (matchesChangedPort) {
+        relations.push_back(std::move(relation));
       }
-      return relations;
     }
-    return failure();
+    return relations.empty()
+               ? FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>>(
+                     failure())
+               : FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>>(
+                     std::move(relations));
   }
 };
 
@@ -377,7 +352,8 @@ public:
 
     SmallVector<VMILayoutRelation, mlir::pto::kValue4> relations;
     for (const VMIBitcastLayoutFact &fact : *facts) {
-      relations.push_back(makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
+      relations.push_back(
+          makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
           operandFact(bitcast.getSourceMutable(), fact.sourceLayout),
           valueFact(bitcast.getResult(), fact.resultLayout)}));
     }
@@ -404,16 +380,17 @@ public:
 
     VMILayoutSupport supports;
     if (changedValue == ensure.getSource()) {
-      FailureOr<SmallVector<VMIMaskGranularityCastLayoutFact, mlir::pto::kValue4>> facts =
-          supports.getMaskGranularityCastLayoutFactsForLayout(
-              sourceType, resultType, VMICastLayoutPort::Source,
-              changedLayout);
+      FailureOr<
+          SmallVector<VMIMaskGranularityCastLayoutFact, mlir::pto::kValue4>>
+          facts = supports.getMaskGranularityCastLayoutFactsForLayout(
+              sourceType, resultType, VMICastLayoutPort::Source, changedLayout);
       if (failed(facts) || facts->empty()) {
         return failure();
       }
       SmallVector<VMILayoutRelation, mlir::pto::kValue4> relations;
       for (const VMIMaskGranularityCastLayoutFact &fact : *facts) {
-        relations.push_back(makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
+        relations.push_back(
+            makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
             operandFact(ensure.getSourceMutable(), fact.sourceLayout),
             valueFact(ensure.getResult(), fact.resultLayout)}));
       }
@@ -421,16 +398,17 @@ public:
     }
 
     if (changedValue == ensure.getResult()) {
-      FailureOr<SmallVector<VMIMaskGranularityCastLayoutFact, mlir::pto::kValue4>> facts =
-          supports.getMaskGranularityCastLayoutFactsForLayout(
-              sourceType, resultType, VMICastLayoutPort::Result,
-              changedLayout);
+      FailureOr<
+          SmallVector<VMIMaskGranularityCastLayoutFact, mlir::pto::kValue4>>
+          facts = supports.getMaskGranularityCastLayoutFactsForLayout(
+              sourceType, resultType, VMICastLayoutPort::Result, changedLayout);
       if (failed(facts) || facts->empty()) {
         return failure();
       }
       SmallVector<VMILayoutRelation, mlir::pto::kValue4> relations;
       for (const VMIMaskGranularityCastLayoutFact &fact : *facts) {
-        relations.push_back(makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
+        relations.push_back(
+            makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
             operandFact(ensure.getSourceMutable(), fact.sourceLayout),
             valueFact(ensure.getResult(), fact.resultLayout)}));
       }
@@ -483,8 +461,8 @@ public:
     if (!resultType) {
       return failure();
     }
-    auto assignedType = VMIVRegType::get(
-        resultType.getContext(), resultType.getElementCount(),
+    auto assignedType =
+        VMIVRegType::get(resultType.getContext(), resultType.getElementCount(),
         resultType.getElementType(), changedLayout);
     VMILayoutSupport supports;
     if (failed(supports.getLoadLayoutFact(assignedType))) {
@@ -520,8 +498,8 @@ public:
       return failure();
     }
     VMILayoutSupport supports;
-    FailureOr<SmallVector<VMIDeinterleaveLoadLayoutFact, mlir::pto::kValue4>> facts =
-        supports.getDeinterleaveLoadLayoutFactsForLayout(
+    FailureOr<SmallVector<VMIDeinterleaveLoadLayoutFact, mlir::pto::kValue4>>
+        facts = supports.getDeinterleaveLoadLayoutFactsForLayout(
             valueType, port, changedLayout);
     if (failed(facts) || facts->empty()) {
       return failure();
@@ -529,7 +507,8 @@ public:
 
     SmallVector<VMILayoutRelation, mlir::pto::kValue4> relations;
     for (const VMIDeinterleaveLoadLayoutFact &fact : *facts) {
-      relations.push_back(makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
+      relations.push_back(
+          makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
           valueFact(load.getLow(), fact.lowLayout),
           valueFact(load.getHigh(), fact.highLayout)}));
     }
@@ -551,8 +530,8 @@ public:
     if (!resultType) {
       return failure();
     }
-    auto assignedType = VMIVRegType::get(
-        resultType.getContext(), resultType.getElementCount(),
+    auto assignedType =
+        VMIVRegType::get(resultType.getContext(), resultType.getElementCount(),
         resultType.getElementType(), changedLayout);
     VMILayoutSupport supports;
     if (failed(supports.getGroupLoadLayoutFact(
@@ -624,7 +603,8 @@ private:
     }
     SmallVector<VMILayoutRelation, mlir::pto::kValue4> relations;
     for (const VMIGroupReduceLayoutFact &fact : *facts) {
-      relations.push_back(makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
+      relations.push_back(
+          makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
           operandFact(reduce.getSourceMutable(), fact.sourceLayout),
           operandFact(reduce.getMaskMutable(), fact.maskLayout),
           valueFact(reduce.getResult(), fact.resultLayout)}));
@@ -647,12 +627,13 @@ public:
     if (!resultType) {
       return failure();
     }
-    auto assignedType = VMIVRegType::get(
-        resultType.getContext(), resultType.getElementCount(),
+    auto assignedType =
+        VMIVRegType::get(resultType.getContext(), resultType.getElementCount(),
         resultType.getElementType(), changedLayout);
     VMILayoutSupport supports;
     if (failed(supports.getGroupSlotLoadLayoutFact(
-            assignedType, load.getNumGroupsAttr().getInt()))) {
+            assignedType, load.getSourceGroupStride(),
+            load.getNumGroupsAttr().getInt()))) {
       return failure();
     }
     return makeSingleRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
@@ -674,13 +655,13 @@ public:
     if (!resultType) {
       return failure();
     }
-    auto assignedType = VMIVRegType::get(
-        resultType.getContext(), resultType.getElementCount(),
-        resultType.getElementType(), changedLayout);
     VMILayoutSupport supports;
-    if (failed(supports.getGroupBroadcastLoadLayoutFact(
-            assignedType, load.getSourceGroupStride(),
-            load.getNumGroupsAttr().getInt()))) {
+    FailureOr<SmallVector<VMIGroupBroadcastLoadLayoutFact, mlir::pto::kValue4>>
+        facts = supports.getGroupBroadcastLoadLayoutFacts(load);
+    if (failed(facts) ||
+        llvm::none_of(*facts, [&](const VMIGroupBroadcastLoadLayoutFact &fact) {
+          return fact.resultLayout == changedLayout;
+        })) {
       return failure();
     }
     return makeSingleRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
@@ -715,15 +696,16 @@ public:
     }
 
     VMILayoutSupport supports;
-    FailureOr<SmallVector<VMIGroupBroadcastLayoutFact, mlir::pto::kValue4>> facts =
-        supports.getGroupBroadcastLayoutFactsForLayout(
+    FailureOr<SmallVector<VMIGroupBroadcastLayoutFact, mlir::pto::kValue4>>
+        facts = supports.getGroupBroadcastLayoutFactsForLayout(
             sourceType, resultType, numGroups, port, changedLayout);
     if (failed(facts) || facts->empty()) {
       return failure();
     }
     SmallVector<VMILayoutRelation, mlir::pto::kValue4> relations;
     for (const VMIGroupBroadcastLayoutFact &fact : *facts) {
-      relations.push_back(makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
+      relations.push_back(
+          makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
           operandFact(broadcast.getSourceMutable(), fact.sourceLayout),
           valueFact(broadcast.getResult(), fact.resultLayout)}));
     }
@@ -788,7 +770,8 @@ private:
 
     SmallVector<VMILayoutRelation, mlir::pto::kValue4> relations;
     for (const VMIInterleaveLayoutFact &fact : *facts) {
-      relations.push_back(makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
+      relations.push_back(
+          makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
           operandFact(op.getLhsMutable(), fact.lhsLayout),
           operandFact(op.getRhsMutable(), fact.rhsLayout),
           operandFact(op.getMaskMutable(), fact.maskLayout),
@@ -809,8 +792,10 @@ public:
     if (!gather) {
       return failure();
     }
-    if (changedValue != gather.getIndices() && changedValue != gather.getMask() &&
-        changedValue != gather.getPassthru() && changedValue != gather.getResult()) {
+    if (changedValue != gather.getIndices() &&
+        changedValue != gather.getMask() &&
+        changedValue != gather.getPassthru() &&
+        changedValue != gather.getResult()) {
       return failure();
     }
     if (!changedLayout.isContiguous() || changedLayout.getLaneStride() != 1) {
@@ -879,7 +864,8 @@ public:
     }
     SmallVector<VMILayoutRelation, mlir::pto::kValue4> relations;
     for (const VMIGroupStoreLayoutFact &fact : *facts) {
-      relations.push_back(makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
+      relations.push_back(
+          makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
           operandFact(store.getValueMutable(), fact.valueLayout)}));
     }
     return relations;
@@ -1007,9 +993,9 @@ const VMILayoutTransfer *getTransfer(Operation *op) {
   if (isa<VMIGroupLoadOp>(op)) {
     return &groupLoadTransfer;
   }
-  if (isa<VMIGroupReduceAddFOp, VMIGroupReduceMaxFOp,
-          VMIGroupReduceMinFOp, VMIGroupReduceAddIOp,
-          VMIGroupReduceMaxIOp, VMIGroupReduceMinIOp>(op)) {
+  if (isa<VMIGroupReduceAddFOp, VMIGroupReduceMaxFOp, VMIGroupReduceMinFOp,
+          VMIGroupReduceAddIOp, VMIGroupReduceMaxIOp, VMIGroupReduceMinIOp>(
+          op)) {
     return &groupReduceTransfer;
   }
   if (isa<VMIGroupSlotLoadOp>(op)) {
@@ -1058,13 +1044,13 @@ const VMILayoutTransfer *getTransfer(Operation *op) {
     }
     return &castTransfer;
   }
-  if (isSameLayoutOp(op)) {
+  if (isVMISameLayoutOp(op)) {
     return &sameLayoutTransfer;
   }
   if (isa<VMIEnsureMaskGranularityOp>(op)) {
     return &maskGranularityCastTransfer;
   }
-  if (isCastOp(op)) {
+  if (isVMILayoutCastOp(op)) {
     return &castTransfer;
   }
   if (isa<VMIStoreOp>(op)) {
@@ -1104,8 +1090,8 @@ VMILayoutAttr VMILayoutPropagator::getCurrentLayout(Value value) const {
 Type VMILayoutPropagator::getTypeWithLayout(Value value,
                                             VMILayoutAttr layout) const {
   if (auto type = dyn_cast<VMIVRegType>(value.getType())) {
-    return VMIVRegType::get(ctx, type.getElementCount(),
-                            type.getElementType(), layout);
+    return VMIVRegType::get(ctx, type.getElementCount(), type.getElementType(),
+                            layout);
   }
   if (auto type = dyn_cast<VMIMaskType>(value.getType())) {
     return VMIMaskType::get(ctx, type.getElementCount(), type.getGranularity(),
@@ -1126,8 +1112,9 @@ bool VMILayoutPropagator::canUseOperandLayout(OpOperand &operand,
   if (!transfer) {
     return false;
   }
-  FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>> relations = transfer->query(
-      operand.getOwner(), operand.get(), layout, *this, &operand);
+  FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>> relations =
+      transfer->query(operand.getOwner(), operand.get(), layout, *this,
+                      &operand);
   if (failed(relations)) {
     return false;
   }
@@ -1145,6 +1132,20 @@ VMILayoutAttr VMILayoutPropagator::getRequestedLayout(Value value) const {
     return {};
   }
   return it->second.layout;
+}
+
+VMILayoutAttr
+VMILayoutPropagator::getRequestedLayout(OpOperand &operand) const {
+  const VMIValueLayoutAssignment *assignment = lookup(operand.get());
+  if (!assignment) {
+    return {};
+  }
+  for (const VMILayoutConflict &conflict : assignment->conflicts) {
+    if (conflict.operand == &operand) {
+      return conflict.layout;
+    }
+  }
+  return assignment->layout;
 }
 
 VMILayoutAttr
@@ -1169,8 +1170,7 @@ VMILayoutAttr VMILayoutPropagator::getOperandLayout(OpOperand &operand) const {
   return assignment->layout;
 }
 
-const VMIValueLayoutAssignment *
-VMILayoutPropagator::lookup(Value value) const {
+const VMIValueLayoutAssignment *VMILayoutPropagator::lookup(Value value) const {
   auto it = assignments.find(value);
   if (it == assignments.end()) {
     return nullptr;
@@ -1219,7 +1219,7 @@ VMILayoutPropagator::addUseConflict(OpOperand &operand,
     if (conflict.layout == layout) {
       return success();
     }
-    return success();
+    return exactMode ? failure() : success();
   }
   assignment.conflicts.push_back(VMILayoutConflict{&operand, layout});
   return success();
@@ -1280,7 +1280,7 @@ LogicalResult VMILayoutPropagator::request(Value value, VMILayoutAttr layout) {
   VMIValueLayoutAssignment &assignment = it->second;
   if (!assignment.layout) {
     if (!canProduceValueLayout(value, layout)) {
-      return success();
+      return exactMode ? failure() : success();
     }
     assignment.layout = layout;
     enqueue(value, layout);
@@ -1289,7 +1289,54 @@ LogicalResult VMILayoutPropagator::request(Value value, VMILayoutAttr layout) {
   if (assignment.layout == layout) {
     return success();
   }
+  return exactMode ? failure() : success();
+}
+
+LogicalResult VMILayoutPropagator::installPlanned(Value value,
+                                                  VMILayoutAttr layout) {
+  if (!layout || !isLayoutValue(value)) {
+    return failure();
+  }
+  auto [it, inserted] = assignments.try_emplace(value);
+  if (inserted) {
+    orderedValues.push_back(value);
+  }
+  VMIValueLayoutAssignment &assignment = it->second;
+  if (assignment.layout && assignment.layout != layout) {
+    return failure();
+  }
+  assignment.layout = layout;
   return success();
+}
+
+LogicalResult VMILayoutPropagator::installPlanned(OpOperand &operand,
+                                                  VMILayoutAttr layout) {
+  if (!layout || !isLayoutValue(operand.get())) {
+    return failure();
+  }
+  auto [it, inserted] = assignments.try_emplace(operand.get());
+  if (inserted) {
+    orderedValues.push_back(operand.get());
+  }
+  VMIValueLayoutAssignment &assignment = it->second;
+  if (!assignment.layout) {
+    VMILayoutAttr current = getCurrentLayout(operand.get());
+    // Structural transport values (for example SCF region results) may be
+    // intentionally untyped before the solver commits its canonical layout.
+    // The validated use relation is the only available primary seed in that
+    // case; ordinary producer values still retain their explicit type layout.
+    assignment.layout = current ? current : layout;
+  }
+  if (assignment.layout == layout) {
+    return success();
+  }
+  return addUseConflict(operand, assignment, layout);
+}
+
+LogicalResult VMILayoutPropagator::requestExact(Value value,
+                                                VMILayoutAttr layout) {
+  exactMode = true;
+  return request(value, layout);
 }
 
 LogicalResult VMILayoutPropagator::request(OpOperand &operand,
@@ -1329,6 +1376,14 @@ LogicalResult VMILayoutPropagator::request(OpOperand &operand,
   }
   return propagateOperandFact(operand, layout);
 }
+
+LogicalResult VMILayoutPropagator::requestExact(OpOperand &operand,
+                                                VMILayoutAttr layout) {
+  exactMode = true;
+  return request(operand, layout);
+}
+
+void VMILayoutPropagator::endExactRequests() { exactMode = false; }
 
 LogicalResult VMILayoutPropagator::propagateFact(Value value,
                                                  VMILayoutAttr layout) {
@@ -1376,8 +1431,9 @@ LogicalResult VMILayoutPropagator::propagateOperandFact(OpOperand &operand,
   return propagateThrough(operand.getOwner(), operand.get(), layout, &operand);
 }
 
-LogicalResult VMILayoutPropagator::propagateThrough(
-    Operation *op, Value changedValue, VMILayoutAttr changedLayout,
+LogicalResult VMILayoutPropagator::propagateThrough(Operation *op,
+                                                    Value changedValue,
+                                                    VMILayoutAttr changedLayout,
     OpOperand *changedOperand) {
   const VMILayoutTransfer *transfer = op ? getTransfer(op) : nullptr;
   if (!transfer) {
@@ -1422,19 +1478,19 @@ LogicalResult VMILayoutPropagator::verifyMaterializationPlan() const {
       if (!canMaterializeLayout(value, currentLayout, assignment.layout)) {
         return emitError(value.getLoc())
                << kVMIDiagLayoutContractPrefix
-               << "cannot materialize primary VMI layout "
-               << assignment.layout << " from " << currentLayout;
+               << "cannot materialize primary VMI layout " << assignment.layout
+               << " from " << currentLayout;
       }
     }
 
     for (const VMILayoutConflict &conflict : assignment.conflicts) {
       if (!canMaterializeLayout(value, assignment.layout, conflict.layout)) {
-        return emitError(conflict.operand ? conflict.operand->getOwner()->getLoc()
+        return emitError(conflict.operand
+                             ? conflict.operand->getOwner()->getLoc()
                                           : value.getLoc())
                << kVMIDiagLayoutContractPrefix
-               << "cannot materialize requested VMI layout "
-               << conflict.layout << " from assigned layout "
-               << assignment.layout;
+               << "cannot materialize requested VMI layout " << conflict.layout
+               << " from assigned layout " << assignment.layout;
       }
     }
   }
@@ -1542,8 +1598,7 @@ LogicalResult VMILayoutPropagator::materializePrimary(
   }
 
   if (*materialized != value) {
-    value.replaceAllUsesExcept(*materialized,
-                               (*materialized).getDefiningOp());
+    value.replaceAllUsesExcept(*materialized, (*materialized).getDefiningOp());
   }
   assignedValues[value] = *materialized;
   return success();
@@ -1568,21 +1623,55 @@ LogicalResult VMILayoutPropagator::materializeUseConflict(
     return owner->emitError()
            << kVMIDiagLayoutContractPrefix
            << "cannot materialize requested VMI operand layout "
-           << conflict.layout;
+           << conflict.layout << " from assigned layout "
+           << getCurrentLayout(assignedValue);
   }
   conflict.operand->set(*materialized);
   return success();
 }
 
+FailureOr<Value> VMILayoutPropagator::materializeSharedUseConflict(
+    Value assignedValue, VMILayoutAttr layout, Block *block,
+    RewriterBase &rewriter) {
+  if (!assignedValue || !layout || !block ||
+      getCurrentLayout(assignedValue) == layout) {
+    return failure();
+  }
+
+  OpBuilder::InsertionGuard guard(rewriter);
+  if (auto result = dyn_cast<OpResult>(assignedValue)) {
+    if (result.getDefiningOp()->getBlock() != block) {
+      return failure();
+    }
+    rewriter.setInsertionPointAfter(result.getDefiningOp());
+  } else if (auto argument = dyn_cast<BlockArgument>(assignedValue)) {
+    if (argument.getOwner() != block) {
+      return failure();
+    }
+    rewriter.setInsertionPointToStart(block);
+  } else {
+    return failure();
+  }
+  return materializeAt(assignedValue, layout, rewriter, assignedValue.getLoc());
+}
+
 LogicalResult VMILayoutPropagator::apply(RewriterBase &rewriter) {
   DenseMap<Value, Value> assignedValues;
+  struct SharedUseMaterialization {
+    Value source;
+    VMILayoutAttr layout;
+    Block *block = nullptr;
+    Value result;
+  };
+  SmallVector<SharedUseMaterialization, mlir::pto::kValue4>
+      sharedMaterializations;
   for (Value value : orderedValues) {
     auto it = assignments.find(value);
     if (it == assignments.end()) {
       continue;
     }
-    if (failed(materializePrimary(value, it->second, rewriter,
-                                  assignedValues))) {
+    if (failed(
+            materializePrimary(value, it->second, rewriter, assignedValues))) {
       return failure();
     }
   }
@@ -1597,6 +1686,29 @@ LogicalResult VMILayoutPropagator::apply(RewriterBase &rewriter) {
       assignedValue = value;
     }
     for (VMILayoutConflict conflict : it->second.conflicts) {
+      if (conflict.operand &&
+          getCurrentLayout(assignedValue) != conflict.layout) {
+        Block *block = conflict.operand->getOwner()->getBlock();
+        auto shared = llvm::find_if(
+            sharedMaterializations,
+            [&](const SharedUseMaterialization &materialization) {
+              return materialization.source == assignedValue &&
+                     materialization.layout == conflict.layout &&
+                     materialization.block == block;
+            });
+        if (shared != sharedMaterializations.end()) {
+          conflict.operand->set(shared->result);
+          continue;
+        }
+        FailureOr<Value> materialized = materializeSharedUseConflict(
+            assignedValue, conflict.layout, block, rewriter);
+        if (succeeded(materialized)) {
+          sharedMaterializations.push_back(
+              {assignedValue, conflict.layout, block, *materialized});
+          conflict.operand->set(*materialized);
+          continue;
+        }
+      }
       if (failed(materializeUseConflict(assignedValue, conflict, rewriter))) {
         return failure();
       }

@@ -31,10 +31,10 @@ module {
 // ASSIGN-LABEL: func.func @vmi_layout_assignment_group_reduce_s16_truncf_broadcast_store(
 // ASSIGN-SAME: %arg0: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
 // ASSIGN-SAME: %arg1: !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
-// ASSIGN: %[[SOURCE:.*]] = pto.vmi.ensure_layout %arg0
-// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 // ASSIGN: %[[MASK:.*]] = pto.vmi.ensure_mask_layout %arg1
 // ASSIGN-SAME: -> !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: %[[SOURCE:.*]] = pto.vmi.ensure_layout %arg0
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 // ASSIGN: %[[SUM32:.*]] = pto.vmi.group_reduce_addf %[[SOURCE]], %[[MASK]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
 // ASSIGN: %[[B32:.*]] = pto.vmi.group_broadcast %[[SUM32]]

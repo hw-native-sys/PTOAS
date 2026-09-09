@@ -26,11 +26,8 @@ module {
 // CHECK-SAME: %[[SRC:.*]]: !pto.vmi.vreg<300xui8, #pto.vmi.layout<contiguous>>
 // CHECK-SAME: %[[MASK:.*]]: !pto.vmi.mask<300xb32, #pto.vmi.layout<contiguous>>
 // CHECK-SAME: -> !pto.vmi.vreg<128xui16, #pto.vmi.layout<contiguous>>
-// CHECK: %[[MASK_D4:.*]] = pto.vmi.ensure_mask_layout %[[MASK]]
+// CHECK: %[[MASK_B8:.*]] = pto.vmi.ensure_mask_granularity %[[MASK]]
 // CHECK-SAME: !pto.vmi.mask<300xb32, #pto.vmi.layout<contiguous>>
-// CHECK-SAME: !pto.vmi.mask<300xb32, #pto.vmi.layout<deinterleaved = 4>>
-// CHECK: %[[MASK_B8:.*]] = pto.vmi.ensure_mask_granularity %[[MASK_D4]]
-// CHECK-SAME: !pto.vmi.mask<300xb32, #pto.vmi.layout<deinterleaved = 4>>
 // CHECK-SAME: !pto.vmi.mask<300xb8, #pto.vmi.layout<contiguous>>
 // CHECK: %[[HIST:.*]] = pto.vmi.vchist %[[ACC]], %[[SRC]], %[[MASK_B8]]
 // CHECK-SAME: !pto.vmi.vreg<128xui16, #pto.vmi.layout<contiguous>>

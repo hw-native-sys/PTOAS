@@ -1,0 +1,27 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: not pto-test-opt %s -test-vmi-layout-cost-conformance 2>&1 | FileCheck %s
+
+// Unified vcvt is intentionally outside the relation-provider phase.  The
+// unified-to-legacy pass must canonicalize it before relation conformance.
+module {
+  func.func @vcvt_requires_canonicalization(
+      %source: !pto.vmi.vreg<128xf16>)
+      -> !pto.vmi.vreg<128xf32> {
+    %result = pto.vmi.vcvt %source
+        {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xf32>
+    return %result : !pto.vmi.vreg<128xf32>
+  }
+}
+
+// CHECK: test layout-cost conformance marker has no exposed relation
+// CHECK-SAME: run the unified-to-legacy canonicalization first

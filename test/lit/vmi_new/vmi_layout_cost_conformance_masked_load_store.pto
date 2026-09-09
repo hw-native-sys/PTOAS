@@ -1,0 +1,120 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR
+// FITNESS FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software
+// repository for the full text of the License.
+
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance | FileCheck %s --check-prefix=COST
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance -vmi-to-vpto -test-vmi-layout-lowering-conformance > /dev/null
+
+module {
+  func.func @masked_load_contiguous(
+      %src: !pto.ptr<f32, ub>, %off: index,
+      %mask: !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>,
+      %passthru: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> {
+    %value = pto.vmi.masked_load %src[%off], %mask, %passthru
+        {test.vmi_layout_cost_conformance}
+        : !pto.ptr<f32, ub>,
+          !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+          -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+    return %value : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @masked_store_contiguous(
+      %value: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>,
+      %dst: !pto.ptr<f32, ub>, %off: index,
+      %mask: !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>) {
+    pto.vmi.masked_store %value, %dst[%off], %mask
+        {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>,
+          !pto.ptr<f32, ub>,
+          !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
+    return
+  }
+
+  func.func @masked_store_deinterleaved2(
+      %value: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>,
+      %dst: !pto.ptr<f32, ub>, %off: index,
+      %mask: !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>) {
+    pto.vmi.masked_store %value, %dst[%off], %mask
+        {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>,
+          !pto.ptr<f32, ub>,
+          !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
+    return
+  }
+
+  func.func @masked_store_deinterleaved4(
+      %value: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>,
+      %dst: !pto.ptr<f32, ub>, %off: index,
+      %mask: !pto.vmi.mask<256xb32, #pto.vmi.layout<deinterleaved = 4>>) {
+    pto.vmi.masked_store %value, %dst[%off], %mask
+        {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>,
+          !pto.ptr<f32, ub>,
+          !pto.vmi.mask<256xb32, #pto.vmi.layout<deinterleaved = 4>>
+    return
+  }
+
+  func.func @masked_store_lane_stride2(
+      %value: !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>,
+      %dst: !pto.ptr<f16, ub>, %off: index,
+      %mask: !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous, lane_stride = 2>>) {
+    pto.vmi.masked_store %value, %dst[%off], %mask
+        {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>,
+          !pto.ptr<f16, ub>,
+          !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+    return
+  }
+
+  func.func @masked_store_lane_stride2_ui8_preferred(
+      %value: !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous, lane_stride = 2>>,
+      %dst: !pto.ptr<ui8, ub>, %off: index,
+      %mask: !pto.vmi.mask<128xb8, #pto.vmi.layout<contiguous, lane_stride = 2>>) {
+    pto.vmi.masked_store %value, %dst[%off], %mask
+        {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous, lane_stride = 2>>,
+          !pto.ptr<ui8, ub>,
+          !pto.vmi.mask<128xb8, #pto.vmi.layout<contiguous, lane_stride = 2>>
+    return
+  }
+
+  func.func @masked_store_lane_stride4(
+      %value: !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>,
+      %dst: !pto.ptr<ui8, ub>, %off: index,
+      %mask: !pto.vmi.mask<64xb8, #pto.vmi.layout<contiguous, lane_stride = 4>>) {
+    pto.vmi.masked_store %value, %dst[%off], %mask
+        {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>,
+          !pto.ptr<ui8, ub>,
+          !pto.vmi.mask<64xb8, #pto.vmi.layout<contiguous, lane_stride = 4>>
+    return
+  }
+}
+
+// COST: vmi-layout-cost-conformance masked_load_contiguous pto.vmi.masked_load relation=0 cost=0
+// COST: vmi-layout-cost-conformance masked_store_contiguous pto.vmi.masked_store relation=0 cost=0
+// COST: vmi-layout-cost-conformance masked_store_contiguous pto.vmi.masked_store relation=1 cost=4
+// COST: vmi-layout-cost-conformance-summary masked_store_contiguous pto.vmi.masked_store relations=2
+// COST: vmi-layout-cost-conformance masked_store_deinterleaved2 pto.vmi.masked_store relation=0 cost=2
+// COST: vmi-layout-cost-conformance masked_store_deinterleaved2 pto.vmi.masked_store relation=1 cost=2
+// COST: vmi-layout-cost-conformance-summary masked_store_deinterleaved2 pto.vmi.masked_store relations=2
+// COST: vmi-layout-cost-conformance masked_store_deinterleaved4 pto.vmi.masked_store relation=0 cost=8
+// COST: vmi-layout-cost-conformance masked_store_deinterleaved4 pto.vmi.masked_store relation=1 cost=8
+// COST: vmi-layout-cost-conformance-summary masked_store_deinterleaved4 pto.vmi.masked_store relations=2
+// COST: vmi-layout-cost-conformance masked_store_lane_stride2 pto.vmi.masked_store relation=0 cost=0
+// COST: vmi-layout-cost-conformance masked_store_lane_stride2 pto.vmi.masked_store relation=1 cost=2
+// COST: vmi-layout-cost-conformance-summary masked_store_lane_stride2 pto.vmi.masked_store relations=2
+// COST: vmi-layout-cost-conformance masked_store_lane_stride2_ui8_preferred pto.vmi.masked_store relation=0 cost=0
+// COST: vmi-layout-cost-conformance masked_store_lane_stride2_ui8_preferred pto.vmi.masked_store relation=1 cost=2
+// COST: vmi-layout-cost-conformance-summary masked_store_lane_stride2_ui8_preferred pto.vmi.masked_store relations=2
+// COST: vmi-layout-cost-conformance masked_store_lane_stride4 pto.vmi.masked_store relation=0 cost=0
+// COST: vmi-layout-cost-conformance masked_store_lane_stride4 pto.vmi.masked_store relation=1 cost=4
+// COST: vmi-layout-cost-conformance-summary masked_store_lane_stride4 pto.vmi.masked_store relations=2

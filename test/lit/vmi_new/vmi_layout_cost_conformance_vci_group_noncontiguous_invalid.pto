@@ -1,0 +1,22 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
+// or implied. See LICENSE in the root of the software repository for the full
+// text of the License.
+
+// RUN: not pto-test-opt %s -test-vmi-layout-cost-conformance 2>&1 | FileCheck %s
+
+module {
+  func.func @vci_group_noncontiguous(%base: f32)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> {
+    %v = pto.vmi.vci %base {group = 2 : i64,
+                            test.vmi_layout_cost_conformance}
+      : f32 -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+    return %v : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+}
+
+// CHECK: test layout-cost conformance marker has no exposed relation

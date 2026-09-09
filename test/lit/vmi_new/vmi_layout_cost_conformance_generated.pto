@@ -1,0 +1,89 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance | FileCheck %s --check-prefix=COST
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance -vmi-to-vpto -test-vmi-layout-lowering-conformance > /dev/null
+
+module {
+  func.func @create_mask_contiguous() ->
+      !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>> {
+    %active = arith.constant 96 : index
+    %mask = pto.vmi.create_mask %active {test.vmi_layout_cost_conformance}
+        : index -> !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
+    return %mask : !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @constant_mask_nonprefix() ->
+      !pto.vmi.mask<4xb32, #pto.vmi.layout<contiguous>> {
+    %mask = "pto.vmi.constant_mask"() {
+      value = dense<[true, false, true, false]> : tensor<4xi1>,
+      test.vmi_layout_cost_conformance
+    } : () ->
+        !pto.vmi.mask<4xb32, #pto.vmi.layout<contiguous>>
+    return %mask : !pto.vmi.mask<4xb32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @create_group_mask_dynamic_block_deinterleaved4(%active: index)
+      -> !pto.vmi.mask<256xb32,
+                       #pto.vmi.layout<block_deinterleaved = 4>> {
+    %mask = pto.vmi.create_group_mask %active
+        {num_groups = 8, group_size = 32,
+         test.vmi_layout_cost_conformance}
+        : index -> !pto.vmi.mask<256xb32,
+                                 #pto.vmi.layout<block_deinterleaved = 4>>
+    return %mask
+        : !pto.vmi.mask<256xb32,
+                        #pto.vmi.layout<block_deinterleaved = 4>>
+  }
+
+  func.func @create_group_mask_dynamic_deinterleaved2(%active: index)
+      -> !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>> {
+    %mask = pto.vmi.create_group_mask %active
+        {num_groups = 8, group_size = 16,
+         test.vmi_layout_cost_conformance}
+        : index -> !pto.vmi.mask<128xb32,
+                                 #pto.vmi.layout<deinterleaved = 2>>
+    return %mask
+        : !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+
+  func.func @create_group_mask_dynamic_deinterleaved4(%active: index)
+      -> !pto.vmi.mask<256xb32, #pto.vmi.layout<deinterleaved = 4>> {
+    %mask = pto.vmi.create_group_mask %active
+        {num_groups = 8, group_size = 32,
+         test.vmi_layout_cost_conformance}
+        : index -> !pto.vmi.mask<256xb32,
+                                 #pto.vmi.layout<deinterleaved = 4>>
+    return %mask
+        : !pto.vmi.mask<256xb32, #pto.vmi.layout<deinterleaved = 4>>
+  }
+
+  func.func @create_group_mask_constant_block_deinterleaved4()
+      -> !pto.vmi.mask<128xb32,
+                       #pto.vmi.layout<block_deinterleaved = 4>> {
+    %active = arith.constant 8 : index
+    %mask = pto.vmi.create_group_mask %active
+        {num_groups = 8, group_size = 16,
+         test.vmi_layout_cost_conformance}
+        : index -> !pto.vmi.mask<128xb32,
+                                 #pto.vmi.layout<block_deinterleaved = 4>>
+    return %mask
+        : !pto.vmi.mask<128xb32,
+                        #pto.vmi.layout<block_deinterleaved = 4>>
+  }
+}
+
+// COST: vmi-layout-cost-conformance create_mask_contiguous pto.vmi.create_mask relation=0 cost=0
+// COST: vmi-layout-cost-conformance-summary create_mask_contiguous pto.vmi.create_mask relations=1
+// COST: vmi-layout-cost-conformance constant_mask_nonprefix pto.vmi.constant_mask relation=0 cost=0
+// COST: vmi-layout-cost-conformance-summary constant_mask_nonprefix pto.vmi.constant_mask relations=1
+// COST: vmi-layout-cost-conformance create_group_mask_dynamic_block_deinterleaved4 pto.vmi.create_group_mask relation=0 cost=0
+// COST: vmi-layout-cost-conformance-summary create_group_mask_dynamic_block_deinterleaved4 pto.vmi.create_group_mask relations=1
+// COST: vmi-layout-cost-conformance create_group_mask_dynamic_deinterleaved2 pto.vmi.create_group_mask relation=0 cost=1
+// COST: vmi-layout-cost-conformance create_group_mask_dynamic_deinterleaved4 pto.vmi.create_group_mask relation=0 cost=4
+// COST: vmi-layout-cost-conformance create_group_mask_constant_block_deinterleaved4 pto.vmi.create_group_mask relation=0 cost=0

@@ -1,0 +1,104 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR
+// FITNESS FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software
+// repository for the full text of the License.
+
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance | FileCheck %s --check-prefix=COST
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance -vmi-to-vpto -test-vmi-layout-lowering-conformance > /dev/null
+
+module {
+  func.func @load_contiguous(%src: !pto.ptr<f32, ub>, %off: index)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> {
+    %value = pto.vmi.load %src[%off] {test.vmi_layout_cost_conformance}
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+    return %value : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @load_deinterleaved(%src: !pto.ptr<f32, ub>, %off: index)
+      -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>> {
+    %value = pto.vmi.load %src[%off] {test.vmi_layout_cost_conformance}
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+    return %value : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+  }
+
+  func.func @load_lane_stride2(%src: !pto.ptr<f16, ub>, %off: index)
+      -> !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous, lane_stride = 2>> {
+    %value = pto.vmi.load %src[%off] {test.vmi_layout_cost_conformance}
+        : !pto.ptr<f16, ub> -> !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+    return %value : !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  }
+
+  func.func @load_lane_stride4(%src: !pto.ptr<ui8, ub>, %off: index)
+      -> !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous, lane_stride = 4>> {
+    %value = pto.vmi.load %src[%off] {test.vmi_layout_cost_conformance}
+        : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>
+    return %value : !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>
+  }
+
+  func.func @load_deinterleaved2(%src: !pto.ptr<f32, ub>, %off: index)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> {
+    %value = pto.vmi.load %src[%off] {test.vmi_layout_cost_conformance}
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+    return %value : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+
+  func.func @store_contiguous(%value: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>,
+                              %dst: !pto.ptr<f32, ub>, %off: index) {
+    pto.vmi.store %value, %dst[%off] {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>, !pto.ptr<f32, ub>
+    return
+  }
+
+  func.func @store_deinterleaved(%value: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>,
+                                 %dst: !pto.ptr<f32, ub>, %off: index) {
+    pto.vmi.store %value, %dst[%off] {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>, !pto.ptr<f32, ub>
+    return
+  }
+
+  func.func @store_lane_stride2(%value: !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>,
+                                %dst: !pto.ptr<f16, ub>, %off: index) {
+    pto.vmi.store %value, %dst[%off] {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>, !pto.ptr<f16, ub>
+    return
+  }
+
+  func.func @store_lane_stride2_ui8_preferred(
+      %value: !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous, lane_stride = 2>>,
+      %dst: !pto.ptr<ui8, ub>, %off: index) {
+    pto.vmi.store %value, %dst[%off] {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous, lane_stride = 2>>, !pto.ptr<ui8, ub>
+    return
+  }
+
+  func.func @store_lane_stride4(%value: !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>,
+                                %dst: !pto.ptr<ui8, ub>, %off: index) {
+    pto.vmi.store %value, %dst[%off] {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>, !pto.ptr<ui8, ub>
+    return
+  }
+
+  func.func @store_deinterleaved2(%value: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>,
+                                  %dst: !pto.ptr<f32, ub>, %off: index) {
+    pto.vmi.store %value, %dst[%off] {test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>, !pto.ptr<f32, ub>
+    return
+  }
+}
+
+// COST: vmi-layout-cost-conformance load_contiguous pto.vmi.load relation=0 cost=0
+// COST: vmi-layout-cost-conformance load_deinterleaved pto.vmi.load relation=0 cost=2
+// COST: vmi-layout-cost-conformance load_lane_stride2 pto.vmi.load relation=0 cost=0
+// COST: vmi-layout-cost-conformance load_lane_stride4 pto.vmi.load relation=0 cost=0
+// COST: vmi-layout-cost-conformance load_deinterleaved2 pto.vmi.load relation=0 cost=0
+// COST: vmi-layout-cost-conformance store_contiguous pto.vmi.store {{relation=[0-9]+}} cost=0 operand0=#pto.vmi.layout<contiguous>
+// COST: vmi-layout-cost-conformance store_deinterleaved pto.vmi.store {{relation=[0-9]+}} cost=4 operand0=#pto.vmi.layout<deinterleaved = 4>
+// COST: vmi-layout-cost-conformance store_lane_stride2 pto.vmi.store {{relation=[0-9]+}} cost=0 operand0=#pto.vmi.layout<contiguous, lane_stride = 2>
+// COST: vmi-layout-cost-conformance store_lane_stride2_ui8_preferred pto.vmi.store {{relation=[0-9]+}} cost=0 operand0=#pto.vmi.layout<contiguous, lane_stride = 2>
+// COST: vmi-layout-cost-conformance store_lane_stride4 pto.vmi.store {{relation=[0-9]+}} cost=0 operand0=#pto.vmi.layout<contiguous, lane_stride = 4>
+// COST: vmi-layout-cost-conformance store_deinterleaved2 pto.vmi.store {{relation=[0-9]+}} cost=0 operand0=#pto.vmi.layout<deinterleaved = 2>

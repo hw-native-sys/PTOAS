@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+// express or implied. See LICENSE in the root of the software repository.
+
+// RUN: pto-test-opt %s -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s
+
+module {
+  func.func @ensure_mask_layout(
+      %x: !pto.vmi.mask<256xb16, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.mask<256xb16, #pto.vmi.layout<deinterleaved = 2>> {
+    %r = pto.vmi.ensure_mask_layout %x
+        : !pto.vmi.mask<256xb16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.mask<256xb16, #pto.vmi.layout<deinterleaved = 2>>
+    return %r : !pto.vmi.mask<256xb16, #pto.vmi.layout<deinterleaved = 2>>
+  }
+}
+
+// CHECK-LABEL: func.func @ensure_mask_layout(
+// CHECK: pto.vmi.ensure_mask_layout

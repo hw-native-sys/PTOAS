@@ -56,9 +56,12 @@ module {
 // CHECK: return %[[LOW]], %[[HIGH]]
 
 // CHECK-LABEL: func.func @vmi_layout_assignment_vmull_consumer_conflict(
-// CHECK: pto.vmi.vmull
-// CHECK: pto.vmi.ensure_mask_layout
-// CHECK: pto.vmi.ensure_layout
+// CHECK: %[[SPLIT_MASK:.*]] = pto.vmi.ensure_mask_layout
+// CHECK-SAME: -> !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
+// CHECK: %{{.*}}, %[[HIGH:.*]] = pto.vmi.vmull
+// CHECK: %[[SPLIT_HIGH:.*]] = pto.vmi.ensure_layout %[[HIGH]]
+// CHECK-SAME: -> !pto.vmi.vreg<128xi32, #pto.vmi.layout<deinterleaved = 2>>
+// CHECK: pto.vmi.vdintlv %[[SPLIT_HIGH]], %[[SPLIT_HIGH]], %[[SPLIT_MASK]]
 
 // LOWER-LABEL: func.func @vmi_layout_assignment_vmull(
 // LOWER-SAME: !pto.vreg<64xi32>

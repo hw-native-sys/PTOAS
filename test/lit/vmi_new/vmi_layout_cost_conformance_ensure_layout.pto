@@ -1,0 +1,129 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance | FileCheck %s
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance -vmi-to-vpto -test-vmi-layout-lowering-conformance > /dev/null
+
+module {
+  func.func @r01_c_to_gs1(%x: !pto.vmi.vreg<1xi32, #pto.vmi.layout<contiguous>>) -> !pto.vmi.vreg<1xi32, #pto.vmi.layout<num_groups = 1, slots = 1>> {
+    %r = pto.vmi.ensure_layout %x {test.vmi_layout_cost_conformance} : !pto.vmi.vreg<1xi32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<1xi32, #pto.vmi.layout<num_groups = 1, slots = 1>>
+    return %r : !pto.vmi.vreg<1xi32, #pto.vmi.layout<num_groups = 1, slots = 1>>
+  }
+  func.func @r02_gs1_to_c(%x: !pto.vmi.vreg<1xi32, #pto.vmi.layout<num_groups = 1, slots = 1>>) -> !pto.vmi.vreg<1xi32, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.ensure_layout %x {test.vmi_layout_cost_conformance} : !pto.vmi.vreg<1xi32, #pto.vmi.layout<num_groups = 1, slots = 1>> -> !pto.vmi.vreg<1xi32, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.vreg<1xi32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @r03_c_to_d2_f16(%x: !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>>) -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<deinterleaved = 2>> {
+    %r = pto.vmi.ensure_layout %x {test.vmi_layout_cost_conformance} : !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<deinterleaved = 2>>
+    return %r : !pto.vmi.vreg<256xf16, #pto.vmi.layout<deinterleaved = 2>>
+  }
+  func.func @r04_c_to_d4_f16(%x: !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>>) -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<deinterleaved = 4>> {
+    %r = pto.vmi.ensure_layout %x {test.vmi_layout_cost_conformance} : !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<deinterleaved = 4>>
+    return %r : !pto.vmi.vreg<256xf16, #pto.vmi.layout<deinterleaved = 4>>
+  }
+  func.func @r05_c_to_d2_f32(%x: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>) -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> {
+    %r = pto.vmi.ensure_layout %x {test.vmi_layout_cost_conformance} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+    return %r : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+  func.func @r07_d2_to_c_f16(%x: !pto.vmi.vreg<256xf16, #pto.vmi.layout<deinterleaved = 2>>) -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.ensure_layout %x {test.vmi_layout_cost_conformance} : !pto.vmi.vreg<256xf16, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>>
+  }
+  func.func @r08_d4_to_c_f16(%x: !pto.vmi.vreg<256xf16, #pto.vmi.layout<deinterleaved = 4>>) -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.ensure_layout %x {test.vmi_layout_cost_conformance} : !pto.vmi.vreg<256xf16, #pto.vmi.layout<deinterleaved = 4>> -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>>
+  }
+  func.func @r09_d2_to_c_f32(%x: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>) -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.ensure_layout %x {test.vmi_layout_cost_conformance} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @r11_c_to_d4_f32(%x: !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>) -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>> {
+    %r = pto.vmi.ensure_layout %x {test.vmi_layout_cost_conformance} : !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+    return %r : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+  }
+  func.func @r13_d4_to_c_f32(%x: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>) -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.ensure_layout %x {test.vmi_layout_cost_conformance} : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @r15_d2_to_d4_f32(%x: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>) -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>> {
+    %r = pto.vmi.ensure_layout %x {test.vmi_layout_cost_conformance} : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+    return %r : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+  }
+  func.func @r17_d4_to_d2_f32(%x: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>) -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>> {
+    %r = pto.vmi.ensure_layout %x {test.vmi_layout_cost_conformance} : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>
+    return %r : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+  func.func @r19_c_to_ls2_i16(%x: !pto.vmi.vreg<64xi16, #pto.vmi.layout<contiguous>>) -> !pto.vmi.vreg<64xi16, #pto.vmi.layout<contiguous, lane_stride = 2>> {
+    %r = pto.vmi.ensure_layout %x {test.vmi_layout_cost_conformance} : !pto.vmi.vreg<64xi16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xi16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+    return %r : !pto.vmi.vreg<64xi16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  }
+  func.func @r20_ls2_to_c_i16(%x: !pto.vmi.vreg<64xi16, #pto.vmi.layout<contiguous, lane_stride = 2>>) -> !pto.vmi.vreg<64xi16, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.ensure_layout %x {test.vmi_layout_cost_conformance} : !pto.vmi.vreg<64xi16, #pto.vmi.layout<contiguous, lane_stride = 2>> -> !pto.vmi.vreg<64xi16, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.vreg<64xi16, #pto.vmi.layout<contiguous>>
+  }
+  func.func @r21_c_to_ls4_i8(%x: !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous>>) -> !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous, lane_stride = 4>> {
+    %r = pto.vmi.ensure_layout %x {test.vmi_layout_cost_conformance} : !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous, lane_stride = 4>>
+    return %r : !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous, lane_stride = 4>>
+  }
+  func.func @r22_ls4_to_c_i8(%x: !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous, lane_stride = 4>>) -> !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.ensure_layout %x {test.vmi_layout_cost_conformance} : !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous, lane_stride = 4>> -> !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous>>
+  }
+  func.func @r23_d2_to_ls2_f16(%x: !pto.vmi.vreg<256xf16, #pto.vmi.layout<deinterleaved = 2>>) -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous, lane_stride = 2>> {
+    %r = pto.vmi.ensure_layout %x {test.vmi_layout_cost_conformance} : !pto.vmi.vreg<256xf16, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+    return %r : !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  }
+  func.func @r24_ls2_to_d2_f16(%x: !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>) -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<deinterleaved = 2>> {
+    %r = pto.vmi.ensure_layout %x {test.vmi_layout_cost_conformance} : !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous, lane_stride = 2>> -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<deinterleaved = 2>>
+    return %r : !pto.vmi.vreg<256xf16, #pto.vmi.layout<deinterleaved = 2>>
+  }
+  func.func @r25_ls2_to_ls4_i8(%x: !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous, lane_stride = 2>>) -> !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous, lane_stride = 4>> {
+    %r = pto.vmi.ensure_layout %x {test.vmi_layout_cost_conformance} : !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous, lane_stride = 2>> -> !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous, lane_stride = 4>>
+    return %r : !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous, lane_stride = 4>>
+  }
+  func.func @r26_ls4_to_ls2_i8(%x: !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous, lane_stride = 4>>) -> !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous, lane_stride = 2>> {
+    %r = pto.vmi.ensure_layout %x {test.vmi_layout_cost_conformance} : !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous, lane_stride = 4>> -> !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous, lane_stride = 2>>
+    return %r : !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  }
+  func.func @r27_gs8_to_gs8_ls2_i16(%x: !pto.vmi.vreg<8xi16, #pto.vmi.layout<num_groups = 8, slots = 8>>) -> !pto.vmi.vreg<8xi16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>> {
+    %r = pto.vmi.ensure_layout %x {test.vmi_layout_cost_conformance} : !pto.vmi.vreg<8xi16, #pto.vmi.layout<num_groups = 8, slots = 8>> -> !pto.vmi.vreg<8xi16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
+    return %r : !pto.vmi.vreg<8xi16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
+  }
+  func.func @r28_gs8_ls2_to_gs8_i16(%x: !pto.vmi.vreg<8xi16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>) -> !pto.vmi.vreg<8xi16, #pto.vmi.layout<num_groups = 8, slots = 8>> {
+    %r = pto.vmi.ensure_layout %x {test.vmi_layout_cost_conformance} : !pto.vmi.vreg<8xi16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>> -> !pto.vmi.vreg<8xi16, #pto.vmi.layout<num_groups = 8, slots = 8>>
+    return %r : !pto.vmi.vreg<8xi16, #pto.vmi.layout<num_groups = 8, slots = 8>>
+  }
+  func.func @r29_gs8_to_gs8_ls4_i8(%x: !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 8>>) -> !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>> {
+    %r = pto.vmi.ensure_layout %x {test.vmi_layout_cost_conformance} : !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 8>> -> !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>
+    return %r : !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>
+  }
+  func.func @r30_gs8_ls4_to_gs8_i8(%x: !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>) -> !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 8>> {
+    %r = pto.vmi.ensure_layout %x {test.vmi_layout_cost_conformance} : !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>> -> !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 8>>
+    return %r : !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 8>>
+  }
+  func.func @r31_gs8_ls2_to_ls4_i8(%x: !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>) -> !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>> {
+    %r = pto.vmi.ensure_layout %x {test.vmi_layout_cost_conformance} : !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>> -> !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>
+    return %r : !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>
+  }
+  func.func @r32_gs8_ls4_to_ls2_i8(%x: !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>) -> !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>> {
+    %r = pto.vmi.ensure_layout %x {test.vmi_layout_cost_conformance} : !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>> -> !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
+    return %r : !pto.vmi.vreg<8xi8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
+  }
+  func.func @r33_d4_to_c_f32_n512(%x: !pto.vmi.vreg<512xf32, #pto.vmi.layout<deinterleaved = 4>>) -> !pto.vmi.vreg<512xf32, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.ensure_layout %x {test.vmi_layout_cost_conformance} : !pto.vmi.vreg<512xf32, #pto.vmi.layout<deinterleaved = 4>> -> !pto.vmi.vreg<512xf32, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.vreg<512xf32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @r34_c_to_d4_f32_n512(%x: !pto.vmi.vreg<512xf32, #pto.vmi.layout<contiguous>>) -> !pto.vmi.vreg<512xf32, #pto.vmi.layout<deinterleaved = 4>> {
+    %r = pto.vmi.ensure_layout %x {test.vmi_layout_cost_conformance} : !pto.vmi.vreg<512xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<512xf32, #pto.vmi.layout<deinterleaved = 4>>
+    return %r : !pto.vmi.vreg<512xf32, #pto.vmi.layout<deinterleaved = 4>>
+  }
+}
+
+// CHECK-COUNT-28: relation=0 cost=

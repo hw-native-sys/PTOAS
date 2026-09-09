@@ -274,7 +274,7 @@ static FailureOr<int64_t> getLayoutBlockElems(Type type) {
   return getVMILayoutBlockElems(type);
 }
 
-static int64_t getMaskGranularityBitWidth(StringRef granularity) {
+static int64_t getVMIMaskGranularityBitWidthImpl(StringRef granularity) {
   if (granularity == "b8") {
     return mlir::pto::kValue8;
   }
@@ -287,7 +287,7 @@ static int64_t getMaskGranularityBitWidth(StringRef granularity) {
   return 0;
 }
 
-static StringRef getMaskGranularityForBitWidth(int64_t bits) {
+static StringRef getVMIMaskGranularityForBitWidthImpl(int64_t bits) {
   switch (bits) {
   case mlir::pto::kValue8:
     return "b8";
@@ -300,8 +300,9 @@ static StringRef getMaskGranularityForBitWidth(int64_t bits) {
   }
 }
 
-static FailureOr<StringRef> getVMIMaskPhysicalGranularity(VMIMaskType type) {
-  int64_t bits = getMaskGranularityBitWidth(type.getGranularity());
+FailureOr<StringRef>
+getVMIMaskPhysicalGranularityImpl(VMIMaskType type) {
+  int64_t bits = getVMIMaskGranularityBitWidthImpl(type.getGranularity());
   if (bits == 0) {
     return failure();
   }
@@ -310,11 +311,34 @@ static FailureOr<StringRef> getVMIMaskPhysicalGranularity(VMIMaskType type) {
   int64_t laneStride = layout && layout.hasLaneStride() ? layout.getLaneStride()
                                                         : 1;
   StringRef physicalGranularity =
-      getMaskGranularityForBitWidth(bits * laneStride);
+      getVMIMaskGranularityForBitWidthImpl(bits * laneStride);
   if (physicalGranularity.empty()) {
     return failure();
   }
   return physicalGranularity;
+}
+
+FailureOr<VMILayoutAttr>
+getVMIMaskPhysicalCarrierLayoutImpl(VMIMaskType type) {
+  VMILayoutAttr layout = type.getLayoutAttr();
+  if (!layout) {
+    return failure();
+  }
+  MLIRContext *ctx = type.getContext();
+  if (layout.isContiguous()) {
+    return VMILayoutAttr::getContiguous(ctx);
+  }
+  if (layout.isDeinterleaved()) {
+    return VMILayoutAttr::getDeinterleaved(ctx, layout.getFactor());
+  }
+  if (layout.isBlockDeinterleaved()) {
+    return VMILayoutAttr::getBlockDeinterleaved(ctx, layout.getFactor());
+  }
+  if (layout.isGroupSlots()) {
+    return VMILayoutAttr::getGroupSlots(ctx, layout.getNumGroups(),
+                                        layout.getSlots());
+  }
+  return failure();
 }
 
 static FailureOr<int64_t> getPhysicalLanesPerPart(Type type) {
@@ -498,7 +522,8 @@ static LogicalResult verifyMaskMatchesData(Operation *op, VMIMaskType maskType,
   }
 
   unsigned elementBitWidth = getVMIElementBitWidth(dataType.getElementType());
-  int64_t maskBitWidth = getMaskGranularityBitWidth(maskType.getGranularity());
+  int64_t maskBitWidth =
+      getVMIMaskGranularityBitWidthImpl(maskType.getGranularity());
   if (elementBitWidth != 0 && maskBitWidth != 0 &&
       elementBitWidth != static_cast<unsigned>(maskBitWidth)) {
     return op->emitOpError(
@@ -708,6 +733,25 @@ static int64_t getDenseLogicalLanesInPart(int64_t elementCount, int64_t factor,
 }
 
 } // namespace
+
+namespace mlir::pto {
+int64_t getVMIMaskGranularityBitWidth(StringRef granularity) {
+  return getVMIMaskGranularityBitWidthImpl(granularity);
+}
+
+StringRef getVMIMaskGranularityForBitWidth(int64_t bits) {
+  return getVMIMaskGranularityForBitWidthImpl(bits);
+}
+
+FailureOr<StringRef> getVMIMaskPhysicalGranularity(VMIMaskType type) {
+  return getVMIMaskPhysicalGranularityImpl(type);
+}
+
+FailureOr<VMILayoutAttr>
+getVMIMaskPhysicalCarrierLayout(VMIMaskType type) {
+  return getVMIMaskPhysicalCarrierLayoutImpl(type);
+}
+} // namespace mlir::pto
 
 // ---------------------------------------------------------------------------
 // FpToSi hardware contract (mirrors VPTO lookupVcvtContract fp→int rows)

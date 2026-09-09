@@ -33,20 +33,18 @@ module {
 // ASSIGN-LABEL: func.func @vmi_layout_assignment_vintlv_width_changing_bitcast(
 // ASSIGN: %[[LOW:.*]], %[[HIGH:.*]] = pto.vmi.vintlv
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>>, !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: %[[HIGH_C:.*]] = pto.vmi.ensure_layout %[[HIGH]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous>>
 // ASSIGN: %[[LOW_C:.*]] = pto.vmi.ensure_layout %[[LOW]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous>>
 // ASSIGN: %[[LOW_F32:.*]] = pto.vmi.bitcast %[[LOW_C]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
-// ASSIGN: %[[HIGH_C:.*]] = pto.vmi.ensure_layout %[[HIGH]]
-// ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous>>
 // ASSIGN: %[[HIGH_F32:.*]] = pto.vmi.bitcast %[[HIGH_C]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
 
 // LOWER-LABEL: func.func @vmi_layout_assignment_vintlv_width_changing_bitcast(
-// LOWER: pto.vintlv
-// LOWER-COUNT-2: pto.vbitcast
-// LOWER: pto.vintlv
-// LOWER-COUNT-2: pto.vbitcast
+// LOWER-COUNT-2: pto.vintlv
+// LOWER-COUNT-4: pto.vbitcast
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.
 // LOWER-NOT: unrealized_conversion_cast

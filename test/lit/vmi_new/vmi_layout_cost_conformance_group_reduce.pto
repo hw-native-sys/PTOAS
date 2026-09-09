@@ -1,0 +1,231 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance | FileCheck %s
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance -vmi-to-vpto -test-vmi-layout-lowering-conformance > /dev/null
+
+module {
+  func.func @half_block(
+      %source: !pto.vmi.vreg<16xf16,
+          #pto.vmi.layout<contiguous, lane_stride = 2>>,
+      %mask: !pto.vmi.mask<16xb16,
+          #pto.vmi.layout<contiguous, lane_stride = 2>>)
+      -> !pto.vmi.vreg<2xf16,
+          #pto.vmi.layout<num_groups = 2, slots = 8>> {
+    %result = pto.vmi.group_reduce_addf %source, %mask {
+        num_groups = 2, reassoc, test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<16xf16,
+            #pto.vmi.layout<contiguous, lane_stride = 2>>,
+          !pto.vmi.mask<16xb16,
+            #pto.vmi.layout<contiguous, lane_stride = 2>>
+        -> !pto.vmi.vreg<2xf16,
+            #pto.vmi.layout<num_groups = 2, slots = 8>>
+    return %result : !pto.vmi.vreg<2xf16,
+        #pto.vmi.layout<num_groups = 2, slots = 8>>
+  }
+
+  func.func @one_block(
+      %source: !pto.vmi.vreg<32xf16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<32xb16, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<2xf16,
+          #pto.vmi.layout<num_groups = 2, slots = 8>> {
+    %result = pto.vmi.group_reduce_addf %source, %mask {
+        num_groups = 2, reassoc, test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<32xf16, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.mask<32xb16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<2xf16,
+            #pto.vmi.layout<num_groups = 2, slots = 8>>
+    return %result : !pto.vmi.vreg<2xf16,
+        #pto.vmi.layout<num_groups = 2, slots = 8>>
+  }
+
+  func.func @two_block_deinterleaved(
+      %source: !pto.vmi.vreg<64xf16,
+          #pto.vmi.layout<deinterleaved = 2>>,
+      %mask: !pto.vmi.mask<64xb16,
+          #pto.vmi.layout<deinterleaved = 2>>)
+      -> !pto.vmi.vreg<2xf16,
+          #pto.vmi.layout<num_groups = 2, slots = 8>> {
+    %result = pto.vmi.group_reduce_addf %source, %mask {
+        num_groups = 2, reassoc, test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<64xf16, #pto.vmi.layout<deinterleaved = 2>>,
+          !pto.vmi.mask<64xb16, #pto.vmi.layout<deinterleaved = 2>>
+        -> !pto.vmi.vreg<2xf16,
+            #pto.vmi.layout<num_groups = 2, slots = 8>>
+    return %result : !pto.vmi.vreg<2xf16,
+        #pto.vmi.layout<num_groups = 2, slots = 8>>
+  }
+
+  func.func @two_block_block_deinterleaved(
+      %source: !pto.vmi.vreg<64xf16,
+          #pto.vmi.layout<block_deinterleaved = 2>>,
+      %mask: !pto.vmi.mask<64xb16,
+          #pto.vmi.layout<block_deinterleaved = 2>>)
+      -> !pto.vmi.vreg<2xf16,
+          #pto.vmi.layout<num_groups = 2, slots = 8>> {
+    %result = pto.vmi.group_reduce_addf %source, %mask {
+        num_groups = 2, reassoc, test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<64xf16,
+            #pto.vmi.layout<block_deinterleaved = 2>>,
+          !pto.vmi.mask<64xb16,
+            #pto.vmi.layout<block_deinterleaved = 2>>
+        -> !pto.vmi.vreg<2xf16,
+            #pto.vmi.layout<num_groups = 2, slots = 8>>
+    return %result : !pto.vmi.vreg<2xf16,
+        #pto.vmi.layout<num_groups = 2, slots = 8>>
+  }
+
+  func.func @four_block_deinterleaved(
+      %source: !pto.vmi.vreg<128xf16,
+          #pto.vmi.layout<deinterleaved = 4>>,
+      %mask: !pto.vmi.mask<128xb16,
+          #pto.vmi.layout<deinterleaved = 4>>)
+      -> !pto.vmi.vreg<2xf16,
+          #pto.vmi.layout<num_groups = 2, slots = 8>> {
+    %result = pto.vmi.group_reduce_addf %source, %mask {
+        num_groups = 2, reassoc, test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<128xf16, #pto.vmi.layout<deinterleaved = 4>>,
+          !pto.vmi.mask<128xb16, #pto.vmi.layout<deinterleaved = 4>>
+        -> !pto.vmi.vreg<2xf16,
+            #pto.vmi.layout<num_groups = 2, slots = 8>>
+    return %result : !pto.vmi.vreg<2xf16,
+        #pto.vmi.layout<num_groups = 2, slots = 8>>
+  }
+
+  func.func @four_block_block_deinterleaved(
+      %source: !pto.vmi.vreg<128xf16,
+          #pto.vmi.layout<block_deinterleaved = 4>>,
+      %mask: !pto.vmi.mask<128xb16,
+          #pto.vmi.layout<block_deinterleaved = 4>>)
+      -> !pto.vmi.vreg<2xf16,
+          #pto.vmi.layout<num_groups = 2, slots = 8>> {
+    %result = pto.vmi.group_reduce_addf %source, %mask {
+        num_groups = 2, reassoc, test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<128xf16,
+            #pto.vmi.layout<block_deinterleaved = 4>>,
+          !pto.vmi.mask<128xb16,
+            #pto.vmi.layout<block_deinterleaved = 4>>
+        -> !pto.vmi.vreg<2xf16,
+            #pto.vmi.layout<num_groups = 2, slots = 8>>
+    return %result : !pto.vmi.vreg<2xf16,
+        #pto.vmi.layout<num_groups = 2, slots = 8>>
+  }
+
+  func.func @full_part(
+      %source: !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<256xb16, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<2xf16,
+          #pto.vmi.layout<num_groups = 2, slots = 1>> {
+    %result = pto.vmi.group_reduce_addf %source, %mask {
+        num_groups = 2, reassoc, test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.mask<256xb16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<2xf16,
+            #pto.vmi.layout<num_groups = 2, slots = 1>>
+    return %result : !pto.vmi.vreg<2xf16,
+        #pto.vmi.layout<num_groups = 2, slots = 1>>
+  }
+
+  func.func @two_full_parts(
+      %source: !pto.vmi.vreg<512xf16,
+          #pto.vmi.layout<deinterleaved = 2>>,
+      %mask: !pto.vmi.mask<512xb16,
+          #pto.vmi.layout<deinterleaved = 2>>)
+      -> !pto.vmi.vreg<2xf16,
+          #pto.vmi.layout<num_groups = 2, slots = 1>> {
+    %result = pto.vmi.group_reduce_addf %source, %mask {
+        num_groups = 2, reassoc, test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<512xf16, #pto.vmi.layout<deinterleaved = 2>>,
+          !pto.vmi.mask<512xb16, #pto.vmi.layout<deinterleaved = 2>>
+        -> !pto.vmi.vreg<2xf16,
+            #pto.vmi.layout<num_groups = 2, slots = 1>>
+    return %result : !pto.vmi.vreg<2xf16,
+        #pto.vmi.layout<num_groups = 2, slots = 1>>
+  }
+
+  func.func @four_full_parts(
+      %source: !pto.vmi.vreg<1024xf16,
+          #pto.vmi.layout<deinterleaved = 4>>,
+      %mask: !pto.vmi.mask<1024xb16,
+          #pto.vmi.layout<deinterleaved = 4>>)
+      -> !pto.vmi.vreg<2xf16,
+          #pto.vmi.layout<num_groups = 2, slots = 1>> {
+    %result = pto.vmi.group_reduce_addf %source, %mask {
+        num_groups = 2, reassoc, test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<1024xf16, #pto.vmi.layout<deinterleaved = 4>>,
+          !pto.vmi.mask<1024xb16, #pto.vmi.layout<deinterleaved = 4>>
+        -> !pto.vmi.vreg<2xf16,
+            #pto.vmi.layout<num_groups = 2, slots = 1>>
+    return %result : !pto.vmi.vreg<2xf16,
+        #pto.vmi.layout<num_groups = 2, slots = 1>>
+  }
+
+  func.func @one_block_maxf(
+      %source: !pto.vmi.vreg<32xf16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<32xb16, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<2xf16,
+          #pto.vmi.layout<num_groups = 2, slots = 8>> {
+    %result = pto.vmi.group_reduce_maxf %source, %mask {
+        num_groups = 2, test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<32xf16, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.mask<32xb16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<2xf16,
+            #pto.vmi.layout<num_groups = 2, slots = 8>>
+    return %result : !pto.vmi.vreg<2xf16,
+        #pto.vmi.layout<num_groups = 2, slots = 8>>
+  }
+
+  func.func @one_block_minf(
+      %source: !pto.vmi.vreg<32xf16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<32xb16, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<2xf16,
+          #pto.vmi.layout<num_groups = 2, slots = 8>> {
+    %result = pto.vmi.group_reduce_minf %source, %mask {
+        num_groups = 2, test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<32xf16, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.mask<32xb16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<2xf16,
+            #pto.vmi.layout<num_groups = 2, slots = 8>>
+    return %result : !pto.vmi.vreg<2xf16,
+        #pto.vmi.layout<num_groups = 2, slots = 8>>
+  }
+
+  func.func @one_block_maxi(
+      %source: !pto.vmi.vreg<32xi16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<32xb16, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<2xi16,
+          #pto.vmi.layout<num_groups = 2, slots = 8>> {
+    %result = pto.vmi.group_reduce_maxi %source, %mask {
+        num_groups = 2, test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<32xi16, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.mask<32xb16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<2xi16,
+            #pto.vmi.layout<num_groups = 2, slots = 8>>
+    return %result : !pto.vmi.vreg<2xi16,
+        #pto.vmi.layout<num_groups = 2, slots = 8>>
+  }
+
+  func.func @one_block_mini(
+      %source: !pto.vmi.vreg<32xi16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<32xb16, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<2xi16,
+          #pto.vmi.layout<num_groups = 2, slots = 8>> {
+    %result = pto.vmi.group_reduce_mini %source, %mask {
+        num_groups = 2, test.vmi_layout_cost_conformance
+      } : !pto.vmi.vreg<32xi16, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.mask<32xb16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<2xi16,
+            #pto.vmi.layout<num_groups = 2, slots = 8>>
+    return %result : !pto.vmi.vreg<2xi16,
+        #pto.vmi.layout<num_groups = 2, slots = 8>>
+  }
+}
+
+// CHECK-COUNT-13: relation=0 cost=0

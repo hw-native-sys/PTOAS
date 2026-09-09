@@ -1,0 +1,83 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance | FileCheck %s --check-prefix=COST
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance -vmi-to-vpto -test-vmi-layout-lowering-conformance > /dev/null
+
+module {
+  func.func @channel_split2(
+      %source: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>)
+      -> (!pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>) {
+    %low, %high = "pto.vmi.channel_split"(%source) {
+        test.vmi_layout_cost_conformance
+      } : (!pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>)
+        -> (!pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+            !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>)
+    return %low, %high
+        : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @channel_split4(
+      %source: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>)
+      -> (!pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>) {
+    %r0, %r1, %r2, %r3 = "pto.vmi.channel_split"(%source) {
+        test.vmi_layout_cost_conformance
+      } : (!pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>)
+        -> (!pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+            !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+            !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+            !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>)
+    return %r0, %r1, %r2, %r3
+        : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @channel_merge2(
+      %low: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+      %high: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> {
+    %result = "pto.vmi.channel_merge"(%low, %high) {
+        test.vmi_layout_cost_conformance
+      } : (!pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+           !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>)
+        -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+    return %result
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+
+  func.func @channel_merge4(
+      %r0: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+      %r1: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+      %r2: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+      %r3: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>> {
+    %result = "pto.vmi.channel_merge"(%r0, %r1, %r2, %r3) {
+        test.vmi_layout_cost_conformance
+      } : (!pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+           !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+           !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+           !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>)
+        -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+    return %result
+        : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+  }
+}
+
+// COST: vmi-layout-cost-conformance channel_split2 pto.vmi.channel_split relation=0 cost=0
+// COST: vmi-layout-cost-conformance channel_split4 pto.vmi.channel_split relation=0 cost=0
+// COST: vmi-layout-cost-conformance channel_merge2 pto.vmi.channel_merge relation=0 cost=0
+// COST: vmi-layout-cost-conformance channel_merge4 pto.vmi.channel_merge relation=0 cost=0

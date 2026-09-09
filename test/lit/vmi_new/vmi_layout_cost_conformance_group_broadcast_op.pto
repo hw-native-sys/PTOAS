@@ -1,0 +1,237 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR
+// FITNESS FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software
+// repository for the full text of the License.
+
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance | FileCheck %s --check-prefix=COST
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance -vmi-to-vpto -test-vmi-layout-lowering-conformance > /dev/null
+
+module {
+  func.func @slots8_half_block(
+      %source: !pto.vmi.vreg<16xf32, #pto.vmi.layout<num_groups = 16, slots = 8>>)
+      -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous, lane_stride = 2>> {
+    %value = pto.vmi.group_broadcast %source
+        {num_groups = 16 : i64, test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<16xf32, #pto.vmi.layout<num_groups = 16, slots = 8>>
+          -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+    return %value
+        : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  }
+
+  func.func @slots8_one_block_contiguous(
+      %source: !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>)
+      -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> {
+    %value = pto.vmi.group_broadcast %source
+        {num_groups = 8 : i64, test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
+          -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return %value : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @slots8_one_block_lane_stride2(
+      %source: !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>)
+      -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous, lane_stride = 2>> {
+    %value = pto.vmi.group_broadcast %source
+        {num_groups = 8 : i64, test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
+          -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+    return %value
+        : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  }
+
+  func.func @slots8_lane_stride2_one_block_contiguous(
+      %source: !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>)
+      -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> {
+    %value = pto.vmi.group_broadcast %source
+        {num_groups = 8 : i64, test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
+          -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return %value : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @slots8_lane_stride4_one_block_contiguous(
+      %source: !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>)
+      -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> {
+    %value = pto.vmi.group_broadcast %source
+        {num_groups = 8 : i64, test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>
+          -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return %value : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @slots8_two_blocks_contiguous(
+      %source: !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> {
+    %value = pto.vmi.group_broadcast %source
+        {num_groups = 8 : i64, test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
+          -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+    return %value : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @slots8_two_blocks_deinterleaved2(
+      %source: !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> {
+    %value = pto.vmi.group_broadcast %source
+        {num_groups = 8 : i64, test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
+          -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+    return %value
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+
+  func.func @slots8_two_blocks_block_deinterleaved2(
+      %source: !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<block_deinterleaved = 2>> {
+    %value = pto.vmi.group_broadcast %source
+        {num_groups = 8 : i64, test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
+          -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<block_deinterleaved = 2>>
+    return %value
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<block_deinterleaved = 2>>
+  }
+
+  func.func @slots1_two_blocks_contiguous(
+      %source: !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 1>>)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> {
+    %value = pto.vmi.group_broadcast %source
+        {num_groups = 8 : i64, test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 1>>
+          -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+    return %value : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @slots8_four_blocks_contiguous(
+      %source: !pto.vmi.vreg<4xf32, #pto.vmi.layout<num_groups = 4, slots = 8>>)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> {
+    %value = pto.vmi.group_broadcast %source
+        {num_groups = 4 : i64, test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<4xf32, #pto.vmi.layout<num_groups = 4, slots = 8>>
+          -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+    return %value : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @slots8_four_blocks_lane_stride2(
+      %source: !pto.vmi.vreg<4xf32, #pto.vmi.layout<num_groups = 4, slots = 8>>)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous, lane_stride = 2>> {
+    %value = pto.vmi.group_broadcast %source
+        {num_groups = 4 : i64, test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<4xf32, #pto.vmi.layout<num_groups = 4, slots = 8>>
+          -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+    return %value
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  }
+
+  func.func @slots8_four_blocks_block_deinterleaved4(
+      %source: !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>)
+      -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<block_deinterleaved = 4>> {
+    %value = pto.vmi.group_broadcast %source
+        {num_groups = 8 : i64, test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
+          -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<block_deinterleaved = 4>>
+    return %value
+        : !pto.vmi.vreg<256xf32, #pto.vmi.layout<block_deinterleaved = 4>>
+  }
+
+  func.func @slots8_full_group_contiguous(
+      %source: !pto.vmi.vreg<2xf32, #pto.vmi.layout<num_groups = 2, slots = 8>>)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> {
+    %value = pto.vmi.group_broadcast %source
+        {num_groups = 2 : i64, test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<2xf32, #pto.vmi.layout<num_groups = 2, slots = 8>>
+          -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+    return %value : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @slots1_full_group_contiguous(
+      %source: !pto.vmi.vreg<2xf32, #pto.vmi.layout<num_groups = 2, slots = 1>>)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> {
+    %value = pto.vmi.group_broadcast %source
+        {num_groups = 2 : i64, test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<2xf32, #pto.vmi.layout<num_groups = 2, slots = 1>>
+          -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+    return %value : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @slots1_full_two_parts_deinterleaved2(
+      %source: !pto.vmi.vreg<1xf32, #pto.vmi.layout<num_groups = 1, slots = 1>>)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> {
+    %value = pto.vmi.group_broadcast %source
+        {num_groups = 1 : i64, test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<1xf32, #pto.vmi.layout<num_groups = 1, slots = 1>>
+          -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+    return %value
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+
+  func.func @slots1_full_four_parts_deinterleaved4(
+      %source: !pto.vmi.vreg<1xf32, #pto.vmi.layout<num_groups = 1, slots = 1>>)
+      -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>> {
+    %value = pto.vmi.group_broadcast %source
+        {num_groups = 1 : i64, test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<1xf32, #pto.vmi.layout<num_groups = 1, slots = 1>>
+          -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+    return %value
+        : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+  }
+
+  func.func @slots1_four_block(
+      %source: !pto.vmi.vreg<4xf32, #pto.vmi.layout<num_groups = 4, slots = 1>>)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> {
+    %value = pto.vmi.group_broadcast %source
+        {num_groups = 4 : i64, test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<4xf32, #pto.vmi.layout<num_groups = 4, slots = 1>>
+          -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+    return %value : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @slots8_small_group(
+      %source: !pto.vmi.vreg<32xf32, #pto.vmi.layout<num_groups = 32, slots = 8>>)
+      -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous, lane_stride = 4>> {
+    %value = pto.vmi.group_broadcast %source
+        {num_groups = 32 : i64, test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<32xf32, #pto.vmi.layout<num_groups = 32, slots = 8>>
+          -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous, lane_stride = 4>>
+    return %value
+        : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous, lane_stride = 4>>
+  }
+
+  func.func @slots8_deinterleaved4(
+      %source: !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>)
+      -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>> {
+    %value = pto.vmi.group_broadcast %source
+        {num_groups = 8 : i64, test.vmi_layout_cost_conformance}
+        : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
+          -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+    return %value
+        : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+  }
+}
+
+// COST: vmi-layout-cost-conformance slots8_half_block pto.vmi.group_broadcast relation=0 cost=0
+// COST: vmi-layout-cost-conformance slots8_one_block_contiguous pto.vmi.group_broadcast relation=0 cost=0
+// COST: vmi-layout-cost-conformance slots8_one_block_lane_stride2 pto.vmi.group_broadcast relation=0 cost=0
+// COST: vmi-layout-cost-conformance slots8_lane_stride2_one_block_contiguous pto.vmi.group_broadcast relation=0 cost=0
+// COST: vmi-layout-cost-conformance slots8_lane_stride4_one_block_contiguous pto.vmi.group_broadcast relation=0 cost=0
+// COST: vmi-layout-cost-conformance slots8_two_blocks_contiguous pto.vmi.group_broadcast relation=0 cost=0
+// COST: vmi-layout-cost-conformance slots8_two_blocks_deinterleaved2 pto.vmi.group_broadcast relation=0 cost=0
+// COST: vmi-layout-cost-conformance slots8_two_blocks_block_deinterleaved2 pto.vmi.group_broadcast relation=0 cost=0
+// COST: vmi-layout-cost-conformance slots1_two_blocks_contiguous pto.vmi.group_broadcast relation=0 cost=0
+// COST: vmi-layout-cost-conformance slots8_four_blocks_contiguous pto.vmi.group_broadcast relation=0 cost=0
+// COST: vmi-layout-cost-conformance slots8_four_blocks_lane_stride2 pto.vmi.group_broadcast relation=0 cost=0
+// COST: vmi-layout-cost-conformance slots8_four_blocks_block_deinterleaved4 pto.vmi.group_broadcast relation=0 cost=0
+// COST: vmi-layout-cost-conformance slots8_full_group_contiguous pto.vmi.group_broadcast relation=0 cost=0
+// COST: vmi-layout-cost-conformance slots1_full_group_contiguous pto.vmi.group_broadcast relation=0 cost=0
+// COST: vmi-layout-cost-conformance slots1_full_two_parts_deinterleaved2 pto.vmi.group_broadcast relation=0 cost=0
+// COST: vmi-layout-cost-conformance slots1_full_four_parts_deinterleaved4 pto.vmi.group_broadcast relation=0 cost=0
+// COST: vmi-layout-cost-conformance slots1_four_block pto.vmi.group_broadcast relation=0 cost=0
+// COST: vmi-layout-cost-conformance-summary slots1_four_block pto.vmi.group_broadcast relations=1
+// COST: vmi-layout-cost-conformance slots8_small_group pto.vmi.group_broadcast relation=0 cost=0
+// COST: vmi-layout-cost-conformance-summary slots8_small_group pto.vmi.group_broadcast relations=1
+// COST: vmi-layout-cost-conformance slots8_deinterleaved4 pto.vmi.group_broadcast relation=0 cost=0
+// COST: vmi-layout-cost-conformance-summary slots8_deinterleaved4 pto.vmi.group_broadcast relations=1

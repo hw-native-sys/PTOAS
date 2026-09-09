@@ -602,7 +602,8 @@ LogicalResult verifyLayoutSemanticSupport(Operation *op,
     auto resultType = cast<VMIVRegType>(load.getResult().getType());
     std::string reason;
     if (failed(supports.getGroupSlotLoadLayoutFact(
-            resultType, load.getNumGroupsAttr().getInt(), &reason))) {
+            resultType, load.getSourceGroupStride(),
+            load.getNumGroupsAttr().getInt(), &reason))) {
       return emitLayoutSupportContract(
           op, diagOS,
           "pto.vmi.group_slot_load has no registered layout support", reason);
@@ -798,6 +799,48 @@ LogicalResult verifyLayoutSemanticSupport(Operation *op,
     if (failed(supports.getExtFSupport(extf, &reason))) {
       return emitLayoutSupportContract(
           op, diagOS, "pto.vmi.extf has no registered layout support", reason);
+    }
+    return success();
+  }
+
+  // Numeric cast operation families share the same operation/layout
+  // capability gate as planning and lowering.  Keep this check here as well
+  // so an explicitly assigned VMI IR cannot bypass the Support boundary.
+  if (auto fptosi = dyn_cast<VMIFPToSIOp>(op)) {
+    auto sourceType = cast<VMIVRegType>(fptosi.getSource().getType());
+    auto resultType = cast<VMIVRegType>(fptosi.getResult().getType());
+    std::string reason;
+    if (failed(supports.validateCastOperationRelation(
+            op, sourceType.getLayoutAttr(), resultType.getLayoutAttr(),
+            &reason))) {
+      return emitLayoutSupportContract(
+          op, diagOS, "pto.vmi.fptosi has no registered layout support", reason);
+    }
+    return success();
+  }
+
+  if (auto fptoui = dyn_cast<VMIFPToUIOp>(op)) {
+    auto sourceType = cast<VMIVRegType>(fptoui.getSource().getType());
+    auto resultType = cast<VMIVRegType>(fptoui.getResult().getType());
+    std::string reason;
+    if (failed(supports.validateCastOperationRelation(
+            op, sourceType.getLayoutAttr(), resultType.getLayoutAttr(),
+            &reason))) {
+      return emitLayoutSupportContract(
+          op, diagOS, "pto.vmi.fptoui has no registered layout support", reason);
+    }
+    return success();
+  }
+
+  if (auto sitofp = dyn_cast<VMISIToFPOp>(op)) {
+    auto sourceType = cast<VMIVRegType>(sitofp.getSource().getType());
+    auto resultType = cast<VMIVRegType>(sitofp.getResult().getType());
+    std::string reason;
+    if (failed(supports.validateCastOperationRelation(
+            op, sourceType.getLayoutAttr(), resultType.getLayoutAttr(),
+            &reason))) {
+      return emitLayoutSupportContract(
+          op, diagOS, "pto.vmi.sitofp has no registered layout support", reason);
     }
     return success();
   }

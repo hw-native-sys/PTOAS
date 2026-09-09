@@ -1,0 +1,34 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: not pto-test-opt %s -pto-validate-vmi-layout-ir 2>&1 | FileCheck %s
+
+module {
+  func.func @f16_quarter_block_has_no_physical_mask(
+      %source: !pto.vmi.vreg<32xf16,
+          #pto.vmi.layout<contiguous, lane_stride = 4>>,
+      %mask: !pto.vmi.mask<32xb16,
+          #pto.vmi.layout<contiguous, lane_stride = 4>>)
+      -> !pto.vmi.vreg<8xf16,
+          #pto.vmi.layout<num_groups = 8, slots = 8>> {
+    // CHECK: VMI-LAYOUT-CONTRACT: pto.vmi.group_reduce_addf has no registered group_slots layout support
+    // CHECK-SAME: group_reduce source/mask/result layouts do not match a legal layout table row
+    %result = pto.vmi.group_reduce_addf %source, %mask {
+        num_groups = 8, reassoc
+      } : !pto.vmi.vreg<32xf16,
+            #pto.vmi.layout<contiguous, lane_stride = 4>>,
+          !pto.vmi.mask<32xb16,
+            #pto.vmi.layout<contiguous, lane_stride = 4>>
+        -> !pto.vmi.vreg<8xf16,
+            #pto.vmi.layout<num_groups = 8, slots = 8>>
+    return %result : !pto.vmi.vreg<8xf16,
+        #pto.vmi.layout<num_groups = 8, slots = 8>>
+  }
+}

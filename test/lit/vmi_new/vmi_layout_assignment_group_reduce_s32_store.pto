@@ -29,18 +29,18 @@ module {
 // ASSIGN-LABEL: func.func @vmi_layout_assignment_group_reduce_s32_store(
 // ASSIGN-SAME: %[[SOURCE:.*]]: !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
 // ASSIGN-SAME: %[[MASK:.*]]: !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>>
-// ASSIGN: %[[SOURCE_SPLIT:.*]] = pto.vmi.ensure_layout %[[SOURCE]]
-// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
 // ASSIGN: %[[MASK_SPLIT:.*]] = pto.vmi.ensure_mask_layout %[[MASK]]
 // ASSIGN-SAME: -> !pto.vmi.mask<256xb32, #pto.vmi.layout<deinterleaved = 4>>
+// ASSIGN: %[[SOURCE_SPLIT:.*]] = pto.vmi.ensure_layout %[[SOURCE]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
 // ASSIGN: %[[SUM:.*]] = pto.vmi.group_reduce_addf %[[SOURCE_SPLIT]], %[[MASK_SPLIT]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
 // ASSIGN: pto.vmi.group_store %[[SUM]]
 // ASSIGN-SAME: !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>, {{(!pto\.ptr)?<f32, ub>}}
 
 // LOWER-LABEL: func.func @vmi_layout_assignment_group_reduce_s32_store(
-// LOWER-COUNT-4: pto.vdintlv
 // LOWER-COUNT-4: pto.pdintlv_b32
+// LOWER-COUNT-4: pto.vdintlv
 // LOWER: %[[VL8:.*]] = pto.pset_b32 "PAT_VL8" : !pto.mask<b32>
 // LOWER-COUNT-4: pto.vcgadd
 // LOWER-COUNT-3: pto.vadd {{.*}}, {{.*}}, %[[VL8]]

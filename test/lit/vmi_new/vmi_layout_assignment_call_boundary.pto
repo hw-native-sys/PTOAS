@@ -30,16 +30,18 @@ module {
 }
 
 // CHECK-LABEL: func.func private @callee(
-// CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
-// CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
 // CHECK: pto.vmi.addf
-// CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
 // CHECK: return
-// CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
 // CHECK-LABEL: func.func @caller(
 // CHECK: %[[EA:.*]] = pto.vmi.extf
 // CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
-// CHECK: %[[R:.*]] = call @callee(%[[EA]])
-// CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// CHECK: %[[CALL_ARG:.*]] = pto.vmi.ensure_layout %[[EA]]
+// CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// CHECK: %[[R:.*]] = call @callee(%[[CALL_ARG]])
+// CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
 // CHECK: pto.vmi.addf %[[R]], %[[R]]
-// CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>

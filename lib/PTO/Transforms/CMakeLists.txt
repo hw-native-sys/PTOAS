@@ -72,7 +72,10 @@ add_mlir_dialect_library(PTOTransforms
   VMINormalizeSignlessIntToUnsigned.cpp
   VMILayoutRematerializeWeakProducers.cpp
   VMILayoutAssignment.cpp
+  VMILayoutConflictSolver.cpp
   VMILayoutFold.cpp
+  VMILayoutCostModel.cpp
+  VMILayoutPlanner.cpp
   VMILayoutPropagation.cpp
   VMILayoutSupport.cpp
   VMILayoutRematerialize.cpp

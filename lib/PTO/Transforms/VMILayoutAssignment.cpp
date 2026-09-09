@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
 //===- VMILayoutAssignment.cpp - Assign VMI layouts ----------------------===//
 //===----------------------------------------------------------------------===//
@@ -15,6 +17,7 @@
 #include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/VMIControlFlowSupport.h"
+#include "PTO/Transforms/VMILayoutPlanner.h"
 #include "PTO/Transforms/VMILayoutPropagation.h"
 #include "PTO/Transforms/VMILayoutSupport.h"
 
@@ -27,6 +30,8 @@
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
+
+#include <memory>
 
 namespace mlir {
 namespace pto {
@@ -64,7 +69,6 @@ enum class DataLayoutSeedPhase {
   GroupBroadcast,
   CompactCast,
   GroupStore,
-  GroupBroadcastLoadWidening,
   LaneStrideNarrowCast,
   GroupBroadcastLoad,
   Cast,
@@ -127,6 +131,16 @@ bool containsVMIType(Type type) {
     return containsVMIType(shapedType.getElementType());
   }
   return false;
+}
+
+static VMILayoutAttr getExplicitLayout(Type type) {
+  if (auto vreg = dyn_cast<VMIVRegType>(type)) {
+    return vreg.getLayoutAttr();
+  }
+  if (auto mask = dyn_cast<VMIMaskType>(type)) {
+    return mask.getLayoutAttr();
+  }
+  return {};
 }
 
 struct LayoutSolver {
@@ -362,8 +376,8 @@ struct LayoutSolver {
     return getContiguousLayout();
   }
 
-  DataLayoutSeedPhase getGroupReduceUseSeedPhase(VMIVRegType sourceType,
-                                                 int64_t numGroups,
+  DataLayoutSeedPhase
+  getGroupReduceUseSeedPhase(VMIVRegType sourceType, int64_t numGroups,
                                                  VMIGroupReduceLayoutFact fact) {
     if (!fact.sourceLayout || !fact.sourceLayout.isContiguous() ||
         fact.sourceLayout.getLaneStride() != 1) {
@@ -371,8 +385,8 @@ struct LayoutSolver {
     }
 
     VMILayoutSupport supports;
-    FailureOr<SmallVector<VMIGroupReduceLayoutFact, mlir::pto::kValue4>> resultFacts =
-        supports.getGroupReduceLayoutFactsForLayout(
+    FailureOr<SmallVector<VMIGroupReduceLayoutFact, mlir::pto::kValue4>>
+        resultFacts = supports.getGroupReduceLayoutFactsForLayout(
             sourceType, numGroups, VMIGroupReduceLayoutPort::Result,
             fact.resultLayout);
     if (succeeded(resultFacts) && resultFacts->size() > 1) {
@@ -392,7 +406,8 @@ struct LayoutSolver {
     std::optional<int64_t> sourceGroupStride =
         getConstantIndexValue(op.getSourceGroupStride());
     if (sourceGroupStride && *sourceGroupStride == 1) {
-      return VMILayoutAttr::getGroupSlots(ctx, numGroups, /*slots=*/mlir::pto::kValue8);
+      return VMILayoutAttr::getGroupSlots(ctx, numGroups,
+                                          /*slots=*/mlir::pto::kValue8);
     }
     return VMILayoutAttr::getGroupSlots(ctx, numGroups, /*slots=*/1);
   }
@@ -409,23 +424,6 @@ struct LayoutSolver {
       return {};
     }
     return fact->layout.resultLayout;
-  }
-
-  bool hasWideningCastUser(VMIGroupBroadcastLoadOp op) {
-    auto sourceType = cast<VMIVRegType>(op.getResult().getType());
-    unsigned sourceBits =
-        pto::getPTOStorageElemBitWidth(sourceType.getElementType());
-    for (Operation *user : op.getResult().getUsers()) {
-      if (!isa<VMIExtFOp, VMIExtSIOp, VMIExtUIOp>(user)) {
-        continue;
-      }
-      auto resultType = dyn_cast<VMIVRegType>(user->getResult(0).getType());
-      if (resultType && sourceBits < pto::getPTOStorageElemBitWidth(
-                                         resultType.getElementType())) {
-        return true;
-      }
-    }
-    return false;
   }
 
   VMILayoutAttr getPreferredGroupBroadcastSourceLayout(Value value,
@@ -449,7 +447,8 @@ struct LayoutSolver {
       // packets with fewer than eight groups.  This keeps the broadcast on
       // the single-source vselr path; explicit or otherwise fixed slots=1
       // values retain their layout and use the cross-source fallback.
-      return VMILayoutAttr::getGroupSlots(ctx, numGroups, /*slots=*/mlir::pto::kValue8);
+      return VMILayoutAttr::getGroupSlots(ctx, numGroups,
+                                          /*slots=*/mlir::pto::kValue8);
     }
     if (auto load = value.getDefiningOp<VMIGroupSlotLoadOp>()) {
       return getPreferredGroupSlotLoadLayout(load);
@@ -457,8 +456,7 @@ struct LayoutSolver {
     return getPreferredGroupSlotsLayout(type, numGroups);
   }
 
-  VMILayoutAttr
-  getPreferredGroupBroadcastResultLayout(VMIGroupBroadcastOp op) {
+  VMILayoutAttr getPreferredGroupBroadcastResultLayout(VMIGroupBroadcastOp op) {
     auto type = cast<VMIVRegType>(op.getResult().getType());
     if (VMILayoutAttr existing = type.getLayoutAttr()) {
       return existing;
@@ -474,9 +472,9 @@ struct LayoutSolver {
 
     int64_t groupSize = type.getElementCount() / numGroups;
     int64_t vcgBlockElems = *lanesPerPart / 8;
-    if (type.getElementCount() < *lanesPerPart &&
-        groupSize == vcgBlockElems) {
-      return VMILayoutAttr::getContiguous(ctx, /*laneStride=*/mlir::pto::kValue2);
+    if (type.getElementCount() < *lanesPerPart && groupSize == vcgBlockElems) {
+      return VMILayoutAttr::getContiguous(ctx,
+                                          /*laneStride=*/mlir::pto::kValue2);
     }
     return {};
   }
@@ -530,8 +528,7 @@ struct LayoutSolver {
     }
 
     int64_t groupSize = type.getElementCount() / numGroups;
-    if (groupSize != mlir::pto::kValue16 &&
-        groupSize != mlir::pto::kValue32) {
+    if (groupSize != mlir::pto::kValue16 && groupSize != mlir::pto::kValue32) {
       return success();
     }
 
@@ -549,6 +546,47 @@ struct LayoutSolver {
            << " requires constant positive row_stride divisible by 8 f32 "
               "elements for the block8 stride plan; stable gather fallback is "
               "not implemented";
+  }
+
+  LogicalResult validateGroupSlotLoadLayoutDomain(VMIGroupSlotLoadOp op) {
+    auto resultType = cast<VMIVRegType>(op.getResult().getType());
+    int64_t numGroups = op.getNumGroupsAttr().getInt();
+    VMILayoutSupport supports;
+    if (VMILayoutAttr explicitLayout = resultType.getLayoutAttr()) {
+      std::string reason;
+      if (succeeded(supports.getGroupSlotLoadLayoutFact(
+              resultType, op.getSourceGroupStride(), numGroups, &reason))) {
+        return success();
+      }
+      return op.emitError() << kVMIDiagLayoutContractPrefix
+                            << "pto.vmi.group_slot_load has no registered "
+                               "layout support: "
+                            << reason;
+    }
+
+    for (int64_t slots : {int64_t(8), int64_t(1)}) {
+      VMILayoutAttr layout =
+          VMILayoutAttr::getGroupSlots(ctx, numGroups, slots);
+      auto assignedType = VMIVRegType::get(ctx, resultType.getElementCount(),
+                                           resultType.getElementType(), layout);
+      if (succeeded(supports.getGroupSlotLoadLayoutFact(
+              assignedType, op.getSourceGroupStride(), numGroups))) {
+        return success();
+      }
+    }
+
+    VMILayoutAttr diagnosticLayout =
+        VMILayoutAttr::getGroupSlots(ctx, numGroups, /*slots=*/1);
+    auto diagnosticType =
+        VMIVRegType::get(ctx, resultType.getElementCount(),
+                         resultType.getElementType(), diagnosticLayout);
+    std::string reason;
+    (void)supports.getGroupSlotLoadLayoutFact(
+        diagnosticType, op.getSourceGroupStride(), numGroups, &reason);
+    return op.emitError() << kVMIDiagLayoutContractPrefix
+                          << "pto.vmi.group_slot_load has no registered "
+                             "layout support: "
+                          << reason;
   }
 
   VMILayoutAttr getDataLayout(Value value) {
@@ -590,8 +628,7 @@ struct LayoutSolver {
       return success();
     }
     if (!layout) {
-      return op->emitError()
-             << kVMIDiagLayoutContractPrefix
+      return op->emitError() << kVMIDiagLayoutContractPrefix
              << "cannot infer concrete mask use layout";
     }
     maskUseRequests.push_back(MaskUseRequest{&operand, layout, phase});
@@ -652,10 +689,11 @@ struct LayoutSolver {
         }
         return WalkResult::advance();
       }
-      if (auto ensure = dyn_cast<VMIEnsureMaskLayoutOp>(op)) {
-        if (failed(uniteMask(ensure.getSource(), ensure.getResult(), op))) {
-          return WalkResult::interrupt();
-        }
+      if (isa<VMIEnsureMaskLayoutOp>(op)) {
+        // ensure_mask_layout is an explicit layout conversion.  Its source
+        // and result are intentionally allowed to have different layouts;
+        // treating them as equivalent here would reject the very relation
+        // that the Support table and cost model describe.
         return WalkResult::advance();
       }
       if (auto ensure = dyn_cast<VMIEnsureMaskGranularityOp>(op)) {
@@ -876,8 +914,8 @@ struct LayoutSolver {
         if (succeeded(fact)) {
           resultLayout = fact->resultLayout;
         }
-        if (failed(setPreferredLayout(fptosi.getResult(), resultLayout,
-                                      op, DataLayoutSeedPhase::Cast))) {
+        if (failed(setPreferredLayout(fptosi.getResult(), resultLayout, op,
+                                      DataLayoutSeedPhase::Cast))) {
           return WalkResult::interrupt();
         }
         return WalkResult::advance();
@@ -892,8 +930,8 @@ struct LayoutSolver {
         if (succeeded(fact)) {
           resultLayout = fact->resultLayout;
         }
-        if (failed(setPreferredLayout(fptoui.getResult(), resultLayout,
-                                      op, DataLayoutSeedPhase::Cast))) {
+        if (failed(setPreferredLayout(fptoui.getResult(), resultLayout, op,
+                                      DataLayoutSeedPhase::Cast))) {
           return WalkResult::interrupt();
         }
         return WalkResult::advance();
@@ -908,8 +946,8 @@ struct LayoutSolver {
         if (succeeded(fact)) {
           resultLayout = fact->resultLayout;
         }
-        if (failed(setPreferredLayout(sitofp.getResult(), resultLayout,
-                                      op, DataLayoutSeedPhase::Cast))) {
+        if (failed(setPreferredLayout(sitofp.getResult(), resultLayout, op,
+                                      DataLayoutSeedPhase::Cast))) {
           return WalkResult::interrupt();
         }
         return WalkResult::advance();
@@ -923,8 +961,9 @@ struct LayoutSolver {
         return WalkResult::advance();
       }
       if (auto ori = dyn_cast<VMIOrIOp>(op)) {
-        if (failed(constrainElementwiseBinary(
-                ori.getLhsMutable(), ori.getRhsMutable(), ori.getResult(), op))) {
+        if (failed(constrainElementwiseBinary(ori.getLhsMutable(),
+                                              ori.getRhsMutable(),
+                                              ori.getResult(), op))) {
           return WalkResult::interrupt();
         }
         return WalkResult::advance();
@@ -995,7 +1034,8 @@ struct LayoutSolver {
         }
         requestDataUse(vselr.getSourceMutable(), fact->sourceLayout);
         requestDataUse(vselr.getIndexMutable(), fact->indexLayout);
-        if (failed(setNaturalLayout(vselr.getResult(), fact->resultLayout, op))) {
+        if (failed(
+                setNaturalLayout(vselr.getResult(), fact->resultLayout, op))) {
           return WalkResult::interrupt();
         }
         return WalkResult::advance();
@@ -1386,9 +1426,7 @@ struct LayoutSolver {
         if (succeeded(fact)) {
           resultLayout = fact->resultLayout;
         }
-        DataLayoutSeedPhase phase =
-            succeeded(fact)
-                ? getCastSeedPhase(*fact)
+        DataLayoutSeedPhase phase = succeeded(fact) ? getCastSeedPhase(*fact)
                 : DataLayoutSeedPhase::Cast;
         if (failed(setPreferredLayout(truncf.getResult(), resultLayout, op,
                                       phase))) {
@@ -1406,9 +1444,7 @@ struct LayoutSolver {
         if (succeeded(fact)) {
           resultLayout = fact->resultLayout;
         }
-        DataLayoutSeedPhase phase =
-            succeeded(fact)
-                ? getCastSeedPhase(*fact)
+        DataLayoutSeedPhase phase = succeeded(fact) ? getCastSeedPhase(*fact)
                 : DataLayoutSeedPhase::Cast;
         if (failed(setPreferredLayout(trunci.getResult(), resultLayout, op,
                                       phase))) {
@@ -1470,8 +1506,8 @@ struct LayoutSolver {
       }
       if (auto load = dyn_cast<VMIMaskedLoadOp>(op)) {
         requestDataUse(load.getPassthruMutable(), getContiguousLayout());
-        if (failed(
-                setNaturalLayout(load.getResult(), getContiguousLayout(), op))) {
+        if (failed(setNaturalLayout(load.getResult(), getContiguousLayout(),
+                                    op))) {
           return WalkResult::interrupt();
         }
         return WalkResult::advance();
@@ -1491,8 +1527,8 @@ struct LayoutSolver {
       }
       if (auto load = dyn_cast<VMIExpandLoadOp>(op)) {
         requestDataUse(load.getPassthruMutable(), getContiguousLayout());
-        if (failed(
-                setNaturalLayout(load.getResult(), getContiguousLayout(), op))) {
+        if (failed(setNaturalLayout(load.getResult(), getContiguousLayout(),
+                                    op))) {
           return WalkResult::interrupt();
         }
         return WalkResult::advance();
@@ -1513,8 +1549,11 @@ struct LayoutSolver {
         return WalkResult::advance();
       }
       if (auto load = dyn_cast<VMIGroupSlotLoadOp>(op)) {
-        if (failed(setPreferredLayout(
-                load.getResult(), getPreferredGroupSlotLoadLayout(load), op,
+        if (failed(validateGroupSlotLoadLayoutDomain(load))) {
+          return WalkResult::interrupt();
+        }
+        if (failed(setPreferredLayout(load.getResult(),
+                                      getPreferredGroupSlotLoadLayout(load), op,
                 DataLayoutSeedPhase::GroupSlotLoad))) {
           return WalkResult::interrupt();
         }
@@ -1529,14 +1568,12 @@ struct LayoutSolver {
             succeeded(directFact) &&
             directFact->kind == VMIGroupBroadcastLoadDirectKind::BRC &&
             load.getNumGroupsAttr().getInt() == 1;
-        if (scalarBroadcast)
+        if (scalarBroadcast) {
           return WalkResult::advance();
-        DataLayoutSeedPhase phase = DataLayoutSeedPhase::Other;
-        if (succeeded(directFact)) {
-          phase = hasWideningCastUser(load)
-                      ? DataLayoutSeedPhase::GroupBroadcastLoadWidening
-                      : DataLayoutSeedPhase::GroupBroadcastLoad;
         }
+        DataLayoutSeedPhase phase =
+            succeeded(directFact) ? DataLayoutSeedPhase::GroupBroadcastLoad
+                                  : DataLayoutSeedPhase::Other;
         if (failed(setPreferredLayout(
                 load.getResult(), getPreferredGroupBroadcastLoadLayout(load),
                 op, phase))) {
@@ -1545,8 +1582,8 @@ struct LayoutSolver {
         return WalkResult::advance();
       }
       if (auto load = dyn_cast<VMIStrideLoadOp>(op)) {
-        if (failed(
-                setNaturalLayout(load.getResult(), getContiguousLayout(), op))) {
+        if (failed(setNaturalLayout(load.getResult(), getContiguousLayout(),
+                                    op))) {
           return WalkResult::interrupt();
         }
         if (failed(requestMaskUse(load.getMaskMutable(), getContiguousLayout(),
@@ -1600,8 +1637,7 @@ struct LayoutSolver {
               getPreferredDenseMaskedStoreLayout(valueType, maskType);
           if (succeeded(fact)) {
             requestDataUse(store.getValueMutable(), fact->valueLayout,
-                           /*late=*/false,
-                           DataLayoutSeedPhase::Store);
+                           /*late=*/false, DataLayoutSeedPhase::Store);
             if (failed(requestMaskUse(store.getMaskMutable(), fact->maskLayout,
                                       op, DataLayoutSeedPhase::Store))) {
               return WalkResult::interrupt();
@@ -1817,7 +1853,8 @@ struct LayoutSolver {
       if (index >= yieldOp.getNumOperands()) {
         break;
       }
-      if (failed(uniteEquivalentValues(result, yieldOp.getOperand(index), op))) {
+      if (failed(
+              uniteEquivalentValues(result, yieldOp.getOperand(index), op))) {
         return failure();
       }
     }
@@ -1829,8 +1866,8 @@ struct LayoutSolver {
       if (yieldOp->getParentOp() != executeOp.getOperation()) {
         return WalkResult::advance();
       }
-      if (failed(
-              addYieldConstraints(executeOp->getResults(), yieldOp, executeOp))) {
+      if (failed(addYieldConstraints(executeOp->getResults(), yieldOp,
+                                     executeOp))) {
         return WalkResult::interrupt();
       }
       return WalkResult::advance();
@@ -1881,7 +1918,8 @@ struct LayoutSolver {
       if (index >= dest->getNumArguments()) {
         break;
       }
-      if (failed(uniteEquivalentValues(operand, dest->getArgument(index), op))) {
+      if (failed(
+              uniteEquivalentValues(operand, dest->getArgument(index), op))) {
         return failure();
       }
     }
@@ -1993,8 +2031,7 @@ struct LayoutSolver {
           sourceType.getGranularity() != targetMaskType.getGranularity()) {
         return failure();
       }
-      return builder
-          .create<VMIEnsureMaskLayoutOp>(loc, targetMaskType, value)
+      return builder.create<VMIEnsureMaskLayoutOp>(loc, targetMaskType, value)
           .getResult();
     }
 
@@ -2045,9 +2082,8 @@ struct LayoutSolver {
         if (!isa<VMIVRegType, VMIMaskType>(targetType)) {
           continue;
         }
-        FailureOr<Value> materialized =
-            materializeLayoutValue(operand, targetType, call.getLoc(),
-                                   rewriter);
+        FailureOr<Value> materialized = materializeLayoutValue(
+            operand, targetType, call.getLoc(), rewriter);
         if (failed(materialized)) {
           return WalkResult::interrupt();
         }
@@ -2078,9 +2114,8 @@ struct LayoutSolver {
           if (!isa<VMIVRegType, VMIMaskType>(targetType)) {
             continue;
           }
-          FailureOr<Value> materialized =
-              materializeLayoutValue(operand, targetType, ret.getLoc(),
-                                     rewriter);
+          FailureOr<Value> materialized = materializeLayoutValue(
+              operand, targetType, ret.getLoc(), rewriter);
           if (failed(materialized)) {
             return WalkResult::interrupt();
           }
@@ -2215,8 +2250,7 @@ struct LayoutSolver {
     return propagator.run();
   }
 
-  LogicalResult applyLayouts() {
-    VMILayoutPropagator propagator(module);
+  void addEquivalentValues(VMILayoutPropagator &propagator) {
     for (DataNode &node : dataNodes) {
       DataNode &root = dataNodes[find(dataIds.lookup(node.value))];
       propagator.addEquivalentValues(root.value, node.value);
@@ -2225,57 +2259,245 @@ struct LayoutSolver {
       MaskNode &root = maskNodes[findMask(maskIds.lookup(node.value))];
       propagator.addEquivalentValues(root.value, node.value);
     }
-    if (failed(requestDataLayoutSeeds(propagator, DataLayoutSeedPhase::Explicit,
-                                      /*skipAlreadyRequested=*/false))) {
-      return failure();
-    }
-    for (MaskNode &node : maskNodes) {
-      MaskNode &root = maskNodes[findMask(maskIds.lookup(node.value))];
-      if (root.requestedLayout &&
-          failed(propagator.request(node.value, root.requestedLayout))) {
-        return failure();
-      }
-    }
-    if (failed(propagator.run())) {
-      return failure();
     }
 
-    for (int64_t phase = static_cast<int64_t>(DataLayoutSeedPhase::SeedStart);
-         phase < static_cast<int64_t>(DataLayoutSeedPhase::SeedEnd); ++phase) {
-      if (failed(runSeedPhase(propagator,
-                              static_cast<DataLayoutSeedPhase>(phase)))) {
-        return failure();
-      }
-    }
+  std::unique_ptr<VMILayoutPropagator> createPropagator() {
+    auto propagator = std::make_unique<VMILayoutPropagator>(module);
+    addEquivalentValues(*propagator);
+    return propagator;
+  }
 
-    for (DataUseRequest request : dataUseRequests) {
-      if (request.late &&
-          failed(propagator.request(*request.operand, request.layout))) {
+  static LogicalResult mergePlan(const VMILayoutPlan &source,
+                                 VMILayoutPlan &result) {
+    for (const auto &assignment : source.valueLayouts) {
+      auto [it, inserted] =
+          result.valueLayouts.try_emplace(assignment.first, assignment.second);
+      if (!inserted && it->second != assignment.second) {
         return failure();
       }
     }
-    if (failed(propagator.run())) {
+    for (const auto &assignment : source.useLayouts) {
+      auto [it, inserted] =
+          result.useLayouts.try_emplace(assignment.first, assignment.second);
+      if (!inserted && it->second != assignment.second) {
       return failure();
     }
+    }
+    for (const auto &selection : source.selectedRelations) {
+      auto [it, inserted] = result.selectedRelations.try_emplace(
+          selection.first, selection.second);
+      if (!inserted && it->second != selection.second) {
+        return failure();
+      }
+    }
+    return success();
+  }
 
-    for (DataNode &node : dataNodes) {
-      if (!propagator.getRequestedLayout(node.value) &&
-          failed(propagator.request(node.value, getContiguousLayout()))) {
+  FailureOr<VMILayoutPlan> selectLayoutPlan() {
+    auto selected = selectCostedVMILayoutPlans(module);
+    if (failed(selected)) {
         return failure();
       }
-    }
-    for (MaskNode &node : maskNodes) {
-      if (!propagator.getRequestedLayout(node.value) &&
-          failed(propagator.request(node.value, getContiguousLayout()))) {
-        return failure();
-      }
-    }
-    if (failed(propagator.run())) {
+    VMILayoutPlan merged;
+    for (const VMILayoutPlan &plan : selected->plans) {
+      if (failed(mergePlan(plan, merged))) {
       return failure();
     }
+    }
+    return merged;
+  }
 
+  LogicalResult applyLayouts() {
+    std::unique_ptr<VMILayoutPropagator> propagator = createPropagator();
+    FailureOr<VMILayoutPlan> plan = selectLayoutPlan();
+    if (failed(plan)) {
+        return failure();
+      }
+    if (failed(commitVMILayoutPlan(*plan, *propagator))) {
+      return failure();
+    }
+    // Structural edges do not have operation relations, but their operand
+    // uses must still match the layout of the destination value.  Record the
+    // edge requirement as a use assignment; this preserves the producer's
+    // primary layout and lets the propagator materialize one conversion at the
+    // edge when necessary.
+    LogicalResult structuralEdges = success();
+    auto matchEdge = [&](OpOperand &edge, Value destination) {
+      VMILayoutAttr layout =
+          propagator->getRequestedOrCurrentLayout(destination);
+      // Structural transport results/arguments can be untyped before this
+      // pass.  In that case the edge source is the validated layout seed;
+      // install it on the destination first, then constrain the edge use.
+      if (!layout)
+        layout = propagator->getRequestedOrCurrentLayout(edge.get());
+      if (!layout || failed(propagator->installPlanned(destination, layout)) ||
+          failed(propagator->installPlanned(edge, layout))) {
+        structuralEdges = failure();
+      }
+    };
+    module.walk([&](Operation *op) {
+      if (failed(structuralEdges)) {
+        return;
+      }
+      if (auto branch = dyn_cast<cf::BranchOp>(op)) {
+        for (auto [index, operand] : llvm::enumerate(branch.getDestOperands())) {
+          (void)operand;
+          if (index < branch.getDest()->getNumArguments()) {
+            matchEdge(branch->getOpOperand(index + 0),
+                      branch.getDest()->getArgument(index));
+          }
+        }
+      } else if (auto branch = dyn_cast<cf::CondBranchOp>(op)) {
+        unsigned trueOffset = 1;
+        for (auto [index, operand] : llvm::enumerate(branch.getTrueDestOperands())) {
+          (void)operand;
+          if (index < branch.getTrueDest()->getNumArguments()) {
+            matchEdge(branch->getOpOperand(trueOffset + index),
+                      branch.getTrueDest()->getArgument(index));
+          }
+        }
+        unsigned falseOffset = trueOffset + branch.getTrueDestOperands().size();
+        for (auto [index, operand] : llvm::enumerate(branch.getFalseDestOperands())) {
+          (void)operand;
+          if (index < branch.getFalseDest()->getNumArguments()) {
+            matchEdge(branch->getOpOperand(falseOffset + index),
+                      branch.getFalseDest()->getArgument(index));
+          }
+        }
+      } else if (auto execute = dyn_cast<scf::ExecuteRegionOp>(op)) {
+        for (Block &block : execute.getRegion()) {
+          auto yield = dyn_cast<scf::YieldOp>(block.getTerminator());
+          if (!yield) {
+            continue;
+          }
+          for (auto [index, operand] : llvm::enumerate(yield.getOperands())) {
+            (void)operand;
+            if (index < execute.getNumResults()) {
+              matchEdge(yield->getOpOperand(index), execute.getResult(index));
+            }
+          }
+        }
+      } else if (auto switchOp = dyn_cast<scf::IndexSwitchOp>(op)) {
+        SmallVector<Block *> blocks;
+        blocks.push_back(&switchOp.getDefaultBlock());
+        for (unsigned index = 0; index < switchOp.getNumCases(); ++index) {
+          blocks.push_back(&switchOp.getCaseBlock(index));
+        }
+        for (Block *block : blocks) {
+          if (!block) {
+            continue;
+          }
+          auto yield = dyn_cast<scf::YieldOp>(block->getTerminator());
+          if (!yield) {
+            continue;
+          }
+          for (auto [index, operand] : llvm::enumerate(yield.getOperands())) {
+            (void)operand;
+            if (index < switchOp.getNumResults()) {
+              matchEdge(yield->getOpOperand(index), switchOp.getResult(index));
+            }
+          }
+        }
+      }
+    });
+    if (failed(structuralEdges)) {
+      return failure();
+    }
+    // Structural operations are intentionally absent from the relation graph.
+    // Seed only their still-unassigned transport values here; an existing
+    // solver assignment always wins and is never replaced by this ABI
+    // fallback.
+    LogicalResult structuralValues = success();
+    module.walk([&](Operation *op) {
+      if (failed(structuralValues) ||
+          !isa<scf::IfOp, scf::ForOp, scf::WhileOp, scf::YieldOp,
+               scf::ConditionOp, cf::BranchOp, cf::CondBranchOp, cf::SwitchOp,
+               func::CallOp, func::ReturnOp>(op)) {
+        return;
+      }
+      auto seed = [&](Value value) {
+        if (!value || !isa<VMIVRegType, VMIMaskType>(value.getType()) ||
+            propagator->getRequestedOrCurrentLayout(value)) {
+          return;
+        }
+        structuralValues = propagator->installPlanned(
+            value, VMILayoutAttr::getContiguous(value.getContext()));
+      };
+      for (Value operand : op->getOperands()) {
+        seed(operand);
+      }
+      if (isa<scf::WhileOp>(op)) {
+        for (Value result : op->getResults()) {
+          seed(result);
+        }
+      }
+    });
+    if (failed(structuralValues)) {
+      return failure();
+    }
+    LogicalResult structuralLoops = success();
+    module.walk([&](scf::WhileOp whileOp) {
+      if (failed(structuralLoops)) {
+        return;
+      }
+      structuralLoops = VMIControlFlowSupport::addWhileConstraints(
+          whileOp, [&](Value lhs, Value rhs, Operation *) {
+            VMILayoutAttr lhsLayout =
+                propagator->getRequestedOrCurrentLayout(lhs);
+            VMILayoutAttr rhsLayout =
+                propagator->getRequestedOrCurrentLayout(rhs);
+            VMILayoutAttr layout = lhsLayout ? lhsLayout : rhsLayout;
+            if (!layout) {
+              return success();
+            }
+            if (failed(propagator->installPlanned(lhs, layout)) ||
+                failed(propagator->installPlanned(rhs, layout))) {
+              return failure();
+            }
+            return success();
+          });
+    });
+    if (failed(structuralLoops)) {
+      return failure();
+    }
+    // CFG block arguments are structural transport values and are not
+    // selected operation relations.  Give an untyped transport argument the
+    // stable dense primary layout; branch operands remain hard-equal to the
+    // destination argument and are not independently re-selected here.
+    LogicalResult transportArgs = success();
+    module.walk([&](Operation *op) {
+      if (failed(transportArgs)) {
+        return;
+      }
+      for (Region &region : op->getRegions()) {
+        for (Block &block : region) {
+          for (BlockArgument arg : block.getArguments()) {
+            if (!isa<VMIVRegType, VMIMaskType>(arg.getType()) ||
+                getExplicitLayout(arg.getType())) {
+              continue;
+            }
+            if (propagator->getRequestedOrCurrentLayout(arg)) {
+              continue;
+            }
+            if (failed(propagator->installPlanned(
+                    arg, VMILayoutAttr::getContiguous(arg.getContext())))) {
+              transportArgs = failure();
+              return;
+            }
+          }
+        }
+    }
+    });
+    if (failed(transportArgs)) {
+      return failure();
+    }
+    // The cost plan is the sole layout decision.  The propagator has already
+    // performed the read-only constraint propagation required by the plan in
+    // commitVMILayoutPlan; submitting the legacy priority seeds here would
+    // select a second, potentially different layout after the plan was
+    // committed.
     IRRewriter rewriter(ctx);
-    return propagator.apply(rewriter);
+    return propagator->apply(rewriter);
   }
 
   void rewriteFunctionType() {
