@@ -1385,7 +1385,13 @@ static LogicalResult populateMainLoweringPasses(PassManager &pm,
   if (effectiveBackend == PTOBackend::EmitC) {
     pm.addPass(createNarrowUnusedMultiResultProvenancePass());
   }
+  return success();
+}
 
+// Backend-agnostic cleanup after the shared lowering. --emit-pto-ir stops
+// before this segment: the IR dump reflects the shared lowering only.
+static LogicalResult appendMainLoweringTailPasses(PassManager &pm,
+                                                  PTOBackend effectiveBackend) {
   pm.addPass(createCSEPass());
   // PTODSL backend helpers already use the tile-native ABI.
   pm.addPass(pto::createPTOInlineBackendHelpersPass());
@@ -1446,6 +1452,8 @@ static LogicalResult runMainLoweringPipeline(
     return failure();
   }
 
+  // --emit-pto-ir dumps the module after the shared lowering segment only;
+  // the backend tail (CSE / helper inlining) is intentionally not run.
   if (emitMlirIR) {
     if (failed(pm.run(*module))) {
       llvm::errs() << "Error: Pass execution failed.\n";
@@ -1458,6 +1466,10 @@ static LogicalResult runMainLoweringPipeline(
     handled = true;
     exitCode = 0;
     return success();
+  }
+
+  if (failed(appendMainLoweringTailPasses(pm, effectiveBackend))) {
+    return failure();
   }
 
   if (effectiveBackend == PTOBackend::VPTO) {
