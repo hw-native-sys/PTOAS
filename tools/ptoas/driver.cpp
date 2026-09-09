@@ -92,15 +92,29 @@ static mlir::pto::CANNVersion selectEffectiveOutputCANNVersion(
   return overrideVersion.value_or(detectedVersion);
 }
 
-static bool hasCLIOption(int argc, char **argv, llvm::StringRef option) {
+static bool hasCLIOption(const std::vector<std::string> &args,
+                         llvm::StringRef option) {
   const std::string optionWithValue = (option + "=").str();
-  for (int i = 1; i < argc; ++i) {
-    llvm::StringRef arg(argv[i]);
+  for (size_t i = 1; i < args.size(); ++i) {
+    llvm::StringRef arg(args[i]);
     if (arg == option || arg.starts_with(optionWithValue)) {
       return true;
     }
   }
   return false;
+}
+
+// Bridges a string-vector command line to the char** form the LLVM
+// command-line parser consumes. The backing strings outlive the bridge
+// because the caller owns the vector.
+static std::vector<const char *>
+toCommandLineViews(const std::vector<std::string> &args) {
+  std::vector<const char *> views;
+  views.reserve(args.size());
+  for (const std::string &arg : args) {
+    views.push_back(arg.c_str());
+  }
+  return views;
 }
 
 static std::string normalizePTOASArch(llvm::StringRef archValue) {
@@ -772,17 +786,13 @@ static LogicalResult emitVPTOLLVMFatobj(
     llvm::StringRef outputPath);
 
 mlir::pto::PTOASContext::PTOASContext(DialectRegistry &registry,
-                                      llvm::StringRef outputPath, int argc,
-                                      char **argv)
+                                      llvm::StringRef outputPath)
     : ownedMlirContext(std::make_unique<MLIRContext>(registry)),
-      mlirContext(ownedMlirContext.get()), outputPath(outputPath.str()),
-      argc(argc), argv(argv) {}
+      mlirContext(ownedMlirContext.get()), outputPath(outputPath.str()) {}
 
-mlir::pto::PTOASContext::PTOASContext(
-    MLIRContext &borrowedContext, llvm::StringRef outputPath, int argc,
-    char **argv)
-    : mlirContext(&borrowedContext), outputPath(outputPath.str()), argc(argc),
-      argv(argv) {}
+mlir::pto::PTOASContext::PTOASContext(MLIRContext *borrowedContext,
+                                      llvm::StringRef outputPath)
+    : mlirContext(borrowedContext), outputPath(outputPath.str()) {}
 
 mlir::pto::PTOASContext::~PTOASContext() = default;
 
@@ -795,14 +805,16 @@ mlir::pto::PTOASContext::initializeEnvironment(bool requiresToolchain,
   return success();
 }
 
-void mlir::pto::PTOASContext::initializeMLIRContext() {
+void mlir::pto::PTOASContext::initializeMLIRContext() const {
   // Be tolerant: ptobc decode may materialize ops from dialects that aren't
   // explicitly registered/loaded in this tool yet.
   mlirContext->allowUnregisteredDialects(true);
   mlir::pto::loadPTOASDialects(*mlirContext);
 }
 
-MLIRContext &mlir::pto::PTOASContext::getMLIRContext() { return *mlirContext; }
+MLIRContext &mlir::pto::PTOASContext::getMLIRContext() const {
+  return *mlirContext;
+}
 
 void mlir::pto::PTOASContext::setArch(std::string value) {
   arch = std::move(value);
@@ -831,10 +843,6 @@ void mlir::pto::PTOASContext::setOutputCANNVersionOverride(
     std::optional<CANNVersion> value) {
   outputCANNVersionOverride = std::move(value);
 }
-
-int mlir::pto::PTOASContext::getArgc() const { return argc; }
-
-char **mlir::pto::PTOASContext::getArgv() const { return argv; }
 
 llvm::StringRef mlir::pto::PTOASContext::getOutputPath() const {
   return outputPath;
@@ -1421,8 +1429,8 @@ struct DriverInvocationOptions {
 };
 
 static FailureOr<DriverInvocationOptions>
-parseDriverInvocation(int argc, char **argv, DialectRegistry &registry,
-                      MLIRContext *borrowedContext) {
+parseDriverInvocation(const std::vector<std::string> &args,
+                      DialectRegistry &registry, MLIRContext *borrowedContext) {
   mlir::pto::registerPTOASDialects(registry);
   if (borrowedContext) {
     borrowedContext->appendDialectRegistry(registry);
@@ -1436,9 +1444,11 @@ parseDriverInvocation(int argc, char **argv, DialectRegistry &registry,
   llvm::cl::ResetAllOptionOccurrences();
 
   DriverInvocationOptions options;
-  options.cliArchSpecified = hasCLIOption(argc, argv, "--pto-arch");
-  options.cliBackendSpecified = hasCLIOption(argc, argv, "--pto-backend");
-  llvm::cl::ParseCommandLineOptions(argc, argv, "PTO Assembler (ptoas)\n");
+  options.cliArchSpecified = hasCLIOption(args, "--pto-arch");
+  options.cliBackendSpecified = hasCLIOption(args, "--pto-backend");
+  std::vector<const char *> argViews = toCommandLineViews(args);
+  llvm::cl::ParseCommandLineOptions(static_cast<int>(argViews.size()),
+                                    argViews.data(), "PTO Assembler (ptoas)\n");
   if (!parseRequestedOutputCANNVersion(mlir::pto::cannOutputVersion,
                                        options.outputCANNVersionOverride,
                                        llvm::errs())) {
@@ -1449,15 +1459,12 @@ parseDriverInvocation(int argc, char **argv, DialectRegistry &registry,
 
 static std::unique_ptr<PTOASContext>
 createDriverContext(DialectRegistry &registry, MLIRContext *borrowedContext,
-                    int argc, char **argv,
                     const DriverInvocationOptions &options) {
   std::unique_ptr<PTOASContext> context;
   if (borrowedContext) {
-    context = std::make_unique<PTOASContext>(*borrowedContext, outputFilename,
-                                             argc, argv);
+    context = std::make_unique<PTOASContext>(borrowedContext, outputFilename);
   } else {
-    context =
-        std::make_unique<PTOASContext>(registry, outputFilename, argc, argv);
+    context = std::make_unique<PTOASContext>(registry, outputFilename);
   }
   context->setOutputCANNVersionOverride(options.outputCANNVersionOverride);
   context->setVFSIMTSizeFixMode(mlir::pto::vptoFixVFSIMTSize);
@@ -1507,16 +1514,16 @@ static int finishDriverResult(const mlir::pto::PTOASCompileResult &result,
   return 1;
 }
 
-static int runPTOASDriver(int argc, char **argv,
+static int runPTOASDriver(const std::vector<std::string> &args,
                           MLIRContext *borrowedContext = nullptr) {
   DialectRegistry registry;
   FailureOr<DriverInvocationOptions> options =
-      parseDriverInvocation(argc, argv, registry, borrowedContext);
+      parseDriverInvocation(args, registry, borrowedContext);
   if (failed(options)) {
     return 1;
   }
   std::unique_ptr<PTOASContext> context =
-      createDriverContext(registry, borrowedContext, argc, argv, *options);
+      createDriverContext(registry, borrowedContext, *options);
   OwningOpRef<ModuleOp> module =
       loadDriverModule(*context, options->cliArchSpecified);
   if (!module || failed(configureDriverBackend(
@@ -1531,10 +1538,16 @@ static int runPTOASDriver(int argc, char **argv,
 }
 
 int mlir::pto::runPTOAS(int argc, char **argv) {
-  return runPTOASDriver(argc, argv);
+  return runPTOASDriver(std::vector<std::string>(argv, argv + argc));
 }
 
 int mlir::pto::runPTOAS(int argc, char **argv,
                         MLIRContext &borrowedContext) {
-  return runPTOASDriver(argc, argv, &borrowedContext);
+  return runPTOASDriver(std::vector<std::string>(argv, argv + argc),
+                        &borrowedContext);
+}
+
+int mlir::pto::runPTOAS(const std::vector<std::string> &args,
+                        MLIRContext &borrowedContext) {
+  return runPTOASDriver(args, &borrowedContext);
 }

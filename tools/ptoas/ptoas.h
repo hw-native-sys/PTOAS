@@ -12,6 +12,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 #include "ObjectEmission.h"
 #include "PTO/Compiler/CompilerApi.h"
 #include "PTO/Transforms/VPTOLLVMEmitter.h"
@@ -60,17 +61,21 @@ enum class PTOASCompileResultKind {
 
 class PTOASContext {
 public:
-  PTOASContext(DialectRegistry &registry, llvm::StringRef outputPath, int argc,
-               char **argv);
-  PTOASContext(MLIRContext &borrowedContext, llvm::StringRef outputPath,
-               int argc, char **argv);
+  PTOASContext(DialectRegistry &registry, llvm::StringRef outputPath);
+  // `borrowedContext` is a non-owning, mutable borrow: PTOAS dialect loading
+  // mutates the caller's context, hence a pointer rather than a const ref.
+  PTOASContext(MLIRContext *borrowedContext, llvm::StringRef outputPath);
   ~PTOASContext();
 
   LogicalResult initializeEnvironment(bool requiresToolchain,
                                       llvm::raw_ostream &diagOS);
-  void initializeMLIRContext();
+  // Loads the PTOAS dialects into the borrowed context (shallow-const: the
+  // pointed-to context is intentionally mutated).
+  void initializeMLIRContext() const;
 
-  MLIRContext &getMLIRContext();
+  // Returns the borrowed context; the reference stays mutable by design so
+  // driver callers can parse and lower into it.
+  MLIRContext &getMLIRContext() const;
 
   void setArch(std::string value);
   llvm::StringRef getArch() const;
@@ -80,9 +85,6 @@ public:
 
   void setVFSIMTSizeFixMode(VFSIMTSizeFixMode value);
   VFSIMTSizeFixMode getVFSIMTSizeFixMode() const;
-
-  int getArgc() const;
-  char **getArgv() const;
 
   llvm::StringRef getOutputPath() const;
   std::string allocModuleId() const;
@@ -102,8 +104,6 @@ private:
   std::string arch;
   BackendInfo backendInfo;
   VFSIMTSizeFixMode vfsimtSizeFixMode = VFSIMTSizeFixMode::Auto;
-  int argc = 0;
-  char **argv = nullptr;
   CANNVersion cannVersion = kDefaultCANNVersion;
   std::optional<CANNVersion> outputCANNVersionOverride;
   std::optional<CANNToolchain> toolchain;
@@ -140,6 +140,10 @@ void loadPTOASDialects(MLIRContext &context);
 PTOAS_COMPILER_EXPORT int runPTOAS(int argc, char **argv);
 PTOAS_COMPILER_EXPORT int
 runPTOAS(int argc, char **argv, MLIRContext &borrowedContext);
+// String-vector variant used by the Python binding; the char* bridging to
+// the LLVM command-line parser stays internal to the driver.
+PTOAS_COMPILER_EXPORT int
+runPTOAS(const std::vector<std::string> &args, MLIRContext &borrowedContext);
 
 // Attach textual-.pto SSA name hints (function args, block args, op results)
 // to the parsed module's Locations as debug metadata. Called by the driver

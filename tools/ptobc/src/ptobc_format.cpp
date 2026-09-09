@@ -219,7 +219,8 @@ std::string canonicalizeIoPath(const std::string& path) {
 }
 
 std::vector<uint8_t> readFile(const std::string& path) {
-  std::ifstream ifs(canonicalizeIoPath(path), std::ios::binary);
+  const std::string canonicalPath = canonicalizeIoPath(path);
+  std::ifstream ifs(canonicalPath, std::ios::binary);
   if (!ifs) {
     throw std::runtime_error("Failed to open: " + path);
   }
@@ -228,7 +229,8 @@ std::vector<uint8_t> readFile(const std::string& path) {
 }
 
 void writeFile(const std::string& path, const std::vector<uint8_t>& data) {
-  std::ofstream ofs(canonicalizeIoPath(path), std::ios::binary);
+  const std::string canonicalPath = canonicalizeIoPath(path);
+  std::ofstream ofs(canonicalPath, std::ios::binary);
   if (!ofs) {
     throw std::runtime_error("Failed to write: " + path);
   }

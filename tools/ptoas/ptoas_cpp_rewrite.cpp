@@ -222,16 +222,10 @@ void rewriteAsyncEventMarkers(std::string &cpp) {
                                  "session", 1);
 }
 
-// --------------------------------------------------------------------------
-// EmitC cleanup: drop trivial emitc.expression ops.
-// After FormExpressions + CSE, EmitC expressions can become invalid in two
-// ways:
-//   1. the root op is CSE'd away, leaving an empty expression region
-//   2. the region degenerates to `emitc.yield %outer_value`, i.e. the yielded
-//      value is defined outside the expression body
-// Both cases crash mlir::emitc::translateToCpp because ExpressionOp expects a
+// Drop trivial emitc.expression ops: after FormExpressions + CSE the root op
+// may be CSE-d away (empty region) or the region may degenerate to yielding a
+// value defined outside the body; both crash translateToCpp, which expects a
 // root op defined within the region.
-// --------------------------------------------------------------------------
 void dropEmptyEmitCExpressions(Operation *rootOp) {
   llvm::SmallVector<emitc::ExpressionOp, kEmptyExpressionInlineCapacity>
       toErase;
