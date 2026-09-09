@@ -24,6 +24,7 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "mlir/IR/OpImplementation.h"
+#include "mlir/Interfaces/InferIntRangeInterface.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/AsmState.h"
@@ -65,3 +66,51 @@
 #include "Parts/PTOOpsPart12.cpp"
 #include "Parts/PTOOpsPart13.cpp"
 #include "Parts/PTOOpsPart14.cpp"
+//===----------------------------------------------------------------------===//
+// InferIntRangeInterface: PTO runtime query ops (i64)
+//===----------------------------------------------------------------------===//
+
+// get_block_idx returns the linear index of the current block within the task,
+// documented as [0, BlockNum - 1]. BlockNum is a runtime launch parameter with
+// no static IR representation, so report the conservative non-negative range
+// [0, INT64_SIGNED_MAX] (signed max, not unsigned max: a sign flip in the
+// unsigned range would widen the signed part back to the full range and carry
+// no non-negative information).
+void pto::GetBlockIdxOp::inferResultRanges(
+    ::llvm::ArrayRef<::mlir::ConstantIntRanges> operandRanges,
+    ::mlir::SetIntRangeFn setResultRange) {
+  setResultRange(
+      getResult(),
+      ConstantIntRanges::fromUnsigned(APInt::getMinValue(64),
+                                      APInt::getSignedMaxValue(64)));
+}
+
+// get_subblock_idx returns the vector-core ID, documented as [0, 1].
+void pto::GetSubBlockIdxOp::inferResultRanges(
+    ::llvm::ArrayRef<::mlir::ConstantIntRanges> operandRanges,
+    ::mlir::SetIntRangeFn setResultRange) {
+  setResultRange(getResult(),
+                 ConstantIntRanges::fromUnsigned(APInt(64, 0),
+                                                 APInt(64, 1)));
+}
+
+// Block/subblock counts are non-negative. Do NOT claim >= 1: existing
+// kernels guard with `cmpi sge block_num, 1` and rely on that comparison
+// staying dynamic (a >= 1 range would fold the guard away).
+void pto::GetBlockNumOp::inferResultRanges(
+    ::llvm::ArrayRef<::mlir::ConstantIntRanges> operandRanges,
+    ::mlir::SetIntRangeFn setResultRange) {
+  setResultRange(
+      getResult(),
+      ConstantIntRanges::fromUnsigned(APInt::getMinValue(64),
+                                      APInt::getSignedMaxValue(64)));
+}
+
+void pto::GetSubBlockNumOp::inferResultRanges(
+    ::llvm::ArrayRef<::mlir::ConstantIntRanges> operandRanges,
+    ::mlir::SetIntRangeFn setResultRange) {
+  setResultRange(
+      getResult(),
+      ConstantIntRanges::fromUnsigned(APInt::getMinValue(64),
+                                      APInt::getSignedMaxValue(64)));
+}

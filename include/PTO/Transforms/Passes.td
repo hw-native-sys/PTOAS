@@ -624,6 +624,29 @@ def PTOCanonicalizeIR : Pass<"pto-canonicalize-ir", "func::FuncOp"> {
   ];
 }
 
+def PTOArithRangeOptimize : Pass<"pto-arith-range-optimize", ""> {
+  let summary = "Run integer-range-driven arith optimizations on PTO IR";
+  let description = [{
+    Runs the upstream arith integer-range optimizations
+    (mlir::createIntRangeOptimizationsPass and
+    mlir::createArithUnsignedWhenEquivalentPass) followed by a
+    canonicalization round. Hardware SIMT ID queries (pto.get_tid_x/y/z,
+    pto.get_block_idx_x/y/z, pto.get_block_dim_x/y/z, pto.get_grid_dim_x/y/z,
+    pto.get_veccoreid, pto.get_laneid) implement InferIntRangeInterface with
+    non-negative result ranges, which lets those passes prove
+    signed-vs-unsigned equivalence and, for example, rewrite
+    arith.floordivsi/remsi by a power of two into unsigned div/rem forms that
+    the LLVM backend folds into shifts/masks.
+
+    Ops whose range cannot be proven are left unchanged.
+  }];
+  let constructor = "mlir::pto::createPTOArithRangeOptimizePass()";
+  let dependentDialects = [
+    "mlir::pto::PTODialect",
+    "mlir::arith::ArithDialect"
+  ];
+}
+
 def LowerPTOToUBufOps : Pass<"pto-lower-to-ubuf-ops", "mlir::func::FuncOp"> {
   let summary = "Lower eligible pto.tadd/tsub/tmul/tdiv to pto.ub.vadd/vsub/vmul/vdiv on a2a3 targets";
   let description = [{

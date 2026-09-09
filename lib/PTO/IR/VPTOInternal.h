@@ -23,6 +23,7 @@
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
+#include "mlir/Interfaces/InferIntRangeInterface.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/SmallPtrSet.h"

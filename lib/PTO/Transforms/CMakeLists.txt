@@ -157,6 +157,7 @@ add_mlir_dialect_library(PTOTransforms
   InferPTOLayout.cpp
   Lowering/PTOA5NormalizeTMovPass.cpp
   Lowering/PTORemoveIdentityTMov.cpp
+  Lowering/PTOArithRangeOptimize.cpp
   Lowering/PTOCanonicalizeIR.cpp
   Lowering/BufferizableOpInterfaceImpl.cpp
   Lowering/ConvertToPTOOp.cpp

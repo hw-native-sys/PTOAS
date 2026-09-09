@@ -1249,6 +1249,16 @@ public:
     Value result = call.getResult(0);
     if (isSimtEntry) {
       result = rewriter.create<arith::ExtUIOp>(op.getLoc(), resultType, result);
+    } else {
+      // The AIC-orchestrator path must keep the 64-bit query intrinsic (the
+      // 32-bit tpe form is only legal inside simt_entry functions), but the
+      // block index is a 32-bit quantity. Round the value through i32 so the
+      // surrounding arithmetic folds on 32-bit facts, matching how the CCE
+      // frontend treats __builtin_cce_get_block_idx as int32_t.
+      Value narrowed = rewriter.create<arith::TruncIOp>(
+          op.getLoc(), rewriter.getI32Type(), result);
+      result =
+          rewriter.create<arith::ExtUIOp>(op.getLoc(), resultType, narrowed);
     }
     rewriter.replaceOp(op, result);
     return success();

@@ -55,7 +55,8 @@ module attributes {pto.target_arch = "a5"} {
 // CHECK: scf.for
 // CHECK-NEXT: pto.vecscope {
 // CHECK-NOT: pto.get_block_idx
-// CHECK: arith.floordivsi %[[BLOCK_IDX]]
+// CHECK: arith.divui %[[BLOCK_IDX]]
+// (floordivsi becomes divui: get_block_idx is non-negative)
 // CHECK: scf.if
 // CHECK: pto.vlds
 // CHECK: pto.vsts
@@ -65,7 +66,8 @@ module attributes {pto.target_arch = "a5"} {
 // CHECK: %[[BLOCK_NUM:.*]] = pto.get_block_num
 // CHECK-NEXT: pto.vecscope {
 // CHECK-NOT: pto.get_block_num
-// CHECK: arith.cmpi sge, %[[BLOCK_NUM]]
+// CHECK: arith.cmpi {{sge|uge}}, %[[BLOCK_NUM]]
+// (sge becomes uge when both operands are provably non-negative)
 // CHECK: scf.if
 // CHECK: pto.vlds
 // CHECK: pto.vsts
