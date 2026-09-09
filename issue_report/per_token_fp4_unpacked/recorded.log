@@ -1,0 +1,3 @@
+=== per_token FP4 unpacked ===
+FAIL AssertionError: packed UE8M0 required for FP4
+# 2026-09-10 compile-probe

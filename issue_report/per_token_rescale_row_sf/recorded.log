@@ -1,0 +1,4 @@
+=== per_token rescale row-major ===
+Fused compile skipped (not TMA-(32,32)); compose path used.
+Classifier: TODO(impl) other layouts still compose (SF off-by-one)
+# 2026-09-10 compile-probe; compose also needs NPU for get_num_vec_cores

@@ -1,0 +1,3 @@
+=== per_token H=128 TMA packed ===
+FAIL AssertionError: VMI per-token cast needs hidden % 256 == 0
+# 2026-09-10 compile-probe, no device (assert before TileLang)

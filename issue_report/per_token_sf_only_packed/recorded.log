@@ -1,0 +1,3 @@
+=== per_token sf_only packed ===
+FAIL AssertionError: sf_only/cast_only require unpacked SF
+# 2026-09-10 compile-probe

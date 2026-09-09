@@ -4,7 +4,7 @@ PTOAS `b465f26b`, CANN 9.2.0, TileLang `5038c468`, A5.
 
 TileKernels-vmi coverage treats a variant as **ported only when every ASC-supported config of that variant has a working in-kernel VMI counterpart**. Host-pad is not a port unless ASC also host-pads. Shape-specific leftovers and in-code gates therefore stay `TODO(impl)`. Isolated legal-VMI attempts (fused last-wave / even-split / stages=1; compose via `cast_back` TMA npt=1; in-kernel e4m3 tail `vbrc`/`T.clear`) did not close the new rows.
 
-The original three `#7` `cast_back` dirs are unchanged. Three new dirs record leftovers that the old “any shape pass” rule hid.
+The original three `#7` `cast_back` dirs are unchanged. Later dirs record leftovers that in-code gates or the old “any shape pass” rule hid.
 
 Each directory has legal desired VMI (`desired_vmi.ptodsl.py` = production dump), TileLang PTODSL dump, Nightly ASC C++ when available (`asc_reference.cpp`), `run_repro.sh`, and recorded logs.
 
@@ -18,8 +18,17 @@ Each directory has legal desired VMI (`desired_vmi.ptodsl.py` = production dump)
 | `per_channel_tma_in_large_shape` | e4m3 rescale TMA-col **input** SF, large tiles | fused 512×7168 last-wave mismatch; compose inherits TMA npt=1 |
 | `per_token_fp4_rescale_m8001` | fused rescale M=8001 (ASC ceildiv, no host pad) | `vbrc(f8e4m3(0))` / `T.clear` e4m3 UB do not lower |
 | `per_block_h384` | per_block H=384 128-strip (ASC align-128, no host pad) | TileLang OK, PTOAS `VMI-RESIDUAL-OP` |
+| `per_token_h128_h384` | per_token Nightly L1 H=128/384 (ASC `%128`) | `hidden % 256 == 0` assert; no 128-strip |
+| `per_token_tma_unpacked` | per_token TMA-col unpacked SF | assert (packed required); host permute is not a port |
+| `per_token_fp4_unpacked` | per_token FP4 unpacked SF | assert (packed UE8M0 cast only) |
+| `per_token_sf_only_packed` | per_token sf_only+packed | assert (sf_only unpacked only) |
+| `per_token_rescale_row_sf` | per_token rescale non-a5 / row-major | compose SF off-by-one vs ASC fused |
+| `per_channel_rescale_unpacked_in` | per_channel L1 unpacked row-major in-SF | assert (packed input SF required) |
+| `per_block_sf_only_packed_fp32` | per_block sf_only+packed fp32 | launch OK, 1024-byte SF mismatch (bf16 path is ported) |
 
 Maps to [cann/pto-as issue #7](https://gitcode.com/cann/pto-as/issues/7) for the `cast_back` 1×T leftovers. The per_channel TMA-in large-shape case is a Persistent remainder / periodic-wave lowering leftover on the same legal 1×T unpack (not a VMI host permute).
+
+Nightly L1 leftovers above are now matrix `TODO(impl)` rows so they cannot be silently dropped. `per_block` bf16 `sf_only+packed` (row and TMA) is a new in-kernel port (bitwise vs ASC); fp32 of that mode stays leftover.
 
 `per_token` has 12 ASC a5 FP4 TMA rescale rows at M=8001 (`8001 % 16 == 1`). ASC uses in-kernel `ceildiv` (no host pad). VMI cannot lower an e4m3/e2m1 last-tile zero (`vbrc(f8e4m3(0))` / `T.clear` fp8). Those 4 variants are **TODO(impl)** — see `per_token_fp4_rescale_m8001/`.
 
