@@ -1,0 +1,68 @@
+from ptodsl import pto, scalar
+from tilelang.contrib.ptodsl.dcache_bypass import (
+  pto_read_gm_bypass_dcache as _tl_pto_read_gm_bypass_dcache,
+  pto_write_gm_bypass_dcache as _tl_pto_write_gm_bypass_dcache,
+)
+from tilelang.contrib.ptodsl.simt import (
+  scalar_div as _tl_scalar_div,
+  scalar_rsqrt as _tl_scalar_rsqrt,
+  simt_allreduce_max as _tl_simt_allreduce_max,
+  simt_allreduce_min as _tl_simt_allreduce_min,
+  simt_allreduce_sum as _tl_simt_allreduce_sum,
+  vectorize_binary_f32x2 as _tl_vectorize_binary_f32x2,
+  vectorize_unary_f32x2 as _tl_vectorize_unary_f32x2,
+)
+from ptodsl._ops import _coerce_i64 as _tl_coerce_i64
+from ptodsl._surface_values import wrap_surface_value as _tl_wrap_surface_value
+
+@pto.jit(name="main_kernel", kernel_kind="vector", target="a5", mode="explicit")
+def main_kernel(out: pto.ptr(pto.bf16, "gm"), x: pto.ptr(pto.f8e4m3, "gm"), x_sf: pto.ptr(pto.ui8, "gm"), num_tokens: pto.si32, sf_extent: pto.si32, sf_stride: pto.si32):
+  buf_dyn_shmem = pto.castptr(pto.const(0, dtype=pto.i64), pto.ptr(pto.ui8, "ub"))
+  x_ub_version_counter_1 = pto.const(0, dtype=pto.int64)
+  pto.set_flag("MTE3", "V", event_id=0)
+  pto.set_flag("MTE3", "V", event_id=1)
+  pto.set_flag("V", "MTE2", event_id=0)
+  pto.set_flag("V", "MTE2", event_id=1)
+  pto.set_flag("V", "MTE2", event_id=2)
+  x_ub_version_counter_1 = _tl_wrap_surface_value(_tl_coerce_i64(0, context="PTO local.var store"))
+  for w in range(0, ((num_tokens + 4607) // 4608), 1):
+    __cond_0 = ((w * 72) + pto.get_block_idx()) < ((num_tokens + 63) // 64)
+    if ((w * 72) + pto.get_block_idx()) < ((num_tokens + 63) // 64):
+      for pid_k in range(0, 4, 1):
+        pto.wait_flag("V", "MTE2", event_id=x_ub_version_counter_1 & 1)
+        pto.mte_gm_ub(pto.addptr(x, ((scalar.cast(w, pto.si64) * 9437184) + (scalar.cast(pto.get_block_idx(), pto.si64) * 131072)) + (scalar.cast(pid_k, pto.si64) * 512)), pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.f8e4m3, "ub")), (x_ub_version_counter_1 & 1) * 32768), 0, 512, nburst=(scalar.min(64, scalar.max(((num_tokens - (pto.get_block_idx() * 64)) - (w * 4608)), 0)), 2048, 512))
+        pto.wait_flag("V", "MTE2", event_id=2)
+        if 0 < ((sf_extent - (pto.get_block_idx() * 64)) - (w * 4608)):
+          pto.mte_gm_ub(pto.addptr(x_sf, (scalar.cast(pid_k, pto.si64) * 16) + (((scalar.cast(w, pto.si64) * 4608) + (scalar.cast(pto.get_block_idx(), pto.si64) * 64)) * scalar.cast(sf_stride, pto.si64))), pto.addptr(buf_dyn_shmem, 65536), 0, 16, nburst=(scalar.min(64, ((sf_extent - (pto.get_block_idx() * 64)) - (w * 4608))), sf_stride, 32))
+        pto.set_flag("MTE2", "V", event_id=0)
+        pto.wait_flag("MTE2", "V", event_id=0)
+        with pto.vecscope():
+          mask = pto.vmi.create_mask(128, size=128)
+          nan_u16 = pto.vmi.vbrc(pto.ui16(32704), size=128)
+          for chunk in range(0, 8, 1):
+            u16 = pto.vmi.vcvt(pto.vmi.vload(pto.addptr(buf_dyn_shmem, 65536), (chunk * 256), size=128), to_dtype=pto.ui16)
+            shifted = pto.vmi.vshls(u16, 7, mask)
+            is_inf = pto.vmi.vcmps(shifted, 32640, mask, "eq")
+            pto.vmi.vstore(pto.vmi.vinterpret_cast(pto.vmi.vsel(is_inf, nan_u16, shifted), to_dtype=pto.bf16), pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.bf16, "ub")), 33792), (chunk * 512), mask)
+        pto.set_flag("V", "MTE2", event_id=2)
+        pto.wait_flag("MTE3", "V", event_id=x_ub_version_counter_1 & 1)
+        with pto.vecscope():
+          mask_1 = pto.vmi.create_mask(128, size=128)
+          for row in range(0, 64, 1):
+            for half in range(0, 4, 1):
+              scale = pto.vmi.vbrc(pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.bf16, "ub")), 33792), ((row * 64) + (half * 4)), group=4, size=4, stride=1), group=4, size=128)
+              source = pto.vmi.vload(pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.f8e4m3, "ub")), (x_ub_version_counter_1 & 1) * 32768), ((row * 512) + (half * 128)), size=128)
+              value = pto.vmi.vcvt(source, to_dtype=pto.f32)
+              scale_f32 = pto.vmi.vcvt(scale, to_dtype=pto.f32)
+              pto.vmi.vstore(pto.vmi.vcvt(pto.vmi.vmul(value, scale_f32, mask_1), to_dtype=pto.bf16), pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.bf16, "ub")), ((x_ub_version_counter_1 & 1) * 32768) + 37888), ((row * 512) + (half * 128)), mask_1)
+        pto.set_flag("V", "MTE3", event_id=x_ub_version_counter_1 & 1)
+        pto.set_flag("V", "MTE2", event_id=x_ub_version_counter_1 & 1)
+        pto.wait_flag("V", "MTE3", event_id=x_ub_version_counter_1 & 1)
+        pto.mte_ub_gm(pto.castptr(scalar.muli(_tl_coerce_i64(((x_ub_version_counter_1 & 1) * 32768) + 37888, context="PTO local pointer offset"), pto.const(2, dtype=pto.int64)), pto.ptr(pto.bf16, "ub")), pto.addptr(out, ((scalar.cast(w, pto.si64) * 9437184) + (scalar.cast(pto.get_block_idx(), pto.si64) * 131072)) + (scalar.cast(pid_k, pto.si64) * 512)), 1024, nburst=(scalar.min(64, scalar.max(((num_tokens - (pto.get_block_idx() * 64)) - (w * 4608)), 0)), 1024, 4096), l2_cache="naci")
+        pto.set_flag("MTE3", "V", event_id=x_ub_version_counter_1 & 1)
+        x_ub_version_counter_1 = _tl_wrap_surface_value(_tl_coerce_i64(x_ub_version_counter_1 + 1, context="PTO local.var store"))
+  pto.wait_flag("MTE3", "V", event_id=0)
+  pto.wait_flag("MTE3", "V", event_id=1)
+  pto.wait_flag("V", "MTE2", event_id=0)
+  pto.wait_flag("V", "MTE2", event_id=1)
+  pto.wait_flag("V", "MTE2", event_id=2)
