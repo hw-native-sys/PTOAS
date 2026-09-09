@@ -1,0 +1,92 @@
+=== vbrc(e4m3 0) isolate ===
+任务已提交: task_20260910_025245_2116304 (断开后可用 task-submit --wait task_20260910_025245_2116304 重连)
+等待任务执行: task_20260910_025245_2116304 (Ctrl+C 终止任务)
+[npu-lock] 获取设备 0 的锁 (无超时)...
+[npu-lock] 已获取设备 0 的锁 (pid=2116389)
+=== fused rescale e4m3->e4m3 TMA packed 8001x3072 ===
+/home/jzhuang/.conda/envs/cann91_dev/lib/python3.11/site-packages/torch_npu/utils/_path_manager.py:66: UserWarning: Permission mismatch: The owner of /home/jzhuang/.conda/envs/cann91_dev/lib/python3.11/site-packages/torch_npu/lib/libop_plugin_atb.so does not match.
+  warnings.warn(f"Permission mismatch: The owner of {path} does not match.")
+Loading tilelang libs from dev root: /home/jzhuang/work_dir/vmi_work_0908/tilelang_fp4_0908/build
+CUTLASS is not installed or found in the expected path
+# device=0 name=Ascend950DT_9592
+[1/1] per_token_cast__fmt=e4m3_hidden=3072_in_dtype=e4m3_mode=cast_num_per_channels=32_num_tokens=8001_round_sf=True_use_packed_ue8m0=True_use_tma_aligned_col_major_sf=True_x_block_size=(32,32) vmi=supported
+/home/jzhuang/work_dir/vmi_work_0908/TileKernels-vmi_rebase_tilelang/third_party/TileKernels-Nightly/tile_kernels/torch/cast.py:286: UserWarning: Cannot create tensor with interal format while allow_internel_format=False, tensor will be created with base format. (Triggered internally at ../torch_npu/csrc/aten/common/TensorFactories.cpp:423.)
+  dq_sf = (ds_int_rounded_padded >> 23).to(torch.int8).view(get_packed_ue8m0_torch_dtype())  # (H/bh, W/bw)
+2026-09-10 02:53:15  [TileLang:tilelang.language.eager.builder:WARNING] (per_token_cast_asc.py:140): Immutable value `scale_bf16` is re-bound; use T.alloc_var to create a mutable variable.
+2026-09-10 02:53:15  [TileLang:tilelang.language.eager.builder:WARNING] (per_token_cast_asc.py:147): Immutable value `x_bf16` is re-bound; use T.alloc_var to create a mutable variable.
+2026-09-10 02:53:15  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:142): TileLang begins to compile kernel `per_token_cast_kernel` with `out_idx=None`
+2026-09-10 02:53:20  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:150): TileLang completes to compile kernel `per_token_cast_kernel`
+2026-09-10 02:53:22  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:142): TileLang begins to compile kernel `main` with `out_idx=None`
+[vmi] fused rescale compile failed in_fp4=False out_fp4=False H=3072: RuntimeError: PTODSL compile-only lowering failed.
+Kernels: ['main_kernel']
+Command: /home/jzhuang/.conda/envs/cann91_dev/bin/python -c <ptodsl-compile-script> /tmp/tmpizspnos1/kernel.ptodsl.py <kernel-names-json> /tmp/tmpizspnos1/kernel.pto
+stdout:
+
+stderr:
+Loading tilelang libs from dev root: /home/jzhuang/work_dir/vmi_work_0908/tilelang_fp4_0908/build
+CUTLASS is not installed or found in the expected path
+/home/jzhuang/.conda/envs/cann91_dev/lib/python3.11/site-packages/torch_npu/utils/_path_manager.py:66: UserWarning: Permission mismatch: The owner of /home/jzhuang/.conda/envs/cann91_dev/lib/python3.11/site-packages/torch_npu/lib/libop_plugin_atb.so does not match.
+  warnings.warn(f"Permission mismatch: The owner of {path} does not match.")
+/tmp/tmpizspnos1/kernel.ptodsl.py:32: PTODSLDeprecationWarning: _VMINamespace.vshrs is deprecated; use pto.vmi.vshr(vector, scalar, mask) instead
+  source_row = pto.vmi.vshrs(lane, 4, transpose_mask)
+/tmp/tmpizspnos1/kernel.ptodsl.py:34: PTODSLDeprecationWarning: _VMINamespace.vmuls is deprecated; use pto.vmi.vmul(vector, scalar, mask) instead
+  transpose_indices = pto.vmi.vadd(pto.vmi.vmuls(source_pair, 16, transpose_mask), source_row, transpose_mask)
+/tmp/tmpizspnos1/kernel.ptodsl.py:53: PTODSLDeprecationWarning: _VMINamespace.vshls is deprecated; use pto.vmi.vshl(vector, scalar, mask) instead
+  shifted = pto.vmi.vshls(u16, 7, one)
+Traceback (most recent call last):
+  File "<string>", line 31, in <module>
+  File "/home/jzhuang/work_dir/vmi_work_0908/TileKernels-vmi/third_party/ptoas/ptodsl/ptodsl/_jit.py", line 343, in compile
+    return self._compiler.compile(**constexpr_bindings)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jzhuang/work_dir/vmi_work_0908/TileKernels-vmi/third_party/ptoas/ptodsl/ptodsl/_kernel_compilation.py", line 142, in compile
+    compiled.build()
+  File "/home/jzhuang/work_dir/vmi_work_0908/TileKernels-vmi/third_party/ptoas/ptodsl/ptodsl/_tracing/artifacts.py", line 36, in build
+    built = self._module_factory()
+            ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jzhuang/work_dir/vmi_work_0908/TileKernels-vmi/third_party/ptoas/ptodsl/ptodsl/_tracing/runtime.py", line 93, in build_module
+    self.trace_entry(*args)
+  File "/home/jzhuang/work_dir/vmi_work_0908/TileKernels-vmi/third_party/ptoas/ptodsl/ptodsl/_tracing/runtime.py", line 135, in trace_entry
+    result = self._callback(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/tmpizspnos1/kernel.ptodsl.py", line 65, in main_kernel
+    pto.vmi.vstore(pto.vmi.vbrc(pto.f8e4m3(float.fromhex('0x0p+0')), size=256), pto.addptr(pto.castptr(buf_dyn_shmem, pto.ptr(pto.f8e4m3, "ub")), ((sf_in_ub_version_counter_1 & 1) * 16384) + 256), ((row * 1024) + (tile * 256)), tail_mask256)
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jzhuang/work_dir/vmi_work_0908/TileKernels-vmi/third_party/ptoas/ptodsl/ptodsl/_types.py", line 84, in __call__
+    raise TypeError(f"unsupported eager constructor target type {target_type}")
+TypeError: unsupported eager constructor target type f8E4M3FN
+
+RESULT per_token_cast__fmt=e4m3_hidden=3072_in_dtype=e4m3_mode=cast_num_per_channels=32_num_tokens=8001_round_sf=True_use_packed_ue8m0=True_use_tma_aligned_col_major_sf=True_x_block_size=(32,32) asc_us=None vmi_us=None ratio=None error=RuntimeError: fused rescale compile failed M=8001 H=3072 (VMI_PER_TOKEN_RESCALE_FUSED_ONLY=1; compose disabled)
+# skip jsonl upsert (BENCH_SKIP_UPSERT=1)
+[WARN]FormatFeatureList,feature_mgr.cpp:55:Do not support feature: AICORE_SHAPE, log is: It not support feature: AICORE_SHAPE!
+ISOLATE_PER_TOKEN_M8001_DONE mode=e4e4_3072
+[npu-lock] 已释放设备 0 的锁
+=== 任务完成 (exit=0) ===
+
+=== T.clear(e4m3 UB) isolate ===
+任务已提交: task_20260910_030439_2164715 (断开后可用 task-submit --wait task_20260910_030439_2164715 重连)
+等待任务执行: task_20260910_030439_2164715 (Ctrl+C 终止任务)
+[npu-lock] 获取设备 0 的锁 (无超时)...
+[npu-lock] 已获取设备 0 的锁 (pid=2170117)
+===== ISOLATE per_token_cast__fmt=e4m3_hidden=3072_in_dtype=e4m3_mode=cast_num_per_channels=32_num_tokens=8001_round_sf=True_use_packed_ue8m0=True_use_tma_aligned_col_major_sf=True_x_block_size=(32,32) =====
+/home/jzhuang/.conda/envs/cann91_dev/lib/python3.11/site-packages/torch_npu/utils/_path_manager.py:66: UserWarning: Permission mismatch: The owner of /home/jzhuang/.conda/envs/cann91_dev/lib/python3.11/site-packages/torch_npu/lib/libop_plugin_atb.so does not match.
+  warnings.warn(f"Permission mismatch: The owner of {path} does not match.")
+Loading tilelang libs from dev root: /home/jzhuang/work_dir/vmi_work_0908/tilelang_fp4_0908/build
+CUTLASS is not installed or found in the expected path
+# device=0 name=Ascend950DT_9592
+[1/1] per_token_cast__fmt=e4m3_hidden=3072_in_dtype=e4m3_mode=cast_num_per_channels=32_num_tokens=8001_round_sf=True_use_packed_ue8m0=True_use_tma_aligned_col_major_sf=True_x_block_size=(32,32) vmi=supported
+/home/jzhuang/work_dir/vmi_work_0908/TileKernels-vmi_rebase_tilelang/third_party/TileKernels-Nightly/tile_kernels/torch/cast.py:286: UserWarning: Cannot create tensor with interal format while allow_internel_format=False, tensor will be created with base format. (Triggered internally at ../torch_npu/csrc/aten/common/TensorFactories.cpp:423.)
+  dq_sf = (ds_int_rounded_padded >> 23).to(torch.int8).view(get_packed_ue8m0_torch_dtype())  # (H/bh, W/bw)
+[WARN]FormatFeatureList,feature_mgr.cpp:55:Do not support feature: AICORE_SHAPE, log is: It not support feature: AICORE_SHAPE!
+[03:06:27] /home/jzhuang/work_dir/vmi_work_0908/tilelang_fp4_0908/src/cuda/codegen/codegen_py.cc:243: Fatal: Bad bit-width for float: float8_e4m3fn
+
+2026-09-10 03:06:15  [TileLang:tilelang.language.eager.builder:WARNING] (per_token_cast_asc.py:140): Immutable value `scale_bf16` is re-bound; use T.alloc_var to create a mutable variable.
+2026-09-10 03:06:15  [TileLang:tilelang.language.eager.builder:WARNING] (per_token_cast_asc.py:147): Immutable value `x_bf16` is re-bound; use T.alloc_var to create a mutable variable.
+2026-09-10 03:06:17  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:142): TileLang begins to compile kernel `main` with `out_idx=None`
+[vmi] fused rescale compile failed in_fp4=False out_fp4=False H=3072: InternalError: Bad bit-width for float: float8_e4m3fn
+
+RESULT per_token_cast__fmt=e4m3_hidden=3072_in_dtype=e4m3_mode=cast_num_per_channels=32_num_tokens=8001_round_sf=True_use_packed_ue8m0=True_use_tma_aligned_col_major_sf=True_x_block_size=(32,32) asc_us=None vmi_us=None ratio=None error=RuntimeError: fused rescale compile failed M=8001 H=3072 (VMI_PER_TOKEN_RESCALE_FUSED_ONLY=1; compose disabled)
+# skip jsonl upsert (BENCH_SKIP_UPSERT=1)
+===== ISOLATE_DONE per_token_cast__fmt=e4m3_hidden=3072_in_dtype=e4m3_mode=cast_num_per_channels=32_num_tokens=8001_round_sf=True_use_packed_ue8m0=True_use_tma_aligned_col_major_sf=True_x_block_size=(32,32) =====
+ISOLATE_PER_TOKEN_M8001_DONE mode=e4e4_3072
+[npu-lock] 已释放设备 0 的锁
+=== 任务完成 (exit=0) ===
