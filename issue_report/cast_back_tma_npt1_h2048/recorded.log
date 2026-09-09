@@ -1,0 +1,1 @@
+PTODSL_COMPILE_OK; isolated 512×2048 mismatch (e2m1→bf16 117550 / 4.5; e4m3→bf16 124084 / 5.25) on 2026-09-10 device 0
