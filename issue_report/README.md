@@ -8,7 +8,7 @@ These reports are **low-level PTOAS bugs**, not one directory per Nightly TileLa
 - a working **ASC reference** (Nightly C++ that launches, plus `asc_pattern.mi` — the `pto.mi` PTOAS must emit)
 - a table of high-level configs that hit the same bug
 
-Old 1:1 leftover directories are **pointers**; their `recorded.log` files are kept.
+Historical leftover-class snapshots (recorded logs, old dumps) live under [`archive/`](archive/). They are not issues.
 
 Host-pad and host TMA permute are not ports. ASC-illegal / untested guards (per-channel FP4, Ascend `npt≠32`, packed+`round_sf=False`, output TMA) are **not** issues.
 
@@ -51,26 +51,6 @@ Every in-matrix `TODO(impl)` row on `per_token_cast` / `per_block_cast` / `per_c
 | per_block sf_only+packed fp32 (4) | E |
 | cast_back npt=1 mismatches (6) + ACL 507035 (48) + e2m1→fp32 TMA launch (1) | A |
 | ASC-illegal / untested guards | not an issue |
-
-## Pointers (old 1:1 dirs)
-
-| Old dir | Now |
-|---|---|
-| `cast_back_e4m3_fp32_tma_npt32_h128/` | A |
-| `cast_back_e4m3_fp32_tma_npt1/` | A |
-| `cast_back_row_npt1/` | A |
-| `cast_back_tma_npt1_h2048/` | A |
-| `cast_back_e2m1_fp32_tma_npt32_h2048/` | A |
-| `per_token_rescale_row_sf/` | A |
-| `per_channel_tma_in_large_shape/` | A compose + F fused |
-| `per_token_h128_h384/` | B |
-| `per_block_h384/` | B |
-| `per_token_fp4_rescale_m8001/` | C |
-| `per_token_tma_unpacked/` | D |
-| `per_token_fp4_unpacked/` | D |
-| `per_channel_rescale_unpacked_in/` | D |
-| `per_token_sf_only_packed/` | E |
-| `per_block_sf_only_packed_fp32/` | E |
 
 ## What is not a PTOAS issue
 

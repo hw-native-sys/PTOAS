@@ -26,10 +26,10 @@ vsts ONEPT_B16
 
 ## High-level configs that hit this
 
-| Config | Recorded | Old dir |
+| Config | Recorded | Archive |
 |---|---|---|
-| per_block sf_only+packed **fp32** (e2m1/e4m3 × row/TMA; 4 rows) | launch OK, 1024-byte SF mismatch | `per_block_sf_only_packed_fp32/` |
-| per_token sf_only+packed (2 rows) | assert: sf_only requires unpacked | `per_token_sf_only_packed/` |
+| per_block sf_only+packed **fp32** (e2m1/e4m3 × row/TMA; 4 rows) | launch OK, 1024-byte SF mismatch | [`archive/per_block_sf_only_packed_fp32/`](../archive/per_block_sf_only_packed_fp32/) |
+| per_token sf_only+packed (2 rows) | assert: sf_only requires unpacked | [`archive/per_token_sf_only_packed/`](../archive/per_token_sf_only_packed/) |
 
 If the fp32 mismatch is only a rounding/`vcvt` after IR exists, keep it as a second recorded outcome here — not a seventh issue.
 

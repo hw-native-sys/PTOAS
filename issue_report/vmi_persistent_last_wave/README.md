@@ -20,9 +20,9 @@ Same 1×T extract as issue A ([design §1.1](../../../../kernel_study/PTO-Gym-vm
 
 ## High-level configs that hit this
 
-| Config | Recorded | Old dir |
+| Config | Recorded | Archive |
 |---|---|---|
-| per_channel e4m3 rescale TMA-col in-SF, large tiles (7 rows) **fused** | 512×7168 payload=47725 sf=1536 (remainder wave) | `per_channel_tma_in_large_shape/` (fused half) |
+| per_channel e4m3 rescale TMA-col in-SF, large tiles (7 rows) **fused** | 512×7168 payload=47725 sf=1536 (remainder wave) | [`archive/per_channel_tma_in_large_shape/`](../archive/per_channel_tma_in_large_shape/) (fused half) |
 | same configs **compose** | issue A | — |
 
 ## Reproducer

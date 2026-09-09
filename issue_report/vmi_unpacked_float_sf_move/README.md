@@ -20,11 +20,11 @@ Nightly ASC already launches these configs (level-1). There is no production VMI
 
 ## High-level configs that hit this
 
-| Config | Recorded | Old dir |
+| Config | Recorded | Archive |
 |---|---|---|
-| per_token TMA-col unpacked SF | assert: packed required for TMA adapter | `per_token_tma_unpacked/` |
-| per_token FP4 unpacked SF | assert: packed UE8M0 required for e2m1 | `per_token_fp4_unpacked/` |
-| per_channel rescale unpacked row-major in-SF (2 rows) | assert: packed input SF required | `per_channel_rescale_unpacked_in/` |
+| per_token TMA-col unpacked SF | assert: packed required for TMA adapter | [`archive/per_token_tma_unpacked/`](../archive/per_token_tma_unpacked/) |
+| per_token FP4 unpacked SF | assert: packed UE8M0 required for e2m1 | [`archive/per_token_fp4_unpacked/`](../archive/per_token_fp4_unpacked/) |
+| per_channel rescale unpacked row-major in-SF (2 rows) | assert: packed input SF required | [`archive/per_channel_rescale_unpacked_in/`](../archive/per_channel_rescale_unpacked_in/) |
 
 ## Reproducer
 

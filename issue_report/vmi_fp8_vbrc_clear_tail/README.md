@@ -18,9 +18,9 @@ ASC fused per-token rescale at M=8001 (`8001 % 16 == 1`) uses in-kernel `ceildiv
 
 ## High-level configs that hit this
 
-| Config | Recorded | Old dir |
+| Config | Recorded | Archive |
 |---|---|---|
-| per_token fused rescale M=8001, 4 dtype pairs × 3 aligned H (12 rows) | compile fail `vbrc`/`T.clear` e4m3 | `per_token_fp4_rescale_m8001/` |
+| per_token fused rescale M=8001, 4 dtype pairs × 3 aligned H (12 rows) | compile fail `vbrc`/`T.clear` e4m3 | [`archive/per_token_fp4_rescale_m8001/`](../archive/per_token_fp4_rescale_m8001/) |
 
 The two **fp32 packed TMA cast** 507035 rows at M=8001 H=16384/65536 are issue A (same ACL family, large TMA store), not this tail-zero hole.
 

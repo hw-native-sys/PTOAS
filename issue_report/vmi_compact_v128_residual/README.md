@@ -18,10 +18,10 @@ ASC tiles hidden in 128-wide chunks (`hidden % 128 == 0`). VMI design allows com
 
 ## High-level configs that hit this
 
-| Config | Recorded | Old dir |
+| Config | Recorded | Archive |
 |---|---|---|
-| per_token H=128/384 (every bf16/fp32 cast layout; 40 rows) | assert `hidden % 256 == 0` | `per_token_h128_h384/` |
-| per_block H=384 128-strip (8 rows) | TileLang OK, `VMI-RESIDUAL-OP` | `per_block_h384/` |
+| per_token H=128/384 (every bf16/fp32 cast layout; 40 rows) | assert `hidden % 256 == 0` | [`archive/per_token_h128_h384/`](../archive/per_token_h128_h384/) |
+| per_block H=384 128-strip (8 rows) | TileLang OK, `VMI-RESIDUAL-OP` | [`archive/per_block_h384/`](../archive/per_block_h384/) |
 
 ## Reproducer
 
