@@ -2259,7 +2259,7 @@ struct LayoutSolver {
       MaskNode &root = maskNodes[findMask(maskIds.lookup(node.value))];
       propagator.addEquivalentValues(root.value, node.value);
     }
-    }
+  }
 
   std::unique_ptr<VMILayoutPropagator> createPropagator() {
     auto propagator = std::make_unique<VMILayoutPropagator>(module);
@@ -2280,8 +2280,8 @@ struct LayoutSolver {
       auto [it, inserted] =
           result.useLayouts.try_emplace(assignment.first, assignment.second);
       if (!inserted && it->second != assignment.second) {
-      return failure();
-    }
+        return failure();
+      }
     }
     for (const auto &selection : source.selectedRelations) {
       auto [it, inserted] = result.selectedRelations.try_emplace(
@@ -2296,13 +2296,13 @@ struct LayoutSolver {
   FailureOr<VMILayoutPlan> selectLayoutPlan() {
     auto selected = selectCostedVMILayoutPlans(module);
     if (failed(selected)) {
-        return failure();
-      }
+      return failure();
+    }
     VMILayoutPlan merged;
     for (const VMILayoutPlan &plan : selected->plans) {
       if (failed(mergePlan(plan, merged))) {
-      return failure();
-    }
+        return failure();
+      }
     }
     return merged;
   }
@@ -2311,9 +2311,42 @@ struct LayoutSolver {
     std::unique_ptr<VMILayoutPropagator> propagator = createPropagator();
     FailureOr<VMILayoutPlan> plan = selectLayoutPlan();
     if (failed(plan)) {
-        return failure();
-      }
+      return failure();
+    }
     if (failed(commitVMILayoutPlan(*plan, *propagator))) {
+      return failure();
+    }
+    // Structural operations are intentionally absent from the relation graph.
+    // Seed only their still-unassigned transport values here; an existing
+    // solver assignment always wins and is never replaced by this ABI
+    // fallback.  This must precede structural edge matching so components
+    // made entirely of ABI transport have a concrete source layout.
+    LogicalResult structuralValues = success();
+    module.walk([&](Operation *op) {
+      if (failed(structuralValues) ||
+          !isa<scf::IfOp, scf::ForOp, scf::WhileOp, scf::YieldOp,
+               scf::ConditionOp, cf::BranchOp, cf::CondBranchOp, cf::SwitchOp,
+               func::CallOp, func::ReturnOp>(op)) {
+        return;
+      }
+      auto seed = [&](Value value) {
+        if (!value || !isa<VMIVRegType, VMIMaskType>(value.getType()) ||
+            propagator->getRequestedOrCurrentLayout(value)) {
+          return;
+        }
+        structuralValues = propagator->installPlanned(
+            value, VMILayoutAttr::getContiguous(value.getContext()));
+      };
+      for (Value operand : op->getOperands()) {
+        seed(operand);
+      }
+      if (isa<scf::WhileOp>(op)) {
+        for (Value result : op->getResults()) {
+          seed(result);
+        }
+      }
+    });
+    if (failed(structuralValues)) {
       return failure();
     }
     // Structural edges do not have operation relations, but their operand
@@ -2328,8 +2361,9 @@ struct LayoutSolver {
       // Structural transport results/arguments can be untyped before this
       // pass.  In that case the edge source is the validated layout seed;
       // install it on the destination first, then constrain the edge use.
-      if (!layout)
+      if (!layout) {
         layout = propagator->getRequestedOrCurrentLayout(edge.get());
+      }
       if (!layout || failed(propagator->installPlanned(destination, layout)) ||
           failed(propagator->installPlanned(edge, layout))) {
         structuralEdges = failure();
@@ -2403,38 +2437,6 @@ struct LayoutSolver {
     if (failed(structuralEdges)) {
       return failure();
     }
-    // Structural operations are intentionally absent from the relation graph.
-    // Seed only their still-unassigned transport values here; an existing
-    // solver assignment always wins and is never replaced by this ABI
-    // fallback.
-    LogicalResult structuralValues = success();
-    module.walk([&](Operation *op) {
-      if (failed(structuralValues) ||
-          !isa<scf::IfOp, scf::ForOp, scf::WhileOp, scf::YieldOp,
-               scf::ConditionOp, cf::BranchOp, cf::CondBranchOp, cf::SwitchOp,
-               func::CallOp, func::ReturnOp>(op)) {
-        return;
-      }
-      auto seed = [&](Value value) {
-        if (!value || !isa<VMIVRegType, VMIMaskType>(value.getType()) ||
-            propagator->getRequestedOrCurrentLayout(value)) {
-          return;
-        }
-        structuralValues = propagator->installPlanned(
-            value, VMILayoutAttr::getContiguous(value.getContext()));
-      };
-      for (Value operand : op->getOperands()) {
-        seed(operand);
-      }
-      if (isa<scf::WhileOp>(op)) {
-        for (Value result : op->getResults()) {
-          seed(result);
-        }
-      }
-    });
-    if (failed(structuralValues)) {
-      return failure();
-    }
     LogicalResult structuralLoops = success();
     module.walk([&](scf::WhileOp whileOp) {
       if (failed(structuralLoops)) {
@@ -2486,7 +2488,7 @@ struct LayoutSolver {
             }
           }
         }
-    }
+      }
     });
     if (failed(transportArgs)) {
       return failure();
@@ -2513,29 +2515,17 @@ struct LayoutSolver {
       }
 
       SmallVector<Type> results;
-      auto it = firstReturnOperandsByFunc.find(func);
-      SmallVector<Type> callResultTypes = getCallResultTypes(func);
-      if (!callResultTypes.empty()) {
-        for (Type type : callResultTypes) {
+      FunctionType functionType = func.getFunctionType();
+      for (Type type : functionType.getResults()) {
+        if (auto vregType = dyn_cast<VMIVRegType>(type)) {
+          results.push_back(VMIVRegType::get(ctx, vregType.getElementCount(),
+                                             vregType.getElementType(),
+                                             getContiguousLayout()));
+        } else if (auto maskType = dyn_cast<VMIMaskType>(type)) {
+          results.push_back(VMIMaskType::get(ctx, maskType.getElementCount(),
+                                             "b32", getContiguousLayout()));
+        } else {
           results.push_back(type);
-        }
-      } else if (it != firstReturnOperandsByFunc.end()) {
-        for (Value operand : it->second) {
-          results.push_back(operand.getType());
-        }
-      } else {
-        FunctionType functionType = func.getFunctionType();
-        for (Type type : functionType.getResults()) {
-          if (auto vregType = dyn_cast<VMIVRegType>(type)) {
-            results.push_back(VMIVRegType::get(ctx, vregType.getElementCount(),
-                                               vregType.getElementType(),
-                                               getContiguousLayout()));
-          } else if (auto maskType = dyn_cast<VMIMaskType>(type)) {
-            results.push_back(VMIMaskType::get(ctx, maskType.getElementCount(),
-                                               "b32", getContiguousLayout()));
-          } else {
-            results.push_back(type);
-          }
         }
       }
 

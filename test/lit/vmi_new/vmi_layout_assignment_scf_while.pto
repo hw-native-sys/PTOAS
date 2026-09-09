@@ -28,20 +28,23 @@ module {
 
 // ASSIGN-LABEL: func.func @vmi_layout_assignment_scf_while(
 // ASSIGN-SAME: %[[INPUT:.*]]: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
-// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
 // ASSIGN: %[[WIDE:.*]] = pto.vmi.extf %[[INPUT]]
 // ASSIGN-SAME: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 // ASSIGN: %[[RESULT:.*]] = scf.while (%[[VALUE:.*]] = %[[WIDE]]) : (!pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>) -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 // ASSIGN: scf.condition(%arg1) %[[VALUE]] : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 // ASSIGN: ^bb0(%[[AFTER:.*]]: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>):
 // ASSIGN: scf.yield %[[AFTER]] : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
-// ASSIGN: return %[[RESULT]] : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: %[[ABI:.*]] = pto.vmi.ensure_layout %[[RESULT]]
+// ASSIGN-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: return %[[ABI]] : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
 
 // LOWER-LABEL: func.func @vmi_layout_assignment_scf_while(
 // LOWER: %[[RESULT:.*]]:2 = scf.while
 // LOWER-SAME: (!pto.vreg<64xf32>, !pto.vreg<64xf32>) -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>)
 // LOWER: scf.condition(%arg1) {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>
 // LOWER: scf.yield {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>
-// LOWER: return %[[RESULT]]#0, %[[RESULT]]#1 : !pto.vreg<64xf32>, !pto.vreg<64xf32>
+// LOWER: %[[LOW:.*]], %[[HIGH:.*]] = pto.vintlv %[[RESULT]]#0, %[[RESULT]]#1
+// LOWER: return %[[LOW]], %[[HIGH]] : !pto.vreg<64xf32>, !pto.vreg<64xf32>
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.

@@ -25,10 +25,21 @@ struct VMILayoutSolverOp {
   SmallVector<VMILayoutOpRelation, mlir::pto::kValue4> relations;
 };
 
+// Optional solver-level sharing of relation decisions.  A group relation is
+// mapped to one relation per member operation; it does not equate SSA value
+// layouts or physical values.
+struct VMILayoutDecisionGroup {
+  SmallVector<unsigned, mlir::pto::kValue4> opIndices;
+  SmallVector<SmallVector<unsigned, mlir::pto::kValue4>, mlir::pto::kValue4>
+      memberRelationIndices;
+};
+
 struct VMILayoutConflictSolverOptions {
   unsigned maxFrontierEntries = 128;
   unsigned maxTransitions = 4096;
   ArrayRef<VMILayoutEqualityConstraint> equalityConstraints;
+  ArrayRef<VMILayoutFixedAssignment> fixedAssignments;
+  ArrayRef<VMILayoutDecisionGroup> decisionGroups;
 };
 
 FailureOr<VMILayoutPlan>

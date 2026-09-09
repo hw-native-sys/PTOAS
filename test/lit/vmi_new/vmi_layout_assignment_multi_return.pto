@@ -28,12 +28,16 @@ module {
 }
 
 // CHECK-LABEL: func.func @multi_return(
-// CHECK-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
-// CHECK: pto.vmi.extf
+// CHECK-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// CHECK: %[[THEN_EXT:.*]] = pto.vmi.extf
 // CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
-// CHECK: return
+// CHECK: %[[THEN_ABI:.*]] = pto.vmi.ensure_layout %[[THEN_EXT]]
+// CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// CHECK: return %[[THEN_ABI]]
+// CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// CHECK: %[[ELSE_EXT:.*]] = pto.vmi.extf
 // CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
-// CHECK: pto.vmi.extf
-// CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
-// CHECK: return
-// CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// CHECK: %[[ELSE_ABI:.*]] = pto.vmi.ensure_layout %[[ELSE_EXT]]
+// CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// CHECK: return %[[ELSE_ABI]]
+// CHECK-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>

@@ -57,6 +57,13 @@ struct VMILayoutEqualityConstraint {
   bool abiBoundary = false;
 };
 
+// A hard assignment of one SSA value to a concrete layout.  Boundary
+// analyses provide these when no defining operation can carry the constraint.
+struct VMILayoutFixedAssignment {
+  Value value;
+  VMILayoutAttr layout;
+};
+
 struct VMILayoutOpRelation {
   Operation *op = nullptr;
   SmallVector<VMILayoutPortAssignment, mlir::pto::kValue4> ports;
@@ -82,8 +89,10 @@ struct VMILayoutPlan {
 class VMILayoutRelationConstraintState {
 public:
   VMILayoutRelationConstraintState() = default;
-  explicit VMILayoutRelationConstraintState(
-      ArrayRef<VMILayoutEqualityConstraint> equalities);
+  VMILayoutRelationConstraintState(
+      ArrayRef<VMILayoutEqualityConstraint> equalities,
+      ArrayRef<VMILayoutFixedAssignment> fixedAssignments = {});
+  bool isValid() const { return valid; }
   LogicalResult accept(const VMILayoutOpRelation &relation,
                        const VMILayoutPlan &plan);
   LogicalResult materialize(VMILayoutPlan &plan) const;
@@ -96,6 +105,7 @@ private:
 
   DenseMap<Value, Value> parent;
   DenseMap<Value, VMILayoutAttr> assignedLayouts;
+  bool valid = true;
 };
 
 struct VMILayoutPlannerOptions {

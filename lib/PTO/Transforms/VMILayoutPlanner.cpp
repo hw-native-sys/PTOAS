@@ -24,9 +24,11 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/Support/Debug.h"
 
 #include <optional>
+#include <string>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -43,6 +45,133 @@ static VMILayoutPortAssignment operandPort(unsigned index,
 static VMILayoutPortAssignment resultPort(unsigned index,
                                           VMILayoutAttr layout) {
   return VMILayoutPortAssignment{VMILayoutPortKind::Result, index, layout};
+}
+
+static std::string getDecisionLayoutKey(VMILayoutAttr layout) {
+  if (!layout) {
+    return "<none>";
+  }
+  std::string text;
+  llvm::raw_string_ostream stream(text);
+  stream << layout;
+  return stream.str();
+}
+
+static std::string getDecisionRelationKey(const VMILayoutOpRelation &relation) {
+  std::string text;
+  llvm::raw_string_ostream stream(text);
+  for (const VMILayoutPortAssignment &port : relation.ports) {
+    stream << (port.kind == VMILayoutPortKind::Operand ? 'o' : 'r')
+           << port.index << ':';
+    if (port.kind == VMILayoutPortKind::Operand &&
+        port.index < relation.op->getNumOperands()) {
+      stream << relation.op->getOperand(port.index).getType();
+    } else if (port.kind == VMILayoutPortKind::Result &&
+               port.index < relation.op->getNumResults()) {
+      stream << relation.op->getResult(port.index).getType();
+    } else {
+      stream << "<invalid>";
+    }
+    stream << '=' << getDecisionLayoutKey(port.layout) << ';';
+  }
+  stream << "direct=" << relation.directProducer
+         << ";rearrange=" << relation.intrinsicRearrangementCost
+         << ";preference=" << relation.preferencePenalty;
+  return stream.str();
+}
+
+static SmallVector<VMILayoutDecisionGroup, mlir::pto::kValue4>
+buildDecisionGroups(ArrayRef<VMILayoutSolverOp> plannerOps) {
+  SmallVector<SmallVector<unsigned, mlir::pto::kValue4>, mlir::pto::kValue8>
+      adjacency(plannerOps.size());
+  DenseMap<Operation *, unsigned> indices;
+  for (auto [index, solverOp] : llvm::enumerate(plannerOps)) {
+    indices[solverOp.op] = index;
+  }
+  for (auto [consumerIndex, solverOp] : llvm::enumerate(plannerOps)) {
+    for (Value operand : solverOp.op->getOperands()) {
+      auto producerIt = indices.find(operand.getDefiningOp());
+      if (producerIt == indices.end()) {
+        continue;
+      }
+      adjacency[consumerIndex].push_back(producerIt->second);
+      adjacency[producerIt->second].push_back(consumerIndex);
+    }
+  }
+  SmallVector<unsigned, mlir::pto::kValue8> components(plannerOps.size(),
+                                                        0);
+  unsigned nextComponent = 0;
+  llvm::SmallBitVector visited(plannerOps.size());
+  for (unsigned root = 0; root < plannerOps.size(); ++root) {
+    if (visited.test(root)) {
+      continue;
+    }
+    SmallVector<unsigned, mlir::pto::kValue4> worklist{root};
+    visited.set(root);
+    while (!worklist.empty()) {
+      unsigned current = worklist.pop_back_val();
+      components[current] = nextComponent;
+      for (unsigned neighbor : adjacency[current]) {
+        if (!visited.test(neighbor)) {
+          visited.set(neighbor);
+          worklist.push_back(neighbor);
+        }
+      }
+    }
+    ++nextComponent;
+  }
+
+  llvm::StringMap<unsigned> classIndices;
+  SmallVector<VMILayoutDecisionGroup, mlir::pto::kValue4> groups;
+  for (auto [opIndex, solverOp] : llvm::enumerate(plannerOps)) {
+    if (solverOp.relations.size() < 2) {
+      continue;
+    }
+    SmallVector<std::string, mlir::pto::kValue4> relations;
+    for (const VMILayoutOpRelation &relation : solverOp.relations) {
+      relations.push_back(getDecisionRelationKey(relation));
+    }
+    llvm::sort(relations);
+    std::string key;
+    llvm::raw_string_ostream stream(key);
+    stream << components[opIndex] << '|';
+    for (const std::string &relation : relations) {
+      stream << '[' << relation << ']';
+    }
+    auto classIt = classIndices.find(key);
+    unsigned groupIndex = 0;
+    if (classIt == classIndices.end()) {
+      groupIndex = groups.size();
+      classIndices.try_emplace(key, groupIndex);
+      groups.emplace_back();
+    } else {
+      groupIndex = classIt->second;
+    }
+    VMILayoutDecisionGroup &group = groups[groupIndex];
+    group.opIndices.push_back(opIndex);
+    SmallVector<unsigned, mlir::pto::kValue4> mapping;
+    for (const std::string &representative : relations) {
+      auto relationIt = llvm::find_if(solverOp.relations,
+                                      [&](const VMILayoutOpRelation &relation) {
+                                        return getDecisionRelationKey(relation) ==
+                                               representative;
+                                      });
+      if (relationIt == solverOp.relations.end()) {
+        mapping.clear();
+        break;
+      }
+      mapping.push_back(relationIt - solverOp.relations.begin());
+    }
+    if (mapping.size() != relations.size()) {
+      group.opIndices.pop_back();
+      continue;
+    }
+    group.memberRelationIndices.push_back(std::move(mapping));
+  }
+  llvm::erase_if(groups, [](const VMILayoutDecisionGroup &group) {
+    return group.opIndices.size() < 2;
+  });
+  return groups;
 }
 
 static bool isLayoutType(Type type) {
@@ -183,6 +312,49 @@ static bool isStructuralTransportValue(Value value) {
     }
   }
   return false;
+}
+
+static bool isVMILayoutABIBoundaryOp(Operation *op) {
+  return isa<func::CallOp, func::ReturnOp>(op);
+}
+
+static VMILayoutAttr getABIBoundaryLayout(Type type) {
+  if (!isLayoutType(type)) {
+    return {};
+  }
+  if (VMILayoutAttr explicitLayout = getExplicitLayout(type)) {
+    return explicitLayout;
+  }
+  return VMILayoutAttr::getContiguous(type.getContext());
+}
+
+static VMILayoutAttr getFunctionArgumentBoundaryLayout(Value value) {
+  auto argument = dyn_cast<BlockArgument>(value);
+  if (!argument) {
+    return {};
+  }
+  auto function = dyn_cast<func::FuncOp>(argument.getOwner()->getParentOp());
+  if (!function || argument.getOwner() != &function.getBody().front() ||
+      argument.getArgNumber() >= function.getNumArguments()) {
+    return {};
+  }
+  return getABIBoundaryLayout(
+      function.getArgumentTypes()[argument.getArgNumber()]);
+}
+
+static SmallVector<VMILayoutFixedAssignment, mlir::pto::kValue4>
+collectFixedAssignments(ArrayRef<Operation *> component) {
+  SmallVector<VMILayoutFixedAssignment, mlir::pto::kValue4> assignments;
+  DenseSet<Value> seen;
+  for (Operation *op : component) {
+    for (Value operand : op->getOperands()) {
+      VMILayoutAttr layout = getFunctionArgumentBoundaryLayout(operand);
+      if (layout && seen.insert(operand).second) {
+        assignments.push_back({operand, layout});
+      }
+    }
+  }
+  return assignments;
 }
 
 static SmallVector<VMILayoutAttr, mlir::pto::kValue4>
@@ -633,8 +805,18 @@ buildPlannerOps(ArrayRef<Operation *> ops) {
   // physical layout (for example deinterleaved=4 for partial group-reduce).
   // A single forward pass would permanently under-constrain that helper.
   for (Operation *op : ops) {
-    if (isVMILayoutStructuralOp(op))
+    for (Value operand : op->getOperands()) {
+      rememberLayout(getFunctionArgumentBoundaryLayout(operand), layouts);
+    }
+    if (isVMILayoutABIBoundaryOp(op)) {
+      auto relations = provider.enumerateRelations(op);
+      if (succeeded(relations)) {
+        rememberRelationLayouts(*relations, layouts);
+      }
+    }
+    if (isVMILayoutStructuralOp(op)) {
       continue;
+    }
     std::optional<int64_t> groups = getGroupReduceNumGroups(op);
     auto sourceType = op->getNumOperands() == 0
                           ? VMIVRegType{}
@@ -771,7 +953,7 @@ buildPlannerOps(ArrayRef<Operation *> ops) {
     return failure();
   }
   for (Operation *op : ops) {
-    if (isVMILayoutStructuralOp(op)) {
+    if (isVMILayoutStructuralOp(op) && !isVMILayoutABIBoundaryOp(op)) {
       continue;
     }
     auto relations = provider.enumerateRelations(op, layouts);
@@ -830,6 +1012,12 @@ solveComponent(ArrayRef<Operation *> component,
   VMILayoutConflictSolverOptions solverOptions;
   solverOptions.maxFrontierEntries = options.maxFrontierEntriesPerComponent;
   solverOptions.maxTransitions = options.maxTransitionsPerComponent;
+  SmallVector<VMILayoutFixedAssignment, mlir::pto::kValue4> fixedAssignments =
+      collectFixedAssignments(component);
+  solverOptions.fixedAssignments = fixedAssignments;
+  SmallVector<VMILayoutDecisionGroup, mlir::pto::kValue4> decisionGroups =
+      buildDecisionGroups(*ops);
+  solverOptions.decisionGroups = decisionGroups;
   VMILayoutStructuralEdgeProvider edgeProvider;
   SmallVector<VMILayoutEqualityConstraint, mlir::pto::kValue16> equalities;
   for (Operation *op : component) {
@@ -881,6 +1069,47 @@ VMILayoutRelationProvider::enumerateRelations(
 
   VMILayoutSupport supports;
   SmallVector<VMILayoutOpRelation, mlir::pto::kValue4> relations;
+  if (auto returnOp = dyn_cast<func::ReturnOp>(op)) {
+    auto function = returnOp->getParentOfType<func::FuncOp>();
+    if (!function || returnOp.getNumOperands() != function.getNumResults()) {
+      return failure();
+    }
+    VMILayoutOpRelation relation;
+    relation.op = op;
+    for (auto [index, operand] : llvm::enumerate(returnOp.getOperands())) {
+      VMILayoutAttr layout =
+          getABIBoundaryLayout(function.getResultTypes()[index]);
+      if (layout) {
+        relation.endpoints.push_back(
+            {operand, &returnOp->getOpOperand(index), layout});
+      }
+    }
+    if (relation.endpoints.empty()) {
+      return failure();
+    }
+    relations.push_back(std::move(relation));
+    return relations;
+  }
+  if (auto call = dyn_cast<func::CallOp>(op)) {
+    VMILayoutOpRelation relation;
+    relation.op = op;
+    for (auto [index, operand] : llvm::enumerate(call.getOperands())) {
+      if (VMILayoutAttr layout = getABIBoundaryLayout(operand.getType())) {
+        relation.endpoints.push_back(
+            {operand, &call->getOpOperand(index), layout});
+      }
+    }
+    for (Value result : call.getResults()) {
+      if (VMILayoutAttr layout = getABIBoundaryLayout(result.getType())) {
+        relation.endpoints.push_back({result, nullptr, layout});
+      }
+    }
+    if (relation.endpoints.empty()) {
+      return failure();
+    }
+    relations.push_back(std::move(relation));
+    return relations;
+  }
   if (isVMILayoutCastOp(op)) {
     if (op->getNumOperands() != 1 || op->getNumResults() != 1) {
       return failure();
@@ -895,6 +1124,8 @@ VMILayoutRelationProvider::enumerateRelations(
         pto::getPTOStorageElemBitWidth(sourceType.getElementType()) != 0 &&
         pto::getPTOStorageElemBitWidth(sourceType.getElementType()) ==
             pto::getPTOStorageElemBitWidth(resultType.getElementType());
+    auto preferred =
+        supports.getPreferredCastLayoutFact(sourceType, resultType);
     auto appendFacts = [&](VMIVRegType concreteSourceType) {
       if (sameWidthNumericCast) {
         VMILayoutAttr layout = concreteSourceType.getLayoutAttr();
@@ -926,13 +1157,20 @@ VMILayoutRelationProvider::enumerateRelations(
                                                           fact.resultLayout))) {
           continue;
         }
+        uint64_t preferencePenalty =
+            succeeded(preferred) &&
+                    (fact.sourceLayout != preferred->sourceLayout ||
+                     fact.resultLayout != preferred->resultLayout)
+                ? 1
+                : 0;
         appendReachableUniqueRelation(
             relations,
             VMILayoutOpRelation{op,
                                 {operandPort(0, fact.sourceLayout),
                                  resultPort(0, fact.resultLayout)},
                                 /*directProducer=*/false,
-                                fact.intrinsicRearrangementCost},
+                                fact.intrinsicRearrangementCost,
+                                preferencePenalty},
             supports);
       }
     };

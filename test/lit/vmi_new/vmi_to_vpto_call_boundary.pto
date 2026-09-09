@@ -42,7 +42,8 @@ module {
 // CHECK-SAME: %[[A:[^)]+]]: !pto.vreg<128xf16>
 // CHECK-DAG: %[[EA0:.*]] = pto.vcvt %[[A]]
 // CHECK-DAG: %[[EA1:.*]] = pto.vcvt %[[A]]
-// CHECK: %[[R:.*]]:2 = call @callee(%[[EA0]], %[[EA1]])
+// CHECK: %[[LOW:.*]], %[[HIGH:.*]] = pto.vintlv %[[EA0]], %[[EA1]]
+// CHECK: %[[R:.*]]:2 = call @callee(%[[LOW]], %[[HIGH]])
 // CHECK-SAME: (!pto.vreg<64xf32>, !pto.vreg<64xf32>) -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>)
 // CHECK-DAG: %[[S0:.*]] = pto.vadd %[[R]]#0, %[[R]]#0
 // CHECK-DAG: %[[S1:.*]] = pto.vadd %[[R]]#1, %[[R]]#1

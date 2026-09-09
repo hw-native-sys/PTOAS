@@ -404,6 +404,13 @@ private:
         if (!endpoint.value || !endpoint.layout) {
           return failure();
         }
+        if (endpoint.use) {
+          if (endpoint.use->getOwner() != op ||
+              failed(buildOperand(*endpoint.use, endpoint.layout))) {
+            return failure();
+          }
+          continue;
+        }
         layouts[endpoint.value] = endpoint.layout;
         if (endpoint.value.getDefiningOp() != op ||
             values.contains(endpoint.value)) {

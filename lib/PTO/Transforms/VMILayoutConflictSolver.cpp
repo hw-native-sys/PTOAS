@@ -53,11 +53,22 @@ static Value getRelationPortValue(const VMILayoutOpRelation &relation,
 namespace mlir::pto {
 
 VMILayoutRelationConstraintState::VMILayoutRelationConstraintState(
-    ArrayRef<VMILayoutEqualityConstraint> equalities) {
+    ArrayRef<VMILayoutEqualityConstraint> equalities,
+    ArrayRef<VMILayoutFixedAssignment> fixedAssignments) {
   for (const VMILayoutEqualityConstraint &equality : equalities) {
     if (failed(unite(equality.source, equality.destination))) {
-      parent.clear();
-      assignedLayouts.clear();
+      valid = false;
+      return;
+    }
+  }
+  for (const VMILayoutFixedAssignment &fixed : fixedAssignments) {
+    if (!fixed.value || !fixed.layout) {
+      valid = false;
+      return;
+    }
+    parent.try_emplace(fixed.value, fixed.value);
+    if (failed(assign(fixed.value, fixed.layout))) {
+      valid = false;
       return;
     }
   }
@@ -190,6 +201,8 @@ struct FrontierEntry {
   VMILayoutPhysicalState physicalState;
   VMILayoutRelationConstraintState constraints;
   uint64_t preferencePenalty = 0;
+  uint64_t materializationPositionScore = 0;
+  DenseMap<unsigned, unsigned> selectedDecisionGroups;
 };
 
 static VMILayoutAttr getPortLayout(const VMILayoutOpRelation &relation,
@@ -197,6 +210,36 @@ static VMILayoutAttr getPortLayout(const VMILayoutOpRelation &relation,
   for (const VMILayoutPortAssignment &port : relation.ports) {
     if (port.kind == kind && port.index == index) {
       return port.layout;
+    }
+  }
+  return {};
+}
+
+static VMILayoutAttr getUseLayout(const VMILayoutOpRelation &relation,
+                                  OpOperand &use) {
+  if (VMILayoutAttr layout =
+          getPortLayout(relation, VMILayoutPortKind::Operand,
+                        use.getOperandNumber())) {
+    return layout;
+  }
+  for (const VMILayoutRelationEndpoint &endpoint : relation.endpoints) {
+    if (endpoint.use == &use) {
+      return endpoint.layout;
+    }
+  }
+  return {};
+}
+
+static VMILayoutAttr getResultLayout(const VMILayoutOpRelation &relation,
+                                     OpResult result) {
+  if (VMILayoutAttr layout =
+          getPortLayout(relation, VMILayoutPortKind::Result,
+                        result.getResultNumber())) {
+    return layout;
+  }
+  for (const VMILayoutRelationEndpoint &endpoint : relation.endpoints) {
+    if (!endpoint.use && endpoint.value == result) {
+      return endpoint.layout;
     }
   }
   return {};
@@ -293,7 +336,11 @@ static bool tieBreaksStrictlyBefore(const FrontierEntry &lhs,
   if (lhsMaterializations != rhsMaterializations) {
     return lhsMaterializations < rhsMaterializations;
   }
-  return lhs.preferencePenalty < rhs.preferencePenalty;
+  if (lhs.preferencePenalty != rhs.preferencePenalty) {
+    return lhs.preferencePenalty < rhs.preferencePenalty;
+  }
+  return lhs.materializationPositionScore >
+         rhs.materializationPositionScore;
 }
 
 static bool tieBreaksLessOrEqual(const FrontierEntry &lhs,
@@ -303,7 +350,11 @@ static bool tieBreaksLessOrEqual(const FrontierEntry &lhs,
   if (lhsMaterializations != rhsMaterializations) {
     return lhsMaterializations < rhsMaterializations;
   }
-  return lhs.preferencePenalty <= rhs.preferencePenalty;
+  if (lhs.preferencePenalty != rhs.preferencePenalty) {
+    return lhs.preferencePenalty < rhs.preferencePenalty;
+  }
+  return lhs.materializationPositionScore >=
+         rhs.materializationPositionScore;
 }
 
 class FrontierConflictSolver {
@@ -314,8 +365,84 @@ public:
     for (auto [index, op] : llvm::enumerate(ops)) {
       opIndices[op.op] = index;
     }
-    initialConstraints =
-        VMILayoutRelationConstraintState(options.equalityConstraints);
+    opDecisionGroups.assign(ops.size(), -1);
+    SmallVector<SmallVector<unsigned, mlir::pto::kValue4>, mlir::pto::kValue8>
+        adjacency(ops.size());
+    for (auto [consumerIndex, solverOp] : llvm::enumerate(ops)) {
+      for (Value operand : solverOp.op->getOperands()) {
+        auto producerIt = opIndices.find(operand.getDefiningOp());
+        if (producerIt == opIndices.end() ||
+            producerIt->second == consumerIndex) {
+          continue;
+        }
+        adjacency[consumerIndex].push_back(producerIt->second);
+        adjacency[producerIt->second].push_back(consumerIndex);
+      }
+    }
+    for (auto &neighbors : adjacency) {
+      llvm::sort(neighbors);
+      neighbors.erase(std::unique(neighbors.begin(), neighbors.end()),
+                      neighbors.end());
+    }
+    SmallVector<unsigned, mlir::pto::kValue8> components(ops.size(), 0);
+    llvm::SmallBitVector visited(ops.size());
+    unsigned nextComponent = 0;
+    for (unsigned root = 0; root < ops.size(); ++root) {
+      if (visited.test(root)) {
+        continue;
+      }
+      SmallVector<unsigned, mlir::pto::kValue4> worklist{root};
+      visited.set(root);
+      while (!worklist.empty()) {
+        unsigned current = worklist.pop_back_val();
+        components[current] = nextComponent;
+        for (unsigned neighbor : adjacency[current]) {
+          if (!visited.test(neighbor)) {
+            visited.set(neighbor);
+            worklist.push_back(neighbor);
+          }
+        }
+      }
+      ++nextComponent;
+    }
+    for (auto [groupIndex, group] : llvm::enumerate(options.decisionGroups)) {
+      if (group.opIndices.size() != group.memberRelationIndices.size() ||
+          group.opIndices.empty()) {
+        continue;
+      }
+      unsigned firstOp = group.opIndices.front();
+      if (firstOp >= ops.size()) {
+        continue;
+      }
+      bool valid = true;
+      for (unsigned opIndex : group.opIndices) {
+        if (opIndex >= ops.size() || components[opIndex] != components[firstOp]) {
+          valid = false;
+          break;
+        }
+      }
+      if (!valid) {
+        continue;
+      }
+      for (auto [member, opIndex] : llvm::enumerate(group.opIndices)) {
+        if (opIndex >= ops.size() || opDecisionGroups[opIndex] != -1 ||
+            group.memberRelationIndices[member].empty()) {
+          valid = false;
+          break;
+        }
+        opDecisionGroups[opIndex] = groupIndex;
+      }
+      if (!valid) {
+        for (unsigned opIndex : group.opIndices) {
+          if (opIndex < ops.size() &&
+              opDecisionGroups[opIndex] == static_cast<int>(groupIndex)) {
+            opDecisionGroups[opIndex] = -1;
+          }
+        }
+      }
+    }
+    initialConstraints = VMILayoutRelationConstraintState(
+        options.equalityConstraints, options.fixedAssignments);
   }
 
   FailureOr<VMILayoutPlan> solve() {
@@ -333,9 +460,16 @@ public:
     if (failed(order)) {
       return failure();
     }
+    topologicalPositions.assign(ops.size(), 0);
+    for (auto [position, opIndex] : llvm::enumerate(*order)) {
+      topologicalPositions[opIndex] = position;
+    }
     SmallVector<FrontierEntry, mlir::pto::kValue8> frontier;
     frontier.emplace_back();
     frontier.back().constraints = initialConstraints;
+    if (failed(frontier.back().constraints.materialize(frontier.back().plan))) {
+      return failure();
+    }
     for (auto [position, opIndex] : llvm::enumerate(*order)) {
       SmallVector<Operation *, mlir::pto::kValue16> remainingOps;
       for (unsigned remaining : llvm::drop_begin(*order, position + 1)) {
@@ -385,14 +519,15 @@ public:
       return failure();
     }
     VMILayoutPlan result = best->plan;
-    if (failed(best->constraints.materialize(result)))
+    if (failed(best->constraints.materialize(result))) {
       return failure();
+    }
     return result;
   }
 
 private:
   bool hasValidInput() const {
-    if (opIndices.size() != ops.size()) {
+    if (!initialConstraints.isValid() || opIndices.size() != ops.size()) {
       return false;
     }
     for (const VMILayoutSolverOp &solverOp : ops) {
@@ -474,9 +609,8 @@ private:
           for (int candidate = state.domains[consumerIndex].find_first();
                candidate >= 0;
                candidate = state.domains[consumerIndex].find_next(candidate)) {
-            VMILayoutAttr targetLayout = getPortLayout(
-                ops[consumerIndex].relations[candidate],
-                VMILayoutPortKind::Operand, use.getOperandNumber());
+            VMILayoutAttr targetLayout =
+                getUseLayout(ops[consumerIndex].relations[candidate], use);
             supported |= canMaterialize(result, port.layout, targetLayout);
           }
           if (!supported) {
@@ -510,9 +644,8 @@ private:
       for (int candidate = state.domains[producerIndex].find_first();
            candidate >= 0;
            candidate = state.domains[producerIndex].find_next(candidate)) {
-        VMILayoutAttr sourceLayout = getPortLayout(
-            ops[producerIndex].relations[candidate], VMILayoutPortKind::Result,
-            cast<OpResult>(source).getResultNumber());
+        VMILayoutAttr sourceLayout = getResultLayout(
+            ops[producerIndex].relations[candidate], cast<OpResult>(source));
         supported |= canMaterialize(source, sourceLayout, port.layout);
       }
       if (!supported) {
@@ -548,6 +681,14 @@ private:
     SmallVector<unsigned, mlir::pto::kValue16> indegrees(ops.size(), 0);
     SmallVector<SmallVector<unsigned, mlir::pto::kValue4>, mlir::pto::kValue16>
         successors(ops.size());
+    auto addDependency = [&](unsigned producer, unsigned consumer) {
+      if (producer == consumer ||
+          llvm::is_contained(successors[producer], consumer)) {
+        return;
+      }
+      ++indegrees[consumer];
+      successors[producer].push_back(consumer);
+    };
     for (auto [consumerIndex, solverOp] : llvm::enumerate(ops)) {
       SmallPtrSet<Operation *, mlir::pto::kValue4> producers;
       for (Value operand : solverOp.op->getOperands()) {
@@ -557,8 +698,21 @@ private:
             !producers.insert(producer).second) {
           continue;
         }
-        ++indegrees[consumerIndex];
-        successors[producerIt->second].push_back(consumerIndex);
+        addDependency(producerIt->second, consumerIndex);
+      }
+    }
+    for (const VMILayoutEqualityConstraint &equality :
+         options.equalityConstraints) {
+      Operation *producer = equality.source.getDefiningOp();
+      auto producerIt = opIndices.find(producer);
+      if (producerIt == opIndices.end()) {
+        continue;
+      }
+      for (Operation *consumer : equality.destination.getUsers()) {
+        auto consumerIt = opIndices.find(consumer);
+        if (consumerIt != opIndices.end()) {
+          addDependency(producerIt->second, consumerIt->second);
+        }
       }
     }
     SmallVector<unsigned, mlir::pto::kValue16> ready;
@@ -624,6 +778,29 @@ private:
     return success();
   }
 
+  uint64_t getMaterializationPositionScore(const VMILayoutPlan &plan) const {
+    uint64_t score = 0;
+    for (const auto &[operand, useLayout] : plan.useLayouts) {
+      if (!operand) {
+        continue;
+      }
+      auto valueLayout = plan.valueLayouts.find(operand->get());
+      if (valueLayout == plan.valueLayouts.end() ||
+          valueLayout->second == useLayout) {
+        continue;
+      }
+      auto opIndex = opIndices.find(operand->getOwner());
+      if (opIndex != opIndices.end()) {
+        uint64_t position = topologicalPositions[opIndex->second];
+        if (position > std::numeric_limits<uint64_t>::max() - score) {
+          return std::numeric_limits<uint64_t>::max();
+        }
+        score += position;
+      }
+    }
+    return score;
+  }
+
   static void insertPareto(
       FrontierEntry candidate, StringRef key,
       llvm::StringMap<SmallVector<FrontierEntry, mlir::pto::kValue2>> &groups) {
@@ -652,9 +829,49 @@ private:
          const llvm::SmallBitVector &domain,
          ArrayRef<Operation *> remainingOps) {
     llvm::StringMap<SmallVector<FrontierEntry, mlir::pto::kValue2>> groups;
+    SmallVector<std::string, mlir::pto::kValue8> groupOrder;
     for (const FrontierEntry &entry : frontier) {
-      for (int relationIndex = domain.find_first(); relationIndex >= 0;
-           relationIndex = domain.find_next(relationIndex)) {
+      unsigned groupIndex = opDecisionGroups.empty()
+                                ? std::numeric_limits<unsigned>::max()
+                                : static_cast<unsigned>(opDecisionGroups[opIndex]);
+      int memberIndex = -1;
+      if (groupIndex != std::numeric_limits<unsigned>::max()) {
+        memberIndex = llvm::find(options.decisionGroups[groupIndex].opIndices,
+                                 opIndex) -
+                      options.decisionGroups[groupIndex].opIndices.begin();
+      }
+      SmallVector<unsigned, mlir::pto::kValue4> candidates;
+      if (memberIndex >= 0 &&
+          entry.selectedDecisionGroups.count(groupIndex)) {
+        unsigned selected = entry.selectedDecisionGroups.lookup(groupIndex);
+        if (selected < options.decisionGroups[groupIndex]
+                          .memberRelationIndices[memberIndex]
+                          .size()) {
+          unsigned mapped = options.decisionGroups[groupIndex]
+                                .memberRelationIndices[memberIndex][selected];
+          if (domain.test(mapped)) {
+            candidates.push_back(mapped);
+          }
+        }
+      } else if (memberIndex >= 0) {
+        for (unsigned selected = 0;
+             selected < options.decisionGroups[groupIndex]
+                             .memberRelationIndices[memberIndex]
+                             .size();
+             ++selected) {
+          unsigned mapped = options.decisionGroups[groupIndex]
+                                .memberRelationIndices[memberIndex][selected];
+          if (domain.test(mapped)) {
+            candidates.push_back(mapped);
+          }
+        }
+      } else {
+        for (int relationIndex = domain.find_first(); relationIndex >= 0;
+             relationIndex = domain.find_next(relationIndex)) {
+          candidates.push_back(static_cast<unsigned>(relationIndex));
+        }
+      }
+      for (unsigned relationIndex : candidates) {
         if (transitions >= options.maxTransitions) {
           return failure();
         }
@@ -662,6 +879,24 @@ private:
         const VMILayoutOpRelation &relation =
             ops[opIndex].relations[relationIndex];
         FrontierEntry candidate = entry;
+        if (memberIndex >= 0 &&
+            !candidate.selectedDecisionGroups.count(groupIndex)) {
+          unsigned selected = 0;
+          while (selected < options.decisionGroups[groupIndex]
+                                  .memberRelationIndices[memberIndex]
+                                  .size() &&
+                 options.decisionGroups[groupIndex]
+                         .memberRelationIndices[memberIndex][selected] !=
+                     relationIndex) {
+            ++selected;
+          }
+          if (selected == options.decisionGroups[groupIndex]
+                                  .memberRelationIndices[memberIndex]
+                                  .size()) {
+            continue;
+          }
+          candidate.selectedDecisionGroups[groupIndex] = selected;
+        }
         if (relation.preferencePenalty >
             std::numeric_limits<uint64_t>::max() -
                 candidate.preferencePenalty) {
@@ -672,8 +907,18 @@ private:
                 addRelationToPlan(relation, relationIndex, candidate.plan))) {
           return failure();
         }
-        if (failed(candidate.constraints.accept(relation, candidate.plan)))
+        if (failed(candidate.constraints.accept(relation, candidate.plan))) {
           continue;
+        }
+        // Keep the partial plan consistent with structural equality classes
+        // before evaluating its physical cost.  Otherwise block arguments and
+        // region-carried values appear as unconstrained fresh inputs until the
+        // final plan is materialized, hiding conversions at structural edges.
+        if (failed(candidate.constraints.materialize(candidate.plan))) {
+          continue;
+        }
+        candidate.materializationPositionScore =
+            getMaterializationPositionScore(candidate.plan);
         auto physicalState = appendVMILayoutPhysicalRelation(
             entry.physicalState, relation, candidate.plan);
         if (failed(physicalState)) {
@@ -686,16 +931,24 @@ private:
           continue;
         }
         auto constraintKey = candidate.constraints.fingerprint();
-        if (failed(constraintKey))
+        if (failed(constraintKey)) {
           return failure();
+        }
         std::string combinedKey = *key + "|constraints=" + *constraintKey;
+        if (!groups.contains(combinedKey)) {
+          groupOrder.push_back(combinedKey);
+        }
         insertPareto(std::move(candidate), combinedKey, groups);
       }
     }
     SmallVector<FrontierEntry, mlir::pto::kValue8> result;
-    for (auto &group : groups) {
-      result.append(std::make_move_iterator(group.second.begin()),
-                    std::make_move_iterator(group.second.end()));
+    for (const std::string &key : groupOrder) {
+      auto group = groups.find(key);
+      if (group == groups.end()) {
+        return failure();
+      }
+      result.append(std::make_move_iterator(group->second.begin()),
+                    std::make_move_iterator(group->second.end()));
       if (result.size() > options.maxFrontierEntries) {
         return failure();
       }
@@ -721,6 +974,8 @@ private:
   ArrayRef<VMILayoutSolverOp> ops;
   const VMILayoutConflictSolverOptions &options;
   DenseMap<Operation *, unsigned> opIndices;
+  SmallVector<int, mlir::pto::kValue8> opDecisionGroups;
+  SmallVector<unsigned, mlir::pto::kValue8> topologicalPositions;
   VMILayoutRelationConstraintState initialConstraints;
   unsigned transitions = 0;
 };

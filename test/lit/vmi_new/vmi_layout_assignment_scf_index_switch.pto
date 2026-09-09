@@ -29,20 +29,26 @@ module {
 // ASSIGN-LABEL: func.func @vmi_layout_assignment_scf_index_switch(
 // ASSIGN-SAME: %[[SELECTOR:.*]]: index
 // ASSIGN-SAME: %[[INPUT:.*]]: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
-// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
 // ASSIGN: %[[WIDE:.*]] = pto.vmi.extf %[[INPUT]]
 // ASSIGN-SAME: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
-// ASSIGN: %[[RESULT:.*]] = scf.index_switch %[[SELECTOR]] -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
-// ASSIGN: scf.yield %[[WIDE]] : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: %[[RESULT:.*]] = scf.index_switch %[[SELECTOR]] -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[CASE_ABI:.*]] = pto.vmi.ensure_layout %[[WIDE]]
+// ASSIGN-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: scf.yield %[[CASE_ABI]] : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
 // ASSIGN: default
-// ASSIGN: scf.yield %[[WIDE]] : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
-// ASSIGN: return %[[RESULT]] : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: %[[DEFAULT_ABI:.*]] = pto.vmi.ensure_layout %[[WIDE]]
+// ASSIGN-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: scf.yield %[[DEFAULT_ABI]] : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: return %[[RESULT]] : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
 
 // LOWER-LABEL: func.func @vmi_layout_assignment_scf_index_switch(
 // LOWER: %[[RESULT:.*]]:2 = scf.index_switch {{.*}} -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
-// LOWER: scf.yield {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>
+// LOWER: %[[CASE_LOW:.*]], %[[CASE_HIGH:.*]] = pto.vintlv
+// LOWER: scf.yield %[[CASE_LOW]], %[[CASE_HIGH]] : !pto.vreg<64xf32>, !pto.vreg<64xf32>
 // LOWER: default
-// LOWER: scf.yield {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>
+// LOWER: %[[DEFAULT_LOW:.*]], %[[DEFAULT_HIGH:.*]] = pto.vintlv
+// LOWER: scf.yield %[[DEFAULT_LOW]], %[[DEFAULT_HIGH]] : !pto.vreg<64xf32>, !pto.vreg<64xf32>
 // LOWER: return %[[RESULT]]#0, %[[RESULT]]#1 : !pto.vreg<64xf32>, !pto.vreg<64xf32>
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.
