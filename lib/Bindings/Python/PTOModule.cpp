@@ -125,7 +125,8 @@ static void populatePTODialectSubmodule(const pybind11::module &m) {
   (void)m;
 }
 
-void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
+static void populatePTODialectAndEnums(pybind11::module_ &m) {
+    // register_dialect plus every PTO enum exposed to Python.
     // --------------------------------------------------------------------------
     // Dialect registration helper
     // --------------------------------------------------------------------------
@@ -335,8 +336,10 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
       .value("P1000", MlirPTOMaskPattern_P1000)
       .value("P1111", MlirPTOMaskPattern_P1111)
       .export_values();
-    py::object maskPatternEnumType = m.attr("MaskPattern");
+}
 
+static void populatePTOEnumAttributeBindings(pybind11::module_ &m) {
+    // Attributes whose payload is a plain PTO enum value.
     mlir_attribute_subclass(m, "BLayoutAttr",
                         [](MlirAttribute a) -> bool {
                           return mlirPTOAttrIsABLayoutAttr(a);
@@ -501,6 +504,10 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
             return cls(a);
             },
             py::arg("cls"), py::arg("value"), py::arg("context") = py::none());
+}
+
+static void populatePTOSyncEventAttributeBindings(pybind11::module_ &m) {
+    // Address-space / fence / round / saturation / pipe / layout / cmp-mode attributes.
     // [保留 HEAD]: AddressSpaceAttr 定义
     mlir_attribute_subclass(
         m, "AddressSpaceAttr",
@@ -715,6 +722,10 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
             return mlirPTOCmpModeAttrGetValue(self);
           });
 
+}
+
+static void populatePTOQuantMaskAttributeBindings(pybind11::module_ &m) {
+    // Sync / event / coalesce / quant / mx / vec-store / mask-pattern attributes.
     mlir_attribute_subclass(
         m, "SyncOpTypeAttr",
         [](MlirAttribute a) { return mlirPTOAttrIsASyncOpTypeAttr(a); })
@@ -930,6 +941,7 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
             return mlirPTOVecStoreModeAttrGetValue(self);
           });
 
+    py::object maskPatternEnumType = m.attr("MaskPattern");
     mlir_attribute_subclass(
         m, "MaskPatternAttr",
         [](MlirAttribute a) { return mlirPTOAttrIsAMaskPatternAttr(a); })
@@ -983,6 +995,10 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
 
     // --------------------------------------------------------------------------
     // !pto.ptr<elem>
+}
+
+static void populatePTOMemRefLikeTypeBindings(pybind11::module_ &m) {
+    // !pto.ptr and the remaining type subclasses.
     // --------------------------------------------------------------------------
     mlir_type_subclass(
         m, "PtrType",
@@ -1386,6 +1402,10 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
         return shapeToPyList(data, n);
         });
 
+}
+
+static void populatePTOTileBufBindings(pybind11::module_ &m) {
+    // TileBufConfigAttr and !pto.TileBufType (the tile descriptor surface).
     // ---- TileBufConfigAttr ----
     mlir_attribute_subclass(m, "TileBufConfigAttr",
                             [](MlirAttribute a) -> bool {
@@ -1545,5 +1565,14 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
           return mlirPTOTileBufTypeGetSFractalSize(self);
         });
 
+}
+
+void mlir::pto::python::populatePTODialectBindings(pybind11::module_ &m) {
+    populatePTODialectAndEnums(m);
+    populatePTOEnumAttributeBindings(m);
+    populatePTOSyncEventAttributeBindings(m);
+    populatePTOQuantMaskAttributeBindings(m);
+    populatePTOMemRefLikeTypeBindings(m);
+    populatePTOTileBufBindings(m);
     populatePTODialectSubmodule(m);
 }

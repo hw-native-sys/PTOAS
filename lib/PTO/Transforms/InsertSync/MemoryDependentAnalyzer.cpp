@@ -183,7 +183,7 @@ bool MemoryDependentAnalyzer::MemAlias(const BaseMemInfo *a,
                                        const BaseMemInfo *b) {
   pto::AddressSpace as = a->scope;
   pto::AddressSpace bs = b->scope;
- 
+
   // [Debug Log] 打印比较对象
   if (isTraceEnabled()) {
     llvm::errs() << "  [MemAlias Check]\n";
@@ -192,7 +192,7 @@ bool MemoryDependentAnalyzer::MemAlias(const BaseMemInfo *a,
     llvm::errs() << "    Scope A: " << static_cast<int>(as)
                  << ", Scope B: " << static_cast<int>(bs) << "\n";
   }
- 
+
   if (as != bs) {
     if (isTraceEnabled()) {
       llvm::errs() << "    -> Scope Mismatch. False.\n";
@@ -206,13 +206,29 @@ bool MemoryDependentAnalyzer::MemAlias(const BaseMemInfo *a,
     }
     return true;
   }
- 
+
   // 1. GM 内存
   if (as == pto::AddressSpace::GM) {
     return isGMBufferOverlap(a, b);
   }
- 
+
   // 2. Local Memory (UB/L1)
+  return isLocalBufferAlias(a, b);
+}
+
+bool MemoryDependentAnalyzer::rangesOverlapOrUnknown(const BaseMemInfo *a,
+                                                      const BaseMemInfo *b) {
+  if (a->baseAddresses.empty() || b->baseAddresses.empty()) {
+    return true;
+  }
+  if (a->allocateSize == 0 || b->allocateSize == 0) {
+    return true;
+  }
+  return isBufferAddressRangeOverlap(a, b);
+}
+
+bool MemoryDependentAnalyzer::isLocalBufferAlias(const BaseMemInfo *a,
+                                                 const BaseMemInfo *b) {
   // PTOPlanMemory writes physical addresses back to allocation roots. Once an
   // async MTE3 store has consumed the source SSA, a later allocation can reuse
   // the same physical range with a different alloc_tile root. Compare those
@@ -221,53 +237,34 @@ bool MemoryDependentAnalyzer::MemAlias(const BaseMemInfo *a,
     if (isTraceEnabled()) {
       llvm::errs() << "    -> Comparing known physical local ranges.\n";
     }
-    if (a->baseAddresses.empty() || b->baseAddresses.empty()) {
-      return true;
-    }
-    if (a->allocateSize == 0 || b->allocateSize == 0) {
-      return true;
-    }
-    return isBufferAddressRangeOverlap(a, b);
+    return rangesOverlapOrUnknown(a, b);
   }
 
   if (a->rootBuffer == b->rootBuffer) {
-    if (a->baseAddresses.empty() || b->baseAddresses.empty()) {
-      return true;
-    }
-    if (a->allocateSize == 0 || b->allocateSize == 0) {
-      return true;
-    }
-    return isBufferAddressRangeOverlap(a, b);
+    return rangesOverlapOrUnknown(a, b);
   }
- 
-  // 2.2 深层比较：穿透 View
+
+  // 深层比较：穿透 View
   Value realRootA = GetRealRoot(a->rootBuffer);
   Value realRootB = GetRealRoot(b->rootBuffer);
- 
+
   if (isTraceEnabled()) {
     llvm::errs() << "    [Deep Check] Surface Roots differ. Digging deeper...\n";
     printValueDebug("      Real Root A", realRootA);
     printValueDebug("      Real Root B", realRootB);
   }
- 
+
   if (realRootA == realRootB && realRootA != nullptr) {
     if (isTraceEnabled()) {
       llvm::errs() << "      -> MATCH! Real roots are the same.\n";
     }
-    if (a->baseAddresses.empty() || b->baseAddresses.empty()) {
-      return true;
-    }
-    if (a->allocateSize == 0 || b->allocateSize == 0) {
-      return true;
-    }
-      return isBufferAddressRangeOverlap(a, b);
-  } else {
-    if (isTraceEnabled()) {
-      llvm::errs() << "      -> Mismatch. Real roots differ.\n";
-    }
+    return rangesOverlapOrUnknown(a, b);
+  }
+  if (isTraceEnabled()) {
+    llvm::errs() << "      -> Mismatch. Real roots differ.\n";
   }
 
-  // 2.3 Cross-root absolute-address overlap check.
+  // Cross-root absolute-address overlap check.
   //
   // Roots genuinely differ (different alloc_tile/address SSA). Historically
   // MemAlias returned false here, but PlanMemory can reuse the same physical
@@ -282,7 +279,7 @@ bool MemoryDependentAnalyzer::MemAlias(const BaseMemInfo *a,
   }
   return crossRootOverlap;
 }
- 
+
 bool MemoryDependentAnalyzer::isGMBufferOverlap(const BaseMemInfo *a,
                                                 const BaseMemInfo *b) {
   if (a->baseAddresses.empty() || b->baseAddresses.empty()) {

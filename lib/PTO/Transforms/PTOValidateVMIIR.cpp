@@ -674,13 +674,18 @@ static LogicalResult verifyVMIGroupMemorySemanticSupport(
   return success();
 }
 
-template <typename ReduceOpT, typename SupportFn>
+template <typename ReduceOpT>
 static LogicalResult verifyVMIGroupReduceSemanticSupport(
     ReduceOpT reduce, llvm::raw_ostream *diagOS, StringRef message,
-    SupportFn supports) {
+    VMILayoutSupport &supports,
+    LogicalResult (VMILayoutSupport::*supportFn)(ReduceOpT,
+                                                 std::string *) const) {
   auto resultType = cast<VMIVRegType>(reduce.getResult().getType());
-  return verifyGroupSlotsLayoutSupport(reduce, reduce, resultType.getLayoutAttr(),
-                                       diagOS, message, supports);
+  return verifyGroupSlotsLayoutSupport(
+      reduce, reduce, resultType.getLayoutAttr(), diagOS, message,
+      [&supports, supportFn](ReduceOpT groupReduce, std::string *reason) {
+        return (supports.*supportFn)(groupReduce, reason);
+      });
 }
 
 static LogicalResult verifyVMIGroupReductionSemanticSupport(
@@ -688,50 +693,38 @@ static LogicalResult verifyVMIGroupReductionSemanticSupport(
   if (auto reduce = dyn_cast<VMIGroupReduceAddFOp>(op)) {
     return verifyVMIGroupReduceSemanticSupport(
         reduce, diagOS,
-        "pto.vmi.group_reduce_addf has no registered group_slots layout support",
-        [&supports](VMIGroupReduceAddFOp groupReduce, std::string *reason) {
-          return supports.getGroupReduceAddFSupport(groupReduce, reason);
-        });
+        "pto.vmi.group_reduce_addf has no registered group_slots layout support", supports,
+        &VMILayoutSupport::getGroupReduceAddFSupport);
   }
   if (auto reduce = dyn_cast<VMIGroupReduceMaxFOp>(op)) {
     return verifyVMIGroupReduceSemanticSupport(
         reduce, diagOS,
-        "pto.vmi.group_reduce_maxf has no registered group_slots layout support",
-        [&supports](VMIGroupReduceMaxFOp groupReduce, std::string *reason) {
-          return supports.getGroupReduceMaxFSupport(groupReduce, reason);
-        });
+        "pto.vmi.group_reduce_maxf has no registered group_slots layout support", supports,
+        &VMILayoutSupport::getGroupReduceMaxFSupport);
   }
   if (auto reduce = dyn_cast<VMIGroupReduceMinFOp>(op)) {
     return verifyVMIGroupReduceSemanticSupport(
         reduce, diagOS,
-        "pto.vmi.group_reduce_minf has no registered group_slots layout support",
-        [&supports](VMIGroupReduceMinFOp groupReduce, std::string *reason) {
-          return supports.getGroupReduceMinFSupport(groupReduce, reason);
-        });
+        "pto.vmi.group_reduce_minf has no registered group_slots layout support", supports,
+        &VMILayoutSupport::getGroupReduceMinFSupport);
   }
   if (auto reduce = dyn_cast<VMIGroupReduceAddIOp>(op)) {
     return verifyVMIGroupReduceSemanticSupport(
         reduce, diagOS,
-        "pto.vmi.group_reduce_addi has no registered group_slots layout support",
-        [&supports](VMIGroupReduceAddIOp groupReduce, std::string *reason) {
-          return supports.getGroupReduceAddISupport(groupReduce, reason);
-        });
+        "pto.vmi.group_reduce_addi has no registered group_slots layout support", supports,
+        &VMILayoutSupport::getGroupReduceAddISupport);
   }
   if (auto reduce = dyn_cast<VMIGroupReduceMaxIOp>(op)) {
     return verifyVMIGroupReduceSemanticSupport(
         reduce, diagOS,
-        "pto.vmi.group_reduce_maxi has no registered group_slots layout support",
-        [&supports](VMIGroupReduceMaxIOp groupReduce, std::string *reason) {
-          return supports.getGroupReduceMaxISupport(groupReduce, reason);
-        });
+        "pto.vmi.group_reduce_maxi has no registered group_slots layout support", supports,
+        &VMILayoutSupport::getGroupReduceMaxISupport);
   }
   if (auto reduce = dyn_cast<VMIGroupReduceMinIOp>(op)) {
     return verifyVMIGroupReduceSemanticSupport(
         reduce, diagOS,
-        "pto.vmi.group_reduce_mini has no registered group_slots layout support",
-        [&supports](VMIGroupReduceMinIOp groupReduce, std::string *reason) {
-          return supports.getGroupReduceMinISupport(groupReduce, reason);
-        });
+        "pto.vmi.group_reduce_mini has no registered group_slots layout support", supports,
+        &VMILayoutSupport::getGroupReduceMinISupport);
   }
   return success();
 }

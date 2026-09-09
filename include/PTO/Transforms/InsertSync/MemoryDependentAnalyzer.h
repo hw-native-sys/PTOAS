@@ -34,6 +34,14 @@ public:
  
 private:
   bool isGMBufferOverlap(const BaseMemInfo *a, const BaseMemInfo *b);
+
+  // Local-memory alias walk: physical ranges, same root, deep (view) root,
+  // then the cross-root absolute-address overlap check.
+  bool isLocalBufferAlias(const BaseMemInfo *a, const BaseMemInfo *b);
+
+  // Conservative overlap: missing range metadata or an unbounded allocation
+  // is treated as aliasing.
+  bool rangesOverlapOrUnknown(const BaseMemInfo *a, const BaseMemInfo *b);
   
   bool isBufferAddressRangeOverlap(const BaseMemInfo *a, const BaseMemInfo *b);
   

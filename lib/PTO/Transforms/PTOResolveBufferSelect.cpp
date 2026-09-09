@@ -54,6 +54,41 @@ constexpr uint64_t kCubeTileAddressAlignmentBytes = 512;
 constexpr uint64_t kVectorTileAddressAlignmentBytes = 32;
 constexpr unsigned kI64BitWidth = 64;
 
+// RowPlusOne compact mode pads the leading dimension by one row.
+int64_t getCompactRowPlusOnePad(pto::TileBufType type) {
+  return type.getCompactModeI32() ==
+                 static_cast<int32_t>(pto::CompactMode::RowPlusOne)
+             ? 1
+             : 0;
+}
+
+// Resolve the fractal inner dimensions (sl != 0) shared by both layouts.
+bool getFractalInnerDims(pto::TileBufType type, int32_t sl,
+                         int64_t &innerRows, int64_t &innerCols) {
+  unsigned elemBytes = pto::getPTOStorageElemByteSize(type.getElementType());
+  if (elemBytes == 0) {
+    return false;
+  }
+  int32_t fractal = type.getConfigAttr().getSFractalSize().getInt();
+  if (fractal == kSFractal1024) {
+    innerRows = kFractalInnerDimension;
+    innerCols = kFractalInnerDimension;
+  } else if (fractal == kSFractal32) {
+    innerRows = kFractalInnerDimension;
+    innerCols = kSFractal32InnerColumnCount;
+  } else if (fractal == kSFractal512 && sl == 1) {
+    innerRows = kFractalInnerDimension;
+    innerCols = kSFractal32 / elemBytes;
+  } else if (fractal == kSFractal512 && sl == 2) {
+    innerRows = kSFractal32 / elemBytes;
+    innerCols = kFractalInnerDimension;
+  } else {
+    return false;
+  }
+  return true;
+}
+
+
 static uint64_t alignUp(uint64_t value, uint64_t align) {
   if (align == 0) {
     return value;
@@ -77,10 +112,12 @@ static Value ensureI64(Value value, IRRewriter &rewriter, Location loc) {
   return {};
 }
 
+
 static bool getTilePointerStrides(pto::TileBufType type, int64_t &rowStride,
                                   int64_t &colStride) {
   auto shape = type.getShape();
-  if (shape.size() != mlir::pto::kValue2 || llvm::is_contained(shape, ShapedType::kDynamic)) {
+  if (shape.size() != mlir::pto::kValue2 ||
+      llvm::is_contained(shape, ShapedType::kDynamic)) {
     return false;
   }
 
@@ -88,34 +125,14 @@ static bool getTilePointerStrides(pto::TileBufType type, int64_t &rowStride,
   int32_t bl = static_cast<int32_t>(config.getBLayout().getValue());
   int32_t sl = static_cast<int32_t>(config.getSLayout().getValue());
   if (sl == 0) {
-    bool rowPlusOne =
-        type.getCompactModeI32() ==
-        static_cast<int32_t>(pto::CompactMode::RowPlusOne);
-    rowStride = bl == 1 ? 1 : shape[1] + (rowPlusOne ? 1 : 0);
-    colStride = bl == 1 ? shape[0] + (rowPlusOne ? 1 : 0) : 1;
+    rowStride = bl == 1 ? 1 : shape[1] + getCompactRowPlusOnePad(type);
+    colStride = bl == 1 ? shape[0] + getCompactRowPlusOnePad(type) : 1;
     return true;
   }
 
-  unsigned elemBytes = pto::getPTOStorageElemByteSize(type.getElementType());
-  if (elemBytes == 0) {
-    return false;
-  }
   int64_t innerRows = 1;
   int64_t innerCols = 1;
-  int32_t fractal = config.getSFractalSize().getInt();
-  if (fractal == kSFractal1024) {
-    innerRows = kFractalInnerDimension;
-    innerCols = kFractalInnerDimension;
-  } else if (fractal == kSFractal32) {
-    innerRows = kFractalInnerDimension;
-    innerCols = kSFractal32InnerColumnCount;
-  } else if (fractal == kSFractal512 && sl == 1) {
-    innerRows = kFractalInnerDimension;
-    innerCols = kSFractal32 / elemBytes;
-  } else if (fractal == kSFractal512 && sl == 2) {
-    innerRows = kSFractal32 / elemBytes;
-    innerCols = kFractalInnerDimension;
-  } else {
+  if (!getFractalInnerDims(type, sl, innerRows, innerCols)) {
     return false;
   }
 
@@ -124,19 +141,9 @@ static bool getTilePointerStrides(pto::TileBufType type, int64_t &rowStride,
       return false;
     }
     rowStride = innerCols;
-    colStride =
-        shape[0] +
-        (type.getCompactModeI32() ==
-                 static_cast<int32_t>(pto::CompactMode::RowPlusOne)
-             ? 1
-             : 0);
+    colStride = shape[0] + getCompactRowPlusOnePad(type);
   } else {
-    rowStride =
-        shape[1] +
-        (type.getCompactModeI32() ==
-                 static_cast<int32_t>(pto::CompactMode::RowPlusOne)
-             ? 1
-             : 0);
+    rowStride = shape[1] + getCompactRowPlusOnePad(type);
     colStride = innerRows;
   }
   return true;

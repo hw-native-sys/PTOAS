@@ -1320,25 +1320,13 @@ static void appendAutoSyncPasses(PassManager &pm) {
   }
 }
 
-static LogicalResult runMainLoweringPipeline(
-    OwningOpRef<ModuleOp> &module, PTOASContext &context,
-    PTOBackend effectiveBackend, const CompilePipelineState &state,
-    PTOASCompileResult &result, bool emitVPTOHostStub, bool &handled,
-    int &exitCode) {
-  handled = false;
-  exitCode = 0;
-  const bool enableA5EmitCFusionPath = state.enableA5EmitCFusionPath;
-  const bool enableA5VPTOFusionPath = state.enableA5VPTOFusionPath;
+// Populates the shared mainline lowering pass sequence (both backends).
+static LogicalResult populateMainLoweringPasses(PassManager &pm,
+                                                PTOBackend effectiveBackend,
+                                                const CompilePipelineState &state) {
   const bool isA2A3 = state.isA2A3;
   const bool hasTileOpsToExpand = state.hasTileOpsToExpand;
   const PTOBuildLevel effectiveLevel = state.level;
-
-  // Main PassManager
-  PassManager pm(module->getContext());
-
-  if (failed(applyPassManagerCLOptions(pm))) {
-    return failure();
-  }
 
   // Rank-2 → rank-5 view canonicalization is currently gated on the VPTO
   // backend to limit blast radius.  A3/A5 EmitC codegen already pads strides
@@ -1371,8 +1359,9 @@ static LogicalResult runMainLoweringPipeline(
     pm.addPass(pto::createInsertTemplateAttributesPass());
   }
 
-  if (failed(appendFusionFrontendPasses(pm, isA2A3, enableA5EmitCFusionPath,
-                                         enableA5VPTOFusionPath))) {
+  if (failed(appendFusionFrontendPasses(pm, isA2A3,
+                                        state.enableA5EmitCFusionPath,
+                                        state.enableA5VPTOFusionPath))) {
     return failure();
   }
 
@@ -1397,6 +1386,66 @@ static LogicalResult runMainLoweringPipeline(
     pm.addPass(createNarrowUnusedMultiResultProvenancePass());
   }
 
+  pm.addPass(createCSEPass());
+  // PTODSL backend helpers already use the tile-native ABI.
+  pm.addPass(pto::createPTOInlineBackendHelpersPass());
+  if (effectiveBackend == PTOBackend::EmitC) {
+    pm.addPass(createNarrowUnusedMultiResultProvenancePass());
+  }
+  pm.addPass(createCanonicalizerPass());
+  pm.addPass(createCSEPass());
+  return applyConfiguredPassManagerCLOptions(pm, "main PTOAS pipeline");
+}
+
+// Runs the populated mainline pipeline for the VPTO backend, emits the seam
+// IR dumps, hands off to the VPTO backend pipeline, and produces the result.
+static LogicalResult finishVPTOMainPipeline(
+    OwningOpRef<ModuleOp> &module, PassManager &pm,
+    PTOASCompileResult &result, PTOASContext &context, bool emitVPTOHostStub,
+    bool hasTileOpsToExpand, bool &handled, int &exitCode) {
+  if (failed(pm.run(*module))) {
+    llvm::errs() << "Error: Pass execution failed.\n";
+    return failure();
+  }
+
+  if (ptoPrintSeamIR) {
+    printSharedPreBackendSeamIR(*module);
+  }
+  if (ptoPrintSeamIR) {
+    module->print(llvm::errs());
+    llvm::errs() << "\n";
+  }
+  if (failed(emitSharedPreBackendSeamIR(*module, ptoSeamIRFile))) {
+    return failure();
+  }
+
+  if (failed(runVPTOBackendPipeline(module, hasTileOpsToExpand))) {
+    return failure();
+  }
+  handled = true;
+  exitCode = emitVPTOBackendResult(*module, result, emitVPTOHostStub,
+                                   context.getCANNVersionOrDefault());
+  return success();
+}
+
+static LogicalResult runMainLoweringPipeline(
+    OwningOpRef<ModuleOp> &module, PTOASContext &context,
+    PTOBackend effectiveBackend, const CompilePipelineState &state,
+    PTOASCompileResult &result, bool emitVPTOHostStub, bool &handled,
+    int &exitCode) {
+  handled = false;
+  exitCode = 0;
+  const bool hasTileOpsToExpand = state.hasTileOpsToExpand;
+
+  // Main PassManager
+  PassManager pm(module->getContext());
+  if (failed(applyPassManagerCLOptions(pm))) {
+    return failure();
+  }
+  if (failed(populateMainLoweringPasses(pm, effectiveBackend, state))) {
+    return failure();
+  }
+
   if (emitMlirIR) {
     if (failed(pm.run(*module))) {
       llvm::errs() << "Error: Pass execution failed.\n";
@@ -1411,42 +1460,10 @@ static LogicalResult runMainLoweringPipeline(
     return success();
   }
 
-  pm.addPass(createCSEPass());
-  // PTODSL backend helpers already use the tile-native ABI.
-  pm.addPass(pto::createPTOInlineBackendHelpersPass());
-  if (effectiveBackend == PTOBackend::EmitC) {
-    pm.addPass(createNarrowUnusedMultiResultProvenancePass());
-  }
-  pm.addPass(createCanonicalizerPass());
-  pm.addPass(createCSEPass());
-  if (failed(applyConfiguredPassManagerCLOptions(pm, "main PTOAS pipeline"))) {
-    return failure();
-  }
-
   if (effectiveBackend == PTOBackend::VPTO) {
-    if (failed(pm.run(*module))) {
-      llvm::errs() << "Error: Pass execution failed.\n";
-      return failure();
-    }
-
-    if (ptoPrintSeamIR) {
-      printSharedPreBackendSeamIR(*module);
-    }
-    if (ptoPrintSeamIR) {
-      module->print(llvm::errs());
-      llvm::errs() << "\n";
-    }
-    if (failed(emitSharedPreBackendSeamIR(*module, ptoSeamIRFile))) {
-      return failure();
-    }
-
-    if (failed(runVPTOBackendPipeline(module, hasTileOpsToExpand))) {
-      return failure();
-    }
-    handled = true;
-    exitCode = emitVPTOBackendResult(*module, result, emitVPTOHostStub,
-                                     context.getCANNVersionOrDefault());
-    return success();
+    return finishVPTOMainPipeline(module, pm, result, context,
+                                  emitVPTOHostStub, hasTileOpsToExpand,
+                                  handled, exitCode);
   }
 
   if (failed(pm.run(*module))) {

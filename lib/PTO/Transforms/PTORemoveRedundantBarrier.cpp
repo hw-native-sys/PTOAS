@@ -116,6 +116,102 @@ bool isPipelineActiveFuture(Block *block, Block::iterator startIt, Attribute tar
     return false;
 }
 
+
+// ==========================================================
+// Op classification helpers
+// ==========================================================
+namespace {
+
+// Maps resource ops to the pipe they occupy (MTE2 load / MTE3 store / V add).
+class OpPipeTable {
+public:
+  explicit OpPipeTable(MLIRContext *ctx)
+      : mte2(pto::PipeAttr::get(ctx, pto::PIPE::PIPE_MTE2)),
+        mte3(pto::PipeAttr::get(ctx, pto::PIPE::PIPE_MTE3)),
+        vec(pto::PipeAttr::get(ctx, pto::PIPE::PIPE_V)) {}
+
+  Attribute pipeFor(Operation *op) const {
+    if (isa<pto::TLoadOp>(op)) {
+      return mte2;
+    }
+    if (isa<pto::TStoreOp>(op)) {
+      return mte3;
+    }
+    if (isa<pto::TAddOp>(op)) {
+      return vec;
+    }
+    return {};
+  }
+
+private:
+  Attribute mte2;
+  Attribute mte3;
+  Attribute vec;
+};
+
+static bool getSetSyncPipes(Operation *op, Attribute &src, Attribute &dst) {
+  if (auto setOp = dyn_cast<pto::SetFlagOp>(op)) {
+    src = setOp.getSrcPipe();
+    dst = setOp.getDstPipe();
+    return true;
+  }
+  StringRef opName = op->getName().getStringRef();
+  if (opName == "pto.set_flag_dyn" || opName == "pto.set_flag_d") {
+    auto srcAttr = op->getAttrOfType<pto::PipeAttr>("src_pipe");
+    auto dstAttr = op->getAttrOfType<pto::PipeAttr>("dst_pipe");
+    if (!srcAttr || !dstAttr) {
+      return false;
+    }
+    src = srcAttr;
+    dst = dstAttr;
+    return true;
+  }
+  return false;
+}
+
+static bool getWaitSyncDst(Operation *op, Attribute &dst) {
+  if (auto waitOp = dyn_cast<pto::WaitFlagOp>(op)) {
+    dst = waitOp.getDstPipe();
+    return true;
+  }
+  StringRef opName = op->getName().getStringRef();
+  if (opName == "pto.wait_flag_dyn" || opName == "pto.wait_flag_d") {
+    auto dstAttr = op->getAttrOfType<pto::PipeAttr>("dst_pipe");
+    if (!dstAttr) {
+      return false;
+    }
+    dst = dstAttr;
+    return true;
+  }
+  return false;
+}
+
+// Rule A: dead pipeline - nothing active for this pipe after the barrier.
+// Rule B: clean pipeline - the pipe has no dirty state to protect.
+// Rule C: subsumed by a following set on the same pipe (set implies barrier).
+bool isRedundantBarrier(pto::BarrierOp barrierOp, Block *block,
+                        Block::iterator it,
+                        const llvm::DenseSet<Attribute> &intraPipeDirtySet) {
+  Attribute bPipe = barrierOp.getPipe();
+  if (!isPipelineActiveFuture(block, std::next(it), bPipe)) {
+    return true;
+  }
+  if (!intraPipeDirtySet.count(bPipe)) {
+    return true;
+  }
+  auto nextIt = std::next(it);
+  if (nextIt != block->end()) {
+    Attribute nextSrc;
+    Attribute nextDst;
+    if (getSetSyncPipes(&*nextIt, nextSrc, nextDst) && nextSrc == bPipe) {
+      return true;
+    }
+  }
+  return false;
+}
+
+} // namespace
+
 // ==========================================================
 // Pass 实现
 // ==========================================================
@@ -124,64 +220,8 @@ struct PTORemoveRedundantBarrierPass : public PassWrapper<PTORemoveRedundantBarr
 
   void runOnOperation() override {
     func::FuncOp func = getOperation();
-    MLIRContext *ctx = &getContext();
-    
-    Attribute attrMTE2 = pto::PipeAttr::get(ctx, pto::PIPE::PIPE_MTE2);
-    Attribute attrMTE3 = pto::PipeAttr::get(ctx, pto::PIPE::PIPE_MTE3);
-    Attribute attrVec  = pto::PipeAttr::get(ctx, pto::PIPE::PIPE_V);
-
-    auto getOpPipe = [&](Operation *op) -> Attribute {
-      if (isa<pto::TLoadOp>(op)) {
-        return attrMTE2;
-      }
-      if (isa<pto::TStoreOp>(op)) {
-        return attrMTE3;
-      }
-      if (isa<pto::TAddOp>(op)) {
-        return attrVec;
-      }
-      return {};
-    };
-
-    auto getSetSyncPipes = [&](Operation *op, Attribute &src,
-                               Attribute &dst) -> bool {
-      if (auto setOp = dyn_cast<pto::SetFlagOp>(op)) {
-        src = setOp.getSrcPipe();
-        dst = setOp.getDstPipe();
-        return true;
-      }
-      StringRef opName = op->getName().getStringRef();
-      if (opName == "pto.set_flag_dyn" || opName == "pto.set_flag_d") {
-        auto srcAttr = op->getAttrOfType<pto::PipeAttr>("src_pipe");
-        auto dstAttr = op->getAttrOfType<pto::PipeAttr>("dst_pipe");
-        if (!srcAttr || !dstAttr) {
-          return false;
-        }
-        src = srcAttr;
-        dst = dstAttr;
-        return true;
-      }
-      return false;
-    };
-
-    auto getWaitSyncDst = [&](Operation *op, Attribute &dst) -> bool {
-      if (auto waitOp = dyn_cast<pto::WaitFlagOp>(op)) {
-        dst = waitOp.getDstPipe();
-        return true;
-      }
-      StringRef opName = op->getName().getStringRef();
-      if (opName == "pto.wait_flag_dyn" || opName == "pto.wait_flag_d") {
-        auto dstAttr = op->getAttrOfType<pto::PipeAttr>("dst_pipe");
-        if (!dstAttr) {
-          return false;
-        }
-        dst = dstAttr;
-        return true;
-      }
-      return false;
-    };
-
-    llvm::SmallVector<Operation*> opsToErase;
+    OpPipeTable pipes(&getContext());
+    llvm::SmallVector<Operation *> opsToErase;
 
     func.walk([&](Block *block) {
       // 记录 Block 内脏状态 (Intra-Block Dirty State)
@@ -190,81 +230,52 @@ struct PTORemoveRedundantBarrierPass : public PassWrapper<PTORemoveRedundantBarr
 
       for (auto it = block->begin(); it != block->end(); ++it) {
         Operation *op = &*it;
-        Attribute pipe = getOpPipe(op);
+
         // === 1. 状态更新 ===
+        Attribute pipe = pipes.pipeFor(op);
         if (pipe) {
-            intraPipeDirtySet.insert(pipe);
-            continue; 
+          intraPipeDirtySet.insert(pipe);
+          continue;
         }
 
         // === 2. Barrier 消除 ===
         if (auto barrierOp = dyn_cast<pto::BarrierOp>(op)) {
-            Attribute bPipe = barrierOp.getPipe();
-            // 规则 A: Dead Pipeline
-            // 后面没活干了 -> 删除 (保护空气没有意义)
-            if (!isPipelineActiveFuture(block, std::next(it), bPipe)) {
-                opsToErase.push_back(op);
-                continue;
-            }
-            // 规则 B: Clean Pipeline
-            // 管线本来就是干净的 -> 删除
-            if (!intraPipeDirtySet.count(bPipe)) {
-                opsToErase.push_back(op);
-                continue;
-            }
-            // 规则 C: Subsumed by Set
-            // 紧跟 Set -> 删除 (Set 隐含 Barrier)
-            auto nextIt = std::next(it);
-            if (nextIt != block->end()) {
-                Attribute nextSrc;
-                Attribute nextDst;
-                if (getSetSyncPipes(&*nextIt, nextSrc, nextDst) &&
-                    nextSrc == bPipe) {
-                    opsToErase.push_back(op);
-                    continue;
-                }
-            }
-            // 如果 Barrier 留下了，管线变干净
-            intraPipeDirtySet.erase(bPipe);
+          if (isRedundantBarrier(barrierOp, block, it, intraPipeDirtySet)) {
+            opsToErase.push_back(op);
+            continue;
+          }
+          // 如果 Barrier 留下了，管线变干净
+          intraPipeDirtySet.erase(barrierOp.getPipe());
         }
 
         // === 3. Wait 消除 (幽灵 Wait 消除) ===
+        // Dead Consumer: dst 后面没有 Resource Op，等待毫无意义。
         Attribute waitDst;
-        if (getWaitSyncDst(op, waitDst)) {
-            // 规则: Dead Consumer
-            // 如果 dst 后面没有 Resource Op，这个 Wait 是毫无意义的阻塞。
-            // 即使逻辑上需要等，但如果等完不干活，等它干嘛？
-            if (!isPipelineActiveFuture(block, std::next(it), waitDst)) {
-                opsToErase.push_back(op);
-                continue;
-            }
+        if (getWaitSyncDst(op, waitDst) &&
+            !isPipelineActiveFuture(block, std::next(it), waitDst)) {
+          opsToErase.push_back(op);
+          continue;
         }
 
         // === 4. Set 消除 (死信 & 陈旧广播消除) ===
         Attribute setSrc;
         Attribute setDst;
         if (getSetSyncPipes(op, setSrc, setDst)) {
-          // 规则 A: Dead Receiver (死信)
-            // 如果 dst 后面没有 Resource Op，发信号也没人用。
-            // 注意：因为 isPipelineActiveFuture 忽略了 WaitOp，
-            // 所以如果后面只有 Wait <Src, Dst> 而没有 Dst 的实质操作，这里也会判定为 Dead，
-            // 从而删除 Set。上面的 Wait 消除逻辑会删除那个 Wait。完美闭环。
-            if (!isPipelineActiveFuture(block, std::next(it), setDst)) {
-                opsToErase.push_back(op);
-                continue;
-            }
- 
-            // 规则 B: Stale Broadcast (陈旧广播)
-            // 如果 Src 在当前 Block 没脏过 (没干活)，就不要发广播。
-            // 这精准删除了 scf.if 中 MTE2->MTE3 的冗余广播，因为 MTE2 在分支里通常是不动的。
-            if (!intraPipeDirtySet.count(setSrc)) {
-                 opsToErase.push_back(op);
-                 continue;
-            }
+          // Dead Receiver: dst 后面没有 Resource Op，发信号没人用。
+          // isPipelineActiveFuture 忽略 WaitOp，因此仅剩 Wait <Src,Dst>
+          // 时这里与上面的 Wait 消除形成闭环。
+          if (!isPipelineActiveFuture(block, std::next(it), setDst)) {
+            opsToErase.push_back(op);
+            continue;
+          }
+          // Stale Broadcast: Src 未脏过 (scf.if 中 MTE2->MTE3 冗余广播)。
+          if (!intraPipeDirtySet.count(setSrc)) {
+            opsToErase.push_back(op);
+          }
         }
       }
     });
- 
+
     for (Operation *op : opsToErase) {
       op->erase();
     }

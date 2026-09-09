@@ -46,6 +46,19 @@ static std::optional<int64_t> getConstantInt64(Value value) {
   return constant.getSExtValue();
 }
 
+// A valid store-stream terminator: the flush drains the accumulated align
+// into the carried base with a zero constant offset.
+static bool isValidStreamFlush(VstasOp flush, Operation *baseUser, VstusOp store,
+                               Value baseOut, Block *block) {
+  if (!flush) {
+    return false;
+  }
+  std::optional<int64_t> flushOffset = getConstantInt64(flush.getOffset());
+  return baseUser == flush && flush.getValue() == store.getAlignOut() &&
+         flush.getDestination() == baseOut && !flush.getUpdatedBase() &&
+         flushOffset && *flushOffset == 0 && flush->getBlock() == block;
+}
+
 static std::optional<StatefulStoreStream>
 parseStatefulStoreStream(InitAlignOp init) {
   Value initialAlign = init.getResult();
@@ -85,16 +98,7 @@ parseStatefulStoreStream(InitAlignOp init) {
     }
 
     auto flush = dyn_cast<VstasOp>(alignUser);
-    std::optional<int64_t> flushOffset;
-    if (flush) {
-      flushOffset = getConstantInt64(flush.getOffset());
-    }
-    bool isValidFlush =
-        flush && baseUser == flush && flush.getValue() == store.getAlignOut() &&
-        flush.getDestination() == baseOut && !flush.getUpdatedBase() &&
-        flushOffset && *flushOffset == 0 &&
-        flush->getBlock() == init->getBlock();
-    if (!isValidFlush) {
+    if (!isValidStreamFlush(flush, baseUser, store, baseOut, init->getBlock())) {
       return std::nullopt;
     }
 
@@ -337,43 +341,25 @@ static std::optional<int64_t> getLoopTripCount(scf::ForOp loop) {
   return static_cast<int64_t>(count);
 }
 
-static std::optional<int64_t>
-getLoopAddressCoefficient(Value value, scf::ForOp loop,
-                          DenseMap<Value, int64_t> &cache,
-                          DenseSet<Value> &failed) {
-  bool isOutside =
-      loop.isDefinedOutsideOfLoop(value) || matchPattern(value, m_Constant());
-  if (isOutside) {
-    return 0;
-  }
-  if (value == loop.getInductionVar()) {
-    return 1;
-  }
-  if (auto it = cache.find(value); it != cache.end()) {
-    return it->second;
-  }
-  bool isFailed = failed.contains(value) || isa<BlockArgument>(value);
-  if (isFailed) {
-    return std::nullopt;
-  }
+using CoefficientFn = llvm::function_ref<std::optional<int64_t>(Value)>;
 
-  Operation *def = value.getDefiningOp();
-  auto coefficient = [&](Value operand) {
-    return getLoopAddressCoefficient(operand, loop, cache, failed);
-  };
-  std::optional<int64_t> result;
+// Computes the address coefficient of a value from its defining operation,
+// given a recursive coefficient resolver for the operands. Returns nullopt
+// when the definition is not a supported linear address computation.
+static std::optional<int64_t>
+computeCoefficientFromDef(Operation *def, CoefficientFn coefficient) {
   int64_t combined;
   if (auto add = dyn_cast_or_null<arith::AddIOp>(def)) {
     auto lhs = coefficient(add.getLhs());
     auto rhs = coefficient(add.getRhs());
     if (lhs && rhs && !llvm::AddOverflow(*lhs, *rhs, combined)) {
-      result = combined;
+      return combined;
     }
   } else if (auto sub = dyn_cast_or_null<arith::SubIOp>(def)) {
     auto lhs = coefficient(sub.getLhs());
     auto rhs = coefficient(sub.getRhs());
     if (lhs && rhs && !llvm::SubOverflow(*lhs, *rhs, combined)) {
-      result = combined;
+      return combined;
     }
   } else if (auto mul = dyn_cast_or_null<arith::MulIOp>(def)) {
     auto lhsConstant = getConstantInt64(mul.getLhs());
@@ -383,19 +369,39 @@ getLoopAddressCoefficient(Value value, scf::ForOp loop,
     auto varyingCoefficient = constant ? coefficient(varying) : std::nullopt;
     if (constant && varyingCoefficient &&
         !llvm::MulOverflow(*constant, *varyingCoefficient, combined)) {
-      result = combined;
+      return combined;
     }
   } else if (auto addPtr = dyn_cast_or_null<AddPtrOp>(def)) {
     auto pointer = coefficient(addPtr.getPtr());
     auto offset = coefficient(addPtr.getOffset());
     if (pointer && offset && !llvm::AddOverflow(*pointer, *offset, combined)) {
-      result = combined;
+      return combined;
     }
   } else if (auto castPtr = dyn_cast_or_null<CastPtrOp>(def)) {
-    result = coefficient(castPtr.getInput());
+    return coefficient(castPtr.getInput());
   } else if (isa_and_nonnull<arith::IndexCastOp, arith::IndexCastUIOp>(def)) {
-    result = coefficient(def->getOperand(0));
+    return coefficient(def->getOperand(0));
   }
+  return std::nullopt;
+}
+
+static std::optional<int64_t>
+getLoopAddressCoefficient(Value value, scf::ForOp loop,
+                          DenseMap<Value, int64_t> &cache,
+                          DenseSet<Value> &failed) {
+  if (auto it = cache.find(value); it != cache.end()) {
+    return it->second;
+  }
+  bool isFailed = failed.contains(value) || isa<BlockArgument>(value);
+  if (isFailed) {
+    return std::nullopt;
+  }
+
+  auto coefficient = [&](Value operand) {
+    return getLoopAddressCoefficient(operand, loop, cache, failed);
+  };
+  std::optional<int64_t> result =
+      computeCoefficientFromDef(value.getDefiningOp(), coefficient);
 
   if (!result) {
     failed.insert(value);
