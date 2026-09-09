@@ -8,6 +8,11 @@
 
 #include "PTO/Support/CodeConstants.h"
 
+// The online-build forward declaration below uses std::vector/std::string
+// before ptoas.h (which would provide them) is conditionally included.
+#include <string>
+#include <vector>
+
 #ifdef PTOAS_ONLINE_BUILD
 // Online fallback build. `ptoas.h` transitively pulls the whole compiler-driver
 // closure (CompilerApi.h / VPTOLLVMEmitter.h / ObjectEmission.h -> the entire
@@ -36,9 +41,6 @@ int runPTOAS(const std::vector<std::string> &args,
 #include "pybind11/pybind11.h"
 #include "pybind11/stl.h"
 #include "llvm/Support/raw_ostream.h"
-
-#include <string>
-#include <vector>
 
 namespace py = pybind11;
 
