@@ -17,6 +17,7 @@
 #define MLIR_DIALECT_PTO_IR_PTOATTRS
 
 include "PTO/IR/PTODialect.td"
+include "PTO/IR/PTOAttrInterfaces.td"
 
 include "mlir/Dialect/LLVMIR/LLVMOpBase.td"
 include "mlir/IR/AttrTypeBase.td"
@@ -888,7 +889,8 @@ def PTO_AccPhaseEnum : PTO_I32Enum<
     I32EnumAttrCase<"Final", 3, "final">
   ]>;
 
-def PTO_AccPhaseAttr : EnumAttr<PTO_Dialect, PTO_AccPhaseEnum, "acc_phase"> {
+def PTO_AccPhaseAttr : EnumAttr<PTO_Dialect, PTO_AccPhaseEnum, "acc_phase",
+    [DeclareAttrInterfaceMethods<PTO_EnumTokenAttr>]> {
   let summary = "TMATMUL / TMATMUL_ACC accumulation phase attribute";
 }
 
@@ -1255,6 +1257,44 @@ def TileBufConfigAttr : AttrDef<PTO_Dialect, "TileBufConfig"> {
                                 mlir::IntegerAttr sFractalSize,
                                 mlir::Attribute pad,
                                 mlir::Attribute compactMode);
+  }];
+}
+
+def PTO_BridgeEntryEnum : PTO_I32Enum<
+  "BridgeEntry", "VPTO bridge logical entry", [
+    I32EnumAttrCase<"PipeInit", 0, "pipe_init">,
+    I32EnumAttrCase<"PipeSize", 1, "pipe_size">,
+    I32EnumAttrCase<"PipePush", 2, "pipe_push">,
+    I32EnumAttrCase<"PipePop", 3, "pipe_pop">,
+    I32EnumAttrCase<"PipeFree", 4, "pipe_free">,
+    I32EnumAttrCase<"CubeTMatmul", 5, "cube_tmatmul">,
+    I32EnumAttrCase<"CubeTgemv", 6, "cube_tgemv">
+  ]>;
+def PTO_BridgeEntryAttr : EnumAttr<PTO_Dialect, PTO_BridgeEntryEnum, "bridge_entry"> {
+  let assemblyFormat = "`<` params `>`";
+}
+
+// Structured specialization carried by a Cube bridge call. The payload is
+// compiler-produced and remains typed at the IR boundary; conversion to C++
+// template spelling is deferred to the bridge renderer.
+def BridgeCubeSpecAttr : AttrDef<PTO_Dialect, "BridgeCubeSpec"> {
+  let mnemonic = "bridge_cube_spec";
+  let parameters = (ins "mlir::DictionaryAttr":$value);
+  let assemblyFormat = "`<` $value `>`";
+  let extraClassDeclaration = [{
+    static LogicalResult verify(function_ref<InFlightDiagnostic()> emitError,
+                                mlir::DictionaryAttr value);
+  }];
+}
+
+// Structured specialization carried by a stateful Pipe bridge object.
+def BridgePipeSpecAttr : AttrDef<PTO_Dialect, "BridgePipeSpec"> {
+  let mnemonic = "bridge_pipe_spec";
+  let parameters = (ins "mlir::DictionaryAttr":$value);
+  let assemblyFormat = "`<` $value `>`";
+  let extraClassDeclaration = [{
+    static LogicalResult verify(function_ref<InFlightDiagnostic()> emitError,
+                                mlir::DictionaryAttr value);
   }];
 }
 

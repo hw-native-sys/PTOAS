@@ -2689,6 +2689,70 @@ def TFreeOp : PTO_TOp<"tfree", [
 }
 
 //===----------------------------------------------------------------------===//
+// C++ Interface Bridge Ops
+//===----------------------------------------------------------------------===//
+//
+// These internal ops form the generic VPTO C++ interface bridge. A
+// family-specific pass
+// (e.g. the TPipe family pass) rewrites its internal ops into bridge ops
+// carrying only the wrapper callee name and ABI values. The generic bridge
+// lowering pass then mechanically converts them into calls to wrapper
+// functions whose implementations come from externally compiled device
+// bitcode linked into the VPTO device module.
+
+def BridgeCallOp : PTO_Op<"bridge_call", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Generic call into an externally linked C++ wrapper entry";
+
+  let arguments = (ins
+      PTO_BridgeEntryAttr:$entry,
+      OptionalAttr<StrAttr>:$callee,
+      OptionalAttr<AnyAttr>:$spec,
+      OptionalAttr<StrAttr>:$instance_key,
+      Variadic<AnyType>:$args
+  );
+
+  let results = (outs Variadic<AnyType>:$results);
+
+  let assemblyFormat = [{
+    $entry
+    (`(` $args^ `:` type($args) `)`)?
+    attr-dict
+    (`->` type($results)^)?
+  }];
+}
+
+def BridgeObjectCreateOp : PTO_Op<"bridge_object_create", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Create a stateful object owned by a bridge wrapper";
+  let arguments = (ins
+      PTO_BridgeEntryAttr:$entry,
+      OptionalAttr<StrAttr>:$callee,
+      OptionalAttr<StrAttr>:$size_callee,
+      OptionalAttr<AnyAttr>:$spec,
+      OptionalAttr<StrAttr>:$instance_key,
+      Variadic<AnyType>:$args
+  );
+  let results = (outs AnyType:$result);
+  let assemblyFormat = [{
+    $entry (`(` $args^ `:` type($args) `)`)? attr-dict `->` type($result)
+  }];
+}
+
+def BridgeIntToPtrOp : PTO_Op<"bridge_inttoptr"> {
+  let summary = "Generic bridge address materialization (i64 to PTO pointer)";
+
+  let arguments = (ins SignlessIntegerLike:$addr);
+  let results = (outs AnyType:$result);
+
+  let assemblyFormat = [{
+    $addr attr-dict `:` type($addr) `->` type($result)
+  }];
+}
+
+//===----------------------------------------------------------------------===//
 // Synchronization Ops
 //===----------------------------------------------------------------------===//
 

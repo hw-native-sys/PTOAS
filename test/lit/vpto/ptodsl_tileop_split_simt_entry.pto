@@ -10,9 +10,11 @@
 
 // CHECK: module attributes {{.*}}pto.kernel_kind = #pto.kernel_kind<vector>
 // CHECK: func.func @vector_kernel
-// CHECK: func.func @vector_simt() attributes {no_inline, pto.simt_entry}
+// CHECK-SAME: attributes {pto.kernel, pto.kernel_kind = #pto.kernel_kind<vector>}
+// CHECK: func.func @vector_simt() attributes {no_inline, pto.kernel_kind = #pto.kernel_kind<vector>, pto.simt_entry}
 // CHECK: module attributes {{.*}}pto.kernel_kind = #pto.kernel_kind<cube>
 // CHECK: func.func @vector_kernel
+// CHECK-SAME: attributes {pto.kernel, pto.kernel_kind = #pto.kernel_kind<cube>}
 // CHECK-NOT: func.func @vector_simt()
 
 module attributes {pto.target_arch = "a5"} {

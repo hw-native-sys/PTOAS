@@ -1,0 +1,87 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// The output has no Cube-to-GM bypass. It is written only from the Vec Tile
+// address returned by TPOP, so compare success proves FIFO Tile consumption.
+module attributes {pto.target_arch = "a5"} {
+  func.func @fifo_tile_data_consume_kernel(%a: !pto.ptr<f16, gm>,
+                                           %b: !pto.ptr<f16, gm>,
+                                           %out: !pto.ptr<f32, gm>) attributes {pto.entry} {
+    func.call @fifo_tile_data_consume_cube(%a, %b, %out)
+      : (!pto.ptr<f16, gm>, !pto.ptr<f16, gm>, !pto.ptr<f32, gm>) -> ()
+    func.call @fifo_tile_data_consume_vector(%a, %b, %out)
+      : (!pto.ptr<f16, gm>, !pto.ptr<f16, gm>, !pto.ptr<f32, gm>) -> ()
+    return
+  }
+
+  func.func private @fifo_tile_data_consume_cube(
+      %a: !pto.ptr<f16, gm>, %b: !pto.ptr<f16, gm>, %out: !pto.ptr<f32, gm>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0_i32 = arith.constant 0 : i32
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %c16 = arith.constant 16 : i64
+    %c512 = arith.constant 512 : i64
+    %fifo_addr = pto.import_reserved_buffer {name = "c2v_fifo", peer_func = @fifo_tile_data_consume_vector} -> i32
+    %pipe = pto.initialize_l2l_pipe{dir_mask = 1, slot_size = 1024, slot_num = 8, flag_base = 0, nosplit = false} (%fifo_addr : i32) -> !pto.pipe
+
+    %l1a = pto.castptr %c0 : i64 -> !pto.ptr<f16, l1>
+    %l1b = pto.castptr %c512 : i64 -> !pto.ptr<f16, l1>
+    %l0a = pto.castptr %c0 : i64 -> !pto.ptr<f16, l0a>
+    %l0b = pto.castptr %c0 : i64 -> !pto.ptr<f16, l0b>
+    %acc = pto.alloc_tile
+      : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    %l0c = pto.tile_buf_addr %acc
+      : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+     -> !pto.ptr<f32, l0c>
+
+    pto.mte_gm_l1 %a, %l1a, %c512 nburst(%c1, %c0, %c0) loop(%c1, %c0, %c0)
+      : !pto.ptr<f16, gm>, !pto.ptr<f16, l1>, i64, i64, i64, i64, loop i64, i64, i64
+    pto.mte_gm_l1 %b, %l1b, %c512 nburst(%c1, %c0, %c0) loop(%c1, %c0, %c0)
+      : !pto.ptr<f16, gm>, !pto.ptr<f16, l1>, i64, i64, i64, i64, loop i64, i64, i64
+    pto.set_flag["PIPE_MTE2", "PIPE_MTE1", "EVENT_ID0"]
+    pto.wait_flag["PIPE_MTE2", "PIPE_MTE1", "EVENT_ID0"]
+    pto.mte_l1_l0a %l1a, %l0a, %c16, %c16, %c0, %c0
+      : !pto.ptr<f16, l1>, !pto.ptr<f16, l0a>, i64, i64, i64, i64
+    pto.mte_l1_l0b %l1b, %l0b, %c16, %c16, %c0, %c0 {transpose = true}
+      : !pto.ptr<f16, l1>, !pto.ptr<f16, l0b>, i64, i64, i64, i64
+    pto.set_flag["PIPE_MTE1", "PIPE_M", "EVENT_ID0"]
+    pto.wait_flag["PIPE_MTE1", "PIPE_M", "EVENT_ID0"]
+    pto.mad %l0a, %l0b, %l0c, %c16, %c16, %c16
+      : !pto.ptr<f16, l0a>, !pto.ptr<f16, l0b>, !pto.ptr<f32, l0c>, i64, i64, i64
+    pto.set_flag["PIPE_M", "PIPE_FIX", "EVENT_ID1"]
+    pto.wait_flag["PIPE_M", "PIPE_FIX", "EVENT_ID1"]
+    pto.tpush(%acc, %pipe : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, !pto.pipe) {split = 1}
+    return
+  }
+
+  func.func private @fifo_tile_data_consume_vector(
+      %a: !pto.ptr<f16, gm>, %b: !pto.ptr<f16, gm>, %out: !pto.ptr<f32, gm>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i32 = arith.constant 0 : i32
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : i64
+    %c512 = arith.constant 512 : i64
+    %fifo_addr = pto.reserve_buffer {name = "c2v_fifo", size = 8192, location = #pto.address_space<vec>, auto = true} -> i32
+    %pipe = pto.initialize_l2l_pipe{dir_mask = 1, slot_size = 1024, slot_num = 8, flag_base = 0, nosplit = false} (%fifo_addr : i32) -> !pto.pipe
+    %tile = pto.declare_tile -> !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tpop(%tile, %pipe : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.pipe) {split = 1}
+    %ub = pto.tile_buf_addr %tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+     -> !pto.ptr<f32, ub>
+    %subblock = pto.get_subblock_idx
+    %is0 = arith.cmpi eq, %subblock, %c0 : i64
+    scf.if %is0 {
+      pto.mte_ub_gm %ub, %out, %c512 nburst(%c1, %c0, %c0)
+        : !pto.ptr<f32, ub>, !pto.ptr<f32, gm>, i64, i64, i64, i64
+    }
+    pto.tfree(%pipe : !pto.pipe) {split = 1}
+    pto.barrier #pto.pipe<PIPE_ALL>
+    return
+  }
+}

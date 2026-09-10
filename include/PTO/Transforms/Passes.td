@@ -398,6 +398,112 @@ def PTOMaterializeTileOpSections
   ];
 }
 
+def PTOLowerPipeFamilyOps : Pass<"pto-lower-pipe-family-ops", "mlir::func::FuncOp"> {
+  let summary = "Lower internal TPipe ops into generic VPTO bridge ops";
+  let description = [{
+    TPipe family pass of the VPTO C++ interface bridge. It rewrites the
+    internal pipe ops (pto.initialize_l2l_pipe / pto.tpush / pto.tpop /
+    pto.tfree) and the tile handles they consume (pto.alloc_tile /
+    pto.declare_tile / pto.tile_buf_addr) into generic pto.bridge_call /
+    pto.bridge_inttoptr ops that carry only wrapper callee names and ABI
+    values. All pipe family semantics (config validation, storage handle
+    flow, and the runtime rebinding of a declared tile to the FIFO slot
+    returned by TPOP) are resolved here so that the generic bridge lowering
+    stays family-agnostic.
+  }];
+  let constructor = "mlir::pto::createPTOLowerPipeFamilyOpsPass()";
+  let options = [
+    Option<"whitelistPath", "whitelist-path", "std::string",
+           /*default=*/"\"\"",
+           "Path to the VPTO bridge whitelist YAML; falls back to the "
+           "PTOAS_VPTO_BRIDGE_WHITELIST environment variable, "
+           "then to the built-in default whitelist">
+  ];
+  let dependentDialects = [
+    "mlir::pto::PTODialect",
+    "mlir::arith::ArithDialect"
+  ];
+}
+
+def PTOLowerDeclarativeBridgeOps : Pass<"pto-lower-declarative-bridge-ops", "mlir::func::FuncOp"> {
+  let summary = "Lower whitelist-routed ops through the declarative VPTO "
+                "bridge channel";
+  let description = [{
+    Declarative lowering channel of the VPTO C++ interface bridge. The route
+    policy selects registered Cube operations; typed adapters own operand and
+    specialization collection, while the registry owns ABI and renderer
+    selection. Ops needing family semantics (storage lifecycle, address
+    rebinding) stay on their family pass. Unrouted ops keep flowing through
+    their regular non-bridge lowering path.
+  }];
+  let constructor = "mlir::pto::createPTOLowerDeclarativeBridgeOpsPass()";
+  let options = [
+    Option<"whitelistPath", "whitelist-path", "std::string",
+           /*default=*/"\"\"",
+           "Path to the VPTO bridge whitelist YAML; falls back to the "
+           "PTOAS_VPTO_BRIDGE_WHITELIST environment variable, "
+           "then to the built-in default whitelist">
+  ];
+  let dependentDialects = [
+    "mlir::pto::PTODialect"
+  ];
+}
+
+def VPTOBridgeLowering : Pass<"vpto-bridge-lowering", "ModuleOp"> {
+  let summary = "Lower generic bridge ops into C++ wrapper calls";
+  let description = [{
+    Generic bridge lowering pass of the VPTO C++ interface bridge. It validates
+    each resolved logical entry against the compiler-owned registry and
+    mechanically lowers it into a func.call, materializing the wrapper
+    declaration at module level. Stateful object creation is represented by
+    bridge_object_create and lowered through the registry size entry.
+    pto.bridge_inttoptr is lowered to llvm.inttoptr.
+  }];
+  let constructor = "mlir::pto::createVPTOBridgeLoweringPass()";
+  let options = [
+    Option<"whitelistPath", "whitelist-path", "std::string",
+           /*default=*/"\"\"",
+           "Path to the VPTO bridge whitelist YAML; falls back to the "
+           "PTOAS_VPTO_BRIDGE_WHITELIST environment variable, "
+           "then to the built-in default whitelist">
+  ];
+  let dependentDialects = [
+    "mlir::pto::PTODialect",
+    "mlir::func::FuncDialect",
+    "mlir::LLVM::LLVMDialect"
+  ];
+}
+
+def VPTOResolveBridgeInstances : Pass<"vpto-resolve-bridge-instances", "ModuleOp"> {
+  let summary = "Resolve logical bridge entries to concrete wrapper instances";
+  let description = [{
+    Canonicalizes entry, structured specialization, and core into a bridge
+    instance key. Equal keys reuse one concrete wrapper symbol; distinct keys
+    receive independent symbols. This pass does not render C++ source.
+  }];
+  let constructor = "mlir::pto::createVPTOResolveBridgeInstancesPass()";
+  let dependentDialects = ["mlir::pto::PTODialect"];
+}
+
+def VPTOBridgeWrapperGen : Pass<"pto-emit-vpto-bridge-wrapper", "ModuleOp"> {
+  let summary = "Render the VPTO bridge wrapper source from the collected spec";
+  let description = [{
+    Wrapper generation pass of the VPTO C++ interface bridge. It consumes
+    instances resolved by `vpto-resolve-bridge-instances`, renders structured
+    Pipe/Cube specializations into complete wrapper C++ source, and stores it
+    in `pto.vpto.bridge.wrapper_source` for object emission. Modules without
+    bridge instances are left untouched.
+  }];
+  let constructor = "mlir::pto::createVPTOBridgeWrapperGenPass()";
+  let options = [
+    Option<"whitelistPath", "whitelist-path", "std::string",
+           /*default=*/"\"\"",
+           "Path to the VPTO bridge whitelist YAML; falls back to the "
+           "PTOAS_VPTO_BRIDGE_WHITELIST environment variable, "
+           "then to the built-in default whitelist">
+  ];
+}
+
 def VPTOSplitCVModule : Pass<"vpto-split-cv-module", "ModuleOp"> {
   let summary = "Split a VPTO module with cube/vector sections into kernel modules";
   let description = [{

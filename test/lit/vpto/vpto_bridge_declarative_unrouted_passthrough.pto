@@ -1,0 +1,83 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// You may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+// https://www.huawei.com/
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A
+// PARTICULAR PURPOSE.
+// See LICENSE for more details.
+
+// Declarative routing is whitelist driven and must never over-lower: an op
+// the whitelist does not route keeps flowing through the regular tile-op
+// expansion path (tmatmul -> pto.mad), and an op routed to the family
+// channel is left for its family pass. Both forms of pass-through are
+// checked here against the empty-routing and the pipe-family whitelists.
+
+// RUN: pto-test-opt %s "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-whitelist-no-routing.yaml" | FileCheck %s --check-prefix=NOROUTE
+// RUN: pto-test-opt %s "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-policy-pipe.yaml" | FileCheck %s --check-prefix=FAMILY
+// RUN: pto-test-opt %s "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-policy-tmatmul.yaml" | FileCheck %s --check-prefix=TYPED
+// RUN: pto-test-opt %s "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-policy-tmatmul.yaml" -vpto-resolve-bridge-instances | FileCheck %s --check-prefix=TYPED-IR
+// RUN: pto-test-opt %s "-pto-lower-declarative-bridge-ops=whitelist-path=%S/Inputs/vpto-bridge-policy-tmatmul.yaml" -vpto-resolve-bridge-instances -pto-emit-vpto-bridge-wrapper | FileCheck %s --check-prefix=TYPED-WRAP
+
+// NOROUTE-LABEL: func.func private @unrouted_matmul_cube
+// NOROUTE: pto.tmatmul
+// NOROUTE-NOT: pto.bridge_call
+// NOROUTE-NOT: pto.vpto.bridge.func_spec
+
+// FAMILY-LABEL: func.func private @family_routed_pipe_cube
+// FAMILY: pto.tpush
+// FAMILY-NOT: pto.bridge_call
+// FAMILY-NOT: pto.vpto.bridge.func_spec
+// TYPED-WRAP: void pto_vpto_tmatmul__0(uint64_t dstAddress, uint64_t lhsAddress, uint64_t rhsAddress)
+// TYPED-WRAP: pto::TMATMUL(dst, lhs, rhs);
+// TYPED-IR: pto.bridge_call <cube_tmatmul>{{.*}}callee = "pto_vpto_tmatmul__0"
+
+// TYPED-LABEL: func.func private @unrouted_matmul_cube
+// TYPED: pto.bridge_call <cube_tmatmul>
+// TYPED-SAME: {instance_key = "cube.tmatmul|
+// TYPED-SAME: spec = #pto.bridge_cube_spec<{acc_phase = #pto<acc_phase unspecified>
+// TYPED-SAME: left_tile = {b_layout = 1 : i32, element_type = f16
+// TYPED-SAME: result_tile = {b_layout = 1 : i32, element_type = f32
+// TYPED-SAME: right_tile = {b_layout = 0 : i32, element_type = f16
+
+module attributes {pto.target_arch = "a5"} {
+  func.func private @unrouted_matmul_cube(%addr: i32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : i64
+    %c1024 = arith.constant 1024 : i64
+    %c2048 = arith.constant 2048 : i64
+    %lhs = pto.alloc_tile addr = %c0
+      : !pto.tile_buf<loc=left, dtype=f16, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    %rhs = pto.alloc_tile addr = %c1024
+      : !pto.tile_buf<loc=right, dtype=f16, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=row_major, slayout=col_major, fractal=512, pad=0>
+    %acc = pto.alloc_tile addr = %c2048
+      : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    pto.tmatmul ins(%lhs, %rhs
+      : !pto.tile_buf<loc=left, dtype=f16, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=row_major, fractal=512, pad=0>,
+        !pto.tile_buf<loc=right, dtype=f16, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=row_major, slayout=col_major, fractal=512, pad=0>)
+      outs(%acc : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                                blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+    return
+  }
+
+  func.func private @family_routed_pipe_cube(%addr: i32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : i64
+    %acc = pto.alloc_tile addr = %c0
+      : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    %pipe = pto.initialize_l2l_pipe{dir_mask = 1, slot_size = 1024, slot_num = 8, flag_base = 0, nosplit = false} (%addr : i32) -> !pto.pipe
+    pto.tpush(%acc, %pipe
+      : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16,
+                      blayout=col_major, slayout=row_major, fractal=1024, pad=0>,
+        !pto.pipe) {split = 1}
+    return
+  }
+}

@@ -8,8 +8,6 @@
 
 cmake_minimum_required(VERSION 3.20.0)
 
-include(cmake/fetch_cann_cmake.cmake)
-
 # CANN/Ascend CMake packages used by downstream PTOAS builds may still use the
 # pre-CMake-3.30 FetchContent_Populate(<declared-name>) pattern. Keep that
 # compatibility path enabled so CMake 4.x developer warnings do not become
@@ -28,6 +26,8 @@ if(POLICY CMP0175)
   cmake_policy(SET CMP0175 OLD)
   set(CMAKE_POLICY_DEFAULT_CMP0175 OLD)
 endif()
+
+include(cmake/fetch_cann_cmake.cmake)
 
 # Standard Python build backends pass environment variables through to CMake
 # but do not synthesize project-specific cache arguments. Accept the existing

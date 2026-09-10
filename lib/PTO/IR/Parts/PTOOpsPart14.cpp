@@ -378,6 +378,21 @@ void TFreeOp::getEffects(
   addEffect(effects, &getPipeHandleMutable(), MemoryEffects::Write::get());
 }
 
+void BridgeCallOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  for (OpOperand &arg : getArgsMutable()) {
+    addEffect(effects, &arg, MemoryEffects::Read::get());
+  }
+  // The wrapper may mutate state the bridge cannot model (e.g. a FIFO or
+  // the storage it is handed), so the call itself is conservatively marked
+  // as reading and writing the default resource.
+  effects.emplace_back(MemoryEffects::Read::get(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(),
+                       SideEffects::DefaultResource::get());
+}
+
 void SetQuantScalarOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
@@ -617,3 +632,11 @@ static void printStructPath(OpAsmPrinter &printer, Operation *op,
 #include "PTO/IR/VPTOInterfaces.cpp.inc"
 #define GET_OP_CLASSES
 #include "PTO/IR/PTOOps.cpp.inc"
+void BridgeObjectCreateOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  for (OpOperand &arg : getArgsMutable()) {
+    addEffect(effects, &arg, MemoryEffects::Read::get());
+  }
+  effects.emplace_back(MemoryEffects::Write::get(),
+                       SideEffects::DefaultResource::get());
+}

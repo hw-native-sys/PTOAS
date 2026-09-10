@@ -10,6 +10,39 @@
 
 namespace mlir::pto::detail {
 
+Type getLowPrecisionLLVMType(Type type, MLIRContext *context) {
+  if (pto::isPTOHiFloat8Type(type)) {
+    return LLVM::LLVMHiFloat8Type::get(context);
+  }
+  if (isa<pto::F4E1M2x2Type>(type)) {
+    return LLVM::LLVMFloat4E1M2x2Type::get(context);
+  }
+  if (isa<pto::F4E2M1x2Type>(type)) {
+    return LLVM::LLVMFloat4E2M1x2Type::get(context);
+  }
+  if (pto::isPTOFloat8E4M3LikeType(type)) {
+    return LLVM::LLVMFloat8E4M3Type::get(context);
+  }
+  if (pto::isPTOFloat8E5M2LikeType(type)) {
+    return LLVM::LLVMFloat8E5M2Type::get(context);
+  }
+  return {};
+}
+
+bool isLLVMExtensionVectorElementType(Type type) {
+  return isa<LLVM::LLVMHiFloat8Type, LLVM::LLVMFloat8E4M3Type, LLVM::LLVMFloat8E5M2Type, LLVM::LLVMFloat4E1M2x2Type,
+             LLVM::LLVMFloat4E2M1x2Type>(type);
+}
+
+Type getLLVMCompatibleVectorType(ArrayRef<int64_t> shape, Type elementType, ArrayRef<bool> scalableDims = {}) {
+  const bool isExtensionVector =
+      shape.size() == 1 && isLLVMExtensionVectorElementType(elementType);
+  if (isExtensionVector) {
+    return LLVM::LLVMFixedVectorType::get(elementType, shape.front());
+  }
+  return VectorType::get(shape, elementType, scalableDims);
+}
+
 [[maybe_unused]] Value getI1Constant(OpBuilder &builder, Location loc, bool value) {
   return builder.create<arith::ConstantOp>(loc, builder.getIntegerAttr(builder.getI1Type(), value ? 1 : 0)).getResult();
 }

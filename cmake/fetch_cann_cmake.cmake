@@ -1,4 +1,3 @@
-# -----------------------------------------------------------------------------------------------------------
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -6,7 +5,7 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-# -----------------------------------------------------------------------------------------------------------
+
 
 if(NOT PROJECT_SOURCE_DIR)
     # Entrypoints that do not run build.sh (quick_install.sh, pip wheel /
@@ -19,6 +18,7 @@ if(NOT PROJECT_SOURCE_DIR)
     if(NOT CANN_3RD_LIB_PATH AND CMAKE_BINARY_DIR)
         set(CANN_3RD_LIB_PATH "${CMAKE_BINARY_DIR}/cann-3rd-lib")
     endif()
+
     if(CANN_3RD_LIB_PATH AND IS_DIRECTORY "${CANN_3RD_LIB_PATH}/cann-cmake")
         include("${CANN_3RD_LIB_PATH}/cann-cmake/function/prepare.cmake")
     else()

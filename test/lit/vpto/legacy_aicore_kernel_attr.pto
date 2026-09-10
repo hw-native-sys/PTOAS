@@ -26,10 +26,10 @@ module attributes {pto.target_arch = "a5"} {
 
 // SPLIT: module attributes {{.*}}pto.kernel_kind = #pto.kernel_kind<vector>
 // SPLIT: func.func @legacy_attr_kernel
-// SPLIT-SAME: attributes {pto.aicore}
+// SPLIT-SAME: attributes {pto.aicore, pto.kernel_kind = #pto.kernel_kind<vector>}
 // SPLIT: module attributes {{.*}}pto.kernel_kind = #pto.kernel_kind<cube>
 // SPLIT: func.func @legacy_attr_kernel
-// SPLIT-SAME: attributes {pto.aicore}
+// SPLIT-SAME: attributes {pto.aicore, pto.kernel_kind = #pto.kernel_kind<cube>}
 
 // LLVM-DAG: llvm.func @legacy_attr_kernel_mix_aiv
 // LLVM-DAG: llvm.func @legacy_attr_kernel_mix_aic

@@ -221,6 +221,14 @@ static bool isSCFTileCarrier(Value value) {
          isa_and_nonnull<scf::ForOp>(blockArg.getOwner()->getParentOp());
 }
 
+/// Returns whether the declared tile is rebound by a TPOP. The VPTO pipe
+/// bridge resolves such tiles at runtime from the FIFO slot address returned
+/// by the pop, so folding their address here would break address propagation.
+static bool isDeclareTileReboundByTPop(pto::DeclareTileOp decl) {
+  return llvm::any_of(decl.getResult().getUsers(),
+                      [](Operation *user) { return isa<pto::TPopOp>(user); });
+}
+
 static std::optional<TileHandleInfo> resolveTileHandle(Value tileBuf,
                                                        Operation *user) {
   if (auto regionResult = dyn_cast<OpResult>(tileBuf)) {
@@ -250,6 +258,16 @@ static std::optional<TileHandleInfo> resolveTileHandle(Value tileBuf,
     return TileHandleInfo{alloc.getAddr(), alloc.getValidRow(),
                           alloc.getValidCol(), tileTy.getConfigAttr()};
   }
+  if (auto decl = tileBuf.getDefiningOp<pto::DeclareTileOp>()) {
+    if (!isDeclareTileReboundByTPop(decl)) {
+      user->emitError("FoldTileBufIntrinsics: pto.declare_tile address requires "
+                      "a matching pto.tpop rebinding");
+      return std::nullopt;
+    }
+    auto tileTy = cast<pto::TileBufType>(decl.getResult().getType());
+    return TileHandleInfo{decl.getResult(), Value{}, Value{},
+                          tileTy.getConfigAttr()};
+  }
   if (auto reshape = tileBuf.getDefiningOp<pto::TReshapeOp>()) {
     auto sourceInfo = resolveTileHandle(reshape.getSrc(), user);
     if (!sourceInfo) {
@@ -267,8 +285,10 @@ static std::optional<TileHandleInfo> resolveTileHandle(Value tileBuf,
                           tileTy.getConfigAttr()};
   }
   user->emitError("FoldTileBufIntrinsics: expected tile_buf to be defined by "
-                  "the active materialized tile-handle bridge (pto.alloc_tile or "
-                  "pto.treshape, or a pto.fusion_region result that yields one of them)");
+                  "the active materialized tile-handle bridge "
+                  "(pto.alloc_tile, pto.declare_tile rebound by pto.tpop, or "
+                  "pto.treshape, "
+                  "or a pto.fusion_region result that yields one of them)");
   return std::nullopt;
 }
 
@@ -825,6 +845,14 @@ struct FoldTileBufIntrinsicsPass
       if (isSCFTileCarrier(addrOp.getSrc())) {
         continue;
       }
+
+      // A declare_tile rebound by TPOP gets its address at runtime from the
+      // FIFO slot; folding it to the placeholder value here would break the
+      // VPTO pipe bridge address propagation.
+      if (auto decl = addrOp.getSrc().getDefiningOp<pto::DeclareTileOp>();
+          decl && isDeclareTileReboundByTPop(decl))
+        continue;
+
       if (failed(foldTileBufAddrHandle(addrOp, builder))) {
         return failure();
       }
