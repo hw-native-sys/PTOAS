@@ -53,6 +53,57 @@ def VPTOSchedulingOpInterface : OpInterface<"VPTOSchedulingOpInterface"> {
   ];
 }
 
+def PTO_StateAccessOpInterface : OpInterface<"StateAccessOpInterface"> {
+  let description = [{
+    Describes one access point to an implicit PTO hardware state resource.
+    The interface separates the accessed resource from the access kind, so a
+    state-analysis pass never has to match op names or the SSA shape of
+    get/set helper sequences. `Query` reads the full state and produces an
+    SSA result, `Write` installs the operand value, `Consume` implicitly
+    depends on the current state without producing one, and `Clobber` may
+    change the state arbitrarily. This interface only describes ordered
+    semantics; whether a specific read can be forwarded is decided by the
+    state-analysis pass, so implementors must not add the `Pure` trait on
+    the strength of this interface alone.
+  }];
+  let cppNamespace = "::mlir::pto";
+  let methods = [
+    InterfaceMethod<"Return the accessed state resource.",
+      "::mlir::pto::StateResource", "getStateResource">,
+    InterfaceMethod<"Return the access kind.",
+      "::mlir::pto::StateAccessKind", "getStateAccessKind">,
+    InterfaceMethod<
+      "Return the SSA value read from or written to the state; empty for Consume and Clobber.",
+      "::mlir::Value", "getAccessedStateValue">
+  ];
+}
+
+def PTO_StateGuardOpInterface : OpInterface<"StateGuardOpInterface"> {
+  let description = [{
+    Describes a temporary state scope: the guard overrides a statically known
+    subset of one implicit state resource while its body executes, and the
+    logical state is restored after the guard exits. Bits outside
+    `controlledStateBits` keep their entry values; controlled bits take the
+    value implied by `requiredStateBits`. The guard stores no saved value and
+    does not decide where configuration or restore hardware accesses are
+    emitted; those decisions belong to the state-optimization pass. The
+    `uint64_t` bit sets only model compile-time-known partial coverage of at
+    most 64 bits.
+  }];
+  let cppNamespace = "::mlir::pto";
+  let methods = [
+    InterfaceMethod<"Return the guarded state resource.",
+      "::mlir::pto::StateResource", "getStateResource">,
+    InterfaceMethod<"Return the state bits owned by this guard.",
+      "uint64_t", "getControlledStateBits">,
+    InterfaceMethod<
+      "Return the controlled bits whose required value is one.",
+      "uint64_t", "getRequiredStateBits">,
+    InterfaceMethod<"Return the guarded body.",
+      "::mlir::Region &", "getGuardedBody">
+  ];
+}
+
 def PTO_MadSemanticOpInterface : OpInterface<"MadSemanticOpInterface"> {
   let description = [{
     Interface for semantic MAD-family ops. The interface is only a uniform view

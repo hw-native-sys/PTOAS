@@ -38,6 +38,7 @@ add_mlir_dialect_library(PTOIR
   VPTOStructuredAcc.cpp
   VPTODma.cpp
   VPTOMad.cpp
+  VPTOCtrlState.cpp
   VPTOVecOp.cpp
   VPTOMemOp.cpp
   PTOAttrs.cpp

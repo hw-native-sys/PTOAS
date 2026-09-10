@@ -1,0 +1,49 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You should not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// A loop with a runtime upper bound cannot be statically proven to execute
+// at least once, so its guards must not hoist the configuration into the
+// preheader. The per-block scan materializes the configuration inside the
+// loop body, shared across the two identical guards, with a deferred
+// restore before the body end.
+//
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - | FileCheck %s
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @ctrl_guard_loop_dynamic(
+      %lhs: !pto.ptr<f32, l0a>,
+      %rhs: !pto.ptr<f32, l0b>,
+      %dst: !pto.ptr<f32, l0c>,
+      %ub: index) attributes {pto.kernel} {
+    %c16 = arith.constant 16 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    scf.for %iv = %c0 to %ub step %c1 {
+      pto.mad %lhs, %rhs, %dst, %c16, %c16, %c16
+        : !pto.ptr<f32, l0a>, !pto.ptr<f32, l0b>, !pto.ptr<f32, l0c>, i64, i64, i64
+      pto.mad %lhs, %rhs, %dst, %c16, %c16, %c16
+        : !pto.ptr<f32, l0a>, !pto.ptr<f32, l0b>, !pto.ptr<f32, l0c>, i64, i64, i64
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @ctrl_guard_loop_dynamic(
+// No CTRL access is emitted before the loop.
+// CHECK: scf.for
+// The configuration is materialized inside the loop body, before the first
+// raw MAD, and restored before the body end.
+// CHECK: %[[ENTRY:.*]] = pto.get_ctrl : i64
+// CHECK: pto.sbitset0
+// CHECK: pto.set_ctrl %[[ACTIVE:.*]] : i64
+// CHECK: pto.mad_raw
+// CHECK: pto.mad_raw
+// CHECK: pto.set_ctrl %[[ENTRY]] : i64
+// CHECK: return
+//
+// CHECK-NOT: ctrl_state_guard

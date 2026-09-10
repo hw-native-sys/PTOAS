@@ -33,24 +33,16 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
 // SEMANTIC-NOT: tf32_mode
 
 // EXPAND-LABEL: func.func @mad_mx_semantic_to_raw(
-// EXPAND-DAG: %[[BIT45:.*]] = arith.constant 45 : i64
-// EXPAND-DAG: %[[BIT46:.*]] = arith.constant 46 : i64
-// EXPAND-DAG: %[[BIT47:.*]] = arith.constant 47 : i64
-// EXPAND-DAG: %[[BIT48:.*]] = arith.constant 48 : i64
-// EXPAND-DAG: %[[BIT51:.*]] = arith.constant 51 : i64
-// EXPAND: %[[CTRL0:.*]] = pto.get_ctrl : i64
-// EXPAND: pto.sbitset0 {{.*}}, %[[BIT45]]
-// EXPAND: pto.sbitset0 {{.*}}, %[[BIT46]]
-// EXPAND: pto.sbitset0 {{.*}}, %[[BIT47]]
-// EXPAND: pto.sbitset0 {{.*}}, %[[BIT48]]
-// EXPAND: pto.sbitset1 {{.*}}, %[[BIT51]]
-// EXPAND: pto.set_ctrl
+// case1: mad_mx, sat, n_dir -> C = bit45|46|47|48|51, R = bit51
+// EXPAND: pto.ctrl_state_guard controlled_bits(2779565395017728) required_bits(2251799813685248)
 // EXPAND: pto.mad_mx_raw
-// EXPAND: pto.set_ctrl %[[CTRL0]] : i64
-// EXPAND: %[[CTRL1:.*]] = pto.get_ctrl : i64
-// EXPAND: pto.sbitset1 {{.*}}, %[[BIT48]]
+// case2: mad_mx_acc, nosat -> C = 2779565395017728, R = bit48
+// EXPAND: pto.ctrl_state_guard controlled_bits(2779565395017728) required_bits(281474976710656)
 // EXPAND: pto.mad_mx_raw
-// EXPAND: pto.set_ctrl %[[CTRL1]] : i64
-// EXPAND: %[[CTRL2:.*]] = pto.get_ctrl : i64
+// case3: mad_mx_bias, default modes -> C = bit45|46|47|51, R = 0
+// EXPAND: pto.ctrl_state_guard controlled_bits(2498090418307072) required_bits(0)
 // EXPAND: pto.mad_mx_bias_raw
-// EXPAND: pto.set_ctrl %[[CTRL2]] : i64
+//
+// No hardware CTRL accesses are emitted at expansion time anymore.
+// EXPAND-NOT: pto.get_ctrl
+// EXPAND-NOT: pto.set_ctrl

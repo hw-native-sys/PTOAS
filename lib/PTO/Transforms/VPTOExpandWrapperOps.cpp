@@ -635,15 +635,6 @@ static FailureOr<Value> packMadXt(Location loc, const MadXtConfig &config,
   return xt;
 }
 
-static Value setCtrlBit(Location loc, Value ctrl, unsigned bitIndex, bool value,
-                        PatternRewriter &rewriter) {
-  Value bit = rewriter.create<arith::ConstantIntOp>(loc, bitIndex, mlir::pto::kValue64);
-  if (value) {
-    return rewriter.create<pto::Sbitset1Op>(loc, ctrl, bit).getResult();
-  }
-  return rewriter.create<pto::Sbitset0Op>(loc, ctrl, bit).getResult();
-}
-
 struct MadCtrlConfig {
   bool isHif8;
   std::optional<pto::Tf32Mode> tf32Mode;
@@ -651,25 +642,40 @@ struct MadCtrlConfig {
   bool hasNDir;
 };
 
-static Value buildMadSemanticCtrl(Location loc, Value ctrl,
-                                  const MadCtrlConfig &config,
-                                  PatternRewriter &rewriter) {
-  ctrl =
-      setCtrlBit(loc, ctrl, mlir::pto::kValue45, config.isHif8, rewriter);
+// Statically computed temporary CTRL requirement of one semantic MAD, per the
+// ctrl_state_guard contract: bits in controlledBits are overridden (to 1 when
+// also in requiredBits, else 0); bits outside controlledBits inherit the entry
+// logical CTRL. Unspecified sat_mode leaves bit 48 uncontrolled; HiF8, TF32,
+// and n_dir always control their fields.
+struct MadCtrlRequirement {
+  uint64_t controlledBits;
+  uint64_t requiredBits;
+};
+
+static MadCtrlRequirement buildMadCtrlRequirement(const MadCtrlConfig &config) {
+  uint64_t controlled = 0;
+  uint64_t required = 0;
+  auto setBit = [&controlled, &required](int bit, bool value) {
+    controlled |= (uint64_t(1) << bit);
+    if (value) {
+      required |= (uint64_t(1) << bit);
+    }
+  };
+  setBit(mlir::pto::kValue45, config.isHif8);
   if (config.tf32Mode) {
-    ctrl = setCtrlBit(loc, ctrl, mlir::pto::kValue46, true, rewriter);
-    ctrl = setCtrlBit(loc, ctrl, mlir::pto::kValue47,
-                      *config.tf32Mode == pto::Tf32Mode::RoundAway, rewriter);
+    setBit(mlir::pto::kValue46, true);
+    setBit(mlir::pto::kValue47,
+           *config.tf32Mode == pto::Tf32Mode::RoundAway);
   } else {
-    ctrl = setCtrlBit(loc, ctrl, mlir::pto::kValue46, false, rewriter);
-    ctrl = setCtrlBit(loc, ctrl, mlir::pto::kValue47, false, rewriter);
+    setBit(mlir::pto::kValue46, false);
+    setBit(mlir::pto::kValue47, false);
   }
   if (config.satMode) {
-    bool noSaturation = *config.satMode == pto::MadSatMode::NoSat;
-    ctrl = setCtrlBit(loc, ctrl, mlir::pto::kValue48, noSaturation, rewriter);
+    setBit(mlir::pto::kValue48,
+           *config.satMode == pto::MadSatMode::NoSat);
   }
-  ctrl = setCtrlBit(loc, ctrl, mlir::pto::kValue51, config.hasNDir, rewriter);
-  return ctrl;
+  setBit(mlir::pto::kValue51, config.hasNDir);
+  return {controlled, required};
 }
 
 struct Mte2NzConfig {
@@ -1311,10 +1317,6 @@ static LogicalResult lowerMadSemanticOp(pto::MadSemanticOpInterface op,
   }
 
   Location loc = op->getLoc();
-  Value ctrlSaved = rewriter.create<pto::GetCtrlOp>(loc).getResult();
-  Value ctrlForOp = buildMadSemanticCtrl(
-      loc, ctrlSaved, {isHif8, tf32Mode, satMode, op.getNDir()}, rewriter);
-  rewriter.create<pto::SetCtrlOp>(loc, ctrlForOp);
 
   FailureOr<Value> xt = packMadXt(
       loc,
@@ -1326,11 +1328,24 @@ static LogicalResult lowerMadSemanticOp(pto::MadSemanticOpInterface op,
     return rewriter.notifyMatchFailure(op, "failed to pack mad xt");
   }
 
-  if (failed(emitMadRawOp(op, deriveMadRawKind(op), *xt, rewriter))) {
-    return rewriter.notifyMatchFailure(op, "failed to emit mad raw op");
+  // Represent the temporary CTRL requirement structurally instead of
+  // materializing get_ctrl/bit-update/set_ctrl around the raw op. The CTRL
+  // state optimization pass analyzes all guards and emits the minimal set of
+  // hardware CTRL accesses.
+  MadCtrlRequirement requirement =
+      buildMadCtrlRequirement({isHif8, tf32Mode, satMode, op.getNDir()});
+  auto guard = rewriter.create<pto::CtrlStateGuardOp>(
+      loc, rewriter.getI64IntegerAttr(
+               static_cast<int64_t>(requirement.controlledBits)),
+      rewriter.getI64IntegerAttr(
+           static_cast<int64_t>(requirement.requiredBits)));
+  {
+    OpBuilder::InsertionGuard insertionGuard(rewriter);
+    rewriter.setInsertionPointToStart(&guard.getBody().emplaceBlock());
+    if (failed(emitMadRawOp(op, deriveMadRawKind(op), *xt, rewriter))) {
+      return rewriter.notifyMatchFailure(op, "failed to emit mad raw op");
+    }
   }
-
-  rewriter.create<pto::SetCtrlOp>(loc, ctrlSaved);
   rewriter.eraseOp(op);
   return success();
 }
