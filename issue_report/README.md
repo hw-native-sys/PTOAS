@@ -33,7 +33,7 @@ Joins checked in TileKernels-vmi:
 
 ## Leftover-class → issue (100% four-kernel ASC-parity blockers)
 
-Every in-matrix `TODO(impl)` row on `per_token_cast` / `per_block_cast` / `per_channel_cast` / `cast_back` maps here. Counts from TileKernels-vmi `kernel_coverage.md` on `per_channel_debug_0909` (459 ASC configs, 135 TODO(impl)).
+Every in-matrix `TODO(impl)` row on `per_token_cast` / `per_block_cast` / `per_channel_cast` / `cast_back` maps here. Counts from TileKernels-vmi `kernel_coverage.md` on `castback_fix_0910` after the PR78 remasure (447 ASC configs, 119 TODO(impl)). Row npt=1 512×2048 is kernel-fixed and is **not** a PTOAS blocker.
 
 | Leftover class (rows) | Issue |
 |---|---|
@@ -49,7 +49,7 @@ Every in-matrix `TODO(impl)` row on `per_token_cast` / `per_block_cast` / `per_c
 | per_channel unpacked in-SF (2) | D |
 | per_block H=384 (8) | B |
 | per_block sf_only+packed fp32 (4) | E |
-| cast_back npt=1 mismatches (6) + ACL 507035 (48) + e2m1→fp32 TMA launch (1) | A |
+| cast_back TMA npt=1 mismatches (3) + e2m1→fp32 TMA npt=32 mismatch (1) + isolated ACL 507035 (35) | A |
 | ASC-illegal / untested guards | not an issue |
 
 ## What is not a PTOAS issue
@@ -58,3 +58,4 @@ Every in-matrix `TODO(impl)` row on `per_token_cast` / `per_block_cast` / `per_c
 - Host permute of row-major SF to look like TMA-col.
 - ASC-illegal combinations (per-channel FP4, Ascend `npt≠32`, packed without round, per-channel **output** TMA).
 - SwiGLU / top-k / fused cast+cast-back (outside the four-kernel parity goal).
+- cast_back **row** npt=1 512×2048 (e2m1/e4m3→bf16/fp32): kernel-fixed by TileKernels-vmi PR78 (bitwise, TODO(perf)). Historical snapshot stays under [`archive/cast_back_row_npt1/`](archive/cast_back_row_npt1/).
