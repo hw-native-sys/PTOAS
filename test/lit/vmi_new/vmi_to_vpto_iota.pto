@@ -49,6 +49,19 @@ module {
     return %part : !pto.vreg<128xi16>
   }
 
+  // Regression for #1411: a compact f16 store chooses a lane_stride=2
+  // carrier.  The physical ramp must advance by two so PK_B32 observes a
+  // logical step of one.
+  func.func @vmi_to_vpto_iota_f16_lane_stride2(%base: f16)
+      -> !pto.vreg<128xf16> {
+    %value = pto.vmi.vci %base
+        : f16 -> !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+    %part = "pto.vmi.unpack"(%value)
+        : (!pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>)
+        -> !pto.vreg<128xf16>
+    return %part : !pto.vreg<128xf16>
+  }
+
   func.func @vmi_to_vpto_iota_f16_deint2_asc(%base: f16)
       -> (!pto.vreg<128xf16>, !pto.vreg<128xf16>) {
     %value = pto.vmi.vci %base
@@ -100,6 +113,15 @@ module {
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast
+
+// CHECK-LABEL: func.func @vmi_to_vpto_iota_f16_lane_stride2(
+// CHECK: %[[C2:.*]] = arith.constant 5.000000e-01 : f16
+// CHECK: %[[C0:.*]] = arith.constant 0.000000e+00 : f16
+// CHECK: %[[IDX:.*]] = pto.vci %[[C0]] : f16 -> !pto.vreg<128xf16>
+// CHECK: %[[SCALED:.*]] = pto.vmuls %[[IDX]], %[[C2]]
+// CHECK: %[[RESULT:.*]] = pto.vadds %[[SCALED]], %arg0
+// CHECK: return %[[RESULT]]
+// CHECK-NOT: pto.vmi.
 
 // CHECK-LABEL: func.func @vmi_to_vpto_iota_f16_deint2_asc(
 // CHECK: arith.constant 1.000000e+00 : f16

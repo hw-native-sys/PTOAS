@@ -774,6 +774,62 @@ FailureOr<Value> createIotaContiguousChunk(
       .getResult();
 }
 
+/// Materialize a logical contiguous iota in a lane-strided physical chunk.
+/// A narrow floating-point VCI advances in physical lanes; scaling its ramp by
+/// the reciprocal lane stride preserves the logical unit increment observed by
+/// the lane-strided store.
+FailureOr<Value> createIotaLaneStrideChunk(
+    const IotaMaterializationContext &context, Type resultType,
+    int64_t laneStride, int64_t laneOffset) {
+  auto vregType = dyn_cast<VRegType>(resultType);
+  if (!vregType || (laneStride != 2 && laneStride != 4)) {
+    return failure();
+  }
+  FailureOr<Value> mask =
+      createAllTrueMaskForVReg(context.loc, vregType, context.rewriter);
+  FailureOr<Value> zero = createScalarOffsetConstant(
+      context.loc, context.base.getType(), 0, context.rewriter);
+  if (failed(mask) || failed(zero)) {
+    return failure();
+  }
+
+  Value indices = context.rewriter
+                      .create<VciOp>(context.loc, resultType, *zero,
+                                      StringAttr{})
+                      .getResult();
+  Value ramp = indices;
+  if (auto floatType = dyn_cast<FloatType>(context.base.getType())) {
+    Value factor = context.rewriter
+                       .create<arith::ConstantOp>(
+                           context.loc, context.rewriter.getFloatAttr(
+                                            floatType, 1.0 / laneStride))
+                       .getResult();
+    ramp = context.rewriter
+               .create<VmulsOp>(context.loc, resultType, indices, factor,
+                                 *mask)
+               .getResult();
+  }
+
+  StringRef order = getIotaOrder(context);
+  FailureOr<Value> chunkBase = createIotaChunkBase(
+      context.loc, context.base, laneOffset, order, context.rewriter);
+  if (failed(chunkBase)) {
+    return failure();
+  }
+  if (order == "DESC") {
+    Value baseVector = context.rewriter
+                           .create<VdupOp>(context.loc, resultType, *chunkBase,
+                                           *mask, /*position=*/nullptr)
+                           .getResult();
+    return context.rewriter
+        .create<VsubOp>(context.loc, resultType, baseVector, ramp, *mask)
+        .getResult();
+  }
+  return context.rewriter
+      .create<VaddsOp>(context.loc, resultType, ramp, *chunkBase, *mask)
+      .getResult();
+}
+
 FailureOr<std::optional<Value>> createPowerOfTwoSubVLChunk(
     Location loc, Type resultType, Value base, int64_t groupSize,
     StringRef order, Value allMask, PatternRewriter &rewriter) {
@@ -1169,16 +1225,33 @@ private:
   }
 
   LogicalResult lowerContiguousIota(
-      IotaOp op, Value base, TypeRange resultTypes, int64_t lanesPerPart,
-      OneToNPatternRewriter &rewriter, SmallVectorImpl<Value> &results) const {
+      IotaOp op, Value base, VMILayoutAttr layout, TypeRange resultTypes,
+      int64_t lanesPerPart, OneToNPatternRewriter &rewriter,
+      SmallVectorImpl<Value> &results) const {
     IotaMaterializationContext context{op.getLoc(), base, op.getOrderAttr(),
                                        rewriter};
+    int64_t laneStride = layout.getLaneStride();
+    if (laneStride != 1 && laneStride != 2 && laneStride != 4) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported contiguous iota lane_stride");
+    }
+    if (lanesPerPart % laneStride != 0) {
+      return rewriter.notifyMatchFailure(
+          op, "contiguous iota lane_stride does not divide physical lanes");
+    }
+    int64_t logicalLanesPerChunk = lanesPerPart / laneStride;
     for (auto [index, resultType] : llvm::enumerate(resultTypes)) {
       if (!isa<VRegType>(resultType)) {
         return rewriter.notifyMatchFailure(op, "iota result must be vreg");
       }
-      FailureOr<Value> result = createIotaContiguousChunk(
-          context, resultType, static_cast<int64_t>(index) * lanesPerPart);
+      int64_t laneOffset = static_cast<int64_t>(index) *
+                           logicalLanesPerChunk;
+      FailureOr<Value> result = laneStride == 1
+                                    ? createIotaContiguousChunk(
+                                          context, resultType, laneOffset)
+                                    : createIotaLaneStrideChunk(
+                                          context, resultType, laneStride,
+                                          laneOffset);
       if (failed(result)) {
         return rewriter.notifyMatchFailure(
             op, "failed to materialize contiguous iota chunk");
@@ -1229,8 +1302,8 @@ private:
         return failure();
       }
     } else if (layout.isContiguous()) {
-      if (failed(lowerContiguousIota(op, base, resultTypes, lanesPerPart,
-                                     rewriter, results))) {
+      if (failed(lowerContiguousIota(op, base, layout, resultTypes,
+                                     lanesPerPart, rewriter, results))) {
         return failure();
       }
     } else if (failed(lowerDeinterleavedIota(
