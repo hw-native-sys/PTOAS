@@ -690,6 +690,18 @@ struct LayoutSolver {
                                failed(unite(fma.getLhs(), fma.getResult(), op));
           return constraintResult(failure(failedToUnite));
         })
+        .Case<VMIVmulaOp>([this, op](VMIVmulaOp vmula) {
+          bool failedToUnite =
+              failed(uniteDataEquivalent(vmula.getLhs(), vmula.getRhs(), op)) ||
+              failed(uniteDataEquivalent(vmula.getLhs(), vmula.getAcc(), op)) ||
+              failed(uniteDataEquivalent(vmula.getLhs(), vmula.getResult(), op));
+          if (!failedToUnite && !vmula.getMask().empty()) {
+            failedToUnite = failed(requestMaskUse(
+                *vmula.getMaskMutable().begin(), getDataLayout(vmula.getLhs()),
+                op));
+          }
+          return constraintResult(failure(failedToUnite));
+        })
         .Case<VMICmpFOp, VMICmpIOp>([this, op](auto compareOp) {
           return constraintResult(
               unite(compareOp.getLhs(), compareOp.getRhs(), op));
