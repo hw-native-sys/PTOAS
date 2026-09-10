@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You should not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// An explicit get_ctrl between guards is a real observation point: it must
+// observe the entry logical state, forcing a restore before the read, and the
+// second guard reconfigures from the same shared logical entry.
+//
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - | FileCheck %s
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @ctrl_guard_observed(
+      %lhs: !pto.ptr<f32, l0a>,
+      %rhs: !pto.ptr<f32, l0b>,
+      %dst: !pto.ptr<f32, l0c>) -> i64 attributes {pto.kernel} {
+    %c16 = arith.constant 16 : i64
+    pto.mad %lhs, %rhs, %dst, %c16, %c16, %c16
+      : !pto.ptr<f32, l0a>, !pto.ptr<f32, l0b>, !pto.ptr<f32, l0c>, i64, i64, i64
+    %observed = pto.get_ctrl : i64
+    pto.mad %lhs, %rhs, %dst, %c16, %c16, %c16
+      : !pto.ptr<f32, l0a>, !pto.ptr<f32, l0b>, !pto.ptr<f32, l0c>, i64, i64, i64
+    return %observed : i64
+  }
+}
+
+// CHECK-LABEL: func.func @ctrl_guard_observed(
+// Shared entry read, configure, first MAD.
+// CHECK: %[[ENTRY:.*]] = pto.get_ctrl : i64
+// CHECK: pto.sbitset0
+// CHECK: pto.set_ctrl %[[ACTIVE:.*]] : i64
+// CHECK: pto.mad_raw
+// The explicit get_ctrl observes the logical state: a restore precedes it.
+// CHECK: pto.set_ctrl %[[ENTRY]] : i64
+// CHECK: %[[OBSERVED:.*]] = pto.get_ctrl : i64
+// The second guard reconfigures; the active chain may be rebuilt from the
+// observed logical value.
+// CHECK: pto.mad_raw
+// Deferred block-end restore writes the new logical base (the observed
+// value), since the explicit query redefined the logical state.
+// CHECK: pto.set_ctrl %[[OBSERVED]] : i64
+// CHECK: return %[[OBSERVED]] : i64
+//
+// CHECK-NOT: ctrl_state_guard

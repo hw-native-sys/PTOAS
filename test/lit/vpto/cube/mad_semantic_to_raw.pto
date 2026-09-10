@@ -37,29 +37,28 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
 // SEMANTIC: pto.mad {{.*}}!pto.ptr<!pto.hif8, l0a>, !pto.ptr<!pto.hif8, l0b>
 
 // EXPAND-LABEL: func.func @mad_semantic_to_raw(
-// EXPAND-DAG: %[[BIT45:.*]] = arith.constant 45 : i64
-// EXPAND-DAG: %[[BIT46:.*]] = arith.constant 46 : i64
-// EXPAND-DAG: %[[BIT47:.*]] = arith.constant 47 : i64
-// EXPAND-DAG: %[[BIT48:.*]] = arith.constant 48 : i64
-// EXPAND-DAG: %[[BIT51:.*]] = arith.constant 51 : i64
-// EXPAND: %[[CTRL0:.*]] = pto.get_ctrl : i64
-// EXPAND: pto.sbitset0 {{.*}}, %[[BIT45]]
-// EXPAND: pto.sbitset1 {{.*}}, %[[BIT46]]
-// EXPAND: pto.sbitset0 {{.*}}, %[[BIT47]]
-// EXPAND: pto.sbitset0 {{.*}}, %[[BIT48]]
-// EXPAND: pto.sbitset1 {{.*}}, %[[BIT51]]
-// EXPAND: pto.set_ctrl
+// After expansion each semantic MAD is wrapped in a ctrl_state_guard carrying
+// its statically computed CTRL requirement (C = controlled_bits mask,
+// R = required_bits). The hardware get_ctrl/sbitset/set_ctrl sequence is
+// materialized later by vpto-optimize-ctrl-state.
+//
+// case1: non-hif8, sat, tf32(round_even), n_dir
+//   C = bit45|46|47|48|51 = 2779565395017728, R = bit46|51 = 2322168557862912
+// EXPAND: pto.ctrl_state_guard controlled_bits(2779565395017728) required_bits(2322168557862912)
 // EXPAND: pto.mad_raw
-// EXPAND: pto.set_ctrl %[[CTRL0]] : i64
-// EXPAND: %[[CTRL1:.*]] = pto.get_ctrl : i64
-// EXPAND: pto.sbitset1 {{.*}}, %[[BIT47]]
-// EXPAND: pto.sbitset1 {{.*}}, %[[BIT48]]
+// case2: mad_acc, nosat, tf32(round_away)
+//   C = 2779565395017728, R = bit46|47|48 = 492581209243648
+// EXPAND: pto.ctrl_state_guard controlled_bits(2779565395017728) required_bits(492581209243648)
 // EXPAND: pto.mad_raw
-// EXPAND: pto.set_ctrl %[[CTRL1]] : i64
-// EXPAND: %[[CTRL2:.*]] = pto.get_ctrl : i64
+// case3: mad_bias, default modes
+//   C = bit45|46|47|51 = 2498090418307072, R = 0
+// EXPAND: pto.ctrl_state_guard controlled_bits(2498090418307072) required_bits(0)
 // EXPAND: pto.mad_bias_raw
-// EXPAND: pto.set_ctrl %[[CTRL2]] : i64
-// EXPAND: %[[CTRL3:.*]] = pto.get_ctrl : i64
-// EXPAND: pto.sbitset1 {{.*}}, %[[BIT45]]
+// case4: hif8 lhs/rhs
+//   C = 2498090418307072, R = bit45 = 35184372088832
+// EXPAND: pto.ctrl_state_guard controlled_bits(2498090418307072) required_bits(35184372088832)
 // EXPAND: pto.mad_raw {{.*}}!pto.ptr<!pto.hif8, l0a>, !pto.ptr<!pto.hif8, l0b>
-// EXPAND: pto.set_ctrl %[[CTRL3]] : i64
+//
+// No hardware CTRL accesses are emitted at expansion time anymore.
+// EXPAND-NOT: pto.get_ctrl
+// EXPAND-NOT: pto.set_ctrl

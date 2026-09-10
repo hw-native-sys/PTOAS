@@ -566,7 +566,10 @@ def PTO_SetMte2NzParaOp : PTO_UnaryI64ConfigOp<"set_mte2_nz_para">;
 def PTO_SetPadValOutToL1Op : PTO_UnaryI64ConfigOp<"set_pad_val_outtol1">;
 // Reading CTRL is ordered with respect to set_ctrl. It must not be modeled as
 // Pure, otherwise CSE can reuse a value read before an intervening write.
-def PTO_GetCtrlOp : PTO_Op<"get_ctrl", [VPTOSchedulingOpInterface]> {
+def PTO_GetCtrlOp : PTO_Op<"get_ctrl", [
+    VPTOSchedulingOpInterface,
+    DeclareOpInterfaceMethods<PTO_StateAccessOpInterface>
+  ]> {
   let arguments = (ins);
   let results = (outs I64:$result);
   let assemblyFormat = [{ attr-dict `:` type($result) }];
@@ -580,7 +583,41 @@ def PTO_GetVms4SrOp : PTO_Op<"get_vms4_sr", [Pure]> {
   }];
 }
 def PTO_SetCtrlOp : PTO_UnaryI64ConfigOp<
-    "set_ctrl", [VPTOSchedulingOpInterface]>;
+    "set_ctrl", [VPTOSchedulingOpInterface,
+                 DeclareOpInterfaceMethods<PTO_StateAccessOpInterface>]>;
+
+// Internal authoring-to-emission guard for temporary CTRL requirements. Not a
+// hardware instruction; it must be eliminated by VPTOOptimizeCtrlStatePass
+// before emission-stage validation.
+def PTO_CtrlStateGuardOp : PTO_Op<"ctrl_state_guard", [
+    DeclareOpInterfaceMethods<PTO_StateGuardOpInterface>,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    SingleBlock,
+    NoTerminator,
+    RecursiveMemoryEffects
+  ]> {
+  let summary = "Guard a temporary CTRL requirement for one consumer region";
+  let description = [{
+    Wraps a raw MAD consumer with a statically known temporary CTRL
+    requirement. With the entry logical CTRL `E`, `controlled_bits (C)` and
+    `required_bits (R)`, the consumer executes under
+    `A = (E & ~C) | R`; bits outside `C` inherit `E`, and the logical state
+    after the guard is `E` again. The guard only records semantics; hardware
+    `get_ctrl`/`set_ctrl` materialization is decided by the CTRL state
+    optimization pass. This op exists only between MAD semantic expansion and
+    emission validation and must not survive into emission-stage IR.
+  }];
+  let arguments = (ins I64Attr:$controlled_bits,
+                       I64Attr:$required_bits);
+  let regions = (region SizedRegion<1>:$body);
+  let results = (outs);
+  let hasVerifier = 1;
+  let assemblyFormat = [{
+    `controlled_bits` `(` $controlled_bits `)`
+    `required_bits` `(` $required_bits `)`
+    $body attr-dict
+  }];
+}
 def PTO_SetStoreAtomicCfgOp : PTO_UnaryI64ConfigOp<"set_store_atomic_cfg">;
 def PTO_StoreVfSimtInfoOp : PTO_SimtOp<"store_vfsimt_info"> {
   let summary = "Configure SIMT VF launch dimensions";
@@ -2251,6 +2288,7 @@ def PTO_MadRawOp : PTO_CubeMicroOp<"mad_raw", [
     DeclareOpInterfaceMethods<PTO_MadRawOpInterface, [
       "isMadMxFamily", "hasBiasOperand", "getBiasOrNull"
     ]>,
+    DeclareOpInterfaceMethods<PTO_StateAccessOpInterface>,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let arguments = (ins
@@ -2272,6 +2310,7 @@ def PTO_MadBiasRawOp : PTO_CubeMicroOp<"mad_bias_raw", [
     DeclareOpInterfaceMethods<PTO_MadRawOpInterface, [
       "isMadMxFamily", "hasBiasOperand", "getBiasOrNull"
     ]>,
+    DeclareOpInterfaceMethods<PTO_StateAccessOpInterface>,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let arguments = (ins
@@ -2294,6 +2333,7 @@ def PTO_MadMxRawOp : PTO_CubeMicroOp<"mad_mx_raw", [
     DeclareOpInterfaceMethods<PTO_MadRawOpInterface, [
       "isMadMxFamily", "hasBiasOperand", "getBiasOrNull"
     ]>,
+    DeclareOpInterfaceMethods<PTO_StateAccessOpInterface>,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let arguments = (ins
@@ -2315,6 +2355,7 @@ def PTO_MadMxBiasRawOp : PTO_CubeMicroOp<"mad_mx_bias_raw", [
     DeclareOpInterfaceMethods<PTO_MadRawOpInterface, [
       "isMadMxFamily", "hasBiasOperand", "getBiasOrNull"
     ]>,
+    DeclareOpInterfaceMethods<PTO_StateAccessOpInterface>,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let arguments = (ins

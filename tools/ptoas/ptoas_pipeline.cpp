@@ -749,6 +749,10 @@ static void prepareVPTOForEmission(PassManager &pm,
     schedulerOptions.trace = vptoSchedulerTrace;
     kernelModulePM.addPass(pto::createVPTOSchedulerPass(schedulerOptions));
   }
+  // Materialize the minimal hardware CTRL accesses from MAD ctrl_state_guard
+  // requirements after the scheduler and every transform that can move or
+  // duplicate CTRL users; emission validation then rejects guard leftovers.
+  kernelModulePM.addNestedPass<func::FuncOp>(pto::createVPTOOptimizeCtrlStatePass());
   kernelModulePM.addPass(pto::createPTOValidateVPTOEmissionIRPass());
 }
 
