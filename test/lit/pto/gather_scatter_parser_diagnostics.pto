@@ -1,0 +1,71 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s --split-input-file --verify-diagnostics
+
+func.func @gather_invalid_axis(%src: f32, %dst: f32) {
+  // expected-error @+1 {{axis must be "row" or "col"}}
+  pto.tgather ins(%src, {maskPattern = #pto.mask_pattern<P0101>} : f32, "depth") outs(%dst : f32)
+  return
+}
+
+// -----
+
+func.func @scatter_invalid_axis(%src: f32, %dst: f32) {
+  // expected-error @+1 {{axis must be "row" or "col"}}
+  pto.tscatter ins(%src, {maskPattern = #pto.mask_pattern<P0101>} : f32, "depth") outs(%dst : f32)
+  return
+}
+
+// -----
+
+func.func @gather_invalid_mask(%src: f32, %dst: f32) {
+  // expected-error @+1 {{expected #pto.mask_pattern<Pxxxx> for maskPattern}}
+  pto.tgather ins(%src, {maskPattern = 1 : i32} : f32) outs(%dst : f32)
+  return
+}
+
+// -----
+
+func.func @scatter_invalid_mask(%src: f32, %dst: f32) {
+  // expected-error @+1 {{expected #pto.mask_pattern<Pxxxx> for maskPattern}}
+  pto.tscatter ins(%src, {maskPattern = 1 : i32} : f32) outs(%dst : f32)
+  return
+}
+
+// -----
+
+func.func @gather_duplicate_mask(%src: f32, %dst: f32) {
+  // expected-error @+1 {{maskPattern may only be specified once}}
+  pto.tgather ins(%src, {maskPattern = #pto.mask_pattern<P0101>} : f32) outs(%dst : f32) maskPattern = #pto.mask_pattern<P0101>
+  return
+}
+
+// -----
+
+func.func @gather_invalid_compare_tmp(%src: f32, %key: f32, %tmp: f32, %dst: f32, %cdst: f32) {
+  // expected-error @+2 {{compare-form tgather tmp must be tile-like}}
+  pto.tgather ins(%src, %key, %tmp : f32, f32, f32) outs(%dst, %cdst : f32, f32)
+  return
+}
+
+// -----
+
+func.func @gather_too_many_inputs(%src: f32, %extra: f32, %dst: f32) {
+  // expected-error @+1 {{expected at most 3 extra operands in tgather ins(...)}}
+  pto.tgather ins(%src, %extra, %extra, %extra, %extra : f32, f32, f32, f32, f32) outs(%dst : f32)
+  return
+}
+
+// -----
+
+func.func @scatter_conflicting_modes(%src: f32, %idx: f32, %dst: f32) {
+  // expected-error @+2 {{mask-pattern tscatter does not take indexes}}
+  pto.tscatter ins(%src, %idx : f32, f32) outs(%dst : f32) {maskPattern = #pto.mask_pattern<P0101>}
+  return
+}

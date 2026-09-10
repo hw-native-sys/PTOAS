@@ -43,7 +43,7 @@ static void printPressureVector(llvm::raw_ostream &os, StringRef label,
                                 const VPTOSchedModel &model) {
   os << ' ' << label << "={";
   for (auto [index, pressureSet] : llvm::enumerate(model.getPressureSets())) {
-    if (index)
+    if (index != 0)
       os << ',';
     os << pressureSet.name << ':' << values[index];
   }
@@ -315,7 +315,7 @@ static void printRegionFailure(llvm::raw_ostream &os, unsigned blockIndex,
   os << '\n';
 }
 
-static bool reportUnknownClasses(func::FuncOp func, unsigned blockIndex,
+static bool reportUnknownClasses(unsigned blockIndex,
                                  const VPTOSchedRegion &region,
                                  const VPTOSchedDAG &dag,
                                  const VPTOSchedModel &model) {
@@ -340,7 +340,7 @@ static void scheduleRegion(func::FuncOp func, llvm::raw_ostream &os,
                            VPTOSchedDAG &dag, const VPTOSchedModel &model,
                            const VPTOSchedulerLimits &limits,
                            VPTOSchedulingBudget &budget, bool trace) {
-  if (reportUnknownClasses(func, blockIndex, region, dag, model)) {
+  if (reportUnknownClasses(blockIndex, region, dag, model)) {
     return;
   }
 

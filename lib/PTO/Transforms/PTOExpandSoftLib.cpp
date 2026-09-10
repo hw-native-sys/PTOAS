@@ -17,6 +17,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/IR/PTO.h"
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/SoftLibService.h"
 #include "Utils.h"
@@ -57,7 +58,8 @@ static bool isSoftLibVdivIntegerVReg(Type type) {
   if (!integer) {
     return false;
   }
-  return (integer.getWidth() == 16 || integer.getWidth() == 32) &&
+  return (integer.getWidth() == mlir::pto::kValue16 ||
+          integer.getWidth() == mlir::pto::kValue32) &&
          (integer.isSigned() || integer.isSignless());
 }
 

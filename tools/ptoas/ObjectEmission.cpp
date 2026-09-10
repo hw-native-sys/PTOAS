@@ -580,6 +580,22 @@ static bool compileDeviceLLVMToObject(llvm::StringRef llPath,
                               "device LLVM compilation", llPath);
 }
 
+static void appendCceAicoreMllvmFlags(
+    llvm::SmallVectorImpl<std::string> &args) {
+  args.append({
+      "-mllvm",
+      "-cce-aicore-stack-size=0x8000",
+      "-mllvm",
+      "-cce-aicore-function-stack-size=0x8000",
+      "-mllvm",
+      "-cce-aicore-record-overflow=true",
+      "-mllvm",
+      "-cce-aicore-addr-transform",
+      "-mllvm",
+      "-cce-aicore-dcci-insert-for-scalar=false",
+  });
+}
+
 static bool compileCppDeviceSourceToObject(
     llvm::StringRef cppPath, llvm::StringRef outObjPath,
     llvm::StringRef targetCPU, const mlir::pto::CANNToolchain &toolchain,
@@ -593,21 +609,14 @@ static bool compileCppDeviceSourceToObject(
       "-fPIC",
       "-Xhost-start",
       "-Xhost-end",
-      "-mllvm",
-      "-cce-aicore-stack-size=0x8000",
-      "-mllvm",
-      "-cce-aicore-function-stack-size=0x8000",
-      "-mllvm",
-      "-cce-aicore-record-overflow=true",
-      "-mllvm",
-      "-cce-aicore-addr-transform",
-      "-mllvm",
-      "-cce-aicore-dcci-insert-for-scalar=false",
+  };
+  appendCceAicoreMllvmFlags(args);
+  args.append({
       std::string("--cce-aicore-arch=") + targetCPU.str(),
       "-DREGISTER_BASE",
       "-std=c++17",
       "-dc",
-  };
+  });
   for (const std::string &includeDir : toolchain.cppIncludeDirs) {
     args.push_back("-I" + includeDir);
   }
@@ -632,23 +641,16 @@ static bool compileCppDeviceSourceToFatobj(
       "-fPIC",
       "-Xhost-start",
       "-Xhost-end",
-      "-mllvm",
-      "-cce-aicore-stack-size=0x8000",
-      "-mllvm",
-      "-cce-aicore-function-stack-size=0x8000",
-      "-mllvm",
-      "-cce-aicore-record-overflow=true",
-      "-mllvm",
-      "-cce-aicore-addr-transform",
-      "-mllvm",
-      "-cce-aicore-dcci-insert-for-scalar=false",
+  };
+  appendCceAicoreMllvmFlags(args);
+  args.append({
       "--cce-aicore-arch=dav-c310",
       "-DREGISTER_BASE",
       "-std=c++17",
       "-O2",
       "-dc",
       "-c",
-  };
+  });
   for (const std::string &includeDir : toolchain.cppIncludeDirs) {
     args.push_back("-I" + includeDir);
   }
@@ -676,12 +678,12 @@ static std::string resolveHostTargetCPU() {
   return hostCPU;
 }
 
-static llvm::SmallVector<std::string, mlir::pto::kValue32>
-buildHostStubFrontendArgs(llvm::StringRef targetCPU,
-                          const mlir::pto::CANNToolchain &toolchain) {
+static void appendHostStubTargetAndCodegenArgs(
+    llvm::SmallVectorImpl<std::string> &args, llvm::StringRef targetCPU,
+    const mlir::pto::CANNToolchain &toolchain) {
   const std::string hostTriple = llvm::sys::getProcessTriple();
   const std::string hostTargetCPU = resolveHostTargetCPU();
-  return {
+  args.append({
       toolchain.bishengCc1Path,
       "-cc1",
       "-triple",
@@ -709,6 +711,13 @@ buildHostStubFrontendArgs(llvm::StringRef targetCPU,
       "pic",
       "-pic-level",
       "2",
+  });
+}
+
+static void appendHostStubIncludeAndOptimizeArgs(
+    llvm::SmallVectorImpl<std::string> &args,
+    const mlir::pto::CANNToolchain &toolchain) {
+  args.append({
       "-fhalf-no-semantic-interposition",
       "-mframe-pointer=none",
       "-fmath-errno",
@@ -741,22 +750,29 @@ buildHostStubFrontendArgs(llvm::StringRef targetCPU,
       "-stack-protector",
       "2",
       "-fno-signed-char",
+  });
+}
+
+static void appendHostStubExceptionAndCceArgs(
+    llvm::SmallVectorImpl<std::string> &args) {
+  args.append({
       "-fgnuc-version=4.2.1",
       "-fcxx-exceptions",
       "-fexceptions",
       "-vectorize-loops",
       "-vectorize-slp",
-      "-mllvm",
-      "-cce-aicore-stack-size=0x8000",
-      "-mllvm",
-      "-cce-aicore-function-stack-size=0x8000",
-      "-mllvm",
-      "-cce-aicore-record-overflow=true",
-      "-mllvm",
-      "-cce-aicore-addr-transform",
-      "-mllvm",
-      "-cce-aicore-dcci-insert-for-scalar=false",
-  };
+  });
+  appendCceAicoreMllvmFlags(args);
+}
+
+static llvm::SmallVector<std::string, mlir::pto::kValue32>
+buildHostStubFrontendArgs(llvm::StringRef targetCPU,
+                          const mlir::pto::CANNToolchain &toolchain) {
+  llvm::SmallVector<std::string, mlir::pto::kValue32> args;
+  appendHostStubTargetAndCodegenArgs(args, targetCPU, toolchain);
+  appendHostStubIncludeAndOptimizeArgs(args, toolchain);
+  appendHostStubExceptionAndCceArgs(args);
+  return args;
 }
 
 static void appendHostStubInputAndOutputArgs(

@@ -456,7 +456,7 @@ lit test/lit/pto/multi_tile_prefetch_insert_sync.pto
 | `pto.alloc_multi_tile` / `pto.multi_tile_get` / `pto.slot_marker` op | ✅ | `include/PTO/IR/PTOOps.td`, `lib/PTO/IR/PTO.cpp` |
 | 类型 / op 验证（count 范围、slot 范围、嵌套禁止） | ✅ | `lib/PTO/IR/PTOTypeDefs.cpp`, `lib/PTO/IR/PTO.cpp` |
 | `PTOViewToMemref` 下沉 alloc_multi_tile/multi_tile_get → `memref.alloc {pto.multi_buffer=N}` + `pto.slot_marker` | ✅ | `lib/PTO/Transforms/PTOViewToMemref.cpp` |
-| `PTOPlanMemory` N-way 多 slot 规划：`StorageEntry.relationOtherBuffers` 列表 + `ExpandMultiBufferStorageEntry` N-way 兄弟展开 + `UpdateBuffer2Offsets` 按 slot 顺序写回 | ✅ N ∈ [2, 16] | `lib/PTO/Transforms/PTOPlanMemory.cpp`, `lib/PTO/Transforms/PTOPlanMemory.h` |
+| `PTOPlanMemory` N-way 多 slot 规划：`StorageEntry.relationOtherBuffers` 列表 + `ExpandMultiBufferStorageEntry` N-way 兄弟展开 + `UpdateBuffer2Offsets` 按 slot 顺序写回 | ✅ N ∈ [2, 16] | `lib/PTO/Transforms/PTOPlanMemoryModern.cpp`（原 `PTOPlanMemory.cpp`，legacy planner 删除后统一到 modern 实现） |
 | `AllocToPointerCast` emit N-address `pto.pointer_cast(addr0..addrN-1)` | ✅ | `lib/PTO/Transforms/AllocToPointerCast.cpp` (pre-existing 已支持) |
 | `PTOResolveBufferSelect` pass（常量 slot → 单地址 cast、动态 slot → arith.select 链） | ✅ | `lib/PTO/Transforms/PTOResolveBufferSelect.cpp` |
 | ptoas pipeline 接入（PlanMemory → ResolveBufferSelect → Sync） | ✅ | `tools/ptoas/ptoas.cpp` |

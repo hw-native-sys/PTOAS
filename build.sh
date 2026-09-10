@@ -13,7 +13,9 @@
 # layout). This is the entry point used by the gitcode smoke pipeline
 # (./build.sh --build / --pkg). It builds the external LLVM/MLIR 19 dependency
 # (reusing a cached LLVM source/build when available) and then builds and
-# installs PTOAS through the tree's native CMake build.
+# installs PTOAS through the tree's native CMake build. Both Actions and robot
+# PreSmoke consume a cached or downloaded Compile installer; PreSmoke never
+# builds from source.
 
 set -e
 
@@ -23,7 +25,7 @@ COLOR_GREEN="\033[32m"
 COLOR_RED="\033[31m"
 
 export BASE_PATH=$(
-  cd "$(dirname $0)"
+  cd "$(dirname "$0")"
   pwd
 )
 export BUILD_PATH="${BASE_PATH}/build"
@@ -131,15 +133,22 @@ devtoolset7_tree_is_usable() {
 }
 
 DEVTOOLSET_TOOLCHAIN_FLAGS=""
-if devtoolset7_tree_is_usable; then
-  _host_glibc_major="$(ldd --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1 | cut -d. -f1)"
-  _host_glibc_minor="$(ldd --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1 | cut -d. -f2)"
-  if [ -n "${_host_glibc_major}" ] && { [ "${_host_glibc_major}" -gt 2 ] \
-       || { [ "${_host_glibc_major}" -eq 2 ] && [ "${_host_glibc_minor:-0}" -gt 17 ]; }; }; then
-    DEVTOOLSET_TOOLCHAIN_FLAGS="--sysroot=/opt/rh/devtoolset-7/root --gcc-toolchain=/opt/rh/devtoolset-7/root/usr"
+resolve_devtoolset_toolchain() {
+  if devtoolset7_tree_is_usable; then
+    local glibc_version
+    glibc_version="$(ldd --version 2>/dev/null)"
+    # Read the complete output before selecting its first line. Piping ldd to
+    # head can raise SIGPIPE and abort this function under set -o pipefail.
+    if [[ "${glibc_version%%$'\n'*}" =~ ([0-9]+)\.([0-9]+) ]]; then
+      local glibc_major="${BASH_REMATCH[1]}"
+      local glibc_minor="${BASH_REMATCH[2]}"
+      if [ "${glibc_major}" -gt 2 ] \
+          || { [ "${glibc_major}" -eq 2 ] && [ "${glibc_minor}" -gt 17 ]; }; then
+        DEVTOOLSET_TOOLCHAIN_FLAGS="--sysroot=/opt/rh/devtoolset-7/root --gcc-toolchain=/opt/rh/devtoolset-7/root/usr"
+      fi
+    fi
   fi
-  unset _host_glibc_major _host_glibc_minor
-fi
+}
 
 # Internal builds provide a pinned clang-15 toolchain under /opt/buildtools,
 # while gitcode images provide clang-15 through PATH. Keep the internal
@@ -211,6 +220,44 @@ usage() {
   echo "    -j <N>                   Parallel jobs (default: nproc)"
   echo "    --cann_3rd_lib_path <d>  Override the third-party/LLVM cache root"
   echo ""
+  echo "PreSmoke reuses a Compile run installer and never builds from source."
+  echo "Downloads use obs_path (Actions) or GIT_PR_NUMBER/pr_id (robot)."
+}
+
+# Keep LLVM parallelism at nproc (or an explicit -j). PTOAS applies its
+# separate limit at each native build entry point, including the wheel.
+resolve_build_jobs() {
+  local cpus requested
+  cpus="$(nproc 2>/dev/null || echo 4)"
+  requested="${JOBS:-${cpus}}"
+  if [[ ! "${requested}" =~ ^[1-9][0-9]{0,5}$ ]]; then
+    echo "ERROR: -j/JOBS must be a positive integer of at most six digits" >&2
+    return 1
+  fi
+  JOBS="${requested}"
+  export CMAKE_BUILD_PARALLEL_LEVEL="${JOBS}"
+  echo "Build resources: nproc=${cpus}, requested=${requested}, jobs=${JOBS}"
+}
+
+# PTOAS has large TableGen-generated translation units. Bound their
+# concurrency without reducing LLVM parallelism or using cgroup memory
+# estimates. Honor explicit job counts below the limit.
+ptoas_build_jobs() {
+  echo "$(( JOBS > 16 ? 16 : JOBS ))"
+}
+
+report_build_failure() {
+  local status="$1"
+  [ "${status}" -ne 0 ] || return 0
+  echo "Build exited with status ${status}; jobs=${JOBS:-unknown}" >&2
+  local counter
+  for counter in /sys/fs/cgroup/memory.events /sys/fs/cgroup/memory.peak \
+      /sys/fs/cgroup/memory/memory.failcnt; do
+    if [ -r "${counter}" ]; then
+      echo "${counter}:" >&2
+      cat "${counter}" >&2 || true
+    fi
+  done
 }
 
 # ---------------------------------------------------------------------------
@@ -365,8 +412,10 @@ llvm_build_is_abi_compatible() {
   local support_lib="${LLVM_BUILD_DIR}/lib/libLLVMSupport.so.19.1"
   [ -f "${support_lib}" ] || return 1
   # _ZNK4llvm5Twine3strEv -> _GLIBCXX_USE_CXX11_ABI=0
+  # Drain nm output: grep -q can close the pipe early and make a valid cache
+  # fail with SIGPIPE under pipefail, forcing LLVM to be rebuilt on every run.
   nm -D --defined-only "${support_lib}" 2>/dev/null \
-    | grep -q "_ZNK4llvm5Twine3strEv"
+    | grep -F "_ZNK4llvm5Twine3strEv" >/dev/null
 }
 
 # BSPUB changes LLVM data types at compile time, so a cache produced without
@@ -424,7 +473,7 @@ llvm_vectorize_has_target_parser_dependency() {
   readelf_bin="$(command -v readelf || command -v llvm-readelf || true)"
   [ -n "${readelf_bin}" ] || return 1
   "${readelf_bin}" -d "${vectorize_lib}" 2>/dev/null \
-    | grep -q 'libLLVMTargetParser\.so'
+    | grep -F 'libLLVMTargetParser.so' >/dev/null
 }
 
 # Check every property that makes the shared LLVM cache safe for PTOAS. This
@@ -432,21 +481,31 @@ llvm_vectorize_has_target_parser_dependency() {
 # from the CANN toolchain may be complete but use the opposite libstdc++ ABI
 # or omit the TargetParser dependency required by LLVMVectorize.
 llvm_build_cache_is_usable() {
-  [ -f "${LLVM_BUILD_DIR}/lib/cmake/llvm/LLVMConfig.cmake" ] \
-    && [ -f "${LLVM_BUILD_DIR}/lib/cmake/mlir/MLIRConfig.cmake" ] \
-    || return 1
-
-  if llvm_has_simt_entry \
-     && [ -f "${LLVM_BUILD_DIR}/include/llvm/IR/CallingConv.h" ] \
-     && ! grep -q "SimtEntry" "${LLVM_BUILD_DIR}/include/llvm/IR/CallingConv.h"; then
-    return 1
+  local reason
+  if [ ! -f "${LLVM_BUILD_DIR}/lib/cmake/llvm/LLVMConfig.cmake" ] \
+     || [ ! -f "${LLVM_BUILD_DIR}/lib/cmake/mlir/MLIRConfig.cmake" ]; then
+    reason="LLVM/MLIR CMake package files are missing"
+  elif llvm_has_simt_entry \
+       && [ -f "${LLVM_BUILD_DIR}/include/llvm/IR/CallingConv.h" ] \
+       && ! grep -q "SimtEntry" "${LLVM_BUILD_DIR}/include/llvm/IR/CallingConv.h"; then
+    reason="cached CallingConv.h lacks SimtEntry"
+  elif ! llvm_build_is_abi_compatible; then
+    reason="libLLVMSupport is missing, unreadable, or has an incompatible C++ ABI"
+  elif ! llvm_build_has_bspub_npu_data_type; then
+    reason="BSPUB_NPU_DATA_TYPE flags do not match"
+  elif ! llvm_build_has_devtoolset_sysroot; then
+    reason="devtoolset-7 sysroot flags do not match"
+  elif ! llvm_build_uses_shared_components; then
+    reason="LLVM shared-component settings do not match"
+  elif ! llvm_build_links_vectorize_target_parser; then
+    reason="LLVMVectorize linker flags lack LLVMTargetParser"
+  elif ! llvm_vectorize_has_target_parser_dependency; then
+    reason="LLVMVectorize is missing, unreadable, or lacks its LLVMTargetParser dependency"
+  else
+    return 0
   fi
-  llvm_build_is_abi_compatible || return 1
-  llvm_build_has_bspub_npu_data_type || return 1
-  llvm_build_has_devtoolset_sysroot || return 1
-  llvm_build_uses_shared_components || return 1
-  llvm_build_links_vectorize_target_parser || return 1
-  llvm_vectorize_has_target_parser_dependency || return 1
+  echo "LLVM/MLIR cache miss at ${LLVM_BUILD_DIR}: ${reason}" >&2
+  return 1
 }
 
 # Build LLVM/MLIR 19 (shared components + MLIR Python bindings) if the cached build
@@ -792,6 +851,9 @@ configure_ptoas() {
   echo "Resetting PTOAS build tree: ${BUILD_PATH}"
   rm -rf "${BUILD_PATH}"
   mkdir -p "${BUILD_PATH}"
+  if is_presmoke; then
+    touch "${PTOAS_PRESMOKE_SKIP_RUNOP_MARKER}"
+  fi
   local ptoas_cmake_args=(
     -G Ninja
     -S "${BASE_PATH}"
@@ -852,7 +914,10 @@ build_only() {
   echo "build ptoas"
   ensure_llvm_build
   configure_ptoas
-  cmake --build "${BUILD_PATH}" -- -j "${JOBS}"
+  local _ptoas_jobs
+  _ptoas_jobs="$(ptoas_build_jobs)"
+  echo "PTOAS build parallelism: jobs=${_ptoas_jobs} (requested=${JOBS})"
+  cmake --build "${BUILD_PATH}" -- -j "${_ptoas_jobs}"
   cmake --install "${BUILD_PATH}"
 
   echo "execute samples success"
@@ -929,7 +994,7 @@ stage_ptoas_wheel() {
       "--config-settings=cmake.define.CMAKE_MODULE_LINKER_FLAGS=-fuse-ld=lld -lstdc++ ${_wheel_rt_flags}"
     )
   fi
-  CMAKE_BUILD_PARALLEL_LEVEL="${JOBS}" \
+  CMAKE_BUILD_PARALLEL_LEVEL="$(ptoas_build_jobs)" \
   SKBUILD_BUILD_DIR="${BUILD_PATH}" \
   LLVM_BUILD_DIR="${LLVM_BUILD_DIR}" \
     "${python_bin}" -m pip wheel "${BASE_PATH}" \
@@ -1002,8 +1067,11 @@ package() {
   echo $dotted_line
   echo "package ptoas"
   ensure_llvm_build
+  local _ptoas_jobs
+  _ptoas_jobs="$(ptoas_build_jobs)"
+  echo "PTOAS build parallelism: jobs=${_ptoas_jobs} (requested=${JOBS})"
   ENABLE_PACKAGE=FALSE configure_ptoas
-  cmake --build "${BUILD_PATH}" -- -j "${JOBS}"
+  cmake --build "${BUILD_PATH}" -- -j "${_ptoas_jobs}"
 
   # Distill the version used for the .run package name. The CANN product version
   # (9.2.0 for this release train) differs from project(ptoas VERSION 0.57), so
@@ -1019,26 +1087,9 @@ package() {
   configure_ptoas
   # configure_ptoas resets the build tree; rebuild all targets before the
   # install/CPack pass so generated install scripts reference real artifacts.
-  # The devtoolset build compiles several giant TableGen-generated TUs
-  # (PTO.cpp measured at ~4.6GB peak RSS). On CI executors a full
-  # -j $(nproc) wave of those can exceed available memory and the compiler
-  # gets OOM-killed with no diagnostics, failing the build silently. Cap
-  # the parallelism so peak concurrent memory stays bounded; the compile
-  # is cache-accelerated on repeat runs so the wall-clock cost is small.
-  if [ -n "${DEVTOOLSET_TOOLCHAIN_FLAGS}" ]; then
-    local _ptoas_jobs
-    _ptoas_jobs="$(( ${JOBS} > 16 ? 16 : ${JOBS} ))"
-    echo "Note: capping PTOAS build parallelism to -j ${_ptoas_jobs} (giant TUs ~4.6GB RSS each)"
-    cmake --build "${BUILD_PATH}" -- -j "${_ptoas_jobs}"
-  else
-    cmake --build "${BUILD_PATH}" -- -j "${JOBS}"
-  fi
+  cmake --build "${BUILD_PATH}" -- -j "${_ptoas_jobs}"
   cmake --install "${BUILD_PATH}"
-  if [ -n "${DEVTOOLSET_TOOLCHAIN_FLAGS}" ]; then
-    cmake --build "${BUILD_PATH}" --target package -- -j "${_ptoas_jobs}"
-  else
-    cmake --build "${BUILD_PATH}" --target package -- -j "${JOBS}"
-  fi
+  cmake --build "${BUILD_PATH}" --target package -- -j "${_ptoas_jobs}"
   echo "package staged under ${BUILD_OUT_PATH}"
   # Diagnostics: the OBS uploader reads build_out via the host path
   # /opt/cloud/slavespace/.../x86build/build_out; print what we actually
@@ -1047,21 +1098,156 @@ package() {
   ls -la "${BUILD_OUT_PATH}"
 }
 
-# The CANN PreSmoke driver invokes test/samples/runop.sh after build.sh exits.
-# Persist the decision in the build tree because exports from this child shell
-# cannot affect that later command in the parent CI process.
+# Actions marks PreSmoke with ST_PART=1. The robot exports task_name and may
+# also pass SMOKE_TYPE=pre; accept the job name when that shell variable is lost.
+is_presmoke() {
+  [ "${SMOKE_TYPE:-}" = "pre" ] || [ "${ST_PART:-}" = "1" ] \
+    || [[ "${task_name:-}" == PreSmoke_* ]]
+}
+
+# Persist the decision before building: the parent driver invokes runop.sh
+# after this child exits, and cannot inherit exports from it.
+prepare_presmoke_log_archive() {
+  # The parent smoke driver archives this directory after the skipped board
+  # commands, so prepare it for either CI entry point after package success.
+  local log_dir="${PTOAS_PRESMOKE_LOG_DIR:-/root/ascend/log}"
+  mkdir -p "${log_dir}"
+  printf '%s\n' 'PTOAS PreSmoke package prepared; runop and board validation are disabled.' \
+    > "${log_dir}/ptoas-presmoke.log"
+}
+
 write_presmoke_runop_policy() {
-  if [ "${SMOKE_TYPE:-}" = "pre" ]; then
+  if is_presmoke; then
     mkdir -p "${BUILD_PATH}"
     touch "${PTOAS_PRESMOKE_SKIP_RUNOP_MARKER}"
     echo "PreSmoke runop smoke disabled: ${PTOAS_PRESMOKE_SKIP_RUNOP_MARKER}"
+    # Report the legacy success sentinel only after package preparation succeeds.
+    if [ "${1:-}" = "complete" ]; then
+      prepare_presmoke_log_archive
+      echo "execute samples success (skipped in PreSmoke; covered by Build_and_test)"
+    fi
   else
     rm -f "${PTOAS_PRESMOKE_SKIP_RUNOP_MARKER}"
   fi
 }
 
+# Accept exactly one nonempty installer for this host. Reject ambiguous output
+# rather than letting the parent expand its wildcard to multiple installers.
+find_presmoke_package() {
+  local package_dir="$1"
+  local package_arch="$2"
+  local packages=()
+  local candidate
+  for candidate in "${package_dir}"/cann-pto-as*.run; do
+    [ -e "${candidate}" ] || continue
+    packages+=("${candidate}")
+  done
+  [ "${#packages[@]}" -eq 1 ] || return 1
+  candidate="${packages[0]}"
+  [ -f "${candidate}" ] && [ -s "${candidate}" ] || return 1
+  case "${candidate##*/}" in
+    *linux-"${package_arch}".run) printf '%s\n' "${candidate}" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Only PreSmoke may consume a previous package. Compile and Build_and_test
+# always build the requested source, and successful packaging refreshes this
+# optional architecture-specific cache with an atomic rename.
+cache_presmoke_package() {
+  local package_arch="$1"
+  local cached_dir="${CANN_3RD_LIB_PATH}/lib_cache/ptoas-presmoke/${package_arch}"
+  local package_file
+  package_file="$(find_presmoke_package "${BUILD_OUT_PATH}" "${package_arch}")" || return 0
+  mkdir -p "${cached_dir}" || return 1
+  local staging_file
+  staging_file="$(mktemp "${cached_dir}/.package.XXXXXX")" || return 1
+  if cp "${package_file}" "${staging_file}" && chmod 644 "${staging_file}" \
+      && mv -f "${staging_file}" "${cached_dir}/cann-pto-as_linux-${package_arch}.run"; then
+    echo "Cached PreSmoke installer under ${cached_dir}"
+  else
+    rm -f "${staging_file}"
+    return 1
+  fi
+}
+
+reuse_presmoke_package() {
+  local package_arch="$1"
+  local cached_dir="${CANN_3RD_LIB_PATH}/lib_cache/ptoas-presmoke/${package_arch}"
+  local package_dir package_file
+  for package_dir in "${BUILD_OUT_PATH}" "${BASE_PATH}" "${download_path:-${BASE_PATH}}" "${cached_dir}"; do
+    package_file="$(find_presmoke_package "${package_dir}" "${package_arch}")" || continue
+    if [ "${package_dir}" != "${BUILD_OUT_PATH}" ]; then
+      # Never leave two installers for the parent's cann-pto-as*.run glob.
+      local existing
+      for existing in "${BUILD_OUT_PATH}"/cann-pto-as*.run; do
+        [ ! -e "${existing}" ] || return 1
+      done
+      mkdir -p "${BUILD_OUT_PATH}" || return 1
+      cp "${package_file}" "${BUILD_OUT_PATH}/cann-pto-as_linux-${package_arch}.run" || return 1
+    fi
+    echo "Reusing PreSmoke installer: ${package_file}; skipping LLVM/PTOAS build and packaging"
+    return 0
+  done
+  return 1
+}
+
+# Actions exports obs_path; the robot publishes under pto-as/package and
+# exports GIT_PR_NUMBER (older smoke wrappers use pr_id). Never guess a PR.
+presmoke_artifact_path() {
+  if [ -n "${obs_path:-}" ]; then
+    if [[ "${obs_path}" =~ ^([A-Za-z0-9_-]+/pto-as/ci|pto-as)/package/[0-9]+$ ]]; then
+      printf '%s\n' "${obs_path}"
+      return 0
+    fi
+  elif [ "${ST_PART:-}" != "1" ]; then
+    local robot_pr="${GIT_PR_NUMBER:-${pr_id:-}}"
+    if [[ "${robot_pr}" =~ ^[0-9]+$ ]]; then
+      printf 'pto-as/package/%s\n' "${robot_pr}"
+      return 0
+    fi
+  fi
+  echo "ERROR: no valid PreSmoke artifact path; set obs_path or the robot PR number" >&2
+  return 1
+}
+
+# Both CI systems publish Compile installers to this existing public endpoint,
+# but their PreSmoke nodes may have neither the package nor a shared cache.
+download_presmoke_package() {
+  local package_arch="$1" artifact_path
+  artifact_path="$(presmoke_artifact_path)" || return 1
+  if [[ ! "${package_arch}" =~ ^(x86_64|aarch64)$ ]]; then
+    echo "ERROR: unsupported PreSmoke installer architecture" >&2
+    return 1
+  fi
+  local package_name="cann-pto-as_linux-${package_arch}.run"
+  local artifact_url="https://ascend-ci.obs.cn-north-4.myhuaweicloud.com/${artifact_path}/${package_name}"
+  local existing staging_file first_line
+  for existing in "${BUILD_OUT_PATH}"/cann-pto-as*.run; do
+    [ ! -e "${existing}" ] || return 1
+  done
+  mkdir -p "${BUILD_OUT_PATH}" || return 1
+  staging_file="$(mktemp "${BUILD_OUT_PATH}/.package.XXXXXX")" || return 1
+  echo "Downloading Compile installer for PreSmoke: ${artifact_url}"
+  if curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+      --connect-timeout 15 --max-time 300 --retry 2 --retry-max-time 300 \
+      --output "${staging_file}" "${artifact_url}" && [ -s "${staging_file}" ]; then
+    IFS= read -r first_line < "${staging_file}" || first_line=""
+    case "${first_line}" in
+      '#!/bin/sh'|'#!/bin/bash'|'#!/usr/bin/env bash')
+        if chmod 644 "${staging_file}" && mv "${staging_file}" "${BUILD_OUT_PATH}/${package_name}"; then
+          return 0
+        fi
+        ;;
+    esac
+  fi
+  rm -f "${staging_file}"
+  echo "ERROR: no valid Compile installer available for PreSmoke; source builds are disabled" >&2
+  return 1
+}
+
 main() {
-  JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
+  JOBS="${JOBS:-}"
   ENABLE_BUILD_ONLY=FALSE
   ENABLE_PACKAGE=FALSE
 
@@ -1093,6 +1279,7 @@ main() {
         esac
         ;;
       -j)
+        [ $# -ge 2 ] || { echo "ERROR: -j requires a job count" >&2; return 1; }
         JOBS="$2"
         shift 2
         ;;
@@ -1115,7 +1302,29 @@ main() {
     esac
   done
 
+  local package_arch
+  package_arch="$(uname -m)"
+  case "${package_arch}" in
+    arm64) package_arch=aarch64 ;;
+    amd64) package_arch=x86_64 ;;
+  esac
   if [ "$ENABLE_BUILD_ONLY" == "TRUE" ] || [ "$ENABLE_PACKAGE" == "TRUE" ]; then
+    write_presmoke_runop_policy
+    if is_presmoke; then
+      if [ "${PACKAGE_TYPE:-run}" != "run" ]; then
+        echo "ERROR: PreSmoke requires a run installer; source builds are disabled" >&2
+        return 1
+      fi
+      if ! reuse_presmoke_package "${package_arch}"; then
+        download_presmoke_package "${package_arch}" || return 1
+        reuse_presmoke_package "${package_arch}" || return 1
+      fi
+      write_presmoke_runop_policy complete
+      return 0
+    fi
+    resolve_build_jobs
+    trap 'report_build_failure "$?"' EXIT
+    resolve_devtoolset_toolchain
     resolve_ptoas_toolchain
   fi
 
@@ -1126,9 +1335,12 @@ main() {
   fi
   if [ "$ENABLE_PACKAGE" == "TRUE" ]; then
     package
+    if ! cache_presmoke_package "${package_arch}"; then
+      echo "WARNING: could not refresh the optional PreSmoke package cache" >&2
+    fi
   fi
   if [ "$ENABLE_BUILD_ONLY" == "TRUE" ] || [ "$ENABLE_PACKAGE" == "TRUE" ]; then
-    write_presmoke_runop_policy
+    write_presmoke_runop_policy complete
   fi
   if [ "$ENABLE_BUILD_ONLY" != "TRUE" ] && [ "$ENABLE_PACKAGE" != "TRUE" ]; then
     usage

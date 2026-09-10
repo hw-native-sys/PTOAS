@@ -541,6 +541,42 @@ static VMICastLayoutFact makeCastLayoutFact(int64_t sourceBits,
   return fact;
 }
 
+static std::optional<VMICastLayoutFact>
+matchHighPriorityCastLayoutPattern(const HighPriorityCastLayoutPattern &pattern,
+                                   VMIVRegType sourceType,
+                                   VMIVRegType resultType, int64_t sourceBits,
+                                   int64_t resultBits) {
+  MLIRContext *ctx = sourceType.getContext();
+  if (!matchesElementBitsPattern(pattern.sourceBits, sourceBits) ||
+      !matchesElementBitsPattern(pattern.resultBits, resultBits) ||
+      !matchesCastTypeClass(pattern.typeClass, sourceType.getElementType(),
+                            resultType.getElementType())) {
+    return std::nullopt;
+  }
+
+  VMILayoutAttr sourceLayout =
+      materializeLayoutPattern(ctx, pattern.sourceLayout);
+  VMILayoutAttr resultLayout =
+      materializeLayoutPattern(ctx, pattern.resultLayout);
+  auto assignedSourceType = VMIVRegType::get(
+      ctx, sourceType.getElementCount(), sourceType.getElementType(),
+      sourceLayout);
+  auto assignedResultType = VMIVRegType::get(
+      ctx, resultType.getElementCount(), resultType.getElementType(),
+      resultLayout);
+  FailureOr<int64_t> sourceArity = getVMIPhysicalArity(assignedSourceType);
+  FailureOr<int64_t> resultArity = getVMIPhysicalArity(assignedResultType);
+  if (failed(sourceArity) || failed(resultArity) ||
+      !matchesPhysicalChunkCountPattern(pattern.sourceChunks,
+                                        *sourceArity) ||
+      !matchesPhysicalChunkCountPattern(pattern.resultChunks,
+                                        *resultArity)) {
+    return std::nullopt;
+  }
+  return makeCastLayoutFact(sourceBits, resultBits, sourceLayout,
+                            resultLayout, VMICastLayoutPriority::High);
+}
+
 static FailureOr<VMICastLayoutFact>
 getHighPriorityCastLayoutFactImpl(VMIVRegType sourceType,
                                   VMIVRegType resultType,
@@ -551,34 +587,12 @@ getHighPriorityCastLayoutFactImpl(VMIVRegType sourceType,
     return failure();
   }
 
-  MLIRContext *ctx = sourceType.getContext();
   std::optional<VMICastLayoutFact> selected;
   for (const HighPriorityCastLayoutPattern &pattern :
        kHighPriorityCastLayoutPatterns) {
-    if (!matchesElementBitsPattern(pattern.sourceBits, sourceBits) ||
-        !matchesElementBitsPattern(pattern.resultBits, resultBits) ||
-        !matchesCastTypeClass(pattern.typeClass, sourceType.getElementType(),
-                              resultType.getElementType())) {
-      continue;
-    }
-
-    VMILayoutAttr sourceLayout =
-        materializeLayoutPattern(ctx, pattern.sourceLayout);
-    VMILayoutAttr resultLayout =
-        materializeLayoutPattern(ctx, pattern.resultLayout);
-    auto assignedSourceType = VMIVRegType::get(
-        ctx, sourceType.getElementCount(), sourceType.getElementType(),
-        sourceLayout);
-    auto assignedResultType = VMIVRegType::get(
-        ctx, resultType.getElementCount(), resultType.getElementType(),
-        resultLayout);
-    FailureOr<int64_t> sourceArity = getVMIPhysicalArity(assignedSourceType);
-    FailureOr<int64_t> resultArity = getVMIPhysicalArity(assignedResultType);
-    if (failed(sourceArity) || failed(resultArity) ||
-        !matchesPhysicalChunkCountPattern(pattern.sourceChunks,
-                                          *sourceArity) ||
-        !matchesPhysicalChunkCountPattern(pattern.resultChunks,
-                                          *resultArity)) {
+    std::optional<VMICastLayoutFact> match = matchHighPriorityCastLayoutPattern(
+        pattern, sourceType, resultType, sourceBits, resultBits);
+    if (!match) {
       continue;
     }
     if (selected) {
@@ -587,9 +601,7 @@ getHighPriorityCastLayoutFactImpl(VMIVRegType sourceType,
       }
       return failure();
     }
-    selected = makeCastLayoutFact(sourceBits, resultBits, sourceLayout,
-                                  resultLayout,
-                                  VMICastLayoutPriority::High);
+    selected = *match;
   }
   if (!selected) {
     if (reason) {

@@ -1,0 +1,163 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -pto-validate-vmi-layout-ir | FileCheck %s --check-prefix=ASSIGN
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - | FileCheck %s --check-prefix=EMIT --implicit-check-not=pto.vmi. --implicit-check-not='!pto.vmi.' --implicit-check-not=unrealized_conversion_cast
+
+// Regression coverage for the integer non-mask cases from issue #1373. The
+// production pipeline lowers vneg to negi before layout assignment. The negi
+// source/result relation must propagate the load layout through to the store
+// instead of assigning the two ports incompatible layouts.
+//
+// The ASSIGN run is the primary regression: it stops right after layout
+// assignment, so it isolates the layout-propagation invariant from every later
+// stage. Each negi below is checked to carry the *same, non-contiguous* layout
+// on both ports. Pinning the concrete layout matters -- a bare "negi exists"
+// check would keep passing if a future change collapsed these cases to plain
+// contiguous, silently retiring the coverage this test exists to provide.
+//
+// The EMIT run additionally proves the whole pipeline completes. It needs the
+// dynamic memory accesses to be provably 32-byte aligned, otherwise physical
+// read legalization fails first and masks the layout regression; the ASSIGN run
+// has no such prerequisite.
+module attributes {pto.target_arch = "a5"} {
+  module attributes {pto.backend = "vpto", pto.kernel_kind = #pto.kernel_kind<vector>} {
+    func.func @vneg_i8_vl1(
+        %src: !pto.ptr<i8, ub>, %dst: !pto.ptr<i8, ub>, %offset: index) {
+      %c32 = arith.constant 32 : index
+      %aligned_offset = arith.muli %offset, %c32 : index
+      %value = pto.vmi.vload %src[%aligned_offset]
+          : !pto.ptr<i8, ub> -> !pto.vmi.vreg<1xi8>
+      %result = pto.vmi.vneg %value
+          : !pto.vmi.vreg<1xi8> -> !pto.vmi.vreg<1xi8>
+      pto.vmi.vstore %result, %dst[%aligned_offset]
+          : !pto.vmi.vreg<1xi8>, !pto.ptr<i8, ub>
+      return
+    }
+
+    func.func @vneg_i8_vl64(
+        %src: !pto.ptr<i8, ub>, %dst: !pto.ptr<i8, ub>, %offset: index) {
+      %c32 = arith.constant 32 : index
+      %aligned_offset = arith.muli %offset, %c32 : index
+      %value = pto.vmi.vload %src[%aligned_offset]
+          : !pto.ptr<i8, ub> -> !pto.vmi.vreg<64xi8>
+      %result = pto.vmi.vneg %value
+          : !pto.vmi.vreg<64xi8> -> !pto.vmi.vreg<64xi8>
+      pto.vmi.vstore %result, %dst[%aligned_offset]
+          : !pto.vmi.vreg<64xi8>, !pto.ptr<i8, ub>
+      return
+    }
+
+    func.func @vneg_i8_vl128(
+        %src: !pto.ptr<i8, ub>, %dst: !pto.ptr<i8, ub>, %offset: index) {
+      %c32 = arith.constant 32 : index
+      %aligned_offset = arith.muli %offset, %c32 : index
+      %value = pto.vmi.vload %src[%aligned_offset]
+          : !pto.ptr<i8, ub> -> !pto.vmi.vreg<128xi8>
+      %result = pto.vmi.vneg %value
+          : !pto.vmi.vreg<128xi8> -> !pto.vmi.vreg<128xi8>
+      pto.vmi.vstore %result, %dst[%aligned_offset]
+          : !pto.vmi.vreg<128xi8>, !pto.ptr<i8, ub>
+      return
+    }
+
+    func.func @vneg_i16_vl1(
+        %src: !pto.ptr<i16, ub>, %dst: !pto.ptr<i16, ub>, %offset: index) {
+      %c16 = arith.constant 16 : index
+      %aligned_offset = arith.muli %offset, %c16 : index
+      %value = pto.vmi.vload %src[%aligned_offset]
+          : !pto.ptr<i16, ub> -> !pto.vmi.vreg<1xi16>
+      %result = pto.vmi.vneg %value
+          : !pto.vmi.vreg<1xi16> -> !pto.vmi.vreg<1xi16>
+      pto.vmi.vstore %result, %dst[%aligned_offset]
+          : !pto.vmi.vreg<1xi16>, !pto.ptr<i16, ub>
+      return
+    }
+
+    func.func @vneg_i16_vl64(
+        %src: !pto.ptr<i16, ub>, %dst: !pto.ptr<i16, ub>, %offset: index) {
+      %c16 = arith.constant 16 : index
+      %aligned_offset = arith.muli %offset, %c16 : index
+      %value = pto.vmi.vload %src[%aligned_offset]
+          : !pto.ptr<i16, ub> -> !pto.vmi.vreg<64xi16>
+      %result = pto.vmi.vneg %value
+          : !pto.vmi.vreg<64xi16> -> !pto.vmi.vreg<64xi16>
+      pto.vmi.vstore %result, %dst[%aligned_offset]
+          : !pto.vmi.vreg<64xi16>, !pto.ptr<i16, ub>
+      return
+    }
+
+    func.func @vneg_i32_vl1(
+        %src: !pto.ptr<i32, ub>, %dst: !pto.ptr<i32, ub>, %offset: index) {
+      %c8 = arith.constant 8 : index
+      %aligned_offset = arith.muli %offset, %c8 : index
+      %value = pto.vmi.vload %src[%aligned_offset]
+          : !pto.ptr<i32, ub> -> !pto.vmi.vreg<1xi32>
+      %result = pto.vmi.vneg %value
+          : !pto.vmi.vreg<1xi32> -> !pto.vmi.vreg<1xi32>
+      pto.vmi.vstore %result, %dst[%aligned_offset]
+          : !pto.vmi.vreg<1xi32>, !pto.ptr<i32, ub>
+      return
+    }
+  }
+}
+
+// Layout assignment must give both negi ports the identical layout that the
+// surrounding load/store pair uses. Before the fix each of these six negi ops
+// ended up with mismatched source/result layouts and tripped the VMI verifier.
+
+// ASSIGN-LABEL: func.func @vneg_i8_vl1(
+// ASSIGN: pto.vmi.negi
+// ASSIGN-SAME: !pto.vmi.vreg<1xi8, #pto.vmi.layout<num_groups = 1, slots = 8>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<1xi8, #pto.vmi.layout<num_groups = 1, slots = 8>>
+
+// ASSIGN-LABEL: func.func @vneg_i8_vl64(
+// ASSIGN: pto.vmi.load
+// ASSIGN-SAME: -> !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous, lane_stride = 4>>
+// ASSIGN: pto.vmi.negi
+// ASSIGN-SAME: !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous, lane_stride = 4>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous, lane_stride = 4>>
+// ASSIGN: pto.vmi.store
+// ASSIGN-SAME: !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous, lane_stride = 4>>
+
+// ASSIGN-LABEL: func.func @vneg_i8_vl128(
+// ASSIGN: pto.vmi.negi
+// ASSIGN-SAME: !pto.vmi.vreg<128xi8, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xi8, #pto.vmi.layout<contiguous, lane_stride = 2>>
+
+// ASSIGN-LABEL: func.func @vneg_i16_vl1(
+// ASSIGN: pto.vmi.negi
+// ASSIGN-SAME: !pto.vmi.vreg<1xi16, #pto.vmi.layout<num_groups = 1, slots = 8>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<1xi16, #pto.vmi.layout<num_groups = 1, slots = 8>>
+
+// ASSIGN-LABEL: func.func @vneg_i16_vl64(
+// ASSIGN: pto.vmi.negi
+// ASSIGN-SAME: !pto.vmi.vreg<64xi16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<64xi16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+
+// ASSIGN-LABEL: func.func @vneg_i32_vl1(
+// ASSIGN: pto.vmi.negi
+// ASSIGN-SAME: !pto.vmi.vreg<1xi32, #pto.vmi.layout<num_groups = 1, slots = 8>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<1xi32, #pto.vmi.layout<num_groups = 1, slots = 8>>
+
+// The residual-VMI guard is supplied by --implicit-check-not on the EMIT RUN
+// line so that it applies to the whole output rather than only to the region
+// following the last match.
+
+// EMIT-LABEL: func.func @vneg_i8_vl1(
+// EMIT: pto.vneg
+// EMIT-LABEL: func.func @vneg_i8_vl64(
+// EMIT: pto.vneg
+// EMIT-LABEL: func.func @vneg_i8_vl128(
+// EMIT: pto.vneg
+// EMIT-LABEL: func.func @vneg_i16_vl1(
+// EMIT: pto.vneg
+// EMIT-LABEL: func.func @vneg_i16_vl64(
+// EMIT: pto.vneg
+// EMIT-LABEL: func.func @vneg_i32_vl1(
+// EMIT: pto.vneg

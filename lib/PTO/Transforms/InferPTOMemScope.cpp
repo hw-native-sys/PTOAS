@@ -208,6 +208,7 @@ struct InferPTOMemScopePass
 private:
   LogicalResult fixDeviceCallSite(func::FuncOp op);
   [[maybe_unused]] LogicalResult fixHostFuncSignature(func::FuncOp op);
+  void inferMemScopeForDeviceFunc(func::FuncOp func);
 };
 } // namespace
 
@@ -522,6 +523,45 @@ LogicalResult pto::inferAndPropagateUbufMemScope(memref::AllocOp op) {
   return success();
 }
 
+void InferPTOMemScopePass::inferMemScopeForDeviceFunc(func::FuncOp func) {
+  // Set the memory scope of values related to `pto::MmadL1Op` to L1 or L0C.
+  func->walk([&](mlir::pto::TMatmulOp op) {
+    if (failed(pto::inferAndPropagateMemScopeForMatmulDps(op))) {
+      signalPassFailure();
+    }
+  });
+
+  func->walk([&](mlir::pto::TMatmulAccOp op) {
+    if (failed(pto::inferAndPropagateMemScopeForMatmulAccDps(op))) {
+      signalPassFailure();
+    }
+  });
+
+  func->walk([&](mlir::pto::TMatmulBiasOp op) {
+    if (failed(pto::inferAndPropagateMemScopeForMatmulBiasDps(op))) {
+      signalPassFailure();
+    }
+  });
+
+  func->walk([&](mlir::pto::TMovOp op) {
+    if (failed(pto::inferAndPropagateMemScopeForMovDps(op))) {
+      signalPassFailure();
+    }
+  });
+
+  // Set device function arguments' memory scope to GM.
+  if (failed(pto::inferAndPropagateMemScopeForFunc(func))) {
+    signalPassFailure();
+  }
+
+  // Finally, set the remaining memory scope in the device kernel to UB.
+  func->walk([&](memref::AllocOp op) {
+    if (failed(pto::inferAndPropagateUbufMemScope(op))) {
+      signalPassFailure();
+    }
+  });
+}
+
 void InferPTOMemScopePass::runOnOperation() {
   SmallVector<func::FuncOp> deviceFuncList;
   getOperation()->walk([&](func::FuncOp func) {
@@ -544,42 +584,7 @@ void InferPTOMemScopePass::runOnOperation() {
 
   // Infer and propagate memory scope for device functions.
   for (auto func : deviceFuncList) {
-    // Set the memory scope of values related to `pto::MmadL1Op` to L1 or L0C.
-    func->walk([&](mlir::pto::TMatmulOp op) {
-      if (failed(pto::inferAndPropagateMemScopeForMatmulDps(op))) {
-        signalPassFailure();
-      }
-    });
-
-    func->walk([&](mlir::pto::TMatmulAccOp op) {
-      if (failed(pto::inferAndPropagateMemScopeForMatmulAccDps(op))) {
-        signalPassFailure();
-      }
-    });
-
-    func->walk([&](mlir::pto::TMatmulBiasOp op) {
-      if (failed(pto::inferAndPropagateMemScopeForMatmulBiasDps(op))) {
-        signalPassFailure();
-      }
-    });
-
-    func->walk([&](mlir::pto::TMovOp op) {
-      if (failed(pto::inferAndPropagateMemScopeForMovDps(op))) {
-        signalPassFailure();
-      }
-    });
-
-    // Set device function arguments' memory scope to GM.
-    if (failed(pto::inferAndPropagateMemScopeForFunc(func))) {
-      signalPassFailure();
-    }
-
-    // Finally, set the remaining memory scope in the device kernel to UB.
-    func->walk([&](memref::AllocOp op) {
-      if (failed(pto::inferAndPropagateUbufMemScope(op))) {
-        signalPassFailure();
-      }
-    });
+    inferMemScopeForDeviceFunc(func);
   }
 
   for (auto func : deviceFuncList) {

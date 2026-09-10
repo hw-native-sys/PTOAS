@@ -56,6 +56,8 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
+#include <climits>
+
 using namespace mlir;
 
 namespace mlir::pto {
@@ -64,6 +66,7 @@ namespace {
 constexpr StringLiteral kAIVScopeDummyCallee = "aivscope_dummy";
 constexpr int64_t kCarrierLoopLowerBound = 0;
 constexpr int64_t kCarrierLoopUpperBound = 1;
+constexpr unsigned kBitsPerByte = CHAR_BIT;
 
 struct QueriedTargetAttrs {
   std::string targetCPU;
@@ -198,7 +201,7 @@ static void ensureAIVScopeDummyDecl(ModuleOp module) {
   dummy.setPrivate();
 }
 
-static bool satisfiesAIVectorScopeLatchPostcondition(llvm::Loop *loop) {
+static bool satisfiesAIVectorScopeLatchPostcondition(const llvm::Loop *loop) {
   llvm::BasicBlock *latch = loop->getLoopLatch();
   if (!latch) {
     return false;
@@ -309,7 +312,7 @@ queryDefaultTargetAttrs(const VPTOEmissionOptions &options,
     return failure();
   }
 
-  auto cleanup = llvm::make_scope_exit([&]() {
+  auto cleanup = llvm::make_scope_exit([&inputPath, &outputPath]() {
     llvm::sys::fs::remove(inputPath);
     llvm::sys::fs::remove(outputPath);
   });
@@ -330,7 +333,7 @@ queryDefaultTargetAttrs(const VPTOEmissionOptions &options,
            << ec.message() << "\n";
     return failure();
   }
-  auto stderrCleanup = llvm::make_scope_exit([&]() {
+  auto stderrCleanup = llvm::make_scope_exit([&stderrPath]() {
     llvm::sys::fs::remove(stderrPath);
   });
   llvm::sys::Process::SafelyCloseFileDescriptor(stderrFD);
@@ -467,12 +470,13 @@ lowerVPTOElementOffsetForIntrinsic(
     bool isPostUpdate, ConversionPatternRewriter &rewriter) {
   auto baseType = dyn_cast<LLVM::LLVMPointerType>(base.getType());
   unsigned elementBits = getPTOStorageElemBitWidth(elementType);
-  if (!baseType || elementBits == 0 || elementBits % 8 != 0) {
+  if (!baseType || elementBits == 0 ||
+      elementBits % kBitsPerByte != 0) {
     return failure();
   }
 
   Location loc = anchor->getLoc();
-  int64_t elementBytes = elementBits / 8;
+  int64_t elementBytes = elementBits / kBitsPerByte;
   if (!elementOffset.getType().isIndex()) {
     if (!elementOffset.getType().isInteger(32)) {
       return failure();

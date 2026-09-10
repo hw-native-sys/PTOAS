@@ -199,10 +199,11 @@ static bool isSameLayoutOp(Operation *op) {
   return isa<VMIAddFOp, VMIAddIOp, VMISubFOp, VMISubIOp, VMIMulFOp, VMIMulIOp,
              VMIVaddcOp, VMIVaddcsOp, VMIAddSOp, VMIMulSOp, VMIMaxSOp,
              VMIMinSOp, VMIShlSOp, VMIShrSOp, VMIVmullOp, VMIFmaOp, VMIDivFOp,
-             VMIMinFOp, VMIMinIOp, VMIMaxFOp, VMIMaxIOp, VMINegFOp, VMIAbsFOp,
-             VMIAbsIOp, VMISqrtOp, VMIExpOp, VMILnOp, VMIReluOp, VMIFPToSIOp,
-             VMISIToFPOp, VMIAndIOp, VMIOrIOp, VMIXOrIOp, VMIShLIOp, VMIShRUIOp,
-             VMIShRSIOp, VMINotOp, VMICmpFOp, VMICmpIOp, VMISelectOp,
+             VMIMinFOp, VMIMinIOp, VMIMaxFOp, VMIMaxIOp, VMINegFOp, VMINegIOp,
+             VMIAbsFOp, VMIAbsIOp, VMISqrtOp, VMIExpOp, VMILnOp, VMIReluOp,
+             VMIFPToSIOp, VMISIToFPOp, VMIAndIOp, VMIOrIOp, VMIXOrIOp,
+             VMIShLIOp, VMIShRUIOp, VMIShRSIOp, VMINotOp, VMICmpFOp, VMICmpIOp,
+             VMISelectOp,
              VMIMaskAndOp, VMIMaskOrOp, VMIMaskXOrOp, VMIMaskNotOp,
              VMIActivePrefixIndexOp, VMICompressOp, VMIExpandLoadOp>(op);
 }
@@ -297,7 +298,7 @@ class VMIVexpdifTransfer final : public VMILayoutTransfer {
 
   static std::optional<VMICastLayoutPort>
   getChangedPort(VMIVexpdifOp op, Value changedValue,
-                 OpOperand *changedOperand) {
+                 const OpOperand *changedOperand) {
     if (changedValue == op.getResult()) {
       return VMICastLayoutPort::Result;
     }
@@ -1516,7 +1517,8 @@ static LogicalResult setMaterializationInsertionPoint(Value value,
 
 LogicalResult VMILayoutPropagator::materializePrimary(
     Value value, const VMIValueLayoutAssignment &assignment,
-    RewriterBase &rewriter, DenseMap<Value, Value> &assignedValues) {
+    RewriterBase &rewriter,
+    DenseMap<Value, Value> &assignedValues) const {
   auto sourceType = dyn_cast<VMIVRegType>(value.getType());
   auto sourceMaskType = dyn_cast<VMIMaskType>(value.getType());
   if (!sourceType && !sourceMaskType) {
@@ -1569,7 +1571,8 @@ LogicalResult VMILayoutPropagator::materializePrimary(
 }
 
 LogicalResult VMILayoutPropagator::materializeUseConflict(
-    Value assignedValue, VMILayoutConflict conflict, RewriterBase &rewriter) {
+    Value assignedValue, VMILayoutConflict conflict,
+    RewriterBase &rewriter) const {
   if (!conflict.operand) {
     return success();
   }

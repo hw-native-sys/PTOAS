@@ -36,6 +36,17 @@ inline LogicalResult getPTOMemRefStridesAndOffset(
   return detail::getPTOMemRefStridesAndOffsetImpl(memTy, strides, offset, 0);
 }
 
+inline bool isSemanticSignCompatible(IntegerType semanticInt,
+                                     IntegerType scalarInt) {
+  if (semanticInt.isSigned()) {
+    return scalarInt.isSigned() || scalarInt.isSignless();
+  }
+  if (semanticInt.isUnsigned()) {
+    return scalarInt.isUnsigned() || scalarInt.isSignless();
+  }
+  return scalarInt.isSignless();
+}
+
 bool isPTOFloat8Type(Type t);
 bool isPTOFloat8E4M3LikeType(Type t);
 bool isPTOFloat8E5M2LikeType(Type t);

@@ -6,6 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#ifndef VMILAYOUTSUPPORTPATTERNDSL_INC
+#define VMILAYOUTSUPPORTPATTERNDSL_INC
 
 //===- VMILayoutSupportPatternDSL.inc - VMI layout support internals -*- C++ -*-===//
 //===----------------------------------------------------------------------===//
@@ -120,19 +122,19 @@ static constexpr MaskGranularityPattern mb8() { return {1U << 0}; }
 static constexpr MaskGranularityPattern mb16() { return {1U << 1}; }
 static constexpr MaskGranularityPattern mb32() { return {1U << 2}; }
 
-static bool matchesElementBitsPattern(ElementBitsPattern pattern,
+inline bool matchesElementBitsPattern(ElementBitsPattern pattern,
                                       int64_t bits) {
   uint64_t mask = elementBitsMask(bits);
   return mask != 0 && (pattern.mask & mask) != 0;
 }
 
-static bool matchesElementBitsPattern(ElementBitsPattern pattern,
+inline bool matchesElementBitsPattern(ElementBitsPattern pattern,
                                       Type elementType) {
   unsigned elementBits = pto::getPTOStorageElemBitWidth(elementType);
   return matchesElementBitsPattern(pattern, elementBits);
 }
 
-static bool matchesCastTypeClass(CastTypeClass typeClass, Type sourceType,
+inline bool matchesCastTypeClass(CastTypeClass typeClass, Type sourceType,
                                  Type resultType) {
   switch (typeClass) {
   case CastTypeClass::Any:
@@ -156,7 +158,7 @@ static bool matchesCastTypeClass(CastTypeClass typeClass, Type sourceType,
   llvm_unreachable("unknown cast type class");
 }
 
-static bool matchesElementCountPattern(ElementCountPattern pattern,
+inline bool matchesElementCountPattern(ElementCountPattern pattern,
                                        int64_t count) {
   if (pattern.any) {
     return true;
@@ -169,7 +171,7 @@ static bool matchesElementCountPattern(ElementCountPattern pattern,
   return false;
 }
 
-static bool matchesPhysicalChunkCountPattern(
+inline bool matchesPhysicalChunkCountPattern(
     PhysicalChunkCountPattern pattern, int64_t chunkCount) {
   if (chunkCount <= 0) {
     return false;
@@ -182,7 +184,7 @@ static bool matchesPhysicalChunkCountPattern(
   return false;
 }
 
-static bool matchesMaskGranularityPattern(MaskGranularityPattern pattern,
+inline bool matchesMaskGranularityPattern(MaskGranularityPattern pattern,
                                           StringRef granularity) {
   uint8_t mask = granularity == "b8"    ? 1U << 0
                  : granularity == "b16" ? 1U << 1
@@ -191,7 +193,7 @@ static bool matchesMaskGranularityPattern(MaskGranularityPattern pattern,
   return mask != 0 && (pattern.mask & mask) != 0;
 }
 
-static VMILayoutAttr materializeLayoutPattern(MLIRContext *ctx,
+inline VMILayoutAttr materializeLayoutPattern(MLIRContext *ctx,
                                               LayoutPattern pattern,
                                               int64_t numGroups = 0) {
   switch (pattern.kind) {
@@ -212,7 +214,7 @@ static VMILayoutAttr materializeLayoutPattern(MLIRContext *ctx,
   llvm_unreachable("unknown layout pattern kind");
 }
 
-static bool matchesLayoutPattern(MLIRContext *ctx, LayoutPattern pattern,
+inline bool matchesLayoutPattern(MLIRContext *ctx, LayoutPattern pattern,
                                  VMILayoutAttr layout, int64_t numGroups = 0) {
   if (!layout) {
     return false;
@@ -269,7 +271,7 @@ static constexpr GroupBlockPattern gbFull(int64_t fullPartMultiple = 1) {
 // section below; helpers in this section should only derive normalized keys.
 //===----------------------------------------------------------------------===//
 
-static std::optional<int64_t> getConstantIndexValue(Value value) {
+inline std::optional<int64_t> getConstantIndexValue(Value value) {
   if (auto constant = value.getDefiningOp<arith::ConstantIndexOp>()) {
     return constant.value();
   }
@@ -281,10 +283,10 @@ static std::optional<int64_t> getConstantIndexValue(Value value) {
   return std::nullopt;
 }
 
-static FailureOr<int64_t> getGroupSizeFromNumGroups(VMIVRegType type,
+inline FailureOr<int64_t> getGroupSizeFromNumGroups(VMIVRegType type,
                                                     int64_t numGroups,
                                                     std::string *reason) {
-  auto fail = [&](const Twine &message) -> FailureOr<int64_t> {
+  auto fail = [reason](const Twine &message) -> FailureOr<int64_t> {
     if (reason) {
       *reason = message.str();
     }
@@ -301,3 +303,5 @@ static FailureOr<int64_t> getGroupSizeFromNumGroups(VMIVRegType type,
 }
 
 //===----------------------------------------------------------------------===//
+
+#endif // VMILAYOUTSUPPORTPATTERNDSL_INC

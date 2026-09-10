@@ -32,7 +32,7 @@
      table `lookupVMIFpToUIContract`: currently `f16→u8`.
 
   5. **SiToFp** — `signed int → fp`. The currently supported pairs are
-     `si32 → f32` and `si8 → f16` (see the support matrix below).
+     `si32 → f32` and `si8 → f16` (see the conversion contract matrix below).
 
   6. **IntWiden** — `int → int`, `|dst| > |src|`.
 
@@ -72,22 +72,23 @@
   `bf16x2` is **conversion-only** — it may not appear as a compute element
   type (`vfadd`/`vfmul`/`vcmp`/...).
 
-### SiToFp support matrix
+### Conversion contract matrix
 
-`SiToFp` requires an explicitly signed integer source (`si*`). A signless
-`i*` source is rejected even when it has the same bit width. The current VMI
-contract exposes `si32 → f32` and `si8 → f16`.
+| Direction | Source → destination | `rounding` | `saturate` |
+|---|---|---|---|
+| FpWiden | `f16→f32`, `bf16→f32`, `fp8_e4m3→f16`, `fp8_e4m3→bf16`, `fp8_e4m3→f32`, `fp8_e5m2→f16`, `fp8_e5m2→bf16`, `fp8_e5m2→f32` | forbidden | forbidden |
+| FpWiden (packed) | `f4E1M2x2→bf16x2`, `f4E2M1x2→bf16x2` | forbidden | forbidden |
+| FpNarrow | `f32→f16`, `f32→bf16`, `f32→fp8_e4m3`, `f32→fp8_e5m2`, `f16→fp8_e4m3`, `f16→fp8_e5m2`, `bf16→fp8_e4m3`, `bf16→fp8_e5m2` | optional: `R`/`A`/`H`/`Z` (lowering defaults to `R`; `A` for hif8 targets) | required: `SAT`/`NOSAT` |
+| FpNarrow (same width) | `bf16→f16` | optional: `R`/`A`/`H`/`Z` | required: `SAT`/`NOSAT` |
+| FpNarrow (same width) | `f16→bf16` | optional: `R`/`A`/`H`/`Z` | forbidden |
+| FpNarrow (packed) | `bf16x2→f4E1M2x2`, `bf16x2→f4E2M1x2` | optional: `R`/`A`/`F`/`C`/`Z` (`H` rejected) | forbidden |
+| FpToSi | `f32→si32`, `f32→si16`, `f16→si16`, `f16→si8`, `bf16→si32` | optional: `R`/`A`/`F`/`C`/`Z` | required: `SAT`/`NOSAT` |
+| FpToSi | `f16→si32` | optional: `R`/`A`/`F`/`C`/`Z` | forbidden |
+| FpToUi | `f16→ui8`  | optional: `R`/`A`/`F`/`C`/`Z` | required: `SAT`/`NOSAT` |
+| SiToFp | `si32→f32`, `si8→f16`  | forbidden | forbidden |
+| IntWiden | any `si8/si16/si32`, `ui8/ui16/ui32`, pair with a wider destination (e.g. `ui8→ui16`, `si16→si32`,); same-width is rejected | forbidden | forbidden |
+| IntNarrow | any `si8/si16/si32`, `ui8/ui16/ui32`, pair with a narrower destination (e.g. `ui32→ui8`, `si32→si16`) | forbidden | required: `SAT`/`NOSAT`; `si32→si8` accepts only `NOSAT` |
 
-The destination type is fixed by the source width: `si32` requires `f32`, and
-`si8` requires `f16`. Other signed-integer widths and floating-point result
-types are rejected by the current `vcvt` contract.
-
-| Source | Destination | Current VMI support |
-|---|---|---|
-| `si32` | `f32` | **Supported** |
-| `si8` | `f16` | **Supported** |
-
-Neither supported pair accepts `rounding` or `saturate` attributes.
 
 - **lowering to `pto.mi`:**
 
@@ -106,7 +107,7 @@ Neither supported pair accepts `rounding` or `saturate` attributes.
   | `f4x2→bf16x2` widen (8→32) | `vcvt{P0}` produces `bf16` lanes; result-side `vbitcast` reinterprets them as `bf16x2`; no rnd, no sat | `K` | `1` |
 
   The width-family rows above do not imply that every source/destination
-  signedness combination is exposed for `SiToFp`; use the support matrix as
+  signedness combination is exposed for `SiToFp`; use the conversion contract matrix as
   the normative list for signed-integer-to-floating-point conversions.
 
 - **example:**

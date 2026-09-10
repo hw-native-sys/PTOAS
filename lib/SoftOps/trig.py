@@ -1,3 +1,4 @@
+# coding=utf-8
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -27,7 +28,6 @@ def sin_f32_soft(value):
     """Approximate sin(value) for an f32 SIMT scalar."""
     x, quadrant = _reduce_angle(value)
     x2 = x * x
-    # sin(x) = x * (1 + x^2 * P(x^2)), through the x^13 term.
     p = pto.f32(-1.0 / 6227020800.0)
     p = pto.fma(p, x2, pto.f32(1.0 / 39916800.0))
     p = pto.fma(p, x2, pto.f32(-1.0 / 362880.0))
@@ -44,7 +44,6 @@ def sin_f32_soft(value):
 
 
 def _cos_polynomial(x, x2):
-    # cos(x) = 1 + x^2 * P(x^2), through the x^14 term.
     p = pto.f32(-1.0 / 87178291200.0)
     p = pto.fma(p, x2, pto.f32(1.0 / 479001600.0))
     p = pto.fma(p, x2, pto.f32(-1.0 / 3628800.0))

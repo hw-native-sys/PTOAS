@@ -341,8 +341,9 @@ static void collectVisibleSpanValues(const GroupSpan &span,
       bool escapes = hasReplaceableUseOutsideSpan(
           init, context.spanOps, context.boundary);
       if (writeInstance) {
-        escapes &= writeInstanceEscapesSpan(*writeInstance,
-                                            context.spanNodeIds);
+        const bool writeEscapes =
+            writeInstanceEscapesSpan(*writeInstance, context.spanNodeIds);
+        escapes = escapes && writeEscapes;
       }
       if (escapes) {
         appendUniqueValue(iface.externallyVisibleValues, seenOutputs, init);

@@ -332,70 +332,82 @@ classifyTileSectionByAddressSpace(std::optional<AddressSpace> space) {
   }
 }
 
+static std::optional<InferredSectionKind> classifyTPushSection(TPushOp push) {
+  std::optional<int8_t> dirMask = getPipeHandleDirMask(push.getPipeHandle());
+  if (!dirMask) {
+    return std::nullopt;
+  }
+  if (*dirMask == kC2VDirMask) {
+    return InferredSectionKind::Cube;
+  }
+  if (*dirMask == kV2CDirMask) {
+    return InferredSectionKind::Vector;
+  }
+  return classifyTileSectionByAddressSpace(
+      getBufferAddressSpace(push.getTile().getType()));
+}
+
+static std::optional<InferredSectionKind> classifyTPopSection(TPopOp pop) {
+  std::optional<int8_t> dirMask = getPipeHandleDirMask(pop.getPipeHandle());
+  if (!dirMask) {
+    return std::nullopt;
+  }
+  if (*dirMask == kC2VDirMask) {
+    return InferredSectionKind::Vector;
+  }
+  if (*dirMask == kV2CDirMask) {
+    return InferredSectionKind::Cube;
+  }
+  return classifyTileSectionByAddressSpace(
+      getBufferAddressSpace(pop.getTile().getType()));
+}
+
+static std::optional<InferredSectionKind> classifyTFreeSection(TFreeOp free) {
+  std::optional<int8_t> dirMask = getPipeHandleDirMask(free.getPipeHandle());
+  if (!dirMask) {
+    return std::nullopt;
+  }
+  if (*dirMask == kC2VDirMask) {
+    return InferredSectionKind::Vector;
+  }
+  if (*dirMask == kV2CDirMask) {
+    return InferredSectionKind::Cube;
+  }
+  if (!free.getEntry()) {
+    return std::nullopt;
+  }
+  return classifyTileSectionByAddressSpace(
+      getBufferAddressSpace(free.getEntry().getType()));
+}
+
+static std::optional<InferredSectionKind> classifyTAllocSection(TAllocOp alloc) {
+  std::optional<int8_t> dirMask = getPipeHandleDirMask(alloc.getPipeHandle());
+  if (!dirMask) {
+    return std::nullopt;
+  }
+  if (*dirMask == kC2VDirMask) {
+    return InferredSectionKind::Cube;
+  }
+  if (*dirMask == kV2CDirMask) {
+    return InferredSectionKind::Vector;
+  }
+  return std::nullopt;
+}
+
 static std::optional<InferredSectionKind>
 classifyInternalPipeTileOp(Operation *op) {
   if (auto push = dyn_cast<TPushOp>(op)) {
-    std::optional<int8_t> dirMask = getPipeHandleDirMask(push.getPipeHandle());
-    if (!dirMask) {
-      return std::nullopt;
-    }
-    if (*dirMask == kC2VDirMask) {
-      return InferredSectionKind::Cube;
-    }
-    if (*dirMask == kV2CDirMask) {
-      return InferredSectionKind::Vector;
-    }
-    return classifyTileSectionByAddressSpace(
-        getBufferAddressSpace(push.getTile().getType()));
+    return classifyTPushSection(push);
   }
-
   if (auto pop = dyn_cast<TPopOp>(op)) {
-    std::optional<int8_t> dirMask = getPipeHandleDirMask(pop.getPipeHandle());
-    if (!dirMask) {
-      return std::nullopt;
-    }
-    if (*dirMask == kC2VDirMask) {
-      return InferredSectionKind::Vector;
-    }
-    if (*dirMask == kV2CDirMask) {
-      return InferredSectionKind::Cube;
-    }
-    return classifyTileSectionByAddressSpace(
-        getBufferAddressSpace(pop.getTile().getType()));
+    return classifyTPopSection(pop);
   }
-
   if (auto free = dyn_cast<TFreeOp>(op)) {
-    std::optional<int8_t> dirMask = getPipeHandleDirMask(free.getPipeHandle());
-    if (!dirMask) {
-      return std::nullopt;
-    }
-    if (*dirMask == kC2VDirMask) {
-      return InferredSectionKind::Vector;
-    }
-    if (*dirMask == kV2CDirMask) {
-      return InferredSectionKind::Cube;
-    }
-    if (!free.getEntry()) {
-      return std::nullopt;
-    }
-    return classifyTileSectionByAddressSpace(
-        getBufferAddressSpace(free.getEntry().getType()));
+    return classifyTFreeSection(free);
   }
-
   if (auto alloc = dyn_cast<TAllocOp>(op)) {
-    std::optional<int8_t> dirMask = getPipeHandleDirMask(alloc.getPipeHandle());
-    if (!dirMask) {
-      return std::nullopt;
-    }
-    if (*dirMask == kC2VDirMask) {
-      return InferredSectionKind::Cube;
-    }
-    if (*dirMask == kV2CDirMask) {
-      return InferredSectionKind::Vector;
-    }
-    return std::nullopt;
+    return classifyTAllocSection(alloc);
   }
-
   return std::nullopt;
 }
 

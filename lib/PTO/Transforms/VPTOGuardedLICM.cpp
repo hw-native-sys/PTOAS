@@ -165,10 +165,7 @@ static int loopNestingDepth(scf::ForOp forOp) {
   return depth;
 }
 
-// Extract every hoistable invariant subexpression that lives inside an scf.if
-// region nested in the loop (and not inside another scf.for), moving the
-// expressions in dependency order to just before the loop.
-static void hoistInvariantsFromGuards(scf::ForOp forOp) {
+static SmallVector<Operation *> collectGuardedHoistCandidates(scf::ForOp forOp) {
   // Collect candidates.  walk() covers every nested scf.if region; the
   // innermost scf.for ancestor test keeps nested loops in charge of their own
   // decisions (they are processed before this loop because loops are visited
@@ -190,11 +187,25 @@ static void hoistInvariantsFromGuards(scf::ForOp forOp) {
       candidates.push_back(op);
     }
   });
+  return candidates;
+}
 
-  if (candidates.empty()) {
-    return;
+// Whether every operand of `op` is either defined outside the loop or produced
+// by an already-hoisted op.
+static bool allOperandsHoistable(Operation *op, scf::ForOp forOp,
+                                 const DenseSet<Value> &available) {
+  for (Value operand : op->getOperands()) {
+    bool operandAvailable = available.count(operand) != 0;
+    bool operandFromOutside = isDefinedOutsideLoop(operand, forOp);
+    if (!operandAvailable && !operandFromOutside) {
+      return false;
+    }
   }
+  return true;
+}
 
+static SmallVector<Operation *>
+computeHoistableOps(ArrayRef<Operation *> candidates, scf::ForOp forOp) {
   // Iterate to a fixed point: an op joins the hoist set only when all of its
   // operands are either defined outside the loop or produced by already-hoisted
   // ops.  The join order is therefore a valid topological order.
@@ -208,16 +219,7 @@ static void hoistInvariantsFromGuards(scf::ForOp forOp) {
       if (hoistedSet.count(op)) {
         continue;
       }
-      bool allOperandsAvailable = true;
-      for (Value operand : op->getOperands()) {
-        bool operandAvailable = available.count(operand) != 0;
-        bool operandFromOutside = isDefinedOutsideLoop(operand, forOp);
-        if (!operandAvailable && !operandFromOutside) {
-          allOperandsAvailable = false;
-          break;
-        }
-      }
-      if (!allOperandsAvailable) {
+      if (!allOperandsHoistable(op, forOp, available)) {
         continue;
       }
       hoisted.push_back(op);
@@ -228,7 +230,19 @@ static void hoistInvariantsFromGuards(scf::ForOp forOp) {
       changed = true;
     }
   }
+  return hoisted;
+}
 
+// Extract every hoistable invariant subexpression that lives inside an scf.if
+// region nested in the loop (and not inside another scf.for), moving the
+// expressions in dependency order to just before the loop.
+static void hoistInvariantsFromGuards(scf::ForOp forOp) {
+  SmallVector<Operation *> candidates = collectGuardedHoistCandidates(forOp);
+  if (candidates.empty()) {
+    return;
+  }
+
+  SmallVector<Operation *> hoisted = computeHoistableOps(candidates, forOp);
   for (Operation *op : hoisted) {
     op->moveBefore(forOp);
   }

@@ -230,9 +230,9 @@ is a `!pto.vmi.mask<L>` with the same `L` as the data operand.
 | `pmode` | Inactive lane behavior | Default? |
 |---|---|---|
 | `"zero"` | Inactive lanes produce 0 (hardware-native ZEROING) | ✓ (default) |
-| `"merge"` | Inactive lanes preserve the destination's prior value | |
+| `"merge"` | Inactive lanes preserve the destination's prior value — **not implemented yet** | |
 
-On A5, MERGE is **emulated**: the hardware predicates only in ZEROING mode, so the
+On A5, MERGE is **not implemented yet**: the hardware predicates only in ZEROING mode, so the
 compiler synthesizes merge as a predicate complement plus a `vor`/`vsel` blend
 of the zeroed result with the old destination (see [Appendix C](10-appendices.md)).
 On A6, some ops support native MERGE.

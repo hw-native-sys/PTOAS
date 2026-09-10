@@ -73,7 +73,7 @@ struct VPTONormalizeContainerPass
       child.getBodyRegion().takeBody(module.getBodyRegion());
 
       module->setAttrs(DictionaryAttr::get(context, outerAttrs));
-      module.getBodyRegion().push_back(new Block);
+      module.getBodyRegion().emplaceBlock();
       module.getBodyRegion().front().push_back(child.getOperation());
     }
 

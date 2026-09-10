@@ -76,7 +76,7 @@
       : !pto.vmi.vreg<64×f32>, !pto.vmi.mask<64> -> !pto.vmi.vreg<1×f32>
 
   // Grouped: 256-lane → 8 groups of 32, each VLane-aligned (W=32B)
-  %sums = pto.vmi.vcadd %x, %mask {group = 8}
+  %sums = pto.vmi.vcadd %x, %mask {group = 8, reassoc}
       : !pto.vmi.vreg<256×f16>, !pto.vmi.mask<256> -> !pto.vmi.vreg<8×f16>
   ```
 

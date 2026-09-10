@@ -38,6 +38,7 @@ inline constexpr int kValue63 = 63;
 inline constexpr int kValue64 = 64;
 inline constexpr int kValue128 = 128;
 inline constexpr int kValue256 = 256;
+inline constexpr int kValue1024 = 1024;
 inline constexpr int kValue2048 = 2048;
 inline constexpr int kValue100000 = 100000;
 

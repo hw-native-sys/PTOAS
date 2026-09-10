@@ -33,14 +33,14 @@
 #include <string>
 #include <vector>
 
-using namespace mlir;
-
 namespace mlir {
 namespace pto {
 #define GEN_PASS_DEF_INSERTTEMPLATEATTRIBUTES
 #include "PTO/Transforms/Passes.h.inc"
 } // namespace pto
 } // namespace mlir
+
+using namespace mlir;
 
 namespace {
 

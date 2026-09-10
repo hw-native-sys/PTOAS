@@ -1,3 +1,4 @@
+# coding=utf-8
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -5,6 +6,7 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
+
 """
 SIMT cross-workitem all-reduce.
 
@@ -157,18 +159,8 @@ def _emit_warp_reduce(x, *,
 
 # ── cross_warp_reduce  ─────────────────────────────────────────────────────────
 
-def _emit_cross_warp_reduce(x, scratch, *,
-                            dtype, threads, scale, thread_offset, reducer):
-    """Cross-warp all-reduce (threads > 32)."""
-    num_warps = threads // 32
-    c_identity = _const(
-        _REDUCER_IDENTITY[reducer][dtype],
-        dtype=_resolve(_REDUCER_IDENTITY_DTYPE[dtype]),
-    )
-    combine = _REDUCER_COMBINE[reducer]
-    redux_fn = _REDUCER_REDUX[reducer]
-
-    # ── thread indexing ──────────────────────────────────────────────────
+def _simt_warp_indexing(*, thread_offset):
+    """Derive global tx, warp id, and warp-local lane id for this work-item."""
     tid_x = get_tid_x()
     if thread_offset:
         tx = tid_x - thread_offset
@@ -178,71 +170,123 @@ def _emit_cross_warp_reduce(x, scratch, *,
         tx = tid_x
         wid = tx // 32
         lid = get_laneid()
+    return tx, wid, lid
 
-    # ── per-warp reduce ──────────────────────────────────────────────────
+
+def _warp_partial_reduce(x, *, scale: int, reducer: str):
+    """Reduce the warp-local value down to ``scale`` partials per warp."""
     if scale == 1:
-        warp_val = redux_fn(x)
-    else:
-        warp_val = _emit_butterfly(x, threads=32, scale=scale, reducer=reducer)
+        return _REDUCER_REDUX[reducer](x)
+    return _emit_butterfly(x, threads=32, scale=scale, reducer=reducer)
 
-    # ── warp leaders write partial results ───────────────────────────────
+
+def _write_warp_partials(warp_val, scratch, *, wid, lid, scale: int) -> None:
+    """Have each warp's ``scale`` leaders store their partial result."""
     is_writer = lid < scale
     with if_(is_writer) as br:
         with br.then_:
             slot = wid * scale + lid
             scalar.store(warp_val, scratch, scalar.index_cast(slot))
 
-    syncthreads()
 
-    # ── leader warp reduces partial sums ─────────────────────────────────
+def _combine_warp_partials(lid, scratch, *, num_warps: int, scale: int,
+                           reducer: str, identity):
+    """Combine every warp's partials on warp 0 (leader lanes only).
+
+    The caller wraps the emitted ops in the runtime leader-warp region; the
+    ``num_warps``/``scale``/``reducer`` dispatch is resolved at trace time.
+    """
+    if scale == 1:
+        loaded = scalar.select(
+            lid < num_warps,
+            scalar.load(scratch, scalar.index_cast(lid)),
+            identity,
+        )
+        return _REDUCER_REDUX[reducer](loaded)
+
+    total = scale * num_warps
+    if total <= 32:
+        loaded = scalar.select(
+            lid < total,
+            scalar.load(scratch, scalar.index_cast(lid)),
+            identity,
+        )
+        return _emit_butterfly(
+            loaded, threads=total, scale=scale, reducer=reducer,
+        )
+
+    combine = _REDUCER_COMBINE[reducer]
+    is_reducer = lid < scale
+    reduced = identity
+    my_slot = lid % scale
+    for w in range(num_warps):
+        idx_val = w * scale + my_slot
+        loaded_v = scalar.load(scratch, scalar.index_cast(idx_val))
+        reduced = combine(reduced, loaded_v)
+    return scalar.select(is_reducer, reduced, identity)
+
+
+def _leader_warp_reduce(
+    tx, lid, scratch, *, num_warps: int, scale: int, reducer: str, identity
+):
+    """Let warp 0 combine every warp's partial into the cross-warp result."""
     is_leader_warp = tx < 32
     with if_(is_leader_warp) as br:
         with br.then_:
-            if scale == 1:
-                loaded = scalar.select(
-                    lid < num_warps,
-                    scalar.load(scratch, scalar.index_cast(lid)),
-                    c_identity,
-                )
-                stage4_result = redux_fn(loaded)
-            elif scale * num_warps <= 32:
-                total = scale * num_warps
-                loaded = scalar.select(
-                    lid < total,
-                    scalar.load(scratch, scalar.index_cast(lid)),
-                    c_identity,
-                )
-                stage4_result = _emit_butterfly(
-                    loaded, threads=total, scale=scale, reducer=reducer,
-                )
-            else:
-                is_reducer = lid < scale
-                reduced = c_identity
-                my_slot = lid % scale
-                for w in range(num_warps):
-                    idx_val = w * scale + my_slot
-                    loaded_v = scalar.load(scratch, scalar.index_cast(idx_val))
-                    reduced = combine(reduced, loaded_v)
-                stage4_result = scalar.select(is_reducer, reduced, c_identity)
-
-            br.assign(stage4_result=stage4_result)
+            br.assign(stage4_result=_combine_warp_partials(
+                lid,
+                scratch,
+                num_warps=num_warps,
+                scale=scale,
+                reducer=reducer,
+                identity=identity,
+            ))
         with br.else_:
-            br.assign(stage4_result=c_identity)
+            br.assign(stage4_result=identity)
 
-    partial_reduced = br.stage4_result
+    return br.stage4_result
 
-    # ── global leader writes result ──────────────────────────────────────
+
+def _broadcast_warp_result(partial_reduced, scratch, *, tx, scale: int):
+    """Store the final partial and load the value broadcast to all lanes."""
     is_global_leader = tx < scale
     with if_(is_global_leader) as br5:
         with br5.then_:
             scalar.store(partial_reduced, scratch, scalar.index_cast(tx))
 
-    # ── broadcast ────────────────────────────────────────────────────────
     syncthreads()
     result = scalar.load(scratch, scalar.index_cast(tx % scale))
     syncthreads()
-
     return result
+
+
+def _emit_cross_warp_reduce(x, scratch, *,
+                            dtype, threads, scale, thread_offset, reducer):
+    """Cross-warp all-reduce (threads > 32)."""
+    num_warps = threads // 32
+    c_identity = _const(
+        _REDUCER_IDENTITY[reducer][dtype],
+        dtype=_resolve(_REDUCER_IDENTITY_DTYPE[dtype]),
+    )
+    tx, wid, lid = _simt_warp_indexing(thread_offset=thread_offset)
+    warp_val = _warp_partial_reduce(x, scale=scale, reducer=reducer)
+    _write_warp_partials(warp_val, scratch, wid=wid, lid=lid, scale=scale)
+
+    syncthreads()
+
+    partial_reduced = _leader_warp_reduce(
+        tx,
+        lid,
+        scratch,
+        num_warps=num_warps,
+        scale=scale,
+        reducer=reducer,
+        identity=c_identity,
+    )
+
+    return _broadcast_warp_result(
+        partial_reduced, scratch, tx=tx, scale=scale,
+    )
 
 
 # ── ub_reduce  ─────────────────────────────────────────────────────────────────

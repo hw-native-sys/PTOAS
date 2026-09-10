@@ -1203,7 +1203,7 @@ def VMIVcmpOp : VMI_Op<"vcmp", [Pure]> {
     Compares two logical vector registers elementwise and produces a predicate
     mask. The comparison mode is given by the `cmp` attribute. The `seed`
     operand provides the governing predicate Pg: where seed[i]=0 the result
-    lane is zero (pmode="zeroing", default), and where seed[i]=1 the comparison
+    lane is zero (pmode="zero", default), and where seed[i]=1 the comparison
     result is written. Floating-point comparisons support eq/ne/lt/le/gt/ge
     and ordered forms oeq/one/olt/ole/ogt/oge. Integer comparisons use
     eq/ne/lt/le/gt/ge; signedness is selected by the integer element type.

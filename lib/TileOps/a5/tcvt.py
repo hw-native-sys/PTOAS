@@ -1,3 +1,4 @@
+# coding=utf-8
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -5,6 +6,7 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
+
 """PTODSL TileLib templates for A5 ``pto.tcvt`` 1D/2D paths.
 
 Conversion-specific instruction sequences stay in this module. Flattened
@@ -1044,23 +1046,18 @@ def template_tcvt_si8_to_i32(src: pto.Tile, dst: pto.Tile):
 
 
 @rewrite_jit_function
-def _render_tcvt_si8_to_i32_1d(src: pto.Tile, dst: pto.Tile):
+def _emit_tcvt_si8_to_i32_chunks(dst, emit_chunk):
+    """Interleaved si8->i32 conversion loop over the flattened destination range."""
+
     valid_rows, valid_cols = dst.valid_shape
     total_elements = valid_rows * valid_cols
-    src_ptr = src.as_ptr()
-    dst_ptr = dst.as_ptr()
-    b8_mask = pto.make_mask(pto.ui8, pto.PAT.ALL)
-    v_zero = pto.vbitcast(pto.vdup(pto.i8(0), b8_mask), pto.ui8)
     lanes_i16 = pto.elements_per_vreg(pto.i16)
     lanes_i32 = pto.elements_per_vreg(pto.i32)
     remained = total_elements
     next_remained = total_elements - lanes_i32
     for offset in range(0, total_elements, lanes_i16):
         mask_b16_cur, remained = pto.make_mask(pto.i16, remained)
-        mask_b16_next, next_remained = pto.make_mask(
-            pto.i16,
-            next_remained,
-        )
+        mask_b16_next, next_remained = pto.make_mask(pto.i16, next_remained)
         mask_b32_cur = pto.punpack(
             mask_b16_cur,
             pto.PredicatePart.LOWER,
@@ -1071,6 +1068,17 @@ def _render_tcvt_si8_to_i32_1d(src: pto.Tile, dst: pto.Tile):
             pto.PredicatePart.LOWER,
             to_type=pto.mask_b32,
         )
+        emit_chunk(offset, mask_b32_cur, mask_b32_next)
+
+
+def _render_tcvt_si8_to_i32_1d(src: pto.Tile, dst: pto.Tile):
+    src_ptr = src.as_ptr()
+    dst_ptr = dst.as_ptr()
+    b8_mask = pto.make_mask(pto.ui8, pto.PAT.ALL)
+    v_zero = pto.vbitcast(pto.vdup(pto.i8(0), b8_mask), pto.ui8)
+    lanes_i32 = pto.elements_per_vreg(pto.i32)
+
+    def emit_chunk(offset, mask_b32_cur, mask_b32_next):
         vec_si8_0 = pto.vlds(src_ptr, offset, dist="UNPK_B8")
         vec_ui8_0 = pto.vbitcast(vec_si8_0, pto.ui8)
         vec_ui8_1, vec_ui8_2 = pto.vintlv(vec_ui8_0, v_zero)
@@ -1102,6 +1110,8 @@ def _render_tcvt_si8_to_i32_1d(src: pto.Tile, dst: pto.Tile):
             mask_b32_next,
             dist=pto.VStoreDist.NORM_B32,
         )
+
+    _emit_tcvt_si8_to_i32_chunks(dst, emit_chunk)
 
 
 template_tcvt_si8_to_i32_1d = _register_tcvt_1d(

@@ -1,3 +1,4 @@
+# coding=utf-8
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -5,6 +6,7 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
+
 """PTODSL TileLib templates for ``pto.ttrans`` (A5 2D tile transpose).
 
 Ports the 2D-vectorized logic from ``include/pto/npu/a5/TTrans.hpp`` of the
@@ -75,7 +77,6 @@ def _major_32byte_aligned(src_valid_shape, src_dtype, dst_dtype, **_):
     tags=("trans", "ub", "b32", "rowwise"),
 )
 def template_ttrans_b32_rowwise(src: pto.Tile, tmp: pto.Tile, dst: pto.Tile):
-    """dst[j,i] = src[i,j] for wide (Rows<Cols) b32 tiles. Port of TTransB32RowWise."""
     dtype = dst.dtype
     valid_rows, valid_cols = src.valid_shape
     lanes = pto.elements_per_vreg(dtype)
@@ -130,7 +131,6 @@ def template_ttrans_b32_colwise(src: pto.Tile, tmp: pto.Tile, dst: pto.Tile):
         remained = valid_rows
         for row in range(0, valid_rows, lanes):
             mask, remained = pto.make_mask(dtype, remained)
-            # src row index = row + [0..lanes-1], clamp, *src_stride, +col
             idx = pto.vadds(base_idx, row, mask)
             idx = pto.vmins(idx, valid_rows_minus_1, mask)
             idx = pto.vmuls(idx, src_stride, mask)

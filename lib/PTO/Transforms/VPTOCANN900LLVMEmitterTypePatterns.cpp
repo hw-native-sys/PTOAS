@@ -114,7 +114,7 @@ public:
 
 class ConvertArithSelectOp final : public OpConversionPattern<arith::SelectOp> {
 public:
-  ConvertArithSelectOp(TypeConverter &typeConverter, MLIRContext *context)
+  ConvertArithSelectOp(const TypeConverter &typeConverter, MLIRContext *context)
       : OpConversionPattern<arith::SelectOp>(typeConverter, context, PatternBenefit(2)) {}
 
   LogicalResult matchAndRewrite(arith::SelectOp op, OpAdaptor adaptor,
@@ -277,7 +277,7 @@ public:
 
 class ConvertPtoLoadOp final : public OpConversionPattern<pto::PTOLoadOp> {
 public:
-  ConvertPtoLoadOp(TypeConverter &typeConverter, MLIRContext *context, LoweringState &)
+  ConvertPtoLoadOp(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &)
       : OpConversionPattern<pto::PTOLoadOp>(typeConverter, context) {}
 
   LogicalResult matchAndRewrite(pto::PTOLoadOp op, OpAdaptor adaptor,
@@ -397,7 +397,7 @@ static FailureOr<Value> preparePtoLdgAddress(pto::PTOLdgOp op, pto::PTOLdgOp::Ad
 
 class ConvertPtoLdgOp final : public OpConversionPattern<pto::PTOLdgOp> {
 public:
-  ConvertPtoLdgOp(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  ConvertPtoLdgOp(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<pto::PTOLdgOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(pto::PTOLdgOp op, OpAdaptor adaptor,
@@ -442,7 +442,7 @@ private:
 
 class ConvertPtoStoreOp final : public OpConversionPattern<pto::PTOStoreOp> {
 public:
-  ConvertPtoStoreOp(TypeConverter &typeConverter, MLIRContext *context, LoweringState &)
+  ConvertPtoStoreOp(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &)
       : OpConversionPattern<pto::PTOStoreOp>(typeConverter, context) {}
 
   LogicalResult matchAndRewrite(pto::PTOStoreOp op, OpAdaptor adaptor,
@@ -511,7 +511,7 @@ static Value convertStgValue(Location loc, Type valueType, Value value, Conversi
 
 class ConvertPtoStgOp final : public OpConversionPattern<pto::PTOStgOp> {
 public:
-  ConvertPtoStgOp(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  ConvertPtoStgOp(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<pto::PTOStgOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(pto::PTOStgOp op, OpAdaptor adaptor,
@@ -567,7 +567,7 @@ static std::string buildStDevCalleeName(unsigned width) { return "llvm.hivm.ST.D
 
 class ConvertPtoLdDevOp final : public OpConversionPattern<pto::PTOLdDevOp> {
 public:
-  ConvertPtoLdDevOp(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  ConvertPtoLdDevOp(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<pto::PTOLdDevOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(pto::PTOLdDevOp op, OpAdaptor adaptor,
@@ -626,7 +626,7 @@ private:
 
 class ConvertPtoStDevOp final : public OpConversionPattern<pto::PTOStDevOp> {
 public:
-  ConvertPtoStDevOp(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  ConvertPtoStDevOp(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<pto::PTOStDevOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(pto::PTOStDevOp op, OpAdaptor adaptor,
@@ -679,7 +679,7 @@ private:
 
 class ConvertVPTOTypedCarrierOp final : public ConversionPattern {
 public:
-  ConvertVPTOTypedCarrierOp(TypeConverter &typeConverter, MLIRContext *context)
+  ConvertVPTOTypedCarrierOp(const TypeConverter &typeConverter, MLIRContext *context)
       : ConversionPattern(typeConverter, MatchAnyOpTypeTag(), 1, context) {}
 
   LogicalResult matchAndRewrite(Operation *op, ArrayRef<Value> operands,
@@ -727,7 +727,7 @@ public:
     return success();
   }
 };
-void populateVPTOTypePatterns(VPTOTypeConverter &typeConverter, RewritePatternSet &patterns, ConversionTarget &target,
+void populateVPTOTypePatterns(const VPTOTypeConverter &typeConverter, RewritePatternSet &patterns,
                               LoweringState &state) {
   MLIRContext *context = patterns.getContext();
   patterns.add<ConvertPtoAddPtrOp, ConvertPtoCastPtrOp, ConvertPtoLoadScalarOp, ConvertPtoStoreScalarOp,

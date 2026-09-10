@@ -25,6 +25,8 @@ namespace func = ::mlir::func;
 using namespace mlir;
 using namespace mlir::pto;
 
+namespace {
+
 static bool isAllowedIntToPtrUse(Value ptr, OpOperand &use) {
   Operation *user = use.getOwner();
   if (isa<LoadScalarOp, StoreScalarOp>(user)) {
@@ -33,7 +35,7 @@ static bool isAllowedIntToPtrUse(Value ptr, OpOperand &use) {
   return false;
 }
 
-LogicalResult mlir::pto::validateIntToPtrUses(func::FuncOp func) {
+static LogicalResult validateIntToPtrUses(func::FuncOp func) {
   WalkResult walkResult = func.walk([&](IntToPtrOp op) -> WalkResult {
     Value ptr = op.getResult();
     for (OpOperand &use : ptr.getUses()) {
@@ -55,6 +57,8 @@ LogicalResult mlir::pto::validateIntToPtrUses(func::FuncOp func) {
 
   return failure(walkResult.wasInterrupted());
 }
+
+} // namespace
 
 namespace {
 struct PTOValidateIntToPtrUsesPass

@@ -1,3 +1,4 @@
+# coding=utf-8
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -5,6 +6,7 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
+
 """Shared PTODSL implementations for straightforward A5 elementwise TileOps.
 
 The module-level traversal cores opt into PTODSL's source rewrite so they can
@@ -242,6 +244,85 @@ def emit_scalar_fill_2d(scalar, dst):
     emit_elementwise_2d(dst, emit_chunk)
 
 
+def _f32_select_masks(raw_mask, full_mask_b16):
+    """Expand one raw f32 mask register into the two lane select masks."""
+    select_mask = pto.pbitcast(raw_mask, pto.mask_b16)
+    select_mask0, select_mask1 = pto.pintlv_b16(
+        select_mask,
+        full_mask_b16,
+    )
+    return (
+        pto.pbitcast(select_mask0, pto.mask_b32),
+        pto.pbitcast(select_mask1, pto.mask_b32),
+    )
+
+
+def _f32_paired_cols(valid_cols, lanes):
+    repeat_times = (valid_cols + lanes - 1) // lanes
+    return (repeat_times // 2) * lanes * 2
+
+
+@rewrite_jit_function
+def _emit_select_2d_f32_pair_tail(
+    mask_ptr,
+    mask_stride,
+    dtype,
+    valid_rows,
+    valid_cols,
+    lanes,
+    dst,
+    full_mask_b16,
+    paired_cols,
+    load_pair,
+    load_tail,
+):
+    """Emit the per-row paired + tail masked-select loops for f32 payloads.
+
+    ``load_pair(row, col)`` returns the four vsel operands for the paired
+    lanes at columns ``col`` and ``col + lanes`` as ``(lhs0, rhs0, lhs1,
+    rhs1)``; ``load_tail(row, col)`` returns ``(lhs, rhs)`` for one tail lane.
+    """
+    pair_width = lanes * 2
+    for row in range(0, valid_rows, 1):
+        remained = valid_cols
+        for col in range(0, paired_cols, pair_width):
+            mask_offset = row * mask_stride + col // 8
+            raw_mask = pto.plds(
+                mask_ptr,
+                mask_offset,
+                dist=pto.PredicateDist.US,
+            )
+            select_mask0, select_mask1 = _f32_select_masks(
+                raw_mask,
+                full_mask_b16,
+            )
+            pred0, remained = pto.make_mask(dtype, remained)
+            pred1, remained = pto.make_mask(dtype, remained)
+            lhs0, rhs0, lhs1, rhs1 = load_pair(row, col)
+            selected0 = pto.vsel(lhs0, rhs0, select_mask0)
+            selected1 = pto.vsel(lhs1, rhs1, select_mask1)
+            pto.vsts(selected0, dst[row, col:], pred0)
+            pto.vsts(selected1, dst[row, col + lanes:], pred1)
+
+        for col in range(paired_cols, valid_cols, lanes):
+            mask_offset = row * mask_stride + col // 8
+            raw_mask = pto.plds(
+                mask_ptr,
+                mask_offset,
+                dist=pto.PredicateDist.US,
+            )
+            select_mask = pto.pbitcast(raw_mask, pto.mask_b16)
+            select_mask = pto.punpack(
+                select_mask,
+                pto.PredicatePart.LOWER,
+            )
+            select_mask = pto.pbitcast(select_mask, pto.mask_b32)
+            pred, remained = pto.make_mask(dtype, remained)
+            lhs, rhs = load_tail(row, col)
+            selected = pto.vsel(lhs, rhs, select_mask)
+            pto.vsts(selected, dst[row, col:], pred)
+
+
 def register_unary(*, op, name, vector_op, dtypes, constraints=(),
                    traversal="2d", priority=None, candidate_id=None):
     """Register a unary tile traversal using a public PTODSL vector operation."""
@@ -297,19 +378,9 @@ def register_binary(*, op, name, vector_op, dtypes, has_tmp=False,
             _common_constraints("src0", "src1", "tmp", "dst"),
         )
 
-        @tilelib.tile_template(
-            op=op,
-            target="a5",
-            name=name,
-            dtypes=dtypes,
-            iteration_axis="none",
-            op_engine="vector",
-            op_class="elementwise",
-            constraints=candidate_constraints,
-            priority=priority,
-            id=candidate_id,
-            loop_depth=loop_depth,
-            is_post_update=False,
+        @_elementwise_template_decorator(
+            op=op, name=name, dtypes=dtypes, constraints=candidate_constraints,
+            priority=priority, candidate_id=candidate_id, loop_depth=loop_depth,
             tags=("elementwise", "binary"),
         )
         def template(src0: pto.Tile, src1: pto.Tile, tmp: pto.Tile, dst: pto.Tile):
@@ -326,19 +397,10 @@ def register_binary(*, op, name, vector_op, dtypes, has_tmp=False,
         ("src0", "src1", "dst"),
         _common_constraints("src0", "src1", "dst"),
     )
-    @tilelib.tile_template(
-        op=op,
-        target="a5",
-        name=name,
-        dtypes=dtypes,
-        iteration_axis="none",
-        op_engine="vector",
-        op_class="elementwise",
-        constraints=candidate_constraints,
-        priority=priority,
-        id=candidate_id,
-        loop_depth=loop_depth,
-        is_post_update=False,
+
+    @_elementwise_template_decorator(
+        op=op, name=name, dtypes=dtypes, constraints=candidate_constraints,
+        priority=priority, candidate_id=candidate_id, loop_depth=loop_depth,
         tags=("elementwise", "binary"),
     )
     def template(src0: pto.Tile, src1: pto.Tile, dst: pto.Tile):
@@ -348,6 +410,126 @@ def register_binary(*, op, name, vector_op, dtypes, has_tmp=False,
             emit_binary_2d(src0, src1, dst, vector_op)
 
     return template
+
+
+def _elementwise_template_decorator(*, op, name, dtypes, constraints, priority,
+                                    candidate_id, loop_depth, tags):
+    """Return the shared a5 elementwise ``tilelib.tile_template`` decorator."""
+    return tilelib.tile_template(
+        op=op, target="a5", name=name, dtypes=dtypes,
+        iteration_axis="none", op_engine="vector", op_class="elementwise",
+        constraints=constraints, priority=priority, id=candidate_id,
+        loop_depth=loop_depth, is_post_update=False, tags=tags,
+    )
+
+
+def _scalar_binary_constraints(traversal, has_tmp, tmp_matches_src_dst):
+    """Build the shared tile/scalar binary constraint list."""
+    constraints = _common_constraints("src", "dst")
+    if not has_tmp:
+        return _with_traversal_constraint(traversal, ("src", "dst"), constraints)
+    if tmp_matches_src_dst:
+        constraints = _common_constraints("src", "tmp", "dst")
+    else:
+        constraints = _common_constraints("src", "dst") + [_ub_or_vec_row_major]
+    return _with_traversal_constraint(traversal, ("src", "tmp", "dst"), constraints)
+
+
+def _emit_scalar_binary_dispatch(traversal, src, scalar, dst, vector_op,
+                                 broadcast_scalar, scalar_lhs):
+    """Route one tile/scalar template body to the traversal-specific emitter."""
+    if traversal == "1d":
+        emit_scalar_binary_1d(
+            src,
+            scalar,
+            dst,
+            vector_op,
+            broadcast_scalar,
+            scalar_lhs,
+        )
+    else:
+        emit_scalar_binary_2d(
+            src,
+            scalar,
+            dst,
+            vector_op,
+            broadcast_scalar,
+            scalar_lhs,
+        )
+
+
+def _scalar_binary_template_variant(*, op, name, dtypes, constraints, priority,
+                                    candidate_id, loop_depth, traversal,
+                                    vector_op, broadcast_scalar, scalar_lhs,
+                                    has_tmp, scalar_first):
+    """Build one decorated tile/scalar template closure variant."""
+    decorator = _elementwise_template_decorator(
+        op=op, name=name, dtypes=dtypes, constraints=constraints,
+        priority=priority, candidate_id=candidate_id, loop_depth=loop_depth,
+        tags=("elementwise", "scalar"),
+    )
+
+    if scalar_first:
+        if has_tmp:
+            @decorator
+            def variant(scalar, src: pto.Tile, tmp: pto.Tile, dst: pto.Tile):
+                _ = tmp
+                _emit_scalar_binary_dispatch(
+                    traversal, src, scalar, dst, vector_op, broadcast_scalar,
+                    scalar_lhs,
+                )
+        else:
+            @decorator
+            def variant(scalar, src: pto.Tile, dst: pto.Tile):
+                _emit_scalar_binary_dispatch(
+                    traversal, src, scalar, dst, vector_op, broadcast_scalar,
+                    scalar_lhs,
+                )
+    elif has_tmp:
+        @decorator
+        def variant(src: pto.Tile, scalar, tmp: pto.Tile, dst: pto.Tile):
+            _ = tmp
+            _emit_scalar_binary_dispatch(
+                traversal, src, scalar, dst, vector_op, broadcast_scalar,
+                scalar_lhs,
+            )
+    else:
+        @decorator
+        def variant(src: pto.Tile, scalar, dst: pto.Tile):
+            _emit_scalar_binary_dispatch(
+                traversal, src, scalar, dst, vector_op, broadcast_scalar,
+                scalar_lhs,
+            )
+
+    return variant
+
+
+def _register_scalar_binary_variants(*, op, name, vector_op, dtypes,
+                                     broadcast_scalar, has_tmp,
+                                     tmp_matches_src_dst, reverse_name,
+                                     traversal, priority, candidate_id,
+                                     loop_depth, reverse_candidate_id):
+    """Register the forward and optional reverse tile/scalar template variants."""
+
+    constraints = _scalar_binary_constraints(traversal, has_tmp, tmp_matches_src_dst)
+    template = _scalar_binary_template_variant(
+        op=op, name=name, dtypes=dtypes, constraints=constraints,
+        priority=priority, candidate_id=candidate_id, loop_depth=loop_depth,
+        traversal=traversal, vector_op=vector_op,
+        broadcast_scalar=broadcast_scalar, scalar_lhs=False, has_tmp=has_tmp,
+        scalar_first=False,
+    )
+    if not reverse_name:
+        return template
+
+    reverse_template = _scalar_binary_template_variant(
+        op=op, name=reverse_name, dtypes=dtypes, constraints=constraints,
+        priority=priority, candidate_id=reverse_candidate_id,
+        loop_depth=loop_depth, traversal=traversal, vector_op=vector_op,
+        broadcast_scalar=True, scalar_lhs=True, has_tmp=has_tmp,
+        scalar_first=True,
+    )
+    return template, reverse_template
 
 
 def register_scalar_binary(*, op, name, vector_op, dtypes, broadcast_scalar=False,
@@ -364,174 +546,21 @@ def register_scalar_binary(*, op, name, vector_op, dtypes, broadcast_scalar=Fals
     )
     if reverse_candidate_id is None:
         reverse_candidate_id = candidate_id + 1
-    constraints = _common_constraints("src", "dst")
-    if has_tmp:
-        if tmp_matches_src_dst:
-            constraints = _common_constraints("src", "tmp", "dst")
-        else:
-            constraints = _common_constraints("src", "dst") + [
-                _ub_or_vec_row_major,
-            ]
-        constraints = _with_traversal_constraint(
-            traversal,
-            ("src", "tmp", "dst"),
-            constraints,
-        )
-
-        @tilelib.tile_template(
-            op=op,
-            target="a5",
-            name=name,
-            dtypes=dtypes,
-            iteration_axis="none",
-            op_engine="vector",
-            op_class="elementwise",
-            constraints=constraints,
-            priority=priority,
-            id=candidate_id,
-            loop_depth=loop_depth,
-            is_post_update=False,
-            tags=("elementwise", "scalar"),
-        )
-        def template(src: pto.Tile, scalar, tmp: pto.Tile, dst: pto.Tile):
-            _ = tmp
-            if traversal == "1d":
-                emit_scalar_binary_1d(
-                    src,
-                    scalar,
-                    dst,
-                    vector_op,
-                    broadcast_scalar,
-                )
-            else:
-                emit_scalar_binary_2d(
-                    src,
-                    scalar,
-                    dst,
-                    vector_op,
-                    broadcast_scalar,
-                )
-
-        if reverse_name:
-
-            @tilelib.tile_template(
-                op=op,
-                target="a5",
-                name=reverse_name,
-                dtypes=dtypes,
-                iteration_axis="none",
-                op_engine="vector",
-                op_class="elementwise",
-                constraints=constraints,
-                priority=priority,
-                id=reverse_candidate_id,
-                loop_depth=loop_depth,
-                is_post_update=False,
-                tags=("elementwise", "scalar"),
-            )
-            def reverse_template(scalar, src: pto.Tile, tmp: pto.Tile, dst: pto.Tile):
-                _ = tmp
-                if traversal == "1d":
-                    emit_scalar_binary_1d(
-                        src,
-                        scalar,
-                        dst,
-                        vector_op,
-                        broadcast_scalar=True,
-                        scalar_lhs=True,
-                    )
-                else:
-                    emit_scalar_binary_2d(
-                        src,
-                        scalar,
-                        dst,
-                        vector_op,
-                        broadcast_scalar=True,
-                        scalar_lhs=True,
-                    )
-
-            return template, reverse_template
-
-        return template
-
-    constraints = _with_traversal_constraint(
-        traversal,
-        ("src", "dst"),
-        constraints,
-    )
-    @tilelib.tile_template(
+    return _register_scalar_binary_variants(
         op=op,
-        target="a5",
         name=name,
+        vector_op=vector_op,
         dtypes=dtypes,
-        iteration_axis="none",
-        op_engine="vector",
-        op_class="elementwise",
-        constraints=constraints,
+        broadcast_scalar=broadcast_scalar,
+        has_tmp=has_tmp,
+        tmp_matches_src_dst=tmp_matches_src_dst,
+        reverse_name=reverse_name,
+        traversal=traversal,
         priority=priority,
-        id=candidate_id,
+        candidate_id=candidate_id,
         loop_depth=loop_depth,
-        is_post_update=False,
-        tags=("elementwise", "scalar"),
+        reverse_candidate_id=reverse_candidate_id,
     )
-    def template(src: pto.Tile, scalar, dst: pto.Tile):
-        if traversal == "1d":
-            emit_scalar_binary_1d(
-                src,
-                scalar,
-                dst,
-                vector_op,
-                broadcast_scalar,
-            )
-        else:
-            emit_scalar_binary_2d(
-                src,
-                scalar,
-                dst,
-                vector_op,
-                broadcast_scalar,
-            )
-
-    if reverse_name:
-
-        @tilelib.tile_template(
-            op=op,
-            target="a5",
-            name=reverse_name,
-            dtypes=dtypes,
-            iteration_axis="none",
-            op_engine="vector",
-            op_class="elementwise",
-            constraints=constraints,
-            priority=priority,
-            id=reverse_candidate_id,
-            loop_depth=loop_depth,
-            is_post_update=False,
-            tags=("elementwise", "scalar"),
-        )
-        def reverse_template(scalar, src: pto.Tile, dst: pto.Tile):
-            if traversal == "1d":
-                emit_scalar_binary_1d(
-                    src,
-                    scalar,
-                    dst,
-                    vector_op,
-                    broadcast_scalar=True,
-                    scalar_lhs=True,
-                )
-            else:
-                emit_scalar_binary_2d(
-                    src,
-                    scalar,
-                    dst,
-                    vector_op,
-                    broadcast_scalar=True,
-                    scalar_lhs=True,
-                )
-
-        return template, reverse_template
-
-    return template
 
 
 def register_scalar_fill(*, op, name, dtypes, traversal="2d", priority=None,

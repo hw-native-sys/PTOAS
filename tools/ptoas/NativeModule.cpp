@@ -8,6 +8,11 @@
 
 #include "PTO/Support/CodeConstants.h"
 
+// The online-build forward declaration below uses std::vector/std::string
+// before ptoas.h (which would provide them) is conditionally included.
+#include <string>
+#include <vector>
+
 #ifdef PTOAS_ONLINE_BUILD
 // Online fallback build. `ptoas.h` transitively pulls the whole compiler-driver
 // closure (CompilerApi.h / VPTOLLVMEmitter.h / ObjectEmission.h -> the entire
@@ -18,7 +23,8 @@
 namespace mlir {
 class MLIRContext;
 namespace pto {
-int runPTOAS(int argc, char **argv, MLIRContext &borrowedContext);
+int runPTOAS(const std::vector<std::string> &args,
+             MLIRContext &borrowedContext);
 } // namespace pto
 } // namespace mlir
 #else
@@ -35,9 +41,6 @@ int runPTOAS(int argc, char **argv, MLIRContext &borrowedContext);
 #include "pybind11/pybind11.h"
 #include "pybind11/stl.h"
 #include "llvm/Support/raw_ostream.h"
-
-#include <string>
-#include <vector>
 
 namespace py = pybind11;
 
@@ -196,13 +199,6 @@ void destroyRuntimeRegistration(PyObject *capsule) {
 }
 
 int runPTOASFromPython(const std::vector<std::string> &arguments) {
-  std::vector<std::string> storage = arguments;
-  std::vector<char *> argv;
-  argv.reserve(storage.size());
-  for (std::string &argument : storage) {
-    argv.push_back(argument.data());
-  }
-
   py::object contextOwner =
       py::module_::import("ptoas.mlir.ir").attr("Context")();
   MlirContext rawContext = py::cast<MlirContext>(contextOwner);
@@ -210,8 +206,7 @@ int runPTOASFromPython(const std::vector<std::string> &arguments) {
   int result;
   {
     py::gil_scoped_release release;
-    result = mlir::pto::runPTOAS(static_cast<int>(argv.size()), argv.data(),
-                                 *unwrap(rawContext));
+    result = mlir::pto::runPTOAS(arguments, *unwrap(rawContext));
   }
   return result;
 }

@@ -59,6 +59,15 @@ static OpOperand *getOptionalOperand(MutableOperandRange operands) {
   return operands.empty() ? nullptr : &*operands.begin();
 }
 
+static VPTOAddressSemantics withOffsetSemantics(
+    OpOperand &base, OpOperand &offset, VPTOAddressUnit unit,
+    Value updatedBase,
+    VPTOAdvanceConstraint constraint = VPTOAdvanceConstraint::Dynamic) {
+  return VPTOAddressSemantics{
+      {currentAccess(base, offset, unit, updatedBase)},
+      postUpdate(base, &offset, unit, updatedBase, constraint)};
+}
+
 static std::optional<int64_t> getElementBytes(Value source) {
   if (!source) {
     return std::nullopt;
@@ -81,11 +90,10 @@ static std::optional<int64_t> getElementBytes(Value source) {
                     : std::optional<int64_t>(static_cast<int64_t>(bytes));
 }
 
-} // namespace
-
-VPTOAddressSemantics
-mlir::pto::getDefaultVPTOAddressSemantics(Operation *operation) {
-  return llvm::TypeSwitch<Operation *, VPTOAddressSemantics>(operation)
+static std::optional<VPTOAddressSemantics>
+getVPTOLoadAddressSemantics(Operation *operation) {
+  return llvm::TypeSwitch<Operation *, std::optional<VPTOAddressSemantics>>(
+             operation)
       .Case<VldsOp, Vldsx2Op>([](auto op) {
         OpOperand &base = op.getSourceMutable();
         OpOperand &offset = op.getOffsetMutable();
@@ -106,32 +114,30 @@ mlir::pto::getDefaultVPTOAddressSemantics(Operation *operation) {
                        VPTOAdvanceConstraint::Dynamic, op.getResult())};
       })
       .Case<PldsOp>([](PldsOp op) {
-        OpOperand &base = op.getSourceMutable();
-        OpOperand &offset = op.getOffsetMutable();
-        return VPTOAddressSemantics{
-            {currentAccess(base, offset, VPTOAddressUnit::Byte,
-                           op.getUpdatedBase())},
-            postUpdate(base, &offset, VPTOAddressUnit::Byte,
-                       op.getUpdatedBase())};
+        return withOffsetSemantics(op.getSourceMutable(),
+                                   op.getOffsetMutable(),
+                                   VPTOAddressUnit::Byte,
+                                   op.getUpdatedBase());
       })
       .Case<PldiOp>([](PldiOp op) {
-        OpOperand &base = op.getSourceMutable();
-        OpOperand &offset = op.getOffsetMutable();
-        return VPTOAddressSemantics{
-            {currentAccess(base, offset, VPTOAddressUnit::Alignment,
-                           op.getUpdatedBase())},
-            postUpdate(base, &offset, VPTOAddressUnit::Alignment,
-                       op.getUpdatedBase(),
-                       VPTOAdvanceConstraint::Constant)};
+        return withOffsetSemantics(op.getSourceMutable(),
+                                   op.getOffsetMutable(),
+                                   VPTOAddressUnit::Alignment,
+                                   op.getUpdatedBase(),
+                                   VPTOAdvanceConstraint::Constant);
       })
+      .Default([](Operation *) { return std::nullopt; });
+}
+
+static std::optional<VPTOAddressSemantics>
+getVPTOStoreAddressSemantics(Operation *operation) {
+  return llvm::TypeSwitch<Operation *, std::optional<VPTOAddressSemantics>>(
+             operation)
       .Case<VstsOp>([](VstsOp op) {
-        OpOperand &base = op.getDestinationMutable();
-        OpOperand &offset = op.getOffsetMutable();
-        return VPTOAddressSemantics{
-            {currentAccess(base, offset, VPTOAddressUnit::Element,
-                           op.getUpdatedBase())},
-            postUpdate(base, &offset, VPTOAddressUnit::Element,
-                       op.getUpdatedBase())};
+        return withOffsetSemantics(op.getDestinationMutable(),
+                                   op.getOffsetMutable(),
+                                   VPTOAddressUnit::Element,
+                                   op.getUpdatedBase());
       })
       .Case<VstusOp>([](VstusOp op) {
         OpOperand &base = op.getBaseMutable();
@@ -142,71 +148,73 @@ mlir::pto::getDefaultVPTOAddressSemantics(Operation *operation) {
                        VPTOAdvanceConstraint::Dynamic, op.getValue())};
       })
       .Case<PstsOp>([](PstsOp op) {
-        OpOperand &base = op.getDestinationMutable();
-        OpOperand &offset = op.getOffsetMutable();
-        return VPTOAddressSemantics{
-            {currentAccess(base, offset, VPTOAddressUnit::Byte,
-                           op.getUpdatedBase())},
-            postUpdate(base, &offset, VPTOAddressUnit::Byte,
-                       op.getUpdatedBase())};
+        return withOffsetSemantics(op.getDestinationMutable(),
+                                   op.getOffsetMutable(),
+                                   VPTOAddressUnit::Byte,
+                                   op.getUpdatedBase());
       })
       .Case<PstiOp>([](PstiOp op) {
-        OpOperand &base = op.getDestinationMutable();
-        OpOperand &offset = op.getOffsetMutable();
-        return VPTOAddressSemantics{
-            {currentAccess(base, offset, VPTOAddressUnit::Alignment,
-                           op.getUpdatedBase())},
-            postUpdate(base, &offset, VPTOAddressUnit::Alignment,
-                       op.getUpdatedBase(),
-                       VPTOAdvanceConstraint::Constant)};
+        return withOffsetSemantics(op.getDestinationMutable(),
+                                   op.getOffsetMutable(),
+                                   VPTOAddressUnit::Alignment,
+                                   op.getUpdatedBase(),
+                                   VPTOAdvanceConstraint::Constant);
       })
       .Case<SprstsOp>([](SprstsOp op) {
-        OpOperand &base = op.getDestinationMutable();
-        OpOperand &offset = op.getOffsetMutable();
-        return VPTOAddressSemantics{
-            {currentAccess(base, offset, VPTOAddressUnit::Byte,
-                           op.getUpdatedBase())},
-            postUpdate(base, &offset, VPTOAddressUnit::Byte,
-                       op.getUpdatedBase())};
+        return withOffsetSemantics(op.getDestinationMutable(),
+                                   op.getOffsetMutable(),
+                                   VPTOAddressUnit::Byte,
+                                   op.getUpdatedBase());
       })
       .Case<SprstiOp>([](SprstiOp op) {
-        OpOperand &base = op.getDestinationMutable();
-        OpOperand &offset = op.getOffsetMutable();
-        return VPTOAddressSemantics{
-            {currentAccess(base, offset, VPTOAddressUnit::Alignment,
-                           op.getUpdatedBase())},
-            postUpdate(base, &offset, VPTOAddressUnit::Alignment,
-                       op.getUpdatedBase(),
-                       VPTOAdvanceConstraint::SignedI8)};
+        return withOffsetSemantics(op.getDestinationMutable(),
+                                   op.getOffsetMutable(),
+                                   VPTOAddressUnit::Alignment,
+                                   op.getUpdatedBase(),
+                                   VPTOAdvanceConstraint::SignedI8);
       })
+      .Default([](Operation *) { return std::nullopt; });
+}
+
+static std::optional<VPTOAddressSemantics>
+getVPTOStridedAddressSemantics(Operation *operation) {
+  return llvm::TypeSwitch<Operation *, std::optional<VPTOAddressSemantics>>(
+             operation)
       .Case<VstasOp>([](VstasOp op) {
-        OpOperand &base = op.getDestinationMutable();
-        OpOperand &offset = op.getOffsetMutable();
-        return VPTOAddressSemantics{
-            {currentAccess(base, offset, VPTOAddressUnit::Element,
-                           op.getUpdatedBase())},
-            postUpdate(base, &offset, VPTOAddressUnit::Element,
-                       op.getUpdatedBase())};
+        return withOffsetSemantics(op.getDestinationMutable(),
+                                   op.getOffsetMutable(),
+                                   VPTOAddressUnit::Element,
+                                   op.getUpdatedBase());
       })
       .Case<VsldbOp>([](VsldbOp op) {
-        OpOperand &base = op.getSourceMutable();
-        OpOperand &stride = op.getRepeatStrideMutable();
-        return VPTOAddressSemantics{
-            {currentAccess(base, stride, VPTOAddressUnit::Block,
-                           op.getUpdatedBase())},
-            postUpdate(base, &stride, VPTOAddressUnit::Block,
-                       op.getUpdatedBase())};
+        return withOffsetSemantics(op.getSourceMutable(),
+                                   op.getRepeatStrideMutable(),
+                                   VPTOAddressUnit::Block,
+                                   op.getUpdatedBase());
       })
       .Case<VsstbOp>([](VsstbOp op) {
-        OpOperand &base = op.getDestinationMutable();
-        OpOperand &stride = op.getRepeatStrideMutable();
-        return VPTOAddressSemantics{
-            {currentAccess(base, stride, VPTOAddressUnit::Block,
-                           op.getUpdatedBase())},
-            postUpdate(base, &stride, VPTOAddressUnit::Block,
-                       op.getUpdatedBase())};
+        return withOffsetSemantics(op.getDestinationMutable(),
+                                   op.getRepeatStrideMutable(),
+                                   VPTOAddressUnit::Block,
+                                   op.getUpdatedBase());
       })
-      .Default([](Operation *) { return VPTOAddressSemantics{}; });
+      .Default([](Operation *) { return std::nullopt; });
+}
+
+} // namespace
+
+VPTOAddressSemantics
+mlir::pto::getDefaultVPTOAddressSemantics(Operation *operation) {
+  if (auto semantics = getVPTOLoadAddressSemantics(operation)) {
+    return *semantics;
+  }
+  if (auto semantics = getVPTOStoreAddressSemantics(operation)) {
+    return *semantics;
+  }
+  if (auto semantics = getVPTOStridedAddressSemantics(operation)) {
+    return *semantics;
+  }
+  return VPTOAddressSemantics{};
 }
 
 std::optional<int64_t>

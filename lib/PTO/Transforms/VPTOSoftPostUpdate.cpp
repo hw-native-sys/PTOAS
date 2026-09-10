@@ -1272,7 +1272,7 @@ static bool validateSequentialRun(SequentialRun &run,
   });
 }
 
-static bool hasOnlyExpectedUser(Value value, Operation *expectedUser) {
+static bool hasOnlyExpectedUser(Value value, const Operation *expectedUser) {
   return value.hasOneUse() && *value.getUsers().begin() == expectedUser;
 }
 
@@ -1315,10 +1315,11 @@ static unsigned initialPointerCost(const SequentialRun &run) {
   return initialOffset && *initialOffset == 0 ? 0 : 1;
 }
 
-static bool isRunStrideUse(OpOperand &use, const SequentialRun &run) {
-  return llvm::any_of(run.candidates, [&use](SequentialCandidate *candidate) {
-    return candidate->advanceOperand == &use;
-  });
+static bool isRunStrideUse(const OpOperand &use, const SequentialRun &run) {
+  return llvm::any_of(
+      run.candidates, [&use](const SequentialCandidate *candidate) {
+        return candidate->advanceOperand == &use;
+      });
 }
 
 // Collect the cumulative add/sub chain used to form the third and later
@@ -1711,7 +1712,7 @@ struct VPTOSoftPostUpdatePass
 private:
   LoopPostUpdatePlan analyzeForOp(
       scf::ForOp forOp, pto::PTOAddressAnalysis &addressAnalysis,
-      OpBuilder &builder) {
+      OpBuilder &builder) const {
     LoopPostUpdatePlan plan{forOp, {}};
     for (Operation &op : *forOp.getBody()) {
       auto postUpdate = getPostUpdateSemantics(&op);
@@ -1800,13 +1801,13 @@ private:
     return plan;
   }
 
-  void applyLoopPlan(LoopPostUpdatePlan &plan, OpBuilder &builder) {
+  void applyLoopPlan(LoopPostUpdatePlan &plan, OpBuilder &builder) const {
     SmallVector<PostUpdateRewrite> rewrites;
     ConstCache constCache;
     for (PostUpdateCandidatePlan &candidate : plan.candidates) {
       SmallVector<Value> leaves;
       collectLeaves(candidate.stride, leaves);
-      bool allInvariant = llvm::all_of(leaves, [&](Value leaf) {
+      bool allInvariant = llvm::all_of(leaves, [&plan](Value leaf) {
         return plan.loop.isDefinedOutsideOfLoop(leaf);
       });
       StrideExprRef finalExpression = candidate.stride;

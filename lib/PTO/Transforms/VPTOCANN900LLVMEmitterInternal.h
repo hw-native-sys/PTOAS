@@ -155,7 +155,7 @@ FailureOr<Value> packShiftedFields(Operation *anchor, Value base, ArrayRef<std::
 std::optional<uint64_t> parseLoadX2DistImmediate(StringRef dist, Type elementType);
 std::optional<uint64_t> parseStoreDistImmediate(StringRef dist, Type elementType);
 bool isMaskOnlyUsedByOnePointStores(Value mask);
-std::optional<uint64_t> parseStoreX2DistImmediate(StringRef dist, Type elementType);
+std::optional<uint64_t> parseStoreX2DistImmediate(StringRef dist, Type);
 Value packBlockRepeatStride(Operation *anchor, Value blockStride, Value repeatStride);
 std::optional<uint64_t> parseOrderImmediate(StringRef order);
 FailureOr<Value> packCopyGmToUbConfig0(Operation *anchor, ValueRange operands);
@@ -303,13 +303,15 @@ StringRef buildDcciCallee(unsigned addressSpace, bool hasDst, MLIRContext *conte
 StringRef buildBufDynSyncCallee(MLIRContext *context, bool isGetBuf);
 LogicalResult materializeDecls(ModuleOp module, ArrayRef<PlannedDecl> plannedDecls, llvm::raw_ostream &diagOS);
 
-void populateVPTOArithmeticPatterns(VPTOTypeConverter &typeConverter, RewritePatternSet &patterns,
+void populateVPTOArithmeticPatterns(const VPTOTypeConverter &typeConverter, RewritePatternSet &patterns,
                                     LoweringState &state);
-void populateVPTOMemoryPatterns(VPTOTypeConverter &typeConverter, RewritePatternSet &patterns, LoweringState &state);
-void populateVPTOVectorMemoryPatterns(VPTOTypeConverter &typeConverter, RewritePatternSet &patterns,
+void populateVPTOMemoryPatterns(const VPTOTypeConverter &typeConverter, RewritePatternSet &patterns,
+                                LoweringState &state);
+void populateVPTOVectorMemoryPatterns(const VPTOTypeConverter &typeConverter, RewritePatternSet &patterns,
                                       LoweringState &state);
-void populateVPTOScalarPatterns(VPTOTypeConverter &typeConverter, RewritePatternSet &patterns, LoweringState &state);
-void populateVPTOTypePatterns(VPTOTypeConverter &typeConverter, RewritePatternSet &patterns, ConversionTarget &target,
+void populateVPTOScalarPatterns(const VPTOTypeConverter &typeConverter, RewritePatternSet &patterns,
+                                LoweringState &state);
+void populateVPTOTypePatterns(const VPTOTypeConverter &typeConverter, RewritePatternSet &patterns,
                               LoweringState &state);
 void populateVPTOStructuralTypePatterns(VPTOTypeConverter &typeConverter, RewritePatternSet &patterns,
                                         ConversionTarget &target);

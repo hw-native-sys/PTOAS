@@ -1,3 +1,4 @@
+# coding=utf-8
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -5,6 +6,7 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
+
 """PTODSL TileLib templates for ``pto.tdequant`` (ports A5 CCE ``TDeQuantImpl``).
 
 ``dst[r,c] = (float(src[r,c]) - offset[r,0]) * scale[r,0]``; one template per src
@@ -136,7 +138,6 @@ def template_tdequant_i8(
             vec_ui8_1, vec_ui8_2 = pto.vintlv(pto.vbitcast(vec_si8_0, pto.ui8), v_zero)
             i32_cur = pto.vcvt(pto.vbitcast(vec_ui8_1, pto.si8), pto.i32, b8_mask, part=pto.VcvtPartMode.P0)
             i32_next = pto.vcvt(pto.vbitcast(vec_ui8_2, pto.si8), pto.i32, b8_mask, part=pto.VcvtPartMode.P0)
-            # i32 -> f32 (rnd=Z, as in C++).
             value_cur = pto.vcvt(i32_cur, pto.f32, mask_b32_cur, rnd=pto.VcvtRoundMode.Z)
             value_next = pto.vcvt(i32_next, pto.f32, mask_b32_next, rnd=pto.VcvtRoundMode.Z)
             scaled_cur = pto.vmul(

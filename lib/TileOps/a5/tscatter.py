@@ -1,3 +1,4 @@
+# coding=utf-8
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -5,9 +6,13 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
+
 """PTODSL TileLib templates for ``pto.tscatter``."""
 
+from dataclasses import dataclass
+
 from ptodsl import pto, scalar
+from ptodsl._ast_rewrite import rewrite_jit_function
 import ptodsl.tilelib as tilelib
 
 from ._common import NUMERIC_DTYPES
@@ -103,6 +108,123 @@ _MASK_PATTERN_TO_STRIDE = {
 }
 
 
+def _scatter_interleave_pair(src_reg, zeros, interleave_hi):
+    if interleave_hi:
+        return pto.vintlv(src_reg, zeros)
+    return pto.vintlv(zeros, src_reg)
+
+
+def _scatter_interleave_quad(src_reg, zeros, interleave_hi0, interleave_hi1):
+    if interleave_hi0:
+        tmp0, tmp1 = pto.vintlv(src_reg, zeros)
+    else:
+        tmp0, tmp1 = pto.vintlv(zeros, src_reg)
+    if interleave_hi1:
+        reg0, reg1 = pto.vintlv(tmp0, zeros)
+        reg2, reg3 = pto.vintlv(tmp1, zeros)
+    else:
+        reg0, reg1 = pto.vintlv(zeros, tmp0)
+        reg2, reg3 = pto.vintlv(zeros, tmp1)
+    return reg0, reg1, reg2, reg3
+
+
+@dataclass(frozen=True)
+class _MaskRowStore:
+    """Trace-time invariants for one interleaved row-mask scatter pass."""
+
+    src: object
+    dst: object
+    dtype: object
+    valid_rows: object
+    valid_cols: object
+    lanes: object
+    times: object
+    dst_valid_col: object
+    zeros: object
+
+
+@rewrite_jit_function
+def _emit_tscatter_mask_row_all(ctx):
+    """Emit the no-interleave (P1111) row-mask scatter pass."""
+    for row in range(0, ctx.valid_rows, 1):
+        py_rem = ctx.dst_valid_col
+        for col in range(0, ctx.valid_cols, ctx.lanes):
+            src_reg = pto.vlds(ctx.src[row, col:])
+            mask, _ = pto.make_mask(ctx.dtype, py_rem)
+            pto.vsts(src_reg, ctx.dst[row, col:], mask)
+            py_rem -= ctx.lanes
+
+
+@rewrite_jit_function
+def _emit_tscatter_mask_row_pair(ctx, interleave_hi):
+    """Emit the two-register interleave (P0101/P1010) row-mask scatter."""
+    for row in range(0, ctx.valid_rows, 1):
+        py_rem = ctx.dst_valid_col
+        for col in range(0, ctx.valid_cols, ctx.lanes):
+            src_reg = pto.vlds(ctx.src[row, col:])
+            reg0, reg1 = _scatter_interleave_pair(src_reg, ctx.zeros, interleave_hi)
+            mask, _ = pto.make_mask(ctx.dtype, py_rem)
+            pto.vsts(reg0, ctx.dst[row, col * ctx.times:], mask)
+            py_rem -= ctx.lanes
+            if py_rem > 0:
+                mask, _ = pto.make_mask(ctx.dtype, py_rem)
+                pto.vsts(reg1, ctx.dst[row, col * ctx.times + ctx.lanes:], mask)
+                py_rem -= ctx.lanes
+
+
+@rewrite_jit_function
+def _emit_tscatter_mask_row_quad(ctx, interleave_hi0, interleave_hi1):
+    """Emit the four-register interleave (P0001..P1000) row-mask scatter."""
+    for row in range(0, ctx.valid_rows, 1):
+        py_rem = ctx.dst_valid_col
+        for col in range(0, ctx.valid_cols, ctx.lanes):
+            src_reg = pto.vlds(ctx.src[row, col:])
+            reg0, reg1, reg2, reg3 = _scatter_interleave_quad(
+                src_reg, ctx.zeros, interleave_hi0, interleave_hi1
+            )
+            mask, _ = pto.make_mask(ctx.dtype, py_rem)
+            pto.vsts(reg0, ctx.dst[row, col * ctx.times:], mask)
+            py_rem -= ctx.lanes
+            if py_rem > 0:
+                mask, _ = pto.make_mask(ctx.dtype, py_rem)
+                pto.vsts(reg1, ctx.dst[row, col * ctx.times + ctx.lanes:], mask)
+                py_rem -= ctx.lanes
+            if py_rem > 0:
+                mask, _ = pto.make_mask(ctx.dtype, py_rem)
+                pto.vsts(reg2, ctx.dst[row, col * ctx.times + ctx.lanes * 2:], mask)
+                py_rem -= ctx.lanes
+            if py_rem > 0:
+                mask, _ = pto.make_mask(ctx.dtype, py_rem)
+                pto.vsts(reg3, ctx.dst[row, col * ctx.times + ctx.lanes * 3:], mask)
+                py_rem -= ctx.lanes
+
+
+def _tscatter_mask_row_emit(src: pto.Tile, dst: pto.Tile, interleave_args):
+    dtype = dst.dtype
+    valid_rows, valid_cols = src.valid_shape
+    lanes = pto.elements_per_vreg(dtype)
+    times = 1 << len(interleave_args)
+    dst_valid_col = valid_cols * times
+    zeros = pto.vbr(_scalar_literal(dtype, 0))
+    ctx = _MaskRowStore(
+        src,
+        dst,
+        dtype,
+        valid_rows,
+        valid_cols,
+        lanes,
+        times,
+        dst_valid_col,
+        zeros,
+    )
+    if not interleave_args:
+        _emit_tscatter_mask_row_all(ctx)
+    elif len(interleave_args) == 1:
+        _emit_tscatter_mask_row_pair(ctx, interleave_args[0])
+    else:
+        _emit_tscatter_mask_row_quad(ctx, interleave_args[0], interleave_args[1])
+
+
 @tilelib.tile_template(
     op="pto.tscatter",
     target="a5",
@@ -121,58 +243,7 @@ _MASK_PATTERN_TO_STRIDE = {
 def template_tscatter_mask_row(src: pto.Tile, dst: pto.Tile):
     mask_pattern = pto.get_op_attr("mask_pattern", "P1111")
     interleave_args = _MASK_PATTERN_TO_INTERLEAVE[mask_pattern]
-    dtype = dst.dtype
-    valid_rows, valid_cols = src.valid_shape
-    lanes = pto.elements_per_vreg(dtype)
-    times = 1 << len(interleave_args)
-    dst_valid_col = valid_cols * times
-    zeros = pto.vbr(_scalar_literal(dtype, 0))
-    for row in range(0, valid_rows, 1):
-        py_rem = dst_valid_col
-        for col in range(0, valid_cols, lanes):
-            src_reg = pto.vlds(src[row, col:])
-            if not interleave_args:
-                mask, _ = pto.make_mask(dtype, py_rem)
-                pto.vsts(src_reg, dst[row, col:], mask)
-                py_rem -= lanes
-            elif len(interleave_args) == 1:
-                if interleave_args[0]:
-                    reg0, reg1 = pto.vintlv(src_reg, zeros)
-                else:
-                    reg0, reg1 = pto.vintlv(zeros, src_reg)
-                mask, _ = pto.make_mask(dtype, py_rem)
-                pto.vsts(reg0, dst[row, col * times:], mask)
-                py_rem -= lanes
-                if py_rem > 0:
-                    mask, _ = pto.make_mask(dtype, py_rem)
-                    pto.vsts(reg1, dst[row, col * times + lanes:], mask)
-                    py_rem -= lanes
-            else:
-                if interleave_args[0]:
-                    tmp0, tmp1 = pto.vintlv(src_reg, zeros)
-                else:
-                    tmp0, tmp1 = pto.vintlv(zeros, src_reg)
-                if interleave_args[1]:
-                    reg0, reg1 = pto.vintlv(tmp0, zeros)
-                    reg2, reg3 = pto.vintlv(tmp1, zeros)
-                else:
-                    reg0, reg1 = pto.vintlv(zeros, tmp0)
-                    reg2, reg3 = pto.vintlv(zeros, tmp1)
-                mask, _ = pto.make_mask(dtype, py_rem)
-                pto.vsts(reg0, dst[row, col * times:], mask)
-                py_rem -= lanes
-                if py_rem > 0:
-                    mask, _ = pto.make_mask(dtype, py_rem)
-                    pto.vsts(reg1, dst[row, col * times + lanes:], mask)
-                    py_rem -= lanes
-                if py_rem > 0:
-                    mask, _ = pto.make_mask(dtype, py_rem)
-                    pto.vsts(reg2, dst[row, col * times + lanes * 2:], mask)
-                    py_rem -= lanes
-                if py_rem > 0:
-                    mask, _ = pto.make_mask(dtype, py_rem)
-                    pto.vsts(reg3, dst[row, col * times + lanes * 3:], mask)
-                    py_rem -= lanes
+    _tscatter_mask_row_emit(src, dst, interleave_args)
 
 
 @tilelib.tile_template(

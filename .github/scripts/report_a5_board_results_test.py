@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# coding=utf-8
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -68,12 +69,12 @@ class BoardResultReportTest(unittest.TestCase):
             )
             log = root / "board-validation.log"
             log.write_text(
-                "[time] === CASE: /tmp/payload/test/samples/Rowexpandsub/rowexpandsub-pto.cpp ===\n"
+                "[time] === CASE: test/samples/Rowexpandsub/rowexpandsub-pto.cpp ===\n"
                 "[ERROR] Mismatch: golden_v3.bin vs v3.bin, max diff=5.5\n"
                 "[time] ERROR: testcase failed (exit 2): rowexpandsub\n"
-                "[time] === CASE: /tmp/payload/test/samples/DeepseekV4DecodeA5/rope_cs-pto.cpp ===\n"
+                "[time] === CASE: test/samples/DeepseekV4DecodeA5/rope_cs-pto.cpp ===\n"
                 "run_remote_npu_validation.sh: line 792: Segmentation fault (core dumped)\n"
-                "[time] === CASE: /tmp/payload/test/samples/TquantMx/tquant_mx-pto.cpp ===\n"
+                "[time] === CASE: test/samples/TquantMx/tquant_mx-pto.cpp ===\n"
                 "error: no member named 'assignData' in 'pto::Tile'\n",
                 encoding="utf-8",
             )

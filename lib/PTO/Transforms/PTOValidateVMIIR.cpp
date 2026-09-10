@@ -209,21 +209,18 @@ LogicalResult emitLayoutSupportContract(Operation *op,
   return emitLayoutContract(op, diagOS, text);
 }
 
-LogicalResult
-emitHelperMaterializationContract(Operation *helper, Type sourceType,
-                                  Type resultType, StringRef helperName,
-                                  StringRef reason, llvm::raw_ostream *diagOS) {
-  auto emitFallback = [diagOS, helper, helperName, reason]() {
-    return emitLayoutContract(
-        helper, diagOS,
-        Twine(helperName) +
-            " has no registered materialization support: " + reason);
-  };
+static LogicalResult emitHelperMaterializationFallback(
+    Operation *helper, StringRef helperName, StringRef reason,
+    llvm::raw_ostream *diagOS) {
+  return emitLayoutContract(
+      helper, diagOS,
+      Twine(helperName) +
+          " has no registered materialization support: " + reason);
+}
 
-  if (helper->getNumResults() != 1 || !helper->getResult(0).hasOneUse()) {
-    return emitFallback();
-  }
-
+static LogicalResult emitHelperMaterializationDiagnostic(
+    Operation *helper, Type sourceType, Type resultType, StringRef helperName,
+    StringRef reason, llvm::raw_ostream *diagOS) {
   OpOperand &use = *helper->getResult(0).use_begin();
   Operation *requester = use.getOwner();
   std::string message;
@@ -240,6 +237,21 @@ emitHelperMaterializationContract(Operation *helper, Type sourceType,
       << " (" << reason << ")";
   mirrorDiagnostic(diagOS, Twine(kVMIDiagLayoutContractPrefix) + message);
   return failure();
+}
+
+LogicalResult
+emitHelperMaterializationContract(Operation *helper, Type sourceType,
+                                  Type resultType, StringRef helperName,
+                                  StringRef reason, llvm::raw_ostream *diagOS) {
+  const bool invalidMaterialization =
+      helper->getNumResults() != 1 || !helper->getResult(0).hasOneUse();
+  if (invalidMaterialization) {
+    return emitHelperMaterializationFallback(helper, helperName, reason,
+                                             diagOS);
+  }
+
+  return emitHelperMaterializationDiagnostic(helper, sourceType, resultType,
+                                             helperName, reason, diagOS);
 }
 
 LogicalResult verifyBoundaryType(Operation *owner, Type type,
@@ -561,208 +573,204 @@ LogicalResult verifyLayoutHelperSupport(Operation *op,
   return success();
 }
 
-LogicalResult verifyLayoutSemanticSupport(Operation *op,
-                                          llvm::raw_ostream *diagOS) {
-  VMILayoutSupport supports;
+template <typename OpT, typename SupportFn>
+static LogicalResult verifyGroupSlotsLayoutSupport(
+    Operation *op, OpT groupOp, VMILayoutAttr layout,
+    llvm::raw_ostream *diagOS, StringRef message, SupportFn supports) {
+  if (!layout || !layout.isGroupSlots()) {
+    return success();
+  }
+  std::string reason;
+  if (failed(supports(groupOp, &reason))) {
+    return emitLayoutSupportContract(op, diagOS, message, reason);
+  }
+  return success();
+}
 
+static LogicalResult verifyVMIStoreSemanticSupport(
+    VMIStoreOp store, llvm::raw_ostream *diagOS, VMILayoutSupport &supports) {
+  auto valueType = cast<VMIVRegType>(store.getValue().getType());
+  VMILayoutAttr layout = valueType.getLayoutAttr();
+  if (!layout || layout.isContiguous()) {
+    return success();
+  }
+  std::string reason;
+  if (failed(supports.getStoreLayoutFact(valueType, &reason))) {
+    return emitLayoutSupportContract(
+        store, diagOS,
+        "pto.vmi.store has no registered contiguous-memory layout support",
+        reason);
+  }
+  return success();
+}
+
+static LogicalResult verifyVMIGroupLoadSemanticSupport(
+    VMIGroupLoadOp load, llvm::raw_ostream *diagOS, VMILayoutSupport &supports) {
+  auto resultType = cast<VMIVRegType>(load.getResult().getType());
+  VMILayoutAttr layout = resultType.getLayoutAttr();
+  if (!layout) {
+    return success();
+  }
+  std::string reason;
+  if (failed(supports.getGroupLoadLayoutFact(load, &reason))) {
+    return emitLayoutSupportContract(
+        load, diagOS, "pto.vmi.group_load has no registered layout support",
+        reason);
+  }
+  return success();
+}
+
+static LogicalResult verifyVMIGroupSlotLoadSemanticSupport(
+    VMIGroupSlotLoadOp load, llvm::raw_ostream *diagOS,
+    VMILayoutSupport &supports) {
+  auto resultType = cast<VMIVRegType>(load.getResult().getType());
+  std::string reason;
+  if (failed(supports.getGroupSlotLoadLayoutFact(
+          resultType, load.getNumGroupsAttr().getInt(), &reason))) {
+    return emitLayoutSupportContract(
+        load, diagOS, "pto.vmi.group_slot_load has no registered layout support",
+        reason);
+  }
+  return success();
+}
+
+static LogicalResult verifyVMIGroupBroadcastLoadSemanticSupport(
+    VMIGroupBroadcastLoadOp load, llvm::raw_ostream *diagOS,
+    VMILayoutSupport &supports) {
+  std::string reason;
+  if (failed(supports.getGroupBroadcastLoadSupport(load, &reason))) {
+    return emitLayoutSupportContract(
+        load, diagOS,
+        "pto.vmi.group_broadcast_load has no registered layout support",
+        reason);
+  }
+  return success();
+}
+
+static LogicalResult verifyVMIGroupMemorySemanticSupport(
+    Operation *op, llvm::raw_ostream *diagOS, VMILayoutSupport &supports) {
   if (auto store = dyn_cast<VMIStoreOp>(op)) {
-    auto valueType = cast<VMIVRegType>(store.getValue().getType());
-    VMILayoutAttr layout = valueType.getLayoutAttr();
-    if (!layout || layout.isContiguous()) {
-      return success();
-    }
-
-    std::string reason;
-    if (failed(supports.getStoreLayoutFact(valueType, &reason))) {
-      return emitLayoutSupportContract(
-          op, diagOS,
-          "pto.vmi.store has no registered contiguous-memory layout support",
-          reason);
-    }
-    return success();
+    return verifyVMIStoreSemanticSupport(store, diagOS, supports);
   }
-
   if (auto load = dyn_cast<VMIGroupLoadOp>(op)) {
-    auto resultType = cast<VMIVRegType>(load.getResult().getType());
-    VMILayoutAttr layout = resultType.getLayoutAttr();
-    if (!layout) {
-      return success();
-    }
-
-    std::string reason;
-    if (failed(supports.getGroupLoadLayoutFact(load, &reason))) {
-      return emitLayoutSupportContract(
-          op, diagOS,
-          "pto.vmi.group_load has no registered layout support", reason);
-    }
-    return success();
+    return verifyVMIGroupLoadSemanticSupport(load, diagOS, supports);
   }
-
   if (auto load = dyn_cast<VMIGroupSlotLoadOp>(op)) {
-    auto resultType = cast<VMIVRegType>(load.getResult().getType());
-    std::string reason;
-    if (failed(supports.getGroupSlotLoadLayoutFact(
-            resultType, load.getNumGroupsAttr().getInt(), &reason))) {
-      return emitLayoutSupportContract(
-          op, diagOS,
-          "pto.vmi.group_slot_load has no registered layout support", reason);
-    }
-    return success();
+    return verifyVMIGroupSlotLoadSemanticSupport(load, diagOS, supports);
   }
-
   if (auto load = dyn_cast<VMIGroupBroadcastLoadOp>(op)) {
-    std::string reason;
-    if (failed(supports.getGroupBroadcastLoadSupport(load, &reason))) {
-      return emitLayoutSupportContract(
-          op, diagOS,
-          "pto.vmi.group_broadcast_load has no registered layout support",
-          reason);
-    }
-    return success();
+    return verifyVMIGroupBroadcastLoadSemanticSupport(load, diagOS, supports);
   }
-
   if (auto store = dyn_cast<VMIGroupStoreOp>(op)) {
     auto valueType = cast<VMIVRegType>(store.getValue().getType());
-    VMILayoutAttr layout = valueType.getLayoutAttr();
-    if (!layout || !layout.isGroupSlots()) {
-      return success();
-    }
-
-    std::string reason;
-    if (failed(supports.getGroupStoreLayoutFact(
-            valueType, store.getNumGroupsAttr().getInt(), &reason))) {
-      return emitLayoutSupportContract(
-          op, diagOS,
-          "pto.vmi.group_store has no registered group_slots layout support",
-          reason);
-    }
-    return success();
+    return verifyGroupSlotsLayoutSupport(
+        op, store, valueType.getLayoutAttr(), diagOS,
+        "pto.vmi.group_store has no registered group_slots layout support",
+        [&supports, valueType](VMIGroupStoreOp groupStore, std::string *reason) {
+          return supports.getGroupStoreLayoutFact(
+              valueType, groupStore.getNumGroupsAttr().getInt(), reason);
+        });
   }
+  return success();
+}
 
+template <typename ReduceOpT, typename SupportFn>
+static LogicalResult verifyVMIGroupReduceSemanticSupport(
+    ReduceOpT reduce, llvm::raw_ostream *diagOS, StringRef message,
+    SupportFn supports) {
+  auto resultType = cast<VMIVRegType>(reduce.getResult().getType());
+  return verifyGroupSlotsLayoutSupport(reduce, reduce, resultType.getLayoutAttr(),
+                                       diagOS, message, supports);
+}
+
+static LogicalResult verifyVMIGroupReductionSemanticSupport(
+    Operation *op, llvm::raw_ostream *diagOS, VMILayoutSupport &supports) {
   if (auto reduce = dyn_cast<VMIGroupReduceAddFOp>(op)) {
-    auto resultType = cast<VMIVRegType>(reduce.getResult().getType());
-    VMILayoutAttr layout = resultType.getLayoutAttr();
-    if (!layout || !layout.isGroupSlots()) {
-      return success();
-    }
-
-    std::string reason;
-    if (failed(supports.getGroupReduceAddFSupport(reduce, &reason))) {
-      return emitLayoutSupportContract(
-          op, diagOS,
-          "pto.vmi.group_reduce_addf has no registered group_slots layout "
-          "support",
-          reason);
-    }
-    return success();
+    return verifyVMIGroupReduceSemanticSupport(
+        reduce, diagOS,
+        "pto.vmi.group_reduce_addf has no registered group_slots layout support",
+        [&supports](VMIGroupReduceAddFOp groupReduce, std::string *reason) {
+          return supports.getGroupReduceAddFSupport(groupReduce, reason);
+        });
   }
-
   if (auto reduce = dyn_cast<VMIGroupReduceMaxFOp>(op)) {
-    auto resultType = cast<VMIVRegType>(reduce.getResult().getType());
-    VMILayoutAttr layout = resultType.getLayoutAttr();
-    if (!layout || !layout.isGroupSlots()) {
-      return success();
-    }
-
-    std::string reason;
-    if (failed(supports.getGroupReduceMaxFSupport(reduce, &reason))) {
-      return emitLayoutSupportContract(
-          op, diagOS,
-          "pto.vmi.group_reduce_maxf has no registered group_slots layout "
-          "support",
-          reason);
-    }
-    return success();
+    return verifyVMIGroupReduceSemanticSupport(
+        reduce, diagOS,
+        "pto.vmi.group_reduce_maxf has no registered group_slots layout support",
+        [&supports](VMIGroupReduceMaxFOp groupReduce, std::string *reason) {
+          return supports.getGroupReduceMaxFSupport(groupReduce, reason);
+        });
   }
-
   if (auto reduce = dyn_cast<VMIGroupReduceMinFOp>(op)) {
-    auto resultType = cast<VMIVRegType>(reduce.getResult().getType());
-    VMILayoutAttr layout = resultType.getLayoutAttr();
-    if (!layout || !layout.isGroupSlots()) {
-      return success();
-    }
-
-    std::string reason;
-    if (failed(supports.getGroupReduceMinFSupport(reduce, &reason))) {
-      return emitLayoutSupportContract(
-          op, diagOS,
-          "pto.vmi.group_reduce_minf has no registered group_slots layout "
-          "support",
-          reason);
-    }
-    return success();
+    return verifyVMIGroupReduceSemanticSupport(
+        reduce, diagOS,
+        "pto.vmi.group_reduce_minf has no registered group_slots layout support",
+        [&supports](VMIGroupReduceMinFOp groupReduce, std::string *reason) {
+          return supports.getGroupReduceMinFSupport(groupReduce, reason);
+        });
   }
-
   if (auto reduce = dyn_cast<VMIGroupReduceAddIOp>(op)) {
-    auto resultType = cast<VMIVRegType>(reduce.getResult().getType());
-    VMILayoutAttr layout = resultType.getLayoutAttr();
-    if (!layout || !layout.isGroupSlots()) {
-      return success();
-    }
-
-    std::string reason;
-    if (failed(supports.getGroupReduceAddISupport(reduce, &reason))) {
-      return emitLayoutSupportContract(
-          op, diagOS,
-          "pto.vmi.group_reduce_addi has no registered group_slots layout "
-          "support",
-          reason);
-    }
-    return success();
+    return verifyVMIGroupReduceSemanticSupport(
+        reduce, diagOS,
+        "pto.vmi.group_reduce_addi has no registered group_slots layout support",
+        [&supports](VMIGroupReduceAddIOp groupReduce, std::string *reason) {
+          return supports.getGroupReduceAddISupport(groupReduce, reason);
+        });
   }
-
   if (auto reduce = dyn_cast<VMIGroupReduceMaxIOp>(op)) {
-    auto resultType = cast<VMIVRegType>(reduce.getResult().getType());
-    VMILayoutAttr layout = resultType.getLayoutAttr();
-    if (!layout || !layout.isGroupSlots()) {
-      return success();
-    }
-
-    std::string reason;
-    if (failed(supports.getGroupReduceMaxISupport(reduce, &reason))) {
-      return emitLayoutSupportContract(
-          op, diagOS,
-          "pto.vmi.group_reduce_maxi has no registered group_slots layout "
-          "support",
-          reason);
-    }
-    return success();
+    return verifyVMIGroupReduceSemanticSupport(
+        reduce, diagOS,
+        "pto.vmi.group_reduce_maxi has no registered group_slots layout support",
+        [&supports](VMIGroupReduceMaxIOp groupReduce, std::string *reason) {
+          return supports.getGroupReduceMaxISupport(groupReduce, reason);
+        });
   }
-
   if (auto reduce = dyn_cast<VMIGroupReduceMinIOp>(op)) {
-    auto resultType = cast<VMIVRegType>(reduce.getResult().getType());
-    VMILayoutAttr layout = resultType.getLayoutAttr();
-    if (!layout || !layout.isGroupSlots()) {
-      return success();
-    }
+    return verifyVMIGroupReduceSemanticSupport(
+        reduce, diagOS,
+        "pto.vmi.group_reduce_mini has no registered group_slots layout support",
+        [&supports](VMIGroupReduceMinIOp groupReduce, std::string *reason) {
+          return supports.getGroupReduceMinISupport(groupReduce, reason);
+        });
+  }
+  return success();
+}
 
-    std::string reason;
-    if (failed(supports.getGroupReduceMinISupport(reduce, &reason))) {
-      return emitLayoutSupportContract(
-          op, diagOS,
-          "pto.vmi.group_reduce_mini has no registered group_slots layout "
-          "support",
-          reason);
-    }
+static LogicalResult verifyVMIGroupBroadcastSemanticSupport(
+    VMIGroupBroadcastOp broadcast, llvm::raw_ostream *diagOS,
+    VMILayoutSupport &supports) {
+  auto sourceType = cast<VMIVRegType>(broadcast.getSource().getType());
+  VMILayoutAttr layout = sourceType.getLayoutAttr();
+  if (!layout || !layout.isGroupSlots() || layout.getSlots() <= 0) {
     return success();
   }
+  std::string reason;
+  if (failed(supports.getGroupBroadcastSupport(broadcast, &reason))) {
+    return emitLayoutSupportContract(
+        broadcast, diagOS,
+        "pto.vmi.group_broadcast has no registered layout support", reason);
+  }
+  return success();
+}
 
+static LogicalResult verifyVMIGroupSemanticSupport(
+    Operation *op, llvm::raw_ostream *diagOS, VMILayoutSupport &supports) {
+  if (isa<VMIStoreOp, VMIGroupLoadOp, VMIGroupSlotLoadOp,
+          VMIGroupBroadcastLoadOp, VMIGroupStoreOp>(op)) {
+    return verifyVMIGroupMemorySemanticSupport(op, diagOS, supports);
+  }
+  if (isa<VMIGroupReduceAddFOp, VMIGroupReduceMaxFOp, VMIGroupReduceMinFOp,
+          VMIGroupReduceAddIOp, VMIGroupReduceMaxIOp, VMIGroupReduceMinIOp>(op)) {
+    return verifyVMIGroupReductionSemanticSupport(op, diagOS, supports);
+  }
   if (auto broadcast = dyn_cast<VMIGroupBroadcastOp>(op)) {
-    auto sourceType = cast<VMIVRegType>(broadcast.getSource().getType());
-    VMILayoutAttr layout = sourceType.getLayoutAttr();
-    if (!layout || !layout.isGroupSlots() || layout.getSlots() <= 0) {
-      return success();
-    }
-
-    std::string reason;
-    if (failed(supports.getGroupBroadcastSupport(broadcast, &reason))) {
-      return emitLayoutSupportContract(
-          op, diagOS,
-          "pto.vmi.group_broadcast has no registered layout support", reason);
-    }
-    return success();
+    return verifyVMIGroupBroadcastSemanticSupport(broadcast, diagOS, supports);
   }
+  return success();
+}
 
+static LogicalResult verifyVMIScalarSemanticSupport(
+    Operation *op, llvm::raw_ostream *diagOS, VMILayoutSupport &supports) {
   if (auto hist = dyn_cast<VMIVdhistOp>(op)) {
     std::string reason;
     if (failed(supports.getVdhistSupport(hist, &reason))) {
@@ -812,6 +820,23 @@ LogicalResult verifyLayoutSemanticSupport(Operation *op,
     return success();
   }
 
+  return success();
+}
+
+LogicalResult verifyLayoutSemanticSupport(Operation *op,
+                                          llvm::raw_ostream *diagOS) {
+  VMILayoutSupport supports;
+  if (isa<VMIStoreOp, VMIGroupLoadOp, VMIGroupSlotLoadOp,
+          VMIGroupBroadcastLoadOp, VMIGroupStoreOp, VMIGroupReduceAddFOp,
+          VMIGroupReduceMaxFOp, VMIGroupReduceMinFOp, VMIGroupReduceAddIOp,
+          VMIGroupReduceMaxIOp, VMIGroupReduceMinIOp, VMIGroupBroadcastOp>(
+          op)) {
+    return verifyVMIGroupSemanticSupport(op, diagOS, supports);
+  }
+  if (isa<VMIVdhistOp, VMIVchistOp, VMITruncFOp, VMIExtFOp, VMIBitcastOp>(
+          op)) {
+    return verifyVMIScalarSemanticSupport(op, diagOS, supports);
+  }
   return success();
 }
 

@@ -210,13 +210,17 @@ std::string canonicalizeIoPath(const std::string& path) {
   // Lexically collapse "./", "foo/../" and redundant separators. This is a
   // pure string rewrite: symlink/absolute resolution is intentionally left to
   // the stream open below, which still reports unreachable paths.
-  llvm::SmallString<128> normalized(path);
+  // Inline capacity sized to cover typical PTOBC file paths without a heap
+  // allocation.
+  constexpr unsigned kIoPathInlineCapacity = 128;
+  llvm::SmallString<kIoPathInlineCapacity> normalized(path);
   llvm::sys::path::remove_dots(normalized, /*remove_dot_dot=*/true);
   return std::string(normalized);
 }
 
 std::vector<uint8_t> readFile(const std::string& path) {
-  std::ifstream ifs(canonicalizeIoPath(path), std::ios::binary);
+  const std::string canonicalPath = canonicalizeIoPath(path);
+  std::ifstream ifs(canonicalPath, std::ios::binary);
   if (!ifs) {
     throw std::runtime_error("Failed to open: " + path);
   }
@@ -225,7 +229,8 @@ std::vector<uint8_t> readFile(const std::string& path) {
 }
 
 void writeFile(const std::string& path, const std::vector<uint8_t>& data) {
-  std::ofstream ofs(canonicalizeIoPath(path), std::ios::binary);
+  const std::string canonicalPath = canonicalizeIoPath(path);
+  std::ofstream ofs(canonicalPath, std::ios::binary);
   if (!ofs) {
     throw std::runtime_error("Failed to write: " + path);
   }

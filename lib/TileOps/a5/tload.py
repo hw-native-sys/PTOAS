@@ -1,3 +1,4 @@
+# coding=utf-8
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -5,9 +6,13 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
+
 """PTODSL TileLib templates for ``pto.tload``."""
 
+from dataclasses import dataclass
+
 from ptodsl import pto
+from ptodsl._ast_rewrite import rewrite_jit_function
 import ptodsl.tilelib as tilelib
 
 from ._load_store import (
@@ -20,6 +25,109 @@ from ._load_store import (
     tload_nd2nd_constraint,
     tload_nz2nz_constraint,
 )
+
+
+@dataclass(frozen=True)
+class _TloadBurst:
+    """Trace-time invariants shared by one five-dimensional tload burst."""
+
+    len_burst: object
+    n_burst: object
+    gm_stride: object
+    ub_stride: object
+    loops: object
+    dst: object
+
+
+def _emit_tload_burst(burst, gm_addr, ub_addr):
+    """Emit one tload ``mte_load`` at the current trace point."""
+    pto.mte_load(
+        gm_addr,
+        ub_addr,
+        0,
+        burst.len_burst,
+        nburst=(burst.n_burst, burst.gm_stride, burst.ub_stride),
+        loops=burst.loops,
+        pad=dma_pad_for(burst.dst),
+    )
+
+
+@rewrite_jit_function
+def _tload_nd2nd_strided(src, dst, elem_bytes):
+    """Emit the five-dimensional ND-to-ND transfer."""
+    g0, g1, g2, g3, g4 = src.shape
+    s0, s1, s2, s3, s4 = src.strides
+    _, ub_cols = dst.shape
+    valid_rows, valid_cols = dst.valid_shape
+    n_burst = valid_rows if g0 == 1 and g1 == 1 and g2 == 1 and g3 is None else g3
+    len_burst = (valid_cols if g4 is None else g4) * elem_bytes
+    gm_stride = 0 if g3 == 1 or s3 is None else s3 * elem_bytes
+    ub_stride = ub_cols * elem_bytes
+    dst_stride2 = (valid_rows if g3 is None else g3) * ub_cols
+    dst_stride1 = g2 * dst_stride2
+    dst_stride0 = g1 * dst_stride1
+    loops = []
+    if g2 not in (1, None):
+        loops.append((g2, s2 * elem_bytes, dst_stride2 * elem_bytes))
+    if g1 not in (1, None):
+        loops.append((g1, s1 * elem_bytes, dst_stride1 * elem_bytes))
+    burst = _TloadBurst(
+        len_burst,
+        n_burst,
+        gm_stride,
+        ub_stride,
+        loops or None,
+        dst,
+    )
+    gm_ptr, ub_ptr = src.as_ptr(), dst.as_ptr()
+    if g0 == 1 and s0 is None:
+        _emit_tload_burst(burst, gm_ptr, ub_ptr)
+    else:
+        for i in range(0, g0, 1):
+            _emit_tload_burst(
+                burst,
+                pto.addptr(gm_ptr, i * s0),
+                pto.addptr(ub_ptr, i * dst_stride0),
+            )
+
+
+@rewrite_jit_function
+def _tload_dn2dn_strided(src, dst, elem_bytes):
+    """Emit the five-dimensional DN-to-DN transfer."""
+    g0, g1, g2, g3, g4 = src.shape
+    s0, s1, s2, s3, s4 = src.strides
+    ub_rows, _ = dst.shape
+    valid_rows, _ = dst.valid_shape
+    n_burst = dst.valid_shape[1] if g4 is None else g4
+    len_burst = valid_rows * elem_bytes
+    gm_stride = 0 if g4 == 1 or s4 is None else s4 * elem_bytes
+    ub_stride = ub_rows * elem_bytes
+    dst_stride2 = ub_rows * n_burst
+    dst_stride1 = g2 * dst_stride2
+    dst_stride0 = g1 * dst_stride1
+    loops = []
+    if g2 not in (1, None):
+        loops.append((g2, s2 * elem_bytes, dst_stride2 * elem_bytes))
+    if g1 not in (1, None):
+        loops.append((g1, s1 * elem_bytes, dst_stride1 * elem_bytes))
+    burst = _TloadBurst(
+        len_burst,
+        n_burst,
+        gm_stride,
+        ub_stride,
+        loops or None,
+        dst,
+    )
+    gm_ptr, ub_ptr = src.as_ptr(), dst.as_ptr()
+    if g0 == 1 and s0 is None:
+        _emit_tload_burst(burst, gm_ptr, ub_ptr)
+    else:
+        for i in range(0, g0, 1):
+            _emit_tload_burst(
+                burst,
+                pto.addptr(gm_ptr, i * s0),
+                pto.addptr(ub_ptr, i * dst_stride0),
+            )
 
 
 @tilelib.tile_template(
@@ -53,49 +161,7 @@ def template_tload_nd2nd(src: pto.PartitionTensorView, dst: pto.Tile):
         )
         return
 
-    g0, g1, g2, g3, g4 = src.shape
-    s0, s1, s2, s3, s4 = src.strides
-    _, ub_cols = dst.shape
-    valid_rows, valid_cols = dst.valid_shape
-
-    n_burst = valid_rows if g0 == 1 and g1 == 1 and g2 == 1 and g3 is None else g3
-    len_burst = (valid_cols if g4 is None else g4) * elem_bytes
-    gm_stride = 0 if g3 == 1 or s3 is None else s3 * elem_bytes
-    ub_stride = ub_cols * elem_bytes
-
-    dst_stride2 = (valid_rows if g3 is None else g3) * ub_cols
-    dst_stride1 = g2 * dst_stride2
-    dst_stride0 = g1 * dst_stride1
-
-    loops = []
-    if g2 not in (1, None):
-        loops.append((g2, s2 * elem_bytes, dst_stride2 * elem_bytes))
-    if g1 not in (1, None):
-        loops.append((g1, s1 * elem_bytes, dst_stride1 * elem_bytes))
-
-    gm_ptr = src.as_ptr()
-    ub_ptr = dst.as_ptr()
-    if g0 == 1 and s0 is None:
-        pto.mte_load(
-            gm_ptr,
-            ub_ptr,
-            0,
-            len_burst,
-            nburst=(n_burst, gm_stride, ub_stride),
-            loops=loops or None,
-            pad=dma_pad_for(dst),
-        )
-    else:
-        for i in range(0, g0, 1):
-            pto.mte_load(
-                pto.addptr(gm_ptr, i * s0),
-                pto.addptr(ub_ptr, i * dst_stride0),
-                0,
-                len_burst,
-                nburst=(n_burst, gm_stride, ub_stride),
-                loops=loops or None,
-                pad=dma_pad_for(dst),
-            )
+    _tload_nd2nd_strided(src, dst, elem_bytes)
 
 
 @tilelib.tile_template(
@@ -129,49 +195,7 @@ def template_tload_dn2dn(src: pto.PartitionTensorView, dst: pto.Tile):
         )
         return
 
-    g0, g1, g2, g3, g4 = src.shape
-    s0, s1, s2, s3, s4 = src.strides
-    ub_rows, _ = dst.shape
-    valid_rows, _ = dst.valid_shape
-
-    n_burst = dst.valid_shape[1] if g4 is None else g4
-    len_burst = valid_rows * elem_bytes
-    gm_stride = 0 if g4 == 1 or s4 is None else s4 * elem_bytes
-    ub_stride = ub_rows * elem_bytes
-
-    dst_stride2 = ub_rows * n_burst
-    dst_stride1 = g2 * dst_stride2
-    dst_stride0 = g1 * dst_stride1
-
-    loops = []
-    if g2 not in (1, None):
-        loops.append((g2, s2 * elem_bytes, dst_stride2 * elem_bytes))
-    if g1 not in (1, None):
-        loops.append((g1, s1 * elem_bytes, dst_stride1 * elem_bytes))
-
-    gm_ptr = src.as_ptr()
-    ub_ptr = dst.as_ptr()
-    if g0 == 1 and s0 is None:
-        pto.mte_load(
-            gm_ptr,
-            ub_ptr,
-            0,
-            len_burst,
-            nburst=(n_burst, gm_stride, ub_stride),
-            loops=loops or None,
-            pad=dma_pad_for(dst),
-        )
-    else:
-        for i in range(0, g0, 1):
-            pto.mte_load(
-                pto.addptr(gm_ptr, i * s0),
-                pto.addptr(ub_ptr, i * dst_stride0),
-                0,
-                len_burst,
-                nburst=(n_burst, gm_stride, ub_stride),
-                loops=loops or None,
-                pad=dma_pad_for(dst),
-            )
+    _tload_dn2dn_strided(src, dst, elem_bytes)
 
 
 @tilelib.tile_template(

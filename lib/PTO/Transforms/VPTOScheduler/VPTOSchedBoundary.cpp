@@ -34,8 +34,9 @@ struct mlir::pto::VPTOPressureEvaluationCache {
 namespace {
 
 static uint64_t getTreeOperationWork(size_t bucketCount) {
+  constexpr size_t kMinBucketsForTree = 2;
   static_assert(sizeof(size_t) <= sizeof(uint64_t));
-  if (bucketCount <= 1) {
+  if (bucketCount < kMinBucketsForTree) {
     return 1;
   }
   uint64_t depth = llvm::Log2_64_Ceil(static_cast<uint64_t>(bucketCount));

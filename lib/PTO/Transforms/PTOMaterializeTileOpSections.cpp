@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 #include "PTO/IR/PTO.h"
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/Passes.h"
 #include "Utils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -37,15 +38,27 @@ constexpr llvm::StringLiteral kTileOpEffectsAttr = "pto.tileop.effects";
 constexpr llvm::StringLiteral kTileOpValidShapeReadAttr =
     "__pto.tileop_valid_shape_abi";
 
-using ValidShapeRequirements = DenseMap<Operation *, SmallVector<unsigned, 2>>;
+// Each dynamic valid-shape argument expands to a (row, col) argument pair.
+constexpr unsigned kValidShapeArgsPerTile = mlir::pto::kValue2;
+constexpr unsigned kValidShapeRank = mlir::pto::kValue2;
+// Valid-shape dimension indices: dim0 = row, dim1 = col.
+constexpr unsigned kDim0 = 0;
+constexpr unsigned kDim1 = 1;
+
+using ValidShapeRequirements =
+    DenseMap<Operation *, SmallVector<unsigned, mlir::pto::kValue2>>;
 using ExpandedValidShapeArguments =
     DenseMap<Operation *, DenseMap<unsigned, std::pair<Value, Value>>>;
 
-enum TileArgumentEffect : uint8_t {
+enum class TileArgumentEffect : uint8_t {
   NoEffect = 0,
   ReadEffect = 1,
   WriteEffect = 2,
 };
+
+constexpr uint8_t kTileReadWrite =
+    static_cast<uint8_t>(TileArgumentEffect::ReadEffect) |
+    static_cast<uint8_t>(TileArgumentEffect::WriteEffect);
 
 static bool isScalarType(Type type) { return type.isIntOrIndexOrFloat(); }
 
@@ -84,7 +97,7 @@ static bool isForbiddenTileOperation(Operation *op) {
 
 static std::optional<unsigned> traceToFunctionArgument(Value value,
                                                        func::FuncOp function) {
-  for (unsigned depth = 0; value && depth < 64; ++depth) {
+  for (unsigned depth = 0; value && depth < mlir::pto::kValue64; ++depth) {
     if (auto argument = dyn_cast<BlockArgument>(value)) {
       if (argument.getOwner() == &function.front())
         return argument.getArgNumber();
@@ -128,30 +141,36 @@ static void applyEffectToAllTileArguments(func::FuncOp function, uint8_t effect,
 
 static SmallVector<uint8_t>
 collectDirectArgumentEffects(func::FuncOp function) {
-  SmallVector<uint8_t> effects(function.getNumArguments(), NoEffect);
+  SmallVector<uint8_t> effects(
+      function.getNumArguments(),
+      static_cast<uint8_t>(TileArgumentEffect::NoEffect));
   function.walk([&](Operation *op) {
     auto memoryEffects = dyn_cast<MemoryEffectOpInterface>(op);
     if (!memoryEffects)
       return WalkResult::advance();
 
-    SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>, 8>
+    SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>,
+                mlir::pto::kValue8>
         instances;
     memoryEffects.getEffects(instances);
     for (const auto &instance : instances) {
-      uint8_t effect = NoEffect;
-      if (isa<MemoryEffects::Read>(instance.getEffect()))
-        effect = ReadEffect;
-      else if (isa<MemoryEffects::Write>(instance.getEffect()))
-        effect = WriteEffect;
-      if (effect == NoEffect || !instance.getValue()) {
+      TileArgumentEffect effect = TileArgumentEffect::NoEffect;
+      if (isa<MemoryEffects::Read>(instance.getEffect())) {
+        effect = TileArgumentEffect::ReadEffect;
+      } else if (isa<MemoryEffects::Write>(instance.getEffect())) {
+        effect = TileArgumentEffect::WriteEffect;
+      }
+      if (effect == TileArgumentEffect::NoEffect || !instance.getValue()) {
         continue;
       }
 
       if (auto argument =
-              traceToFunctionArgument(instance.getValue(), function))
-        effects[*argument] |= effect;
-      else if (isMemoryReferenceType(instance.getValue().getType()))
-        applyEffectToAllTileArguments(function, effect, effects);
+              traceToFunctionArgument(instance.getValue(), function)) {
+        effects[*argument] |= static_cast<uint8_t>(effect);
+      } else if (isMemoryReferenceType(instance.getValue().getType())) {
+        applyEffectToAllTileArguments(function, static_cast<uint8_t>(effect),
+                                      effects);
+      }
     }
     return WalkResult::advance();
   });
@@ -164,20 +183,21 @@ static void summarizeSimtLaunchEffects(func::FuncOp helper, SimtLaunchOp launch,
   auto callee = module ? module.lookupSymbol<func::FuncOp>(launch.getCallee())
                        : func::FuncOp();
   if (!callee || callee.isDeclaration()) {
-    applyEffectToAllTileArguments(helper, ReadEffect | WriteEffect, effects);
+    applyEffectToAllTileArguments(helper, kTileReadWrite, effects);
     return;
   }
 
   SmallVector<uint8_t> calleeEffects = collectDirectArgumentEffects(callee);
   for (auto [argument, calleeEffect] :
        llvm::zip_equal(launch.getArgs(), calleeEffects)) {
-    if (calleeEffect == NoEffect) {
+    if (calleeEffect == static_cast<uint8_t>(TileArgumentEffect::NoEffect)) {
       continue;
     }
-    if (auto helperArgument = traceToFunctionArgument(argument, helper))
+    if (auto helperArgument = traceToFunctionArgument(argument, helper)) {
       effects[*helperArgument] |= calleeEffect;
-    else
+    } else {
       applyEffectToAllTileArguments(helper, calleeEffect, effects);
+    }
   }
 }
 
@@ -193,11 +213,11 @@ static void summarizeTileOpEffects(func::FuncOp helper) {
        llvm::zip_equal(helper.getArgumentTypes(), effects)) {
     StringRef effectName = "none";
     if (isa<TileBufType>(type)) {
-      if (effect == (ReadEffect | WriteEffect))
+      if (effect == kTileReadWrite)
         effectName = "readwrite";
-      else if (effect == ReadEffect)
+      else if (effect == static_cast<uint8_t>(TileArgumentEffect::ReadEffect))
         effectName = "read";
-      else if (effect == WriteEffect)
+      else if (effect == static_cast<uint8_t>(TileArgumentEffect::WriteEffect))
         effectName = "write";
     }
     effectAttrs.push_back(StringAttr::get(helper.getContext(), effectName));
@@ -236,7 +256,7 @@ collectTileOpValidShapeRequirements(func::FuncOp helper,
     }
 
     auto tileType = dyn_cast<TileBufType>(argument.getType());
-    if (!tileType || tileType.getValidShape().size() != 2) {
+    if (!tileType || tileType.getValidShape().size() != kValidShapeRank) {
       status = op->emitError(
           "tileop valid-shape metadata requires a rank-2 Tile argument");
       return WalkResult::interrupt();
@@ -270,7 +290,8 @@ propagateValidShapeRequirements(ModuleOp module,
       if (required == requirements.end()) {
         continue;
       }
-      SmallVector<unsigned, 2> requiredArguments(required->second);
+      SmallVector<unsigned, mlir::pto::kValue2> requiredArguments(
+          required->second);
 
       auto caller = call->getParentOfType<func::FuncOp>();
       if (!caller)
@@ -311,20 +332,23 @@ static LogicalResult expandValidShapeFunctionArguments(
           "external function");
 
     unsigned originalArgumentCount = function.getNumArguments();
-    SmallVector<unsigned> insertionIndices(argumentIndices.size() * 2,
+    unsigned expandedArgCount =
+        argumentIndices.size() * kValidShapeArgsPerTile;
+    SmallVector<unsigned> insertionIndices(expandedArgCount,
                                            originalArgumentCount);
-    SmallVector<Type> argumentTypes(argumentIndices.size() * 2,
+    SmallVector<Type> argumentTypes(expandedArgCount,
                                     IndexType::get(function.getContext()));
     SmallVector<DictionaryAttr> argumentAttrs(
-        argumentIndices.size() * 2, DictionaryAttr::get(function.getContext()));
-    SmallVector<Location> argumentLocations(argumentIndices.size() * 2,
+        expandedArgCount, DictionaryAttr::get(function.getContext()));
+    SmallVector<Location> argumentLocations(expandedArgCount,
                                             function.getLoc());
     function.insertArguments(insertionIndices, argumentTypes, argumentAttrs,
                              argumentLocations);
 
     auto &functionArguments = expandedArguments[functionOperation];
     for (auto [position, originalIndex] : llvm::enumerate(argumentIndices)) {
-      unsigned rowIndex = originalArgumentCount + position * 2;
+      unsigned rowIndex =
+          originalArgumentCount + position * kValidShapeArgsPerTile;
       functionArguments[originalIndex] = std::make_pair(
           function.getArgument(rowIndex), function.getArgument(rowIndex + 1));
     }
@@ -332,7 +356,7 @@ static LogicalResult expandValidShapeFunctionArguments(
     if (auto effects = function->getAttrOfType<ArrayAttr>(kTileOpEffectsAttr)) {
       SmallVector<Attribute> effectAttrs(effects.begin(), effects.end());
       auto none = StringAttr::get(function.getContext(), "none");
-      effectAttrs.append(argumentIndices.size() * 2, none);
+      effectAttrs.append(expandedArgCount, none);
       function->setAttr(kTileOpEffectsAttr,
                         ArrayAttr::get(function.getContext(), effectAttrs));
     }
@@ -349,12 +373,13 @@ resolveCallValidShape(Value tile, Operation *anchor, func::FuncOp caller,
   }
 
   auto tileType = dyn_cast<TileBufType>(tile.getType());
-  if (tileType && tileType.getValidShape().size() == 2 &&
-      tileType.getValidShape()[0] >= 0 && tileType.getValidShape()[1] >= 0) {
+  if (tileType && tileType.getValidShape().size() == kValidShapeRank &&
+      tileType.getValidShape()[kDim0] >= 0 &&
+      tileType.getValidShape()[kDim1] >= 0) {
     Value row = builder.create<arith::ConstantIndexOp>(
-        anchor->getLoc(), tileType.getValidShape()[0]);
+        anchor->getLoc(), tileType.getValidShape()[kDim0]);
     Value col = builder.create<arith::ConstantIndexOp>(
-        anchor->getLoc(), tileType.getValidShape()[1]);
+        anchor->getLoc(), tileType.getValidShape()[kDim1]);
     return std::make_pair(row, col);
   }
 
@@ -367,7 +392,7 @@ resolveCallValidShape(Value tile, Operation *anchor, func::FuncOp caller,
     }
   }
 
-  if (!tileType || tileType.getValidShape().size() != 2) {
+  if (!tileType || tileType.getValidShape().size() != kValidShapeRank) {
     return std::nullopt;
   }
 
@@ -437,7 +462,7 @@ static LogicalResult replaceTileOpValidShapeReads(
       auto argument = dyn_cast<BlockArgument>(read->getOperand(0));
       auto tileType =
           argument ? dyn_cast<TileBufType>(argument.getType()) : TileBufType();
-      if (!argument || !tileType || tileType.getValidShape().size() != 2)
+      if (!argument || !tileType || tileType.getValidShape().size() != kValidShapeRank)
         return read->emitError(
             "tileop valid-shape metadata must be read directly from a rank-2 "
             "Tile argument");
@@ -457,8 +482,8 @@ static LogicalResult replaceTileOpValidShapeReads(
         if (metadata == function->second.end())
           return read->emitError(
               "missing internal Tile valid-shape ABI arguments");
-        replacement =
-            dimension == 0 ? metadata->second.first : metadata->second.second;
+        replacement = dimension == kDim0 ? metadata->second.first
+                                         : metadata->second.second;
       }
       read->getResult(0).replaceAllUsesWith(replacement);
       read->erase();
@@ -471,23 +496,27 @@ static LogicalResult
 materializeTileOpValidShapeABI(ModuleOp module,
                                ArrayRef<func::FuncOp> helpers) {
   ValidShapeRequirements requirements;
-  for (func::FuncOp helper : helpers)
-    if (failed(collectTileOpValidShapeRequirements(helper, requirements)))
+  for (func::FuncOp helper : helpers) {
+    if (failed(collectTileOpValidShapeRequirements(helper, requirements))) {
       return failure();
+    }
+  }
   if (requirements.empty()) {
     ExpandedValidShapeArguments emptyArguments;
     return replaceTileOpValidShapeReads(helpers, emptyArguments);
   }
 
-  if (failed(propagateValidShapeRequirements(module, requirements)))
+  if (failed(propagateValidShapeRequirements(module, requirements))) {
     return failure();
+  }
   ExpandedValidShapeArguments expandedArguments;
   if (failed(
           expandValidShapeFunctionArguments(requirements, expandedArguments)) ||
       failed(expandValidShapeCallOperands(module, requirements,
                                           expandedArguments)) ||
-      failed(replaceTileOpValidShapeReads(helpers, expandedArguments)))
+      failed(replaceTileOpValidShapeReads(helpers, expandedArguments))) {
     return failure();
+  }
   return success();
 }
 
@@ -515,12 +544,15 @@ static bool hasRawVPTOVectorTransientType(Type type) {
 // for dialects or out-of-tree operations that have not adopted the markers.
 static std::optional<PhysicalSectionKind>
 inferRawVPTOComputeKind(Operation *op) {
-  if (isa<CubeMicroOpInterface>(op))
+  if (isa<CubeMicroOpInterface>(op)) {
     return PhysicalSectionKind::Cube;
-  if (isa<VectorMicroOpInterface>(op))
+  }
+  if (isa<VectorMicroOpInterface>(op)) {
     return PhysicalSectionKind::Vector;
-  if (isa<MadSemanticOpInterface, MadRawOpInterface>(op))
+  }
+  if (isa<MadSemanticOpInterface, MadRawOpInterface>(op)) {
     return PhysicalSectionKind::Cube;
+  }
 
   for (Value operand : op->getOperands()) {
     if (hasRawVPTOVectorTransientType(operand.getType()))
@@ -657,11 +689,13 @@ static LogicalResult materializeTileOpSection(func::FuncOp helper,
 }
 
 static LogicalResult materializeTileOpHelper(func::FuncOp helper) {
-  if (failed(verifyTileOpABI(helper)))
+  if (failed(verifyTileOpABI(helper))) {
     return failure();
+  }
   PhysicalSectionKind kind;
-  if (failed(inferTileOpKind(helper, kind)))
+  if (failed(inferTileOpKind(helper, kind))) {
     return failure();
+  }
   summarizeTileOpEffects(helper);
   return materializeTileOpSection(helper, kind);
 }
@@ -684,8 +718,9 @@ struct PTOMaterializeTileOpSectionsPass
       return WalkResult::advance();
     });
     if (failed(status) ||
-        failed(materializeTileOpValidShapeABI(module, helpers)))
+        failed(materializeTileOpValidShapeABI(module, helpers))) {
       signalPassFailure();
+    }
   }
 };
 

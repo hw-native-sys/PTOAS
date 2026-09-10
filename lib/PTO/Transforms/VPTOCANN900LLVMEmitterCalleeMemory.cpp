@@ -538,8 +538,8 @@ FailureOr<Value> packVmrgsort4SourceAddr(Operation *anchor, Value source0, Value
     return failure();
   }
 
-  auto packOne = [&](Value source, uint64_t laneShift) -> FailureOr<Value> {
-    FailureOr<Value> ubPtr = reinterpretPointerToAddrSpace(anchor, source, 6);
+  auto packOne = [anchor, &builder, loc, addrShift](Value source, uint64_t laneShift) -> FailureOr<Value> {
+    FailureOr<Value> ubPtr = reinterpretPointerToAddrSpace(anchor, source, static_cast<unsigned>(pto::AddressSpace::VEC));
     if (failed(ubPtr)) {
       return failure();
     }
@@ -563,7 +563,7 @@ FailureOr<Value> packVmrgsort4SourceAddr(Operation *anchor, Value source0, Value
   Value packed01 = builder.create<arith::OrIOp>(loc, *low0, *low1);
   Value packed23 = builder.create<arith::OrIOp>(loc, *low2, *low3);
   Value packed = builder.create<arith::OrIOp>(loc, packed01, packed23);
-  Type ubPtrTy = LLVM::LLVMPointerType::get(anchor->getContext(), 6);
+  Type ubPtrTy = LLVM::LLVMPointerType::get(anchor->getContext(), static_cast<unsigned>(pto::AddressSpace::VEC));
   return builder.create<LLVM::IntToPtrOp>(loc, ubPtrTy, packed).getResult();
 }
 

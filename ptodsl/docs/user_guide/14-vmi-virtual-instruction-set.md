@@ -35,7 +35,7 @@ a PTODSL element type token such as `pto.f32`, `pto.f16`, `pto.i32`, etc.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `lanes` | `int` | Logical lane count. Must be a multiple of 64. See Constraints below |
+| `lanes` | `int` | Logical lane count: standard counts `64/128/256`, or compact/partial counts `1/2/4/8`. See Constraints below |
 | `dtype` | `DType` | Element type token (`pto.f32`, `pto.f16`, `pto.i32`, etc.) |
 
 **Returns**:
@@ -46,10 +46,15 @@ a PTODSL element type token such as `pto.f32`, `pto.f16`, `pto.i32`, etc.
 
 **Constraints**:
 
-- `lanes` must be a multiple of 64.
+- Standard VMI lane counts are `64`, `128`, `256`; compact/partial lane
+  counts are `1`, `2`, `4`, `8` — the logical value then occupies only part
+  of one physical register.
 - `lanes · bitwidth(dtype)` determines the physical register count
   `K = ⌈ lanes · bitwidth(dtype) / 2048 ⌉`. Each physical register is
   256 B (2048 bits).
+- Individual operations may impose additional operation-specific shape,
+  layout, or mask restrictions on top of these lane counts; see each op's
+  Constraints.
 - Common legal combinations:
 
   | dtype | bitwidth | lanes per physical reg | example `lanes` |
@@ -306,14 +311,13 @@ three mutually exclusive mode families.
 | `values` | `VRegType` or `(VRegType, VRegType)` | One VMI vector for normal forms, or an `(even, odd)` pair for `dist_mode="intlv"` |
 | `destination` | `PtrType` (ub) | UB destination pointer |
 | `offset` | `IndexLike` | Element offset into the destination buffer |
-| `pmode` | `str` or `None` | Optional inactive-lane mode: `"zero"` stores 0 to masked-off lanes; `"merge"` skips the write for masked-off lanes |
+| `pmode` | `str` or `None` | Optional inactive-lane mode: only `"zero"` is supported, it stores 0 to masked-off lanes |
 
 **About `pmode` on `vstore`.**
 
-- `pmode="zero"` is the default store behavior. When a `mask` is present,
-  inactive lanes are written as zero.
-- `pmode="merge"` preserves destination contents on inactive lanes by skipping
-  those writes.
+- `pmode="zero"` is the default and only supported store behavior. When a
+  `mask` is present, inactive lanes are written as zero.
+- `pmode="merge"` is **not supported**
 - `pmode` only matters on store forms that actually use a `mask`. Group-mode
   store does not take a mask operand, so there are no inactive lanes to define
   there.
@@ -390,51 +394,6 @@ pto.vmi.vstore(
 - Block-stride lowering fixes the physical repeat stride to zero.
 
 ---
-
-### `vsstb`
-
-### `pto.vmi.vsstb(value, destination, offset, block_stride, mask, *, pmode=None) -> None`
-
-**Description**: Performs the dedicated zero-repeat-stride block store. It
-writes a logical VMI vector to UB in 32-byte blocks using the supplied dynamic
-16-bit `block_stride`. The physical `repeat_stride` is fixed to zero and is not
-an argument on this API. Unlike the general block-stride `vstore` form,
-`vsstb` requires an explicit mask.
-
-**Parameters**:
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `value` | `VRegType` | Logical VMI vector to store |
-| `destination` | `PtrType` (ub) | UB destination pointer; its element type must match `value` |
-| `offset` | `IndexLike` | Element offset into the destination buffer |
-| `block_stride` | `int` or scalar value convertible to `i16` | Dynamic 32-byte-block stride |
-| `mask` | VMI mask | Required predicate mask; its lane count must match `value` |
-| `pmode` | `str` or `None` | Optional inactive-lane mode: `"zero"` or `"merge"` |
-
-**Returns**: None (side-effect operation).
-
-**Example**:
-
-```python
-pto.vmi.vsstb(
-    vec,
-    dst_ptr,
-    offset,
-    pto.i16(8),
-    mask,
-)
-```
-
-This lowers to the physical block-stride store with an `i16` zero supplied as
-its `repeat_stride`.
-
-**Constraints**:
-
-- `destination` must refer to UB memory.
-- `block_stride` must be representable as an `i16` scalar operand.
-- `mask` is required and must match the vector's logical lane count.
-- `vsstb` does not accept `repeat_stride`, `dist_mode`, `group`, or `stride`.
 
 ---
 
@@ -588,8 +547,8 @@ out = pto.vmi.vmul(scale, data, full_mask)
 - The result type is inferred from `lhs`.
 - For bitwise ops (`vand`, `vor`, `vxor`, `vshl`, `vshr`), integer element
   types are expected. Floating-point usage is rejected.
-- `vshr` performs logical right shift for explicit unsigned element types and
-  arithmetic right shift for signed or signless element types.
+- `vshr` performs arithmetic right shift for signed element types and logical
+  right shift for unsigned element types.
 
 ---
 
@@ -651,7 +610,7 @@ and are unchanged.
 
 The following are **PTODSL syntax sugar** — convenience wrappers provided by the
 PTODSL authoring layer. They have **no corresponding VMI instruction**; PTODSL lowers
-each to an equivalent `pto.vmi.*` form (e.g., `pto.vsubs` lowers to `pto.vmi.vadds` with a
+each to an equivalent physical `pto.*` form (e.g., `pto.vsubs` lowers to `pto.vadds` with a
 negated scalar). Users may freely use these spellings in PTODSL programs, but tooling and
 the VMI v0.1 spec only recognize the formal `pto.vmi.*` ops listed above.
 
@@ -834,7 +793,7 @@ performed per group.
 | `source` | `VRegType` | Input vector |
 | `mask` | VMI mask | **Required.** Predicate mask gating lane participation |
 | `group` | `int` or `None` | Number of groups for per-group reduction. `None` means full-vector reduction |
-| `reassoc` | `bool` | For `vcadd` on floating-point data only: PTODSL requires this keyword to be written explicitly as `True` or `False` |
+| `reassoc` | `bool` | For `vcadd` on floating-point data only: must be spelled explicitly as `True`; `False` is rejected. On integer `vcadd`, `True` is accepted but the attribute is ignored |
 | `pmode` | `str` or `None` | Optional predicate mode: `"merge"` keeps predicate-inactive lanes at their prior value; `"zero"` writes 0 |
 
 **Returns**:
@@ -866,10 +825,12 @@ group_max = pto.vmi.vcmax(
   `!pto.vmi.vreg<1xT>`, and grouped reduction returns `!pto.vmi.vreg<GxT>`,
   where `T` is the source element type and `G` is `group`.
 - `reassoc` is only meaningful for `vcadd` on floating-point data.
-- Floating-point `vcadd` must spell `reassoc` explicitly at the PTODSL surface.
-- `reassoc=None` is rejected by PTODSL; use `reassoc=True` or `reassoc=False`.
-- The current VMI op encoding remains presence-based, so PTODSL preserves the
-  `reassoc` attribute for both `reassoc=True` and `reassoc=False`.
+  On integer `vcadd`, `True` is accepted but the attribute is ignored.
+- Floating-point `vcadd` must spell `reassoc=True` explicitly at the PTODSL
+  surface.
+- `reassoc=False` is explicitly rejected: the VMI op encoding is
+  presence-based, so a disabled flag cannot be represented — only
+  `reassoc=True` is currently supported.
 
 ---
 
@@ -917,6 +878,24 @@ narrow = pto.vmi.vcvt(src_f32, pto.f16)
 - For `f32 -> f8e4m3/f8e5m2`, PTODSL accepts `rounding="R"`, `"A"`, `"H"`,
   and `"Z"`; other low-level rounding tokens remain rejected on the VMI
   surface.
+
+**Conversion contract** (`rounding` / `saturate` are per-row semantic
+conditions; "forbidden" means passing the attribute is an error):
+
+| Direction | `source` → `to_dtype` | `rounding` | `saturate` |
+|---|---|---|---|
+| fp widen | `f16→f32`, `bf16→f32`, `fp8_e4m3→f16`, `fp8_e4m3→bf16`, `fp8_e4m3→f32`, `fp8_e5m2→f16`, `fp8_e5m2→bf16`, `fp8_e5m2→f32` | forbidden | forbidden |
+| fp widen (packed) | `f4E1M2x2→bf16x2`, `f4E2M1x2→bf16x2` | forbidden | forbidden |
+| fp narrow | `f32→f16`, `f32→bf16`, `f32→fp8_e4m3`, `f32→fp8_e5m2`, `f16→fp8_e4m3`, `f16→fp8_e5m2`, `bf16→fp8_e4m3`, `bf16→fp8_e5m2` | optional `R`/`A`/`H`/`Z` | required `SAT`/`NOSAT` |
+| fp narrow (same width) | `bf16→f16` | optional `R`/`A`/`H`/`Z` | required `SAT`/`NOSAT` |
+| fp narrow (same width) | `f16→bf16` | optional `R`/`A`/`H`/`Z` | forbidden |
+| fp narrow (packed) | `bf16x2→f4E1M2x2`, `bf16x2→f4E2M1x2` | optional `R`/`A`/`F`/`C`/`Z` (`H` rejected; omitted defaults to `"R"`) | forbidden |
+| fp → si | `f32→si32`, `f32→si16`, `f16→si16`, `f16→si8`, `bf16→si32` | optional `R`/`A`/`F`/`C`/`Z` | required `SAT`/`NOSAT` |
+| fp → si | `f16→si32` | optional `R`/`A`/`F`/`C`/`Z` | forbidden |
+| fp → ui | `f16→ui8` | optional `R`/`A`/`F`/`C`/`Z` | required `SAT`/`NOSAT` |
+| si → fp | `si32→f32`, `si8→f16` | forbidden | forbidden |
+| int widen | any `si8/si16/si32`, `ui8/ui16/ui32` pair with a wider destination (e.g. `ui8→ui16`, `si16→si32`); same-width is rejected | forbidden | forbidden |
+| int narrow | any `si8/si16/si32`, `ui8/ui16/ui32` pair with a narrower destination (e.g. `i32→i8`, `si32→si16`) | forbidden | required `SAT`/`NOSAT`; `si32→si8` accepts only `NOSAT` |
 
 ---
 
@@ -1222,7 +1201,7 @@ irregular memory locations using per-lane element offsets.
 | `destination` | `PtrType` (ub) | UB destination pointer |
 | `offsets` | `VRegType` | Per-lane element offsets (integer VMI vector) |
 | `mask` | VMI mask | **Required.** Predicate mask gating lane participation |
-| `pmode` | `str` or `None` | Optional predicate mode: `"merge"` keeps predicate-inactive lanes at their prior value; `"zero"` writes 0 |
+| `pmode` | `str` or `None` | Optional predicate mode: Only support `"zero"`, it writes 0 |
 
 **Returns**: None (side-effect operation).
 

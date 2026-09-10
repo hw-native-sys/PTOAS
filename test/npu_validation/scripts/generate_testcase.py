@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# coding=utf-8
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -3212,6 +3213,8 @@ endif()
     launch_cpp = (
         INCLUDE_REPLACEMENT
         + "\n"
+        "using namespace pto;\n"
+        "\n"
         "#if defined(__CCE_AICORE__)\n"
         f"{kernel_linkage}__global__ AICORE void {kernel_name}({', '.join(raw_params)});\n"
         "#else\n"

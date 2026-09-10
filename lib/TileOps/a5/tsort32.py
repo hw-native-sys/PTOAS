@@ -1,3 +1,4 @@
+# coding=utf-8
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -5,9 +6,13 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
+
 """PTODSL TileLib template for the aligned ``pto.tsort32`` path."""
 
+from dataclasses import dataclass
+
 from ptodsl import pto
+from ptodsl._ast_rewrite import rewrite_jit_function
 import ptodsl.tilelib as tilelib
 
 
@@ -16,6 +21,26 @@ FLOAT_DST_STRIDE_COEF = 2
 HALF_DST_STRIDE_COEF = 4
 MAX_UB_TMP = 32 * 255
 REPEAT_MAX = 255
+
+
+@dataclass
+class _Tsort32Buf:
+    """Trace-time plan shared by the unaligned ``template_tsort32_with_tmp`` emitters."""
+
+    src_ptr: object
+    idx_ptr: object
+    dst_ptr: object
+    tmp_ptr: object
+    src_stride: int
+    idx_stride: int
+    dst_stride: int
+    elem_bytes: int
+    type_coef: int
+    dtype: object
+    pad_value: object
+    repeat_num_per_row: int
+    src_tail_per_row: int
+    src_shape_bytes_per_row: int
 
 
 def _static_valid_dim(tile, index):
@@ -53,6 +78,108 @@ def _pad_min(dtype):
     if name == "bf16":
         return pto.bf16(0xFF80)
     return pto.f32(0xFF800000)
+
+
+@rewrite_jit_function
+def _tsort32_emit_tmp_row(buf, valid_rows):
+    """Stage rows whose whole padded width fits in the UB tmp buffer."""
+    len_burst = (buf.src_shape_bytes_per_row + BLOCK_SIZE - 1) // BLOCK_SIZE
+    tmp_last_offset = buf.repeat_num_per_row * BLOCK_SIZE - BLOCK_SIZE
+    for row in range(0, valid_rows, 1):
+        pto.mte_ub_ub(
+            pto.addptr(buf.src_ptr, row * buf.src_stride),
+            buf.tmp_ptr,
+            len_burst,
+            nburst=(1, 0, 0),
+        )
+        pad_mask, _ = pto.make_mask(buf.dtype, BLOCK_SIZE - buf.src_tail_per_row)
+        pto.vsts(
+            pto.vdup(buf.pad_value, pad_mask),
+            buf.tmp_ptr,
+            tmp_last_offset,
+            pad_mask,
+        )
+        pto.vbitsort(
+            pto.addptr(buf.dst_ptr, row * buf.dst_stride),
+            buf.tmp_ptr,
+            pto.addptr(buf.idx_ptr, row * buf.idx_stride),
+            buf.repeat_num_per_row,
+        )
+
+
+@rewrite_jit_function
+def _tsort32_emit_tmp_tail_chunk(buf, row, chunk, src_tail_repeat_num):
+    """Stage the partially filled final chunk of one row through UB tmp."""
+    if src_tail_repeat_num <= 0:
+        return
+    if src_tail_repeat_num > 1:
+        pto.vbitsort(
+            pto.addptr(
+                buf.dst_ptr,
+                row * buf.dst_stride + chunk * REPEAT_MAX * BLOCK_SIZE * buf.type_coef,
+            ),
+            pto.addptr(
+                buf.src_ptr, row * buf.src_stride + chunk * REPEAT_MAX * BLOCK_SIZE
+            ),
+            pto.addptr(
+                buf.idx_ptr, row * buf.idx_stride + chunk * REPEAT_MAX * BLOCK_SIZE
+            ),
+            src_tail_repeat_num - 1,
+        )
+
+    tail_src_offset = (
+        chunk * REPEAT_MAX + (src_tail_repeat_num - 1)
+    ) * BLOCK_SIZE
+    tail_dst_offset = (
+        (chunk * REPEAT_MAX + (src_tail_repeat_num - 1))
+        * BLOCK_SIZE
+        * buf.type_coef
+    )
+    len_burst = (
+        buf.src_tail_per_row * buf.elem_bytes + BLOCK_SIZE - 1
+    ) // BLOCK_SIZE
+
+    pto.mte_ub_ub(
+        pto.addptr(buf.src_ptr, row * buf.src_stride + tail_src_offset),
+        buf.tmp_ptr,
+        len_burst,
+        nburst=(1, 0, 0),
+    )
+
+    tmp_last_offset = (
+        ((buf.src_tail_per_row + BLOCK_SIZE - 1) // BLOCK_SIZE) * BLOCK_SIZE
+    ) - BLOCK_SIZE
+    pad_mask, _ = pto.make_mask(buf.dtype, BLOCK_SIZE - buf.src_tail_per_row)
+    pad_vec = pto.vdup(buf.pad_value, pad_mask)
+    pto.vsts(pad_vec, buf.tmp_ptr, tmp_last_offset, pad_mask)
+
+    pto.vbitsort(
+        pto.addptr(buf.dst_ptr, row * buf.dst_stride + tail_dst_offset),
+        buf.tmp_ptr,
+        pto.addptr(buf.idx_ptr, row * buf.idx_stride + tail_src_offset),
+        1,
+    )
+
+
+@rewrite_jit_function
+def _tsort32_emit_tmp_bursts(buf, valid_rows):
+    """Sort rows wider than UB tmp, chunked into ``REPEAT_MAX`` bursts."""
+    loop_num = (buf.repeat_num_per_row + REPEAT_MAX - 1) // REPEAT_MAX
+    src_tail_repeat_num = buf.repeat_num_per_row % REPEAT_MAX
+    for row in range(0, valid_rows, 1):
+        for chunk in range(0, loop_num, 1):
+            if chunk < loop_num - 1:
+                pto.vbitsort(
+                    pto.addptr(
+                        buf.dst_ptr,
+                        row * buf.dst_stride + chunk * REPEAT_MAX * BLOCK_SIZE * buf.type_coef,
+                    ),
+                    pto.addptr(buf.src_ptr, row * buf.src_stride + chunk * REPEAT_MAX * BLOCK_SIZE),
+                    pto.addptr(buf.idx_ptr, row * buf.idx_stride + chunk * REPEAT_MAX * BLOCK_SIZE),
+                    REPEAT_MAX,
+                )
+            else:
+                _tsort32_emit_tmp_tail_chunk(buf, row, chunk, src_tail_repeat_num)
 
 
 @tilelib.tile_template(
@@ -158,87 +285,15 @@ def template_tsort32_with_tmp(src: pto.Tile, idx: pto.Tile, tmp: pto.Tile, dst: 
     src_tail_per_row = valid_cols % BLOCK_SIZE
     pad_value = _pad_min(dtype)
     src_shape_bytes_per_row = valid_cols * elem_bytes
+    buf = _Tsort32Buf(
+        src_ptr, idx_ptr, dst_ptr, tmp_ptr,
+        src_stride, idx_stride, dst_stride, elem_bytes, type_coef,
+        dtype, pad_value, repeat_num_per_row, src_tail_per_row,
+        src_shape_bytes_per_row,
+    )
 
     if src_shape_bytes_per_row <= MAX_UB_TMP:
-        len_burst = (src_shape_bytes_per_row + BLOCK_SIZE - 1) // BLOCK_SIZE
-        tmp_last_offset = repeat_num_per_row * BLOCK_SIZE - BLOCK_SIZE
-
-        for row in range(0, valid_rows, 1):
-            pto.mte_ub_ub(
-                pto.addptr(src_ptr, row * src_stride),
-                tmp_ptr,
-                len_burst,
-                nburst=(1, 0, 0),
-            )
-            pad_mask, _ = pto.make_mask(dtype, BLOCK_SIZE - src_tail_per_row)
-            pad_vec = pto.vdup(pad_value, pad_mask)
-            pto.vsts(pad_vec, tmp_ptr, tmp_last_offset, pad_mask)
-            pto.vbitsort(
-                pto.addptr(dst_ptr, row * dst_stride),
-                tmp_ptr,
-                pto.addptr(idx_ptr, row * idx_stride),
-                repeat_num_per_row,
-            )
+        _tsort32_emit_tmp_row(buf, valid_rows)
         return
 
-    loop_num = (repeat_num_per_row + REPEAT_MAX - 1) // REPEAT_MAX
-    src_tail_repeat_num = repeat_num_per_row % REPEAT_MAX
-
-    for row in range(0, valid_rows, 1):
-        for chunk in range(0, loop_num, 1):
-            if chunk < loop_num - 1:
-                pto.vbitsort(
-                    pto.addptr(
-                        dst_ptr, row * dst_stride + chunk * REPEAT_MAX * BLOCK_SIZE * type_coef
-                    ),
-                    pto.addptr(src_ptr, row * src_stride + chunk * REPEAT_MAX * BLOCK_SIZE),
-                    pto.addptr(idx_ptr, row * idx_stride + chunk * REPEAT_MAX * BLOCK_SIZE),
-                    REPEAT_MAX,
-                )
-            else:
-                if src_tail_repeat_num > 0:
-                    if src_tail_repeat_num > 1:
-                        pto.vbitsort(
-                            pto.addptr(
-                                dst_ptr,
-                                row * dst_stride + chunk * REPEAT_MAX * BLOCK_SIZE * type_coef,
-                            ),
-                            pto.addptr(
-                                src_ptr, row * src_stride + chunk * REPEAT_MAX * BLOCK_SIZE
-                            ),
-                            pto.addptr(
-                                idx_ptr, row * idx_stride + chunk * REPEAT_MAX * BLOCK_SIZE
-                            ),
-                            src_tail_repeat_num - 1,
-                        )
-
-                    tail_src_offset = (
-                        chunk * REPEAT_MAX + (src_tail_repeat_num - 1)
-                    ) * BLOCK_SIZE
-                    tail_dst_offset = (
-                        (chunk * REPEAT_MAX + (src_tail_repeat_num - 1))
-                        * BLOCK_SIZE
-                        * type_coef
-                    )
-                    len_burst = (src_tail_per_row * elem_bytes + BLOCK_SIZE - 1) // BLOCK_SIZE
-
-                    pto.mte_ub_ub(
-                        pto.addptr(src_ptr, row * src_stride + tail_src_offset),
-                        tmp_ptr,
-                        len_burst,
-                        nburst=(1, 0, 0),
-                    )
-
-                    tmp_last_offset = (
-                        ((src_tail_per_row + BLOCK_SIZE - 1) // BLOCK_SIZE) * BLOCK_SIZE
-                    ) - BLOCK_SIZE
-                    pad_mask, _ = pto.make_mask(dtype, BLOCK_SIZE - src_tail_per_row)
-                    pad_vec = pto.vdup(pad_value, pad_mask)
-                    pto.vsts(pad_vec, tmp_ptr, tmp_last_offset, pad_mask)
-
-                    pto.vbitsort(
-                        pto.addptr(dst_ptr, row * dst_stride + tail_dst_offset),
-                        tmp_ptr,
-                        pto.addptr(idx_ptr, row * idx_stride + tail_src_offset),
-                        1,
-                    )
+    _tsort32_emit_tmp_bursts(buf, valid_rows)

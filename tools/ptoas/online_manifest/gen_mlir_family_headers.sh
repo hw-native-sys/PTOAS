@@ -36,15 +36,11 @@
 
 set -euo pipefail
 
-LLVM_SRC="${LLVM_SRC:-$HOME/workspace/huawei/llvm-workspace/llvm-project}"
-LLVM_BUILD="${LLVM_BUILD:-$LLVM_SRC/build-shared}"
 CXX="${CXX:-c++}"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 out_manifest="$script_dir/mlir_family_headers.manifest"
 repo_root="$(cd "$script_dir/../../.." && pwd)"
-
-py_root="$LLVM_SRC/mlir/lib/Bindings/Python"
 
 # Repo-owned include roots needed by the _core TUs (PTO/Transforms/*Service.h,
 # PTO/Support/CodeConstants.h, pto-c/Dialect/*, and PTOModule.h).
@@ -52,15 +48,18 @@ repo_inc="$repo_root/include"
 repo_pybind_src="$repo_root/lib/Bindings/Python"
 
 # Include roots, longest first so prefix stripping is unambiguous.
+# G.SCRIPT.04: variable derivations stay at most two levels deep; the
+# build-tree include roots are therefore expanded inline from LLVM_BUILD.
+LLVM_SRC="${LLVM_SRC:-$HOME/workspace/huawei/llvm-workspace/llvm-project}"
+LLVM_BUILD="${LLVM_BUILD:-$LLVM_SRC/build-shared}"
 inc_mlir_src="$LLVM_SRC/mlir/include"
-inc_mlir_bld="$LLVM_BUILD/tools/mlir/include"
 inc_llvm_src="$LLVM_SRC/llvm/include"
-inc_llvm_bld="$LLVM_BUILD/include"
+py_root="$LLVM_SRC/mlir/lib/Bindings/Python"
 
 pybind_inc="$(python3 -c 'import pybind11; print(pybind11.get_include())')"
 python_inc="$(python3 -c 'import sysconfig; print(sysconfig.get_path("include"))')"
 
-for d in "$inc_mlir_src" "$inc_mlir_bld" "$inc_llvm_src" "$inc_llvm_bld" "$py_root"; do
+for d in "$inc_mlir_src" "$LLVM_BUILD/tools/mlir/include" "$inc_llvm_src" "$LLVM_BUILD/include" "$py_root"; do
   if [[ ! -d "$d" ]]; then
     echo "error: include/source dir not found: $d" >&2
     exit 1
@@ -113,8 +112,8 @@ for src in "${sources[@]}"; do
     -DPTOAS_ONLINE_BUILD=1 \
     -I"$py_root" \
     -I"$repo_inc" -I"$repo_pybind_src" \
-    -I"$inc_mlir_src" -I"$inc_mlir_bld" \
-    -I"$inc_llvm_src" -I"$inc_llvm_bld" \
+    -I"$inc_mlir_src" -I"$LLVM_BUILD/tools/mlir/include" \
+    -I"$inc_llvm_src" -I"$LLVM_BUILD/include" \
     -I"$pybind_inc" -I"$python_inc" \
     "$src" 2>/dev/null > "$tmp_all.one" || true
   tr ' ' '\n' < "$tmp_all.one" | sed 's/\\$//' >> "$tmp_all"
@@ -131,12 +130,12 @@ rm -f "$tmp_all.one"
   echo "# Paths are include-root-relative; '#' and blank lines are ignored by"
   echo "# the wheel-build reader in tools/ptoas/CMakeLists.txt."
   {
-    for root in "$inc_mlir_src" "$inc_mlir_bld" "$inc_llvm_src" "$inc_llvm_bld"; do
+    for root in "$inc_mlir_src" "$LLVM_BUILD/tools/mlir/include" "$inc_llvm_src" "$LLVM_BUILD/include"; do
       grep -F "$root/" "$tmp_all" || true
     done
   } | while IFS= read -r path; do
     [[ -z "$path" ]] && continue
-    for root in "$inc_mlir_src" "$inc_mlir_bld" "$inc_llvm_src" "$inc_llvm_bld"; do
+    for root in "$inc_mlir_src" "$LLVM_BUILD/tools/mlir/include" "$inc_llvm_src" "$LLVM_BUILD/include"; do
       if [[ "$path" == "$root/"* ]]; then
         echo "${path#"$root"/}"
         break

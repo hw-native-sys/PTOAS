@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# coding=utf-8
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -3753,8 +3754,8 @@ def vmi_wrapper_dispatch_probe():
     scalar_pred = pto.vmi.vcmps(scaled, 0.0, mask, "ogt")
     selected = pto.vmi.vsel(pred, scaled, expanded)
     shuffled = pto.vmi.vselr(selected, idx)
-    total = pto.vmi.vcadd(shuffled, mask, reassoc=False)
-    explicit_total = pto.vmi.vcadd(shuffled, mask, group=1, reassoc=False)
+    total = pto.vmi.vcadd(shuffled, mask, reassoc=True)
+    explicit_total = pto.vmi.vcadd(shuffled, mask, group=1, reassoc=True)
     peak = pto.vmi.vcmax(shuffled, mask)
     explicit_peak = pto.vmi.vcmax(shuffled, mask, group=1)
     floor = pto.vmi.vcmin(shuffled, mask)
@@ -3786,7 +3787,6 @@ def vmi_wrapper_dispatch_probe():
     even, odd = pto.vmi.vdintlv(lo, hi, mask)
     pto.vmi.vscatter(selected, dst_ptr, idx, mask)
     pto.vmi.vstore(lo, dst_ptr, offset, mask)
-    pto.vmi.vsstb(hi, dst_ptr, offset, pto.i16(8), mask)
 
     _ = group_mask
     _ = carry_next
@@ -8289,7 +8289,6 @@ def main() -> None:
     expected_vmi_ops = [
         "pto.vmi.vload",
         "pto.vmi.vstore",
-        "pto.vmi.vsstb",
         "pto.vmi.vci",
         "pto.vmi.vadd",
         "pto.vmi.vaddc",

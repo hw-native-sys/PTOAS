@@ -10,7 +10,7 @@
 
 namespace mlir::pto::detail {
 
-void populateVPTOOpLoweringPatterns(VPTOTypeConverter &typeConverter, RewritePatternSet &patterns,
+void populateVPTOOpLoweringPatterns(const VPTOTypeConverter &typeConverter, RewritePatternSet &patterns,
                                     LoweringState &state) {
   populateVPTOArithmeticPatterns(typeConverter, patterns, state);
   populateVPTOVectorMemoryPatterns(typeConverter, patterns, state);
@@ -84,8 +84,7 @@ void markIllegalVPTOArithmeticAndCopyOps(ConversionTarget &target) {
       pto::MadBiasRawOp, pto::MadMxRawOp, pto::MadMxBiasRawOp>();
 }
 
-void configureVPTOOpLoweringTarget(ConversionTarget &target, VPTOTypeConverter &typeConverter) {
-  (void)typeConverter;
+void configureVPTOOpLoweringTarget(ConversionTarget &target) {
   target.addLegalOp<ModuleOp>();
   target.addLegalDialect<arith::ArithDialect, cf::ControlFlowDialect, LLVM::LLVMDialect, func::FuncDialect,
                          scf::SCFDialect>();
@@ -167,7 +166,7 @@ LogicalResult lowerVPTOOps(ModuleOp module, llvm::raw_ostream &diagOS) {
   RewritePatternSet patterns(context);
   LoweringState state;
 
-  configureVPTOOpLoweringTarget(target, typeConverter);
+  configureVPTOOpLoweringTarget(target);
   populateVPTOOpLoweringPatterns(typeConverter, patterns, state);
 
   if (failed(applyPartialConversion(module, target, std::move(patterns)))) {
@@ -190,7 +189,7 @@ LogicalResult lowerVPTOTypes(ModuleOp module, llvm::raw_ostream &diagOS) {
   configureVPTOTypeLoweringTarget(target, typeConverter);
   configureVPTOCarrierTypeLegality(target, typeConverter);
   populateVPTOStructuralTypePatterns(typeConverter, patterns, target);
-  populateVPTOTypePatterns(typeConverter, patterns, target, state);
+  populateVPTOTypePatterns(typeConverter, patterns, state);
 
   if (failed(applyPartialConversion(module, target, std::move(patterns)))) {
     diagOS << "VPTO LLVM emission failed: VPTO type lowering failed\n";
@@ -219,12 +218,12 @@ void normalizeFuncSignaturesForOfficialLLVMLowering(ModuleOp module) {
 
     for (Type input : oldType.getInputs()) {
       Type normalized = normalizeTypeForOfficialLLVMLowering(input, builder);
-      changed |= (normalized != input);
+      changed = changed || (normalized != input);
       newInputs.push_back(normalized);
     }
     for (Type result : oldType.getResults()) {
       Type normalized = normalizeTypeForOfficialLLVMLowering(result, builder);
-      changed |= (normalized != result);
+      changed = changed || (normalized != result);
       newResults.push_back(normalized);
     }
 

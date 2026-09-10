@@ -335,7 +335,7 @@ struct LayoutSolver {
   }
 
   VMILayoutAttr getPreferredGroupSlotsLayout(VMIVRegType type,
-                                             int64_t numGroups) {
+                                             int64_t numGroups) const {
     if (VMILayoutAttr existing = type.getLayoutAttr()) {
       if (existing.isGroupSlots() && existing.getSlots() > 0) {
         return existing;
@@ -351,7 +351,7 @@ struct LayoutSolver {
   }
 
   VMILayoutAttr getPreferredGroupReduceSourceLayout(VMIVRegType type,
-                                                    int64_t numGroups) {
+                                                    int64_t numGroups) const {
     if (VMILayoutAttr existing = type.getLayoutAttr()) {
       return existing;
     }
@@ -494,7 +494,7 @@ struct LayoutSolver {
     return {};
   }
 
-  VMILayoutAttr getPreferredGroupLoadResultLayout(VMIGroupLoadOp op) {
+  VMILayoutAttr getPreferredGroupLoadResultLayout(VMIGroupLoadOp op) const {
     auto type = cast<VMIVRegType>(op.getResult().getType());
     if (VMILayoutAttr existing = type.getLayoutAttr()) {
       return existing;
@@ -1334,7 +1334,7 @@ struct LayoutSolver {
     return std::nullopt;
   }
 
-  WalkResult validateUnconstrainedOperation(Operation *op) {
+  WalkResult validateUnconstrainedOperation(Operation *op) const {
     bool isIndirectCall =
         op->getName().getStringRef() == "func.call_indirect";
     if (isIndirectCall) {
@@ -1630,7 +1630,7 @@ struct LayoutSolver {
 
   WalkResult materializeReturnOperands(func::ReturnOp ret,
                                        ArrayRef<Type> resultTypes,
-                                       IRRewriter &rewriter) {
+                                       IRRewriter &rewriter) const {
     rewriter.setInsertionPoint(ret);
     for (auto [index, operand] : llvm::enumerate(ret.getOperands())) {
       if (index >= resultTypes.size()) {

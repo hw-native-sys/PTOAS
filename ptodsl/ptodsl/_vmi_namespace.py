@@ -1,3 +1,4 @@
+# coding=utf-8
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -5,6 +6,7 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
+
 """Public PTODSL namespace for formal VMI APIs."""
 
 from __future__ import annotations
@@ -706,11 +708,11 @@ def _emit_reduce(
             if _is_vmi_float_element_type(source_elem_type):
                 raise TypeError(
                     f"{context} on floating-point vectors requires an explicit reassoc "
-                    "argument; spell out reassoc=True or reassoc=False"
+                    "argument; spell out reassoc=True"
                 )
-        elif not isinstance(reassoc, bool):
+        elif reassoc is not True:
             raise TypeError(
-                f"{context} requires reassoc to be the Python boolean True or False; "
+                f"{context} currently supports only reassoc=True; "
                 f"received {reassoc!r}"
             )
     kwargs = {"group": group, "pmode": pmode, "loc": loc, "ip": ip}
@@ -814,15 +816,6 @@ class _VMINamespace:
             pmode=pmode,
             loc=loc,
             ip=ip,
-        )
-
-    @staticmethod
-    def vsstb(value, destination, offset, block_stride, mask, *, pmode=None, loc=None, ip=None):
-        context = "pto.vmi.vsstb(...)"
-        return _generated("vsstb")(
-            _raw(value), _raw(destination), _coerce_index_value(offset),
-            _i16_value(block_stride, context=f"{context} block_stride"),
-            _required_mask(mask, context=context), pmode=pmode, loc=loc, ip=ip,
         )
 
     @staticmethod

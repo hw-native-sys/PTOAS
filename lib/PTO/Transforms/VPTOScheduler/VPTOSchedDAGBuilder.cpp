@@ -24,6 +24,7 @@
 #include "llvm/Support/MathExtras.h"
 
 #include <array>
+#include <climits>
 #include <limits>
 
 #include "../Utils.h"
@@ -109,6 +110,8 @@ LogicalResult VPTOSchedDAGBuilder::addEdge(
 }
 
 namespace {
+constexpr unsigned kBitsPerByte = CHAR_BIT;
+
 struct IntegerRange {
   int64_t lowerInclusive = 0;
   int64_t upperInclusive = 0;
@@ -264,7 +267,8 @@ static bool isProvenNoSignedWrap(Value value) {
   }
   unsigned bitWidth = ConstantIntRanges::getStorageBitwidth(value.getType());
   auto resultRange = getMathematicalResultRange(operation);
-  if (bitWidth == 0 || bitWidth > 64 || !resultRange) {
+  if (bitWidth == 0 ||
+      bitWidth > std::numeric_limits<uint64_t>::digits || !resultRange) {
     return false;
   }
   __int128 signedMinimum = -(__int128{1} << (bitWidth - 1));
@@ -388,12 +392,14 @@ static std::optional<int64_t> getAddPtrElementByteSize(AddPtrOp addPtr) {
     return std::nullopt;
   }
   Type elementType = pointerType.getElementType();
-  bool invalidElementType = !elementType.isIntOrFloat() ||
-                            elementType.getIntOrFloatBitWidth() % 8 != 0;
+  bool invalidElementType =
+      !elementType.isIntOrFloat() ||
+      elementType.getIntOrFloatBitWidth() % kBitsPerByte != 0;
   if (invalidElementType) {
     return std::nullopt;
   }
-  return static_cast<int64_t>(elementType.getIntOrFloatBitWidth() / 8);
+  return static_cast<int64_t>(elementType.getIntOrFloatBitWidth() /
+                              kBitsPerByte);
 }
 
 static LogicalResult accumulateAddPtrDisplacement(AddPtrOp addPtr,

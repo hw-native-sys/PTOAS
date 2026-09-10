@@ -215,13 +215,8 @@ inline void printVirtualBufIds(llvm::raw_ostream &os,
   }
 }
 
-inline void printOp2BufSync(llvm::raw_ostream &os,
-                            const DenseMap<Operation *, BufSyncPipeBuild> &op2BufSync,
-                            func::FuncOp func, const char *title = nullptr) {
-  if (title) {
-    os << "[bufid_sync] " << title << ":\n";
-  }
-
+inline SmallVector<Operation *> collectOpsSortedByFuncOrder(
+    const DenseMap<Operation *, BufSyncPipeBuild> &op2BufSync, func::FuncOp func) {
   SmallVector<Operation *> sortedOps;
   sortedOps.reserve(op2BufSync.size());
   for (auto &[op, build] : op2BufSync) {
@@ -236,41 +231,57 @@ inline void printOp2BufSync(llvm::raw_ostream &os,
             [&](const Operation *a, const Operation *b) {
               return opOrder[a] < opOrder[b];
             });
+  return sortedOps;
+}
+
+inline void printBufSyncOperationEntry(llvm::raw_ostream &os, unsigned printIdx,
+                                       Operation *op, const BufSyncPipeBuild &build) {
+  auto firstSyncIdx = build.pipeBefore.empty()
+                          ? (build.pipeAfter.empty() ? 0
+                                                     : build.pipeAfter[0].syncIRIndex)
+                          : build.pipeBefore[0].syncIRIndex;
+  os << "  [" << printIdx << "][syncIR=" << firstSyncIdx << "] op: ";
+  op->getName().print(os);
+  if (op->getNumResults() > 0) {
+    os << " ";
+    op->getResult(0).printAsOperand(os, OpPrintingFlags());
+  }
+  os << " <- ";
+  for (unsigned i = 0; i < op->getNumOperands(); ++i) {
+    if (i > 0) {
+      os << ", ";
+    }
+    op->getOperand(i).printAsOperand(os, OpPrintingFlags());
+  }
+  os << "\n    pipeBefore:";
+  for (auto &s : build.pipeBefore) {
+    os << " [GET_BUF pipe=" << static_cast<int>(s.pipe)
+       << " logicId=" << s.logicId
+       << " syncIR=" << s.syncIRIndex << "]";
+  }
+  os << "\n    pipeAfter:";
+  for (auto &s : build.pipeAfter) {
+    os << " [RLS_BUF pipe=" << static_cast<int>(s.pipe)
+       << " logicId=" << s.logicId
+       << " syncIR=" << s.syncIRIndex << "]";
+  }
+  os << "\n";
+}
+
+inline void printOp2BufSync(llvm::raw_ostream &os,
+                            const DenseMap<Operation *, BufSyncPipeBuild> &op2BufSync,
+                            func::FuncOp func, const char *title = nullptr) {
+  if (title) {
+    os << "[bufid_sync] " << title << ":\n";
+  }
+
+  SmallVector<Operation *> sortedOps = collectOpsSortedByFuncOrder(op2BufSync, func);
 
   os << "[bufid_sync] op2BufSync count: " << op2BufSync.size() << "\n";
   unsigned printIdx = 0;
   for (auto *op : sortedOps) {
     auto &build = op2BufSync.find(op)->second;
-    auto firstSyncIdx = build.pipeBefore.empty()
-                            ? (build.pipeAfter.empty() ? 0
-                                                       : build.pipeAfter[0].syncIRIndex)
-                            : build.pipeBefore[0].syncIRIndex;
-    os << "  [" << printIdx << "][syncIR=" << firstSyncIdx << "] op: ";
-    op->getName().print(os);
-    if (op->getNumResults() > 0) {
-      os << " ";
-      op->getResult(0).printAsOperand(os, OpPrintingFlags());
-    }
-    os << " <- ";
-    for (unsigned i = 0; i < op->getNumOperands(); ++i) {
-      if (i > 0) {
-        os << ", ";
-      }
-      op->getOperand(i).printAsOperand(os, OpPrintingFlags());
-    }
-    os << "\n    pipeBefore:";
-    for (auto &s : build.pipeBefore) {
-      os << " [GET_BUF pipe=" << static_cast<int>(s.pipe)
-         << " logicId=" << s.logicId
-         << " syncIR=" << s.syncIRIndex << "]";
-    }
-    os << "\n    pipeAfter:";
-    for (auto &s : build.pipeAfter) {
-      os << " [RLS_BUF pipe=" << static_cast<int>(s.pipe)
-         << " logicId=" << s.logicId
-         << " syncIR=" << s.syncIRIndex << "]";
-    }
-    os << "\n";
+    printBufSyncOperationEntry(os, printIdx, op, build);
     ++printIdx;
   }
 }

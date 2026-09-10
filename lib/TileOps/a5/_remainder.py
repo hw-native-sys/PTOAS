@@ -1,3 +1,4 @@
+# coding=utf-8
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -5,6 +6,7 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
+
 """Shared PTODSL implementations for remainder/fmod-style TileOps."""
 
 from ptodsl import pto
@@ -12,6 +14,7 @@ import ptodsl.tilelib as tilelib
 
 from ._common import ub_row_major_constraints
 from ._elementwise import (
+    _elementwise_template_decorator,
     emit_binary_1d,
     emit_binary_2d,
     emit_scalar_binary_1d,
@@ -79,20 +82,10 @@ def register_binary_remainder(*, op, name, dtypes, round_mode, has_tmp=False,
                 )
             )
 
-        @tilelib.tile_template(
-            op=op,
-            target="a5",
-            name=name,
-            dtypes=dtypes,
-            iteration_axis="none",
-            op_engine="vector",
-            op_class="elementwise",
-            constraints=constraints,
-            priority=priority,
-            id=candidate_id,
-            loop_depth=loop_depth,
-            is_post_update=False,
-            tags=("elementwise", "remainder"),
+        @_elementwise_template_decorator(
+            op=op, name=name, dtypes=dtypes, constraints=constraints,
+            priority=priority, candidate_id=candidate_id,
+            loop_depth=loop_depth, tags=("elementwise", "remainder"),
         )
         def template(src0: pto.Tile, src1: pto.Tile, tmp: pto.Tile, dst: pto.Tile):
             _ = tmp
@@ -105,20 +98,10 @@ def register_binary_remainder(*, op, name, dtypes, round_mode, has_tmp=False,
             tilelib.require_elementwise_1d("src0", "src1", "dst")
         )
 
-    @tilelib.tile_template(
-        op=op,
-        target="a5",
-        name=name,
-        dtypes=dtypes,
-        iteration_axis="none",
-        op_engine="vector",
-        op_class="elementwise",
-        constraints=constraints,
-        priority=priority,
-        id=candidate_id,
-        loop_depth=loop_depth,
-        is_post_update=False,
-        tags=("elementwise", "remainder"),
+    @_elementwise_template_decorator(
+        op=op, name=name, dtypes=dtypes, constraints=constraints,
+        priority=priority, candidate_id=candidate_id,
+        loop_depth=loop_depth, tags=("elementwise", "remainder"),
     )
     def template(src0: pto.Tile, src1: pto.Tile, dst: pto.Tile):
         _emit_binary(src0, src1, dst, round_mode, traversal)
@@ -165,20 +148,10 @@ def register_scalar_remainder(*, op, name, dtypes, round_mode, has_tmp=False,
                 tilelib.require_elementwise_1d("src", "tmp", "dst")
             )
 
-        @tilelib.tile_template(
-            op=op,
-            target="a5",
-            name=name,
-            dtypes=dtypes,
-            iteration_axis="none",
-            op_engine="vector",
-            op_class="elementwise",
-            constraints=constraints,
-            priority=priority,
-            id=candidate_id,
-            loop_depth=loop_depth,
-            is_post_update=False,
-            tags=("elementwise", "scalar", "remainder"),
+        @_elementwise_template_decorator(
+            op=op, name=name, dtypes=dtypes, constraints=constraints,
+            priority=priority, candidate_id=candidate_id,
+            loop_depth=loop_depth, tags=("elementwise", "scalar", "remainder"),
         )
         def template(src: pto.Tile, scalar, tmp: pto.Tile, dst: pto.Tile):
             _ = tmp
@@ -189,20 +162,10 @@ def register_scalar_remainder(*, op, name, dtypes, round_mode, has_tmp=False,
     if traversal == "1d":
         constraints.append(tilelib.require_elementwise_1d("src", "dst"))
 
-    @tilelib.tile_template(
-        op=op,
-        target="a5",
-        name=name,
-        dtypes=dtypes,
-        iteration_axis="none",
-        op_engine="vector",
-        op_class="elementwise",
-        constraints=constraints,
-        priority=priority,
-        id=candidate_id,
-        loop_depth=loop_depth,
-        is_post_update=False,
-        tags=("elementwise", "scalar", "remainder"),
+    @_elementwise_template_decorator(
+        op=op, name=name, dtypes=dtypes, constraints=constraints,
+        priority=priority, candidate_id=candidate_id,
+        loop_depth=loop_depth, tags=("elementwise", "scalar", "remainder"),
     )
     def template(src: pto.Tile, scalar, dst: pto.Tile):
         _emit_scalar(src, scalar, dst, round_mode, traversal)

@@ -21,11 +21,12 @@ RUN_ONLY_CASES="${RUN_ONLY_CASES:-}"  # comma/space separated testcase names or 
 
 log() { echo "[$(date +'%F %T')] $*"; }
 
-# PreSmoke performs package and sample/codegen checks in its smoke task. The
-# separate NPU validation command is not part of that gate and can submit a
-# full board sweep; stop it here while leaving explicit board workflows intact.
-if [[ "${SMOKE_TYPE:-}" == "pre" ]]; then
-  log "Skipping remote NPU validation in PreSmoke (SMOKE_TYPE=pre)"
+# Both CI drivers invoke this command after preparing the PreSmoke package.
+# PreSmoke no longer submits a board sweep; explicit board workflows retain
+# the full validation path. The robot job name also survives wrappers that do
+# not export SMOKE_TYPE to this child shell.
+if [[ "${SMOKE_TYPE:-}" == "pre" || "${ST_PART:-}" == "1" || "${task_name:-}" == PreSmoke_* ]]; then
+  log "Skipping remote NPU validation in PreSmoke (SMOKE_TYPE, ST_PART, or task_name)"
   log "execute samples success"
   exit 0
 fi

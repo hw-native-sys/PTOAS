@@ -12,7 +12,7 @@ namespace mlir::pto::detail {
 
 class LowerTrapOpPattern final : public OpConversionPattern<pto::TrapOp> {
 public:
-  explicit LowerTrapOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerTrapOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<pto::TrapOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(pto::TrapOp op, pto::TrapOp::Adaptor,
@@ -47,11 +47,11 @@ static LogicalResult appendVcvtImmediate(pto::VcvtOp op, StringRef name, std::op
 static LogicalResult appendVcvtOptionalArguments(pto::VcvtOp op, const VcvtContract &contract,
                                                  SmallVectorImpl<Value> &callArgs, SmallVectorImpl<Type> &argTypes,
                                                  ConversionPatternRewriter &rewriter) {
-  auto appendRound = [&]() {
+  auto appendRound = [&op, &callArgs, &argTypes, &rewriter]() {
     return appendVcvtImmediate(op, "rnd", op.getRndAttr() ? parseRoundModeImmediate(*op.getRnd()) : std::nullopt,
                                callArgs, argTypes, rewriter);
   };
-  auto appendSaturation = [&]() {
+  auto appendSaturation = [&op, &callArgs, &argTypes, &rewriter]() {
     return appendVcvtImmediate(op, "sat", op.getSatAttr() ? parseSaturationImmediate(*op.getSat()) : std::nullopt,
                                callArgs, argTypes, rewriter);
   };
@@ -79,7 +79,7 @@ static LogicalResult appendVcvtOptionalArguments(pto::VcvtOp op, const VcvtContr
 
 class LowerVcvtOpPattern final : public OpConversionPattern<pto::VcvtOp> {
 public:
-  explicit LowerVcvtOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerVcvtOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<pto::VcvtOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(pto::VcvtOp op, pto::VcvtOp::Adaptor adaptor,
@@ -118,7 +118,7 @@ private:
 
 class LowerVbitcastOpPattern final : public OpConversionPattern<pto::VbitcastOp> {
 public:
-  explicit LowerVbitcastOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerVbitcastOpPattern(const TypeConverter &typeConverter, MLIRContext *context)
       : OpConversionPattern<pto::VbitcastOp>(typeConverter, context) {}
 
   LogicalResult matchAndRewrite(pto::VbitcastOp op, pto::VbitcastOp::Adaptor adaptor,
@@ -141,7 +141,7 @@ public:
 
 class LowerPbitcastOpPattern final : public OpConversionPattern<pto::PbitcastOp> {
 public:
-  explicit LowerPbitcastOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerPbitcastOpPattern(const TypeConverter &typeConverter, MLIRContext *context)
       : OpConversionPattern<pto::PbitcastOp>(typeConverter, context) {}
 
   LogicalResult matchAndRewrite(pto::PbitcastOp op, pto::PbitcastOp::Adaptor adaptor,
@@ -160,7 +160,7 @@ public:
 
 class LowerVtrcOpPattern final : public OpConversionPattern<pto::VtrcOp> {
 public:
-  explicit LowerVtrcOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerVtrcOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<pto::VtrcOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(pto::VtrcOp op, pto::VtrcOp::Adaptor adaptor,
@@ -220,7 +220,7 @@ static void replacePredicateStoreOp(StoreOp op, bool usePostIntrinsic, const VPT
 
 template <typename StoreOp> class LowerPredicateStoreOpPattern final : public OpConversionPattern<StoreOp> {
 public:
-  explicit LowerPredicateStoreOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerPredicateStoreOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<StoreOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(StoreOp op, typename StoreOp::Adaptor adaptor,
@@ -267,7 +267,7 @@ private:
 
 template <typename LoadOp> class LowerPredicateLoadOpPattern final : public OpConversionPattern<LoadOp> {
 public:
-  explicit LowerPredicateLoadOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerPredicateLoadOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<LoadOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(LoadOp op, typename LoadOp::Adaptor adaptor,
@@ -319,7 +319,7 @@ private:
 
 template <typename LoopOp> class LowerSetLoopConfigOpPattern final : public OpConversionPattern<LoopOp> {
 public:
-  explicit LowerSetLoopConfigOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerSetLoopConfigOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<LoopOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(LoopOp op, typename LoopOp::Adaptor adaptor,
@@ -349,7 +349,7 @@ private:
 
 template <typename ConfigOp> class LowerUnaryConfigOpPattern final : public OpConversionPattern<ConfigOp> {
 public:
-  explicit LowerUnaryConfigOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerUnaryConfigOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<ConfigOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(ConfigOp op, typename ConfigOp::Adaptor adaptor,
@@ -373,7 +373,7 @@ private:
 
 template <typename ConfigOp> class LowerUnaryI64ConfigOpPattern final : public OpConversionPattern<ConfigOp> {
 public:
-  explicit LowerUnaryI64ConfigOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerUnaryI64ConfigOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<ConfigOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(ConfigOp op, typename ConfigOp::Adaptor adaptor,
@@ -392,7 +392,7 @@ private:
 
 class LowerStoreVfSimtInfoOpPattern final : public OpConversionPattern<pto::StoreVfSimtInfoOp> {
 public:
-  explicit LowerStoreVfSimtInfoOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerStoreVfSimtInfoOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<pto::StoreVfSimtInfoOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(pto::StoreVfSimtInfoOp op, pto::StoreVfSimtInfoOp::Adaptor adaptor,
@@ -406,7 +406,7 @@ public:
     }
 
     auto i64Type = rewriter.getI64Type();
-    auto castToI64 = [&](Value value) -> Value {
+    auto castToI64 = [&rewriter, loc, i64Type](Value value) -> Value {
       if (value.getType().isInteger(64)) {
         return value;
       }
@@ -451,7 +451,7 @@ template <> StringRef buildSimtFenceCallee<pto::ThreadfenceBlockOp>(MLIRContext 
 
 template <typename FenceOp> class LowerSimtFenceOpPattern final : public OpConversionPattern<FenceOp> {
 public:
-  explicit LowerSimtFenceOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerSimtFenceOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<FenceOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(FenceOp op, typename FenceOp::Adaptor adaptor,
@@ -486,7 +486,7 @@ static std::string buildSimtKeepResumeConstraints(ArrayRef<SimtKeepResumePhysica
       os << ",";
     }
     if (physicalReg.registerCount == 2) {
-      os << "={TPERL" << physicalReg.baseRegister / 2 << "}";
+      os << "={TPERL" << (physicalReg.baseRegister / 2) << "}";
     } else {
       os << "={TPER" << physicalReg.baseRegister << "}";
     }
@@ -665,7 +665,7 @@ static LogicalResult replaceResumeGroup(ArrayRef<pto::ResumeOp> resumeOps, LLVM:
 
 class LowerKeepOpPattern final : public OpConversionPattern<pto::KeepOp> {
 public:
-  explicit LowerKeepOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &)
+  explicit LowerKeepOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &)
       : OpConversionPattern<pto::KeepOp>(typeConverter, context) {}
 
   LogicalResult matchAndRewrite(pto::KeepOp op, pto::KeepOp::Adaptor adaptor,
@@ -720,7 +720,7 @@ public:
 
 class LowerResumeOpPattern final : public OpConversionPattern<pto::ResumeOp> {
 public:
-  explicit LowerResumeOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &)
+  explicit LowerResumeOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &)
       : OpConversionPattern<pto::ResumeOp>(typeConverter, context) {}
 
   LogicalResult matchAndRewrite(pto::ResumeOp op, pto::ResumeOp::Adaptor adaptor,
@@ -770,7 +770,7 @@ public:
 
 template <typename ConfigOp> class LowerNullaryConfigOpPattern final : public OpConversionPattern<ConfigOp> {
 public:
-  explicit LowerNullaryConfigOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerNullaryConfigOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<ConfigOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(ConfigOp op, typename ConfigOp::Adaptor adaptor,
@@ -790,7 +790,7 @@ private:
 
 template <typename SyncOp> class LowerPipeEventSyncOpPattern final : public OpConversionPattern<SyncOp> {
 public:
-  explicit LowerPipeEventSyncOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerPipeEventSyncOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<SyncOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(SyncOp op, typename SyncOp::Adaptor adaptor,
@@ -821,7 +821,7 @@ private:
 
 template <typename SyncOp> class LowerPipeEventDynSyncOpPattern final : public OpConversionPattern<SyncOp> {
 public:
-  explicit LowerPipeEventDynSyncOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerPipeEventDynSyncOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<SyncOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(SyncOp op, typename SyncOp::Adaptor adaptor,
@@ -914,7 +914,7 @@ static SmallVector<Value> buildInterCoreSyncArgs(SyncOp op, Value pipeValue, Val
 
 template <typename SyncOp> class LowerInterCoreSyncOpPattern final : public OpConversionPattern<SyncOp> {
 public:
-  explicit LowerInterCoreSyncOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerInterCoreSyncOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<SyncOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(SyncOp op, typename SyncOp::Adaptor adaptor,
@@ -945,7 +945,7 @@ private:
 
 template <typename SyncOp> class LowerNamedSyncOpPattern final : public OpConversionPattern<SyncOp> {
 public:
-  explicit LowerNamedSyncOpPattern(TypeConverter &tc, MLIRContext *ctx, LoweringState &state)
+  explicit LowerNamedSyncOpPattern(const TypeConverter &tc, MLIRContext *ctx, LoweringState &state)
       : OpConversionPattern<SyncOp>(tc, ctx), state(state) {}
   LogicalResult matchAndRewrite(SyncOp op, typename SyncOp::Adaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
@@ -977,7 +977,7 @@ private:
 
 class LowerBarrierOpPattern final : public OpConversionPattern<pto::BarrierOp> {
 public:
-  explicit LowerBarrierOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerBarrierOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<pto::BarrierOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(pto::BarrierOp op, OpAdaptor adaptor,
@@ -1009,7 +1009,7 @@ private:
 
 class LowerMemBarOpPattern final : public OpConversionPattern<pto::MemBarOp> {
 public:
-  explicit LowerMemBarOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerMemBarOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<pto::MemBarOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(pto::MemBarOp op, OpAdaptor adaptor,
@@ -1030,11 +1030,8 @@ private:
 template <typename MemoryConsistencyOp>
 class LowerUnsupportedMemoryConsistencyOpPattern final : public OpConversionPattern<MemoryConsistencyOp> {
 public:
-  explicit LowerUnsupportedMemoryConsistencyOpPattern(TypeConverter &typeConverter, MLIRContext *context,
-                                                      LoweringState &state)
-      : OpConversionPattern<MemoryConsistencyOp>(typeConverter, context) {
-    (void)state;
-  }
+  explicit LowerUnsupportedMemoryConsistencyOpPattern(const TypeConverter &typeConverter, MLIRContext *context)
+      : OpConversionPattern<MemoryConsistencyOp>(typeConverter, context) {}
 
   LogicalResult matchAndRewrite(MemoryConsistencyOp op, typename MemoryConsistencyOp::Adaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
@@ -1049,7 +1046,7 @@ public:
 
 class LowerDsbOpPattern final : public OpConversionPattern<pto::DsbOp> {
 public:
-  explicit LowerDsbOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerDsbOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<pto::DsbOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(pto::DsbOp op, OpAdaptor adaptor, ConversionPatternRewriter &rewriter) const override {
@@ -1070,7 +1067,7 @@ private:
 
 class LowerDcciOpPattern final : public OpConversionPattern<pto::DcciOp> {
 public:
-  explicit LowerDcciOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerDcciOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<pto::DcciOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(pto::DcciOp op, OpAdaptor adaptor, ConversionPatternRewriter &rewriter) const override {
@@ -1104,7 +1101,7 @@ private:
 
 template <typename BufSyncOp> class LowerBufSyncOpPattern final : public OpConversionPattern<BufSyncOp> {
 public:
-  explicit LowerBufSyncOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerBufSyncOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<BufSyncOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(BufSyncOp op, typename BufSyncOp::Adaptor adaptor,
@@ -1147,7 +1144,7 @@ private:
 
 template <typename BufDynSyncOp> class LowerBufDynSyncOpPattern final : public OpConversionPattern<BufDynSyncOp> {
 public:
-  explicit LowerBufDynSyncOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerBufDynSyncOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<BufDynSyncOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(BufDynSyncOp op, typename BufDynSyncOp::Adaptor adaptor,
@@ -1198,7 +1195,7 @@ private:
 
 template <typename QueryOp> class LowerRuntimeQueryOpPattern final : public OpConversionPattern<QueryOp> {
 public:
-  explicit LowerRuntimeQueryOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerRuntimeQueryOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<QueryOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(QueryOp op, typename QueryOp::Adaptor adaptor,
@@ -1223,7 +1220,7 @@ private:
 
 template <typename QueryOp> class LowerBlockRuntimeQueryOpPattern final : public OpConversionPattern<QueryOp> {
 public:
-  explicit LowerBlockRuntimeQueryOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerBlockRuntimeQueryOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<QueryOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(QueryOp op, typename QueryOp::Adaptor adaptor,
@@ -1261,7 +1258,7 @@ private:
 
 template <typename VoteOp> class LowerVoteOpPattern final : public OpConversionPattern<VoteOp> {
 public:
-  explicit LowerVoteOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerVoteOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<VoteOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(VoteOp op, typename VoteOp::Adaptor adaptor,
@@ -1291,7 +1288,7 @@ private:
 
 template <typename ShuffleOp> class LowerShuffleOpPattern final : public OpConversionPattern<ShuffleOp> {
 public:
-  explicit LowerShuffleOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerShuffleOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<ShuffleOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(ShuffleOp op, typename ShuffleOp::Adaptor adaptor,
@@ -1348,7 +1345,7 @@ private:
 
 template <typename ReduxOp> class LowerReduxOpPattern final : public OpConversionPattern<ReduxOp> {
 public:
-  explicit LowerReduxOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerReduxOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<ReduxOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(ReduxOp op, typename ReduxOp::Adaptor adaptor,
@@ -1383,7 +1380,7 @@ private:
 
 template <typename AtomicOp> class LowerAtomicBinaryOpPattern final : public OpConversionPattern<AtomicOp> {
 public:
-  explicit LowerAtomicBinaryOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerAtomicBinaryOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<AtomicOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(AtomicOp op, typename AtomicOp::Adaptor adaptor,
@@ -1423,7 +1420,7 @@ private:
 
 class LowerAtomicCasOpPattern final : public OpConversionPattern<pto::AtomicCasOp> {
 public:
-  explicit LowerAtomicCasOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerAtomicCasOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<pto::AtomicCasOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(pto::AtomicCasOp op, pto::AtomicCasOp::Adaptor adaptor,
@@ -1465,7 +1462,7 @@ private:
 
 template <typename ScalarOp> class LowerScalarIntrinsicOpPattern final : public OpConversionPattern<ScalarOp> {
 public:
-  explicit LowerScalarIntrinsicOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerScalarIntrinsicOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<ScalarOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(ScalarOp op, typename ScalarOp::Adaptor adaptor,
@@ -1494,7 +1491,7 @@ private:
 
 class LowerMulhiOpPattern final : public OpConversionPattern<pto::MulhiOp> {
 public:
-  explicit LowerMulhiOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerMulhiOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<pto::MulhiOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(pto::MulhiOp op, OpAdaptor adaptor,
@@ -1550,7 +1547,7 @@ private:
 
 class LowerMulI32ToI64OpPattern final : public OpConversionPattern<pto::MulI32ToI64Op> {
 public:
-  explicit LowerMulI32ToI64OpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerMulI32ToI64OpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<pto::MulI32ToI64Op>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(pto::MulI32ToI64Op op, OpAdaptor adaptor,
@@ -1581,7 +1578,7 @@ private:
 
 class LowerSqrtOpPattern final : public OpConversionPattern<pto::SqrtOp> {
 public:
-  explicit LowerSqrtOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerSqrtOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<pto::SqrtOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(pto::SqrtOp op, pto::SqrtOp::Adaptor adaptor,
@@ -1611,7 +1608,7 @@ private:
 
 template <typename UnaryOp> class LowerUnaryScalarMathOpPattern final : public OpConversionPattern<UnaryOp> {
 public:
-  explicit LowerUnaryScalarMathOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerUnaryScalarMathOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<UnaryOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(UnaryOp op, typename UnaryOp::Adaptor adaptor,
@@ -1641,7 +1638,7 @@ private:
 
 template <typename BinaryOp> class LowerBinaryScalarMathOpPattern final : public OpConversionPattern<BinaryOp> {
 public:
-  explicit LowerBinaryScalarMathOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerBinaryScalarMathOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<BinaryOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(BinaryOp op, typename BinaryOp::Adaptor adaptor,
@@ -1672,7 +1669,7 @@ private:
 
 class LowerFmaOpPattern final : public OpConversionPattern<pto::FmaOp> {
 public:
-  explicit LowerFmaOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerFmaOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<pto::FmaOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(pto::FmaOp op, pto::FmaOp::Adaptor adaptor,
@@ -1705,7 +1702,7 @@ private:
 
 class LowerConvertOpPattern final : public OpConversionPattern<pto::ConvertOp> {
 public:
-  explicit LowerConvertOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerConvertOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<pto::ConvertOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(pto::ConvertOp op, pto::ConvertOp::Adaptor adaptor,
@@ -1739,7 +1736,7 @@ private:
 
 class LowerGetVms4SrOpPattern final : public OpConversionPattern<pto::GetVms4SrOp> {
 public:
-  explicit LowerGetVms4SrOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerGetVms4SrOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<pto::GetVms4SrOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(pto::GetVms4SrOp op, pto::GetVms4SrOp::Adaptor adaptor,
@@ -1775,7 +1772,7 @@ private:
 
 template <typename BinaryOp> class LowerBinaryI64PureOpPattern final : public OpConversionPattern<BinaryOp> {
 public:
-  explicit LowerBinaryI64PureOpPattern(TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+  explicit LowerBinaryI64PureOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<BinaryOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(BinaryOp op, typename BinaryOp::Adaptor adaptor,
@@ -1799,7 +1796,7 @@ private:
   LoweringState &state;
 };
 
-static void populateVPTOSIMTAndScalarPatterns(VPTOTypeConverter &typeConverter, RewritePatternSet &patterns,
+static void populateVPTOSIMTAndScalarPatterns(const VPTOTypeConverter &typeConverter, RewritePatternSet &patterns,
                                               LoweringState &state) {
   patterns.add<
       LowerRuntimeQueryOpPattern<pto::GetCtrlOp>, LowerGetVms4SrOpPattern, LowerRuntimeQueryOpPattern<pto::GetTidXOp>,
@@ -1840,7 +1837,7 @@ static void populateVPTOSIMTAndScalarPatterns(VPTOTypeConverter &typeConverter, 
                                                                                    state);
 }
 
-static void populateVPTOConfigAndSyncPatterns(VPTOTypeConverter &typeConverter, RewritePatternSet &patterns,
+static void populateVPTOConfigAndSyncPatterns(const VPTOTypeConverter &typeConverter, RewritePatternSet &patterns,
                                               LoweringState &state) {
   patterns
       .add<LowerUnaryConfigOpPattern<pto::SetMovPadValOp>, LowerUnaryI64ConfigOpPattern<pto::SetQuantPreOp>,
@@ -1853,21 +1850,25 @@ static void populateVPTOConfigAndSyncPatterns(VPTOTypeConverter &typeConverter, 
            LowerNullaryConfigOpPattern<pto::SetAtomicS8Op>, LowerPipeEventSyncOpPattern<pto::SetFlagOp>,
            LowerPipeEventSyncOpPattern<pto::WaitFlagOp>, LowerPipeEventDynSyncOpPattern<pto::SetFlagDynOp>,
            LowerPipeEventDynSyncOpPattern<pto::WaitFlagDynOp>, LowerBarrierOpPattern, LowerMemBarOpPattern,
-           LowerUnsupportedMemoryConsistencyOpPattern<pto::CmoCacheInvalidOp>,
-           LowerUnsupportedMemoryConsistencyOpPattern<pto::FenceBarrierAllOp>, LowerDsbOpPattern, LowerDcciOpPattern,
+           LowerDsbOpPattern, LowerDcciOpPattern,
            LowerBufSyncOpPattern<pto::GetBufOp>, LowerBufSyncOpPattern<pto::RlsBufOp>,
            LowerBufDynSyncOpPattern<pto::GetBufDynOp>, LowerBufDynSyncOpPattern<pto::RlsBufDynOp>,
            LowerBlockRuntimeQueryOpPattern<pto::GetBlockIdxOp>, LowerRuntimeQueryOpPattern<pto::GetSubBlockIdxOp>,
            LowerBlockRuntimeQueryOpPattern<pto::GetBlockNumOp>, LowerRuntimeQueryOpPattern<pto::GetSubBlockNumOp>,
-           LowerVtrcOpPattern, LowerVcvtOpPattern, LowerVbitcastOpPattern, LowerPbitcastOpPattern,
-           LowerPredicateLoadOpPattern<pto::PldiOp>, LowerPredicateLoadOpPattern<pto::PldsOp>,
+           LowerVtrcOpPattern, LowerVcvtOpPattern, LowerPredicateLoadOpPattern<pto::PldiOp>,
+           LowerPredicateLoadOpPattern<pto::PldsOp>,
            LowerPredicateStoreOpPattern<pto::PstiOp>, LowerPredicateStoreOpPattern<pto::PstsOp>,
            LowerInterCoreSyncOpPattern<pto::SyncSetOp>, LowerInterCoreSyncOpPattern<pto::SyncWaitOp>,
            LowerNamedSyncOpPattern<pto::SetIntraBlockOp>, LowerNamedSyncOpPattern<pto::WaitIntraBlockOp>>(
           typeConverter, patterns.getContext(), state);
+  patterns.add<LowerVbitcastOpPattern, LowerPbitcastOpPattern>(typeConverter, patterns.getContext());
+  patterns.add<LowerUnsupportedMemoryConsistencyOpPattern<pto::CmoCacheInvalidOp>,
+               LowerUnsupportedMemoryConsistencyOpPattern<pto::FenceBarrierAllOp>>(typeConverter,
+                                                                            patterns.getContext());
 }
 
-void populateVPTOScalarPatterns(VPTOTypeConverter &typeConverter, RewritePatternSet &patterns, LoweringState &state) {
+void populateVPTOScalarPatterns(const VPTOTypeConverter &typeConverter, RewritePatternSet &patterns,
+                                LoweringState &state) {
   populateVPTOSIMTAndScalarPatterns(typeConverter, patterns, state);
   populateVPTOConfigAndSyncPatterns(typeConverter, patterns, state);
 }

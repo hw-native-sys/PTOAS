@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# coding=utf-8
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -89,108 +90,143 @@ def _remove_path(path: Path) -> None:
         shutil.rmtree(path)
 
 
-def prepare_source(output_dir: Path, revision: str) -> dict[str, str]:
+def _prepare_work_directory(output_dir: Path) -> tuple[Path, Path]:
+    """Resolve the output directory and create a sibling staging directory."""
     output_dir = output_dir.expanduser().resolve()
     _check_output_dir(output_dir)
     output_dir.parent.mkdir(parents=True, exist_ok=True)
     temporary_dir = Path(
         tempfile.mkdtemp(prefix=f".{output_dir.name}-", dir=output_dir.parent)
     )
-    archive_path: Path | None = None
-    try:
-        try:
-            resolved_revision = subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(REPOSITORY_ROOT),
-                    "rev-parse",
-                    "--verify",
-                    f"{revision}^{{commit}}",
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            ).stdout.strip()
-        except subprocess.CalledProcessError:
-            # Shallow clone fallback: HEAD^{commit} may fail when the
-            # commit object is not fully resolved (e.g. fetch-depth: 1).
-            resolved_revision = subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(REPOSITORY_ROOT),
-                    "rev-parse",
-                    "--verify",
-                    revision,
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            ).stdout.strip()
-        with tempfile.NamedTemporaryFile(
-            prefix="ptoas-vmi-source-",
-            suffix=".tar",
-            dir=output_dir.parent,
-            delete=False,
-        ) as archive_file:
-            archive_path = Path(archive_file.name)
+    return output_dir, temporary_dir
 
-        subprocess.run(
+
+def _resolve_archived_revision(revision: str) -> str:
+    """Resolve a git revision to a commit id, tolerating shallow clones."""
+    try:
+        completed = subprocess.run(
             [
                 "git",
                 "-C",
                 str(REPOSITORY_ROOT),
-                "archive",
-                "--format=tar",
-                f"--output={archive_path}",
-                resolved_revision,
-                "--",
-                *ARCHIVE_EXCLUDES,
+                "rev-parse",
+                "--verify",
+                f"{revision}^{{commit}}",
             ],
             check=True,
+            capture_output=True,
+            text=True,
         )
-        with tarfile.open(archive_path, mode="r:") as archive:
-            for member in archive.getmembers():
-                member_path = Path(member.name)
-                if member_path.is_absolute() or ".." in member_path.parts:
-                    raise ValueError(
-                        f"git archive contains an unsafe path: {member.name}"
-                    )
-                if member.issym() or member.islnk():
-                    raise ValueError(
-                        f"git archive contains an unsupported link: {member.name}"
-                    )
-            archive.extractall(temporary_dir)
-
-        apply_environment = os.environ.copy()
-        apply_environment.update(
-            {
-                "GIT_DIR": str(temporary_dir / ".git-not-present"),
-                "GIT_WORK_TREE": str(temporary_dir),
-            }
-        )
-        subprocess.run(
-            ["git", "apply", str(METADATA_PATCH)],
-            cwd=temporary_dir,
-            env=apply_environment,
+        return completed.stdout.strip()
+    except subprocess.CalledProcessError:
+        # Shallow clone fallback: HEAD^{commit} may fail when the
+        # commit object is not fully resolved (e.g. fetch-depth: 1).
+        completed = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(REPOSITORY_ROOT),
+                "rev-parse",
+                "--verify",
+                revision,
+            ],
             check=True,
+            capture_output=True,
+            text=True,
         )
+        return completed.stdout.strip()
 
-        version = read_vmi_version()
-        staged_text = (temporary_dir / "pyproject.toml").read_text(encoding="utf-8")
-        required_fragments = (
-            'name = "ptoas-vmi"',
-            f'version = "{version}"',
-            'PTOAS_CLI_VERSION_LABEL = "vmi"',
-            'sdist.inclusion-mode = "manual"',
-        )
-        missing = [item for item in required_fragments if item not in staged_text]
-        if missing:
-            raise ValueError(f"VMI metadata patch is incomplete: {missing}")
-        if "../" in staged_text:
-            raise ValueError("staged pyproject.toml contains an external relative path")
 
+def _create_archive_file(output_dir: Path) -> Path:
+    """Create the empty staging tar file next to the output directory."""
+    with tempfile.NamedTemporaryFile(
+        prefix="ptoas-vmi-source-",
+        suffix=".tar",
+        dir=output_dir.parent,
+        delete=False,
+    ) as archive_file:
+        return Path(archive_file.name)
+
+
+def _run_git_archive(archive_path: Path, resolved_revision: str) -> None:
+    """Archive the resolved revision into the staging tar file."""
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(REPOSITORY_ROOT),
+            "archive",
+            "--format=tar",
+            f"--output={archive_path}",
+            resolved_revision,
+            "--",
+            *ARCHIVE_EXCLUDES,
+        ],
+        check=True,
+    )
+
+
+def _extract_archive(archive_path: Path, temporary_dir: Path) -> None:
+    """Validate every tar member and extract the archive into the staging dir."""
+    with tarfile.open(archive_path, mode="r:") as archive:
+        for member in archive.getmembers():
+            member_path = Path(member.name)
+            if member_path.is_absolute() or ".." in member_path.parts:
+                raise ValueError(
+                    f"git archive contains an unsafe path: {member.name}"
+                )
+            if member.issym() or member.islnk():
+                raise ValueError(
+                    f"git archive contains an unsupported link: {member.name}"
+                )
+        archive.extractall(temporary_dir)
+
+
+def _apply_metadata_patch(temporary_dir: Path) -> None:
+    """Apply the VMI pyproject metadata patch inside the staging directory."""
+    apply_environment = os.environ.copy()
+    apply_environment.update(
+        {
+            "GIT_DIR": str(temporary_dir / ".git-not-present"),
+            "GIT_WORK_TREE": str(temporary_dir),
+        }
+    )
+    subprocess.run(
+        ["git", "apply", str(METADATA_PATCH)],
+        cwd=temporary_dir,
+        env=apply_environment,
+        check=True,
+    )
+
+
+def _verify_staged_metadata(temporary_dir: Path) -> str:
+    """Confirm the patched pyproject is consistent and return its version."""
+    version = read_vmi_version()
+    staged_text = (temporary_dir / "pyproject.toml").read_text(encoding="utf-8")
+    required_fragments = (
+        'name = "ptoas-vmi"',
+        f'version = "{version}"',
+        'PTOAS_CLI_VERSION_LABEL = "vmi"',
+        'sdist.inclusion-mode = "manual"',
+    )
+    missing = [item for item in required_fragments if item not in staged_text]
+    if missing:
+        raise ValueError(f"VMI metadata patch is incomplete: {missing}")
+    if "../" in staged_text:
+        raise ValueError("staged pyproject.toml contains an external relative path")
+    return version
+
+
+def prepare_source(output_dir: Path, revision: str) -> dict[str, str]:
+    output_dir, temporary_dir = _prepare_work_directory(output_dir)
+    archive_path: Path | None = None
+    try:
+        resolved_revision = _resolve_archived_revision(revision)
+        archive_path = _create_archive_file(output_dir)
+        _run_git_archive(archive_path, resolved_revision)
+        _extract_archive(archive_path, temporary_dir)
+        _apply_metadata_patch(temporary_dir)
+        version = _verify_staged_metadata(temporary_dir)
         _remove_path(output_dir)
         temporary_dir.replace(output_dir)
     except BaseException:

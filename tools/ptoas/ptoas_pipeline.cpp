@@ -13,85 +13,8 @@
 
 #include "ptoas_internal.h"
 
-#include "ptoas.h"
-
-#include "PTO/IR/PTO.h"
-#include "PTO/IR/PTOMultiBuffer.h"
-#include "PTO/IR/VMIUtils.h"
-#include "PTO/Transforms/BufferizableOpInterfaceImpl.h"
-#include "PTO/Transforms/CppPostprocess.h"
-#include "PTO/Transforms/Passes.h"
-#include "PTO/Transforms/VPTOLLVMEmitter.h"
-#include "VPTOHostStubEmission.h"
-#include "mlir/AsmParser/AsmParserState.h"
-#include "mlir/Conversion/Passes.h"
-#include "mlir/Dialect/Affine/IR/AffineOps.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Arith/Transforms/BufferizableOpInterfaceImpl.h"
-#include "mlir/Dialect/Arith/Transforms/Passes.h"
-#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
-#include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
-#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
-#include "mlir/Dialect/EmitC/IR/EmitC.h"
-#include "mlir/Dialect/EmitC/Transforms/Transforms.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/Func/Transforms/Passes.h"
-#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
-#include "mlir/Dialect/Math/IR/Math.h"
-#include "mlir/Dialect/Math/Transforms/Passes.h"
-#include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/Dialect/MemRef/Transforms/Passes.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/Dialect/SCF/Transforms/Passes.h"
-#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Tensor/Transforms/BufferizableOpInterfaceImpl.h"
-#include "mlir/Dialect/Tensor/Transforms/Passes.h"
-#include "mlir/Dialect/Utils/StaticValueUtils.h"
-#include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/Diagnostics.h"
-#include "mlir/IR/DialectInterface.h"
-#include "mlir/IR/IRMapping.h"
-#include "mlir/IR/MLIRContext.h"
-#include "mlir/IR/PatternMatch.h"
-#include "mlir/IR/Verifier.h"
-#include "mlir/Parser/Parser.h"
-#include "mlir/Pass/PassManager.h"
-#include "mlir/Target/Cpp/CppEmitter.h"
-#include "mlir/Transforms/InliningUtils.h"
-#include "mlir/Transforms/Passes.h"
-#include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/SmallPtrSet.h"
-#include "llvm/ADT/SmallString.h"
-#include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/StringMap.h"
-#include "llvm/ADT/StringRef.h"
-#include "llvm/ADT/StringSwitch.h"
-#include "llvm/Support/CommandLine.h"
-#include "llvm/Support/FileSystem.h"
-#include "llvm/Support/MemoryBuffer.h"
-#include "llvm/Support/Path.h"
-#include "llvm/Support/Program.h"
-#include "llvm/Support/Regex.h"
-#include "llvm/Support/SourceMgr.h"
-#include "llvm/Support/ToolOutputFile.h"
-#include "llvm/Support/raw_ostream.h"
-#include "ptobc/ptobc_decode.h"
-
-#include <algorithm>
-#include <cctype>
-#include <chrono>
-#include <csignal>
-#include <cstdlib>
-#include <cstring>
-#include <memory>
-#include <optional>
-#include <set>
-#include <string>
-#include <thread>
-
-#include <sys/types.h>
-#include <unistd.h>
-
 
 using namespace mlir;
 using namespace pto;
@@ -434,7 +357,6 @@ static LogicalResult reorderEmitCFunctions(ModuleOp module) {
 
 // --------------------------------------------------------------------------
 // Command Line Options
-
 
 enum class PTOBuildLevel {
   Level1,
@@ -1355,26 +1277,11 @@ static LogicalResult appendFusionFrontendPasses(
 
 static LogicalResult appendPlanMemoryPasses(PassManager &pm,
                                             PTOBuildLevel effectiveLevel) {
-  if (planMemoryImpl != "legacy" && planMemoryImpl != "modern") {
-    llvm::errs() << "Error: invalid --plan-memory-impl='" << planMemoryImpl
-                 << "', expected 'legacy' or 'modern'.\n";
-    return failure();
-  }
-
   if (effectiveLevel != PTOBuildLevel::Level3) {
     pto::PlanMemoryOptions planMemoryOptions;
     planMemoryOptions.memMode = "local";
-    bool effectivePlanMemoryOrderBySize = planMemoryOrderBySize;
-    if (planMemoryImpl == "modern" &&
-        planMemoryOrderBySize.getNumOccurrences() == 0) {
-      effectivePlanMemoryOrderBySize = true;
-    }
-    planMemoryOptions.orderBySize = effectivePlanMemoryOrderBySize;
-    if (planMemoryImpl == "legacy") {
-      pm.addPass(pto::createPlanMemoryPass(planMemoryOptions));
-    } else {
-      pm.addPass(pto::createPlanMemoryModernPass(planMemoryOptions));
-    }
+    planMemoryOptions.orderBySize = planMemoryOrderBySize;
+    pm.addPass(pto::createPlanMemoryModernPass(planMemoryOptions));
   }
   return success();
 }
@@ -1413,25 +1320,13 @@ static void appendAutoSyncPasses(PassManager &pm) {
   }
 }
 
-static LogicalResult runMainLoweringPipeline(
-    OwningOpRef<ModuleOp> &module, PTOASContext &context,
-    PTOBackend effectiveBackend, const CompilePipelineState &state,
-    PTOASCompileResult &result, bool emitVPTOHostStub, bool &handled,
-    int &exitCode) {
-  handled = false;
-  exitCode = 0;
-  const bool enableA5EmitCFusionPath = state.enableA5EmitCFusionPath;
-  const bool enableA5VPTOFusionPath = state.enableA5VPTOFusionPath;
+// Populates the shared mainline lowering pass sequence (both backends).
+static LogicalResult populateMainLoweringPasses(PassManager &pm,
+                                                PTOBackend effectiveBackend,
+                                                const CompilePipelineState &state) {
   const bool isA2A3 = state.isA2A3;
   const bool hasTileOpsToExpand = state.hasTileOpsToExpand;
   const PTOBuildLevel effectiveLevel = state.level;
-
-  // Main PassManager
-  PassManager pm(module->getContext());
-
-  if (failed(applyPassManagerCLOptions(pm))) {
-    return failure();
-  }
 
   // Rank-2 → rank-5 view canonicalization is currently gated on the VPTO
   // backend to limit blast radius.  A3/A5 EmitC codegen already pads strides
@@ -1464,8 +1359,9 @@ static LogicalResult runMainLoweringPipeline(
     pm.addPass(pto::createInsertTemplateAttributesPass());
   }
 
-  if (failed(appendFusionFrontendPasses(pm, isA2A3, enableA5EmitCFusionPath,
-                                         enableA5VPTOFusionPath))) {
+  if (failed(appendFusionFrontendPasses(pm, isA2A3,
+                                        state.enableA5EmitCFusionPath,
+                                        state.enableA5VPTOFusionPath))) {
     return failure();
   }
 
@@ -1489,7 +1385,75 @@ static LogicalResult runMainLoweringPipeline(
   if (effectiveBackend == PTOBackend::EmitC) {
     pm.addPass(createNarrowUnusedMultiResultProvenancePass());
   }
+  return success();
+}
 
+// Backend-agnostic cleanup after the shared lowering. --emit-pto-ir stops
+// before this segment: the IR dump reflects the shared lowering only.
+static LogicalResult appendMainLoweringTailPasses(PassManager &pm,
+                                                  PTOBackend effectiveBackend) {
+  pm.addPass(createCSEPass());
+  // PTODSL backend helpers already use the tile-native ABI.
+  pm.addPass(pto::createPTOInlineBackendHelpersPass());
+  if (effectiveBackend == PTOBackend::EmitC) {
+    pm.addPass(createNarrowUnusedMultiResultProvenancePass());
+  }
+  pm.addPass(createCanonicalizerPass());
+  pm.addPass(createCSEPass());
+  return applyConfiguredPassManagerCLOptions(pm, "main PTOAS pipeline");
+}
+
+// Runs the populated mainline pipeline for the VPTO backend, emits the seam
+// IR dumps, hands off to the VPTO backend pipeline, and produces the result.
+static LogicalResult finishVPTOMainPipeline(
+    OwningOpRef<ModuleOp> &module, PassManager &pm,
+    PTOASCompileResult &result, PTOASContext &context, bool emitVPTOHostStub,
+    bool hasTileOpsToExpand, bool &handled, int &exitCode) {
+  if (failed(pm.run(*module))) {
+    llvm::errs() << "Error: Pass execution failed.\n";
+    return failure();
+  }
+
+  if (ptoPrintSeamIR) {
+    printSharedPreBackendSeamIR(*module);
+  }
+  if (ptoPrintSeamIR) {
+    module->print(llvm::errs());
+    llvm::errs() << "\n";
+  }
+  if (failed(emitSharedPreBackendSeamIR(*module, ptoSeamIRFile))) {
+    return failure();
+  }
+
+  if (failed(runVPTOBackendPipeline(module, hasTileOpsToExpand))) {
+    return failure();
+  }
+  handled = true;
+  exitCode = emitVPTOBackendResult(*module, result, emitVPTOHostStub,
+                                   context.getCANNVersionOrDefault());
+  return success();
+}
+
+static LogicalResult runMainLoweringPipeline(
+    OwningOpRef<ModuleOp> &module, PTOASContext &context,
+    PTOBackend effectiveBackend, const CompilePipelineState &state,
+    PTOASCompileResult &result, bool emitVPTOHostStub, bool &handled,
+    int &exitCode) {
+  handled = false;
+  exitCode = 0;
+  const bool hasTileOpsToExpand = state.hasTileOpsToExpand;
+
+  // Main PassManager
+  PassManager pm(module->getContext());
+  if (failed(applyPassManagerCLOptions(pm))) {
+    return failure();
+  }
+  if (failed(populateMainLoweringPasses(pm, effectiveBackend, state))) {
+    return failure();
+  }
+
+  // --emit-pto-ir dumps the module after the shared lowering segment only;
+  // the backend tail (CSE / helper inlining) is intentionally not run.
   if (emitMlirIR) {
     if (failed(pm.run(*module))) {
       llvm::errs() << "Error: Pass execution failed.\n";
@@ -1504,42 +1468,14 @@ static LogicalResult runMainLoweringPipeline(
     return success();
   }
 
-  pm.addPass(createCSEPass());
-  // PTODSL backend helpers already use the tile-native ABI.
-  pm.addPass(pto::createPTOInlineBackendHelpersPass());
-  if (effectiveBackend == PTOBackend::EmitC) {
-    pm.addPass(createNarrowUnusedMultiResultProvenancePass());
-  }
-  pm.addPass(createCanonicalizerPass());
-  pm.addPass(createCSEPass());
-  if (failed(applyConfiguredPassManagerCLOptions(pm, "main PTOAS pipeline"))) {
+  if (failed(appendMainLoweringTailPasses(pm, effectiveBackend))) {
     return failure();
   }
 
   if (effectiveBackend == PTOBackend::VPTO) {
-    if (failed(pm.run(*module))) {
-      llvm::errs() << "Error: Pass execution failed.\n";
-      return failure();
-    }
-
-    if (ptoPrintSeamIR) {
-      printSharedPreBackendSeamIR(*module);
-    }
-    if (ptoPrintSeamIR) {
-      module->print(llvm::errs());
-      llvm::errs() << "\n";
-    }
-    if (failed(emitSharedPreBackendSeamIR(*module, ptoSeamIRFile))) {
-      return failure();
-    }
-
-    if (failed(runVPTOBackendPipeline(module, hasTileOpsToExpand))) {
-      return failure();
-    }
-    handled = true;
-    exitCode = emitVPTOBackendResult(*module, result, emitVPTOHostStub,
-                                     context.getCANNVersionOrDefault());
-    return success();
+    return finishVPTOMainPipeline(module, pm, result, context,
+                                  emitVPTOHostStub, hasTileOpsToExpand,
+                                  handled, exitCode);
   }
 
   if (failed(pm.run(*module))) {

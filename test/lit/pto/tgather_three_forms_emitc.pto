@@ -1,4 +1,18 @@
 // RUN: ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s --check-prefix=A3
+// RUN: pto-test-opt %s --mlir-print-op-generic | FileCheck %s --check-prefix=PARSE
+
+// PARSE: %[[KEY:[0-9]+]] = "arith.constant"
+// PARSE: %[[SRC:[0-9]+]] = "pto.alloc_tile"
+// PARSE: %[[IDX:[0-9]+]] = "pto.alloc_tile"
+// PARSE: %[[ITMP:[0-9]+]] = "pto.alloc_tile"
+// PARSE: %[[IDST:[0-9]+]] = "pto.alloc_tile"
+// PARSE: "pto.tgather"(%[[SRC]], %[[IDST]], %[[IDX]], %[[ITMP]]) <{operandSegmentSizes = array<i32: 1, 1, 0, 1, 1, 0>}>
+// PARSE: %[[MDST:[0-9]+]] = "pto.alloc_tile"
+// PARSE: "pto.tgather"(%[[SRC]], %[[MDST]]) <{axis = "row", maskPattern = #pto.mask_pattern<P1111>, operandSegmentSizes = array<i32: 1, 1, 0, 0, 0, 0>}>
+// PARSE: %[[CTMP:[0-9]+]] = "pto.alloc_tile"
+// PARSE: %[[CDST:[0-9]+]] = "pto.alloc_tile"
+// PARSE: %[[COUNT:[0-9]+]] = "pto.alloc_tile"
+// PARSE: "pto.tgather"(%[[SRC]], %[[CDST]], %[[COUNT]], %[[CTMP]], %[[KEY]]) <{offset = 7 : i32, operandSegmentSizes = array<i32: 1, 1, 1, 0, 1, 1>}>
 
 module {
   func.func @tgather_three_forms() {

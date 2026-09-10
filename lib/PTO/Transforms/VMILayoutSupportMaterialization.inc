@@ -6,6 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#ifndef VMILAYOUTSUPPORTMATERIALIZATION_INC
+#define VMILAYOUTSUPPORTMATERIALIZATION_INC
 
 //===- VMILayoutSupportMaterialization.inc - VMI layout support internals -*- C++ -*-===//
 //===----------------------------------------------------------------------===//
@@ -13,20 +15,20 @@
 // Table matching and materialization helpers
 //===----------------------------------------------------------------------===//
 
-static VMIDeinterleaveLoadLayoutFact materializeDeinterleaveLoadLayoutFact(
+inline VMIDeinterleaveLoadLayoutFact materializeDeinterleaveLoadLayoutFact(
     MLIRContext *ctx, const DeinterleaveLoadLayoutPattern &pattern) {
   return VMIDeinterleaveLoadLayoutFact{
       materializeLayoutPattern(ctx, pattern.lowLayout),
       materializeLayoutPattern(ctx, pattern.highLayout)};
 }
 
-static bool isSameGroupBlockPattern(GroupBlockPattern lhs,
+inline bool isSameGroupBlockPattern(GroupBlockPattern lhs,
                                     GroupBlockPattern rhs) {
   return lhs.kind == rhs.kind && lhs.numerator == rhs.numerator &&
          lhs.denominator == rhs.denominator;
 }
 
-static VMIGroupBlockClass
+inline VMIGroupBlockClass
 getGroupBlockClassFromPattern(GroupBlockPattern pattern) {
   for (const GroupBlockClassPattern &row : kGroupBlockClassPatterns) {
     if (isSameGroupBlockPattern(pattern, row.block)) {
@@ -36,7 +38,7 @@ getGroupBlockClassFromPattern(GroupBlockPattern pattern) {
   llvm_unreachable("unsupported group block pattern");
 }
 
-static bool matchesGroupBroadcastLoadMemoryPattern(
+inline bool matchesGroupBroadcastLoadMemoryPattern(
     GroupMemoryPattern pattern, std::optional<int64_t> stride,
     int64_t elementBits) {
   switch (pattern.kind) {
@@ -61,7 +63,7 @@ static bool matchesGroupBroadcastLoadMemoryPattern(
   llvm_unreachable("unknown group memory pattern kind");
 }
 
-static bool matchesGroupLoadMemoryPattern(GroupMemoryPattern pattern,
+inline bool matchesGroupLoadMemoryPattern(GroupMemoryPattern pattern,
                                           std::optional<int64_t> rowStride,
                                           int64_t groupSize,
                                           int64_t elementBits) {
@@ -82,7 +84,7 @@ static bool matchesGroupLoadMemoryPattern(GroupMemoryPattern pattern,
   llvm_unreachable("unknown group memory pattern kind");
 }
 
-static bool isSupportedGroupSlotMemoryLayout(VMILayoutAttr layout,
+inline bool isSupportedGroupSlotMemoryLayout(VMILayoutAttr layout,
                                              int64_t numGroups) {
   bool hasSupportedShape =
       layout && layout.isGroupSlots() && layout.getNumGroups() == numGroups &&
@@ -100,7 +102,7 @@ static bool isSupportedGroupSlotMemoryLayout(VMILayoutAttr layout,
   return false;
 }
 
-static FailureOr<VMIGroupBlockClass> getGroupBlockClass(int64_t groupSize,
+inline FailureOr<VMIGroupBlockClass> getGroupBlockClass(int64_t groupSize,
                                                         int64_t vcgBlockElems) {
   if (vcgBlockElems <= 0) {
     return failure();
@@ -140,12 +142,12 @@ struct InterleaveLayoutKey {
   int64_t physicalChunkCount = 0;
 };
 
-static bool matchesPhysicalChunkCountPattern(
+inline bool matchesPhysicalChunkCountPattern(
     PhysicalChunkCountPattern pattern, InterleaveLayoutKey key) {
   return matchesPhysicalChunkCountPattern(pattern, key.physicalChunkCount);
 }
 
-static bool matchesInterleaveLayoutPattern(
+inline bool matchesInterleaveLayoutPattern(
     const InterleaveLayoutPattern &pattern, VMIVRegType valueType,
     InterleaveLayoutKey key) {
   if (!matchesElementBitsPattern(pattern.elementBits,
@@ -167,9 +169,9 @@ static bool matchesInterleaveLayoutPattern(
          *physicalParts <= pattern.maxPhysicalParts;
 }
 
-static FailureOr<InterleaveLayoutKey>
+inline FailureOr<InterleaveLayoutKey>
 buildInterleaveLayoutKey(VMIVRegType valueType, std::string *reason) {
-  auto fail = [&](const Twine &message) -> FailureOr<InterleaveLayoutKey> {
+  auto fail = [reason](const Twine &message) -> FailureOr<InterleaveLayoutKey> {
     if (reason) {
       *reason = message.str();
     }
@@ -195,7 +197,7 @@ buildInterleaveLayoutKey(VMIVRegType valueType, std::string *reason) {
   return InterleaveLayoutKey{elementCount, *lanesPerPart, physicalChunkCount};
 }
 
-static bool matchesGroupBlockPattern(GroupBlockPattern pattern,
+inline bool matchesGroupBlockPattern(GroupBlockPattern pattern,
                                      GroupLayoutKey key) {
   if (pattern.kind == GroupBlockPatternKind::FullPartMultiple) {
     if (pattern.numerator <= 0) {
@@ -213,7 +215,7 @@ static bool matchesGroupBlockPattern(GroupBlockPattern pattern,
   return key.groupSize == numerator / pattern.denominator;
 }
 
-static bool matchesGroupStoreLayoutPattern(
+inline bool matchesGroupStoreLayoutPattern(
     const GroupStoreLayoutPattern &pattern, VMIVRegType valueType,
     GroupLayoutKey key, std::optional<int64_t> rowStride) {
   unsigned elementBits =
@@ -226,11 +228,11 @@ static bool matchesGroupStoreLayoutPattern(
                                        key.groupSize, elementBits);
 }
 
-static FailureOr<GroupLayoutKey>
+inline FailureOr<GroupLayoutKey>
 buildGroupLayoutKey(VMIVRegType type, int64_t numGroups,
                     const Twine &unsupportedGroupSizeReason,
                     std::string *reason) {
-  auto fail = [&](const Twine &message) -> FailureOr<GroupLayoutKey> {
+  auto fail = [reason](const Twine &message) -> FailureOr<GroupLayoutKey> {
     if (reason) {
       *reason = message.str();
     }
@@ -260,7 +262,7 @@ buildGroupLayoutKey(VMIVRegType type, int64_t numGroups,
   return GroupLayoutKey{*groupSize, *lanesPerPart, vcgBlockElems, *blockClass};
 }
 
-static VMIGroupReduceLayoutFact
+inline VMIGroupReduceLayoutFact
 materializeGroupReduceLayoutFact(MLIRContext *ctx,
                                  const GroupReduceLayoutPattern &pattern,
                                  GroupLayoutKey key, int64_t numGroups) {
@@ -276,7 +278,7 @@ materializeGroupReduceLayoutFact(MLIRContext *ctx,
   return fact;
 }
 
-static VMIGroupBroadcastLayoutFact materializeGroupBroadcastLayoutFact(
+inline VMIGroupBroadcastLayoutFact materializeGroupBroadcastLayoutFact(
     MLIRContext *ctx, const GroupBroadcastLayoutPattern &pattern,
     GroupLayoutKey key, int64_t numGroups) {
   VMIGroupBroadcastLayoutFact fact;
@@ -291,7 +293,7 @@ static VMIGroupBroadcastLayoutFact materializeGroupBroadcastLayoutFact(
   return fact;
 }
 
-static VMIGroupStoreLayoutFact materializeGroupStoreLayoutFact(
+inline VMIGroupStoreLayoutFact materializeGroupStoreLayoutFact(
     MLIRContext *ctx, const GroupStoreLayoutPattern &pattern,
     GroupLayoutKey key) {
   VMIGroupStoreLayoutFact fact;
@@ -303,7 +305,7 @@ static VMIGroupStoreLayoutFact materializeGroupStoreLayoutFact(
   return fact;
 }
 
-static VMIInterleaveLayoutFact materializeInterleaveLayoutFact(
+inline VMIInterleaveLayoutFact materializeInterleaveLayoutFact(
     MLIRContext *ctx, const InterleaveLayoutPattern &pattern,
     InterleaveLayoutKey key) {
   VMIInterleaveLayoutFact fact;
@@ -317,7 +319,7 @@ static VMIInterleaveLayoutFact materializeInterleaveLayoutFact(
   return fact;
 }
 
-static VMIVselrLayoutFact
+inline VMIVselrLayoutFact
 materializeVselrLayoutFact(MLIRContext *ctx,
                            const VselrLayoutPattern &pattern) {
   return VMIVselrLayoutFact{
@@ -326,14 +328,14 @@ materializeVselrLayoutFact(MLIRContext *ctx,
       materializeLayoutPattern(ctx, pattern.resultLayout)};
 }
 
-static FailureOr<int64_t> getPhysicalArityForLayout(VMIVRegType type,
+inline FailureOr<int64_t> getPhysicalArityForLayout(VMIVRegType type,
                                                      VMILayoutAttr layout) {
   auto assignedType = VMIVRegType::get(
       type.getContext(), type.getElementCount(), type.getElementType(), layout);
   return getVMIPhysicalArity(assignedType);
 }
 
-static bool matchesVselrLayoutPattern(const VselrLayoutPattern &pattern,
+inline bool matchesVselrLayoutPattern(const VselrLayoutPattern &pattern,
                                       VMIVselrOp op,
                                       const VMIVselrLayoutFact &fact) {
   auto sourceType = cast<VMIVRegType>(op.getSource().getType());
@@ -372,3 +374,5 @@ static bool matchesVselrLayoutPattern(const VselrLayoutPattern &pattern,
          matchesPhysicalChunkCountPattern(pattern.indexChunks, *indexArity) &&
          matchesPhysicalChunkCountPattern(pattern.resultChunks, *resultArity);
 }
+
+#endif // VMILAYOUTSUPPORTMATERIALIZATION_INC

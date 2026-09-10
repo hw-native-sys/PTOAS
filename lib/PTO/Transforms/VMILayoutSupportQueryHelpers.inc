@@ -6,6 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#ifndef VMILAYOUTSUPPORTQUERYHELPERS_INC
+#define VMILAYOUTSUPPORTQUERYHELPERS_INC
 
 //===- VMILayoutSupportQueryHelpers.inc - VMI query helpers -*- C++ -*-===//
 //===----------------------------------------------------------------------===//
@@ -21,7 +23,7 @@ struct GroupBroadcastLoadQuery {
   unsigned elementBits;
 };
 
-static bool matchesGroupBroadcastLoadPattern(
+inline bool matchesGroupBroadcastLoadPattern(
     const GroupBroadcastLoadLayoutPattern &pattern,
     const GroupBroadcastLoadQuery &query) {
   return matchesGroupBlockPattern(pattern.block, query.key) &&
@@ -34,7 +36,7 @@ static bool matchesGroupBroadcastLoadPattern(
                               query.numGroups);
 }
 
-static VMIGroupBroadcastLoadLayoutFact materializeGroupBroadcastLoadFact(
+inline VMIGroupBroadcastLoadLayoutFact materializeGroupBroadcastLoadFact(
     const GroupBroadcastLoadLayoutPattern &pattern,
     const GroupBroadcastLoadQuery &query) {
   return {getGroupBlockClassFromPattern(pattern.block),
@@ -45,7 +47,7 @@ static VMIGroupBroadcastLoadLayoutFact materializeGroupBroadcastLoadFact(
           static_cast<int64_t>(query.elementBits)};
 }
 
-static bool matchesGroupBroadcastLoadDirectPattern(
+inline bool matchesGroupBroadcastLoadDirectPattern(
     const GroupBroadcastLoadDirectPattern &pattern,
     const GroupBroadcastLoadQuery &query) {
   return matchesElementCountPattern(pattern.numGroups, query.numGroups) &&
@@ -62,7 +64,7 @@ struct GroupStoreMaterializationQuery {
   std::optional<int64_t> rowStride;
 };
 
-static void appendMaterializableGroupStoreFacts(
+inline void appendMaterializableGroupStoreFacts(
     const VMILayoutSupport &support,
     const GroupStoreMaterializationQuery &query,
     SmallVectorImpl<VMIGroupStoreLayoutFact> &facts) {
@@ -75,7 +77,7 @@ static void appendMaterializableGroupStoreFacts(
     VMILayoutAttr useLayout =
         materializeLayoutPattern(ctx, pattern.valueLayout);
     bool duplicate = llvm::any_of(
-        facts, [&](const VMIGroupStoreLayoutFact &fact) {
+        facts, [useLayout](const VMIGroupStoreLayoutFact &fact) {
           return fact.valueLayout == useLayout;
         });
     if (!useLayout || duplicate) {
@@ -95,7 +97,7 @@ static void appendMaterializableGroupStoreFacts(
   }
 }
 
-static std::optional<VMIGroupStoreLayoutFact>
+inline std::optional<VMIGroupStoreLayoutFact>
 getPreferredGroupSlotStoreFact(const VMILayoutSupport &support,
                                VMIGroupStoreOp op, VMIVRegType valueType,
                                int64_t numGroups) {
@@ -118,7 +120,7 @@ getPreferredGroupSlotStoreFact(const VMILayoutSupport &support,
   return VMIGroupStoreLayoutFact{layout};
 }
 
-static const GroupStoreLayoutPattern *selectPreferredGroupStorePattern(
+inline const GroupStoreLayoutPattern *selectPreferredGroupStorePattern(
     VMIVRegType valueType, GroupLayoutKey key,
     std::optional<int64_t> rowStride) {
   const GroupStoreLayoutPattern *selected = nullptr;
@@ -143,7 +145,7 @@ static const GroupStoreLayoutPattern *selectPreferredGroupStorePattern(
 // Support-query adapters
 //===----------------------------------------------------------------------===//
 
-static LogicalResult getGroupReduceAddSupportImpl(VMIVRegType sourceType,
+inline LogicalResult getGroupReduceAddSupportImpl(VMIVRegType sourceType,
                                                   VMIMaskType maskType,
                                                   VMIVRegType resultType,
                                                   int64_t numGroups,
@@ -237,7 +239,7 @@ LogicalResult VMILayoutSupport::getGroupBroadcastSupport(
       sourceType, resultType, numGroups, reason)));
 }
 
-static LogicalResult getNarrowCastSupport(VMIVRegType sourceType,
+inline LogicalResult getNarrowCastSupport(VMIVRegType sourceType,
                                           VMIVRegType resultType,
                                           std::string *reason) {
   return success(succeeded(VMILayoutSupport().getCastLayoutFactForLayouts(
@@ -262,7 +264,7 @@ LogicalResult VMILayoutSupport::getExtFSupport(VMIExtFOp op,
 }
 
 template <typename OpT>
-static LogicalResult getExtISupportImpl(OpT op, std::string *reason) {
+inline LogicalResult getExtISupportImpl(OpT op, std::string *reason) {
   auto sourceType = cast<VMIVRegType>(op.getSource().getType());
   auto resultType = cast<VMIVRegType>(op.getResult().getType());
   return success(succeeded(VMILayoutSupport().getCastLayoutFactForLayouts(
@@ -286,3 +288,5 @@ VMILayoutSupport::getTruncISupport(VMITruncIOp op, std::string *reason) const {
                               cast<VMIVRegType>(op.getResult().getType()),
                               reason);
 }
+
+#endif // VMILAYOUTSUPPORTQUERYHELPERS_INC

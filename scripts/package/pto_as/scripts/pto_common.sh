@@ -270,28 +270,32 @@ softlinksRemove() {
   fi
 }
 
+# Keep wheel helpers POSIX-sh compatible: the CANN installer may source this
+# file from a /bin/sh process even though direct execution uses Bash.
+pto_find_wheel() {
+  local wheel_dir="$1"
+  local wheel_list wheel_count
+  wheel_list=$(find "${wheel_dir}" -maxdepth 1 -type f -name 'ptoas*.whl' -print 2>/dev/null)
+  wheel_count=$(printf '%s\n' "${wheel_list}" | sed '/^[[:space:]]*$/d' | wc -l)
+  if [ "${wheel_count}" -ne 1 ]; then
+    echo "[pto-as] expected exactly one PTOAS wheel in ${wheel_dir} (found ${wheel_count})" >&2
+    return 1
+  fi
+  printf '%s\n' "${wheel_list}"
+}
+
 pto_install_wheel() {
   local version_root="$1" share_info_dir="$2"
   local wheel_dir="${version_root}/tools/ptoas/wheels"
   local python_dir="${version_root}/tools/ptoas/python"
   local record="${version_root}/tools/ptoas/.ptoas-python.path"
-  local python_bin
+  local python_bin wheel
   python_bin=$(command -v "${PTOAS_PYTHON:-python3}" 2>/dev/null || true)
   if [ -z "${python_bin}" ]; then
     echo "[pto-as] Python interpreter is unavailable" >&2
     return 1
   fi
-  # Keep this function POSIX-sh compatible: the CANN installer may source this
-  # file from a /bin/sh process even though direct execution uses Bash.
-  local wheel_list wheel_count wheel
-  wheel_list=$(find "${wheel_dir}" -maxdepth 1 -type f -name 'ptoas*.whl' -print 2>/dev/null)
-  wheel_count=$(printf '%s\n' "${wheel_list}" | sed '/^[[:space:]]*$/d' | wc -l)
-  if [ "${wheel_count}" -ne 1 ]; then
-    echo "[pto-as] expected exactly one PTOAS wheel in ${wheel_dir}" >&2
-    rm -rf "${python_dir}"
-    return 1
-  fi
-  wheel=${wheel_list}
+  wheel=$(pto_find_wheel "${wheel_dir}") || return 1
   rm -rf "${python_dir}"
   mkdir -p "${python_dir}" "${share_info_dir}"
   if ! "${python_bin}" -m pip install --no-deps --upgrade --target "${python_dir}" "${wheel}"; then

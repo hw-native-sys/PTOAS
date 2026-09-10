@@ -41,9 +41,7 @@ LLVM_BUILD_DIR="${LLVM_BUILD_DIR:-${LLVM_SOURCE_DIR}/build-shared}"
 PTO_BUILD_DIR="${PTO_BUILD_DIR:-${PTO_SOURCE_DIR}/build}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 
-LLVM_DIR="${LLVM_BUILD_DIR}/lib/cmake/llvm"
-MLIR_DIR="${LLVM_BUILD_DIR}/lib/cmake/mlir"
-if [[ ! -d "${LLVM_DIR}" || ! -d "${MLIR_DIR}" ]]; then
+if [[ ! -d "${LLVM_BUILD_DIR}/lib/cmake/llvm" || ! -d "${LLVM_BUILD_DIR}/lib/cmake/mlir" ]]; then
   echo "LLVM/MLIR CMake packages not found under: ${LLVM_BUILD_DIR}" >&2
   echo "Set LLVM_BUILD_DIR to an existing LLVM build directory." >&2
   exit 1
@@ -64,8 +62,8 @@ LLVM_BUILD_DIR="${LLVM_BUILD_DIR}" \
   "${PYTHON_BIN}" -m pip install --editable "${PTO_SOURCE_DIR}" \
     --no-build-isolation "${PIP_VERBOSE[@]}" \
     --config-settings="build-dir=${PTO_BUILD_DIR}" \
-    --config-settings="cmake.define.LLVM_DIR=${LLVM_DIR}" \
-    --config-settings="cmake.define.MLIR_DIR=${MLIR_DIR}"
+    --config-settings="cmake.define.LLVM_DIR=${LLVM_BUILD_DIR}/lib/cmake/llvm" \
+    --config-settings="cmake.define.MLIR_DIR=${LLVM_BUILD_DIR}/lib/cmake/mlir"
 
 echo "PTOAS editable install complete."
 echo "Build directory: ${PTO_BUILD_DIR}"

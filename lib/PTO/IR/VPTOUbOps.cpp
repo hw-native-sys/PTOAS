@@ -8,9 +8,7 @@
 
 //===- VPTOUbOps.cpp --------------------------------------------------===//
 
-#include "PTO/IR/PTO.h"
-
-#include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "VPTOInternal.h"
 
 using namespace mlir;
 

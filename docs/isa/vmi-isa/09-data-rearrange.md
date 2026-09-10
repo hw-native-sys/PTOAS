@@ -67,19 +67,13 @@
 - **semantics:** Deinterleave a paired-source by even/odd lanes (AoS → SoA).
 
   ```c
-  // lhs, rhs treated as pairs: (lhs[0], rhs[0]), (lhs[1], rhs[1]), ...
-  // even = {lhs[0], lhs[2], lhs[4], ...} (all even-indexed slots from paired stream)
-  // odd  = {lhs[1], lhs[3], lhs[5], ...} (all odd-indexed slots from paired stream)
-  // More precisely:
-  // low  = {lhs[0], lhs[1], lhs[2], lhs[3], ...}   ← original even slots from each pair
-  // high = {rhs[0], rhs[1], rhs[2], rhs[3], ...}   ← original odd slots from each pair
-  // After deinterleaving:
-  // even[i] = (i % 2 == 0) ? lhs[i/2] : rhs[i/2]  — this is the vintlv inverse
+  // even = {lhs[0], lhs[2], ..., lhs[L-2], rhs[0], rhs[2], ..., rhs[L-2]}
+  // odd  = {lhs[1], lhs[3], ..., lhs[L-1], rhs[1], rhs[3], ..., rhs[L-1]}
   for (int i = 0; i < L/2; i++) {
-      even[i]         = lhs[2*i];      // even slots of paired input
-      even[L/2 + i]   = lhs[2*i + 1];
-      odd[i]          = rhs[2*i];      // odd slots of paired input
-      odd[L/2 + i]    = rhs[2*i + 1];
+      even[i]       = lhs[2*i];      // even-indexed slots of lhs
+      even[L/2 + i] = rhs[2*i];      // even-indexed slots of rhs
+      odd[i]        = lhs[2*i + 1];  // odd-indexed slots of lhs
+      odd[L/2 + i]  = rhs[2*i + 1];  // odd-indexed slots of rhs
   }
   ```
 

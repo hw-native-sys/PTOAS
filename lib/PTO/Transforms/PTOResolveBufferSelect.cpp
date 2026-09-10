@@ -50,6 +50,16 @@ constexpr int64_t kSFractal512 = 512;
 constexpr int64_t kSFractal32 = 32;
 constexpr int64_t kFractalInnerDimension = 16;
 constexpr int64_t kSFractal32InnerColumnCount = 2;
+// Values mirror the pto-isa layout enums in pto/common/type.hpp:
+// BLayout has RowMajor=0 and ColMajor=1; SLayout has NoneBox=0,
+// RowMajor=1 and ColMajor=2.
+constexpr int32_t kBLayoutColMajor = 1;
+constexpr int32_t kSlayoutNoneBox = 0;
+constexpr int32_t kSlayoutRowMajor = 1;
+constexpr int32_t kSlayoutColMajor = 2;
+// Tile shape / valid-shape dimension indices: dim0 = row, dim1 = col.
+constexpr unsigned kDim0 = 0;
+constexpr unsigned kDim1 = 1;
 constexpr uint64_t kCubeTileAddressAlignmentBytes = 512;
 constexpr uint64_t kVectorTileAddressAlignmentBytes = 32;
 constexpr unsigned kI64BitWidth = 64;
@@ -87,12 +97,14 @@ static bool getTilePointerStrides(pto::TileBufType type, int64_t &rowStride,
   auto config = type.getConfigAttr();
   int32_t bl = static_cast<int32_t>(config.getBLayout().getValue());
   int32_t sl = static_cast<int32_t>(config.getSLayout().getValue());
-  if (sl == 0) {
+  if (sl == kSlayoutNoneBox) {
     bool rowPlusOne =
         type.getCompactModeI32() ==
         static_cast<int32_t>(pto::CompactMode::RowPlusOne);
-    rowStride = bl == 1 ? 1 : shape[1] + (rowPlusOne ? 1 : 0);
-    colStride = bl == 1 ? shape[0] + (rowPlusOne ? 1 : 0) : 1;
+    rowStride =
+        bl == kBLayoutColMajor ? 1 : shape[kDim1] + (rowPlusOne ? 1 : 0);
+    colStride =
+        bl == kBLayoutColMajor ? shape[kDim0] + (rowPlusOne ? 1 : 0) : 1;
     return true;
   }
 
@@ -109,30 +121,30 @@ static bool getTilePointerStrides(pto::TileBufType type, int64_t &rowStride,
   } else if (fractal == kSFractal32) {
     innerRows = kFractalInnerDimension;
     innerCols = kSFractal32InnerColumnCount;
-  } else if (fractal == kSFractal512 && sl == 1) {
+  } else if (fractal == kSFractal512 && sl == kSlayoutRowMajor) {
     innerRows = kFractalInnerDimension;
     innerCols = kSFractal32 / elemBytes;
-  } else if (fractal == kSFractal512 && sl == 2) {
+  } else if (fractal == kSFractal512 && sl == kSlayoutColMajor) {
     innerRows = kSFractal32 / elemBytes;
     innerCols = kFractalInnerDimension;
   } else {
     return false;
   }
 
-  if (bl == 1) {
-    if (sl != 1) {
+  if (bl == kBLayoutColMajor) {
+    if (sl != kSlayoutRowMajor) {
       return false;
     }
     rowStride = innerCols;
     colStride =
-        shape[0] +
+        shape[kDim0] +
         (type.getCompactModeI32() ==
                  static_cast<int32_t>(pto::CompactMode::RowPlusOne)
              ? 1
              : 0);
   } else {
     rowStride =
-        shape[1] +
+        shape[kDim1] +
         (type.getCompactModeI32() ==
                  static_cast<int32_t>(pto::CompactMode::RowPlusOne)
              ? 1
@@ -251,7 +263,7 @@ static pto::TileBufType getSubviewPhysicalType(pto::SubViewOp op) {
 static Value getSubviewValidOperand(pto::SubViewOp op,
                                     pto::TileBufType physicalType,
                                     unsigned dim, IRRewriter &rewriter) {
-  Value operand = dim == 0 ? op.getValidRow() : op.getValidCol();
+  Value operand = dim == kDim0 ? op.getValidRow() : op.getValidCol();
   ArrayRef<int64_t> validShape = physicalType.getValidShape();
   if (validShape.size() <= dim || validShape[dim] >= 0) {
     return {};
@@ -283,8 +295,8 @@ static LogicalResult resolveTileNativeSubviews(ModuleOp module,
     pto::TileBufType physicalType = getSubviewPhysicalType(op);
     auto alloc = rewriter.create<pto::AllocTileOp>(
         op.getLoc(), physicalType, addr,
-        getSubviewValidOperand(op, physicalType, 0, rewriter),
-        getSubviewValidOperand(op, physicalType, 1, rewriter));
+        getSubviewValidOperand(op, physicalType, kDim0, rewriter),
+        getSubviewValidOperand(op, physicalType, kDim1, rewriter));
     alloc->setAttr("pto.view_semantics", rewriter.getStringAttr("subview"));
     rewriter.replaceOp(op, alloc.getResult());
   }

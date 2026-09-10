@@ -46,6 +46,72 @@ BufidSyncCodegen::getOpTypeAttr(Builder &builder,
   return pto::PipeEventTypeAttr::get(builder.getContext(), opType);
 }
 
+void BufidSyncCodegen::sortSyncOperations(
+    SmallVector<BufSyncOperation> &pipeBefore,
+    SmallVector<BufSyncOperation> &pipeAfter) const {
+  auto physicalIdFor = [this](const BufSyncOperation &sync) {
+    return idAlloc_.getLogicToPhysical().lookup(sync.logicId);
+  };
+  std::sort(pipeBefore.begin(), pipeBefore.end(),
+            [&physicalIdFor](const BufSyncOperation &a, const BufSyncOperation &b) {
+              return std::make_tuple(physicalIdFor(a),
+                                     static_cast<int>(a.pipe), a.logicId) <
+                     std::make_tuple(physicalIdFor(b),
+                                     static_cast<int>(b.pipe), b.logicId);
+            });
+  std::sort(pipeAfter.begin(), pipeAfter.end(),
+            [&physicalIdFor](const BufSyncOperation &a, const BufSyncOperation &b) {
+              return std::make_tuple(physicalIdFor(a),
+                                     static_cast<int>(a.pipe), a.logicId) >
+                     std::make_tuple(physicalIdFor(b),
+                                     static_cast<int>(b.pipe), b.logicId);
+            });
+}
+
+LogicalResult BufidSyncCodegen::emitGetBufOps(
+    Operation *op, IRRewriter &rewriter,
+    const SmallVector<BufSyncOperation> &pipeBefore) const {
+  for (auto &syncBefore : pipeBefore) {
+    int physicalId = idAlloc_.getLogicToPhysical().lookup(syncBefore.logicId);
+    auto syncOpType = mapPipelineToSyncOpType(syncBefore.pipe);
+    if (!syncOpType) {
+      op->emitError("bufid_sync cannot encode get_buf for unsupported pipe ")
+          << static_cast<int>(syncBefore.pipe);
+      return failure();
+    }
+
+    rewriter.setInsertionPoint(op);
+    auto opTypeAttr = getOpTypeAttr(rewriter, *syncOpType);
+    rewriter.create<pto::GetBufOp>(op->getLoc(), opTypeAttr,
+                                   static_cast<uint32_t>(physicalId), 0);
+  }
+  return success();
+}
+
+LogicalResult BufidSyncCodegen::emitRlsBufOps(
+    Operation *op, IRRewriter &rewriter,
+    const SmallVector<BufSyncOperation> &pipeAfter) const {
+  for (auto &syncAfter : pipeAfter) {
+    int physicalId = idAlloc_.getLogicToPhysical().lookup(syncAfter.logicId);
+    auto syncOpType = mapPipelineToSyncOpType(syncAfter.pipe);
+    if (!syncOpType) {
+      op->emitError("bufid_sync cannot encode rls_buf for unsupported pipe ")
+          << static_cast<int>(syncAfter.pipe);
+      return failure();
+    }
+
+    if (op->hasTrait<OpTrait::IsTerminator>()) {
+      rewriter.setInsertionPoint(op);
+    } else {
+      rewriter.setInsertionPointAfter(op);
+    }
+    Attribute opTypeAttr = getOpTypeAttr(rewriter, *syncOpType);
+    rewriter.create<pto::RlsBufOp>(op->getLoc(), opTypeAttr,
+                                   static_cast<uint32_t>(physicalId), 0);
+  }
+  return success();
+}
+
 LogicalResult BufidSyncCodegen::run() {
   MLIRContext *ctx = func_->getContext();
   IRRewriter rewriter(ctx);
@@ -61,56 +127,11 @@ LogicalResult BufidSyncCodegen::run() {
                                              build.pipeBefore.end());
     SmallVector<BufSyncOperation> pipeAfter(build.pipeAfter.begin(),
                                             build.pipeAfter.end());
-    auto physicalIdFor = [this](const BufSyncOperation &sync) {
-      return idAlloc_.getLogicToPhysical().lookup(sync.logicId);
-    };
-    std::sort(pipeBefore.begin(), pipeBefore.end(),
-              [&physicalIdFor](const BufSyncOperation &a, const BufSyncOperation &b) {
-                return std::make_tuple(physicalIdFor(a),
-                                       static_cast<int>(a.pipe), a.logicId) <
-                       std::make_tuple(physicalIdFor(b),
-                                       static_cast<int>(b.pipe), b.logicId);
-              });
-    std::sort(pipeAfter.begin(), pipeAfter.end(),
-              [&physicalIdFor](const BufSyncOperation &a, const BufSyncOperation &b) {
-                return std::make_tuple(physicalIdFor(a),
-                                       static_cast<int>(a.pipe), a.logicId) >
-                       std::make_tuple(physicalIdFor(b),
-                                       static_cast<int>(b.pipe), b.logicId);
-              });
+    sortSyncOperations(pipeBefore, pipeAfter);
 
-    for (auto &syncBefore : pipeBefore) {
-      int physicalId = idAlloc_.getLogicToPhysical().lookup(syncBefore.logicId);
-      auto syncOpType = mapPipelineToSyncOpType(syncBefore.pipe);
-      if (!syncOpType) {
-        op->emitError("bufid_sync cannot encode get_buf for unsupported pipe ")
-            << static_cast<int>(syncBefore.pipe);
-        return WalkResult::interrupt();
-      }
-
-      rewriter.setInsertionPoint(op);
-      auto opTypeAttr = getOpTypeAttr(rewriter, *syncOpType);
-      rewriter.create<pto::GetBufOp>(op->getLoc(), opTypeAttr,
-                                     static_cast<uint32_t>(physicalId), 0);
-    }
-
-    for (auto &syncAfter : pipeAfter) {
-      int physicalId = idAlloc_.getLogicToPhysical().lookup(syncAfter.logicId);
-      auto syncOpType = mapPipelineToSyncOpType(syncAfter.pipe);
-      if (!syncOpType) {
-        op->emitError("bufid_sync cannot encode rls_buf for unsupported pipe ")
-            << static_cast<int>(syncAfter.pipe);
-        return WalkResult::interrupt();
-      }
-
-      if (op->hasTrait<OpTrait::IsTerminator>()) {
-        rewriter.setInsertionPoint(op);
-      } else {
-        rewriter.setInsertionPointAfter(op);
-      }
-      Attribute opTypeAttr = getOpTypeAttr(rewriter, *syncOpType);
-      rewriter.create<pto::RlsBufOp>(op->getLoc(), opTypeAttr,
-                                     static_cast<uint32_t>(physicalId), 0);
+    if (failed(emitGetBufOps(op, rewriter, pipeBefore)) ||
+        failed(emitRlsBufOps(op, rewriter, pipeAfter))) {
+      return WalkResult::interrupt();
     }
 
     return WalkResult::advance();

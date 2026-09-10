@@ -79,12 +79,12 @@ private:
   LogicalResult materializePrimary(Value value,
                                    const VMIValueLayoutAssignment &assignment,
                                    RewriterBase &rewriter,
-                                   DenseMap<Value, Value> &assignedValues);
+                                   DenseMap<Value, Value> &assignedValues) const;
   FailureOr<Value> materializeAt(Value source, VMILayoutAttr layout,
                                  RewriterBase &rewriter, Location loc) const;
   LogicalResult materializeUseConflict(Value assignedValue,
                                        VMILayoutConflict conflict,
-                                       RewriterBase &rewriter);
+                                       RewriterBase &rewriter) const;
 
   Operation *scope = nullptr;
   MLIRContext *ctx = nullptr;

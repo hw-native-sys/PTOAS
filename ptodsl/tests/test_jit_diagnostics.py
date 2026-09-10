@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# coding=utf-8
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -148,6 +149,13 @@ def vmi_float_vcadd_none_reassoc_probe():
     src = pto.vmi.vbrc(pto.f32(0.0), size=64)
     mask = pto.vmi.create_mask(64, size=64)
     _ = pto.vmi.vcadd(src, mask, reassoc=None)
+
+
+@pto.jit(target="a5")
+def vmi_float_vcadd_false_reassoc_probe():
+    src = pto.vmi.vbrc(pto.f32(0.0), size=64)
+    mask = pto.vmi.create_mask(64, size=64)
+    _ = pto.vmi.vcadd(src, mask, reassoc=False)
 
 
 @pto.jit(target="a5")
@@ -776,14 +784,21 @@ def main() -> None:
         "pto.vmi.vcadd(...)",
         "floating-point vectors",
         "reassoc",
-        "reassoc=True or reassoc=False",
+        "reassoc=True",
     )
     expect_raises(
         vmi_float_vcadd_none_reassoc_probe.compile,
         TypeError,
         "pto.vmi.vcadd(...)",
-        "True or False",
+        "only reassoc=True",
         "received None",
+    )
+    expect_raises(
+        vmi_float_vcadd_false_reassoc_probe.compile,
+        TypeError,
+        "pto.vmi.vcadd(...)",
+        "only reassoc=True",
+        "received False",
     )
     expect_raises(
         vmi_vbrc_untyped_scalar_probe.compile,

@@ -297,20 +297,20 @@ one-to-N to `pto.vaddc` and `pto.vaddcs` respectively.
 
 ### `pto.vmi.vshl` / `pto.vmi.vshr`
 
-- **semantics:** Elementwise left shift (`vshl`) or unsigned right shift (`vshr`). The shift count is per-lane from `rhs`.
+- **semantics:** Elementwise left shift (`vshl`) or right shift (`vshr`). The shift count is per-lane from `rhs`. For `vshr`, signed elements use arithmetic right shift, while unsigned and signless elements use logical right shift.
 
   ```c
   for (int i = 0; i < L; i++)
       dst[i] = mask[i] ? (lhs[i] << rhs[i]) : (pmode_merge ? dst_old[i] : 0);  // vshl
   for (int i = 0; i < L; i++)
-      dst[i] = mask[i] ? (lhs[i] >> rhs[i]) : (pmode_merge ? dst_old[i] : 0);  // vshr (unsigned)
+      dst[i] = mask[i] ? (lhs[i] >> rhs[i]) : (pmode_merge ? dst_old[i] : 0);  // vshr (signed: arithmetic; unsigned: logical)
   ```
 
 - **syntax:**
   ```mlir
   %r = pto.vmi.vshl %lhs, %rhs, %mask : !pto.vmi.vreg<L×T>, !pto.vmi.vreg<L×T>, !pto.vmi.mask<L> -> !pto.vmi.vreg<L×T>
   ```
-- **datatypes:** `i8`–`i32`
+- **datatypes:** `si8`/`si16`/`si32` and `ui8`/`ui16`/`ui32`
 - **lowering to `pto.mi`:**
   ```
   K × pto.vshl / pto.vshr
@@ -392,10 +392,10 @@ scalar type must match the vector element type.
   ```mlir
   %r = pto.vmi.vshls %src, %shift, %mask : !pto.vmi.vreg<L×T>, i16, !pto.vmi.mask<L> -> !pto.vmi.vreg<L×T>
   ```
-- **datatypes:** `T` is an integer type from 8 to 32 bits. The uniform shift
-  amount is a signless `i16` value independent of `T` and should be in the
-  range `[0, bitwidth(T))`. For `vshrs`, the signedness of `T` determines
-  whether the right shift is arithmetic or logical.
+- **datatypes:** `si8`/`si16`/`si32` and `ui8`/`ui16`/`ui32`. The uniform shift
+  amount is a `ui16` value independent of `T` and should be in the
+  range `[0, bitwidth(T))`. For `vshrs`, signed elements use arithmetic right
+  shift, while unsigned and signless elements use logical right shift.
 - **lowering to `pto.mi`:**
   ```
   K × pto.vshls / pto.vshrs
@@ -628,10 +628,9 @@ scalar type must match the vector element type.
 
 ---
 
-## 3.7 Carry / Borrow Ops (Not Provided)
+## 3.7 Borrow Ops (Not Provided)
 
-Vector carry/borrow arithmetic (e.g. multi-word add-with-carry across
-lanes) is **not provided** on the current surface. It will be added directly
+borrow arithmetic  is **not provided** on the current surface. It will be added directly
 as `i64` element-wise ops once the `i64` support plan is finalized and the
 hardware path is confirmed. Until then, widening to `i64` scalar emulation
 or fusing at the `pto.mi` layer is the workaround.

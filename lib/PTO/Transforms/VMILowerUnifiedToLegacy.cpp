@@ -720,17 +720,12 @@ static LogicalResult lowerPge(VMIPgeOp op, OpBuilder &builder) {
   int64_t numLanes = 16;
   if (pattern.starts_with("PAT_VL")) {
     StringRef numStr = pattern.drop_front(6); // strlen("PAT_VL")
-    if (!numStr.empty()) {
-      int64_t parsed = 0;
-      for (char c : numStr) {
-        if (c < '0' || c > '9') {
-          break;
-        }
-        parsed = parsed * kDecimalRadix + (c - '0');
-      }
-      if (parsed > 0) {
-        numLanes = parsed;
-      }
+    int64_t parsed = 0;
+    bool hasValidLaneCount =
+        !numStr.empty() && !numStr.getAsInteger(kDecimalRadix, parsed) &&
+        parsed > 0;
+    if (hasValidLaneCount) {
+      numLanes = parsed;
     }
   }
 

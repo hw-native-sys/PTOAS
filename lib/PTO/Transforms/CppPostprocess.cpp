@@ -108,6 +108,55 @@ static bool parseLastUseMarkerName(llvm::StringRef markerName,
   return !lastUseArgs.empty();
 }
 
+static size_t findMarkerLparen(const std::string &cpp, size_t searchFrom) {
+  size_t lparenPos = searchFrom;
+  while (lparenPos < cpp.size() && cpp[lparenPos] != '(') {
+    ++lparenPos;
+  }
+  return lparenPos;
+}
+
+static size_t findMatchingRparen(const std::string &cpp, size_t argsBegin) {
+  int parenDepth = 0;
+  for (size_t i = argsBegin; i < cpp.size(); ++i) {
+    char c = cpp[i];
+    if (c == '(') {
+      ++parenDepth;
+      continue;
+    }
+    if (c != ')') {
+      continue;
+    }
+    if (parenDepth == 0) {
+      return i;
+    }
+    --parenDepth;
+  }
+  return std::string::npos;
+}
+
+static std::string
+buildLastUseReplacement(const std::string &callee, const std::string &lastUseArgs,
+                        const llvm::SmallVectorImpl<llvm::StringRef> &args,
+                        size_t argsRefSize) {
+  std::string replacement;
+  replacement.reserve(callee.size() + lastUseArgs.size() + argsRefSize +
+                      kLastUseReplacementReserve);
+  replacement.append("[[pto::last_use(");
+  replacement.append(lastUseArgs);
+  replacement.append(")]] ");
+  replacement.append(callee);
+  replacement.push_back('(');
+  for (size_t i = 0; i < args.size(); ++i) {
+    if (i != 0) {
+      replacement.append(", ");
+    }
+    replacement.append(args[i].str());
+  }
+  replacement.push_back(')');
+  return replacement;
+}
+
 } // namespace
 
 bool rewriteLastUseMarkersInCpp(std::string &cpp) {
@@ -120,41 +169,23 @@ bool rewriteLastUseMarkersInCpp(std::string &cpp) {
       break;
     }
 
-    size_t lparenPos = markerPos + kPrefix.size();
-    while (lparenPos < cpp.size() && cpp[lparenPos] != '(') {
-      ++lparenPos;
-    }
+    size_t lparenPos = findMarkerLparen(cpp, markerPos + kPrefix.size());
     if (lparenPos >= cpp.size()) {
       searchPos = markerPos + 1;
       continue;
     }
 
-    ParsedMarkerCall call{markerPos, std::string::npos, {}};
     size_t argsBegin = lparenPos + 1;
-    int parenDepth = 0;
-    for (size_t i = argsBegin; i < cpp.size(); ++i) {
-      char c = cpp[i];
-      if (c == '(') {
-        ++parenDepth;
-        continue;
-      }
-      if (c != ')') {
-        continue;
-      }
-      if (parenDepth == 0) {
-        call.rparenPos = i;
-        break;
-      }
-      --parenDepth;
-    }
-    if (call.rparenPos == std::string::npos) {
+    size_t rparenPos = findMatchingRparen(cpp, argsBegin);
+    if (rparenPos == std::string::npos) {
       searchPos = markerPos + 1;
       continue;
     }
 
-    llvm::StringRef argsRef(cpp.data() + argsBegin, call.rparenPos - argsBegin);
+    llvm::StringRef argsRef(cpp.data() + argsBegin, rparenPos - argsBegin);
+    ParsedMarkerCall call{markerPos, rparenPos, {}};
     if (!parseMarkerArgs(argsRef, call.args)) {
-      searchPos = call.rparenPos + 1;
+      searchPos = rparenPos + 1;
       continue;
     }
 
@@ -162,27 +193,14 @@ bool rewriteLastUseMarkersInCpp(std::string &cpp) {
     std::string callee;
     std::string lastUseArgs;
     if (!parseLastUseMarkerName(markerName, callee, lastUseArgs)) {
-      searchPos = call.rparenPos + 1;
+      searchPos = rparenPos + 1;
       continue;
     }
 
-    std::string replacement;
-    replacement.reserve(callee.size() + lastUseArgs.size() + argsRef.size() +
-                        kLastUseReplacementReserve);
-    replacement.append("[[pto::last_use(");
-    replacement.append(lastUseArgs);
-    replacement.append(")]] ");
-    replacement.append(callee);
-    replacement.push_back('(');
-    for (size_t i = 0; i < call.args.size(); ++i) {
-      if (i != 0) {
-        replacement.append(", ");
-      }
-      replacement.append(call.args[i].str());
-    }
-    replacement.push_back(')');
+    std::string replacement = buildLastUseReplacement(callee, lastUseArgs,
+                                                      call.args, argsRef.size());
 
-    cpp.replace(markerPos, (call.rparenPos - markerPos) + 1, replacement);
+    cpp.replace(markerPos, (rparenPos - markerPos) + 1, replacement);
     changed = true;
     searchPos = markerPos + replacement.size();
   }

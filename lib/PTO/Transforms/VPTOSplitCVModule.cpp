@@ -93,7 +93,7 @@ static bool hasCVSections(ModuleOp module) {
     if (found || !isSectionSplitCandidate(funcOp)) {
       return WalkResult::advance();
     }
-    WalkResult result = funcOp.walk([&](Operation *op) {
+    WalkResult result = funcOp.walk([&found](Operation *op) {
       if (isa<SectionCubeOp, SectionVectorOp>(op)) {
         found = true;
         return WalkResult::interrupt();
@@ -112,7 +112,7 @@ static bool hasSectionKind(ModuleOp module, FunctionKernelKind kind) {
     if (found || !isSectionSplitCandidate(funcOp)) {
       return WalkResult::advance();
     }
-    WalkResult result = funcOp.walk([&](Operation *op) {
+    WalkResult result = funcOp.walk([&found, &kind](Operation *op) {
       bool matches = kind == FunctionKernelKind::Cube
                          ? isa<SectionCubeOp>(op)
                          : isa<SectionVectorOp>(op);

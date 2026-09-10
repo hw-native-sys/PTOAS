@@ -88,8 +88,13 @@ FailureOr<Value> packCopyGmToUbConfig0(Operation *anchor, ValueRange operands) {
     return failure();
   }
 
-  SmallVector<std::pair<Value, uint64_t>, 6> fields = {{operands[3], 4},  {operands[4], 25}, {operands[5], 46},
-                                                       {operands[6], 52}, {operands[7], 58}, {operands[8], 60}};
+  SmallVector<std::pair<Value, uint64_t>, 6> fields = {
+      {operands[3], 4},
+      {operands[4], 25},
+      {operands[5], 46},
+      {operands[6], 52},
+      {operands[7], 58},
+      {operands[8], 60}};
   return packShiftedFields(anchor, operands[2], fields);
 }
 
@@ -165,102 +170,102 @@ FailureOr<Value> packCopyUbToCbufConfig(Operation *anchor, ValueRange operands) 
   return packCopyCbufToUbConfig(anchor, operands);
 }
 
-FailureOr<Value> packCopyGmToCbufConfig0(Operation *anchor, Value nBurst, Value lenBurst) {
-  OpBuilder builder(anchor);
-  builder.setInsertionPoint(anchor);
-  Location loc = anchor->getLoc();
+namespace {
+// Shared plumbing for the copy/load config packers: an insertion-point
+// builder plus the i64 operand conversion and shifted-field composition
+// helpers shared by every config layout.
+class ConfigPacker {
+public:
+  explicit ConfigPacker(Operation *anchor) : anchor(anchor), builder(anchor), loc(anchor->getLoc()) {
+    builder.setInsertionPoint(anchor);
+  }
 
-  Value nBurstI64 = castIntegerLikeTo(anchor, nBurst, builder.getI64Type());
-  Value lenBurstI64 = castIntegerLikeTo(anchor, lenBurst, builder.getI64Type());
+  Value i64Constant(uint64_t value) { return getI64Constant(builder, loc, value); }
+
+  Value i64Operand(ValueRange operands, unsigned idx) {
+    return castIntegerLikeTo(anchor, operands[idx], builder.getI64Type());
+  }
+
+  Value i64Operand(Value operand) { return castIntegerLikeTo(anchor, operand, builder.getI64Type()); }
+
+  Value shl(Value value, uint64_t amount) {
+    return builder.create<arith::ShLIOp>(loc, value, i64Constant(amount));
+  }
+
+  Value bitOr(Value lhs, Value rhs) { return builder.create<arith::OrIOp>(loc, lhs, rhs); }
+
+private:
+  Operation *anchor;
+  OpBuilder builder;
+  Location loc;
+};
+} // namespace
+
+FailureOr<Value> packCopyGmToCbufConfig0(Operation *anchor, Value nBurst, Value lenBurst) {
+  ConfigPacker packer(anchor);
+  Value nBurstI64 = packer.i64Operand(nBurst);
+  Value lenBurstI64 = packer.i64Operand(lenBurst);
   if (!nBurstI64 || !lenBurstI64) {
     return failure();
   }
-
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value, getI64Constant(builder, loc, amount));
-  };
-  auto bitOr = [&](Value lhs, Value rhs) -> Value { return builder.create<arith::OrIOp>(loc, lhs, rhs); };
-
-  Value config0 = getI64Constant(builder, loc, 0); // sid
-  config0 = bitOr(config0, shl(nBurstI64, 4));     // burst_num[24:4]
-  config0 = bitOr(config0, shl(lenBurstI64, 25));  // burst_len[45:25]
+  Value config0 = packer.i64Constant(0); // sid
+  config0 = packer.bitOr(config0, packer.shl(nBurstI64, 4));     // burst_num[24:4]
+  config0 = packer.bitOr(config0, packer.shl(lenBurstI64, 25));  // burst_len[45:25]
   return config0;
 }
 
-FailureOr<Value> packCopyGmToCbufConfig1(Operation *anchor, Value srcStride, Value dstStride) {
-  OpBuilder builder(anchor);
-  builder.setInsertionPoint(anchor);
-  Location loc = anchor->getLoc();
-
-  Value srcStrideI64 = castIntegerLikeTo(anchor, srcStride, builder.getI64Type());
-  Value dstStrideI64 = castIntegerLikeTo(anchor, dstStride, builder.getI64Type());
+// Packs a (srcStride, dstStride) pair with the dst field shifted by dstShift;
+// shared by the copy_gm_to_cbuf config1 and load_cbuf_to_* config1 layouts.
+static FailureOr<Value> packSrcDstStrides(Operation *anchor, Value srcStride, Value dstStride, uint64_t dstShift) {
+  ConfigPacker packer(anchor);
+  Value srcStrideI64 = packer.i64Operand(srcStride);
+  Value dstStrideI64 = packer.i64Operand(dstStride);
   if (!srcStrideI64 || !dstStrideI64) {
     return failure();
   }
+  return packer.bitOr(srcStrideI64, packer.shl(dstStrideI64, dstShift));
+}
 
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value, getI64Constant(builder, loc, amount));
-  };
-  auto bitOr = [&](Value lhs, Value rhs) -> Value { return builder.create<arith::OrIOp>(loc, lhs, rhs); };
-
+FailureOr<Value> packCopyGmToCbufConfig1(Operation *anchor, Value srcStride, Value dstStride) {
   // config1 packs burst_src_stride[39:0] and burst_dst_stride[60:40].
-  return bitOr(srcStrideI64, shl(dstStrideI64, 40));
+  return packSrcDstStrides(anchor, srcStride, dstStride, 40);
 }
 
 FailureOr<Value> packCopyGmToCbufMultiConfig0(Operation *anchor, Value sid, Value loop1SrcStride, Value l2CacheCtl,
                                               Value nValue) {
-  OpBuilder builder(anchor);
-  builder.setInsertionPoint(anchor);
-  Location loc = anchor->getLoc();
-
-  Value sidI64 = castIntegerLikeTo(anchor, sid, builder.getI64Type());
-  Value loop1SrcStrideI64 = castIntegerLikeTo(anchor, loop1SrcStride, builder.getI64Type());
-  Value l2CacheCtlI64 = castIntegerLikeTo(anchor, l2CacheCtl, builder.getI64Type());
-  Value nValueI64 = castIntegerLikeTo(anchor, nValue, builder.getI64Type());
+  ConfigPacker packer(anchor);
+  Value sidI64 = packer.i64Operand(sid);
+  Value loop1SrcStrideI64 = packer.i64Operand(loop1SrcStride);
+  Value l2CacheCtlI64 = packer.i64Operand(l2CacheCtl);
+  Value nValueI64 = packer.i64Operand(nValue);
   if (!sidI64 || !loop1SrcStrideI64 || !l2CacheCtlI64 || !nValueI64) {
     return failure();
   }
-
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value, getI64Constant(builder, loc, amount));
-  };
-  auto bitOr = [&](Value lhs, Value rhs) -> Value { return builder.create<arith::OrIOp>(loc, lhs, rhs); };
-
   Value config0 = sidI64;
-  config0 = bitOr(config0, shl(loop1SrcStrideI64, 4));
-  config0 = bitOr(config0, shl(l2CacheCtlI64, 44));
-  config0 = bitOr(config0, shl(nValueI64, 48));
+  config0 = packer.bitOr(config0, packer.shl(loop1SrcStrideI64, 4));
+  config0 = packer.bitOr(config0, packer.shl(l2CacheCtlI64, 44));
+  config0 = packer.bitOr(config0, packer.shl(nValueI64, 48));
   return config0;
 }
 
 FailureOr<Value> packCopyGmToCbufMultiConfig1(Operation *anchor, Value dValue, Value loop4SrcStride, Value smallC0En) {
-  OpBuilder builder(anchor);
-  builder.setInsertionPoint(anchor);
-  Location loc = anchor->getLoc();
-
-  Value dValueI64 = castIntegerLikeTo(anchor, dValue, builder.getI64Type());
-  Value loop4SrcStrideI64 = castIntegerLikeTo(anchor, loop4SrcStride, builder.getI64Type());
-  Value smallC0EnI64 = castIntegerLikeTo(anchor, smallC0En, builder.getI64Type());
+  ConfigPacker packer(anchor);
+  Value dValueI64 = packer.i64Operand(dValue);
+  Value loop4SrcStrideI64 = packer.i64Operand(loop4SrcStride);
+  Value smallC0EnI64 = packer.i64Operand(smallC0En);
   if (!dValueI64 || !loop4SrcStrideI64 || !smallC0EnI64) {
     return failure();
   }
-
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value, getI64Constant(builder, loc, amount));
-  };
-  auto bitOr = [&](Value lhs, Value rhs) -> Value { return builder.create<arith::OrIOp>(loc, lhs, rhs); };
-
   Value config1 = dValueI64;
-  config1 = bitOr(config1, shl(loop4SrcStrideI64, 21));
-  config1 = bitOr(config1, shl(smallC0EnI64, 61));
+  config1 = packer.bitOr(config1, packer.shl(loop4SrcStrideI64, 21));
+  config1 = packer.bitOr(config1, packer.shl(smallC0EnI64, 61));
   return config1;
 }
 
 FailureOr<Value> packCopyCbufToBtConfig(Operation *anchor, Value convControl, Value nBurst, Value lenBurst,
                                         Value sourceGap, Value dstGap) {
-  OpBuilder builder(anchor);
-  builder.setInsertionPoint(anchor);
-  Value zero = getI64Constant(builder, anchor->getLoc(), 0);
+  ConfigPacker packer(anchor);
+  Value zero = packer.i64Constant(0);
   SmallVector<std::pair<Value, uint64_t>, 5> fields = {
       {convControl, 3}, {nBurst, 4}, {lenBurst, 16}, {sourceGap, 32}, {dstGap, 48}};
   return packShiftedFields(anchor, zero, fields);
@@ -268,154 +273,62 @@ FailureOr<Value> packCopyCbufToBtConfig(Operation *anchor, Value convControl, Va
 
 FailureOr<Value> packCopyCbufToFbufConfig(Operation *anchor, Value nBurst, Value lenBurst, Value sourceGap,
                                           Value dstGap) {
-  OpBuilder builder(anchor);
-  builder.setInsertionPoint(anchor);
-  Location loc = anchor->getLoc();
-
-  Value nBurstI64 = castIntegerLikeTo(anchor, nBurst, builder.getI64Type());
-  Value lenBurstI64 = castIntegerLikeTo(anchor, lenBurst, builder.getI64Type());
-  Value sourceGapI64 = castIntegerLikeTo(anchor, sourceGap, builder.getI64Type());
-  Value dstGapI64 = castIntegerLikeTo(anchor, dstGap, builder.getI64Type());
+  ConfigPacker packer(anchor);
+  Value nBurstI64 = packer.i64Operand(nBurst);
+  Value lenBurstI64 = packer.i64Operand(lenBurst);
+  Value sourceGapI64 = packer.i64Operand(sourceGap);
+  Value dstGapI64 = packer.i64Operand(dstGap);
   if (!nBurstI64 || !lenBurstI64 || !sourceGapI64 || !dstGapI64) {
     return failure();
   }
-
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value, getI64Constant(builder, loc, amount));
-  };
-  auto bitOr = [&](Value lhs, Value rhs) -> Value { return builder.create<arith::OrIOp>(loc, lhs, rhs); };
-
-  Value config = shl(nBurstI64, 4);
-  config = bitOr(config, shl(lenBurstI64, 16));
-  config = bitOr(config, shl(sourceGapI64, 32));
-  config = bitOr(config, shl(dstGapI64, 48));
+  Value config = packer.shl(nBurstI64, 4);
+  config = packer.bitOr(config, packer.shl(lenBurstI64, 16));
+  config = packer.bitOr(config, packer.shl(sourceGapI64, 32));
+  config = packer.bitOr(config, packer.shl(dstGapI64, 48));
   return config;
 }
 
-FailureOr<Value> packLoadCbufToS4Config0(Operation *anchor, Value mStart, Value kStart, Value mStep, Value kStep) {
-  OpBuilder builder(anchor);
-  builder.setInsertionPoint(anchor);
-  Location loc = anchor->getLoc();
-
-  Value mStartI64 = castIntegerLikeTo(anchor, mStart, builder.getI64Type());
-  Value kStartI64 = castIntegerLikeTo(anchor, kStart, builder.getI64Type());
-  Value mStepI64 = castIntegerLikeTo(anchor, mStep, builder.getI64Type());
-  Value kStepI64 = castIntegerLikeTo(anchor, kStep, builder.getI64Type());
+// Packs the (mStart, kStart, mStep, kStep) 2D-load tile descriptor shared by
+// the load_cbuf_to_s4/ca/cb config0 layouts.
+static FailureOr<Value> packLoadCbufTileConfig0(Operation *anchor, Value mStart, Value kStart, Value mStep,
+                                                Value kStep) {
+  ConfigPacker packer(anchor);
+  Value mStartI64 = packer.i64Operand(mStart);
+  Value kStartI64 = packer.i64Operand(kStart);
+  Value mStepI64 = packer.i64Operand(mStep);
+  Value kStepI64 = packer.i64Operand(kStep);
   if (!mStartI64 || !kStartI64 || !mStepI64 || !kStepI64) {
     return failure();
   }
-
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value, getI64Constant(builder, loc, amount));
-  };
-  auto bitOr = [&](Value lhs, Value rhs) -> Value { return builder.create<arith::OrIOp>(loc, lhs, rhs); };
-
   Value config0 = mStartI64;
-  config0 = bitOr(config0, shl(kStartI64, 16));
-  config0 = bitOr(config0, shl(mStepI64, 32));
-  config0 = bitOr(config0, shl(kStepI64, 40));
+  config0 = packer.bitOr(config0, packer.shl(kStartI64, 16));
+  config0 = packer.bitOr(config0, packer.shl(mStepI64, 32));
+  config0 = packer.bitOr(config0, packer.shl(kStepI64, 40));
   return config0;
+}
+
+FailureOr<Value> packLoadCbufToS4Config0(Operation *anchor, Value mStart, Value kStart, Value mStep, Value kStep) {
+  return packLoadCbufTileConfig0(anchor, mStart, kStart, mStep, kStep);
 }
 
 FailureOr<Value> packLoadCbufToS4Config1(Operation *anchor, Value srcStride, Value dstStride) {
-  OpBuilder builder(anchor);
-  builder.setInsertionPoint(anchor);
-  Location loc = anchor->getLoc();
-
-  Value srcStrideI64 = castIntegerLikeTo(anchor, srcStride, builder.getI64Type());
-  Value dstStrideI64 = castIntegerLikeTo(anchor, dstStride, builder.getI64Type());
-  if (!srcStrideI64 || !dstStrideI64) {
-    return failure();
-  }
-
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value, getI64Constant(builder, loc, amount));
-  };
-  return builder.create<arith::OrIOp>(loc, srcStrideI64, shl(dstStrideI64, 16)).getResult();
+  return packSrcDstStrides(anchor, srcStride, dstStride, 16);
 }
 
 FailureOr<Value> packLoadCbufToCaConfig0(Operation *anchor, Value mStart, Value kStart, Value mStep, Value kStep) {
-  OpBuilder builder(anchor);
-  builder.setInsertionPoint(anchor);
-  Location loc = anchor->getLoc();
-
-  Value mStartI64 = castIntegerLikeTo(anchor, mStart, builder.getI64Type());
-  Value kStartI64 = castIntegerLikeTo(anchor, kStart, builder.getI64Type());
-  Value mStepI64 = castIntegerLikeTo(anchor, mStep, builder.getI64Type());
-  Value kStepI64 = castIntegerLikeTo(anchor, kStep, builder.getI64Type());
-  if (!mStartI64 || !kStartI64 || !mStepI64 || !kStepI64) {
-    return failure();
-  }
-
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value, getI64Constant(builder, loc, amount));
-  };
-  auto bitOr = [&](Value lhs, Value rhs) -> Value { return builder.create<arith::OrIOp>(loc, lhs, rhs); };
-
-  Value config0 = mStartI64;
-  config0 = bitOr(config0, shl(kStartI64, 16));
-  config0 = bitOr(config0, shl(mStepI64, 32));
-  config0 = bitOr(config0, shl(kStepI64, 40));
-  return config0;
+  return packLoadCbufTileConfig0(anchor, mStart, kStart, mStep, kStep);
 }
 
 FailureOr<Value> packLoadCbufToCaConfig1(Operation *anchor, Value srcStride, Value dstStride) {
-  OpBuilder builder(anchor);
-  builder.setInsertionPoint(anchor);
-  Location loc = anchor->getLoc();
-
-  Value srcStrideI64 = castIntegerLikeTo(anchor, srcStride, builder.getI64Type());
-  Value dstStrideI64 = castIntegerLikeTo(anchor, dstStride, builder.getI64Type());
-  if (!srcStrideI64 || !dstStrideI64) {
-    return failure();
-  }
-
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value, getI64Constant(builder, loc, amount));
-  };
-  return builder.create<arith::OrIOp>(loc, srcStrideI64, shl(dstStrideI64, 16)).getResult();
+  return packSrcDstStrides(anchor, srcStride, dstStride, 16);
 }
 
 FailureOr<Value> packLoadCbufToCbConfig0(Operation *anchor, Value mStart, Value kStart, Value mStep, Value kStep) {
-  OpBuilder builder(anchor);
-  builder.setInsertionPoint(anchor);
-  Location loc = anchor->getLoc();
-
-  Value mStartI64 = castIntegerLikeTo(anchor, mStart, builder.getI64Type());
-  Value kStartI64 = castIntegerLikeTo(anchor, kStart, builder.getI64Type());
-  Value mStepI64 = castIntegerLikeTo(anchor, mStep, builder.getI64Type());
-  Value kStepI64 = castIntegerLikeTo(anchor, kStep, builder.getI64Type());
-  if (!mStartI64 || !kStartI64 || !mStepI64 || !kStepI64) {
-    return failure();
-  }
-
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value, getI64Constant(builder, loc, amount));
-  };
-  auto bitOr = [&](Value lhs, Value rhs) -> Value { return builder.create<arith::OrIOp>(loc, lhs, rhs); };
-
-  Value config0 = mStartI64;
-  config0 = bitOr(config0, shl(kStartI64, 16));
-  config0 = bitOr(config0, shl(mStepI64, 32));
-  config0 = bitOr(config0, shl(kStepI64, 40));
-  return config0;
+  return packLoadCbufTileConfig0(anchor, mStart, kStart, mStep, kStep);
 }
 
 FailureOr<Value> packLoadCbufToCbConfig1(Operation *anchor, Value srcStride, Value dstStride) {
-  OpBuilder builder(anchor);
-  builder.setInsertionPoint(anchor);
-  Location loc = anchor->getLoc();
-
-  Value srcStrideI64 = castIntegerLikeTo(anchor, srcStride, builder.getI64Type());
-  Value dstStrideI64 = castIntegerLikeTo(anchor, dstStride, builder.getI64Type());
-  if (!srcStrideI64 || !dstStrideI64) {
-    return failure();
-  }
-
-  auto shl = [&](Value value, uint64_t amount) -> Value {
-    return builder.create<arith::ShLIOp>(loc, value, getI64Constant(builder, loc, amount));
-  };
-  return builder.create<arith::OrIOp>(loc, srcStrideI64, shl(dstStrideI64, 16)).getResult();
+  return packSrcDstStrides(anchor, srcStride, dstStride, 16);
 }
 
 Value buildMadBiasDestination(Operation *anchor, ConversionPatternRewriter &rewriter, Value dst, Value bias) {
@@ -432,15 +345,12 @@ Value buildMadBiasDestination(Operation *anchor, ConversionPatternRewriter &rewr
 }
 
 FailureOr<Value> packVbitsortConfig(Operation *anchor, Value repeatTimes) {
-  OpBuilder builder(anchor);
-  builder.setInsertionPoint(anchor);
-  Location loc = anchor->getLoc();
-
-  Value repeatI64 = castIntegerLikeTo(anchor, repeatTimes, builder.getI64Type());
+  ConfigPacker packer(anchor);
+  Value repeatI64 = packer.i64Operand(repeatTimes);
   if (!repeatI64) {
     return failure();
   }
-  return builder.create<arith::ShLIOp>(loc, repeatI64, getI64Constant(builder, loc, 56)).getResult();
+  return packer.shl(repeatI64, 56);
 }
 
 [[maybe_unused]] FailureOr<Value> materializeDynamicPltMask(ConversionPatternRewriter &rewriter, LoweringState &state,

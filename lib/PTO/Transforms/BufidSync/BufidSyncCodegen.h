@@ -34,6 +34,12 @@ private:
   mapPipelineToSyncOpType(PipelineType pipe) const;
   pto::PipeEventTypeAttr getOpTypeAttr(Builder &builder,
                                        pto::SyncOpType opType) const;
+  void sortSyncOperations(SmallVector<BufSyncOperation> &pipeBefore,
+                          SmallVector<BufSyncOperation> &pipeAfter) const;
+  LogicalResult emitGetBufOps(Operation *op, IRRewriter &rewriter,
+                              const SmallVector<BufSyncOperation> &pipeBefore) const;
+  LogicalResult emitRlsBufOps(Operation *op, IRRewriter &rewriter,
+                              const SmallVector<BufSyncOperation> &pipeAfter) const;
 
   func::FuncOp func_;
   const DenseMap<Operation *, BufSyncPipeBuild> &op2BufSync_;

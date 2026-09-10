@@ -131,6 +131,18 @@ private:
                            const CompoundInstanceElement *frontCompound,
                            DepBaseMemInfoPairVec &depBaseMemInfosVec,
                            const std::optional<unsigned> &forEndIndex);
+  
+  /// Insert a PIPE_BARRIER sync for same-pipe dependencies
+  void InsertPipeBarrierSync(const CompoundInstanceElement *nowCompound,
+                             const CompoundInstanceElement *frontCompound,
+                             const std::optional<unsigned> &forEndIndex);
+  
+  /// Insert a SET_EVENT / WAIT_EVENT sync pair for cross-pipe dependencies
+  void InsertCrossPipeEventSync(const CompoundInstanceElement *nowCompound,
+                                const CompoundInstanceElement *frontCompound,
+                                DepBaseMemInfoPairVec &depBaseMemInfosVec,
+                                const std::optional<unsigned> &forEndIndex);
+  
  
   // --- Utility Methods ---
  

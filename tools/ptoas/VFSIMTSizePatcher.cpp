@@ -195,13 +195,16 @@ collectManifest(llvm::Module &module, llvm::raw_ostream &diagOS) {
 static LogicalResult
 validateObjectFunctionTableLayout(const llvm::object::ELFObjectFileBase &object,
                                   llvm::raw_ostream &diagOS) {
-  unsigned executableSections = 0;
   unsigned symbolTables = 0;
+  unsigned executableSections = 0;
   for (const llvm::object::SectionRef &section : object.sections()) {
     llvm::object::ELFSectionRef elfSection(section);
-    symbolTables += elfSection.getType() == llvm::ELF::SHT_SYMTAB;
-    executableSections +=
-        (elfSection.getFlags() & llvm::ELF::SHF_EXECINSTR) != 0;
+    if (elfSection.getType() == llvm::ELF::SHT_SYMTAB) {
+      ++symbolTables;
+    }
+    if ((elfSection.getFlags() & llvm::ELF::SHF_EXECINSTR) != 0) {
+      ++executableSections;
+    }
   }
   if (symbolTables != 1) {
     emitError(diagOS, llvm::Twine("expected exactly one symbol table, found ") +

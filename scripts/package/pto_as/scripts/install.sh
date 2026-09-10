@@ -18,6 +18,8 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # --------------------------------------------------------------------------------
+# Installation metadata lives in share/info/pto_as; the private wheel payload
+# lives in tools/ptoas/wheels. Reinstall cleanup must handle both locations.
 # error number and description
 OPERATE_FAILED="0x0001"
 PARAM_INVALID="0x0002"
@@ -65,7 +67,7 @@ ASCEND_INSTALL_INFO="ascend_install.info"
 TARGET_INSTALL_PATH="${DEFAULT_INSTALL_PATH}" #--input-path
 TARGET_USERNAME="${CURR_OPERATE_USER}"
 TARGET_USERGROUP="${CURR_OPERATE_GROUP}"
-TARGET_MOULDE_DIR=""  # TARGET_INSTALL_PATH + PKG_VERSION_DIR + PTO_PLATFORM_DIR
+TARGET_MOULDE_DIR=""  # TARGET_VERSION_DIR + share/info/pto_as
 TARGET_VERSION_DIR="" # TARGET_INSTALL_PATH + PKG_VERSION_DIR
 
 # keys of infos in ascend_install.info
@@ -588,7 +590,7 @@ init_env() {
     TARGET_VERSION_DIR=${temp_path_val}${TARGET_VERSION_DIR}
   fi
 
-  TARGET_MOULDE_DIR="${TARGET_VERSION_DIR}/${PTO_PLATFORM_DIR}"
+  TARGET_MOULDE_DIR="${TARGET_VERSION_DIR}/share/info/${PTO_PLATFORM_DIR}"
 
   UNINSTALL_SHELL_FILE="${TARGET_VERSION_DIR}/share/info/pto_as/script/pto_uninstall.sh"
   INSTALL_INFO_FILE="${TARGET_VERSION_DIR}/share/info/pto_as/${ASCEND_INSTALL_INFO}"
@@ -680,6 +682,26 @@ mkdir_install_path() {
   fi
 }
 
+prepare_reinstall() {
+  local package_root wheel_dir
+  package_root=$(readlink -f "${CURR_PATH}/../../../..") || return 1
+  wheel_dir="${TARGET_VERSION_DIR}/tools/ptoas/wheels"
+  # Validate the new payload before uninstalling an existing working package.
+  pto_find_wheel "${package_root}/tools/ptoas/wheels" >/dev/null || return 1
+  if [ "${package_root}/tools/ptoas/wheels" -ef "${wheel_dir}" ]; then
+    logandprint "[ERROR]: Cannot reinstall from the installed PTOAS wheel directory."
+    return 1
+  fi
+
+  clean_before_reinstall || return 1
+  # --copy_all merges directories. Remove orphaned wheels even when an earlier
+  # failed installation left no usable installation record or filelist.
+  if ! rm -rf -- "${wheel_dir}"; then
+    logandprint "[ERROR]: Failed to clean PTOAS wheel directory ${wheel_dir}."
+    return 1
+  fi
+}
+
 install_package() {
   if [ "${IS_INSTALL}" = "n" ] && [ "${IS_UPGRADE}" = "n" ]; then
     return
@@ -689,10 +711,11 @@ install_package() {
     interact_pre_check
   fi
 
-  # use uninstall to clean the install folder
-  clean_before_reinstall
-  if [ "$?" != 0 ]; then
-    comm_log_operation "Install" "${IN_INSTALL_TYPE}" "PTO" "$?" "${CMD_LIST}"
+  prepare_reinstall
+  local clean_ret="$?"
+  if [ "${clean_ret}" != 0 ]; then
+    comm_log_operation "Install" "${IN_INSTALL_TYPE}" "PTO" "${clean_ret}" "${CMD_LIST}"
+    return "${clean_ret}"
   fi
 
   bash "${INSTALL_SHELL_FILE}" "${TARGET_INSTALL_PATH}" "${TARGET_USERNAME}" "${TARGET_USERGROUP}" "${IN_FEATURE}" \

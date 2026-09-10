@@ -1,3 +1,4 @@
+# coding=utf-8
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -5,7 +6,10 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
+
 """PTODSL TileLib template for ``pto.trandom``."""
+
+from dataclasses import dataclass
 
 from ptodsl import pto
 from ptodsl import scalar
@@ -33,6 +37,72 @@ def _philox_round(ctr0, ctr1, ctr2, ctr3, key0, key1, const0, const1, mask):
     key0 = pto.vadds(key0, pto.ui32(TRANDOM_CONST_KEY_ADD_0), mask)
     key1 = pto.vadds(key1, pto.ui32(TRANDOM_CONST_KEY_ADD_1), mask)
     return ctr0, tmp_l1, ctr2, tmp_l0, key0, key1
+
+
+@dataclass
+class _PhiloxState:
+    """Trace-time Philox vector state shared by the trandom helpers."""
+
+    full_mask: object
+    ctr0: object
+    ctr1: object
+    ctr2: object
+    ctr3: object
+    key0_vec: object
+    key1_vec: object
+    zeros: object
+    const0: object
+    const1: object
+
+
+def _trandom_state_init(key0, key1, counter):
+    """Build the initial 128-bit counter, keys, and Philox constants."""
+    counter0, counter1, counter2, counter3 = counter
+    full_mask = pto.pset_b32(pto.PAT.ALL)
+    ctr0_init = pto.vbitcast(pto.vbr(counter0), pto.ui32)
+    ctr1_init = pto.vbitcast(pto.vbr(counter1), pto.ui32)
+    ctr2_init = pto.vbitcast(pto.vbr(counter2), pto.ui32)
+    ctr3_init = pto.vbitcast(pto.vbr(counter3), pto.ui32)
+    key0_vec = pto.vbitcast(pto.vbr(key0), pto.ui32)
+    key1_vec = pto.vbitcast(pto.vbr(key1), pto.ui32)
+    zeros = pto.vbr(pto.ui32(0))
+    const0 = pto.vbr(pto.ui32(TRANDOM_CONST_0))
+    const1 = pto.vbr(pto.ui32(TRANDOM_CONST_1))
+    inc_idx = pto.vbitcast(pto.vci(0), pto.ui32)
+
+    ctr0, carry = pto.vaddc(ctr0_init, inc_idx, full_mask)
+    ctr1, carry = pto.vaddcs(ctr1_init, zeros, carry, full_mask)
+    ctr2, carry = pto.vaddcs(ctr2_init, zeros, carry, full_mask)
+    ctr3, _ = pto.vaddcs(ctr3_init, zeros, carry, full_mask)
+    return _PhiloxState(
+        full_mask=full_mask,
+        ctr0=ctr0,
+        ctr1=ctr1,
+        ctr2=ctr2,
+        ctr3=ctr3,
+        key0_vec=key0_vec,
+        key1_vec=key1_vec,
+        zeros=zeros,
+        const0=const0,
+        const1=const1,
+    )
+
+
+def _trandom_advance_counter(state, valid_cols, lanes, repeats, repeat):
+    """Advance the Philox counter by one lane-group after each repeat."""
+    tail_counter_add = (valid_cols - 1) % lanes + 1
+    counter_add = scalar.select(
+        repeat == repeats - 1,
+        scalar.index_cast(pto.i32, tail_counter_add),
+        pto.const(lanes, dtype=pto.i32),
+    )
+    counter_add = pto.vbr(counter_add)
+    counter_add = pto.vbitcast(counter_add, pto.ui32)
+    ctr0, carry = pto.vaddc(state.ctr0, counter_add, state.full_mask)
+    ctr1, carry = pto.vaddcs(state.ctr1, state.zeros, carry, state.full_mask)
+    ctr2, carry = pto.vaddcs(state.ctr2, state.zeros, carry, state.full_mask)
+    ctr3, _ = pto.vaddcs(state.ctr3, state.zeros, carry, state.full_mask)
+    return ctr0, ctr1, ctr2, ctr3
 
 
 @tilelib.tile_template(
@@ -66,32 +136,26 @@ def template_trandom(
     )
     rounds = int(pto.get_op_attr("rounds", "10"))
 
-    full_mask = pto.pset_b32(pto.PAT.ALL)
-    ctr0_init = pto.vbitcast(pto.vbr(counter0), pto.ui32)
-    ctr1_init = pto.vbitcast(pto.vbr(counter1), pto.ui32)
-    ctr2_init = pto.vbitcast(pto.vbr(counter2), pto.ui32)
-    ctr3_init = pto.vbitcast(pto.vbr(counter3), pto.ui32)
-    key0_vec = pto.vbitcast(pto.vbr(key0), pto.ui32)
-    key1_vec = pto.vbitcast(pto.vbr(key1), pto.ui32)
-    zeros = pto.vbr(pto.ui32(0))
-    const0 = pto.vbr(pto.ui32(TRANDOM_CONST_0))
-    const1 = pto.vbr(pto.ui32(TRANDOM_CONST_1))
-    inc_idx = pto.vbitcast(pto.vci(0), pto.ui32)
-
-    ctr0, carry = pto.vaddc(ctr0_init, inc_idx, full_mask)
-    ctr1, carry = pto.vaddcs(ctr1_init, zeros, carry, full_mask)
-    ctr2, carry = pto.vaddcs(ctr2_init, zeros, carry, full_mask)
-    ctr3, _ = pto.vaddcs(ctr3_init, zeros, carry, full_mask)
+    state = _trandom_state_init(key0, key1, (counter0, counter1, counter2, counter3))
+    ctr0, ctr1, ctr2, ctr3 = state.ctr0, state.ctr1, state.ctr2, state.ctr3
 
     for row in range(0, valid_rows, 1):
         remained = valid_cols
         for repeat in range(0, repeats, 1):
             tmp0, tmp1, tmp2, tmp3 = ctr0, ctr1, ctr2, ctr3
-            tmp_key0, tmp_key1 = key0_vec, key1_vec
+            tmp_key0, tmp_key1 = state.key0_vec, state.key1_vec
             for _round in range(0, rounds, 1):
                 _ = _round
                 tmp0, tmp1, tmp2, tmp3, tmp_key0, tmp_key1 = _philox_round(
-                    tmp0, tmp1, tmp2, tmp3, tmp_key0, tmp_key1, const0, const1, full_mask
+                    tmp0,
+                    tmp1,
+                    tmp2,
+                    tmp3,
+                    tmp_key0,
+                    tmp_key1,
+                    state.const0,
+                    state.const1,
+                    state.full_mask,
                 )
 
             tmp_l0, tmp_h0 = pto.vintlv(tmp0, tmp2)
@@ -109,15 +173,10 @@ def template_trandom(
             pto.vsts(tmp2, dst[row, (TRANDOM_ONCE_REPEAT * repeat + 2) * lanes:], mask2)
             pto.vsts(tmp3, dst[row, (TRANDOM_ONCE_REPEAT * repeat + 3) * lanes:], mask3)
 
-            tail_counter_add = (valid_cols - 1) % lanes + 1
-            counter_add = scalar.select(
-                repeat == repeats - 1,
-                scalar.index_cast(pto.i32, tail_counter_add),
-                pto.const(lanes, dtype=pto.i32),
+            state.ctr0 = ctr0
+            state.ctr1 = ctr1
+            state.ctr2 = ctr2
+            state.ctr3 = ctr3
+            ctr0, ctr1, ctr2, ctr3 = _trandom_advance_counter(
+                state, valid_cols, lanes, repeats, repeat,
             )
-            counter_add = pto.vbr(counter_add)
-            counter_add = pto.vbitcast(counter_add, pto.ui32)
-            ctr0, carry = pto.vaddc(ctr0, counter_add, full_mask)
-            ctr1, carry = pto.vaddcs(ctr1, zeros, carry, full_mask)
-            ctr2, carry = pto.vaddcs(ctr2, zeros, carry, full_mask)
-            ctr3, _ = pto.vaddcs(ctr3, zeros, carry, full_mask)

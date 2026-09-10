@@ -225,7 +225,8 @@ getPersistentAccessLaneCount(Operation *access, Type accessType,
       return failure();
     }
     int64_t vectorLaneCount = vectorType.getDimSize(0);
-    if (vectorLaneCount != mlir::pto::kValue2 && vectorLaneCount != 4) {
+    if (vectorLaneCount != mlir::pto::kValue2 &&
+        vectorLaneCount != mlir::pto::kValue4) {
       access->emitOpError()
           << "persistent SIMT fragment currently supports only 2- or 4-lane "
              "vector accesses, got "
@@ -253,11 +254,15 @@ getPersistentAccessLaneCount(Operation *access, Type accessType,
   return laneCount;
 }
 
-static LogicalResult recordAccess(Operation *access, Type accessType,
-                                  int64_t byteOffset, func::FuncOp parentFunc,
-                                  LLVM::AllocaOp allocaOp,
-                                  const FragmentShape &shape,
-                                  PersistentAccessDiscovery &discovery) {
+struct PersistentAccessRange {
+  unsigned laneCount;
+  int64_t firstElementOffset;
+};
+
+static FailureOr<PersistentAccessRange> validatePersistentAccessRange(
+    Operation *access, Type accessType, int64_t byteOffset,
+    func::FuncOp parentFunc, LLVM::AllocaOp allocaOp,
+    const FragmentShape &shape) {
   pto::SectionSimtOp section = access->getParentOfType<pto::SectionSimtOp>();
   if (!section) {
     return access->emitOpError(
@@ -308,18 +313,33 @@ static LogicalResult recordAccess(Operation *access, Type accessType,
            << "size " << shape.totalByteSize;
   }
 
+  return PersistentAccessRange{*laneCount,
+                               byteOffset / shape.elementByteSize};
+}
+
+static LogicalResult recordAccess(Operation *access, Type accessType,
+                                  int64_t byteOffset, func::FuncOp parentFunc,
+                                  LLVM::AllocaOp allocaOp,
+                                  const FragmentShape &shape,
+                                  PersistentAccessDiscovery &discovery) {
+  pto::SectionSimtOp section = access->getParentOfType<pto::SectionSimtOp>();
+  FailureOr<PersistentAccessRange> accessRange = validatePersistentAccessRange(
+      access, accessType, byteOffset, parentFunc, allocaOp, shape);
+  if (failed(accessRange)) {
+    return failure();
+  }
+
   if (discovery.accessIndices.count(access)) {
     return access->emitOpError(
         "persistent SIMT fragment access was visited more than once");
   }
 
-  int64_t firstElementOffset = byteOffset / shape.elementByteSize;
   SmallVector<unsigned> accessIndices;
-  accessIndices.reserve(*laneCount);
-  for (unsigned laneIndex = 0; laneIndex < *laneCount; ++laneIndex) {
+  accessIndices.reserve(accessRange->laneCount);
+  for (unsigned laneIndex = 0; laneIndex < accessRange->laneCount; ++laneIndex) {
     int64_t elementOffset;
-    if (llvm::AddOverflow(firstElementOffset, static_cast<int64_t>(laneIndex),
-                          elementOffset)) {
+    if (llvm::AddOverflow(accessRange->firstElementOffset,
+                          static_cast<int64_t>(laneIndex), elementOffset)) {
       return access->emitOpError(
           "persistent SIMT fragment lane element offset overflows signed "
           "i64");
@@ -517,10 +537,11 @@ analyzeResidentElements(DominanceInfo &dominance,
 
 static FailureOr<int64_t> getPersistentSlotWidth(Type type, Operation *anchor) {
   if (auto intType = dyn_cast<IntegerType>(type)) {
-    if (intType.getWidth() <= mlir::pto::kValue32) {
+    const unsigned intWidth = intType.getWidth();
+    if (intWidth <= mlir::pto::kValue32) {
       return 1;
     }
-    if (intType.getWidth() <= 64) {
+    if (intWidth <= mlir::pto::kValue64) {
       return kWideValueSlotWidth;
     }
   } else if (type.isF16() || type.isBF16() || type.isF32()) {
@@ -622,35 +643,65 @@ materializeResidentAccessLanes(const PersistentMaterializationPlan &plan,
   return success();
 }
 
-static LogicalResult
-analyzePersistentFragment(LLVM::AllocaOp allocaOp, DominanceInfo &dominance,
-                          const PersistentMaterializationPlan &plan,
-                          PersistentFragmentAnalysis &fragment,
-                          PersistentAccessDiscovery &discovery) {
-  func::FuncOp parentFunc = allocaOp->getParentOfType<func::FuncOp>();
-  if (!parentFunc) {
-    return allocaOp.emitOpError("must be nested in a func.func");
+static LogicalResult discoverPersistentPointerUse(
+    const PointerWorkItem &item, OpOperand &use, LLVM::AllocaOp allocaOp,
+    func::FuncOp parentFunc, DominanceInfo &dominance,
+    const DataLayout &dataLayout, const FragmentShape &shape,
+    SmallVectorImpl<PointerWorkItem> &pointerWorklist,
+    PersistentAccessDiscovery &discovery) {
+  Operation *user = use.getOwner();
+  if (user->getParentOfType<func::FuncOp>() != parentFunc) {
+    return user->emitOpError(
+        "persistent SIMT fragment pointer must remain in its defining "
+        "function");
+  }
+  if (!dominance.dominates(allocaOp.getOperation(), user)) {
+    return user->emitOpError(
+        "persistent SIMT fragment definition must dominate every use");
   }
 
-  if (!isa<UnitAttr>(allocaOp->getAttr(pto::kPersistentAttrName))) {
-    return allocaOp.emitOpError()
-           << "expects '" << pto::kPersistentAttrName << "' to be a unit attribute";
-  }
-  if (allocaOp->getParentOfType<pto::SectionSimtOp>()) {
-    return allocaOp.emitOpError(
-        "persistent SIMT fragment must be defined outside pto.section.simt");
-  }
-  if (parentFunc->hasAttr(pto::kPTOSimtEntryAttrName)) {
-    return allocaOp.emitOpError(
-        "persistent SIMT fragment must be defined before SIMT outlining");
+  if (auto gep = dyn_cast<LLVM::GEPOp>(user)) {
+    if (use.getOperandNumber() != 0) {
+      return gep.emitOpError(
+          "persistent SIMT fragment pointer must be the base of "
+          "llvm.getelementptr");
+    }
+    FailureOr<int64_t> gepByteOffset = getStaticGEPByteOffset(gep, dataLayout);
+    if (failed(gepByteOffset)) {
+      return failure();
+    }
+    int64_t derivedByteOffset;
+    if (llvm::AddOverflow(item.byteOffset, *gepByteOffset, derivedByteOffset)) {
+      return gep.emitOpError(
+          "persistent fragment cumulative byte offset overflows signed i64");
+    }
+    pointerWorklist.push_back({gep.getRes(), derivedByteOffset});
+    return success();
   }
 
+  if (auto load = dyn_cast<LLVM::LoadOp>(user)) {
+    return recordAccess(load, load.getRes().getType(), item.byteOffset,
+                        parentFunc, allocaOp, shape, discovery);
+  }
+
+  if (auto store = dyn_cast<LLVM::StoreOp>(user)) {
+    if (use.getOperandNumber() != 1) {
+      return store.emitOpError(
+          "persistent SIMT fragment pointer must not be stored as a value");
+    }
+    return recordAccess(store, store.getValue().getType(), item.byteOffset,
+                        parentFunc, allocaOp, shape, discovery);
+  }
+
+  return user->emitOpError()
+         << "unsupported use of persistent SIMT fragment pointer by '"
+         << user->getName() << "'";
+}
+
+static LogicalResult discoverPersistentFragmentAccesses(
+    LLVM::AllocaOp allocaOp, func::FuncOp parentFunc, DominanceInfo &dominance,
+    const FragmentShape &shape, PersistentAccessDiscovery &discovery) {
   DataLayout dataLayout = DataLayout::closest(allocaOp);
-  FailureOr<FragmentShape> shape = getFragmentShape(allocaOp, dataLayout);
-  if (failed(shape)) {
-    return failure();
-  }
-
   SmallVector<PointerWorkItem> pointerWorklist{{allocaOp.getRes(), 0}};
   llvm::DenseMap<Value, int64_t> pointerOffsets;
 
@@ -667,65 +718,11 @@ analyzePersistentFragment(LLVM::AllocaOp allocaOp, DominanceInfo &dominance,
     }
 
     for (OpOperand &use : item.pointer.getUses()) {
-      Operation *user = use.getOwner();
-      if (user->getParentOfType<func::FuncOp>() != parentFunc) {
-        return user->emitOpError(
-            "persistent SIMT fragment pointer must remain in its defining "
-            "function");
+      if (failed(discoverPersistentPointerUse(
+              item, use, allocaOp, parentFunc, dominance, dataLayout, shape,
+              pointerWorklist, discovery))) {
+        return failure();
       }
-      if (!dominance.dominates(allocaOp.getOperation(), user)) {
-        return user->emitOpError(
-            "persistent SIMT fragment definition must dominate every use");
-      }
-
-      if (auto gep = dyn_cast<LLVM::GEPOp>(user)) {
-        if (use.getOperandNumber() != 0) {
-          return gep.emitOpError(
-              "persistent SIMT fragment pointer must be the base of "
-              "llvm.getelementptr");
-        }
-
-        FailureOr<int64_t> gepByteOffset =
-            getStaticGEPByteOffset(gep, dataLayout);
-        if (failed(gepByteOffset)) {
-          return failure();
-        }
-        int64_t derivedByteOffset;
-        if (llvm::AddOverflow(item.byteOffset, *gepByteOffset,
-                              derivedByteOffset)) {
-          return gep.emitOpError(
-              "persistent fragment cumulative byte offset overflows signed "
-              "i64");
-        }
-        pointerWorklist.push_back({gep.getRes(), derivedByteOffset});
-        continue;
-      }
-
-      if (auto load = dyn_cast<LLVM::LoadOp>(user)) {
-        if (failed(recordAccess(load, load.getRes().getType(), item.byteOffset,
-                                parentFunc, allocaOp, *shape, discovery))) {
-          return failure();
-        }
-        continue;
-      }
-
-      if (auto store = dyn_cast<LLVM::StoreOp>(user)) {
-        if (use.getOperandNumber() != 1) {
-          return store.emitOpError(
-              "persistent SIMT fragment pointer must not be stored as a "
-              "value");
-        }
-        if (failed(recordAccess(store, store.getValue().getType(),
-                                item.byteOffset, parentFunc, allocaOp, *shape,
-                                discovery))) {
-          return failure();
-        }
-        continue;
-      }
-
-      return user->emitOpError()
-             << "unsupported use of persistent SIMT fragment pointer by '"
-             << user->getName() << "'";
     }
   }
 
@@ -733,6 +730,43 @@ analyzePersistentFragment(LLVM::AllocaOp allocaOp, DominanceInfo &dominance,
     return allocaOp.emitOpError(
         "persistent SIMT fragment requires at least one llvm.load or "
         "llvm.store inside pto.section.simt");
+  }
+  return success();
+}
+
+static LogicalResult
+analyzePersistentFragment(LLVM::AllocaOp allocaOp, DominanceInfo &dominance,
+                          const PersistentMaterializationPlan &plan,
+                          PersistentFragmentAnalysis &fragment,
+                          PersistentAccessDiscovery &discovery) {
+  func::FuncOp parentFunc = allocaOp->getParentOfType<func::FuncOp>();
+  if (!parentFunc) {
+    return allocaOp.emitOpError("must be nested in a func.func");
+  }
+
+  if (!isa<UnitAttr>(allocaOp->getAttr(pto::kPersistentAttrName))) {
+    return allocaOp.emitOpError()
+           << "expects '" << pto::kPersistentAttrName
+           << "' to be a unit attribute";
+  }
+  if (allocaOp->getParentOfType<pto::SectionSimtOp>()) {
+    return allocaOp.emitOpError(
+        "persistent SIMT fragment must be defined outside pto.section.simt");
+  }
+  if (parentFunc->hasAttr(pto::kPTOSimtEntryAttrName)) {
+    return allocaOp.emitOpError(
+        "persistent SIMT fragment must be defined before SIMT outlining");
+  }
+
+  DataLayout dataLayout = DataLayout::closest(allocaOp);
+  FailureOr<FragmentShape> shape = getFragmentShape(allocaOp, dataLayout);
+  if (failed(shape)) {
+    return failure();
+  }
+
+  if (failed(discoverPersistentFragmentAccesses(allocaOp, parentFunc,
+                                                dominance, *shape, discovery))) {
+    return failure();
   }
 
   return analyzeResidentElements(dominance, plan, fragment, discovery);

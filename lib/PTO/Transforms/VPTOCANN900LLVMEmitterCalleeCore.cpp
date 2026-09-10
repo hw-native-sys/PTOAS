@@ -279,7 +279,10 @@ std::string getScalarFloatBuiltinFragment(Type type) {
   return {};
 }
 
-std::string getLLVMFloatBuiltinFragment(Type type) {
+// Shared shape for the vector-pair float fragments: a scalar fragment when the
+// type is scalar, otherwise the <N x f16/bf16> pair fragment selected by the
+// element type.
+static std::string getVectorPairFloatFragment(Type type, StringRef f16Fragment, StringRef bf16Fragment) {
   std::string scalar = getScalarFloatBuiltinFragment(type);
   if (!scalar.empty()) {
     return scalar;
@@ -291,32 +294,20 @@ std::string getLLVMFloatBuiltinFragment(Type type) {
   }
   Type elementType = vecType.getElementType();
   if (elementType.isF16()) {
-    return "v2f16";
+    return f16Fragment.str();
   }
   if (elementType.isBF16()) {
-    return "v2bf16";
+    return bf16Fragment.str();
   }
   return {};
 }
 
-std::string getHIVMFloatBuiltinFragment(Type type) {
-  std::string scalar = getScalarFloatBuiltinFragment(type);
-  if (!scalar.empty()) {
-    return scalar;
-  }
+std::string getLLVMFloatBuiltinFragment(Type type) {
+  return getVectorPairFloatFragment(type, "v2f16", "v2bf16");
+}
 
-  auto vecType = dyn_cast<VectorType>(type);
-  if (!vecType || vecType.getRank() != 1 || vecType.getDimSize(0) != 2) {
-    return {};
-  }
-  Type elementType = vecType.getElementType();
-  if (elementType.isF16()) {
-    return "f16x2";
-  }
-  if (elementType.isBF16()) {
-    return "bf16x2";
-  }
-  return {};
+std::string getHIVMFloatBuiltinFragment(Type type) {
+  return getVectorPairFloatFragment(type, "f16x2", "bf16x2");
 }
 
 FailureOr<StringRef> buildSqrtCallee(MLIRContext *context, Type valueType) {

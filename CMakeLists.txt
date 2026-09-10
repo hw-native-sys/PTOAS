@@ -288,6 +288,15 @@ if(BUILD_TESTING)
       ENVIRONMENT "${_pto_python_test_env}"
     )
     add_test(
+      NAME pto_as_reinstall_wheel_cleanup
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/test/python/test_pto_as_reinstall.py"
+    )
+    set_tests_properties(pto_as_reinstall_wheel_cleanup PROPERTIES
+      LABELS "PTO"
+      ENVIRONMENT "${_pto_python_test_env}"
+    )
+    add_test(
       NAME pto_online_core_build
       COMMAND "${Python3_EXECUTABLE}" -S
               "${CMAKE_CURRENT_SOURCE_DIR}/test/python/test_online_core_build.py"
