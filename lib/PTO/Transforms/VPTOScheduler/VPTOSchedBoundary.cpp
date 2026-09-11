@@ -261,7 +261,7 @@ VPTOSchedBoundary::evaluatePressure(const VPTOSUnit &unit) const {
   if (direction != VPTOSchedDirection::Top ||
       id >= pressureEvaluationCache->valid.size())
     return pressureTracker->evaluate(unit);
-  if (!pressureEvaluationCache->valid[id]) {
+  if (pressureEvaluationCache->valid[id] == 0) {
     pressureEvaluationCache->evaluations[id] =
         pressureTracker->evaluate(unit);
     pressureEvaluationCache->valid[id] = 1;
@@ -332,7 +332,7 @@ void VPTOSchedBoundary::insertPending(VPTOSUnit *unit, unsigned readyCycle) {
   readyCycles[id] = readyCycle;
   SmallVector<VPTOSUnit *> &bucket = pendingByCycle[readyCycle];
   auto position = llvm::lower_bound(
-      bucket, unit, [](VPTOSUnit *lhs, VPTOSUnit *rhs) {
+      bucket, unit, [](const VPTOSUnit *lhs, const VPTOSUnit *rhs) {
         return lhs->getOriginalIndex() < rhs->getOriginalIndex();
       });
   bucket.insert(position, unit);
