@@ -33,7 +33,7 @@ Joins checked in TileKernels-vmi:
 
 ## Leftover-class → issue (100% four-kernel ASC-parity blockers)
 
-Every in-matrix `TODO(impl)` row on `per_token_cast` / `per_block_cast` / `per_channel_cast` / `cast_back` maps here. Counts from TileKernels-vmi `kernel_coverage.md` on `castback_fix_0910` after the PR78 remasure (447 ASC configs, 119 TODO(impl)). Row npt=1 512×2048 is kernel-fixed and is **not** a PTOAS blocker.
+Every in-matrix `TODO(impl)` row on `per_token_cast` / `per_block_cast` / `per_channel_cast` / `cast_back` maps here. Counts from TileKernels-vmi `kernel_coverage.md` on `castback_fix_0910` after the PR78 remasure (447 ASC configs, 119 TODO(impl); stale vs `#85` / `benchfix_0911`). Row npt=1 512×2048 and the four TMA mismatch leftover classes below are kernel-fixed for **correctness** and are **not** PTOAS blockers. Their ratios are still TODO(perf) — that slowness is still open.
 
 | Leftover class (rows) | Issue |
 |---|---|
@@ -49,7 +49,7 @@ Every in-matrix `TODO(impl)` row on `per_token_cast` / `per_block_cast` / `per_c
 | per_channel unpacked in-SF (2) | D |
 | per_block H=384 (8) | B |
 | per_block sf_only+packed fp32 (4) | E |
-| cast_back TMA npt=1 mismatches (3) + e2m1→fp32 TMA npt=32 mismatch (1) + isolated ACL 507035 (35) | A |
+| cast_back remaining isolated ACL 507035 + e4m3→fp32 TMA npt=32 H=128 representative | A |
 | ASC-illegal / untested guards | not an issue |
 
 ## What is not a PTOAS issue
@@ -59,3 +59,4 @@ Every in-matrix `TODO(impl)` row on `per_token_cast` / `per_block_cast` / `per_c
 - ASC-illegal combinations (per-channel FP4, Ascend `npt≠32`, packed without round, per-channel **output** TMA).
 - SwiGLU / top-k / fused cast+cast-back (outside the four-kernel parity goal).
 - cast_back **row** npt=1 512×2048 (e2m1/e4m3→bf16/fp32): kernel-fixed by TileKernels-vmi PR78 (bitwise, TODO(perf)). Historical snapshot stays under [`archive/cast_back_row_npt1/`](archive/cast_back_row_npt1/).
+- cast_back **TMA** leftover mismatches (TMA npt=1 512×2048 e2m1/e4m3→bf16 + e4m3→fp32 TMA npt=1 + e2m1→fp32 TMA npt=32 H=2048): kernel-fixed by TileKernels-vmi TMA/non-canonical 32B scale slots (`benchfix_0911` / Codex `5b4bb1f3d`). Bitwise vs ASC; **TODO(perf)** on this host (ratios ~0.030–0.096, `BENCH_REP=20`). Correctness is closed; the slow ratio is still an issue to solve. Not closed by PTOAS `9edc5a0`. Snapshots: [`archive/cast_back_tma_npt1_h2048/`](archive/cast_back_tma_npt1_h2048/), [`archive/cast_back_e4m3_fp32_tma_npt1/`](archive/cast_back_e4m3_fp32_tma_npt1/), [`archive/cast_back_e2m1_fp32_tma_npt32_h2048/`](archive/cast_back_e2m1_fp32_tma_npt32_h2048/).
