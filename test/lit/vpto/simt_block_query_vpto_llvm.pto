@@ -37,8 +37,16 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK-DAG: declare i32 @llvm.hivm.tpe.get.BLOCK.NUM()
 
 // CHECK-LABEL: define {{.*}}@block_query_kernel_mix_aiv(
-// CHECK: call i64 @llvm.hivm.GET.BLOCK.IDX()
-// CHECK: call i64 @llvm.hivm.GET.BLOCK.NUM()
+// The AIC orchestrator keeps the 64-bit intrinsics (the 32-bit tpe form is
+// only legal inside simt_entry) but rounds the result through i32 so the
+// surrounding arithmetic folds on 32-bit facts, matching the CCE frontend
+// where __builtin_cce_get_block_idx/get_block_num are int32_t.
+// CHECK: [[BID64:%.*]] = call i64 @llvm.hivm.GET.BLOCK.IDX()
+// CHECK: [[BID32:%.*]] = trunc i64 [[BID64]] to i32
+// CHECK: [[BIDX:%.*]] = zext i32 [[BID32]] to i64
+// CHECK: [[BN64:%.*]] = call i64 @llvm.hivm.GET.BLOCK.NUM()
+// CHECK: [[BN32:%.*]] = trunc i64 [[BN64]] to i32
+// CHECK: [[BN:%.*]] = zext i32 [[BN32]] to i64
 
 // CHECK-LABEL: define linkonce_odr simt_entry void @simt_block_query(
 // CHECK-NOT: call i64 @llvm.hivm.GET.BLOCK

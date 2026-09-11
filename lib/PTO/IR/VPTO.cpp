@@ -19,6 +19,149 @@
 using namespace mlir;
 using namespace mlir::pto;
 
+//===----------------------------------------------------------------------===//
+// InferIntRangeInterface: hardware SIMT ID queries
+//===----------------------------------------------------------------------===//
+// Hardware thread/block IDs and dimensions are i32 and provably non-negative.
+// Report [0, umax] with umax >= 0, which is sufficient for the signed ->
+// unsigned equivalence decisions in arith-int-range-optimizations and
+// arith-unsigned-when-equivalent. Thread indices can be tightened to
+// [0, dim-1] when the enclosing pto.section.simt carries static dims;
+// everything else conservatively uses [0, INT32_SIGNED_MAX] (INT32_MAX,
+// 0x7fffffff - reporting the full unsigned range would carry no non-negative
+// information, because the sign flip in [0, 0xffffffff] widens the signed
+// range back to [INT32_MIN, INT32_MAX]).
+
+static void setNonNegativeI32Range(Value result, uint64_t umax,
+                                   mlir::SetIntRangeFn setResultRange) {
+  uint32_t width = cast<IntegerType>(result.getType()).getWidth();
+  APInt uminAP = APInt::getMinValue(width);
+  APInt umaxAP = APInt(width, umax, /*isSigned=*/false);
+  if (umaxAP.isNegative()) {
+    umaxAP = APInt::getSignedMaxValue(width);
+  }
+  setResultRange(result,
+                 ConstantIntRanges::fromUnsigned(uminAP, umaxAP));
+}
+
+static uint64_t simtThreadDimUpperBound(Operation *op, unsigned axis) {
+  for (Operation *curr = op; curr != nullptr; curr = curr->getParentOp()) {
+    if (auto section = dyn_cast<pto::SectionSimtOp>(curr)) {
+      int64_t dim = axis == 0   ? section.getDimX()
+                    : axis == 1 ? section.getDimY()
+                                : section.getDimZ();
+      if (dim > 0) {
+        return static_cast<uint64_t>(dim - 1);
+      }
+    }
+  }
+  return std::numeric_limits<int32_t>::max();
+}
+
+static void inferNonNegativeIdRange(Operation *op, Value result,
+                                    uint64_t umax,
+                                    mlir::SetIntRangeFn setResultRange) {
+  setNonNegativeI32Range(result, umax, setResultRange);
+}
+
+void pto::GetTidXOp::inferResultRanges(
+    ::llvm::ArrayRef<::mlir::ConstantIntRanges> operandRanges,
+    ::mlir::SetIntRangeFn setResultRange) {
+  inferNonNegativeIdRange(*this, this->getResult(),
+                          simtThreadDimUpperBound(*this, 0), setResultRange);
+}
+
+void pto::GetTidYOp::inferResultRanges(
+    ::llvm::ArrayRef<::mlir::ConstantIntRanges> operandRanges,
+    ::mlir::SetIntRangeFn setResultRange) {
+  inferNonNegativeIdRange(*this, this->getResult(),
+                          simtThreadDimUpperBound(*this, 1), setResultRange);
+}
+
+void pto::GetTidZOp::inferResultRanges(
+    ::llvm::ArrayRef<::mlir::ConstantIntRanges> operandRanges,
+    ::mlir::SetIntRangeFn setResultRange) {
+  inferNonNegativeIdRange(*this, this->getResult(),
+                          simtThreadDimUpperBound(*this, 2), setResultRange);
+}
+
+void pto::GetBlockIdxXOp::inferResultRanges(
+    ::llvm::ArrayRef<::mlir::ConstantIntRanges> operandRanges,
+    ::mlir::SetIntRangeFn setResultRange) {
+  inferNonNegativeIdRange(*this, this->getResult(),
+                          std::numeric_limits<int32_t>::max(), setResultRange);
+}
+
+void pto::GetBlockIdxYOp::inferResultRanges(
+    ::llvm::ArrayRef<::mlir::ConstantIntRanges> operandRanges,
+    ::mlir::SetIntRangeFn setResultRange) {
+  inferNonNegativeIdRange(*this, this->getResult(),
+                          std::numeric_limits<int32_t>::max(), setResultRange);
+}
+
+void pto::GetBlockIdxZOp::inferResultRanges(
+    ::llvm::ArrayRef<::mlir::ConstantIntRanges> operandRanges,
+    ::mlir::SetIntRangeFn setResultRange) {
+  inferNonNegativeIdRange(*this, this->getResult(),
+                          std::numeric_limits<int32_t>::max(), setResultRange);
+}
+
+void pto::GetBlockDimXOp::inferResultRanges(
+    ::llvm::ArrayRef<::mlir::ConstantIntRanges> operandRanges,
+    ::mlir::SetIntRangeFn setResultRange) {
+  inferNonNegativeIdRange(*this, this->getResult(),
+                          std::numeric_limits<int32_t>::max(), setResultRange);
+}
+
+void pto::GetBlockDimYOp::inferResultRanges(
+    ::llvm::ArrayRef<::mlir::ConstantIntRanges> operandRanges,
+    ::mlir::SetIntRangeFn setResultRange) {
+  inferNonNegativeIdRange(*this, this->getResult(),
+                          std::numeric_limits<int32_t>::max(), setResultRange);
+}
+
+void pto::GetBlockDimZOp::inferResultRanges(
+    ::llvm::ArrayRef<::mlir::ConstantIntRanges> operandRanges,
+    ::mlir::SetIntRangeFn setResultRange) {
+  inferNonNegativeIdRange(*this, this->getResult(),
+                          std::numeric_limits<int32_t>::max(), setResultRange);
+}
+
+void pto::GetGridDimXOp::inferResultRanges(
+    ::llvm::ArrayRef<::mlir::ConstantIntRanges> operandRanges,
+    ::mlir::SetIntRangeFn setResultRange) {
+  inferNonNegativeIdRange(*this, this->getResult(),
+                          std::numeric_limits<int32_t>::max(), setResultRange);
+}
+
+void pto::GetGridDimYOp::inferResultRanges(
+    ::llvm::ArrayRef<::mlir::ConstantIntRanges> operandRanges,
+    ::mlir::SetIntRangeFn setResultRange) {
+  inferNonNegativeIdRange(*this, this->getResult(),
+                          std::numeric_limits<int32_t>::max(), setResultRange);
+}
+
+void pto::GetGridDimZOp::inferResultRanges(
+    ::llvm::ArrayRef<::mlir::ConstantIntRanges> operandRanges,
+    ::mlir::SetIntRangeFn setResultRange) {
+  inferNonNegativeIdRange(*this, this->getResult(),
+                          std::numeric_limits<int32_t>::max(), setResultRange);
+}
+
+void pto::GetVecCoreIdOp::inferResultRanges(
+    ::llvm::ArrayRef<::mlir::ConstantIntRanges> operandRanges,
+    ::mlir::SetIntRangeFn setResultRange) {
+  inferNonNegativeIdRange(*this, this->getResult(),
+                          std::numeric_limits<int32_t>::max(), setResultRange);
+}
+
+void pto::GetLaneIdOp::inferResultRanges(
+    ::llvm::ArrayRef<::mlir::ConstantIntRanges> operandRanges,
+    ::mlir::SetIntRangeFn setResultRange) {
+  inferNonNegativeIdRange(*this, this->getResult(),
+                          std::numeric_limits<int32_t>::max(), setResultRange);
+}
+
 llvm::cl::opt<bool> disableVPTOAlignChainVerification(
     "vpto-disable-align-chain-verification",
     llvm::cl::desc("Disable !pto.align linear-chain verifier checks"),

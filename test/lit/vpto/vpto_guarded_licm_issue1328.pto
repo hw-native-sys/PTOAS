@@ -79,7 +79,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK: %[[VALID64:.*]] = arith.extsi %{{.*}} : i32 to i64
 // CHECK: %[[LOCAL64:.*]] = arith.extsi %{{.*}} : i32 to i64
 // CHECK: %[[RANGEBASE:.*]] = arith.minsi %[[VALID64]], %[[LOCAL64]] : i64
-// CHECK: %[[TID64:.*]] = arith.extsi %[[TID]] : i32 to i64
+// get_tid_x carries a non-negative range, so extsi becomes extui.
+// CHECK: %[[TID64:.*]] = arith.extui %[[TID]] : i32 to i64
 // CHECK: %[[LANE64:.*]] = arith.andi %[[TID64]], %{{.*}} : i64
 // CHECK: %[[BASE0:.*]] = arith.addi %[[SLOTBASE]], %[[RANGEBASE]] : i64
 // CHECK: %[[BASE1:.*]] = arith.addi %[[BASE0]], %[[LANE64]] : i64
@@ -93,7 +94,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK:   %[[LOGICAL:.*]] = arith.addi %[[ITEROFF]], %[[LANE]] : i32
 // CHECK:   arith.cmpi
 // CHECK:   scf.if
-// CHECK:     %[[IV64:.*]] = arith.extsi %[[IV32]] : i32 to i64
+// CHECK:     %[[IV64:.*]] = arith.ext{{si|ui}} %[[IV32]] : i32 to i64
 // CHECK:     %[[DYNAMIC:.*]] = arith.muli %[[IV64]], %{{.*}} : i64
 // CHECK:     %[[OFFSET:.*]] = arith.addi %[[BASE]], %[[DYNAMIC]] : i64
 // CHECK:     %[[INDEX:.*]] = arith.index_cast %[[OFFSET]] : i64 to index

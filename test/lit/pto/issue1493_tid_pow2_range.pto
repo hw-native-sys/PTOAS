@@ -1,0 +1,95 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// the CANN Open Software License Agreement Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://console.huawei.com/cann/license
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o %t.ll 2>/dev/null
+// RUN: FileCheck %s --input-file=%t.ll --check-prefix=LL \
+// RUN:   --implicit-check-not=sdiv --implicit-check-not=srem
+
+// Hardware SIMT ID queries are non-negative; floordivsi/remsi by a power of
+// two on them must reach the LLVM backend as udiv/urem (which the backend
+// folds into shifts/masks), never as the signed-division guard chain.
+// The scf.if guard mirrors the real TileLang-generated amax-store pattern.
+
+module attributes {pto.target_arch = "a5"} {
+  module attributes {pto.backend = "vpto", pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch = "a5"} {
+    func.func @floordiv_repro(%arg0: !pto.ptr<i32, gm>, %arg1: !pto.ptr<i32, gm>) attributes {pto.entry, pto.kernel_kind = #pto.kernel_kind<vector>} {
+      pto.section.simt<<<1024, 1, 1>>> {
+        %tid = pto.get_tid_x : i32
+        %c32 = arith.constant 32 : i32
+        %mod = arith.remsi %tid, %c32 : i32
+        %zero = arith.constant 0 : i32
+        %pred = arith.cmpi eq, %mod, %zero : i32
+        scf.if %pred {
+          %div = arith.floordivsi %tid, %c32 : i32
+          %c64 = arith.constant 64 : i32
+          %lane = arith.muli %div, %c64 : i32
+          %laneidx = arith.index_cast %lane : i32 to index
+          %v = pto.load %arg0[%laneidx] : !pto.ptr<i32, gm> -> i32
+          %one = arith.constant 1 : i32
+          %v1 = arith.addi %v, %one : i32
+          pto.store %v1, %arg1[%laneidx] : !pto.ptr<i32, gm>, i32
+        }
+      }
+      return
+    }
+    // Same rewrite must fire for the non-thread ID queries (block/dim/grid/lane)
+    // that carry no launch-dim upper bound and rely on the [0, INT32_SIGNED_MAX]
+    // fallback range.
+    func.func @blockidx_repro(%arg0: !pto.ptr<i32, gm>, %arg1: !pto.ptr<i32, gm>) attributes {pto.entry, pto.kernel_kind = #pto.kernel_kind<vector>} {
+      pto.section.simt<<<8, 1, 1>>> {
+        %blk = pto.get_block_idx_x : i32
+        %c32 = arith.constant 32 : i32
+        %div = arith.floordivsi %blk, %c32 : i32
+        %mod = arith.remsi %blk, %c32 : i32
+        %c64 = arith.constant 64 : i32
+        %lane = arith.muli %div, %c64 : i32
+        %adj = arith.addi %lane, %mod : i32
+        %idx = arith.index_cast %adj : i32 to index
+        %v = pto.load %arg0[%idx] : !pto.ptr<i32, gm> -> i32
+        %one = arith.constant 1 : i32
+        %v1 = arith.addi %v, %one : i32
+        pto.store %v1, %arg1[%idx] : !pto.ptr<i32, gm>, i32
+      }
+      return
+    }
+    // The PTO-dialect i64 block query (cube-side orchestrator pattern, as
+    // generated for TileLang persistent kernels) also carries a non-negative
+    // range, so pow2 floordivsi/remsi on it must become udiv/urem as well.
+    func.func @ptoblockidx_repro(%arg0: !pto.ptr<i64, gm>, %arg1: !pto.ptr<i64, gm>) attributes {pto.entry, pto.kernel_kind = #pto.kernel_kind<vector>} {
+      %blk = pto.get_block_idx
+      %c32 = arith.constant 32 : i64
+      %div = arith.floordivsi %blk, %c32 : i64
+      %mod = arith.remsi %blk, %c32 : i64
+      %c64 = arith.constant 64 : i64
+      %lane = arith.muli %div, %c64 : i64
+      %adj = arith.addi %lane, %mod : i64
+      %idx = arith.index_cast %adj : i64 to index
+      %v = pto.load %arg0[%idx] : !pto.ptr<i64, gm> -> i64
+      %one = arith.constant 1 : i64
+      %v1 = arith.addi %v, %one : i64
+      pto.store %v1, %arg1[%idx] : !pto.ptr<i64, gm>, i64
+      return
+    }
+  }
+}
+
+// Every power-of-two division/remainder must reach LLVM unsigned, in both the
+// i32 SIMT kernels and the i64 orchestrator kernel. The checks are order
+// independent because the emission order of the kernels is not part of the
+// contract; --implicit-check-not=sdiv/srem on the RUN line already rejects any
+// signed form anywhere in the file.
+// LL-DAG: urem i32
+// LL-DAG: udiv i32
+// LL-DAG: udiv i64
+// LL-DAG: urem i64

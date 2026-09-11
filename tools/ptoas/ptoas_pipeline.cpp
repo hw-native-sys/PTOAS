@@ -886,6 +886,12 @@ static LogicalResult runVPTOBackendPipeline(OwningOpRef<ModuleOp> &module,
   if (!hasTileOpsToExpand) {
     pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOCanonicalizeIRPass());
   }
+  // Range-driven arith rewrites before the module is split into vector/cube
+  // units: hardware SIMT ID queries are still present here, so their
+  // non-negative InferIntRangeInterface ranges let the upstream arith passes
+  // prove signed-vs-unsigned equivalence (e.g. floordivsi/remsi by pow2 on
+  // get_tid_x results).
+  pm.addPass(pto::createPTOArithRangeOptimizePass());
   pm.addPass(pto::createVPTOSplitCVModulePass());
   pm.addPass(pto::createVPTONormalizeContainerPass());
   if (hasTileOpsToExpand) {
