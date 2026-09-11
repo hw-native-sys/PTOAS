@@ -486,7 +486,7 @@ static std::string buildSimtKeepResumeConstraints(ArrayRef<SimtKeepResumePhysica
       os << ",";
     }
     if (physicalReg.registerCount == kSimtKeepResumePairRegisterCount) {
-      os << "={TPERL" << (physicalReg.baseRegister / 2) << "}";
+      os << "={TPERL" << (physicalReg.baseRegister / kSimtKeepResumePairRegisterCount) << "}";
     } else {
       os << "={TPER" << physicalReg.baseRegister << "}";
     }
@@ -593,7 +593,8 @@ computeSimtKeepResumePhysicalRegs(ArrayRef<std::pair<int64_t, unsigned>> logical
       return failure();
     }
     if (registerCount == kSimtKeepResumePairRegisterCount &&
-        ((slot % 2) != 0 || slot + 1 >= kSimtKeepResumeSlotCount)) {
+        ((slot % kSimtKeepResumeSlotAlignment) != 0 ||
+         slot + 1 >= kSimtKeepResumeSlotCount)) {
       return failure();
     }
     // Slots are user-assigned storage words, not dense ordinals in the current
@@ -613,7 +614,7 @@ static bool isValidSimtKeepResumeSlot(int64_t slot, unsigned registerCount) {
     return false;
   }
   if (registerCount == kSimtKeepResumePairRegisterCount &&
-      ((slot % 2) != 0 || slot + 1 >= kSimtKeepResumeSlotCount)) {
+      ((slot % kSimtKeepResumeSlotAlignment) != 0 || slot + 1 >= kSimtKeepResumeSlotCount)) {
     return false;
   }
   return true;

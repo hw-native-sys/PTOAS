@@ -423,10 +423,10 @@ FailureOr<Type> getVgather2OffsetsCarrierType(PatternRewriter &rewriter, Type so
 
   Type carrierType = offsetsType;
   if (pto::getPTOStorageElemBitWidth(elementType) == kBits16) {
-    if (*lanes % 2 != 0) {
+    if (*lanes % kVgather2LaneMultiplier != 0) {
       return failure();
     }
-    carrierType = VectorType::get({*lanes / 2}, rewriter.getI32Type());
+    carrierType = VectorType::get({*lanes / kVgather2LaneMultiplier}, rewriter.getI32Type());
   }
 
   std::optional<uint64_t> offsetsBits = getFixedVectorBitWidth(offsetsType);
@@ -532,9 +532,9 @@ FailureOr<Value> packVmrgsort4SourceAddr(Operation *anchor, Value source0, Value
   Location loc = anchor->getLoc();
   unsigned addrShift = 0;
   if (elemType.isF16()) {
-    addrShift = 3;
+    addrShift = kVmrgsort4AddrShift;
   } else if (elemType.isF32()) {
-    addrShift = 3;
+    addrShift = kVmrgsort4AddrShift;
   } else {
     return failure();
   }

@@ -88,7 +88,7 @@ FailureOr<Value> packCopyGmToUbConfig0(Operation *anchor, ValueRange operands) {
     return failure();
   }
 
-  SmallVector<std::pair<Value, uint64_t>, 6> fields = {
+  SmallVector<std::pair<Value, uint64_t>, kGmToUbConfigFieldCount> fields = {
       {operands[3], kGmToUbBurstNumShift},
       {operands[4], kGmToUbBurstLenShift},
       {operands[5], kGmToUbLeftPaddingShift},
@@ -123,7 +123,7 @@ FailureOr<Value> packCopyUbToGmConfig0(Operation *anchor, ValueRange operands) {
   if (operands.size() != kUbToGmConfig0OperandCount) {
     return failure();
   }
-  SmallVector<std::pair<Value, uint64_t>, 3> fields = {
+  SmallVector<std::pair<Value, uint64_t>, kUbToGmConfigFieldCount> fields = {
       {operands[3], kUbToGmBurstNumShift}, {operands[4], kUbToGmBurstLenShift},
       {operands[5], kUbToGmL2CacheCtrlShift}};
   return packShiftedFields(anchor, operands[2], fields);
@@ -150,7 +150,7 @@ FailureOr<Value> packCopyUbToUbConfig(Operation *anchor, ValueRange operands) {
   if (operands.size() != kUbToUbConfigOperandCount) {
     return failure();
   }
-  SmallVector<std::pair<Value, uint64_t>, 3> fields = {
+  SmallVector<std::pair<Value, uint64_t>, kUbToUbConfigFieldCount> fields = {
       {operands[4], kUbToUbNBurstShift}, {operands[5], kUbToUbLenBurstShift},
       {operands[6], kUbToUbDstGapShift}};
   return packShiftedFields(anchor, operands[3], fields);
@@ -160,7 +160,7 @@ FailureOr<Value> packCopyCbufToUbConfig(Operation *anchor, ValueRange operands) 
   if (operands.size() != kCbufToUbConfigOperandCount) {
     return failure();
   }
-  SmallVector<std::pair<Value, uint64_t>, 4> fields = {
+  SmallVector<std::pair<Value, uint64_t>, kCbufToUbConfigFieldCount> fields = {
       {operands[3], kCbufToUbNBurstShift}, {operands[4], kCbufToUbLenBurstShift},
       {operands[5], kCbufToUbSrcGapShift}, {operands[6], kCbufToUbDstGapShift}};
   return packShiftedFields(anchor, operands[2], fields);
@@ -269,7 +269,7 @@ FailureOr<Value> packCopyCbufToBtConfig(Operation *anchor, Value convControl, Va
                                         Value sourceGap, Value dstGap) {
   ConfigPacker packer(anchor);
   Value zero = packer.i64Constant(0);
-  SmallVector<std::pair<Value, uint64_t>, 5> fields = {
+  SmallVector<std::pair<Value, uint64_t>, kCbufToBtConfigFieldCount> fields = {
       {convControl, kCbufToBtConvControlShift}, {nBurst, kCbufToBtNBurstShift},
       {lenBurst, kCbufToBtLenBurstShift}, {sourceGap, kCbufToBtSourceGapShift},
       {dstGap, kCbufToBtDstGapShift}};

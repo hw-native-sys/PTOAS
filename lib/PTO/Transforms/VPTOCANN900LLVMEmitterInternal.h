@@ -142,6 +142,8 @@ inline constexpr unsigned kBitsPerByte = 8;
 inline constexpr int64_t kSimtKeepResumeSlotCount = 123;
 inline constexpr int64_t kSimtKeepResumeLastBaseRegister = 126;
 inline constexpr unsigned kSimtKeepResumePairRegisterCount = 2;
+// A paired payload occupies two adjacent slots, so its base slot must be even.
+inline constexpr int64_t kSimtKeepResumeSlotAlignment = 2;
 
 // get_vms4_sr packs four 16-bit counters into one i64 runtime query result.
 inline constexpr unsigned kVms4SrCountFieldBits = 16;
@@ -156,6 +158,14 @@ inline constexpr uint64_t kFillWordWidth32 = 32;
 inline constexpr unsigned kVmullResultCount = 2;
 inline constexpr unsigned kVectorPairLaneCount = 2;
 
+// Atomic RMW fragments are only emitted for 1-D f16x2/bf16x2 vector payloads.
+inline constexpr int64_t kAtomicVectorRank = 1;
+inline constexpr int64_t kAtomicVectorDimSize = 2;
+
+// arith.select conversion outranks the generic fallback patterns so the
+// converted-operand fast path is tried first.
+inline constexpr unsigned kSelectPatternBenefit = 2;
+
 // Named vector shapes of the specialized widening intrinsics (f16<->f32).
 inline constexpr int64_t kVexpdifInterleaveLanes = 128;
 inline constexpr int64_t kVexpdifLanes = 64;
@@ -167,6 +177,10 @@ inline constexpr int64_t kVgather2LaneMultiplier = 2;
 inline constexpr uint64_t kVgather2PackShift16 = 16;
 inline constexpr uint64_t kVgather2PackShift32 = 32;
 inline constexpr uint64_t kVgather2PackShift48 = 48;
+
+// vmrgsort4 packs four 16-bit source addresses into the immediate operand;
+// UB addresses are 8-byte aligned, so >>3 keeps each address within 16 bits.
+inline constexpr unsigned kVmrgsort4AddrShift = 3;
 
 // MOV.PAD payloads are limited to byte, halfword, and word widths.
 inline constexpr unsigned kMovPadWidth8 = 8;
@@ -202,6 +216,13 @@ inline constexpr unsigned kUbToUbConfigOperandCount = 7;
 inline constexpr uint64_t kUbToUbNBurstShift = 16;
 inline constexpr uint64_t kUbToUbLenBurstShift = 32;
 inline constexpr uint64_t kUbToUbDstGapShift = 48;
+
+// Number of shifted config-word fields each copy config packs after the base.
+inline constexpr unsigned kGmToUbConfigFieldCount = 6;
+inline constexpr unsigned kUbToGmConfigFieldCount = 3;
+inline constexpr unsigned kUbToUbConfigFieldCount = 3;
+inline constexpr unsigned kCbufToUbConfigFieldCount = 4;
+inline constexpr unsigned kCbufToBtConfigFieldCount = 5;
 
 inline constexpr unsigned kCbufToUbConfigOperandCount = 7;
 inline constexpr uint64_t kCbufToUbNBurstShift = 4;
