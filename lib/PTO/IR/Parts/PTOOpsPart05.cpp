@@ -1199,7 +1199,8 @@ mlir::LogicalResult mlir::pto::TImg2colOp::verify()
     if (getPTOMemorySpaceEnum(src) != AddressSpace::MAT || getPTOMemorySpaceEnum(dst) != AddressSpace::LEFT)
         return emitOpError("expects Mat source and Left destination");
     Type elem = src.getElementType();
-    if (elem != dst.getElementType() || !(elem.isF16() || elem.isBF16() || elem.isF32() || elem.isInteger(8)))
+    if (elem != dst.getElementType() ||
+        !(elem.isF16() || elem.isBF16() || elem.isF32() || elem.isSignlessInteger(8) || elem.isSignedInteger(8)))
         return emitOpError("expects matching f16/bf16/f32/i8 element types");
     const int64_t c0 = 256 / elem.getIntOrFloatBitWidth();
     if (src.getBLayoutValueI32() != static_cast<int32_t>(BLayout::ColMajor) ||

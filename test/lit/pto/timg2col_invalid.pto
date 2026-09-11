@@ -8,6 +8,18 @@
 
 // RUN: pto-test-opt %s --split-input-file --verify-diagnostics
 
+func.func @invalid_unsigned_element(%src: !pto.tile_buf<mat, 64x32xui8, blayout=col_major, slayout=row_major>, %dst: !pto.tile_buf<left, 16x32xui8, blayout=row_major, slayout=row_major>) {
+  %m = arith.constant 0 : index
+  %k = arith.constant 0 : index
+  // expected-error @+1 {{expects matching f16/bf16/f32/i8 element types}}
+  pto.timg2col ins(%src, %m, %k : !pto.tile_buf<mat, 64x32xui8, blayout=col_major, slayout=row_major>, index, index)
+    outs(%dst : !pto.tile_buf<left, 16x32xui8, blayout=row_major, slayout=row_major>)
+    {fmap_h=8 : i64, fmap_w=8 : i64, kernel_h=1 : i64, kernel_w=1 : i64}
+  return
+}
+
+// -----
+
 func.func @invalid_0(%src: !pto.tile_buf<vec, 64x32xf16, blayout=col_major, slayout=row_major>, %dst: !pto.tile_buf<left, 16x32xf16, blayout=row_major, slayout=row_major>) {
   %m = arith.constant 0 : index
   %k = arith.constant 0 : index
