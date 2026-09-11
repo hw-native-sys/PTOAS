@@ -288,14 +288,14 @@ static void canonicalizeFunctionType(func::FuncOp func) {
   inputs.reserve(oldType.getNumInputs());
   for (Type type : oldType.getInputs()) {
     Type newType = canonicalViewType(type);
-    changed |= newType != type;
+    changed = changed || newType != type;
     inputs.push_back(newType);
   }
 
   results.reserve(oldType.getNumResults());
   for (Type type : oldType.getResults()) {
     Type newType = canonicalViewType(type);
-    changed |= newType != type;
+    changed = changed || newType != type;
     results.push_back(newType);
   }
 

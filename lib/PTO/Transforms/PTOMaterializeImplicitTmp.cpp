@@ -764,37 +764,37 @@ static LogicalResult materializeFixedMandatoryTmp(Operation *op,
                                                   bool requireExplicitTmp,
                                                   MLIRContext *ctx) {
   return llvm::TypeSwitch<Operation *, LogicalResult>(op)
-      .Case<pto::TPReluOp>([&](auto typedOp) -> LogicalResult {
+      .Case<pto::TPReluOp>([requireExplicitTmp, ctx](auto typedOp) -> LogicalResult {
         if (typedOp.getTmp()) {
           return success();
         }
         return materializeTPReluTmpOp(typedOp, requireExplicitTmp, ctx);
       })
-      .Case<pto::TRemOp>([&](auto typedOp) -> LogicalResult {
+      .Case<pto::TRemOp>([requireExplicitTmp, ctx](auto typedOp) -> LogicalResult {
         if (typedOp.getTmp()) {
           return success();
         }
         return materializeTRemTmpOp(typedOp, requireExplicitTmp, ctx);
       })
-      .Case<pto::TRemSOp>([&](auto typedOp) -> LogicalResult {
+      .Case<pto::TRemSOp>([requireExplicitTmp, ctx](auto typedOp) -> LogicalResult {
         if (typedOp.getTmp()) {
           return success();
         }
         return materializeTRemSTmpOp(typedOp, requireExplicitTmp, ctx);
       })
-      .Case<pto::TSelOp>([&](auto typedOp) -> LogicalResult {
+      .Case<pto::TSelOp>([requireExplicitTmp, ctx](auto typedOp) -> LogicalResult {
         if (typedOp.getTmp()) {
           return success();
         }
         return materializeTSelTmpOp(typedOp, requireExplicitTmp, ctx);
       })
-      .Case<pto::TSelSOp>([&](auto typedOp) -> LogicalResult {
+      .Case<pto::TSelSOp>([requireExplicitTmp, ctx](auto typedOp) -> LogicalResult {
         if (typedOp.getTmp()) {
           return success();
         }
         return materializeTSelSTmpOp(typedOp, requireExplicitTmp, ctx);
       })
-      .Case<pto::TTransOp>([&](auto typedOp) -> LogicalResult {
+      .Case<pto::TTransOp>([requireExplicitTmp, ctx](auto typedOp) -> LogicalResult {
         if (typedOp.getTmp()) {
           return success();
         }
@@ -975,7 +975,7 @@ struct PTOMaterializeImplicitTmpPass
     func::FuncOp func = getOperation();
     MLIRContext *ctx = func.getContext();
     SmallVector<pto::TCIOp> tciOps;
-    func.walk([&](pto::TCIOp op) {
+    func.walk([&tciOps](pto::TCIOp op) {
       if (!op.getTmp()) {
         tciOps.push_back(op);
       }
@@ -1018,7 +1018,7 @@ struct PTOMaterializeImplicitTmpPass
     func::FuncOp func = getOperation();
     MLIRContext *ctx = func.getContext();
     SmallVector<Operation *> rowExpandOps;
-    func.walk([&](Operation *op) {
+    func.walk([&rowExpandOps](Operation *op) {
       if (isa<pto::TRowExpandAddOp, pto::TRowExpandSubOp,
               pto::TRowExpandMulOp, pto::TRowExpandDivOp,
               pto::TRowExpandMaxOp, pto::TRowExpandMinOp>(op)) {
@@ -1032,7 +1032,7 @@ struct PTOMaterializeImplicitTmpPass
               .Case<pto::TRowExpandAddOp, pto::TRowExpandSubOp,
                     pto::TRowExpandMulOp, pto::TRowExpandDivOp,
                     pto::TRowExpandMaxOp, pto::TRowExpandMinOp>(
-                  [&](auto typedOp) {
+                  [this, ctx](auto typedOp) {
                     return materializeTRowExpandTmp(typedOp, requireExplicitTmp,
                                                     ctx);
                   })
@@ -1049,7 +1049,7 @@ struct PTOMaterializeImplicitTmpPass
     func::FuncOp func = getOperation();
     MLIRContext *ctx = func.getContext();
     SmallVector<Operation *> optionalTmpOps;
-    func.walk([&](Operation *op) {
+    func.walk([&optionalTmpOps](Operation *op) {
       if (isa<pto::TColSumOp, pto::TQuantOp, pto::TPowOp,
               pto::TPowSOp, pto::TSort32Op, pto::TXorOp,
               pto::TXorSOp, pto::TCvtOp, pto::TMrgSortOp>(op)) {
@@ -1060,31 +1060,31 @@ struct PTOMaterializeImplicitTmpPass
     for (Operation *op : optionalTmpOps) {
       LogicalResult result =
           llvm::TypeSwitch<Operation *, LogicalResult>(op)
-              .Case<pto::TColSumOp>([&](auto typedOp) {
+              .Case<pto::TColSumOp>([this, ctx](auto typedOp) {
                 return replaceTColSumWithTmp(typedOp, requireExplicitTmp, ctx);
               })
-              .Case<pto::TQuantOp>([&](auto typedOp) {
+              .Case<pto::TQuantOp>([this, ctx](auto typedOp) {
                 return replaceTQuantWithTmp(typedOp, requireExplicitTmp, ctx);
               })
-              .Case<pto::TPowOp>([&](auto typedOp) {
+              .Case<pto::TPowOp>([this, ctx](auto typedOp) {
                 return replaceTPowWithTmp(typedOp, requireExplicitTmp, ctx);
               })
-              .Case<pto::TPowSOp>([&](auto typedOp) {
+              .Case<pto::TPowSOp>([this, ctx](auto typedOp) {
                 return replaceTPowSWithTmp(typedOp, requireExplicitTmp, ctx);
               })
-              .Case<pto::TSort32Op>([&](auto typedOp) {
+              .Case<pto::TSort32Op>([this, ctx](auto typedOp) {
                 return replaceTSort32WithTmp(typedOp, requireExplicitTmp, ctx);
               })
-              .Case<pto::TXorOp>([&](auto typedOp) {
+              .Case<pto::TXorOp>([this, ctx](auto typedOp) {
                 return replaceTXorWithTmp(typedOp, requireExplicitTmp, ctx);
               })
-              .Case<pto::TXorSOp>([&](auto typedOp) {
+              .Case<pto::TXorSOp>([this, ctx](auto typedOp) {
                 return replaceTXorSWithTmp(typedOp, requireExplicitTmp, ctx);
               })
-              .Case<pto::TCvtOp>([&](auto typedOp) {
+              .Case<pto::TCvtOp>([this, ctx](auto typedOp) {
                 return materializeTCvtTmp(typedOp, requireExplicitTmp, ctx);
               })
-              .Case<pto::TMrgSortOp>([&](auto typedOp) {
+              .Case<pto::TMrgSortOp>([this, ctx](auto typedOp) {
                 return materializeTMrgSortTmp(typedOp, requireExplicitTmp, ctx);
               })
               .Default([](Operation *) { return success(); });
@@ -1100,7 +1100,7 @@ struct PTOMaterializeImplicitTmpPass
     func::FuncOp func = getOperation();
     MLIRContext *ctx = func.getContext();
     SmallVector<Operation *> rowReductionOps;
-    func.walk([&](Operation *op) {
+    func.walk([&rowReductionOps](Operation *op) {
       if (isa<pto::TRowMaxOp, pto::TRowMinOp, pto::TRowSumOp,
               pto::TRowProdOp, pto::TColArgMaxOp, pto::TColArgMinOp,
               pto::TRowArgMaxOp, pto::TRowArgMinOp>(op)) {
@@ -1113,7 +1113,7 @@ struct PTOMaterializeImplicitTmpPass
           llvm::TypeSwitch<Operation *, LogicalResult>(op)
               .Case<pto::TRowMaxOp, pto::TRowMinOp, pto::TRowSumOp,
                     pto::TRowProdOp, pto::TColArgMaxOp, pto::TColArgMinOp,
-                    pto::TRowArgMaxOp, pto::TRowArgMinOp>([&](auto typedOp) {
+                    pto::TRowArgMaxOp, pto::TRowArgMinOp>([this, ctx](auto typedOp) {
                 return replaceRowReductionWithTmp(typedOp, requireExplicitTmp,
                                                   ctx);
               })
@@ -1130,7 +1130,7 @@ struct PTOMaterializeImplicitTmpPass
     func::FuncOp func = getOperation();
     MLIRContext *ctx = func.getContext();
     SmallVector<Operation *> mandatoryTmpOps;
-    func.walk([&](Operation *op) {
+    func.walk([&mandatoryTmpOps](Operation *op) {
       if (isa<pto::TPReluOp, pto::TRemOp, pto::TRemSOp, pto::TSelOp,
               pto::TSelSOp, pto::TTransOp>(op)) {
         mandatoryTmpOps.push_back(op);

@@ -188,7 +188,7 @@ static bool isRedundantBarrier(pto::BarrierOp barrierOp, Block *block,
   if (!isPipelineActiveFuture(block, std::next(it), bPipe)) {
     return true;
   }
-  if (!intraPipeDirtySet.count(bPipe)) {
+  if (!intraPipeDirtySet.contains(bPipe)) {
     return true;
   }
   auto nextIt = std::next(it);
@@ -225,7 +225,7 @@ static bool isRedundantSet(Operation *op, Block *block, Block::iterator it,
   if (!isPipelineActiveFuture(block, std::next(it), setDst)) {
     return true;
   }
-  if (!intraPipeDirtySet.count(setSrc)) {
+  if (!intraPipeDirtySet.contains(setSrc)) {
     return true;
   }
   return false;

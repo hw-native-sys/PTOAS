@@ -449,7 +449,7 @@ static FailureOr<int32_t> chooseFlagBaseForComponent(const PipeComponent &compon
 struct PTOResolveReservedBuffersPass
     : public mlir::pto::impl::PTOResolveReservedBuffersBase<
           PTOResolveReservedBuffersPass> {
-  LogicalResult assignPeerAwareFlagBases(ModuleOp moduleOp) {
+  LogicalResult assignPeerAwareFlagBases(ModuleOp moduleOp) const {
     // Build peer-connected pipe-init components, assign one consistent
     // flag_base per component, and reserve non-overlapping flag ranges per
     // function so multiple frontend pipes can coexist safely.
@@ -493,8 +493,8 @@ struct PTOResolveReservedBuffersPass
 
   // Replaces one func's reserve_buffer markers with their resolved constant
   // base addresses, recording the ops for deferred erasure.
-  LogicalResult materializeReserveOpsInFunc(func::FuncOp funcOp,
-                                            SmallVectorImpl<Operation *> &eraseOps) {
+  LogicalResult materializeReserveOpsInFunc(
+      func::FuncOp funcOp, SmallVectorImpl<Operation *> &eraseOps) const {
     OpBuilder builder(funcOp.getContext());
 
     SmallVector<ReserveBufferOp> reserveOps;
@@ -520,8 +520,8 @@ struct PTOResolveReservedBuffersPass
 
   // Replaces one func's import_reserved_buffer references with the peer
   // reserve_buffer's resolved constant base address.
-  LogicalResult materializeImportOpsInFunc(func::FuncOp funcOp,
-                                           SmallVectorImpl<Operation *> &eraseOps) {
+  LogicalResult materializeImportOpsInFunc(
+      func::FuncOp funcOp, SmallVectorImpl<Operation *> &eraseOps) const {
     OpBuilder builder(funcOp.getContext());
 
     SmallVector<ImportReservedBufferOp> importOps;
@@ -562,7 +562,7 @@ struct PTOResolveReservedBuffersPass
     return success();
   }
 
-  LogicalResult materializeResolvedAddresses(ModuleOp moduleOp) {
+  LogicalResult materializeResolvedAddresses(ModuleOp moduleOp) const {
     // Resolve frontend reserve/import ops to plain constant local addresses so
     // downstream lowering only sees ordinary SSA values.
     SmallVector<Operation *> eraseOps;

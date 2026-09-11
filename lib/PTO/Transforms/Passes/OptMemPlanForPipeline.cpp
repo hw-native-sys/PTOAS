@@ -14,7 +14,7 @@ using namespace mlir;
 using namespace mlir::detail;
 using namespace mlir::pto;
 
-void OptMemPlanForDma::build(func::FuncOp func) {
+void OptMemPlanForDma::build(func::FuncOp func) const {
   (void)func;
 }
 

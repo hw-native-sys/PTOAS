@@ -290,7 +290,8 @@ static InplacePolicy getInplacePolicy(Operation *op) {
 
   if (auto fillPad = dyn_cast<TFillPadOp>(op)) {
     auto expanded = hasTFillPadExpandedPhysicalShape(fillPad);
-    policy.notInplaceSafe |= failed(expanded) || *expanded;
+    policy.notInplaceSafe = policy.notInplaceSafe ||
+                            (failed(expanded) || *expanded);
   }
 
   if (name == "pto.tsel") {
@@ -431,7 +432,7 @@ struct PlannerAnalysis {
   }
 
   void addRoot(Value value, Operation *defOp) {
-    if (rootIndexByValue.count(value)) {
+    if (rootIndexByValue.contains(value)) {
       return;
     }
 
@@ -510,7 +511,7 @@ struct PlannerAnalysis {
     if (a == b) {
       return;
     }
-    if (!rootIndexByValue.count(a) || !rootIndexByValue.count(b)) {
+    if (!rootIndexByValue.contains(a) || !rootIndexByValue.contains(b)) {
       return;
     }
     appendUniqueRoot(facts.forbidAlias[a], b);
@@ -537,7 +538,7 @@ struct PlannerAnalysis {
     }
   }
 
-  void markRoots(DenseSet<Value> &set, const RootList &roots) {
+  void markRoots(DenseSet<Value> &set, const RootList &roots) const {
     for (Value root : roots) {
       set.insert(root);
     }
@@ -592,7 +593,7 @@ struct PlannerAnalysis {
     }
   }
 
-  bool isRootDefinedInRegion(Value root, Region &region) const {
+  bool isRootDefinedInRegion(Value root, const Region &region) const {
     auto it = rootIndexByValue.find(root);
     if (it == rootIndexByValue.end()) {
       return false;
@@ -611,7 +612,7 @@ struct PlannerAnalysis {
     if (lhs == rhs) {
       return;
     }
-    if (!rootIndexByValue.count(lhs) || !rootIndexByValue.count(rhs)) {
+    if (!rootIndexByValue.contains(lhs) || !rootIndexByValue.contains(rhs)) {
       return;
     }
     appendUniqueRoot(facts.branchExclusiveRoots[lhs], rhs);
@@ -758,7 +759,7 @@ struct PlannerAnalysis {
     recordTpopConsumerRoots(op, dpsInits, opIndex);
   }
 
-  void appendAccessRoots(RootList &dst, Value value) {
+  void appendAccessRoots(RootList &dst, Value value) const {
     for (Value root : getRoots(value)) {
       appendUniqueRoot(dst, root);
     }

@@ -57,8 +57,9 @@ static void mergeSegmentSummary(UncoveredTopLevelSegment &dst,
   if (!dst.firstTileCarrierOp) {
     dst.firstTileCarrierOp = src.firstTileCarrierOp;
   }
-  dst.containsTileOp |= src.containsTileOp;
-  dst.containsNestedExplicitSection |= src.containsNestedExplicitSection;
+  dst.containsTileOp = dst.containsTileOp || src.containsTileOp;
+  dst.containsNestedExplicitSection =
+      dst.containsNestedExplicitSection || src.containsNestedExplicitSection;
   dst.vectorTileOpCount += src.vectorTileOpCount;
   dst.cubeTileOpCount += src.cubeTileOpCount;
   dst.ambiguousTileOps.append(src.ambiguousTileOps.begin(),
@@ -714,10 +715,10 @@ static std::optional<InferredSectionKind> inferWholeFunctionKind(
   inspectModuleKindOperation(funcOp.getOperation(), summary);
   std::optional<InferredSectionKind> inferredKind;
   if (summary.ambiguousOps.empty() &&
-      !(summary.vectorCount && summary.cubeCount)) {
-    if (summary.vectorCount) {
+      !(summary.vectorCount != 0 && summary.cubeCount != 0)) {
+    if (summary.vectorCount != 0) {
       inferredKind = InferredSectionKind::Vector;
-    } else if (summary.cubeCount) {
+    } else if (summary.cubeCount != 0) {
       inferredKind = InferredSectionKind::Cube;
     }
   }
@@ -855,13 +856,13 @@ inferSegmentKind(const UncoveredTopLevelSegment &segment) {
   if (!segment.ambiguousTileOps.empty()) {
     return std::nullopt;
   }
-  if (segment.vectorTileOpCount && segment.cubeTileOpCount) {
+  if (segment.vectorTileOpCount != 0 && segment.cubeTileOpCount != 0) {
     return std::nullopt;
   }
-  if (segment.vectorTileOpCount) {
+  if (segment.vectorTileOpCount != 0) {
     return InferredSectionKind::Vector;
   }
-  if (segment.cubeTileOpCount) {
+  if (segment.cubeTileOpCount != 0) {
     return InferredSectionKind::Cube;
   }
   return std::nullopt;
@@ -891,7 +892,7 @@ static void collectUncoveredTopLevelSegments(
   Block &entryBlock = funcOp.getBody().front();
   UncoveredTopLevelSegment current;
 
-  auto flushCurrent = [&]() {
+  auto flushCurrent = [&current, &segments]() {
     if (!current.firstOp) {
       return;
     }
@@ -966,13 +967,13 @@ emitSegmentInferenceError(func::FuncOp funcOp,
   InFlightDiagnostic diag =
       funcOp.emitOpError("contains an uncovered top-level op segment whose "
                          "section kind cannot be inferred uniquely");
-  if (segment.vectorTileOpCount && segment.cubeTileOpCount) {
+  if (segment.vectorTileOpCount != 0 && segment.cubeTileOpCount != 0) {
     diag << "; saw both vector-like and cube-like ops in the same segment";
   } else if (!segment.ambiguousTileOps.empty()) {
     diag << "; ambiguous op(s): ";
     for (size_t i = 0, e = segment.ambiguousTileOps.size(); i < e && i < mlir::pto::kValue3;
          ++i) {
-      if (i) {
+      if (i != 0) {
         diag << ", ";
       }
       diag << '\'' << segment.ambiguousTileOps[i]->getName().getStringRef()

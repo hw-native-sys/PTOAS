@@ -16,6 +16,7 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/bit.h"
 
 #include <algorithm>
 #include <map>
@@ -142,7 +143,7 @@ static PipePeerKey getGlobalTensorPipeKey(Operation *op, int8_t dirMask) {
   if (auto idAttr = op->getAttrOfType<IntegerAttr>(kFrontendPipeIdAttrName)) {
     id = std::to_string(idAttr.getInt());
   } else {
-    id = std::to_string(reinterpret_cast<uintptr_t>(op));
+    id = std::to_string(llvm::bit_cast<uintptr_t>(op));
   }
   return PipePeerKey{"__pto_globaltensor_pipe", "id_" + id, dirMask};
 }

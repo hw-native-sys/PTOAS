@@ -80,7 +80,7 @@ static bool isA5ScaleTileTMov(pto::TMovOp op) {
          *dstAS == pto::AddressSpace::SCALING;
 }
 
-static bool hasInterveningUsesOfDst(Operation *start, Operation *end,
+static bool hasInterveningUsesOfDst(Operation *start, const Operation *end,
                                     Value dst) {
   for (Operation *cursor = start->getNextNode(); cursor && cursor != end;
        cursor = cursor->getNextNode()) {

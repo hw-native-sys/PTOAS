@@ -45,7 +45,7 @@ private:
                   bool beforeInsert);
  
   // --- 预处理：构建 op2InsertSync 映射 ---
-  void UpdateOpInsertSync(const IRRewriter &rewriter);
+  void UpdateOpInsertSync();
   void UpdateCompoundOpInsertSync(CompoundInstanceElement *nowCompound);
   void updatePlaceHolderOpInsertSync(PlaceHolderInstanceElement *placeHolder);
   void UpdateLoopOpInsertSync(LoopInstanceElement *nowElement);
@@ -59,10 +59,12 @@ private:
   void AppendAutoSyncTailBarrierIfNeeded(IRRewriter &rewriter);
  
   void CreateSetWaitOpForSingleBuffer(IRRewriter &rewriter, Operation *op,
-                                      SyncOperation *sync, bool beforeInsert);
+                                      SyncOperation *sync,
+                                      bool beforeInsert) const;
  
   void CreateSetWaitOpForMultiBuffer(IRRewriter &rewriter, Operation *op,
-                                     SyncOperation *sync, bool beforeInsert);
+                                     SyncOperation *sync,
+                                     bool beforeInsert) const;
  
   void CreateBlockSyncBarrierOp(IRRewriter &rewriter, Operation *op,
                                 const SyncOperation *sync, bool beforeInsert);

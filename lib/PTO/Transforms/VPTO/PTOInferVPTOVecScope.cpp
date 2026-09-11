@@ -869,7 +869,7 @@ static LogicalResult repairEscapingSubclusters(Block &block,
         if (failed(changed)) {
           return failure();
         }
-        changedInIteration |= *changed;
+        changedInIteration = changedInIteration || *changed;
         break;
       }
       }

@@ -240,7 +240,9 @@ struct PTOExpandSoftLibPass
     std::string functionName = uniqueSoftLibName(module, functionStem);
     func::FuncOp importedEntry;
     LogicalResult materializationResult = service->materialize(
-        request, context, [&](ModuleOp source, StringRef entrySymbol) {
+        request, context,
+        [this, &module, &context, &functionName,
+         &importedEntry](ModuleOp source, StringRef entrySymbol) {
           return importSoftLibFunctions(module, context, functionName,
                                         entrySymbol, source, importedEntry);
         });

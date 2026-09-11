@@ -188,7 +188,7 @@ validateWorklistElement(const PersistentFragmentAnalysis &fragment,
     }
 
     bool isOwnedAccess = llvm::any_of(
-        residentElement.accesses, [&](const AccessLane &candidate) {
+        residentElement.accesses, [&accessLane](const AccessLane &candidate) {
           return candidate.op == accessLane.op &&
                  candidate.laneIndex == accessLane.laneIndex;
         });

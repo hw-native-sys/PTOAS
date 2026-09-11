@@ -451,7 +451,7 @@ PTOIRTranslator::dispatchControlAndComputeOp(Operation *op) {
 }
 
 void PTOIRTranslator::RecursionIR(Region *region) {
-  auto result = region->walk<WalkOrder::PreOrder>([&](Operation *op) {
+  auto result = region->walk<WalkOrder::PreOrder>([this](Operation *op) {
     // 保持原有 if/else-if 链的互斥匹配顺序：A 内存分配 → B 别名/视图 →
     // C/D 控制流与计算指令，任一类别命中后不再尝试后续类别。
     if (auto allocResult = dispatchAllocOp(op)) {
@@ -779,7 +779,7 @@ void PTOIRTranslator::UpdateHelperCallInfo(func::CallOp callOp) {
 // ============================================================================
 // 6. [P0 修改] 获取 Op 的 Pipeline 类型
 // ============================================================================
-pto::PipelineType PTOIRTranslator::getOpPipeline(Operation *op) {
+pto::PipelineType PTOIRTranslator::getOpPipeline(Operation *op) const {
   // 1. 优先尝试通过接口获取
   if (auto pipeOp = dyn_cast<pto::OpPipeInterface>(op)) {
     // 注意：假设 pto::Pipe (ODS Enum) 和 pto::PipelineType (C++ Enum) 的数值定义是一致的
@@ -1104,7 +1104,7 @@ void PTOIRTranslator::UpdateDefUseVec(ValueRange values, SmallVector<const BaseM
 // 9. 调试与打印支持
 // ============================================================================
 
-std::string PTOIRTranslator::getPipelineName(pto::PipelineType pipe) {
+std::string PTOIRTranslator::getPipelineName(pto::PipelineType pipe) const {
   switch (pipe) {
   case pto::PipelineType::PIPE_MTE1: return "MTE1";
   case pto::PipelineType::PIPE_MTE2: return "MTE2";
@@ -1119,7 +1119,7 @@ std::string PTOIRTranslator::getPipelineName(pto::PipelineType pipe) {
 
 void PTOIRTranslator::printMemInfoList(llvm::raw_ostream &os,
                                        const SmallVector<const BaseMemInfo *> &list,
-                                       AsmState &state) {
+                                       AsmState &state) const {
   os << "[";
   bool first = true;
   for (const auto *info : list) {

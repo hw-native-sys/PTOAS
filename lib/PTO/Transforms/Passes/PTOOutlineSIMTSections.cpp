@@ -137,7 +137,7 @@ static LogicalResult verifySectionCanBeOutlined(pto::SectionSimtOp sectionOp) {
   }
 
   Operation *scope = sectionOp.getOperation();
-  WalkResult escapeCheck = sectionOp.getBody().walk([&](Operation *op) {
+  WalkResult escapeCheck = sectionOp.getBody().walk([scope](Operation *op) {
     for (Value result : op->getResults()) {
       for (Operation *user : result.getUsers()) {
         if (!scope->isAncestor(user)) {

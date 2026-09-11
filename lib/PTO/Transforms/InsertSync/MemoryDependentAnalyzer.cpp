@@ -14,10 +14,7 @@
 #include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
 #include "PTO/Transforms/InsertSync/InsertSyncDebug.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "llvm/Support/Debug.h"
- 
-#define DEBUG_TYPE "pto-inject-sync"
- 
+
 using namespace mlir;
 using namespace mlir::pto;
 
@@ -51,24 +48,18 @@ static Value GetRealRoot(Value v) {
     llvm::errs() << "  [Trace] GetRealRoot Start:\n";
     printValueDebug("    Current", v);
   }
-  
-  int depth = 0;
-  const int maxDepth = 20;
- 
-  while (v && depth++ < maxDepth) {
-    Operation *defOp = v.getDefiningOp();
-    if (!defOp) {
-      if (trace) {
-        llvm::errs() << "    -> Reached BlockArgument. Stop.\n";
-      }
-        break; 
+
+  Operation *defOp = v ? v.getDefiningOp() : nullptr;
+  if (!defOp) {
+    if (trace && v) {
+      llvm::errs() << "    -> Reached BlockArgument. Stop.\n";
     }
- 
-    if (trace) {
-      llvm::errs() << "    -> Hit Alloc/Other [" << defOp->getName()
-                   << "]. Stop.\n";
-    }
-    break;
+    return v;
+  }
+
+  if (trace) {
+    llvm::errs() << "    -> Hit Alloc/Other [" << defOp->getName()
+                 << "]. Stop.\n";
   }
   return v;
 }
@@ -324,7 +315,7 @@ bool MemoryDependentAnalyzer::isBufferAddressRangeOverlap(
  
 bool MemoryDependentAnalyzer::isBufferOverlap(const BaseMemInfo *a,
                                               const BaseMemInfo *b, int aIndex,
-                                              int bIndex) {
+                                              int bIndex) const {
   uint64_t aStart = a->baseAddresses[aIndex];
   uint64_t bStart = b->baseAddresses[bIndex];
   uint64_t aEnd = aStart + a->allocateSize;

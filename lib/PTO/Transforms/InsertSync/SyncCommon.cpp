@@ -282,7 +282,8 @@ static Value getIsNotDeadLoopValue(scf::ForOp forOp, Location loc,
 }
 
 std::optional<mlir::Value>
-CompoundInstanceElement::getUnitFlagCond(Location loc, OpBuilder &rewriter) {
+CompoundInstanceElement::getUnitFlagCond(Location loc,
+                                         OpBuilder &rewriter) const {
   OpBuilder::InsertionGuard guard(rewriter);
   SmallVector<Value> conditions;
 

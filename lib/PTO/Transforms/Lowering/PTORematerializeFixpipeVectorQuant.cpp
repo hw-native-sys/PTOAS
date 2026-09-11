@@ -50,7 +50,7 @@ struct PTORematerializeFixpipeVectorQuantPass
     func::FuncOp funcOp = getOperation();
     SmallVector<Operation *> eraseList;
 
-    auto processBlock = [&](auto &&self, Block &block) -> LogicalResult {
+    auto processBlock = [&eraseList](auto &&self, Block &block) -> LogicalResult {
       llvm::DenseMap<int32_t, SetQuantVectorOp> activeVectorById;
       SmallVector<Operation *> originalOps;
       for (Operation &op : block) {
