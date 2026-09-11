@@ -1,0 +1,48 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+//===- VPTOStrictVecScope.cpp - pto.StrictVecScope methods ----------------===//
+//===----------------------------------------------------------------------===//
+
+#include "VPTOVecScopeInternal.h"
+
+using namespace mlir;
+using namespace mlir::pto;
+using namespace mlir::pto::vecscope_detail;
+
+LogicalResult StrictVecScopeOp::verify() {
+  Region &bodyRegion = getBody();
+  if (bodyRegion.empty()) {
+    return emitOpError("expects a non-empty body region");
+  }
+
+  Block &body = bodyRegion.front();
+  if (body.getNumArguments() != getCaptures().size()) {
+    return emitOpError() << "expects body block to have "
+                         << getCaptures().size()
+                         << " arguments to match explicit captures, got "
+                         << body.getNumArguments();
+  }
+
+  for (auto [idx, pair] :
+       llvm::enumerate(llvm::zip(body.getArguments(), getCaptures()))) {
+    BlockArgument blockArg = std::get<0>(pair);
+    Value capture = std::get<1>(pair);
+    if (blockArg.getType() != capture.getType()) {
+      return emitOpError() << "expects body block argument #" << idx
+                           << " to have type " << capture.getType()
+                           << ", got " << blockArg.getType();
+    }
+  }
+
+  if (Operation *boundaryOp = findForbiddenSyncInRegion(bodyRegion)) {
+    return boundaryOp->emitOpError()
+           << "must be outside 'pto.strict_vecscope'; synchronization "
+              "operations delimit vector scopes";
+  }
+  return success();
+}

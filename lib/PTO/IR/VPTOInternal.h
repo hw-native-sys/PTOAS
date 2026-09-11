@@ -129,6 +129,8 @@ bool isIntegerOrFloatLike(mlir::Type type);
 bool isMxElementType(mlir::Type type);
 bool isSupportedMovPadScalarType(mlir::Type type);
 bool isSupportedPostMode(llvm::StringRef mode);
+bool isCompatibleScalarForSemanticType(mlir::Type semanticType,
+                                       mlir::Type scalarType);
 bool isSupportedPredicatePattern(llvm::StringRef pattern);
 bool isVector2Of(mlir::Type type, llvm::function_ref<bool(mlir::Type)> elementPred);
 mlir::ParseResult parseCubeBridgeOptionalOperands( mlir::OpAsmParser &parser, llvm::ArrayRef<llvm::StringRef> shapeNames, llvm::ArrayRef<llvm::StringRef> fullNames, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &legacyOperands, llvm::SmallVectorImpl<CubeBridgeLoadAsmOperand> &namedOperands, llvm::SmallVectorImpl<unsigned> &namedOperandOrder, bool &usesNamedOperands);
