@@ -126,19 +126,20 @@ checkSupportedVMIAddCarryPorts(VMIVRegType lhsType, VMIVRegType rhsType,
   return success();
 }
 
-LogicalResult checkSupportedVMIAddcShape(VMIVaddcOp op,
-                                         std::string *reason = nullptr) {
+template <typename CarryOp>
+LogicalResult checkSupportedVMICarryOutputShape(
+    CarryOp op, std::string *reason = nullptr) {
   return checkSupportedVMIAddCarryPorts(
       cast<VMIVRegType>(op.getLhs().getType()),
       cast<VMIVRegType>(op.getRhs().getType()),
       cast<VMIVRegType>(op.getResult().getType()),
       {cast<VMIMaskType>(op.getMask().getType()),
-       cast<VMIMaskType>(op.getCarry().getType())},
-      reason);
+       cast<VMIMaskType>(op.getCarry().getType())}, reason);
 }
 
-LogicalResult checkSupportedVMIAddcsShape(VMIVaddcsOp op,
-                                          std::string *reason = nullptr) {
+template <typename CarryOp>
+LogicalResult checkSupportedVMICarryInputShape(CarryOp op,
+                                               std::string *reason = nullptr) {
   return checkSupportedVMIAddCarryPorts(
       cast<VMIVRegType>(op.getLhs().getType()),
       cast<VMIVRegType>(op.getRhs().getType()),
@@ -862,13 +863,23 @@ std::optional<WalkResult> verifyAddCarryShape(CarryOp op, ShapeCheck check,
 std::optional<WalkResult> verifySupportedVMIAddCarryOp(Operation *op) {
   if (auto addc = dyn_cast<VMIVaddcOp>(op)) {
     return verifyAddCarryShape(
-        addc, checkSupportedVMIAddcShape,
+        addc, checkSupportedVMICarryOutputShape<VMIVaddcOp>,
         "pto.vmi.vaddc requires matching 32-bit data and b32 mask parts (");
   }
   if (auto addcs = dyn_cast<VMIVaddcsOp>(op)) {
     return verifyAddCarryShape(
-        addcs, checkSupportedVMIAddcsShape,
+        addcs, checkSupportedVMICarryInputShape<VMIVaddcsOp>,
         "pto.vmi.vaddcs requires matching 32-bit data and b32 mask parts (");
+  }
+  if (auto subc = dyn_cast<VMIVsubcOp>(op)) {
+    return verifyAddCarryShape(
+        subc, checkSupportedVMICarryOutputShape<VMIVsubcOp>,
+        "pto.vmi.vsubc requires matching 32-bit data and b32 mask parts (");
+  }
+  if (auto subcs = dyn_cast<VMIVsubcsOp>(op)) {
+    return verifyAddCarryShape(
+        subcs, checkSupportedVMICarryInputShape<VMIVsubcsOp>,
+        "pto.vmi.vsubcs requires matching 32-bit data and b32 mask parts (");
   }
   return std::nullopt;
 }
@@ -1278,5 +1289,3 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
       });
   return failure(result.wasInterrupted());
 }
-
-

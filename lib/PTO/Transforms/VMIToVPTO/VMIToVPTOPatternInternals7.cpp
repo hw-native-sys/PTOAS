@@ -608,7 +608,10 @@ static void populateVMIArithmeticPatterns(
     VMIToVPTOTypeConverter &typeConverter, RewritePatternSet &patterns) {
   patterns.add<OneToNVMIBinaryOpPattern<VMIAddFOp, VaddOp>,
       OneToNVMIBinaryOpPattern<VMIAddIOp, VaddOp>,
-      OneToNVMIVaddcOpPattern, OneToNVMIVaddcsOpPattern,
+      OneToNVMICarryOutputOpPattern<VMIVaddcOp, VaddcOp>,
+      OneToNVMICarryOutputOpPattern<VMIVsubcOp, VsubcOp>,
+      OneToNVMICarryInputOpPattern<VMIVaddcsOp, VaddcsOp>,
+      OneToNVMICarryInputOpPattern<VMIVsubcsOp, VsubcsOp>,
       OneToNVMIBinaryOpPattern<VMISubFOp, VsubOp>,
       OneToNVMIBinaryOpPattern<VMISubIOp, VsubOp>,
       OneToNVMIBinaryOpPattern<VMIMulFOp, VmulOp>,
@@ -1869,5 +1872,4 @@ static FailureOr<VmullShapePlan> buildVmullShapePlan(
   }
   return VmullShapePlan{aType, logical->layout, *aArity};
 }
-
 

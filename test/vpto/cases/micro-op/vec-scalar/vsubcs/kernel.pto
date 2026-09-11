@@ -1,0 +1,208 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING, BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// -----------------------------------------------------------------------------
+// case: micro-op/vec-scalar/vsubcs
+// family: vec-scalar
+// target_ops: pto.vsubcs
+// scenarios: core-u32-unsigned, full-mask, borrow-chain
+// -----------------------------------------------------------------------------
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @vsubcs_kernel(%arg0: !pto.ptr<ui32, gm>, %arg1: !pto.ptr<ui32, gm>,
+                           %arg2: !pto.ptr<ui32, gm>, %arg3: !pto.ptr<ui8, gm>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c0_i64 = arith.constant 0 : i64
+    %c1_i64 = arith.constant 1 : i64
+    %c128_i64 = arith.constant 128 : i64
+    %c256_i64 = arith.constant 256 : i64
+    %c4096_i64 = arith.constant 4096 : i64
+    %c8192_i64 = arith.constant 8192 : i64
+    %c12288_i64 = arith.constant 12288 : i64
+    %false = arith.constant false
+
+    %ub_lhs = pto.castptr %c0_i64 : i64 -> !pto.ptr<ui32, ub>
+    %ub_rhs = pto.castptr %c4096_i64 : i64 -> !pto.ptr<ui32, ub>
+    %ub_out = pto.castptr %c8192_i64 : i64 -> !pto.ptr<ui32, ub>
+    %ub_borrow = pto.castptr %c12288_i64 : i64 -> !pto.ptr<ui8, ub>
+    pto.mte_gm_ub %arg0, %ub_lhs, %c0_i64, %c256_i64
+      nburst(%c1_i64, %c256_i64, %c256_i64)
+      : !pto.ptr<ui32, gm>, !pto.ptr<ui32, ub>, i64, i64, i64, i64, i64
+    pto.mte_gm_ub %arg1, %ub_rhs, %c0_i64, %c256_i64
+      nburst(%c1_i64, %c256_i64, %c256_i64)
+      : !pto.ptr<ui32, gm>, !pto.ptr<ui32, ub>, i64, i64, i64, i64, i64
+
+    pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %borrow_in = pto.pset_b32 "PAT_ALLF" : !pto.mask<b32>
+      %lhs = pto.vlds %ub_lhs[%c0] : !pto.ptr<ui32, ub> -> !pto.vreg<64xui32>
+      %rhs = pto.vlds %ub_rhs[%c0] : !pto.ptr<ui32, ub> -> !pto.vreg<64xui32>
+      %diff, %borrow = pto.vsubcs %lhs, %rhs, %borrow_in, %mask : !pto.vreg<64xui32>, !pto.vreg<64xui32>, !pto.mask<b32>, !pto.mask<b32> -> !pto.vreg<64xui32>, !pto.mask<b32>
+      pto.vsts %diff, %ub_out[%c0], %mask : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, !pto.mask<b32>
+      pto.psti %borrow, %ub_borrow[%c0], "NORM" : !pto.mask<b32>, !pto.ptr<ui8, ub>, index
+    }
+
+    pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.mte_ub_gm %ub_out, %arg2, %c256_i64
+      nburst(%c1_i64, %c256_i64, %c256_i64)
+      : !pto.ptr<ui32, ub>, !pto.ptr<ui32, gm>, i64, i64, i64, i64
+    pto.mte_ub_gm %ub_borrow, %arg3, %c128_i64
+      nburst(%c1_i64, %c256_i64, %c256_i64)
+      : !pto.ptr<ui8, ub>, !pto.ptr<ui8, gm>, i64, i64, i64, i64
+    pto.barrier #pto.pipe<PIPE_ALL>
+    %__case_merge_guard = arith.constant false
+
+    // inactive cross-case merge from micro-op/vec-scalar/vsubcs-borrow-boundary
+    scf.if %__case_merge_guard {
+      
+          %c0_cmg17_1 = arith.constant 0 : index
+          %c0_i64_cmg17_1 = arith.constant 0 : i64
+          %c1_i64_cmg17_1 = arith.constant 1 : i64
+          %c128_i64_cmg17_1 = arith.constant 128 : i64
+          %c256_i64_cmg17_1 = arith.constant 256 : i64
+          %c4096_i64_cmg17_1 = arith.constant 4096 : i64
+          %c8192_i64_cmg17_1 = arith.constant 8192 : i64
+          %c12288_i64_cmg17_1 = arith.constant 12288 : i64
+          %false_cmg17_1 = arith.constant false
+      
+          %ub_lhs_cmg17_1 = pto.castptr %c0_i64_cmg17_1 : i64 -> !pto.ptr<ui32, ub>
+          %ub_rhs_cmg17_1 = pto.castptr %c4096_i64_cmg17_1 : i64 -> !pto.ptr<ui32, ub>
+          %ub_out_cmg17_1 = pto.castptr %c8192_i64_cmg17_1 : i64 -> !pto.ptr<ui32, ub>
+          %ub_borrow_cmg17_1 = pto.castptr %c12288_i64_cmg17_1 : i64 -> !pto.ptr<ui8, ub>
+          pto.mte_gm_ub %arg0, %ub_lhs_cmg17_1, %c0_i64_cmg17_1, %c256_i64_cmg17_1
+            nburst(%c1_i64_cmg17_1, %c256_i64_cmg17_1, %c256_i64_cmg17_1)
+            : !pto.ptr<ui32, gm>, !pto.ptr<ui32, ub>, i64, i64, i64, i64, i64
+          pto.mte_gm_ub %arg1, %ub_rhs_cmg17_1, %c0_i64_cmg17_1, %c256_i64_cmg17_1
+            nburst(%c1_i64_cmg17_1, %c256_i64_cmg17_1, %c256_i64_cmg17_1)
+            : !pto.ptr<ui32, gm>, !pto.ptr<ui32, ub>, i64, i64, i64, i64, i64
+      
+          pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+          pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+      
+          pto.vecscope {
+            %mask_cmg17_1 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+            %borrow_in_cmg17_1 = pto.pset_b32 "PAT_ALLF" : !pto.mask<b32>
+            %lhs_cmg17_1 = pto.vlds %ub_lhs_cmg17_1[%c0_cmg17_1] : !pto.ptr<ui32, ub> -> !pto.vreg<64xui32>
+            %rhs_cmg17_1 = pto.vlds %ub_rhs_cmg17_1[%c0_cmg17_1] : !pto.ptr<ui32, ub> -> !pto.vreg<64xui32>
+            %diff_cmg17_1, %borrow_cmg17_1 = pto.vsubcs %lhs_cmg17_1, %rhs_cmg17_1, %borrow_in_cmg17_1, %mask_cmg17_1 : !pto.vreg<64xui32>, !pto.vreg<64xui32>, !pto.mask<b32>, !pto.mask<b32> -> !pto.vreg<64xui32>, !pto.mask<b32>
+            pto.vsts %diff_cmg17_1, %ub_out_cmg17_1[%c0_cmg17_1], %mask_cmg17_1 : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, !pto.mask<b32>
+            pto.psti %borrow_cmg17_1, %ub_borrow_cmg17_1[%c0_cmg17_1], "NORM" : !pto.mask<b32>, !pto.ptr<ui8, ub>, index
+          }
+      
+          pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+          pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+          pto.mte_ub_gm %ub_out_cmg17_1, %arg2, %c256_i64_cmg17_1
+            nburst(%c1_i64_cmg17_1, %c256_i64_cmg17_1, %c256_i64_cmg17_1)
+            : !pto.ptr<ui32, ub>, !pto.ptr<ui32, gm>, i64, i64, i64, i64
+          pto.mte_ub_gm %ub_borrow_cmg17_1, %arg3, %c128_i64_cmg17_1
+            nburst(%c1_i64_cmg17_1, %c256_i64_cmg17_1, %c256_i64_cmg17_1)
+            : !pto.ptr<ui8, ub>, !pto.ptr<ui8, gm>, i64, i64, i64, i64
+          pto.barrier #pto.pipe<PIPE_ALL>
+    }
+
+    // inactive cross-case merge from micro-op/vec-scalar/vsubcs
+    scf.if %__case_merge_guard {
+      
+          %c0_cmg17_2 = arith.constant 0 : index
+          %c0_i64_cmg17_2 = arith.constant 0 : i64
+          %c1_i64_cmg17_2 = arith.constant 1 : i64
+          %c128_i64_cmg17_2 = arith.constant 128 : i64
+          %c256_i64_cmg17_2 = arith.constant 256 : i64
+          %c4096_i64_cmg17_2 = arith.constant 4096 : i64
+          %c8192_i64_cmg17_2 = arith.constant 8192 : i64
+          %c12288_i64_cmg17_2 = arith.constant 12288 : i64
+          %false_cmg17_2 = arith.constant false
+      
+          %ub_lhs_cmg17_2 = pto.castptr %c0_i64_cmg17_2 : i64 -> !pto.ptr<ui32, ub>
+          %ub_rhs_cmg17_2 = pto.castptr %c4096_i64_cmg17_2 : i64 -> !pto.ptr<ui32, ub>
+          %ub_out_cmg17_2 = pto.castptr %c8192_i64_cmg17_2 : i64 -> !pto.ptr<ui32, ub>
+          %ub_borrow_cmg17_2 = pto.castptr %c12288_i64_cmg17_2 : i64 -> !pto.ptr<ui8, ub>
+          pto.mte_gm_ub %arg0, %ub_lhs_cmg17_2, %c0_i64_cmg17_2, %c256_i64_cmg17_2
+            nburst(%c1_i64_cmg17_2, %c256_i64_cmg17_2, %c256_i64_cmg17_2)
+            : !pto.ptr<ui32, gm>, !pto.ptr<ui32, ub>, i64, i64, i64, i64, i64
+          pto.mte_gm_ub %arg1, %ub_rhs_cmg17_2, %c0_i64_cmg17_2, %c256_i64_cmg17_2
+            nburst(%c1_i64_cmg17_2, %c256_i64_cmg17_2, %c256_i64_cmg17_2)
+            : !pto.ptr<ui32, gm>, !pto.ptr<ui32, ub>, i64, i64, i64, i64, i64
+      
+          pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+          pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+      
+          pto.vecscope {
+            %mask_cmg17_2 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+            %borrow_in_cmg17_2 = pto.pset_b32 "PAT_ALLF" : !pto.mask<b32>
+            %lhs_cmg17_2 = pto.vlds %ub_lhs_cmg17_2[%c0_cmg17_2] : !pto.ptr<ui32, ub> -> !pto.vreg<64xui32>
+            %rhs_cmg17_2 = pto.vlds %ub_rhs_cmg17_2[%c0_cmg17_2] : !pto.ptr<ui32, ub> -> !pto.vreg<64xui32>
+            %diff_cmg17_2, %borrow_cmg17_2 = pto.vsubcs %lhs_cmg17_2, %rhs_cmg17_2, %borrow_in_cmg17_2, %mask_cmg17_2 : !pto.vreg<64xui32>, !pto.vreg<64xui32>, !pto.mask<b32>, !pto.mask<b32> -> !pto.vreg<64xui32>, !pto.mask<b32>
+            pto.vsts %diff_cmg17_2, %ub_out_cmg17_2[%c0_cmg17_2], %mask_cmg17_2 : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, !pto.mask<b32>
+            pto.psti %borrow_cmg17_2, %ub_borrow_cmg17_2[%c0_cmg17_2], "NORM" : !pto.mask<b32>, !pto.ptr<ui8, ub>, index
+          }
+      
+          pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+          pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+          pto.mte_ub_gm %ub_out_cmg17_2, %arg2, %c256_i64_cmg17_2
+            nburst(%c1_i64_cmg17_2, %c256_i64_cmg17_2, %c256_i64_cmg17_2)
+            : !pto.ptr<ui32, ub>, !pto.ptr<ui32, gm>, i64, i64, i64, i64
+          pto.mte_ub_gm %ub_borrow_cmg17_2, %arg3, %c128_i64_cmg17_2
+            nburst(%c1_i64_cmg17_2, %c256_i64_cmg17_2, %c256_i64_cmg17_2)
+            : !pto.ptr<ui8, ub>, !pto.ptr<ui8, gm>, i64, i64, i64, i64
+          pto.barrier #pto.pipe<PIPE_ALL>
+    }
+
+    // inactive cross-case merge from micro-op/vec-scalar/vsubcs-borrow-boundary
+    scf.if %__case_merge_guard {
+      
+          %c0_cmg17_3 = arith.constant 0 : index
+          %c0_i64_cmg17_3 = arith.constant 0 : i64
+          %c1_i64_cmg17_3 = arith.constant 1 : i64
+          %c128_i64_cmg17_3 = arith.constant 128 : i64
+          %c256_i64_cmg17_3 = arith.constant 256 : i64
+          %c4096_i64_cmg17_3 = arith.constant 4096 : i64
+          %c8192_i64_cmg17_3 = arith.constant 8192 : i64
+          %c12288_i64_cmg17_3 = arith.constant 12288 : i64
+          %false_cmg17_3 = arith.constant false
+      
+          %ub_lhs_cmg17_3 = pto.castptr %c0_i64_cmg17_3 : i64 -> !pto.ptr<ui32, ub>
+          %ub_rhs_cmg17_3 = pto.castptr %c4096_i64_cmg17_3 : i64 -> !pto.ptr<ui32, ub>
+          %ub_out_cmg17_3 = pto.castptr %c8192_i64_cmg17_3 : i64 -> !pto.ptr<ui32, ub>
+          %ub_borrow_cmg17_3 = pto.castptr %c12288_i64_cmg17_3 : i64 -> !pto.ptr<ui8, ub>
+          pto.mte_gm_ub %arg0, %ub_lhs_cmg17_3, %c0_i64_cmg17_3, %c256_i64_cmg17_3
+            nburst(%c1_i64_cmg17_3, %c256_i64_cmg17_3, %c256_i64_cmg17_3)
+            : !pto.ptr<ui32, gm>, !pto.ptr<ui32, ub>, i64, i64, i64, i64, i64
+          pto.mte_gm_ub %arg1, %ub_rhs_cmg17_3, %c0_i64_cmg17_3, %c256_i64_cmg17_3
+            nburst(%c1_i64_cmg17_3, %c256_i64_cmg17_3, %c256_i64_cmg17_3)
+            : !pto.ptr<ui32, gm>, !pto.ptr<ui32, ub>, i64, i64, i64, i64, i64
+      
+          pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+          pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+      
+          pto.vecscope {
+            %mask_cmg17_3 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+            %borrow_in_cmg17_3 = pto.pset_b32 "PAT_ALLF" : !pto.mask<b32>
+            %lhs_cmg17_3 = pto.vlds %ub_lhs_cmg17_3[%c0_cmg17_3] : !pto.ptr<ui32, ub> -> !pto.vreg<64xui32>
+            %rhs_cmg17_3 = pto.vlds %ub_rhs_cmg17_3[%c0_cmg17_3] : !pto.ptr<ui32, ub> -> !pto.vreg<64xui32>
+            %diff_cmg17_3, %borrow_cmg17_3 = pto.vsubcs %lhs_cmg17_3, %rhs_cmg17_3, %borrow_in_cmg17_3, %mask_cmg17_3 : !pto.vreg<64xui32>, !pto.vreg<64xui32>, !pto.mask<b32>, !pto.mask<b32> -> !pto.vreg<64xui32>, !pto.mask<b32>
+            pto.vsts %diff_cmg17_3, %ub_out_cmg17_3[%c0_cmg17_3], %mask_cmg17_3 : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, !pto.mask<b32>
+            pto.psti %borrow_cmg17_3, %ub_borrow_cmg17_3[%c0_cmg17_3], "NORM" : !pto.mask<b32>, !pto.ptr<ui8, ub>, index
+          }
+      
+          pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+          pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+          pto.mte_ub_gm %ub_out_cmg17_3, %arg2, %c256_i64_cmg17_3
+            nburst(%c1_i64_cmg17_3, %c256_i64_cmg17_3, %c256_i64_cmg17_3)
+            : !pto.ptr<ui32, ub>, !pto.ptr<ui32, gm>, i64, i64, i64, i64
+          pto.mte_ub_gm %ub_borrow_cmg17_3, %arg3, %c128_i64_cmg17_3
+            nburst(%c1_i64_cmg17_3, %c256_i64_cmg17_3, %c256_i64_cmg17_3)
+            : !pto.ptr<ui8, ub>, !pto.ptr<ui8, gm>, i64, i64, i64, i64
+          pto.barrier #pto.pipe<PIPE_ALL>
+    }
+    return
+  }
+}
