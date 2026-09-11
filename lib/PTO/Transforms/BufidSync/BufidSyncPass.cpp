@@ -30,6 +30,28 @@ namespace pto {
 #include "PTO/Transforms/Passes.h.inc"
 
 namespace {
+// True if the function already carries hand-written get_buf/rls_buf ops, in
+// which case this pass must not run.
+static bool hasExistingBufSyncOps(func::FuncOp func) {
+  bool found = false;
+  func.walk([&](pto::GetBufOp) { found = true; });
+  func.walk([&](pto::RlsBufOp) { found = true; });
+  return found;
+}
+
+// Linear-scan physical id allocation with reuse. Returns failure if the
+// function still needs more than the available physical buf ids after reuse.
+static LogicalResult allocatePhysicalBufIds(BufidSyncIdAlloc &idAlloc) {
+  idAlloc.computeLifeIntervals();
+  idAlloc.linearScanAllocate();
+  idAlloc.compactPhysicalIds();
+  if (idAlloc.needsReuse()) {
+    idAlloc.reuseIds();
+    idAlloc.compactPhysicalIds();
+  }
+  return failure(idAlloc.needsReuse());
+}
+
 struct PTOBufidSyncPass
     : public impl::PTOBufidSyncBase<PTOBufidSyncPass> {
   PTOBufidSyncPass() = default;
@@ -39,125 +61,78 @@ struct PTOBufidSyncPass
   void runOnOperation() override;
 
 private:
-  bool shouldSkipExistingBufSync(func::FuncOp func) const;
-  void buildSyncIR(SyncIRs &syncIR, MemoryDependentAnalyzer &memAnalyzer,
-                   Buffer2MemInfoMap &buffer2MemInfoMap,
-                   func::FuncOp func) const;
-  bool runAnalysisPhases(BufidSyncAnalysis &analysis);
-  LogicalResult allocatePhysicalIds(BufidSyncIdAlloc &idAlloc,
-                                    func::FuncOp func);
-  LogicalResult emitBufidSync(BufidSyncAnalysis &analysis,
-                              const BufidSyncIdAlloc &idAlloc,
-                              func::FuncOp func);
+  // Allocate physical buf ids for the collected syncs and emit the get_buf /
+  // rls_buf ops. Returns failure (with an emitted diagnostic) on id overflow,
+  // invalid nesting, or a codegen error; the caller signals pass failure.
+  LogicalResult allocateAndEmit(func::FuncOp func, BufidSyncAnalysis &analysis,
+                                SyncIRs &syncIR);
 };
 } // namespace
 
-bool PTOBufidSyncPass::shouldSkipExistingBufSync(func::FuncOp func) const {
-  bool hasExistingBufSync = false;
-  func.walk([&](pto::GetBufOp) { hasExistingBufSync = true; });
-  func.walk([&](pto::RlsBufOp) { hasExistingBufSync = true; });
-  if (hasExistingBufSync) {
+void PTOBufidSyncPass::runOnOperation() {
+  func::FuncOp func = getOperation();
+
+  if (hasExistingBufSyncOps(func)) {
     LLVM_DEBUG(llvm::dbgs() << "bufid_sync: existing get_buf ops found, "
                                "skipping pass.\n");
+    return;
   }
-  return hasExistingBufSync;
-}
-
-void PTOBufidSyncPass::buildSyncIR(SyncIRs &syncIR,
-                                   MemoryDependentAnalyzer &memAnalyzer,
-                                   Buffer2MemInfoMap &buffer2MemInfoMap,
-                                   func::FuncOp func) const {
   if (enableBufidSyncDebug) {
     llvm::outs() << "[bufid_sync] STEP 0: Build SyncIR...\n";
   }
+  SyncIRs syncIR;
+  Buffer2MemInfoMap buffer2MemInfoMap;
+  MemoryDependentAnalyzer memAnalyzer;
   PTOIRTranslator translator(syncIR, memAnalyzer, buffer2MemInfoMap, func,
                              SyncAnalysisMode::NORMALSYNC);
   translator.Build();
   if (enableBufidSyncDebug) {
     llvm::outs() << "[bufid_sync] STEP 0 done: syncIR size=" << syncIR.size() << "\n";
   }
-}
+  if (syncIR.empty()) {
+    LLVM_DEBUG(llvm::dbgs() << "bufid_sync: SyncIR is empty, nothing to do.\n");
+    return;
+  }
 
-bool PTOBufidSyncPass::runAnalysisPhases(BufidSyncAnalysis &analysis) {
+  BufidSyncAnalysis analysis(syncIR, memAnalyzer, func, enableBufidSyncDebug);
   analysis.collectDependencies();
   analysis.classifyTiles();
   analysis.allocateVirtualBufIds();
   analysis.insertSyncOperations();
   analysis.optimizeSamePipeMerge();
-
   if (analysis.getOp2BufSync().empty()) {
     if (enableBufidSyncDebug) {
       llvm::outs() << "[bufid_sync] No sync operations to insert, done.\n";
     }
-    return false;
+    return;
   }
-  return true;
+
+  if (failed(allocateAndEmit(func, analysis, syncIR))) {
+    signalPassFailure();
+  }
 }
 
-LogicalResult PTOBufidSyncPass::allocatePhysicalIds(BufidSyncIdAlloc &idAlloc,
-                                                    func::FuncOp func) {
-  idAlloc.computeLifeIntervals();
-  idAlloc.linearScanAllocate();
-  idAlloc.compactPhysicalIds();
-
-  if (idAlloc.needsReuse()) {
-    idAlloc.reuseIds();
-    idAlloc.compactPhysicalIds();
+LogicalResult PTOBufidSyncPass::allocateAndEmit(func::FuncOp func,
+                                                BufidSyncAnalysis &analysis,
+                                                SyncIRs &syncIR) {
+  BufidSyncIdAlloc idAlloc(analysis.getVirtualBufIds(), analysis.getOp2BufSync(),
+                           syncIR, mlir::pto::kValue32, enableBufidSyncDebug);
+  if (failed(allocatePhysicalBufIds(idAlloc))) {
+    return func.emitError("bufid_sync requires more than 32 physical buf ids "
+                          "after reuse");
   }
-  if (idAlloc.needsReuse()) {
-    func.emitError("bufid_sync requires more than 32 physical buf ids after "
-                   "reuse");
-    return failure();
-  }
-  return success();
-}
 
-LogicalResult PTOBufidSyncPass::emitBufidSync(BufidSyncAnalysis &analysis,
-                                              const BufidSyncIdAlloc &idAlloc,
-                                              func::FuncOp func) {
   analysis.setLogicToPhysicalId(idAlloc.getLogicToPhysical());
   analysis.mergeGetRls();
 
   std::string validationError;
   if (!idAlloc.validateNoSamePhysicalIdNesting(&validationError)) {
-    func.emitError("bufid_sync produced invalid physical bufid nesting: ")
-        << validationError;
-    return failure();
+    return func.emitError("bufid_sync produced invalid physical bufid nesting: ")
+           << validationError;
   }
 
   BufidSyncCodegen codegen(func, analysis.getOp2BufSync(), idAlloc);
   return codegen.run();
-}
-
-void PTOBufidSyncPass::runOnOperation() {
-  func::FuncOp func = getOperation();
-
-  if (shouldSkipExistingBufSync(func)) {
-    return;
-  }
-
-  SyncIRs syncIR;
-  Buffer2MemInfoMap buffer2MemInfoMap;
-  MemoryDependentAnalyzer memAnalyzer;
-  buildSyncIR(syncIR, memAnalyzer, buffer2MemInfoMap, func);
-  if (syncIR.empty()) {
-    LLVM_DEBUG(llvm::dbgs()
-               << "bufid_sync: SyncIR is empty, nothing to do.\n");
-    return;
-  }
-
-  BufidSyncAnalysis analysis(syncIR, memAnalyzer, func, enableBufidSyncDebug);
-  if (!runAnalysisPhases(analysis)) {
-    return;
-  }
-
-  BufidSyncIdAlloc idAlloc(analysis.getVirtualBufIds(),
-                           analysis.getOp2BufSync(), syncIR, mlir::pto::kValue32,
-                           enableBufidSyncDebug);
-  if (failed(allocatePhysicalIds(idAlloc, func)) ||
-      failed(emitBufidSync(analysis, idAlloc, func))) {
-    signalPassFailure();
-  }
 }
 
 std::unique_ptr<Pass>

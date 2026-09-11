@@ -34,12 +34,14 @@ private:
   mapPipelineToSyncOpType(PipelineType pipe) const;
   pto::PipeEventTypeAttr getOpTypeAttr(Builder &builder,
                                        pto::SyncOpType opType) const;
-  void sortSyncOperations(SmallVector<BufSyncOperation> &pipeBefore,
-                          SmallVector<BufSyncOperation> &pipeAfter) const;
-  LogicalResult emitGetBufOps(Operation *op, IRRewriter &rewriter,
-                              const SmallVector<BufSyncOperation> &pipeBefore) const;
-  LogicalResult emitRlsBufOps(Operation *op, IRRewriter &rewriter,
-                              const SmallVector<BufSyncOperation> &pipeAfter) const;
+
+  // Emit the get_buf ops that must precede `op` (the pipeBefore syncs) and the
+  // rls_buf ops that must follow it (the pipeAfter syncs). Each returns failure
+  // if a sync references a pipe that has no encodable sync-op type.
+  LogicalResult emitGetBufs(Operation *op, IRRewriter &rewriter,
+                            ArrayRef<BufSyncOperation> pipeBefore);
+  LogicalResult emitRlsBufs(Operation *op, IRRewriter &rewriter,
+                            ArrayRef<BufSyncOperation> pipeAfter);
 
   func::FuncOp func_;
   const DenseMap<Operation *, BufSyncPipeBuild> &op2BufSync_;

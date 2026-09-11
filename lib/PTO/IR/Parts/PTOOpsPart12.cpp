@@ -178,15 +178,13 @@ static bool isInsideSectionOrAttributedKernel(Operation *op) {
 }
 
 static LogicalResult verifySplitAttr(Operation *op, int64_t split) {
-  if (split < 0 || split > 4) {
-    return op->emitOpError("expects 'split' to be 0, 1, 2, 3, or 4");
-  }
+    if (split < 0 || split > mlir::pto::kValue4) {
+        return op->emitOpError("expects 'split' to be 0, 1, 2, 3, or 4");
+    }
   return success();
 }
 
-static bool isOddSplit(int64_t split) {
-  return split == 3 || split == 4;
-}
+static bool isOddSplit(int64_t split) { return split == mlir::pto::kValue3 || split == mlir::pto::kValue4; }
 
 static bool isInsideCubeKernelOrSection(Operation *op) {
   if (isInsideSectionCube(op)) {
@@ -236,18 +234,23 @@ static LogicalResult verifyFrontendKernelKind(Operation *op,
 
 struct FrontendInitParseState {
   NamedAttrList attrs;
-  SmallVector<OpAsmParser::UnresolvedOperand, 4> operands =
+  SmallVector<OpAsmParser::UnresolvedOperand, mlir::pto::kValue4> operands =
       SmallVector<OpAsmParser::UnresolvedOperand, 4>(4);
-  SmallVector<Type, 4> types = SmallVector<Type, 4>(4);
-  std::array<bool, 7> sawAttr{};
-  std::array<bool, 4> sawOperand{};
+  SmallVector<Type, mlir::pto::kValue4> types = SmallVector<Type, mlir::pto::kValue4>(mlir::pto::kValue4);
+  std::array<bool, mlir::pto::kValue7> sawAttr{};
+  std::array<bool, mlir::pto::kValue4> sawOperand{};
 };
 
 static int getFrontendInitAttrIndex(StringRef keyword) {
-  return llvm::StringSwitch<int>(keyword)
-      .Case("id", 0).Case("dir_mask", 1).Case("slot_size", 2)
-      .Case("slot_num", 3).Case("local_slot_num", 4)
-      .Case("nosplit", 5).Case("acc_push_epilogue", 6).Default(-1);
+    return llvm::StringSwitch<int>(keyword)
+        .Case("id", 0)
+        .Case("dir_mask", 1)
+        .Case("slot_size", mlir::pto::kValue2)
+        .Case("slot_num", mlir::pto::kValue3)
+        .Case("local_slot_num", mlir::pto::kValue4)
+        .Case("nosplit", mlir::pto::kValue5)
+        .Case("acc_push_epilogue", 6)
+        .Default(-1);
 }
 
 static ParseResult parseFrontendInitAttrClause(OpAsmParser &parser,
@@ -263,15 +266,14 @@ static ParseResult parseFrontendInitAttrClause(OpAsmParser &parser,
     return parser.emitError(parser.getCurrentLocation())
            << "duplicate '" << keyword << "' clause";
   state.sawAttr[index] = true;
-  if (index <= 4) {
-    IntegerAttr value;
-    Type type = index == 1 ? parser.getBuilder().getI8Type()
-                           : parser.getBuilder().getI32Type();
-    return parser.parseAttribute(value, type, keyword, state.attrs);
+  if (index <= mlir::pto::kValue4) {
+      IntegerAttr value;
+      Type type = index == 1 ? parser.getBuilder().getI8Type() : parser.getBuilder().getI32Type();
+      return parser.parseAttribute(value, type, keyword, state.attrs);
   }
-  if (index == 5) {
-    BoolAttr value;
-    return parser.parseAttribute(value, "nosplit", state.attrs);
+  if (index == mlir::pto::kValue5) {
+      BoolAttr value;
+      return parser.parseAttribute(value, "nosplit", state.attrs);
   }
   AccPushEpilogueAttr value;
   return parser.parseAttribute(value, "acc_push_epilogue", state.attrs);
@@ -299,9 +301,12 @@ static ParseResult parseFrontendInitAttrs(OpAsmParser &parser,
 }
 
 static int getFrontendInitOperandIndex(StringRef keyword) {
-  return llvm::StringSwitch<int>(keyword)
-      .Case("gm_slot_buffer", 0).Case("gm_slot_tensor", 1)
-      .Case("c2v_consumer_buf", 2).Case("v2c_consumer_buf", 3).Default(-1);
+    return llvm::StringSwitch<int>(keyword)
+        .Case("gm_slot_buffer", 0)
+        .Case("gm_slot_tensor", 1)
+        .Case("c2v_consumer_buf", mlir::pto::kValue2)
+        .Case("v2c_consumer_buf", mlir::pto::kValue3)
+        .Default(-1);
 }
 
 static ParseResult parseFrontendInitOperands(OpAsmParser &parser,
@@ -335,7 +340,7 @@ static ParseResult resolveFrontendInitOperands(OpAsmParser &parser,
                                                OperationState &result,
                                                FrontendInitParseState &state) {
   result.addAttributes(state.attrs);
-  SmallVector<int32_t, 4> segments;
+  SmallVector<int32_t, mlir::pto::kValue4> segments;
   for (bool present : state.sawOperand)
     segments.push_back(present ? 1 : 0);
   result.addAttribute("operandSegmentSizes",
@@ -439,7 +444,7 @@ getStaticElementCount(ArrayRef<int64_t> shape) {
 }
 
 static bool isSameOrHalfSlotByteSize(uint64_t tensorBytes, uint64_t slotBytes) {
-  return tensorBytes == slotBytes || tensorBytes * 2 == slotBytes;
+    return tensorBytes == slotBytes || tensorBytes * mlir::pto::kValue2 == slotBytes;
 }
 
 static LogicalResult verifyFrontendGlobalSlotTensor(Operation *op, Value tensor,
@@ -505,9 +510,9 @@ static FailureOr<int32_t> verifyFrontendInitIdentity(InitOpT op,
     return failure();
   }
   int8_t dirMask = op.getDirMask();
-  if (dirMask != 1 && dirMask != 2 && dirMask != 3) {
-    op.emitOpError("expects 'dir_mask' to be 1, 2, or 3");
-    return failure();
+  if (dirMask != 1 && dirMask != mlir::pto::kValue2 && dirMask != mlir::pto::kValue3) {
+      op.emitOpError("expects 'dir_mask' to be 1, 2, or 3");
+      return failure();
   }
   if (op.getSlotSize() <= 0) {
     op.emitOpError("expects 'slot_size' to be greater than 0");
@@ -568,12 +573,10 @@ static LogicalResult verifyFrontendInitLocalBuffers(InitOpT op) {
   if (dirMask == 1 && !c2v)
     return op.emitOpError(
         "expects 'c2v_consumer_buf' when dir_mask is 1");
-  if (dirMask == 2 && !v2c)
-    return op.emitOpError(
-        "expects 'v2c_consumer_buf' when dir_mask is 2");
-  if (dirMask == 3 && (!c2v || !v2c))
-    return op.emitOpError(
-        "expects both 'c2v_consumer_buf' and 'v2c_consumer_buf' when dir_mask is 3");
+  if (dirMask == mlir::pto::kValue2 && !v2c)
+      return op.emitOpError("expects 'v2c_consumer_buf' when dir_mask is 2");
+  if (dirMask == mlir::pto::kValue3 && (!c2v || !v2c))
+      return op.emitOpError("expects both 'c2v_consumer_buf' and 'v2c_consumer_buf' when dir_mask is 3");
   return success();
 }
 
@@ -598,25 +601,27 @@ static LogicalResult verifyFrontendInitLocalSlots(InitOpT op, PTOArch arch,
 }
 
 static bool isAllowedFrontendFixpipeQuant(pto::FixpipeQuant quant) {
-  switch (quant) {
-  case pto::FixpipeQuant::NoConvert:
-  case pto::FixpipeQuant::F32F16:
-  case pto::FixpipeQuant::F32BF16:
-  case pto::FixpipeQuant::REQ8Scalar:
-  case pto::FixpipeQuant::REQ8Vec:
-  case pto::FixpipeQuant::DEQF16Scalar:
-  case pto::FixpipeQuant::DEQF16Vec:
-  case pto::FixpipeQuant::QF322B8PreScalar:
-  case pto::FixpipeQuant::QF322B8PreVec:
-  case pto::FixpipeQuant::QF322F16PreScalar:
-  case pto::FixpipeQuant::QF322BF16PreScalar:
-  case pto::FixpipeQuant::QS322BF16PreScalar:
-  case pto::FixpipeQuant::QS322BF16PreVec:
-  case pto::FixpipeQuant::QF322HIF8PreScalar:
-  case pto::FixpipeQuant::QF322FP8PreScalar:
-    return true;
-  }
-  llvm_unreachable("unhandled FixpipeQuant");
+    static constexpr pto::FixpipeQuant kAllowedQuants[] = {
+        pto::FixpipeQuant::NoConvert,
+        pto::FixpipeQuant::F32F16,
+        pto::FixpipeQuant::F32BF16,
+        pto::FixpipeQuant::REQ8Scalar,
+        pto::FixpipeQuant::REQ8Vec,
+        pto::FixpipeQuant::DEQF16Scalar,
+        pto::FixpipeQuant::DEQF16Vec,
+        pto::FixpipeQuant::QF322B8PreScalar,
+        pto::FixpipeQuant::QF322B8PreVec,
+        pto::FixpipeQuant::QF322F16PreScalar,
+        pto::FixpipeQuant::QF322BF16PreScalar,
+        pto::FixpipeQuant::QS322BF16PreScalar,
+        pto::FixpipeQuant::QS322BF16PreVec,
+        pto::FixpipeQuant::QF322HIF8PreScalar,
+        pto::FixpipeQuant::QF322FP8PreScalar,
+    };
+    if (llvm::is_contained(kAllowedQuants, quant)) {
+        return true;
+    }
+    llvm_unreachable("unhandled FixpipeQuant");
 }
 
 static bool isA5OnlyFrontendFixpipeQuant(pto::FixpipeQuant quant) {
@@ -792,7 +797,7 @@ struct FixpipeQuantStateResource
 };
 
 static IntegerAttr getFixpipeQuantStateIdAttr(Operation *op, int32_t id) {
-  return IntegerAttr::get(IntegerType::get(op->getContext(), 32), id);
+    return IntegerAttr::get(IntegerType::get(op->getContext(), mlir::pto::kValue32), id);
 }
 
 static FailureOr<Operation *> lookupFrontendInitOpById(Operation *op,
@@ -1165,9 +1170,9 @@ static LogicalResult verifyFullTileSplitParity(Operation *op, int64_t split,
   } else {
     return success();
 }
-  if (shape.size() != 2) {
+if (shape.size() != mlir::pto::kValue2) {
     return success();
-  }
+}
 
   bool splitRows = split == 1 || split == 3;
   int64_t axisSize = shape[splitRows ? 0 : 1];
@@ -1176,11 +1181,9 @@ static LogicalResult verifyFullTileSplitParity(Operation *op, int64_t split,
   }
 
   bool expectOdd = isOddSplit(split);
-  if ((axisSize % 2 != 0) != expectOdd) {
-    return op->emitOpError()
-           << "expects a statically " << (expectOdd ? "odd" : "even")
-           << " valid-" << (splitRows ? "row" : "column")
-           << " count for split = " << split;
+  if ((axisSize % mlir::pto::kValue2 != 0) != expectOdd) {
+      return op->emitOpError() << "expects a statically " << (expectOdd ? "odd" : "even") << " valid-"
+                               << (splitRows ? "row" : "column") << " count for split = " << split;
   }
   return success();
 }
@@ -1238,15 +1241,11 @@ static LogicalResult verifyFrontendDataOpDirection(Operation *op, int32_t id,
   }
 
   int8_t dirMask = *dirMaskOr;
-  if (expectC2V && dirMask != 1 && dirMask != 3) {
-    return op->emitOpError()
-           << "expects 'id' = " << id
-           << " to reference initialize_pipe with dir_mask = 1 or 3";
+  if (expectC2V && dirMask != 1 && dirMask != mlir::pto::kValue3) {
+      return op->emitOpError() << "expects 'id' = " << id << " to reference initialize_pipe with dir_mask = 1 or 3";
   }
-  if (!expectC2V && dirMask != 2 && dirMask != 3) {
-    return op->emitOpError()
-           << "expects 'id' = " << id
-           << " to reference initialize_pipe with dir_mask = 2 or 3";
+  if (!expectC2V && dirMask != mlir::pto::kValue2 && dirMask != mlir::pto::kValue3) {
+      return op->emitOpError() << "expects 'id' = " << id << " to reference initialize_pipe with dir_mask = 2 or 3";
   }
   return success();
 }
@@ -1418,14 +1417,14 @@ static bool matchesFixpipeConsumerLayout(FixpipeLayout layout,
 
 static bool isSignedOrUnsignedI8(Type ty) {
   if (auto intTy = dyn_cast<IntegerType>(ty)) {
-    return intTy.getWidth() == 8 && (intTy.isSigned() || intTy.isUnsigned());
+      return intTy.getWidth() == mlir::pto::kValue8 && (intTy.isSigned() || intTy.isUnsigned());
   }
   return false;
 }
 
 static bool isSignedI8(Type ty) {
   if (auto intTy = dyn_cast<IntegerType>(ty)) {
-    return intTy.isSignedInteger(8);
+      return intTy.isSignedInteger(mlir::pto::kValue8);
   }
   return false;
 }
@@ -1434,7 +1433,7 @@ static bool matchesFixpipeConsumerElementType(FixpipeQuant quant,
                                               Type resultElemType) {
   switch (quant) {
   case FixpipeQuant::NoConvert:
-    return resultElemType.isF32() || resultElemType.isInteger(32);
+      return resultElemType.isF32() || resultElemType.isInteger(mlir::pto::kValue32);
   case FixpipeQuant::F32F16:
   case FixpipeQuant::DEQF16Scalar:
   case FixpipeQuant::DEQF16Vec:
@@ -1477,7 +1476,7 @@ static bool matchesFixpipeProducerElementType(FixpipeQuant quant,
                                               Type srcElemType) {
   switch (quant) {
   case FixpipeQuant::NoConvert:
-    return srcElemType.isF32() || srcElemType.isInteger(32);
+      return srcElemType.isF32() || srcElemType.isInteger(mlir::pto::kValue32);
   case FixpipeQuant::F32F16:
   case FixpipeQuant::F32BF16:
   case FixpipeQuant::QF322B8PreScalar:
@@ -1493,7 +1492,7 @@ static bool matchesFixpipeProducerElementType(FixpipeQuant quant,
   case FixpipeQuant::DEQF16Vec:
   case FixpipeQuant::QS322BF16PreScalar:
   case FixpipeQuant::QS322BF16PreVec:
-    return srcElemType.isInteger(32);
+      return srcElemType.isInteger(mlir::pto::kValue32);
   }
   llvm_unreachable("unhandled FixpipeQuant");
 }
@@ -1631,8 +1630,8 @@ static LogicalResult verifyPipeShape(Operation *op, int8_t dirMask, int32_t slot
                                      int32_t slotNum,
                                      std::optional<int32_t> flagBase) {
   constexpr int32_t kMaxHardwareFlagIds = 16;
-  if (dirMask != 1 && dirMask != 2 && dirMask != 3) {
-    return op->emitOpError("expects 'dir_mask' to be 1, 2, or 3");
+  if (dirMask != 1 && dirMask != mlir::pto::kValue2 && dirMask != mlir::pto::kValue3) {
+      return op->emitOpError("expects 'dir_mask' to be 1, 2, or 3");
   }
   if (slotSize <= 0) {
     return op->emitOpError("expects 'slot_size' to be greater than 0");

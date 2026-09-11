@@ -207,7 +207,7 @@ struct InferPTOMemScopePass
 
 private:
   LogicalResult fixDeviceCallSite(func::FuncOp op);
-  [[maybe_unused]] LogicalResult fixHostFuncSignature(func::FuncOp op);
+  [[maybe_unused]] const LogicalResult fixHostFuncSignature(func::FuncOp op);
   void inferMemScopeForDeviceFunc(func::FuncOp func);
 };
 } // namespace
@@ -380,7 +380,7 @@ LogicalResult InferPTOMemScopePass::fixDeviceCallSite(func::FuncOp op) {
 /// updated the memref type of the BlockArgument of or the return operation
 /// within the function (if they are updated at all). So we need to use those
 /// information to update the function's type.
-[[maybe_unused]] LogicalResult InferPTOMemScopePass::fixHostFuncSignature(func::FuncOp op) {
+[[maybe_unused]] const LogicalResult InferPTOMemScopePass::fixHostFuncSignature(func::FuncOp op) {
   // Skip external host functions because we know nothing about it.
   if (op.isExternal()) {
     return success();
@@ -564,14 +564,14 @@ void InferPTOMemScopePass::inferMemScopeForDeviceFunc(func::FuncOp func) {
 
 void InferPTOMemScopePass::runOnOperation() {
   SmallVector<func::FuncOp> deviceFuncList;
-  getOperation()->walk([&](func::FuncOp func) {
+  getOperation()->walk([&deviceFuncList](func::FuncOp func) {
     deviceFuncList.push_back(func);
     return;
   });
 
   SmallVector<gpu::GPUFuncOp> gpuFuncList;
-  getOperation()->walk([&](gpu::GPUModuleOp gpuModule) {
-    gpuModule->walk([&](gpu::GPUFuncOp gpuFunc) -> void {
+  getOperation()->walk([&gpuFuncList](gpu::GPUModuleOp gpuModule) {
+    gpuModule->walk([&gpuFuncList](gpu::GPUFuncOp gpuFunc) -> void {
       gpuFuncList.push_back(gpuFunc);
     });
   });

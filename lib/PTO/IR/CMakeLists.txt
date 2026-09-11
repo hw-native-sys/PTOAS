@@ -20,26 +20,25 @@ add_mlir_dialect_library(PTOIR
   VPTOAddressSemantics.cpp
   VPTOMemoryDist.cpp
   VPTOScheduling.cpp
-  VMI.cpp
-  VMI_helpers.cpp
-  VMI_ops.cpp
-  VMI_ops_mem.cpp
-  VMI_ops_cvt.cpp
-  VMI_ops_group.cpp
-  VMI_ops_arith.cpp
-  VPTOUbOps.cpp
-  VPTOVecScope.cpp
-  VPTOUBV.cpp
-  VPTOAlign.cpp
-  VPTOVcvt.cpp
-  VPTOMte.cpp
-  VPTOMteAsm.cpp
-  VPTOCubeBridge.cpp
-  VPTOStructuredAcc.cpp
-  VPTODma.cpp
-  VPTOMad.cpp
-  VPTOVecOp.cpp
-  VPTOMemOp.cpp
+  VMI/VMIHelpers.cpp
+  VMI/VMI.cpp
+  VMI/VMIMem.cpp
+  VMI/VMICvt.cpp
+  VMI/VMIGroup.cpp
+  VMI/VMIArith.cpp
+  VPTO/VPTOUbOps.cpp
+  VPTO/VPTOVecScope.cpp
+  VPTO/VPTOUBV.cpp
+  VPTO/VPTOAlign.cpp
+  VPTO/VPTOVcvt.cpp
+  VPTO/VPTOMte.cpp
+  VPTO/VPTOMteAsm.cpp
+  VPTO/VPTOCubeBridge.cpp
+  VPTO/VPTOStructuredAcc.cpp
+  VPTO/VPTODma.cpp
+  VPTO/VPTOMad.cpp
+  VPTO/VPTOVecOp.cpp
+  VPTO/VPTOMemOp.cpp
   PTOAttrs.cpp
   PTOLayoutUtils.cpp
   PTOSyncUtils.cpp
@@ -74,4 +73,10 @@ target_include_directories(PTOIR INTERFACE
   $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
   $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/include>
   $<INSTALL_INTERFACE:include>
+)
+
+# VMI/ VPTO/ 子目录源文件仍按文件名裸引用本目录内部头 (VMIInternal.h /
+# VPTOInternal.h), 将本目录加入 PRIVATE 搜索路径保持自包含解析
+target_include_directories(PTOIR PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
 )

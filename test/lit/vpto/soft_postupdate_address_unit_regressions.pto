@@ -7,8 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // RUN: ptoas --pto-backend=vpto --pto-arch=a5 --enable-vpto-soft-postupdate --emit-vpto %s -o - | FileCheck %s
-// RUN: ptoas --cann-output-version=9.0.0 --pto-backend=vpto --pto-arch=a5 --enable-vpto-soft-postupdate --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s --check-prefix=LLVM
-// RUN: ptoas --cann-output-version=9.0.0-beta.1 --pto-backend=vpto --pto-arch=a5 --enable-vpto-soft-postupdate --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s --check-prefix=LLVM
+// RUN: ptoas --pto-backend=vpto --pto-arch=a5 --enable-vpto-soft-postupdate --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s --check-prefix=LLVM
 
 // Element and byte strides with the same numeric SSA value are different
 // address recurrences on an f32 pointer and must use separate iter_args.

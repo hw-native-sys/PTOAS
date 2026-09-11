@@ -8,11 +8,8 @@
 
 // RUN: ptoas --pto-backend=vpto --pto-arch=a5 --enable-vpto-soft-postupdate \
 // RUN:   --emit-vpto %s -o - | FileCheck %s --check-prefix=POSTPASS
-// RUN: ptoas --cann-output-version=9.0.0 --pto-backend=vpto --pto-arch=a5 \
+// RUN: ptoas --pto-backend=vpto --pto-arch=a5 \
 // RUN:   --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s --check-prefix=LLVM
-// RUN: ptoas --cann-output-version=9.0.0-beta.1 --pto-backend=vpto \
-// RUN:   --pto-arch=a5 --emit-vpto-llvm-ir %s -o - 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=LLVM
 
 // POSTPASS-LABEL: func.func @soft_postupdate_dynamic_initial_offset
 // POSTPASS: %[[INITIAL:[a-zA-Z0-9_]+]] = arith.index_castui %arg1 : i16 to index

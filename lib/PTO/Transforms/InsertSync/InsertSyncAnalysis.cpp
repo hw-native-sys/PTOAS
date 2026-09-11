@@ -82,12 +82,12 @@ static bool hasReadWriteScratchDependency(
   } else if (auto dpsOp = dyn_cast<DestinationStyleOpInterface>(op)) {
     dpsInits = dpsOp.getDpsInits();
   }
-  return llvm::any_of(writes, [&](Value value) {
+  return llvm::any_of(writes, [&reads, &dpsInits, &dependencies](Value value) {
     if (!reads.contains(value) || llvm::is_contained(dpsInits, value)) {
       return false;
     }
-    return llvm::any_of(dependencies, [&](const auto &dependency) {
-      auto matches = [&](const BaseMemInfo *info) {
+    return llvm::any_of(dependencies, [&value](const auto &dependency) {
+      auto matches = [&value](const BaseMemInfo *info) {
         return info &&
                (info->baseBuffer == value || info->rootBuffer == value);
       };
@@ -206,7 +206,7 @@ static bool isSameExactAccess(const BaseMemInfo *lhs, const BaseMemInfo *rhs) {
 
 static bool containsExactAccess(const SmallVector<const BaseMemInfo *> &infos,
                                 const BaseMemInfo *access) {
-  return llvm::any_of(infos, [&](const BaseMemInfo *info) {
+  return llvm::any_of(infos, [&access](const BaseMemInfo *info) {
     return isSameExactAccess(info, access);
   });
 }
@@ -567,13 +567,19 @@ bool InsertSyncAnalysis::IsMemInfoHasDependency(
     CompoundInstanceElement *frontCompound,
     DepBaseMemInfoPairVec &depBaseMemInfosVec) {
   bool hasDependency = false;
-  hasDependency |= memAnalyzer_.DepBetween(nowCompound->useVec, frontCompound->defVec,
-                                          depBaseMemInfosVec);
-  hasDependency |= memAnalyzer_.DepBetween(nowCompound->defVec, frontCompound->useVec,
-                                          depBaseMemInfosVec);
+  if (memAnalyzer_.DepBetween(nowCompound->useVec, frontCompound->defVec,
+                              depBaseMemInfosVec)) {
+    hasDependency = true;
+  }
+  if (memAnalyzer_.DepBetween(nowCompound->defVec, frontCompound->useVec,
+                              depBaseMemInfosVec)) {
+    hasDependency = true;
+  }
   if (!isTLoadToTLoadWAWExempt(nowCompound, frontCompound)) {
-    hasDependency |= memAnalyzer_.DepBetween(nowCompound->defVec, frontCompound->defVec,
-                                            depBaseMemInfosVec);
+    if (memAnalyzer_.DepBetween(nowCompound->defVec, frontCompound->defVec,
+                                depBaseMemInfosVec)) {
+      hasDependency = true;
+    }
   }
   // Special hazard: ACC (L0C) read/read cross-pipe ordering.
   //
@@ -773,7 +779,7 @@ void InsertSyncAnalysis::InsertSyncOperation(
 
 bool InsertSyncAnalysis::isAlreadySync(
     const CompoundInstanceElement *nowCompound,
-    CompoundInstanceElement *frontCompound,
+    const CompoundInstanceElement *frontCompound,
     SyncRecordList &syncRecordList, unsigned recordListIndex) {
   (void)nowCompound;
   const PipelineType frontPipe = frontCompound->kPipeValue;
@@ -903,7 +909,7 @@ void InsertSyncAnalysis::InsertLastPipeAll() {
 // 7. Helpers
 // ==============================================================================
 
-SmallVector<Value> InsertSyncAnalysis::GetMemInfoBuffers(
+const SmallVector<Value> InsertSyncAnalysis::GetMemInfoBuffers(
     const DepBaseMemInfoPairVec &depBaseMemInfosVec) {
   llvm::DenseSet<Value> touchedBuffer;
   SmallVector<Value> result;

@@ -105,6 +105,14 @@ private:
   PTOAnalysisResult<PTOTypedExprRef>
   getPointerDifference(const PTOAddressExpr &from,
                        const PTOAddressExpr &to);
+  // Byte delta contributed by an address's post-update offset across `loop`;
+  // returns constant zero when the address has no offset.
+  PTOAnalysisResult<PTOTypedExprRef>
+  getOffsetEvolutionDeltaBytes(const PTOAddressExpr &address, scf::ForOp loop);
+  // Byte value of a post-update offset as a domain-free point expression;
+  // returns constant zero when `offset` is absent.
+  PTOAnalysisResult<PTOTypedExprRef>
+  getOffsetPointBytes(const std::optional<PTOTypedAddressOffset> &offset);
 
   func::FuncOp func;
   PTOValueEvolutionAnalysis &valueEvolution;

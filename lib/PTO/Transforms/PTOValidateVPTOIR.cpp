@@ -951,7 +951,7 @@ private:
         .Default([](Operation *) { return success(); });
   }
 
-  static LogicalResult validateMaskGranularityContracts(Operation *op) {
+  static LogicalResult validateArithmeticMaskContracts(Operation *op) {
     return llvm::TypeSwitch<Operation *, LogicalResult>(op)
         .Case<VabsOp, VexpOp, VlnOp, VsqrtOp, VreluOp, VnotOp,
               VcaddOp, VcmaxOp, VcminOp>(
@@ -987,6 +987,15 @@ private:
               PintlvB8Op, PintlvB16Op, PintlvB32Op>([](auto concreteOp) {
           return validatePredicateMovementContract(concreteOp);
         })
+        .Default([](Operation *) { return success(); });
+  }
+
+  static LogicalResult validateMaskGranularityContracts(Operation *op) {
+    if (failed(validateArithmeticMaskContracts(op))) {
+      return failure();
+    }
+
+    return llvm::TypeSwitch<Operation *, LogicalResult>(op)
         .Case<VselOp>([](VselOp concreteOp) {
           return validateMaskMatchesVectorFamily(concreteOp,
                                                  concreteOp.getMask().getType(),
@@ -1017,47 +1026,51 @@ private:
         .Default([](Operation *) { return success(); });
   }
 
+  static LogicalResult validatePositiveI32FuncAttr(func::FuncOp func,
+                                                   StringRef attrName,
+                                                   int64_t upperBound,
+                                                   StringRef description) {
+    Attribute attr = func->getAttr(attrName);
+    if (!attr) {
+      return success();
+    }
+
+    auto intAttr = dyn_cast<IntegerAttr>(attr);
+    if (!intAttr || !intAttr.getType().isSignlessInteger(32)) {
+      return func.emitError()
+             << "'" << attrName
+             << "' must be a signless i32 integer attribute";
+    }
+
+    if (intAttr.getInt() <= 0) {
+      return func.emitError()
+             << "'" << attrName << "' must be a positive integer, got "
+             << intAttr.getInt();
+    }
+
+    if (intAttr.getInt() > upperBound) {
+      return func.emitError()
+             << "'" << attrName << "' must be in range [1, "
+             << upperBound << "] for " << description;
+    }
+
+    if (!func->hasAttr(pto::kPTOSimtEntryAttrName)) {
+      return func.emitError()
+             << "'" << attrName << "' is only allowed on functions marked '"
+             << pto::kPTOSimtEntryAttrName << "'";
+    }
+
+    return success();
+  }
+
   LogicalResult validateAuthoringFunctionSurface() {
     for (func::FuncOp func : helper.getFunctions()) {
-      auto validatePositiveI32FuncAttr =
-          [&](StringRef attrName, int64_t upperBound,
-              StringRef description) -> LogicalResult {
-        Attribute attr = func->getAttr(attrName);
-        if (!attr) {
-          return success();
-        }
-
-        auto intAttr = dyn_cast<IntegerAttr>(attr);
-        if (!intAttr || !intAttr.getType().isSignlessInteger(32)) {
-          return func.emitError()
-                 << "'" << attrName
-                 << "' must be a signless i32 integer attribute";
-        }
-
-        if (intAttr.getInt() <= 0) {
-          return func.emitError()
-                 << "'" << attrName << "' must be a positive integer, got "
-                 << intAttr.getInt();
-        }
-
-        if (intAttr.getInt() > upperBound) {
-          return func.emitError()
-                 << "'" << attrName << "' must be in range [1, "
-                 << upperBound << "] for " << description;
-        }
-
-        if (!func->hasAttr(pto::kPTOSimtEntryAttrName)) {
-          return func.emitError()
-                 << "'" << attrName << "' is only allowed on functions marked '"
-                 << pto::kPTOSimtEntryAttrName << "'";
-        }
-
-        return success();
-      };
-      if (failed(validatePositiveI32FuncAttr(pto::kPTOSimtMaxThreadsAttrName,
-                                             mlir::pto::kValue2048, "SIMT max threads")) ||
-          failed(validatePositiveI32FuncAttr(pto::kPTOSimtMaxRegistersAttrName,
-                                             mlir::pto::kValue128, "SIMT max registers"))) {
+      if (failed(validatePositiveI32FuncAttr(
+              func, pto::kPTOSimtMaxThreadsAttrName,
+              mlir::pto::kValue2048, "SIMT max threads")) ||
+          failed(validatePositiveI32FuncAttr(
+              func, pto::kPTOSimtMaxRegistersAttrName,
+              mlir::pto::kValue128, "SIMT max registers"))) {
         return failure();
       }
 
@@ -1084,9 +1097,9 @@ private:
     return success();
   }
 
-  LogicalResult validateAuthoringOperationSurface() {
+  static LogicalResult validateNoDirectFP8Constants(ModuleOp module) {
     WalkResult constantWalkResult =
-        helper.getModule().walk([&](arith::ConstantOp constant) {
+        module.walk([&](arith::ConstantOp constant) {
           Type resultType = constant.getType();
           Type elementType = resultType;
           if (auto vectorType = dyn_cast<VectorType>(resultType)) {
@@ -1101,11 +1114,11 @@ private:
                  "the VPTO backend; produce FP8 values with pto.convert";
           return WalkResult::interrupt();
         });
-    if (constantWalkResult.wasInterrupted()) {
-      return failure();
-    }
+    return constantWalkResult.wasInterrupted() ? failure() : success();
+  }
 
-    WalkResult loopWalkResult = helper.getModule().walk([&](scf::ForOp loop) {
+  static LogicalResult validateNoNestedVectorScopes(ModuleOp module) {
+    WalkResult loopWalkResult = module.walk([&](scf::ForOp loop) {
       if (!VPTOLegalityHelper::isAIVectorScopeCarrier(loop)) {
         return WalkResult::advance();
       }
@@ -1131,7 +1144,7 @@ private:
       return failure();
     }
 
-    WalkResult vecScopeWalkResult = helper.getModule().walk([&](Operation *op) {
+    WalkResult vecScopeWalkResult = module.walk([&](Operation *op) {
       if (!VPTOLegalityHelper::isDedicatedVecScopeCarrier(op)) {
         return WalkResult::advance();
       }
@@ -1144,11 +1157,17 @@ private:
           << "does not allow nested dedicated pto.vecscope/pto.strict_vecscope";
       return WalkResult::interrupt();
     });
-    if (vecScopeWalkResult.wasInterrupted()) {
+    return vecScopeWalkResult.wasInterrupted() ? failure() : success();
+  }
+
+  LogicalResult validateAuthoringOperationSurface() {
+    ModuleOp module = helper.getModule();
+    if (failed(validateNoDirectFP8Constants(module)) ||
+        failed(validateNoNestedVectorScopes(module))) {
       return failure();
     }
 
-    WalkResult opWalkResult = helper.getModule().walk([&](Operation *op) {
+    WalkResult opWalkResult = module.walk([&](Operation *op) {
       (void)VPTOLegalityHelper::inferMaskGranularityFromFamily(op);
       (void)VPTOLegalityHelper::classifyBufferAddressFamily(op);
 

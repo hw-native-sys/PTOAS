@@ -11,7 +11,7 @@
 // remainder correction) instead of the unsupported integer HiVM VDIV
 // intrinsic, which hung the device at runtime.
 
-// RUN: ptoas --cann-output-version=9.0.0 --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @issue_1241_vdiv_i16(%lhs: !pto.vreg<128xsi16>,

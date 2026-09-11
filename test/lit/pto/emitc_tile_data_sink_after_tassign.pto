@@ -9,7 +9,7 @@
 // Guards the EmitC fixup that sinks tile.data() reads past TASSIGN for
 // tile-like values bridged through a second tile assignment. This alloc_tile
 // addr form requires level3 lowering; check the final emitted C++ directly.
-// RUN: ptoas --cann-output-version=9.0.0 --pto-arch=a5 --pto-level=level3 %s -o - 2>&1 | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 %s -o - 2>&1 | FileCheck %s
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @kernel(%arg0: i64) {

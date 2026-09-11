@@ -121,7 +121,7 @@ Comment: [discussion_r3585509393](https://github.com/hw-native-sys/PTOAS/pull/90
 `modeCount1L` passes `totalRpts` directly to a UB operation
 (`lib/PTO/Transforms/LowerPTOToUBufOps.cpp:1500-1508`). For a `16x1024xf32`
 tile, this is 256 repeats. The LLVM emitter masks the value with `0xff`
-(`lib/PTO/Transforms/VPTOLLVMEmitter.cpp:4814`), encoding it as zero. The C220
+(`lib/PTO/Transforms/VPTOCANN900LLVMEmitterUbuf.cpp`), encoding it as zero. The C220
 count-mode design also requires repeat-one operations rather than a multi-repeat
 count-mode instruction.
 
@@ -169,11 +169,12 @@ Recommended correction:
 
 Comment: [discussion_r3585078496](https://github.com/hw-native-sys/PTOAS/pull/908#discussion_r3585078496)
 
-`usesCANN900Lowering` unconditionally returns false
-(`lib/PTO/Transforms/VPTOLLVMEmitterDispatcher.cpp:14-25`). This routes every
+At the time of the review, `usesCANN900Lowering` unconditionally returned false
+(`lib/PTO/Transforms/VPTOLLVMEmitterDispatcher.cpp:14-25`). That routed every
 VPTO target through the Beta1 emitter, including A5 on CANN 9 releases that
-previously selected the CANN900 emitter. The two emitters use materially
-different intrinsic spellings and contracts.
+previously selected the CANN900 emitter. The two emitters used materially
+different intrinsic spellings and contracts. This has been resolved: Beta1
+lowering is removed, while CANN900 and C220 use the official pipeline.
 
 The complete lit run confirms this behavior with three A5/CANN 9 failures:
 `a5_extra_arith_vpto_llvm.pto`, `issue220_vrelu_i32_vpto_llvm.pto`, and
@@ -183,9 +184,10 @@ received Beta1 spellings. For example, `issue220` expected
 
 Recommended correction:
 
-- Keep the Beta1 compatibility path for A2/A3 C220 targets.
+- Route A2/A3 C220 targets through the same official CANN900 emitter pipeline;
+  Beta1 lowering is no longer supported.
 - Preserve version-based CANN900 selection for A5.
-- Test A5 beta, A5 release, and A2/A3 release dispatch explicitly.
+- Test A5 CANN900 and A2/A3 C220 dispatch explicitly.
 
 ### P2: Tile valid-shape metadata is discarded
 

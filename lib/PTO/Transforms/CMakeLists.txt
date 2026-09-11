@@ -21,6 +21,28 @@ if(TARGET vfsim::ir_planner)
     $<BUILD_INTERFACE:vfsim::ir_planner>)
 endif()
 
+# VMIToVPTO lowering internals are textual include units of VMIToVPTO.cpp.
+# They are listed here so LLVM per-directory source check is satisfied and
+# marked HEADER_FILE_ONLY so they are not compiled as separate translation
+# units (VMIToVPTO.cpp includes them inside its own anonymous namespace).
+set(_ptoas_vmi_split_units
+  VMIToVPTOConversionInternals.cpp
+  VMIToVPTO/VMIToVPTOMemoryInternals.cpp
+  VMIToVPTO/VMIToVPTOMaskInternals.cpp
+  VMIToVPTO/VMIToVPTODataLayoutInternals.cpp
+  VMIToVPTO/VMIToVPTOPatternInternals0.cpp
+  VMIToVPTO/VMIToVPTOPatternInternals1.cpp
+  VMIToVPTO/VMIToVPTOPatternInternals2.cpp
+  VMIToVPTO/VMIToVPTOPatternInternals3.cpp
+  VMIToVPTO/VMIToVPTOPatternInternals4.cpp
+  VMIToVPTO/VMIToVPTOPatternInternals5.cpp
+  VMIToVPTO/VMIToVPTOPatternInternals6.cpp
+  VMIToVPTO/VMIToVPTOPatternInternals7.cpp
+  VMIToVPTO/VMIToVPTOPatternInternals8.cpp
+  VMIToVPTO/VMIToVPTOPatternInternals9.cpp
+)
+set_source_files_properties(${_ptoas_vmi_split_units} PROPERTIES HEADER_FILE_ONLY TRUE)
+
 add_mlir_dialect_library(PTOTransforms
   ENABLE_AGGREGATION
 
@@ -38,42 +60,29 @@ add_mlir_dialect_library(PTOTransforms
   TileFusion/PTOVexpdifFusion.cpp
   TileFusion/PTOUnrollAfterLoopFusion.cpp
   TileFusion/PTOFlattenFusionRegion.cpp
-  VPTOLLVMEmitter.cpp
-  VPTOLLVMEmitter/VPTOLLVMEmitterCommon.cpp
-  VPTOLLVMEmitter/VPTOLLVMEmitterBasic.cpp
-  VPTOLLVMEmitter/VPTOLLVMEmitterVector.cpp
-  VPTOLLVMEmitter/VPTOLLVMEmitterVectorReduction.cpp
-  VPTOLLVMEmitter/VPTOLLVMEmitterVectorPredicate.cpp
-  VPTOLLVMEmitter/VPTOLLVMEmitterMemory.cpp
-  VPTOLLVMEmitter/VPTOLLVMEmitterCubeMad.cpp
-  VPTOLLVMEmitter/VPTOLLVMEmitterCubeMemory.cpp
-  VPTOLLVMEmitter/VPTOLLVMEmitterVectorMemory.cpp
-  VPTOLLVMEmitter/VPTOLLVMEmitterVectorGather.cpp
-  VPTOLLVMEmitter/VPTOLLVMEmitterUbuf.cpp
-  VPTOLLVMEmitter/VPTOLLVMEmitterScalarRuntime.cpp
-  VPTOLLVMEmitter/VPTOLLVMEmitterSyncConfig.cpp
-  VPTOLLVMEmitter/VPTOLLVMEmitterVcvt.cpp
-  VPTOCANN900LLVMEmitter.cpp
+  VPTO/VPTOCANN900LLVMEmitterCommon.cpp
+  VPTO/VPTOCANN900LLVMEmitterUbuf.cpp
+  VPTO/VPTOCANN900LLVMEmitter.cpp
   VPTOCANN900LLVMEmitterArithmeticPatterns.cpp
-  VPTOCANN900LLVMEmitterCalleeCore.cpp
-  VPTOCANN900LLVMEmitterCalleeMemory.cpp
+  VPTO/VPTOCANN900LLVMEmitterCalleeCore.cpp
+  VPTO/VPTOCANN900LLVMEmitterCalleeMemory.cpp
   VPTOCANN900LLVMEmitterMemoryPatterns.cpp
-  VPTOCANN900LLVMEmitterPacking.cpp
-  VPTOCANN900LLVMEmitterPipeline.cpp
+  VPTO/VPTOCANN900LLVMEmitterPacking.cpp
+  VPTO/VPTOCANN900LLVMEmitterPipeline.cpp
   VPTOCANN900LLVMEmitterScalarPatterns.cpp
-  VPTOCANN900LLVMEmitterTypeHelpers.cpp
+  VPTO/VPTOCANN900LLVMEmitterTypeHelpers.cpp
   VPTOCANN900LLVMEmitterTypePatterns.cpp
-  VPTOLLVMEmitterDispatcher.cpp
+  VPTO/VPTOLLVMEmitterDispatcher.cpp
   VPTOLLVMEmitterHelper.cpp
   VPTOPtrNormalize.cpp
-  VPTOPtrCastCleanup.cpp
-  VPTOCombineReductions.cpp
-  VPTOOptimizeVcvt.cpp
-  VPTOMaskSimplify.cpp
+  VPTO/VPTOPtrCastCleanup.cpp
+  VPTO/VPTOCombineReductions.cpp
+  VPTO/VPTOOptimizeVcvt.cpp
+  VPTO/VPTOMaskSimplify.cpp
   VPTOExpandWrapperOps.cpp
   VPTOSoftPostUpdate.cpp
-  VPTOGuardedLICM.cpp
-  PTOPrintAddressAnalysis.cpp
+  VPTO/VPTOGuardedLICM.cpp
+  Passes/PTOPrintAddressAnalysis.cpp
   VPTOScheduler/VPTORegPressureTracker.cpp
   VPTOScheduler/VPTOSchedBoundary.cpp
   VPTOScheduler/VPTOSchedDAG.cpp
@@ -85,73 +94,83 @@ add_mlir_dialect_library(PTOTransforms
   VPTOScheduler/VPTOScheduler.cpp
   VPTOScheduler/VPTOSchedulerPass.cpp
   PTOVPTOPtrBoundary.cpp
-  VPTOBufferMaterialization.cpp
+  VPTO/VPTOBufferMaterialization.cpp
   PTOValidateVPTOIR.cpp
-  PTONarrowVPTOLoopCounters.cpp
-  PTOConvertSCFToCFWithLoopHintsPass.cpp
-  PTOPromotePersistentFragmentLoopsPass.cpp
-  PTOUnrollLoopsPass.cpp
+  Passes/PTONarrowVPTOLoopCounters.cpp
+  Passes/PTOConvertSCFToCFWithLoopHintsPass.cpp
+  Passes/PTOPromotePersistentFragmentLoopsPass.cpp
+  Passes/PTOUnrollLoopsPass.cpp
   PTOValidateVMIIR.cpp
   VMIPreAssignmentCombine.cpp
-  VMIControlFlowSupport.cpp
-  VMILegalizeArithSelect.cpp
-  VMIMaskGranularityAssignment.cpp
+  VMI/VMIControlFlowSupport.cpp
+  VMI/VMILegalizeArithSelect.cpp
+  VMI/VMIMaskGranularityAssignment.cpp
   VMILowerUnifiedToLegacy.cpp
-  VMINormalizeSignlessIntToUnsigned.cpp
-  VMILayoutRematerializeWeakProducers.cpp
+  VMI/VMINormalizeSignlessIntToUnsigned.cpp
+  VMI/VMILayoutRematerializeWeakProducers.cpp
   VMILayoutAssignment.cpp
-  VMILayoutFold.cpp
+  VMI/VMILayoutFold.cpp
   VMILayoutPropagation.cpp
   VMILayoutSupport.cpp
-  VMILayoutRematerialize.cpp
+  VMI/VMILayoutRematerialize.cpp
   VMILayoutSinkMaterialization.cpp
-  VMIToVPTO.cpp
+  VMIToVPTO/VMIToVPTO.cpp
+  ${_ptoas_vmi_split_units}
   VPTOStatefulStreamFusion.cpp
-  PTOExpandSoftLib.cpp
+  Lowering/PTOExpandSoftLib.cpp
   SIMTPersistentFragmentAnalysis.cpp
-  PTOAnalyzeSIMTPersistentFragment.cpp
-  PTOMaterializeSIMTPersistentFragment.cpp
-  PTOOutlineSIMTSections.cpp
-  PTOInferVPTOVecScope.cpp
+  Passes/PTOAnalyzeSIMTPersistentFragment.cpp
+  Passes/PTOMaterializeSIMTPersistentFragment.cpp
+  Passes/PTOOutlineSIMTSections.cpp
+  VPTO/PTOInferVPTOVecScope.cpp
 
   InsertSync/PTOInsertSync.cpp
-  PTOInjectBarrierAllSync.cpp
+  Passes/PTOInjectBarrierAllSync.cpp
   InsertSync/InsertSyncDebug.cpp
   PTOMaterializeImplicitTmp.cpp
-  PTORematerializeFixpipeVectorQuant.cpp
-  PTOValidateIntToPtrUses.cpp
-  TileLibService.cpp
+  Lowering/PTORematerializeFixpipeVectorQuant.cpp
+  Passes/PTOValidateIntToPtrUses.cpp
+  TileOp/TileLibService.cpp
   SoftLibService.cpp
   InsertTemplateAttributes.cpp
   ExpandTileOp.cpp
-  FoldTileBufIntrinsics.cpp
-  LowerPTOToUBufOps.cpp
-  PTOLowerToOpLibCalls.cpp
-  PTOInstantiateAndInlineOpLib.cpp
-  PTOToEmitC.cpp
-  CppPostprocess.cpp
+  TileOp/FoldTileBufIntrinsics.cpp
+  Lowering/LowerPTOToUBufOps.cpp
+  TileOp/PTOLowerToOpLibCalls.cpp
+  TileOp/PTOInstantiateAndInlineOpLib.cpp
+  PTOToEmitC/PTOToEmitCCommon.cpp
+  PTOToEmitC/PTOToEmitCArith.cpp
+  PTOToEmitC/PTOToEmitCMemref.cpp
+  PTOToEmitC/PTOToEmitCLoadStore.cpp
+  PTOToEmitC/PTOToEmitCSyncComm.cpp
+  PTOToEmitC/PTOToEmitCScalarMisc.cpp
+  PTOToEmitC/PTOToEmitCTile.cpp
+  PTOToEmitC/PTOToEmitCTensor.cpp
+  PTOToEmitC/PTOToEmitCTensorReduce.cpp
+  PTOToEmitC/PTOToEmitCPass.cpp
+  Lowering/CppPostprocess.cpp
   Utils.cpp
-  OptMemPlanForPipeline.cpp
+  Passes/OptMemPlanForPipeline.cpp
   InferPTOMemScope.cpp
   PTOPlanMemoryModern.cpp
-  PTORemoveRedundantBarrier.cpp
+  Passes/PTORemoveRedundantBarrier.cpp
   InferPTOLayout.cpp
-  PTOA5NormalizeTMovPass.cpp
-  PTORemoveIdentityTMov.cpp
-  PTOCanonicalizeIR.cpp
-  BufferizableOpInterfaceImpl.cpp
-  ConvertToPTOOp.cpp
-  PTOAssignDefaultFrontendPipeIdPass.cpp
-  PTOLowerFrontendPipeOpsPass.cpp
-  PTOInferValidatePipeInitPass.cpp
-  PTOResolveBufferSelect.cpp
+  Lowering/PTOA5NormalizeTMovPass.cpp
+  Lowering/PTORemoveIdentityTMov.cpp
+  Lowering/PTOCanonicalizeIR.cpp
+  Lowering/BufferizableOpInterfaceImpl.cpp
+  Lowering/ConvertToPTOOp.cpp
+  Passes/PTOAssignDefaultFrontendPipeIdPass.cpp
+  Lowering/PTOLowerFrontendPipeOpsPass.cpp
+  Passes/PTOInferValidatePipeInitPass.cpp
+  Passes/PTOResolveBufferSelect.cpp
   PTOResolveReservedBuffersPass.cpp
-  SlotAffineAnalysis.cpp
-  PTOWrapFunctionsInSectionsPass.cpp
+  Passes/SlotAffineAnalysis.cpp
+  Passes/PTOWrapFunctionsInSectionsPass.cpp
   PTONormalizeUncoveredTileSections.cpp
-  PTOValidatePhysicalSectionBoundaries.cpp
+  Passes/PTOValidatePhysicalSectionBoundaries.cpp
   PTOMaterializeTileOpSections.cpp
-  VPTONormalizeContainer.cpp
+  VPTO/VPTONormalizeContainer.cpp
   VPTOSplitCVModule.cpp
   InsertSync/PTOIRTranslator.cpp
   InsertSync/SyncMacroModel.cpp
@@ -166,8 +185,8 @@ add_mlir_dialect_library(PTOTransforms
   BufidSync/BufidSyncAnalysis.cpp
   BufidSync/BufidSyncIdAlloc.cpp
   BufidSync/BufidSyncCodegen.cpp
-  LoweringSyncToPipe.cpp
-  PTOVerifyTFreePass.cpp
+  Passes/LoweringSyncToPipe.cpp
+  Passes/PTOVerifyTFreePass.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/PTO
@@ -223,6 +242,24 @@ target_include_directories(PTOTransforms INTERFACE
   $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
+
+# Sources grouped in subdirectories keep including headers that live directly in
+# this directory by bare name (e.g. "Utils.h"), so keep it on the private
+# include path.
+target_include_directories(PTOTransforms PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+if(TARGET obj.PTOTransforms)
+  target_include_directories(obj.PTOTransforms PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
+
+# MLIR conversion patterns legitimately hide base-class virtual
+# matchAndRewrite overloads; upstream advice is to silence the warning.
+# https://discourse.llvm.org/t/matchandrewrite-hiding-virtual-functions/84933/6
+# (Replaces the per-file #pragma GCC diagnostic ignored "-Woverloaded-virtual"
+# that PTOToEmitC.cpp carried before the split.)
+if(TARGET obj.PTOTransforms)
+  target_compile_options(obj.PTOTransforms PRIVATE -Wno-overloaded-virtual)
+endif()
+target_compile_options(PTOTransforms PRIVATE -Wno-overloaded-virtual)
 
 if(TARGET vfsim::native_core AND TARGET obj.PTOTransforms)
   # Preserve the simulator target's compile usage requirements on the object

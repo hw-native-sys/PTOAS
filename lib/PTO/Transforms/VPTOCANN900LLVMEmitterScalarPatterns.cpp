@@ -485,7 +485,7 @@ static std::string buildSimtKeepResumeConstraints(ArrayRef<SimtKeepResumePhysica
     if (index != 0) {
       os << ",";
     }
-    if (physicalReg.registerCount == 2) {
+    if (physicalReg.registerCount == kSimtKeepResumePairRegisterCount) {
       os << "={TPERL" << (physicalReg.baseRegister / 2) << "}";
     } else {
       os << "={TPER" << physicalReg.baseRegister << "}";
@@ -499,8 +499,8 @@ static std::string buildSimtKeepResumeConstraints(ArrayRef<SimtKeepResumePhysica
   return os.str();
 }
 
-template <typename OpT> static SmallVector<OpT, 4> collectConsecutiveOps(OpT first) {
-  SmallVector<OpT, 4> ops;
+template <typename OpT> static SmallVector<OpT, kSimtKeepResumeGroupCapacity> collectConsecutiveOps(OpT first) {
+  SmallVector<OpT, kSimtKeepResumeGroupCapacity> ops;
   for (Operation *cur = first.getOperation(); cur; cur = cur->getNextNode()) {
     auto typed = dyn_cast<OpT>(cur);
     if (!typed) {
@@ -518,16 +518,16 @@ static bool hasPreviousSameOp(Operation *op) {
 
 static std::optional<unsigned> getSimtKeepResumeBitWidth(Type type) {
   if (auto intType = dyn_cast<IntegerType>(type)) {
-    if (intType.getWidth() <= 64) {
+    if (intType.getWidth() <= kBits64) {
       return intType.getWidth();
     }
     return std::nullopt;
   }
   if (type.isF16() || type.isBF16()) {
-    return 16;
+    return kBits16;
   }
   if (type.isF32()) {
-    return 32;
+    return kBits32;
   }
   return std::nullopt;
 }
@@ -546,10 +546,10 @@ static Value packSimtKeepResumePayload(Location loc, Value value, ConversionPatt
   } else if (bits.getType() != intType) {
     bits = rewriter.create<LLVM::BitcastOp>(loc, intType, bits);
   }
-  if (*width < 32) {
+  if (*width < kBits32) {
     return rewriter.create<LLVM::ZExtOp>(loc, rewriter.getI32Type(), bits);
   }
-  if (*width == 32 && bits.getType() != rewriter.getI32Type()) {
+  if (*width == kBits32 && bits.getType() != rewriter.getI32Type()) {
     return rewriter.create<LLVM::BitcastOp>(loc, rewriter.getI32Type(), bits);
   }
   return bits;
@@ -564,7 +564,7 @@ static Value unpackSimtKeepResumePayload(Location loc, Value value, Type resultT
 
   Type intType = rewriter.getIntegerType(*width);
   Value bits = value;
-  if (*width < 32) {
+  if (*width < kBits32) {
     bits = rewriter.create<LLVM::TruncOp>(loc, intType, bits);
   } else if (bits.getType() != intType) {
     bits = rewriter.create<LLVM::BitcastOp>(loc, intType, bits);
@@ -581,25 +581,26 @@ static Value unpackSimtKeepResumePayload(Location loc, Value value, Type resultT
 
 static unsigned getSimtKeepResumeRegisterCount(Type type) {
   std::optional<unsigned> width = getSimtKeepResumeBitWidth(type);
-  return width && *width > 32 ? 2 : 1;
+  return width && *width > kBits32 ? kSimtKeepResumePairRegisterCount : 1;
 }
 
-static FailureOr<SmallVector<SimtKeepResumePhysicalRegister, 4>>
+static FailureOr<SmallVector<SimtKeepResumePhysicalRegister, kSimtKeepResumeGroupCapacity>>
 computeSimtKeepResumePhysicalRegs(ArrayRef<std::pair<int64_t, unsigned>> logicalSlots) {
-  SmallVector<SimtKeepResumePhysicalRegister, 4> physicalRegs;
+  SmallVector<SimtKeepResumePhysicalRegister, kSimtKeepResumeGroupCapacity> physicalRegs;
   physicalRegs.reserve(logicalSlots.size());
   for (auto [slot, registerCount] : logicalSlots) {
-    if (slot < 0 || slot >= 123) {
+    if (slot < 0 || slot >= kSimtKeepResumeSlotCount) {
       return failure();
     }
-    if (registerCount == 2 && ((slot % 2) != 0 || slot + 1 >= 123)) {
+    if (registerCount == kSimtKeepResumePairRegisterCount &&
+        ((slot % 2) != 0 || slot + 1 >= kSimtKeepResumeSlotCount)) {
       return failure();
     }
     // Slots are user-assigned storage words, not dense ordinals in the current
     // keep/resume group. This keeps a consumer that resumes only a subset of
     // slots from changing where the remaining slots are read from.
     int64_t baseRegister = 4 + slot;
-    if (baseRegister + static_cast<int64_t>(registerCount) - 1 > 126) {
+    if (baseRegister + static_cast<int64_t>(registerCount) - 1 > kSimtKeepResumeLastBaseRegister) {
       return failure();
     }
     physicalRegs.push_back({baseRegister, registerCount});
@@ -608,18 +609,19 @@ computeSimtKeepResumePhysicalRegs(ArrayRef<std::pair<int64_t, unsigned>> logical
 }
 
 static bool isValidSimtKeepResumeSlot(int64_t slot, unsigned registerCount) {
-  if (slot < 0 || slot >= 123) {
+  if (slot < 0 || slot >= kSimtKeepResumeSlotCount) {
     return false;
   }
-  if (registerCount == 2 && ((slot % 2) != 0 || slot + 1 >= 123)) {
+  if (registerCount == kSimtKeepResumePairRegisterCount &&
+      ((slot % 2) != 0 || slot + 1 >= kSimtKeepResumeSlotCount)) {
     return false;
   }
   return true;
 }
 
 struct ResumeGroupTypes {
-  SmallVector<std::pair<int64_t, unsigned>, 4> logicalSlots;
-  SmallVector<Type, 4> asmResultTypes;
+  SmallVector<std::pair<int64_t, unsigned>, kSimtKeepResumeGroupCapacity> logicalSlots;
+  SmallVector<Type, kSimtKeepResumeGroupCapacity> asmResultTypes;
 };
 
 static FailureOr<ResumeGroupTypes> collectResumeGroupTypes(ArrayRef<pto::ResumeOp> resumeOps,
@@ -638,14 +640,14 @@ static FailureOr<ResumeGroupTypes> collectResumeGroupTypes(ArrayRef<pto::ResumeO
       return failure();
     }
     types.logicalSlots.push_back({resume.getSlot(), registerCount});
-    types.asmResultTypes.push_back(rewriter.getIntegerType(*bitWidth > 32 ? 64 : 32));
+    types.asmResultTypes.push_back(rewriter.getIntegerType(*bitWidth > kBits32 ? kBits64 : kBits32));
   }
   return types;
 }
 
 static LogicalResult replaceResumeGroup(ArrayRef<pto::ResumeOp> resumeOps, LLVM::InlineAsmOp asmOp,
                                         const TypeConverter &typeConverter, ConversionPatternRewriter &rewriter) {
-  SmallVector<Value, 4> results;
+  SmallVector<Value, kSimtKeepResumeGroupCapacity> results;
   for (unsigned index = 0; index < resumeOps.size(); ++index) {
     pto::ResumeOp resume = resumeOps[index];
     auto extract = rewriter.create<LLVM::ExtractValueOp>(resume.getLoc(), asmOp.getRes(),
@@ -675,10 +677,10 @@ public:
       return rewriter.notifyMatchFailure(op, "only the first keep in a contiguous group is lowered");
     }
 
-    SmallVector<pto::KeepOp, 4> keepOps = collectConsecutiveOps(op);
-    SmallVector<Value, 4> payloads;
-    SmallVector<Type, 4> asmResultTypes;
-    SmallVector<std::pair<int64_t, unsigned>, 4> logicalSlots;
+    SmallVector<pto::KeepOp, kSimtKeepResumeGroupCapacity> keepOps = collectConsecutiveOps(op);
+    SmallVector<Value, kSimtKeepResumeGroupCapacity> payloads;
+    SmallVector<Type, kSimtKeepResumeGroupCapacity> asmResultTypes;
+    SmallVector<std::pair<int64_t, unsigned>, kSimtKeepResumeGroupCapacity> logicalSlots;
     for (pto::KeepOp keep : keepOps) {
       Value payload = rewriter.getRemappedValue(keep.getPayload());
       if (!payload) {
@@ -697,7 +699,7 @@ public:
       payloads.push_back(payload);
       asmResultTypes.push_back(payload.getType());
     }
-    FailureOr<SmallVector<SimtKeepResumePhysicalRegister, 4>> physicalRegs =
+    FailureOr<SmallVector<SimtKeepResumePhysicalRegister, kSimtKeepResumeGroupCapacity>> physicalRegs =
         computeSimtKeepResumePhysicalRegs(logicalSlots);
     if (failed(physicalRegs)) {
       return rewriter.notifyMatchFailure(op, "keep slots must map to valid non-overlapping SIMT registers");
@@ -730,12 +732,12 @@ public:
       return rewriter.notifyMatchFailure(op, "only the first resume in a contiguous group is lowered");
     }
 
-    SmallVector<pto::ResumeOp, 4> resumeOps = collectConsecutiveOps(op);
+    SmallVector<pto::ResumeOp, kSimtKeepResumeGroupCapacity> resumeOps = collectConsecutiveOps(op);
     FailureOr<ResumeGroupTypes> groupTypes = collectResumeGroupTypes(resumeOps, *getTypeConverter(), rewriter);
     if (failed(groupTypes)) {
       return rewriter.notifyMatchFailure(op, "resume slots or result types are unsupported");
     }
-    FailureOr<SmallVector<SimtKeepResumePhysicalRegister, 4>> physicalRegs =
+    FailureOr<SmallVector<SimtKeepResumePhysicalRegister, kSimtKeepResumeGroupCapacity>> physicalRegs =
         computeSimtKeepResumePhysicalRegs(groupTypes->logicalSlots);
     if (failed(physicalRegs)) {
       return rewriter.notifyMatchFailure(op, "resume slots must map to valid non-overlapping SIMT registers");
@@ -854,7 +856,7 @@ public:
     if (eventValue.getType().isIndex()) {
       eventValue = rewriter.create<arith::IndexCastOp>(op.getLoc(), rewriter.getI64Type(), eventValue);
     } else if (auto intType = dyn_cast<IntegerType>(eventValue.getType())) {
-      if (intType.getWidth() < 64) {
+      if (intType.getWidth() < kBits64) {
         eventValue = rewriter.create<LLVM::ZExtOp>(op.getLoc(), rewriter.getI64Type(), eventValue);
       }
     } else {
@@ -1233,7 +1235,7 @@ public:
 
     auto funcOp = op->template getParentOfType<func::FuncOp>();
     bool isSimtEntry = funcOp && funcOp->hasAttr(pto::kPTOSimtEntryAttrName);
-    if (isSimtEntry && !resultType.isInteger(64)) {
+    if (isSimtEntry && !resultType.isInteger(kBits64)) {
       return rewriter.notifyMatchFailure(op, "SIMT block runtime-query expects an i64 PTO result");
     }
 
@@ -1514,7 +1516,7 @@ public:
       return success();
     }
 
-    if (!op.getResult().getType().isInteger(64) || signedness != pto::Signedness::Signed) {
+    if (!op.getResult().getType().isInteger(kBits64) || signedness != pto::Signedness::Signed) {
       return rewriter.notifyMatchFailure(op, "unsupported mulhi signature");
     }
 
@@ -1743,7 +1745,8 @@ public:
                                 ConversionPatternRewriter &rewriter) const override {
     (void)adaptor;
     SmallVector<Type> resultTypes;
-    if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(), resultTypes)) || resultTypes.size() != 4) {
+    if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(), resultTypes)) ||
+        resultTypes.size() != kVms4SrCounterCount) {
       return rewriter.notifyMatchFailure(op, "failed to convert get_vms4_sr result types");
     }
 
@@ -1753,12 +1756,13 @@ public:
     state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
 
     SmallVector<Value> counts;
-    counts.reserve(4);
+    counts.reserve(kVms4SrCounterCount);
     Value raw = call.getResult(0);
-    for (unsigned i = 0; i < 4; ++i) {
+    for (unsigned i = 0; i < kVms4SrCounterCount; ++i) {
       Value shifted = raw;
       if (i != 0) {
-        shifted = rewriter.create<arith::ShRUIOp>(op.getLoc(), raw, getI64Constant(rewriter, op.getLoc(), i * 16));
+        shifted = rewriter.create<arith::ShRUIOp>(op.getLoc(), raw,
+                                                  getI64Constant(rewriter, op.getLoc(), i * kVms4SrCountFieldBits));
       }
       counts.push_back(rewriter.create<arith::TruncIOp>(op.getLoc(), resultTypes[i], shifted));
     }

@@ -87,10 +87,10 @@ static std::optional<int64_t> getElemBytes(Type elemTy) {
       return 2;
     }
     if (ft.isF32()) {
-      return 4;
+        return mlir::pto::kValue4;
     }
     if (ft.isF64()) {
-      return 8;
+        return mlir::pto::kValue8;
     }
     return std::nullopt;
   }
@@ -99,7 +99,7 @@ static std::optional<int64_t> getElemBytes(Type elemTy) {
     if (bits <= 0) {
       return std::nullopt;
     }
-    return std::max<int64_t>(1, bits / 8);
+    return std::max<int64_t>(1, bits / mlir::pto::kValue8);
   }
   return std::nullopt;
 }
@@ -153,13 +153,13 @@ static std::optional<int64_t> getConstIndexLike(Value v) {
 mlir::LogicalResult mlir::pto::SetValidShapeOp::verify() {
   SmallVector<int64_t> shape;
   auto srcTy = getSource().getType();
-  if (srcTy.getRank() != 2) {
-    return emitOpError("expects rank-2 tile_buf source");
+  if (srcTy.getRank() != mlir::pto::kValue2) {
+      return emitOpError("expects rank-2 tile_buf source");
   }
 
   ArrayRef<int64_t> validShape = srcTy.getValidShape();
-  if (validShape.size() != 2) {
-    return emitOpError("expects source validShape to be rank-2");
+  if (validShape.size() != mlir::pto::kValue2) {
+      return emitOpError("expects source validShape to be rank-2");
   }
   if (!srcTy.hasDynamicValid()) {
     return emitOpError("expects source tile_buf to have dynamic validShape (?, ?)");
@@ -191,7 +191,6 @@ mlir::LogicalResult mlir::pto::SetValidShapeOp::verify() {
     }
     return success();
   };
-
   if (failed(checkDim(getValidRow(), /*dimIdx=*/0, "row"))) {
     return failure();
   }
@@ -204,11 +203,11 @@ mlir::LogicalResult mlir::pto::SetValidShapeOp::verify() {
 
 mlir::LogicalResult mlir::pto::GetValidShapeOp::verify() {
   auto srcTy = getSource().getType();
-  if (srcTy.getRank() != 2) {
-    return emitOpError("expects rank-2 tile_buf source");
+  if (srcTy.getRank() != mlir::pto::kValue2) {
+      return emitOpError("expects rank-2 tile_buf source");
   }
-  if (srcTy.getValidShape().size() != 2) {
-    return emitOpError("expects source validShape to be rank-2");
+  if (srcTy.getValidShape().size() != mlir::pto::kValue2) {
+      return emitOpError("expects source validShape to be rank-2");
   }
   return success();
 }
@@ -318,8 +317,8 @@ static LogicalResult verifyTRowExpandValidShapes(TRowExpandOp op, Type srcTy,
                                                  Type dstTy) {
   auto srcValid = getValidShapeVec(op.getSrc());
   auto dstValid = getValidShapeVec(op.getDst());
-  if (srcValid.size() != 2 || dstValid.size() != 2) {
-    return op.emitOpError("expects src and dst to have rank-2 valid_shape");
+  if (srcValid.size() != mlir::pto::kValue2 || dstValid.size() != mlir::pto::kValue2) {
+      return op.emitOpError("expects src and dst to have rank-2 valid_shape");
   }
   // Fully-empty dst valid region (0x0): dual-AIV no-op replay marker. The op
   // writes no elements; accept and skip the non-empty constraints. One-sided
@@ -639,9 +638,6 @@ void mlir::pto::TPowOp::print(OpAsmPrinter &p) {
                               getDst());
 }
 
-// TPOWS assembly format:
-//   pto.tpows ins(%src, %scalar[, %tmp] : !tile, scalar_t[, !tile])
-//             outs(%dst : !tile) [attr-dict]
 ParseResult mlir::pto::TPowSOp::parse(OpAsmParser &parser, OperationState &result) {
   return parseOptionalTmpBinaryDpsOp(parser, result,
                                      /*tmpBeforeDst=*/false,
@@ -782,8 +778,9 @@ static TRowExpandBinaryMode classifyTRowExpandBinaryMode(Type src0Ty,
   auto src0Valid = getValidShapeVec(src0Ty);
   auto src1Valid = getValidShapeVec(src1Ty);
   auto dstValid = getValidShapeVec(dstTy);
-  if (src0Valid.size() != 2 || src1Valid.size() != 2 || dstValid.size() != 2) {
-    return TRowExpandBinaryMode::Unknown;
+  if (src0Valid.size() != mlir::pto::kValue2 || src1Valid.size() != mlir::pto::kValue2 ||
+      dstValid.size() != mlir::pto::kValue2) {
+      return TRowExpandBinaryMode::Unknown;
   }
 
   Type expandedTy;
@@ -820,15 +817,15 @@ static TRowExpandBinaryMode classifyTRowExpandBinaryMode(Type src0Ty,
 
 static int64_t getTRowExpandTmpMinBytes(int64_t dstValidRows) {
   if (dstValidRows == ShapedType::kDynamic) {
-    return 8192;
+      return mlir::pto::kValue8192;
   }
   if (dstValidRows < 0) {
-    return 8192;
+      return mlir::pto::kValue8192;
   }
-  if (dstValidRows < 256) {
-    return ceilDivInt64(dstValidRows, 8) * 256;
+  if (dstValidRows < mlir::pto::kValue256) {
+      return ceilDivInt64(dstValidRows, mlir::pto::kValue8) * mlir::pto::kValue256;
   }
-  return 30 * 256;
+  return mlir::pto::kValue30 * mlir::pto::kValue256;
 }
 
 static std::optional<int64_t> getStaticTileCapacityBytes(Type ty) {
@@ -862,8 +859,8 @@ static LogicalResult verifyTRowExpandImplicitTmpContract(
   }
 
   auto dstValid = getValidShapeVec(dstTy);
-  if (dstValid.size() != 2) {
-    return op->emitOpError("expects dst to have rank-2 valid_shape");
+  if (dstValid.size() != mlir::pto::kValue2) {
+      return op->emitOpError("expects dst to have rank-2 valid_shape");
   }
   int64_t minBytes = getTRowExpandTmpMinBytes(dstValid[0]);
   std::optional<int64_t> tmpBytes = getStaticTileCapacityBytes(tmpTy);
@@ -1003,8 +1000,8 @@ static LogicalResult verifyTRowExpandAddSrc1(TRowExpandAddOp op, Type elem,
   Type dstTy = op.getDst().getType();
   auto src1Valid = getValidShapeVec(src1Ty);
   auto dstValid = getValidShapeVec(dstTy);
-  if (src1Valid.size() != 2 || dstValid.size() != 2) {
-    return op.emitOpError("expects src1 and dst to have rank-2 valid_shape");
+  if (src1Valid.size() != mlir::pto::kValue2 || dstValid.size() != mlir::pto::kValue2) {
+      return op.emitOpError("expects src1 and dst to have rank-2 valid_shape");
   }
   if (src1Valid[0] != ShapedType::kDynamic && dstValid[0] != ShapedType::kDynamic &&
       src1Valid[0] != dstValid[0]) {
@@ -1142,14 +1139,14 @@ static LogicalResult verifyTRowExpandFullAndBroadcast(
 static LogicalResult verifyTRowExpandReduceValidBasics(
     Operation *op, ArrayRef<int64_t> src0Valid, ArrayRef<int64_t> src1Valid,
     ArrayRef<int64_t> dstValid) {
-  if (src0Valid.size() != 2 || src1Valid.size() != 2 || dstValid.size() != 2)
-    return op->emitOpError(
-        "expects src0, src1, and dst to have rank-2 valid_shape");
-  if (dstValid[0] != ShapedType::kDynamic && dstValid[0] == 0)
-    return op->emitOpError("expects dst valid_shape[0] to be non-zero");
-  if (dstValid[1] != ShapedType::kDynamic && dstValid[1] == 0)
-    return op->emitOpError("expects dst valid_shape[1] to be non-zero");
-  return success();
+    if (src0Valid.size() != mlir::pto::kValue2 || src1Valid.size() != mlir::pto::kValue2 ||
+        dstValid.size() != mlir::pto::kValue2)
+        return op->emitOpError("expects src0, src1, and dst to have rank-2 valid_shape");
+    if (dstValid[0] != ShapedType::kDynamic && dstValid[0] == 0)
+        return op->emitOpError("expects dst valid_shape[0] to be non-zero");
+    if (dstValid[1] != ShapedType::kDynamic && dstValid[1] == 0)
+        return op->emitOpError("expects dst valid_shape[1] to be non-zero");
+    return success();
 }
 
 static LogicalResult verifyTRowExpandReduceLikeOp(
@@ -1170,9 +1167,9 @@ static LogicalResult verifyTRowExpandReduceLikeOp(
   auto src0Valid = getValidShapeVec(src0Ty);
   auto src1Valid = getValidShapeVec(src1Ty);
   auto dstValid = getValidShapeVec(dstTy);
-  if (src0Valid.size() != 2 || src1Valid.size() != 2 || dstValid.size() != 2)
-    return verifyTRowExpandReduceValidBasics(op, src0Valid, src1Valid,
-                                             dstValid);
+  if (src0Valid.size() != mlir::pto::kValue2 || src1Valid.size() != mlir::pto::kValue2 ||
+      dstValid.size() != mlir::pto::kValue2)
+      return verifyTRowExpandReduceValidBasics(op, src0Valid, src1Valid, dstValid);
 
   // Fully-empty dst valid region (0x0): dual-AIV no-op replay marker. Element
   // type/layout were already checked above; the op writes no elements, so accept
@@ -1413,8 +1410,7 @@ static void printOptionalTmpFixedDpsOp(OpAsmPrinter &p, Operation *op,
 
 ParseResult mlir::pto::TTransOp::parse(OpAsmParser &parser,
                                        OperationState &result) {
-  return parseOptionalTmpFixedDpsOp(parser, result, 1, 2, {1, 0, 1},
-                                    {1, 1, 1});
+    return parseOptionalTmpFixedDpsOp(parser, result, 1, mlir::pto::kValue2, {1, 0, 1}, {1, 1, 1});
 }
 void mlir::pto::TTransOp::print(OpAsmPrinter &p) {
   SmallVector<Value> inputs{getSrc()};
@@ -1426,8 +1422,8 @@ void mlir::pto::TTransOp::print(OpAsmPrinter &p) {
 
 ParseResult mlir::pto::TPReluOp::parse(OpAsmParser &parser,
                                        OperationState &result) {
-  return parseOptionalTmpFixedDpsOp(parser, result, 2, 3, {1, 1, 0, 1},
-                                    {1, 1, 1, 1});
+    return parseOptionalTmpFixedDpsOp(
+        parser, result, mlir::pto::kValue2, mlir::pto::kValue3, {1, 1, 0, 1}, {1, 1, 1, 1});
 }
 void mlir::pto::TPReluOp::print(OpAsmPrinter &p) {
   SmallVector<Value> inputs{getSrc0(), getSrc1()};
@@ -1439,8 +1435,8 @@ void mlir::pto::TPReluOp::print(OpAsmPrinter &p) {
 
 ParseResult mlir::pto::TRemOp::parse(OpAsmParser &parser,
                                      OperationState &result) {
-  return parseOptionalTmpFixedDpsOp(parser, result, 2, 3, {1, 1, 0, 1},
-                                    {1, 1, 1, 1});
+    return parseOptionalTmpFixedDpsOp(
+        parser, result, mlir::pto::kValue2, mlir::pto::kValue3, {1, 1, 0, 1}, {1, 1, 1, 1});
 }
 void mlir::pto::TRemOp::print(OpAsmPrinter &p) {
   SmallVector<Value> inputs{getSrc0(), getSrc1()};
@@ -1452,8 +1448,8 @@ void mlir::pto::TRemOp::print(OpAsmPrinter &p) {
 
 ParseResult mlir::pto::TRemSOp::parse(OpAsmParser &parser,
                                       OperationState &result) {
-  return parseOptionalTmpFixedDpsOp(parser, result, 2, 3, {1, 1, 0, 1},
-                                    {1, 1, 1, 1});
+    return parseOptionalTmpFixedDpsOp(
+        parser, result, mlir::pto::kValue2, mlir::pto::kValue3, {1, 1, 0, 1}, {1, 1, 1, 1});
 }
 void mlir::pto::TRemSOp::print(OpAsmPrinter &p) {
   SmallVector<Value> inputs{getSrc(), getScalar()};
@@ -1465,8 +1461,8 @@ void mlir::pto::TRemSOp::print(OpAsmPrinter &p) {
 
 ParseResult mlir::pto::TSelOp::parse(OpAsmParser &parser,
                                      OperationState &result) {
-  return parseOptionalTmpFixedDpsOp(parser, result, 3, 4,
-                                    {1, 1, 1, 0, 1}, {1, 1, 1, 1, 1});
+    return parseOptionalTmpFixedDpsOp(
+        parser, result, mlir::pto::kValue3, mlir::pto::kValue4, {1, 1, 1, 0, 1}, {1, 1, 1, 1, 1});
 }
 void mlir::pto::TSelOp::print(OpAsmPrinter &p) {
   SmallVector<Value> inputs{getMask(), getSrc0(), getSrc1()};
@@ -1478,8 +1474,8 @@ void mlir::pto::TSelOp::print(OpAsmPrinter &p) {
 
 ParseResult mlir::pto::TSelSOp::parse(OpAsmParser &parser,
                                       OperationState &result) {
-  return parseOptionalTmpFixedDpsOp(parser, result, 3, 4,
-                                    {1, 1, 0, 1, 1}, {1, 1, 1, 1, 1});
+    return parseOptionalTmpFixedDpsOp(
+        parser, result, mlir::pto::kValue3, mlir::pto::kValue4, {1, 1, 0, 1, 1}, {1, 1, 1, 1, 1});
 }
 void mlir::pto::TSelSOp::print(OpAsmPrinter &p) {
   SmallVector<Value> inputs{getMask(), getSrc()};

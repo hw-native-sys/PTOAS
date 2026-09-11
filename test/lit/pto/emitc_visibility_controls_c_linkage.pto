@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: ptoas --cann-output-version=9.0.0 --emit-pto-ir %s -o - 2>&1 | FileCheck %s
+// RUN: ptoas --emit-pto-ir %s -o - 2>&1 | FileCheck %s
 // Guards backend child assembly ABI visibility. Non-entry helpers may remain
 // public in MLIR for cross-child symbol lookup, but only pto.visibility =
 // "external" should preserve artifact-level external visibility.

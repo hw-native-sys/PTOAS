@@ -581,8 +581,8 @@ lib/PTO/Transforms/VMIToVPTO.cpp
   the assigned source/result relation
 
 lib/PTO/IR/VPTO.cpp
-lib/PTO/Transforms/VPTOLLVMEmitter.cpp
 lib/PTO/Transforms/VPTOCANN900LLVMEmitter.cpp
+lib/PTO/Transforms/VPTOCANN900LLVMEmitterPipeline.cpp
   no change for existing vlds/vsts dist tokens
   extend vpack/vsunpack/vzunpack verifier/emitter only if the first implemented
   fallback needs currently unsupported b64->b32 or floating-point carrier paths

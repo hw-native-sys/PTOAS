@@ -98,8 +98,8 @@ private:
 
   /// 合并两个分支的同步状态 (Intersection)
   void MergeAlreadySync(SyncRecordList &syncRecordList,
-                        const SyncRecordList &syncRecordIfList,
-                        const SyncRecordList &syncRecordElseList);
+                              const SyncRecordList &syncRecordIfList,
+                              const SyncRecordList &syncRecordElseList);
  
   // --- Dependency & Sync Insertion ---
 
@@ -148,9 +148,9 @@ private:
  
   /// 检查是否已经同步过 (Transitive Dependency Elimination)
   bool isAlreadySync(const CompoundInstanceElement *nowCompound,
-                     CompoundInstanceElement *frontCompound,
-                     SyncRecordList &syncRecordList,
-                     unsigned recordListIndex);
+                           const CompoundInstanceElement *frontCompound,
+                           SyncRecordList &syncRecordList,
+                           unsigned recordListIndex);
 
   bool CanPrunePipeVBarrier(
       const CompoundInstanceElement *nowCompound,
@@ -167,7 +167,7 @@ private:
                             SyncRecordList &syncRecordList);
  
   void UpdateSyncRecord(const SyncOperation *sync, SyncRecord &syncRecord,
-                        PipelineType nowPipeValue);
+                              PipelineType nowPipeValue);
                         
   void InsertLastPipeAll();
   
@@ -181,7 +181,7 @@ private:
   int GetEventIdNum(const DepBaseMemInfoPairVec &depBaseMemInfosVec);
  
   /// 辅助函数：获取所有涉及的 Buffer (用于 LCA 计算，虽然现在简化了，保留接口)
-  SmallVector<Value> GetMemInfoBuffers(const DepBaseMemInfoPairVec &depBaseMemInfosVec);
+  const SmallVector<Value> GetMemInfoBuffers(const DepBaseMemInfoPairVec &depBaseMemInfosVec);
  
   /// 判断两个操作是否构成GM的读写冲突
   bool IsGMHazard(const CompoundInstanceElement *nowCompound,

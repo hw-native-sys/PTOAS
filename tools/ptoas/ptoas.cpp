@@ -288,11 +288,6 @@ llvm::cl::opt<std::string> mlir::pto::ptoSeamIRFile(
     llvm::cl::value_desc("path"),
     llvm::cl::init(""));
 
-llvm::cl::opt<std::string> mlir::pto::cannOutputVersion(
-    "cann-output-version",
-    llvm::cl::desc("Override the CANN version used for lowering and public ABI output selection; examples: 9.0.0, 9.0.0-beta.1"),
-    llvm::cl::value_desc("version"), llvm::cl::init(""));
-
 llvm::cl::opt<mlir::pto::VFSIMTSizeFixMode> mlir::pto::vptoFixVFSIMTSize(
     "vpto-fix-vfsimt-size",
     llvm::cl::desc("Validate or repair VF_SIMT code sizes in VPTO vector objects"),

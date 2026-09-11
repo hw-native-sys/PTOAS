@@ -91,6 +91,94 @@ static int64_t normalizeRemainder(int64_t value, int64_t modulus) {
   return remainder < 0 ? remainder + modulus : remainder;
 }
 
+static std::optional<int64_t> getKnownIndexRemainder(Value value,
+                                                     int64_t modulus,
+                                                     unsigned depth);
+
+// A ForOp induction variable is congruent to its lower bound modulo `modulus`
+// only when the step is a multiple of the modulus (remainder 0).
+static std::optional<int64_t>
+indexRemainderFromInductionVar(BlockArgument blockArgument, Value value,
+                               int64_t modulus, unsigned depth) {
+  auto forOp =
+      dyn_cast_or_null<scf::ForOp>(blockArgument.getOwner()->getParentOp());
+  if (!forOp || forOp.getInductionVar() != value) {
+    return std::nullopt;
+  }
+  auto lower = getKnownIndexRemainder(forOp.getLowerBound(), modulus, depth + 1);
+  auto step = getKnownIndexRemainder(forOp.getStep(), modulus, depth + 1);
+  if (lower && step && *step == 0) {
+    return lower;
+  }
+  return std::nullopt;
+}
+
+// Forward the remainder query through width/index-preserving casts. Returns
+// true when `value` is such a cast; the forwarded result is written to `out`.
+static bool tryIndexRemainderThroughCast(Value value, int64_t modulus,
+                                         unsigned depth,
+                                         std::optional<int64_t> &out) {
+  if (auto cast = value.getDefiningOp<arith::IndexCastOp>()) {
+    out = getKnownIndexRemainder(cast.getIn(), modulus, depth + 1);
+    return true;
+  }
+  if (auto cast = value.getDefiningOp<arith::IndexCastUIOp>()) {
+    out = getKnownIndexRemainder(cast.getIn(), modulus, depth + 1);
+    return true;
+  }
+  if (auto cast = value.getDefiningOp<arith::ExtSIOp>()) {
+    out = getKnownIndexRemainder(cast.getIn(), modulus, depth + 1);
+    return true;
+  }
+  if (auto cast = value.getDefiningOp<arith::ExtUIOp>()) {
+    out = getKnownIndexRemainder(cast.getIn(), modulus, depth + 1);
+    return true;
+  }
+  if (auto cast = value.getDefiningOp<UnrealizedConversionCastOp>()) {
+    if (cast->getNumOperands() == 1 && cast->getNumResults() == 1) {
+      out = getKnownIndexRemainder(cast.getOperand(0), modulus, depth + 1);
+      return true;
+    }
+  }
+  return false;
+}
+
+// Combine remainders of arithmetic add/sub/mul operands. Returns true when
+// `value` is such a binary op; the combined result is written to `out`.
+static bool tryIndexRemainderThroughBinaryOp(Value value, int64_t modulus,
+                                             unsigned depth,
+                                             std::optional<int64_t> &out) {
+  if (auto add = value.getDefiningOp<arith::AddIOp>()) {
+    auto lhs = getKnownIndexRemainder(add.getLhs(), modulus, depth + 1);
+    auto rhs = getKnownIndexRemainder(add.getRhs(), modulus, depth + 1);
+    out = lhs && rhs ? std::optional<int64_t>(
+                           normalizeRemainder(*lhs + *rhs, modulus))
+                     : std::nullopt;
+    return true;
+  }
+  if (auto sub = value.getDefiningOp<arith::SubIOp>()) {
+    auto lhs = getKnownIndexRemainder(sub.getLhs(), modulus, depth + 1);
+    auto rhs = getKnownIndexRemainder(sub.getRhs(), modulus, depth + 1);
+    out = lhs && rhs ? std::optional<int64_t>(
+                           normalizeRemainder(*lhs - *rhs, modulus))
+                     : std::nullopt;
+    return true;
+  }
+  if (auto mul = value.getDefiningOp<arith::MulIOp>()) {
+    auto lhs = getKnownIndexRemainder(mul.getLhs(), modulus, depth + 1);
+    auto rhs = getKnownIndexRemainder(mul.getRhs(), modulus, depth + 1);
+    if ((lhs && *lhs == 0) || (rhs && *rhs == 0)) {
+      out = 0;
+      return true;
+    }
+    out = lhs && rhs ? std::optional<int64_t>(
+                           normalizeRemainder(*lhs * *rhs, modulus))
+                     : std::nullopt;
+    return true;
+  }
+  return false;
+}
+
 static std::optional<int64_t>
 getKnownIndexRemainder(Value value, int64_t modulus, unsigned depth = 0) {
   if (modulus <= 1) {
@@ -102,73 +190,44 @@ getKnownIndexRemainder(Value value, int64_t modulus, unsigned depth = 0) {
   if (auto constant = getConstantIndexValue(value)) {
     return normalizeRemainder(*constant, modulus);
   }
-
   if (auto blockArgument = dyn_cast<BlockArgument>(value)) {
-    auto forOp = dyn_cast_or_null<scf::ForOp>(
-        blockArgument.getOwner()->getParentOp());
-    if (forOp) {
-      bool isInductionVariable = forOp.getInductionVar() == value;
-      if (!isInductionVariable) {
-        return std::nullopt;
-      }
-      auto lower =
-          getKnownIndexRemainder(forOp.getLowerBound(), modulus, depth + 1);
-      auto step =
-          getKnownIndexRemainder(forOp.getStep(), modulus, depth + 1);
-      if (lower && step && *step == 0) {
-        return lower;
-      }
-    }
+    return indexRemainderFromInductionVar(blockArgument, value, modulus, depth);
   }
-
-  if (auto cast = value.getDefiningOp<arith::IndexCastOp>()) {
-    return getKnownIndexRemainder(cast.getIn(), modulus, depth + 1);
+  std::optional<int64_t> result;
+  if (tryIndexRemainderThroughCast(value, modulus, depth, result)) {
+    return result;
   }
-  if (auto cast = value.getDefiningOp<arith::IndexCastUIOp>()) {
-    return getKnownIndexRemainder(cast.getIn(), modulus, depth + 1);
-  }
-  if (auto cast = value.getDefiningOp<arith::ExtSIOp>()) {
-    return getKnownIndexRemainder(cast.getIn(), modulus, depth + 1);
-  }
-  if (auto cast = value.getDefiningOp<arith::ExtUIOp>()) {
-    return getKnownIndexRemainder(cast.getIn(), modulus, depth + 1);
-  }
-  if (auto cast = value.getDefiningOp<UnrealizedConversionCastOp>()) {
-    bool isSingleCast = cast->getNumOperands() == 1 &&
-                        cast->getNumResults() == 1;
-    if (isSingleCast) {
-      return getKnownIndexRemainder(cast.getOperand(0), modulus, depth + 1);
-    }
-  }
-
-  if (auto add = value.getDefiningOp<arith::AddIOp>()) {
-    auto lhs = getKnownIndexRemainder(add.getLhs(), modulus, depth + 1);
-    auto rhs = getKnownIndexRemainder(add.getRhs(), modulus, depth + 1);
-    return lhs && rhs ? std::optional<int64_t>(normalizeRemainder(
-                              *lhs + *rhs, modulus))
-                      : std::nullopt;
-  }
-  if (auto sub = value.getDefiningOp<arith::SubIOp>()) {
-    auto lhs = getKnownIndexRemainder(sub.getLhs(), modulus, depth + 1);
-    auto rhs = getKnownIndexRemainder(sub.getRhs(), modulus, depth + 1);
-    return lhs && rhs ? std::optional<int64_t>(normalizeRemainder(
-                              *lhs - *rhs, modulus))
-                      : std::nullopt;
-  }
-  if (auto mul = value.getDefiningOp<arith::MulIOp>()) {
-    auto lhs = getKnownIndexRemainder(mul.getLhs(), modulus, depth + 1);
-    auto rhs = getKnownIndexRemainder(mul.getRhs(), modulus, depth + 1);
-    if (lhs && *lhs == 0) {
-      return 0;
-    }
-    if (rhs && *rhs == 0) {
-      return 0;
-    }
-    return lhs && rhs ? std::optional<int64_t>(normalizeRemainder(
-                              *lhs * *rhs, modulus))
-                      : std::nullopt;
+  if (tryIndexRemainderThroughBinaryOp(value, modulus, depth, result)) {
+    return result;
   }
   return std::nullopt;
+}
+
+static std::optional<int64_t>
+getKnownPointerRemainder(Value pointer, int64_t alignmentBytes, unsigned depth);
+
+// Fold an AddPtr into the remainder of its base by scaling the element offset
+// by the element size, using the gcd-reduced modulus for the offset query.
+static std::optional<int64_t>
+pointerRemainderThroughAddPtr(AddPtrOp add, int64_t alignmentBytes,
+                              unsigned depth) {
+  auto base = getKnownPointerRemainder(add.getPtr(), alignmentBytes, depth + 1);
+  auto pointerType = dyn_cast<PtrType>(add.getPtr().getType());
+  if (!base || !pointerType) {
+    return std::nullopt;
+  }
+  unsigned elementBits = getPTOStorageElemBitWidth(pointerType.getElementType());
+  if (elementBits == 0 || elementBits % 8 != 0) {
+    return std::nullopt;
+  }
+  int64_t elementBytes = static_cast<int64_t>(elementBits / 8);
+  int64_t offsetModulus =
+      alignmentBytes / std::gcd(alignmentBytes, elementBytes);
+  auto offset = getKnownIndexRemainder(add.getOffset(), offsetModulus);
+  if (!offset) {
+    return std::nullopt;
+  }
+  return normalizeRemainder(*base + *offset * elementBytes, alignmentBytes);
 }
 
 static std::optional<int64_t>
@@ -206,24 +265,7 @@ getKnownPointerRemainder(Value pointer, int64_t alignmentBytes,
   if (!add) {
     return std::nullopt;
   }
-  auto base = getKnownPointerRemainder(add.getPtr(), alignmentBytes,
-                                       depth + 1);
-  auto pointerType = dyn_cast<PtrType>(add.getPtr().getType());
-  if (!base || !pointerType) {
-    return std::nullopt;
-  }
-  unsigned elementBits = getPTOStorageElemBitWidth(pointerType.getElementType());
-  if (elementBits == 0 || elementBits % 8 != 0) {
-    return std::nullopt;
-  }
-  int64_t elementBytes = static_cast<int64_t>(elementBits / 8);
-  int64_t offsetModulus =
-      alignmentBytes / std::gcd(alignmentBytes, elementBytes);
-  auto offset = getKnownIndexRemainder(add.getOffset(), offsetModulus);
-  if (!offset) {
-    return std::nullopt;
-  }
-  return normalizeRemainder(*base + *offset * elementBytes, alignmentBytes);
+  return pointerRemainderThroughAddPtr(add, alignmentBytes, depth);
 }
 
 struct NormalizedPointer {
@@ -447,6 +489,25 @@ PTOAddressAnalysis::getPointerDelta(Value pointer, scf::ForOp loop) {
 }
 
 PTOAnalysisResult<PTOTypedExprRef>
+PTOAddressAnalysis::getOffsetEvolutionDeltaBytes(const PTOAddressExpr &address,
+                                                 scf::ForOp loop) {
+  if (!address.offset) {
+    return PTOAnalysisResult<PTOTypedExprRef>::known(makePTOConstantExpr(0));
+  }
+  if (!address.offset->unitBytes) {
+    return PTOAnalysisResult<PTOTypedExprRef>::unknown(
+        PTOAnalysisUnknownReason::UnknownUnitSize);
+  }
+  auto offsetEvolution =
+      valueEvolution.getEvolution(address.offset->sourceValue, loop);
+  if (!offsetEvolution) {
+    return PTOAnalysisResult<PTOTypedExprRef>::unknown(offsetEvolution.reason);
+  }
+  return scaleExpression(offsetEvolution.value->step,
+                         *address.offset->unitBytes, 1);
+}
+
+PTOAnalysisResult<PTOTypedExprRef>
 PTOAddressAnalysis::getDeltaBytes(const PTOAddressExpr &address,
                                   scf::ForOp loop) {
   auto rootDelta = getPointerDelta(address.rootOrBase, loop);
@@ -474,25 +535,11 @@ PTOAddressAnalysis::getDeltaBytes(const PTOAddressExpr &address,
     return pointerBytes;
   }
 
-  PTOTypedExprRef offsetBytes = makePTOConstantExpr(0);
-  if (address.offset) {
-    if (!address.offset->unitBytes) {
-      return PTOAnalysisResult<PTOTypedExprRef>::unknown(
-          PTOAnalysisUnknownReason::UnknownUnitSize);
-    }
-    auto offsetEvolution =
-        valueEvolution.getEvolution(address.offset->sourceValue, loop);
-    if (!offsetEvolution) {
-      return PTOAnalysisResult<PTOTypedExprRef>::unknown(
-          offsetEvolution.reason);
-    }
-    auto scaled = scaleExpression(offsetEvolution.value->step,
-                                  *address.offset->unitBytes, 1);
-    if (!scaled) {
-      return scaled;
-    }
-    offsetBytes = *scaled.value;
+  auto offsetBytesResult = getOffsetEvolutionDeltaBytes(address, loop);
+  if (!offsetBytesResult) {
+    return offsetBytesResult;
   }
+  PTOTypedExprRef offsetBytes = *offsetBytesResult.value;
 
   PTOTypedExprRef result =
       makePTOAddExpr(*pointerBytes.value, offsetBytes,
@@ -541,6 +588,23 @@ PTOAddressAnalysis::getPointerDifference(const PTOAddressExpr &from,
 }
 
 PTOAnalysisResult<PTOTypedExprRef>
+PTOAddressAnalysis::getOffsetPointBytes(
+    const std::optional<PTOTypedAddressOffset> &offset) {
+  if (!offset) {
+    return PTOAnalysisResult<PTOTypedExprRef>::known(makePTOConstantExpr(0));
+  }
+  if (!offset->unitBytes) {
+    return PTOAnalysisResult<PTOTypedExprRef>::unknown(
+        PTOAnalysisUnknownReason::UnknownUnitSize);
+  }
+  auto pointValue = valueEvolution.getPointExpression(offset->value);
+  if (!pointValue) {
+    return pointValue;
+  }
+  return scaleExpression(*pointValue.value, *offset->unitBytes, 1);
+}
+
+PTOAnalysisResult<PTOTypedExprRef>
 PTOAddressAnalysis::getDifferenceBytes(const PTOAddressExpr &from,
                                        const PTOAddressExpr &to) {
   auto pointerDifference = getPointerDifference(from, to);
@@ -553,42 +617,17 @@ PTOAddressAnalysis::getDifferenceBytes(const PTOAddressExpr &from,
     return pointerBytes;
   }
 
-  PTOTypedExprRef fromOffsetBytes = makePTOConstantExpr(0);
-  if (from.offset) {
-    if (!from.offset->unitBytes) {
-      return PTOAnalysisResult<PTOTypedExprRef>::unknown(
-          PTOAnalysisUnknownReason::UnknownUnitSize);
-    }
-    auto pointValue =
-        valueEvolution.getPointExpression(from.offset->value);
-    if (!pointValue) {
-      return pointValue;
-    }
-    auto scaled = scaleExpression(*pointValue.value,
-                                  *from.offset->unitBytes, 1);
-    if (!scaled) {
-      return scaled;
-    }
-    fromOffsetBytes = *scaled.value;
+  auto fromOffsetResult = getOffsetPointBytes(from.offset);
+  if (!fromOffsetResult) {
+    return fromOffsetResult;
   }
+  PTOTypedExprRef fromOffsetBytes = *fromOffsetResult.value;
 
-  PTOTypedExprRef toOffsetBytes = makePTOConstantExpr(0);
-  if (to.offset) {
-    if (!to.offset->unitBytes) {
-      return PTOAnalysisResult<PTOTypedExprRef>::unknown(
-          PTOAnalysisUnknownReason::UnknownUnitSize);
-    }
-    auto pointValue = valueEvolution.getPointExpression(to.offset->value);
-    if (!pointValue) {
-      return pointValue;
-    }
-    auto scaled =
-        scaleExpression(*pointValue.value, *to.offset->unitBytes, 1);
-    if (!scaled) {
-      return scaled;
-    }
-    toOffsetBytes = *scaled.value;
+  auto toOffsetResult = getOffsetPointBytes(to.offset);
+  if (!toOffsetResult) {
+    return toOffsetResult;
   }
+  PTOTypedExprRef toOffsetBytes = *toOffsetResult.value;
 
   PTOTypedExprRef offsetDifference =
       makePTOSubExpr(toOffsetBytes, fromOffsetBytes,

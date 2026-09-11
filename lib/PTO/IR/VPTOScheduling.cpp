@@ -192,33 +192,30 @@ static bool hasKnownNoOrdinaryMemoryAccess(Operation *op) {
   return isa<MemBarOp, SprclrOp, GetCtrlOp, SetCtrlOp>(op);
 }
 
-static void collectMemoryAccesses(Operation *op,
-                                  VPTOSchedulingSemantics &semantics) {
-  SmallVectorImpl<VPTOMemoryAccess> &accesses = semantics.memoryAccesses;
-  if (hasKnownNoOrdinaryMemoryAccess(op)) {
+// Handle ops that lack a MemoryEffectOpInterface: memory-effect-free ops have
+// no ordinary access; anything else is a conservative unknown write.
+static void classifyWithoutMemoryEffects(
+    Operation *op, VPTOSchedulingSemantics &semantics,
+    SmallVectorImpl<VPTOMemoryAccess> &accesses) {
+  if (isMemoryEffectFree(op)) {
     semantics.memoryBehavior = VPTOMemoryBehavior::None;
     return;
   }
+  semantics.memoryBehavior = VPTOMemoryBehavior::Unknown;
+  VPTOMemoryAccess access;
+  access.writes = true;
+  access.ordered = true;
+  access.unknown = true;
+  accesses.push_back(access);
+}
 
-  auto memoryEffects = dyn_cast<MemoryEffectOpInterface>(op);
-  if (!memoryEffects) {
-    if (isMemoryEffectFree(op)) {
-      semantics.memoryBehavior = VPTOMemoryBehavior::None;
-      return;
-    }
-    semantics.memoryBehavior = VPTOMemoryBehavior::Unknown;
-    VPTOMemoryAccess access;
-    access.writes = true;
-    access.ordered = true;
-    access.unknown = true;
-    accesses.push_back(access);
-    return;
-  }
-
-  semantics.memoryBehavior = VPTOMemoryBehavior::Explicit;
+// Populate `accesses` from op's explicit memory effects.
+static void collectExplicitAccesses(
+    Operation *op, bool storeLike,
+    SmallVectorImpl<VPTOMemoryAccess> &accesses) {
+  auto memoryEffects = cast<MemoryEffectOpInterface>(op);
   SmallVector<MemoryEffects::EffectInstance> effects;
   memoryEffects.getEffects(effects);
-  bool storeLike = isStoreLikeName(op->getName().getStringRef());
   for (const MemoryEffects::EffectInstance &effect : effects) {
     Value value = effect.getValue();
     if (value && !isMemoryAddress(value))
@@ -236,7 +233,12 @@ static void collectMemoryAccesses(Operation *op,
     setStaticAccessRange(op, access);
     accesses.push_back(access);
   }
+}
 
+// Mark all accesses ordered when the op has atomic/volatile effects,
+// synthesizing a conservative access if none were found.
+static void finalizeOrdering(VPTOSchedulingSemantics &semantics,
+                             SmallVectorImpl<VPTOMemoryAccess> &accesses) {
   bool ordered =
       llvm::any_of(semantics.effects, [](const VPTOSchedulingEffect &effect) {
         return effect.kind == VPTOSchedulingEffectKind::AtomicMemory ||
@@ -258,6 +260,56 @@ static void collectMemoryAccesses(Operation *op,
   for (VPTOMemoryAccess &access : accesses)
     access.ordered = true;
 }
+
+static void collectMemoryAccesses(Operation *op,
+                                  VPTOSchedulingSemantics &semantics) {
+  SmallVectorImpl<VPTOMemoryAccess> &accesses = semantics.memoryAccesses;
+  if (hasKnownNoOrdinaryMemoryAccess(op)) {
+    semantics.memoryBehavior = VPTOMemoryBehavior::None;
+    return;
+  }
+
+  if (!isa<MemoryEffectOpInterface>(op)) {
+    classifyWithoutMemoryEffects(op, semantics, accesses);
+    return;
+  }
+
+  semantics.memoryBehavior = VPTOMemoryBehavior::Explicit;
+  bool storeLike = isStoreLikeName(op->getName().getStringRef());
+  collectExplicitAccesses(op, storeLike, accesses);
+  finalizeOrdering(semantics, accesses);
+}
+
+// Post-update ops carry an optional updated base address. Try one op type;
+// return true when it matched (so callers can stop probing further types).
+template <typename OpTy>
+static bool tryAddPostUpdate(Operation *op,
+                             SmallVectorImpl<VPTOSchedulingEffect> &effects) {
+  auto typedOp = dyn_cast<OpTy>(op);
+  if (!typedOp)
+    return false;
+  if (Value updatedBase = typedOp.getUpdatedBase())
+    effects.push_back(
+        {VPTOSchedulingEffectKind::PostUpdate, "updated-address", updatedBase});
+  return true;
+}
+
+static void collectPostUpdateEffects(
+    Operation *op, SmallVectorImpl<VPTOSchedulingEffect> &effects) {
+  (void)(tryAddPostUpdate<VldsOp>(op, effects) ||
+         tryAddPostUpdate<Vldsx2Op>(op, effects) ||
+         tryAddPostUpdate<SprstiOp>(op, effects) ||
+         tryAddPostUpdate<SprstsOp>(op, effects) ||
+         tryAddPostUpdate<VldusOp>(op, effects) ||
+         tryAddPostUpdate<PldsOp>(op, effects) ||
+         tryAddPostUpdate<PldiOp>(op, effects) ||
+         tryAddPostUpdate<PstiOp>(op, effects) ||
+         tryAddPostUpdate<VstsOp>(op, effects) ||
+         tryAddPostUpdate<PstsOp>(op, effects) ||
+         tryAddPostUpdate<VsldbOp>(op, effects) ||
+         tryAddPostUpdate<VsstbOp>(op, effects) ||
+         tryAddPostUpdate<VstasOp>(op, effects));
+}
 } // namespace
 
 VPTOSchedulingSemantics
@@ -275,37 +327,7 @@ mlir::pto::getDefaultVPTOSchedulingSemantics(Operation *op) {
   if (op->hasAttr("volatile") || op->hasAttr("is_volatile"))
     effects.push_back(
         {VPTOSchedulingEffectKind::VolatileMemory, "memory", Value()});
-  auto addPostUpdate = [&effects](Value updatedBase) {
-    if (updatedBase)
-      effects.push_back({VPTOSchedulingEffectKind::PostUpdate,
-                         "updated-address", updatedBase});
-  };
-  if (auto typedOp = dyn_cast<VldsOp>(op))
-    addPostUpdate(typedOp.getUpdatedBase());
-  if (auto typedOp = dyn_cast<Vldsx2Op>(op))
-    addPostUpdate(typedOp.getUpdatedBase());
-  if (auto typedOp = dyn_cast<SprstiOp>(op))
-    addPostUpdate(typedOp.getUpdatedBase());
-  if (auto typedOp = dyn_cast<SprstsOp>(op))
-    addPostUpdate(typedOp.getUpdatedBase());
-  if (auto typedOp = dyn_cast<VldusOp>(op))
-    addPostUpdate(typedOp.getUpdatedBase());
-  if (auto typedOp = dyn_cast<PldsOp>(op))
-    addPostUpdate(typedOp.getUpdatedBase());
-  if (auto typedOp = dyn_cast<PldiOp>(op))
-    addPostUpdate(typedOp.getUpdatedBase());
-  if (auto typedOp = dyn_cast<PstiOp>(op))
-    addPostUpdate(typedOp.getUpdatedBase());
-  if (auto typedOp = dyn_cast<VstsOp>(op))
-    addPostUpdate(typedOp.getUpdatedBase());
-  if (auto typedOp = dyn_cast<PstsOp>(op))
-    addPostUpdate(typedOp.getUpdatedBase());
-  if (auto typedOp = dyn_cast<VsldbOp>(op))
-    addPostUpdate(typedOp.getUpdatedBase());
-  if (auto typedOp = dyn_cast<VsstbOp>(op))
-    addPostUpdate(typedOp.getUpdatedBase());
-  if (auto typedOp = dyn_cast<VstasOp>(op))
-    addPostUpdate(typedOp.getUpdatedBase());
+  collectPostUpdateEffects(op, effects);
   if (auto sprclr = dyn_cast<SprclrOp>(op))
     effects.push_back(
         {VPTOSchedulingEffectKind::ImplicitWrite, sprclr.getSpr(), Value()});

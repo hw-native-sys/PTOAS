@@ -179,6 +179,40 @@ static LogicalResult canonicalizeBoundaryCastPtrOps(ModuleOp module,
   return success();
 }
 
+static FailureOr<Value> canonicalizeOperandToPtr(Operation *op, Value operand,
+                                                 PatternRewriter &rewriter,
+                                                 llvm::raw_ostream *diagOS) {
+  if (!needsPtrCanonicalization(operand)) {
+    return operand;
+  }
+
+  Type elementType = getVPTOBufferElementType(operand);
+  Attribute memorySpace = getVPTOBufferMemorySpace(operand);
+  if (!elementType || !memorySpace) {
+    if (diagOS) {
+      *diagOS << "VPTO emission-boundary ptr rewrite failed: could not "
+                 "derive element type or memory space for operand of ";
+      op->print(*diagOS);
+      *diagOS << "\n";
+    }
+    return failure();
+  }
+
+  Value ptrValue = pto::materializeBufferPointer(operand, elementType,
+                                                 memorySpace, rewriter,
+                                                 op->getLoc());
+  if (!ptrValue) {
+    if (diagOS) {
+      *diagOS << "VPTO emission-boundary ptr rewrite failed: could not "
+                 "materialize pointer operand for ";
+      op->print(*diagOS);
+      *diagOS << "\n";
+    }
+    return failure();
+  }
+  return ptrValue;
+}
+
 static LogicalResult canonicalizeSupportedVPTOBufferLikeOps(
     ModuleOp module, llvm::raw_ostream *diagOS) {
   SmallVector<Operation *> opsToRewrite;
@@ -197,38 +231,13 @@ static LogicalResult canonicalizeSupportedVPTOBufferLikeOps(
     bool changed = false;
 
     for (Value operand : op->getOperands()) {
-      if (!needsPtrCanonicalization(operand)) {
-        newOperands.push_back(operand);
-        continue;
-      }
-
-      Type elementType = getVPTOBufferElementType(operand);
-      Attribute memorySpace = getVPTOBufferMemorySpace(operand);
-      if (!elementType || !memorySpace) {
-        if (diagOS) {
-          *diagOS << "VPTO emission-boundary ptr rewrite failed: could not "
-                     "derive element type or memory space for operand of ";
-          op->print(*diagOS);
-          *diagOS << "\n";
-        }
+      FailureOr<Value> canonicalized =
+          canonicalizeOperandToPtr(op, operand, rewriter, diagOS);
+      if (failed(canonicalized)) {
         return failure();
       }
-
-      Value ptrValue = pto::materializeBufferPointer(operand, elementType,
-                                                     memorySpace, rewriter,
-                                                     op->getLoc());
-      if (!ptrValue) {
-        if (diagOS) {
-          *diagOS << "VPTO emission-boundary ptr rewrite failed: could not "
-                     "materialize pointer operand for ";
-          op->print(*diagOS);
-          *diagOS << "\n";
-        }
-        return failure();
-      }
-
-      changed = changed || (ptrValue != operand);
-      newOperands.push_back(ptrValue);
+      changed = changed || (*canonicalized != operand);
+      newOperands.push_back(*canonicalized);
     }
 
     if (!changed) {

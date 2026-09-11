@@ -29,9 +29,9 @@ static LogicalResult verifyInternalOddSplitSupport(Operation *op,
   auto initOp = pipeHandle.getDefiningOp<InitializeL2G2LPipeOp>();
   Value consumerBuffer;
   if (initOp && directionMask != 0) {
-    consumerBuffer = directionMask == 2 && initOp.getDirMask() == 3
-                         ? initOp.getPeerLocalAddr()
-                         : initOp.getLocalAddr();
+      consumerBuffer = directionMask == mlir::pto::kValue2 && initOp.getDirMask() == mlir::pto::kValue3 ?
+                           initOp.getPeerLocalAddr() :
+                           initOp.getLocalAddr();
   }
   if (!initOp || directionMask == 0 ||
       (initOp.getDirMask() & directionMask) == 0 || !consumerBuffer) {
@@ -94,8 +94,8 @@ static LogicalResult verifyInternalPipeEntryBytes(
   uint64_t entryBytes = *elementCount * elemBytes;
   uint64_t slotBytes = static_cast<uint64_t>(initOp.getSlotSize());
   bool split = getInternalPipeEntrySplit(op) != 0;
-  if (entryBytes == slotBytes || (split && entryBytes * 2 == slotBytes))
-    return success();
+  if (entryBytes == slotBytes || (split && entryBytes * mlir::pto::kValue2 == slotBytes))
+      return success();
   return op->emitOpError()
          << "expects pipe entry byte size to match initialize_l2g2l_pipe slot_size"
          << (split ? " or half slot_size for split entries" : "")
@@ -150,8 +150,8 @@ static LogicalResult verifyAsyncSessionScratch(BuildAsyncSessionOp op) {
   }
 
   auto scratchShape = getShapeVec(scratchTy);
-  if (scratchShape.empty() || scratchShape.size() > 2) {
-    return op.emitOpError("expects scratch to be rank-1 or rank-2");
+  if (scratchShape.empty() || scratchShape.size() > mlir::pto::kValue2) {
+      return op.emitOpError("expects scratch to be rank-1 or rank-2");
   }
   for (int64_t dim : scratchShape) {
     if (dim == ShapedType::kDynamic) {
@@ -171,8 +171,8 @@ static LogicalResult verifyAsyncSessionScratch(BuildAsyncSessionOp op) {
 
 static LogicalResult verifyAsyncSessionAttrs(BuildAsyncSessionOp op) {
   if (auto attr = op.getSyncIdAttr()) {
-    if (attr.getInt() < 0 || attr.getInt() > 7)
-      return op.emitOpError("expects sync_id in range [0, 7]");
+      if (attr.getInt() < 0 || attr.getInt() > mlir::pto::kValue7)
+          return op.emitOpError("expects sync_id in range [0, 7]");
   }
   if (auto attr = op.getBlockBytesAttr(); attr && attr.getInt() <= 0)
     return op.emitOpError("expects block_bytes to be greater than 0");
@@ -268,8 +268,8 @@ static LogicalResult verifyCommSignalI32(Operation *op, Value signal,
   if (failed(verifyCommSignalLike(op, signal, "signal")))
     return failure();
   auto valueTy = dyn_cast<IntegerType>(value.getType());
-  if (!valueTy || valueTy.getWidth() != 32)
-    return op->emitOpError() << "expects " << valueName << " to be i32";
+  if (!valueTy || valueTy.getWidth() != mlir::pto::kValue32)
+      return op->emitOpError() << "expects " << valueName << " to be i32";
   return success();
 }
 
@@ -307,11 +307,10 @@ static LogicalResult verifySyncAllWorkspaceCapacity(Operation *op,
     }
     capacity = product;
   }
-  if (capacity < 16)
-    return op->emitOpError()
-           << "expects " << name
-           << " to contain at least 16 i32 elements (64 bytes), but static capacity is "
-           << capacity;
+  if (capacity < mlir::pto::kValue16)
+      return op->emitOpError() << "expects " << name
+                               << " to contain at least 16 i32 elements (64 bytes), but static capacity is "
+                               << capacity;
   return success();
 }
 
@@ -319,7 +318,7 @@ static LogicalResult verifySyncAllGmWorkspace(Operation *op, Value workspace,
                                               StringRef name) {
   Type ty = workspace.getType();
   Type elemType;
-  SmallVector<int64_t, 4> shape;
+  SmallVector<int64_t, mlir::pto::kValue4> shape;
   if (auto ptrTy = dyn_cast<pto::PtrType>(ty)) {
     if (ptrTy.getMemorySpace().getAddressSpace() != pto::AddressSpace::GM) {
       return op->emitOpError() << "expects " << name
@@ -336,8 +335,8 @@ static LogicalResult verifySyncAllGmWorkspace(Operation *op, Value workspace,
   }
 
   auto elemTy = dyn_cast<IntegerType>(elemType);
-  if (!elemTy || elemTy.getWidth() != 32) {
-    return op->emitOpError() << "expects " << name << " element type to be i32";
+  if (!elemTy || elemTy.getWidth() != mlir::pto::kValue32) {
+      return op->emitOpError() << "expects " << name << " element type to be i32";
   }
 
   // A pointer does not carry capacity metadata. It is lowered as the fixed
@@ -353,7 +352,6 @@ static LogicalResult verifySyncAllGmWorkspace(Operation *op, Value workspace,
 LogicalResult SyncAllOp::verify() {
   bool hasGm = static_cast<bool>(getGmWorkspace());
   auto mode = getMode().getValue();
-
   if (mode == pto::SyncAllMode::Hard) {
     if (hasGm || getUsedCores()) {
       return emitOpError(
@@ -1026,13 +1024,11 @@ LogicalResult SetQuantVectorOp::verify() {
 static LogicalResult verifyPeerLocalAddrForDirMask(Operation *op,
                                                    uint32_t dirMask,
                                                    Value peerLocalAddr) {
-  if (dirMask == 3 && !peerLocalAddr)
-    return op->emitOpError(
-        "expects 'peer_local_addr' when dir_mask is 3");
-  if (dirMask != 3 && peerLocalAddr)
-    return op->emitOpError(
-        "'peer_local_addr' is only allowed when dir_mask is 3");
-  return success();
+    if (dirMask == mlir::pto::kValue3 && !peerLocalAddr)
+        return op->emitOpError("expects 'peer_local_addr' when dir_mask is 3");
+    if (dirMask != mlir::pto::kValue3 && peerLocalAddr)
+        return op->emitOpError("'peer_local_addr' is only allowed when dir_mask is 3");
+    return success();
 }
 
 LogicalResult InitializeL2G2LPipeOp::verify() {
@@ -1263,12 +1259,12 @@ static bool isOpInRange(Operation *op, Operation *first, Operation *last) {
 
 static std::optional<unsigned> getSimtKeepResumeRegisterCount(Type type) {
   if (auto intType = dyn_cast<IntegerType>(type)) {
-    if (intType.getWidth() <= 32) {
-      return 1;
-    }
-    if (intType.getWidth() == 64) {
-      return 2;
-    }
+      if (intType.getWidth() <= mlir::pto::kValue32) {
+          return 1;
+      }
+      if (intType.getWidth() == mlir::pto::kValue64) {
+          return mlir::pto::kValue2;
+      }
     return std::nullopt;
   }
   if (type.isF16() || type.isBF16() || type.isF32()) {
@@ -1298,17 +1294,14 @@ static LogicalResult verifySimtKeepResumeSlotRange(OpT op) {
            << "requires slot in range [0, "
            << (kSimtKeepResumeSlotLimit - 1) << "]";
   }
-  if (*registerCount == 2) {
-    if ((slot % 2) != 0) {
-      return op.emitOpError()
-             << "requires an even slot for 64-bit keep/resume values";
-    }
-    if (slot + 1 >= kSimtKeepResumeSlotLimit) {
-      return op.emitOpError()
-             << "requires slot in range [0, "
-             << (kSimtKeepResumeSlotLimit - 2)
-             << "] for 64-bit keep/resume values";
-    }
+  if (*registerCount == mlir::pto::kValue2) {
+      if ((slot % mlir::pto::kValue2) != 0) {
+          return op.emitOpError() << "requires an even slot for 64-bit keep/resume values";
+      }
+      if (slot + 1 >= kSimtKeepResumeSlotLimit) {
+          return op.emitOpError() << "requires slot in range [0, " << (kSimtKeepResumeSlotLimit - mlir::pto::kValue2)
+                                  << "] for 64-bit keep/resume values";
+      }
   }
   return success();
 }
@@ -1335,47 +1328,43 @@ static bool overlapsEarlierSimtKeepResumeSlotUse(OpT op,
 
 static LogicalResult verifyUniqueResumeGroupSlots(ResumeOp current,
                                                   Operation *first) {
-  SmallVector<int64_t, 4> slots;
-  for (Operation *cur = first; cur; cur = cur->getNextNode()) {
-    auto resume = dyn_cast<ResumeOp>(cur);
-    if (!resume) {
-      break;
+    SmallVector<int64_t, mlir::pto::kValue4> slots;
+    for (Operation* cur = first; cur; cur = cur->getNextNode()) {
+        auto resume = dyn_cast<ResumeOp>(cur);
+        if (!resume) {
+            break;
+        }
+        if (overlapsEarlierSimtKeepResumeSlotUse(resume, slots) && resume.getOperation() == current.getOperation()) {
+            return current.emitOpError() << "duplicates an earlier slot " << resume.getSlot()
+                                         << " in the SIMT resume prologue group";
+        }
     }
-    if (overlapsEarlierSimtKeepResumeSlotUse(resume, slots) &&
-        resume.getOperation() == current.getOperation()) {
-      return current.emitOpError()
-             << "duplicates an earlier slot " << resume.getSlot()
-             << " in the SIMT resume prologue group";
-    }
-  }
   return success();
 }
 
 static LogicalResult verifyUniqueKeepGroupSlots(KeepOp current,
                                                 Operation *first,
                                                 Operation *last) {
-  SmallVector<int64_t, 4> slots;
-  for (Operation *cur = first; cur; cur = cur->getNextNode()) {
-    auto keep = dyn_cast<KeepOp>(cur);
-    if (!keep) {
-      break;
+    SmallVector<int64_t, mlir::pto::kValue4> slots;
+    for (Operation* cur = first; cur; cur = cur->getNextNode()) {
+        auto keep = dyn_cast<KeepOp>(cur);
+        if (!keep) {
+            break;
+        }
+        if (overlapsEarlierSimtKeepResumeSlotUse(keep, slots) && keep.getOperation() == current.getOperation()) {
+            return current.emitOpError() << "duplicates an earlier slot " << keep.getSlot()
+                                         << " in the SIMT keep epilogue group";
+        }
+        if (cur == last) {
+            break;
+        }
     }
-    if (overlapsEarlierSimtKeepResumeSlotUse(keep, slots) &&
-        keep.getOperation() == current.getOperation()) {
-      return current.emitOpError()
-             << "duplicates an earlier slot " << keep.getSlot()
-             << " in the SIMT keep epilogue group";
-    }
-    if (cur == last) {
-      break;
-    }
-  }
   return success();
 }
 
 static bool isSupportedSimtKeepResumeType(Type type) {
   if (auto intType = dyn_cast<IntegerType>(type)) {
-    return intType.getWidth() <= 64;
+      return intType.getWidth() <= mlir::pto::kValue64;
   }
   return type.isF16() || type.isBF16() || type.isF32();
 }

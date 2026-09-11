@@ -12,7 +12,7 @@ PTOAS has two parallel lowering tiers for gather, one per backend family:
 
 | Backend | Gather tier | Primitive | Where |
 |---|---|---|---|
-| A5 (`vpto`) | vreg | `vgather2` / `vgather2_bc` (vreg operands) | `VPTOLLVMEmitter.cpp:7926` lowers to `llvm.hivm.vgather2.v300.*` |
+| A5 (`vpto`) | vreg | `vgather2` / `vgather2_bc` (vreg operands) | `VPTOCANN900LLVMEmitterMemoryPatterns.cpp:1140` lowers to `llvm.hivm.vgather2.v300.*` |
 | A2/A3 (`vpto`) | flat UB pointer (`pto.ub.*`) | raw CCE `vgather` / `vgatherb` (UB pointers) | implemented by this branch |
 | Any arch (EmitC) | tile-level CCE call | `TGATHER` / `TGATHERB` opaque calls | `PTOToEmitC.cpp:9772` (tgather), `:9875` (tgatherb) |
 
@@ -130,7 +130,7 @@ Reuse the existing helpers (`extractTileShapeInfo`, `addPtr`, mask count/norm,
 `TileBufAddrOp` for tile→UB ptr). Match the CCE driver's
 `validRow × numRepeatPerLine` chunking.
 
-### 3. UB → LLVM lowering (`lib/PTO/Transforms/VPTOLLVMEmitter.cpp`)
+### 3. UB → LLVM lowering (`lib/PTO/Transforms/VPTOCANN900LLVMEmitterUbuf.cpp`)
 
 The `llvm.hivm` callees are resolved (from `docs/designs/a2a3-vector-builtins.md`,
 probe target `dav-c220-vec`):
@@ -141,16 +141,18 @@ probe target `dav-c220-vec`):
 | `pto.ub.vgatherb` | `llvm.hivm.VGATHERB.b16` / `.b32` | `void (ptr addrspace(6) dst, ptr addrspace(6) src, i64 config)` |
 
 Both take **2 UB pointers + 1 packed `i64` config** — the same shape as the
-elementwise UB ops. Mirror `LowerUBufBinaryOpPattern` (`VPTOLLVMEmitter.cpp:4734`)
+elementwise UB ops. Mirror `LowerUBufBinaryOpPattern`
+(`VPTOCANN900LLVMEmitterUbuf.cpp`)
 which packs repeat/stride fields into one `i64` via `maskByte`/`shl`/`OrIOp`
 and passes the pointer operands directly. Register in the `patterns.add<…>`
-block (`:10955`) and declare legality (`:11110`). Keep `VPTOCANN900LLVMEmitter.cpp`
-in sync (dormant via the dispatcher's `return false`, but must not rot).
+block in `VPTOCANN900LLVMEmitterUbuf.cpp`; the shared official emitter pipeline
+selects these target-specific UB patterns for C220.
 
 The CCE builtin forms `vgatherb(dst, src, offsetAddr, dstRepeatStride,
 dstBlockStride, repeat)` get packed into `(dst_ptr, src_ptr, config)`. The
-elementwise config bit-layout is documented in `VPTOLLVMEmitter.cpp` (e.g.
-`LowerUBufShiftOpPattern:4885`); the **vgather/vgatherb config bit-layout is
+elementwise config bit-layout is documented in
+`VPTOCANN900LLVMEmitterUbuf.cpp` (e.g. `LowerUBufShiftOpPattern`);
+the **vgather/vgatherb config bit-layout is
 not documented in CANN** ("No `// ->` packing comment"), so it was decoded
 empirically from the bisheng-emitted LLVM IR. The `.b16`/`.b32` suffix selects
 16-bit vs 32-bit element lanes.
@@ -232,7 +234,8 @@ job for these today.
 - EmitC contract: `PTOToEmitC.cpp:9772` (tgather), `:9875` (tgatherb),
   `:3323` (mgather).
 - UB op layer: `include/PTO/IR/VPTOUbOps.td`; tile→UB dispatch:
-  `LowerPTOToUBufOps.cpp`; UB→LLVM: `VPTOLLVMEmitter.cpp`.
+  `LowerPTOToUBufOps.cpp`; UB→LLVM:
+  `VPTOCANN900LLVMEmitterUbuf.cpp`.
 - e2e harness: `ptodsl/tests/e2e/common.py`.
 
 ## E2E investigation (NPU hardware)

@@ -38,7 +38,7 @@ struct CANNVersion {
                         unsigned beta)
       : major(major), minor(minor), patch(patch), beta(beta) {}
 
-  static CANNVersion release(unsigned major, unsigned minor, unsigned patch) {
+  static constexpr CANNVersion release(unsigned major, unsigned minor, unsigned patch) {
     return CANNVersion{major, minor, patch, RELEASE};
   }
 
@@ -68,7 +68,7 @@ struct CANNVersion {
   bool operator>=(const CANNVersion &rhs) const { return !(*this < rhs); }
 };
 
-inline constexpr CANNVersion kDefaultCANNVersion{9, 0, 0, 1};
+inline constexpr CANNVersion kDefaultCANNVersion = CANNVersion::release(9, 0, 0);
 inline constexpr CANNVersion kCANN900Beta2Version{9, 0, 0, 2};
 
 inline std::optional<unsigned> parseCANNVersionComponent(

@@ -28,7 +28,7 @@ namespace {
 
 constexpr int64_t kRowMajorNoneBoxSFractalSize = 512;
 // Hardware repeat counter limit (matches the instruction-level repeat max,
-// also spelled REPEAT_MAX in pto-isa common/constants.hpp).
+// also spelled kRepeatMax in LowerPTOToUBufOps).
 constexpr int64_t kRepeatMax = 255;
 
 static pto::TileBufConfigAttr makeRowMajorNoneBoxConfig(MLIRContext *ctx) {
@@ -629,146 +629,176 @@ static FailureOr<pto::TileBufType> makeRowsTmpType(MLIRContext *ctx,
                         {rows, valid[1]});
 }
 
+static LogicalResult materializeTPReluTmpOp(pto::TPReluOp typedOp,
+                                           bool requireExplicitTmp,
+                                           MLIRContext *ctx) {
+  Operation *op = typedOp.getOperation();
+  bool isA5 = pto::getTargetArch(op) == pto::PTOArch::A5;
+  auto type = isA5 ? makeA5PlaceholderTmpType(ctx, typedOp.getDst(),
+                                              IntegerType::get(ctx, 8))
+                   : makeTPReluTmpType(ctx, typedOp.getDst());
+  if (failed(type)) {
+    return typedOp.emitOpError(
+        "requires static tile_buf dst to materialize implicit tprelu tmp");
+  }
+  return replaceFixedDpsOpWithTmp(
+      op, {typedOp.getSrc0(), typedOp.getSrc1(), Value(), typedOp.getDst()},
+      *type, {1, 1, 1, 1}, isA5 ? false : requireExplicitTmp, "tprelu");
+}
+
+static LogicalResult materializeTRemTmpOp(pto::TRemOp typedOp,
+                                          bool requireExplicitTmp,
+                                          MLIRContext *ctx) {
+  Operation *op = typedOp.getOperation();
+  bool isA5 = pto::getTargetArch(op) == pto::PTOArch::A5;
+  auto type = isA5 ? makeA5PlaceholderTmpType(ctx, typedOp.getDst())
+                   : makeRowsTmpType(ctx, typedOp.getDst(), 2);
+  if (failed(type)) {
+    return typedOp.emitOpError(
+        "requires static tile_buf dst to materialize implicit trem tmp");
+  }
+  return replaceFixedDpsOpWithTmp(
+      op, {typedOp.getSrc0(), typedOp.getSrc1(), Value(), typedOp.getDst()},
+      *type, {1, 1, 1, 1}, isA5 ? false : requireExplicitTmp, "trem");
+}
+
+static LogicalResult materializeTRemSTmpOp(pto::TRemSOp typedOp,
+                                           bool requireExplicitTmp,
+                                           MLIRContext *ctx) {
+  Operation *op = typedOp.getOperation();
+  bool isA5 = pto::getTargetArch(op) == pto::PTOArch::A5;
+  auto type = isA5 ? makeA5PlaceholderTmpType(ctx, typedOp.getDst())
+                   : makeRowsTmpType(ctx, typedOp.getDst(), 1);
+  if (failed(type)) {
+    return typedOp.emitOpError(
+        "requires static tile_buf dst to materialize implicit trems tmp");
+  }
+  return replaceFixedDpsOpWithTmp(
+      op, {typedOp.getSrc(), typedOp.getScalar(), Value(), typedOp.getDst()},
+      *type, {1, 1, 1, 1}, isA5 ? false : requireExplicitTmp, "trems");
+}
+
+static LogicalResult materializeTSelTmpOp(pto::TSelOp typedOp,
+                                          bool requireExplicitTmp,
+                                          MLIRContext *ctx) {
+  Operation *op = typedOp.getOperation();
+  bool isA5 = pto::getTargetArch(op) == pto::PTOArch::A5;
+  auto type = isA5 ? makeA5PlaceholderTmpType(ctx, typedOp.getDst(),
+                                              IntegerType::get(ctx, 32))
+                   : makeVecTmpType(ctx, {1, 16}, IntegerType::get(ctx, 32),
+                                    {1, 16});
+  if (failed(type)) {
+    return typedOp.emitOpError(
+        "requires static tile_buf dst to materialize implicit tsel tmp");
+  }
+  return replaceFixedDpsOpWithTmp(
+      op, {typedOp.getMask(), typedOp.getSrc0(), typedOp.getSrc1(), Value(),
+           typedOp.getDst()},
+      *type, {1, 1, 1, 1, 1}, isA5 ? false : requireExplicitTmp, "tsel");
+}
+
+static LogicalResult materializeTSelSTmpOp(pto::TSelSOp typedOp,
+                                           bool requireExplicitTmp,
+                                           MLIRContext *ctx) {
+  Operation *op = typedOp.getOperation();
+  bool isA5 = pto::getTargetArch(op) == pto::PTOArch::A5;
+  auto type = isA5 ? makeA5PlaceholderTmpType(ctx, typedOp.getSrc())
+                   : makeRowsTmpType(ctx, typedOp.getSrc(), 1);
+  if (failed(type)) {
+    return typedOp.emitOpError(
+        "requires static tile_buf src to materialize implicit tsels tmp");
+  }
+  return replaceFixedDpsOpWithTmp(
+      op, {typedOp.getMask(), typedOp.getSrc(), Value(), typedOp.getScalar(),
+           typedOp.getDst()},
+      *type, {1, 1, 1, 1, 1}, isA5 ? false : requireExplicitTmp, "tsels");
+}
+
+static LogicalResult materializeTTransTmpOp(pto::TTransOp typedOp,
+                                            bool requireExplicitTmp,
+                                            MLIRContext *ctx) {
+  Operation *op = typedOp.getOperation();
+  bool isA5 = pto::getTargetArch(op) == pto::PTOArch::A5;
+  auto srcTy = dyn_cast<pto::TileBufType>(typedOp.getSrc().getType());
+  auto dstTy = dyn_cast<pto::TileBufType>(typedOp.getDst().getType());
+  auto srcShape = getShapeVec(typedOp.getSrc().getType());
+  auto dstShape = getShapeVec(typedOp.getDst().getType());
+  if (!srcTy || !dstTy || srcShape.size() != mlir::pto::kValue2 ||
+      dstShape.size() != mlir::pto::kValue2 || hasDynamicDim(srcShape) ||
+      hasDynamicDim(dstShape)) {
+    return typedOp.emitOpError(
+        "requires static tile_buf src to materialize implicit ttrans tmp");
+  }
+  auto elemBytes = getElemBytes(srcTy.getElementType());
+  if (!elemBytes) {
+    return typedOp.emitOpError("failed to infer ttrans element size");
+  }
+  // PTO-ISA TTRANS fast path constraints (docs/isa/TTRANS.md): row stride is
+  // 32 for b8 element types (Y_ELEM_B8) and 16 for b16/b32 (Y_ELEM_OTHER);
+  // a block is 32 bytes, so ElemPerBlock = 32 / sizeof(T).
+  constexpr int64_t kTtransRowStrideB8 = 32;
+  constexpr int64_t kTtransRowStrideOther = 16;
+  constexpr int64_t kTtransBlockBytes = 32;
+  int64_t rowStride =
+      *elemBytes == 1 ? kTtransRowStrideB8 : kTtransRowStrideOther;
+  int64_t elemPerBlock = kTtransBlockBytes / *elemBytes;
+  bool usesTmp = dstShape[1] % rowStride == 0 &&
+                 srcShape[1] % elemPerBlock == 0 &&
+                 srcShape[1] / elemPerBlock <= kRepeatMax;
+  FailureOr<pto::TileBufType> type =
+      isA5 ? makeA5PlaceholderTmpType(ctx, typedOp.getSrc())
+           : makeSameShapeTmpType(ctx, typedOp.getSrc());
+  if (!isA5 && !usesTmp) {
+    type = makeVecTmpType(ctx, {1, elemPerBlock}, srcTy.getElementType(),
+                          {1, elemPerBlock});
+  }
+  if (failed(type)) {
+    return typedOp.emitOpError("failed to build implicit ttrans tmp");
+  }
+  return replaceFixedDpsOpWithTmp(
+      op, {typedOp.getSrc(), Value(), typedOp.getDst()}, *type, {1, 1, 1},
+      isA5 ? false : requireExplicitTmp, "ttrans");
+}
+
 static LogicalResult materializeFixedMandatoryTmp(Operation *op,
-                                                   bool requireExplicitTmp,
-                                                   MLIRContext *ctx) {
+                                                  bool requireExplicitTmp,
+                                                  MLIRContext *ctx) {
   return llvm::TypeSwitch<Operation *, LogicalResult>(op)
       .Case<pto::TPReluOp>([&](auto typedOp) -> LogicalResult {
         if (typedOp.getTmp()) {
           return success();
         }
-        bool isA5 =
-            pto::getTargetArch(op) == pto::PTOArch::A5;
-        auto type = isA5 ? makeA5PlaceholderTmpType(
-                               ctx, typedOp.getDst(),
-                               IntegerType::get(ctx, 8))
-                         : makeTPReluTmpType(ctx, typedOp.getDst());
-        if (failed(type)) {
-          return typedOp.emitOpError(
-              "requires static tile_buf dst to materialize implicit tprelu tmp");
-        }
-        return replaceFixedDpsOpWithTmp(
-            op, {typedOp.getSrc0(), typedOp.getSrc1(), Value(),
-                 typedOp.getDst()},
-            *type, {1, 1, 1, 1}, isA5 ? false : requireExplicitTmp,
-            "tprelu");
+        return materializeTPReluTmpOp(typedOp, requireExplicitTmp, ctx);
       })
       .Case<pto::TRemOp>([&](auto typedOp) -> LogicalResult {
         if (typedOp.getTmp()) {
           return success();
         }
-        bool isA5 =
-            pto::getTargetArch(op) == pto::PTOArch::A5;
-        auto type = isA5 ? makeA5PlaceholderTmpType(ctx, typedOp.getDst())
-                         : makeRowsTmpType(ctx, typedOp.getDst(), 2);
-        if (failed(type)) {
-          return typedOp.emitOpError(
-              "requires static tile_buf dst to materialize implicit trem tmp");
-        }
-        return replaceFixedDpsOpWithTmp(
-            op, {typedOp.getSrc0(), typedOp.getSrc1(), Value(),
-                 typedOp.getDst()},
-            *type, {1, 1, 1, 1}, isA5 ? false : requireExplicitTmp, "trem");
+        return materializeTRemTmpOp(typedOp, requireExplicitTmp, ctx);
       })
       .Case<pto::TRemSOp>([&](auto typedOp) -> LogicalResult {
         if (typedOp.getTmp()) {
           return success();
         }
-        bool isA5 =
-            pto::getTargetArch(op) == pto::PTOArch::A5;
-        auto type = isA5 ? makeA5PlaceholderTmpType(ctx, typedOp.getDst())
-                         : makeRowsTmpType(ctx, typedOp.getDst(), 1);
-        if (failed(type)) {
-          return typedOp.emitOpError(
-              "requires static tile_buf dst to materialize implicit trems tmp");
-        }
-        return replaceFixedDpsOpWithTmp(
-            op, {typedOp.getSrc(), typedOp.getScalar(), Value(),
-                 typedOp.getDst()},
-            *type, {1, 1, 1, 1}, isA5 ? false : requireExplicitTmp, "trems");
+        return materializeTRemSTmpOp(typedOp, requireExplicitTmp, ctx);
       })
       .Case<pto::TSelOp>([&](auto typedOp) -> LogicalResult {
         if (typedOp.getTmp()) {
           return success();
         }
-        bool isA5 =
-            pto::getTargetArch(op) == pto::PTOArch::A5;
-        auto type = isA5 ? makeA5PlaceholderTmpType(
-                               ctx, typedOp.getDst(),
-                               IntegerType::get(ctx, 32))
-                         : makeVecTmpType(ctx, {1, 16},
-                                          IntegerType::get(ctx, 32), {1, 16});
-        if (failed(type)) {
-          return typedOp.emitOpError(
-              "requires static tile_buf dst to materialize implicit tsel tmp");
-        }
-        return replaceFixedDpsOpWithTmp(
-            op, {typedOp.getMask(), typedOp.getSrc0(), typedOp.getSrc1(),
-                 Value(), typedOp.getDst()},
-            *type, {1, 1, 1, 1, 1}, isA5 ? false : requireExplicitTmp, "tsel");
+        return materializeTSelTmpOp(typedOp, requireExplicitTmp, ctx);
       })
       .Case<pto::TSelSOp>([&](auto typedOp) -> LogicalResult {
         if (typedOp.getTmp()) {
           return success();
         }
-        bool isA5 =
-            pto::getTargetArch(op) == pto::PTOArch::A5;
-        auto type = isA5 ? makeA5PlaceholderTmpType(ctx, typedOp.getSrc())
-                         : makeRowsTmpType(ctx, typedOp.getSrc(), 1);
-        if (failed(type)) {
-          return typedOp.emitOpError(
-              "requires static tile_buf src to materialize implicit tsels tmp");
-        }
-        return replaceFixedDpsOpWithTmp(
-            op, {typedOp.getMask(), typedOp.getSrc(), Value(),
-                 typedOp.getScalar(), typedOp.getDst()},
-            *type, {1, 1, 1, 1, 1}, isA5 ? false : requireExplicitTmp, "tsels");
+        return materializeTSelSTmpOp(typedOp, requireExplicitTmp, ctx);
       })
       .Case<pto::TTransOp>([&](auto typedOp) -> LogicalResult {
         if (typedOp.getTmp()) {
           return success();
         }
-        bool isA5 =
-            pto::getTargetArch(op) == pto::PTOArch::A5;
-        auto srcTy = dyn_cast<pto::TileBufType>(typedOp.getSrc().getType());
-        auto dstTy = dyn_cast<pto::TileBufType>(typedOp.getDst().getType());
-        auto srcShape = getShapeVec(typedOp.getSrc().getType());
-        auto dstShape = getShapeVec(typedOp.getDst().getType());
-        if (!srcTy || !dstTy || srcShape.size() != mlir::pto::kValue2 || dstShape.size() != mlir::pto::kValue2 ||
-            hasDynamicDim(srcShape) || hasDynamicDim(dstShape)) {
-          return typedOp.emitOpError(
-              "requires static tile_buf src to materialize implicit ttrans tmp");
-        }
-        auto elemBytes = getElemBytes(srcTy.getElementType());
-        if (!elemBytes) {
-          return typedOp.emitOpError("failed to infer ttrans element size");
-        }
-        // PTO-ISA TTRANS fast path constraints (docs/isa/TTRANS.md): row
-        // stride is 32 for b8 element types (Y_ELEM_B8) and 16 for b16/b32
-        // (Y_ELEM_OTHER); a block is 32 bytes, so ElemPerBlock =
-        // 32 / sizeof(T).
-        constexpr int64_t kTtransRowStrideB8 = 32;
-        constexpr int64_t kTtransRowStrideOther = 16;
-        constexpr int64_t kTtransBlockBytes = 32;
-        int64_t rowStride =
-            *elemBytes == 1 ? kTtransRowStrideB8 : kTtransRowStrideOther;
-        int64_t elemPerBlock = kTtransBlockBytes / *elemBytes;
-        bool usesTmp = dstShape[1] % rowStride == 0 &&
-                       srcShape[1] % elemPerBlock == 0 &&
-                       srcShape[1] / elemPerBlock <= kRepeatMax;
-        FailureOr<pto::TileBufType> type =
-            isA5 ? makeA5PlaceholderTmpType(ctx, typedOp.getSrc())
-                 : makeSameShapeTmpType(ctx, typedOp.getSrc());
-        if (!isA5 && !usesTmp) {
-          type = makeVecTmpType(ctx, {1, elemPerBlock},
-                                srcTy.getElementType(), {1, elemPerBlock});
-        }
-        if (failed(type)) {
-          return typedOp.emitOpError("failed to build implicit ttrans tmp");
-        }
-        return replaceFixedDpsOpWithTmp(
-            op, {typedOp.getSrc(), Value(), typedOp.getDst()}, *type,
-            {1, 1, 1}, isA5 ? false : requireExplicitTmp, "ttrans");
+        return materializeTTransTmpOp(typedOp, requireExplicitTmp, ctx);
       })
       .Default([](Operation *) { return success(); });
 }
@@ -828,7 +858,8 @@ static FailureOr<pto::TileBufType> makeTCvtTmpType(MLIRContext *ctx,
     int64_t halfToI16 = kTcvtBlockBytes * ceilDiv(width, 8);
     int64_t halfToI8 =
         std::max(halfToI16,
-                 kTcvtHalfToI8BaseBytes + kTcvtBlockBytes * ceilDiv(width, 16));
+                 kTcvtHalfToI8BaseBytes +
+                     kTcvtBlockBytes * ceilDiv(width, 16));
     bytes = dstTy.getElementType().isInteger(mlir::pto::kValue8) ? halfToI8 : halfToI16;
   }
   int64_t allocatedBytes = std::max<int64_t>(32, ceilDiv(bytes, 32) * 32);
@@ -856,16 +887,9 @@ static LogicalResult materializeTCvtTmp(pto::TCvtOp op,
                                   {1, 1, 1}, requireExplicitTmp, "tcvt");
 }
 
-static LogicalResult materializeTMrgSortTmp(pto::TMrgSortOp op,
-                                            bool requireExplicitTmp,
-                                            MLIRContext *ctx) {
-  if (!op.isFormat2WithoutTmp()) {
-    return success();
-  }
-  if (requireExplicitTmp) {
-    return op.emitOpError(
-        "requires explicit tmp for tmrgsort format2 when PlanMemory is skipped");
-  }
+// Infer the format2 tmrgsort scratch type and collect the src operands.
+static FailureOr<std::pair<pto::TileBufType, SmallVector<Value>>>
+inferTMrgSortTmpType(pto::TMrgSortOp op, MLIRContext *ctx) {
   int64_t totalCols = 0;
   Type elementType;
   SmallVector<Value> operands;
@@ -895,8 +919,26 @@ static LogicalResult materializeTMrgSortTmp(pto::TMrgSortOp op,
     }
   }
   int64_t tmpCols = std::max(totalCols, dstCols);
-  pto::TileBufType tmpType =
-      makeVecTmpType(ctx, {1, tmpCols}, elementType, {1, tmpCols});
+  return std::make_pair(
+      makeVecTmpType(ctx, {1, tmpCols}, elementType, {1, tmpCols}),
+      std::move(operands));
+}
+
+static LogicalResult materializeTMrgSortTmp(pto::TMrgSortOp op,
+                                            bool requireExplicitTmp,
+                                            MLIRContext *ctx) {
+  if (!op.isFormat2WithoutTmp()) {
+    return success();
+  }
+  if (requireExplicitTmp) {
+    return op.emitOpError(
+        "requires explicit tmp for tmrgsort format2 when PlanMemory is skipped");
+  }
+  auto tmpTypeAndOperands = inferTMrgSortTmpType(op, ctx);
+  if (failed(tmpTypeAndOperands)) {
+    return failure();
+  }
+  auto [tmpType, operands] = std::move(*tmpTypeAndOperands);
   OpBuilder builder(op);
   FailureOr<Value> tmp = createAllocTmp(builder, op.getLoc(), tmpType);
   if (failed(tmp)) {
@@ -927,11 +969,11 @@ struct PTOMaterializeImplicitTmpPass
     return "Materialize implicit tmp tiles for PTO ops before memplan";
   }
 
-  void runOnOperation() override {
+  // Materialize implicit tci tmp: rebuild the op with an alloc_tile-based
+  // tmp inserted before the dst operand.
+  LogicalResult materializeTCIOps() {
     func::FuncOp func = getOperation();
     MLIRContext *ctx = func.getContext();
-    bool failed = false;
-
     SmallVector<pto::TCIOp> tciOps;
     func.walk([&](pto::TCIOp op) {
       if (!op.getTmp()) {
@@ -946,8 +988,7 @@ struct PTOMaterializeImplicitTmpPass
 
       if (requireExplicitTmp) {
         op.emitOpError("requires explicit tmp when PlanMemory is skipped");
-        failed = true;
-        continue;
+        return failure();
       }
 
       OpBuilder builder(op);
@@ -969,7 +1010,13 @@ struct PTOMaterializeImplicitTmpPass
       }
       op.erase();
     }
+    return success();
+  }
 
+  // Materialize implicit row-expand tmp ops.
+  LogicalResult materializeRowExpandOps() {
+    func::FuncOp func = getOperation();
+    MLIRContext *ctx = func.getContext();
     SmallVector<Operation *> rowExpandOps;
     func.walk([&](Operation *op) {
       if (isa<pto::TRowExpandAddOp, pto::TRowExpandSubOp,
@@ -991,10 +1038,16 @@ struct PTOMaterializeImplicitTmpPass
                   })
               .Default([](Operation *) { return success(); });
       if (mlir::failed(result)) {
-        failed = true;
+        return failure();
       }
     }
+    return success();
+  }
 
+  // Materialize implicit tmp for ops with an optional tmp operand.
+  LogicalResult materializeOptionalTmpOps() {
+    func::FuncOp func = getOperation();
+    MLIRContext *ctx = func.getContext();
     SmallVector<Operation *> optionalTmpOps;
     func.walk([&](Operation *op) {
       if (isa<pto::TColSumOp, pto::TQuantOp, pto::TPowOp,
@@ -1036,10 +1089,16 @@ struct PTOMaterializeImplicitTmpPass
               })
               .Default([](Operation *) { return success(); });
       if (mlir::failed(result)) {
-        failed = true;
+        return failure();
       }
     }
+    return success();
+  }
 
+  // Materialize implicit tmp for row/col reduction ops.
+  LogicalResult materializeRowReductionOps() {
+    func::FuncOp func = getOperation();
+    MLIRContext *ctx = func.getContext();
     SmallVector<Operation *> rowReductionOps;
     func.walk([&](Operation *op) {
       if (isa<pto::TRowMaxOp, pto::TRowMinOp, pto::TRowSumOp,
@@ -1060,10 +1119,16 @@ struct PTOMaterializeImplicitTmpPass
               })
               .Default([](Operation *) { return success(); });
       if (mlir::failed(result)) {
-        failed = true;
+        return failure();
       }
     }
+    return success();
+  }
 
+  // Materialize implicit tmp for ops whose tmp is mandatory.
+  LogicalResult materializeMandatoryTmpOps() {
+    func::FuncOp func = getOperation();
+    MLIRContext *ctx = func.getContext();
     SmallVector<Operation *> mandatoryTmpOps;
     func.walk([&](Operation *op) {
       if (isa<pto::TPReluOp, pto::TRemOp, pto::TRemSOp, pto::TSelOp,
@@ -1074,8 +1139,22 @@ struct PTOMaterializeImplicitTmpPass
     for (Operation *op : mandatoryTmpOps) {
       if (mlir::failed(
               materializeFixedMandatoryTmp(op, requireExplicitTmp, ctx))) {
-        failed = true;
+        return failure();
       }
+    }
+    return success();
+  }
+
+  void runOnOperation() override {
+    // Process every family so all diagnostics are emitted before failing.
+    bool failed = false;
+    for (auto materialize :
+         {&PTOMaterializeImplicitTmpPass::materializeTCIOps,
+          &PTOMaterializeImplicitTmpPass::materializeRowExpandOps,
+          &PTOMaterializeImplicitTmpPass::materializeOptionalTmpOps,
+          &PTOMaterializeImplicitTmpPass::materializeRowReductionOps,
+          &PTOMaterializeImplicitTmpPass::materializeMandatoryTmpOps}) {
+      failed |= mlir::failed((this->*materialize)());
     }
 
     if (failed) {

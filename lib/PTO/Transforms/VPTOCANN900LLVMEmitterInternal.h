@@ -15,7 +15,6 @@
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/VPTOLLVMEmitter.h"
 #include "PTO/Transforms/VPTOLLVMEmitterHelper.h"
-#include "VPTOLLVMEmitter/VPTOLLVMEmitterInternal.h"
 
 #include "mlir/Conversion/Passes.h"
 #include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"
@@ -55,10 +54,221 @@ LogicalResult applyQueriedTargetAttrs(ModuleOp module, const VPTOEmissionOptions
 LogicalResult attachAIVectorScopeMetadata(llvm::Module &llvmModule, llvm::raw_ostream &diagOS);
 void attachHIVMKernelAnnotations(llvm::Module &llvmModule, ModuleOp sourceModule);
 
+struct PlannedDecl {
+  std::string name;
+  FunctionType type;
+};
+
+struct LoweringState {
+  SmallVector<PlannedDecl> plannedDecls;
+};
+
+Value getI64Constant(OpBuilder &builder, Location loc, uint64_t value);
+Value getI32Constant(OpBuilder &builder, Location loc, uint64_t value);
+Value packShiftedI64Fields(OpBuilder &builder, Location loc, Value config,
+                           ArrayRef<std::pair<Value, uint64_t>> fields);
+Value packMaskedI64Fields(OpBuilder &builder, Location loc, Value config,
+                          ArrayRef<std::pair<Value, uint64_t>> fields,
+                          uint64_t mask);
+Type convertVPTOType(Type type, Builder &builder);
+Value materializeVPTOCast(OpBuilder &builder, Type resultType, ValueRange inputs, Location loc);
+Type getLowPrecisionLLVMType(Type type, MLIRContext *context);
+bool isLLVMExtensionVectorElementType(Type type);
+Type getLLVMCompatibleVectorType(ArrayRef<int64_t> shape, Type elementType, ArrayRef<bool> scalableDims);
+Type normalizePayloadTypeForLLVMLowering(Type type, Builder &builder);
+Type normalizeGEPElementTypeForLLVMLowering(Type type, Builder &builder);
+unsigned getNaturalByteAlignment(Type type);
+bool hasVPTOConvertibleType(Type type);
+bool hasVPTOConvertibleType(TypeRange types);
+LLVM::LLVMStructType getVPTOStructStorageType(pto::StructType structType, Builder &builder);
+FailureOr<Value> getVPTOStructFieldAddress(ConversionPatternRewriter &rewriter, Location loc, Value root,
+                                           pto::StructType rootType, ArrayRef<int64_t> path);
+std::string getElementTypeFragment(Type type);
+std::string getLowPrecisionElementFragment(Type type);
+std::string getMemoryElementTypeFragment(Type type);
+std::string getCopyElementFragment(Type type);
+std::string getDn2NzCopyElementFragment(Type type);
+std::string getMadLhsFragment(Type type);
+std::string getMadDstFragment(Type type);
+Type getElementTypeFromVectorLike(Type type);
+std::optional<int64_t> getElementCountFromVectorLike(Type type);
+bool isOnePointStoreDist(StringRef dist);
+std::optional<uint64_t> parseRoundModeImmediate(StringRef roundMode);
+std::optional<uint64_t> parsePartImmediate(StringRef part);
+std::optional<uint64_t> parseVcvtPartImmediate(StringRef part);
+std::optional<uint64_t> parseSaturationImmediate(StringRef sat);
+std::optional<uint64_t> parsePredicateStoreDistImmediate(StringRef dist);
+std::optional<uint64_t> parsePredicateLoadDistImmediate(StringRef dist);
+Value castIntegerLikeTo(Operation *anchor, Value value, Type targetType);
+FailureOr<SmallVector<Value, 7>> castIntegerLikeOperands(Operation *anchor, ValueRange operands,
+                                                         ArrayRef<unsigned> indices, Type targetType);
+FailureOr<Value> reinterpretPointerToAddrSpace(Operation *anchor, Value value, unsigned targetAddressSpace);
+FailureOr<SmallVector<Value, 2>> reinterpretPointerOperands(Operation *anchor, ArrayRef<Value> values,
+                                                           ArrayRef<unsigned> addressSpaces);
+FailureOr<Value> packLoopPair(Operation *anchor, Value low, Value high);
+FailureOr<Value> packLoopSize(Operation *anchor, Value loop2, Value loop1);
+
+class VPTOTypeConverter final : public TypeConverter {
+public:
+  explicit VPTOTypeConverter(MLIRContext *context);
+};
+
+namespace ubuf {
+void populateVPTOUbufPatterns(TypeConverter &typeConverter, RewritePatternSet &patterns, LoweringState &state,
+                              const std::string &march);
+}
+
 namespace detail {
 
 inline constexpr llvm::StringLiteral kVectorSuffix = "_mix_aiv";
 inline constexpr llvm::StringLiteral kCubeSuffix = "_mix_aic";
+
+// Canonical integer bit widths used across callee-name selection, ABI payload
+// packing, and type classification in the CANN900 emitter.
+inline constexpr unsigned kBits2 = 2;
+inline constexpr unsigned kBits4 = 4;
+inline constexpr unsigned kBits8 = 8;
+inline constexpr unsigned kBits16 = 16;
+inline constexpr unsigned kBits32 = 32;
+inline constexpr unsigned kBits64 = 64;
+
+// Byte-addressable element granularity: element bit widths must be a whole
+// number of bytes for the byte-oriented load/store intrinsics.
+inline constexpr unsigned kBitsPerByte = 8;
+
+// SIMT keep/resume slot and TPER/TPERL register window constraints:
+// 123 addressable slots, register file index cap of 126, and 2-register
+// (64-bit) payloads that must start on an even slot.
+inline constexpr int64_t kSimtKeepResumeSlotCount = 123;
+inline constexpr int64_t kSimtKeepResumeLastBaseRegister = 126;
+inline constexpr unsigned kSimtKeepResumePairRegisterCount = 2;
+
+// get_vms4_sr packs four 16-bit counters into one i64 runtime query result.
+inline constexpr unsigned kVms4SrCountFieldBits = 16;
+inline constexpr unsigned kVms4SrCountFieldCount = 4;
+
+// Hardware immediate encodings for the SPR store and CBUF matrix fill.
+inline constexpr uint64_t kSprArImmediate = 74;
+inline constexpr uint64_t kFillWordWidth16 = 16;
+inline constexpr uint64_t kFillWordWidth32 = 32;
+
+// Vector-pair ABI shapes shared by the widening/elementwise callee builders.
+inline constexpr unsigned kVmullResultCount = 2;
+inline constexpr unsigned kVectorPairLaneCount = 2;
+
+// Named vector shapes of the specialized widening intrinsics (f16<->f32).
+inline constexpr int64_t kVexpdifInterleaveLanes = 128;
+inline constexpr int64_t kVexpdifLanes = 64;
+inline constexpr int64_t kVmulscvtInputLanes = 64;
+inline constexpr int64_t kVmulscvtResultLanes = 128;
+
+// VGather2 packs two sub-byte source elements per result lane.
+inline constexpr int64_t kVgather2LaneMultiplier = 2;
+inline constexpr uint64_t kVgather2PackShift16 = 16;
+inline constexpr uint64_t kVgather2PackShift32 = 32;
+inline constexpr uint64_t kVgather2PackShift48 = 48;
+
+// MOV.PAD payloads are limited to byte, halfword, and word widths.
+inline constexpr unsigned kMovPadWidth8 = 8;
+inline constexpr unsigned kMovPadWidth16 = 16;
+inline constexpr unsigned kMovPadWidth32 = 32;
+
+// Intrinsic call shapes for the memory patterns: compare calls take
+// (lhs, rhs, mask); post-update loads/stores append the updated base pointer
+// as the third intrinsic result; predicate-pair reorder and PSTU return the
+// (value, mask) or (loaded, mask) pair.
+inline constexpr unsigned kVcmpsCallArgCount = 3;
+inline constexpr unsigned kUpdatedBaseResultIndex = 2;
+inline constexpr unsigned kPredicatePairResultCount = 2;
+inline constexpr unsigned kPostUpdateResultCount = 2;
+inline constexpr unsigned kPstuResultCount = 2;
+
+// Copy/load config word layouts. Shifts are the hardware field bit positions
+// of each config operand, grouped per intrinsic layout.
+inline constexpr unsigned kGmToUbConfig0OperandCount = 11;
+inline constexpr uint64_t kGmToUbBurstNumShift = 4;
+inline constexpr uint64_t kGmToUbBurstLenShift = 25;
+inline constexpr uint64_t kGmToUbLeftPaddingShift = 46;
+inline constexpr uint64_t kGmToUbRightPaddingShift = 52;
+inline constexpr uint64_t kGmToUbDataSelectShift = 58;
+inline constexpr uint64_t kGmToUbCacheCtlShift = 60;
+
+inline constexpr unsigned kUbToGmConfig0OperandCount = 8;
+inline constexpr uint64_t kUbToGmBurstNumShift = 4;
+inline constexpr uint64_t kUbToGmBurstLenShift = 25;
+inline constexpr uint64_t kUbToGmL2CacheCtrlShift = 60;
+
+inline constexpr unsigned kUbToUbConfigOperandCount = 7;
+inline constexpr uint64_t kUbToUbNBurstShift = 16;
+inline constexpr uint64_t kUbToUbLenBurstShift = 32;
+inline constexpr uint64_t kUbToUbDstGapShift = 48;
+
+inline constexpr unsigned kCbufToUbConfigOperandCount = 7;
+inline constexpr uint64_t kCbufToUbNBurstShift = 4;
+inline constexpr uint64_t kCbufToUbLenBurstShift = 16;
+inline constexpr uint64_t kCbufToUbSrcGapShift = 32;
+inline constexpr uint64_t kCbufToUbDstGapShift = 48;
+
+// copy_gm_to_cbuf config0 packs burst_num[24:4] and burst_len[45:25]; config1
+// packs burst_src_stride[39:0] and burst_dst_stride[60:40].
+inline constexpr uint64_t kGmToCbufBurstNumShift = 4;
+inline constexpr uint64_t kGmToCbufBurstLenShift = 25;
+inline constexpr uint64_t kGmToCbufSrcStrideShift = 40;
+inline constexpr uint64_t kGmToCbufDstStrideShift = 40;
+
+// copy_gm_to_cbuf_multi config0: sid, loop1SrcStride, l2CacheCtrl, nValue;
+// config1: dValue, loop4SrcStride, smallC0En.
+inline constexpr uint64_t kGmToCbufMultiLoop1SrcStrideShift = 4;
+inline constexpr uint64_t kGmToCbufMultiL2CacheCtrlShift = 44;
+inline constexpr uint64_t kGmToCbufMultiNValueShift = 48;
+inline constexpr uint64_t kGmToCbufMultiLoop4SrcStrideShift = 21;
+inline constexpr uint64_t kGmToCbufMultiSmallC0EnShift = 61;
+
+// copy_cbuf_to_bt: convControl, nBurst, lenBurst, sourceGap, dstGap.
+inline constexpr uint64_t kCbufToBtConvControlShift = 3;
+inline constexpr uint64_t kCbufToBtNBurstShift = 4;
+inline constexpr uint64_t kCbufToBtLenBurstShift = 16;
+inline constexpr uint64_t kCbufToBtSourceGapShift = 32;
+inline constexpr uint64_t kCbufToBtDstGapShift = 48;
+
+// copy_cbuf_to_fbuf: nBurst, lenBurst, sourceGap, dstGap.
+inline constexpr uint64_t kCbufToFbufNBurstShift = 4;
+inline constexpr uint64_t kCbufToFbufLenBurstShift = 16;
+inline constexpr uint64_t kCbufToFbufSourceGapShift = 32;
+inline constexpr uint64_t kCbufToFbufDstGapShift = 48;
+
+// load_cbuf_to_{s4,ca,cb} tile config0 packs the tile descriptor
+// [mStart | kStart<<16 | mStep<<32 | kStep<<40]; config1 shares the same
+// dst-stride field position as kStart.
+inline constexpr uint64_t kLoadCbufKStartShift = 16;
+inline constexpr uint64_t kLoadCbufMStepShift = 32;
+inline constexpr uint64_t kLoadCbufKStepShift = 40;
+inline constexpr uint64_t kLoadCbufDstStrideShift = kLoadCbufKStartShift;
+
+// vbitsort config packs the repeat count into the top byte of the word.
+inline constexpr uint64_t kBitsortRepeatShift = 56;
+
+// TPER/TPERL packing: block stride occupies the high half of a 32-bit word.
+inline constexpr uint64_t kBlockRepeatStrideBlockShift = 16;
+
+// MAD bias packing: the low 32 bits of the destination/bias addresses share
+// one 64-bit word.
+inline constexpr uint64_t kMadBiasAddressMask = 0xffffffffULL;
+inline constexpr uint64_t kMadBiasHighWordShift = 32;
+
+// PLT mask vector length for the V300 dynamic predicate mask intrinsic.
+inline constexpr int64_t kPltMaskVectorLength = 256;
+
+// SIMT keep/resume groups handle at most four logical slots per inline-asm
+// group.
+inline constexpr unsigned kSimtKeepResumeGroupCapacity = 4;
+
+// get_vms4_sr result selection: four 16-bit counters, each fetched by
+// shifting the raw query result right by a multiple of 16 bits.
+inline constexpr unsigned kVms4SrCounterCount = 4;
+
+// Decimal radix for parsing numeric immediate suffixes from attribute strings.
+inline constexpr unsigned kRadixDecimal = 10;
 
 enum class VcvtElemKind {
   Invalid,

@@ -13,11 +13,22 @@ from __future__ import annotations
 
 import warnings
 from functools import wraps
-from typing import Callable, ParamSpec, TypeVar
+from typing import Callable, TypeVar
+
+try:  # ParamSpec entered the stdlib ``typing`` in Python 3.10.
+    from typing import ParamSpec
+except ImportError:  # Python 3.8 / 3.9
+    try:
+        from typing_extensions import ParamSpec
+    except ImportError:
+        ParamSpec = None
 
 
-P = ParamSpec("P")
 R = TypeVar("R")
+# Annotations in this module are lazy strings (see ``from __future__`` above),
+# so ``P`` only needs to exist as a name; on interpreters without ParamSpec a
+# plain TypeVar keeps the annotation references resolvable enough for tooling.
+P = ParamSpec("P") if ParamSpec is not None else TypeVar("P")
 
 
 class PTODSLDeprecationWarning(UserWarning):

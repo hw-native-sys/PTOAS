@@ -22,10 +22,14 @@
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Support/LLVM.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
+#include <map>
 #include <optional>
 #include <queue>
 #include <set>
+#include <string>
+#include <tuple>
 
 namespace mlir {
 namespace pto {
@@ -39,6 +43,32 @@ namespace pto {
     Vector,
     Cube,
   };
+
+  // Identifies one logical pipe across peer init ops: the owning function,
+  // the reserved buffer name, and the effective direction. Shared by the
+  // reserved-buffer resolve and pipe-init infer/validate passes.
+  struct PipePeerKey {
+    std::string ownerFunc;
+    std::string reserveName;
+    int8_t dirMask = 0;
+
+    // Provide a stable lexicographic order so PipePeerKey can be used as the
+    // key type of std::map.
+    bool operator<(const PipePeerKey &other) const {
+      return std::tie(ownerFunc, reserveName, dirMask) <
+             std::tie(other.ownerFunc, other.reserveName, other.dirMask);
+    }
+  };
+
+  using PipeInitGroups = std::map<PipePeerKey, SmallVector<Operation *>>;
+
+  // Connects peer init ops recorded under the same key into the adjacency
+  // graph, joining every unordered pair within a key. Groups smaller than
+  // `minGroupSize` are skipped.
+  void buildPipeInitAdjacency(const PipeInitGroups &keyedInits,
+                              llvm::DenseMap<Operation *,
+                                             SmallVector<Operation *>> &adjacency,
+                              size_t minGroupSize = 2);
 
   std::optional<PhysicalSectionKind>
   inferPhysicalSectionKindFromPipe(Operation *op);

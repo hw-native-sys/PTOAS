@@ -76,7 +76,7 @@ static void decomposeStridedLayout(AffineMap map, SmallVectorImpl<int64_t> &stri
   }
 
   // 2. 摊平表达式
-  SmallVector<AffineExpr, 4> terms;
+  SmallVector<AffineExpr, mlir::pto::kValue4> terms;
   flattenAddExpr(map.getResult(0), terms);
 
   for (auto term : terms) {
@@ -258,8 +258,8 @@ static ParseResult parseStrideList(AsmParser &parser, SmallVectorImpl<int64_t> &
 
 struct SubViewParseState {
   OpAsmParser::UnresolvedOperand source;
-  SmallVector<OpAsmParser::UnresolvedOperand, 4> offsets;
-  SmallVector<OpAsmParser::UnresolvedOperand, 2> valids;
+  SmallVector<OpAsmParser::UnresolvedOperand, mlir::pto::kValue4> offsets;
+  SmallVector<OpAsmParser::UnresolvedOperand, mlir::pto::kValue2> valids;
   Type sourceTy;
   Type resultTy;
   bool hasExplicitResultTy = false;
@@ -421,25 +421,23 @@ static std::pair<Value, Value> getSubViewExplicitValids(
     if (auto segAttr = attributes.getAs<DenseI32ArrayAttr>(
             "operandSegmentSizes")) {
       ArrayRef<int32_t> segs = segAttr.asArrayRef();
-      if (segs.size() == 4) {
-        size_t index = static_cast<size_t>(segs[0] + segs[1]);
-        if (segs[0] == 1 && segs[1] >= 0 && segs[2] == 1 &&
-            index < operands.size()) {
-          row = operands[index++];
-        }
-        if (segs[0] == 1 && segs[1] >= 0 && segs[3] == 1 &&
-            index < operands.size()) {
-          col = operands[index];
-        }
+      if (segs.size() == mlir::pto::kValue4) {
+          size_t index = static_cast<size_t>(segs[0] + segs[1]);
+          if (segs[0] == 1 && segs[1] >= 0 && segs[mlir::pto::kValue2] == 1 && index < operands.size()) {
+              row = operands[index++];
+          }
+          if (segs[0] == 1 && segs[1] >= 0 && segs[mlir::pto::kValue3] == 1 && index < operands.size()) {
+              col = operands[index];
+          }
       }
     }
   }
-  if (!row && !col && rank == 2) {
-    size_t expectedWithoutValid = static_cast<size_t>(1 + rank);
-    if (operands.size() >= expectedWithoutValid + 2) {
-      row = operands[expectedWithoutValid];
-      col = operands[expectedWithoutValid + 1];
-    }
+  if (!row && !col && rank == mlir::pto::kValue2) {
+      size_t expectedWithoutValid = static_cast<size_t>(1 + rank);
+      if (operands.size() >= expectedWithoutValid + mlir::pto::kValue2) {
+          row = operands[expectedWithoutValid];
+          col = operands[expectedWithoutValid + 1];
+      }
   }
   return {row, col};
 }
@@ -548,27 +546,27 @@ static LogicalResult computeInnerShape(TileBufConfigAttr cfg, Type elemTy,
     return failure();
   }
 
-  if (fr == 1024) {
-    innerRows = 16;
-    innerCols = 16;
-    return success();
-  }
-  if (fr == 32) {
-    innerRows = 16;
-    innerCols = 2;
-    return success();
-  }
-  if (fr == 512) {
-    if (sl == 1) {
-      innerRows = 16;
-      innerCols = 32 / elemBytes;
+  if (fr == mlir::pto::kValue1024) {
+      innerRows = mlir::pto::kValue16;
+      innerCols = mlir::pto::kValue16;
       return success();
-    }
-    if (sl == 2) {
-      innerRows = 32 / elemBytes;
-      innerCols = 16;
+  }
+  if (fr == mlir::pto::kValue32) {
+      innerRows = mlir::pto::kValue16;
+      innerCols = mlir::pto::kValue2;
       return success();
-    }
+  }
+  if (fr == mlir::pto::kValue512) {
+      if (sl == 1) {
+          innerRows = mlir::pto::kValue16;
+          innerCols = mlir::pto::kValue32 / elemBytes;
+          return success();
+      }
+      if (sl == mlir::pto::kValue2) {
+          innerRows = mlir::pto::kValue32 / elemBytes;
+          innerCols = mlir::pto::kValue16;
+          return success();
+      }
   }
   return failure();
 }
@@ -582,16 +580,16 @@ struct SubViewInfo {
 static LogicalResult verifySubViewSizesAndOffsets(SubViewOp op,
                                                   SubViewInfo &info) {
   auto sizesAttr = op.getSizes();
-  if (!sizesAttr || sizesAttr.size() != 2) {
-    return op.emitOpError("subview expects 2D sizes");
+  if (!sizesAttr || sizesAttr.size() != mlir::pto::kValue2) {
+      return op.emitOpError("subview expects 2D sizes");
   }
   info.sizeR = cast<IntegerAttr>(sizesAttr[0]).getInt();
   info.sizeC = cast<IntegerAttr>(sizesAttr[1]).getInt();
   if (info.sizeR <= 0 || info.sizeC <= 0) {
     return op.emitOpError("subview sizes must be positive");
   }
-  if (op.getOffsets().size() != 2) {
-    return op.emitOpError("subview expects 2D offsets");
+  if (op.getOffsets().size() != mlir::pto::kValue2) {
+      return op.emitOpError("subview expects 2D offsets");
   }
 
   info.offRConst = getConstIndex(op.getOffsets()[0], info.offR);
@@ -639,12 +637,12 @@ static LogicalResult verifySubViewShapeAndConfig(SubViewOp op, TileBufType srcTy
                                                  TileBufType dstTy, int64_t sizeR,
                                                  int64_t sizeC) {
   auto dstShape = dstTy.getShape();
-  if (dstShape.size() != 2) {
-    return op.emitOpError("expects result to be rank-2");
+  if (dstShape.size() != mlir::pto::kValue2) {
+      return op.emitOpError("expects result to be rank-2");
   }
   auto srcShape = srcTy.getShape();
-  if (srcShape.size() != 2) {
-    return op.emitOpError("expects source to be rank-2");
+  if (srcShape.size() != mlir::pto::kValue2) {
+      return op.emitOpError("expects source to be rank-2");
   }
   if (dstShape[0] != sizeR || dstShape[1] != sizeC) {
     return op.emitOpError("expects result shape to match subview sizes");
@@ -689,8 +687,8 @@ static LogicalResult verifySubViewValidShape(SubViewOp op, TileBufType dstTy,
   int64_t expectedVRow = expectedValidDim(op.getValidRow(), sizeR);
   int64_t expectedVCol = expectedValidDim(op.getValidCol(), sizeC);
   auto dstValid = dstTy.getValidShape();
-  if (dstValid.size() != 2) {
-    return op.emitOpError("expects result to have rank-2 valid_shape");
+  if (dstValid.size() != mlir::pto::kValue2) {
+      return op.emitOpError("expects result to have rank-2 valid_shape");
   }
   // With the valid operand omitted, the result type is authoritative for the
   // valid extent: accept any static value in [0, size] (this subsumes both the
@@ -748,10 +746,9 @@ static LogicalResult verifySubViewBoxed(SubViewOp op, TileBufType srcTy,
 
   (void)bl;
   auto srcShape = srcTy.getShape();
-  if (srcShape.size() != 2 ||
-      srcShape[0] == ShapedType::kDynamic ||
+  if (srcShape.size() != mlir::pto::kValue2 || srcShape[0] == ShapedType::kDynamic ||
       srcShape[1] == ShapedType::kDynamic) {
-    return op.emitOpError("boxed layout subview requires static source shape");
+      return op.emitOpError("boxed layout subview requires static source shape");
   }
 
   return success();
@@ -763,8 +760,8 @@ mlir::LogicalResult mlir::pto::SubViewOp::verify() {
   if (!srcTy || !dstTy) {
     return emitOpError("expects tile_buf src and tile_buf result");
   }
-  if (srcTy.getRank() != 2 || dstTy.getRank() != 2) {
-    return emitOpError("expects rank-2 tilebuf for src/dst");
+  if (srcTy.getRank() != mlir::pto::kValue2 || dstTy.getRank() != mlir::pto::kValue2) {
+      return emitOpError("expects rank-2 tilebuf for src/dst");
   }
 
   SubViewInfo info;
@@ -1239,12 +1236,12 @@ void TQuantMxOp::getEffects(
   auto valid = getValidShapeVec(srcTy);
   auto physical = getShapeVec(srcTy);
   Type elem = getElemTy(srcTy);
-  if ((elem.isF16() || elem.isBF16()) && valid.size() == 2 && physical.size() == 2 &&
+  if ((elem.isF16() || elem.isBF16()) && valid.size() == mlir::pto::kValue2 && physical.size() == mlir::pto::kValue2 &&
       valid[1] < physical[1]) {
-    addEffect(effects, &getSrcMutable(), MemoryEffects::Read::get());
-    addEffect(effects, &getSrcMutable(), MemoryEffects::Write::get());
+      addEffect(effects, &getSrcMutable(), MemoryEffects::Read::get());
+      addEffect(effects, &getSrcMutable(), MemoryEffects::Write::get());
   } else {
-    addEffect(effects, &getSrcMutable(), MemoryEffects::Read::get());
+      addEffect(effects, &getSrcMutable(), MemoryEffects::Read::get());
   }
   PTO_ADD_WRITE(getDstMutable());
   PTO_ADD_WRITE(getExpMutable());

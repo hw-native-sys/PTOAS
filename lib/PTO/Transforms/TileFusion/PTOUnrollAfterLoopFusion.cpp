@@ -37,7 +37,8 @@ namespace pto {
 
 using namespace mlir;
 
-#define DEBUG_TYPE "pto-unroll-after-loop-fusion"
+[[maybe_unused]] static constexpr char DEBUG_TYPE[] =
+    "pto-unroll-after-loop-fusion";
 
 static constexpr llvm::StringLiteral kRowUnrollFactorAttr =
     "pto.fusion.row_unroll_factor";

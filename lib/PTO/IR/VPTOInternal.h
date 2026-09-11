@@ -36,19 +36,14 @@
 #include "PTO/IR/VPTOMemoryDist.h"
 #include "PTO/Support/CodeConstants.h"
 
-
-using namespace mlir;
-using namespace mlir::pto;
-
 extern llvm::cl::opt<bool> disableVPTOAlignChainVerification;
 
-LogicalResult verifyAlignTypeLike(Operation *op, Type type,
-                                  StringRef roleDescription);
-LogicalResult verifyStoreAlignChain(Value align, Operation *user,
-                                    StringRef roleDescription);
-LogicalResult verifyLoadAlignChain(Value align, Operation *user,
-                                   StringRef roleDescription);
-
+mlir::LogicalResult verifyAlignTypeLike(mlir::Operation *op, mlir::Type type,
+                                  llvm::StringRef roleDescription);
+mlir::LogicalResult verifyStoreAlignChain(mlir::Value align, mlir::Operation *user,
+                                    llvm::StringRef roleDescription);
+mlir::LogicalResult verifyLoadAlignChain(mlir::Value align, mlir::Operation *user,
+                                   llvm::StringRef roleDescription);
 
 enum class MemoryRole {
   Unknown,
@@ -57,31 +52,29 @@ enum class MemoryRole {
   Other,
 };
 
-MemoryRole classifyMemoryRole(Type type);
+MemoryRole classifyMemoryRole(mlir::Type type);
 
-[[maybe_unused]] static bool isBufferLike(Type type) {
-  return isa<BaseMemRefType, pto::PtrType>(type);
+[[maybe_unused]] inline bool isBufferLike(mlir::Type type) {
+  return mlir::isa<mlir::BaseMemRefType, mlir::pto::PtrType>(type);
 }
 
-bool isForbiddenSynchronizationInsideVecScope(Operation *op);
+bool isForbiddenSynchronizationInsideVecScope(mlir::Operation *op);
 
-Operation *findForbiddenSyncInRegion(Region &body);
+mlir::Operation *findForbiddenSyncInRegion(mlir::Region &body);
 
-
-
-LogicalResult verifyMaskTypeLike(Operation *op, Type type, StringRef roleDescription);
-LogicalResult verifyMaskTypeWithGranularityLike(Operation *op, Type type,
-                                                StringRef roleDescription,
-                                                StringRef granularity);
-std::optional<StringRef> normalizeRoundModeToken(StringRef token);
-std::optional<StringRef> normalizeSaturationToken(StringRef token);
-ParseResult normalizeNamedStringAttr(
-    OpAsmParser &parser, NamedAttrList &attrs, StringRef sourceName,
-    StringRef canonicalName,
-    std::optional<StringRef> (*normalizeFn)(StringRef));
+mlir::LogicalResult verifyMaskTypeLike(mlir::Operation *op, mlir::Type type, llvm::StringRef roleDescription);
+mlir::LogicalResult verifyMaskTypeWithGranularityLike(mlir::Operation *op, mlir::Type type,
+                                                llvm::StringRef roleDescription,
+                                                llvm::StringRef granularity);
+std::optional<llvm::StringRef> normalizeRoundModeToken(llvm::StringRef token);
+std::optional<llvm::StringRef> normalizeSaturationToken(llvm::StringRef token);
+mlir::ParseResult normalizeNamedStringAttr(
+    mlir::OpAsmParser &parser, mlir::NamedAttrList &attrs, llvm::StringRef sourceName,
+    llvm::StringRef canonicalName,
+    std::optional<llvm::StringRef> (*normalizeFn)(llvm::StringRef));
 
 
-std::optional<StringRef> normalizeEvenOddPartToken(StringRef token);
+std::optional<llvm::StringRef> normalizeEvenOddPartToken(llvm::StringRef token);
 
 // Batch1: RawFill 对齐常量
 constexpr uint64_t kRawFillByteOffsetAlignment = 32;
@@ -90,181 +83,181 @@ constexpr uint64_t kRawFillControlFieldMax = 32767;
 // Batch1: 由 VPTO.cpp 上移的文件局部类型(StructuredAccStore/CubeBridge 域共用)
 
 struct StructuredAccStoreAsmState {
-  std::optional<AccStoreUnitFlagCtrl> unitFlag;
-  std::optional<AccStoreQuantPreMode> preQuantMode;
-  std::optional<ReluPreMode> preReluMode;
-  std::optional<AccStoreMode> mode;
-  std::optional<AccStoreAtomicType> atomicType;
-  std::optional<AccStoreAtomicOp> atomicOp;
-  std::optional<AccStoreSatMode> satMode;
+  std::optional<mlir::pto::AccStoreUnitFlagCtrl> unitFlag;
+  std::optional<mlir::pto::AccStoreQuantPreMode> preQuantMode;
+  std::optional<mlir::pto::ReluPreMode> preReluMode;
+  std::optional<mlir::pto::AccStoreMode> mode;
+  std::optional<mlir::pto::AccStoreAtomicType> atomicType;
+  std::optional<mlir::pto::AccStoreAtomicOp> atomicOp;
+  std::optional<mlir::pto::AccStoreSatMode> satMode;
 
-  SmallVector<OpAsmParser::UnresolvedOperand, 1> preQuantOperands;
-  SmallVector<OpAsmParser::UnresolvedOperand, 1> preReluOperands;
-  SmallVector<OpAsmParser::UnresolvedOperand, 1> clipValueOperands;
-  SmallVector<OpAsmParser::UnresolvedOperand, 1> splitOperands;
-  SmallVector<OpAsmParser::UnresolvedOperand, 1> loop0SrcStrideOperands;
-  SmallVector<OpAsmParser::UnresolvedOperand, 1> loop3CountOperands;
-  SmallVector<OpAsmParser::UnresolvedOperand, 1> loop3SrcStrideOperands;
-  SmallVector<OpAsmParser::UnresolvedOperand, 1> loop3DstStrideOperands;
+  llvm::SmallVector<mlir::OpAsmParser::UnresolvedOperand, 1> preQuantOperands;
+  llvm::SmallVector<mlir::OpAsmParser::UnresolvedOperand, 1> preReluOperands;
+  llvm::SmallVector<mlir::OpAsmParser::UnresolvedOperand, 1> clipValueOperands;
+  llvm::SmallVector<mlir::OpAsmParser::UnresolvedOperand, 1> splitOperands;
+  llvm::SmallVector<mlir::OpAsmParser::UnresolvedOperand, 1> loop0SrcStrideOperands;
+  llvm::SmallVector<mlir::OpAsmParser::UnresolvedOperand, 1> loop3CountOperands;
+  llvm::SmallVector<mlir::OpAsmParser::UnresolvedOperand, 1> loop3SrcStrideOperands;
+  llvm::SmallVector<mlir::OpAsmParser::UnresolvedOperand, 1> loop3DstStrideOperands;
 
-  SmallVector<Type, 1> preQuantTypes;
-  SmallVector<Type, 1> preReluTypes;
-  SmallVector<Type, 1> clipValueTypes;
-  SmallVector<Type, 1> splitTypes;
-  SmallVector<Type, 1> loop0SrcStrideTypes;
-  SmallVector<Type, 1> loop3CountTypes;
-  SmallVector<Type, 1> loop3SrcStrideTypes;
-  SmallVector<Type, 1> loop3DstStrideTypes;
+  llvm::SmallVector<mlir::Type, 1> preQuantTypes;
+  llvm::SmallVector<mlir::Type, 1> preReluTypes;
+  llvm::SmallVector<mlir::Type, 1> clipValueTypes;
+  llvm::SmallVector<mlir::Type, 1> splitTypes;
+  llvm::SmallVector<mlir::Type, 1> loop0SrcStrideTypes;
+  llvm::SmallVector<mlir::Type, 1> loop3CountTypes;
+  llvm::SmallVector<mlir::Type, 1> loop3SrcStrideTypes;
+  llvm::SmallVector<mlir::Type, 1> loop3DstStrideTypes;
 };
 
 struct CubeBridgeLoadAsmOperand {
-  OpAsmParser::UnresolvedOperand operand;
-  Type type;
+  mlir::OpAsmParser::UnresolvedOperand operand;
+  mlir::Type type;
   bool present = false;
 };
 
 // Batch1: 跨文件共享函数声明(定义分布在 VPTO/VPTOMte/VPTOMteAsm/VPTODma/VPTOCubeBridge/VPTOStructuredAcc/VPTOVecOp/VPTOMemOp)
-LogicalResult verifyIntegerVRegTypeLike(Operation *op, Type type, StringRef roleDescription);
-LogicalResult checkConstAlignment(Operation *op, Value value, StringRef name, uint64_t alignment);
-LogicalResult checkConstMax(Operation *op, Value value, StringRef name, uint64_t max);
-std::string formatVRegType(int64_t elementCount, Type elementType);
-StringRef getAddressSpaceDiagnosticName(pto::AddressSpace space);
-unsigned getIntOrFloatBitWidth(Type type);
-std::optional<int64_t> getVRegStorageBitWidth(Type type);
-bool isInsideSimtExecutionScope(Operation *op);
-bool isIntegerOrFloatLike(Type type);
-bool isMxElementType(Type type);
-bool isSupportedMovPadScalarType(Type type);
-bool isSupportedPostMode(StringRef mode);
-bool isSupportedPredicatePattern(StringRef pattern);
-bool isVector2Of(Type type, llvm::function_ref<bool(Type)> elementPred);
-ParseResult parseCubeBridgeOptionalOperands( OpAsmParser &parser, ArrayRef<StringRef> shapeNames, ArrayRef<StringRef> fullNames, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &legacyOperands, SmallVectorImpl<CubeBridgeLoadAsmOperand> &namedOperands, SmallVectorImpl<unsigned> &namedOperandOrder, bool &usesNamedOperands);
-ParseResult parseCubeBridgeOptionalTypes( OpAsmParser &parser, bool usesNamedOperands, SmallVectorImpl<unsigned> &namedOperandOrder, SmallVectorImpl<CubeBridgeLoadAsmOperand> &namedOperands, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &legacyOperands, SmallVectorImpl<Type> &legacyTypes);
-FailureOr<CubeLoadFracMode> parseCubeLoadFracModeKeyword(StringRef keyword);
-ParseResult parseCubeLoadFracSrcLayoutGroup( OpAsmParser &parser, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &operands);
-ParseResult parseCubeLoadFracSrcLayoutTypes(OpAsmParser &parser, SmallVectorImpl<Type> &types);
-ParseResult parseDmaLoopAndPadTypeGroups( OpAsmParser &parser, SmallVectorImpl<Type> &loopCountTypes, SmallVectorImpl<Type> &loopSrcStrideTypes, SmallVectorImpl<Type> &loopDstStrideTypes, SmallVectorImpl<Type> &padTypes);
-ParseResult parseDmaLoopOperandGroups( OpAsmParser &parser, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &loopCountOperands, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &loopSrcStrideOperands, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &loopDstStrideOperands);
-ParseResult parseDmaLoopTypeGroups( OpAsmParser &parser, SmallVectorImpl<Type> &loopCountTypes, SmallVectorImpl<Type> &loopSrcStrideTypes, SmallVectorImpl<Type> &loopDstStrideTypes);
-ParseResult parseDmaPadOperandGroup( OpAsmParser &parser, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &padOperands);
-ParseResult parseDmaTripleGroup( OpAsmParser &parser, StringRef keyword, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &operands);
-ParseResult parseDmaTripleTypes(OpAsmParser &parser, SmallVectorImpl<Type> &types);
-ParseResult parseFixedKeywordOperandGroup( OpAsmParser &parser, StringRef keyword, int operandCount, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &operands);
-ParseResult parseFixedKeywordTypes(OpAsmParser &parser, StringRef keyword, int typeCount, SmallVectorImpl<Type> &types);
-ParseResult parseMteGmL1FracBasicOperands( OpAsmParser &parser, OpAsmParser::UnresolvedOperand &source, OpAsmParser::UnresolvedOperand &destination, StringRef &modeKeyword, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &shapeOperands, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &srcLayoutOperands, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &dstGroupOperands, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &ctrlOperands);
-ParseResult parseMteGmL1FracBasicTypes( OpAsmParser &parser, Type &sourceType, Type &destinationType, StringRef modeKeyword, SmallVectorImpl<Type> &shapeTypes, SmallVectorImpl<Type> &srcLayoutTypes, SmallVectorImpl<Type> &dstGroupTypes, SmallVectorImpl<Type> &ctrlTypes);
-ParseResult parseMteGmUbBasicOperands( OpAsmParser &parser, OpAsmParser::UnresolvedOperand &source, OpAsmParser::UnresolvedOperand &destination, OpAsmParser::UnresolvedOperand &l2CacheCtl, OpAsmParser::UnresolvedOperand &lenBurst, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &nburstOperands);
-ParseResult parseMteGmUbBasicTypes( OpAsmParser &parser, Type &sourceType, Type &destinationType, Type &l2CacheCtlType, Type &lenBurstType, SmallVectorImpl<Type> &nburstTypes);
-ParseResult parseMteL0cGmTypes( OpAsmParser &parser, Type &sourceType, Type &destinationType, Type &mType, Type &nType, Type &srcStrideType, Type &dstStrideType, Type &sidType, Type &l2CacheCtrlType, StructuredAccStoreAsmState &state);
-ParseResult parseMteL0cL1Types( OpAsmParser &parser, Type &sourceType, Type &destinationType, Type &mType, Type &nType, Type &srcStrideType, Type &dstStrideType, StructuredAccStoreAsmState &state);
-ParseResult parseMteL0cUbBasicOperands( OpAsmParser &parser, OpAsmParser::UnresolvedOperand &source, OpAsmParser::UnresolvedOperand &destination, OpAsmParser::UnresolvedOperand &m, OpAsmParser::UnresolvedOperand &n, OpAsmParser::UnresolvedOperand &srcStride, OpAsmParser::UnresolvedOperand &dstStride);
-ParseResult parseMteL0cUbDstMode(OpAsmParser &parser, AccStoreUbDstMode &dstMode, OpAsmParser::UnresolvedOperand &subBlockId, bool &hasSubBlockId);
-ParseResult parseMteL0cUbTypes( OpAsmParser &parser, Type &sourceType, Type &destinationType, Type &mType, Type &nType, Type &srcStrideType, Type &dstStrideType, bool hasSubBlockId, Type &subBlockIdType, StructuredAccStoreAsmState &state);
-ParseResult parseMteUbGmBasicOperands( OpAsmParser &parser, OpAsmParser::UnresolvedOperand &source, OpAsmParser::UnresolvedOperand &destination, OpAsmParser::UnresolvedOperand &lenBurst, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &nburstOperands);
-ParseResult parseMteUbGmBasicTypes( OpAsmParser &parser, Type &sourceType, Type &destinationType, Type &lenBurstType, SmallVectorImpl<Type> &nburstTypes);
-ParseResult parseMteUbGmL2CacheCtlOperand( OpAsmParser &parser, OpAsmParser::UnresolvedOperand &l2CacheCtl, bool &hasL2CacheCtl);
-ParseResult parseOptionalDmaTripleGroupAlias( OpAsmParser &parser, ArrayRef<StringRef> keywords, StringRef &parsedKeyword, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &operands);
-ParseResult parseStructuredAccStoreClauses( OpAsmParser &parser, StructuredAccStoreAsmState &state);
-ParseResult parseStructuredAccStoreTailTypes( OpAsmParser &parser, StructuredAccStoreAsmState &state);
-void printCubeLoadFracSrcLayoutGroup(OpAsmPrinter &printer, Value srcInnerStride, Value srcOuterStride);
-void printCubeLoadFracSrcLayoutTypes(OpAsmPrinter &printer, Type srcInnerStrideType, Type srcOuterStrideType);
-void printDmaPadGroup(OpAsmPrinter &printer, Value value, Value left, Value right);
-void printDmaPadTypes(OpAsmPrinter &printer, Type valueType, Type leftType, Type rightType);
-void printDmaTripleGroup(OpAsmPrinter &printer, StringRef keyword, Value first, Value second, Value third);
-void printDmaTripleTypes(OpAsmPrinter &printer, StringRef keyword, Type first, Type second, Type third);
-void printMteL1L0OptionalOperandsOp( OpAsmPrinter &printer, Operation *operation, Value source, Value destination, ArrayRef<Value> shapeOperands, ArrayRef<StringRef> shapeNames, ArrayRef<Value> fullOperands, ArrayRef<StringRef> fullNames);
-void printStructuredAccStoreClauses( OpAsmPrinter &printer, std::optional<AccStoreUnitFlagCtrl> unitFlag, Value preQuant, std::optional<AccStoreQuantPreMode> preQuantMode, Value preRelu, std::optional<ReluPreMode> preReluMode, Value clipValue, std::optional<AccStoreMode> mode, Value split, Value loop0SrcStride, Value loop3Count, Value loop3SrcStride, Value loop3DstStride, std::optional<AccStoreSatMode> satMode, std::optional<AccStoreAtomicType> atomicType, std::optional<AccStoreAtomicOp> atomicOp);
-void printStructuredAccStoreOptionalTypes( OpAsmPrinter &printer, Value preQuant, Value preRelu, Value clipValue, Value split, Value loop0SrcStride, Value loop3Count, Value loop3SrcStride, Value loop3DstStride);
-ParseResult resolveCubeBridgeOperands( OpAsmParser &parser, OperationState &result, bool usesNamedOperands, OpAsmParser::UnresolvedOperand source, Type sourceType, OpAsmParser::UnresolvedOperand destination, Type destinationType, SmallVectorImpl<CubeBridgeLoadAsmOperand> &namedOperands, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &legacyOperands, SmallVectorImpl<Type> &legacyTypes, SmallVectorImpl<int32_t> &segmentSizes);
-ParseResult resolveDmaBasicOperands( OpAsmParser &parser, OperationState &result, OpAsmParser::UnresolvedOperand source, Type sourceType, OpAsmParser::UnresolvedOperand destination, Type destinationType, OpAsmParser::UnresolvedOperand lenBurst, Type lenBurstType, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &nburstOperands, SmallVectorImpl<Type> &nburstTypes);
-ParseResult resolveDmaLoopOperands( OpAsmParser &parser, OperationState &result, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &loopCountOperands, SmallVectorImpl<Type> &loopCountTypes, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &loopSrcStrideOperands, SmallVectorImpl<Type> &loopSrcStrideTypes, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &loopDstStrideOperands, SmallVectorImpl<Type> &loopDstStrideTypes);
-ParseResult resolveDmaTripleOperands( OpAsmParser &parser, OperationState &result, bool hasL2CacheCtl, OpAsmParser::UnresolvedOperand l2CacheCtl, Type l2CacheCtlType, OpAsmParser::UnresolvedOperand source, Type sourceType, OpAsmParser::UnresolvedOperand destination, Type destinationType, OpAsmParser::UnresolvedOperand lenBurst, Type lenBurstType, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &nburstOperands, SmallVectorImpl<Type> &nburstTypes, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &loopCountOperands, SmallVectorImpl<Type> &loopCountTypes, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &loopSrcStrideOperands, SmallVectorImpl<Type> &loopSrcStrideTypes, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &loopDstStrideOperands, SmallVectorImpl<Type> &loopDstStrideTypes);
-ParseResult resolveMteGmL1FracOperands( OpAsmParser &parser, OperationState &result, OpAsmParser::UnresolvedOperand source, Type sourceType, OpAsmParser::UnresolvedOperand destination, Type destinationType, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &shapeOperands, SmallVectorImpl<Type> &shapeTypes, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &srcLayoutOperands, SmallVectorImpl<Type> &srcLayoutTypes, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &dstGroupOperands, SmallVectorImpl<Type> &dstGroupTypes, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &ctrlOperands, SmallVectorImpl<Type> &ctrlTypes);
-ParseResult resolveMteGmUbOperands( OpAsmParser &parser, OperationState &result, OpAsmParser::UnresolvedOperand source, Type sourceType, OpAsmParser::UnresolvedOperand destination, Type destinationType, OpAsmParser::UnresolvedOperand l2CacheCtl, Type l2CacheCtlType, OpAsmParser::UnresolvedOperand lenBurst, Type lenBurstType, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &nburstOperands, SmallVectorImpl<Type> &nburstTypes, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &loopCountOperands, SmallVectorImpl<Type> &loopCountTypes, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &loopSrcStrideOperands, SmallVectorImpl<Type> &loopSrcStrideTypes, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &loopDstStrideOperands, SmallVectorImpl<Type> &loopDstStrideTypes, SmallVectorImpl<OpAsmParser::UnresolvedOperand> &padOperands, SmallVectorImpl<Type> &padTypes);
-ParseResult resolveMteL0cGmOperands( OpAsmParser &parser, OperationState &result, OpAsmParser::UnresolvedOperand source, Type sourceType, OpAsmParser::UnresolvedOperand destination, Type destinationType, OpAsmParser::UnresolvedOperand m, Type mType, OpAsmParser::UnresolvedOperand n, Type nType, OpAsmParser::UnresolvedOperand srcStride, Type srcStrideType, OpAsmParser::UnresolvedOperand dstStride, Type dstStrideType, OpAsmParser::UnresolvedOperand sid, Type sidType, OpAsmParser::UnresolvedOperand l2CacheCtrl, Type l2CacheCtrlType, StructuredAccStoreAsmState &state);
-ParseResult resolveMteL0cL1Operands( OpAsmParser &parser, OperationState &result, OpAsmParser::UnresolvedOperand source, Type sourceType, OpAsmParser::UnresolvedOperand destination, Type destinationType, OpAsmParser::UnresolvedOperand m, Type mType, OpAsmParser::UnresolvedOperand n, Type nType, OpAsmParser::UnresolvedOperand srcStride, Type srcStrideType, OpAsmParser::UnresolvedOperand dstStride, Type dstStrideType, StructuredAccStoreAsmState &state);
-ParseResult resolveMteL0cUbOperands( OpAsmParser &parser, OperationState &result, OpAsmParser::UnresolvedOperand source, Type sourceType, OpAsmParser::UnresolvedOperand destination, Type destinationType, OpAsmParser::UnresolvedOperand m, Type mType, OpAsmParser::UnresolvedOperand n, Type nType, OpAsmParser::UnresolvedOperand srcStride, Type srcStrideType, OpAsmParser::UnresolvedOperand dstStride, Type dstStrideType, bool hasSubBlockId, OpAsmParser::UnresolvedOperand subBlockId, Type subBlockIdType, const StructuredAccStoreAsmState &state);
-void setMteGmUbSegmentSizes(OperationState &result, int32_t loopGroupCount, size_t padOperandCount);
-void setMteL0cGmSegmentSizes(OperationState &result, const StructuredAccStoreAsmState &st);
-void setMteL0cL1SegmentSizes(OperationState &result, const StructuredAccStoreAsmState &st);
-void setMteUbGmSegmentSizes(OperationState &result, bool hasL2CacheCtl, size_t loopGroupCount);
-ParseResult validateMteGmL1FracOperands( OpAsmParser &parser, size_t shapeOps, size_t shapeTypes, size_t srcLayoutOps, size_t srcLayoutTypes, size_t dstGroupOps, size_t dstGroupTypes, size_t ctrlOps, size_t ctrlTypes);
-LogicalResult verifyDmaLoadStoreLoopGroups(Operation *op, ValueRange loopCounts, ValueRange loopSrcStrides, ValueRange loopDstStrides);
-ParseResult verifyDmaLoopGroupConsistency( OpAsmParser &parser, size_t countOperands, size_t srcStrideOperands, size_t dstStrideOperands, size_t countTypes, size_t srcStrideTypes, size_t dstStrideTypes);
-LogicalResult verifyMxLoadAlignment(Operation *op, Value source, Value destination);
-LogicalResult verifyMxLoadOperands(Operation *op, ArrayRef<Value> shapeOperands, ArrayRef<StringRef> shapeNames, ArrayRef<Value> fullOperands);
-LogicalResult verifyNestedInVecScope(Operation *op, StringRef opNameForDiag);
-LogicalResult verifyNonLowPrecisionVRegElementTypeLike( Operation *op, Type type, StringRef roleDescription);
-LogicalResult verifyNotNestedInVecScope(Operation *op, StringRef opNameForDiag);
-LogicalResult verifyStructuredAccStoreLike( Operation *op, Type srcType, Type dstType, Value preQuant, Value preRelu, Value clipValue, Value split, Value loop0SrcStride, Value loop3Count, Value loop3SrcStride, Value loop3DstStride, std::optional<AccStoreUnitFlagCtrl> unitFlag, std::optional<AccStoreQuantPreMode> preQuantMode, std::optional<ReluPreMode> preReluMode, std::optional<AccStoreMode> mode, std::optional<AccStoreAtomicType> atomicType, std::optional<AccStoreAtomicOp> atomicOp, bool allowAtomic);
+mlir::LogicalResult verifyIntegerVRegTypeLike(mlir::Operation *op, mlir::Type type, llvm::StringRef roleDescription);
+mlir::LogicalResult checkConstAlignment(mlir::Operation *op, mlir::Value value, llvm::StringRef name, uint64_t alignment);
+mlir::LogicalResult checkConstMax(mlir::Operation *op, mlir::Value value, llvm::StringRef name, uint64_t max);
+std::string formatVRegType(int64_t elementCount, mlir::Type elementType);
+llvm::StringRef getAddressSpaceDiagnosticName(mlir::pto::AddressSpace space);
+unsigned getIntOrFloatBitWidth(mlir::Type type);
+std::optional<int64_t> getVRegStorageBitWidth(mlir::Type type);
+bool isInsideSimtExecutionScope(mlir::Operation *op);
+bool isIntegerOrFloatLike(mlir::Type type);
+bool isMxElementType(mlir::Type type);
+bool isSupportedMovPadScalarType(mlir::Type type);
+bool isSupportedPostMode(llvm::StringRef mode);
+bool isSupportedPredicatePattern(llvm::StringRef pattern);
+bool isVector2Of(mlir::Type type, llvm::function_ref<bool(mlir::Type)> elementPred);
+mlir::ParseResult parseCubeBridgeOptionalOperands( mlir::OpAsmParser &parser, llvm::ArrayRef<llvm::StringRef> shapeNames, llvm::ArrayRef<llvm::StringRef> fullNames, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &legacyOperands, llvm::SmallVectorImpl<CubeBridgeLoadAsmOperand> &namedOperands, llvm::SmallVectorImpl<unsigned> &namedOperandOrder, bool &usesNamedOperands);
+mlir::ParseResult parseCubeBridgeOptionalTypes( mlir::OpAsmParser &parser, bool usesNamedOperands, llvm::SmallVectorImpl<unsigned> &namedOperandOrder, llvm::SmallVectorImpl<CubeBridgeLoadAsmOperand> &namedOperands, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &legacyOperands, llvm::SmallVectorImpl<mlir::Type> &legacyTypes);
+llvm::FailureOr<mlir::pto::CubeLoadFracMode> parseCubeLoadFracModeKeyword(llvm::StringRef keyword);
+mlir::ParseResult parseCubeLoadFracSrcLayoutGroup( mlir::OpAsmParser &parser, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &operands);
+mlir::ParseResult parseCubeLoadFracSrcLayoutTypes(mlir::OpAsmParser &parser, llvm::SmallVectorImpl<mlir::Type> &types);
+mlir::ParseResult parseDmaLoopAndPadTypeGroups( mlir::OpAsmParser &parser, llvm::SmallVectorImpl<mlir::Type> &loopCountTypes, llvm::SmallVectorImpl<mlir::Type> &loopSrcStrideTypes, llvm::SmallVectorImpl<mlir::Type> &loopDstStrideTypes, llvm::SmallVectorImpl<mlir::Type> &padTypes);
+mlir::ParseResult parseDmaLoopOperandGroups( mlir::OpAsmParser &parser, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &loopCountOperands, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &loopSrcStrideOperands, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &loopDstStrideOperands);
+mlir::ParseResult parseDmaLoopTypeGroups( mlir::OpAsmParser &parser, llvm::SmallVectorImpl<mlir::Type> &loopCountTypes, llvm::SmallVectorImpl<mlir::Type> &loopSrcStrideTypes, llvm::SmallVectorImpl<mlir::Type> &loopDstStrideTypes);
+mlir::ParseResult parseDmaPadOperandGroup( mlir::OpAsmParser &parser, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &padOperands);
+mlir::ParseResult parseDmaTripleGroup( mlir::OpAsmParser &parser, llvm::StringRef keyword, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &operands);
+mlir::ParseResult parseDmaTripleTypes(mlir::OpAsmParser &parser, llvm::SmallVectorImpl<mlir::Type> &types);
+mlir::ParseResult parseFixedKeywordOperandGroup( mlir::OpAsmParser &parser, llvm::StringRef keyword, int operandCount, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &operands);
+mlir::ParseResult parseFixedKeywordTypes(mlir::OpAsmParser &parser, llvm::StringRef keyword, int typeCount, llvm::SmallVectorImpl<mlir::Type> &types);
+mlir::ParseResult parseMteGmL1FracBasicOperands( mlir::OpAsmParser &parser, mlir::OpAsmParser::UnresolvedOperand &source, mlir::OpAsmParser::UnresolvedOperand &destination, llvm::StringRef &modeKeyword, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &shapeOperands, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &srcLayoutOperands, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &dstGroupOperands, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &ctrlOperands);
+mlir::ParseResult parseMteGmL1FracBasicTypes( mlir::OpAsmParser &parser, mlir::Type &sourceType, mlir::Type &destinationType, llvm::StringRef modeKeyword, llvm::SmallVectorImpl<mlir::Type> &shapeTypes, llvm::SmallVectorImpl<mlir::Type> &srcLayoutTypes, llvm::SmallVectorImpl<mlir::Type> &dstGroupTypes, llvm::SmallVectorImpl<mlir::Type> &ctrlTypes);
+mlir::ParseResult parseMteGmUbBasicOperands( mlir::OpAsmParser &parser, mlir::OpAsmParser::UnresolvedOperand &source, mlir::OpAsmParser::UnresolvedOperand &destination, mlir::OpAsmParser::UnresolvedOperand &l2CacheCtl, mlir::OpAsmParser::UnresolvedOperand &lenBurst, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &nburstOperands);
+mlir::ParseResult parseMteGmUbBasicTypes( mlir::OpAsmParser &parser, mlir::Type &sourceType, mlir::Type &destinationType, mlir::Type &l2CacheCtlType, mlir::Type &lenBurstType, llvm::SmallVectorImpl<mlir::Type> &nburstTypes);
+mlir::ParseResult parseMteL0cGmTypes( mlir::OpAsmParser &parser, mlir::Type &sourceType, mlir::Type &destinationType, mlir::Type &mType, mlir::Type &nType, mlir::Type &srcStrideType, mlir::Type &dstStrideType, mlir::Type &sidType, mlir::Type &l2CacheCtrlType, StructuredAccStoreAsmState &state);
+mlir::ParseResult parseMteL0cL1Types( mlir::OpAsmParser &parser, mlir::Type &sourceType, mlir::Type &destinationType, mlir::Type &mType, mlir::Type &nType, mlir::Type &srcStrideType, mlir::Type &dstStrideType, StructuredAccStoreAsmState &state);
+mlir::ParseResult parseMteL0cUbBasicOperands( mlir::OpAsmParser &parser, mlir::OpAsmParser::UnresolvedOperand &source, mlir::OpAsmParser::UnresolvedOperand &destination, mlir::OpAsmParser::UnresolvedOperand &m, mlir::OpAsmParser::UnresolvedOperand &n, mlir::OpAsmParser::UnresolvedOperand &srcStride, mlir::OpAsmParser::UnresolvedOperand &dstStride);
+mlir::ParseResult parseMteL0cUbDstMode(mlir::OpAsmParser &parser, mlir::pto::AccStoreUbDstMode &dstMode, mlir::OpAsmParser::UnresolvedOperand &subBlockId, bool &hasSubBlockId);
+mlir::ParseResult parseMteL0cUbTypes( mlir::OpAsmParser &parser, mlir::Type &sourceType, mlir::Type &destinationType, mlir::Type &mType, mlir::Type &nType, mlir::Type &srcStrideType, mlir::Type &dstStrideType, bool hasSubBlockId, mlir::Type &subBlockIdType, StructuredAccStoreAsmState &state);
+mlir::ParseResult parseMteUbGmBasicOperands( mlir::OpAsmParser &parser, mlir::OpAsmParser::UnresolvedOperand &source, mlir::OpAsmParser::UnresolvedOperand &destination, mlir::OpAsmParser::UnresolvedOperand &lenBurst, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &nburstOperands);
+mlir::ParseResult parseMteUbGmBasicTypes( mlir::OpAsmParser &parser, mlir::Type &sourceType, mlir::Type &destinationType, mlir::Type &lenBurstType, llvm::SmallVectorImpl<mlir::Type> &nburstTypes);
+mlir::ParseResult parseMteUbGmL2CacheCtlOperand( mlir::OpAsmParser &parser, mlir::OpAsmParser::UnresolvedOperand &l2CacheCtl, bool &hasL2CacheCtl);
+mlir::ParseResult parseOptionalDmaTripleGroupAlias( mlir::OpAsmParser &parser, llvm::ArrayRef<llvm::StringRef> keywords, llvm::StringRef &parsedKeyword, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &operands);
+mlir::ParseResult parseStructuredAccStoreClauses( mlir::OpAsmParser &parser, StructuredAccStoreAsmState &state);
+mlir::ParseResult parseStructuredAccStoreTailTypes( mlir::OpAsmParser &parser, StructuredAccStoreAsmState &state);
+void printCubeLoadFracSrcLayoutGroup(mlir::OpAsmPrinter &printer, mlir::Value srcInnerStride, mlir::Value srcOuterStride);
+void printCubeLoadFracSrcLayoutTypes(mlir::OpAsmPrinter &printer, mlir::Type srcInnerStrideType, mlir::Type srcOuterStrideType);
+void printDmaPadGroup(mlir::OpAsmPrinter &printer, mlir::Value value, mlir::Value left, mlir::Value right);
+void printDmaPadTypes(mlir::OpAsmPrinter &printer, mlir::Type valueType, mlir::Type leftType, mlir::Type rightType);
+void printDmaTripleGroup(mlir::OpAsmPrinter &printer, llvm::StringRef keyword, mlir::Value first, mlir::Value second, mlir::Value third);
+void printDmaTripleTypes(mlir::OpAsmPrinter &printer, llvm::StringRef keyword, mlir::Type first, mlir::Type second, mlir::Type third);
+void printMteL1L0OptionalOperandsOp( mlir::OpAsmPrinter &printer, mlir::Operation *operation, mlir::Value source, mlir::Value destination, llvm::ArrayRef<mlir::Value> shapeOperands, llvm::ArrayRef<llvm::StringRef> shapeNames, llvm::ArrayRef<mlir::Value> fullOperands, llvm::ArrayRef<llvm::StringRef> fullNames);
+void printStructuredAccStoreClauses( mlir::OpAsmPrinter &printer, std::optional<mlir::pto::AccStoreUnitFlagCtrl> unitFlag, mlir::Value preQuant, std::optional<mlir::pto::AccStoreQuantPreMode> preQuantMode, mlir::Value preRelu, std::optional<mlir::pto::ReluPreMode> preReluMode, mlir::Value clipValue, std::optional<mlir::pto::AccStoreMode> mode, mlir::Value split, mlir::Value loop0SrcStride, mlir::Value loop3Count, mlir::Value loop3SrcStride, mlir::Value loop3DstStride, std::optional<mlir::pto::AccStoreSatMode> satMode, std::optional<mlir::pto::AccStoreAtomicType> atomicType, std::optional<mlir::pto::AccStoreAtomicOp> atomicOp);
+void printStructuredAccStoreOptionalTypes( mlir::OpAsmPrinter &printer, mlir::Value preQuant, mlir::Value preRelu, mlir::Value clipValue, mlir::Value split, mlir::Value loop0SrcStride, mlir::Value loop3Count, mlir::Value loop3SrcStride, mlir::Value loop3DstStride);
+mlir::ParseResult resolveCubeBridgeOperands( mlir::OpAsmParser &parser, mlir::OperationState &result, bool usesNamedOperands, mlir::OpAsmParser::UnresolvedOperand source, mlir::Type sourceType, mlir::OpAsmParser::UnresolvedOperand destination, mlir::Type destinationType, llvm::SmallVectorImpl<CubeBridgeLoadAsmOperand> &namedOperands, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &legacyOperands, llvm::SmallVectorImpl<mlir::Type> &legacyTypes, llvm::SmallVectorImpl<int32_t> &segmentSizes);
+mlir::ParseResult resolveDmaBasicOperands( mlir::OpAsmParser &parser, mlir::OperationState &result, mlir::OpAsmParser::UnresolvedOperand source, mlir::Type sourceType, mlir::OpAsmParser::UnresolvedOperand destination, mlir::Type destinationType, mlir::OpAsmParser::UnresolvedOperand lenBurst, mlir::Type lenBurstType, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &nburstOperands, llvm::SmallVectorImpl<mlir::Type> &nburstTypes);
+mlir::ParseResult resolveDmaLoopOperands( mlir::OpAsmParser &parser, mlir::OperationState &result, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &loopCountOperands, llvm::SmallVectorImpl<mlir::Type> &loopCountTypes, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &loopSrcStrideOperands, llvm::SmallVectorImpl<mlir::Type> &loopSrcStrideTypes, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &loopDstStrideOperands, llvm::SmallVectorImpl<mlir::Type> &loopDstStrideTypes);
+mlir::ParseResult resolveDmaTripleOperands( mlir::OpAsmParser &parser, mlir::OperationState &result, bool hasL2CacheCtl, mlir::OpAsmParser::UnresolvedOperand l2CacheCtl, mlir::Type l2CacheCtlType, mlir::OpAsmParser::UnresolvedOperand source, mlir::Type sourceType, mlir::OpAsmParser::UnresolvedOperand destination, mlir::Type destinationType, mlir::OpAsmParser::UnresolvedOperand lenBurst, mlir::Type lenBurstType, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &nburstOperands, llvm::SmallVectorImpl<mlir::Type> &nburstTypes, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &loopCountOperands, llvm::SmallVectorImpl<mlir::Type> &loopCountTypes, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &loopSrcStrideOperands, llvm::SmallVectorImpl<mlir::Type> &loopSrcStrideTypes, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &loopDstStrideOperands, llvm::SmallVectorImpl<mlir::Type> &loopDstStrideTypes);
+mlir::ParseResult resolveMteGmL1FracOperands( mlir::OpAsmParser &parser, mlir::OperationState &result, mlir::OpAsmParser::UnresolvedOperand source, mlir::Type sourceType, mlir::OpAsmParser::UnresolvedOperand destination, mlir::Type destinationType, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &shapeOperands, llvm::SmallVectorImpl<mlir::Type> &shapeTypes, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &srcLayoutOperands, llvm::SmallVectorImpl<mlir::Type> &srcLayoutTypes, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &dstGroupOperands, llvm::SmallVectorImpl<mlir::Type> &dstGroupTypes, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &ctrlOperands, llvm::SmallVectorImpl<mlir::Type> &ctrlTypes);
+mlir::ParseResult resolveMteGmUbOperands( mlir::OpAsmParser &parser, mlir::OperationState &result, mlir::OpAsmParser::UnresolvedOperand source, mlir::Type sourceType, mlir::OpAsmParser::UnresolvedOperand destination, mlir::Type destinationType, mlir::OpAsmParser::UnresolvedOperand l2CacheCtl, mlir::Type l2CacheCtlType, mlir::OpAsmParser::UnresolvedOperand lenBurst, mlir::Type lenBurstType, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &nburstOperands, llvm::SmallVectorImpl<mlir::Type> &nburstTypes, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &loopCountOperands, llvm::SmallVectorImpl<mlir::Type> &loopCountTypes, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &loopSrcStrideOperands, llvm::SmallVectorImpl<mlir::Type> &loopSrcStrideTypes, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &loopDstStrideOperands, llvm::SmallVectorImpl<mlir::Type> &loopDstStrideTypes, llvm::SmallVectorImpl<mlir::OpAsmParser::UnresolvedOperand> &padOperands, llvm::SmallVectorImpl<mlir::Type> &padTypes);
+mlir::ParseResult resolveMteL0cGmOperands( mlir::OpAsmParser &parser, mlir::OperationState &result, mlir::OpAsmParser::UnresolvedOperand source, mlir::Type sourceType, mlir::OpAsmParser::UnresolvedOperand destination, mlir::Type destinationType, mlir::OpAsmParser::UnresolvedOperand m, mlir::Type mType, mlir::OpAsmParser::UnresolvedOperand n, mlir::Type nType, mlir::OpAsmParser::UnresolvedOperand srcStride, mlir::Type srcStrideType, mlir::OpAsmParser::UnresolvedOperand dstStride, mlir::Type dstStrideType, mlir::OpAsmParser::UnresolvedOperand sid, mlir::Type sidType, mlir::OpAsmParser::UnresolvedOperand l2CacheCtrl, mlir::Type l2CacheCtrlType, StructuredAccStoreAsmState &state);
+mlir::ParseResult resolveMteL0cL1Operands( mlir::OpAsmParser &parser, mlir::OperationState &result, mlir::OpAsmParser::UnresolvedOperand source, mlir::Type sourceType, mlir::OpAsmParser::UnresolvedOperand destination, mlir::Type destinationType, mlir::OpAsmParser::UnresolvedOperand m, mlir::Type mType, mlir::OpAsmParser::UnresolvedOperand n, mlir::Type nType, mlir::OpAsmParser::UnresolvedOperand srcStride, mlir::Type srcStrideType, mlir::OpAsmParser::UnresolvedOperand dstStride, mlir::Type dstStrideType, StructuredAccStoreAsmState &state);
+mlir::ParseResult resolveMteL0cUbOperands( mlir::OpAsmParser &parser, mlir::OperationState &result, mlir::OpAsmParser::UnresolvedOperand source, mlir::Type sourceType, mlir::OpAsmParser::UnresolvedOperand destination, mlir::Type destinationType, mlir::OpAsmParser::UnresolvedOperand m, mlir::Type mType, mlir::OpAsmParser::UnresolvedOperand n, mlir::Type nType, mlir::OpAsmParser::UnresolvedOperand srcStride, mlir::Type srcStrideType, mlir::OpAsmParser::UnresolvedOperand dstStride, mlir::Type dstStrideType, bool hasSubBlockId, mlir::OpAsmParser::UnresolvedOperand subBlockId, mlir::Type subBlockIdType, const StructuredAccStoreAsmState &state);
+void setMteGmUbSegmentSizes(mlir::OperationState &result, int32_t loopGroupCount, size_t padOperandCount);
+void setMteL0cGmSegmentSizes(mlir::OperationState &result, const StructuredAccStoreAsmState &st);
+void setMteL0cL1SegmentSizes(mlir::OperationState &result, const StructuredAccStoreAsmState &st);
+void setMteUbGmSegmentSizes(mlir::OperationState &result, bool hasL2CacheCtl, size_t loopGroupCount);
+mlir::ParseResult validateMteGmL1FracOperands( mlir::OpAsmParser &parser, size_t shapeOps, size_t shapeTypes, size_t srcLayoutOps, size_t srcLayoutTypes, size_t dstGroupOps, size_t dstGroupTypes, size_t ctrlOps, size_t ctrlTypes);
+mlir::LogicalResult verifyDmaLoadStoreLoopGroups(mlir::Operation *op, mlir::ValueRange loopCounts, mlir::ValueRange loopSrcStrides, mlir::ValueRange loopDstStrides);
+mlir::ParseResult verifyDmaLoopGroupConsistency( mlir::OpAsmParser &parser, size_t countOperands, size_t srcStrideOperands, size_t dstStrideOperands, size_t countTypes, size_t srcStrideTypes, size_t dstStrideTypes);
+mlir::LogicalResult verifyMxLoadAlignment(mlir::Operation *op, mlir::Value source, mlir::Value destination);
+mlir::LogicalResult verifyMxLoadOperands(mlir::Operation *op, llvm::ArrayRef<mlir::Value> shapeOperands, llvm::ArrayRef<llvm::StringRef> shapeNames, llvm::ArrayRef<mlir::Value> fullOperands);
+mlir::LogicalResult verifyNestedInVecScope(mlir::Operation *op, llvm::StringRef opNameForDiag);
+mlir::LogicalResult verifyNonLowPrecisionVRegElementTypeLike( mlir::Operation *op, mlir::Type type, llvm::StringRef roleDescription);
+mlir::LogicalResult verifyNotNestedInVecScope(mlir::Operation *op, llvm::StringRef opNameForDiag);
+mlir::LogicalResult verifyStructuredAccStoreLike( mlir::Operation *op, mlir::Type srcType, mlir::Type dstType, mlir::Value preQuant, mlir::Value preRelu, mlir::Value clipValue, mlir::Value split, mlir::Value loop0SrcStride, mlir::Value loop3Count, mlir::Value loop3SrcStride, mlir::Value loop3DstStride, std::optional<mlir::pto::AccStoreUnitFlagCtrl> unitFlag, std::optional<mlir::pto::AccStoreQuantPreMode> preQuantMode, std::optional<mlir::pto::ReluPreMode> preReluMode, std::optional<mlir::pto::AccStoreMode> mode, std::optional<mlir::pto::AccStoreAtomicType> atomicType, std::optional<mlir::pto::AccStoreAtomicOp> atomicOp, bool allowAtomic);
 
 // Batch1: VPTO.cpp/MTE/DMA 共用小函数
 [[maybe_unused]] 
-static LogicalResult verifyVRegTypeLike(Operation *op, Type type,
-                                       StringRef roleDescription) {
-  auto vecType = dyn_cast<VRegType>(type);
+inline mlir::LogicalResult verifyVRegTypeLike(mlir::Operation *op, mlir::Type type,
+                                       llvm::StringRef roleDescription) {
+  auto vecType = mlir::dyn_cast<mlir::pto::VRegType>(type);
   if (!vecType) {
     return op->emitOpError() << roleDescription << " must be !pto.vreg<...>";
   }
 
-  return VRegType::verify(
+  return mlir::pto::VRegType::verify(
       [&]() { return op->emitOpError() << roleDescription << " "; },
       vecType.getElementCount(), vecType.getElementType());
 }
 
 [[maybe_unused]] 
 
-static int64_t getBufferElementByteSize(Type type) {
-  Type elementType;
-  if (auto ptrType = dyn_cast<pto::PtrType>(type)) {
+inline int64_t getBufferElementByteSize(mlir::Type type) {
+  mlir::Type elementType;
+  if (auto ptrType = mlir::dyn_cast<mlir::pto::PtrType>(type)) {
     elementType = ptrType.getElementType();
-  } else if (auto memrefType = dyn_cast<BaseMemRefType>(type)) {
+  } else if (auto memrefType = mlir::dyn_cast<mlir::BaseMemRefType>(type)) {
     elementType = memrefType.getElementType();
   } else {
     return 0;
   }
 
-  return getPTOStorageElemByteSize(elementType);
+  return mlir::pto::getPTOStorageElemByteSize(elementType);
 }
 
 [[maybe_unused]] 
-static Type getBufferElementType(Type type) {
-  if (auto ptrType = dyn_cast<pto::PtrType>(type)) {
+inline mlir::Type getBufferElementType(mlir::Type type) {
+  if (auto ptrType = mlir::dyn_cast<mlir::pto::PtrType>(type)) {
     return ptrType.getElementType();
   }
-  if (auto memrefType = dyn_cast<BaseMemRefType>(type)) {
+  if (auto memrefType = mlir::dyn_cast<mlir::BaseMemRefType>(type)) {
     return memrefType.getElementType();
   }
   return {};
 }
 
 [[maybe_unused]] 
-static std::optional<AddressSpace> getBufferAddressSpace(Type type) {
-  if (auto ptrType = dyn_cast<pto::PtrType>(type)) {
+inline std::optional<mlir::pto::AddressSpace> getBufferAddressSpace(mlir::Type type) {
+  if (auto ptrType = mlir::dyn_cast<mlir::pto::PtrType>(type)) {
     return ptrType.getMemorySpace().getAddressSpace();
   }
-  if (auto memrefType = dyn_cast<BaseMemRefType>(type)) {
+  if (auto memrefType = mlir::dyn_cast<mlir::BaseMemRefType>(type)) {
     if (auto space =
-            dyn_cast_or_null<pto::AddressSpaceAttr>(memrefType.getMemorySpace())) {
+            mlir::dyn_cast_or_null<mlir::pto::AddressSpaceAttr>(memrefType.getMemorySpace())) {
       return space.getAddressSpace();
     }
-    if (auto intSpace = dyn_cast_or_null<IntegerAttr>(memrefType.getMemorySpace())) {
-      return static_cast<AddressSpace>(intSpace.getInt());
+    if (auto intSpace = mlir::dyn_cast_or_null<mlir::IntegerAttr>(memrefType.getMemorySpace())) {
+      return static_cast<mlir::pto::AddressSpace>(intSpace.getInt());
     }
   }
   return std::nullopt;
 }
 
 template <typename BridgeLoadOp>
-static LogicalResult verifyCubeBridgeLoadLikeOp(BridgeLoadOp op,
-                                                AddressSpace expectedDstSpace,
-                                                StringRef dstName) {
+static mlir::LogicalResult verifyCubeBridgeLoadLikeOp(BridgeLoadOp op,
+                                                mlir::pto::AddressSpace expectedDstSpace,
+                                                llvm::StringRef dstName) {
   if (!isBufferLike(op.getSource().getType()) ||
       !isBufferLike(op.getDestination().getType())) {
     return op.emitOpError("requires buffer-like source and destination");
   }
 
-  if (getBufferAddressSpace(op.getSource().getType()) != AddressSpace::MAT) {
+  if (getBufferAddressSpace(op.getSource().getType()) != mlir::pto::AddressSpace::MAT) {
     return op.emitOpError("requires MAT source");
   }
   if (getBufferAddressSpace(op.getDestination().getType()) != expectedDstSpace) {
@@ -284,65 +277,65 @@ static LogicalResult verifyCubeBridgeLoadLikeOp(BridgeLoadOp op,
         "requires source and destination element byte widths to match");
   }
 
-  return success();
+  return mlir::success();
 }
 
 [[maybe_unused]] 
-static ParseResult parseRequiredOperandWithComma(
-    OpAsmParser &parser, OpAsmParser::UnresolvedOperand &operand) {
+inline mlir::ParseResult parseRequiredOperandWithComma(
+    mlir::OpAsmParser &parser, mlir::OpAsmParser::UnresolvedOperand &operand) {
   if (parser.parseOperand(operand)) {
-    return failure();
+    return mlir::failure();
   }
   (void)parser.parseOptionalComma();
-  return success();
+  return mlir::success();
 }
 
 [[maybe_unused]] 
 
-static LogicalResult checkNonNegativeConst(Operation *op, Value value,
-                                           StringRef name) {
+inline mlir::LogicalResult checkNonNegativeConst(mlir::Operation *op, mlir::Value value,
+                                           llvm::StringRef name) {
   if (!value) {
-    return success();
+    return mlir::success();
   }
-  APInt intValue;
-  if (matchPattern(value, m_ConstantInt(&intValue)) && intValue.isNegative()) {
+  llvm::APInt intValue;
+  if (matchPattern(value, mlir::m_ConstantInt(&intValue)) && intValue.isNegative()) {
     return op->emitOpError() << name << " must be non-negative";
   }
-  return success();
+  return mlir::success();
 }
 
 [[maybe_unused]] 
-static LogicalResult verifyCubeBridgeLoadStart(Operation *op, Value firstStart,
-                                               StringRef firstName,
-                                               Value secondStart,
-                                               StringRef secondName) {
-  auto checkNonNegativeConst = [&](Value value, StringRef name) -> LogicalResult {
-    APInt intValue;
-    if (matchPattern(value, m_ConstantInt(&intValue)) && intValue.isNegative()) {
+inline mlir::LogicalResult verifyCubeBridgeLoadStart(mlir::Operation *op, mlir::Value firstStart,
+                                               llvm::StringRef firstName,
+                                               mlir::Value secondStart,
+                                               llvm::StringRef secondName) {
+  auto checkNonNegativeConst = [op](mlir::Value value, llvm::StringRef name) -> mlir::LogicalResult {
+    llvm::APInt intValue;
+    if (matchPattern(value, mlir::m_ConstantInt(&intValue)) && intValue.isNegative()) {
       return op->emitOpError() << name << " must be non-negative";
     }
-    return success();
+    return mlir::success();
   };
-  if (failed(checkNonNegativeConst(firstStart, firstName)) ||
-      failed(checkNonNegativeConst(secondStart, secondName))) {
-    return failure();
+  if (mlir::failed(checkNonNegativeConst(firstStart, firstName)) ||
+      mlir::failed(checkNonNegativeConst(secondStart, secondName))) {
+    return mlir::failure();
   }
-  return success();
+  return mlir::success();
 }
 
 template <typename OpTy>
-static LogicalResult verifyCubeBridgeLoadStart(OpTy op) {
+static mlir::LogicalResult verifyCubeBridgeLoadStart(OpTy op) {
   return verifyCubeBridgeLoadStart(op.getOperation(), op.getStartRow(),
                                    "start_row", op.getStartCol(), "start_col");
 }
 
 [[maybe_unused]] 
-static LogicalResult verifyStaticControlRange(Operation *op, Value value,
-                                              StringRef name, int64_t min,
+inline mlir::LogicalResult verifyStaticControlRange(mlir::Operation *op, mlir::Value value,
+                                              llvm::StringRef name, int64_t min,
                                               int64_t max) {
-  APInt intValue;
-  if (!matchPattern(value, m_ConstantInt(&intValue))) {
-    return success();
+  llvm::APInt intValue;
+  if (!matchPattern(value, mlir::m_ConstantInt(&intValue))) {
+    return mlir::success();
 }
   int64_t signedValue = intValue.getSExtValue();
   if (signedValue < min) {
@@ -354,54 +347,54 @@ static LogicalResult verifyStaticControlRange(Operation *op, Value value,
     return op->emitOpError() << name << " must be <= " << max
                              << " to fit the hardware control field";
 }
-  return success();
+  return mlir::success();
 }
 
 
 // Batch1: 跨文件实例化的模板定义(本体必须在头文件)
 template <typename OpTy>
-[[maybe_unused]] static void addStructuredAccStoreAttrs(OperationState &result,
-                                       Builder &builder,
+[[maybe_unused]] static void addStructuredAccStoreAttrs(mlir::OperationState &result,
+                                       mlir::Builder &builder,
                                        const StructuredAccStoreAsmState &state) {
   if (state.mode) {
-    result.addAttribute("mode", AccStoreModeAttr::get(builder.getContext(),
+    result.addAttribute("mode", mlir::pto::AccStoreModeAttr::get(builder.getContext(),
                                                       *state.mode));
   }
   if (state.unitFlag) {
     result.addAttribute("unit_flag",
-                        AccStoreUnitFlagCtrlAttr::get(builder.getContext(),
+                        mlir::pto::AccStoreUnitFlagCtrlAttr::get(builder.getContext(),
                                                       *state.unitFlag));
   }
   if (state.preQuantMode) {
     result.addAttribute("pre_quant_mode",
-                        AccStoreQuantPreModeAttr::get(builder.getContext(),
+                        mlir::pto::AccStoreQuantPreModeAttr::get(builder.getContext(),
                                                       *state.preQuantMode));
   }
   if (state.preReluMode) {
     result.addAttribute("pre_relu_mode",
-                        ReluPreModeAttr::get(builder.getContext(),
+                        mlir::pto::ReluPreModeAttr::get(builder.getContext(),
                                              *state.preReluMode));
   }
   if (state.atomicType) {
     result.addAttribute("atomic_type",
-                        AccStoreAtomicTypeAttr::get(builder.getContext(),
+                        mlir::pto::AccStoreAtomicTypeAttr::get(builder.getContext(),
                                                     *state.atomicType));
   }
   if (state.atomicOp) {
     result.addAttribute("atomic_op",
-                        AccStoreAtomicOpAttr::get(builder.getContext(),
+                        mlir::pto::AccStoreAtomicOpAttr::get(builder.getContext(),
                                                   *state.atomicOp));
   }
   if (state.satMode) {
     result.addAttribute("sat_mode",
-                        AccStoreSatModeAttr::get(builder.getContext(),
+                        mlir::pto::AccStoreSatModeAttr::get(builder.getContext(),
                                                  *state.satMode));
   }
 }
 
 template <typename OpTy>
-[[maybe_unused]] static void setStructuredAccStoreSegmentSizes(OperationState &result,
-                                              ArrayRef<int32_t> segmentSizes) {
+[[maybe_unused]] static void setStructuredAccStoreSegmentSizes(mlir::OperationState &result,
+                                              llvm::ArrayRef<int32_t> segmentSizes) {
   auto &segments = result.getOrAddProperties<typename OpTy::Properties>()
                        .operandSegmentSizes;
   llvm::copy(segmentSizes, segments.begin());
@@ -409,69 +402,69 @@ template <typename OpTy>
 
 template <typename OpTy>
 [[maybe_unused]] static void setCubeBridgeLoadOperandSegmentSizes(
-    OperationState &result, ArrayRef<int32_t> segmentSizes) {
+    mlir::OperationState &result, llvm::ArrayRef<int32_t> segmentSizes) {
   auto &segments = result.getOrAddProperties<typename OpTy::Properties>()
                        .operandSegmentSizes;
   llvm::copy(segmentSizes, segments.begin());
 }
 
 template <typename OpTy>
-[[maybe_unused]] static ParseResult parseMteL1L0OptionalOperandsOp(
-    OpAsmParser &parser, OperationState &result, ArrayRef<StringRef> shapeNames,
-    ArrayRef<StringRef> fullNames, StringRef operandDescription = "operands") {
-  OpAsmParser::UnresolvedOperand source;
-  OpAsmParser::UnresolvedOperand destination;
+[[maybe_unused]] static mlir::ParseResult parseMteL1L0OptionalOperandsOp(
+    mlir::OpAsmParser &parser, mlir::OperationState &result, llvm::ArrayRef<llvm::StringRef> shapeNames,
+    llvm::ArrayRef<llvm::StringRef> fullNames, llvm::StringRef operandDescription = "operands") {
+  mlir::OpAsmParser::UnresolvedOperand source;
+  mlir::OpAsmParser::UnresolvedOperand destination;
   if (parser.parseOperand(source) || parser.parseComma() ||
       parser.parseOperand(destination)) {
-    return failure();
+    return mlir::failure();
   }
-  SmallVector<OpAsmParser::UnresolvedOperand, 6> legacyOperands;
-  SmallVector<CubeBridgeLoadAsmOperand, 10> namedOperands(10);
-  SmallVector<unsigned, 10> namedOperandOrder;
+  llvm::SmallVector<mlir::OpAsmParser::UnresolvedOperand, 6> legacyOperands; // 6:six full positional
+  llvm::SmallVector<CubeBridgeLoadAsmOperand, 10> namedOperands(10); // 10: 数组长度
+  llvm::SmallVector<unsigned, 10> namedOperandOrder;
   bool usesNamedOperands = false;
-  if (failed(parseCubeBridgeOptionalOperands(
+  if (mlir::failed(parseCubeBridgeOptionalOperands(
           parser, shapeNames, fullNames, legacyOperands, namedOperands,
           namedOperandOrder, usesNamedOperands))) {
-    return failure();
+    return mlir::failure();
   }
-  if (!usesNamedOperands && legacyOperands.size() != 4 &&
-      legacyOperands.size() != 6) {
+  if (!usesNamedOperands && legacyOperands.size() != mlir::pto::kValue4 &&
+      legacyOperands.size() != mlir::pto::kValue6) {
     return parser.emitError(
                parser.getCurrentLocation(),
                "expects either four shape-derived or six full positional ")
            << operandDescription;
   }
   if (parser.parseOptionalAttrDict(result.attributes) || parser.parseColon()) {
-    return failure();
+    return mlir::failure();
   }
-  Type sourceType;
-  Type destinationType;
+  mlir::Type sourceType;
+  mlir::Type destinationType;
   if (parser.parseType(sourceType) || parser.parseComma() ||
       parser.parseType(destinationType)) {
-    return failure();
+    return mlir::failure();
   }
-  SmallVector<Type, mlir::pto::kValue6> legacyTypes;
-  if (failed(parseCubeBridgeOptionalTypes(parser, usesNamedOperands,
+  llvm::SmallVector<mlir::Type, mlir::pto::kValue6> legacyTypes;
+  if (mlir::failed(parseCubeBridgeOptionalTypes(parser, usesNamedOperands,
                                           namedOperandOrder, namedOperands,
                                           legacyOperands, legacyTypes))) {
-    return failure();
+    return mlir::failure();
   }
-  SmallVector<int32_t, 12> segmentSizes(12, 0);
+  llvm::SmallVector<int32_t, 12> segmentSizes(12, 0); // 12:数组长度
   segmentSizes[0] = 1;
   segmentSizes[1] = 1;
-  if (failed(resolveCubeBridgeOperands(
+  if (mlir::failed(resolveCubeBridgeOperands(
           parser, result, usesNamedOperands, source, sourceType,
           destination, destinationType, namedOperands, legacyOperands,
           legacyTypes, segmentSizes))) {
-    return failure();
+    return mlir::failure();
   }
   setCubeBridgeLoadOperandSegmentSizes<OpTy>(result, segmentSizes);
-  return success();
+  return mlir::success();
 }
 
 // Batch1: 跨文件实例化的模板定义 II
 template <typename CopyOp>
-LogicalResult verifyCopyElemByteWidths(CopyOp op) {
+mlir::LogicalResult verifyCopyElemByteWidths(CopyOp op) {
   int64_t sourceElemBytes = getBufferElementByteSize(op.getSource().getType());
   int64_t destinationElemBytes =
       getBufferElementByteSize(op.getDestination().getType());
@@ -482,12 +475,12 @@ LogicalResult verifyCopyElemByteWidths(CopyOp op) {
     return op.emitOpError("requires source and destination element byte widths to match");
   }
 
-  return success();
+  return mlir::success();
 }
 
 
 template <typename CopyOp>
-LogicalResult verifyCopyGmToUbufOp(CopyOp op, bool expectSourceGM) {
+mlir::LogicalResult verifyCopyGmToUbufOp(CopyOp op, bool expectSourceGM) {
   if (!isBufferLike(op.getSource().getType()) ||
       !isBufferLike(op.getDestination().getType())) {
     return op.emitOpError(
@@ -496,13 +489,13 @@ LogicalResult verifyCopyGmToUbufOp(CopyOp op, bool expectSourceGM) {
 
   MemoryRole sourceRole = classifyMemoryRole(op.getSource().getType());
   MemoryRole destinationRole = classifyMemoryRole(op.getDestination().getType());
-  bool directionMatches = true;
+  bool directionMatches;
   if (expectSourceGM) {
-    directionMatches &= sourceRole != MemoryRole::UB;
-    directionMatches &= destinationRole != MemoryRole::GM;
+    directionMatches =
+        sourceRole != MemoryRole::UB && destinationRole != MemoryRole::GM;
   } else {
-    directionMatches &= sourceRole != MemoryRole::GM;
-    directionMatches &= destinationRole != MemoryRole::UB;
+    directionMatches =
+        sourceRole != MemoryRole::GM && destinationRole != MemoryRole::UB;
   }
 
   if (!directionMatches) {
@@ -516,7 +509,7 @@ LogicalResult verifyCopyGmToUbufOp(CopyOp op, bool expectSourceGM) {
 }
 
 template <typename CopyOp>
-LogicalResult verifyCopyCbufToUbufLikeOp(CopyOp op) {
+mlir::LogicalResult verifyCopyCbufToUbufLikeOp(CopyOp op) {
   if (!isBufferLike(op.getSource().getType()) ||
       !isBufferLike(op.getDestination().getType())) {
     return op.emitOpError(

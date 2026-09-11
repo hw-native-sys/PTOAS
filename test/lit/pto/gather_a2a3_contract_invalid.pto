@@ -9,11 +9,16 @@
 // RUN: split-file %s %t
 // RUN: not ptoas --pto-arch=a3 %t/index_shape.pto 2>&1 | FileCheck %s --check-prefix=INDEX-SHAPE
 // RUN: not ptoas --pto-arch=a3 %t/gatherb_layout.pto 2>&1 | FileCheck %s --check-prefix=GATHERB-LAYOUT
-// RUN: not ptoas --pto-arch=a3 %t/gatherb_i8.pto 2>&1 | FileCheck %s --check-prefix=GATHERB-I8
+// RUN: not ptoas --pto-arch=a3 %t/gatherb_i64.pto 2>&1 | FileCheck %s --check-prefix=GATHERB-I64
+// RUN: not ptoas --pto-arch=a2 %t/gatherb_i64.pto 2>&1 | FileCheck %s --check-prefix=GATHERB-I64
+// RUN: not ptoas --pto-arch=a3 %t/gatherb_i8_offset_cols.pto 2>&1 | FileCheck %s --check-prefix=GATHERB-OFFSET-COLS
+// RUN: not ptoas --pto-arch=a3 %t/gatherb_i8_offset_rows.pto 2>&1 | FileCheck %s --check-prefix=GATHERB-OFFSET-ROWS
 
+// GATHERB-OFFSET-COLS: expects offsets valid cols to be compact 32B block address count padded to 8 entries; expected 8, got 16
+// GATHERB-OFFSET-ROWS: expects offsets valid rows to match dst valid rows
 // INDEX-SHAPE: expects dst and indices to have the same valid_shape
 // GATHERB-LAYOUT: expects dst and offsets to use row-major layout
-// GATHERB-I8: expects A2/A3 dst element size to be 2 or 4 bytes
+// GATHERB-I64: expects A2/A3 dst element size to be 1, 2, or 4 bytes
 
 //--- index_shape.pto
 module {
@@ -38,13 +43,37 @@ module {
   }
 }
 
-//--- gatherb_i8.pto
+//--- gatherb_i64.pto
 module {
-  func.func @gatherb_i8() {
-    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i8, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+  func.func @gatherb_i64() {
+    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i64, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     %off = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
-    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i8, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
-    pto.tgatherb ins(%src, %off : !pto.tile_buf<loc=vec, dtype=i8, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=i8, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i64, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tgatherb ins(%src, %off : !pto.tile_buf<loc=vec, dtype=i64, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=i64, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+//--- gatherb_i8_offset_cols.pto
+module {
+  func.func private @gatherb_i8_offset_cols(
+      %src: !pto.tile_buf<vec, 4x256xi8>,
+      %off: !pto.tile_buf<vec, 4x16xui32>,
+      %dst: !pto.tile_buf<vec, 4x256xi8>) {
+    pto.tgatherb ins(%src, %off : !pto.tile_buf<vec, 4x256xi8>, !pto.tile_buf<vec, 4x16xui32>)
+                outs(%dst : !pto.tile_buf<vec, 4x256xi8>)
+    return
+  }
+}
+
+//--- gatherb_i8_offset_rows.pto
+module {
+  func.func private @gatherb_i8_offset_rows(
+      %src: !pto.tile_buf<vec, 4x256xi8>,
+      %off: !pto.tile_buf<vec, 2x8xui32>,
+      %dst: !pto.tile_buf<vec, 4x256xi8>) {
+    pto.tgatherb ins(%src, %off : !pto.tile_buf<vec, 4x256xi8>, !pto.tile_buf<vec, 2x8xui32>)
+                outs(%dst : !pto.tile_buf<vec, 4x256xi8>)
     return
   }
 }

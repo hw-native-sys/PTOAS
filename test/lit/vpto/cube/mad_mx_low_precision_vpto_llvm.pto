@@ -8,8 +8,7 @@
 
 // Guard: VPTO cube lowering must accept MX fp4/f8 low-precision payloads and
 // select the expected GM/L1/L0 and MMAD.MX intrinsics.
-// RUN: ( mkdir -p %T && ptoas --pto-arch=a5 --pto-backend=vpto --cann-output-version=9.0.0-beta.1 %s -o %t.beta1 --mlir-print-ir-after=convert-func-to-llvm 2>&1 || true ) | FileCheck %s
-// RUN: ( mkdir -p %T && ptoas --pto-arch=a5 --pto-backend=vpto --cann-output-version=9.0.0 %s -o %t.cann900 --mlir-print-ir-after=convert-func-to-llvm 2>&1 || true ) | FileCheck %s
+// RUN: ( mkdir -p %T && ptoas --pto-arch=a5 --pto-backend=vpto %s -o %t.cann900 --mlir-print-ir-after=convert-func-to-llvm 2>&1 || true ) | FileCheck %s
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
   func.func @mad_mx_low_precision_vpto_llvm(

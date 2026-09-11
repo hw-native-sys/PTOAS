@@ -9,7 +9,7 @@
 // Regression test for issue #220: direct VPTO `pto.vrelu` should accept both
 // signless and signed i32 vectors and lower them to the same HIVM callee.
 //
-// RUN: ptoas --cann-output-version=9.0.0 --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @vrelu_signless_i32_store(%value: !pto.vreg<64xi32>, %dst: !pto.ptr<i32, ub>) attributes {pto.kernel} {

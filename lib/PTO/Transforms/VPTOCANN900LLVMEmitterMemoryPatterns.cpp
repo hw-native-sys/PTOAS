@@ -136,7 +136,7 @@ public:
     if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(), resultTypes))) {
       return rewriter.notifyMatchFailure(op, "failed to convert predicate-pair-reorder result types");
     }
-    if (resultTypes.size() != 2 || resultTypes[0] != resultTypes[1]) {
+    if (resultTypes.size() != kPredicatePairResultCount || resultTypes[0] != resultTypes[1]) {
       return rewriter.notifyMatchFailure(op, "unexpected predicate-pair-reorder converted result types");
     }
 
@@ -188,13 +188,14 @@ public:
     SmallVector<Value> callArgs;
     callArgs.append(adaptor.getOperands().begin(), adaptor.getOperands().end());
     if constexpr (isScalarCompare) {
-      if (callArgs.size() != 3 || !callArgs[0] || !callArgs[1] || !callArgs[2] || callArgs[2].getType() != maskType) {
+      if (callArgs.size() != kVcmpsCallArgCount || !callArgs[0] || !callArgs[1] || !callArgs[2] ||
+          callArgs[2].getType() != maskType) {
         return rewriter.notifyMatchFailure(op, "unexpected converted scalar-compare operand types");
       }
       callArgs[1] = normalizeByteScalarOperandForCANN900VectorCall(
           rewriter, op.getLoc(), callArgs[1], cast<pto::VRegType>(op.getSrc().getType()).getElementType());
     } else {
-      if (callArgs.size() != 3 || !callArgs[0] || !callArgs[1] || !callArgs[2] ||
+      if (callArgs.size() != kVcmpsCallArgCount || !callArgs[0] || !callArgs[1] || !callArgs[2] ||
           callArgs[0].getType() != callArgs[1].getType() || callArgs[2].getType() != maskType) {
         return rewriter.notifyMatchFailure(op, "unexpected converted compare operand types");
       }
@@ -253,7 +254,7 @@ public:
 
     Value loop = adaptor.getLoop();
     Value bound = adaptor.getBound();
-    if (!loop || !bound || !loop.getType().isInteger(16) || !bound.getType().isInteger(32)) {
+    if (!loop || !bound || !loop.getType().isInteger(kBits16) || !bound.getType().isInteger(kBits32)) {
       return rewriter.notifyMatchFailure(op, "unexpected converted pltm operand types");
     }
 
@@ -370,7 +371,7 @@ static SmallVector<Value> getVldsx2Replacements(pto::Vldsx2Op op, const VPTOLowe
   Value high = castFromPayloadABI(op.getLoc(), call.getResult(1), op.getHigh().getType(), resultTypes[1], rewriter);
   SmallVector<Value> replacements{low, high};
   if (op.getUpdatedBase()) {
-    replacements.push_back(offset.updatedBase ? offset.updatedBase : call.getResult(2));
+    replacements.push_back(offset.updatedBase ? offset.updatedBase : call.getResult(kUpdatedBaseResultIndex));
   }
   return replacements;
 }
@@ -401,7 +402,7 @@ public:
     }
 
     if (usePostIntrinsic) {
-      if (resultTypes.size() != 2 || resultTypes[1] != adaptor.getSource().getType()) {
+      if (resultTypes.size() != kPostUpdateResultCount || resultTypes[1] != adaptor.getSource().getType()) {
         return rewriter.notifyMatchFailure(op, "unsupported vlds post-update results");
       }
     } else if (resultTypes.size() != 1) {
@@ -655,7 +656,8 @@ public:
         castFromPayloadABI(op.getLoc(), call.getResult(0), op.getResult().getType(), resultTypes[0], rewriter);
     SmallVector<Value> replacements{loaded, call.getResult(1)};
     if (usePostIntrinsic) {
-      replacements.push_back(callOperands->explicitUpdatedBase ? callOperands->explicitUpdatedBase : call.getResult(2));
+      replacements.push_back(callOperands->explicitUpdatedBase ? callOperands->explicitUpdatedBase
+                                                              : call.getResult(kUpdatedBaseResultIndex));
     }
     rewriter.replaceOp(op, replacements);
     return success();
@@ -703,7 +705,7 @@ public:
       return rewriter.notifyMatchFailure(op, "unsupported spr store target");
     }
     auto destType = dyn_cast<LLVM::LLVMPointerType>(adaptor.getDestination().getType());
-    if (!destType || !adaptor.getOffset().getType().isInteger(32)) {
+    if (!destType || !adaptor.getOffset().getType().isInteger(kBits32)) {
       return rewriter.notifyMatchFailure(op, "expected converted spr store operands");
     }
 
@@ -935,7 +937,7 @@ public:
     if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(), resultTypes))) {
       return rewriter.notifyMatchFailure(op, "failed to convert pstu result types");
     }
-    if (resultTypes.size() != 2) {
+    if (resultTypes.size() != kPstuResultCount) {
       return rewriter.notifyMatchFailure(op, "unexpected converted pstu result arity");
     }
 

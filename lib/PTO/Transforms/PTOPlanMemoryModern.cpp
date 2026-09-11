@@ -995,6 +995,124 @@ struct PlannerAnalysis {
     }
   }
 
+  // Register a freshly-seen root-producing alloc (alloc_tile without a
+  // planned address, or alloc_multi_tile) and mark its lifetime point.
+  void registerRootAlloc(Operation *op, Value result, unsigned index) {
+    addRoot(result, op);
+    if (failed) {
+      return;
+    }
+    auto found = rootIndexByValue.find(result);
+    if (found != rootIndexByValue.end()) {
+      roots[found->second].allocIndex = index;
+      roots[found->second].freeIndex = index;
+    }
+  }
+
+  // Root aliasing: propagate roots through value-forwarding ops.
+  void recordRootAliases(Operation *op) {
+    if (auto multiGet = dyn_cast<pto::MultiTileGetOp>(op)) {
+      setRoots(multiGet.getResult(), getRoots(multiGet.getSource()));
+      propagateSplitTpopDerived(multiGet.getResult(),
+                                ValueRange{multiGet.getSource()});
+    } else if (auto select = dyn_cast<arith::SelectOp>(op)) {
+      setRoots(select.getResult(),
+               unionRoots(getRoots(select.getTrueValue()),
+                          getRoots(select.getFalseValue())));
+      propagateSplitTpopDerived(select.getResult(),
+                                ValueRange{select.getTrueValue(),
+                                           select.getFalseValue()});
+    } else if (auto subview = dyn_cast<pto::SubViewOp>(op)) {
+      setRoots(subview.getResult(), getRoots(subview.getSource()));
+      propagateSplitTpopDerived(subview.getResult(),
+                                ValueRange{subview.getSource()});
+    } else if (auto bitcast = dyn_cast<pto::BitcastOp>(op)) {
+      setRoots(bitcast.getResult(), getRoots(bitcast.getSrc()));
+      propagateSplitTpopDerived(bitcast.getResult(),
+                                ValueRange{bitcast.getSrc()});
+    } else if (auto reshape = dyn_cast<pto::TReshapeOp>(op)) {
+      setRoots(reshape.getResult(), getRoots(reshape.getSrc()));
+      propagateSplitTpopDerived(reshape.getResult(),
+                                ValueRange{reshape.getSrc()});
+    } else if (auto branchOp = dyn_cast<RegionBranchOpInterface>(op)) {
+      seedRegionBranchEntryAliases(branchOp);
+    }
+  }
+
+  // Reads/writes: mark every non-DPS-init operand as a use; DPS inits are
+  // marked read when the op has a read effect and always marked written.
+  void recordAccesses(Operation *op, unsigned index, ValueRange dpsInits) {
+    for (Value operand : op->getOperands()) {
+      if (llvm::is_contained(dpsInits, operand)) {
+        continue;
+      }
+      markUse(operand, index);
+    }
+    for (Value init : dpsInits) {
+      bool readsOldValue = hasReadEffectOnValue(op, init);
+      if (readsOldValue) {
+        markUse(init, index);
+      }
+      markWrite(init, index, /*pureOverwrite=*/!readsOldValue);
+    }
+  }
+
+  // Recurse into nested regions, keeping region-branch alias bookkeeping in
+  // sync.
+  void walkNestedRegions(Operation *op) {
+    if (auto branchOp = dyn_cast<RegionBranchOpInterface>(op)) {
+      for (Region &nested : op->getRegions()) {
+        walkRegion(nested);
+        if (failed) {
+          return;
+        }
+        finalizeRegionBranchAliasesFromRegion(branchOp, nested);
+      }
+    } else {
+      for (Region &nested : op->getRegions()) {
+        walkRegion(nested);
+        if (failed) {
+          return;
+        }
+      }
+    }
+  }
+
+  // Post-visit bookkeeping for structured control flow and fact recording.
+  void finalizeOperationFacts(Operation *op, unsigned index,
+                              ValueRange dpsInits) {
+    if (auto branchOp = dyn_cast<RegionBranchOpInterface>(op)) {
+      finalizeRegionBranchAliases(branchOp);
+    }
+
+    if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
+      if (ifOp.getNumResults() != 0) {
+        recordIfBranchExclusivity(ifOp);
+      }
+    } else if (auto forOp = dyn_cast<scf::ForOp>(op)) {
+      unsigned loopEndIndex =
+          linearOps.empty() ? index : linearOps.size() - 1;
+      finalizeForLoopLiveness(forOp, index, loopEndIndex);
+    } else if (auto whileOp = dyn_cast<scf::WhileOp>(op)) {
+      unsigned loopEndIndex =
+          linearOps.empty() ? index : linearOps.size() - 1;
+      finalizeWhileLoopLiveness(whileOp, index, loopEndIndex);
+    } else if (auto fusionRegion = dyn_cast<pto::FusionRegionOp>(op)) {
+      auto yieldOp = cast<pto::YieldOp>(
+          fusionRegion.getBody().front().getTerminator());
+      for (auto [result, yielded] :
+           llvm::zip(fusionRegion.getResults(), yieldOp.getOperands())) {
+        setRoots(result, getRoots(yielded));
+      }
+    }
+
+    recordSplitTpopDerivedValue(op);
+    recordDpsTargetHazardFacts(op, index);
+    recordDpsInplaceConflicts(op);
+    recordSemanticNoAliasConflicts(op);
+    recordOpAccess(op, dpsInits);
+  }
+
   void walkRegion(Region &region) {
     for (Block &block : region) {
       for (Operation &opRef : block) {
@@ -1008,119 +1126,25 @@ struct PlannerAnalysis {
             if (isA5IgnoredTmpAlloc(allocTile)) {
               continue;
             }
-            addRoot(allocTile.getResult(), op);
-            if (failed) {
-              return;
-            }
-            auto found = rootIndexByValue.find(allocTile.getResult());
-            if (found != rootIndexByValue.end()) {
-              roots[found->second].allocIndex = index;
-              roots[found->second].freeIndex = index;
-            }
+            registerRootAlloc(op, allocTile.getResult(), index);
           }
         } else if (auto allocMulti = dyn_cast<pto::AllocMultiTileOp>(op)) {
           if (!allocMulti.getAddr()) {
-            addRoot(allocMulti.getResult(), op);
-            if (failed) {
-              return;
-            }
-            auto found = rootIndexByValue.find(allocMulti.getResult());
-            if (found != rootIndexByValue.end()) {
-              roots[found->second].allocIndex = index;
-              roots[found->second].freeIndex = index;
-            }
+            registerRootAlloc(op, allocMulti.getResult(), index);
           }
         }
 
-        if (auto multiGet = dyn_cast<pto::MultiTileGetOp>(op)) {
-          setRoots(multiGet.getResult(), getRoots(multiGet.getSource()));
-          propagateSplitTpopDerived(multiGet.getResult(),
-                                    ValueRange{multiGet.getSource()});
-        } else if (auto select = dyn_cast<arith::SelectOp>(op)) {
-          setRoots(select.getResult(),
-                   unionRoots(getRoots(select.getTrueValue()),
-                              getRoots(select.getFalseValue())));
-          propagateSplitTpopDerived(select.getResult(),
-                                    ValueRange{select.getTrueValue(),
-                                               select.getFalseValue()});
-        } else if (auto subview = dyn_cast<pto::SubViewOp>(op)) {
-          setRoots(subview.getResult(), getRoots(subview.getSource()));
-          propagateSplitTpopDerived(subview.getResult(),
-                                    ValueRange{subview.getSource()});
-        } else if (auto bitcast = dyn_cast<pto::BitcastOp>(op)) {
-          setRoots(bitcast.getResult(), getRoots(bitcast.getSrc()));
-          propagateSplitTpopDerived(bitcast.getResult(),
-                                    ValueRange{bitcast.getSrc()});
-        } else if (auto reshape = dyn_cast<pto::TReshapeOp>(op)) {
-          setRoots(reshape.getResult(), getRoots(reshape.getSrc()));
-          propagateSplitTpopDerived(reshape.getResult(),
-                                    ValueRange{reshape.getSrc()});
-        } else if (auto branchOp = dyn_cast<RegionBranchOpInterface>(op)) {
-          seedRegionBranchEntryAliases(branchOp);
-        }
+        recordRootAliases(op);
 
         ValueRange dpsInits = getDpsInits(op);
-        for (Value operand : op->getOperands()) {
-          if (llvm::is_contained(dpsInits, operand)) {
-            continue;
-          }
-          markUse(operand, index);
-        }
-        for (Value init : dpsInits) {
-          bool readsOldValue = hasReadEffectOnValue(op, init);
-          if (readsOldValue) {
-            markUse(init, index);
-          }
-          markWrite(init, index, /*pureOverwrite=*/!readsOldValue);
+        recordAccesses(op, index, dpsInits);
+
+        walkNestedRegions(op);
+        if (failed) {
+          return;
         }
 
-        if (auto branchOp = dyn_cast<RegionBranchOpInterface>(op)) {
-          for (Region &nested : op->getRegions()) {
-            walkRegion(nested);
-            if (failed) {
-              return;
-            }
-            finalizeRegionBranchAliasesFromRegion(branchOp, nested);
-          }
-        } else {
-          for (Region &nested : op->getRegions()) {
-            walkRegion(nested);
-            if (failed) {
-              return;
-            }
-          }
-        }
-
-        if (auto branchOp = dyn_cast<RegionBranchOpInterface>(op)) {
-          finalizeRegionBranchAliases(branchOp);
-        }
-
-        if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
-          if (ifOp.getNumResults() != 0) {
-            recordIfBranchExclusivity(ifOp);
-          }
-        } else if (auto forOp = dyn_cast<scf::ForOp>(op)) {
-          unsigned loopEndIndex =
-              linearOps.empty() ? index : linearOps.size() - 1;
-          finalizeForLoopLiveness(forOp, index, loopEndIndex);
-        } else if (auto whileOp = dyn_cast<scf::WhileOp>(op)) {
-          unsigned loopEndIndex =
-              linearOps.empty() ? index : linearOps.size() - 1;
-          finalizeWhileLoopLiveness(whileOp, index, loopEndIndex);
-        } else if (auto fusionRegion = dyn_cast<pto::FusionRegionOp>(op)) {
-          auto yieldOp = cast<pto::YieldOp>(
-              fusionRegion.getBody().front().getTerminator());
-          for (auto [result, yielded] :
-               llvm::zip(fusionRegion.getResults(), yieldOp.getOperands())) {
-            setRoots(result, getRoots(yielded));
-          }
-        }
-
-        recordSplitTpopDerivedValue(op);
-        recordDpsTargetHazardFacts(op, index);
-        recordDpsInplaceConflicts(op);
-        recordSemanticNoAliasConflicts(op);
-        recordOpAccess(op, dpsInits);
+        finalizeOperationFacts(op, index, dpsInits);
       }
     }
   }
@@ -1384,6 +1408,46 @@ static uint64_t getProjectedPackedBytes(ArrayRef<ReuseGroup> groups,
   return cursor;
 }
 
+// Whether the best reuse group should be preferred over a fresh group.
+static bool preferReuseOverFresh(RootInfo &info, const MemSpec &spec,
+                                 SmallVectorImpl<ReuseGroup> &groups,
+                                 bool bestFits, uint64_t bestCost,
+                                 uint64_t bestProjectedBytes,
+                                 unsigned bestOrder) {
+  uint64_t freshProjectedBytes = getProjectedPackedBytes(groups, info,
+                                                         std::nullopt);
+  bool freshFits = freshProjectedBytes <= spec.capacityBytes;
+  uint64_t freshSlack =
+      freshFits ? spec.capacityBytes - freshProjectedBytes : 0;
+  uint64_t pressureReserve =
+      std::max(info.totalBytes, info.alignmentBytes);
+
+  // The cost model is a performance hint, not a correctness gate. When local
+  // memory is already tight, do not let a fresh address outrank a legal reuse
+  // group; future roots may still need the remaining tail bytes.
+  if (bestFits && freshFits && freshSlack < pressureReserve) {
+    return true;
+  }
+
+  // Fresh groups are not free: cost 1 lets true zero-cost reuse keep the old
+  // compact layout, while still avoiding positive-cost PIPE/MTE co-location
+  // when local capacity is available.
+  uint64_t freshCost = groups.empty() ? 0 : 1;
+  unsigned freshOrder = groups.size();
+
+  auto isBetter = [](bool lhsFits, uint64_t lhsCost, uint64_t lhsBytes,
+                     unsigned lhsOrder, bool rhsFits, uint64_t rhsCost,
+                     uint64_t rhsBytes, unsigned rhsOrder) {
+    if (lhsFits != rhsFits) {
+      return lhsFits;
+    }
+    return std::tie(lhsCost, lhsBytes, lhsOrder) <
+           std::tie(rhsCost, rhsBytes, rhsOrder);
+  };
+  return !isBetter(freshFits, freshCost, freshProjectedBytes, freshOrder,
+                   bestFits, bestCost, bestProjectedBytes, bestOrder);
+}
+
 static ReuseGroup *chooseReuseGroupByCost(
     RootInfo &info, SmallVectorImpl<ReuseGroup> &groups,
     const PlannerAnalysis &analysis, const MemSpec &spec) {
@@ -1415,43 +1479,14 @@ static ReuseGroup *chooseReuseGroupByCost(
     }
   }
 
-  uint64_t freshProjectedBytes = getProjectedPackedBytes(groups, info,
-                                                         std::nullopt);
-  bool freshFits = freshProjectedBytes <= spec.capacityBytes;
-  uint64_t freshSlack =
-      freshFits ? spec.capacityBytes - freshProjectedBytes : 0;
-  uint64_t pressureReserve =
-      std::max(info.totalBytes, info.alignmentBytes);
-  // Fresh groups are not free: cost 1 lets true zero-cost reuse keep the old
-  // compact layout, while still avoiding positive-cost PIPE/MTE co-location
-  // when local capacity is available.
-  uint64_t freshCost = groups.empty() ? 0 : 1;
-  unsigned freshOrder = groups.size();
   if (!bestGroup) {
     return nullptr;
   }
-
-  // The cost model is a performance hint, not a correctness gate. When local
-  // memory is already tight, do not let a fresh address outrank a legal reuse
-  // group; future roots may still need the remaining tail bytes.
-  if (bestFits && freshFits && freshSlack < pressureReserve) {
+  if (preferReuseOverFresh(info, spec, groups, bestFits, bestCost,
+                           bestProjectedBytes, bestOrder)) {
     return bestGroup;
   }
-
-  auto isBetter = [](bool lhsFits, uint64_t lhsCost, uint64_t lhsBytes,
-                     unsigned lhsOrder, bool rhsFits, uint64_t rhsCost,
-                     uint64_t rhsBytes, unsigned rhsOrder) {
-    if (lhsFits != rhsFits) {
-      return lhsFits;
-    }
-    return std::tie(lhsCost, lhsBytes, lhsOrder) <
-           std::tie(rhsCost, rhsBytes, rhsOrder);
-  };
-  if (isBetter(freshFits, freshCost, freshProjectedBytes, freshOrder, bestFits,
-               bestCost, bestProjectedBytes, bestOrder)) {
-    return nullptr;
-  }
-  return bestGroup;
+  return nullptr;
 }
 
 static SmallVector<uint64_t> buildSlotOffsets(uint64_t base, uint64_t slotBytes,
@@ -1658,6 +1693,149 @@ static LogicalResult materializePlannedOffsets(
 
 } // namespace
 
+// Assign every root in `roots` to a reuse group (creating fresh groups as
+// needed) and lay the groups out consecutively. Returns the total bytes
+// required for the space.
+static uint64_t assignReuseGroupsAndLayout(
+    SmallVectorImpl<RootInfo *> &roots, AddressSpace space,
+    const PlannerAnalysis &analysis, const MemSpec &spec,
+    SmallVectorImpl<ReuseGroup> &groups) {
+  for (RootInfo *info : roots) {
+    ReuseGroup *chosen = chooseReuseGroupByCost(*info, groups, analysis, spec);
+    if (!chosen) {
+      ReuseGroup group;
+      group.space = space;
+      group.alignmentBytes = info->alignmentBytes;
+      groups.push_back(std::move(group));
+      chosen = &groups.back();
+    }
+
+    chosen->members.push_back(info);
+    chosen->sizeBytes = std::max(chosen->sizeBytes, info->totalBytes);
+    chosen->alignmentBytes =
+        std::max(chosen->alignmentBytes, info->alignmentBytes);
+  }
+
+  uint64_t scopeRequiredBytes = 0;
+  uint64_t cursor = 0;
+  for (ReuseGroup &group : groups) {
+    cursor = alignUp(cursor, group.alignmentBytes);
+    group.offsetBytes = cursor;
+    if (group.offsetBytes + group.sizeBytes > spec.capacityBytes) {
+      scopeRequiredBytes = group.offsetBytes + group.sizeBytes;
+      break;
+    }
+
+    for (RootInfo *member : group.members) {
+      member->offsets = buildSlotOffsets(group.offsetBytes, member->slotBytes,
+                                         member->slotCount);
+    }
+    scopeRequiredBytes =
+        std::max(scopeRequiredBytes, group.offsetBytes + group.sizeBytes);
+    cursor = group.offsetBytes + group.sizeBytes;
+  }
+  return scopeRequiredBytes;
+}
+
+// Plan all roots of one address space into `buffer2Offsets`. Fails (with a
+// diagnostic) when the space overflows its capacity.
+static LogicalResult planOneAddressSpace(
+    func::FuncOp func, AddressSpace space, SmallVectorImpl<RootInfo *> &roots,
+    const PlannerAnalysis &analysis, bool orderBySize,
+    DenseMap<Value, SmallVector<uint64_t>> &buffer2Offsets) {
+  MemSpec spec = getMemSpec(getTargetArch(func), space);
+
+  bool sizeFirstForSpace = orderBySize && !isCubeLocalSpace(space);
+  llvm::stable_sort(roots, [&](const RootInfo *lhs, const RootInfo *rhs) {
+    if (sizeFirstForSpace && lhs->totalBytes != rhs->totalBytes) {
+      return lhs->totalBytes > rhs->totalBytes;
+    }
+    if (lhs->allocIndex != rhs->allocIndex) {
+      return lhs->allocIndex < rhs->allocIndex;
+    }
+    return lhs->stableOrder < rhs->stableOrder;
+  });
+
+  SmallVector<ReuseGroup> groups;
+  uint64_t scopeRequiredBytes =
+      assignReuseGroupsAndLayout(roots, space, analysis, spec, groups);
+
+  if (scopeRequiredBytes > spec.capacityBytes) {
+    func.emitError() << stringifyEnum(space) << " overflow, requires "
+                     << (scopeRequiredBytes * mlir::pto::kValue8) << " bits while "
+                     << (spec.capacityBytes * mlir::pto::kValue8) << " bits available";
+    return failure();
+  }
+
+  for (RootInfo *info : roots) {
+    buffer2Offsets[info->root] = info->offsets;
+  }
+  return success();
+}
+
+// Reserve base addresses for every reserve_buffer, placing them in free
+// holes left by the planned roots. Sets `failedFlag` when a reserve cannot
+// be satisfied.
+static void planReserveBuffers(func::FuncOp func,
+                               const SmallVectorImpl<RootInfo> &roots,
+                               bool &failedFlag) {
+  DenseMap<AddressSpace, SmallVector<std::pair<uint64_t, uint64_t>>>
+      occupiedBySpace;
+  for (const RootInfo &info : roots) {
+    if (info.offsets.empty()) {
+      continue;
+    }
+    occupiedBySpace[info.space].push_back(
+        {info.offsets.front(), info.offsets.front() + info.totalBytes});
+  }
+
+  MLIRContext *ctx = func.getContext();
+  PTOArch arch = getTargetArch(func);
+  func.walk([&](pto::ReserveBufferOp reserveOp) -> WalkResult {
+    if (mlir::failed(validateReserveBufferForPlanMemory(reserveOp, arch))) {
+      failedFlag = true;
+      return WalkResult::interrupt();
+    }
+
+    AddressSpace space = reserveOp.getLocation().getAddressSpace();
+    MemSpec spec = getMemSpec(arch, space);
+    auto baseOr =
+        planReserveBufferBase(reserveOp, spec, occupiedBySpace[space]);
+    if (mlir::failed(baseOr)) {
+      reserveOp.emitError("failed to reserve a local memory hole for "
+                          "reserve_buffer");
+      failedFlag = true;
+      return WalkResult::interrupt();
+    }
+
+    reserveOp->setAttr("base", IntegerAttr::get(IntegerType::get(ctx, mlir::pto::kValue32),
+                                                static_cast<int32_t>(*baseOr)));
+    return WalkResult::advance();
+  });
+}
+
+// Reject any live alloc_tile that still has no planned address.
+static LogicalResult verifyNoUnplannedAllocTile(func::FuncOp func) {
+  bool hasUnplannedAllocTile = false;
+  func.walk([&](pto::AllocTileOp op) {
+    if (op.getAddr()) {
+      return;
+    }
+    if (op->use_empty()) {
+      return;
+    }
+    if (isA5IgnoredTmpAlloc(op)) {
+      return;
+    }
+    op.emitError("PTOPlanMemory failed to assign an address to pto.alloc_tile");
+    hasUnplannedAllocTile = true;
+  });
+  if (hasUnplannedAllocTile) {
+    return failure();
+  }
+  return success();
+}
+
 static LogicalResult runModernPlanMemory(func::FuncOp func,
                                          llvm::StringRef memMode,
                                          bool orderBySize) {
@@ -1680,103 +1858,13 @@ static LogicalResult runModernPlanMemory(func::FuncOp func,
   }
 
   for (auto &entry : rootsBySpace) {
-    AddressSpace space = entry.first;
-    SmallVector<RootInfo *> &roots = entry.second;
-    MemSpec spec = getMemSpec(getTargetArch(func), space);
-
-    bool sizeFirstForSpace = orderBySize && !isCubeLocalSpace(space);
-    llvm::stable_sort(roots, [&](const RootInfo *lhs, const RootInfo *rhs) {
-      if (sizeFirstForSpace && lhs->totalBytes != rhs->totalBytes) {
-        return lhs->totalBytes > rhs->totalBytes;
-      }
-      if (lhs->allocIndex != rhs->allocIndex) {
-        return lhs->allocIndex < rhs->allocIndex;
-      }
-      return lhs->stableOrder < rhs->stableOrder;
-    });
-
-    SmallVector<ReuseGroup> groups;
-    uint64_t scopeRequiredBytes = 0;
-    for (RootInfo *info : roots) {
-      ReuseGroup *chosen =
-          chooseReuseGroupByCost(*info, groups, analysis, spec);
-      if (!chosen) {
-        ReuseGroup group;
-        group.space = space;
-        group.alignmentBytes = info->alignmentBytes;
-        groups.push_back(std::move(group));
-        chosen = &groups.back();
-      }
-
-      chosen->members.push_back(info);
-      chosen->sizeBytes = std::max(chosen->sizeBytes, info->totalBytes);
-      chosen->alignmentBytes =
-          std::max(chosen->alignmentBytes, info->alignmentBytes);
-    }
-
-    uint64_t cursor = 0;
-    for (ReuseGroup &group : groups) {
-      cursor = alignUp(cursor, group.alignmentBytes);
-      group.offsetBytes = cursor;
-      if (group.offsetBytes + group.sizeBytes > spec.capacityBytes) {
-        scopeRequiredBytes = group.offsetBytes + group.sizeBytes;
-        break;
-      }
-
-      for (RootInfo *member : group.members) {
-        member->offsets = buildSlotOffsets(group.offsetBytes, member->slotBytes,
-                                           member->slotCount);
-      }
-      scopeRequiredBytes =
-          std::max(scopeRequiredBytes, group.offsetBytes + group.sizeBytes);
-      cursor = group.offsetBytes + group.sizeBytes;
-    }
-
-    if (scopeRequiredBytes > spec.capacityBytes) {
-      func.emitError() << stringifyEnum(space) << " overflow, requires "
-                       << (scopeRequiredBytes * mlir::pto::kValue8) << " bits while "
-                       << (spec.capacityBytes * mlir::pto::kValue8) << " bits available";
+    if (failed(planOneAddressSpace(func, entry.first, entry.second, analysis,
+                                   orderBySize, buffer2Offsets))) {
       return failure();
     }
-
-    for (RootInfo *info : roots) {
-      buffer2Offsets[info->root] = info->offsets;
-    }
   }
 
-  DenseMap<AddressSpace, SmallVector<std::pair<uint64_t, uint64_t>>>
-      occupiedBySpace;
-  for (const RootInfo &info : analysis.roots) {
-    if (info.offsets.empty()) {
-      continue;
-    }
-    occupiedBySpace[info.space].push_back(
-        {info.offsets.front(), info.offsets.front() + info.totalBytes});
-  }
-
-  MLIRContext *ctx = func.getContext();
-  PTOArch arch = getTargetArch(func);
-  func.walk([&](pto::ReserveBufferOp reserveOp) -> WalkResult {
-    if (mlir::failed(validateReserveBufferForPlanMemory(reserveOp, arch))) {
-      analysis.failed = true;
-      return WalkResult::interrupt();
-    }
-
-    AddressSpace space = reserveOp.getLocation().getAddressSpace();
-    MemSpec spec = getMemSpec(arch, space);
-    auto baseOr =
-        planReserveBufferBase(reserveOp, spec, occupiedBySpace[space]);
-    if (mlir::failed(baseOr)) {
-      reserveOp.emitError("failed to reserve a local memory hole for "
-                          "reserve_buffer");
-      analysis.failed = true;
-      return WalkResult::interrupt();
-    }
-
-    reserveOp->setAttr("base", IntegerAttr::get(IntegerType::get(ctx, mlir::pto::kValue32),
-                                                static_cast<int32_t>(*baseOr)));
-    return WalkResult::advance();
-  });
+  planReserveBuffers(func, analysis.roots, analysis.failed);
 
   if (analysis.failed ||
       mlir::failed(materializePlannedOffsets(func, buffer2Offsets))) {
@@ -1786,24 +1874,7 @@ static LogicalResult runModernPlanMemory(func::FuncOp func,
     return failure();
   }
 
-  bool hasUnplannedAllocTile = false;
-  func.walk([&](pto::AllocTileOp op) {
-    if (op.getAddr()) {
-      return;
-    }
-    if (op->use_empty()) {
-      return;
-    }
-    if (isA5IgnoredTmpAlloc(op)) {
-      return;
-    }
-    op.emitError("PTOPlanMemory failed to assign an address to pto.alloc_tile");
-    hasUnplannedAllocTile = true;
-  });
-  if (hasUnplannedAllocTile) {
-    return failure();
-  }
-  return success();
+  return verifyNoUnplannedAllocTile(func);
 }
 
 namespace {

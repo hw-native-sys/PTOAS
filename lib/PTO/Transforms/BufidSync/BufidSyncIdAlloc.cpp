@@ -23,6 +23,99 @@
 
 namespace {
 constexpr size_t kMinimumReusableIdGroupSize = 2;
+
+// A get_buf/rls_buf occurrence, ordered by (syncIRIndex, phase, ...) for the
+// nesting check. phase 0 = pipeBefore (get), phase 1 = pipeAfter (rls).
+struct Event {
+  unsigned syncIRIndex;
+  unsigned phase;
+  mlir::pto::BufSyncType type;
+  int logicId;
+  int physicalId;
+  mlir::pto::PipelineType pipe;
+};
+
+// Flatten every sync in op2BufSync into `events`, resolving each logic id to a
+// physical id. Returns false (and fills `error`) if any logic id is unmapped.
+static bool collectSyncEvents(
+    const mlir::DenseMap<mlir::Operation *, mlir::pto::BufSyncPipeBuild>
+        &op2BufSync,
+    const mlir::DenseMap<int, int> &logicToPhysical,
+    mlir::SmallVector<Event> &events, std::string *error) {
+  auto appendEvents = [&events, &logicToPhysical, error](const auto &syncs,
+                                                         unsigned phase) -> bool {
+    for (auto &sync : syncs) {
+      auto it = logicToPhysical.find(sync.logicId);
+      if (it == logicToPhysical.end()) {
+        if (error) {
+          *error = "missing physical bufid for logic id " +
+                   std::to_string(sync.logicId);
+        }
+        return false;
+      }
+      events.push_back({sync.syncIRIndex, phase, sync.type, sync.logicId,
+                        it->second, sync.pipe});
+    }
+    return true;
+  };
+  for (auto &[op, build] : op2BufSync) {
+    (void)op;
+    if (!appendEvents(build.pipeBefore, 0) ||
+        !appendEvents(build.pipeAfter, 1)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Scan ordered events, enforcing that a physical bufid is never re-acquired
+// while still active. Returns false (and fills `error`) on any violation.
+static bool checkNoNestedGetBuf(const mlir::SmallVector<Event> &events,
+                                std::string *error) {
+  mlir::DenseMap<int, Event> activeByPhysicalId;
+  for (const Event &event : events) {
+    if (event.type == mlir::pto::BufSyncType::GET_BUF) {
+      auto activeIt = activeByPhysicalId.find(event.physicalId);
+      if (activeIt != activeByPhysicalId.end()) {
+        if (error) {
+          const Event &active = activeIt->second;
+          *error = "nested get_buf for physical bufid " +
+                   std::to_string(event.physicalId) + " at SyncIR " +
+                   std::to_string(event.syncIRIndex) +
+                   " while logic id " + std::to_string(active.logicId) +
+                   " from SyncIR " + std::to_string(active.syncIRIndex) +
+                   " is still active";
+        }
+        return false;
+      }
+      activeByPhysicalId[event.physicalId] = event;
+      continue;
+    }
+
+    auto activeIt = activeByPhysicalId.find(event.physicalId);
+    if (activeIt == activeByPhysicalId.end()) {
+      if (error) {
+        *error = "rls_buf without active get_buf for physical bufid " +
+                 std::to_string(event.physicalId) + " at SyncIR " +
+                 std::to_string(event.syncIRIndex);
+      }
+      return false;
+    }
+    activeByPhysicalId.erase(activeIt);
+  }
+
+  if (!activeByPhysicalId.empty()) {
+    if (error) {
+      auto activeIt = activeByPhysicalId.begin();
+      const Event &active = activeIt->second;
+      *error = "unclosed get_buf for physical bufid " +
+               std::to_string(active.physicalId) + " from SyncIR " +
+               std::to_string(active.syncIRIndex);
+    }
+    return false;
+  }
+  return true;
+}
 }
 
 using namespace mlir;
@@ -236,297 +329,331 @@ void BufidSyncIdAlloc::compactPhysicalIds() {
   }
 }
 
+namespace {
+
+// Encode a set of pipeline types as a sorted, comma-joined key string.
+static std::string encodeSig(const SmallVector<PipelineType> &sig) {
+  SmallVector<PipelineType> s = sig;
+  std::sort(s.begin(), s.end());
+  std::string key;
+  for (auto p : s) {
+    if (!key.empty()) {
+      key += ",";
+    }
+    key += std::to_string(static_cast<int>(p));
+  }
+  return key;
+}
+
+// Inverse of encodeSig.
+static SmallVector<PipelineType> decodeSig(const std::string &key) {
+  SmallVector<PipelineType> pipes;
+  std::string token;
+  std::istringstream iss(key);
+  while (std::getline(iss, token, ',')) {
+    if (!token.empty()) {
+      pipes.push_back(static_cast<PipelineType>(std::stoi(token)));
+    }
+  }
+  return pipes;
+}
+
+// Lower score == more contended pipe (prefer merging on it).
+static int getPipeScore(PipelineType p) {
+  switch (p) {
+  case PipelineType::PIPE_MTE2:
+    return 1;
+  case PipelineType::PIPE_MTE3:
+  case PipelineType::PIPE_FIX:
+    return 2;
+  default:
+    return 3;
+  }
+}
+
+static int getMinPipeScore(const SmallVector<PipelineType> &pipes) {
+  int minScore = 99;
+  for (auto p : pipes) {
+    minScore = std::min(minScore, getPipeScore(p));
+  }
+  return minScore;
+}
+
+// The pipe within a signature with the lowest score; used as the consecutivity
+// check pipe.
+static PipelineType pickCheckPipe(const SmallVector<PipelineType> &sigPipes) {
+  PipelineType checkPipe = sigPipes[0];
+  int minPipeScore = getPipeScore(sigPipes[0]);
+  for (auto p : sigPipes) {
+    if (getPipeScore(p) < minPipeScore) {
+      minPipeScore = getPipeScore(p);
+      checkPipe = p;
+    }
+  }
+  return checkPipe;
+}
+
+static void sortLogicIdsByFirstPos(SmallVector<int> &ids,
+                                   const DenseMap<int, unsigned> &firstPos) {
+  std::sort(ids.begin(), ids.end(), [&firstPos](int a, int b) {
+    auto itA = firstPos.find(a);
+    auto itB = firstPos.find(b);
+    if (itA == firstPos.end() || itB == firstPos.end()) {
+      return a < b;
+    }
+    return itA->second < itB->second;
+  });
+}
+
+// Pair off the group's logic ids into a target->donor merge map, then collapse
+// donor chains so every target maps to a terminal donor.
+static DenseMap<int, int> buildMergeMap(const SmallVector<int> &groupIds,
+                                        bool consecutive) {
+  DenseMap<int, int> mergeMap;
+  unsigned halfSize = groupIds.size() / 2;
+  if (consecutive) {
+    for (unsigned i = 0; i < halfSize; ++i) {
+      mergeMap[groupIds[2 * i + 1]] = groupIds[2 * i];
+    }
+  } else {
+    for (unsigned i = 0; i < halfSize; ++i) {
+      mergeMap[groupIds[i + halfSize]] = groupIds[i];
+    }
+  }
+  for (auto &[lid, donorLid] : mergeMap) {
+    while (mergeMap.contains(donorLid)) {
+      donorLid = mergeMap[donorLid];
+    }
+  }
+  return mergeMap;
+}
+
+static void debugSigGroups(bool enabled, int iteration,
+                           const std::map<std::string, SmallVector<int>> &sigGroups) {
+  if (!enabled) {
+    return;
+  }
+  llvm::outs() << "[bufid_sync] reuseIds iteration=" << iteration
+               << " sigGroups=" << sigGroups.size() << "\n";
+  for (auto &[sigKey, ids] : sigGroups) {
+    llvm::outs() << "  sig=" << sigKey << " count=" << ids.size() << "\n";
+  }
+}
+
+static void debugSelection(bool enabled, const std::string &bestSigKey,
+                           size_t groupSize, PipelineType checkPipe,
+                           bool consecutive) {
+  if (!enabled) {
+    return;
+  }
+  llvm::outs() << "[bufid_sync] reuseIds: bestSig=" << bestSigKey
+               << " groupSize=" << groupSize
+               << " checkPipe=" << static_cast<int>(checkPipe)
+               << " consecutive=" << consecutive << "\n";
+}
+
+static void debugIterationResult(bool enabled, int iteration,
+                                 int maxPhysicalIdUsed,
+                                 const DenseMap<int, int> &mergeMap,
+                                 const DenseMap<int, int> &logicToPhysical) {
+  if (!enabled) {
+    return;
+  }
+  llvm::outs() << "[bufid_sync] reuseIds: iteration=" << iteration
+               << " maxPhysicalIdUsed=" << maxPhysicalIdUsed << "\n";
+  for (auto &[lid, donorLid] : mergeMap) {
+    llvm::outs() << "  merge logicId=" << lid << " -> donor logicId="
+                 << donorLid << " physicalId=" << logicToPhysical.lookup(lid)
+                 << "\n";
+  }
+}
+
+static void debugReuseBreak(bool enabled, const char *msg) {
+  if (enabled) {
+    llvm::outs() << msg;
+  }
+}
+
+} // namespace
+
+void BufidSyncIdAlloc::collectLogicIdPipes(
+    DenseMap<int, SmallVector<PipelineType>> &logicIdPipes,
+    DenseMap<int, unsigned> &logicIdFirstPos) const {
+  DenseMap<int, DenseSet<PipelineType>> logicIdSeenPipes;
+  auto accumulate = [&logicIdPipes, &logicIdFirstPos,
+                     &logicIdSeenPipes](const auto &syncs) {
+    for (auto &s : syncs) {
+      if (logicIdSeenPipes[s.logicId].insert(s.pipe).second) {
+        logicIdPipes[s.logicId].push_back(s.pipe);
+      }
+      if (!logicIdFirstPos.contains(s.logicId)) {
+        logicIdFirstPos[s.logicId] = s.syncIRIndex;
+      } else {
+        logicIdFirstPos[s.logicId] =
+            std::min(logicIdFirstPos[s.logicId], s.syncIRIndex);
+      }
+    }
+  };
+  for (auto &[op, build] : op2BufSync_) {
+    (void)op;
+    accumulate(build.pipeBefore);
+    accumulate(build.pipeAfter);
+  }
+}
+
+std::string BufidSyncIdAlloc::selectBestSigGroup(
+    const std::map<std::string, SmallVector<int>> &sigGroups) const {
+  int bestScore = -1;
+  std::string bestSigKey;
+  for (auto &[sigKey, ids] : sigGroups) {
+    if (ids.size() < kMinimumReusableIdGroupSize) {
+      continue;
+    }
+    SmallVector<PipelineType> sigPipes = decodeSig(sigKey);
+    int pipeScore = getMinPipeScore(sigPipes);
+    int idNum = static_cast<int>(ids.size());
+    int score = pipeScore * idNum * idNum;
+    if (score > bestScore) {
+      bestScore = score;
+      bestSigKey = sigKey;
+    }
+  }
+  return bestSigKey;
+}
+
+bool BufidSyncIdAlloc::isConsecutiveOnPipe(const SmallVector<int> &ids,
+                                           PipelineType pipe) const {
+  SmallVector<std::pair<unsigned, unsigned>> idRanges;
+  for (int lid : ids) {
+    unsigned minIdx = UINT_MAX, maxIdx = 0;
+    for (auto &[op, build] : op2BufSync_) {
+      (void)op;
+      for (auto &s : build.pipeBefore) {
+        if (s.logicId == lid && s.pipe == pipe) {
+          minIdx = std::min(minIdx, s.syncIRIndex);
+          maxIdx = std::max(maxIdx, s.syncIRIndex);
+        }
+      }
+      for (auto &s : build.pipeAfter) {
+        if (s.logicId == lid && s.pipe == pipe) {
+          minIdx = std::min(minIdx, s.syncIRIndex);
+          maxIdx = std::max(maxIdx, s.syncIRIndex);
+        }
+      }
+    }
+    if (minIdx != UINT_MAX) {
+      idRanges.push_back({minIdx, maxIdx});
+    }
+  }
+  std::sort(idRanges.begin(), idRanges.end());
+  for (unsigned i = 1; i < idRanges.size(); ++i) {
+    if (idRanges[i].first <= idRanges[i - 1].second) {
+      return false;
+    }
+  }
+  for (unsigned i = 1; i < idRanges.size(); ++i) {
+    unsigned gapStart = idRanges[i - 1].second;
+    unsigned gapEnd = idRanges[i].first;
+    for (auto &[op, build] : op2BufSync_) {
+      (void)op;
+      for (auto &s : build.pipeBefore) {
+        if (s.syncIRIndex > gapStart && s.syncIRIndex < gapEnd) {
+          return false;
+        }
+      }
+      for (auto &s : build.pipeAfter) {
+        if (s.syncIRIndex > gapStart && s.syncIRIndex < gapEnd) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+void BufidSyncIdAlloc::applyMerges(const DenseMap<int, int> &mergeMap) {
+  DenseMap<Operation *, BufSyncPipeBuild> newOp2BufSync;
+  for (auto &[op, build] : op2BufSync_) {
+    BufSyncPipeBuild newBuild;
+    remapSyncList(build.pipeBefore, mergeMap, newBuild.pipeBefore);
+    remapSyncList(build.pipeAfter, mergeMap, newBuild.pipeAfter);
+    newOp2BufSync[op] = std::move(newBuild);
+  }
+  op2BufSync_ = std::move(newOp2BufSync);
+
+  for (auto &[lid, donorLid] : mergeMap) {
+    logicToPhysical_[lid] = logicToPhysical_[donorLid];
+  }
+
+  virtualBufIds_.erase(
+      std::remove_if(virtualBufIds_.begin(), virtualBufIds_.end(),
+                     [&mergeMap](const VirtualBufId &vbid) {
+                       return mergeMap.contains(vbid.logicId);
+                     }),
+      virtualBufIds_.end());
+
+  for (auto &[lid, pid] : logicToPhysical_) {
+    auto it = mergeMap.find(lid);
+    if (it != mergeMap.end()) {
+      pid = logicToPhysical_[it->second];
+    }
+  }
+
+  compactPhysicalIds();
+}
+
+bool BufidSyncIdAlloc::reuseIdsStep(int iteration) {
+  DenseMap<int, SmallVector<PipelineType>> logicIdPipes;
+  DenseMap<int, unsigned> logicIdFirstPos;
+  collectLogicIdPipes(logicIdPipes, logicIdFirstPos);
+
+  std::map<std::string, SmallVector<int>> sigGroups;
+  for (auto &[lid, pipes] : logicIdPipes) {
+    sigGroups[encodeSig(pipes)].push_back(lid);
+  }
+  debugSigGroups(debugEnabled_, iteration, sigGroups);
+
+  std::string bestSigKey = selectBestSigGroup(sigGroups);
+  if (bestSigKey.empty()) {
+    debugReuseBreak(
+        debugEnabled_,
+        "[bufid_sync] reuseIds: no group with >=2 IDs to reuse, breaking\n");
+    return false;
+  }
+
+  auto &groupIds = sigGroups[bestSigKey];
+  sortLogicIdsByFirstPos(groupIds, logicIdFirstPos);
+
+  SmallVector<PipelineType> bestSigPipes = decodeSig(bestSigKey);
+  PipelineType checkPipe = pickCheckPipe(bestSigPipes);
+  bool consecutive = isConsecutiveOnPipe(groupIds, checkPipe);
+  debugSelection(debugEnabled_, bestSigKey, groupIds.size(), checkPipe,
+                 consecutive);
+
+  if (groupIds.size() / 2 == 0) {
+    debugReuseBreak(debugEnabled_,
+                    "[bufid_sync] reuseIds: halfSize=0, breaking\n");
+    return false;
+  }
+
+  DenseMap<int, int> mergeMap = buildMergeMap(groupIds, consecutive);
+  applyMerges(mergeMap);
+  debugIterationResult(debugEnabled_, iteration, maxPhysicalIdUsed_, mergeMap,
+                       logicToPhysical_);
+
+  if (mergeMap.empty()) {
+    debugReuseBreak(debugEnabled_,
+                    "[bufid_sync] reuseIds: no merges in this iteration, breaking\n");
+    return false;
+  }
+  return true;
+}
+
 void BufidSyncIdAlloc::reuseIds() {
-  auto encodeSig = [](const SmallVector<PipelineType> &sig) -> std::string {
-    SmallVector<PipelineType> s = sig;
-    std::sort(s.begin(), s.end());
-    std::string key;
-    for (auto p : s) {
-      if (!key.empty()) {
-        key += ",";
-      }
-      key += std::to_string(static_cast<int>(p));
-    }
-    return key;
-  };
-
-  auto decodeSig = [](const std::string &key) -> SmallVector<PipelineType> {
-    SmallVector<PipelineType> pipes;
-    std::string token;
-    std::istringstream iss(key);
-    while (std::getline(iss, token, ',')) {
-      if (!token.empty()) {
-        pipes.push_back(static_cast<PipelineType>(std::stoi(token)));
-      }
-    }
-    return pipes;
-  };
-
-  auto getPipeScore = [](PipelineType p) -> int {
-    switch (p) {
-    case PipelineType::PIPE_MTE2:
-      return 1;
-    case PipelineType::PIPE_MTE3:
-    case PipelineType::PIPE_FIX:
-      return 2;
-    default:
-      return 3;
-    }
-  };
-
-  auto getMinPipeScore = [&getPipeScore](
-                             const SmallVector<PipelineType> &pipes) -> int {
-    int minScore = 99;
-    for (auto p : pipes) {
-      minScore = std::min(minScore, getPipeScore(p));
-    }
-    return minScore;
-  };
-
-  auto isConsecutiveOnPipe = [this](const SmallVector<int> &ids,
-                                    PipelineType pipe) -> bool {
-    SmallVector<std::pair<unsigned, unsigned>> idRanges;
-    for (int lid : ids) {
-      unsigned minIdx = UINT_MAX, maxIdx = 0;
-      for (auto &[op, build] : op2BufSync_) {
-        for (auto &s : build.pipeBefore) {
-          if (s.logicId == lid && s.pipe == pipe) {
-            minIdx = std::min(minIdx, s.syncIRIndex);
-            maxIdx = std::max(maxIdx, s.syncIRIndex);
-          }
-        }
-        for (auto &s : build.pipeAfter) {
-          if (s.logicId == lid && s.pipe == pipe) {
-            minIdx = std::min(minIdx, s.syncIRIndex);
-            maxIdx = std::max(maxIdx, s.syncIRIndex);
-          }
-        }
-      }
-      if (minIdx != UINT_MAX) {
-        idRanges.push_back({minIdx, maxIdx});
-      }
-    }
-    std::sort(idRanges.begin(), idRanges.end());
-    for (unsigned i = 1; i < idRanges.size(); ++i) {
-      if (idRanges[i].first <= idRanges[i - 1].second) {
-        return false;
-      }
-    }
-    for (unsigned i = 1; i < idRanges.size(); ++i) {
-      unsigned gapStart = idRanges[i - 1].second;
-      unsigned gapEnd = idRanges[i].first;
-      for (auto &[op, build] : op2BufSync_) {
-        for (auto &s : build.pipeBefore) {
-          if (s.syncIRIndex > gapStart && s.syncIRIndex < gapEnd) {
-            return false;
-          }
-        }
-        for (auto &s : build.pipeAfter) {
-          if (s.syncIRIndex > gapStart && s.syncIRIndex < gapEnd) {
-            return false;
-          }
-        }
-      }
-    }
-    return true;
-  };
-
   int iteration = 0;
   while (maxPhysicalIdUsed_ >= static_cast<int>(physicalBufIdCount_)) {
     ++iteration;
-
-    DenseMap<int, SmallVector<PipelineType>> logicIdPipes;
-    DenseMap<int, unsigned> logicIdFirstPos;
-    DenseMap<int, DenseSet<PipelineType>> logicIdSeenPipes;
-    auto accumulatePipeSyncs =
-        [&logicIdPipes, &logicIdFirstPos, &logicIdSeenPipes](const auto &syncs) {
-          for (auto &s : syncs) {
-            if (logicIdSeenPipes[s.logicId].insert(s.pipe).second) {
-              logicIdPipes[s.logicId].push_back(s.pipe);
-            }
-            if (!logicIdFirstPos.contains(s.logicId)) {
-              logicIdFirstPos[s.logicId] = s.syncIRIndex;
-            } else {
-              logicIdFirstPos[s.logicId] =
-                  std::min(logicIdFirstPos[s.logicId], s.syncIRIndex);
-            }
-          }
-        };
-    for (auto &[op, build] : op2BufSync_) {
-      accumulatePipeSyncs(build.pipeBefore);
-      accumulatePipeSyncs(build.pipeAfter);
-    }
-
-    std::map<std::string, SmallVector<int>> sigGroups;
-    for (auto &[lid, pipes] : logicIdPipes) {
-      std::string sigKey = encodeSig(pipes);
-      sigGroups[sigKey].push_back(lid);
-    }
-
-    if (debugEnabled_) {
-      llvm::outs() << "[bufid_sync] reuseIds iteration=" << iteration
-                   << " sigGroups=" << sigGroups.size() << "\n";
-      for (auto &[sigKey, ids] : sigGroups) {
-        llvm::outs() << "  sig=" << sigKey << " count=" << ids.size() << "\n";
-      }
-    }
-
-    int bestScore = -1;
-    std::string bestSigKey;
-    for (auto &[sigKey, ids] : sigGroups) {
-      if (ids.size() < kMinimumReusableIdGroupSize) {
-        continue;
-      }
-      SmallVector<PipelineType> sigPipes = decodeSig(sigKey);
-      int pipeScore = getMinPipeScore(sigPipes);
-      int idNum = static_cast<int>(ids.size());
-      int score = pipeScore * idNum * idNum;
-      if (score > bestScore) {
-        bestScore = score;
-        bestSigKey = sigKey;
-      }
-    }
-
-    if (bestSigKey.empty()) {
-      if (debugEnabled_) {
-        llvm::outs() << "[bufid_sync] reuseIds: no group with >=2 IDs to reuse, breaking\n";
-      }
-      break;
-    }
-
-    auto &groupIds = sigGroups[bestSigKey];
-
-    std::sort(groupIds.begin(), groupIds.end(), [&](int a, int b) {
-      auto itA = logicIdFirstPos.find(a);
-      auto itB = logicIdFirstPos.find(b);
-      if (itA == logicIdFirstPos.end() || itB == logicIdFirstPos.end()) {
-        return a < b;
-      }
-      return itA->second < itB->second;
-    });
-
-    SmallVector<PipelineType> bestSigPipes = decodeSig(bestSigKey);
-
-    PipelineType checkPipe = bestSigPipes[0];
-    int minPipeScore = getPipeScore(bestSigPipes[0]);
-    for (auto p : bestSigPipes) {
-      if (getPipeScore(p) < minPipeScore) {
-        minPipeScore = getPipeScore(p);
-        checkPipe = p;
-      }
-    }
-
-    bool consecutive = isConsecutiveOnPipe(groupIds, checkPipe);
-
-    if (debugEnabled_) {
-      llvm::outs() << "[bufid_sync] reuseIds: bestSig=" << bestSigKey
-                   << " groupSize=" << groupIds.size()
-                   << " checkPipe=" << static_cast<int>(checkPipe)
-                   << " consecutive=" << consecutive << "\n";
-    }
-
-    unsigned halfSize = groupIds.size() / 2;
-    if (halfSize == 0) {
-      if (debugEnabled_) {
-        llvm::outs() << "[bufid_sync] reuseIds: halfSize=0, breaking\n";
-      }
-      break;
-    }
-
-    DenseMap<int, int> mergeMap;
-    if (consecutive) {
-      for (unsigned i = 0; i < halfSize; ++i) {
-        int donorLid = groupIds[2 * i];
-        int targetLid = groupIds[2 * i + 1];
-        mergeMap[targetLid] = donorLid;
-      }
-    } else {
-      for (unsigned i = 0; i < halfSize; ++i) {
-        int donorLid = groupIds[i];
-        int targetLid = groupIds[i + halfSize];
-        mergeMap[targetLid] = donorLid;
-      }
-    }
-
-    for (auto &[lid, donorLid] : mergeMap) {
-      while (mergeMap.contains(donorLid)) {
-        donorLid = mergeMap[donorLid];
-      }
-    }
-
-    DenseMap<Operation *, BufSyncPipeBuild> newOp2BufSync;
-    for (auto &[op, build] : op2BufSync_) {
-      BufSyncPipeBuild newBuild;
-
-      DenseSet<std::pair<int, int>> seenBefore;
-      for (auto &s : build.pipeBefore) {
-        int newLogicId = s.logicId;
-        auto it = mergeMap.find(newLogicId);
-        if (it != mergeMap.end()) {
-          newLogicId = it->second;
-        }
-        auto key = std::make_pair(static_cast<int>(s.pipe), newLogicId);
-        if (seenBefore.insert(key).second) {
-          BufSyncOperation newS = s;
-          newS.logicId = newLogicId;
-          newBuild.pipeBefore.push_back(newS);
-        }
-      }
-
-      DenseSet<std::pair<int, int>> seenAfter;
-      for (auto &s : build.pipeAfter) {
-        int newLogicId = s.logicId;
-        auto it = mergeMap.find(newLogicId);
-        if (it != mergeMap.end()) {
-          newLogicId = it->second;
-        }
-        auto key = std::make_pair(static_cast<int>(s.pipe), newLogicId);
-        if (seenAfter.insert(key).second) {
-          BufSyncOperation newS = s;
-          newS.logicId = newLogicId;
-          newBuild.pipeAfter.push_back(newS);
-        }
-      }
-
-      newOp2BufSync[op] = std::move(newBuild);
-    }
-
-    op2BufSync_ = std::move(newOp2BufSync);
-
-    for (auto &[lid, donorLid] : mergeMap) {
-      int donorPid = logicToPhysical_[donorLid];
-      logicToPhysical_[lid] = donorPid;
-    }
-
-    virtualBufIds_.erase(
-        std::remove_if(virtualBufIds_.begin(), virtualBufIds_.end(),
-                       [&](const VirtualBufId &vbid) {
-                         return mergeMap.contains(vbid.logicId);
-                       }),
-        virtualBufIds_.end());
-
-    for (auto &[lid, pid] : logicToPhysical_) {
-      auto it = mergeMap.find(lid);
-      if (it != mergeMap.end()) {
-        pid = logicToPhysical_[it->second];
-      }
-    }
-
-    compactPhysicalIds();
-
-    if (debugEnabled_) {
-      llvm::outs() << "[bufid_sync] reuseIds: iteration=" << iteration
-                   << " maxPhysicalIdUsed=" << maxPhysicalIdUsed_ << "\n";
-      for (auto &[lid, donorLid] : mergeMap) {
-        llvm::outs() << "  merge logicId=" << lid << " -> donor logicId="
-                     << donorLid << " physicalId=" << logicToPhysical_[lid] << "\n";
-      }
-    }
-
-    if (mergeMap.empty()) {
-      if (debugEnabled_) {
-        llvm::outs() << "[bufid_sync] reuseIds: no merges in this iteration, breaking\n";
-      }
+    if (!reuseIdsStep(iteration)) {
       break;
     }
   }
@@ -540,42 +667,9 @@ void BufidSyncIdAlloc::reuseIds() {
 
 bool BufidSyncIdAlloc::validateNoSamePhysicalIdNesting(
     std::string *error) const {
-  struct Event {
-    unsigned syncIRIndex;
-    unsigned phase;
-    BufSyncType type;
-    int logicId;
-    int physicalId;
-    PipelineType pipe;
-  };
-
   SmallVector<Event> events;
-  for (auto &[op, build] : op2BufSync_) {
-    (void)op;
-    for (auto &sync : build.pipeBefore) {
-      auto it = logicToPhysical_.find(sync.logicId);
-      if (it == logicToPhysical_.end()) {
-        if (error) {
-          *error = "missing physical bufid for logic id " +
-                   std::to_string(sync.logicId);
-        }
-        return false;
-      }
-      events.push_back({sync.syncIRIndex, 0, sync.type, sync.logicId,
-                        it->second, sync.pipe});
-    }
-    for (auto &sync : build.pipeAfter) {
-      auto it = logicToPhysical_.find(sync.logicId);
-      if (it == logicToPhysical_.end()) {
-        if (error) {
-          *error = "missing physical bufid for logic id " +
-                   std::to_string(sync.logicId);
-        }
-        return false;
-      }
-      events.push_back({sync.syncIRIndex, 1, sync.type, sync.logicId,
-                        it->second, sync.pipe});
-    }
+  if (!collectSyncEvents(op2BufSync_, logicToPhysical_, events, error)) {
+    return false;
   }
 
   std::sort(events.begin(), events.end(), [](const Event &a, const Event &b) {
@@ -587,48 +681,5 @@ bool BufidSyncIdAlloc::validateNoSamePhysicalIdNesting(
                            b.logicId, static_cast<int>(b.pipe));
   });
 
-  DenseMap<int, Event> activeByPhysicalId;
-  for (const Event &event : events) {
-    if (event.type == BufSyncType::GET_BUF) {
-      auto activeIt = activeByPhysicalId.find(event.physicalId);
-      if (activeIt != activeByPhysicalId.end()) {
-        if (error) {
-          const Event &active = activeIt->second;
-          *error = "nested get_buf for physical bufid " +
-                   std::to_string(event.physicalId) + " at SyncIR " +
-                   std::to_string(event.syncIRIndex) +
-                   " while logic id " + std::to_string(active.logicId) +
-                   " from SyncIR " + std::to_string(active.syncIRIndex) +
-                   " is still active";
-        }
-        return false;
-      }
-      activeByPhysicalId[event.physicalId] = event;
-      continue;
-    }
-
-    auto activeIt = activeByPhysicalId.find(event.physicalId);
-    if (activeIt == activeByPhysicalId.end()) {
-      if (error) {
-        *error = "rls_buf without active get_buf for physical bufid " +
-                 std::to_string(event.physicalId) + " at SyncIR " +
-                 std::to_string(event.syncIRIndex);
-      }
-      return false;
-    }
-    activeByPhysicalId.erase(activeIt);
-  }
-
-  if (!activeByPhysicalId.empty()) {
-    if (error) {
-      auto activeIt = activeByPhysicalId.begin();
-      const Event &active = activeIt->second;
-      *error = "unclosed get_buf for physical bufid " +
-               std::to_string(active.physicalId) + " from SyncIR " +
-               std::to_string(active.syncIRIndex);
-    }
-    return false;
-  }
-
-  return true;
+  return checkNoNestedGetBuf(events, error);
 }

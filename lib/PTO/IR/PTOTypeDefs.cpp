@@ -327,18 +327,86 @@ static LogicalResult parseLegacyTileBufFields(AsmParser &parser,
   return success();
 }
 
-// When `outMultiCount` is non-null, the parser is willing to consume an
-// optional trailing `, count=N` clause as belonging to a wrapping
-// `multi_tile_buf` instead of treating it as an unknown tile_buf field. The
-// extracted N is written into `*outMultiCount` and the loop exits without
-// consuming additional fields. When `outMultiCount` is null, `count` is
-// treated as an unknown key (preserving the original tile_buf semantics).
-static LogicalResult parseCompactTileBufFields(AsmParser &parser,
-                                               StringRef firstToken,
-                                               ParsedTileBufFields &fields,
-                                               uint32_t *outMultiCount = nullptr) {
-  fields.locStr = firstToken.str();
+// Tracks which optional compact tile_buf fields have already been parsed so
+// duplicates can be rejected.
+struct CompactSeenFlags {
+  bool valid = false;
+  bool blayout = false;
+  bool slayout = false;
+  bool fractal = false;
+  bool pad = false;
+  bool compact = false;
+};
 
+static LogicalResult checkNotDuplicate(AsmParser &parser, bool &seen,
+                                       StringRef name) {
+  if (seen) {
+    parser.emitError(parser.getCurrentLocation(),
+                     Twine("duplicate ") + name +
+                         " in tile_buf compact syntax");
+    return failure();
+  }
+  seen = true;
+  return success();
+}
+
+static LogicalResult parseCompactValidField(AsmParser &parser,
+                                            ParsedTileBufFields &fields,
+                                            bool &seen) {
+  if (failed(checkNotDuplicate(parser, seen, "valid"))) {
+    return failure();
+  }
+  TileBufShape validShape;
+  if (failed(parser.parseDimensionList(validShape, /*allowDynamic=*/true,
+                                       /*withTrailingX=*/false))) {
+    return failure();
+  }
+  if (validShape.size() != kTileBufRank2D) {
+    parser.emitError(parser.getCurrentLocation(),
+                     "tile_buf valid must have exactly two dims");
+    return failure();
+  }
+  fields.vrow = validShape[0];
+  fields.vcol = validShape[1];
+  return success();
+}
+
+static LogicalResult parseCompactKeywordField(AsmParser &parser,
+                                              std::string &out, bool &seen,
+                                              StringRef name) {
+  if (failed(checkNotDuplicate(parser, seen, name))) {
+    return failure();
+  }
+  if (failed(parser.parseKeywordOrString(&out))) {
+    return failure();
+  }
+  return success();
+}
+
+static LogicalResult parseCompactFractalField(AsmParser &parser,
+                                              ParsedTileBufFields &fields,
+                                              bool &seen) {
+  if (failed(checkNotDuplicate(parser, seen, "fractal"))) {
+    return failure();
+  }
+  if (failed(parser.parseInteger(fields.fractal))) {
+    return failure();
+  }
+  return success();
+}
+
+static LogicalResult parseCompactUInt32Field(AsmParser &parser, StringRef key,
+                                             uint32_t &out, bool &seen) {
+  if (failed(checkNotDuplicate(parser, seen, key))) {
+    return failure();
+  }
+  return parseTileBufUInt32Value(parser, key, out);
+}
+
+// Parse the shape, dtype and default-config prefix of the compact syntax
+// (everything before the optional `, key=value` list).
+static LogicalResult parseCompactTileBufHeader(AsmParser &parser,
+                                               ParsedTileBufFields &fields) {
   if (failed(parser.parseComma())) {
     return failure();
   }
@@ -377,155 +445,122 @@ static LogicalResult parseCompactTileBufFields(AsmParser &parser,
   fields.fractal = defaultConfig.getSFractalSize().getInt();
   fields.padInt = static_cast<uint32_t>(defaultPad.getValue());
   fields.compactInt = static_cast<uint32_t>(defaultCompact.getValue());
+  return success();
+}
 
-  bool seenValid = false;
-  bool seenBLayout = false;
-  bool seenSLayout = false;
-  bool seenFractal = false;
-  bool seenPad = false;
-  bool seenCompact = false;
+// Parse a single `key=value` field in the compact loop. Sets `stop` when a
+// wrapping multi_tile_buf `count` tail was consumed and the loop should end.
+static LogicalResult parseOneCompactField(AsmParser &parser, StringRef key,
+                                          ParsedTileBufFields &fields,
+                                          CompactSeenFlags &seen,
+                                          uint32_t *outMultiCount, bool &stop) {
+  if (key == "valid") {
+    return parseCompactValidField(parser, fields, seen.valid);
+  }
+  if (key == "blayout") {
+    return parseCompactKeywordField(parser, fields.blayoutStr, seen.blayout,
+                                    "blayout");
+  }
+  if (key == "slayout") {
+    return parseCompactKeywordField(parser, fields.slayoutStr, seen.slayout,
+                                    "slayout");
+  }
+  if (key == "fractal") {
+    return parseCompactFractalField(parser, fields, seen.fractal);
+  }
+  if (key == "pad") {
+    return parseCompactUInt32Field(parser, key, fields.padInt, seen.pad);
+  }
+  if (key == "compact") {
+    return parseCompactUInt32Field(parser, key, fields.compactInt, seen.compact);
+  }
+  if (outMultiCount && key == "count") {
+    // Tail field belonging to a wrapping multi_tile_buf<...>. Consume the
+    // integer and finish; the wrapper completes the parse.
+    stop = true;
+    return parseTileBufUInt32Value(parser, key, *outMultiCount);
+  }
 
+  parser.emitError(parser.getCurrentLocation(),
+                   "unknown key in tile_buf compact syntax: ")
+      << key;
+  return failure();
+}
+
+// When `outMultiCount` is non-null, the parser is willing to consume an
+// optional trailing `, count=N` clause as belonging to a wrapping
+// `multi_tile_buf` instead of treating it as an unknown tile_buf field. The
+// extracted N is written into `*outMultiCount` and the loop exits without
+// consuming additional fields. When `outMultiCount` is null, `count` is
+// treated as an unknown key (preserving the original tile_buf semantics).
+static LogicalResult parseCompactTileBufFields(AsmParser &parser,
+                                               StringRef firstToken,
+                                               ParsedTileBufFields &fields,
+                                               uint32_t *outMultiCount = nullptr) {
+  fields.locStr = firstToken.str();
+
+  if (failed(parseCompactTileBufHeader(parser, fields))) {
+    return failure();
+  }
+
+  CompactSeenFlags seen;
   while (succeeded(parser.parseOptionalComma())) {
     StringRef key;
     if (failed(parser.parseKeyword(&key)) || failed(parser.parseEqual())) {
       return failure();
     }
-
-    if (key == "valid") {
-      if (seenValid) {
-        parser.emitError(parser.getCurrentLocation(),
-                         "duplicate valid in tile_buf compact syntax");
-        return failure();
-      }
-      seenValid = true;
-
-      TileBufShape validShape;
-      if (failed(parser.parseDimensionList(validShape, /*allowDynamic=*/true,
-                                           /*withTrailingX=*/false))) {
-        return failure();
-      }
-      if (validShape.size() != kTileBufRank2D) {
-        parser.emitError(parser.getCurrentLocation(),
-                         "tile_buf valid must have exactly two dims");
-        return failure();
-      }
-      fields.vrow = validShape[0];
-      fields.vcol = validShape[1];
-      continue;
+    bool stop = false;
+    if (failed(parseOneCompactField(parser, key, fields, seen, outMultiCount,
+                                    stop))) {
+      return failure();
     }
-
-    if (key == "blayout") {
-      if (seenBLayout) {
-        parser.emitError(parser.getCurrentLocation(),
-                         "duplicate blayout in tile_buf compact syntax");
-        return failure();
-      }
-      seenBLayout = true;
-      if (failed(parser.parseKeywordOrString(&fields.blayoutStr))) {
-        return failure();
-      }
-      continue;
-    }
-
-    if (key == "slayout") {
-      if (seenSLayout) {
-        parser.emitError(parser.getCurrentLocation(),
-                         "duplicate slayout in tile_buf compact syntax");
-        return failure();
-      }
-      seenSLayout = true;
-      if (failed(parser.parseKeywordOrString(&fields.slayoutStr))) {
-        return failure();
-      }
-      continue;
-    }
-
-    if (key == "fractal") {
-      if (seenFractal) {
-        parser.emitError(parser.getCurrentLocation(),
-                         "duplicate fractal in tile_buf compact syntax");
-        return failure();
-      }
-      seenFractal = true;
-      if (failed(parser.parseInteger(fields.fractal))) {
-        return failure();
-      }
-      continue;
-    }
-
-    if (key == "pad") {
-      if (seenPad) {
-        parser.emitError(parser.getCurrentLocation(),
-                         "duplicate pad in tile_buf compact syntax");
-        return failure();
-      }
-      seenPad = true;
-      if (failed(parseTileBufUInt32Value(parser, key, fields.padInt))) {
-        return failure();
-      }
-      continue;
-    }
-
-    if (key == "compact") {
-      if (seenCompact) {
-        parser.emitError(parser.getCurrentLocation(),
-                         "duplicate compact in tile_buf compact syntax");
-        return failure();
-      }
-      seenCompact = true;
-      if (failed(parseTileBufUInt32Value(parser, key, fields.compactInt))) {
-        return failure();
-      }
-      continue;
-    }
-
-    if (outMultiCount && key == "count") {
-      // Tail field belonging to a wrapping multi_tile_buf<...>. Consume the
-      // integer and return success; the wrapper finishes the parse.
-      if (failed(parseTileBufUInt32Value(parser, key, *outMultiCount))) {
-        return failure();
-      }
+    if (stop) {
       return success();
     }
-
-    parser.emitError(parser.getCurrentLocation(),
-                     "unknown key in tile_buf compact syntax: ")
-        << key;
-    return failure();
   }
 
   return success();
 }
 
-static Type buildTileBufType(AsmParser &parser,
-                             const ParsedTileBufFields &fields) {
-  MLIRContext *ctx = parser.getContext();
+// Validate the shape/valid-shape constraints of a parsed tile_buf.
+static LogicalResult validateTileBufShape(AsmParser &parser,
+                                          const ParsedTileBufFields &fields) {
   auto emitError = [&parser]() -> InFlightDiagnostic {
     return parser.emitError(parser.getNameLoc());
   };
 
-  // 1. Shape positivity check
   if (fields.rows <= 0 || fields.cols <= 0) {
     emitError() << "tile_buf rows/cols must be positive";
-    return Type();
+    return failure();
   }
 
-  // 2. ValidShape bounds check
   int64_t vrow = fields.vrow < 0 ? ShapedType::kDynamic : fields.vrow;
   int64_t vcol = fields.vcol < 0 ? ShapedType::kDynamic : fields.vcol;
   if (vrow != ShapedType::kDynamic && vrow > fields.rows) {
     emitError() << "tile_buf valid_row (" << vrow << ") exceeds row (" << fields.rows << ")";
-    return Type();
+    return failure();
   }
   if (vcol != ShapedType::kDynamic && vcol > fields.cols) {
     emitError() << "tile_buf valid_col (" << vcol << ") exceeds col (" << fields.cols << ")";
-    return Type();
+    return failure();
   }
+  return success();
+}
+
+// Resolve the memory space and layout/pad/compact config attributes for a
+// parsed tile_buf, emitting diagnostics on any unknown value.
+static LogicalResult resolveTileBufConfig(AsmParser &parser, MLIRContext *ctx,
+                                          const ParsedTileBufFields &fields,
+                                          TileBufConfigAttr &cfg,
+                                          AddressSpaceAttr &memorySpaceAttr) {
+  auto emitError = [&parser]() -> InFlightDiagnostic {
+    return parser.emitError(parser.getNameLoc());
+  };
 
   auto memorySpace = resolveTileBufMemorySpace(fields.locStr);
   if (!memorySpace.has_value()) {
     emitError() << "unknown loc: " << fields.locStr;
-    return Type();
+    return failure();
   }
 
   auto bl = symbolizeBLayout(fields.blayoutStr);
@@ -534,37 +569,33 @@ static Type buildTileBufType(AsmParser &parser,
   auto compact = symbolizeCompactMode(fields.compactInt);
   if (!bl.has_value()) {
     emitError() << "unknown blayout: " << fields.blayoutStr;
-    return Type();
+    return failure();
   }
   if (!sl.has_value()) {
     emitError() << "unknown slayout: " << fields.slayoutStr;
-    return Type();
+    return failure();
   }
   if (!pv.has_value()) {
     emitError() << "unknown pad: " << fields.padInt;
-    return Type();
+    return failure();
   }
   if (!compact.has_value()) {
     emitError() << "unknown compact: " << fields.compactInt;
-    return Type();
+    return failure();
   }
 
-  // 3. Fractal value check (only Mx/AB/C sizes allowed)
+  // Fractal value check (only Mx/AB/C sizes allowed)
   if (fields.fractal != kFractalMxSize && fields.fractal != kFractalABSize && fields.fractal != kFractalCSize) {
     emitError() << "unsupported s_fractal_size: " << fields.fractal
                 << ", must be one of {"
                 << kFractalMxSize << ", "
                 << kFractalABSize << ", "
                 << kFractalCSize << "}";
-    return Type();
+    return failure();
   }
 
   BLayout effectiveBLayout =
-      resolveTileBufBLayout(parser.getContext(), memorySpace.value(),
-                            bl.value());
-
-  // (32-byte alignment and boxed layout divisibility checks removed
-  // - not general hardware requirements; validation handled elsewhere)
+      resolveTileBufBLayout(ctx, memorySpace.value(), bl.value());
 
   auto blAttr = BLayoutAttr::get(ctx, effectiveBLayout);
   auto slAttr = SLayoutAttr::get(ctx, sl.value());
@@ -572,9 +603,25 @@ static Type buildTileBufType(AsmParser &parser,
       IntegerAttr::get(IntegerType::get(ctx, kI32BitWidth), fields.fractal);
   auto padAttr = PadValueAttr::get(ctx, pv.value());
   auto compactAttr = CompactModeAttr::get(ctx, compact.value());
-  auto memorySpaceAttr = AddressSpaceAttr::get(ctx, memorySpace.value());
-  auto cfg = TileBufConfigAttr::get(ctx, blAttr, slAttr, fractalAttr, padAttr,
-                                    compactAttr);
+  memorySpaceAttr = AddressSpaceAttr::get(ctx, memorySpace.value());
+  cfg = TileBufConfigAttr::get(ctx, blAttr, slAttr, fractalAttr, padAttr,
+                               compactAttr);
+  return success();
+}
+
+static Type buildTileBufType(AsmParser &parser,
+                             const ParsedTileBufFields &fields) {
+  MLIRContext *ctx = parser.getContext();
+
+  if (failed(validateTileBufShape(parser, fields))) {
+    return Type();
+  }
+
+  TileBufConfigAttr cfg;
+  AddressSpaceAttr memorySpaceAttr;
+  if (failed(resolveTileBufConfig(parser, ctx, fields, cfg, memorySpaceAttr))) {
+    return Type();
+  }
 
   TileBufShape shape{fields.rows, fields.cols};
   TileBufShape validShape{fields.vrow, fields.vcol};

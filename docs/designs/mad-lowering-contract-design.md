@@ -572,7 +572,9 @@ lib/PTO/Transforms/MadLoweringRules.cpp
 - lowering 主流程里的 repeated op class 判断
 
 `VPTOExpandWrapperOps.cpp` 保留 IR 构造和 pattern 注册。
-`VPTOLLVMEmitter.cpp` 保留 LLVM address-space cast、bias packing、call emission。
+`VPTOCANN900LLVMEmitterTypePatterns.cpp` 与
+`VPTOCANN900LLVMEmitterPacking.cpp` 负责 LLVM address-space cast、bias
+packing 和 call emission。
 
 ## 验收标准
 

@@ -565,6 +565,55 @@ inferRawVPTOComputeKind(Operation *op) {
   return std::nullopt;
 }
 
+// Checks one helper operation against the "must not appear in a tileop
+// helper" rules (pre-existing sections, MTE moves, sync, direct SIMT,
+// high-level TileOps, helper-to-helper calls). Returns failure with a
+// diagnostic when the op is rejected.
+static LogicalResult checkHelperOpAllowed(Operation *op) {
+  if (isa<SectionCubeOp, SectionVectorOp>(op)) {
+    return op->emitError(
+        "tileop helpers must not contain pre-existing sections");
+  }
+  if (isMteDataMovementOperation(op)) {
+    return op->emitError("tileop helpers must not contain MTE data movement");
+  }
+  if (isForbiddenPipeOperation(op)) {
+    return op->emitError("tileop helpers must not contain pipe synchronization");
+  }
+  if (isDirectSimtOperation(op)) {
+    return op->emitError("tileop helpers must launch a @pto.simt helper "
+                         "instead of containing SIMT operations directly");
+  }
+  if (isForbiddenTileOperation(op)) {
+    return op->emitError("tileop helpers must not contain Tile allocation "
+                         "or high-level TileOps");
+  }
+  if (isa<func::CallOp>(op)) {
+    return op->emitError("tileop helpers must not call another helper; use "
+                         "pto.simt_launch for SIMT work");
+  }
+  return success();
+}
+
+// Classifies one compute operation as Vector or Cube. Returns std::nullopt
+// when the op carries no computable kind (and no diagnostic is needed).
+static std::optional<PhysicalSectionKind> classifyHelperComputeOp(Operation *op,
+                                                                 LogicalResult &status) {
+  if (isa<SimtLaunchOp>(op)) {
+    return PhysicalSectionKind::Vector;
+  }
+  if (isa<OpPipeInterface>(op)) {
+    std::optional<PhysicalSectionKind> opKind =
+        inferPhysicalSectionKindFromPipe(op);
+    if (!opKind) {
+      status = op->emitError("tileop helpers may only contain Vector or Cube "
+                             "compute operations");
+    }
+    return opKind;
+  }
+  return inferRawVPTOComputeKind(op);
+}
+
 static LogicalResult inferTileOpKind(func::FuncOp helper,
                                      PhysicalSectionKind &kind) {
   Operation *firstVector = nullptr;
@@ -576,34 +625,8 @@ static LogicalResult inferTileOpKind(func::FuncOp helper,
         isa<func::ReturnOp>(op))
       return WalkResult::advance();
 
-    if (isa<SectionCubeOp, SectionVectorOp>(op)) {
-      status = op->emitError(
-          "tileop helpers must not contain pre-existing sections");
-      return WalkResult::interrupt();
-    }
-    if (isMteDataMovementOperation(op)) {
-      status =
-          op->emitError("tileop helpers must not contain MTE data movement");
-      return WalkResult::interrupt();
-    }
-    if (isForbiddenPipeOperation(op)) {
-      status =
-          op->emitError("tileop helpers must not contain pipe synchronization");
-      return WalkResult::interrupt();
-    }
-    if (isDirectSimtOperation(op)) {
-      status = op->emitError("tileop helpers must launch a @pto.simt helper "
-                             "instead of containing SIMT operations directly");
-      return WalkResult::interrupt();
-    }
-    if (isForbiddenTileOperation(op)) {
-      status = op->emitError("tileop helpers must not contain Tile allocation "
-                             "or high-level TileOps");
-      return WalkResult::interrupt();
-    }
-    if (isa<func::CallOp>(op)) {
-      status = op->emitError("tileop helpers must not call another helper; use "
-                             "pto.simt_launch for SIMT work");
+    if (failed(checkHelperOpAllowed(op))) {
+      status = failure();
       return WalkResult::interrupt();
     }
     if (isa<SimtLaunchOp>(op)) {
@@ -611,18 +634,11 @@ static LogicalResult inferTileOpKind(func::FuncOp helper,
       return WalkResult::advance();
     }
 
-    std::optional<PhysicalSectionKind> opKind;
-    if (isa<OpPipeInterface>(op)) {
-      opKind = inferPhysicalSectionKindFromPipe(op);
-      if (!opKind) {
-        status = op->emitError("tileop helpers may only contain Vector or Cube "
-                               "compute operations");
-        return WalkResult::interrupt();
-      }
-    } else {
-      opKind = inferRawVPTOComputeKind(op);
+    std::optional<PhysicalSectionKind> opKind =
+        classifyHelperComputeOp(op, status);
+    if (failed(status)) {
+      return WalkResult::interrupt();
     }
-
     if (opKind) {
       if (*opKind == PhysicalSectionKind::Vector)
         firstVector = firstVector ? firstVector : op;

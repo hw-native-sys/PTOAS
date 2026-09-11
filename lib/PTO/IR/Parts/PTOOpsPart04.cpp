@@ -52,16 +52,15 @@ static LogicalResult verifyTileBufCommon(Operation *op, Type ty, StringRef name,
   }
 
   auto validShape = getValidShapeVec(ty);
-  if (validShape.size() != 2) {
-    return op->emitOpError() << "expects " << name << " to have a rank-2 valid_shape";
+  if (validShape.size() != mlir::pto::kValue2) {
+      return op->emitOpError() << "expects " << name << " to have a rank-2 valid_shape";
   }
   auto shape = getShapeVec(ty);
-  for (unsigned i = 0; i < 2; ++i) {
-    if (shape[i] != ShapedType::kDynamic && validShape[i] != ShapedType::kDynamic &&
-        validShape[i] > shape[i]) {
-      return op->emitOpError() << "expects " << name << " to satisfy valid_shape[" << i
-                               << "] <= shape[" << i << "]";
-    }
+  for (unsigned i = 0; i < mlir::pto::kValue2; ++i) {
+      if (shape[i] != ShapedType::kDynamic && validShape[i] != ShapedType::kDynamic && validShape[i] > shape[i]) {
+          return op->emitOpError() << "expects " << name << " to satisfy valid_shape[" << i << "] <= shape[" << i
+                                   << "]";
+      }
   }
   return success();
 }
@@ -138,8 +137,9 @@ static LogicalResult verifyPartialValidPatternImpl(Operation *op, Type src0Ty,
   auto src0Valid = getValidShapeVec(src0Ty);
   auto src1Valid = getValidShapeVec(src1Ty);
   auto dstValid = getValidShapeVec(dstTy);
-  if (src0Valid.size() != 2 || src1Valid.size() != 2 || dstValid.size() != 2) {
-    return op->emitOpError("expects src0, src1, and dst to have rank-2 valid_shape");
+  if (src0Valid.size() != mlir::pto::kValue2 || src1Valid.size() != mlir::pto::kValue2 ||
+      dstValid.size() != mlir::pto::kValue2) {
+      return op->emitOpError("expects src0, src1, and dst to have rank-2 valid_shape");
   }
 
   auto lessEqualKnown = [](int64_t lhs, int64_t rhs) {
@@ -154,12 +154,10 @@ static LogicalResult verifyPartialValidPatternImpl(Operation *op, Type src0Ty,
     return true;
   };
 
-  for (unsigned i = 0; i < 2; ++i) {
-    if (!lessEqualKnown(src0Valid[i], dstValid[i]) ||
-        !lessEqualKnown(src1Valid[i], dstValid[i])) {
-      return op->emitOpError(
-          "expects src0/src1 valid_shape to be less than or equal to dst valid_shape");
-    }
+  for (unsigned i = 0; i < mlir::pto::kValue2; ++i) {
+      if (!lessEqualKnown(src0Valid[i], dstValid[i]) || !lessEqualKnown(src1Valid[i], dstValid[i])) {
+          return op->emitOpError("expects src0/src1 valid_shape to be less than or equal to dst valid_shape");
+      }
   }
   if (requireExactInput && !equalsKnown(src0Valid, dstValid) &&
       !equalsKnown(src1Valid, dstValid)) {
@@ -183,8 +181,8 @@ static LogicalResult verifyPartialValidPatternLoose(Operation *op, Type src0Ty,
 
 [[maybe_unused]] static bool hasKnownZeroValidRegion(Type ty) {
   auto valid = getValidShapeVec(ty);
-  if (valid.size() != 2) {
-    return false;
+  if (valid.size() != mlir::pto::kValue2) {
+      return false;
   }
   return valid[0] == 0 || valid[1] == 0;
 }
@@ -213,10 +211,8 @@ static LogicalResult verifyScalarTileOp(Operation *op, Type srcTy, Type dstTy,
 
   auto srcValid = getValidShapeVec(srcTy);
   auto dstValid = getValidShapeVec(dstTy);
-  if (srcValid.size() != 2 || dstValid.size() != 2) {
-    return op->emitOpError()
-           << "expects " << srcName << " and " << dstName
-           << " to have rank-2 valid_shape";
+  if (srcValid.size() != mlir::pto::kValue2 || dstValid.size() != mlir::pto::kValue2) {
+      return op->emitOpError() << "expects " << srcName << " and " << dstName << " to have rank-2 valid_shape";
   }
   if (requireValidRowsEqual &&
       srcValid[0] != ShapedType::kDynamic && dstValid[0] != ShapedType::kDynamic &&
@@ -361,8 +357,8 @@ static LogicalResult verifyArithmeticElemTypeForArch(
   bool supported = elemTy.isInteger(32) || elemTy.isInteger(16) ||
                    elemTy.isF16() || elemTy.isF32();
   if (targetArch == PTOArch::A5) {
-    supported = supported || (allowInt8OnA5 && elemTy.isInteger(8)) ||
-                (allowBf16OnA5 && elemTy.isBF16());
+      supported =
+          supported || (allowInt8OnA5 && elemTy.isInteger(mlir::pto::kValue8)) || (allowBf16OnA5 && elemTy.isBF16());
   }
   if (supported) {
     return success();
@@ -419,8 +415,7 @@ static LogicalResult verifyTColReductionElemTypeForArch(
   bool ok = elemTy.isF16() || elemTy.isF32() || elemTy.isInteger(16) ||
             elemTy.isInteger(32);
   if (targetArch == PTOArch::A5) {
-    ok = ok || (allowInt8OnA5 && elemTy.isInteger(8)) ||
-         (allowBf16OnA5 && elemTy.isBF16());
+      ok = ok || (allowInt8OnA5 && elemTy.isInteger(mlir::pto::kValue8)) || (allowBf16OnA5 && elemTy.isBF16());
   }
   if (ok) {
     return success();
@@ -557,15 +552,13 @@ static LogicalResult verifyMatmulValidSizes(Operation *op, Type lhsTy,
                                             Type rhsTy, int64_t minValue) {
   auto lhsValid = getValidShapeVec(lhsTy);
   auto rhsValid = getValidShapeVec(rhsTy);
-  if (lhsValid.size() != 2 || rhsValid.size() != 2) {
-    return success();
+  if (lhsValid.size() != mlir::pto::kValue2 || rhsValid.size() != mlir::pto::kValue2) {
+      return success();
   }
   for (int64_t value : {lhsValid[0], lhsValid[1], rhsValid[1]}) {
-    if (value != ShapedType::kDynamic &&
-        (value < minValue || value > 4095)) {
-      return op->emitOpError() << "expects m, k, and n valid sizes to be in ["
-                               << minValue << ", 4095]";
-    }
+      if (value != ShapedType::kDynamic && (value < minValue || value > mlir::pto::kValue4095)) {
+          return op->emitOpError() << "expects m, k, and n valid sizes to be in [" << minValue << ", 4095]";
+      }
   }
   return success();
 }
@@ -725,22 +718,22 @@ static LogicalResult verifyA5MxMatTileOperands(Operation *op, Type lhsTy,
 
   auto lhsShape = getShapeVec(lhsTy);
   auto rhsShape = getShapeVec(rhsTy);
-  if (lhsShape.size() == 2 && rhsShape.size() == 2) {
-    int64_t lhsK = lhsShape[1];
-    int64_t rhsK = rhsShape[0];
-    auto checkPhysicalK = [&](int64_t value, StringRef name) -> LogicalResult {
-      if (value != ShapedType::kDynamic && (value < 1 || (value % 64) != 0)) {
-        return op->emitOpError() << "expects " << name
-                                 << " physical K shape to be a positive multiple of 64 on A5";
+  if (lhsShape.size() == mlir::pto::kValue2 && rhsShape.size() == mlir::pto::kValue2) {
+      int64_t lhsK = lhsShape[1];
+      int64_t rhsK = rhsShape[0];
+      auto checkPhysicalK = [&](int64_t value, StringRef name) -> LogicalResult {
+          if (value != ShapedType::kDynamic && (value < 1 || (value % mlir::pto::kValue64) != 0)) {
+              return op->emitOpError() << "expects " << name
+                                       << " physical K shape to be a positive multiple of 64 on A5";
+          }
+          return success();
+      };
+      if (failed(checkPhysicalK(lhsK, "lhs"))) {
+          return failure();
       }
-      return success();
-    };
-    if (failed(checkPhysicalK(lhsK, "lhs"))) {
-      return failure();
-    }
-    if (failed(checkPhysicalK(rhsK, "rhs"))) {
-      return failure();
-    }
+      if (failed(checkPhysicalK(rhsK, "rhs"))) {
+          return failure();
+      }
   }
 
   auto lhsValid = getValidShapeVec(lhsTy);
@@ -749,10 +742,10 @@ static LogicalResult verifyA5MxMatTileOperands(Operation *op, Type lhsTy,
     int64_t m = lhsValid[0];
     int64_t k = lhsValid[1];
     int64_t n = rhsValid[1];
-    if ((m != ShapedType::kDynamic && (m < 1 || m > 4095)) ||
-        (k != ShapedType::kDynamic && (k < 1 || k > 4095)) ||
-        (n != ShapedType::kDynamic && (n < 1 || n > 4095))) {
-      return op->emitOpError("expects m, k, and n valid sizes to be in [1, 4095]");
+    if ((m != ShapedType::kDynamic && (m < 1 || m > mlir::pto::kValue4095)) ||
+        (k != ShapedType::kDynamic && (k < 1 || k > mlir::pto::kValue4095)) ||
+        (n != ShapedType::kDynamic && (n < 1 || n > mlir::pto::kValue4095))) {
+        return op->emitOpError("expects m, k, and n valid sizes to be in [1, 4095]");
     }
   }
   return success();
@@ -772,10 +765,10 @@ static LogicalResult verifyA5MxMatScaleDims(
     Operation *op, StringRef scaleName, ArrayRef<int64_t> scaleDims,
     ArrayRef<int64_t> lhsDims, ArrayRef<int64_t> rhsDims, StringRef dimsName,
     bool isLeftScale) {
-  if (scaleDims.size() != 2 || lhsDims.size() != 2 || rhsDims.size() != 2) {
-    return op->emitOpError() << "expects " << scaleName
-                             << ", lhs, and rhs to have rank-2 " << dimsName;
-  }
+    if (scaleDims.size() != mlir::pto::kValue2 || lhsDims.size() != mlir::pto::kValue2 ||
+        rhsDims.size() != mlir::pto::kValue2) {
+        return op->emitOpError() << "expects " << scaleName << ", lhs, and rhs to have rank-2 " << dimsName;
+    }
   int64_t scaleK = ceilDivKnown(lhsDims[1], 32);
   int64_t expectedRows = isLeftScale ? lhsDims[0] : scaleK;
   int64_t expectedCols = isLeftScale ? scaleK : rhsDims[1];
@@ -806,9 +799,8 @@ static LogicalResult verifyA5MxMatScaleLayout(Operation *op,
                              << (isLeftScale ? "row_major" : "col_major")
                              << " slayout on A5";
   }
-  if (scaleTb.getSFractalSizeI32() != 32) {
-    return op->emitOpError() << "expects " << scaleName
-                             << " to use fractal=32 on A5";
+  if (scaleTb.getSFractalSizeI32() != mlir::pto::kValue32) {
+      return op->emitOpError() << "expects " << scaleName << " to use fractal=32 on A5";
   }
   return success();
 }
@@ -885,11 +877,10 @@ static LogicalResult verifyA5MxGemvScaleTile(Operation *op, Type scaleTy,
   auto rhsShape = getShapeVec(rhsTy);
   auto lhsValid = getValidShapeVec(lhsTy);
   auto rhsValid = getValidShapeVec(rhsTy);
-  if (scaleShape.size() != 2 || scaleValid.size() != 2 ||
-      lhsShape.size() != 2 || rhsShape.size() != 2 || lhsValid.size() != 2 ||
-      rhsValid.size() != 2) {
-    return op->emitOpError() << "expects " << scaleName
-                             << ", lhs, and rhs to have rank-2 shape/valid_shape";
+  if (scaleShape.size() != mlir::pto::kValue2 || scaleValid.size() != mlir::pto::kValue2 ||
+      lhsShape.size() != mlir::pto::kValue2 || rhsShape.size() != mlir::pto::kValue2 ||
+      lhsValid.size() != mlir::pto::kValue2 || rhsValid.size() != mlir::pto::kValue2) {
+      return op->emitOpError() << "expects " << scaleName << ", lhs, and rhs to have rank-2 shape/valid_shape";
   }
 
   int64_t logicalM = lhsValid[0];
@@ -971,8 +962,8 @@ static LogicalResult verifyMatmulTypeTriple(Operation *op, Type lhsElemTy,
   auto isInt8 = [](Type ty) {
     return ty.isInteger(8);
   };
-  if (dstElemTy.isInteger(32) && isInt8(lhsElemTy) && isInt8(rhsElemTy)) {
-    return success();
+  if (dstElemTy.isInteger(mlir::pto::kValue32) && isInt8(lhsElemTy) && isInt8(rhsElemTy)) {
+      return success();
   }
 
   auto isSupportedFpInput = [](Type ty) {
@@ -1032,7 +1023,6 @@ LogicalResult pto::TAddCOp::verify() {
   Type t1 = getSrc1().getType();
   Type t2 = getSrc2().getType();
   Type td = getDst().getType();
-
   if (!isPTOShapedLike(t0) || !isPTOShapedLike(t1) ||
       !isPTOShapedLike(t2) || !isPTOShapedLike(td)) {
     return emitOpError("expects src0/src1/src2/dst to be PTO shaped-like types");
@@ -1187,10 +1177,9 @@ LogicalResult pto::TAndOp::verify() {
 static LogicalResult verifyTConcatValidShapes(TConcatOp op, ArrayRef<int64_t> v0,
                                               ArrayRef<int64_t> v1,
                                               ArrayRef<int64_t> vd, Type dstTy) {
-  if (v0.size() != 2 || v1.size() != 2 || vd.size() != 2) {
-    return op.emitOpError(
-        "expects src0, src1, and dst to have rank-2 valid_shape");
-  }
+    if (v0.size() != mlir::pto::kValue2 || v1.size() != mlir::pto::kValue2 || vd.size() != mlir::pto::kValue2) {
+        return op.emitOpError("expects src0, src1, and dst to have rank-2 valid_shape");
+    }
   if (v0[0] != ShapedType::kDynamic && vd[0] != ShapedType::kDynamic &&
       v0[0] != vd[0]) {
     return op.emitOpError("expects src0 valid row to match dst valid row");
@@ -1200,11 +1189,9 @@ static LogicalResult verifyTConcatValidShapes(TConcatOp op, ArrayRef<int64_t> v0
     return op.emitOpError("expects src1 valid row to match dst valid row");
   }
   auto dstShape = getShapeVec(dstTy);
-  if (dstShape.size() == 2 && dstShape[1] != ShapedType::kDynamic &&
-      v0[1] != ShapedType::kDynamic && v1[1] != ShapedType::kDynamic &&
-      v0[1] + v1[1] > dstShape[1]) {
-    return op.emitOpError(
-        "expects src0.valid_col + src1.valid_col <= dst.cols");
+  if (dstShape.size() == mlir::pto::kValue2 && dstShape[1] != ShapedType::kDynamic && v0[1] != ShapedType::kDynamic &&
+      v1[1] != ShapedType::kDynamic && v0[1] + v1[1] > dstShape[1]) {
+      return op.emitOpError("expects src0.valid_col + src1.valid_col <= dst.cols");
   }
   return success();
 }
@@ -1244,9 +1231,9 @@ static LogicalResult verifyTConcatElemType(TConcatOp op, Type elem) {
     return success();
   }
   auto it = mlir::dyn_cast<IntegerType>(elem);
-  if (!it ||
-      (it.getWidth() != 8 && it.getWidth() != 16 && it.getWidth() != 32)) {
-    return op.emitOpError("expects element type to be i8, i16, i32, f16, f32, or bf16");
+  if (!it || (it.getWidth() != mlir::pto::kValue8 && it.getWidth() != mlir::pto::kValue16 &&
+              it.getWidth() != mlir::pto::kValue32)) {
+      return op.emitOpError("expects element type to be i8, i16, i32, f16, f32, or bf16");
   }
   return success();
 }
@@ -1296,11 +1283,11 @@ static LogicalResult verifyTConcatidxValidRows(
     TConcatidxOp op, ArrayRef<int64_t> dstValid) {
   SmallVector<Value, 4> values = {op.getSrc0(), op.getSrc1(), op.getSrc0Idx(),
                                   op.getSrc1Idx()};
-  SmallVector<StringRef, 4> names = {"src0", "src1", "src0Idx", "src1Idx"};
+  SmallVector<StringRef, mlir::pto::kValue4> names = {"src0", "src1", "src0Idx", "src1Idx"};
   for (auto [value, name] : llvm::zip_equal(values, names)) {
     auto valid = getValidShapeVec(value);
-    if (valid.size() != 2) {
-      return op.emitOpError("expects all operands to have rank-2 valid_shape");
+    if (valid.size() != mlir::pto::kValue2) {
+        return op.emitOpError("expects all operands to have rank-2 valid_shape");
     }
     if (valid[0] != ShapedType::kDynamic &&
         dstValid[0] != ShapedType::kDynamic && valid[0] != dstValid[0]) {
@@ -1351,22 +1338,21 @@ static LogicalResult verifyTConcatidxIndexColumns(TConcatidxOp op) {
 
 static FailureOr<std::pair<Type, Type>> verifyTConcatidxCommon(
     TConcatidxOp op) {
-  SmallVector<Type, 5> types = {op.getSrc0().getType(), op.getSrc1().getType(),
-                                op.getSrc0Idx().getType(),
-                                op.getSrc1Idx().getType(), op.getDst().getType()};
-  SmallVector<StringRef, 5> names = {"src0", "src1", "src0Idx", "src1Idx",
-                                     "dst"};
-  for (auto [type, name] : llvm::zip_equal(types, names)) {
-    if (failed(verifyTileBufCommon(op, type, name))) {
-      return failure();
+    SmallVector<Type, mlir::pto::kValue5> types = {
+        op.getSrc0().getType(), op.getSrc1().getType(), op.getSrc0Idx().getType(), op.getSrc1Idx().getType(),
+        op.getDst().getType()};
+    SmallVector<StringRef, mlir::pto::kValue5> names = {"src0", "src1", "src0Idx", "src1Idx", "dst"};
+    for (auto [type, name] : llvm::zip_equal(types, names)) {
+        if (failed(verifyTileBufCommon(op, type, name))) {
+            return failure();
+        }
     }
-  }
   auto elementTypes = verifyTConcatidxElementAgreement(op, types);
   if (failed(elementTypes))
     return failure();
   auto dstValid = getValidShapeVec(op.getDst());
-  if (dstValid.size() != 2) {
-    return op.emitOpError("expects all operands to have rank-2 valid_shape");
+  if (dstValid.size() != mlir::pto::kValue2) {
+      return op.emitOpError("expects all operands to have rank-2 valid_shape");
   }
   if (failed(verifyTConcatidxValidRows(op, dstValid))) {
     return failure();
@@ -1383,18 +1369,18 @@ static LogicalResult verifyTConcatidxElementTypes(TConcatidxOp op,
     if (!dataElem.isF16() && !dataElem.isF32() && !dataElem.isBF16()) {
       auto it = mlir::dyn_cast<IntegerType>(dataElem);
       if (!it || !it.isSignless() ||
-          (it.getWidth() != 8 && it.getWidth() != 16 && it.getWidth() != 32)) {
-        return op.emitOpError()
-               << "expects data element type to be i8, i16, i32, f16, f32, or bf16";
+          (it.getWidth() != mlir::pto::kValue8 && it.getWidth() != mlir::pto::kValue16 &&
+           it.getWidth() != mlir::pto::kValue32)) {
+          return op.emitOpError() << "expects data element type to be i8, i16, i32, f16, f32, or bf16";
       }
     }
 
     // Index element type: i8, i16, i32 (signless).
     auto it = mlir::dyn_cast<IntegerType>(idxElem);
     if (!it || !it.isSignless() ||
-        (it.getWidth() != 8 && it.getWidth() != 16 && it.getWidth() != 32)) {
-      return op.emitOpError()
-             << "expects index element type to be i8, i16, or i32";
+        (it.getWidth() != mlir::pto::kValue8 && it.getWidth() != mlir::pto::kValue16 &&
+         it.getWidth() != mlir::pto::kValue32)) {
+        return op.emitOpError() << "expects index element type to be i8, i16, or i32";
     }
     return success();
 }
@@ -1542,8 +1528,8 @@ static LogicalResult verifyTCITmp(TCIOp op, unsigned bitWidth) {
       return op.emitOpError("expects tmp to be in vec address space");
     }
     Type tmpElemTy = tmpTy.getElementType();
-    if (!(tmpElemTy.isF32() || tmpElemTy.isInteger(32))) {
-      return op.emitOpError("expects A2/A3 tmp element type to be a 4-byte type");
+    if (!(tmpElemTy.isF32() || tmpElemTy.isInteger(mlir::pto::kValue32))) {
+        return op.emitOpError("expects A2/A3 tmp element type to be a 4-byte type");
     }
     if (tmpTy.getBLayoutValueI32() != static_cast<int32_t>(BLayout::RowMajor)) {
       return op.emitOpError("expects tmp blayout to be row_major");
@@ -1578,8 +1564,8 @@ LogicalResult pto::TCIOp::verify() {
     return emitOpError("expects dst element type to be integer");
   }
   unsigned bw = elemTy.getWidth();
-  if (bw != 16 && bw != 32) {
-    return emitOpError("expects dst element type to be i16/i32");
+  if (bw != mlir::pto::kValue16 && bw != mlir::pto::kValue32) {
+      return emitOpError("expects dst element type to be i16/i32");
   }
   if (getTmp() && getTargetArch(getOperation()) != PTOArch::A5 &&
       failed(verifyTCITmp(*this, bw))) {
@@ -1595,8 +1581,8 @@ LogicalResult pto::TCIOp::verify() {
     return emitOpError("expects S and dst element type to be exactly the same type");
   }
   auto shape = getShapeVec(dstTy);
-  if (shape.size() != 2) {
-    return emitOpError("expects dst to be rank-2");
+  if (shape.size() != mlir::pto::kValue2) {
+      return emitOpError("expects dst to be rank-2");
   }
   if (shape[1] != ShapedType::kDynamic && shape[1] == 1) {
     return emitOpError("expects dst cols to be different from 1");

@@ -171,6 +171,26 @@ static bool addLinearTerm(PTOLinearExpr &linear, PTOTypedExprRef atom,
 }
 
 static bool accumulateLinear(const PTOTypedExprRef &expr, int64_t scale,
+                             PTOLinearExpr &linear);
+
+// Distribute a multiplication into the linear form when one operand folds to a
+// constant scale factor.
+static bool accumulateLinearMul(const PTOTypedExprRef &expr, int64_t scale,
+                                PTOLinearExpr &linear) {
+  if (auto lhsConstant = foldPTOConstant(expr->lhs)) {
+    int64_t nextScale;
+    return llvm::MulOverflow(scale, *lhsConstant, nextScale) == 0 &&
+           accumulateLinear(expr->rhs, nextScale, linear);
+  }
+  if (auto rhsConstant = foldPTOConstant(expr->rhs)) {
+    int64_t nextScale;
+    return llvm::MulOverflow(scale, *rhsConstant, nextScale) == 0 &&
+           accumulateLinear(expr->lhs, nextScale, linear);
+  }
+  return false;
+}
+
+static bool accumulateLinear(const PTOTypedExprRef &expr, int64_t scale,
                              PTOLinearExpr &linear) {
   if (!expr) {
     return false;
@@ -208,17 +228,7 @@ static bool accumulateLinear(const PTOTypedExprRef &expr, int64_t scale,
            accumulateLinear(expr->rhs, negativeScale, linear);
   }
   case PTOTypedExpr::Kind::Mul: {
-    if (auto lhsConstant = foldPTOConstant(expr->lhs)) {
-      int64_t nextScale;
-      return llvm::MulOverflow(scale, *lhsConstant, nextScale) == 0 &&
-             accumulateLinear(expr->rhs, nextScale, linear);
-    }
-    if (auto rhsConstant = foldPTOConstant(expr->rhs)) {
-      int64_t nextScale;
-      return llvm::MulOverflow(scale, *rhsConstant, nextScale) == 0 &&
-             accumulateLinear(expr->lhs, nextScale, linear);
-    }
-    return false;
+    return accumulateLinearMul(expr, scale, linear);
   }
   }
   return false;
@@ -319,6 +329,71 @@ using RecurrenceDecompositionCache =
 
 static std::optional<RecurrenceDecomposition> decomposeRecurrence(
     Value value, BlockArgument iterArg, scf::ForOp loop,
+    PTOValueEvolutionAnalysis &analysis, RecurrenceDecompositionCache &cache);
+
+// Decompose an add/sub whose operands are each affine in the recurrence.
+static std::optional<RecurrenceDecomposition> decomposeAddSubRecurrence(
+    Value value, Operation *definition, BlockArgument iterArg, scf::ForOp loop,
+    PTOValueEvolutionAnalysis &analysis, RecurrenceDecompositionCache &cache) {
+  auto lhs = decomposeRecurrence(definition->getOperand(0), iterArg, loop,
+                                 analysis, cache);
+  auto rhs = decomposeRecurrence(definition->getOperand(1), iterArg, loop,
+                                 analysis, cache);
+  if (!lhs || !rhs) {
+    return std::nullopt;
+  }
+  if (lhs->coefficient == 0 && rhs->coefficient == 0) {
+    return RecurrenceDecomposition{0, makePTOOpaqueExpr(value)};
+  }
+  bool isSubtraction = isa<arith::SubIOp>(definition);
+  int64_t coefficient;
+  bool overflow =
+      isSubtraction
+          ? llvm::SubOverflow(lhs->coefficient, rhs->coefficient, coefficient)
+          : llvm::AddOverflow(lhs->coefficient, rhs->coefficient, coefficient);
+  if (overflow) {
+    return std::nullopt;
+  }
+  PTOTypedExprRef increment =
+      isSubtraction
+          ? makePTOSubExpr(lhs->increment, rhs->increment, value.getType())
+          : makePTOAddExpr(lhs->increment, rhs->increment, value.getType());
+  return RecurrenceDecomposition{coefficient, std::move(increment)};
+}
+
+// Decompose a multiply of an affine operand by a loop-invariant constant.
+static std::optional<RecurrenceDecomposition> decomposeMulRecurrence(
+    Value value, arith::MulIOp multiplication, BlockArgument iterArg,
+    scf::ForOp loop, PTOValueEvolutionAnalysis &analysis,
+    RecurrenceDecompositionCache &cache) {
+  auto lhs = decomposeRecurrence(multiplication.getLhs(), iterArg, loop,
+                                 analysis, cache);
+  auto rhs = decomposeRecurrence(multiplication.getRhs(), iterArg, loop,
+                                 analysis, cache);
+  if (!lhs || !rhs || (lhs->coefficient != 0 && rhs->coefficient != 0)) {
+    return std::nullopt;
+  }
+  if (lhs->coefficient == 0 && rhs->coefficient == 0) {
+    return RecurrenceDecomposition{0, makePTOOpaqueExpr(value)};
+  }
+  const RecurrenceDecomposition &variant =
+      lhs->coefficient != 0 ? *lhs : *rhs;
+  Value multiplierValue = lhs->coefficient != 0 ? multiplication.getRhs()
+                                                : multiplication.getLhs();
+  auto multiplier = getConstantIntValue(multiplierValue);
+  int64_t coefficient;
+  if (!multiplier ||
+      llvm::MulOverflow(variant.coefficient, *multiplier, coefficient) != 0) {
+    return std::nullopt;
+  }
+  return RecurrenceDecomposition{
+      coefficient,
+      makePTOMulExpr(variant.increment, analysis.getExpr(multiplierValue),
+                     value.getType())};
+}
+
+static std::optional<RecurrenceDecomposition> decomposeRecurrence(
+    Value value, BlockArgument iterArg, scf::ForOp loop,
     PTOValueEvolutionAnalysis &analysis,
     RecurrenceDecompositionCache &cache) {
   if (value == iterArg) {
@@ -341,62 +416,13 @@ static std::optional<RecurrenceDecomposition> decomposeRecurrence(
   }
 
   if (isa<arith::AddIOp, arith::SubIOp>(definition)) {
-    auto lhs = decomposeRecurrence(definition->getOperand(0), iterArg, loop,
-                                   analysis, cache);
-    auto rhs = decomposeRecurrence(definition->getOperand(1), iterArg, loop,
-                                   analysis, cache);
-    if (!lhs || !rhs) {
-      return record(std::nullopt);
-    }
-    if (lhs->coefficient == 0 && rhs->coefficient == 0) {
-      return record(RecurrenceDecomposition{0, makePTOOpaqueExpr(value)});
-    }
-    bool isSubtraction = isa<arith::SubIOp>(definition);
-    int64_t coefficient;
-    bool overflow =
-        isSubtraction
-            ? llvm::SubOverflow(lhs->coefficient, rhs->coefficient,
-                                coefficient)
-            : llvm::AddOverflow(lhs->coefficient, rhs->coefficient,
-                                coefficient);
-    if (overflow) {
-      return record(std::nullopt);
-    }
-    PTOTypedExprRef increment =
-        isSubtraction
-            ? makePTOSubExpr(lhs->increment, rhs->increment, value.getType())
-            : makePTOAddExpr(lhs->increment, rhs->increment, value.getType());
-    return record(RecurrenceDecomposition{coefficient,
-                                           std::move(increment)});
+    return record(decomposeAddSubRecurrence(value, definition, iterArg, loop,
+                                            analysis, cache));
   }
 
   if (auto multiplication = dyn_cast<arith::MulIOp>(definition)) {
-    auto lhs = decomposeRecurrence(multiplication.getLhs(), iterArg, loop,
-                                   analysis, cache);
-    auto rhs = decomposeRecurrence(multiplication.getRhs(), iterArg, loop,
-                                   analysis, cache);
-    if (!lhs || !rhs ||
-        (lhs->coefficient != 0 && rhs->coefficient != 0)) {
-      return record(std::nullopt);
-    }
-    if (lhs->coefficient == 0 && rhs->coefficient == 0) {
-      return record(RecurrenceDecomposition{0, makePTOOpaqueExpr(value)});
-    }
-    const RecurrenceDecomposition &variant =
-        lhs->coefficient != 0 ? *lhs : *rhs;
-    Value multiplierValue = lhs->coefficient != 0
-                                ? multiplication.getRhs()
-                                : multiplication.getLhs();
-    auto multiplier = getConstantIntValue(multiplierValue);
-    int64_t coefficient;
-    if (!multiplier || llvm::MulOverflow(variant.coefficient, *multiplier,
-                                         coefficient) != 0) {
-      return record(std::nullopt);
-    }
-    return record(RecurrenceDecomposition{
-        coefficient,
-        makePTOMulExpr(variant.increment, analysis.getExpr(multiplierValue),
-                       value.getType())});
+    return record(decomposeMulRecurrence(value, multiplication, iterArg, loop,
+                                         analysis, cache));
   }
 
   // A cast wholly inside the increment is retained by getExpr.  A cast of the
@@ -596,6 +622,35 @@ static std::optional<__int128> evaluateTypedExpr(
 
 static std::optional<__int128> evaluateLoopValue(
     Value value, scf::ForOp loop, __int128 inductionValue,
+    ArrayRef<std::optional<__int128>> iterArgValues, bool isUnsigned);
+
+// Evaluate an add/sub/mul definition under the concrete induction/iter-arg
+// state, checking each step against the operation's finite-width range.
+static std::optional<__int128> evaluateLoopBinaryOp(
+    Operation *definition, scf::ForOp loop, __int128 inductionValue,
+    ArrayRef<std::optional<__int128>> iterArgValues, bool isUnsigned) {
+  auto lhs = evaluateLoopValue(definition->getOperand(0), loop, inductionValue,
+                               iterArgValues, isUnsigned);
+  auto rhs = evaluateLoopValue(definition->getOperand(1), loop, inductionValue,
+                               iterArgValues, isUnsigned);
+  if (!lhs || !rhs) {
+    return std::nullopt;
+  }
+  __int128 result;
+  bool valid = isa<arith::AddIOp>(definition)
+                   ? checkedAdd(*lhs, *rhs, result)
+               : isa<arith::SubIOp>(definition)
+                   ? checkedSub(*lhs, *rhs, result)
+                   : checkedMul(*lhs, *rhs, result);
+  Type valueType = definition->getResult(0).getType();
+  if (!valid || !fitsInterpretation(result, valueType, isUnsigned)) {
+    return std::nullopt;
+  }
+  return result;
+}
+
+static std::optional<__int128> evaluateLoopValue(
+    Value value, scf::ForOp loop, __int128 inductionValue,
     ArrayRef<std::optional<__int128>> iterArgValues, bool isUnsigned) {
   if (value == loop.getInductionVar()) {
     return fitsInterpretation(inductionValue, value.getType(), isUnsigned)
@@ -631,24 +686,53 @@ static std::optional<__int128> evaluateLoopValue(
   if (!isa<arith::AddIOp, arith::SubIOp, arith::MulIOp>(definition)) {
     return std::nullopt;
   }
+  return evaluateLoopBinaryOp(definition, loop, inductionValue, iterArgValues,
+                              isUnsigned);
+}
 
-  auto lhs = evaluateLoopValue(definition->getOperand(0), loop,
-                               inductionValue, iterArgValues, isUnsigned);
-  auto rhs = evaluateLoopValue(definition->getOperand(1), loop,
-                               inductionValue, iterArgValues, isUnsigned);
-  if (!lhs || !rhs) {
-    return std::nullopt;
+// Iterate the recurrence `tripCount` times, verifying that each observed step
+// matches the decomposed increment and tracking the visited value range.
+// Returns nullopt on success, or the reason the simulation could not proceed.
+static std::optional<PTOAnalysisUnknownReason> simulateDynamicRecurrence(
+    const PTOTypedExprRef &increment, scf::YieldOp yield, scf::ForOp loop,
+    unsigned index, uint64_t tripCount, bool isUnsigned,
+    std::vector<std::optional<__int128>> &states, __int128 &induction,
+    __int128 inductionStep, __int128 &minimum, __int128 &maximum) {
+  for (uint64_t iteration = 0; iteration < tripCount; ++iteration) {
+    auto step =
+        evaluateTypedExpr(increment, loop, induction, states, isUnsigned);
+    std::vector<std::optional<__int128>> nextStates;
+    nextStates.reserve(states.size());
+    for (Value yielded : yield.getOperands()) {
+      nextStates.push_back(
+          evaluateLoopValue(yielded, loop, induction, states, isUnsigned));
+    }
+    if (!step || !nextStates[index]) {
+      return PTOAnalysisUnknownReason::PossibleWrap;
+    }
+    __int128 observedStep;
+    if (!checkedSub(*nextStates[index], *states[index], observedStep) ||
+        observedStep != *step) {
+      return PTOAnalysisUnknownReason::NonAffineRecurrence;
+    }
+    minimum = std::min(minimum, *nextStates[index]);
+    maximum = std::max(maximum, *nextStates[index]);
+    states = std::move(nextStates);
+    if (!checkedAdd(induction, inductionStep, induction)) {
+      return PTOAnalysisUnknownReason::PossibleWrap;
+    }
   }
-  __int128 result;
-  bool valid = isa<arith::AddIOp>(definition)
-                   ? checkedAdd(*lhs, *rhs, result)
-               : isa<arith::SubIOp>(definition)
-                   ? checkedSub(*lhs, *rhs, result)
-                   : checkedMul(*lhs, *rhs, result);
-  if (!valid || !fitsInterpretation(result, value.getType(), isUnsigned)) {
-    return std::nullopt;
+  return std::nullopt;
+}
+
+static bool collectInitialRecurrenceStates(
+    scf::ForOp loop, unsigned index, bool isUnsigned,
+    std::vector<std::optional<__int128>> &states) {
+  states.reserve(loop.getInitArgs().size());
+  for (Value initial : loop.getInitArgs()) {
+    states.push_back(getMathematicalConstant(initial, isUnsigned));
   }
-  return result;
+  return states[index].has_value();
 }
 
 static PTOAnalysisResult<PTOLoopEvolution> analyzeDynamicRecurrence(
@@ -675,11 +759,7 @@ static PTOAnalysisResult<PTOLoopEvolution> analyzeDynamicRecurrence(
   }
 
   std::vector<std::optional<__int128>> states;
-  states.reserve(loop.getInitArgs().size());
-  for (Value initial : loop.getInitArgs()) {
-    states.push_back(getMathematicalConstant(initial, isUnsigned));
-  }
-  if (!states[index]) {
+  if (!collectInitialRecurrenceStates(loop, index, isUnsigned, states)) {
     return PTOAnalysisResult<PTOLoopEvolution>::unknown(
         PTOAnalysisUnknownReason::RangeUnavailable);
   }
@@ -693,33 +773,11 @@ static PTOAnalysisResult<PTOLoopEvolution> analyzeDynamicRecurrence(
 
   __int128 minimum = *states[index];
   __int128 maximum = *states[index];
-  for (uint64_t iteration = 0; iteration < tripCount; ++iteration) {
-    auto step = evaluateTypedExpr(decomposition->increment, loop, *induction,
-                                  states, isUnsigned);
-    std::vector<std::optional<__int128>> nextStates;
-    nextStates.reserve(states.size());
-    for (Value yielded : yield.getOperands()) {
-      nextStates.push_back(evaluateLoopValue(
-          yielded, loop, *induction, states, isUnsigned));
-    }
-    if (!step || !nextStates[index]) {
-      return PTOAnalysisResult<PTOLoopEvolution>::unknown(
-          PTOAnalysisUnknownReason::PossibleWrap);
-    }
-    __int128 observedStep;
-    if (
-        !checkedSub(*nextStates[index], *states[index], observedStep) ||
-        observedStep != *step) {
-      return PTOAnalysisResult<PTOLoopEvolution>::unknown(
-          PTOAnalysisUnknownReason::NonAffineRecurrence);
-    }
-    minimum = std::min(minimum, *nextStates[index]);
-    maximum = std::max(maximum, *nextStates[index]);
-    states = std::move(nextStates);
-    if (!checkedAdd(*induction, *inductionStep, *induction)) {
-      return PTOAnalysisResult<PTOLoopEvolution>::unknown(
-          PTOAnalysisUnknownReason::PossibleWrap);
-    }
+  __int128 inductionValue = *induction;
+  if (auto reason = simulateDynamicRecurrence(
+          decomposition->increment, yield, loop, index, tripCount, isUnsigned,
+          states, inductionValue, *inductionStep, minimum, maximum)) {
+    return PTOAnalysisResult<PTOLoopEvolution>::unknown(*reason);
   }
 
   auto constantStep = foldPTOConstant(decomposition->increment);
@@ -1230,68 +1288,59 @@ computePointBinaryRange(const PTOTypedExprRef &expression,
 }
 
 static PTOAnalysisResult<PointExpressionProof>
-analyzePointExpression(const PTOTypedExprRef &expression, bool isUnsigned) {
-  if (!expression) {
+analyzePointExpression(const PTOTypedExprRef &expression, bool isUnsigned);
+
+// Prove the point range of a cast expression, forwarding through the source
+// range or a static value-preservation proof.
+static PTOAnalysisResult<PointExpressionProof>
+analyzeCastPointExpression(const PTOTypedExprRef &expression, bool isUnsigned) {
+  bool sourceIsUnsigned = expression->castKind == PTOCastKind::IndexCastUI ||
+                          expression->castKind == PTOCastKind::ExtUI;
+  auto input = analyzePointExpression(expression->lhs, sourceIsUnsigned);
+  if (!input) {
+    return input;
+  }
+  std::optional<PTOFiniteRange> resultRange;
+  if (input.value->range) {
+    auto sourceRange =
+        getMathematicalRange(*input.value->range, sourceIsUnsigned);
+    if (sourceRange) {
+      resultRange = makeProvenRange(sourceRange->minimum, sourceRange->maximum,
+                                    expression->type, isUnsigned);
+    }
+  }
+  bool proven = staticallyPreservesCastValue(expression->castKind,
+                                             expression->lhs->type,
+                                             expression->type) ||
+                resultRange.has_value();
+  if (expression->sourceValue && !proven) {
+    return PTOAnalysisResult<PointExpressionProof>::known(
+        {makePTOOpaqueExpr(expression->sourceValue),
+         getFullPointRange(expression->type, isUnsigned)});
+  }
+  if (!proven) {
     return PTOAnalysisResult<PointExpressionProof>::unknown(
-        PTOAnalysisUnknownReason::UnsupportedOperation);
+        PTOAnalysisUnknownReason::RangeUnavailable);
   }
-  if (auto constant = foldPTOConstant(expression)) {
-    PTOTypedExprRef folded = makePTOConstantExpr(*constant, expression->type);
-    return PTOAnalysisResult<PointExpressionProof>::known(
-        {folded, PTOFiniteRange{folded->constant, folded->constant,
-                                isUnsigned}});
+  PTOTypedExprRef result = makePTOCastExpr(
+      expression->castKind, input.value->expression, expression->type,
+      expression->sourceOperation);
+  if (!resultRange) {
+    resultRange = getFullPointRange(expression->type, isUnsigned);
   }
-  if (expression->kind == PTOTypedExpr::Kind::Opaque) {
-    return PTOAnalysisResult<PointExpressionProof>::known(
-        {expression, getFullPointRange(expression->type, isUnsigned)});
-  }
+  return PTOAnalysisResult<PointExpressionProof>::known(
+      {std::move(result), std::move(resultRange)});
+}
 
-  if (expression->kind == PTOTypedExpr::Kind::Cast) {
-    bool sourceIsUnsigned =
-        expression->castKind == PTOCastKind::IndexCastUI ||
-        expression->castKind == PTOCastKind::ExtUI;
-    auto input = analyzePointExpression(expression->lhs, sourceIsUnsigned);
-    if (!input) {
-      return input;
-    }
-    std::optional<PTOFiniteRange> resultRange;
-    if (input.value->range) {
-      auto sourceRange =
-          getMathematicalRange(*input.value->range, sourceIsUnsigned);
-      if (sourceRange) {
-        resultRange = makeProvenRange(sourceRange->minimum,
-                                      sourceRange->maximum, expression->type,
-                                      isUnsigned);
-      }
-    }
-    bool proven = staticallyPreservesCastValue(
-                      expression->castKind, expression->lhs->type,
-                      expression->type) ||
-                  resultRange.has_value();
-    if (expression->sourceValue && !proven) {
-      return PTOAnalysisResult<PointExpressionProof>::known(
-          {makePTOOpaqueExpr(expression->sourceValue),
-           getFullPointRange(expression->type, isUnsigned)});
-    }
-    if (!proven) {
-      return PTOAnalysisResult<PointExpressionProof>::unknown(
-          PTOAnalysisUnknownReason::RangeUnavailable);
-    }
-    PTOTypedExprRef result = makePTOCastExpr(
-        expression->castKind, input.value->expression, expression->type,
-        expression->sourceOperation);
-    if (!resultRange) {
-      resultRange = getFullPointRange(expression->type, isUnsigned);
-    }
-    return PTOAnalysisResult<PointExpressionProof>::known(
-        {std::move(result), std::move(resultRange)});
-  }
-
+// Prove the point range of an add/sub/mul expression, keeping the source-backed
+// operation opaque when no-wrap cannot be established.
+static PTOAnalysisResult<PointExpressionProof>
+analyzeBinaryPointExpression(const PTOTypedExprRef &expression,
+                             bool isUnsigned) {
   Operation *source = expression->sourceValue
                           ? expression->sourceValue.getDefiningOp()
                           : nullptr;
-  bool sourceProvesNoWrap =
-      operationProvesNoWrap(source, isUnsigned);
+  bool sourceProvesNoWrap = operationProvesNoWrap(source, isUnsigned);
 
   auto lhs = analyzePointExpression(expression->lhs, isUnsigned);
   auto rhs = analyzePointExpression(expression->rhs, isUnsigned);
@@ -1301,8 +1350,8 @@ analyzePointExpression(const PTOTypedExprRef &expression, bool isUnsigned) {
   }
   std::optional<PTOFiniteRange> provenRange;
   if (!sourceProvesNoWrap) {
-    provenRange = computePointBinaryRange(
-        expression, *lhs.value, *rhs.value, isUnsigned);
+    provenRange = computePointBinaryRange(expression, *lhs.value, *rhs.value,
+                                          isUnsigned);
   }
   if (expression->sourceValue && !sourceProvesNoWrap && !provenRange) {
     return PTOAnalysisResult<PointExpressionProof>::known(
@@ -1329,6 +1378,123 @@ analyzePointExpression(const PTOTypedExprRef &expression, bool isUnsigned) {
   }
   return PTOAnalysisResult<PointExpressionProof>::known(
       {std::move(result), std::move(provenRange)});
+}
+
+static PTOAnalysisResult<PointExpressionProof>
+analyzePointExpression(const PTOTypedExprRef &expression, bool isUnsigned) {
+  if (!expression) {
+    return PTOAnalysisResult<PointExpressionProof>::unknown(
+        PTOAnalysisUnknownReason::UnsupportedOperation);
+  }
+  if (auto constant = foldPTOConstant(expression)) {
+    PTOTypedExprRef folded = makePTOConstantExpr(*constant, expression->type);
+    return PTOAnalysisResult<PointExpressionProof>::known(
+        {folded, PTOFiniteRange{folded->constant, folded->constant,
+                                isUnsigned}});
+  }
+  if (expression->kind == PTOTypedExpr::Kind::Opaque) {
+    return PTOAnalysisResult<PointExpressionProof>::known(
+        {expression, getFullPointRange(expression->type, isUnsigned)});
+  }
+  if (expression->kind == PTOTypedExpr::Kind::Cast) {
+    return analyzeCastPointExpression(expression, isUnsigned);
+  }
+  return analyzeBinaryPointExpression(expression, isUnsigned);
+}
+
+// Interpret a finite-range endpoint as a mathematical integer.
+static __int128 finiteRangeEndpoint(const APInt &bound, bool isUnsigned) {
+  return isUnsigned ? static_cast<__int128>(bound.getZExtValue())
+                    : static_cast<__int128>(bound.getSExtValue());
+}
+
+// Compute the source-range endpoints of a cast and decide whether the target
+// width preserves the value.  Fills minimum/maximum from the proven source
+// range (both zero when unknown).
+static bool castPreservesRange(const PTOLoopEvolution &source, unsigned width,
+                               bool sourceIsUnsigned, bool staticallyPreserves,
+                               __int128 &minimum, __int128 &maximum) {
+  minimum = 0;
+  maximum = 0;
+  if (source.rangeKnown) {
+    minimum = finiteRangeEndpoint(source.range.lowerInclusive,
+                                  source.range.unsignedInterpretation);
+    maximum = finiteRangeEndpoint(source.range.upperInclusive,
+                                  source.range.unsignedInterpretation);
+  }
+  return staticallyPreserves ||
+         (sourceIsUnsigned
+              ? fitsUnsigned(minimum, width) && fitsUnsigned(maximum, width)
+              : fitsSigned(minimum, width) && fitsSigned(maximum, width));
+}
+
+// Combine the constant steps of an add/sub, propagating overflow as unknown.
+static std::optional<int64_t> combineAddSubConstantStep(
+    bool isAdd, const std::optional<int64_t> &lhs,
+    const std::optional<int64_t> &rhs) {
+  if (!lhs || !rhs) {
+    return std::nullopt;
+  }
+  int64_t combined;
+  bool overflow = isAdd ? llvm::AddOverflow(*lhs, *rhs, combined)
+                        : llvm::SubOverflow(*lhs, *rhs, combined);
+  return overflow ? std::nullopt : std::optional<int64_t>(combined);
+}
+
+// Scale a constant step by a loop-invariant multiplier, propagating overflow
+// or an out-of-range multiplier as unknown.
+static std::optional<int64_t> scaleConstantStep(
+    const std::optional<int64_t> &step, __int128 multiplier) {
+  bool multiplierFitsInt64 =
+      multiplier >= std::numeric_limits<int64_t>::min() &&
+      multiplier <= std::numeric_limits<int64_t>::max();
+  if (!step || !multiplierFitsInt64) {
+    return std::nullopt;
+  }
+  int64_t combined;
+  return llvm::MulOverflow(*step, static_cast<int64_t>(multiplier), combined) !=
+                 0
+             ? std::nullopt
+             : std::optional<int64_t>(combined);
+}
+
+// Build the cast-lifted loop evolution from a proven source evolution.
+static PTOLoopEvolution buildCastLoopEvolution(
+    const PTOTypedExprRef &expression, const PTOLoopEvolution &source,
+    unsigned width, __int128 minimum, __int128 maximum, bool sourceIsUnsigned) {
+  PTOLoopEvolution result = source;
+  result.initial =
+      makePTOCastExpr(expression->castKind, result.initial, expression->type,
+                      expression->sourceOperation);
+  result.step =
+      result.constantStep
+          ? makePTOConstantExpr(*result.constantStep, expression->type)
+          : makePTOCastExpr(expression->castKind, result.step,
+                            expression->type, expression->sourceOperation);
+  if (source.rangeKnown) {
+    result.range = makeRange(minimum, maximum, width, sourceIsUnsigned);
+  }
+  result.rangeKnown = source.rangeKnown;
+  result.noWrap = true;
+  return result;
+}
+
+// Build the loop evolution of a variant operand scaled by an invariant factor.
+static PTOLoopEvolution buildMulEvolution(
+    const PTOTypedExprRef &expression, const PTOLoopEvolution &variant,
+    const PTOTypedExprRef &invariant, __int128 multiplier,
+    const std::optional<PTOFiniteRange> &provenRange) {
+  PTOLoopEvolution result = variant;
+  result.initial =
+      makePTOMulExpr(invariant, result.initial, expression->type);
+  result.step = makePTOMulExpr(invariant, result.step, expression->type);
+  result.constantStep = scaleConstantStep(result.constantStep, multiplier);
+  if (provenRange) {
+    result.range = *provenRange;
+  }
+  result.rangeKnown = provenRange.has_value();
+  result.noWrap = true;
+  return result;
 }
 
 } // namespace
@@ -1395,7 +1561,7 @@ PTOValueEvolutionAnalysis::getEvolution(const PTOTypedExprRef &expression,
 }
 
 PTOAnalysisResult<PTOTypedExprRef>
-PTOValueEvolutionAnalysis::getPointExpression(
+const PTOValueEvolutionAnalysis::getPointExpression(
     const PTOTypedExprRef &expression) {
   return getPointExpressionImpl(expression);
 }
@@ -1412,170 +1578,94 @@ PTOValueEvolutionAnalysis::getPointExpressionImpl(
 }
 
 PTOAnalysisResult<PTOLoopEvolution>
-PTOValueEvolutionAnalysis::getSyntheticEvolutionImpl(
-    const PTOTypedExprRef &expression, scf::ForOp loop,
-    Interpretation interpretation, bool sourceProvesNoWrap) {
-  if (!expression) {
+PTOValueEvolutionAnalysis::getSyntheticCastEvolution(
+    const PTOTypedExprRef &expression, scf::ForOp loop, unsigned width) {
+  if (expression->castKind == PTOCastKind::TruncI) {
     return PTOAnalysisResult<PTOLoopEvolution>::unknown(
-        PTOAnalysisUnknownReason::UnsupportedOperation);
+        PTOAnalysisUnknownReason::UnsupportedCast);
   }
-  if (expression->sourceValue) {
-    return getEvolutionImpl(expression->sourceValue, loop, interpretation);
+  bool sourceIsUnsigned = expression->castKind == PTOCastKind::IndexCastUI ||
+                          expression->castKind == PTOCastKind::ExtUI;
+  Interpretation sourceInterpretation =
+      sourceIsUnsigned ? Interpretation::Unsigned : Interpretation::Signed;
+  auto source =
+      getSyntheticEvolutionImpl(expression->lhs, loop, sourceInterpretation);
+  if (!source) {
+    return source;
   }
-
-  bool isUnsigned = interpretation == Interpretation::Unsigned;
-  unsigned width = getIntegerLikeWidth(expression->type);
-  if (expression->kind == PTOTypedExpr::Kind::Constant) {
-    PTOFiniteRange range{expression->constant, expression->constant,
-                         isUnsigned};
-    return PTOAnalysisResult<PTOLoopEvolution>::known(
-        {expression, makePTOConstantExpr(0, expression->type), 0, range,
-         width != 0, true, int64_t{0}});
-  }
-  if (expression->kind == PTOTypedExpr::Kind::Opaque) {
+  if (!source.value->noWrap) {
     return PTOAnalysisResult<PTOLoopEvolution>::unknown(
-        PTOAnalysisUnknownReason::UnsupportedOperation);
+        PTOAnalysisUnknownReason::PossibleWrap);
   }
-
-  if (expression->kind == PTOTypedExpr::Kind::Cast) {
-    if (expression->castKind == PTOCastKind::TruncI) {
-      return PTOAnalysisResult<PTOLoopEvolution>::unknown(
-          PTOAnalysisUnknownReason::UnsupportedCast);
-    }
-    bool sourceIsUnsigned =
-        expression->castKind == PTOCastKind::IndexCastUI ||
-        expression->castKind == PTOCastKind::ExtUI;
-    Interpretation sourceInterpretation =
-        sourceIsUnsigned ? Interpretation::Unsigned : Interpretation::Signed;
-    auto source = getSyntheticEvolutionImpl(expression->lhs, loop,
-                                            sourceInterpretation);
-    if (!source) {
-      return source;
-    }
-    if (!source.value->noWrap) {
-      return PTOAnalysisResult<PTOLoopEvolution>::unknown(
-          PTOAnalysisUnknownReason::PossibleWrap);
-    }
-    unsigned sourceWidth =
-        getIntegerLikeWidth(expression->lhs ? expression->lhs->type : Type());
-    if (width == 0 || sourceWidth == 0) {
-      return PTOAnalysisResult<PTOLoopEvolution>::unknown(
-          PTOAnalysisUnknownReason::TypeMismatch);
-    }
-    bool staticallyPreserves = staticallyPreservesCastValue(
-        expression->castKind, expression->lhs->type, expression->type);
-    if (!source.value->rangeKnown && !staticallyPreserves) {
-      return PTOAnalysisResult<PTOLoopEvolution>::unknown(
-          PTOAnalysisUnknownReason::RangeUnavailable);
-    }
-
-    const PTOFiniteRange &sourceRange = source.value->range;
-    __int128 minimum = 0;
-    __int128 maximum = 0;
-    if (source.value->rangeKnown) {
-      minimum = sourceRange.unsignedInterpretation
-                    ? static_cast<__int128>(
-                          sourceRange.lowerInclusive.getZExtValue())
-                    : static_cast<__int128>(
-                          sourceRange.lowerInclusive.getSExtValue());
-      maximum = sourceRange.unsignedInterpretation
-                    ? static_cast<__int128>(
-                          sourceRange.upperInclusive.getZExtValue())
-                    : static_cast<__int128>(
-                          sourceRange.upperInclusive.getSExtValue());
-    }
-    bool preserves = staticallyPreserves ||
-                     (sourceInterpretation == Interpretation::Unsigned
-                          ? fitsUnsigned(minimum, width) &&
-                                fitsUnsigned(maximum, width)
-                          : fitsSigned(minimum, width) &&
-                                fitsSigned(maximum, width));
-    if (!preserves) {
-      return PTOAnalysisResult<PTOLoopEvolution>::unknown(
-          PTOAnalysisUnknownReason::RangeUnavailable);
-    }
-
-    PTOLoopEvolution result = *source.value;
-    result.initial = makePTOCastExpr(
-        expression->castKind, result.initial, expression->type,
-        expression->sourceOperation);
-    result.step =
-        result.constantStep
-            ? makePTOConstantExpr(*result.constantStep, expression->type)
-            : makePTOCastExpr(expression->castKind, result.step,
-                              expression->type,
-                              expression->sourceOperation);
-    if (source.value->rangeKnown) {
-      result.range = makeRange(
-          minimum, maximum, width,
-          sourceInterpretation == Interpretation::Unsigned);
-    }
-    result.rangeKnown = source.value->rangeKnown;
-    result.noWrap = true;
-    return PTOAnalysisResult<PTOLoopEvolution>::known(std::move(result));
-  }
-
-  auto lhs = getSyntheticEvolutionImpl(expression->lhs, loop,
-                                       interpretation);
-  auto rhs = getSyntheticEvolutionImpl(expression->rhs, loop,
-                                       interpretation);
-  if (!lhs || !rhs) {
+  unsigned sourceWidth =
+      getIntegerLikeWidth(expression->lhs ? expression->lhs->type : Type());
+  if (width == 0 || sourceWidth == 0) {
     return PTOAnalysisResult<PTOLoopEvolution>::unknown(
-        !lhs ? lhs.reason : rhs.reason);
+        PTOAnalysisUnknownReason::TypeMismatch);
+  }
+  bool staticallyPreserves = staticallyPreservesCastValue(
+      expression->castKind, expression->lhs->type, expression->type);
+  if (!source.value->rangeKnown && !staticallyPreserves) {
+    return PTOAnalysisResult<PTOLoopEvolution>::unknown(
+        PTOAnalysisUnknownReason::RangeUnavailable);
   }
 
-  if (expression->kind == PTOTypedExpr::Kind::Add ||
-      expression->kind == PTOTypedExpr::Kind::Sub) {
-    std::optional<PTOFiniteRange> provenRange;
-    bool canComputeRange = !sourceProvesNoWrap &&
-                           expression->type.isIndex() &&
-                           lhs.value->noWrap && rhs.value->noWrap &&
-                           lhs.value->rangeKnown && rhs.value->rangeKnown;
-    if (canComputeRange) {
-      provenRange = expression->kind == PTOTypedExpr::Kind::Add
-                        ? computeAddRange(lhs.value->range, rhs.value->range,
+  __int128 minimum = 0;
+  __int128 maximum = 0;
+  if (!castPreservesRange(*source.value, width, sourceIsUnsigned,
+                          staticallyPreserves, minimum, maximum)) {
+    return PTOAnalysisResult<PTOLoopEvolution>::unknown(
+        PTOAnalysisUnknownReason::RangeUnavailable);
+  }
+  return PTOAnalysisResult<PTOLoopEvolution>::known(buildCastLoopEvolution(
+      expression, *source.value, width, minimum, maximum, sourceIsUnsigned));
+}
+
+PTOAnalysisResult<PTOLoopEvolution>
+PTOValueEvolutionAnalysis::getSyntheticAddSubEvolution(
+    const PTOTypedExprRef &expression, bool sourceProvesNoWrap, bool isUnsigned,
+    const PTOAnalysisResult<PTOLoopEvolution> &lhs,
+    const PTOAnalysisResult<PTOLoopEvolution> &rhs) {
+  bool isAdd = expression->kind == PTOTypedExpr::Kind::Add;
+  std::optional<PTOFiniteRange> provenRange;
+  bool canComputeRange = !sourceProvesNoWrap && expression->type.isIndex() &&
+                         lhs.value->noWrap && rhs.value->noWrap &&
+                         lhs.value->rangeKnown && rhs.value->rangeKnown;
+  if (canComputeRange) {
+    provenRange = isAdd ? computeAddRange(lhs.value->range, rhs.value->range,
                                           expression->type, isUnsigned)
                         : computeSubRange(lhs.value->range, rhs.value->range,
                                           expression->type, isUnsigned);
-    }
-    if (!provenRange && !sourceProvesNoWrap) {
-      return PTOAnalysisResult<PTOLoopEvolution>::unknown(
-          PTOAnalysisUnknownReason::PossibleWrap);
-    }
-    PTOLoopEvolution result = *lhs.value;
-    result.initial =
-        expression->kind == PTOTypedExpr::Kind::Add
-            ? makePTOAddExpr(lhs.value->initial, rhs.value->initial,
+  }
+  if (!provenRange && !sourceProvesNoWrap) {
+    return PTOAnalysisResult<PTOLoopEvolution>::unknown(
+        PTOAnalysisUnknownReason::PossibleWrap);
+  }
+  PTOLoopEvolution result = *lhs.value;
+  result.initial =
+      isAdd ? makePTOAddExpr(lhs.value->initial, rhs.value->initial,
                              expression->type)
             : makePTOSubExpr(lhs.value->initial, rhs.value->initial,
                              expression->type);
-    result.step = expression->kind == PTOTypedExpr::Kind::Add
-                      ? makePTOAddExpr(lhs.value->step, rhs.value->step,
+  result.step = isAdd ? makePTOAddExpr(lhs.value->step, rhs.value->step,
                                        expression->type)
                       : makePTOSubExpr(lhs.value->step, rhs.value->step,
                                        expression->type);
-    if (lhs.value->constantStep && rhs.value->constantStep) {
-      int64_t combined;
-      bool overflow = expression->kind == PTOTypedExpr::Kind::Add
-                          ? llvm::AddOverflow(*lhs.value->constantStep,
-                                              *rhs.value->constantStep,
-                                              combined)
-                          : llvm::SubOverflow(*lhs.value->constantStep,
-                                              *rhs.value->constantStep,
-                                              combined);
-      result.constantStep =
-          overflow ? std::nullopt : std::optional<int64_t>(combined);
-    } else {
-      result.constantStep = std::nullopt;
-    }
-    if (provenRange) {
-      result.range = *provenRange;
-    }
-    result.rangeKnown = provenRange.has_value();
-    result.noWrap = true;
-    return PTOAnalysisResult<PTOLoopEvolution>::known(std::move(result));
+  result.constantStep = combineAddSubConstantStep(
+      isAdd, lhs.value->constantStep, rhs.value->constantStep);
+  if (provenRange) {
+    result.range = *provenRange;
   }
+  result.rangeKnown = provenRange.has_value();
+  result.noWrap = true;
+  return PTOAnalysisResult<PTOLoopEvolution>::known(std::move(result));
+}
 
+PTOAnalysisResult<PTOLoopEvolution>
+PTOValueEvolutionAnalysis::getSyntheticMulEvolution(
+    const PTOTypedExprRef &expression, bool sourceProvesNoWrap, bool isUnsigned,
+    const PTOAnalysisResult<PTOLoopEvolution> &lhs,
+    const PTOAnalysisResult<PTOLoopEvolution> &rhs) {
   auto lhsConstant = getMathematicalConstant(expression->lhs, isUnsigned);
   auto rhsConstant = getMathematicalConstant(expression->rhs, isUnsigned);
   const PTOTypedExprRef *invariantExpression = nullptr;
@@ -1603,55 +1693,182 @@ PTOValueEvolutionAnalysis::getSyntheticEvolutionImpl(
     provenRange = computeMulRange(variantEvolution->value->range, multiplier,
                                   expression->type, isUnsigned);
   }
-  bool hasIndexType = expression->type.isIndex();
-  if (!hasIndexType || (!provenRange && !sourceProvesNoWrap)) {
+  if (!expression->type.isIndex() || (!provenRange && !sourceProvesNoWrap)) {
+    return PTOAnalysisResult<PTOLoopEvolution>::unknown(
+        PTOAnalysisUnknownReason::PossibleWrap);
+  }
+  return PTOAnalysisResult<PTOLoopEvolution>::known(
+      buildMulEvolution(expression, *variantEvolution->value,
+                        *invariantExpression, multiplier, provenRange));
+}
+
+PTOAnalysisResult<PTOLoopEvolution>
+PTOValueEvolutionAnalysis::getSyntheticEvolutionImpl(
+    const PTOTypedExprRef &expression, scf::ForOp loop,
+    Interpretation interpretation, bool sourceProvesNoWrap) {
+  if (!expression) {
+    return PTOAnalysisResult<PTOLoopEvolution>::unknown(
+        PTOAnalysisUnknownReason::UnsupportedOperation);
+  }
+  if (expression->sourceValue) {
+    return getEvolutionImpl(expression->sourceValue, loop, interpretation);
+  }
+
+  bool isUnsigned = interpretation == Interpretation::Unsigned;
+  unsigned width = getIntegerLikeWidth(expression->type);
+  if (expression->kind == PTOTypedExpr::Kind::Constant) {
+    PTOFiniteRange range{expression->constant, expression->constant,
+                         isUnsigned};
+    return PTOAnalysisResult<PTOLoopEvolution>::known(
+        {expression, makePTOConstantExpr(0, expression->type), 0, range,
+         width != 0, true, int64_t{0}});
+  }
+  if (expression->kind == PTOTypedExpr::Kind::Opaque) {
+    return PTOAnalysisResult<PTOLoopEvolution>::unknown(
+        PTOAnalysisUnknownReason::UnsupportedOperation);
+  }
+  if (expression->kind == PTOTypedExpr::Kind::Cast) {
+    return getSyntheticCastEvolution(expression, loop, width);
+  }
+
+  auto lhs = getSyntheticEvolutionImpl(expression->lhs, loop, interpretation);
+  auto rhs = getSyntheticEvolutionImpl(expression->rhs, loop, interpretation);
+  if (!lhs || !rhs) {
+    return PTOAnalysisResult<PTOLoopEvolution>::unknown(
+        !lhs ? lhs.reason : rhs.reason);
+  }
+
+  if (expression->kind == PTOTypedExpr::Kind::Add ||
+      expression->kind == PTOTypedExpr::Kind::Sub) {
+    return getSyntheticAddSubEvolution(expression, sourceProvesNoWrap,
+                                       isUnsigned, lhs, rhs);
+  }
+  return getSyntheticMulEvolution(expression, sourceProvesNoWrap, isUnsigned,
+                                  lhs, rhs);
+}
+
+PTOAnalysisResult<PTOLoopEvolution>
+PTOValueEvolutionAnalysis::getInvariantEvolution(Value value,
+                                                 Interpretation interpretation) {
+  unsigned width = getIntegerLikeWidth(value.getType());
+  bool isUnsigned = interpretation == Interpretation::Unsigned;
+  PTOFiniteRange range{APInt(std::max(1U, width), 0),
+                       APInt(std::max(1U, width), 0), isUnsigned};
+  bool rangeKnown = false;
+  if (auto constant = getConstantAPInt(value)) {
+    range = {*constant, *constant, isUnsigned};
+    rangeKnown = true;
+  }
+  return PTOAnalysisResult<PTOLoopEvolution>::known(
+      {getExpr(value), makePTOConstantExpr(0, value.getType()), 0, range,
+       rangeKnown, true, int64_t{0}});
+}
+
+std::optional<PTOAnalysisResult<PTOLoopEvolution>>
+PTOValueEvolutionAnalysis::resolveAffineTerms(
+    Value value, scf::ForOp loop, Interpretation interpretation,
+    uint64_t tripCount, Value &initialValue, Value &stepValue,
+    bool &negateStep) {
+  bool isUnsigned = interpretation == Interpretation::Unsigned;
+  if (value == loop.getInductionVar()) {
+    initialValue = loop.getLowerBound();
+    stepValue = loop.getStep();
+    return std::nullopt;
+  }
+  if (auto iterArg = dyn_cast<BlockArgument>(value);
+      iterArg && iterArg.getOwner() == loop.getBody() &&
+      iterArg.getArgNumber() > 0) {
+    unsigned index = iterArg.getArgNumber() - 1;
+    initialValue = loop.getInitArgs()[index];
+    auto recurrence = getDirectRecurrenceStep(iterArg, loop);
+    if (!recurrence) {
+      return analyzeDynamicRecurrence(iterArg, loop, tripCount, isUnsigned,
+                                      *this);
+    }
+    stepValue = recurrence->first;
+    negateStep = recurrence->second;
+    return std::nullopt;
+  }
+  if (auto add = value.getDefiningOp<arith::AddIOp>()) {
+    return getSyntheticEvolutionImpl(
+        makePTOAddExpr(getExpr(add.getLhs()), getExpr(add.getRhs()),
+                       value.getType()),
+        loop, interpretation, operationProvesNoWrap(add, isUnsigned));
+  }
+  if (auto sub = value.getDefiningOp<arith::SubIOp>()) {
+    return getSyntheticEvolutionImpl(
+        makePTOSubExpr(getExpr(sub.getLhs()), getExpr(sub.getRhs()),
+                       value.getType()),
+        loop, interpretation, operationProvesNoWrap(sub, isUnsigned));
+  }
+  if (auto mul = value.getDefiningOp<arith::MulIOp>()) {
+    return getSyntheticEvolutionImpl(
+        makePTOMulExpr(getExpr(mul.getLhs()), getExpr(mul.getRhs()),
+                       value.getType()),
+        loop, interpretation, operationProvesNoWrap(mul, isUnsigned));
+  }
+  return PTOAnalysisResult<PTOLoopEvolution>::unknown(
+      PTOAnalysisUnknownReason::UnsupportedOperation);
+}
+
+PTOAnalysisResult<PTOLoopEvolution>
+PTOValueEvolutionAnalysis::buildAffineEvolution(
+    Value value, Value initialValue, Value stepValue, bool negateStep,
+    uint64_t tripCount, Interpretation interpretation) {
+  unsigned width = getIntegerLikeWidth(value.getType());
+  if (width == 0 || width > kMaxSupportedBitWidth) {
+    return PTOAnalysisResult<PTOLoopEvolution>::unknown(
+        PTOAnalysisUnknownReason::TypeMismatch);
+  }
+  bool isUnsigned = interpretation == Interpretation::Unsigned;
+  auto initial = getMathematicalConstant(initialValue, isUnsigned);
+  auto step = stepValue ? getMathematicalConstant(stepValue, isUnsigned)
+                        : std::optional<__int128>(0);
+  if (!initial || !step) {
+    return PTOAnalysisResult<PTOLoopEvolution>::unknown(
+        PTOAnalysisUnknownReason::RangeUnavailable);
+  }
+  if (negateStep) {
+    *step = -*step;
+  }
+
+  __int128 finalBackedge = *initial + *step * static_cast<__int128>(tripCount);
+  __int128 finalAccess =
+      tripCount == 0
+          ? *initial
+          : *initial + *step * static_cast<__int128>(tripCount - 1);
+  __int128 minimum = std::min(*initial, std::min(finalAccess, finalBackedge));
+  __int128 maximum = std::max(*initial, std::max(finalAccess, finalBackedge));
+  bool noWrap = isUnsigned ? fitsUnsigned(minimum, width) &&
+                                 fitsUnsigned(maximum, width)
+                           : fitsSigned(minimum, width) &&
+                                 fitsSigned(maximum, width);
+  if (!noWrap) {
     return PTOAnalysisResult<PTOLoopEvolution>::unknown(
         PTOAnalysisUnknownReason::PossibleWrap);
   }
 
-  PTOLoopEvolution result = *variantEvolution->value;
-  result.initial = makePTOMulExpr(*invariantExpression, result.initial,
-                                  expression->type);
-  result.step = makePTOMulExpr(*invariantExpression, result.step,
-                               expression->type);
-  bool multiplierFitsInt64 =
-      multiplier >= std::numeric_limits<int64_t>::min() &&
-      multiplier <= std::numeric_limits<int64_t>::max();
-  if (result.constantStep && multiplierFitsInt64) {
-    int64_t combined;
-    result.constantStep =
-        llvm::MulOverflow(*result.constantStep,
-                          static_cast<int64_t>(multiplier), combined) != 0
-            ? std::nullopt
-            : std::optional<int64_t>(combined);
-  } else {
-    result.constantStep = std::nullopt;
+  Type expressionType = value.getType();
+  PTOTypedExprRef stepExpression =
+      stepValue ? getExpr(stepValue) : makePTOConstantExpr(0, expressionType);
+  if (negateStep) {
+    stepExpression = makePTOSubExpr(makePTOConstantExpr(0, expressionType),
+                                    stepExpression, expressionType);
   }
-  if (provenRange) {
-    result.range = *provenRange;
-  }
-  result.rangeKnown = provenRange.has_value();
-  result.noWrap = true;
-  return PTOAnalysisResult<PTOLoopEvolution>::known(std::move(result));
+  return PTOAnalysisResult<PTOLoopEvolution>::known(
+      {getExpr(initialValue), stepExpression, tripCount,
+       makeRange(minimum, maximum, width, isUnsigned), true, true,
+       *step >= std::numeric_limits<int64_t>::min() &&
+               *step <= std::numeric_limits<int64_t>::max()
+           ? std::optional<int64_t>(static_cast<int64_t>(*step))
+           : std::nullopt});
 }
 
 PTOAnalysisResult<PTOLoopEvolution>
 PTOValueEvolutionAnalysis::getEvolutionImpl(Value value, scf::ForOp loop,
                                             Interpretation interpretation) {
   if (loop.isDefinedOutsideOfLoop(value)) {
-    unsigned width = getIntegerLikeWidth(value.getType());
-    bool isUnsigned = interpretation == Interpretation::Unsigned;
-    PTOFiniteRange range{APInt(std::max(1U, width), 0),
-                         APInt(std::max(1U, width), 0),
-                         isUnsigned};
-    bool rangeKnown = false;
-    if (auto constant = getConstantAPInt(value)) {
-      range = {*constant, *constant, isUnsigned};
-      rangeKnown = true;
-    }
-    return PTOAnalysisResult<PTOLoopEvolution>::known(
-        {getExpr(value), makePTOConstantExpr(0, value.getType()), 0, range,
-         rangeKnown, true, int64_t{0}});
+    return getInvariantEvolution(value, interpretation);
   }
 
   if (Operation *cast = value.getDefiningOp();
@@ -1673,93 +1890,12 @@ PTOValueEvolutionAnalysis::getEvolutionImpl(Value value, scf::ForOp loop,
   Value initialValue;
   Value stepValue;
   bool negateStep = false;
-  if (value == loop.getInductionVar()) {
-    initialValue = loop.getLowerBound();
-    stepValue = loop.getStep();
-  } else if (auto iterArg = dyn_cast<BlockArgument>(value);
-             iterArg && iterArg.getOwner() == loop.getBody() &&
-             iterArg.getArgNumber() > 0) {
-    unsigned index = iterArg.getArgNumber() - 1;
-    initialValue = loop.getInitArgs()[index];
-    auto recurrence = getDirectRecurrenceStep(iterArg, loop);
-    if (!recurrence) {
-      return analyzeDynamicRecurrence(
-          iterArg, loop, *tripCount,
-          interpretation == Interpretation::Unsigned, *this);
-    }
-    stepValue = recurrence->first;
-    negateStep = recurrence->second;
-  } else if (auto add = value.getDefiningOp<arith::AddIOp>()) {
-    return getSyntheticEvolutionImpl(
-        makePTOAddExpr(getExpr(add.getLhs()), getExpr(add.getRhs()),
-                       value.getType()),
-        loop, interpretation,
-        operationProvesNoWrap(add, interpretation == Interpretation::Unsigned));
-  } else if (auto sub = value.getDefiningOp<arith::SubIOp>()) {
-    return getSyntheticEvolutionImpl(
-        makePTOSubExpr(getExpr(sub.getLhs()), getExpr(sub.getRhs()),
-                       value.getType()),
-        loop, interpretation,
-        operationProvesNoWrap(sub, interpretation == Interpretation::Unsigned));
-  } else if (auto mul = value.getDefiningOp<arith::MulIOp>()) {
-    return getSyntheticEvolutionImpl(
-        makePTOMulExpr(getExpr(mul.getLhs()), getExpr(mul.getRhs()),
-                       value.getType()),
-        loop, interpretation,
-        operationProvesNoWrap(mul, interpretation == Interpretation::Unsigned));
-  } else {
-    return PTOAnalysisResult<PTOLoopEvolution>::unknown(
-        PTOAnalysisUnknownReason::UnsupportedOperation);
+  if (auto early = resolveAffineTerms(value, loop, interpretation, *tripCount,
+                                      initialValue, stepValue, negateStep)) {
+    return *early;
   }
-
-  unsigned width = getIntegerLikeWidth(value.getType());
-  if (width == 0 || width > kMaxSupportedBitWidth) {
-    return PTOAnalysisResult<PTOLoopEvolution>::unknown(
-        PTOAnalysisUnknownReason::TypeMismatch);
-  }
-  bool isUnsigned = interpretation == Interpretation::Unsigned;
-  auto initial = getMathematicalConstant(initialValue, isUnsigned);
-  auto step = stepValue ? getMathematicalConstant(stepValue, isUnsigned)
-                        : std::optional<__int128>(0);
-  if (!initial || !step) {
-    return PTOAnalysisResult<PTOLoopEvolution>::unknown(
-        PTOAnalysisUnknownReason::RangeUnavailable);
-  }
-  if (negateStep) {
-    *step = -*step;
-  }
-
-  __int128 finalBackedge =
-      *initial + *step * static_cast<__int128>(*tripCount);
-  __int128 finalAccess = *tripCount == 0
-                             ? *initial
-                             : *initial +
-                                   *step * static_cast<__int128>(*tripCount - 1);
-  __int128 minimum = std::min(*initial, std::min(finalAccess, finalBackedge));
-  __int128 maximum = std::max(*initial, std::max(finalAccess, finalBackedge));
-  bool noWrap = isUnsigned ? fitsUnsigned(minimum, width) &&
-                                 fitsUnsigned(maximum, width)
-                           : fitsSigned(minimum, width) &&
-                                 fitsSigned(maximum, width);
-  if (!noWrap) {
-    return PTOAnalysisResult<PTOLoopEvolution>::unknown(
-        PTOAnalysisUnknownReason::PossibleWrap);
-  }
-
-  Type expressionType = value.getType();
-  PTOTypedExprRef stepExpression =
-      stepValue ? getExpr(stepValue) : makePTOConstantExpr(0, expressionType);
-  if (negateStep) {
-    stepExpression = makePTOSubExpr(makePTOConstantExpr(0, expressionType),
-                                    stepExpression, expressionType);
-  }
-  return PTOAnalysisResult<PTOLoopEvolution>::known(
-      {getExpr(initialValue), stepExpression, *tripCount,
-       makeRange(minimum, maximum, width, isUnsigned), true, true,
-       *step >= std::numeric_limits<int64_t>::min() &&
-               *step <= std::numeric_limits<int64_t>::max()
-           ? std::optional<int64_t>(static_cast<int64_t>(*step))
-           : std::nullopt});
+  return buildAffineEvolution(value, initialValue, stepValue, negateStep,
+                              *tripCount, interpretation);
 }
 
 PTOAnalysisResult<PTOFiniteRange>

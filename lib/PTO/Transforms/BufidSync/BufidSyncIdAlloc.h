@@ -9,6 +9,7 @@
 #ifndef MLIR_DIALECT_PTO_TRANSFORMS_BUFIDSYNC_BUFIDSYNCIDALLOC_H
 #define MLIR_DIALECT_PTO_TRANSFORMS_BUFIDSYNC_BUFIDSYNCIDALLOC_H
 
+#include <map>
 #include <string>
 #include "BufidSyncAnalysis.h"
 
@@ -39,6 +40,18 @@ private:
   void collectPipeSignature(int logicId, SmallVector<PipelineType> &pipes) const;
   unsigned getOutermostLoopBegin(Operation *op) const;
   unsigned getOutermostLoopEnd(Operation *op) const;
+
+  // reuseIds() helpers. A single reuse iteration (reuseIdsStep) selects the
+  // best signature group, merges half of its logic ids onto donors, and
+  // recompacts; it returns false when no further reuse is possible.
+  bool reuseIdsStep(int iteration);
+  void collectLogicIdPipes(
+      DenseMap<int, SmallVector<PipelineType>> &logicIdPipes,
+      DenseMap<int, unsigned> &logicIdFirstPos) const;
+  std::string
+  selectBestSigGroup(const std::map<std::string, SmallVector<int>> &sigGroups) const;
+  bool isConsecutiveOnPipe(const SmallVector<int> &ids, PipelineType pipe) const;
+  void applyMerges(const DenseMap<int, int> &mergeMap);
 
   SmallVector<VirtualBufId> &virtualBufIds_;
   DenseMap<Operation *, BufSyncPipeBuild> &op2BufSync_;

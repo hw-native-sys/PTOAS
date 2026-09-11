@@ -93,12 +93,12 @@ std::optional<SyncMacroModel> getP2PCommSyncMacroModel(Operation *op) {
   return model;
 }
 
-std::optional<SyncMacroModel> getCollectiveCommSyncMacroModel(Operation *op) {
-  SyncMacroModel model;
-  unsigned laneCount = 1;
-
+// Models one collective communication op that stages through MTE2 (read) and
+// MTE3 (write). Returns the event lane count the model needs, or std::nullopt
+// when `op` is not a modeled collective op.
+static std::optional<unsigned> buildCollectiveCommPhases(Operation *op,
+                                                         SyncMacroModel &model) {
   if (auto tgather = dyn_cast<pto::CommTGatherOp>(op)) {
-    laneCount = tgather.getPong() ? 2U : 1U;
     // TGATHER_IMPL reads each group source through MTE2 and writes the gathered
     // result into dst through MTE3, using ping/pong as staging tiles.
     SmallVector<Value> staging =
@@ -107,8 +107,9 @@ std::optional<SyncMacroModel> getCollectiveCommSyncMacroModel(Operation *op) {
              tgather.getGroup());
     addPhase(model, PipelineType::PIPE_MTE3, ValueRange{tgather.getDst()},
              staging);
-  } else if (auto tscatter = dyn_cast<pto::CommTScatterOp>(op)) {
-    laneCount = tscatter.getPong() ? 2U : 1U;
+    return tgather.getPong() ? 2U : 1U;
+  }
+  if (auto tscatter = dyn_cast<pto::CommTScatterOp>(op)) {
     // TSCATTER_IMPL reads the source through MTE2 and writes every group
     // destination through MTE3, using ping/pong as staging tiles.
     SmallVector<Value> staging =
@@ -117,8 +118,9 @@ std::optional<SyncMacroModel> getCollectiveCommSyncMacroModel(Operation *op) {
              ValueRange{tscatter.getSrc()});
     addPhase(model, PipelineType::PIPE_MTE3, tscatter.getGroup(),
              staging);
-  } else if (auto tbroadcast = dyn_cast<pto::TBroadcastOp>(op)) {
-    laneCount = tbroadcast.getPong() ? 2U : 1U;
+    return tscatter.getPong() ? 2U : 1U;
+  }
+  if (auto tbroadcast = dyn_cast<pto::TBroadcastOp>(op)) {
     // TBROADCAST_IMPL reads the source through MTE2 and writes every group
     // destination through MTE3, using ping/pong as staging tiles.
     SmallVector<Value> staging =
@@ -127,8 +129,9 @@ std::optional<SyncMacroModel> getCollectiveCommSyncMacroModel(Operation *op) {
              ValueRange{tbroadcast.getSrc()});
     addPhase(model, PipelineType::PIPE_MTE3, tbroadcast.getGroup(),
              staging);
-  } else if (auto treduce = dyn_cast<pto::TReduceOp>(op)) {
-    laneCount = treduce.getRecvPong() ? 3U : 2U;
+    return tbroadcast.getPong() ? 2U : 1U;
+  }
+  if (auto treduce = dyn_cast<pto::TReduceOp>(op)) {
     // TREDUCE_IMPL reads group sources through MTE2, reduces into acc on the
     // vector pipe, and stores the final result into dst through MTE3, using
     // recvPing/recvPong as receive staging tiles.
@@ -141,11 +144,19 @@ std::optional<SyncMacroModel> getCollectiveCommSyncMacroModel(Operation *op) {
              reduceUses);
     addPhase(model, PipelineType::PIPE_MTE3, ValueRange{treduce.getDst()},
              ValueRange{treduce.getAcc()});
-  } else {
+    return treduce.getRecvPong() ? 3U : 2U;
+  }
+  return std::nullopt;
+}
+
+std::optional<SyncMacroModel> getCollectiveCommSyncMacroModel(Operation *op) {
+  SyncMacroModel model;
+  auto laneCount = buildCollectiveCommPhases(op, model);
+  if (!laneCount) {
     return std::nullopt;
   }
 
-  SmallVector<unsigned> eventIds = getSequentialEventIds(laneCount);
+  SmallVector<unsigned> eventIds = getSequentialEventIds(*laneCount);
   addBidirectionalHiddenEvent(model, PipelineType::PIPE_MTE2,
                               PipelineType::PIPE_MTE3, eventIds);
   if (isa<pto::TReduceOp>(op)) {
@@ -293,76 +304,64 @@ getMGatherOperandShape(Value value, bool useValidShape = true) {
 // Also reserve pto-isa's fixed internal event ids through hiddenEvents so
 // compiler-generated sync around the macro does not reuse EVENT_ID0 on pipe
 // pairs already consumed inside the library implementation.
-std::optional<SyncMacroModel> getMGatherSyncMacroModel(pto::MGatherOp op) {
-  // GM -> L1 (dst is an L1 / cube MAT tile). A5/A2A3 share the same data flow:
-  // the scalar pipe reads the GM index to compute src rows, then MTE2 issues the
-  // GM -> L1 nd2nz DMA. pto-isa currently keeps an internal fixed EVENT_ID0 on
-  // S -> MTE2, so reserve that pair here.
-  auto dstSpace = getMGatherOperandAddressSpace(op.getDst().getType());
-  const bool isGm2L1 = dstSpace && *dstSpace == pto::AddressSpace::MAT;
-
-  auto coalesceAttr = op.getCoalesceAttr();
-  if (!coalesceAttr) {
-    return std::nullopt;
-  }
-
-  const PTOArch arch = getTargetArch(op.getOperation());
-  const pto::Coalesce coalesce = coalesceAttr.getValue();
-
+// P1/P2: GM -> L1 (Row + Elem). S reads GM idx; MTE2 DMAs GM -> L1 into dst.
+// Elem additionally writes the GM scratch (owned by S in the template) before
+// the MTE2 bulk copy reads it, so model scratch as a S def / MTE2 use.
+static SyncMacroModel buildMGatherGm2L1Model(pto::MGatherOp op,
+                                             pto::Coalesce coalesce) {
   SyncMacroModel model;
+  SmallVector<Value> sDefs;
+  if (coalesce == pto::Coalesce::Elem && op.getScratch()) {
+    sDefs.push_back(op.getScratch());
+  }
+  addPhase(model, PipelineType::PIPE_S, ValueRange(sDefs),
+           ValueRange{op.getIdx()});
+  if (coalesce == pto::Coalesce::Elem && op.getScratch()) {
+    SmallVector<Value> mte2Uses;
+    mte2Uses.push_back(op.getMem());
+    mte2Uses.push_back(op.getScratch());
+    addPhase(model, PipelineType::PIPE_MTE2,
+             ValueRange{op.getDst()}, ValueRange(mte2Uses));
+  } else {
+    addPhase(model, PipelineType::PIPE_MTE2,
+             ValueRange{op.getDst()}, ValueRange{op.getMem()});
+  }
+  addHiddenEvent(model, PipelineType::PIPE_S, PipelineType::PIPE_MTE2,
+                 ArrayRef<unsigned>{0});
+  return model;
+}
 
-  if (isGm2L1) {
-    // P1/P2: GM -> L1 (Row + Elem). S reads GM idx; MTE2 DMAs GM -> L1 into dst.
-    // Elem additionally writes the GM scratch (owned by S in the template) before
-    // the MTE2 bulk copy reads it, so model scratch as a S def / MTE2 use.
-    SmallVector<Value> sDefs;
-    if (coalesce == pto::Coalesce::Elem && op.getScratch()) {
-      sDefs.push_back(op.getScratch());
-    }
-    addPhase(model, PipelineType::PIPE_S, ValueRange(sDefs),
+// P3/P4/P5: A5 lowers GM -> UB through a SIMT kernel on the vector pipe (no
+// scalar index loop). The 1x1 scalar overload (P5) reads idx on V then does
+// a scalar GM load + dst write on S.
+static SyncMacroModel buildMGatherA5Gm2UbModel(pto::MGatherOp op,
+                                               pto::Coalesce coalesce) {
+  SyncMacroModel model;
+  auto dstShape = getMGatherOperandShape(op.getDst());
+  const bool isElem1x1 =
+      coalesce == pto::Coalesce::Elem && dstShape && dstShape->size() == 2 &&
+      (*dstShape)[0] == 1 && (*dstShape)[1] == 1;
+  if (isElem1x1) {
+    addPhase(model, PipelineType::PIPE_V, ValueRange{},
              ValueRange{op.getIdx()});
-    if (coalesce == pto::Coalesce::Elem && op.getScratch()) {
-      SmallVector<Value> mte2Uses;
-      mte2Uses.push_back(op.getMem());
-      mte2Uses.push_back(op.getScratch());
-      addPhase(model, PipelineType::PIPE_MTE2,
-               ValueRange{op.getDst()}, ValueRange(mte2Uses));
-    } else {
-      addPhase(model, PipelineType::PIPE_MTE2,
-               ValueRange{op.getDst()}, ValueRange{op.getMem()});
-    }
-    addHiddenEvent(model, PipelineType::PIPE_S, PipelineType::PIPE_MTE2,
-                   ArrayRef<unsigned>{0});
-    return model;
+    addPhase(model, PipelineType::PIPE_S, ValueRange{op.getDst()},
+             ValueRange{op.getMem()});
+    addBidirectionalHiddenEvent(model, PipelineType::PIPE_V,
+                                PipelineType::PIPE_S,
+                                ArrayRef<unsigned>{0});
+  } else {
+    addPhase(model, PipelineType::PIPE_V, ValueRange{op.getDst()},
+             ValueRange{op.getMem(), op.getIdx()});
   }
+  return model;
+}
 
-  // GM -> UB (dst is a VEC tile).
-  if (arch == PTOArch::A5) {
-    // P3/P4: A5 lowers GM -> UB through a SIMT kernel on the vector pipe (no
-    // scalar index loop). The 1x1 scalar overload (P5) reads idx on V then does
-    // a scalar GM load + dst write on S.
-    auto dstShape = getMGatherOperandShape(op.getDst());
-    const bool isElem1x1 =
-        coalesce == pto::Coalesce::Elem && dstShape && dstShape->size() == 2 &&
-        (*dstShape)[0] == 1 && (*dstShape)[1] == 1;
-    if (isElem1x1) {
-      addPhase(model, PipelineType::PIPE_V, ValueRange{},
-               ValueRange{op.getIdx()});
-      addPhase(model, PipelineType::PIPE_S, ValueRange{op.getDst()},
-               ValueRange{op.getMem()});
-      addBidirectionalHiddenEvent(model, PipelineType::PIPE_V,
-                                  PipelineType::PIPE_S,
-                                  ArrayRef<unsigned>{0});
-    } else {
-      addPhase(model, PipelineType::PIPE_V, ValueRange{op.getDst()},
-               ValueRange{op.getMem(), op.getIdx()});
-    }
-    return model;
-  }
-
-  // A2/A3 GM -> UB. Row (P6): S reads the UB index tile to compute GM addresses,
-  // then MTE2 DMAs each gathered row GM -> UB. Elem (P7): the whole gather runs
-  // on the scalar pipe (scalar GM loads + scalar UB dst writes), single phase.
+// A2/A3 GM -> UB. Row (P6): S reads the UB index tile to compute GM addresses,
+// then MTE2 DMAs each gathered row GM -> UB. Elem (P7): the whole gather runs
+// on the scalar pipe (scalar GM loads + scalar UB dst writes), single phase.
+static SyncMacroModel buildMGatherA2A3Gm2UbModel(pto::MGatherOp op,
+                                                 pto::Coalesce coalesce) {
+  SyncMacroModel model;
   if (coalesce == pto::Coalesce::Row) {
     addPhase(model, PipelineType::PIPE_S, ValueRange{},
              ValueRange{op.getIdx()});
@@ -402,6 +401,31 @@ std::optional<SyncMacroModel> getMGatherSyncMacroModel(pto::MGatherOp op) {
                    ArrayRef<unsigned>{0});
   }
   return model;
+}
+
+std::optional<SyncMacroModel> getMGatherSyncMacroModel(pto::MGatherOp op) {
+  // GM -> L1 (dst is an L1 / cube MAT tile). A5/A2A3 share the same data flow:
+  // the scalar pipe reads the GM index to compute src rows, then MTE2 issues the
+  // GM -> L1 nd2nz DMA. pto-isa currently keeps an internal fixed EVENT_ID0 on
+  // S -> MTE2, so reserve that pair here.
+  auto dstSpace = getMGatherOperandAddressSpace(op.getDst().getType());
+  const bool isGm2L1 = dstSpace && *dstSpace == pto::AddressSpace::MAT;
+
+  auto coalesceAttr = op.getCoalesceAttr();
+  if (!coalesceAttr) {
+    return std::nullopt;
+  }
+
+  const PTOArch arch = getTargetArch(op.getOperation());
+  const pto::Coalesce coalesce = coalesceAttr.getValue();
+
+  if (isGm2L1) {
+    return buildMGatherGm2L1Model(op, coalesce);
+  }
+  if (arch == PTOArch::A5) {
+    return buildMGatherA5Gm2UbModel(op, coalesce);
+  }
+  return buildMGatherA2A3Gm2UbModel(op, coalesce);
 }
 
 } // namespace

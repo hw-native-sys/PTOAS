@@ -490,22 +490,17 @@ static LogicalResult verifyTGatherBA2A3(TGatherBOp op) {
   if (failed(elems)) {
     return failure();
   }
-  Type srcTy = op.getSrc().getType();
   Type offTy = op.getOffsets().getType();
   Type dstTy = op.getDst().getType();
   Type dstElemTy = elems->second;
-  if (failed(
-          verifyTileBufSameValidShape(op, srcTy, dstTy, "src", "dst"))) {
-    return failure();
-  }
   if (!isRowMajorTileBuf(dstTy) || !isRowMajorTileBuf(offTy)) {
     return op.emitOpError()
            << "expects dst and offsets to use row-major layout";
   }
   auto dstBytes = tgatherbElemBytes(dstElemTy);
-  if (!dstBytes || (*dstBytes != 2 && *dstBytes != 4)) {
+  if (!dstBytes || (*dstBytes != 1 && *dstBytes != 2 && *dstBytes != 4)) {
     return op.emitOpError()
-           << "expects A2/A3 dst element size to be 2 or 4 bytes";
+           << "expects A2/A3 dst element size to be 1, 2, or 4 bytes";
   }
   Type offElemTy = getElemTy(offTy);
   if (!offElemTy.isInteger(32)) {

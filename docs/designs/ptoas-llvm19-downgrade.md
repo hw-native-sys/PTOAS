@@ -133,7 +133,7 @@ The remaining source port covers these LLVM 19 API families:
 - `FunctionOpInterface::insertArguments` return behavior;
 - LLVM dialect inline-assembly builders;
 - LLVM 19 calling-convention syntax in textual LLVM IR;
-- VPTO beta.1 and CANN 9.0 LLVM emitters.
+- The official VPTO CANN 9.0 LLVM emitter.
 
 LLVM 19's Func inliner does not honor PTOAS's SIMT `no_inline` requirement in
 the same way as LLVM 21. PTOAS registers a project inliner interface that
@@ -174,7 +174,7 @@ Completed checks include:
 The object smoke test uses:
 
 ```text
---cann-output-version=9.0.0 --pto-arch=a5 --pto-backend=vpto
+--pto-arch=a5 --pto-backend=vpto
 --emit-vpto-llvm-ir
 ```
 

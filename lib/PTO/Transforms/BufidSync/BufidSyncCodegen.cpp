@@ -46,31 +46,8 @@ BufidSyncCodegen::getOpTypeAttr(Builder &builder,
   return pto::PipeEventTypeAttr::get(builder.getContext(), opType);
 }
 
-void BufidSyncCodegen::sortSyncOperations(
-    SmallVector<BufSyncOperation> &pipeBefore,
-    SmallVector<BufSyncOperation> &pipeAfter) const {
-  auto physicalIdFor = [this](const BufSyncOperation &sync) {
-    return idAlloc_.getLogicToPhysical().lookup(sync.logicId);
-  };
-  std::sort(pipeBefore.begin(), pipeBefore.end(),
-            [&physicalIdFor](const BufSyncOperation &a, const BufSyncOperation &b) {
-              return std::make_tuple(physicalIdFor(a),
-                                     static_cast<int>(a.pipe), a.logicId) <
-                     std::make_tuple(physicalIdFor(b),
-                                     static_cast<int>(b.pipe), b.logicId);
-            });
-  std::sort(pipeAfter.begin(), pipeAfter.end(),
-            [&physicalIdFor](const BufSyncOperation &a, const BufSyncOperation &b) {
-              return std::make_tuple(physicalIdFor(a),
-                                     static_cast<int>(a.pipe), a.logicId) >
-                     std::make_tuple(physicalIdFor(b),
-                                     static_cast<int>(b.pipe), b.logicId);
-            });
-}
-
-LogicalResult BufidSyncCodegen::emitGetBufOps(
-    Operation *op, IRRewriter &rewriter,
-    const SmallVector<BufSyncOperation> &pipeBefore) const {
+LogicalResult BufidSyncCodegen::emitGetBufs(Operation *op, IRRewriter &rewriter,
+                                            ArrayRef<BufSyncOperation> pipeBefore) {
   for (auto &syncBefore : pipeBefore) {
     int physicalId = idAlloc_.getLogicToPhysical().lookup(syncBefore.logicId);
     auto syncOpType = mapPipelineToSyncOpType(syncBefore.pipe);
@@ -88,9 +65,8 @@ LogicalResult BufidSyncCodegen::emitGetBufOps(
   return success();
 }
 
-LogicalResult BufidSyncCodegen::emitRlsBufOps(
-    Operation *op, IRRewriter &rewriter,
-    const SmallVector<BufSyncOperation> &pipeAfter) const {
+LogicalResult BufidSyncCodegen::emitRlsBufs(Operation *op, IRRewriter &rewriter,
+                                            ArrayRef<BufSyncOperation> pipeAfter) {
   for (auto &syncAfter : pipeAfter) {
     int physicalId = idAlloc_.getLogicToPhysical().lookup(syncAfter.logicId);
     auto syncOpType = mapPipelineToSyncOpType(syncAfter.pipe);
@@ -127,13 +103,28 @@ LogicalResult BufidSyncCodegen::run() {
                                              build.pipeBefore.end());
     SmallVector<BufSyncOperation> pipeAfter(build.pipeAfter.begin(),
                                             build.pipeAfter.end());
-    sortSyncOperations(pipeBefore, pipeAfter);
+    auto physicalIdFor = [this](const BufSyncOperation &sync) {
+      return idAlloc_.getLogicToPhysical().lookup(sync.logicId);
+    };
+    std::sort(pipeBefore.begin(), pipeBefore.end(),
+              [&physicalIdFor](const BufSyncOperation &a, const BufSyncOperation &b) {
+                return std::make_tuple(physicalIdFor(a),
+                                       static_cast<int>(a.pipe), a.logicId) <
+                       std::make_tuple(physicalIdFor(b),
+                                       static_cast<int>(b.pipe), b.logicId);
+              });
+    std::sort(pipeAfter.begin(), pipeAfter.end(),
+              [&physicalIdFor](const BufSyncOperation &a, const BufSyncOperation &b) {
+                return std::make_tuple(physicalIdFor(a),
+                                       static_cast<int>(a.pipe), a.logicId) >
+                       std::make_tuple(physicalIdFor(b),
+                                       static_cast<int>(b.pipe), b.logicId);
+              });
 
-    if (failed(emitGetBufOps(op, rewriter, pipeBefore)) ||
-        failed(emitRlsBufOps(op, rewriter, pipeAfter))) {
+    if (failed(emitGetBufs(op, rewriter, pipeBefore)) ||
+        failed(emitRlsBufs(op, rewriter, pipeAfter))) {
       return WalkResult::interrupt();
     }
-
     return WalkResult::advance();
   });
   return failure(walkResult.wasInterrupted());

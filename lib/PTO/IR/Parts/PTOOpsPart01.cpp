@@ -85,8 +85,8 @@ static void printSyncEventOpCommon(OpAsmPrinter &p, Operation *op,
                                    Value eventDyn, StringRef pipeAttrName,
                                    StringRef eventIdAttrName);
 static bool isTileLikeType(Type ty);
-static SmallVector<int64_t, 4> getShapeVec(Type ty);
-static SmallVector<int64_t, 4> getValidShapeVec(Type ty);
+static SmallVector<int64_t, mlir::pto::kValue4> getShapeVec(Type ty);
+static SmallVector<int64_t, mlir::pto::kValue4> getValidShapeVec(Type ty);
 static SmallVector<int64_t, 4> getValidShapeVec(Value value);
 static bool isKnownZeroOrUnitExtent(int64_t value);
 static bool isByteIntegerType(Type ty);
@@ -473,15 +473,13 @@ mlir::pto::getLoadStoreVecAlignmentSize(Operation *op) {
   }
   if (auto sprsti = dyn_cast<SprstiOp>(op)) {
     if (sprsti.getSpr() == "AR") {
-      return 4;
+        return mlir::pto::kValue4;
     }
   }
   return std::nullopt;
 }
 
-static llvm::TypeSize getOneByteTypeSize() {
-  return llvm::TypeSize::getFixed(8);
-}
+static llvm::TypeSize getOneByteTypeSize() { return llvm::TypeSize::getFixed(mlir::pto::kValue8); }
 
 llvm::TypeSize mlir::pto::HiF8Type::getTypeSizeInBits(
     const DataLayout &, DataLayoutEntryListRef) const {
@@ -513,9 +511,7 @@ uint64_t mlir::pto::F8E8M0Type::getPreferredAlignment(
   return 1;
 }
 
-static llvm::TypeSize getTwoByteTypeSize() {
-  return llvm::TypeSize::getFixed(16);
-}
+static llvm::TypeSize getTwoByteTypeSize() { return llvm::TypeSize::getFixed(mlir::pto::kValue16); }
 
 llvm::TypeSize mlir::pto::HiF8x2Type::getTypeSizeInBits(
     const DataLayout &, DataLayoutEntryListRef) const {
@@ -524,12 +520,12 @@ llvm::TypeSize mlir::pto::HiF8x2Type::getTypeSizeInBits(
 
 uint64_t mlir::pto::HiF8x2Type::getABIAlignment(
     const DataLayout &, DataLayoutEntryListRef) const {
-  return 2;
+    return mlir::pto::kValue2;
 }
 
 uint64_t mlir::pto::HiF8x2Type::getPreferredAlignment(
     const DataLayout &, DataLayoutEntryListRef) const {
-  return 2;
+    return mlir::pto::kValue2;
 }
 
 llvm::TypeSize mlir::pto::F4E1M2x2Type::getTypeSizeInBits(
@@ -562,9 +558,7 @@ uint64_t mlir::pto::F4E2M1x2Type::getPreferredAlignment(
   return 1;
 }
 
-static llvm::TypeSize getFourByteTypeSize() {
-  return llvm::TypeSize::getFixed(32);
-}
+static llvm::TypeSize getFourByteTypeSize() { return llvm::TypeSize::getFixed(mlir::pto::kValue32); }
 
 llvm::TypeSize mlir::pto::BF16x2Type::getTypeSizeInBits(
     const DataLayout &, DataLayoutEntryListRef) const {
@@ -573,12 +567,12 @@ llvm::TypeSize mlir::pto::BF16x2Type::getTypeSizeInBits(
 
 uint64_t mlir::pto::BF16x2Type::getABIAlignment(
     const DataLayout &, DataLayoutEntryListRef) const {
-  return 4;
+    return mlir::pto::kValue4;
 }
 
 uint64_t mlir::pto::BF16x2Type::getPreferredAlignment(
     const DataLayout &, DataLayoutEntryListRef) const {
-  return 4;
+    return mlir::pto::kValue4;
 }
 
 static VerifierTargetArch getVerifierTargetArch(Operation *op) {
@@ -614,13 +608,14 @@ static std::optional<StringRef> getVerifierArchName(Operation *op) {
   return std::nullopt;
 }
 
-static SmallVector<int64_t, 4> canonicalizeTileBufValidShape(ArrayRef<int64_t> validShape) {
-  SmallVector<int64_t, 4> canonical;
-  canonical.reserve(validShape.size());
-  for (int64_t dim : validShape) {
-    canonical.push_back(dim < 0 ? ShapedType::kDynamic : dim);
-  }
-  return canonical;
+static SmallVector<int64_t, mlir::pto::kValue4> canonicalizeTileBufValidShape(ArrayRef<int64_t> validShape)
+{
+    SmallVector<int64_t, mlir::pto::kValue4> canonical;
+    canonical.reserve(validShape.size());
+    for (int64_t dim : validShape) {
+        canonical.push_back(dim < 0 ? ShapedType::kDynamic : dim);
+    }
+    return canonical;
 }
 
 template <typename FnA2A3, typename FnA5>
@@ -751,7 +746,7 @@ static LogicalResult parsePTOShapeAndElement(OpAsmParser& parser, SmallVectorImp
 
 static Type parseShapedPTOType(OpAsmParser& parser, StringRef head)
 {
-    SmallVector<int64_t, 4> shape;
+    SmallVector<int64_t, mlir::pto::kValue4> shape;
     Type elementType;
     if (failed(parsePTOShapeAndElement(parser, shape, elementType))) {
         return {};
@@ -821,7 +816,7 @@ static Type parseKnownPTOType(OpAsmParser& parser, StringRef head)
 
 mlir::Type TensorViewType::parse(::mlir::AsmParser& parser)
 {
-    SmallVector<int64_t, 4> shape;
+    SmallVector<int64_t, mlir::pto::kValue4> shape;
     Type elementType;
     Attribute layout;
     if (failed(parseViewShapeElemAndLayout(
@@ -1165,7 +1160,7 @@ static ParseResult parseCommCollectiveTail(
         resolveCommOperands(parser, result, fixedOperands, fixedTypes, recvClause, groupOps, groupTypes)) {
         return failure();
     }
-    SmallVector<int32_t, 5> segmentSizes(operandSegmentsPrefix.begin(), operandSegmentsPrefix.end());
+    SmallVector<int32_t, mlir::pto::kValue5> segmentSizes(operandSegmentsPrefix.begin(), operandSegmentsPrefix.end());
     segmentSizes.push_back(static_cast<int32_t>(groupOps.size()));
     result.addAttribute("operandSegmentSizes", parser.getBuilder().getDenseI32ArrayAttr(segmentSizes));
     return success();
@@ -1200,8 +1195,8 @@ static ParseResult parseCommSingleFixedOperand(OpAsmParser& parser, OperationSta
 {
     OpAsmParser::UnresolvedOperand src;
     CommRecvClause recvClause;
-    SmallVector<OpAsmParser::UnresolvedOperand, 4> groupOps;
-    SmallVector<Type, 4> groupTypes;
+    SmallVector<OpAsmParser::UnresolvedOperand, mlir::pto::kValue4> groupOps;
+    SmallVector<Type, mlir::pto::kValue4> groupTypes;
 
     if (parser.parseLParen() || parser.parseOperand(src) || parser.parseComma()) {
         return failure();
@@ -1270,8 +1265,8 @@ ParseResult mlir::pto::TReduceOp::parse(OpAsmParser &parser,
                                         OperationState &result) {
   OpAsmParser::UnresolvedOperand dst, acc;
   CommRecvClause recvClause;
-  SmallVector<OpAsmParser::UnresolvedOperand, 4> groupOps;
-  SmallVector<Type, 4> groupTypes;
+  SmallVector<OpAsmParser::UnresolvedOperand, mlir::pto::kValue4> groupOps;
+  SmallVector<Type, mlir::pto::kValue4> groupTypes;
 
   if (parser.parseLParen() || parser.parseOperand(dst) || parser.parseComma() ||
       parser.parseOperand(acc) || parser.parseComma()) {
@@ -1281,8 +1276,8 @@ ParseResult mlir::pto::TReduceOp::parse(OpAsmParser &parser,
     return failure();
   }
 
-  SmallVector<OpAsmParser::UnresolvedOperand, 2> fixedOperands{dst, acc};
-  SmallVector<Type, 2> fixedTypes(2);
+  SmallVector<OpAsmParser::UnresolvedOperand, mlir::pto::kValue2> fixedOperands{dst, acc};
+  SmallVector<Type, mlir::pto::kValue2> fixedTypes(mlir::pto::kValue2);
   if (failed(parseCommCollectiveTail(
           parser, result, fixedOperands, fixedTypes, recvClause, groupOps,
           groupTypes, {1, 1, 1, recvClause.pong ? 1 : 0},
@@ -1311,8 +1306,8 @@ void mlir::pto::TReduceOp::print(OpAsmPrinter &p) {
 ParseResult mlir::pto::MakeTensorViewOp::parse(OpAsmParser &parser,
                                                OperationState &result) {
   OpAsmParser::UnresolvedOperand ptr;
-  SmallVector<OpAsmParser::UnresolvedOperand, 4> shapeOps;
-  SmallVector<OpAsmParser::UnresolvedOperand, 4> strideOps;
+  SmallVector<OpAsmParser::UnresolvedOperand, mlir::pto::kValue4> shapeOps;
+  SmallVector<OpAsmParser::UnresolvedOperand, mlir::pto::kValue4> strideOps;
 
   Type resultTy;
 
@@ -1357,7 +1352,6 @@ ParseResult mlir::pto::MakeTensorViewOp::parse(OpAsmParser &parser,
   Type elemTy = tvTy.getElementType();
 
   Type ptrTy = mlir::pto::PtrType::get(parser.getContext(), elemTy);
-
   // resolve %ptr
   if (parser.resolveOperand(ptr, ptrTy, result.operands)) {
     return failure();
@@ -1431,7 +1425,7 @@ inferPartitionViewResultTypeFromSizes(Type sourceType, ValueRange sizes) {
     return failure();
   }
 
-  SmallVector<int64_t, 4> shape;
+  SmallVector<int64_t, mlir::pto::kValue4> shape;
   shape.reserve(sizes.size());
   for (Value size : sizes) {
     auto constSize = getConstIndexValue(size);

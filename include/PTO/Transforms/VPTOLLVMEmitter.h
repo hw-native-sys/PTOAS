@@ -51,11 +51,6 @@ LogicalResult lowerVPTOModuleToLLVMModules(
     EmittedLLVMModule &cubeModule, EmittedLLVMModule &vectorModule,
     llvm::raw_ostream &diagOS);
 
-LogicalResult lowerVPTOModuleToLLVMModulesBeta1(
-    ModuleOp module, const VPTOEmissionOptions &options,
-    EmittedLLVMModule &cubeModule, EmittedLLVMModule &vectorModule,
-    llvm::raw_ostream &diagOS);
-
 LogicalResult lowerVPTOModuleToLLVMModulesCANN900(
     ModuleOp module, const VPTOEmissionOptions &options,
     EmittedLLVMModule &cubeModule, EmittedLLVMModule &vectorModule,

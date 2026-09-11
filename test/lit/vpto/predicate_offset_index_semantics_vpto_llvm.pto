@@ -6,11 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: ptoas --cann-output-version=9.0.0 --pto-backend=vpto --pto-arch=a5 \
+// RUN: ptoas --pto-backend=vpto --pto-arch=a5 \
 // RUN:   --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s --check-prefix=LLVM
-// RUN: ptoas --cann-output-version=9.0.0-beta.1 --pto-backend=vpto \
-// RUN:   --pto-arch=a5 --emit-vpto-llvm-ir %s -o - 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=LLVM
 
 // LLVM-LABEL: define void @normal_full_predicate_index_offsets_mix_aiv
 // LLVM-NOT: trunc i64

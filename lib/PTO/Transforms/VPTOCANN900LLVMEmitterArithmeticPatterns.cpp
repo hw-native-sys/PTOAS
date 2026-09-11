@@ -175,7 +175,7 @@ public:
     if (!inputType || !maskType || failed(this->getTypeConverter()->convertTypes(op->getResultTypes(), resultTypes))) {
       return rewriter.notifyMatchFailure(op, "failed to convert vmull types");
     }
-    if (resultTypes.size() != 2 || resultTypes[0] != resultTypes[1]) {
+    if (resultTypes.size() != kVmullResultCount || resultTypes[0] != resultTypes[1]) {
       return rewriter.notifyMatchFailure(op, "unexpected converted vmull results");
     }
 
@@ -530,14 +530,14 @@ static FailureOr<CreateCbufMatrixFill> buildCreateCbufMatrixFill(pto::CreateCbuf
   Location loc = op.getLoc();
   Type i64Ty = rewriter.getI64Type();
   const uint64_t fillWordWidth = static_cast<uint64_t>(op.getFillWordBits());
-  if (fillWordWidth == 16) {
+  if (fillWordWidth == kFillWordWidth16) {
     Value wordMask = getI32Constant(rewriter, loc, 0xFFFFU);
     Value lowWord = rewriter.create<arith::AndIOp>(loc, rawValue, wordMask);
     Value wordBits = rewriter.create<arith::TruncIOp>(loc, rewriter.getI16Type(), lowWord);
     Value pattern = rewriter.create<LLVM::BitcastOp>(loc, rewriter.getF16Type(), wordBits);
     return CreateCbufMatrixFill{"llvm.hivm.CREATE.CBUF.MATRIX.v3.u16.h", pattern};
   }
-  if (fillWordWidth == 32) {
+  if (fillWordWidth == kFillWordWidth32) {
     Value pattern = rewriter.create<arith::ExtUIOp>(loc, i64Ty, rawValue);
     return CreateCbufMatrixFill{"llvm.hivm.CREATE.CBUF.MATRIX.v3.u32", pattern};
   }
@@ -555,8 +555,8 @@ static Value packCreateCbufMatrixConfig(Operation *anchor, Value repeatTimes, Va
     return rewriter.create<arith::ShLIOp>(loc, value, getI64Constant(rewriter, loc, amount));
   };
   Value config = maskField(repeatTimes);
-  config = rewriter.create<arith::OrIOp>(loc, config, shiftField(maskField(blockNum32b), 16));
-  return rewriter.create<arith::OrIOp>(loc, config, shiftField(maskField(dstGap32b), 32));
+  config = rewriter.create<arith::OrIOp>(loc, config, shiftField(maskField(blockNum32b), kBits16));
+  return rewriter.create<arith::OrIOp>(loc, config, shiftField(maskField(dstGap32b), kBits32));
 }
 
 class LowerCreateCbufMatrixOpPattern final : public OpConversionPattern<pto::CreateCbufMatrixOp> {
@@ -1124,7 +1124,7 @@ public:
 
     Type sourceElemType = cast<pto::PtrType>(op.getSource().getType()).getElementType();
     unsigned elemBitWidth = pto::getPTOStorageElemBitWidth(sourceElemType);
-    if (elemBitWidth == 0 || (elemBitWidth % 8) != 0) {
+    if (elemBitWidth == 0 || (elemBitWidth % kBitsPerByte) != 0) {
       return rewriter.notifyMatchFailure(op, "unsupported load_cbuf_to_ca_mx element type");
     }
     FailureOr<Value> config0 = packLoadCbufToCaConfig0(op, adaptor.getXStartPosition(), adaptor.getYStartPosition(),
@@ -1175,7 +1175,7 @@ public:
 
     Type sourceElemType = cast<pto::PtrType>(op.getSource().getType()).getElementType();
     unsigned elemBitWidth = pto::getPTOStorageElemBitWidth(sourceElemType);
-    if (elemBitWidth == 0 || (elemBitWidth % 8) != 0) {
+    if (elemBitWidth == 0 || (elemBitWidth % kBitsPerByte) != 0) {
       return rewriter.notifyMatchFailure(op, "unsupported load_cbuf_to_cb_mx element type");
     }
     FailureOr<Value> config0 = packLoadCbufToCbConfig0(op, adaptor.getXStartPosition(), adaptor.getYStartPosition(),
@@ -1398,7 +1398,7 @@ public:
     Value mask = adaptor.getMask();
     Value bin = adaptor.getBin();
     if (!acc || !source || !mask || !bin || acc.getType() != resultType || source.getType() != sourceType ||
-        mask.getType() != maskType || !bin.getType().isInteger(32)) {
+        mask.getType() != maskType || !bin.getType().isInteger(kBits32)) {
       return rewriter.notifyMatchFailure(op, "unexpected converted histogram operand types");
     }
 

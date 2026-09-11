@@ -71,9 +71,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK-DAG: declare <256 x float8e4m3> @llvm.hivm.vand.x.v256fp8e4m3(<256 x float8e4m3>, <256 x float8e4m3>, <256 x i1>)
 // CHECK-DAG: declare <256 x float8e4m3> @llvm.hivm.vor.x.v256fp8e4m3(<256 x float8e4m3>, <256 x float8e4m3>, <256 x i1>)
 // CHECK-DAG: declare <256 x float8e4m3> @llvm.hivm.vxor.x.v256fp8e4m3(<256 x float8e4m3>, <256 x float8e4m3>, <256 x i1>)
-// CHECK-DAG: declare <256 x i8> @llvm.hivm.vand.v256u8.x(<256 x i8>, <256 x i8>, <256 x i1>)
-// CHECK-DAG: declare <256 x i8> @llvm.hivm.vor.v256u8.x(<256 x i8>, <256 x i8>, <256 x i1>)
-// CHECK-DAG: declare <256 x i8> @llvm.hivm.vxor.v256u8.x(<256 x i8>, <256 x i8>, <256 x i1>)
+// CHECK-DAG: declare <256 x i8> @llvm.hivm.vand.x.v256u8(<256 x i8>, <256 x i8>, <256 x i1>)
+// CHECK-DAG: declare <256 x i8> @llvm.hivm.vor.x.v256u8(<256 x i8>, <256 x i8>, <256 x i1>)
+// CHECK-DAG: declare <256 x i8> @llvm.hivm.vxor.x.v256u8(<256 x i8>, <256 x i8>, <256 x i1>)
 // CHECK-LABEL: define void @vand_lowp_direct_mix_aiv
 // CHECK: call <256 x float8e4m3> @llvm.hivm.vand.x.v256fp8e4m3
 // CHECK-LABEL: define void @vor_lowp_direct_mix_aiv
@@ -81,7 +81,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK-LABEL: define void @vxor_lowp_direct_mix_aiv
 // CHECK: call <256 x float8e4m3> @llvm.hivm.vxor.x.v256fp8e4m3
 // CHECK-LABEL: define void @vlogic_lowp_payload_mix_aiv
-// CHECK: call <256 x i8> @llvm.hivm.vand.v256u8.x
-// CHECK: call <256 x i8> @llvm.hivm.vor.v256u8.x
-// CHECK: call <256 x i8> @llvm.hivm.vxor.v256u8.x
+// CHECK: call <256 x i8> @llvm.hivm.vand.x.v256u8
+// CHECK: call <256 x i8> @llvm.hivm.vor.x.v256u8
+// CHECK: call <256 x i8> @llvm.hivm.vxor.x.v256u8
 // CHECK: bitcast <256 x i8> {{.*}} to <256 x hifloat8>

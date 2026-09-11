@@ -21,6 +21,8 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "llvm/Support/raw_ostream.h"
+
+#include <optional>
  
 namespace mlir {
 namespace pto {
@@ -66,6 +68,11 @@ private:
  
   // --- 递归遍历逻辑 ---
   void RecursionIR(Region *region);
+  // RecursionIR 的按类别分发器：返回 nullopt 表示 op 不属于该类别，
+  // 需继续尝试后续类别；返回 WalkResult 表示已匹配处理完毕。
+  std::optional<WalkResult> dispatchAllocOp(Operation *op);
+  std::optional<WalkResult> dispatchAliasViewOp(Operation *op);
+  std::optional<WalkResult> dispatchControlAndComputeOp(Operation *op);
  
   // --- 内存/Alias 分析 ---
   void UpdateKernelArgMemInfo();

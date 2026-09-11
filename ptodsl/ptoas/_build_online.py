@@ -278,6 +278,13 @@ class _PythonContext:
     # compile against pybind11 >= 3.0.2. _core is unaffected. See
     # gen_mlir_family_headers.sh / online_template for how the family is built.
     _PYBIND11_KEEP_ALIVE_BROKEN = (3, 0, 2)
+    # Python 3.14 support landed in pybind11 3.0.0; earlier releases fail to
+    # compile against a 3.14 interpreter. Combined with the family's < 3.0.2
+    # upper bound, the ptoas.mlir family only builds against pybind11
+    # 3.0.0 / 3.0.1 on 3.14. Used to warn (not hard-fail) since the effective
+    # pybind11 floor is version-specific.
+    _PYBIND11_PY314_MIN_VERSION = (3, 0, 0)
+    _PY314_MINOR = 14
 
     def __init__(self, require_family_pybind11: bool = False):
         self.require_family_pybind11 = require_family_pybind11
@@ -298,10 +305,10 @@ class _PythonContext:
 
     def _init_minor_version(self):
         minor = int(sys.version_info.minor)
-        if minor < 9:
+        if minor < 8:
             raise RuntimeError(
-                f"Python version 3.{minor} is not supported for online compilation, require >= 3.9.\n"
-                "Hint: use a Python 3.9+ interpreter."
+                f"Python version 3.{minor} is not supported for online compilation, require >= 3.8.\n"
+                "Hint: use a Python 3.8+ interpreter."
             )
         self.minor = minor
 
@@ -326,15 +333,41 @@ class _PythonContext:
                 f"pybind11 version {pybind11.__version__} is too old, require >= 2.13.6.\n"
                 "Hint: upgrade it with `pip install pybind11>=2.13.6`."
             )
+        if (
+            self.minor >= self._PY314_MINOR
+            and current_ver < self._PYBIND11_PY314_MIN_VERSION
+        ):
+            _log.warning(
+                "Python 3.%d requires a pinned pybind11 to build the online "
+                "extensions: only 3.0.0 or 3.0.1 work. It needs pybind11 >= 3.0.0, "
+                "while the ptoas.mlir family additionally requires pybind11 < 3.0.2 "
+                "(def_property + keep_alive is rejected from 3.0.2 on), leaving 3.0.0 "
+                "/ 3.0.1 as the only versions that build the full Python API. Detected "
+                "pybind11 %s will likely fail to compile.\n"
+                "Hint: pin it with `pip install 'pybind11==3.0.1'` (or 3.0.0).",
+                self.minor,
+                pybind11.__version__,
+            )
         if self.require_family_pybind11 and current_ver >= self._PYBIND11_KEEP_ALIVE_BROKEN:
+            if self.minor >= self._PY314_MINOR:
+                downgrade_hint = (
+                    "Hint: on Python 3.%d pin pybind11 to the only working versions with "
+                    "`pip install 'pybind11==3.0.1'` (or 3.0.0); versions < 3.0.0 do not "
+                    "support 3.14 and >= 3.0.2 break the bindings." % self.minor
+                )
+            else:
+                downgrade_hint = (
+                    "Hint: install a compatible pybind11 with "
+                    "`pip install 'pybind11>=2.13.6,<3'` "
+                    "(or the last working 3.x, `pip install pybind11==3.0.1`)."
+                )
             raise RuntimeError(
                 f"pybind11 version {pybind11.__version__} is incompatible with the "
                 "ptoas.mlir Python bindings.\n"
                 "The upstream MLIR bindings use def_property + keep_alive, which "
                 "pybind11 >= 3.0.2 rejects at compile time (\"def_property family does "
                 "not currently support keep_alive\").\n"
-                "Hint: install a compatible pybind11 with `pip install 'pybind11>=2.13.6,<3'` "
-                "(or the last working 3.x, `pip install pybind11==3.0.1`).\n"
+                f"{downgrade_hint}\n"
                 "Note: the ptoas CLI itself does NOT need these bindings and works on any "
                 "supported pybind11; this only affects the ptodsl / ptoas.mlir Python API."
             )

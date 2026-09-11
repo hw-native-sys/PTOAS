@@ -24,6 +24,7 @@ inline constexpr int kValue12 = 12;
 inline constexpr int kValue15 = 15;
 inline constexpr int kValue16 = 16;
 inline constexpr int kValue24 = 24;
+inline constexpr int kValue30 = 30;
 inline constexpr int kValue32 = 32;
 inline constexpr int kValue45 = 45;
 inline constexpr int kValue46 = 46;
@@ -37,9 +38,13 @@ inline constexpr int kValue62 = 62;
 inline constexpr int kValue63 = 63;
 inline constexpr int kValue64 = 64;
 inline constexpr int kValue128 = 128;
+inline constexpr int kValue255 = 255;
 inline constexpr int kValue256 = 256;
+inline constexpr int kValue512 = 512;
 inline constexpr int kValue1024 = 1024;
 inline constexpr int kValue2048 = 2048;
+inline constexpr int kValue4095 = 4095;
+inline constexpr int kValue8192 = 8192;
 inline constexpr int kValue100000 = 100000;
 
 } // namespace mlir::pto

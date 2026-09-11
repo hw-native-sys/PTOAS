@@ -1,0 +1,124 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+//
+// Regression for GitHub issue #1495: A2/A3 block gathers accept byte-sized
+// destinations and reinterpret source bytes without requiring matching shapes.
+// RUN: ptoas --pto-level=level3 --enable-insert-sync %s | FileCheck %s
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --enable-insert-sync %s | FileCheck %s
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %s | FileCheck %s
+
+module {
+  func.func @tgatherb_i8_same_shape() {
+    %c0 = arith.constant 0 : i64
+    %c1024 = arith.constant 1024 : i64
+    %c1152 = arith.constant 1152 : i64
+    %src = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 4x256xi8>
+    %off = pto.alloc_tile addr = %c1024 : !pto.tile_buf<vec, 4x8xui32>
+    %dst = pto.alloc_tile addr = %c1152 : !pto.tile_buf<vec, 4x256xi8>
+    pto.tgatherb ins(%src, %off : !pto.tile_buf<vec, 4x256xi8>, !pto.tile_buf<vec, 4x8xui32>)
+                outs(%dst : !pto.tile_buf<vec, 4x256xi8>)
+    return
+  }
+
+  func.func @tgatherb_i8_reshape() {
+    %c0 = arith.constant 0 : i64
+    %c1024 = arith.constant 1024 : i64
+    %c1152 = arith.constant 1152 : i64
+    %src = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 1x1024xi8>
+    %off = pto.alloc_tile addr = %c1024 : !pto.tile_buf<vec, 4x8xui32>
+    %dst = pto.alloc_tile addr = %c1152 : !pto.tile_buf<vec, 4x256xi8>
+    pto.tgatherb ins(%src, %off : !pto.tile_buf<vec, 1x1024xi8>, !pto.tile_buf<vec, 4x8xui32>)
+                outs(%dst : !pto.tile_buf<vec, 4x256xi8>)
+    return
+  }
+
+  func.func @tgatherb_ui8_reshape() {
+    %c0 = arith.constant 0 : i64
+    %c1024 = arith.constant 1024 : i64
+    %c1152 = arith.constant 1152 : i64
+    %src = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 1x1024xui8>
+    %off = pto.alloc_tile addr = %c1024 : !pto.tile_buf<vec, 4x8xui32>
+    %dst = pto.alloc_tile addr = %c1152 : !pto.tile_buf<vec, 4x256xui8>
+    pto.tgatherb ins(%src, %off : !pto.tile_buf<vec, 1x1024xui8>, !pto.tile_buf<vec, 4x8xui32>)
+                outs(%dst : !pto.tile_buf<vec, 4x256xui8>)
+    return
+  }
+
+  func.func @tgatherb_i32_to_i8() {
+    %c0 = arith.constant 0 : i64
+    %c1024 = arith.constant 1024 : i64
+    %c1152 = arith.constant 1152 : i64
+    %src = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 1x256xi32>
+    %off = pto.alloc_tile addr = %c1024 : !pto.tile_buf<vec, 4x8xui32>
+    %dst = pto.alloc_tile addr = %c1152 : !pto.tile_buf<vec, 4x256xi8>
+    pto.tgatherb ins(%src, %off : !pto.tile_buf<vec, 1x256xi32>, !pto.tile_buf<vec, 4x8xui32>)
+                outs(%dst : !pto.tile_buf<vec, 4x256xi8>)
+    return
+  }
+
+  func.func @tgatherb_f32_to_ui8() {
+    %c0 = arith.constant 0 : i64
+    %c1024 = arith.constant 1024 : i64
+    %c1152 = arith.constant 1152 : i64
+    %src = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 1x256xf32>
+    %off = pto.alloc_tile addr = %c1024 : !pto.tile_buf<vec, 4x8xui32>
+    %dst = pto.alloc_tile addr = %c1152 : !pto.tile_buf<vec, 4x256xui8>
+    pto.tgatherb ins(%src, %off : !pto.tile_buf<vec, 1x256xf32>, !pto.tile_buf<vec, 4x8xui32>)
+                outs(%dst : !pto.tile_buf<vec, 4x256xui8>)
+    return
+  }
+
+  func.func @tgatherb_ui8_to_ui16() {
+    %c0 = arith.constant 0 : i64
+    %c1024 = arith.constant 1024 : i64
+    %c1152 = arith.constant 1152 : i64
+    %src = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 1x1024xui8>
+    %off = pto.alloc_tile addr = %c1024 : !pto.tile_buf<vec, 4x8xui32>
+    %dst = pto.alloc_tile addr = %c1152 : !pto.tile_buf<vec, 4x128xui16>
+    pto.tgatherb ins(%src, %off : !pto.tile_buf<vec, 1x1024xui8>, !pto.tile_buf<vec, 4x8xui32>)
+                outs(%dst : !pto.tile_buf<vec, 4x128xui16>)
+    return
+  }
+
+}
+
+// CHECK-LABEL: AICORE void tgatherb_i8_same_shape(
+// CHECK: Tile<TileType::Vec, int8_t, 4, 256,{{[^>]*}}> [[I8_SAME_SHAPE_SRC:v[0-9]+]];
+// CHECK: Tile<TileType::Vec, uint32_t, 4, 8,{{[^>]*}}> [[I8_SAME_SHAPE_OFF:v[0-9]+]];
+// CHECK: Tile<TileType::Vec, int8_t, 4, 256,{{[^>]*}}> [[I8_SAME_SHAPE_DST:v[0-9]+]];
+// CHECK: TGATHERB([[I8_SAME_SHAPE_DST]], [[I8_SAME_SHAPE_SRC]], [[I8_SAME_SHAPE_OFF]]);
+
+// CHECK-LABEL: AICORE void tgatherb_i8_reshape(
+// CHECK: Tile<TileType::Vec, int8_t, 1, 1024,{{[^>]*}}> [[I8_RESHAPE_SRC:v[0-9]+]];
+// CHECK: Tile<TileType::Vec, uint32_t, 4, 8,{{[^>]*}}> [[I8_RESHAPE_OFF:v[0-9]+]];
+// CHECK: Tile<TileType::Vec, int8_t, 4, 256,{{[^>]*}}> [[I8_RESHAPE_DST:v[0-9]+]];
+// CHECK: TGATHERB([[I8_RESHAPE_DST]], [[I8_RESHAPE_SRC]], [[I8_RESHAPE_OFF]]);
+
+// CHECK-LABEL: AICORE void tgatherb_ui8_reshape(
+// CHECK: Tile<TileType::Vec, uint8_t, 1, 1024,{{[^>]*}}> [[UI8_RESHAPE_SRC:v[0-9]+]];
+// CHECK: Tile<TileType::Vec, uint32_t, 4, 8,{{[^>]*}}> [[UI8_RESHAPE_OFF:v[0-9]+]];
+// CHECK: Tile<TileType::Vec, uint8_t, 4, 256,{{[^>]*}}> [[UI8_RESHAPE_DST:v[0-9]+]];
+// CHECK: TGATHERB([[UI8_RESHAPE_DST]], [[UI8_RESHAPE_SRC]], [[UI8_RESHAPE_OFF]]);
+
+// CHECK-LABEL: AICORE void tgatherb_i32_to_i8(
+// CHECK: Tile<TileType::Vec, int32_t, 1, 256,{{[^>]*}}> [[I32_TO_I8_SRC:v[0-9]+]];
+// CHECK: Tile<TileType::Vec, uint32_t, 4, 8,{{[^>]*}}> [[I32_TO_I8_OFF:v[0-9]+]];
+// CHECK: Tile<TileType::Vec, int8_t, 4, 256,{{[^>]*}}> [[I32_TO_I8_DST:v[0-9]+]];
+// CHECK: TGATHERB([[I32_TO_I8_DST]], [[I32_TO_I8_SRC]], [[I32_TO_I8_OFF]]);
+
+// CHECK-LABEL: AICORE void tgatherb_f32_to_ui8(
+// CHECK: Tile<TileType::Vec, float, 1, 256,{{[^>]*}}> [[F32_TO_UI8_SRC:v[0-9]+]];
+// CHECK: Tile<TileType::Vec, uint32_t, 4, 8,{{[^>]*}}> [[F32_TO_UI8_OFF:v[0-9]+]];
+// CHECK: Tile<TileType::Vec, uint8_t, 4, 256,{{[^>]*}}> [[F32_TO_UI8_DST:v[0-9]+]];
+// CHECK: TGATHERB([[F32_TO_UI8_DST]], [[F32_TO_UI8_SRC]], [[F32_TO_UI8_OFF]]);
+
+// CHECK-LABEL: AICORE void tgatherb_ui8_to_ui16(
+// CHECK: Tile<TileType::Vec, uint8_t, 1, 1024,{{[^>]*}}> [[UI8_TO_UI16_SRC:v[0-9]+]];
+// CHECK: Tile<TileType::Vec, uint32_t, 4, 8,{{[^>]*}}> [[UI8_TO_UI16_OFF:v[0-9]+]];
+// CHECK: Tile<TileType::Vec, uint16_t, 4, 128,{{[^>]*}}> [[UI8_TO_UI16_DST:v[0-9]+]];
+// CHECK: TGATHERB([[UI8_TO_UI16_DST]], [[UI8_TO_UI16_SRC]], [[UI8_TO_UI16_OFF]]);

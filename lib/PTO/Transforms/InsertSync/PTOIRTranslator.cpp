@@ -343,94 +343,125 @@ void PTOIRTranslator::UpdateKernelArgMemInfo() {
 // ============================================================================
 // 3. 递归遍历 IR (核心分发逻辑)
 // ============================================================================
+
+// 各分发函数返回 std::nullopt 表示该 op 不属于本类别，需继续尝试后续类别；
+// 返回 WalkResult 表示已匹配并处理完毕（保持原 if/else-if 链的互斥语义）。
+
+// --- Case A: 内存分配 (AllocTile / AllocMultiTile / Declare*) ---
+std::optional<WalkResult>
+PTOIRTranslator::dispatchAllocOp(Operation *op) {
+  if (auto allocOp = dyn_cast<pto::AllocTileOp>(op)) {
+    if (failed(UpdateAllocTileOpMemInfo(allocOp))) {
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  }
+  if (auto allocMultiOp = dyn_cast<pto::AllocMultiTileOp>(op)) {
+    if (failed(UpdateAllocMultiTileOpMemInfo(allocMultiOp))) {
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  }
+  if (auto declareOp = dyn_cast<pto::DeclareTileOp>(op)) {
+    if (failed(UpdateDeclareTileOpMemInfo(declareOp))) {
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  }
+  if (auto declareGlobalOp = dyn_cast<pto::DeclareGlobalOp>(op)) {
+    if (failed(UpdateDeclareGlobalOpMemInfo(declareGlobalOp))) {
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  }
+  return std::nullopt;
+}
+
+// --- Case B: 别名/视图操作 ---
+std::optional<WalkResult>
+PTOIRTranslator::dispatchAliasViewOp(Operation *op) {
+  if (auto makeViewOp = dyn_cast<pto::MakeTensorViewOp>(op)) {
+    UpdateAliasBufferInfo(makeViewOp.getResult(), makeViewOp.getPtr());
+  } else if (auto subViewOp = dyn_cast<pto::PartitionViewOp>(op)) {
+    UpdateAliasBufferInfo(subViewOp.getResult(), subViewOp.getSource());
+  } else if (auto addPtrOp = dyn_cast<pto::AddPtrOp>(op)) {
+    UpdateAliasBufferInfo(addPtrOp.getResult(), addPtrOp.getPtr());
+  } else if (auto ptrToIntOp = dyn_cast<pto::PtrToIntOp>(op)) {
+    UpdateAliasBufferInfo(ptrToIntOp.getResult(), ptrToIntOp.getPtr());
+  } else if (auto intToPtrOp = dyn_cast<pto::IntToPtrOp>(op)) {
+    if (failed(UpdateIntToPtrOpMemInfo(intToPtrOp))) {
+      return WalkResult::interrupt();
+    }
+  } else if (auto castPtrOp = dyn_cast<pto::CastPtrOp>(op)) {
+    if (isa<pto::PtrType>(castPtrOp.getInput().getType()) &&
+        isa<pto::PtrType>(castPtrOp.getResult().getType())) {
+      UpdateAliasBufferInfo(castPtrOp.getResult(), castPtrOp.getInput());
+    }
+  } else if (auto subViewOp = dyn_cast<pto::SubViewOp>(op)) {
+    UpdateTileSubViewAliasBufferInfo(subViewOp);
+  } else if (auto multiGet = dyn_cast<pto::MultiTileGetOp>(op)) {
+    UpdateMultiTileGetAliasBufferInfo(multiGet);
+  } else if (auto reshape = dyn_cast<pto::TReshapeOp>(op)) {
+    UpdateAliasBufferInfo(reshape.getResult(), reshape.getSrc());
+  } else if (auto bitcast = dyn_cast<pto::BitcastOp>(op)) {
+    UpdateAliasBufferInfo(bitcast.getResult(), bitcast.getSrc());
+  } else if (auto select = dyn_cast<arith::SelectOp>(op)) {
+    UpdateAliasBufferInfo(select.getResult(), select.getTrueValue());
+    UpdateAliasBufferInfo(select.getResult(), select.getFalseValue());
+  } else {
+    return std::nullopt;
+  }
+  return WalkResult::advance();
+}
+
+// --- Case C/D: 控制流 (SCF)、同步宏指令、调用与计算指令 ---
+std::optional<WalkResult>
+PTOIRTranslator::dispatchControlAndComputeOp(Operation *op) {
+  if (auto forOp = dyn_cast<scf::ForOp>(op)) {
+    UpdateForOpInfo(forOp);
+    return WalkResult::skip();
+  }
+  if (auto whileOp = dyn_cast<scf::WhileOp>(op)) {
+    UpdateWhileOpInfo(whileOp);
+    return WalkResult::skip();
+  }
+  if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
+    UpdateIfOpInfo(ifOp);
+    return WalkResult::skip();
+  }
+  if (auto yieldOp = dyn_cast<scf::YieldOp>(op)) {
+    UpdateYieldOpInfo(yieldOp);
+  } else if (getSyncMacroModel(op)) {
+    UpdateMacroOpInfo(op);
+  } else if (auto callOp = dyn_cast<func::CallOp>(op)) {
+    UpdateHelperCallInfo(callOp);
+  } else if (isa<pto::LoadScalarOp, pto::StoreScalarOp>(op)) {
+    // Scalar GM pointer accesses do not implement OpPipeInterface, but they
+    // execute on PIPE_S and can race with async MTE/FIX tile stores touching
+    // the same GM payload.
+    UpdatePTOOpInfoWithPipeline(op, pto::PipelineType::PIPE_S,
+                                /*skipIfNoMemInfo=*/true);
+  } else if (isa<pto::OpPipeInterface>(op)) {
+    // --- Case D: 带有 OpPipeInterface 的计算/搬运指令 ---
+    UpdatePTOOpInfo(op);
+  } else {
+    return std::nullopt;
+  }
+  return WalkResult::advance();
+}
+
 void PTOIRTranslator::RecursionIR(Region *region) {
   auto result = region->walk<WalkOrder::PreOrder>([&](Operation *op) {
-    // --- Case A: 内存分配 (AllocTile) ---
-    if (auto allocOp = dyn_cast<pto::AllocTileOp>(op)) {
-      if (failed(UpdateAllocTileOpMemInfo(allocOp))) {
-        return WalkResult::interrupt();
-      }
+    // 保持原有 if/else-if 链的互斥匹配顺序：A 内存分配 → B 别名/视图 →
+    // C/D 控制流与计算指令，任一类别命中后不再尝试后续类别。
+    if (auto allocResult = dispatchAllocOp(op)) {
+      return *allocResult;
     }
-    else if (auto allocMultiOp = dyn_cast<pto::AllocMultiTileOp>(op)) {
-      if (failed(UpdateAllocMultiTileOpMemInfo(allocMultiOp))) {
-        return WalkResult::interrupt();
-      }
+    if (auto aliasResult = dispatchAliasViewOp(op)) {
+      return *aliasResult;
     }
-    else if (auto declareOp = dyn_cast<pto::DeclareTileOp>(op)) {
-      if (failed(UpdateDeclareTileOpMemInfo(declareOp))) {
-        return WalkResult::interrupt();
-      }
-    }
-    else if (auto declareGlobalOp = dyn_cast<pto::DeclareGlobalOp>(op)) {
-      if (failed(UpdateDeclareGlobalOpMemInfo(declareGlobalOp))) {
-        return WalkResult::interrupt();
-      }
-    }
-    // --- Case B: 别名/视图操作 ---
-    else if (auto makeViewOp = dyn_cast<pto::MakeTensorViewOp>(op)) {
-      UpdateAliasBufferInfo(makeViewOp.getResult(), makeViewOp.getPtr());
-    }
-    else if (auto subViewOp = dyn_cast<pto::PartitionViewOp>(op)) {
-      UpdateAliasBufferInfo(subViewOp.getResult(), subViewOp.getSource());
-    }
-    else if (auto addPtrOp = dyn_cast<pto::AddPtrOp>(op)) {
-      UpdateAliasBufferInfo(addPtrOp.getResult(), addPtrOp.getPtr());
-    }
-    else if (auto ptrToIntOp = dyn_cast<pto::PtrToIntOp>(op)) {
-      UpdateAliasBufferInfo(ptrToIntOp.getResult(), ptrToIntOp.getPtr());
-    }
-    else if (auto intToPtrOp = dyn_cast<pto::IntToPtrOp>(op)) {
-      if (failed(UpdateIntToPtrOpMemInfo(intToPtrOp))) {
-        return WalkResult::interrupt();
-      }
-    }
-    else if (auto castPtrOp = dyn_cast<pto::CastPtrOp>(op)) {
-      if (isa<pto::PtrType>(castPtrOp.getInput().getType()) &&
-          isa<pto::PtrType>(castPtrOp.getResult().getType())) {
-        UpdateAliasBufferInfo(castPtrOp.getResult(), castPtrOp.getInput());
-      }
-    }
-    else if (auto subViewOp = dyn_cast<pto::SubViewOp>(op)) {
-      UpdateTileSubViewAliasBufferInfo(subViewOp);
-    } else if (auto multiGet = dyn_cast<pto::MultiTileGetOp>(op)) {
-      UpdateMultiTileGetAliasBufferInfo(multiGet);
-    }
-    else if (auto reshape = dyn_cast<pto::TReshapeOp>(op)) {
-      UpdateAliasBufferInfo(reshape.getResult(), reshape.getSrc());
-    }
-    else if (auto bitcast = dyn_cast<pto::BitcastOp>(op)) {
-      UpdateAliasBufferInfo(bitcast.getResult(), bitcast.getSrc());
-    }
-    else if (auto select = dyn_cast<arith::SelectOp>(op)) {
-      UpdateAliasBufferInfo(select.getResult(), select.getTrueValue());
-      UpdateAliasBufferInfo(select.getResult(), select.getFalseValue());
-    }
-
-    // --- Case C: 控制流 (SCF) ---
-    else if (auto forOp = dyn_cast<scf::ForOp>(op)) {
-      UpdateForOpInfo(forOp);
-      return WalkResult::skip();
-    } else if (auto whileOp = dyn_cast<scf::WhileOp>(op)) {
-      UpdateWhileOpInfo(whileOp);
-      return WalkResult::skip();
-    } else if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
-      UpdateIfOpInfo(ifOp);
-      return WalkResult::skip();
-    } else if (auto yieldOp = dyn_cast<scf::YieldOp>(op)) {
-      UpdateYieldOpInfo(yieldOp);
-    } else if (getSyncMacroModel(op)) {
-      UpdateMacroOpInfo(op);
-    } else if (auto callOp = dyn_cast<func::CallOp>(op)) {
-      UpdateHelperCallInfo(callOp);
-    } else if (isa<pto::LoadScalarOp, pto::StoreScalarOp>(op)) {
-      // Scalar GM pointer accesses do not implement OpPipeInterface, but they
-      // execute on PIPE_S and can race with async MTE/FIX tile stores touching
-      // the same GM payload.
-      UpdatePTOOpInfoWithPipeline(op, pto::PipelineType::PIPE_S,
-                                  /*skipIfNoMemInfo=*/true);
-    } else if (isa<pto::OpPipeInterface>(op)) {
-      // --- Case D: 带有 OpPipeInterface 的计算/搬运指令 ---
-      UpdatePTOOpInfo(op);
+    if (auto controlResult = dispatchControlAndComputeOp(op)) {
+      return *controlResult;
     }
     return WalkResult::advance();
   });
@@ -986,6 +1017,31 @@ void PTOIRTranslator::UpdateSlotSelectedAliasBufferInfo(Value result,
   }
 }
 
+// 计算 SubView 结果 segment 的大小（按主序维度取连续方向的大小）。
+static uint64_t getSubViewSegmentSize(pto::SubViewOp op,
+                                      pto::TileBufType sourceType,
+                                      unsigned elemBytes) {
+  auto sizesAttr = op.getSizes();
+  int64_t rowSize = cast<IntegerAttr>(sizesAttr[0]).getInt();
+  int64_t colSize = cast<IntegerAttr>(sizesAttr[1]).getInt();
+  bool rowMajor =
+      sourceType.getBLayoutValueI32() == static_cast<int32_t>(pto::BLayout::RowMajor);
+  return static_cast<uint64_t>((rowMajor ? colSize : rowSize) *
+                               static_cast<int64_t>(elemBytes));
+}
+
+// 校验所有父 buffer 的 MemInfo 均为单基地址且已分配，方可精确推导别名。
+static bool hasSingleBaseAllocatedParents(
+    const llvm::SmallVector<std::unique_ptr<BaseMemInfo>> &parentInfos) {
+  for (auto &parentInfo : parentInfos) {
+    if (!parentInfo || parentInfo->baseAddresses.size() != 1 ||
+        parentInfo->allocateSize == 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
 void PTOIRTranslator::UpdateTileSubViewAliasBufferInfo(pto::SubViewOp op) {
   Value result = op.getResult();
   Value source = op.getSource();
@@ -1012,21 +1068,11 @@ void PTOIRTranslator::UpdateTileSubViewAliasBufferInfo(pto::SubViewOp op) {
     return;
   }
 
-  auto sizesAttr = op.getSizes();
-  int64_t rowSize = cast<IntegerAttr>(sizesAttr[0]).getInt();
-  int64_t colSize = cast<IntegerAttr>(sizesAttr[1]).getInt();
-  bool rowMajor =
-      sourceType.getBLayoutValueI32() == static_cast<int32_t>(pto::BLayout::RowMajor);
-  uint64_t segmentSize =
-      static_cast<uint64_t>((rowMajor ? colSize : rowSize) *
-                            static_cast<int64_t>(elemBytes));
+  uint64_t segmentSize = getSubViewSegmentSize(op, sourceType, elemBytes);
 
-  for (auto &parentInfo : buffer2MemInfoMap_[source]) {
-    if (!parentInfo || parentInfo->baseAddresses.size() != 1 ||
-        parentInfo->allocateSize == 0) {
-      UpdateConservativeAliasBufferInfo(result, source);
-      return;
-    }
+  if (!hasSingleBaseAllocatedParents(buffer2MemInfoMap_[source])) {
+    UpdateConservativeAliasBufferInfo(result, source);
+    return;
   }
 
   auto &resultMemInfoVec = buffer2MemInfoMap_[result];

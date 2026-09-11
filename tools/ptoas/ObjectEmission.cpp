@@ -918,7 +918,7 @@ mlir::pto::CANNToolchain::create(llvm::raw_ostream &diagOS) {
   toolchain.bishengCompilerBinDirPath =
       joinPath(toolchain.ascendHomePath, "tools/bisheng_compiler/bin");
   toolchain.cannVersionString =
-      discoverCANNVersion(toolchain.ascendHomePath).value_or("9.0.0-beta.1");
+      discoverCANNVersion(toolchain.ascendHomePath).value_or("9.0.0");
   llvm::SmallVector<std::string, mlir::pto::kValue8> cppIncludeDirs = discoverCppIncludeDirs(
       toolchain.ascendHomePath, diagOS, toolchain.ptoIsaPath);
   toolchain.cppIncludeDirs.assign(cppIncludeDirs.begin(),

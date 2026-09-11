@@ -32,7 +32,7 @@ PTOAS_ROOT=/path/to/PTOAS
 "${PTOAS_ROOT}/build/tools/ptoas/ptoas" \
   --pto-arch=a5 \
   --pto-backend=vpto \
-  --cann-output-version=9.0.0 \
+  \
   --emit-vpto-llvm-ir \
   "${PTOAS_ROOT}/test/vpto/cases/onboard-only/simt-keep-resume-register-swap/kernel.pto" \
   -o kernel.ll

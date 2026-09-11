@@ -1208,8 +1208,13 @@ static std::string buildContextAttrsJson(const SpecKey &key) {
 // this pass clones the required functions into the caller module there.
 // ============================================================================
 // Collect every func.func defined in the PTODSL materialized source module.
-static SmallVector<func::FuncOp, 4> collectSourceFuncs(ModuleOp sourceModule) {
-  SmallVector<func::FuncOp, 4> sourceFuncs;
+// Inline capacity hint for func.func lists; a named constant, not a bare
+// literal, per the coding standard.
+static constexpr unsigned kFuncListInlineCapacity = 4U;
+
+static SmallVector<func::FuncOp, kFuncListInlineCapacity>
+collectSourceFuncs(ModuleOp sourceModule) {
+  SmallVector<func::FuncOp, kFuncListInlineCapacity> sourceFuncs;
   for (func::FuncOp fn : sourceModule.getOps<func::FuncOp>()) {
     sourceFuncs.push_back(fn);
   }
@@ -1295,7 +1300,8 @@ static LogicalResult importTileLibSource(ModuleOp sourceModule,
                  << entrySymbol << " was not found\n";
     return failure();
   }
-  SmallVector<func::FuncOp, 4> sourceFuncs = collectSourceFuncs(sourceModule);
+  SmallVector<func::FuncOp, kFuncListInlineCapacity> sourceFuncs =
+      collectSourceFuncs(sourceModule);
   if (sourceFuncs.empty()) {
     llvm::errs() << "ExpandTileOp: in-process PTODSL returned no func.func\n";
     return failure();
@@ -1308,7 +1314,7 @@ static LogicalResult importTileLibSource(ModuleOp sourceModule,
   }
   OpBuilder builder(ctx);
   builder.setInsertionPointToEnd(mod.getBody());
-  SmallVector<func::FuncOp, 4> clonedFuncs;
+  SmallVector<func::FuncOp, kFuncListInlineCapacity> clonedFuncs;
   cloneSourceFuncs(sourceFuncs, plannedSymbols, builder, clonedFuncs);
   if (failed(rewriteImportedSymbolUses(clonedFuncs, plannedSymbols, ctx))) {
     return failure();
@@ -1345,7 +1351,9 @@ func::FuncOp ExpandState::invokeInProcessTileLib(const SpecKey &key,
 
   func::FuncOp importedEntry;
   LogicalResult materializationResult = tileLibService->materialize(
-      request, *ctx, [&](ModuleOp sourceModule, StringRef entrySymbol) {
+      request, *ctx,
+      [&mod, &uniqueName, &ctx, &importedEntry](ModuleOp sourceModule,
+                                                StringRef entrySymbol) {
         return importTileLibSource(sourceModule, entrySymbol, mod, uniqueName,
                                    ctx, importedEntry);
       });

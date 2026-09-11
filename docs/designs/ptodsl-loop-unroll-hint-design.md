@@ -102,8 +102,8 @@ PTODSL 目前**没有任何 public API** 设置 `pto.unroll` attr——该 attr 
 
    其中 `!llvm.loop.unroll.enable` 正是无 factor `#pragma unroll` 的等价物（#1242 req2 的目标语义）。
 
-4. **两条 VPTO emission pipeline 结构一致**：均为 `createConvertSCFToCFPass()` → `createConvertControlFlowToLLVMPass()` → `translateModuleToLLVMIR`
-   （`lib/PTO/Transforms/VPTOLLVMEmitter.cpp:14195-14200`、`lib/PTO/Transforms/VPTOCANN900LLVMEmitter.cpp:11875` 附近）。
+4. **VPTO emission pipeline 结构一致**：为 `createConvertSCFToCFPass()` → `createConvertControlFlowToLLVMPass()` → `translateModuleToLLVMIR`
+   （实现位于 `lib/PTO/Transforms/VPTOCANN900LLVMEmitterPipeline.cpp`）。
    `prepareVPTOForEmission`（`tools/ptoas/ptoas.cpp:3252`）先于所有 emission 路径执行。
 
 ### 2.3 关键发现：上游 unroll 工具能力足够
@@ -272,7 +272,7 @@ for i in pto.range(0, N, unroll_factor=4):
 v2 曾整体移除该 pass;v3 为满足 #1242 Req2 的 enable 验收标准恢复其最小子集;v4 按评审意见把它从"局部降级"改为**完整的 PTOAS 专用 SCF→CF 转换**,并相应改名（原名 `pto-lower-loop-hints` 已不能反映其职责）:
 
 - **pass 名**：`pto-convert-scf-to-cf-with-loop-hints`,func-level;
-- **插入点**：两个 emitter pipeline 中原 `createConvertSCFToCFPass()` 的位置——本 pass **替代**它，两者不可同时运行（会冗余）;必须排在所有 structured-loop 变换之后，确保没有后续 pass 克隆 loop 时丢失 hint;
+- **插入点**：官方 VPTO emission pipeline 中原 `createConvertSCFToCFPass()` 的位置——本 pass **替代**它，两者不可同时运行（会冗余）;必须排在所有 structured-loop 变换之后，确保没有后续 pass 克隆 loop 时丢失 hint;
 - **翻译**：`{pto.unroll = "enable"}` → `#llvm.loop_annotation<unroll = <disable = false>>`（即 `!llvm.loop.unroll.enable`,LLVM ForceEnable 语义)；loop 上已有 `llvm.loop_annotation` 时合并 unroll 字段（已有 unroll 条目被覆盖时 warning);其余 attr 一律不触碰(full/factor 归 Pass A,理论上到不了这里);
 - **转换机制**:`populateSCFToControlFlowConversionPatterns`（上游全套 for/if/while/forall/parallel）+ 自定义 `LowerAnnotatedForPattern`(benefit=2,覆盖上游 `ForLowering`),经 `applyPartialConversion` 一次完成（scf 系全部标记 illegal),与上游 `SCFToControlFlowPass` 同构。带注解 loop 的注解以 ODS 裸名 `loop_annotation` 挂到 latch `cf.br`(MLIR→LLVM IR 翻译经 `BrOp::getLoopAnnotationAttr()` 按裸名查找,`convert-cf-to-llvm` 原样转发分支属性);
 - **为什么必须整体转换**：只降级带注解 loop 会把新生成的 condition/body/latch/exit blocks 留在外层 single-block region 内，触发 `scf.for`/`scf.if`/`scf.while` 的 SingleBlock verifier 失败（emitter 的 PassManager 开启 `enableVerifier()`,失败发生在 stock 转换运行之前）;
@@ -474,8 +474,8 @@ No changes are needed in the LLVM/BiSheng interface layers:
 
    `!llvm.loop.unroll.enable` is exactly the equivalent of a no-factor `#pragma unroll` (the target semantics of #1242 req2).
 
-4. **Both VPTO emission pipelines share the same structure**: `createConvertSCFToCFPass()` → `createConvertControlFlowToLLVMPass()` → `translateModuleToLLVMIR`
-   (`lib/PTO/Transforms/VPTOLLVMEmitter.cpp:14195-14200`, near `lib/PTO/Transforms/VPTOCANN900LLVMEmitter.cpp:11875`).
+4. **The VPTO emission pipeline uses one shared structure**: `createConvertSCFToCFPass()` → `createConvertControlFlowToLLVMPass()` → `translateModuleToLLVMIR`
+   (implemented in `lib/PTO/Transforms/VPTOCANN900LLVMEmitterPipeline.cpp`).
    `prepareVPTOForEmission` (`tools/ptoas/ptoas.cpp:3252`) runs before every emission path.
 
 ### 2.3 Key finding: upstream unroll utilities are sufficient

@@ -25,8 +25,7 @@ static LogicalResult verifyTCmpElementTypes(TCmpOp op, Type t0, Type t1,
     return op.emitOpError(isA5
         ? "expects A5 tcmp input element type to be i8/i16/i32/f16/bf16/f32"
         : "expects A2/A3 tcmp input element type to be i32/f16/f32");
-  return ed.isInteger(8) ? success()
-                         : op.emitOpError("expects dst element type to be i8");
+  return ed.isInteger(mlir::pto::kValue8) ? success() : op.emitOpError("expects dst element type to be i8");
 }
 
 static LogicalResult verifyTCmpA2ValidShapes(TCmpOp op, Type t0, Type t1,
@@ -96,19 +95,19 @@ static LogicalResult verifyTCmpSArch(TCmpSOp op, bool allowInt8) {
       return failure();
     }
     Type elemTy = getElemTy(srcTy);
-    if (!((allowInt8 && elemTy.isInteger(8)) || elemTy.isInteger(16) ||
-          elemTy.isInteger(32) || elemTy.isF16() || elemTy.isF32())) {
-      return op.emitOpError(allowInt8
-          ? "expects A5 tcmps input element type to be i8/i16/i32/f16/f32"
-          : "expects A2/A3 tcmps input element type to be i16/i32/f16/f32");
+    if (!((allowInt8 && elemTy.isInteger(mlir::pto::kValue8)) || elemTy.isInteger(mlir::pto::kValue16) ||
+          elemTy.isInteger(mlir::pto::kValue32) || elemTy.isF16() || elemTy.isF32())) {
+        return op.emitOpError(
+            allowInt8 ? "expects A5 tcmps input element type to be i8/i16/i32/f16/f32" :
+                        "expects A2/A3 tcmps input element type to be i16/i32/f16/f32");
     }
     if (!op.getScalar().getType().isIntOrIndexOrFloat()) {
       return op.emitOpError("expects scalar to be integer, index, or float");
     }
     auto srcValid = getValidShapeVec(srcTy);
     auto dstValid = getValidShapeVec(dstTy);
-    if (srcValid.size() != 2 || dstValid.size() != 2) {
-      return op.emitOpError("expects src and dst to have rank-2 valid_shape");
+    if (srcValid.size() != mlir::pto::kValue2 || dstValid.size() != mlir::pto::kValue2) {
+        return op.emitOpError("expects src and dst to have rank-2 valid_shape");
     }
     if (srcValid[0] != ShapedType::kDynamic && dstValid[0] != ShapedType::kDynamic &&
         srcValid[0] != dstValid[0]) {
@@ -138,8 +137,8 @@ LogicalResult pto::TColExpandOp::verify() {
   }
   auto srcValid = getValidShapeVec(getSrc());
   auto dstValid = getValidShapeVec(getDst());
-  if (srcValid.size() != 2 || dstValid.size() != 2) {
-    return emitOpError("expects src and dst to have rank-2 valid_shape");
+  if (srcValid.size() != mlir::pto::kValue2 || dstValid.size() != mlir::pto::kValue2) {
+      return emitOpError("expects src and dst to have rank-2 valid_shape");
   }
   if (srcValid[1] != ShapedType::kDynamic && dstValid[1] != ShapedType::kDynamic &&
       srcValid[1] != dstValid[1]) {
@@ -158,7 +157,7 @@ static bool isSupportedTColExpandElem(Type elemTy, PTOArch targetArch,
   if (elemTy.isInteger(16) || elemTy.isInteger(32)) {
     return true;
   }
-  return targetArch == PTOArch::A5 && elemTy.isInteger(8);
+  return targetArch == PTOArch::A5 && elemTy.isInteger(mlir::pto::kValue8);
 }
 
 static LogicalResult verifyTColExpandRowMajor(Operation *op, Type type,
@@ -195,11 +194,9 @@ static LogicalResult verifyTColExpandValidColumn(Operation *op, Type t1,
                                                  Type td) {
   auto src1Valid = getValidShapeVec(t1);
   auto dstValid = getValidShapeVec(td);
-  if (src1Valid.size() == 2 && dstValid.size() == 2 &&
-      src1Valid[1] != ShapedType::kDynamic &&
-      dstValid[1] != ShapedType::kDynamic && src1Valid[1] != dstValid[1])
-    return op->emitOpError(
-        "expects src1 valid_shape[1] to equal dst valid_shape[1]");
+  if (src1Valid.size() == mlir::pto::kValue2 && dstValid.size() == mlir::pto::kValue2 &&
+      src1Valid[1] != ShapedType::kDynamic && dstValid[1] != ShapedType::kDynamic && src1Valid[1] != dstValid[1])
+      return op->emitOpError("expects src1 valid_shape[1] to equal dst valid_shape[1]");
   return success();
 }
 
@@ -332,8 +329,6 @@ LogicalResult pto::TColArgMinOp::verify() {
                                   getDst().getType());
 }
 
-
-
 static ParseResult resolveRequiredOperand(
     OpAsmParser &parser, OperationState &result,
     OpAsmParser::UnresolvedOperand operand, Type type) {
@@ -412,7 +407,7 @@ void mlir::pto::TColSumOp::print(OpAsmPrinter &p) {
     // Format 2: ins(%src, %tmp {isBinary = ...}: type, type) outs(%dst : type)
     p << " ins(" << getSrc() << ", " << getTmp();
     // Print isBinary attribute if present
-    SmallVector<StringRef, 2> elidedAttrs = {"operandSegmentSizes"};
+    SmallVector<StringRef, mlir::pto::kValue2> elidedAttrs = {"operandSegmentSizes"};
     if (!getIsBinaryAttr() || getIsBinaryAttr().getValue() == false) {
       elidedAttrs.push_back("isBinary");
     }
@@ -427,8 +422,8 @@ void mlir::pto::TColSumOp::print(OpAsmPrinter &p) {
 
   // Print remaining attributes for format 1 (excluding isBinary)
   if (!getTmp()) {
-    SmallVector<StringRef, 2> elidedAttrs = {"isBinary", "operandSegmentSizes"};
-    p.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
+      SmallVector<StringRef, mlir::pto::kValue2> elidedAttrs = {"isBinary", "operandSegmentSizes"};
+      p.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
   }
 }
 
@@ -452,10 +447,9 @@ static LogicalResult verifyTColSumTmp(TColSumOp op, Type srcTy, Type dstTy) {
   }
   auto srcValid = getValidShapeVec(srcTy);
   auto elemBytes = getElemByteSize(getElemTy(srcTy));
-  if (srcValid.size() != 2 || srcValid[0] == ShapedType::kDynamic ||
+  if (srcValid.size() != mlir::pto::kValue2 || srcValid[0] == ShapedType::kDynamic ||
       srcValid[1] == ShapedType::kDynamic || elemBytes == 0) {
-    return op.emitOpError(
-        "expects static src valid_shape and element size to verify tcolsum tmp");
+      return op.emitOpError("expects static src valid_shape and element size to verify tcolsum tmp");
   }
   uint64_t requiredBytes =
       static_cast<uint64_t>(ceilDivInt64(srcValid[0], 2)) *
@@ -522,9 +516,8 @@ static bool tcvtNeedsTmp(TCvtOp op, Type srcElem, Type dstElem) {
   if (op.getSatMode() != pto::SaturationMode::OFF) {
     return false;
   }
-  return (srcElem.isF32() && dstElem.isInteger(16)) ||
-         (srcElem.isF16() &&
-          (dstElem.isInteger(16) || dstElem.isInteger(8)));
+  return (srcElem.isF32() && dstElem.isInteger(mlir::pto::kValue16)) ||
+         (srcElem.isF16() && (dstElem.isInteger(mlir::pto::kValue16) || dstElem.isInteger(mlir::pto::kValue8)));
 }
 
 static int64_t computeTCvtTmpRequiredBytes(Type srcElem, Type dstElem,
@@ -548,7 +541,7 @@ static int64_t computeTCvtTmpRequiredBytes(Type srcElem, Type dstElem,
         halfToI16,
         128 + 32 * static_cast<int64_t>(
                        llvm::divideCeil(width, int64_t{16})));
-    requiredBytes = dstElem.isInteger(8) ? halfToI8 : halfToI16;
+    requiredBytes = dstElem.isInteger(mlir::pto::kValue8) ? halfToI8 : halfToI16;
   }
   return requiredBytes;
 }
@@ -567,11 +560,9 @@ static LogicalResult verifyTCvtTmp(TCvtOp op, Type srcTy, Type dstTy,
   }
   auto srcShape = getShapeVec(srcTy);
   auto dstValid = getValidShapeVec(dstTy);
-  if (srcShape.size() != 2 || dstValid.size() != 2 ||
-      llvm::is_contained(srcShape, ShapedType::kDynamic) ||
-      llvm::is_contained(dstValid, ShapedType::kDynamic)) {
-    return op.emitOpError(
-        "expects static src shape and dst valid_shape to verify tcvt tmp");
+  if (srcShape.size() != mlir::pto::kValue2 || dstValid.size() != mlir::pto::kValue2 ||
+      llvm::is_contained(srcShape, ShapedType::kDynamic) || llvm::is_contained(dstValid, ShapedType::kDynamic)) {
+      return op.emitOpError("expects static src shape and dst valid_shape to verify tcvt tmp");
   }
   int64_t requiredBytes =
       computeTCvtTmpRequiredBytes(srcElem, dstElem, srcShape, dstValid);
@@ -714,7 +705,6 @@ mlir::LogicalResult mlir::pto::TDivSOp::verify() {
     bool rhsTile = isTileLike(rhsTy);
     bool srcScalar = isScalarLike(srcTy);
     bool rhsScalar = isScalarLike(rhsTy);
-
     if (!(srcTile && rhsScalar) && !(srcScalar && rhsTile)) {
       return emitOpError("expects one tile-like operand and one scalar operand in ins(...)");
     }
@@ -794,8 +784,8 @@ static LogicalResult verifyTExpandsArch(TExpandsOp op, bool isA5) {
     }
     if (auto it = mlir::dyn_cast<mlir::IntegerType>(dstElem)) {
       unsigned w = it.getWidth();
-      if ((isA5 && w == 8) || w == 16 || w == 32) {
-        return mlir::success();
+      if ((isA5 && w == mlir::pto::kValue8) || w == mlir::pto::kValue16 || w == mlir::pto::kValue32) {
+          return mlir::success();
       }
     }
     return op.emitOpError(isA5
@@ -815,10 +805,10 @@ static bool isA2A3AccCastExtractTypePair(Type srcElem, Type dstElem) {
 
 static bool isA2A3AccQuantTypePair(Type srcElem, Type dstElem) {
   if (srcElem.isF32()) {
-    return dstElem.isInteger(8);
+      return dstElem.isInteger(mlir::pto::kValue8);
   }
-  if (srcElem.isInteger(32)) {
-    return dstElem.isInteger(8) || dstElem.isF16() || dstElem.isInteger(16);
+  if (srcElem.isInteger(mlir::pto::kValue32)) {
+      return dstElem.isInteger(mlir::pto::kValue8) || dstElem.isF16() || dstElem.isInteger(mlir::pto::kValue16);
   }
   return false;
 }
@@ -831,21 +821,19 @@ static bool isA5AccCastExtractTypePair(Type srcElem, Type dstElem) {
   if (srcElem.isF32()) {
     return dstElem.isF16() || dstElem.isBF16() || dstElem.isF32();
   }
-  if (srcElem.isInteger(32)) {
-    return dstElem.isInteger(32);
+  if (srcElem.isInteger(mlir::pto::kValue32)) {
+      return dstElem.isInteger(mlir::pto::kValue32);
   }
   return false;
 }
 
 static bool isA5AccQuantExtractTypePair(Type srcElem, Type dstElem) {
   if (srcElem.isF32()) {
-    return dstElem.isInteger(8) || dstElem.isF16() || dstElem.isBF16() ||
-           dstElem.isF32() ||
-           (llvm::isa<FloatType>(dstElem) &&
-            llvm::cast<FloatType>(dstElem).getWidth() == 8);
+      return dstElem.isInteger(mlir::pto::kValue8) || dstElem.isF16() || dstElem.isBF16() || dstElem.isF32() ||
+             (llvm::isa<FloatType>(dstElem) && llvm::cast<FloatType>(dstElem).getWidth() == mlir::pto::kValue8);
   }
-  if (srcElem.isInteger(32)) {
-    return dstElem.isInteger(8) || dstElem.isF16() || dstElem.isBF16();
+  if (srcElem.isInteger(mlir::pto::kValue32)) {
+      return dstElem.isInteger(mlir::pto::kValue8) || dstElem.isF16() || dstElem.isBF16();
   }
   return false;
 }
@@ -876,7 +864,7 @@ static bool hasMatExtractSourceLayoutA5(pto::TileBufType srcTy,
 }
 
 static bool isA2A3ExtractElemType(Type ty) {
-  return ty.isInteger(8) || ty.isF16() || ty.isBF16() || ty.isF32();
+    return ty.isInteger(mlir::pto::kValue8) || ty.isF16() || ty.isBF16() || ty.isF32();
 }
 
 static bool isA5ExtractElemType(Type ty) {
@@ -884,10 +872,10 @@ static bool isA5ExtractElemType(Type ty) {
     return true;
   }
   if (auto it = dyn_cast<IntegerType>(ty)) {
-    return it.getWidth() == 8;
+      return it.getWidth() == mlir::pto::kValue8;
   }
   if (auto ft = dyn_cast<FloatType>(ty)) {
-    return ft.getWidth() == 8 || ft.isF16() || ft.isBF16() || ft.isF32();
+      return ft.getWidth() == mlir::pto::kValue8 || ft.isF16() || ft.isBF16() || ft.isF32();
   }
   return false;
 }
@@ -1008,8 +996,8 @@ static LogicalResult verifyTExtractA2A3Acc(TExtractOp op,
       c.dstTb.getSLayoutValueI32() != static_cast<int32_t>(pto::SLayout::RowMajor)) {
     return op.emitOpError("expects A2/A3 acc-source textract dst to use blayout=col_major and slayout=row_major");
   }
-  if (c.dstTb.getSFractalSizeI32() != 512) {
-    return op.emitOpError("expects A2/A3 acc-source textract dst fractal size to be 512");
+  if (c.dstTb.getSFractalSizeI32() != mlir::pto::kValue512) {
+      return op.emitOpError("expects A2/A3 acc-source textract dst fractal size to be 512");
   }
   const bool hasFp = static_cast<bool>(op.getFp());
   const bool hasPreQuantScalar = static_cast<bool>(op.getPreQuantScalar());
@@ -1061,8 +1049,8 @@ static LogicalResult verifyTExtractA2A3(TExtractOp op) {
   const bool hasFp = static_cast<bool>(op.getFp());
   const bool hasPreQuantScalar = static_cast<bool>(op.getPreQuantScalar());
   const bool hasRelu = op.getReluPreMode() != pto::ReluPreMode::NoRelu;
-  if (!isA2A3ExtractElemType(c.dstElem) && !(hasFp && c.dstElem.isInteger(16))) {
-    return op.emitOpError("expects A2/A3 textract element type to be i8/f16/bf16/f32");
+  if (!isA2A3ExtractElemType(c.dstElem) && !(hasFp && c.dstElem.isInteger(mlir::pto::kValue16))) {
+      return op.emitOpError("expects A2/A3 textract element type to be i8/f16/bf16/f32");
   }
   if (failed(verifyTExtractFpFormLoc(op, c.srcSpace))) {
     return failure();
@@ -1229,13 +1217,13 @@ static bool isA5SupportedVecElemType(Type ty) {
     return it.getWidth() == 8 || it.getWidth() == 32;
   }
   if (auto ft = dyn_cast<FloatType>(ty)) {
-    return ft.getWidth() == 8 || ft.isF16() || ft.isBF16() || ft.isF32();
+      return ft.getWidth() == mlir::pto::kValue8 || ft.isF16() || ft.isBF16() || ft.isF32();
   }
   return false;
 }
 
 static bool isA2A3VecInsertElemType(Type ty) {
-  return ty.isInteger(8) || ty.isF16() || ty.isBF16() || ty.isF32();
+    return ty.isInteger(mlir::pto::kValue8) || ty.isF16() || ty.isBF16() || ty.isF32();
 }
 
 using TInsertCommon = TileTransferCommon;
@@ -1333,8 +1321,8 @@ static LogicalResult verifyTInsertA2A3AccMat(TInsertOp op,
   if (!isColMajorRowMajorNZ(c.dstTb)) {
     return op.emitOpError("expects A2/A3 tinsert dst to use blayout=col_major and slayout=row_major");
   }
-  if (c.dstTb.getSFractalSizeI32() != 512) {
-    return op.emitOpError("expects A2/A3 tinsert dst fractal size to be 512");
+  if (c.dstTb.getSFractalSizeI32() != mlir::pto::kValue512) {
+      return op.emitOpError("expects A2/A3 tinsert dst fractal size to be 512");
   }
   const bool hasFp = static_cast<bool>(op.getFp());
   const bool hasPreQuantScalar = static_cast<bool>(op.getPreQuantScalar());
@@ -1405,9 +1393,8 @@ static LogicalResult verifyTInsertA5Acc(TInsertOp op, const TInsertCommon &c) {
   if (hasQuant) {
     okTypes = isA5VectorPreQuantTypePair(c.srcElem, c.dstElem);
   } else {
-    okTypes = (c.srcElem.isF32() &&
-               (c.dstElem.isF16() || c.dstElem.isBF16() || c.dstElem.isF32())) ||
-              (c.srcElem.isInteger(32) && c.dstElem.isInteger(32));
+      okTypes = (c.srcElem.isF32() && (c.dstElem.isF16() || c.dstElem.isBF16() || c.dstElem.isF32())) ||
+                (c.srcElem.isInteger(mlir::pto::kValue32) && c.dstElem.isInteger(mlir::pto::kValue32));
   }
   if (!okTypes) {
     return op.emitOpError(
@@ -1541,7 +1528,7 @@ static bool isColMajorRowMajorNZTileBuf(pto::TileBufType ty) {
 
 static bool isA5Fp8LikeType(Type ty) {
   if (auto ft = dyn_cast<FloatType>(ty)) {
-    return ft.getWidth() == 8;
+      return ft.getWidth() == mlir::pto::kValue8;
   }
   return false;
 }
@@ -1578,12 +1565,11 @@ static LogicalResult verifyA5MxTypeTriple(Operation *op, Type lhsTy, Type rhsTy,
 
 static bool isA5VectorPreQuantTypePair(Type srcElem, Type dstElem) {
   if (srcElem.isF32()) {
-    return dstElem.isInteger(8) || isA5Fp8LikeType(dstElem) ||
-           isPTOHiFloat8Type(dstElem) || dstElem.isF16() ||
-           dstElem.isBF16() || dstElem.isF32();
+      return dstElem.isInteger(mlir::pto::kValue8) || isA5Fp8LikeType(dstElem) || isPTOHiFloat8Type(dstElem) ||
+             dstElem.isF16() || dstElem.isBF16() || dstElem.isF32();
   }
-  if (srcElem.isInteger(32)) {
-    return dstElem.isInteger(8) || dstElem.isF16() || dstElem.isBF16();
+  if (srcElem.isInteger(mlir::pto::kValue32)) {
+      return dstElem.isInteger(mlir::pto::kValue8) || dstElem.isF16() || dstElem.isBF16();
   }
   return false;
 }

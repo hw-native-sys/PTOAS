@@ -7753,8 +7753,10 @@ pto.tgather ins(%src, {maskPattern = #pto.mask_pattern<P1111>} : !pto.tile_buf<.
 
 Each `offsets[i, k]` is a 32-byte-aligned byte address relative to the source
 UB base. It selects one complete 32-byte source block, which is copied to the
-corresponding output block. This is not a scalar per-element gather; use the
-index form of `pto.tgather` for arbitrary element indices.
+corresponding output block. Source and destination may have different shapes
+and element types: bytes are copied without numeric conversion. Each selected
+32-byte block must lie within the source buffer. This is not a scalar per-element
+gather; use the index form of `pto.tgather` for arbitrary element indices.
 
 **Arguments:**
 
@@ -7769,9 +7771,8 @@ index form of `pto.tgather` for arbitrary element indices.
 **Constraints & Verification:**
 
 - **Implementation checks (A2/A3)**
-  - `src` and `dst` must have the same valid shape.
   - `dst` and `offsets` must use row-major layout (`blayout=row_major`).
-  - `dst` element size must be `2` or `4` bytes.
+  - `dst` element size must be `1`, `2`, or `4` bytes.
   - `offsets` must use a 32-bit integer element type.
   - `offsets.v_row` must equal `dst.v_row`.
   - For destination element size `E`, each row needs

@@ -21,6 +21,8 @@ where the annotation is evaluated at *import* time (no active context), and
 the actual type is materialised later by the ``@pto.jit`` decorator.
 """
 
+from __future__ import annotations
+
 from ptoas.mlir.dialects import pto as _pto
 from ptoas.mlir.dialects import arith
 from ptoas.mlir.dialects.builtin import UnrealizedConversionCastOp

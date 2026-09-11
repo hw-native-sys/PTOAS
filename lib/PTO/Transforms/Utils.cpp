@@ -8,6 +8,7 @@
 
 #include "Utils.h"
 
+#include <algorithm>
 #include <limits>
 
 #include "PTO/IR/PTO.h"
@@ -23,7 +24,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ErrorHandling.h"
 
-#define DEBUG_TYPE "pto-utils"
+[[maybe_unused]] static constexpr char DEBUG_TYPE[] = "pto-utils";
 
 namespace mlir {
 namespace pto {
@@ -1107,6 +1108,30 @@ LoopLikeOpInterface getParentLoop(Value val) {
   }
 
   return parentLoop;
+}
+
+void buildPipeInitAdjacency(const PipeInitGroups &keyedInits,
+                            llvm::DenseMap<Operation *,
+                                           SmallVector<Operation *>> &adjacency,
+                            size_t minGroupSize) {
+  for (const auto &entry : keyedInits) {
+    SmallVector<Operation *> uniqueOps;
+    for (Operation *op : entry.second) {
+      if (std::find(uniqueOps.begin(), uniqueOps.end(), op) ==
+          uniqueOps.end()) {
+        uniqueOps.push_back(op);
+      }
+    }
+    if (uniqueOps.size() < minGroupSize) {
+      continue;
+    }
+    for (size_t i = 0; i < uniqueOps.size(); ++i) {
+      for (size_t j = i + 1; j < uniqueOps.size(); ++j) {
+        adjacency[uniqueOps[i]].push_back(uniqueOps[j]);
+        adjacency[uniqueOps[j]].push_back(uniqueOps[i]);
+      }
+    }
+  }
 }
 
 }

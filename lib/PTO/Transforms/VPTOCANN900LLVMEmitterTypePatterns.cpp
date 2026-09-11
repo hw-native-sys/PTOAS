@@ -312,7 +312,7 @@ public:
 static Type getLdgCallResultType(Type valueType, Type convertedValueType, ConversionPatternRewriter &rewriter) {
   if (auto intType = dyn_cast<IntegerType>(valueType)) {
     unsigned width = intType.getWidth();
-    if (width == 8 || width == 16) {
+    if (width == kBits8 || width == kBits16) {
       return rewriter.getI32Type();
     }
     return convertedValueType;
@@ -328,13 +328,13 @@ static Type getLdgCallResultType(Type valueType, Type convertedValueType, Conver
   }
   if (pto::isPTOPackedLdgStgVectorType(valueType)) {
     unsigned totalBits = pto::getPTOPackedLdgStgTotalBits(valueType);
-    if (totalBits == 16) {
+    if (totalBits == kBits16) {
       return rewriter.getI32Type();
     }
-    if (totalBits == 32) {
+    if (totalBits == kBits32) {
       return rewriter.getI32Type();
     }
-    if (totalBits == 64) {
+    if (totalBits == kBits64) {
       return rewriter.getI64Type();
     }
   }
@@ -345,7 +345,7 @@ static Value convertLdgCallResult(Location loc, Type valueType, Type convertedVa
                                   ConversionPatternRewriter &rewriter) {
   if (auto intType = dyn_cast<IntegerType>(valueType)) {
     unsigned width = intType.getWidth();
-    if (width == 8 || width == 16) {
+    if (width == kBits8 || width == kBits16) {
       return rewriter.create<arith::TruncIOp>(loc, rewriter.getIntegerType(width), callResult);
     }
     return callResult;
@@ -364,7 +364,7 @@ static Value convertLdgCallResult(Location loc, Type valueType, Type convertedVa
   }
   if (pto::isPTOPackedLdgStgVectorType(valueType)) {
     unsigned totalBits = pto::getPTOPackedLdgStgTotalBits(valueType);
-    if (totalBits == 16) {
+    if (totalBits == kBits16) {
       Value trunc = rewriter.create<arith::TruncIOp>(loc, rewriter.getI16Type(), callResult);
       return rewriter.create<LLVM::BitcastOp>(loc, convertedValueType, trunc);
     }
@@ -472,10 +472,10 @@ public:
 static Value convertStgValue(Location loc, Type valueType, Value value, ConversionPatternRewriter &rewriter) {
   if (auto intType = dyn_cast<IntegerType>(valueType)) {
     unsigned width = intType.getWidth();
-    if (width == 8) {
+    if (width == kBits8) {
       return rewriter.create<arith::ExtUIOp>(loc, rewriter.getI32Type(), value);
     }
-    if (width == 16) {
+    if (width == kBits16) {
       return rewriter.create<LLVM::BitcastOp>(loc, rewriter.getF16Type(), value);
     }
     return value;
@@ -496,13 +496,13 @@ static Value convertStgValue(Location loc, Type valueType, Value value, Conversi
   }
   if (pto::isPTOPackedLdgStgVectorType(valueType)) {
     unsigned totalBits = pto::getPTOPackedLdgStgTotalBits(valueType);
-    if (totalBits == 16) {
+    if (totalBits == kBits16) {
       return rewriter.create<LLVM::BitcastOp>(loc, rewriter.getF16Type(), value);
     }
-    if (totalBits == 32) {
+    if (totalBits == kBits32) {
       return rewriter.create<LLVM::BitcastOp>(loc, rewriter.getI32Type(), value);
     }
-    if (totalBits == 64) {
+    if (totalBits == kBits64) {
       return rewriter.create<LLVM::BitcastOp>(loc, rewriter.getI64Type(), value);
     }
   }
@@ -613,7 +613,7 @@ public:
     state.plannedDecls.push_back(PlannedDecl{calleeName, funcType});
 
     Value result = call.getResult(0);
-    if (valueType.getWidth() < 64) {
+    if (valueType.getWidth() < kBits64) {
       result = rewriter.create<arith::TruncIOp>(op.getLoc(), convertedValueType, result);
     }
     rewriter.replaceOp(op, result);
@@ -659,7 +659,7 @@ public:
     }
 
     Value payload = adaptor.getValue();
-    if (valueType.getWidth() < 64) {
+    if (valueType.getWidth() < kBits64) {
       payload = rewriter.create<arith::ExtUIOp>(op.getLoc(), rewriter.getI64Type(), payload);
     }
 

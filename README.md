@@ -196,7 +196,9 @@ from ptoas.mlir.dialects import pto as mlir_pto
 >   `PTOAS_ENABLE_ONLINE_CORE_COMPILE=ON` 构建（`build.sh` 默认开启，并以 shared
 >   方式产出 `libLLVMSupport`），且目标机上有系统级 `cmake`、`python3-dev` 头与
 >   合适版本的 `pybind11`。具体版本约束：
->   - **Python**：在线编译驱动要求解释器 **>= 3.9**（更低版本会直接报错）。
+>   - **Python**：在线编译驱动要求解释器 **>= 3.8**（更低版本会直接报错）。3.8 上
+>     随包运行时已消除 3.9-only API 依赖（`str.removesuffix` 等）；`ast.unparse`
+>     缺失时错误信息会降级但不影响编译。
 >   - **pybind11（`ptoas._core`）**：**>= 2.13.6**，不限上界，任意 3.x 均可。
 >   - **pybind11（`ptoas.mlir` 家族）**：`2.13.6 <= pybind11 < 3.0.2`。自 3.0.2 起
 >     `def_property` 系列禁用 `keep_alive`，上游 MLIR 绑定因此无法编译；家族因而

@@ -5,6 +5,11 @@
 The A3 (`dav-c220-vec`) backend reuses the same top-level VPTO emission pipeline
 as A5 (`dav-c310-vec`) but replaces the TileLang-template expansion path with a
 direct pointer-based lowering of binary tile operations to UB intrinsics.
+A2/A3 dispatch through the same official `VPTOCANN900LLVMEmitter` pipeline as
+A5. The legacy monolithic `VPTOLLVMEmitter.cpp` orchestrator and the
+Beta1-only lowering have been removed; Beta1 is no longer a supported output
+version. C220-specific UB patterns are registered by the shared
+`VPTOCANN900LLVMEmitterUbuf.cpp` component; there is no separate C220 emitter.
 
 ## Pipeline: Shared vs Divergent
 
@@ -287,4 +292,4 @@ Binary:           native AICORE binary
 | **Passes added** | `LowerPTOToUBufOps` (1 new pass) | `ExpandTileOp` + `InlineLibCall` + `FoldTileBufIntrinsics` |
 | **New ops (6)** | `pto.ub.{vadd,vsub,vmul,vdiv,set_mask_count,set_mask_norm}` | none |
 | **Intrinsics** | `llvm.hivm.{VADD,VSUB,VMUL,VDIV}.f32` | `llvm.hivm.{ADD,LOAD,STORE}` |
-| **Relevant files** | `LowerPTOToUBufOps.cpp`, `VPTOUbOps.td`, `VPTOUbOps.cpp`, `VPTOLLVMEmitter.cpp`, `VPTOExpandWrapperOps.cpp`, `ObjectEmission.cpp` | `ExpandTileOp.cpp`, `FoldTileBufIntrinsics.cpp`, `VPTOLLVMEmitter.cpp` |
+| **Relevant files** | `LowerPTOToUBufOps.cpp`, `VPTOUbOps.td`, `VPTOUbOps.cpp`, `VPTOCANN900LLVMEmitterPipeline.cpp`, `VPTOLLVMEmitterDispatcher.cpp`, `VPTOCANN900LLVMEmitterUbuf.cpp`, `VPTOExpandWrapperOps.cpp`, `ObjectEmission.cpp` | `ExpandTileOp.cpp`, `FoldTileBufIntrinsics.cpp`, `VPTOCANN900LLVMEmitterPipeline.cpp`, `VPTOLLVMEmitterDispatcher.cpp` |

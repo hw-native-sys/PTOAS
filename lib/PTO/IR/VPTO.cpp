@@ -78,7 +78,8 @@ LogicalResult verifyMaskTypeWithGranularityLike(Operation *op, Type type,
 
 static bool isStandardScalarConvertType(Type type) {
   if (auto intType = dyn_cast<IntegerType>(type)) {
-    return intType.getWidth() == mlir::pto::kValue32 || intType.getWidth() == 64;
+    return intType.getWidth() == mlir::pto::kValue32 ||
+           intType.getWidth() == mlir::pto::kValue64;
   }
   return type.isF16() || type.isBF16() || type.isF32();
 }
@@ -300,7 +301,8 @@ static LogicalResult verifyIntToFloatConvert(Operation *op, Type srcType,
 static LogicalResult verifyF32ConvertTarget(Operation *op, Type dstType,
                                             pto::Rounding rounding,
                                             pto::Saturation saturation) {
-  if (dstType.isInteger(mlir::pto::kValue32) || dstType.isInteger(64)) {
+  if (dstType.isInteger(mlir::pto::kValue32) ||
+      dstType.isInteger(mlir::pto::kValue64)) {
     if (saturation != pto::Saturation::Enable) {
       return op->emitOpError()
              << "fp32-to-integer conversion requires saturation enable";
@@ -480,7 +482,7 @@ std::optional<int64_t> getVRegStorageBitWidth(Type type) {
     return std::nullopt;
   }
   unsigned elemWidth = getIntOrFloatBitWidth(vecType.getElementType());
-  if (!elemWidth) {
+  if (elemWidth == 0) {
     return std::nullopt;
   }
   return vecType.getElementCount() * static_cast<int64_t>(elemWidth);
@@ -499,27 +501,27 @@ LogicalResult verifyIntegerVRegTypeLike(Operation *op, Type type,
   return success();
 }
 
-Type VRegType::parse(AsmParser &parser) {
+Type VRegType::parse(AsmParser &odsParser) {
   SmallVector<int64_t, 1> shape;
   Type elementType;
-  SMLoc loc = parser.getCurrentLocation();
+  SMLoc loc = odsParser.getCurrentLocation();
 
-  if (failed(parser.parseLess()) ||
-      failed(parser.parseDimensionList(shape, /*allowDynamic=*/false,
+  if (failed(odsParser.parseLess()) ||
+      failed(odsParser.parseDimensionList(shape, /*allowDynamic=*/false,
                                        /*withTrailingX=*/true)) ||
-      shape.size() != 1 || failed(parser.parseType(elementType)) ||
-      failed(parser.parseGreater())) {
+      shape.size() != 1 || failed(odsParser.parseType(elementType)) ||
+      failed(odsParser.parseGreater())) {
     return {};
   }
 
-  return parser.getChecked<VRegType>(loc, parser.getContext(), shape.front(),
+  return odsParser.getChecked<VRegType>(loc, odsParser.getContext(), shape.front(),
                                     elementType);
 }
 
-void VRegType::print(AsmPrinter &printer) const {
-  printer << "<" << getElementCount() << "x";
-  printer.printType(getElementType());
-  printer << ">";
+void VRegType::print(AsmPrinter &odsPrinter) const {
+  odsPrinter << "<" << getElementCount() << "x";
+  odsPrinter.printType(getElementType());
+  odsPrinter << ">";
 }
 
 LogicalResult VRegType::verify(function_ref<InFlightDiagnostic()> emitError,
@@ -556,19 +558,19 @@ bool MaskType::isSupportedGranularity(StringRef granularity) {
          granularity == "b32";
 }
 
-Type MaskType::parse(AsmParser &parser) {
-  auto loc = parser.getCurrentLocation();
+Type MaskType::parse(AsmParser &odsParser) {
+  auto loc = odsParser.getCurrentLocation();
   StringRef granularity;
-  if (failed(parser.parseLess()) || failed(parser.parseKeyword(&granularity)) ||
-      failed(parser.parseGreater())) {
+  if (failed(odsParser.parseLess()) || failed(odsParser.parseKeyword(&granularity)) ||
+      failed(odsParser.parseGreater())) {
     return {};
   }
 
-  return parser.getChecked<MaskType>(loc, parser.getContext(), granularity);
+  return odsParser.getChecked<MaskType>(loc, odsParser.getContext(), granularity);
 }
 
-void MaskType::print(AsmPrinter &printer) const {
-  printer << "<" << getGranularity() << ">";
+void MaskType::print(AsmPrinter &odsPrinter) const {
+  odsPrinter << "<" << getGranularity() << ">";
 }
 
 LogicalResult
@@ -728,7 +730,7 @@ LogicalResult verifyMxLoadOperands(Operation *op,
                                           ArrayRef<Value> shapeOperands,
                                           ArrayRef<StringRef> shapeNames,
                                           ArrayRef<Value> fullOperands) {
-  auto checkNonNegativeConst = [&](Value value,
+  auto checkNonNegativeConst = [op](Value value,
                                    StringRef name) -> LogicalResult {
     APInt intValue;
     if (matchPattern(value, m_ConstantInt(&intValue)) && intValue.isNegative()) {

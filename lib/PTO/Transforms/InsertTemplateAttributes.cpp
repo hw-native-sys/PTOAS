@@ -55,13 +55,8 @@ struct CandidateMetadata {
   bool tail;
 };
 
-static std::string getDtypeString(Type elementType) {
-  if (elementType.isIndex()) {
-    return "i32";
-  }
-  if (elementType.isInteger(1)) {
-    return "i1";
-  }
+// Dtype string for floating-point element types ("" if unsupported).
+static std::string getFloatDtypeString(Type elementType) {
   if (elementType.isF32()) {
     return "f32";
   }
@@ -86,43 +81,39 @@ static std::string getDtypeString(Type elementType) {
   if (isa<pto::F4E2M1x2Type>(elementType)) {
     return "f4e2m1x2";
   }
-  if (elementType.isUnsignedInteger(mlir::pto::kValue64)) {
-    return "ui64";
-  }
-  if (elementType.isUnsignedInteger(mlir::pto::kValue32)) {
-    return "ui32";
-  }
-  if (elementType.isUnsignedInteger(mlir::pto::kValue16)) {
-    return "ui16";
-  }
-  if (elementType.isUnsignedInteger(mlir::pto::kValue8)) {
-    return "ui8";
-  }
-  if (elementType.isSignedInteger(mlir::pto::kValue64)) {
-    return "si64";
-  }
-  if (elementType.isSignedInteger(mlir::pto::kValue32)) {
-    return "si32";
-  }
-  if (elementType.isSignedInteger(mlir::pto::kValue16)) {
-    return "si16";
-  }
-  if (elementType.isSignedInteger(mlir::pto::kValue8)) {
-    return "si8";
-  }
-  if (elementType.isSignlessInteger(mlir::pto::kValue64)) {
-    return "i64";
-  }
-  if (elementType.isSignlessInteger(mlir::pto::kValue32)) {
+  return "";
+}
+
+// Dtype string for integer element types ("" if unsupported). Widths follow
+// the tile library's dtype naming (ui/si/i + width).
+static std::string getIntegerDtypeString(Type elementType) {
+  if (elementType.isIndex()) {
     return "i32";
   }
-  if (elementType.isSignlessInteger(mlir::pto::kValue16)) {
-    return "i16";
+  if (elementType.isInteger(1)) {
+    return "i1";
   }
-  if (elementType.isSignlessInteger(mlir::pto::kValue8)) {
-    return "i8";
+  for (unsigned width : {mlir::pto::kValue64, mlir::pto::kValue32,
+                         mlir::pto::kValue16, mlir::pto::kValue8}) {
+    if (elementType.isUnsignedInteger(width)) {
+      return "ui" + std::to_string(width);
+    }
+    if (elementType.isSignedInteger(width)) {
+      return "si" + std::to_string(width);
+    }
+    if (elementType.isSignlessInteger(width)) {
+      return "i" + std::to_string(width);
+    }
   }
   return "";
+}
+
+static std::string getDtypeString(Type elementType) {
+  std::string dtype = getFloatDtypeString(elementType);
+  if (dtype.empty()) {
+    dtype = getIntegerDtypeString(elementType);
+  }
+  return dtype;
 }
 
 static std::string stringifyMemorySpace(pto::AddressSpace space) {
@@ -312,6 +303,41 @@ static std::optional<pto::Layout> resolveViewLayout(Value value) {
   return std::nullopt;
 }
 
+// Shape of a partition_view: its static sizes when available, otherwise the
+// result type's shape.
+static void populatePTOViewShapeAndStrides(Value value,
+                                           SmallVectorImpl<int64_t> &shape,
+                                           SmallVectorImpl<int64_t> &strides);
+
+static void populatePartitionViewShape(pto::PartitionViewOp part,
+                                       SmallVectorImpl<int64_t> &shape) {
+  shape.reserve(part.getSizes().size());
+  for (Value sizeValue : part.getSizes()) {
+    int64_t size = ShapedType::kDynamic;
+    (void)getStaticIntFromValue(sizeValue, size);
+    shape.push_back(size);
+  }
+  if (shape.empty()) {
+    auto partTy =
+        dyn_cast<pto::PartitionTensorViewType>(part.getResult().getType());
+    if (partTy) {
+      shape.assign(partTy.getShape().begin(), partTy.getShape().end());
+    }
+  }
+}
+
+// Strides of a partition_view: inherited from its source.
+static void populatePartitionViewStrides(pto::PartitionViewOp part,
+                                         SmallVectorImpl<int64_t> &strides) {
+  SmallVector<int64_t> sourceShape;
+  SmallVector<int64_t> sourceStrides;
+  populatePTOViewShapeAndStrides(part.getSource(), sourceShape,
+                                 sourceStrides);
+  if (strides.empty() && !sourceStrides.empty()) {
+    strides = sourceStrides;
+  }
+}
+
 static void populatePTOViewShapeAndStrides(Value value,
                                            SmallVectorImpl<int64_t> &shape,
                                            SmallVectorImpl<int64_t> &strides) {
@@ -321,26 +347,10 @@ static void populatePTOViewShapeAndStrides(Value value,
 
   if (auto part = value.getDefiningOp<pto::PartitionViewOp>()) {
     if (shape.empty()) {
-      shape.reserve(part.getSizes().size());
-      for (Value sizeValue : part.getSizes()) {
-        int64_t size = ShapedType::kDynamic;
-        (void)getStaticIntFromValue(sizeValue, size);
-        shape.push_back(size);
-      }
-      if (shape.empty()) {
-        auto partTy =
-            dyn_cast<pto::PartitionTensorViewType>(part.getResult().getType());
-        if (partTy) {
-          shape.assign(partTy.getShape().begin(), partTy.getShape().end());
-        }
-      }
+      populatePartitionViewShape(part, shape);
     }
-    SmallVector<int64_t> sourceShape;
-    SmallVector<int64_t> sourceStrides;
-    populatePTOViewShapeAndStrides(part.getSource(), sourceShape,
-                                   sourceStrides);
-    if (strides.empty() && !sourceStrides.empty()) {
-      strides = sourceStrides;
+    if (strides.empty()) {
+      populatePartitionViewStrides(part, strides);
     }
     return;
   }
@@ -525,6 +535,37 @@ static bool tryAppendPrecisionType(
 // Candidate discovery runs before memory planning, so address-dependent
 // context such as tfillpad's lowering_kind intentionally belongs only to the
 // post-planning specialization key built by ExpandTileOp.
+// cmp_mode for TCmpOp/TCmpSOp (shared shape).
+template <typename CmpOp>
+static void appendCmpModeAttr(Operation *op,
+                              SmallVectorImpl<std::pair<std::string, std::string>>
+                                  &attrs) {
+  if (auto tcmp = dyn_cast<CmpOp>(op)) {
+    if (auto cmpModeAttr = tcmp.getCmpModeAttr()) {
+      attrs.emplace_back("cmp_mode",
+                         stringifyCmpMode(cmpModeAttr.getValue()).str());
+    }
+  }
+}
+
+// mask_pattern + axis_value for TGatherOp/TScatterOp (shared shape).
+template <typename GatherLikeOp>
+static void appendMaskPatternAndAxisAttrs(
+    Operation *op,
+    SmallVectorImpl<std::pair<std::string, std::string>> &attrs) {
+  if (auto gatherLike = dyn_cast<GatherLikeOp>(op)) {
+    if (auto maskPatternAttr = gatherLike.getMaskPatternAttr()) {
+      attrs.emplace_back(
+          "mask_pattern",
+          stringifyMaskPattern(maskPatternAttr.getValue()).str());
+    }
+    if (auto axisAttr = gatherLike.getAxisAttr()) {
+      attrs.emplace_back("axis_value", axisAttr.getValue().str());
+    }
+  }
+}
+
+// Op-specific context attributes for the template library metadata query.
 static void appendOpContextAttrs(
     Operation *op, SmallVectorImpl<std::pair<std::string, std::string>> &attrs) {
   if (auto tcvt = dyn_cast<pto::TCvtOp>(op)) {
@@ -535,18 +576,8 @@ static void appendOpContextAttrs(
   if (auto trandom = dyn_cast<pto::TRandomOp>(op)) {
     attrs.emplace_back("rounds", std::to_string(trandom.getRounds()));
   }
-  if (auto tcmp = dyn_cast<pto::TCmpOp>(op)) {
-    if (auto cmpModeAttr = tcmp.getCmpModeAttr()) {
-      attrs.emplace_back("cmp_mode",
-                         stringifyCmpMode(cmpModeAttr.getValue()).str());
-    }
-  }
-  if (auto tcmps = dyn_cast<pto::TCmpSOp>(op)) {
-    if (auto cmpModeAttr = tcmps.getCmpModeAttr()) {
-      attrs.emplace_back("cmp_mode",
-                         stringifyCmpMode(cmpModeAttr.getValue()).str());
-    }
-  }
+  appendCmpModeAttr<pto::TCmpOp>(op, attrs);
+  appendCmpModeAttr<pto::TCmpSOp>(op, attrs);
   if (auto tinsert = dyn_cast<pto::TInsertOp>(op)) {
     if (auto modeAttr = tinsert.getAccToVecModeAttr()) {
       attrs.emplace_back("acc_to_vec_mode",
@@ -559,16 +590,7 @@ static void appendOpContextAttrs(
     attrs.emplace_back("exhausted",
                        tmrgsort.getExhausted() ? "1" : "0");
   }
-  if (auto tgather = dyn_cast<pto::TGatherOp>(op)) {
-    if (auto maskPatternAttr = tgather.getMaskPatternAttr()) {
-      attrs.emplace_back(
-          "mask_pattern",
-          stringifyMaskPattern(maskPatternAttr.getValue()).str());
-    }
-    if (auto axisAttr = tgather.getAxisAttr()) {
-      attrs.emplace_back("axis_value", axisAttr.getValue().str());
-    }
-  }
+  appendMaskPatternAndAxisAttrs<pto::TGatherOp>(op, attrs);
   if (auto ttri = dyn_cast<pto::TTriOp>(op)) {
     attrs.emplace_back("upper_or_lower", std::to_string(ttri.getUpperOrLower()));
   }
@@ -579,16 +601,7 @@ static void appendOpContextAttrs(
     }
     attrs.emplace_back("byte", std::to_string(byte));
   }
-  if (auto tscatter = dyn_cast<pto::TScatterOp>(op)) {
-    if (auto maskPatternAttr = tscatter.getMaskPatternAttr()) {
-      attrs.emplace_back(
-          "mask_pattern",
-          stringifyMaskPattern(maskPatternAttr.getValue()).str());
-    }
-    if (auto axisAttr = tscatter.getAxisAttr()) {
-      attrs.emplace_back("axis_value", axisAttr.getValue().str());
-    }
-  }
+  appendMaskPatternAndAxisAttrs<pto::TScatterOp>(op, attrs);
   (void)(tryAppendPrecisionType<pto::TExpOp>(op, attrs) ||
          tryAppendPrecisionType<pto::TLogOp>(op, attrs) ||
          tryAppendPrecisionType<pto::TSqrtOp>(op, attrs) ||
@@ -738,6 +751,76 @@ static void appendPtrOperandSpecJson(std::string &json, pto::PtrType ptrType) {
   json += "\"}";
 }
 
+// Reports the unsupported-`kind`-dtype diagnostic for `elemTy` and returns
+// false when `elemTy` has no dtype string.
+static bool checkDtypeSupported(Type elemTy, Operation *operation,
+                                const char *kind) {
+  if (!getDtypeString(elemTy).empty()) {
+    return true;
+  }
+  operation->emitError()
+      << "InsertTemplateAttributes encountered an unsupported " << kind
+      << " dtype";
+  return false;
+}
+
+// Append the operand-spec JSON for one operand. Returns false (after
+// emitting a diagnostic) when the operand type or dtype is unsupported.
+static bool appendOperandSpecJson(std::string &json, Value operand,
+                                  Operation *operation) {
+  Type type = operand.getType();
+  if (auto tileType = dyn_cast<pto::TileBufType>(type)) {
+    if (!checkDtypeSupported(tileType.getElementType(), operation, "tile")) {
+      return false;
+    }
+    appendTileOperandSpecJson(json, tileType);
+    return true;
+  }
+
+  if (auto memrefType = dyn_cast<MemRefType>(type)) {
+    if (!checkDtypeSupported(memrefType.getElementType(), operation, "view")) {
+      return false;
+    }
+    appendViewOperandSpecJson(json, operand, memrefType);
+    return true;
+  }
+
+  if (auto viewType = dyn_cast<pto::PartitionTensorViewType>(type)) {
+    if (!checkDtypeSupported(viewType.getElementType(), operation, "view")) {
+      return false;
+    }
+    appendViewOperandSpecJson(json, operand, viewType);
+    return true;
+  }
+
+  if (auto ptrType = dyn_cast<pto::PtrType>(type)) {
+    if (!checkDtypeSupported(ptrType.getElementType(), operation, "pointer")) {
+      return false;
+    }
+    appendPtrOperandSpecJson(json, ptrType);
+    return true;
+  }
+
+  if (auto vectorType = dyn_cast<VectorType>(type)) {
+    if (!checkDtypeSupported(vectorType.getElementType(), operation,
+                             "vector")) {
+      return false;
+    }
+    appendVectorOperandSpecJson(json, vectorType);
+    return true;
+  }
+
+  if (!getDtypeString(type).empty()) {
+    appendScalarOperandSpecJson(json, operand);
+    return true;
+  }
+
+  operation->emitError(
+      "InsertTemplateAttributes encountered an unsupported operand type ")
+      << type;
+  return false;
+}
+
 static std::optional<std::string>
 buildOperandSpecsJson(Operation *operation) {
   std::string json = "[";
@@ -745,67 +828,9 @@ buildOperandSpecsJson(Operation *operation) {
     if (index != 0) {
       json += ",";
     }
-
-    Type type = operand.getType();
-    if (auto tileType = dyn_cast<pto::TileBufType>(type)) {
-      if (getDtypeString(tileType.getElementType()).empty()) {
-        operation->emitError(
-            "InsertTemplateAttributes encountered an unsupported tile dtype");
-        return std::nullopt;
-      }
-      appendTileOperandSpecJson(json, tileType);
-      continue;
+    if (!appendOperandSpecJson(json, operand, operation)) {
+      return std::nullopt;
     }
-
-    if (auto memrefType = dyn_cast<MemRefType>(type)) {
-      if (getDtypeString(memrefType.getElementType()).empty()) {
-        operation->emitError(
-            "InsertTemplateAttributes encountered an unsupported view dtype");
-        return std::nullopt;
-      }
-      appendViewOperandSpecJson(json, operand, memrefType);
-      continue;
-    }
-
-    if (auto viewType = dyn_cast<pto::PartitionTensorViewType>(type)) {
-      if (getDtypeString(viewType.getElementType()).empty()) {
-        operation->emitError(
-            "InsertTemplateAttributes encountered an unsupported view dtype");
-        return std::nullopt;
-      }
-      appendViewOperandSpecJson(json, operand, viewType);
-      continue;
-    }
-
-    if (auto ptrType = dyn_cast<pto::PtrType>(type)) {
-      if (getDtypeString(ptrType.getElementType()).empty()) {
-        operation->emitError(
-            "InsertTemplateAttributes encountered an unsupported pointer dtype");
-        return std::nullopt;
-      }
-      appendPtrOperandSpecJson(json, ptrType);
-      continue;
-    }
-
-    if (auto vectorType = dyn_cast<VectorType>(type)) {
-      if (getDtypeString(vectorType.getElementType()).empty()) {
-        operation->emitError(
-            "InsertTemplateAttributes encountered an unsupported vector dtype");
-        return std::nullopt;
-      }
-      appendVectorOperandSpecJson(json, vectorType);
-      continue;
-    }
-
-    if (!getDtypeString(type).empty()) {
-      appendScalarOperandSpecJson(json, operand);
-      continue;
-    }
-
-    operation->emitError(
-        "InsertTemplateAttributes encountered an unsupported operand type ")
-        << type;
-    return std::nullopt;
   }
   json += "]";
   return json;
@@ -832,80 +857,52 @@ getTargetArch(Operation *operation) {
   return std::nullopt;
 }
 
-static FailureOr<ArrayAttr>
-parseCandidateAttributes(Operation *operation, StringRef metadataJson) {
-  auto parsed = llvm::json::parse(metadataJson);
-  if (!parsed) {
-    llvm::consumeError(parsed.takeError());
+// Parse and validate one candidate entry. Returns nullopt (after emitting a
+// diagnostic) on malformed metadata.
+static std::optional<CandidateMetadata>
+parseCandidateEntry(Operation *operation, const llvm::json::Object *metadata,
+                    size_t totalCandidates,
+                    llvm::DenseSet<int64_t> &candidateIds) {
+  auto name = metadata->getString("name");
+  auto id = metadata->getInteger("id");
+  auto priority = metadata->getInteger("priority");
+  auto loopDepth = metadata->getInteger("loop_depth");
+  auto postUpdate = metadata->getBoolean("is_post_update");
+  auto tail = metadata->getBoolean("has_tail");
+  if (!name || !priority || !loopDepth || !postUpdate || !tail) {
     operation->emitError(
-        "InsertTemplateAttributes received invalid metadata JSON");
-    return failure();
+        "InsertTemplateAttributes candidate metadata is missing name, "
+        "priority, loop_depth, is_post_update, or has_tail");
+    return std::nullopt;
+  }
+  if (!id && totalCandidates != 1) {
+    operation->emitError(
+        "InsertTemplateAttributes requires an id for every "
+        "multi-candidate template");
+    return std::nullopt;
   }
 
-  auto *root = parsed->getAsObject();
-  auto *candidates = root ? root->getArray("candidates") : nullptr;
-  if (!candidates || candidates->empty()) {
-    operation->emitError("InsertTemplateAttributes found no legal template "
-                         "candidates for ")
-        << operation->getName();
-    return failure();
+  int64_t candidateId = id.value_or(0);
+  if (!candidateIds.insert(candidateId).second) {
+    operation->emitError(
+        "InsertTemplateAttributes candidate ids must be unique");
+    return std::nullopt;
   }
 
-  SmallVector<CandidateMetadata> parsedCandidates;
-  parsedCandidates.reserve(candidates->size());
-  llvm::DenseSet<int64_t> candidateIds;
-  for (const llvm::json::Value &entry : *candidates) {
-    auto *metadata = entry.getAsObject();
-    if (!metadata) {
-      operation->emitError(
-          "InsertTemplateAttributes candidate metadata must be an object");
-      return failure();
-    }
+  return CandidateMetadata{
+      candidateId,
+      name->str(),
+      *priority,
+      *loopDepth,
+      *postUpdate,
+      *tail,
+  };
+}
 
-    auto name = metadata->getString("name");
-    auto id = metadata->getInteger("id");
-    auto priority = metadata->getInteger("priority");
-    auto loopDepth = metadata->getInteger("loop_depth");
-    auto postUpdate = metadata->getBoolean("is_post_update");
-    auto tail = metadata->getBoolean("has_tail");
-    if (!name || !priority || !loopDepth || !postUpdate || !tail) {
-      operation->emitError(
-          "InsertTemplateAttributes candidate metadata is missing name, "
-          "priority, loop_depth, is_post_update, or has_tail");
-      return failure();
-    }
-    if (!id && candidates->size() != 1) {
-      operation->emitError(
-          "InsertTemplateAttributes requires an id for every "
-          "multi-candidate template");
-      return failure();
-    }
-
-    int64_t candidateId = id.value_or(0);
-    if (!candidateIds.insert(candidateId).second) {
-      operation->emitError(
-          "InsertTemplateAttributes candidate ids must be unique");
-      return failure();
-    }
-
-    parsedCandidates.push_back(CandidateMetadata{
-        candidateId,
-        name->str(),
-        *priority,
-        *loopDepth,
-        *postUpdate,
-        *tail,
-    });
-  }
-
-  llvm::sort(parsedCandidates,
-             [](const CandidateMetadata &left,
-                const CandidateMetadata &right) {
-               if (left.priority != right.priority) {
-                 return left.priority > right.priority;
-               }
-               return left.name < right.name;
-             });
+// Reject ambiguous templates: the highest priority must be unique.
+static bool checkNoPriorityTie(Operation *operation,
+                               const SmallVectorImpl<CandidateMetadata>
+                                   &parsedCandidates) {
   if (parsedCandidates.size() > 1 &&
       parsedCandidates[0].priority == parsedCandidates[1].priority) {
     operation->emitError(
@@ -915,9 +912,15 @@ parseCandidateAttributes(Operation *operation, StringRef metadataJson) {
         << " at priority " << parsedCandidates[0].priority
         << "; assign distinct priorities or make their constraints mutually "
            "exclusive";
-    return failure();
+    return false;
   }
+  return true;
+}
 
+// Materialize the sorted candidates as the "candidates" array attribute.
+static ArrayAttr buildCandidatesAttr(
+    Operation *operation,
+    const SmallVectorImpl<CandidateMetadata> &parsedCandidates) {
   Builder builder(operation->getContext());
   SmallVector<Attribute> attributes;
   attributes.reserve(parsedCandidates.size());
@@ -939,6 +942,82 @@ parseCandidateAttributes(Operation *operation, StringRef metadataJson) {
         }));
   }
   return builder.getArrayAttr(attributes);
+}
+
+// Parses the metadata JSON document and returns its non-empty "candidates"
+// array. Emits a diagnostic on the operation and returns std::nullopt when
+// the JSON is invalid or carries no candidates.
+static std::optional<llvm::json::Array>
+parseCandidatesJson(Operation *operation, StringRef metadataJson) {
+  auto parsed = llvm::json::parse(metadataJson);
+  if (!parsed) {
+    llvm::consumeError(parsed.takeError());
+    operation->emitError(
+        "InsertTemplateAttributes received invalid metadata JSON");
+    return std::nullopt;
+  }
+
+  auto *root = parsed->getAsObject();
+  auto *candidates = root ? root->getArray("candidates") : nullptr;
+  if (!candidates || candidates->empty()) {
+    operation->emitError("InsertTemplateAttributes found no legal template "
+                         "candidates for ")
+        << operation->getName();
+    return std::nullopt;
+  }
+  return std::move(*candidates);
+}
+
+// Converts each JSON candidate entry to CandidateMetadata. Returns
+// std::nullopt when an entry is malformed or a candidate id repeats.
+static std::optional<SmallVector<CandidateMetadata>>
+parseCandidateEntries(Operation *operation,
+                      const llvm::json::Array &candidates) {
+  SmallVector<CandidateMetadata> parsedCandidates;
+  parsedCandidates.reserve(candidates.size());
+  llvm::DenseSet<int64_t> candidateIds;
+  for (const llvm::json::Value &entry : candidates) {
+    auto *metadata = entry.getAsObject();
+    if (!metadata) {
+      operation->emitError(
+          "InsertTemplateAttributes candidate metadata must be an object");
+      return std::nullopt;
+    }
+    auto candidate =
+        parseCandidateEntry(operation, metadata, candidates.size(),
+                            candidateIds);
+    if (!candidate) {
+      return std::nullopt;
+    }
+    parsedCandidates.push_back(std::move(*candidate));
+  }
+  return parsedCandidates;
+}
+
+static FailureOr<ArrayAttr>
+parseCandidateAttributes(Operation *operation, StringRef metadataJson) {
+  auto candidates = parseCandidatesJson(operation, metadataJson);
+  if (!candidates) {
+    return failure();
+  }
+  auto parsedCandidates = parseCandidateEntries(operation, *candidates);
+  if (!parsedCandidates) {
+    return failure();
+  }
+
+  llvm::sort(*parsedCandidates,
+             [](const CandidateMetadata &left,
+                const CandidateMetadata &right) {
+               if (left.priority != right.priority) {
+                 return left.priority > right.priority;
+               }
+               return left.name < right.name;
+             });
+  if (!checkNoPriorityTie(operation, *parsedCandidates)) {
+    return failure();
+  }
+
+  return buildCandidatesAttr(operation, *parsedCandidates);
 }
 
 struct InsertTemplateAttributesPass

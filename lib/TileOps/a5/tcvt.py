@@ -1821,6 +1821,13 @@ template_tcvt_bf16_to_fp4_1d = _register_tcvt_1d(
 )
 
 
+def _strip_suffix(name, suffix):
+    """Python 3.8-safe replacement for str.removesuffix (added in 3.9)."""
+    if suffix and name.endswith(suffix):
+        return name[: -len(suffix)]
+    return name
+
+
 def _register_deferred_tcvt_1d():
     """Assign stable 1D IDs after every 2D fallback is registered."""
 
@@ -1837,7 +1844,7 @@ def _register_deferred_tcvt_1d():
     for candidate in sorted(
         _PENDING_TCVT_1D,
         key=lambda item: fallbacks[
-            item.name.removesuffix("_1d")
+            _strip_suffix(item.name, "_1d")
         ].metadata.id,
     ):
         assigned = replace(

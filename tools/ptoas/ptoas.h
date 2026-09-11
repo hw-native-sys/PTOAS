@@ -38,7 +38,6 @@ extern llvm::cl::opt<bool> emitVPTO;
 extern llvm::cl::opt<bool> emitVPTOLLVMDialect;
 extern llvm::cl::opt<bool> ptoPrintSeamIR;
 extern llvm::cl::opt<std::string> ptoSeamIRFile;
-extern llvm::cl::opt<std::string> cannOutputVersion;
 extern llvm::cl::opt<VFSIMTSizeFixMode> vptoFixVFSIMTSize;
 
 enum class PTOBackend {
@@ -92,7 +91,6 @@ public:
   const CANNToolchain *getToolchain(llvm::raw_ostream &diagOS) const;
   CANNVersion getCANNVersionOrDefault() const;
 
-  void setOutputCANNVersionOverride(std::optional<CANNVersion> value);
   TempFileRegistry &getTempFiles();
   LogicalResult createTempPath(llvm::StringRef prefix, llvm::StringRef suffix,
                                std::string &path);
@@ -105,7 +103,6 @@ private:
   BackendInfo backendInfo;
   VFSIMTSizeFixMode vfsimtSizeFixMode = VFSIMTSizeFixMode::Auto;
   CANNVersion cannVersion = kDefaultCANNVersion;
-  std::optional<CANNVersion> outputCANNVersionOverride;
   std::optional<CANNToolchain> toolchain;
   TempFileRegistry tempFiles;
 

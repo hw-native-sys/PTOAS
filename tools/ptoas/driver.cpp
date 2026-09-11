@@ -68,30 +68,6 @@ static void printPTOASVersion(llvm::raw_ostream &os) {
   os << "ptoas " << kPTOASReleaseVersion << "\n";
 }
 
-static bool parseRequestedOutputCANNVersion(
-    llvm::StringRef versionText, std::optional<mlir::pto::CANNVersion> &version,
-    llvm::raw_ostream &diagOS) {
-  version.reset();
-  if (versionText.empty()) {
-    return true;
-  }
-  std::optional<mlir::pto::CANNVersion> parsed =
-      mlir::pto::parseCANNVersion(versionText);
-  if (!parsed) {
-    diagOS << "Error: invalid --cann-output-version='" << versionText
-           << "'. Expected forms like '9.0.0' or '9.0.0-beta.1'.\n";
-    return false;
-  }
-  version = *parsed;
-  return true;
-}
-
-static mlir::pto::CANNVersion selectEffectiveOutputCANNVersion(
-    const mlir::pto::CANNVersion &detectedVersion,
-    const std::optional<mlir::pto::CANNVersion> &overrideVersion) {
-  return overrideVersion.value_or(detectedVersion);
-}
-
 static bool hasCLIOption(const std::vector<std::string> &args,
                          llvm::StringRef option) {
   const std::string optionWithValue = (option + "=").str();
@@ -839,11 +815,6 @@ mlir::pto::PTOASContext::getVFSIMTSizeFixMode() const {
   return vfsimtSizeFixMode;
 }
 
-void mlir::pto::PTOASContext::setOutputCANNVersionOverride(
-    std::optional<CANNVersion> value) {
-  outputCANNVersionOverride = std::move(value);
-}
-
 llvm::StringRef mlir::pto::PTOASContext::getOutputPath() const {
   return outputPath;
 }
@@ -868,14 +839,11 @@ mlir::pto::PTOASContext::initializeToolchain(llvm::raw_ostream &diagOS) {
   if (!parsedVersion) {
     diagOS << "Warning: unable to parse CANN version: "
            << discovered->cannVersionString
-           << "; defaulting detected version to 9.0.0-beta.1.\n";
+           << "; defaulting detected version to 9.0.0.\n";
     parsedVersion = kDefaultCANNVersion;
   }
-  CANNVersion effectiveVersion =
-      selectEffectiveOutputCANNVersion(*parsedVersion,
-                                       outputCANNVersionOverride);
-  discovered->cannVersion = effectiveVersion;
-  cannVersion = effectiveVersion;
+  discovered->cannVersion = *parsedVersion;
+  cannVersion = *parsedVersion;
   toolchain = std::move(*discovered);
   return success();
 }
@@ -891,8 +859,7 @@ mlir::pto::PTOASContext::getToolchain(llvm::raw_ostream &diagOS) const {
 
 mlir::pto::CANNVersion
 mlir::pto::PTOASContext::getCANNVersionOrDefault() const {
-  return selectEffectiveOutputCANNVersion(cannVersion,
-                                          outputCANNVersionOverride);
+  return cannVersion;
 }
 
 mlir::pto::TempFileRegistry &mlir::pto::PTOASContext::getTempFiles() {
@@ -1425,7 +1392,6 @@ static LogicalResult writeTextOutput(llvm::StringRef output,
 struct DriverInvocationOptions {
   bool cliArchSpecified = false;
   bool cliBackendSpecified = false;
-  std::optional<mlir::pto::CANNVersion> outputCANNVersionOverride;
 };
 
 static FailureOr<DriverInvocationOptions>
@@ -1449,11 +1415,6 @@ parseDriverInvocation(const std::vector<std::string> &args,
   std::vector<const char *> argViews = toCommandLineViews(args);
   llvm::cl::ParseCommandLineOptions(static_cast<int>(argViews.size()),
                                     argViews.data(), "PTO Assembler (ptoas)\n");
-  if (!parseRequestedOutputCANNVersion(mlir::pto::cannOutputVersion,
-                                       options.outputCANNVersionOverride,
-                                       llvm::errs())) {
-    return failure();
-  }
   return options;
 }
 
@@ -1466,7 +1427,6 @@ createDriverContext(DialectRegistry &registry, MLIRContext *borrowedContext,
   } else {
     context = std::make_unique<PTOASContext>(registry, outputFilename);
   }
-  context->setOutputCANNVersionOverride(options.outputCANNVersionOverride);
   context->setVFSIMTSizeFixMode(mlir::pto::vptoFixVFSIMTSize);
   context->initializeMLIRContext();
   return context;
