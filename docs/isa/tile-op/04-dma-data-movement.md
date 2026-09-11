@@ -3,7 +3,7 @@
 > **Category:** GM↔on-chip DMA for tile buffers
 > **Pipelines:** PIPE_MTE2 (GM→UB), PIPE_MTE3 (UB→GM), PIPE_FIX (when source is `loc=acc`)
 
-This chapter documents the public tile DMA instructions `pto.tload` and `pto.tstore`. Other raw scalar load/store helpers are outside the current tile-instruction subset and are not covered here.
+This chapter documents the public tile DMA instructions `pto.tload`, `pto.tstore`, and the L1-to-L0A feature-map transfer `pto.timg2col`. Other raw scalar load/store helpers are outside the current tile-instruction subset and are not covered here.
 
 ---
 
@@ -86,3 +86,40 @@ pto.tstore ins(%src : !pto.tile_buf<...>)
 pto.tstore ins(%tb : !pto.tile_buf<vec, 16x16xf16>)
            outs(%pv : !pto.partition_tensor_view<16x16xf16>)
 ```
+
+
+## `pto.timg2col`
+
+A2/A3 `TIMG2COL` unfolds a feature map from Mat (L1) to Left (L0A), on
+`PIPE_MTE1`. Both operands are rank-2 tile buffers with the same element type
+(`f16`, `bf16`, `f32`, or `i8`). The source is a fully valid NZ tile `[H*W, C]`;
+its packed bytes are `NC1HWC0` when `H*W` is divisible by 16 and C is divisible
+by `C0=32/sizeof(dtype)`. Both tiles use 512-byte fractals. The destination
+uses `blayout=row_major, slayout=row_major`.
+
+```mlir
+pto.timg2col ins(%src, %pos_m, %pos_k : !pto.tile_buf<mat, 64x32xf16,
+    blayout=col_major, slayout=row_major>, index, index)
+  outs(%dst : !pto.tile_buf<left, 16x32xf16,
+    blayout=row_major, slayout=row_major>)
+  {fmap_h=8 : i64, fmap_w=8 : i64, kernel_h=3 : i64, kernel_w=3 : i64,
+   pad_top=1 : i64, pad_bottom=1 : i64, pad_left=1 : i64, pad_right=1 : i64}
+```
+
+`fmap_h/w` and `kernel_h/w` are required. `stride_h/w` and `dilation_h/w`
+default to 1; `pad_top/bottom/left/right` default to 0. Padding supplies zero.
+The lowering creates a ConvTile descriptor aliasing the existing L1 buffer,
+sets its geometry, and invokes `TIMG2COL` with `FMATRIX_A_AUTO`, configuring
+FMATRIX, repeat and padding registers on every call.
+
+For destination `[M,K]`, the unfolded row axis enumerates output H/W and the
+column axis enumerates C1/kernel H/kernel W/C0. Matmul weights must use that
+same K order. M is divisible by 16 and K by C0. `pos_m` and `pos_k` select the
+window; both must fit uint16 and keep the whole destination window in range.
+`pos_k` must be C0-aligned. Runtime source valid dimensions must equal its
+physical dimensions. Static violations are rejected by the verifier.
+
+Image H/W and C fit uint16; kernel H/W are in [1,511]; stride and dilation
+are in [1,255]; each padding value is in [0,255]. Destination M/K fit uint16.
+This primitive handles spatial convolution. A temporal kernel for causal
+3-D convolution needs an outer loop and accumulation over temporal slices.

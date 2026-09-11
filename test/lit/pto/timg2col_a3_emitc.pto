@@ -1,0 +1,80 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 %s | FileCheck %s
+
+// CHECK: fmap.data() = src.data();
+// CHECK: FMATRIX_A_AUTO
+
+func.func @img2col_f16() {
+  %m = arith.constant 16 : index
+  %k = arith.constant 32 : i64
+  %src = pto.alloc_tile : !pto.tile_buf<mat, 64x32xf16, blayout=col_major, slayout=row_major>
+  %dst = pto.alloc_tile : !pto.tile_buf<left, 16x32xf16, blayout=row_major, slayout=row_major>
+  pto.timg2col ins(%src, %m, %k : !pto.tile_buf<mat, 64x32xf16, blayout=col_major, slayout=row_major>, index, i64)
+    outs(%dst : !pto.tile_buf<left, 16x32xf16, blayout=row_major, slayout=row_major>)
+    {fmap_h=8 : i64, fmap_w=8 : i64, kernel_h=3 : i64, kernel_w=3 : i64,
+      pad_top=1 : i64, pad_bottom=1 : i64, pad_left=1 : i64, pad_right=1 : i64}
+  return
+}
+// CHECK-LABEL: AICORE void img2col_f16(
+// CHECK: PTOAS__TIMG2COL<8, 8, 3, 3, 1, 1, 1, 1, 1, 1, 1, 1>(
+
+func.func @img2col_bf16() {
+  %m = arith.constant 16 : index
+  %k = arith.constant 32 : i64
+  %src = pto.alloc_tile : !pto.tile_buf<mat, 64x32xbf16, blayout=col_major, slayout=row_major>
+  %dst = pto.alloc_tile : !pto.tile_buf<left, 16x32xbf16, blayout=row_major, slayout=row_major>
+  pto.timg2col ins(%src, %m, %k : !pto.tile_buf<mat, 64x32xbf16, blayout=col_major, slayout=row_major>, index, i64)
+    outs(%dst : !pto.tile_buf<left, 16x32xbf16, blayout=row_major, slayout=row_major>)
+    {fmap_h=8 : i64, fmap_w=8 : i64, kernel_h=3 : i64, kernel_w=3 : i64,
+      pad_top=1 : i64, pad_bottom=1 : i64, pad_left=1 : i64, pad_right=1 : i64}
+  return
+}
+// CHECK-LABEL: AICORE void img2col_bf16(
+// CHECK: PTOAS__TIMG2COL<8, 8, 3, 3, 1, 1, 1, 1, 1, 1, 1, 1>(
+
+func.func @img2col_f32() {
+  %m = arith.constant 16 : index
+  %k = arith.constant 32 : i64
+  %src = pto.alloc_tile : !pto.tile_buf<mat, 64x32xf32, blayout=col_major, slayout=row_major>
+  %dst = pto.alloc_tile : !pto.tile_buf<left, 16x32xf32, blayout=row_major, slayout=row_major>
+  pto.timg2col ins(%src, %m, %k : !pto.tile_buf<mat, 64x32xf32, blayout=col_major, slayout=row_major>, index, i64)
+    outs(%dst : !pto.tile_buf<left, 16x32xf32, blayout=row_major, slayout=row_major>)
+    {fmap_h=8 : i64, fmap_w=8 : i64, kernel_h=3 : i64, kernel_w=3 : i64,
+      pad_top=1 : i64, pad_bottom=1 : i64, pad_left=1 : i64, pad_right=1 : i64}
+  return
+}
+// CHECK-LABEL: AICORE void img2col_f32(
+// CHECK: PTOAS__TIMG2COL<8, 8, 3, 3, 1, 1, 1, 1, 1, 1, 1, 1>(
+
+func.func @img2col_i8() {
+  %m = arith.constant 16 : index
+  %k = arith.constant 32 : i64
+  %src = pto.alloc_tile : !pto.tile_buf<mat, 64x32xi8, blayout=col_major, slayout=row_major>
+  %dst = pto.alloc_tile : !pto.tile_buf<left, 16x32xi8, blayout=row_major, slayout=row_major>
+  pto.timg2col ins(%src, %m, %k : !pto.tile_buf<mat, 64x32xi8, blayout=col_major, slayout=row_major>, index, i64)
+    outs(%dst : !pto.tile_buf<left, 16x32xi8, blayout=row_major, slayout=row_major>)
+    {fmap_h=8 : i64, fmap_w=8 : i64, kernel_h=3 : i64, kernel_w=3 : i64,
+      pad_top=1 : i64, pad_bottom=1 : i64, pad_left=1 : i64, pad_right=1 : i64}
+  return
+}
+// CHECK-LABEL: AICORE void img2col_i8(
+// CHECK: PTOAS__TIMG2COL<8, 8, 3, 3, 1, 1, 1, 1, 1, 1, 1, 1>(
+
+func.func @img2col_unsigned(%k: ui64) {
+  %m = arith.constant 0 : index
+  %src = pto.alloc_tile : !pto.tile_buf<mat, 64x32xf16, blayout=col_major, slayout=row_major>
+  %dst = pto.alloc_tile : !pto.tile_buf<left, 16x32xf16, blayout=row_major, slayout=row_major>
+  pto.timg2col ins(%src, %m, %k : !pto.tile_buf<mat, 64x32xf16, blayout=col_major, slayout=row_major>, index, ui64)
+    outs(%dst : !pto.tile_buf<left, 16x32xf16, blayout=row_major, slayout=row_major>)
+    {fmap_h=8 : i64, fmap_w=8 : i64, kernel_h=1 : i64, kernel_w=1 : i64}
+  return
+}
+// CHECK-LABEL: AICORE void img2col_unsigned(
+// CHECK: PTOAS__TIMG2COL<8, 8, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0>(

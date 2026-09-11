@@ -688,12 +688,15 @@ struct EmitPTOManualPass
     bool eventIdArray = false;
     bool tRandom = false;
     bool globalTensorData = false;
+    bool tImg2col = false;
     bool bitcast = false;
   };
 
   static HelperFlags collectHelperFlags(ModuleOp mop) {
     HelperFlags flags;
     mop.walk([&](Operation *op) {
+      if (isa<mlir::pto::TImg2colOp>(op))
+        flags.tImg2col = true;
       if (isa<mlir::pto::DeclareEventIdArrayOp>(op))
         flags.eventIdArray = true;
       if (isa<mlir::pto::TRandomOp>(op))
@@ -757,6 +760,36 @@ static AICORE inline auto PTOAS__GLOBAL_TENSOR_DATA(Tensor &tensor)
   return tensor.data();
 }
 )cpp"));
+    }
+    if (flags.tImg2col) {
+        builder.create<emitc::VerbatimOp>(loc, builder.getStringAttr(R"cpp(
+            template <
+                int H, int W, int KH, int KW, int SH, int SW, int DH, int DW, int PT, int PB, int PL, int PR,
+                typename DstTile, typename SrcTile>
+            static AICORE inline void PTOAS__TIMG2COL(DstTile& dst, SrcTile& src, uint16_t posM, uint16_t posK)
+            {
+                using T = typename SrcTile::DType;
+                constexpr int C0 = 32 / sizeof(T);
+                constexpr int C = SrcTile::Cols;
+                using Fmap = ConvTile<TileType::Mat, T, H * W * C * sizeof(T), Layout::NC1HWC0, ConvTileShape<1, C / C0, H, W, C0>>;
+                Fmap fmap;
+                fmap.data() = src.data();
+                fmap.SetFmapH(H);
+                fmap.SetFmapW(W);
+                fmap.SetChannelSize(C);
+                fmap.SetFilterH(KH);
+                fmap.SetFilterW(KW);
+                fmap.SetStrideH(SH);
+                fmap.SetStrideW(SW);
+                fmap.SetDilationH(DH);
+                fmap.SetDilationW(DW);
+                fmap.SetPadList(0, PL);
+                fmap.SetPadList(1, PR);
+                fmap.SetPadList(2, PT);
+                fmap.SetPadList(3, PB);
+                TIMG2COL<DstTile, Fmap, SetFmatrixMode::FMATRIX_A_AUTO>(dst, fmap, posM, posK);
+            }
+        )cpp"));
     }
     if (flags.eventIdArray) {
       builder.create<emitc::VerbatimOp>(
