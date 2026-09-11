@@ -27,7 +27,7 @@
 #include <climits>
 #include <limits>
 
-#include "../Utils.h"
+#include "Utils.h"
 
 using namespace mlir;
 using namespace mlir::pto;

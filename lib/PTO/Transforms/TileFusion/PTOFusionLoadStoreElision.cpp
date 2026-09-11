@@ -9,7 +9,7 @@
 #include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
-#include "../Utils.h"
+#include "Utils.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"

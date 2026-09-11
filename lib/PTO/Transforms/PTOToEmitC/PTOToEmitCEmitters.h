@@ -31,7 +31,7 @@
 #include "PTO/IR/PTOSyncUtils.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Transforms/MemoryConsistencyAttrs.h"
-#include "../Utils.h"
+#include "Utils.h"
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"

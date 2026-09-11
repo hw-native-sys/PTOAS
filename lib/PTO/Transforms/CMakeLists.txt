@@ -26,7 +26,7 @@ endif()
 # marked HEADER_FILE_ONLY so they are not compiled as separate translation
 # units (VMIToVPTO.cpp includes them inside its own anonymous namespace).
 set(_ptoas_vmi_split_units
-  VMIToVPTOConversionInternals.cpp
+  VMIToVPTO/VMIToVPTOConversionInternals.cpp
   VMIToVPTO/VMIToVPTOMemoryInternals.cpp
   VMIToVPTO/VMIToVPTOMaskInternals.cpp
   VMIToVPTO/VMIToVPTODataLayoutInternals.cpp
@@ -101,7 +101,7 @@ add_mlir_dialect_library(PTOTransforms
   Passes/PTOPromotePersistentFragmentLoopsPass.cpp
   Passes/PTOUnrollLoopsPass.cpp
   PTOValidateVMIIR.cpp
-  VMIPreAssignmentCombine.cpp
+  VMI/VMIPreAssignmentCombine.cpp
   VMI/VMIControlFlowSupport.cpp
   VMI/VMILegalizeArithSelect.cpp
   VMI/VMIMaskGranularityAssignment.cpp
@@ -131,7 +131,7 @@ add_mlir_dialect_library(PTOTransforms
   Lowering/PTORematerializeFixpipeVectorQuant.cpp
   Passes/PTOValidateIntToPtrUses.cpp
   TileOp/TileLibService.cpp
-  SoftLibService.cpp
+  Support/SoftLibService.cpp
   InsertTemplateAttributes.cpp
   ExpandTileOp.cpp
   TileOp/FoldTileBufIntrinsics.cpp
@@ -224,7 +224,7 @@ add_mlir_dialect_library(PTOTransforms
   PTOToEmitC/Memref/MemrefSupport.cpp
   PTOToEmitC/Memref/MemrefPatterns.cpp
   Lowering/CppPostprocess.cpp
-  Utils.cpp
+  Support/Utils.cpp
   Passes/OptMemPlanForPipeline.cpp
   InferPTOMemScope.cpp
   PTOPlanMemoryModern.cpp
@@ -322,8 +322,10 @@ target_include_directories(PTOTransforms INTERFACE
 # this directory by bare name (e.g. "Utils.h"), so keep it on the private
 # include path.
 target_include_directories(PTOTransforms PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(PTOTransforms PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Support)
 if(TARGET obj.PTOTransforms)
   target_include_directories(obj.PTOTransforms PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  target_include_directories(obj.PTOTransforms PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Support)
 endif()
 
 # MLIR conversion patterns legitimately hide base-class virtual

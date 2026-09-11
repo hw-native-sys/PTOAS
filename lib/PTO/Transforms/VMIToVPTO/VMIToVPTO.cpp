@@ -44,6 +44,8 @@
 #include <tuple>
 #include <variant>
 
+#include "../VMI/VMIIndexUtils.h"
+
 namespace mlir {
 namespace pto {
 #define GEN_PASS_DEF_VMITOVPTO
