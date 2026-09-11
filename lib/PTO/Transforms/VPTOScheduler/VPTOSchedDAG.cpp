@@ -48,9 +48,11 @@ VPTOSchedEdge &VPTOSchedDAG::addEdge(
 void VPTOSchedDAG::resetDependencyCounts() {
   for (const std::unique_ptr<VPTOSUnit> &unit : units) {
     unit->remainingPredecessors = llvm::count_if(
-        unit->predecessors, [](VPTOSchedEdge *edge) { return edge->isMust(); });
+        unit->predecessors,
+        [](const VPTOSchedEdge *edge) { return edge->isMust(); });
     unit->remainingSuccessors = llvm::count_if(
-        unit->successors, [](VPTOSchedEdge *edge) { return edge->isMust(); });
+        unit->successors,
+        [](const VPTOSchedEdge *edge) { return edge->isMust(); });
   }
 }
 
@@ -74,7 +76,7 @@ LogicalResult VPTOSchedDAG::computeCriticalPaths() {
     unit->setHeight(0);
     indegree[unit->getId()] = llvm::count_if(
         unit->getPredecessors(),
-        [](VPTOSchedEdge *edge) { return edge->isMust(); });
+        [](const VPTOSchedEdge *edge) { return edge->isMust(); });
     if (indegree[unit->getId()] == 0)
       ready.push_back(unit.get());
   }

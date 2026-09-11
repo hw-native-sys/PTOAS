@@ -1005,31 +1005,31 @@ static void populatePtrNormalizeTypeConverter(TypeConverter &typeConverter) {
 // Registers dynamic legality for transfer ops whose source and destination
 // must both have been normalized to pto::PtrType.
 template <typename OpTy>
-static void addBothOperandsPtrLegality(ConversionTarget &target) {
-  target.addDynamicallyLegalOp<OpTy>([](OpTy op) {
+static void addBothOperandsPtrLegality(ConversionTarget *target) {
+  target->addDynamicallyLegalOp<OpTy>([](OpTy op) {
     return isa<pto::PtrType>(op.getSource().getType()) &&
            isa<pto::PtrType>(op.getDestination().getType());
   });
 }
 
 static void populateMteTransferOpLegality(ConversionTarget &target) {
-  addBothOperandsPtrLegality<pto::MteUbUbOp>(target);
+  addBothOperandsPtrLegality<pto::MteUbUbOp>(&target);
   target.addDynamicallyLegalOp<pto::RawFillL1Op>([](pto::RawFillL1Op op) {
     return isa<pto::PtrType>(op.getDst().getType());
   });
-  addBothOperandsPtrLegality<pto::MteUbL1Op>(target);
-  addBothOperandsPtrLegality<pto::MteGmL1Op>(target);
-  addBothOperandsPtrLegality<pto::MteL1UbOp>(target);
-  addBothOperandsPtrLegality<pto::MteL1BtOp>(target);
-  addBothOperandsPtrLegality<pto::MteGmL1FracOp>(target);
-  addBothOperandsPtrLegality<pto::MteL1L0aOp>(target);
-  addBothOperandsPtrLegality<pto::MteL1L0bOp>(target);
-  addBothOperandsPtrLegality<pto::MteL1L0aMxOp>(target);
-  addBothOperandsPtrLegality<pto::MteL1L0bMxOp>(target);
-  addBothOperandsPtrLegality<pto::MteL0cL1Op>(target);
-  addBothOperandsPtrLegality<pto::MteL0cGmOp>(target);
-  addBothOperandsPtrLegality<pto::MteL0cUbOp>(target);
-  addBothOperandsPtrLegality<pto::MteUbGmOp>(target);
+  addBothOperandsPtrLegality<pto::MteUbL1Op>(&target);
+  addBothOperandsPtrLegality<pto::MteGmL1Op>(&target);
+  addBothOperandsPtrLegality<pto::MteL1UbOp>(&target);
+  addBothOperandsPtrLegality<pto::MteL1BtOp>(&target);
+  addBothOperandsPtrLegality<pto::MteGmL1FracOp>(&target);
+  addBothOperandsPtrLegality<pto::MteL1L0aOp>(&target);
+  addBothOperandsPtrLegality<pto::MteL1L0bOp>(&target);
+  addBothOperandsPtrLegality<pto::MteL1L0aMxOp>(&target);
+  addBothOperandsPtrLegality<pto::MteL1L0bMxOp>(&target);
+  addBothOperandsPtrLegality<pto::MteL0cL1Op>(&target);
+  addBothOperandsPtrLegality<pto::MteL0cGmOp>(&target);
+  addBothOperandsPtrLegality<pto::MteL0cUbOp>(&target);
+  addBothOperandsPtrLegality<pto::MteUbGmOp>(&target);
 }
 
 static void populatePtrLikeOpLegality(ConversionTarget &target,

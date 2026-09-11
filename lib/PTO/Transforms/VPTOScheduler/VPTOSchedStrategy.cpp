@@ -53,10 +53,12 @@ struct RankingContext {
 static bool checkedMultiplyAdd(int64_t lhs, int64_t rhs, int64_t &total) {
   int64_t product = 0;
   int64_t updated = 0;
-  if (llvm::MulOverflow(lhs, rhs, product)) {
+  bool productOverflow = llvm::MulOverflow(lhs, rhs, product) != 0;
+  if (productOverflow) {
     return false;
   }
-  if (llvm::AddOverflow(total, product, updated)) {
+  bool updatedOverflow = llvm::AddOverflow(total, product, updated) != 0;
+  if (updatedOverflow) {
     return false;
   }
   total = updated;
@@ -130,8 +132,10 @@ static LogicalResult populatePressureBands(const VPTOScheduleContext &context,
     bool highPressure = context.currentPressure[index] * 3 >= limit * 2;
     rankingContext.nearLimitPressureSets[index] = nearLimit;
     rankingContext.highPressureSets[index] = highPressure;
-    rankingContext.hasNearLimitPressure |= nearLimit;
-    rankingContext.hasHighPressure |= highPressure;
+    rankingContext.hasNearLimitPressure =
+        rankingContext.hasNearLimitPressure || nearLimit;
+    rankingContext.hasHighPressure =
+        rankingContext.hasHighPressure || highPressure;
   }
   return success();
 }
@@ -192,9 +196,9 @@ validatePressureScoreState(const VPTOScheduleContext &context,
   int64_t expectedProjected = 0;
   bool inconsistent =
       llvm::SubOverflow(candidate.pressure.introduced[index],
-                        candidate.pressure.released[index], expectedDelta) ||
+                        candidate.pressure.released[index], expectedDelta) != 0 ||
       llvm::AddOverflow(context.currentPressure[index],
-                        candidate.pressure.delta[index], expectedProjected) ||
+                        candidate.pressure.delta[index], expectedProjected) != 0 ||
       expectedDelta != candidate.pressure.delta[index] ||
       expectedProjected != candidate.pressure.projected[index];
   if (inconsistent) {
@@ -239,7 +243,7 @@ accumulateBasePressureCosts(const VPTORegPressureSet &pressureSet,
     detail = "candidate pressure score overflow";
     return failure();
   }
-  rank.exceedsLimit |= state.projectedExcess > 0;
+  rank.exceedsLimit = rank.exceedsLimit || state.projectedExcess > 0;
   return success();
 }
 
@@ -598,6 +602,10 @@ VPTODefaultSchedStrategy::pickCandidate(const VPTOScheduleContext &context,
     ranks.push_back(*rank);
   }
 
+  if (ranks.empty()) {
+    detail = "strategy produced no ranked candidates";
+    return failure();
+  }
   const RankedCandidate *selected = &ranks.front();
   for (const RankedCandidate &rank : llvm::drop_begin(ranks)) {
     if (isBetterCandidate(rank, *selected,
@@ -613,10 +621,14 @@ VPTODefaultSchedStrategy::pickCandidate(const VPTOScheduleContext &context,
     if (&rank == selected) {
       continue;
     }
-    if (!runnerUp || isBetterCandidate(rank, *runnerUp,
-                                       rankingContext->hasNearLimitPressure,
-                                       rankingContext->hasHighPressure,
-                                       context.closurePressureSet.has_value())) {
+    if (!runnerUp) {
+      runnerUp = &rank;
+      continue;
+    }
+    if (isBetterCandidate(rank, *runnerUp,
+                          rankingContext->hasNearLimitPressure,
+                          rankingContext->hasHighPressure,
+                          context.closurePressureSet.has_value())) {
       runnerUp = &rank;
     }
   }
