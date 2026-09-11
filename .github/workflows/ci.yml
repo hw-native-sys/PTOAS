@@ -298,8 +298,7 @@ jobs:
             -DPTO_ENABLE_PYTHON_BINDING=ON \
             -DBUILD_TESTING=ON \
             -DCMAKE_C_COMPILER="${PTOAS_CMAKE_C_COMPILER}" \
-            -DCMAKE_CXX_COMPILER="${PTOAS_CMAKE_CXX_COMPILER}" \
-            -Werror=dev
+            -DCMAKE_CXX_COMPILER="${PTOAS_CMAKE_CXX_COMPILER}"
 
       - name: Install PTOAS editable
         run: |

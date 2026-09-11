@@ -1000,7 +1000,7 @@ struct PTOMaterializeImplicitTmpPass
               .getResult();
 
       auto newOp = builder.create<pto::TCIOp>(
-          loc, TypeRange{}, op.getS(), tmp, op.getDst(),
+          loc, TypeRange{}, op.getStart(), tmp, op.getDst(),
           op.getDescendingAttr());
       for (NamedAttribute attr : op->getAttrs()) {
         if (attr.getName() == "operandSegmentSizes") {

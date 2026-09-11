@@ -3747,7 +3747,7 @@ def TCIOp : PTO_TOp<"tci", [
   let summary = "Generate contiguous integer sequence into dst tile.";
 
   let arguments = (ins
-    AnyInteger:$S,
+    AnyInteger:$start,
     Optional<PTODpsType>:$tmp,
     PTODpsType:$dst,
     DefaultValuedAttr<BoolAttr, "false">:$descending
