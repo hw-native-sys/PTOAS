@@ -1109,6 +1109,8 @@ void TExpandsOp::getEffects(
   PTO_ADD_WRITE(getDstMutable());
 }
 
+PTO_DEFINE_UNARY_EFFECTS(mlir::pto::TImg2colOp, getSrcMutable(), getDstMutable())
+
 // TEXTRACT: Read(src) -> Write(dst)
 void TExtractOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {

@@ -1,0 +1,115 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s --split-input-file --verify-diagnostics
+
+func.func @invalid_unsigned_element(%src: !pto.tile_buf<mat, 64x32xui8, blayout=col_major, slayout=row_major>, %dst: !pto.tile_buf<left, 16x32xui8, blayout=row_major, slayout=row_major>) {
+  %m = arith.constant 0 : index
+  %k = arith.constant 0 : index
+  // expected-error @+1 {{expects matching f16/bf16/f32/i8 element types}}
+  pto.timg2col ins(%src, %m, %k : !pto.tile_buf<mat, 64x32xui8, blayout=col_major, slayout=row_major>, index, index)
+    outs(%dst : !pto.tile_buf<left, 16x32xui8, blayout=row_major, slayout=row_major>)
+    {fmap_h=8 : i64, fmap_w=8 : i64, kernel_h=1 : i64, kernel_w=1 : i64}
+  return
+}
+
+// -----
+
+func.func @invalid_0(%src: !pto.tile_buf<vec, 64x32xf16, blayout=col_major, slayout=row_major>, %dst: !pto.tile_buf<left, 16x32xf16, blayout=row_major, slayout=row_major>) {
+  %m = arith.constant 0 : index
+  %k = arith.constant 0 : index
+  // expected-error @+1 {{expects Mat source and Left destination}}
+  pto.timg2col ins(%src, %m, %k : !pto.tile_buf<vec, 64x32xf16, blayout=col_major, slayout=row_major>, index, index)
+    outs(%dst : !pto.tile_buf<left, 16x32xf16, blayout=row_major, slayout=row_major>)
+    {fmap_h=8 : i64, fmap_w=8 : i64, kernel_h=1 : i64, kernel_w=1 : i64}
+  return
+}
+
+// -----
+
+func.func @invalid_1(%src: !pto.tile_buf<mat, 64x32xf16, blayout=col_major, slayout=row_major>, %dst: !pto.tile_buf<left, 16x32xbf16, blayout=row_major, slayout=row_major>) {
+  %m = arith.constant 0 : index
+  %k = arith.constant 0 : index
+  // expected-error @+1 {{expects matching}}
+  pto.timg2col ins(%src, %m, %k : !pto.tile_buf<mat, 64x32xf16, blayout=col_major, slayout=row_major>, index, index)
+    outs(%dst : !pto.tile_buf<left, 16x32xbf16, blayout=row_major, slayout=row_major>)
+    {fmap_h=8 : i64, fmap_w=8 : i64, kernel_h=1 : i64, kernel_w=1 : i64}
+  return
+}
+
+// -----
+
+func.func @invalid_2(%src: !pto.tile_buf<mat, 64x32xf16, blayout=row_major, slayout=row_major>, %dst: !pto.tile_buf<left, 16x32xf16, blayout=row_major, slayout=row_major>) {
+  %m = arith.constant 0 : index
+  %k = arith.constant 0 : index
+  // expected-error @+1 {{expects NZ source}}
+  pto.timg2col ins(%src, %m, %k : !pto.tile_buf<mat, 64x32xf16, blayout=row_major, slayout=row_major>, index, index)
+    outs(%dst : !pto.tile_buf<left, 16x32xf16, blayout=row_major, slayout=row_major>)
+    {fmap_h=8 : i64, fmap_w=8 : i64, kernel_h=1 : i64, kernel_w=1 : i64}
+  return
+}
+
+// -----
+
+func.func @invalid_3(%src: !pto.tile_buf<mat, 64x32xf16, blayout=col_major, slayout=row_major>, %dst: !pto.tile_buf<left, 16x32xf16, blayout=row_major, slayout=row_major>) {
+  %m = arith.constant 0 : index
+  %k = arith.constant 0 : index
+  // expected-error @+1 {{instruction range}}
+  pto.timg2col ins(%src, %m, %k : !pto.tile_buf<mat, 64x32xf16, blayout=col_major, slayout=row_major>, index, index)
+    outs(%dst : !pto.tile_buf<left, 16x32xf16, blayout=row_major, slayout=row_major>)
+    {fmap_h=8 : i64, fmap_w=8 : i64, kernel_h=1 : i64, kernel_w=1 : i64, stride_h=0 : i64}
+  return
+}
+
+// -----
+
+func.func @invalid_4(%src: !pto.tile_buf<mat, 64x32xf16, blayout=col_major, slayout=row_major>, %dst: !pto.tile_buf<left, 16x32xf16, blayout=row_major, slayout=row_major>) {
+  %m = arith.constant 0 : index
+  %k = arith.constant 0 : index
+  // expected-error @+1 {{padding must be}}
+  pto.timg2col ins(%src, %m, %k : !pto.tile_buf<mat, 64x32xf16, blayout=col_major, slayout=row_major>, index, index)
+    outs(%dst : !pto.tile_buf<left, 16x32xf16, blayout=row_major, slayout=row_major>)
+    {fmap_h=8 : i64, fmap_w=8 : i64, kernel_h=1 : i64, kernel_w=1 : i64, pad_top=256 : i64}
+  return
+}
+
+// -----
+
+func.func @invalid_5(%src: !pto.tile_buf<mat, 64x32xf16, blayout=col_major, slayout=row_major>, %dst: !pto.tile_buf<left, 16x32xf16, blayout=row_major, slayout=row_major>) {
+  %m = arith.constant 0 : index
+  %k = arith.constant 0 : index
+  // expected-error @+1 {{instruction range}}
+  pto.timg2col ins(%src, %m, %k : !pto.tile_buf<mat, 64x32xf16, blayout=col_major, slayout=row_major>, index, index)
+    outs(%dst : !pto.tile_buf<left, 16x32xf16, blayout=row_major, slayout=row_major>)
+    {fmap_h=8 : i64, fmap_w=8 : i64, kernel_h=1 : i64, kernel_w=1 : i64, dilation_w=256 : i64}
+  return
+}
+
+// -----
+
+func.func @invalid_6(%src: !pto.tile_buf<mat, 64x32xf16, blayout=col_major, slayout=row_major>, %dst: !pto.tile_buf<left, 16x32xf16, blayout=row_major, slayout=row_major>) {
+  %m = arith.constant 0 : index
+  %k = arith.constant 1 : index
+  // expected-error @+1 {{position is out of bounds}}
+  pto.timg2col ins(%src, %m, %k : !pto.tile_buf<mat, 64x32xf16, blayout=col_major, slayout=row_major>, index, index)
+    outs(%dst : !pto.tile_buf<left, 16x32xf16, blayout=row_major, slayout=row_major>)
+    {fmap_h=8 : i64, fmap_w=8 : i64, kernel_h=1 : i64, kernel_w=1 : i64}
+  return
+}
+
+// -----
+
+func.func @invalid_7(%src: !pto.tile_buf<mat, 64x32xf16, blayout=col_major, slayout=row_major>, %dst: !pto.tile_buf<left, 16x64xf16, blayout=row_major, slayout=row_major>) {
+  %m = arith.constant 0 : index
+  %k = arith.constant 0 : index
+  // expected-error @+1 {{destination must fit}}
+  pto.timg2col ins(%src, %m, %k : !pto.tile_buf<mat, 64x32xf16, blayout=col_major, slayout=row_major>, index, index)
+    outs(%dst : !pto.tile_buf<left, 16x64xf16, blayout=row_major, slayout=row_major>)
+    {fmap_h=8 : i64, fmap_w=8 : i64, kernel_h=1 : i64, kernel_w=1 : i64}
+  return
+}

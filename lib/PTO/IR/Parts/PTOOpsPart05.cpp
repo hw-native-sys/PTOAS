@@ -1190,6 +1190,72 @@ static LogicalResult verifyTExtractA5(TExtractOp op) {
   return success();
 }
 
+mlir::LogicalResult mlir::pto::TImg2colOp::verify()
+{
+    auto src = dyn_cast<TileBufType>(getSrc().getType());
+    auto dst = dyn_cast<TileBufType>(getDst().getType());
+    if (!src || !dst || src.getRank() != 2 || dst.getRank() != 2)
+        return emitOpError("expects rank-2 tile_buf operands");
+    if (getPTOMemorySpaceEnum(src) != AddressSpace::MAT || getPTOMemorySpaceEnum(dst) != AddressSpace::LEFT)
+        return emitOpError("expects Mat source and Left destination");
+    Type elem = src.getElementType();
+    if (elem != dst.getElementType() ||
+        !(elem.isF16() || elem.isBF16() || elem.isF32() || elem.isSignlessInteger(8) || elem.isSignedInteger(8)))
+        return emitOpError("expects matching f16/bf16/f32/i8 element types");
+    const int64_t c0 = 256 / elem.getIntOrFloatBitWidth();
+    if (src.getBLayoutValueI32() != static_cast<int32_t>(BLayout::ColMajor) ||
+        src.getSLayoutValueI32() != static_cast<int32_t>(SLayout::RowMajor) ||
+        dst.getBLayoutValueI32() != static_cast<int32_t>(BLayout::RowMajor) ||
+        dst.getSLayoutValueI32() != static_cast<int32_t>(SLayout::RowMajor))
+        return emitOpError("expects NZ source and row_major/row_major destination");
+    if (src.getSFractalSizeI32() != 512 || dst.getSFractalSizeI32() != 512)
+        return emitOpError("expects 512-byte fractals");
+    for (auto entry :
+         {std::make_pair(getFmapHAttr().getInt(), int64_t{65535}),
+          std::make_pair(getFmapWAttr().getInt(), int64_t{65535}),
+          std::make_pair(getKernelHAttr().getInt(), int64_t{511}),
+          std::make_pair(getKernelWAttr().getInt(), int64_t{511}),
+          std::make_pair(getStrideHAttr().getInt(), int64_t{255}),
+          std::make_pair(getStrideWAttr().getInt(), int64_t{255}),
+          std::make_pair(getDilationHAttr().getInt(), int64_t{255}),
+          std::make_pair(getDilationWAttr().getInt(), int64_t{255})}) {
+        if (entry.first < 1 || entry.first > entry.second)
+            return emitOpError("image/kernel/stride/dilation exceeds instruction range");
+    }
+    for (int64_t pad :
+         {getPadTopAttr().getInt(), getPadBottomAttr().getInt(), getPadLeftAttr().getInt(), getPadRightAttr().getInt()})
+        if (pad < 0 || pad > 255)
+            return emitOpError("padding must be in [0, 255]");
+    auto sourceShape = src.getShape();
+    if (sourceShape[0] != getFmapHAttr().getInt() * getFmapWAttr().getInt() || sourceShape[0] % 16 != 0 ||
+        sourceShape[1] <= 0 || sourceShape[1] > 65535 || sourceShape[1] % c0 != 0)
+        return emitOpError("expects source [H*W, C] aligned to [16, C0]");
+    auto sourceValid = getValidShapeVec(getSrc());
+    for (unsigned i = 0; i < 2; ++i)
+        if (sourceValid[i] >= 0 && sourceValid[i] != sourceShape[i])
+            return emitOpError("expects fully valid source");
+    const int64_t h = getFmapHAttr().getInt() + getPadTopAttr().getInt() + getPadBottomAttr().getInt() -
+                      getDilationHAttr().getInt() * (getKernelHAttr().getInt() - 1) - 1;
+    const int64_t w = getFmapWAttr().getInt() + getPadLeftAttr().getInt() + getPadRightAttr().getInt() -
+                      getDilationWAttr().getInt() * (getKernelWAttr().getInt() - 1) - 1;
+    if (h < 0 || w < 0)
+        return emitOpError("kernel exceeds padded image");
+    const int64_t bounds[] = {
+        (h / getStrideHAttr().getInt() + 1) * (w / getStrideWAttr().getInt() + 1),
+        sourceShape[1] * getKernelHAttr().getInt() * getKernelWAttr().getInt()};
+    Value positions[] = {getPosM(), getPosK()};
+    for (unsigned i = 0; i < 2; ++i) {
+        const int64_t dim = dst.getShape()[i];
+        if (dim <= 0 || dim > 65535 || dim % (i == 0 ? 16 : c0) || dim > bounds[i])
+            return emitOpError("destination must fit unfolded image and align to [16, C0]");
+        auto pos = getConstantIntegerValue(positions[i]);
+        if (pos && (*pos < 0 || *pos > 65535 || *pos + dim > bounds[i] || (i == 1 && *pos % c0)))
+            return emitOpError("position is out of bounds or posK is not C0-aligned");
+    }
+    return dispatchVerifierByArch(
+        getOperation(), []() { return success(); }, [&]() { return emitOpError("TIMG2COL currently supports A2/A3"); });
+}
+
 mlir::LogicalResult mlir::pto::TExtractOp::verify() {
   auto verifyA2A3 = [&]() -> LogicalResult { return verifyTExtractA2A3(*this); };
   auto verifyA5 = [&]() -> LogicalResult { return verifyTExtractA5(*this); };

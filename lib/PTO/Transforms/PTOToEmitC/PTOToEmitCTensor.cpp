@@ -810,6 +810,26 @@ static StringRef getTInsertModeToken(pto::TInsertMode mode) {
   llvm_unreachable("unknown TInsertMode");
 }
 
+struct PTOImg2colToEmitC : public OpConversionPattern<pto::TImg2colOp> {
+    using OpConversionPattern<pto::TImg2colOp>::OpConversionPattern;
+
+    LogicalResult matchAndRewrite(
+        pto::TImg2colOp op, OpAdaptor adaptor, ConversionPatternRewriter& rewriter) const override
+    {
+        SmallVector<Attribute> templateArgs;
+        for (int64_t value :
+             {op.getFmapH(), op.getFmapW(), op.getKernelH(), op.getKernelW(), op.getStrideH(), op.getStrideW(),
+              op.getDilationH(), op.getDilationW(), op.getPadTop(), op.getPadBottom(), op.getPadLeft(),
+              op.getPadRight()})
+            templateArgs.push_back(rewriter.getI64IntegerAttr(value));
+        rewriter.create<emitc::CallOpaqueOp>(
+            op.getLoc(), TypeRange{}, "PTOAS__TIMG2COL", ArrayAttr{}, rewriter.getArrayAttr(templateArgs),
+            ValueRange{adaptor.getDst(), adaptor.getSrc(), adaptor.getPosM(), adaptor.getPosK()});
+        rewriter.eraseOp(op);
+        return success();
+    }
+};
+
 struct PTOExtractToEmitC : public OpConversionPattern<pto::TExtractOp> {
   using OpConversionPattern<pto::TExtractOp>::OpConversionPattern;
 
@@ -1957,6 +1977,7 @@ void populateTensorPatterns(RewritePatternSet &patterns,
   patterns.add<PTOExpToEmitC>(typeConverter, ctx);
   patterns.add<PTOExpandsToEmitC>(typeConverter, ctx);
   patterns.add<PTOExtractToEmitC, PTOInsertToEmitC>(typeConverter, ctx);
+  patterns.add<PTOImg2colToEmitC>(typeConverter, ctx);
   patterns.add<PTOFillPadToEmitC>(typeConverter, ctx);
   patterns.add<PTOGatherToEmitC>(typeConverter, ctx);
   patterns.add<PTOGatherbToEmitC>(typeConverter, ctx);

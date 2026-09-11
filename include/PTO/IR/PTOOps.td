@@ -4566,6 +4566,48 @@ def TExpandsOp : PTO_TOp<"texpands", [
   }];
 }
 
+def TImg2colOp : PTO_TOp<"timg2col", [
+  PTO_DpsInitOpInterface,
+  OpPipeInterface,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Unfold a full NZ feature map from Mat into Left using TIMG2COL";
+  let description = [{
+    The source is a fully valid NZ tile [H*W, C], whose packed storage is
+    NC1HWC0 when H*W is divisible by 16 and C is C0-aligned (C0=32/sizeof(T)).
+    The destination selects [M, K] from the unfolded matrix: M enumerates
+    output H/W and K enumerates C1/kernel H/kernel W/C0. Padding is zero.
+    FMATRIX, repeat and padding registers are configured by every operation.
+    Dynamic positions must fit uint16 and keep the complete window in range;
+    posK must be C0-aligned. Geometry and destination dimensions are static.
+  }];
+  let arguments = (ins
+    PTODpsType:$src, AnyTypeOf<[Index, I64, UI64]>:$posM,
+    AnyTypeOf<[Index, I64, UI64]>:$posK, PTODpsType:$dst,
+    I64Attr:$fmap_h, I64Attr:$fmap_w,
+    I64Attr:$kernel_h, I64Attr:$kernel_w,
+    DefaultValuedAttr<I64Attr, "1">:$stride_h,
+    DefaultValuedAttr<I64Attr, "1">:$stride_w,
+    DefaultValuedAttr<I64Attr, "1">:$dilation_h,
+    DefaultValuedAttr<I64Attr, "1">:$dilation_w,
+    DefaultValuedAttr<I64Attr, "0">:$pad_top,
+    DefaultValuedAttr<I64Attr, "0">:$pad_bottom,
+    DefaultValuedAttr<I64Attr, "0">:$pad_left,
+    DefaultValuedAttr<I64Attr, "0">:$pad_right
+  );
+  let results = (outs);
+  let hasVerifier = 1;
+  let assemblyFormat = [{
+    `ins` `(` $src `,` $posM `,` $posK `:` qualified(type($src)) `,`
+      type($posM) `,` type($posK) `)`
+    `outs` `(` $dst `:` qualified(type($dst)) `)` attr-dict
+  }];
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_MTE1; }
+    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
+  }];
+}
+
 def TExtractOp : PTO_TOp<"textract", [
   AttrSizedOperandSegments,
   PTO_DpsInitOpInterface,
