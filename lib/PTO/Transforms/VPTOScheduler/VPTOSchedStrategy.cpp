@@ -53,10 +53,12 @@ struct RankingContext {
 static bool checkedMultiplyAdd(int64_t lhs, int64_t rhs, int64_t &total) {
   int64_t product = 0;
   int64_t updated = 0;
-  if (llvm::MulOverflow(lhs, rhs, product)) {
+  bool productOverflow = llvm::MulOverflow(lhs, rhs, product) != 0;
+  if (productOverflow) {
     return false;
   }
-  if (llvm::AddOverflow(total, product, updated)) {
+  bool updatedOverflow = llvm::AddOverflow(total, product, updated) != 0;
+  if (updatedOverflow) {
     return false;
   }
   total = updated;
@@ -130,8 +132,10 @@ static LogicalResult populatePressureBands(const VPTOScheduleContext &context,
     bool highPressure = context.currentPressure[index] * 3 >= limit * 2;
     rankingContext.nearLimitPressureSets[index] = nearLimit;
     rankingContext.highPressureSets[index] = highPressure;
-    rankingContext.hasNearLimitPressure |= nearLimit;
-    rankingContext.hasHighPressure |= highPressure;
+    rankingContext.hasNearLimitPressure =
+        rankingContext.hasNearLimitPressure || nearLimit;
+    rankingContext.hasHighPressure =
+        rankingContext.hasHighPressure || highPressure;
   }
   return success();
 }
@@ -192,9 +196,9 @@ validatePressureScoreState(const VPTOScheduleContext &context,
   int64_t expectedProjected = 0;
   bool inconsistent =
       llvm::SubOverflow(candidate.pressure.introduced[index],
-                        candidate.pressure.released[index], expectedDelta) ||
+                        candidate.pressure.released[index], expectedDelta) != 0 ||
       llvm::AddOverflow(context.currentPressure[index],
-                        candidate.pressure.delta[index], expectedProjected) ||
+                        candidate.pressure.delta[index], expectedProjected) != 0 ||
       expectedDelta != candidate.pressure.delta[index] ||
       expectedProjected != candidate.pressure.projected[index];
   if (inconsistent) {
@@ -239,7 +243,7 @@ accumulateBasePressureCosts(const VPTORegPressureSet &pressureSet,
     detail = "candidate pressure score overflow";
     return failure();
   }
-  rank.exceedsLimit |= state.projectedExcess > 0;
+  rank.exceedsLimit = rank.exceedsLimit || state.projectedExcess > 0;
   return success();
 }
 
@@ -462,6 +466,49 @@ static bool isBetterCandidate(const RankedCandidate &lhs,
   return lhs.candidate->originalIndex < rhs.candidate->originalIndex;
 }
 
+struct CandidateSelection {
+  const RankedCandidate *selected = nullptr;
+  const RankedCandidate *runnerUp = nullptr;
+};
+
+static FailureOr<CandidateSelection>
+selectCandidates(const VPTOScheduleContext &context,
+                 const RankingContext &rankingContext,
+                 ArrayRef<RankedCandidate> ranks, std::string &detail) {
+  if (ranks.empty()) {
+    detail = "strategy produced no ranked candidates";
+    return failure();
+  }
+  bool hasPressureClosure = context.closurePressureSet.has_value();
+  CandidateSelection selection;
+  selection.selected = &ranks.front();
+  for (const RankedCandidate &rank : llvm::drop_begin(ranks)) {
+    if (isBetterCandidate(rank, *selection.selected,
+                          rankingContext.hasNearLimitPressure,
+                          rankingContext.hasHighPressure,
+                          hasPressureClosure)) {
+      selection.selected = &rank;
+    }
+  }
+
+  for (const RankedCandidate &rank : ranks) {
+    if (&rank == selection.selected) {
+      continue;
+    }
+    if (!selection.runnerUp) {
+      selection.runnerUp = &rank;
+      continue;
+    }
+    if (isBetterCandidate(rank, *selection.runnerUp,
+                          rankingContext.hasNearLimitPressure,
+                          rankingContext.hasHighPressure,
+                          hasPressureClosure)) {
+      selection.runnerUp = &rank;
+    }
+  }
+  return selection;
+}
+
 static StringRef getBasePressureReason(const RankedCandidate &selected,
                                        const RankedCandidate &runnerUp) {
   if (selected.exceedsLimit != runnerUp.exceedsLimit) {
@@ -598,36 +645,21 @@ VPTODefaultSchedStrategy::pickCandidate(const VPTOScheduleContext &context,
     ranks.push_back(*rank);
   }
 
-  const RankedCandidate *selected = &ranks.front();
-  for (const RankedCandidate &rank : llvm::drop_begin(ranks)) {
-    if (isBetterCandidate(rank, *selected,
-                          rankingContext->hasNearLimitPressure,
-                          rankingContext->hasHighPressure,
-                          context.closurePressureSet.has_value())) {
-      selected = &rank;
-    }
+  FailureOr<CandidateSelection> selection =
+      selectCandidates(context, *rankingContext, ranks, detail);
+  if (failed(selection)) {
+    return failure();
   }
 
-  const RankedCandidate *runnerUp = nullptr;
-  for (const RankedCandidate &rank : ranks) {
-    if (&rank == selected) {
-      continue;
-    }
-    if (!runnerUp || isBetterCandidate(rank, *runnerUp,
-                                       rankingContext->hasNearLimitPressure,
-                                       rankingContext->hasHighPressure,
-                                       context.closurePressureSet.has_value())) {
-      runnerUp = &rank;
-    }
+  StringRef reason = "only-candidate";
+  if (selection->runnerUp) {
+    reason = getDecisionReason(
+        *selection->selected, *selection->runnerUp,
+        rankingContext->hasNearLimitPressure,
+        rankingContext->hasHighPressure,
+        context.closurePressureSet.has_value());
   }
-
-  StringRef reason = runnerUp ? getDecisionReason(
-                                    *selected, *runnerUp,
-                                    rankingContext->hasNearLimitPressure,
-                                    rankingContext->hasHighPressure,
-                                    context.closurePressureSet.has_value())
-                              : StringRef("only-candidate");
-  const VPTOSchedCandidate &candidate = *selected->candidate;
+  const VPTOSchedCandidate &candidate = *selection->selected->candidate;
   return VPTOSchedDecision{candidate.unit, candidate.direction,
                            candidate.issueCycle, reason.str()};
 }

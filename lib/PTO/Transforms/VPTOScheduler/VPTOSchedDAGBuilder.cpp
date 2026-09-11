@@ -319,7 +319,9 @@ getOperationOffsetBytes(const PTOAddressExpr &address, int64_t scale) {
     return failure();
   }
   int64_t coefficient;
-  if (llvm::MulOverflow(scale, *address.offset->unitBytes, coefficient)) {
+  bool overflow =
+      llvm::MulOverflow(scale, *address.offset->unitBytes, coefficient) != 0;
+  if (overflow) {
     return failure();
   }
   PTOTypedExprRef offset =
@@ -378,9 +380,9 @@ static std::optional<IntegerRange>
 addDisplacement(int64_t address, const IntegerRange &displacement) {
   IntegerRange result;
   if (llvm::AddOverflow(address, displacement.lowerInclusive,
-                        result.lowerInclusive) ||
+                        result.lowerInclusive) != 0 ||
       llvm::AddOverflow(address, displacement.upperInclusive,
-                        result.upperInclusive)) {
+                        result.upperInclusive) != 0) {
     return std::nullopt;
   }
   return result;
@@ -414,13 +416,13 @@ static LogicalResult accumulateAddPtrDisplacement(AddPtrOp addPtr,
   int64_t maximumByteOffset = 0;
   return failure(
       llvm::MulOverflow(elementOffset->lowerInclusive, *elementByteSize,
-                        minimumByteOffset) ||
+                        minimumByteOffset) != 0 ||
       llvm::MulOverflow(elementOffset->upperInclusive, *elementByteSize,
-                        maximumByteOffset) ||
+                        maximumByteOffset) != 0 ||
       llvm::AddOverflow(displacement.lowerInclusive, minimumByteOffset,
-                        displacement.lowerInclusive) ||
+                        displacement.lowerInclusive) != 0 ||
       llvm::AddOverflow(displacement.upperInclusive, maximumByteOffset,
-                        displacement.upperInclusive));
+                        displacement.upperInclusive) != 0);
 }
 
 static std::optional<IntegerRange> getPointerAddressRange(Value value) {
@@ -500,9 +502,10 @@ static void resolveAbsoluteByteRange(ResolvedMemoryAccess &access) {
   bool overflow =
       llvm::AddOverflow(pointerRange->lowerInclusive,
                         *access.semantics.byteOffset,
-                        byteRange.lowerInclusive) ||
+                        byteRange.lowerInclusive) != 0 ||
       llvm::AddOverflow(pointerRange->upperInclusive,
-                        *access.semantics.byteOffset, byteRange.upperInclusive);
+                        *access.semantics.byteOffset,
+                        byteRange.upperInclusive) != 0;
   if (overflow) {
     return;
   }
@@ -563,7 +566,7 @@ getExactDifferenceOverlap(const ResolvedMemoryAccess &lhs,
   std::optional<int64_t> rhsBegin = getExactByteDifference(lhs, rhs);
   int64_t rhsEnd = 0;
   if (!rhsBegin ||
-      llvm::AddOverflow(*rhsBegin, *rhs.semantics.byteSize, rhsEnd)) {
+      llvm::AddOverflow(*rhsBegin, *rhs.semantics.byteSize, rhsEnd) != 0) {
     return std::nullopt;
   }
   return *rhsBegin < *lhs.semantics.byteSize && rhsEnd > 0;
@@ -577,10 +580,11 @@ static bool hasDisjointAbsoluteRanges(const ResolvedMemoryAccess &lhs,
   }
   int64_t lhsLatestEnd = 0;
   int64_t rhsLatestEnd = 0;
-  bool overflow = llvm::AddOverflow(lhs.absoluteByteRange->upperInclusive,
-                                    *lhs.semantics.byteSize, lhsLatestEnd) ||
-                  llvm::AddOverflow(rhs.absoluteByteRange->upperInclusive,
-                                    *rhs.semantics.byteSize, rhsLatestEnd);
+  bool overflow =
+      llvm::AddOverflow(lhs.absoluteByteRange->upperInclusive,
+                        *lhs.semantics.byteSize, lhsLatestEnd) != 0 ||
+      llvm::AddOverflow(rhs.absoluteByteRange->upperInclusive,
+                        *rhs.semantics.byteSize, rhsLatestEnd) != 0;
   return !overflow && (lhsLatestEnd <= rhs.absoluteByteRange->lowerInclusive ||
                        rhsLatestEnd <= lhs.absoluteByteRange->lowerInclusive);
 }
@@ -594,8 +598,8 @@ static std::optional<bool> getOffsetOverlap(std::optional<int64_t> lhsOffset,
   }
   int64_t lhsEnd = 0;
   int64_t rhsEnd = 0;
-  bool overflow = llvm::AddOverflow(*lhsOffset, *lhsSize, lhsEnd) ||
-                  llvm::AddOverflow(*rhsOffset, *rhsSize, rhsEnd);
+  bool overflow = llvm::AddOverflow(*lhsOffset, *lhsSize, lhsEnd) != 0 ||
+                  llvm::AddOverflow(*rhsOffset, *rhsSize, rhsEnd) != 0;
   if (overflow) {
     return std::nullopt;
   }
@@ -659,7 +663,8 @@ getMemoryRange(std::optional<int64_t> byteOffset,
     return std::nullopt;
   }
   int64_t end;
-  if (llvm::AddOverflow(*byteOffset, *byteSize, end)) {
+  bool overflow = llvm::AddOverflow(*byteOffset, *byteSize, end) != 0;
+  if (overflow) {
     return std::nullopt;
   }
   return MemoryRange{*byteOffset, end};
@@ -686,8 +691,8 @@ static bool containsMemoryRange(const ResolvedMemoryAccess &prior,
     if (std::optional<int64_t> priorBegin =
             getExactByteDifference(current, prior)) {
       int64_t priorEnd;
-      if (!llvm::AddOverflow(*priorBegin, *prior.semantics.byteSize,
-                             priorEnd) &&
+      if (llvm::AddOverflow(*priorBegin, *prior.semantics.byteSize,
+                            priorEnd) == 0 &&
           *priorBegin >= 0 && priorEnd <= *current.semantics.byteSize) {
         return true;
       }
@@ -792,7 +797,7 @@ collectResolvedMemoryAccesses(const VPTOSchedDAG &dag,
 }
 
 static void
-updateMemoryFrontier(SmallVectorImpl<FrontierAccess> &frontier, VPTOSUnit &unit,
+updateMemoryFrontier(SmallVectorImpl<FrontierAccess> &frontier, VPTOSUnit *unit,
                      ArrayRef<ResolvedMemoryAccess> currentAccesses) {
   llvm::erase_if(frontier, [&](const FrontierAccess &prior) {
     return llvm::any_of(
@@ -801,7 +806,7 @@ updateMemoryFrontier(SmallVectorImpl<FrontierAccess> &frontier, VPTOSUnit &unit,
         });
   });
   for (const ResolvedMemoryAccess &current : currentAccesses) {
-    frontier.push_back({&unit, current});
+    frontier.push_back({unit, current});
   }
 }
 
@@ -962,7 +967,9 @@ LogicalResult VPTOSchedDAGBuilder::buildMemoryEdges(
     }
   }
 
-  auto consume = [&](uint64_t amount) { return consumeWork(failure, amount); };
+  auto consume = [this, &failure](uint64_t amount) {
+    return consumeWork(failure, amount);
+  };
   auto resolved =
       collectResolvedMemoryAccesses(dag, addressAnalysis.get(), consume);
   if (failed(resolved)) {
@@ -978,7 +985,7 @@ LogicalResult VPTOSchedDAGBuilder::buildMemoryEdges(
     }
     VPTOSUnit *unit = dag.getUnits()[unitIndex].get();
     SmallPtrSet<VPTOSUnit *, 8> predecessors;
-    auto consumeOne = [&]() { return consumeWork(failure); };
+    auto consumeOne = [this, &failure]() { return consumeWork(failure); };
     if (failed(collectMemoryPredecessors(frontier, currentAccesses, consumeOne,
                                          predecessors))) {
       return mlir::failure();
@@ -999,7 +1006,7 @@ LogicalResult VPTOSchedDAGBuilder::buildMemoryEdges(
     // an edge but cannot remove the old entry: a future access may touch only
     // the uncovered portion. Read-only accesses remain side by side until a
     // later closing access safely subsumes them.
-    updateMemoryFrontier(frontier, *unit, currentAccesses);
+    updateMemoryFrontier(frontier, unit, currentAccesses);
   }
   return success();
 }
@@ -1012,8 +1019,10 @@ LogicalResult VPTOSchedDAGBuilder::buildImplicitAndSyncEdges(
 
   for (const std::unique_ptr<VPTOSUnit> &unitOwner : dag.getUnits()) {
     VPTOSUnit &unit = *unitOwner;
-    auto add = [&](VPTOSUnit &predecessor, VPTOSUnit &successor,
-                   VPTOSchedEdgeKind kind, unsigned latency, Twine reason) {
+    auto add = [this, &dag, &failure](VPTOSUnit &predecessor,
+                                      VPTOSUnit &successor,
+                                      VPTOSchedEdgeKind kind, unsigned latency,
+                                      Twine reason) {
       return addEdge(dag, predecessor, successor, kind,
                      VPTOSchedEdgeStrength::Must, latency, reason, failure);
     };
@@ -1070,9 +1079,10 @@ LogicalResult VPTOSchedDAGBuilder::buildSSAEdges(
   Operation *lastRegionOperation = dag.getRegion().operations.back();
   for (const std::unique_ptr<VPTOSUnit> &unitOwner : dag.getUnits()) {
     VPTOSUnit &unit = *unitOwner;
-    auto consume = [&]() { return consumeWork(failure); };
-    auto add = [&](VPTOSUnit &predecessor, VPTOSUnit &successor,
-                   unsigned latency, Twine reason) {
+    auto consume = [this, &failure]() { return consumeWork(failure); };
+    auto add = [this, &dag, &failure](VPTOSUnit &predecessor,
+                                      VPTOSUnit &successor, unsigned latency,
+                                      Twine reason) {
       return addEdge(dag, predecessor, successor, VPTOSchedEdgeKind::Data,
                      VPTOSchedEdgeStrength::Must, latency, reason, failure);
     };
