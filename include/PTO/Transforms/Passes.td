@@ -1371,13 +1371,24 @@ def VPTOScheduler : Pass<"pto-vpto-scheduler", "ModuleOp"> {
     retains verified pressure-driven advancement when all ready candidates
     exceed a limit. Validation and fresh replay precede application of each
     verified result.
+    The opt-in `rematerialize` path runs that scheduler first, then considers
+    only over-limit regions for bounded cloning of loop-carried cheap producer
+    DAGs approved by the target scheduling model. It limits recursive vector
+    predecessor depth, groups nearby equivalent consumers, accounts for static
+    loop trip counts, anchors clones near their first use, rebuilds all
+    scheduling analyses, and runs the scheduler once more. The first schedule
+    is restored if the second schedule fails or does not reduce modeled vector
+    pressure.
   }];
   let constructor = "mlir::pto::createVPTOSchedulerPass()";
   let options = [
     Option<"mode", "mode", "std::string", "\"off\"",
            "Scheduler mode: off, analyze, or on">,
     Option<"trace", "trace", "bool", "false",
-           "Print detailed on-mode schedule results">
+           "Print detailed on-mode schedule results">,
+    Option<"rematerialize", "rematerialize", "bool", "false",
+           "Enable one bounded high-pressure rematerialization and reschedule step; "
+           "ptoas exposes this pass option as --vpto-scheduler-remat">
   ];
   let dependentDialects = ["mlir::func::FuncDialect",
                            "mlir::pto::PTODialect",

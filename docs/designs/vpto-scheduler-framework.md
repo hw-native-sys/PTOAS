@@ -93,13 +93,35 @@ Pass 会先找出函数中的所有 vecscope。处理一个 vecscope 时，它�
 
 Pass 自身默认 `off`。`ptoas` driver 的默认行为是：
 
-- A5 且没有显式传递 `--vpto-scheduler`：使用 `on`；
+- A5 且没有显式传递 `--vpto-scheduler`：使用 `on`，并在没有显式传递 `--vpto-scheduler-remat` 时启用高压重物化；
 - 其他架构且没有显式传递该选项：使用 `off`；
 - 显式指定 `off`、`analyze` 或 `on` 时，以用户选择为准。
 
 `on` 默认只报告跳过调度的情况。`--vpto-scheduler-trace` 或 Pass 选项 `trace=true` 会先输出与 `analyze` 相同的静态分析报告，再输出最终顺序、逻辑周期、峰值压力和工作量计数；trace 只能配合 `on`。
 
 `--vpto-scheduler=on` 与 `--enable-bisheng-vec-misched` 可以同时配置：前者在 VPTO IR 层应用调度结果，后者在 device object 编译阶段保留 Bisheng 默认的 vector MI scheduler 行为。`analyze` 不修改 IR，也可以与 Bisheng vector MISched 同时配置。
+
+### 可选的高压重物化
+
+`--vpto-scheduler-remat` 是 `ptoas` driver 的命令行名称，对应 `pto-vpto-scheduler` Pass 的 `rematerialize=true` 选项。独立 Pass 选项默认关闭；`ptoas` driver 在 A5 的有效 scheduler 模式为 `on` 且用户没有显式设置 remat 选项时默认启用，可用 `--vpto-scheduler-remat=false` 单独关闭。启用后，每个函数执行一次“首次调度 → 高压分析 → 有界重物化 → 完整重建 DAG/存活性/压力信息 → 第二次调度”；不会循环尝试，也不会切换到 `off`。
+
+“高压”严格定义为首次调度后的静态 vector 峰值大于 A5 模型的 vector limit 32。启用 remat 后每个函数都会完成首次调度和压力分析，但只有至少一个调度区间满足 `vector peak > 32` 才会克隆候选并进入第二次调度；predicate limit 7 参与普通调度的压力策略和 transaction 最终验收，但 predicate 超限本身不会触发当前仅处理 vector 值的 remat。规划目标为 `limit - 1`，给后续临时值保留一个静态 headroom；该预测只用于候选选择和排序，Planner 在预算耗尽或没有更多候选时仍会把已选出的部分方案交给二次调度，由重新计算的实际模型压力决定是否提交，不代表 Bisheng 已产生或消除了真实 spill。
+
+候选首先通过 `VPTOSchedModel::isCheapToRematerialize` 查询目标是否认可其单操作复制成本；A5 当前保守认可 `vbr`、`vdup`、`vci`、`vmuls`、`vadds`、`vmaxs` 和 `vmins`，而不是在 remat 实现中匹配某条固定链。通过目标门槛后，从循环携带的 vector 值沿 vector-pressure producer 递归构造 DAG，要求每层 producer 同样得到目标认可、无 region、单结果、pure 且具有已知 sched class；vector block argument 可以作为外部叶子，scalar 和 mask operand 不被复制但必须支配每个插入点。这样 `vci → vadds` 仍是合法特例，也可以处理其他满足同一规则的 cheap 链；load、随机值、同步、原子、store、高代价计算和未知 trip count 循环均不会进入 recipe。
+
+同一值在循环外的其他使用也必须局部重物化，该类消费组的动态倍数按 1 计；从而所有消费者替换后才能删除循环外的长寿命原定义。实现按拓扑序克隆 recipe 操作并复用其原有外部 operand，因此保留 scalar offset、mask、inactive-lane 和执行上下文。每个替换点还要通过 dominance 检查，候选存在任何未覆盖 use 时会整体拒绝。
+
+同一指令类型、原始位置间隔不超过 64 且最多两个 use 的邻近消费者共享一个局部 clone。每个候选最多四组；一次函数规划最多选择 16 个候选、克隆 96 个操作。候选本身记为深度 0，vector producer 前驱最多递归两层，因此单链最多包含三个操作；分支 DAG 的实际操作数计入 clone 预算。新增动态 micro-op 按 recipe 操作数乘每个消费组穿越循环的静态 trip count（未穿越则为 1）估算，且总量不得超过 2048。候选先比较仍需降压的覆盖区域数和 live-range 覆盖收益；两者相同时，优先选择能够让更多原 recipe 操作变为无用户的候选，从而识别“补全最后一个用户后可同时删除共享 cheap 前驱”的边际收益；最后优先较低动态成本。这些常量是防止代码膨胀和分析失控的保守预算，不是硬件性能结论。
+
+重物化 transaction 在第二次调度验收前保留原定义、原 use 和首次调度后的操作顺序。克隆完成后先验证完整函数 IR，验证失败会回滚 transaction 并令 Pass 失败，不会把无效中间 IR 交给第二次调度。第二次 DAG 对每组局部 recipe 的第一个 clone 增加只存在于本次 transaction 的 Must cluster anchor，防止调度器把整条计算重新提前到消费区间入口；该信息不写入 IR attribute。只有第二次调度成功、重新计算的函数最大静态 vector 峰值低于首次调度结果，且所有具有模型上限的压力集最终都不超限时才提交；压力集在上限以内的增长不会导致回滚。提交按逆拓扑顺序清理已死原定义及因原定义删除而失去最后一个用户的 transaction-local clone，否则恢复全部 use、删除 clone，并恢复首次调度顺序。操作顺序快照只记录基本块内顺序，因为当前调度区间及 `applyVPTOScheduleResult` 都不会跨基本块移动操作。
+
+trace 使用 `remat-region`、`remat-candidate`、`remat-select`、`remat-partial-plan`、`remat-summary` 和 `remat-result` 记录触发区间、候选拒绝原因、未完全达到估算目标的部分方案、消费分组、clone 数、估计动态成本、压力前后变化与第二次调度结果。降低的是模型压力；是否改善 RA spill、SMEM_BAR 或执行周期必须通过同工具链的 Bisheng 与 CA-model A/B 验证。
+
+### Issue #1446 性能验证来源
+
+仓库内 lit 用例保护的是触发条件、候选合法性、预算、transaction 提交/回滚以及模型压力变化，不把硬件 ticks 当作稳定的文本断言。Issue #1446 的端到端用例来自外部 fixture 提交 [`48b1af0dbd14fd0bb47e4176aa1c1cbef90705e6`](https://github.com/WenboCodes/tilelang-deepseek/commit/48b1af0dbd14fd0bb47e4176aa1c1cbef90705e6)，测试形状固定为 `vmi_w128, T=4, E=768, K=9, token_tile=2, sms=1, A5/dav_3510, CANN 9.1.0-beta.3`。复现命令为 `PTO_FLAGS='--pto-backend=vpto --pto-level=level3 --cann-output-version=9.1.0-beta.3 --vpto-scheduler=on --vpto-scheduler-remat' python run_topk_gate_msprof.py --kernel vmi_w128 --tokens 4 --experts 768 --topk 9 --sms 1 --token-tile 2 --compile-only --so /tmp/topk_e768_g2_sched_on.so`；对照组只移除 `--vpto-scheduler-remat`，并使用相同 PTOAS、Bisheng、CA-model、输入数据和 profiler 配置。
+
+该外部 A/B 的留档结果是：`scheduler=on, remat=off` 在 Bisheng 中因 VF stack `8224 > 6144` 编译失败；`scheduler=on, remat=on` 编译及严格 CA 比较通过，静态 vector 峰值由 36 降至 32，主 VF 周期由 13281 降至 6412，降幅为 51.72%。这些数值是指定 fixture 和工具链的测量证据，不是通用性能保证；变更 scheduler 模型、remat 白名单或默认开关后，应使用上述完整 A/B 重新测量并记录工具链版本。
 
 ## 整体结构
 
@@ -698,6 +720,7 @@ SemanticVerification, ModelReplay, Apply
 - 模型未知、预算超限和内部检查失败只影响当前调度区间；
 - 静态报告使用独立预算，打开报告不会改变 `on` 的调度预算和结果；
 - 逻辑周期、压力代价和预算计算都有整数溢出或上限检查。
+- 可选重物化只提交通过中间 IR 验证、第二次调度且确实降低静态 vector 峰值的 transaction；验证失败令 Pass 失败，其余验收失败恢复首次调度结果。
 
 当前实现限制：
 
@@ -708,7 +731,7 @@ SemanticVerification, ModelReplay, Apply
 - pressure-driven idle 只在所有当前候选都会增加已知有界集合的压力风险时触发，仍依赖当前未校准的逻辑 latency，不代表真实硬件空转周期；
 - 多用户 closure group 当前每轮只评价最早的一个低 fan-out bundle，并使用 8 个直接用户和 96 个模拟节点的固定上限；
 - 不支持跨基本块调度、双向调度、指令捆绑/配对、bank conflict、NOP、软件流水或 Cube kernel 调度；
-- 修改 IR 时没有独立事务回滚，因为当前移动操作不可失败；
+- 普通单次调度的操作移动仍不需要独立 transaction；可选重物化路径会保存首次调度顺序，并对 clone 和 use 替换执行显式 rollback；
 - 不设置额外的收益门槛；新顺序合法且通过重放就会应用，即使新旧顺序相同也允许执行移动流程。
 
 ## 测试覆盖
@@ -725,6 +748,11 @@ SemanticVerification, ModelReplay, Apply
 | `vpto_scheduler_generic_op_coverage.pto` | vcvt/vmul/vdiv/vexp/vmula/vcadd 等通用 Vector micro-op 使用统一 sched class，on 不因 opcode 未登记而跳过 region |
 | `vpto_scheduler_multi_user_closure.pto` | near-limit 多用户 predicate closure group 可接受安全的瞬时压力增加，并在打开无关 producer 前关闭完整 fan-out live range |
 | `vpto_scheduler_trackers.pto` | live-through 与无上限 pressure、near-limit/closure-group/低压力/紧急 critical-path/tie-break 策略、Predicate limit 7、无 pending 进展、非法 idle replay、独立 top/bottom Boundary、fan-out commit 原子预算、pending cycle buckets、verify/replay、随机 DAG differential test |
+| `vpto_scheduler_rematerialization.pto` | 超限触发、两层前驱的通用 cheap recipe clone、原定义清理、静态压力下降、load 目标成本排除和低压力不触发 |
+| `vpto_scheduler_rematerialization_legality.pto` | 超过两层 vector producer 前驱、高代价 `vexp`、未覆盖 use 和未知动态循环 trip count 的候选拒绝 |
+| `vpto_scheduler_rematerialization_budget.pto` | 候选数预算不足时拒绝整项计划并保持原 IR |
+| `vpto_scheduler_rematerialization_rollback.pto` | 第二次调度成功但峰值未下降时回滚 clone/use，并恢复首次调度后的原定义和顺序 |
+| `vpto_scheduler_rematerialization_pressure_sets.pto` | vector 压力下降但 predicate 压力上升时拒绝并回滚 transaction |
 | `bisheng_vec_misched_cli.pto` | Bisheng vector MISched 选项存在性 |
 
 随机 DAG differential test 使用 8 个固定 seed，覆盖完整 permutation、Must edge、ready cycle、独立 pressure oracle、decision metadata、非法结果拒绝、精确/不足预算以及最终 apply 顺序。

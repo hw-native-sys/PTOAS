@@ -57,6 +57,9 @@ FailureOr<std::unique_ptr<VPTOSchedDAG>> VPTOSchedDAGBuilder::build(
   if (failed(buildImplicitAndSyncEdges(*dag, failure))) {
     return mlir::failure();
   }
+  if (failed(buildRematerializationClusterEdges(*dag, failure))) {
+    return mlir::failure();
+  }
   if (failed(buildModelFallbackEdges(*dag, failure))) {
     return mlir::failure();
   }
@@ -1060,6 +1063,25 @@ LogicalResult VPTOSchedDAGBuilder::buildImplicitAndSyncEdges(
                                        add))) {
         return mlir::failure();
       }
+    }
+  }
+  return success();
+}
+
+LogicalResult VPTOSchedDAGBuilder::buildRematerializationClusterEdges(
+    VPTOSchedDAG &dag, VPTOScheduleFailure &failure) const {
+  ArrayRef<std::unique_ptr<VPTOSUnit>> units = dag.getUnits();
+  for (size_t index = 1; index < units.size(); ++index) {
+    VPTOSUnit &current = *units[index];
+    if (!rematerializationAnchors ||
+        !rematerializationAnchors->contains(current.getOperation())) {
+      continue;
+    }
+    if (failed(addEdge(dag, *units[index - 1], current,
+                       VPTOSchedEdgeKind::Cluster,
+                       VPTOSchedEdgeStrength::Must, /*latency=*/0,
+                       "keep rematerialized chain near its use", failure))) {
+      return mlir::failure();
     }
   }
   return success();

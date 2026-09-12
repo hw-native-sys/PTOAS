@@ -16,6 +16,7 @@
 #include "PTO/Transforms/VPTOScheduler/VPTOScheduler.h"
 
 #include "mlir/Support/LLVM.h"
+#include "llvm/ADT/DenseSet.h"
 
 #include <memory>
 
@@ -27,8 +28,11 @@ public:
       : model(model) {}
   VPTOSchedDAGBuilder(const VPTOSchedModel *model,
                       const VPTOSchedulerLimits &limits,
-                      VPTOSchedulingBudget &budget)
-      : model(model), limits(&limits), budget(&budget) {}
+                      VPTOSchedulingBudget &budget,
+                      const llvm::DenseSet<Operation *> *rematerializationAnchors =
+                          nullptr)
+      : model(model), limits(&limits), budget(&budget),
+        rematerializationAnchors(rematerializationAnchors) {}
 
   FailureOr<std::unique_ptr<VPTOSchedDAG>>
   build(const VPTOSchedRegion &region) const;
@@ -43,6 +47,8 @@ private:
                                  VPTOScheduleFailure &failure) const;
   LogicalResult buildImplicitAndSyncEdges(
       VPTOSchedDAG &dag, VPTOScheduleFailure &failure) const;
+  LogicalResult buildRematerializationClusterEdges(
+      VPTOSchedDAG &dag, VPTOScheduleFailure &failure) const;
   LogicalResult buildModelFallbackEdges(
       VPTOSchedDAG &dag, VPTOScheduleFailure &failure) const;
   LogicalResult addEdge(VPTOSchedDAG &dag, VPTOSUnit &predecessor,
@@ -55,6 +61,7 @@ private:
   const VPTOSchedModel *model;
   const VPTOSchedulerLimits *limits = nullptr;
   VPTOSchedulingBudget *budget = nullptr;
+  const llvm::DenseSet<Operation *> *rematerializationAnchors = nullptr;
 };
 
 } // namespace mlir::pto

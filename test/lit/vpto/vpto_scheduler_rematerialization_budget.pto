@@ -1,0 +1,136 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s '-pto-vpto-scheduler=mode=on trace=true rematerialize=true' > %t 2> %t.trace
+// RUN: FileCheck %s --check-prefix=IR < %t
+// RUN: FileCheck %s --check-prefix=TRACE < %t.trace
+
+// IR-LABEL: func.func @remat_candidate_budget
+// IR: pto.vci
+// IR-COUNT-48: pto.vadds
+// IR: scf.for
+// IR-NOT: pto.vci
+
+// TRACE: vpto-scheduler: remat-partial-plan reason=insufficient-estimated-relief selected=16 clones=32 dynamic-micro-ops=64
+// TRACE: vpto-scheduler: remat-summary function=remat_candidate_budget changed=true high-regions=2 selected=16 groups=16 clones=32 dynamic-micro-ops=64
+// TRACE: vpto-scheduler: remat-result function=remat_candidate_budget accepted=false initial-peak=48 final-peak=33 second-schedule=success
+// TRACE-SAME: pressure-over-limit=vector
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @remat_candidate_budget() {
+    %zero = arith.constant 0 : i32
+    %lower = arith.constant 0 : index
+    %upper = arith.constant 2 : index
+    %step = arith.constant 1 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %root = pto.vci %zero : i32 -> !pto.vreg<64xi32>
+      %index0 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index1 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index2 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index3 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index4 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index5 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index6 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index7 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index8 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index9 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index10 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index11 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index12 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index13 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index14 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index15 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index16 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index17 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index18 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index19 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index20 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index21 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index22 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index23 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index24 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index25 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index26 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index27 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index28 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index29 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index30 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index31 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index32 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index33 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index34 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index35 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index36 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index37 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index38 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index39 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index40 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index41 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index42 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index43 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index44 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index45 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index46 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index47 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      scf.for %i = %lower to %upper step %step {
+        %use0 = pto.vcmp %index0, %index0, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use1 = pto.vcmp %index1, %index1, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use2 = pto.vcmp %index2, %index2, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use3 = pto.vcmp %index3, %index3, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use4 = pto.vcmp %index4, %index4, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use5 = pto.vcmp %index5, %index5, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use6 = pto.vcmp %index6, %index6, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use7 = pto.vcmp %index7, %index7, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use8 = pto.vcmp %index8, %index8, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use9 = pto.vcmp %index9, %index9, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use10 = pto.vcmp %index10, %index10, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use11 = pto.vcmp %index11, %index11, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use12 = pto.vcmp %index12, %index12, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use13 = pto.vcmp %index13, %index13, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use14 = pto.vcmp %index14, %index14, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use15 = pto.vcmp %index15, %index15, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use16 = pto.vcmp %index16, %index16, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use17 = pto.vcmp %index17, %index17, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use18 = pto.vcmp %index18, %index18, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use19 = pto.vcmp %index19, %index19, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use20 = pto.vcmp %index20, %index20, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use21 = pto.vcmp %index21, %index21, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use22 = pto.vcmp %index22, %index22, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use23 = pto.vcmp %index23, %index23, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use24 = pto.vcmp %index24, %index24, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use25 = pto.vcmp %index25, %index25, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use26 = pto.vcmp %index26, %index26, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use27 = pto.vcmp %index27, %index27, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use28 = pto.vcmp %index28, %index28, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use29 = pto.vcmp %index29, %index29, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use30 = pto.vcmp %index30, %index30, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use31 = pto.vcmp %index31, %index31, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use32 = pto.vcmp %index32, %index32, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use33 = pto.vcmp %index33, %index33, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use34 = pto.vcmp %index34, %index34, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use35 = pto.vcmp %index35, %index35, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use36 = pto.vcmp %index36, %index36, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use37 = pto.vcmp %index37, %index37, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use38 = pto.vcmp %index38, %index38, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use39 = pto.vcmp %index39, %index39, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use40 = pto.vcmp %index40, %index40, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use41 = pto.vcmp %index41, %index41, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use42 = pto.vcmp %index42, %index42, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use43 = pto.vcmp %index43, %index43, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use44 = pto.vcmp %index44, %index44, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use45 = pto.vcmp %index45, %index45, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use46 = pto.vcmp %index46, %index46, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use47 = pto.vcmp %index47, %index47, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+      }
+    }
+    return
+  }
+}

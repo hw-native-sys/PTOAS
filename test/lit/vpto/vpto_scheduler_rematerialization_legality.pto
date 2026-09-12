@@ -1,0 +1,157 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s '-pto-vpto-scheduler=mode=on trace=true rematerialize=true' > %t 2> %t.trace
+// RUN: FileCheck %s --check-prefix=IR < %t
+// RUN: FileCheck %s --check-prefix=TRACE < %t.trace
+
+// IR-LABEL: func.func @remat_legality
+// IR: pto.vdup
+// IR: pto.vmuls
+// IR: pto.vmuls
+// IR: pto.vmuls
+// IR: pto.vexp
+// IR: scf.for
+// IR-NOT: pto.scheduler_remat_anchor
+
+// TRACE: vpto-scheduler: remat-region
+// TRACE-SAME: peak=34 limit=32 trigger=true
+// TRACE-DAG: vpto-scheduler: remat-candidate id={{[0-9]+}} selected=false reason=producer-depth-limit
+// TRACE-DAG: vpto-scheduler: remat-candidate id={{[0-9]+}} selected=false reason=target-cost-rejected
+// TRACE-DAG: vpto-scheduler: remat-candidate id={{[0-9]+}} selected=false reason=uncovered-use
+// TRACE-DAG: vpto-scheduler: remat-candidate id={{[0-9]+}} selected=false reason=unknown-loop-cost
+// TRACE: vpto-scheduler: remat-summary function=remat_legality changed=false reason=no-budgeted-plan
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @remat_legality(
+      %x0: !pto.vreg<64xf32>,
+      %x1: !pto.vreg<64xf32>,
+      %x2: !pto.vreg<64xf32>,
+      %x3: !pto.vreg<64xf32>,
+      %x4: !pto.vreg<64xf32>,
+      %x5: !pto.vreg<64xf32>,
+      %x6: !pto.vreg<64xf32>,
+      %x7: !pto.vreg<64xf32>,
+      %x8: !pto.vreg<64xf32>,
+      %x9: !pto.vreg<64xf32>,
+      %x10: !pto.vreg<64xf32>,
+      %x11: !pto.vreg<64xf32>,
+      %x12: !pto.vreg<64xf32>,
+      %x13: !pto.vreg<64xf32>,
+      %x14: !pto.vreg<64xf32>,
+      %x15: !pto.vreg<64xf32>,
+      %x16: !pto.vreg<64xf32>,
+      %x17: !pto.vreg<64xf32>,
+      %x18: !pto.vreg<64xf32>,
+      %x19: !pto.vreg<64xf32>,
+      %x20: !pto.vreg<64xf32>,
+      %x21: !pto.vreg<64xf32>,
+      %x22: !pto.vreg<64xf32>,
+      %x23: !pto.vreg<64xf32>,
+      %x24: !pto.vreg<64xf32>,
+      %x25: !pto.vreg<64xf32>,
+      %x26: !pto.vreg<64xf32>,
+      %x27: !pto.vreg<64xf32>,
+      %x28: !pto.vreg<64xf32>,
+      %x29: !pto.vreg<64xf32>,
+      %x30: !pto.vreg<64xf32>,
+      %dynamic_upper: index,
+      %condition: i1) {
+    %one = arith.constant 1.0 : f32
+    %lower = arith.constant 0 : index
+    %upper = arith.constant 2 : index
+    %step = arith.constant 1 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %root = pto.vdup %one, %mask : f32, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %chain1 = pto.vmuls %root, %one, %mask : !pto.vreg<64xf32>, f32, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %chain2 = pto.vmuls %chain1, %one, %mask : !pto.vreg<64xf32>, f32, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %deep = pto.vmuls %chain2, %one, %mask : !pto.vreg<64xf32>, f32, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %expensive = pto.vexp %x0, %mask : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %uncovered = pto.vdup %one, %mask : f32, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %passthrough = scf.if %condition -> (!pto.vreg<64xf32>) {
+        scf.yield %uncovered : !pto.vreg<64xf32>
+      } else {
+        scf.yield %uncovered : !pto.vreg<64xf32>
+      }
+      scf.for %i = %lower to %upper step %step {
+        %probe = pto.vcmp %deep, %expensive, %mask, "eq" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.mask<b32>
+        %uncovered_probe = pto.vcmp %uncovered, %uncovered, %mask, "eq" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.mask<b32>
+        %score0 = pto.vmax %x0, %x0, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %score1 = pto.vmax %x1, %x1, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %score2 = pto.vmax %x2, %x2, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %score3 = pto.vmax %x3, %x3, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %score4 = pto.vmax %x4, %x4, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %score5 = pto.vmax %x5, %x5, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %score6 = pto.vmax %x6, %x6, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %score7 = pto.vmax %x7, %x7, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %score8 = pto.vmax %x8, %x8, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %score9 = pto.vmax %x9, %x9, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %score10 = pto.vmax %x10, %x10, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %score11 = pto.vmax %x11, %x11, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %score12 = pto.vmax %x12, %x12, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %score13 = pto.vmax %x13, %x13, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %score14 = pto.vmax %x14, %x14, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %score15 = pto.vmax %x15, %x15, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %score16 = pto.vmax %x16, %x16, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %score17 = pto.vmax %x17, %x17, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %score18 = pto.vmax %x18, %x18, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %score19 = pto.vmax %x19, %x19, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %score20 = pto.vmax %x20, %x20, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %score21 = pto.vmax %x21, %x21, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %score22 = pto.vmax %x22, %x22, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %score23 = pto.vmax %x23, %x23, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %score24 = pto.vmax %x24, %x24, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %score25 = pto.vmax %x25, %x25, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %score26 = pto.vmax %x26, %x26, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %score27 = pto.vmax %x27, %x27, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %score28 = pto.vmax %x28, %x28, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %score29 = pto.vmax %x29, %x29, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %score30 = pto.vmax %x30, %x30, %probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      }
+      %dynamic_candidate = pto.vdup %one, %mask : f32, !pto.mask<b32> -> !pto.vreg<64xf32>
+      scf.for %i = %lower to %dynamic_upper step %step {
+        %dynamic_probe = pto.vcmp %dynamic_candidate, %deep, %mask, "eq" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.mask<b32>
+        %dynamic_score0 = pto.vmax %x0, %x0, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %dynamic_score1 = pto.vmax %x1, %x1, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %dynamic_score2 = pto.vmax %x2, %x2, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %dynamic_score3 = pto.vmax %x3, %x3, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %dynamic_score4 = pto.vmax %x4, %x4, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %dynamic_score5 = pto.vmax %x5, %x5, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %dynamic_score6 = pto.vmax %x6, %x6, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %dynamic_score7 = pto.vmax %x7, %x7, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %dynamic_score8 = pto.vmax %x8, %x8, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %dynamic_score9 = pto.vmax %x9, %x9, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %dynamic_score10 = pto.vmax %x10, %x10, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %dynamic_score11 = pto.vmax %x11, %x11, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %dynamic_score12 = pto.vmax %x12, %x12, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %dynamic_score13 = pto.vmax %x13, %x13, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %dynamic_score14 = pto.vmax %x14, %x14, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %dynamic_score15 = pto.vmax %x15, %x15, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %dynamic_score16 = pto.vmax %x16, %x16, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %dynamic_score17 = pto.vmax %x17, %x17, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %dynamic_score18 = pto.vmax %x18, %x18, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %dynamic_score19 = pto.vmax %x19, %x19, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %dynamic_score20 = pto.vmax %x20, %x20, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %dynamic_score21 = pto.vmax %x21, %x21, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %dynamic_score22 = pto.vmax %x22, %x22, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %dynamic_score23 = pto.vmax %x23, %x23, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %dynamic_score24 = pto.vmax %x24, %x24, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %dynamic_score25 = pto.vmax %x25, %x25, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %dynamic_score26 = pto.vmax %x26, %x26, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %dynamic_score27 = pto.vmax %x27, %x27, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %dynamic_score28 = pto.vmax %x28, %x28, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %dynamic_score29 = pto.vmax %x29, %x29, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %dynamic_score30 = pto.vmax %x30, %x30, %dynamic_probe : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      }
+    }
+    return
+  }
+}

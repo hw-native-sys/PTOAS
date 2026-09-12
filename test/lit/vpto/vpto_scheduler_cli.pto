@@ -11,8 +11,11 @@
 // RUN: ptoas --vpto-scheduler=analyze --help > /dev/null
 // RUN: ptoas --vpto-scheduler=on --help > /dev/null
 // RUN: ptoas --vpto-scheduler-trace --help > /dev/null
+// RUN: ptoas --vpto-scheduler-remat --help > /dev/null
 // RUN: not ptoas --vpto-scheduler=invalid %s -o %t 2>&1 | FileCheck %s --check-prefix=INVALID
 // RUN: not pto-test-opt %s '-pto-vpto-scheduler=mode=analyze' 2>&1 | FileCheck %s --check-prefix=MISSING-TARGET
+// RUN: not pto-test-opt %s '-pto-vpto-scheduler=mode=analyze rematerialize=true' 2>&1 | FileCheck %s --check-prefix=INVALID-REMAT-PASS
+// RUN: not pto-test-opt %s '-pto-vpto-scheduler=mode=off rematerialize=true' 2>&1 | FileCheck %s --check-prefix=INVALID-REMAT-PASS
 // RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %S/auto_vecscope_infer_simple.pto -o %t.default.cpp
 // RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --vpto-scheduler=on %S/auto_vecscope_infer_simple.pto -o %t.on.cpp
 // RUN: diff %t.default.cpp %t.on.cpp
@@ -20,14 +23,19 @@
 // RUN: FileCheck %s --check-prefix=DEFAULT-ORDER < %t.default.cpp
 // RUN: FileCheck %s --check-prefix=OFF-ORDER < %t.off.cpp
 // RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --vpto-scheduler-trace %S/auto_vecscope_infer_simple.pto -o %t.trace.cpp 2>&1 | FileCheck %s --check-prefix=DEFAULT-ON
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --vpto-scheduler=on --vpto-scheduler-remat=false --vpto-scheduler-trace %S/auto_vecscope_infer_simple.pto -o %t.remat-disabled.cpp 2>&1 | FileCheck %s --check-prefix=REMAT-DISABLED
 // RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --vpto-scheduler=analyze %S/auto_vecscope_infer_simple.pto -o %t.analyze.cpp 2>&1 | FileCheck %s --check-prefix=PIPELINE
 // RUN: not ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --vpto-scheduler=off --vpto-scheduler-trace %S/auto_vecscope_infer_simple.pto -o %t.invalid-trace.cpp 2>&1 | FileCheck %s --check-prefix=INVALID-TRACE
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --vpto-scheduler=off --vpto-scheduler-remat %S/auto_vecscope_infer_simple.pto -o %t.invalid-remat.cpp 2>&1 | FileCheck %s --check-prefix=INVALID-REMAT
+// RUN: not ptoas --pto-arch=a5 --vpto-scheduler-remat %S/auto_vecscope_infer_simple.pto -o %t.invalid-remat-backend.cpp 2>&1 | FileCheck %s --check-prefix=BACKEND-REMAT
 
 // HELP: --vpto-scheduler=<value>
 // HELP-SAME: VPTO scheduler mode
+// HELP: --vpto-scheduler-remat
 // HELP: --vpto-scheduler-trace
 // INVALID: for the --vpto-scheduler option: Cannot find option named 'invalid'!
 // MISSING-TARGET: error: VPTO scheduler requires target architecture 'a5', but neither this module nor an enclosing module defines 'pto.target_arch'
+// INVALID-REMAT-PASS: error: VPTO scheduler rematerialization requires mode 'on'
 // DEFAULT-ORDER: pto.plt_b32
 // DEFAULT-ORDER-NEXT: pto.vlds
 // DEFAULT-ORDER-NEXT: pto.pset_b32
@@ -35,11 +43,16 @@
 // OFF-ORDER-NEXT: pto.plt_b32
 // OFF-ORDER-NEXT: pto.vlds
 // DEFAULT-ON: vpto-scheduler: function=auto_vecscope_infer_simple mode=on
+// DEFAULT-ON: vpto-scheduler: remat-summary function=auto_vecscope_infer_simple changed=false reason=no-high-pressure-region
+// REMAT-DISABLED: vpto-scheduler: function=auto_vecscope_infer_simple mode=on
+// REMAT-DISABLED-NOT: vpto-scheduler: remat-summary
 // PIPELINE: vpto-scheduler: function=auto_vecscope_infer_simple mode=analyze
 // PIPELINE: vpto-scheduler: coverage {{.*}} unsupported=0 unclassified=0
 // PIPELINE-NOT: vpto-scheduler: unsupported-op=
 // PIPELINE-NOT: vpto-scheduler: unclassified-op=
 // INVALID-TRACE: Error: --vpto-scheduler-trace requires --vpto-scheduler=on.
+// INVALID-REMAT: Error: --vpto-scheduler-remat requires --vpto-scheduler=on.
+// BACKEND-REMAT: Error: VPTO-specific flags require --pto-backend=vpto or pto.backend = "vpto".
 
 module {
 }

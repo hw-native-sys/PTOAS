@@ -92,6 +92,10 @@ add_mlir_dialect_library(PTOTransforms
   VPTOScheduler/VPTOSchedResourceTracker.cpp
   VPTOScheduler/VPTOSchedStrategy.cpp
   VPTOScheduler/VPTOScheduler.cpp
+  VPTOScheduler/VPTOSchedulerRematCandidates.cpp
+  VPTOScheduler/VPTOSchedulerRematPlanner.cpp
+  VPTOScheduler/VPTOSchedulerRematPressure.cpp
+  VPTOScheduler/VPTOSchedulerRematerialization.cpp
   VPTOScheduler/VPTOSchedulerPass.cpp
   PTOVPTOPtrBoundary.cpp
   VPTO/VPTOBufferMaterialization.cpp
