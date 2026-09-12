@@ -65,9 +65,14 @@ struct OneToNVMIGroupSlotLoadOpPattern
 
 struct OneToNVMIMaskedLoadOpPattern
     : OneToNOpConversionPattern<VMIMaskedLoadOp> {
-  using OneToNOpConversionPattern<VMIMaskedLoadOp>::OneToNOpConversionPattern;
+  OneToNVMIMaskedLoadOpPattern(TypeConverter &typeConverter,
+                               MLIRContext *context,
+                               VMILoadSafetyPolicy loadSafety)
+      : OneToNOpConversionPattern<VMIMaskedLoadOp>(typeConverter, context),
+        loadSafety(loadSafety) {}
 
 private:
+  VMILoadSafetyPolicy loadSafety;
   FailureOr<Value> materializeMaskedLoadPart(
       VMIMaskedLoadOp op, OneToNPatternRewriter &rewriter, Value source,
       Value offset, Value mask, Value passthru, Type resultType,
@@ -129,7 +134,7 @@ public:
     }
 
     FailureOr<int64_t> lanesPerPart = verifyFullOrSafeReadVRegChunks(
-        op, resultVMIType, op.getSource(), op.getOffset(), rewriter);
+        op, resultVMIType, op.getSource(), op.getOffset(), rewriter, loadSafety);
     if (failed(lanesPerPart)) {
       return failure();
     }
@@ -240,9 +245,14 @@ public:
 
 struct OneToNVMIExpandLoadOpPattern
     : OneToNOpConversionPattern<VMIExpandLoadOp> {
-  using OneToNOpConversionPattern<VMIExpandLoadOp>::OneToNOpConversionPattern;
+  OneToNVMIExpandLoadOpPattern(TypeConverter &typeConverter,
+                               MLIRContext *context,
+                               VMILoadSafetyPolicy loadSafety)
+      : OneToNOpConversionPattern<VMIExpandLoadOp>(typeConverter, context),
+        loadSafety(loadSafety) {}
 
 private:
+  VMILoadSafetyPolicy loadSafety;
   struct RuntimeExpandLoadPlan {
     VRegType resultType;
     Value gatherBase;
@@ -358,7 +368,7 @@ private:
       VMIExpandLoadOp op, OneToNPatternRewriter &rewriter, Value source,
       Value offset, VMIVRegType resultVMIType, ArrayRef<Type> resultTypes) const {
     FailureOr<int64_t> lanesPerPart = verifyFullOrSafeReadVRegChunks(
-        op, resultVMIType, op.getSource(), op.getOffset(), rewriter);
+        op, resultVMIType, op.getSource(), op.getOffset(), rewriter, loadSafety);
     if (failed(lanesPerPart)) {
       return failure();
     }

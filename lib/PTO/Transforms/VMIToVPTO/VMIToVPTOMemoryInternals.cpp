@@ -10,6 +10,10 @@
 //===- VMIToVPTOMemoryInternals.inc - VMIToVPTO internals -*- C++ -*-===//
 //===----------------------------------------------------------------------===//
 
+/// Byte alignment a physical memory access must satisfy (the memory block
+/// granularity used by the read safety proofs and the store legalizer).
+constexpr int64_t kMemoryAccessAlignmentBytes = 32;
+
 static FailureOr<VMIStatefulReadContract> getStatefulReadContract(
     Value source, Value offset, VMIVRegType resultType, std::string *reason) {
   auto fail = [&reason](const Twine &message)
@@ -187,17 +191,63 @@ getUnavailableReadFallbackReason(VMIMemoryCoverageKind coverageKind) {
       .str();
 }
 
-FailureOr<int64_t> verifyFullOrSafeReadVRegChunks(Operation *op,
-                                                  VMIVRegType type,
-                                                  Value source, Value offset,
-                                                  PatternRewriter &rewriter) {
+/// Width of one physical chunk for `type`: a full-vector load reads this many
+/// lanes whatever the logical element count is.
+static FailureOr<int64_t> getFullPhysicalChunkLanes(VMIVRegType type) {
+  return getDataLanesPerPart(type.getElementType());
+}
+
+/// Applies the load safety policy to a load whose physical read safety proof
+/// failed. Every mode except Error accepts the full physical chunk read and
+/// reports the accepted over-read, so that the relaxation stays visible: as a
+/// warning under Warn and as a remark under Policy.
+static FailureOr<int64_t> applyLoadSafetyPolicy(
+    Operation *op, VMIVRegType type, PatternRewriter &rewriter,
+    VMILoadSafetyPolicy loadSafety, const std::string &legalizationReason,
+    const VMIMemorySafeReadProof &safeReadProof) {
+  if (loadSafety == VMILoadSafetyPolicy::Error) {
+    (void)rewriter.notifyMatchFailure(
+        op, Twine("memory lowering ") + legalizationReason +
+                "; safe physical-read proof failed: " + safeReadProof.reason);
+    return failure();
+  }
+
+  FailureOr<int64_t> physicalLanes = getFullPhysicalChunkLanes(type);
+  if (failed(physicalLanes)) {
+    (void)rewriter.notifyMatchFailure(
+        op, Twine("memory lowering ") + legalizationReason +
+                "; safe physical-read proof failed: " + safeReadProof.reason);
+    return failure();
+  }
+
+  std::string accepted =
+      (Twine("VMI load physical read is not proven safe; memory lowering ") +
+       legalizationReason +
+       "; safe physical-read proof failed: " + safeReadProof.reason +
+       "; reading the full physical chunk of " + Twine(*physicalLanes) +
+       " lane(s) is accepted by the load safety policy")
+          .str();
+  if (loadSafety == VMILoadSafetyPolicy::Warn) {
+    op->emitWarning() << accepted << " (load-safety=warn)";
+  } else {
+    op->emitRemark()
+        << accepted
+        << "; pass option load-safety=warn reports this as a warning and "
+           "load-safety=error rejects it";
+  }
+  return *physicalLanes;
+}
+
+FailureOr<int64_t> verifyFullOrSafeReadVRegChunks(
+    Operation *op, VMIVRegType type, Value source, Value offset,
+    PatternRewriter &rewriter, VMILoadSafetyPolicy loadSafety) {
   std::string fullChunkReason;
   FailureOr<int64_t> lanesPerPart =
       checkFullDataPhysicalChunks(type, &fullChunkReason);
   bool usesAlignedLoad =
-      isKnownAddressAligned(source, offset, type.getElementType(), 32);
-  bool canUseAlignedFullChunk = succeeded(lanesPerPart) && usesAlignedLoad;
-  if (canUseAlignedFullChunk) {
+      isKnownAddressAligned(source, offset, type.getElementType(),
+                            kMemoryAccessAlignmentBytes);
+  if (succeeded(lanesPerPart) && usesAlignedLoad) {
     return *lanesPerPart;
   }
 
@@ -207,7 +257,7 @@ FailureOr<int64_t> verifyFullOrSafeReadVRegChunks(Operation *op,
                                      getConstantIndexValue(offset), type)
           : computeSafeStatefulReadProof(source, offset, type);
   if (safeReadProof.proven) {
-    lanesPerPart = getDataLanesPerPart(type.getElementType());
+    lanesPerPart = getFullPhysicalChunkLanes(type);
     if (succeeded(lanesPerPart)) {
       return *lanesPerPart;
     }
@@ -217,10 +267,8 @@ FailureOr<int64_t> verifyFullOrSafeReadVRegChunks(Operation *op,
       succeeded(lanesPerPart)
           ? "unaligned load requires a proven stateful physical read envelope"
           : fullChunkReason;
-  (void)rewriter.notifyMatchFailure(
-      op, Twine("memory lowering ") + legalizationReason +
-              "; safe physical-read proof failed: " + safeReadProof.reason);
-  return failure();
+  return applyLoadSafetyPolicy(op, type, rewriter, loadSafety,
+                               legalizationReason, safeReadProof);
 }
 
 LogicalResult

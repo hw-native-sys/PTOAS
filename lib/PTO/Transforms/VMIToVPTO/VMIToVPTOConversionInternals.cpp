@@ -582,6 +582,15 @@ static FailureOr<StringRef> getVMIMaskPhysicalGranularity(VMIMaskType type) {
   return physicalGranularity;
 }
 
+/// Physical read safety policy for VMI loads. pto.vmi.load is UB-backed only
+/// (see VMILoadOp::verify), the lanes a full-vector load over-reads carry no
+/// semantics, and crossing the end of UB can at worst trap/hang, so an
+/// unproven full-chunk read is accepted by default and stays visible:
+/// - Policy: accept it and report it as a remark.
+/// - Warn:   accept it and report it as a warning.
+/// - Error:  require the physical read safety proof to succeed.
+enum class VMILoadSafetyPolicy { Policy, Warn, Error };
+
 class VMIToVPTOTypeConverter final : public OneToNTypeConverter {
 public:
   VMIToVPTOTypeConverter() {

@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: not pto-test-opt %s -split-input-file -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-lower-unified-to-legacy -vmi-to-vpto 2>&1 | FileCheck %s
+// RUN: not pto-test-opt %s -split-input-file -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-lower-unified-to-legacy -vmi-to-vpto=load-safety=error 2>&1 | FileCheck %s
 
 module {
   func.func @full_chunk_unaligned_load_without_read_envelope(
@@ -68,4 +68,8 @@ module {
   }
 }
 
-// CHECK-COUNT-4: VMI-RESIDUAL-OP: failed to convert all VMI ops/types to VPTO
+// Unaligned loads leave a residual VMI op under the strict load safety policy.
+// CHECK-COUNT-2: VMI-RESIDUAL-OP: failed to convert all VMI ops/types to VPTO
+// An unaligned masked store has no exact write form and is reported before
+// conversion: writes must never exceed the semantic footprint.
+// CHECK-COUNT-2: pto.vmi.masked_store requires a destination address with a proven store alignment

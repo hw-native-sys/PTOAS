@@ -575,7 +575,8 @@ struct OneToNSCFIndexSwitchOpPattern
 };
 
 static void populateVMIStructuralAndMemoryPatterns(
-    VMIToVPTOTypeConverter &typeConverter, RewritePatternSet &patterns) {
+    VMIToVPTOTypeConverter &typeConverter, RewritePatternSet &patterns,
+    VMILoadSafetyPolicy loadSafety) {
   populateFuncTypeConversionPatterns(typeConverter, patterns);
   scf::populateSCFStructuralOneToNTypeConversions(typeConverter, patterns);
   patterns.add<OneToNCFBranchOpPattern, OneToNCFCondBranchOpPattern,
@@ -594,14 +595,18 @@ static void populateVMIStructuralAndMemoryPatterns(
       OneToNVMIBinaryOpPattern<VMIMaskOrOp, PorOp, /*IsMaskResult=*/true>,
       OneToNVMIBinaryOpPattern<VMIMaskXOrOp, PxorOp, /*IsMaskResult=*/true>,
       OneToNVMIUnaryOpPattern<VMIMaskNotOp, PnotOp, /*IsMaskResult=*/true>,
-      OneToNVMILoadOpPattern,
       OneToNVMIDeinterleaveLoadOpPattern, OneToNVMIGroupLoadOpPattern,
       OneToNVMIGroupSlotLoadOpPattern, OneToNVMIStrideLoadOpPattern,
-      OneToNVMIMaskedLoadOpPattern, OneToNVMIGatherOpPattern,
-      OneToNVMIExpandLoadOpPattern, OneToNVMIStoreOpPattern,
+      OneToNVMIGatherOpPattern, OneToNVMIStoreOpPattern,
       OneToNVMIInterleaveStoreOpPattern, OneToNVMIGroupStoreOpPattern,
       OneToNVMIMaskedStoreOpPattern, OneToNVMIStrideStoreOpPattern,
       OneToNVMIScatterOpPattern>(typeConverter, patterns.getContext());
+  // The load patterns that verify the physical read need the load safety
+  // policy, which is passed explicitly instead of being read from the type
+  // converter.
+  patterns.add<OneToNVMILoadOpPattern, OneToNVMIMaskedLoadOpPattern,
+               OneToNVMIExpandLoadOpPattern>(typeConverter,
+                                             patterns.getContext(), loadSafety);
 }
 
 static void populateVMIArithmeticPatterns(
@@ -689,9 +694,10 @@ static void populateVMIReductionAndConversionPatterns(
       typeConverter, patterns.getContext());
 }
 
-void populateVMIConversionPatterns(
-    VMIToVPTOTypeConverter &typeConverter, RewritePatternSet &patterns) {
-  populateVMIStructuralAndMemoryPatterns(typeConverter, patterns);
+void populateVMIConversionPatterns(VMIToVPTOTypeConverter &typeConverter,
+                                   RewritePatternSet &patterns,
+                                   VMILoadSafetyPolicy loadSafety) {
+  populateVMIStructuralAndMemoryPatterns(typeConverter, patterns, loadSafety);
   populateVMIArithmeticPatterns(typeConverter, patterns);
   populateVMIReductionAndConversionPatterns(typeConverter, patterns);
 }
@@ -723,6 +729,31 @@ static WalkResult verifyNoResidualConstant(Operation *op) {
   return WalkResult::advance();
 }
 
+/// Appends a targeted explanation to the residual VMI diagnostic for shapes
+/// whose conversion is unsupported, so the generic residual error stays
+/// actionable. Only called once the conversion has already failed, so it can
+/// never report a false positive.
+static void explainResidualVMIOp(InFlightDiagnostic &diag, Operation *op) {
+  // An unaligned masked store has no exact write form: the unaligned store
+  // instruction writes a contiguous low-bit prefix only, while an arbitrary
+  // predicate coverage needs per-lane write predicates. Reads may over-read
+  // under the load safety policy, but writes must never exceed the semantic
+  // footprint, so this shape is reported instead of being lowered.
+  if (auto maskedStore = dyn_cast<VMIMaskedStoreOp>(op)) {
+    auto valueVMIType = dyn_cast<VMIVRegType>(maskedStore.getValue().getType());
+    if (valueVMIType &&
+        !isKnownAddressAligned(maskedStore.getDestination(),
+                               maskedStore.getOffset(),
+                               valueVMIType.getElementType(),
+                               kMemoryAccessAlignmentBytes)) {
+      diag << "; pto.vmi.masked_store requires a destination address with a "
+              "proven store alignment: an arbitrary predicate coverage has no "
+              "exact unaligned store form, and a write must never exceed the "
+              "semantic footprint";
+    }
+  }
+}
+
 LogicalResult verifyNoResidualVMIIR(ModuleOp module) {
   WalkResult result = module.walk([](Operation *op) {
     if (WalkResult result = verifyNoResidualCreateMask(op);
@@ -735,8 +766,10 @@ LogicalResult verifyNoResidualVMIIR(ModuleOp module) {
     }
     bool hasResidualVMI = isVMIOp(op) || hasVMIType(op);
     if (hasResidualVMI) {
-      op->emitError() << kVMIDiagResidualOpPrefix
-                      << "failed to convert all VMI ops/types to VPTO";
+      InFlightDiagnostic diag =
+          op->emitError() << kVMIDiagResidualOpPrefix
+                          << "failed to convert all VMI ops/types to VPTO";
+      explainResidualVMIOp(diag, op);
       return WalkResult::interrupt();
     }
     return WalkResult::advance();

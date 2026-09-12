@@ -1289,7 +1289,13 @@ def VMIToVPTO : Pass<"vmi-to-vpto", "ModuleOp"> {
            "enable-stable-gather-masked-load", "bool",
            /*default=*/"false",
            "Reserve the stable VGATHER-based lowering path for VMI masked "
-           "loads; currently emits a TODO diagnostic when used.">
+           "loads; currently emits a TODO diagnostic when used.">,
+    Option<"loadSafety", "load-safety", "std::string",
+           /*default=*/"\"policy\"",
+           "Physical read safety policy for VMI loads. 'policy' (default) "
+           "accepts an unproven full-chunk read and reports it as a remark, "
+           "'warn' reports it as a warning, 'error' requires the safety proof "
+           "to succeed.">
   ];
   let dependentDialects = ["mlir::cf::ControlFlowDialect",
                            "mlir::func::FuncDialect",

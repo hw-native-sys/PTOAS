@@ -6,7 +6,10 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: not pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto 2>&1 | FileCheck %s
+// RUN: not pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto=load-safety=error 2>&1 | FileCheck %s
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto=load-safety=warn 2>&1 | FileCheck %s --check-prefix=WARN
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto 2>&1 | FileCheck %s --check-prefix=POLICYREMARK
+// RUN: not pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto=load-safety=foo 2>&1 | FileCheck %s --check-prefix=BADOPT
 
 module {
   func.func @vmi_to_vpto_load_safe_tail_memref_negative_offset(%src: !pto.ptr<f32, ub>)
@@ -22,3 +25,14 @@ module {
 }
 
 // CHECK: VMI-RESIDUAL-OP: failed to convert all VMI ops/types to VPTO
+
+// The warn mode lowers the load and reports the accepted over-read.
+// WARN: warning: VMI load physical read is not proven safe
+// WARN: reading the full physical chunk of
+
+// The default policy mode reports the same over-read as a remark.
+// POLICYREMARK: remark: VMI load physical read is not proven safe
+// POLICYREMARK: load-safety=warn reports this as a warning
+
+// An unknown policy value is rejected up front.
+// BADOPT: invalid load-safety value "foo"; expected "policy", "warn" or "error"

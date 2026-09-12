@@ -400,7 +400,10 @@ struct VMIReadSafety {
 candidate physical read envelope <= proven readable envelope
 ```
 
-如果没有额外证明，默认只允许读取 semantic footprint。
+读与写采用不对称 policy，见 §6.4：读允许物理越界（默认不要求证明），写必须严格限制在
+semantic footprint 内。下面这段严格模型对应当前的 `load-safety=error` 模式。
+
+在严格模型（`load-safety=error`）下，如果没有额外证明，只允许读取 semantic footprint。
 
 这是 E2B/UNPK fallback 的关键：
 
@@ -415,7 +418,8 @@ envelope，而不只是检查 `[address, address + V)`。对于起始地址 32B 
 保守模型，envelope 可能延伸到 semantic address 之前最多 31B，并延伸到完整结果所需
 范围之后。只有该联合范围被证明安全时，`vldus + explicit mapping` 才可用。否则
 legalizer 必须选择精确的自然对齐访问组合，例如多个 BRC/point load，或在当前目标
-没有合理精确路径时给出明确诊断。不能为了优化而静默 overread。
+没有合理精确路径时给出明确诊断。不能为了优化而未声明地 overread：现行默认 policy
+允许读越界，但该放宽必须是显式声明、集中定义的（见 §6.4），而不是隐含在 lowering 里。
 
 现有 `VMIMemorySafeReadProof` 只证明 static memref 中从 constant offset 开始的 identity
 full-vector 范围，尚未覆盖起始地址之前的 aligned-block read，也不能表达 direct
@@ -426,6 +430,41 @@ proof 失败时不能因为 `lanesPerPart` 可计算而继续选择会扩大读�
 store 不允许超出 semantic footprint 写入。`vstus` 的 byte count 由 advance/size
 operand 控制，它只存 source vector 的低位连续前缀，因此适合 Dense 或 Prefix store，
 不适合任意 Predicate store。
+
+### 6.4 读越界与写裁剪 Policy
+
+访存安全采用不对称 policy，读侧强度由 `vmi-to-vpto` 的 `load-safety` 选项选择：
+
+```text
+R1  读：不设上界。pto.vmi.load 的源被 verifier 限定为 UB-backed（VMILoadOp::verify），
+    越界 lane 不承载语义，越过 UB 末端的后果是 trap/hang，policy 接受；默认不做
+    safe-read 证明。
+W1  写：写范围必须 <= 语义 footprint，绝不允许越界写。
+W2  写裁剪能力：
+      aligned                  -> vsts + mask（任意 lane 集合可表达）
+      unaligned + Dense/Prefix -> vstus，size/advance 给出精确 byte count
+      unaligned + Predicate    -> 无精确写形式，报错诊断
+W3  一致性：写指令的活跃 lane 数 / byte count 必须等于该 VMI 值的逻辑活跃 lane 数。
+```
+
+读侧强度：
+
+```text
+policy (默认)  读越界放行，不执行 safe-read 证明
+warn           执行证明；失败时给出 warning 并仍然放行（用于定位形状）
+error          证明失败即拒绝，即 6.3 描述的严格模型（用于验证与回归）
+```
+
+因此 6.3 的“只允许读取 semantic footprint”是 `error` 模式的语义。硬件事实不变
+（`vldus` 读满一个 `V`，`vldas` 额外读 32B 对齐块）；选择更小 envelope 的 direct
+candidate 仍由 8.1 的候选顺序与成本偏好决定，但读安全不再是准入条件。
+
+配套约束：
+
+- load 的物理读按整块 footprint 计（`MemoryEffects` 只声明读 source，不含范围），
+  依赖/别名分析不得假设它只读语义范围；
+- mask/predicate 是 lane 取值语义，不是内存访问开关，加 mask 不会减少读的字节数；
+- 无精确写形式的形状（非对齐 + Predicate）在转换结束后由 residual 诊断给出明确原因。
 
 ## 7. Plan 规范化与 Point 合并
 

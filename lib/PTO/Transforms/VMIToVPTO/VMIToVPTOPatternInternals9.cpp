@@ -10,6 +10,20 @@
 //===- VMIToVPTOPatternInternals9.inc - VMIToVPTO internals -*- C++ -*-===//
 //===----------------------------------------------------------------------===//
 
+/// Parses the pass option load-safety.
+static FailureOr<VMILoadSafetyPolicy> parseLoadSafetyPolicy(StringRef value) {
+  if (value == "policy") {
+    return VMILoadSafetyPolicy::Policy;
+  }
+  if (value == "warn") {
+    return VMILoadSafetyPolicy::Warn;
+  }
+  if (value == "error") {
+    return VMILoadSafetyPolicy::Error;
+  }
+  return failure();
+}
+
 struct VMIToVPTOPass : public mlir::pto::impl::VMIToVPTOBase<VMIToVPTOPass> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(VMIToVPTOPass)
 
@@ -27,9 +41,17 @@ struct VMIToVPTOPass : public mlir::pto::impl::VMIToVPTOBase<VMIToVPTOPass> {
 
     MLIRContext *context = module.getContext();
     VMIToVPTOTypeConverter typeConverter;
+    FailureOr<VMILoadSafetyPolicy> loadSafetyPolicy =
+        parseLoadSafetyPolicy(loadSafety);
+    if (failed(loadSafetyPolicy)) {
+      module.emitError() << "invalid load-safety value \"" << loadSafety
+                         << "\"; expected \"policy\", \"warn\" or \"error\"";
+      signalPassFailure();
+      return;
+    }
     RewritePatternSet patterns(context);
 
-    populateVMIConversionPatterns(typeConverter, patterns);
+    populateVMIConversionPatterns(typeConverter, patterns, *loadSafetyPolicy);
     if (failed(applyPartialOneToNConversion(module, typeConverter,
                                             std::move(patterns)))) {
       module.emitError() << kVMIDiagResidualOpPrefix
