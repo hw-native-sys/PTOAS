@@ -6,8 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: ptoas --enable-insert-sync --mlir-print-ir-after=pto-insert-sync \
-// RUN:   %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=INSERT
+// RUN: ptoas --enable-insert-sync --emit-pto-ir %s -o %t
+// RUN: pto-test-opt %t --canonicalize | FileCheck %s --check-prefix=INSERT
 
 // The producer/consumer slots are hidden behind tile alias ops. The sync
 // analysis must still trace them back to `pto.multi_tile_get` and keep the
@@ -55,12 +55,21 @@ module {
 }
 
 // INSERT-LABEL: func.func @multi_tile_alias_slot_dyn_event_id
-// INSERT: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+// INSERT-NOT: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
 // INSERT: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID1>]
-// INSERT: scf.for
+// INSERT-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+// INSERT-NEXT: scf.for
 // INSERT: pto.wait_flag_dyn[<PIPE_MTE3>, <PIPE_MTE2>,
 // INSERT: pto.tload
+// INSERT: pto.set_flag_dyn[<PIPE_MTE2>, <PIPE_MTE3>,
+// INSERT: pto.wait_flag_dyn[<PIPE_MTE2>, <PIPE_MTE3>,
 // INSERT: pto.tstore
 // INSERT: pto.set_flag_dyn[<PIPE_MTE3>, <PIPE_MTE2>,
-// INSERT: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
-// INSERT: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID1>]
+// INSERT: scf.if
+// INSERT-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID1>]
+// INSERT: scf.if
+// INSERT-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+// INSERT: scf.if
+// INSERT-NEXT: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID1>]
+// INSERT: scf.if
+// INSERT-NEXT: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
