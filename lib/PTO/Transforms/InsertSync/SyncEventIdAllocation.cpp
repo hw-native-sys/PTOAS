@@ -173,13 +173,14 @@ void SyncEventIdAllocation::SetEventId(SyncOperation *sync) {
     for (auto &id : canAllocaEventId) {
       SetEventPool(sync, id);
     }
-  } else if (reallocatedPipePair.contains(ScopePair(sync)) &&
-             (canAllocaEventId.size() < idSize)) {
-    // Reallocate strategy: reduce usage to 1
-    assert(canAllocaEventId.size() > 0);
-    SetEventPool(sync, canAllocaEventId[0]);
-    sync->eventIdNum = 1;
+  } else if (
+      !sync->slotSchedule && reallocatedPipePair.contains(ScopePair(sync)) && (canAllocaEventId.size() < idSize)) {
+      // Reallocate strategy: reduce usage to 1
+      SetEventPool(sync, canAllocaEventId[0]);
+      sync->eventIdNum = 1;
   }
+  // A slot rotation cannot collapse to one token after forward edges were
+  // pruned. Leave it unallocated so the existing PIPE_ALL fallback orders it.
 }
 
 SmallVector<int> SyncEventIdAllocation::UpdateBlockAvailableEventId(
@@ -414,24 +415,34 @@ void SyncEventIdAllocation::UpdateBackwardMatchSync(
   syncFront->eventIds.push_back(eventId);
   syncEnd->eventIds.push_back(eventId);
 
-  if (reallocatedPipePair.contains(ScopePair(setFlag))) {
-    auto *ptr = dyn_cast<LoopInstanceElement>(
-        syncIR_[setFlag->GetForEndIndex().value()].get());
-    assert(ptr != nullptr);
-    syncFront->SetSyncIRIndex(ptr->beginId);
-    syncEnd->SetSyncIRIndex(ptr->endId);
-    syncFront->reallocatedLoopHeadTailSync = true;
-    syncEnd->reallocatedLoopHeadTailSync = true;
-    syncIR_[ptr->beginId]->pipeBefore.push_back(syncFront.get());
-    // Insert the synthetic tail wait ahead of existing loop-end sets so the
-    // loop tail anchor does not emit a new set before consuming the carried
-    // event of the previous iteration.
-    syncIR_[ptr->endId]->pipeAfter.push_front(syncEnd.get());
+  if (setFlag->slotSchedule) {
+      syncFront->slotSchedule = setFlag->slotSchedule;
+      syncEnd->slotSchedule = setFlag->slotSchedule;
+      syncFront->slotCount = setFlag->slotCount;
+      syncEnd->slotCount = setFlag->slotCount;
+      syncFront->boundarySlot = static_cast<uint32_t>(setFlag->eventIds.size() - 1);
+      syncEnd->boundarySlot = syncFront->boundarySlot;
+  }
+
+  if (setFlag->slotSchedule || reallocatedPipePair.contains(ScopePair(setFlag))) {
+      auto* ptr = dyn_cast<LoopInstanceElement>(syncIR_[setFlag->GetForEndIndex().value()].get());
+      checkCondition(ptr != nullptr, "expected a loop for backward event boundaries");
+      syncFront->SetSyncIRIndex(ptr->beginId);
+      syncEnd->SetSyncIRIndex(ptr->endId);
+      // Slot predicates depend on this loop's bounds and cannot move to the
+      // function boundary through MoveOutBackwardMatchSync.
+      syncFront->reallocatedLoopHeadTailSync = !setFlag->slotSchedule;
+      syncEnd->reallocatedLoopHeadTailSync = !setFlag->slotSchedule;
+      syncIR_[ptr->beginId]->pipeBefore.push_back(syncFront.get());
+      // Insert the synthetic tail wait ahead of existing loop-end sets so the
+      // loop tail anchor does not emit a new set before consuming the carried
+      // event of the previous iteration.
+      syncIR_[ptr->endId]->pipeAfter.push_front(syncEnd.get());
   } else {
-    syncFront->SetSyncIRIndex(0);
-    syncEnd->SetSyncIRIndex(syncIR_.size() - 1);
-    syncIR_[0]->pipeBefore.push_back(syncFront.get());
-    syncIR_[syncIR_.size() - 1]->pipeAfter.push_back(syncEnd.get());
+      syncFront->SetSyncIRIndex(0);
+      syncEnd->SetSyncIRIndex(syncIR_.size() - 1);
+      syncIR_[0]->pipeBefore.push_back(syncFront.get());
+      syncIR_[syncIR_.size() - 1]->pipeAfter.push_back(syncEnd.get());
   }
 
   insertedBackwardSync.insert(syncFront.get());

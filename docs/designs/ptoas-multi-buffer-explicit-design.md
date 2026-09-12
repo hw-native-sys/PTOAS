@@ -227,7 +227,7 @@ struct SlotInfo {
 | Const(a) ↔ Dyn(%k) | – | ⚠️ 保守 alias，全同步 | dyn event id（仅 %k==a 时同步） |
 | Dyn(%j) ↔ Dyn(%k), 表达式相同 | – | ⚠️ 保守 alias | 真冲突 + dyn event id |
 | Dyn(%j) ↔ Dyn(%k), 可证 disjoint | – | ⚠️ 保守 alias | 同 iter 不冲突，跨 iter dyn event id |
-| Dyn ↔ Dyn 不可证 | – | ⚠️ 保守 alias | N 个 dyn event id |
+| Dyn ↔ Dyn 不可证 | – | ⚠️ 保守 alias | 保留依赖，使用静态 event id |
 
 dyn event id 分配 + `set_flag_dyn` / `wait_flag_dyn` 生成留作 follow-up（需要扩展 `SyncEventIdAllocation` 和 `SyncCodegen`）。
 
@@ -355,6 +355,19 @@ ptoas 自动行为：
 - 同步分析：producer slot 表达式 `(iv+1)%2`，consumer slot `iv%2` → 同 iter disjoint / 跨 iter 冲突 → 2 个 dyn event id；
 - emit `set_flag_dyn` / `wait_flag_dyn`，event id value 与 slot 表达式同源。
 
+循环边界必须按槽位配平事件，不能对所有槽位统一 prime / drain：
+
+- V→MTE2：循环前只初始化 slot 1 的事件。slot 0 的第一次循环内写入必须等待第 0 次计算完成。
+- MTE2→V：循环前只初始化 slot 0 的循环事件；预加载本身另有完整的 MTE2→V 同步。slot 1 必须等待实际预取完成。
+- 执行 `n` 次后，V→MTE2 只 drain slot `(n + 1) % 2`，MTE2→V 只 drain slot `n % 2`。`n = 0` 时也遵循同一规则。
+
+对步长为 1、非负常量下界、槽位形如 `(iv + 非负常量) remui N` 的循环，
+按每个槽位第一次 set / wait 的先后关系生成边界同步，并在循环结束时按最终轮转位置计算剩余事件。
+生产者和消费者必须直接位于同一个循环体内。嵌套循环在所属循环的每次入口和出口完成配平，
+外层循环不再为这对操作添加重复的跨迭代事件。若两个槽位表达式不同且无法证明这样的轮转，
+则保留同次迭代的依赖，并使用单个静态事件进行保守同步；不假定未知表达式会遍历所有槽位。
+已证明轮转的事件组在资源不足时使用 `PIPE_ALL` 保守同步，不将多个槽位折叠成单个事件。
+
 ### 7.3 例 3：N=4 同表达式轮转
 
 ```mlir
@@ -476,7 +489,7 @@ lit test/lit/pto/multi_tile_prefetch_insert_sync.pto
 
 ### 当前限制
 
-- **affine 分析仅覆盖核心几种形态**：`compareSlotSSA` 当前能证 `iv % N` / `(iv ± c) % N` / 同 SSA / 纯常量；不能证 `(iv * c) % N`、跨函数 / 跨循环的 SSA 等价、非 `arith.remui` 包装的 slot 表达式。命中不到时退回 kUnknown / 保守 N dyn event id。
+- **affine 分析仅覆盖核心几种形态**：`compareSlotSSA` 当前能证 `iv % N` / `(iv ± c) % N` / 同 SSA / 纯常量；不能证 `(iv * c) % N`、跨函数 / 跨循环的 SSA 等价、非 `arith.remui` 包装的 slot 表达式。不同表达式的轮转无法证明时，使用静态事件保守同步（见 §7.2）。
 - **PlanMemory N>2 不复用 Stage1**：N>2 的兄弟 slot 不走 SPEC_LEVEL_1 "ping/pong 相邻摆放"优化，用更多内存。N=2 路径不变。
 - 初版仅支持 `loc=vec` / `loc=mat` local memory。
 - function argument / return 上的 `multi_tile_buf` 不支持（多 buffer 所有权限定在 ptoas 内）。
