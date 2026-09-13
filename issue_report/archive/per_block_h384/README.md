@@ -1,5 +1,6 @@
-# Moved to issue B
+# Withdrawn from issue B
 
-Same low-level bug as **[vmi_compact_v128_residual](../../vmi_compact_v128_residual/)**: compact 128-lane K strip at H=384.
+per_block H=384 128-strip is **kernel-closed** on `quant_missing_impl_0913`
+(dual legal `V<64>`, bitwise vs ASC). Not a live PTOAS issue.
 
-Recorded: TileLang OK, PTOAS `VMI-RESIDUAL-OP`. `recorded.log` is kept here.
+Old recorded: TileLang OK, PTOAS `VMI-RESIDUAL-OP`. `recorded.log` is kept here.

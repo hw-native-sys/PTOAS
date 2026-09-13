@@ -3,7 +3,9 @@
 ASC Nightly L1 stores/loads V<L x f32> scales without packing. TMA-col is
 a compiler dist-mode / address map, not a host permute of row-major SF.
 
-Production VMI asserts packed-only on these adapters and never emits IR.
+TMA-col unpacked now emits production IR (tilelang_dump.ptodsl.py) but SF
+mismatches ASC. FP4 unpacked still dies in the TileLang frontend (32-lane
+packed FP4 vstore). This file is the legal V<64 x f32> target.
 """
 from ptodsl import pto
 

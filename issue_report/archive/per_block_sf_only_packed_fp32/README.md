@@ -1,5 +1,7 @@
-# Moved to issue E
+# Withdrawn from issue E
 
-Same low-level bug as **[vmi_ue8m0_pack_from_fp32_amax](../../vmi_ue8m0_pack_from_fp32_amax/)**: UE8M0 pack from an fp32 amax (bf16 sibling already matches ASC).
+per_block fp32 `sf_only`+packed is **kernel-closed** on
+`quant_missing_impl_0913` (bitwise vs ASC; TODO(perf)). Snapshot:
+[`vmi_ue8m0_pack_from_fp32_amax`](../vmi_ue8m0_pack_from_fp32_amax/).
 
-Recorded: launch OK, 1024-byte SF mismatch. `recorded.log` is kept here.
+Recorded originally: launch OK, 1024-byte SF mismatch.

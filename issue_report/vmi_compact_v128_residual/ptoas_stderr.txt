@@ -1,0 +1,47 @@
+Traceback (most recent call last):
+  File "<stdin>", line 53, in compile_one
+  File "<stdin>", line 76, in <lambda>
+  File "/home/jzhuang/work_dir/vmi_work_0908/TileKernels-vmi_quant_missing_impl_0913/tile_kernels_vmi/quant/per_token_cast_vmi.py", line 3716, in get_per_token_cast_kernel_vmi
+    kn = _compile_kernel_impl(
+         ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jzhuang/work_dir/vmi_work_0908/TileKernels-vmi_quant_missing_impl_0913/tile_kernels_vmi/quant/per_token_cast_vmi.py", line 2549, in _compile_kernel_impl
+    return tilelang.compile(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/jzhuang/.conda/envs/cann91_dev/lib/python3.11/site-packages/tilelang/jit/__init__.py", line 164, in compile
+    return cached(
+           ^^^^^^^
+  File "/home/jzhuang/.conda/envs/cann91_dev/lib/python3.11/site-packages/tilelang/cache/__init__.py", line 92, in cached
+    return cache.cached(
+           ^^^^^^^^^^^^^
+  File "/home/jzhuang/.conda/envs/cann91_dev/lib/python3.11/site-packages/tilelang/cache/kernel_cache.py", line 469, in cached
+    kernel = JITKernel(
+             ^^^^^^^^^^
+  File "/home/jzhuang/.conda/envs/cann91_dev/lib/python3.11/site-packages/tilelang/jit/kernel.py", line 145, in __init__
+    adapter = self._compile_and_create_adapter(func, out_idx)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jzhuang/.conda/envs/cann91_dev/lib/python3.11/site-packages/tilelang/jit/kernel.py", line 265, in _compile_and_create_adapter
+    adapter = self._create_adapter_from_artifact(
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jzhuang/.conda/envs/cann91_dev/lib/python3.11/site-packages/tilelang/jit/kernel.py", line 351, in _create_adapter_from_artifact
+    adapter = create_adapter(
+              ^^^^^^^^^^^^^^^
+  File "/home/jzhuang/.conda/envs/cann91_dev/lib/python3.11/site-packages/tilelang/jit/kernel.py", line 326, in create_adapter
+    return adapter_cls(**kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jzhuang/.conda/envs/cann91_dev/lib/python3.11/site-packages/tilelang/jit/adapter/cython/adapter.py", line 137, in __init__
+    self.lib_generator.compile_lib()
+  File "/home/jzhuang/.conda/envs/cann91_dev/lib/python3.11/site-packages/tilelang/jit/adapter/libgen.py", line 166, in compile_lib
+    self.compile_pto_lib()
+  File "/home/jzhuang/.conda/envs/cann91_dev/lib/python3.11/site-packages/tilelang/jit/adapter/libgen.py", line 339, in compile_pto_lib
+    self._compile_pto_lib()
+  File "/home/jzhuang/.conda/envs/cann91_dev/lib/python3.11/site-packages/tilelang/jit/adapter/libgen.py", line 381, in _compile_pto_lib
+    raise RuntimeError(
+RuntimeError: PTO lowering failed for kernels ['main_kernel'].
+Command: ptoas --pto-arch=a5 --pto-backend=vpto --pto-level=level3 /home/jzhuang/.cache/ptoas_prod_dumps_quant_missing_impl_0913/b_per_token_h128_packed_row/kernel.pto -o /home/jzhuang/.cache/ptoas_prod_dumps_quant_missing_impl_0913/b_per_token_h128_packed_row/kernel.fatobj.o
+stderr:
+Warning: PTO_ISA_PATH/PTO_ISA_ROOT is not set; C++ device object emission may fail to include pto/pto-inst.hpp.
+loc("94"("/home/jzhuang/.cache/ptoas_prod_dumps_quant_missing_impl_0913/b_per_token_h128_packed_row/kernel.pto":116:23)): error: VMI-RESIDUAL-OP: failed to convert all VMI ops/types to VPTO
+Error: VPTO emission pipeline failed.
+
+stdout:
+

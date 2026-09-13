@@ -1,3 +1,15 @@
+# WITHDRAWN C — fp8 `vbrc` / UB clear for a ceildiv tail
+
+**Withdrawn** on TileKernels-vmi `quant_missing_impl_0913`. Production
+kernel zeros leftover fp8/fp4 lanes with i8 `vbrc(0)` + `vinterpret`
+(no host-pad, no fp8 `vbrc` / `T.clear`). Fused rescale M=8001 is
+bitwise at H=3072 and H=16384 (8/12 rows). H=65536×4 never ran VMI:
+Nightly ASC host `aten::bitwise_left_shift` AICPU **507018**.
+
+This directory is a snapshot. Not a live PTOAS issue.
+
+---
+
 # C — fp8 `vbrc` / UB clear for a ceildiv tail
 
 PTOAS `b465f26b` (recorded) / still open on `9edc5a0`, TileLang `c1a4276c`, CANN 9.2.0, A5. No kernel workaround after PRs 89–91.

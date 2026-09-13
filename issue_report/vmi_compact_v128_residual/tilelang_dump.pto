@@ -1,0 +1,322 @@
+module attributes {pto.target_arch = "a5"} {
+  module attributes {pto.backend = "vpto", pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch = "a5"} {
+    func.func @main_kernel(%arg0: !pto.ptr<bf16, gm>, %arg1: !pto.ptr<f8E4M3FN, gm>, %arg2: !pto.ptr<ui8, gm>) attributes {pto.entry, pto.kernel_kind = #pto.kernel_kind<vector>} {
+      %c0_i64 = arith.constant 0 : i64
+      %0 = pto.castptr %c0_i64 : i64 -> !pto.ptr<ui8, ub>
+      %c0_i64_0 = arith.constant 0 : i64
+      pto.set_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID0>]
+      pto.set_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID1>]
+      pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+      pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID1>]
+      pto.set_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID2>]
+      pto.set_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID3>]
+      %c0_i64_1 = arith.constant 0 : i64
+      %c0 = arith.constant 0 : index
+      %c2 = arith.constant 2 : index
+      %c1 = arith.constant 1 : index
+      %1 = scf.for %arg3 = %c0 to %c2 step %c1 iter_args(%arg4 = %c0_i64_1) -> (i64) {
+        %c9 = arith.constant 9 : index
+        %2 = arith.muli %arg3, %c9 : index
+        %3 = pto.get_block_idx
+        %c8_i64 = arith.constant 8 : i64
+        %4 = arith.floordivsi %3, %c8_i64 : i64
+        %5 = arith.index_cast %4 : i64 to index
+        %6 = arith.addi %2, %5 : index
+        %c16 = arith.constant 16 : index
+        %7 = arith.cmpi slt, %6, %c16 : index
+        %c9_2 = arith.constant 9 : index
+        %8 = arith.muli %arg3, %c9_2 : index
+        %9 = pto.get_block_idx
+        %c8_i64_3 = arith.constant 8 : i64
+        %10 = arith.floordivsi %9, %c8_i64_3 : i64
+        %11 = arith.index_cast %10 : i64 to index
+        %12 = arith.addi %8, %11 : index
+        %c16_4 = arith.constant 16 : index
+        %13 = arith.cmpi slt, %12, %c16_4 : index
+        %14 = scf.if %13 -> (i64) {
+          %c1_i64 = arith.constant 1 : i64
+          %15 = arith.andi %arg4, %c1_i64 : i64
+          %16 = arith.index_cast %15 : i64 to index
+          pto.wait_flag_dyn[<PIPE_V>, <PIPE_MTE2>, %16]
+          %c36864 = arith.constant 36864 : index
+          %17 = arith.muli %arg3, %c36864 : index
+          %18 = pto.get_block_idx
+          %c512_i64 = arith.constant 512 : i64
+          %19 = arith.muli %18, %c512_i64 : i64
+          %20 = arith.index_cast %19 : i64 to index
+          %21 = arith.addi %17, %20 : index
+          %22 = pto.addptr %arg0, %21 : <bf16, gm> -> <bf16, gm>
+          %23 = pto.castptr %0 : !pto.ptr<ui8, ub> -> !pto.ptr<bf16, ub>
+          %c1_i64_5 = arith.constant 1 : i64
+          %24 = arith.andi %arg4, %c1_i64_5 : i64
+          %c512_i64_6 = arith.constant 512 : i64
+          %25 = arith.muli %24, %c512_i64_6 : i64
+          %26 = arith.index_cast %25 : i64 to index
+          %27 = pto.addptr %23, %26 : <bf16, ub> -> <bf16, ub>
+          %c1_i64_7 = arith.constant 1 : i64
+          %c1024_i64 = arith.constant 1024 : i64
+          %c1024_i64_8 = arith.constant 1024 : i64
+          %c0_i64_9 = arith.constant 0 : i64
+          %c1024_i64_10 = arith.constant 1024 : i64
+          pto.mte_gm_ub %22, %27, %c0_i64_9, %c1024_i64_10 nburst(%c1_i64_7, %c1024_i64, %c1024_i64_8) {operandSegmentSizes = array<i32: 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0>} : !pto.ptr<bf16, gm>, !pto.ptr<bf16, ub>, i64, i64, i64, i64, i64
+          %c1_i64_11 = arith.constant 1 : i64
+          %28 = arith.andi %arg4, %c1_i64_11 : i64
+          %29 = arith.index_cast %28 : i64 to index
+          pto.set_flag_dyn[<PIPE_MTE2>, <PIPE_V>, %29]
+          %c1_i64_12 = arith.constant 1 : i64
+          %30 = arith.andi %arg4, %c1_i64_12 : i64
+          %c2_i64 = arith.constant 2 : i64
+          %31 = arith.addi %30, %c2_i64 : i64
+          %32 = arith.index_cast %31 : i64 to index
+          pto.wait_flag_dyn[<PIPE_MTE3>, <PIPE_V>, %32]
+          %c1_i64_13 = arith.constant 1 : i64
+          %33 = arith.andi %arg4, %c1_i64_13 : i64
+          %34 = arith.index_cast %33 : i64 to index
+          pto.wait_flag_dyn[<PIPE_MTE2>, <PIPE_V>, %34]
+          pto.vecscope {
+            %c64 = arith.constant 64 : index
+            %75 = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+            %c64_40 = arith.constant 64 : index
+            %76 = pto.vmi.create_mask %c64_40 : index -> !pto.vmi.mask<64xpred>
+            %c2_41 = arith.constant 2 : index
+            %77 = pto.vmi.create_mask %c2_41 : index -> !pto.vmi.mask<2xpred>
+            %c32767_i16 = arith.constant 32767 : i16
+            %78 = builtin.unrealized_conversion_cast %c32767_i16 : i16 to ui16
+            %79 = pto.vmi.vbrc %78 : ui16 -> !pto.vmi.vreg<64xui16>
+            %cst = arith.constant 9.99999974E-5 : f32
+            %80 = pto.vmi.vbrc %cst : f32 -> !pto.vmi.vreg<2xf32>
+            %cst_42 = arith.constant 0.00223214296 : f32
+            %81 = pto.vmi.vbrc %cst_42 : f32 -> !pto.vmi.vreg<2xf32>
+            %c1_i32 = arith.constant 1 : i32
+            %82 = builtin.unrealized_conversion_cast %c1_i32 : i32 to ui32
+            %83 = pto.vmi.vbrc %82 : ui32 -> !pto.vmi.vreg<2xui32>
+            %c254_i32 = arith.constant 254 : i32
+            %84 = builtin.unrealized_conversion_cast %c254_i32 : i32 to ui32
+            %85 = pto.vmi.vbrc %84 : ui32 -> !pto.vmi.vreg<2xui32>
+            %c0_43 = arith.constant 0 : index
+            %c4 = arith.constant 4 : index
+            %c1_44 = arith.constant 1 : index
+            scf.for %arg5 = %c0_43 to %c4 step %c1_44 {
+              %c0_45 = arith.constant 0 : index
+              %c2_46 = arith.constant 2 : index
+              %c1_47 = arith.constant 1 : index
+              scf.for %arg6 = %c0_45 to %c2_46 step %c1_47 {
+                %86 = pto.castptr %0 : !pto.ptr<ui8, ub> -> !pto.ptr<bf16, ub>
+                %c1_i64_48 = arith.constant 1 : i64
+                %87 = arith.andi %arg4, %c1_i64_48 : i64
+                %c512_i64_49 = arith.constant 512 : i64
+                %88 = arith.muli %87, %c512_i64_49 : i64
+                %89 = arith.index_cast %88 : i64 to index
+                %90 = pto.addptr %86, %89 : <bf16, ub> -> <bf16, ub>
+                %c128 = arith.constant 128 : index
+                %91 = arith.muli %arg5, %c128 : index
+                %c64_50 = arith.constant 64 : index
+                %92 = arith.muli %arg6, %c64_50 : index
+                %93 = arith.addi %91, %92 : index
+                %94 = pto.vmi.vload %90[%93] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+                %95 = pto.vmi.vinterpret_cast %94 : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xui16>
+                %96 = pto.vmi.vand %95, %79, %75 : !pto.vmi.vreg<64xui16>, !pto.vmi.vreg<64xui16>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xui16>
+                %97 = pto.vmi.vinterpret_cast %96 : !pto.vmi.vreg<64xui16> -> !pto.vmi.vreg<64xbf16>
+                %98 = pto.vmi.vcvt %97 : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
+                %99 = pto.vmi.vcmax %98, %75 {group = 2 : i64} : !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<2xf32>
+                %100 = pto.vmi.vmax %99, %80, %77 : !pto.vmi.vreg<2xf32>, !pto.vmi.vreg<2xf32>, !pto.vmi.mask<2xpred> -> !pto.vmi.vreg<2xf32>
+                %101 = pto.vmi.vmul %100, %81, %77 : !pto.vmi.vreg<2xf32>, !pto.vmi.vreg<2xf32>, !pto.vmi.mask<2xpred> -> !pto.vmi.vreg<2xf32>
+                %102 = pto.vmi.vinterpret_cast %101 : !pto.vmi.vreg<2xf32> -> !pto.vmi.vreg<2xui32>
+                %103 = pto.vmi.vsub %102, %83, %77 : !pto.vmi.vreg<2xui32>, !pto.vmi.vreg<2xui32>, !pto.vmi.mask<2xpred> -> !pto.vmi.vreg<2xui32>
+                %c23_i16 = arith.constant 23 : i16
+                %104 = pto.vmi.vshrs %103, %c23_i16, %77 : !pto.vmi.vreg<2xui32>, i16, !pto.vmi.mask<2xpred> -> !pto.vmi.vreg<2xui32>
+                %c1_i32_51 = arith.constant 1 : i32
+                %105 = builtin.unrealized_conversion_cast %c1_i32_51 : i32 to ui32
+                %106 = pto.vmi.vadds %104, %105, %77 : !pto.vmi.vreg<2xui32>, ui32, !pto.vmi.mask<2xpred> -> !pto.vmi.vreg<2xui32>
+                %107 = pto.vmi.vcvt %106 {saturate = "SAT"} : !pto.vmi.vreg<2xui32> -> !pto.vmi.vreg<2xui8>
+                %108 = pto.vmi.vsub %85, %106, %77 : !pto.vmi.vreg<2xui32>, !pto.vmi.vreg<2xui32>, !pto.vmi.mask<2xpred> -> !pto.vmi.vreg<2xui32>
+                %c23_i16_52 = arith.constant 23 : i16
+                %109 = pto.vmi.vshls %108, %c23_i16_52, %77 : !pto.vmi.vreg<2xui32>, i16, !pto.vmi.mask<2xpred> -> !pto.vmi.vreg<2xui32>
+                %110 = pto.vmi.vinterpret_cast %109 : !pto.vmi.vreg<2xui32> -> !pto.vmi.vreg<2xf32>
+                %111 = pto.vmi.vcvt %110 {saturate = "SAT"} : !pto.vmi.vreg<2xf32> -> !pto.vmi.vreg<2xbf16>
+                %c1_i64_53 = arith.constant 1 : i64
+                %112 = arith.andi %arg4, %c1_i64_53 : i64
+                %c32_i64_54 = arith.constant 32 : i64
+                %113 = arith.muli %112, %c32_i64_54 : i64
+                %c3072_i64_55 = arith.constant 3072 : i64
+                %114 = arith.addi %113, %c3072_i64_55 : i64
+                %115 = arith.index_cast %114 : i64 to index
+                %116 = pto.addptr %0, %115 : <ui8, ub> -> <ui8, ub>
+                %c4_56 = arith.constant 4 : index
+                %117 = arith.muli %arg5, %c4_56 : index
+                %c2_57 = arith.constant 2 : index
+                %118 = arith.muli %arg6, %c2_57 : index
+                %119 = arith.addi %117, %118 : index
+                %c1_58 = arith.constant 1 : index
+                pto.vmi.vstore %107, %116[%119], %c1_58 {group = 2 : i64} : !pto.vmi.vreg<2xui8>, !pto.ptr<ui8, ub>
+                %120 = pto.castptr %0 : !pto.ptr<ui8, ub> -> !pto.ptr<bf16, ub>
+                %c1568 = arith.constant 1568 : index
+                %121 = pto.addptr %120, %c1568 : <bf16, ub> -> <bf16, ub>
+                %c64_59 = arith.constant 64 : index
+                %122 = arith.muli %arg5, %c64_59 : index
+                %c32 = arith.constant 32 : index
+                %123 = arith.muli %arg6, %c32 : index
+                %124 = arith.addi %122, %123 : index
+                %c1_60 = arith.constant 1 : index
+                pto.vmi.vstore %111, %121[%124], %c1_60 {group = 2 : i64} : !pto.vmi.vreg<2xbf16>, !pto.ptr<bf16, ub>
+              }
+            }
+          }
+          %c1_i64_14 = arith.constant 1 : i64
+          %35 = arith.andi %arg4, %c1_i64_14 : i64
+          %c2_i64_15 = arith.constant 2 : i64
+          %36 = arith.addi %35, %c2_i64_15 : i64
+          %37 = arith.index_cast %36 : i64 to index
+          pto.set_flag_dyn[<PIPE_V>, <PIPE_MTE3>, %37]
+          %c1_i64_16 = arith.constant 1 : i64
+          %38 = arith.andi %arg4, %c1_i64_16 : i64
+          %c2_i64_17 = arith.constant 2 : i64
+          %39 = arith.addi %38, %c2_i64_17 : i64
+          %40 = arith.index_cast %39 : i64 to index
+          pto.wait_flag_dyn[<PIPE_V>, <PIPE_MTE3>, %40]
+          %c1_i64_18 = arith.constant 1 : i64
+          %41 = arith.andi %arg4, %c1_i64_18 : i64
+          %c32_i64 = arith.constant 32 : i64
+          %42 = arith.muli %41, %c32_i64 : i64
+          %c3072_i64 = arith.constant 3072 : i64
+          %43 = arith.addi %42, %c3072_i64 : i64
+          %44 = pto.castptr %43 : i64 -> !pto.ptr<ui8, ub>
+          %c1152 = arith.constant 1152 : index
+          %45 = arith.muli %arg3, %c1152 : index
+          %46 = pto.get_block_idx
+          %c16_i64 = arith.constant 16 : i64
+          %47 = arith.muli %46, %c16_i64 : i64
+          %48 = arith.index_cast %47 : i64 to index
+          %49 = arith.addi %45, %48 : index
+          %50 = pto.addptr %arg2, %49 : <ui8, gm> -> <ui8, gm>
+          %c1_i64_19 = arith.constant 1 : i64
+          %c16_i64_20 = arith.constant 16 : i64
+          %c16_i64_21 = arith.constant 16 : i64
+          %c16_i64_22 = arith.constant 16 : i64
+          %c4_i64 = arith.constant 4 : i64
+          pto.mte_ub_gm %44, %50, %c16_i64_22 nburst(%c1_i64_19, %c16_i64_20, %c16_i64_21) l2_cache_ctl(%c4_i64) {operandSegmentSizes = array<i32: 1, 1, 1, 1, 1, 1, 1, 0, 0, 0>} : !pto.ptr<ui8, ub>, !pto.ptr<ui8, gm>, i64, i64, i64, i64, i64
+          %c1_i64_23 = arith.constant 1 : i64
+          %51 = arith.andi %arg4, %c1_i64_23 : i64
+          %c2_i64_24 = arith.constant 2 : i64
+          %52 = arith.addi %51, %c2_i64_24 : i64
+          %53 = arith.index_cast %52 : i64 to index
+          pto.set_flag_dyn[<PIPE_MTE3>, <PIPE_V>, %53]
+          %c1_i64_25 = arith.constant 1 : i64
+          %54 = arith.andi %arg4, %c1_i64_25 : i64
+          %55 = arith.index_cast %54 : i64 to index
+          pto.wait_flag_dyn[<PIPE_MTE3>, <PIPE_V>, %55]
+          pto.vecscope {
+            %c64 = arith.constant 64 : index
+            %75 = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+            %c64_40 = arith.constant 64 : index
+            %76 = pto.vmi.create_mask %c64_40 : index -> !pto.vmi.mask<64xpred>
+            %c64_41 = arith.constant 64 : index
+            %77 = pto.vmi.create_mask %c64_41 : index -> !pto.vmi.mask<64xpred>
+            %c0_42 = arith.constant 0 : index
+            %c4 = arith.constant 4 : index
+            %c1_43 = arith.constant 1 : index
+            scf.for %arg5 = %c0_42 to %c4 step %c1_43 {
+              %c0_44 = arith.constant 0 : index
+              %c2_45 = arith.constant 2 : index
+              %c1_46 = arith.constant 1 : index
+              scf.for %arg6 = %c0_44 to %c2_45 step %c1_46 {
+                %78 = pto.castptr %0 : !pto.ptr<ui8, ub> -> !pto.ptr<bf16, ub>
+                %c1568 = arith.constant 1568 : index
+                %79 = pto.addptr %78, %c1568 : <bf16, ub> -> <bf16, ub>
+                %c64_47 = arith.constant 64 : index
+                %80 = arith.muli %arg5, %c64_47 : index
+                %c32 = arith.constant 32 : index
+                %81 = arith.muli %arg6, %c32 : index
+                %82 = arith.addi %80, %81 : index
+                %c1_48 = arith.constant 1 : index
+                %83 = pto.vmi.vload %79[%82], %c1_48 {dist_mode = "brc", group = 2 : i64} : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+                %84 = pto.castptr %0 : !pto.ptr<ui8, ub> -> !pto.ptr<bf16, ub>
+                %c1_i64_49 = arith.constant 1 : i64
+                %85 = arith.andi %arg4, %c1_i64_49 : i64
+                %c512_i64_50 = arith.constant 512 : i64
+                %86 = arith.muli %85, %c512_i64_50 : i64
+                %87 = arith.index_cast %86 : i64 to index
+                %88 = pto.addptr %84, %87 : <bf16, ub> -> <bf16, ub>
+                %c128 = arith.constant 128 : index
+                %89 = arith.muli %arg5, %c128 : index
+                %c64_51 = arith.constant 64 : index
+                %90 = arith.muli %arg6, %c64_51 : index
+                %91 = arith.addi %89, %90 : index
+                %92 = pto.vmi.vload %88[%91] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+                %93 = pto.vmi.vcvt %92 : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
+                %94 = pto.vmi.vcvt %83 : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
+                %95 = pto.vmi.vmul %93, %94, %75 : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
+                %96 = pto.vmi.vcvt %95 {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf8E4M3FN>
+                %97 = pto.castptr %0 : !pto.ptr<ui8, ub> -> !pto.ptr<f8E4M3FN, ub>
+                %c1_i64_52 = arith.constant 1 : i64
+                %98 = arith.andi %arg4, %c1_i64_52 : i64
+                %c512_i64_53 = arith.constant 512 : i64
+                %99 = arith.muli %98, %c512_i64_53 : i64
+                %c2048_i64_54 = arith.constant 2048 : i64
+                %100 = arith.addi %99, %c2048_i64_54 : i64
+                %101 = arith.index_cast %100 : i64 to index
+                %102 = pto.addptr %97, %101 : <f8E4M3FN, ub> -> <f8E4M3FN, ub>
+                %c128_55 = arith.constant 128 : index
+                %103 = arith.muli %arg5, %c128_55 : index
+                %c64_56 = arith.constant 64 : index
+                %104 = arith.muli %arg6, %c64_56 : index
+                %105 = arith.addi %103, %104 : index
+                pto.vmi.vstore %96, %102[%105], %75 : !pto.vmi.vreg<64xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, !pto.vmi.mask<64xpred>
+              }
+            }
+          }
+          %c1_i64_26 = arith.constant 1 : i64
+          %56 = arith.andi %arg4, %c1_i64_26 : i64
+          %57 = arith.index_cast %56 : i64 to index
+          pto.set_flag_dyn[<PIPE_V>, <PIPE_MTE3>, %57]
+          %c1_i64_27 = arith.constant 1 : i64
+          %58 = arith.andi %arg4, %c1_i64_27 : i64
+          %59 = arith.index_cast %58 : i64 to index
+          pto.set_flag_dyn[<PIPE_V>, <PIPE_MTE2>, %59]
+          %c1_i64_28 = arith.constant 1 : i64
+          %60 = arith.andi %arg4, %c1_i64_28 : i64
+          %61 = arith.index_cast %60 : i64 to index
+          pto.wait_flag_dyn[<PIPE_V>, <PIPE_MTE3>, %61]
+          %c1_i64_29 = arith.constant 1 : i64
+          %62 = arith.andi %arg4, %c1_i64_29 : i64
+          %c512_i64_30 = arith.constant 512 : i64
+          %63 = arith.muli %62, %c512_i64_30 : i64
+          %c2048_i64 = arith.constant 2048 : i64
+          %64 = arith.addi %63, %c2048_i64 : i64
+          %65 = pto.castptr %64 : i64 -> !pto.ptr<f8E4M3FN, ub>
+          %c36864_31 = arith.constant 36864 : index
+          %66 = arith.muli %arg3, %c36864_31 : index
+          %67 = pto.get_block_idx
+          %c512_i64_32 = arith.constant 512 : i64
+          %68 = arith.muli %67, %c512_i64_32 : i64
+          %69 = arith.index_cast %68 : i64 to index
+          %70 = arith.addi %66, %69 : index
+          %71 = pto.addptr %arg1, %70 : <f8E4M3FN, gm> -> <f8E4M3FN, gm>
+          %c1_i64_33 = arith.constant 1 : i64
+          %c512_i64_34 = arith.constant 512 : i64
+          %c512_i64_35 = arith.constant 512 : i64
+          %c512_i64_36 = arith.constant 512 : i64
+          %c4_i64_37 = arith.constant 4 : i64
+          pto.mte_ub_gm %65, %71, %c512_i64_36 nburst(%c1_i64_33, %c512_i64_34, %c512_i64_35) l2_cache_ctl(%c4_i64_37) {operandSegmentSizes = array<i32: 1, 1, 1, 1, 1, 1, 1, 0, 0, 0>} : !pto.ptr<f8E4M3FN, ub>, !pto.ptr<f8E4M3FN, gm>, i64, i64, i64, i64, i64
+          %c1_i64_38 = arith.constant 1 : i64
+          %72 = arith.andi %arg4, %c1_i64_38 : i64
+          %73 = arith.index_cast %72 : i64 to index
+          pto.set_flag_dyn[<PIPE_MTE3>, <PIPE_V>, %73]
+          %c1_i64_39 = arith.constant 1 : i64
+          %74 = arith.addi %arg4, %c1_i64_39 : i64
+          scf.yield %74 : i64
+        } else {
+          scf.yield %arg4 : i64
+        }
+        scf.yield %14 : i64
+      }
+      pto.wait_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID0>]
+      pto.wait_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID1>]
+      pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+      pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID1>]
+      pto.wait_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID2>]
+      pto.wait_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID3>]
+      return
+    }
+  }
+}

@@ -1,0 +1,7 @@
+# Live issue D — remaining four-kernel TODO(impl) IDs after quant_missing_impl_0913
+
+# TMA-col unpacked SF (compile OK, 48-byte SF mismatch vs ASC)
+per_token_cast__fmt=e4m3_hidden=3072_in_dtype=bf16_mode=cast_num_per_channels=32_num_tokens=512_round_sf=True_use_packed_ue8m0=False_use_tma_aligned_col_major_sf=True
+
+# FP4 unpacked (32-lane packed FP4 vstore is illegal; no IR)
+per_token_cast__fmt=e2m1_hidden=3072_in_dtype=bf16_mode=cast_num_per_channels=32_num_tokens=512_round_sf=True_use_packed_ue8m0=False_use_tma_aligned_col_major_sf=False

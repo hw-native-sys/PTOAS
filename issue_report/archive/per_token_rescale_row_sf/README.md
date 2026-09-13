@@ -1,8 +1,7 @@
-# Kernel compose leftover (was old A)
+# Kernel compose leftover — closed 0913
 
 Compose calls `cast_back` then bf16 per_token
-(`_compose_per_token_rescale`). Recorded: fused path rejects; compose
-SF off-by-one vs ASC fused.
+(`_compose_per_token_rescale`). Row-major fused/compose is now bitwise
+vs ASC on `quant_missing_impl_0913`.
 
-Not a proven PTOAS hole and not closed by PRs 89–91. Keep the log.
-Do not reopen as live **A**.
+Not a PTOAS hole. `recorded.log` here is the old SF off-by-one.

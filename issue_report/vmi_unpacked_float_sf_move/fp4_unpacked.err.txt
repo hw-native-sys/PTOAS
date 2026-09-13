@@ -1,0 +1,29 @@
+Traceback (most recent call last):
+  File "<stdin>", line 53, in compile_one
+  File "<stdin>", line 90, in <lambda>
+  File "/home/jzhuang/work_dir/vmi_work_0908/TileKernels-vmi_quant_missing_impl_0913/tile_kernels_vmi/quant/per_token_cast_vmi.py", line 3716, in get_per_token_cast_kernel_vmi
+    kn = _compile_kernel_impl(
+         ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jzhuang/work_dir/vmi_work_0908/TileKernels-vmi_quant_missing_impl_0913/tile_kernels_vmi/quant/per_token_cast_vmi.py", line 2536, in _compile_kernel_impl
+    prim = _per_token_cast_kernel_unpacked(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jzhuang/work_dir/vmi_work_0908/TileKernels-vmi_quant_missing_impl_0913/tile_kernels_vmi/quant/per_token_cast_vmi.py", line 2084, in _per_token_cast_kernel_unpacked
+    @T.prim_func
+     ^^^^^^^^^^^
+  File "/home/jzhuang/.conda/envs/cann91_dev/lib/python3.11/site-packages/tilelang/language/eager/builder.py", line 1686, in prim_func
+    return impl(func) if func is not None else impl
+           ^^^^^^^^^^
+  File "/home/jzhuang/.conda/envs/cann91_dev/lib/python3.11/site-packages/tilelang/language/eager/builder.py", line 1684, in impl
+    raise e
+  File "/home/jzhuang/.conda/envs/cann91_dev/lib/python3.11/site-packages/tilelang/language/eager/builder.py", line 1677, in impl
+    ir_gen.gen(builder)(**annot)
+  File "/home/jzhuang/work_dir/vmi_work_0908/TileKernels-vmi_quant_missing_impl_0913/tile_kernels_vmi/quant/per_token_cast_vmi.py", line 2389, in main
+    T.vmi.vstore(
+  File "/home/jzhuang/.conda/envs/cann91_dev/lib/python3.11/site-packages/tilelang/ascend/language/vmi.py", line 247, in wrapper
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/jzhuang/.conda/envs/cann91_dev/lib/python3.11/site-packages/tilelang/ascend/language/vmi.py", line 560, in vstore
+    _require_vmi_lane_count(
+  File "/home/jzhuang/.conda/envs/cann91_dev/lib/python3.11/site-packages/tilelang/ascend/language/vmi.py", line 78, in _require_vmi_lane_count
+    raise ValueError(f"{context} requires lanes to be one of {_VMI_LANE_COUNTS}; got {lanes}")
+ValueError: T.vmi.vstore(...) packed FP4 physical lane count requires lanes to be one of (1, 2, 4, 8, 64, 128, 256); got 32

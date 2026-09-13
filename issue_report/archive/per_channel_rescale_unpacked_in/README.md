@@ -1,5 +1,6 @@
-# Moved to issue D
+# Withdrawn from issue D
 
-Same low-level bug as **[vmi_unpacked_float_sf_move](../../vmi_unpacked_float_sf_move/)**: unpacked row-major **input** SF `vload` for per_channel rescale.
+per_channel unpacked in-SF (2 rows) is **kernel-closed** on
+`quant_missing_impl_0913` (compose via `cast_back`, bitwise vs ASC).
 
-Recorded: assert packed input SF required. `recorded.log` is kept here.
+Old recorded: assert packed input SF required. `recorded.log` is kept here.

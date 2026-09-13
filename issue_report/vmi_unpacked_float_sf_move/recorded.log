@@ -1,3 +1,18 @@
-=== per_token TMA unpacked ===
-FAIL AssertionError: packed UE8M0 required for TMA adapter
-# 2026-09-10 compile-probe
+=== D TMA-col unpacked SF (quant_missing_impl_0913) ===
+Pins: PTOAS 9edc5a0 / TileLang c1a4276c / Nightly adefcb7 / CANN 9.2.0
+Config: per_token_cast__fmt=e4m3_hidden=3072_in_dtype=bf16_mode=cast_num_per_channels=32_num_tokens=512_round_sf=True_use_packed_ue8m0=False_use_tma_aligned_col_major_sf=True
+
+Production IR emits (tilelang_dump.ptodsl.py / .pto). PTOAS lowers.
+Isolated remasure (one process):
+  RuntimeError: per_token ASC/VMI scale mismatch: 48 bytes
+Not a packed-only adapter assert. Not a stub dump.
+
+=== D FP4 unpacked (quant_missing_impl_0913) ===
+Config: per_token_cast__fmt=e2m1_hidden=3072_in_dtype=bf16_mode=cast_num_per_channels=32_num_tokens=512_round_sf=True_use_packed_ue8m0=False_use_tma_aligned_col_major_sf=False
+
+ValueError: T.vmi.vstore(...) packed FP4 physical lane count requires lanes to be one of (1, 2, 4, 8, 64, 128, 256); got 32
+See fp4_unpacked.err.txt. No kernel.ptodsl.py (frontend).
+
+=== Withdrawn (kernel-closed 0913) ===
+per_channel unpacked in-SF (2 rows): compose via cast_back, bitwise.
+Old assert "packed UE8M0 required for TMA adapter" is stale for TMA-unpacked.

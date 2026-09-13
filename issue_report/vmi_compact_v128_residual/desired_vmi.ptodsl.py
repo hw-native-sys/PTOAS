@@ -4,7 +4,9 @@ Design §1.1: K_raw = 128 * 16 / 2048 = 1; one physical vreg, all 128
 bf16 lanes valid. create_mask(128) is legal. Host-pad to 256 is not a port.
 
 ASC tiles hidden with block_k aligned to 128 (H=128 one tile, H=384 three).
-PTOAS currently reports VMI-RESIDUAL-OP when this strip is used at H=384.
+PTOAS currently reports VMI-RESIDUAL-OP on the production packed compact
+emit (dual V<64> at H=128; see tilelang_dump.ptodsl.py). Unpacked compact
+and per_block H=384 are kernel-closed.
 """
 from ptodsl import pto
 

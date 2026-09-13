@@ -1,3 +1,13 @@
+# WITHDRAWN E — UE8M0 pack from an fp32 amax
+
+**Withdrawn** on TileKernels-vmi `quant_missing_impl_0913`. per_block
+fp32 `sf_only`+packed (4/4) and per_token `sf_only`+packed (2/2) are
+bitwise vs ASC (ratios below the drop-in bar → TODO(perf), not PTOAS).
+
+This directory is a snapshot. Not a live PTOAS issue.
+
+---
+
 # E — UE8M0 pack from an fp32 amax
 
 PTOAS `b465f26b` (recorded) / still open on `9edc5a0`, TileLang `c1a4276c`, CANN 9.2.0, A5. No kernel workaround after PRs 89–91.

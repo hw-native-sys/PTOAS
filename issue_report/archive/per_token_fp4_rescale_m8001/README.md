@@ -1,5 +1,7 @@
-# Moved to issue C
+# Withdrawn from issue C
 
-Same low-level bug as **[vmi_fp8_vbrc_clear_tail](../../vmi_fp8_vbrc_clear_tail/)**: fp8 `vbrc` / `T.clear` for an in-kernel ceildiv tail (no host pad).
+Fused rescale M=8001 is **kernel-closed** on `quant_missing_impl_0913`
+(i8 `vbrc(0)` + `vinterpret` to fp8/fp4, no host-pad). Snapshot of the
+old compiler hole: [`vmi_fp8_vbrc_clear_tail`](../vmi_fp8_vbrc_clear_tail/).
 
-Recorded: `vbrc(f8e4m3(0))` TypeError; `T.clear` e4m3 Bad bit-width. `recorded.log` is kept here.
+Recorded originally: `vbrc(f8e4m3(0))` TypeError; `T.clear` e4m3 Bad bit-width.

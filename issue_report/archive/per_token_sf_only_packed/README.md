@@ -1,5 +1,7 @@
-# Moved to issue E
+# Withdrawn from issue E
 
-Same low-level bug as **[vmi_ue8m0_pack_from_fp32_amax](../../vmi_ue8m0_pack_from_fp32_amax/)**: amax → UE8M0 pack without a payload store.
+per_token `sf_only`+packed is **kernel-closed** on `quant_missing_impl_0913`
+(bitwise vs ASC; ratio below drop-in bar → TODO(perf)). Snapshot:
+[`vmi_ue8m0_pack_from_fp32_amax`](../vmi_ue8m0_pack_from_fp32_amax/).
 
-Recorded: assert sf_only requires unpacked. `recorded.log` is kept here.
+Recorded originally: assert sf_only requires unpacked.
