@@ -1,5 +1,8 @@
-# Moved to issue A
+# Kernel compose leftover (was old A)
 
-Compose calls `cast_back` then bf16 per_token (`_compose_per_token_rescale`). Same low-level bug as **[vmi_1xT_ue8m0_scale_apply](../../vmi_1xT_ue8m0_scale_apply/)**.
+Compose calls `cast_back` then bf16 per_token
+(`_compose_per_token_rescale`). Recorded: fused path rejects; compose
+SF off-by-one vs ASC fused.
 
-Recorded: fused path rejects; compose SF off-by-one vs ASC fused. `recorded.log` is kept here.
+Not a proven PTOAS hole and not closed by PRs 89–91. Keep the log.
+Do not reopen as live **A**.

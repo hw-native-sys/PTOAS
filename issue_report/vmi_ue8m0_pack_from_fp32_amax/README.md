@@ -1,8 +1,8 @@
 # E — UE8M0 pack from an fp32 amax
 
-PTOAS `b465f26b` / CANN 9.2.0 / TileLang `5038c468` / A5.
+PTOAS `b465f26b` (recorded) / still open on `9edc5a0`, TileLang `c1a4276c`, CANN 9.2.0, A5. No kernel workaround after PRs 89–91.
 
-Scale-only (or scale+payload) path: amax → exponent → packed UE8M0 `vstore`. **bf16** per-block sf_only+packed is already bitwise versus ASC (row and TMA). **fp32** of that path mismatches 1024 SF bytes. per-token sf_only+packed never emits IR.
+Scale-only (or scale+payload) path: amax → exponent → packed UE8M0 `vstore`. **bf16** per-block sf_only+packed is bitwise versus ASC (row and TMA); PR89 only closed TMA+packed **bf16** `sf_only` *perf* (0.53 → ≥1.23). **fp32** of that path still mismatches 1024 SF bytes. per-token sf_only+packed never emits IR.
 
 One issue: pack scales from an fp32 (or bf16-widened) amax into UE8M0.
 

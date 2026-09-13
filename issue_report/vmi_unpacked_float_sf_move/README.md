@@ -1,6 +1,6 @@
 # D — Unpacked float scale `vload` / `vstore`
 
-PTOAS `b465f26b` / CANN 9.2.0 / TileLang `5038c468` / A5.
+PTOAS `b465f26b` (recorded) / still open on `9edc5a0`, TileLang `c1a4276c`, CANN 9.2.0, A5. No kernel workaround after PRs 89–91 (unpacked in-SF still gated).
 
 ASC Nightly L1 stores and loads `V<L×f32>` scales without packing. TMA-col is a compiler address / `dist-mode`, not a host permute of row-major GM. Production VMI asserts packed-only and never emits IR.
 

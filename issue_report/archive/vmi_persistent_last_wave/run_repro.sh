@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPRO_ROOT="$(cd "${HERE}/../.." && pwd)"
+REPRO_ROOT="$(cd "${HERE}/../../.." && pwd)"
 export PYTHONPATH="${REPRO_PYTHONPATH:-${REPRO_ROOT}/build/python:${REPRO_ROOT}/ptodsl:${TILELANG_ROOT:-}:${PYTHONPATH:-}}"
 if [[ -z "${PTOAS_BIN:-}" && -x "${REPRO_ROOT}/build/tools/ptoas/ptoas" ]]; then
   export PTOAS_BIN="${REPRO_ROOT}/build/tools/ptoas/ptoas"

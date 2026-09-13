@@ -1,6 +1,6 @@
 # C — fp8 `vbrc` / UB clear for a ceildiv tail
 
-PTOAS `b465f26b` / CANN 9.2.0 / TileLang `5038c468` / A5.
+PTOAS `b465f26b` (recorded) / still open on `9edc5a0`, TileLang `c1a4276c`, CANN 9.2.0, A5. No kernel workaround after PRs 89–91.
 
 ASC fused per-token rescale at M=8001 (`8001 % 16 == 1`) uses in-kernel `ceildiv` and zeros leftover e4m3/e2m1 lanes. VMI `vbrc(f8e4m3(0))` raises `TypeError` (`f8E4M3FN` constructor). `T.clear` on e4m3 UB fails (`Bad bit-width float8_e4m3fn`). Host-pad M to a multiple of 16 is not a port.
 
@@ -22,7 +22,7 @@ ASC fused per-token rescale at M=8001 (`8001 % 16 == 1`) uses in-kernel `ceildiv
 |---|---|---|
 | per_token fused rescale M=8001, 4 dtype pairs × 3 aligned H (12 rows) | compile fail `vbrc`/`T.clear` e4m3 | [`archive/per_token_fp4_rescale_m8001/`](../archive/per_token_fp4_rescale_m8001/) |
 
-The two **fp32 packed TMA cast** 507035 rows at M=8001 H=16384/65536 are issue A (same ACL family, large TMA store), not this tail-zero hole.
+The two **fp32 packed TMA cast** 507035 rows at M=8001 H=16384/65536 were later kernel-fixed (E4M3 exact-M / on-device TMA, bitwise ≥0.98). They are not this tail-zero hole and not a live PTOAS issue.
 
 ## Reproducer
 

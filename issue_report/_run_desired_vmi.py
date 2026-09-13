@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile-check desired_vmi.ptodsl.py (shared by the six merged issues)."""
+"""Compile-check desired_vmi.ptodsl.py (shared by live B–E issues)."""
 from __future__ import annotations
 
 import argparse

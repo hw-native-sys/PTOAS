@@ -1,6 +1,6 @@
 # B — Compact `V<128×T>` leftover strip
 
-PTOAS `b465f26b` / CANN 9.2.0 / TileLang `5038c468` / A5.
+PTOAS `b465f26b` (recorded) / still open on `9edc5a0`, TileLang `c1a4276c`, CANN 9.2.0, A5. No kernel workaround after PRs 89–91.
 
 ASC tiles hidden in 128-wide chunks (`hidden % 128 == 0`). VMI design allows compact `V<128×bf16>` (`K_raw = 1`). PTOAS reports `VMI-RESIDUAL-OP` when that strip is used at H=384. Per-token never emits IR (`hidden % 256 == 0` assert). Host-pad is not a port.
 

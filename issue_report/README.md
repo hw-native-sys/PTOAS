@@ -1,62 +1,87 @@
 # Quant leftover PTOAS issues (0909 pins)
 
-PTOAS `b465f26b`, CANN 9.2.0, TileLang `5038c468`, A5.
-
-These reports are **low-level PTOAS bugs**, not one directory per Nightly TileLang leftover class. Each issue has:
+Live reports are **low-level PTOAS holes that still block a Nightly VMI
+port**, with no known kernel workaround. Each live issue has:
 
 - a short **desired VMI** (logical `V<L×T>`, no PART/ONEPT/PK impersonation)
-- a working **ASC reference** (Nightly C++ that launches, plus `asc_pattern.mi` — the `pto.mi` PTOAS must emit)
-- a table of high-level configs that hit the same bug
+- a working **ASC reference** (`asc_pattern.mi` — the `pto.mi` PTOAS must emit)
+- a table of high-level configs that still hit the same hole
 
-Historical leftover-class snapshots (recorded logs, old dumps) live under [`archive/`](archive/). They are not issues.
+Recorded originally on PTOAS `b465f26b` / TileLang `5038c468`. **Still
+open** on PTOAS `9edc5a0` / TileLang `c1a4276c` / Nightly `adefcb7` /
+CANN **9.2.0** after TileKernels-vmi `#88` + sequential remasure of
+PRs **89, 91, 90** (`pr_89_90_91_rebase`). Coverage grain: four-kernel
+**623** ASC configs → **324** ready / **273** TODO(impl) / **26** TODO(perf).
 
-Host-pad and host TMA permute are not ports. ASC-illegal / untested guards (per-channel FP4, Ascend `npt≠32`, packed+`round_sf=False`, output TMA) are **not** issues.
+Historical leftover-class snapshots and **withdrawn** compiler reports
+live under [`archive/`](archive/). They are not live issues.
 
-Design: [PTO-vmi-design.en.md](../../../kernel_study/PTO-Gym-vmi-design/docs/PTO-vmi-design.en.md), [PTO-vmi-Instruction-SPEC.md](../../../kernel_study/PTO-Gym/docs/PTO-vmi-Instruction-SPEC.md).
+Host-pad and host TMA permute are not ports. ASC-illegal / untested
+guards (per-channel FP4, Ascend `npt≠32`, packed+`round_sf=False`,
+output TMA) are **not** issues.
 
-## Six issues
+Design: [PTO-vmi-design.en.md](../../../kernel_study/PTO-Gym-vmi-design/docs/PTO-vmi-design.en.md),
+[PTO-vmi-Instruction-SPEC.md](../../../kernel_study/PTO-Gym/docs/PTO-vmi-Instruction-SPEC.md).
 
-| | Dir | Low-level hole | ASC reference | Recorded |
+## Live issues (no known kernel workaround)
+
+| | Dir | Low-level hole | Still hits | Recorded |
 |---|---|---|---|---|
-| **A** | [`vmi_1xT_ue8m0_scale_apply/`](vmi_1xT_ue8m0_scale_apply/) | 1×T UE8M0 extract + scale apply | Nightly `cast_back_asc` launches; `asc_pattern.mi` is `vlds_brc_elem` + `vshl` + `vmul` | 507035 **or** compile-OK mismatch |
-| **B** | [`vmi_compact_v128_residual/`](vmi_compact_v128_residual/) | Compact `V<128×T>` strip (`create_mask(128)`) | Nightly per_block H=384 launches (128-aligned `block_k`, no host pad) | `VMI-RESIDUAL-OP` / `hidden % 256` assert |
-| **C** | [`vmi_fp8_vbrc_clear_tail/`](vmi_fp8_vbrc_clear_tail/) | `vbrc` / UB clear of fp8 (ceildiv tail) | Nightly fused rescale launches (`ceildiv`, clamped DMA) | `vbrc(f8e4m3(0))` / `T.clear` e4m3 |
-| **D** | [`vmi_unpacked_float_sf_move/`](vmi_unpacked_float_sf_move/) | Unpacked `V<L×f32>` SF load/store (row and TMA-col) | Nightly unpacked path (`ONEPT_B32` / `BRC_B32`); pattern in `asc_pattern.mi` | packed-only adapter assert |
-| **E** | [`vmi_ue8m0_pack_from_fp32_amax/`](vmi_ue8m0_pack_from_fp32_amax/) | amax → UE8M0 pack (sf_only or with payload) | Nightly `store_scale_pair` packed; bf16 sibling already bitwise | 1024-byte SF mismatch (fp32) / assert (per_token) |
-| **F** | [`vmi_persistent_last_wave/`](vmi_persistent_last_wave/) | Last Persistent software-pipeline wave | Nightly fused per_channel TMA-in launches | remainder-wave payload+SF mismatch |
+| **B** | [`vmi_compact_v128_residual/`](vmi_compact_v128_residual/) | Compact `V<128×T>` strip (`create_mask(128)`) | per_token H=128/384 (40); per_block H=384 (8) | `VMI-RESIDUAL-OP` / `hidden % 256` assert |
+| **C** | [`vmi_fp8_vbrc_clear_tail/`](vmi_fp8_vbrc_clear_tail/) | `vbrc` / UB clear of fp8 (ceildiv tail) | per_token fused rescale M=8001 (12) | `vbrc(f8e4m3(0))` / `T.clear` e4m3 |
+| **D** | [`vmi_unpacked_float_sf_move/`](vmi_unpacked_float_sf_move/) | Unpacked `V<L×f32>` SF load/store (row and TMA-col) | per_token TMA-unpacked (1), FP4 unpacked (1); per_channel unpacked in-SF (2) | packed-only adapter assert |
+| **E** | [`vmi_ue8m0_pack_from_fp32_amax/`](vmi_ue8m0_pack_from_fp32_amax/) | amax → UE8M0 pack from an **fp32** amax | per_block sf_only+packed fp32 (4); per_token sf_only+packed (2) | 1024-byte SF mismatch / assert |
 
-Joins checked in TileKernels-vmi:
+Letters A and F are **withdrawn** (kernel workarounds exist). Snapshots:
+[`archive/vmi_1xT_ue8m0_scale_apply/`](archive/vmi_1xT_ue8m0_scale_apply/),
+[`archive/vmi_persistent_last_wave/`](archive/vmi_persistent_last_wave/).
 
-- `per_token_rescale_row_sf` compose calls `cast_back` → **A**.
-- per_token fp32 packed TMA M=8001 H=16384/65536 isolated 507035 (fresh lock) → **A** (same ACL family, large TMA store).
-- per_channel TMA-in **compose** → **A**; **fused** remainder waves stay **F** (matching waves are bitwise).
+## Leftover-class → live issue
 
-## Leftover-class → issue (100% four-kernel ASC-parity blockers)
+Every four-kernel `TODO(impl)` class that is still a **PTOAS** blocker
+maps here. Kernel-fixed / unisolated / TODO(perf) classes are **not**
+PTOAS issues (see below).
 
-Every in-matrix `TODO(impl)` row on `per_token_cast` / `per_block_cast` / `per_channel_cast` / `cast_back` maps here. Counts from TileKernels-vmi `kernel_coverage.md` on `castback_fix_0910` after the PR78 remasure (447 ASC configs, 119 TODO(impl); stale vs `#85` / `benchfix_0911`). Row npt=1 512×2048 and the four TMA mismatch leftover classes below are kernel-fixed for **correctness** and are **not** PTOAS blockers. Their ratios are still TODO(perf) — that slowness is still open.
-
-| Leftover class (rows) | Issue |
+| Leftover class (rows on `pr_89_90_91_rebase`) | Issue |
 |---|---|
 | per_token hidden 128/384 (40) | B |
 | per_token fused rescale M=8001 (12) | C |
 | per_token sf_only+packed (2) | E |
 | per_token TMA-col unpacked SF (1) | D |
 | per_token FP4 unpacked SF (1) | D |
-| per_token row-major rescale compose (1) | A |
-| per_token fp32 packed TMA M=8001 H=16384/65536 isolated 507035 (2) | A |
-| per_channel large TMA-in fused (7) | F |
-| per_channel large TMA-in compose | A |
 | per_channel unpacked in-SF (2) | D |
 | per_block H=384 (8) | B |
 | per_block sf_only+packed fp32 (4) | E |
-| cast_back remaining isolated ACL 507035 + e4m3→fp32 TMA npt=32 H=128 representative | A |
 | ASC-illegal / untested guards | not an issue |
 
 ## What is not a PTOAS issue
 
-- Host-pad of M or H (ASC uses in-kernel `ceildiv` / 128-aligned tiles).
-- Host permute of row-major SF to look like TMA-col.
-- ASC-illegal combinations (per-channel FP4, Ascend `npt≠32`, packed without round, per-channel **output** TMA).
-- SwiGLU / top-k / fused cast+cast-back (outside the four-kernel parity goal).
-- cast_back **row** npt=1 512×2048 (e2m1/e4m3→bf16/fp32): kernel-fixed by TileKernels-vmi PR78 (bitwise, TODO(perf)). Historical snapshot stays under [`archive/cast_back_row_npt1/`](archive/cast_back_row_npt1/).
-- cast_back **TMA** leftover mismatches (TMA npt=1 512×2048 e2m1/e4m3→bf16 + e4m3→fp32 TMA npt=1 + e2m1→fp32 TMA npt=32 H=2048): kernel-fixed by TileKernels-vmi TMA/non-canonical 32B scale slots (`benchfix_0911` / Codex `5b4bb1f3d`). Bitwise vs ASC; **TODO(perf)** on this host (ratios ~0.030–0.096, `BENCH_REP=20`). Correctness is closed; the slow ratio is still an issue to solve. Not closed by PTOAS `9edc5a0`. Snapshots: [`archive/cast_back_tma_npt1_h2048/`](archive/cast_back_tma_npt1_h2048/), [`archive/cast_back_e4m3_fp32_tma_npt1/`](archive/cast_back_e4m3_fp32_tma_npt1/), [`archive/cast_back_e2m1_fp32_tma_npt32_h2048/`](archive/cast_back_e2m1_fp32_tma_npt32_h2048/).
+- Host-pad of M or H; host permute of row-major SF to TMA-col.
+- ASC-illegal combinations (per-channel FP4, Ascend `npt≠32`, packed
+  without round, per-channel **output** TMA).
+- SwiGLU / top-k / fused `#169` `VMI-RESIDUAL-OP` (outside this
+  four-kernel PTOAS set).
+- **Withdrawn A:** 1×T UE8M0 extract. Production kernels no longer
+  need it: PR90 `(32,1)` `dintlv` + decode-once / TMA occupancy; PR91
+  TMA-col `vgather` + in-register `<<7`. Representative
+  `cast_back` e4m3→fp32 TMA npt=32 512×128 was ACL 507035; isolated
+  remasure is now bitwise **1.139**. Canonical `(1,32)` leftover is
+  kernel TODO(perf) (4-lane decode), not a compiler hole. Snapshot:
+  [`archive/vmi_1xT_ue8m0_scale_apply/`](archive/vmi_1xT_ue8m0_scale_apply/).
+- **Withdrawn F:** Persistent last-wave fused mismatch. The 7
+  per_channel TMA-col large-shape payload mismatches are bitwise after
+  PR91 gather (1 ready, 6 TODO(perf)). Production evidence for a
+  distinct last-wave PTOAS bug is gone. Snapshot:
+  [`archive/vmi_persistent_last_wave/`](archive/vmi_persistent_last_wave/).
+- PR89 bf16 TMA+packed `sf_only` 512×2048 (0.53 → ≥1.23): kernel
+  `token_group=4` store, not PTOAS. Issue E is **fp32** pack only.
+- per_token row-major rescale compose (1): kernel compose leftover
+  (SF off-by-one vs ASC fused), not a proven PTOAS hole.
+- per_token fp32 packed TMA M=8001 H=16384/65536: later kernel-fixed
+  (E4M3 exact-M / on-device TMA), bitwise ≥0.98.
+- Unisolated ACL 507035 (`cast_back` 201 rows; one per_channel
+  8064×768 TMA-col): counted as TODO(impl) until isolated
+  one-process-per-row. Not a PTOAS issue on that evidence.
+- TODO(perf) (canonical `(1,32)`, some TMA fp32 / h4096, row
+  `sf_only` packed, six bitwise-slow per_channel TMA-col rows):
+  kernel schedule, not PTOAS.
