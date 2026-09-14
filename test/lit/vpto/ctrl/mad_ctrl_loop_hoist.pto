@@ -1,0 +1,51 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You should not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// A statically positive trip-count scf.for whose guards share one
+// requirement gets a single hoisted configuration at the loop entry: the
+// loop body contains no CTRL accesses at all, and the logical state is
+// restored once after the loop.
+//
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - | FileCheck %s
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @ctrl_guard_loop_hoist(
+      %lhs: !pto.ptr<f32, l0a>,
+      %rhs: !pto.ptr<f32, l0b>,
+      %dst: !pto.ptr<f32, l0c>) attributes {pto.kernel} {
+    %c16 = arith.constant 16 : i64
+    %c0 = arith.constant 0 : index
+    %c8 = arith.constant 8 : index
+    %c1 = arith.constant 1 : index
+    scf.for %iv = %c0 to %c8 step %c1 {
+      pto.mad %lhs, %rhs, %dst, %c16, %c16, %c16
+        : !pto.ptr<f32, l0a>, !pto.ptr<f32, l0b>, !pto.ptr<f32, l0c>, i64, i64, i64
+      pto.mad %lhs, %rhs, %dst, %c16, %c16, %c16
+        : !pto.ptr<f32, l0a>, !pto.ptr<f32, l0b>, !pto.ptr<f32, l0c>, i64, i64, i64
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @ctrl_guard_loop_hoist(
+// The shared entry read and configuration are hoisted before the loop.
+// CHECK: %[[ENTRY:.*]] = pto.get_ctrl : i64
+// CHECK: pto.sbitset0
+// CHECK: pto.set_ctrl %[[ACTIVE:.*]] : i64
+// CHECK: scf.for
+// The loop body runs the raw MADs without any CTRL access.
+// CHECK: pto.mad_raw
+// CHECK: pto.mad_raw
+// CHECK-NOT: pto.get_ctrl
+// CHECK-NOT: pto.set_ctrl
+// CHECK-NOT: pto.sbitset0
+// One deferred restore to the entry state after the loop, before return.
+// CHECK: pto.set_ctrl %[[ENTRY]] : i64
+// CHECK: return
+//
+// CHECK-NOT: ctrl_state_guard
