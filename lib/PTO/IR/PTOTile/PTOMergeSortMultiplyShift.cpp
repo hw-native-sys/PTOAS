@@ -8,6 +8,9 @@
 
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
 
+constexpr int64_t kBlockLenMultiple = 64;
+
+constexpr unsigned kMergeSortTileRank = 2;
 static ParseResult resolveTMrgSortFormat2(OpAsmParser &parser,
                                           OperationState &result,
                                           TMrgSortFormat2State &state) {
@@ -61,7 +64,7 @@ static LogicalResult verifyTMrgSortFormat1(TMrgSortOp op) {
   }
   auto ss = getShapeVec(srcTy);
   auto ds = getShapeVec(dstTy);
-  if (ss.size() != 2 || ds.size() != 2) {
+  if (ss.size() != kMergeSortTileRank || ds.size() != kMergeSortTileRank) {
     return op.emitOpError() << "expects src/dst to be rank-2 tile-shaped";
   }
   if (ss[0] != mlir::ShapedType::kDynamic && ss[0] != 1) {
@@ -77,7 +80,7 @@ static LogicalResult verifyTMrgSortFormat1(TMrgSortOp op) {
     if (auto cstOp = op.getBlockLen().getDefiningOp<arith::ConstantOp>()) {
       if (auto intAttr = mlir::dyn_cast<mlir::IntegerAttr>(cstOp.getValue())) {
         int64_t v = intAttr.getValue().getSExtValue();
-        if (v <= 0 || (v % 64) != 0) {
+        if (v <= 0 || (v % kBlockLenMultiple) != 0) {
           return op.emitOpError() << "expects blockLen > 0 and multiple of 64";
         }
       }
@@ -90,7 +93,7 @@ static LogicalResult verifyTMrgSortOutputShapes(TMrgSortOp op, Type dstTy,
                                                 Type tmpTy) {
   auto dstShape = getShapeVec(dstTy);
   auto tmpShape = tmpTy ? getShapeVec(tmpTy) : SmallVector<int64_t, 4>{};
-  if (dstShape.size() != 2 || (tmpTy && tmpShape.size() != 2))
+  if (dstShape.size() != kMergeSortTileRank || (tmpTy && tmpShape.size() != kMergeSortTileRank))
     return op.emitOpError(
         "format2 expects dst/tmp to be rank-2 tile-shaped");
   if (dstShape[0] != ShapedType::kDynamic && dstShape[0] != 1)
@@ -239,12 +242,12 @@ static FailureOr<Type> verifyMatchingVecUnaryTiles(Operation *op, Type srcTy,
 }
 
 mlir::LogicalResult mlir::pto::TShrSOp::verify() {
-  auto verifyCommon = [&]() -> FailureOr<Type> {
+  auto verifyCommon = [this]() -> FailureOr<Type> {
     return verifyMatchingVecUnaryTiles(getOperation(), getSrc().getType(),
                                        getDst().getType());
   };
 
-  auto verifyA2A3 = [&]() -> LogicalResult {
+  auto verifyA2A3 = [this, &verifyCommon]() -> LogicalResult {
     FailureOr<Type> elemOr = verifyCommon();
     if (failed(elemOr)) {
       return failure();
@@ -257,7 +260,7 @@ mlir::LogicalResult mlir::pto::TShrSOp::verify() {
     return success();
   };
 
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [this, &verifyCommon]() -> LogicalResult {
     FailureOr<Type> elemOr = verifyCommon();
     if (failed(elemOr)) {
       return failure();

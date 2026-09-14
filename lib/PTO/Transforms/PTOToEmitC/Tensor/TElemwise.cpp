@@ -8,6 +8,10 @@
 //===- TElemwise.cpp - Tensor TElemwise op lowering --------------------------------===//
 //===----------------------------------------------------------------------===//
 
+constexpr unsigned kUnaryOperandCount = 2;
+constexpr unsigned kBinaryOperandCount = 3;
+constexpr unsigned kElemwiseOperandInlineCapacity = 4;
+
 #include "../PTOToEmitCEmitters.h"
 #include "TensorInternal.h"
 
@@ -29,7 +33,7 @@ LogicalResult matchAndRewrite(pto::TNegOp op, OpAdaptor adaptor,
   Value src = adaptor.getSrc();
   Value dst = adaptor.getDst();
 
-  SmallVector<Value, 2> operands{dst, src};
+  SmallVector<Value, kUnaryOperandCount> operands{dst, src};
   rewriter.create<emitc::CallOpaqueOp>(
       loc, TypeRange{}, "TNEG",
       /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
@@ -50,7 +54,7 @@ struct PTONotToEmitC : public OpConversionPattern<pto::TNotOp> {
     Value src = adaptor.getSrc();
     Value dst = adaptor.getDst();
 
-    SmallVector<Value, 2> operands{dst, src};
+    SmallVector<Value, kUnaryOperandCount> operands{dst, src};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TNOT",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
@@ -71,7 +75,7 @@ struct PTOOrToEmitC : public OpConversionPattern<pto::TOrOp> {
     Value src1 = adaptor.getSrc1();
     Value dst  = adaptor.getDst();
 
-    SmallVector<Value, 3> operands{dst, src0, src1};
+    SmallVector<Value, kBinaryOperandCount> operands{dst, src0, src1};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TOR",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
@@ -96,7 +100,7 @@ struct PTOOrsToEmitC : public OpConversionPattern<pto::TOrSOp> {
     // directly without arith casts here.
     Value s = adaptor.getScalar();
 
-    SmallVector<Value, 3> operands{dst, src0, s};
+    SmallVector<Value, kBinaryOperandCount> operands{dst, src0, s};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TORS",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
@@ -118,7 +122,7 @@ struct PTOXORToEmitC : public OpConversionPattern<pto::TXorOp> {
     Value src1 = adaptor.getSrc1();
     Value dst = adaptor.getDst();
     Value tmp = adaptor.getTmp();
-    SmallVector<Value, 4> operands{dst, src0, src1, tmp};
+    SmallVector<Value, kElemwiseOperandInlineCapacity> operands{dst, src0, src1, tmp};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TXOR",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
@@ -141,7 +145,7 @@ struct PTOXORSToEmitC : public OpConversionPattern<pto::TXorSOp> {
     Value tmp  = adaptor.getTmp();
     Value dst = adaptor.getDst();
 
-    SmallVector<Value, 4> operands{dst, src, scalar, tmp};
+    SmallVector<Value, kElemwiseOperandInlineCapacity> operands{dst, src, scalar, tmp};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TXORS",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},

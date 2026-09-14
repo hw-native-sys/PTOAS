@@ -10,17 +10,20 @@
 //===- VMIToVPTOPatternInternals0.inc - VMIToVPTO internals -*- C++ -*-===//
 //===----------------------------------------------------------------------===//
 
-static FailureOr<SmallVector<Value, 4>> materializeDeintToContiguousMaskGroup(
+constexpr unsigned kVmiPatternInlineCapacity = 4;
+constexpr int64_t kDeintFactor2 = 2;
+
+static FailureOr<SmallVector<Value, kVmiPatternInlineCapacity>> materializeDeintToContiguousMaskGroup(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes, int64_t factor,
     int64_t groups, int64_t groupIndex, size_t resultOffset,
     PatternRewriter &rewriter) {
-  SmallVector<Value, 4> sources;
+  SmallVector<Value, kVmiPatternInlineCapacity> sources;
   sources.reserve(factor);
   for (int64_t part = 0; part < factor; ++part) {
     sources.push_back(sourceParts[part * groups + groupIndex]);
   }
-  SmallVector<Value, 4> results;
-  if (factor == 2) {
+  SmallVector<Value, kVmiPatternInlineCapacity> results;
+  if (factor == kDeintFactor2) {
     FailureOr<std::array<Value, 2>> materialized =
         materializeFactor2DeintToContiguousGroup(
             op, sources, resultTypes, resultOffset, rewriter);
@@ -58,7 +61,7 @@ FailureOr<SmallVector<Value>> materializeStagingDeintToContiguousMaskLayout(
   SmallVector<Value> results;
   results.reserve(resultTypes.size());
   for (int64_t i = 0; i < groups && results.size() < resultTypes.size(); ++i) {
-    FailureOr<SmallVector<Value, 4>> materialized =
+    FailureOr<SmallVector<Value, kVmiPatternInlineCapacity>> materialized =
         materializeDeintToContiguousMaskGroup(
             op, sourceParts, resultTypes, factor, groups, i, results.size(),
             rewriter);
@@ -145,10 +148,10 @@ static FailureOr<std::array<Value, 2>> materializeFactor2ContiguousToDeintGroup(
   return std::array<Value, 2>{materialized->first, materialized->second};
 }
 
-static FailureOr<SmallVector<Value, 4>> materializeContiguousToDeintMaskGroup(
+static FailureOr<SmallVector<Value, kVmiPatternInlineCapacity>> materializeContiguousToDeintMaskGroup(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes, int64_t factor,
     int64_t groups, int64_t groupIndex, PatternRewriter &rewriter) {
-  SmallVector<Value, 4> sources;
+  SmallVector<Value, kVmiPatternInlineCapacity> sources;
   size_t sourceBase = static_cast<size_t>(groupIndex * factor);
   if (sourceBase >= sourceParts.size()) {
     (void)rewriter.notifyMatchFailure(
@@ -171,8 +174,8 @@ static FailureOr<SmallVector<Value, 4>> materializeContiguousToDeintMaskGroup(
     }
     sources.push_back(*zero);
   }
-  SmallVector<Value, 4> results;
-  if (factor == 2) {
+  SmallVector<Value, kVmiPatternInlineCapacity> results;
+  if (factor == kDeintFactor2) {
     FailureOr<std::array<Value, 2>> materialized =
         materializeFactor2ContiguousToDeintGroup(
             op, sources, resultTypes, groups, groupIndex, rewriter);
@@ -193,13 +196,13 @@ static FailureOr<SmallVector<Value, 4>> materializeContiguousToDeintMaskGroup(
 }
 
 struct StagingMaskPartAccumulator {
-  SmallVector<SmallVector<Value, 4>, 4> parts;
+  SmallVector<SmallVector<Value, kVmiPatternInlineCapacity>, 4> parts;
   int64_t factor;
   int64_t groups;
 
   StagingMaskPartAccumulator(int64_t factor, int64_t groups)
       : parts(factor), factor(factor), groups(groups) {
-    for (SmallVector<Value, 4> &part : parts) {
+    for (SmallVector<Value, kVmiPatternInlineCapacity> &part : parts) {
       part.reserve(static_cast<size_t>(groups));
     }
   }
@@ -261,7 +264,7 @@ FailureOr<SmallVector<Value>> materializeStagingContiguousToDeintMaskLayout(
   StagingMaskPartAccumulator accumulator(factor, groups);
 
   for (int64_t i = 0; i < groups; ++i) {
-    FailureOr<SmallVector<Value, 4>> materialized =
+    FailureOr<SmallVector<Value, kVmiPatternInlineCapacity>> materialized =
         materializeContiguousToDeintMaskGroup(
             op, sourceParts, resultTypes, factor, groups, i, rewriter);
     if (failed(materialized)) {
@@ -443,7 +446,7 @@ struct MaskGranularityCastPlan {
 };
 
 static FailureOr<SmallVector<Value>> materializeMaskGranularityCastThroughLayout(
-    Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
+    Operation *op, VMIMaskType sourceType,
     ValueRange sourceParts, TypeRange resultTypes,
     const MaskGranularityCastPlan &plan, PatternRewriter &rewriter) {
   VMIMaskType granularityType = VMIMaskType::get(
@@ -475,7 +478,7 @@ static FailureOr<SmallVector<Value>> materializeMaskGranularityCastParts(
   }
 
   return materializeMaskGranularityCastThroughLayout(
-      op, sourceType, resultType, sourceParts, resultTypes, plan, rewriter);
+      op, sourceType, sourceParts, resultTypes, plan, rewriter);
 }
 
 static FailureOr<MaskGranularityCastPlan> buildMaskGranularityCastPlan(
@@ -651,7 +654,6 @@ public:
             op, sourceType, resultType, sourceParts, resultTypes, rewriter);
     return replaceCheckedResults(op, rewriter, std::move(results), resultTypes);
   }
-
 };
 
 struct OneToNVMIBroadcastOpPattern : OneToNOpConversionPattern<VMIBroadcastOp> {
@@ -1422,8 +1424,7 @@ private:
     }
     SmallVector<Value> results;
     if (failed(lowerDynamicMask(op, *active, resultVMIType, layout,
-                                *maybeResultTypes, lanesPerPart, rewriter,
-                                results))) {
+                                *maybeResultTypes, rewriter, results))) {
       return failure();
     }
     return replacePhysicalResults(rewriter, op, results,
@@ -1450,7 +1451,7 @@ private:
 
   LogicalResult lowerDynamicMask(
       VMICreateMaskOp op, Value active, VMIMaskType resultVMIType,
-      VMILayoutAttr layout, TypeRange resultTypes, int64_t lanesPerPart,
+      VMILayoutAttr layout, TypeRange resultTypes,
       OneToNPatternRewriter &rewriter,
       SmallVectorImpl<Value> &results) const {
     int64_t factor = layout.isDenseSplit() ? layout.getFactor() : 1;

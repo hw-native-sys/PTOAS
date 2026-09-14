@@ -107,9 +107,10 @@ static Operation *resolveSyncInsertAnchor(Operation *op,
   if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
     if (!ifOp.elseBlock()) {
       OpBuilder builder(ifOp.getContext());
-      Block *elseBlock = new Block();
-      ifOp.getElseRegion().push_back(elseBlock);
-      builder.setInsertionPointToEnd(elseBlock);
+      auto elseBlock = std::make_unique<Block>();
+      ifOp.getElseRegion().push_back(elseBlock.get());
+      builder.setInsertionPointToEnd(elseBlock.get());
+      (void)elseBlock.release();
       builder.create<scf::YieldOp>(ifOp.getLoc());
     }
     return ifOp.getElseRegion().front().getTerminator();
@@ -247,9 +248,10 @@ void SyncCodegen::updatePlaceHolderOpInsertSync(PlaceHolderInstanceElement *plac
           // 只有当确实有 Sync 指令需要插入时才创建
           if (!placeHolder->pipeBefore.empty() || !placeHolder->pipeAfter.empty()) {
                Region &elseRegion = ifOp.getElseRegion();
-               Block *elseBlock = new Block();
-               elseRegion.push_back(elseBlock);
-               builder.setInsertionPointToEnd(elseBlock);
+               auto elseBlock = std::make_unique<Block>();
+               elseRegion.push_back(elseBlock.get());
+               builder.setInsertionPointToEnd(elseBlock.get());
+               (void)elseBlock.release();
                builder.create<scf::YieldOp>(ifOp.getLoc());
           }
       }

@@ -25,10 +25,14 @@
 using namespace mlir;
 using namespace mlir::pto;
 
+constexpr unsigned kSchedRepresentativeInlineCapacity = 2;
+constexpr unsigned kSchedUpdateMapInlineCapacity = 8;
+constexpr unsigned kSchedDepthMultiplier = 2;
+
 struct mlir::pto::VPTOPressureEvaluationCache {
   SmallVector<VPTORegPressureEvaluation> evaluations;
   SmallVector<uint8_t> valid;
-  DenseMap<Value, SmallVector<unsigned, 2>> usersByRepresentative;
+  DenseMap<Value, SmallVector<unsigned, kSchedRepresentativeInlineCapacity>> usersByRepresentative;
 };
 
 namespace {
@@ -40,7 +44,7 @@ static uint64_t getTreeOperationWork(size_t bucketCount) {
     return 1;
   }
   uint64_t depth = llvm::Log2_64_Ceil(static_cast<uint64_t>(bucketCount));
-  return 2 * depth + 1;
+  return kSchedDepthMultiplier * depth + 1;
 }
 
 struct DependencyUpdate {
@@ -57,7 +61,7 @@ collectDependencyUpdates(VPTOSUnit &unit, VPTOSchedDirection direction,
   ArrayRef<VPTOSchedEdge *> edges = direction == VPTOSchedDirection::Top
                                         ? unit.getSuccessors()
                                         : unit.getPredecessors();
-  llvm::SmallDenseMap<VPTOSUnit *, size_t, 8> updateByUnit;
+  llvm::SmallDenseMap<VPTOSUnit *, size_t, kSchedUpdateMapInlineCapacity> updateByUnit;
   for (VPTOSchedEdge *edge : edges) {
     if (!budget.consume()) {
       detail = "work budget exhausted while inspecting dependencies";
@@ -406,7 +410,7 @@ LogicalResult VPTOSchedBoundary::commit(VPTOSUnit &unit, unsigned issueCycle,
     return mlir::failure();
   }
 
-  SmallVector<DependencyUpdate, 8> updates;
+  SmallVector<DependencyUpdate, kSchedUpdateMapInlineCapacity> updates;
   if (failed(collectDependencyUpdates(unit, direction, issueCycle, budget,
                                       updates, detail))) {
     return mlir::failure();

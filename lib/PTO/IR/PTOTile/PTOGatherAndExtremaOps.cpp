@@ -8,6 +8,11 @@
 
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
 
+constexpr unsigned kI32BitWidth = 32;
+constexpr unsigned kExpectedTileRank = 2;
+constexpr int64_t kTmovAlignBytes = 16;
+constexpr unsigned kFp8ElemBitWidth = 8;
+
 static LogicalResult verifyTGatherArch(TGatherOp op, bool isA5) {
   if (op.getMaskPatternAttr()) {
     if (op.getCdst() || op.getIndices() || op.getTmp() || op.getKValue()) {
@@ -37,8 +42,8 @@ static LogicalResult verifyTGatherArch(TGatherOp op, bool isA5) {
 }
 
 llvm::LogicalResult mlir::pto::TGatherOp::verify() {
-  auto verifyA2A3 = [&]() { return verifyTGatherArch(*this, false); };
-  auto verifyA5 = [&]() { return verifyTGatherArch(*this, true); };
+  auto verifyA2A3 = [this]() { return verifyTGatherArch(*this, false); };
+  auto verifyA5 = [this]() { return verifyTGatherArch(*this, true); };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 static std::optional<unsigned> tgatherbElemBytes(Type ty) {
@@ -84,13 +89,13 @@ static LogicalResult verifyTGatherBA2A3(TGatherBOp op) {
            << "expects A2/A3 dst element size to be 1, 2, or 4 bytes";
   }
   Type offElemTy = getElemTy(offTy);
-  if (!offElemTy.isInteger(32)) {
+  if (!offElemTy.isInteger(kI32BitWidth)) {
     return op.emitOpError() << "expects offsets element type to be i32";
   }
 
   auto dstValid = getValidShapeVec(dstTy);
   auto offValid = getValidShapeVec(offTy);
-  if (dstValid.size() != 2 || offValid.size() != 2) {
+  if (dstValid.size() != kExpectedTileRank || offValid.size() != kExpectedTileRank) {
     return op.emitOpError() << "expects rank-2 src/offsets/dst tile buffers";
   }
   if (dstValid[0] != ShapedType::kDynamic &&
@@ -126,8 +131,8 @@ static LogicalResult verifyTGatherBA5(TGatherBOp op) {
 }
 
 mlir::LogicalResult mlir::pto::TGatherBOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult { return verifyTGatherBA2A3(*this); };
-  auto verifyA5 = [&]() -> LogicalResult { return verifyTGatherBA5(*this); };
+  auto verifyA2A3 = [this]() -> LogicalResult { return verifyTGatherBA2A3(*this); };
+  auto verifyA5 = [this]() -> LogicalResult { return verifyTGatherBA5(*this); };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
@@ -152,7 +157,7 @@ static LogicalResult verifyTLReluCommon(TLReluOp op, StringRef typeError) {
 
 mlir::LogicalResult mlir::pto::TLReluOp::verify() {
   Type srcTy = getSrc().getType();
-  auto verifyA2A3 = [&]() -> LogicalResult {
+  auto verifyA2A3 = [this, &srcTy]() -> LogicalResult {
     if (failed(verifyTLReluCommon(
             *this, "expects A2/A3 tlrelu element type to be f16 or f32")))
       return failure();
@@ -168,7 +173,7 @@ mlir::LogicalResult mlir::pto::TLReluOp::verify() {
     }
     return success();
   };
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [this]() -> LogicalResult {
     if (failed(verifyTLReluCommon(
             *this, "expects A5 tlrelu element type to be f16 or f32")))
       return failure();
@@ -232,12 +237,13 @@ static std::optional<int64_t> tmovCheckedMul(int64_t lhs, int64_t rhs) {
 }
 
 static std::optional<int64_t> tmovAlign16(int64_t value) {
-  auto biased = tmovCheckedAdd(value, 15);
-  return biased ? tmovCheckedMul(*biased / 16, 16) : std::nullopt;
+  auto biased = tmovCheckedAdd(value, kTmovAlignBytes - 1);
+  return biased ? tmovCheckedMul(*biased / kTmovAlignBytes, kTmovAlignBytes)
+                : std::nullopt;
 }
 
 static std::optional<int64_t> tmovCheckedElements(ArrayRef<int64_t> shape) {
-  if (shape.size() != 2 || shape[0] < 0 || shape[1] < 0 ||
+  if (shape.size() != kExpectedTileRank || shape[0] < 0 || shape[1] < 0 ||
       (shape[1] != 0 &&
        shape[0] > std::numeric_limits<int64_t>::max() / shape[1])) {
     return std::nullopt;
@@ -259,7 +265,7 @@ static LogicalResult verifyTMovXToZzElemLayout(TMovOp op) {
   }
   bool validElem = isPTOHiFloat8Type(srcElem) || isPTOF8E8M0Type(srcElem);
   if (auto integer = dyn_cast<IntegerType>(srcElem)) {
-    validElem = integer.getWidth() == 8 &&
+    validElem = integer.getWidth() == kFp8ElemBitWidth &&
                 integer.getSignedness() == IntegerType::Unsigned;
   }
   if (!validElem) {

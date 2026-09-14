@@ -170,7 +170,7 @@ ParseResult mlir::pto::MakeTensorViewOp::parse(OpAsmParser &parser,
   }
 
   auto segAttr = parser.getBuilder().getDenseI32ArrayAttr(
-      {1, (int32_t)shapeOps.size(), (int32_t)strideOps.size()});
+      {1, static_cast<int32_t>(shapeOps.size()), static_cast<int32_t>(strideOps.size())});
   result.addAttribute("operandSegmentSizes", segAttr);
 
   return success();
@@ -244,10 +244,12 @@ inferPartitionViewResultTypeFromSizes(Type sourceType, ValueRange sizes) {
 }
 
 namespace {
+constexpr unsigned kPartitionViewOperandInlineCapacity = 4;
+
 struct PartitionViewParseState {
     OpAsmParser::UnresolvedOperand source;
-    SmallVector<OpAsmParser::UnresolvedOperand, 4> offsets;
-    SmallVector<OpAsmParser::UnresolvedOperand, 4> sizes;
+    SmallVector<OpAsmParser::UnresolvedOperand, kPartitionViewOperandInlineCapacity> offsets;
+    SmallVector<OpAsmParser::UnresolvedOperand, kPartitionViewOperandInlineCapacity> sizes;
     Type sourceTy;
     Type resultTy;
     bool hasExplicitResultTy = false;

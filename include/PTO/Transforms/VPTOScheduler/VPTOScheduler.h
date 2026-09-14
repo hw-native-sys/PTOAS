@@ -53,8 +53,10 @@ private:
   bool exceeded = false;
 };
 
+constexpr unsigned kScheduleDiagnosticInlineCapacity = 2;
+
 struct VPTOScheduleDiagnostic {
-  SmallVector<int64_t, 2> currentPressure;
+  SmallVector<int64_t, kScheduleDiagnosticInlineCapacity> currentPressure;
   unsigned candidateCount = 0;
   std::optional<unsigned> closurePressureSet;
   SmallVector<unsigned, 2> closureBundleOriginalIndices;
@@ -64,17 +66,17 @@ struct VPTOScheduleDiagnostic {
   int64_t closureSupportPressure = 0;
   int64_t closureEffectiveEnd = 0;
   int64_t closureNetRelief = 0;
-  SmallVector<int64_t, 2> closurePeak;
-  SmallVector<int64_t, 2> closureEnd;
+  SmallVector<int64_t, kScheduleDiagnosticInlineCapacity> closurePeak;
+  SmallVector<int64_t, kScheduleDiagnosticInlineCapacity> closureEnd;
   unsigned selectedCriticalPath = 0;
   bool selectedAdvancesClosure = false;
-  SmallVector<int64_t, 2> selectedProjectedPressure;
-  SmallVector<int64_t, 2> selectedReleasedPressure;
+  SmallVector<int64_t, kScheduleDiagnosticInlineCapacity> selectedProjectedPressure;
+  SmallVector<int64_t, kScheduleDiagnosticInlineCapacity> selectedReleasedPressure;
   std::optional<unsigned> safeAlternativeOriginalIndex;
   unsigned safeAlternativeCriticalPath = 0;
   bool safeAlternativeOpensPressureFrontier = false;
-  SmallVector<int64_t, 2> safeAlternativeProjectedPressure;
-  SmallVector<int64_t, 2> safeAlternativeReleasedPressure;
+  SmallVector<int64_t, kScheduleDiagnosticInlineCapacity> safeAlternativeProjectedPressure;
+  SmallVector<int64_t, kScheduleDiagnosticInlineCapacity> safeAlternativeReleasedPressure;
 };
 
 struct VPTOScheduleEntry {

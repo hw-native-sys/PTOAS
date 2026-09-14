@@ -26,13 +26,9 @@ namespace pto {
 //===----------------------------------------------------------------------===//
 
 
-
-
-
 //===----------------------------------------------------------------------===//
 // pto.matmul_dps lowering (Simplified: No internal copy/sync)
 //===----------------------------------------------------------------------===//
-//
 // Render `pto.tmatmul` as one of three forms depending on the optional
 // `acc_phase` attribute:
 //   * absent / Unspecified  -> `TMATMUL(dst, lhs, rhs)`
@@ -41,7 +37,6 @@ namespace pto {
 // The Unspecified default keeps backward compatibility with all upstream IR
 
 //===----------------------------------------------------------------------===//
-//
 // Render `pto.tmatmul` as one of three forms depending on the optional
 // `acc_phase` attribute:
 //   * absent / Unspecified  -> `TMATMUL(dst, lhs, rhs)`
@@ -95,7 +90,6 @@ ArrayAttr buildAccPhaseTemplateArgs(ConversionPatternRewriter &rewriter,
   return rewriter.getArrayAttr(
       {emitc::OpaqueAttr::get(rewriter.getContext(), tmpl)});
 }
-
 
 
 } // namespace pto

@@ -31,7 +31,7 @@ namespace mlir::pto::vecop_detail {
 using namespace mlir;
 using namespace mlir::pto;
 
-  [[maybe_unused]] static bool isSupportedShuffleValueType(Type type) {
+  inline bool isSupportedShuffleValueType(Type type) {
     if (auto intType = dyn_cast<IntegerType>(type)) {
       return intType.getWidth() == mlir::pto::kValue32 ||
              intType.getWidth() == mlir::pto::kValue64;
@@ -43,14 +43,14 @@ using namespace mlir::pto;
     return type.isF16() || type.isF32();
   }
 
-  [[maybe_unused]] static bool isSupportedReduxValueType(Type type) {
+  inline bool isSupportedReduxValueType(Type type) {
     if (auto intType = dyn_cast<IntegerType>(type)) {
       return intType.getWidth() == mlir::pto::kValue32;
     }
     return type.isF16() || type.isF32();
   }
 
-  [[maybe_unused]] static LogicalResult verifyShuffleSemanticControl(Operation *op,
+  inline LogicalResult verifyShuffleSemanticControl(Operation *op,
                                                     Type controlType,
                                                     IntegerAttr widthAttr,
                                                     StringRef ctrlName) {
@@ -70,7 +70,7 @@ using namespace mlir::pto;
     return success();
   }
 
-  [[maybe_unused]] static LogicalResult verifyReduxSemanticType(Operation *op, Type valueType,
+  inline LogicalResult verifyReduxSemanticType(Operation *op, Type valueType,
                                                Attribute signednessAttr,
                                                bool requireSignedness) {
     if (!isSupportedReduxValueType(valueType)) {
