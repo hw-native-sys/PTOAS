@@ -670,6 +670,24 @@ def _reject_low_precision_vreg_operands(*values, context: str) -> None:
         _reject_low_precision_vreg(value, context=context)
 
 
+def _require_integer32_vreg_operands(*values, context: str) -> None:
+    """Require carry-family vector operands to use 32-bit integer elements."""
+    for value in values:
+        raw_value = unwrap_surface_value(value)
+        try:
+            _, elem_type = _infer_vreg_metadata(raw_value)
+        except TypeError:
+            continue
+        if not IntegerType.isinstance(elem_type) or IntegerType(elem_type).width != 32:
+            raise TypeError(f"{context} requires 32-bit integer vector elements, got {elem_type}")
+
+
+def _require_b32_mask(mask, *, context: str) -> None:
+    granularity_, mask_type_ = _infer_mask_metadata(mask, context=context)
+    if granularity_ != 32:
+        raise TypeError(f"{context} requires a b32 mask, got {mask_type_}")
+
+
 def _element_bytewidth(elem_type):
     if F32Type.isinstance(elem_type):
         return 4

@@ -11,9 +11,13 @@
 //===----------------------------------------------------------------------===//
 
 struct OneToNVMILoadOpPattern : OneToNOpConversionPattern<VMILoadOp> {
-  using OneToNOpConversionPattern<VMILoadOp>::OneToNOpConversionPattern;
+  OneToNVMILoadOpPattern(TypeConverter &typeConverter, MLIRContext *context,
+                         VMILoadSafetyPolicy loadSafety)
+      : OneToNOpConversionPattern<VMILoadOp>(typeConverter, context),
+        loadSafety(loadSafety) {}
 
 private:
+  VMILoadSafetyPolicy loadSafety;
   struct LoadPhysicalPlan {
     Value source;
     Value offset;
@@ -59,7 +63,7 @@ private:
     }
     auto resultVMIType = cast<VMIVRegType>(op.getResult().getType());
     FailureOr<int64_t> lanesPerPart = verifyFullOrSafeReadVRegChunks(
-        op, resultVMIType, op.getSource(), op.getOffset(), rewriter);
+        op, resultVMIType, op.getSource(), op.getOffset(), rewriter, loadSafety);
     if (failed(lanesPerPart)) {
       return failure();
     }

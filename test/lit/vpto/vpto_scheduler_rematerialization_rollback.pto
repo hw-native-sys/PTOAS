@@ -1,0 +1,106 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s '-pto-vpto-scheduler=mode=on trace=true rematerialize=true' > %t 2> %t.trace
+// RUN: FileCheck %s --check-prefix=IR < %t
+// RUN: FileCheck %s --check-prefix=TRACE < %t.trace
+
+// IR-LABEL: func.func @remat_no_pressure_improvement
+// IR: %[[ROOT:.*]] = pto.vci
+// IR: %[[INDEX0:.*]] = pto.vadds %[[ROOT]]
+// IR: %[[INDEX1:.*]] = pto.vadds %[[ROOT]]
+// IR: scf.for
+// IR: pto.vcmp %[[INDEX0]], %[[INDEX1]]
+// IR-NOT: pto.vci
+
+// TRACE: vpto-scheduler: remat-summary function=remat_no_pressure_improvement changed=true
+// TRACE-SAME: selected=2 groups=3 clones=4 dynamic-micro-ops=7
+// TRACE: vpto-scheduler: remat-result function=remat_no_pressure_improvement accepted=false initial-peak=33 final-peak=33 second-schedule=success
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @remat_no_pressure_improvement(
+      %x0: !pto.vreg<64xi32>,
+      %x1: !pto.vreg<64xi32>,
+      %x2: !pto.vreg<64xi32>,
+      %x3: !pto.vreg<64xi32>,
+      %x4: !pto.vreg<64xi32>,
+      %x5: !pto.vreg<64xi32>,
+      %x6: !pto.vreg<64xi32>,
+      %x7: !pto.vreg<64xi32>,
+      %x8: !pto.vreg<64xi32>,
+      %x9: !pto.vreg<64xi32>,
+      %x10: !pto.vreg<64xi32>,
+      %x11: !pto.vreg<64xi32>,
+      %x12: !pto.vreg<64xi32>,
+      %x13: !pto.vreg<64xi32>,
+      %x14: !pto.vreg<64xi32>,
+      %x15: !pto.vreg<64xi32>,
+      %x16: !pto.vreg<64xi32>,
+      %x17: !pto.vreg<64xi32>,
+      %x18: !pto.vreg<64xi32>,
+      %x19: !pto.vreg<64xi32>,
+      %x20: !pto.vreg<64xi32>,
+      %x21: !pto.vreg<64xi32>,
+      %x22: !pto.vreg<64xi32>,
+      %x23: !pto.vreg<64xi32>,
+      %x24: !pto.vreg<64xi32>,
+      %x25: !pto.vreg<64xi32>,
+      %x26: !pto.vreg<64xi32>,
+      %x27: !pto.vreg<64xi32>,
+      %x28: !pto.vreg<64xi32>,
+      %x29: !pto.vreg<64xi32>) {
+    %zero = arith.constant 0 : i32
+    %c64 = arith.constant 64 : i32
+    %lower = arith.constant 0 : index
+    %upper = arith.constant 2 : index
+    %step = arith.constant 1 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %root = pto.vci %zero : i32 -> !pto.vreg<64xi32>
+      %index0 = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index1 = pto.vadds %root, %c64, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      scf.for %i = %lower to %upper step %step {
+        %use1 = pto.vcmp %index0, %index1, %mask, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %root_use = pto.vadds %root, %zero, %use1 : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %score0 = pto.vmax %x0, %x0, %use1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %score1 = pto.vmax %x1, %x1, %use1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %score2 = pto.vmax %x2, %x2, %use1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %score3 = pto.vmax %x3, %x3, %use1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %score4 = pto.vmax %x4, %x4, %use1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %score5 = pto.vmax %x5, %x5, %use1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %score6 = pto.vmax %x6, %x6, %use1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %score7 = pto.vmax %x7, %x7, %use1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %score8 = pto.vmax %x8, %x8, %use1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %score9 = pto.vmax %x9, %x9, %use1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %score10 = pto.vmax %x10, %x10, %use1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %score11 = pto.vmax %x11, %x11, %use1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %score12 = pto.vmax %x12, %x12, %use1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %score13 = pto.vmax %x13, %x13, %use1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %score14 = pto.vmax %x14, %x14, %use1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %score15 = pto.vmax %x15, %x15, %use1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %score16 = pto.vmax %x16, %x16, %use1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %score17 = pto.vmax %x17, %x17, %use1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %score18 = pto.vmax %x18, %x18, %use1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %score19 = pto.vmax %x19, %x19, %use1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %score20 = pto.vmax %x20, %x20, %use1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %score21 = pto.vmax %x21, %x21, %use1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %score22 = pto.vmax %x22, %x22, %use1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %score23 = pto.vmax %x23, %x23, %use1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %score24 = pto.vmax %x24, %x24, %use1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %score25 = pto.vmax %x25, %x25, %use1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %score26 = pto.vmax %x26, %x26, %use1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %score27 = pto.vmax %x27, %x27, %use1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %score28 = pto.vmax %x28, %x28, %use1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %score29 = pto.vmax %x29, %x29, %use1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+      }
+    }
+    return
+  }
+}

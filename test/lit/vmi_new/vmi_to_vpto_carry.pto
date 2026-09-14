@@ -35,6 +35,33 @@ module {
     return %sum, %carry
         : !pto.vmi.vreg<128xui32>, !pto.vmi.mask<128xpred>
   }
+
+  func.func @vmi_to_vpto_vsubc(
+      %lhs: !pto.vmi.vreg<128xui32>,
+      %rhs: !pto.vmi.vreg<128xui32>,
+      %mask: !pto.vmi.mask<128xpred>)
+      -> (!pto.vmi.vreg<128xui32>, !pto.vmi.mask<128xpred>) {
+    %diff, %carry = pto.vmi.vsubc %lhs, %rhs, %mask
+        : !pto.vmi.vreg<128xui32>, !pto.vmi.vreg<128xui32>,
+          !pto.vmi.mask<128xpred>
+        -> !pto.vmi.vreg<128xui32>, !pto.vmi.mask<128xpred>
+    return %diff, %carry
+        : !pto.vmi.vreg<128xui32>, !pto.vmi.mask<128xpred>
+  }
+
+  func.func @vmi_to_vpto_vsubcs(
+      %lhs: !pto.vmi.vreg<128xui32>,
+      %rhs: !pto.vmi.vreg<128xui32>,
+      %carry_in: !pto.vmi.mask<128xpred>,
+      %mask: !pto.vmi.mask<128xpred>)
+      -> (!pto.vmi.vreg<128xui32>, !pto.vmi.mask<128xpred>) {
+    %diff, %carry = pto.vmi.vsubcs %lhs, %rhs, %carry_in, %mask
+        : !pto.vmi.vreg<128xui32>, !pto.vmi.vreg<128xui32>,
+          !pto.vmi.mask<128xpred>, !pto.vmi.mask<128xpred>
+        -> !pto.vmi.vreg<128xui32>, !pto.vmi.mask<128xpred>
+    return %diff, %carry
+        : !pto.vmi.vreg<128xui32>, !pto.vmi.mask<128xpred>
+  }
 }
 
 // CHECK-LABEL: func.func @vmi_to_vpto_vaddc(
@@ -45,5 +72,13 @@ module {
 // CHECK: %[[NEXT0:.*]], %[[NEXTCARRY0:.*]] = pto.vaddcs
 // CHECK: %[[NEXT1:.*]], %[[NEXTCARRY1:.*]] = pto.vaddcs
 // CHECK: return %[[NEXT0]], %[[NEXT1]], %[[NEXTCARRY0]], %[[NEXTCARRY1]]
+// CHECK-LABEL: func.func @vmi_to_vpto_vsubc(
+// CHECK: %[[DIFF0:.*]], %[[DIFFCARRY0:.*]] = pto.vsubc
+// CHECK: %[[DIFF1:.*]], %[[DIFFCARRY1:.*]] = pto.vsubc
+// CHECK: return %[[DIFF0]], %[[DIFF1]], %[[DIFFCARRY0]], %[[DIFFCARRY1]]
+// CHECK-LABEL: func.func @vmi_to_vpto_vsubcs(
+// CHECK: %[[NEXTDIFF0:.*]], %[[NEXTDIFFCARRY0:.*]] = pto.vsubcs
+// CHECK: %[[NEXTDIFF1:.*]], %[[NEXTDIFFCARRY1:.*]] = pto.vsubcs
+// CHECK: return %[[NEXTDIFF0]], %[[NEXTDIFF1]], %[[NEXTDIFFCARRY0]], %[[NEXTDIFFCARRY1]]
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.

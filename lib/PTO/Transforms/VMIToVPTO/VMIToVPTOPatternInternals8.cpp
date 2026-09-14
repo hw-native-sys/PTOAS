@@ -126,19 +126,20 @@ checkSupportedVMIAddCarryPorts(VMIVRegType lhsType, VMIVRegType rhsType,
   return success();
 }
 
-LogicalResult checkSupportedVMIAddcShape(VMIVaddcOp op,
-                                         std::string *reason = nullptr) {
+template <typename CarryOp>
+LogicalResult checkSupportedVMICarryOutputShape(
+    CarryOp op, std::string *reason = nullptr) {
   return checkSupportedVMIAddCarryPorts(
       cast<VMIVRegType>(op.getLhs().getType()),
       cast<VMIVRegType>(op.getRhs().getType()),
       cast<VMIVRegType>(op.getResult().getType()),
       {cast<VMIMaskType>(op.getMask().getType()),
-       cast<VMIMaskType>(op.getCarry().getType())},
-      reason);
+       cast<VMIMaskType>(op.getCarry().getType())}, reason);
 }
 
-LogicalResult checkSupportedVMIAddcsShape(VMIVaddcsOp op,
-                                          std::string *reason = nullptr) {
+template <typename CarryOp>
+LogicalResult checkSupportedVMICarryInputShape(CarryOp op,
+                                               std::string *reason = nullptr) {
   return checkSupportedVMIAddCarryPorts(
       cast<VMIVRegType>(op.getLhs().getType()),
       cast<VMIVRegType>(op.getRhs().getType()),
@@ -295,6 +296,25 @@ static std::optional<WalkResult> verifySupportedVMIStructuredMaskedStoreOp(
             cast<VMIMaskType>(store.getMask().getType()),
             store.getDestination(), store.getDestination().getType(),
             &reason))) {
+      // A masked store needs per-lane write predicates, while the only exact
+      // unaligned store form writes a contiguous low-bit prefix. An unaligned
+      // destination therefore has no exact write form, and a write must never
+      // exceed the semantic footprint: report the shape here instead of
+      // leaving a residual VMI op whose generic residual error hides it.
+      auto valueVMIType = cast<VMIVRegType>(store.getValue().getType());
+      bool unalignedDestination = !isKnownAddressAligned(
+          store.getDestination(), store.getOffset(),
+          valueVMIType.getElementType(), kMemoryAccessAlignmentBytes);
+      if (unalignedDestination) {
+        store.emitError()
+            << kVMIDiagUnsupportedPrefix
+            << "pto.vmi.masked_store requires a destination address with a "
+               "proven store alignment: a masked store needs per-lane write "
+               "predicates, the exact unaligned store form writes a "
+               "contiguous low-bit prefix only, and a write must never "
+               "exceed the semantic footprint";
+        return WalkResult::interrupt();
+      }
       return WalkResult::advance();
     }
     store.emitError()
@@ -862,13 +882,23 @@ std::optional<WalkResult> verifyAddCarryShape(CarryOp op, ShapeCheck check,
 std::optional<WalkResult> verifySupportedVMIAddCarryOp(Operation *op) {
   if (auto addc = dyn_cast<VMIVaddcOp>(op)) {
     return verifyAddCarryShape(
-        addc, checkSupportedVMIAddcShape,
+        addc, checkSupportedVMICarryOutputShape<VMIVaddcOp>,
         "pto.vmi.vaddc requires matching 32-bit data and b32 mask parts (");
   }
   if (auto addcs = dyn_cast<VMIVaddcsOp>(op)) {
     return verifyAddCarryShape(
-        addcs, checkSupportedVMIAddcsShape,
+        addcs, checkSupportedVMICarryInputShape<VMIVaddcsOp>,
         "pto.vmi.vaddcs requires matching 32-bit data and b32 mask parts (");
+  }
+  if (auto subc = dyn_cast<VMIVsubcOp>(op)) {
+    return verifyAddCarryShape(
+        subc, checkSupportedVMICarryOutputShape<VMIVsubcOp>,
+        "pto.vmi.vsubc requires matching 32-bit data and b32 mask parts (");
+  }
+  if (auto subcs = dyn_cast<VMIVsubcsOp>(op)) {
+    return verifyAddCarryShape(
+        subcs, checkSupportedVMICarryInputShape<VMIVsubcsOp>,
+        "pto.vmi.vsubcs requires matching 32-bit data and b32 mask parts (");
   }
   return std::nullopt;
 }
@@ -1278,5 +1308,3 @@ verifySupportedVMIToVPTOOps(ModuleOp module,
       });
   return failure(result.wasInterrupted());
 }
-
-

@@ -18,11 +18,12 @@ import json
 import unittest
 from pathlib import Path
 
+from TileOps.a5.elementwise.tadd import template_tadd
+
 from ptoas.mlir.dialects import pto as pto_dialect
 from ptoas.mlir.ir import Context
-from ptodsl.tilelib._compiler_runtime import materialize
 from ptodsl.tilelib import TileSpec, f32
-from TileOps.a5.tadd import template_tadd
+from ptodsl.tilelib._compiler_runtime import materialize
 
 FIXTURE = Path(__file__).parent / "fixtures" / "tadd_a5_8x64_f32.golden.mlir"
 

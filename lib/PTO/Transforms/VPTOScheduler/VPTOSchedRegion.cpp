@@ -32,7 +32,7 @@ static void addOperationUses(Operation &op, llvm::SetVector<Value> &live) {
   for (Region &nestedRegion : op.getRegions()) {
     visitUsedValuesDefinedAbove(
         nestedRegion, nestedRegion,
-        [&](OpOperand *operand) { live.insert(operand->get()); });
+        [&](const OpOperand *operand) { live.insert(operand->get()); });
   }
 }
 
@@ -149,7 +149,9 @@ SmallVector<VPTOSchedRegion> VPTOSchedRegionBuilder::build(Block &block) const {
   Operation *precedingBoundary = nullptr;
   std::string precedingReason = "block-start";
 
-  auto flush = [&](Operation *followingBoundary, StringRef followingReason) {
+  auto flush = [&block, &current, &precedingBoundary, &precedingReason,
+                &regions](Operation *followingBoundary,
+                          StringRef followingReason) {
     bool hasSchedulable = llvm::any_of(current, [](Operation *op) {
       return classifyVPTOSchedulingOp(op) == VPTOSchedulingClass::Schedulable;
     });

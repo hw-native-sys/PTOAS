@@ -115,7 +115,7 @@ public:
 class ConvertArithSelectOp final : public OpConversionPattern<arith::SelectOp> {
 public:
   ConvertArithSelectOp(const TypeConverter &typeConverter, MLIRContext *context)
-      : OpConversionPattern<arith::SelectOp>(typeConverter, context, PatternBenefit(2)) {}
+      : OpConversionPattern<arith::SelectOp>(typeConverter, context, PatternBenefit(kSelectPatternBenefit)) {}
 
   LogicalResult matchAndRewrite(arith::SelectOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {

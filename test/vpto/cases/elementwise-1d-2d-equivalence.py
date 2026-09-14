@@ -29,15 +29,15 @@ _bootstrap_dsl_st_common()
 
 from common import assert_close, auto_main
 from ptodsl import pto
-from ptodsl.tilelib.templates.a5.tabs import (
+from ptodsl.tilelib.templates.a5.unary.tabs import (
     template_tabs,
     template_tabs_1d,
 )
-from ptodsl.tilelib.templates.a5.tadd import (
+from ptodsl.tilelib.templates.a5.elementwise.tadd import (
     template_tadd,
     template_tadd_1d,
 )
-from ptodsl.tilelib.templates.a5.tadds import (
+from ptodsl.tilelib.templates.a5.elementwise.tadds import (
     template_tadds,
     template_tadds_1d,
 )
@@ -49,7 +49,7 @@ from ptodsl.tilelib.templates.a5.tcvt import (
     template_tcvt_f32_to_i16,
     template_tcvt_f32_to_i16_1d,
 )
-from ptodsl.tilelib.templates.a5.texpand import (
+from ptodsl.tilelib.templates.a5.expand.texpand import (
     template_texpands,
     template_texpands_1d,
 )

@@ -98,7 +98,8 @@ static void MergeSyncList(SyncOps &dstList, const SyncOps &srcList) {
   }
 }
 
-static Operation *resolveSyncInsertAnchor(Operation *op, SyncOperation *sync) {
+static Operation *resolveSyncInsertAnchor(Operation *op,
+                                          const SyncOperation *sync) {
   if (!sync->isCompensation) {
     return op;
   }
@@ -153,7 +154,7 @@ static bool hasNeighborBarrier(Block *block, Block::iterator ip,
 }
 
 static void createSetOrWaitFlagOp(IRRewriter &rewriter, Operation *op,
-                                  SyncOperation *sync, pto::PipeAttr srcPipe,
+                                  const SyncOperation *sync, pto::PipeAttr srcPipe,
                                   pto::PipeAttr dstPipe,
                                   pto::EventAttr eventId) {
   if (sync->isSyncWaitType()) {
@@ -171,13 +172,13 @@ void SyncCodegen::Run() {
   MLIRContext *ctx = func_->getContext();
   IRRewriter rewriter(ctx);
 
-  UpdateOpInsertSync(rewriter);
+  UpdateOpInsertSync();
 
   // [Optional Debug] 这里的 Debug 打印可以保留或注释掉
   // ...
 
   func_->walk<WalkOrder::PreOrder>([&](Operation *op) {
-    if (op2InsertSync.count(op)) {
+    if (op2InsertSync.contains(op)) {
       // 处理 PRE Sync
       for (auto &syncBefore : op2InsertSync[op].pipeBefore) {
         SyncInsert(rewriter, op, syncBefore, true);
@@ -194,7 +195,7 @@ void SyncCodegen::Run() {
   AppendAutoSyncTailBarrierIfNeeded(rewriter);
 }
 
-void SyncCodegen::UpdateOpInsertSync(const IRRewriter &rewriter) {
+void SyncCodegen::UpdateOpInsertSync() {
   for (auto &nowElement : syncIR_) {
     if (auto *compoundElement = dyn_cast<CompoundInstanceElement>(nowElement.get())) {
       UpdateCompoundOpInsertSync(compoundElement);
@@ -360,7 +361,7 @@ void SyncCodegen::AppendAutoSyncTailBarrierIfNeeded(IRRewriter &rewriter) {
 void SyncCodegen::CreateSetWaitOpForSingleBuffer(IRRewriter &rewriter,
                                                  Operation *op,
                                                  SyncOperation *sync,
-                                                 bool beforeInsert) {
+                                                 bool beforeInsert) const {
   setSyncInsertionPoint(rewriter, op,
                         beforeInsert || op->hasTrait<OpTrait::IsTerminator>());
   auto srcPipe = getPipeAttr(rewriter, sync->GetActualSrcPipe());
@@ -372,7 +373,7 @@ void SyncCodegen::CreateSetWaitOpForSingleBuffer(IRRewriter &rewriter,
 void SyncCodegen::CreateSetWaitOpForMultiBuffer(IRRewriter &rewriter,
                                                 Operation *op,
                                                 SyncOperation *sync,
-                                                bool beforeInsert) {
+                                                bool beforeInsert) const {
   auto srcPipe = getPipeAttr(rewriter, sync->GetActualSrcPipe());
   auto dstPipe = getPipeAttr(rewriter, sync->GetActualDstPipe());
   setSyncInsertionPoint(rewriter, op,
@@ -430,7 +431,7 @@ void SyncCodegen::CreateSetWaitOpForMultiBuffer(IRRewriter &rewriter,
 
 Value SyncCodegen::GetBufferSelected(IRRewriter &rewriter, Operation *op,
                                      SyncOperation *sync) {
-  if (SyncIndex2SelectBuffer.count(sync->GetSyncIndex())) {
+  if (SyncIndex2SelectBuffer.contains(sync->GetSyncIndex())) {
     return SyncIndex2SelectBuffer[sync->GetSyncIndex()];
   }
 
@@ -440,7 +441,7 @@ Value SyncCodegen::GetBufferSelected(IRRewriter &rewriter, Operation *op,
   }
 
   Value counter;
-  if (loop2BufferCounter.count(parentLoop)) {
+  if (loop2BufferCounter.contains(parentLoop)) {
     counter = loop2BufferCounter[parentLoop];
   } else {
     rewriter.setInsertionPointToStart(parentLoop.getBody());

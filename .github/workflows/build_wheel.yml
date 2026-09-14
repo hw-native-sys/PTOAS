@@ -476,7 +476,12 @@ jobs:
 
   bump_base_version:
     name: Bump base version after release
-    if: github.event_name == 'release' && github.event.action == 'released' && (startsWith(github.ref_name, 'ptoas-v') || (startsWith(github.ref_name, 'v') && !startsWith(github.ref_name, 'vmi-v')))
+    # The GitHub mirror publishes assets; version changes belong in GitCode.
+    if: >-
+      github.repository != 'hw-native-sys/PTOAS' &&
+      github.event_name == 'release' && github.event.action == 'released' &&
+      (startsWith(github.ref_name, 'ptoas-v') ||
+       (startsWith(github.ref_name, 'v') && !startsWith(github.ref_name, 'vmi-v')))
     needs: upload_release_assets
     runs-on: ubuntu-latest
     permissions:
@@ -511,7 +516,11 @@ jobs:
 
   bump_vmi_version:
     name: Bump VMI version after release
-    if: github.event_name == 'release' && github.event.action == 'released' && startsWith(github.ref_name, 'vmi-v')
+    # Keep VMI version changes in GitCode as well.
+    if: >-
+      github.repository != 'hw-native-sys/PTOAS' &&
+      github.event_name == 'release' && github.event.action == 'released' &&
+      startsWith(github.ref_name, 'vmi-v')
     needs: upload_release_assets
     runs-on: ubuntu-latest
     permissions:

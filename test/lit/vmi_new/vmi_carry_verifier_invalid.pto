@@ -36,3 +36,35 @@ module {
 }
 
 // CHECK: 'pto.vmi.vaddcs' op requires mask logical lane count to match data lane count
+
+// -----
+
+module {
+  func.func @vsubc_non_b32_mask(
+      %lhs: !pto.vmi.vreg<64xui32>, %rhs: !pto.vmi.vreg<64xui32>,
+      %mask: !pto.vmi.mask<64xb16>) {
+    %diff, %carry = pto.vmi.vsubc %lhs, %rhs, %mask
+        : !pto.vmi.vreg<64xui32>, !pto.vmi.vreg<64xui32>,
+          !pto.vmi.mask<64xb16>
+        -> !pto.vmi.vreg<64xui32>, !pto.vmi.mask<64xb16>
+    return
+  }
+}
+
+// CHECK: 'pto.vmi.vsubc' op requires mask granularity to match data element width
+
+// -----
+
+module {
+  func.func @vsubcs_non_b32_masks(
+      %lhs: !pto.vmi.vreg<64xui32>, %rhs: !pto.vmi.vreg<64xui32>,
+      %carry_in: !pto.vmi.mask<64xb16>, %mask: !pto.vmi.mask<64xb16>) {
+    %diff, %carry = pto.vmi.vsubcs %lhs, %rhs, %carry_in, %mask
+        : !pto.vmi.vreg<64xui32>, !pto.vmi.vreg<64xui32>,
+          !pto.vmi.mask<64xb16>, !pto.vmi.mask<64xb16>
+        -> !pto.vmi.vreg<64xui32>, !pto.vmi.mask<64xb16>
+    return
+  }
+}
+
+// CHECK: 'pto.vmi.vsubcs' op requires mask granularity to match data element width

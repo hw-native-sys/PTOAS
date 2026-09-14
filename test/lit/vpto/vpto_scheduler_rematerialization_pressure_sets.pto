@@ -1,0 +1,96 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s '-pto-vpto-scheduler=mode=on trace=true rematerialize=true' > /dev/null 2> %t.trace
+// RUN: FileCheck %s --check-prefix=TRACE < %t.trace
+
+// TRACE: vpto-scheduler: remat-region block=0 region=1 peak=33 limit=32 trigger=true
+// TRACE: vpto-scheduler: remat-region block=0 region=2 peak=1 limit=32 trigger=false
+// TRACE: vpto-scheduler: remat-candidate id=0 selected=pending groups=2
+// TRACE: vpto-scheduler: remat-summary function=predicate_pressure_within_limit changed=true high-regions=3 selected=2 groups=3
+// TRACE: vpto-scheduler: remat-result function=predicate_pressure_within_limit accepted=true initial-peak=33 final-peak=32 second-schedule=success
+// TRACE-SAME: initial-pressure={vector:33,predicate:6}
+// TRACE-SAME: final-pressure={vector:32,predicate:7}
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @predicate_pressure_within_limit(
+      %x0: !pto.vreg<64xi32>, %x1: !pto.vreg<64xi32>,
+      %x2: !pto.vreg<64xi32>, %x3: !pto.vreg<64xi32>,
+      %x4: !pto.vreg<64xi32>, %x5: !pto.vreg<64xi32>,
+      %x6: !pto.vreg<64xi32>, %x7: !pto.vreg<64xi32>,
+      %x8: !pto.vreg<64xi32>, %x9: !pto.vreg<64xi32>,
+      %x10: !pto.vreg<64xi32>, %x11: !pto.vreg<64xi32>,
+      %x12: !pto.vreg<64xi32>, %x13: !pto.vreg<64xi32>,
+      %x14: !pto.vreg<64xi32>, %x15: !pto.vreg<64xi32>,
+      %x16: !pto.vreg<64xi32>, %x17: !pto.vreg<64xi32>,
+      %x18: !pto.vreg<64xi32>, %x19: !pto.vreg<64xi32>,
+      %x20: !pto.vreg<64xi32>, %x21: !pto.vreg<64xi32>,
+      %x22: !pto.vreg<64xi32>, %x23: !pto.vreg<64xi32>,
+      %x24: !pto.vreg<64xi32>, %x25: !pto.vreg<64xi32>,
+      %x26: !pto.vreg<64xi32>, %x27: !pto.vreg<64xi32>,
+      %x28: !pto.vreg<64xi32>, %x29: !pto.vreg<64xi32>,
+      %x30: !pto.vreg<64xi32>) {
+    %zero = arith.constant 0 : i32
+    %one = arith.constant 1 : i32
+    %lower = arith.constant 0 : index
+    %upper = arith.constant 2 : index
+    %step = arith.constant 1 : index
+    %cond = arith.constant true
+    pto.vecscope {
+      %producer_mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %root = pto.vci %zero : i32 -> !pto.vreg<64xi32>
+      %index0 = pto.vadds %root, %zero, %producer_mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      %index1 = pto.vadds %root, %one, %producer_mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>
+      scf.if %cond {
+      }
+      %m0 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %m1 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %m2 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %m3 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %m4 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %m5 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      scf.for %i = %lower to %upper step %step {
+        %use0 = pto.vcmp %index0, %index0, %m0, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %use1 = pto.vcmp %index1, %index1, %m1, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+        %s0 = pto.vmax %x0, %x0, %m0 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %s1 = pto.vmax %x1, %x1, %m1 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %s2 = pto.vmax %x2, %x2, %m2 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %s3 = pto.vmax %x3, %x3, %m3 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %s4 = pto.vmax %x4, %x4, %m4 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %s5 = pto.vmax %x5, %x5, %m5 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %s6 = pto.vmax %x6, %x6, %m5 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %s7 = pto.vmax %x7, %x7, %m5 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %s8 = pto.vmax %x8, %x8, %m5 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %s9 = pto.vmax %x9, %x9, %m5 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %s10 = pto.vmax %x10, %x10, %m5 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %s11 = pto.vmax %x11, %x11, %m5 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %s12 = pto.vmax %x12, %x12, %m5 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %s13 = pto.vmax %x13, %x13, %m5 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %s14 = pto.vmax %x14, %x14, %m5 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %s15 = pto.vmax %x15, %x15, %m5 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %s16 = pto.vmax %x16, %x16, %m5 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %s17 = pto.vmax %x17, %x17, %m5 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %s18 = pto.vmax %x18, %x18, %m5 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %s19 = pto.vmax %x19, %x19, %m5 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %s20 = pto.vmax %x20, %x20, %m5 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %s21 = pto.vmax %x21, %x21, %m5 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %s22 = pto.vmax %x22, %x22, %m5 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %s23 = pto.vmax %x23, %x23, %m5 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %s24 = pto.vmax %x24, %x24, %m5 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %s25 = pto.vmax %x25, %x25, %m5 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %s26 = pto.vmax %x26, %x26, %m5 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %s27 = pto.vmax %x27, %x27, %m5 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %s28 = pto.vmax %x28, %x28, %m5 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %s29 = pto.vmax %x29, %x29, %m5 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+        %s30 = pto.vmax %x30, %x30, %m5 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+      }
+      %after = pto.vcmp %index0, %index0, %m0, "eq" : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.mask<b32>
+    }
+    return
+  }
+}

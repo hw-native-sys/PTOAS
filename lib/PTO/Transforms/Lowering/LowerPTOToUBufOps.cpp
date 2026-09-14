@@ -331,9 +331,9 @@ private:
   // VEC-space CastPtr of its planned address and record the tile shape.
   LogicalResult collectTileShapes(func::FuncOp func, MLIRContext *ctx,
                                   OpBuilder &builder,
-                                  TileShapeMap &tileShapes) {
+                                  TileShapeMap &tileShapes) const {
     SmallVector<pto::AllocTileOp> allocOps;
-    func.walk([&](pto::AllocTileOp op) { allocOps.push_back(op); });
+    func.walk([&allocOps](pto::AllocTileOp op) { allocOps.push_back(op); });
     for (auto op : allocOps) {
       auto tbTy = cast<pto::TileBufType>(op.getResult().getType());
       if (llvm::any_of(tbTy.getValidShape(), ShapedType::isDynamic)) {
@@ -371,9 +371,9 @@ private:
   template <typename TileOp, typename UBop>
   void lowerBinaryTileFamily(func::FuncOp func, MLIRContext *ctx,
                              OpBuilder &builder,
-                             const TileShapeMap &tileShapes) {
+                             const TileShapeMap &tileShapes) const {
     SmallVector<TileOp> ops;
-    func.walk([&](TileOp op) { ops.push_back(op); });
+    func.walk([&ops](TileOp op) { ops.push_back(op); });
     for (auto op : ops) {
       if (!canLower(op, tileShapes)) {
         continue;
@@ -398,7 +398,8 @@ private:
   }
 
   void lowerBinaryTileOps(func::FuncOp func, MLIRContext *ctx,
-                          OpBuilder &builder, const TileShapeMap &tileShapes) {
+                          OpBuilder &builder,
+                          const TileShapeMap &tileShapes) const {
     // ---- tadd -> pto.ub.vadd ----
     lowerBinaryTileFamily<pto::TAddOp, pto::UBVaddOp>(func, ctx, builder,
                                                       tileShapes);
@@ -432,12 +433,13 @@ private:
   // txor -> vor(tmp) + vand(dst) + vnot(dst) + vand(dst,tmp).
   // De Morgan: src0 ^ src1 = ~(src0 & src1) & (src0 | src1).
   void lowerXorTileOps(func::FuncOp func, MLIRContext *ctx,
-                       OpBuilder &builder, const TileShapeMap &tileShapes) {
+                       OpBuilder &builder,
+                       const TileShapeMap &tileShapes) const {
     // ---- txor → vor(tmp) + vand(dst) + vnot(dst) + vand(dst,tmp) ----
     // De Morgan: src0 ^ src1 = ~(src0 & src1) & (src0 | src1)
     {
       SmallVector<pto::TXorOp> ops;
-      func.walk([&](pto::TXorOp op) { ops.push_back(op); });
+      func.walk([&ops](pto::TXorOp op) { ops.push_back(op); });
       for (auto op : ops) {
         auto info = extractTileShapeInfoFromValue(op.getDst(), tileShapes);
         if (!info) {
@@ -485,9 +487,10 @@ private:
   template <typename SrcOp, typename LowerFn>
   void forEachTileOpWithPtrs(func::FuncOp func, MLIRContext *ctx,
                              OpBuilder &builder,
-                             const TileShapeMap &tileShapes, LowerFn lower) {
+                             const TileShapeMap &tileShapes,
+                             LowerFn lower) const {
     SmallVector<SrcOp> ops;
-    func.walk([&](SrcOp op) { ops.push_back(op); });
+    func.walk([&ops](SrcOp op) { ops.push_back(op); });
     for (auto op : ops) {
       auto info = extractTileShapeInfoFromValue(op.getDst(), tileShapes);
       if (!info) {
@@ -508,11 +511,12 @@ private:
   // trsqrt → pto.ub.vrsqrt: a plain dispatch on the prepared operands.
   template <typename SrcOp, typename UBop>
   void lowerUnaryFamily(func::FuncOp func, MLIRContext *ctx,
-                        OpBuilder &builder, const TileShapeMap &tileShapes) {
+                        OpBuilder &builder,
+                        const TileShapeMap &tileShapes) const {
     forEachTileOpWithPtrs<SrcOp>(
         func, ctx, builder, tileShapes,
-        [&](SrcOp op, ValueRange ptrs, pto::PtrType ptrType,
-            const TileShapeInfo &info) {
+        [this, &builder](SrcOp op, ValueRange ptrs, pto::PtrType ptrType,
+                         const TileShapeInfo &info) {
           dispatchUnary<UBop>(op.getLoc(), builder, ptrs[0], ptrs[1],
                               ptrType, info);
         });
@@ -521,11 +525,12 @@ private:
   // tneg → pto.ub.vmuls(dst, src, -1): needs a typed -1 constant, so it
   // cannot reuse the plain unary dispatch.
   void lowerTNegFamily(func::FuncOp func, MLIRContext *ctx,
-                       OpBuilder &builder, const TileShapeMap &tileShapes) {
+                       OpBuilder &builder,
+                       const TileShapeMap &tileShapes) const {
     forEachTileOpWithPtrs<pto::TNegOp>(
         func, ctx, builder, tileShapes,
-        [&](pto::TNegOp op, ValueRange ptrs, pto::PtrType ptrType,
-            const TileShapeInfo &info) {
+        [this, &builder](pto::TNegOp op, ValueRange ptrs, pto::PtrType ptrType,
+                         const TileShapeInfo &info) {
           Type elemTy = ptrType.getElementType();
           Value minusOneScalar;
           if (elemTy.isF32() || elemTy.isF16()) {
@@ -545,11 +550,13 @@ private:
   // trecip → vector_dup(dst, 1) + vdiv(dst, dst, src): a two-step sequence,
   // so it cannot reuse the plain unary dispatch either.
   void lowerTRecipFamily(func::FuncOp func, MLIRContext *ctx,
-                         OpBuilder &builder, const TileShapeMap &tileShapes) {
+                         OpBuilder &builder,
+                         const TileShapeMap &tileShapes) const {
     forEachTileOpWithPtrs<pto::TRecipOp>(
         func, ctx, builder, tileShapes,
-        [&](pto::TRecipOp op, ValueRange ptrs, pto::PtrType ptrType,
-            const TileShapeInfo &info) {
+        [this, ctx, &builder](pto::TRecipOp op, ValueRange ptrs,
+                              pto::PtrType ptrType,
+                              const TileShapeInfo &info) {
           Type elemTy = ptrType.getElementType();
           Value oneScalar = builder.create<arith::ConstantOp>(
               op.getLoc(), builder.getFloatAttr(elemTy, 1.0));
@@ -564,7 +571,8 @@ private:
   }
 
   void lowerUnaryTileOps(func::FuncOp func, MLIRContext *ctx,
-                         OpBuilder &builder, const TileShapeMap &tileShapes) {
+                         OpBuilder &builder,
+                         const TileShapeMap &tileShapes) const {
     // tnot → pto.ub.vnot, tabs → pto.ub.vabs, trelu → pto.ub.vrelu,
     // texp → pto.ub.vexp, tlog → pto.ub.vln, tsqrt → pto.ub.vsqrt,
     // trsqrt → pto.ub.vrsqrt.
@@ -597,9 +605,9 @@ private:
   void lowerScalarShiftFamily(
       func::FuncOp func, MLIRContext *ctx, OpBuilder &builder,
       const TileShapeMap &tileShapes,
-      Value (SrcOp::*srcOf)() = &SrcOp::getSrc) {
+      Value (SrcOp::*srcOf)() = &SrcOp::getSrc) const {
     SmallVector<SrcOp> ops;
-    func.walk([&](SrcOp op) { ops.push_back(op); });
+    func.walk([&ops](SrcOp op) { ops.push_back(op); });
     for (auto op : ops) {
       auto info = extractTileShapeInfo(op, tileShapes);
       if (!info) {
@@ -618,7 +626,8 @@ private:
   }
 
   void lowerScalarTileOps(func::FuncOp func, MLIRContext *ctx,
-                          OpBuilder &builder, const TileShapeMap &tileShapes) {
+                          OpBuilder &builder,
+                          const TileShapeMap &tileShapes) const {
     // tadds → pto.ub.vadds, tmaxs → pto.ub.vmaxs, tmins → pto.ub.vmins.
     lowerScalarShiftFamily<pto::TAddSOp, pto::UBVaddSOp>(func, ctx, builder,
                                                          tileShapes);
@@ -635,15 +644,15 @@ private:
     // raw scalar (no i64 conversion).
     forEachTileOpWithPtrs<pto::TShlSOp>(
         func, ctx, builder, tileShapes,
-        [&](pto::TShlSOp op, ValueRange ptrs, pto::PtrType ptrType,
-            const TileShapeInfo &info) {
+        [this, &builder](pto::TShlSOp op, ValueRange ptrs, pto::PtrType ptrType,
+                         const TileShapeInfo &info) {
           dispatchShift<pto::UBVshlOp>(op.getLoc(), builder, ptrs[0], ptrs[1],
                                        op.getScalar(), ptrType, info);
         });
     forEachTileOpWithPtrs<pto::TShrSOp>(
         func, ctx, builder, tileShapes,
-        [&](pto::TShrSOp op, ValueRange ptrs, pto::PtrType ptrType,
-            const TileShapeInfo &info) {
+        [this, &builder](pto::TShrSOp op, ValueRange ptrs, pto::PtrType ptrType,
+                         const TileShapeInfo &info) {
           dispatchShift<pto::UBVshrOp>(op.getLoc(), builder, ptrs[0], ptrs[1],
                                        op.getScalar(), ptrType, info);
         });
@@ -651,10 +660,10 @@ private:
 
   // tload -> mte_gm_ub, tstore -> mte_ub_gm.
   void lowerMemTileOps(func::FuncOp func, OpBuilder &builder,
-                       const TileShapeMap &tileShapes) {
+                       const TileShapeMap &tileShapes) const {
     // ---- tload → mte_gm_ub ----
     SmallVector<pto::TLoadOp> tloadOps;
-    func.walk([&](pto::TLoadOp op) { tloadOps.push_back(op); });
+    func.walk([&tloadOps](pto::TLoadOp op) { tloadOps.push_back(op); });
     for (auto op : tloadOps) {
       builder.setInsertionPoint(op);
       if (succeeded(lowerTLoad(op, builder, tileShapes))) {
@@ -664,7 +673,7 @@ private:
 
     // ---- tstore → mte_ub_gm ----
     SmallVector<pto::TStoreOp> tstoreOps;
-    func.walk([&](pto::TStoreOp op) { tstoreOps.push_back(op); });
+    func.walk([&tstoreOps](pto::TStoreOp op) { tstoreOps.push_back(op); });
     for (auto op : tstoreOps) {
       builder.setInsertionPoint(op);
       if (succeeded(lowerTStore(op, builder, tileShapes))) {
@@ -701,7 +710,7 @@ private:
   // shapes leave a zero divisor.
   std::optional<GatherBlockTiling>
   computeGatherBlockTiling(const TileShapeInfo &dstInfo,
-                           const TileShapeInfo &offsetInfo) {
+                           const TileShapeInfo &offsetInfo) const {
     GatherBlockTiling t;
     t.blockSizeElem = dstInfo.blockSizeElem;
     t.elementsPerRepeat = dstInfo.elementsPerRepeat;
@@ -724,9 +733,9 @@ private:
   // advancement per call.
   LogicalResult lowerTGatherBOps(func::FuncOp func, MLIRContext *ctx,
                                  OpBuilder &builder,
-                                 const TileShapeMap &tileShapes) {
+                                 const TileShapeMap &tileShapes) const {
     SmallVector<pto::TGatherBOp> ops;
-    func.walk([&](pto::TGatherBOp op) { ops.push_back(op); });
+    func.walk([&ops](pto::TGatherBOp op) { ops.push_back(op); });
     for (auto op : ops) {
       auto dstInfo = extractTileShapeInfoFromValue(op.getDst(), tileShapes);
       auto offsetInfo =
@@ -756,7 +765,8 @@ private:
       Value srcBase = emitTileOrPtrAddress(builder, loc, op.getSrc(),
                                            dstPtrType);
 
-      auto emitGatherb = [&](Value dst, Value off, int64_t repStride,
+      auto emitGatherb = [this, loc, srcBase, &builder](
+                             Value dst, Value off, int64_t repStride,
                              int64_t repeat) {
         builder.create<pto::UBVgatherbOp>(
             loc, dst, off, srcBase, i64c(repStride, loc, builder),
@@ -778,7 +788,8 @@ private:
   void emitGatherBlockHead(Location loc, OpBuilder &builder,
                            const GatherBlockTiling &t, Value dstBase,
                            Value offBase, pto::PtrType dstPtrType,
-                           pto::PtrType offPtrType, EmitFn &&emitGatherb) {
+                           pto::PtrType offPtrType,
+                           EmitFn &&emitGatherb) const {
     constexpr int64_t REPEAT_MAX = kRepeatMax;
     constexpr int64_t ADDRS_PER_REPEAT = 8;
     if (t.numRepeatPerLine <= 0) {
@@ -818,7 +829,8 @@ private:
   void emitGatherBlockTail(Location loc, OpBuilder &builder,
                            const GatherBlockTiling &t, Value dstBase,
                            Value offBase, pto::PtrType dstPtrType,
-                           pto::PtrType offPtrType, EmitFn &&emitGatherb) {
+                           pto::PtrType offPtrType,
+                           EmitFn &&emitGatherb) const {
     if (t.numRemainPerLine <= 0) {
       return;
     }
@@ -855,7 +867,7 @@ private:
                                const TileShapeInfo &dstInfo,
                                const TileShapeInfo &indexInfo,
                                const TileShapeInfo &tmpInfo,
-                               unsigned elemSize) {
+                               unsigned elemSize) const {
     auto pipeV = pto::PipeAttr::get(ctx, pto::PIPE::PIPE_V);
     int64_t epr = dstInfo.elementsPerRepeat;
     for (int64_t i = 0; i < dstInfo.vRows; ++i) {
@@ -914,7 +926,7 @@ private:
   emitGatherIndexPointers(pto::TGatherOp op, MLIRContext *ctx,
                           OpBuilder &builder, pto::PtrType &i32PtrType,
                           pto::PtrType &dstPtrType, Value &indicesPtr,
-                          Value &tmpPtr, Value &dstPtr) {
+                          Value &tmpPtr, Value &dstPtr) const {
     Location loc = op.getLoc();
     builder.setInsertionPoint(op);
 
@@ -940,7 +952,7 @@ private:
                                      OpBuilder &builder,
                                      const TileShapeMap &tileShapes) {
     SmallVector<pto::TGatherOp> ops;
-    func.walk([&](pto::TGatherOp op) { ops.push_back(op); });
+    func.walk([&ops](pto::TGatherOp op) { ops.push_back(op); });
     for (auto op : ops) {
       if (!op.hasIndexForm()) {
         continue;
@@ -982,9 +994,9 @@ private:
   }
 
   // Erase dead view/cast ops left behind after the tile lowerings.
-  void cleanupDeadPTOOps(func::FuncOp func) {
+  void cleanupDeadPTOOps(func::FuncOp func) const {
     SmallVector<Operation *> toErase;
-    func.walk([&](Operation *op) {
+    func.walk([&toErase](Operation *op) {
       if (isa<pto::PartitionViewOp, pto::MakeTensorViewOp,
               memref::SubViewOp, memref::ReinterpretCastOp, memref::CastOp>(op)) {
         toErase.push_back(op);
@@ -1002,24 +1014,24 @@ private:
   // Helpers
   //===--------------------------------------------------------------------===//
 
-  Value i64c(int64_t val, Location loc, OpBuilder &b) {
+  Value i64c(int64_t val, Location loc, OpBuilder &b) const {
     return b.create<arith::ConstantOp>(loc, b.getI64IntegerAttr(val));
   }
-  Value idxc(int64_t val, Location loc, OpBuilder &b) {
+  Value idxc(int64_t val, Location loc, OpBuilder &b) const {
     return b.create<arith::ConstantOp>(
                loc, b.getIntegerAttr(b.getIndexType(), val))
         .getResult();
   }
-  Value i64c0(Location loc, OpBuilder &b) { return i64c(0, loc, b); }
-  Value i64c1(Location loc, OpBuilder &b) { return i64c(1, loc, b); }
-  Value i64cM1(Location loc, OpBuilder &b) { return i64c(-1, loc, b); }
-  Value i64c8(Location loc, OpBuilder &b) { return i64c(kDefaultRepeatStride, loc, b); }
-  Value idxc0(Location loc, OpBuilder &b) { return idxc(0, loc, b); }
-  Value idxc1(Location loc, OpBuilder &b) { return idxc(1, loc, b); }
+  Value i64c0(Location loc, OpBuilder &b) const { return i64c(0, loc, b); }
+  Value i64c1(Location loc, OpBuilder &b) const { return i64c(1, loc, b); }
+  Value i64cM1(Location loc, OpBuilder &b) const { return i64c(-1, loc, b); }
+  Value i64c8(Location loc, OpBuilder &b) const { return i64c(kDefaultRepeatStride, loc, b); }
+  Value idxc0(Location loc, OpBuilder &b) const { return idxc(0, loc, b); }
+  Value idxc1(Location loc, OpBuilder &b) const { return idxc(1, loc, b); }
 
   template <typename UBop>
   void emitUBBinOp(Location loc, OpBuilder &b, Value dst, Value s0, Value s1,
-                   Value repeat, Value repStride) {
+                   Value repeat, Value repStride) const {
     b.create<UBop>(loc, dst, s0, s1, repeat,
                    i64c1(loc, b), i64c1(loc, b), i64c1(loc, b),
                    repStride, repStride, i64c0(loc, b));
@@ -1031,13 +1043,13 @@ private:
   // gets a TileBufAddrOp). The destination address is always ptrs.front().
   SmallVector<Value> lowerTilePtrs(OpBuilder &builder, MLIRContext *ctx,
                                    Operation *op, Value dstVal,
-                                   ArrayRef<Value> tiles) {
+                                   ArrayRef<Value> tiles) const {
     Location loc = op->getLoc();
     builder.setInsertionPoint(op);
     Type elemTy = getStoredElemType(dstVal.getType());
     auto ptrType = getUBPtrType(ctx, elemTy);
 
-    auto emitAddr = [&](Value tile) -> Value {
+    auto emitAddr = [loc, ptrType, &builder](Value tile) -> Value {
       if (isa<pto::PtrType>(tile.getType())) {
         return tile;
       }
@@ -1059,14 +1071,15 @@ private:
   // the pointers (ptrs[0] is the destination) plus their element type.
   std::pair<SmallVector<Value>, pto::PtrType>
   lowerOpPtrs(OpBuilder &builder, MLIRContext *ctx, Operation *op,
-              Value dstVal, ArrayRef<Value> srcs) {
+              Value dstVal, ArrayRef<Value> srcs) const {
     Type elemTy = getStoredElemType(dstVal.getType());
     auto ptrType = getUBPtrType(ctx, elemTy);
     SmallVector<Value> ptrs = lowerTilePtrs(builder, ctx, op, dstVal, srcs);
     return {std::move(ptrs), ptrType};
   }
 
-  Value convertScalarToI64(OpBuilder &builder, Location loc, Value scalar) {
+  Value convertScalarToI64(OpBuilder &builder, Location loc,
+                           Value scalar) const {
     if (scalar.getType().isF32() || scalar.getType().isF16()) {
       unsigned width = scalar.getType().isF32() ? 32 : 16;
       auto intTy = builder.getIntegerType(width);
@@ -1086,7 +1099,7 @@ private:
   template <typename Fn>
   bool splitIntoRows(Location loc, OpBuilder &b, Value dst, Value src,
                      pto::PtrType ptrTy, const TileShapeInfo &info,
-                     Fn &&recurse) {
+                     Fn &&recurse) const {
     if (!(info.vRows > 1 && info.vCols != info.cols)) {
       return false;
     }
@@ -1111,7 +1124,7 @@ private:
   template <typename EmitFn>
   void emitMaskedRepeats(Location loc, OpBuilder &b, Value dst, Value src,
                          pto::PtrType ptrTy, const TileShapeInfo &info,
-                         EmitFn &&emit) {
+                         EmitFn &&emit) const {
     int64_t epr = info.elementsPerRepeat;
     int64_t totalV = info.vRows * info.vCols;
     int64_t headRepeats = totalV / epr;
@@ -1155,10 +1168,10 @@ private:
   template <typename UBop>
   void dispatchShift(Location loc, OpBuilder &b, Value dst, Value src,
                      Value scalar, pto::PtrType ptrTy,
-                     const TileShapeInfo &info) {
+                     const TileShapeInfo &info) const {
     if (splitIntoRows(loc, b, dst, src, ptrTy, info,
-                      [&](Value rd, Value rs, pto::PtrType pty,
-                          const TileShapeInfo &rowInfo) {
+                      [this, loc, &b, scalar](Value rd, Value rs,
+                          pto::PtrType pty, const TileShapeInfo &rowInfo) {
                         dispatchShift<UBop>(loc, b, rd, rs, scalar, pty,
                                             rowInfo);
                       })) {
@@ -1179,9 +1192,9 @@ private:
 
   template <typename UBop>
   void dispatchUnary(Location loc, OpBuilder &b, Value dst, Value src,
-                     pto::PtrType ptrTy, const TileShapeInfo &info) {
+                     pto::PtrType ptrTy, const TileShapeInfo &info) const {
     if (splitIntoRows(loc, b, dst, src, ptrTy, info,
-                      [&](Value rd, Value rs, pto::PtrType pty,
+                      [this, loc, &b](Value rd, Value rs, pto::PtrType pty,
                           const TileShapeInfo &rowInfo) {
                         dispatchUnary<UBop>(loc, b, rd, rs, pty, rowInfo);
                       })) {
@@ -1196,10 +1209,10 @@ private:
   }
 
   void dispatchDup(Location loc, OpBuilder &b, Value dst, Value scalar,
-                   pto::PtrType ptrTy, const TileShapeInfo &info) {
+                   pto::PtrType ptrTy, const TileShapeInfo &info) const {
     if (splitIntoRows(loc, b, dst, Value{}, ptrTy, info,
-                      [&](Value rd, Value, pto::PtrType pty,
-                          const TileShapeInfo &rowInfo) {
+                      [this, loc, &b, scalar](Value rd, Value,
+                          pto::PtrType pty, const TileShapeInfo &rowInfo) {
                         dispatchDup(loc, b, rd, scalar, pty, rowInfo);
                       })) {
       return;
@@ -1217,7 +1230,7 @@ private:
   }
 
   template <typename UBop>
-  void modeNorm1L(const TileOpContext &c, const TileShapeInfo &info) {
+  void modeNorm1L(const TileOpContext &c, const TileShapeInfo &info) const {
     int64_t epr = info.elementsPerRepeat;
     int64_t totalV = info.vRows * info.vCols;
     int64_t headRepeats = totalV / epr;
@@ -1260,17 +1273,17 @@ private:
     fullMask(c.loc, c.b);
   }
 
-  void setMask(Location loc, OpBuilder &b, unsigned n) {
+  void setMask(Location loc, OpBuilder &b, unsigned n) const {
     auto [m0, m1] = computeContMaskValues(n);
     b.create<pto::UBSetMaskOp>(loc, i64c(m0, loc, b), i64c(m1, loc, b));
   }
 
-  void fullMask(Location loc, OpBuilder &b) {
+  void fullMask(Location loc, OpBuilder &b) const {
     b.create<pto::UBSetMaskOp>(loc, i64cM1(loc, b), i64cM1(loc, b));
   }
 
   Value addPtr(Location loc, OpBuilder &b, Value base, pto::PtrType ptrTy,
-                Value off) {
+                Value off) const {
     return b.create<pto::AddPtrOp>(loc, ptrTy, base, off);
   }
 
@@ -1438,7 +1451,8 @@ private:
   }
 
   Value computeGMByteOffset(Location loc, OpBuilder &b,
-                            const DmaViewInfo &viewInfo, unsigned elemSize) {
+                            const DmaViewInfo &viewInfo,
+                            unsigned elemSize) const {
     if (viewInfo.linearOffset) {
       Value offset = b.create<arith::IndexCastOp>(
           loc, b.getI64Type(), viewInfo.linearOffset);
@@ -1465,7 +1479,7 @@ private:
   }
 
   Value offsetGMPtrByBytes(Location loc, OpBuilder &b, Value gmPtr,
-                           Value byteOff) {
+                           Value byteOff) const {
     APInt constOff;
     if (matchPattern(byteOff, m_ConstantInt(&constOff)) && constOff.isZero()) {
       return gmPtr;
@@ -1484,21 +1498,21 @@ private:
     return b.create<pto::CastPtrOp>(loc, origPtrTy, offsetBytePtr);
   }
 
-  Value i64Cast(Location loc, OpBuilder &b, Value indexVal) {
+  Value i64Cast(Location loc, OpBuilder &b, Value indexVal) const {
     return b.create<arith::IndexCastOp>(loc, b.getI64Type(), indexVal)
         .getResult();
   }
 
   // i64 byte-stride of a GM view dimension (index-typed stride x elemSize).
   Value strideBytes(Location loc, OpBuilder &b, Value idxStride,
-                    unsigned elemSize) {
+                    unsigned elemSize) const {
     return b.create<arith::MulIOp>(loc, i64Cast(loc, b, idxStride),
                                    i64c(elemSize, loc, b)).getResult();
   }
 
   // i64 byte-length of the innermost (contiguous) burst dimension.
   Value burstBytes(Location loc, OpBuilder &b, Value lenBurstElts,
-                   unsigned elemSize) {
+                   unsigned elemSize) const {
     return b.create<arith::MulIOp>(loc, i64Cast(loc, b, lenBurstElts),
                                    i64c(elemSize, loc, b)).getResult();
   }
@@ -1506,7 +1520,7 @@ private:
   // Product (in elements) of all dims below `i`, used as the UB-side stride
   // of loop level `i` (the UB tile is dense).
   Value innerDimElems(Location loc, OpBuilder &b, const DmaViewInfo &viewInfo,
-                      int i) {
+                      int i) const {
     Value innerElems = i64c1(loc, b);
     for (int j = i + 1; j < static_cast<int>(viewInfo.sizes.size()); ++j) {
       innerElems = b.create<arith::MulIOp>(loc, innerElems,
@@ -1549,7 +1563,7 @@ private:
 
   BurstPlan buildBurstPlan(Location loc, OpBuilder &b,
                            const DmaViewInfo &viewInfo,
-                           const BurstGeometry &g) {
+                           const BurstGeometry &g) const {
     // The burst length covers one innermost view dim; the UB row stride is
     // the full UB tile row.
     Value lenBurst = burstBytes(loc, b, viewInfo.sizes[g.nd - 1], g.elemSize);
@@ -1559,8 +1573,9 @@ private:
   }
 
   LogicalResult emitMteGmUb(Location loc, OpBuilder &b, Value gmPtr,
-                             Value ubPtr, const DmaViewInfo &viewInfo,
-                             Type elemTy, ArrayRef<int64_t> tileShape) {
+                            Value ubPtr, const DmaViewInfo &viewInfo,
+                            Type elemTy,
+                            ArrayRef<int64_t> tileShape) const {
     auto geometry = getBurstGeometry(viewInfo, elemTy, tileShape);
     if (!geometry) {
       return failure();
@@ -1591,8 +1606,9 @@ private:
   }
 
   LogicalResult emitMteUbGm(Location loc, OpBuilder &b, Value ubPtr,
-                             Value gmPtr, const DmaViewInfo &viewInfo,
-                             Type elemTy, ArrayRef<int64_t> tileShape) {
+                            Value gmPtr, const DmaViewInfo &viewInfo,
+                            Type elemTy,
+                            ArrayRef<int64_t> tileShape) const {
     auto geometry = getBurstGeometry(viewInfo, elemTy, tileShape);
     if (!geometry) {
       return failure();
@@ -1631,7 +1647,7 @@ private:
   };
 
   std::optional<TLoadStorePrologue>
-  checkLoadStoreTile(Value tile, const TileShapeMap &tileShapes) {
+  checkLoadStoreTile(Value tile, const TileShapeMap &tileShapes) const {
     Type tileType = tile.getType();
     if (!isUBMemorySpace(tileType)) {
       return std::nullopt;
@@ -1653,7 +1669,7 @@ private:
   }
 
   LogicalResult lowerTLoad(pto::TLoadOp op, OpBuilder &b,
-                           const TileShapeMap &tileShapes) {
+                           const TileShapeMap &tileShapes) const {
     Location loc = op.getLoc();
     auto viewInfo = extractDmaViewInfo(op);
     if (failed(viewInfo)) {
@@ -1671,7 +1687,7 @@ private:
   }
 
   LogicalResult lowerTStore(pto::TStoreOp op, OpBuilder &b,
-                            const TileShapeMap &tileShapes) {
+                            const TileShapeMap &tileShapes) const {
     Location loc = op.getLoc();
     auto viewInfo = extractDmaViewInfo(op);
     if (failed(viewInfo)) {
@@ -1693,7 +1709,7 @@ private:
   //===--------------------------------------------------------------------===//
 
   template <typename UBop>
-  void dispatch(const TileOpContext &c, const TileShapeInfo &info) {
+  void dispatch(const TileOpContext &c, const TileShapeInfo &info) const {
     int64_t epr = info.elementsPerRepeat;
     int64_t cols = info.cols;
     int64_t rows = info.rows;
@@ -1708,14 +1724,7 @@ private:
 
     // 2. Continuous at compile time
     if (vCols == cols || vRows == 1) {
-      int64_t totalV = vRows * vCols;
-      int64_t totalRpts = (totalV + epr - 1) / epr;
-
-      if (totalRpts > kRepeatMax) {
-        modeNorm1L<UBop>(c, info);
-      } else {
-        modeNorm1L<UBop>(c, info);
-      }
+      modeNorm1L<UBop>(c, info);
       return;
     }
 
@@ -1739,7 +1748,7 @@ private:
   //===--------------------------------------------------------------------===//
 
   template <typename UBop>
-  void modeSmall(const TileOpContext &c, const TileShapeInfo &info) {
+  void modeSmall(const TileOpContext &c, const TileShapeInfo &info) const {
     int64_t rs = info.cols / static_cast<int64_t>(info.blockSizeElem);
 
     if (info.vRows > 1) {
@@ -1772,7 +1781,8 @@ private:
   //===--------------------------------------------------------------------===//
 
   template <typename UBop>
-  void modeColVLAlign(const TileOpContext &c, const TileShapeInfo &info) {
+  void modeColVLAlign(const TileOpContext &c,
+                      const TileShapeInfo &info) const {
     int64_t epr = info.elementsPerRepeat;
     int64_t headRepeats = info.vCols / epr;
     int64_t rowStride = info.cols;
@@ -1800,7 +1810,7 @@ private:
   //===--------------------------------------------------------------------===//
 
   template <typename UBop>
-  void modeCount2L(const TileOpContext &c, const TileShapeInfo &info) {
+  void modeCount2L(const TileOpContext &c, const TileShapeInfo &info) const {
     int64_t rowStride = info.cols;
 
     auto forOp = c.b.create<scf::ForOp>(c.loc, idxc0(c.loc, c.b),
@@ -1825,7 +1835,7 @@ private:
   //===--------------------------------------------------------------------===//
 
   template <typename UBop>
-  void modeRowRpt(const TileOpContext &c, const TileShapeInfo &info) {
+  void modeRowRpt(const TileOpContext &c, const TileShapeInfo &info) const {
     int64_t be = info.blockSizeElem;
     int64_t rowStride = info.cols;
     int64_t rs = rowStride / be;
@@ -1840,7 +1850,7 @@ private:
 
   template <typename UBop>
   void rowRptFast(const TileOpContext &c, const TileShapeInfo &info,
-                  int64_t rs) {
+                  int64_t rs) const {
     int64_t epr = info.elementsPerRepeat;
     int64_t numLoop = info.vCols / epr;
     int64_t tailElements = info.vCols % epr;
@@ -1865,7 +1875,7 @@ private:
 
   template <typename UBop>
   void rowRptChunked(const TileOpContext &c, const TileShapeInfo &info,
-                     int64_t rowStride, int64_t rs) {
+                     int64_t rowStride, int64_t rs) const {
     int64_t epr = info.elementsPerRepeat;
     int64_t rptPerLine = info.vCols / epr;
     int64_t remainElem = info.vCols % epr;
@@ -1903,7 +1913,7 @@ private:
 
   template <typename UBop>
   void headRows(const TileOpContext &c, const TileShapeInfo &info,
-                int64_t rowStride, int64_t rptPerLine) {
+                int64_t rowStride, int64_t rptPerLine) const {
     int64_t epr = info.elementsPerRepeat;
     int64_t numLoop = rptPerLine / kRepeatMax;
     int64_t remain = rptPerLine % kRepeatMax;
@@ -1947,7 +1957,7 @@ private:
 
   template <typename UBop>
   void tailRows(const TileOpContext &c, const TileShapeInfo &info,
-                int64_t rowStride, int64_t rs, unsigned remainPerLine) {
+                int64_t rowStride, int64_t rs, unsigned remainPerLine) const {
     bool strideOver =
         (rowStride / info.blockSizeElem > kRepeatStrideMax);
     setMask(c.loc, c.b, remainPerLine);
@@ -1983,7 +1993,7 @@ private:
 
   template <typename UBop>
   void tailStrideOverChunk(const TileOpContext &c, Value iv,
-                           int64_t rowStride) {
+                           int64_t rowStride) const {
     auto forOp = c.b.create<scf::ForOp>(c.loc, idxc0(c.loc, c.b),
                                       idxc(kRepeatMax, c.loc, c.b), idxc1(c.loc, c.b));
     c.b.setInsertionPointToStart(forOp.getBody());
@@ -2001,7 +2011,7 @@ private:
 
   template <typename UBop>
   void tailStrideOkChunk(const TileOpContext &c, Value iv,
-                         int64_t rowStride, int64_t rs) {
+                         int64_t rowStride, int64_t rs) const {
     Value off = c.b.create<arith::MulIOp>(
         c.loc, iv, idxc(kRepeatMax * rowStride, c.loc, c.b)).getResult();
     emitUBBinOp<UBop>(c.loc, c.b, addPtr(c.loc, c.b, c.dst, c.ptrTy, off),
@@ -2011,7 +2021,7 @@ private:
 
   template <typename UBop>
   void tailStrideOverRemain(const TileOpContext &c, int64_t rowStride,
-                            int64_t numLoop, int64_t remain) {
+                            int64_t numLoop, int64_t remain) const {
     auto forOp = c.b.create<scf::ForOp>(c.loc, idxc0(c.loc, c.b), idxc(remain, c.loc, c.b),
                                       idxc1(c.loc, c.b));
     c.b.setInsertionPointToStart(forOp.getBody());
@@ -2028,7 +2038,7 @@ private:
 
   template <typename UBop>
   void tailStrideOkRemain(const TileOpContext &c, int64_t rowStride,
-                          int64_t rs, int64_t numLoop, int64_t remain) {
+                          int64_t rs, int64_t numLoop, int64_t remain) const {
     Value off = idxc(numLoop * kRepeatMax * rowStride, c.loc, c.b);
     emitUBBinOp<UBop>(c.loc, c.b, addPtr(c.loc, c.b, c.dst, c.ptrTy, off),
          addPtr(c.loc, c.b, c.s0, c.ptrTy, off), addPtr(c.loc, c.b, c.s1, c.ptrTy, off),

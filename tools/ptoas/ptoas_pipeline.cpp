@@ -685,8 +685,17 @@ getEffectiveVPTOSchedulerMode(llvm::StringRef arch) {
   return vptoSchedulerMode;
 }
 
+static bool getEffectiveVPTOSchedulerRematerialization(
+    llvm::StringRef arch, VPTOSchedulerCLIMode schedulerMode) {
+  if (vptoSchedulerRemat.getNumOccurrences() == 0) {
+    return arch == "a5" && schedulerMode == VPTOSchedulerCLIMode::On;
+  }
+  return vptoSchedulerRemat;
+}
+
 static void prepareVPTOForEmission(PassManager &pm,
-                                   VPTOSchedulerCLIMode schedulerMode) {
+                                   VPTOSchedulerCLIMode schedulerMode,
+                                   bool rematerialize) {
   auto &kernelModulePM = pm.nest<ModuleOp>();
   // VPTO LLVM emission lowers pto.barrier to the backend barrier intrinsic.
   // A5 does not support a standalone PIPE_V barrier; vector barriers are either
@@ -747,6 +756,7 @@ static void prepareVPTOForEmission(PassManager &pm,
     schedulerOptions.mode =
         schedulerMode == VPTOSchedulerCLIMode::Analyze ? "analyze" : "on";
     schedulerOptions.trace = vptoSchedulerTrace;
+    schedulerOptions.rematerialize = rematerialize;
     kernelModulePM.addPass(pto::createVPTOSchedulerPass(schedulerOptions));
   }
   kernelModulePM.addPass(pto::createPTOValidateVPTOEmissionIRPass());
@@ -900,9 +910,11 @@ static LogicalResult runVPTOBackendPipeline(OwningOpRef<ModuleOp> &module,
   kernelModulePM.addPass(std::make_unique<ApplySIMTEntryNoInlinePass>());
   kernelModulePM.addPass(createInlinerPass());
   appendVMISemanticPipeline(kernelModulePM);
-  VPTOSchedulerCLIMode schedulerMode = getEffectiveVPTOSchedulerMode(
-      resolveEffectiveTargetArch(*module, ptoTargetArch));
-  prepareVPTOForEmission(pm, schedulerMode);
+  std::string arch = resolveEffectiveTargetArch(*module, ptoTargetArch);
+  VPTOSchedulerCLIMode schedulerMode = getEffectiveVPTOSchedulerMode(arch);
+  bool rematerialize =
+      getEffectiveVPTOSchedulerRematerialization(arch, schedulerMode);
+  prepareVPTOForEmission(pm, schedulerMode, rematerialize);
   if (failed(applyConfiguredPassManagerCLOptions(
           pm, "VPTO unified emission pipeline")))
     return failure();
@@ -983,7 +995,7 @@ static LogicalResult validateCompileBackendFlags(PTOBackend backend,
   VPTOSchedulerCLIMode schedulerMode = getEffectiveVPTOSchedulerMode(arch);
   if (backend != PTOBackend::VPTO &&
       (emitVPTO || emitVPTOLLVMDialect || ptoPrintSeamIR ||
-       !ptoSeamIRFile.empty())) {
+       !ptoSeamIRFile.empty() || vptoSchedulerRemat)) {
     llvm::errs() << "Error: VPTO-specific flags require "
                     "--pto-backend=vpto or pto.backend = \"vpto\".\n";
     return failure();
@@ -998,6 +1010,11 @@ static LogicalResult validateCompileBackendFlags(PTOBackend backend,
   }
   if (vptoSchedulerTrace && schedulerMode != VPTOSchedulerCLIMode::On) {
     llvm::errs() << "Error: --vpto-scheduler-trace requires "
+                    "--vpto-scheduler=on.\n";
+    return failure();
+  }
+  if (vptoSchedulerRemat && schedulerMode != VPTOSchedulerCLIMode::On) {
+    llvm::errs() << "Error: --vpto-scheduler-remat requires "
                     "--vpto-scheduler=on.\n";
     return failure();
   }

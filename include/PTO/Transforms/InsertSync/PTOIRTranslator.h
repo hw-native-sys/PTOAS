@@ -108,16 +108,16 @@ private:
   // --- 辅助函数 ---
 
   // 获取 PTO Op 对应的硬件流水线类型
-  PipelineType getOpPipeline(Operation *op);
- 
+  PipelineType getOpPipeline(Operation *op) const;
+
   // 根据 Values 填充 Def/Use 列表
   void UpdateDefUseVec(ValueRange values, SmallVector<const BaseMemInfo *> &vec);
- 
+
   // 调试辅助
-  std::string getPipelineName(PipelineType pipe);
-  void printMemInfoList(llvm::raw_ostream &os, 
-                        const SmallVector<const BaseMemInfo *> &list, 
-                        AsmState &state);
+  std::string getPipelineName(PipelineType pipe) const;
+  void printMemInfoList(llvm::raw_ostream &os,
+                        const SmallVector<const BaseMemInfo *> &list,
+                        AsmState &state) const;
 };
  
 } // namespace pto

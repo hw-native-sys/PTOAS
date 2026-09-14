@@ -26,7 +26,7 @@ endif()
 # marked HEADER_FILE_ONLY so they are not compiled as separate translation
 # units (VMIToVPTO.cpp includes them inside its own anonymous namespace).
 set(_ptoas_vmi_split_units
-  VMIToVPTOConversionInternals.cpp
+  VMIToVPTO/VMIToVPTOConversionInternals.cpp
   VMIToVPTO/VMIToVPTOMemoryInternals.cpp
   VMIToVPTO/VMIToVPTOMaskInternals.cpp
   VMIToVPTO/VMIToVPTODataLayoutInternals.cpp
@@ -92,6 +92,10 @@ add_mlir_dialect_library(PTOTransforms
   VPTOScheduler/VPTOSchedResourceTracker.cpp
   VPTOScheduler/VPTOSchedStrategy.cpp
   VPTOScheduler/VPTOScheduler.cpp
+  VPTOScheduler/VPTOSchedulerRematCandidates.cpp
+  VPTOScheduler/VPTOSchedulerRematPlanner.cpp
+  VPTOScheduler/VPTOSchedulerRematPressure.cpp
+  VPTOScheduler/VPTOSchedulerRematerialization.cpp
   VPTOScheduler/VPTOSchedulerPass.cpp
   PTOVPTOPtrBoundary.cpp
   VPTO/VPTOBufferMaterialization.cpp
@@ -101,7 +105,7 @@ add_mlir_dialect_library(PTOTransforms
   Passes/PTOPromotePersistentFragmentLoopsPass.cpp
   Passes/PTOUnrollLoopsPass.cpp
   PTOValidateVMIIR.cpp
-  VMIPreAssignmentCombine.cpp
+  VMI/VMIPreAssignmentCombine.cpp
   VMI/VMIControlFlowSupport.cpp
   VMI/VMILegalizeArithSelect.cpp
   VMI/VMIMaskGranularityAssignment.cpp
@@ -131,7 +135,7 @@ add_mlir_dialect_library(PTOTransforms
   Lowering/PTORematerializeFixpipeVectorQuant.cpp
   Passes/PTOValidateIntToPtrUses.cpp
   TileOp/TileLibService.cpp
-  SoftLibService.cpp
+  Support/SoftLibService.cpp
   InsertTemplateAttributes.cpp
   ExpandTileOp.cpp
   TileOp/FoldTileBufIntrinsics.cpp
@@ -139,17 +143,92 @@ add_mlir_dialect_library(PTOTransforms
   TileOp/PTOLowerToOpLibCalls.cpp
   TileOp/PTOInstantiateAndInlineOpLib.cpp
   PTOToEmitC/PTOToEmitCCommon.cpp
-  PTOToEmitC/PTOToEmitCArith.cpp
-  PTOToEmitC/PTOToEmitCMemref.cpp
-  PTOToEmitC/PTOToEmitCLoadStore.cpp
-  PTOToEmitC/PTOToEmitCSyncComm.cpp
-  PTOToEmitC/PTOToEmitCScalarMisc.cpp
-  PTOToEmitC/PTOToEmitCTile.cpp
-  PTOToEmitC/PTOToEmitCTensor.cpp
-  PTOToEmitC/PTOToEmitCTensorReduce.cpp
+  PTOToEmitC/PTOToEmitCTypeConverter.cpp
   PTOToEmitC/PTOToEmitCPass.cpp
+  PTOToEmitC/Arith/ArithBinary.cpp
+  PTOToEmitC/Arith/ArithCast.cpp
+  PTOToEmitC/Arith/ArithCmp.cpp
+  PTOToEmitC/Arith/ArithFloatMinMax.cpp
+  PTOToEmitC/Arith/ArithIntBinary.cpp
+  PTOToEmitC/Arith/ArithIntDiv.cpp
+  PTOToEmitC/Arith/ArithIntMinMax.cpp
+  PTOToEmitC/Arith/ArithMisc.cpp
+  PTOToEmitC/Arith/ArithShift.cpp
+  PTOToEmitC/Arith/ArithSupport.cpp
+  PTOToEmitC/Arith/ArithPatterns.cpp
+  PTOToEmitC/Tensor/TActivation.cpp
+  PTOToEmitC/Tensor/TAdd.cpp
+  PTOToEmitC/Tensor/TAnd.cpp
+  PTOToEmitC/Tensor/TCI.cpp
+  PTOToEmitC/Tensor/TCmp.cpp
+  PTOToEmitC/Tensor/TColExpand.cpp
+  PTOToEmitC/Tensor/TColReduce.cpp
+  PTOToEmitC/Tensor/TConcat.cpp
+  PTOToEmitC/Tensor/TCvt.cpp
+  PTOToEmitC/Tensor/TDiv.cpp
+  PTOToEmitC/Tensor/TElemwise.cpp
+  PTOToEmitC/Tensor/TExp.cpp
+  PTOToEmitC/Tensor/TExtractInsert.cpp
+  PTOToEmitC/Tensor/TFillPad.cpp
+  PTOToEmitC/Tensor/TGather.cpp
+  PTOToEmitC/Tensor/TMinMax.cpp
+  PTOToEmitC/Tensor/TMov.cpp
+  PTOToEmitC/Tensor/TMul.cpp
+  PTOToEmitC/Tensor/TQuant.cpp
+  PTOToEmitC/Tensor/TRandom.cpp
+  PTOToEmitC/Tensor/TSort.cpp
+  PTOToEmitC/Tensor/TSub.cpp
+  PTOToEmitC/Tensor/TTrans.cpp
+  PTOToEmitC/Tensor/TTri.cpp
+  PTOToEmitC/Tensor/TensorSupport.cpp
+  PTOToEmitC/Tensor/TensorPatterns.cpp
+  PTOToEmitC/Reduce/ArithCmpI.cpp
+  PTOToEmitC/Reduce/ReduceMisc.cpp
+  PTOToEmitC/Reduce/TInterleave.cpp
+  PTOToEmitC/Reduce/TMath.cpp
+  PTOToEmitC/Reduce/TPart.cpp
+  PTOToEmitC/Reduce/TPrintTrap.cpp
+  PTOToEmitC/Reduce/TRowExpand.cpp
+  PTOToEmitC/Reduce/TRowReduce.cpp
+  PTOToEmitC/Reduce/TScatter.cpp
+  PTOToEmitC/Reduce/TSel.cpp
+  PTOToEmitC/Reduce/TShiftScalar.cpp
+  PTOToEmitC/Reduce/ReduceSupport.cpp
+  PTOToEmitC/Reduce/ReducePatterns.cpp
+  PTOToEmitC/ScalarMisc/AsyncSession.cpp
+  PTOToEmitC/ScalarMisc/Comm.cpp
+  PTOToEmitC/ScalarMisc/GlobalEventArray.cpp
+  PTOToEmitC/ScalarMisc/LocalArray.cpp
+  PTOToEmitC/ScalarMisc/ScalarMiscMisc.cpp
+  PTOToEmitC/ScalarMisc/ScalarMiscOps.cpp
+  PTOToEmitC/ScalarMisc/ScalarPtr.cpp
+  PTOToEmitC/ScalarMisc/Struct.cpp
+  PTOToEmitC/ScalarMisc/ScalarMiscSupport.cpp
+  PTOToEmitC/ScalarMisc/ScalarMiscPatterns.cpp
+  PTOToEmitC/Tile/PartitionView.cpp
+  PTOToEmitC/Tile/Section.cpp
+  PTOToEmitC/Tile/TensorView.cpp
+  PTOToEmitC/Tile/TileAlloc.cpp
+  PTOToEmitC/Tile/TileMisc.cpp
+  PTOToEmitC/Tile/TileSupport.cpp
+  PTOToEmitC/Tile/TilePatterns.cpp
+  PTOToEmitC/SyncComm/BlockIdx.cpp
+  PTOToEmitC/SyncComm/BufPool.cpp
+  PTOToEmitC/SyncComm/FuncCall.cpp
+  PTOToEmitC/SyncComm/Sync.cpp
+  PTOToEmitC/SyncComm/SyncCommSupport.cpp
+  PTOToEmitC/SyncComm/SyncCommPatterns.cpp
+  PTOToEmitC/LoadStore/TLoad.cpp
+  PTOToEmitC/LoadStore/TMatmul.cpp
+  PTOToEmitC/LoadStore/TStore.cpp
+  PTOToEmitC/LoadStore/LoadStoreSupport.cpp
+  PTOToEmitC/LoadStore/LoadStorePatterns.cpp
+  PTOToEmitC/Memref/ReinterpretCast.cpp
+  PTOToEmitC/Memref/Subview.cpp
+  PTOToEmitC/Memref/MemrefSupport.cpp
+  PTOToEmitC/Memref/MemrefPatterns.cpp
   Lowering/CppPostprocess.cpp
-  Utils.cpp
+  Support/Utils.cpp
   Passes/OptMemPlanForPipeline.cpp
   InferPTOMemScope.cpp
   PTOPlanMemoryModern.cpp
@@ -247,8 +326,10 @@ target_include_directories(PTOTransforms INTERFACE
 # this directory by bare name (e.g. "Utils.h"), so keep it on the private
 # include path.
 target_include_directories(PTOTransforms PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(PTOTransforms PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Support)
 if(TARGET obj.PTOTransforms)
   target_include_directories(obj.PTOTransforms PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  target_include_directories(obj.PTOTransforms PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Support)
 endif()
 
 # MLIR conversion patterns legitimately hide base-class virtual

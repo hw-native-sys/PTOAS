@@ -95,6 +95,8 @@ from ._ops_common import (
     _normalize_vcvt_round_mode,
     _normalize_vdup_position_mode,
     _pointer_element_type,
+    _require_b32_mask,
+    _require_integer32_vreg_operands,
     _reject_low_precision_vreg_operands,
 )
 
@@ -500,7 +502,8 @@ def vselr(src0, src1):
 
 def vaddc(lhs, rhs, mask):
     """``pto.vaddc`` – vector add with carry-out predicate."""
-    _reject_low_precision_vreg_operands(lhs, rhs, context="pto.vaddc(...)")
+    _require_integer32_vreg_operands(lhs, rhs, context="pto.vaddc(...)")
+    _require_b32_mask(mask, context="pto.vaddc(...)")
     carry_type = unwrap_surface_value(mask).type
     result, carry = _pto.VaddcOp(
         unwrap_surface_value(lhs).type,
@@ -512,11 +515,53 @@ def vaddc(lhs, rhs, mask):
     return wrap_surface_value(result), wrap_surface_value(carry)
 
 
+def vsubc(lhs, rhs, mask):
+    """``pto.vsubc`` – subtract with a per-lane not-borrow predicate.
+
+    A carry value of 1 means the lane completed without borrow; 0 means that
+    the lane borrowed.
+    """
+    _require_integer32_vreg_operands(lhs, rhs, context="pto.vsubc(...)")
+    _require_b32_mask(mask, context="pto.vsubc(...)")
+    carry_type = unwrap_surface_value(mask).type
+    result, carry = _pto.VsubcOp(
+        unwrap_surface_value(lhs).type,
+        carry_type,
+        unwrap_surface_value(lhs),
+        unwrap_surface_value(rhs),
+        unwrap_surface_value(mask),
+    ).results
+    return wrap_surface_value(result), wrap_surface_value(carry)
+
+
 def vaddcs(lhs, rhs, carry_in, mask):
     """``pto.vaddcs`` – vector add with carry-in and carry-out."""
-    _reject_low_precision_vreg_operands(lhs, rhs, context="pto.vaddcs(...)")
+    _require_integer32_vreg_operands(lhs, rhs, context="pto.vaddcs(...)")
+    _require_b32_mask(carry_in, context="pto.vaddcs(...)")
+    _require_b32_mask(mask, context="pto.vaddcs(...)")
     carry_type = unwrap_surface_value(carry_in).type
     result, carry = _pto.VaddcsOp(
+        unwrap_surface_value(lhs).type,
+        carry_type,
+        unwrap_surface_value(lhs),
+        unwrap_surface_value(rhs),
+        unwrap_surface_value(carry_in),
+        unwrap_surface_value(mask),
+    ).results
+    return wrap_surface_value(result), wrap_surface_value(carry)
+
+
+def vsubcs(lhs, rhs, carry_in, mask):
+    """``pto.vsubcs`` – subtract with not-borrow carry chaining.
+
+    Each lane computes ``lhs - rhs - (1 - carry_in)``. A carry-in or carry-out
+    value of 1 means no borrow; 0 means borrow.
+    """
+    _require_integer32_vreg_operands(lhs, rhs, context="pto.vsubcs(...)")
+    _require_b32_mask(carry_in, context="pto.vsubcs(...)")
+    _require_b32_mask(mask, context="pto.vsubcs(...)")
+    carry_type = unwrap_surface_value(carry_in).type
+    result, carry = _pto.VsubcsOp(
         unwrap_surface_value(lhs).type,
         carry_type,
         unwrap_surface_value(lhs),

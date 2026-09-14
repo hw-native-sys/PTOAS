@@ -21,7 +21,7 @@ public:
   OptMemPlanForDma(){};
 
   /// Main interface for OptMemPlanForDma.
-  void build(func::FuncOp func);
+  void build(func::FuncOp func) const;
 
   /// Check if buf1 and buf2 is dma and scalar pipe conflict.
   bool BufferPipeConflict(const Value buf1, const Value buf2) const;
@@ -35,7 +35,7 @@ private:
   /// Update the buffers for MTE2 and MTE3.
   void UpdateDmaBuffers(SmallVector<Value> dpsOperand);
 
-  void UpdateScalarBuffersForLowerToLoops(Operation *operands);
+  void UpdateScalarBuffersForLowerToLoops(Operation *op);
 
   /// Buffer in MTE2 and MTE3.
   DenseSet<Value> DmaBuffers;

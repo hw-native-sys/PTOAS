@@ -72,6 +72,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/IR/PTO.h"
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/LoopUnrollUtils.h"
 #include "PTO/Transforms/Passes.h"
 
@@ -126,7 +127,7 @@ static bool indexDependsOnLoopVar(Value index, Value loopVar) {
     return true;
   }
   DenseSet<Value> visited;
-  SmallVector<Value, 8> worklist{index};
+  SmallVector<Value, mlir::pto::kValue8> worklist{index};
   while (!worklist.empty()) {
     Value value = worklist.pop_back_val();
     if (!visited.insert(value).second) {
@@ -157,7 +158,7 @@ static bool indexDependsOnLoopVar(Value index, Value loopVar) {
 /// materialization, so the loop must be promoted even though unrolling it
 /// clones the section it wraps.
 static bool persistentGepDependsOnLoop(
-    scf::ForOp forOp, const llvm::SmallSetVector<Operation *, 32> &relatedOps) {
+    scf::ForOp forOp, const llvm::SmallSetVector<Operation *, mlir::pto::kValue32> &relatedOps) {
   Value iv = forOp.getInductionVar();
   for (Operation *op : relatedOps) {
     auto gep = dyn_cast<LLVM::GEPOp>(op);
@@ -194,8 +195,8 @@ static bool persistentGepDependsOnLoop(
 ///
 /// Returns false when the function has no persistent alloca at all.
 static bool collectPersistentRelatedOps(
-    func::FuncOp func, llvm::SmallSetVector<Operation *, 32> &relatedOps,
-    SmallVector<LLVM::AllocaOp, 4> &persistentAllocas) {
+    func::FuncOp func, llvm::SmallSetVector<Operation *, mlir::pto::kValue32> &relatedOps,
+    SmallVector<LLVM::AllocaOp, mlir::pto::kValue4> &persistentAllocas) {
   bool foundPersistent = false;
   func.walk([&](LLVM::AllocaOp allocaOp) {
     if (!allocaOp->hasAttr(pto::kPersistentAttrName)) {
@@ -204,7 +205,7 @@ static bool collectPersistentRelatedOps(
     foundPersistent = true;
     persistentAllocas.push_back(allocaOp);
     relatedOps.insert(allocaOp.getOperation());
-    SmallVector<Operation *, 8> worklist{allocaOp.getOperation()};
+    SmallVector<Operation *, mlir::pto::kValue8> worklist{allocaOp.getOperation()};
     while (!worklist.empty()) {
       Operation *cur = worklist.pop_back_val();
       for (Operation *user : cur->getUsers()) {
@@ -238,7 +239,7 @@ static bool collectPersistentRelatedOps(
 ///    promoted; the dep shape is verified to materialize correctly (each
 ///    clone reads its own resident slot).
 static bool sectionLoopSkipsPromotion(
-    Operation *loopOp, const llvm::SmallSetVector<Operation *, 32> &relatedOps) {
+    Operation *loopOp, const llvm::SmallSetVector<Operation *, mlir::pto::kValue32> &relatedOps) {
   bool wrapsSection =
       loopOp->walk([](pto::SectionSimtOp) { return WalkResult::interrupt(); })
           .wasInterrupted();
@@ -262,11 +263,11 @@ static bool sectionLoopSkipsPromotion(
 ///
 /// Returns true when a fail-fast diagnostic was emitted.
 static bool collectLoopsToPromote(
-    const llvm::SmallSetVector<Operation *, 32> &relatedOps,
-    SmallVector<Operation *, 8> &loopOps) {
+    const llvm::SmallSetVector<Operation *, mlir::pto::kValue32> &relatedOps,
+    SmallVector<Operation *, mlir::pto::kValue8> &loopOps) {
   bool hadError = false;
-  llvm::SmallPtrSet<Operation *, 4> seenWhileOps;
-  llvm::SmallPtrSet<Operation *, 8> seenLoopOps;
+  llvm::SmallPtrSet<Operation *, mlir::pto::kValue4> seenWhileOps;
+  llvm::SmallPtrSet<Operation *, mlir::pto::kValue8> seenLoopOps;
   for (Operation *op : relatedOps) {
     if (auto whileOp = op->getParentOfType<scf::WhileOp>()) {
       if (seenWhileOps.insert(whileOp.getOperation()).second) {
@@ -283,7 +284,7 @@ static bool collectLoopsToPromote(
     // would only produce a spurious "no constant trip count" hard error
     // downstream).
     Operation *cur = op;
-    SmallVector<Operation *, 4> chain;
+    SmallVector<Operation *, mlir::pto::kValue4> chain;
     bool chainIsDead = false;
     while (auto forOp = cur->getParentOfType<scf::ForOp>()) {
       chain.push_back(forOp.getOperation());
@@ -313,12 +314,12 @@ struct PTOPromotePersistentFragmentLoops
 
   void runOnOperation() override {
     func::FuncOp func = getOperation();
-    llvm::SmallSetVector<Operation *, 32> relatedOps;
-    SmallVector<LLVM::AllocaOp, 4> persistentAllocas;
+    llvm::SmallSetVector<Operation *, mlir::pto::kValue32> relatedOps;
+    SmallVector<LLVM::AllocaOp, mlir::pto::kValue4> persistentAllocas;
     if (!collectPersistentRelatedOps(func, relatedOps, persistentAllocas)) {
       return;
     }
-    SmallVector<Operation *, 8> loopOps;
+    SmallVector<Operation *, mlir::pto::kValue8> loopOps;
     bool hadError = collectLoopsToPromote(relatedOps, loopOps);
     for (Operation *loopOp : loopOps) {
       // No short-circuit: every collected loop must be diagnosed/promoted

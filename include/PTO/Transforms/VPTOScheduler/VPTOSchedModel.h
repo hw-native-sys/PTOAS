@@ -100,6 +100,10 @@ public:
     return {schedClass.microOps, schedClass.writeLatency,
             schedClass.resources, schedClass.readAdvance};
   }
+  /// Return whether the target considers `op` cheap enough to duplicate for
+  /// register-pressure rematerialization. This is intentionally independent
+  /// of general scheduling cost: targets must opt operations into remat.
+  virtual bool isCheapToRematerialize(Operation *op) const { return false; }
   /// Return the direct SSA source whose physical register pressure is shared
   /// by `value`. Trackers may follow this relation across view-like operations
   /// that belong to their scheduling region.
@@ -126,6 +130,7 @@ public:
   }
   const VPTOSchedClass &getSchedClass(Operation *op) const override;
   VPTOSchedParameters getSchedParameters(Operation *op) const override;
+  bool isCheapToRematerialize(Operation *op) const override;
   Value getPressureRepresentative(Value value) const override;
   SmallVector<VPTORegPressureContribution>
   getPressure(Value value) const override;

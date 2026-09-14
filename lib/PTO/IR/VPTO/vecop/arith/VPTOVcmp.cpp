@@ -1,0 +1,31 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+//===- VPTOVcmp.cpp - pto.Vcmp methods ------------------------------------===//
+//===----------------------------------------------------------------------===//
+
+#include "../VPTOVecOpInternal.h"
+
+using namespace mlir;
+using namespace mlir::pto;
+using namespace mlir::pto::vecop_detail;
+
+LogicalResult VcmpOp::verify() {
+  if (failed(verifyVRegTypeLike(*this, getSrc0().getType(), "src0 type")) ||
+      failed(verifyVRegTypeLike(*this, getSrc1().getType(), "src1 type")) ||
+      failed(verifyMaskTypeLike(*this, getMask().getType(), "mask type")) ||
+      failed(verifyMaskTypeLike(*this, getResult().getType(), "result type"))) {
+    return failure();
+  }
+  if (getSrc0().getType() != getSrc1().getType()) {
+    return emitOpError("requires src0 and src1 to have identical vector types");
+  }
+  if (!isSupportedCmpMode(getCmpMode())) {
+    return emitOpError("requires cmp_mode to be one of eq/ne/lt/le/gt/ge");
+  }
+  return success();
+}

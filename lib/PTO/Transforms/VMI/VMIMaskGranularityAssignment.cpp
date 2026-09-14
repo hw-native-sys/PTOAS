@@ -280,17 +280,17 @@ struct MaskGranularitySolver {
           return constraintResult(requestMaskUse(vmull.getMaskMutable(),
                                                  "b32", op));
         })
-        .Case<VMIVaddcOp>([this, op](VMIVaddcOp addc) {
+        .Case<VMIVaddcOp, VMIVsubcOp>([this, op](auto carryOp) {
           bool failedToConstrain =
-              failed(requestMaskUse(addc.getMaskMutable(), "b32", op)) ||
-              failed(requestMask(addc.getCarry(), "b32", op));
+              failed(requestMaskUse(carryOp.getMaskMutable(), "b32", op)) ||
+              failed(requestMask(carryOp.getCarry(), "b32", op));
           return constraintResult(failure(failedToConstrain));
         })
-        .Case<VMIVaddcsOp>([this, op](VMIVaddcsOp addcs) {
+        .Case<VMIVaddcsOp, VMIVsubcsOp>([this, op](auto carryOp) {
           bool failedToConstrain =
-              failed(requestMaskUse(addcs.getCarryInMutable(), "b32", op)) ||
-              failed(requestMaskUse(addcs.getMaskMutable(), "b32", op)) ||
-              failed(requestMask(addcs.getCarry(), "b32", op));
+              failed(requestMaskUse(carryOp.getCarryInMutable(), "b32", op)) ||
+              failed(requestMaskUse(carryOp.getMaskMutable(), "b32", op)) ||
+              failed(requestMask(carryOp.getCarry(), "b32", op));
           return constraintResult(failure(failedToConstrain));
         })
         .Case<VMIVdhistOp, VMIVchistOp>([this, op](auto histogram) {

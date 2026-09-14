@@ -1132,7 +1132,8 @@ static bool isUnifiedLoweringCandidate(Operation *op) {
 
 static bool requiresDirectVMIToVPTOLowering(Operation *op) {
   return isa<VMIAddSOp, VMIMulSOp, VMIMaxSOp, VMIMinSOp, VMIShlSOp,
-             VMIShrSOp, VMIVaddcOp, VMIVaddcsOp, VMIVintlvOp, VMIVdintlvOp,
+             VMIShrSOp, VMIVaddcOp, VMIVsubcOp, VMIVaddcsOp, VMIVsubcsOp,
+             VMIVintlvOp, VMIVdintlvOp,
              VMIVselrOp, VMIVgatherbOp, VMIVmullOp>(op);
 }
 

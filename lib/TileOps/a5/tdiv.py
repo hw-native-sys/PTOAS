@@ -13,7 +13,7 @@ from ptodsl import pto
 import ptodsl.tilelib as tilelib
 
 from ._elementwise import emit_binary_1d, emit_binary_2d, traversal_metadata
-from .div_hp import _div_ieee754_f32_impl, _div_ieee754_f16_impl
+from .elementwise.div_hp import _div_ieee754_f32_impl, _div_ieee754_f16_impl
 from SoftOps import div_i32_soft
 
 

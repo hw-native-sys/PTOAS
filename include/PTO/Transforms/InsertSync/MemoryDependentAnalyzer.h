@@ -37,8 +37,8 @@ private:
   
   bool isBufferAddressRangeOverlap(const BaseMemInfo *a, const BaseMemInfo *b);
   
-  bool isBufferOverlap(const BaseMemInfo *a, const BaseMemInfo *b, 
-                       int aIndex, int bIndex);
+  bool isBufferOverlap(const BaseMemInfo *a, const BaseMemInfo *b,
+                       int aIndex, int bIndex) const;
 };
  
 } // namespace pto

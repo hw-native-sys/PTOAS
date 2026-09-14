@@ -1800,6 +1800,48 @@ exp_vec = pto.vexp(s_row, col_mask)
 |--------------|------|-------------|
 | `result` | `VRegType` | Result vector |
 
+
+---
+
+### 8.2.3 Carry vector ops
+
+#### `pto.vaddc(v0: VRegType, v1: VRegType, mask: MaskType) -> (VRegType, MaskType)`
+#### `pto.vsubc(v0: VRegType, v1: VRegType, mask: MaskType) -> (VRegType, MaskType)`
+#### `pto.vaddcs(v0: VRegType, v1: VRegType, carry_in: MaskType, mask: MaskType) -> (VRegType, MaskType)`
+#### `pto.vsubcs(v0: VRegType, v1: VRegType, carry_in: MaskType, mask: MaskType) -> (VRegType, MaskType)`
+
+**Description**: Carry-family operations compute lane-wise integer arithmetic and return both the arithmetic result and a per-lane carry predicate. `vsubc` and `vsubcs` use the carry predicate as **not-borrow**: `carry[i] = 1` means the subtraction completed without borrow, and `carry[i] = 0` means a borrow occurred. The comparison in this definition is unsigned, even for `si32` vectors.
+
+For `pto.vsubc`, each active lane `i` obeys:
+
+```text
+difference[i] = (v0[i] - v1[i]) modulo 2^32
+carry[i] = (uint32(v0[i]) >= uint32(v1[i]))
+```
+
+The subtraction result is reduced modulo `2^32`. Carry-family operations
+support only `i32`, `si32`, and `ui32` vector elements. The two input vectors
+must have the same type. Both `mask` and the returned `carry` must use `b32`
+granularity, for example `pto.pset_b32(...)`. Inactive lanes have unspecified
+result values.
+
+```python
+mask32 = pto.make_mask(pto.ui32, pto.MaskPattern.ALL)
+difference, carry = pto.vsubc(lhs_u32, rhs_u32, mask32)
+```
+
+For `pto.vsubcs`, each active lane `i` obeys:
+
+```text
+difference[i] = (v0[i] - v1[i] - (1 - carry_in[i])) modulo 2^32
+carry_out[i] = (uint32(v0[i]) >= uint32(v1[i]) + (1 - carry_in[i]))
+```
+
+Here `carry_in[i] = 1` means no incoming borrow and `carry_in[i] = 0` means
+an incoming borrow. The returned `carry_out[i]` uses the same not-borrow
+polarity: `1` means no borrow and `0` means borrow. The comparison is unsigned,
+even for `si32` vectors.
+
 ---
 
 **Bitwise binary ops** (integer types only):
@@ -1820,7 +1862,7 @@ not defined by the current contract.
 
 ---
 
-### 8.2.3 Vector-scalar ops
+### 8.2.4 Vector-scalar ops
 
 #### `pto.vadds(vec: VRegType, scalar: ScalarType, mask: MaskType) -> VRegType`
 #### `pto.vsubs(vec: VRegType, scalar: ScalarType, mask: MaskType) -> VRegType`
@@ -1872,7 +1914,7 @@ as `vbr(scalar)` followed by `vand(...)`, `vor(...)`, or `vxor(...)`.
 
 ---
 
-### 8.2.3.1 Vector duplication: `pto.vdup`
+### 8.2.4.1 Vector duplication: `pto.vdup`
 
 #### `pto.vdup(input: ScalarType, mask: MaskType) -> VRegType`
 #### `pto.vdup(input: VRegType, mask: MaskType, position: PositionMode = PositionMode.LOWEST) -> VRegType`
@@ -1931,7 +1973,7 @@ dup_highest = pto.vdup(vec, mask32, pto.PositionMode.HIGHEST)
 
 ---
 
-### 8.2.4 Full-vector and group reductions
+### 8.2.5 Full-vector and group reductions
 
 #### Full-vector reductions
 
@@ -1988,7 +2030,7 @@ group_sum = pto.vcgadd(p_row, col_mask)
 
 ---
 
-### 8.2.5 Fused and compound ops
+### 8.2.6 Fused and compound ops
 
 These combine an arithmetic operation with a math function or activation in a single instruction.
 
@@ -2067,7 +2109,7 @@ exp_f16_odd  = pto.vmulscvt(exp_f32_odd, 1.0, mask, rnd=pto.VcvtRoundMode.A, par
 
 ---
 
-### 8.2.6 Comparison and selection
+### 8.2.7 Comparison and selection
 
 #### `pto.vcmp(v0: VRegType, v1: VRegType, seed_mask: MaskType, cmp_mode: CmpMode) -> MaskType`
 
@@ -2116,7 +2158,7 @@ exp_f16_odd  = pto.vmulscvt(exp_f32_odd, 1.0, mask, rnd=pto.VcvtRoundMode.A, par
 
 ---
 
-### 8.2.7 Vector type conversion and packing
+### 8.2.8 Vector type conversion and packing
 
 These ops change the element type or layout of vector registers. They are distinct from the tile-level `tile.cvt` â€” they operate on `VRegType` values inside `@pto.tileop` and are the explicit micro-op counterparts to higher-level conversion helpers.
 
@@ -2216,7 +2258,7 @@ packed_high = pto.vpack(vec_i32, pto.VPackPart.HIGHER)  # upper 64 lanes -> 128Ã
 
 ---
 
-### 8.2.7.1 Index generation
+### 8.2.8.1 Index generation
 
 #### `pto.vci(base: ScalarType | int, order: OrderMode | None = None) -> VRegType`
 
@@ -2234,7 +2276,7 @@ typed_idx = pto.vci(pto.i32(16), order=pto.OrderMode.ASC)
 
 ---
 
-### 8.2.8 Vector rearrangement
+### 8.2.9 Vector rearrangement
 
 These ops rearrange data between vector registers without touching UB memory.
 They are useful for switching between interleaved layouts (`x0, y0, x1, y1,
@@ -2371,12 +2413,13 @@ even_lanes, odd_lanes = pto.vdintlv(packed_low, packed_high)
 
 ---
 
-### 8.2.9 Vector compute quick reference
+### 8.2.10 Vector compute quick reference
 
 | Category | Operations |
 |----------|------------|
 | Unary | `vexp`, `vln`, `vsqrt`, `vabs`, `vneg`, `vrec`, `vrsqrt`, `vrelu`, `vnot` |
 | Binary | `vadd`, `vsub`, `vmul`, `vdiv`, `vmax`, `vmin`, `vand`, `vor`, `vxor`, `vshl`, `vshr` |
+| Carry | `vaddc`, `vsubc`, `vaddcs`, `vsubcs` |
 | Vector-scalar | `vadds`, `vsubs`, `vmuls`, `vmaxs`, `vmins`, `vlrelu`, `vands`, `vors`, `vxors`, `vshls`, `vshrs` |
 | Broadcast | `vbr`, `vdup` |
 | Full reduction | `vcadd`, `vcmax`, `vcmin` |

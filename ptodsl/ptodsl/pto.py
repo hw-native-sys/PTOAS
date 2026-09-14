@@ -116,7 +116,7 @@ from ._ops import (             # noqa: F401
     vcgmax, vcgadd, vcgmin, vcpadd,
     vtrc, vprelu, vintlv, vdintlv, vselr,
     chistv2,
-    vci, vaddc, vaddcs, vmull, vbitsort, vmrgsort4,
+    vci, vaddc, vsubc, vaddcs, vsubcs, vmull, vbitsort, vmrgsort4,
     load_scalar, store_scalar, print,
     vadds, vsubs, vmuls, vmaxs, vmins, vlrelu, vands, vors, vxors,
     vaxpy, vaddrelu, vsubrelu,

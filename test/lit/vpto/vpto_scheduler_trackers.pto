@@ -37,3 +37,4 @@
 // CHECK-NEXT: scheduler over-limit pressure relief: pass
 // CHECK-NEXT: scheduler unbounded-pressure-delta: pass
 // CHECK-NEXT: scheduler random-dag differential: pass seeds=8 dags=8
+// CHECK-NEXT: rematerialization second-schedule failure rollback: pass

@@ -168,6 +168,10 @@ VPTOGenericA5SchedModel::getSchedParameters(Operation *op) const {
   return parameters;
 }
 
+bool VPTOGenericA5SchedModel::isCheapToRematerialize(Operation *op) const {
+  return isa<VbrOp, VdupOp, VciOp, VmulsOp, VaddsOp, VmaxsOp, VminsOp>(op);
+}
+
 Value
 VPTOGenericA5SchedModel::getPressureRepresentative(Value value) const {
   Operation *definingOp = value ? value.getDefiningOp() : nullptr;

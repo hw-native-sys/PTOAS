@@ -92,7 +92,7 @@ static Value maybeUnwrapCastToExpected(Value operand, Type expectedType) {
 static Operation *cloneOpForInlineWithFix(OpBuilder &builder, Operation &op,
                                           IRMapping &mapping) {
   if (auto alloc = dyn_cast<pto::AllocTileOp>(&op)) {
-    auto mapOperand = [&](Value operand, Type expectedType) -> Value {
+    auto mapOperand = [&mapping](Value operand, Type expectedType) -> Value {
       if (!operand) {
         return Value();
       }

@@ -313,8 +313,9 @@ propagateValidShapeRequirements(ModuleOp module,
         if (!tileType || !tileType.hasDynamicValid()) {
           continue;
         }
-        changed |=
-            addValidShapeRequirement(requirements, caller, *callerArgument);
+        if (addValidShapeRequirement(requirements, caller, *callerArgument)) {
+          changed = true;
+        }
       }
     }
   }

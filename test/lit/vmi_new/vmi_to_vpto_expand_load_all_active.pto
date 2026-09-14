@@ -6,7 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: pto-test-opt %s -vmi-to-vpto | FileCheck %s
+// RUN: pto-test-opt %s -vmi-to-vpto | FileCheck %s --check-prefix=POLICY
+// RUN: pto-test-opt %s -vmi-to-vpto=load-safety=error | FileCheck %s
 
 module {
   func.func @vmi_to_vpto_expand_load_all_active(
@@ -38,4 +39,13 @@ module {
 // CHECK: return %[[OUT]]
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
+
+// A statically all-active expand_load loads a dense stream into every logical
+// lane, so it degenerates to one contiguous read and the default load safety
+// policy lowers it to a single aligned vlds (no gather, no passthru select).
+// POLICY-LABEL: func.func @vmi_to_vpto_expand_load_all_active(
+// POLICY: %[[RESULT:.*]] = pto.vlds %arg0[%arg1] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+// POLICY: return %[[RESULT]] : !pto.vreg<64xf32>
+// POLICY-NOT: pto.vmi.
+// POLICY-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast

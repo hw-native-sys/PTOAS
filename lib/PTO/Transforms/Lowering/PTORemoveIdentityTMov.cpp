@@ -123,7 +123,7 @@ static std::optional<int64_t> tryEvalI64Constant(Value value) {
   return apInt->getSExtValue();
 }
 
-static bool hasOnlyCurrentOpUses(Value value, Operation *currentOp) {
+static bool hasOnlyCurrentOpUses(Value value, const Operation *currentOp) {
   return llvm::all_of(value.getUses(), [currentOp](OpOperand &use) {
     return use.getOwner() == currentOp;
   });
@@ -177,7 +177,8 @@ static bool hasDynamicStaticList(ArrayRef<int64_t> values) {
 static bool isStaticallyAddressableValue(Value value) {
   int depth = 0;
   constexpr int kMaxDepth = 32;
-  while (value && depth++ < kMaxDepth) {
+  while (value && depth < kMaxDepth) {
+    ++depth;
     Operation *defOp = value.getDefiningOp();
     if (!defOp) {
       return false;

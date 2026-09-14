@@ -322,7 +322,7 @@ Value castFromPayloadABI(Location loc, Value value, Type semanticType, Type conv
 
 std::string getAtomicElementTypeFragment(Type type, Attribute signednessAttr) {
   if (auto vecType = dyn_cast<VectorType>(type)) {
-    if (vecType.getRank() != 1 || vecType.getDimSize(0) != 2) {
+    if (vecType.getRank() != kAtomicVectorRank || vecType.getDimSize(0) != kAtomicVectorDimSize) {
       return {};
     }
     if (vecType.getElementType().isF16()) {
