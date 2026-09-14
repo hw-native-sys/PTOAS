@@ -166,7 +166,7 @@ static LogicalResult verifyA5MxMatTileOperands(Operation *op, Type lhsTy,
   if (lhsShape.size() == mlir::pto::kValue2 && rhsShape.size() == mlir::pto::kValue2) {
       int64_t lhsK = lhsShape[1];
       int64_t rhsK = rhsShape[0];
-      auto checkPhysicalK = [&](int64_t value, StringRef name) -> LogicalResult {
+      auto checkPhysicalK = [op](int64_t value, StringRef name) -> LogicalResult {
           if (value != ShapedType::kDynamic && (value < 1 || (value % mlir::pto::kValue64) != 0)) {
               return op->emitOpError() << "expects " << name
                                        << " physical K shape to be a positive multiple of 64 on A5";

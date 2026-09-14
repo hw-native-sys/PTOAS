@@ -9,10 +9,10 @@
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
 
 LogicalResult pto::TAxpyOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult {
+  auto verifyA2A3 = [this]() -> LogicalResult {
     return verifyTAxpyArch(*this, /*allowBf16=*/false);
   };
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [this]() -> LogicalResult {
     return verifyTAxpyArch(*this, /*allowBf16=*/true);
   };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
@@ -35,6 +35,8 @@ LogicalResult pto::TAddSCOp::verify() {
   return success();
 }
 
+constexpr unsigned kConcatOperandInlineCapacity = 4;
+
 static LogicalResult verifyIntegerWidths(Operation *op, Type type,
                                          ArrayRef<unsigned> widths,
                                          StringRef diagnostic) {
@@ -47,10 +49,10 @@ static LogicalResult verifyIntegerWidths(Operation *op, Type type,
 static LogicalResult verifyBitwiseBinaryOp(Operation *op, Type src0,
                                            Type src1, Type dst,
                                            StringRef opName) {
-  auto verifyCommon = [&]() {
+  auto verifyCommon = [op, src0, src1, dst]() {
     return verifyMatchingRowMajorBinaryTileOpCommon(op, src0, src1, dst);
   };
-  auto verifyFor = [&](StringRef arch) -> LogicalResult {
+  auto verifyFor = [op, &verifyCommon, opName](StringRef arch) -> LogicalResult {
     auto elem = verifyCommon();
     if (failed(elem))
       return failure();
@@ -60,14 +62,14 @@ static LogicalResult verifyBitwiseBinaryOp(Operation *op, Type src0,
             .str();
     return verifyIntegerWidths(op, *elem, {8, 16, 32}, diagnostic);
   };
-  auto verifyA2A3 = [&]() { return verifyFor("A2/A3"); };
-  auto verifyA5 = [&]() { return verifyFor("A5"); };
+  auto verifyA2A3 = [&verifyFor]() { return verifyFor("A2/A3"); };
+  auto verifyA5 = [&verifyFor]() { return verifyFor("A5"); };
   return dispatchVerifierByArch(op, verifyA2A3, verifyA5);
 }
 
 static LogicalResult verifyBitwiseScalarOp(Operation *op, Value src,
                                            Value dst, StringRef opName) {
-  auto verifyFor = [&](bool isA5) -> LogicalResult {
+  auto verifyFor = [op, src, dst, opName](bool isA5) -> LogicalResult {
     auto elem = verifyDistinctRowMajorUnaryTileOpCommon(op, src, dst, "src",
                                                         "dst");
     if (failed(elem))
@@ -81,8 +83,8 @@ static LogicalResult verifyBitwiseScalarOp(Operation *op, Value src,
                                                : ArrayRef<unsigned>{8, 16},
                                diagnostic);
   };
-  auto verifyA2A3 = [&]() { return verifyFor(false); };
-  auto verifyA5 = [&]() { return verifyFor(true); };
+  auto verifyA2A3 = [&verifyFor]() { return verifyFor(false); };
+  auto verifyA5 = [&verifyFor]() { return verifyFor(true); };
   return dispatchVerifierByArch(op, verifyA2A3, verifyA5);
 }
 
@@ -191,14 +193,14 @@ static LogicalResult verifyTConcatA5(TConcatOp op) {
 }
 
 mlir::LogicalResult mlir::pto::TConcatOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult { return verifyTConcatA2A3(*this); };
-  auto verifyA5 = [&]() -> LogicalResult { return verifyTConcatA5(*this); };
+  auto verifyA2A3 = [this]() -> LogicalResult { return verifyTConcatA2A3(*this); };
+  auto verifyA5 = [this]() -> LogicalResult { return verifyTConcatA5(*this); };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
 static LogicalResult verifyTConcatidxValidRows(
     TConcatidxOp op, ArrayRef<int64_t> dstValid) {
-  SmallVector<Value, 4> values = {op.getSrc0(), op.getSrc1(), op.getSrc0Idx(),
+  SmallVector<Value, kConcatOperandInlineCapacity> values = {op.getSrc0(), op.getSrc1(), op.getSrc0Idx(),
                                   op.getSrc1Idx()};
   SmallVector<StringRef, mlir::pto::kValue4> names = {"src0", "src1", "src0Idx", "src1Idx"};
   for (auto [value, name] : llvm::zip_equal(values, names)) {

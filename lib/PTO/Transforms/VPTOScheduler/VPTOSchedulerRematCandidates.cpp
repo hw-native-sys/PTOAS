@@ -294,7 +294,9 @@ static bool evaluateUseGroups(
             rejection = "unknown-loop-cost";
             return false;
         }
-        hasLoopCarriedGroup |= loopCost->crossedLoop;
+        if (loopCost->crossedLoop) {
+          hasLoopCarriedGroup = true;
+        }
         group.dynamicMultiplier = loopCost->multiplier;
         uint64_t groupCost = 0;
         uint64_t updatedCost = 0;

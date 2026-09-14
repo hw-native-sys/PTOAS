@@ -32,7 +32,8 @@ struct SectionToEmitC : public OpConversionPattern<SectionOpTy> {
   }
 
   LogicalResult
-  matchAndRewrite(SectionOpTy op, typename SectionOpTy::Adaptor adaptor,
+  matchAndRewrite(SectionOpTy op,
+                  typename SectionOpTy::Adaptor /*adaptor*/,
                   ConversionPatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     bool needsNoSplitGuard = needsA5NoSplitVectorGuard(op.getOperation());

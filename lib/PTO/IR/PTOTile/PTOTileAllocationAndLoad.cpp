@@ -12,6 +12,8 @@
 // AllocMultiTileOp / MultiTileGetOp
 //===----------------------------------------------------------------------===//
 
+constexpr unsigned kValidShapeRank = 2;
+
 static LogicalResult verifyMultiTileSlot(AllocMultiTileOp op,
                                          pto::MultiTileBufType mtbTy) {
   TileBufType slotTy = mtbTy.getSlotType();
@@ -38,7 +40,7 @@ static LogicalResult verifyMultiTileSlot(AllocMultiTileOp op,
 static LogicalResult verifyMultiTileValidShape(AllocMultiTileOp op,
                                                TileBufType slotTy) {
   auto vs = slotTy.getValidShape();
-  if (vs.size() != 2)
+  if (vs.size() != kValidShapeRank)
     return op.emitOpError("slot tile_buf must have rank-2 validShape");
   bool needVR = (vs[0] < 0);
   bool needVC = (vs[1] < 0);
@@ -266,8 +268,8 @@ static LogicalResult verifyTLoadA5(TLoadOp op) {
 }
 
 LogicalResult TLoadOp::verify() {
-  auto verifyA2A3 = [&]() { return verifyTLoadA2A3(*this); };
-  auto verifyA5 = [&]() { return verifyTLoadA5(*this); };
+  auto verifyA2A3 = [this]() { return verifyTLoadA2A3(*this); };
+  auto verifyA5 = [this]() { return verifyTLoadA5(*this); };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 

@@ -162,17 +162,14 @@ namespace {
 
 // ---------------------------------------------------------------------------
 // VMI integer element type sign-semantics helper
-//
 // CONVENTION: VMI op verifiers that need "unsigned semantics" or "signed
 // semantics" on an integer element type MUST route the sign check through
 // matchesVMIIntSemantics(...) instead of calling mlir::IntegerType::isUnsigned()
 // / isSigned() directly.
-//
 // Signless integers are treated as equivalent to UNSIGNED only. They are
 // NOT accepted for signed semantics: signed hardware ops require an
 // explicitly signed integer type, to avoid silent sign-extension bugs when
 // a producer happens to emit a signless value.
-//
 // Width / kind / mlir::IntegerType-cast checks stay inline at each callsite;
 // only the sign-semantics decision is centralized here.
 // ---------------------------------------------------------------------------

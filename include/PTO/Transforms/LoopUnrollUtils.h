@@ -29,6 +29,8 @@
 
 namespace mlir {
 namespace pto {
+constexpr unsigned kUnrollFactorAttrBitWidth = 32;
+
 
 /// Compute the constant trip count of *forOp*, or std::nullopt when any of
 /// the bounds/step is not a compile-time constant, the step is not positive,
@@ -101,7 +103,7 @@ inline LogicalResult validateLoopUnrollHint(scf::ForOp forOp) {
   }
 
   if (factorAttr && !pto::isValidUnrollFactorAttr(factorAttr)) {
-    if (!factorAttr.getType().isSignlessInteger(32)) {
+    if (!factorAttr.getType().isSignlessInteger(kUnrollFactorAttrBitWidth)) {
       forOp.emitError() << "'" << pto::kUnrollFactorAttrName
                         << "' must be a signless i32 attribute, got "
                         << factorAttr.getType();

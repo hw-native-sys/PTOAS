@@ -65,4 +65,3 @@ struct VMIToVPTOPass : public mlir::pto::impl::VMIToVPTOBase<VMIToVPTOPass> {
   }
 };
 
-

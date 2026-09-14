@@ -26,10 +26,6 @@ namespace pto {
 //===----------------------------------------------------------------------===//
 
 
-
-
-
-
 //===----------------------------------------------------------------------===//
 // Arith -> EmitC (full dialect coverage for scalar ops)
 //===----------------------------------------------------------------------===//
@@ -249,13 +245,6 @@ Value buildCmpFResult(const ArithCmpFConfig &config,
 //===----------------------------------------------------------------------===//
 
 
-
-
-
-
-
-
-
 // For signless iN integers lowered to signed C++ types, this creates a value
 // representing the same N-bit pattern in an unsigned C++ type of the same
 // width. This avoids incorrect sign-extension when later widening to a larger
@@ -273,6 +262,11 @@ Value buildCmpFResult(const ArithCmpFConfig &config,
 //===----------------------------------------------------------------------===//
 
 enum class KernelKind { VecAdd, Matmul, Unknown };
+
+constexpr unsigned kTilingDimDefault = 32;
+constexpr unsigned kSubViewInlineCapacity = 4;
+constexpr unsigned kMinSubViewCount = 2;
+constexpr unsigned kFftsModeFactor2 = 2;
 
 [[maybe_unused]] static KernelKind inferKernelKind(func::FuncOp f) {
   bool hasAdd = false;
@@ -298,11 +292,11 @@ enum class KernelKind { VecAdd, Matmul, Unknown };
 }
 
 [[maybe_unused]] static void inferTileMNK(func::FuncOp f, int &M, int &N, int &K) {
-  M = 32; N = 32; K = 32;
-  SmallVector<memref::SubViewOp, 4> subs;
+  M = N = K = static_cast<int>(kTilingDimDefault);
+  SmallVector<memref::SubViewOp, kSubViewInlineCapacity> subs;
   f.walk([&](memref::SubViewOp sv) { subs.push_back(sv); });
 
-  auto readShape2D = [&](memref::SubViewOp sv, int &d0, int &d1) {
+  auto readShape2D = [](memref::SubViewOp sv, int &d0, int &d1) {
     auto resTy = mlir::cast<MemRefType>(sv.getResult().getType());
     if (resTy.getRank() == 2 && resTy.hasStaticShape()) {
       d0 = static_cast<int>(resTy.getDimSize(0));
@@ -318,15 +312,14 @@ enum class KernelKind { VecAdd, Matmul, Unknown };
   readShape2D(subs[0], a0, a1);
   M = a0; N = a1;
 
-  if (subs.size() >= 2) {
-    int b0=32, b1=32;
+  if (subs.size() >= kMinSubViewCount) {
+    int b0 = static_cast<int>(kTilingDimDefault);
+    int b1 = static_cast<int>(kTilingDimDefault);
     readShape2D(subs[0], a0, a1);
     readShape2D(subs[1], b0, b1);
     M = a0; K = a1; N = b1;
   }
 }
-
-
 
 
 // Pick the C++ specifiers (extern "C"/static/__global__) for the emitted
@@ -441,8 +434,9 @@ Value createFFTSMsg(ConversionPatternRewriter &rewriter, Location loc,
 Attribute getFFTSModeCodegenArg(ConversionPatternRewriter &rewriter,
                                        int64_t fftsMode) {
   auto *ctx = rewriter.getContext();
-  if (fftsMode == 2)
+  if (fftsMode == kFftsModeFactor2) {
     return emitc::OpaqueAttr::get(ctx, "FFTS_MODE_VAL");
+  }
   return emitc::OpaqueAttr::get(ctx, std::to_string(fftsMode));
 }
 
@@ -488,7 +482,6 @@ std::optional<StringRef> getKernelKindMacro(func::FuncOp funcOp) {
 
   llvm_unreachable("unexpected kernel kind");
 }
-
 
 
 } // namespace pto

@@ -8,6 +8,8 @@
 //===- TRowReduce.cpp - Reduce TRowReduce op lowering --------------------------------===//
 //===----------------------------------------------------------------------===//
 
+constexpr unsigned kRowReduceOperandCount = 3;
+
 #include "../PTOToEmitCEmitters.h"
 #include "ReduceInternal.h"
 
@@ -96,7 +98,7 @@ struct PTORowProdToEmitC : public OpConversionPattern<pto::TRowProdOp> {
     Value tmp = adaptor.getTmp();
     Value dst = adaptor.getDst();
 
-    SmallVector<Value, 3> operands{dst, src, tmp};
+    SmallVector<Value, kRowReduceOperandCount> operands{dst, src, tmp};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TROWPROD",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},

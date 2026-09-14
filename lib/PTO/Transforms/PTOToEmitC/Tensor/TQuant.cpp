@@ -31,7 +31,6 @@ LogicalResult matchAndRewrite(pto::TQuantOp op, OpAdaptor adaptor,
   Value src = adaptor.getSrc();
   Value fp = adaptor.getFp();
 
-
   Value tmp;
   if (op.getTmp())
     tmp = adaptor.getTmp();
@@ -89,7 +88,6 @@ LogicalResult matchAndRewrite(pto::TQuantMxOp op, OpAdaptor adaptor,
   if (expZz && !expZzOT)
     return rewriter.notifyMatchFailure(
         op, "expected exp_zz operand to be emitc::OpaqueType");
-
 
   Value expPtr = addressOfEmitCValue(rewriter, loc, ctx, exp, expOT);
   Value maxPtr = addressOfEmitCValue(rewriter, loc, ctx, max, maxOT);
