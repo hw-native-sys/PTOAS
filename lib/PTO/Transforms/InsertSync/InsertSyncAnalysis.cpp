@@ -477,30 +477,89 @@ void InsertSyncAnalysis::InsertSync(
   MemAnalyze(nowCompound, frontCompound, syncRecordList, forEndIndex);
 }
 
+static std::optional<std::pair<Value, Value>> getDependencySlots(const DepBaseMemInfoPairVec& dependencies)
+{
+    Value producerSlot;
+    Value consumerSlot;
+    for (const auto& pair : dependencies) {
+        if (!pair.first || !pair.second) {
+            return std::nullopt;
+        }
+        Value producer = findMultiTileSlotExpr(pair.second->baseBuffer);
+        Value consumer = findMultiTileSlotExpr(pair.first->baseBuffer);
+        if (!producer || !consumer) {
+            return std::nullopt;
+        }
+        bool mismatchedProducer = producerSlot && producerSlot != producer;
+        bool mismatchedConsumer = consumerSlot && consumerSlot != consumer;
+        if (mismatchedProducer || mismatchedConsumer) {
+            return std::nullopt;
+        }
+        producerSlot = producer;
+        consumerSlot = consumer;
+    }
+    if (!producerSlot || !consumerSlot) {
+        return std::nullopt;
+    }
+    return std::make_pair(producerSlot, consumerSlot);
+}
+
+static std::optional<SlotEventSchedule> getSlotEventSchedule(
+    Value producerSlot, Value consumerSlot, Operation* producer, Operation* consumer, uint32_t count)
+{
+    Block* producerBlock = producer->getBlock();
+    Block* consumerBlock = consumer->getBlock();
+    if (producerBlock != consumerBlock) {
+        return std::nullopt;
+    }
+    auto loop = dyn_cast<scf::ForOp>(producer->getParentOp());
+    if (!loop) {
+        return std::nullopt;
+    }
+    IntegerAttr lowerBound;
+    bool unitStep = matchPattern(loop.getStep(), m_One());
+    bool constantLowerBound = matchPattern(loop.getLowerBound(), m_Constant(&lowerBound));
+    if (!unitStep || !constantLowerBound) {
+        return std::nullopt;
+    }
+    if (lowerBound.getValue().isNegative()) {
+        return std::nullopt;
+    }
+    auto producerOffset = getSlotRotationOffset(producerSlot, loop.getInductionVar(), count);
+    auto consumerOffset = getSlotRotationOffset(consumerSlot, loop.getInductionVar(), count);
+    if (!producerOffset || !consumerOffset) {
+        return std::nullopt;
+    }
+    return SlotEventSchedule{loop, *producerOffset, *consumerOffset, producer->isBeforeInBlock(consumer)};
+}
+
 // Returns true if a *same-iter* multi-buffer dep pair can be dropped
 // because the producer's and consumer's slot SSA expressions are provably
 // disjoint modulo N. Only applied to forward (non-back-edge) deps -- the
 // back-edge path still needs to sync per-slot via dyn event id (the
 // prefetch idiom). When the analysis is inconclusive (kUnknown / kEqual)
 // the dep is kept and the existing conservative path runs.
-static bool isForwardDepDroppableBySlotAffine(const BaseMemInfo *a,
-                                              const BaseMemInfo *b) {
-  if (!a || !b) {
-    return false;
-  }
-  size_t aN = a->baseAddresses.size();
-  size_t bN = b->baseAddresses.size();
-  size_t n = std::max(aN, bN);
-  if (n < kPtoMultiBufferMinNum) {
-    return false;
-  }
-  Value slotA = findMultiTileSlotExpr(a->baseBuffer);
-  Value slotB = findMultiTileSlotExpr(b->baseBuffer);
-  if (!slotA || !slotB) {
-    return false;
-  }
-  return compareSlotSSA(slotA, slotB, static_cast<uint32_t>(n)) ==
-         SlotRelation::kDisjoint;
+static bool isForwardDepDroppableBySlotAffine(
+    const BaseMemInfo* a, const BaseMemInfo* b, Operation* consumer, Operation* producer)
+{
+    if (!a || !b) {
+        return false;
+    }
+    size_t aN = a->baseAddresses.size();
+    size_t bN = b->baseAddresses.size();
+    size_t n = std::max(aN, bN);
+    if (n < kPtoMultiBufferMinNum) {
+        return false;
+    }
+    Value slotA = findMultiTileSlotExpr(a->baseBuffer);
+    Value slotB = findMultiTileSlotExpr(b->baseBuffer);
+    if (!slotA || !slotB) {
+        return false;
+    }
+    // Removing the forward edge requires a balanced slot rotation on the back
+    // edge. Unknown schedules retain static program-order synchronization.
+    return getSlotEventSchedule(slotB, slotA, producer, consumer, static_cast<uint32_t>(n)).has_value() &&
+           compareSlotSSA(slotA, slotB, static_cast<uint32_t>(n)) == SlotRelation::kDisjoint;
 }
 
 void InsertSyncAnalysis::MemAnalyze(
@@ -518,18 +577,31 @@ void InsertSyncAnalysis::MemAnalyze(
 
   // Same-iter (forward) deps: drop pairs that the affine analysis proves
   // touch disjoint slots in every iteration of the multi-buffer loop.
-  // Back-edge deps stay untouched -- they still need per-slot syncing
-  // through the dyn-event-id pipeline.
-  if (!forEndIndex.has_value()) {
-    auto isDroppable = [](const std::pair<const BaseMemInfo *,
-                                          const BaseMemInfo *> &pair) {
-      return isForwardDepDroppableBySlotAffine(pair.first, pair.second);
-    };
-    depVec.erase(std::remove_if(depVec.begin(), depVec.end(), isDroppable),
-                 depVec.end());
-    if (depVec.empty()) {
-      return;
-    }
+  // The owning loop still needs per-slot back-edge synchronization; its
+  // boundaries also close the dependency across enclosing iterations.
+  auto dependencySlots = getDependencySlots(depVec);
+  int slotCount = GetEventIdNum(depVec);
+  bool uniformSlots = slotCount > 1 && dependencySlots.has_value();
+  if (forEndIndex && uniformSlots) {
+      auto schedule = getSlotEventSchedule(
+          dependencySlots->first, dependencySlots->second, frontCompound->elementOp, nowCompound->elementOp, slotCount);
+      Operation* scope = syncIR_[*forEndIndex]->elementOp;
+      if (schedule && scope->isProperAncestor(schedule->loop)) {
+          // The owning loop drains its slot events on every exit. An enclosing
+          // loop must not add another carried token to these same operations.
+          return;
+      }
+  }
+  bool forwardDependency = !forEndIndex.has_value();
+  if (forwardDependency && uniformSlots) {
+      auto isDroppable = [nowCompound, frontCompound](const std::pair<const BaseMemInfo*, const BaseMemInfo*>& pair) {
+          return isForwardDepDroppableBySlotAffine(
+              pair.first, pair.second, nowCompound->elementOp, frontCompound->elementOp);
+      };
+      depVec.erase(std::remove_if(depVec.begin(), depVec.end(), isDroppable), depVec.end());
+      if (depVec.empty()) {
+          return;
+      }
   }
 
   if (CanPrunePipeVBarrier(nowCompound, frontCompound, depVec, forEndIndex)) {
@@ -673,50 +745,36 @@ void InsertSyncAnalysis::InsertPipeBarrierSync(
 
 // Resolve one unambiguous producer/consumer slot SSA pair for the whole
 // dependency group and configure a dynamic set/wait pair with it. Returns the
-// effective event-id count: when the group decomposes into a single slot
-// expression per side, slotSSAExpr/slotCount are filled and `eventIdNum` is
-// kept; otherwise a single static event id is used for the whole group.
+// effective event-id count. Keep per-slot events for a balanced rotation or
+// equal slot expressions; missing, ambiguous, or unproven distinct expressions
+// use one static event for the whole group.
 static int configureDynEventSlots(
-    SyncOperation *setOp, SyncOperation *waitOp,
-    const DepBaseMemInfoPairVec &depBaseMemInfosVec, int eventIdNum) {
-  if (eventIdNum <= 1) {
+    SyncOperation* setOp, SyncOperation* waitOp, const DepBaseMemInfoPairVec& depBaseMemInfosVec, int eventIdNum,
+    Operation* producer, Operation* consumer, Operation* loop)
+{
+    if (eventIdNum <= 1) {
+        return eventIdNum;
+    }
+    auto slots = getDependencySlots(depBaseMemInfosVec);
+    if (!slots) {
+        return 1;
+    }
+    auto [producerSlot, consumerSlot] = *slots;
+    auto schedule = getSlotEventSchedule(producerSlot, consumerSlot, producer, consumer, eventIdNum);
+    if (schedule && schedule->loop != loop) {
+        schedule.reset();
+    }
+    bool sameSlot = compareSlotSSA(producerSlot, consumerSlot, eventIdNum) == SlotRelation::kEqual;
+    if (!schedule && !sameSlot) {
+        return 1;
+    }
+    setOp->slotSchedule = schedule;
+    waitOp->slotSchedule = schedule;
+    setOp->slotSSAExpr = producerSlot;
+    setOp->slotCount = static_cast<uint32_t>(eventIdNum);
+    waitOp->slotSSAExpr = consumerSlot;
+    waitOp->slotCount = static_cast<uint32_t>(eventIdNum);
     return eventIdNum;
-  }
-  Value producerSlot;
-  Value consumerSlot;
-  bool hasAmbiguousSlot = false;
-  for (auto &pair : depBaseMemInfosVec) {
-    Value pairProducerSlot;
-    Value pairConsumerSlot;
-    if (pair.second && pair.second->baseBuffer) {
-      pairProducerSlot = findMultiTileSlotExpr(pair.second->baseBuffer);
-    }
-    if (pair.first && pair.first->baseBuffer) {
-      pairConsumerSlot = findMultiTileSlotExpr(pair.first->baseBuffer);
-    }
-    if (!pairProducerSlot || !pairConsumerSlot) {
-      hasAmbiguousSlot = true;
-      break;
-    }
-    if ((producerSlot && producerSlot != pairProducerSlot) ||
-        (consumerSlot && consumerSlot != pairConsumerSlot)) {
-      hasAmbiguousSlot = true;
-      break;
-    }
-    producerSlot = pairProducerSlot;
-    consumerSlot = pairConsumerSlot;
-  }
-  if (hasAmbiguousSlot || !producerSlot || !consumerSlot) {
-    // Missing or ambiguous slot SSA -- fall back to a single event id. This
-    // also keeps non-multi-buffer codepaths untouched if their baseAddresses
-    // have multiple entries for another reason.
-    return 1;
-  }
-  setOp->slotSSAExpr = producerSlot;
-  setOp->slotCount = static_cast<uint32_t>(eventIdNum);
-  waitOp->slotSSAExpr = consumerSlot;
-  waitOp->slotCount = static_cast<uint32_t>(eventIdNum);
-  return eventIdNum;
 }
 
 void InsertSyncAnalysis::InsertCrossPipeEventSync(
@@ -740,11 +798,11 @@ void InsertSyncAnalysis::InsertCrossPipeEventSync(
   // dyn event IDs are warranted, also plumb the per-side slot SSA so
   // codegen can lower into `pto.set_flag_dyn` / `pto.wait_flag_dyn`.
   if (forEndIndex.has_value()) {
-    int eventIdNum = configureDynEventSlots(
-        setOp.get(), waitOp.get(), depBaseMemInfosVec,
-        GetEventIdNum(depBaseMemInfosVec));
-    setOp->eventIdNum = eventIdNum;
-    waitOp->eventIdNum = eventIdNum;
+      int eventIdNum = configureDynEventSlots(
+          setOp.get(), waitOp.get(), depBaseMemInfosVec, GetEventIdNum(depBaseMemInfosVec), frontCompound->elementOp,
+          nowCompound->elementOp, syncIR_[*forEndIndex]->elementOp);
+      setOp->eventIdNum = eventIdNum;
+      waitOp->eventIdNum = eventIdNum;
   }
 
   syncIR_[insertSetId]->pipeAfter.push_back(setOp.get());

@@ -179,6 +179,45 @@ static int64_t pyMod(int64_t a, int64_t n) {
 
 } // namespace
 
+std::optional<uint32_t> getSlotRotationOffset(Value slot, Value inductionVar, uint32_t count)
+{
+    if (!slot || !inductionVar || count == 0) {
+        return std::nullopt;
+    }
+    auto rem = slot.getDefiningOp<arith::RemUIOp>();
+    if (!rem) {
+        return std::nullopt;
+    }
+    IntegerAttr modulus;
+    bool constantModulus = matchPattern(rem.getRhs(), m_Constant(&modulus));
+    if (!constantModulus) {
+        return std::nullopt;
+    }
+    const APInt& modulusValue = modulus.getValue();
+    if (modulusValue != count) {
+        return std::nullopt;
+    }
+    Value inner = rem.getLhs();
+    if (inner == inductionVar) {
+        return 0;
+    }
+    auto add = inner.getDefiningOp<arith::AddIOp>();
+    if (!add) {
+        return std::nullopt;
+    }
+    Value constant = add.getLhs() == inductionVar ? add.getRhs() : add.getLhs();
+    IntegerAttr offset;
+    bool inductionAdd = add.getLhs() == inductionVar || add.getRhs() == inductionVar;
+    bool constantOffset = matchPattern(constant, m_Constant(&offset));
+    if (!inductionAdd || !constantOffset) {
+        return std::nullopt;
+    }
+    if (offset.getValue().isNegative()) {
+        return std::nullopt;
+    }
+    return static_cast<uint32_t>(offset.getValue().urem(count));
+}
+
 SlotRelation compareSlotSSA(Value a, Value b, uint32_t N) {
   if (!a || !b || N == 0) {
     return SlotRelation::kUnknown;

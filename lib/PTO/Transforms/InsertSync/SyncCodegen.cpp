@@ -164,6 +164,44 @@ static void createSetOrWaitFlagOp(IRRewriter &rewriter, Operation *op,
   rewriter.create<pto::SetFlagOp>(op->getLoc(), srcPipe, dstPipe, eventId);
 }
 
+// The first visit to a lane occurs at `(lane - phase - offset) mod N`.
+// Work with residues so the boundary calculation cannot overflow the IV.
+static Value getFirstSlotVisit(
+    IRRewriter& rewriter, Location loc, Value phase, uint32_t lane, uint32_t offset, uint32_t count)
+{
+    Value modulus = rewriter.create<arith::ConstantIndexOp>(loc, count);
+    Value phaseMod = rewriter.create<arith::RemUIOp>(loc, phase, modulus);
+    uint32_t residue = (lane + count - offset) % count;
+    Value shiftedLane = rewriter.create<arith::ConstantIndexOp>(loc, residue + count);
+    Value distance = rewriter.create<arith::SubIOp>(loc, shiftedLane, phaseMod);
+    return rewriter.create<arith::RemUIOp>(loc, distance, modulus);
+}
+
+static void createSlotBoundaryFlag(
+    IRRewriter& rewriter, Operation* op, SyncOperation* sync, pto::PipeAttr srcPipe, pto::PipeAttr dstPipe,
+    pto::EventAttr eventId)
+{
+    const auto& schedule = *sync->slotSchedule;
+    auto loop = cast<scf::ForOp>(schedule.loop);
+    Location loc = op->getLoc();
+    Value phase = loop.getLowerBound();
+    if (sync->isSyncWaitType()) {
+        // For a unit-step loop, max(lb, ub) is the next IV even for zero trips.
+        Value entered = rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt, phase, loop.getUpperBound());
+        phase = rewriter.create<arith::SelectOp>(loc, entered, loop.getUpperBound(), phase);
+    }
+    Value firstSet =
+        getFirstSlotVisit(rewriter, loc, phase, *sync->boundarySlot, schedule.producerOffset, sync->slotCount);
+    Value firstWait =
+        getFirstSlotVisit(rewriter, loc, phase, *sync->boundarySlot, schedule.consumerOffset, sync->slotCount);
+    auto predicate = schedule.producerBeforeConsumer ? arith::CmpIPredicate::ult : arith::CmpIPredicate::ule;
+    Value pending = rewriter.create<arith::CmpIOp>(loc, predicate, firstWait, firstSet);
+    auto guard = rewriter.create<scf::IfOp>(loc, pending, false);
+    OpBuilder::InsertionGuard insertionGuard(rewriter);
+    rewriter.setInsertionPointToStart(guard.thenBlock());
+    createSetOrWaitFlagOp(rewriter, op, sync, srcPipe, dstPipe, eventId);
+}
+
 // ==============================================================================
 // 2. SyncCodegen Implementation
 // ==============================================================================
@@ -367,6 +405,10 @@ void SyncCodegen::CreateSetWaitOpForSingleBuffer(IRRewriter &rewriter,
   auto srcPipe = getPipeAttr(rewriter, sync->GetActualSrcPipe());
   auto dstPipe = getPipeAttr(rewriter, sync->GetActualDstPipe());
   auto eventId = getEventAttr(rewriter, sync->eventIds[0]);
+  if (sync->boundarySlot) {
+      createSlotBoundaryFlag(rewriter, op, sync, srcPipe, dstPipe, eventId);
+      return;
+  }
   createSetOrWaitFlagOp(rewriter, op, sync, srcPipe, dstPipe, eventId);
 }
 
