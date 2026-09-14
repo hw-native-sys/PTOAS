@@ -17,10 +17,7 @@ using namespace mlir::pto::mad_detail;
 void MadMxBiasOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
-  effects.emplace_back(MemoryEffects::Read::get(), &getLhsMutable());
-  effects.emplace_back(MemoryEffects::Read::get(), &getRhsMutable());
-  effects.emplace_back(MemoryEffects::Read::get(), &getBiasMutable());
-  effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable());
+  collectMadSemanticBiasEffects(*this, effects, /*accumulates=*/false);
 }
 
 LogicalResult MadMxBiasOp::verify() {

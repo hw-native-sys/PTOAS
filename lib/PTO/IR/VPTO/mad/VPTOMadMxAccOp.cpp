@@ -17,10 +17,7 @@ using namespace mlir::pto::mad_detail;
 void MadMxAccOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
-  effects.emplace_back(MemoryEffects::Read::get(), &getLhsMutable());
-  effects.emplace_back(MemoryEffects::Read::get(), &getRhsMutable());
-  effects.emplace_back(MemoryEffects::Read::get(), &getDstMutable());
-  effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable());
+  collectMadSemanticEffects(*this, effects, /*accumulates=*/true);
 }
 
 LogicalResult MadMxAccOp::verify() {

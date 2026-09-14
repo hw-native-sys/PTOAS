@@ -13,6 +13,14 @@ __all__ = ["pto"]
 
 from importlib import import_module
 
+# Capability switch. Downstream templates probe this instead of
+# introspecting function signatures: a **kwargs signature hides the named
+# keyword arguments from inspect.signature, so a signature-based probe
+# would always be False. This switch is set when mad/mad_acc/mad_bias
+# accept unit_flag / init / bias_init / disable_gemv as runtime operands
+# packed into the mad xt immediate (PTOAS issue #1279).
+MAD_RUNTIME_FLAGS = True
+
 
 def __getattr__(name):
     if name == "pto":

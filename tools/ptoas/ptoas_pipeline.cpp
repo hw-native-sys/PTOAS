@@ -762,6 +762,12 @@ static void prepareVPTOForEmission(PassManager &pm,
   // scheduler sees the final MI instruction set and dependencies.
   kernelModulePM.addPass(pto::createVPTOCombineReductionsPass());
   kernelModulePM.addPass(createCSEPass());
+  // Materialize the minimal CTRL accesses before scheduling: a surviving
+  // ctrl_state_guard is region-bearing and would make every guarded raw MAD
+  // a scheduling boundary, splitting cube loop bodies and blocking the
+  // MTE/MAD interleave the scheduler exists to find.
+  kernelModulePM.addNestedPass<func::FuncOp>(
+      pto::createVPTOOptimizeCtrlStatePass());
   if (schedulerMode != VPTOSchedulerCLIMode::Off) {
     pto::VPTOSchedulerOptions schedulerOptions;
     schedulerOptions.mode =

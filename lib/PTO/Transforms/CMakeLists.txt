@@ -82,7 +82,9 @@ add_mlir_dialect_library(PTOTransforms
   VPTO/VPTOCombineReductions.cpp
   VPTO/VPTOOptimizeVcvt.cpp
   VPTO/VPTOMaskSimplify.cpp
+  VPTOExpandMadOps.cpp
   VPTOExpandWrapperOps.cpp
+  VPTOOptimizeCtrlState.cpp
   VPTOSoftPostUpdate.cpp
   VPTO/VPTOGuardedLICM.cpp
   Passes/PTOPrintAddressAnalysis.cpp

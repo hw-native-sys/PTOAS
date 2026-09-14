@@ -1,0 +1,49 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// The runtime flag operands override the static semantics encoded by the
+// op kind. Decode the packed xt to pin each override (bits: 61 disable_gemv,
+// 62 cmatrix_source, 63 cmatrix_init):
+//   mad            -> bit63=1 (zero-Cmatrix init)
+//   mad acc_init(0)-> bit63=0 (runtime override to accumulate)
+//   mad_bias       -> bit62=1 (C source = BT buffer)
+//   bias_init(0)   -> bit62=0 (runtime override to dst)
+// unit_flag-style mutual exclusion does NOT apply to kind overlap; the
+// override is the documented contract.
+//
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - | FileCheck %s
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @mad_runtime_overrides(
+      %lhs: !pto.ptr<f32, l0a>,
+      %rhs: !pto.ptr<f32, l0b>,
+      %dst: !pto.ptr<f32, l0c>,
+      %bias: !pto.ptr<f32, bt>) attributes {pto.kernel} {
+    %c16 = arith.constant 16 : i64
+    %zero = arith.constant 0 : i1
+    pto.mad %lhs, %rhs, %dst, %c16, %c16, %c16
+      : !pto.ptr<f32, l0a>, !pto.ptr<f32, l0b>, !pto.ptr<f32, l0c>, i64, i64, i64
+    pto.mad %lhs, %rhs, %dst, %c16, %c16, %c16 acc_init(%zero)
+      : !pto.ptr<f32, l0a>, !pto.ptr<f32, l0b>, !pto.ptr<f32, l0c>, i64, i64, i64, i1
+    pto.mad_bias %lhs, %rhs, %dst, %bias, %c16, %c16, %c16
+      : !pto.ptr<f32, l0a>, !pto.ptr<f32, l0b>, !pto.ptr<f32, l0c>, !pto.ptr<f32, bt>, i64, i64, i64
+    pto.mad_bias %lhs, %rhs, %dst, %bias, %c16, %c16, %c16 bias_init(%zero)
+      : !pto.ptr<f32, l0a>, !pto.ptr<f32, l0b>, !pto.ptr<f32, l0c>, !pto.ptr<f32, bt>, i64, i64, i64, i1
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @mad_runtime_overrides(
+// Static mad: bit63=1 (zero-Cmatrix init).
+// CHECK: pto.mad_raw {{.*}} %c-9223372036586274800_i64 : !pto.ptr<f32, l0a>, !pto.ptr<f32, l0b>, !pto.ptr<f32, l0c>, i64
+// Runtime acc_init(0): bit63=0 — the kind-selected init is overridden.
+// CHECK: pto.mad_raw {{.*}} %c268501008_i64 : !pto.ptr<f32, l0a>, !pto.ptr<f32, l0b>, !pto.ptr<f32, l0c>, i64
+// Static mad_bias: bit62=1 (C source = BT buffer).
+// CHECK: pto.mad_bias_raw {{.*}} %c4611686018695888912_i64 : !pto.ptr<f32, l0a>, !pto.ptr<f32, l0b>, !pto.ptr<f32, l0c>, !pto.ptr<f32, bt>, i64
+// Runtime bias_init(0): bit62=0 — the kind-selected source is overridden.
+// CHECK: pto.mad_bias_raw {{.*}} %c268501008_i64 : !pto.ptr<f32, l0a>, !pto.ptr<f32, l0b>, !pto.ptr<f32, l0c>, !pto.ptr<f32, bt>, i64
+// CHECK: return

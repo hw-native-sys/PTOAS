@@ -10,6 +10,7 @@
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Transforms/Passes.h"
+#include "VPTOExpandMadOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -552,124 +553,6 @@ static Value packLoopSize(Location loc, Value loop2, Value loop1,
   Value shift = rewriter.create<arith::ConstantIntOp>(loc, 21, mlir::pto::kValue64);
   Value loop2Shifted = rewriter.create<arith::ShLIOp>(loc, loop2, shift);
   return rewriter.create<arith::OrIOp>(loc, loop2Shifted, loop1);
-}
-
-static Value castIntegerLikeTo(Location loc, Value value, Type targetType,
-                               PatternRewriter &rewriter) {
-  if (value.getType() == targetType) {
-    return value;
-  }
-
-  auto targetInt = dyn_cast<IntegerType>(targetType);
-  if (value.getType().isIndex() && targetInt) {
-    return rewriter.create<arith::IndexCastOp>(loc, targetType, value);
-  }
-  if (auto sourceInt = dyn_cast<IntegerType>(value.getType())) {
-    if (targetInt) {
-      if (sourceInt.getWidth() < targetInt.getWidth()) {
-        return rewriter.create<arith::ExtUIOp>(loc, targetType, value);
-      }
-      if (sourceInt.getWidth() > targetInt.getWidth()) {
-        return rewriter.create<arith::TruncIOp>(loc, targetType, value);
-      }
-      return value;
-    }
-    if (targetType.isIndex()) {
-      return rewriter.create<arith::IndexCastOp>(loc, targetType, value);
-    }
-  }
-
-  return {};
-}
-
-struct MadXtConfig {
-  Value m;
-  Value n;
-  Value k;
-  std::optional<pto::MadUnitFlagMode> unitFlagMode;
-  bool disableGemv;
-  bool cmatrixSource;
-  bool cmatrixInit;
-};
-
-static FailureOr<Value> packMadXt(Location loc, const MadXtConfig &config,
-                                  PatternRewriter &rewriter) {
-  Type i64Ty = rewriter.getI64Type();
-  Value mI64 = castIntegerLikeTo(loc, config.m, i64Ty, rewriter);
-  Value nI64 = castIntegerLikeTo(loc, config.n, i64Ty, rewriter);
-  Value kI64 = castIntegerLikeTo(loc, config.k, i64Ty, rewriter);
-  if (!mI64 || !nI64 || !kI64) {
-    return failure();
-  }
-
-  auto constant = [&rewriter, loc](uint64_t value) -> Value {
-    return rewriter.create<arith::ConstantIntOp>(loc, value, mlir::pto::kValue64);
-  };
-  auto shl = [&rewriter, loc, &constant](Value value,
-                                         uint64_t amount) -> Value {
-    return rewriter.create<arith::ShLIOp>(loc, value, constant(amount));
-  };
-  auto bitOr = [&rewriter, loc](Value lhs, Value rhs) -> Value {
-    return rewriter.create<arith::OrIOp>(loc, lhs, rhs);
-  };
-
-  Value xt = mI64;
-  xt = bitOr(xt, shl(kI64, mlir::pto::kValue12));
-  xt = bitOr(xt, shl(nI64, mlir::pto::kValue24));
-  if (config.unitFlagMode) {
-    uint64_t unitFlagCtrl =
-        *config.unitFlagMode == pto::MadUnitFlagMode::CheckOnly
-            ? mlir::pto::kValue2
-            : mlir::pto::kValue3;
-    xt = bitOr(xt, shl(constant(unitFlagCtrl), mlir::pto::kValue55));
-  }
-  if (config.disableGemv) {
-    xt = bitOr(xt, shl(constant(1), mlir::pto::kValue61));
-  }
-  if (config.cmatrixSource) {
-    xt = bitOr(xt, shl(constant(1), mlir::pto::kValue62));
-  }
-  if (config.cmatrixInit) {
-    xt = bitOr(xt, shl(constant(1), mlir::pto::kValue63));
-  }
-  return xt;
-}
-
-static Value setCtrlBit(Location loc, Value ctrl, unsigned bitIndex, bool value,
-                        PatternRewriter &rewriter) {
-  Value bit = rewriter.create<arith::ConstantIntOp>(loc, bitIndex, mlir::pto::kValue64);
-  if (value) {
-    return rewriter.create<pto::Sbitset1Op>(loc, ctrl, bit).getResult();
-  }
-  return rewriter.create<pto::Sbitset0Op>(loc, ctrl, bit).getResult();
-}
-
-struct MadCtrlConfig {
-  bool isHif8;
-  std::optional<pto::Tf32Mode> tf32Mode;
-  std::optional<pto::MadSatMode> satMode;
-  bool hasNDir;
-};
-
-static Value buildMadSemanticCtrl(Location loc, Value ctrl,
-                                  const MadCtrlConfig &config,
-                                  PatternRewriter &rewriter) {
-  ctrl =
-      setCtrlBit(loc, ctrl, mlir::pto::kValue45, config.isHif8, rewriter);
-  if (config.tf32Mode) {
-    ctrl = setCtrlBit(loc, ctrl, mlir::pto::kValue46, true, rewriter);
-    ctrl = setCtrlBit(loc, ctrl, mlir::pto::kValue47,
-                      *config.tf32Mode == pto::Tf32Mode::RoundAway, rewriter);
-  } else {
-    ctrl = setCtrlBit(loc, ctrl, mlir::pto::kValue46, false, rewriter);
-    ctrl = setCtrlBit(loc, ctrl, mlir::pto::kValue47, false, rewriter);
-  }
-  if (config.satMode) {
-    bool noSaturation = *config.satMode == pto::MadSatMode::NoSat;
-    ctrl = setCtrlBit(loc, ctrl, mlir::pto::kValue48, noSaturation, rewriter);
-  }
-  ctrl = setCtrlBit(loc, ctrl, mlir::pto::kValue51, config.hasNDir, rewriter);
-  return ctrl;
 }
 
 struct Mte2NzConfig {
@@ -1244,110 +1127,6 @@ struct ExpandUvldPattern : public OpRewritePattern<pto::UvldOp> {
         ValueRange{loadPtr, align});
     rewriter.replaceOp(op, load.getResult());
     return success();
-  }
-};
-
-enum class MadRawKind { Ordinary, OrdinaryBias, Mx, MxBias };
-
-static MadRawKind deriveMadRawKind(pto::MadSemanticOpInterface op) {
-  if (op.isMadMxFamily()) {
-    return op.hasBiasOperand() ? MadRawKind::MxBias : MadRawKind::Mx;
-  }
-  return op.hasBiasOperand() ? MadRawKind::OrdinaryBias
-                             : MadRawKind::Ordinary;
-}
-
-static LogicalResult emitMadRawOp(pto::MadSemanticOpInterface op,
-                                  MadRawKind kind, Value xt,
-                                  PatternRewriter &rewriter) {
-  Location loc = op->getLoc();
-  Value lhs = op.getLhs();
-  Value rhs = op.getRhs();
-  Value dst = op.getDst();
-  switch (kind) {
-  case MadRawKind::Ordinary:
-    rewriter.create<pto::MadRawOp>(loc, lhs, rhs, dst, xt);
-    return success();
-  case MadRawKind::OrdinaryBias:
-    rewriter.create<pto::MadBiasRawOp>(loc, lhs, rhs, dst, op.getBiasOrNull(),
-                                       xt);
-    return success();
-  case MadRawKind::Mx:
-    rewriter.create<pto::MadMxRawOp>(loc, lhs, rhs, dst, xt);
-    return success();
-  case MadRawKind::MxBias:
-    rewriter.create<pto::MadMxBiasRawOp>(loc, lhs, rhs, dst,
-                                         op.getBiasOrNull(), xt);
-    return success();
-  }
-  return failure();
-}
-
-static LogicalResult lowerMadSemanticOp(pto::MadSemanticOpInterface op,
-                                        PatternRewriter &rewriter) {
-  std::optional<pto::MadUnitFlagMode> unitFlagMode;
-  if (auto unitFlagModeAttr =
-          dyn_cast_or_null<pto::MadUnitFlagModeAttr>(op.getUnitFlagModeAttr())) {
-    unitFlagMode = unitFlagModeAttr.getValue();
-  }
-
-  std::optional<pto::Tf32Mode> tf32Mode;
-  if (op.supportsTf32Mode()) {
-    if (auto tf32ModeAttr =
-            dyn_cast_or_null<pto::Tf32ModeAttr>(op.getTf32ModeAttr())) {
-      tf32Mode = tf32ModeAttr.getValue();
-    }
-  }
-
-  std::optional<pto::MadSatMode> satMode;
-  if (auto satModeAttr =
-          dyn_cast_or_null<pto::MadSatModeAttr>(op.getSatModeAttr())) {
-    satMode = satModeAttr.getValue();
-  }
-
-  bool isHif8 = false;
-  if (auto lhsPtr = dyn_cast<pto::PtrType>(op.getLhs().getType())) {
-    isHif8 = pto::isPTOHiFloat8Type(lhsPtr.getElementType());
-  }
-
-  Location loc = op->getLoc();
-  Value ctrlSaved = rewriter.create<pto::GetCtrlOp>(loc).getResult();
-  Value ctrlForOp = buildMadSemanticCtrl(
-      loc, ctrlSaved, {isHif8, tf32Mode, satMode, op.getNDir()}, rewriter);
-  rewriter.create<pto::SetCtrlOp>(loc, ctrlForOp);
-
-  FailureOr<Value> xt = packMadXt(
-      loc,
-      {op.getM(), op.getN(), op.getK(), unitFlagMode, op.getDisableGemv(),
-       op.initializesAccumulatorWithBias(),
-       op.initializesAccumulatorWithZero()},
-      rewriter);
-  if (failed(xt)) {
-    return rewriter.notifyMatchFailure(op, "failed to pack mad xt");
-  }
-
-  if (failed(emitMadRawOp(op, deriveMadRawKind(op), *xt, rewriter))) {
-    return rewriter.notifyMatchFailure(op, "failed to emit mad raw op");
-  }
-
-  rewriter.create<pto::SetCtrlOp>(loc, ctrlSaved);
-  rewriter.eraseOp(op);
-  return success();
-}
-
-template <typename SemanticOp>
-class ExpandMadSemanticPattern final : public OpRewritePattern<SemanticOp> {
-public:
-  explicit ExpandMadSemanticPattern(MLIRContext *context)
-      : OpRewritePattern<SemanticOp>(context) {}
-
-  LogicalResult matchAndRewrite(SemanticOp op,
-                                PatternRewriter &rewriter) const override {
-    auto semantic = dyn_cast<pto::MadSemanticOpInterface>(op.getOperation());
-    if (!semantic) {
-      return failure();
-    }
-    return lowerMadSemanticOp(semantic, rewriter);
   }
 };
 
@@ -2128,13 +1907,8 @@ struct VPTOExpandWrapperOpsPass
                  ExpandAtomicConfigPattern<pto::SetAtomicBF16Op>,
                  ExpandAtomicConfigPattern<pto::SetAtomicS32Op>,
                  ExpandAtomicConfigPattern<pto::SetAtomicS16Op>,
-                 ExpandAtomicConfigPattern<pto::SetAtomicS8Op>,
-                 ExpandMadSemanticPattern<pto::MadOp>,
-                 ExpandMadSemanticPattern<pto::MadAccOp>,
-                 ExpandMadSemanticPattern<pto::MadBiasOp>,
-                 ExpandMadSemanticPattern<pto::MadMxOp>,
-                 ExpandMadSemanticPattern<pto::MadMxAccOp>,
-                 ExpandMadSemanticPattern<pto::MadMxBiasOp>>(&getContext());
+                 ExpandAtomicConfigPattern<pto::SetAtomicS8Op>>(&getContext());
+    pto::expand_mad::populateExpandMadPatterns(patterns);
     if (failed(applyPatternsAndFoldGreedily(func, std::move(patterns)))) {
       signalPassFailure();
     }

@@ -1,0 +1,49 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// An acc-store copy-out inside a statically positive loop observes the
+// ambient CTRL (the lowered copy_matrix_cc_to_gm reads the sat/atomic bits),
+// so a MAD configuration must NOT be hoisted into the loop preheader. Each
+// iteration configures around its own mad_raw and restores afterwards.
+//
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - | FileCheck %s
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @ctrl_guard_loop_acc_store(
+      %lhs: !pto.ptr<f32, l0a>,
+      %rhs: !pto.ptr<f32, l0b>,
+      %dst: !pto.ptr<f32, l0c>,
+      %gm: !pto.ptr<f32, gm>) attributes {pto.kernel} {
+    %c16 = arith.constant 16 : i64
+    %c0 = arith.constant 0 : i64
+    %iv0 = arith.constant 0 : index
+    %iv8 = arith.constant 8 : index
+    %iv1 = arith.constant 1 : index
+    scf.for %iv = %iv0 to %iv8 step %iv1 {
+      pto.mad %lhs, %rhs, %dst, %c16, %c16, %c16
+        : !pto.ptr<f32, l0a>, !pto.ptr<f32, l0b>, !pto.ptr<f32, l0c>, i64, i64, i64
+      pto.mte_l0c_gm %dst, %gm, %c16, %c16, %c16, %c16, %c0, %c0, nz2nd
+        : !pto.ptr<f32, l0c>, !pto.ptr<f32, gm>, i64, i64, i64, i64, i64, i64
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @ctrl_guard_loop_acc_store(
+// No configuration is hoisted above the loop: the first CTRL access must
+// appear after the scf.for header.
+// CHECK-NOT: pto.set_ctrl
+// CHECK: scf.for
+// Inside the body: configure, run the raw mad, restore before the copy-out
+// (which observes the ambient CTRL), then the acc-store copy sequence.
+// CHECK: pto.get_ctrl
+// CHECK: pto.set_ctrl
+// CHECK: pto.mad_raw
+// CHECK: pto.set_ctrl
+// CHECK: pto.copy_matrix_cc_to_gm
+// CHECK: return

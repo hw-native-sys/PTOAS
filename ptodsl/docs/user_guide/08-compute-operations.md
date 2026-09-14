@@ -2531,6 +2531,47 @@ pto.mad(
 )
 ```
 
+### 8.3.2a Runtime mad flags (new)
+
+`pto.mad`, `pto.mad_acc`, and `pto.mad_bias` additionally accept the four
+control flags as **runtime values** (any `scalar.*` expression producing an
+i32/i1), in addition to the static keywords above:
+
+| Keyword | Runtime type | Meaning |
+|---------|--------------|---------|
+| `unit_flag` | i32 in `{0, 2, 3}` | Runtime unit-flag control; replaces the static `unit_flag(...)` clause |
+| `disable_gemv` | i1 | Runtime GEMV-disable; replaces the static keyword |
+| `init` | i1 | Runtime acc-init selector: 1 = zero-Cmatrix rewrite, 0 = accumulate into `dst` |
+| `bias_init` | i1 | Runtime BTbuf selector on `mad_bias`: 1 = C source is the bias buffer, 0 = C source is `dst` |
+
+A runtime value is packed into the mad `xt` immediate at expansion time and
+**takes precedence over the static semantics encoded by the op kind** — this
+is the documented contract, and it is what lets a template emit a single op
+for a data-dependent choice instead of forking with `pto.if_`:
+
+```python
+# first sub-K block: clear or accumulate depending on a runtime flag
+pto.mad_acc(
+    a_l0.as_ptr(), b_l0.as_ptr(), acc.as_ptr(), m, n, k,
+    init=clear_accum,                       # runtime i1
+    unit_flag=scalar.select(uf == 3, pto.const(2, dtype=pto.si32), uf),
+)
+```
+
+Rules:
+
+- Passing a runtime `unit_flag`/`disable_gemv` together with the same-named
+  static clause/keyword is rejected (mutually exclusive).
+- Passing a **static** (Python int/bool) `init`/`bias_init` is rejected;
+  the accumulate/bias-init choice is the op kind's job (`mad` vs `mad_acc`,
+  `mad_bias`), and only runtime values may override it per instruction.
+- The mx family (`mad_mx*`) does **not** accept runtime flags yet; passing
+  one raises a `TypeError`. The IR layer already carries the operands and
+  interfaces, so lifting this restriction later is additive.
+- Capability probing: `ptodsl.MAD_RUNTIME_FLAGS` is the package-level
+  switch declaring this support (see the tilelang PTO GEMM template for a
+  downstream consumer).
+
 ### 8.3.3 Typical cube matmul pattern
 
 A full cube matmul follows a three-stage pattern: stage operands into L0A/L0B, compute, write back to UB.
