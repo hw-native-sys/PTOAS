@@ -305,7 +305,9 @@ checkSupportedLoadShape(VMIVRegType type, Value source, Type sourceType,
 
 // Keep preflight diagnostics consistent with the bounded block selection.
 // A non-aligned source may still use the existing stateful sequence when its
-// complete physical read envelope is proven; a raw pointer carries no extent.
+// complete physical read envelope is proven; a PtrType source delegates to
+// the vldas+vldus stateful stream (materializeUnalignedContiguousParts),
+// which resolves alignment at runtime and needs no static extent proof.
 LogicalResult checkSupportedContiguousLoadAddress(VMILoadOp op,
                                                   std::string *reason) {
   auto type = cast<VMIVRegType>(op.getResult().getType());
@@ -313,6 +315,12 @@ LogicalResult checkSupportedContiguousLoadAddress(VMILoadOp op,
       type.getElementCount() == 1 ||
       isKnownAddressAligned(op.getSource(), op.getOffset(),
                             type.getElementType(), pto::kVMIVCGBlockBytes)) {
+    return success();
+  }
+  // PtrType source: the unaligned stateful stream (vldas+vldus) can lower it
+  // without a static alignment proof; materializeBufferPointer succeeds for
+  // any PtrType source, so no extent information is required here.
+  if (isa<PtrType>(op.getSource().getType())) {
     return success();
   }
   VMIMemorySafeReadProof proof =
