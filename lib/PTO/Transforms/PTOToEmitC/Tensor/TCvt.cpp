@@ -44,7 +44,7 @@ struct PTOCvtToEmitC : public OpConversionPattern<pto::TCvtOp> {
     Value satModeVal = rewriter.create<emitc::ConstantOp>(
         loc, satModeTy, emitc::OpaqueAttr::get(ctx, satTok));
 
-    SmallVector<Value, 5> operands{dst, src};
+    SmallVector<Value> operands{dst, src};
     if (adaptor.getTmp())
       operands.push_back(peelUnrealized(adaptor.getTmp()));
     operands.push_back(rmodeVal);

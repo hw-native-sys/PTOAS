@@ -2652,11 +2652,22 @@ def TPopOp : PTO_TOp<"tpop", [
       if (!as)
         return ::mlir::pto::PIPE::PIPE_UNASSIGNED;
 
+      const bool isA5DirectPipe =
+          isA5Target() && getPipeHandle().getDefiningOp<InitializeL2LPipeOp>();
       switch (*as) {
       case ::mlir::pto::AddressSpace::VEC:
+        // A5 direct C2V POP waits for the producer on PIPE_V before exposing UB.
+        // The scalar address binding alone does not make the payload ready.
+        if (isA5DirectPipe) {
+          return ::mlir::pto::PIPE::PIPE_V;
+        }
+        return ::mlir::pto::PIPE::PIPE_MTE2;
       case ::mlir::pto::AddressSpace::MAT:
-        return isA5Target() ? ::mlir::pto::PIPE::PIPE_S
-                            : ::mlir::pto::PIPE::PIPE_MTE2;
+        // Direct V2C POP waits on MTE1; GM-backed POP loads through MTE2.
+        if (isA5DirectPipe) {
+          return ::mlir::pto::PIPE::PIPE_MTE1;
+        }
+        return ::mlir::pto::PIPE::PIPE_MTE2;
       default:
         break;
       }

@@ -124,7 +124,8 @@ struct PTOAllocTileToEmitC
     auto validShape = tileTy.getValidShape();
     Type elemTy = tileTy.getElementType();
     pto::BLayout blayout = getTileBufBLayoutValue(tileTy.getConfigAttr());
-    auto maybeScaleDynamicValid = [&](Value emitted, int dimIdx) -> Value {
+    auto maybeScaleDynamicValid = [&elemTy, &blayout, &ctx, &rewriter, &loc](
+                                      Value emitted, int dimIdx) -> Value {
       if (!emitted || !pto::isPTOFloat4PackedType(elemTy))
         return emitted;
       int packedDim = blayout == pto::BLayout::ColMajor ? 0 : 1;

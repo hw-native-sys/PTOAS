@@ -20,7 +20,6 @@ namespace mlir {
 namespace pto {
 
 namespace {
-constexpr int64_t kGlobalTensorRank = 5;
 constexpr int64_t kZeroIndexValue = 0;
 constexpr int64_t kUnitIndexValue = 1;
 // PTO C++ Shape/Stride templates use -1 for dynamic dimensions. This is

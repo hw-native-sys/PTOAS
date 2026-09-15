@@ -12,56 +12,58 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
                               %arg4: !pto.ptr<f32, gm>, %arg5: !pto.ptr<ui8, gm>) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
-    %c2 = arith.constant 2 : index
     %c16 = arith.constant 16 : index
     %c32 = arith.constant 32 : index
-    %c64 = arith.constant 64 : index
+    %c512 = arith.constant 512 : index
+    %c1024 = arith.constant 1024 : index
 
     // Canonical axis1 layout: source is [M, N] and grouped auxiliaries are [M, N/32].
-    %0 = pto.make_tensor_view %arg0, shape = [%c16, %c64], strides = [%c64, %c1] : !pto.tensor_view<?x?xf32>
-    %1 = pto.make_tensor_view %arg1, shape = [%c16, %c64], strides = [%c64, %c1] : !pto.tensor_view<?x?xi8>
-    %2 = pto.make_tensor_view %arg2, shape = [%c16, %c2], strides = [%c2, %c1] : !pto.tensor_view<?x?xui8>
-    %3 = pto.make_tensor_view %arg3, shape = [%c16, %c2], strides = [%c2, %c1] : !pto.tensor_view<?x?xf32>
-    %4 = pto.make_tensor_view %arg4, shape = [%c16, %c2], strides = [%c2, %c1] : !pto.tensor_view<?x?xf32>
-    %5 = pto.make_tensor_view %arg5, shape = [%c16, %c2], strides = [%c2, %c1] : !pto.tensor_view<?x?xui8>
+    %0 = pto.make_tensor_view %arg0, shape = [%c16, %c1024], strides = [%c1024, %c1] : !pto.tensor_view<?x?xf32>
+    %1 = pto.make_tensor_view %arg1, shape = [%c16, %c1024], strides = [%c1024, %c1] : !pto.tensor_view<?x?xi8>
+    %2 = pto.make_tensor_view %arg2, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xui8>
+    %3 = pto.make_tensor_view %arg3, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %4 = pto.make_tensor_view %arg4, shape = [%c16, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %5 = pto.make_tensor_view %arg5, shape = [%c1, %c512], strides = [%c512, %c1] : !pto.tensor_view<?x?xui8>
 
-    %6 = pto.partition_view %0, offsets = [%c0, %c0], sizes = [%c16, %c64] : !pto.tensor_view<?x?xf32>
-    %7 = pto.partition_view %1, offsets = [%c0, %c0], sizes = [%c16, %c64] : !pto.tensor_view<?x?xi8>
-    %8 = pto.partition_view %2, offsets = [%c0, %c0], sizes = [%c16, %c2] : !pto.tensor_view<?x?xui8>
-    %9 = pto.partition_view %3, offsets = [%c0, %c0], sizes = [%c16, %c2] : !pto.tensor_view<?x?xf32>
-    %10 = pto.partition_view %4, offsets = [%c0, %c0], sizes = [%c16, %c2] : !pto.tensor_view<?x?xf32>
-    %11 = pto.partition_view %5, offsets = [%c0, %c0], sizes = [%c16, %c2] : !pto.tensor_view<?x?xui8>
+    %6 = pto.partition_view %0, offsets = [%c0, %c0], sizes = [%c16, %c1024] : !pto.tensor_view<?x?xf32>
+    %7 = pto.partition_view %1, offsets = [%c0, %c0], sizes = [%c16, %c1024] : !pto.tensor_view<?x?xi8>
+    %8 = pto.partition_view %2, offsets = [%c0, %c0], sizes = [%c16, %c32] : !pto.tensor_view<?x?xui8>
+    %9 = pto.partition_view %3, offsets = [%c0, %c0], sizes = [%c16, %c32] : !pto.tensor_view<?x?xf32>
+    %10 = pto.partition_view %4, offsets = [%c0, %c0], sizes = [%c16, %c32] : !pto.tensor_view<?x?xf32>
+    %11 = pto.partition_view %5, offsets = [%c0, %c0], sizes = [%c1, %c512] : !pto.tensor_view<?x?xui8>
 
-    %src = pto.alloc_tile : !pto.tile_buf<vec, 16x64xf32>
-    %dst = pto.alloc_tile : !pto.tile_buf<vec, 16x64xi8>
-    // Keep allocator-facing storage rows 32-byte aligned, then expose the exact
-    // canonical logical tiles required by TQUANT and ND-to-ZZ.
-    %exp_storage = pto.alloc_tile : !pto.tile_buf<vec, 1x32xui8>
-    %max_storage = pto.alloc_tile : !pto.tile_buf<vec, 1x32xf32>
-    %scaling_storage = pto.alloc_tile : !pto.tile_buf<vec, 1x32xf32>
-    %exp_zz_storage = pto.alloc_tile : !pto.tile_buf<vec, 1x32xui8, slayout=row_major>
-    // ND-to-ZZ needs 64 + ceil(16/16) * 2 = 66 bytes; the allocation is
-    // rounded up to a 32-byte row while its valid grouped width remains 2.
-    %tmp = pto.alloc_tile : !pto.tile_buf<vec, 1x96xui8, valid=1x2>
-    %exp = pto.treshape %exp_storage : !pto.tile_buf<vec, 1x32xui8> -> !pto.tile_buf<vec, 16x2xui8>
-    %max = pto.treshape %max_storage : !pto.tile_buf<vec, 1x32xf32> -> !pto.tile_buf<vec, 16x2xf32>
-    %scaling = pto.treshape %scaling_storage : !pto.tile_buf<vec, 1x32xf32> -> !pto.tile_buf<vec, 16x2xf32>
-    %exp_zz = pto.treshape %exp_zz_storage : !pto.tile_buf<vec, 1x32xui8, slayout=row_major> -> !pto.tile_buf<vec, 16x2xui8, slayout=row_major>
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 16x1024xf32>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 16x1024xi8>
+    // Each grouped row has 32 elements, including byte-wide exponents.
+    %exp = pto.alloc_tile : !pto.tile_buf<vec, 16x32xui8>
+    %max = pto.alloc_tile : !pto.tile_buf<vec, 16x32xf32>
+    %scaling = pto.alloc_tile : !pto.tile_buf<vec, 16x32xf32>
+    %exp_zz = pto.alloc_tile : !pto.tile_buf<vec, 16x32xui8, slayout=row_major>
+    // ND-to-ZZ needs 64 + ceil(16/16) * 32 = 96 bytes.
+    %tmp = pto.alloc_tile : !pto.tile_buf<vec, 1x96xui8, valid=1x32>
 
-    pto.tload ins(%6 : !pto.partition_tensor_view<16x64xf32>) outs(%src : !pto.tile_buf<vec, 16x64xf32>)
+    pto.tload ins(%6 : !pto.partition_tensor_view<16x1024xf32>) outs(%src : !pto.tile_buf<vec, 16x1024xf32>)
 
-    pto.tquant.mx ins(%src : !pto.tile_buf<vec, 16x64xf32>)
-                   outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 16x64xi8>, !pto.tile_buf<vec, 16x2xui8>, !pto.tile_buf<vec, 16x2xf32>, !pto.tile_buf<vec, 16x2xf32>)
+    pto.tquant.mx ins(%src : !pto.tile_buf<vec, 16x1024xf32>)
+                   outs(%dst, %exp, %max, %scaling : !pto.tile_buf<vec, 16x1024xi8>, !pto.tile_buf<vec, 16x32xui8>, !pto.tile_buf<vec, 16x32xf32>, !pto.tile_buf<vec, 16x32xf32>)
                    {quant_type = #pto<quant_type MXFP8>}
 
-    pto.tmov ins(%exp : !pto.tile_buf<vec, 16x2xui8>, %tmp : !pto.tile_buf<vec, 1x96xui8, valid=1x2>)
-              outs(%exp_zz : !pto.tile_buf<vec, 16x2xui8, slayout=row_major>)
+    pto.barrier <PIPE_V>
+    pto.tmov ins(%exp : !pto.tile_buf<vec, 16x32xui8>, %tmp : !pto.tile_buf<vec, 1x96xui8, valid=1x32>)
+              outs(%exp_zz : !pto.tile_buf<vec, 16x32xui8, slayout=row_major>)
 
-    pto.tstore ins(%dst : !pto.tile_buf<vec, 16x64xi8>) outs(%7 : !pto.partition_tensor_view<16x64xi8>)
-    pto.tstore ins(%exp : !pto.tile_buf<vec, 16x2xui8>) outs(%8 : !pto.partition_tensor_view<16x2xui8>)
-    pto.tstore ins(%max : !pto.tile_buf<vec, 16x2xf32>) outs(%9 : !pto.partition_tensor_view<16x2xf32>)
-    pto.tstore ins(%scaling : !pto.tile_buf<vec, 16x2xf32>) outs(%10 : !pto.partition_tensor_view<16x2xf32>)
-    pto.tstore ins(%exp_zz_storage : !pto.tile_buf<vec, 1x32xui8, slayout=row_major>) outs(%11 : !pto.partition_tensor_view<16x2xui8>)
+    pto.tstore ins(%dst : !pto.tile_buf<vec, 16x1024xi8>) outs(%7 : !pto.partition_tensor_view<16x1024xi8>)
+    pto.tstore ins(%exp : !pto.tile_buf<vec, 16x32xui8>) outs(%8 : !pto.partition_tensor_view<16x32xui8>)
+    pto.tstore ins(%max : !pto.tile_buf<vec, 16x32xf32>) outs(%9 : !pto.partition_tensor_view<16x32xf32>)
+    pto.tstore ins(%scaling : !pto.tile_buf<vec, 16x32xf32>) outs(%10 : !pto.partition_tensor_view<16x32xf32>)
+    // Form the flat store view after TMOV writes the packed tile.
+    %exp_zz_flat = pto.treshape %exp_zz : !pto.tile_buf<vec, 16x32xui8, slayout=row_major> -> !pto.tile_buf<vec, 1x512xui8, slayout=row_major>
+    // Copy the packed bytes into an ND tile: boxed RowMajor tiles have no
+    // vector TSTORE implementation in the pinned PTO-ISA revision.
+    %exp_zz_bytes = pto.alloc_tile : !pto.tile_buf<vec, 1x512xui8>
+    pto.tmov ins(%exp_zz_flat : !pto.tile_buf<vec, 1x512xui8, slayout=row_major>)
+              outs(%exp_zz_bytes : !pto.tile_buf<vec, 1x512xui8>)
+    pto.tstore ins(%exp_zz_bytes : !pto.tile_buf<vec, 1x512xui8>) outs(%11 : !pto.partition_tensor_view<1x512xui8>)
     return
   }
 }

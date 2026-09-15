@@ -24,16 +24,20 @@
 
 namespace mlir::pto {
 
+// Keep every inline pressure vector small: the evaluation struct is copied
+// per scheduling step and must stay well below the SmallVector big-type limit.
+inline constexpr unsigned kPressureVecInlineElems = 2;
+
 struct VPTORegPressureEvaluation {
-  SmallVector<int64_t, 2> delta;
+  SmallVector<int64_t, kPressureVecInlineElems> delta;
   /// Direction-local pressure removed by operand last uses (top-down) or
   /// result definitions (bottom-up).
-  SmallVector<int64_t, 2> released;
+  SmallVector<int64_t, kPressureVecInlineElems> released;
   /// Direction-local pressure introduced by result definitions (top-down) or
   /// operand liveness (bottom-up).
-  SmallVector<int64_t, 2> introduced;
-  SmallVector<int64_t, 2> projected;
-  SmallVector<int64_t, 2> projectedExcess;
+  SmallVector<int64_t, kPressureVecInlineElems> introduced;
+  SmallVector<int64_t, kPressureVecInlineElems> projected;
+  SmallVector<int64_t, kPressureVecInlineElems> projectedExcess;
 };
 
 class VPTORegPressureTracker {

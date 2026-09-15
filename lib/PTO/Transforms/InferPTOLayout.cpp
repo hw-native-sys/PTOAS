@@ -1021,7 +1021,7 @@ private:
       return success();
     }
     unsigned root = find(it->second);
-    if (ambiguousRoots.count(root) == 0) {
+    if (!ambiguousRoots.contains(root)) {
       return success();
     }
     if (nodes[root].layout) {

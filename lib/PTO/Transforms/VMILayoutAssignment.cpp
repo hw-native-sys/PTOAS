@@ -477,21 +477,9 @@ struct LayoutSolver {
       return existing;
     }
 
-    FailureOr<int64_t> lanesPerPart =
-        getDataLanesPerPart(type.getElementType());
-    int64_t numGroups = op.getNumGroupsAttr().getInt();
-    if (failed(lanesPerPart) || numGroups <= 0 ||
-        type.getElementCount() % numGroups != 0) {
-      return {};
-    }
-
-    int64_t groupSize = type.getElementCount() / numGroups;
-    int64_t vcgBlockElems = *lanesPerPart / 8;
-    if (type.getElementCount() < *lanesPerPart &&
-        groupSize == vcgBlockElems) {
-      return VMILayoutAttr::getContiguous(ctx, /*laneStride=*/mlir::pto::kValue2);
-    }
-    return {};
+    VMILayoutSupport supports;
+    return supports.getPreferredGroupBroadcastResultLayout(
+        type, op.getNumGroupsAttr().getInt());
   }
 
   VMILayoutAttr getPreferredGroupLoadResultLayout(VMIGroupLoadOp op) const {

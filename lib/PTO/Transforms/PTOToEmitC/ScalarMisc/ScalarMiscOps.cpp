@@ -50,7 +50,7 @@ struct PTOMScatterToMSCATTER : public OpConversionPattern<pto::MScatterOp> {
 
     Value memArg = mem;
 
-    SmallVector<Attribute, 4> templateArgVec;
+    SmallVector<Attribute> templateArgVec;
     if (coalesceAttr) {
       templateArgVec.push_back(
           emitc::OpaqueAttr::get(ctx, coalesceTok(coalesceAttr.getValue())));
@@ -144,7 +144,7 @@ struct PTOHistogramToEmitC : public OpConversionPattern<pto::THistogramOp> {
     Value idx = adaptor.getIdx();
     Value dst = adaptor.getDst();
 
-    StringRef histByte = "HistByte::BYTE_1";
+    constexpr int64_t kHistByteMax = 3;
     int64_t byte = 1;
     auto byteAttr = op.getByteAttr();
     if (byteAttr)
@@ -156,22 +156,11 @@ struct PTOHistogramToEmitC : public OpConversionPattern<pto::THistogramOp> {
             op, "conflicting 'byte' and legacy 'isMSB' attributes");
       byte = legacyByte;
     }
-    switch (byte) {
-    case 0:
-      histByte = "HistByte::BYTE_0";
-      break;
-    case 1:
-      histByte = "HistByte::BYTE_1";
-      break;
-    case 2:
-      histByte = "HistByte::BYTE_2";
-      break;
-    case 3:
-      histByte = "HistByte::BYTE_3";
-      break;
-    default:
-      return rewriter.notifyMatchFailure(op, "expected byte to be in range [0, 3]");
+    if (byte < 0 || byte > kHistByteMax) {
+      return rewriter.notifyMatchFailure(
+          op, "expected byte to be in range [0, 3]");
     }
+    std::string histByte = "HistByte::BYTE_" + std::to_string(byte);
 
     auto templateArgs =
         rewriter.getArrayAttr({emitc::OpaqueAttr::get(ctx, histByte)});

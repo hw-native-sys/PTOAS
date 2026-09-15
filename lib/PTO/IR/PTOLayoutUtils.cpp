@@ -42,7 +42,7 @@ static std::optional<int64_t> checkedMultiply(int64_t lhs, int64_t rhs) {
     return ShapedType::kDynamic;
   }
   int64_t product = 0;
-  if (llvm::MulOverflow(lhs, rhs, product)) {
+  if (llvm::MulOverflow(lhs, rhs, product) != 0) {
     return std::nullopt;
   }
   return product;

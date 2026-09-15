@@ -49,6 +49,7 @@ struct LayoutPattern {
 };
 
 enum class GroupBlockPatternKind {
+  Compact,
   Ratio,
   FullPartMultiple,
 };
@@ -229,7 +230,8 @@ inline bool matchesLayoutPattern(MLIRContext *ctx, LayoutPattern pattern,
     return false;
   }
   if (pattern.kind == LayoutPatternKind::SingleCarrierGroupSlots) {
-    return isVMISingleCarrierGroupSlots(layout, lanesPerPart);
+    return isVMISingleCarrierGroupSlotsWithStride(layout, lanesPerPart,
+                                                  pattern.laneStride);
   }
   return materializeLayoutPattern(ctx, pattern, numGroups) == layout;
 }
@@ -255,11 +257,15 @@ static constexpr LayoutPattern gs(int64_t slots, int64_t laneStride = 1) {
 }
 
 /// Group packets whose groups all fit in one physical chunk (num_groups <=
-/// slots, lane_stride = 1).  Rows keyed on `gsFit()` hold for every `slots`
-/// value, so they express a physical property instead of a group count list.
-static constexpr LayoutPattern gsFit() {
-  return {LayoutPatternKind::SingleCarrierGroupSlots, 0, 1};
+/// slots) of the produced slot width (slots <= 8, lane_stride = 1).  Rows keyed
+/// on `gsFit()` hold for every group count of that form, so they express a
+/// physical property instead of a group count list.  The same physical property
+/// at a concrete lane stride: rows keyed on `gsFitStride(S)`.
+static constexpr LayoutPattern gsFitStride(int64_t laneStride) {
+  return {LayoutPatternKind::SingleCarrierGroupSlots, 0, laneStride};
 }
+
+static constexpr LayoutPattern gsFit() { return gsFitStride(1); }
 
 static constexpr GroupMemoryPattern memAny() {
   return {GroupMemoryPatternKind::Any};
@@ -271,6 +277,11 @@ static constexpr GroupMemoryPattern memContiguous() {
 
 static constexpr GroupMemoryPattern memBlockAligned() {
   return {GroupMemoryPatternKind::BlockAligned};
+}
+
+// Dense logical vectors that fit in the compact eight-result packet.
+static constexpr GroupBlockPattern gbCompact() {
+  return {GroupBlockPatternKind::Compact, mlir::pto::kValue8, 1};
 }
 
 static constexpr GroupBlockPattern gb(int64_t numerator) {

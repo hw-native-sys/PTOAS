@@ -26,7 +26,7 @@ namespace mlir::pto::mte_detail {
 using namespace mlir;
 using namespace mlir::pto;
 
-  [[maybe_unused]] static ParseResult resolveMteL0cPrefix(
+  [[maybe_unused]] inline ParseResult resolveMteL0cPrefix(
       OpAsmParser &parser, OperationState &result,
       OpAsmParser::UnresolvedOperand source, Type sourceType,
       OpAsmParser::UnresolvedOperand destination, Type destinationType,
@@ -53,7 +53,7 @@ using namespace mlir::pto;
     return success();
   }
 
-  [[maybe_unused]] static ParseResult resolveMteL0cTail(OpAsmParser &parser,
+  [[maybe_unused]] inline ParseResult resolveMteL0cTail(OpAsmParser &parser,
                                        OperationState &result,
                                        StructuredAccStoreAsmState &state) {
     auto loc = parser.getCurrentLocation();

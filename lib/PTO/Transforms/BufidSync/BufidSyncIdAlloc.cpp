@@ -301,7 +301,8 @@ void BufidSyncIdAlloc::compactPhysicalIds() {
       logicIdsByPos.push_back(lid);
     }
   }
-  std::sort(logicIdsByPos.begin(), logicIdsByPos.end(), [&](int a, int b) {
+  std::sort(logicIdsByPos.begin(), logicIdsByPos.end(),
+            [&logicIdFirstPos](int a, int b) {
     return logicIdFirstPos[a] < logicIdFirstPos[b];
   });
 
@@ -360,19 +361,24 @@ static SmallVector<PipelineType> decodeSig(const std::string &key) {
 
 // Lower score == more contended pipe (prefer merging on it).
 static int getPipeScore(PipelineType p) {
+  constexpr int kPipeScoreMte2 = 1;
+  constexpr int kPipeScoreMte3Fix = 2;
+  constexpr int kPipeScoreDefault = 3;
   switch (p) {
   case PipelineType::PIPE_MTE2:
-    return 1;
+    return kPipeScoreMte2;
   case PipelineType::PIPE_MTE3:
   case PipelineType::PIPE_FIX:
-    return 2;
+    return kPipeScoreMte3Fix;
   default:
-    return 3;
+    return kPipeScoreDefault;
   }
 }
 
 static int getMinPipeScore(const SmallVector<PipelineType> &pipes) {
-  int minScore = 99;
+  // Sentinel larger than any real score; real scores come from getPipeScore.
+  constexpr int kMinPipeScoreSentinel = 99;
+  int minScore = kMinPipeScoreSentinel;
   for (auto p : pipes) {
     minScore = std::min(minScore, getPipeScore(p));
   }
@@ -630,7 +636,7 @@ bool BufidSyncIdAlloc::reuseIdsStep(int iteration) {
   debugSelection(debugEnabled_, bestSigKey, groupIds.size(), checkPipe,
                  consecutive);
 
-  if (groupIds.size() / 2 == 0) {
+  if (groupIds.size() < kMinimumReusableIdGroupSize) {
     debugReuseBreak(debugEnabled_,
                     "[bufid_sync] reuseIds: halfSize=0, breaking\n");
     return false;

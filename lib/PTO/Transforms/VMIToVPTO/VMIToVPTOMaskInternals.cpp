@@ -1605,6 +1605,16 @@ LogicalResult verifyIdentityPartForwarding(Operation *op,
 
 FailureOr<VRegType> getUnsignedCarrierVRegType(MLIRContext *ctx,
                                                unsigned elementBits) {
+  // The lane-stride materialization widens one carrier per lane_stride factor
+  // (vzunpack) and packs it back (vpack).  vpack itself only narrows 32 -> 16
+  // and 16 -> 8 ("currently supports only s32/u32 -> u16 and s16/u16 -> u8"), so
+  // a 64-bit carrier has no pack form and the widest usable carrier is 32 bit.
+  //
+  // That is the intended domain, not a gap: lane_stride means "narrow elements
+  // sharing one wider carrier lane", which only exists below 32-bit elements.
+  // A 32-bit element already fills a carrier lane, so it has no lane-strided
+  // form (stride 2 would only double the register footprint); lane stride 2
+  // therefore stops at 16-bit elements and lane stride 4 at 8-bit ones.
   if (elementBits != kElementBits8 && elementBits != kElementBits16 &&
       elementBits != kElementBits32) {
     return failure();
@@ -1721,10 +1731,17 @@ static FailureOr<unsigned> validateDenseLaneStrideShape(
                 "group per physical part");
   }
   unsigned elementBits = pto::getPTOStorageElemBitWidth(elementType);
+  // Both ends of the carrier chain have to be expressible: the element carrier
+  // and the lane-strided carrier (element bits times the stride) both have to be
+  // packable widths, so 8/16-bit at stride 2 and 8-bit at stride 4 (8 -> 16 ->
+  // 32) are admitted, while 16-bit at stride 4 and 32-bit at stride 2 are not:
+  // the carrier chain has no 64-bit pack form.
   bool unsupportedShape =
       (laneStride != kPairWidth && laneStride != kQuadWidth) ||
-      (laneStride == kQuadWidth && elementBits != kElementBits8) ||
-      (elementBits != kElementBits8 && elementBits != kElementBits16);
+      failed(getUnsignedCarrierVRegType(rewriter.getContext(), elementBits)) ||
+      failed(getUnsignedCarrierVRegType(
+          rewriter.getContext(),
+          elementBits * static_cast<unsigned>(laneStride)));
   if (unsupportedShape) {
     StringRef direction = unpack ? "unpack" : "pack";
     return rewriter.notifyMatchFailure(

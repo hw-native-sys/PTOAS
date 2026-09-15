@@ -1,0 +1,454 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --pto-backend=vpto --emit-vpto %s -o - | FileCheck %s --implicit-check-not='pto.vc{{(add|max|min)}} {{.*}}!pto.vreg<256x{{(s|u)?}}i8>'
+// CHECK-NOT: pto.vmi.
+module {
+  // CHECK-LABEL: func.func @compact_reduce_i8_1
+  // CHECK-NOT: pto.vzunpack
+  // CHECK-NOT: pto.punpack
+  // CHECK: pto.vsel
+  // CHECK: pto.vsel
+  // CHECK: pto.vsel
+  func.func @compact_reduce_i8_1(%src: !pto.ptr<i8, ub>, %dst: !pto.ptr<i8, ub>, %active: index) {
+    %c0 = arith.constant 0 : index
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<i8, ub> -> !pto.vmi.vreg<1xi8>
+    %m = pto.vmi.create_mask %active : index -> !pto.vmi.mask<1xpred>
+    %r0 = pto.vmi.vcadd %x, %m {group = 1, reassoc} : !pto.vmi.vreg<1xi8>, !pto.vmi.mask<1xpred> -> !pto.vmi.vreg<1xi8>
+    %b0 = pto.vmi.vbrc %r0 : !pto.vmi.vreg<1xi8> -> !pto.vmi.vreg<1xi8>
+    %o0 = arith.constant 0 : index
+    pto.vmi.vstore %b0, %dst[%o0] : !pto.vmi.vreg<1xi8>, !pto.ptr<i8, ub>
+    %r1 = pto.vmi.vcmax %x, %m {group = 1} : !pto.vmi.vreg<1xi8>, !pto.vmi.mask<1xpred> -> !pto.vmi.vreg<1xi8>
+    %b1 = pto.vmi.vbrc %r1 : !pto.vmi.vreg<1xi8> -> !pto.vmi.vreg<1xi8>
+    %o1 = arith.constant 256 : index
+    pto.vmi.vstore %b1, %dst[%o1] : !pto.vmi.vreg<1xi8>, !pto.ptr<i8, ub>
+    %r2 = pto.vmi.vcmin %x, %m {group = 1} : !pto.vmi.vreg<1xi8>, !pto.vmi.mask<1xpred> -> !pto.vmi.vreg<1xi8>
+    %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xi8> -> !pto.vmi.vreg<1xi8>
+    %o2 = arith.constant 512 : index
+    pto.vmi.vstore %b2, %dst[%o2] : !pto.vmi.vreg<1xi8>, !pto.ptr<i8, ub>
+    return
+  }
+  // CHECK-LABEL: func.func @compact_reduce_i8_2
+  // CHECK: pto.vc{{g?}}add
+  // CHECK: pto.vc{{g?}}max
+  // CHECK: pto.vc{{g?}}min
+  func.func @compact_reduce_i8_2(%src: !pto.ptr<i8, ub>, %dst: !pto.ptr<i8, ub>, %active: index) {
+    %c0 = arith.constant 0 : index
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<i8, ub> -> !pto.vmi.vreg<2xi8>
+    %m = pto.vmi.create_mask %active : index -> !pto.vmi.mask<2xpred>
+    %r0 = pto.vmi.vcadd %x, %m {group = 1, reassoc} : !pto.vmi.vreg<2xi8>, !pto.vmi.mask<2xpred> -> !pto.vmi.vreg<1xi8>
+    %b0 = pto.vmi.vbrc %r0 : !pto.vmi.vreg<1xi8> -> !pto.vmi.vreg<2xi8>
+    %o0 = arith.constant 0 : index
+    pto.vmi.vstore %b0, %dst[%o0] : !pto.vmi.vreg<2xi8>, !pto.ptr<i8, ub>
+    %r1 = pto.vmi.vcmax %x, %m {group = 1} : !pto.vmi.vreg<2xi8>, !pto.vmi.mask<2xpred> -> !pto.vmi.vreg<1xi8>
+    %b1 = pto.vmi.vbrc %r1 : !pto.vmi.vreg<1xi8> -> !pto.vmi.vreg<2xi8>
+    %o1 = arith.constant 256 : index
+    pto.vmi.vstore %b1, %dst[%o1] : !pto.vmi.vreg<2xi8>, !pto.ptr<i8, ub>
+    %r2 = pto.vmi.vcmin %x, %m {group = 1} : !pto.vmi.vreg<2xi8>, !pto.vmi.mask<2xpred> -> !pto.vmi.vreg<1xi8>
+    %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xi8> -> !pto.vmi.vreg<2xi8>
+    %o2 = arith.constant 512 : index
+    pto.vmi.vstore %b2, %dst[%o2] : !pto.vmi.vreg<2xi8>, !pto.ptr<i8, ub>
+    return
+  }
+  // CHECK-LABEL: func.func @compact_reduce_i8_4
+  // CHECK: pto.vc{{g?}}add
+  // CHECK: pto.vc{{g?}}max
+  // CHECK: pto.vc{{g?}}min
+  func.func @compact_reduce_i8_4(%src: !pto.ptr<i8, ub>, %dst: !pto.ptr<i8, ub>, %active: index) {
+    %c0 = arith.constant 0 : index
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<i8, ub> -> !pto.vmi.vreg<4xi8>
+    %m = pto.vmi.create_mask %active : index -> !pto.vmi.mask<4xpred>
+    %r0 = pto.vmi.vcadd %x, %m {group = 1, reassoc} : !pto.vmi.vreg<4xi8>, !pto.vmi.mask<4xpred> -> !pto.vmi.vreg<1xi8>
+    %b0 = pto.vmi.vbrc %r0 : !pto.vmi.vreg<1xi8> -> !pto.vmi.vreg<4xi8>
+    %o0 = arith.constant 0 : index
+    pto.vmi.vstore %b0, %dst[%o0] : !pto.vmi.vreg<4xi8>, !pto.ptr<i8, ub>
+    %r1 = pto.vmi.vcmax %x, %m {group = 1} : !pto.vmi.vreg<4xi8>, !pto.vmi.mask<4xpred> -> !pto.vmi.vreg<1xi8>
+    %b1 = pto.vmi.vbrc %r1 : !pto.vmi.vreg<1xi8> -> !pto.vmi.vreg<4xi8>
+    %o1 = arith.constant 256 : index
+    pto.vmi.vstore %b1, %dst[%o1] : !pto.vmi.vreg<4xi8>, !pto.ptr<i8, ub>
+    %r2 = pto.vmi.vcmin %x, %m {group = 1} : !pto.vmi.vreg<4xi8>, !pto.vmi.mask<4xpred> -> !pto.vmi.vreg<1xi8>
+    %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xi8> -> !pto.vmi.vreg<4xi8>
+    %o2 = arith.constant 512 : index
+    pto.vmi.vstore %b2, %dst[%o2] : !pto.vmi.vreg<4xi8>, !pto.ptr<i8, ub>
+    return
+  }
+  // CHECK-LABEL: func.func @compact_reduce_i8_8
+  // CHECK: pto.vc{{g?}}add
+  // CHECK: pto.vc{{g?}}max
+  // CHECK: pto.vc{{g?}}min
+  func.func @compact_reduce_i8_8(%src: !pto.ptr<i8, ub>, %dst: !pto.ptr<i8, ub>, %active: index) {
+    %c0 = arith.constant 0 : index
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<i8, ub> -> !pto.vmi.vreg<8xi8>
+    %m = pto.vmi.create_mask %active : index -> !pto.vmi.mask<8xpred>
+    %r0 = pto.vmi.vcadd %x, %m {group = 1, reassoc} : !pto.vmi.vreg<8xi8>, !pto.vmi.mask<8xpred> -> !pto.vmi.vreg<1xi8>
+    %b0 = pto.vmi.vbrc %r0 : !pto.vmi.vreg<1xi8> -> !pto.vmi.vreg<8xi8>
+    %o0 = arith.constant 0 : index
+    pto.vmi.vstore %b0, %dst[%o0] : !pto.vmi.vreg<8xi8>, !pto.ptr<i8, ub>
+    %r1 = pto.vmi.vcmax %x, %m {group = 1} : !pto.vmi.vreg<8xi8>, !pto.vmi.mask<8xpred> -> !pto.vmi.vreg<1xi8>
+    %b1 = pto.vmi.vbrc %r1 : !pto.vmi.vreg<1xi8> -> !pto.vmi.vreg<8xi8>
+    %o1 = arith.constant 256 : index
+    pto.vmi.vstore %b1, %dst[%o1] : !pto.vmi.vreg<8xi8>, !pto.ptr<i8, ub>
+    %r2 = pto.vmi.vcmin %x, %m {group = 1} : !pto.vmi.vreg<8xi8>, !pto.vmi.mask<8xpred> -> !pto.vmi.vreg<1xi8>
+    %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xi8> -> !pto.vmi.vreg<8xi8>
+    %o2 = arith.constant 512 : index
+    pto.vmi.vstore %b2, %dst[%o2] : !pto.vmi.vreg<8xi8>, !pto.ptr<i8, ub>
+    return
+  }
+  // CHECK-LABEL: func.func @compact_reduce_i16_1
+  // CHECK: pto.vsel
+  // CHECK: pto.vsel
+  // CHECK: pto.vsel
+  func.func @compact_reduce_i16_1(%src: !pto.ptr<i16, ub>, %dst: !pto.ptr<i16, ub>, %active: index) {
+    %c0 = arith.constant 0 : index
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<i16, ub> -> !pto.vmi.vreg<1xi16>
+    %m = pto.vmi.create_mask %active : index -> !pto.vmi.mask<1xpred>
+    %r0 = pto.vmi.vcadd %x, %m {group = 1, reassoc} : !pto.vmi.vreg<1xi16>, !pto.vmi.mask<1xpred> -> !pto.vmi.vreg<1xi16>
+    %b0 = pto.vmi.vbrc %r0 : !pto.vmi.vreg<1xi16> -> !pto.vmi.vreg<1xi16>
+    %o0 = arith.constant 0 : index
+    pto.vmi.vstore %b0, %dst[%o0] : !pto.vmi.vreg<1xi16>, !pto.ptr<i16, ub>
+    %r1 = pto.vmi.vcmax %x, %m {group = 1} : !pto.vmi.vreg<1xi16>, !pto.vmi.mask<1xpred> -> !pto.vmi.vreg<1xi16>
+    %b1 = pto.vmi.vbrc %r1 : !pto.vmi.vreg<1xi16> -> !pto.vmi.vreg<1xi16>
+    %o1 = arith.constant 256 : index
+    pto.vmi.vstore %b1, %dst[%o1] : !pto.vmi.vreg<1xi16>, !pto.ptr<i16, ub>
+    %r2 = pto.vmi.vcmin %x, %m {group = 1} : !pto.vmi.vreg<1xi16>, !pto.vmi.mask<1xpred> -> !pto.vmi.vreg<1xi16>
+    %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xi16> -> !pto.vmi.vreg<1xi16>
+    %o2 = arith.constant 512 : index
+    pto.vmi.vstore %b2, %dst[%o2] : !pto.vmi.vreg<1xi16>, !pto.ptr<i16, ub>
+    return
+  }
+  // CHECK-LABEL: func.func @compact_reduce_i16_2
+  // CHECK: pto.vc{{g?}}add
+  // CHECK: pto.vc{{g?}}max
+  // CHECK: pto.vc{{g?}}min
+  func.func @compact_reduce_i16_2(%src: !pto.ptr<i16, ub>, %dst: !pto.ptr<i16, ub>, %active: index) {
+    %c0 = arith.constant 0 : index
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<i16, ub> -> !pto.vmi.vreg<2xi16>
+    %m = pto.vmi.create_mask %active : index -> !pto.vmi.mask<2xpred>
+    %r0 = pto.vmi.vcadd %x, %m {group = 1, reassoc} : !pto.vmi.vreg<2xi16>, !pto.vmi.mask<2xpred> -> !pto.vmi.vreg<1xi16>
+    %b0 = pto.vmi.vbrc %r0 : !pto.vmi.vreg<1xi16> -> !pto.vmi.vreg<2xi16>
+    %o0 = arith.constant 0 : index
+    pto.vmi.vstore %b0, %dst[%o0] : !pto.vmi.vreg<2xi16>, !pto.ptr<i16, ub>
+    %r1 = pto.vmi.vcmax %x, %m {group = 1} : !pto.vmi.vreg<2xi16>, !pto.vmi.mask<2xpred> -> !pto.vmi.vreg<1xi16>
+    %b1 = pto.vmi.vbrc %r1 : !pto.vmi.vreg<1xi16> -> !pto.vmi.vreg<2xi16>
+    %o1 = arith.constant 256 : index
+    pto.vmi.vstore %b1, %dst[%o1] : !pto.vmi.vreg<2xi16>, !pto.ptr<i16, ub>
+    %r2 = pto.vmi.vcmin %x, %m {group = 1} : !pto.vmi.vreg<2xi16>, !pto.vmi.mask<2xpred> -> !pto.vmi.vreg<1xi16>
+    %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xi16> -> !pto.vmi.vreg<2xi16>
+    %o2 = arith.constant 512 : index
+    pto.vmi.vstore %b2, %dst[%o2] : !pto.vmi.vreg<2xi16>, !pto.ptr<i16, ub>
+    return
+  }
+  // CHECK-LABEL: func.func @compact_reduce_i16_4
+  // CHECK: pto.vc{{g?}}add
+  // CHECK: pto.vc{{g?}}max
+  // CHECK: pto.vc{{g?}}min
+  func.func @compact_reduce_i16_4(%src: !pto.ptr<i16, ub>, %dst: !pto.ptr<i16, ub>, %active: index) {
+    %c0 = arith.constant 0 : index
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<i16, ub> -> !pto.vmi.vreg<4xi16>
+    %m = pto.vmi.create_mask %active : index -> !pto.vmi.mask<4xpred>
+    %r0 = pto.vmi.vcadd %x, %m {group = 1, reassoc} : !pto.vmi.vreg<4xi16>, !pto.vmi.mask<4xpred> -> !pto.vmi.vreg<1xi16>
+    %b0 = pto.vmi.vbrc %r0 : !pto.vmi.vreg<1xi16> -> !pto.vmi.vreg<4xi16>
+    %o0 = arith.constant 0 : index
+    pto.vmi.vstore %b0, %dst[%o0] : !pto.vmi.vreg<4xi16>, !pto.ptr<i16, ub>
+    %r1 = pto.vmi.vcmax %x, %m {group = 1} : !pto.vmi.vreg<4xi16>, !pto.vmi.mask<4xpred> -> !pto.vmi.vreg<1xi16>
+    %b1 = pto.vmi.vbrc %r1 : !pto.vmi.vreg<1xi16> -> !pto.vmi.vreg<4xi16>
+    %o1 = arith.constant 256 : index
+    pto.vmi.vstore %b1, %dst[%o1] : !pto.vmi.vreg<4xi16>, !pto.ptr<i16, ub>
+    %r2 = pto.vmi.vcmin %x, %m {group = 1} : !pto.vmi.vreg<4xi16>, !pto.vmi.mask<4xpred> -> !pto.vmi.vreg<1xi16>
+    %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xi16> -> !pto.vmi.vreg<4xi16>
+    %o2 = arith.constant 512 : index
+    pto.vmi.vstore %b2, %dst[%o2] : !pto.vmi.vreg<4xi16>, !pto.ptr<i16, ub>
+    return
+  }
+  // CHECK-LABEL: func.func @compact_reduce_i16_8
+  // CHECK: pto.vc{{g?}}add
+  // CHECK: pto.vc{{g?}}max
+  // CHECK: pto.vc{{g?}}min
+  func.func @compact_reduce_i16_8(%src: !pto.ptr<i16, ub>, %dst: !pto.ptr<i16, ub>, %active: index) {
+    %c0 = arith.constant 0 : index
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<i16, ub> -> !pto.vmi.vreg<8xi16>
+    %m = pto.vmi.create_mask %active : index -> !pto.vmi.mask<8xpred>
+    %r0 = pto.vmi.vcadd %x, %m {group = 1, reassoc} : !pto.vmi.vreg<8xi16>, !pto.vmi.mask<8xpred> -> !pto.vmi.vreg<1xi16>
+    %b0 = pto.vmi.vbrc %r0 : !pto.vmi.vreg<1xi16> -> !pto.vmi.vreg<8xi16>
+    %o0 = arith.constant 0 : index
+    pto.vmi.vstore %b0, %dst[%o0] : !pto.vmi.vreg<8xi16>, !pto.ptr<i16, ub>
+    %r1 = pto.vmi.vcmax %x, %m {group = 1} : !pto.vmi.vreg<8xi16>, !pto.vmi.mask<8xpred> -> !pto.vmi.vreg<1xi16>
+    %b1 = pto.vmi.vbrc %r1 : !pto.vmi.vreg<1xi16> -> !pto.vmi.vreg<8xi16>
+    %o1 = arith.constant 256 : index
+    pto.vmi.vstore %b1, %dst[%o1] : !pto.vmi.vreg<8xi16>, !pto.ptr<i16, ub>
+    %r2 = pto.vmi.vcmin %x, %m {group = 1} : !pto.vmi.vreg<8xi16>, !pto.vmi.mask<8xpred> -> !pto.vmi.vreg<1xi16>
+    %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xi16> -> !pto.vmi.vreg<8xi16>
+    %o2 = arith.constant 512 : index
+    pto.vmi.vstore %b2, %dst[%o2] : !pto.vmi.vreg<8xi16>, !pto.ptr<i16, ub>
+    return
+  }
+  // CHECK-LABEL: func.func @compact_reduce_i32_1
+  // CHECK: pto.vsel
+  // CHECK: pto.vsel
+  // CHECK: pto.vsel
+  func.func @compact_reduce_i32_1(%src: !pto.ptr<i32, ub>, %dst: !pto.ptr<i32, ub>, %active: index) {
+    %c0 = arith.constant 0 : index
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<i32, ub> -> !pto.vmi.vreg<1xi32>
+    %m = pto.vmi.create_mask %active : index -> !pto.vmi.mask<1xpred>
+    %r0 = pto.vmi.vcadd %x, %m {group = 1, reassoc} : !pto.vmi.vreg<1xi32>, !pto.vmi.mask<1xpred> -> !pto.vmi.vreg<1xi32>
+    %b0 = pto.vmi.vbrc %r0 : !pto.vmi.vreg<1xi32> -> !pto.vmi.vreg<1xi32>
+    %o0 = arith.constant 0 : index
+    pto.vmi.vstore %b0, %dst[%o0] : !pto.vmi.vreg<1xi32>, !pto.ptr<i32, ub>
+    %r1 = pto.vmi.vcmax %x, %m {group = 1} : !pto.vmi.vreg<1xi32>, !pto.vmi.mask<1xpred> -> !pto.vmi.vreg<1xi32>
+    %b1 = pto.vmi.vbrc %r1 : !pto.vmi.vreg<1xi32> -> !pto.vmi.vreg<1xi32>
+    %o1 = arith.constant 256 : index
+    pto.vmi.vstore %b1, %dst[%o1] : !pto.vmi.vreg<1xi32>, !pto.ptr<i32, ub>
+    %r2 = pto.vmi.vcmin %x, %m {group = 1} : !pto.vmi.vreg<1xi32>, !pto.vmi.mask<1xpred> -> !pto.vmi.vreg<1xi32>
+    %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xi32> -> !pto.vmi.vreg<1xi32>
+    %o2 = arith.constant 512 : index
+    pto.vmi.vstore %b2, %dst[%o2] : !pto.vmi.vreg<1xi32>, !pto.ptr<i32, ub>
+    return
+  }
+  // CHECK-LABEL: func.func @compact_reduce_i32_2
+  // CHECK: pto.vc{{g?}}add
+  // CHECK: pto.vc{{g?}}max
+  // CHECK: pto.vc{{g?}}min
+  func.func @compact_reduce_i32_2(%src: !pto.ptr<i32, ub>, %dst: !pto.ptr<i32, ub>, %active: index) {
+    %c0 = arith.constant 0 : index
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<i32, ub> -> !pto.vmi.vreg<2xi32>
+    %m = pto.vmi.create_mask %active : index -> !pto.vmi.mask<2xpred>
+    %r0 = pto.vmi.vcadd %x, %m {group = 1, reassoc} : !pto.vmi.vreg<2xi32>, !pto.vmi.mask<2xpred> -> !pto.vmi.vreg<1xi32>
+    %b0 = pto.vmi.vbrc %r0 : !pto.vmi.vreg<1xi32> -> !pto.vmi.vreg<2xi32>
+    %o0 = arith.constant 0 : index
+    pto.vmi.vstore %b0, %dst[%o0] : !pto.vmi.vreg<2xi32>, !pto.ptr<i32, ub>
+    %r1 = pto.vmi.vcmax %x, %m {group = 1} : !pto.vmi.vreg<2xi32>, !pto.vmi.mask<2xpred> -> !pto.vmi.vreg<1xi32>
+    %b1 = pto.vmi.vbrc %r1 : !pto.vmi.vreg<1xi32> -> !pto.vmi.vreg<2xi32>
+    %o1 = arith.constant 256 : index
+    pto.vmi.vstore %b1, %dst[%o1] : !pto.vmi.vreg<2xi32>, !pto.ptr<i32, ub>
+    %r2 = pto.vmi.vcmin %x, %m {group = 1} : !pto.vmi.vreg<2xi32>, !pto.vmi.mask<2xpred> -> !pto.vmi.vreg<1xi32>
+    %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xi32> -> !pto.vmi.vreg<2xi32>
+    %o2 = arith.constant 512 : index
+    pto.vmi.vstore %b2, %dst[%o2] : !pto.vmi.vreg<2xi32>, !pto.ptr<i32, ub>
+    return
+  }
+  // CHECK-LABEL: func.func @compact_reduce_i32_4
+  // CHECK: pto.vc{{g?}}add
+  // CHECK: pto.vc{{g?}}max
+  // CHECK: pto.vc{{g?}}min
+  func.func @compact_reduce_i32_4(%src: !pto.ptr<i32, ub>, %dst: !pto.ptr<i32, ub>, %active: index) {
+    %c0 = arith.constant 0 : index
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<i32, ub> -> !pto.vmi.vreg<4xi32>
+    %m = pto.vmi.create_mask %active : index -> !pto.vmi.mask<4xpred>
+    %r0 = pto.vmi.vcadd %x, %m {group = 1, reassoc} : !pto.vmi.vreg<4xi32>, !pto.vmi.mask<4xpred> -> !pto.vmi.vreg<1xi32>
+    %b0 = pto.vmi.vbrc %r0 : !pto.vmi.vreg<1xi32> -> !pto.vmi.vreg<4xi32>
+    %o0 = arith.constant 0 : index
+    pto.vmi.vstore %b0, %dst[%o0] : !pto.vmi.vreg<4xi32>, !pto.ptr<i32, ub>
+    %r1 = pto.vmi.vcmax %x, %m {group = 1} : !pto.vmi.vreg<4xi32>, !pto.vmi.mask<4xpred> -> !pto.vmi.vreg<1xi32>
+    %b1 = pto.vmi.vbrc %r1 : !pto.vmi.vreg<1xi32> -> !pto.vmi.vreg<4xi32>
+    %o1 = arith.constant 256 : index
+    pto.vmi.vstore %b1, %dst[%o1] : !pto.vmi.vreg<4xi32>, !pto.ptr<i32, ub>
+    %r2 = pto.vmi.vcmin %x, %m {group = 1} : !pto.vmi.vreg<4xi32>, !pto.vmi.mask<4xpred> -> !pto.vmi.vreg<1xi32>
+    %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xi32> -> !pto.vmi.vreg<4xi32>
+    %o2 = arith.constant 512 : index
+    pto.vmi.vstore %b2, %dst[%o2] : !pto.vmi.vreg<4xi32>, !pto.ptr<i32, ub>
+    return
+  }
+  // CHECK-LABEL: func.func @compact_reduce_i32_8
+  // CHECK: pto.vc{{g?}}add
+  // CHECK: pto.vc{{g?}}max
+  // CHECK: pto.vc{{g?}}min
+  func.func @compact_reduce_i32_8(%src: !pto.ptr<i32, ub>, %dst: !pto.ptr<i32, ub>, %active: index) {
+    %c0 = arith.constant 0 : index
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<i32, ub> -> !pto.vmi.vreg<8xi32>
+    %m = pto.vmi.create_mask %active : index -> !pto.vmi.mask<8xpred>
+    %r0 = pto.vmi.vcadd %x, %m {group = 1, reassoc} : !pto.vmi.vreg<8xi32>, !pto.vmi.mask<8xpred> -> !pto.vmi.vreg<1xi32>
+    %b0 = pto.vmi.vbrc %r0 : !pto.vmi.vreg<1xi32> -> !pto.vmi.vreg<8xi32>
+    %o0 = arith.constant 0 : index
+    pto.vmi.vstore %b0, %dst[%o0] : !pto.vmi.vreg<8xi32>, !pto.ptr<i32, ub>
+    %r1 = pto.vmi.vcmax %x, %m {group = 1} : !pto.vmi.vreg<8xi32>, !pto.vmi.mask<8xpred> -> !pto.vmi.vreg<1xi32>
+    %b1 = pto.vmi.vbrc %r1 : !pto.vmi.vreg<1xi32> -> !pto.vmi.vreg<8xi32>
+    %o1 = arith.constant 256 : index
+    pto.vmi.vstore %b1, %dst[%o1] : !pto.vmi.vreg<8xi32>, !pto.ptr<i32, ub>
+    %r2 = pto.vmi.vcmin %x, %m {group = 1} : !pto.vmi.vreg<8xi32>, !pto.vmi.mask<8xpred> -> !pto.vmi.vreg<1xi32>
+    %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xi32> -> !pto.vmi.vreg<8xi32>
+    %o2 = arith.constant 512 : index
+    pto.vmi.vstore %b2, %dst[%o2] : !pto.vmi.vreg<8xi32>, !pto.ptr<i32, ub>
+    return
+  }
+  // CHECK-LABEL: func.func @compact_reduce_f16_1
+  // CHECK: pto.vc{{g?}}add
+  // CHECK: pto.vc{{g?}}max
+  // CHECK: pto.vc{{g?}}min
+  func.func @compact_reduce_f16_1(%src: !pto.ptr<f16, ub>, %dst: !pto.ptr<f16, ub>, %active: index) {
+    %c0 = arith.constant 0 : index
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<1xf16>
+    %m = pto.vmi.create_mask %active : index -> !pto.vmi.mask<1xpred>
+    %r0 = pto.vmi.vcadd %x, %m {group = 1, reassoc} : !pto.vmi.vreg<1xf16>, !pto.vmi.mask<1xpred> -> !pto.vmi.vreg<1xf16>
+    %b0 = pto.vmi.vbrc %r0 : !pto.vmi.vreg<1xf16> -> !pto.vmi.vreg<1xf16>
+    %o0 = arith.constant 0 : index
+    pto.vmi.vstore %b0, %dst[%o0] : !pto.vmi.vreg<1xf16>, !pto.ptr<f16, ub>
+    %r1 = pto.vmi.vcmax %x, %m {group = 1} : !pto.vmi.vreg<1xf16>, !pto.vmi.mask<1xpred> -> !pto.vmi.vreg<1xf16>
+    %b1 = pto.vmi.vbrc %r1 : !pto.vmi.vreg<1xf16> -> !pto.vmi.vreg<1xf16>
+    %o1 = arith.constant 256 : index
+    pto.vmi.vstore %b1, %dst[%o1] : !pto.vmi.vreg<1xf16>, !pto.ptr<f16, ub>
+    %r2 = pto.vmi.vcmin %x, %m {group = 1} : !pto.vmi.vreg<1xf16>, !pto.vmi.mask<1xpred> -> !pto.vmi.vreg<1xf16>
+    %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xf16> -> !pto.vmi.vreg<1xf16>
+    %o2 = arith.constant 512 : index
+    pto.vmi.vstore %b2, %dst[%o2] : !pto.vmi.vreg<1xf16>, !pto.ptr<f16, ub>
+    return
+  }
+  // CHECK-LABEL: func.func @compact_reduce_f16_2
+  // CHECK: pto.vc{{g?}}add
+  // CHECK: pto.vc{{g?}}max
+  // CHECK: pto.vc{{g?}}min
+  func.func @compact_reduce_f16_2(%src: !pto.ptr<f16, ub>, %dst: !pto.ptr<f16, ub>, %active: index) {
+    %c0 = arith.constant 0 : index
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<2xf16>
+    %m = pto.vmi.create_mask %active : index -> !pto.vmi.mask<2xpred>
+    %r0 = pto.vmi.vcadd %x, %m {group = 1, reassoc} : !pto.vmi.vreg<2xf16>, !pto.vmi.mask<2xpred> -> !pto.vmi.vreg<1xf16>
+    %b0 = pto.vmi.vbrc %r0 : !pto.vmi.vreg<1xf16> -> !pto.vmi.vreg<2xf16>
+    %o0 = arith.constant 0 : index
+    pto.vmi.vstore %b0, %dst[%o0] : !pto.vmi.vreg<2xf16>, !pto.ptr<f16, ub>
+    %r1 = pto.vmi.vcmax %x, %m {group = 1} : !pto.vmi.vreg<2xf16>, !pto.vmi.mask<2xpred> -> !pto.vmi.vreg<1xf16>
+    %b1 = pto.vmi.vbrc %r1 : !pto.vmi.vreg<1xf16> -> !pto.vmi.vreg<2xf16>
+    %o1 = arith.constant 256 : index
+    pto.vmi.vstore %b1, %dst[%o1] : !pto.vmi.vreg<2xf16>, !pto.ptr<f16, ub>
+    %r2 = pto.vmi.vcmin %x, %m {group = 1} : !pto.vmi.vreg<2xf16>, !pto.vmi.mask<2xpred> -> !pto.vmi.vreg<1xf16>
+    %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xf16> -> !pto.vmi.vreg<2xf16>
+    %o2 = arith.constant 512 : index
+    pto.vmi.vstore %b2, %dst[%o2] : !pto.vmi.vreg<2xf16>, !pto.ptr<f16, ub>
+    return
+  }
+  // CHECK-LABEL: func.func @compact_reduce_f16_4
+  // CHECK: pto.vc{{g?}}add
+  // CHECK: pto.vc{{g?}}max
+  // CHECK: pto.vc{{g?}}min
+  func.func @compact_reduce_f16_4(%src: !pto.ptr<f16, ub>, %dst: !pto.ptr<f16, ub>, %active: index) {
+    %c0 = arith.constant 0 : index
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<4xf16>
+    %m = pto.vmi.create_mask %active : index -> !pto.vmi.mask<4xpred>
+    %r0 = pto.vmi.vcadd %x, %m {group = 1, reassoc} : !pto.vmi.vreg<4xf16>, !pto.vmi.mask<4xpred> -> !pto.vmi.vreg<1xf16>
+    %b0 = pto.vmi.vbrc %r0 : !pto.vmi.vreg<1xf16> -> !pto.vmi.vreg<4xf16>
+    %o0 = arith.constant 0 : index
+    pto.vmi.vstore %b0, %dst[%o0] : !pto.vmi.vreg<4xf16>, !pto.ptr<f16, ub>
+    %r1 = pto.vmi.vcmax %x, %m {group = 1} : !pto.vmi.vreg<4xf16>, !pto.vmi.mask<4xpred> -> !pto.vmi.vreg<1xf16>
+    %b1 = pto.vmi.vbrc %r1 : !pto.vmi.vreg<1xf16> -> !pto.vmi.vreg<4xf16>
+    %o1 = arith.constant 256 : index
+    pto.vmi.vstore %b1, %dst[%o1] : !pto.vmi.vreg<4xf16>, !pto.ptr<f16, ub>
+    %r2 = pto.vmi.vcmin %x, %m {group = 1} : !pto.vmi.vreg<4xf16>, !pto.vmi.mask<4xpred> -> !pto.vmi.vreg<1xf16>
+    %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xf16> -> !pto.vmi.vreg<4xf16>
+    %o2 = arith.constant 512 : index
+    pto.vmi.vstore %b2, %dst[%o2] : !pto.vmi.vreg<4xf16>, !pto.ptr<f16, ub>
+    return
+  }
+  // CHECK-LABEL: func.func @compact_reduce_f16_8
+  // CHECK: pto.vc{{g?}}add
+  // CHECK: pto.vc{{g?}}max
+  // CHECK: pto.vc{{g?}}min
+  func.func @compact_reduce_f16_8(%src: !pto.ptr<f16, ub>, %dst: !pto.ptr<f16, ub>, %active: index) {
+    %c0 = arith.constant 0 : index
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<8xf16>
+    %m = pto.vmi.create_mask %active : index -> !pto.vmi.mask<8xpred>
+    %r0 = pto.vmi.vcadd %x, %m {group = 1, reassoc} : !pto.vmi.vreg<8xf16>, !pto.vmi.mask<8xpred> -> !pto.vmi.vreg<1xf16>
+    %b0 = pto.vmi.vbrc %r0 : !pto.vmi.vreg<1xf16> -> !pto.vmi.vreg<8xf16>
+    %o0 = arith.constant 0 : index
+    pto.vmi.vstore %b0, %dst[%o0] : !pto.vmi.vreg<8xf16>, !pto.ptr<f16, ub>
+    %r1 = pto.vmi.vcmax %x, %m {group = 1} : !pto.vmi.vreg<8xf16>, !pto.vmi.mask<8xpred> -> !pto.vmi.vreg<1xf16>
+    %b1 = pto.vmi.vbrc %r1 : !pto.vmi.vreg<1xf16> -> !pto.vmi.vreg<8xf16>
+    %o1 = arith.constant 256 : index
+    pto.vmi.vstore %b1, %dst[%o1] : !pto.vmi.vreg<8xf16>, !pto.ptr<f16, ub>
+    %r2 = pto.vmi.vcmin %x, %m {group = 1} : !pto.vmi.vreg<8xf16>, !pto.vmi.mask<8xpred> -> !pto.vmi.vreg<1xf16>
+    %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xf16> -> !pto.vmi.vreg<8xf16>
+    %o2 = arith.constant 512 : index
+    pto.vmi.vstore %b2, %dst[%o2] : !pto.vmi.vreg<8xf16>, !pto.ptr<f16, ub>
+    return
+  }
+  // CHECK-LABEL: func.func @compact_reduce_f32_1
+  // CHECK: pto.vc{{g?}}add
+  // CHECK: pto.vc{{g?}}max
+  // CHECK: pto.vc{{g?}}min
+  func.func @compact_reduce_f32_1(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>, %active: index) {
+    %c0 = arith.constant 0 : index
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<1xf32>
+    %m = pto.vmi.create_mask %active : index -> !pto.vmi.mask<1xpred>
+    %r0 = pto.vmi.vcadd %x, %m {group = 1, reassoc} : !pto.vmi.vreg<1xf32>, !pto.vmi.mask<1xpred> -> !pto.vmi.vreg<1xf32>
+    %b0 = pto.vmi.vbrc %r0 : !pto.vmi.vreg<1xf32> -> !pto.vmi.vreg<1xf32>
+    %o0 = arith.constant 0 : index
+    pto.vmi.vstore %b0, %dst[%o0] : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>
+    %r1 = pto.vmi.vcmax %x, %m {group = 1} : !pto.vmi.vreg<1xf32>, !pto.vmi.mask<1xpred> -> !pto.vmi.vreg<1xf32>
+    %b1 = pto.vmi.vbrc %r1 : !pto.vmi.vreg<1xf32> -> !pto.vmi.vreg<1xf32>
+    %o1 = arith.constant 256 : index
+    pto.vmi.vstore %b1, %dst[%o1] : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>
+    %r2 = pto.vmi.vcmin %x, %m {group = 1} : !pto.vmi.vreg<1xf32>, !pto.vmi.mask<1xpred> -> !pto.vmi.vreg<1xf32>
+    %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xf32> -> !pto.vmi.vreg<1xf32>
+    %o2 = arith.constant 512 : index
+    pto.vmi.vstore %b2, %dst[%o2] : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>
+    return
+  }
+  // CHECK-LABEL: func.func @compact_reduce_f32_2
+  // CHECK: pto.vc{{g?}}add
+  // CHECK: pto.vc{{g?}}max
+  // CHECK: pto.vc{{g?}}min
+  func.func @compact_reduce_f32_2(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>, %active: index) {
+    %c0 = arith.constant 0 : index
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<2xf32>
+    %m = pto.vmi.create_mask %active : index -> !pto.vmi.mask<2xpred>
+    %r0 = pto.vmi.vcadd %x, %m {group = 1, reassoc} : !pto.vmi.vreg<2xf32>, !pto.vmi.mask<2xpred> -> !pto.vmi.vreg<1xf32>
+    %b0 = pto.vmi.vbrc %r0 : !pto.vmi.vreg<1xf32> -> !pto.vmi.vreg<2xf32>
+    %o0 = arith.constant 0 : index
+    pto.vmi.vstore %b0, %dst[%o0] : !pto.vmi.vreg<2xf32>, !pto.ptr<f32, ub>
+    %r1 = pto.vmi.vcmax %x, %m {group = 1} : !pto.vmi.vreg<2xf32>, !pto.vmi.mask<2xpred> -> !pto.vmi.vreg<1xf32>
+    %b1 = pto.vmi.vbrc %r1 : !pto.vmi.vreg<1xf32> -> !pto.vmi.vreg<2xf32>
+    %o1 = arith.constant 256 : index
+    pto.vmi.vstore %b1, %dst[%o1] : !pto.vmi.vreg<2xf32>, !pto.ptr<f32, ub>
+    %r2 = pto.vmi.vcmin %x, %m {group = 1} : !pto.vmi.vreg<2xf32>, !pto.vmi.mask<2xpred> -> !pto.vmi.vreg<1xf32>
+    %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xf32> -> !pto.vmi.vreg<2xf32>
+    %o2 = arith.constant 512 : index
+    pto.vmi.vstore %b2, %dst[%o2] : !pto.vmi.vreg<2xf32>, !pto.ptr<f32, ub>
+    return
+  }
+  // CHECK-LABEL: func.func @compact_reduce_f32_4
+  // CHECK: pto.vc{{g?}}add
+  // CHECK: pto.vc{{g?}}max
+  // CHECK: pto.vc{{g?}}min
+  func.func @compact_reduce_f32_4(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>, %active: index) {
+    %c0 = arith.constant 0 : index
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<4xf32>
+    %m = pto.vmi.create_mask %active : index -> !pto.vmi.mask<4xpred>
+    %r0 = pto.vmi.vcadd %x, %m {group = 1, reassoc} : !pto.vmi.vreg<4xf32>, !pto.vmi.mask<4xpred> -> !pto.vmi.vreg<1xf32>
+    %b0 = pto.vmi.vbrc %r0 : !pto.vmi.vreg<1xf32> -> !pto.vmi.vreg<4xf32>
+    %o0 = arith.constant 0 : index
+    pto.vmi.vstore %b0, %dst[%o0] : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>
+    %r1 = pto.vmi.vcmax %x, %m {group = 1} : !pto.vmi.vreg<4xf32>, !pto.vmi.mask<4xpred> -> !pto.vmi.vreg<1xf32>
+    %b1 = pto.vmi.vbrc %r1 : !pto.vmi.vreg<1xf32> -> !pto.vmi.vreg<4xf32>
+    %o1 = arith.constant 256 : index
+    pto.vmi.vstore %b1, %dst[%o1] : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>
+    %r2 = pto.vmi.vcmin %x, %m {group = 1} : !pto.vmi.vreg<4xf32>, !pto.vmi.mask<4xpred> -> !pto.vmi.vreg<1xf32>
+    %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xf32> -> !pto.vmi.vreg<4xf32>
+    %o2 = arith.constant 512 : index
+    pto.vmi.vstore %b2, %dst[%o2] : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>
+    return
+  }
+  // CHECK-LABEL: func.func @compact_reduce_f32_8
+  // CHECK: pto.vc{{g?}}add
+  // CHECK: pto.vc{{g?}}max
+  // CHECK: pto.vc{{g?}}min
+  func.func @compact_reduce_f32_8(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>, %active: index) {
+    %c0 = arith.constant 0 : index
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
+    %m = pto.vmi.create_mask %active : index -> !pto.vmi.mask<8xpred>
+    %r0 = pto.vmi.vcadd %x, %m {group = 1, reassoc} : !pto.vmi.vreg<8xf32>, !pto.vmi.mask<8xpred> -> !pto.vmi.vreg<1xf32>
+    %b0 = pto.vmi.vbrc %r0 : !pto.vmi.vreg<1xf32> -> !pto.vmi.vreg<8xf32>
+    %o0 = arith.constant 0 : index
+    pto.vmi.vstore %b0, %dst[%o0] : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+    %r1 = pto.vmi.vcmax %x, %m {group = 1} : !pto.vmi.vreg<8xf32>, !pto.vmi.mask<8xpred> -> !pto.vmi.vreg<1xf32>
+    %b1 = pto.vmi.vbrc %r1 : !pto.vmi.vreg<1xf32> -> !pto.vmi.vreg<8xf32>
+    %o1 = arith.constant 256 : index
+    pto.vmi.vstore %b1, %dst[%o1] : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+    %r2 = pto.vmi.vcmin %x, %m {group = 1} : !pto.vmi.vreg<8xf32>, !pto.vmi.mask<8xpred> -> !pto.vmi.vreg<1xf32>
+    %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xf32> -> !pto.vmi.vreg<8xf32>
+    %o2 = arith.constant 512 : index
+    pto.vmi.vstore %b2, %dst[%o2] : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+    return
+  }
+}

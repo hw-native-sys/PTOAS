@@ -16,6 +16,267 @@ struct OneToNVMIGroupReduceOpPattern : OneToNOpConversionPattern<OpTy> {
   using OneToNOpConversionPattern<OpTy>::OneToNOpConversionPattern;
 
 private:
+  int64_t getCompactIntegerIdentity(IntegerType type) const {
+    unsigned width = type.getWidth();
+    if constexpr (std::is_same_v<OpTy, VMIGroupReduceMaxIOp>) {
+      return type.isSigned() ? APInt::getSignedMinValue(width).getSExtValue()
+                             : 0;
+    }
+    if constexpr (std::is_same_v<OpTy, VMIGroupReduceMinIOp>) {
+      return type.isSigned() ? APInt::getSignedMaxValue(width).getSExtValue()
+                             : APInt::getMaxValue(width).getZExtValue();
+    }
+    return 0;
+  }
+
+  FailureOr<std::pair<Value, Value>> prepareCompactReduction(
+      OpTy op, Value source, Value mask, int64_t partIndex,
+      OneToNPatternRewriter &rewriter) const {
+    auto sourceType = cast<VRegType>(source.getType());
+    auto elementType = dyn_cast<IntegerType>(sourceType.getElementType());
+    bool needsWidening = elementType && elementType.getWidth() == mlir::pto::kValue8;
+    if (!needsWidening) {
+      return std::make_pair(source, mask);
+    }
+    // Widen each half inside the instruction lowering, without changing the
+    // logical VMI value's one-carrier layout.
+    auto wideElementType = IntegerType::get(
+        rewriter.getContext(), mlir::pto::kValue16,
+        elementType.isSigned() ? IntegerType::SignednessSemantics::Signed
+                               : IntegerType::SignednessSemantics::Unsigned);
+    auto wideType = VRegType::get(rewriter.getContext(),
+                                  sourceType.getElementCount() / mlir::pto::kValue2,
+                                  wideElementType);
+    Value part = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), partIndex);
+    Value extended = elementType.isSigned()
+                         ? rewriter.create<VsunpackOp>(op.getLoc(), wideType,
+                                                       source, part).getResult()
+                         : rewriter.create<VzunpackOp>(op.getLoc(), wideType,
+                                                       source, part).getResult();
+    auto wideMaskType = MaskType::get(rewriter.getContext(), "b16");
+    Value wideMask = rewriter.create<PunpackOp>(
+        op.getLoc(), wideMaskType, mask,
+        rewriter.getStringAttr(partIndex == 0 ? "LOWER" : "HIGHER"));
+    if constexpr (std::is_same_v<OpTy, VMIGroupReduceAddIOp>) {
+      // Add has the same zero identity before and after extension.
+      return std::make_pair(extended, wideMask);
+    }
+    FailureOr<Value> allMask = createAllTrueMask(op.getLoc(), wideMaskType, rewriter);
+    FailureOr<Value> identity = createScalarOffsetConstant(
+        op.getLoc(), rewriter.getI16Type(), getCompactIntegerIdentity(elementType), rewriter);
+    bool failedMaterialization = failed(allMask) || failed(identity);
+    if (failedMaterialization) {
+      return failure();
+    }
+    // Fill inactive lanes with the original element type's identity. Using
+    // the widened type's extrema would change an empty signed min/max group
+    // when its result is narrowed back to eight bits.
+    Value neutral = rewriter.create<VdupOp>(op.getLoc(), wideType, *identity,
+                                           *allMask, /*position=*/nullptr);
+    Value selected = rewriter.create<VselOp>(op.getLoc(), wideType, extended,
+                                            neutral, wideMask);
+    return std::make_pair(selected, *allMask);
+  }
+
+  LogicalResult lowerSingletonGroups(
+      OpTy op, Value source, Value mask, VRegType resultType,
+      OneToNPatternRewriter &rewriter) const {
+    auto elementType = cast<IntegerType>(resultType.getElementType());
+    auto scalarType = rewriter.getIntegerType(elementType.getWidth());
+    FailureOr<Value> identity = createScalarOffsetConstant(
+        op.getLoc(), scalarType, getCompactIntegerIdentity(elementType), rewriter);
+    FailureOr<Value> allMask = createAllTrueMaskForVReg(
+        op.getLoc(), resultType, rewriter);
+    if (failed(identity) || failed(allMask)) {
+      return failure();
+    }
+    Value neutral = rewriter.create<VdupOp>(op.getLoc(), resultType, *identity,
+                                           *allMask, /*position=*/nullptr);
+    Value selected = rewriter.create<VselOp>(op.getLoc(), resultType, source,
+                                            neutral, mask);
+    replaceOpWithFlatConvertedValues(rewriter, op, ValueRange{selected},
+                                     *this->getTypeConverter());
+    return success();
+  }
+
+  FailureOr<Value> reduceCompactPart(
+      OpTy op, std::pair<Value, Value> input, int64_t begin, int64_t end,
+      OneToNPatternRewriter &rewriter) const {
+    auto sourceType = cast<VRegType>(input.first.getType());
+    auto maskType = cast<MaskType>(input.second.getType());
+    Value active = input.second;
+    if (begin != 0 || end != sourceType.getElementCount()) {
+      FailureOr<Value> groupMask = createLaneRangeMask(
+          op.getLoc(), maskType, begin, end, rewriter);
+      FailureOr<Value> allMask = createAllTrueMask(op.getLoc(), maskType, rewriter);
+      if (failed(groupMask) || failed(allMask)) {
+        return failure();
+      }
+      active = rewriter.create<PandOp>(op.getLoc(), maskType, active,
+                                      *groupMask, *allMask);
+    }
+    FailureOr<VRegType> rowType = getRowResultType(sourceType, sourceType);
+    if (failed(rowType)) {
+      return failure();
+    }
+    return rewriter.create<RowReduceOpTy>(op.getLoc(), *rowType,
+                                          input.first, active).getResult();
+  }
+
+  FailureOr<Value> buildCompactGroupResult(
+      OpTy op, ArrayRef<std::pair<Value, Value>> inputs, VRegType resultType,
+      int64_t group, int64_t groupSize,
+      OneToNPatternRewriter &rewriter) const {
+    int64_t lanes = cast<VRegType>(inputs.front().first.getType()).getElementCount();
+    Value reduced;
+    for (auto [index, input] : llvm::enumerate(inputs)) {
+      int64_t partBegin = static_cast<int64_t>(index) * lanes;
+      int64_t begin = std::max<int64_t>(0, group * groupSize - partBegin);
+      int64_t end = std::min<int64_t>(lanes, (group + 1) * groupSize - partBegin);
+      if (begin >= end) {
+        continue;
+      }
+      FailureOr<Value> partial = reduceCompactPart(op, input, begin, end, rewriter);
+      if (failed(partial)) {
+        return failure();
+      }
+      if (!reduced) {
+        reduced = *partial;
+        continue;
+      }
+      auto rowType = cast<VRegType>(reduced.getType());
+      FailureOr<MaskType> rowMaskType =
+          getMaskTypeForVReg(rowType, rewriter.getContext());
+      if (failed(rowMaskType)) {
+        return failure();
+      }
+      FailureOr<Value> firstLane = createPrefixMaskForActiveLanes(
+          op.getLoc(), *rowMaskType, 1, rewriter);
+      if (failed(firstLane)) {
+        return failure();
+      }
+      reduced = rewriter.create<CombineOpTy>(op.getLoc(), rowType, reduced,
+                                            *partial, *firstLane);
+    }
+    if (!reduced) {
+      return failure();
+    }
+    // A 16-bit integer vcadd also returns a 32-bit sum, typed by
+    // getRowResultType(). Combine wide partials before taking the low bits.
+    // Only lane zero of this view is a logical group value; buildCompactPacket
+    // selects each later group's low lane into its own slot. Unlike VCG's
+    // eight simultaneous sums, this needs no per-register vpack.
+    return bitcastVReg(op.getLoc(), reduced, resultType, rewriter);
+  }
+
+  FailureOr<Value> buildCompactPacket(
+      OpTy op, ArrayRef<std::pair<Value, Value>> inputs, VRegType resultType,
+      MaskType resultMaskType, int64_t groupSize,
+      OneToNPatternRewriter &rewriter) const {
+    Value packet;
+    int64_t numGroups = op.getNumGroupsAttr().getInt();
+    for (int64_t group = 0; group < numGroups; ++group) {
+      FailureOr<Value> reduced = buildCompactGroupResult(
+          op, inputs, resultType, group, groupSize, rewriter);
+      if (failed(reduced)) {
+        return failure();
+      }
+      if (!packet) {
+        // Only slot zero is live initially: no broadcast or slot mask needed.
+        packet = *reduced;
+        continue;
+      }
+      FailureOr<Value> slotMask = createLaneRangeMask(
+          op.getLoc(), resultMaskType, group, group + 1, rewriter);
+      if (failed(slotMask)) {
+        return failure();
+      }
+      Value splat = rewriter.create<VdupOp>(
+          op.getLoc(), resultType, *reduced, *slotMask,
+          rewriter.getStringAttr("LOWEST"));
+      packet = rewriter.create<VselOp>(op.getLoc(), resultType, splat,
+                                       packet, *slotMask);
+    }
+    return packet;
+  }
+
+  LogicalResult lowerCompactRows(
+      OpTy op, ValueRange sourceParts, ValueRange maskParts,
+      TypeRange resultTypes, int64_t groupSize,
+      OneToNPatternRewriter &rewriter) const {
+    bool invalidArity = sourceParts.size() != 1 || maskParts.size() != 1 ||
+                        resultTypes.size() != 1;
+    if (invalidArity) {
+      return rewriter.notifyMatchFailure(
+          op, "compact group_reduce requires one physical source and result");
+    }
+    auto resultType = cast<VRegType>(resultTypes.front());
+    if (groupSize == 1 && isa<IntegerType>(resultType.getElementType())) {
+      return lowerSingletonGroups(op, sourceParts.front(), maskParts.front(),
+                                   resultType, rewriter);
+    }
+    auto logicalType = cast<VMIVRegType>(op.getSource().getType());
+    auto integerType = dyn_cast<IntegerType>(logicalType.getElementType());
+    bool twoWideParts = integerType && integerType.getWidth() == mlir::pto::kValue8 &&
+                        logicalType.getElementCount() > mlir::pto::kValue128;
+    SmallVector<std::pair<Value, Value>, 2> inputs;
+    for (int64_t part = 0; part < (twoWideParts ? 2 : 1); ++part) {
+      auto input = prepareCompactReduction(op, sourceParts.front(),
+                                           maskParts.front(), part, rewriter);
+      if (failed(input)) {
+        return failure();
+      }
+      inputs.push_back(*input);
+    }
+    FailureOr<MaskType> resultMaskType =
+        getMaskTypeForVReg(resultType, rewriter.getContext());
+    if (failed(resultMaskType)) {
+      return failure();
+    }
+    FailureOr<Value> packet = buildCompactPacket(
+        op, inputs, resultType, *resultMaskType, groupSize, rewriter);
+    if (failed(packet)) {
+      return failure();
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, ValueRange{*packet},
+                                     *this->getTypeConverter());
+    return success();
+  }
+
+  Value createNativeGroupResult(OpTy op, VRegType resultType, Value source,
+                                Value mask, OneToNPatternRewriter &rewriter) const {
+    Value reduced = rewriter.create<GroupReduceOpTy>(op.getLoc(), resultType,
+                                                    source, mask);
+    if constexpr (std::is_same_v<OpTy, VMIGroupReduceAddIOp>) {
+      auto elementType = cast<IntegerType>(resultType.getElementType());
+      if (elementType.getWidth() == mlir::pto::kValue16) {
+        // A5 VCG integer addition returns eight 32-bit sums. Restore the
+        // declared 16-bit group slots by truncating each sum, not by reading
+        // alternating low/high halves as distinct logical groups.
+        // VCG max/min retain 16-bit values and need no such narrowing.
+        // Compact vcadd also widens, but builds its packet one scalar at a
+        // time (see buildCompactGroupResult). Keep gs(8) here; exposing raw
+        // gs(8, 2) results requires a separate consumer-layout audit, described
+        // in docs/isa/vmi-isa/05-reduce.md.
+        auto wideElementType = IntegerType::get(
+            rewriter.getContext(), mlir::pto::kValue32,
+            IntegerType::SignednessSemantics::Unsigned);
+        auto wideType = VRegType::get(
+            rewriter.getContext(), resultType.getElementCount() / 2,
+            wideElementType);
+        Value wide = rewriter.create<VbitcastOp>(op.getLoc(), wideType, reduced);
+        auto packedType = VRegType::get(
+            rewriter.getContext(), resultType.getElementCount(),
+            IntegerType::get(rewriter.getContext(), mlir::pto::kValue16,
+                             IntegerType::SignednessSemantics::Unsigned));
+        Value packed = rewriter.create<VpackOp>(op.getLoc(), packedType, wide,
+                                                rewriter.getStringAttr("LOWER"));
+        return rewriter.create<VbitcastOp>(op.getLoc(), resultType, packed);
+      }
+    }
+    return reduced;
+  }
+
   FailureOr<Value> buildOneBlockGroupResult(
       OpTy op, Value sourcePart, Value maskPart, Type resultType,
       VRegType expectedResultType, MaskType expectedMaskType,
@@ -27,10 +288,8 @@ private:
       return rewriter->notifyMatchFailure(
           op, "vcg group_reduce path requires uniform physical chunk types");
     }
-    return rewriter
-        ->create<GroupReduceOpTy>(op.getLoc(), expectedResultType, sourcePart,
-                                 maskPart)
-        .getResult();
+    return createNativeGroupResult(op, expectedResultType, sourcePart,
+                                   maskPart, *rewriter);
   }
 
   LogicalResult lowerOneBlock(
@@ -90,14 +349,8 @@ private:
       return rewriter.notifyMatchFailure(
           op, "failed to create two-block group_reduce combine mask");
     }
-    Value lo = rewriter
-                   .create<GroupReduceOpTy>(op.getLoc(), resultType, loSource,
-                                            loMask)
-                   .getResult();
-    Value hi = rewriter
-                   .create<GroupReduceOpTy>(op.getLoc(), resultType, hiSource,
-                                            hiMask)
-                   .getResult();
+    Value lo = createNativeGroupResult(op, resultType, loSource, loMask, rewriter);
+    Value hi = createNativeGroupResult(op, resultType, hiSource, hiMask, rewriter);
     return rewriter
         .create<CombineOpTy>(op.getLoc(), resultType, lo, hi, *combineMask)
         .getResult();
@@ -154,15 +407,18 @@ private:
     SmallVector<Value, mlir::pto::kValue4> partials;
     partials.reserve(mlir::pto::kValue4);
     for (int64_t part = 0; part < mlir::pto::kValue4; ++part) {
-        int64_t sourceIndex = part * resultPartCount + resultIndex;
-        Value source = sourceParts[sourceIndex];
-        Value mask = maskParts[sourceIndex];
-        bool mismatchedTypes =
-            resultTypes[resultIndex] != resultType || source.getType() != resultType || mask.getType() != maskType;
-        if (mismatchedTypes) {
-            return rewriter.notifyMatchFailure(op, "four-block group_reduce requires uniform physical types");
-        }
-        partials.push_back(rewriter.create<GroupReduceOpTy>(op.getLoc(), resultType, source, mask).getResult());
+      int64_t sourceIndex = part * resultPartCount + resultIndex;
+      Value source = sourceParts[sourceIndex];
+      Value mask = maskParts[sourceIndex];
+      bool mismatchedTypes = resultTypes[resultIndex] != resultType ||
+                             source.getType() != resultType ||
+                             mask.getType() != maskType;
+      if (mismatchedTypes) {
+        return rewriter.notifyMatchFailure(
+            op, "four-block group_reduce requires uniform physical types");
+      }
+      partials.push_back(
+          createNativeGroupResult(op, resultType, source, mask, rewriter));
     }
     Value sum01 = rewriter
                       .create<CombineOpTy>(op.getLoc(), resultType, partials[0],
@@ -709,6 +965,9 @@ private:
       OneToNPatternRewriter &rewriter) const {
     int64_t numGroups = op.getNumGroupsAttr().getInt();
     switch (plan) {
+    case GroupReduceLoweringPlan::CompactMaskedRows:
+      return lowerCompactRows(op, sourceParts, maskParts, resultTypes,
+                               groupSize, rewriter);
     case GroupReduceLoweringPlan::OneBlockVcgadd:
       return lowerOneBlock(op, sourceParts, maskParts, resultTypes, rewriter);
     case GroupReduceLoweringPlan::TwoBlockDeinterleaved2VcgaddVadd:
@@ -768,6 +1027,7 @@ private:
 
   ;
 };
+
 
 struct OneToNVMIGroupBroadcastOpPattern
     : OneToNOpConversionPattern<VMIGroupBroadcastOp> {
@@ -1211,6 +1471,49 @@ private:
     return success();
   }
 
+  /// Dense lane-stride widening plan.  `applies` is set when each declared
+  /// layout describes the same carrier as its dense lane-strided form, and
+  /// `part` is then the vcvt part that selects the source lanes.  Planning from
+  /// the carrier view of a single-carrier group-slot packet -- rather than from
+  /// its declared form -- is what lets a packet source or result take the same
+  /// one-vcvt plan as its dense counterpart, with the physical part forwarded
+  /// unchanged and no pack, zip or shuffle implied.
+  struct ExtFDenseLaneStridePlan {
+    bool applies = false;
+    StringRef part;
+  };
+
+  static ExtFDenseLaneStridePlan buildDenseLaneStridePlan(
+      const ExtFPhysicalPlan &plan, VMILayoutAttr sourceLayout,
+      VMILayoutAttr resultLayout, size_t sourcePartCount) {
+    unsigned sourceBits =
+        pto::getPTOStorageElemBitWidth(plan.sourceType.getElementType());
+    VMILayoutAttr sourceView = getVMICastDenseCarrierView(
+        sourceLayout, plan.sourceType.getElementType());
+    VMILayoutAttr resultView = getVMICastDenseCarrierView(
+        resultLayout, plan.resultTypes.front().getElementType());
+    int64_t widenFactor = 0;
+    if (sourceBits == kElementBits16) {
+      widenFactor = kPairWidth;
+    } else if (sourceBits == kElementBits8) {
+      widenFactor = kQuadWidth;
+    }
+    // A packet that keeps one group per part (slots = 1) only fills lane 0,
+    // which every part family maps to result lane 0, so it widens 1:1 per part
+    // like the dense lane-strided form.
+    bool sourceSelectsLanes =
+        sourceView && widenFactor != 0 &&
+        (sourceView.getLaneStride() == widenFactor ||
+         isVMISingleGroupPerPartPacket(sourceLayout));
+    bool applies = sourceView && resultView && sourceView.isContiguous() &&
+                   resultView.isContiguous() &&
+                   resultView.getLaneStride() == 1 && sourceSelectsLanes &&
+                   plan.resultTypes.size() == sourcePartCount;
+    StringRef part =
+        sourceBits == kElementBits16 ? StringRef("EVEN") : StringRef("P0");
+    return ExtFDenseLaneStridePlan{applies, part};
+  }
+
   struct ExtFFactorPlan {
     ArrayRef<StringRef> parts;
     int64_t factor;
@@ -1254,20 +1557,16 @@ private:
     // physical-noop VbitcastOp, mirroring the source-side reinterpret in
     // OneToNVMITruncFOpPattern (viewVcvtSource).
     ResultViewPlan viewPlan = buildResultViewPlan(plan.resultTypes, rewriter);
-    bool denseLaneStrideExtension =
-        sourceLayout && resultLayout && sourceLayout.isContiguous() &&
-        resultLayout.isContiguous() && resultLayout.getLaneStride() == 1 &&
-        ((sourceBits == 16 && sourceLayout.getLaneStride() == 2) ||
-         (sourceBits == 8 && sourceLayout.getLaneStride() == 4)) &&
-        plan.resultTypes.size() == sourceParts.size();
-    if (denseLaneStrideExtension) {
-      StringRef part = sourceBits == 16 ? StringRef("EVEN") : StringRef("P0");
+    ExtFDenseLaneStridePlan laneStridePlan =
+        buildDenseLaneStridePlan(plan, sourceLayout, resultLayout,
+                                 sourceParts.size());
+    if (laneStridePlan.applies) {
       FailureOr<Value> mask = createSeedMask(op, plan.sourceType, rewriter);
       if (failed(mask)) {
         return failure();
       }
       return lowerLaneStride(op, rewriter, sourceParts, plan.resultTypes, *mask,
-                             part, viewPlan.isPackedBF16x2,
+                             laneStridePlan.part, viewPlan.isPackedBF16x2,
                              viewPlan.vcvtResultType);
     }
 

@@ -39,7 +39,7 @@ struct PTOFillPadToEmitC : public OpConversionPattern<pto::TFillPadOp> {
       return failure();
     }
 
-    auto padValueTok = [&](pto::PadValue mode) -> StringRef {
+    auto padValueTok = [](pto::PadValue mode) -> StringRef {
       switch (mode) {
       case pto::PadValue::Null:
         return "pto::PadValue::Null";

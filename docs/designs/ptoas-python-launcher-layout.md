@@ -180,14 +180,95 @@ removed and the parked payload is put back. Failure semantics are uniform:
 
 Uninstall (`pto_uninstall_wheel`) mirrors `pypto`: it removes the full PTOAS
 payload — `ptoas/`, `ptodsl/`, `TileOps/`, `SoftOps/`, `ptoas.libs/`,
-`ptoas-*.dist-info`, and PTOAS's own console script in the shared `bin/` — drops
-the `<version>/bin/ptoas` symlink, deletes the interpreter record plus any
-staging or backup tree, and finally removes the `python/` tree itself when PTOAS
-was its last occupant. Sibling components in the shared site-packages are never
-touched: the empty-dir `rmdir` steps fail harmlessly while other components still
-own entries. The rpm/deb prerm hook falls back to an inline removal only when
+`ptoas-*.dist-info`, and PTOAS's own command in the shared `bin/` — drops the
+`<version>/bin/ptoas` symlink, deletes the interpreter record plus any staging or
+backup tree, and finally removes the `python/` tree itself when PTOAS was its
+last occupant. Sibling components in the shared site-packages are never touched:
+the empty-dir `rmdir` steps fail harmlessly while other components still own
+entries. The rpm/deb prerm hook falls back to an inline removal only when
 `pto_common.sh` is unreadable, and repeats the same name list there, including
 the legacy private tree.
+
+The shared command is matched in both of its forms. It is a symlink in the
+normal layout, but the console script that pip generates for the wheel lands in
+the same directory as a regular file, so every check and removal treats "exists
+or is a symlink" as present; a symlink test alone would miss an undeletable
+regular file and report the removal as successful.
+
+`pto_remove_site_payload` and `pto_uninstall_wheel` return non-zero when any of
+PTOAS's own entries survived, instead of reporting the status of whichever step
+ran last. Without that, a payload deletion that failed would be followed by the
+successful removal of the interpreter record and the caller would read the whole
+removal as successful. Both callers — `pto_uninstall.sh` and the rpm/deb prerm
+hook — propagate that status to their own callers.
+
+### Uninstall entry point
+
+The user-facing entry point `share/info/pto_as/script/uninstall.sh` (invoked
+directly, or through the toolkit's `cann_uninstall.sh`) hands the component
+installer the *version root* — the directory four levels above the script, i.e.
+`script -> pto_as -> info -> share -> <version>`. The component installer
+reconstructs the version directory from that argument and only honours the name
+it is given when the path itself already looks like a version directory
+(`is_version_dirpath`: it contains `share/info`). Passing the parent directory
+instead makes it fall back to the hardcoded default name `cann`, so an install
+whose version directory is called something else — the multi-version layout
+`<prefix>/cann-9.2.0/ascend-toolkit`, for example — would be looked up at
+`<parent>/cann`, found missing, and left completely in place; that branch also
+exits successfully, so the removal reports success while every file stays on
+disk.
+
+Two checks make that class of silent no-op impossible, because a removal must
+never be reported as successful while files are still installed:
+
+- The component installer propagates its own removal status, and its caller
+  exits with that status. Reporting the status of an unrelated log call instead
+  let a failed removal look successful.
+- Afterwards the entry point checks that none of the paths PTOAS owns still
+  exist — the component info tree, `tools/ptoas` (wheels, launcher and
+  interpreter record), the arch version header, the shared `site-packages`
+  payload and the command entry in either of its forms — and fails loudly naming
+  the first leftover, rather than trusting an exit status. Every path checked
+  belongs to PTOAS alone, so a sibling component sharing the version directory
+  cannot make the check fire.
+
+The cleaned-up skeleton is bounded by what the installer actually created. The
+installer records that list (`.ptoas-created-dirs` under `share/info/pto_as`)
+before it creates anything: it walks up from the version directory and stops at
+the first ancestor that already exists, so every recorded directory is one that
+did not exist before. Removal deletes exactly those entries and stops there —
+there is deliberately no walk up the tree. An unrelated empty directory such as
+`/data/team/Ascend` is therefore never a candidate even when it happens to be
+empty, which `rmdir` alone cannot distinguish from a directory the installer
+made.
+
+Removal sweeps the recorded list repeatedly until a pass removes nothing, rather
+than once in the order the file happens to be written, so a list that names an
+ancestor before its descendant still converges: the ancestor is not empty on the
+first pass and is empty on the next. The installer writes the list deepest first
+for the common case; the sweep is what makes the removal independent of that
+ordering, including for a record an earlier revision wrote the other way round.
+Only empty directories are ever removed by either path, so the first pass that
+finds nothing to do is the correct place to stop.
+
+Two details make that record trustworthy across the install lifecycle. Because
+the metadata directory is installed read-only, writing the record restores the
+owner write bit for the write and puts it back, and the outcome is checked —
+an unwritten record would silently disable the cleanup. Because a reinstall over
+an existing install creates no directories at all, its chain is empty and the
+previous record is carried forward, so the directories the *first* install
+created are not forgotten. The inner removal script reads the record from the
+module directory and derives the version root from it: in that script the path
+named `TARGET_VERSION_DIR` is the version directory's `share/info` subtree, not
+the version directory itself.
+
+The shared command is also checked and removed under both of its spellings:
+`<version>/bin/ptoas` and `<version>/<arch>-linux/bin/ptoas`. `<version>/bin` is
+a symlink into the architecture directory, and the link really lives in the
+latter, so looking only at the former would leave a dangling command link behind
+once the toolkit has torn the shared symlink down. Both directories are created
+read-only, so the write bit is restored per entry around its own parent
+directory rather than once for the shared path.
 
 ## Standalone Archive Layout
 

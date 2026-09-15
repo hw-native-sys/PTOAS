@@ -126,10 +126,10 @@ Value castIntegerLikeTo(Operation *anchor, Value value, Type targetType) {
   return {};
 }
 
-FailureOr<SmallVector<Value, 7>>
+FailureOr<SmallVector<Value, mlir::pto::kValue7>>
 castIntegerLikeOperands(Operation *anchor, ValueRange operands,
                         ArrayRef<unsigned> indices, Type targetType) {
-  SmallVector<Value, 7> converted;
+  SmallVector<Value, mlir::pto::kValue7> converted;
   converted.reserve(indices.size());
   for (unsigned index : indices) {
     if (index >= operands.size()) {
@@ -162,12 +162,12 @@ FailureOr<Value> reinterpretPointerToAddrSpace(Operation *anchor, Value value,
   return builder.create<LLVM::IntToPtrOp>(loc, targetPtrType, asInt).getResult();
 }
 
-FailureOr<SmallVector<Value, 2>> reinterpretPointerOperands(
+FailureOr<SmallVector<Value, mlir::pto::kValue2>> reinterpretPointerOperands(
     Operation *anchor, ArrayRef<Value> values, ArrayRef<unsigned> addressSpaces) {
   if (values.size() != addressSpaces.size()) {
     return failure();
   }
-  SmallVector<Value, 2> converted;
+  SmallVector<Value, mlir::pto::kValue2> converted;
   converted.reserve(values.size());
   for (auto [value, addressSpace] : llvm::zip(values, addressSpaces)) {
     FailureOr<Value> result =
@@ -295,11 +295,11 @@ std::string getCopyElementFragment(Type elementType) {
       !fragment.empty()) return fragment;
   if (auto intType = dyn_cast<IntegerType>(elementType)) {
     switch (intType.getWidth()) {
-    case 8:
+    case mlir::pto::kValue8:
       return intType.isUnsigned() ? "u8" : "s8";
-    case 16:
+    case mlir::pto::kValue16:
       return intType.isUnsigned() ? "u16" : "s16";
-    case 32:
+    case mlir::pto::kValue32:
       return intType.isUnsigned() ? "u32" : "s32";
     default:
       return {};
@@ -328,11 +328,11 @@ std::string getDn2NzCopyElementFragment(Type type) {
   }
   if (auto intType = dyn_cast<IntegerType>(elementType)) {
     switch (intType.getWidth()) {
-    case 8:
+    case mlir::pto::kValue8:
       return "u8";
-    case 16:
+    case mlir::pto::kValue16:
       return "u16";
-    case 32:
+    case mlir::pto::kValue32:
       return "u32";
     default:
       return {};
@@ -343,7 +343,7 @@ std::string getDn2NzCopyElementFragment(Type type) {
 
 std::string getMadLhsFragment(Type type) {
   if (auto intType = dyn_cast<IntegerType>(type)) {
-    if (intType.getWidth() == 8 &&
+    if (intType.getWidth() == mlir::pto::kValue8 &&
         (intType.isSigned() || intType.isSignless())) {
       return "s8";
     }
@@ -372,7 +372,7 @@ std::string getMadDstFragment(Type type) {
     return "f32";
   }
   if (auto intType = dyn_cast<IntegerType>(type);
-      intType && intType.getWidth() == 32 &&
+      intType && intType.getWidth() == mlir::pto::kValue32 &&
       (intType.isSigned() || intType.isSignless())) {
     return "s32";
   }
@@ -415,6 +415,7 @@ bool isOnePointStoreDist(StringRef dist) {
 }
 
 VPTOTypeConverter::VPTOTypeConverter(MLIRContext *context) {
+  (void)context;
   addConversion([](Type type) { return type; });
   addConversion([](Type type) -> Type {
     Builder builder(type.getContext());
@@ -598,10 +599,10 @@ unsigned getNaturalByteAlignment(Type type) {
   }
   if (pto::isPTOHiFloat8x2Type(type))
   {
-    return 2;
+    return mlir::pto::kValue2;
   }
   if (pto::isPTOBF16x2Type(type)) {
-    return 4;
+    return mlir::pto::kValue4;
   }
   if (pto::isPTOLowPrecisionType(type))
   {
@@ -609,15 +610,15 @@ unsigned getNaturalByteAlignment(Type type) {
   }
   if (type.isF16() || type.isBF16())
   {
-    return 2;
+    return mlir::pto::kValue2;
   }
   if (type.isF32())
   {
-    return 4;
+    return mlir::pto::kValue4;
   }
   if (type.isF64())
   {
-    return 8;
+    return mlir::pto::kValue8;
   }
   return 0;
 }

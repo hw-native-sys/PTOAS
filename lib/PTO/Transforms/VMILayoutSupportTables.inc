@@ -49,6 +49,9 @@ static constexpr EnsureLayoutPattern kEnsureLayoutPatterns[] = {
     {bits<32>(), N<256, 512>(), d(4), d(2)},
     {bits<64>(), N<128, 256>(), d(4), d(2)},
 
+    // The lane-stride carrier is element bits times the stride and has to be
+    // packable (32 -> 16 -> 8 only), so stride 2 stops at 16-bit elements and
+    // stride 4 at 8-bit ones.
     {bits<8, 16>(), anyN(), c(), ls(2)},
     {bits<8, 16>(), anyN(), ls(2), c()},
     {bits<8>(), anyN(), c(), ls(4)},
@@ -57,6 +60,40 @@ static constexpr EnsureLayoutPattern kEnsureLayoutPatterns[] = {
     {bits<16>(), N<256>(), ls(2), d(2)},
     {bits<8>(), anyN(), ls(2), ls(4)},
     {bits<8>(), anyN(), ls(4), ls(2)},
+
+    // A lane-strided dense value and a unit-stride group packet do not select
+    // the same carrier lanes, so they cannot use the carrier-identity bridge
+    // above: the dense lane stride is normalized onto the packet's carrier
+    // first, which materializeDataLayoutViaContiguous decomposes through the
+    // contiguous form.  The rows stay explicit because an ensure_layout row is
+    // a whole-layout pair, and they need no element count of their own: a
+    // packet whose groups fit in one carrier has num_groups <= slots and the
+    // produced forms carry at most eight group slots, so the dense value holds
+    // at most eight elements and occupies a single part.  A longer dense value
+    // spans several parts, no longer shares a carrier with the packet and has
+    // no producer, so both the predicate and the materializer reject it instead
+    // of admitting a pair they cannot lower.
+    {bits<8, 16>(), anyN(), ls(2), gsFit()},
+    {bits<8, 16>(), anyN(), gsFit(), ls(2)},
+    {bits<8>(), anyN(), ls(4), gsFit()},
+    {bits<8>(), anyN(), gsFit(), ls(4)},
+
+    // The same bridge for a unit-stride dense value against a packet that
+    // carries its groups at a lane stride: the short grouped read/write path
+    // produces both directions.
+    {bits<8, 16>(), anyN(), c(), gsFitStride(2)},
+    {bits<8, 16>(), anyN(), gsFitStride(2), c()},
+    {bits<8>(), anyN(), c(), gsFitStride(4)},
+    {bits<8>(), anyN(), gsFitStride(4), c()},
+
+    // The same carrier at a non-unit lane stride on both sides is the carrier
+    // identity itself, so it needs no normalization.  Only the 8-bit stride-4
+    // pair is reachable: the packed f8 read/write path is what puts a value in
+    // a lane-strided carrier and then hands it to a group packet, while no
+    // producer selects a lane-strided 16-bit dense value against a stride-2
+    // packet.
+    {bits<8>(), anyN(), ls(4), gsFitStride(4)},
+    {bits<8>(), anyN(), gsFitStride(4), ls(4)},
 
     // Group-slot lane-stride materialization keeps num_groups and slots=8.
     // Each physical part carries at most eight row-local group values, so the
@@ -110,6 +147,7 @@ struct GroupBlockClassPattern {
 };
 
 static constexpr GroupBlockClassPattern kGroupBlockClassPatterns[] = {
+    {gbCompact(), VMIGroupBlockClass::Compact},
     {gb(1, 4), VMIGroupBlockClass::QuarterBlock},
     {gb(1, 2), VMIGroupBlockClass::HalfBlock},
     {gb(1), VMIGroupBlockClass::OneBlock},
@@ -137,6 +175,8 @@ static constexpr GroupReduceLayoutPattern kGroupReduceLayoutPatterns[] = {
     {gbFull(), c(), gs(1)},
     {gbFull(2), d(2), gs(1)},
     {gbFull(4), d(4), gs(1)},
+    // Dense fallback for one-carrier groups, including eight-bit widening.
+    {gbCompact(), c(), gs(8)},
 };
 
 struct PreferredCastLayoutPattern {
@@ -535,6 +575,8 @@ struct GroupBroadcastLayoutPattern {
 };
 
 static constexpr GroupBroadcastLayoutPattern kGroupBroadcastLayoutPatterns[] = {
+    {gbCompact(), gs(8), c()},
+    {gbCompact(), gs(1), c()},
     {gb(1, 4), gs(8), ls(4)},
     {gb(1, 2), gs(8), ls(2)},
     {gb(1), gs(8), c()},

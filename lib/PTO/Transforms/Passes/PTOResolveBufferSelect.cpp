@@ -50,13 +50,10 @@ constexpr int64_t kSFractal512 = 512;
 constexpr int64_t kSFractal32 = 32;
 constexpr int64_t kFractalInnerDimension = 16;
 constexpr int64_t kSFractal32InnerColumnCount = 2;
-// Values mirror the pto-isa layout enums in pto/common/type.hpp:
-// BLayout has RowMajor=0 and ColMajor=1; SLayout has NoneBox=0,
-// RowMajor=1 and ColMajor=2.
-constexpr int32_t kBLayoutColMajor = 1;
-constexpr int32_t kSlayoutNoneBox = 0;
-constexpr int32_t kSlayoutRowMajor = 1;
-constexpr int32_t kSlayoutColMajor = 2;
+constexpr int32_t kBLayoutColMajor = static_cast<int32_t>(pto::BLayout::ColMajor);
+constexpr int32_t kSlayoutNoneBox = static_cast<int32_t>(pto::SLayout::NoneBox);
+constexpr int32_t kSlayoutRowMajor = static_cast<int32_t>(pto::SLayout::RowMajor);
+constexpr int32_t kSlayoutColMajor = static_cast<int32_t>(pto::SLayout::ColMajor);
 // Tile shape / valid-shape dimension indices: dim0 = row, dim1 = col.
 constexpr unsigned kDim0 = 0;
 constexpr unsigned kDim1 = 1;

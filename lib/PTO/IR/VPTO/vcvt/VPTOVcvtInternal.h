@@ -27,7 +27,7 @@ namespace mlir::pto::vcvt_detail {
 using namespace mlir;
 using namespace mlir::pto;
 
-  [[maybe_unused]] static std::optional<StringRef> normalizePacked4PartToken(StringRef token) {
+  [[maybe_unused]] inline std::optional<StringRef> normalizePacked4PartToken(StringRef token) {
     if (token == "P0" || token == "PART_P0") {
       return StringRef("P0");
     }
@@ -43,7 +43,7 @@ using namespace mlir::pto;
     return std::nullopt;
   }
 
-  [[maybe_unused]] static std::optional<StringRef> normalizeVcvtPartToken(StringRef token) {
+  [[maybe_unused]] inline std::optional<StringRef> normalizeVcvtPartToken(StringRef token) {
     if (auto normalized = normalizeEvenOddPartToken(token)) {
       return normalized;
     }
@@ -84,7 +84,7 @@ using namespace mlir::pto;
     const char *allowedRndModes = nullptr;
   };
 
-  [[maybe_unused]] static VcvtElemKind classifyVcvtElemType(Type type) {
+  [[maybe_unused]] inline VcvtElemKind classifyVcvtElemType(Type type) {
     if (type.isF16()) {
       return VcvtElemKind::F16;
     }
@@ -126,7 +126,7 @@ using namespace mlir::pto;
     return VcvtElemKind::Invalid;
   }
 
-  [[maybe_unused]] static std::optional<unsigned> getVcvtElemBitWidth(VcvtElemKind kind) {
+  [[maybe_unused]] inline std::optional<unsigned> getVcvtElemBitWidth(VcvtElemKind kind) {
     switch (kind) {
     case VcvtElemKind::F16:
     case VcvtElemKind::BF16:
@@ -153,7 +153,7 @@ using namespace mlir::pto;
     return std::nullopt;
   }
 
-  [[maybe_unused]] static std::optional<VcvtPartFamily> classifyVcvtPartFamily(unsigned srcBits,
+  [[maybe_unused]] inline std::optional<VcvtPartFamily> classifyVcvtPartFamily(unsigned srcBits,
                                                               unsigned dstBits) {
     unsigned largerBits = std::max(srcBits, dstBits);
     unsigned smallerBits = std::min(srcBits, dstBits);
@@ -166,7 +166,7 @@ using namespace mlir::pto;
     return std::nullopt;
   }
 
-  [[maybe_unused]] static bool isValidVcvtPartForFamily(StringRef part, VcvtPartFamily family) {
+  [[maybe_unused]] inline bool isValidVcvtPartForFamily(StringRef part, VcvtPartFamily family) {
     switch (family) {
     case VcvtPartFamily::EvenOdd:
       return part == "EVEN" || part == "ODD";
@@ -176,7 +176,7 @@ using namespace mlir::pto;
     return false;
   }
 
-  [[maybe_unused]] static bool isValidVcvtRoundModeForContract(StringRef roundMode,
+  [[maybe_unused]] inline bool isValidVcvtRoundModeForContract(StringRef roundMode,
                                               const VcvtContract &contract) {
     if (!contract.allowedRndModes) {
       return true;
@@ -185,7 +185,7 @@ using namespace mlir::pto;
   }
 
   // Vcvt contract lookup helpers — one per source element kind.
-  [[maybe_unused]] static std::optional<VcvtContract> lookupF32Contract(VcvtElemKind dst) {
+  [[maybe_unused]] inline std::optional<VcvtContract> lookupF32Contract(VcvtElemKind dst) {
     switch (dst) {
     case VcvtElemKind::F8E4M3:
     case VcvtElemKind::F8E5M2:
@@ -203,7 +203,7 @@ using namespace mlir::pto;
     }
   }
 
-  [[maybe_unused]] static std::optional<VcvtContract> lookupF16Contract(VcvtElemKind dst) {
+  [[maybe_unused]] inline std::optional<VcvtContract> lookupF16Contract(VcvtElemKind dst) {
     switch (dst) {
     case VcvtElemKind::F8E4M3:
     case VcvtElemKind::F8E5M2:
@@ -225,7 +225,7 @@ using namespace mlir::pto;
     }
   }
 
-  [[maybe_unused]] static std::optional<VcvtContract> lookupBF16Contract(VcvtElemKind dst) {
+  [[maybe_unused]] inline std::optional<VcvtContract> lookupBF16Contract(VcvtElemKind dst) {
     switch (dst) {
     case VcvtElemKind::F8E4M3:
     case VcvtElemKind::F8E5M2:
@@ -243,7 +243,7 @@ using namespace mlir::pto;
     }
   }
 
-  [[maybe_unused]] static std::optional<VcvtContract> lookupU8Contract(VcvtElemKind dst) {
+  [[maybe_unused]] inline std::optional<VcvtContract> lookupU8Contract(VcvtElemKind dst) {
     if (dst == VcvtElemKind::F16 || dst == VcvtElemKind::U16 ||
         dst == VcvtElemKind::U32) {
       return VcvtContract{false, false, true};
@@ -251,7 +251,7 @@ using namespace mlir::pto;
     return std::nullopt;
   }
 
-  [[maybe_unused]] static std::optional<VcvtContract> lookupS8Contract(VcvtElemKind dst) {
+  [[maybe_unused]] inline std::optional<VcvtContract> lookupS8Contract(VcvtElemKind dst) {
     if (dst == VcvtElemKind::F16 || dst == VcvtElemKind::S16 ||
         dst == VcvtElemKind::S32) {
       return VcvtContract{false, false, true};
@@ -259,7 +259,7 @@ using namespace mlir::pto;
     return std::nullopt;
   }
 
-  [[maybe_unused]] static std::optional<VcvtContract> lookupU16Contract(VcvtElemKind dst) {
+  [[maybe_unused]] inline std::optional<VcvtContract> lookupU16Contract(VcvtElemKind dst) {
     if (dst == VcvtElemKind::U8) {
       return VcvtContract{false, true, true};
     }
@@ -269,7 +269,7 @@ using namespace mlir::pto;
     return std::nullopt;
   }
 
-  [[maybe_unused]] static std::optional<VcvtContract> lookupS16Contract(VcvtElemKind dst) {
+  [[maybe_unused]] inline std::optional<VcvtContract> lookupS16Contract(VcvtElemKind dst) {
     if (dst == VcvtElemKind::F16) {
       return VcvtContract{true, false, false};
     }
@@ -283,7 +283,7 @@ using namespace mlir::pto;
     return std::nullopt;
   }
 
-  [[maybe_unused]] static std::optional<VcvtContract> lookupU32Contract(VcvtElemKind dst) {
+  [[maybe_unused]] inline std::optional<VcvtContract> lookupU32Contract(VcvtElemKind dst) {
     if (dst == VcvtElemKind::U8 || dst == VcvtElemKind::U16 ||
         dst == VcvtElemKind::S16) {
       return VcvtContract{false, true, true};
@@ -291,7 +291,7 @@ using namespace mlir::pto;
     return std::nullopt;
   }
 
-  [[maybe_unused]] static std::optional<VcvtContract> lookupS32Contract(VcvtElemKind dst) {
+  [[maybe_unused]] inline std::optional<VcvtContract> lookupS32Contract(VcvtElemKind dst) {
     if (dst == VcvtElemKind::F32) {
       return VcvtContract{true, false, false};
     }
@@ -305,7 +305,7 @@ using namespace mlir::pto;
     return std::nullopt;
   }
 
-  [[maybe_unused]] static std::optional<VcvtContract> lookupS64Contract(VcvtElemKind dst) {
+  [[maybe_unused]] inline std::optional<VcvtContract> lookupS64Contract(VcvtElemKind dst) {
     if (dst == VcvtElemKind::F32) {
       return VcvtContract{true, false, true};
     }
@@ -315,7 +315,7 @@ using namespace mlir::pto;
     return std::nullopt;
   }
 
-  [[maybe_unused]] static std::optional<VcvtContract> lookupVcvtContract(VcvtElemKind src,
+  [[maybe_unused]] inline std::optional<VcvtContract> lookupVcvtContract(VcvtElemKind src,
                                                         VcvtElemKind dst) {
     switch (src) {
     case VcvtElemKind::F32: return lookupF32Contract(dst);
@@ -343,7 +343,7 @@ using namespace mlir::pto;
 
   } // namespace
 
-  [[maybe_unused]] static StringRef getVcvtMaskGranularityByWidth(unsigned elemBits) {
+  [[maybe_unused]] inline StringRef getVcvtMaskGranularityByWidth(unsigned elemBits) {
     unsigned maskBitWidth = std::min(elemBits, 32u);
     if (maskBitWidth == mlir::pto::kValue8) {
       return "b8";
@@ -357,7 +357,7 @@ using namespace mlir::pto;
     return "";
   }
 
-  [[maybe_unused]] static LogicalResult verifyVcvtMaskGranularity(VcvtOp op, Type maskType,
+  [[maybe_unused]] inline LogicalResult verifyVcvtMaskGranularity(VcvtOp op, Type maskType,
                                                  VcvtElemKind inputElemKind,
                                                  VcvtElemKind resultElemKind) {
     auto inputElemBits = getVcvtElemBitWidth(inputElemKind);
@@ -373,7 +373,7 @@ using namespace mlir::pto;
                                              expectedMaskGranularity);
   }
 
-  [[maybe_unused]] static LogicalResult verifyVcvtTotalElementBits(VcvtOp op, Type inputType,
+  [[maybe_unused]] inline LogicalResult verifyVcvtTotalElementBits(VcvtOp op, Type inputType,
                                                   Type resultType,
                                                   VcvtElemKind inputElemKind,
                                                   VcvtElemKind resultElemKind) {
@@ -392,7 +392,7 @@ using namespace mlir::pto;
     return success();
   }
 
-  [[maybe_unused]] static LogicalResult verifyVcvtRndAttr(VcvtOp op, const VcvtContract &contract) {
+  [[maybe_unused]] inline LogicalResult verifyVcvtRndAttr(VcvtOp op, const VcvtContract &contract) {
     if (op.getRndAttr()) {
       StringRef roundMode = *op.getRnd();
       auto normalizedRoundMode = normalizeRoundModeToken(roundMode);
@@ -412,7 +412,7 @@ using namespace mlir::pto;
     return success();
   }
 
-  [[maybe_unused]] static LogicalResult verifyVcvtSatAttr(VcvtOp op, const VcvtContract &contract) {
+  [[maybe_unused]] inline LogicalResult verifyVcvtSatAttr(VcvtOp op, const VcvtContract &contract) {
     if (op.getSatAttr()) {
       StringRef sat = *op.getSat();
       if (!normalizeSaturationToken(sat)) {
@@ -428,7 +428,7 @@ using namespace mlir::pto;
     return success();
   }
 
-  [[maybe_unused]] static LogicalResult verifyVcvtPartAttr(VcvtOp op, const VcvtContract &contract,
+  [[maybe_unused]] inline LogicalResult verifyVcvtPartAttr(VcvtOp op, const VcvtContract &contract,
                                           VcvtElemKind inputElemKind,
                                           VcvtElemKind resultElemKind) {
     if (op.getPartAttr()) {

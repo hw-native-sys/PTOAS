@@ -184,7 +184,6 @@ static bool persistentGepDependsOnLoop(
 /// discovered too.  A SmallSetVector keeps the insertion (discovery) order
 /// unconditionally, so the diagnostics emitted by the caller have a stable
 /// order regardless of how many ops are related.
-///
 /// The worklist holds only pointer-producing ops (the alloca and GEPs
 /// derived from it), so every `cur` has exactly one result: the pointer.
 /// GEP users extend the pointer flow; every other user is a terminal
@@ -192,7 +191,6 @@ static bool persistentGepDependsOnLoop(
 /// results are not part of the pointer flow.  In particular a load's data
 /// result is not followed, so loops that merely consume a loaded value are
 /// never pulled in.
-///
 /// Returns false when the function has no persistent alloca at all.
 static bool collectPersistentRelatedOps(
     func::FuncOp func, llvm::SmallSetVector<Operation *, mlir::pto::kValue32> &relatedOps,
@@ -224,7 +222,6 @@ static bool collectPersistentRelatedOps(
 /// A loop whose body contains a pto.section.simt region is only promoted
 /// when a persistent GEP inside it actually depends on the loop's induction
 /// variable:
-///
 ///  - no dependency (e.g. a tile loop that only moves data while the
 ///    fragment is indexed by lane constants, the RMSNorm shape): unrolling
 ///    would clone the whole section once per iteration, the SIMT outlining
@@ -233,7 +230,6 @@ static bool collectPersistentRelatedOps(
 ///    missing, and VPTO fatobj emission fails in the VF_SIMT size patch -
 ///    for zero benefit, because materialization only needs the in-section
 ///    accesses static, which this loop does not affect.
-///
 ///  - dependency (fragment slot selected per iteration): unrolling is the
 ///    only way to statically resolve those accesses, so the loop must be
 ///    promoted; the dep shape is verified to materialize correctly (each
@@ -256,11 +252,9 @@ static bool sectionLoopSkipsPromotion(
 /// adaptor may stop scheduling functions after the first failure, so
 /// per-function completeness keeps the emitted set deterministic under
 /// parallel scheduling.
-///
 /// relatedOps iterates in discovery order (see
 /// collectPersistentRelatedOps), and repeated diagnostics for the same
 /// scf.while are deduplicated, so the emitted set is deterministic.
-///
 /// Returns true when a fail-fast diagnostic was emitted.
 static bool collectLoopsToPromote(
     const llvm::SmallSetVector<Operation *, mlir::pto::kValue32> &relatedOps,

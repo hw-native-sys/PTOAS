@@ -88,15 +88,19 @@ private:
       OpT op, ValueRange sourceParts, ArrayRef<Type> resultTypes,
       unsigned sourceBits, unsigned resultBits,
       OneToNPatternRewriter &rewriter) const {
-    if (resultBits == sourceBits * 2 &&
-        resultTypes.size() == 2 * sourceParts.size()) {
+    constexpr int64_t kEvenOddFactor = 2;
+    constexpr int64_t kPacked4Factor = 4;
+    if (resultBits == sourceBits * kEvenOddFactor &&
+        resultTypes.size() ==
+            static_cast<size_t>(kEvenOddFactor) * sourceParts.size()) {
       static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
-      return std::make_pair(ArrayRef<StringRef>(kEvenOddParts), int64_t{2});
+      return std::make_pair(ArrayRef<StringRef>(kEvenOddParts), kEvenOddFactor);
     }
-    if (resultBits == sourceBits * 4 &&
-        resultTypes.size() == 4 * sourceParts.size()) {
+    if (resultBits == sourceBits * kPacked4Factor &&
+        resultTypes.size() ==
+            static_cast<size_t>(kPacked4Factor) * sourceParts.size()) {
       static constexpr StringRef kPacked4Parts[] = {"P0", "P1", "P2", "P3"};
-      return std::make_pair(ArrayRef<StringRef>(kPacked4Parts), int64_t{4});
+      return std::make_pair(ArrayRef<StringRef>(kPacked4Parts), kPacked4Factor);
     }
     return rewriter.notifyMatchFailure(
         op, "unsupported physical integer extension source/result width relation");
@@ -155,7 +159,7 @@ private:
         return failure();
       }
       current = *next;
-      currentBits *= 2;
+      currentBits *= mlir::pto::kValue2;
     }
     FailureOr<Value> result =
         bitcastVReg(op.getLoc(), current, *physicalResultType, rewriter);
@@ -290,9 +294,8 @@ private:
 
   LogicalResult lowerLegacyGroupSlotExtension(
       OpT op, ValueRange sourceParts, ArrayRef<Type> resultTypes,
-      VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
-      VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
-      unsigned sourceBits, unsigned resultBits,
+      VMIVRegType sourceVMIType, VMILayoutAttr sourceLayout,
+      VMILayoutAttr resultLayout, unsigned sourceBits, unsigned resultBits,
       OneToNPatternRewriter &rewriter) const {
     FailureOr<std::tuple<int64_t, VRegType, Value>> preparation =
         prepareLegacyGroupSlotExtension(
@@ -328,12 +331,32 @@ private:
       ArrayRef<Type> resultTypes, VRegType sourceType, unsigned sourceBits,
       unsigned resultBits, VMILayoutAttr sourceLayout,
       VMILayoutAttr resultLayout, OneToNPatternRewriter &rewriter) const {
+    // The carrier view of each declared layout drives the plan, exactly as in
+    // pto.vmi.extf: a single-carrier group-slot packet whose stride is the
+    // widening factor, or a packet that keeps one group at lane 0 of every
+    // part, selects the same source lanes as the dense lane-strided form and
+    // forwards the physical part unchanged.
+    VMILayoutAttr sourceView =
+        getVMICastDenseCarrierView(sourceLayout, sourceType.getElementType());
+    VMILayoutAttr resultView =
+        resultVRegTypes.empty()
+            ? VMILayoutAttr()
+            : getVMICastDenseCarrierView(
+                  resultLayout, resultVRegTypes.front().getElementType());
+    unsigned pairWidth = static_cast<unsigned>(kPairWidth);
+    unsigned quadWidth = static_cast<unsigned>(kQuadWidth);
+    bool evenRadix = resultBits == sourceBits * pairWidth &&
+                     sourceView.getLaneStride() == kPairWidth;
+    bool quadRadix = resultBits == sourceBits * quadWidth &&
+                     sourceView.getLaneStride() == kQuadWidth;
+    bool sourceSelectsPartLanes =
+        sourceView &&
+        (evenRadix || quadRadix ||
+         isVMISingleGroupPerPartPacket(sourceLayout));
     bool denseLaneExtension =
-        sourceLayout && resultLayout && sourceLayout.isContiguous() &&
-        resultLayout.isContiguous() && resultLayout.getLaneStride() == 1 &&
-        ((resultBits == sourceBits * 2 && sourceLayout.getLaneStride() == 2) ||
-         (resultBits == sourceBits * 4 && sourceLayout.getLaneStride() == 4)) &&
-        resultTypes.size() == sourceParts.size();
+        sourceView && resultView && sourceView.isContiguous() &&
+        resultView.isContiguous() && resultView.getLaneStride() == 1 &&
+        sourceSelectsPartLanes && resultTypes.size() == sourceParts.size();
     if (denseLaneExtension) {
       StringRef part = resultBits == sourceBits * 2 ? StringRef("EVEN")
                                                     : StringRef("P0");
@@ -464,8 +487,8 @@ private:
     }
     return lowerLegacyGroupSlotExtension(
         op, input.sourceParts, input.resultTypes, input.sourceVMIType,
-        input.resultVMIType, input.sourceLayout, input.resultLayout,
-        sourceBits, resultBits, rewriter);
+        input.sourceLayout, input.resultLayout, sourceBits, resultBits,
+        rewriter);
   }
 
   LogicalResult lowerNonGroupSlotByLayout(
@@ -587,11 +610,10 @@ private:
   }
 
   FailureOr<Value> lowerGroupSlotTruncPart(
-      VMITruncIOp op, Value sourcePart, VRegType sourceType,
-      VRegType resultType, VMIVRegType resultVMIType,
-      VMILayoutAttr resultLayout, unsigned sourceLogicalBits,
-      unsigned resultLogicalBits, Value activeSlotMask, StringAttr sat,
-      OneToNPatternRewriter &rewriter) const {
+      VMITruncIOp op, Value sourcePart, VRegType resultType,
+      VMIVRegType resultVMIType, VMILayoutAttr resultLayout,
+      unsigned sourceLogicalBits, unsigned resultLogicalBits,
+      Value activeSlotMask, StringAttr sat, OneToNPatternRewriter &rewriter) const {
     unsigned physicalResultBits =
         pto::getPTOStorageElemBitWidth(resultType.getElementType());
     bool directCarrier = resultLayout.hasLaneStride() &&
@@ -688,10 +710,9 @@ private:
 
   FailureOr<SmallVector<Value>> lowerGroupSlotTruncParts(
       VMITruncIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes,
-      VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
-      VMILayoutAttr resultLayout, unsigned sourceBits, unsigned resultBits,
-      bool supportsPacked, Value activeSlotMask, StringAttr sat,
-      OneToNPatternRewriter &rewriter) const {
+      VMIVRegType resultVMIType, VMILayoutAttr resultLayout,
+      unsigned sourceBits, unsigned resultBits, bool supportsPacked,
+      Value activeSlotMask, StringAttr sat, OneToNPatternRewriter &rewriter) const {
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
     for (auto [sourcePart, physicalResultType] :
@@ -717,8 +738,8 @@ private:
         continue;
       }
       FailureOr<Value> lowered = lowerGroupSlotTruncPart(
-          op, sourcePart, sourceType, resultType, resultVMIType, resultLayout,
-          sourceBits, resultBits, activeSlotMask, sat, rewriter);
+          op, sourcePart, resultType, resultVMIType, resultLayout, sourceBits,
+          resultBits, activeSlotMask, sat, rewriter);
       if (failed(lowered)) {
         return failure();
       }
@@ -757,9 +778,9 @@ private:
           op, "failed to build group-slot trunci active slot mask");
     }
     FailureOr<SmallVector<Value>> results = lowerGroupSlotTruncParts(
-        op, sourceParts, resultTypes, sourceVMIType, resultVMIType,
-        resultLayout, sourceLogicalBits, resultLogicalBits, supportsPacked,
-        *activeSlotMask, sat, rewriter);
+        op, sourceParts, resultTypes, resultVMIType, resultLayout,
+        sourceLogicalBits, resultLogicalBits, supportsPacked, *activeSlotMask,
+        sat, rewriter);
     if (failed(results)) {
       return failure();
     }
@@ -998,7 +1019,7 @@ private:
       return rewriter.notifyMatchFailure(
           op, "unsupported physical trunci source/result arity relation");
     }
-    if (factor == 2) {
+    if (factor == mlir::pto::kValue2) {
       static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
       return ArrayRef<StringRef>(kEvenOddParts);
     }
@@ -1314,8 +1335,15 @@ static FailureOr<NarrowFpToIntPlan> buildNarrowFpToIntPlan(
   }
   int64_t factor = sourceBits / resultBits;
   VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
-  int64_t resultLaneStride = resultLayout && resultLayout.isContiguous()
-                                 ? resultLayout.getLaneStride()
+  // The narrowing result lane stride comes from the carrier view of the
+  // declared result layout: a single-carrier group-slot packet with slots = 1
+  // or with the narrowing factor as its lane stride places its groups exactly
+  // where the dense lane-strided result does, so the same converted lane
+  // ordering applies and the physical part is forwarded unchanged.
+  VMILayoutAttr resultView = getVMICastDenseCarrierView(
+      resultLayout, resultVMIType.getElementType());
+  int64_t resultLaneStride = resultView && resultView.isContiguous()
+                                 ? resultView.getLaneStride()
                                  : 1;
   bool invalidResultLaneStride =
       resultLaneStride <= 0 || factor % resultLaneStride != 0;
@@ -1323,6 +1351,12 @@ static FailureOr<NarrowFpToIntPlan> buildNarrowFpToIntPlan(
     return rewriter.notifyMatchFailure(op, unsupportedLaneStrideDiagnostic);
   }
   int64_t sourceFactor = factor / resultLaneStride;
+  if (isVMISingleGroupPerPartPacket(resultLayout)) {
+    // One group per result part is fed by one source part: the part family maps
+    // source lane 0 to result lane 0 whatever the narrowing radix, so a packet
+    // pair like this narrows 1:1 per part instead of merging source parts.
+    sourceFactor = 1;
+  }
   bool invalidSourceArity =
       sourceParts.size() != sourceFactor * physicalResultTypes.size();
   if (invalidSourceArity) {
@@ -1369,11 +1403,29 @@ private:
       OneToNPatternRewriter &rewriter) const {
     VMILayoutAttr sourceLayout = sourceVMIType.getLayoutAttr();
     VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
+    // Same carrier-view plan as pto.vmi.extf: a single-carrier group-slot
+    // packet with the widening factor as its lane stride, or a packet with one
+    // group per part, is the dense lane-strided carrier in every respect the
+    // part selection depends on.
+    VMILayoutAttr sourceView =
+        getVMICastDenseCarrierView(sourceLayout, sourceType.getElementType());
+    VMILayoutAttr resultView =
+        resultTypes.empty()
+            ? VMILayoutAttr()
+            : getVMICastDenseCarrierView(resultLayout,
+                                         resultTypes.front().getElementType());
+    bool packedRadix = sourceBits == kElementBits16 &&
+                       sourceView.getLaneStride() == kPairWidth;
+    bool quadRadix = sourceBits == kElementBits8 &&
+                     sourceView.getLaneStride() == kQuadWidth;
+    bool sourceSelectsPartLanes =
+        sourceView &&
+        (packedRadix || quadRadix ||
+         isVMISingleGroupPerPartPacket(sourceLayout));
     bool denseOneToOne =
-        sourceLayout && resultLayout && sourceLayout.isContiguous() &&
-        resultLayout.isContiguous() && resultLayout.getLaneStride() == 1 &&
-        ((sourceBits == 16 && sourceLayout.getLaneStride() == 2) ||
-         (sourceBits == 8 && sourceLayout.getLaneStride() == 4)) &&
+        sourceView && resultView && sourceView.isContiguous() &&
+        resultView.isContiguous() && resultView.getLaneStride() == 1 &&
+        sourceSelectsPartLanes &&
         physicalResultTypes.size() == sourceParts.size();
     if (denseOneToOne) {
       return lowerDenseWiden(op, sourceParts, resultTypes, sourceType,
@@ -1402,7 +1454,8 @@ private:
     }
     static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
     static constexpr StringRef kPacked4Parts[] = {"P0", "P1", "P2", "P3"};
-    ArrayRef<StringRef> parts = plan->factor == 2
+    ArrayRef<StringRef> parts =
+        plan->factor == mlir::pto::kValue2
                                     ? ArrayRef<StringRef>(kEvenOddParts)
                                     : ArrayRef<StringRef>(kPacked4Parts);
     return lowerNarrowFpToInt(
@@ -1681,7 +1734,8 @@ private:
     static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
-    for (int64_t partIndex = 0; partIndex < 2; ++partIndex) {
+    for (size_t partIndex = 0; partIndex < std::size(kEvenOddParts);
+         ++partIndex) {
       for (auto [chunkIndex, sourcePart] :
            llvm::enumerate(sourceParts)) {
         VRegType resultType =
@@ -1703,9 +1757,11 @@ private:
       VMISIToFPOp op, ValueRange sourceParts,
       ArrayRef<VRegType> resultTypes, Value mask, unsigned sourceBits,
       unsigned resultBits, OneToNPatternRewriter &rewriter) const {
-    if (sourceBits == 32 && resultBits == 32) {
+    if (sourceBits == mlir::pto::kValue32 &&
+        resultBits == mlir::pto::kValue32) {
       return lowerSameWidth(op, sourceParts, resultTypes, mask, rewriter);
-    } else if (sourceBits == 8 && resultBits == 16) {
+    } else if (sourceBits == mlir::pto::kValue8 &&
+               resultBits == mlir::pto::kValue16) {
       return lowerWiden(op, sourceParts, resultTypes, mask, rewriter);
     } else {
       return rewriter.notifyMatchFailure(
@@ -1852,5 +1908,4 @@ public:
     return lowerParts(op, sourceParts, resultTypes, rewriter);
   }
 };
-
 

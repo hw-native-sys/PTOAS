@@ -1979,7 +1979,7 @@ static bool forceRematerializationDAGBuildFailure(
   VPTOSchedulingBudget budget(limits.maxWorkUnits);
   VPTOScheduleFailure failure;
   VPTOSchedRegion region = buildPressureRegion(scope);
-  VPTOSchedDAGBuilder builder(&model, limits, budget, &anchors);
+  VPTOSchedDAGBuilder builder(&model, limits, &budget, &anchors);
   return failed(builder.build(region, failure));
 }
 

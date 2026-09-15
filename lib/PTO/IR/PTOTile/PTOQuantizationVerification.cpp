@@ -37,8 +37,8 @@ mlir::LogicalResult mlir::pto::TQuantOp::verify() {
   if (failed(verifyTQuantStructural(*this))) {
     return failure();
   }
-  auto verifyA2A3 = [&]() -> LogicalResult { return verifyTQuantA2A3(*this); };
-  auto verifyA5 = [&]() -> LogicalResult { return verifyTQuantInt8Common(*this); };
+  auto verifyA2A3 = [this]() -> LogicalResult { return verifyTQuantA2A3(*this); };
+  auto verifyA5 = [this]() -> LogicalResult { return verifyTQuantInt8Common(*this); };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
@@ -192,10 +192,11 @@ static LogicalResult verifyTQuantMxElemTypes(TQuantMxOp op) {
   if (!(srcElem.isF32() || srcElem.isF16() || srcElem.isBF16())) {
     return op.emitOpError("expects src element type to be f32/f16/bf16");
   }
-  if (!expElem.isInteger(8)) {
+  constexpr unsigned kI8BitWidth = 8;
+  if (!expElem.isInteger(kI8BitWidth)) {
     return op.emitOpError("expects exp element type to be i8/ui8");
   }
-  if (op.getExpZz() && !getElemTy(op.getExpZz().getType()).isInteger(8)) {
+  if (op.getExpZz() && !getElemTy(op.getExpZz().getType()).isInteger(kI8BitWidth)) {
     return op.emitOpError("expects exp_zz element type to be i8/ui8");
   }
   if (maxElem != srcElem) {
@@ -205,7 +206,7 @@ static LogicalResult verifyTQuantMxElemTypes(TQuantMxOp op) {
     return op.emitOpError("expects scaling element type to match src element type");
   }
   if (op.getQuantType() == mlir::pto::QuantType::MXFP8) {
-    if (!dstElem.isInteger(8)) {
+    if (!dstElem.isInteger(kI8BitWidth)) {
       return op.emitOpError("expects MXFP8 dst element type to be i8/ui8");
     }
   } else {
@@ -248,16 +249,20 @@ static LogicalResult verifyTQuantMxShapes(TQuantMxOp op) {
   Type expTy = op.getExp().getType();
   Type maxTy = op.getMax().getType();
   Type scalingTy = op.getScaling().getType();
+  constexpr size_t kMxTileRank = 2;
   for (Type type : {srcTy, dstTy, expTy, maxTy, scalingTy}) {
-    if (getValidShapeVec(type).size() != 2 || getShapeVec(type).size() != 2)
+    if (getValidShapeVec(type).size() != kMxTileRank ||
+        getShapeVec(type).size() != kMxTileRank) {
       return op.emitOpError(
           "expects rank-2 valid and physical shapes for MX quantization");
+    }
   }
   if (op.getExpZz() &&
-      (getValidShapeVec(op.getExpZz().getType()).size() != 2 ||
-       getShapeVec(op.getExpZz().getType()).size() != 2))
+      (getValidShapeVec(op.getExpZz().getType()).size() != kMxTileRank ||
+       getShapeVec(op.getExpZz().getType()).size() != kMxTileRank)) {
     return op.emitOpError(
         "expects rank-2 valid and physical shapes for exp_zz");
+  }
   if (failed(verifyTQuantMxStaticShapes(op)))
     return failure();
   if (failed(verifyTileBufSameElemType(op, srcTy, maxTy, "src", "max")) ||
@@ -272,8 +277,8 @@ static LogicalResult verifyTQuantMxShapes(TQuantMxOp op) {
 struct TQuantMxA5 {
   Type srcTy, dstTy, expTy, maxTy, scalingTy;
   Type srcElem;
-  SmallVector<int64_t, 4> dstValid, expValid, expPhysical;
-  SmallVector<int64_t, 4> dstPhysical, maxPhysical, scalingPhysical;
+  SmallVector<int64_t> dstValid, expValid, expPhysical;
+  SmallVector<int64_t> dstPhysical, maxPhysical, scalingPhysical;
   bool isDn, isMxFp4;
   int64_t srcRows, srcCols, srcPhysicalRows, srcPhysicalCols;
   int64_t pack, dstValidCols, groups;

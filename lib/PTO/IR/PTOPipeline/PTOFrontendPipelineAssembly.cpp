@@ -22,7 +22,7 @@ template <typename InitOpT>
 static void printFrontendInitAttrs(InitOpT op, OpAsmPrinter &p) {
   p << " {";
   bool needsComma = false;
-  auto printClause = [&](StringRef keyword, auto value) {
+  auto printClause = [&p, &needsComma](StringRef keyword, auto value) {
     if (needsComma) {
       p << ", ";
     }
@@ -52,7 +52,7 @@ template <typename InitOpT>
 static void printFrontendInitOperands(InitOpT op, OpAsmPrinter &p) {
   p << "(";
   bool needsOperandComma = false;
-  auto printOperandClause = [&](StringRef keyword, Value value) {
+  auto printOperandClause = [&p, &needsOperandComma](StringRef keyword, Value value) {
     if (needsOperandComma) {
       p << ", ";
     }
@@ -152,11 +152,14 @@ static FailureOr<int32_t> verifyFrontendInitIdentity(InitOpT op,
     return failure();
   }
   unsigned matches = 0;
-  funcOp.walk([&](Operation *candidate) {
-    if (auto init = dyn_cast<AicInitializePipeOp>(candidate))
-      matches += init.getId() == op.getId();
-    else if (auto init = dyn_cast<AivInitializePipeOp>(candidate))
-      matches += init.getId() == op.getId();
+  funcOp.walk([&op, &matches](Operation *candidate) {
+    if (auto init = dyn_cast<AicInitializePipeOp>(candidate)) {
+      if (init.getId() == op.getId())
+        ++matches;
+    } else if (auto init = dyn_cast<AivInitializePipeOp>(candidate)) {
+      if (init.getId() == op.getId())
+        ++matches;
+    }
   });
   if (matches > 1) {
     op.emitOpError(
@@ -272,7 +275,8 @@ static bool isAllowedFrontendFixpipeQuant(pto::FixpipeQuant quant) {
         pto::FixpipeQuant::QF322HIF8PreScalar,
         pto::FixpipeQuant::QF322FP8PreScalar,
     };
-    if (llvm::is_contained(kAllowedQuants, quant)) {
+    if (llvm::is_contained(ArrayRef<pto::FixpipeQuant>(kAllowedQuants),
+                           quant)) {
         return true;
     }
     llvm_unreachable("unhandled FixpipeQuant");

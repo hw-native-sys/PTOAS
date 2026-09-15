@@ -48,7 +48,8 @@ LogicalResult Vgather2Op::verify() {
                                       expectedMaskGranularity, expectedLanes))) {
     return failure();
   }
-  if (resultElemWidth != mlir::pto::kValue16 && resultElemWidth != 32) {
+  if (resultElemWidth != mlir::pto::kValue16 &&
+      resultElemWidth != mlir::pto::kValue32) {
     return emitOpError("result element type must be 16-bit or 32-bit");
   }
   if (resultType.getElementCount() != expectedLanes) {

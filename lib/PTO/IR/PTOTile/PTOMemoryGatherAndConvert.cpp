@@ -13,6 +13,13 @@
 // in NZ layout; the index is a GM tensor (the cube core cannot read UB on A5),
 // and Coalesce::Elem carries a contiguous GM scratch workspace. Mirrors the
 // pto-isa MGATHER GM -> L1 overloads / MGatherCheckGm2L1.
+static constexpr int32_t kMgatherNzFractalSize = 512;
+static constexpr int64_t kFractalC0Bytes = 32;
+static constexpr int64_t kFractalNzRowMultiple = 16;
+static constexpr size_t kMgatherTileRank = 2;
+static constexpr size_t kMgatherMinOperands = 2;
+static constexpr size_t kMgatherMaxOperands = 3;
+
 static FailureOr<Type> verifyMGatherGm2L1Dst(Operation *op, Value dst) {
   Type dstTy = dst.getType();
   auto dstTb = dyn_cast<pto::TileBufType>(dstTy);
@@ -21,8 +28,9 @@ static FailureOr<Type> verifyMGatherGm2L1Dst(Operation *op, Value dst) {
   if (!isColMajorRowMajorNZTileBuf(dstTb))
     return op->emitOpError("expects GM->L1 mgather dst (loc=mat) to use "
                            "blayout=col_major and slayout=row_major (NZ)");
-  if (dstTb.getSFractalSizeI32() != 512)
+  if (dstTb.getSFractalSizeI32() != kMgatherNzFractalSize) {
     return op->emitOpError("expects GM->L1 mgather dst fractal size to be 512");
+  }
   Type dstElem = getElemTy(dstTy);
   if (!dstElem)
     return op->emitOpError("failed to resolve GM->L1 mgather dst element type");
@@ -33,16 +41,17 @@ static FailureOr<Type> verifyMGatherGm2L1Dst(Operation *op, Value dst) {
         "float8_e4m3/float8_e5m2 family types)");
   unsigned elemBytes =
       std::max<unsigned>(1u, dstElem.getIntOrFloatBitWidth() / 8u);
-  int64_t kC0 = 32 / static_cast<int64_t>(elemBytes);
+  int64_t kC0 = kFractalC0Bytes / static_cast<int64_t>(elemBytes);
   auto dstShape = getShapeVec(dstTy);
-  if (dstShape.size() == 2) {
+  if (dstShape.size() == kMgatherTileRank) {
     if (kC0 > 0 && dstShape[1] != ShapedType::kDynamic &&
         dstShape[1] % kC0 != 0) {
       return op->emitOpError()
              << "expects GM->L1 mgather dst padded cols to be a multiple of "
              << kC0 << " (C0 = 32 / sizeof(elem))";
     }
-    if (dstShape[0] != ShapedType::kDynamic && dstShape[0] % 16 != 0) {
+    if (dstShape[0] != ShapedType::kDynamic &&
+        dstShape[0] % kFractalNzRowMultiple != 0) {
       return op->emitOpError("expects GM->L1 mgather dst padded rows to be a "
                              "multiple of 16 (FRACTAL_NZ_ROW)");
     }
@@ -115,7 +124,8 @@ static ParseResult parseMGatherInputs(
     }
     operands.push_back(operand);
   } while (succeeded(parser.parseOptionalComma()));
-  if (operands.size() < 2 || operands.size() > 3) {
+  if (operands.size() < kMgatherMinOperands ||
+      operands.size() > kMgatherMaxOperands) {
     return parser.emitError(parser.getCurrentLocation(),
                             "expects mgather ins(mem, idx[, scratch])");
   }
@@ -146,7 +156,7 @@ static ParseResult resolveMGatherOperands(
       parser.resolveOperand(dst, dstTy, result.operands)) {
     return failure();
   }
-  if (inputs.size() == 3 &&
+  if (inputs.size() == kMgatherMaxOperands &&
       parser.resolveOperand(inputs[2], inputTypes[2], result.operands)) {
     return failure();
   }
@@ -155,8 +165,8 @@ static ParseResult resolveMGatherOperands(
 
 ParseResult mlir::pto::MGatherOp::parse(OpAsmParser &parser,
                                         OperationState &result) {
-  SmallVector<OpAsmParser::UnresolvedOperand, 3> insOperands;
-  SmallVector<Type, 3> insTypes;
+  SmallVector<OpAsmParser::UnresolvedOperand> insOperands;
+  SmallVector<Type> insTypes;
   OpAsmParser::UnresolvedOperand dst;
   Type dstTy;
   NamedAttrList parsedAttrs;

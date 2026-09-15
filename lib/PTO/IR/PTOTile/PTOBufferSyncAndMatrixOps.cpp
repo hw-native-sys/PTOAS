@@ -125,7 +125,9 @@ static ParseResult parseBufDynSyncOp(OpAsmParser &parser,
       return failure();
     }
   } else {
-    modeAttr = IntegerAttr::get(IntegerType::get(parser.getContext(), 32), 0);
+    constexpr unsigned kModeAttrBitWidth = 32;
+    modeAttr = IntegerAttr::get(
+        IntegerType::get(parser.getContext(), kModeAttrBitWidth), 0);
   }
   if ((bracketed && parser.parseRSquare()) ||
       parser.parseOptionalAttrDict(result.attributes)) {
@@ -181,12 +183,12 @@ static LogicalResult verifyMatBiasCommon(Operation *op, Type a, Type b,
 }
 
 LogicalResult TGemvBiasOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult {
+  auto verifyA2A3 = [this]() -> LogicalResult {
     return verifyMatBiasCommon(getOperation(), getA().getType(),
                                getB().getType(), getBias().getType(),
                                getDst().getType(), true);
   };
-  auto verifyA5 = [&]() -> LogicalResult { return verifyA2A3(); };
+  auto verifyA5 = [&verifyA2A3]() -> LogicalResult { return verifyA2A3(); };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
@@ -205,7 +207,7 @@ static LogicalResult verifyA5MxGemvOperands(Operation *op, Type a, Type b,
 static LogicalResult verifyA5Only(
     Operation *op, StringRef opName,
     llvm::function_ref<LogicalResult()> verifyA5Body) {
-  auto verifyA2A3 = [&]() -> LogicalResult {
+  auto verifyA2A3 = [&op, &opName]() -> LogicalResult {
     return op->emitOpError() << opName << " is only supported on A5 targets";
   };
   return dispatchVerifierByArch(op, verifyA2A3, verifyA5Body);
@@ -234,7 +236,7 @@ static LogicalResult verifyA5MxBiasBase(Operation *op, Type a, Type b,
                                         Type bScale, bool isGemv);
 
 LogicalResult TGemvMxOp::verify() {
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [this]() -> LogicalResult {
     if (failed(verifyA5MxGemvOperands(
             getOperation(), getA().getType(), getB().getType(),
             getDst().getType(), getAScale().getType(),
@@ -247,7 +249,7 @@ LogicalResult TGemvMxOp::verify() {
 }
 
 LogicalResult TGemvMxAccOp::verify() {
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [this]() -> LogicalResult {
     return verifyA5MxAccCommon(
         getOperation(), getA().getType(), getB().getType(), getCIn().getType(),
         getDst().getType(), getAScale().getType(), getBScale().getType(), true);
@@ -256,7 +258,7 @@ LogicalResult TGemvMxAccOp::verify() {
 }
 
 LogicalResult TGemvMxBiasOp::verify() {
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [this]() -> LogicalResult {
     if (failed(verifyA5MxBiasBase(
             getOperation(), getA().getType(), getB().getType(),
             getBias().getType(), getDst().getType(), getAScale().getType(),

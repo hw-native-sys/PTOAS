@@ -60,6 +60,23 @@
   | `group` | positive integer | *(none — ungrouped)* | Number of group slots; must equal `input.L` for group mode |
 
 - **datatypes:** `i8`–`i32`, `f16`, `bf16`, `f32`
+- **Bounded grouped vectors:** For the one-carrier lengths documented in
+  [Reduce](05-reduce.md), a group count of at most eight that divides `L`
+  broadcasts compact source slot `g` into logical lanes
+  `[g * L/C, (g + 1) * L/C)`. The A5 VPTO backend retains established native
+  layouts when available and uses a dense register-selection fallback otherwise.
+  The source can come from a short load or a grouped reduction. Padding lanes
+  in the physical register are not logical results.
+- **Group slots and output layout:** Source-slot spacing and broadcast-output
+  spacing describe different values. For `ui16 L=64, group=8`, native integer
+  addition first normalizes its eight 32-bit sums into eight consecutive
+  16-bit group slots. Broadcast selects and repeats those values into the
+  preferred `ls(2)` output, which a `PK_B32` store writes as 64 logical
+  elements. This path uses `vpack`, `vselr`, and a packing store; it does not
+  require a separate source-slot unpack after normalization. Directly storing
+  the eight group values instead uses the short-vector store path. Retaining
+  strided native sums for consumers to select is a
+  [follow-up exploration](05-reduce.md#follow-up-exploration-retain-strided-native-sums).
 - **lowering to `pto.mi`:**
 
   | Form | Physical lowering | `#mi` | `dep` |

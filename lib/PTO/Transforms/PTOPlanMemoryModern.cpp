@@ -545,7 +545,7 @@ struct PlannerAnalysis {
   }
 
   bool rootsContain(const DenseSet<Value> &set, const RootList &roots) const {
-    return llvm::any_of(roots, [&](Value root) { return set.contains(root); });
+    return llvm::any_of(roots, [&set](Value root) { return set.contains(root); });
   }
 
   bool isSplitTpopDerived(Value value) const {
@@ -553,13 +553,13 @@ struct PlannerAnalysis {
   }
 
   bool operandsContainSplitTpopDerived(Operation *op) const {
-    return llvm::any_of(op->getOperands(), [&](Value operand) {
+    return llvm::any_of(op->getOperands(), [this](Value operand) {
       return isSplitTpopDerived(operand);
     });
   }
 
   bool operandsContainLoadDerivedRoot(Operation *op) const {
-    return llvm::any_of(op->getOperands(), [&](Value operand) {
+    return llvm::any_of(op->getOperands(), [this](Value operand) {
       return rootsContain(facts.loadDerivedRoots, getRoots(operand));
     });
   }
@@ -568,7 +568,7 @@ struct PlannerAnalysis {
     if (!result) {
       return;
     }
-    if (llvm::any_of(sources, [&](Value source) {
+    if (llvm::any_of(sources, [this](Value source) {
           return isSplitTpopDerived(source);
         })) {
       splitTpopDerivedValues.insert(result);
@@ -1422,7 +1422,6 @@ static bool preferReuseOverFresh(RootInfo &info, const MemSpec &spec,
       freshFits ? spec.capacityBytes - freshProjectedBytes : 0;
   uint64_t pressureReserve =
       std::max(info.totalBytes, info.alignmentBytes);
-
   // The cost model is a performance hint, not a correctness gate. When local
   // memory is already tight, do not let a fresh address outrank a legal reuse
   // group; future roots may still need the remaining tail bytes.
@@ -1669,7 +1668,7 @@ public:
     for (uint64_t offset : it->second) {
       addrs.push_back(static_cast<int64_t>(offset));
     }
-    rewriter.modifyOpInPlace(op, [&] {
+    rewriter.modifyOpInPlace(op, [&op, &rewriter, &addrs] {
       op->setAttr(pto::kPtoMultiBufferAddrsAttrName,
                   rewriter.getDenseI64ArrayAttr(addrs));
     });
@@ -1747,7 +1746,7 @@ static LogicalResult planOneAddressSpace(
   MemSpec spec = getMemSpec(getTargetArch(func), space);
 
   bool sizeFirstForSpace = orderBySize && !isCubeLocalSpace(space);
-  llvm::stable_sort(roots, [&](const RootInfo *lhs, const RootInfo *rhs) {
+  llvm::stable_sort(roots, [sizeFirstForSpace](const RootInfo *lhs, const RootInfo *rhs) {
     if (sizeFirstForSpace && lhs->totalBytes != rhs->totalBytes) {
       return lhs->totalBytes > rhs->totalBytes;
     }
@@ -1760,7 +1759,6 @@ static LogicalResult planOneAddressSpace(
   SmallVector<ReuseGroup> groups;
   uint64_t scopeRequiredBytes =
       assignReuseGroupsAndLayout(roots, space, analysis, spec, groups);
-
   if (scopeRequiredBytes > spec.capacityBytes) {
     func.emitError() << stringifyEnum(space) << " overflow, requires "
                      << (scopeRequiredBytes * mlir::pto::kValue8) << " bits while "
@@ -1792,7 +1790,7 @@ static void planReserveBuffers(func::FuncOp func,
 
   MLIRContext *ctx = func.getContext();
   PTOArch arch = getTargetArch(func);
-  func.walk([&](pto::ReserveBufferOp reserveOp) -> WalkResult {
+  func.walk([&failedFlag, &occupiedBySpace, ctx, arch](pto::ReserveBufferOp reserveOp) -> WalkResult {
     if (mlir::failed(validateReserveBufferForPlanMemory(reserveOp, arch))) {
       failedFlag = true;
       return WalkResult::interrupt();
@@ -1818,7 +1816,7 @@ static void planReserveBuffers(func::FuncOp func,
 // Reject any live alloc_tile that still has no planned address.
 static LogicalResult verifyNoUnplannedAllocTile(func::FuncOp func) {
   bool hasUnplannedAllocTile = false;
-  func.walk([&](pto::AllocTileOp op) {
+  func.walk([&hasUnplannedAllocTile](pto::AllocTileOp op) {
     if (op.getAddr()) {
       return;
     }
@@ -1903,7 +1901,7 @@ struct PlanMemoryModernPass
   void runOnOperation() override {
     ModuleOp moduleOp = getOperation();
     SmallVector<func::FuncOp> funcs;
-    moduleOp.walk([&](func::FuncOp funcOp) {
+    moduleOp.walk([&funcs](func::FuncOp funcOp) {
       // `pto.tileop.helper` identifies compute-only helpers, not whether a
       // child module needs memory planning.  Skip those helpers themselves,
       // while planning every ordinary function in nested backend modules.

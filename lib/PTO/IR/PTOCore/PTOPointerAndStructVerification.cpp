@@ -47,7 +47,10 @@ static bool isEmitCSupportedScalarType(Type type)
         return true;
     }
     if (auto intTy = dyn_cast<IntegerType>(type)) {
-        return intTy.getWidth() == 8 || intTy.getWidth() == 16 || intTy.getWidth() == 32 || intTy.getWidth() == 64;
+        return intTy.getWidth() == mlir::pto::kValue8 ||
+               intTy.getWidth() == mlir::pto::kValue16 ||
+               intTy.getWidth() == mlir::pto::kValue32 ||
+               intTy.getWidth() == mlir::pto::kValue64;
     }
     if (mlir::pto::isPTOFloat8Type(type)) {
         return true;
@@ -62,7 +65,7 @@ LogicalResult mlir::pto::PtrToIntOp::verify()
 {
     Type resultTy = getResult().getType();
     auto intTy = dyn_cast<IntegerType>(resultTy);
-    if (!intTy || intTy.getWidth() != 64) {
+    if (!intTy || intTy.getWidth() != mlir::pto::kValue64) {
         return emitOpError("result must be i64");
     }
 
@@ -75,7 +78,7 @@ LogicalResult mlir::pto::PtrToIntOp::verify()
 LogicalResult mlir::pto::IntToPtrOp::verify()
 {
     auto addrTy = dyn_cast<IntegerType>(getAddr().getType());
-    if (!addrTy || addrTy.getWidth() != 64) {
+    if (!addrTy || addrTy.getWidth() != mlir::pto::kValue64) {
         return emitOpError("address operand must be i64");
     }
 

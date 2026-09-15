@@ -1,0 +1,1 @@
+--pto-arch a5 --pto-backend=vpto --vmi-prefer-lane-stride-narrowing=false

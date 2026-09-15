@@ -131,6 +131,20 @@ inline constexpr llvm::StringLiteral kLastUseAttrName = "pto.last_use";
 inline constexpr llvm::StringLiteral kLastUseMarkerPrefix = "PTOAS__LAST_USE__";
 inline constexpr unsigned kPTOIndexBitWidth =
     64; // keep consistent with IndexType conversion
+inline constexpr int8_t kPipeDirMaskC2V = 1;
+inline constexpr int8_t kPipeDirMaskV2C = 2;
+inline constexpr int8_t kPipeDirMaskBoth = 3;
+inline constexpr unsigned kBitsPerByte = 8;
+inline constexpr unsigned kInt8BitWidth = 8;
+inline constexpr unsigned kInt16BitWidth = 16;
+inline constexpr unsigned kInt32BitWidth = 32;
+inline constexpr unsigned kInt64BitWidth = 64;
+inline constexpr unsigned kInt128BitWidth = 128;
+inline constexpr int64_t kMrgSortExecutedNumListSize = 4;
+inline constexpr int kTileRank = 2;
+inline constexpr int64_t kFp4PackFactor = 2;
+inline constexpr int64_t kGlobalTensorRank = 5;
+inline constexpr int64_t kDefaultFftsMode = 2;
 inline constexpr llvm::StringLiteral kAutoSyncTailPendingModeAttr =
     "__pto.auto_sync_tail_mode";
 inline constexpr llvm::StringLiteral kAutoSyncTailBarrierAttr =

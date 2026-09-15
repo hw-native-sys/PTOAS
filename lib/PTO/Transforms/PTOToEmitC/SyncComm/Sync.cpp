@@ -120,7 +120,7 @@ struct PTOSyncToEmitC : public OpConversionPattern<mlir::pto::TSyncOp> {
 
   LogicalResult matchAndRewrite(mlir::pto::TSyncOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
-    SmallVector<Value, 4> operands;
+    SmallVector<Value> operands;
     operands.reserve(adaptor.getEvents().size());
     for (Value event : adaptor.getEvents())
       operands.push_back(peelUnrealized(event));
@@ -292,7 +292,7 @@ struct PTOSyncSetToEmitC : public OpConversionPattern<mlir::pto::SyncSetOp> {
     auto loc = op->getLoc();
     IntegerAttr eventIdAttr = op.getEventIdAttr();
     Value eventIdDyn = adaptor.getEventIdDyn();
-    int64_t fftsMode = 2;
+    int64_t fftsMode = kDefaultFftsMode;
     if (IntegerAttr fftsModeAttr = op.getFftsModeAttr())
       fftsMode = getIntegerAttrSignedValue(fftsModeAttr);
 
@@ -335,7 +335,6 @@ struct PTOSyncWaitToEmitC : public OpConversionPattern<mlir::pto::SyncWaitOp> {
     auto loc = op->getLoc();
     IntegerAttr eventIdAttr = op.getEventIdAttr();
     Value eventIdDyn = adaptor.getEventIdDyn();
-
     if ((eventIdAttr != nullptr) == static_cast<bool>(eventIdDyn))
       return rewriter.notifyMatchFailure(
           op, "expects exactly one of static event_id attr or dynamic event_id operand");
@@ -368,7 +367,6 @@ struct PTONamedIntraSyncToEmitC : public OpConversionPattern<SyncOp> {
   LogicalResult
   matchAndRewrite(SyncOp op, typename SyncOp::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    auto loc = op->getLoc();
     IntegerAttr eventIdAttr = op.getEventIdAttr();
     Value eventIdDyn = adaptor.getEventIdDyn();
     const bool hasStaticEventId = eventIdAttr != nullptr;
@@ -379,25 +377,40 @@ struct PTONamedIntraSyncToEmitC : public OpConversionPattern<SyncOp> {
     }
 
     if (targetArch != PTOArch::A5) {
-      InterCoreSyncCallDesc desc;
-      if constexpr (std::is_same_v<SyncOp, mlir::pto::SetIntraBlockOp>) {
-        desc = eventIdAttr
-                   ? buildInterCoreSyncSetCall(rewriter, loc, targetArch,
-                                               op.getPipe(), eventIdAttr, 2)
-                   : buildInterCoreSyncSetCallDyn(rewriter, loc, targetArch,
-                                                  op.getPipe(), eventIdDyn, 2);
-      } else {
-        desc = eventIdAttr
-                   ? buildInterCoreSyncWaitCall(rewriter, targetArch,
-                                                op.getPipe(), eventIdAttr)
-                   : buildInterCoreSyncWaitCallDyn(rewriter, loc, targetArch,
-                                                   op.getPipe(), eventIdDyn);
-      }
-      rewriter.replaceOpWithNewOp<emitc::CallOpaqueOp>(
-          op, TypeRange{}, desc.callee, desc.args, ArrayAttr{}, desc.operands);
-      return success();
+      return rewriteInterCore(op, eventIdAttr, eventIdDyn, rewriter);
     }
+    return rewriteIntraBlock(op, eventIdAttr, eventIdDyn, rewriter);
+  }
 
+  LogicalResult rewriteInterCore(SyncOp op, IntegerAttr eventIdAttr,
+                                 Value eventIdDyn,
+                                 ConversionPatternRewriter &rewriter) const {
+    auto loc = op->getLoc();
+    InterCoreSyncCallDesc desc;
+    if constexpr (std::is_same_v<SyncOp, mlir::pto::SetIntraBlockOp>) {
+      desc = eventIdAttr
+                  ? buildInterCoreSyncSetCall(rewriter, loc, targetArch,
+                                              op.getPipe(), eventIdAttr,
+                                              kDefaultFftsMode)
+                  : buildInterCoreSyncSetCallDyn(rewriter, loc, targetArch,
+                                                 op.getPipe(), eventIdDyn,
+                                                 kDefaultFftsMode);
+    } else {
+      desc = eventIdAttr
+                 ? buildInterCoreSyncWaitCall(rewriter, targetArch,
+                                              op.getPipe(), eventIdAttr)
+                 : buildInterCoreSyncWaitCallDyn(rewriter, loc, targetArch,
+                                                 op.getPipe(), eventIdDyn);
+    }
+    rewriter.replaceOpWithNewOp<emitc::CallOpaqueOp>(
+        op, TypeRange{}, desc.callee, desc.args, ArrayAttr{}, desc.operands);
+    return success();
+  }
+
+  LogicalResult rewriteIntraBlock(SyncOp op, IntegerAttr eventIdAttr,
+                                  Value eventIdDyn,
+                                  ConversionPatternRewriter &rewriter) const {
+    auto loc = op->getLoc();
     auto *ctx = rewriter.getContext();
     std::string pipeTok = pipeTokFromPipeAttr(op.getPipe());
     Value eventValue;

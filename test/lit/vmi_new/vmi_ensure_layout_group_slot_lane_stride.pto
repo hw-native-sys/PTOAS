@@ -1,0 +1,73 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -pto-validate-vmi-layout-ir | FileCheck %s
+// RUN: pto-test-opt %s -vmi-to-vpto | FileCheck %s --check-prefix=LOWER --implicit-check-not=pto.vmi. --implicit-check-not='!pto.vmi.'
+
+// A single-carrier group packet places group g at lane (g % slots) * LS and a
+// dense contiguous value places logical lane i at lane i * LS, so the two are
+// the same carrier whenever the lane strides agree.  Pairs whose strides
+// differ normalize the dense stride through a contiguous intermediate instead.
+//
+// Of the same-stride pairs only the 8-bit stride-4 one is admitted: the packed
+// f8 carrier is what a group packet actually receives.  A lane-strided 16-bit
+// dense value against a stride-2 packet has no producer, so that row is gone
+// and the pair is rejected instead (see
+// vmi_ensure_layout_group_slot_lane_stride_invalid.pto).
+//
+// The bridge rows are bounded by the packet form instead of by an element
+// count: the produced group packets carry at most eight group slots, so a
+// single-carrier packet holds at most eight elements and the dense side stays
+// inside one physical part, which is what makes the normalization carrier
+// local.  A hand-written packet with more slots spreads its groups over several
+// carriers, so it no longer shares a carrier with the dense value; that pair
+// has no producer and is rejected as well (same negative file).
+
+module {
+  func.func @dense_lane_stride4_gs_packet_lane_stride4_ui8(%v: !pto.vmi.vreg<8xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>) -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>> {
+    %r = pto.vmi.ensure_layout %v : !pto.vmi.vreg<8xui8, #pto.vmi.layout<contiguous, lane_stride = 4>> -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>
+    return %r : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>
+  }
+
+  func.func @gs_packet_lane_stride2_to_dense_unit_stride(%v: !pto.vmi.vreg<8xf16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>) -> !pto.vmi.vreg<8xf16, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.ensure_layout %v : !pto.vmi.vreg<8xf16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>> -> !pto.vmi.vreg<8xf16, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.vreg<8xf16, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @dense_unit_stride_to_gs_packet_lane_stride2(%v: !pto.vmi.vreg<8xf16, #pto.vmi.layout<contiguous>>) -> !pto.vmi.vreg<8xf16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>> {
+    %r = pto.vmi.ensure_layout %v : !pto.vmi.vreg<8xf16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<8xf16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
+    return %r : !pto.vmi.vreg<8xf16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
+  }
+
+  func.func @dense_unit_stride_to_gs_packet_unit_stride(%v: !pto.vmi.vreg<8xf16, #pto.vmi.layout<contiguous>>) -> !pto.vmi.vreg<8xf16, #pto.vmi.layout<num_groups = 8, slots = 8>> {
+    %r = pto.vmi.ensure_layout %v : !pto.vmi.vreg<8xf16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<8xf16, #pto.vmi.layout<num_groups = 8, slots = 8>>
+    return %r : !pto.vmi.vreg<8xf16, #pto.vmi.layout<num_groups = 8, slots = 8>>
+  }
+
+}
+
+// CHECK-LABEL: func.func @dense_lane_stride4_gs_packet_lane_stride4_ui8(
+// CHECK: pto.vmi.ensure_layout
+// CHECK-LABEL: func.func @gs_packet_lane_stride2_to_dense_unit_stride(
+// CHECK: pto.vmi.ensure_layout
+// CHECK-LABEL: func.func @dense_unit_stride_to_gs_packet_lane_stride2(
+// CHECK: pto.vmi.ensure_layout
+// CHECK-LABEL: func.func @dense_unit_stride_to_gs_packet_unit_stride(
+// CHECK: pto.vmi.ensure_layout
+
+// Every accepted row has to reach VPTO: the same-stride pairs are the carrier
+// identity (one register forward, no instruction) and the unit <-> stride
+// pairs are the dense lane-stride pack.
+// LOWER-LABEL: func.func @dense_lane_stride4_gs_packet_lane_stride4_ui8(
+// LOWER-NEXT: return %arg0
+// LOWER-LABEL: func.func @gs_packet_lane_stride2_to_dense_unit_stride(
+// LOWER: pto.vpack
+// LOWER-LABEL: func.func @dense_unit_stride_to_gs_packet_lane_stride2(
+// LOWER: pto.vzunpack
+// LOWER-LABEL: func.func @dense_unit_stride_to_gs_packet_unit_stride(
+// LOWER-NEXT: return %arg0

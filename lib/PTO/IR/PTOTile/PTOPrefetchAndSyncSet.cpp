@@ -44,7 +44,6 @@ static LogicalResult verifyTPrefetchImpl(TPrefetchOp op,
       return op.emitOpError("expects dst to use loc=vec or loc=mat");
     }
     dstElem = dstTile.getElementType();
-
     if (getElemByteSize(srcElem) != getElemByteSize(dstElem)) {
       return op.emitOpError("expects src and dst element types to have the same element size");
     }
@@ -61,10 +60,10 @@ static LogicalResult verifyTPrefetchImpl(TPrefetchOp op,
 }
 
 LogicalResult TPrefetchOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult {
+  auto verifyA2A3 = [this]() -> LogicalResult {
     return verifyTPrefetchImpl(*this, /*allowLowPrecision=*/false);
   };
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [this]() -> LogicalResult {
     return verifyTPrefetchImpl(*this, /*allowLowPrecision=*/true);
   };
   switch (getVerifierTargetArch(getOperation())) {
@@ -102,8 +101,8 @@ LogicalResult mlir::pto::SetFFTsOp::verify() {
     return emitOpError("expects a !pto.ptr operand");
   }
 
-  if (!ptrTy.getElementType().isInteger(64) &&
-      !ptrTy.getElementType().isInteger(8)) {
+  if (!ptrTy.getElementType().isInteger(mlir::pto::kValue64) &&
+      !ptrTy.getElementType().isInteger(mlir::pto::kValue8)) {
     return emitOpError("expects element type i64 (or i8)");
   }
 
@@ -129,13 +128,14 @@ static LogicalResult verifySyncSetWaitCommon(
   if ((eventIdAttr != nullptr) == static_cast<bool>(eventIdDyn))
     return op->emitOpError(
         "expects exactly one event-id form: static attr or dynamic index operand");
+  constexpr int64_t kFftsModeMax = mlir::pto::kValue2;
   if (fftsModeAttr &&
-      (fftsModeAttr.getInt() < 0 || fftsModeAttr.getInt() > 2))
+      (fftsModeAttr.getInt() < 0 || fftsModeAttr.getInt() > kFftsModeMax))
     return op->emitOpError()
            << "requires ffts_mode in range [0, 2], but got "
            << fftsModeAttr.getInt();
-  auto verifyA2A3 = [&]() -> LogicalResult { return success(); };
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA2A3 = []() -> LogicalResult { return success(); };
+  auto verifyA5 = [op, pipe, eventIdAttr, opName]() -> LogicalResult {
     if (eventIdAttr &&
         (eventIdAttr.getInt() < 0 || eventIdAttr.getInt() > 15))
       return op->emitOpError()
@@ -241,7 +241,9 @@ static ParseResult resolveSyncAllOperands(
     break;
   }
 
-  if (operands.size() != 1 && operands.size() != 2) {
+  // Soft syncall takes gm_workspace plus an optional used_cores operand.
+  constexpr size_t kSoftSyncallMaxOperands = mlir::pto::kValue2;
+  if (operands.size() != 1 && operands.size() != kSoftSyncallMaxOperands) {
     return parser.emitError(parser.getCurrentLocation())
            << "expects soft syncall to have gm_workspace and optional "
               "used_cores";
@@ -249,21 +251,21 @@ static ParseResult resolveSyncAllOperands(
   if (parser.resolveOperand(operands[0], operandTypes[0], result.operands)) {
     return failure();
   }
-  if (operands.size() == 2 &&
+  if (operands.size() == kSoftSyncallMaxOperands &&
       parser.resolveOperand(operands[1], operandTypes[1], result.operands)) {
     return failure();
   }
   result.addAttribute(
       "operandSegmentSizes",
       parser.getBuilder().getDenseI32ArrayAttr(
-          {1, operands.size() == 2 ? 1 : 0}));
+          {1, operands.size() == kSoftSyncallMaxOperands ? 1 : 0}));
   return success();
 }
 
 ParseResult mlir::pto::SyncAllOp::parse(OpAsmParser &parser,
                                         OperationState &result) {
-  SmallVector<OpAsmParser::UnresolvedOperand, 2> operands;
-  SmallVector<Type, 2> operandTypes;
+  SmallVector<OpAsmParser::UnresolvedOperand, mlir::pto::kValue2> operands;
+  SmallVector<Type, mlir::pto::kValue2> operandTypes;
   pto::SyncAllModeAttr mode;
   if (failed(parseSyncAllOperands(parser, operands, operandTypes)) ||
       failed(parseSyncAllAttributes(parser, result, mode))) {

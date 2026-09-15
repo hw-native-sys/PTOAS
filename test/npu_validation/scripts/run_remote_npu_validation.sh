@@ -14,7 +14,7 @@ RUN_MODE="${RUN_MODE:-npu}"   # npu|sim
 SOC_VERSION="${SOC_VERSION:-Ascend910}"
 GOLDEN_MODE="${GOLDEN_MODE:-npu}"  # sim|npu|skip
 PTO_ISA_REPO="${PTO_ISA_REPO:-https://gitcode.com/cann/pto-isa.git}"
-PTO_ISA_COMMIT="${PTO_ISA_COMMIT:-ce3262e3825a235f951917eeada30e52910b6a84}"
+PTO_ISA_COMMIT="${PTO_ISA_COMMIT:-5649f0522ba9987fd22cbf18923b729b97c5f2ff}"
 DEVICE_ID="${DEVICE_ID:-}"
 SKIP_CASES="${SKIP_CASES:-}"          # comma/space separated testcase names
 RUN_ONLY_CASES="${RUN_ONLY_CASES:-}"  # comma/space separated testcase names or model groups
@@ -819,6 +819,12 @@ while IFS= read -r -d '' cpp; do
     --soc-version "${SIM_SOC_VERSION}"
   gen_rc=$?
   set -euo pipefail
+  if [[ $gen_rc -eq 77 ]]; then
+    skip_count=$((skip_count + 1))
+    printf "%s\tSKIP\tgen\tTile-only device helper has no host-callable entry\n" "${case_id}" >> "${RESULTS_TSV}"
+    log "SKIP: ${testcase} (compile-only Tile helper; use the GM-pointer runtime sample)"
+    continue
+  fi
   if [[ $gen_rc -ne 0 ]]; then
     status=1
     fail_count=$((fail_count + 1))

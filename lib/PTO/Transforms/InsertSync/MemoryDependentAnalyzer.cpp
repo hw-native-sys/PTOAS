@@ -299,7 +299,7 @@ bool MemoryDependentAnalyzer::isGMBufferOverlap(const BaseMemInfo *a,
 }
  
 bool MemoryDependentAnalyzer::isBufferAddressRangeOverlap(
-    const BaseMemInfo *a, const BaseMemInfo *b) {
+    const BaseMemInfo *a, const BaseMemInfo *b) const {
   int aBaseAddressesSize = static_cast<int>(a->baseAddresses.size());
   int bBaseAddressesSize = static_cast<int>(b->baseAddresses.size());
   

@@ -22,4 +22,9 @@ module {
 }
 
 // CHECK-LABEL: func.func @group_reduce_maxi_i8(
-// CHECK: pto.vcgmax {{.*}} : !pto.vreg<256xi8>, !pto.mask<b8> -> !pto.vreg<256xi8>
+// CHECK: pto.vzunpack
+// CHECK: pto.punpack {{.*}} "LOWER"
+// CHECK: pto.vzunpack
+// CHECK: pto.punpack {{.*}} "HIGHER"
+// CHECK-COUNT-8: pto.vcmax {{.*}} : !pto.vreg<128xui16>, !pto.mask<b16>
+// CHECK-NOT: pto.vcgmax

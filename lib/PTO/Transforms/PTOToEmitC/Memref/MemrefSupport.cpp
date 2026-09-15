@@ -38,12 +38,12 @@ namespace pto {
 Value ofrToEmitCIndexValue(ConversionPatternRewriter &rewriter,
                                   Location loc, Type indexTy,
                                   OpFoldResult ofr) {
-  auto mkIndex = [&](int64_t v) -> Value {
+  auto mkIndex = [&rewriter, &loc, &indexTy](int64_t v) -> Value {
     return rewriter.create<emitc::ConstantOp>(
         loc, indexTy, emitc::OpaqueAttr::get(rewriter.getContext(),
                                              std::to_string(v)));
   };
-  auto asIndex = [&](Value value) -> Value {
+  auto asIndex = [&rewriter, &loc, &indexTy](Value value) -> Value {
     if (value.getType() == indexTy)
       return value;
     return rewriter.create<emitc::CastOp>(loc, indexTy, value).getResult();
@@ -71,22 +71,28 @@ std::string memrefElemTypeToString(Type elemTy) {
     return "float";
   if (elemTy.isF64())
     return "double";
-  if (elemTy.isInteger(8)) {
-    if (elemTy.isSignlessInteger(8) || elemTy.isSignedInteger(8))
+  if (elemTy.isInteger(kInt8BitWidth)) {
+    if (elemTy.isSignlessInteger(kInt8BitWidth) ||
+        elemTy.isSignedInteger(kInt8BitWidth)) {
       return "int8_t";
+    }
     return "uint8_t";
   }
-  if (elemTy.isInteger(16)) {
-    if (elemTy.isSignlessInteger(16) || elemTy.isSignedInteger(16))
+  if (elemTy.isInteger(kInt16BitWidth)) {
+    if (elemTy.isSignlessInteger(kInt16BitWidth) ||
+        elemTy.isSignedInteger(kInt16BitWidth)) {
       return "int16_t";
+    }
     return "uint16_t";
   }
-  if (elemTy.isInteger(32)) {
-    if (elemTy.isSignlessInteger(32) || elemTy.isSignedInteger(32))
+  if (elemTy.isInteger(kInt32BitWidth)) {
+    if (elemTy.isSignlessInteger(kInt32BitWidth) ||
+        elemTy.isSignedInteger(kInt32BitWidth)) {
       return "int32_t";
+    }
     return "uint32_t";
   }
-  if (elemTy.isInteger(64)) {
+  if (elemTy.isInteger(kInt64BitWidth)) {
     return cast<IntegerType>(elemTy).isUnsigned() ? "uint64_t" : "int64_t";
   }
   return "float";

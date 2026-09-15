@@ -592,6 +592,24 @@ init_env() {
 
   TARGET_MOULDE_DIR="${TARGET_VERSION_DIR}/share/info/${PTO_PLATFORM_DIR}"
 
+  # The directories this install will create, deepest first, stopping at the
+  # first ancestor that already exists. Removal uses the list to drop the
+  # emptied skeleton; stopping at an existing ancestor is what keeps it from
+  # ever touching a directory the user or another component already had, since a
+  # recorded directory is by construction one that did not exist before. The
+  # version directory sits under the install path, so its chain covers both.
+  local previous_created_dirs=""
+  if [ -r "${TARGET_MOULDE_DIR}/${PTOAS_CREATED_DIRS_RECORD}" ]; then
+    previous_created_dirs="$(cat "${TARGET_MOULDE_DIR}/${PTOAS_CREATED_DIRS_RECORD}" 2>/dev/null)"
+  fi
+  PTOAS_CREATED_DIRS="$(pto_created_dir_chain "${TARGET_VERSION_DIR}")"
+  # Reinstalling over an existing install creates nothing, so the chain above is
+  # empty; the directories the *first* install created must not be forgotten, or
+  # the final removal stops leaving the prefix behind.
+  if [ -z "${PTOAS_CREATED_DIRS}" ]; then
+    PTOAS_CREATED_DIRS="${previous_created_dirs}"
+  fi
+
   UNINSTALL_SHELL_FILE="${TARGET_VERSION_DIR}/share/info/pto_as/script/pto_uninstall.sh"
   INSTALL_INFO_FILE="${TARGET_VERSION_DIR}/share/info/pto_as/${ASCEND_INSTALL_INFO}"
   is_multi_version_pkg "pkg_is_multi_version" "$VERSION_INFO_FILE"
@@ -729,13 +747,39 @@ install_package() {
     chown -R "root":"root" "${TARGET_MOULDE_DIR}/script" 2>/dev/null
     chown "root":"root" "${TARGET_MOULDE_DIR}" 2>/dev/null
   fi
+
+  # Record what this install created, now that the component metadata directory
+  # exists. Removal reads it to drop the emptied skeleton without deleting a
+  # directory the user already had; at removal time an empty directory looks the
+  # same either way, so it can only be recorded here.
+  #
+  # The metadata directory is installed with a read-only mode, so its owner write
+  # bit is restored for the write and put back afterwards. The result is checked:
+  # reporting success while the record was never written would leave the skeleton
+  # cleanup silently disabled.
+  local created_dirs_record="${TARGET_MOULDE_DIR}/${PTOAS_CREATED_DIRS_RECORD}"
+  local record_saved_mode record_written=0
+  record_saved_mode=$(pto_relax_dir_write "${TARGET_MOULDE_DIR}")
+  rm -f "${created_dirs_record}" 2>/dev/null
+  if printf '%s\n' "${PTOAS_CREATED_DIRS}" >"${created_dirs_record}" 2>/dev/null; then
+    record_written=1
+  fi
+  chmod 644 "${created_dirs_record}" 2>/dev/null
+  pto_restore_dir_write "${TARGET_MOULDE_DIR}" "${record_saved_mode}"
+  if [ "${record_written}" != 1 ] || [ ! -e "${created_dirs_record}" ]; then
+    logandprint "[ERROR]: ERR_NO:${INSTALL_FAILED};ERR_DES:Cannot record the created directories\
+ (${created_dirs_record}); the installed layout could not be described."
+    comm_log_operation "Install" "${IN_INSTALL_TYPE}" "PTO" "${INSTALL_FAILED}" "${CMD_LIST}"
+    return 1
+  fi
+
   comm_log_operation "Install" "${IN_INSTALL_TYPE}" "PTO" "${install_ret}" "${CMD_LIST}"
   return "${install_ret}"
 }
 
 uninstall_package() {
   if [ "${IS_UNINSTALL}" = "n" ]; then
-    return
+    return 0
   fi
 
   if [ ! -f "${UNINSTALL_SHELL_FILE}" ]; then
@@ -749,11 +793,18 @@ uninstall_package() {
     comm_log_operation "Uninstall" "${IN_INSTALL_TYPE}" "PTO" "$?" "${CMD_LIST}"
     exit 0
   fi
-  bash "${UNINSTALL_SHELL_FILE}" "${TARGET_INSTALL_PATH}" "uninstall" "${IS_QUIET}" ${IN_FEATURE} "${IS_DOCKER_INSTALL}" "${DOCKER_ROOT}" "$pkg_version_dir"
+
+  # Propagate the component removal's status. Reporting the status of the log
+  # call instead let a failed removal look like a successful one: the caller
+  # then exits 0 while the installed files are still on disk.
+  local uninstall_ret=0
+  bash "${UNINSTALL_SHELL_FILE}" "${TARGET_INSTALL_PATH}" "uninstall" "${IS_QUIET}" ${IN_FEATURE} "${IS_DOCKER_INSTALL}" "${DOCKER_ROOT}" "$pkg_version_dir" ||
+    uninstall_ret="$?"
   # remove precheck info in ${TARGET_VERSION_DIR}/bin/prereq_check.bash
   logandprint "[INFO]: Remove precheck info."
 
-  comm_log_operation "Uninstall" "${IN_INSTALL_TYPE}" "PTO" "$?" "${CMD_LIST}"
+  comm_log_operation "Uninstall" "${IN_INSTALL_TYPE}" "PTO" "${uninstall_ret}" "${CMD_LIST}"
+  return "${uninstall_ret}"
 }
 
 pre_check_only() {
@@ -791,6 +842,10 @@ main() {
   fi
 
   uninstall_package
+  uninstall_ret="$?"
+  if [ "${uninstall_ret}" != 0 ]; then
+    exit "${uninstall_ret}"
+  fi
 
   pre_check_only
 }

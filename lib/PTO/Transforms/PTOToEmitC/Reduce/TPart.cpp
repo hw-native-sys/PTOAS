@@ -29,7 +29,7 @@ struct PTOPartAddToEmitC : public OpConversionPattern<pto::TPartAddOp> {
     Value src1 = adaptor.getSrc1();
     Value dst  = adaptor.getDst();
 
-    SmallVector<Value, 3> operands{dst, src0, src1};
+    SmallVector<Value> operands{dst, src0, src1};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TPARTADD",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
@@ -51,7 +51,7 @@ struct PTOPartMaxToEmitC : public OpConversionPattern<pto::TPartMaxOp> {
     Value src1 = adaptor.getSrc1();
     Value dst  = adaptor.getDst();
 
-    SmallVector<Value, 3> operands{dst, src0, src1};
+    SmallVector<Value> operands{dst, src0, src1};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TPARTMAX",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
@@ -73,7 +73,7 @@ struct PTOPartMinToEmitC : public OpConversionPattern<pto::TPartMinOp> {
     Value src1 = adaptor.getSrc1();
     Value dst  = adaptor.getDst();
 
-    SmallVector<Value, 3> operands{dst, src0, src1};
+    SmallVector<Value> operands{dst, src0, src1};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TPARTMIN",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
@@ -141,7 +141,7 @@ struct PTOPartMulToEmitC : public OpConversionPattern<pto::TPartMulOp> {
     Value src1 = adaptor.getSrc1();
     Value dst  = adaptor.getDst();
 
-    SmallVector<Value, 3> operands{dst, src0, src1};
+    SmallVector<Value> operands{dst, src0, src1};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TPARTMUL",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},

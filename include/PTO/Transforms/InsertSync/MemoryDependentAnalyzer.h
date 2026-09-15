@@ -35,7 +35,7 @@ public:
 private:
   bool isGMBufferOverlap(const BaseMemInfo *a, const BaseMemInfo *b);
   
-  bool isBufferAddressRangeOverlap(const BaseMemInfo *a, const BaseMemInfo *b);
+  bool isBufferAddressRangeOverlap(const BaseMemInfo *a, const BaseMemInfo *b) const;
   
   bool isBufferOverlap(const BaseMemInfo *a, const BaseMemInfo *b,
                        int aIndex, int bIndex) const;

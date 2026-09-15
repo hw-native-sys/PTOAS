@@ -28,7 +28,7 @@ from validation_runtime import compare_file, finalize_compare, load_case_meta
 
 
 M = 16
-K = 64
+K = 1024
 GROUP_SIZE = 32
 GROUP_COUNT = (M * K) // GROUP_SIZE
 

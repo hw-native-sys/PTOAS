@@ -17,6 +17,7 @@
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/VMILayoutSupport.h"
 #include "PTO/Transforms/VPTOLowering.h"
+#include "PTO/Support/CodeConstants.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -38,7 +39,6 @@
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
-#include <cassert>
 #include <numeric>
 #include <type_traits>
 #include <tuple>

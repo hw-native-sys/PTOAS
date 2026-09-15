@@ -161,7 +161,8 @@ isFragmentActiveInSection(const PersistentFragmentAnalysis &fragment,
   if (fragment.initSection == section) {
     return true;
   }
-  return llvm::any_of(fragment.carrySections, [&](pto::SectionSimtOp carry) {
+  return llvm::any_of(fragment.carrySections,
+                     [section](pto::SectionSimtOp carry) {
     return carry == section;
   });
 }
@@ -405,8 +406,7 @@ static LogicalResult
 distributeFragmentsToSections(
     const PersistentMaterializationPlan &plan,
     const llvm::DenseMap<Operation *, PersistentSectionWorklist *>
-        &worklistBySection,
-    PersistentTransformWorklist &worklist) {
+        &worklistBySection) {
   for (const PersistentFragmentAnalysis &fragment : plan.fragments) {
     LLVM::AllocaOp allocaOp = fragment.allocaOp;
     if (!fragment.initSection) {
@@ -444,8 +444,7 @@ buildPersistentTransformWorklist(const PersistentMaterializationPlan &plan,
   if (failed(buildSectionWorklistIndex(worklist, worklistBySection))) {
     return failure();
   }
-  if (failed(distributeFragmentsToSections(plan, worklistBySection,
-                                           worklist))) {
+  if (failed(distributeFragmentsToSections(plan, worklistBySection))) {
     return failure();
   }
 

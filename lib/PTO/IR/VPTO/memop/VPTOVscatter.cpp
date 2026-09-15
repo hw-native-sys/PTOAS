@@ -38,7 +38,8 @@ LogicalResult VscatterOp::verify() {
     return emitOpError("offset vector must use integer element type");
   }
   unsigned valueElemWidth = getPTOStorageElemBitWidth(valueType.getElementType());
-  if (valueElemWidth != mlir::pto::kValue8 && valueElemWidth != 16 && valueElemWidth != 32) {
+  if (valueElemWidth != mlir::pto::kValue8 && valueElemWidth != mlir::pto::kValue16 &&
+      valueElemWidth != mlir::pto::kValue32) {
     return emitOpError("requires 8-, 16-, or 32-bit value elements");
   }
   unsigned expectedOffsetWidth = valueElemWidth == 32 ? 32 : 16;

@@ -503,6 +503,14 @@ LogicalResult verifyOperationBoundary(Operation *op,
   }
 
   if (isVMISemanticOp(op) || isStructuralOp(op)) {
+    std::string reason;
+    if (failed(VMILayoutSupport().getGroupOperationShapeSupport(op, &reason))) {
+      InFlightDiagnostic diag = op->emitError()
+          << kVMIDiagUnsupportedPrefix << op->getName() << ": " << reason;
+      (void)diag;
+      mirrorDiagnostic(diagOS, Twine(kVMIDiagUnsupportedPrefix) + reason);
+      return failure();
+    }
     return success();
   }
 

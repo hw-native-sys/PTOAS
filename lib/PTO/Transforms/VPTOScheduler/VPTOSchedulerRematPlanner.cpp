@@ -41,7 +41,8 @@ static unsigned countDeadRecipeOperations(
 {
     DenseSet<Operation*> recipeOperations;
     DenseSet<Operation*> deadOperations;
-    auto addCandidate = [&](const RematCandidate& candidate) {
+    auto addCandidate = [&recipeOperations, &deadOperations](
+        const RematCandidate& candidate) {
         recipeOperations.insert(candidate.recipeOperations.begin(), candidate.recipeOperations.end());
         deadOperations.insert(candidate.value.getDefiningOp());
     };
@@ -60,9 +61,12 @@ static unsigned countDeadRecipeOperations(
                 continue;
             }
             bool allUsersDead =
-                llvm::all_of(operation->getUsers(), [&](Operation* user) { return deadOperations.contains(user); });
+                llvm::all_of(operation->getUsers(),
+                             [&deadOperations](Operation* user) {
+                                 return deadOperations.contains(user);
+                             });
             if (allUsersDead) {
-                changed |= deadOperations.insert(operation).second;
+                changed = changed || deadOperations.insert(operation).second;
             }
         }
     }

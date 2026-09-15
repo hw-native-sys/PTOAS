@@ -48,7 +48,7 @@ static LogicalResult verifyTRowExpandImplicitTmpContract(
 }
 
 mlir::LogicalResult mlir::pto::TRowExpandDivOp::verify() {
-  auto verifyByArch = [&](PTOArch targetArch) -> LogicalResult {
+  auto verifyByArch = [this](PTOArch targetArch) -> LogicalResult {
     Type src0Ty = getSrc0().getType();
     Type src1Ty = getSrc1().getType();
     Type dstTy = getDst().getType();
@@ -81,8 +81,8 @@ mlir::LogicalResult mlir::pto::TRowExpandDivOp::verify() {
     }
     return mlir::success();
   };
-  auto verifyA2A3 = [&]() -> LogicalResult { return verifyByArch(PTOArch::A3); };
-  auto verifyA5 = [&]() -> LogicalResult { return verifyByArch(PTOArch::A5); };
+  auto verifyA2A3 = [&verifyByArch]() -> LogicalResult { return verifyByArch(PTOArch::A3); };
+  auto verifyA5 = [&verifyByArch]() -> LogicalResult { return verifyByArch(PTOArch::A5); };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
@@ -110,25 +110,25 @@ static LogicalResult verifyTRowExpandMulSub(
 }
 
 mlir::LogicalResult mlir::pto::TRowExpandMulOp::verify() {
-  auto verifyByArch = [&](PTOArch arch) {
+  auto verifyByArch = [this](PTOArch arch) {
     return verifyTRowExpandMulSub(
         getOperation(), getSrc0().getType(), getSrc1().getType(),
         getDst().getType(), getTmp(), arch, "trowexpandmul");
   };
-  auto verifyA2A3 = [&]() -> LogicalResult { return verifyByArch(PTOArch::A3); };
-  auto verifyA5 = [&]() -> LogicalResult { return verifyByArch(PTOArch::A5); };
+  auto verifyA2A3 = [&verifyByArch]() -> LogicalResult { return verifyByArch(PTOArch::A3); };
+  auto verifyA5 = [&verifyByArch]() -> LogicalResult { return verifyByArch(PTOArch::A5); };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
 
 mlir::LogicalResult mlir::pto::TRowExpandSubOp::verify() {
-  auto verifyByArch = [&](PTOArch arch) {
+  auto verifyByArch = [this](PTOArch arch) {
     return verifyTRowExpandMulSub(
         getOperation(), getSrc0().getType(), getSrc1().getType(),
         getDst().getType(), getTmp(), arch, "trowexpandsub");
   };
-  auto verifyA2A3 = [&]() -> LogicalResult { return verifyByArch(PTOArch::A3); };
-  auto verifyA5 = [&]() -> LogicalResult { return verifyByArch(PTOArch::A5); };
+  auto verifyA2A3 = [&verifyByArch]() -> LogicalResult { return verifyByArch(PTOArch::A3); };
+  auto verifyA5 = [&verifyByArch]() -> LogicalResult { return verifyByArch(PTOArch::A5); };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
@@ -211,10 +211,10 @@ static LogicalResult verifyTRowExpandAddByArch(TRowExpandAddOp op,
 }
 
 mlir::LogicalResult mlir::pto::TRowExpandAddOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult {
+  auto verifyA2A3 = [this]() -> LogicalResult {
     return verifyTRowExpandAddByArch(*this, PTOArch::A3);
   };
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [this]() -> LogicalResult {
     return verifyTRowExpandAddByArch(*this, PTOArch::A5);
   };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);

@@ -102,14 +102,35 @@ inline bool isSupportedGroupSlotMemoryLayout(VMILayoutAttr layout,
   return false;
 }
 
+inline bool matchesCompactGroupShape(int64_t elementCount,
+                                     int64_t vcgBlockElems,
+                                     int64_t groupSize) {
+  // One physical input carrier and at most one eight-slot result packet.
+  // Eight-bit inputs use two instruction-local 16-bit carriers after unpack.
+  bool supportedWidth =
+      matchesElementCountPattern(N<8, 16, 32>(), vcgBlockElems);
+  bool supportedLength = matchesElementCountPattern(
+      N<1, 2, 4, 8, 64, 128, 256>(), elementCount);
+  return supportedWidth && supportedLength && groupSize > 0 &&
+         elementCount <= mlir::pto::kValue8 * vcgBlockElems &&
+         elementCount / groupSize <= mlir::pto::kValue8;
+}
+
 inline FailureOr<VMIGroupBlockClass> getGroupBlockClass(int64_t groupSize,
-                                                        int64_t vcgBlockElems) {
+                                                        int64_t vcgBlockElems,
+                                                        int64_t elementCount) {
   if (vcgBlockElems <= 0) {
     return failure();
   }
 
   for (const GroupBlockClassPattern &row : kGroupBlockClassPatterns) {
     GroupBlockPattern block = row.block;
+    if (block.kind == GroupBlockPatternKind::Compact) {
+      if (matchesCompactGroupShape(elementCount, vcgBlockElems, groupSize)) {
+        return row.blockClass;
+      }
+      continue;
+    }
     if (block.kind == GroupBlockPatternKind::FullPartMultiple) {
       int64_t fullPartElems = 8 * vcgBlockElems;
       if (groupSize >= fullPartElems && groupSize % fullPartElems == 0) {
@@ -130,6 +151,7 @@ inline FailureOr<VMIGroupBlockClass> getGroupBlockClass(int64_t groupSize,
 }
 
 struct GroupLayoutKey {
+  int64_t elementCount = 0;
   int64_t groupSize = 0;
   int64_t lanesPerPart = 0;
   int64_t vcgBlockElems = 0;
@@ -199,6 +221,10 @@ buildInterleaveLayoutKey(VMIVRegType valueType, std::string *reason) {
 
 inline bool matchesGroupBlockPattern(GroupBlockPattern pattern,
                                      GroupLayoutKey key) {
+  if (pattern.kind == GroupBlockPatternKind::Compact) {
+    return matchesCompactGroupShape(key.elementCount, key.vcgBlockElems,
+                                    key.groupSize);
+  }
   if (pattern.kind == GroupBlockPatternKind::FullPartMultiple) {
     if (pattern.numerator <= 0) {
       return false;
@@ -254,12 +280,38 @@ buildGroupLayoutKey(VMIVRegType type, int64_t numGroups,
 
   int64_t vcgBlockElems = *lanesPerPart / mlir::pto::kValue8;
   FailureOr<VMIGroupBlockClass> blockClass =
-      getGroupBlockClass(*groupSize, vcgBlockElems);
+      getGroupBlockClass(*groupSize, vcgBlockElems, type.getElementCount());
   if (failed(blockClass)) {
     return fail(unsupportedGroupSizeReason);
   }
 
-  return GroupLayoutKey{*groupSize, *lanesPerPart, vcgBlockElems, *blockClass};
+  return GroupLayoutKey{type.getElementCount(), *groupSize, *lanesPerPart,
+                        vcgBlockElems, *blockClass};
+}
+
+inline bool isExecutableGroupReducePattern(const GroupReduceLayoutPattern &pattern,
+                                           GroupLayoutKey key) {
+  if (pattern.block.kind == GroupBlockPatternKind::Compact) {
+    return true;
+  }
+  // A5 has neither row nor VCG eight-bit reductions. Dense execution must
+  // widen the input; a layout fact alone does not make the old instruction legal.
+  if (key.vcgBlockElems == mlir::pto::kValue32) {
+    return false;
+  }
+  // Partial carriers cannot materialize the full deinterleave demanded by
+  // multi-block VCG plans. Use the dense row plan for these bounded shapes.
+  bool deinterleaved =
+      pattern.sourceLayout.kind == LayoutPatternKind::Deinterleaved ||
+      pattern.sourceLayout.kind == LayoutPatternKind::BlockDeinterleaved;
+  if (deinterleaved && key.elementCount <= key.lanesPerPart) {
+    return false;
+  }
+  // Strided 16/32-bit operands must not demand nonexistent b64/b128 masks.
+  int64_t stride = pattern.sourceLayout.kind == LayoutPatternKind::LaneStride
+                       ? pattern.sourceLayout.value : 1;
+  int64_t elementBits = kVMIVCGBlockBytes * mlir::pto::kValue8 / key.vcgBlockElems;
+  return elementBits * stride <= mlir::pto::kValue32;
 }
 
 inline VMIGroupReduceLayoutFact

@@ -113,7 +113,7 @@ struct PTOExpandSoftLibPass
   // erases the original operation. Shared by the cache-hit and
   // freshly-materialized paths.
   void replaceWithSoftLibCall(Operation *op, func::FuncOp callee,
-                              ValueRange operands, Value resultValue) {
+                              ValueRange operands, Value resultValue) const {
     OpBuilder builder(op);
     auto call = builder.create<func::CallOp>(op->getLoc(), callee, operands);
     resultValue.replaceAllUsesWith(call.getResult(0));
@@ -143,7 +143,7 @@ struct PTOExpandSoftLibPass
   importSoftLibFunctions(ModuleOp module, MLIRContext &context,
                          StringRef functionName, StringRef entrySymbol,
                          ModuleOp source,
-                         func::FuncOp &importedEntry) {
+                         func::FuncOp &importedEntry) const {
     bool materializeSourceReady =
         source && source.getContext() == &context;
     if (!materializeSourceReady) {

@@ -35,12 +35,12 @@ constexpr int64_t kCriticalPressureMultiplier = 2;
 struct PressureClosureGroup {
   VPTOSUnit *target = nullptr;
   std::optional<unsigned> pressureSet;
-  SmallVector<unsigned, 2> bundleOriginalIndices;
-  SmallVector<Value, 2> targetValues;
+  SmallVector<unsigned> bundleOriginalIndices;
+  SmallVector<Value> targetValues;
   DenseSet<VPTOSUnit *> units;
-  SmallVector<VPTOSUnit *, 8> witness;
-  SmallVector<int64_t, 2> peak;
-  SmallVector<int64_t, 2> end;
+  SmallVector<VPTOSUnit *> witness;
+  SmallVector<int64_t> peak;
+  SmallVector<int64_t> end;
   unsigned steps = 0;
   int64_t supportPressure = 0;
   int64_t effectiveEnd = 0;
@@ -371,7 +371,7 @@ static bool isValueBefore(Value lhs, Value rhs, const VPTOSchedDAG &dag) {
   return llvm::find(dag.getLiveIns(), lhs) < llvm::find(dag.getLiveIns(), rhs);
 }
 
-static SmallVector<Value, 2>
+static SmallVector<Value>
 buildPressureBundle(Value value, VPTOPressureSetID pressureSet,
                     const VPTORegPressureTracker &tracker,
                     const VPTOSchedModel &model, const VPTOSchedDAG &dag,
@@ -384,7 +384,7 @@ buildPressureBundle(Value value, VPTOPressureSetID pressureSet,
   if (!checkedDefinitions.insert(definingOp).second) {
     return {};
   }
-  SmallVector<Value, 2> bundle;
+  SmallVector<Value> bundle;
   for (Value result : definingOp->getResults()) {
     bool contributes =
         tracker.isLive(result) &&
@@ -428,7 +428,7 @@ static LogicalResult collectPressureClosureBundles(
     const VPTOSchedBoundary &boundary, const VPTOSchedModel &model,
     const VPTOSchedDAG &dag, unsigned pressureSet,
     VPTOSchedulingBudget &budget,
-    SmallVectorImpl<SmallVector<Value, 2>> &bundles) {
+    SmallVectorImpl<SmallVector<Value>> &bundles) {
   constexpr unsigned kMaxClosureTargetBundles = 1;
   constexpr unsigned kMaxClosureDirectUsers = 8;
   VPTOPressureSetID pressureSetID = model.getPressureSets()[pressureSet].id;
@@ -446,7 +446,7 @@ static LogicalResult collectPressureClosureBundles(
     if (!valueContributesToPressureSet(model, value, pressureSetID)) {
       continue;
     }
-    SmallVector<Value, 2> bundle = buildPressureBundle(
+    SmallVector<Value> bundle = buildPressureBundle(
         value, pressureSetID, tracker, model, dag, checkedDefinitions);
     if (bundle.empty()) {
       continue;
@@ -485,7 +485,7 @@ static bool isBetterClosureGroup(const PressureClosureGroup &candidate,
 }
 
 struct PressureClosureSimulation {
-  SmallVector<VPTOSUnit *, 8> ready;
+  SmallVector<VPTOSUnit *> ready;
   DenseMap<VPTOSUnit *, unsigned> remaining;
   DenseSet<VPTOSUnit *> discovered;
   DenseSet<VPTOSUnit *> expanded;
@@ -539,7 +539,7 @@ static LogicalResult enqueueClosurePredecessors(
 static FailureOr<bool> discoverClosureUnit(
     VPTOSUnit &root, bool isCore, const VPTOSchedBoundary &boundary,
     VPTOSchedulingBudget &budget, PressureClosureSimulation &simulation) {
-  SmallVector<std::pair<VPTOSUnit *, bool>, 8> worklist{{&root, isCore}};
+  SmallVector<std::pair<VPTOSUnit *, bool>> worklist{{&root, isCore}};
   while (!worklist.empty()) {
     if (!budget.consume()) {
       return failure();
@@ -832,7 +832,7 @@ refreshPressureClosureGroup(PressureClosureGroup &closureGroup,
     return success();
   }
 
-  SmallVector<SmallVector<Value, 2>, 2> bundles;
+  SmallVector<SmallVector<Value>> bundles;
   LogicalResult collected = collectPressureClosureBundles(
       boundary, model, dag, *pressureSet, budget, bundles);
   if (failed(collected)) {
@@ -907,7 +907,7 @@ static FailureOr<bool> extendRecoveryTargets(
     const PressureClosureGroup &closureGroup, const VPTOSchedBoundary &boundary,
     const VPTOSchedModel &model, const VPTOSchedDAG &dag,
     VPTOSchedulingBudget &budget, PressureClosureGroup &extendedGroup) {
-  SmallVector<Value, 4> targets(closureGroup.targetValues.begin(),
+  SmallVector<Value> targets(closureGroup.targetValues.begin(),
                                 closureGroup.targetValues.end());
   VPTOPressureSetID pressureSetID =
       model.getPressureSets()[*closureGroup.pressureSet].id;
@@ -1529,7 +1529,7 @@ LogicalResult ScheduleRunner::commitDecision(
                "strategy returned an invalid scheduling decision");
     return mlir::failure();
   }
-  SmallVector<int64_t, 2> pressureBeforeCommit;
+  SmallVector<int64_t> pressureBeforeCommit;
   if (collectDiagnostics) {
     pressureBeforeCommit.assign(context.currentPressure.begin(),
                                 context.currentPressure.end());

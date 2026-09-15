@@ -100,7 +100,7 @@ private:
   SmallVector<int>
   GetAvailableEventId(SyncOperation *sync,
                       SmallVector<bool> eventIdLifetimeAvailableStatus,
-                      SmallVector<bool> eventIdIdleStatus, size_t eventIdNum);
+                      SmallVector<bool> eventIdIdleStatus, size_t eventIdNum) const;
  
   SmallVector<int>
   UpdateBlockAvailableEventId(const SyncOperation *sync,

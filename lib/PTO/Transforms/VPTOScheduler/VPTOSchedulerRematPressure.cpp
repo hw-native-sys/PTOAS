@@ -44,7 +44,7 @@ static std::optional<SmallVector<int64_t>> evaluateRegionPressure(
     VPTOSchedulerLimits limits;
     VPTOSchedulingBudget budget(limits.maxWorkUnits);
     VPTOScheduleFailure failure;
-    VPTOSchedDAGBuilder builder(&model, limits, budget);
+    VPTOSchedDAGBuilder builder(&model, limits, &budget);
     FailureOr<std::unique_ptr<VPTOSchedDAG>> dag = builder.build(region, failure);
     if (failed(dag)) {
         return std::nullopt;

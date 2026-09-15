@@ -49,9 +49,9 @@ struct PTOInitializeL2G2LPipeToEmitC
     Value v2cBuf = zero;
     if (op.getDirMask() == 1) {
       c2vBuf = localAddr ? localAddr : zero;
-    } else if (op.getDirMask() == 2) {
+    } else if (op.getDirMask() == mlir::pto::kValue2) {
       v2cBuf = localAddr ? localAddr : zero;
-    } else if (op.getDirMask() == 3) {
+    } else if (op.getDirMask() == mlir::pto::kValue3) {
       if (localAddr) {
         if (!op.getPeerLocalAddr()) {
           return rewriter.notifyMatchFailure(
@@ -103,9 +103,9 @@ struct PTOInitializeL2LPipeToEmitC
     Value v2cBuf = zero;
     if (op.getDirMask() == 1) {
       c2vBuf = localAddr;
-    } else if (op.getDirMask() == 2) {
+    } else if (op.getDirMask() == mlir::pto::kValue2) {
       v2cBuf = localAddr;
-    } else if (op.getDirMask() == 3) {
+    } else if (op.getDirMask() == mlir::pto::kValue3) {
       c2vBuf = localAddr;
       v2cBuf = adaptor.getPeerLocalAddr();
     } else {

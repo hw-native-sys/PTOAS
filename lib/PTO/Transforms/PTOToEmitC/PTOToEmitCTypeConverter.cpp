@@ -75,15 +75,15 @@ void PTOToEmitCTypeConverter::registerIntegerConversions(MLIRContext *Ctx) {addC
   // explicitly signed/unsigned; treat signless as signed by default.
   const bool isUnsigned = type.isUnsignedInteger();
   switch (type.getWidth()) {
-  case 8:
+  case kInt8BitWidth:
     return emitc::OpaqueType::get(Ctx, isUnsigned ? "uint8_t" : "int8_t");
-  case 16:
+  case kInt16BitWidth:
     return emitc::OpaqueType::get(Ctx,
                                   isUnsigned ? "uint16_t" : "int16_t");
-  case 32:
+  case kInt32BitWidth:
     return emitc::OpaqueType::get(Ctx,
                                   isUnsigned ? "uint32_t" : "int32_t");
-  case 64:
+  case kInt64BitWidth:
     return emitc::OpaqueType::get(Ctx,
                                   isUnsigned ? "uint64_t" : "int64_t");
   default:
@@ -99,9 +99,11 @@ addConversion([Ctx](IndexType type) -> Type {
 
 // vector<4xi16> (e.g. TMRGSORT executedNumList) -> pto::MrgSortExecutedNumList
 addConversion([Ctx](VectorType type) -> Type {
-  if (type.getRank() == 1 && type.getNumElements() == 4 &&
-      type.getElementType().isInteger(16))
+  if (type.getRank() == 1 &&
+      type.getNumElements() == kMrgSortExecutedNumListSize &&
+      type.getElementType().isInteger(kInt16BitWidth)) {
     return emitc::OpaqueType::get(Ctx, "pto::MrgSortExecutedNumList");
+  }
   return Type{};
 });
 

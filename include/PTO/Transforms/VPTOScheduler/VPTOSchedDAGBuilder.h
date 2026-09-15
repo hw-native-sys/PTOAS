@@ -28,10 +28,10 @@ public:
       : model(model) {}
   VPTOSchedDAGBuilder(const VPTOSchedModel *model,
                       const VPTOSchedulerLimits &limits,
-                      VPTOSchedulingBudget &budget,
+                      VPTOSchedulingBudget *budget,
                       const llvm::DenseSet<Operation *> *rematerializationAnchors =
                           nullptr)
-      : model(model), limits(&limits), budget(&budget),
+      : model(model), limits(&limits), budget(budget),
         rematerializationAnchors(rematerializationAnchors) {}
 
   FailureOr<std::unique_ptr<VPTOSchedDAG>>

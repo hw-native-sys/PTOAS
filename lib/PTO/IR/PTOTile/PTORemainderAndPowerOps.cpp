@@ -25,10 +25,12 @@ static LogicalResult verifyTRemSTmpA2A3(TRemSOp op, Type tt, Type elem) {
       tmpValid[1] < dstValid[1]) {
     return op.emitOpError("expects A2/A3 tmp valid columns to cover dst valid columns");
   }
+  constexpr size_t kTremsTileRank = 2;
+  constexpr unsigned kI32BitWidth = 32;
   auto dstShape = getShapeVec(td);
   auto elemBytes = getElemByteSize(elem);
-  if (dstShape.size() != 2 || dstShape[1] == ShapedType::kDynamic ||
-      elemBytes == 0) {
+  if (dstShape.size() != kTremsTileRank ||
+      dstShape[1] == ShapedType::kDynamic || elemBytes == 0) {
     return op.emitOpError(
         "expects A2/A3 trems dst shape and element size to be static when tmp is provided");
   }
@@ -36,36 +38,41 @@ static LogicalResult verifyTRemSTmpA2A3(TRemSOp op, Type tt, Type elem) {
           op, tt, static_cast<uint64_t>(dstShape[1]) * elemBytes))) {
     return failure();
   }
-  if (!(elem.isInteger(32) || elem.isF32())) {
+  if (!(elem.isInteger(kI32BitWidth) || elem.isF32())) {
     return op.emitOpError("expects A2/A3 trems element type to be i32/f32");
   }
   return success();
 }
 
 static LogicalResult verifyTRemSTmpA5(TRemSOp op, Type tt, Type elem) {
+  constexpr unsigned kI16BitWidth = 16;
+  constexpr unsigned kI32BitWidth = 32;
   if (failed(verifyVecTileCommon(op, tt, "tmp"))) {
     return failure();
   }
-  if (!(elem.isInteger(32) || elem.isInteger(16) || elem.isF16() || elem.isF32())) {
+  if (!(elem.isInteger(kI32BitWidth) || elem.isInteger(kI16BitWidth) ||
+        elem.isF16() || elem.isF32())) {
     return op.emitOpError("expects A5 trems element type to be i32/i16/f16/f32");
   }
   return success();
 }
 
 static LogicalResult verifyTRemSTmp(TRemSOp op, Type elem) {
+  constexpr size_t kTremsTileRank = 2;
   Type tt = op.getTmp().getType();
   if (failed(verifyTileBufCommon(op, tt, "tmp"))) {
     return failure();
   }
   auto dstValid = getValidShapeVec(op.getDst().getType());
   auto tmpValid = getValidShapeVec(tt);
-  if (dstValid.size() != 2 || tmpValid.size() != 2) {
+  if (dstValid.size() != kTremsTileRank ||
+      tmpValid.size() != kTremsTileRank) {
     return op.emitOpError("expects tmp and dst to be rank-2 tiles");
   }
-  auto verifyA2A3 = [&]() -> LogicalResult {
+  auto verifyA2A3 = [&op, &tt, &elem]() -> LogicalResult {
     return verifyTRemSTmpA2A3(op, tt, elem);
   };
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [&op, &tt, &elem]() -> LogicalResult {
     return verifyTRemSTmpA5(op, tt, elem);
   };
   return dispatchVerifierByArch(op.getOperation(), verifyA2A3, verifyA5);
@@ -123,13 +130,13 @@ mlir::LogicalResult mlir::pto::TFModSOp::verify() {
     return emitOpError("expects scalar type to match the tile element type");
   }
 
-  auto verifyA2A3 = [&]() -> LogicalResult {
+  auto verifyA2A3 = [this, &elem]() -> LogicalResult {
     if (!(elem.isInteger(32) || elem.isInteger(16) || elem.isF16() || elem.isF32())) {
       return emitOpError("expects A2/A3 tfmods element type to be i32/i16/f16/f32");
     }
     return success();
   };
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [this, &elem]() -> LogicalResult {
     if (!(elem.isInteger(32) || elem.isInteger(16) || elem.isF16() || elem.isF32())) {
       return emitOpError("expects A5 tfmods element type to be i32/i16/f16/f32");
     }
@@ -149,7 +156,7 @@ static LogicalResult verifyTPowTmpShape(Operation *op, Type tmpTy, Type dstTy) {
 }
 
 static LogicalResult verifyTPowElemType(TPowOp op, Type elem, bool isIntElem) {
-  auto verifyA2A3 = [&]() -> LogicalResult {
+  auto verifyA2A3 = [&op, &elem, &isIntElem]() -> LogicalResult {
     if (op.getPrecisionType() == pto::PowPrecision::HighPrecision) {
       return op.emitOpError(
           "A2/A3 does not support precisionType=high_precision");
@@ -160,7 +167,7 @@ static LogicalResult verifyTPowElemType(TPowOp op, Type elem, bool isIntElem) {
     }
     return success();
   };
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [&op, &elem, &isIntElem]() -> LogicalResult {
     if (op.getPrecisionType() == pto::PowPrecision::HighPrecision) {
       if (!(elem.isF16() || elem.isF32() || elem.isBF16())) {
         return op.emitOpError("expects A5 tpow element type to be f16/f32/bf16 "
@@ -243,7 +250,7 @@ mlir::LogicalResult mlir::pto::TPowOp::verify() {
 }
 
 static LogicalResult verifyTPowSElemType(TPowSOp op, Type elem, bool isIntElem) {
-  auto verifyA2A3 = [&]() -> LogicalResult {
+  auto verifyA2A3 = [&op, &elem, &isIntElem]() -> LogicalResult {
     if (op.getPrecisionType() == pto::PowPrecision::HighPrecision) {
       return op.emitOpError(
           "A2/A3 does not support precisionType=high_precision");
@@ -254,7 +261,7 @@ static LogicalResult verifyTPowSElemType(TPowSOp op, Type elem, bool isIntElem) 
     }
     return success();
   };
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [&op, &elem, &isIntElem]() -> LogicalResult {
     if (op.getPrecisionType() == pto::PowPrecision::HighPrecision) {
       if (!(elem.isF16() || elem.isF32() || elem.isBF16())) {
         return op.emitOpError("expects A5 tpows element type to be f16/f32/bf16 "

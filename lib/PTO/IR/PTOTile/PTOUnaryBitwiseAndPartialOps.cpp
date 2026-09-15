@@ -18,7 +18,8 @@ static LogicalResult verifyTNegArch(TNegOp op, bool isA5) {
   if (isA5) {
     auto srcValid = getValidShapeVec(srcTy);
     auto dstValid = getValidShapeVec(dstTy);
-    if (srcValid.size() != 2 || dstValid.size() != 2)
+    if (srcValid.size() != mlir::pto::kValue2 ||
+        dstValid.size() != mlir::pto::kValue2)
       return op.emitOpError("expects src and dst to have rank-2 valid_shape");
     if (srcValid[1] != ShapedType::kDynamic &&
         dstValid[1] != ShapedType::kDynamic &&
@@ -32,7 +33,8 @@ static LogicalResult verifyTNegArch(TNegOp op, bool isA5) {
   bool supported = isA5
                        ? isSupportedVecElemType(elemTy, /*allowBf16=*/true,
                                                 /*allowInt8=*/true)
-                       : (elemTy.isInteger(16) || elemTy.isInteger(32) ||
+                       : (elemTy.isInteger(mlir::pto::kValue16) ||
+                          elemTy.isInteger(mlir::pto::kValue32) ||
                           elemTy.isF16() || elemTy.isF32());
   if (!supported)
     return op.emitOpError(isA5
@@ -42,24 +44,24 @@ static LogicalResult verifyTNegArch(TNegOp op, bool isA5) {
 }
 
 mlir::LogicalResult mlir::pto::TNegOp::verify() {
-  auto verifyA2A3 = [&]() { return verifyTNegArch(*this, false); };
-  auto verifyA5 = [&]() { return verifyTNegArch(*this, true); };
+  auto verifyA2A3 = [this]() { return verifyTNegArch(*this, false); };
+  auto verifyA5 = [this]() { return verifyTNegArch(*this, true); };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
 mlir::LogicalResult mlir::pto::TNotOp::verify() {
-  auto verifyCommon = [&]() {
+  auto verifyCommon = [this]() {
     return verifyMatchingVecUnaryTiles(getOperation(), getSrc().getType(),
                                        getDst().getType());
   };
-  auto verifyA2A3 = [&]() -> LogicalResult {
+  auto verifyA2A3 = [this, &verifyCommon]() -> LogicalResult {
     auto elemTy = verifyCommon();
     return failed(elemTy)
                ? failure()
                : verifyIntegerWidths(getOperation(), *elemTy, {16},
                                      "expects A2/A3 tnot element type to be i16");
   };
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [this, &verifyCommon]() -> LogicalResult {
     auto elemTy = verifyCommon();
     return failed(elemTy)
                ? failure()
@@ -78,7 +80,7 @@ mlir::LogicalResult mlir::pto::TOrOp::verify() {
 mlir::LogicalResult mlir::pto::TOrSOp::verify() {
   // ORS has the same operand contract as ANDS; diagnostics intentionally omit
   // the scalar noun for compatibility with the existing verifier messages.
-  auto verifyFor = [&](bool isA5) -> LogicalResult {
+  auto verifyFor = [this](bool isA5) -> LogicalResult {
     auto elem = verifyDistinctRowMajorUnaryTileOpCommon(
         getOperation(), getSrc(), getDst(), "src", "dst");
     if (failed(elem))
@@ -89,8 +91,8 @@ mlir::LogicalResult mlir::pto::TOrSOp::verify() {
         isA5 ? "expects A5 tors src and dst element type to be i8/i16/i32"
              : "expects A2/A3 tors src and dst element type to be i8/i16");
   };
-  auto verifyA2A3 = [&]() { return verifyFor(false); };
-  auto verifyA5 = [&]() { return verifyFor(true); };
+  auto verifyA2A3 = [&verifyFor]() { return verifyFor(false); };
+  auto verifyA5 = [&verifyFor]() { return verifyFor(true); };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
@@ -135,7 +137,8 @@ static LogicalResult verifyTPartBinaryA2A3(Operation *op, Type src0Ty,
   auto s0 = getShapeVec(src0Ty);
   auto s1 = getShapeVec(src1Ty);
   auto d = getShapeVec(dstTy);
-  if (s0.size() != 2 || s1.size() != 2 || d.size() != 2) {
+  if (s0.size() != mlir::pto::kValue2 || s1.size() != mlir::pto::kValue2 ||
+      d.size() != mlir::pto::kValue2) {
     return op->emitOpError()
            << "expects src0/src1/dst to be rank-2 (tile-shaped)";
   }
@@ -143,7 +146,8 @@ static LogicalResult verifyTPartBinaryA2A3(Operation *op, Type src0Ty,
     return failure();
   }
   Type elem = getElemTy(src0Ty);
-  if (!(elem.isInteger(32) || elem.isInteger(16) || elem.isF16() || elem.isF32())) {
+  if (!(elem.isInteger(mlir::pto::kValue32) ||
+        elem.isInteger(mlir::pto::kValue16) || elem.isF16() || elem.isF32())) {
     return op->emitOpError()
            << "expects A2/A3 " << opName
            << " element type to be i32/i16/f16/f32";
@@ -162,15 +166,18 @@ static LogicalResult verifyTPartBinaryA5(Operation *op, Type src0Ty,
     return op->emitOpError()
            << "expects src0/src1/dst to have the same element type";
   Type elem = getElemTy(src0Ty);
-  if (!(elem.isInteger(32) || elem.isInteger(16) || elem.isInteger(8) ||
-        elem.isF16() || elem.isBF16() || elem.isF32()))
+  if (!(elem.isInteger(mlir::pto::kValue32) ||
+        elem.isInteger(mlir::pto::kValue16) ||
+        elem.isInteger(mlir::pto::kValue8) || elem.isF16() ||
+        elem.isBF16() || elem.isF32()))
     return op->emitOpError()
            << "expects A5 " << opName
            << " element type to be i32/i16/i8/f16/bf16/f32";
   auto s0 = getShapeVec(src0Ty);
   auto s1 = getShapeVec(src1Ty);
   auto d = getShapeVec(dstTy);
-  if (s0.size() != 2 || s1.size() != 2 || d.size() != 2)
+  if (s0.size() != mlir::pto::kValue2 || s1.size() != mlir::pto::kValue2 ||
+      d.size() != mlir::pto::kValue2)
     return op->emitOpError()
            << "expects src0/src1/dst to be rank-2 (tile-shaped)";
   return verifyPartialValidPatternLoose(op, src0Ty, src1Ty, dstTy);
@@ -189,8 +196,8 @@ static LogicalResult verifyTPartAddA5(TPartAddOp op) {
 }
 
 mlir::LogicalResult mlir::pto::TPartAddOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult { return verifyTPartAddA2A3(*this); };
-  auto verifyA5 = [&]() -> LogicalResult { return verifyTPartAddA5(*this); };
+  auto verifyA2A3 = [this]() -> LogicalResult { return verifyTPartAddA2A3(*this); };
+  auto verifyA5 = [this]() -> LogicalResult { return verifyTPartAddA5(*this); };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
@@ -202,10 +209,12 @@ static LogicalResult verifyTPartMinMax(Operation *op, Type src0, Type src1,
   if (!isA5 && failed(verifyPartialValidPattern(op, src0, src1, dst)))
     return failure();
   bool supported = isA5
-                       ? (elem->isInteger(32) || elem->isInteger(16) ||
-                          elem->isInteger(8) || elem->isF16() ||
-                          elem->isBF16() || elem->isF32())
-                       : (elem->isInteger(32) || elem->isInteger(16) ||
+                       ? (elem->isInteger(mlir::pto::kValue32) ||
+                          elem->isInteger(mlir::pto::kValue16) ||
+                          elem->isInteger(mlir::pto::kValue8) ||
+                          elem->isF16() || elem->isBF16() || elem->isF32())
+                       : (elem->isInteger(mlir::pto::kValue32) ||
+                          elem->isInteger(mlir::pto::kValue16) ||
                           elem->isF16() || elem->isF32());
   if (!supported)
     return op->emitOpError()
@@ -218,12 +227,12 @@ static LogicalResult verifyTPartMinMax(Operation *op, Type src0, Type src1,
 
 #define PTO_DEFINE_PART_MINMAX_VERIFY(OpClass, opName)                             \
   mlir::LogicalResult mlir::pto::OpClass::verify() {                               \
-    auto verifyA2A3 = [&]() {                                                      \
+    auto verifyA2A3 = [this]() {                                                  \
       return verifyTPartMinMax(getOperation(), getSrc0().getType(),                \
                                getSrc1().getType(), getDst().getType(), opName,     \
                                false);                                             \
     };                                                                             \
-    auto verifyA5 = [&]() {                                                        \
+    auto verifyA5 = [this]() {                                                    \
       return verifyTPartMinMax(getOperation(), getSrc0().getType(),                \
                                getSrc1().getType(), getDst().getType(), opName,     \
                                true);                                              \
@@ -249,7 +258,7 @@ static LogicalResult verifyTPartArgIndices(Operation *op, Type src0Ty,
         "expects src0Idx/src1Idx/dstIdx to have the same element type");
   }
   auto idxInt = dyn_cast<IntegerType>(idxElem);
-  if (!idxInt || idxInt.getWidth() != 32) {
+  if (!idxInt || idxInt.getWidth() != mlir::pto::kValue32) {
     return op->emitOpError(
         "expects src0Idx/src1Idx/dstIdx element type to be i32 or ui32");
   }

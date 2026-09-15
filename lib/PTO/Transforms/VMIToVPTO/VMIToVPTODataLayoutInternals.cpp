@@ -60,8 +60,14 @@ static LogicalResult checkGroupSlotLaneStrideContract(
   }
   unsigned elementBits = pto::getPTOStorageElemBitWidth(elementType);
   int64_t maxStride = std::max(sourceStride, resultStride);
+  // The same carrier chain as the dense lane-stride materialization: both the
+  // element carrier and the widest carrier (element bits times the stride) have
+  // to be expressible, which now reaches 64 bit.
   bool unsupportedCarrier =
-      (elementBits != 8 && elementBits != 16) || elementBits * maxStride > 32;
+      failed(getUnsignedCarrierVRegType(rewriter.getContext(), elementBits)) ||
+      failed(getUnsignedCarrierVRegType(
+          rewriter.getContext(),
+          elementBits * static_cast<unsigned>(maxStride)));
   if (unsupportedCarrier) {
     return fail("unsupported group-slot lane_stride carrier shape");
   }
@@ -423,6 +429,11 @@ struct DataLayoutIntermediatePlan {
   enum class Kind { Contiguous, Deinterleaved };
   Kind kind;
   size_t intermediateCount;
+  /// Lane stride of the Contiguous intermediate.  A dense/group-packet pair
+  /// whose two strides differ normalizes towards the packet's stride, so that
+  /// the first step is the carrier identity (or the dense lane-stride change)
+  /// and the second step finishes the other axis.
+  int64_t laneStride = 1;
 };
 
 static bool isContiguousLaneStrideLayout(VMILayoutAttr layout,
@@ -442,10 +453,27 @@ static bool isSupportedDeinterleavedIntermediateLayout(VMILayoutAttr layout) {
           layout.getFactor() == kVMIDataLayoutFactor4);
 }
 
+/// Physical arity of a dense lane-strided value once it is normalized to the
+/// unit lane stride.
+///
+/// The dense lane-stride materialization keeps one physical part per stride
+/// group, so normalizing a value of `sourcePartCount` parts at
+/// `sourceLaneStride` leaves the ceiling of the division: the last stride group
+/// may be partial, which is also how the materializer counts it.
+static std::optional<size_t> getUnitStridePartCount(size_t sourcePartCount,
+                                                    int64_t sourceLaneStride) {
+  if (sourcePartCount == 0 || sourceLaneStride <= 0) {
+    return std::nullopt;
+  }
+  return (sourcePartCount + static_cast<size_t>(sourceLaneStride) - 1) /
+         static_cast<size_t>(sourceLaneStride);
+}
+
 static std::optional<DataLayoutIntermediatePlan>
 getDataLayoutIntermediatePlan(VMILayoutAttr sourceLayout,
                               VMILayoutAttr resultLayout,
-                              size_t sourcePartCount) {
+                              size_t sourcePartCount, Type sourceVMIElementType,
+                              int64_t lanesPerPart) {
   bool deint2ToLaneStride =
       isDeinterleavedUnitStrideLayout(sourceLayout, 2) &&
       isContiguousLaneStrideLayout(resultLayout, 2);
@@ -462,11 +490,38 @@ getDataLayoutIntermediatePlan(VMILayoutAttr sourceLayout,
       deint2ToLaneStride || laneStrideToDeint2 || laneStride2ToLaneStride4 ||
       laneStride4ToLaneStride2;
   if (useContiguousIntermediate) {
-    bool needsPacking = !deint2ToLaneStride;
-    size_t intermediateCount = needsPacking ? (sourcePartCount + 1) / 2
-                                            : sourcePartCount;
+    // The intermediate is the unit-stride form of the same value: a
+    // deinterleaved source already carries that arity, a lane-strided one
+    // shrinks by its lane stride.
+    std::optional<size_t> intermediateCount = getUnitStridePartCount(
+        sourcePartCount, sourceLayout.getLaneStride());
+    if (!intermediateCount) {
+      return std::nullopt;
+    }
     return DataLayoutIntermediatePlan{
-        DataLayoutIntermediatePlan::Kind::Contiguous, intermediateCount};
+        DataLayoutIntermediatePlan::Kind::Contiguous, *intermediateCount};
+  }
+
+  // A dense value and a single-carrier group packet whose lane strides differ
+  // live in the same carrier but not in the same lanes: normalize towards the
+  // packet's lane stride first, then forward the carrier unchanged (the
+  // single-carrier identity).  The mirror direction is the same plan reversed.
+  if (needsVMIDenseLaneStrideGroupSlotBridge(sourceLayout, resultLayout,
+                                             sourceVMIElementType,
+                                             lanesPerPart)) {
+    bool denseToPacket = sourceLayout.isContiguous();
+    // Both sides of the bridge stay inside one physical part -- the
+    // ensure_layout rows bound the element count -- so the intermediate keeps
+    // the source arity: the dense side is normalized onto the packet's lane
+    // stride and the single-carrier identity forwards that intermediate
+    // unchanged.  In the mirror direction the packet is the source, the first
+    // step is that identity and the second one finishes the dense side.
+    size_t intermediateCount = sourcePartCount;
+    int64_t packetStride = denseToPacket ? resultLayout.getLaneStride()
+                                         : sourceLayout.getLaneStride();
+    return DataLayoutIntermediatePlan{
+        DataLayoutIntermediatePlan::Kind::Contiguous, intermediateCount,
+        packetStride};
   }
 
   bool useDeinterleavedIntermediate =
@@ -485,7 +540,7 @@ static FailureOr<SmallVector<Value>> materializeDataLayoutThroughContiguous(
     Type sourceVMIElementType, PatternRewriter &rewriter,
     const DataLayoutIntermediatePlan &plan) {
   VMILayoutAttr contiguous =
-      VMILayoutAttr::getContiguous(rewriter.getContext());
+      VMILayoutAttr::getContiguous(rewriter.getContext(), plan.laneStride);
   SmallVector<Type> intermediateTypes(
       plan.intermediateCount, sourceParts.front().getType());
   FailureOr<SmallVector<Value>> dense = materializeDataLayoutConversion(
@@ -521,9 +576,12 @@ materializeDataLayoutViaContiguous(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
     Type sourceVMIElementType, PatternRewriter &rewriter) {
+  FailureOr<int64_t> carrierLanes = getDataLanesPerPart(sourceVMIElementType);
   std::optional<DataLayoutIntermediatePlan> plan =
       getDataLayoutIntermediatePlan(sourceLayout, resultLayout,
-                                    sourceParts.size());
+                                    sourceParts.size(), sourceVMIElementType,
+                                    succeeded(carrierLanes) ? *carrierLanes
+                                                            : 0);
   if (!plan) {
     return std::optional<SmallVector<Value>>{};
   }

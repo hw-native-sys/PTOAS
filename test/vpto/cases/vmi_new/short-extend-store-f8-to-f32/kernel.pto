@@ -1,0 +1,72 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Short dense f8e4m3 reads widened into short dense f32 stores at four sizes
+// and offsets.  The narrow source is packed four to a 32-bit carrier lane
+// (lane_stride = 4) while the widened result is a contiguous group packet, so a
+// value only lands in the right lanes when the widening picks the semantic
+// lanes of its packed source.  Each shape writes a disjoint region; the rest of
+// the destination buffer keeps its sentinel, so a wrong lane, a wrong region or
+// an overrun shows up as a mismatch.
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @vmi_short_extend_store_f8_kernel(%src_gm: !pto.ptr<ui8, gm>,
+                                              %dst_gm: !pto.ptr<f32, gm>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c0_i64 = arith.constant 0 : i64
+    %c1_i64 = arith.constant 1 : i64
+    %c256_i64 = arith.constant 256 : i64
+    %c1024_i64 = arith.constant 1024 : i64
+    %c2048_i64 = arith.constant 2048 : i64
+    %s0 = arith.constant 0 : index
+    %d0 = arith.constant 0 : index
+    %s32 = arith.constant 32 : index
+    %d32 = arith.constant 32 : index
+    %s64 = arith.constant 64 : index
+    %d64 = arith.constant 64 : index
+    %s96 = arith.constant 96 : index
+    %d96 = arith.constant 96 : index
+
+    %ub_src_u8 = pto.castptr %c0_i64 : i64 -> !pto.ptr<ui8, ub>
+    %ub_src_f8 = pto.castptr %c0_i64 : i64 -> !pto.ptr<f8E4M3FN, ub>
+    %ub_dst = pto.castptr %c2048_i64 : i64 -> !pto.ptr<f32, ub>
+
+    pto.mte_gm_ub %src_gm, %ub_src_u8, %c0_i64, %c256_i64
+      nburst(%c1_i64, %c256_i64, %c256_i64)
+      : !pto.ptr<ui8, gm>, !pto.ptr<ui8, ub>, i64, i64, i64, i64, i64
+    pto.mte_gm_ub %dst_gm, %ub_dst, %c0_i64, %c1024_i64
+      nburst(%c1_i64, %c1024_i64, %c1024_i64)
+      : !pto.ptr<f32, gm>, !pto.ptr<f32, ub>, i64, i64, i64, i64, i64
+
+    pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+
+    pto.vecscope {
+      %v1 = pto.vmi.vload %ub_src_f8[%s0] : !pto.ptr<f8E4M3FN, ub> -> !pto.vmi.vreg<1xf8E4M3FN>
+      %w1 = pto.vmi.vcvt %v1 : !pto.vmi.vreg<1xf8E4M3FN> -> !pto.vmi.vreg<1xf32>
+      pto.vmi.vstore %w1, %ub_dst[%d0] : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>
+      %v2 = pto.vmi.vload %ub_src_f8[%s32] : !pto.ptr<f8E4M3FN, ub> -> !pto.vmi.vreg<2xf8E4M3FN>
+      %w2 = pto.vmi.vcvt %v2 : !pto.vmi.vreg<2xf8E4M3FN> -> !pto.vmi.vreg<2xf32>
+      pto.vmi.vstore %w2, %ub_dst[%d32] : !pto.vmi.vreg<2xf32>, !pto.ptr<f32, ub>
+      %v4 = pto.vmi.vload %ub_src_f8[%s64] : !pto.ptr<f8E4M3FN, ub> -> !pto.vmi.vreg<4xf8E4M3FN>
+      %w4 = pto.vmi.vcvt %v4 : !pto.vmi.vreg<4xf8E4M3FN> -> !pto.vmi.vreg<4xf32>
+      pto.vmi.vstore %w4, %ub_dst[%d64] : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>
+      %v8 = pto.vmi.vload %ub_src_f8[%s96] : !pto.ptr<f8E4M3FN, ub> -> !pto.vmi.vreg<8xf8E4M3FN>
+      %w8 = pto.vmi.vcvt %v8 : !pto.vmi.vreg<8xf8E4M3FN> -> !pto.vmi.vreg<8xf32>
+      pto.vmi.vstore %w8, %ub_dst[%d96] : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+    }
+
+    pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.mte_ub_gm %ub_dst, %dst_gm, %c1024_i64
+      nburst(%c1_i64, %c1024_i64, %c1024_i64)
+      : !pto.ptr<f32, ub>, !pto.ptr<f32, gm>, i64, i64, i64, i64
+    pto.barrier #pto.pipe<PIPE_ALL>
+    return
+  }
+}

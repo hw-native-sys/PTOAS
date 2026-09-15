@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --pto-backend=vpto --emit-vpto %s -o - | FileCheck %s
+
+module {
+  // CHECK-LABEL: func.func @half_block_compare_ui16
+  // CHECK: pto.vcmp {{.*}} : !pto.vreg<128xui16>, !pto.vreg<128xui16>, !pto.mask<b16> -> !pto.mask<b16>
+  // CHECK: pto.pbitcast {{.*}} : !pto.mask<b16> -> !pto.mask<b32>
+  // CHECK: pto.vcgadd
+  func.func @half_block_compare_ui16(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>, %limit: ui16, %active: index) {
+    %zero = arith.constant 0 : index
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<64xui16>
+    %prefix = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xpred>
+    %m = pto.vmi.vcmps %x, %limit, %prefix {cmp = "gt"} : !pto.vmi.vreg<64xui16>, ui16, !pto.vmi.mask<64xpred> -> !pto.vmi.mask<64xpred>
+    %r = pto.vmi.vcadd %x, %m {group = 8, reassoc} : !pto.vmi.vreg<64xui16>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<8xui16>
+    %b = pto.vmi.vbrc %r {group = 8} : !pto.vmi.vreg<8xui16> -> !pto.vmi.vreg<64xui16>
+    pto.vmi.vstore %b, %dst[%zero] : !pto.vmi.vreg<64xui16>, !pto.ptr<ui16, ub>
+    return
+  }
+  // CHECK-LABEL: func.func @half_block_compare_f16
+  // CHECK: pto.vcmp {{.*}} : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.mask<b16>
+  // CHECK: pto.pbitcast {{.*}} : !pto.mask<b16> -> !pto.mask<b32>
+  // CHECK: pto.vcgmax
+  func.func @half_block_compare_f16(%src: !pto.ptr<f16, ub>, %dst: !pto.ptr<f16, ub>, %limit: f16, %active: index) {
+    %zero = arith.constant 0 : index
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<64xf16>
+    %prefix = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xpred>
+    %m = pto.vmi.vcmps %x, %limit, %prefix {cmp = "gt"} : !pto.vmi.vreg<64xf16>, f16, !pto.vmi.mask<64xpred> -> !pto.vmi.mask<64xpred>
+    %r = pto.vmi.vcmax %x, %m {group = 8, reassoc} : !pto.vmi.vreg<64xf16>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<8xf16>
+    %b = pto.vmi.vbrc %r {group = 8} : !pto.vmi.vreg<8xf16> -> !pto.vmi.vreg<64xf16>
+    pto.vmi.vstore %b, %dst[%zero] : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>
+    return
+  }
+}

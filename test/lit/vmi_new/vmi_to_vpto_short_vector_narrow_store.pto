@@ -1,0 +1,99 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - | FileCheck %s --check-prefix=STRIDE --implicit-check-not=pto.vmi. --implicit-check-not='!pto.vmi.'
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --vmi-prefer-lane-stride-narrowing=false %s -o - | FileCheck %s --check-prefix=NOSTRIDE --implicit-check-not=pto.vmi. --implicit-check-not='!pto.vmi.'
+
+// A short dense read that is narrowed into a short dense store must lower even
+// though the narrowing result is lane-strided: the dense lane stride is
+// normalized through the contiguous form first, and the single-carrier group
+// packet that carries the short group_store operand then forwards the same
+// register.  Before that bridge existed the layout contract rejected the pair.
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @short_narrow_store_f16_L2(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f16, ub>, %off: index) attributes {pto.kernel} {
+    %c16 = arith.constant 16 : index
+    %aoff = arith.muli %off, %c16 : index
+    pto.vecscope {
+      %s = pto.vmi.vload %src[%aoff] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<2xf32>
+      %n = pto.vmi.vcvt %s {saturate = "SAT"} : !pto.vmi.vreg<2xf32> -> !pto.vmi.vreg<2xf16>
+      pto.vmi.vstore %n, %dst[%aoff] : !pto.vmi.vreg<2xf16>, !pto.ptr<f16, ub>
+    }
+    return
+  }
+
+  func.func @short_narrow_store_f16_L4(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f16, ub>, %off: index) attributes {pto.kernel} {
+    %c16 = arith.constant 16 : index
+    %aoff = arith.muli %off, %c16 : index
+    pto.vecscope {
+      %s = pto.vmi.vload %src[%aoff] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<4xf32>
+      %n = pto.vmi.vcvt %s {saturate = "SAT"} : !pto.vmi.vreg<4xf32> -> !pto.vmi.vreg<4xf16>
+      pto.vmi.vstore %n, %dst[%aoff] : !pto.vmi.vreg<4xf16>, !pto.ptr<f16, ub>
+    }
+    return
+  }
+
+  func.func @short_narrow_store_f16_L8(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f16, ub>, %off: index) attributes {pto.kernel} {
+    %c16 = arith.constant 16 : index
+    %aoff = arith.muli %off, %c16 : index
+    pto.vecscope {
+      %s = pto.vmi.vload %src[%aoff] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
+      %n = pto.vmi.vcvt %s {saturate = "SAT"} : !pto.vmi.vreg<8xf32> -> !pto.vmi.vreg<8xf16>
+      pto.vmi.vstore %n, %dst[%aoff] : !pto.vmi.vreg<8xf16>, !pto.ptr<f16, ub>
+    }
+    return
+  }
+
+  func.func @short_narrow_store_f16_L8_masked(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f16, ub>, %off: index) attributes {pto.kernel} {
+    %c16 = arith.constant 16 : index
+    %aoff = arith.muli %off, %c16 : index
+    pto.vecscope {
+      %cn = arith.constant 8 : index
+      %m = pto.vmi.create_mask %cn : index -> !pto.vmi.mask<8xpred>
+      %s = pto.vmi.vload %src[%aoff] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
+      %n = pto.vmi.vcvt %s {saturate = "SAT"} : !pto.vmi.vreg<8xf32> -> !pto.vmi.vreg<8xf16>
+      pto.vmi.vstore %n, %dst[%aoff], %m : !pto.vmi.vreg<8xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<8xpred>
+    }
+    return
+  }
+
+}
+
+// The default lane-stride-narrowing path reads the short vector with one
+// bounded vsldb block and packs the narrowed lanes back into the store prefix.
+// STRIDE-LABEL: func.func @short_narrow_store_f16_L2(
+// STRIDE: pto.vsldb
+// STRIDE: pto.vcvt
+// STRIDE: pto.vsts
+// STRIDE-LABEL: func.func @short_narrow_store_f16_L4(
+// STRIDE: pto.vsldb
+// STRIDE: pto.vcvt
+// STRIDE: pto.vsts
+// STRIDE-LABEL: func.func @short_narrow_store_f16_L8(
+// STRIDE: pto.vsldb
+// STRIDE: pto.vcvt
+// STRIDE: pto.vsts
+// STRIDE-LABEL: func.func @short_narrow_store_f16_L8_masked(
+// STRIDE: pto.vsldb
+// STRIDE: pto.vcvt
+// STRIDE: pto.vsts
+
+// With the preference disabled the same shapes must still lower; only the read
+// form differs.
+// NOSTRIDE-LABEL: func.func @short_narrow_store_f16_L2(
+// NOSTRIDE: pto.vcvt
+// NOSTRIDE: pto.vsts
+// NOSTRIDE-LABEL: func.func @short_narrow_store_f16_L4(
+// NOSTRIDE: pto.vcvt
+// NOSTRIDE: pto.vsts
+// NOSTRIDE-LABEL: func.func @short_narrow_store_f16_L8(
+// NOSTRIDE: pto.vcvt
+// NOSTRIDE: pto.vsts
+// NOSTRIDE-LABEL: func.func @short_narrow_store_f16_L8_masked(
+// NOSTRIDE: pto.vcvt
+// NOSTRIDE: pto.vsts

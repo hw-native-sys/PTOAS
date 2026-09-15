@@ -117,10 +117,12 @@ struct ArithAddUIExtendedToEmitC
 
     SmallVector<Type> newResultTypes;
     if (failed(getTypeConverter()->convertTypes(op->getResultTypes(),
-                                                newResultTypes)))
+                                                 newResultTypes)))
       return failure();
-    if (newResultTypes.size() != 2)
+    constexpr size_t kDualResultCount = 2;
+    if (newResultTypes.size() != kDualResultCount) {
       return failure();
+    }
 
     Type sumDstTy = newResultTypes[0];
     Type overflowDstTy = newResultTypes[1];
@@ -179,8 +181,10 @@ struct ArithMulExtendedToEmitC : public OpConversionPattern<ArithOp> {
     if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
                                                       newResultTypes)))
       return failure();
-    if (newResultTypes.size() != 2)
+    constexpr size_t kDualResultCount = 2;
+    if (newResultTypes.size() != kDualResultCount) {
       return failure();
+    }
 
     Type lowDstTy = newResultTypes[0];
     Type highDstTy = newResultTypes[1];
@@ -242,7 +246,8 @@ struct ArithConstantToEmitC : public OpConversionPattern<arith::ConstantOp> {
     }
 
     if (auto floatAttr = dyn_cast_or_null<FloatAttr>(valueAttr)) {
-      SmallString<32> valStr;
+      constexpr unsigned kFloatLiteralCapacity = 32;
+      SmallString<kFloatLiteralCapacity> valStr;
       floatAttr.getValue().toString(valStr);
       llvm::StringRef s(valStr);
       // Ensure the literal parses as a floating-point constant in C/C++.
@@ -308,7 +313,7 @@ struct PTOMGatherToMGATHER : public OpConversionPattern<pto::MGatherOp> {
 
     // GM -> L1 Coalesce::Elem stages elements through a GM scratch buffer, passed
     // as the 4th MGATHER argument; Row and the GM -> UB path have no scratch.
-    SmallVector<Value, 4> callArgs{dst, memArg, idxArg};
+    SmallVector<Value> callArgs{dst, memArg, idxArg};
     if (Value scratch = adaptor.getScratch()) {
       callArgs.push_back(peelUnrealized(scratch));
     }
@@ -357,7 +362,7 @@ struct PTOMGatherToMGATHER : public OpConversionPattern<pto::MGatherOp> {
       llvm_unreachable("unknown GatherOOB");
     };
 
-    SmallVector<Attribute, 2> templateArgVec;
+    SmallVector<Attribute> templateArgVec;
     templateArgVec.push_back(
         emitc::OpaqueAttr::get(ctx, coalesceTok(coalescePropAttr.getValue())));
     if (op.getGatherOob() != pto::GatherOOB::Undefined) {
@@ -376,7 +381,6 @@ struct AffineApplyMulConstToEmitC
   LogicalResult matchAndRewrite(affine::AffineApplyOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto map = op.getAffineMap();
-
     if (map.getNumDims() != 0 || map.getNumSymbols() != 1)
       return failure();
 

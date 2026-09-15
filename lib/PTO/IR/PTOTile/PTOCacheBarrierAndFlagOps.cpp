@@ -39,7 +39,8 @@ static ParseResult parseLegacyOrAttrDsbMem(OpAsmParser &parser,
   return success();
 }
 
-static void printLegacyOrAttrDsbMem(OpAsmPrinter &printer, Operation *op,
+static void printLegacyOrAttrDsbMem(OpAsmPrinter &printer,
+                                    const Operation *op,
                                     DsbMemAttr mem) {
   (void)op;
   printer << ' ' << '"' << stringifyDsbMem(mem.getKind()) << '"';
@@ -70,7 +71,8 @@ static ParseResult parseLegacyOrAttrDcciCacheLine(OpAsmParser &parser,
   return success();
 }
 
-static void printLegacyOrAttrDcciCacheLine(OpAsmPrinter &printer, Operation *op,
+static void printLegacyOrAttrDcciCacheLine(OpAsmPrinter &printer,
+                                           const Operation *op,
                                            DcciCacheLineAttr cache) {
   (void)op;
   printer << ' ' << '"' << stringifyDcciCacheLine(cache.getKind()) << '"';
@@ -105,7 +107,8 @@ static ParseResult parseOptionalDcciDst(OpAsmParser &parser,
   return success();
 }
 
-static void printOptionalDcciDst(OpAsmPrinter &printer, Operation *op,
+static void printOptionalDcciDst(OpAsmPrinter &printer,
+                                 const Operation *op,
                                  DcciDstAttr dst) {
   (void)op;
   if (!dst) {
@@ -210,7 +213,9 @@ static ParseResult parseI32LiteralAttr(OpAsmParser &parser, IntegerAttr &attr) {
       value > std::numeric_limits<int32_t>::max()) {
     return parser.emitError(loc, "expected 32-bit integer literal");
   }
-  attr = IntegerAttr::get(IntegerType::get(parser.getContext(), 32), value);
+  constexpr unsigned kI32LiteralBitWidth = 32;
+  attr = IntegerAttr::get(
+      IntegerType::get(parser.getContext(), kI32LiteralBitWidth), value);
   return success();
 }
 
@@ -218,7 +223,9 @@ static ParseResult parseOptionalSyncMode(OpAsmParser &parser,
                                          IntegerAttr &modeAttr) {
   if (succeeded(parser.parseOptionalComma()))
     return parseI32LiteralAttr(parser, modeAttr);
-  modeAttr = IntegerAttr::get(IntegerType::get(parser.getContext(), 32), 0);
+  constexpr unsigned kI32LiteralBitWidth = 32;
+  modeAttr = IntegerAttr::get(
+      IntegerType::get(parser.getContext(), kI32LiteralBitWidth), 0);
   return success();
 }
 

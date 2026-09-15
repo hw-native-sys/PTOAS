@@ -45,7 +45,7 @@ static std::optional<int64_t> getElemBytes(Type elemTy) {
   }
   if (auto ft = dyn_cast<FloatType>(elemTy)) {
     if (ft.isF16() || ft.isBF16()) {
-      return 2;
+      return mlir::pto::kValue2;
     }
     if (ft.isF32()) {
         return mlir::pto::kValue4;
@@ -134,8 +134,8 @@ mlir::LogicalResult mlir::pto::SetValidShapeOp::verify() {
         "are unsupported");
   }
 
-  auto checkDim = [&](Value operand, unsigned dimIdx,
-                      StringRef dimName) -> LogicalResult {
+  auto checkDim = [this, &shape](Value operand, unsigned dimIdx,
+                                 StringRef dimName) -> LogicalResult {
     int64_t maxStatic = shape[dimIdx];
 
     auto constVal = getConstIndexLike(operand);

@@ -28,7 +28,7 @@ struct PTOSubSSToEmitC : public OpConversionPattern<pto::TSubSOp> {
     Value scalar = adaptor.getScalar();
     Value dst = adaptor.getDst();
 
-    SmallVector<Value, 4> operands{dst, src, scalar};
+    SmallVector<Value, mlir::pto::kValue4> operands{dst, src, scalar};
     createLastUseAwareOpaqueCall(rewriter, op.getOperation(), TypeRange{},
                                  "TSUBS", operands);
 

@@ -27,7 +27,7 @@ static LogicalResult verifyRowReductionDstLayout(Operation* op, Type ty, StringR
         auto layout = getTileBufLogicalLayout(tb);
         if (layout && *layout == pto::Layout::DN) {
             auto shape = getShapeVec(ty);
-            if (shape.size() == 2 && shape[1] != ShapedType::kDynamic && shape[1] != 1) {
+            if (shape.size() == mlir::pto::kValue2 && shape[1] != ShapedType::kDynamic && shape[1] != 1) {
                 return op->emitOpError() << "expects DN-style " << name << " to have shape[1] == 1";
             }
             return success();
@@ -51,7 +51,7 @@ static LogicalResult verifyRowReductionValidRegion(Operation* op, Type srcTy, Ty
 {
     auto srcValid = getValidShapeVec(srcTy);
     auto dstValid = getValidShapeVec(dstTy);
-    if (srcValid.size() != 2 || dstValid.size() != 2) {
+    if (srcValid.size() != mlir::pto::kValue2 || dstValid.size() != mlir::pto::kValue2) {
         return op->emitOpError("expects src and dst to have rank-2 valid_shape");
     }
     // A fully-empty dst valid region (0x0) is PyPTO's dual-AIV no-op replay
@@ -81,7 +81,7 @@ static LogicalResult verifyRowReductionValidRegion(Operation* op, Type srcTy, Ty
 
 static bool isSupportedRowReductionElemType(Type elem)
 {
-    return elem.isInteger(16) || elem.isInteger(32) || elem.isF16() || elem.isF32();
+    return elem.isInteger(mlir::pto::kValue16) || elem.isInteger(mlir::pto::kValue32) || elem.isF16() || elem.isF32();
 }
 
 static LogicalResult verifyTRowReductionTail(Operation *op, Type srcTy,
@@ -123,7 +123,7 @@ static LogicalResult verifyTRowReductionWithTmpCommon(
     }
     if (failed(verifyTRowReductionTail(op, srcTy, dstTy, elemTypeError)))
         return failure();
-    if (getTargetArch(op) != PTOArch::A5 && failed(verifyTmpCapacityAtLeast(op, tmpTy, 32))) {
+    if (getTargetArch(op) != PTOArch::A5 && failed(verifyTmpCapacityAtLeast(op, tmpTy, mlir::pto::kValue32))) {
         return failure();
     }
     return success();
@@ -132,19 +132,19 @@ static LogicalResult verifyTRowReductionWithTmpCommon(
 static std::optional<int64_t> getVectorRepeatElements(Type elemTy)
 {
     unsigned elemBits = elemTy ? getPTOStorageElemBitWidth(elemTy) : 0;
-    if (elemBits == 0 || 2048 % elemBits != 0) {
+    if (elemBits == 0 || mlir::pto::kValue2048 % elemBits != 0) {
         return std::nullopt;
     }
-    return static_cast<int64_t>(2048 / elemBits);
+    return static_cast<int64_t>(mlir::pto::kValue2048 / elemBits);
 }
 
 static std::optional<int64_t> getVectorBlockElements(Type elemTy)
 {
     unsigned elemBits = elemTy ? getPTOStorageElemBitWidth(elemTy) : 0;
-    if (elemBits == 0 || 256 % elemBits != 0) {
+    if (elemBits == 0 || mlir::pto::kValue256 % elemBits != 0) {
         return std::nullopt;
     }
-    return static_cast<int64_t>(256 / elemBits);
+    return static_cast<int64_t>(mlir::pto::kValue256 / elemBits);
 }
 
 static int64_t ceilDivInt64(int64_t numerator, int64_t denominator)
@@ -165,7 +165,7 @@ static std::optional<int64_t> getArgReductionTmpMinStride(Type elemTy, int64_t s
         return std::nullopt;
     }
     int64_t repeats = ceilDivInt64(srcValidCols, *repeatElems);
-    return (ceilDivInt64(repeats * 2, *blockElems) + ceilDivInt64(repeats, *blockElems)) * *blockElems;
+    return (ceilDivInt64(repeats * mlir::pto::kValue2, *blockElems) + ceilDivInt64(repeats, *blockElems)) * *blockElems;
 }
 
 static bool hasExactKnownValidShape(Type lhsTy, Type rhsTy)
@@ -178,7 +178,7 @@ static LogicalResult verifyArgTmpMinStride(Operation *op, Type srcTy,
                                            ArrayRef<int64_t> srcValid,
                                            ArrayRef<int64_t> tmpValid) {
   if (srcValid[1] == ShapedType::kDynamic)
-    return verifyTmpCapacityAtLeast(op, tmpTy, 32);
+    return verifyTmpCapacityAtLeast(op, tmpTy, mlir::pto::kValue32);
   auto minStride = getArgReductionTmpMinStride(getElemTy(srcTy), srcValid[1]);
   if (!minStride)
     return op->emitOpError(
@@ -187,7 +187,7 @@ static LogicalResult verifyArgTmpMinStride(Operation *op, Type srcTy,
     return op->emitOpError()
            << "expects A2/A3 tmp valid_shape[1] to be at least " << *minStride
            << " for src valid_shape[1] = " << srcValid[1];
-  return verifyTmpCapacityAtLeast(op, tmpTy, 32);
+  return verifyTmpCapacityAtLeast(op, tmpTy, mlir::pto::kValue32);
 }
 
 static LogicalResult verifyTColArgTmpA2A3(Operation* op, Type srcTy, Type tmpTy)
@@ -198,12 +198,12 @@ static LogicalResult verifyTColArgTmpA2A3(Operation* op, Type srcTy, Type tmpTy)
     }
 
     if (hasExactKnownValidShape(srcTy, tmpTy)) {
-        return verifyTmpCapacityAtLeast(op, tmpTy, 32);
+        return verifyTmpCapacityAtLeast(op, tmpTy, mlir::pto::kValue32);
     }
 
     auto srcValid = getValidShapeVec(srcTy);
     auto tmpValid = getValidShapeVec(tmpTy);
-    if (srcValid.size() != 2 || tmpValid.size() != 2) {
+    if (srcValid.size() != mlir::pto::kValue2 || tmpValid.size() != mlir::pto::kValue2) {
         return op->emitOpError("expects src and tmp to have rank-2 valid_shape");
     }
     if (tmpValid[0] != ShapedType::kDynamic && tmpValid[0] < 1) {
@@ -219,10 +219,12 @@ static LogicalResult verifyColArgReductionTypes(Operation *op, Type srcTy,
   unsigned srcElemBits =
       srcElemTy ? getPTOStorageElemBitWidth(srcElemTy) : 0;
   if (!(mlir::isa<IntegerType, FloatType>(srcElemTy) &&
-        (srcElemBits == 8 || srcElemBits == 16 || srcElemBits == 32)))
+        (srcElemBits == mlir::pto::kValue8 ||
+         srcElemBits == mlir::pto::kValue16 ||
+         srcElemBits == mlir::pto::kValue32)))
     return op->emitOpError(srcTypeError);
   auto dstInt = dyn_cast<IntegerType>(getElemTy(dstTy));
-  if (!dstInt || dstInt.getWidth() != 32)
+  if (!dstInt || dstInt.getWidth() != mlir::pto::kValue32)
     return op->emitOpError("expects dst element type to be i32 or ui32");
   return success();
 }

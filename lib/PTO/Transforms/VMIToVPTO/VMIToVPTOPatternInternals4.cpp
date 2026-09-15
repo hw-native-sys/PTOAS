@@ -1314,8 +1314,16 @@ private:
                                         "physical cmp part type mismatch");
       return failure();
     }
+    // Sparse logical lanes can request a coarser result predicate. Compare
+    // using the data carrier's element width, then reinterpret the same bits;
+    // the coarser predicate observes only the occupied source lanes.
+    FailureOr<MaskType> compareMaskType =
+        getMaskTypeForVReg(lhsType, rewriter.getContext());
+    if (failed(compareMaskType)) {
+      return failure();
+    }
     FailureOr<Value> seedMask =
-        createAllTrueMask(op.getLoc(), maskType, rewriter);
+        createAllTrueMask(op.getLoc(), *compareMaskType, rewriter);
     if (failed(seedMask)) {
       (void)rewriter.notifyMatchFailure(
           op, "unsupported mask type for all-true cmp seed");
@@ -1342,10 +1350,13 @@ private:
       lhs = *carrierLhs;
       rhs = *carrierRhs;
     }
-    return rewriter
-        .create<VcmpOp>(op.getLoc(), resultType, lhs, rhs, *seedMask,
-                        rewriter.getStringAttr(cmpMode.mode))
-        .getResult();
+    Value compared = rewriter.create<VcmpOp>(
+        op.getLoc(), *compareMaskType, lhs, rhs, *seedMask,
+        rewriter.getStringAttr(cmpMode.mode));
+    if (*compareMaskType != maskType) {
+      compared = rewriter.create<PbitcastOp>(op.getLoc(), maskType, compared);
+    }
+    return compared;
   }
 
 public:
@@ -1833,6 +1844,7 @@ struct OneToNVMIReduceAddFOpPattern
 };
 
 enum class GroupReduceLoweringPlan {
+  CompactMaskedRows,
   OneBlockVcgadd,
   TwoBlockDeinterleaved2VcgaddVadd,
   FourBlockDeinterleaved4VcgaddTree,
@@ -1853,6 +1865,8 @@ classifyGroupReduceLoweringPlan(VMIVRegType sourceType, VMIMaskType maskType,
   }
 
   switch (fact->blockClass) {
+  case VMIGroupBlockClass::Compact:
+    return GroupReduceLoweringPlan::CompactMaskedRows;
   case VMIGroupBlockClass::QuarterBlock:
   case VMIGroupBlockClass::HalfBlock:
   case VMIGroupBlockClass::OneBlock:

@@ -41,12 +41,12 @@ static bool isStructStorable(Type t) {
   return isStructScalar(t) || llvm::isa<StructType>(t);
 }
 
-Type StructType::parse(AsmParser &parser) {
+Type StructType::parse(AsmParser &odsParser) {
   SmallVector<Type> fields;
-  if (parser.parseCommaSeparatedList(
+  if (odsParser.parseCommaSeparatedList(
           AsmParser::Delimiter::LessGreater, [&]() -> ParseResult {
             Type t;
-            if (parser.parseType(t)) {
+            if (odsParser.parseType(t)) {
               return failure();
             }
             fields.push_back(t);
@@ -55,20 +55,20 @@ Type StructType::parse(AsmParser &parser) {
     return Type();
   }
   return StructType::getChecked(
-      [&]() { return parser.emitError(parser.getNameLoc()); },
-      parser.getContext(), fields);
+      [&]() { return odsParser.emitError(odsParser.getNameLoc()); },
+      odsParser.getContext(), fields);
 }
 
-void StructType::print(AsmPrinter &printer) const {
-  printer << "<";
+void StructType::print(AsmPrinter &odsPrinter) const {
+  odsPrinter << "<";
   llvm::ArrayRef<Type> fields = getFieldTypes();
   for (size_t i = 0; i < fields.size(); ++i) {
-    if (i) {
-      printer << ", ";
+    if (i != 0) {
+      odsPrinter << ", ";
     }
-    printer.printType(fields[i]);
+    odsPrinter.printType(fields[i]);
   }
-  printer << ">";
+  odsPrinter << ">";
 }
 
 LogicalResult StructType::verify(

@@ -47,7 +47,6 @@ struct ArithUnsignedBitwiseBinaryToEmitC : public OpConversionPattern<ArithOp> {
       return failure();
     auto [loc, dstTy] = *prologue;
     const unsigned bitWidth = getScalarIntOrIndexBitWidth(op.getType());
-
     if (bitWidth == 1) {
       rewriter.replaceOpWithNewOp<EmitCOp>(op, dstTy, adaptor.getLhs(),
                                            adaptor.getRhs());
@@ -76,6 +75,8 @@ void populateArithArithBinaryPatterns(RewritePatternSet &patterns,
   patterns.add<ArithUnsignedBitwiseBinaryToEmitC<arith::OrIOp, emitc::BitwiseOrOp>>(typeConverter, ctx);
   patterns.add<ArithUnsignedBitwiseBinaryToEmitC<arith::XOrIOp, emitc::BitwiseXorOp>>(typeConverter, ctx);
   patterns.add<ArithRemUIToEmitC>(typeConverter, ctx);
+  patterns.add<ArithSimpleBinaryToEmitC<arith::AddFOp, emitc::AddOp>>(typeConverter,
+                                                                  ctx);
   patterns.add<ArithSimpleBinaryToEmitC<arith::SubFOp, emitc::SubOp>>(typeConverter,
                                                                      ctx);
   patterns.add<ArithSimpleBinaryToEmitC<arith::MulFOp, emitc::MulOp>>(typeConverter,

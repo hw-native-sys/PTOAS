@@ -29,7 +29,7 @@ struct PTORecipToEmitC : public OpConversionPattern<pto::TRecipOp> {
     Value src = adaptor.getSrc();
     Value dst = adaptor.getDst();
 
-    SmallVector<Value, 2> operands{dst, src};
+    SmallVector<Value> operands{dst, src};
     ArrayAttr templateArgs = buildPrecisionTemplateArgs(
         rewriter, op.getPrecisionType(), pto::RecipPrecision::Default,
         "RecipAlgorithm");
@@ -54,7 +54,7 @@ struct PTORemToEmitC : public OpConversionPattern<pto::TRemOp> {
     Value src1 = adaptor.getSrc1();
     Value tmp  = adaptor.getTmp();
     Value dst  = adaptor.getDst();
-    SmallVector<Value, 4> operands{dst, src0, src1, tmp};
+    SmallVector<Value> operands{dst, src0, src1, tmp};
     ArrayAttr templateArgs = buildPrecisionTemplateArgs(
         rewriter, op.getPrecisionType(), pto::RemPrecision::Default,
         "RemAlgorithm");
@@ -79,7 +79,7 @@ struct PTOFModToEmitC : public OpConversionPattern<pto::TFModOp> {
     Value src1 = adaptor.getSrc1();
     Value dst  = adaptor.getDst();
 
-    SmallVector<Value, 3> operands{dst, src0, src1};
+    SmallVector<Value> operands{dst, src0, src1};
     ArrayAttr templateArgs = buildPrecisionTemplateArgs(
         rewriter, op.getPrecisionType(), pto::FmodPrecision::Default,
         "FmodAlgorithm");
@@ -103,7 +103,7 @@ struct PTORemSToEmitC : public OpConversionPattern<pto::TRemSOp> {
     Value tmp = adaptor.getTmp();
     Value dst = adaptor.getDst();
     Value scalar = adaptor.getScalar();
-    SmallVector<Value, 4> operands{dst, src, scalar, tmp};
+    SmallVector<Value> operands{dst, src, scalar, tmp};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TREMS",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
@@ -125,7 +125,7 @@ struct PTOFModSToEmitC : public OpConversionPattern<pto::TFModSOp> {
     Value dst = adaptor.getDst();
     Value scalar = adaptor.getScalar();
 
-    SmallVector<Value, 3> operands{dst, src, scalar};
+    SmallVector<Value> operands{dst, src, scalar};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TFMODS",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
@@ -150,7 +150,7 @@ struct PTOPowToEmitC : public OpConversionPattern<pto::TPowOp> {
     // Forms:
     //   integer:  TPOW(dst, base, exp)
     //   float:    TPOW(dst, base, exp, tmp)
-    SmallVector<Value, 4> operands{dst, base, exp};
+    SmallVector<Value> operands{dst, base, exp};
     if (Value tmp = adaptor.getTmp())
       operands.push_back(peelUnrealized(tmp));
     ArrayAttr templateArgs = buildPrecisionTemplateArgs(
@@ -180,7 +180,7 @@ struct PTOPowSToEmitC : public OpConversionPattern<pto::TPowSOp> {
     // Forms:
     //   integer:  TPOWS(dst, src, scalar)
     //   float:    TPOWS(dst, src, scalar, tmp)
-    SmallVector<Value, 4> operands{dst, src, scalar};
+    SmallVector<Value> operands{dst, src, scalar};
     if (Value tmp = adaptor.getTmp())
       operands.push_back(peelUnrealized(tmp));
 
@@ -206,7 +206,7 @@ struct PTORsqrtToEmitC : public OpConversionPattern<pto::TRsqrtOp> {
 
     Value src = adaptor.getSrc();
     Value dst = adaptor.getDst();
-    SmallVector<Value, 3> operands{dst, src};
+    SmallVector<Value> operands{dst, src};
     if (Value tmp = adaptor.getTmp())
       operands.push_back(peelUnrealized(tmp));
     ArrayAttr templateArgs = buildPrecisionTemplateArgs(
@@ -232,7 +232,7 @@ struct PTOSqrtSToEmitC : public OpConversionPattern<pto::TSqrtOp> {
     Value src = adaptor.getSrc();
     Value dst = adaptor.getDst();
 
-    SmallVector<Value, 4> operands{dst, src};
+    SmallVector<Value> operands{dst, src};
     ArrayAttr templateArgs = buildPrecisionTemplateArgs(
         rewriter, op.getPrecisionType(), pto::SqrtPrecision::Default,
         "SqrtAlgorithm");

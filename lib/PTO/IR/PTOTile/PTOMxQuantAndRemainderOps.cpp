@@ -10,13 +10,16 @@
 
 static LogicalResult verifyTQuantMxSrcPadding(TQuantMxOp op,
                                               const TQuantMxA5 &s) {
+  // MX scale groups cover 128 source elements; a padded B16 source must stay
+  // VL-aligned to complete the final group.
+  constexpr int64_t kMxSrcBlockElems = 128;
   if ((s.srcElem.isF16() || s.srcElem.isBF16()) &&
-      s.srcCols < s.srcPhysicalCols && 128 % s.srcPhysicalCols == 0) {
+      s.srcCols < s.srcPhysicalCols && kMxSrcBlockElems % s.srcPhysicalCols == 0) {
     auto validPhysicalElems = mxCheckedMul(s.srcRows, s.srcPhysicalCols);
     if (!validPhysicalElems) {
       return op.emitOpError("cannot compute B16 source padding extent without overflow");
     }
-    if (*validPhysicalElems % 128 != 0) {
+    if (*validPhysicalElems % kMxSrcBlockElems != 0) {
       return op.emitOpError("does not support padded B16 source whose VL-aligned padding store has an incomplete final VL");
     }
   }
@@ -50,16 +53,16 @@ static LogicalResult verifyTQuantMxA5(TQuantMxOp op) {
 }
 
 mlir::LogicalResult mlir::pto::TQuantMxOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult {
+  auto verifyA2A3 = [this]() -> LogicalResult {
     return emitOpError("tquant.mx is only supported on A5");
   };
-  auto verifyA5 = [&]() -> LogicalResult { return verifyTQuantMxA5(*this); };
+  auto verifyA5 = [this]() -> LogicalResult { return verifyTQuantMxA5(*this); };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
 mlir::LogicalResult mlir::pto::TDequantOp::verify() {
   // Structural checks: src must be i8 or i16, dst/scale/offset must be f32.
-  auto verifyStructural = [&]() -> LogicalResult {
+  auto verifyStructural = [this]() -> LogicalResult {
     Type srcElemTy = getElemTy(getSrc().getType());
     auto srcIntTy = dyn_cast<IntegerType>(srcElemTy);
     if (!srcIntTy || !(srcIntTy.getWidth() == 8 || srcIntTy.getWidth() == 16)) {
@@ -77,12 +80,11 @@ mlir::LogicalResult mlir::pto::TDequantOp::verify() {
     }
     return success();
   };
-
   if (failed(verifyStructural())) {
     return failure();
   }
 
-  auto verifyCommon = [&]() -> LogicalResult {
+  auto verifyCommon = [this]() -> LogicalResult {
     if (failed(verifyTileBufCommon(*this, getSrc().getType(), "src")) ||
         failed(verifyTileBufCommon(*this, getScale().getType(), "scale")) ||
         failed(verifyTileBufCommon(*this, getOffset().getType(), "offset")) ||
@@ -92,7 +94,7 @@ mlir::LogicalResult mlir::pto::TDequantOp::verify() {
     return success();
   };
 
-  auto verifyA2A3 = [&]() -> LogicalResult {
+  auto verifyA2A3 = [this, &verifyCommon]() -> LogicalResult {
     if (failed(verifyCommon())) {
       return failure();
     }
@@ -104,7 +106,7 @@ mlir::LogicalResult mlir::pto::TDequantOp::verify() {
     return success();
   };
 
-  auto verifyA5 = [&]() -> LogicalResult { return verifyCommon(); };
+  auto verifyA5 = [&verifyCommon]() -> LogicalResult { return verifyCommon(); };
 
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
@@ -121,7 +123,7 @@ mlir::LogicalResult mlir::pto::TRecipOp::verify() {
 }
 
 mlir::LogicalResult mlir::pto::TReluOp::verify() {
-  auto verifyByArch = [&](StringRef errorMessage) -> LogicalResult {
+  auto verifyByArch = [this](StringRef errorMessage) -> LogicalResult {
     Type srcTy = getSrc().getType();
     Type dstTy = getDst().getType();
     if (failed(verifyVecTileCommon(*this, srcTy, "src")) ||
@@ -138,10 +140,10 @@ mlir::LogicalResult mlir::pto::TReluOp::verify() {
     }
     return success();
   };
-  auto verifyA2A3 = [&]() -> LogicalResult {
+  auto verifyA2A3 = [&verifyByArch]() -> LogicalResult {
     return verifyByArch("expects A2/A3 trelu element type to be i32/f16/f32");
   };
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [&verifyByArch]() -> LogicalResult {
     return verifyByArch("expects A5 trelu element type to be i32/f16/f32");
   };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
@@ -149,13 +151,13 @@ mlir::LogicalResult mlir::pto::TReluOp::verify() {
 
 
 static LogicalResult verifyTRemNoTmp(TRemOp op, Type elem) {
-  auto verifyA2A3NoTmp = [&]() -> LogicalResult {
+  auto verifyA2A3NoTmp = [&op, &elem]() -> LogicalResult {
     if (!(elem.isInteger(32) || elem.isF32())) {
       return op.emitOpError("expects A2/A3 trem element type to be i32/f32");
     }
     return success();
   };
-  auto verifyA5NoTmp = [&]() -> LogicalResult {
+  auto verifyA5NoTmp = [&op, &elem]() -> LogicalResult {
     if (!(elem.isInteger(32) || elem.isInteger(16) || elem.isF16() ||
           elem.isF32())) {
       return op.emitOpError(
@@ -168,6 +170,10 @@ static LogicalResult verifyTRemNoTmp(TRemOp op, Type elem) {
 }
 
 static LogicalResult verifyTRemTmpA2A3(TRemOp op, Type tmpTy, Type elem) {
+  constexpr size_t kTremTileRank = 2;
+  constexpr int64_t kTremMinTmpRows = 2;
+  constexpr uint64_t kTremTmpColFactor = 2;
+  constexpr unsigned kI32BitWidth = 32;
   Type dstTy = op.getDst().getType();
   auto dstValid = getValidShapeVec(dstTy);
   auto tmpValid = getValidShapeVec(tmpTy);
@@ -177,7 +183,7 @@ static LogicalResult verifyTRemTmpA2A3(TRemOp op, Type tmpTy, Type elem) {
   if (getElemTy(tmpTy) != getElemTy(dstTy)) {
     return op.emitOpError("expects tmp and dst to have the same element type");
   }
-  if (tmpValid[0] != ShapedType::kDynamic && tmpValid[0] < 2) {
+  if (tmpValid[0] != ShapedType::kDynamic && tmpValid[0] < kTremMinTmpRows) {
     return op.emitOpError("expects A2/A3 tmp valid_shape[0] to be at least 2");
   }
   if (dstValid[1] != ShapedType::kDynamic && tmpValid[1] != ShapedType::kDynamic &&
@@ -186,45 +192,50 @@ static LogicalResult verifyTRemTmpA2A3(TRemOp op, Type tmpTy, Type elem) {
   }
   auto dstShape = getShapeVec(dstTy);
   auto elemBytes = getElemByteSize(elem);
-  if (dstShape.size() != 2 || dstShape[1] == ShapedType::kDynamic ||
-      elemBytes == 0) {
+  if (dstShape.size() != kTremTileRank ||
+      dstShape[1] == ShapedType::kDynamic || elemBytes == 0) {
     return op.emitOpError(
         "expects A2/A3 trem dst shape and element size to be static when tmp is provided");
   }
   if (failed(verifyTmpCapacityAtLeast(
-          op, tmpTy, static_cast<uint64_t>(2) * static_cast<uint64_t>(dstShape[1]) * elemBytes))) {
+          op, tmpTy,
+          kTremTmpColFactor * static_cast<uint64_t>(dstShape[1]) * elemBytes))) {
     return failure();
   }
-  if (!(elem.isInteger(32) || elem.isF32())) {
+  if (!(elem.isInteger(kI32BitWidth) || elem.isF32())) {
     return op.emitOpError("expects A2/A3 trem element type to be i32/f32");
   }
   return success();
 }
 
 static LogicalResult verifyTRemTmpA5(TRemOp op, Type tmpTy, Type elem) {
+  constexpr unsigned kI16BitWidth = 16;
+  constexpr unsigned kI32BitWidth = 32;
   if (failed(verifyVecTileCommon(op, tmpTy, "tmp"))) {
     return failure();
   }
-  if (!(elem.isInteger(32) || elem.isInteger(16) || elem.isF16() || elem.isF32())) {
+  if (!(elem.isInteger(kI32BitWidth) || elem.isInteger(kI16BitWidth) ||
+        elem.isF16() || elem.isF32())) {
     return op.emitOpError("expects A5 trem element type to be i32/i16/f16/f32");
   }
   return success();
 }
 
 static LogicalResult verifyTRemTmp(TRemOp op, Type elem) {
+  constexpr size_t kTremTileRank = 2;
   Type tmpTy = op.getTmp().getType();
   if (failed(verifyTileBufCommon(op, tmpTy, "tmp"))) {
     return failure();
   }
   auto dstValid = getValidShapeVec(op.getDst().getType());
   auto tmpValid = getValidShapeVec(tmpTy);
-  if (dstValid.size() != 2 || tmpValid.size() != 2) {
+  if (dstValid.size() != kTremTileRank || tmpValid.size() != kTremTileRank) {
     return op.emitOpError("expects tmp and dst to be rank-2 tiles");
   }
-  auto verifyA2A3 = [&]() -> LogicalResult {
+  auto verifyA2A3 = [&op, &tmpTy, &elem]() -> LogicalResult {
     return verifyTRemTmpA2A3(op, tmpTy, elem);
   };
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [&op, &tmpTy, &elem]() -> LogicalResult {
     return verifyTRemTmpA5(op, tmpTy, elem);
   };
   return dispatchVerifierByArch(op.getOperation(), verifyA2A3, verifyA5);
@@ -266,13 +277,13 @@ mlir::LogicalResult mlir::pto::TFModOp::verify() {
 }
 
 static LogicalResult verifyTRemSNoTmp(TRemSOp op, Type elem) {
-  auto verifyA2A3NoTmp = [&]() -> LogicalResult {
+  auto verifyA2A3NoTmp = [&op, &elem]() -> LogicalResult {
     if (!(elem.isInteger(32) || elem.isF32())) {
       return op.emitOpError("expects A2/A3 trems element type to be i32/f32");
     }
     return success();
   };
-  auto verifyA5NoTmp = [&]() -> LogicalResult {
+  auto verifyA5NoTmp = [&op, &elem]() -> LogicalResult {
     if (!(elem.isInteger(32) || elem.isInteger(16) || elem.isF16() ||
           elem.isF32())) {
       return op.emitOpError(

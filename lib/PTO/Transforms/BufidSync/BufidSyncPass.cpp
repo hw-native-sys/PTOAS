@@ -71,7 +71,6 @@ private:
 
 void PTOBufidSyncPass::runOnOperation() {
   func::FuncOp func = getOperation();
-
   if (hasExistingBufSyncOps(func)) {
     LLVM_DEBUG(llvm::dbgs() << "bufid_sync: existing get_buf ops found, "
                                "skipping pass.\n");

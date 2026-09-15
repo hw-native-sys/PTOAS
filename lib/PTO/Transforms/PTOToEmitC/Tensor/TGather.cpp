@@ -48,8 +48,8 @@ struct PTOGatherToEmitC : public OpConversionPattern<pto::TGatherOp> {
     Value dst = adaptor.getDst();
     Value src0 = adaptor.getSrc();
 
-    auto getOpaqueTok = [&](Value v,
-                            StringRef name) -> FailureOr<std::string> {
+    auto getOpaqueTok = [&rewriter, &op](Value v,
+                                        StringRef name) -> FailureOr<std::string> {
       if (auto ot = mlir::dyn_cast<emitc::OpaqueType>(v.getType()))
         return ot.getValue().str();
       return rewriter.notifyMatchFailure(
@@ -90,7 +90,7 @@ struct PTOGatherToEmitC : public OpConversionPattern<pto::TGatherOp> {
     Value dst = adaptor.getDst();
     Value src0 = adaptor.getSrc();
     idx = peelUnrealized(idx);
-    SmallVector<Value, 4> operands{dst, src0, idx};
+    SmallVector<Value, mlir::pto::kValue4> operands{dst, src0, idx};
     if (Value tmp = adaptor.getTmp())
       operands.push_back(peelUnrealized(tmp));
 
@@ -115,8 +115,8 @@ struct PTOGatherToEmitC : public OpConversionPattern<pto::TGatherOp> {
     Value tmp = adaptor.getTmp();
     Value kValue = adaptor.getKValue();
 
-    auto getOpaqueTok = [&](Value v,
-                            StringRef name) -> FailureOr<std::string> {
+    auto getOpaqueTok = [&rewriter, &op](Value v,
+                                        StringRef name) -> FailureOr<std::string> {
       if (auto ot = mlir::dyn_cast<emitc::OpaqueType>(v.getType()))
         return ot.getValue().str();
       return rewriter.notifyMatchFailure(

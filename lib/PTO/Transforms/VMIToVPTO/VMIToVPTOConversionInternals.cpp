@@ -170,6 +170,54 @@ static FailureOr<VMIPhysicalConversionInput> getVMIPhysicalConversionInput(
   return input;
 }
 
+/// Dense carrier view of a cast operand's declared layout.
+///
+/// A group-slot packet with `slots` slots places group g at lane
+/// (g % slots) * lane_stride of physical part g / slots, so as long as one
+/// packet fits in one part every part holds a lane-strided prefix of group
+/// values -- exactly what a dense contiguous value with the same lane stride
+/// describes.  Forwarding between the two is a pure register pass (see
+/// isVMISingleCarrierGroupSlotAlias, which the layout materializer uses for the
+/// single-carrier case), so a cast may derive its part/parity plan from the
+/// dense view while forwarding the physical part unchanged: no pack, zip or
+/// shuffle instruction is implied.
+///
+/// Returns `layout` itself for layouts that are already dense (contiguous,
+/// deinterleaved, block), and a null attribute for a layout without a dense
+/// lane-stride view, i.e. a packet whose slots span more than one physical part
+/// (slots * lane_stride > physical lanes per part), where group blocks are
+/// spread across parts instead of being packed into carrier lanes.
+///
+/// Callers still decide polarity: the view only names the carrier, never the
+/// source or result lane the cast has to select.
+static VMILayoutAttr getVMICastDenseCarrierView(VMILayoutAttr layout,
+                                                Type elementType) {
+  if (!layout || !layout.isGroupSlots()) {
+    return layout;
+  }
+  FailureOr<int64_t> lanesPerPart = getDataLanesPerPart(elementType);
+  int64_t slots = layout.getSlots();
+  int64_t laneStride = layout.getLaneStride();
+  // Guarded division instead of `slots * laneStride <= lanesPerPart` so an
+  // out-of-range attribute cannot overflow the comparison.
+  bool fitsInOnePart = succeeded(lanesPerPart) && *lanesPerPart > 0 &&
+                       slots > 0 && laneStride > 0 &&
+                       laneStride <= *lanesPerPart / slots;
+  if (!fitsInOnePart) {
+    return VMILayoutAttr();
+  }
+  return VMILayoutAttr::getContiguous(layout.getContext(), laneStride);
+}
+
+/// True for a group-slot packet that keeps exactly one group per physical part
+/// (slots = 1), where the group of every part sits at lane 0.  A part-family
+/// cast reads or writes lane 0 of each part regardless of the conversion
+/// radix, so such a packet casts 1:1 per part like the dense lane-stride form,
+/// even though its carrier prefix is a single lane rather than a stride.
+static bool isVMISingleGroupPerPartPacket(VMILayoutAttr layout) {
+  return layout && layout.isGroupSlots() && layout.getSlots() == 1;
+}
+
 // Resolves the (result, carry) type pair together with the result/carry value
 // vectors, lets lowerFn fill them per physical part, then emits the carry
 // results after the data results.

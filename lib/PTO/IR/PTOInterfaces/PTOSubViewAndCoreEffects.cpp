@@ -198,68 +198,68 @@ void TMovOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffect
                       getPreQuantScalarMutable(), getDstMutable());
 }
 
-#define PTO_ADD_READ(operand) addEffect(effects, &(operand), MemoryEffects::Read::get())
-#define PTO_ADD_WRITE(operand) addEffect(effects, &(operand), MemoryEffects::Write::get())
+#define PTO_ADD_READ(effects, operand) addEffect(effects, &(operand), MemoryEffects::Read::get())
+#define PTO_ADD_WRITE(effects, operand) addEffect(effects, &(operand), MemoryEffects::Write::get())
 
 #define PTO_DEFINE_UNARY_EFFECTS(OpClass, srcOperand, dstOperand)                    \
   void OpClass::getEffects(                                                         \
       SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) { \
-    PTO_ADD_READ(srcOperand);                                                       \
-    PTO_ADD_WRITE(dstOperand);                                                      \
+    PTO_ADD_READ(effects, srcOperand);                                              \
+    PTO_ADD_WRITE(effects, dstOperand);                                             \
   }
 
 #define PTO_DEFINE_BINARY_EFFECTS(OpClass, lhsOperand, rhsOperand, dstOperand)       \
   void OpClass::getEffects(                                                         \
       SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) { \
-    PTO_ADD_READ(lhsOperand);                                                       \
-    PTO_ADD_READ(rhsOperand);                                                       \
-    PTO_ADD_WRITE(dstOperand);                                                      \
+    PTO_ADD_READ(effects, lhsOperand);                                              \
+    PTO_ADD_READ(effects, rhsOperand);                                              \
+    PTO_ADD_WRITE(effects, dstOperand);                                             \
   }
 
 #define PTO_DEFINE_TERNARY_EFFECTS(OpClass, op0, op1, op2, dstOperand)               \
   void OpClass::getEffects(                                                         \
       SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) { \
-    PTO_ADD_READ(op0);                                                              \
-    PTO_ADD_READ(op1);                                                              \
-    PTO_ADD_READ(op2);                                                              \
-    PTO_ADD_WRITE(dstOperand);                                                      \
+    PTO_ADD_READ(effects, op0);                                                     \
+    PTO_ADD_READ(effects, op1);                                                     \
+    PTO_ADD_READ(effects, op2);                                                     \
+    PTO_ADD_WRITE(effects, dstOperand);                                             \
   }
 
 #define PTO_DEFINE_QUATERNARY_EFFECTS(OpClass, op0, op1, op2, op3, dstOperand)      \
   void OpClass::getEffects(                                                         \
       SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) { \
-    PTO_ADD_READ(op0);                                                              \
-    PTO_ADD_READ(op1);                                                              \
-    PTO_ADD_READ(op2);                                                              \
-    PTO_ADD_READ(op3);                                                              \
-    PTO_ADD_WRITE(dstOperand);                                                      \
+    PTO_ADD_READ(effects, op0);                                                     \
+    PTO_ADD_READ(effects, op1);                                                     \
+    PTO_ADD_READ(effects, op2);                                                     \
+    PTO_ADD_READ(effects, op3);                                                     \
+    PTO_ADD_WRITE(effects, dstOperand);                                             \
   }
 
 #define PTO_DEFINE_UNARY_SCRATCH_EFFECTS(OpClass, srcOperand, tmpOperand,          \
                                          dstOperand)                               \
   void OpClass::getEffects(PTOEffectList &effects) {                               \
-    PTO_ADD_READ(srcOperand);                                                      \
+    PTO_ADD_READ(effects, srcOperand);                                             \
     addA2A3ScratchEffects(effects, getOperation(), tmpOperand);                    \
-    PTO_ADD_WRITE(dstOperand);                                                     \
+    PTO_ADD_WRITE(effects, dstOperand);                                            \
   }
 
 #define PTO_DEFINE_BINARY_SCRATCH_EFFECTS(OpClass, lhsOperand, rhsOperand,         \
                                           tmpOperand, dstOperand)                  \
   void OpClass::getEffects(PTOEffectList &effects) {                               \
-    PTO_ADD_READ(lhsOperand);                                                      \
-    PTO_ADD_READ(rhsOperand);                                                      \
+    PTO_ADD_READ(effects, lhsOperand);                                             \
+    PTO_ADD_READ(effects, rhsOperand);                                             \
     addA2A3ScratchEffects(effects, getOperation(), tmpOperand);                    \
-    PTO_ADD_WRITE(dstOperand);                                                     \
+    PTO_ADD_WRITE(effects, dstOperand);                                            \
   }
 
 void LoadScalarOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  PTO_ADD_READ(getPtrMutable());
+  PTO_ADD_READ(effects, getPtrMutable());
 }
 
 void StoreScalarOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  PTO_ADD_WRITE(getPtrMutable());
+  PTO_ADD_WRITE(effects, getPtrMutable());
 }
 
 // === Tile/Device ops added for InsertSync ===
@@ -267,9 +267,9 @@ void StoreScalarOp::getEffects(
 // MGATHER: Read(mem, idx) -> Write(dst)
 void MGatherOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  PTO_ADD_READ(getMemMutable());
-  PTO_ADD_READ(getIdxMutable());
-  PTO_ADD_WRITE(getDstMutable());
+  PTO_ADD_READ(effects, getMemMutable());
+  PTO_ADD_READ(effects, getIdxMutable());
+  PTO_ADD_WRITE(effects, getDstMutable());
   // GM -> L1 Elem mode stages the gathered elements into the GM scratch buffer
   // before the bulk copy: the op clobbers scratch, so model it as a write.
   auto scratchRange = getScratchMutable();

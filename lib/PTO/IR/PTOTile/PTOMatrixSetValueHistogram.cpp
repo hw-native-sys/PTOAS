@@ -9,12 +9,12 @@
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
 
 LogicalResult TMatmulBiasOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult {
+  auto verifyA2A3 = [this]() -> LogicalResult {
     return verifyMatBiasCommon(getOperation(), getA().getType(),
                                getB().getType(), getBias().getType(),
                                getDst().getType(), false);
   };
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [this]() -> LogicalResult {
     return verifyMatBiasCommon(getOperation(), getA().getType(),
                                getB().getType(), getBias().getType(),
                                getDst().getType(), false,
@@ -59,7 +59,7 @@ static LogicalResult verifyA5MxBiasBase(Operation *op, Type a, Type b,
 }
 
 LogicalResult TMatmulMxOp::verify() {
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [this]() -> LogicalResult {
     if (failed(verifyA5MxMatOperands(
             getOperation(), getA().getType(), getB().getType(),
             getDst().getType(), getAScale().getType(),
@@ -72,7 +72,7 @@ LogicalResult TMatmulMxOp::verify() {
 }
 
 LogicalResult TMatmulMxAccOp::verify() {
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [this]() -> LogicalResult {
     return verifyA5MxAccCommon(
         getOperation(), getA().getType(), getB().getType(), getCIn().getType(),
         getDst().getType(), getAScale().getType(), getBScale().getType(), false);
@@ -80,7 +80,7 @@ LogicalResult TMatmulMxAccOp::verify() {
   return verifyA5Only(getOperation(), "tmatmul.mx.acc", verifyA5);
 }
 LogicalResult TMatmulMxBiasOp::verify() {
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [this]() -> LogicalResult {
     if (failed(verifyA5MxBiasBase(
             getOperation(), getA().getType(), getB().getType(),
             getBias().getType(), getDst().getType(), getAScale().getType(),
@@ -146,7 +146,7 @@ static FailureOr<int64_t> getTHistogramByte(THistogramOp op) {
     }
     byte = legacyByte;
   }
-  if (byte < 0 || byte > 3) {
+  if (byte < 0 || byte > mlir::pto::kValue3) {
     op.emitOpError("expects byte to be in range [0, 3]");
     return failure();
   }
@@ -168,8 +168,8 @@ static FailureOr<THistogramState> verifyTHistogramTypes(THistogramOp op) {
       failed(verifyTileBufCommon(op, idxTy, "idx")) ||
       failed(verifyTileBufCommon(op, dstTy, "dst")))
     return failure();
-  Type types[] = {srcTy, idxTy, dstTy};
-  StringRef names[] = {"src", "idx", "dst"};
+  std::array<Type, mlir::pto::kValue3> types = {srcTy, idxTy, dstTy};
+  std::array<StringRef, mlir::pto::kValue3> names = {"src", "idx", "dst"};
   for (auto [type, name] : llvm::zip_equal(types, names)) {
     auto space = getPTOMemorySpaceEnum(type);
     if (!space || *space != pto::AddressSpace::VEC) {
@@ -193,14 +193,14 @@ static FailureOr<THistogramState> verifyTHistogramTypes(THistogramOp op) {
     op.emitOpError("expects dst to use row_major + none_box layout");
     return failure();
   }
-  bool srcIsUi16 = isIntegerWidth(getElemTy(srcTy), 16);
-  if (!srcIsUi16 && !isIntegerWidth(getElemTy(srcTy), 32)) {
+  bool srcIsUi16 = isIntegerWidth(getElemTy(srcTy), mlir::pto::kValue16);
+  if (!srcIsUi16 && !isIntegerWidth(getElemTy(srcTy), mlir::pto::kValue32)) {
     op.emitOpError("expects src element type to be ui16 or ui32");
     return failure();
   }
-  if (!isIntegerWidth(getElemTy(idxTy), 8) ||
-      !isIntegerWidth(getElemTy(dstTy), 32)) {
-    op.emitOpError(!isIntegerWidth(getElemTy(idxTy), 8)
+  if (!isIntegerWidth(getElemTy(idxTy), mlir::pto::kValue8) ||
+      !isIntegerWidth(getElemTy(dstTy), mlir::pto::kValue32)) {
+    op.emitOpError(!isIntegerWidth(getElemTy(idxTy), mlir::pto::kValue8)
                        ? "expects idx element type to be ui8"
                        : "expects dst element type to be ui32");
     return failure();
@@ -238,7 +238,7 @@ static LogicalResult verifyTHistogramUi16Idx(THistogramOp op,
 static LogicalResult verifyTHistogramUi32Idx(THistogramOp op,
                                              const THistogramState &state,
                                              int64_t byte) {
-  if (byte == 3)
+  if (byte == mlir::pto::kValue3)
     return success();
   if (!isRowMajorTileBuf(state.idx))
     return op.emitOpError(
@@ -251,7 +251,7 @@ static LogicalResult verifyTHistogramUi32Idx(THistogramOp op,
       !hasCompatibleKnownExtent(srcValid[1], idxValid[1]))
     return op.emitOpError(
         "expects idx cols and valid cols to match src when src element type is ui32 and byte is 0, 1, or 2");
-  int64_t expectedRows = byte == 1 ? 2 : (byte == 0 ? 3 : 1);
+  int64_t expectedRows = byte == 1 ? mlir::pto::kValue2 : (byte == 0 ? mlir::pto::kValue3 : 1);
   if (!hasCompatibleKnownExtent(idxShape[0], expectedRows) ||
       !hasCompatibleKnownExtentOrZero(idxValid[0], expectedRows))
     return op.emitOpError(

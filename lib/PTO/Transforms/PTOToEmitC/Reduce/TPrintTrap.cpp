@@ -60,7 +60,7 @@ struct PTOPrintToTPRINT : public OpConversionPattern<pto::TPrintOp> {
       operands.push_back(tmpValue);
     }
 
-    SmallVector<Attribute, 1> templateArgVec;
+    SmallVector<Attribute> templateArgVec;
     if (auto formatAttr =
             dyn_cast_or_null<pto::PrintFormatAttr>(
                 op.getProperties().printFormat)) {

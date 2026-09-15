@@ -426,7 +426,7 @@ void FunctionSchedulerRunner::processSchedulingRegion(
   VPTOSchedulerLimits limits;
   VPTOSchedulingBudget schedulingBudget(limits.maxWorkUnits);
   VPTOScheduleFailure failure;
-  VPTOSchedDAGBuilder dagBuilder(&model, limits, schedulingBudget,
+  VPTOSchedDAGBuilder dagBuilder(&model, limits, &schedulingBudget,
                                  rematAnchors);
   FailureOr<std::unique_ptr<VPTOSchedDAG>> dag =
       dagBuilder.build(region, failure);
@@ -718,7 +718,8 @@ struct VPTOSchedulerPass
     VPTOGenericA5SchedModel model;
     std::string report;
     llvm::raw_string_ostream os(report);
-    WalkResult walkResult = getOperation().walk([&](func::FuncOp func) {
+    WalkResult walkResult = getOperation().walk(
+        [this, &os, &model](func::FuncOp func) {
       if (rematerialize) {
         if (failed(
                 runFunctionWithRematerialization(func, os, model, trace))) {

@@ -78,61 +78,61 @@ static Type parseKnownPTOType(OpAsmParser& parser, StringRef head)
     return parseKnownPTOType(parser, head);
 }
 
-mlir::Type TensorViewType::parse(::mlir::AsmParser& parser)
+mlir::Type TensorViewType::parse(::mlir::AsmParser& odsParser)
 {
     SmallVector<int64_t, mlir::pto::kValue4> shape;
     Type elementType;
     Attribute layout;
     if (failed(parseViewShapeElemAndLayout(
-            parser, shape, elementType, layout, /*allowDynamic=*/true))) {
+            odsParser, shape, elementType, layout, /*allowDynamic=*/true))) {
         return Type();
     }
-    return TensorViewType::get(parser.getContext(), shape, elementType, layout);
+    return TensorViewType::get(odsParser.getContext(), shape, elementType, layout);
 }
 
-void TensorViewType::print(::mlir::AsmPrinter& printer) const
+void TensorViewType::print(::mlir::AsmPrinter& odsPrinter) const
 {
-    printViewShapeElemAndLayout(printer, getShape(), getElementType(),
+    printViewShapeElemAndLayout(odsPrinter, getShape(), getElementType(),
                                 getLayout());
 }
 
-mlir::Type PtrType::parse(::mlir::AsmParser& parser)
+mlir::Type PtrType::parse(::mlir::AsmParser& odsParser)
 {
     Type elementType;
-    if (failed(parser.parseLess()) || failed(parser.parseType(elementType))) {
+    if (failed(odsParser.parseLess()) || failed(odsParser.parseType(elementType))) {
         return {};
     }
 
-    auto memorySpace = pto::AddressSpaceAttr::get(parser.getContext(), pto::AddressSpace::GM);
-    if (succeeded(parser.parseOptionalComma())) {
+    auto memorySpace = pto::AddressSpaceAttr::get(odsParser.getContext(), pto::AddressSpace::GM);
+    if (succeeded(odsParser.parseOptionalComma())) {
         StringRef memorySpaceKeyword;
-        if (failed(parser.parseKeyword(&memorySpaceKeyword))) {
+        if (failed(odsParser.parseKeyword(&memorySpaceKeyword))) {
             return {};
         }
         auto parsed = parsePtrAddressSpaceKeyword(memorySpaceKeyword);
         if (!parsed) {
-            parser.emitError(
-                parser.getCurrentLocation(), "!pto.ptr address space must be one of "
+            odsParser.emitError(
+                odsParser.getCurrentLocation(), "!pto.ptr address space must be one of "
                                              "`gm|ub|mat|l1|left|l0a|right|l0b|acc|l0c|vec|bias|bt|scaling|fb`");
             return {};
         }
-        memorySpace = pto::AddressSpaceAttr::get(parser.getContext(), *parsed);
+        memorySpace = pto::AddressSpaceAttr::get(odsParser.getContext(), *parsed);
     }
 
-    if (failed(parser.parseGreater())) {
+    if (failed(odsParser.parseGreater())) {
         return {};
     }
-    return PtrType::get(parser.getContext(), elementType, memorySpace);
+    return PtrType::get(odsParser.getContext(), elementType, memorySpace);
 }
 
-void PtrType::print(::mlir::AsmPrinter& printer) const
+void PtrType::print(::mlir::AsmPrinter& odsPrinter) const
 {
-    printer << "<" << getElementType();
+    odsPrinter << "<" << getElementType();
     StringRef memorySpaceKeyword = printPtrAddressSpaceKeyword(getMemorySpace().getAddressSpace());
     if (!memorySpaceKeyword.empty()) {
-        printer << ", " << memorySpaceKeyword;
+        odsPrinter << ", " << memorySpaceKeyword;
     }
-    printer << ">";
+    odsPrinter << ">";
 }
 
 //===----------------------------------------------------------------------===//
@@ -261,8 +261,8 @@ static ParseResult parseGatherScatterAxis(OpAsmParser& parser, OperationState& r
 
 struct TGatherParseState {
     OpAsmParser::UnresolvedOperand src, dst, cdst;
-    SmallVector<OpAsmParser::UnresolvedOperand, 3> insOps;
-    SmallVector<Type, 3> insTypes;
+    SmallVector<OpAsmParser::UnresolvedOperand, mlir::pto::kValue3> insOps;
+    SmallVector<Type, mlir::pto::kValue3> insTypes;
     Type srcTy, dstTy, cdstTy;
     bool hasCdst = false;
     bool hasMask = false;

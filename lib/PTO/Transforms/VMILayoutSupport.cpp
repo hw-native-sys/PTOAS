@@ -40,28 +40,11 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/CommandLine.h"
 
 namespace mlir {
 namespace pto {
-
-bool isVMISingleCarrierGroupSlots(VMILayoutAttr layout, int64_t lanesPerPart) {
-  return layout && layout.isGroupSlots() && layout.getSlots() > 0 &&
-         layout.getLaneStride() == 1 &&
-         layout.getNumGroups() <= layout.getSlots() &&
-         layout.getNumGroups() <= lanesPerPart;
-}
-
-bool isVMISingleCarrierGroupSlotAlias(VMILayoutAttr lhs, VMILayoutAttr rhs,
-                                      int64_t lanesPerPart) {
-  auto isDenseCarrier = [](VMILayoutAttr layout) {
-    return layout && layout.isContiguous() && layout.getLaneStride() == 1;
-  };
-  return (isVMISingleCarrierGroupSlots(lhs, lanesPerPart) &&
-          isDenseCarrier(rhs)) ||
-         (isDenseCarrier(lhs) &&
-          isVMISingleCarrierGroupSlots(rhs, lanesPerPart));
-}
 
 namespace {
 
@@ -107,6 +90,7 @@ static llvm::cl::opt<bool> preferLaneStrideNarrowing(
 } // namespace
 
 #include "VMILayoutSupportQueryHelpers.inc"
+#include "VMILayoutSupportGroupCapabilities.inc"
 
 static VMIGroupBroadcastLoadDirectFact materializeGroupBroadcastLoadDirectFact(
     const GroupBroadcastLoadDirectPattern &pattern,
@@ -211,7 +195,8 @@ VMILayoutSupport::getPreferredGroupReduceLayoutFact(VMIVRegType sourceType,
   }
 
   for (const GroupReduceLayoutPattern &pattern : kGroupReduceLayoutPatterns) {
-    if (!matchesGroupBlockPattern(pattern.block, *key)) {
+    if (!matchesGroupBlockPattern(pattern.block, *key) ||
+        !isExecutableGroupReducePattern(pattern, *key)) {
       continue;
     }
     return materializeGroupReduceLayoutFact(sourceType.getContext(), pattern,
@@ -249,7 +234,8 @@ VMILayoutSupport::getGroupReduceLayoutFactForLayouts(
   }
 
   for (const GroupReduceLayoutPattern &pattern : kGroupReduceLayoutPatterns) {
-    if (!matchesGroupBlockPattern(pattern.block, *key)) {
+    if (!matchesGroupBlockPattern(pattern.block, *key) ||
+        !isExecutableGroupReducePattern(pattern, *key)) {
       continue;
     }
     VMIGroupReduceLayoutFact candidate = materializeGroupReduceLayoutFact(
@@ -290,7 +276,8 @@ VMILayoutSupport::getGroupReduceLayoutFactsForLayout(
 
   SmallVector<VMIGroupReduceLayoutFact, mlir::pto::kValue4> facts;
   for (const GroupReduceLayoutPattern &pattern : kGroupReduceLayoutPatterns) {
-    if (!matchesGroupBlockPattern(pattern.block, *key)) {
+    if (!matchesGroupBlockPattern(pattern.block, *key) ||
+        !isExecutableGroupReducePattern(pattern, *key)) {
       continue;
     }
     VMIGroupReduceLayoutFact candidate = materializeGroupReduceLayoutFact(
@@ -744,6 +731,59 @@ static FailureOr<VMICastLayoutFact> getPreferredCastLayoutFactImpl(
                             request.priority);
 }
 
+static LogicalResult matchEnsureLayoutPattern(VMIVRegType sourceType,
+                                              VMIVRegType resultType,
+                                              VMILayoutAttr sourceLayout,
+                                              VMILayoutAttr resultLayout,
+                                              std::string *reason);
+
+/// Whether the deinterleaved narrowing relation the preference falls back to is
+/// representable for this shape.
+///
+/// Dropping the one-chunk lane-stride preference makes the cast take the
+/// deinterleaved relation the normal preferred table holds for its width pair
+/// (`d(2) -> c` or `d(4) -> c`).  That relation is materialized through the
+/// same ensure_layout table that bounds every dense layout pair by element
+/// count -- no 8/16-bit deinterleaved relation exists at all, 32-bit
+/// `c <-> d(2)` only at 128/256 lanes and 32-bit `c <-> d(4)` only at 256 --
+/// so outside those ranges the fallback has no materialization and the
+/// preference must stay on the lane-stride relation instead of switching to a
+/// form the lowering cannot express.  The check queries the shared table rather
+/// than re-deriving its ranges.
+static bool isDeinterleavedNarrowingFallbackSupported(VMIVRegType sourceType,
+                                                      VMIVRegType resultType) {
+  auto [sourceBits, resultBits] = getCastElementBits(sourceType, resultType);
+  if (sourceBits <= resultBits) {
+    // The preference only redirects narrowing layouts.
+    return true;
+  }
+  FailureOr<VMICastLayoutFact> fallback = getPreferredCastLayoutFactImpl(
+      kPreferredCastLayoutPatterns,
+      {sourceType, resultType, "preferred cast layout table",
+       /*reason=*/nullptr, VMICastLayoutPriority::Normal});
+  bool usableFallback = succeeded(fallback) && fallback->sourceLayout &&
+                        fallback->sourceLayout.isDeinterleaved();
+  if (!usableFallback) {
+    // Nothing deinterleaved to switch to: the preference keeps its meaning.
+    return true;
+  }
+
+  MLIRContext *ctx = sourceType.getContext();
+  VMILayoutAttr contiguous = VMILayoutAttr::getContiguous(ctx);
+  VMILayoutAttr deinterleaved = VMILayoutAttr::getDeinterleaved(
+      ctx, fallback->sourceLayout.getFactor());
+  auto deinterleavedType =
+      VMIVRegType::get(ctx, sourceType.getElementCount(),
+                       sourceType.getElementType(), deinterleaved);
+  auto contiguousType = VMIVRegType::get(
+      ctx, sourceType.getElementCount(), sourceType.getElementType(),
+      contiguous);
+  std::string ignoredReason;
+  return succeeded(matchEnsureLayoutPattern(deinterleavedType, contiguousType,
+                                            deinterleaved, contiguous,
+                                            &ignoredReason));
+}
+
 static FailureOr<VMICastLayoutFact>
 getPreferredLaneStrideNarrowCastLayoutFactImpl(VMIVRegType sourceType,
                                                VMIVRegType resultType,
@@ -757,13 +797,22 @@ getPreferredLaneStrideNarrowCastLayoutFactImpl(VMIVRegType sourceType,
 
 FailureOr<VMICastLayoutFact> VMILayoutSupport::getPreferredCastLayoutFact(
     VMIVRegType sourceType, VMIVRegType resultType, std::string *reason) const {
+  // The preference only switches the cast to a deinterleaved relation when
+  // this shape can materialize one; otherwise it keeps the one-chunk
+  // lane-stride relation the default path uses, so the switch cannot turn a
+  // lowerable narrowing into a residual op.  Both gates below consult the same
+  // shape-aware decision.
+  bool preferLaneStrideNarrowingForShape =
+      preferLaneStrideNarrowing ||
+      !isDeinterleavedNarrowingFallbackSupported(sourceType, resultType);
   FailureOr<VMICastLayoutFact> highPriorityFact =
       getHighPriorityCastLayoutFactImpl(sourceType, resultType,
-                                        preferLaneStrideNarrowing, reason);
+                                        preferLaneStrideNarrowingForShape,
+                                        reason);
   if (succeeded(highPriorityFact)) {
     return highPriorityFact;
   }
-  if (preferLaneStrideNarrowing) {
+  if (preferLaneStrideNarrowingForShape) {
     FailureOr<VMICastLayoutFact> laneStrideFact =
         getPreferredLaneStrideNarrowCastLayoutFactImpl(sourceType, resultType,
                                                        reason);
@@ -1680,6 +1729,12 @@ static LogicalResult matchEnsureLayoutPattern(VMIVRegType sourceType,
     return success();
   }
 
+  // A dense value and a single-carrier group packet whose lane strides differ
+  // is a bounded row above, like every other pair: the dense side has to stay
+  // inside the packet's carrier for the normalization to be carrier-local.  A
+  // dense value that spans several parts is not such a conversion and has no
+  // producer, so it stays rejected here instead of being admitted and left to
+  // the lowering, which could not materialize it.
   return failWithReason<LogicalResult>(
       reason,
       "source/result layouts do not match a supported ensure_layout table row");

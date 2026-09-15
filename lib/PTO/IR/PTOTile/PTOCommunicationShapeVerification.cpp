@@ -10,7 +10,7 @@
 
   bool logical1D = true;
   for (int i = 0, e = static_cast<int>(shape->size()) - 1; i < e; ++i) {
-    logical1D &= (*shape)[i] == 1;
+    logical1D = logical1D && (*shape)[i] == 1;
   }
   if (!logical1D) {
     return op->emitOpError()
@@ -63,7 +63,7 @@ static LogicalResult verifyCommSignalLike(Operation *op, Value value,
     return failure();
   }
   Type elemTy = getElemTy(value.getType());
-  if (!elemTy || !elemTy.isSignlessInteger(32)) {
+  if (!elemTy || !elemTy.isSignlessInteger(mlir::pto::kValue32)) {
     return op->emitOpError() << "expects " << name
                              << " element type to be i32";
   }
@@ -81,7 +81,7 @@ static LogicalResult verifyCommStagingTileLike(Operation *op, Value value,
     return op->emitOpError() << "expects " << name
                              << " to be in vec address space";
   }
-  SmallVector<int64_t, 4> shape = getShapeVec(ty);
+  SmallVector<int64_t, mlir::pto::kValue4> shape = getShapeVec(ty);
   if (shape.empty()) {
     return op->emitOpError() << "expects " << name << " to have rank >= 1";
   }
@@ -131,7 +131,7 @@ static LogicalResult verifyCommPingPongSameType(Operation *op, Value ping,
 }
 
 static std::optional<uint64_t> getStaticByteSize(Type ty) {
-  SmallVector<int64_t, 4> shape = getShapeVec(ty);
+  SmallVector<int64_t, mlir::pto::kValue4> shape = getShapeVec(ty);
   if (shape.empty()) {
     return std::nullopt;
   }
@@ -195,7 +195,7 @@ TMovForm mlir::pto::classifyTMovForm(Value fp) {
 
 [[maybe_unused]] static bool isRank2TileBuf(Type ty) {
   auto tb = dyn_cast<pto::TileBufType>(ty);
-  return tb && tb.getRank() == 2 && tb.getValidShape().size() == 2;
+  return tb && tb.getRank() == mlir::pto::kValue2 && tb.getValidShape().size() == mlir::pto::kValue2;
 }
 
 static bool isSupportedVecElemType(Type ty, bool allowBf16,
@@ -208,10 +208,10 @@ static bool isSupportedVecElemType(Type ty, bool allowBf16,
   }
   if (auto it = dyn_cast<IntegerType>(ty)) {
     switch (it.getWidth()) {
-    case 32:
-    case 16:
+    case mlir::pto::kValue32:
+    case mlir::pto::kValue16:
       return true;
-    case 8:
+    case mlir::pto::kValue8:
       return allowInt8;
     default:
       return false;
@@ -222,7 +222,7 @@ static bool isSupportedVecElemType(Type ty, bool allowBf16,
 
 static bool isSupportedMGatherMScatterIndexElemType(Type ty) {
   auto it = dyn_cast<IntegerType>(ty);
-  if (!it || it.getWidth() != 32) {
+  if (!it || it.getWidth() != mlir::pto::kValue32) {
     return false;
   }
   return true;
@@ -246,11 +246,11 @@ static bool isSupportedMScatterAtomicPayloadElemType(Type ty,
     return true;
   case pto::ScatterAtomicOp::Add:
     return ty.isF16() || ty.isF32() ||
-           (intTy && intTy.getWidth() == 32);
+           (intTy && intTy.getWidth() == mlir::pto::kValue32);
   case pto::ScatterAtomicOp::Max:
   case pto::ScatterAtomicOp::Min:
     return ty.isF32() ||
-           (intTy && intTy.getWidth() == 32);
+           (intTy && intTy.getWidth() == mlir::pto::kValue32);
   }
   llvm_unreachable("Unknown ScatterAtomicOp");
 }

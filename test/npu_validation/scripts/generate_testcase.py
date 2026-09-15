@@ -15,6 +15,7 @@ import ast
 import os
 import re
 import shutil
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -324,6 +325,11 @@ CASE_POINTER_COUNT_MINIMUMS = {
 # source revision.  Scope by sample so older DeepSeek variants with the same
 # testcase names retain their already validated layouts.
 SAMPLE_CASE_POINTER_COUNT_MINIMUMS = {
+    "matmulmxlowprecision": {
+        # MX B-scale storage is packed in 16-column blocks: logical 4x63
+        # occupies 4x64 bytes, including padding omitted by tensor-view inference.
+        "matmul_mx_low_precision": {"v4": 4 * 64},
+    },
     "tpipe": {
         "a3_pipe_roundtrip": {"v3": 2_048},
     },
@@ -1004,6 +1010,21 @@ def _extract_aicore_functions(text: str):
     return functions
 
 
+class CompileOnlyTileHelper(ValueError):
+    """A device helper has no host-callable entry for board validation."""
+
+
+def _is_compile_only_tile_helper(text: str) -> bool:
+    functions = _extract_aicore_functions(text)
+    if not functions or any(function["is_global"] for function in functions):
+        return False
+    for function in functions:
+        params = function["raw_params"]
+        if not params or not all(re.match(r"(?:const\s+)?(?:pto::)?Tile\s*<", param) for param in params):
+            return False
+    return True
+
+
 def _describe_kernel_source(text: str):
     functions = _extract_aicore_functions(text)
     for func in functions:
@@ -1437,25 +1458,27 @@ def _detect_output_pointer_params(text: str, pointer_param_names):
     if not pointer_param_names:
         return []
 
-    tstore_gts = re.findall(r"\bTSTORE\s*\(\s*(\w+)\s*,", text)
+    tstore_gts = re.findall(
+        r"\bTSTORE(?:_FP)?(?:\s*<[^;()]*>)?\s*\(\s*(\w+)\s*,", text
+    )
     if not tstore_gts:
         return []
 
     gt_to_expr = {}
     for match in re.finditer(
-        r"\bGlobalTensor<[^;\n]*>\s+(\w+)\s*=\s*GlobalTensor<[^;\n]*>\(([^,]+?)\s*,",
+        r"\bGlobalTensor<[^;\n]*?>\s+(\w+)\s*=\s*GlobalTensor<[^;\n]*?>\(([^,]+?)\s*,",
         text,
     ):
         gt_to_expr.setdefault(match.group(1), match.group(2).strip())
     for match in re.finditer(
-        r"\b(?:pto::)?GlobalTensor<[^;\n]*>\s+(\w+)\s*=\s*(?:pto::)?GlobalTensor<[^;\n]*>\s*\(([^;]*)\);",
+        r"\b(?:pto::)?GlobalTensor<[^;\n]*?>\s+(\w+)\s*=\s*(?:pto::)?GlobalTensor<[^;\n]*?>\s*\(([^;]*)\);",
         text,
     ):
         args = _split_cpp_args(match.group(2))
         if args:
             gt_to_expr.setdefault(match.group(1), args[0].strip())
     for match in re.finditer(
-        r"\b(\w+)\s*=\s*(?:pto::)?GlobalTensor<[^;\n]*>\s*\(([^;]*)\);",
+        r"\b(\w+)\s*=\s*(?:pto::)?GlobalTensor<[^;\n]*?>\s*\(([^;]*)\);",
         text,
     ):
         args = _split_cpp_args(match.group(2))
@@ -2033,6 +2056,35 @@ def _safe_eval_int_expr(expr: str, env: dict) -> Optional[int]:
     if not expr:
         return None
 
+    # EmitC lowers integer min/max to a conditional expression. Both operations
+    # are monotone, so applying them to inferred maxima preserves an upper bound.
+    # Do not choose a general conditional branch using maxima as concrete values.
+    if expr.count("?") == 1 and expr.count(":") == 1:
+        condition, branches = expr.split("?", 1)
+        true_expr, false_expr = branches.split(":", 1)
+        try:
+            comparison = ast.parse(condition.strip(), mode="eval").body
+            true_node = ast.parse(true_expr.strip(), mode="eval").body
+            false_node = ast.parse(false_expr.strip(), mode="eval").body
+        except SyntaxError:
+            return None
+        if not isinstance(comparison, ast.Compare) or len(comparison.ops) != 1:
+            return None
+        op = comparison.ops[0]
+        if not isinstance(op, (ast.Lt, ast.LtE, ast.Gt, ast.GtE)):
+            return None
+        left = ast.dump(comparison.left)
+        right = ast.dump(comparison.comparators[0])
+        choices = (ast.dump(true_node), ast.dump(false_node))
+        if choices not in ((left, right), (right, left)):
+            return None
+        true_value = _safe_eval_int_expr(true_expr, env)
+        false_value = _safe_eval_int_expr(false_expr, env)
+        if true_value is None or false_value is None:
+            return None
+        is_min = isinstance(op, (ast.Lt, ast.LtE)) == (choices == (left, right))
+        return min(true_value, false_value) if is_min else max(true_value, false_value)
+
     try:
         parsed = ast.parse(expr, mode="eval")
     except SyntaxError:
@@ -2507,6 +2559,8 @@ def generate_testcase(
 
     raw_kernel = input_cpp.read_text(encoding="utf-8")
     raw_kernel_for_analysis = raw_kernel
+    if _is_compile_only_tile_helper(raw_kernel_for_analysis):
+        raise CompileOnlyTileHelper("Tile-only device helper; use a GM-pointer runtime sample for board validation")
     kernel_info = _describe_kernel_source(raw_kernel_for_analysis)
     # pto.tcmp / pto.tcmps produce packed predicate masks and leave parts of the
     # logical u8 tile undefined. This can make byte-wise compares flaky.
@@ -3552,15 +3606,20 @@ def main():
 
     output_root = Path(args.output_root) if args.output_root else None
     testcase = args.testcase or _derive_testcase_name(Path(args.input))
-    generate_testcase(
-        Path(args.input),
-        output_root,
-        testcase,
-        args.run_mode,
-        args.soc_version,
-        aicore_arch=args.aicore_arch,
-    )
+    try:
+        generate_testcase(
+            Path(args.input),
+            output_root,
+            testcase,
+            args.run_mode,
+            args.soc_version,
+            aicore_arch=args.aicore_arch,
+        )
+    except CompileOnlyTileHelper as exc:
+        print(f"SKIP: {exc}")
+        return 77
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

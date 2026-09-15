@@ -329,9 +329,13 @@ target_include_directories(PTOTransforms INTERFACE
 # include path.
 target_include_directories(PTOTransforms PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(PTOTransforms PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Support)
+# PTOValidateVPTOIR.cpp shares the SIMT keep/resume verify helpers with the
+# PTO IR implementation (lib/PTO/IR/PTOPipeline); expose that internal dir.
+target_include_directories(PTOTransforms PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../IR)
 if(TARGET obj.PTOTransforms)
   target_include_directories(obj.PTOTransforms PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   target_include_directories(obj.PTOTransforms PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Support)
+  target_include_directories(obj.PTOTransforms PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../IR)
 endif()
 
 # MLIR conversion patterns legitimately hide base-class virtual

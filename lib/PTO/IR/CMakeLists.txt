@@ -67,6 +67,7 @@ add_mlir_dialect_library(PTOIR
   VPTO/align/VPTOVldus.cpp
   VPTO/vcvt/VPTOVcvt.cpp
   VPTO/vcvt/VPTOVcvtShared.cpp
+  VPTO/mte/VPTOMteShared.cpp
   VPTO/mte/VPTOMteGmL1.cpp
   VPTO/mte/VPTOMteGmL1Frac.cpp
   VPTO/mte/VPTOMteGmUb.cpp

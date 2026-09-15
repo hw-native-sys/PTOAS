@@ -1574,6 +1574,9 @@ template <typename OpTy>
 LogicalResult
 checkSupportedGroupReduceShape(OpTy op, std::string *reason = nullptr) {
   VMILayoutSupport supports;
+  if (failed(supports.getGroupOperationShapeSupport(op, reason))) {
+    return failure();
+  }
   if constexpr (std::is_same_v<OpTy, VMIGroupReduceAddFOp>) {
     if (succeeded(supports.getGroupReduceAddFSupport(op, reason))) {
       return success();
@@ -1609,6 +1612,7 @@ struct GroupBroadcastShapePlan {
   int64_t lanesPerPart;
   int64_t groupSize;
   int64_t resultFactor;
+  bool compact;
 };
 
 static LogicalResult checkGroupBroadcastLogicalContract(
@@ -1721,13 +1725,20 @@ static FailureOr<GroupBroadcastShapePlan> buildGroupBroadcastShapePlan(
   if (failed(resultFactor)) {
     return fail("requires known result layout factor");
   }
-  return GroupBroadcastShapePlan{sourceLayout, resultLayout, numGroups,
-                                 *lanesPerPart, *groupSize, *resultFactor};
+  auto fact = VMILayoutSupport().getGroupBroadcastLayoutFactForLayouts(
+      sourceType, resultType, numGroups, reason);
+  if (failed(fact)) {
+    return failure();
+  }
+  return GroupBroadcastShapePlan{
+      sourceLayout, resultLayout, numGroups, *lanesPerPart, *groupSize,
+      *resultFactor, fact->blockClass == VMIGroupBlockClass::Compact};
 }
 
 static LogicalResult checkGroupBroadcastResultShape(
     VMIVRegType resultType, VMILayoutAttr resultLayout, int64_t groupSize,
-    int64_t lanesPerPart, int64_t resultFactor, std::string *reason) {
+    int64_t lanesPerPart, int64_t resultFactor, bool compact,
+    std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason) {
       *reason = message.str();
@@ -1736,7 +1747,7 @@ static LogicalResult checkGroupBroadcastResultShape(
   };
   bool laneStridedDense =
       resultLayout.isDense() && resultLayout.getLaneStride() > 1;
-  if (!laneStridedDense) {
+  if (!laneStridedDense && !compact) {
     std::string fullChunkReason;
     if (failed(checkFullDataPhysicalChunks(resultType, &fullChunkReason))) {
       return fail(Twine("requires full result physical chunks; ") +
@@ -1780,7 +1791,9 @@ LogicalResult checkSupportedGroupBroadcastShape(
   auto resultType = cast<VMIVRegType>(op.getResult().getType());
   return checkGroupBroadcastResultShape(
       resultType, plan->resultLayout, plan->groupSize, plan->lanesPerPart,
-      plan->resultFactor, reason);
+      plan->resultFactor,
+      plan->compact,
+      reason);
 }
 
 LogicalResult checkSupportedVdhistShape(VMIVdhistOp op,

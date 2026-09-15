@@ -140,7 +140,8 @@ static FailureOr<FragmentShape> getFragmentShape(LLVM::AllocaOp allocaOp,
   }
 
   int64_t totalByteSize;
-  if (llvm::MulOverflow(*elementCount, *elementByteSize, totalByteSize)) {
+  if (llvm::MulOverflow(*elementCount, *elementByteSize, totalByteSize) !=
+      0) {
     return allocaOp.emitOpError(
         "persistent SIMT fragment byte size overflows signed i64");
   }
@@ -184,7 +185,7 @@ static FailureOr<int64_t> getStaticGEPByteOffset(LLVM::GEPOp gep,
   }
 
   int64_t byteOffset;
-  if (llvm::MulOverflow(*index, *elementByteSize, byteOffset)) {
+  if (llvm::MulOverflow(*index, *elementByteSize, byteOffset) != 0) {
     gep.emitOpError("persistent fragment GEP byte offset overflows signed i64");
     return failure();
   }
@@ -295,12 +296,12 @@ static FailureOr<PersistentAccessRange> validatePersistentAccessRange(
 
   int64_t accessByteSize;
   if (llvm::MulOverflow(static_cast<int64_t>(*laneCount), shape.elementByteSize,
-                        accessByteSize)) {
+                        accessByteSize) != 0) {
     return access->emitOpError(
         "persistent SIMT fragment access byte size overflows signed i64");
   }
   int64_t accessEnd;
-  if (llvm::AddOverflow(byteOffset, accessByteSize, accessEnd) ||
+  if (llvm::AddOverflow(byteOffset, accessByteSize, accessEnd) != 0 ||
       accessEnd > shape.totalByteSize) {
     if (*laneCount == 1) {
       return access->emitOpError()
@@ -339,7 +340,8 @@ static LogicalResult recordAccess(Operation *access, Type accessType,
   for (unsigned laneIndex = 0; laneIndex < accessRange->laneCount; ++laneIndex) {
     int64_t elementOffset;
     if (llvm::AddOverflow(accessRange->firstElementOffset,
-                          static_cast<int64_t>(laneIndex), elementOffset)) {
+                          static_cast<int64_t>(laneIndex), elementOffset) !=
+        0) {
       return access->emitOpError(
           "persistent SIMT fragment lane element offset overflows signed "
           "i64");
@@ -391,7 +393,7 @@ findInitSection(DominanceInfo &dominance,
   pto::SectionSimtOp initSection;
   for (pto::SectionSimtOp candidate : accessedSections) {
     bool dominatesAllAccessSections =
-        llvm::all_of(accessedSections, [&](pto::SectionSimtOp section) {
+        llvm::all_of(accessedSections, [&candidate, &dominance](pto::SectionSimtOp section) {
           if (section == candidate) {
             return true;
           }
@@ -671,7 +673,8 @@ static LogicalResult discoverPersistentPointerUse(
       return failure();
     }
     int64_t derivedByteOffset;
-    if (llvm::AddOverflow(item.byteOffset, *gepByteOffset, derivedByteOffset)) {
+    if (llvm::AddOverflow(item.byteOffset, *gepByteOffset,
+                          derivedByteOffset) != 0) {
       return gep.emitOpError(
           "persistent fragment cumulative byte offset overflows signed i64");
     }
@@ -777,7 +780,7 @@ analyzePersistentFragment(LLVM::AllocaOp allocaOp, DominanceInfo &dominance,
 SIMTPersistentFragmentAnalysis::SIMTPersistentFragmentAnalysis(
     func::FuncOp func) {
   SmallVector<LLVM::AllocaOp> persistentAllocas;
-  func.walk([&](LLVM::AllocaOp allocaOp) {
+  func.walk([&persistentAllocas](LLVM::AllocaOp allocaOp) {
     if (allocaOp->hasAttr(pto::kPersistentAttrName)) {
       persistentAllocas.push_back(allocaOp);
     }
@@ -797,7 +800,7 @@ SIMTPersistentFragmentAnalysis::SIMTPersistentFragmentAnalysis(
   }
 
   PersistentMaterializationPlan candidate;
-  func.walk([&](pto::SectionSimtOp section) {
+  func.walk([&candidate](pto::SectionSimtOp section) {
     candidate.sections.push_back(section);
   });
 

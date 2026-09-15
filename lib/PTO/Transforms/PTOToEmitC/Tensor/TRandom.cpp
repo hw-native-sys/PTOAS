@@ -28,7 +28,7 @@ struct PTORandomToEmitC : public OpConversionPattern<pto::TRandomOp> {
     auto *ctx = rewriter.getContext();
 
     Value dst = adaptor.getDst();
-    SmallVector<Value, 7> operands{
+    SmallVector<Value> operands{
         dst,
         adaptor.getKey0(),
         adaptor.getKey1(),

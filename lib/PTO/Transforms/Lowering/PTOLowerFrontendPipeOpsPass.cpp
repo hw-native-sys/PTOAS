@@ -377,7 +377,7 @@ static bool collectFrontendInitOps(func::FuncOp funcOp,
                                    llvm::DenseMap<int32_t, Operation *> &seen) {
   // Aic and Aiv initialize ops share the id-uniqueness contract, so both
   // variants run through one shared record-and-check helper.
-  auto recordInitOp = [&](Operation *op, int32_t id) {
+  auto recordInitOp = [&initOps, &seen](Operation *op, int32_t id) {
     initOps.push_back(op);
     auto [it, inserted] = seen.try_emplace(id, op);
     (void)it;
@@ -391,9 +391,9 @@ static bool collectFrontendInitOps(func::FuncOp funcOp,
   bool allUnique = true;
   funcOp.walk([&](Operation *op) {
     if (auto init = dyn_cast<AicInitializePipeOp>(op)) {
-      allUnique &= recordInitOp(op, init.getId());
+      allUnique = allUnique && recordInitOp(op, init.getId());
     } else if (auto init = dyn_cast<AivInitializePipeOp>(op)) {
-      allUnique &= recordInitOp(op, init.getId());
+      allUnique = allUnique && recordInitOp(op, init.getId());
     }
   });
   return allUnique;
@@ -593,7 +593,7 @@ static LogicalResult lowerFrontendAllocOp(
 template <typename OpTy, typename LowerFn>
 static LogicalResult lowerFrontendDataWithPipe(
     OpTy op, Value FrontendPipeHandles::*pipeSel, const char *dirName,
-    const FrontendDataLowering &ctx, IRRewriter &rewriter, LowerFn &&lower) {
+    const FrontendDataLowering &ctx, LowerFn &&lower) {
   auto handlesOr = resolveFrontendPipe(op, pipeSel, dirName, ctx);
   if (failed(handlesOr)) {
     return failure();
@@ -608,7 +608,7 @@ lowerFrontendPushOp(OpTy push, Value FrontendPipeHandles::*pipeSel,
                     const char *dirName, Value subblockid,
                     const FrontendDataLowering &ctx, IRRewriter &rewriter) {
   return lowerFrontendDataWithPipe(
-      push, pipeSel, dirName, ctx, rewriter,
+      push, pipeSel, dirName, ctx,
       [&](const FrontendPipeHandles &handles) {
         rewriter.replaceOpWithNewOp<TPushOp>(push, push.getTile(),
                                              handles.*pipeSel, subblockid,
@@ -624,7 +624,7 @@ lowerFrontendPopOp(OpTy pop, Value FrontendPipeHandles::*pipeSel,
                    const char *dirName, Value subblockid,
                    const FrontendDataLowering &ctx, IRRewriter &rewriter) {
   return lowerFrontendDataWithPipe(
-      pop, pipeSel, dirName, ctx, rewriter,
+      pop, pipeSel, dirName, ctx,
       [&](const FrontendPipeHandles &handles) {
         Value entry = createPopDestination(pop, handles, rewriter);
         rewriter.create<TPopOp>(pop.getLoc(), entry, handles.*pipeSel,
@@ -641,7 +641,7 @@ lowerFrontendFreeOp(OpTy free, Value FrontendPipeHandles::*pipeSel,
                     const char *dirName, const FrontendDataLowering &ctx,
                     IRRewriter &rewriter) {
   return lowerFrontendDataWithPipe(
-      free, pipeSel, dirName, ctx, rewriter,
+      free, pipeSel, dirName, ctx,
       [&](const FrontendPipeHandles &handles) {
         rewriter.replaceOpWithNewOp<TFreeOp>(free, free.getEntry(),
                                              handles.*pipeSel,

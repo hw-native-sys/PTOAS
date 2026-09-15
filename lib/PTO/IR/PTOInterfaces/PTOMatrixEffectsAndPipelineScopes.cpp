@@ -179,7 +179,7 @@ static int getFrontendInitAttrIndex(StringRef keyword) {
         .Case("slot_num", mlir::pto::kValue3)
         .Case("local_slot_num", mlir::pto::kValue4)
         .Case("nosplit", mlir::pto::kValue5)
-        .Case("acc_push_epilogue", 6)
+        .Case("acc_push_epilogue", mlir::pto::kValue6)
         .Default(-1);
 }
 

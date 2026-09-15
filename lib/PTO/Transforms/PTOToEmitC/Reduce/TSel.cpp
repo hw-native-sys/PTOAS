@@ -24,7 +24,7 @@ struct PTOSelToEmitC : public OpConversionPattern<pto::TSelOp> {
   LogicalResult matchAndRewrite(pto::TSelOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    SmallVector<Value, 5> operands{adaptor.getDst(), adaptor.getMask(),
+    SmallVector<Value, mlir::pto::kValue5> operands{adaptor.getDst(), adaptor.getMask(),
                                    adaptor.getSrc0(), adaptor.getSrc1(),
                                    adaptor.getTmp()};
     rewriter.create<emitc::CallOpaqueOp>(
@@ -41,7 +41,7 @@ struct PTOSelSToEmitC : public OpConversionPattern<pto::TSelSOp> {
   LogicalResult matchAndRewrite(pto::TSelSOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    SmallVector<Value, 5> operands{adaptor.getDst(), adaptor.getMask(),
+    SmallVector<Value, mlir::pto::kValue5> operands{adaptor.getDst(), adaptor.getMask(),
                                    adaptor.getSrc(), adaptor.getTmp(),
                                    adaptor.getScalar()};
     rewriter.create<emitc::CallOpaqueOp>(

@@ -32,8 +32,8 @@
     }
     return success();
   };
-  auto verifyA2A3 = [&]() -> LogicalResult { return verifyByArch(PTOArch::A3); };
-  auto verifyA5 = [&]() -> LogicalResult { return verifyByArch(PTOArch::A5); };
+  auto verifyA2A3 = [&verifyByArch]() -> LogicalResult { return verifyByArch(PTOArch::A3); };
+  auto verifyA5 = [&verifyByArch]() -> LogicalResult { return verifyByArch(PTOArch::A5); };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
@@ -51,11 +51,11 @@ static LogicalResult verifyF16F32VecUnary(Operation *op, Type srcTy,
 }
 
 mlir::LogicalResult mlir::pto::TExpOp::verify() {
-  auto verifyA2A3 = [&]() {
+  auto verifyA2A3 = [this]() {
     return verifyF16F32VecUnary(getOperation(), getSrc().getType(),
                                 getDst().getType());
   };
-  auto verifyA5 = [&]() -> LogicalResult { return verifyA2A3(); };
+  auto verifyA5 = [&verifyA2A3]() -> LogicalResult { return verifyA2A3(); };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
@@ -93,8 +93,8 @@ static LogicalResult verifyTExpandsArch(TExpandsOp op, bool isA5) {
 }
 
 mlir::LogicalResult mlir::pto::TExpandsOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult { return verifyTExpandsArch(*this, false); };
-  auto verifyA5 = [&]() -> LogicalResult { return verifyTExpandsArch(*this, true); };
+  auto verifyA2A3 = [this]() -> LogicalResult { return verifyTExpandsArch(*this, false); };
+  auto verifyA5 = [this]() -> LogicalResult { return verifyTExpandsArch(*this, true); };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 

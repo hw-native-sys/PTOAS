@@ -36,7 +36,7 @@ static bool isAllowedIntToPtrUse(Value ptr, OpOperand &use) {
 }
 
 static LogicalResult validateIntToPtrUses(func::FuncOp func) {
-  WalkResult walkResult = func.walk([&](IntToPtrOp op) -> WalkResult {
+  WalkResult walkResult = func.walk([](IntToPtrOp op) -> WalkResult {
     Value ptr = op.getResult();
     for (OpOperand &use : ptr.getUses()) {
       if (isAllowedIntToPtrUse(ptr, use)) {

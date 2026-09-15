@@ -32,6 +32,10 @@ TARGET_INSTALL_PATH=""
 TARGET_VERSION_DIR="${CURR_PATH}/../.."
 TARGET_VERSION_DIR=$(readlink -f ${TARGET_VERSION_DIR})     # TARGET_INSTALL_PATH + PKG_VERSION_DIR
 TARGET_MOULDE_DIR=${TARGET_VERSION_DIR}/${PTO_PLATFORM_DIR} # TARGET_INSTALL_PATH + PKG_VERSION_DIR + PTO_PLATFORM_DIR
+# The real version directory root, for the created-directory cleanup at the end.
+# TARGET_MOULDE_DIR is the version directory's share/info subtree, so the root is
+# three levels up -- the same computation remove_module() uses.
+PTO_PLATFORM_ROOT=$(readlink -f "${TARGET_MOULDE_DIR}/../../..")
 ASCEND_INSTALL_INFO="ascend_install.info"
 # init log file path
 INSTALL_INFO_FILE="${TARGET_MOULDE_DIR}/${ASCEND_INSTALL_INFO}"
@@ -162,6 +166,7 @@ remove_module() {
   local pto_version_root
   pto_version_root=$(readlink -f "${TARGET_MOULDE_DIR}/../../..")
   pto_uninstall_wheel "${pto_version_root}" "${TARGET_MOULDE_DIR}"
+  log_with_errorlevel "$?" "error" "[ERROR]: ERR_NO:${OPERATE_FAILED};ERR_DES:Remove the ptoas Python runtime failed."
   chmod u+w ${TARGET_MOULDE_DIR}/scene.info
 
   logandprint "[INFO]: Delete the installed pto source files in (${TARGET_VERSION_DIR})."
@@ -216,6 +221,26 @@ remote_all_soft_link() {
 
 logandprint "[INFO]: Begin uninstall the pto module."
 
+# Drop the directories the installer created and that this removal emptied. The
+# record lists them because nothing here can tell an empty directory the
+# installer made from an empty directory the user already had -- and the install
+# path handed in may well be the user's own prefix, which must survive.
+#
+# TARGET_VERSION_DIR here is the version directory's share/info subtree, not the
+# version directory, so the real root is derived from the module directory.
+remove_created_dirs() {
+  [ -d "${PTO_PLATFORM_ROOT}" ] && rmdir "${PTO_PLATFORM_ROOT}" 2>/dev/null
+  pto_rmdir_created_dirs "${PTOAS_CREATED_DIRS}"
+}
+
+# The record lives beside the rest of the component metadata and is removed
+# along with it, so it has to be read before the removal runs.
+read_created_dirs() {
+  local record="${TARGET_MOULDE_DIR}/${PTOAS_CREATED_DIRS_RECORD}"
+  PTOAS_CREATED_DIRS=""
+  [ -r "${record}" ] && PTOAS_CREATED_DIRS="$(cat "${record}" 2>/dev/null)"
+}
+
 main() {
   get_opts "$@"
 
@@ -227,6 +252,8 @@ main() {
 
   check_installed_type "${INSTALLED_TYPE}"
 
+  read_created_dirs
+
   unsetenv
 
   remove_pto
@@ -235,9 +262,8 @@ main() {
 
   if [ "${UNINSTALL_MODE}" != "upgrade" ]; then
     remove_dir_if_empty ${TARGET_VERSION_DIR}/${PTO_PLATFORM_DIR}
+    remove_created_dirs
   fi
-
-  remove_dir_if_empty ${INSTALLED_PATH}
 
   logandprint "[INFO]: Pto package uninstalled successfully! Uninstallation takes effect immediately."
 }

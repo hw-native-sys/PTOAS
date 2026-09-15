@@ -100,7 +100,8 @@ static LogicalResult verifyTRowExpandReduceLikeOp(
 
   // (A5 tmp-form invariant is checked earlier, before the empty-marker accept.)
 
-  auto verifyTmpContract = [&]() {
+  auto verifyTmpContract = [&op, &src0Ty, &src1Ty, &dstTy, &tmpTy, &hasTmp,
+                          &targetArch, &enforceTmpContract]() {
     return enforceTmpContract
                ? verifyTRowExpandImplicitTmpContract(
                      op, src0Ty, src1Ty, dstTy, tmpTy, hasTmp, targetArch)
@@ -130,20 +131,20 @@ static LogicalResult verifyTRowExpandReduceLikeOp(
 }
 
 mlir::LogicalResult mlir::pto::TRowExpandExpdifOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult {
+  auto verifyA2A3 = [this]() -> LogicalResult {
     return verifyTRowExpandReduceLikeOp(getOperation(), getSrc0().getType(),
                                         getSrc1().getType(), getDst().getType(),
                                         getTmp() ? getTmp().getType() : Type{},
-                                        (bool)getTmp(), PTOArch::A3,
+                                        static_cast<bool>(getTmp()), PTOArch::A3,
                                         /*enforceTmpContract=*/false,
                                         "trowexpandexpdif",
                                         /*allowIntegerTypes=*/false);
   };
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [this]() -> LogicalResult {
     return verifyTRowExpandReduceLikeOp(getOperation(), getSrc0().getType(),
                                         getSrc1().getType(), getDst().getType(),
                                         getTmp() ? getTmp().getType() : Type{},
-                                        (bool)getTmp(), PTOArch::A5,
+                                        static_cast<bool>(getTmp()), PTOArch::A5,
                                         /*enforceTmpContract=*/false,
                                         "trowexpandexpdif",
                                         /*allowIntegerTypes=*/false);
@@ -152,20 +153,20 @@ mlir::LogicalResult mlir::pto::TRowExpandExpdifOp::verify() {
 }
 
 mlir::LogicalResult mlir::pto::TRowExpandMaxOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult {
+  auto verifyA2A3 = [this]() -> LogicalResult {
     return verifyTRowExpandReduceLikeOp(getOperation(), getSrc0().getType(),
                                         getSrc1().getType(), getDst().getType(),
                                         getTmp() ? getTmp().getType() : Type{},
-                                        (bool)getTmp(), PTOArch::A3,
+                                        static_cast<bool>(getTmp()), PTOArch::A3,
                                         /*enforceTmpContract=*/true,
                                         "trowexpandmax",
                                         /*allowIntegerTypes=*/true);
   };
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [this]() -> LogicalResult {
     return verifyTRowExpandReduceLikeOp(getOperation(), getSrc0().getType(),
                                         getSrc1().getType(), getDst().getType(),
                                         getTmp() ? getTmp().getType() : Type{},
-                                        (bool)getTmp(), PTOArch::A5,
+                                        static_cast<bool>(getTmp()), PTOArch::A5,
                                         /*enforceTmpContract=*/true,
                                         "trowexpandmax",
                                         /*allowIntegerTypes=*/true);
@@ -174,20 +175,20 @@ mlir::LogicalResult mlir::pto::TRowExpandMaxOp::verify() {
 }
 
 mlir::LogicalResult mlir::pto::TRowExpandMinOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult {
+  auto verifyA2A3 = [this]() -> LogicalResult {
     return verifyTRowExpandReduceLikeOp(getOperation(), getSrc0().getType(),
                                         getSrc1().getType(), getDst().getType(),
                                         getTmp() ? getTmp().getType() : Type{},
-                                        (bool)getTmp(), PTOArch::A3,
+                                        static_cast<bool>(getTmp()), PTOArch::A3,
                                         /*enforceTmpContract=*/true,
                                         "trowexpandmin",
                                         /*allowIntegerTypes=*/true);
   };
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [this]() -> LogicalResult {
     return verifyTRowExpandReduceLikeOp(getOperation(), getSrc0().getType(),
                                         getSrc1().getType(), getDst().getType(),
                                         getTmp() ? getTmp().getType() : Type{},
-                                        (bool)getTmp(), PTOArch::A5,
+                                        static_cast<bool>(getTmp()), PTOArch::A5,
                                         /*enforceTmpContract=*/true,
                                         "trowexpandmin",
                                         /*allowIntegerTypes=*/true);
@@ -275,7 +276,8 @@ static ParseResult parseFixedDpsInputs(
     return failure();
   }
   for (unsigned i = 0; i < inputs.size(); ++i) {
-    if ((i && parser.parseComma()) || parser.parseType(inputTypes.emplace_back())) {
+    if ((i != 0 && parser.parseComma()) ||
+        parser.parseType(inputTypes.emplace_back())) {
       return failure();
     }
   }

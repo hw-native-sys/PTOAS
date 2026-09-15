@@ -26,30 +26,44 @@ esac
 PTOAS_COMMON="${INSTALL_PATH}/share/info/pto_as/script/pto_common.sh"
 if [ -r "${PTOAS_COMMON}" ]; then
     . "${PTOAS_COMMON}"
+    # Propagate the helper's status: a removal that could not delete PTOAS's
+    # files must not let the prerm step report success.
     pto_uninstall_wheel "${INSTALL_PATH}" "${INSTALL_PATH}/share/info/pto_as"
+    ret="$?"
+    if [ "${ret}" != 0 ]; then
+        echo "[pto-as] failed to remove the installed PTOAS runtime" >&2
+        exit "${ret}"
+    fi
 else
     # Last resort: pto_common.sh is missing or unreadable, which the package
     # layout rules out (the files are still present here). Repeat the payload
     # names inline so removal can never fail to clean the runtime, and keep this
     # list in sync with PTOAS_SITE_PACKAGES_TOPLEVEL / PTOAS_LEGACY_PRIVATE_PYTHON
     # in pto_common.sh, which is the authoritative definition.
+    ret=0
     rm -rf "${INSTALL_PATH}/python/site-packages/ptoas" \
            "${INSTALL_PATH}/python/site-packages/ptodsl" \
            "${INSTALL_PATH}/python/site-packages/TileOps" \
            "${INSTALL_PATH}/python/site-packages/SoftOps" \
-           "${INSTALL_PATH}/python/site-packages/ptoas.libs"
-    rm -rf "${INSTALL_PATH}/python/site-packages/"ptoas-*.dist-info
-    rm -f "${INSTALL_PATH}/python/site-packages/bin/ptoas"
+           "${INSTALL_PATH}/python/site-packages/ptoas.libs" || ret=1
+    rm -rf "${INSTALL_PATH}/python/site-packages/"ptoas-*.dist-info || ret=1
+    rm -f "${INSTALL_PATH}/python/site-packages/bin/ptoas" || ret=1
     # Best effort: these stay when a sibling component still uses the directory.
     rmdir "${INSTALL_PATH}/python/site-packages/bin" 2>/dev/null || true
     rmdir "${INSTALL_PATH}/python/site-packages" 2>/dev/null || true
     rmdir "${INSTALL_PATH}/python" 2>/dev/null || true
-    [ -L "${INSTALL_PATH}/bin/ptoas" ] && rm -f "${INSTALL_PATH}/bin/ptoas"
-    rm -f "${INSTALL_PATH}/tools/ptoas/.ptoas-python.path"
+    if [ -L "${INSTALL_PATH}/bin/ptoas" ] || [ -e "${INSTALL_PATH}/bin/ptoas" ]; then
+        rm -f "${INSTALL_PATH}/bin/ptoas" || ret=1
+    fi
+    rm -f "${INSTALL_PATH}/tools/ptoas/.ptoas-python.path" || ret=1
     # The pre-site-packages runtime and any staging/backup tree left behind by
     # an interrupted install belong to PTOAS alone, so they can be removed
     # wholesale rather than by name.
     rm -rf "${INSTALL_PATH}/tools/ptoas/python" \
            "${INSTALL_PATH}/tools/ptoas/.ptoas-wheel-staging" \
-           "${INSTALL_PATH}/tools/ptoas/.ptoas-wheel-backup"
+           "${INSTALL_PATH}/tools/ptoas/.ptoas-wheel-backup" || ret=1
+    if [ "${ret}" != 0 ]; then
+        echo "[pto-as] failed to remove the installed PTOAS runtime" >&2
+        exit "${ret}"
+    fi
 fi

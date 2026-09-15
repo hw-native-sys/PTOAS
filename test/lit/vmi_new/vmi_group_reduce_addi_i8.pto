@@ -22,4 +22,9 @@ module {
 }
 
 // CHECK-LABEL: func.func @group_reduce_addi_i8(
-// CHECK: pto.vcgadd {{.*}} : !pto.vreg<256xi8>, !pto.mask<b8> -> !pto.vreg<256xi8>
+// CHECK: pto.vzunpack
+// CHECK: pto.punpack {{.*}} "LOWER"
+// CHECK: pto.vzunpack
+// CHECK: pto.punpack {{.*}} "HIGHER"
+// CHECK-COUNT-8: pto.vcadd {{.*}} : !pto.vreg<128xui16>, !pto.mask<b16>
+// CHECK-NOT: pto.vcgadd

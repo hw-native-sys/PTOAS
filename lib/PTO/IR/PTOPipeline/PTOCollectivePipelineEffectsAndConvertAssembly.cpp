@@ -210,6 +210,7 @@ static ParseResult parseConvertRounding(OpAsmParser &parser,
 
 static void printConvertRounding(OpAsmPrinter &printer, Operation *op,
                                  RoundingAttr rounding) {
+  (void)op;
   printer << "round(" << stringifyRounding(rounding.getValue()) << ")";
 }
 
@@ -231,6 +232,7 @@ static ParseResult parseConvertSaturation(OpAsmParser &parser,
 
 static void printConvertSaturation(OpAsmPrinter &printer, Operation *op,
                                    SaturationAttr saturation) {
+  (void)op;
   printer << stringifySaturation(saturation.getValue());
 }
 
@@ -251,6 +253,7 @@ static ParseResult parseSignedness(OpAsmParser &parser,
 
 static void printSignedness(OpAsmPrinter &printer, Operation *op,
                             SignednessAttr signedness) {
+  (void)op;
   printer << stringifySignedness(signedness.getValue());
 }
 
@@ -270,6 +273,7 @@ static OptionalParseResult parseOptionalSignedness(OpAsmParser &parser,
 
 static void printOptionalSignedness(OpAsmPrinter &printer, Operation *op,
                                     SignednessAttr signedness) {
+  (void)op;
   printer << stringifySignedness(signedness.getValue());
 }
 

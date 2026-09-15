@@ -1,0 +1,71 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-level=level3 --pto-arch=a3 %s -o - | FileCheck %s
+// RUN: ptoas --pto-level=level3 --pto-arch=a5 %s -o - | FileCheck %s
+
+// Keep the tile read and scalar store from issue #1478 so the addition cannot
+// be constant-folded away before EmitC conversion.
+module {
+  func.func @scalar_addf(%out: !pto.ptr<f32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %tile = pto.alloc_tile addr = %c0_i64 valid_row = %c1 valid_col = %c8
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=?, v_col=?,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %value = pto.tgetval ins(%tile, %c0 :
+        !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=?, v_col=?,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+        index) outs : f32
+    %sum = arith.addf %value, %value : f32
+    pto.store_scalar %sum, %out[%c0] : !pto.ptr<f32>, f32
+    return
+  }
+
+  // Distinct runtime operands exercise addition and result type conversion
+  // across the standard scalar floating-point types.
+  func.func @scalar_addf_types(
+      %lhs16: f16, %rhs16: f16, %out16: !pto.ptr<f16>,
+      %lhsbf: bf16, %rhsbf: bf16, %outbf: !pto.ptr<bf16>,
+      %lhs32: f32, %rhs32: f32, %out32: !pto.ptr<f32>,
+      %lhs64: f64, %rhs64: f64, %out64: !pto.ptr<f64>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %sum16 = arith.addf %lhs16, %rhs16 : f16
+    pto.store_scalar %sum16, %out16[%c0] : !pto.ptr<f16>, f16
+    %sumbf = arith.addf %lhsbf, %rhsbf : bf16
+    pto.store_scalar %sumbf, %outbf[%c0] : !pto.ptr<bf16>, bf16
+    %sum32 = arith.addf %lhs32, %rhs32 : f32
+    pto.store_scalar %sum32, %out32[%c0] : !pto.ptr<f32>, f32
+    %sum64 = arith.addf %lhs64, %rhs64 : f64
+    pto.store_scalar %sum64, %out64[%c0] : !pto.ptr<f64>, f64
+    return
+  }
+}
+
+// CHECK-LABEL: AICORE void scalar_addf(
+// CHECK: float [[VALUE:[_A-Za-z][_A-Za-z0-9]*]] = {{.*}}.GetValue(
+// CHECK: float [[SUM:[_A-Za-z][_A-Za-z0-9]*]] = [[VALUE]] + [[VALUE]];
+// CHECK: {{.*}}[{{.*}}] = [[SUM]];
+
+// CHECK-LABEL: AICORE void scalar_addf_types(
+// CHECK-SAME: half [[LHS16:[_A-Za-z][_A-Za-z0-9]*]], half [[RHS16:[_A-Za-z][_A-Za-z0-9]*]],
+// CHECK-SAME: bfloat16_t [[LHSBF:[_A-Za-z][_A-Za-z0-9]*]], bfloat16_t [[RHSBF:[_A-Za-z][_A-Za-z0-9]*]],
+// CHECK-SAME: float [[LHS32:[_A-Za-z][_A-Za-z0-9]*]], float [[RHS32:[_A-Za-z][_A-Za-z0-9]*]],
+// CHECK-SAME: double [[LHS64:[_A-Za-z][_A-Za-z0-9]*]], double [[RHS64:[_A-Za-z][_A-Za-z0-9]*]],
+// CHECK: half [[SUM16:[_A-Za-z][_A-Za-z0-9]*]] = [[LHS16]] + [[RHS16]];
+// CHECK: {{.*}}[{{.*}}] = [[SUM16]];
+// CHECK: bfloat16_t [[SUMBF:[_A-Za-z][_A-Za-z0-9]*]] = [[LHSBF]] + [[RHSBF]];
+// CHECK: {{.*}}[{{.*}}] = [[SUMBF]];
+// CHECK: float [[SUM32:[_A-Za-z][_A-Za-z0-9]*]] = [[LHS32]] + [[RHS32]];
+// CHECK: {{.*}}[{{.*}}] = [[SUM32]];
+// CHECK: double [[SUM64:[_A-Za-z][_A-Za-z0-9]*]] = [[LHS64]] + [[RHS64]];
+// CHECK: {{.*}}[{{.*}}] = [[SUM64]];

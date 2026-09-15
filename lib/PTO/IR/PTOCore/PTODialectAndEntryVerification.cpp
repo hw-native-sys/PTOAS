@@ -115,7 +115,7 @@ LogicalResult mlir::pto::validateStructProvenance(ModuleOp module)
         return success();
     }
 
-    WalkResult result = module.walk([&](Operation* op) -> WalkResult {
+    WalkResult result = module.walk([](Operation* op) -> WalkResult {
         if (auto func = dyn_cast<func::FuncOp>(op)) {
             for (auto [i, inputTy] : llvm::enumerate(func.getFunctionType().getInputs())) {
                 if (!isa<StructType>(inputTy)) {
@@ -177,16 +177,18 @@ getLocalAddressAlignmentBytes(Attribute memorySpace) {
   // TASSIGN<Addr> alignment as 32 bytes for local tile memories. For L0 tile
   // bases, PTOAS level3/manual IR historically uses a 4096-bit (512-byte)
   // granularity; fuller per-arch/per-layout bounds checks belong in PTO-ISA.
+  constexpr uint64_t kLocalTileAlignBytes = mlir::pto::kValue32;
+  constexpr uint64_t kL0TileBaseAlignBytes = mlir::pto::kValue512;
   switch (addrSpace.getAddressSpace()) {
   case AddressSpace::VEC:
   case AddressSpace::MAT:
   case AddressSpace::BIAS:
   case AddressSpace::SCALING:
-    return 32;
+    return kLocalTileAlignBytes;
   case AddressSpace::LEFT:
   case AddressSpace::RIGHT:
   case AddressSpace::ACC:
-    return 512;
+    return kL0TileBaseAlignBytes;
   case AddressSpace::GM:
   case AddressSpace::Zero:
     return std::nullopt;
@@ -208,7 +210,7 @@ static LogicalResult verifyConstantLocalAddress(Operation *op, Value addr,
     return success();
   }
 
-  auto emitAddrError = [&]() {
+  auto emitAddrError = [op, addrIndex]() {
     InFlightDiagnostic diag = op->emitOpError();
     if (addrIndex >= 0) {
       diag << "addr[" << addrIndex << "]";
@@ -234,7 +236,6 @@ static LogicalResult verifyConstantLocalAddress(Operation *op, Value addr,
 
 LogicalResult AllocTileOp::verify() {
   auto ty = getResult().getType(); // TileBufType
-
   if (failed(verifyTileBufLayoutConstraints(*this, ty, "result"))) {
     return failure();
   }
@@ -249,8 +250,9 @@ LogicalResult AllocTileOp::verify() {
   bool hasVC = getValidCol() != nullptr;
 
   // type 上的 validShape
+  constexpr size_t kTileBufValidShapeRank = mlir::pto::kValue2;
   auto vs = ty.getValidShape();
-  if (vs.size() != 2) {
+  if (vs.size() != kTileBufValidShapeRank) {
     return emitOpError("result tile_buf must have rank-2 validShape");
   }
 

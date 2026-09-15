@@ -30,7 +30,7 @@ struct PTOShlSToEmitC : public OpConversionPattern<pto::TShlOp> {
     Value src1 = adaptor.getSrc1();
     Value dst  = adaptor.getDst();
 
-    SmallVector<Value, 4> operands{dst, src0, src1};
+    SmallVector<Value> operands{dst, src0, src1};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TSHL",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
@@ -52,7 +52,7 @@ struct PTOShrSToEmitC : public OpConversionPattern<pto::TShrOp> {
     Value src1 = adaptor.getSrc1();
     Value dst  = adaptor.getDst();
 
-    SmallVector<Value, 4> operands{dst, src0, src1};
+    SmallVector<Value> operands{dst, src0, src1};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TSHR",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
@@ -72,7 +72,7 @@ struct PTOShlSConstToEmitC : public OpConversionPattern<pto::TShlSOp> {
     Value dst    = adaptor.getDst();
     Value src    = adaptor.getSrc();
     Value scalar = adaptor.getScalar();
-    SmallVector<Value, 3> operands{dst, src, scalar};
+    SmallVector<Value> operands{dst, src, scalar};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TSHLS",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
@@ -91,7 +91,7 @@ struct PTOShrSConstToEmitC : public OpConversionPattern<pto::TShrSOp> {
     Value dst    = adaptor.getDst();
     Value src    = adaptor.getSrc();
     Value scalar = adaptor.getScalar();
-    SmallVector<Value, 3> operands{dst, src, scalar};
+    SmallVector<Value> operands{dst, src, scalar};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TSHRS",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},

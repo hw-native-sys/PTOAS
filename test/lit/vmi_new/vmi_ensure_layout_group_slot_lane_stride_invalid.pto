@@ -1,0 +1,140 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not pto-test-opt %s -split-input-file -pto-validate-vmi-layout-ir 2>&1 | FileCheck %s
+
+// The dense lane-stride materialization only covers 8/16-bit elements with lane
+// stride 2, and lane stride 4 for 8-bit elements, so a 32-bit strided pair and
+// a 16-bit lane_stride = 4 pair stay unsupported instead of being accepted and
+// failing later in the materializer.
+
+module {
+  func.func @gs_packet_lane_stride2_dense_lane_stride2_f32(%v: !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>) -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<contiguous, lane_stride = 2>> {
+    %r = pto.vmi.ensure_layout %v : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>> -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+    return %r : !pto.vmi.vreg<8xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  }
+
+}
+
+// CHECK: VMI-LAYOUT-CONTRACT
+
+// -----
+
+module {
+  func.func @gs_packet_lane_stride4_dense_lane_stride4_f16(%v: !pto.vmi.vreg<8xf16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>) -> !pto.vmi.vreg<8xf16, #pto.vmi.layout<contiguous, lane_stride = 4>> {
+    %r = pto.vmi.ensure_layout %v : !pto.vmi.vreg<8xf16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>> -> !pto.vmi.vreg<8xf16, #pto.vmi.layout<contiguous, lane_stride = 4>>
+    return %r : !pto.vmi.vreg<8xf16, #pto.vmi.layout<contiguous, lane_stride = 4>>
+  }
+
+}
+
+// CHECK: VMI-LAYOUT-CONTRACT
+
+// -----
+
+// A lane-strided 16-bit dense value and a stride-2 group packet select the same
+// carrier lanes in principle, but nothing produces that pair: the packed
+// 16-bit path hands a group packet a unit-stride packet or the carrier-identity
+// dense form instead.  The row was removed rather than kept for model
+// completeness, so both directions are rejected.
+
+module {
+  func.func @gs_packet_lane_stride2_dense_lane_stride2_f16(%v: !pto.vmi.vreg<8xf16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>) -> !pto.vmi.vreg<8xf16, #pto.vmi.layout<contiguous, lane_stride = 2>> {
+    %r = pto.vmi.ensure_layout %v : !pto.vmi.vreg<8xf16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>> -> !pto.vmi.vreg<8xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+    return %r : !pto.vmi.vreg<8xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  }
+
+}
+
+// CHECK: VMI-LAYOUT-CONTRACT
+
+// -----
+
+module {
+  func.func @dense_lane_stride2_gs_packet_lane_stride2_f16(%v: !pto.vmi.vreg<8xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>) -> !pto.vmi.vreg<8xf16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>> {
+    %r = pto.vmi.ensure_layout %v : !pto.vmi.vreg<8xf16, #pto.vmi.layout<contiguous, lane_stride = 2>> -> !pto.vmi.vreg<8xf16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
+    return %r : !pto.vmi.vreg<8xf16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
+  }
+
+}
+
+// CHECK: VMI-LAYOUT-CONTRACT
+
+// -----
+
+module {
+  func.func @dense_unit_stride_to_gs_packet_lane_stride2_f32(%v: !pto.vmi.vreg<8xf32, #pto.vmi.layout<contiguous>>) -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>> {
+    %r = pto.vmi.ensure_layout %v : !pto.vmi.vreg<8xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
+    return %r : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
+  }
+
+}
+
+// CHECK: VMI-LAYOUT-CONTRACT
+
+// -----
+
+// Two differing non-unit strides need two dense lane-stride moves: the
+// materialization only moves between the unit stride and a strided form, so a
+// stride-2 dense value against a stride-4 packet is rejected instead of being
+// accepted here and left as a residual ensure_layout by the lowering.
+
+module {
+  func.func @dense_lane_stride2_gs_packet_lane_stride4_ui8(%v: !pto.vmi.vreg<8xui8, #pto.vmi.layout<contiguous, lane_stride = 2>>) -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>> {
+    %r = pto.vmi.ensure_layout %v : !pto.vmi.vreg<8xui8, #pto.vmi.layout<contiguous, lane_stride = 2>> -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>
+    return %r : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>
+  }
+
+}
+
+// CHECK: VMI-LAYOUT-CONTRACT
+
+// -----
+
+module {
+  func.func @gs_packet_lane_stride4_dense_lane_stride2_ui8(%v: !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>) -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<contiguous, lane_stride = 2>> {
+    %r = pto.vmi.ensure_layout %v : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>> -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<contiguous, lane_stride = 2>>
+    return %r : !pto.vmi.vreg<8xui8, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  }
+
+}
+
+// CHECK: VMI-LAYOUT-CONTRACT
+
+// -----
+
+// A packet wide enough to span several carriers is hand-written IR: the
+// produced group packets carry at most eight group slots, and a shorter dense
+// value then holds 129 elements whose stride-4 footprint needs three physical
+// parts.  The two sides no longer share a carrier, so the pair is rejected
+// instead of being accepted here and left as a residual ensure_layout by a
+// lowering that cannot normalize a multi-part dense value onto the packet.
+
+module {
+  func.func @dense_lane_stride4_to_wide_packet_ui8_129(%v: !pto.vmi.vreg<129xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>) -> !pto.vmi.vreg<129xui8, #pto.vmi.layout<num_groups = 129, slots = 256>> {
+    %r = pto.vmi.ensure_layout %v : !pto.vmi.vreg<129xui8, #pto.vmi.layout<contiguous, lane_stride = 4>> -> !pto.vmi.vreg<129xui8, #pto.vmi.layout<num_groups = 129, slots = 256>>
+    return %r : !pto.vmi.vreg<129xui8, #pto.vmi.layout<num_groups = 129, slots = 256>>
+  }
+
+}
+
+// CHECK: VMI-LAYOUT-CONTRACT
+// CHECK: num_groups = 129, slots = 256
+
+// -----
+
+module {
+  func.func @dense_lane_stride4_to_wide_packet_ui8_256(%v: !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>) -> !pto.vmi.vreg<256xui8, #pto.vmi.layout<num_groups = 256, slots = 256>> {
+    %r = pto.vmi.ensure_layout %v : !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous, lane_stride = 4>> -> !pto.vmi.vreg<256xui8, #pto.vmi.layout<num_groups = 256, slots = 256>>
+    return %r : !pto.vmi.vreg<256xui8, #pto.vmi.layout<num_groups = 256, slots = 256>>
+  }
+
+}
+
+// CHECK: VMI-LAYOUT-CONTRACT
+// CHECK: num_groups = 256, slots = 256

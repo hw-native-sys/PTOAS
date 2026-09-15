@@ -213,7 +213,7 @@ static SmallVector<int64_t, 4> getLogicalTileExtentVec(Type ty,
   return dims;
 }
 
-static SmallVector<int64_t, 4> getValidShapeVec(Value value) {
+static SmallVector<int64_t, mlir::pto::kValue4> getValidShapeVec(Value value) {
   if (!value) {
     return {};
   }

@@ -1425,7 +1425,7 @@ LogicalResult ExpandState::expandTileOpsInFunction(func::FuncOp func,
 
   // Collect tile ops first (avoid modifying while iterating).
   SmallVector<Operation *, mlir::pto::kValue16> tileOps;
-  func.walk([&](Operation *op) {
+  func.walk([&tileOps](Operation *op) {
     if (pto::isTileLibExpandableOp(op)) {
       tileOps.push_back(op);
     }
@@ -1476,7 +1476,7 @@ void ExpandTileOpPass::runOnOperation() {
   MLIRContext *ctx = &getContext();
 
   bool hasExpandableOps = false;
-  mod.walk([&](Operation *op) {
+  mod.walk([&hasExpandableOps](Operation *op) {
     if (pto::isTileLibExpandableOp(op)) {
       hasExpandableOps = true;
       return WalkResult::interrupt();

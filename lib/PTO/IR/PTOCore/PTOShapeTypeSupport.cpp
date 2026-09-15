@@ -164,7 +164,7 @@ static void printSyncEventOpCommon(OpAsmPrinter &p, Operation *op,
 static bool isTileLikeType(Type ty);
 static SmallVector<int64_t, mlir::pto::kValue4> getShapeVec(Type ty);
 static SmallVector<int64_t, mlir::pto::kValue4> getValidShapeVec(Type ty);
-static SmallVector<int64_t, 4> getValidShapeVec(Value value);
+static SmallVector<int64_t, mlir::pto::kValue4> getValidShapeVec(Value value);
 static bool isKnownZeroOrUnitExtent(int64_t value);
 static bool isByteIntegerType(Type ty);
 static LogicalResult verifyTileBufCommon(Operation *op, Type ty, StringRef name,

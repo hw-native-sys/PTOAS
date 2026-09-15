@@ -30,7 +30,7 @@ struct PTOTTransToEmitC : public OpConversionPattern<pto::TTransOp> {
     Value tmp = adaptor.getTmp();
     Value dst = adaptor.getDst();
 
-    SmallVector<Value, 4> operands{dst, src, tmp};
+    SmallVector<Value> operands{dst, src, tmp};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TTRANS",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},

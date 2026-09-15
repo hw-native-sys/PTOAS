@@ -89,7 +89,7 @@ FailureOr<Value> getVPTOStructFieldAddress(ConversionPatternRewriter &rewriter, 
 std::string getElementTypeFragment(Type type);
 std::string getLowPrecisionElementFragment(Type type);
 std::string getMemoryElementTypeFragment(Type type);
-std::string getCopyElementFragment(Type type);
+std::string getCopyElementFragment(Type elementType);
 std::string getDn2NzCopyElementFragment(Type type);
 std::string getMadLhsFragment(Type type);
 std::string getMadDstFragment(Type type);
@@ -117,7 +117,7 @@ public:
 };
 
 namespace ubuf {
-void populateVPTOUbufPatterns(TypeConverter &typeConverter, RewritePatternSet &patterns, LoweringState &state,
+void populateVPTOUbufPatterns(const TypeConverter &typeConverter, RewritePatternSet &patterns, LoweringState &state,
                               const std::string &march);
 }
 
@@ -232,6 +232,17 @@ inline constexpr uint64_t kCbufToUbNBurstShift = 4;
 inline constexpr uint64_t kCbufToUbLenBurstShift = 16;
 inline constexpr uint64_t kCbufToUbSrcGapShift = 32;
 inline constexpr uint64_t kCbufToUbDstGapShift = 48;
+
+// ub.vdup lowers to MOVEV: config packs repeat[63:56], srcRepeatStride[47:40],
+// dstRepeatStride[39:32], srcBlockStride[23:16].
+inline constexpr uint64_t kMoveVRepeatShift = 56;
+inline constexpr uint64_t kMoveVSrcRepeatStrideShift = 40;
+inline constexpr uint64_t kMoveVDstRepeatStrideShift = 32;
+inline constexpr uint64_t kMoveVSrcBlockStrideShift = 16;
+
+// ub.vgather config packs repeat[63:56] and dstRepeatStride[39:32].
+inline constexpr uint64_t kVgatherRepeatShift = 56;
+inline constexpr uint64_t kVgatherDstRepeatStrideShift = 32;
 
 // copy_gm_to_cbuf config0 packs burst_num[24:4] and burst_len[45:25]; config1
 // packs burst_src_stride[39:0] and burst_dst_stride[60:40].

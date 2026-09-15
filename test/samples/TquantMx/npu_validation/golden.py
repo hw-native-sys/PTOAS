@@ -27,7 +27,7 @@ Auxiliary tiles:
 import numpy as np
 
 M = 16
-K = 64
+K = 1024
 GROUP_SIZE = 32
 EMAX = 8  # e4m3 max exponent
 GROUP_COLS = K // GROUP_SIZE
@@ -66,8 +66,7 @@ def fp32_to_fp8e4m3fn_bytes(arr):
     overflow = is_normal & (fp8_exp > 15)
     result = np.where(overflow, (sign << np.int32(7)) | np.int32(0x7E), result)
 
-    # Underflow (fp8_exp < 0 for normals, or subnormal): 0 (ignore subnormal fp8 for simplicity,
-    # since source range [-10,10]*scaling rarely produces fp8 subnormals).
+    # FP8 subnormals are handled separately below.
     inrange = is_normal & (fp8_exp >= 0) & (fp8_exp <= 15)
 
     # For in-range normals: mantissa fp32 (23 bits, with implicit 1) -> fp8 (3 bits).
@@ -95,7 +94,12 @@ def fp32_to_fp8e4m3fn_bytes(arr):
     is_inf = (exp_f32 == 0xFF) & (mant_f32 == 0)
     result = np.where(is_inf, (sign << np.int32(7)) | np.int32(0x7E), result)
 
-    # Zero (fp32 zero): 0.
+    # E4M3 subnormals have a fixed 2^-9 spacing; round ties to even,
+    # including the boundary that rounds up to the smallest normal (0x08).
+    subnormal = np.abs(arr) < np.float32(2.0 ** -6)
+    subnormal_values = np.where(subnormal, np.abs(arr), np.float32(0.0))
+    subnormal_bits = np.rint(subnormal_values * np.float32(512.0)).astype(np.int32)
+    result = np.where(subnormal, (sign << np.int32(7)) | subnormal_bits, result)
     return result.astype(np.uint8).view(np.int8)
 
 
@@ -126,6 +130,9 @@ def nd_to_zz(exp):
 def main():
     np.random.seed(23)
     src = np.random.uniform(-10, 10, [M, K]).astype(np.float32)
+    # Distinct group exponents make an incorrect ZZ permutation observable.
+    shifts = (np.arange(M * GROUP_COLS) % 9 - 4).reshape(M, GROUP_COLS)
+    src *= np.repeat(np.exp2(shifts).astype(np.float32), GROUP_SIZE, axis=1)
     src.tofile("input.bin")
 
     # Per-group absmax along last dim (group_size=32).

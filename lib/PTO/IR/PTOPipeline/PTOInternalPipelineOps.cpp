@@ -146,140 +146,18 @@ static func::FuncOp getParentFunc(Operation *op) {
   return op ? op->getParentOfType<func::FuncOp>() : func::FuncOp();
 }
 
-static constexpr int64_t kSimtKeepResumeSlotLimit = 123;
+// SIMT keep/resume verify helpers now live in the shared internal header so
+// the validation pass (PTOValidateVPTOIR.cpp) checks the identical rules.
+#include "PTOPipeline/PTOSimtKeepResumeShared.h"
 
-static Operation *getFirstNonConstantLikeOp(Block *block) {
-  if (!block) {
-    return nullptr;
-  }
-  for (Operation &op : *block) {
-    if (!op.hasTrait<OpTrait::ConstantLike>()) {
-      return &op;
-    }
-  }
-  return nullptr;
-}
+using mlir::pto::simt_detail::getFirstNonConstantLikeOp;
+using mlir::pto::simt_detail::isOpInRange;
+using mlir::pto::simt_detail::kSimtKeepResumeSlotLimit;
+using mlir::pto::simt_detail::getSimtKeepResumeRegisterCount;
+using mlir::pto::simt_detail::getSimtKeepResumeValueType;
+using mlir::pto::simt_detail::verifySimtKeepResumeSlotRange;
+using mlir::pto::simt_detail::overlapsEarlierSimtKeepResumeSlotUse;
+using mlir::pto::simt_detail::verifyUniqueResumeGroupSlots;
+using mlir::pto::simt_detail::verifyUniqueKeepGroupSlots;
+using mlir::pto::simt_detail::isSupportedSimtKeepResumeType;
 
-static bool isOpInRange(Operation *op, Operation *first, Operation *last) {
-  for (Operation *cur = first; cur; cur = cur->getNextNode()) {
-    if (cur == op) {
-      return true;
-    }
-    if (cur == last) {
-      return false;
-    }
-  }
-  return false;
-}
-
-static std::optional<unsigned> getSimtKeepResumeRegisterCount(Type type) {
-  if (auto intType = dyn_cast<IntegerType>(type)) {
-      if (intType.getWidth() <= mlir::pto::kValue32) {
-          return 1;
-      }
-      if (intType.getWidth() == mlir::pto::kValue64) {
-          return mlir::pto::kValue2;
-      }
-    return std::nullopt;
-  }
-  if (type.isF16() || type.isBF16() || type.isF32()) {
-    return 1;
-  }
-  return std::nullopt;
-}
-
-static Type getSimtKeepResumeValueType(KeepOp op) {
-  return op.getPayload().getType();
-}
-
-static Type getSimtKeepResumeValueType(ResumeOp op) {
-  return op.getResult().getType();
-}
-
-template <typename OpT>
-static LogicalResult verifySimtKeepResumeSlotRange(OpT op) {
-  std::optional<unsigned> registerCount =
-      getSimtKeepResumeRegisterCount(getSimtKeepResumeValueType(op));
-  if (!registerCount) {
-    return success();
-  }
-  int64_t slot = op.getSlot();
-  if (slot < 0 || slot >= kSimtKeepResumeSlotLimit) {
-    return op.emitOpError()
-           << "requires slot in range [0, "
-           << (kSimtKeepResumeSlotLimit - 1) << "]";
-  }
-  if (*registerCount == mlir::pto::kValue2) {
-      if ((slot % mlir::pto::kValue2) != 0) {
-          return op.emitOpError() << "requires an even slot for 64-bit keep/resume values";
-      }
-      if (slot + 1 >= kSimtKeepResumeSlotLimit) {
-          return op.emitOpError() << "requires slot in range [0, " << (kSimtKeepResumeSlotLimit - mlir::pto::kValue2)
-                                  << "] for 64-bit keep/resume values";
-      }
-  }
-  return success();
-}
-
-template <typename OpT>
-static bool overlapsEarlierSimtKeepResumeSlotUse(OpT op,
-                                                 SmallVectorImpl<int64_t> &used) {
-  std::optional<unsigned> registerCount =
-      getSimtKeepResumeRegisterCount(getSimtKeepResumeValueType(op));
-  if (!registerCount) {
-    return false;
-  }
-  int64_t slot = op.getSlot();
-  for (int64_t word = slot; word < slot + *registerCount; ++word) {
-    if (llvm::is_contained(used, word)) {
-      return true;
-    }
-  }
-  for (int64_t word = slot; word < slot + *registerCount; ++word) {
-    used.push_back(word);
-  }
-  return false;
-}
-
-static LogicalResult verifyUniqueResumeGroupSlots(ResumeOp current,
-                                                  Operation *first) {
-    SmallVector<int64_t, mlir::pto::kValue4> slots;
-    for (Operation* cur = first; cur; cur = cur->getNextNode()) {
-        auto resume = dyn_cast<ResumeOp>(cur);
-        if (!resume) {
-            break;
-        }
-        if (overlapsEarlierSimtKeepResumeSlotUse(resume, slots) && resume.getOperation() == current.getOperation()) {
-            return current.emitOpError() << "duplicates an earlier slot " << resume.getSlot()
-                                         << " in the SIMT resume prologue group";
-        }
-    }
-  return success();
-}
-
-static LogicalResult verifyUniqueKeepGroupSlots(KeepOp current,
-                                                Operation *first,
-                                                Operation *last) {
-    SmallVector<int64_t, mlir::pto::kValue4> slots;
-    for (Operation* cur = first; cur; cur = cur->getNextNode()) {
-        auto keep = dyn_cast<KeepOp>(cur);
-        if (!keep) {
-            break;
-        }
-        if (overlapsEarlierSimtKeepResumeSlotUse(keep, slots) && keep.getOperation() == current.getOperation()) {
-            return current.emitOpError() << "duplicates an earlier slot " << keep.getSlot()
-                                         << " in the SIMT keep epilogue group";
-        }
-        if (cur == last) {
-            break;
-        }
-    }
-  return success();
-}
-
-static bool isSupportedSimtKeepResumeType(Type type) {
-  if (auto intType = dyn_cast<IntegerType>(type)) {
-      return intType.getWidth() <= mlir::pto::kValue64;
-  }
-  return type.isF16() || type.isBF16() || type.isF32();
-}

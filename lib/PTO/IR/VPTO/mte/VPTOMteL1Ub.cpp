@@ -14,12 +14,12 @@ using namespace mlir;
 using namespace mlir::pto;
 using namespace mlir::pto::mte_detail;
 
-void MteL1UbOp::build(OpBuilder &odsBuilder, OperationState &state, Value source,
-                      Value destination, Value lenBurst,
+void MteL1UbOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                      Value source, Value destination, Value lenBurst,
                       pto::DmaLoopConfig nburst,
                       llvm::ArrayRef<pto::DmaLoopConfig> loops) {
-  buildDmaLoopOp<MteL1UbOp>(odsBuilder, state, source, destination, lenBurst,
-                            nburst, loops);
+  buildDmaLoopOp<MteL1UbOp>(odsBuilder, odsState, source, destination,
+                            lenBurst, nburst, loops);
 }
 
 ParseResult MteL1UbOp::parse(OpAsmParser &parser, OperationState &result) {

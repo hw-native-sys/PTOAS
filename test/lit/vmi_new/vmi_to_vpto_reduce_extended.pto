@@ -68,14 +68,20 @@ module {
 // CHECK: pto.vbitcast {{.*}} : !pto.vreg<64xi32> -> !pto.vreg<128xi16>
 
 // CHECK-LABEL: func.func @group_min_i8_one_block(
-// CHECK: pto.vcgmin {{.*}} : !pto.vreg<256xi8>, !pto.mask<b8> -> !pto.vreg<256xi8>
+// CHECK: pto.vzunpack
+// CHECK: pto.punpack {{.*}} "HIGHER"
+// CHECK-COUNT-8: pto.vcmin {{.*}} : !pto.vreg<128xui16>, !pto.mask<b16>
+// CHECK-NOT: pto.vcgmin
 
 // CHECK-LABEL: func.func @group_min_f32_two_blocks(
 // CHECK-COUNT-2: pto.vcgmin {{.*}} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 // CHECK: pto.vmin {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 
 // CHECK-LABEL: func.func @reduce_max_i8(
-// CHECK: pto.vcmax {{.*}} : !pto.vreg<256xi8>, !pto.mask<b8> -> !pto.vreg<256xi8>
+// CHECK: pto.vzunpack
+// CHECK: pto.punpack {{.*}} "HIGHER"
+// CHECK-COUNT-2: pto.vcmax {{.*}} : !pto.vreg<128xui16>, !pto.mask<b16>
+// CHECK: pto.vmax {{.*}} : !pto.vreg<128xui16>
 
 // CHECK-LABEL: func.func @reduce_min_i16(
 // CHECK: pto.vcmin {{.*}} : !pto.vreg<128xi16>, !pto.mask<b16> -> !pto.vreg<128xi16>

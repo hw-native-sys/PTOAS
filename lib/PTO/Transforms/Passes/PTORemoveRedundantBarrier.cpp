@@ -207,7 +207,7 @@ static bool isRedundantBarrier(pto::BarrierOp barrierOp, Block *block,
 // Wait 消除 (幽灵 Wait 消除)：Dead Consumer 规则。
 // 如果 dst 后面没有 Resource Op，这个 Wait 是毫无意义的阻塞。
 // 即使逻辑上需要等，但如果等完不干活，等它干嘛？
-static bool isRedundantWait(Operation *op, Block *block, Block::iterator it,
+static bool isRedundantWait(Block *block, Block::iterator it,
                             Attribute waitDst) {
   return !isPipelineActiveFuture(block, std::next(it), waitDst);
 }
@@ -219,7 +219,7 @@ static bool isRedundantWait(Operation *op, Block *block, Block::iterator it,
 //      从而删除 Set。Wait 消除逻辑会删除那个 Wait。完美闭环。
 //   B: Stale Broadcast (陈旧广播) —— Src 在当前 Block 没脏过 (没干活)，就不发广播。
 //      这精准删除了 scf.if 中 MTE2->MTE3 的冗余广播，因为 MTE2 在分支里通常是不动的。
-static bool isRedundantSet(Operation *op, Block *block, Block::iterator it,
+static bool isRedundantSet(Block *block, Block::iterator it,
                            Attribute setSrc, Attribute setDst,
                            llvm::DenseSet<Attribute> &intraPipeDirtySet) {
   if (!isPipelineActiveFuture(block, std::next(it), setDst)) {
@@ -255,14 +255,14 @@ static bool tryRemoveRedundantSync(Operation *op, Block *block,
   // === 3. Wait 消除 (幽灵 Wait 消除) ===
   Attribute waitDst;
   if (getWaitSyncDst(op, waitDst)) {
-    return isRedundantWait(op, block, it, waitDst);
+    return isRedundantWait(block, it, waitDst);
   }
 
   // === 4. Set 消除 (死信 & 陈旧广播消除) ===
   Attribute setSrc;
   Attribute setDst;
   if (getSetSyncPipes(op, setSrc, setDst)) {
-    return isRedundantSet(op, block, it, setSrc, setDst, intraPipeDirtySet);
+    return isRedundantSet(block, it, setSrc, setDst, intraPipeDirtySet);
   }
   return false;
 }
@@ -275,7 +275,7 @@ struct PTORemoveRedundantBarrierPass : public PassWrapper<PTORemoveRedundantBarr
 
     llvm::SmallVector<Operation*> opsToErase;
 
-    func.walk([&](Block *block) {
+    func.walk([&opsToErase](Block *block) {
       // 记录 Block 内脏状态 (Intra-Block Dirty State)
       // 用于判断是否需要发广播
       llvm::DenseSet<Attribute> intraPipeDirtySet;

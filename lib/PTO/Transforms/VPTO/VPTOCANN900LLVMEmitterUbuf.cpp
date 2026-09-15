@@ -16,11 +16,39 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 
 namespace mlir::pto::ubuf {
+
+using mlir::pto::detail::kCbufToUbConfigOperandCount;
+using mlir::pto::detail::kCbufToUbDstGapShift;
+using mlir::pto::detail::kCbufToUbLenBurstShift;
+using mlir::pto::detail::kCbufToUbNBurstShift;
+using mlir::pto::detail::kCbufToUbSrcGapShift;
+using mlir::pto::detail::kGmToUbBurstLenShift;
+using mlir::pto::detail::kGmToUbBurstNumShift;
+using mlir::pto::detail::kGmToUbCacheCtlShift;
+using mlir::pto::detail::kGmToUbConfig0OperandCount;
+using mlir::pto::detail::kGmToUbDataSelectShift;
+using mlir::pto::detail::kGmToUbLeftPaddingShift;
+using mlir::pto::detail::kGmToUbRightPaddingShift;
+using mlir::pto::detail::kMoveVDstRepeatStrideShift;
+using mlir::pto::detail::kMoveVRepeatShift;
+using mlir::pto::detail::kMoveVSrcBlockStrideShift;
+using mlir::pto::detail::kMoveVSrcRepeatStrideShift;
+using mlir::pto::detail::kUbToGmBurstLenShift;
+using mlir::pto::detail::kUbToGmBurstNumShift;
+using mlir::pto::detail::kUbToGmConfig0OperandCount;
+using mlir::pto::detail::kUbToGmL2CacheCtrlShift;
+using mlir::pto::detail::kUbToUbConfigOperandCount;
+using mlir::pto::detail::kUbToUbDstGapShift;
+using mlir::pto::detail::kUbToUbLenBurstShift;
+using mlir::pto::detail::kUbToUbNBurstShift;
+using mlir::pto::detail::kVgatherDstRepeatStrideShift;
+using mlir::pto::detail::kVgatherRepeatShift;
+
 namespace {
 
-static FailureOr<SmallVector<Value, 7>> castCopyGmToUbConfig0Operands(
+static FailureOr<SmallVector<Value, mlir::pto::kValue7>> castCopyGmToUbConfig0Operands(
     Operation *anchor, ValueRange operands, Type i64Type) {
-  if (operands.size() != 11)
+  if (operands.size() != kGmToUbConfig0OperandCount)
   {
     return failure();
   }
@@ -33,7 +61,7 @@ ubufPackCopyGmToUbConfig0(Operation *anchor, ValueRange operands) {
   OpBuilder builder(anchor);
   builder.setInsertionPoint(anchor);
   Location loc = anchor->getLoc();
-  FailureOr<SmallVector<Value, 7>> values =
+  FailureOr<SmallVector<Value, mlir::pto::kValue7>> values =
       castCopyGmToUbConfig0Operands(anchor, operands, builder.getI64Type());
   if (failed(values))
   {
@@ -41,13 +69,16 @@ ubufPackCopyGmToUbConfig0(Operation *anchor, ValueRange operands) {
   }
   return packShiftedI64Fields(
       builder, loc, (*values)[0],
-      {{(*values)[1], 4}, {(*values)[2], 25}, {(*values)[3], 46},
-       {(*values)[4], 52}, {(*values)[5], 58}, {(*values)[6], 60}});
+      {{(*values)[1], kGmToUbBurstNumShift}, {(*values)[2], kGmToUbBurstLenShift},
+       {(*values)[3], kGmToUbLeftPaddingShift},
+       {(*values)[4], kGmToUbRightPaddingShift},
+       {(*values)[5], kGmToUbDataSelectShift},
+       {(*values)[6], kGmToUbCacheCtlShift}});
 }
 
 static FailureOr<Value>
 ubufPackCopyGmToUbConfig1(Operation *anchor, ValueRange operands) {
-  if (operands.size() != 11)
+  if (operands.size() != kGmToUbConfig0OperandCount)
   {
     return failure();
   }
@@ -82,12 +113,12 @@ static FailureOr<Value> packCopyV220Config(Operation *anchor,
 
 static FailureOr<Value>
 packCopyGmToUbCfgV220(Operation *anchor, ValueRange operands) {
-  return packCopyV220Config(anchor, operands, 11);
+  return packCopyV220Config(anchor, operands, kGmToUbConfig0OperandCount);
 }
 
 static FailureOr<Value>
 ubufPackCopyUbToGmConfig0(Operation *anchor, ValueRange operands) {
-  if (operands.size() != 8)
+  if (operands.size() != kUbToGmConfig0OperandCount)
   {
     return failure();
   }
@@ -103,13 +134,14 @@ ubufPackCopyUbToGmConfig0(Operation *anchor, ValueRange operands) {
     return failure();
   }
   return packShiftedI64Fields(builder, loc, (*values)[0],
-                              {{(*values)[1], 4}, {(*values)[2], 25},
-                               {(*values)[3], 60}});
+                              {{(*values)[1], kUbToGmBurstNumShift},
+                               {(*values)[2], kUbToGmBurstLenShift},
+                               {(*values)[3], kUbToGmL2CacheCtrlShift}});
 }
 
 static FailureOr<Value>
 ubufPackCopyUbToGmConfig1(Operation *anchor, ValueRange operands) {
-  if (operands.size() != 8)
+  if (operands.size() != kUbToGmConfig0OperandCount)
   {
     return failure();
   }
@@ -118,7 +150,7 @@ ubufPackCopyUbToGmConfig1(Operation *anchor, ValueRange operands) {
 
 static FailureOr<Value>
 packCopyUbToGmCfgV220(Operation *anchor, ValueRange operands) {
-  return packCopyV220Config(anchor, operands, 8);
+  return packCopyV220Config(anchor, operands, kUbToGmConfig0OperandCount);
 }
 
 static FailureOr<Value> buildUbufUnaryConfig(Operation *anchor,
@@ -144,11 +176,11 @@ static FailureOr<Value> buildUbufUnaryConfig(Operation *anchor,
 
   return packMaskedI64Fields(
       rewriter, anchor->getLoc(), getI64Constant(rewriter, anchor->getLoc(), 0),
-      {{repeatI64, 56},
+      {{repeatI64, kMoveVRepeatShift},
        {dstBlockStrideI64, 0},
-       {srcBlockStrideI64, 16},
-       {dstRepeatStrideI64, 32},
-       {srcRepeatStrideI64, 40}},
+       {srcBlockStrideI64, kMoveVSrcBlockStrideShift},
+       {dstRepeatStrideI64, kMoveVDstRepeatStrideShift},
+       {srcRepeatStrideI64, kMoveVSrcRepeatStrideShift}},
       0xff);
 }
 
@@ -179,9 +211,9 @@ static FailureOr<StringRef> buildCopyGmToUbCallee(MLIRContext *context,
   }
   Type elementType = ptrType.getElementType();
 
-  auto getElementSuffix = [&]() -> std::string {
+  auto getElementSuffix = [elementType]() -> std::string {
     if ((isa<IntegerType>(elementType) &&
-         cast<IntegerType>(elementType).getWidth() == 64) ||
+         cast<IntegerType>(elementType).getWidth() == mlir::pto::kValue64) ||
         elementType.isF64()) {
       return "s32";
     }
@@ -237,12 +269,15 @@ static void planVPTOLLVMCall(Location loc, StringRef calleeName,
 template <typename CopyOp>
 static FailureOr<StringRef> getCopyOpCallee(CopyOp op,
                                             const std::string &march,
-                                            bool hasPadding) {
+                                            [[maybe_unused]] bool hasPadding) {
   if constexpr (std::is_same_v<CopyOp, pto::CopyGmToUbufOp>) {
     return buildCopyGmToUbCallee(op.getContext(), op.getSource().getType(),
                                  march, hasPadding);
+  } else {
+    // Padding is a GM->UB-only contract; other copy directions ignore it.
+    (void)hasPadding;
+    return buildCopyUbToGmCallee(op.getContext(), march);
   }
-  return buildCopyUbToGmCallee(op.getContext(), march);
 }
 
 struct CopyGmUbConfigs {
@@ -353,9 +388,10 @@ static FailureOr<std::string> buildVgatherbCallee(pto::UBVgatherbOp op) {
   auto ptrType = mlir::cast<pto::PtrType>(op.getDst().getType());
   Type elemType = ptrType.getElementType();
   unsigned width = pto::getPTOStorageElemBitWidth(elemType);
-  if (width != 16 && width != 32)
+  if (width != mlir::pto::kValue16 && width != mlir::pto::kValue32)
     return failure();
-  return std::string("llvm.hivm.VGATHERB.") + (width == 16 ? "b16" : "b32");
+  return std::string("llvm.hivm.VGATHERB.") +
+         (width == mlir::pto::kValue16 ? "b16" : "b32");
 }
 
 static Value buildVgatherbConfig(pto::UBVgatherbOp op,
@@ -363,11 +399,11 @@ static Value buildVgatherbConfig(pto::UBVgatherbOp op,
                                  ConversionPatternRewriter &rewriter) {
   Location loc = op.getLoc();
   Type i64Ty = rewriter.getI64Type();
-  auto constI64 = [&](uint64_t v) -> Value {
+  auto constI64 = [&rewriter, loc](uint64_t v) -> Value {
     return rewriter.create<arith::ConstantOp>(loc,
                                               rewriter.getI64IntegerAttr(v));
   };
-  auto getI64 = [&](Value v) -> Value {
+  auto getI64 = [op, i64Ty](Value v) -> Value {
     return castIntegerLikeTo(op, v, i64Ty);
   };
   // config[31:0] = source data address (low 32 bits of the src pointer).
@@ -393,7 +429,7 @@ static Value buildVgatherbConfig(pto::UBVgatherbOp op,
 template <typename CopyOp>
 class LowerCopyOpPattern final : public OpConversionPattern<CopyOp> {
 public:
-  explicit LowerCopyOpPattern(TypeConverter &typeConverter, MLIRContext *context,
+  explicit LowerCopyOpPattern(const TypeConverter &typeConverter, MLIRContext *context,
                               LoweringState &state, const std::string &march)
       : OpConversionPattern<CopyOp>(typeConverter, context), state(state),
         march(march) {}
@@ -457,7 +493,7 @@ private:
 // C220 uses the single-configuration v220 form where required.
 static FailureOr<Value> ubufPackCopyUbToUbConfig(Operation *anchor,
                                              ValueRange operands) {
-  if (operands.size() != 7)
+  if (operands.size() != kUbToUbConfigOperandCount)
   {
     return failure();
   }
@@ -473,12 +509,13 @@ static FailureOr<Value> ubufPackCopyUbToUbConfig(Operation *anchor,
   }
   return packShiftedI64Fields(
       builder, loc, (*values)[0],
-      {{(*values)[1], 16}, {(*values)[2], 32}, {(*values)[3], 48}});
+      {{(*values)[1], kUbToUbNBurstShift}, {(*values)[2], kUbToUbLenBurstShift},
+       {(*values)[3], kUbToUbDstGapShift}});
 }
 
 static FailureOr<Value> ubufPackCopyCbufToUbConfig(Operation *anchor,
                                                ValueRange operands) {
-  if (operands.size() != 7)
+  if (operands.size() != kCbufToUbConfigOperandCount)
   {
     return failure();
   }
@@ -494,8 +531,8 @@ static FailureOr<Value> ubufPackCopyCbufToUbConfig(Operation *anchor,
   }
   return packShiftedI64Fields(
       builder, loc, (*values)[0],
-      {{(*values)[1], 4}, {(*values)[2], 16}, {(*values)[3], 32},
-       {(*values)[4], 48}});
+      {{(*values)[1], kCbufToUbNBurstShift}, {(*values)[2], kCbufToUbLenBurstShift},
+       {(*values)[3], kCbufToUbSrcGapShift}, {(*values)[4], kCbufToUbDstGapShift}});
 }
 
 static FailureOr<Value> ubufPackCopyUbToCbufConfig(Operation *anchor,
@@ -519,7 +556,7 @@ static StringRef buildCopyUbToCbufCallee(MLIRContext *context) {
 // pointer pair. The cbuf copies cross the MAT/VEC address spaces and need
 // their pointers retargeted before the call is planned.
 template <typename CopyOp>
-static FailureOr<SmallVector<Value, 2>>
+static FailureOr<SmallVector<Value, mlir::pto::kValue2>>
 prepareLocalCopyPointers(CopyOp op, typename CopyOp::Adaptor adaptor,
                          ConversionPatternRewriter &rewriter) {
   Value sourceRaw = adaptor.getSource();
@@ -535,7 +572,7 @@ prepareLocalCopyPointers(CopyOp op, typename CopyOp::Adaptor adaptor,
     return failure();
   }
   if constexpr (std::is_same_v<CopyOp, pto::CopyUbufToUbufOp>) {
-    return SmallVector<Value, 2>{sourceRaw, destinationRaw};
+    return SmallVector<Value, mlir::pto::kValue2>{sourceRaw, destinationRaw};
   }
 
   constexpr unsigned sourceAddressSpace =
@@ -546,7 +583,7 @@ prepareLocalCopyPointers(CopyOp op, typename CopyOp::Adaptor adaptor,
       std::is_same_v<CopyOp, pto::CopyCbufToUbufOp>
           ? static_cast<unsigned>(pto::AddressSpace::VEC)
           : static_cast<unsigned>(pto::AddressSpace::MAT);
-  FailureOr<SmallVector<Value, 2>> pointers = reinterpretPointerOperands(
+  FailureOr<SmallVector<Value, mlir::pto::kValue2>> pointers = reinterpretPointerOperands(
       op, {sourceRaw, destinationRaw},
       {sourceAddressSpace, destinationAddressSpace});
   if (failed(pointers))
@@ -584,7 +621,7 @@ getLocalCopyCalleeAndConfig(CopyOp op, typename CopyOp::Adaptor adaptor) {
 template <typename CopyOp>
 class LowerLocalCopyOpPattern final : public OpConversionPattern<CopyOp> {
 public:
-  explicit LowerLocalCopyOpPattern(TypeConverter &typeConverter,
+  explicit LowerLocalCopyOpPattern(const TypeConverter &typeConverter,
                                    MLIRContext *context,
                                    LoweringState &state)
       : OpConversionPattern<CopyOp>(typeConverter, context), state(state) {}
@@ -592,7 +629,7 @@ public:
   LogicalResult
   matchAndRewrite(CopyOp op, typename CopyOp::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    FailureOr<SmallVector<Value, 2>> pointers =
+    FailureOr<SmallVector<Value, mlir::pto::kValue2>> pointers =
         prepareLocalCopyPointers(op, adaptor, rewriter);
     if (failed(pointers))
     {
@@ -647,7 +684,7 @@ static FailureOr<Value> materializeUBufBinaryConfig(
 template <typename UBOp>
 class LowerUBufBinaryOpPattern final : public OpConversionPattern<UBOp> {
 public:
-  explicit LowerUBufBinaryOpPattern(TypeConverter &typeConverter,
+  explicit LowerUBufBinaryOpPattern(const TypeConverter &typeConverter,
                                     MLIRContext *context, LoweringState &state)
       : OpConversionPattern<UBOp>(typeConverter, context), state(state) {}
 
@@ -709,7 +746,7 @@ private:
 class LowerUBVgatherbOpPattern final
     : public OpConversionPattern<pto::UBVgatherbOp> {
 public:
-  explicit LowerUBVgatherbOpPattern(TypeConverter &typeConverter,
+  explicit LowerUBVgatherbOpPattern(const TypeConverter &typeConverter,
                                     MLIRContext *context, LoweringState &state)
       : OpConversionPattern<pto::UBVgatherbOp>(typeConverter, context),
         state(state) {}
@@ -753,7 +790,7 @@ private:
 class LowerUBVgatherOpPattern final
     : public OpConversionPattern<pto::UBVgatherOp> {
 public:
-  explicit LowerUBVgatherOpPattern(TypeConverter &typeConverter,
+  explicit LowerUBVgatherOpPattern(const TypeConverter &typeConverter,
                                    MLIRContext *context, LoweringState &state)
       : OpConversionPattern<pto::UBVgatherOp>(typeConverter, context),
         state(state) {}
@@ -772,35 +809,30 @@ public:
     auto ptrType = mlir::cast<pto::PtrType>(op.getDst().getType());
     Type elemType = ptrType.getElementType();
     unsigned width = pto::getPTOStorageElemBitWidth(elemType);
-    if (width != 16 && width != 32) {
+    if (width != mlir::pto::kValue16 && width != mlir::pto::kValue32) {
       return rewriter.notifyMatchFailure(
           op, "unsupported element width for ub.vgather");
     }
     std::string calleeName =
-        std::string("llvm.hivm.VGATHER.") + ((width == 16) ? "b16" : "b32");
+        std::string("llvm.hivm.VGATHER.") +
+        ((width == mlir::pto::kValue16) ? "b16" : "b32");
 
     Location loc = op.getLoc();
     Type i64Ty = rewriter.getI64Type();
-    auto constI64 = [&](uint64_t v) -> Value {
+    auto constI64 = [&rewriter, loc](uint64_t v) -> Value {
       return rewriter.create<arith::ConstantOp>(loc,
                                                 rewriter.getI64IntegerAttr(v));
     };
-    auto getI64 = [&](Value v) -> Value {
+    auto getI64 = [op, i64Ty](Value v) -> Value {
       return castIntegerLikeTo(op, v, i64Ty);
     };
-    auto maskByte = [&](Value v) -> Value {
-      return rewriter.create<arith::AndIOp>(loc, v, constI64(0xff));
-    };
-    auto shl = [&](Value v, uint64_t amount) -> Value {
-      return rewriter.create<arith::ShLIOp>(loc, v, constI64(amount));
-    };
-
     Value config = rewriter.create<arith::AndIOp>(
         loc, getI64(adaptor.getOffsetAddr()), constI64(0xffffffff));
-    config = rewriter.create<arith::OrIOp>(
-        loc, config, shl(maskByte(getI64(adaptor.getDstRepeatStride())), 32));
-    config = rewriter.create<arith::OrIOp>(
-        loc, config, shl(maskByte(getI64(adaptor.getRepeat())), 56));
+    config = packMaskedI64Fields(
+        rewriter, loc, config,
+        {{getI64(adaptor.getDstRepeatStride()), kVgatherDstRepeatStrideShift},
+         {getI64(adaptor.getRepeat()), kVgatherRepeatShift}},
+        0xff);
 
     auto funcType = rewriter.getFunctionType(
         TypeRange{dst.getType(), src.getType(), rewriter.getI64Type()},
@@ -819,7 +851,7 @@ private:
 template <typename ShiftOp>
 class LowerUBufShiftOpPattern final : public OpConversionPattern<ShiftOp> {
 public:
-  explicit LowerUBufShiftOpPattern(TypeConverter &typeConverter,
+  explicit LowerUBufShiftOpPattern(const TypeConverter &typeConverter,
                                    MLIRContext *context, LoweringState &state)
       : OpConversionPattern<ShiftOp>(typeConverter, context), state(state) {}
 
@@ -886,7 +918,7 @@ private:
 template <typename ScalarOp>
 class LowerUBufScalarBinaryPattern final : public OpConversionPattern<ScalarOp> {
 public:
-  explicit LowerUBufScalarBinaryPattern(TypeConverter &typeConverter,
+  explicit LowerUBufScalarBinaryPattern(const TypeConverter &typeConverter,
                                      MLIRContext *context, LoweringState &state)
       : OpConversionPattern<ScalarOp>(typeConverter, context), state(state) {}
 
@@ -954,7 +986,7 @@ private:
 template <typename UnaryOp>
 class LowerUBufUnaryOpPattern final : public OpConversionPattern<UnaryOp> {
 public:
-  explicit LowerUBufUnaryOpPattern(TypeConverter &typeConverter,
+  explicit LowerUBufUnaryOpPattern(const TypeConverter &typeConverter,
                                    MLIRContext *context, LoweringState &state)
       : OpConversionPattern<UnaryOp>(typeConverter, context), state(state) {}
 
@@ -1004,7 +1036,7 @@ private:
 
 class LowerUBSetMaskOpPattern final : public OpConversionPattern<pto::UBSetMaskOp> {
 public:
-  explicit LowerUBSetMaskOpPattern(TypeConverter &converter, MLIRContext *context, LoweringState &state)
+  explicit LowerUBSetMaskOpPattern(const TypeConverter &converter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<pto::UBSetMaskOp>(converter, context), state(state) {}
 
   LogicalResult matchAndRewrite(pto::UBSetMaskOp op, pto::UBSetMaskOp::Adaptor adaptor,
@@ -1027,7 +1059,7 @@ private:
 
 class LowerUBSetMaskCountOpPattern final : public OpConversionPattern<pto::UBSetMaskCountOp> {
 public:
-  explicit LowerUBSetMaskCountOpPattern(TypeConverter &converter, MLIRContext *context)
+  explicit LowerUBSetMaskCountOpPattern(const TypeConverter &converter, MLIRContext *context)
       : OpConversionPattern<pto::UBSetMaskCountOp>(converter, context) {}
 
   LogicalResult matchAndRewrite(pto::UBSetMaskCountOp op, pto::UBSetMaskCountOp::Adaptor,
@@ -1045,7 +1077,7 @@ public:
 
 class LowerUBSetMaskNormOpPattern final : public OpConversionPattern<pto::UBSetMaskNormOp> {
 public:
-  explicit LowerUBSetMaskNormOpPattern(TypeConverter &converter, MLIRContext *context)
+  explicit LowerUBSetMaskNormOpPattern(const TypeConverter &converter, MLIRContext *context)
       : OpConversionPattern<pto::UBSetMaskNormOp>(converter, context) {}
 
   LogicalResult matchAndRewrite(pto::UBSetMaskNormOp op, pto::UBSetMaskNormOp::Adaptor,
@@ -1063,16 +1095,16 @@ public:
 
 class LowerUBufVdupPattern final : public OpConversionPattern<pto::UBVdupOp> {
 public:
-  explicit LowerUBufVdupPattern(TypeConverter &converter, MLIRContext *context, LoweringState &state)
+  explicit LowerUBufVdupPattern(const TypeConverter &converter, MLIRContext *context, LoweringState &state)
       : OpConversionPattern<pto::UBVdupOp>(converter, context), state(state) {}
 
   LogicalResult matchAndRewrite(pto::UBVdupOp op, pto::UBVdupOp::Adaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     Type elem = cast<pto::PtrType>(op.getDst().getType()).getElementType();
     StringRef suffix;
-    if (elem.isF32() || elem.isInteger(32)) {
+    if (elem.isF32() || elem.isInteger(mlir::pto::kValue32)) {
       suffix = "u32";
-    } else if (elem.isF16() || elem.isInteger(16)) {
+    } else if (elem.isF16() || elem.isInteger(mlir::pto::kValue16)) {
       suffix = "u16";
     } else {
       return rewriter.notifyMatchFailure(op, "unsupported element type for ubuf vdup");
@@ -1083,21 +1115,27 @@ public:
     }
     Location loc = op.getLoc();
     Type i64 = rewriter.getI64Type();
-    auto getI64 = [&](Value value) { return castIntegerLikeTo(op, value, i64); };
-    auto byte = [&](Value value) {
+    auto getI64 = [op, i64](Value value) { return castIntegerLikeTo(op, value, i64); };
+    auto byte = [&rewriter, loc](Value value) {
       return rewriter.create<arith::AndIOp>(
           loc, value, rewriter.create<arith::ConstantOp>(loc, rewriter.getI64IntegerAttr(0xff)));
     };
-    auto shift = [&](Value value, uint64_t amount) {
+    auto shift = [&rewriter, loc](Value value, uint64_t amount) {
       return rewriter.create<arith::ShLIOp>(
           loc, value, rewriter.create<arith::ConstantOp>(loc, rewriter.getI64IntegerAttr(amount)));
     };
     Value config = rewriter.create<arith::ConstantOp>(loc, rewriter.getI64IntegerAttr(0));
-    config = rewriter.create<arith::OrIOp>(loc, config, shift(byte(getI64(adaptor.getRepeat())), 56));
+    config = rewriter.create<arith::OrIOp>(
+        loc, config, shift(byte(getI64(adaptor.getRepeat())), kMoveVRepeatShift));
     config = rewriter.create<arith::OrIOp>(loc, config, byte(getI64(adaptor.getDstBlockStride())));
-    config = rewriter.create<arith::OrIOp>(loc, config, shift(byte(getI64(adaptor.getSrcBlockStride())), 16));
-    config = rewriter.create<arith::OrIOp>(loc, config, shift(byte(getI64(adaptor.getDstRepeatStride())), 32));
-    config = rewriter.create<arith::OrIOp>(loc, config, shift(byte(getI64(adaptor.getSrcRepeatStride())), 40));
+    config = rewriter.create<arith::OrIOp>(
+        loc, config, shift(byte(getI64(adaptor.getSrcBlockStride())), kMoveVSrcBlockStrideShift));
+    config = rewriter.create<arith::OrIOp>(
+        loc, config, shift(byte(getI64(adaptor.getDstRepeatStride())),
+                           kMoveVDstRepeatStrideShift));
+    config = rewriter.create<arith::OrIOp>(
+        loc, config, shift(byte(getI64(adaptor.getSrcRepeatStride())),
+                           kMoveVSrcRepeatStrideShift));
     Value scalar = getI64(adaptor.getScalar());
     std::string callee = "llvm.hivm.MOVEV." + suffix.str();
     auto functionType = rewriter.getFunctionType(TypeRange{dst.getType(), i64, i64}, TypeRange{});
@@ -1113,7 +1151,7 @@ private:
 
 } // namespace
 
-static void populateVPTOUbufArithmeticPatterns(TypeConverter &typeConverter,
+static void populateVPTOUbufArithmeticPatterns(const TypeConverter &typeConverter,
                                                 RewritePatternSet &patterns,
                                                 LoweringState &state) {
   patterns.add<LowerUBufBinaryOpPattern<pto::UBVaddOp>,
@@ -1141,7 +1179,7 @@ static void populateVPTOUbufArithmeticPatterns(TypeConverter &typeConverter,
       typeConverter, patterns.getContext(), state);
 }
 
-void populateVPTOUbufPatterns(TypeConverter &typeConverter,
+void populateVPTOUbufPatterns(const TypeConverter &typeConverter,
                               RewritePatternSet &patterns,
                               LoweringState &state,
                               const std::string &march) {
