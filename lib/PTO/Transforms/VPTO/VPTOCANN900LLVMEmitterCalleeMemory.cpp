@@ -525,6 +525,18 @@ FailureOr<StringRef> buildVmrgsort4Callee(MLIRContext *context, pto::Vmrgsort4Op
   return failure();
 }
 
+FailureOr<StringRef> buildVtransposeCallee(MLIRContext *context,
+                                           pto::VtransposeOp op) {
+  Type elemType = cast<pto::PtrType>(op.getSource().getType()).getElementType();
+  if (elemType.isSignlessInteger(16) || elemType.isSignedInteger(16)) {
+    return StringAttr::get(context, "llvm.hivm.VTRANSPOSE.s16.V300").getValue();
+  }
+  if (elemType.isUnsignedInteger(16)) {
+    return StringAttr::get(context, "llvm.hivm.VTRANSPOSE.u16.V300").getValue();
+  }
+  return failure();
+}
+
 FailureOr<Value> packVmrgsort4SourceAddr(Operation *anchor, Value source0, Value source1, Value source2, Value source3,
                                          Type elemType) {
   OpBuilder builder(anchor);

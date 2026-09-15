@@ -346,6 +346,33 @@ def process_block(k_part, v_part, k_tile, v_tile, o_tile, o_part,
                           cols * pto.bytewidth(pto.f32)))
 ```
 
+### UB matrix transpose
+
+#### `pto.vtranspose(destination: PtrType, source: PtrType) -> None`
+
+**Description**: Transpose an `i16` or `ui16` matrix directly between two
+unified-buffer (UB) regions. This explicit VPTO operation works on UB pointers
+and is independent of tile-level transpose helpers.
+
+**Parameters**:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `destination` | `PtrType` (UB) | Destination UB pointer; element type must match `source` and be `i16` or `ui16` |
+| `source` | `PtrType` (UB) | Source UB pointer containing the matrix to transpose |
+
+**Constraints**:
+
+- `destination` and `source` must be typed UB pointers with matching element
+  types.
+- Only 16-bit integer elements (`i16` or `ui16`) are supported.
+- The operation uses the hardware-defined shape and layout contract of the
+  `VTRANSPOSE.s16.V300` or `VTRANSPOSE.u16.V300` intrinsic according to the pointer
+  element type. The operation is bitwise, so signedness does not alter the
+  payload.
+- The operation returns `None` and writes the transposed matrix to
+  `destination`.
+
 ## 7.3 Vector loads (simd)
 
 Inside `@pto.tileop`, data moves between UB tiles and vector registers (`vreg`). Vector loads read a contiguous chunk of a tile row into a `vreg`; the chunk size equals the hardware vector width for the element type (e.g., 64 elements for `f32`, 128 for `f16`).
@@ -365,8 +392,6 @@ vec = pto.vlds(tile[start:])          # 1D tile, starting at element start
 ```
 
 The compiler automatically computes the byte offset from the tile's shape, element type, and layout. The `:` indicates a full vector-width range — the number of elements loaded is `elements_per_vreg(dtype)`.
-
----
 
 #### `pto.vlds(tile[row, col:], *, dist: VLoadDist | None = None) -> VRegType`
 #### `pto.vlds(tile[start:], *, dist: VLoadDist | None = None) -> VRegType`

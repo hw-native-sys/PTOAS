@@ -107,6 +107,10 @@ is_ptodsl_case_dir() {
   [[ -f "$1/kernel.py" ]]
 }
 
+is_unsupported_case_path() {
+  [[ -f "$1/UNSUPPORTED" ]]
+}
+
 is_ptodsl_case_file() {
   local case_path="$1"
   local base_name
@@ -169,6 +173,9 @@ discover_cases() {
   find "${CASES_ROOT}" -mindepth 1 -type d | sort | while read -r dir; do
     [[ -f "${dir}/kernel.pto" || -f "${dir}/kernel.py" ]] || continue
     local rel="${dir#${CASES_ROOT}/}"
+    if is_unsupported_case_path "${dir}"; then
+      continue
+    fi
     if ! is_ptodsl_case_dir "${dir}"; then
       local ok=1
       for f in launch.cpp main.cpp golden.py compare.py; do
@@ -344,6 +351,10 @@ build_one_impl() {
   local -a ptoas_args=()
 
   if is_ptodsl_case_path "${case_path}"; then
+    if is_unsupported_case_path "${case_path}"; then
+      log "[$case_name] SKIP: $(tr '\n' ' ' < "${case_path}/UNSUPPORTED")"
+      return 0
+    fi
     run_ptodsl_case "${case_name}" "${case_path}" "${out_dir}"
     return 0
   fi

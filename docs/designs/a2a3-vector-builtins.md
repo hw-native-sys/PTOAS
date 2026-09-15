@@ -3555,11 +3555,11 @@
       - Parameter packing: No CANN `// ->` packing comment found for wrapper `vsubreluconv_vdeqs162b8` with this parameter list in `cce_aicore_intrinsics_3101.h`.
 - `__builtin_cce_vtranspose`
   - LLVM intrinsic names:
-    - `llvm.hivm.VTRANSPOSE.s16`
-    - `llvm.hivm.VTRANSPOSE.u16`
+    - `llvm.hivm.VTRANSPOSE.s16.V300`
+    - `llvm.hivm.VTRANSPOSE.u16.V300`
   - Observed LLVM IR declarations:
-    - `declare void @llvm.hivm.VTRANSPOSE.s16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly) #1`
-    - `declare void @llvm.hivm.VTRANSPOSE.u16(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly) #1`
+    - `declare void @llvm.hivm.VTRANSPOSE.s16.V300(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly) #1`
+    - `declare void @llvm.hivm.VTRANSPOSE.u16.V300(ptr addrspace(6) nocapture writeonly, ptr addrspace(6) nocapture readonly) #1`
   - Probe targets used: `dav-m200-vec`
   - Complete C++ pointer-form signatures:
     - `void __builtin_cce_vtranspose(__ubuf__ int16_t* dst, __ubuf__ int16_t* src);`

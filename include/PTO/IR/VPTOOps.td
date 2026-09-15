@@ -2722,6 +2722,24 @@ def PTO_Vmrgsort4Op : PTO_VectorMicroOp<"vmrgsort4"> {
   }];
 }
 
+def PTO_VtransposeOp : PTO_VectorMicroOp<"vtranspose", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let arguments = (ins
+    PTO_BufferType:$destination,
+    PTO_BufferType:$source
+  );
+
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $destination `,` $source attr-dict `:` type($destination) `,`
+    type($source)
+  }];
+}
+
 def PTO_Vgather2Op : PTO_VectorMicroOp<"vgather2", [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {

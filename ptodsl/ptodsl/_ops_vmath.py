@@ -608,6 +608,14 @@ def vmrgsort4(destination, source0, source1, source2, source3, count, config):
     )
 
 
+def vtranspose(destination, source):
+    """``pto.vtranspose`` – transpose an i16/ui16 matrix in UB memory."""
+    _pto.VtransposeOp(
+        unwrap_surface_value(destination),
+        unwrap_surface_value(source),
+    )
+
+
 def _resolve_l1_bypass_scalar_pointer(ptr_value, *, context: str):
     """Validate the GM integer pointer contract used by ``ld_dev``."""
     raw_ptr = unwrap_surface_value(ptr_value)

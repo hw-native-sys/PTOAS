@@ -100,7 +100,7 @@ static bool isForbiddenInsideInferredVectorScope(Operation *op) {
   // Bisheng cannot expand block-query results produced inside an AIV vector
   // scope. Keep these scalar queries outside the inferred scope and capture
   // their results instead.
-  return isa<pto::VbitsortOp, pto::Vmrgsort4Op, pto::GetBlockIdxOp,
+  return isa<pto::VbitsortOp, pto::Vmrgsort4Op, pto::VtransposeOp, pto::GetBlockIdxOp,
              pto::GetBlockNumOp>(op);
 }
 

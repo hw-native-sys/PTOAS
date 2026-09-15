@@ -213,6 +213,39 @@ for (int i = 0; i < N; i++)
 
 ---
 
+## UB-to-UB Operations
+
+### `pto.vtranspose`
+
+- **syntax:** `pto.vtranspose %dest, %src : !pto.ptr<T, ub>, !pto.ptr<T, ub>`
+- **semantics:** Interpret the 512-byte region beginning at `%src` as a
+  row-major 16×16 matrix of 16-bit elements, and write its transpose to the
+  512-byte region beginning at `%dest`. For `0 ≤ i, j < 16`, the observable
+  result is:
+
+  ```text
+  dst[i][j] = src[j][i]
+  ```
+
+  The operation returns no SSA value.
+- **inputs:** `%src` and `%dest` are UB-backed pointers with the same element
+  type. The element type is a signed, signless, or unsigned 16-bit integer
+  (`si16`, `i16`, or `ui16`); signed and signless values use the same bitwise
+  transpose behavior. Each pointer must designate a
+  contiguous region of at least 512 bytes, and each address must satisfy the
+  hardware UB alignment requirement of 32 bytes.
+- **outputs:** `%dest` receives all 256 transposed elements in row-major order;
+  no bytes outside that 512-byte destination region are part of the result.
+- **constraints and limitations:** Destination and source element types must
+  match, and both pointers must address UB memory. The source and destination
+  regions must not overlap. If either region is shorter than 512 bytes, an
+  access crosses the end of its buffer, an address is misaligned, or the two
+  regions overlap, behavior is undefined (the implementation is not required
+  to diagnose the condition or produce a partial result). For a transpose of
+  an arbitrary shape, use the Tile-layer `pto.ttrans` operation instead.
+
+---
+
 ## Sorting Operations
 
 ### `pto.vbitsort`
@@ -266,6 +299,7 @@ for (int i = 0; i < N; i++)
 - `pto.vmula %acc, %lhs, %rhs, %mask : !pto.vreg<NxT>, !pto.vreg<NxT>, !pto.vreg<NxT>, !pto.mask<G> -> !pto.vreg<NxT>`
 - `pto.vmulscvt %input, %scalar, %mask, %rnd, %part : !pto.vreg<NxT0>, T0, !pto.mask<G> -> !pto.vreg<MxT1>`
 - `pto.vci %index {order = "ASC|DESC"} : T -> !pto.vreg<NxT>`
+- `pto.vtranspose %dest, %src : !pto.ptr<T, ub>, !pto.ptr<T, ub>`
 - `pto.vbitsort %dest, %src, %indices, %repeat_times : !pto.ptr<...>, !pto.ptr<...>, !pto.ptr<...>, index`
 - `pto.vmrgsort4 %dest, %src0, %src1, %src2, %src3, %count, %config : !pto.ptr<...>, !pto.ptr<...>, !pto.ptr<...>, !pto.ptr<...>, !pto.ptr<...>, i64, i64`
 - `pto.get_vms4_sr : i16, i16, i16, i16`
