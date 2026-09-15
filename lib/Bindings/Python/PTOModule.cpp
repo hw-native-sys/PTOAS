@@ -175,7 +175,6 @@ static void registerPTOEnums1(py::module_ &m) {
     .value("TRUNC", MlirPTORoundMode_TRUNC)
     .value("ODD", MlirPTORoundMode_ODD)
     .value("CAST_RINT", MlirPTORoundMode_CAST_RINT);
-
 }
 
 static void registerPTOEnums2(py::module_ &m) {
@@ -223,7 +222,6 @@ static void registerPTOEnums2(py::module_ &m) {
       .value("GT", MlirPTOCmpMode_GT)
       .value("GE", MlirPTOCmpMode_GE)
       .export_values();
-
 }
 
 static void registerPTOEnums3(py::module_ &m) {
@@ -272,7 +270,6 @@ static void registerPTOEnums3(py::module_ &m) {
       .value("AtomicNone", MlirPTOAtomicType_AtomicNone)
       .value("AtomicAdd", MlirPTOAtomicType_AtomicAdd)
       .export_values();
-
 }
 
 static void registerPTOEnums4(py::module_ &m) {
@@ -309,7 +306,6 @@ static void registerPTOEnums4(py::module_ &m) {
       .value("TVEC", MlirPTOSyncOpType_TVEC)
       .value("TVECWAIT_EVENT", MlirPTOSyncOpType_TVECWAIT_EVENT)
       .export_values();
-
 }
 
 static void registerPTOEnums5(py::module_ &m) {
@@ -380,7 +376,6 @@ static void registerPTOSimpleAttrs1(py::module_ &m) {
             return cls(a);
             },
             py::arg("cls"), py::arg("value"), py::arg("context") = py::none());
-
 }
 
 static void registerPTOSimpleAttrs2(py::module_ &m) {
@@ -428,7 +423,6 @@ static void registerPTOSimpleAttrs2(py::module_ &m) {
             return cls(a);
             },
             py::arg("cls"), py::arg("value"), py::arg("context") = py::none());
-
 }
 
 static void registerPTOSimpleAttrs3(py::module_ &m) {
@@ -476,7 +470,6 @@ static void registerPTOSimpleAttrs3(py::module_ &m) {
             return cls(a);
             },
             py::arg("cls"), py::arg("value"), py::arg("context") = py::none());
-
 }
 
 static void registerPTOSimpleAttrs4(py::module_ &m) {
@@ -561,7 +554,6 @@ static void registerPTOValueAttrs1(py::module_ &m) {
         [](MlirAttribute self) -> int32_t {
         return mlirPTOFenceScopeAttrGetValue(self);
         });
-
 }
 
 static void registerPTOValueAttrs2(py::module_ &m) {
@@ -599,7 +591,6 @@ static void registerPTOValueAttrs2(py::module_ &m) {
         [](MlirAttribute self) -> int32_t {
         return mlirPTORoundModeAttrGetValue(self);
         });
-
 }
 
 static void registerPTOValueAttrs3(py::module_ &m) {
@@ -635,7 +626,6 @@ static void registerPTOValueAttrs3(py::module_ &m) {
                     mlirPTOAttrIsAFmodPrecisionAttr,
                     mlirPTOFmodPrecisionAttrGet,
                     mlirPTOFmodPrecisionAttrGetValue);
-
 }
 
 static void registerPTOValueAttrs4(py::module_ &m) {
@@ -667,7 +657,6 @@ static void registerPTOValueAttrs4(py::module_ &m) {
         [](MlirAttribute self) -> int32_t {
         return mlirPTOSaturationModeAttrGetValue(self);
         });
-
 }
 
 static void registerPTOValueAttrs5(py::module_ &m) {
@@ -697,7 +686,6 @@ static void registerPTOValueAttrs5(py::module_ &m) {
           [](MlirAttribute self) -> int32_t {
             return mlirPTOPipeAttrGetValue(self);
           });
-
 }
 
 static void registerPTOValueAttrs6(py::module_ &m) {
@@ -740,7 +728,6 @@ static void registerPTOValueAttrs6(py::module_ &m) {
           [](MlirAttribute self) {
             return mlirPTOCmpModeAttrGetValue(self);
           });
-
 }
 
 static void registerPTOValueAttrs7(py::module_ &m) {
@@ -770,7 +757,6 @@ static void registerPTOValueAttrs7(py::module_ &m) {
           [](MlirAttribute self) -> int32_t {
             return mlirPTOSyncOpTypeAttrGetValue(self);
           });
-
 }
 
 static void registerPTOValueAttrs8(py::module_ &m) {
@@ -805,7 +791,6 @@ static void registerPTOValueAttrs8(py::module_ &m) {
       .value("Elem", MlirPTOCoalesce_Elem)
       .value("Row", MlirPTOCoalesce_Row)
       .export_values();
-
 }
 
 static void registerPTOValueAttrs9(py::module_ &m) {
@@ -843,7 +828,6 @@ static void registerPTOValueAttrs9(py::module_ &m) {
       .value("MXFP8",     MlirPTOQuantType_MXFP8)
       .value("MXFP4_E2M1", MlirPTOQuantType_MXFP4_E2M1)
       .export_values();
-
 }
 
 static void registerPTOValueAttrs10(py::module_ &m) {
@@ -888,7 +872,6 @@ static void registerPTOValueAttrs10(py::module_ &m) {
           [](MlirAttribute self) -> int32_t {
             return mlirPTOQuantTypeAttrGetValue(self);
           });
-
 }
 
 static void registerPTOValueAttrs11(py::module_ &m) {
@@ -918,7 +901,6 @@ static void registerPTOValueAttrs11(py::module_ &m) {
           [](MlirAttribute self) -> int32_t {
             return mlirPTOQuantScaleAlgAttrGetValue(self);
           });
-
 }
 
 static void registerPTOValueAttrs12(py::module_ &m) {
@@ -946,7 +928,6 @@ static void registerPTOValueAttrs12(py::module_ &m) {
           [](MlirAttribute self) -> int32_t {
             return mlirPTOMxGroupAxisAttrGetValue(self);
           });
-
 }
 
 static void registerPTOValueAttrs13(py::module_ &m) {
@@ -976,7 +957,6 @@ static void registerPTOValueAttrs13(py::module_ &m) {
           [](MlirAttribute self) -> int32_t {
             return mlirPTOVecStoreModeAttrGetValue(self);
           });
-
 }
 
 static void addMaskPatternGetMethods(pure_subclass &c, py::module_ m) {
@@ -1077,7 +1057,6 @@ static void registerPTOTypes1(py::module_ &m) {
             [](MlirType self) -> MlirAttribute {
                 return mlirPTOPtrTypeGetMemorySpace(self);
             });
-
 }
 
 static void registerPTOTypes2(py::module_ &m) {
@@ -1123,7 +1102,6 @@ static void registerPTOTypes2(py::module_ &m) {
                 MlirStringRef s = mlirPTOMaskTypeGetGranularity(self);
                 return std::string(s.data, s.length);
             });
-
 }
 
 static void registerPTOTypes3(py::module_ &m) {
@@ -1163,7 +1141,6 @@ static void registerPTOTypes3(py::module_ &m) {
                 }
                 return py::cast(attr);
             });
-
 }
 
 static void registerPTOTypes4(py::module_ &m) {
@@ -1219,7 +1196,6 @@ static void registerPTOTypes4b(py::module_ &m) {
                 return cls.attr("__call__")(t);
             },
             py::arg("cls"), py::arg("context") = py::none());
-
 }
 
 static void registerPTOTypes5(py::module_ &m) {
@@ -1270,7 +1246,6 @@ static void registerPTOTypes5(py::module_ &m) {
                 return cls.attr("__call__")(t);
             },
             py::arg("cls"), py::arg("context") = py::none());
-
 }
 
 static void registerPTOTypes6(py::module_ &m) {
@@ -1319,7 +1294,6 @@ static void registerPTOTypes6(py::module_ &m) {
                 return cls.attr("__call__")(t);
             },
             py::arg("cls"), py::arg("context") = py::none());
-
 }
 
 static void registerPTOTypes7(py::module_ &m) {
@@ -1472,7 +1446,6 @@ static void registerPTOTypes10(py::module_ &m) {
         const int64_t *data = mlirPTOTileTypeGetShape(self, &n);
         return shapeToPyList(data, n);
         });
-
 }
 
 static void addTileBufConfigGetMethod(pure_subclass &c) {

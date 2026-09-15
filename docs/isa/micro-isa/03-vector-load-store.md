@@ -287,15 +287,22 @@ for (int i = 0; i < 64; i++) {
   `%result` is the loaded vector. If requested, `%updated_base` is the source
   pointer advanced by `%repeat_stride` 32-byte blocks.
 - **constraints and limitations:**
+  The effective source address MUST be 32-byte aligned, including when only
+  one block is enabled or `block_stride = 0`. Each enabled block requires its
+  entire 32-byte interval to be readable. The mask controls participating
+  blocks and does not relax address alignment or shorten an enabled block.
   PTO surface does not expose the packed control word directly. If a block is
   masked off, the corresponding destination block is zeroed and MUST NOT raise
   an address overflow exception for that block.
+- **Block predicate:** the predicate at the first element of each 32B block
+  enables that whole block. For B32 this is logical lane `blk * 8`; for B16
+  `blk * 16`; for B8 `blk * 32`. A prefix of 2 bits does not enable 2 blocks.
 - **Latency:** **9** cycles.
 
 ```c
 // Block-strided load on 32-bit elements: one 32B block = 8 lanes.
 for (int blk = 0; blk < 8; ++blk) {
-    if (pg_b32[blk])
+    if (pg_b32[blk * 8])
         dst_block[blk] = UB_block[base + repeat_stride + blk * block_stride];
     else
         dst_block[blk] = 0;

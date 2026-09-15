@@ -22,6 +22,9 @@ using namespace mlir;
 using namespace mlir::pto;
 
 namespace {
+
+constexpr int64_t kVectorRegisterBytes = mlir::pto::kValue256;
+constexpr int64_t kVectorRegisterPairBytes = mlir::pto::kValue512;
 constexpr unsigned kBitsPerByte = 8;
 constexpr unsigned kInt64BitWidth = 64;
 
@@ -144,7 +147,7 @@ static int64_t getVstsByteSize(VstsOp store) {
       return *elementByteSize;
     }
   }
-  return 256;
+  return kVectorRegisterBytes;
 }
 
 static void setStaticAccessRange(Operation *op, VPTOMemoryAccess &access) {
@@ -167,7 +170,7 @@ static void setStaticAccessRange(Operation *op, VPTOMemoryAccess &access) {
     return setStaticIndexedRange(store, access);
   }
   if (auto load = dyn_cast<VldsOp>(op)) {
-    return setStaticVectorRange(load.getSource(), load.getOffset(), 256,
+    return setStaticVectorRange(load.getSource(), load.getOffset(), kVectorRegisterBytes,
                                 access);
   }
   if (auto store = dyn_cast<VstsOp>(op)) {
@@ -175,11 +178,11 @@ static void setStaticAccessRange(Operation *op, VPTOMemoryAccess &access) {
                                 getVstsByteSize(store), access);
   }
   if (auto load = dyn_cast<Vldsx2Op>(op)) {
-    return setStaticVectorRange(load.getSource(), load.getOffset(), 512,
+    return setStaticVectorRange(load.getSource(), load.getOffset(), kVectorRegisterPairBytes,
                                 access);
   }
   if (auto store = dyn_cast<Vstsx2Op>(op)) {
-    return setStaticVectorRange(store.getDestination(), store.getOffset(), 512,
+    return setStaticVectorRange(store.getDestination(), store.getOffset(), kVectorRegisterPairBytes,
                                 access);
   }
 }

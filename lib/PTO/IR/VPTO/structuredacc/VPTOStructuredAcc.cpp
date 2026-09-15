@@ -215,9 +215,8 @@ using namespace mlir::pto;
     llvm_unreachable("unexpected mte_l0c mode");
   }
 
-  
 
-  bool isStructuredAccStoreVectorQuantMode(AccStoreQuantPreMode mode) {
+bool isStructuredAccStoreVectorQuantMode(AccStoreQuantPreMode mode) {
     switch (mode) {
     case AccStoreQuantPreMode::QF322HIF8PreVec:
     case AccStoreQuantPreMode::QF322HIF8PreHybridVec:
@@ -281,7 +280,7 @@ using namespace mlir::pto;
       return false;
     }
     unsigned width = intType.getWidth();
-    if (width != mlir::pto::kValue4 && width != 8 && width != 16) {
+    if (width != mlir::pto::kValue4 && width != mlir::pto::kValue8 && width != mlir::pto::kValue16) {
       return false;
     }
     return intType.isSigned() || intType.isSignless();
@@ -392,7 +391,9 @@ using namespace mlir::pto;
         AccStoreQuantPreMode::QF322BF16PreVec,
         AccStoreQuantPreMode::QF322BF16PreScalar,
     };
-    return llvm::is_contained(kFloatModes, mode);
+    return llvm::is_contained(
+        llvm::ArrayRef(kFloatModes, sizeof(kFloatModes) / sizeof(kFloatModes[0])),
+        mode);
   }
 
   bool isStructuredAccStoreInt32PreQuantMode(AccStoreQuantPreMode mode) {
@@ -415,9 +416,8 @@ using namespace mlir::pto;
     }
   }
 
-  
 
-  StructuredAccStoreDestinationFamily
+StructuredAccStoreDestinationFamily
   getStructuredAccStorePreQuantDestinationFamily(AccStoreQuantPreMode mode) {
     struct Entry {
       AccStoreQuantPreMode mode;

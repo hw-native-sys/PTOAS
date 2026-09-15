@@ -26,6 +26,9 @@ using namespace mlir;
 using namespace mlir::pto;
 
 namespace {
+constexpr unsigned kBitsPerByte = mlir::pto::kValue8;
+constexpr int64_t kMinimumLoopTripCount = mlir::pto::kValue2;
+
 struct StatefulStoreStream {
   InitAlignOp init;
   VstusOp firstStore;
@@ -66,7 +69,7 @@ parseStatefulStoreStream(InitAlignOp init) {
     Value baseOut = store.getBaseOut();
     std::optional<int64_t> advance = getConstantInt64(store.getOffset());
     if (!baseOut || !advance ||
-        llvm::AddOverflow(stream.totalAdvance, *advance, stream.totalAdvance) ||
+        llvm::AddOverflow(stream.totalAdvance, *advance, stream.totalAdvance) != 0 ||
         !store.getAlignOut().hasOneUse() || !baseOut.hasOneUse()) {
       return std::nullopt;
     }
@@ -112,12 +115,12 @@ static bool areContiguousStatefulAddresses(Value first, int64_t advanceElements,
     return false;
   }
   unsigned elementBits = getPTOStorageElemBitWidth(firstType.getElementType());
-  if (elementBits == 0 || elementBits % 8 != 0) {
+  if (elementBits == 0 || elementBits % kBitsPerByte != 0) {
     return false;
   }
-  int64_t elementBytes = static_cast<int64_t>(elementBits / 8);
+  int64_t elementBytes = static_cast<int64_t>(elementBits / kBitsPerByte);
   int64_t expectedBytes;
-  if (llvm::MulOverflow(advanceElements, elementBytes, expectedBytes)) {
+  if (llvm::MulOverflow(advanceElements, elementBytes, expectedBytes) != 0) {
     return false;
   }
   auto difference = getKnownAddressDifferenceBytes(first, second);
@@ -232,7 +235,7 @@ static std::optional<StatefulLoadStream> parseStatefulLoadStream(VldasOp init) {
     if (!resultType || !increment ||
         *increment != resultType.getElementCount() ||
         llvm::AddOverflow(stream.totalElements, *increment,
-                          stream.totalElements)) {
+                          stream.totalElements) != 0) {
       return std::nullopt;
     }
     Value nextAlign = load.getUpdatedAlign();
@@ -358,7 +361,7 @@ getLoopAddressCoefficient(Value value, scf::ForOp loop,
   }
 
   Operation *def = value.getDefiningOp();
-  auto coefficient = [&](Value operand) {
+  auto coefficient = [loop, &cache, &failed](Value operand) {
     return getLoopAddressCoefficient(operand, loop, cache, failed);
   };
   std::optional<int64_t> result;
@@ -366,13 +369,13 @@ getLoopAddressCoefficient(Value value, scf::ForOp loop,
   if (auto add = dyn_cast_or_null<arith::AddIOp>(def)) {
     auto lhs = coefficient(add.getLhs());
     auto rhs = coefficient(add.getRhs());
-    if (lhs && rhs && !llvm::AddOverflow(*lhs, *rhs, combined)) {
+    if (lhs && rhs && llvm::AddOverflow(*lhs, *rhs, combined) == 0) {
       result = combined;
     }
   } else if (auto sub = dyn_cast_or_null<arith::SubIOp>(def)) {
     auto lhs = coefficient(sub.getLhs());
     auto rhs = coefficient(sub.getRhs());
-    if (lhs && rhs && !llvm::SubOverflow(*lhs, *rhs, combined)) {
+    if (lhs && rhs && llvm::SubOverflow(*lhs, *rhs, combined) == 0) {
       result = combined;
     }
   } else if (auto mul = dyn_cast_or_null<arith::MulIOp>(def)) {
@@ -382,13 +385,13 @@ getLoopAddressCoefficient(Value value, scf::ForOp loop,
     std::optional<int64_t> constant = lhsConstant ? lhsConstant : rhsConstant;
     auto varyingCoefficient = constant ? coefficient(varying) : std::nullopt;
     if (constant && varyingCoefficient &&
-        !llvm::MulOverflow(*constant, *varyingCoefficient, combined)) {
+        llvm::MulOverflow(*constant, *varyingCoefficient, combined) == 0) {
       result = combined;
     }
   } else if (auto addPtr = dyn_cast_or_null<AddPtrOp>(def)) {
     auto pointer = coefficient(addPtr.getPtr());
     auto offset = coefficient(addPtr.getOffset());
-    if (pointer && offset && !llvm::AddOverflow(*pointer, *offset, combined)) {
+    if (pointer && offset && llvm::AddOverflow(*pointer, *offset, combined) == 0) {
       result = combined;
     }
   } else if (auto castPtr = dyn_cast_or_null<CastPtrOp>(def)) {
@@ -409,7 +412,7 @@ static bool isLoopContinuousAddress(Value address, int64_t streamAdvance,
                                     scf::ForOp loop) {
   auto tripCount = getLoopTripCount(loop);
   auto step = getConstantInt64(loop.getStep());
-  if (!tripCount || *tripCount < 2 || !step) {
+  if (!tripCount || *tripCount < kMinimumLoopTripCount || !step) {
     return false;
   }
   DenseMap<Value, int64_t> cache;
@@ -417,7 +420,7 @@ static bool isLoopContinuousAddress(Value address, int64_t streamAdvance,
   auto coefficient = getLoopAddressCoefficient(address, loop, cache, failed);
   int64_t iterationAdvance;
   return coefficient &&
-         !llvm::MulOverflow(*coefficient, *step, iterationAdvance) &&
+         llvm::MulOverflow(*coefficient, *step, iterationAdvance) == 0 &&
          iterationAdvance == streamAdvance;
 }
 
@@ -567,6 +570,32 @@ hasPotentiallyAliasingEffect(scf::ForOp loop, Value streamAddress,
   return found;
 }
 
+struct LoopCarriedStreamState {
+  scf::ForOp loop;
+  SmallVector<BlockArgument> arguments;
+};
+
+static FailureOr<LoopCarriedStreamState>
+addLoopCarriedStreamState(scf::ForOp loop, IRRewriter &rewriter,
+                          Value initialBase, Value initialAlign,
+                          Value finalBase, Value finalAlign) {
+  SmallVector<BlockArgument> newArguments;
+  NewYieldValuesFn yields =
+      [&newArguments, finalBase,
+       finalAlign](OpBuilder &, Location,
+                   ArrayRef<BlockArgument> arguments) -> SmallVector<Value> {
+    newArguments.assign(arguments.begin(), arguments.end());
+    return {finalBase, finalAlign};
+  };
+  auto replacement = loop.replaceWithAdditionalYields(
+      rewriter, ValueRange{initialBase, initialAlign}, false, yields);
+  if (failed(replacement)) {
+    return failure();
+  }
+  return LoopCarriedStreamState{cast<scf::ForOp>(replacement->getOperation()),
+                                std::move(newArguments)};
+}
+
 static bool fuseLoopCarriedStoreStream(StatefulStoreStream stream,
                                        IRRewriter &rewriter) {
   auto loop = stream.init->getParentOfType<scf::ForOp>();
@@ -592,20 +621,15 @@ static bool fuseLoopCarriedStoreStream(StatefulStoreStream stream,
   Value initialAlign =
       rewriter.create<InitAlignOp>(loopLoc, stream.finalAlign.getType())
           .getResult();
-  SmallVector<BlockArgument> newArguments;
-  NewYieldValuesFn yields = [&](OpBuilder &, Location,
-                                ArrayRef<BlockArgument> arguments) {
-    newArguments.assign(arguments.begin(), arguments.end());
-    return SmallVector<Value>{stream.finalBase, stream.finalAlign};
-  };
-  auto replacement = loop.replaceWithAdditionalYields(
-      rewriter, ValueRange{initialBase, initialAlign}, false, yields);
-  if (failed(replacement)) {
+  auto state =
+      addLoopCarriedStreamState(loop, rewriter, initialBase, initialAlign,
+                                stream.finalBase, stream.finalAlign);
+  if (failed(state)) {
     return false;
   }
-  auto newLoop = cast<scf::ForOp>(replacement->getOperation());
-  stream.firstStore.getBaseMutable().set(newArguments[0]);
-  stream.firstStore.getAlignInMutable().set(newArguments[1]);
+  scf::ForOp newLoop = state->loop;
+  stream.firstStore.getBaseMutable().set(state->arguments[0]);
+  stream.firstStore.getAlignInMutable().set(state->arguments[1]);
   stream.init.erase();
   stream.flush.erase();
 
@@ -643,19 +667,14 @@ static bool fuseLoopCarriedLoadStream(StatefulLoadStream stream,
           .create<VldasOp>(loop.getLoc(), stream.finalAlign.getType(),
                            initialBase)
           .getResult();
-  SmallVector<BlockArgument> newArguments;
-  NewYieldValuesFn yields = [&](OpBuilder &, Location,
-                                ArrayRef<BlockArgument> arguments) {
-    newArguments.assign(arguments.begin(), arguments.end());
-    return SmallVector<Value>{stream.finalBase, stream.finalAlign};
-  };
-  auto replacement = loop.replaceWithAdditionalYields(
-      rewriter, ValueRange{initialBase, initialAlign}, false, yields);
-  if (failed(replacement)) {
+  auto state =
+      addLoopCarriedStreamState(loop, rewriter, initialBase, initialAlign,
+                                stream.finalBase, stream.finalAlign);
+  if (failed(state)) {
     return false;
   }
-  stream.firstLoad.getSourceMutable().set(newArguments[0]);
-  stream.firstLoad.getAlignMutable().set(newArguments[1]);
+  stream.firstLoad.getSourceMutable().set(state->arguments[0]);
+  stream.firstLoad.getAlignMutable().set(state->arguments[1]);
   stream.init.erase();
   return true;
 }

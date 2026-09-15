@@ -290,7 +290,6 @@ void populateTensorReducePatterns(RewritePatternSet &patterns,
                                   PTOArch targetArch);
 
 
-
 //---- sync-token extraction templates ------------------------------------//
 template <typename T, typename = void>
 struct HasGetSrcPipe : std::false_type {};

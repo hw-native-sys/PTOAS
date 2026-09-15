@@ -9,29 +9,27 @@
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
 
 LogicalResult mlir::pto::TMatmulAccOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult {
-    if (failed(verifyAccTileCommon(*this, getAccIn().getType(), "acc_in")) ||
-        failed(verifyMatTileOperands(*this, getLhs().getType(), getRhs().getType(),
-                                     getDst().getType()))) {
-      return failure();
-    }
-    return success();
-  };
-  auto verifyA5 = [&]() -> LogicalResult {
-    if (failed(verifyMatmulTypeTriple(*this, getElemTy(getLhs().getType()),
-                                      getElemTy(getRhs().getType()),
-                                      getElemTy(getDst().getType())))) {
-      return failure();
-    }
-    if (failed(verifyAccTileCommon(*this, getAccIn().getType(), "acc_in")) ||
-        failed(verifyMatTileOperands(*this, getLhs().getType(), getRhs().getType(),
-                                     getDst().getType(),
-                                     /*allowLowPrecision=*/true))) {
-      return failure();
-    }
-    return success();
-  };
-  return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
+    auto verifyA2A3 = [this]() -> LogicalResult {
+        if (failed(verifyAccTileCommon(*this, getAccIn().getType(), "acc_in")) ||
+            failed(verifyMatTileOperands(*this, getLhs().getType(), getRhs().getType(), getDst().getType()))) {
+            return failure();
+        }
+        return success();
+    };
+    auto verifyA5 = [this]() -> LogicalResult {
+        if (failed(verifyMatmulTypeTriple(
+                *this, getElemTy(getLhs().getType()), getElemTy(getRhs().getType()), getElemTy(getDst().getType())))) {
+            return failure();
+        }
+        if (failed(verifyAccTileCommon(*this, getAccIn().getType(), "acc_in")) ||
+            failed(verifyMatTileOperands(
+                *this, getLhs().getType(), getRhs().getType(), getDst().getType(),
+                /*allowLowPrecision=*/true))) {
+            return failure();
+        }
+        return success();
+    };
+    return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
 LogicalResult mlir::pto::TGemvAccOp::verify() {
@@ -59,10 +57,10 @@ LogicalResult mlir::pto::TGemvAccOp::verify() {
 
   Type elemTy = lhsTile.getElementType();
 
-  if (operands.size() >= 3) {
-    if (auto biasTile = dyn_cast<mlir::pto::TileType>(operands[2].getType())) {
-      return mlir::pto::TileType::get(context, biasTile.getShape(), elemTy);
-    }
+  if (operands.size() >= mlir::pto::kValue3) {
+      if (auto biasTile = dyn_cast<mlir::pto::TileType>(operands[2].getType())) {
+          return mlir::pto::TileType::get(context, biasTile.getShape(), elemTy);
+      }
   }
 
   auto lhsShape = lhsTile.getShape();
@@ -90,10 +88,10 @@ LogicalResult mlir::pto::TGemvAccOp::verify() {
 
   Type elemTy = lhsTy.getElementType();
 
-  if (operands.size() >= 3) {
-    if (auto biasRT = dyn_cast<RankedTensorType>(operands[2].getType())) {
-      return RankedTensorType::get(biasRT.getShape(), elemTy);
-    }
+  if (operands.size() >= mlir::pto::kValue3) {
+      if (auto biasRT = dyn_cast<RankedTensorType>(operands[2].getType())) {
+          return RankedTensorType::get(biasRT.getShape(), elemTy);
+      }
   }
 
   if (lhsTy.getRank() >= mlir::pto::kValue2 && rhsTy.getRank() >= mlir::pto::kValue2) {
@@ -199,54 +197,54 @@ static void printViewShapeElemAndLayout(AsmPrinter &printer,
 // PartitionTensorViewType Implementation
 // =============================================================================
 
-Type PartitionTensorViewType::parse(AsmParser &parser) {
+Type PartitionTensorViewType::parse(AsmParser& odsParser)
+{
     SmallVector<int64_t, mlir::pto::kValue4> shape;
     Type elemTy;
     Attribute layout;
-    if (failed(parseViewShapeElemAndLayout(parser, shape, elemTy, layout, /*allowDynamic=*/true))) {
+    if (failed(parseViewShapeElemAndLayout(odsParser, shape, elemTy, layout, /*allowDynamic=*/true))) {
         return Type();
     }
 
-  return PartitionTensorViewType::get(parser.getContext(), shape, elemTy,
-                                      layout);
+    return PartitionTensorViewType::get(odsParser.getContext(), shape, elemTy, layout);
 }
 
-void PartitionTensorViewType::print(AsmPrinter &printer) const {
-  printViewShapeElemAndLayout(printer, getShape(), getElementType(),
-                              getLayout());
+void PartitionTensorViewType::print(AsmPrinter& odsPrinter) const
+{
+    printViewShapeElemAndLayout(odsPrinter, getShape(), getElementType(), getLayout());
 }
 
 // ---- TileType ----
-Type TileType::parse(AsmParser &parser) {
+Type TileType::parse(AsmParser& odsParser)
+{
     SmallVector<int64_t, mlir::pto::kValue4> shape;
     Type elemTy;
-    if (failed(parseShapeAndElem(parser, shape, elemTy, /*allowDynamic=*/true))) {
+    if (failed(parseShapeAndElem(odsParser, shape, elemTy, /*allowDynamic=*/true))) {
         return Type();
     }
-  return TileType::get(parser.getContext(), shape, elemTy);
+    return TileType::get(odsParser.getContext(), shape, elemTy);
 }
 
-void TileType::print(AsmPrinter &printer) const {
-  printShapeAndElem(printer, getShape(), getElementType());
-}
+void TileType::print(AsmPrinter& odsPrinter) const { printShapeAndElem(odsPrinter, getShape(), getElementType()); }
 
 // ---- LocalArrayType ----
 // Asm form: !pto.local_array<D1 x D2 x ... x Dk x T>
 // Static shape only (no '?'). Element type must be a scalar; this is enforced
 // by the type verifier below.
-Type LocalArrayType::parse(AsmParser &parser) {
+Type LocalArrayType::parse(AsmParser& odsParser)
+{
     SmallVector<int64_t, mlir::pto::kValue4> shape;
     Type elemTy;
-    if (failed(parseShapeAndElem(parser, shape, elemTy, /*allowDynamic=*/false))) {
+    if (failed(parseShapeAndElem(odsParser, shape, elemTy, /*allowDynamic=*/false))) {
         return Type();
     }
-  return LocalArrayType::getChecked(
-      [&]() { return parser.emitError(parser.getNameLoc()); },
-      parser.getContext(), shape, elemTy);
+    return LocalArrayType::getChecked(
+        [&odsParser]() { return odsParser.emitError(odsParser.getNameLoc()); }, odsParser.getContext(), shape, elemTy);
 }
 
-void LocalArrayType::print(AsmPrinter &printer) const {
-  printShapeAndElem(printer, getShape(), getElementType());
+void LocalArrayType::print(AsmPrinter& odsPrinter) const
+{
+    printShapeAndElem(odsPrinter, getShape(), getElementType());
 }
 
 LogicalResult LocalArrayType::verify(

@@ -49,16 +49,15 @@ LogicalResult pto::TColExpandAddOp::verify() {
                                       /*allowIntegerTypes=*/true);
 }
 LogicalResult pto::TColExpandDivOp::verify() {
-  auto verifyByArch = [&](PTOArch targetArch) -> LogicalResult {
-    bool allowIntegerTypes = (targetArch == PTOArch::A5);
-    return verifyTColExpandBinaryLikeOp(getOperation(), getSrc0().getType(),
-                                        getSrc1().getType(), getDst().getType(),
-                                        targetArch, "tcolexpanddiv",
-                                        /*allowIntegerTypes=*/allowIntegerTypes);
-  };
-  auto verifyA2A3 = [&]() -> LogicalResult { return verifyByArch(PTOArch::A3); };
-  auto verifyA5 = [&]() -> LogicalResult { return verifyByArch(PTOArch::A5); };
-  return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
+    auto verifyByArch = [this](PTOArch targetArch) -> LogicalResult {
+        bool allowIntegerTypes = (targetArch == PTOArch::A5);
+        return verifyTColExpandBinaryLikeOp(
+            getOperation(), getSrc0().getType(), getSrc1().getType(), getDst().getType(), targetArch, "tcolexpanddiv",
+            /*allowIntegerTypes=*/allowIntegerTypes);
+    };
+    auto verifyA2A3 = [&verifyByArch]() -> LogicalResult { return verifyByArch(PTOArch::A3); };
+    auto verifyA5 = [&verifyByArch]() -> LogicalResult { return verifyByArch(PTOArch::A5); };
+    return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 LogicalResult pto::TColExpandSubOp::verify() {
   PTOArch arch = getTargetArch(getOperation());
@@ -101,12 +100,8 @@ static LogicalResult verifyTColArgReductionOp(Operation *op, Type srcTy,
                                               Value tmp, Type dstTy) {
   if (!tmp)
     return verifyTColArgReductionNoTmp(op, srcTy, dstTy);
-  auto verifyA2A3 = [&]() {
-    return verifyTColArgReductionOpA2A3(op, srcTy, tmp.getType(), dstTy);
-  };
-  auto verifyA5 = [&]() {
-    return verifyTColArgReductionOpA5(op, srcTy, tmp.getType(), dstTy);
-  };
+  auto verifyA2A3 = [op, srcTy, tmp, dstTy]() { return verifyTColArgReductionOpA2A3(op, srcTy, tmp.getType(), dstTy); };
+  auto verifyA5 = [op, srcTy, tmp, dstTy]() { return verifyTColArgReductionOpA5(op, srcTy, tmp.getType(), dstTy); };
   return dispatchVerifierByArch(op, verifyA2A3, verifyA5);
 }
 

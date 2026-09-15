@@ -40,7 +40,7 @@ struct PTOTTriToEmitC : public OpConversionPattern<pto::TTriOp> {
       templateArgs = ArrayAttr{};
     }
 
-    SmallVector<Value, 2> operands{dst, diagonal};
+    SmallVector<Value, mlir::pto::kValue2> operands{dst, diagonal};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TTRI",
         /*args=*/ArrayAttr{}, /*templateArgs=*/templateArgs, operands);

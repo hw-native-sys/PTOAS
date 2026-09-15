@@ -26,7 +26,7 @@ void mlir::pto::SoftLibRuntime::install(std::shared_ptr<SoftLibService> service)
   runtimeService() = std::move(service);
 }
 
-void mlir::pto::SoftLibRuntime::uninstall(SoftLibService *service) {
+void mlir::pto::SoftLibRuntime::uninstall(const SoftLibService *service) {
   std::lock_guard<std::mutex> lock(runtimeMutex());
   if (runtimeService().get() == service)
     runtimeService().reset();

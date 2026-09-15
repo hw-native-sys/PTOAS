@@ -27,9 +27,9 @@ attrs:
   #pto.vmi.layout<...>
 
 ops:
-  pto.vmi.addf
-  pto.vmi.subf
-  pto.vmi.mulf
+  pto.vmi.vadd
+  pto.vmi.vsub
+  pto.vmi.vmul
   pto.vmi.ensure_layout
 ```
 
@@ -37,7 +37,7 @@ ops:
 如果后续要拆成真正独立的 `pto.vmi` dialect，必须先保证所有 pass、type converter、parser 测试
 和公开文档同步迁移；第一版不要做这个拆分。
 
-风险点：带点 mnemonic 例如 `vmi.vreg`、`vmi.addf` 必须在 Slice 0 先用 parser round-trip 测试
+风险点：带点 mnemonic 例如 `vmi.vreg`、`vmi.vadd` 必须在 Slice 0 先用 parser round-trip 测试
 证明。如果 TableGen 的默认 type/attr parser 不接受该 spelling，就在 VMI type/attr 上实现
 custom assembly format，而不是改公开 spelling。
 
@@ -1479,7 +1479,7 @@ facts; it must not rewrite while walking:
 
 ```text
 Data equivalence:
-  pto.vmi.addf/addi: lhs == rhs == result
+  pto.vmi.vadd: lhs == rhs == result
   pto.vmi.cmpf/cmpi: lhs == rhs
   pto.vmi.select: true_value == false_value == result
   pto.vmi.ensure_layout: source and result are not equivalent if layouts differ
@@ -1827,7 +1827,7 @@ The main reason is not style. It is correctness across values without defining o
   cf.br ^bb1(%x : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>)
 
 ^bb1(%y: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>):
-  %z = pto.vmi.addf %y, %y
+  %z = pto.vmi.vadd %y, %y
     : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
   ...
 ```
@@ -1901,10 +1901,13 @@ identity/helper:
   pack, unpack, ensure_layout identity/materialization cases, ensure_mask_* identity case
 
 per-part elementwise:
-  addf, addi, subf, subi, mulf, muli, divf, minf, maxf, negf, absf, absi, sqrt, exp, ln, relu, andi, ori, xori, shli, shrui, shrsi, not, cmpf, cmpi, select
+  vadd, vsub, vmul, vdiv, vmin, vmax, vneg, vabs, vsqrt, vexp, vln, vrelu, vand, vor, vxor, vshl, vshr, vnot, andi, ori, xori, vmula, cmpf, cmpi, select
 
 per-part predicate:
   mask_and, mask_or, mask_xor, mask_not
+
+per-part vreg-interface bitwise (vreg form of vand/vor/vxor/vnot):
+  andi, ori, xori, not
 
 layout-producing conversion:
   extf, truncf, bitcast
@@ -1923,7 +1926,7 @@ logical deinterleaved=2 value:
   part0 contains logical lanes 0, 2, 4, ...
   part1 contains logical lanes 1, 3, 5, ...
 
-vmi.addf/subf/mulf on two such values:
+vmi.vadd/vsub/vmul on two such values:
   emit the matching VPTO per-part op for part0_lhs, part0_rhs
   emit the matching VPTO per-part op for part1_lhs, part1_rhs
 ```
@@ -2172,33 +2175,45 @@ pto.vmi.mask_xor
 pto.vmi.mask_not
 ```
 
+Mask logic uses the mask interface. The dual-form bitwise ops
+`vand`/`vor`/`vxor`/`vnot` accept both vreg and mask operands, and
+`vmi-lower-unified-to-legacy` splits them onto the two interfaces:
+
+```text
+mask operands -> pto.vmi.mask_and / mask_or / mask_xor / mask_not
+vreg operands -> pto.vmi.andi / ori / xori / not
+```
+
+The vreg-interface ops (`andi`/`ori`/`xori`/`not`) are vreg-only and keep the
+governed predicate mask and `pmode`, so the direct VMI-to-VPTO lowering forwards
+that mask as the predication operand of `pto.vand`/`vor`/`vxor`/`vnot` instead of
+substituting a materialized all-true mask. A pipeline that does not run
+`vmi-lower-unified-to-legacy` must perform this split itself; otherwise
+VMI-to-VPTO conversion reports `dual-form bitwise op must be split by
+-vmi-lower-unified-to-legacy`.
+
 Arithmetic / conversion：
 
 ```text
-pto.vmi.addf
-pto.vmi.addi
-pto.vmi.subf
-pto.vmi.subi
-pto.vmi.mulf
-pto.vmi.muli
-pto.vmi.fma
-pto.vmi.divf
-pto.vmi.minf
-pto.vmi.maxf
-pto.vmi.negf
-pto.vmi.absf
-pto.vmi.absi
-pto.vmi.sqrt
-pto.vmi.exp
-pto.vmi.ln
-pto.vmi.relu
-pto.vmi.andi
-pto.vmi.ori
-pto.vmi.xori
-pto.vmi.shli
-pto.vmi.shrui
-pto.vmi.shrsi
-pto.vmi.not
+pto.vmi.vadd
+pto.vmi.vsub
+pto.vmi.vmul
+pto.vmi.vmula
+pto.vmi.vdiv
+pto.vmi.vmin
+pto.vmi.vmax
+pto.vmi.vneg
+pto.vmi.vabs
+pto.vmi.vsqrt
+pto.vmi.vexp
+pto.vmi.vln
+pto.vmi.vrelu
+pto.vmi.vand
+pto.vmi.vor
+pto.vmi.vxor
+pto.vmi.vshl
+pto.vmi.vshr
+pto.vmi.vnot
 pto.vmi.cmpf
 pto.vmi.cmpi
 pto.vmi.select
@@ -2207,9 +2222,9 @@ pto.vmi.truncf
 pto.vmi.bitcast
 ```
 
-`pto.vmi.shrui` represents logical right shift and lowers to unsigned
-`pto.vshr`. `pto.vmi.shrsi` represents arithmetic right shift and lowers to
-signed `pto.vshr`; the physical element type selects the VPTO/VISA sign mode.
+`pto.vmi.vshr` covers both right shifts and lowers to `pto.vshr`: an unsigned
+physical element type selects the logical shift, a signed one the arithmetic
+shift, i.e. the physical element type selects the VPTO/VISA sign mode.
 Integer div/rem, integer casts, int-float casts, and index casts are also
 intentionally outside the current VMI surface until signedness, rounding,
 saturation, overflow/remainder, and target lowering contracts are explicit.
@@ -2234,9 +2249,9 @@ pto.vmi.vdhist
 pto.vmi.vchist
 ```
 
-`pto.vmi.vdhist` is a first-stage semantic op when histogram support is enabled.
-`pto.vmi.vchist` may share the surface verifier, but its final lowering must be
-gated until the target CHISTv2 high-range cumulative semantics are verified.
+`pto.vmi.vdhist` and `pto.vmi.vchist` share the histogram verifier and lowering
+template. Both support 128-bin and 256-bin results. A5 CHISTv2 high-range
+semantics have been verified as global cumulative; see Histogram lowering below.
 
 Current implementation scope note:
 
@@ -2322,14 +2337,21 @@ store memory element type must match stored VMI data element type when the desti
 
 Histogram op verifier:
 
+The PTODSL public entry points for `vdhist` and `vchist` require source/mask
+lane count `N` in `1/2/4/8/64/128/256` and reject other counts before constructing
+the operation. This whitelist also applies to the value/offsets/mask lane count
+of `vscatter`; it does not restrict compiler-internal VMI types.
+
 ```text
-dhist/chist acc type must be !pto.vmi.vreg<256xui16>
-dhist/chist result type must match acc type
-source type must be !pto.vmi.vreg<Nxui8>
-mask logical lane count must match source logical lane count
+vdhist/vchist acc type must be !pto.vmi.vreg<Bx{ui16|i16}>, B = 128 or 256
+result bin count and layout must match acc; result elements are ui16 or i16
+source type must be !pto.vmi.vreg<Nx{ui8|i8}>
+source and accumulator/result integers are interpreted as unsigned
+B is the output bin count, independent of the source lane count N
+mask logical lane count must match source logical lane count N
 surface mask may be pred; after layout assignment it must be b8 contiguous
 source/result/acc must not carry layout before vmi-layout-assignment
-layout-assigned dhist/chist requires contiguous source, mask, acc, and result
+layout-assigned vdhist/vchist requires contiguous source, mask, acc, and result
 ```
 
 `shuffle` verifier：
@@ -2497,7 +2519,7 @@ constant/broadcast/create_mask/constant_mask:
 mask_and/mask_or/mask_xor/mask_not:
   all mask operands/results same layout and granularity
 
-addf/addi/subf/subi/mulf/muli/divf/minf/maxf/negf/absf/absi/sqrt/exp/ln/relu/andi/ori/xori/shli/shrui/shrsi/not/cmpf/cmpi/select:
+vadd/vsub/vmul/vdiv/vmin/vmax/vneg/vabs/vsqrt/vexp/vln/vrelu/vand/vor/vxor/vshl/vshr/vnot/vmula/cmpf/cmpi/select:
   all data operands/results same layout
   mask layout follows data layout
 
@@ -2680,7 +2702,7 @@ for each iter_arg index i:
 ```
 
 这条规则避免 loop-carried value 每次迭代改变 layout。对于 `extf f16->f32` 作为 init、
-loop body 内部 `addf` 并 yield 的 case，`extf` 的 natural layout `deinterleaved=2`
+loop body 内部 `vadd` 并 yield 的 case，`extf` 的 natural layout `deinterleaved=2`
 必须稳定传递到 `%acc` region arg、`scf.yield` 和 loop result。
 
 `cf.br` / `cf.cond_br` equivalence：
@@ -2872,7 +2894,7 @@ pto.vmi.mask_and / mask_or / mask_xor / mask_not:
     mask_xor emits pto.pxor(lhs_part, rhs_part, all_true_mask)
     mask_not emits pto.pnot(source_part, all_true_mask)
 
-pto.vmi.addf / addi / subf / subi / mulf / muli / divf / minf / maxf / negf / absf / absi / sqrt / exp / ln / relu / andi / ori / xori / shli / shrui / shrsi / not:
+pto.vmi.vadd / vsub / vmul / vdiv / vmin / vmax / vneg / vabs / vsqrt / vexp / vln / vrelu / vand / vor / vxor / vshl / vshr / vnot:
   current direct lowering requires the physical element width to be 8, 16, or
   32 bits, because every emitted VPTO op is predicated by a materialized
   pto.mask<b8/b16/b32>. VMI types such as index or f64 remain valid semantic
@@ -2881,50 +2903,33 @@ pto.vmi.addf / addi / subf / subi / mulf / muli / divf / minf / maxf / negf / ab
   This common predicate-maskability rule is necessary but not sufficient for
   every target op. Direct lowering must also preflight the concrete VPTO/VISA
   element contract before OneToN rewriting:
-    addf/subf/mulf -> pto.vadd/vsub/vmul support f16/bf16/f32 floating types
-    divf -> pto.vdiv supports f16/f32 floating types
-    minf/maxf -> pto.vmin/vmax support f16/bf16/f32 floating types
-    negf/absf/sqrt/exp/ln/relu -> pto.vneg/vabs/vsqrt/vexp/vln/vrelu support f16/f32 floating types
-    absi -> pto.vabs supports signless/signed i8/i16/i32 integer types
+    vadd/vsub/vmul -> pto.vadd/vsub/vmul support the corresponding floating or integer element types
+    vdiv -> pto.vdiv supports f16/f32 floating types
+    vmin/vmax -> pto.vmin/vmax support the corresponding floating or integer element types
+    vneg/vabs/vsqrt/vexp/vln/vrelu -> the matching VPTO op and its element-type contract
   bf16/f8 remain legal VMI float-like semantic types for the ops whose VMI
   semantics allow them, but vmi-to-vpto must report VMI-UNSUPPORTED until a
   materialization plan or wider target contract exists.
   for each physical part:
-    materialize pto.pset_b8/b16/b32 "PAT_ALL" from the physical element width
-    addf/addi emit pto.vadd(lhs_part, rhs_part, all_true_mask)
-    subf/subi emit pto.vsub(lhs_part, rhs_part, all_true_mask)
-    mulf/muli emit pto.vmul(lhs_part, rhs_part, all_true_mask)
-    divf emits pto.vdiv(lhs_part, rhs_part, all_true_mask)
-    minf emits pto.vmin(lhs_part, rhs_part, all_true_mask)
-    maxf emits pto.vmax(lhs_part, rhs_part, all_true_mask)
-    negf emits pto.vneg(source_part, all_true_mask)
-    absf/absi emit pto.vabs(source_part, all_true_mask)
-    sqrt emits pto.vsqrt(source_part, all_true_mask)
-    exp emits pto.vexp(source_part, all_true_mask)
-    ln emits pto.vln(source_part, all_true_mask)
-    relu emits pto.vrelu(source_part, all_true_mask)
-    andi emits pto.vand(lhs_part, rhs_part, all_true_mask)
-    ori emits pto.vor(lhs_part, rhs_part, all_true_mask)
-    xori emits pto.vxor(lhs_part, rhs_part, all_true_mask)
-    shli emits pto.vshl(lhs_part, rhs_part, all_true_mask)
-    shrui emits pto.vshr(lhs_part, rhs_part, all_true_mask)
-    shrsi emits signed pto.vshr(lhs_part, rhs_part, all_true_mask)
-    not emits pto.vnot(source_part, all_true_mask)
+    forward an explicit VMI mask part when present; otherwise materialize an
+    all-active pto.mask<b8/b16/b32> for that physical part
+    emit the same-named VPTO operation for each physical part
+    vshr signedness follows the operand element type
 
-pto.vmi.fma:
+pto.vmi.vmula:
   semantic:
     result = fused_multiply_add(lhs, rhs, acc)
-    It must not be decomposed to pto.vmi.mulf + pto.vmi.addf because VPTO VMULA
+    It must not be decomposed to pto.vmi.vmul + pto.vmi.vadd because VPTO VMULA
     may produce different floating-point results from separate multiply and add.
   layout assignment:
     lhs, rhs, acc, and result belong to one data layout equivalence class.
   verifier contract:
-    source/result element type must be f16, bf16, or f32
+    source/result element type must be f16, bf16, f32, or i8/i16/i32
   current direct lowering:
     for each physical part:
-      materialize pto.pset_b16/b32 "PAT_ALL" from the physical element width
-      emit pto.vmula(acc_part, lhs_part, rhs_part, all_true_mask)
-    The VMI operand order is lhs, rhs, acc; the VPTO operand order is acc, lhs, rhs.
+      forward the explicit mask part, or materialize an all-active predicate
+      emit pto.vmula(acc_part, lhs_part, rhs_part, mask_part)
+    VMI and VPTO both use operand order acc, lhs, rhs.
 
 pto.vmi.cmpf / cmpi:
   verifier contract:
@@ -3878,18 +3883,21 @@ vmi.scatter:
     mask use is requested as contiguous with granularity derived from value element width
   current direct path:
     destination must be !pto.ptr<T, ub>
-    T must be a 32-bit element type
-    indices must be signless or unsigned i32
-    value / indices / mask must be contiguous full physical chunks
-    mask granularity must be b32
-    for each physical chunk i:
-      pto.vscatter value_i, destination, indices_i, mask_i
+    value / indices / mask use unit-stride contiguous layouts
+    B32 values use signless/unsigned i32 indices and a b32 mask
+    B16 values use signless/unsigned i16 indices and a b16 mask
+    B8 values use signless/unsigned i16 indices and a logical b8 mask
+    B32/B16: createMaskedStorePredicate intersects partial chunks with logical
+      validity; full chunks use the incoming mask without extra instructions
+    B8: vzunpack LOWER/HIGHER byte halves into 16-bit request slots, bitcast
+      to the original byte carrier, punpack the matching mask halves to b16,
+      then use index-chunk validity (128 requests per chunk) before vscatter
+    PTODSL accepts exactly 1/2/4/8/64/128/256 logical lanes; internal IR is general
   unsupported cases:
-    f16/b16/f8/i8 value element types
-    partial/tail chunks
-    non-contiguous layouts
+    non-contiguous or non-unit-stride layouts
     memref/gm destination
     ordered duplicate-index fallback
+    pmode=merge
 
 vmi.expand_load:
   semantics:
@@ -3966,65 +3974,76 @@ non-full chunks:
 
 Histogram lowering：
 
+`N` is the source/mask lane count; PTODSL accepts `1/2/4/8/64/128/256`.
+`B` is the accumulator/result bin count and is independently either `128` or
+`256`. For example, 64 input samples with a 64-lane mask can produce either a
+128-bin or a 256-bin histogram. The whitelist is enforced by PTODSL; internal
+VMI source lengths remain general.
+
 ```text
-vmi.dhist semantics:
-  source lanes are ui8 samples
+pto.vmi.vdhist semantics:
+  source contains N 8-bit samples interpreted as unsigned (ui8 or i8)
   mask selects active source lanes
-  acc/result are complete logical 256-bin ui16 histograms
-  result[b] = acc[b] + count(active source lanes whose value equals b)
+  acc/result contain B 16-bit bins interpreted as unsigned (ui16 or i16)
+  for each b in 0..B-1:
+    result[b] = acc[b] + count(active source lanes whose value equals b)
+  B=128 returns bins 0..127; B=256 returns all bins 0..255
 
 layout assignment:
   source layout = contiguous
   mask layout = contiguous, granularity b8
-  acc/result layout = contiguous !pto.vmi.vreg<256xui16>
+  acc/result layout = contiguous !pto.vmi.vreg<Bx{ui16|i16}>
 
 physicalization:
-  acc/result physical arity is 2 because 256xui16 is 512B
-  part0 represents logical bins 0..127
-  part1 represents logical bins 128..255
+  each accumulator/result physical part holds 128 16-bit bins (256B)
+  B=128: one part, part0 represents bins 0..127 (Bin_N0)
+  B=256: two parts (512B total), part1 represents bins 128..255 (Bin_N1)
 ```
 
 `vmi-to-vpto` lowering for `pto.vmi.vdhist` is local and deterministic from the
 op and assigned types:
 
 ```text
-lo = converted acc part0
-hi = converted acc part1
+parts = converted acc parts  // one part for B=128, two for B=256
 
 for each converted source physical chunk c in logical order:
   chunk_mask = converted b8 mask chunk c
+  active_lanes = min(256, N - 256 * c)
 
-  if source chunk c contains padding lanes because N is not a multiple of 256:
-    valid = pto.pge/plt_b8 prefix mask for the valid logical lanes in this chunk
+  if active_lanes < 256:
+    valid = b8 prefix mask for active_lanes
     chunk_mask = pto.pand chunk_mask, valid
 
-  lo = pto.dhistv2 lo, src_c, chunk_mask, #bin=0
-  hi = pto.dhistv2 hi, src_c, chunk_mask, #bin=1
+  for h in 0..(B / 128)-1:
+    parts[h] = pto.dhistv2 parts[h], src_c, chunk_mask, #bin=h
 
-return physical result parts [lo, hi]
+return physical result parts
 ```
+
+For `K = ceil(N / 256)` source chunks, this emits `K * (B / 128)` histogram
+instructions, excluding mask materialization and memory operations. Every
+public PTODSL lane count fits in one source carrier, so `B=128` emits one
+histogram instruction and `B=256` emits two. Smaller `N` changes the valid
+source prefix, not the bin count. Aligned raw UB loads for 64/128 `ui8` input
+lanes read exactly 2/4 consecutive 32B blocks; they do not require a full 256B
+readable region.
 
 Required preflight:
 
 ```text
-acc/result element type is ui16 and logical lane count is exactly 256
-source element type is ui8
-source and mask logical lane counts match
-source/mask are contiguous
+acc/result elements are ui16 or i16; bin count B is 128 or 256
+source elements are ui8 or i8
+source and mask logical lane counts N match
+source/mask and acc/result layouts are contiguous
 mask granularity is b8
-source physical chunks are 256-lane ui8 chunks; final partial chunk is allowed
+source physical chunks are 256-lane byte chunks; a final partial chunk is allowed
 only when the lowering can construct the valid-lane prefix mask
 ```
 
-Diagnostics:
-
-```text
-VMI-UNSUPPORTED: pto.vmi.vdhist requires contiguous ui8 source, b8 mask, and
-contiguous 256xui16 accumulator/result
-
-VMI-UNSUPPORTED: pto.vmi.vdhist final partial source chunk requires valid-lane
-b8 mask materialization
-```
+The op verifier diagnoses invalid accumulator bin counts, element types, or
+source/mask lane mismatches. Lowering preflight additionally checks supported
+layouts; a final partial source chunk requires a materializable b8 validity
+mask. These checks are independent of the public PTODSL seven-value whitelist.
 
 `pto.vmi.vchist` has the same verifier and assignment requirements as `pto.vmi.vdhist`.
 A5 hardware `chistv2` high-range semantics have been confirmed as **global cumulative**
@@ -4036,7 +4055,11 @@ If future hardware switches to range-local cumulative semantics, the chist patte
 will need a broadcast+add compensation path.  In that scenario, introduce a
 `-vmi-chist-mode` attribute or runtime probe as a separate evolution step.
 
-Reference lit tests: `vmi_to_vpto_chist.pto` (mirrors `vmi_to_vpto_dhist.pto`).
+Reference lit tests in `test/lit/vmi_new/`:
+`vmi_to_vpto_vdhist_bin0.pto` and `vmi_to_vpto_vchist_bin0.pto` cover 128-bin
+results; `vmi_to_vpto_vdhist.pto` and `vmi_to_vpto_vchist.pto` cover 256-bin
+results. `vmi_histogram_scatter_seven_lanes.pto` covers every public source lane
+count with both bin counts, plus scatter and bounded-load lowering.
 
 Do not classify histogram as `group_reduce`.  Its result location is selected
 by source values, not by lane/group position, and its low/high split is caused
@@ -4100,17 +4123,19 @@ Slice 4 完成条件：
     Covered by vmi_to_vpto_bf16_arith.pto, vmi_to_vpto_math_element_type_invalid.pto,
     vmi_to_vpto_cmp_select.pto, vmi_to_vpto_cmp_element_type_invalid.pto,
     vmi_to_vpto_fma.pto, vmi_to_vpto_fma_element_type_invalid.pto, and
-    vmi_to_vpto_unary_math.pto for negf/absf/absi/sqrt/exp/ln/relu, plus
+    vmi_to_vpto_unary_math.pto for vneg/vabs/vsqrt/vexp/vln/vrelu, plus
     vmi_to_vpto_relu_element_type_invalid.pto.
 11. Same-family mask logic ops lower through the physical mask granularity instead of assuming b32 masks.
     Covered by vmi_to_vpto_mask_logic.pto for mask_and/mask_or/mask_xor/mask_not on b32 masks produced by
     cmpf and on direct b8/b16 mask operands.
-12. `pto.vmi.vdhist` lowers one logical 256-bin histogram into two VPTO low/high
-    bin-range histogram accumulator chains, and tail source chunks are masked
+12. `pto.vmi.vdhist` lowers a 128-bin result into one VPTO Bin_N0 accumulator
+    chain and a 256-bin result into two Bin_N0/Bin_N1 chains. Source lane count
+    is independent of bin count; partial source chunks intersect the user mask
     with a valid-lane b8 prefix. `pto.vmi.vchist` uses the same lowering template
-    as `pto.vmi.vdhist` (A5 hardware confirmed global cumulative semantics).
-    Covered by vmi_to_vpto_dhist.pto, vmi_to_vpto_dhist_tail_mask.pto, and
-    vmi_to_vpto_chist.pto.
+    (A5 hardware confirmed global cumulative semantics).
+    Covered by vmi_to_vpto_vdhist_bin0.pto, vmi_to_vpto_vchist_bin0.pto,
+    vmi_to_vpto_vdhist.pto, vmi_to_vpto_vdhist_tail_mask.pto,
+    vmi_to_vpto_vchist.pto, and vmi_histogram_scatter_seven_lanes.pto.
 ```
 
 ## 7. Slice 5: Memory Padding
@@ -4340,16 +4365,19 @@ vmi_to_vpto_compaction_deint_invalid.mlir
 vmi_to_vpto_load_safe_tail_memref.mlir
 vmi_to_vpto_masked_load_safe_tail_memref.mlir
 vmi_to_vpto_store_tail.mlir
-vmi_to_vpto_dhist.mlir
-vmi_to_vpto_dhist_tail_mask.mlir
-vmi_to_vpto_chist.mlir
+vmi_to_vpto_vdhist_bin0.pto
+vmi_to_vpto_vchist_bin0.pto
+vmi_to_vpto_vdhist.pto
+vmi_to_vpto_vdhist_tail_mask.pto
+vmi_to_vpto_vchist.pto
+vmi_histogram_scatter_seven_lanes.pto
 vmi_pipeline_hard_gates.mlir
 ```
 
 Each pass test must use `FileCheck` to prove both positive output and negative absence:
 
 ```text
-CHECK: pto.vmi.addf
+CHECK: pto.vmi.vadd
 CHECK-NOT: pto.vadd
 CHECK-NOT: unrealized_conversion_cast
 ```
@@ -4471,7 +4499,7 @@ logical vector 语义和当前物理指令的天然限制。
 ```text
 elementwise same-shape op:
   examples:
-    addf/addi/subf/mulf/andi/shli/shrui/shrsi/absf/absi/sqrt
+    vadd/vsub/vmul/vand/vshl/vshr/vabs/vsqrt
   layout rule:
     all data operands and result are in one equivalence class
   lowering rule:
@@ -4526,9 +4554,9 @@ structural boundary:
 只需要：
 
 ```cpp
-if (auto addf = dyn_cast<VMIAddFOp>(op)) {
-  if (failed(unite(addf.getLhs(), addf.getRhs(), op)) ||
-      failed(unite(addf.getLhs(), addf.getResult(), op)))
+if (auto vadd = dyn_cast<VMIVaddOp>(op)) {
+  if (failed(unite(vadd.getLhs(), vadd.getRhs(), op)) ||
+      failed(unite(vadd.getLhs(), vadd.getResult(), op)))
     return WalkResult::interrupt();
   return WalkResult::advance();
 }
@@ -4616,7 +4644,7 @@ scf.execute_region / scf.index_switch:
 
 ```mlir
 %r = scf.if %cond -> !pto.vmi.vreg<128xf32> {
-  %x = pto.vmi.addf %a, %b : ... -> !pto.vmi.vreg<128xf32>
+  %x = pto.vmi.vadd %a, %b : ... -> !pto.vmi.vreg<128xf32>
   scf.yield %x : !pto.vmi.vreg<128xf32>
 } else {
   scf.yield %c : !pto.vmi.vreg<128xf32>
@@ -4644,9 +4672,8 @@ CHECK-NOT: unrealized_conversion_cast
 use verifier failure:
   op 本身语义非法，任何 target 都不应该接受。
   examples:
-    absf on integer element
-    shrui on signed integer element
-    shrsi on unsigned integer element
+    vabs on an unsupported element type
+    vshr whose element type is unsupported by the target contract
     bitcast total bits mismatch
 
 use VMI-LAYOUT-CONTRACT:
@@ -4670,3 +4697,44 @@ use VMI-RESIDUAL-OP:
 
 Pattern-local `notifyMatchFailure()` is still useful for debugging competing patterns, but it must not be the only
 user-visible explanation for a known unsupported VMI semantic case.
+
+### Bounded contiguous sub-register loads
+
+`getVMIContiguousLoadBlockCount` recognizes a contiguous unit-stride payload
+that fits in one 32B block or occupies whole 32B blocks below one full carrier.
+One logical lane uses scalar BRC with element alignment. Every multi-element
+`vsldb` path requires `isKnownAddressAligned(source, offset, elementType, 32)`,
+including a one-block read. Zero block stride and `PAT_VL1` do not waive this
+requirement. Address alignment and readable extent are independent contracts:
+the caller must supply 32 readable bytes for a single block, even for a smaller
+logical payload, and the whole payload for an exact multi-block read.
+
+`emitContiguousBlockLoad` uses block stride 0 and `PAT_VL1` for a single block.
+For aligned 64/128B payloads, it emits one `vsldb` with block stride 1 and
+repeat stride 0, under a predicate covering all payload lanes. VSLDB samples
+the predicate at each block's first element. Disabled blocks do not read memory.
+
+`checkSupportedContiguousLoadAddress` rejects an unproven aligned bounded-load
+address in preflight with `VMI-UNSUPPORTED` unless the existing stateful load
+sequence has a proven safe physical read envelope. The diagnostic states both
+the missing 32B alignment guarantee and why the unaligned fallback is unsafe.
+The physical pattern independently checks alignment before selecting `vsldb`.
+A raw pointer has no allocation extent and cannot justify reading a full 256B
+carrier or the stateful sequence's surrounding blocks. Existing full-carrier
+and proven-safe memref paths remain available.
+
+This gate is narrower than the `load-safety` policy in §6.4 of
+`vmi-physical-memory-access-legalization-design.md`, and the two answer
+different questions. That policy decides how far a *fall-back* full-carrier
+read may over-read, and its default accepts an unproven full physical chunk. A
+bounded contiguous shape instead asks for `pto.vsldb`, whose base address must
+be 32B aligned on hardware, so the preflight keeps a raw pointer from being
+widened into a 256B carrier read to work around a missing alignment proof.
+Shapes that are not bounded contiguous loads - a 33B payload, a partial
+trailing block, a full carrier - never reach this gate and follow the
+`load-safety` policy unchanged.
+
+Unconstrained `pred` equivalence classes with histogram/scatter uses prefer the
+common requested granularity when all consumers agree. Concrete producers and
+mixed-granularity classes retain their previous decisions. This avoids an
+unnecessary b32-to-b8 layout conversion for short predicate arguments.

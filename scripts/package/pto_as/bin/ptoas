@@ -1,18 +1,33 @@
 #!/bin/bash
 set -e
-bin_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# This launcher is installed at <version>/tools/ptoas/bin/ptoas and is also
+# reached through the <version>/bin/ptoas relative symlink that the package
+# installer drops so the toolkit set_env.sh PATH exposes the command. Resolve
+# the symlink chain to the real launcher path before deriving <version> so the
+# layout math holds regardless of which name invoked us.
+target="$0"
+while [ -L "${target}" ]; do
+  link=$(readlink "${target}")
+  case "${link}" in
+    /*) target="${link}" ;;
+    *) target="$(dirname -- "${target}")/${link}" ;;
+  esac
+done
+bin_dir=$(CDPATH= cd -- "$(dirname -- "${target}")" && pwd)
 version_root=$(CDPATH= cd -- "${bin_dir}/../../.." && pwd)
-share_info="${version_root}/share/info/pto_as"
-python_dir="${version_root}/tools/ptoas/python"
+# PTOAS installs its wheel into the CANN shared site-packages, covered by the
+# toolkit set_env.sh PYTHONPATH. Prepend it here too so the command works even
+# when invoked before sourcing set_env.sh.
+site_packages="${version_root}/python/site-packages"
 record="${version_root}/tools/ptoas/.ptoas-python.path"
-if [ ! -s "${record}" ] || [ ! -d "${python_dir}" ]; then
-  echo "ptoas: private PTOAS Python runtime is not installed; run the CANN package installer first" >&2
+if [ ! -s "${record}" ] || [ ! -d "${site_packages}/ptoas" ]; then
+  echo "ptoas: PTOAS Python runtime is not installed; run the CANN package installer first" >&2
   exit 1
 fi
 python_bin=$(head -n 1 "${record}")
 if [ -z "${python_bin}" ] || [ ! -x "${python_bin}" ]; then
-  echo "ptoas: recorded private PTOAS Python interpreter is unavailable" >&2
+  echo "ptoas: recorded PTOAS Python interpreter is unavailable" >&2
   exit 1
 fi
-export PYTHONPATH="${python_dir}${PYTHONPATH:+:${PYTHONPATH}}"
+export PYTHONPATH="${site_packages}${PYTHONPATH:+:${PYTHONPATH}}"
 exec "${python_bin}" -m ptoas._cli "$@"

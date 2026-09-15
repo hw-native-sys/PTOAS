@@ -14,17 +14,19 @@ using namespace mlir;
 using namespace mlir::pto;
 using namespace mlir::pto::mte_detail;
 
-void MteL1FbOp::build(OpBuilder &odsBuilder, OperationState &state, Value source,
+void MteL1FbOp::build(OpBuilder &odsBuilder, OperationState &odsState, Value source,
                       Value destination, Value lenBurst,
                       pto::DmaLoopConfig nburst) {
   (void)odsBuilder;
-  addDmaTripleOperandList(state, source, destination, lenBurst, nburst);
+  addDmaTripleOperandList(odsState, source, destination, lenBurst, nburst);
 }
 
 ParseResult MteL1FbOp::parse(OpAsmParser &parser, OperationState &result) {
   return parseDmaTripleOp(parser, result);
 }
 
+// ODS fixes printer callbacks to a non-const member signature.
+// NOLINTNEXTLINE(readability-make-member-function-const)
 void MteL1FbOp::print(OpAsmPrinter &p) {
   printDmaTripleOpFields(p, *this);
 }

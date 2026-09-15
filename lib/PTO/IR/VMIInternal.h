@@ -45,7 +45,6 @@ llvm::FailureOr<int64_t> getDenseLaneStride(mlir::Type type);
 mlir::LogicalResult verifyAllSameVRegShapeAndLayout(mlir::Operation *op, llvm::ArrayRef<mlir::pto::VMIVRegType> types, bool requireSameElement);
 mlir::LogicalResult verifyAllSameVRegShapeAndLayoutPresence( mlir::Operation *op, llvm::ArrayRef<mlir::pto::VMIVRegType> types, bool requireSameElement);
 mlir::LogicalResult verifyFloatUnaryVRegOp(mlir::Operation *op, mlir::pto::VMIVRegType source, mlir::pto::VMIVRegType result);
-mlir::LogicalResult verifyFloatTernaryVRegOp(mlir::Operation *op, mlir::pto::VMIVRegType lhs, mlir::pto::VMIVRegType rhs, mlir::pto::VMIVRegType acc, mlir::pto::VMIVRegType result);
 mlir::LogicalResult verifyAllSameMaskShapeLayoutAndGranularity(mlir::Operation *op, llvm::ArrayRef<mlir::pto::VMIMaskType> types);
 mlir::LogicalResult verifyMaskMatchesData(mlir::Operation *op, mlir::pto::VMIMaskType maskType, mlir::pto::VMIVRegType dataType);
 bool isUBBackedMemoryType(mlir::Type type);
@@ -162,17 +161,14 @@ namespace {
 
 // ---------------------------------------------------------------------------
 // VMI integer element type sign-semantics helper
-//
 // CONVENTION: VMI op verifiers that need "unsigned semantics" or "signed
 // semantics" on an integer element type MUST route the sign check through
 // matchesVMIIntSemantics(...) instead of calling mlir::IntegerType::isUnsigned()
 // / isSigned() directly.
-//
 // Signless integers are treated as equivalent to UNSIGNED only. They are
 // NOT accepted for signed semantics: signed hardware ops require an
 // explicitly signed integer type, to avoid silent sign-extension bugs when
 // a producer happens to emit a signless value.
-//
 // Width / kind / mlir::IntegerType-cast checks stay inline at each callsite;
 // only the sign-semantics decision is centralized here.
 // ---------------------------------------------------------------------------

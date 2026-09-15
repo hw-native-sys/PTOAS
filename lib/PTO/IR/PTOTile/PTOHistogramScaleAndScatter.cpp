@@ -8,6 +8,9 @@
 
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
 
+constexpr unsigned kHistogramTileRank = 2;
+constexpr int64_t kHistogramMinDstCols = 256;
+
 static LogicalResult verifyTHistogramShapes(THistogramOp op,
                                             const THistogramState &state,
                                             int64_t byte) {
@@ -17,8 +20,9 @@ static LogicalResult verifyTHistogramShapes(THistogramOp op,
   auto srcValid = getValidShapeVec(state.src);
   auto idxValid = getValidShapeVec(state.idx);
   auto dstValid = getValidShapeVec(state.dst);
-  if (srcShape.size() != 2 || idxShape.size() != 2 || dstShape.size() != 2 ||
-      srcValid.size() != 2 || idxValid.size() != 2 || dstValid.size() != 2)
+  if (srcShape.size() != kHistogramTileRank || idxShape.size() != kHistogramTileRank ||
+      dstShape.size() != kHistogramTileRank || srcValid.size() != kHistogramTileRank ||
+      idxValid.size() != kHistogramTileRank || dstValid.size() != kHistogramTileRank)
     return op.emitOpError(
         "expects src, idx, and dst to have rank-2 shape and valid_shape");
   if (!hasCompatibleKnownExtent(srcShape[0], dstShape[0]) ||
@@ -29,10 +33,10 @@ static LogicalResult verifyTHistogramShapes(THistogramOp op,
                                 : verifyTHistogramUi32Idx(op, state, byte);
   if (failed(idxResult))
     return failure();
-  if (dstShape[1] != ShapedType::kDynamic && dstShape[1] < 256)
+  if (dstShape[1] != ShapedType::kDynamic && dstShape[1] < kHistogramMinDstCols)
     return op.emitOpError("expects dst shape[1] to be at least 256");
   if (dstValid[1] != ShapedType::kDynamic && dstValid[1] != 0 &&
-      dstValid[1] < 256)
+      dstValid[1] < kHistogramMinDstCols)
     return op.emitOpError(
         "expects dst valid_shape[1] to be 0 or at least 256");
   return success();
@@ -50,10 +54,10 @@ LogicalResult THistogramOp::verify() {
   if (failed(byte))
     return failure();
 
-  auto verifyA2A3 = [&]() -> LogicalResult {
+  auto verifyA2A3 = [this]() -> LogicalResult {
     return emitOpError("thistogram is only supported on A5");
   };
-  auto verifyA5 = [&]() { return verifyTHistogramA5(*this, *byte); };
+  auto verifyA5 = [this, &byte]() { return verifyTHistogramA5(*this, *byte); };
 
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
@@ -102,8 +106,8 @@ static LogicalResult verifyTGetScaleAddrA5(TGetScaleAddrOp op) {
   auto dstShape = getShapeVec(dstTy);
   auto srcValid = getValidShapeVec(srcTy);
   auto dstValid = getValidShapeVec(dstTy);
-  if (srcShape.size() != 2 || dstShape.size() != 2 || srcValid.size() != 2 ||
-      dstValid.size() != 2)
+  if (srcShape.size() != kHistogramTileRank || dstShape.size() != kHistogramTileRank ||
+      srcValid.size() != kHistogramTileRank || dstValid.size() != kHistogramTileRank)
     return op.emitOpError(
         "expects src/dst to have rank-2 shape and valid_shape");
   return verifyTGetScaleAddrShape(op, *srcSpace, srcShape, srcValid, dstShape,
@@ -111,10 +115,10 @@ static LogicalResult verifyTGetScaleAddrA5(TGetScaleAddrOp op) {
 }
 
 LogicalResult TGetScaleAddrOp::verify() {
-  auto verifyA2A3 = [&]() {
+  auto verifyA2A3 = [this]() {
     return emitOpError("tget_scale_addr is only supported on A5");
   };
-  auto verifyA5 = [&]() { return verifyTGetScaleAddrA5(*this); };
+  auto verifyA5 = [this]() { return verifyTGetScaleAddrA5(*this); };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 

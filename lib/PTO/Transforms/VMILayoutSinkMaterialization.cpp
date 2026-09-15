@@ -20,7 +20,6 @@
 #include "mlir/IR/Operation.h"
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/TypeSwitch.h"
 
 namespace mlir {
 namespace pto {
@@ -39,20 +38,10 @@ struct BinaryVRegOperands {
   OpOperand *rhs = nullptr;
 };
 
-struct TernaryVRegOperands {
-  OpOperand *lhs = nullptr;
-  OpOperand *rhs = nullptr;
-  OpOperand *acc = nullptr;
-};
-
 struct SelectOperands {
   OpOperand *mask = nullptr;
   OpOperand *trueValue = nullptr;
   OpOperand *falseValue = nullptr;
-};
-
-struct UnaryVRegOperand {
-  OpOperand *source = nullptr;
 };
 
 struct BinaryMaskOperands {
@@ -64,17 +53,11 @@ struct UnaryMaskOperand {
   OpOperand *source = nullptr;
 };
 
-static std::optional<BinaryVRegOperands>
-getSinkableBinaryOperands(Operation *op) {
-  return llvm::TypeSwitch<Operation *, std::optional<BinaryVRegOperands>>(op)
-      .Case<VMIAddFOp, VMIAddIOp, VMISubFOp, VMISubIOp, VMIMulFOp, VMIMulIOp,
-            VMIDivFOp, VMIMinFOp, VMIMinIOp, VMIMaxFOp, VMIMaxIOp, VMIAndIOp,
-            VMIOrIOp, VMIXOrIOp, VMIShLIOp, VMIShRUIOp, VMIShRSIOp>(
-          [](auto typedOp) {
-            return BinaryVRegOperands{&typedOp.getLhsMutable(),
-                                      &typedOp.getRhsMutable()};
-          })
-      .Default([](Operation *) { return std::nullopt; });
+static bool isSinkableElementwiseOp(Operation *op) {
+  return isa<VMIVaddOp, VMIVsubOp, VMIVmulOp, VMIVdivOp, VMIVminOp, VMIVmaxOp,
+             VMIVandOp, VMIVorOp, VMIVxorOp, VMIVshlOp, VMIVshrOp, VMIVnegOp,
+             VMIVabsOp, VMIVsqrtOp, VMIVexpOp, VMIVlnOp, VMIVreluOp, VMIVnotOp,
+             VMIAndIOp, VMIOrIOp, VMIXOrIOp, VMINotOp, VMIVmulaOp>(op);
 }
 
 static std::optional<BinaryVRegOperands>
@@ -95,23 +78,6 @@ static std::optional<SelectOperands> getSinkableSelectOperands(Operation *op) {
                           &select.getFalseValueMutable()};
   }
   return std::nullopt;
-}
-
-static std::optional<TernaryVRegOperands>
-getSinkableTernaryOperands(Operation *op) {
-  if (auto fma = dyn_cast<VMIFmaOp>(op)) {
-    return TernaryVRegOperands{&fma.getLhsMutable(), &fma.getRhsMutable(),
-                               &fma.getAccMutable()};
-  }
-  return std::nullopt;
-}
-
-static std::optional<UnaryVRegOperand> getSinkableUnaryOperand(Operation *op) {
-  return llvm::TypeSwitch<Operation *, std::optional<UnaryVRegOperand>>(op)
-      .Case<VMINegFOp, VMINegIOp, VMIAbsFOp, VMIAbsIOp, VMISqrtOp, VMIExpOp,
-            VMILnOp, VMIReluOp, VMINotOp>([](auto typedOp) {
-        return UnaryVRegOperand{&typedOp.getSourceMutable()};
-      }).Default([](Operation *) { return std::nullopt; });
 }
 
 static std::optional<BinaryMaskOperands>
@@ -151,49 +117,6 @@ static bool isSameMaterialization(VMIEnsureLayoutOp ensure,
   }
 
   return ensureResultType == resultType && sourceType != resultType;
-}
-
-static bool isSameMaterialization(VMIEnsureLayoutOp lhsEnsure,
-                                  VMIEnsureLayoutOp rhsEnsure,
-                                  VMIVRegType resultType) {
-  if (!lhsEnsure || !rhsEnsure || !resultType) {
-    return false;
-  }
-
-  auto lhsSourceType = dyn_cast<VMIVRegType>(lhsEnsure.getSource().getType());
-  auto rhsSourceType = dyn_cast<VMIVRegType>(rhsEnsure.getSource().getType());
-  auto lhsResultType = dyn_cast<VMIVRegType>(lhsEnsure.getResult().getType());
-  auto rhsResultType = dyn_cast<VMIVRegType>(rhsEnsure.getResult().getType());
-  if (!lhsSourceType || !rhsSourceType || !lhsResultType || !rhsResultType) {
-    return false;
-  }
-
-  return lhsSourceType == rhsSourceType && lhsResultType == rhsResultType &&
-         lhsResultType == resultType && lhsSourceType != resultType;
-}
-
-static bool isSameMaterialization(VMIEnsureLayoutOp lhsEnsure,
-                                  VMIEnsureLayoutOp rhsEnsure,
-                                  VMIEnsureLayoutOp accEnsure,
-                                  VMIVRegType resultType) {
-  if (!lhsEnsure || !rhsEnsure || !accEnsure || !resultType) {
-    return false;
-  }
-
-  auto lhsSourceType = dyn_cast<VMIVRegType>(lhsEnsure.getSource().getType());
-  auto rhsSourceType = dyn_cast<VMIVRegType>(rhsEnsure.getSource().getType());
-  auto accSourceType = dyn_cast<VMIVRegType>(accEnsure.getSource().getType());
-  auto lhsResultType = dyn_cast<VMIVRegType>(lhsEnsure.getResult().getType());
-  auto rhsResultType = dyn_cast<VMIVRegType>(rhsEnsure.getResult().getType());
-  auto accResultType = dyn_cast<VMIVRegType>(accEnsure.getResult().getType());
-  if (!lhsSourceType || !rhsSourceType || !accSourceType || !lhsResultType ||
-      !rhsResultType || !accResultType) {
-    return false;
-  }
-
-  return lhsSourceType == rhsSourceType && lhsSourceType == accSourceType &&
-         lhsResultType == rhsResultType && lhsResultType == accResultType &&
-         lhsResultType == resultType && lhsSourceType != resultType;
 }
 
 static bool hasEnsureLayoutSupport(VMIVRegType sourceType,
@@ -250,186 +173,313 @@ static bool hasEnsureMaskSupport(VMIEnsureMaskGranularityOp,
          !sourceType.isPred() && !resultType.isPred();
 }
 
-static bool trySinkBinaryMaterialization(Operation *op) {
-  std::optional<BinaryVRegOperands> operands = getSinkableBinaryOperands(op);
-  if (!operands || op->getNumResults() != 1) {
-    return false;
+static Value rematerializeMask(Value mask, VMILayoutAttr layout,
+                               OpBuilder &builder) {
+  auto maskType = dyn_cast<VMIMaskType>(mask.getType());
+  if (!maskType || !layout) {
+    return {};
   }
-
-  auto resultType = dyn_cast<VMIVRegType>(op->getResult(0).getType());
-  if (!resultType) {
-    return false;
+  auto resultType = VMIMaskType::get(
+      maskType.getContext(), maskType.getElementCount(),
+      maskType.getGranularity(), layout);
+  if (auto createMask = mask.getDefiningOp<VMICreateMaskOp>()) {
+    return builder
+        .create<VMICreateMaskOp>(createMask.getLoc(), resultType,
+                                 createMask.getActiveLanes())
+        .getResult();
   }
-
-  auto lhsEnsure = operands->lhs->get().getDefiningOp<VMIEnsureLayoutOp>();
-  auto rhsEnsure = operands->rhs->get().getDefiningOp<VMIEnsureLayoutOp>();
-  if (!isSameMaterialization(lhsEnsure, rhsEnsure, resultType)) {
-    return false;
+  if (auto createGroupMask = mask.getDefiningOp<VMICreateGroupMaskOp>()) {
+    return builder
+        .create<VMICreateGroupMaskOp>(
+            createGroupMask.getLoc(), resultType,
+            createGroupMask.getActiveElemsPerGroup(),
+            createGroupMask.getNumGroupsAttr(),
+            createGroupMask.getGroupSizeAttr())
+        .getResult();
   }
-
-  auto sourceType = cast<VMIVRegType>(lhsEnsure.getSource().getType());
-  if (!hasEnsureLayoutSupport(sourceType, resultType)) {
-    return false;
+  if (auto constantMask = mask.getDefiningOp<VMIConstantMaskOp>()) {
+    return builder
+        .create<VMIConstantMaskOp>(constantMask.getLoc(), resultType,
+                                   constantMask.getValueAttr())
+        .getResult();
   }
+  return {};
+}
 
-  OpBuilder builder(op);
+/// Creates the rebuilt form of a sunk op, keeping its name, location and
+/// attributes.
+static Operation *rebuildSinkOp(OpBuilder &builder, Operation *op,
+                               ValueRange operands, Type resultType) {
   OperationState state(op->getLoc(), op->getName());
-  state.addOperands({lhsEnsure.getSource(), rhsEnsure.getSource()});
-  state.addTypes(sourceType);
+  state.addOperands(operands);
+  state.addTypes(resultType);
   state.addAttributes(op->getAttrs());
-  Operation *newOp = builder.create(state);
+  return builder.create(state);
+}
 
+/// Replaces the result of a sunk op, erases it and drops the ensures that became
+/// dead. `dataEnsures` must not contain duplicates.
+static void retireSunkOp(Operation *op, Value newResult,
+                         ArrayRef<VMIEnsureLayoutOp> dataEnsures,
+                         VMIEnsureMaskLayoutOp maskEnsure = nullptr) {
+  op->getResult(0).replaceAllUsesWith(newResult);
+  op->erase();
+
+  for (VMIEnsureLayoutOp ensure : llvm::reverse(dataEnsures)) {
+    if (ensure->use_empty()) {
+      ensure.erase();
+    }
+  }
+  if (maskEnsure && maskEnsure->use_empty()) {
+    maskEnsure.erase();
+  }
+}
+
+/// Layout ensures and the optional mask ensure feeding one sinkable op.
+struct ElementwiseSinkOperands {
+  SmallVector<VMIEnsureLayoutOp> dataEnsures;
+  VMIEnsureMaskLayoutOp maskEnsure;
+  Value directMask;
+};
+
+/// Collects the ensures that feed `op`, requiring one single materialization for
+/// every data operand. Returns false when the op is not sinkable this way.
+static bool collectElementwiseSinkOperands(Operation *op,
+                                           VMIVRegType resultType,
+                                           ElementwiseSinkOperands &collected) {
+  for (Value operand : op->getOperands()) {
+    if (isa<VMIVRegType>(operand.getType())) {
+      auto ensure = operand.getDefiningOp<VMIEnsureLayoutOp>();
+      if (!ensure || !isSameMaterialization(ensure, resultType)) {
+        return false;
+      }
+      bool known = llvm::any_of(
+          collected.dataEnsures, [ensure](VMIEnsureLayoutOp existing) {
+            return existing == ensure;
+          });
+      if (!known) {
+        collected.dataEnsures.push_back(ensure);
+      }
+      continue;
+    }
+    if (isa<VMIMaskType>(operand.getType())) {
+      collected.maskEnsure = operand.getDefiningOp<VMIEnsureMaskLayoutOp>();
+      if (!collected.maskEnsure) {
+        collected.directMask = operand;
+      }
+    }
+  }
+  return !collected.dataEnsures.empty();
+}
+
+/// Checks that every data ensure shares one source layout and that the mask
+/// materialization, when present, is supported and layout compatible.
+static bool hasCompatibleElementwiseSink(
+    ElementwiseSinkOperands &collected, VMIVRegType resultType,
+    VMIVRegType &sourceType) {
+  sourceType =
+      cast<VMIVRegType>(collected.dataEnsures.front().getSource().getType());
+  bool mixedSources =
+      llvm::any_of(collected.dataEnsures, [&](VMIEnsureLayoutOp ensure) {
+        return ensure.getSource().getType() != sourceType;
+      });
+  if (mixedSources || !hasEnsureLayoutSupport(sourceType, resultType)) {
+    return false;
+  }
+
+  if (!collected.maskEnsure) {
+    if (!collected.directMask) {
+      return true;
+    }
+    if (!isa<VMICreateMaskOp, VMICreateGroupMaskOp, VMIConstantMaskOp>(
+            collected.directMask.getDefiningOp())) {
+      return false;
+    }
+    // A directly produced mask is re-stamped with the data source layout by
+    // `rematerializeMask`, so it must describe the same logical lanes as the
+    // data operand.  The upstream op verifiers already require that, and the
+    // ensure path below checks the same properties; keep the two paths
+    // symmetric instead of relying on that invariant implicitly.
+    auto maskType = dyn_cast<VMIMaskType>(collected.directMask.getType());
+    return maskType &&
+           maskType.getElementCount() == sourceType.getElementCount() &&
+           !maskType.isPred();
+  }
+  auto maskSourceType =
+      dyn_cast<VMIMaskType>(collected.maskEnsure.getSource().getType());
+  auto maskResultType =
+      dyn_cast<VMIMaskType>(collected.maskEnsure.getResult().getType());
+  if (!maskSourceType || !maskResultType ||
+      maskSourceType.getLayoutAttr() != sourceType.getLayoutAttr() ||
+      maskResultType.getLayoutAttr() != resultType.getLayoutAttr()) {
+    return false;
+  }
+  return hasEnsureMaskSupport(collected.maskEnsure, maskSourceType,
+                              maskResultType);
+}
+
+/// Recreates `op` from the sources of its ensures and replaces the consumed
+/// ensures. Returns false when a mask cannot be rematerialized.
+static bool rebuildElementwiseSinkOp(Operation *op,
+                                     ElementwiseSinkOperands &collected,
+                                     VMIVRegType sourceType,
+                                     VMIVRegType resultType) {
+  OpBuilder builder(op);
+  SmallVector<Value> operands;
+  operands.reserve(op->getNumOperands());
+  for (Value operand : op->getOperands()) {
+    if (auto ensure = operand.getDefiningOp<VMIEnsureLayoutOp>()) {
+      operands.push_back(ensure.getSource());
+      continue;
+    }
+    if (auto ensure = operand.getDefiningOp<VMIEnsureMaskLayoutOp>()) {
+      operands.push_back(ensure.getSource());
+      continue;
+    }
+    if (isa<VMIMaskType>(operand.getType())) {
+      Value rematerialized =
+          rematerializeMask(operand, sourceType.getLayoutAttr(), builder);
+      if (!rematerialized) {
+        return false;
+      }
+      operands.push_back(rematerialized);
+      continue;
+    }
+    operands.push_back(operand);
+  }
+
+  Operation *newOp = rebuildSinkOp(builder, op, operands, sourceType);
   builder.setInsertionPointAfter(newOp);
   auto resultEnsure = builder.create<VMIEnsureLayoutOp>(
       op->getLoc(), resultType, newOp->getResult(0));
-  op->getResult(0).replaceAllUsesWith(resultEnsure.getResult());
-  op->erase();
-
-  if (lhsEnsure->use_empty()) {
-    lhsEnsure.erase();
-  }
-  if (rhsEnsure != lhsEnsure && rhsEnsure->use_empty()) {
-    rhsEnsure.erase();
-  }
+  retireSunkOp(op, resultEnsure.getResult(), collected.dataEnsures,
+               collected.maskEnsure);
   return true;
 }
 
-struct SelectMaterialization {
-  VMIEnsureMaskLayoutOp maskEnsure;
-  VMIEnsureLayoutOp trueEnsure;
-  VMIEnsureLayoutOp falseEnsure;
-  VMIVRegType sourceType;
-  VMIVRegType resultType;
-};
-
-static bool isCompatibleSelectMask(VMIEnsureMaskLayoutOp maskEnsure,
-                                   Type operandType, VMIVRegType sourceType,
-                                   VMIVRegType resultType) {
-  auto maskSourceType = dyn_cast<VMIMaskType>(maskEnsure.getSource().getType());
-  auto maskResultType = dyn_cast<VMIMaskType>(maskEnsure.getResult().getType());
-  if (!maskSourceType || !maskResultType || maskResultType != operandType) {
+static bool trySinkElementwiseMaterialization(Operation *op) {
+  if (!isSinkableElementwiseOp(op) || op->getNumResults() != 1) {
     return false;
   }
-  bool hasMismatchedLayout =
-      maskResultType.getLayoutAttr() != resultType.getLayoutAttr() ||
-      maskSourceType.getLayoutAttr() != sourceType.getLayoutAttr();
-  if (hasMismatchedLayout) {
-    return false;
-  }
-  bool hasMismatchedShape =
-      maskSourceType.getElementCount() != sourceType.getElementCount() ||
-      maskResultType.getElementCount() != resultType.getElementCount() ||
-      maskSourceType.getGranularity() != maskResultType.getGranularity();
-  if (hasMismatchedShape) {
-    return false;
-  }
-  return hasEnsureMaskSupport(maskEnsure, maskSourceType, maskResultType);
-}
-
-static std::optional<SelectMaterialization>
-getSelectMaterialization(Operation *op) {
-  std::optional<SelectOperands> operands = getSinkableSelectOperands(op);
-  if (!operands || op->getNumResults() != 1) {
-    return std::nullopt;
-  }
-
   auto resultType = dyn_cast<VMIVRegType>(op->getResult(0).getType());
   if (!resultType) {
+    return false;
+  }
+
+  ElementwiseSinkOperands collected;
+  if (!collectElementwiseSinkOperands(op, resultType, collected)) {
+    return false;
+  }
+  VMIVRegType sourceType;
+  if (!hasCompatibleElementwiseSink(collected, resultType, sourceType)) {
+    return false;
+  }
+  return rebuildElementwiseSinkOp(op, collected, sourceType, resultType);
+}
+
+/// Validates the ensures feeding a sinkable select op and returns the layout of
+/// the rebuilt select, or nullopt when the materialization is unsupported.
+static std::optional<VMIVRegType> getSelectSinkSourceType(
+    VMIVRegType resultType, VMIEnsureMaskLayoutOp maskEnsure,
+    VMIEnsureLayoutOp trueEnsure, VMIEnsureLayoutOp falseEnsure) {
+  auto trueSourceType = dyn_cast<VMIVRegType>(trueEnsure.getSource().getType());
+  auto falseSourceType =
+      dyn_cast<VMIVRegType>(falseEnsure.getSource().getType());
+  auto trueResultType = dyn_cast<VMIVRegType>(trueEnsure.getResult().getType());
+  auto falseResultType =
+      dyn_cast<VMIVRegType>(falseEnsure.getResult().getType());
+  auto maskSourceType = dyn_cast<VMIMaskType>(maskEnsure.getSource().getType());
+  auto maskResultType = dyn_cast<VMIMaskType>(maskEnsure.getResult().getType());
+  if (!trueSourceType || !falseSourceType || !trueResultType ||
+      !falseResultType || !maskSourceType || !maskResultType) {
     return std::nullopt;
   }
 
+  bool mismatchedValues = trueSourceType != falseSourceType ||
+                          trueResultType != falseResultType ||
+                          trueResultType != resultType ||
+                          trueSourceType == resultType;
+  bool mismatchedMask =
+      maskResultType.getLayoutAttr() != resultType.getLayoutAttr() ||
+      maskSourceType.getLayoutAttr() != trueSourceType.getLayoutAttr() ||
+      maskSourceType.getElementCount() != trueSourceType.getElementCount() ||
+      maskResultType.getElementCount() != resultType.getElementCount() ||
+      maskSourceType.getGranularity() != maskResultType.getGranularity();
+  if (mismatchedValues || mismatchedMask) {
+    return std::nullopt;
+  }
+  if (!hasEnsureLayoutSupport(trueSourceType, resultType) ||
+      !hasEnsureMaskSupport(maskEnsure, maskSourceType, maskResultType)) {
+    return std::nullopt;
+  }
+  return trueSourceType;
+}
+
+static bool trySinkSelectMaterialization(Operation *op) {
+  std::optional<SelectOperands> operands = getSinkableSelectOperands(op);
+  if (!operands || op->getNumResults() != 1) {
+    return false;
+  }
+  auto resultType = dyn_cast<VMIVRegType>(op->getResult(0).getType());
   auto maskEnsure =
       operands->mask->get().getDefiningOp<VMIEnsureMaskLayoutOp>();
   auto trueEnsure =
       operands->trueValue->get().getDefiningOp<VMIEnsureLayoutOp>();
   auto falseEnsure =
       operands->falseValue->get().getDefiningOp<VMIEnsureLayoutOp>();
-  if (!maskEnsure || !trueEnsure || !falseEnsure) {
-    return std::nullopt;
+  if (!resultType || !maskEnsure || !trueEnsure || !falseEnsure ||
+      maskEnsure.getResult().getType() != operands->mask->get().getType()) {
+    return false;
   }
 
-  auto trueSourceType = dyn_cast<VMIVRegType>(trueEnsure.getSource().getType());
-  if (!trueSourceType ||
-      !isSameMaterialization(trueEnsure, falseEnsure, resultType)) {
-    return std::nullopt;
-  }
-  if (!hasEnsureLayoutSupport(trueSourceType, resultType) ||
-      !isCompatibleSelectMask(maskEnsure, operands->mask->get().getType(),
-                              trueSourceType, resultType)) {
-    return std::nullopt;
-  }
-  return SelectMaterialization{maskEnsure, trueEnsure, falseEnsure,
-                               trueSourceType, resultType};
-}
-
-static bool trySinkSelectMaterialization(Operation *op) {
-  std::optional<SelectMaterialization> materialization =
-      getSelectMaterialization(op);
-  if (!materialization) {
+  std::optional<VMIVRegType> sourceType =
+      getSelectSinkSourceType(resultType, maskEnsure, trueEnsure, falseEnsure);
+  if (!sourceType) {
     return false;
   }
 
   OpBuilder builder(op);
-  OperationState state(op->getLoc(), op->getName());
-  state.addOperands({materialization->maskEnsure.getSource(),
-                     materialization->trueEnsure.getSource(),
-                     materialization->falseEnsure.getSource()});
-  state.addTypes(materialization->sourceType);
-  state.addAttributes(op->getAttrs());
-  Operation *newOp = builder.create(state);
-
+  Operation *newOp = rebuildSinkOp(
+      builder, op,
+      {maskEnsure.getSource(), trueEnsure.getSource(), falseEnsure.getSource()},
+      *sourceType);
   builder.setInsertionPointAfter(newOp);
   auto resultEnsure = builder.create<VMIEnsureLayoutOp>(
-      op->getLoc(), materialization->resultType, newOp->getResult(0));
-  op->getResult(0).replaceAllUsesWith(resultEnsure.getResult());
-  op->erase();
+      op->getLoc(), resultType, newOp->getResult(0));
 
-  if (materialization->maskEnsure->use_empty()) {
-    materialization->maskEnsure.erase();
+  SmallVector<VMIEnsureLayoutOp> consumed{trueEnsure};
+  if (falseEnsure != trueEnsure) {
+    consumed.push_back(falseEnsure);
   }
-  if (materialization->trueEnsure->use_empty()) {
-    materialization->trueEnsure.erase();
-  }
-  if (materialization->falseEnsure != materialization->trueEnsure &&
-      materialization->falseEnsure->use_empty()) {
-    materialization->falseEnsure.erase();
-  }
+  retireSunkOp(op, resultEnsure.getResult(), consumed, maskEnsure);
   return true;
 }
 
-struct CompareMaterialization {
-  VMIEnsureLayoutOp lhsEnsure;
-  VMIEnsureLayoutOp rhsEnsure;
-  VMIMaskType sourceType;
-  VMIMaskType resultType;
+/// Mask types of a sinkable compare's source and rebuilt form.
+struct CompareSinkTypes {
+  VMIMaskType sourceMaskType;
+  VMIMaskType resultMaskType;
 };
 
-static std::optional<CompareMaterialization>
-getCompareMaterialization(Operation *op) {
-  std::optional<BinaryVRegOperands> operands = getSinkableCompareOperands(op);
-  if (!operands || op->getNumResults() != 1) {
-    return std::nullopt;
-  }
-
-  auto resultMaskType = dyn_cast<VMIMaskType>(op->getResult(0).getType());
-  if (!resultMaskType) {
-    return std::nullopt;
-  }
-
-  auto lhsEnsure = operands->lhs->get().getDefiningOp<VMIEnsureLayoutOp>();
-  auto rhsEnsure = operands->rhs->get().getDefiningOp<VMIEnsureLayoutOp>();
-  if (!lhsEnsure || !rhsEnsure) {
-    return std::nullopt;
-  }
-
+/// Validates the ensures feeding a sinkable compare op and derives the mask type
+/// of the rebuilt compare.
+static std::optional<CompareSinkTypes> getCompareSinkTypes(
+    Operation *op, VMIEnsureLayoutOp lhsEnsure, VMIEnsureLayoutOp rhsEnsure,
+    VMIMaskType resultMaskType) {
   auto lhsSourceType = dyn_cast<VMIVRegType>(lhsEnsure.getSource().getType());
+  auto rhsSourceType = dyn_cast<VMIVRegType>(rhsEnsure.getSource().getType());
   auto lhsResultType = dyn_cast<VMIVRegType>(lhsEnsure.getResult().getType());
-  if (!lhsSourceType || !lhsResultType ||
-      !isSameMaterialization(lhsEnsure, rhsEnsure, lhsResultType)) {
+  auto rhsResultType = dyn_cast<VMIVRegType>(rhsEnsure.getResult().getType());
+  if (!lhsSourceType || !rhsSourceType || !lhsResultType || !rhsResultType) {
     return std::nullopt;
   }
-  if (lhsResultType.getElementCount() != resultMaskType.getElementCount() ||
-      lhsResultType.getLayoutAttr() != resultMaskType.getLayoutAttr()) {
+  bool incompatibleSources = lhsSourceType != rhsSourceType ||
+                             lhsResultType != rhsResultType ||
+                             lhsSourceType == lhsResultType;
+  bool mismatchedMask =
+      lhsResultType.getElementCount() != resultMaskType.getElementCount() ||
+      lhsResultType.getLayoutAttr() != resultMaskType.getLayoutAttr();
+  if (incompatibleSources || mismatchedMask) {
     return std::nullopt;
   }
 
@@ -440,88 +490,39 @@ getCompareMaterialization(Operation *op) {
   if (failed(supports.getEnsureMaskLayoutFact(sourceMaskType, resultMaskType))) {
     return std::nullopt;
   }
-  return CompareMaterialization{lhsEnsure, rhsEnsure, sourceMaskType,
-                                resultMaskType};
+  return CompareSinkTypes{sourceMaskType, resultMaskType};
 }
 
 static bool trySinkCompareMaterialization(Operation *op) {
-  std::optional<CompareMaterialization> materialization =
-      getCompareMaterialization(op);
-  if (!materialization) {
-    return false;
-  }
-
-  OpBuilder builder(op);
-  OperationState state(op->getLoc(), op->getName());
-  state.addOperands({materialization->lhsEnsure.getSource(),
-                     materialization->rhsEnsure.getSource()});
-  state.addTypes(materialization->sourceType);
-  state.addAttributes(op->getAttrs());
-  Operation *newOp = builder.create(state);
-
-  builder.setInsertionPointAfter(newOp);
-  auto resultEnsure = builder.create<VMIEnsureMaskLayoutOp>(
-      op->getLoc(), materialization->resultType, newOp->getResult(0));
-  op->getResult(0).replaceAllUsesWith(resultEnsure.getResult());
-  op->erase();
-
-  if (materialization->lhsEnsure->use_empty()) {
-    materialization->lhsEnsure.erase();
-  }
-  if (materialization->rhsEnsure != materialization->lhsEnsure &&
-      materialization->rhsEnsure->use_empty()) {
-    materialization->rhsEnsure.erase();
-  }
-  return true;
-}
-
-static bool trySinkTernaryMaterialization(Operation *op) {
-  std::optional<TernaryVRegOperands> operands = getSinkableTernaryOperands(op);
+  std::optional<BinaryVRegOperands> operands = getSinkableCompareOperands(op);
   if (!operands || op->getNumResults() != 1) {
     return false;
   }
-
-  auto resultType = dyn_cast<VMIVRegType>(op->getResult(0).getType());
-  if (!resultType) {
-    return false;
-  }
-
+  auto resultMaskType = dyn_cast<VMIMaskType>(op->getResult(0).getType());
   auto lhsEnsure = operands->lhs->get().getDefiningOp<VMIEnsureLayoutOp>();
   auto rhsEnsure = operands->rhs->get().getDefiningOp<VMIEnsureLayoutOp>();
-  auto accEnsure = operands->acc->get().getDefiningOp<VMIEnsureLayoutOp>();
-  if (!isSameMaterialization(lhsEnsure, rhsEnsure, accEnsure, resultType)) {
+  if (!resultMaskType || !lhsEnsure || !rhsEnsure) {
     return false;
   }
-
-  auto sourceType = cast<VMIVRegType>(lhsEnsure.getSource().getType());
-  if (!hasEnsureLayoutSupport(sourceType, resultType)) {
+  std::optional<CompareSinkTypes> types =
+      getCompareSinkTypes(op, lhsEnsure, rhsEnsure, resultMaskType);
+  if (!types) {
     return false;
   }
 
   OpBuilder builder(op);
-  OperationState state(op->getLoc(), op->getName());
-  state.addOperands(
-      {lhsEnsure.getSource(), rhsEnsure.getSource(), accEnsure.getSource()});
-  state.addTypes(sourceType);
-  state.addAttributes(op->getAttrs());
-  Operation *newOp = builder.create(state);
-
+  Operation *newOp =
+      rebuildSinkOp(builder, op, {lhsEnsure.getSource(), rhsEnsure.getSource()},
+                    types->sourceMaskType);
   builder.setInsertionPointAfter(newOp);
-  auto resultEnsure = builder.create<VMIEnsureLayoutOp>(
-      op->getLoc(), resultType, newOp->getResult(0));
-  op->getResult(0).replaceAllUsesWith(resultEnsure.getResult());
-  op->erase();
+  auto resultEnsure = builder.create<VMIEnsureMaskLayoutOp>(
+      op->getLoc(), types->resultMaskType, newOp->getResult(0));
 
-  if (lhsEnsure->use_empty()) {
-    lhsEnsure.erase();
+  SmallVector<VMIEnsureLayoutOp> consumed{lhsEnsure};
+  if (rhsEnsure != lhsEnsure) {
+    consumed.push_back(rhsEnsure);
   }
-  if (rhsEnsure != lhsEnsure && rhsEnsure->use_empty()) {
-    rhsEnsure.erase();
-  }
-  if (accEnsure != lhsEnsure && accEnsure != rhsEnsure &&
-      accEnsure->use_empty()) {
-    accEnsure.erase();
-  }
+  retireSunkOp(op, resultEnsure.getResult(), consumed);
   return true;
 }
 
@@ -567,46 +568,6 @@ static bool trySinkBinaryMaskMaterialization(Operation *op) {
   }
   if (rhsEnsure != lhsEnsure && rhsEnsure->use_empty()) {
     rhsEnsure.erase();
-  }
-  return true;
-}
-
-static bool trySinkUnaryMaterialization(Operation *op) {
-  std::optional<UnaryVRegOperand> operand = getSinkableUnaryOperand(op);
-  if (!operand || op->getNumResults() != 1) {
-    return false;
-  }
-
-  auto resultType = dyn_cast<VMIVRegType>(op->getResult(0).getType());
-  if (!resultType) {
-    return false;
-  }
-
-  auto sourceEnsure = operand->source->get().getDefiningOp<VMIEnsureLayoutOp>();
-  if (!isSameMaterialization(sourceEnsure, resultType)) {
-    return false;
-  }
-
-  auto sourceType = cast<VMIVRegType>(sourceEnsure.getSource().getType());
-  if (!hasEnsureLayoutSupport(sourceType, resultType)) {
-    return false;
-  }
-
-  OpBuilder builder(op);
-  OperationState state(op->getLoc(), op->getName());
-  state.addOperands(sourceEnsure.getSource());
-  state.addTypes(sourceType);
-  state.addAttributes(op->getAttrs());
-  Operation *newOp = builder.create(state);
-
-  builder.setInsertionPointAfter(newOp);
-  auto resultEnsure = builder.create<VMIEnsureLayoutOp>(
-      op->getLoc(), resultType, newOp->getResult(0));
-  op->getResult(0).replaceAllUsesWith(resultEnsure.getResult());
-  op->erase();
-
-  if (sourceEnsure->use_empty()) {
-    sourceEnsure.erase();
   }
   return true;
 }
@@ -659,24 +620,6 @@ static bool trySinkMaskMaterialization(Operation *op) {
          trySinkUnaryMaskMaterialization<VMIEnsureMaskGranularityOp>(op);
 }
 
-static bool isSinkCandidate(Operation *op) {
-  return getSinkableBinaryOperands(op) || getSinkableCompareOperands(op) ||
-         getSinkableSelectOperands(op) || getSinkableTernaryOperands(op) ||
-         getSinkableUnaryOperand(op) || getSinkableBinaryMaskOperands(op) ||
-         getSinkableUnaryMaskOperand(op);
-}
-
-static void trySinkMaterialization(Operation *op) {
-  bool materialized =
-      trySinkBinaryMaterialization(op) || trySinkCompareMaterialization(op) ||
-      trySinkSelectMaterialization(op) || trySinkTernaryMaterialization(op) ||
-      trySinkUnaryMaterialization(op);
-  if (materialized) {
-    return;
-  }
-  (void)trySinkMaskMaterialization(op);
-}
-
 struct VMILayoutSinkMaterializationPass
     : public mlir::pto::impl::VMILayoutSinkMaterializationBase<
           VMILayoutSinkMaterializationPass> {
@@ -685,8 +628,10 @@ struct VMILayoutSinkMaterializationPass
   void runOnOperation() override {
     ModuleOp module = getOperation();
     SmallVector<Operation *> candidates;
-    module.walk([&candidates](Operation *op) {
-      if (isSinkCandidate(op)) {
+    module.walk([&](Operation *op) {
+      if (isSinkableElementwiseOp(op) || getSinkableCompareOperands(op) ||
+          getSinkableSelectOperands(op) || getSinkableBinaryMaskOperands(op) ||
+          getSinkableUnaryMaskOperand(op)) {
         candidates.push_back(op);
       }
     });
@@ -695,7 +640,12 @@ struct VMILayoutSinkMaterializationPass
       if (op->getBlock() == nullptr) {
         continue;
       }
-      trySinkMaterialization(op);
+      if (trySinkElementwiseMaterialization(op) ||
+          trySinkCompareMaterialization(op) ||
+          trySinkSelectMaterialization(op)) {
+        continue;
+      }
+      trySinkMaskMaterialization(op);
     }
   }
 };

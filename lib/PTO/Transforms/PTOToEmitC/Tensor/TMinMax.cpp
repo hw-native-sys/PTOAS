@@ -28,7 +28,7 @@ LogicalResult matchAndRewrite(pto::TMaxOp op, OpAdaptor adaptor,
   Value src1 = adaptor.getSrc1();
   Value dst  = adaptor.getDst();
 
-  SmallVector<Value, 3> operands{dst, src0, src1};
+  SmallVector<Value, mlir::pto::kValue3> operands{dst, src0, src1};
   createLastUseAwareOpaqueCall(rewriter, op.getOperation(), TypeRange{},
                                "TMAX", operands);
 
@@ -46,7 +46,7 @@ struct PTOMaxSToEmitC : public OpConversionPattern<pto::TMaxSOp> {
     Value scalar = adaptor.getScalar();
     Value dst  = adaptor.getDst();
 
-    SmallVector<Value, 3> operands{dst, src0, scalar};
+    SmallVector<Value, mlir::pto::kValue3> operands{dst, src0, scalar};
     createLastUseAwareOpaqueCall(rewriter, op.getOperation(), TypeRange{},
                                  "TMAXS", operands);
 
@@ -82,7 +82,7 @@ LogicalResult matchAndRewrite(pto::TMinSOp op, OpAdaptor adaptor,
   Value dst = adaptor.getDst();
   Value scalar = adaptor.getScalar();
 
-  SmallVector<Value, 3> operands{dst, src, scalar};
+  SmallVector<Value, mlir::pto::kValue3> operands{dst, src, scalar};
   createLastUseAwareOpaqueCall(rewriter, op.getOperation(), TypeRange{},
                                "TMINS", operands);
 

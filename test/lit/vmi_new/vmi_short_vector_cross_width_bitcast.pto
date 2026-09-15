@@ -1,0 +1,60 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -pto-validate-vmi-layout-ir -vmi-to-vpto | FileCheck %s --implicit-check-not=pto.vmi. --implicit-check-not='!pto.vmi.' --implicit-check-not=pto.vmi.ensure_layout
+
+// hw-native-sys/PTOAS#1380: a lane-count-changing vinterpret_cast requires a
+// contiguous operand, which a short vload now produces directly.  The i8 source
+// of 16 lanes is included because it is not one of the four lane counts the old
+// alias enumerated: the bound is 16 bytes, well inside one VCG block.
+module {
+  func.func @cast_f16_8_to_f32_4(%src: !pto.ptr<f16, ub>,
+                                 %dst: !pto.ptr<f32, ub>) {
+    %c0 = arith.constant 0 : index
+    %v = pto.vmi.vload %src[%c0] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<8xf16>
+    %r = pto.vmi.vinterpret_cast %v
+        : !pto.vmi.vreg<8xf16> -> !pto.vmi.vreg<4xf32>
+    pto.vmi.vstore %r, %dst[%c0] : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>
+    return
+  }
+
+  func.func @cast_f32_4_to_f16_8(%src: !pto.ptr<f32, ub>,
+                                 %dst: !pto.ptr<f16, ub>) {
+    %c0 = arith.constant 0 : index
+    %v = pto.vmi.vload %src[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<4xf32>
+    %r = pto.vmi.vinterpret_cast %v
+        : !pto.vmi.vreg<4xf32> -> !pto.vmi.vreg<8xf16>
+    pto.vmi.vstore %r, %dst[%c0] : !pto.vmi.vreg<8xf16>, !pto.ptr<f16, ub>
+    return
+  }
+
+  func.func @cast_i8_16_to_i32_4(%src: !pto.ptr<i8, ub>,
+                                 %dst: !pto.ptr<i32, ub>) {
+    %c0 = arith.constant 0 : index
+    %v = pto.vmi.vload %src[%c0] : !pto.ptr<i8, ub> -> !pto.vmi.vreg<16xi8>
+    %r = pto.vmi.vinterpret_cast %v
+        : !pto.vmi.vreg<16xi8> -> !pto.vmi.vreg<4xi32>
+    pto.vmi.vstore %r, %dst[%c0] : !pto.vmi.vreg<4xi32>, !pto.ptr<i32, ub>
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @cast_f16_8_to_f32_4(
+// CHECK: pto.vsldb
+// CHECK: pto.vbitcast
+// CHECK: pto.vsts
+
+// CHECK-LABEL: func.func @cast_f32_4_to_f16_8(
+// CHECK: pto.vsldb
+// CHECK: pto.vbitcast
+// CHECK: pto.vsts
+
+// CHECK-LABEL: func.func @cast_i8_16_to_i32_4(
+// CHECK: pto.vsldb
+// CHECK: pto.vbitcast
+// CHECK: pto.vsts

@@ -216,10 +216,10 @@ def vmi_vstore_group_mask_probe():
 
 @pto.jit(target="a5")
 def vmi_vbrc_group_lane_mismatch_probe():
-    tile = pto.alloc_tile(shape=[1, 16], dtype=pto.f32)
+    tile = pto.alloc_tile(shape=[1, 64], dtype=pto.f32)
     src = tile.as_ptr()
     offset = pto.const(0, dtype=pto.index)
-    compact = pto.vmi.vload(src, offset, size=16)
+    compact = pto.vmi.vload(src, offset, size=4)
     _ = pto.vmi.vbrc(compact, size=64, group=8)
 
 @pto.jit(target="a5")

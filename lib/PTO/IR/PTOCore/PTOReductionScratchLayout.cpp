@@ -40,11 +40,11 @@ static LogicalResult verifyTRowArgTmpSmallDn(Operation* op, Type tmpTy, ArrayRef
         return op->emitOpError("expects A2/A3 tmp DN layout to have valid_shape[1] == 1");
     }
     if (srcValid[0] != ShapedType::kDynamic && tmpValid[0] != ShapedType::kDynamic &&
-        tmpValid[0] < srcValid[0] * 2) {
+        tmpValid[0] < srcValid[0] * mlir::pto::kValue2) {
         return op->emitOpError() << "expects A2/A3 tmp DN layout to have valid_shape[0] >= "
-                                 << (srcValid[0] * 2);
+                                 << (srcValid[0] * mlir::pto::kValue2);
     }
-    return verifyTmpCapacityAtLeast(op, tmpTy, 32);
+    return verifyTmpCapacityAtLeast(op, tmpTy, mlir::pto::kValue32);
 }
 
 static LogicalResult verifyTRowArgTmpSmallNd(Operation* op, Type tmpTy, ArrayRef<int64_t> srcValid,
@@ -56,10 +56,10 @@ static LogicalResult verifyTRowArgTmpSmallNd(Operation* op, Type tmpTy, ArrayRef
     if (srcValid[0] != ShapedType::kDynamic && tmpValid[0] != ShapedType::kDynamic && tmpValid[0] < srcValid[0]) {
         return op->emitOpError("expects A2/A3 tmp valid_shape[0] to cover src valid rows");
     }
-    if (tmpValid[1] != ShapedType::kDynamic && tmpValid[1] < 2) {
+    if (tmpValid[1] != ShapedType::kDynamic && tmpValid[1] < mlir::pto::kValue2) {
         return op->emitOpError("expects A2/A3 tmp valid_shape[1] to be at least 2 in the small-col ND path");
     }
-    return verifyTmpCapacityAtLeast(op, tmpTy, 32);
+    return verifyTmpCapacityAtLeast(op, tmpTy, mlir::pto::kValue32);
 }
 
 static LogicalResult verifyTRowArgTmpSmall(Operation* op, Type tmpTy, ArrayRef<int64_t> srcValid,
@@ -259,7 +259,7 @@ LogicalResult mlir::pto::SectionSimtOp::verify()
         return emitOpError("must not appear inside a function marked with '") << pto::kPTOSimtEntryAttrName << "'";
     }
 
-    WalkResult nested = getBody().walk([&](SectionSimtOp nestedOp) {
+    WalkResult nested = getBody().walk([](SectionSimtOp nestedOp) {
         nestedOp.emitOpError("nested pto.section.simt is not allowed");
         return WalkResult::interrupt();
     });

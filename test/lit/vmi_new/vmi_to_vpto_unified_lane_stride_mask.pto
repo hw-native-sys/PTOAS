@@ -1,0 +1,181 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-to-vpto | FileCheck %s
+
+!b8_ls2 = !pto.vmi.vreg<128xui8,
+    #pto.vmi.layout<contiguous, lane_stride = 2>>
+!m8_ls2 = !pto.vmi.mask<128xb8,
+    #pto.vmi.layout<contiguous, lane_stride = 2>>
+!b8_ls4 = !pto.vmi.vreg<64xui8,
+    #pto.vmi.layout<contiguous, lane_stride = 4>>
+!m8_ls4 = !pto.vmi.mask<64xb8,
+    #pto.vmi.layout<contiguous, lane_stride = 4>>
+!b16_ls2 = !pto.vmi.vreg<128xbf16,
+    #pto.vmi.layout<contiguous, lane_stride = 2>>
+!m16_ls2 = !pto.vmi.mask<128xb16,
+    #pto.vmi.layout<contiguous, lane_stride = 2>>
+!b32 = !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+!m32 = !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+!f32_d4 = !pto.vmi.vreg<64xf32,
+    #pto.vmi.layout<deinterleaved = 4>>
+!f32_bd2 = !pto.vmi.vreg<64xf32,
+    #pto.vmi.layout<block_deinterleaved = 2>>
+!b16_d2_ls2 = !pto.vmi.vreg<64xbf16,
+    #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+!b16_g8s8_ls2 = !pto.vmi.vreg<8xbf16,
+    #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
+
+module {
+  func.func @b8_lane_stride2(%lhs: !b8_ls2, %rhs: !b8_ls2) -> !b8_ls2 {
+    %c13 = arith.constant 13 : index
+    %mask = pto.vmi.create_mask %c13 : index -> !m8_ls2
+    %result = pto.vmi.vadd %lhs, %rhs, %mask
+        : !b8_ls2, !b8_ls2, !m8_ls2 -> !b8_ls2
+    return %result : !b8_ls2
+  }
+
+  func.func @b8_lane_stride4(%lhs: !b8_ls4, %rhs: !b8_ls4) -> !b8_ls4 {
+    %c13 = arith.constant 13 : index
+    %mask = pto.vmi.create_mask %c13 : index -> !m8_ls4
+    %result = pto.vmi.vadd %lhs, %rhs, %mask
+        : !b8_ls4, !b8_ls4, !m8_ls4 -> !b8_ls4
+    return %result : !b8_ls4
+  }
+
+  func.func @b16_lane_stride2(%lhs: !b16_ls2,
+                              %rhs: !b16_ls2) -> !b16_ls2 {
+    %c65 = arith.constant 65 : index
+    %mask = pto.vmi.create_mask %c65 : index -> !m16_ls2
+    %result = pto.vmi.vmul %lhs, %rhs, %mask
+        : !b16_ls2, !b16_ls2, !m16_ls2 -> !b16_ls2
+    return %result : !b16_ls2
+  }
+
+  func.func @b16_lane_stride2_without_mask(%lhs: !b16_ls2,
+                                           %rhs: !b16_ls2) -> !b16_ls2 {
+    %result = pto.vmi.vmul %lhs, %rhs
+        : !b16_ls2, !b16_ls2 -> !b16_ls2
+    return %result : !b16_ls2
+  }
+
+  func.func @b32_native(%lhs: !b32, %rhs: !b32, %mask: !m32) -> !b32 {
+    %result = pto.vmi.vmul %lhs, %rhs, %mask
+        : !b32, !b32, !m32 -> !b32
+    return %result : !b32
+  }
+
+  func.func @bf16_abs_lane_stride2(%source: !b16_ls2) -> !b16_ls2 {
+    %c65 = arith.constant 65 : index
+    %mask = pto.vmi.create_mask %c65 : index -> !m16_ls2
+    %result = pto.vmi.vabs %source, %mask
+        : !b16_ls2, !m16_ls2 -> !b16_ls2
+    return %result : !b16_ls2
+  }
+
+  func.func @deinterleaved4_without_mask(%lhs: !f32_d4,
+                                          %rhs: !f32_d4) -> !f32_d4 {
+    %result = pto.vmi.vadd %lhs, %rhs : !f32_d4, !f32_d4 -> !f32_d4
+    return %result : !f32_d4
+  }
+
+  func.func @block_deinterleaved2_without_mask(
+      %lhs: !f32_bd2, %rhs: !f32_bd2) -> !f32_bd2 {
+    %result = pto.vmi.vadd %lhs, %rhs : !f32_bd2, !f32_bd2 -> !f32_bd2
+    return %result : !f32_bd2
+  }
+
+  func.func @deinterleaved2_lane_stride2_without_mask(
+      %lhs: !b16_d2_ls2, %rhs: !b16_d2_ls2) -> !b16_d2_ls2 {
+    %result = pto.vmi.vmul %lhs, %rhs
+        : !b16_d2_ls2, !b16_d2_ls2 -> !b16_d2_ls2
+    return %result : !b16_d2_ls2
+  }
+
+  func.func @group_slots_lane_stride2_without_mask(
+      %lhs: !b16_g8s8_ls2, %rhs: !b16_g8s8_ls2) -> !b16_g8s8_ls2 {
+    %result = pto.vmi.vmul %lhs, %rhs
+        : !b16_g8s8_ls2, !b16_g8s8_ls2 -> !b16_g8s8_ls2
+    return %result : !b16_g8s8_ls2
+  }
+}
+
+// CHECK-LABEL: func.func @b8_lane_stride2(
+// CHECK-COUNT-1: pto.pbitcast {{.*}} : !pto.mask<b16> -> !pto.mask<b8>
+// CHECK-COUNT-1: pto.vadd {{.*}} : !pto.vreg<256xui8>, !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<256xui8>
+// CHECK-NOT: pto.vmi.
+
+// CHECK-LABEL: func.func @b8_lane_stride4(
+// CHECK-COUNT-1: pto.pbitcast {{.*}} : !pto.mask<b32> -> !pto.mask<b8>
+// CHECK-COUNT-1: pto.vadd {{.*}} : !pto.vreg<256xui8>, !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<256xui8>
+// CHECK-NOT: pto.vmi.
+
+// CHECK-LABEL: func.func @b16_lane_stride2(
+// CHECK: pto.pbitcast {{.*}} : !pto.mask<b32> -> !pto.mask<b16>
+// CHECK: pto.vmul {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<128xbf16>
+// CHECK: pto.pbitcast {{.*}} : !pto.mask<b32> -> !pto.mask<b16>
+// CHECK: pto.vmul {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<128xbf16>
+// CHECK-NOT: pto.vmi.
+
+// CHECK-LABEL: func.func @b16_lane_stride2_without_mask(
+// CHECK: pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+// CHECK: pto.pbitcast {{.*}} : !pto.mask<b32> -> !pto.mask<b16>
+// CHECK: pto.vmul {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<128xbf16>
+// CHECK: pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+// CHECK: pto.pbitcast {{.*}} : !pto.mask<b32> -> !pto.mask<b16>
+// CHECK: pto.vmul {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<128xbf16>
+// CHECK-NOT: pto.vmi.
+
+// CHECK-LABEL: func.func @b32_native(
+// CHECK-NOT: pto.pbitcast
+// CHECK: pto.vmul {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+// CHECK-NOT: pto.vmi.
+
+// CHECK-LABEL: func.func @bf16_abs_lane_stride2(
+// CHECK: pto.pbitcast {{.*}} : !pto.mask<b32> -> !pto.mask<b16>
+// CHECK: pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+// CHECK: pto.vdup {{.*}} : i16, !pto.mask<b16> -> !pto.vreg<128xi16>
+// CHECK: pto.vand {{.*}} : !pto.vreg<128xi16>, !pto.vreg<128xi16>, !pto.mask<b16> -> !pto.vreg<128xi16>
+// CHECK: pto.pbitcast {{.*}} : !pto.mask<b32> -> !pto.mask<b16>
+// CHECK: pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+// CHECK: pto.vdup {{.*}} : i16, !pto.mask<b16> -> !pto.vreg<128xi16>
+// CHECK: pto.vand {{.*}} : !pto.vreg<128xi16>, !pto.vreg<128xi16>, !pto.mask<b16> -> !pto.vreg<128xi16>
+// CHECK-NOT: pto.vmi.
+
+// CHECK-LABEL: func.func @deinterleaved4_without_mask(
+// CHECK: pto.pset_b32 "PAT_VL16" : !pto.mask<b32>
+// CHECK: pto.vadd {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+// CHECK: pto.pset_b32 "PAT_VL16" : !pto.mask<b32>
+// CHECK: pto.vadd {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+// CHECK: pto.pset_b32 "PAT_VL16" : !pto.mask<b32>
+// CHECK: pto.vadd {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+// CHECK: pto.pset_b32 "PAT_VL16" : !pto.mask<b32>
+// CHECK: pto.vadd {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+// CHECK-NOT: pto.vmi.
+
+// CHECK-LABEL: func.func @block_deinterleaved2_without_mask(
+// CHECK: pto.pset_b32 "PAT_VL32" : !pto.mask<b32>
+// CHECK: pto.vadd {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+// CHECK: pto.pset_b32 "PAT_VL32" : !pto.mask<b32>
+// CHECK: pto.vadd {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+// CHECK-NOT: pto.vmi.
+
+// CHECK-LABEL: func.func @deinterleaved2_lane_stride2_without_mask(
+// CHECK: pto.pset_b32 "PAT_VL32" : !pto.mask<b32>
+// CHECK: pto.pbitcast {{.*}} : !pto.mask<b32> -> !pto.mask<b16>
+// CHECK: pto.vmul {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<128xbf16>
+// CHECK: pto.pset_b32 "PAT_VL32" : !pto.mask<b32>
+// CHECK: pto.pbitcast {{.*}} : !pto.mask<b32> -> !pto.mask<b16>
+// CHECK: pto.vmul {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<128xbf16>
+// CHECK-NOT: pto.vmi.
+
+// CHECK-LABEL: func.func @group_slots_lane_stride2_without_mask(
+// CHECK: pto.pset_b32 "PAT_VL8" : !pto.mask<b32>
+// CHECK: pto.pbitcast {{.*}} : !pto.mask<b32> -> !pto.mask<b16>
+// CHECK: pto.vmul {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<128xbf16>
+// CHECK-NOT: pto.vmi.

@@ -49,6 +49,9 @@
 
 namespace mlir::pto {
 
+inline constexpr unsigned kMaxIntegerLikeOperands = 7;
+inline constexpr unsigned kMaxReinterpretedPointerOperands = 2;
+
 void materializeVecScopeCarrierLoops(ModuleOp module);
 LogicalResult applyQueriedTargetAttrs(ModuleOp module, const VPTOEmissionOptions &options, llvm::raw_ostream &diagOS);
 LogicalResult attachAIVectorScopeMetadata(llvm::Module &llvmModule, llvm::raw_ostream &diagOS);
@@ -100,10 +103,10 @@ std::optional<uint64_t> parseSaturationImmediate(StringRef sat);
 std::optional<uint64_t> parsePredicateStoreDistImmediate(StringRef dist);
 std::optional<uint64_t> parsePredicateLoadDistImmediate(StringRef dist);
 Value castIntegerLikeTo(Operation *anchor, Value value, Type targetType);
-FailureOr<SmallVector<Value, 7>> castIntegerLikeOperands(Operation *anchor, ValueRange operands,
+FailureOr<SmallVector<Value, kMaxIntegerLikeOperands>> castIntegerLikeOperands(Operation *anchor, ValueRange operands,
                                                          ArrayRef<unsigned> indices, Type targetType);
 FailureOr<Value> reinterpretPointerToAddrSpace(Operation *anchor, Value value, unsigned targetAddressSpace);
-FailureOr<SmallVector<Value, 2>> reinterpretPointerOperands(Operation *anchor, ArrayRef<Value> values,
+FailureOr<SmallVector<Value, kMaxReinterpretedPointerOperands>> reinterpretPointerOperands(Operation *anchor, ArrayRef<Value> values,
                                                            ArrayRef<unsigned> addressSpaces);
 FailureOr<Value> packLoopPair(Operation *anchor, Value low, Value high);
 FailureOr<Value> packLoopSize(Operation *anchor, Value loop2, Value loop1);

@@ -66,13 +66,9 @@ static LogicalResult verifyTConcatidxArch(TConcatidxOp op,
 }
 
 LogicalResult pto::TConcatidxOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult {
-    return verifyTConcatidxArch(*this, /*requireRowMajor=*/false);
-  };
-  auto verifyA5 = [&]() -> LogicalResult {
-    return verifyTConcatidxArch(*this, /*requireRowMajor=*/true);
-  };
-  return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
+    auto verifyA2A3 = [this]() -> LogicalResult { return verifyTConcatidxArch(*this, /*requireRowMajor=*/false); };
+    auto verifyA5 = [this]() -> LogicalResult { return verifyTConcatidxArch(*this, /*requireRowMajor=*/true); };
+    return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
 LogicalResult pto::TAndSOp::verify() {
@@ -183,8 +179,8 @@ static LogicalResult verifyTCITmp(TCIOp op, unsigned bitWidth) {
     if (tmpTy.getSLayoutValueI32() != static_cast<int32_t>(SLayout::NoneBox)) {
       return op.emitOpError("expects tmp slayout to be none_box");
     }
-    if (tmpTy.getSFractalSizeI32() != 512) {
-      return op.emitOpError("expects tmp fractal size to be 512");
+    if (tmpTy.getSFractalSizeI32() != mlir::pto::kValue512) {
+        return op.emitOpError("expects tmp fractal size to be 512");
     }
     auto tmpBytes = getStaticByteSize(tmpTy);
     if (!tmpBytes) {

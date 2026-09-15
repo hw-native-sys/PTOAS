@@ -203,6 +203,22 @@ struct MaskGranularitySolver {
     return success();
   }
 
+  LogicalResult constrainDirectMaskedElementwise(
+      Operation *op, unsigned sourceOperandIndex,
+      std::optional<unsigned> maskOperandIndex) {
+    if (!maskOperandIndex || *maskOperandIndex >= op->getNumOperands()) {
+      return success();
+    }
+    auto sourceType =
+        dyn_cast<VMIVRegType>(op->getOperand(sourceOperandIndex).getType());
+    if (!sourceType) {
+      return success();
+    }
+    return requestMaskUse(
+        op->getOpOperand(*maskOperandIndex),
+        getMaskGranularityForElement(sourceType.getElementType()), op);
+  }
+
   static std::optional<WalkResult> constraintResult(LogicalResult result) {
     return failed(result) ? WalkResult::interrupt() : WalkResult::advance();
   }
@@ -242,7 +258,58 @@ struct MaskGranularitySolver {
         .Default([](Operation *) { return std::nullopt; });
   }
 
-  std::optional<WalkResult> addSourceMaskUseConstraint(Operation *op) {
+  /// Constrains the optional variadic predicate of a unified elementwise op whose
+  /// physical predicate, when present, is the operand at `maskIndex`.
+  std::optional<WalkResult> constrainOptionalElementwiseMask(Operation *op,
+                                                             unsigned maskIndex) {
+    if (!isa<VMIVRegType>(op->getResult(0).getType())) {
+      return constraintResult(success());
+    }
+    std::optional<unsigned> index = op->getNumOperands() > maskIndex
+                                        ? std::optional<unsigned>(maskIndex)
+                                        : std::nullopt;
+    return constraintResult(constrainDirectMaskedElementwise(op, 0, index));
+  }
+
+  /// Constrains the mandatory predicate operand of a unified op.
+  std::optional<WalkResult> constrainMandatoryMask(Operation *op,
+                                                   unsigned maskIndex) {
+    return constraintResult(
+        constrainDirectMaskedElementwise(op, 0, maskIndex));
+  }
+
+  std::optional<WalkResult> addUnifiedSourceMaskUseConstraint(Operation *op) {
+    return llvm::TypeSwitch<Operation *, std::optional<WalkResult>>(op)
+        .Case<VMIVabsOp>([this, op](auto unaryOp) {
+          MutableOperandRange maskOperands = unaryOp.getMaskMutable();
+          if (maskOperands.empty()) {
+            return constraintResult(success());
+          }
+          return constraintResult(requestMaskUseForSource(
+              *maskOperands.begin(), unaryOp.getSource(), op));
+        })
+        .Case<VMIVaddOp, VMIVsubOp, VMIVmulOp, VMIVdivOp, VMIVminOp,
+              VMIVmaxOp, VMIVandOp, VMIVorOp, VMIVxorOp, VMIVshlOp,
+              VMIVshrOp, VMIAndIOp, VMIOrIOp, VMIXOrIOp>([this, op](auto) {
+          return constrainOptionalElementwiseMask(op, mlir::pto::kValue2);
+        })
+        .Case<VMIVnegOp, VMIVsqrtOp, VMIVexpOp, VMIVlnOp, VMIVreluOp,
+              VMIVnotOp, VMINotOp>([this, op](auto) {
+          return constrainOptionalElementwiseMask(op, 1);
+        })
+        .Case<VMIVmulaOp>([this, op](auto) {
+          return constrainOptionalElementwiseMask(op, mlir::pto::kValue3);
+        })
+        .Case<VMIVaxpyOp>([this, op](auto) {
+          return constrainMandatoryMask(op, mlir::pto::kValue3);
+        })
+        .Case<VMIVlreluOp, VMIVpreluOp>([this, op](auto) {
+          return constrainMandatoryMask(op, mlir::pto::kValue2);
+        })
+        .Default([](Operation *) { return std::nullopt; });
+  }
+
+  std::optional<WalkResult> addLegacySourceMaskUseConstraint(Operation *op) {
     return llvm::TypeSwitch<Operation *, std::optional<WalkResult>>(op)
         .Case<VMIAddSOp, VMIMulSOp, VMIMaxSOp, VMIMinSOp, VMIShlSOp,
               VMIShrSOp>([this, op](auto maskOp) {
@@ -272,6 +339,14 @@ struct MaskGranularitySolver {
               maskOp.getMaskMutable(), maskOp.getValue(), op));
         })
         .Default([](Operation *) { return std::nullopt; });
+  }
+
+  std::optional<WalkResult> addSourceMaskUseConstraint(Operation *op) {
+    if (std::optional<WalkResult> unified =
+            addUnifiedSourceMaskUseConstraint(op)) {
+      return unified;
+    }
+    return addLegacySourceMaskUseConstraint(op);
   }
 
   std::optional<WalkResult> addSpecialMaskConstraint(Operation *op) {
@@ -584,7 +659,43 @@ struct MaskGranularitySolver {
     return success();
   }
 
+  // Unconstrained predicates used by histogram/scatter should start in the
+  // common consumer granularity. Falling back to b32 introduces an unnecessary
+  // b32-to-b8 conversion, whose deinterleaved carrier cannot represent short
+  // vectors. Preserve concrete producers and all mixed-granularity decisions.
+  void preferHistogramScatterGranularity() {
+    struct Preference {
+      StringRef granularity;
+      bool conflict = false;
+      bool histogramOrScatter = false;
+    };
+    llvm::DenseMap<unsigned, Preference> preferences;
+    for (const MaskUseRequest &request : maskUseRequests) {
+      unsigned rootId = findMask(maskIds.lookup(request.operand->get()));
+      if (!maskNodes[rootId].granularity.empty()) {
+        continue;
+      }
+      Preference &preference = preferences[rootId];
+      if (preference.granularity.empty()) {
+        preference.granularity = request.granularity;
+      } else if (preference.granularity != request.granularity) {
+        preference.conflict = true;
+      }
+      preference.histogramOrScatter =
+          preference.histogramOrScatter ||
+          isa<VMIScatterOp, VMIVdhistOp, VMIVchistOp>(
+              request.operand->getOwner());
+    }
+    for (const auto &entry : preferences) {
+      const Preference &preference = entry.second;
+      if (preference.histogramOrScatter && !preference.conflict) {
+        maskNodes[entry.first].granularity = preference.granularity.str();
+      }
+    }
+  }
+
   void rewriteMaskTypes() {
+    preferHistogramScatterGranularity();
     for (MaskNode &node : maskNodes) {
       MaskNode &root = maskNodes[findMask(maskIds.lookup(node.value))];
       StringRef granularity =

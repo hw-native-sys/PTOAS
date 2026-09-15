@@ -53,13 +53,13 @@ module {
 // ASSIGN-SAME: -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
 // ASSIGN: %[[SUM16:.*]] = pto.vmi.group_reduce_addf
 // ASSIGN-SAME: -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
-// ASSIGN: pto.vmi.addf %[[SUM16]], %[[RHS16]]
+// ASSIGN: pto.vmi.vadd %[[SUM16]], %[[RHS16]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
 // ASSIGN: %[[RHS64:.*]] = pto.vmi.group_slot_load
 // ASSIGN-SAME: -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 1>>
 // ASSIGN: %[[SUM64:.*]] = pto.vmi.group_reduce_addf
 // ASSIGN-SAME: -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 1>>
-// ASSIGN: pto.vmi.addf %[[SUM64]], %[[RHS64]]
+// ASSIGN: pto.vmi.vadd %[[SUM64]], %[[RHS64]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 1>>
 
 // LOWER-LABEL: func.func @vmi_layout_assignment_group_slot_load_dual_layout(

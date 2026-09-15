@@ -137,3 +137,10 @@ per-lane bit-wise boolean op on the predicate.
   %not = pto.vmi.vnot %lt
       : !pto.vmi.mask<128xpred> -> !pto.vmi.mask<128xpred>
   ```
+
+- **lowering:** mask logic is normalised onto the mask interface by `pto.as` in
+  `vmi-lower-unified-to-legacy`: `vand` / `vor` / `vxor` / `vnot` on masks
+  become `pto.vmi.mask_and` / `mask_or` / `mask_xor` / `mask_not`, which lower
+  to `pto.pand` / `por` / `pxor` / `pnot`. The vreg form of the same spellings
+  becomes the vreg interface (`pto.vmi.andi` / `ori` / `xori` / `not`), which
+  keeps its governing predicate mask.

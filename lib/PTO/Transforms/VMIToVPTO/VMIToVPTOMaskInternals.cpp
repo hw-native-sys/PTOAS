@@ -10,6 +10,19 @@
 //===- VMIToVPTOMaskInternals.inc - VMIToVPTO internals -*- C++ -*-===//
 //===----------------------------------------------------------------------===//
 
+FailureOr<Value> createScalarOffsetConstant(Location loc, Type type,
+                                            int64_t value,
+                                            PatternRewriter &rewriter);
+
+namespace vmi_to_vpto_mask_detail {
+
+constexpr unsigned kElementBits8 = 8;
+constexpr unsigned kElementBits16 = 16;
+constexpr unsigned kElementBits32 = 32;
+constexpr unsigned kVRegBits = 2048;
+constexpr int64_t kPairWidth = 2;
+constexpr int64_t kQuadWidth = 4;
+
 static FailureOr<Value> compactDenseLaneStrideStorePredicate(
     Location loc, Value userMask, VMILayoutAttr layout, StringRef targetGranularity,
     PatternRewriter &rewriter) {
@@ -24,7 +37,7 @@ static FailureOr<Value> compactDenseLaneStrideStorePredicate(
   if (sourceGranularity == targetGranularity) {
     return compactMask;
   }
-  bool unpackLaneStride2 = layout.getLaneStride() == 2;
+  bool unpackLaneStride2 = layout.getLaneStride() == kPairWidth;
   if (unpackLaneStride2) {
     Value unpacked = rewriter
                          .create<PunpackOp>(loc, targetMaskType, compactMask,
@@ -32,7 +45,7 @@ static FailureOr<Value> compactDenseLaneStrideStorePredicate(
                          .getResult();
     return unpacked;
   }
-  bool supportsLaneStride4 = layout.getLaneStride() == 4 &&
+  bool supportsLaneStride4 = layout.getLaneStride() == kQuadWidth &&
                              sourceGranularity == "b8" &&
                              targetGranularity == "b32";
   if (!supportsLaneStride4) {
@@ -698,7 +711,7 @@ static FailureOr<Value> applyGroupMaskPadding(
           op, "failed to classify dynamic create_group_mask padding");
     }
     validLanes.push_back(*padding ? 0 : 1);
-    hasPadding |= *padding;
+    hasPadding = hasPadding || *padding;
   }
   if (!hasPadding) {
     return predicate;
@@ -1003,7 +1016,7 @@ std::optional<int64_t> getPrefixActiveLaneCount(ArrayRef<int8_t> activeLanes) {
   bool seenInactive = false;
   int64_t activeCount = 0;
   for (int8_t active : activeLanes) {
-    if (active) {
+    if (active != 0) {
       if (seenInactive) {
         return std::nullopt;
       }
@@ -1050,14 +1063,14 @@ static FailureOr<Value> materializeNonPrefixConstantMask(
     int64_t lanesPerPart, Value allTrue, PatternRewriter &rewriter) {
   Value result;
   for (int64_t lane = 0; lane < lanesPerPart;) {
-    while (lane < lanesPerPart && !activeLanes[lane]) {
+    while (lane < lanesPerPart && activeLanes[lane] == 0) {
       ++lane;
     }
     if (lane >= lanesPerPart) {
       break;
     }
     int64_t runBegin = lane;
-    while (lane < lanesPerPart && activeLanes[lane]) {
+    while (lane < lanesPerPart && activeLanes[lane] != 0) {
       ++lane;
     }
     int64_t runEnd = lane;
@@ -1122,10 +1135,6 @@ FailureOr<Value> materializeConstantMaskChunk(Location loc, MaskType maskType,
   }
   return materializePrefixMask(loc, maskType, 0, *lanesPerPart, rewriter);
 }
-
-FailureOr<Value> createScalarOffsetConstant(Location loc, Type type,
-                                            int64_t value,
-                                            PatternRewriter &rewriter);
 
 Value createChunkOffset(Location loc, Value baseOffset, int64_t laneOffset,
                         PatternRewriter &rewriter) {
@@ -1249,11 +1258,12 @@ FailureOr<Value> createGroupSlotIndexVector(Location loc, VRegType indexType,
   if (groupSize >= lanesPerPart) {
     return result;
   }
-  if (lanesPerPart % groupSize != 0) {
+  int64_t safeGroupSize = groupSize > 0 ? groupSize : 1;
+  if (lanesPerPart % safeGroupSize != 0) {
     return failure();
   }
 
-  int64_t groupsPerChunk = lanesPerPart / groupSize;
+  int64_t groupsPerChunk = lanesPerPart / safeGroupSize;
   for (int64_t localGroup = 1; localGroup < groupsPerChunk; ++localGroup) {
     FailureOr<Value> groupScalar = createScalarOffsetConstant(
         loc, indexType.getElementType(),
@@ -1275,10 +1285,14 @@ FailureOr<Value> createGroupSlotIndexVector(Location loc, VRegType indexType,
   return result;
 }
 
+} // namespace vmi_to_vpto_mask_detail
+
 std::optional<std::string> getX2MemoryDistToken(Type elementType,
                                                 StringRef prefix) {
   unsigned elementBits = pto::getPTOStorageElemBitWidth(elementType);
-  if (elementBits != 8 && elementBits != 16 && elementBits != 32) {
+  if (elementBits != vmi_to_vpto_mask_detail::kElementBits8 &&
+      elementBits != vmi_to_vpto_mask_detail::kElementBits16 &&
+      elementBits != vmi_to_vpto_mask_detail::kElementBits32) {
     return std::nullopt;
   }
   return (Twine(prefix) + "_B" + Twine(elementBits)).str();
@@ -1290,11 +1304,15 @@ std::optional<std::string> getDenseLaneStrideLoadDistToken(VMIVRegType type) {
     return std::nullopt;
   }
   unsigned elementBits = pto::getPTOStorageElemBitWidth(type.getElementType());
-  if (layout.getLaneStride() == 2 &&
-      (elementBits == 8 || elementBits == 16 || elementBits == 32)) {
+  if (layout.getLaneStride() == vmi_to_vpto_mask_detail::kPairWidth &&
+      (elementBits == vmi_to_vpto_mask_detail::kElementBits8 ||
+       elementBits == vmi_to_vpto_mask_detail::kElementBits16 ||
+       elementBits == vmi_to_vpto_mask_detail::kElementBits32)) {
     return (Twine("UNPK_B") + Twine(elementBits)).str();
   }
-  bool isUnpack4 = layout.getLaneStride() == 4 && elementBits == 8;
+  bool isUnpack4 =
+      layout.getLaneStride() == vmi_to_vpto_mask_detail::kQuadWidth &&
+      elementBits == vmi_to_vpto_mask_detail::kElementBits8;
   if (isUnpack4) {
     return std::string("UNPK4");
   }
@@ -1307,19 +1325,27 @@ getLaneStrideStoreDistToken(VMILayoutAttr layout, Type elementType) {
     return std::nullopt;
   }
   unsigned elementBits = pto::getPTOStorageElemBitWidth(elementType);
-  bool isPackB16 = layout.getLaneStride() == 2 && elementBits == 8;
+  bool isPackB16 =
+      layout.getLaneStride() == vmi_to_vpto_mask_detail::kPairWidth &&
+      elementBits == vmi_to_vpto_mask_detail::kElementBits8;
   if (isPackB16) {
     return std::string("PK_B16");
   }
-  bool isPackB32 = layout.getLaneStride() == 2 && elementBits == 16;
+  bool isPackB32 =
+      layout.getLaneStride() == vmi_to_vpto_mask_detail::kPairWidth &&
+      elementBits == vmi_to_vpto_mask_detail::kElementBits16;
   if (isPackB32) {
     return std::string("PK_B32");
   }
-  bool isPackB64 = layout.getLaneStride() == 2 && elementBits == 32;
+  bool isPackB64 =
+      layout.getLaneStride() == vmi_to_vpto_mask_detail::kPairWidth &&
+      elementBits == vmi_to_vpto_mask_detail::kElementBits32;
   if (isPackB64) {
     return std::string("PK_B64");
   }
-  bool isPack4B32 = layout.getLaneStride() == 4 && elementBits == 8;
+  bool isPack4B32 =
+      layout.getLaneStride() == vmi_to_vpto_mask_detail::kQuadWidth &&
+      elementBits == vmi_to_vpto_mask_detail::kElementBits8;
   if (isPack4B32) {
     return std::string("PK4_B32");
   }
@@ -1340,15 +1366,20 @@ getLaneStrideStoreMaskGranularity(VMILayoutAttr layout, Type elementType) {
     return std::nullopt;
   }
   unsigned elementBits = pto::getPTOStorageElemBitWidth(elementType);
-  bool isB16Mask = layout.getLaneStride() == 2 && elementBits == 8;
+  bool isB16Mask =
+      layout.getLaneStride() == vmi_to_vpto_mask_detail::kPairWidth &&
+      elementBits == vmi_to_vpto_mask_detail::kElementBits8;
   if (isB16Mask) {
     return StringRef("b16");
   }
-  if (layout.getLaneStride() == 2 &&
-      (elementBits == 16 || elementBits == 32)) {
+  if (layout.getLaneStride() == vmi_to_vpto_mask_detail::kPairWidth &&
+      (elementBits == vmi_to_vpto_mask_detail::kElementBits16 ||
+       elementBits == vmi_to_vpto_mask_detail::kElementBits32)) {
     return StringRef("b32");
   }
-  bool isB32MaskForPack4 = layout.getLaneStride() == 4 && elementBits == 8;
+  bool isB32MaskForPack4 =
+      layout.getLaneStride() == vmi_to_vpto_mask_detail::kQuadWidth &&
+      elementBits == vmi_to_vpto_mask_detail::kElementBits8;
   if (isB32MaskForPack4) {
     return StringRef("b32");
   }
@@ -1371,16 +1402,21 @@ getDenseLaneStrideMaskedStoreMaskGranularity(VMIVRegType type) {
     return std::nullopt;
   }
   unsigned elementBits = pto::getPTOStorageElemBitWidth(type.getElementType());
-  bool isB16MaskedStore = layout.getLaneStride() == 2 && elementBits == 8;
+  bool isB16MaskedStore =
+      layout.getLaneStride() == vmi_to_vpto_mask_detail::kPairWidth &&
+      elementBits == vmi_to_vpto_mask_detail::kElementBits8;
   if (isB16MaskedStore) {
     return StringRef("b16");
   }
-  bool isB32MaskedStore = layout.getLaneStride() == 2 && elementBits == 16;
+  bool isB32MaskedStore =
+      layout.getLaneStride() == vmi_to_vpto_mask_detail::kPairWidth &&
+      elementBits == vmi_to_vpto_mask_detail::kElementBits16;
   if (isB32MaskedStore) {
     return StringRef("b32");
   }
   bool isB32MaskedStorePack4 =
-      layout.getLaneStride() == 4 && elementBits == 8;
+      layout.getLaneStride() == vmi_to_vpto_mask_detail::kQuadWidth &&
+      elementBits == vmi_to_vpto_mask_detail::kElementBits8;
   if (isB32MaskedStorePack4) {
     return StringRef("b32");
   }
@@ -1389,7 +1425,9 @@ getDenseLaneStrideMaskedStoreMaskGranularity(VMIVRegType type) {
 
 std::optional<std::string> getPointStoreDistToken(Type elementType) {
   unsigned elementBits = pto::getPTOStorageElemBitWidth(elementType);
-  if (elementBits != 8 && elementBits != 16 && elementBits != 32) {
+  if (elementBits != vmi_to_vpto_mask_detail::kElementBits8 &&
+      elementBits != vmi_to_vpto_mask_detail::kElementBits16 &&
+      elementBits != vmi_to_vpto_mask_detail::kElementBits32) {
     return std::nullopt;
   }
   return (Twine("1PT_B") + Twine(elementBits)).str();
@@ -1397,11 +1435,15 @@ std::optional<std::string> getPointStoreDistToken(Type elementType) {
 
 std::optional<std::string> getScalarBroadcastLoadDistToken(Type elementType) {
   unsigned elementBits = pto::getPTOStorageElemBitWidth(elementType);
-  if (elementBits != 8 && elementBits != 16 && elementBits != 32) {
+  if (elementBits != vmi_to_vpto_mask_detail::kElementBits8 &&
+      elementBits != vmi_to_vpto_mask_detail::kElementBits16 &&
+      elementBits != vmi_to_vpto_mask_detail::kElementBits32) {
     return std::nullopt;
   }
   return (Twine("BRC_B") + Twine(elementBits)).str();
 }
+
+namespace vmi_to_vpto_mask_detail {
 
 struct VPTOCmpMode {
   StringRef mode;
@@ -1563,12 +1605,14 @@ LogicalResult verifyIdentityPartForwarding(Operation *op,
 
 FailureOr<VRegType> getUnsignedCarrierVRegType(MLIRContext *ctx,
                                                unsigned elementBits) {
-  if (elementBits != 8 && elementBits != 16 && elementBits != 32) {
+  if (elementBits != kElementBits8 && elementBits != kElementBits16 &&
+      elementBits != kElementBits32) {
     return failure();
   }
+  unsigned safeElementBits = elementBits == 0 ? 1 : elementBits;
   auto elementType = IntegerType::get(
       ctx, elementBits, IntegerType::SignednessSemantics::Unsigned);
-  return VRegType::get(ctx, 2048 / elementBits, elementType);
+  return VRegType::get(ctx, kVRegBits / safeElementBits, elementType);
 }
 
 FailureOr<VRegType>
@@ -1607,26 +1651,28 @@ FailureOr<Value> bitcastVReg(Location loc, Value value, Type resultType,
 FailureOr<VRegType> getVcaddResultType(VRegType inputType) {
   auto inputIntegerType = dyn_cast<IntegerType>(inputType.getElementType());
   bool preservesType =
-      !inputIntegerType || inputIntegerType.getWidth() == 32;
+      !inputIntegerType || inputIntegerType.getWidth() == kElementBits32;
   if (preservesType) {
     return inputType;
   }
   unsigned inputWidth = inputIntegerType.getWidth();
-  if (inputWidth != 8 && inputWidth != 16) {
+  if (inputWidth != kElementBits8 && inputWidth != kElementBits16) {
     return failure();
   }
   auto resultElementType = IntegerType::get(
-      inputType.getContext(), inputWidth * 2,
+      inputType.getContext(), inputWidth * kPairWidth,
       inputIntegerType.getSignedness());
   return VRegType::get(inputType.getContext(),
-                       inputType.getElementCount() / 2, resultElementType);
+                       inputType.getElementCount() / kPairWidth,
+                       resultElementType);
 }
 
 FailureOr<Value> unpackToNextCarrier(Location loc, Value source,
                                      unsigned sourceBits, int64_t partIndex,
                                      PatternRewriter &rewriter) {
   FailureOr<VRegType> resultType =
-      getUnsignedCarrierVRegType(rewriter.getContext(), sourceBits * 2);
+      getUnsignedCarrierVRegType(rewriter.getContext(),
+                                 sourceBits * kPairWidth);
   if (failed(resultType)) {
     return failure();
   }
@@ -1676,9 +1722,9 @@ static FailureOr<unsigned> validateDenseLaneStrideShape(
   }
   unsigned elementBits = pto::getPTOStorageElemBitWidth(elementType);
   bool unsupportedShape =
-      (laneStride != 2 && laneStride != 4) ||
-      (laneStride == 4 && elementBits != 8) ||
-      (elementBits != 8 && elementBits != 16);
+      (laneStride != kPairWidth && laneStride != kQuadWidth) ||
+      (laneStride == kQuadWidth && elementBits != kElementBits8) ||
+      (elementBits != kElementBits8 && elementBits != kElementBits16);
   if (unsupportedShape) {
     StringRef direction = unpack ? "unpack" : "pack";
     return rewriter.notifyMatchFailure(
@@ -1699,14 +1745,15 @@ static FailureOr<Value> materializeContiguousLaneStridePart(
   }
   FailureOr<Value> unpacked = unpackToNextCarrier(
       op->getLoc(), *current, elementBits,
-      laneStride == 4 ? part / 2 : part, rewriter);
+      laneStride == kQuadWidth ? part / kPairWidth : part, rewriter);
   if (failed(unpacked)) {
     return failure();
   }
   current = *unpacked;
-  if (laneStride == 4) {
-    unpacked = unpackToNextCarrier(op->getLoc(), *current, elementBits * 2,
-                                   part % 2, rewriter);
+  if (laneStride == kQuadWidth) {
+    unpacked = unpackToNextCarrier(op->getLoc(), *current,
+                                   elementBits * kPairWidth,
+                                   part % kPairWidth, rewriter);
     if (failed(unpacked)) {
       return failure();
     }
@@ -1738,11 +1785,12 @@ FailureOr<SmallVector<Value>> materializeContiguousToLaneStride(
   SmallVector<Value> results;
   results.reserve(resultTypes.size());
   for (auto [resultIndex, resultType] : llvm::enumerate(resultTypes)) {
-    int64_t sourceIndex = resultIndex / laneStride;
+    int64_t safeLaneStride = laneStride > 0 ? laneStride : 1;
+    int64_t sourceIndex = resultIndex / safeLaneStride;
     if (sourceIndex >= static_cast<int64_t>(sourceParts.size())) {
       return failure();
     }
-    int64_t part = resultIndex % laneStride;
+    int64_t part = resultIndex % safeLaneStride;
     FailureOr<Value> result = materializeContiguousLaneStridePart(
         op, sourceParts[sourceIndex], resultType, *elementBits, *inputCarrier,
         laneStride, part, rewriter);
@@ -1758,12 +1806,12 @@ static FailureOr<Value> mergeLaneStrideCarrierPair(
     Operation *op, Value lowCarrier, Value highCarrier, unsigned carrierBits,
     PatternRewriter &rewriter) {
   FailureOr<Value> low = packToPreviousCarrier(
-      op->getLoc(), lowCarrier, carrierBits / 2, "LOWER", rewriter);
+      op->getLoc(), lowCarrier, carrierBits / kPairWidth, "LOWER", rewriter);
   if (failed(low)) {
     return failure();
   }
   FailureOr<Value> high = packToPreviousCarrier(
-      op->getLoc(), highCarrier, carrierBits / 2, "HIGHER", rewriter);
+      op->getLoc(), highCarrier, carrierBits / kPairWidth, "HIGHER", rewriter);
   if (failed(high)) {
     return failure();
   }
@@ -1795,8 +1843,9 @@ static FailureOr<Value> materializeLaneStrideResultPart(
   unsigned currentBits = carrierBits;
   while (currentBits > elementBits) {
     SmallVector<Value> nextLevel;
-    nextLevel.reserve((currentLevel.size() + 1) / 2);
-    for (size_t index = 0; index < currentLevel.size(); index += 2) {
+    nextLevel.reserve((currentLevel.size() + 1) / kPairWidth);
+    for (size_t index = 0; index < currentLevel.size();
+         index += kPairWidth) {
       Value merged;
       if (index + 1 < currentLevel.size()) {
         FailureOr<Value> pair = mergeLaneStrideCarrierPair(
@@ -1808,7 +1857,8 @@ static FailureOr<Value> materializeLaneStrideResultPart(
         merged = *pair;
       } else {
         FailureOr<Value> low = packToPreviousCarrier(
-            op->getLoc(), currentLevel[index], currentBits / 2, "LOWER",
+            op->getLoc(), currentLevel[index], currentBits / kPairWidth,
+            "LOWER",
             rewriter);
         if (failed(low)) {
           return failure();
@@ -1818,7 +1868,7 @@ static FailureOr<Value> materializeLaneStrideResultPart(
       nextLevel.push_back(merged);
     }
     currentLevel = std::move(nextLevel);
-    currentBits /= 2;
+    currentBits /= kPairWidth;
   }
   bool invalidResultArity = currentLevel.size() != 1;
   if (invalidResultArity) {
@@ -1852,18 +1902,18 @@ static FailureOr<Value> materializeGroupSlotLaneStridePart(
       return failure();
     }
     current = *unpacked;
-    currentStride *= 2;
-    carrierBits *= 2;
+    currentStride *= kPairWidth;
+    carrierBits *= kPairWidth;
   }
   while (currentStride > resultStride) {
     FailureOr<Value> packed = packToPreviousCarrier(
-        op->getLoc(), *current, carrierBits / 2, "LOWER", rewriter);
+        op->getLoc(), *current, carrierBits / kPairWidth, "LOWER", rewriter);
     if (failed(packed)) {
       return failure();
     }
     current = *packed;
-    currentStride /= 2;
-    carrierBits /= 2;
+    currentStride /= kPairWidth;
+    carrierBits /= kPairWidth;
   }
   return bitcastVReg(op->getLoc(), *current, resultType, rewriter);
 }
@@ -1889,4 +1939,6 @@ static FailureOr<SmallVector<Value>> materializeLaneStrideResultList(
   return results;
 }
 
+} // namespace vmi_to_vpto_mask_detail
 
+using namespace vmi_to_vpto_mask_detail;

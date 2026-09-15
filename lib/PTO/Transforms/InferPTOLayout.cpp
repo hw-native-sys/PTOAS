@@ -26,6 +26,7 @@
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/VMIControlFlowSupport.h"
+#include "PTO/Support/CodeConstants.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -54,6 +55,8 @@ namespace {
 static constexpr llvm::StringLiteral kLayoutAttrName = "layout";
 static constexpr llvm::StringLiteral kInferredLayoutAttrName =
     "pto.inferred_layout";
+static constexpr int64_t kTileRank = kValue2;
+static constexpr int64_t kNonSingletonDimSize = 1;
 
 static LayoutAttr getViewTypeLayoutAttr(Type type) {
   if (auto tensorView = dyn_cast<TensorViewType>(type)) {
@@ -119,7 +122,7 @@ static unsigned elemByteSize(Type ty) {
 static bool isF8E8M0ElemType(Type ty) {
   return getPTOStorageElemByteSize(ty) == 1 && isa<Type>(ty) &&
          ty.getTypeID() == ty.getTypeID() &&
-         [&]() {
+         [ty]() {
            std::string buffer;
            llvm::raw_string_ostream os(buffer);
            os << ty;
@@ -381,7 +384,7 @@ static void mergePreferredLayoutFromTLoad(pto::TLoadOp load,
   }
   if (bl.getValue() == BLayout::RowMajor &&
       sl.getValue() == SLayout::RowMajor &&
-      dstTy.getShape().size() == 2 && dstTy.getShape()[0] != 1) {
+      dstTy.getShape().size() == kTileRank && dstTy.getShape()[0] != kNonSingletonDimSize) {
     mergeLayoutPreference(result, Layout::MX_A_ZZ);
   } else if (bl.getValue() == BLayout::ColMajor &&
              sl.getValue() == SLayout::ColMajor) {
@@ -873,7 +876,7 @@ private:
     return nodes[id].parent;
   }
 
-  const LogicalResult reportConflict(Operation *op, Layout lhs, Layout rhs) {
+  LogicalResult reportConflict(Operation *op, Layout lhs, Layout rhs) const {
     return op->emitError()
            << "view layout conflict: " << stringifyLayout(lhs) << " and "
            << stringifyLayout(rhs)
@@ -932,7 +935,7 @@ private:
   }
 
   LogicalResult seedMakeTensorViewLayouts() {
-    WalkResult result = module.walk([&](MakeTensorViewOp op) {
+    WalkResult result = module.walk([this](MakeTensorViewOp op) {
       auto layout = op.getLayoutAttr();
       if (!layout) {
         return WalkResult::advance();
@@ -970,7 +973,7 @@ private:
       return success();
     }
     FunctionType functionType = function.getFunctionType();
-    WalkResult result = function.walk([&](func::ReturnOp returnOp) {
+    WalkResult result = function.walk([this, functionType](func::ReturnOp returnOp) {
       return failed(seedReturnLayouts(returnOp, functionType))
                  ? WalkResult::interrupt()
                  : WalkResult::advance();
@@ -979,7 +982,7 @@ private:
   }
 
   LogicalResult seedFunctionResultLayouts() {
-    WalkResult result = module.walk([&](func::FuncOp function) {
+    WalkResult result = module.walk([this](func::FuncOp function) {
       return failed(seedFunctionResultLayouts(function))
                  ? WalkResult::interrupt()
                  : WalkResult::advance();
@@ -988,14 +991,14 @@ private:
   }
 
   LogicalResult collectValuesAndSeeds() {
-    module.walk([&](Operation *op) { collectOperationValues(op); });
+    module.walk([this](Operation *op) { collectOperationValues(op); });
     if (failed(seedMakeTensorViewLayouts())) {
       return failure();
     }
     return seedFunctionResultLayouts();
   }
 
-  const LogicalResult reportAmbiguousConsumerConflict(Operation *consumer) {
+  LogicalResult reportAmbiguousConsumerConflict(Operation *consumer) const {
     consumer->emitError(
         "ambiguous tensor view has conflicting ND and DN consumer layouts");
     return failure();
@@ -1018,7 +1021,7 @@ private:
       return success();
     }
     unsigned root = find(it->second);
-    if (!ambiguousRoots.count(root)) {
+    if (ambiguousRoots.count(root) == 0) {
       return success();
     }
     if (nodes[root].layout) {
@@ -1054,7 +1057,7 @@ private:
     }
 
     DenseMap<unsigned, LayoutPreference> preferences;
-    WalkResult loads = module.walk([&](pto::TLoadOp op) {
+    WalkResult loads = module.walk([this, &ambiguousRoots, &preferences](pto::TLoadOp op) {
       return failed(recordAmbiguousConsumerLayout(
                  op.getSrc(), op.getDst().getType(), op, ambiguousRoots,
                  preferences))
@@ -1065,7 +1068,7 @@ private:
       return failure();
     }
 
-    WalkResult stores = module.walk([&](pto::TStoreOp op) {
+    WalkResult stores = module.walk([this, &ambiguousRoots, &preferences](pto::TStoreOp op) {
       return failed(recordAmbiguousConsumerLayout(
                  op.getDst(), op.getSrc().getType(), op, ambiguousRoots,
                  preferences))
@@ -1118,7 +1121,7 @@ private:
 
   LogicalResult addExecuteRegionConstraints(scf::ExecuteRegionOp execute) {
     Operation *executeOp = execute.getOperation();
-    WalkResult result = execute.getRegion().walk([&](scf::YieldOp yield) {
+    WalkResult result = execute.getRegion().walk([this, &execute, executeOp](scf::YieldOp yield) {
       bool belongsToExecute = yield->getParentOp() == executeOp;
       if (!belongsToExecute) {
         return WalkResult::advance();
@@ -1131,7 +1134,7 @@ private:
   }
 
   LogicalResult addIndexSwitchConstraints(scf::IndexSwitchOp indexSwitch) {
-    auto addTerminator = [&](Block &block) {
+    auto addTerminator = [this, &indexSwitch](Block &block) {
       auto yield = dyn_cast<scf::YieldOp>(block.getTerminator());
       return yield ? addYieldConstraints(indexSwitch->getResults(), yield,
                                          indexSwitch)
@@ -1259,7 +1262,7 @@ private:
         return failure();
       }
     }
-    WalkResult result = callee.walk([&](func::ReturnOp returnOp) {
+    WalkResult result = callee.walk([this, &call](func::ReturnOp returnOp) {
       for (auto [index, result] : llvm::enumerate(call.getResults())) {
         bool hasOperand = index < returnOp.getNumOperands();
         if (hasOperand &&
@@ -1296,14 +1299,14 @@ private:
 
   LogicalResult addForConstraints(scf::ForOp forOp) {
     return VMIControlFlowSupport::addForConstraints(
-        forOp, [&](Value lhs, Value rhs, Operation *anchor) {
+        forOp, [this](Value lhs, Value rhs, Operation *anchor) {
           return unite(lhs, rhs, anchor);
         });
   }
 
   LogicalResult addWhileConstraints(scf::WhileOp whileOp) {
     return VMIControlFlowSupport::addWhileConstraints(
-        whileOp, [&](Value lhs, Value rhs, Operation *anchor) {
+        whileOp, [this](Value lhs, Value rhs, Operation *anchor) {
           return unite(lhs, rhs, anchor);
         });
   }
@@ -1317,7 +1320,7 @@ private:
                                 branch.getFalseDestOperands(), branch);
   }
 
-  const LogicalResult addIndirectCallConstraints(func::CallIndirectOp call) {
+  LogicalResult addIndirectCallConstraints(func::CallIndirectOp call) const {
     if (!hasViewValueTypes(call)) {
       return success();
     }
@@ -1401,7 +1404,7 @@ private:
   }
 
   LogicalResult addConstraints() {
-    WalkResult result = module.walk([&](Operation *op) {
+    WalkResult result = module.walk([this](Operation *op) {
       return failed(addConstraint(op)) ? WalkResult::interrupt()
                                        : WalkResult::advance();
     });

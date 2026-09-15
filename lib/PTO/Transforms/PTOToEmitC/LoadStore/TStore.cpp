@@ -19,6 +19,9 @@ using namespace mlir::pto;
 namespace mlir {
 namespace pto {
 
+constexpr unsigned kTStoreMaxTemplateArgumentCount = mlir::pto::kValue5;
+constexpr unsigned kTStoreMaxOperandCount = mlir::pto::kValue3;
+
 struct PTOTStoreToTSTORE : public OpConversionPattern<pto::TStoreOp> {
   using OpConversionPattern<pto::TStoreOp>::OpConversionPattern;
 
@@ -73,7 +76,7 @@ struct PTOTStoreToTSTORE : public OpConversionPattern<pto::TStoreOp> {
   // attributes (phase / atomic / relu / preQuant).
   FailureOr<ArrayAttr> resolveTStoreTemplateArgs(pto::TStoreOp op,
                                       ConversionPatternRewriter &rewriter,
-                                      Value src, Value dstArg, Value fp,
+                                      Value src, Value dstArg,
                                       Value preQuantScalar) const {
     auto *ctx = rewriter.getContext();
     const auto phase = op.getStPhase();
@@ -84,7 +87,7 @@ struct PTOTStoreToTSTORE : public OpConversionPattern<pto::TStoreOp> {
     const bool atomicNonDefault = atomicType != pto::AtomicType::AtomicNone;
     const bool reluNonDefault = reluPreMode != pto::ReluPreMode::NoRelu;
 
-    auto getOpaqueTok = [&](Value v, StringRef name) -> FailureOr<std::string> {
+    auto getOpaqueTok = [](Value v) -> FailureOr<std::string> {
       if (auto ot = mlir::dyn_cast<emitc::OpaqueType>(v.getType()))
         return ot.getValue().str();
       return FailureOr<std::string>();
@@ -109,13 +112,13 @@ targs = rewriter.getArrayAttr({
 targs = ArrayAttr{};
   }
 } else {
-  auto srcTokOr = getOpaqueTok(src, "src");
-  auto dstTokOr = getOpaqueTok(dstArg, "dst");
+  auto srcTokOr = getOpaqueTok(src);
+  auto dstTokOr = getOpaqueTok(dstArg);
   if (failed(srcTokOr) || failed(dstTokOr))
     return failure();
 
   // Token list: [Phase], TileData, GlobalData, AtomicType[, ReluPreMode].
-  SmallVector<Attribute, 5> targsList;
+  SmallVector<Attribute, kTStoreMaxTemplateArgumentCount> targsList;
   if (phaseNonDefault)
     targsList.push_back(
         emitc::OpaqueAttr::get(ctx, stPhaseTok(phase)));
@@ -144,13 +147,13 @@ targs = ArrayAttr{};
     if (hasFp)
       return emitTStoreFp(op, rewriter, src, dstArg, dst, fp);
 
-    auto targsOr = resolveTStoreTemplateArgs(op, rewriter, src, dstArg, fp,
+    auto targsOr = resolveTStoreTemplateArgs(op, rewriter, src, dstArg,
                                              preQuantScalar);
     if (failed(targsOr))
       return failure();
     ArrayAttr targs = *targsOr;
 
-    SmallVector<Value, 3> operands{dstArg, src};
+    SmallVector<Value, kTStoreMaxOperandCount> operands{dstArg, src};
     if (hasPreQuantScalar)
       operands.push_back(preQuantScalar);
 
@@ -168,14 +171,14 @@ targs = ArrayAttr{};
     const auto atomicType = op.getAtomicType();
     const auto reluPreMode = op.getReluPreMode();
 
-    auto getOpaqueTok = [&](Value v, StringRef name) -> FailureOr<std::string> {
+    auto getOpaqueTok = [&rewriter, op](Value v, StringRef name) -> FailureOr<std::string> {
       if (auto ot = mlir::dyn_cast<emitc::OpaqueType>(v.getType()))
         return ot.getValue().str();
       return rewriter.notifyMatchFailure(op, (name + " must be emitc::OpaqueType").str());
     };
 
     ArrayAttr targs;
-    SmallVector<Value, 3> operands{dstArg, src, fp};
+    SmallVector<Value, kTStoreMaxOperandCount> operands{dstArg, src, fp};
     if (atomicType != pto::AtomicType::AtomicNone ||
         reluPreMode != pto::ReluPreMode::NoRelu) {
       auto srcTokOr = getOpaqueTok(src, "src");

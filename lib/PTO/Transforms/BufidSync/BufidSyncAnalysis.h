@@ -22,7 +22,6 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/raw_ostream.h"
 
-
 namespace mlir {
 namespace pto {
 
@@ -265,7 +264,10 @@ inline void printOp2BufSync(llvm::raw_ostream &os,
 
   DenseMap<const Operation *, unsigned> opOrder;
   unsigned orderIdx = 0;
-  func.walk([&](Operation *op) { opOrder[op] = orderIdx++; });
+  func.walk([&opOrder, &orderIdx](
+                Operation *op) { // NOLINT(readability-non-const-parameter)
+    opOrder[op] = orderIdx++;
+  });
 
   std::sort(sortedOps.begin(), sortedOps.end(),
             [&](const Operation *a, const Operation *b) {

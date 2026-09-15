@@ -20,14 +20,14 @@
 #ifndef PTO_IR_VPTO_VPTOUBOPS_INTERNAL_H
 #define PTO_IR_VPTO_VPTOUBOPS_INTERNAL_H
 
+// Required by the split UB-op translation units for shared MLIR/operation
+// declarations; this header is their sole include.
 #include "VPTOInternal.h"
 
 namespace mlir::pto::ubops_detail {
 
 using namespace mlir;
 using namespace mlir::pto;
-
-
 } // namespace mlir::pto::ubops_detail
 
 #endif // PTO_IR_VPTO_VPTOUBOPS_INTERNAL_H

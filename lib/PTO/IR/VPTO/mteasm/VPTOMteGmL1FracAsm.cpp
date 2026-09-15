@@ -68,7 +68,7 @@ ParseResult validateMteGmL1FracOperands(
     size_t srcLayoutOps, size_t srcLayoutTypes,
     size_t dstGroupOps, size_t dstGroupTypes,
     size_t ctrlOps, size_t ctrlTypes) {
-  if (shapeOps != 2 || shapeTypes != 2) {
+  if (shapeOps != mlir::pto::kValue2 || shapeTypes != mlir::pto::kValue2) {
     return parser.emitError(parser.getCurrentLocation(),
                             "shape requires exactly two operands and types");
   }

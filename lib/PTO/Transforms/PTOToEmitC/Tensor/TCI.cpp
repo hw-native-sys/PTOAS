@@ -19,6 +19,10 @@ using namespace mlir::pto;
 namespace mlir {
 namespace pto {
 
+constexpr unsigned kTCIInt16BitWidth = mlir::pto::kValue16;
+constexpr unsigned kTCIMaxTemplateArgumentCount = mlir::pto::kValue4;
+constexpr unsigned kTCIMaxOperandCount = mlir::pto::kValue3;
+
 struct PTOTCIToEmitC : public OpConversionPattern<pto::TCIOp> {
   using OpConversionPattern<pto::TCIOp>::OpConversionPattern;
 
@@ -36,7 +40,7 @@ struct PTOTCIToEmitC : public OpConversionPattern<pto::TCIOp> {
     std::string scalarTok = "int32_t";
     if (auto it = dyn_cast<IntegerType>(op->getOperand(0).getType())) {
       bool isUnsigned = it.isUnsigned();
-      if (it.getWidth() == 16) {
+      if (it.getWidth() == kTCIInt16BitWidth) {
         scalarTok = isUnsigned ? "uint16_t" : "int16_t";
       } else {
         scalarTok = isUnsigned ? "uint32_t" : "int32_t";
@@ -48,7 +52,7 @@ struct PTOTCIToEmitC : public OpConversionPattern<pto::TCIOp> {
 
     ArrayAttr targs;
     if (auto ot = mlir::dyn_cast<emitc::OpaqueType>(dst.getType())) {
-      SmallVector<Attribute, 4> templateArgVec;
+      SmallVector<Attribute, kTCIMaxTemplateArgumentCount> templateArgVec;
       templateArgVec.push_back(
           emitc::OpaqueAttr::get(ctx, ot.getValue().str()));
       if (tmp) {
@@ -66,7 +70,7 @@ struct PTOTCIToEmitC : public OpConversionPattern<pto::TCIOp> {
       targs = rewriter.getArrayAttr({});
     }
 
-    SmallVector<Value, 3> operands{dst, S};
+    SmallVector<Value, kTCIMaxOperandCount> operands{dst, S};
     if (tmp)
       operands.push_back(tmp);
 

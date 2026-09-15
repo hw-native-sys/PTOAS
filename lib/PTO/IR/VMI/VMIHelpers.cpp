@@ -225,7 +225,7 @@ static ParseResult parseNumGroupsLayoutFields(AsmParser &parser,
   return success();
 }
 
-Attribute VMILayoutAttr::parse(AsmParser &odsParser, Type) {
+Attribute VMILayoutAttr::parse(AsmParser &odsParser, Type odsType) {
   SMLoc loc = odsParser.getCurrentLocation();
   StringRef kind;
   int64_t factor = 1;
@@ -735,19 +735,6 @@ LogicalResult verifyFloatUnaryVRegOp(Operation *op, VMIVRegType source,
     return op->emitOpError("requires floating-point-like VMI element type");
   }
   return verifyAllSameVRegShapeAndLayout(op, {source, result},
-                                         /*requireSameElement=*/true);
-}
-
-LogicalResult verifyFloatTernaryVRegOp(Operation *op, VMIVRegType lhs,
-                                              VMIVRegType rhs, VMIVRegType acc,
-                                              VMIVRegType result) {
-  if (failed(verifyBF16x2ComputeElementType(op, lhs.getElementType()))) {
-    return failure();
-  }
-  if (!isVMIFloatLikeType(lhs.getElementType())) {
-    return op->emitOpError("requires floating-point-like VMI element type");
-  }
-  return verifyAllSameVRegShapeAndLayout(op, {lhs, rhs, acc, result},
                                          /*requireSameElement=*/true);
 }
 

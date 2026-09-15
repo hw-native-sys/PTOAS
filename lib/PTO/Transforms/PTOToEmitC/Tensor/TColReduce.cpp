@@ -119,7 +119,7 @@ struct PTOColSumToEmitC : public OpConversionPattern<pto::TColSumOp> {
       Value isBinaryVal = rewriter.create<emitc::ConstantOp>(
           loc, boolTy, emitc::OpaqueAttr::get(ctx, tok));
 
-      SmallVector<unsigned, 3> tileSlotOrder;
+      SmallVector<unsigned, mlir::pto::kValue3> tileSlotOrder;
       tileSlotOrder.push_back(op.getDstMutable().getOperandNumber());
       tileSlotOrder.push_back(op.getSrcMutable().getOperandNumber());
       tileSlotOrder.push_back(op.getTmpMutable().begin()->getOperandNumber());
@@ -130,7 +130,7 @@ struct PTOColSumToEmitC : public OpConversionPattern<pto::TColSumOp> {
           tileSlotOrder);
     } else {
       // Format 1: without tmp and isBinary
-      SmallVector<unsigned, 2> tileSlotOrder;
+      SmallVector<unsigned, mlir::pto::kValue2> tileSlotOrder;
       tileSlotOrder.push_back(op.getDstMutable().getOperandNumber());
       tileSlotOrder.push_back(op.getSrcMutable().getOperandNumber());
       createLastUseAwareOpaqueCall(rewriter, op.getOperation(), TypeRange{},

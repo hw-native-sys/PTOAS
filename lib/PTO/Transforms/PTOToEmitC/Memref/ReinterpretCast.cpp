@@ -31,7 +31,6 @@ struct ReinterpretCastToEmitC : public OpConversionPattern<memref::ReinterpretCa
 
     auto asAttr = dyn_cast_or_null<pto::AddressSpaceAttr>(resMrTy.getMemorySpace());
     const bool isGm = (!asAttr || asAttr.getAddressSpace() == pto::AddressSpace::GM);
-
     // GM: keep pointer arithmetic.
     if (isGm)
       return emitGmReinterpretCast(op, adaptor, rewriter);

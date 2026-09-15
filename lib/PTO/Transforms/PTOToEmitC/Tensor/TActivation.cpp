@@ -30,7 +30,7 @@ struct PTOLogToEmitC : public OpConversionPattern<pto::TLogOp> {
     Value src = adaptor.getSrc();
     Value dst = adaptor.getDst();
 
-    SmallVector<Value, 2> operands{dst, src};
+    SmallVector<Value, mlir::pto::kValue2> operands{dst, src};
     ArrayAttr templateArgs;
     if (op.getPrecisionType() != pto::LogPrecision::Default) {
       StringRef precisionTok;
@@ -66,7 +66,7 @@ struct PTOLReluToEmitC : public OpConversionPattern<pto::TLReluOp> {
     Value slope = adaptor.getSlope();
     Value dst = adaptor.getDst();
 
-          SmallVector<Value, 3> operands{dst, src, slope};
+    SmallVector<Value, mlir::pto::kValue3> operands{dst, src, slope};
 
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TLRELU",
@@ -91,7 +91,7 @@ struct PTOPreluToEmitC : public OpConversionPattern<pto::TPReluOp> {
     Value dst  = adaptor.getDst();
 
     // C++ interface: TPRELU(dst, src0, src1, tmp) — last parameter is tmp.
-    SmallVector<Value, 4> operands{dst, src0, src1, tmp};
+    SmallVector<Value, mlir::pto::kValue4> operands{dst, src0, src1, tmp};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TPRELU",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
@@ -112,7 +112,7 @@ struct PTOReluToEmitC : public OpConversionPattern<pto::TReluOp> {
     Value src = adaptor.getSrc();
     Value dst = adaptor.getDst();
 
-    SmallVector<Value, 2> operands{dst, src};
+    SmallVector<Value, mlir::pto::kValue2> operands{dst, src};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TRELU",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},

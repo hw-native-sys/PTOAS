@@ -8,6 +8,9 @@
 
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
 
+static constexpr size_t kTGatherOptionalInputCount = mlir::pto::kValue2;
+static constexpr size_t kTGatherTooManyInputCount = mlir::pto::kValue3;
+
 static ParseResult parseGatherScatterMaskInputs(
     OpAsmParser& parser, OperationState& result, Type& srcType, bool& hasMask, bool braceBeforeValidation)
 {
@@ -41,7 +44,7 @@ static ParseResult parseTGatherExtraInputs(OpAsmParser& parser, TGatherParseStat
     }
     state.insOps.push_back(extra);
     while (succeeded(parser.parseOptionalComma())) {
-        if (state.insOps.size() == 3) {
+        if (state.insOps.size() == kTGatherTooManyInputCount) {
             return parser.emitError(
                 parser.getCurrentLocation(), "expected at most 3 extra operands in tgather ins(...)");
         }
@@ -143,13 +146,13 @@ static ParseResult validateTGatherCompareInputs(OpAsmParser& parser, TGatherPars
         return parser.emitError(parser.getCurrentLocation(), "compare-form tgather expects a scalar kValue operand");
     }
     state.hasKValue = true;
-    if (state.insOps.size() >= 2) {
+    if (state.insOps.size() >= kTGatherOptionalInputCount) {
         if (!isTileLikeType(state.insTypes[1])) {
             return parser.emitError(parser.getCurrentLocation(), "compare-form tgather tmp must be tile-like");
         }
         state.hasTmp = true;
     }
-    if (state.insOps.size() == 3) {
+    if (state.insOps.size() == kTGatherTooManyInputCount) {
         return parser.emitError(
             parser.getCurrentLocation(), "compare-form tgather expects at most src, kValue, tmp in ins(...)");
     }
@@ -165,14 +168,14 @@ static ParseResult validateTGatherIndexInputs(OpAsmParser& parser, TGatherParseS
     }
     if (!state.insOps.empty()) {
         state.hasIndices = true;
-        if (state.insOps.size() >= 2) {
+        if (state.insOps.size() >= kTGatherOptionalInputCount) {
             if (!isTileLikeType(state.insTypes[1])) {
                 return parser.emitError(parser.getCurrentLocation(), "index-form tgather tmp must be tile-like");
             }
             state.hasTmp = true;
         }
     }
-    if (state.insOps.size() == 3) {
+    if (state.insOps.size() == kTGatherTooManyInputCount) {
         return parser.emitError(
             parser.getCurrentLocation(), "index-form tgather expects at most src, indices, tmp in ins(...)");
     }
@@ -270,7 +273,7 @@ static ParseResult parseTScatterOutput(OpAsmParser& parser, TScatterParseState& 
     return success();
 }
 
-static ParseResult validateTScatterInputs(OpAsmParser& parser, TScatterParseState& state)
+static ParseResult validateTScatterInputs(OpAsmParser& parser, const TScatterParseState& state)
 {
     if (state.hasMask && state.hasIndexes) {
         return parser.emitError(parser.getCurrentLocation(), "mask-pattern tscatter does not take indexes");

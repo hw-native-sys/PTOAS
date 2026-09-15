@@ -187,13 +187,13 @@ struct PTOA5NormalizeTMovPass
   void runOnOperation() override;
 
 private:
-  void hoistScaleAddrOpsBeforeTMov(func::FuncOp func);
+  void hoistScaleAddrOpsBeforeTMov(func::FuncOp func) const;
   LogicalResult normalizeRiskyVecVecTMov(func::FuncOp func);
-  LogicalResult rewriteRiskyVecVecTMov(IRRewriter &rewriter, pto::TMovOp op);
+  LogicalResult rewriteRiskyVecVecTMov(IRRewriter &rewriter, pto::TMovOp op) const;
   void verifyNoResidualRiskyTMov(func::FuncOp func);
 };
 
-void PTOA5NormalizeTMovPass::hoistScaleAddrOpsBeforeTMov(func::FuncOp func) {
+void PTOA5NormalizeTMovPass::hoistScaleAddrOpsBeforeTMov(func::FuncOp func) const {
   SmallVector<pto::TGetScaleAddrOp, kRiskyOpReserveSize> scaleAddrOps;
   func.walk([&](pto::TGetScaleAddrOp op) { scaleAddrOps.push_back(op); });
   for (pto::TGetScaleAddrOp op : scaleAddrOps) {
@@ -206,7 +206,7 @@ void PTOA5NormalizeTMovPass::hoistScaleAddrOpsBeforeTMov(func::FuncOp func) {
 }
 
 LogicalResult PTOA5NormalizeTMovPass::rewriteRiskyVecVecTMov(
-    IRRewriter &rewriter, pto::TMovOp op) {
+    IRRewriter &rewriter, pto::TMovOp op) const {
   auto srcTb = cast<pto::TileBufType>(op.getSrc().getType());
   auto dstTb = cast<pto::TileBufType>(op.getDst().getType());
 

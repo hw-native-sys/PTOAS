@@ -10,6 +10,12 @@
 //===- VMIToVPTODataLayoutInternals.inc - VMIToVPTO internals -*- C++ -*-===//
 //===----------------------------------------------------------------------===//
 
+constexpr int kVMIDataLayoutFactor2 = 2;
+constexpr int kVMIDataLayoutFourthPartIndex = 3;
+constexpr int kVMIDataLayoutFactor4 = 4;
+constexpr int kVMIDataLayoutPairSize = 2;
+constexpr int kVMIDataLayoutMaskGranularityRankB32 = 2;
+
 FailureOr<SmallVector<Value>> materializeLaneStrideToContiguous(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     Type elementType, int64_t laneStride, PatternRewriter &rewriter) {
@@ -182,15 +188,13 @@ materializeSimpleDataLayoutConversion(
     return forwardIdentityLayoutParts(op, sourceParts, resultTypes, rewriter);
   }
 
-  bool oneLaneContiguousToGroup =
-      sourceLayout.isContiguous() && sourceLayout.getLaneStride() == 1 &&
-      resultLayout.isGroupSlots() && resultLayout.getNumGroups() == 1 &&
-      resultLayout.getSlots() == 1;
-  bool oneLaneGroupToContiguous =
-      sourceLayout.isGroupSlots() && sourceLayout.getNumGroups() == 1 &&
-      sourceLayout.getSlots() == 1 && resultLayout.isContiguous() &&
-      resultLayout.getLaneStride() == 1;
-  if (oneLaneContiguousToGroup || oneLaneGroupToContiguous) {
+  // A compact group packet and a dense value share the same carrier lanes.
+  FailureOr<int64_t> carrierLanes = getDataLanesPerPart(sourceVMIElementType);
+  const bool singleCarrierAlias =
+      succeeded(carrierLanes) &&
+      isVMISingleCarrierGroupSlotAlias(sourceLayout, resultLayout,
+                                       *carrierLanes);
+  if (singleCarrierAlias) {
     return forwardIdentityLayoutParts(op, sourceParts, resultTypes, rewriter);
   }
 
@@ -275,7 +279,8 @@ static LogicalResult validateContiguousToDeinterleaved2Shape(
   }
   groups = resultTypes.size() / 2;
   bool sourceExceedsResult =
-      sourceParts.size() > static_cast<size_t>(2 * groups);
+      sourceParts.size() >
+      static_cast<size_t>(kVMIDataLayoutFactor2 * groups);
   if (sourceExceedsResult) {
     return rewriter.notifyMatchFailure(
         op, "contiguous to deinterleaved=2 materialization source footprint "
@@ -433,7 +438,8 @@ static bool isDeinterleavedUnitStrideLayout(VMILayoutAttr layout,
 
 static bool isSupportedDeinterleavedIntermediateLayout(VMILayoutAttr layout) {
   return layout.isDeinterleaved() && layout.getLaneStride() == 1 &&
-         (layout.getFactor() == 2 || layout.getFactor() == 4);
+         (layout.getFactor() == kVMIDataLayoutFactor2 ||
+          layout.getFactor() == kVMIDataLayoutFactor4);
 }
 
 static std::optional<DataLayoutIntermediatePlan>
@@ -587,8 +593,8 @@ static FailureOr<SmallVector<Value>> materializeDeint4DataToContiguous(
           op, "vintlv deinterleaved=4 requires matching source part types");
       return failure();
     }
-    for (size_t offset = 0; offset < 4; ++offset) {
-      if (resultTypes[4 * group + offset] != chunkType) {
+    for (size_t offset = 0; offset < kVMIDataLayoutFactor4; ++offset) {
+      if (resultTypes[kVMIDataLayoutFactor4 * group + offset] != chunkType) {
         (void)rewriter.notifyMatchFailure(
             op, "vintlv requires operands and results to share one type");
         return failure();
@@ -608,7 +614,8 @@ static FailureOr<SmallVector<Value>> materializeDeint4DataToContiguous(
   return results;
 }
 
-static FailureOr<std::array<Value, 4>> materializeContiguousToDeint4DataGroup(
+static FailureOr<std::array<Value, kVMIDataLayoutFactor4>>
+materializeContiguousToDeint4DataGroup(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     int64_t groups, int64_t group, PatternRewriter &rewriter) {
   Value s0 = sourceParts[4 * group];
@@ -622,7 +629,7 @@ static FailureOr<std::array<Value, 4>> materializeContiguousToDeint4DataGroup(
         op, "vdintlv deinterleaved=4 requires matching source part types");
     return failure();
   }
-  for (size_t offset = 0; offset < 4; ++offset) {
+  for (size_t offset = 0; offset < kVMIDataLayoutFactor4; ++offset) {
     if (resultTypes[group + offset * groups] != chunkType) {
       (void)rewriter.notifyMatchFailure(
           op, "vdintlv requires operands and results to share one type");
@@ -637,7 +644,7 @@ static FailureOr<std::array<Value, 4>> materializeContiguousToDeint4DataGroup(
                                          low.getLow(), high.getLow());
   auto odd = rewriter.create<VdintlvOp>(op->getLoc(), chunkType, chunkType,
                                         low.getHigh(), high.getHigh());
-  return std::array<Value, 4>{
+  return std::array<Value, kVMIDataLayoutFactor4>{
       even.getLow(), odd.getLow(), even.getHigh(), odd.getHigh()};
 }
 
@@ -654,7 +661,7 @@ static FailureOr<SmallVector<Value>> materializeContiguousToDeint4Data(
   part2.reserve(groups);
   part3.reserve(groups);
   for (int64_t group = 0; group < groups; ++group) {
-    FailureOr<std::array<Value, 4>> groupValues =
+    FailureOr<std::array<Value, kVMIDataLayoutFactor4>> groupValues =
         materializeContiguousToDeint4DataGroup(op, sourceParts, resultTypes,
                                                groups, group, rewriter);
     if (failed(groupValues)) {
@@ -1000,9 +1007,10 @@ static FailureOr<SmallVector<Value>> materializeMaskLaneStrideUnpack(
                         .create<PunpackOp>(op->getLoc(), *maskType, source,
                                            firstPart)
                         .getResult();
-    if (laneStride == 4) {
+    if (laneStride == kVMIDataLayoutFactor4) {
       current = rewriter.create<PunpackOp>(
-          op->getLoc(), *maskType, current, part % 2 == 0 ? lower : higher);
+          op->getLoc(), *maskType, current,
+          part % kVMIDataLayoutPairSize == 0 ? lower : higher);
     }
     results.push_back(current);
   }
@@ -1068,20 +1076,21 @@ static FailureOr<Value> materializeMaskLaneStridePackChunk(
     return failure();
   }
   Value current = *lowHalf;
-  if (laneStride != 4) {
+  if (laneStride != kVMIDataLayoutFactor4) {
     return current;
   }
   current = rewriter.create<PpackOp>(op->getLoc(), maskType, current,
                                      context.lower);
-  if (base + 2 >= sourceParts.size()) {
+  if (base + kVMIDataLayoutFactor2 >= sourceParts.size()) {
     return current;
   }
   std::optional<Value> source3;
-  if (base + 3 < sourceParts.size()) {
-    source3 = sourceParts[base + 3];
+  if (base + kVMIDataLayoutFourthPartIndex < sourceParts.size()) {
+    source3 = sourceParts[base + kVMIDataLayoutFourthPartIndex];
   }
   FailureOr<Value> highHalf =
-      context.packPair(sourceParts[base + 2], source3, maskType);
+      context.packPair(sourceParts[base + kVMIDataLayoutFactor2], source3,
+                       maskType);
   if (failed(highHalf)) {
     return failure();
   }
@@ -1275,9 +1284,9 @@ static MaskLayoutMaterializationResult materializeDeinterleaved4MaskLayout(
   FailureOr<SmallVector<Value>> results =
       contiguousToDeint4
           ? materializeStagingContiguousToDeintMaskLayout(
-                op, sourceParts, resultTypes, 4, rewriter)
+                op, sourceParts, resultTypes, kVMIDataLayoutFactor4, rewriter)
           : materializeStagingDeintToContiguousMaskLayout(
-                op, sourceParts, resultTypes, 4, rewriter);
+                op, sourceParts, resultTypes, kVMIDataLayoutFactor4, rewriter);
   if (failed(results)) {
     return failure();
   }
@@ -1349,7 +1358,7 @@ int getMaskGranularityRank(StringRef granularity) {
     return 1;
   }
   if (granularity == "b32") {
-    return 2;
+    return kVMIDataLayoutMaskGranularityRankB32;
   }
   return -1;
 }
@@ -1360,7 +1369,7 @@ StringRef getMaskGranularityForRank(int rank) {
     return "b8";
   case 1:
     return "b16";
-  case 2:
+  case kVMIDataLayoutMaskGranularityRankB32:
     return "b32";
   default:
     return "";
@@ -1801,11 +1810,12 @@ FailureOr<Value> createAllFalseMaskLike(Location loc, Value value,
   return createPrefixMask(loc, maskType, "PAT_ALLF", rewriter);
 }
 
-FailureOr<std::array<Value, 4>> materializeFactor4DeintToContiguousGroup(
+FailureOr<std::array<Value, kVMIDataLayoutFactor4>>
+materializeFactor4DeintToContiguousGroup(
     Operation *op, ArrayRef<Value> sources, TypeRange resultTypes,
     size_t resultOffset, PatternRewriter &rewriter) {
   auto fail = [&op, &rewriter](const Twine &message)
-      -> FailureOr<std::array<Value, 4>> {
+      -> FailureOr<std::array<Value, kVMIDataLayoutFactor4>> {
     (void)rewriter.notifyMatchFailure(op, message);
     return failure();
   };
@@ -1843,15 +1853,16 @@ FailureOr<std::array<Value, 4>> materializeFactor4DeintToContiguousGroup(
   if (failed(high)) {
     return fail("unsupported predicate intlv staging mask type");
   }
-  return std::array<Value, 4>{low->first, low->second, high->first,
-                              high->second};
+  return std::array<Value, kVMIDataLayoutFactor4>{
+      low->first, low->second, high->first, high->second};
 }
 
-static FailureOr<std::array<Value, 2>> materializeFactor2DeintToContiguousGroup(
+static FailureOr<std::array<Value, kVMIDataLayoutPairSize>>
+materializeFactor2DeintToContiguousGroup(
     Operation *op, ArrayRef<Value> sources, TypeRange resultTypes,
     size_t resultOffset, PatternRewriter &rewriter) {
   auto fail = [&op, &rewriter](const Twine &message)
-      -> FailureOr<std::array<Value, 2>> {
+      -> FailureOr<std::array<Value, kVMIDataLayoutPairSize>> {
     (void)rewriter.notifyMatchFailure(op, message);
     return failure();
   };
@@ -1867,7 +1878,6 @@ static FailureOr<std::array<Value, 2>> materializeFactor2DeintToContiguousGroup(
   if (failed(materialized)) {
     return fail("unsupported predicate intlv staging mask type");
   }
-  return std::array<Value, 2>{materialized->first, materialized->second};
+  return std::array<Value, kVMIDataLayoutPairSize>{materialized->first,
+                                                   materialized->second};
 }
-
-

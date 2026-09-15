@@ -14,14 +14,14 @@ using namespace mlir;
 using namespace mlir::pto;
 using namespace mlir::pto::mte_detail;
 
-void MteGmUbOp::build(OpBuilder &odsBuilder, OperationState &state, Value source,
+void MteGmUbOp::build(OpBuilder &odsBuilder, OperationState &odsState, Value source,
                       Value destination, Value l2CacheCtl, Value lenBurst,
                       pto::DmaLoopConfig nburst,
                       llvm::ArrayRef<pto::DmaLoopConfig> loops,
                       std::optional<pto::DmaPadConfig> pad) {
-  state.addOperands({source, destination, l2CacheCtl, lenBurst, nburst.count,
+  odsState.addOperands({source, destination, l2CacheCtl, lenBurst, nburst.count,
                      nburst.srcStride, nburst.dstStride});
-  addDmaLoopConfigOperands(state, loops);
+  addDmaLoopConfigOperands(odsState, loops);
   bool hasPadCounts = pad && pad->leftCount && pad->rightCount;
   if (pad && static_cast<bool>(pad->leftCount) !=
                   static_cast<bool>(pad->rightCount)) {
@@ -29,13 +29,13 @@ void MteGmUbOp::build(OpBuilder &odsBuilder, OperationState &state, Value source
         "mte_gm_ub pad config must provide both left and right counts, or omit both");
   }
   if (pad) {
-    state.addOperands(pad->value);
+    odsState.addOperands(pad->value);
     if (hasPadCounts) {
-      state.addOperands({pad->leftCount, pad->rightCount});
+      odsState.addOperands({pad->leftCount, pad->rightCount});
     }
   }
 
-  state.addAttribute(
+  odsState.addAttribute(
       getOperandSegmentSizeAttr(),
       odsBuilder.getDenseI32ArrayAttr(
           {1, 1, 1, 1, 1, 1, 1,
@@ -45,7 +45,7 @@ void MteGmUbOp::build(OpBuilder &odsBuilder, OperationState &state, Value source
            pad ? 1 : 0, hasPadCounts ? 1 : 0, hasPadCounts ? 1 : 0}));
 }
 
-void MteGmUbOp::build(OpBuilder &odsBuilder, OperationState &state, Value source,
+void MteGmUbOp::build(OpBuilder &odsBuilder, OperationState &odsState, Value source,
                       Value destination, Value l2CacheCtl, Value lenBurst,
                       pto::DmaLoopConfig nburst,
                       std::optional<pto::DmaLoopConfig> loop1,
@@ -58,7 +58,7 @@ void MteGmUbOp::build(OpBuilder &odsBuilder, OperationState &state, Value source
   if (loop2) {
     loops.push_back(*loop2);
   }
-  build(odsBuilder, state, source, destination, l2CacheCtl, lenBurst, nburst,
+  build(odsBuilder, odsState, source, destination, l2CacheCtl, lenBurst, nburst,
         loops, pad);
 }
 

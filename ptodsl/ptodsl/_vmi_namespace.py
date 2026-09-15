@@ -318,6 +318,30 @@ def _check_vmi_lane_count(lanes: int, *, context: str) -> None:
         )
 
 
+def _check_vmi_operand_lanes(vectors, mask, *, context: str) -> None:
+    """Validate public logical lengths before emitting an operation."""
+    expected_lanes = None
+    for name, value in vectors:
+        lanes = _vmi_vreg_element_count(_type_of(value), context=context)
+        _check_vmi_lane_count(lanes, context=f"{context} {name}")
+        if expected_lanes is not None and lanes != expected_lanes:
+            raise ValueError(
+                f"{context} requires matching logical lane counts; "
+                f"{name} has {lanes}, expected {expected_lanes}"
+            )
+        expected_lanes = lanes
+    mask_type = _as_vmi_mask_type(
+        _type_of(_required_mask(mask, context=context)), context=context
+    )
+    mask_lanes = _vmi_mask_element_count(mask_type, context=context)
+    _check_vmi_lane_count(mask_lanes, context=f"{context} mask")
+    if mask_lanes != expected_lanes:
+        raise ValueError(
+            f"{context} requires matching logical lane counts; "
+            f"mask has {mask_lanes}, expected {expected_lanes}"
+        )
+
+
 def _derive_vinterpret_cast_result_type(source, to_dtype, *, context: str):
     if to_dtype is None:
         raise TypeError(f"{context} requires to_dtype")
@@ -353,6 +377,7 @@ def _derive_vinterpret_cast_result_type(source, to_dtype, *, context: str):
 def _derive_vbrc_result_type(value, size, *, context: str):
     if size is None:
         raise TypeError(f"{context} requires size")
+    _check_vmi_lane_count(size, context=context)
     raw_value = _raw(value)
     if not hasattr(raw_value, "type"):
         raise TypeError(
@@ -370,6 +395,7 @@ def _derive_vbrc_result_type(value, size, *, context: str):
 def _derive_vci_result_type(base, size, *, context: str):
     if size is None:
         raise TypeError(f"{context} requires size")
+    _check_vmi_lane_count(size, context=context)
     raw_base = _raw(base)
     if not hasattr(raw_base, "type"):
         raise TypeError(
@@ -581,6 +607,7 @@ def _vmi_vreg_element_count(type_obj, *, context: str):
 def _resolve_vmi_vload_result_types(source, size, *, dist_mode, context: str):
     if size is None:
         raise TypeError(f"{context} requires size")
+    _check_vmi_lane_count(size, context=context)
     element_type = _pointer_element_type(_type_of(source), context=context)
     resolved = _pto.VMIVRegType.get(size, element_type)
     if dist_mode == "dintlv":
@@ -1265,6 +1292,9 @@ class _VMINamespace:
 
     @staticmethod
     def vdhist(acc, source, mask, *, loc=None, ip=None):
+        _check_vmi_operand_lanes(
+            (("source", source),), mask, context="pto.vmi.vdhist(...)"
+        )
         return _call_value(
             "vdhist",
             _derive_hist_result_type(acc, context="pto.vmi.vdhist(...)"),
@@ -1277,6 +1307,9 @@ class _VMINamespace:
 
     @staticmethod
     def vchist(acc, source, mask, *, loc=None, ip=None):
+        _check_vmi_operand_lanes(
+            (("source", source),), mask, context="pto.vmi.vchist(...)"
+        )
         return _call_value(
             "vchist",
             _derive_hist_result_type(acc, context="pto.vmi.vchist(...)"),
@@ -1319,6 +1352,11 @@ class _VMINamespace:
 
     @staticmethod
     def vscatter(value, destination, offsets, mask, *, pmode=None, loc=None, ip=None):
+        _check_vmi_operand_lanes(
+            (("value", value), ("offsets", offsets)),
+            mask,
+            context="pto.vmi.vscatter(...)",
+        )
         return _generated("vscatter")(
             _raw(value),
             _raw(destination),

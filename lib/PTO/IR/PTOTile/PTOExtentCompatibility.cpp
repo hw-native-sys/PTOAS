@@ -39,9 +39,8 @@ static LogicalResult verifyMGatherMScatterTileShape(Operation *op, Type dataTy,
                                                     std::optional<pto::Coalesce> coalesce) {
   auto dataValid = getValidShapeVec(dataTy);
   auto idxValid = getValidShapeVec(idxTy);
-  if (dataValid.size() != 2 || idxValid.size() != 2) {
-    return op->emitOpError() << "expects " << dataName
-                             << " and idx to have rank-2 valid_shape";
+  if (dataValid.size() != mlir::pto::kValue2 || idxValid.size() != mlir::pto::kValue2) {
+      return op->emitOpError() << "expects " << dataName << " and idx to have rank-2 valid_shape";
   }
 
   auto idxTile = dyn_cast<pto::TileBufType>(idxTy);
@@ -220,21 +219,19 @@ static LogicalResult verifyMGatherMScatterIdxTile(Operation *op, Type ty,
 }
 
 static bool isA5TLoadStoreTransferElemType(Type ty) {
-  return ty.isInteger(8) || ty.isInteger(16) || ty.isInteger(32) ||
-         ty.isInteger(64) || ty.isF16() || ty.isBF16() || ty.isF32() ||
-         isPTOLowPrecisionType(ty);
+    return ty.isInteger(mlir::pto::kValue8) || ty.isInteger(16) || ty.isInteger(32) ||
+           ty.isInteger(mlir::pto::kValue64) || ty.isF16() || ty.isBF16() || ty.isF32() || isPTOLowPrecisionType(ty);
 }
 
 static bool isA5AccStorePreQuantDstType(Type srcElem, Type dstElem) {
-  if (srcElem.isInteger(32)) {
-    return dstElem.isInteger(8) || dstElem.isF16() || dstElem.isBF16();
-  }
+    if (srcElem.isInteger(mlir::pto::kValue32)) {
+        return dstElem.isInteger(mlir::pto::kValue8) || dstElem.isF16() || dstElem.isBF16();
+    }
   if (!srcElem.isF32()) {
     return false;
   }
-  return dstElem.isInteger(8) || dstElem.isF16() || dstElem.isBF16() ||
-         dstElem.isF32() || isPTOHiFloat8Type(dstElem) ||
-         isPTOFloat8E4M3LikeType(dstElem);
+  return dstElem.isInteger(mlir::pto::kValue8) || dstElem.isF16() || dstElem.isBF16() || dstElem.isF32() ||
+         isPTOHiFloat8Type(dstElem) || isPTOFloat8E4M3LikeType(dstElem);
 }
 
 static bool isA5LowPrecisionTCvtPair(Type srcElem, Type dstElem) {

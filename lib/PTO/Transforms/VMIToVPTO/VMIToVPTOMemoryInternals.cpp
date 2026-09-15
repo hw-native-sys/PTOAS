@@ -303,6 +303,33 @@ checkSupportedLoadShape(VMIVRegType type, Value source, Type sourceType,
   return success();
 }
 
+// Keep preflight diagnostics consistent with the bounded block selection.
+// A non-aligned source may still use the existing stateful sequence when its
+// complete physical read envelope is proven; a raw pointer carries no extent.
+LogicalResult checkSupportedContiguousLoadAddress(VMILoadOp op,
+                                                  std::string *reason) {
+  auto type = cast<VMIVRegType>(op.getResult().getType());
+  if (pto::getVMIContiguousLoadBlockCount(type) == 0 ||
+      type.getElementCount() == 1 ||
+      isKnownAddressAligned(op.getSource(), op.getOffset(),
+                            type.getElementType(), pto::kVMIVCGBlockBytes)) {
+    return success();
+  }
+  VMIMemorySafeReadProof proof =
+      computeSafeStatefulReadProof(op.getSource(), op.getOffset(), type);
+  if (proof.proven) {
+    return success();
+  }
+  if (reason) {
+    *reason =
+        (Twine("bounded contiguous load requires a provably 32-byte-aligned ") +
+         "effective address for pto.vsldb, including single-block reads; " +
+         "no safe unaligned full-read fallback: " + proof.reason)
+            .str();
+  }
+  return failure();
+}
+
 LogicalResult checkSupportedDeinterleaveLoadShape(
     VMIDeinterleaveLoadOp op,
     std::string *reason) {
@@ -405,13 +432,6 @@ LogicalResult checkSupportedStoreShape(VMIVRegType type, Value destination,
 LogicalResult checkSupportedInterleaveStoreShape(
     VMIInterleaveStoreOp op,
     std::string *reason) {
-  auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason) {
-      *reason = message.str();
-    }
-    return failure();
-  };
-
   auto lowType = cast<VMIVRegType>(op.getLow().getType());
   auto highType = cast<VMIVRegType>(op.getHigh().getType());
   VMILayoutAttr lowLayout = lowType.getLayoutAttr();
@@ -420,22 +440,22 @@ LogicalResult checkSupportedInterleaveStoreShape(
       !lowLayout || !highLayout || !lowLayout.isContiguous() ||
       !highLayout.isContiguous();
   if (nonContiguousInputs) {
-    return fail("requires assigned contiguous low/high input layouts");
+    return emitLogicalFailure(reason, "requires assigned contiguous low/high input layouts");
   }
   bool mismatchedInputs = lowType.getElementCount() != highType.getElementCount() ||
                         lowType.getElementType() != highType.getElementType();
   if (mismatchedInputs) {
-    return fail("requires matching low/high input shape and element type");
+    return emitLogicalFailure(reason, "requires matching low/high input shape and element type");
   }
   if (!getX2MemoryDistToken(lowType.getElementType(), "INTLV")) {
-    return fail("requires 8/16/32-bit element type for vstsx2 INTLV");
+    return emitLogicalFailure(reason, "requires 8/16/32-bit element type for vstsx2 INTLV");
   }
 
   VMIMemoryAccessPlan accessPlan =
       buildWriteAccessPlan(op.getDestination(), op.getOffset(), lowType,
                            VMIMemoryCoverageKind::Dense);
   if (!accessPlan.layoutSupport.isSupported()) {
-    return fail(accessPlan.layoutSupport.reason);
+    return emitLogicalFailure(reason, accessPlan.layoutSupport.reason);
   }
   if (failed(checkSupportedMaskableVReg(lowType, reason))) {
     return failure();
@@ -443,7 +463,7 @@ LogicalResult checkSupportedInterleaveStoreShape(
 
   std::string fullChunkReason;
   if (failed(checkFullDataPhysicalChunks(lowType, &fullChunkReason))) {
-    return fail(Twine("requires full physical chunks; ") + fullChunkReason);
+    return emitLogicalFailure(reason, Twine("requires full physical chunks; ") + fullChunkReason);
   }
   return success();
 }
@@ -520,7 +540,7 @@ getDeinterleaved2StoreLanes(VMIVRegType type, std::string *reason) {
 
   VMILayoutAttr layout = type.getLayoutAttr();
   bool unsupportedLayout =
-      !layout || !layout.isDeinterleaved() || layout.getFactor() != 2 ||
+      !layout || !layout.isDeinterleaved() || layout.getFactor() != mlir::pto::kValue2 ||
       layout.getLaneStride() != 1;
   if (unsupportedLayout) {
     return fail("requires deinterleaved=2 value layout");
@@ -562,7 +582,7 @@ getDeinterleaved2GroupStoreGeometry(VMIVRegType type, int64_t groupSize,
   if (lanesPerPart <= 0) {
     return fail("requires positive physical lane count");
   }
-  int64_t pairLanes = 2 * lanesPerPart;
+  int64_t pairLanes = mlir::pto::kValue2 * lanesPerPart;
   if (groupSize % pairLanes != 0) {
     return fail("requires group size to be a multiple of two physical chunks");
   }
@@ -634,12 +654,12 @@ LogicalResult checkSupportedBlockDeinterleavedGroupLoadShape(
   if (!isa<PtrType>(op.getSource().getType())) {
     return fail("block_deinterleaved group_load requires !pto.ptr source");
   }
-  bool hasGroupMultiple = op.getNumGroupsAttr().getInt() % 8 == 0;
+  bool hasGroupMultiple = op.getNumGroupsAttr().getInt() % mlir::pto::kValue8 == 0;
   if (!hasGroupMultiple) {
     return fail("block_deinterleaved group_load requires num_groups multiple of 8");
   }
   std::optional<int64_t> rowStride = getConstantIndexValue(op.getRowStride());
-  if (!rowStride || *rowStride <= 0 || *rowStride % 8 != 0) {
+  if (!rowStride || *rowStride <= 0 || *rowStride % mlir::pto::kValue8 != 0) {
     return fail("block_deinterleaved group_load requires constant positive "
                 "row_stride divisible by 8 f32 elements");
   }
@@ -757,7 +777,7 @@ LogicalResult checkSupportedGroupSlotLoadShape(
     return failure();
   }
 
-  if (fact->slots == 8) {
+  if (fact->slots == mlir::pto::kValue8) {
     return checkSupportedSlots8GroupSlotLoadShape(op, reason);
   }
 
@@ -775,11 +795,11 @@ LogicalResult checkSupportedSlots1GroupSlotLoadShape(
 
   unsigned elementBits =
       pto::getPTOStorageElemBitWidth(resultType.getElementType());
-  bool unsupportedElementWidth = elementBits == 0 || 256 % elementBits != 0;
+  bool unsupportedElementWidth = elementBits == 0 || mlir::pto::kValue256 % elementBits != 0;
   if (unsupportedElementWidth) {
     return fail("slots=1 group_slot_load requires supported element width");
   }
-  int64_t alignedStrideElems = 256 / elementBits;
+  int64_t alignedStrideElems = mlir::pto::kValue256 / elementBits;
   std::optional<int64_t> sourceGroupStride =
       getConstantIndexValue(op.getSourceGroupStride());
   if (!sourceGroupStride || *sourceGroupStride <= 0 ||
@@ -833,13 +853,14 @@ static bool isCompactSmallGroupStore(VMILayoutAttr layout,
   int64_t payloadBits =
       valueType.getElementCount() * static_cast<int64_t>(elementBits);
   return layout && layout.isGroupSlots() && layout.getNumGroups() == numGroups &&
-         layout.getSlots() == 8 &&
-         (layout.getLaneStride() == 1 || layout.getLaneStride() == 2 ||
-          layout.getLaneStride() == 4) &&
-         (valueType.getElementCount() == 4 ||
-          valueType.getElementCount() == 8) &&
+         layout.getSlots() == mlir::pto::kValue8 &&
+         (layout.getLaneStride() == 1 || layout.getLaneStride() == mlir::pto::kValue2 ||
+          layout.getLaneStride() == mlir::pto::kValue4) &&
+         (valueType.getElementCount() == mlir::pto::kValue4 ||
+          valueType.getElementCount() == mlir::pto::kValue8) &&
          numGroups == valueType.getElementCount() && elementBits > 0 &&
-         payloadBits > 0 && payloadBits < 256 && payloadBits % 32 == 0 &&
+         payloadBits > 0 && payloadBits < mlir::pto::kValue256 &&
+         payloadBits % mlir::pto::kValue32 == 0 &&
          rowStride && *rowStride == 1;
 }
 
@@ -946,7 +967,7 @@ checkSupportedGroupSlotsStoreShape(VMIGroupStoreOp op, VMIVRegType valueType,
   if (fact->slots == 1) {
     unsigned elementBits =
         pto::getPTOStorageElemBitWidth(valueType.getElementType());
-    if (elementBits == 0 || 256 % elementBits != 0) {
+    if (elementBits == 0 || mlir::pto::kValue256 % elementBits != 0) {
       return fail("slots=1 group_store requires supported element width");
     }
     if (rowStride && *rowStride <= 0) {
@@ -1140,7 +1161,7 @@ static bool isB8To16GatherContract(IntegerType sourceType,
                                    VMIMaskType maskType) {
   return sourceType.getWidth() == mlir::pto::kValue8 &&
          resultType.getWidth() == mlir::pto::kValue16 &&
-         indexType.isUnsigned() && indexType.getWidth() == 16 &&
+         indexType.isUnsigned() && indexType.getWidth() == mlir::pto::kValue16 &&
          maskType.getGranularity() == "b16" &&
          haveMatchingIntegerSignedness(sourceType, resultType);
 }
@@ -1151,7 +1172,7 @@ static bool isSameWidth16IntegerGatherContract(IntegerType sourceType,
                                                VMIMaskType maskType) {
   return sourceType.getWidth() == mlir::pto::kValue16 &&
          resultType.getWidth() == mlir::pto::kValue16 &&
-         indexType.isUnsigned() && indexType.getWidth() == 16 &&
+         indexType.isUnsigned() && indexType.getWidth() == mlir::pto::kValue16 &&
          maskType.getGranularity() == "b16" &&
          haveMatchingIntegerSignedness(sourceType, resultType);
 }
@@ -1162,7 +1183,7 @@ static bool isSameWidth16FloatGatherContract(Type sourceElementType,
                                              VMIMaskType maskType) {
   return sourceElementType == resultElementType &&
          (sourceElementType.isF16() || sourceElementType.isBF16()) &&
-         indexType.isUnsigned() && indexType.getWidth() == 16 &&
+         indexType.isUnsigned() && indexType.getWidth() == mlir::pto::kValue16 &&
          maskType.getGranularity() == "b16";
 }
 
@@ -1185,10 +1206,10 @@ checkGatherElementContract(VMIVRegType resultType, VMIVRegType indicesType,
   auto sourceInt = dyn_cast<IntegerType>(sourceElemType);
   auto resultInt = dyn_cast<IntegerType>(resultType.getElementType());
   bool isB8To16Gather =
-      resultBits == 16 && sourceInt && resultInt &&
+      resultBits == mlir::pto::kValue16 && sourceInt && resultInt &&
       isB8To16GatherContract(sourceInt, resultInt, indexElementType, maskType);
   bool isSameWidth16Gather =
-      resultBits == 16 &&
+      resultBits == mlir::pto::kValue16 &&
       ((sourceInt && resultInt && isSameWidth16IntegerGatherContract(
                                       sourceInt, resultInt, indexElementType,
                                       maskType)) ||
@@ -1283,8 +1304,8 @@ checkSupportedGatherShape(VMIGatherOp op, std::string *reason) {
   unsigned resultBits =
       pto::getPTOStorageElemBitWidth(resultType.getElementType());
   auto indexElementType = dyn_cast<IntegerType>(indicesType.getElementType());
-  bool isB16Gather = resultBits == 16 && indexElementType &&
-                     indexElementType.getWidth() == 16 &&
+  bool isB16Gather = resultBits == mlir::pto::kValue16 && indexElementType &&
+                     indexElementType.getWidth() == mlir::pto::kValue16 &&
                      maskType.getGranularity() == "b16";
   bool isB32Gather = resultBits == 32 && indexElementType &&
                      indexElementType.getWidth() == 32 &&
@@ -1297,7 +1318,7 @@ checkSupportedGatherShape(VMIGatherOp op, std::string *reason) {
 
 LogicalResult checkSupportedScatterPhysicalShape(
     VMIVRegType valueType, VMIVRegType indicesType, VMIMaskType maskType,
-    bool requiresFullChunks, std::string *reason) {
+    std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason) {
       *reason = message.str();
@@ -1312,25 +1333,25 @@ LogicalResult checkSupportedScatterPhysicalShape(
   if (!hasPhysicalArity) {
     return fail("requires computable physical arity");
   }
-  if (*valueArity != *indicesArity || *valueArity != *maskArity) {
-    return fail("requires value, indices, and mask to have the same physical "
-                "arity");
+  const bool isByte =
+      pto::getPTOStorageElemBitWidth(valueType.getElementType()) == mlir::pto::kValue8;
+  if (*valueArity != *maskArity || (!isByte && *valueArity != *indicesArity)) {
+    return fail("requires matching value/mask physical arity and one index "
+                "chunk per scatter request group");
   }
-  if (!requiresFullChunks) {
-    return success();
-  }
-  std::string valueReason;
-  std::string indicesReason;
-  std::string maskReason;
-  if (failed(checkFullDataPhysicalChunks(valueType, &valueReason))) {
-    return fail(Twine("value requires full physical chunks; ") + valueReason);
-  }
-  if (failed(checkFullDataPhysicalChunks(indicesType, &indicesReason))) {
-    return fail(Twine("indices require full physical chunks; ") +
-                indicesReason);
-  }
-  if (failed(checkFullVMIPhysicalChunks(maskType, &maskReason))) {
-    return fail(Twine("mask requires full physical chunks; ") + maskReason);
+  if (isByte) {
+    // The op verifier already requires equal logical value/index lane counts.
+    // Defend the physical contract as well: B8 scatter uses 16-bit indices,
+    // so each index chunk describes 128 requests, even for a partial group.
+    // Equal chunk counts alone do not replace the logical lane-count check.
+    constexpr int64_t requestsPerIndexChunk = mlir::pto::kValue128;
+    int64_t expectedIndicesArity =
+        llvm::divideCeil(valueType.getElementCount(), requestsPerIndexChunk);
+    if (*indicesArity != expectedIndicesArity) {
+      return fail(Twine("requires one index chunk per 128 byte-scatter requests; ") +
+                  "expected " + Twine(expectedIndicesArity) + ", got " +
+                  Twine(*indicesArity));
+    }
   }
   return success();
 }
@@ -1358,6 +1379,10 @@ checkScatterLayoutAndDestination(VMIScatterOp op, VMIVRegType valueType,
   if (nonContiguousLayout) {
     return fail("requires contiguous value, indices, and mask layouts");
   }
+  if (valueLayout.getLaneStride() != 1 ||
+      indicesLayout.getLaneStride() != 1 || maskLayout.getLaneStride() != 1) {
+    return fail("requires unit-stride value, indices, and mask layouts");
+  }
   if (!isa<PtrType>(op.getDestination().getType())) {
     return fail("requires !pto.ptr destination because pto.vscatter is "
                 "pointer-only");
@@ -1381,9 +1406,9 @@ checkScatterElementContract(VMIVRegType valueType, VMIVRegType indicesType,
   if (!indexElementType || indexElementType.isSigned()) {
     return fail("requires signless or unsigned integer indices");
   }
-  bool isB8Scatter = valueBits == 8 && indexElementType.getWidth() == 16 &&
-                     maskType.getGranularity() == "b16";
-  bool isB16Scatter = valueBits == 16 && indexElementType.getWidth() == 16 &&
+  bool isB8Scatter = valueBits == mlir::pto::kValue8 && indexElementType.getWidth() == mlir::pto::kValue16 &&
+                     maskType.getGranularity() == "b8";
+  bool isB16Scatter = valueBits == mlir::pto::kValue16 && indexElementType.getWidth() == mlir::pto::kValue16 &&
                       maskType.getGranularity() == "b16";
   bool isB32Scatter = valueBits == 32 && indexElementType.getWidth() == 32 &&
                       maskType.getGranularity() == "b32";
@@ -1391,8 +1416,8 @@ checkScatterElementContract(VMIVRegType valueType, VMIVRegType indicesType,
   if (unsupportedContract) {
     return fail("requires either 32-bit values with 32-bit indices and b32 "
                 "mask, 16-bit values with 16-bit indices and b16 "
-                "mask, or 8-bit values with 16-bit indices and b16 "
-                "mask");
+                "mask, or 8-bit values with 16-bit indices and b8 "
+                "logical mask");
   }
   return success();
 }
@@ -1423,7 +1448,7 @@ checkSupportedScatterShape(VMIScatterOp op, std::string *reason) {
   }
 
   return checkSupportedScatterPhysicalShape(types.value, types.indices,
-                                            types.mask, true, reason);
+                                            types.mask, reason);
 }
 
 LogicalResult
@@ -1939,5 +1964,3 @@ FailureOr<Value> createMaskedStorePredicate(Location loc, VMIVRegType vmiType,
   return rewriter.create<PandOp>(loc, maskType, userMask, *tailMask, *allTrue)
       .getResult();
 }
-
-

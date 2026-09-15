@@ -26,9 +26,6 @@ namespace pto {
 //===----------------------------------------------------------------------===//
 
 
-
-
-
 // Resolve the third TPUSH/TPOP template token: the fixpipe config alias
 // when the pipe carries an acc-push epilogue, otherwise the split mode.
 // tpush/tpop lowering: resolve the TPipe/tile/split template tokens and emit
@@ -53,7 +50,7 @@ std::string buildReinterpretCastTileTypeString(MemRefType resMrTy,
                                                       Type elemTy,
                                                       const char *roleTok) {
   int64_t rows = 32, cols = 32;
-  if (resMrTy.getRank() >= 2 && resMrTy.hasStaticShape()) {
+  if (resMrTy.getRank() >= mlir::pto::kValue2 && resMrTy.hasStaticShape()) {
     rows = resMrTy.getDimSize(0);
     cols = resMrTy.getDimSize(1);
   }
@@ -132,11 +129,12 @@ createEmitCTileVariable(ConversionPatternRewriter &rewriter, Location loc,
 
   if (initializeDynamicValidToShape && tileTy.hasDynamicValid()) {
     auto shape = tileTy.getShape();
-    if (shape.size() != 2 || llvm::is_contained(shape, ShapedType::kDynamic))
+    if (shape.size() != mlir::pto::kValue2 ||
+      llvm::is_contained(shape, ShapedType::kDynamic))
       return failure();
     Type i32Ty = emitc::OpaqueType::get(rewriter.getContext(), "int32_t");
     pto::BLayout blayout = getTileBufBLayoutValue(tileTy.getConfigAttr());
-    SmallVector<Value, 2> constructorArgs;
+    SmallVector<Value, mlir::pto::kValue2> constructorArgs;
     constructorArgs.push_back(makeEmitCIntConstant(
         rewriter, loc, i32Ty,
         renderTileTemplateDim(shape[0], tileTy.getElementType(), blayout, 0)));
@@ -159,12 +157,11 @@ createEmitCTileVariable(ConversionPatternRewriter &rewriter, Location loc,
 
 //===----------------------------------------------------------------------===//
 // SCF Control-Flow Pre-Lowering
-//
+// SCF ops are pre-lowered into EmitC-supported forms before translation.
 // EmitC translation supports `emitc.for`/`emitc.if` plus CFG-style
 // `cf.br`/`cf.cond_br`. Upstream SCFToEmitC patterns only cover `scf.for` and
 // `scf.if`, so we pre-lower some SCF ops into those supported forms.
 //===----------------------------------------------------------------------===//
-
 
 FailureOr<Value> buildGlobalTensorViewFromPointer(
     ConversionPatternRewriter &rewriter, Location loc, Value ptr, Type elemTy,
@@ -183,8 +180,8 @@ FailureOr<Value> buildGlobalTensorViewFromPointer(
     rowMajorStrides = buildRowMajorStrides(shape);
     effectiveStrides = rowMajorStrides;
   }
-  SmallVector<int64_t, 5> shape5D;
-  SmallVector<int64_t, 5> stride5D;
+  SmallVector<int64_t, mlir::pto::kValue5> shape5D;
+  SmallVector<int64_t, mlir::pto::kValue5> stride5D;
   buildGlobalTensorShapeAndStride(shape, effectiveStrides, shape5D, stride5D);
 
   std::string shapeType;
@@ -222,23 +219,23 @@ FailureOr<Value> buildGlobalTensorViewFromPointer(
 
 // Right-align runtime shape/stride values to 5 dims: leading shape dims are
 // 1, leading strides derive by tight packing (or 1 in the fully-dynamic case).
-std::pair<SmallVector<Value, 5>, SmallVector<Value, 5>>
+std::pair<SmallVector<Value, mlir::pto::kValue5>, SmallVector<Value, mlir::pto::kValue5>>
 buildRuntime5DValues(ConversionPatternRewriter &rewriter, Location loc,
                      ValueRange runtimeShape, ValueRange runtimeStrides,
                      int64_t shift) {
-  SmallVector<Value, 5> shapeValues;
-  SmallVector<Value, 5> strideValues;
+  SmallVector<Value, mlir::pto::kValue5> shapeValues;
+  SmallVector<Value, mlir::pto::kValue5> strideValues;
   for (int64_t dim = 0; dim < shift; ++dim)
     shapeValues.push_back(makeViewIndexConstant(rewriter, loc, 1));
   for (Value value : runtimeShape)
     shapeValues.push_back(castViewIndexToEmitC(rewriter, loc, value));
 
-  strideValues.resize(5);
+  strideValues.resize(mlir::pto::kValue5);
   for (auto [index, value] : llvm::enumerate(runtimeStrides))
     strideValues[shift + static_cast<int64_t>(index)] =
         castViewIndexToEmitC(rewriter, loc, value);
-  if (shift == 5) {
-    for (int64_t dim = 0; dim < 5; ++dim)
+  if (shift == mlir::pto::kValue5) {
+    for (int64_t dim = 0; dim < mlir::pto::kValue5; ++dim)
       strideValues[dim] = makeViewIndexConstant(rewriter, loc, 1);
   } else {
     for (int64_t dim = shift - 1; dim >= 0; --dim) {
@@ -257,12 +254,13 @@ FailureOr<Value> buildRuntimeGlobalTensor(
     ConversionPatternRewriter &rewriter, Location loc, Value ptr, Type elemTy,
     ArrayRef<int64_t> staticShape, ValueRange runtimeShape,
     ValueRange runtimeStrides, StringRef layoutEnum) {
-  if (staticShape.size() > 5 || runtimeShape.size() != staticShape.size() ||
+  if (staticShape.size() > mlir::pto::kValue5 ||
+      runtimeShape.size() != staticShape.size() ||
       runtimeStrides.size() != staticShape.size())
     return failure();
 
-  SmallVector<int64_t, 5> shape5D(5, 1);
-  SmallVector<int64_t, 5> stride5D(5, -1);
+  SmallVector<int64_t, mlir::pto::kValue5> shape5D(mlir::pto::kValue5, 1);
+  SmallVector<int64_t, mlir::pto::kValue5> stride5D(mlir::pto::kValue5, -1);
   int64_t shift = 5 - static_cast<int64_t>(staticShape.size());
   for (auto [index, dim] : llvm::enumerate(staticShape))
     shape5D[shift + static_cast<int64_t>(index)] =
@@ -364,12 +362,12 @@ bool parseIntegerTemplateList(StringRef token, StringRef marker,
   if (end == StringRef::npos)
     return false;
 
-  SmallVector<StringRef, 8> parts;
+  SmallVector<StringRef, mlir::pto::kValue8> parts;
   token.slice(pos, end).split(parts, ',');
   values.clear();
   for (StringRef part : parts) {
     int64_t value = 0;
-    if (part.trim().getAsInteger(10, value))
+    if (part.trim().getAsInteger(mlir::pto::kValue10, value))
       return false;
     values.push_back(value);
   }
@@ -441,7 +439,7 @@ LogicalResult getStaticTensorViewStrides(
 
   Value src = peelUnrealized(convertedSource);
   if (auto opaqueTy = dyn_cast<emitc::OpaqueType>(src.getType())) {
-    SmallVector<int64_t, 5> stride5D;
+    SmallVector<int64_t, mlir::pto::kValue5> stride5D;
     StringRef token = opaqueTy.getValue();
     if ((parseIntegerTemplateList(token, "pto::Stride<", stride5D) ||
          parseIntegerTemplateList(token, "Stride<", stride5D)) &&
@@ -453,7 +451,6 @@ LogicalResult getStaticTensorViewStrides(
 
   return failure();
 }
-
 
 
 } // namespace pto

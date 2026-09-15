@@ -130,7 +130,6 @@ LogicalResult mlir::pto::MakeTensorViewOp::verify()
         return emitOpError("ptr operand must be !pto.ptr<...>");
     }
     Type ptrElemTy = ptrTy.getElementType();
-
     if (ptrElemTy != tvTy.getElementType()) {
         return emitOpError() << "ptr element type must match tensor_view element "
                                 "type, but got ptr="
@@ -219,7 +218,7 @@ static LogicalResult verifyPartitionDimension(mlir::pto::PartitionViewOp op, int
         return success();
     }
     int64_t end = 0;
-    if (llvm::AddOverflow(*offset, *size, end)) {
+    if (llvm::AddOverflow(*offset, *size, end) != 0) {
         return op.emitOpError() << "offset+size at dim " << index << " overflows";
     }
     if (end > sourceDim) {

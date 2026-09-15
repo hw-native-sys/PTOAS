@@ -19,11 +19,15 @@ using namespace mlir::pto;
 namespace mlir {
 namespace pto {
 
+constexpr unsigned kExtractInsertMaxOperandCount = mlir::pto::kValue6;
+constexpr unsigned kExtractMaxTemplateArgumentCount = mlir::pto::kValue4;
+constexpr unsigned kInsertMaxTemplateArgumentCount = mlir::pto::kValue5;
+
 struct PTOExtractToEmitC : public OpConversionPattern<pto::TExtractOp> {
   using OpConversionPattern<pto::TExtractOp>::OpConversionPattern;
 
-  static SmallVector<Value, 6> collectOperands(OpAdaptor adaptor) {
-    SmallVector<Value, 6> operands{adaptor.getDst(), adaptor.getSrc()};
+  static SmallVector<Value, kExtractInsertMaxOperandCount> collectOperands(OpAdaptor adaptor) {
+    SmallVector<Value, kExtractInsertMaxOperandCount> operands{adaptor.getDst(), adaptor.getSrc()};
     if (Value fp = adaptor.getFp()) {
       operands.push_back(fp);
     }
@@ -50,7 +54,7 @@ struct PTOExtractToEmitC : public OpConversionPattern<pto::TExtractOp> {
     if (!dstType || !srcType) {
       return failure();
     }
-    SmallVector<Attribute, 4> args{
+    SmallVector<Attribute, kExtractMaxTemplateArgumentCount> args{
         emitc::OpaqueAttr::get(rewriter.getContext(), dstType.getValue().str()),
         emitc::OpaqueAttr::get(rewriter.getContext(), srcType.getValue().str()),
     };
@@ -119,7 +123,7 @@ struct PTOInsertToEmitC : public OpConversionPattern<pto::TInsertOp> {
       if (!dstOT || !srcOT)
         return rewriter.notifyMatchFailure(
             op, "tinsert template lowering expects opaque dst/src types");
-      SmallVector<Attribute, 5> args{
+      SmallVector<Attribute, kInsertMaxTemplateArgumentCount> args{
           emitc::OpaqueAttr::get(ctx, dstOT.getValue().str()),
           emitc::OpaqueAttr::get(ctx, srcOT.getValue().str()),
       };
@@ -158,7 +162,7 @@ struct PTOInsertToEmitC : public OpConversionPattern<pto::TInsertOp> {
     if (op.getPreQuantScalar())
       preQuantScalar = adaptor.getPreQuantScalar();
 
-    SmallVector<Value, 6> operands{dst, src};
+    SmallVector<Value, kExtractInsertMaxOperandCount> operands{dst, src};
     if (fp)
       operands.push_back(fp);
     if (preQuantScalar)
@@ -178,7 +182,6 @@ struct PTOInsertToEmitC : public OpConversionPattern<pto::TInsertOp> {
     rewriter.eraseOp(op);
     return success();
   }
-
 };
 
 void populateTensorTExtractInsertPatterns(RewritePatternSet &patterns,

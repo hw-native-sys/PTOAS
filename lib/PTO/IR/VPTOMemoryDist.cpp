@@ -10,6 +10,8 @@
 
 #include "PTO/IR/VPTOMemoryDist.h"
 
+#include "PTO/Support/CodeConstants.h"
+
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/MathExtras.h"
 
@@ -400,31 +402,31 @@ static std::optional<int64_t> evaluateSizeRule(VPTOMemorySizeRule rule,
 
   switch (rule) {
   case Size::Element:
-    if (elementBits == 0 || elementBits % 8 != 0) {
+    if (elementBits == 0 || elementBits % mlir::pto::kValue8 != 0) {
       return std::nullopt;
     }
-    return static_cast<int64_t>(elementBits / 8);
+    return static_cast<int64_t>(elementBits / mlir::pto::kValue8);
   case Size::Block:
-    return 32;
+    return mlir::pto::kValue32;
   case Size::Vector:
     return vectorBytes;
   case Size::VectorTimes2:
     if (
-        vectorBytes > std::numeric_limits<int64_t>::max() / 2) {
+        vectorBytes > std::numeric_limits<int64_t>::max() / mlir::pto::kValue2) {
       return std::nullopt;
     }
-    return vectorBytes * 2;
+    return vectorBytes * mlir::pto::kValue2;
   case Size::VectorDiv2:
-    return vectorBytes % 2 == 0 ? std::optional<int64_t>(vectorBytes / 2)
+    return vectorBytes % mlir::pto::kValue2 == 0 ? std::optional<int64_t>(vectorBytes / mlir::pto::kValue2)
                                 : std::nullopt;
   case Size::VectorDiv4:
-    return vectorBytes % 4 == 0 ? std::optional<int64_t>(vectorBytes / 4)
+    return vectorBytes % mlir::pto::kValue4 == 0 ? std::optional<int64_t>(vectorBytes / mlir::pto::kValue4)
                                 : std::nullopt;
   case Size::VectorDiv8:
-    return vectorBytes % 8 == 0 ? std::optional<int64_t>(vectorBytes / 8)
+    return vectorBytes % mlir::pto::kValue8 == 0 ? std::optional<int64_t>(vectorBytes / mlir::pto::kValue8)
                                 : std::nullopt;
   case Size::VectorDiv16:
-    return vectorBytes % 16 == 0 ? std::optional<int64_t>(vectorBytes / 16)
+    return vectorBytes % mlir::pto::kValue16 == 0 ? std::optional<int64_t>(vectorBytes / mlir::pto::kValue16)
                                  : std::nullopt;
   }
   return std::nullopt;
@@ -439,11 +441,11 @@ static llvm::StringRef getDefaultToken(VPTOMemoryOpFamily family,
     return {};
   }
   switch (*elementBits) {
-  case 8:
+  case mlir::pto::kValue8:
     return "NORM_B8";
-  case 16:
+  case mlir::pto::kValue16:
     return "NORM_B16";
-  case 32:
+  case mlir::pto::kValue32:
     return "NORM_B32";
   default:
     return {};
@@ -460,7 +462,7 @@ VPTOMemoryDistContract::getRequiredAlignmentBytes(int64_t vectorBytes) const {
     return std::nullopt;
   }
   if (alignmentRule == Size::VectorDiv2 || alignmentRule == Size::VectorDiv4) {
-    return std::min<int64_t>(32, *alignment);
+    return std::min<int64_t>(mlir::pto::kValue32, *alignment);
   }
   return alignment;
 }
@@ -473,7 +475,7 @@ VPTOMemoryDistContract::getFullActiveFootprintBytes(int64_t vectorBytes) const {
 int64_t VPTOMemoryDistContract::getDependencyGranularityBytes(
     int64_t vectorBytes) const {
   if (transfer == Transfer::ScalarBroadcast) {
-    return 32;
+    return mlir::pto::kValue32;
   }
   return getFullActiveFootprintBytes(vectorBytes).value_or(0);
 }

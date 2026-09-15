@@ -26,7 +26,7 @@
 # rpm -e / dpkg -r, so no extra cann_uninstall.sh entry or ascend_install.info record is
 # created here.
 #
-# What this script does: install the private PTOAS wheel runtime and align installed file/dir permissions with the makeself run package's
+# What this script does: install the PTOAS wheel runtime and align installed file/dir permissions with the makeself run package's
 # "install for all" mode (IS_FOR_ALL=y, root install), so the files are readable by every user.
 # The run package's pto_install.sh does this dynamically; rpm/deb have fixed permissions baked in at
 # pack time, so we replay the same mode bits here.
@@ -47,10 +47,11 @@ ARCH_DIR="$(uname -m)-linux"
 # Only run when the install root actually exists.
 if [ -d "${INSTALL_ROOT}" ]; then
 
-    # Install the wheel into the same private runtime used by the run package. The
+    # Install the wheel into the same shared runtime used by the run package. The
     # helper selects exactly one wheel from tools/ptoas/wheels, installs it into
-    # tools/ptoas/python with --no-deps --target, and records the
-    # interpreter consumed by tools/ptoas/bin/ptoas.
+    # the CANN shared python/site-packages with --no-deps --target, records the
+    # interpreter consumed by tools/ptoas/bin/ptoas, and exposes the command
+    # through the <version>/bin/ptoas symlink.
     PTOAS_COMMON="${INSTALL_ROOT}/share/info/${PTO_PLATFORM_DIR}/script/pto_common.sh"
     if [ ! -r "${PTOAS_COMMON}" ]; then
         echo "[pto-as] missing wheel runtime helper: ${PTOAS_COMMON}" >&2

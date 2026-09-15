@@ -99,7 +99,7 @@ private:
   /// 合并两个分支的同步状态 (Intersection)
   void MergeAlreadySync(SyncRecordList &syncRecordList,
                               const SyncRecordList &syncRecordIfList,
-                              const SyncRecordList &syncRecordElseList);
+                              const SyncRecordList &syncRecordElseList) const;
  
   // --- Dependency & Sync Insertion ---
 
@@ -142,7 +142,6 @@ private:
                                 const CompoundInstanceElement *frontCompound,
                                 DepBaseMemInfoPairVec &depBaseMemInfosVec,
                                 const std::optional<unsigned> &forEndIndex);
-  
  
   // --- Utility Methods ---
  
@@ -150,7 +149,7 @@ private:
   bool isAlreadySync(const CompoundInstanceElement *nowCompound,
                            const CompoundInstanceElement *frontCompound,
                            SyncRecordList &syncRecordList,
-                           unsigned recordListIndex);
+                           unsigned recordListIndex) const;
 
   bool CanPrunePipeVBarrier(
       const CompoundInstanceElement *nowCompound,
@@ -167,7 +166,7 @@ private:
                             SyncRecordList &syncRecordList);
  
   void UpdateSyncRecord(const SyncOperation *sync, SyncRecord &syncRecord,
-                              PipelineType nowPipeValue);
+                              PipelineType nowPipeValue) const;
                         
   void InsertLastPipeAll();
   
@@ -178,10 +177,10 @@ private:
                             bool isBackwardDep) const;
  
   /// 获取依赖对涉及的 Event ID 数量 (用于 Multi-Buffer 分析)
-  int GetEventIdNum(const DepBaseMemInfoPairVec &depBaseMemInfosVec);
+  int GetEventIdNum(const DepBaseMemInfoPairVec &depBaseMemInfosVec) const;
  
   /// 辅助函数：获取所有涉及的 Buffer (用于 LCA 计算，虽然现在简化了，保留接口)
-  const SmallVector<Value> GetMemInfoBuffers(const DepBaseMemInfoPairVec &depBaseMemInfosVec);
+  SmallVector<Value> GetMemInfoBuffers(const DepBaseMemInfoPairVec &depBaseMemInfosVec) const;
  
   /// 判断两个操作是否构成GM的读写冲突
   bool IsGMHazard(const CompoundInstanceElement *nowCompound,

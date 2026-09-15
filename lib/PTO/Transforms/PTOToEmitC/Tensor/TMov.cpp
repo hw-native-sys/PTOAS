@@ -47,8 +47,8 @@ LogicalResult matchAndRewrite(pto::TMovOp op, OpAdaptor adaptor,
   const bool hasMode = static_cast<bool>(modeAttr);
   const bool reluNonDefault = op.getReluPreMode() != pto::ReluPreMode::NoRelu;
 
-  SmallVector<Value, 4> operands{dst, src};
-  SmallVector<Attribute, 5> templateArgVec{
+  SmallVector<Value, mlir::pto::kValue4> operands{dst, src};
+  SmallVector<Attribute, mlir::pto::kValue5> templateArgVec{
       emitc::OpaqueAttr::get(ctx, dstOT.getValue().str()),
       emitc::OpaqueAttr::get(ctx, srcOT.getValue().str()),
   };

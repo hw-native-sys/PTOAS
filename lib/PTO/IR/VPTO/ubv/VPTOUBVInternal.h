@@ -27,7 +27,7 @@ namespace mlir::pto::ubv_detail {
 using namespace mlir;
 using namespace mlir::pto;
 
-  [[maybe_unused]] static LogicalResult verifyUBBinaryOperands(Operation *op, Value dst,
+  [[maybe_unused]] static inline LogicalResult verifyUBBinaryOperands(Operation *op, Value dst,
                                                   Value src0, Value src1) {
     if (!isBufferLike(dst.getType()) || !isBufferLike(src0.getType()) ||
         !isBufferLike(src1.getType())) {
@@ -41,7 +41,7 @@ using namespace mlir::pto;
     return success();
   }
 
-  [[maybe_unused]] static LogicalResult verifyUBUnaryOperands(Operation *op, Value dst, Value src) {
+  [[maybe_unused]] static inline LogicalResult verifyUBUnaryOperands(Operation *op, Value dst, Value src) {
     if (!isBufferLike(dst.getType()) || !isBufferLike(src.getType())) {
       return op->emitOpError("requires pointer-like operands");
     }

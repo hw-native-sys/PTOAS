@@ -23,7 +23,7 @@ static LogicalResult verifyTGatherMaskShapes(TGatherOp op) {
   const unsigned times = getMaskGatherTimes(mp);
   auto srcValid = getValidShapeVec(srcTy);
   auto dstValid = getValidShapeVec(dstTy);
-  if (srcValid.size() != 2 || dstValid.size() != 2) {
+  if (srcValid.size() != mlir::pto::kValue2 || dstValid.size() != mlir::pto::kValue2) {
     return op.emitOpError("expects src and dst to have rank-2 valid_shape");
   }
   if (axisVal == "row") {
@@ -55,12 +55,12 @@ static LogicalResult verifyTGatherMaskArchTypes(TGatherOp op, Type srcElem,
                                                 unsigned elemBytes,
                                                 bool allowA5MaskTypes) {
   if (!allowA5MaskTypes) {
-    if (elemBytes == 2 || elemBytes == 4)
+    if (elemBytes == mlir::pto::kValue2 || elemBytes == mlir::pto::kValue4)
       return success();
     return op.emitOpError(
         "expects A2/A3 mask-pattern gather element size to be 2 or 4 bytes");
   }
-  if (!(elemBytes == 1 || elemBytes == 2 || elemBytes == 4))
+  if (!(elemBytes == 1 || elemBytes == mlir::pto::kValue2 || elemBytes == mlir::pto::kValue4))
     return op.emitOpError(
         "expects A5 mask-pattern gather element size to be 1, 2, or 4 bytes");
   if (!isSupportedGatherElemTypeA5(srcElem) ||
@@ -101,7 +101,7 @@ static LogicalResult verifyTGatherMaskForm(TGatherOp op, bool allowA5MaskTypes) 
   }
   auto dstValid = getValidShapeVec(dstTy);
   auto dstShape = getShapeVec(dstTy);
-  if (dstValid.size() == 2 && dstShape.size() == 2 &&
+  if (dstValid.size() == mlir::pto::kValue2 && dstShape.size() == mlir::pto::kValue2 &&
       dstValid[1] != ShapedType::kDynamic && dstShape[1] != ShapedType::kDynamic &&
       dstValid[1] != dstShape[1]) {
     return op.emitOpError("expects dst valid_shape[1] to equal dst cols");
@@ -151,7 +151,7 @@ static LogicalResult verifyTGatherIndexTypes(TGatherOp op, bool allow16BitIndice
     return op.emitOpError("indices element type must be integer");
   }
   unsigned width = idxElem.getWidth();
-  if (!(width == 32 || (allow16BitIndices && width == 16))) {
+  if (!(width == mlir::pto::kValue32 || (allow16BitIndices && width == mlir::pto::kValue16))) {
     return op.emitOpError() << "expects indices element type to be i32"
                             << (allow16BitIndices ? " or i16" : "");
   }
@@ -163,14 +163,14 @@ static LogicalResult verifyTGatherIndexShapes(TGatherOp op, bool allowA5ElemType
   Type idxTy = op.getIndices().getType();
   auto dstValid = getValidShapeVec(dstTy);
   auto dstShape = getShapeVec(dstTy);
-  if (dstValid.size() == 2 && dstShape.size() == 2 &&
+  if (dstValid.size() == mlir::pto::kValue2 && dstShape.size() == mlir::pto::kValue2 &&
       dstValid[1] != ShapedType::kDynamic && dstShape[1] != ShapedType::kDynamic &&
       dstValid[1] != dstShape[1]) {
     return op.emitOpError("expects dst valid_shape[1] to equal dst cols");
   }
   auto idxValid = getValidShapeVec(idxTy);
   auto idxShape = getShapeVec(idxTy);
-  if (idxValid.size() == 2 && idxShape.size() == 2 &&
+  if (idxValid.size() == mlir::pto::kValue2 && idxShape.size() == mlir::pto::kValue2 &&
       idxValid[1] != ShapedType::kDynamic && idxShape[1] != ShapedType::kDynamic &&
       idxValid[1] != idxShape[1]) {
     return op.emitOpError("expects indices valid_shape[1] to equal indices cols");
@@ -208,14 +208,14 @@ static LogicalResult verifyTGatherCompareSrcType(TGatherOp op, Type srcElem,
                                                  pto::CmpMode cmpMode,
                                                  bool allowA5SrcTypes) {
   if (allowA5SrcTypes) {
-    if (!(srcElem.isF16() || srcElem.isF32() || srcElem.isInteger(16) ||
-          srcElem.isInteger(32))) {
+    if (!(srcElem.isF16() || srcElem.isF32() || srcElem.isInteger(mlir::pto::kValue16) ||
+          srcElem.isInteger(mlir::pto::kValue32))) {
       return op.emitOpError(
           "expects A5 compare-form tgather src element type to be i16/i32/f16/f32");
     }
   } else {
     if (!(srcElem.isF16() || srcElem.isF32() ||
-          (srcElem.isInteger(32) && cmpMode == pto::CmpMode::EQ))) {
+          (srcElem.isInteger(mlir::pto::kValue32) && cmpMode == pto::CmpMode::EQ))) {
       return op.emitOpError(
           "expects A2/A3 compare-form tgather src element type to be f16/f32, or i32 when cmpMode=eq");
     }
@@ -241,7 +241,7 @@ static LogicalResult verifyTGatherCompareForm(TGatherOp op, bool allowA5SrcTypes
     return op.emitOpError("failed to get element type for src/dst/cdst");
   }
   auto dstInt = dyn_cast<IntegerType>(dstElem);
-  if (!dstInt || dstInt.getWidth() != 32) {
+  if (!dstInt || dstInt.getWidth() != mlir::pto::kValue32) {
     return op.emitOpError("expects dst element type to be i32");
   }
   if (cdstElem != dstElem) {

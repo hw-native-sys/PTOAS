@@ -14,25 +14,21 @@ using namespace mlir;
 using namespace mlir::pto;
 using namespace mlir::pto::mte_detail;
 
-void MteGmL1FracOp::build(OpBuilder &odsBuilder, OperationState &state,
-                           Value source, Value destination,
-                           pto::CubeLoadFracMode mode,
-                           pto::CubeLoadFracShapeConfig shape,
-                           pto::CubeLoadFracSrcLayoutConfig srcLayout,
-                           pto::CubeLoadFracDstGroupConfig dstGroup,
-                           pto::CubeLoadFracCtrlConfig ctrl) {
-  state.addOperands({source, destination, shape.nValue, shape.dValue,
-                     srcLayout.srcInnerStride});
-  state.addOperands({dstGroup.groupCount, dstGroup.dstLoop2Stride,
-                     dstGroup.dstLoop3Stride, dstGroup.dstLoop4Stride,
-                     ctrl.l2CacheCtrl, ctrl.smallc0En});
-  bool hasSrcOuterStride = srcLayout.srcOuterStride.has_value();
-  if (hasSrcOuterStride) {
-    state.addOperands(*srcLayout.srcOuterStride);
-  }
+void MteGmL1FracOp::build(
+    OpBuilder& odsBuilder, OperationState& odsState, Value source, Value destination, pto::CubeLoadFracMode mode,
+    pto::CubeLoadFracShapeConfig shape, pto::CubeLoadFracSrcLayoutConfig srcLayout,
+    pto::CubeLoadFracDstGroupConfig dstGroup, pto::CubeLoadFracCtrlConfig ctrl)
+{
+    odsState.addOperands({source, destination, shape.nValue, shape.dValue, srcLayout.srcInnerStride});
+    odsState.addOperands(
+        {dstGroup.groupCount, dstGroup.dstLoop2Stride, dstGroup.dstLoop3Stride, dstGroup.dstLoop4Stride,
+         ctrl.l2CacheCtrl, ctrl.smallc0En});
+    bool hasSrcOuterStride = srcLayout.srcOuterStride.has_value();
+    if (hasSrcOuterStride) {
+        odsState.addOperands(*srcLayout.srcOuterStride);
+    }
 
-  state.addAttribute(getModeAttrName(state.name),
-                     CubeLoadFracModeAttr::get(odsBuilder.getContext(), mode));
+    odsState.addAttribute(getModeAttrName(odsState.name), CubeLoadFracModeAttr::get(odsBuilder.getContext(), mode));
 }
 
 ParseResult MteGmL1FracOp::parse(OpAsmParser &parser, OperationState &result) {

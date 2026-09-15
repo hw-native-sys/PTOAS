@@ -23,6 +23,8 @@ LogicalResult AtomicCasOp::verify() {
                             getSignednessAttr());
 }
 
+// ODS OpInterface methods have generated non-const declarations.
+// NOLINTNEXTLINE(readability-make-member-function-const)
 void AtomicCasOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {

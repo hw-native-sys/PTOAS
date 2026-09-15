@@ -587,8 +587,10 @@ from UB using byte offsets.
 #### `pto.vsldb(buf: PtrType, block_stride: Index, repeat_stride: Index, mask: MaskType) -> VRegType`
 
 **Description**: Block-strided load. The source is interpreted as a sequence of
-32-byte blocks addressed by `repeat_stride + blk * block_stride`. Masked-off
-blocks are zero-filled.
+32-byte blocks addressed by `repeat_stride + blk * block_stride`. The source
+address must be 32-byte aligned and every enabled block must have all 32 bytes
+readable, including when only one block is enabled or `block_stride` is zero.
+Masked-off blocks are zero-filled.
 
 **Parameters**:
 

@@ -42,14 +42,12 @@ namespace {
 
 static bool isWhitelisted(Operation *op) {
   return llvm::TypeSwitch<Operation *, bool>(op)
-      .Case<pto::VMIVminOp, pto::VMIVmaxOp, pto::VMIVshrOp,
-            pto::VMIvcmaxOp, pto::VMIvcminOp, pto::VMIMaxSOp,
-            pto::VMIMinSOp, pto::VMIShrSOp, pto::VMICvtOp,
-            pto::VMIMinIOp, pto::VMIMaxIOp, pto::VMIShRUIOp,
-            pto::VMIReduceMaxIOp, pto::VMIReduceMinIOp,
+      .Case<pto::VMIVminOp, pto::VMIVmaxOp, pto::VMIVshrOp, pto::VMIvcmaxOp,
+            pto::VMIvcminOp, pto::VMIMaxSOp, pto::VMIMinSOp, pto::VMIShrSOp,
+            pto::VMICvtOp, pto::VMIReduceMaxIOp, pto::VMIReduceMinIOp,
             pto::VMIGroupReduceMaxIOp, pto::VMIGroupReduceMinIOp,
-            pto::VMIFPToUIOp, pto::VMIExtUIOp,
-            pto::VMIVdhistOp, pto::VMIVchistOp>([](auto) { return true; })
+            pto::VMIFPToUIOp, pto::VMIExtUIOp, pto::VMIVdhistOp,
+            pto::VMIVchistOp>([](auto) { return true; })
       .Default([](auto) { return false; });
 }
 

@@ -10,7 +10,7 @@
 
 static LogicalResult verifyShiftOp(Operation *op, Type src0Ty, Type src1Ty,
                                    Type dstTy, StringRef name) {
-  auto verify = [&]() -> LogicalResult {
+  auto verify = [op, src0Ty, src1Ty, dstTy, name]() -> LogicalResult {
     FailureOr<Type> elemOr =
         verifyShiftLikeBinaryTileOpCommon(op, src0Ty, src1Ty, dstTy);
     if (failed(elemOr)) {

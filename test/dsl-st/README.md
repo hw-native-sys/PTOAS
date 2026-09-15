@@ -218,3 +218,23 @@ python3 ptodsl/tests/test_jit_compile.py
 - 以下划线开头的辅助模块
 
 每个被发现的模块都需要定义非空 `CASES` 列表，且所有 case name 在目录内必须唯一。
+
+## Histogram / scatter 的七种合法 lane
+
+`vmi_histogram_scatter_lanes.py` 包含 56 个 kernel、224 个设备场景：
+
+- `1/2/4/8/64/128/256`，`vdhist/vchist` 各覆盖 128/256 bins；
+- scatter 覆盖 f32、f16、ui8、i8，随机式无重复偏移与不同奇偶字节值；
+- full、empty、prefix、sparse mask，128 lane 的 prefix 为 96；
+- 非零 histogram accumulator，以及输出区两侧和所有未写位置的哨兵。
+
+```bash
+python3 test/dsl-st/vmi_histogram_scatter_lanes.py --emit-mlir
+python3 test/dsl-st/vmi_histogram_scatter_lanes.py
+python3 ptodsl/tests/test_vmi_histogram_scatter_lanes.py
+```
+
+最后一条无需设备，检查 size 推导、类型构造、操作入口和 mask/offset
+长度不匹配的负向用例。非法 logical lane 在 PTODSL 报错；active prefix
+不受七值白名单限制。输入分配为短读取保留最小 32B，64/128 ui8 的
+VMI load 仍分别只请求 64/128B。

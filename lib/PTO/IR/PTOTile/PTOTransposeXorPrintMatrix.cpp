@@ -28,9 +28,9 @@ static LogicalResult verifyTTransA5(TTransOp op) {
 }
 
 mlir::LogicalResult mlir::pto::TTransOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult { return verifyTTransA2A3(*this); };
-  auto verifyA5 = [&]() -> LogicalResult { return verifyTTransA5(*this); };
-  return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
+    auto verifyA2A3 = [this]() -> LogicalResult { return verifyTTransA2A3(*this); };
+    auto verifyA5 = [this]() -> LogicalResult { return verifyTTransA5(*this); };
+    return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
 ParseResult mlir::pto::TXorOp::parse(OpAsmParser &parser,
@@ -114,9 +114,9 @@ static LogicalResult verifyTXorA5(TXorOp op) {
 }
 
 mlir::LogicalResult mlir::pto::TXorOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult { return verifyTXorA2A3(*this); };
-  auto verifyA5 = [&]() -> LogicalResult { return verifyTXorA5(*this); };
-  return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
+    auto verifyA2A3 = [this]() -> LogicalResult { return verifyTXorA2A3(*this); };
+    auto verifyA5 = [this]() -> LogicalResult { return verifyTXorA5(*this); };
+    return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
 
@@ -159,9 +159,9 @@ static LogicalResult verifyTXorSArch(TXorSOp op, bool isA5) {
 }
 
 mlir::LogicalResult mlir::pto::TXorSOp::verify() {
-  auto verifyA2A3 = [&]() { return verifyTXorSArch(*this, false); };
-  auto verifyA5 = [&]() { return verifyTXorSArch(*this, true); };
-  return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
+    auto verifyA2A3 = [this]() { return verifyTXorSArch(*this, false); };
+    auto verifyA5 = [this]() { return verifyTXorSArch(*this, true); };
+    return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
 ParseResult mlir::pto::TPrintOp::parse(OpAsmParser &parser,
@@ -262,23 +262,21 @@ static LogicalResult verifyMatmulOrGemv(Operation *op, Type lhs, Type rhs,
 }
 
 LogicalResult mlir::pto::TMatmulOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult {
-    return verifyMatmulOrGemv(getOperation(), getLhs().getType(),
-                              getRhs().getType(), getDst().getType(), false);
-  };
-  auto verifyA5 = [&]() -> LogicalResult {
-    return verifyMatmulOrGemv(getOperation(), getLhs().getType(),
-                              getRhs().getType(), getDst().getType(), false,
-                              /*allowLowPrecision=*/true);
-  };
-  return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
+    auto verifyA2A3 = [this]() -> LogicalResult {
+        return verifyMatmulOrGemv(getOperation(), getLhs().getType(), getRhs().getType(), getDst().getType(), false);
+    };
+    auto verifyA5 = [this]() -> LogicalResult {
+        return verifyMatmulOrGemv(
+            getOperation(), getLhs().getType(), getRhs().getType(), getDst().getType(), false,
+            /*allowLowPrecision=*/true);
+    };
+    return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
 LogicalResult mlir::pto::TGemvOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult {
-    return verifyMatmulOrGemv(getOperation(), getLhs().getType(),
-                              getRhs().getType(), getDst().getType(), true);
-  };
-  auto verifyA5 = [&]() -> LogicalResult { return verifyA2A3(); };
-  return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
+    auto verifyA2A3 = [this]() -> LogicalResult {
+        return verifyMatmulOrGemv(getOperation(), getLhs().getType(), getRhs().getType(), getDst().getType(), true);
+    };
+    auto verifyA5 = [&verifyA2A3]() -> LogicalResult { return verifyA2A3(); };
+    return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }

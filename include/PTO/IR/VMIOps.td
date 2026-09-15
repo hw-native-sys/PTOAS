@@ -157,223 +157,6 @@ def VMIMaskNotOp : VMI_Op<"mask_not", [Pure]> {
   let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
 }
 
-def VMIAddFOp : VMI_Op<"addf", [Pure]> {
-  let summary = "VMI floating-point elementwise add";
-  let arguments = (ins VMI_VRegTypeConstraint:$lhs, VMI_VRegTypeConstraint:$rhs);
-  let results = (outs VMI_VRegTypeConstraint:$result);
-  let hasVerifier = 1;
-  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs) `,` type($rhs) `->` type($result)";
-}
-
-def VMIAddIOp : VMI_Op<"addi", [Pure]> {
-  let summary = "VMI integer elementwise add";
-  let arguments = (ins VMI_VRegTypeConstraint:$lhs, VMI_VRegTypeConstraint:$rhs);
-  let results = (outs VMI_VRegTypeConstraint:$result);
-  let hasVerifier = 1;
-  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs) `,` type($rhs) `->` type($result)";
-}
-
-def VMISubFOp : VMI_Op<"subf", [Pure]> {
-  let summary = "VMI floating-point elementwise subtract";
-  let arguments = (ins VMI_VRegTypeConstraint:$lhs, VMI_VRegTypeConstraint:$rhs);
-  let results = (outs VMI_VRegTypeConstraint:$result);
-  let hasVerifier = 1;
-  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs) `,` type($rhs) `->` type($result)";
-}
-
-def VMISubIOp : VMI_Op<"subi", [Pure]> {
-  let summary = "VMI integer elementwise subtract";
-  let arguments = (ins VMI_VRegTypeConstraint:$lhs, VMI_VRegTypeConstraint:$rhs);
-  let results = (outs VMI_VRegTypeConstraint:$result);
-  let hasVerifier = 1;
-  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs) `,` type($rhs) `->` type($result)";
-}
-
-def VMIMulFOp : VMI_Op<"mulf", [Pure]> {
-  let summary = "VMI floating-point elementwise multiply";
-  let arguments = (ins VMI_VRegTypeConstraint:$lhs, VMI_VRegTypeConstraint:$rhs);
-  let results = (outs VMI_VRegTypeConstraint:$result);
-  let hasVerifier = 1;
-  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs) `,` type($rhs) `->` type($result)";
-}
-
-def VMIMulIOp : VMI_Op<"muli", [Pure]> {
-  let summary = "VMI integer elementwise multiply";
-  let arguments = (ins VMI_VRegTypeConstraint:$lhs, VMI_VRegTypeConstraint:$rhs);
-  let results = (outs VMI_VRegTypeConstraint:$result);
-  let hasVerifier = 1;
-  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs) `,` type($rhs) `->` type($result)";
-}
-
-def VMIFmaOp : VMI_Op<"fma", [Pure]> {
-  let summary = "VMI fused floating-point multiply-add";
-  let arguments = (ins VMI_VRegTypeConstraint:$lhs, VMI_VRegTypeConstraint:$rhs,
-                       VMI_VRegTypeConstraint:$acc);
-  let results = (outs VMI_VRegTypeConstraint:$result);
-  let hasVerifier = 1;
-  let assemblyFormat = "$lhs `,` $rhs `,` $acc attr-dict `:` type($lhs) `,` type($rhs) `,` type($acc) `->` type($result)";
-}
-
-def VMIDivFOp : VMI_Op<"divf", [Pure]> {
-  let summary = "VMI floating-point elementwise divide";
-  let arguments = (ins VMI_VRegTypeConstraint:$lhs, VMI_VRegTypeConstraint:$rhs);
-  let results = (outs VMI_VRegTypeConstraint:$result);
-  let hasVerifier = 1;
-  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs) `,` type($rhs) `->` type($result)";
-}
-
-def VMIMinFOp : VMI_Op<"minf", [Pure]> {
-  let summary = "VMI floating-point elementwise minimum";
-  let arguments = (ins VMI_VRegTypeConstraint:$lhs, VMI_VRegTypeConstraint:$rhs);
-  let results = (outs VMI_VRegTypeConstraint:$result);
-  let hasVerifier = 1;
-  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs) `,` type($rhs) `->` type($result)";
-}
-
-def VMIMaxFOp : VMI_Op<"maxf", [Pure]> {
-  let summary = "VMI floating-point elementwise maximum";
-  let arguments = (ins VMI_VRegTypeConstraint:$lhs, VMI_VRegTypeConstraint:$rhs);
-  let results = (outs VMI_VRegTypeConstraint:$result);
-  let hasVerifier = 1;
-  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs) `,` type($rhs) `->` type($result)";
-}
-
-def VMIMinIOp : VMI_Op<"mini", [Pure]> {
-  let summary = "VMI integer elementwise minimum";
-  let arguments = (ins VMI_VRegTypeConstraint:$lhs, VMI_VRegTypeConstraint:$rhs);
-  let results = (outs VMI_VRegTypeConstraint:$result);
-  let hasVerifier = 1;
-  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs) `,` type($rhs) `->` type($result)";
-}
-
-def VMIMaxIOp : VMI_Op<"maxi", [Pure]> {
-  let summary = "VMI integer elementwise maximum";
-  let arguments = (ins VMI_VRegTypeConstraint:$lhs, VMI_VRegTypeConstraint:$rhs);
-  let results = (outs VMI_VRegTypeConstraint:$result);
-  let hasVerifier = 1;
-  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs) `,` type($rhs) `->` type($result)";
-}
-
-def VMINegFOp : VMI_Op<"negf", [Pure]> {
-  let summary = "VMI floating-point elementwise negate";
-  let arguments = (ins VMI_VRegTypeConstraint:$source);
-  let results = (outs VMI_VRegTypeConstraint:$result);
-  let hasVerifier = 1;
-  let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
-}
-
-def VMINegIOp : VMI_Op<"negi", [Pure]> {
-  let summary = "VMI integer elementwise negate";
-  let arguments = (ins VMI_VRegTypeConstraint:$source);
-  let results = (outs VMI_VRegTypeConstraint:$result);
-  let hasVerifier = 1;
-  let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
-}
-
-def VMIAbsFOp : VMI_Op<"absf", [Pure]> {
-  let summary = "VMI floating-point elementwise absolute value";
-  let arguments = (ins VMI_VRegTypeConstraint:$source);
-  let results = (outs VMI_VRegTypeConstraint:$result);
-  let hasVerifier = 1;
-  let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
-}
-
-def VMIAbsIOp : VMI_Op<"absi", [Pure]> {
-  let summary = "VMI integer elementwise absolute value";
-  let arguments = (ins VMI_VRegTypeConstraint:$source);
-  let results = (outs VMI_VRegTypeConstraint:$result);
-  let hasVerifier = 1;
-  let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
-}
-
-def VMISqrtOp : VMI_Op<"sqrt", [Pure]> {
-  let summary = "VMI floating-point elementwise square root";
-  let arguments = (ins VMI_VRegTypeConstraint:$source);
-  let results = (outs VMI_VRegTypeConstraint:$result);
-  let hasVerifier = 1;
-  let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
-}
-
-def VMIExpOp : VMI_Op<"exp", [Pure]> {
-  let summary = "VMI floating-point elementwise exponential";
-  let arguments = (ins VMI_VRegTypeConstraint:$source);
-  let results = (outs VMI_VRegTypeConstraint:$result);
-  let hasVerifier = 1;
-  let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
-}
-
-def VMILnOp : VMI_Op<"ln", [Pure]> {
-  let summary = "VMI floating-point elementwise natural logarithm";
-  let arguments = (ins VMI_VRegTypeConstraint:$source);
-  let results = (outs VMI_VRegTypeConstraint:$result);
-  let hasVerifier = 1;
-  let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
-}
-
-def VMIReluOp : VMI_Op<"relu", [Pure]> {
-  let summary = "VMI floating-point or signed 32-bit integer elementwise ReLU";
-  let arguments = (ins VMI_VRegTypeConstraint:$source);
-  let results = (outs VMI_VRegTypeConstraint:$result);
-  let hasVerifier = 1;
-  let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
-}
-
-def VMIAndIOp : VMI_Op<"andi", [Pure]> {
-  let summary = "VMI integer elementwise bitwise and";
-  let arguments = (ins VMI_VRegTypeConstraint:$lhs, VMI_VRegTypeConstraint:$rhs);
-  let results = (outs VMI_VRegTypeConstraint:$result);
-  let hasVerifier = 1;
-  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs) `,` type($rhs) `->` type($result)";
-}
-
-def VMIOrIOp : VMI_Op<"ori", [Pure]> {
-  let summary = "VMI integer elementwise bitwise or";
-  let arguments = (ins VMI_VRegTypeConstraint:$lhs, VMI_VRegTypeConstraint:$rhs);
-  let results = (outs VMI_VRegTypeConstraint:$result);
-  let hasVerifier = 1;
-  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs) `,` type($rhs) `->` type($result)";
-}
-
-def VMIXOrIOp : VMI_Op<"xori", [Pure]> {
-  let summary = "VMI integer elementwise bitwise xor";
-  let arguments = (ins VMI_VRegTypeConstraint:$lhs, VMI_VRegTypeConstraint:$rhs);
-  let results = (outs VMI_VRegTypeConstraint:$result);
-  let hasVerifier = 1;
-  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs) `,` type($rhs) `->` type($result)";
-}
-
-def VMIShLIOp : VMI_Op<"shli", [Pure]> {
-  let summary = "VMI integer elementwise left shift";
-  let arguments = (ins VMI_VRegTypeConstraint:$lhs, VMI_VRegTypeConstraint:$rhs);
-  let results = (outs VMI_VRegTypeConstraint:$result);
-  let hasVerifier = 1;
-  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs) `,` type($rhs) `->` type($result)";
-}
-
-def VMIShRUIOp : VMI_Op<"shrui", [Pure]> {
-  let summary = "VMI unsigned integer elementwise right shift";
-  let arguments = (ins VMI_VRegTypeConstraint:$lhs, VMI_VRegTypeConstraint:$rhs);
-  let results = (outs VMI_VRegTypeConstraint:$result);
-  let hasVerifier = 1;
-  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs) `,` type($rhs) `->` type($result)";
-}
-
-def VMIShRSIOp : VMI_Op<"shrsi", [Pure]> {
-  let summary = "VMI signed integer elementwise arithmetic right shift";
-  let arguments = (ins VMI_VRegTypeConstraint:$lhs, VMI_VRegTypeConstraint:$rhs);
-  let results = (outs VMI_VRegTypeConstraint:$result);
-  let hasVerifier = 1;
-  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs) `,` type($rhs) `->` type($result)";
-}
-
-def VMINotOp : VMI_Op<"not", [Pure]> {
-  let summary = "VMI integer elementwise bitwise not";
-  let arguments = (ins VMI_VRegTypeConstraint:$source);
-  let results = (outs VMI_VRegTypeConstraint:$result);
-  let hasVerifier = 1;
-  let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
-}
-
 def VMICmpFOp : VMI_Op<"cmpf", [Pure]> {
   let summary = "VMI floating-point elementwise compare";
   let arguments = (ins StrAttr:$predicate, VMI_VRegTypeConstraint:$lhs, VMI_VRegTypeConstraint:$rhs);
@@ -552,6 +335,12 @@ def VMIGroupBroadcastOp : VMI_Op<"group_broadcast"> {
 class VMIHistogramOp<string mnemonic, string summaryText>
     : VMI_Op<mnemonic> {
   let summary = summaryText;
+  let description = [{
+    Accumulates counts from logical byte source lanes selected by the mask.
+    Source and mask lengths match; the accumulator independently selects
+    128 or 256 ui16 bins. PTODSL restricts public source/mask lengths to
+    1/2/4/8/64/128/256. Internal IR retains general logical lengths.
+  }];
   let arguments = (ins VMI_VRegTypeConstraint:$acc,
                        VMI_VRegTypeConstraint:$source,
                        VMI_MaskTypeConstraint:$mask);
@@ -1250,6 +1039,56 @@ def VMIVnotOp : VMI_Op<"vnot", [Pure]> {
   let assemblyFormat = "$source (`,` $mask^)? attr-dict `:` type($source) (`,` type($mask)^)? `->` type($result)";
 }
 
+//===----------------------------------------------------------------------===//
+// Vreg bitwise interface
+//
+// `vand`/`vor`/`vxor`/`vnot` accept both vreg and mask operands.  Mask logic is
+// normalised onto the mask interface (`mask_and`/`mask_or`/`mask_xor`/
+// `mask_not`); the vreg form is normalised onto the vreg-only ops below, which
+// keep the governed predicate mask and `pmode` so the VMI-to-VPTO lowering can
+// forward them as the predication operand of the VPTO op.
+//===----------------------------------------------------------------------===//
+
+def VMIAndIOp : VMI_Op<"andi", [Pure]> {
+  let summary = "VMI vreg elementwise bitwise and (vreg interface)";
+  let arguments = (ins VMI_VRegTypeConstraint:$lhs, VMI_VRegTypeConstraint:$rhs,
+                       Variadic<VMI_MaskTypeConstraint>:$mask,
+                       OptionalAttr<StrAttr>:$pmode);
+  let results = (outs VMI_VRegTypeConstraint:$result);
+  let hasVerifier = 1;
+  let assemblyFormat = "$lhs `,` $rhs (`,` $mask^)? attr-dict `:` type($lhs) `,` type($rhs) (`,` type($mask)^)? `->` type($result)";
+}
+
+def VMIOrIOp : VMI_Op<"ori", [Pure]> {
+  let summary = "VMI vreg elementwise bitwise or (vreg interface)";
+  let arguments = (ins VMI_VRegTypeConstraint:$lhs, VMI_VRegTypeConstraint:$rhs,
+                       Variadic<VMI_MaskTypeConstraint>:$mask,
+                       OptionalAttr<StrAttr>:$pmode);
+  let results = (outs VMI_VRegTypeConstraint:$result);
+  let hasVerifier = 1;
+  let assemblyFormat = "$lhs `,` $rhs (`,` $mask^)? attr-dict `:` type($lhs) `,` type($rhs) (`,` type($mask)^)? `->` type($result)";
+}
+
+def VMIXOrIOp : VMI_Op<"xori", [Pure]> {
+  let summary = "VMI vreg elementwise bitwise xor (vreg interface)";
+  let arguments = (ins VMI_VRegTypeConstraint:$lhs, VMI_VRegTypeConstraint:$rhs,
+                       Variadic<VMI_MaskTypeConstraint>:$mask,
+                       OptionalAttr<StrAttr>:$pmode);
+  let results = (outs VMI_VRegTypeConstraint:$result);
+  let hasVerifier = 1;
+  let assemblyFormat = "$lhs `,` $rhs (`,` $mask^)? attr-dict `:` type($lhs) `,` type($rhs) (`,` type($mask)^)? `->` type($result)";
+}
+
+def VMINotOp : VMI_Op<"not", [Pure]> {
+  let summary = "VMI vreg elementwise bitwise not (vreg interface)";
+  let arguments = (ins VMI_VRegTypeConstraint:$source,
+                       Variadic<VMI_MaskTypeConstraint>:$mask,
+                       OptionalAttr<StrAttr>:$pmode);
+  let results = (outs VMI_VRegTypeConstraint:$result);
+  let hasVerifier = 1;
+  let assemblyFormat = "$source (`,` $mask^)? attr-dict `:` type($source) (`,` type($mask)^)? `->` type($result)";
+}
+
 def VMIVcmpOp : VMI_Op<"vcmp", [Pure]> {
   let summary = "VMI elementwise compare (fp/int unified) → predicate mask";
   let description = [{
@@ -1703,7 +1542,11 @@ def VMIVscatterOp : VMI_Op<"vscatter", [DeclareOpInterfaceMethods<MemoryEffectsO
   let summary = "VMI logical masked indexed scatter";
   let description = [{
     Scatters elements to UB memory using an index vector.
-    Inactive lanes are controlled by pmode.
+    Inactive and padding lanes do not write memory. The direct path supports
+    partial contiguous B32/B16 chunks. B8 values and logical b8 masks are
+    expanded together to B16 hardware request slots (128 requests per chunk).
+    PTODSL requires matching value/index/mask lane counts in
+    1/2/4/8/64/128/256; internal IR retains general logical lengths.
 
     Example:
     ```
@@ -1849,8 +1692,8 @@ def VMIVmulaOp : VMI_Op<"vmula", [Pure]> {
     The accumulator operand comes first to match hardware FMA semantics.
 
     Supports both floating-point (f16/bf16/f32) and integer (i8-i32) types.
-    The mask operand is optional; when present it is only a semantic annotation
-    and is discarded during lowering to legacy fma.
+    The mask operand is optional. When present, it predicates the VPTO vmula;
+    otherwise lowering supplies an all-active predicate.
 
     Example:
     ```

@@ -20,14 +20,14 @@
 #ifndef PTO_IR_VPTO_VPTOVECSCOPE_INTERNAL_H
 #define PTO_IR_VPTO_VPTOVECSCOPE_INTERNAL_H
 
+// Required by the split vecscope translation units for shared MLIR/operation
+// declarations; this header is their sole include.
 #include "VPTOInternal.h"
 
 namespace mlir::pto::vecscope_detail {
 
 using namespace mlir;
 using namespace mlir::pto;
-
-
 } // namespace mlir::pto::vecscope_detail
 
 #endif // PTO_IR_VPTO_VPTOVECSCOPE_INTERNAL_H

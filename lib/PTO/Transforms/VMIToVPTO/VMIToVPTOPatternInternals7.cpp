@@ -28,7 +28,8 @@ public:
   matchAndRewrite(VMIChannelSplitOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
     int64_t channels = op.getNumResults();
-    bool unsupportedChannels = channels != 2 && channels != 4;
+    bool unsupportedChannels =
+        channels != mlir::pto::kValue2 && channels != mlir::pto::kValue4;
     if (unsupportedChannels) {
       return rewriter.notifyMatchFailure(
           op, "channel_split only supports 2 or 4 channels");
@@ -124,7 +125,8 @@ public:
   matchAndRewrite(VMIChannelMergeOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
     int64_t channels = op.getInputs().size();
-    bool unsupportedChannels = channels != 2 && channels != 4;
+    bool unsupportedChannels =
+        channels != mlir::pto::kValue2 && channels != mlir::pto::kValue4;
     if (unsupportedChannels) {
       return rewriter.notifyMatchFailure(
           op, "channel_merge only supports 2 or 4 channels");
@@ -222,7 +224,9 @@ private:
     unsigned indexBits =
         pto::getPTOStorageElemBitWidth(sourceVRegType->getElementType());
     bool unsupportedIndexBits =
-        indexBits != 8 && indexBits != 16 && indexBits != 32;
+        indexBits != mlir::pto::kValue8 &&
+        indexBits != mlir::pto::kValue16 &&
+        indexBits != mlir::pto::kValue32;
     if (unsupportedIndexBits) {
       return rewriter.notifyMatchFailure(
           op, "shuffle vselr requires 8/16/32-bit index elements");
@@ -445,7 +449,7 @@ private:
   }
 
   static bool switchDestinationsChanged(
-      cf::SwitchOp op, Block *defaultDest, ArrayRef<Block *> caseDests) {
+      cf::SwitchOp op, const Block *defaultDest, ArrayRef<Block *> caseDests) {
     if (defaultDest != op.getDefaultDestination()) {
       return true;
     }
@@ -611,43 +615,48 @@ static void populateVMIStructuralAndMemoryPatterns(
 
 static void populateVMIArithmeticPatterns(
     VMIToVPTOTypeConverter &typeConverter, RewritePatternSet &patterns) {
-  patterns.add<OneToNVMIBinaryOpPattern<VMIAddFOp, VaddOp>,
-      OneToNVMIBinaryOpPattern<VMIAddIOp, VaddOp>,
-      OneToNVMICarryOutputOpPattern<VMIVaddcOp, VaddcOp>,
+  patterns.add<OneToNVMICarryOutputOpPattern<VMIVaddcOp, VaddcOp>,
       OneToNVMICarryOutputOpPattern<VMIVsubcOp, VsubcOp>,
       OneToNVMICarryInputOpPattern<VMIVaddcsOp, VaddcsOp>,
       OneToNVMICarryInputOpPattern<VMIVsubcsOp, VsubcsOp>,
-      OneToNVMIBinaryOpPattern<VMISubFOp, VsubOp>,
-      OneToNVMIBinaryOpPattern<VMISubIOp, VsubOp>,
-      OneToNVMIBinaryOpPattern<VMIMulFOp, VmulOp>,
-      OneToNVMIBinaryOpPattern<VMIMulIOp, VmulOp>,
+      OneToNUnifiedMaskedOpPattern<VMIVaddOp, VaddOp>,
+      OneToNUnifiedMaskedOpPattern<VMIVsubOp, VsubOp>,
+      OneToNUnifiedMaskedOpPattern<VMIVmulOp, VmulOp>,
+      OneToNUnifiedMaskedOpPattern<VMIVdivOp, VdivOp>,
+      OneToNUnifiedMaskedOpPattern<VMIVminOp, VminOp>,
+      OneToNUnifiedMaskedOpPattern<VMIVmaxOp, VmaxOp>,
+      // The dual-form bitwise ops reach this pass only from a hand-built
+      // pipeline that skips `-vmi-lower-unified-to-legacy`; the standard
+      // pipeline feeds the vreg-interface forms below instead.
+      OneToNUnifiedMaskedOpPattern<VMIVandOp, VandOp>,
+      OneToNUnifiedMaskedOpPattern<VMIVorOp, VorOp>,
+      OneToNUnifiedMaskedOpPattern<VMIVxorOp, VxorOp>,
+      // Vreg-interface forms produced by the dual-form split in
+      // `-vmi-lower-unified-to-legacy`; they keep the governed mask.
+      OneToNUnifiedMaskedOpPattern<VMIAndIOp, VandOp>,
+      OneToNUnifiedMaskedOpPattern<VMIOrIOp, VorOp>,
+      OneToNUnifiedMaskedOpPattern<VMIXOrIOp, VxorOp>,
+      OneToNUnifiedMaskedOpPattern<VMINotOp, VnotOp>,
+      OneToNUnifiedMaskedOpPattern<VMIVshlOp, VshlOp>,
+      OneToNUnifiedMaskedOpPattern<VMIVshrOp, VshrOp>,
+      OneToNUnifiedMaskedOpPattern<VMIVnegOp, VnegOp>,
+      OneToNUnifiedMaskedOpPattern<VMIVsqrtOp, VsqrtOp>,
+      OneToNUnifiedMaskedOpPattern<VMIVexpOp, VexpOp>,
+      OneToNUnifiedMaskedOpPattern<VMIVlnOp, VlnOp>,
+      OneToNUnifiedMaskedOpPattern<VMIVreluOp, VreluOp>,
+      OneToNUnifiedMaskedOpPattern<VMIVnotOp, VnotOp>,
+      OneToNUnifiedMaskedOpPattern<VMIVmulaOp, VmulaOp>,
+      OneToNUnifiedMaskedOpPattern<VMIVaxpyOp, VaxpyOp>,
+      OneToNUnifiedMaskedOpPattern<VMIVlreluOp, VlreluOp>,
+      OneToNUnifiedMaskedOpPattern<VMIVpreluOp, VpreluOp>,
+      OneToNUnifiedMaskedOpPattern<VMIVabsOp, VabsOp>,
       OneToNVMIVecScalarOpPattern<VMIAddSOp, VaddsOp>,
       OneToNVMIVecScalarOpPattern<VMIMulSOp, VmulsOp>,
       OneToNVMIVecScalarOpPattern<VMIMaxSOp, VmaxsOp>,
       OneToNVMIVecScalarOpPattern<VMIMinSOp, VminsOp>,
       OneToNVMIVecScalarOpPattern<VMIShlSOp, VshlsOp>,
       OneToNVMIVecScalarOpPattern<VMIShrSOp, VshrsOp>, OneToNVMIVmullOpPattern,
-      OneToNVMIFmaOpPattern, OneToNVMIVexpdifOpPattern,
-      OneToNVMIBinaryOpPattern<VMIDivFOp, VdivOp>,
-      OneToNVMIBinaryOpPattern<VMIMinFOp, VminOp>,
-      OneToNVMIBinaryOpPattern<VMIMinIOp, VminOp>,
-      OneToNVMIBinaryOpPattern<VMIMaxFOp, VmaxOp>,
-      OneToNVMIBinaryOpPattern<VMIMaxIOp, VmaxOp>,
-      OneToNVMIUnaryOpPattern<VMINegFOp, VnegOp>,
-      OneToNVMIUnaryOpPattern<VMINegIOp, VnegOp>,
-      OneToNVMIUnaryOpPattern<VMIAbsFOp, VabsOp>,
-      OneToNVMIUnaryOpPattern<VMIAbsIOp, VabsOp>,
-      OneToNVMIUnaryOpPattern<VMISqrtOp, VsqrtOp>,
-      OneToNVMIUnaryOpPattern<VMIExpOp, VexpOp>,
-      OneToNVMIUnaryOpPattern<VMILnOp, VlnOp>,
-      OneToNVMIUnaryOpPattern<VMIReluOp, VreluOp>,
-      OneToNVMIBinaryOpPattern<VMIAndIOp, VandOp>,
-      OneToNVMIBinaryOpPattern<VMIOrIOp, VorOp>,
-      OneToNVMIBinaryOpPattern<VMIXOrIOp, VxorOp>,
-      OneToNVMIShiftOpPattern<VMIShLIOp, VshlOp>,
-      OneToNVMIShiftOpPattern<VMIShRUIOp, VshrOp>,
-      OneToNVMIShiftOpPattern<VMIShRSIOp, VshrOp>,
-      OneToNVMIUnaryOpPattern<VMINotOp, VnotOp>,
+      OneToNVMIVexpdifOpPattern,
       OneToNVMICmpOpPattern<VMICmpFOp>, OneToNVMICmpOpPattern<VMICmpIOp>,
       OneToNVMISelectOpPattern, OneToNVMIVselrOpPattern,
       OneToNVMIActivePrefixIndexOpPattern,
@@ -870,7 +879,6 @@ LogicalResult checkSupportedFPToIntShape(OpTy op, StringRef conversionName,
 
   unsigned srcBits = pto::getPTOStorageElemBitWidth(srcElem);
   unsigned dstBits = pto::getPTOStorageElemBitWidth(dstElem);
-
   if (srcBits == dstBits) {
     // Same-width (f32→s32, f16→s16): layout equality + arity equality.
     if (failed(checkSameWidthConversionArity(sourceType, resultType,
@@ -950,7 +958,7 @@ LogicalResult checkSupportedSIToFPShape(VMISIToFPOp op,
   }
   unsigned srcBits = pto::getPTOStorageElemBitWidth(sourceType.getElementType());
   unsigned dstBits = pto::getPTOStorageElemBitWidth(resultType.getElementType());
-  if (srcBits == 32 && dstBits == 32) {
+  if (srcBits == mlir::pto::kValue32 && dstBits == mlir::pto::kValue32) {
     if (!resultType.getElementType().isF32()) {
       return emitLogicalFailure(reason, "requires f32 result element type");
     }
@@ -958,7 +966,8 @@ LogicalResult checkSupportedSIToFPShape(VMISIToFPOp op,
                                              "si32->f32", reason))) {
       return failure();
     }
-  } else if (srcBits == 8 && dstBits == 16) {
+  } else if (srcBits == mlir::pto::kValue8 &&
+             dstBits == mlir::pto::kValue16) {
     if (!resultType.getElementType().isF16()) {
       return emitLogicalFailure(reason, "requires f16 result element type");
     }
@@ -981,8 +990,6 @@ LogicalResult checkSupportedBitcastShape(VMIBitcastOp op, std::string *reason) {
   }
   return success();
 }
-
-
 
 struct ChannelShapePlan {
   int64_t channels;
@@ -1018,7 +1025,7 @@ static LogicalResult lowerBinaryPhysicalResults(
 
 template <typename OpTy, typename LowerFn>
 static LogicalResult lowerPointwisePhysicalParts(
-    OpTy op, ArrayRef<Type> resultTypes, StringRef arityMessage,
+    OpTy op, ArrayRef<Type> resultTypes, StringRef,
     OneToNPatternRewriter &rewriter, LowerFn &&lowerFn,
     TypeConverter &typeConverter) {
   SmallVector<Value> results;
@@ -1077,7 +1084,7 @@ static FailureOr<ChannelShapePlan> buildChannelShapePlan(
     }
     return failure();
   };
-  if (channels != 2 && channels != 4) {
+  if (channels != mlir::pto::kValue2 && channels != mlir::pto::kValue4) {
     return fail(Twine("pto.vmi.") + operationName +
                 " supports only 2 or 4 channels");
   }
@@ -1370,7 +1377,7 @@ static LogicalResult checkSupportedCompressResultShape(
 }
 
 static LogicalResult checkCompressStoreDestination(VMICompressStoreOp op,
-                                                   std::string *reason) {
+                                                   std::string *reason) { // NOLINT(readability-non-const-parameter)
   if (isa<PtrType>(op.getDestination().getType())) {
     return success();
   }
@@ -1498,8 +1505,7 @@ static LogicalResult checkReducePhysicalArity(
   return success();
 }
 
-template <typename OpTy>
-static LogicalResult checkReduceSourceChunks(OpTy op, VMIVRegType sourceType,
+static LogicalResult checkReduceSourceChunks(VMIVRegType sourceType,
                                              std::string *reason) {
   std::string fullChunkReason;
   if (succeeded(checkFullDataPhysicalChunks(sourceType, &fullChunkReason))) {
@@ -1528,7 +1534,7 @@ static FailureOr<ReducePhysicalShapePlan> buildReducePhysicalShapePlan(
     return failure();
   }
 
-  if (failed(checkReduceSourceChunks(op, sourceType, reason))) {
+  if (failed(checkReduceSourceChunks(sourceType, reason))) {
     return failure();
   }
 
@@ -1606,7 +1612,7 @@ struct GroupBroadcastShapePlan {
 };
 
 static LogicalResult checkGroupBroadcastLogicalContract(
-    VMIGroupBroadcastOp op, VMIVRegType sourceType, VMIVRegType resultType,
+    VMIVRegType sourceType, VMIVRegType resultType,
     VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
     int64_t numGroups, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
@@ -1648,7 +1654,7 @@ static LogicalResult checkGroupBroadcastLogicalContract(
     return fail("requires dense result layout");
   }
   bool unsupportedSlots = sourceLayout.getSlots() > 0 &&
-                          sourceLayout.getSlots() != 8 &&
+                          sourceLayout.getSlots() != mlir::pto::kValue8 &&
                           sourceLayout.getSlots() != 1;
   if (unsupportedSlots) {
     return fail("supports only slots=8 or slots=1 group_broadcast source "
@@ -1685,7 +1691,7 @@ static FailureOr<GroupBroadcastShapePlan> buildGroupBroadcastShapePlan(
   VMILayoutAttr resultLayout = resultType.getLayoutAttr();
   int64_t numGroups = op.getNumGroupsAttr().getInt();
   if (failed(checkGroupBroadcastLogicalContract(
-          op, sourceType, resultType, sourceLayout, resultLayout, numGroups,
+          sourceType, resultType, sourceLayout, resultLayout, numGroups,
           reason))) {
     return failure();
   }
@@ -1821,7 +1827,8 @@ static LogicalResult validateVmullDataLayout(
       layout.getLaneStride() == 1 &&
       (layout.isContiguous() ||
        (layout.isDeinterleaved() &&
-        (layout.getFactor() == 2 || layout.getFactor() == 4)));
+        (layout.getFactor() == mlir::pto::kValue2 ||
+         layout.getFactor() == mlir::pto::kValue4)));
   if (!supportedLayout) {
     return fail("requires contiguous or deinterleaved factor 2/4 layout with "
                 "lane_stride=1");
@@ -1838,7 +1845,7 @@ static LogicalResult validateVmullDataLayout(
 }
 
 static FailureOr<VmullShapePlan> validateVmullLogicalShape(
-    VMIVmullOp op, VMIVRegType aType, VMIVRegType bType,
+    VMIVRegType aType, VMIVRegType bType,
     VMIVRegType lowType, VMIVRegType highType, VMIMaskType maskType,
     std::string *reason) {
   auto fail = [&reason](const Twine &message)
@@ -1850,13 +1857,14 @@ static FailureOr<VmullShapePlan> validateVmullLogicalShape(
   };
   auto elementType = dyn_cast<IntegerType>(aType.getElementType());
   bool unsupportedElementType =
-      !elementType || elementType.getWidth() != 32 ||
+      !elementType || elementType.getWidth() != mlir::pto::kValue32 ||
       (!elementType.isSignless() && !elementType.isUnsigned());
   if (unsupportedElementType) {
     return fail("requires element type to be exactly i32 or ui32");
   }
   int64_t lanes = aType.getElementCount();
-  if (lanes != 64 && lanes != 128 && lanes != 256) {
+  if (lanes != mlir::pto::kValue64 && lanes != mlir::pto::kValue128 &&
+      lanes != mlir::pto::kValue256) {
     return fail("requires logical lane count 64, 128, or 256");
   }
   if (failed(validateVmullDataLayout(aType, bType, lowType, highType, maskType,
@@ -1875,7 +1883,7 @@ static FailureOr<VmullShapePlan> buildVmullShapePlan(
   auto maskType = cast<VMIMaskType>(op.getMask().getType());
 
   FailureOr<VmullShapePlan> logical = validateVmullLogicalShape(
-      op, aType, bType, lowType, highType, maskType, reason);
+      aType, bType, lowType, highType, maskType, reason);
   if (failed(logical)) {
     return failure();
   }
@@ -1905,4 +1913,3 @@ static FailureOr<VmullShapePlan> buildVmullShapePlan(
   }
   return VmullShapePlan{aType, logical->layout, *aArity};
 }
-

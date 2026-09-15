@@ -15,7 +15,8 @@ static ParseResult resolveTQuantOperands(OpAsmParser &parser,
       parser.resolveOperand(state.fp, state.fpTy, result.operands)) {
     return failure();
   }
-  auto resolveOptional = [&](bool present, OpAsmParser::UnresolvedOperand value,
+  auto resolveOptional = [&parser, &result](bool present,
+                             OpAsmParser::UnresolvedOperand value,
                              Type type) -> ParseResult {
     if (present && parser.resolveOperand(value, type, result.operands))
       return failure();
@@ -107,7 +108,7 @@ static ParseResult validateTQuantMxParse(OpAsmParser &parser,
         parser.getCurrentLocation(),
         "expects the number of outs operands to match the number of outs types");
   }
-  if (operandCount != 4 && operandCount != 5) {
+  if (operandCount != mlir::pto::kValue4 && operandCount != mlir::pto::kValue5) {
     return parser.emitError(parser.getCurrentLocation(),
                             "expects 4 or 5 operands in outs(...)");
   }
@@ -178,7 +179,7 @@ static LogicalResult verifyTQuantStructural(TQuantOp op) {
       return op.emitOpError()
              << "INT8_SYM quantization must not have an offset operand";
     }
-    if (!dstIntTy || dstIntTy.getWidth() != 8) {
+    if (!dstIntTy || dstIntTy.getWidth() != mlir::pto::kValue8) {
       return op.emitOpError()
              << "expects dst element type i8/ui8 for INT8_SYM quantization";
     }
@@ -191,7 +192,7 @@ static LogicalResult verifyTQuantStructural(TQuantOp op) {
       return op.emitOpError()
              << "INT8_ASYM quantization requires an offset operand";
     }
-    if (!dstIntTy || dstIntTy.getWidth() != 8) {
+    if (!dstIntTy || dstIntTy.getWidth() != mlir::pto::kValue8) {
       return op.emitOpError()
              << "expects dst element type i8/ui8 for INT8_ASYM quantization";
     }

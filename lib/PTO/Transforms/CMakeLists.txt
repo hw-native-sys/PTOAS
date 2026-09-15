@@ -30,6 +30,7 @@ set(_ptoas_vmi_split_units
   VMIToVPTO/VMIToVPTOMemoryInternals.cpp
   VMIToVPTO/VMIToVPTOMaskInternals.cpp
   VMIToVPTO/VMIToVPTODataLayoutInternals.cpp
+  VMIToVPTO/VMIToVPTOUnifiedMaskInternals.cpp
   VMIToVPTO/VMIToVPTOPatternInternals0.cpp
   VMIToVPTO/VMIToVPTOPatternInternals1.cpp
   VMIToVPTO/VMIToVPTOPatternInternals2.cpp
@@ -37,6 +38,7 @@ set(_ptoas_vmi_split_units
   VMIToVPTO/VMIToVPTOPatternInternals4.cpp
   VMIToVPTO/VMIToVPTOPatternInternals5.cpp
   VMIToVPTO/VMIToVPTOPatternInternals6.cpp
+  VMIToVPTO/VMIToVPTOUnifiedPatternInternals.cpp
   VMIToVPTO/VMIToVPTOPatternInternals7.cpp
   VMIToVPTO/VMIToVPTOPatternInternals8.cpp
   VMIToVPTO/VMIToVPTOPatternInternals9.cpp

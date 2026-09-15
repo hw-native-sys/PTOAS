@@ -19,16 +19,8 @@ using namespace mlir::pto;
 namespace mlir {
 namespace pto {
 
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-
 //===- PTOToEmitCTensor.cpp - tensor elementwise op lowering ---------===//
 //===----------------------------------------------------------------------===//
-
-
-
-
-
 
 //===----------------------------------------------------------------------===//
 // pto.tadds lowering -> TADDS(dst, src, scalar)
@@ -75,7 +67,7 @@ std::string saturationModeTok(mlir::pto::SaturationModeAttr attr) {
   case SM::ON:  return "SaturationMode::ON";
   case SM::OFF: return "SaturationMode::OFF";
   }
-  return "SaturationMode::OFF";
+  return "SaturationMode::ON";
 }
 
 //===----------------------------------------------------------------------===//
@@ -247,8 +239,9 @@ buildTQuantTemplateArgs(pto::TQuantOp op,
   if (!(dstOT && srcOT && fpOT))
     return ArrayAttr{};
 
-  auto quantTypeTok = [&]() -> StringRef {
-    switch (op.getQuantType()) {
+  const pto::QuantType quantType = op.getQuantType();
+  auto quantTypeTok = [quantType]() -> StringRef {
+    switch (quantType) {
     case pto::QuantType::INT8_SYM:
       return "pto::QuantType::INT8_SYM";
     case pto::QuantType::INT8_ASYM:
@@ -260,7 +253,7 @@ buildTQuantTemplateArgs(pto::TQuantOp op,
     llvm_unreachable("unknown QuantType");
   };
 
-  SmallVector<Attribute, 5> args{
+  SmallVector<Attribute, 4> args{
       emitc::OpaqueAttr::get(ctx, quantTypeTok()),
       emitc::OpaqueAttr::get(ctx, dstOT.getValue().str()),
       emitc::OpaqueAttr::get(ctx, srcOT.getValue().str()),
@@ -378,8 +371,6 @@ void appendLegacyExpZzMxTemplateArgs(
 //===----------------------------------------------------------------------===//
 // PTOConvert.cpp  (add lowering + patterns.add for TNOT DPS/memref op)
 //===----------------------------------------------------------------------===//
-
-
 
 } // namespace pto
 } // namespace mlir

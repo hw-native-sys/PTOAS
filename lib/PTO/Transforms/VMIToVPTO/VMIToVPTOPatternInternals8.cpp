@@ -151,35 +151,6 @@ LogicalResult checkSupportedVMICarryInputShape(CarryOp op,
 }
 
 LogicalResult
-checkSupportedFmaShape(VMIFmaOp op, std::string *reason = nullptr) {
-  auto fail = [&reason](const Twine &message) -> LogicalResult {
-    if (reason) {
-      *reason = message.str();
-    }
-    return failure();
-  };
-
-  auto lhsType = cast<VMIVRegType>(op.getLhs().getType());
-  FailureOr<int64_t> arity = getVMIPhysicalArity(lhsType);
-  bool hasNonEmptyArity = succeeded(arity) && *arity >= 1;
-  if (!hasNonEmptyArity) {
-    return fail("requires computable non-empty physical arity");
-  }
-
-  return success();
-}
-
-LogicalResult
-checkSupportedReluShape(VMIReluOp op, std::string *reason = nullptr) {
-  auto resultType = cast<VMIVRegType>(op.getResult().getType());
-  if (failed(checkSupportedMaskableVReg(resultType, reason))) {
-    return failure();
-  }
-
-  return success();
-}
-
-LogicalResult
 checkSupportedVselrShape(VMIVselrOp op, std::string *reason = nullptr) {
   VMILayoutSupport supports;
   return supports.getVselrSupport(op, reason);
@@ -366,8 +337,8 @@ static std::optional<WalkResult> verifySupportedVMIScatterOp(Operation *op) {
     return verifySupportedShapeOp(
         scatter, checkSupportedScatterShape,
         "pto.vmi.scatter lowers through pto.vscatter only with a UB pointer "
-        "destination, contiguous full physical chunks, 32-bit value elements, "
-        "i32 indices, and b32 masks (");
+        "destination, unit-stride contiguous layouts, and matching "
+        "value/index/mask physical shapes (");
   }
   return std::nullopt;
 }
@@ -492,6 +463,11 @@ std::optional<WalkResult> verifySupportedVMIStructuredLoadOp(Operation *op) {
 std::optional<WalkResult> verifySupportedVMIMemoryLoadOp(
     Operation *op, bool enableStableGatherMaskedLoad) {
   if (auto load = dyn_cast<VMILoadOp>(op)) {
+    std::string reason;
+    if (failed(checkSupportedContiguousLoadAddress(load, &reason))) {
+      load.emitError() << kVMIDiagUnsupportedPrefix << reason;
+      return WalkResult::interrupt();
+    }
     return emitMemoryUnsupported(
         op, "pto.vmi.load", cast<VMIVRegType>(load.getResult().getType()),
         load.getSource(), getConstantIndexValue(load.getOffset()));
@@ -631,6 +607,18 @@ std::optional<WalkResult> verifySupportedVMICompareOp(Operation *op,
   return std::nullopt;
 }
 
+/// Reports a maskable candidate whose result is not a vreg.  The maskable checks
+/// only apply to vreg results; a mask result belongs to the mask interface and
+/// must have been produced by the unified-to-legacy split.
+WalkResult emitMaskableNonVReg(Operation *op, StringRef opName,
+                               Type resultType) {
+  op->emitError() << kVMIDiagUnsupportedPrefix << opName
+                  << " has a non-vreg result (" << resultType
+                  << "); mask logic must be split by "
+                     "-vmi-lower-unified-to-legacy first";
+  return WalkResult::interrupt();
+}
+
 template <typename VecScalarOp, typename MaskableCheck>
 WalkResult verifySupportedVecScalarOp(VecScalarOp op, StringRef opName,
                                       MaskableCheck checkMaskable) {
@@ -641,15 +629,44 @@ WalkResult verifySupportedVecScalarOp(VecScalarOp op, StringRef opName,
                    << " with pmode=merge requires an explicit passthru lowering";
     return WalkResult::interrupt();
   }
-  return checkMaskable(op, opName,
-                       cast<VMIVRegType>(op.getResult().getType()));
+  auto resultType = dyn_cast<VMIVRegType>(op.getResult().getType());
+  if (!resultType) {
+    return emitMaskableNonVReg(op.getOperation(), opName,
+                               op.getResult().getType());
+  }
+  return checkMaskable(op, opName, resultType);
+}
+
+/// Unified v-ops carry an optional `pmode` attribute; `pmode="merge"` needs an
+/// explicit passthru lowering, so report it before the maskable check.
+template <typename UnifiedOp, typename MaskableCheck>
+WalkResult verifySupportedUnifiedMaskableOp(UnifiedOp op, StringRef opName,
+                                            MaskableCheck checkMaskable) {
+  if (auto pmode = op->template getAttrOfType<StringAttr>("pmode")) {
+    if (pmode.getValue() == "merge") {
+      op.emitError() << kVMIDiagUnsupportedPrefix << opName
+                     << " with pmode=merge requires an explicit passthru "
+                        "lowering";
+      return WalkResult::interrupt();
+    }
+  }
+  auto resultType = dyn_cast<VMIVRegType>(op.getResult().getType());
+  if (!resultType) {
+    return emitMaskableNonVReg(op.getOperation(), opName,
+                               op.getResult().getType());
+  }
+  return checkMaskable(op.getOperation(), opName, resultType);
 }
 
 template <typename MaskableOp, typename MaskableCheck>
 WalkResult verifySupportedMaskableOp(MaskableOp op, StringRef opName,
                                      MaskableCheck checkMaskable) {
-  return checkMaskable(op.getOperation(), opName,
-                       cast<VMIVRegType>(op.getResult().getType()));
+  auto resultType = dyn_cast<VMIVRegType>(op.getResult().getType());
+  if (!resultType) {
+    return emitMaskableNonVReg(op.getOperation(), opName,
+                               op.getResult().getType());
+  }
+  return checkMaskable(op.getOperation(), opName, resultType);
 }
 
 WalkResult emitMaskableUnsupported(Operation *op, StringRef opName,
@@ -671,33 +688,34 @@ static std::optional<WalkResult> verifySupportedVMIUnaryBinaryArithmeticOp(
     Operation *op, MaskableCheck check) {
 #define PTO_VERIFY_MASKABLE(Op, Name)                                      \
   if (auto value = dyn_cast<Op>(op)) {                                    \
-    return verifySupportedMaskableOp(value, Name, check);                  \
+    return verifySupportedUnifiedMaskableOp(value, Name, check);            \
   }
-  PTO_VERIFY_MASKABLE(VMIAddFOp, "pto.vmi.addf");
-  PTO_VERIFY_MASKABLE(VMIAddIOp, "pto.vmi.addi");
-  PTO_VERIFY_MASKABLE(VMISubFOp, "pto.vmi.subf");
-  PTO_VERIFY_MASKABLE(VMISubIOp, "pto.vmi.subi");
-  PTO_VERIFY_MASKABLE(VMIMulFOp, "pto.vmi.mulf");
-  PTO_VERIFY_MASKABLE(VMIMulIOp, "pto.vmi.muli");
-  PTO_VERIFY_MASKABLE(VMIDivFOp, "pto.vmi.divf");
-  PTO_VERIFY_MASKABLE(VMIMinFOp, "pto.vmi.minf");
-  PTO_VERIFY_MASKABLE(VMIMinIOp, "pto.vmi.mini");
-  PTO_VERIFY_MASKABLE(VMIMaxFOp, "pto.vmi.maxf");
-  PTO_VERIFY_MASKABLE(VMIMaxIOp, "pto.vmi.maxi");
-  PTO_VERIFY_MASKABLE(VMINegFOp, "pto.vmi.negf");
-  PTO_VERIFY_MASKABLE(VMINegIOp, "pto.vmi.negi");
-  PTO_VERIFY_MASKABLE(VMIAbsFOp, "pto.vmi.absf");
-  PTO_VERIFY_MASKABLE(VMIAbsIOp, "pto.vmi.absi");
-  PTO_VERIFY_MASKABLE(VMISqrtOp, "pto.vmi.sqrt");
-  PTO_VERIFY_MASKABLE(VMIExpOp, "pto.vmi.exp");
-  PTO_VERIFY_MASKABLE(VMILnOp, "pto.vmi.ln");
+  PTO_VERIFY_MASKABLE(VMIVaddOp, "pto.vmi.vadd");
+  PTO_VERIFY_MASKABLE(VMIVsubOp, "pto.vmi.vsub");
+  PTO_VERIFY_MASKABLE(VMIVmulOp, "pto.vmi.vmul");
+  PTO_VERIFY_MASKABLE(VMIVdivOp, "pto.vmi.vdiv");
+  PTO_VERIFY_MASKABLE(VMIVminOp, "pto.vmi.vmin");
+  PTO_VERIFY_MASKABLE(VMIVmaxOp, "pto.vmi.vmax");
+  PTO_VERIFY_MASKABLE(VMIVandOp, "pto.vmi.vand");
+  PTO_VERIFY_MASKABLE(VMIVorOp, "pto.vmi.vor");
+  PTO_VERIFY_MASKABLE(VMIVxorOp, "pto.vmi.vxor");
   PTO_VERIFY_MASKABLE(VMIAndIOp, "pto.vmi.andi");
   PTO_VERIFY_MASKABLE(VMIOrIOp, "pto.vmi.ori");
   PTO_VERIFY_MASKABLE(VMIXOrIOp, "pto.vmi.xori");
-  PTO_VERIFY_MASKABLE(VMIShLIOp, "pto.vmi.shli");
-  PTO_VERIFY_MASKABLE(VMIShRUIOp, "pto.vmi.shrui");
-  PTO_VERIFY_MASKABLE(VMIShRSIOp, "pto.vmi.shrsi");
   PTO_VERIFY_MASKABLE(VMINotOp, "pto.vmi.not");
+  PTO_VERIFY_MASKABLE(VMIVshlOp, "pto.vmi.vshl");
+  PTO_VERIFY_MASKABLE(VMIVshrOp, "pto.vmi.vshr");
+  PTO_VERIFY_MASKABLE(VMIVnegOp, "pto.vmi.vneg");
+  PTO_VERIFY_MASKABLE(VMIVabsOp, "pto.vmi.vabs");
+  PTO_VERIFY_MASKABLE(VMIVsqrtOp, "pto.vmi.vsqrt");
+  PTO_VERIFY_MASKABLE(VMIVexpOp, "pto.vmi.vexp");
+  PTO_VERIFY_MASKABLE(VMIVlnOp, "pto.vmi.vln");
+  PTO_VERIFY_MASKABLE(VMIVreluOp, "pto.vmi.vrelu");
+  PTO_VERIFY_MASKABLE(VMIVnotOp, "pto.vmi.vnot");
+  PTO_VERIFY_MASKABLE(VMIVmulaOp, "pto.vmi.vmula");
+  PTO_VERIFY_MASKABLE(VMIVaxpyOp, "pto.vmi.vaxpy");
+  PTO_VERIFY_MASKABLE(VMIVlreluOp, "pto.vmi.vlrelu");
+  PTO_VERIFY_MASKABLE(VMIVpreluOp, "pto.vmi.vprelu");
   PTO_VERIFY_MASKABLE(VMISelectOp, "pto.vmi.select");
 #undef PTO_VERIFY_MASKABLE
   return std::nullopt;
@@ -932,12 +950,6 @@ std::optional<WalkResult> verifySpecialUnaryShape(
 }
 
 std::optional<WalkResult> verifySupportedVMISpecialUnaryOp(Operation *op) {
-  if (auto relu = dyn_cast<VMIReluOp>(op)) {
-    return verifySpecialUnaryShape(
-        relu, checkSupportedReluShape,
-        "pto.vmi.relu direct lowering requires physical vreg parts with b32 "
-        "predicates for si32 or matching b16/b32 predicates for f16/f32 (");
-  }
   if (auto vselr = dyn_cast<VMIVselrOp>(op)) {
     return verifySpecialUnaryShape(
         vselr, checkSupportedVselrShape,
@@ -1085,12 +1097,6 @@ std::optional<WalkResult> verifySupportedVMIReductionOp(Operation *op) {
 }
 
 std::optional<WalkResult> verifySupportedVMIFloatOp(Operation *op) {
-  if (auto fma = dyn_cast<VMIFmaOp>(op)) {
-    return verifySupportedShapeOp(
-        fma, checkSupportedFmaShape,
-        "pto.vmi.fma lowers through pto.vmula only for f16/bf16/f32 element "
-        "types (");
-  }
   if (auto extf = dyn_cast<VMIExtFOp>(op)) {
     return verifySupportedShapeOp(
         extf, checkSupportedExtFShape,

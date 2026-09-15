@@ -22,6 +22,4 @@ module {
   }
 }
 
-// vmula(mask optional) with f8 parses and lowers to legacy fma;
-// fma's verifier rejects the f8 element type.
-// CHECK: 'pto.vmi.fma' op requires f16, bf16, or f32 VMI element type
+// CHECK: 'pto.vmi.vmula' op requires f16, bf16, f32, or i8/i16/i32 VMI element type

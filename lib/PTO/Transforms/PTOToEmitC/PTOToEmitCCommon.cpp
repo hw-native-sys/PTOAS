@@ -43,7 +43,8 @@ adaptCallOperandForEmitC(const TypeConverter *typeConverter,
     std::string elemTokStorage = getEmitCScalarTypeToken(elemTy);
     StringRef elemTok(elemTokStorage);
 
-    auto materializeForCall = [&](Value tileLike) -> FailureOr<Value> {
+    auto materializeForCall = [&rewriter, loc, as, elemTok, typeConverter,
+                               originalCalleeArgTy](Value tileLike) -> FailureOr<Value> {
       Value extracted =
           materializeTileDataValue(rewriter, loc, tileLike, *as, elemTok);
       if (!typeConverter)
@@ -190,7 +191,7 @@ FailureOr<Value> buildAsyncScratchTileValue(
     return failure();
 
   ArrayRef<int64_t> shape = memTy.getShape();
-  if (!memTy.hasStaticShape() || shape.empty() || shape.size() > 2)
+  if (!memTy.hasStaticShape() || shape.empty() || shape.size() > mlir::pto::kValue2)
     return failure();
 
   int64_t rows = shape.size() == 1 ? 1 : shape[0];
@@ -236,10 +237,10 @@ FailureOr<Value> buildAsyncScratchTileValue(
   return tile;
 }
 
-SmallVector<unsigned, 4>
+SmallVector<unsigned, mlir::pto::kValue4>
 buildDefaultLastUseTileSlotOrder(Operation *op) {
-  SmallVector<unsigned, 4> dpsInitTileOperands;
-  SmallVector<unsigned, 4> nonDpsTileOperands;
+  SmallVector<unsigned, mlir::pto::kValue4> dpsInitTileOperands;
+  SmallVector<unsigned, mlir::pto::kValue4> nonDpsTileOperands;
   for (OpOperand &operand : op->getOpOperands()) {
     if (!isa<pto::TileBufType>(operand.get().getType()))
       continue;
@@ -255,12 +256,12 @@ buildDefaultLastUseTileSlotOrder(Operation *op) {
   // emitted tile operand so `[[pto::last_use(...)]]` aligns with the final
   // intrinsic call order.
   if (dpsInitTileOperands.size() == 1) {
-    SmallVector<unsigned, 4> ordered{dpsInitTileOperands.front()};
+    SmallVector<unsigned, mlir::pto::kValue4> ordered{dpsInitTileOperands.front()};
     ordered.append(nonDpsTileOperands.begin(), nonDpsTileOperands.end());
     return ordered;
   }
 
-  SmallVector<unsigned, 4> ordered = std::move(nonDpsTileOperands);
+  SmallVector<unsigned, mlir::pto::kValue4> ordered = std::move(nonDpsTileOperands);
   ordered.append(dpsInitTileOperands.begin(), dpsInitTileOperands.end());
   return ordered;
 }
@@ -277,8 +278,8 @@ FailureOr<std::string> buildEmitCOpaqueConstantLiteral(Type targetType,
       return failure();
 
     auto vecTy = dyn_cast<VectorType>(dense.getType());
-    if (!vecTy || vecTy.getRank() != 1 || vecTy.getNumElements() != 4 ||
-        !vecTy.getElementType().isInteger(16))
+    if (!vecTy || vecTy.getRank() != 1 || vecTy.getNumElements() != mlir::pto::kValue4 ||
+        !vecTy.getElementType().isInteger(mlir::pto::kValue16))
       return failure();
 
     std::string literal;
@@ -320,7 +321,10 @@ static GlobalTensorTypeNames getGlobalTensorTypeNames(Operation *anchor,
   // wraps more than one GM memref as a GlobalTensor (e.g. GM->L1 mgather wraps
   // mem + idx + scratch), an extra `tag` keeps the emitted `using` aliases
   // distinct so the generated C++ does not redefine a type with a new value.
-  std::string suffix = "_" + std::to_string(reinterpret_cast<uintptr_t>(anchor));
+  std::string anchorAddress;
+  llvm::raw_string_ostream anchorStream(anchorAddress);
+  anchorStream << static_cast<const void *>(anchor);
+  std::string suffix = "_" + anchorStream.str();
   if (!tag.empty())
     suffix += "_" + tag.str();
   return {
@@ -336,8 +340,8 @@ static GlobalTensorTypeNames getGlobalTensorTypeNames(Operation *anchor,
 static std::string
 emitGlobalTensorAliases(ConversionPatternRewriter &rewriter, Location loc,
                         const GlobalTensorTypeNames &names,
-                        const SmallVector<int64_t, 5> &shape5D,
-                        const SmallVector<int64_t, 5> &stride5D,
+                        const SmallVector<int64_t, mlir::pto::kValue5> &shape5D,
+                        const SmallVector<int64_t, mlir::pto::kValue5> &stride5D,
                         const std::optional<SpecialGlobalTensorTypeSpec> &spec,
                         Operation *anchor, Value basePtr,
                         ArrayRef<int64_t> shape, ArrayRef<int64_t> strides,
@@ -380,8 +384,8 @@ Value buildGlobalTensorFromMemref(ConversionPatternRewriter &rewriter,
   Value ptr = applyStaticMemrefOffset(rewriter, loc, basePtr, offset);
   GlobalTensorTypeNames names = getGlobalTensorTypeNames(anchor, tag);
   std::string elemTypeStr = getElemTypeStringForGT(mrTy.getElementType());
-  SmallVector<int64_t, 5> shape5D;
-  SmallVector<int64_t, 5> stride5D;
+  SmallVector<int64_t, mlir::pto::kValue5> shape5D;
+  SmallVector<int64_t, mlir::pto::kValue5> stride5D;
   buildGlobalTensorShapeAndStride(shape, strides, shape5D, stride5D);
 
   std::string layoutEnum =
@@ -421,21 +425,19 @@ Value buildGlobalTensorFromMemref(ConversionPatternRewriter &rewriter,
   return gtInst.getResult(0);
 }
 
-
-
 void buildGlobalTensorShapeAndStride(ArrayRef<int64_t> shape,
                                             ArrayRef<int64_t> strides,
                                             SmallVectorImpl<int64_t> &shape5D,
                                             SmallVectorImpl<int64_t> &stride5D) {
-  shape5D.assign(5, 1);
-  stride5D.assign(5, 1);
+  shape5D.assign(mlir::pto::kValue5, 1);
+  stride5D.assign(mlir::pto::kValue5, 1);
   int rank = static_cast<int>(shape.size());
-  int shift = 5 - rank;
-  for (int i = 0; i < rank && i < 5; ++i) {
+  int shift = mlir::pto::kValue5 - rank;
+  for (int i = 0; i < rank && i < mlir::pto::kValue5; ++i) {
     shape5D[shift + i] = shape[i];
     stride5D[shift + i] = strides[i];
   }
-  for (int i = 3; i >= 0; --i) {
+  for (int i = mlir::pto::kValue3; i >= 0; --i) {
     if (i >= shift)
       continue;
     stride5D[i] = multiplyOrDynamic(shape5D[i + 1], stride5D[i + 1]);
@@ -449,12 +451,12 @@ std::optional<std::string> buildLastUseMarkerCallee(
   if (!lastUseAttr)
     return std::nullopt;
 
-  SmallVector<unsigned, 4> originalTileOperands = collectTileOperandNumbers(op);
+  SmallVector<unsigned, mlir::pto::kValue4> originalTileOperands = collectTileOperandNumbers(op);
   ArrayRef<int64_t> originalBits = lastUseAttr.asArrayRef();
   if (originalTileOperands.size() != originalBits.size())
     return std::nullopt;
 
-  SmallVector<unsigned, 4> defaultTileSlotOrder;
+  SmallVector<unsigned, mlir::pto::kValue4> defaultTileSlotOrder;
   if (tileSlotOrder.empty()) {
     defaultTileSlotOrder = buildDefaultLastUseTileSlotOrder(op);
     tileSlotOrder = defaultTileSlotOrder;
@@ -462,7 +464,7 @@ std::optional<std::string> buildLastUseMarkerCallee(
   if (tileSlotOrder.size() != originalBits.size())
     return std::nullopt;
 
-  SmallVector<int64_t, 4> reorderedBits;
+  SmallVector<int64_t, mlir::pto::kValue4> reorderedBits;
   reorderedBits.reserve(tileSlotOrder.size());
   for (unsigned operandNumber : tileSlotOrder) {
     bool found = false;
@@ -507,12 +509,12 @@ getTPipeDirectionToken(bool isL2G2L, int8_t dirMask, PTOArch targetArch) {
       return std::string("Direction::DIR_C2V_GM");
     return std::string("Direction::DIR_C2V");
   }
-  if (dirMask == 2) {
+  if (dirMask == mlir::pto::kValue2) {
     if (isL2G2L && targetArch == PTOArch::A5)
       return std::string("Direction::DIR_V2C_GM");
     return std::string("Direction::DIR_V2C");
   }
-  if (dirMask == 3)
+  if (dirMask == mlir::pto::kValue3)
     return std::string("Direction::DIR_BOTH");
   return failure();
 }
@@ -558,7 +560,7 @@ FailureOr<std::string> buildTPipeTokenFromInitOp(Operation *op,
       return failure();
     return buildTPipeToken(
         static_cast<int32_t>(getIntegerAttrSignedValue(initOp.getFlagBaseAttr())),
-        *dirTok, initOp.getSlotSize(), initOp.getSlotNum(), 2,
+        *dirTok, initOp.getSlotSize(), initOp.getSlotNum(), mlir::pto::kValue2,
         initOp.getNosplitAttr() && initOp.getNosplitAttr().getValue());
   }
 
@@ -602,8 +604,8 @@ void collectStructTypes(Type t, llvm::SetVector<pto::StructType> &out) {
   out.insert(st);
 }
 
-SmallVector<unsigned, 4> collectTileOperandNumbers(Operation *op) {
-  SmallVector<unsigned, 4> tileOperandNumbers;
+SmallVector<unsigned, mlir::pto::kValue4> collectTileOperandNumbers(Operation *op) {
+  SmallVector<unsigned, mlir::pto::kValue4> tileOperandNumbers;
   for (OpOperand &operand : op->getOpOperands()) {
     if (isa<pto::TileBufType>(operand.get().getType()))
       tileOperandNumbers.push_back(operand.getOperandNumber());
@@ -755,13 +757,13 @@ emitc::PointerType getEmitCPointerType(MLIRContext *ctx, StringRef qualifier,
 int64_t getEmitCScalarByteWidth(Type elemTy) {
   if (pto::getPTOStorageElemByteSize(elemTy) == 1)
     return 1;
-  if (elemTy.isF16() || elemTy.isBF16() || elemTy.isInteger(16))
-    return 2;
-  if (elemTy.isF32() || elemTy.isInteger(32))
-    return 4;
-  if (elemTy.isF64() || elemTy.isInteger(64))
-    return 8;
-  return 4;
+  if (elemTy.isF16() || elemTy.isBF16() || elemTy.isInteger(mlir::pto::kValue16))
+    return mlir::pto::kValue2;
+  if (elemTy.isF32() || elemTy.isInteger(mlir::pto::kValue32))
+    return mlir::pto::kValue4;
+  if (elemTy.isF64() || elemTy.isInteger(mlir::pto::kValue64))
+    return mlir::pto::kValue8;
+  return mlir::pto::kValue4;
 }
 
 // Map low-precision (FP8/FP4 family) types to their EmitC scalar token.
@@ -798,22 +800,22 @@ static std::optional<StringRef> getFloatToken(Type elemTy) {
 // Map integer types to their EmitC scalar token; signless and signed map to
 // signed C types, unsigned maps to unsigned C types.
 static std::optional<StringRef> getIntegerToken(Type elemTy) {
-  if (elemTy.isInteger(8)) {
-    return (elemTy.isSignlessInteger(8) || elemTy.isSignedInteger(8))
+  if (elemTy.isInteger(mlir::pto::kValue8)) {
+    return (elemTy.isSignlessInteger(mlir::pto::kValue8) || elemTy.isSignedInteger(mlir::pto::kValue8))
                ? StringRef("int8_t")
                : StringRef("uint8_t");
   }
-  if (elemTy.isInteger(16)) {
-    return (elemTy.isSignlessInteger(16) || elemTy.isSignedInteger(16))
+  if (elemTy.isInteger(mlir::pto::kValue16)) {
+    return (elemTy.isSignlessInteger(mlir::pto::kValue16) || elemTy.isSignedInteger(mlir::pto::kValue16))
                ? StringRef("int16_t")
                : StringRef("uint16_t");
   }
-  if (elemTy.isInteger(32)) {
-    return (elemTy.isSignlessInteger(32) || elemTy.isSignedInteger(32))
+  if (elemTy.isInteger(mlir::pto::kValue32)) {
+    return (elemTy.isSignlessInteger(mlir::pto::kValue32) || elemTy.isSignedInteger(mlir::pto::kValue32))
                ? StringRef("int32_t")
                : StringRef("uint32_t");
   }
-  if (elemTy.isInteger(64)) {
+  if (elemTy.isInteger(mlir::pto::kValue64)) {
     return cast<IntegerType>(elemTy).isUnsigned() ? StringRef("uint64_t")
                                                   : StringRef("int64_t");
   }
@@ -831,10 +833,10 @@ std::string getEmitCScalarTypeToken(Type elemTy) {
 }
 
 std::optional<std::string> getEmitCTileTypeString(pto::TileBufType type) {
-  if (type.getRank() != 2)
+  if (type.getRank() != mlir::pto::kValue2)
     return std::nullopt;
   auto validShape = type.getValidShape();
-  if (validShape.size() != 2)
+  if (validShape.size() != mlir::pto::kValue2)
     return std::nullopt;
 
   Type elemTy = type.getElementType();
@@ -844,7 +846,7 @@ std::optional<std::string> getEmitCTileTypeString(pto::TileBufType type) {
   int64_t rows = shape[0];
   int64_t cols = shape[1];
 
-  auto render = [&](int64_t dim, int dimIdx) {
+  auto render = [elemTy, blayout](int64_t dim, int dimIdx) {
     return renderTileTemplateDim(dim, elemTy, blayout, dimIdx);
   };
 
@@ -954,8 +956,8 @@ int getGlobalTensorElementBytes(Type elemTy) {
 std::string getGlobalTensorTypeStringFromShapeAndStrides(
     Type elemTy, ArrayRef<int64_t> shape, ArrayRef<int64_t> strides,
     StringRef layoutEnum) {
-  SmallVector<int64_t, 5> shape5D;
-  SmallVector<int64_t, 5> stride5D;
+  SmallVector<int64_t, mlir::pto::kValue5> shape5D;
+  SmallVector<int64_t, mlir::pto::kValue5> stride5D;
   buildGlobalTensorShapeAndStride(shape, strides, shape5D, stride5D);
 
   std::string elemTypeStr = getElemTypeStringForGT(elemTy);
@@ -967,7 +969,7 @@ std::string getGlobalTensorTypeStringFromShapeAndStrides(
 }
 
 Location getIndexedNameHintLoc(Location fallbackLoc, unsigned index) {
-  SmallVector<std::string, 4> hints;
+  SmallVector<std::string, mlir::pto::kValue4> hints;
   appendRawLocationNameHints(fallbackLoc, hints);
   if (index >= hints.size() || hints[index].empty())
     return fallbackLoc;
@@ -1017,9 +1019,9 @@ std::optional<mlir::pto::Layout> getLayoutAttrFromViewType(Type type) {
 emitc::OpaqueType getRuntimeGlobalTensorOpaqueType(
     MLIRContext *ctx, Type elemTy, ArrayRef<int64_t> shape,
     StringRef layoutEnum) {
-  SmallVector<int64_t, 5> shape5D(5, 1);
-  SmallVector<int64_t, 5> stride5D(5, -1);
-  int64_t shift = 5 - static_cast<int64_t>(shape.size());
+  SmallVector<int64_t, mlir::pto::kValue5> shape5D(mlir::pto::kValue5, 1);
+  SmallVector<int64_t, mlir::pto::kValue5> stride5D(mlir::pto::kValue5, -1);
+  int64_t shift = mlir::pto::kValue5 - static_cast<int64_t>(shape.size());
   for (auto [index, dim] : llvm::enumerate(shape))
     shape5D[shift + static_cast<int64_t>(index)] =
         ShapedType::isDynamic(dim) ? -1 : dim;
@@ -1038,15 +1040,15 @@ emitc::OpaqueType getSignedIntOpaqueType(MLIRContext *ctx,
   switch (bitWidth) {
   case 1:
     return emitc::OpaqueType::get(ctx, "int8_t");
-  case 8:
+  case mlir::pto::kValue8:
     return emitc::OpaqueType::get(ctx, "int8_t");
-  case 16:
+  case mlir::pto::kValue16:
     return emitc::OpaqueType::get(ctx, "int16_t");
-  case 32:
+  case mlir::pto::kValue32:
     return emitc::OpaqueType::get(ctx, "int32_t");
-  case 64:
+  case mlir::pto::kValue64:
     return emitc::OpaqueType::get(ctx, "int64_t");
-  case 128:
+  case mlir::pto::kValue128:
     return emitc::OpaqueType::get(ctx, "__int128");
   default:
     llvm::errs() << "[Debug] Unsupported signed integer bitwidth: " << bitWidth
@@ -1064,7 +1066,7 @@ Value getSourceEmitCVariable(Value value) {
 std::optional<SpecialGlobalTensorTypeSpec>
 getSpecialGlobalTensorTypeSpecForLayout(std::optional<mlir::pto::Layout> layout,
                                         ArrayRef<int64_t> shape, Type elemTy) {
-  if (!layout || !isF8E8M0ElemType(elemTy) || shape.size() != 2)
+  if (!layout || !isF8E8M0ElemType(elemTy) || shape.size() != mlir::pto::kValue2)
     return std::nullopt;
 
   auto alignUp = [](int64_t value, int64_t align) -> int64_t {
@@ -1076,8 +1078,8 @@ getSpecialGlobalTensorTypeSpecForLayout(std::optional<mlir::pto::Layout> layout,
   std::string elemTypeStr = getEmitCScalarTypeToken(elemTy);
   switch (*layout) {
   case mlir::pto::Layout::MX_A_ZZ: {
-    int64_t rows = alignUp(shape[0], 16);
-    int64_t cols = alignUp(shape[1], 2);
+    int64_t rows = alignUp(shape[0], mlir::pto::kValue16);
+    int64_t cols = alignUp(shape[1], mlir::pto::kValue2);
     return SpecialGlobalTensorTypeSpec{
         "TileShape2D<" + elemTypeStr + ", " + std::to_string(rows) + ", " +
             std::to_string(cols) + ", pto::Layout::MX_A_ZZ>",
@@ -1087,8 +1089,8 @@ getSpecialGlobalTensorTypeSpecForLayout(std::optional<mlir::pto::Layout> layout,
     };
   }
   case mlir::pto::Layout::MX_B_NN: {
-    int64_t rows = alignUp(shape[0], 2);
-    int64_t cols = alignUp(shape[1], 16);
+    int64_t rows = alignUp(shape[0], mlir::pto::kValue2);
+    int64_t cols = alignUp(shape[1], mlir::pto::kValue16);
     return SpecialGlobalTensorTypeSpec{
         "TileShape2D<" + elemTypeStr + ", " + std::to_string(rows) + ", " +
             std::to_string(cols) + ", pto::Layout::MX_B_NN>",
@@ -1132,7 +1134,7 @@ getSpecialScaleGlobalTensorTypeSpecForTileValue(Value dstValue,
   auto config = dstTileTy.getConfigAttr();
   if (!isF8E8M0ElemType(elemTy))
     return std::nullopt;
-  if (effectiveShape.size() != 2)
+  if (effectiveShape.size() != mlir::pto::kValue2)
     return std::nullopt;
 
   pto::BLayout blayout = getTileBufBLayoutValue(config);
@@ -1235,11 +1237,11 @@ FailureOr<std::string> getTileSplitToken(int64_t split) {
     return std::string("TileSplitAxis::TILE_NO_SPLIT");
   case 1:
     return std::string("TileSplitAxis::TILE_UP_DOWN");
-  case 2:
+  case mlir::pto::kValue2:
     return std::string("TileSplitAxis::TILE_LEFT_RIGHT");
-  case 3:
+  case mlir::pto::kValue3:
     return std::string("TileSplitAxis::TILE_UP_DOWN_ODD");
-  case 4:
+  case mlir::pto::kValue4:
     return std::string("TileSplitAxis::TILE_LEFT_RIGHT_ODD");
   default:
     return failure();
@@ -1251,15 +1253,15 @@ emitc::OpaqueType getUnsignedIntOpaqueType(MLIRContext *ctx,
   switch (bitWidth) {
   case 1:
     return emitc::OpaqueType::get(ctx, "uint8_t");
-  case 8:
+  case mlir::pto::kValue8:
     return emitc::OpaqueType::get(ctx, "uint8_t");
-  case 16:
+  case mlir::pto::kValue16:
     return emitc::OpaqueType::get(ctx, "uint16_t");
-  case 32:
+  case mlir::pto::kValue32:
     return emitc::OpaqueType::get(ctx, "uint32_t");
-  case 64:
+  case mlir::pto::kValue64:
     return emitc::OpaqueType::get(ctx, "uint64_t");
-  case 128:
+  case mlir::pto::kValue128:
     return emitc::OpaqueType::get(ctx, "unsigned __int128");
   default:
     llvm::errs() << "[Debug] Unsupported unsigned integer bitwidth: "
@@ -1272,16 +1274,16 @@ emitc::OpaqueType getWiderSignedIntOpaqueType(MLIRContext *ctx,
                                                      unsigned bitWidth) {
   switch (bitWidth) {
   case 1:
-  case 8:
-    return getSignedIntOpaqueType(ctx, 16);
-  case 16:
-    return getSignedIntOpaqueType(ctx, 32);
-  case 32:
-    return getSignedIntOpaqueType(ctx, 64);
-  case 64:
-    return getSignedIntOpaqueType(ctx, 128);
+  case mlir::pto::kValue8:
+    return getSignedIntOpaqueType(ctx, mlir::pto::kValue16);
+  case mlir::pto::kValue16:
+    return getSignedIntOpaqueType(ctx, mlir::pto::kValue32);
+  case mlir::pto::kValue32:
+    return getSignedIntOpaqueType(ctx, mlir::pto::kValue64);
+  case mlir::pto::kValue64:
+    return getSignedIntOpaqueType(ctx, mlir::pto::kValue128);
   default:
-    return getSignedIntOpaqueType(ctx, 128);
+    return getSignedIntOpaqueType(ctx, mlir::pto::kValue128);
   }
 }
 
@@ -1289,16 +1291,16 @@ emitc::OpaqueType getWiderUnsignedIntOpaqueType(MLIRContext *ctx,
                                                        unsigned bitWidth) {
   switch (bitWidth) {
   case 1:
-  case 8:
-    return getUnsignedIntOpaqueType(ctx, 16);
-  case 16:
-    return getUnsignedIntOpaqueType(ctx, 32);
-  case 32:
-    return getUnsignedIntOpaqueType(ctx, 64);
-  case 64:
-    return getUnsignedIntOpaqueType(ctx, 128);
+  case mlir::pto::kValue8:
+    return getUnsignedIntOpaqueType(ctx, mlir::pto::kValue16);
+  case mlir::pto::kValue16:
+    return getUnsignedIntOpaqueType(ctx, mlir::pto::kValue32);
+  case mlir::pto::kValue32:
+    return getUnsignedIntOpaqueType(ctx, mlir::pto::kValue64);
+  case mlir::pto::kValue64:
+    return getUnsignedIntOpaqueType(ctx, mlir::pto::kValue128);
   default:
-    return getUnsignedIntOpaqueType(ctx, 128);
+    return getUnsignedIntOpaqueType(ctx, mlir::pto::kValue128);
   }
 }
 
@@ -1443,11 +1445,11 @@ std::string layoutToEmitCString(mlir::pto::Layout layout) {
   return "pto::Layout::ND";
 }
 
-Value loadEmitCVariableIfNeeded(OpBuilder &builder, Location loc,
-                                       Value value) {
-  (void)builder;
-  (void)loc;
-  return value;
+Value loadEmitCVariableIfNeeded(const OpBuilder& builder, Location loc, Value value)
+{
+    (void)builder;
+    (void)loc;
+    return value;
 }
 
 Value makeEmitCIntConstant(ConversionPatternRewriter &rewriter,
@@ -1567,8 +1569,6 @@ Value maybeWrapGlobalMemrefAsGlobalTensor(
   }
   return loweredValue;
 }
-
-
 
 int64_t multiplyOrDynamic(int64_t lhs, int64_t rhs) {
   if (lhs < 0 || rhs < 0)
@@ -1722,8 +1722,6 @@ static LogicalResult processFixpipeQuantBlock(Block &block,
   }
   return success();
 }
-
-
 std::string renderStructDef(pto::StructType st) {
   std::string s = "struct " + getStructTypeName(st) + " {\n";
   for (auto [i, f] : llvm::enumerate(st.getFieldTypes()))
@@ -1744,8 +1742,6 @@ LogicalResult rematerializeFixpipeQuantBindings(ModuleOp mop) {
     op->erase();
   return success();
 }
-
-
 std::string renderStructFieldDecl(Type fieldTy,
                                          const std::string &name) {
   if (auto st = dyn_cast<pto::StructType>(fieldTy))
@@ -1755,14 +1751,14 @@ std::string renderStructFieldDecl(Type fieldTy,
 
 int64_t renderTileTemplateDim(int64_t rawDim, Type elemTy,
                                      pto::BLayout blayout, int dimIdx) {
-  if (dimIdx < 0 || dimIdx >= 2)
+  if (dimIdx < 0 || dimIdx >= mlir::pto::kValue2)
     return rawDim;
   if (rawDim == ShapedType::kDynamic)
     return rawDim;
   if (!pto::isPTOFloat4PackedType(elemTy))
     return rawDim;
   int packedDim = blayout == pto::BLayout::ColMajor ? 0 : 1;
-  return dimIdx == packedDim ? rawDim * 2 : rawDim;
+  return dimIdx == packedDim ? rawDim * mlir::pto::kValue2 : rawDim;
 }
 
 FailureOr<TileBufType> resolveFixpipeConsumerTileType(Value pipeHandle) {
@@ -1773,9 +1769,9 @@ FailureOr<TileBufType> resolveFixpipeConsumerTileType(Value pipeHandle) {
   Type resolvedType;
   bool hasMismatch = false;
 
-  auto collectFromFunc = [&](func::FuncOp funcOp,
+  auto collectFromFunc = [&resolvedType, &hasMismatch](func::FuncOp funcOp,
                              llvm::function_ref<bool(pto::TPopOp)> matchesPop) {
-    funcOp.walk([&](pto::TPopOp pop) {
+    funcOp.walk([matchesPop, &resolvedType, &hasMismatch](pto::TPopOp pop) {
       if (!matchesPop(pop))
         return WalkResult::advance();
       if (!resolvedType) {
@@ -1796,7 +1792,7 @@ FailureOr<TileBufType> resolveFixpipeConsumerTileType(Value pipeHandle) {
 
   Value peerPipe = (*peerInitOr)->getResult(0);
   collectFromFunc((*peerInitOr)->getParentOfType<func::FuncOp>(),
-                  [&](pto::TPopOp pop) {
+                  [peerPipe](pto::TPopOp pop) {
                     return peelUnrealized(pop.getPipeHandle()) == peerPipe;
                   });
 
@@ -1903,7 +1899,7 @@ std::string tileBufCompactToken(pto::TileBufConfigAttr configAttr) {
     case 1:
       compactTok = "CompactMode::Normal";
       break;
-    case 2:
+    case mlir::pto::kValue2:
       compactTok = "CompactMode::RowPlusOne";
       break;
     default:
@@ -1921,10 +1917,10 @@ std::string tileBufPadToken(pto::TileBufConfigAttr configAttr) {
     case 1:
       padTok = "PadValue::Zero";
       break;
-    case 2:
+    case mlir::pto::kValue2:
       padTok = "PadValue::Max";
       break;
-    case 3:
+    case mlir::pto::kValue3:
       padTok = "PadValue::Min";
       break;
     default:
@@ -1940,7 +1936,7 @@ std::string tileBufSLayoutToken(pto::TileBufConfigAttr configAttr) {
   if (auto slAttr = dyn_cast<SLayoutAttr>(configAttr.getSLayout())) {
     int32_t slVal = static_cast<int32_t>(slAttr.getValue());
     slTok = (slVal == 1) ? "SLayout::RowMajor"
-                         : (slVal == 2) ? "SLayout::ColMajor"
+                         : (slVal == mlir::pto::kValue2) ? "SLayout::ColMajor"
                                         : "SLayout::NoneBox";
   }
   return slTok;

@@ -108,7 +108,7 @@ static ParseResult parseTDeInterleaveSources(
       return failure();
     srcTypes.push_back(srcType);
   }
-  if (srcs.size() < 1 || srcs.size() > 2)
+  if (srcs.size() < 1 || srcs.size() > mlir::pto::kValue2)
     return parser.emitError(parser.getCurrentLocation(),
                             "tdeinterleave expects one or two source operands");
   return success();
@@ -127,8 +127,8 @@ static ParseResult parseTDeInterleaveOutputs(
 
 ParseResult mlir::pto::TDeInterleaveOp::parse(OpAsmParser &parser,
                                                OperationState &result) {
-  SmallVector<OpAsmParser::UnresolvedOperand, 2> srcs;
-  SmallVector<Type, 2> srcTypes;
+  SmallVector<OpAsmParser::UnresolvedOperand, mlir::pto::kValue2> srcs;
+  SmallVector<Type, mlir::pto::kValue2> srcTypes;
   OpAsmParser::UnresolvedOperand dst0, dst1;
   Type dst0Ty, dst1Ty;
   if (failed(parseTDeInterleaveSources(parser, srcs, srcTypes)) ||
@@ -173,8 +173,8 @@ void mlir::pto::TMrgSortOp::print(OpAsmPrinter &p) {
 }
 
 struct TMrgSortFormat2State {
-  SmallVector<OpAsmParser::UnresolvedOperand, 4> srcs;
-  SmallVector<Type, 4> srcTypes;
+  SmallVector<OpAsmParser::UnresolvedOperand, mlir::pto::kValue4> srcs;
+  SmallVector<Type, mlir::pto::kValue4> srcTypes;
   OpAsmParser::UnresolvedOperand tmp;
   OpAsmParser::UnresolvedOperand dst;
   OpAsmParser::UnresolvedOperand executed;

@@ -1,0 +1,32 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto=load-safety=error 2>&1 | FileCheck %s
+
+// One element past a 32-byte VCG block the single-block read no longer covers
+// the vector, and a bare !pto.ptr cannot supply the whole-register over-read
+// proof the remaining dense legs need. A partial second block (33 bytes)
+// cannot use the exact multi-block path either.
+//
+// 33 bytes is not a bounded contiguous load, so the shape falls back to the
+// generic full-carrier read and its outcome is decided by the load safety
+// policy, not by this change. load-safety=error pins the read safety proof
+// the assertion below is about; under the default policy the same shape is
+// accepted as a full physical chunk over-read.
+module {
+  func.func @over_block_ui8_33() -> !pto.vmi.vreg<33xui8> {
+    %addr = arith.constant 1024 : i64
+    %src = pto.castptr %addr : i64 -> !pto.ptr<ui8, ub>
+    %off = arith.constant 0 : index
+    %v = pto.vmi.vload %src[%off] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<33xui8>
+    return %v : !pto.vmi.vreg<33xui8>
+  }
+}
+
+// CHECK: VMI-RESIDUAL-OP: failed to convert all VMI ops/types to VPTO
+// CHECK: pto.vmi.load

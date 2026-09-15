@@ -115,6 +115,80 @@ helpers. Each wrapper adds exactly the Python root belonging to its own tree;
 it never scans repositories, neighboring build directories, or environment
 variables for another installation.
 
+## CANN Run-Package Layout
+
+The CANN component package (`pto_as` run package and its rpm/deb equivalents)
+does not ship a private Python tree. Instead it aligns with the sibling `pypto`
+component: the self-contained PTOAS wheel is `pip install --no-deps --target`ed
+into the CANN shared site-packages, and the command is exposed through the
+version-level `bin/` directory that the toolkit `set_env.sh` already puts on
+`PATH`.
+
+- wheel source: `<version>/tools/ptoas/wheels/ptoas*.whl`
+- Python payload: `<version>/python/site-packages/{ptoas,ptodsl,TileOps,SoftOps,ptoas.libs}`
+  (+ the single `ptoas-<version>.dist-info`, and pip's `bin/` holding the
+  console script that `[project.scripts]` generates under `--target`)
+- interpreter record: `<version>/tools/ptoas/.ptoas-python.path`
+- launcher (component-owned): `<version>/tools/ptoas/bin/ptoas`
+- command on PATH: `<version>/bin/ptoas` — a relative symlink to the launcher,
+  created with the same `createrelativelysoftlink` idiom used for the opapi
+  softlinks
+
+After the standard `source <cann>/set_env.sh`, `set_env.sh` prepends
+`<version>/python/site-packages` to `PYTHONPATH` and `<version>/bin` to `PATH`,
+so both `import ptoas` / `import ptodsl` and the `ptoas` command work with no
+PTOAS-specific environment script. The launcher also prepends the shared
+site-packages to `PYTHONPATH` itself, so invoking it by absolute path works even
+before `set_env.sh` is sourced. It resolves its own symlink chain before
+deriving `<version>`, so reaching it through the `<version>/bin/ptoas` symlink
+computes the same layout as a direct invocation.
+
+Install (`pto_install_wheel`) unpacks the wheel into a private staging tree
+(`tools/ptoas/.ptoas-wheel-staging`) and then migrates only PTOAS's own entries
+into the shared site-packages. Staging is required because
+`pip install --upgrade --target` deletes and recreates the generated-script
+directory of its target: pointing pip straight at the shared site-packages would
+wipe the `bin/` commands of every sibling component. The migration removes only
+same-named entries, so foreign files in `site-packages/` and in
+`site-packages/bin/` survive both a first install and a reinstall. Install also
+deletes the pre-site-packages-era private tree `tools/ptoas/python` when
+upgrading over an older install, so the legacy payload is not stranded.
+
+Exposing the command needs one more care: `<version>/bin` is a symlink to
+`<version>/<arch>/bin`, and the filelist creates that per-architecture directory
+with mode 550, which denies its owner the write permission needed to add the
+`ptoas` symlink. `pto_install_wheel` therefore reads the directory mode through
+the symlink (`stat -L`), adds the owner write bit for the link operation, and
+restores the recorded mode afterwards. Reading it without `-L` would capture the
+symlink's own 777 and the restore step would then leave the shared directory
+world-writable.
+
+Because the payload spans several top-level entries, replacing it is not one
+atomic step. Before migrating, the version already installed is moved into
+`tools/ptoas/.ptoas-wheel-backup`; if any later step fails, the new entries are
+removed and the parked payload is put back. Failure semantics are uniform:
+
+- Every failure returns non-zero. `ptoas` is never reported as installed while
+  the command is missing, so a missing `bin_dir`, a missing launcher, or a
+  failed symlink is an install failure like any other.
+- A failure after the previous payload was parked restores it, so a failed
+  upgrade leaves the previously installed version working and runnable.
+- The interpreter record is written only after the command is published, so a
+  failed install cannot leave a launcher pointing at a runtime that is absent.
+- If the restore itself cannot complete, the backup tree is deliberately kept —
+  it is then the only copy of the previous install — and its path is reported.
+
+Uninstall (`pto_uninstall_wheel`) mirrors `pypto`: it removes the full PTOAS
+payload — `ptoas/`, `ptodsl/`, `TileOps/`, `SoftOps/`, `ptoas.libs/`,
+`ptoas-*.dist-info`, and PTOAS's own console script in the shared `bin/` — drops
+the `<version>/bin/ptoas` symlink, deletes the interpreter record plus any
+staging or backup tree, and finally removes the `python/` tree itself when PTOAS
+was its last occupant. Sibling components in the shared site-packages are never
+touched: the empty-dir `rmdir` steps fail harmlessly while other components still
+own entries. The rpm/deb prerm hook falls back to an inline removal only when
+`pto_common.sh` is unreadable, and repeats the same name list there, including
+the legacy private tree.
+
 ## Standalone Archive Layout
 
 Standalone compiler archives contain the installed Python wrapper and package:

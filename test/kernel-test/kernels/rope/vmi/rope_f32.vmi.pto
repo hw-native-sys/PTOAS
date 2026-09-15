@@ -103,7 +103,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       // │  MI（硬件细节暴露）        │  VMI（语义级抽象）                    │
       // ├──────────────────────────┼──────────────────────────────────────┤
       // │ vlds（无 dist 模式）       │ vmi.load（同样简洁，但类型系统统一）    │
-      // │ vmul/vsub/vadd            │ vmi.mulf / subf / addf               │
+      // │ vmul/vsub/vadd            │ vmi.vmul / vsub / vadd               │
       // │   + mask<b32> 每条都带    │   无 mask 参数（编译器管理）            │
       // │ vsts + mask<b32>          │ vmi.masked_store（统一 vmi.mask<N>）  │
       // │ vdintlv/vintlv 硬件交织    │ channel_split / channel_merge         │
@@ -184,7 +184,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
               // Half 模式 RoPE 核心计算 (纯 f32)
               // 公式: out1 = x1*cos - x2*sin, out2 = x2*cos + x1*sin
               //
-              // VMI: mulf / subf / addf 直接表达向量运算，无 mask 参数。
+              // VMI: vmul / vsub / vadd 直接表达向量运算；省略 mask 时使用全有效语义。
               // MI 对应:
               //   %t0 = pto.vmul %cos_lo, %x_lo, %mask32_half  ← mask<b32>
               //   %t1 = pto.vmul %sin_lo, %x_hi, %mask32_half
@@ -193,19 +193,19 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
               //   VMI 编译器根据向量宽度自动生成正确的 mask。
               // ========================================================================
               // y1 = x1 * cos - x2 * sin
-              %x1_cos = pto.vmi.mulf %x1, %cos1
+              %x1_cos = pto.vmi.vmul %x1, %cos1
                   : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf32>
-              %x2_sin = pto.vmi.mulf %x2, %sin1
+              %x2_sin = pto.vmi.vmul %x2, %sin1
                   : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf32>
-              %out1 = pto.vmi.subf %x1_cos, %x2_sin
+              %out1 = pto.vmi.vsub %x1_cos, %x2_sin
                   : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf32>
 
               // y2 = x2 * cos + x1 * sin
-              %x2_cos = pto.vmi.mulf %x2, %cos2
+              %x2_cos = pto.vmi.vmul %x2, %cos2
                   : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf32>
-              %x1_sin = pto.vmi.mulf %x1, %sin2
+              %x1_sin = pto.vmi.vmul %x1, %sin2
                   : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf32>
-              %out2 = pto.vmi.addf %x2_cos, %x1_sin
+              %out2 = pto.vmi.vadd %x2_cos, %x1_sin
                   : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf32>
 
               // VMI: masked_store 统一掩码写回。
@@ -284,21 +284,21 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
             // y_even = x_even*cos_even - x_odd*sin_even
             // y_odd  = x_odd *cos_odd  + x_even*sin_odd
             //
-            // VMI: mulf/subf/addf 无 mask——4条乘+2条加减表达完整的成对 RoPE。
+            // VMI: vmul/vsub/vadd 省略 mask，以 4 条乘和 2 条加减表达完整的成对 RoPE。
             // MI 对应: 8条 vmul/vadd/vsub，每条都带 mask<b32>。
             // ========================================================================
-            %x_even_cos = pto.vmi.mulf %x_even, %cos_even
+            %x_even_cos = pto.vmi.vmul %x_even, %cos_even
                 : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf32>
-            %x_odd_sin = pto.vmi.mulf %x_odd, %sin_even
+            %x_odd_sin = pto.vmi.vmul %x_odd, %sin_even
                 : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf32>
-            %y_even = pto.vmi.subf %x_even_cos, %x_odd_sin
+            %y_even = pto.vmi.vsub %x_even_cos, %x_odd_sin
                 : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf32>
 
-            %x_odd_cos = pto.vmi.mulf %x_odd, %cos_odd
+            %x_odd_cos = pto.vmi.vmul %x_odd, %cos_odd
                 : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf32>
-            %x_even_sin = pto.vmi.mulf %x_even, %sin_odd
+            %x_even_sin = pto.vmi.vmul %x_even, %sin_odd
                 : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf32>
-            %y_odd = pto.vmi.addf %x_odd_cos, %x_even_sin
+            %y_odd = pto.vmi.vadd %x_odd_cos, %x_even_sin
                 : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf32>
 
             // VMI: channel_merge 将两个独立通道合并回交织格式 [e0,o0, e1,o1, ...]。

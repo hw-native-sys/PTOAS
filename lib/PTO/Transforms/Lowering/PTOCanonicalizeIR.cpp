@@ -357,100 +357,94 @@ struct PTOCanonicalizeIRPass
   void runOnOperation() override;
 
 private:
-  LogicalResult rewriteLowRankViewOps(func::FuncOp func);
-  void normalizeSyncBlockOps(func::FuncOp func, IRRewriter &rewriter);
+    LogicalResult rewriteLowRankViewOps(func::FuncOp func) const;
+    void normalizeSyncBlockOps(func::FuncOp func, IRRewriter& rewriter) const;
 };
 
-LogicalResult PTOCanonicalizeIRPass::rewriteLowRankViewOps(func::FuncOp func) {
-  SmallVector<MakeTensorViewOp> makeViews;
-  SmallVector<PartitionViewOp> partitionViews;
-  SmallVector<std::tuple<Operation *, Value, unsigned>> dimIndexOps;
+LogicalResult PTOCanonicalizeIRPass::rewriteLowRankViewOps(func::FuncOp func) const
+{
+    SmallVector<MakeTensorViewOp> makeViews;
+    SmallVector<PartitionViewOp> partitionViews;
+    SmallVector<std::tuple<Operation*, Value, unsigned>> dimIndexOps;
 
-  func.walk([&](MakeTensorViewOp op) {
-    if (isLowRankViewLike(op.getResult().getType())) {
-      makeViews.push_back(op);
-    }
-  });
-  func.walk([&](PartitionViewOp op) {
-    unsigned rank = op.getOffsets().size();
-    if (rank > 0 && rank < kCanonicalRank5 && op.getSizes().size() == rank) {
-      partitionViews.push_back(op);
-    }
-  });
-  func.walk([&](GetTensorViewDimOp op) {
-    if (std::optional<unsigned> rank =
-            getLowRankViewRank(op.getTensorView().getType())) {
-      dimIndexOps.emplace_back(op.getOperation(), op.getDimIndex(), *rank);
-    }
-  });
-  func.walk([&](GetTensorViewStrideOp op) {
-    if (std::optional<unsigned> rank =
-            getLowRankViewRank(op.getTensorView().getType())) {
-      dimIndexOps.emplace_back(op.getOperation(), op.getDimIndex(), *rank);
-    }
-  });
+    func.walk([&](MakeTensorViewOp op) {
+        if (isLowRankViewLike(op.getResult().getType())) {
+            makeViews.push_back(op);
+        }
+    });
+    func.walk([&](PartitionViewOp op) {
+        unsigned rank = op.getOffsets().size();
+        if (rank > 0 && rank < kCanonicalRank5 && op.getSizes().size() == rank) {
+            partitionViews.push_back(op);
+        }
+    });
+    func.walk([&](GetTensorViewDimOp op) {
+        if (std::optional<unsigned> rank = getLowRankViewRank(op.getTensorView().getType())) {
+            dimIndexOps.emplace_back(op.getOperation(), op.getDimIndex(), *rank);
+        }
+    });
+    func.walk([&](GetTensorViewStrideOp op) {
+        if (std::optional<unsigned> rank = getLowRankViewRank(op.getTensorView().getType())) {
+            dimIndexOps.emplace_back(op.getOperation(), op.getDimIndex(), *rank);
+        }
+    });
 
-  IRRewriter rewriter(func.getContext());
-  for (MakeTensorViewOp op : makeViews) {
-    if (failed(rewriteMakeTensorView(op, rewriter))) {
-      return failure();
+    IRRewriter rewriter(func.getContext());
+    for (MakeTensorViewOp op : makeViews) {
+        if (failed(rewriteMakeTensorView(op, rewriter))) {
+            return failure();
+        }
     }
-  }
-  for (auto [op, dimIndex, rank] : dimIndexOps) {
-    rewriteTensorViewDimOperand(op, dimIndex, rank, rewriter);
-  }
-  canonicalizeValueTypes(func);
-  for (PartitionViewOp op : partitionViews) {
-    if (failed(rewritePartitionView(op, rewriter))) {
-      return failure();
+    for (auto [op, dimIndex, rank] : dimIndexOps) {
+        rewriteTensorViewDimOperand(op, dimIndex, rank, rewriter);
     }
-  }
-  return success();
+    canonicalizeValueTypes(func);
+    for (PartitionViewOp op : partitionViews) {
+        if (failed(rewritePartitionView(op, rewriter))) {
+            return failure();
+        }
+    }
+    return success();
 }
 
-void PTOCanonicalizeIRPass::normalizeSyncBlockOps(func::FuncOp func,
-                                                  IRRewriter &rewriter) {
-  // VPTO consumes the shared FFTS sync representation.  Normalize named
-  // cross-block ops to mode 0 and A2/A3 intra-block ops to mode 2; A5 keeps
-  // named intra ops for dedicated lowering.
-  SmallVector<SetCrossBlockOp> crossSets;
-  SmallVector<WaitCrossBlockOp> crossWaits;
-  SmallVector<SetIntraBlockOp> intraSets;
-  SmallVector<WaitIntraBlockOp> intraWaits;
-  func.walk([&](SetCrossBlockOp op) { crossSets.push_back(op); });
-  func.walk([&](WaitCrossBlockOp op) { crossWaits.push_back(op); });
-  PTOArch targetArch = getTargetArch(func);
-  if (targetArch != PTOArch::A5) {
-    func.walk([&](SetIntraBlockOp op) { intraSets.push_back(op); });
-    func.walk([&](WaitIntraBlockOp op) { intraWaits.push_back(op); });
-  }
-  auto mode0 = IntegerAttr::get(IntegerType::get(func.getContext(), 32), 0);
-  auto mode2 = IntegerAttr::get(IntegerType::get(func.getContext(), 32), 2);
-  for (SetCrossBlockOp op : crossSets) {
-    rewriter.setInsertionPoint(op);
-    rewriter.replaceOpWithNewOp<SyncSetOp>(
-        op, op.getPipe(), op.getEventIdAttr(), mode0, op.getEventIdDyn());
-  }
-  for (WaitCrossBlockOp op : crossWaits) {
-    rewriter.setInsertionPoint(op);
-    rewriter.replaceOpWithNewOp<SyncWaitOp>(
-        op, op.getPipe(), op.getEventIdAttr(), mode0, op.getEventIdDyn());
-  }
-  for (SetIntraBlockOp op : intraSets) {
-    rewriter.setInsertionPoint(op);
-    rewriter.replaceOpWithNewOp<SyncSetOp>(
-        op, op.getPipe(), op.getEventIdAttr(), mode2, op.getEventIdDyn());
-  }
-  for (WaitIntraBlockOp op : intraWaits) {
-    rewriter.setInsertionPoint(op);
-    rewriter.replaceOpWithNewOp<SyncWaitOp>(
-        op, op.getPipe(), op.getEventIdAttr(), mode2, op.getEventIdDyn());
-  }
+void PTOCanonicalizeIRPass::normalizeSyncBlockOps(func::FuncOp func, IRRewriter& rewriter) const
+{
+    // VPTO consumes the shared FFTS sync representation.  Normalize named
+    // cross-block ops to mode 0 and A2/A3 intra-block ops to mode 2; A5 keeps
+    // named intra ops for dedicated lowering.
+    SmallVector<SetCrossBlockOp> crossSets;
+    SmallVector<WaitCrossBlockOp> crossWaits;
+    SmallVector<SetIntraBlockOp> intraSets;
+    SmallVector<WaitIntraBlockOp> intraWaits;
+    func.walk([&](SetCrossBlockOp op) { crossSets.push_back(op); });
+    func.walk([&](WaitCrossBlockOp op) { crossWaits.push_back(op); });
+    PTOArch targetArch = getTargetArch(func);
+    if (targetArch != PTOArch::A5) {
+        func.walk([&](SetIntraBlockOp op) { intraSets.push_back(op); });
+        func.walk([&](WaitIntraBlockOp op) { intraWaits.push_back(op); });
+    }
+    auto mode0 = IntegerAttr::get(IntegerType::get(func.getContext(), 32), 0);
+    auto mode2 = IntegerAttr::get(IntegerType::get(func.getContext(), 32), 2);
+    for (SetCrossBlockOp op : crossSets) {
+        rewriter.setInsertionPoint(op);
+        rewriter.replaceOpWithNewOp<SyncSetOp>(op, op.getPipe(), op.getEventIdAttr(), mode0, op.getEventIdDyn());
+    }
+    for (WaitCrossBlockOp op : crossWaits) {
+        rewriter.setInsertionPoint(op);
+        rewriter.replaceOpWithNewOp<SyncWaitOp>(op, op.getPipe(), op.getEventIdAttr(), mode0, op.getEventIdDyn());
+    }
+    for (SetIntraBlockOp op : intraSets) {
+        rewriter.setInsertionPoint(op);
+        rewriter.replaceOpWithNewOp<SyncSetOp>(op, op.getPipe(), op.getEventIdAttr(), mode2, op.getEventIdDyn());
+    }
+    for (WaitIntraBlockOp op : intraWaits) {
+        rewriter.setInsertionPoint(op);
+        rewriter.replaceOpWithNewOp<SyncWaitOp>(op, op.getPipe(), op.getEventIdAttr(), mode2, op.getEventIdDyn());
+    }
 }
 
 void PTOCanonicalizeIRPass::runOnOperation() {
   func::FuncOp func = getOperation();
-
   if (failed(rewriteLowRankViewOps(func))) {
     signalPassFailure();
     return;

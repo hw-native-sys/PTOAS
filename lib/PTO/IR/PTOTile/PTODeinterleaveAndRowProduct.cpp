@@ -34,7 +34,7 @@
       return emitOpError("expects src0, src1, dst0, and dst1 to have rank-2 valid_shape");
     }
     bool hasOddValidColumns =
-        validShape[1] != ShapedType::kDynamic && (validShape[1] & 1) != 0;
+        validShape[1] != ShapedType::kDynamic && validShape[1] % mlir::pto::kValue2 != 0;
     if (hasOddValidColumns) {
       return emitOpError("expects valid_shape[1] to be even");
     }
@@ -81,7 +81,7 @@ static LogicalResult verifyTDeInterleaveTwoSources(TDeInterleaveOp op) {
   if (!isRowMajorTileBuf(src1Ty))
     return op.emitOpError("expects src1 to use row-major layout");
   int64_t columns = getValidShapeVec(src0Ty)[1];
-  if (columns != ShapedType::kDynamic && (columns & 1) != 0)
+  if (columns != ShapedType::kDynamic && columns % mlir::pto::kValue2 != 0)
     return op.emitOpError("expects two-source valid_shape[1] to be even");
   return success();
 }
@@ -104,7 +104,7 @@ static LogicalResult verifyTDeInterleaveA5(TDeInterleaveOp op) {
   if (op.getSrcs().size() == mlir::pto::kValue2)
       return verifyTDeInterleaveTwoSources(op);
   auto srcValid = getValidShapeVec(op.getSrc0());
-  if (srcValid[1] != ShapedType::kDynamic && (srcValid[1] & 1) != 0)
+  if (srcValid[1] != ShapedType::kDynamic && srcValid[1] % mlir::pto::kValue2 != 0)
     return op.emitOpError("expects single-source valid_shape[1] to be even");
   if (failed(verifyTDeInterleaveSingleOutput(
           op, srcValid, getValidShapeVec(op.getDst0()), "dst0")))
@@ -114,15 +114,15 @@ static LogicalResult verifyTDeInterleaveA5(TDeInterleaveOp op) {
 }
 
 mlir::LogicalResult mlir::pto::TDeInterleaveOp::verify() {
-  auto verifyA2A3 = [&]() {
+  auto verifyA2A3 = [this]() {
     return emitOpError("tdeinterleave is only supported on A5 targets");
   };
-  auto verifyA5 = [&]() { return verifyTDeInterleaveA5(*this); };
+  auto verifyA5 = [this]() { return verifyTDeInterleaveA5(*this); };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
 mlir::LogicalResult mlir::pto::TRowProdOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult {
+  auto verifyA2A3 = [this]() -> LogicalResult {
     if (!getTmp()) {
       return verifyTRowReductionNoTmpCommon(
           *this, getSrc().getType(), getDst().getType(),
@@ -132,7 +132,7 @@ mlir::LogicalResult mlir::pto::TRowProdOp::verify() {
         *this, getSrc().getType(), getTmp().getType(), getDst().getType(),
         "expects A2/A3 trowprod element type to be i16/i32/f16/f32");
   };
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [this]() -> LogicalResult {
     if (!getTmp()) {
       return verifyTRowReductionNoTmpCommon(
           *this, getSrc().getType(), getDst().getType(),
@@ -144,7 +144,6 @@ mlir::LogicalResult mlir::pto::TRowProdOp::verify() {
   };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
-
 
 mlir::LogicalResult mlir::pto::TRsqrtOp::verify() {
   Type ts = getSrc().getType();
@@ -176,12 +175,11 @@ mlir::LogicalResult mlir::pto::TRsqrtOp::verify() {
       return emitOpError("expects tmp to have a static, byte-addressable tile type");
     }
     if (tmpElemBytes.value() * tmpNumel.value() < mlir::pto::kValue32) {
-        return emitOpError("expects tmp to be at least 32 bytes when provided");
+      return emitOpError("expects tmp to be at least 32 bytes when provided");
     }
   }
   return mlir::success();
 }
-
 
 static bool isTScatterAllowedDataElem(mlir::Type t) {
   if (t.isF16() || t.isF32() || t.isBF16()) {

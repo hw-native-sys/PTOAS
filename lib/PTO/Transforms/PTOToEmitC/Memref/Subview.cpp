@@ -19,6 +19,18 @@ using namespace mlir::pto;
 namespace mlir {
 namespace pto {
 
+namespace {
+constexpr int64_t kGlobalTensorRank = 5;
+constexpr int64_t kZeroIndexValue = 0;
+constexpr int64_t kUnitIndexValue = 1;
+// PTO C++ Shape/Stride templates use -1 for dynamic dimensions. This is
+// intentionally different from MLIR's ShapedType::kDynamic sentinel.
+constexpr int64_t kPtoDynamicValue = -1;
+constexpr int64_t kLastPrependedDimension = 3;
+constexpr unsigned kFirstOperandIndex = 0;
+constexpr unsigned kFirstResultIndex = 0;
+} // namespace
+
 struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
   using OpConversionPattern<memref::SubViewOp>::OpConversionPattern;
 
@@ -48,18 +60,20 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     auto parentStatic = extractStaticInt(parentStride);
     auto stepStatic = extractStaticInt(step);
     if (parentStatic && stepStatic) {
-      int64_t product = 0;
-      if (llvm::MulOverflow(*parentStatic, *stepStatic, product)) {
+      int64_t product = kZeroIndexValue;
+      const bool productOverflows =
+          llvm::MulOverflow(*parentStatic, *stepStatic, product);
+      if (productOverflows) {
         return failure();
       }
       strides.push_back(rewriter.getIndexAttr(product));
       return success();
     }
-    if (stepStatic && *stepStatic == 1) {
+    if (stepStatic && *stepStatic == kUnitIndexValue) {
       strides.push_back(parentStride);
       return success();
     }
-    if (parentStatic && *parentStatic == 1) {
+    if (parentStatic && *parentStatic == kUnitIndexValue) {
       strides.push_back(step);
       return success();
     }
@@ -185,11 +199,11 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     int64_t rank = srcType.getRank();
     Type indexTy = emitc::OpaqueType::get(ctx, "int64_t");
 
-    auto mkIndex = [&](int64_t v) -> Value {
+    auto mkIndex = [&rewriter, loc, indexTy, ctx](int64_t v) -> Value {
       return rewriter.create<emitc::ConstantOp>(
           loc, indexTy, emitc::OpaqueAttr::get(ctx, std::to_string(v)));
     };
-    auto asIndex = [&](Value value) -> Value {
+    auto asIndex = [&rewriter, loc, indexTy](Value value) -> Value {
       if (value.getType() == indexTy)
         return value;
       return rewriter.create<emitc::CastOp>(loc, indexTy, value).getResult();
@@ -197,9 +211,9 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
 
     auto staticOffsets = op.getStaticOffsets();
     auto dynamicOffsets = adaptor.getOffsets();
-    int dynOffIdx = 0;
-    Value totalOffset = mkIndex(0);
-    for (int i = 0; i < rank; ++i) {
+    int dynOffIdx = kZeroIndexValue;
+    Value totalOffset = mkIndex(kZeroIndexValue);
+    for (int i = kZeroIndexValue; i < rank; ++i) {
       Value offVal;
       if (staticOffsets[i] == ShapedType::kDynamic) {
         Value rawDyn = dynamicOffsets[dynOffIdx++];
@@ -208,7 +222,7 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
         offVal = mkIndex(staticOffsets[i]);
       }
 
-      Value strideVal = mkIndex(1);
+      Value strideVal = mkIndex(kUnitIndexValue);
       if (i < static_cast<int>(sourceStrides.size()))
         strideVal = ofrToEmitCIndexValue(rewriter, loc, indexTy, sourceStrides[i]);
 
@@ -231,7 +245,7 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     Value convertedSource = adaptor.getSource();
     if (auto cast =
             convertedSource.getDefiningOp<UnrealizedConversionCastOp>())
-      convertedSource = cast.getOperand(0);
+      convertedSource = cast.getOperand(kFirstOperandIndex);
     Value sourcePtr = materializeGlobalTensorDataPointer(
         rewriter, loc, convertedSource, op.getSource().getType());
     Value tileCandidate = sourcePtr;
@@ -239,7 +253,7 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
       tileCandidate = castOp.getOperand();
     } else if (auto uc =
                    sourcePtr.getDefiningOp<UnrealizedConversionCastOp>()) {
-      tileCandidate = uc.getOperand(0);
+      tileCandidate = uc.getOperand(kFirstOperandIndex);
     }
     if (auto ot = dyn_cast<emitc::OpaqueType>(tileCandidate.getType())) {
       auto tyStr = ot.getValue();
@@ -286,6 +300,22 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     return true;
   }
 
+  Value materializeStrideValue(
+      OpFoldResult ofr, ConversionPatternRewriter &rewriter, Type indexTy,
+      const std::function<Value(int64_t)> &mkIndex, Location loc) const {
+    if (isa<Value>(ofr)) {
+      Value value = cast<Value>(ofr);
+      Value remapped = rewriter.getRemappedValue(value);
+      if (remapped.getType() == indexTy)
+        return remapped;
+      return rewriter.create<emitc::CastOp>(loc, indexTy, remapped).getResult();
+    }
+    Attribute attr = cast<Attribute>(ofr);
+    if (auto intAttr = dyn_cast<IntegerAttr>(attr))
+      return mkIndex(getIntegerAttrSignedValue(intAttr));
+    return mkIndex(kZeroIndexValue);
+  }
+
   // Build the Shape/Stride/GlobalTensor construction for GM subviews.
   // Compose per-dimension subview strides: source stride x step, keeping
   // static products in the template list and dynamic ones as runtime values.
@@ -298,35 +328,23 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
       SmallVectorImpl<Value> &strideValues) const {
     int64_t rank = sourceStrides.size();
     auto subViewSteps = op.getMixedStrides();
-    auto ofrToValue = [&](OpFoldResult ofr) -> Value {
-      if (isa<Value>(ofr)) {
-        Value v = cast<Value>(ofr);
-        Value rv = rewriter.getRemappedValue(v);
-        if (rv.getType() == indexTy)
-          return rv;
-        return rewriter
-            .create<emitc::CastOp>(op.getLoc(), indexTy, rv)
-            .getResult();
-      }
-      Attribute attr = cast<Attribute>(ofr);
-      if (auto ia = dyn_cast<IntegerAttr>(attr))
-        return mkIndex(getIntegerAttrSignedValue(ia));
-      return mkIndex(0);
-    };
+    const Location loc = op.getLoc();
 
-    for (int i = 0; i < rank; ++i) {
+    for (int i = kZeroIndexValue; i < rank; ++i) {
       OpFoldResult srcStrideOfr =
           (i < static_cast<int>(sourceStrides.size())) ? sourceStrides[i]
-                                                       : rewriter.getIndexAttr(1);
+                                                       : rewriter.getIndexAttr(kUnitIndexValue);
       OpFoldResult stepOfr = (i < static_cast<int>(subViewSteps.size()))
                                  ? subViewSteps[i]
-                                 : rewriter.getIndexAttr(1);
+                                 : rewriter.getIndexAttr(kUnitIndexValue);
 
       auto srcStatic = extractStaticInt(srcStrideOfr);
       auto stepStatic = extractStaticInt(stepOfr);
       if (srcStatic && stepStatic) {
-        int64_t finalStride = 0;
-        if (llvm::MulOverflow(*srcStatic, *stepStatic, finalStride)) {
+        int64_t finalStride = kZeroIndexValue;
+        const bool strideOverflows =
+            llvm::MulOverflow(*srcStatic, *stepStatic, finalStride);
+        if (strideOverflows) {
           return rewriter.notifyMatchFailure(
               op, "source stride and subview step product overflows");
         }
@@ -335,12 +353,14 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
         continue;
       }
 
-      strideTemplateVec.push_back(-1);
-      Value srcV = ofrToValue(srcStrideOfr);
-      Value stepV = ofrToValue(stepOfr);
-      if (stepStatic && *stepStatic == 1) {
+      strideTemplateVec.push_back(kPtoDynamicValue);
+      Value srcV = materializeStrideValue(srcStrideOfr, rewriter, indexTy,
+                                           mkIndex, loc);
+      Value stepV = materializeStrideValue(stepOfr, rewriter, indexTy,
+                                           mkIndex, loc);
+      if (stepStatic && *stepStatic == kUnitIndexValue) {
         strideValues.push_back(srcV);
-      } else if (srcStatic && *srcStatic == 1) {
+      } else if (srcStatic && *srcStatic == kUnitIndexValue) {
         strideValues.push_back(stepV);
       } else {
         strideValues.push_back(rewriter.create<emitc::MulOp>(
@@ -352,10 +372,10 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
 
   // Right-aligned 5D shape/stride bundle: template dims plus runtime values.
   struct Aligned5DDims {
-    SmallVector<int64_t, 5> shape;
-    SmallVector<int64_t, 5> stride;
-    SmallVector<Value, 5> shapeValues;
-    SmallVector<Value, 5> strideValues;
+    SmallVector<int64_t, kGlobalTensorRank> shape;
+    SmallVector<int64_t, kGlobalTensorRank> stride;
+    SmallVector<Value, kGlobalTensorRank> shapeValues;
+    SmallVector<Value, kGlobalTensorRank> strideValues;
   };
 
   // Right-align the subview's shape/strides to 5 dims: existing dims inherit
@@ -370,29 +390,30 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     Aligned5DDims dims;
     buildGlobalTensorShapeAndStride(shapeParamsVec, strideTemplateVec,
                                     dims.shape, dims.stride);
-    Value oneIndex = mkIndex(1);
-    dims.shapeValues.assign(5, oneIndex);
-    dims.strideValues.assign(5, oneIndex);
-    int shift = 5 - rank;
+    Value oneIndex = mkIndex(kUnitIndexValue);
+    dims.shapeValues.assign(kGlobalTensorRank, oneIndex);
+    dims.strideValues.assign(kGlobalTensorRank, oneIndex);
+    int shift = kGlobalTensorRank - rank;
 
-    for (int i = 0; i < rank && i < 5; ++i) {
+    for (int i = kZeroIndexValue; i < rank && i < kGlobalTensorRank; ++i) {
       dims.shapeValues[shift + i] = sizeValues[i];
       dims.strideValues[shift + i] = strideValues[i];
     }
 
-    for (int i = 3; i >= 0; --i) {
+    for (int i = kLastPrependedDimension; i >= kZeroIndexValue; --i) {
       if (i >= shift)
         continue;
-      if (dims.stride[i] != -1) {
+      if (dims.stride[i] != kPtoDynamicValue) {
         dims.strideValues[i] = mkIndex(dims.stride[i]);
         continue;
       }
-      if (dims.shape[i + 1] == 1) {
-        dims.strideValues[i] = dims.strideValues[i + 1];
+      if (dims.shape[i + kUnitIndexValue] == kUnitIndexValue) {
+        dims.strideValues[i] = dims.strideValues[i + kUnitIndexValue];
       } else {
         dims.strideValues[i] = rewriter.create<emitc::MulOp>(
-            loc, dims.shapeValues[i + 1].getType(),
-            dims.shapeValues[i + 1], dims.strideValues[i + 1]);
+            loc, dims.shapeValues[i + kUnitIndexValue].getType(),
+            dims.shapeValues[i + kUnitIndexValue],
+            dims.strideValues[i + kUnitIndexValue]);
       }
     }
     return dims;
@@ -428,7 +449,7 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     auto *ctx = rewriter.getContext();
     Type indexTy = emitc::OpaqueType::get(ctx, "int64_t");
 
-    auto mkIndex = [&](int64_t v) -> Value {
+    auto mkIndex = [&rewriter, loc, indexTy, ctx](int64_t v) -> Value {
       return rewriter.create<emitc::ConstantOp>(
           loc, indexTy, emitc::OpaqueAttr::get(ctx, std::to_string(v)));
     };
@@ -484,9 +505,9 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     auto resShape = resTy.getShape();
     auto mixedSizes = op.getMixedSizes();
     sizeValues.reserve(rank);
-    for (int i = 0; i < resTy.getRank(); ++i) {
+    for (int i = kZeroIndexValue; i < resTy.getRank(); ++i) {
       if (resShape[i] == ShapedType::kDynamic) {
-        shapeParamsVec.push_back(-1);
+        shapeParamsVec.push_back(kPtoDynamicValue);
       } else {
         shapeParamsVec.push_back(resShape[i]);
       }
@@ -494,7 +515,8 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
         sizeValues.push_back(ofrToEmitCIndexValue(rewriter, loc, indexTy, mixedSizes[i]));
       } else {
         sizeValues.push_back(
-            mkIndex(resShape[i] == ShapedType::kDynamic ? 1 : resShape[i]));
+            mkIndex(resShape[i] == ShapedType::kDynamic ? kUnitIndexValue
+                                                        : resShape[i]));
       }
     }
     SmallVector<int64_t> strideTemplateVec;
@@ -553,10 +575,11 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     // pto::Stride N-parameter ctor (and its static_assert).
     auto strideTypeOpaque = emitc::OpaqueType::get(ctx, strideCppType);
     SmallVector<Value> strideCtorArgs;
-    strideCtorArgs.reserve(5);
-    for (int i = 0; i < 5; ++i) {
-      if (dims.stride[i] == -1)
+    strideCtorArgs.reserve(kGlobalTensorRank);
+    for (int i = kZeroIndexValue; i < kGlobalTensorRank; ++i) {
+      if (dims.stride[i] == kPtoDynamicValue) {
         strideCtorArgs.push_back(dims.strideValues[i]);
+      }
     }
     auto strideInstOp = rewriter.create<emitc::CallOpaqueOp>(
         loc, strideTypeOpaque, strideCppType,
@@ -570,8 +593,8 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
 
     SmallVector<Value> gtConstructorArgs;
     gtConstructorArgs.push_back(newPtr);
-    gtConstructorArgs.push_back(shapeInstOp.getResult(0));
-    gtConstructorArgs.push_back(strideInstOp.getResult(0));
+    gtConstructorArgs.push_back(shapeInstOp.getResult(kFirstResultIndex));
+    gtConstructorArgs.push_back(strideInstOp.getResult(kFirstResultIndex));
 
     rewriter.replaceOpWithNewOp<emitc::CallOpaqueOp>(
         op, gtType, gtCppType,
@@ -645,7 +668,7 @@ struct CastPtrConversion : public OpConversionPattern<pto::CastPtrOp> {
                       .create<emitc::CallOpaqueOp>(
                           op.getLoc(), convertedResultType, "PTOAS__TILE_DATA",
                           ArrayAttr{}, ArrayAttr{}, ValueRange{peeledInput})
-                      .getResult(0);
+                      .getResult(kFirstResultIndex);
       rewriter.replaceOp(op, ptr);
       return success();
     }
@@ -683,7 +706,7 @@ struct CastPtrConversion : public OpConversionPattern<pto::CastPtrOp> {
                        .create<emitc::CallOpaqueOp>(
                            op.getLoc(), convertedInputType, "PTOAS__TILE_DATA",
                            ArrayAttr{}, ArrayAttr{}, ValueRange{peeledInput})
-                       .getResult(0);
+                       .getResult(kFirstResultIndex);
         } else {
           source = materializeAddressAsPointer(rewriter, op.getLoc(),
                                                peeledInput, *as, elemTok);
@@ -699,7 +722,7 @@ struct CastPtrConversion : public OpConversionPattern<pto::CastPtrOp> {
     auto cast = rewriter.create<emitc::CallOpaqueOp>(
         op.getLoc(), convertedResultType, "reinterpret_cast", ArrayAttr{},
         templateArgs, ValueRange{source});
-    rewriter.replaceOp(op, cast.getResult(0));
+    rewriter.replaceOp(op, cast.getResult(kFirstResultIndex));
     return success();
   }
 };

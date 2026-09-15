@@ -1420,7 +1420,7 @@ parseDriverInvocation(const std::vector<std::string> &args,
 
 static std::unique_ptr<PTOASContext>
 createDriverContext(DialectRegistry &registry, MLIRContext *borrowedContext,
-                    const DriverInvocationOptions &options) {
+                    const DriverInvocationOptions &) {
   std::unique_ptr<PTOASContext> context;
   if (borrowedContext) {
     context = std::make_unique<PTOASContext>(borrowedContext, outputFilename);

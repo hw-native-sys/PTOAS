@@ -45,7 +45,7 @@ module {
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
 // ASSIGN: %[[SOURCE_GROUP_2:.*]] = pto.vmi.ensure_layout %[[SOURCE]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
-// ASSIGN: %[[SCALED:.*]] = pto.vmi.mulf %[[SOURCE_GROUP_2]], %[[BROADCAST]]
+// ASSIGN: %[[SCALED:.*]] = pto.vmi.vmul %[[SOURCE_GROUP_2]], %[[BROADCAST]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
 // ASSIGN: %[[SCALED_SUM:.*]] = pto.vmi.group_reduce_addf %[[SCALED]]
 

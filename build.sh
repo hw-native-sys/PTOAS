@@ -973,6 +973,21 @@ stage_ptoas_wheel() {
     wheel_feature_args+=(--use-feature=in-tree-build)
   fi
   # scikit-build-core reconfigures the PTOAS tree from scratch for the wheel.
+  # compile.sh sources /opt/rh/devtoolset-7/enable, so PATH resolves the C/C++
+  # compilers to the devtoolset GCC 7.3.1 unless the wheel configure pins them
+  # explicitly; --gcc-toolchain below is a clang-only flag, so letting CMake
+  # pick GCC fails the compiler check. Pin the same clang pair that
+  # configure_ptoas uses for the install-tree build.
+  # CANN_3RD_LIB_PATH must also be passed explicitly: the wheel configure no
+  # longer inherits it from a previous configure_ptoas cache, and without it
+  # fetch_cann_cmake.cmake falls back to cloning cann/cmake.git, which is
+  # unreachable from the intranet build environment. A CMake cache define is
+  # used instead of an env var so the value is recorded in the build tree.
+  wheel_feature_args+=(
+    "--config-settings=cmake.define.CMAKE_C_COMPILER=${PTOAS_CC}"
+    "--config-settings=cmake.define.CMAKE_CXX_COMPILER=${PTOAS_CXX}"
+    "--config-settings=cmake.define.CANN_3RD_LIB_PATH=${CANN_3RD_LIB_PATH}"
+  )
   # Pass the devtoolset-7 sysroot + gcc-toolchain through CMake defines so the
   # wheel's native extension links against the CentOS7 libc floor, matching the
   # LLVM/MLIR runtime libraries packaged alongside it.
@@ -1070,16 +1085,16 @@ package() {
   local _ptoas_jobs
   _ptoas_jobs="$(ptoas_build_jobs)"
   echo "PTOAS build parallelism: jobs=${_ptoas_jobs} (requested=${JOBS})"
-  ENABLE_PACKAGE=FALSE configure_ptoas
-  cmake --build "${BUILD_PATH}" -- -j "${_ptoas_jobs}"
-
   # Distill the version used for the .run package name. The CANN product version
   # (9.2.0 for this release train) differs from project(ptoas VERSION 0.57), so
   # default to the packaging version and allow an explicit override.
   PTOAS_PACKAGE_VERSION="${PTOAS_PACKAGE_VERSION:-9.2.0}"
 
   # Build and repair the wheel first, then reconfigure with its absolute path
-  # so CMake/CPack owns run, RPM, and DEB payload generation uniformly.
+  # so CMake/CPack owns run, RPM, and DEB payload generation uniformly. The
+  # wheel pass configures and compiles the same sources in the same build
+  # tree, so no separate pre-build of PTOAS is needed here: compile errors
+  # surface in stage_ptoas_wheel before the final configure.
   rm -rf "${BUILD_OUT_PATH}"
   mkdir -p "${BUILD_OUT_PATH}"
   stage_ptoas_wheel

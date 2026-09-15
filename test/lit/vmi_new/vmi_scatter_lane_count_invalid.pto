@@ -1,0 +1,76 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -split-input-file -verify-diagnostics
+// RUN: pto-test-opt %s -split-input-file -verify-diagnostics -vmi-lower-unified-to-legacy -vmi-to-vpto
+
+// Both scatter spellings reject mismatched logical lengths before lowering.
+// 256/128 also differs in index chunks; 128/64 occupies one index chunk each.
+// The physical arity defense must never replace this stricter op verifier.
+
+module {
+  func.func @vscatter_value256_indices128(
+      %value: !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous>>,
+      %dst: !pto.ptr<ui8, ub>,
+      %indices: !pto.vmi.vreg<128xi16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<256xb8, #pto.vmi.layout<contiguous>>) {
+    // expected-error @+1 {{requires all VMI data values to have the same logical lane count}}
+    pto.vmi.vscatter %value, %dst, %indices, %mask
+        : !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous>>, !pto.ptr<ui8, ub>,
+          !pto.vmi.vreg<128xi16, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<256xb8, #pto.vmi.layout<contiguous>>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @scatter_value256_indices128(
+      %value: !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous>>,
+      %dst: !pto.ptr<ui8, ub>,
+      %indices: !pto.vmi.vreg<128xi16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<256xb8, #pto.vmi.layout<contiguous>>) {
+    // expected-error @+1 {{requires all VMI data values to have the same logical lane count}}
+    pto.vmi.scatter %value, %dst[%indices], %mask
+        : !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous>>, !pto.ptr<ui8, ub>,
+          !pto.vmi.vreg<128xi16, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<256xb8, #pto.vmi.layout<contiguous>>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @vscatter_value128_indices64(
+      %value: !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous>>,
+      %dst: !pto.ptr<ui8, ub>,
+      %indices: !pto.vmi.vreg<64xi16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<128xb8, #pto.vmi.layout<contiguous>>) {
+    // expected-error @+1 {{requires all VMI data values to have the same logical lane count}}
+    pto.vmi.vscatter %value, %dst, %indices, %mask
+        : !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous>>, !pto.ptr<ui8, ub>,
+          !pto.vmi.vreg<64xi16, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<128xb8, #pto.vmi.layout<contiguous>>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @scatter_value128_indices64(
+      %value: !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous>>,
+      %dst: !pto.ptr<ui8, ub>,
+      %indices: !pto.vmi.vreg<64xi16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<128xb8, #pto.vmi.layout<contiguous>>) {
+    // expected-error @+1 {{requires all VMI data values to have the same logical lane count}}
+    pto.vmi.scatter %value, %dst[%indices], %mask
+        : !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous>>, !pto.ptr<ui8, ub>,
+          !pto.vmi.vreg<64xi16, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<128xb8, #pto.vmi.layout<contiguous>>
+    return
+  }
+}

@@ -207,7 +207,7 @@ struct InferPTOMemScopePass
 
 private:
   LogicalResult fixDeviceCallSite(func::FuncOp op);
-  [[maybe_unused]] const LogicalResult fixHostFuncSignature(func::FuncOp op);
+  [[maybe_unused]] LogicalResult fixHostFuncSignature(func::FuncOp op) const;
   void inferMemScopeForDeviceFunc(func::FuncOp func);
 };
 } // namespace
@@ -380,7 +380,7 @@ LogicalResult InferPTOMemScopePass::fixDeviceCallSite(func::FuncOp op) {
 /// updated the memref type of the BlockArgument of or the return operation
 /// within the function (if they are updated at all). So we need to use those
 /// information to update the function's type.
-[[maybe_unused]] const LogicalResult InferPTOMemScopePass::fixHostFuncSignature(func::FuncOp op) {
+[[maybe_unused]] LogicalResult InferPTOMemScopePass::fixHostFuncSignature(func::FuncOp op) const {
   // Skip external host functions because we know nothing about it.
   if (op.isExternal()) {
     return success();

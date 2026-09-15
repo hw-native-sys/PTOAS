@@ -19,6 +19,8 @@ using namespace mlir::pto;
 namespace mlir {
 namespace pto {
 
+constexpr unsigned kTScatterArgumentCount = mlir::pto::kValue2;
+
 struct PTOScatterToEmitC : public OpConversionPattern<pto::TScatterOp> {
   using OpConversionPattern<pto::TScatterOp>::OpConversionPattern;
 
@@ -28,7 +30,7 @@ struct PTOScatterToEmitC : public OpConversionPattern<pto::TScatterOp> {
                               Value dst, Value src) const {
     auto loc = op.getLoc();
     auto *ctx = rewriter.getContext();
-    SmallVector<Attribute, 2> targsList;
+    SmallVector<Attribute, kTScatterArgumentCount> targsList;
     targsList.push_back(
         emitc::OpaqueAttr::get(ctx, maskPatternTok(op.getMaskPatternAttr())));
     if (auto axisAttr = op.getAxisAttr()) {
@@ -39,7 +41,7 @@ struct PTOScatterToEmitC : public OpConversionPattern<pto::TScatterOp> {
       targsList.push_back(emitc::OpaqueAttr::get(ctx, scatterAxis));
     }
     auto targs = rewriter.getArrayAttr(targsList);
-    SmallVector<Value, 2> operands{dst, src};
+    SmallVector<Value, kTScatterArgumentCount> operands{dst, src};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TSCATTER",
         /*args=*/ArrayAttr{}, /*templateArgs=*/targs,

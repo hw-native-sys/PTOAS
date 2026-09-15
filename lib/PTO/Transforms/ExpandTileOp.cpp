@@ -529,18 +529,17 @@ static const llvm::StringSet<> &highPrecisionImplementedOps() {
   return kImplementedOps;
 }
 
+// Returns the precisionType context attr when op matches OpT; std::nullopt
+// otherwise. Only the first matching op type applies.
 template <typename OpT, typename PrecisionT>
-static bool tryAppendPrecisionType(
-    Operation *op,
-    SmallVectorImpl<std::pair<std::string, std::string>> &attrs,
-    PrecisionT highPrecision) {
+static std::optional<std::pair<std::string, std::string>>
+tryGetPrecisionTypeAttr(Operation *op, PrecisionT highPrecision) {
   auto typed = dyn_cast<OpT>(op);
   if (!typed) {
-    return false;
+    return std::nullopt;
   }
 
   PrecisionT precision = typed.getPrecisionType();
-  attrs.emplace_back("precisionType", getPrecisionTypeString(precision).str());
 
   if (precision == highPrecision &&
       !highPrecisionImplementedOps().contains(op->getName().getStringRef())) {
@@ -549,7 +548,8 @@ static bool tryAppendPrecisionType(
                  << ": precisionType = high_precision requested but not yet "
                     "implemented; falling back to default behavior\n";
   }
-  return true;
+  return std::pair<std::string, std::string>(
+      "precisionType", getPrecisionTypeString(precision).str());
 }
 
 static std::string getTRandomRoundsString(pto::TRandomOp op) {
@@ -566,14 +566,15 @@ static void appendTCvtRoundModeAttr(
   }
 }
 
-// Appends the cmp_mode context attr for TCmpOp / TCmpSOp.
+// Returns the cmp_mode context attr for TCmpOp / TCmpSOp, when present.
 template <typename CmpOpT>
-static void appendCmpModeAttr(
-    CmpOpT cmpOp, SmallVectorImpl<std::pair<std::string, std::string>> &attrs) {
+static std::optional<std::pair<std::string, std::string>>
+getCmpModeContextAttr(CmpOpT cmpOp) {
   if (auto cmpModeAttr = cmpOp.getCmpModeAttr()) {
-    attrs.emplace_back("cmp_mode",
-                       stringifyCmpMode(cmpModeAttr.getValue()).str());
+    return std::pair<std::string, std::string>(
+        "cmp_mode", stringifyCmpMode(cmpModeAttr.getValue()).str());
   }
+  return std::nullopt;
 }
 
 // Appends the acc_to_vec_mode / relu_pre_mode context attrs for a TInsert op.
@@ -588,18 +589,20 @@ static void appendTInsertAttrs(
                      stringifyReluPreMode(tinsert.getReluPreMode()).str());
 }
 
-// Appends mask_pattern / axis_value context attrs for TGatherOp / TScatterOp.
+// Returns the mask_pattern / axis_value context attrs for TGatherOp /
+// TScatterOp.
 template <typename GatherScatterOpT>
-static void appendMaskAxisAttrs(
-    GatherScatterOpT op,
-    SmallVectorImpl<std::pair<std::string, std::string>> &attrs) {
+static SmallVector<std::pair<std::string, std::string>, 2>
+getMaskAxisContextAttrs(GatherScatterOpT op) {
+  SmallVector<std::pair<std::string, std::string>, 2> maskAxisAttrs;
   if (auto maskPatternAttr = op.getMaskPatternAttr()) {
-    attrs.emplace_back("mask_pattern",
-                       stringifyMaskPattern(maskPatternAttr.getValue()).str());
+    maskAxisAttrs.emplace_back(
+        "mask_pattern", stringifyMaskPattern(maskPatternAttr.getValue()).str());
   }
   if (auto axisAttr = op.getAxisAttr()) {
-    attrs.emplace_back("axis_value", axisAttr.getValue().str());
+    maskAxisAttrs.emplace_back("axis_value", axisAttr.getValue().str());
   }
+  return maskAxisAttrs;
 }
 
 // Appends the byte context attr for a THistogram op.
@@ -646,24 +649,27 @@ static LogicalResult appendTFillPadLoweringAttr(
 static void appendPrecisionAttrs(
     Operation *op,
     SmallVectorImpl<std::pair<std::string, std::string>> &attrs) {
-  (void)(tryAppendPrecisionType<pto::TExpOp>(
-             op, attrs, pto::ExpPrecision::HighPrecision) ||
-         tryAppendPrecisionType<pto::TLogOp>(
-             op, attrs, pto::LogPrecision::HighPrecision) ||
-         tryAppendPrecisionType<pto::TSqrtOp>(
-             op, attrs, pto::SqrtPrecision::HighPrecision) ||
-         tryAppendPrecisionType<pto::TRecipOp>(
-             op, attrs, pto::RecipPrecision::HighPrecision) ||
-         tryAppendPrecisionType<pto::TRsqrtOp>(
-             op, attrs, pto::RsqrtPrecision::HighPrecision) ||
-         tryAppendPrecisionType<pto::TDivOp>(
-             op, attrs, pto::DivPrecision::HighPrecision) ||
-         tryAppendPrecisionType<pto::TDivSOp>(
-             op, attrs, pto::DivPrecision::HighPrecision) ||
-         tryAppendPrecisionType<pto::TRowExpandDivOp>(
-             op, attrs, pto::DivPrecision::HighPrecision) ||
-         tryAppendPrecisionType<pto::TColExpandDivOp>(
-             op, attrs, pto::DivPrecision::HighPrecision));
+  std::optional<std::pair<std::string, std::string>> precisionAttr;
+  if ((precisionAttr = tryGetPrecisionTypeAttr<pto::TExpOp>(
+           op, pto::ExpPrecision::HighPrecision)) ||
+      (precisionAttr = tryGetPrecisionTypeAttr<pto::TLogOp>(
+           op, pto::LogPrecision::HighPrecision)) ||
+      (precisionAttr = tryGetPrecisionTypeAttr<pto::TSqrtOp>(
+           op, pto::SqrtPrecision::HighPrecision)) ||
+      (precisionAttr = tryGetPrecisionTypeAttr<pto::TRecipOp>(
+           op, pto::RecipPrecision::HighPrecision)) ||
+      (precisionAttr = tryGetPrecisionTypeAttr<pto::TRsqrtOp>(
+           op, pto::RsqrtPrecision::HighPrecision)) ||
+      (precisionAttr = tryGetPrecisionTypeAttr<pto::TDivOp>(
+           op, pto::DivPrecision::HighPrecision)) ||
+      (precisionAttr = tryGetPrecisionTypeAttr<pto::TDivSOp>(
+           op, pto::DivPrecision::HighPrecision)) ||
+      (precisionAttr = tryGetPrecisionTypeAttr<pto::TRowExpandDivOp>(
+           op, pto::DivPrecision::HighPrecision)) ||
+      (precisionAttr = tryGetPrecisionTypeAttr<pto::TColExpandDivOp>(
+           op, pto::DivPrecision::HighPrecision))) {
+    attrs.emplace_back(std::move(*precisionAttr));
+  }
 }
 
 static LogicalResult appendOpContextAttrs(
@@ -676,16 +682,22 @@ static LogicalResult appendOpContextAttrs(
     attrs.emplace_back("rounds", getTRandomRoundsString(trandom));
   }
   if (auto tcmp = dyn_cast<pto::TCmpOp>(op)) {
-    appendCmpModeAttr(tcmp, attrs);
+    if (auto cmpMode = getCmpModeContextAttr(tcmp)) {
+      attrs.emplace_back(std::move(*cmpMode));
+    }
   }
   if (auto tcmps = dyn_cast<pto::TCmpSOp>(op)) {
-    appendCmpModeAttr(tcmps, attrs);
+    if (auto cmpMode = getCmpModeContextAttr(tcmps)) {
+      attrs.emplace_back(std::move(*cmpMode));
+    }
   }
   if (auto tinsert = dyn_cast<pto::TInsertOp>(op)) {
     appendTInsertAttrs(tinsert, attrs);
   }
   if (auto tgather = dyn_cast<pto::TGatherOp>(op)) {
-    appendMaskAxisAttrs(tgather, attrs);
+    for (auto &maskAxisAttr : getMaskAxisContextAttrs(tgather)) {
+      attrs.emplace_back(std::move(maskAxisAttr));
+    }
   }
   if (auto ttri = dyn_cast<pto::TTriOp>(op)) {
     attrs.emplace_back("upper_or_lower", std::to_string(ttri.getUpperOrLower()));
@@ -702,7 +714,9 @@ static LogicalResult appendOpContextAttrs(
     }
   }
   if (auto tscatter = dyn_cast<pto::TScatterOp>(op)) {
-    appendMaskAxisAttrs(tscatter, attrs);
+    for (auto &maskAxisAttr : getMaskAxisContextAttrs(tscatter)) {
+      attrs.emplace_back(std::move(maskAxisAttr));
+    }
   }
   appendPrecisionAttrs(op, attrs);
   return success();
@@ -826,8 +840,6 @@ static void populateViewShapeAndStrides(Value value,
     }
   }
 }
-
-
 
 static std::optional<OperandTypeInfo> buildTileOperandTypeInfo(
     pto::TileBufType tbTy) {

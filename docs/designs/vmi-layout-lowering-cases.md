@@ -419,7 +419,7 @@ VMI input:
 %x8  = pto.vmi.load %base[%off]
 %x32 = pto.vmi.extf %x8
 %scale = pto.vmi.broadcast %scale_s : f32 -> !pto.vmi.vreg<256xf32>
-%y32 = pto.vmi.mulf %x32, %scale
+%y32 = pto.vmi.vmul %x32, %scale
 %y8  = pto.vmi.truncf %y32
 pto.vmi.store %y8, %out[%off]
 ```
@@ -680,7 +680,7 @@ VMI input:
   : memref<Nxf32> -> !pto.vmi.vreg<Nxf32>
 %sum = pto.vmi.group_reduce_addf %x, %mask {num_groups = N / 16}
 %b = pto.vmi.group_broadcast %sum {num_groups = N / 16}
-%y = pto.vmi.mulf %x, %b
+%y = pto.vmi.vmul %x, %b
 %ysum = pto.vmi.group_reduce_addf %y, %mask {num_groups = N / 16}
 pto.vmi.group_store %ysum, %out[%group_off], %c1 {num_groups = N / 16}
 ```
@@ -845,7 +845,7 @@ VMI input:
 %rhs = pto.vmi.group_slot_load %rhs_base[%rhs_off], %c1 {num_groups = 8}
   : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
 %sum = pto.vmi.group_reduce_addf %x, %mask {num_groups = 8}
-%outv = pto.vmi.addf %sum, %rhs
+%outv = pto.vmi.vadd %sum, %rhs
 pto.vmi.group_store %outv, %out[%group_off], %c1 {num_groups = 8}
 ```
 
@@ -1060,7 +1060,7 @@ VMI input:
 %rhs = pto.vmi.group_slot_load %rhs_base[%rhs_off], %c1 {num_groups = 8}
   : !pto.ptr<f32, ub> -> !pto.vmi.vreg<256xf32>
 %sum = pto.vmi.group_reduce_addf %x, %mask {num_groups = 8}
-%outv = pto.vmi.addf %sum, %rhs
+%outv = pto.vmi.vadd %sum, %rhs
 pto.vmi.group_store %outv, %out[%group_off], %c1 {num_groups = 8}
 ```
 
@@ -1131,7 +1131,7 @@ VMI input:
   : memref<256xf32> -> !pto.vmi.vreg<256xf32>
 %sum = pto.vmi.group_reduce_addf %x, %mask {num_groups = 8}
 %b = pto.vmi.group_broadcast %sum {num_groups = 8}
-%y = pto.vmi.mulf %x, %b
+%y = pto.vmi.vmul %x, %b
 %ysum = pto.vmi.group_reduce_addf %y, %mask {num_groups = 8}
 pto.vmi.group_store %ysum, %out[%group_off], %c1 {num_groups = 8}
 ```
@@ -1359,7 +1359,7 @@ VMI input:
 %rhs = pto.vmi.group_slot_load %rhs_base[%rhs_off], %c1 {num_groups = 8}
   : !pto.ptr<f32, ub> -> !pto.vmi.vreg<512xf32>
 %sum = pto.vmi.group_reduce_addf %x, %mask {num_groups = 8}
-%outv = pto.vmi.addf %sum, %rhs
+%outv = pto.vmi.vadd %sum, %rhs
 %c8 = arith.constant 8 : index
 pto.vmi.group_store %outv, %out[%group_off], %c8 {num_groups = 8}
 ```
@@ -1460,7 +1460,7 @@ VMI input:
   : memref<512xf32> -> !pto.vmi.vreg<512xf32>
 %sum = pto.vmi.group_reduce_addf %x, %mask {num_groups = 8}
 %b = pto.vmi.group_broadcast %sum {num_groups = 8}
-%y = pto.vmi.mulf %x, %b
+%y = pto.vmi.vmul %x, %b
 %ysum = pto.vmi.group_reduce_addf %y, %mask {num_groups = 8}
 %c8 = arith.constant 8 : index
 pto.vmi.group_store %ysum, %out[%group_off], %c8 {num_groups = 8}
@@ -1723,7 +1723,7 @@ VMI input:
   : memref<256xf32> -> !pto.vmi.vreg<256xf32>
 %bias = pto.vmi.broadcast %bias_s
   : f32 -> !pto.vmi.vreg<256xf32>
-%x = pto.vmi.addf %a, %bias
+%x = pto.vmi.vadd %a, %bias
 %sum = pto.vmi.group_reduce_addf %x, %mask {num_groups = 8}
 pto.vmi.group_store %sum, %out[%group_off], %c1 {num_groups = 8}
 ```
@@ -2833,7 +2833,7 @@ VMI input:
 }
 %bias = pto.vmi.group_slot_load %bias_base[%bias_off], %c1 {num_groups = 8}
   : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<128xf32>
-%outv = pto.vmi.addf %sum, %bias
+%outv = pto.vmi.vadd %sum, %bias
 pto.vmi.group_store %outv, %out[%group_off], %c1 {num_groups = 8}
 ```
 
@@ -3010,7 +3010,7 @@ VMI input:
     iter_args(%arg = %init) -> !pto.vmi.vreg<256xf32> {
   %bias = pto.vmi.broadcast %bias_s
     : f32 -> !pto.vmi.vreg<256xf32>
-  %next = pto.vmi.addf %arg, %bias
+  %next = pto.vmi.vadd %arg, %bias
   scf.yield %next : !pto.vmi.vreg<256xf32>
 }
 %sum = pto.vmi.group_reduce_addf %acc, %mask {num_groups = 8}
@@ -3102,7 +3102,7 @@ VMI input:
 %sum = pto.vmi.group_reduce_addf %x, %mask {num_groups = 8}
 
 %b_for_mul = pto.vmi.group_broadcast %sum {num_groups = 8}
-%y = pto.vmi.mulf %x, %b_for_mul
+%y = pto.vmi.vmul %x, %b_for_mul
 %ysum = pto.vmi.group_reduce_addf %y, %mask {num_groups = 8}
 pto.vmi.group_store %ysum, %sum_out[%group_off], %c1 {num_groups = 8}
 
@@ -3236,7 +3236,7 @@ VMI input:
   : memref<64xf32> -> !pto.vmi.vreg<64xf32>
 %mask = pto.vmi.create_mask %c48
   : index -> !pto.vmi.mask<64xpred>
-%sum = pto.vmi.addf %x, %rhs
+%sum = pto.vmi.vadd %x, %rhs
 %passthrough = pto.vmi.select %mask, %sum, %x
 pto.vmi.store %passthrough, %dense_out[%off]
 pto.vmi.masked_store %sum, %masked_out[%off], %mask
@@ -3431,7 +3431,7 @@ VMI input:
   : index -> !pto.vmi.mask<128xpred>
 %sum = pto.vmi.group_reduce_addf %x, %mask {num_groups = 8}
 %b = pto.vmi.group_broadcast %sum {num_groups = 8}
-%y = pto.vmi.mulf %x, %b
+%y = pto.vmi.vmul %x, %b
 %ysum = pto.vmi.group_reduce_addf %y, %mask {num_groups = 8}
 pto.vmi.group_store %ysum, %out[%group_off], %c1 {num_groups = 8}
 ```
@@ -4320,7 +4320,7 @@ VMI input:
 pto.vmi.group_store %sum, %sum_out[%group_off], %c1 {num_groups = 8}
 
 %b = pto.vmi.group_broadcast %sum {num_groups = 8}
-%y = pto.vmi.mulf %x, %b
+%y = pto.vmi.vmul %x, %b
 %ysum = pto.vmi.group_reduce_addf %y, %mask {num_groups = 8}
 pto.vmi.group_store %ysum, %out[%group_off], %c1 {num_groups = 8}
 ```
@@ -4440,7 +4440,7 @@ VMI input:
 %x16 = pto.vmi.load %base16[%off16]
   : memref<128xf32> -> !pto.vmi.vreg<128xf32>
 %sum16 = pto.vmi.group_reduce_addf %x16, %mask16 {num_groups = 8}
-%out16v = pto.vmi.addf %sum16, %rhs16
+%out16v = pto.vmi.vadd %sum16, %rhs16
 pto.vmi.group_store %out16v, %out16[%group_off16], %c1 {num_groups = 8}
 
 %rhs64 = pto.vmi.group_slot_load %rhs_base[%rhs_off], %c1 {num_groups = 8}
@@ -4448,7 +4448,7 @@ pto.vmi.group_store %out16v, %out16[%group_off16], %c1 {num_groups = 8}
 %x64 = pto.vmi.load %base64[%off64]
   : memref<512xf32> -> !pto.vmi.vreg<512xf32>
 %sum64 = pto.vmi.group_reduce_addf %x64, %mask64 {num_groups = 8}
-%out64v = pto.vmi.addf %sum64, %rhs64
+%out64v = pto.vmi.vadd %sum64, %rhs64
 pto.vmi.group_store %out64v, %out64[%group_off64], %c1 {num_groups = 8}
 ```
 
@@ -4678,7 +4678,7 @@ VMI input:
   : index -> !pto.vmi.mask<256xpred>
 %sum = pto.vmi.group_reduce_addf %x, %mask {num_groups = 8}
 %b = pto.vmi.group_broadcast %sum {num_groups = 8}
-%y = pto.vmi.mulf %x, %b
+%y = pto.vmi.vmul %x, %b
 %ysum = pto.vmi.group_reduce_addf %y, %mask {num_groups = 8}
 pto.vmi.group_store %ysum, %out[%group_off], %c1 {num_groups = 8}
 ```
@@ -4724,7 +4724,7 @@ VPTO lowering result:
 
 // Materialize the same per-row scalar into every 32B row fragment.  The four
 // bundle entries have the same lane contents, but the result layout remains
-// block_deinterleaved=4 because the consumer `%y = mulf %x, %b`
+// block_deinterleaved=4 because the consumer `%y = vmul %x, %b`
 // operates on the block-fragment layout.
 %b_p0 = pto.vselr %sum_block, %broadcast_idx
   : !pto.vreg<64xf32>, !pto.vreg<64xi32> -> !pto.vreg<64xf32>
@@ -4788,12 +4788,12 @@ VMI input:
 %x = pto.vmi.load %base[%off]
   : memref<256xf32> -> !pto.vmi.vreg<256xf32>
 
-%copy = pto.vmi.addf %x, %scale
+%copy = pto.vmi.vadd %x, %scale
 pto.vmi.store %copy, %copy_out[%off]
 
 %mask = pto.vmi.create_group_mask %c32 {num_groups = 8, group_size = 32}
   : index -> !pto.vmi.mask<256xpred>
-%prod = pto.vmi.mulf %x, %scale
+%prod = pto.vmi.vmul %x, %scale
 %sum = pto.vmi.group_reduce_addf %prod, %mask {num_groups = 8}
 pto.vmi.group_store %sum, %sum_out[%group_off], %c1 {num_groups = 8}
 ```
@@ -5038,7 +5038,7 @@ VMI input:
   %mask = pto.vmi.create_group_mask %c16 {num_groups = 8, group_size = 16}
     : index -> !pto.vmi.mask<128xpred>
   %sum = pto.vmi.group_reduce_addf %x, %mask {num_groups = 8}
-  %next = pto.vmi.addf %arg, %sum
+  %next = pto.vmi.vadd %arg, %sum
   scf.yield %next : !pto.vmi.vreg<128xf32>
 }
 
@@ -5480,7 +5480,7 @@ VMI input:
 
 %w = pto.vmi.extf %a
   : !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xf32>
-%t1 = pto.vmi.mulf %w, %k
+%t1 = pto.vmi.vmul %w, %k
   : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>
     -> !pto.vmi.vreg<128xf32>
 

@@ -68,20 +68,19 @@ module {
 // -----
 
 module {
-  func.func @vmi_to_vpto_scatter_tail_invalid(
-      %value: !pto.vmi.vreg<32xf32, #pto.vmi.layout<contiguous>>,
+  func.func @vmi_to_vpto_scatter_lane_stride_invalid(
+      %value: !pto.vmi.vreg<32xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>,
       %dst: !pto.ptr<f32, ub>,
-      %indices: !pto.vmi.vreg<32xi32, #pto.vmi.layout<contiguous>>,
-      %mask: !pto.vmi.mask<32xb32, #pto.vmi.layout<contiguous>>) {
+      %indices: !pto.vmi.vreg<32xi32, #pto.vmi.layout<contiguous, lane_stride = 2>>,
+      %mask: !pto.vmi.mask<32xb32, #pto.vmi.layout<contiguous, lane_stride = 2>>) {
     pto.vmi.vscatter %value, %dst, %indices, %mask
-        : !pto.vmi.vreg<32xf32, #pto.vmi.layout<contiguous>>,
+        : !pto.vmi.vreg<32xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>,
           !pto.ptr<f32, ub>,
-          !pto.vmi.vreg<32xi32, #pto.vmi.layout<contiguous>>,
-          !pto.vmi.mask<32xb32, #pto.vmi.layout<contiguous>>
+          !pto.vmi.vreg<32xi32, #pto.vmi.layout<contiguous, lane_stride = 2>>,
+          !pto.vmi.mask<32xb32, #pto.vmi.layout<contiguous, lane_stride = 2>>
     return
   }
 }
 
 // CHECK: VMI{{-}}UNSUPPORTED{{:}} pto.vmi.scatter lowers through pto.vscatter only
-// CHECK-SAME: value requires full physical chunks
-// CHECK-SAME: found padding lane in physical chunk
+// CHECK-SAME: requires unit-stride value, indices, and mask layouts

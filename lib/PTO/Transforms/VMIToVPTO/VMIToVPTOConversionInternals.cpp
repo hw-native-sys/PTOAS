@@ -10,7 +10,6 @@
 //===- VMIToVPTOConversionInternals.inc - VMIToVPTO internals -*- C++ -*-===//
 //===----------------------------------------------------------------------===//
 
-
 std::optional<std::string> getX2MemoryDistToken(Type elementType,
                                                 StringRef prefix);
 std::optional<std::string> getDenseLaneStrideLoadDistToken(VMIVRegType type);
@@ -498,6 +497,14 @@ LogicalResult verifyVMIToVPTOInputTypes(Operation *op) {
   return success();
 }
 
+/// Dual-form bitwise ops accept vreg and mask operands and are split onto the
+/// vreg interface (`pto.vmi.andi/ori/xori/not`) and the mask interface
+/// (`pto.vmi.mask_and/or/xor/not`) by `-vmi-lower-unified-to-legacy`.  The
+/// VMI-to-VPTO conversion only consumes the two interfaces.
+static bool isDualFormBitwiseOp(Operation *op) {
+  return isa<VMIVandOp, VMIVorOp, VMIVxorOp, VMIVnotOp>(op);
+}
+
 LogicalResult verifyVMIToVPTOInputIR(ModuleOp module) {
   WalkResult result = module.walk([](Operation *op) {
     if (auto cast = dyn_cast<UnrealizedConversionCastOp>(op)) {
@@ -510,6 +517,13 @@ LogicalResult verifyVMIToVPTOInputIR(ModuleOp module) {
                "VMI-to-VPTO conversion";
         return WalkResult::interrupt();
       }
+    }
+    if (isDualFormBitwiseOp(op)) {
+      op->emitError()
+          << kVMIDiagResidualOpPrefix
+          << "dual-form bitwise op must be split by "
+             "-vmi-lower-unified-to-legacy before VMI-to-VPTO conversion";
+      return WalkResult::interrupt();
     }
     if (failed(verifyVMIToVPTOInputTypes(op))) {
       return WalkResult::interrupt();
@@ -1855,5 +1869,3 @@ struct VMIStatefulReadContract {
   int64_t remainder;
   VMIStatefulOffsetRange offsetRange;
 };
-
-

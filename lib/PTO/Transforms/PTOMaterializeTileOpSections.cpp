@@ -692,8 +692,7 @@ static LogicalResult materializeTileOpSection(func::FuncOp helper,
           : builder.create<SectionCubeOp>(roots.front()->getLoc())
                 .getOperation();
   Region &sectionBody = sectionOperation->getRegion(0);
-  auto *sectionBlock = new Block();
-  sectionBody.push_back(sectionBlock);
+  Block* sectionBlock = &sectionBody.emplaceBlock();
 
   for (Operation *root : roots) {
     root->moveBefore(sectionBlock, sectionBlock->end());

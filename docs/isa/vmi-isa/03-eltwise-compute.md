@@ -265,11 +265,18 @@ borrow occurred. In `vsubcs`, a carry-in of 0 propagates a borrow.
   %r = pto.vmi.vxor %lhs, %rhs : !pto.vmi.mask<L>, !pto.vmi.mask<L> -> !pto.vmi.mask<L>
   ```
 - **datatypes:** `i8`–`i32` (integer bitwise); `pred` (per-lane boolean op)
+- **interface split:** the two forms are lowered through two separate
+  interfaces. vreg operands become the vreg-interface ops
+  `pto.vmi.andi` / `pto.vmi.ori` / `pto.vmi.xori`, which are vreg-only and keep
+  the governing `mask`; mask operands become `pto.vmi.mask_and` /
+  `pto.vmi.mask_or` / `pto.vmi.mask_xor`. `pto.as` performs this split in
+  `vmi-lower-unified-to-legacy`.
 - **lowering to `pto.mi`:**
   ```
   K × pto.vand / pto.vor / pto.vxor
   ```
-  `#mi = K`, `dep = 1`.
+  `#mi = K`, `dep = 1`. The governing `mask` of the vreg form becomes the
+  predication operand of each part.
 
 ### `pto.vmi.vnot`
 
@@ -293,11 +300,15 @@ borrow occurred. In `vsubcs`, a carry-in of 0 propagates a borrow.
   %r = pto.vmi.vnot %src : !pto.vmi.mask<L> -> !pto.vmi.mask<L>
   ```
 - **datatypes:** `i8`–`i32`; `pred` (predicate complement)
+- **interface split:** the vreg form becomes `pto.vmi.not` (vreg-only, keeps the
+  governing `mask`), the mask form becomes `pto.vmi.mask_not`; `pto.as`
+  performs this split in `vmi-lower-unified-to-legacy`.
 - **lowering to `pto.mi`:**
   ```
   K × pto.vnot
   ```
-  `#mi = K`, `dep = 1`.
+  `#mi = K`, `dep = 1`. The governing `mask` of the vreg form becomes the
+  predication operand of each part.
 
 
 ---

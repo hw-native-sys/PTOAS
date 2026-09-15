@@ -98,6 +98,9 @@ static LogicalResult verifyVMIInterleaveLikeOp(OpTy op) {
   return success();
 }
 
+/// Verifies one dual-form bitwise op: its operands and result are either all
+/// masks (mask logic) or all vregs.  Mixed forms are rejected instead of being
+/// reinterpreted, because the two forms are split onto different interfaces.
 template <typename OpTy>
 static LogicalResult verifyVMIMaskLogicOp(OpTy op) {
   if (isa<VMIMaskType>(op.getLhs().getType())) {
@@ -107,15 +110,25 @@ static LogicalResult verifyVMIMaskLogicOp(OpTy op) {
     if (auto pmode = op.getPmode()) {
       return op.emitOpError("mask logic op does not support pmode");
     }
-    auto lhsType = cast<VMIMaskType>(op.getLhs().getType());
-    auto rhsType = cast<VMIMaskType>(op.getRhs().getType());
-    auto resultType = cast<VMIMaskType>(op.getResult().getType());
+    auto lhsType = dyn_cast<VMIMaskType>(op.getLhs().getType());
+    auto rhsType = dyn_cast<VMIMaskType>(op.getRhs().getType());
+    auto resultType = dyn_cast<VMIMaskType>(op.getResult().getType());
+    if (!lhsType || !rhsType || !resultType) {
+      return op.emitOpError(
+          "requires both operands and the result to be masks when the lhs is "
+          "a mask");
+    }
     return verifyAllSameMaskShapeLayoutAndGranularity(
         op.getOperation(), {lhsType, rhsType, resultType});
   }
-  auto lhsType = cast<VMIVRegType>(op.getLhs().getType());
-  auto rhsType = cast<VMIVRegType>(op.getRhs().getType());
-  auto resultType = cast<VMIVRegType>(op.getResult().getType());
+  auto lhsType = dyn_cast<VMIVRegType>(op.getLhs().getType());
+  auto rhsType = dyn_cast<VMIVRegType>(op.getRhs().getType());
+  auto resultType = dyn_cast<VMIVRegType>(op.getResult().getType());
+  if (!lhsType || !rhsType || !resultType) {
+    return op.emitOpError(
+        "requires every operand and the result to be vregs when the lhs is a "
+        "vreg");
+  }
   if (!isVMIIntegerLikeType(lhsType.getElementType())) {
     return op.emitOpError("requires integer-like VMI element type");
   }
@@ -262,38 +275,6 @@ LogicalResult VMIMaskNotOp::verify() {
                                                     {sourceType, resultType});
 }
 
-// Batch8: float elementwise 五兄弟共用校验
-template <typename OpTy>
-static LogicalResult verifyVMIFloatElementwiseOp(OpTy op) {
-  auto lhsType = cast<VMIVRegType>(op.getLhs().getType());
-  auto rhsType = cast<VMIVRegType>(op.getRhs().getType());
-  auto resultType = cast<VMIVRegType>(op.getResult().getType());
-  if (!isVMIFloatLikeType(lhsType.getElementType())) {
-    return op.emitOpError("requires floating-point-like VMI element type");
-  }
-  if (!isVMIF16BF16OrF32Type(lhsType.getElementType())) {
-    return op.emitOpError("requires f16, bf16, or f32 VMI element type");
-  }
-  return verifyElementwiseVRegOp(op.getOperation(), lhsType, rhsType, resultType);
-}
-
-
-LogicalResult VMIAddFOp::verify() { return verifyVMIFloatElementwiseOp(*this); }
-// Batch8: 整数位运算六兄弟 + vcmax/vcmin 共用校验
-template <typename OpTy>
-static LogicalResult verifyVMIIntBitwiseOp(OpTy op) {
-  auto lhsType = cast<VMIVRegType>(op.getLhs().getType());
-  auto rhsType = cast<VMIVRegType>(op.getRhs().getType());
-  auto resultType = cast<VMIVRegType>(op.getResult().getType());
-  if (!isVMIIntegerLikeType(lhsType.getElementType())) {
-    return op.emitOpError("requires integer-like VMI element type");
-  }
-  if (!isVMIAnyI8I16I32Type(lhsType.getElementType())) {
-    return op.emitOpError("requires i8, i16, or i32 VMI element type");
-  }
-  return verifyElementwiseVRegOp(op.getOperation(), lhsType, rhsType, resultType);
-}
-
 template <typename OpTy>
 static LogicalResult verifyVMIvcCmpOp(OpTy op) {
   auto sourceType = cast<VMIVRegType>(op.getSource().getType());
@@ -307,214 +288,6 @@ static LogicalResult verifyVMIvcCmpOp(OpTy op) {
   return verifyReductionGroupAndPmode(op.getOperation(), sourceType, resultType,
                                       op.getGroupAttr(), op.getPmode());
 }
-
-
-LogicalResult VMIAddIOp::verify() { return verifyVMIIntBitwiseOp(*this); }
-
-LogicalResult VMISubFOp::verify() { return verifyVMIFloatElementwiseOp(*this); }
-LogicalResult VMISubIOp::verify() { return verifyVMIIntBitwiseOp(*this); }
-
-LogicalResult VMIMulFOp::verify() { return verifyVMIFloatElementwiseOp(*this); }
-LogicalResult VMIMulIOp::verify() {
-  auto lhsType = cast<VMIVRegType>(getLhs().getType());
-  auto rhsType = cast<VMIVRegType>(getRhs().getType());
-  auto resultType = cast<VMIVRegType>(getResult().getType());
-  if (!isVMIIntegerLikeType(lhsType.getElementType())) {
-    return emitOpError("requires integer-like VMI element type");
-  }
-  auto intType = dyn_cast<IntegerType>(lhsType.getElementType());
-  bool supportedInteger =
-      intType && (intType.getWidth() == mlir::pto::kValue16 || intType.getWidth() == mlir::pto::kValue32);
-  if (!supportedInteger) {
-    return emitOpError("requires i16 or i32 VMI element type");
-  }
-  return verifyElementwiseVRegOp(getOperation(), lhsType, rhsType, resultType);
-}
-
-LogicalResult VMIFmaOp::verify() {
-  auto lhsType = cast<VMIVRegType>(getLhs().getType());
-  auto rhsType = cast<VMIVRegType>(getRhs().getType());
-  auto accType = cast<VMIVRegType>(getAcc().getType());
-  auto resultType = cast<VMIVRegType>(getResult().getType());
-  if (!isVMIF16BF16OrF32Type(lhsType.getElementType())) {
-    return emitOpError("requires f16, bf16, or f32 VMI element type");
-  }
-  return verifyFloatTernaryVRegOp(getOperation(), lhsType, rhsType, accType,
-                                  resultType);
-}
-
-//===----------------------------------------------------------------------===//
-// Legacy elementwise op verifiers (restored for backward compatibility).
-//===----------------------------------------------------------------------===//
-
-LogicalResult VMIDivFOp::verify() {
-  auto lhsType = cast<VMIVRegType>(getLhs().getType());
-  auto rhsType = cast<VMIVRegType>(getRhs().getType());
-  auto resultType = cast<VMIVRegType>(getResult().getType());
-  if (!isVMIFloatLikeType(lhsType.getElementType())) {
-    return emitOpError("requires floating-point-like VMI element type");
-  }
-  if (!isVMIF16OrF32Type(lhsType.getElementType())) {
-    return emitOpError("requires f16 or f32 VMI element type");
-  }
-  return verifyElementwiseVRegOp(getOperation(), lhsType, rhsType, resultType);
-}
-
-LogicalResult VMIMinFOp::verify() { return verifyVMIFloatElementwiseOp(*this); }
-LogicalResult VMIMaxFOp::verify() { return verifyVMIFloatElementwiseOp(*this); }
-LogicalResult VMIMinIOp::verify() {
-  auto lhsType = cast<VMIVRegType>(getLhs().getType());
-  auto rhsType = cast<VMIVRegType>(getRhs().getType());
-  auto resultType = cast<VMIVRegType>(getResult().getType());
-  if (!isVMIIntegerLikeType(lhsType.getElementType()) ||
-      !isVMIAnyI8I16I32Type(lhsType.getElementType())) {
-    return emitOpError("requires i8, i16, or i32 integer-like VMI element type");
-  }
-  return verifyElementwiseVRegOp(getOperation(), lhsType, rhsType, resultType);
-}
-
-LogicalResult VMIMaxIOp::verify() {
-  auto lhsType = cast<VMIVRegType>(getLhs().getType());
-  auto rhsType = cast<VMIVRegType>(getRhs().getType());
-  auto resultType = cast<VMIVRegType>(getResult().getType());
-  if (!isVMIIntegerLikeType(lhsType.getElementType()) ||
-      !isVMIAnyI8I16I32Type(lhsType.getElementType())) {
-    return emitOpError("requires i8, i16, or i32 integer-like VMI element type");
-  }
-  return verifyElementwiseVRegOp(getOperation(), lhsType, rhsType, resultType);
-}
-
-LogicalResult VMINegFOp::verify() {
-  auto sourceType = cast<VMIVRegType>(getSource().getType());
-  auto resultType = cast<VMIVRegType>(getResult().getType());
-  if (!isVMIF16OrF32Type(sourceType.getElementType())) {
-    return emitOpError("requires f16 or f32 VMI element type");
-  }
-  return verifyFloatUnaryVRegOp(getOperation(), sourceType, resultType);
-}
-
-LogicalResult VMINegIOp::verify() {
-  auto sourceType = cast<VMIVRegType>(getSource().getType());
-  auto resultType = cast<VMIVRegType>(getResult().getType());
-  if (!isVMIAnyI8I16I32Type(sourceType.getElementType())) {
-    return emitOpError("requires i8, i16, or i32 VMI element type");
-  }
-  return verifyAllSameVRegShapeAndLayout(getOperation(),
-                                         {sourceType, resultType},
-                                         /*requireSameElement=*/true);
-}
-
-LogicalResult VMIAbsFOp::verify() {
-  auto sourceType = cast<VMIVRegType>(getSource().getType());
-  auto resultType = cast<VMIVRegType>(getResult().getType());
-  if (!isVMIF16OrF32Type(sourceType.getElementType())) {
-    return emitOpError("requires f16 or f32 VMI element type");
-  }
-  return verifyFloatUnaryVRegOp(getOperation(), sourceType, resultType);
-}
-
-LogicalResult VMIAbsIOp::verify() {
-  auto sourceType = cast<VMIVRegType>(getSource().getType());
-  auto resultType = cast<VMIVRegType>(getResult().getType());
-  if (!isVMIIntegerLikeType(sourceType.getElementType())) {
-    return emitOpError("requires integer-like VMI element type");
-  }
-  if (!isVMISignedI8I16I32Type(sourceType.getElementType())) {
-    return emitOpError("requires si8, si16, or si32 VMI element type");
-  }
-  return verifyAllSameVRegShapeAndLayout(getOperation(),
-                                         {sourceType, resultType},
-                                         /*requireSameElement=*/true);
-}
-
-LogicalResult VMISqrtOp::verify() {
-  auto sourceType = cast<VMIVRegType>(getSource().getType());
-  auto resultType = cast<VMIVRegType>(getResult().getType());
-  if (!isVMIF16OrF32Type(sourceType.getElementType())) {
-    return emitOpError("requires f16 or f32 VMI element type");
-  }
-  return verifyFloatUnaryVRegOp(getOperation(), sourceType, resultType);
-}
-
-LogicalResult VMIExpOp::verify() {
-  auto sourceType = cast<VMIVRegType>(getSource().getType());
-  auto resultType = cast<VMIVRegType>(getResult().getType());
-  if (!isVMIF16OrF32Type(sourceType.getElementType())) {
-    return emitOpError("requires f16 or f32 VMI element type");
-  }
-  return verifyFloatUnaryVRegOp(getOperation(), sourceType, resultType);
-}
-
-LogicalResult VMILnOp::verify() {
-  auto sourceType = cast<VMIVRegType>(getSource().getType());
-  auto resultType = cast<VMIVRegType>(getResult().getType());
-  if (!isVMIF16OrF32Type(sourceType.getElementType())) {
-    return emitOpError("requires f16 or f32 VMI element type");
-  }
-  return verifyFloatUnaryVRegOp(getOperation(), sourceType, resultType);
-}
-
-LogicalResult VMIReluOp::verify() {
-  auto sourceType = cast<VMIVRegType>(getSource().getType());
-  auto resultType = cast<VMIVRegType>(getResult().getType());
-  Type elementType = sourceType.getElementType();
-  if (failed(verifySignedI32OrF16F32ElementType(getOperation(), elementType))) {
-    return failure();
-  }
-  return verifyAllSameVRegShapeAndLayout(getOperation(),
-                                         {sourceType, resultType},
-                                         /*requireSameElement=*/true);
-}
-
-LogicalResult VMIAndIOp::verify() { return verifyVMIIntBitwiseOp(*this); }
-
-LogicalResult VMIOrIOp::verify() { return verifyVMIIntBitwiseOp(*this); }
-
-LogicalResult VMIXOrIOp::verify() { return verifyVMIIntBitwiseOp(*this); }
-
-LogicalResult VMIShLIOp::verify() { return verifyVMIIntBitwiseOp(*this); }
-
-LogicalResult VMIShRUIOp::verify() {
-  auto lhsType = cast<VMIVRegType>(getLhs().getType());
-  auto rhsType = cast<VMIVRegType>(getRhs().getType());
-  auto resultType = cast<VMIVRegType>(getResult().getType());
-  auto integerType = dyn_cast<IntegerType>(lhsType.getElementType());
-  if (!integerType || integerType.isSigned()) {
-    return emitOpError(
-        "requires signless or unsigned integer VMI element type");
-  }
-  if (!isVMIAnyI8I16I32Type(lhsType.getElementType())) {
-    return emitOpError("requires i8, i16, or i32 VMI element type");
-  }
-  return verifyElementwiseVRegOp(getOperation(), lhsType, rhsType, resultType);
-}
-
-LogicalResult VMIShRSIOp::verify() {
-  auto lhsType = cast<VMIVRegType>(getLhs().getType());
-  auto rhsType = cast<VMIVRegType>(getRhs().getType());
-  auto resultType = cast<VMIVRegType>(getResult().getType());
-  if (!isVMISignedI8I16I32Type(lhsType.getElementType())) {
-    return emitOpError(
-        "requires signed i8, i16, or i32 VMI element type");
-  }
-  return verifyElementwiseVRegOp(getOperation(), lhsType, rhsType, resultType);
-}
-
-LogicalResult VMINotOp::verify() {
-  auto sourceType = cast<VMIVRegType>(getSource().getType());
-  auto resultType = cast<VMIVRegType>(getResult().getType());
-  if (!isVMIIntegerLikeType(sourceType.getElementType())) {
-    return emitOpError("requires integer-like VMI element type");
-  }
-  if (!isVMIAnyI8I16I32Type(sourceType.getElementType())) {
-    return emitOpError("requires i8, i16, or i32 VMI element type");
-  }
-  return verifyAllSameVRegShapeAndLayout(getOperation(),
-                                         {sourceType, resultType},
-                                         /*requireSameElement=*/true);
-}
-
-//===----------------------------------------------------------------------===//
 
 LogicalResult VMICmpFOp::verify() {
   auto lhsType = cast<VMIVRegType>(getLhs().getType());
@@ -1011,7 +784,6 @@ static LogicalResult verifyVMIBinaryComputeOp(
   return success();
 }
 
-
 LogicalResult VMIVaddOp::verify() {
   return verifyVMIBinaryComputeOp(
       *this, [](mlir::Type type) { return isVMII8I16I32OrF16BF16F32Type(type); },
@@ -1216,6 +988,55 @@ LogicalResult VMIVnotOp::verify() {
     return failure();
   }
   return success();
+}
+
+/// Verifies one vreg-interface bitwise binary op (`pto.vmi.andi/ori/xori`).
+/// These ops carry the governed predicate mask that must reach the VPTO op.
+template <typename OpTy>
+static LogicalResult verifyVMIVRegBitwiseBinaryOp(OpTy op) {
+  auto lhsType = cast<VMIVRegType>(op.getLhs().getType());
+  auto rhsType = cast<VMIVRegType>(op.getRhs().getType());
+  auto resultType = cast<VMIVRegType>(op.getResult().getType());
+  if (!isVMIIntegerLikeType(lhsType.getElementType())) {
+    return op.emitOpError("requires integer-like VMI element type");
+  }
+  return verifyElementwisePmodeTail(op, lhsType, rhsType, resultType);
+}
+
+/// Verifies the vreg-interface bitwise not (`pto.vmi.not`).
+template <typename OpTy>
+static LogicalResult verifyVMIVRegBitwiseUnaryOp(OpTy op) {
+  auto sourceType = cast<VMIVRegType>(op.getSource().getType());
+  auto resultType = cast<VMIVRegType>(op.getResult().getType());
+  if (!isVMIIntegerLikeType(sourceType.getElementType())) {
+    return op.emitOpError("requires integer-like VMI element type");
+  }
+  if (failed(verifyAllSameVRegShapeAndLayout(op.getOperation(),
+                                             {sourceType, resultType},
+                                             /*requireSameElement=*/true))) {
+    return failure();
+  }
+  if (failed(verifyVMIVariadicPmodeMask(op.getOperation(), op.getMask(),
+                                        resultType, op.getPmode()))) {
+    return failure();
+  }
+  return success();
+}
+
+LogicalResult VMIAndIOp::verify() {
+  return verifyVMIVRegBitwiseBinaryOp(*this);
+}
+
+LogicalResult VMIOrIOp::verify() {
+  return verifyVMIVRegBitwiseBinaryOp(*this);
+}
+
+LogicalResult VMIXOrIOp::verify() {
+  return verifyVMIVRegBitwiseBinaryOp(*this);
+}
+
+LogicalResult VMINotOp::verify() {
+  return verifyVMIVRegBitwiseUnaryOp(*this);
 }
 
 LogicalResult VMIvSelOp::verify() {
@@ -1477,16 +1298,16 @@ LogicalResult VMIVmulaOp::verify() {
   Type eltTy = accType.getElementType();
   if (failed(verifyBF16x2ComputeElementType(getOperation(), eltTy))) {
     return failure();
-}
-  if (!isVMIFloatLikeType(eltTy) && !isVMIIntegerLikeType(eltTy)) {
+  }
+  if (!isVMIF16BF16OrF32Type(eltTy) && !isVMIAnyI8I16I32Type(eltTy)) {
     return emitOpError(
-        "requires floating-point-like or integer-like VMI element type");
-}
+        "requires f16, bf16, f32, or i8/i16/i32 VMI element type");
+  }
 
   if (accType != lhsType || lhsType != rhsType || rhsType != resultType) {
     return emitOpError(
         "requires acc, lhs, rhs, and result to have identical VMI vreg types");
-}
+  }
 
   if (failed(verifyVMIVariadicPmodeMask(getOperation(), getMask(),
                                         resultType, getPmode()))) {

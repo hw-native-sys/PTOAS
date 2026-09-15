@@ -76,6 +76,7 @@ ParseResult AicInitializePipeOp::parse(OpAsmParser &parser,
   return parseFrontendInitializePipeOp(parser, result);
 }
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated printer callback has a non-const signature.
 void AicInitializePipeOp::print(OpAsmPrinter &p) {
   printFrontendInitializePipeOp(*this, p);
 }
@@ -85,6 +86,7 @@ ParseResult AivInitializePipeOp::parse(OpAsmParser &parser,
   return parseFrontendInitializePipeOp(parser, result);
 }
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated printer callback has a non-const signature.
 void AivInitializePipeOp::print(OpAsmPrinter &p) {
   printFrontendInitializePipeOp(*this, p);
 }

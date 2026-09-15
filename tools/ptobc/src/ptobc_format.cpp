@@ -16,6 +16,7 @@
 #include "ptobc/leb128.h"
 
 #include "llvm/ADT/SmallString.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
 
 #include <cstring>
@@ -207,15 +208,29 @@ std::vector<uint8_t> PTOBCFile::serialize() const {
 }
 
 std::string canonicalizeIoPath(const std::string& path) {
-  // Lexically collapse "./", "foo/../" and redundant separators. This is a
-  // pure string rewrite: symlink/absolute resolution is intentionally left to
-  // the stream open below, which still reports unreachable paths.
-  // Inline capacity sized to cover typical PTOBC file paths without a heap
-  // allocation.
-  constexpr unsigned kIoPathInlineCapacity = 128;
-  llvm::SmallString<kIoPathInlineCapacity> normalized(path);
-  llvm::sys::path::remove_dots(normalized, /*remove_dot_dot=*/true);
-  return std::string(normalized);
+  constexpr unsigned kIoPathInlineCapacity = 256;
+  llvm::SmallString<kIoPathInlineCapacity> canonicalPath;
+  if (!llvm::sys::fs::real_path(path, canonicalPath, /*expand_tilde=*/true)) {
+    return canonicalPath.str().str();
+  }
+
+  // Output files may not exist yet. Canonicalize their existing parent and
+  // then append only the final filename component.
+  llvm::SmallString<kIoPathInlineCapacity> absolutePath(path);
+  if (std::error_code error = llvm::sys::fs::make_absolute(absolutePath)) {
+    throw std::runtime_error("Failed to make path absolute: " + path +
+                             ": " + error.message());
+  }
+  llvm::sys::path::remove_dots(absolutePath, /*remove_dot_dot=*/true);
+  llvm::SmallString<kIoPathInlineCapacity> canonicalParent;
+  if (std::error_code error = llvm::sys::fs::real_path(
+          llvm::sys::path::parent_path(absolutePath), canonicalParent)) {
+    throw std::runtime_error("Failed to canonicalize parent path: " + path +
+                             ": " + error.message());
+  }
+  llvm::sys::path::append(canonicalParent,
+                          llvm::sys::path::filename(absolutePath));
+  return canonicalParent.str().str();
 }
 
 std::vector<uint8_t> readFile(const std::string& path) {

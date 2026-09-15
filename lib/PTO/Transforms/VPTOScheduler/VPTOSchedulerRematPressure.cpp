@@ -98,14 +98,14 @@ static void walkFunctionSchedulingBlocks(func::FuncOp func, Callback&& callback)
 
 SmallVector<PressureRegion, 0> mlir::pto::remat::collectPressureRegions(
     func::FuncOp func, const VPTOSchedModel& model, llvm::raw_ostream& os, bool trace,
-    SmallVectorImpl<int64_t>& maxPressure)
+    SmallVectorImpl<int64_t>& initialMaxPressure)
 {
     SmallVector<PressureRegion, 0> pressureRegions;
     std::optional<unsigned> vectorIndex = getVectorPressureIndex(model);
     if (!vectorIndex || !model.getPressureSets()[*vectorIndex].limit) {
         return pressureRegions;
     }
-    maxPressure.assign(model.getPressureSets().size(), 0);
+    initialMaxPressure.assign(model.getPressureSets().size(), 0);
     int64_t limit = static_cast<int64_t>(*model.getPressureSets()[*vectorIndex].limit);
     Liveness liveness(func);
     VPTOSchedulingCoverage coverage;
@@ -122,7 +122,7 @@ SmallVector<PressureRegion, 0> mlir::pto::remat::collectPressureRegions(
                 continue;
             }
             for (auto [index, value] : llvm::enumerate(*peak)) {
-                maxPressure[index] = std::max(maxPressure[index], value);
+                initialMaxPressure[index] = std::max(initialMaxPressure[index], value);
             }
             int64_t vectorPeak = (*peak)[*vectorIndex];
             bool highPressure = vectorPeak > limit;

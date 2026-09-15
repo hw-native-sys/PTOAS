@@ -24,8 +24,6 @@
 #define DEBUG_TYPE "pto-emitc"
 #endif
 
-#include <cassert>
-
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOLayoutUtils.h"
 #include "PTO/IR/PTOSyncUtils.h"
@@ -151,7 +149,7 @@ inline constexpr llvm::StringLiteral kAutoSyncTailModeMte3ToSEvent0Token =
 struct InterCoreSyncCallDesc {
   const char *callee = nullptr;
   ArrayAttr args;
-  SmallVector<Value, 2> operands;
+  SmallVector<Value, mlir::pto::kValue2> operands;
 };
 
 struct GlobalTensorTypeNames {
@@ -175,13 +173,15 @@ Value applyStaticMemrefOffset(ConversionPatternRewriter &rewriter, Location loc,
 ArrayAttr buildAccPhaseTemplateArgs(ConversionPatternRewriter &rewriter, pto::AccPhase phase) ;
 FailureOr<Value> buildAsyncScratchTileValue( ConversionPatternRewriter &rewriter, Location loc, Value originalScratch, Value emittedScratch) ;
 FailureOr<Value> buildCollectiveParallelGroup( ConversionPatternRewriter &rewriter, Location loc, ArrayRef<Value> groupGTs, int64_t root) ;
-FailureOr<Value> buildCommGlobalTensorValue( ConversionPatternRewriter &rewriter, Location loc, Value originalValue, Value emittedValue, Operation *anchor) ;
+FailureOr<Value> buildCommGlobalTensorValue(
+    const ConversionPatternRewriter& rewriter, Location loc, Value originalValue, Value emittedValue,
+    Operation* anchor);
 template <typename OpTy>
 FailureOr<SmallVector<Value>> buildCommGroupGlobalTensors(
-    ConversionPatternRewriter &rewriter, Location loc, OpTy op,
-    ValueRange originalGroup, ValueRange emittedGroup);
+    const ConversionPatternRewriter& rewriter, Location loc, OpTy op, ValueRange originalGroup,
+    ValueRange emittedGroup);
 FailureOr<Value> buildCommTileValue(ConversionPatternRewriter &rewriter, Location loc, Value originalValue, Value emittedValue) ;
-SmallVector<unsigned, 4> buildDefaultLastUseTileSlotOrder(Operation *op) ;
+SmallVector<unsigned, mlir::pto::kValue4> buildDefaultLastUseTileSlotOrder(Operation* op);
 FailureOr<std::string> buildEmitCOpaqueConstantLiteral(Type targetType, Attribute valueAttr) ;
 std::string buildFixpipeConfigAliasName(int32_t pipeId) ;
 FailureOr<std::string> buildFixpipeConfigTypeToken(AccPushEpilogueAttr accPushEpilogue) ;
@@ -207,7 +207,7 @@ Value castSignlessIntToUnsignedSameWidth(ConversionPatternRewriter &rewriter, Lo
 Value castToGMBytePointer(ConversionPatternRewriter &rewriter, Location loc, Value value) ;
 Value castViewIndexToEmitC(ConversionPatternRewriter &rewriter, Location loc, Value value) ;
 void collectStructTypes(Type t, llvm::SetVector<pto::StructType> &out) ;
-SmallVector<unsigned, 4> collectTileOperandNumbers(Operation *op) ;
+SmallVector<unsigned, mlir::pto::kValue4> collectTileOperandNumbers(Operation* op);
 Value createFFTSMsg(ConversionPatternRewriter &rewriter, Location loc, Value eventId, int64_t fftsMode) ;
 void createOpaqueCall(ConversionPatternRewriter &rewriter, Location loc,
                       TypeRange resultTypes, StringRef callee, ArrayAttr args,
@@ -298,7 +298,7 @@ bool isSetFFTsPointerLikeType(Type ty) ;
 bool isTriviallyInlineableExecuteRegion(scf::ExecuteRegionOp op) ;
 std::string joinIntTemplateParams(ArrayRef<int64_t> values) ;
 std::string layoutToEmitCString(mlir::pto::Layout layout) ;
-Value loadEmitCVariableIfNeeded(OpBuilder &builder, Location loc, Value value) ;
+Value loadEmitCVariableIfNeeded(const OpBuilder& builder, Location loc, Value value);
 Value makeEmitCIntConstant(ConversionPatternRewriter &rewriter, Location loc, Type type, int64_t value) ;
 Value makeEmitCOpaqueConstant(ConversionPatternRewriter &rewriter, Location loc, Type type, llvm::StringRef literal) ;
 Value makeViewIndexConstant(ConversionPatternRewriter &rewriter, Location loc, int64_t value) ;
@@ -360,56 +360,6 @@ private:
   // Register function-type conversion and source/target materializations.
   void registerFunctionAndMaterializations();
 };;
-
-enum class Role { A, B, C, Unknown };
-
-template <typename MatmulLikeOp>
-static std::optional<Role> inferMatmulLikeSubviewRole(MatmulLikeOp op,
-                                                      Value buffer) {
-  if (op.getLhs() == buffer)
-    return Role::A;
-  if (op.getRhs() == buffer)
-    return Role::B;
-  return std::nullopt;
-}
-
-static std::optional<Role> inferSubviewRoleFromLoadUser(mlir::pto::TLoadOp load) {
-  Value buffer = load.getDst();
-  if (!buffer)
-    return std::nullopt;
-  for (Operation *user : buffer.getUsers()) {
-    if (auto matmul = dyn_cast<mlir::pto::TMatmulOp>(user)) {
-      if (auto role = inferMatmulLikeSubviewRole(matmul, buffer))
-        return role;
-      continue;
-    }
-    if (auto matmulAcc = dyn_cast<mlir::pto::TMatmulAccOp>(user)) {
-      if (auto role = inferMatmulLikeSubviewRole(matmulAcc, buffer))
-        return role;
-    }
-  }
-  return std::nullopt;
-}
-
-static std::optional<Role> inferSubviewRoleFromUser(Operation *user, Value result) {
-  if (auto load = dyn_cast<mlir::pto::TLoadOp>(user))
-    return inferSubviewRoleFromLoadUser(load);
-  if (auto store = dyn_cast<mlir::pto::TStoreOp>(user)) {
-    if (store.getDst() == result)
-      return Role::C;
-  }
-  return std::nullopt;
-}
-
-[[maybe_unused]] static Role inferSubviewRole(memref::SubViewOp sv) {
-  Value result = sv.getResult();
-  for (Operation *user : result.getUsers()) {
-    if (auto role = inferSubviewRoleFromUser(user, result))
-      return *role;
-  }
-  return Role::Unknown;
-}
-
 
 } // namespace pto
 } // namespace mlir

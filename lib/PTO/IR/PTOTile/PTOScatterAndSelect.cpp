@@ -59,7 +59,8 @@ static LogicalResult verifyTScatterMaskForm(TScatterOp op) {
 
   auto srcValid = getValidShapeVec(ts);
   auto dstValid = getValidShapeVec(td);
-  if (srcValid.size() != 2 || dstValid.size() != 2) {
+  if (srcValid.size() != mlir::pto::kValue2 ||
+      dstValid.size() != mlir::pto::kValue2) {
     return op.emitOpError("expects src and dst to have rank-2 valid_shape");
   }
 
@@ -94,7 +95,7 @@ mlir::LogicalResult mlir::pto::TScatterOp::verify() {
   if (hasIndexes && getAxisAttr()) {
     return emitOpError("axis attribute must not be provided with indexes operand");
   }
-  auto verifyForm = [&]() -> LogicalResult {
+  auto verifyForm = [this, hasMaskPattern]() -> LogicalResult {
     if (hasMaskPattern) {
       return verifyTScatterMaskForm(*this);
     }
@@ -142,7 +143,7 @@ static LogicalResult verifyTSelA2A3(TSelOp op) {
         return op.emitOpError("expects A2/A3 tsel tmp element type to be 4 bytes wide");
     }
     unsigned elemBits = getPTOStorageElemBitWidth(elem);
-    if (elemBits != 16 && elemBits != 32) {
+    if (elemBits != mlir::pto::kValue16 && elemBits != mlir::pto::kValue32) {
       return op.emitOpError("expects A2/A3 tsel data element type to be 16 or 32 bits");
     }
     uint64_t minBytes = elemBits == 16 ? 16 : 8;
@@ -172,8 +173,8 @@ static LogicalResult verifyTSelA5(TSelOp op) {
 }
 
 mlir::LogicalResult mlir::pto::TSelOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult { return verifyTSelA2A3(*this); };
-  auto verifyA5 = [&]() -> LogicalResult { return verifyTSelA5(*this); };
+  auto verifyA2A3 = [this]() -> LogicalResult { return verifyTSelA2A3(*this); };
+  auto verifyA5 = [this]() -> LogicalResult { return verifyTSelA5(*this); };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
@@ -275,7 +276,7 @@ mlir::LogicalResult mlir::pto::TSelSOp::verify() {
   // Constraints & Verification per PTO_IR_manual.md pto.tsels:
   // - src and dst same element type; A2A3: i16/i32/f16/f32; A5: i8/i16/i32/f16/f32
   // - src and dst row-major; src and dst same valid region
-  auto verifyA2A3 = [&]() -> LogicalResult { return verifyTSelSA2A3(*this); };
-  auto verifyA5 = [&]() -> LogicalResult { return verifyTSelSA5(*this); };
+  auto verifyA2A3 = [this]() -> LogicalResult { return verifyTSelSA2A3(*this); };
+  auto verifyA5 = [this]() -> LogicalResult { return verifyTSelSA5(*this); };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }

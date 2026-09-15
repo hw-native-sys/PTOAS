@@ -1,0 +1,73 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -pto-validate-vmi-layout-ir -vmi-to-vpto | FileCheck %s --implicit-check-not=pto.vmi. --implicit-check-not='!pto.vmi.' --implicit-check-not=pto.vmi.ensure_layout
+
+// hw-native-sys/PTOAS#1377: vchist/vdhist over a short ui8 source loaded from a
+// !pto.ptr.  The source stays contiguous, which is what the histogram operands
+// require, so no layout conversion is planned at all.  The reported shape is a
+// 128-bin ui16 accumulator at source VL=1.
+module {
+  func.func @chist_ui8_vl1(%src: !pto.ptr<ui8, ub>,
+                           %acc: !pto.vmi.vreg<128xui16>)
+      -> !pto.vmi.vreg<128xui16> {
+    %c0 = arith.constant 0 : index
+    %n = arith.constant 1 : index
+    %s = pto.vmi.vload %src[%c0] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<1xui8>
+    %m = pto.vmi.create_mask %n : index -> !pto.vmi.mask<1xpred>
+    %h = pto.vmi.vchist %acc, %s, %m
+        : !pto.vmi.vreg<128xui16>, !pto.vmi.vreg<1xui8>,
+          !pto.vmi.mask<1xpred> -> !pto.vmi.vreg<128xui16>
+    return %h : !pto.vmi.vreg<128xui16>
+  }
+
+  func.func @dhist_ui8_vl8(%src: !pto.ptr<ui8, ub>,
+                           %acc: !pto.vmi.vreg<256xui16>)
+      -> !pto.vmi.vreg<256xui16> {
+    %c0 = arith.constant 0 : index
+    %n = arith.constant 8 : index
+    %s = pto.vmi.vload %src[%c0] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<8xui8>
+    %m = pto.vmi.create_mask %n : index -> !pto.vmi.mask<8xpred>
+    %h = pto.vmi.vdhist %acc, %s, %m
+        : !pto.vmi.vreg<256xui16>, !pto.vmi.vreg<8xui8>,
+          !pto.vmi.mask<8xpred> -> !pto.vmi.vreg<256xui16>
+    return %h : !pto.vmi.vreg<256xui16>
+  }
+
+  // Beyond the {1,2,4,8} the old alias could express: 32 ui8 is still one
+  // 32-byte block, so it lowers through the same leg.
+  func.func @chist_ui8_vl32(%src: !pto.ptr<ui8, ub>,
+                            %acc: !pto.vmi.vreg<256xui16>)
+      -> !pto.vmi.vreg<256xui16> {
+    %c0 = arith.constant 0 : index
+    %n = arith.constant 32 : index
+    %s = pto.vmi.vload %src[%c0] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<32xui8>
+    %m = pto.vmi.create_mask %n : index -> !pto.vmi.mask<32xpred>
+    %h = pto.vmi.vchist %acc, %s, %m
+        : !pto.vmi.vreg<256xui16>, !pto.vmi.vreg<32xui8>,
+          !pto.vmi.mask<32xpred> -> !pto.vmi.vreg<256xui16>
+    return %h : !pto.vmi.vreg<256xui16>
+  }
+}
+
+// CHECK-LABEL: func.func @chist_ui8_vl1(
+// CHECK: pto.vlds {{.*}} {dist = "BRC_B8"}
+// CHECK: pto.pand
+// CHECK: pto.chistv2
+
+// CHECK-LABEL: func.func @dhist_ui8_vl8(
+// CHECK: pto.pset_b8 "PAT_VL1"
+// CHECK: pto.vsldb
+// CHECK: pto.pand
+// CHECK: pto.dhistv2
+
+// CHECK-LABEL: func.func @chist_ui8_vl32(
+// CHECK: pto.pset_b8 "PAT_VL1"
+// CHECK: pto.vsldb
+// CHECK: pto.pand
+// CHECK: pto.chistv2

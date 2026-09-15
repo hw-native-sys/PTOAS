@@ -96,7 +96,12 @@ def check_pipeline(entry, requested, expected_llvm, expected_ptoas, toolchain_fl
         result = subprocess.run([BASH, str(script)], cwd=root, env=env, text=True,
                                 capture_output=True, timeout=10)
         assert result.returncode == 0, result.stdout + result.stderr
-        expected = [f"llvm:{expected_llvm}:{expected_llvm}", f"native:{expected_ptoas}"]
+        # package() builds the wheel first and then the packaging tree; the
+        # old pre-wheel native build was dropped, so the first PTOAS compile
+        # pass only runs for build_only.
+        expected = [f"llvm:{expected_llvm}:{expected_llvm}"]
+        if entry == "build_only":
+            expected.append(f"native:{expected_ptoas}")
         if entry == "package":
             if toolchain_flags:
                 expected.append(f"compiler-rt:{expected_llvm}:{expected_llvm}")

@@ -85,7 +85,8 @@ private:
 };
 
 VPTORematerializationTransaction prepareVPTORematerialization(
-    func::FuncOp func, const VPTOSchedModel& model, llvm::raw_ostream& os, bool trace);
+    func::FuncOp func, const VPTOSchedModel& model, llvm::raw_ostream& os,
+    bool trace);
 
 std::optional<SmallVector<int64_t>> evaluateVPTOMaxPressure(func::FuncOp func, const VPTOSchedModel& model);
 

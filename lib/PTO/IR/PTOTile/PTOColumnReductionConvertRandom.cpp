@@ -41,8 +41,8 @@ static LogicalResult verifyTColSumArch(TColSumOp op, bool isA5) {
 }
 
 LogicalResult pto::TColSumOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult { return verifyTColSumArch(*this, false); };
-  auto verifyA5 = [&]() -> LogicalResult { return verifyTColSumArch(*this, true); };
+  auto verifyA2A3 = [this]() -> LogicalResult { return verifyTColSumArch(*this, false); };
+  auto verifyA5 = [this]() -> LogicalResult { return verifyTColSumArch(*this, true); };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
@@ -147,13 +147,13 @@ llvm::LogicalResult mlir::pto::TCvtOp::verify() {
   }
   Type srcElem = getElemTy(srcTy);
   Type dstElem = getElemTy(dstTy);
-  auto verifyA2A3 = [&]() -> LogicalResult {
+  auto verifyA2A3 = [this, &srcTy, &dstTy, &srcElem, &dstElem]() -> LogicalResult {
     if (isPTOLowPrecisionType(srcElem) || isPTOLowPrecisionType(dstElem)) {
       return emitOpError("expects A2/A3 tcvt low-precision element types to be unsupported");
     }
     return verifyTCvtTmp(*this, srcTy, dstTy, srcElem, dstElem);
   };
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [this, &srcElem, &dstElem]() -> LogicalResult {
     if (!isA5SupportedTCvtPair(srcElem, dstElem)) {
       return emitOpError("expects A5 tcvt low-precision type pairs to match PTO-ISA support");
     }
@@ -165,10 +165,10 @@ llvm::LogicalResult mlir::pto::TCvtOp::verify() {
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 llvm::LogicalResult mlir::pto::TRandomOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult {
+  auto verifyA2A3 = [this]() -> LogicalResult {
     return emitOpError("trandom is only supported for A5 targets");
   };
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [this]() -> LogicalResult {
     Type dstTy = getDst().getType();
     if (failed(verifyTileBufCommon(*this, dstTy, "dst"))) {
       return failure();
@@ -182,7 +182,7 @@ llvm::LogicalResult mlir::pto::TRandomOp::verify() {
       return emitOpError("expects dst element type to be i32 or ui32");
     }
 
-    auto checkWord = [&](Value v, StringRef name) -> LogicalResult {
+    auto checkWord = [this](Value v, StringRef name) -> LogicalResult {
       auto ty = dyn_cast<IntegerType>(v.getType());
       if (!ty || ty.getWidth() != 32) {
         return emitOpError() << "expects " << name << " to be i32/ui32";
@@ -209,7 +209,7 @@ llvm::LogicalResult mlir::pto::TRandomOp::verify() {
 }
 
 LogicalResult mlir::pto::TDivOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult {
+  auto verifyA2A3 = [this]() -> LogicalResult {
     FailureOr<Type> elemOr = verifyMatchingRowMajorBinaryTileOpCommon(
         getOperation(), getSrc0().getType(), getSrc1().getType(),
         getDst().getType());
@@ -222,7 +222,7 @@ LogicalResult mlir::pto::TDivOp::verify() {
     }
     return success();
   };
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [this]() -> LogicalResult {
     FailureOr<Type> elemOr = verifyMatchingRowMajorBinaryTileOpCommon(
         getOperation(), getSrc0().getType(), getSrc1().getType(),
         getDst().getType());
@@ -247,7 +247,7 @@ mlir::LogicalResult mlir::pto::TDivSOp::verify() {
     return mlir::isa<IntegerType, FloatType>(ty);
   };
 
-  auto verifyByArch = [&](PTOArch targetArch) -> LogicalResult {
+  auto verifyByArch = [this, &isTileLike, &isScalarLike](PTOArch targetArch) -> LogicalResult {
     Type srcTy = getSrc().getType();
     Type rhsTy = getScalar().getType();
     Type dstTy = getDst().getType();

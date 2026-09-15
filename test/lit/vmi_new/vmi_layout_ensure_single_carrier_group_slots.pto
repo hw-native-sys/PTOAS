@@ -1,0 +1,58 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -pto-validate-vmi-layout-ir -vmi-to-vpto | FileCheck %s --implicit-check-not=pto.vmi. --implicit-check-not='!pto.vmi.'
+
+// A group packet with num_groups <= slots, lane_stride = 1 puts logical lane i
+// on physical lane i of one carrier -- exactly where a dense short vector puts
+// it -- so the conversion forwards the register in either direction and emits
+// nothing.  Dense short vectors reach group operations through this bridge:
+// group reduce results and group broadcast sources are genuine group packets,
+// while a plain vload produces a dense value.  The relation is keyed on the
+// invariant, so it holds for group counts no producer emits today (3 below).
+module {
+  func.func @group_to_dense(
+      %v: !pto.vmi.vreg<3xf32, #pto.vmi.layout<num_groups = 3, slots = 8>>)
+      -> !pto.vmi.vreg<3xf32, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.ensure_layout %v
+        : !pto.vmi.vreg<3xf32, #pto.vmi.layout<num_groups = 3, slots = 8>>
+        -> !pto.vmi.vreg<3xf32, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.vreg<3xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @dense_to_group(
+      %v: !pto.vmi.vreg<8xui8, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8>> {
+    %r = pto.vmi.ensure_layout %v
+        : !pto.vmi.vreg<8xui8, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8>>
+    return %r : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8>>
+  }
+
+  // The degenerate one-group, one-slot case this relation subsumes.
+  func.func @one_lane_group_to_dense(
+      %v: !pto.vmi.vreg<1xf32, #pto.vmi.layout<num_groups = 1, slots = 1>>)
+      -> !pto.vmi.vreg<1xf32, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.ensure_layout %v
+        : !pto.vmi.vreg<1xf32, #pto.vmi.layout<num_groups = 1, slots = 1>>
+        -> !pto.vmi.vreg<1xf32, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.vreg<1xf32, #pto.vmi.layout<contiguous>>
+  }
+}
+
+// CHECK-LABEL: func.func @group_to_dense(
+// CHECK-SAME: %[[V:.*]]: !pto.vreg<64xf32>) -> !pto.vreg<64xf32>
+// CHECK-NEXT: return %[[V]]
+
+// CHECK-LABEL: func.func @dense_to_group(
+// CHECK-SAME: %[[V:.*]]: !pto.vreg<256xui8>) -> !pto.vreg<256xui8>
+// CHECK-NEXT: return %[[V]]
+
+// CHECK-LABEL: func.func @one_lane_group_to_dense(
+// CHECK-SAME: %[[V:.*]]: !pto.vreg<64xf32>) -> !pto.vreg<64xf32>
+// CHECK-NEXT: return %[[V]]

@@ -32,8 +32,10 @@ static LogicalResult verifyTCmpA2ValidShapes(TCmpOp op, Type t0, Type t1,
   auto valid0 = getValidShapeVec(t0);
   auto valid1 = getValidShapeVec(t1);
   auto validd = getValidShapeVec(td);
-  if (valid0.size() != 2 || valid1.size() != 2 || validd.size() != 2)
-    return op.emitOpError("expects src0, src1, and dst to have rank-2 valid_shape");
+  if (valid0.size() != mlir::pto::kValue2 || valid1.size() != mlir::pto::kValue2 ||
+      validd.size() != mlir::pto::kValue2) {
+      return op.emitOpError("expects src0, src1, and dst to have rank-2 valid_shape");
+  }
   if (!hasCompatibleKnownExtent(valid0[0], valid1[0]))
     return op.emitOpError("expects src0 and src1 to have the same valid row");
   if (!hasCompatibleKnownExtent(valid0[1], valid1[1]))
@@ -66,9 +68,8 @@ static LogicalResult verifyTCmpArch(TCmpOp op, bool isA5) {
   Type t0 = op.getSrc0().getType();
   Type t1 = op.getSrc1().getType();
   Type td = op.getDst().getType();
-  auto verifyTile = [&](Type type, StringRef name) {
-    return isA5 ? verifyTileBufCommon(op, type, name)
-                : verifyVecTileStorage(op, type, name);
+  auto verifyTile = [op, isA5](Type type, StringRef name) {
+      return isA5 ? verifyTileBufCommon(op, type, name) : verifyVecTileStorage(op, type, name);
   };
   if (failed(verifyTile(t0, "src0")) || failed(verifyTile(t1, "src1")) ||
       failed(verifyTile(td, "dst")) ||
@@ -80,9 +81,9 @@ static LogicalResult verifyTCmpArch(TCmpOp op, bool isA5) {
 }
 
 LogicalResult pto::TCmpOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult { return verifyTCmpArch(*this, false); };
-  auto verifyA5 = [&]() -> LogicalResult { return verifyTCmpArch(*this, true); };
-  return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
+    auto verifyA2A3 = [this]() -> LogicalResult { return verifyTCmpArch(*this, false); };
+    auto verifyA5 = [this]() -> LogicalResult { return verifyTCmpArch(*this, true); };
+    return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
 // ---- TCMPS verify ----
@@ -116,9 +117,9 @@ static LogicalResult verifyTCmpSArch(TCmpSOp op, bool allowInt8) {
 }
 
 LogicalResult pto::TCmpSOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult { return verifyTCmpSArch(*this, false); };
-  auto verifyA5 = [&]() -> LogicalResult { return verifyTCmpSArch(*this, true); };
-  return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
+    auto verifyA2A3 = [this]() -> LogicalResult { return verifyTCmpSArch(*this, false); };
+    auto verifyA5 = [this]() -> LogicalResult { return verifyTCmpSArch(*this, true); };
+    return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 LogicalResult pto::TColExpandOp::verify() {
   Type srcTy = getSrc().getType();
@@ -153,8 +154,8 @@ static bool isSupportedTColExpandElem(Type elemTy, PTOArch targetArch,
   if (!allowIntegerTypes) {
     return false;
   }
-  if (elemTy.isInteger(16) || elemTy.isInteger(32)) {
-    return true;
+  if (elemTy.isInteger(mlir::pto::kValue16) || elemTy.isInteger(32)) {
+      return true;
   }
   return targetArch == PTOArch::A5 && elemTy.isInteger(mlir::pto::kValue8);
 }

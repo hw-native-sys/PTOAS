@@ -68,7 +68,9 @@ static LogicalResult verifyArithmeticElemTypeForArch(
 static LogicalResult verifyArithmeticBinaryTileOpWithArchDispatch(
     Operation *op, Type src0Ty, Type src1Ty, Type dstTy, bool allowInt8OnA5,
     bool allowBf16OnA5, StringRef a2a3Error, StringRef a5Error) {
-  auto verifyByArch = [&](PTOArch targetArch) -> LogicalResult {
+  auto verifyByArch = [&op, &src0Ty, &src1Ty, &dstTy, &allowInt8OnA5,
+                        &allowBf16OnA5, &a2a3Error, &a5Error](PTOArch targetArch)
+      -> LogicalResult {
     FailureOr<Type> elemOr =
         verifyMatchingRowMajorBinaryTileOpCommon(op, src0Ty, src1Ty, dstTy);
     if (failed(elemOr)) {
@@ -78,8 +80,8 @@ static LogicalResult verifyArithmeticBinaryTileOpWithArchDispatch(
                                            allowInt8OnA5, allowBf16OnA5,
                                            a2a3Error, a5Error);
   };
-  auto verifyA2A3 = [&]() -> LogicalResult { return verifyByArch(PTOArch::A3); };
-  auto verifyA5 = [&]() -> LogicalResult { return verifyByArch(PTOArch::A5); };
+  auto verifyA2A3 = [&verifyByArch]() -> LogicalResult { return verifyByArch(PTOArch::A3); };
+  auto verifyA5 = [&verifyByArch]() -> LogicalResult { return verifyByArch(PTOArch::A5); };
   return dispatchVerifierByArch(op, verifyA2A3, verifyA5);
 }
 
@@ -88,7 +90,9 @@ static LogicalResult verifyArithmeticScalarTileOpWithArchDispatch(
     bool allowBf16OnA5, StringRef a2a3Error, StringRef a5Error,
     bool requireValidRowsEqualOnA2A3 = true,
     bool requireValidRowsEqualOnA5 = false) {
-  auto verifyByArch = [&](PTOArch targetArch,
+  auto verifyByArch = [&op, &srcTy, &dstTy, &scalarTy, &allowInt8OnA5,
+                        &allowBf16OnA5, &a2a3Error, &a5Error](
+                          PTOArch targetArch,
                           bool requireValidRowsEqual) -> LogicalResult {
     FailureOr<Type> elemOr = verifyNumericScalarTileOpCommon(
         op, srcTy, dstTy, scalarTy, requireValidRowsEqual);
@@ -99,10 +103,10 @@ static LogicalResult verifyArithmeticScalarTileOpWithArchDispatch(
                                            allowInt8OnA5, allowBf16OnA5,
                                            a2a3Error, a5Error);
   };
-  auto verifyA2A3 = [&]() -> LogicalResult {
+  auto verifyA2A3 = [&verifyByArch, requireValidRowsEqualOnA2A3]() -> LogicalResult {
     return verifyByArch(PTOArch::A3, requireValidRowsEqualOnA2A3);
   };
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [&verifyByArch, requireValidRowsEqualOnA5]() -> LogicalResult {
     return verifyByArch(PTOArch::A5, requireValidRowsEqualOnA5);
   };
   return dispatchVerifierByArch(op, verifyA2A3, verifyA5);
@@ -126,7 +130,9 @@ static LogicalResult verifyTColReductionOpWithArchDispatch(
     Operation *op, Type srcTy, Type dstTy, bool requireNonZeroSrcOnA2A3,
     bool requireNonZeroSrcOnA5, bool allowInt8OnA5, bool allowBf16OnA5,
     StringRef a2a3Error, StringRef a5Error) {
-  auto verifyByArch = [&](PTOArch targetArch,
+  auto verifyByArch = [&op, &srcTy, &dstTy, &allowInt8OnA5, &allowBf16OnA5,
+                        &a2a3Error, &a5Error](
+                          PTOArch targetArch,
                           bool requireNonZeroSrc) -> LogicalResult {
     if (failed(verifyNDStyleVecTile(op, srcTy, "src")) ||
         failed(verifyNDStyleVecTile(op, dstTy, "dst"))) {
@@ -142,10 +148,10 @@ static LogicalResult verifyTColReductionOpWithArchDispatch(
     return verifyTColReductionElemTypeForArch(op, elem, targetArch, allowInt8OnA5,
                                               allowBf16OnA5, a2a3Error, a5Error);
   };
-  auto verifyA2A3 = [&]() -> LogicalResult {
+  auto verifyA2A3 = [&verifyByArch, requireNonZeroSrcOnA2A3]() -> LogicalResult {
     return verifyByArch(PTOArch::A3, requireNonZeroSrcOnA2A3);
   };
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [&verifyByArch, requireNonZeroSrcOnA5]() -> LogicalResult {
     return verifyByArch(PTOArch::A5, requireNonZeroSrcOnA5);
   };
   return dispatchVerifierByArch(op, verifyA2A3, verifyA5);

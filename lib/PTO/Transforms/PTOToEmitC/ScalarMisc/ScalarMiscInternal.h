@@ -1,3 +1,11 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
 // Internal helper declarations shared within the ScalarMisc lowering domain.
 #pragma once
 
@@ -20,21 +28,20 @@ FailureOr<Value> getStructAdaptorValue(ValueRange operands);
 FailureOr<Value> buildStructMemberChain( ConversionPatternRewriter &rewriter, Location loc, const TypeConverter *tc, Value root, mlir::pto::StructType rootPtoTy, llvm::ArrayRef<int64_t> path);
 FailureOr<Value> resolveStructMember(Operation *op, ValueRange adaptorOperands, Type structPtoTy, ArrayRef<int64_t> path, ConversionPatternRewriter &rewriter, const TypeConverter *typeConverter);
 
-
 template <typename OpTy>
 FailureOr<SmallVector<Value>> buildCommGroupGlobalTensors(
-    ConversionPatternRewriter &rewriter, Location loc, OpTy op,
-    ValueRange originalGroup, ValueRange emittedGroup) {
-  SmallVector<Value> groupGTs;
-  groupGTs.reserve(originalGroup.size());
-  for (auto [orig, emitted] : llvm::zip(originalGroup, emittedGroup)) {
-    FailureOr<Value> gt =
-        buildCommGlobalTensorValue(rewriter, loc, orig, emitted, op.getOperation());
-    if (failed(gt))
-      return failure();
-    groupGTs.push_back(*gt);
-  }
-  return groupGTs;
+    const ConversionPatternRewriter& rewriter, Location loc, OpTy op, ValueRange originalGroup, ValueRange emittedGroup)
+{
+    SmallVector<Value> groupGTs;
+    groupGTs.reserve(originalGroup.size());
+    for (auto [orig, emitted] : llvm::zip(originalGroup, emittedGroup)) {
+        FailureOr<Value> gt = buildCommGlobalTensorValue(rewriter, loc, orig, emitted, op.getOperation());
+        if (failed(gt)) {
+            return failure();
+        }
+        groupGTs.push_back(*gt);
+    }
+    return groupGTs;
 }
 void populateScalarMiscAsyncSessionPatterns(RewritePatternSet &patterns,
                         TypeConverter &typeConverter, MLIRContext *ctx,

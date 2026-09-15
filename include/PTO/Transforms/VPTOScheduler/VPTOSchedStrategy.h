@@ -20,6 +20,7 @@
 #include "PTO/Transforms/VPTOScheduler/VPTORegPressureTracker.h"
 #include "PTO/Transforms/VPTOScheduler/VPTOSchedDAG.h"
 #include "PTO/Transforms/VPTOScheduler/VPTOSchedModel.h"
+#include "PTO/Support/CodeConstants.h"
 
 #include "mlir/Support/LogicalResult.h"
 #include "llvm/ADT/ArrayRef.h"
@@ -48,8 +49,8 @@ struct VPTOSchedCandidate {
   unsigned criticalPath = 0;
   unsigned originalIndex = 0;
   VPTORegPressureEvaluation pressure;
-  SmallVector<int64_t, 2> lookaheadPeak;
-  SmallVector<int64_t, 2> lookaheadEnd;
+  SmallVector<int64_t, mlir::pto::kValue2> lookaheadPeak;
+  SmallVector<int64_t, mlir::pto::kValue2> lookaheadEnd;
   unsigned lookaheadSteps = 0;
   bool opensPressureFrontier = false;
   bool advancesPressureClosure = false;

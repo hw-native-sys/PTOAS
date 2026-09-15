@@ -14,4 +14,5 @@ using namespace mlir;
 using namespace mlir::pto;
 using namespace mlir::pto::memop_detail;
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated verifier callback has a non-const signature.
 LogicalResult Chistv2Op::verify() { return verifyHistogramOp(*this); }

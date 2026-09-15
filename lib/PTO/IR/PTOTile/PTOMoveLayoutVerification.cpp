@@ -8,6 +8,11 @@
 
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
 
+static constexpr int64_t kTMovRank = mlir::pto::kValue2;
+static constexpr int64_t kTMovAlignmentElements = mlir::pto::kValue16;
+static constexpr int64_t kTMovFractalSize = mlir::pto::kValue512;
+static constexpr unsigned kTMovI32BitWidth = mlir::pto::kValue32;
+
 static bool isVecTile(Type type) {
   auto space = getPTOMemorySpaceEnum(type);
   return isa<pto::TileBufType>(type) && space &&
@@ -35,9 +40,9 @@ static LogicalResult verifyTMovXToZzForm(TMovOp op, bool isA5) {
   if (op.getSrc() == op.getDst() || op.getSrc() == fp || op.getDst() == fp) {
     return op.emitOpError("expects X-to-ZZ src, dst, and tmp to be distinct tile values");
   }
-  if (cast<pto::TileBufType>(srcTy).getRank() != 2 ||
-      cast<pto::TileBufType>(dstTy).getRank() != 2 ||
-      cast<pto::TileBufType>(fp.getType()).getRank() != 2) {
+  if (cast<pto::TileBufType>(srcTy).getRank() != kTMovRank ||
+      cast<pto::TileBufType>(dstTy).getRank() != kTMovRank ||
+      cast<pto::TileBufType>(fp.getType()).getRank() != kTMovRank) {
     return op.emitOpError("expects rank-2 valid_shape for src/dst/tmp");
   }
   if (!isStaticTMovShape(srcTy, true) || !isStaticTMovShape(dstTy, true) ||
@@ -53,7 +58,7 @@ static LogicalResult verifyTMovXToZzAxis1(TMovOp op, ArrayRef<int64_t> srcValid,
   Type srcTy = op.getSrc().getType();
   Type dstTy = op.getDst().getType();
   Value fp = op.getFp();
-  if (dstValid[1] % 2 != 0) {
+  if (dstValid[1] % kTMovRank != 0) {
     return op.emitOpError("expects ND-to-ZZ dst valid_shape[1] (the grouped exponent column count) to be even");
   }
   if (srcValid[0] != 1 && srcPhysical[1] != srcValid[1]) {
@@ -75,7 +80,7 @@ static LogicalResult verifyTMovXToZzAxis1(TMovOp op, ArrayRef<int64_t> srcValid,
   }
   auto rowBlocksBias = tmovCheckedAdd(dstValid[0], 15);
   auto offsetBytes = rowBlocksBias
-                         ? tmovCheckedMul(*rowBlocksBias / 16, dstValid[1])
+                         ? tmovCheckedMul(*rowBlocksBias / mlir::pto::kValue16, dstValid[1])
                          : std::nullopt;
   auto tmpRequired =
       offsetBytes ? tmovCheckedAdd(64, *offsetBytes) : std::nullopt;
@@ -94,10 +99,10 @@ static LogicalResult verifyTMovXToZzAxis0(TMovOp op, ArrayRef<int64_t> srcValid,
                                           ArrayRef<int64_t> srcPhysical) {
   Type srcTy = op.getSrc().getType();
   Type dstTy = op.getDst().getType();
-  if (srcValid[0] < 2 || srcValid[0] % 2 != 0) {
+  if (srcValid[0] < kTMovRank || srcValid[0] % kTMovRank != 0) {
     return op.emitOpError("expects DN-to-ZZ src valid_shape[0] to be an even count >= 2; a single row-group produces no output in PTO-ISA");
   }
-  if (srcValid[1] % 16 != 0) {
+  if (srcValid[1] % kTMovAlignmentElements != 0) {
     return op.emitOpError("expects DN-to-ZZ src valid_shape[1] to be a multiple of 16");
   }
   if (srcPhysical[1] != srcValid[1]) {
@@ -236,7 +241,7 @@ static LogicalResult verifyTMovGenericFpLayout(TMovOp op, bool isA5) {
     return op.emitOpError() << "expects fp tmov dst to use blayout=col_major and slayout=row_major";
   }
   if (srcTb && dstTb && isAccToMat && !isA5 &&
-      dstTb.getSFractalSizeI32() != 512) {
+      dstTb.getSFractalSizeI32() != kTMovFractalSize) {
     return op.emitOpError() << "expects A2/A3 acc-to-mat tmov destination fractal to be 512";
   }
   return success();
@@ -262,7 +267,7 @@ static LogicalResult verifyTMovGenericFpForm(TMovOp op, bool isA5) {
     }
     auto srcElemTy = getElemTy(srcTy);
     auto srcIntTy = dyn_cast<IntegerType>(srcElemTy);
-    if (!(srcElemTy.isF32() || (srcIntTy && srcIntTy.getWidth() == 32))) {
+    if (!(srcElemTy.isF32() || (srcIntTy && srcIntTy.getWidth() == kTMovI32BitWidth))) {
       return op.emitOpError() << "expects fp form src to have element type f32, i32";
     }
     if (!(isAccToMat || isAccToVec)) {

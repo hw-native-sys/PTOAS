@@ -8,6 +8,11 @@
 
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
 
+static constexpr unsigned kI8BitWidth = mlir::pto::kValue8;
+static constexpr unsigned kI16BitWidth = mlir::pto::kValue16;
+static constexpr unsigned kI32BitWidth = mlir::pto::kValue32;
+static constexpr unsigned kI64BitWidth = mlir::pto::kValue64;
+
 static LogicalResult verifyBoxedTileBufLayout(
     Operation* op, pto::TileBufType tb, StringRef name, int64_t rows, int64_t cols, unsigned elemBytes, int32_t slayout,
     int32_t fractal)
@@ -65,7 +70,7 @@ static LogicalResult verifyTileBufLayoutConstraints(Operation* op, pto::TileBufT
     }
     if (auto it = dyn_cast<IntegerType>(ty)) {
         unsigned width = it.getWidth();
-        return width == 8 || width == 16 || width == 32 || width == 64;
+        return width == kI8BitWidth || width == kI16BitWidth || width == kI32BitWidth || width == kI64BitWidth;
     }
     return false;
 }
@@ -77,7 +82,7 @@ static bool isSupportedGatherElemTypeA2A3(Type ty)
     }
     if (auto it = dyn_cast<IntegerType>(ty)) {
         unsigned width = it.getWidth();
-        return width == 16 || width == 32;
+        return width == kI16BitWidth || width == kI32BitWidth;
     }
     return false;
 }
@@ -92,10 +97,10 @@ static bool isSupportedGatherElemTypeA5(Type ty)
     }
     if (auto ft = dyn_cast<FloatType>(ty)) {
         unsigned width = ft.getWidth();
-        return width == 8;
+        return width == kI8BitWidth;
     }
     if (auto it = dyn_cast<IntegerType>(ty)) {
-        return it.getWidth() == 8 || it.getWidth() == 16 || it.getWidth() == 32;
+        return it.getWidth() == kI8BitWidth || it.getWidth() == kI16BitWidth || it.getWidth() == kI32BitWidth;
     }
     return false;
 }

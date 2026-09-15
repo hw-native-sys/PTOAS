@@ -114,6 +114,8 @@ LogicalResult VPTOSchedDAGBuilder::addEdge(
 
 namespace {
 constexpr unsigned kBitsPerByte = CHAR_BIT;
+constexpr size_t kBinaryProductBoundCount = mlir::pto::kValue4;
+constexpr unsigned kVisitedOperationInlineCapacity = mlir::pto::kValue8;
 
 struct IntegerRange {
   int64_t lowerInclusive = 0;
@@ -252,7 +254,7 @@ getMathematicalResultRange(Operation *operation) {
         static_cast<__int128>(lhs->lowerInclusive) - rhs->upperInclusive,
         static_cast<__int128>(lhs->upperInclusive) - rhs->lowerInclusive);
   }
-  std::array<__int128, 4> products = {
+  std::array<__int128, kBinaryProductBoundCount> products = {
       static_cast<__int128>(lhs->lowerInclusive) * rhs->lowerInclusive,
       static_cast<__int128>(lhs->lowerInclusive) * rhs->upperInclusive,
       static_cast<__int128>(lhs->upperInclusive) * rhs->lowerInclusive,
@@ -429,7 +431,7 @@ static LogicalResult accumulateAddPtrDisplacement(AddPtrOp addPtr,
 }
 
 static std::optional<IntegerRange> getPointerAddressRange(Value value) {
-  SmallPtrSet<Operation *, 8> visited;
+  SmallPtrSet<Operation *, kVisitedOperationInlineCapacity> visited;
   IntegerRange displacement;
   while (Operation *definingOp = value.getDefiningOp()) {
     if (!visited.insert(definingOp).second) {
@@ -466,7 +468,7 @@ static std::optional<IntegerRange> getPointerAddressRange(Value value) {
 }
 
 static Value getAliasRoot(Value value) {
-  SmallPtrSet<Operation *, 8> visited;
+  SmallPtrSet<Operation *, mlir::pto::kValue8> visited;
   while (Operation *definingOp = value.getDefiningOp()) {
     if (!visited.insert(definingOp).second)
       break;
@@ -800,7 +802,8 @@ collectResolvedMemoryAccesses(const VPTOSchedDAG &dag,
 }
 
 static void
-updateMemoryFrontier(SmallVectorImpl<FrontierAccess> &frontier, VPTOSUnit *unit,
+updateMemoryFrontier(SmallVectorImpl<FrontierAccess> &frontier,
+                     VPTOSUnit *unit, // NOLINT(readability-non-const-parameter)
                      ArrayRef<ResolvedMemoryAccess> currentAccesses) {
   llvm::erase_if(frontier, [&](const FrontierAccess &prior) {
     return llvm::any_of(
@@ -987,7 +990,7 @@ LogicalResult VPTOSchedDAGBuilder::buildMemoryEdges(
       continue;
     }
     VPTOSUnit *unit = dag.getUnits()[unitIndex].get();
-    SmallPtrSet<VPTOSUnit *, 8> predecessors;
+    SmallPtrSet<VPTOSUnit *, kVisitedOperationInlineCapacity> predecessors;
     auto consumeOne = [this, &failure]() { return consumeWork(failure); };
     if (failed(collectMemoryPredecessors(frontier, currentAccesses, consumeOne,
                                          predecessors))) {

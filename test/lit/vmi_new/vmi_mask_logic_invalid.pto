@@ -111,3 +111,33 @@ module {
 }
 
 // CHECK: 'pto.vmi.vnot' op mask logic op does not support predication mask
+
+// -----
+
+module {
+  func.func @vmi_vand_mask_with_vreg_rhs_rejected(
+      %lhs: !pto.vmi.mask<128xpred>,
+      %rhs: !pto.vmi.vreg<128xf32>) {
+    %and = pto.vmi.vand %lhs, %rhs
+        : !pto.vmi.mask<128xpred>, !pto.vmi.vreg<128xf32>
+        -> !pto.vmi.mask<128xpred>
+    return
+  }
+}
+
+// CHECK: 'pto.vmi.vand' op requires both operands and the result to be masks when the lhs is a mask
+
+// -----
+
+module {
+  func.func @vmi_vand_vreg_with_mask_rhs_rejected(
+      %lhs: !pto.vmi.vreg<128xsi32>,
+      %rhs: !pto.vmi.mask<128xpred>) {
+    %and = pto.vmi.vand %lhs, %rhs
+        : !pto.vmi.vreg<128xsi32>, !pto.vmi.mask<128xpred>
+        -> !pto.vmi.vreg<128xsi32>
+    return
+  }
+}
+
+// CHECK: 'pto.vmi.vand' op requires every operand and the result to be vregs when the lhs is a vreg

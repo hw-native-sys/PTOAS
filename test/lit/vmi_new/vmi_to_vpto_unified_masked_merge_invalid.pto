@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not pto-test-opt %s -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-lower-unified-to-legacy -vmi-to-vpto 2>&1 | FileCheck %s
+
+module {
+  func.func @binary_merge(%lhs: !pto.vmi.vreg<64xf32>,
+                          %rhs: !pto.vmi.vreg<64xf32>,
+                          %mask: !pto.vmi.mask<64xpred>)
+      -> !pto.vmi.vreg<64xf32> {
+    %result = pto.vmi.vadd %lhs, %rhs, %mask {pmode = "merge"}
+        : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>,
+          !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
+    return %result : !pto.vmi.vreg<64xf32>
+  }
+}
+
+// CHECK: pto.vmi.vadd with pmode=merge requires an explicit passthru lowering

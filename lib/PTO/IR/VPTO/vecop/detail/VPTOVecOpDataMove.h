@@ -31,11 +31,11 @@ namespace mlir::pto::vecop_detail {
 using namespace mlir;
 using namespace mlir::pto;
 
-  [[maybe_unused]] static bool isSupportedVdupPosition(std::optional<StringRef> position) {
+  [[maybe_unused]] static inline bool isSupportedVdupPosition(std::optional<StringRef> position) {
     return !position || *position == "LOWEST" || *position == "HIGHEST";
   }
 
-  [[maybe_unused]] static std::optional<StringRef> getVdupMaskGranularity(Type elementType) {
+  [[maybe_unused]] static inline std::optional<StringRef> getVdupMaskGranularity(Type elementType) {
     if (auto intType = dyn_cast<IntegerType>(elementType)) {
       switch (intType.getWidth()) {
       case mlir::pto::kValue8:
@@ -57,12 +57,12 @@ using namespace mlir::pto;
     return std::nullopt;
   }
 
-  [[maybe_unused]] static bool isSupportedVtrcRoundMode(StringRef mode) {
+  [[maybe_unused]] static inline bool isSupportedVtrcRoundMode(StringRef mode) {
     return mode == "R" || mode == "A" || mode == "F" || mode == "C" ||
            mode == "Z";
   }
 
-  [[maybe_unused]] static bool isSupportedPartToken(StringRef part) {
+  [[maybe_unused]] static inline bool isSupportedPartToken(StringRef part) {
     return part == "LOWER" || part == "HIGHER";
   }
 

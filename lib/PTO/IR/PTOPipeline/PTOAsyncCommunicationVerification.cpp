@@ -266,9 +266,9 @@ static LogicalResult verifySyncAllWorkspaceCapacity(Operation *op,
   int64_t capacity = 1;
   for (int64_t dim : shape) {
     int64_t product = 0;
-    if (llvm::MulOverflow(capacity, dim, product)) {
-      capacity = std::numeric_limits<int64_t>::max();
-      break;
+    if (llvm::MulOverflow(capacity, dim, product) != 0) {
+        capacity = std::numeric_limits<int64_t>::max();
+        break;
     }
     capacity = product;
   }

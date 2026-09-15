@@ -25,8 +25,8 @@ module {
 }
 
 // LEGACY-LABEL: func.func @vmi_to_vpto_min_max_integer(
-// LEGACY: %[[MIN:.*]] = pto.vmi.mini {{.*}} -> !pto.vmi.vreg<64xui32>
-// LEGACY: %[[MAX:.*]] = pto.vmi.maxi {{.*}} -> !pto.vmi.vreg<64xui32>
+// LEGACY: %[[MIN:.*]] = pto.vmi.vmin {{.*}} -> !pto.vmi.vreg<64xui32>
+// LEGACY: %[[MAX:.*]] = pto.vmi.vmax {{.*}} -> !pto.vmi.vreg<64xui32>
 // LEGACY-NOT: pto.vmi.vmin
 // LEGACY-NOT: pto.vmi.vmax
 

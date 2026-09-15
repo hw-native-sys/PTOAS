@@ -9,10 +9,10 @@
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
 
 void mlir::pto::SyncAllOp::print(OpAsmPrinter &p) {
-  SmallVector<Value, 2> operands;
-  if (getGmWorkspace()) {
-    operands.push_back(getGmWorkspace());
-  }
+    SmallVector<Value, mlir::pto::kValue2> operands;
+    if (getGmWorkspace()) {
+        operands.push_back(getGmWorkspace());
+    }
   if (getUsedCores()) {
     operands.push_back(getUsedCores());
   }
@@ -88,8 +88,8 @@ LogicalResult mlir::pto::SetCrossBlockOp::verify() {
                            << modeValue;
     }
   }
-  return verifyNamedSyncEventOp(getOperation(), getPipe(), getEventIdAttr(),
-                                getEventIdDyn(), 15, "pto.set_cross_block");
+  return verifyNamedSyncEventOp(
+      getOperation(), getPipe(), getEventIdAttr(), getEventIdDyn(), mlir::pto::kValue15, "pto.set_cross_block");
 }
 
 ParseResult mlir::pto::WaitCrossBlockOp::parse(OpAsmParser &parser,
@@ -106,8 +106,8 @@ void mlir::pto::WaitCrossBlockOp::print(OpAsmPrinter &p) {
 }
 
 LogicalResult mlir::pto::WaitCrossBlockOp::verify() {
-  return verifyNamedSyncEventOp(getOperation(), getPipe(), getEventIdAttr(),
-                                getEventIdDyn(), 15, "pto.wait_cross_block");
+    return verifyNamedSyncEventOp(
+        getOperation(), getPipe(), getEventIdAttr(), getEventIdDyn(), mlir::pto::kValue15, "pto.wait_cross_block");
 }
 
 ParseResult mlir::pto::SetIntraBlockOp::parse(OpAsmParser &parser,
@@ -124,17 +124,15 @@ void mlir::pto::SetIntraBlockOp::print(OpAsmPrinter &p) {
 }
 
 LogicalResult mlir::pto::SetIntraBlockOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult {
-    return verifyNamedSyncEventOp(getOperation(), getPipe(), getEventIdAttr(),
-                                  getEventIdDyn(), 15,
-                                  "pto.set_intra_block");
-  };
-  auto verifyA5 = [&]() -> LogicalResult {
-    return verifyNamedSyncEventOp(getOperation(), getPipe(), getEventIdAttr(),
-                                  getEventIdDyn(), 31,
-                                  "pto.set_intra_block");
-  };
-  return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
+    auto verifyA2A3 = [this]() -> LogicalResult {
+        return verifyNamedSyncEventOp(
+            getOperation(), getPipe(), getEventIdAttr(), getEventIdDyn(), 15, "pto.set_intra_block");
+    };
+    auto verifyA5 = [this]() -> LogicalResult {
+        return verifyNamedSyncEventOp(
+            getOperation(), getPipe(), getEventIdAttr(), getEventIdDyn(), 31, "pto.set_intra_block");
+    };
+    return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
 ParseResult mlir::pto::WaitIntraBlockOp::parse(OpAsmParser &parser,
@@ -151,17 +149,15 @@ void mlir::pto::WaitIntraBlockOp::print(OpAsmPrinter &p) {
 }
 
 LogicalResult mlir::pto::WaitIntraBlockOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult {
-    return verifyNamedSyncEventOp(getOperation(), getPipe(), getEventIdAttr(),
-                                  getEventIdDyn(), 15,
-                                  "pto.wait_intra_block");
-  };
-  auto verifyA5 = [&]() -> LogicalResult {
-    return verifyNamedSyncEventOp(getOperation(), getPipe(), getEventIdAttr(),
-                                  getEventIdDyn(), 31,
-                                  "pto.wait_intra_block");
-  };
-  return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
+    auto verifyA2A3 = [this]() -> LogicalResult {
+        return verifyNamedSyncEventOp(
+            getOperation(), getPipe(), getEventIdAttr(), getEventIdDyn(), 15, "pto.wait_intra_block");
+    };
+    auto verifyA5 = [this]() -> LogicalResult {
+        return verifyNamedSyncEventOp(
+            getOperation(), getPipe(), getEventIdAttr(), getEventIdDyn(), 31, "pto.wait_intra_block");
+    };
+    return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
 using StoreTypes = std::pair<pto::TileBufType, pto::PartitionTensorViewType>;
@@ -252,20 +248,19 @@ static LogicalResult verifyTStoreA2VecMat(TStoreOp op,
 
 static LogicalResult verifyTStoreA2AccTypes(TStoreOp op, Type srcElem,
                                             Type dstElem) {
-  if (!(srcElem.isInteger(32) || srcElem.isF32()))
-    return op.emitOpError(
-        "expects A2/A3 acc tstore src element type to be i32 or f32");
-  if (op.getPreQuantScalar() && srcElem.isInteger(32) &&
-      !(dstElem.isInteger(8) || dstElem.isF16()))
-    return op.emitOpError(
-        "expects A2/A3 acc preQuantScalar tstore dst type to be i8/ui8/f16");
-  if (op.getPreQuantScalar() && srcElem.isF32() && !dstElem.isInteger(8))
-    return op.emitOpError(
-        "expects A2/A3 acc preQuantScalar tstore dst type to be i8/ui8");
-  if (!op.getPreQuantScalar() && !op.getFp() &&
-      !(dstElem.isInteger(32) || dstElem.isF32() || dstElem.isF16() ||
-        dstElem.isBF16()))
-    return op.emitOpError(
-        "expects A2/A3 acc tstore dst element type to be i32/f32/f16/bf16");
+    if (!(srcElem.isInteger(mlir::pto::kValue32) || srcElem.isF32())) {
+        return op.emitOpError("expects A2/A3 acc tstore src element type to be i32 or f32");
+    }
+    if (op.getPreQuantScalar() && srcElem.isInteger(mlir::pto::kValue32) &&
+        !(dstElem.isInteger(mlir::pto::kValue8) || dstElem.isF16())) {
+        return op.emitOpError("expects A2/A3 acc preQuantScalar tstore dst type to be i8/ui8/f16");
+    }
+    if (op.getPreQuantScalar() && srcElem.isF32() && !dstElem.isInteger(mlir::pto::kValue8)) {
+        return op.emitOpError("expects A2/A3 acc preQuantScalar tstore dst type to be i8/ui8");
+    }
+    if (!op.getPreQuantScalar() && !op.getFp() &&
+        !(dstElem.isInteger(mlir::pto::kValue32) || dstElem.isF32() || dstElem.isF16() || dstElem.isBF16())) {
+        return op.emitOpError("expects A2/A3 acc tstore dst element type to be i32/f32/f16/bf16");
+    }
   return success();
 }

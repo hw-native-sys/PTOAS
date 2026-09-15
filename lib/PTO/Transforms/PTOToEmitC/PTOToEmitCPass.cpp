@@ -31,8 +31,6 @@ using namespace mlir::pto;
 
 namespace {
 
-
-
 // scf.execute_region is semantically just an inlined region producing results
 // via scf.yield. Inline it to the parent block to avoid extra lowering needs.
 struct SCFExecuteRegionInline
@@ -164,15 +162,16 @@ struct SCFIndexSwitchToCF : public OpRewritePattern<scf::IndexSwitchOp> {
     return rewriter.splitBlock(op->getBlock(), std::next(switchIt));
   }
 
-  static void addContinuationArguments(PatternRewriter &rewriter,
-                                       scf::IndexSwitchOp op, Location loc,
-                                       Block *continueBlock) {
-    SmallVector<BlockArgument> contArgs;
-    contArgs.reserve(op.getNumResults());
-    for (Type type : op.getResultTypes())
-      contArgs.push_back(continueBlock->addArgument(type, loc));
-    for (auto result : llvm::enumerate(op.getResults()))
-      result.value().replaceAllUsesWith(contArgs[result.index()]);
+  static void addContinuationArguments(scf::IndexSwitchOp op, Location loc, Block* continueBlock)
+  {
+      SmallVector<BlockArgument> contArgs;
+      contArgs.reserve(op.getNumResults());
+      for (Type type : op.getResultTypes()) {
+          contArgs.push_back(continueBlock->addArgument(type, loc));
+      }
+      for (auto result : llvm::enumerate(op.getResults())) {
+          result.value().replaceAllUsesWith(contArgs[result.index()]);
+      }
   }
 
   static void createIndexSwitchBlocks(PatternRewriter &rewriter,
@@ -207,7 +206,6 @@ struct SCFIndexSwitchToCF : public OpRewritePattern<scf::IndexSwitchOp> {
     }
   }
 
-
   // Clone each case body (and the default body) into its target block and
   // branch to the continuation block.
   static LogicalResult cloneIndexSwitchBodies(PatternRewriter &rewriter,
@@ -237,7 +235,7 @@ struct SCFIndexSwitchToCF : public OpRewritePattern<scf::IndexSwitchOp> {
     Block *curBlock = op->getBlock();
     Region *parentRegion = curBlock->getParent();
     Block *continueBlock = splitBlockForContinuation(rewriter, op);
-    addContinuationArguments(rewriter, op, loc, continueBlock);
+    addContinuationArguments(op, loc, continueBlock);
 
     unsigned numCases = op.getCases().size();
     auto insertPt = continueBlock->getIterator();
@@ -258,7 +256,7 @@ struct SCFIndexSwitchToCF : public OpRewritePattern<scf::IndexSwitchOp> {
       return rewriter.notifyMatchFailure(op, "expected scf.yield terminator");
 
     // Replace the original switch op with a branch into the check chain.
-    Block *entryDest = numCases ? checkBlocks[0] : defaultBlock;
+    Block *entryDest = numCases != 0 ? checkBlocks[0] : defaultBlock;
     rewriter.setInsertionPointAfter(op);
     rewriter.create<cf::BranchOp>(loc, entryDest, ValueRange{});
     rewriter.eraseOp(op);
@@ -291,16 +289,16 @@ struct SCFWhileToCF : public OpRewritePattern<scf::WhileOp> {
     return rewriter.splitBlock(op->getBlock(), std::next(whileIt));
   }
 
-  static void addWhileExitArguments(PatternRewriter &rewriter, scf::WhileOp op,
-                                    Location loc, Block *afterWhileBlock) {
-    SmallVector<Value> exitArgs;
-    exitArgs.reserve(op.getNumResults());
-    for (Type type : op.getResultTypes()) {
-      exitArgs.push_back(afterWhileBlock->addArgument(type, loc));
-    }
-    for (auto result : llvm::enumerate(op.getResults())) {
-      result.value().replaceAllUsesWith(exitArgs[result.index()]);
-    }
+  static void addWhileExitArguments(scf::WhileOp op, Location loc, Block* afterWhileBlock)
+  {
+      SmallVector<Value> exitArgs;
+      exitArgs.reserve(op.getNumResults());
+      for (Type type : op.getResultTypes()) {
+          exitArgs.push_back(afterWhileBlock->addArgument(type, loc));
+      }
+      for (auto result : llvm::enumerate(op.getResults())) {
+          result.value().replaceAllUsesWith(exitArgs[result.index()]);
+      }
   }
 
   LogicalResult matchAndRewrite(scf::WhileOp op,
@@ -317,7 +315,7 @@ struct SCFWhileToCF : public OpRewritePattern<scf::WhileOp> {
 
     auto loc = op.getLoc();
     Block *afterWhileBlock = splitAfterWhileBlock(rewriter, op);
-    addWhileExitArguments(rewriter, op, loc, afterWhileBlock);
+    addWhileExitArguments(op, loc, afterWhileBlock);
 
     // SCFToControlFlow may already have lowered nested scf.if/scf.for ops in
     // either region, leaving the region with several blocks. Move all of the
@@ -623,9 +621,9 @@ struct EmitPTOManualPass
     LLVM_DEBUG(llvm::dbgs() << "DEBUG: Start PTOToEmitC Pass\n");
     MLIRContext *ctx = &getContext();
     ModuleOp mop = getOperation();
-
-    if (failed(validateAndAnnotate(mop)))
+    if (failed(validateAndAnnotate(mop))) {
       return signalPassFailure();
+    }
 
     emitPreambleHelpers(mop, ctx);
 
@@ -637,50 +635,57 @@ struct EmitPTOManualPass
       return signalPassFailure();
     if (failed(runMainConversion(mop, ctx, typeConverter)))
       return signalPassFailure();
-    if (failed(cleanupConversionCasts(mop, ctx, typeConverter)))
-      return signalPassFailure();
+    if (failed(cleanupConversionCasts(mop, typeConverter))) {
+        return signalPassFailure();
+    }
     eraseDeadPureEmitCValueOps(mop);
     fixLoopInductionVariables(mop);
     eraseDeadTileVariables(mop);
     eraseDeadConstants(mop);
   }
 
-  LogicalResult validateAndAnnotate(ModuleOp mop) {
-    if (failed(pto::validatePTOEntryFunctions(mop)))
-  return failure();
-    if (failed(pto::validateStructProvenance(mop)))
-  return failure();
-    pto::annotatePTOEntryFunctions(mop);
+  LogicalResult validateAndAnnotate(ModuleOp mop) const
+  {
+      if (failed(pto::validatePTOEntryFunctions(mop))) {
+          return failure();
+      }
+      if (failed(pto::validateStructProvenance(mop))) {
+          return failure();
+      }
+      pto::annotatePTOEntryFunctions(mop);
 
-    // A3 requires explicit FFTS base setup for inter-core sync ops.
-    if (targetArch == PTOArch::A3) {
-  bool hasMissingSetFFTs = false;
-  for (auto func : mop.getOps<func::FuncOp>()) {
-    if (!hasInterCoreSyncOp(func))
-      continue;
-    if (hasSetFFTsOp(func))
-      continue;
-    hasMissingSetFFTs = true;
-    func.emitError()
-        << "A3 inter-core sync requires explicit `pto.set_ffts` in the "
-           "same function when using `pto.sync.set`/`pto.sync.wait`";
-  }
-  if (hasMissingSetFFTs)
-    return failure();
-    }
-    return success();
+      // A3 requires explicit FFTS base setup for inter-core sync ops.
+      if (targetArch == PTOArch::A3) {
+          bool hasMissingSetFFTs = false;
+          for (auto func : mop.getOps<func::FuncOp>()) {
+              if (!hasInterCoreSyncOp(func)) {
+                  continue;
+              }
+              if (hasSetFFTsOp(func)) {
+                  continue;
+              }
+              hasMissingSetFFTs = true;
+              func.emitError() << "A3 inter-core sync requires explicit `pto.set_ffts` in the "
+                                  "same function when using `pto.sync.set`/`pto.sync.wait`";
+          }
+          if (hasMissingSetFFTs) {
+              return failure();
+          }
+      }
+      return success();
   }
 
   // Walk the module to decide which runtime helper snippets are needed and
   // emit the pto-inst include plus helper definitions at module start.
-  void emitPreambleHelpers(ModuleOp mop, MLIRContext *ctx) {
-    HelperFlags flags = collectHelperFlags(mop);
+  void emitPreambleHelpers(ModuleOp mop, MLIRContext* ctx) const
+  {
+      HelperFlags flags = collectHelperFlags(mop);
 
-    OpBuilder builder(ctx);
-    builder.setInsertionPointToStart(mop.getBody());
-    emitPreambleIncludesAndStructs(mop, builder, flags);
-    emitPreambleRuntimeHelpers(mop, builder, flags);
-    emitPreambleTailHelpers(mop, builder, flags);
+      OpBuilder builder(ctx);
+      builder.setInsertionPointToStart(mop.getBody());
+      emitPreambleIncludesAndStructs(mop, builder, flags);
+      emitPreambleRuntimeHelpers(mop, builder, flags);
+      emitPreambleTailHelpers(mop, builder, flags);
   }
 
   // Which runtime helper snippets the module needs, decided by walking ops.
@@ -831,44 +836,42 @@ static inline To ptoas_bitcast(From from) {
     }
   }
 
-
   // Pre-lower SCF constructs not handled by SCFToEmitC into supported forms.
   // Lower whole functions whose SCF nesting cannot stay single-block via
   // SCFToControlFlow. Returns failure when the partial conversion fails.
-  LogicalResult lowerWholeFunctionSCF(ModuleOp mop, MLIRContext *ctx,
-                                      SmallVectorImpl<func::FuncOp> &functions) {
-    bool needsAnySCFToCF = false;
-    for (func::FuncOp func : functions) {
-      if (needsWholeFunctionSCFToCF(func)) {
-        needsAnySCFToCF = true;
-        break;
+  LogicalResult lowerWholeFunctionSCF(MLIRContext* ctx, SmallVectorImpl<func::FuncOp>& functions) const
+  {
+      bool needsAnySCFToCF = false;
+      for (func::FuncOp func : functions) {
+          if (needsWholeFunctionSCFToCF(func)) {
+              needsAnySCFToCF = true;
+              break;
+          }
       }
-    }
-    if (!needsAnySCFToCF)
+      if (!needsAnySCFToCF) {
+          return success();
+      }
+
+      RewritePatternSet scfToCfPatterns(ctx);
+      populateSCFToControlFlowConversionPatterns(scfToCfPatterns);
+      FrozenRewritePatternSet frozenSCFToCF(std::move(scfToCfPatterns));
+
+      ConversionTarget scfToCfTarget(*ctx);
+      // Only eliminate the single-block SCF constructs; we'll pre-lower
+      // scf.while/index_switch/execute_region ourselves afterwards.
+      scfToCfTarget.addIllegalOp<scf::ForallOp, scf::ForOp, scf::IfOp, scf::ParallelOp, scf::WhileOp>();
+      scfToCfTarget.markUnknownOpDynamicallyLegal([](Operation*) { return true; });
+
+      for (func::FuncOp func : functions) {
+          if (!needsWholeFunctionSCFToCF(func)) {
+              continue;
+          }
+          if (failed(applyPartialConversion(func, scfToCfTarget, frozenSCFToCF))) {
+              func.emitError() << "failed to lower nested SCF to ControlFlow (SCFToCF)";
+              return failure();
+          }
+      }
       return success();
-
-    RewritePatternSet scfToCfPatterns(ctx);
-    populateSCFToControlFlowConversionPatterns(scfToCfPatterns);
-    FrozenRewritePatternSet frozenSCFToCF(std::move(scfToCfPatterns));
-
-    ConversionTarget scfToCfTarget(*ctx);
-    // Only eliminate the single-block SCF constructs; we'll pre-lower
-    // scf.while/index_switch/execute_region ourselves afterwards.
-    scfToCfTarget.addIllegalOp<scf::ForallOp, scf::ForOp, scf::IfOp,
-                               scf::ParallelOp, scf::WhileOp>();
-    scfToCfTarget.markUnknownOpDynamicallyLegal(
-        [](Operation *) { return true; });
-
-    for (func::FuncOp func : functions) {
-      if (!needsWholeFunctionSCFToCF(func))
-        continue;
-      if (failed(applyPartialConversion(func, scfToCfTarget, frozenSCFToCF))) {
-        func.emitError()
-            << "failed to lower nested SCF to ControlFlow (SCFToCF)";
-        return failure();
-      }
-    }
-    return success();
   }
 
   // Verify no SCF/CF op that EmitC cannot print survived pre-lowering.
@@ -894,8 +897,9 @@ static inline To ptoas_bitcast(From from) {
   LogicalResult preLowerSCF(ModuleOp mop, MLIRContext *ctx) {
     SmallVector<func::FuncOp> functions;
     mop.walk([&](func::FuncOp func) { functions.push_back(func); });
-    if (failed(lowerWholeFunctionSCF(mop, ctx, functions)))
-      return failure();
+    if (failed(lowerWholeFunctionSCF(ctx, functions))) {
+        return failure();
+    }
 
     RewritePatternSet scfLoweringPatterns(ctx);
     scfLoweringPatterns.add<SCFExecuteRegionInline, SCFExecuteRegionToCF,
@@ -906,104 +910,100 @@ static inline To ptoas_bitcast(From from) {
     return verifyNoUnsupportedSCF(mop);
   }
 
-  LogicalResult convertStructuralTypes(ModuleOp mop, MLIRContext *ctx,
-                                       TypeConverter &typeConverter) {
-    // 2. Pre-convert SCF structural op types (e.g. scf.if/scf.for results)
-    // using the same type converter. This avoids creating emitc.variable with
-    // unsupported types such as memref.
-    {
-  RewritePatternSet scfTypePatterns(ctx);
-  ConversionTarget scfTypeTarget(*ctx);
-  scf::populateSCFStructuralTypeConversionsAndLegality(
-      typeConverter, scfTypePatterns, scfTypeTarget);
-  scfTypeTarget.markUnknownOpDynamicallyLegal(
-      [](Operation *) { return true; });
+  LogicalResult convertStructuralTypes(ModuleOp mop, MLIRContext* ctx, TypeConverter& typeConverter) const
+  {
+      // 2. Pre-convert SCF structural op types (e.g. scf.if/scf.for results)
+      // using the same type converter. This avoids creating emitc.variable with
+      // unsupported types such as memref.
+      {
+          RewritePatternSet scfTypePatterns(ctx);
+          ConversionTarget scfTypeTarget(*ctx);
+          scf::populateSCFStructuralTypeConversionsAndLegality(typeConverter, scfTypePatterns, scfTypeTarget);
+          scfTypeTarget.markUnknownOpDynamicallyLegal([](Operation*) { return true; });
 
-  if (failed(applyPartialConversion(mop, scfTypeTarget,
-                                    std::move(scfTypePatterns)))) {
-    mop.emitError("failed to reconcile SCF structural types");
-    return failure();
-  }
-    }
+          if (failed(applyPartialConversion(mop, scfTypeTarget, std::move(scfTypePatterns)))) {
+              mop.emitError("failed to reconcile SCF structural types");
+              return failure();
+          }
+      }
 
-    if (failed(rematerializeFixpipeQuantBindings(mop))) {
-  mop.emitError("failed to rematerialize fixpipe quant bindings");
-  return failure();
-    }
-    if (failed(insertFixpipeConfigAliases(mop))) {
-  mop.emitError("failed to insert fixpipe config aliases");
-  return failure();
-    }
+      if (failed(rematerializeFixpipeQuantBindings(mop))) {
+          mop.emitError("failed to rematerialize fixpipe quant bindings");
+          return failure();
+      }
+      if (failed(insertFixpipeConfigAliases(mop))) {
+          mop.emitError("failed to insert fixpipe config aliases");
+          return failure();
+      }
 
-    return success();
+      return success();
   }
 
-  LogicalResult runMainConversion(ModuleOp mop, MLIRContext *ctx,
-                                  PTOToEmitCTypeConverter &typeConverter) {
-    // 3. 配置转换目标
-    ConversionTarget target(*ctx);
+  LogicalResult runMainConversion(ModuleOp mop, MLIRContext* ctx, PTOToEmitCTypeConverter& typeConverter) const
+  {
+      // 3. 配置转换目标
+      ConversionTarget target(*ctx);
 
-    target.addIllegalDialect<memref::MemRefDialect>();
-    target.addIllegalDialect<pto::PTODialect>();
-    target.addIllegalDialect<arith::ArithDialect>();
-    target.addIllegalDialect<mlir::scf::SCFDialect>();
+      target.addIllegalDialect<memref::MemRefDialect>();
+      target.addIllegalDialect<pto::PTODialect>();
+      target.addIllegalDialect<arith::ArithDialect>();
+      target.addIllegalDialect<mlir::scf::SCFDialect>();
 
-    // If we introduced CFG branches (e.g. from scf.while), make sure they are
-    // updated to use legalized operand types.
-    target.addDynamicallyLegalOp<cf::BranchOp, cf::CondBranchOp>(
-        [&](Operation *op) {
-          return isLegalForBranchOpInterfaceTypeConversionPattern(
-              op, typeConverter);
-        });
+      // If we introduced CFG branches (e.g. from scf.while), make sure they are
+      // updated to use legalized operand types.
+      target.addDynamicallyLegalOp<cf::BranchOp, cf::CondBranchOp>(
+          [&](Operation* op) { return isLegalForBranchOpInterfaceTypeConversionPattern(op, typeConverter); });
 
-    // [关键] 允许 Cast 存在，最后统一清理
-    target.addLegalOp<UnrealizedConversionCastOp>();
+      // [关键] 允许 Cast 存在，最后统一清理
+      target.addLegalOp<UnrealizedConversionCastOp>();
 
-    target.addIllegalOp<func::ReturnOp>();
-    target.addIllegalOp<func::FuncOp>();
-    target.addIllegalOp<func::CallOp>();
+      target.addIllegalOp<func::ReturnOp>();
+      target.addIllegalOp<func::FuncOp>();
+      target.addIllegalOp<func::CallOp>();
 
-    target.addLegalDialect<emitc::EmitCDialect>();
-    target.addLegalOp<ModuleOp>();
+      target.addLegalDialect<emitc::EmitCDialect>();
+      target.addLegalOp<ModuleOp>();
 
-    RewritePatternSet patterns(ctx);
-    populatePTOToEmitCPatterns(patterns, typeConverter, ctx, targetArch);
+      RewritePatternSet patterns(ctx);
+      populatePTOToEmitCPatterns(patterns, typeConverter, ctx, targetArch);
 
-    // 4. 执行转换
-    if (failed(applyPartialConversion(mop, target, std::move(patterns)))) {
-  llvm::errs() << "Conversion FAILED! Rolling back executed.\n";
-  return failure();
-    }
+      // 4. 执行转换
+      if (failed(applyPartialConversion(mop, target, std::move(patterns)))) {
+          llvm::errs() << "Conversion FAILED! Rolling back executed.\n";
+          return failure();
+      }
 
-    {
-  SmallVector<pto::MakeTensorViewOp> deadStaticMakeViews;
-  mop.walk([&](pto::MakeTensorViewOp op) {
-    if (op->use_empty())
-      deadStaticMakeViews.push_back(op);
-  });
-  for (pto::MakeTensorViewOp op : deadStaticMakeViews)
-    op.erase();
-    }
+      {
+          SmallVector<pto::MakeTensorViewOp> deadStaticMakeViews;
+          mop.walk([&](pto::MakeTensorViewOp op) {
+              if (op->use_empty()) {
+                  deadStaticMakeViews.push_back(op);
+              }
+          });
+          for (pto::MakeTensorViewOp op : deadStaticMakeViews) {
+              op.erase();
+          }
+      }
 
-    // =========================================================================
-    // 5. [终极清理] 
-    // 顺序至关重要：
-    // Step A: 先移除所有 Cast，让 Loop 的 Operand 类型变成底层类型 (如 int32)
-    // Step B: 再根据新的 Operand 类型，修复 Loop IV 的类型
-    // =========================================================================
-    return success();
+      // =========================================================================
+      // 5. [终极清理]
+      // 顺序至关重要：
+      // Step A: 先移除所有 Cast，让 Loop 的 Operand 类型变成底层类型 (如 int32)
+      // Step B: 再根据新的 Operand 类型，修复 Loop IV 的类型
+      // =========================================================================
+      return success();
   }
 
   // Step A/A2/A3: lower or drop leftover UnrealizedConversionCast ops and
   // re-materialize variable reads at their use sites.
-  LogicalResult cleanupConversionCasts(ModuleOp mop, MLIRContext *ctx,
-                                       TypeConverter &typeConverter) {
-    (void)ctx;
-    if (failed(lowerUnrealizedCasts(mop, typeConverter)))
-      return failure();
-    sinkVariableReadCasts(mop);
-    sinkTileDataReads(mop);
-    return success();
+  LogicalResult cleanupConversionCasts(ModuleOp mop, TypeConverter& typeConverter)
+  {
+      if (failed(lowerUnrealizedCasts(mop, typeConverter))) {
+          return failure();
+      }
+      sinkVariableReadCasts(mop);
+      sinkTileDataReads(mop);
+      return success();
   }
 
   // Step A: drop or lower leftover UnrealizedConversionCast ops so the C++
@@ -1018,13 +1018,12 @@ static inline To ptoas_bitcast(From from) {
       return failure();
     }
 
+    // Dead or identity/bridge casts whose input already carries the lowered
+    // value: drop or fold the cast away by forwarding the input.
     Value input = cast.getOperand(0);
     Value output = cast.getResult(0);
     Type inTy = input.getType();
     Type outTy = output.getType();
-
-    // Dead or identity/bridge casts whose input already carries the lowered
-    // value: drop or fold the cast away by forwarding the input.
     if (isFoldableBridgeCast(output, inTy, outTy, typeConverter)) {
       output.replaceAllUsesWith(input);
       return success();
@@ -1085,25 +1084,27 @@ static inline To ptoas_bitcast(From from) {
     return opaqueTy && opaqueTy.getValue() == "int64_t";
   }
 
-  LogicalResult lowerUnrealizedCasts(ModuleOp mop,
-                                     TypeConverter &typeConverter) {
-    llvm::SmallVector<UnrealizedConversionCastOp> castsToErase;
-    bool castCleanupFailed = false;
-    mop.walk([&](UnrealizedConversionCastOp cast) {
-      if (castCleanupFailed)
-        return;
+  LogicalResult lowerUnrealizedCasts(ModuleOp mop, TypeConverter& typeConverter) const
+  {
+      llvm::SmallVector<UnrealizedConversionCastOp> castsToErase;
+      bool castCleanupFailed = false;
+      mop.walk([&](UnrealizedConversionCastOp cast) {
+          if (castCleanupFailed) {
+              return;
+          }
 
-      if (failed(lowerSingleCast(cast, typeConverter))) {
-        castCleanupFailed = true;
-        return;
+          if (failed(lowerSingleCast(cast, typeConverter))) {
+              castCleanupFailed = true;
+              return;
+          }
+          castsToErase.push_back(cast);
+      });
+
+      for (auto cast : castsToErase) {
+          cast.erase();
       }
-      castsToErase.push_back(cast);
-    });
 
-    for (auto cast : castsToErase)
-      cast.erase();
-
-    return failure(castCleanupFailed);
+      return failure(castCleanupFailed);
   }
 
   // Step A2: re-materialize casts of emitc.variable reads at each use site so
@@ -1187,79 +1188,84 @@ static inline To ptoas_bitcast(From from) {
   }
   }
 
-
   // Step B: keep emitc.for induction-variable types in sync with bounds.
-  void fixLoopInductionVariables(ModuleOp mop) {
-    // --- Step B: 修复 Loop 归纳变量 (IV) ---
-    // 此时 emitc.for 的 operand 已经是 int32 了，我们检查 IV 是否匹配，不匹配则修正
-    mop.walk([&](emitc::ForOp forOp) {
-   Type boundTy = forOp.getLowerBound().getType(); 
-   BlockArgument iv = forOp.getBody()->getArgument(0); 
-   
-   if (iv.getType() != boundTy) {
-     iv.setType(boundTy); // 强制将 IV 类型 (index) 修改为与边界一致 (int32)
-   }
-    });
+  void fixLoopInductionVariables(ModuleOp mop) const
+  {
+      // --- Step B: 修复 Loop 归纳变量 (IV) ---
+      // 此时 emitc.for 的 operand 已经是 int32 了，我们检查 IV 是否匹配，不匹配则修正
+      mop.walk([&](emitc::ForOp forOp) {
+          Type boundTy = forOp.getLowerBound().getType();
+          BlockArgument iv = forOp.getBody()->getArgument(0);
+          if (iv.getType() != boundTy) {
+              iv.setType(boundTy); // 强制将 IV 类型 (index) 修改为与边界一致 (int32)
+          }
+      });
   }
 
   // Step C: remove tile variables that are never read (and their TASSIGNs).
-  void eraseDeadTileVariables(ModuleOp mop) {
-    // --- Step C: 消除冗余 Tile 变量 (Dead Code Elimination) [新增] ---
-    // 逻辑：如果一个 emitc.variable 没有被读取（use_empty），
-    // 那么它自己，以及给它赋值的 TASSIGN 都可以删除。
-    // 注意：TASSIGN(v15, v9) 会把 v15 作为 Operand 0 使用，所以 v15 不是严格的 use_empty。
-    // 我们需要检查：v15 是否除了 TASSIGN 之外没有其他 User。
+  void eraseDeadTileVariables(ModuleOp mop) const
+  {
+      // --- Step C: 消除冗余 Tile 变量 (Dead Code Elimination) [新增] ---
+      // 逻辑：如果一个 emitc.variable 没有被读取（use_empty），
+      // 那么它自己，以及给它赋值的 TASSIGN 都可以删除。
+      // 注意：TASSIGN(v15, v9) 会把 v15 作为 Operand 0 使用，所以 v15 不是严格的 use_empty。
+      // 我们需要检查：v15 是否除了 TASSIGN 之外没有其他 User。
 
-    llvm::SmallVector<emitc::VariableOp> deadVars;
-    mop.walk([&](emitc::VariableOp varOp) {
-    // 检查该变量的所有 User
-    bool isRead = false;
-    for (Operation* user : varOp.getResult().getUsers()) {
-        // 如果 User 是 TASSIGN 且变量是第0个参数(dst)，不算"读取"
-        if (auto call = dyn_cast<emitc::CallOpaqueOp>(user)) {
-            if (call.getCallee() == "TASSIGN" && call.getOperand(0) == varOp.getResult()) {
-                continue; // 这是一个赋值操作，不算有效使用
-            }
-            if (call.getCallee() == "PTOAS__TILE_DATA" &&
-                call.getNumResults() == 1 &&
-                call.getResult(0).use_empty())
-                continue;
-        }
-        // 如果还有其他用途（如 TLOAD, TMOV, TMATMUL），则该变量有用
-        isRead = true;
-        break;
-    }
+      llvm::SmallVector<emitc::VariableOp> deadVars;
+      mop.walk([&](emitc::VariableOp varOp) {
+          // 检查该变量的所有 User
+          bool isRead = false;
+          for (Operation* user : varOp.getResult().getUsers()) {
+              // 如果 User 是 TASSIGN 且变量是第0个参数(dst)，不算"读取"
+              if (auto call = dyn_cast<emitc::CallOpaqueOp>(user)) {
+                  if (call.getCallee() == "TASSIGN" && call.getOperand(0) == varOp.getResult()) {
+                      continue; // 这是一个赋值操作，不算有效使用
+                  }
+                  if (call.getCallee() == "PTOAS__TILE_DATA" && call.getNumResults() == 1 &&
+                      call.getResult(0).use_empty()) {
+                      continue;
+                  }
+              }
+              // 如果还有其他用途（如 TLOAD, TMOV, TMATMUL），则该变量有用
+              isRead = true;
+              break;
+          }
 
-    if (!isRead) {
-        deadVars.push_back(varOp);
-    }
-    });
+          if (!isRead) {
+              deadVars.push_back(varOp);
+          }
+      });
 
-    for (auto varOp : deadVars) {
-    // 1. 先删除所有使用该变量的 TASSIGN
-    llvm::SmallVector<Operation*> usersToErase;
-    for (Operation* user : varOp.getResult().getUsers()) {
-         // 上面已经确认过，剩下的 user 只能是 TASSIGN 或无使用的
-         // PTOAS__TILE_DATA。
-         usersToErase.push_back(user);
-    }
-    for (auto u : usersToErase) u->erase();
+      for (auto varOp : deadVars) {
+          // 1. 先删除所有使用该变量的 TASSIGN
+          llvm::SmallVector<Operation*> usersToErase;
+          for (Operation* user : varOp.getResult().getUsers()) {
+              // 上面已经确认过，剩下的 user 只能是 TASSIGN 或无使用的
+              // PTOAS__TILE_DATA。
+              usersToErase.push_back(user);
+          }
+          for (auto u : usersToErase) {
+              u->erase();
+          }
 
-    // 2. 删除变量定义本身
-    varOp.erase();
-    }
+          // 2. 删除变量定义本身
+          varOp.erase();
+      }
   }
 
-  void eraseDeadConstants(ModuleOp mop) {
-    llvm::SmallVector<emitc::ConstantOp> deadConsts;
-    mop.walk([&](emitc::ConstantOp constOp) {
-  if (constOp.getResult().use_empty())
-    deadConsts.push_back(constOp);
-    });
-    for (auto constOp : deadConsts)
-  constOp.erase();
+  void eraseDeadConstants(ModuleOp mop) const
+  {
+      llvm::SmallVector<emitc::ConstantOp> deadConsts;
+      mop.walk([&](emitc::ConstantOp constOp) {
+          if (constOp.getResult().use_empty()) {
+              deadConsts.push_back(constOp);
+          }
+      });
+      for (auto constOp : deadConsts) {
+          constOp.erase();
+      }
 
-    // =========================================================================
+      // =========================================================================
   }
   };
 } // namespace
@@ -1277,5 +1283,3 @@ std::unique_ptr<Pass> createEmitPTOManualPass(PTOArch arch) {
 
 } // namespace pto
 } // namespace mlir
-
-

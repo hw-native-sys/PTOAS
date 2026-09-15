@@ -33,8 +33,8 @@ static LogicalResult verifyTInsertA5(TInsertOp op) {
 }
 
 mlir::LogicalResult mlir::pto::TInsertOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult { return verifyTInsertA2A3(*this); };
-  auto verifyA5 = [&]() -> LogicalResult { return verifyTInsertA5(*this); };
+  auto verifyA2A3 = [this]() -> LogicalResult { return verifyTInsertA2A3(*this); };
+  auto verifyA5 = [this]() -> LogicalResult { return verifyTInsertA5(*this); };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
@@ -102,7 +102,7 @@ static LogicalResult verifyTFillPadElementTypes(Operation *op, Type srcTy,
   }
   if (srcB != dstB)
     return op->emitError("expects sizeof(src element) == sizeof(dst element)");
-  if (!(srcB == 1 || srcB == 2 || srcB == 4))
+  if (!(srcB == 1 || srcB == mlir::pto::kValue2 || srcB == mlir::pto::kValue4))
     return op->emitError("expects element size to be 1, 2, or 4 bytes");
   return success();
 }
@@ -144,10 +144,11 @@ static LogicalResult verifyTFillPadMatTypes(Operation *op, Type srcTy,
     auto dimToStr = [](int64_t dim) -> std::string {
       return dim == ShapedType::kDynamic ? "?" : std::to_string(dim);
     };
-    SmallVector<std::string, 4> mismatchFields;
+    SmallVector<std::string, mlir::pto::kValue4> mismatchFields;
     auto srcValid = getValidShapeVec(srcTy);
     auto dstValid = getValidShapeVec(dstTy);
-    if (srcValid.size() == 2 && dstValid.size() == 2) {
+    if (srcValid.size() == mlir::pto::kValue2 &&
+        dstValid.size() == mlir::pto::kValue2) {
       if (srcValid[0] != dstValid[0]) {
         mismatchFields.push_back("v_row (" + dimToStr(srcValid[0]) + " vs " +
                                  dimToStr(dstValid[0]) + ")");
@@ -181,7 +182,8 @@ static mlir::LogicalResult verifyTFillPadLike(Operation *op, Type srcTy,
                                               Type dstTy) {
   if (!isPTOShapedLike(srcTy) || !isPTOShapedLike(dstTy))
     return op->emitError("expects src/dst to be PTO shaped-like types");
-  if (getShapeVec(srcTy).size() != 2 || getShapeVec(dstTy).size() != 2)
+  if (getShapeVec(srcTy).size() != mlir::pto::kValue2 ||
+      getShapeVec(dstTy).size() != mlir::pto::kValue2)
     return op->emitError("expects rank-2 shaped types for src/dst");
   if (failed(verifyTFillPadElementTypes(op, srcTy, dstTy)) ||
       failed(verifyTFillPadShapeExpansion(op, srcTy, dstTy)) ||
@@ -233,7 +235,8 @@ static bool isSupportedGatherElemTypeA5Index(Type ty) {
   }
   if (auto it = dyn_cast<IntegerType>(ty)) {
     unsigned width = it.getWidth();
-    return width == 8 || width == 16 || width == 32;
+    return width == mlir::pto::kValue8 || width == mlir::pto::kValue16 ||
+           width == mlir::pto::kValue32;
   }
   return false;
 }
@@ -244,8 +247,8 @@ static unsigned getMaskGatherTimes(mlir::pto::MaskPatternAttr mp) {
     return 1;
   case mlir::pto::MaskPattern::P0101:
   case mlir::pto::MaskPattern::P1010:
-    return 2;
+    return mlir::pto::kValue2;
   default:
-    return 4;
+    return mlir::pto::kValue4;
   }
 }

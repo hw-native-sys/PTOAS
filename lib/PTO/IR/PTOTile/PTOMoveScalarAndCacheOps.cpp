@@ -29,17 +29,17 @@ static LogicalResult verifyTMovImpl(TMovOp op, bool isA5) {
 }
 
 mlir::LogicalResult mlir::pto::TMovOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult {
+  auto verifyA2A3 = [this]() -> LogicalResult {
     return verifyTMovImpl(*this, /*isA5=*/false);
   };
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [this]() -> LogicalResult {
     return verifyTMovImpl(*this, /*isA5=*/true);
   };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
 // 辅助函数：获取 Rank，支持 ShapedType 和 PTO TileTypes
-static int64_t getRankHelper(Type t) {
+static std::optional<int64_t> getRankHelper(Type t) {
   if (auto s = dyn_cast<RankedTensorType>(t)) {
     return s.getRank();
   }
@@ -49,7 +49,7 @@ static int64_t getRankHelper(Type t) {
   if (auto view = dyn_cast<pto::PartitionTensorViewType>(t)) {
     return view.getRank();
   }
-  return -1;
+  return std::nullopt;
 }
 
 static LogicalResult verifyMatmulLike(Operation *op, Type aTy, Type bTy, Type dstTy, bool checkRank = true) {
@@ -63,15 +63,15 @@ static LogicalResult verifyMatmulLike(Operation *op, Type aTy, Type bTy, Type ds
   }
 
   if (checkRank) {
-    int64_t aRank = getRankHelper(aTy);
-    int64_t bRank = getRankHelper(bTy);
-    int64_t dRank = getRankHelper(dstTy);
+    std::optional<int64_t> aRank = getRankHelper(aTy);
+    std::optional<int64_t> bRank = getRankHelper(bTy);
+    std::optional<int64_t> dRank = getRankHelper(dstTy);
 
     // 检查 Rank 一致性
-    if (aRank != -1 && dRank != -1 && aRank != dRank) {
+    if (aRank.has_value() && dRank.has_value() && *aRank != *dRank) {
       return op->emitOpError("expects a and dst to have the same rank");
     }
-    if (bRank != -1 && dRank != -1 && bRank != dRank) {
+    if (bRank.has_value() && dRank.has_value() && *bRank != *dRank) {
       return op->emitOpError("expects b and dst to have the same rank");
     }
   }
@@ -177,10 +177,12 @@ LogicalResult CmoCacheInvalidOp::verify() {
 }
 
 // ---- GetBufOp / RlsBufOp ----
+constexpr int64_t kMaxBufferId = mlir::pto::kValue32 - 1;
+
 static FailureOr<pto::PIPE> getConcreteSyncPipe(Operation *op,
                                                 Attribute opTypeAttr) {
   if (!opTypeAttr) {
-    op->emitOpError("expects 'op_type' attribute");
+    (void)op->emitOpError("expects 'op_type' attribute");
     return failure();
   }
   pto::PIPE pipe = pto::PIPE::PIPE_UNASSIGNED;
@@ -189,15 +191,15 @@ static FailureOr<pto::PIPE> getConcreteSyncPipe(Operation *op,
   } else {
     auto opType = parseSyncOpTypeLikeAttr(opTypeAttr);
     if (failed(opType)) {
-      op->emitOpError(
-          "expects 'op_type' to be pipe_event_type/sync_op_type/pipe, got ")
-          << opTypeAttr;
+      (void)(op->emitOpError(
+                 "expects 'op_type' to be pipe_event_type/sync_op_type/pipe, got ")
+             << opTypeAttr);
       return failure();
     }
     pipe = mapSyncOpTypeToPipe(*opType);
   }
   if (!isConcreteSyncPipe(pipe)) {
-    op->emitOpError(
+    (void)op->emitOpError(
         "expects 'op_type' to map to a concrete pipe, not PIPE_ALL/PIPE_UNASSIGNED");
     return failure();
   }
@@ -221,8 +223,9 @@ static LogicalResult verifyBufSyncOp(Operation *op, Attribute opTypeAttr,
     return op->emitOpError("expects 'buf_id' attribute");
   }
   int64_t bufId = bufIdAttr.getInt();
-  if (bufId < 0 || bufId > 31) {
-    return op->emitOpError("expects 'buf_id' in range [0, 31]");
+  if (bufId < 0 || bufId > kMaxBufferId) {
+    return op->emitOpError() << "expects 'buf_id' in range [0, "
+                             << kMaxBufferId << "]";
   }
 
   return verifyOptionalSyncMode(op, modeAttr);

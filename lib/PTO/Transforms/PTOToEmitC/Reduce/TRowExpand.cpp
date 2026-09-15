@@ -29,7 +29,7 @@ struct PTORowExpandToEmitC : public OpConversionPattern<pto::TRowExpandOp> {
     Value src = adaptor.getSrc();
     Value dst = adaptor.getDst();
 
-    SmallVector<Value, 2> operands{dst, src};
+    SmallVector<Value, kBasicRowExpandOperands> operands{dst, src};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TROWEXPAND",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
@@ -94,9 +94,6 @@ struct PTORowExpandDivToEmitC
 };
 
 using PTORowExpandAddToEmitC = PTORowExpandBinaryToEmitC<pto::TRowExpandAddOp>;
-
-
-
 using PTORowExpandExpdifToEmitC =
     PTORowExpandBinaryToEmitC<pto::TRowExpandExpdifOp>;
 using PTORowExpandMulToEmitC =

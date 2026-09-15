@@ -23,6 +23,28 @@ module {
     return %abs : !pto.vmi.vreg<256xsi16>
   }
 
+  func.func @vmi_to_vpto_absf_all_off(
+      %value: !pto.vmi.vreg<256xf16>) -> !pto.vmi.vreg<256xf16> {
+    %c0 = arith.constant 0 : index
+    %mask = pto.vmi.create_mask %c0
+        : index -> !pto.vmi.mask<256xpred>
+    %abs = pto.vmi.vabs %value, %mask {pmode = "zero"}
+        : !pto.vmi.vreg<256xf16>, !pto.vmi.mask<256xpred>
+        -> !pto.vmi.vreg<256xf16>
+    return %abs : !pto.vmi.vreg<256xf16>
+  }
+
+  func.func @vmi_to_vpto_absf_partial(
+      %value: !pto.vmi.vreg<128xf16>) -> !pto.vmi.vreg<128xf16> {
+    %c13 = arith.constant 13 : index
+    %mask = pto.vmi.create_mask %c13
+        : index -> !pto.vmi.mask<128xpred>
+    %abs = pto.vmi.vabs %value, %mask {pmode = "zero"}
+        : !pto.vmi.vreg<128xf16>, !pto.vmi.mask<128xpred>
+        -> !pto.vmi.vreg<128xf16>
+    return %abs : !pto.vmi.vreg<128xf16>
+  }
+
   // bf16: no absf — clear sign bit via bitcast + andi 0x7FFF (ASC vand path).
   func.func @vmi_to_vpto_abs_bf16(
       %value: !pto.vmi.vreg<128xbf16>) -> !pto.vmi.vreg<128xbf16> {
@@ -47,6 +69,18 @@ module {
 // CHECK-DAG: %[[AI0:.*]] = pto.vabs %[[I0]], {{.*}} : !pto.vreg<128xsi16>, !pto.mask<b16> -> !pto.vreg<128xsi16>
 // CHECK-DAG: %[[AI1:.*]] = pto.vabs %[[I1]], {{.*}} : !pto.vreg<128xsi16>, !pto.mask<b16> -> !pto.vreg<128xsi16>
 // CHECK: return %[[AI0]], %[[AI1]]
+
+// CHECK-LABEL: func.func @vmi_to_vpto_absf_all_off(
+// CHECK: %[[NONE0:.*]] = pto.pset_b16 "PAT_ALLF" : !pto.mask<b16>
+// CHECK: %[[NONE1:.*]] = pto.pset_b16 "PAT_ALLF" : !pto.mask<b16>
+// CHECK: %[[AZ0:.*]] = pto.vabs {{.*}}, %[[NONE0]] : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<128xf16>
+// CHECK: %[[AZ1:.*]] = pto.vabs {{.*}}, %[[NONE1]] : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<128xf16>
+// CHECK: return %[[AZ0]], %[[AZ1]]
+
+// CHECK-LABEL: func.func @vmi_to_vpto_absf_partial(
+// CHECK: %[[PARTIAL:.*]], {{.*}} = pto.plt_b16 {{.*}} : i32 -> !pto.mask<b16>, i32
+// CHECK: %[[AP:.*]] = pto.vabs {{.*}}, %[[PARTIAL]] : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<128xf16>
+// CHECK: return %[[AP]]
 
 // CHECK-LABEL: func.func @vmi_to_vpto_abs_bf16(
 // CHECK-DAG: pto.vbitcast

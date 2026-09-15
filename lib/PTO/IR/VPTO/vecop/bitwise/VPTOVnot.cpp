@@ -14,4 +14,6 @@ using namespace mlir;
 using namespace mlir::pto;
 using namespace mlir::pto::vecop_detail;
 
+// ODS fixes verifier callbacks to a non-const member signature.
+// NOLINTNEXTLINE(readability-make-member-function-const)
 LogicalResult VnotOp::verify() { return verifyUnaryVecOp(*this); }

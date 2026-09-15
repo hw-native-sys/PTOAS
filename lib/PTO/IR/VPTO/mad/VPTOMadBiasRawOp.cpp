@@ -12,6 +12,7 @@
 
 using namespace mlir;
 using namespace mlir::pto;
+using namespace mlir::pto::mad_detail;
 
 void MadBiasRawOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>

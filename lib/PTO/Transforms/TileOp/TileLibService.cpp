@@ -30,7 +30,7 @@ void mlir::pto::TileLibRuntime::install(
   getRuntimeService() = std::move(service);
 }
 
-void mlir::pto::TileLibRuntime::uninstall(TileLibService *service) {
+void mlir::pto::TileLibRuntime::uninstall(const TileLibService *service) {
   std::lock_guard<std::mutex> lock(getRuntimeMutex());
   if (getRuntimeService().get() == service) {
     getRuntimeService().reset();

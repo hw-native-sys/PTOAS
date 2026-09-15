@@ -10,6 +10,71 @@
 //===- VMIToVPTOPatternInternals1.inc - VMIToVPTO internals -*- C++ -*-===//
 //===----------------------------------------------------------------------===//
 
+/// Loads the one live element of a single-lane value.
+///
+/// `pto.vsldb` is a 32B block load whose base must be 32B aligned, which is
+/// stronger than the element alignment a `base + k` address guarantees.  VLD
+/// BRC reads that element from the effective address and broadcasts it; only
+/// lane 0 is semantically live, whether the value is dense or a one-group
+/// packet.
+static FailureOr<Value>
+emitScalarBroadcastLoad(Operation *op, Type elementType, VRegType resultType,
+                        Value source, Value offset,
+                        OneToNPatternRewriter &rewriter) {
+  std::optional<std::string> dist = getScalarBroadcastLoadDistToken(elementType);
+  if (!dist) {
+    (void)rewriter.notifyMatchFailure(
+        op, "single-lane load requires supported BRC load element width");
+    return failure();
+  }
+  return rewriter
+      .create<VldsOp>(op->getLoc(), resultType, /*updated_base=*/Type{}, source,
+                      offset, rewriter.getStringAttr(*dist))
+      .getResult();
+}
+
+/// Reads the selected contiguous 32B blocks without a full-carrier over-read.
+static FailureOr<Value> emitContiguousBlockLoad(
+    Operation *op, VMIVRegType resultVMIType, VRegType resultType, Value source,
+    Value offset, int64_t blockCount, OneToNPatternRewriter &rewriter) {
+  Location loc = op->getLoc();
+  const bool singleLane = resultVMIType.getElementCount() == 1;
+  if (singleLane) {
+    return emitScalarBroadcastLoad(op, resultVMIType.getElementType(),
+                                   resultType, source, offset, rewriter);
+  }
+
+  FailureOr<MaskType> maskType =
+      getMaskTypeForVReg(resultType, rewriter.getContext());
+  if (failed(maskType)) {
+    (void)rewriter.notifyMatchFailure(
+        op, "unsupported element type for short contiguous load mask");
+    return failure();
+  }
+  // VSLDB samples the predicate at the first element of each 32B block.
+  // A prefix covering the payload enables exactly the requested blocks;
+  // a prefix of blockCount bits would still select only the first block.
+  // Keep the existing one-block mask (and zero block stride) for short reads.
+  int64_t maskLanes = blockCount == 1 ? 1 : resultVMIType.getElementCount();
+  FailureOr<Value> blockMask =
+      createPrefixMaskForActiveLanes(loc, *maskType, maskLanes, rewriter);
+  if (failed(blockMask)) {
+    (void)rewriter.notifyMatchFailure(
+        op, "failed to create short contiguous load block mask");
+    return failure();
+  }
+  Value base =
+      rewriter.create<AddPtrOp>(loc, source.getType(), source, offset)
+          .getResult();
+  Value zeroI16 = rewriter.create<arith::ConstantIntOp>(loc, 0, 16);
+  Value blockStride =
+      blockCount == 1 ? zeroI16 : createI16Constant(loc, 1, rewriter);
+  return rewriter
+      .create<VsldbOp>(loc, resultType, /*updated_base=*/Type{}, base, blockStride,
+                       zeroI16, *blockMask)
+      .getResult();
+}
+
 struct OneToNVMILoadOpPattern : OneToNOpConversionPattern<VMILoadOp> {
   OneToNVMILoadOpPattern(TypeConverter &typeConverter, MLIRContext *context,
                          VMILoadSafetyPolicy loadSafety)
@@ -18,6 +83,38 @@ struct OneToNVMILoadOpPattern : OneToNOpConversionPattern<VMILoadOp> {
 
 private:
   VMILoadSafetyPolicy loadSafety;
+  std::optional<LogicalResult> lowerBoundedBlock(
+      VMILoadOp op, OneToNPatternRewriter &rewriter, Value source, Value offset,
+      VMIVRegType resultVMIType, ArrayRef<Type> resultTypes) const {
+    const int64_t blockCount =
+        pto::getVMIContiguousLoadBlockCount(resultVMIType);
+    // Scalar BRC needs only element alignment. Every VSLDB block, including
+    // a single masked block, requires an aligned effective address.
+    const bool boundedRead =
+        blockCount > 0 && isa<PtrType>(source.getType()) &&
+        resultTypes.size() == 1 &&
+        (resultVMIType.getElementCount() == 1 ||
+         isKnownAddressAligned(op.getSource(), op.getOffset(),
+                               resultVMIType.getElementType(),
+                               pto::kVMIVCGBlockBytes));
+    if (!boundedRead) {
+      return std::nullopt;
+    }
+    auto vregType = dyn_cast<VRegType>(resultTypes.front());
+    if (!vregType) {
+      return rewriter.notifyMatchFailure(op, "load result must be vreg");
+    }
+    FailureOr<Value> loaded = emitContiguousBlockLoad(
+        op, resultVMIType, vregType, source, offset, blockCount, rewriter);
+    if (failed(loaded)) {
+      return failure();
+    }
+    SmallVector<Value> results{*loaded};
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
   struct LoadPhysicalPlan {
     Value source;
     Value offset;
@@ -434,6 +531,11 @@ public:
     if (laneStrideDist) {
       return lowerLaneStride(op, rewriter, *source, *offset, resultVMIType,
                              resultTypes, *laneStrideDist);
+    }
+
+    if (auto bounded = lowerBoundedBlock(op, rewriter, *source, *offset,
+                                          resultVMIType, resultTypes)) {
+      return *bounded;
     }
 
     FailureOr<LoadPhysicalPlan> plan =

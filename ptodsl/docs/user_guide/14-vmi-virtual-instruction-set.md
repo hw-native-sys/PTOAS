@@ -195,6 +195,26 @@ Dist-mode behavior:
 - `"dintlv"`: deinterleaved load, returning an `(even, odd)` pair.
 - `"brc"`: broadcast load from one source element, returning one VMI vector.
 
+**Bounded contiguous loads.** Public `size` values are
+`1/2/4/8/64/128/256`. A one-lane load reads one scalar and requires only element
+alignment and that scalar to be readable. For multi-element loads, address
+alignment and readable extent are independent requirements:
+
+- Payloads of at most 32 bytes require a provably 32-byte-aligned effective
+  address and an entire readable 32-byte interval starting at that address.
+- Payloads larger than 32 bytes but smaller than 256 bytes can use bounded
+  block access when their byte count is a multiple of 32, their effective
+  address is provably 32-byte aligned, and the whole payload is readable.
+  Thus 64/128 `ui8` lanes read 64/128 bytes.
+
+The effective address includes the element offset. Dynamic offsets can be
+accepted when their alignment is provable; an unknown offset does not establish
+alignment. Without that proof, or for a partial extra block, another supported
+access sequence needs an independent proof that its complete physical read
+range is safe. A raw UB pointer carries no allocation extent for that proof,
+so unsupported cases are rejected at compilation. A consumer mask does not
+shorten the read range. Full physical-register loads retain their existing rules.
+
 **Mode 2: `group`**
 
 Use this family for grouped row-strided accesses.
@@ -1084,13 +1104,13 @@ The accumulator is both the input and the result value.
 
 **Description**: Distribution histogram (dhistv2). Counts per-bin
 occurrences of `source` values and adds them to the accumulator `acc`,
-producing a 256-bin unsigned 16-bit result.
+producing a 128- or 256-bin unsigned 16-bit result.
 
 **Parameters**:
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `acc` | `VRegType` | Accumulator vector (256×ui16) |
+| `acc` | `VRegType` | Accumulator vector (128×ui16 or 256×ui16) |
 | `source` | `VRegType` | Source values (N×ui8) |
 | `mask` | VMI mask | **Required.** Predicate mask (b8 granularity) |
 
@@ -1102,7 +1122,12 @@ producing a 256-bin unsigned 16-bit result.
 
 **Constraints**:
 - PTODSL infers the result vector type from `acc`; it must be the matching
-  256×ui16 histogram accumulator layout.
+  128×ui16 or 256×ui16 histogram accumulator layout.
+- `source` and `mask` must have equal logical lane counts, chosen from
+  `1/2/4/8/64/128/256`. PTODSL raises `ValueError` for other counts before
+  emitting the operation. Histogram bin count is independent of source lanes.
+- The logical mask is `pred` (assigned to b8); physical padding lanes do not
+  contribute to the histogram.
 
 ---
 
@@ -1116,7 +1141,7 @@ as `vdhist` but each bin accumulates the sum of counts for all bins ≤ its inde
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `acc` | `VRegType` | Accumulator vector (256×ui16) |
+| `acc` | `VRegType` | Accumulator vector (128×ui16 or 256×ui16) |
 | `source` | `VRegType` | Source values (N×ui8) |
 | `mask` | VMI mask | **Required.** Predicate mask (b8 granularity) |
 
@@ -1128,7 +1153,12 @@ as `vdhist` but each bin accumulates the sum of counts for all bins ≤ its inde
 
 **Constraints**:
 - PTODSL infers the result vector type from `acc`; it must be the matching
-  256×ui16 histogram accumulator layout.
+  128×ui16 or 256×ui16 histogram accumulator layout.
+- `source` and `mask` must have equal logical lane counts, chosen from
+  `1/2/4/8/64/128/256`. PTODSL raises `ValueError` for other counts before
+  emitting the operation. Histogram bin count is independent of source lanes.
+- The logical mask is `pred` (assigned to b8); physical padding lanes do not
+  contribute to the histogram.
 
 ---
 
@@ -1201,9 +1231,28 @@ irregular memory locations using per-lane element offsets.
 | `destination` | `PtrType` (ub) | UB destination pointer |
 | `offsets` | `VRegType` | Per-lane element offsets (integer VMI vector) |
 | `mask` | VMI mask | **Required.** Predicate mask gating lane participation |
-| `pmode` | `str` or `None` | Optional predicate mode: Only support `"zero"`, it writes 0 |
+| `pmode` | `str` or `None` | Direct lowering accepts `None` or `"zero"`; inactive requests perform no write |
 
 **Returns**: None (side-effect operation).
+
+**Supported lane counts**: `value`, `offsets`, and `mask` must have the
+same logical lane count, chosen from `1/2/4/8/64/128/256`. PTODSL rejects other
+counts with `ValueError`, including `96`; this policy does not restrict compiler
+internal VMI shapes. The three operands must lower to unit-stride contiguous
+layouts and the destination must be a UB pointer. Active offsets must be valid
+and pairwise distinct.
+
+B32 uses 32-bit indices and B16/B8 use 16-bit indices. B32/B16 partial physical
+chunks intersect the user mask with a valid-lane prefix. Full chunks reuse the
+original mask. B8 keeps dense logical bytes and a logical b8 mask; lowering
+expands each group of at most 128 bytes into the low byte of 128 B16 request
+slots, and unpacks the corresponding mask half to b16. A 256-lane byte scatter
+therefore emits two physical request groups. Inactive and padding requests
+perform no writes. `pmode=None` or `"zero"` use this path; `"merge"` remains
+unsupported by the existing scatter lowering.
+
+`create_mask(96, size=128)` is valid: 96 is the active prefix length, while 128
+is the logical lane count. `create_mask(96, size=96)` is invalid.
 
 **Example**:
 

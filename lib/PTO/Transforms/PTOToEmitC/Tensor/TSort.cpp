@@ -39,7 +39,7 @@ LogicalResult matchAndRewrite(pto::TMrgSortOp op, OpAdaptor adaptor,
     Value dst = adaptor.getDsts().front();
     Value blockLen = adaptor.getBlockLen();
 
-    SmallVector<Value, 3> operands{dst, src, blockLen};
+    SmallVector<Value, mlir::pto::kValue3> operands{dst, src, blockLen};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TMRGSORT",
         ArrayAttr{}, ArrayAttr{}, operands);
@@ -58,18 +58,18 @@ LogicalResult matchAndRewrite(pto::TMrgSortOp op, OpAdaptor adaptor,
     Value tmp = adaptor.getTmp();
     Value excuted = adaptor.getExcuted();
 
-    SmallVector<Value, 4> srcs;
+    SmallVector<Value, mlir::pto::kValue4> srcs;
     srcs.reserve(adaptor.getSrcs().size());
     for (Value v : adaptor.getSrcs())
       srcs.push_back(v);
 
     auto dstOT = mlir::dyn_cast<emitc::OpaqueType>(dst.getType());
     auto tmpOT = mlir::dyn_cast<emitc::OpaqueType>(tmp.getType());
-    if (!dstOT || !tmpOT || srcs.size() < 2 || srcs.size() > 4)
+    if (!dstOT || !tmpOT || srcs.size() < mlir::pto::kValue2 || srcs.size() > mlir::pto::kValue4)
       return op.emitOpError("format2 expects dst/tmp tilebufs and 2 to 4 srcs");
 
-    SmallVector<Attribute, 8> targs;
-    targs.reserve(2 + srcs.size() + 1);
+    SmallVector<Attribute, mlir::pto::kValue8> targs;
+    targs.reserve(mlir::pto::kValue2 + srcs.size() + 1);
     targs.push_back(emitc::OpaqueAttr::get(ctx, dstOT.getValue().str()));
     targs.push_back(emitc::OpaqueAttr::get(ctx, tmpOT.getValue().str()));
     for (Value v : srcs) {
@@ -81,7 +81,7 @@ LogicalResult matchAndRewrite(pto::TMrgSortOp op, OpAdaptor adaptor,
     targs.push_back(emitc::OpaqueAttr::get(ctx, op.getExhausted() ? "true" : "false"));
     ArrayAttr templateArgs = rewriter.getArrayAttr(targs);
 
-    SmallVector<Value, 7> operands{dst, excuted, tmp};
+    SmallVector<Value, mlir::pto::kValue7> operands{dst, excuted, tmp};
     operands.append(srcs.begin(), srcs.end());
 
     rewriter.create<emitc::CallOpaqueOp>(
@@ -104,7 +104,7 @@ struct PTOSORT32SToEmitC : public OpConversionPattern<pto::TSort32Op> {
     Value idx = adaptor.getIdx();
     Value tmp = op.getTmp() ? adaptor.getTmp() : Value();
 
-    SmallVector<Value, 4> operands;
+    SmallVector<Value, mlir::pto::kValue4> operands;
     if (tmp) {
       operands.assign({dst, src, idx, tmp});
     } else {

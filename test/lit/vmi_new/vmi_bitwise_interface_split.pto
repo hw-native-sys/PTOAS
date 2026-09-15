@@ -1,0 +1,59 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// The dual-form bitwise ops split onto the vreg interface (`pto.vmi.andi/not`)
+// and the mask interface (`pto.vmi.mask_and`).  The vreg interface keeps the
+// governed predicate mask, so the VPTO op stays predicated by that mask instead
+// of falling back to a freshly materialised all-true mask.
+
+// RUN: pto-test-opt %s -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-lower-unified-to-legacy | FileCheck %s --check-prefix=SPLIT
+// RUN: pto-test-opt %s -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+
+module {
+  func.func @vmi_bitwise_interface_split(
+      %lhs: !pto.vmi.vreg<256xsi32>,
+      %rhs: !pto.vmi.vreg<256xsi32>,
+      %dst: !pto.ptr<si32, ub>,
+      %off: index) {
+    %c0 = arith.constant 0 : index
+    %c7 = arith.constant 7 : index
+    %all_off = pto.vmi.create_mask %c0 : index -> !pto.vmi.mask<256xpred>
+    %tail = pto.vmi.create_mask %c7 : index -> !pto.vmi.mask<256xpred>
+    %mask_and = pto.vmi.vand %tail, %all_off
+        : !pto.vmi.mask<256xpred>, !pto.vmi.mask<256xpred>
+        -> !pto.vmi.mask<256xpred>
+    %and = pto.vmi.vand %lhs, %rhs, %tail {pmode = "zero"}
+        : !pto.vmi.vreg<256xsi32>, !pto.vmi.vreg<256xsi32>,
+          !pto.vmi.mask<256xpred> -> !pto.vmi.vreg<256xsi32>
+    %not = pto.vmi.vnot %and, %mask_and
+        : !pto.vmi.vreg<256xsi32>, !pto.vmi.mask<256xpred>
+        -> !pto.vmi.vreg<256xsi32>
+    pto.vmi.vstore %not, %dst[%off]
+        : !pto.vmi.vreg<256xsi32>, !pto.ptr<si32, ub>
+    return
+  }
+}
+
+// SPLIT-LABEL: func.func @vmi_bitwise_interface_split(
+// SPLIT: %[[ALL_OFF:.*]] = pto.vmi.create_mask %c0 : index -> !pto.vmi.mask<256xb32
+// SPLIT: %[[TAIL:.*]] = pto.vmi.create_mask %c7 : index -> !pto.vmi.mask<256xb32
+// SPLIT: %[[MASK_AND:.*]] = pto.vmi.mask_and %[[TAIL]], %[[ALL_OFF]] : !pto.vmi.mask<256xb32
+// SPLIT: %[[AND:.*]] = pto.vmi.andi {{.*}}, {{.*}}, %[[TAIL]] {pmode = "zero"}
+// SPLIT: %[[NOT:.*]] = pto.vmi.not %[[AND]], %[[MASK_AND]]
+// SPLIT-NOT: pto.vmi.vand
+// SPLIT-NOT: pto.vmi.vnot
+
+// LOWER-LABEL: func.func @vmi_bitwise_interface_split(
+// The partial (`plt`) mask governs the VPTO op: the vreg interface kept it
+// instead of falling back to an all-true mask.
+// LOWER: %[[TAIL_MASK:[^,]*]], %{{.*}} = pto.plt_b32
+// LOWER-DAG: pto.vand {{.*}}, %[[TAIL_MASK]] : !pto.vreg<64xsi32>, !pto.vreg<64xsi32>, !pto.mask<b32> -> !pto.vreg<64xsi32>
+// LOWER-DAG: pto.vnot {{.*}} : !pto.vreg<64xsi32>, !pto.mask<b32> -> !pto.vreg<64xsi32>
+// LOWER-DAG: pto.pand {{.*}} -> !pto.mask<b32>
+// LOWER-NOT: pto.vmi.
+// LOWER-NOT: !pto.vmi.

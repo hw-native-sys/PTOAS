@@ -88,14 +88,14 @@ ensure_layout(op(a, b), L)
 适用对象包括纯 elementwise data ops：
 
 ```text
-addf/addi/subf/subi/mulf/muli/divf/minf/maxf
-andi/ori/xori/shli/shrui/shrsi
-negf/absf/absi/sqrt/exp/ln/relu/not
-fma
+vadd/vsub/vmul/vdiv/vmin/vmax
+vand/vor/vxor/vshl/vshr
+vneg/vabs/vsqrt/vexp/vln/vrelu/vnot
+vmula
 select, when data operands and mask layout requirements can be kept explicit
 ```
 
-第一阶段可以先覆盖 ComputeY1 需要的 `mulf`，但实现形态应按 op family 泛化。
+第一阶段可以先覆盖 ComputeY1 需要的 `vmul`，但实现形态应按 op family 泛化。
 
 ### 3.2 Widen Ext Relation Remat
 
@@ -187,7 +187,7 @@ baseline assignment 可能产生：
 ```text
 %x32 = extf %x16              // result deinterleaved=2
 %s32 = extf %scale16          // result deinterleaved=2
-%m   = mulf %x32, %s32        // result deinterleaved=2
+%m   = vmul %x32, %s32        // result deinterleaved=2
 %m4  = ensure_layout %m       // deinterleaved=2 -> deinterleaved=4
 %y   = truncf %m4
 ```
@@ -201,7 +201,7 @@ remat/fold 后目标 IR：
 %scale16_d2 = group_broadcast_load ... // folded/assigned deinterleaved=2
 %scale32_d4 = extf %scale16_d2         // deinterleaved=2 -> deinterleaved=4
 
-%m4 = mulf %x32_d4, %scale32_d4
+%m4 = vmul %x32_d4, %scale32_d4
 %y  = truncf %m4
 ```
 

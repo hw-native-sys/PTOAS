@@ -31,13 +31,13 @@ vmi-layout-sink-materialization:
 ComputeY1-like IR currently remains suboptimal because assignment emits:
 
 ```text
-ensure_layout(mulf(ext(...), ext(...)), deinterleaved=4)
+ensure_layout(vmul(ext(...), ext(...)), deinterleaved=4)
 ```
 
 but remat does not yet:
 
 ```text
-1. hoist result-side ensure_layout through mulf
+1. hoist result-side ensure_layout through vmul
 2. rematerialize ext under a requested result layout
 3. expose foldable load/group_broadcast_load helpers
 ```
@@ -170,7 +170,7 @@ Match:
 
 ```text
 %wanted = pto.vmi.ensure_layout %old
-%old = pto.vmi.mulf %lhs, %rhs
+%old = pto.vmi.vmul %lhs, %rhs
 ```
 
 Rewrite:
@@ -178,18 +178,17 @@ Rewrite:
 ```text
 %lhs2 = ensure_layout %lhs : lhsLayout -> requestedLayout
 %rhs2 = ensure_layout %rhs : rhsLayout -> requestedLayout
-%new  = pto.vmi.mulf %lhs2, %rhs2 : requestedLayout
+%new  = pto.vmi.vmul %lhs2, %rhs2 : requestedLayout
 replace %wanted with %new
 ```
 
 Initial op coverage:
 
 ```text
-mulf
-addf/addi/subf/subi/muli/divf/minf/maxf
-andi/ori/xori/shli/shrui/shrsi
-negf/absf/absi/sqrt/exp/ln/relu/not
-fma
+vadd/vsub/vmul/vdiv/vmin/vmax
+vand/vor/vxor/vshl/vshr
+vneg/vabs/vsqrt/vexp/vln/vrelu/vnot
+vmula
 ```
 
 Optional later coverage:
@@ -331,17 +330,17 @@ Input shape:
 ```text
 extf lhs -> deinterleaved=2
 extf rhs -> deinterleaved=2
-mulf lhs, rhs -> deinterleaved=2
-ensure_layout mulf result -> deinterleaved=4
+vmul lhs, rhs -> deinterleaved=2
+ensure_layout vmul result -> deinterleaved=4
 truncf
 ```
 
 Check:
 
 ```text
-mulf is cloned/rebuilt with deinterleaved=4 operands/results
+vmul is cloned/rebuilt with deinterleaved=4 operands/results
 each ext is rematerialized as source deinterleaved=2 -> result deinterleaved=4
-no ensure_layout remains between mulf and truncf
+no ensure_layout remains between vmul and truncf
 ```
 
 ### 6.3 Multi-Consumer Conflict
@@ -379,7 +378,7 @@ Expected:
 ```text
 x load can become deinterleaved=2 and lower through deinterleaved load support
 scale path can keep the E2B-compatible deinterleaved layout
-mulf/truncf path has no deinterleaved=2 -> deinterleaved=4 helper immediately
+vmul/truncf path has no deinterleaved=2 -> deinterleaved=4 helper immediately
 before truncf
 ```
 

@@ -237,7 +237,6 @@ public:
     bool allActive = isStaticAllActiveMask(op.getMask(),
                                            resultVMIType.getElementCount());
 
-
     return lowerPhysicalParts(op, rewriter, *source, indicesParts, maskParts,
                               passthruParts, resultTypes, allActive);
   }
@@ -1020,5 +1019,3 @@ public:
     return lowerByAddressPlan(op, *input, rewriter);
   }
 };
-
-

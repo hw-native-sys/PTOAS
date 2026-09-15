@@ -80,7 +80,7 @@ static scf::IfOp getEnclosingBranchIf(Operation *op) {
   return nullptr;
 }
 
-static bool isValueOwnedByRegion(Value value, Region *region) {
+static bool isValueOwnedByRegion(Value value, const Region *region) {
   Region *valueRegion = nullptr;
   if (auto blockArg = dyn_cast<BlockArgument>(value)) {
     valueRegion = blockArg.getParentRegion();
@@ -98,8 +98,8 @@ static bool isValueOwnedByRegion(Value value, Region *region) {
   return false;
 }
 
-static FailureOr<Value> resolveStoreAlignRoot(Value value, Operation *user);
-static FailureOr<Value> resolveLoadAlignRoot(Value value, Operation *user);
+static FailureOr<Value> resolveStoreAlignRoot(Value value);
+static FailureOr<Value> resolveLoadAlignRoot(Value value);
 static FailureOr<Value> resolveLoadAlignRootImpl(
     Value current, llvm::SmallPtrSet<void *, mlir::pto::kValue8> visited);
 static FailureOr<Value> resolveAlignForResult(Value current, scf::ForOp forOp);
@@ -279,8 +279,7 @@ static FailureOr<Value> resolveStoreAlignRootImpl(
       resolveStoreAlignIfResult);
 }
 
-static FailureOr<Value> resolveStoreAlignRoot(Value value, Operation *user) {
-  (void)user;
+static FailureOr<Value> resolveStoreAlignRoot(Value value) {
   return resolveStoreAlignRootImpl(value, {});
 }
 
@@ -546,7 +545,7 @@ LogicalResult verifyStoreAlignChain(Value align, Operation *user,
     return failure();
   }
 
-  FailureOr<Value> root = resolveStoreAlignRoot(align, user);
+  FailureOr<Value> root = resolveStoreAlignRoot(align);
   if (failed(root)) {
     if (Operation *def = align.getDefiningOp()) {
       if (!isa<scf::ForOp>(def)) {
@@ -572,8 +571,7 @@ LogicalResult verifyStoreAlignChain(Value align, Operation *user,
   return verifyStoreAlignLinearUses(*root, user);
 }
 
-static FailureOr<Value> resolveLoadAlignRoot(Value value, Operation *user) {
-  (void)user;
+static FailureOr<Value> resolveLoadAlignRoot(Value value) {
   return resolveLoadAlignRootImpl(value, {});
 }
 
@@ -594,7 +592,7 @@ LogicalResult verifyLoadAlignChain(Value align, Operation *user,
     return failure();
   }
 
-  FailureOr<Value> root = resolveLoadAlignRoot(align, user);
+  FailureOr<Value> root = resolveLoadAlignRoot(align);
   if (failed(root)) {
     if (Operation *def = align.getDefiningOp()) {
       if (!isa<scf::ForOp>(def)) {

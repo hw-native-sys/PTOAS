@@ -452,7 +452,7 @@ unsigned InsertSyncAnalysis::InsertBranchSync(
 
 void InsertSyncAnalysis::MergeAlreadySync(
     SyncRecordList &syncRecordList, const SyncRecordList &syncRecordIfList,
-    const SyncRecordList &syncRecordElseList) {
+    const SyncRecordList &syncRecordElseList) const {
   for (size_t bufferIdx = 0; bufferIdx < syncRecordList.size(); bufferIdx++) {
     for (size_t pipeIdx = 0; pipeIdx < kPipeStateSize; pipeIdx++) {
       if (syncRecordIfList[bufferIdx].alreadySync[pipeIdx] &&
@@ -780,7 +780,7 @@ void InsertSyncAnalysis::InsertSyncOperation(
 bool InsertSyncAnalysis::isAlreadySync(
     const CompoundInstanceElement *nowCompound,
     const CompoundInstanceElement *frontCompound,
-    SyncRecordList &syncRecordList, unsigned recordListIndex) {
+    SyncRecordList &syncRecordList, unsigned recordListIndex) const {
   (void)nowCompound;
   const PipelineType frontPipe = frontCompound->kPipeValue;
   if (recordListIndex >= syncRecordList.size()) {
@@ -810,7 +810,7 @@ void InsertSyncAnalysis::UpdateAlreadySync(const SyncOps &syncVector,
 
 void InsertSyncAnalysis::UpdateSyncRecord(const SyncOperation *sync,
                                           SyncRecord &syncRecord,
-                                          PipelineType nowPipeValue) {
+                                          PipelineType nowPipeValue) const {
   PipelineType setPipeValue = sync->GetSrcPipe();
   PipelineType waitPipeValue = sync->GetDstPipe();
 
@@ -909,8 +909,8 @@ void InsertSyncAnalysis::InsertLastPipeAll() {
 // 7. Helpers
 // ==============================================================================
 
-const SmallVector<Value> InsertSyncAnalysis::GetMemInfoBuffers(
-    const DepBaseMemInfoPairVec &depBaseMemInfosVec) {
+SmallVector<Value> InsertSyncAnalysis::GetMemInfoBuffers(
+    const DepBaseMemInfoPairVec &depBaseMemInfosVec) const {
   llvm::DenseSet<Value> touchedBuffer;
   SmallVector<Value> result;
   for (auto &pair : depBaseMemInfosVec) {
@@ -931,7 +931,7 @@ const SmallVector<Value> InsertSyncAnalysis::GetMemInfoBuffers(
 }
 
 int InsertSyncAnalysis::GetEventIdNum(
-    const DepBaseMemInfoPairVec &depBaseMemInfosVec) {
+    const DepBaseMemInfoPairVec &depBaseMemInfosVec) const {
   // A back-edge dependency benefits from N dynamic event IDs whenever at
   // least one side is a multi-buffer access. We detect that from the
   // BaseMemInfo's `baseAddresses` size, which the translator and alias

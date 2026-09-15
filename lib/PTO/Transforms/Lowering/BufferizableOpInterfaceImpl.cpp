@@ -43,14 +43,18 @@ struct PTODpsOpInterfaceBase
 template <typename Derived, typename OpTy>
 struct PTOReadWriteDpsOpInterfaceBase
     : public PTODpsOpInterfaceBase<Derived, OpTy> {
+  // NOLINTNEXTLINE: external-model dispatch requires these interface method
+  // signatures, and this implementation specializes the default semantics.
   bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
-                              const AnalysisState &state) const {
+                              const AnalysisState &) const {
     auto dpsOp = cast<DestinationStyleOpInterface>(op);
     return dpsOp.isDpsInput(&opOperand);
   }
 
+  // NOLINTNEXTLINE: external-model dispatch requires these interface method
+  // signatures, and this implementation specializes the default semantics.
   bool bufferizesToMemoryWrite(Operation *op, OpOperand &opOperand,
-                               const AnalysisState &state) const {
+                               const AnalysisState &) const {
     auto dpsOp = cast<DestinationStyleOpInterface>(op);
     return dpsOp.isDpsInit(&opOperand);
   }
@@ -166,8 +170,8 @@ struct PTOMrgSortDpsOpInterface
 
 struct PTOAddOpInterface
     : public PTOReadWriteDpsOpInterfaceBase<PTOAddOpInterface, pto::TAddOp> {
-  bool bufferizesToElementwiseAccess(Operation *op, const AnalysisState &state,
-                                     ArrayRef<OpOperand *> opOperands) const {
+  bool bufferizesToElementwiseAccess(Operation *, const AnalysisState &,
+                                     ArrayRef<OpOperand *>) const {
     return true;
   }
 };
@@ -180,13 +184,12 @@ struct PTOMatmulOpInterface
 
 void mlir::pto::registerBufferizableOpInterfaceExternalModels(
     DialectRegistry &registry) {
-  registry.addExtension(+[](MLIRContext *ctx, pto::PTODialect *dialect) {
+  registry.addExtension(+[](MLIRContext *ctx, pto::PTODialect *) {
     TLoadOp::attachInterface<PTOLoadOpInterface>(*ctx);
     TStoreOp::attachInterface<PTOStoreOpInterface>(*ctx);
     TMrgSortOp::attachInterface<PTOMrgSortDpsOpInterface>(*ctx);
     TAddOp::attachInterface<PTOAddOpInterface>(*ctx);
     TMatmulOp::attachInterface<PTOMatmulOpInterface>(*ctx);
     (void)ctx;
-    (void)dialect;
   });
 }

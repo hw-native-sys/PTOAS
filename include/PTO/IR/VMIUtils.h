@@ -13,8 +13,10 @@
 #define PTO_IR_VMIUTILS_H
 
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/PTOTypeUtils.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
+#include "llvm/Support/MathExtras.h"
 
 namespace mlir::pto {
 
@@ -52,6 +54,43 @@ FailureOr<int64_t> mapPhysicalLaneToLogical(Type type, int64_t part,
                                              int64_t chunk, int64_t lane);
 FailureOr<bool> isPaddingLane(Type type, int64_t part, int64_t chunk,
                               int64_t lane);
+
+/// Bytes in one VCG block: the granule `pto.vsldb` addresses and masks, and the
+/// granule a 2048-bit physical carrier is divided into eight of.
+inline constexpr int64_t kVMIVCGBlockBytes = 32;
+
+/// Number of 32-byte blocks in a bounded contiguous load, or zero if the
+/// shape needs another load strategy. Preserve the existing single-block
+/// short-read footprint; larger partial carriers must occupy whole blocks.
+/// Full carriers keep their existing VLD(S) lowering.
+inline int64_t getVMIContiguousLoadBlockCount(VMIVRegType type) {
+  VMILayoutAttr layout = type.getLayoutAttr();
+  if (!layout || !layout.isContiguous() || layout.getLaneStride() != 1) {
+    return 0;
+  }
+  FailureOr<int64_t> arity = getVMIPhysicalArity(type);
+  if (failed(arity) || *arity != 1) {
+    return 0;
+  }
+  unsigned elementBits = getPTOStorageElemBitWidth(type.getElementType());
+  if (elementBits == 0 || elementBits % 8 != 0) {
+    return 0;
+  }
+  int64_t payloadBytes = 0;
+  if (type.getElementCount() <= 0 ||
+      llvm::MulOverflow(type.getElementCount(),
+                        static_cast<int64_t>(elementBits / 8), payloadBytes)) {
+    return 0;
+  }
+  if (payloadBytes <= kVMIVCGBlockBytes) {
+    return 1;
+  }
+  if (payloadBytes >= 8 * kVMIVCGBlockBytes ||
+      payloadBytes % kVMIVCGBlockBytes != 0) {
+    return 0;
+  }
+  return payloadBytes / kVMIVCGBlockBytes;
+}
 
 // ---------------------------------------------------------------------------
 // VMI FpToSi hardware contract (mirrored from VPTO lookupVcvtContract).

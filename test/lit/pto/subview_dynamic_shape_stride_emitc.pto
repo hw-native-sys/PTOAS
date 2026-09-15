@@ -1,0 +1,64 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may obtain a copy of the License at
+// https://www.hiascend.com/document/detail/en/CANNCommunityEdition/82RC1alpha001/licensedoc/licensedoc_0001.html
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and limitations under the License.
+
+// Regression coverage for the PTO-vs-MLIR dynamic-dimension sentinel mismatch.
+// RUN: ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s
+
+module {
+  func.func @dynamic_shape_subview(
+      %base: memref<?xf32, #pto.address_space<gm>>,
+      %rows: index, %cols: index)
+      -> memref<?x?xf32, strided<[32, 1], offset: ?>,
+                 #pto.address_space<gm>> {
+    %c0 = arith.constant 0 : index
+    %view = memref.reinterpret_cast %base to
+      offset: [0], sizes: [%rows, %cols], strides: [32, 1]
+      : memref<?xf32, #pto.address_space<gm>> to
+        memref<?x?xf32, strided<[32, 1], offset: ?>,
+                #pto.address_space<gm>>
+    %part = memref.subview %view[%c0, %c0] [%rows, %cols] [1, 1]
+      : memref<?x?xf32, strided<[32, 1], offset: ?>,
+                #pto.address_space<gm>> to
+        memref<?x?xf32, strided<[32, 1], offset: ?>,
+                #pto.address_space<gm>>
+    return %part : memref<?x?xf32, strided<[32, 1], offset: ?>,
+                           #pto.address_space<gm>>
+  }
+
+  func.func @dynamic_stride_subview(
+    %base: memref<?xf32, #pto.address_space<gm>>,
+      %row_stride: index)
+      -> memref<16x8xf32, strided<[?, 1], offset: ?>,
+                 #pto.address_space<gm>> {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %view = memref.reinterpret_cast %base to
+      offset: [0], sizes: [32, 8], strides: [%row_stride, %c1]
+      : memref<?xf32, #pto.address_space<gm>> to
+        memref<32x8xf32, strided<[?, 1], offset: ?>,
+                #pto.address_space<gm>>
+    %part = memref.subview %view[%c0, %c0] [16, 8] [1, 1]
+      : memref<32x8xf32, strided<[?, 1], offset: ?>,
+                #pto.address_space<gm>> to
+        memref<16x8xf32, strided<[?, 1], offset: ?>,
+                #pto.address_space<gm>>
+    return %part : memref<16x8xf32, strided<[?, 1], offset: ?>,
+                           #pto.address_space<gm>>
+  }
+}
+
+// Dynamic result sizes must use PTO's -1 marker and receive both runtime sizes.
+// CHECK-LABEL: AICORE __gm__ float* dynamic_shape_subview
+// CHECK: pto::Shape<1, 1, 1, -1, -1> v{{[0-9]+}} = pto::Shape<1, 1, 1, -1, -1>([[ROWS:v[0-9]+]], [[COLS:v[0-9]+]])
+// CHECK-NOT: 9223372036854775808
+
+// A rank-2 dynamic source stride creates three dynamic leading strides during
+// 5D padding; all four runtime stride arguments must be passed to Stride.
+// CHECK-LABEL: AICORE __gm__ float* dynamic_stride_subview
+// CHECK: pto::Stride<-1, -1, -1, -1, 1> v{{[0-9]+}} = pto::Stride<-1, -1, -1, -1, 1>([[STRIDE0:v[0-9]+]], [[STRIDE1:v[0-9]+]], [[STRIDE2:v[0-9]+]], [[STRIDE3:v[0-9]+]])

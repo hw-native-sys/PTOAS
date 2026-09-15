@@ -132,24 +132,25 @@ static bool isHoistCandidate(Operation *op) {
 // Whether a value is defined outside the loop, i.e. available before the loop
 // starts.  Loop induction variables, iter_args of the loop body and every
 // value produced inside the loop fail this check.
-static bool isDefinedOutsideLoop(Value value, Operation *loopOp) {
-  Operation *holder = nullptr;
-  if (auto blockArg = dyn_cast<BlockArgument>(value)) {
-    holder = blockArg.getOwner()->getParentOp();
-  } else {
-    holder = value.getDefiningOp();
-  }
-  if (!holder) {
-    return true;
-  }
-  Operation *ancestor = holder;
-  while (ancestor) {
-    if (ancestor == loopOp) {
-      return false;
+static bool isDefinedOutsideLoop(Value value, const Operation* loopOp)
+{
+    Operation* holder = nullptr;
+    if (auto blockArg = dyn_cast<BlockArgument>(value)) {
+        holder = blockArg.getOwner()->getParentOp();
+    } else {
+        holder = value.getDefiningOp();
     }
-    ancestor = ancestor->getParentOp();
-  }
-  return true;
+    if (!holder) {
+        return true;
+    }
+    Operation* ancestor = holder;
+    while (ancestor) {
+        if (ancestor == loopOp) {
+            return false;
+        }
+        ancestor = ancestor->getParentOp();
+    }
+    return true;
 }
 
 // Number of enclosing scf.for loops; used to sort loops innermost-first.
@@ -216,9 +217,9 @@ computeHoistableOps(ArrayRef<Operation *> candidates, scf::ForOp forOp) {
   while (changed) {
     changed = false;
     for (Operation *op : candidates) {
-      if (hoistedSet.count(op)) {
-        continue;
-      }
+        if (hoistedSet.count(op) != 0) {
+            continue;
+        }
       if (!allOperandsHoistable(op, forOp, available)) {
         continue;
       }
@@ -269,7 +270,6 @@ struct VPTOGuardedLICM
 
   void runOnOperation() override {
     func::FuncOp func = getOperation();
-
     if (!isA5VPTOModule(func)) {
       return;
     }

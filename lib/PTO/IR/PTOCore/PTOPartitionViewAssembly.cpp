@@ -56,17 +56,17 @@ ParseResult mlir::pto::PartitionViewOp::parse(OpAsmParser& parser, OperationStat
     return inferPartitionViewParseResult(parser, result, state);
 }
 
-void mlir::pto::PartitionViewOp::print(OpAsmPrinter& printer)
+void mlir::pto::PartitionViewOp::print(OpAsmPrinter& p)
 {
-    printer << " " << getSource() << ", offsets = [";
-    printer.printOperands(getOffsets());
-    printer << "], sizes = [";
-    printer.printOperands(getSizes());
-    printer << "]";
-    printer.printOptionalAttrDict(
+    p << " " << getSource() << ", offsets = [";
+    p.printOperands(getOffsets());
+    p << "], sizes = [";
+    p.printOperands(getSizes());
+    p << "]";
+    p.printOptionalAttrDict(
         (*this)->getAttrs(),
         /*elidedAttrs=*/{"operandSegmentSizes"});
-    printer << " : " << getSource().getType();
+    p << " : " << getSource().getType();
 
     auto inferredResultType =
         inferPartitionViewResultTypeFromSizes(getSource().getType(), getSizes());
@@ -74,7 +74,7 @@ void mlir::pto::PartitionViewOp::print(OpAsmPrinter& printer)
         return;
     }
 
-    printer << " -> " << getResult().getType();
+    p << " -> " << getResult().getType();
 }
 
 static std::optional<int64_t> getConstantIntegerValueEx(Value v, bool includeIndexAndIntOpsInConstFold)
@@ -119,7 +119,7 @@ static LogicalResult verifyExtractStaticBoundsCommon(
     auto col = getConstantIntegerValueEx(indexCol, includeIndexAndIntOpsInConstFold);
     auto srcShape = getShapeVec(srcTy);
     auto dstShape = getShapeVec(dstTy);
-    if (srcShape.size() != 2 || dstShape.size() != 2) {
+    if (srcShape.size() != mlir::pto::kValue2 || dstShape.size() != mlir::pto::kValue2) {
         return op.emitOpError("expects src and dst to be rank-2 tile_buf");
     }
     if (row && srcShape[0] != ShapedType::kDynamic && dstShape[0] != ShapedType::kDynamic &&
@@ -140,7 +140,7 @@ static LogicalResult verifyInsertStaticBoundsCommon(
     auto col = getConstantIntegerValueEx(indexCol, includeIndexAndIntOpsInConstFold);
     auto srcShape = getValidShapeVec(srcTy);
     auto dstShape = getShapeVec(dstTy);
-    if (srcShape.size() != 2 || dstShape.size() != 2) {
+    if (srcShape.size() != mlir::pto::kValue2 || dstShape.size() != mlir::pto::kValue2) {
         return op.emitOpError("expects src and dst to be rank-2 tile_buf");
     }
     if (row && srcShape[0] != ShapedType::kDynamic && dstShape[0] != ShapedType::kDynamic &&
@@ -158,7 +158,7 @@ static unsigned getElemByteSize(Type ty) { return getPTOStorageElemByteSize(ty);
 
 static LogicalResult verifyTileBufPositiveShape(Operation* op, ArrayRef<int64_t> shape, StringRef name)
 {
-    if (shape.size() != 2) {
+    if (shape.size() != mlir::pto::kValue2) {
         return op->emitOpError() << "expects " << name << " to be rank-2";
     }
     if (shape[0] != ShapedType::kDynamic && shape[0] <= 0) {
@@ -236,26 +236,26 @@ static LogicalResult getBoxedTileInnerShape(
                                  << " element byte size to be non-zero";
     }
     switch (fractal) {
-        case 1024:
-            innerRows = 16;
-            innerCols = 16;
+        case mlir::pto::kValue1024:
+            innerRows = mlir::pto::kValue16;
+            innerCols = mlir::pto::kValue16;
             break;
-        case 32:
-            innerRows = 16;
-            innerCols = 2;
+        case mlir::pto::kValue32:
+            innerRows = mlir::pto::kValue16;
+            innerCols = mlir::pto::kValue2;
             break;
-        case 512:
+        case mlir::pto::kValue512:
             if (kAlignedBytes % elemBytes != 0) {
                 return op->emitOpError() << "expects " << name
                                          << " element byte size to divide 32 for boxed "
                                             "fractal-512 tile layout";
             }
             if (slayout == static_cast<int32_t>(SLayout::RowMajor)) {
-                innerRows = 16;
+                innerRows = mlir::pto::kValue16;
                 innerCols = kAlignedBytes / static_cast<int64_t>(elemBytes);
             } else if (slayout == static_cast<int32_t>(SLayout::ColMajor)) {
                 innerRows = kAlignedBytes / static_cast<int64_t>(elemBytes);
-                innerCols = 16;
+                innerCols = mlir::pto::kValue16;
             }
             break;
         default:

@@ -8,8 +8,7 @@
 
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
 
-static LogicalResult verifyTRowExpandValidShapes(TRowExpandOp op, Type srcTy,
-                                                 Type dstTy) {
+static LogicalResult verifyTRowExpandValidShapes(TRowExpandOp op) {
   auto srcValid = getValidShapeVec(op.getSrc());
   auto dstValid = getValidShapeVec(op.getDst());
   if (srcValid.size() != mlir::pto::kValue2 || dstValid.size() != mlir::pto::kValue2) {
@@ -59,11 +58,13 @@ static LogicalResult verifyTRowExpandCommon(TRowExpandOp op) {
   if (!isSupportedVecElemType(getElemTy(srcTy), /*allowBf16=*/true,
                               /*allowInt8=*/true))
     return op.emitOpError("expects trowexpand element type to be supported");
-  return verifyTRowExpandValidShapes(op, srcTy, dstTy);
+  return verifyTRowExpandValidShapes(op);
 }
 
 mlir::LogicalResult mlir::pto::TRowExpandOp::verify() {
-  auto verify = [&]() -> LogicalResult { return verifyTRowExpandCommon(*this); };
+  auto verify = [this]() -> LogicalResult {
+    return verifyTRowExpandCommon(*this);
+  };
   return dispatchVerifierByArch(getOperation(), verify, verify);
 }
 

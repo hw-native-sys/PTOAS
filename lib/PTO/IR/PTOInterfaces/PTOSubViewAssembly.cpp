@@ -145,17 +145,18 @@ ParseResult mlir::pto::SubViewOp::parse(OpAsmParser &parser,
   return success();
 }
 
-void mlir::pto::SubViewOp::print(OpAsmPrinter &printer) {
-  printer << " " << getSource() << "[";
-  printer.printOperands(getOffsets());
-  printer << "] sizes " << getSizes();
-  if (getValidRow()) {
-    printer << " valid [" << getValidRow() << ", " << getValidCol() << "]";
-  }
-  printer.printOptionalAttrDict((*this)->getAttrs(),
-                                /*elidedAttrs=*/{"operandSegmentSizes",
-                                                 "sizes"});
-  printer << " : " << getSource().getType() << " -> " << getResult().getType();
+void mlir::pto::SubViewOp::print(OpAsmPrinter& p)
+{
+    p << " " << getSource() << "[";
+    p.printOperands(getOffsets());
+    p << "] sizes " << getSizes();
+    if (getValidRow()) {
+        p << " valid [" << getValidRow() << ", " << getValidCol() << "]";
+    }
+    p.printOptionalAttrDict(
+        (*this)->getAttrs(),
+        /*elidedAttrs=*/{"operandSegmentSizes", "sizes"});
+    p << " : " << getSource().getType() << " -> " << getResult().getType();
 }
 
 // The inferred result type derives valid_shape from `sizes` (or the explicit
@@ -167,39 +168,40 @@ void mlir::pto::SubViewOp::print(OpAsmPrinter &printer) {
 // disagrees with the inferred extent is incompatible -- it needs an explicit
 // operand to supply the runtime value. Every other difference (shape, element
 // type, address space, config) is still rejected as the default check would.
-bool SubViewOp::isCompatibleReturnTypes(TypeRange lhs, TypeRange rhs) {
-  if (lhs.size() != rhs.size()) {
-    return false;
-  }
-  for (auto [inferred, declared] : llvm::zip(lhs, rhs)) {
-    if (inferred == declared) {
-      continue;
-    }
-    auto inferredTb = dyn_cast<TileBufType>(inferred);
-    auto declaredTb = dyn_cast<TileBufType>(declared);
-    if (!inferredTb || !declaredTb) {
-      return false;
-    }
-    if (inferredTb.getShape() != declaredTb.getShape() ||
-        inferredTb.getElementType() != declaredTb.getElementType() ||
-        inferredTb.getMemorySpace() != declaredTb.getMemorySpace() ||
-        inferredTb.getConfigAttr() != declaredTb.getConfigAttr()) {
-      return false;
-    }
-    auto inferredValid = inferredTb.getValidShape();
-    auto declaredValid = declaredTb.getValidShape();
-    if (inferredValid.size() != declaredValid.size()) {
-      return false;
-    }
-    for (auto [inferredDim, declaredDim] : llvm::zip(inferredValid, declaredValid)) {
-      // Any static declared valid extent is accepted in place of the inferred
-      // one; only a dynamic declared valid that disagrees is incompatible.
-      if (inferredDim != declaredDim && declaredDim == ShapedType::kDynamic) {
+bool SubViewOp::isCompatibleReturnTypes(TypeRange l, TypeRange r)
+{
+    if (l.size() != r.size()) {
         return false;
-      }
     }
-  }
-  return true;
+    for (auto [inferred, declared] : llvm::zip(l, r)) {
+        if (inferred == declared) {
+            continue;
+        }
+        auto inferredTb = dyn_cast<TileBufType>(inferred);
+        auto declaredTb = dyn_cast<TileBufType>(declared);
+        if (!inferredTb || !declaredTb) {
+            return false;
+        }
+        if (inferredTb.getShape() != declaredTb.getShape() ||
+            inferredTb.getElementType() != declaredTb.getElementType() ||
+            inferredTb.getMemorySpace() != declaredTb.getMemorySpace() ||
+            inferredTb.getConfigAttr() != declaredTb.getConfigAttr()) {
+            return false;
+        }
+        auto inferredValid = inferredTb.getValidShape();
+        auto declaredValid = declaredTb.getValidShape();
+        if (inferredValid.size() != declaredValid.size()) {
+            return false;
+        }
+        for (auto [inferredDim, declaredDim] : llvm::zip(inferredValid, declaredValid)) {
+            // Any static declared valid extent is accepted in place of the inferred
+            // one; only a dynamic declared valid that disagrees is incompatible.
+            if (inferredDim != declaredDim && declaredDim == ShapedType::kDynamic) {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 static ArrayAttr getSubViewSizeAttr(DictionaryAttr attributes,

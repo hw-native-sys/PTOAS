@@ -1,0 +1,46 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --implicit-check-not=pto.vmi. --implicit-check-not='!pto.vmi.'
+
+module {
+  // A dynamic offset can be proven aligned when it is a multiple of 8 f32.
+  func.func @dynamic_aligned_offset(%k: index) -> !pto.vmi.vreg<8xf32> {
+    %addr = arith.constant 1024 : i64
+    %src = pto.castptr %addr : i64 -> !pto.ptr<f32, ub>
+    %c8 = arith.constant 8 : index
+    %off = arith.muli %k, %c8 : index
+    %v = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
+    return %v : !pto.vmi.vreg<8xf32>
+  }
+  // Check the final address: neither the intermediate pointer nor its offset
+  // is individually 32B aligned, but 1028 + 7 * sizeof(f32) is 1056.
+  func.func @combined_effective_alignment() -> !pto.vmi.vreg<8xf32> {
+    %addr = arith.constant 1028 : i64
+    %src = pto.castptr %addr : i64 -> !pto.ptr<f32, ub>
+    %off = arith.constant 7 : index
+    %v = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
+    return %v : !pto.vmi.vreg<8xf32>
+  }
+  // Exact boundary for the existing unaligned fallback: 288 readable bytes.
+  func.func @safe_unaligned_read_envelope(%src: memref<72xf32, #pto.address_space<vec>>)
+      -> !pto.vmi.vreg<8xf32> {
+    %off = arith.constant 1 : index
+    %v = pto.vmi.vload %src[%off] : memref<72xf32, #pto.address_space<vec>> -> !pto.vmi.vreg<8xf32>
+    return %v : !pto.vmi.vreg<8xf32>
+  }
+}
+
+// CHECK-LABEL: func.func @dynamic_aligned_offset
+// CHECK: pto.vsldb
+// CHECK-LABEL: func.func @combined_effective_alignment
+// CHECK: pto.vsldb
+// CHECK-LABEL: func.func @safe_unaligned_read_envelope
+// CHECK-NOT: pto.vsldb
+// CHECK: pto.vldas
+// CHECK: pto.vldus

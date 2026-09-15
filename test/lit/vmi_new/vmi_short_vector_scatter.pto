@@ -1,0 +1,29 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -pto-validate-vmi-layout-ir -vmi-to-vpto 2>&1 | FileCheck %s --implicit-check-not=ensure_layout
+
+// Short scatter is legal and must intersect the user mask with logical VL.
+module {
+  func.func @scatter_f32_vl4(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>,
+                             %idx: !pto.vmi.vreg<4xi32>) {
+    %c0 = arith.constant 0 : index
+    %n = arith.constant 4 : index
+    %v = pto.vmi.vload %src[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<4xf32>
+    %m = pto.vmi.create_mask %n : index -> !pto.vmi.mask<4xpred>
+    pto.vmi.vscatter %v, %dst, %idx, %m
+        : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>,
+          !pto.vmi.vreg<4xi32>, !pto.vmi.mask<4xpred>
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @scatter_f32_vl4
+// CHECK: pto.plt_b32
+// CHECK: %[[VALID:.*]] = pto.pand
+// CHECK: pto.vscatter {{.*}}, %[[VALID]]

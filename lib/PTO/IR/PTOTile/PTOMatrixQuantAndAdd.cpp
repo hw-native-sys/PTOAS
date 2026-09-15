@@ -191,7 +191,7 @@ LogicalResult pto::TAddOp::verify() {
 }
 
 LogicalResult pto::TAddReluOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult {
+  auto verifyA2A3 = [this]() -> LogicalResult {
     FailureOr<Type> elemOr = verifyMatchingRowMajorBinaryTileOpCommon(
         getOperation(), getSrc0().getType(), getSrc1().getType(), getDst().getType());
     if (failed(elemOr)) {
@@ -203,7 +203,7 @@ LogicalResult pto::TAddReluOp::verify() {
     }
     return emitOpError("expects element type to be i16/f16/f32");
   };
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [this]() -> LogicalResult {
     return emitOpError("taddrelu is only supported on A2/A3 targets");
   };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);

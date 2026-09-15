@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// The VMI-to-VPTO conversion consumes the vreg interface and the mask interface
+// only: a dual-form bitwise op that was not split by
+// `-vmi-lower-unified-to-legacy` is reported instead of being reinterpreted.
+
+// RUN: not pto-test-opt %s -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto 2>&1 | FileCheck %s
+
+module {
+  func.func @vmi_to_vpto_dual_form_unsplit(
+      %lhs: !pto.vmi.vreg<256xsi32>,
+      %rhs: !pto.vmi.vreg<256xsi32>) {
+    %c7 = arith.constant 7 : index
+    %tail = pto.vmi.create_mask %c7 : index -> !pto.vmi.mask<256xpred>
+    %and = pto.vmi.vand %lhs, %rhs, %tail {pmode = "zero"}
+        : !pto.vmi.vreg<256xsi32>, !pto.vmi.vreg<256xsi32>,
+          !pto.vmi.mask<256xpred> -> !pto.vmi.vreg<256xsi32>
+    return
+  }
+}
+
+// CHECK: dual-form bitwise op must be split by -vmi-lower-unified-to-legacy before VMI-to-VPTO conversion

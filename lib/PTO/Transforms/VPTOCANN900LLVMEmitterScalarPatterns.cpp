@@ -206,6 +206,7 @@ static SmallVector<Value> buildPredicateStoreCallArgs(StoreOp op, typename Store
 
 template <typename StoreOp>
 static void replacePredicateStoreOp(StoreOp op, bool usePostIntrinsic, const VPTOLoweredAddressOffset &offset,
+                                    // NOLINTNEXTLINE: eraseOp/replaceOp require a mutable rewriter to update IR.
                                     func::CallOp call, ConversionPatternRewriter &rewriter) {
   if (!usePostIntrinsic) {
     rewriter.eraseOp(op);
@@ -1037,6 +1038,7 @@ public:
       : OpConversionPattern<MemoryConsistencyOp>(typeConverter, context) {}
 
   LogicalResult matchAndRewrite(MemoryConsistencyOp op, typename MemoryConsistencyOp::Adaptor adaptor,
+                                // NOLINTNEXTLINE: ConversionPattern requires the mutable rewriter override signature.
                                 ConversionPatternRewriter &rewriter) const override {
     (void)adaptor;
     (void)rewriter;

@@ -218,21 +218,16 @@ static LogicalResult verifyTRowArgReductionOp(Operation *op, Type srcTy,
                                               Value tmp, Type dstTy) {
   if (!tmp)
     return verifyTRowArgReductionNoTmp(op, srcTy, dstTy);
-  auto verifyA2A3 = [&]() {
-    return verifyTRowArgReductionOpA2A3(op, srcTy, tmp.getType(), dstTy);
-  };
-  auto verifyA5 = [&]() {
-    return verifyTRowArgReductionOpA5(op, srcTy, tmp.getType(), dstTy);
-  };
+  auto verifyA2A3 = [op, srcTy, tmp, dstTy]() { return verifyTRowArgReductionOpA2A3(op, srcTy, tmp.getType(), dstTy); };
+  auto verifyA5 = [op, srcTy, tmp, dstTy]() { return verifyTRowArgReductionOpA5(op, srcTy, tmp.getType(), dstTy); };
   return dispatchVerifierByArch(op, verifyA2A3, verifyA5);
 }
 
 mlir::LogicalResult mlir::pto::TRowMaxOp::verify() {
-  auto verifyByArch = [&]() {
-    return verifyTRowReductionOp(getOperation(), getSrc().getType(), getTmp(),
-                                 getDst().getType());
-  };
-  return dispatchVerifierByArch(getOperation(), verifyByArch, verifyByArch);
+    auto verifyByArch = [this]() {
+        return verifyTRowReductionOp(getOperation(), getSrc().getType(), getTmp(), getDst().getType());
+    };
+    return dispatchVerifierByArch(getOperation(), verifyByArch, verifyByArch);
 }
 
 mlir::LogicalResult mlir::pto::TRowArgMaxOp::verify() {
@@ -242,11 +237,10 @@ mlir::LogicalResult mlir::pto::TRowArgMaxOp::verify() {
 
 
 mlir::LogicalResult mlir::pto::TRowMinOp::verify() {
-  auto verifyByArch = [&]() {
-    return verifyTRowReductionOp(getOperation(), getSrc().getType(), getTmp(),
-                                 getDst().getType());
-  };
-  return dispatchVerifierByArch(getOperation(), verifyByArch, verifyByArch);
+    auto verifyByArch = [this]() {
+        return verifyTRowReductionOp(getOperation(), getSrc().getType(), getTmp(), getDst().getType());
+    };
+    return dispatchVerifierByArch(getOperation(), verifyByArch, verifyByArch);
 }
 
 mlir::LogicalResult mlir::pto::TRowArgMinOp::verify() {
@@ -256,19 +250,16 @@ mlir::LogicalResult mlir::pto::TRowArgMinOp::verify() {
 
 
 mlir::LogicalResult mlir::pto::TRowSumOp::verify() {
-  auto verifyByArch = [&]() {
-    return verifyTRowReductionOp(getOperation(), getSrc().getType(), getTmp(),
-                                 getDst().getType());
-  };
-  return dispatchVerifierByArch(getOperation(), verifyByArch, verifyByArch);
+    auto verifyByArch = [this]() {
+        return verifyTRowReductionOp(getOperation(), getSrc().getType(), getTmp(), getDst().getType());
+    };
+    return dispatchVerifierByArch(getOperation(), verifyByArch, verifyByArch);
 }
 
 mlir::LogicalResult mlir::pto::TInterleaveOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult {
-    return emitOpError("tinterleave is only supported on A5 targets");
-  };
+    auto verifyA2A3 = [this]() -> LogicalResult { return emitOpError("tinterleave is only supported on A5 targets"); };
 
-  auto verifyA5 = [&]() -> LogicalResult {
+    auto verifyA5 = [this]() -> LogicalResult {
     Type src0Ty = getSrc0().getType();
     Type src1Ty = getSrc1().getType();
     Type dst0Ty = getDst0().getType();

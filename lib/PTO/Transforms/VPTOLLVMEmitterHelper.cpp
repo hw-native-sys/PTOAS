@@ -67,6 +67,9 @@ constexpr StringLiteral kAIVScopeDummyCallee = "aivscope_dummy";
 constexpr int64_t kCarrierLoopLowerBound = 0;
 constexpr int64_t kCarrierLoopUpperBound = 1;
 constexpr unsigned kBitsPerByte = CHAR_BIT;
+constexpr unsigned kI32BitWidth = 32;
+constexpr unsigned kI64BitWidth = 64;
+constexpr unsigned kI128BitWidth = 128;
 
 struct QueriedTargetAttrs {
   std::string targetCPU;
@@ -413,9 +416,10 @@ getI32EncodedIndexOffset(Value offset, int64_t intrinsicScale) {
     return std::nullopt;
   }
   llvm::APInt scaled =
-      llvm::APInt(64, static_cast<uint64_t>(*constant), true).sext(128);
-  scaled *= llvm::APInt(128, static_cast<uint64_t>(intrinsicScale));
-  if (!scaled.isSignedIntN(32)) {
+      llvm::APInt(kI64BitWidth, static_cast<uint64_t>(*constant), true)
+          .sext(kI128BitWidth);
+  scaled *= llvm::APInt(kI128BitWidth, static_cast<uint64_t>(intrinsicScale));
+  if (!scaled.isSignedIntN(kI32BitWidth)) {
     return std::nullopt;
   }
   return scaled.getSExtValue();
@@ -478,10 +482,11 @@ lowerVPTOElementOffsetForIntrinsic(
   Location loc = anchor->getLoc();
   int64_t elementBytes = elementBits / kBitsPerByte;
   if (!elementOffset.getType().isIndex()) {
-    if (!elementOffset.getType().isInteger(32)) {
+    if (!elementOffset.getType().isInteger(kI32BitWidth)) {
       return failure();
     }
-    Value scale = rewriter.create<arith::ConstantIntOp>(loc, elementBytes, 32);
+    Value scale =
+        rewriter.create<arith::ConstantIntOp>(loc, elementBytes, kI32BitWidth);
     Value encoded =
         rewriter.create<arith::MulIOp>(loc, elementOffset, scale);
     return VPTOLoweredAddressOffset{base, encoded, Value()};

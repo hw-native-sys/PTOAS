@@ -25,10 +25,6 @@ namespace pto {
 //===- PTOToEmitCSyncComm.cpp - sync/barrier/comm/async/declare lowering ---------===//
 //===----------------------------------------------------------------------===//
 
-
-
-
-
 //===----------------------------------------------------------------------===//
 // Return lowering
 //===----------------------------------------------------------------------===
@@ -128,8 +124,9 @@ bool tryExtractSyncTokensFromArrayAttr(Operation *op, StringRef attrName,
                                               std::string &dstTok,
                                               std::string &evtTok) {
   auto arrayAttr = op->getAttrOfType<ArrayAttr>(attrName);
-  if (!arrayAttr || arrayAttr.size() < 3)
-    return false;
+  if (!arrayAttr || arrayAttr.size() < mlir::pto::kValue3) {
+      return false;
+  }
   return tryAssignSyncTokens(arrayAttr[0], arrayAttr[1], arrayAttr[2], srcTok,
                              dstTok, evtTok);
 }
@@ -137,21 +134,21 @@ bool tryExtractSyncTokensFromArrayAttr(Operation *op, StringRef attrName,
 bool tryExtractFallbackSyncTokens(Operation *op, std::string &srcTok,
                                          std::string &dstTok,
                                          std::string &evtTok) {
-  SmallVector<std::string, 2> pipes;
-  std::string event;
-  for (NamedAttribute namedAttr : op->getAttrs()) {
-    std::string token;
-    if (tryConvertPipeAttrToToken(namedAttr.getValue(), token)) {
-      pipes.push_back(std::move(token));
-      continue;
+    SmallVector<std::string, mlir::pto::kValue2> pipes;
+    std::string event;
+    for (NamedAttribute namedAttr : op->getAttrs()) {
+        std::string token;
+        if (tryConvertPipeAttrToToken(namedAttr.getValue(), token)) {
+            pipes.push_back(std::move(token));
+            continue;
+        }
+        if (event.empty() && tryConvertEventAttrToToken(namedAttr.getValue(), token)) {
+            event = std::move(token);
+        }
     }
-    if (event.empty() &&
-        tryConvertEventAttrToToken(namedAttr.getValue(), token)) {
-      event = std::move(token);
+    if (pipes.size() < mlir::pto::kValue2 || event.empty()) {
+        return false;
     }
-  }
-  if (pipes.size() < 2 || event.empty())
-    return false;
   srcTok = pipes[0];
   dstTok = pipes[1];
   evtTok = event;
@@ -194,8 +191,6 @@ LogicalResult extractSyncTripletTokens(Operation *op,
 // GetSubBlockIdxOp Lowering (pto.get_block_idx -> get_subblockid())
 
 // GetSubBlockNumOp Lowering.
-
-
 
 } // namespace pto
 } // namespace mlir

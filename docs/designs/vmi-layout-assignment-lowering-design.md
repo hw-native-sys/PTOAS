@@ -514,7 +514,7 @@ rewriting explicit helper IR:
 ```text
 baseline:
   %x_d2 = pto.vmi.extf %x_f16
-  %a    = pto.vmi.addf %x_d2, %k_d2
+  %a    = pto.vmi.vadd %x_d2, %k_d2
   %a_c  = pto.vmi.ensure_layout %a : deinterleaved=2 -> contiguous
   pto.vmi.store %a_c, %out0
   %x_c  = pto.vmi.ensure_layout %x_d2 : deinterleaved=2 -> contiguous
@@ -695,7 +695,7 @@ group_store:
   requests source group_slots(num_groups, slots=K)
   explicit output stride attrs/operands decide store legality
 
-dense elementwise add/mul/fma/min/max/select:
+dense elementwise add/mul/vmula/min/max/select:
   requests all dense data operands and results use one dense layout
   mask operands request the same data layout and the consumer element
   granularity

@@ -9,96 +9,114 @@
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
 
 llvm::TypeSize mlir::pto::HiF8Type::getTypeSizeInBits(
-    const DataLayout &, DataLayoutEntryListRef) const {
-  return getOneByteTypeSize();
+    [[maybe_unused]] const DataLayout& dataLayout, [[maybe_unused]] DataLayoutEntryListRef params) const
+{
+    return getOneByteTypeSize();
 }
 
 llvm::TypeSize mlir::pto::F8E8M0Type::getTypeSizeInBits(
-    const DataLayout &, DataLayoutEntryListRef) const {
-  return getOneByteTypeSize();
+    [[maybe_unused]] const DataLayout& dataLayout, [[maybe_unused]] DataLayoutEntryListRef params) const
+{
+    return getOneByteTypeSize();
 }
 
-uint64_t mlir::pto::HiF8Type::getABIAlignment(const DataLayout &,
-                                              DataLayoutEntryListRef) const {
-  return 1;
+uint64_t mlir::pto::HiF8Type::getABIAlignment(
+    [[maybe_unused]] const DataLayout& dataLayout, [[maybe_unused]] DataLayoutEntryListRef params) const
+{
+    return 1;
 }
 
-uint64_t mlir::pto::F8E8M0Type::getABIAlignment(const DataLayout &,
-                                                DataLayoutEntryListRef) const {
-  return 1;
+uint64_t mlir::pto::F8E8M0Type::getABIAlignment(
+    [[maybe_unused]] const DataLayout& dataLayout, [[maybe_unused]] DataLayoutEntryListRef params) const
+{
+    return 1;
 }
 
 uint64_t mlir::pto::HiF8Type::getPreferredAlignment(
-    const DataLayout &, DataLayoutEntryListRef) const {
-  return 1;
+    [[maybe_unused]] const DataLayout& dataLayout, [[maybe_unused]] DataLayoutEntryListRef params) const
+{
+    return 1;
 }
 
 uint64_t mlir::pto::F8E8M0Type::getPreferredAlignment(
-    const DataLayout &, DataLayoutEntryListRef) const {
-  return 1;
+    [[maybe_unused]] const DataLayout& dataLayout, [[maybe_unused]] DataLayoutEntryListRef params) const
+{
+    return 1;
 }
 
 static llvm::TypeSize getTwoByteTypeSize() { return llvm::TypeSize::getFixed(mlir::pto::kValue16); }
 
 llvm::TypeSize mlir::pto::HiF8x2Type::getTypeSizeInBits(
-    const DataLayout &, DataLayoutEntryListRef) const {
-  return getTwoByteTypeSize();
+    [[maybe_unused]] const DataLayout& dataLayout, [[maybe_unused]] DataLayoutEntryListRef params) const
+{
+    return getTwoByteTypeSize();
 }
 
 uint64_t mlir::pto::HiF8x2Type::getABIAlignment(
-    const DataLayout &, DataLayoutEntryListRef) const {
+    [[maybe_unused]] const DataLayout& dataLayout, [[maybe_unused]] DataLayoutEntryListRef params) const
+{
     return mlir::pto::kValue2;
 }
 
 uint64_t mlir::pto::HiF8x2Type::getPreferredAlignment(
-    const DataLayout &, DataLayoutEntryListRef) const {
+    [[maybe_unused]] const DataLayout& dataLayout, [[maybe_unused]] DataLayoutEntryListRef params) const
+{
     return mlir::pto::kValue2;
 }
 
 llvm::TypeSize mlir::pto::F4E1M2x2Type::getTypeSizeInBits(
-    const DataLayout &, DataLayoutEntryListRef) const {
-  return getOneByteTypeSize();
+    [[maybe_unused]] const DataLayout& dataLayout, [[maybe_unused]] DataLayoutEntryListRef params) const
+{
+    return getOneByteTypeSize();
 }
 
 uint64_t mlir::pto::F4E1M2x2Type::getABIAlignment(
-    const DataLayout &, DataLayoutEntryListRef) const {
-  return 1;
+    [[maybe_unused]] const DataLayout& dataLayout, [[maybe_unused]] DataLayoutEntryListRef params) const
+{
+    return 1;
 }
 
 uint64_t mlir::pto::F4E1M2x2Type::getPreferredAlignment(
-    const DataLayout &, DataLayoutEntryListRef) const {
-  return 1;
+    [[maybe_unused]] const DataLayout& dataLayout, [[maybe_unused]] DataLayoutEntryListRef params) const
+{
+    return 1;
 }
 
 llvm::TypeSize mlir::pto::F4E2M1x2Type::getTypeSizeInBits(
-    const DataLayout &, DataLayoutEntryListRef) const {
-  return getOneByteTypeSize();
+    [[maybe_unused]] const DataLayout& dataLayout, [[maybe_unused]] DataLayoutEntryListRef params) const
+{
+    return getOneByteTypeSize();
 }
 
 uint64_t mlir::pto::F4E2M1x2Type::getABIAlignment(
-    const DataLayout &, DataLayoutEntryListRef) const {
-  return 1;
+    [[maybe_unused]] const DataLayout& dataLayout, [[maybe_unused]] DataLayoutEntryListRef params) const
+{
+    return 1;
 }
 
 uint64_t mlir::pto::F4E2M1x2Type::getPreferredAlignment(
-    const DataLayout &, DataLayoutEntryListRef) const {
-  return 1;
+    [[maybe_unused]] const DataLayout& dataLayout, [[maybe_unused]] DataLayoutEntryListRef params) const
+{
+    return 1;
 }
 
 static llvm::TypeSize getFourByteTypeSize() { return llvm::TypeSize::getFixed(mlir::pto::kValue32); }
 
 llvm::TypeSize mlir::pto::BF16x2Type::getTypeSizeInBits(
-    const DataLayout &, DataLayoutEntryListRef) const {
-  return getFourByteTypeSize();
+    [[maybe_unused]] const DataLayout& dataLayout, [[maybe_unused]] DataLayoutEntryListRef params) const
+{
+    return getFourByteTypeSize();
 }
 
 uint64_t mlir::pto::BF16x2Type::getABIAlignment(
-    const DataLayout &, DataLayoutEntryListRef) const {
+    [[maybe_unused]] const DataLayout& dataLayout, [[maybe_unused]] DataLayoutEntryListRef params) const
+{
     return mlir::pto::kValue4;
 }
 
 uint64_t mlir::pto::BF16x2Type::getPreferredAlignment(
-    const DataLayout &, DataLayoutEntryListRef) const {
+    [[maybe_unused]] const DataLayout& dataLayout, [[maybe_unused]] DataLayoutEntryListRef params) const
+{
     return mlir::pto::kValue4;
 }
 

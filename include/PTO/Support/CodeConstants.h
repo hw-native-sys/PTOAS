@@ -37,6 +37,7 @@ inline constexpr int kValue61 = 61;
 inline constexpr int kValue62 = 62;
 inline constexpr int kValue63 = 63;
 inline constexpr int kValue64 = 64;
+inline constexpr int kValue127 = 127;
 inline constexpr int kValue128 = 128;
 inline constexpr int kValue255 = 255;
 inline constexpr int kValue256 = 256;

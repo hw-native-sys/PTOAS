@@ -8448,14 +8448,14 @@ dst[i, j] = saturate(cast(src[i, j], rmode), satmode)
 | `src` | `pto.tile_buf` | Source tile |
 | `dst` | `pto.tile_buf` | Destination tile (different element type) |
 | `rmode` | `RoundModeAttr` (default: `CAST_RINT`) | Rounding mode |
-| `satmode` | `SaturationModeAttr` (default: `OFF`) | Saturation mode |
+| `satmode` | `SaturationModeAttr` (default: `ON`) | Saturation mode |
 
 **Results:** None. Writes into `dst` via DPS pattern.
 
 **Constraints & Verification:**
 
 - `dst` and `src` must be compatible in shape/valid region as required by the implementation.
-- `satmode = ON` requests destination-range clamping after rounding; `OFF` preserves the target's non-saturating conversion path.
+- Omitting `satmode` selects `ON`, which requests destination-range clamping after rounding. Specify `OFF` explicitly to use the target's non-saturating conversion path.
 - **A2/A3 and A5 notes:**
   - A2/A3 reject all low-precision `tcvt` operands.
   - A5 only accepts the following low-precision pairs: 

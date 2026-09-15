@@ -20,39 +20,41 @@ namespace mlir {
 namespace pto {
 
 struct PTOMulToEmitC : public OpConversionPattern<pto::TMulOp> {
-using OpConversionPattern<pto::TMulOp>::OpConversionPattern;
+  using OpConversionPattern<pto::TMulOp>::OpConversionPattern;
 
-LogicalResult matchAndRewrite(pto::TMulOp op, OpAdaptor adaptor,
-                              ConversionPatternRewriter &rewriter) const override {
-  Value src0 = adaptor.getSrc0();
-  Value src1 = adaptor.getSrc1();
-  Value dst  = adaptor.getDst();
+  LogicalResult matchAndRewrite(
+      pto::TMulOp op, OpAdaptor adaptor,
+      ConversionPatternRewriter &rewriter) const override {
+    Value src0 = adaptor.getSrc0();
+    Value src1 = adaptor.getSrc1();
+    Value dst = adaptor.getDst();
 
-  SmallVector<Value, 3> operands{dst, src0, src1};
-  createLastUseAwareOpaqueCall(rewriter, op.getOperation(), TypeRange{},
-                               "TMUL", operands);
+    SmallVector<Value, mlir::pto::kValue3> operands{dst, src0, src1};
+    createLastUseAwareOpaqueCall(rewriter, op.getOperation(), TypeRange{},
+                                 "TMUL", operands);
 
-  rewriter.eraseOp(op);
-  return success();
-}
+    rewriter.eraseOp(op);
+    return success();
+  }
 };
 
 struct PTOMulsToEmitC : public OpConversionPattern<pto::TMulSOp> {
-using OpConversionPattern<pto::TMulSOp>::OpConversionPattern;
+  using OpConversionPattern<pto::TMulSOp>::OpConversionPattern;
 
-LogicalResult matchAndRewrite(pto::TMulSOp op, OpAdaptor adaptor,
-                              ConversionPatternRewriter &rewriter) const override {
-  Value src = adaptor.getSrc0();
-  Value dst = adaptor.getDst();
-  Value scalar = adaptor.getScalar();
+  LogicalResult matchAndRewrite(
+      pto::TMulSOp op, OpAdaptor adaptor,
+      ConversionPatternRewriter &rewriter) const override {
+    Value src = adaptor.getSrc0();
+    Value dst = adaptor.getDst();
+    Value scalar = adaptor.getScalar();
 
-  SmallVector<Value, 3> operands{dst, src, scalar};
-  createLastUseAwareOpaqueCall(rewriter, op.getOperation(), TypeRange{},
-                               "TMULS", operands);
+    SmallVector<Value, mlir::pto::kValue3> operands{dst, src, scalar};
+    createLastUseAwareOpaqueCall(rewriter, op.getOperation(), TypeRange{},
+                                 "TMULS", operands);
 
-  rewriter.eraseOp(op);
-  return success();
-}
+    rewriter.eraseOp(op);
+    return success();
+  }
 };
 
 struct PTOTAxpyToEmitC : public OpConversionPattern<pto::TAxpyOp> {

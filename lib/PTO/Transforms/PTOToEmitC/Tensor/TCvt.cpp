@@ -40,7 +40,7 @@ struct PTOCvtToEmitC : public OpConversionPattern<pto::TCvtOp> {
     auto satModeTy = emitc::OpaqueType::get(ctx, "SaturationMode");
     auto satAttr = op.getSatModeAttr();
     std::string satTok = satAttr ? saturationModeTok(satAttr)
-                                 : std::string("SaturationMode::OFF");
+                                 : std::string("SaturationMode::ON");
     Value satModeVal = rewriter.create<emitc::ConstantOp>(
         loc, satModeTy, emitc::OpaqueAttr::get(ctx, satTok));
 

@@ -41,7 +41,7 @@ public:
 class SoftLibRuntime {
 public:
   static void install(std::shared_ptr<SoftLibService> service);
-  static void uninstall(SoftLibService *service);
+  static void uninstall(const SoftLibService *service);
   static std::shared_ptr<SoftLibService> getService();
 };
 

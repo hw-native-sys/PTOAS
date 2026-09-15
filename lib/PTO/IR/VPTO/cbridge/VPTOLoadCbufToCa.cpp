@@ -15,6 +15,8 @@ using namespace mlir;
 using namespace mlir::pto;
 
 // pto.load_cbuf_to_ca: regular CBUF -> CA (LEFT) cube bridge load.
+// ODS fixes verifier callbacks to a non-const member signature.
+// NOLINTNEXTLINE(readability-make-member-function-const)
 LogicalResult LoadCbufToCaOp::verify() {
   return verifyRegularCubeBridgeLoad(*this, AddressSpace::LEFT, "LEFT");
 }

@@ -28,8 +28,9 @@ struct ArithShiftToEmitC : public OpConversionPattern<ArithOp> {
                   ConversionPatternRewriter &rewriter) const override {
     FailureOr<ScalarIntOpPrologue> prologue =
         resolveScalarIntPrologue(this, op, adaptor, rewriter);
-    if (failed(prologue))
+    if (failed(prologue)) {
       return failure();
+    }
     auto [loc, dstTy] = *prologue;
 
     if (getScalarIntOrIndexBitWidth(op.getType()) == 1) {

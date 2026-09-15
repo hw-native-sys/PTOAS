@@ -216,8 +216,8 @@ static LogicalResult verifyTExtractA5(TExtractOp op) {
 }
 
 mlir::LogicalResult mlir::pto::TExtractOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult { return verifyTExtractA2A3(*this); };
-  auto verifyA5 = [&]() -> LogicalResult { return verifyTExtractA5(*this); };
+  auto verifyA2A3 = [this]() -> LogicalResult { return verifyTExtractA2A3(*this); };
+  auto verifyA5 = [this]() -> LogicalResult { return verifyTExtractA5(*this); };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 static bool isA5VectorPreQuantTypePair(Type srcElem, Type dstElem);

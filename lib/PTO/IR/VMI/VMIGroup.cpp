@@ -14,6 +14,8 @@
 using namespace mlir;
 using namespace mlir::pto;
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated
+// verifier callbacks have a non-const signature.
 LogicalResult VMIGroupIotaOp::verify() {
   auto resultType = cast<VMIVRegType>(getResult().getType());
   Type elementType = resultType.getElementType();
@@ -53,6 +55,8 @@ LogicalResult VMIGroupIotaOp::verify() {
   return success();
 }
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated
+// verifier callbacks have a non-const signature.
 LogicalResult VMIReduceAddIOp::verify() {
   auto sourceType = cast<VMIVRegType>(getSource().getType());
   auto maskType = cast<VMIMaskType>(getMask().getType());
@@ -73,6 +77,8 @@ LogicalResult VMIReduceAddIOp::verify() {
   return verifyMaskMatchesData(getOperation(), maskType, sourceType);
 }
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated
+// verifier callbacks have a non-const signature.
 LogicalResult VMIReduceAddFOp::verify() {
   auto sourceType = cast<VMIVRegType>(getSource().getType());
   auto maskType = cast<VMIMaskType>(getMask().getType());
@@ -117,8 +123,12 @@ template <typename OpTy> static LogicalResult verifyReduceMinMaxFOp(OpTy op) {
   return verifyMaskMatchesData(op.getOperation(), maskType, sourceType);
 }
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated
+// verifier callbacks have a non-const signature.
 LogicalResult VMIReduceMaxFOp::verify() { return verifyReduceMinMaxFOp(*this); }
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated
+// verifier callbacks have a non-const signature.
 LogicalResult VMIReduceMinFOp::verify() { return verifyReduceMinMaxFOp(*this); }
 
 template <typename OpTy> static LogicalResult verifyReduceMinMaxIOp(OpTy op) {
@@ -140,8 +150,12 @@ template <typename OpTy> static LogicalResult verifyReduceMinMaxIOp(OpTy op) {
   return verifyMaskMatchesData(op.getOperation(), maskType, sourceType);
 }
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated
+// verifier callbacks have a non-const signature.
 LogicalResult VMIReduceMaxIOp::verify() { return verifyReduceMinMaxIOp(*this); }
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated
+// verifier callbacks have a non-const signature.
 LogicalResult VMIReduceMinIOp::verify() { return verifyReduceMinMaxIOp(*this); }
 
 template <typename OpTy>
@@ -202,14 +216,20 @@ static LogicalResult verifyGroupReduceFloatOp(OpTy op, bool requiresReassoc) {
   return verifyGroupReduceCommon(op, sourceType, resultType, maskType);
 }
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated
+// verifier callbacks have a non-const signature.
 LogicalResult VMIGroupReduceAddFOp::verify() {
   return verifyGroupReduceFloatOp(*this, /*requiresReassoc=*/true);
 }
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated
+// verifier callbacks have a non-const signature.
 LogicalResult VMIGroupReduceMaxFOp::verify() {
   return verifyGroupReduceFloatOp(*this, /*requiresReassoc=*/false);
 }
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated
+// verifier callbacks have a non-const signature.
 LogicalResult VMIGroupReduceMinFOp::verify() {
   return verifyGroupReduceFloatOp(*this, /*requiresReassoc=*/false);
 }
@@ -230,14 +250,20 @@ static LogicalResult verifyGroupReduceIntegerOp(OpTy op) {
   return verifyGroupReduceCommon(op, sourceType, resultType, maskType);
 }
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated
+// verifier callbacks have a non-const signature.
 LogicalResult VMIGroupReduceAddIOp::verify() {
   return verifyGroupReduceIntegerOp(*this);
 }
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated
+// verifier callbacks have a non-const signature.
 LogicalResult VMIGroupReduceMaxIOp::verify() {
   return verifyGroupReduceIntegerOp(*this);
 }
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated
+// verifier callbacks have a non-const signature.
 LogicalResult VMIGroupReduceMinIOp::verify() {
   return verifyGroupReduceIntegerOp(*this);
 }
@@ -246,6 +272,8 @@ LogicalResult VMIGroupReduceMinIOp::verify() {
 // Group 5: vcadd / vcmax / vcmin verifiers
 //===----------------------------------------------------------------------===//
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated
+// verifier callbacks have a non-const signature.
 LogicalResult VMIGroupBroadcastOp::verify() {
   auto sourceType = cast<VMIVRegType>(getSource().getType());
   auto resultType = cast<VMIVRegType>(getResult().getType());
@@ -357,10 +385,16 @@ template <typename OpTy> static LogicalResult verifyVMIHistogramOp(OpTy op) {
                                    maskType);
 }
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated
+// verifier callbacks have a non-const signature.
 LogicalResult VMIVdhistOp::verify() { return verifyVMIHistogramOp(*this); }
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated
+// verifier callbacks have a non-const signature.
 LogicalResult VMIVchistOp::verify() { return verifyVMIHistogramOp(*this); }
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated
+// verifier callbacks have a non-const signature.
 LogicalResult VMIChannelSplitOp::verify() {
   auto sourceType = cast<VMIVRegType>(getSource().getType());
   if (getResults().size() < mlir::pto::kValue2) {
@@ -390,6 +424,8 @@ LogicalResult VMIChannelSplitOp::verify() {
   return success();
 }
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated
+// verifier callbacks have a non-const signature.
 LogicalResult VMIChannelMergeOp::verify() {
   if (getInputs().size() < mlir::pto::kValue2) {
     return emitOpError("requires at least two channel inputs");

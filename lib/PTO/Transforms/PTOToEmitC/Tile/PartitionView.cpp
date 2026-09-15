@@ -8,6 +8,9 @@
 //===- PartitionView.cpp - Tile PartitionView op lowering --------------------------------===//
 //===----------------------------------------------------------------------===//
 
+constexpr unsigned kPartitionStrideDimCount = 5;
+constexpr unsigned kPartitionViewPatternBenefit = 2;
+
 #include "../PTOToEmitCEmitters.h"
 #include "TileInternal.h"
 
@@ -54,16 +57,16 @@ struct PTOPartitionViewToEmitC
 
     return emitRuntimePartitionGlobalTensor(
         op, adaptor, rewriter, resultType, source, sourceElementType,
-        *sourceStrides, sourceRank);
+        *sourceStrides);
   }
 
   // Collect the per-dimension source strides: static strides come from the
   // make_tensor_view template token, dynamic ones from runtime metadata.
-  FailureOr<SmallVector<Value, 5>>
+  FailureOr<SmallVector<Value, kPartitionStrideDimCount>>
   gatherRuntimeSourceStrides(mlir::pto::PartitionViewOp op,
                              ConversionPatternRewriter &rewriter, Value source,
                              int64_t sourceRank) const {
-    SmallVector<Value, 5> sourceStrides;
+    SmallVector<Value, kPartitionStrideDimCount> sourceStrides;
     sourceStrides.reserve(sourceRank);
 sourceStrides.reserve(sourceRank);
 if (auto makeView = op.getSource().getDefiningOp<pto::MakeTensorViewOp>()) {
@@ -96,9 +99,7 @@ if (auto makeView = op.getSource().getDefiningOp<pto::MakeTensorViewOp>()) {
       mlir::pto::PartitionViewOp op, OpAdaptor adaptor,
       ConversionPatternRewriter &rewriter,
       pto::PartitionTensorViewType resultType, Value source,
-      Type sourceElementType, const SmallVector<Value, 5> &sourceStrides,
-      int64_t sourceRank) const {
-
+      Type sourceElementType, const SmallVector<Value, kPartitionStrideDimCount> &sourceStrides) const {
 Value linearOffset = makeViewIndexConstant(rewriter, op.getLoc(), 0);
 for (auto [offset, stride] :
      llvm::zip(adaptor.getOffsets(), sourceStrides)) {
@@ -237,7 +238,7 @@ struct PTOPartitionViewStaticToEmitC
       ConversionPatternRewriter &rewriter, Location loc, Value data,
       const StaticPartitionInputs &inputs, Type indexTy,
       const std::function<Value(int64_t)> &mkIndex) const {
-    auto asIndex = [&](Value value) -> Value {
+    auto asIndex = [&rewriter, loc, indexTy](Value value) -> Value {
       if (value.getType() == indexTy)
         return value;
       return rewriter.create<emitc::CastOp>(loc, indexTy, value).getResult();
@@ -280,7 +281,7 @@ struct PTOPartitionViewStaticToEmitC
                  .getResult();
     }
     Type indexTy = emitc::OpaqueType::get(ctx, "int64_t");
-    auto mkIndex = [&](int64_t value) {
+    auto mkIndex = [&rewriter, &op, indexTy](int64_t value) {
       return makeEmitCIntConstant(rewriter, op.getLoc(), indexTy, value);
     };
     Value ptr = applyPartitionOffsetTerms(rewriter, op.getLoc(), data,
@@ -309,7 +310,7 @@ void populateTilePartitionViewPatterns(RewritePatternSet &patterns,
                         TypeConverter &typeConverter, MLIRContext *ctx) {
   patterns.add<PTOPartitionViewToEmitC>(typeConverter, ctx);
   patterns.add<PTOPartitionViewStaticToEmitC>(typeConverter, ctx,
-                                              PatternBenefit(2));
+                                              PatternBenefit(kPartitionViewPatternBenefit));
 }
 
 } // namespace pto

@@ -952,8 +952,7 @@ wrapUncoveredTopLevelSegment(func::FuncOp funcOp,
 
   OpBuilder builder(firstOp);
   auto sectionOp = builder.create<SectionOpT>(firstOp->getLoc());
-  sectionOp.getBody().push_back(new Block());
-  Block *sectionBlock = &sectionOp.getBody().front();
+  Block *sectionBlock = builder.createBlock(&sectionOp.getBody());
 
   auto firstIt = Block::iterator(firstOp);
   auto afterLastIt = std::next(Block::iterator(lastOp));

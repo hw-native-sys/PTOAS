@@ -8,17 +8,23 @@
 
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
 
+static constexpr unsigned kPartialI8BitWidth = mlir::pto::kValue8;
+static constexpr unsigned kPartialI16BitWidth = mlir::pto::kValue16;
+static constexpr unsigned kPartialI32BitWidth = mlir::pto::kValue32;
+static constexpr size_t kPartialRank = mlir::pto::kValue2;
+
 static LogicalResult verifyTPartArgElementType(Operation *op, Type elem,
                                                StringRef opName) {
   PTOArch arch = getTargetArch(op);
   if (arch == PTOArch::A5) {
-    if (!(elem.isInteger(32) || elem.isInteger(16) || elem.isInteger(8) ||
+    if (!(elem.isInteger(kPartialI32BitWidth) || elem.isInteger(kPartialI16BitWidth) ||
+          elem.isInteger(kPartialI8BitWidth) ||
           elem.isF16() || elem.isBF16() || elem.isF32())) {
       return op->emitOpError() << "expects A5 " << opName
                                << " element type to be i32/i16/i8/f16/bf16/f32";
     }
   } else {
-    if (!(elem.isInteger(32) || elem.isInteger(16) || elem.isF16() ||
+    if (!(elem.isInteger(kPartialI32BitWidth) || elem.isInteger(kPartialI16BitWidth) || elem.isF16() ||
           elem.isF32())) {
       return op->emitOpError() << "expects A2/A3 " << opName
                                << " element type to be i32/i16/f16/f32";
@@ -42,7 +48,7 @@ static LogicalResult verifyTPartArgOpCommon(Operation *op, Type src0Ty,
 }
 
 mlir::LogicalResult mlir::pto::TPartArgMaxOp::verify() {
-  auto verifyByArch = [&]() -> LogicalResult {
+  auto verifyByArch = [this]() -> LogicalResult {
     return verifyTPartArgOpCommon(
         getOperation(), getSrc0().getType(), getSrc1().getType(),
         getSrc0Idx().getType(), getSrc1Idx().getType(), getDst().getType(),
@@ -52,7 +58,7 @@ mlir::LogicalResult mlir::pto::TPartArgMaxOp::verify() {
 }
 
 mlir::LogicalResult mlir::pto::TPartArgMinOp::verify() {
-  auto verifyByArch = [&]() -> LogicalResult {
+  auto verifyByArch = [this]() -> LogicalResult {
     return verifyTPartArgOpCommon(
         getOperation(), getSrc0().getType(), getSrc1().getType(),
         getSrc0Idx().getType(), getSrc1Idx().getType(), getDst().getType(),
@@ -74,8 +80,8 @@ static LogicalResult verifyTPartMulA5(TPartMulOp op) {
 }
 
 mlir::LogicalResult mlir::pto::TPartMulOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult { return verifyTPartMulA2A3(*this); };
-  auto verifyA5 = [&]() -> LogicalResult { return verifyTPartMulA5(*this); };
+  auto verifyA2A3 = [this]() -> LogicalResult { return verifyTPartMulA2A3(*this); };
+  auto verifyA5 = [this]() -> LogicalResult { return verifyTPartMulA5(*this); };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
@@ -135,7 +141,7 @@ static FailureOr<std::tuple<Type, Type, Type, Type>> verifyTPReluCommon(
 static LogicalResult verifyTPReluA2A3Tmp(TPReluOp op, Type tt, Type td) {
   Type tmpElem = getElemTy(tt);
   auto tmpIntTy = mlir::dyn_cast<IntegerType>(tmpElem);
-  if (!tmpIntTy || tmpIntTy.getWidth() != 8) {
+  if (!tmpIntTy || tmpIntTy.getWidth() != kPartialI8BitWidth) {
     return op.emitOpError("expects A2/A3 tmp element type to be u8");
   }
   if (failed(verifyVecTileCommon(op, tt, "tmp"))) {
@@ -144,7 +150,7 @@ static LogicalResult verifyTPReluA2A3Tmp(TPReluOp op, Type tt, Type td) {
   auto tmpShape = getShapeVec(tt);
   auto dstValid = getValidShapeVec(td);
   auto tmpValid = getValidShapeVec(tt);
-  if (tmpShape.size() != 2 || dstValid.size() != 2 || tmpValid.size() != 2) {
+  if (tmpShape.size() != kPartialRank || dstValid.size() != kPartialRank || tmpValid.size() != kPartialRank) {
     return op.emitOpError("expects tmp and dst to be rank-2 tiles");
   }
   if (dstValid[0] != ShapedType::kDynamic && tmpShape[0] != ShapedType::kDynamic &&
@@ -154,7 +160,7 @@ static LogicalResult verifyTPReluA2A3Tmp(TPReluOp op, Type tt, Type td) {
            << (dstValid[0] + 1) << ")";
   }
   if (dstValid[1] != ShapedType::kDynamic && tmpValid[1] != ShapedType::kDynamic) {
-    int64_t packedMaskCols = llvm::divideCeil(dstValid[1], int64_t{8});
+    int64_t packedMaskCols = llvm::divideCeil(dstValid[1], int64_t{mlir::pto::kValue8});
     if (tmpValid[1] < packedMaskCols) {
       return op.emitOpError()
              << "expects A2/A3 tmp valid_shape[1] to be at least ceil(dst valid_shape[1] / 8) ("
@@ -167,9 +173,10 @@ static LogicalResult verifyTPReluA2A3Tmp(TPReluOp op, Type tt, Type td) {
         "expects A2/A3 tprelu dst valid_shape to be static when tmp is provided");
   }
   int64_t packedCols = std::max<int64_t>(
-      32, llvm::divideCeil(llvm::divideCeil(dstValid[1], int64_t{8}),
-                           int64_t{32}) *
-              32);
+      kPartialI32BitWidth,
+      llvm::divideCeil(llvm::divideCeil(dstValid[1], int64_t{kPartialI8BitWidth}),
+                       int64_t{kPartialI32BitWidth}) *
+          kPartialI32BitWidth);
   if (failed(verifyTmpCapacityAtLeast(
           op, tt, static_cast<uint64_t>(dstValid[0] + 1) * static_cast<uint64_t>(packedCols)))) {
     return failure();
@@ -219,8 +226,8 @@ static LogicalResult verifyTPReluA5(TPReluOp op) {
 }
 
 mlir::LogicalResult mlir::pto::TPReluOp::verify() {
-  auto verifyA2A3 = [&]() -> LogicalResult { return verifyTPReluA2A3(*this); };
-  auto verifyA5 = [&]() -> LogicalResult { return verifyTPReluA5(*this); };
+  auto verifyA2A3 = [this]() -> LogicalResult { return verifyTPReluA2A3(*this); };
+  auto verifyA5 = [this]() -> LogicalResult { return verifyTPReluA5(*this); };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 

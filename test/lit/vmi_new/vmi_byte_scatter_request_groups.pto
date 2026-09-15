@@ -1,0 +1,162 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -split-input-file -vmi-to-vpto | FileCheck %s --implicit-check-not=pto.vmi.
+
+// Internal VMI lengths remain general: round partial 128-request groups up,
+// including a partial final byte carrier and more than two index chunks.
+
+// CHECK-LABEL: func.func @scatter_n127(
+// CHECK-COUNT-1: pto.vscatter
+// CHECK-NOT: pto.vscatter
+// CHECK: return
+module {
+  func.func @scatter_n127(
+      %value: !pto.vmi.vreg<127xui8, #pto.vmi.layout<contiguous>>,
+      %dst: !pto.ptr<ui8, ub>,
+      %indices: !pto.vmi.vreg<127xi16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<127xb8, #pto.vmi.layout<contiguous>>) {
+    pto.vmi.scatter %value, %dst[%indices], %mask
+        : !pto.vmi.vreg<127xui8, #pto.vmi.layout<contiguous>>, !pto.ptr<ui8, ub>,
+          !pto.vmi.vreg<127xi16, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<127xb8, #pto.vmi.layout<contiguous>>
+    return
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @scatter_n128(
+// CHECK-COUNT-1: pto.vscatter
+// CHECK-NOT: pto.vscatter
+// CHECK: return
+module {
+  func.func @scatter_n128(
+      %value: !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous>>,
+      %dst: !pto.ptr<ui8, ub>,
+      %indices: !pto.vmi.vreg<128xi16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<128xb8, #pto.vmi.layout<contiguous>>) {
+    pto.vmi.scatter %value, %dst[%indices], %mask
+        : !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous>>, !pto.ptr<ui8, ub>,
+          !pto.vmi.vreg<128xi16, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<128xb8, #pto.vmi.layout<contiguous>>
+    return
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @scatter_n129(
+// CHECK-COUNT-2: pto.vscatter
+// CHECK-NOT: pto.vscatter
+// CHECK: return
+module {
+  func.func @scatter_n129(
+      %value: !pto.vmi.vreg<129xui8, #pto.vmi.layout<contiguous>>,
+      %dst: !pto.ptr<ui8, ub>,
+      %indices: !pto.vmi.vreg<129xi16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<129xb8, #pto.vmi.layout<contiguous>>) {
+    pto.vmi.scatter %value, %dst[%indices], %mask
+        : !pto.vmi.vreg<129xui8, #pto.vmi.layout<contiguous>>, !pto.ptr<ui8, ub>,
+          !pto.vmi.vreg<129xi16, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<129xb8, #pto.vmi.layout<contiguous>>
+    return
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @scatter_n255(
+// CHECK-COUNT-2: pto.vscatter
+// CHECK-NOT: pto.vscatter
+// CHECK: return
+module {
+  func.func @scatter_n255(
+      %value: !pto.vmi.vreg<255xui8, #pto.vmi.layout<contiguous>>,
+      %dst: !pto.ptr<ui8, ub>,
+      %indices: !pto.vmi.vreg<255xi16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<255xb8, #pto.vmi.layout<contiguous>>) {
+    pto.vmi.scatter %value, %dst[%indices], %mask
+        : !pto.vmi.vreg<255xui8, #pto.vmi.layout<contiguous>>, !pto.ptr<ui8, ub>,
+          !pto.vmi.vreg<255xi16, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<255xb8, #pto.vmi.layout<contiguous>>
+    return
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @scatter_n256(
+// CHECK-COUNT-2: pto.vscatter
+// CHECK-NOT: pto.vscatter
+// CHECK: return
+module {
+  func.func @scatter_n256(
+      %value: !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous>>,
+      %dst: !pto.ptr<ui8, ub>,
+      %indices: !pto.vmi.vreg<256xi16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<256xb8, #pto.vmi.layout<contiguous>>) {
+    pto.vmi.scatter %value, %dst[%indices], %mask
+        : !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous>>, !pto.ptr<ui8, ub>,
+          !pto.vmi.vreg<256xi16, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<256xb8, #pto.vmi.layout<contiguous>>
+    return
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @scatter_n257(
+// CHECK-COUNT-3: pto.vscatter
+// CHECK-NOT: pto.vscatter
+// CHECK: return
+module {
+  func.func @scatter_n257(
+      %value: !pto.vmi.vreg<257xui8, #pto.vmi.layout<contiguous>>,
+      %dst: !pto.ptr<ui8, ub>,
+      %indices: !pto.vmi.vreg<257xi16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<257xb8, #pto.vmi.layout<contiguous>>) {
+    pto.vmi.scatter %value, %dst[%indices], %mask
+        : !pto.vmi.vreg<257xui8, #pto.vmi.layout<contiguous>>, !pto.ptr<ui8, ub>,
+          !pto.vmi.vreg<257xi16, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<257xb8, #pto.vmi.layout<contiguous>>
+    return
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @scatter_n384(
+// CHECK-COUNT-3: pto.vscatter
+// CHECK-NOT: pto.vscatter
+// CHECK: return
+module {
+  func.func @scatter_n384(
+      %value: !pto.vmi.vreg<384xui8, #pto.vmi.layout<contiguous>>,
+      %dst: !pto.ptr<ui8, ub>,
+      %indices: !pto.vmi.vreg<384xi16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<384xb8, #pto.vmi.layout<contiguous>>) {
+    pto.vmi.scatter %value, %dst[%indices], %mask
+        : !pto.vmi.vreg<384xui8, #pto.vmi.layout<contiguous>>, !pto.ptr<ui8, ub>,
+          !pto.vmi.vreg<384xi16, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<384xb8, #pto.vmi.layout<contiguous>>
+    return
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @scatter_n512(
+// CHECK-COUNT-4: pto.vscatter
+// CHECK-NOT: pto.vscatter
+// CHECK: return
+module {
+  func.func @scatter_n512(
+      %value: !pto.vmi.vreg<512xui8, #pto.vmi.layout<contiguous>>,
+      %dst: !pto.ptr<ui8, ub>,
+      %indices: !pto.vmi.vreg<512xi16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<512xb8, #pto.vmi.layout<contiguous>>) {
+    pto.vmi.scatter %value, %dst[%indices], %mask
+        : !pto.vmi.vreg<512xui8, #pto.vmi.layout<contiguous>>, !pto.ptr<ui8, ub>,
+          !pto.vmi.vreg<512xi16, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<512xb8, #pto.vmi.layout<contiguous>>
+    return
+  }
+}

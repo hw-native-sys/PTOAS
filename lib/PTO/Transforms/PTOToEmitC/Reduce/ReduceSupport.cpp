@@ -25,11 +25,6 @@ namespace pto {
 //===- PTOToEmitCTensorReduce.cpp - tensor elementwise op lowering ---------===//
 //===----------------------------------------------------------------------===//
 
-
-
-
-
-
 //===----------------------------------------------------------------------===//
 // PTOConvert.cpp  (add lowering + patterns.add for TOR DPS/memref op)
 //===----------------------------------------------------------------------===//
@@ -193,8 +188,6 @@ void replaceOrEraseWithOpaqueCallAndReturnDst(Operation *op, Value dst,
     rewriter.eraseOp(op);
   }
 }
-
-
 
 } // namespace pto
 } // namespace mlir

@@ -701,7 +701,7 @@ static void wrapCluster(const ResultlessScopePlan &plan, MLIRContext *context) {
   IRRewriter rewriter(context);
   rewriter.setInsertionPoint(first);
   auto scope = rewriter.create<pto::VecScopeOp>(first->getLoc());
-  scope.getBody().push_back(new Block());
+  rewriter.createBlock(&scope.getBody());
 
   for (Operation *op : plan.hoistOps) {
     if (op->getBlock() == parentBlock && scope->isBeforeInBlock(op)) {

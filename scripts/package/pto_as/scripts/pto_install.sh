@@ -625,7 +625,7 @@ install_pto() {
   log_with_errorlevel "$?" "error" "[ERROR]: ERR_NO:${INSTALL_FAILED};ERR_DES:Install pto module files failed."
 
   pto_install_wheel "${TARGET_VERSION_DIR}" "${TARGET_MOULDE_DIR}"
-  log_with_errorlevel "$?" "error" "[ERROR]: ERR_NO:${INSTALL_FAILED};ERR_DES:Install PTOAS private wheel failed."
+  log_with_errorlevel "$?" "error" "[ERROR]: ERR_NO:${INSTALL_FAILED};ERR_DES:Install PTOAS wheel failed."
 
   # Removed lib directory from package root
   if [ -d "${TARGET_VERSION_DIR}/lib" ]; then
@@ -677,6 +677,10 @@ main() {
  before you run the pto module, execute the command \
  [ export ASCEND_PTO_AS_PATH=${TARGET_INSTALL_PATH}/cann/${PTO_PLATFORM_DIR} ] to set the environment path."
   fi
+
+  logandprint "[INFO]: Source the CANN toolkit set_env.sh so the [ ptoas ] command \
+ and the [ ptoas ]/[ ptodsl ] Python packages become available (it prepends \
+ <version>/bin to PATH and <version>/python/site-packages to PYTHONPATH)."
 
   logandprint "[INFO]: Pto package installed successfully! The new version takes effect immediately."
 }

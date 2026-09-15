@@ -54,6 +54,8 @@ struct ArithExtSIToEmitC : public OpConversionPattern<arith::ExtSIOp> {
 template <typename CastOp>
 struct ArithCastToEmitC : public OpConversionPattern<CastOp> {
   using OpConversionPattern<CastOp>::OpConversionPattern;
+  // NOLINTNEXTLINE: ConversionPattern requires a mutable rewriter to replace
+  // the matched operation.
   LogicalResult matchAndRewrite(CastOp op, typename CastOp::Adaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     Type dstTy = this->getTypeConverter()->convertType(op.getType());

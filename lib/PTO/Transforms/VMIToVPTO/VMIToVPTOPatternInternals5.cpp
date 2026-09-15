@@ -19,16 +19,16 @@ private:
   FailureOr<Value> buildOneBlockGroupResult(
       OpTy op, Value sourcePart, Value maskPart, Type resultType,
       VRegType expectedResultType, MaskType expectedMaskType,
-      OneToNPatternRewriter &rewriter) const {
+      OneToNPatternRewriter *rewriter) const {
     bool mismatchedTypes = sourcePart.getType() != expectedResultType ||
                            maskPart.getType() != expectedMaskType ||
                            resultType != expectedResultType;
     if (mismatchedTypes) {
-      return rewriter.notifyMatchFailure(
+      return rewriter->notifyMatchFailure(
           op, "vcg group_reduce path requires uniform physical chunk types");
     }
     return rewriter
-        .create<GroupReduceOpTy>(op.getLoc(), expectedResultType, sourcePart,
+        ->create<GroupReduceOpTy>(op.getLoc(), expectedResultType, sourcePart,
                                  maskPart)
         .getResult();
   }
@@ -54,7 +54,7 @@ private:
     for (auto [sourceIndex, sourcePart] : llvm::enumerate(sourceParts)) {
       FailureOr<Value> result = buildOneBlockGroupResult(
           op, sourcePart, maskParts[sourceIndex], resultTypes[sourceIndex],
-          resultType, maskType, rewriter);
+          resultType, maskType, &rewriter);
       if (failed(result)) {
         return failure();
       }
@@ -151,23 +151,18 @@ private:
       return rewriter.notifyMatchFailure(
           op, "failed to create four-block group_reduce combine mask");
     }
-    SmallVector<Value, 4> partials;
-    partials.reserve(4);
-    for (int64_t part = 0; part < 4; ++part) {
-      int64_t sourceIndex = part * resultPartCount + resultIndex;
-      Value source = sourceParts[sourceIndex];
-      Value mask = maskParts[sourceIndex];
-      bool mismatchedTypes = resultTypes[resultIndex] != resultType ||
-                             source.getType() != resultType ||
-                             mask.getType() != maskType;
-      if (mismatchedTypes) {
-        return rewriter.notifyMatchFailure(
-            op, "four-block group_reduce requires uniform physical types");
-      }
-      partials.push_back(rewriter
-                             .create<GroupReduceOpTy>(op.getLoc(), resultType,
-                                                      source, mask)
-                             .getResult());
+    SmallVector<Value, mlir::pto::kValue4> partials;
+    partials.reserve(mlir::pto::kValue4);
+    for (int64_t part = 0; part < mlir::pto::kValue4; ++part) {
+        int64_t sourceIndex = part * resultPartCount + resultIndex;
+        Value source = sourceParts[sourceIndex];
+        Value mask = maskParts[sourceIndex];
+        bool mismatchedTypes =
+            resultTypes[resultIndex] != resultType || source.getType() != resultType || mask.getType() != maskType;
+        if (mismatchedTypes) {
+            return rewriter.notifyMatchFailure(op, "four-block group_reduce requires uniform physical types");
+        }
+        partials.push_back(rewriter.create<GroupReduceOpTy>(op.getLoc(), resultType, source, mask).getResult());
     }
     Value sum01 = rewriter
                       .create<CombineOpTy>(op.getLoc(), resultType, partials[0],
@@ -223,7 +218,7 @@ private:
       OpTy op, ValueRange sourceParts, ValueRange maskParts,
       int64_t groupCount, int64_t chunksPerGroup, int64_t chunksPerPart,
       VRegType sourcePartType, VRegType rowResultType, MaskType maskType,
-      Value firstLaneMask, OneToNPatternRewriter &rewriter) const {
+      Value firstLaneMask, OneToNPatternRewriter *rewriter) const {
     SmallVector<Value> results;
     results.reserve(groupCount);
     for (int64_t group = 0; group < groupCount; ++group) {
@@ -237,28 +232,28 @@ private:
             maskParts[loIndex].getType() != maskType ||
             maskParts[hiIndex].getType() != maskType;
         if (mismatchedTypes) {
-          return rewriter.notifyMatchFailure(
+          return rewriter->notifyMatchFailure(
               op, "deinterleaved=2 group_reduce requires uniform physical "
                   "chunk types");
         }
         Value low = rewriter
-                        .create<RowReduceOpTy>(op.getLoc(), rowResultType,
+                        ->create<RowReduceOpTy>(op.getLoc(), rowResultType,
                                                sourceParts[loIndex],
                                                maskParts[loIndex])
                         .getResult();
         Value high = rewriter
-                         .create<RowReduceOpTy>(op.getLoc(), rowResultType,
+                         ->create<RowReduceOpTy>(op.getLoc(), rowResultType,
                                                 sourceParts[hiIndex],
                                                 maskParts[hiIndex])
                          .getResult();
         Value pair = rewriter
-                         .create<CombineOpTy>(op.getLoc(), rowResultType, low,
+                         ->create<CombineOpTy>(op.getLoc(), rowResultType, low,
                                               high, firstLaneMask)
                          .getResult();
         accumulator =
             accumulator
                 ? rewriter
-                      .create<CombineOpTy>(op.getLoc(), rowResultType, pair,
+                      ->create<CombineOpTy>(op.getLoc(), rowResultType, pair,
                                            accumulator, firstLaneMask)
                       .getResult()
                 : pair;
@@ -333,25 +328,25 @@ private:
   FailureOr<std::pair<int64_t, int64_t>> validateFullDeinterleaved2Shape(
       OpTy op, VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
       ValueRange sourceParts, ValueRange maskParts, TypeRange resultTypes,
-      int64_t groupSize, OneToNPatternRewriter &rewriter) const {
+      int64_t groupSize, OneToNPatternRewriter *rewriter) const {
     VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
     bool rowLocalSlots1Result = resultLayout && resultLayout.isGroupSlots() &&
                                 resultLayout.getSlots() == 1;
     if (!rowLocalSlots1Result) {
-      return rewriter.notifyMatchFailure(
+      return rewriter->notifyMatchFailure(
           op, "deinterleaved=2 full group_reduce requires slots=1 result");
     }
     FailureOr<int64_t> lanesPerPart =
         getDataLanesPerPart(sourceVMIType.getElementType());
     if (failed(lanesPerPart)) {
-      return rewriter.notifyMatchFailure(
+      return rewriter->notifyMatchFailure(
           op, "deinterleaved=2 group_reduce requires known physical lanes");
     }
     int64_t safeLanesPerPart = *lanesPerPart > 0 ? *lanesPerPart : 1;
     int64_t safeGroupSize = groupSize > 0 ? groupSize : 1;
     bool invalidGroupSize = groupSize % (2 * safeLanesPerPart) != 0;
     if (invalidGroupSize) {
-      return rewriter.notifyMatchFailure(
+      return rewriter->notifyMatchFailure(
           op, "deinterleaved=2 group_reduce requires group size to be a "
               "multiple of two physical chunks");
     }
@@ -363,7 +358,7 @@ private:
                             2 * chunksPerPart ||
                         static_cast<int64_t>(resultTypes.size()) != groupCount;
     if (invalidArity) {
-      return rewriter.notifyMatchFailure(
+      return rewriter->notifyMatchFailure(
           op, "deinterleaved=2 group_reduce arity mismatch");
     }
     return std::make_pair(groupCount, chunksPerGroup);
@@ -376,7 +371,7 @@ private:
     FailureOr<std::pair<int64_t, int64_t>> shape =
         validateFullDeinterleaved2Shape(
             op, sourceVMIType, resultVMIType, sourceParts, maskParts,
-            resultTypes, groupSize, rewriter);
+            resultTypes, groupSize, &rewriter);
     if (failed(shape)) {
       return failure();
     }
@@ -400,7 +395,7 @@ private:
             op, sourceParts, maskParts, groupCount, chunksPerGroupPerPart,
             chunksPerPart, types->sourcePartType, types->rowResultType,
             types->maskType,
-            *firstLaneMask, rewriter);
+            *firstLaneMask, &rewriter);
     if (failed(reducedResults)) {
       return failure();
     }
@@ -418,24 +413,24 @@ private:
       OpTy op, ValueRange sourceParts, ValueRange maskParts, int64_t group,
       int64_t chunksPerGroup, VRegType sourcePartType, VRegType rowResultType,
       MaskType maskType, Value firstLaneMask,
-      OneToNPatternRewriter &rewriter) const {
+      OneToNPatternRewriter *rewriter) const {
     Value accumulator;
     for (int64_t chunk = 0; chunk < chunksPerGroup; ++chunk) {
       int64_t index = group * chunksPerGroup + chunk;
       bool mismatchedTypes = sourceParts[index].getType() != sourcePartType ||
                              maskParts[index].getType() != maskType;
       if (mismatchedTypes) {
-        return rewriter.notifyMatchFailure(
+        return rewriter->notifyMatchFailure(
             op, "group_reduce requires uniform physical chunk types");
       }
       Value reduced = rewriter
-                          .create<RowReduceOpTy>(op.getLoc(), rowResultType,
+                          ->create<RowReduceOpTy>(op.getLoc(), rowResultType,
                                                  sourceParts[index],
                                                  maskParts[index])
                           .getResult();
       accumulator = accumulator
                         ? rewriter
-                              .create<CombineOpTy>(op.getLoc(), rowResultType,
+                              ->create<CombineOpTy>(op.getLoc(), rowResultType,
                                                    reduced, accumulator,
                                                    firstLaneMask)
                               .getResult()
@@ -454,7 +449,7 @@ private:
     for (int64_t group = 0; group < groupCount; ++group) {
       FailureOr<Value> result = buildContiguousGroupReduceResult(
           op, sourceParts, maskParts, group, chunksPerGroup, sourcePartType,
-          rowResultType, maskType, firstLaneMask, rewriter);
+          rowResultType, maskType, firstLaneMask, &rewriter);
       if (failed(result)) {
         return failure();
       }
@@ -586,7 +581,7 @@ private:
       FailureOr<Value> reduced = buildContiguousGroupReduceResult(
           op, sourceParts, maskParts, group, shape.chunksPerGroup,
           types.sourcePartType, types.rowResultType, types.maskType,
-          firstLaneMask, rewriter);
+          firstLaneMask, &rewriter);
       if (failed(reduced)) {
         return failure();
       }
@@ -846,8 +841,8 @@ template <typename VMIOp>
 struct HistogramPhysicalPlan {
   ValueRange sourceParts;
   ValueRange maskParts;
-  SmallVector<Value, 2> halves;
-  SmallVector<Value, 2> binConsts;
+  SmallVector<Value, mlir::pto::kValue2> halves;
+  SmallVector<Value, mlir::pto::kValue2> binConsts;
   VRegType partType;
   int64_t lanesPerPart;
   size_t halfCount;
@@ -894,10 +889,10 @@ static FailureOr<HistogramPhysicalPlan<VMIOp>> prepareHistogramPhysicalPlan(
     return failure();
   }
   Location loc = op.getLoc();
-  SmallVector<Value, 2> binConsts;
+  SmallVector<Value, mlir::pto::kValue2> binConsts;
   binConsts.push_back(createI32Constant(loc, 0, rewriter));
-  if (halfCount == 2) {
-    binConsts.push_back(createI32Constant(loc, 1, rewriter));
+  if (halfCount == mlir::pto::kValue2) {
+      binConsts.push_back(createI32Constant(loc, 1, rewriter));
   }
   return HistogramPhysicalPlan<VMIOp>{
       sourceParts, maskParts,
@@ -1004,30 +999,30 @@ private:
 
   FailureOr<std::pair<VRegType, MaskType>> validatePhysicalParts(
       SourceOp op, ValueRange sourceParts, ValueRange maskParts,
-      TypeRange resultTypes, OneToNPatternRewriter &rewriter) const {
+      TypeRange resultTypes, OneToNPatternRewriter *rewriter) const {
     bool invalidArity = sourceParts.empty() || sourceParts.size() != maskParts.size() ||
                         resultTypes.size() != 1;
     if (invalidArity) {
-      return rewriter.notifyMatchFailure(
+      return rewriter->notifyMatchFailure(
           op, "min/max reduction requires matching source/mask chunks and one result chunk");
     }
     auto resultType = dyn_cast<VRegType>(resultTypes.front());
     auto maskType = dyn_cast<MaskType>(maskParts.front().getType());
     if (!resultType || !maskType) {
-      return rewriter.notifyMatchFailure(
+      return rewriter->notifyMatchFailure(
           op, "min/max reduction requires matching physical source/result vregs and one mask");
     }
     for (Value sourcePart : sourceParts) {
       bool mismatch = sourcePart.getType() != resultType;
       if (mismatch) {
-        return rewriter.notifyMatchFailure(
+        return rewriter->notifyMatchFailure(
             op, "min/max reduction requires every source chunk to match result vreg type");
       }
     }
     for (Value maskPart : maskParts) {
       bool mismatch = maskPart.getType() != maskType;
       if (mismatch) {
-        return rewriter.notifyMatchFailure(
+        return rewriter->notifyMatchFailure(
             op, "min/max reduction requires every mask chunk to have the same predicate type");
       }
     }
@@ -1071,7 +1066,7 @@ public:
     }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     FailureOr<std::pair<VRegType, MaskType>> physical =
-        validatePhysicalParts(op, sourceParts, maskParts, resultTypes, rewriter);
+        validatePhysicalParts(op, sourceParts, maskParts, resultTypes, &rewriter);
     if (failed(physical)) {
       return failure();
     }
@@ -1138,9 +1133,9 @@ private:
         pto::isPTOBF16x2Type(resultTypes.front().getElementType());
     VRegType vcvtResultType = resultTypes.front();
     if (isPackedBF16x2) {
-      vcvtResultType = VRegType::get(
-          rewriter.getContext(), resultTypes.front().getElementCount() * 2,
-          BFloat16Type::get(rewriter.getContext()));
+        vcvtResultType = VRegType::get(
+            rewriter.getContext(), resultTypes.front().getElementCount() * mlir::pto::kValue2,
+            BFloat16Type::get(rewriter.getContext()));
     }
     return ResultViewPlan{isPackedBF16x2, vcvtResultType};
   }
@@ -1189,9 +1184,9 @@ private:
       return failure();
     }
     ResultViewPlan viewPlan = buildResultViewPlan(plan.resultTypes, rewriter);
-    return lowerFactor(op, rewriter, sourceParts, plan.resultTypes,
-                       kPacked2Parts, 2, *mask, viewPlan.isPackedBF16x2,
-                       viewPlan.vcvtResultType);
+    return lowerFactor(
+        op, rewriter, sourceParts, plan.resultTypes, kPacked2Parts, mlir::pto::kValue2, *mask, viewPlan.isPackedBF16x2,
+        viewPlan.vcvtResultType);
   }
 
   LogicalResult lowerFactor(
@@ -1224,14 +1219,14 @@ private:
   FailureOr<ExtFFactorPlan> buildFactorPlan(
       VMIExtFOp op, unsigned sourceBits, size_t sourcePartCount,
       size_t resultPartCount, OneToNPatternRewriter &rewriter) const {
-    if (sourceBits == 16 && resultPartCount == 2 * sourcePartCount) {
-      static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
-      return ExtFFactorPlan{ArrayRef<StringRef>(kEvenOddParts), 2};
-    }
-    if (sourceBits == 8 && resultPartCount == 4 * sourcePartCount) {
-      static constexpr StringRef kPacked4Parts[] = {"P0", "P1", "P2", "P3"};
-      return ExtFFactorPlan{ArrayRef<StringRef>(kPacked4Parts), 4};
-    }
+      if (sourceBits == mlir::pto::kValue16 && resultPartCount == 2 * sourcePartCount) {
+          static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
+          return ExtFFactorPlan{ArrayRef<StringRef>(kEvenOddParts), 2};
+      }
+      if (sourceBits == mlir::pto::kValue8 && resultPartCount == 4 * sourcePartCount) {
+          static constexpr StringRef kPacked4Parts[] = {"P0", "P1", "P2", "P3"};
+          return ExtFFactorPlan{ArrayRef<StringRef>(kPacked4Parts), 4};
+      }
     return rewriter.notifyMatchFailure(
         op, "unsupported physical extf source/result width relation");
   }
@@ -1414,9 +1409,8 @@ private:
     }
     unsigned sourceBits =
         pto::getPTOStorageElemBitWidth(sourceType->getElementType());
-    if (sourceBits != 32 && sourceBits != 16) {
-      return rewriter.notifyMatchFailure(
-          op, "truncf source bit width must be 32 or 16");
+    if (sourceBits != mlir::pto::kValue32 && sourceBits != 16) {
+        return rewriter.notifyMatchFailure(op, "truncf source bit width must be 32 or 16");
     }
     FailureOr<SmallVector<VRegType>> resultVRegTypes =
         getUniformResultTypes(op, resultTypes, rewriter);
@@ -1433,9 +1427,9 @@ private:
         pto::isPTOBF16x2Type(sourceType->getElementType());
     VRegType sourceViewType = *sourceType;
     if (sourceIsPackedBF16x2) {
-      sourceViewType = VRegType::get(
-          rewriter.getContext(), sourceType->getElementCount() * 2,
-          BFloat16Type::get(rewriter.getContext()));
+        sourceViewType = VRegType::get(
+            rewriter.getContext(), sourceType->getElementCount() * mlir::pto::kValue2,
+            BFloat16Type::get(rewriter.getContext()));
     }
     return TruncFPhysicalPlan{*sourceType, std::move(*resultVRegTypes),
                               sourceViewType, sourceBits, resultBits,
@@ -1638,17 +1632,16 @@ private:
       size_t resultPartCount, OneToNPatternRewriter &rewriter) const {
     ArrayRef<StringRef> parts;
     int64_t factor = 0;
-    if (resultBits * 2 == sourceBits) {
-      static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
-      parts = kEvenOddParts;
-      factor = 2;
-    } else if (resultBits * 4 == sourceBits) {
-      static constexpr StringRef kPacked4Parts[] = {"P0", "P1", "P2", "P3"};
-      parts = kPacked4Parts;
-      factor = 4;
+    if (resultBits * mlir::pto::kValue2 == sourceBits) {
+        static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
+        parts = kEvenOddParts;
+        factor = mlir::pto::kValue2;
+    } else if (resultBits * mlir::pto::kValue4 == sourceBits) {
+        static constexpr StringRef kPacked4Parts[] = {"P0", "P1", "P2", "P3"};
+        parts = kPacked4Parts;
+        factor = mlir::pto::kValue4;
     } else {
-      return rewriter.notifyMatchFailure(
-          op, "unsupported physical truncf source/result width relation");
+        return rewriter.notifyMatchFailure(op, "unsupported physical truncf source/result width relation");
     }
     int64_t resultLaneStride = resultLayout && resultLayout.isContiguous()
                                    ? resultLayout.getLaneStride()
@@ -1847,5 +1840,3 @@ public:
                                   resultLayout, rewriter);
   }
 };
-
-

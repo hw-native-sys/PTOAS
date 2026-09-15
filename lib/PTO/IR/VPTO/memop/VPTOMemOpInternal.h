@@ -28,7 +28,7 @@ namespace mlir::pto::memop_detail {
 using namespace mlir;
 using namespace mlir::pto;
 
-  [[maybe_unused]] static LogicalResult verifyVPTOScalarAccessTypes(Operation *op, Type ptrTy,
+  [[maybe_unused]] inline LogicalResult verifyVPTOScalarAccessTypes(Operation *op, Type ptrTy,
                                                    Type valueTy,
                                                    StringRef opNameForDiag) {
     Type elemTy;
@@ -48,13 +48,13 @@ using namespace mlir::pto;
     return success();
   }
 
-  [[maybe_unused]] static bool isVector2F16OrBF16Type(Type type) {
+  [[maybe_unused]] inline bool isVector2F16OrBF16Type(Type type) {
     return isVector2Of(type, [](Type elem) {
       return elem.isF16() || elem.isBF16();
     });
   }
 
-  [[maybe_unused]] static bool isSupportedAtomicScalarType(Type type) {
+  [[maybe_unused]] inline bool isSupportedAtomicScalarType(Type type) {
     if (auto intType = dyn_cast<IntegerType>(type)) {
       return intType.getWidth() == mlir::pto::kValue32 ||
              intType.getWidth() == mlir::pto::kValue64;
@@ -63,7 +63,7 @@ using namespace mlir::pto;
            isVector2F16OrBF16Type(type);
   }
 
-  [[maybe_unused]] static LogicalResult verifyAtomicCommon(Operation *op, Value ptr, Type valueType,
+  [[maybe_unused]] inline LogicalResult verifyAtomicCommon(Operation *op, Value ptr, Type valueType,
                                           Type resultType, bool bitwise,
                                           Attribute signednessAttr) {
     if (!isSupportedAtomicScalarType(valueType)) {
@@ -115,7 +115,7 @@ using namespace mlir::pto;
     return success();
   }
 
-  [[maybe_unused]] static LogicalResult verifyLdgStgAccess(Operation *op, Type ptrType,
+  [[maybe_unused]] inline LogicalResult verifyLdgStgAccess(Operation *op, Type ptrType,
                                           Type valueType) {
     auto ptrTy = dyn_cast<PtrType>(ptrType);
     if (!ptrTy) {
@@ -127,7 +127,8 @@ using namespace mlir::pto;
 
     if (auto intType = dyn_cast<IntegerType>(valueType)) {
       unsigned width = intType.getWidth();
-      if (width == mlir::pto::kValue8 || width == 16 || width == 32 || width == 64) {
+      if (width == mlir::pto::kValue8 || width == mlir::pto::kValue16 ||
+          width == mlir::pto::kValue32 || width == mlir::pto::kValue64) {
         return success();
       }
     }
@@ -149,7 +150,7 @@ using namespace mlir::pto;
               "packed vector<2/4/8xfp8>, and !pto.hif8x2 value type";
   }
 
-  [[maybe_unused]] static LogicalResult verifyLdStDevAccess(Operation *op, Type ptrType,
+  [[maybe_unused]] inline LogicalResult verifyLdStDevAccess(Operation *op, Type ptrType,
                                            Type valueType) {
     if (op->hasAttr("l1cache") || op->hasAttr("l2cache")) {
       return op->emitOpError()
@@ -165,8 +166,10 @@ using namespace mlir::pto;
     }
 
     auto intType = dyn_cast<IntegerType>(valueType);
-    if (!intType || (intType.getWidth() != mlir::pto::kValue8 && intType.getWidth() != 16 &&
-                     intType.getWidth() != mlir::pto::kValue32 && intType.getWidth() != 64)) {
+    if (!intType || (intType.getWidth() != mlir::pto::kValue8 &&
+                     intType.getWidth() != mlir::pto::kValue16 &&
+                     intType.getWidth() != mlir::pto::kValue32 &&
+                     intType.getWidth() != mlir::pto::kValue64)) {
       return op->emitOpError() << "supports only i8, i16, i32 or i64 values";
     }
 
@@ -183,8 +186,8 @@ using namespace mlir::pto;
   }
 
   // Batch7: MemOp 双胞胎共用校验
-  [[maybe_unused]] static bool isSupportedPredicateLoadDist(llvm::StringRef dist);
-  [[maybe_unused]] static bool isSupportedPredicateStoreDist(llvm::StringRef dist);
+  [[maybe_unused]] bool isSupportedPredicateLoadDist(llvm::StringRef dist);
+  [[maybe_unused]] bool isSupportedPredicateStoreDist(llvm::StringRef dist);
 
   template <typename OpTy>
   [[maybe_unused]] static LogicalResult verifyPTOScalarAccessOp(OpTy op, llvm::StringRef tag) {
@@ -291,22 +294,22 @@ using namespace mlir::pto;
     effects.emplace_back(MemoryEffects::Write::get(), &op.getPtrMutable());
   }
 
-  [[maybe_unused]] static bool isSupportedPredicateLoadDist(StringRef dist) {
+  [[maybe_unused]] inline bool isSupportedPredicateLoadDist(StringRef dist) {
     return dist == "NORM" || dist == "US" || dist == "DS";
   }
 
-  [[maybe_unused]] static bool isSupportedPredicateStoreDist(StringRef dist) {
+  [[maybe_unused]] inline bool isSupportedPredicateStoreDist(StringRef dist) {
     return dist == "NORM" || dist == "PK";
   }
 
-  [[maybe_unused]] static bool isSupportedSprToken(StringRef spr) { return spr == "AR"; }
+  [[maybe_unused]] inline bool isSupportedSprToken(StringRef spr) { return spr == "AR"; }
 
-  [[maybe_unused]] static bool isUnsignedOrSignlessIntegerOfWidth(Type type, unsigned width) {
+  [[maybe_unused]] inline bool isUnsignedOrSignlessIntegerOfWidth(Type type, unsigned width) {
     auto intType = dyn_cast<IntegerType>(type);
     return intType && intType.getWidth() == width && !intType.isSigned();
   }
 
-  [[maybe_unused]] static bool isSameVgather2IntegerSemantics(IntegerType sourceType,
+  [[maybe_unused]] inline bool isSameVgather2IntegerSemantics(IntegerType sourceType,
                                              IntegerType resultType) {
     if (!sourceType || !resultType ||
         sourceType.getWidth() != resultType.getWidth()) {
@@ -318,7 +321,7 @@ using namespace mlir::pto;
     return !resultType.isUnsigned();
   }
 
-  [[maybe_unused]] static bool isVgather2B8ResultType(IntegerType sourceType,
+  [[maybe_unused]] inline bool isVgather2B8ResultType(IntegerType sourceType,
                                      IntegerType resultType) {
     if (!sourceType || !resultType || sourceType.getWidth() != mlir::pto::kValue8 ||
         resultType.getWidth() != mlir::pto::kValue16) {
@@ -330,7 +333,7 @@ using namespace mlir::pto;
     return !resultType.isUnsigned();
   }
 
-  [[maybe_unused]] static LogicalResult resolveVgather2WidthInfo(
+  [[maybe_unused]] inline LogicalResult resolveVgather2WidthInfo(
       Operation *op, Type sourceElemType, Type resultElemType,
       unsigned &expectedOffsetWidth, StringRef &expectedMaskGranularity,
       int64_t &expectedLanes) {
@@ -400,7 +403,7 @@ using namespace mlir::pto;
     return success();
   }
 
-  [[maybe_unused]] static LogicalResult verifySprStoreCommon(Operation *op, StringRef opName,
+  [[maybe_unused]] inline LogicalResult verifySprStoreCommon(Operation *op, StringRef opName,
                                             StringRef spr, Value destination,
                                             Value offset,
                                             bool requireImmediateOffset) {
@@ -430,7 +433,8 @@ using namespace mlir::pto;
         return op->emitOpError("requires constant immediate offset");
       }
       int64_t signedOffset = offsetValue.getSExtValue();
-      if (signedOffset < -mlir::pto::kValue128 || signedOffset > 127) {
+      if (signedOffset < -mlir::pto::kValue128 ||
+          signedOffset > mlir::pto::kValue127) {
         return op->emitOpError("requires signed 8-bit immediate offset");
       }
     }
@@ -468,7 +472,7 @@ using namespace mlir::pto;
     return success();
   }
 
-  [[maybe_unused]] static LogicalResult verifyRawFillGeometry(Operation *op, Value byteOffset,
+  [[maybe_unused]] inline LogicalResult verifyRawFillGeometry(Operation *op, Value byteOffset,
                                              Value repeatTimes,
                                              Value blockNum32b, Value dstGap32b) {
     const bool hasNonNegativeGeometry =
@@ -494,8 +498,9 @@ using namespace mlir::pto;
     return success();
   }
 
-  [[maybe_unused]] static LogicalResult verifyRawFillWordBits(Operation *op, int64_t fillWordBits) {
-    const bool validWordBits = fillWordBits == 16 || fillWordBits == 32;
+  [[maybe_unused]] inline LogicalResult verifyRawFillWordBits(Operation *op, int64_t fillWordBits) {
+    const bool validWordBits = fillWordBits == mlir::pto::kValue16 ||
+                               fillWordBits == mlir::pto::kValue32;
     if (!validWordBits) {
       return op->emitOpError() << "fill_word_bits must be 16 or 32, got "
                                << fillWordBits;
@@ -503,7 +508,7 @@ using namespace mlir::pto;
     return success();
   }
 
-  [[maybe_unused]] static LogicalResult verifyRawFillDestination(Operation *op, Type dstType,
+  [[maybe_unused]] inline LogicalResult verifyRawFillDestination(Operation *op, Type dstType,
                                                 StringRef dstName) {
     auto addressSpace = getBufferAddressSpace(dstType);
     if (!addressSpace) {

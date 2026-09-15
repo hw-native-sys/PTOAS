@@ -223,7 +223,7 @@ static LogicalResult parseTileBufConfigField(AsmParser &odsParser,
   return failure();
 }
 
-Attribute TileBufConfigAttr::parse(AsmParser &odsParser, Type) {
+Attribute TileBufConfigAttr::parse(AsmParser &odsParser, Type odsType) {
   MLIRContext *ctx = odsParser.getContext();
   auto def = TileBufConfigAttr::getDefault(ctx);
   BLayoutAttr bl = def.getBLayout();

@@ -19,6 +19,8 @@ using namespace mlir::pto;
 namespace mlir {
 namespace pto {
 
+constexpr unsigned kMaxPrintOperands = 4;
+
 struct PTOPrintToTPRINT : public OpConversionPattern<pto::TPrintOp> {
   using OpConversionPattern<pto::TPrintOp>::OpConversionPattern;
 
@@ -26,7 +28,7 @@ struct PTOPrintToTPRINT : public OpConversionPattern<pto::TPrintOp> {
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
     auto *ctx = rewriter.getContext();
-    auto printFormatTok = [&](pto::PrintFormat format) -> StringRef {
+    auto printFormatTok = [](pto::PrintFormat format) -> StringRef {
       switch (format) {
       case pto::PrintFormat::Width8_Precision4:
         return "pto::PrintFormat::Width8_Precision4";
@@ -45,7 +47,7 @@ struct PTOPrintToTPRINT : public OpConversionPattern<pto::TPrintOp> {
           rewriter, loc, src, op.getSrc().getType(), op.getOperation());
     }
 
-    SmallVector<Value, 4> operands{src};
+    SmallVector<Value, kMaxPrintOperands> operands{src};
     if (Value tmp = op->getNumOperands() > 1 ? op->getOperand(1) : Value()) {
       Value tmpValue = adaptor.getOperands().size() > 1 ? adaptor.getOperands()[1]
                                                         : Value();

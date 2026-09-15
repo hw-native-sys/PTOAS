@@ -295,12 +295,13 @@ FailureOr<Value> buildCollectiveParallelGroup(
 }
 
 FailureOr<Value> buildCommGlobalTensorValue(
-    ConversionPatternRewriter &rewriter, Location loc, Value originalValue,
-    Value emittedValue, Operation *anchor) {
-  Value value = peelUnrealized(emittedValue);
-  if (isEmitCGlobalTensorLikeType(value.getType()))
-    return value;
-  return failure();
+    const ConversionPatternRewriter& rewriter, Location loc, Value originalValue, Value emittedValue, Operation* anchor)
+{
+    Value value = peelUnrealized(emittedValue);
+    if (isEmitCGlobalTensorLikeType(value.getType())) {
+        return value;
+    }
+    return failure();
 }
 
 FailureOr<Value> buildCommTileValue(ConversionPatternRewriter &rewriter,

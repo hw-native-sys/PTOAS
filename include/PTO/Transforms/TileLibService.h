@@ -59,7 +59,7 @@ public:
 class TileLibRuntime {
 public:
   static void install(std::shared_ptr<TileLibService> service);
-  static void uninstall(TileLibService *service);
+  static void uninstall(const TileLibService *service);
   static std::shared_ptr<TileLibService> getService();
 };
 
