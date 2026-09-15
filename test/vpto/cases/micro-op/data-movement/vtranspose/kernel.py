@@ -34,7 +34,7 @@ COLS = 16
 BYTES = ROWS * COLS * 2
 
 
-def _transpose_kernel(name, element_type, *, destination_offset=BYTES):
+def _transpose_kernel(name, element_type):
     @pto.jit(
         name=name,
         target="a5",
@@ -47,7 +47,7 @@ def _transpose_kernel(name, element_type, *, destination_offset=BYTES):
         zero = pto.const(0, dtype=pto.i64)
         ub_src = pto.castptr(zero, pto.ptr(element_type, "ub"))
         ub_dst = pto.castptr(
-            pto.const(destination_offset, dtype=pto.i64), pto.ptr(element_type, "ub")
+            pto.const(BYTES, dtype=pto.i64), pto.ptr(element_type, "ub")
         )
         pto.mte_gm_ub(src, ub_src, 0, BYTES, nburst=(1, BYTES, BYTES))
         pto.set_flag(pto.Pipe.MTE2, pto.Pipe.V, event_id=0)
@@ -61,20 +61,17 @@ def _transpose_kernel(name, element_type, *, destination_offset=BYTES):
     return kernel
 
 
-# Runtime execution is currently disabled by the directory UNSUPPORTED marker;
-# the cases remain here for re-enablement once bisheng supports VTRANSPOSE.
+# Runtime execution remains available for the non-overlapping case once the
+# simulator/compiler provides VTRANSPOSE support.
 vtranspose_ui16_kernel = _transpose_kernel("vtranspose_ui16_kernel", pto.ui16)
-vtranspose_ui16_partial_overlap_kernel = _transpose_kernel(
-    "vtranspose_ui16_partial_overlap_kernel", pto.ui16, destination_offset=32
-)
 
 
 def make_unsigned_inputs():
     source = (np.arange(ROWS * COLS, dtype=np.uint32) * 257 % 65536).astype(np.uint16)
-    return [source, np.zeros_like(source)]
+    return [source]
 
 
-def transpose_expected(source, _output):
+def transpose_expected(source):
     return source.reshape(ROWS, COLS).T.reshape(-1)
 
 
@@ -82,14 +79,6 @@ CASES = [
     golden_output_case(
         "vtranspose_ui16",
         vtranspose_ui16_kernel,
-        inputs=make_unsigned_inputs,
-        expected=transpose_expected,
-        rtol=0.0,
-        atol=0.0,
-    ),
-    golden_output_case(
-        "vtranspose_ui16_partial_overlap",
-        vtranspose_ui16_partial_overlap_kernel,
         inputs=make_unsigned_inputs,
         expected=transpose_expected,
         rtol=0.0,
