@@ -1120,6 +1120,14 @@ private:
         return WalkResult::interrupt();
       }
 
+      if (isa<pto::CtrlStateGuardOp>(op)) {
+        op->emitOpError()
+            << "is an internal authoring-to-emission construct and must be "
+               "eliminated by the CTRL state optimization pass before "
+               "emission-stage VPTO validation";
+        return WalkResult::interrupt();
+      }
+
       return WalkResult::advance();
     });
     return walkResult.wasInterrupted() ? failure() : success();

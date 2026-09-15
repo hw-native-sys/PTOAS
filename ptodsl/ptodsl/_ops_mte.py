@@ -447,13 +447,76 @@ def _tf32_mode_attr(tf32_mode):
     )
 
 
+def _is_surface_value(value):
+    # Surface values are _SurfaceValue instances (runtime scalar expressions);
+    # plain Python ints/bools/None keep the static attribute path.
+    from ._surface_values import _SurfaceValue
+
+    return isinstance(value, _SurfaceValue)
+
+
+def _mad_runtime_operands(
+    unit_flag=None, acc_init=None, disable_gemv=None, bias_init=None
+):
+    """Map runtime (surface) flag values onto the optional mad operands.
+
+    Returns (operands, error). Static values (None / int / bool) go back as
+    None and keep their attribute/op-kind paths; surface values become the
+    trailing optional operands consumed by packMadXt.
+    """
+    operands = {}
+    if unit_flag is not None and _is_surface_value(unit_flag):
+        operands["unit_flag_value"] = unit_flag
+    if acc_init is not None and _is_surface_value(acc_init):
+        operands["acc_init_value"] = acc_init
+    if disable_gemv is not None and _is_surface_value(disable_gemv):
+        operands["disable_gemv_value"] = disable_gemv
+    if bias_init is not None and _is_surface_value(bias_init):
+        operands["bias_init_value"] = bias_init
+    return operands
+
+
+def _split_mad_options(kwargs):
+    """Split a mad call's kwargs into runtime operands and static attributes.
+
+    Runtime surface values (``unit_flag``/``disable_gemv``/``init``/
+    ``bias_init``) become the optional trailing operands; static values keep
+    the attribute / op-kind paths. Returns one dict ready to splat into the
+    op constructor.
+    """
+    unit_flag = kwargs.pop("unit_flag", None)
+    acc_init = kwargs.pop("init", None)
+    disable_gemv = kwargs.pop("disable_gemv", False)
+    bias_init = kwargs.pop("bias_init", None)
+    runtime = _mad_runtime_operands(
+        unit_flag=unit_flag,
+        acc_init=acc_init,
+        disable_gemv=disable_gemv,
+        bias_init=bias_init,
+    )
+    options = {
+        **{key: unwrap_surface_value(value)
+           for key, value in runtime.items()},
+        **_mad_options(
+            unit_flag=unit_flag,
+            disable_gemv=disable_gemv,
+            sat=kwargs.pop("sat", None),
+            tf32_mode=kwargs.pop("tf32_mode", None),
+            n_dir=kwargs.pop("n_dir", False),
+        ),
+    }
+    if kwargs:
+        raise TypeError(f"unexpected mad kwargs: {sorted(kwargs)}")
+    return options
+
+
 def _mad_options(unit_flag=None, disable_gemv=False, sat=None, tf32_mode=None, n_dir=False):
     if not isinstance(disable_gemv, bool):
         raise TypeError("mad disable_gemv expects bool")
     if not isinstance(n_dir, bool):
         raise TypeError("mad n_dir expects bool")
     return {
-        "unit_flag_mode": _mad_unit_flag_attr(unit_flag),
+        "unit_flag_mode": _mad_unit_flag_attr(None if _is_surface_value(unit_flag) else unit_flag),
         "disable_gemv": disable_gemv,
         "sat_mode": _mad_sat_attr(sat),
         "tf32_mode": _tf32_mode_attr(tf32_mode),
@@ -1348,8 +1411,16 @@ def mte_l0c_ub(
     )
 
 
-def mad(lhs, rhs, dst, m, n, k, *, unit_flag=None, disable_gemv=False, sat=None, tf32_mode=None, n_dir=False):
-    """``pto.mad`` – cube matmul accumulate."""
+def mad(lhs, rhs, dst, m, n, k, **kwargs):
+    """``pto.mad`` – cube matmul accumulate.
+
+    ``unit_flag``/``disable_gemv`` accept either the static keywords or a
+    runtime surface value (e.g. ``scalar.select(...)``); runtime values pack
+    into the xt operand bits and avoid frontend control flow. ``init`` is the
+    runtime acc-init selector (1=zero-Cmatrix rewrite, 0=accumulate);
+    ``bias_init`` the runtime BTbuf selector.
+    """
+    _mad_options = _split_mad_options(kwargs)
     _pto.MadOp(
         unwrap_surface_value(lhs),
         unwrap_surface_value(rhs),
@@ -1357,18 +1428,13 @@ def mad(lhs, rhs, dst, m, n, k, *, unit_flag=None, disable_gemv=False, sat=None,
         _coerce_i64(m, context="mad m"),
         _coerce_i64(n, context="mad n"),
         _coerce_i64(k, context="mad k"),
-        **_mad_options(
-            unit_flag=unit_flag,
-            disable_gemv=disable_gemv,
-            sat=sat,
-            tf32_mode=tf32_mode,
-            n_dir=n_dir,
-        ),
+        **_mad_options,
     )
 
 
-def mad_acc(lhs, rhs, dst, m, n, k, *, unit_flag=None, disable_gemv=False, sat=None, tf32_mode=None, n_dir=False):
+def mad_acc(lhs, rhs, dst, m, n, k, **kwargs):
     """``pto.mad_acc`` – cube matmul accumulate into an existing accumulator."""
+    _mad_options = _split_mad_options(kwargs)
     _pto.MadAccOp(
         unwrap_surface_value(lhs),
         unwrap_surface_value(rhs),
@@ -1376,19 +1442,13 @@ def mad_acc(lhs, rhs, dst, m, n, k, *, unit_flag=None, disable_gemv=False, sat=N
         _coerce_i64(m, context="mad_acc m"),
         _coerce_i64(n, context="mad_acc n"),
         _coerce_i64(k, context="mad_acc k"),
-        **_mad_options(
-            unit_flag=unit_flag,
-            disable_gemv=disable_gemv,
-            sat=sat,
-            tf32_mode=tf32_mode,
-            n_dir=n_dir,
-        ),
+        **_mad_options,
     )
 
 
-def mad_bias(lhs, rhs, dst, bias, m, n, k, *, unit_flag=None, disable_gemv=False,
-             sat=None, tf32_mode=None, n_dir=False):
+def mad_bias(lhs, rhs, dst, bias, m, n, k, **kwargs):
     """``pto.mad_bias`` – cube matmul initialized from a bias buffer."""
+    _mad_options = _split_mad_options(kwargs)
     _pto.MadBiasOp(
         unwrap_surface_value(lhs),
         unwrap_surface_value(rhs),
@@ -1397,13 +1457,7 @@ def mad_bias(lhs, rhs, dst, bias, m, n, k, *, unit_flag=None, disable_gemv=False
         _coerce_i64(m, context="mad_bias m"),
         _coerce_i64(n, context="mad_bias n"),
         _coerce_i64(k, context="mad_bias k"),
-        **_mad_options(
-            unit_flag=unit_flag,
-            disable_gemv=disable_gemv,
-            sat=sat,
-            tf32_mode=tf32_mode,
-            n_dir=n_dir,
-        ),
+        **_mad_options,
     )
 
 

@@ -97,6 +97,33 @@ def PTO_LoadCachePolicyAttr
 }
 
 //===----------------------------------------------------------------------===//
+// Implicit state resource and access kind
+//===----------------------------------------------------------------------===//
+
+// Enumerates the implicit hardware state resources that PTO state interfaces
+// describe. The values only generate C++ enums; they are never stored as
+// guard attributes.
+def PTO_StateResource_Ctrl : I32EnumAttrCase<"Ctrl", 0, "ctrl">;
+
+def PTO_StateResourceEnum : PTO_I32Enum<
+  "StateResource", "PTO implicit state resource", [
+    PTO_StateResource_Ctrl
+  ]>;
+
+def PTO_StateAccessKind_Query : I32EnumAttrCase<"Query", 0, "query">;
+def PTO_StateAccessKind_Write : I32EnumAttrCase<"Write", 1, "write">;
+def PTO_StateAccessKind_Consume : I32EnumAttrCase<"Consume", 2, "consume">;
+def PTO_StateAccessKind_Clobber : I32EnumAttrCase<"Clobber", 3, "clobber">;
+
+def PTO_StateAccessKindEnum : PTO_I32Enum<
+  "StateAccessKind", "PTO implicit state access kind", [
+    PTO_StateAccessKind_Query,
+    PTO_StateAccessKind_Write,
+    PTO_StateAccessKind_Consume,
+    PTO_StateAccessKind_Clobber
+  ]>;
+
+//===----------------------------------------------------------------------===//
 // Signedness
 //===----------------------------------------------------------------------===//
 

@@ -590,58 +590,135 @@ struct MadXtConfig {
   bool disableGemv;
   bool cmatrixSource;
   bool cmatrixInit;
+  // Runtime-operand overrides (take precedence over the static fields above).
+  Value unitFlagValue;   // i32, expected domain 0/2/3; packed to bits 55-56
+  Value accInitValue;    // i1, packed to bit 63 (zero-Cmatrix)
+  Value disableGemvValue;// i1, packed to bit 61
+  Value biasInitValue;   // i1, packed to bit 62 (BTbuf)
 };
 
-static FailureOr<Value> packMadXt(Location loc, const MadXtConfig &config,
-                                  PatternRewriter &rewriter) {
-  Type i64Ty = rewriter.getI64Type();
+// Shared i64 bit arithmetic used to assemble an `xt` word.
+struct MadXtBitPacker {
+  Location loc;
+  PatternRewriter &rewriter;
+
+  Value constant(uint64_t value) const {
+    return rewriter.create<arith::ConstantIntOp>(loc, value,
+                                                 mlir::pto::kValue64);
+  }
+  Value shl(Value value, uint64_t amount) const {
+    return rewriter.create<arith::ShLIOp>(loc, value, constant(amount));
+  }
+  Value bitOr(Value lhs, Value rhs) const {
+    return rewriter.create<arith::OrIOp>(loc, lhs, rhs);
+  }
+};
+
+// One optional flag bit: the runtime operand when present, otherwise the
+// statically known value, packed at `shift`.
+struct MadXtFlagBit {
+  Value value;
+  bool staticValue;
+  uint64_t shift;
+};
+
+// Coerce a runtime flag value to i64, reinterpreting signed frontend integer
+// types (e.g. si32 from PTODSL scalar.select) to signless first because arith
+// ops require signless operands.
+static Value coerceMadFlagToI64(Location loc, Value value, Type i64Ty,
+                                PatternRewriter &rewriter) {
+  if (auto intTy = dyn_cast<IntegerType>(value.getType())) {
+    if (!intTy.isSignless()) {
+      Type signless = IntegerType::get(rewriter.getContext(), intTy.getWidth());
+      value = rewriter.create<UnrealizedConversionCastOp>(loc, signless, value)
+                  .getResult(0);
+    }
+  }
+  return castIntegerLikeTo(loc, value, i64Ty, rewriter);
+}
+
+// Or-in one flag bit at `bit.shift`, preferring the runtime operand over the
+// statically known value (1 packs the bit, 0 skips it).
+static FailureOr<Value> packMadFlagBit(const MadXtBitPacker &packer, Value xt,
+                                       const MadXtFlagBit &bit, Type i64Ty) {
+  if (bit.value) {
+    Value flagI64 =
+        coerceMadFlagToI64(packer.loc, bit.value, i64Ty, packer.rewriter);
+    if (!flagI64) {
+      return failure();
+    }
+    return packer.bitOr(xt, packer.shl(flagI64, bit.shift));
+  }
+  if (bit.staticValue) {
+    return packer.bitOr(xt, packer.shl(packer.constant(1), bit.shift));
+  }
+  return xt;
+}
+
+// Pack the m/k/n shape fields, which always come from operands.
+static FailureOr<Value> packMadShapeXt(const MadXtBitPacker &packer,
+                                       const MadXtConfig &config, Type i64Ty) {
+  Location loc = packer.loc;
+  PatternRewriter &rewriter = packer.rewriter;
   Value mI64 = castIntegerLikeTo(loc, config.m, i64Ty, rewriter);
   Value nI64 = castIntegerLikeTo(loc, config.n, i64Ty, rewriter);
   Value kI64 = castIntegerLikeTo(loc, config.k, i64Ty, rewriter);
   if (!mI64 || !nI64 || !kI64) {
     return failure();
   }
-
-  auto constant = [&rewriter, loc](uint64_t value) -> Value {
-    return rewriter.create<arith::ConstantIntOp>(loc, value, mlir::pto::kValue64);
-  };
-  auto shl = [&rewriter, loc, &constant](Value value,
-                                         uint64_t amount) -> Value {
-    return rewriter.create<arith::ShLIOp>(loc, value, constant(amount));
-  };
-  auto bitOr = [&rewriter, loc](Value lhs, Value rhs) -> Value {
-    return rewriter.create<arith::OrIOp>(loc, lhs, rhs);
-  };
-
-  Value xt = mI64;
-  xt = bitOr(xt, shl(kI64, mlir::pto::kValue12));
-  xt = bitOr(xt, shl(nI64, mlir::pto::kValue24));
-  if (config.unitFlagMode) {
-    uint64_t unitFlagCtrl =
-        *config.unitFlagMode == pto::MadUnitFlagMode::CheckOnly
-            ? mlir::pto::kValue2
-            : mlir::pto::kValue3;
-    xt = bitOr(xt, shl(constant(unitFlagCtrl), mlir::pto::kValue55));
-  }
-  if (config.disableGemv) {
-    xt = bitOr(xt, shl(constant(1), mlir::pto::kValue61));
-  }
-  if (config.cmatrixSource) {
-    xt = bitOr(xt, shl(constant(1), mlir::pto::kValue62));
-  }
-  if (config.cmatrixInit) {
-    xt = bitOr(xt, shl(constant(1), mlir::pto::kValue63));
-  }
-  return xt;
+  Value xt = packer.bitOr(mI64, packer.shl(kI64, mlir::pto::kValue12));
+  return packer.bitOr(xt, packer.shl(nI64, mlir::pto::kValue24));
 }
 
-static Value setCtrlBit(Location loc, Value ctrl, unsigned bitIndex, bool value,
-                        PatternRewriter &rewriter) {
-  Value bit = rewriter.create<arith::ConstantIntOp>(loc, bitIndex, mlir::pto::kValue64);
-  if (value) {
-    return rewriter.create<pto::Sbitset1Op>(loc, ctrl, bit).getResult();
+// unit_flag occupies two bits, so it does not fit the single-bit helper: the
+// runtime operand carries the frontend's 0/2/3 domain directly, while the
+// attribute path maps the mode enum onto the same domain.
+static FailureOr<Value> packMadUnitFlagXt(const MadXtBitPacker &packer,
+                                          Value xt, const MadXtConfig &config,
+                                          Type i64Ty) {
+  if (config.unitFlagValue) {
+    Value flagI64 = coerceMadFlagToI64(packer.loc, config.unitFlagValue, i64Ty,
+                                       packer.rewriter);
+    if (!flagI64) {
+      return failure();
+    }
+    return packer.bitOr(xt, packer.shl(flagI64, mlir::pto::kValue55));
   }
-  return rewriter.create<pto::Sbitset0Op>(loc, ctrl, bit).getResult();
+  if (!config.unitFlagMode) {
+    return xt;
+  }
+  uint64_t unitFlagCtrl = *config.unitFlagMode == pto::MadUnitFlagMode::CheckOnly
+                              ? mlir::pto::kValue2
+                              : mlir::pto::kValue3;
+  return packer.bitOr(
+      xt, packer.shl(packer.constant(unitFlagCtrl), mlir::pto::kValue55));
+}
+
+static FailureOr<Value> packMadXt(Location loc, const MadXtConfig &config,
+                                  PatternRewriter &rewriter) {
+  Type i64Ty = rewriter.getI64Type();
+  MadXtBitPacker packer{loc, rewriter};
+  FailureOr<Value> xt = packMadShapeXt(packer, config, i64Ty);
+  if (failed(xt)) {
+    return failure();
+  }
+  xt = packMadUnitFlagXt(packer, *xt, config, i64Ty);
+  if (failed(xt)) {
+    return failure();
+  }
+
+  const MadXtFlagBit flagBits[] = {
+      {config.disableGemvValue, config.disableGemv, mlir::pto::kValue61},
+      {config.biasInitValue, config.cmatrixSource, mlir::pto::kValue62},
+      {config.accInitValue, config.cmatrixInit, mlir::pto::kValue63},
+  };
+  for (const MadXtFlagBit &bit : flagBits) {
+    xt = packMadFlagBit(packer, *xt, bit, i64Ty);
+    if (failed(xt)) {
+      return failure();
+    }
+  }
+  return *xt;
 }
 
 struct MadCtrlConfig {
@@ -651,25 +728,40 @@ struct MadCtrlConfig {
   bool hasNDir;
 };
 
-static Value buildMadSemanticCtrl(Location loc, Value ctrl,
-                                  const MadCtrlConfig &config,
-                                  PatternRewriter &rewriter) {
-  ctrl =
-      setCtrlBit(loc, ctrl, mlir::pto::kValue45, config.isHif8, rewriter);
+// Statically computed temporary CTRL requirement of one semantic MAD, per the
+// ctrl_state_guard contract: bits in controlledBits are overridden (to 1 when
+// also in requiredBits, else 0); bits outside controlledBits inherit the entry
+// logical CTRL. Unspecified sat_mode leaves bit 48 uncontrolled; HiF8, TF32,
+// and n_dir always control their fields.
+struct MadCtrlRequirement {
+  uint64_t controlledBits;
+  uint64_t requiredBits;
+};
+
+static MadCtrlRequirement buildMadCtrlRequirement(const MadCtrlConfig &config) {
+  uint64_t controlled = 0;
+  uint64_t required = 0;
+  auto setBit = [&controlled, &required](int bit, bool value) {
+    controlled |= (uint64_t(1) << bit);
+    if (value) {
+      required |= (uint64_t(1) << bit);
+    }
+  };
+  setBit(mlir::pto::kValue45, config.isHif8);
   if (config.tf32Mode) {
-    ctrl = setCtrlBit(loc, ctrl, mlir::pto::kValue46, true, rewriter);
-    ctrl = setCtrlBit(loc, ctrl, mlir::pto::kValue47,
-                      *config.tf32Mode == pto::Tf32Mode::RoundAway, rewriter);
+    setBit(mlir::pto::kValue46, true);
+    setBit(mlir::pto::kValue47,
+           *config.tf32Mode == pto::Tf32Mode::RoundAway);
   } else {
-    ctrl = setCtrlBit(loc, ctrl, mlir::pto::kValue46, false, rewriter);
-    ctrl = setCtrlBit(loc, ctrl, mlir::pto::kValue47, false, rewriter);
+    setBit(mlir::pto::kValue46, false);
+    setBit(mlir::pto::kValue47, false);
   }
   if (config.satMode) {
-    bool noSaturation = *config.satMode == pto::MadSatMode::NoSat;
-    ctrl = setCtrlBit(loc, ctrl, mlir::pto::kValue48, noSaturation, rewriter);
+    setBit(mlir::pto::kValue48,
+           *config.satMode == pto::MadSatMode::NoSat);
   }
-  ctrl = setCtrlBit(loc, ctrl, mlir::pto::kValue51, config.hasNDir, rewriter);
-  return ctrl;
+  setBit(mlir::pto::kValue51, config.hasNDir);
+  return {controlled, required};
 }
 
 struct Mte2NzConfig {
@@ -1311,26 +1403,36 @@ static LogicalResult lowerMadSemanticOp(pto::MadSemanticOpInterface op,
   }
 
   Location loc = op->getLoc();
-  Value ctrlSaved = rewriter.create<pto::GetCtrlOp>(loc).getResult();
-  Value ctrlForOp = buildMadSemanticCtrl(
-      loc, ctrlSaved, {isHif8, tf32Mode, satMode, op.getNDir()}, rewriter);
-  rewriter.create<pto::SetCtrlOp>(loc, ctrlForOp);
 
   FailureOr<Value> xt = packMadXt(
       loc,
       {op.getM(), op.getN(), op.getK(), unitFlagMode, op.getDisableGemv(),
-       op.initializesAccumulatorWithBias(),
-       op.initializesAccumulatorWithZero()},
+       op.initializesAccumulatorWithBias(), op.initializesAccumulatorWithZero(),
+       op.getUnitFlagValueOrNull(), op.getAccInitValueOrNull(),
+       op.getDisableGemvValueOrNull(), op.getBiasInitValueOrNull()},
       rewriter);
   if (failed(xt)) {
     return rewriter.notifyMatchFailure(op, "failed to pack mad xt");
   }
 
-  if (failed(emitMadRawOp(op, deriveMadRawKind(op), *xt, rewriter))) {
-    return rewriter.notifyMatchFailure(op, "failed to emit mad raw op");
+  // Represent the temporary CTRL requirement structurally instead of
+  // materializing get_ctrl/bit-update/set_ctrl around the raw op. The CTRL
+  // state optimization pass analyzes all guards and emits the minimal set of
+  // hardware CTRL accesses.
+  MadCtrlRequirement requirement =
+      buildMadCtrlRequirement({isHif8, tf32Mode, satMode, op.getNDir()});
+  auto guard = rewriter.create<pto::CtrlStateGuardOp>(
+      loc, rewriter.getI64IntegerAttr(
+               static_cast<int64_t>(requirement.controlledBits)),
+      rewriter.getI64IntegerAttr(
+           static_cast<int64_t>(requirement.requiredBits)));
+  {
+    OpBuilder::InsertionGuard insertionGuard(rewriter);
+    rewriter.setInsertionPointToStart(&guard.getBody().emplaceBlock());
+    if (failed(emitMadRawOp(op, deriveMadRawKind(op), *xt, rewriter))) {
+      return rewriter.notifyMatchFailure(op, "failed to emit mad raw op");
+    }
   }
-
-  rewriter.create<pto::SetCtrlOp>(loc, ctrlSaved);
   rewriter.eraseOp(op);
   return success();
 }
