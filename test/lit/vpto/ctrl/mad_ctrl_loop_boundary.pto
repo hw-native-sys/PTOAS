@@ -1,0 +1,50 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You should not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// An explicit get_ctrl inside the loop body is a CTRL observation point:
+// the loop is not CTRL-clean, so no configuration is hoisted to the
+// preheader. The body scan restores the entry state before the explicit
+// query, which then observes the logical (entry) state.
+//
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - | FileCheck %s
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @ctrl_guard_loop_boundary(
+      %lhs: !pto.ptr<f32, l0a>,
+      %rhs: !pto.ptr<f32, l0b>,
+      %dst: !pto.ptr<f32, l0c>) -> i64 attributes {pto.kernel} {
+    %c16 = arith.constant 16 : i64
+    %c0 = arith.constant 0 : index
+    %c8 = arith.constant 8 : index
+    %c1 = arith.constant 1 : index
+    %observed = scf.for %iv = %c0 to %c8 step %c1 iter_args(%acc = %c16) -> (i64) {
+      pto.mad %lhs, %rhs, %dst, %c16, %c16, %c16
+        : !pto.ptr<f32, l0a>, !pto.ptr<f32, l0b>, !pto.ptr<f32, l0c>, i64, i64, i64
+      %x = pto.get_ctrl : i64
+      %next = arith.addi %acc, %x : i64
+      scf.yield %next : i64
+    }
+    return %observed : i64
+  }
+}
+
+// CHECK-LABEL: func.func @ctrl_guard_loop_boundary(
+// No hoisting: the first CTRL access appears only inside the loop body.
+// CHECK: scf.for
+// CHECK: %[[ENTRY:.*]] = pto.get_ctrl : i64
+// CHECK: pto.sbitset0
+// CHECK: pto.set_ctrl %[[ACTIVE:.*]] : i64
+// CHECK: pto.mad_raw
+// The explicit get_ctrl observes the logical state, so a restore precedes
+// it and the query result becomes the new logical base.
+// CHECK: pto.set_ctrl %[[ENTRY]] : i64
+// CHECK: %[[OBS:.*]] = pto.get_ctrl : i64
+// CHECK: scf.yield
+// CHECK: return %[[LOOP:.*]] : i64
+//
+// CHECK-NOT: ctrl_state_guard
