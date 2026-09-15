@@ -18,315 +18,146 @@
 #define PTO_IR_VPTO_MAD_INTERNAL_H
 
 #include "VPTOInternal.h"
-
 // Shared Mad-family helpers. They live in a detail namespace so the
-// unqualified MLIR/LLVM names used by the original TU keep resolving without
-// adding using-directives to the global scope of this header.
+// per-instruction TUs (VPTOMad*Op.cpp) can `using namespace` them without
+// polluting mlir::pto.
 namespace mlir::pto::mad_detail {
 using namespace mlir;
 using namespace mlir::pto;
 
-inline LogicalResult verifyMadPointerKinds(Operation *op, Type lhsTy, Type rhsTy,
-                                           Type dstTy,
-                                           std::optional<Type> biasTy = std::nullopt) {
-  auto lhsType = dyn_cast<pto::PtrType>(lhsTy);
-  auto rhsType = dyn_cast<pto::PtrType>(rhsTy);
-  auto dstType = dyn_cast<pto::PtrType>(dstTy);
-  if (!lhsType || !rhsType || !dstType) {
-    return op->emitOpError("requires typed !pto.ptr lhs/rhs/dst operands");
-  }
 
-  const auto lhsAS = lhsType.getMemorySpace().getAddressSpace();
-  const auto rhsAS = rhsType.getMemorySpace().getAddressSpace();
-  const auto dstAS = dstType.getMemorySpace().getAddressSpace();
+// Shared Mad-family helpers (defined in mad/VPTOMad.cpp).
+mlir::LogicalResult verifyMadPointerKinds(mlir::Operation *op, mlir::Type lhsTy,
+                                          mlir::Type rhsTy, mlir::Type dstTy,
+                                          std::optional<mlir::Type> biasTy = std::nullopt);
+mlir::LogicalResult verifyMadMxCommon(mlir::Operation *op, mlir::Type lhsTy,
+                                      mlir::Type rhsTy, mlir::Type dstTy,
+                                      std::optional<mlir::Type> biasTy = std::nullopt);
+mlir::LogicalResult verifyMadSemanticClauses(mlir::Operation *op, mlir::Type lhsTy,
+                                             mlir::Type rhsTy, mlir::Type dstTy,
+                                             std::optional<mlir::Type> biasTy,
+                                             std::optional<mlir::pto::Tf32Mode> tf32Mode,
+                                             std::optional<mlir::pto::MadSatMode> satMode,
+                                             bool hasNDir);
+mlir::ParseResult parseMadSemanticClauses(mlir::OpAsmParser &parser,
+                                          mlir::NamedAttrList &attrs,
+                                          bool parseTf32ModeClause);
+// Collected parse state for the optional runtime flag operands.
+struct MadRuntimeFlagParseState {
+  mlir::OpAsmParser::UnresolvedOperand unitFlagValue;
+  mlir::OpAsmParser::UnresolvedOperand accInitValue;
+  mlir::OpAsmParser::UnresolvedOperand disableGemvValue;
+  mlir::OpAsmParser::UnresolvedOperand biasInitValue;
+  mlir::Type unitFlagType;
+  mlir::Type accInitType;
+  mlir::Type disableGemvType;
+  mlir::Type biasInitType;
+  bool hasUnitFlagValue = false;
+  bool hasAccInitValue = false;
+  bool hasDisableGemvValue = false;
+  bool hasBiasInitValue = false;
+};
 
-  const bool isStrongCube =
-      lhsAS == pto::AddressSpace::LEFT && rhsAS == pto::AddressSpace::RIGHT &&
-      dstAS == pto::AddressSpace::ACC;
-  if (!isStrongCube) {
-    return op->emitOpError("requires l0a/l0b/l0c-typed lhs/rhs/dst pointers");
-  }
+mlir::ParseResult parseMadSemanticTypes(
+    mlir::OpAsmParser &parser, bool hasBias, mlir::Type &lhsType,
+    mlir::Type &rhsType, mlir::Type &dstType, mlir::Type &biasType,
+    mlir::Type &mType, mlir::Type &nType, mlir::Type &kType,
+    MadRuntimeFlagParseState &flags);
+mlir::ParseResult resolveMadSemanticOperands(
+    mlir::OpAsmParser &parser, mlir::OperationState &result, bool hasBias,
+    mlir::OpAsmParser::UnresolvedOperand lhs, mlir::Type lhsType,
+    mlir::OpAsmParser::UnresolvedOperand rhs, mlir::Type rhsType,
+    mlir::OpAsmParser::UnresolvedOperand dst, mlir::Type dstType,
+    mlir::OpAsmParser::UnresolvedOperand bias, mlir::Type biasType,
+    mlir::OpAsmParser::UnresolvedOperand m, mlir::Type mType,
+    mlir::OpAsmParser::UnresolvedOperand n, mlir::Type nType,
+    mlir::OpAsmParser::UnresolvedOperand k, mlir::Type kType);
+void printMadSemanticClauses(mlir::OpAsmPrinter &printer, mlir::Operation *op,
+                             bool allowTf32Mode);
+llvm::ArrayRef<llvm::StringRef> getMadSemanticElidedAttrs(bool allowTf32Mode);
 
-  if (!biasTy) {
-    return success();
-  }
 
-  auto biasType = dyn_cast<pto::PtrType>(*biasTy);
-  if (!biasType) {
-    return op->emitOpError("requires typed !pto.ptr bias operand");
+// Parse one `keyword(%operand)` runtime flag clause.
+inline mlir::ParseResult
+parseMadRuntimeFlagClause(mlir::OpAsmParser &parser, const char *keyword,
+                          mlir::OpAsmParser::UnresolvedOperand &operand,
+                          bool &present) {
+  if (mlir::failed(parser.parseOptionalKeyword(keyword))) {
+    return mlir::success();
   }
-  if (biasType.getMemorySpace().getAddressSpace() != pto::AddressSpace::BIAS) {
-    return op->emitOpError("requires bias pointer in !pto.ptr<..., bt>");
-  }
-  if (biasType.getElementType() != dstType.getElementType()) {
-    return op->emitOpError("requires bias element type to match dst element type");
-  }
-  return success();
+  present = true;
+  return mlir::failure(parser.parseLParen() || parser.parseOperand(operand) ||
+                       parser.parseRParen());
 }
 
-inline LogicalResult verifyMadMxCommon(Operation *op, Type lhsTy, Type rhsTy,
-                                       Type dstTy,
-                                       std::optional<Type> biasTy = std::nullopt) {
-  if (failed(verifyMadPointerKinds(op, lhsTy, rhsTy, dstTy, biasTy))) {
-    return failure();
+// Parse the four optional runtime flag clauses in operand order.
+inline mlir::ParseResult
+parseMadRuntimeFlagClauses(mlir::OpAsmParser &parser,
+                           MadRuntimeFlagParseState &flags) {
+  if (failed(parseMadRuntimeFlagClause(parser, "unit_flag_value",
+                                       flags.unitFlagValue,
+                                       flags.hasUnitFlagValue)) ||
+      failed(parseMadRuntimeFlagClause(parser, "acc_init",
+                                       flags.accInitValue,
+                                       flags.hasAccInitValue)) ||
+      failed(parseMadRuntimeFlagClause(parser, "disable_gemv_value",
+                                       flags.disableGemvValue,
+                                       flags.hasDisableGemvValue)) ||
+      failed(parseMadRuntimeFlagClause(parser, "bias_init",
+                                       flags.biasInitValue,
+                                       flags.hasBiasInitValue))) {
+    return mlir::failure();
   }
-
-  auto lhsType = cast<pto::PtrType>(lhsTy);
-  auto rhsType = cast<pto::PtrType>(rhsTy);
-  auto dstType = cast<pto::PtrType>(dstTy);
-  const auto lhsAS = lhsType.getMemorySpace().getAddressSpace();
-  const auto rhsAS = rhsType.getMemorySpace().getAddressSpace();
-  const auto dstAS = dstType.getMemorySpace().getAddressSpace();
-  const bool isStrongCube =
-      lhsAS == pto::AddressSpace::LEFT && rhsAS == pto::AddressSpace::RIGHT &&
-      dstAS == pto::AddressSpace::ACC;
-  if (!isStrongCube) {
-    return op->emitOpError("requires l0a/l0b/l0c-typed lhs/rhs/dst pointers");
-  }
-
-  if (!isMxElementType(lhsType.getElementType()) ||
-      !isMxElementType(rhsType.getElementType())) {
-    return op->emitOpError(
-        "requires MX lhs/rhs element types (f8E4M3FN, f8E5M2, f4E1M2x2, or "
-        "f4E2M1x2)");
-  }
-  return success();
+  return mlir::success();
 }
 
-inline std::optional<pto::MadUnitFlagMode>
-parseMadUnitFlagModeToken(StringRef token) {
-  if (token == "check_only") {
-    return pto::MadUnitFlagMode::CheckOnly;
+// Prefill the mandatory operandSegmentSizes attribute with the canonical
+// sizes when the input text omitted it.
+inline void prefillMadOperandSegmentSizes(mlir::OpAsmParser &parser,
+                                          mlir::OperationState &result,
+                                          bool hasBias,
+                                          const MadRuntimeFlagParseState &flags) {
+  if (result.attributes.get("operandSegmentSizes")) {
+    return;
   }
-  if (token == "check_and_set") {
-    return pto::MadUnitFlagMode::CheckAndSet;
-  }
-  return std::nullopt;
+  int fixedCount = (hasBias ? 4 : 3) + 3;
+  llvm::SmallVector<int32_t, 10> sizes(fixedCount, 1);
+  sizes.push_back(flags.hasUnitFlagValue ? 1 : 0);
+  sizes.push_back(flags.hasAccInitValue ? 1 : 0);
+  sizes.push_back(flags.hasDisableGemvValue ? 1 : 0);
+  sizes.push_back(flags.hasBiasInitValue ? 1 : 0);
+  result.addAttribute(
+      "operandSegmentSizes",
+      mlir::DenseI32ArrayAttr::get(parser.getContext(), sizes));
 }
 
-inline StringRef stringifyMadUnitFlagModeToken(pto::MadUnitFlagMode mode) {
-  switch (mode) {
-  case pto::MadUnitFlagMode::CheckOnly:
-    return "check_only";
-  case pto::MadUnitFlagMode::CheckAndSet:
-    return "check_and_set";
+// Resolve the runtime flag operands onto the operation, in operand order.
+inline mlir::ParseResult
+resolveMadRuntimeFlagOperands(mlir::OpAsmParser &parser,
+                              mlir::OperationState &result,
+                              const MadRuntimeFlagParseState &flags) {
+  if (flags.hasUnitFlagValue &&
+      parser.resolveOperand(flags.unitFlagValue, flags.unitFlagType,
+                            result.operands)) {
+    return mlir::failure();
   }
-  llvm_unreachable("unexpected mad unit flag mode");
+  if (flags.hasAccInitValue &&
+      parser.resolveOperand(flags.accInitValue, flags.accInitType,
+                            result.operands)) {
+    return mlir::failure();
+  }
+  if (flags.hasDisableGemvValue &&
+      parser.resolveOperand(flags.disableGemvValue, flags.disableGemvType,
+                            result.operands)) {
+    return mlir::failure();
+  }
+  if (flags.hasBiasInitValue &&
+      parser.resolveOperand(flags.biasInitValue, flags.biasInitType,
+                            result.operands)) {
+    return mlir::failure();
+  }
+  return mlir::success();
 }
-
-inline std::optional<pto::Tf32Mode> parseTf32ModeToken(StringRef token) {
-  if (token == "round_even") {
-    return pto::Tf32Mode::RoundEven;
-  }
-  if (token == "round_away") {
-    return pto::Tf32Mode::RoundAway;
-  }
-  return std::nullopt;
-}
-
-inline StringRef stringifyTf32ModeToken(pto::Tf32Mode mode) {
-  switch (mode) {
-  case pto::Tf32Mode::RoundEven:
-    return "round_even";
-  case pto::Tf32Mode::RoundAway:
-    return "round_away";
-  }
-  llvm_unreachable("unexpected tf32 mode");
-}
-
-inline StringRef stringifyMadSatModeToken(pto::MadSatMode mode) {
-  switch (mode) {
-  case pto::MadSatMode::Sat:
-    return "sat";
-  case pto::MadSatMode::NoSat:
-    return "nosat";
-  }
-  llvm_unreachable("unexpected mad sat mode");
-}
-
-inline LogicalResult verifyMadSemanticClauses(Operation *op, Type lhsTy,
-                                              Type rhsTy, Type dstTy,
-                                              std::optional<Type> biasTy,
-                                              std::optional<pto::Tf32Mode> tf32Mode,
-                                              std::optional<pto::MadSatMode> satMode,
-                                              bool hasNDir) {
-  if (failed(verifyMadPointerKinds(op, lhsTy, rhsTy, dstTy, biasTy))) {
-    return failure();
-  }
-
-  auto lhsType = dyn_cast<pto::PtrType>(lhsTy);
-  auto rhsType = dyn_cast<pto::PtrType>(rhsTy);
-  auto dstType = dyn_cast<pto::PtrType>(dstTy);
-  if (!lhsType || !rhsType || !dstType) {
-    return op->emitOpError("requires typed !pto.ptr lhs/rhs/dst operands");
-  }
-
-  if (tf32Mode) {
-    if (!(lhsType.getElementType().isF32() && rhsType.getElementType().isF32() &&
-          dstType.getElementType().isF32())) {
-      return op->emitOpError(
-          "requires tf32_mode only for f32 lhs/rhs/dst element types");
-    }
-  }
-  if (pto::isPTOHiFloat8Type(lhsType.getElementType()) !=
-      pto::isPTOHiFloat8Type(rhsType.getElementType())) {
-    return op->emitOpError(
-        "requires lhs/rhs to both use hif8 or both use non-hif8 element types");
-  }
-  if (satMode) {
-    auto isFloatLike = [](Type type) {
-      if (isa<FloatType>(type)) {
-        return true;
-      }
-      return pto::isPTOLowPrecisionType(type);
-    };
-    if (!(isFloatLike(lhsType.getElementType()) &&
-          isFloatLike(rhsType.getElementType()) &&
-          isFloatLike(dstType.getElementType()))) {
-      return op->emitOpError(
-          "requires sat/nosat only for floating lhs/rhs/dst element types");
-    }
-  }
-  (void)hasNDir;
-  return success();
-}
-
-inline ParseResult parseMadSemanticClauses(OpAsmParser &parser,
-                                       NamedAttrList &attrs,
-                                       bool parseTf32ModeClause) {
-  StringRef unitFlagKeyword;
-  if (failed(parser.parseOptionalKeyword("unit_flag"))) {
-    /* no unit_flag clause */
-  } else {
-    if (parser.parseLParen() || parser.parseKeyword(&unitFlagKeyword) ||
-        parser.parseRParen()) {
-      return failure();
-    }
-    auto mode = parseMadUnitFlagModeToken(unitFlagKeyword);
-    if (!mode) {
-      return parser.emitError(parser.getCurrentLocation())
-             << "expected unit_flag(check_only|check_and_set)";
-    }
-    attrs.set("unit_flag_mode",
-              pto::MadUnitFlagModeAttr::get(parser.getContext(), *mode));
-  }
-  if (succeeded(parser.parseOptionalKeyword("disable_gemv"))) {
-    attrs.set("disable_gemv", UnitAttr::get(parser.getContext()));
-  }
-  if (succeeded(parser.parseOptionalKeyword("sat"))) {
-    attrs.set("sat_mode",
-              pto::MadSatModeAttr::get(parser.getContext(),
-                                       pto::MadSatMode::Sat));
-  } else if (succeeded(parser.parseOptionalKeyword("nosat"))) {
-    attrs.set("sat_mode",
-              pto::MadSatModeAttr::get(parser.getContext(),
-                                       pto::MadSatMode::NoSat));
-  }
-  if (parseTf32ModeClause &&
-      succeeded(parser.parseOptionalKeyword("tf32_mode"))) {
-    StringRef tf32Keyword;
-    if (parser.parseLParen() || parser.parseKeyword(&tf32Keyword) ||
-        parser.parseRParen()) {
-      return failure();
-    }
-    auto mode = parseTf32ModeToken(tf32Keyword);
-    if (!mode) {
-      return parser.emitError(parser.getCurrentLocation())
-             << "expected tf32_mode(round_even|round_away)";
-    }
-    attrs.set("tf32_mode", pto::Tf32ModeAttr::get(parser.getContext(), *mode));
-  }
-  if (succeeded(parser.parseOptionalKeyword("n_dir"))) {
-    attrs.set("n_dir", UnitAttr::get(parser.getContext()));
-  }
-  return success();
-}
-
-inline ParseResult parseMadSemanticTypes(OpAsmParser &parser, bool hasBias,
-                                         Type &lhsType, Type &rhsType,
-                                         Type &dstType, Type &biasType,
-                                         Type &mType, Type &nType,
-                                         Type &kType) {
-  if (parser.parseType(lhsType) || parser.parseComma() ||
-      parser.parseType(rhsType) || parser.parseComma() ||
-      parser.parseType(dstType) || parser.parseComma()) {
-    return failure();
-  }
-  if (hasBias) {
-    if (parser.parseType(biasType) || parser.parseComma()) {
-      return failure();
-    }
-  }
-  if (parser.parseType(mType) || parser.parseComma() ||
-      parser.parseType(nType) || parser.parseComma() ||
-      parser.parseType(kType)) {
-    return failure();
-  }
-  return success();
-}
-
-inline ParseResult resolveMadSemanticOperands(
-    OpAsmParser &parser, OperationState &result, bool hasBias,
-    OpAsmParser::UnresolvedOperand lhs, Type lhsType,
-    OpAsmParser::UnresolvedOperand rhs, Type rhsType,
-    OpAsmParser::UnresolvedOperand dst, Type dstType,
-    OpAsmParser::UnresolvedOperand bias, Type biasType,
-    OpAsmParser::UnresolvedOperand m, Type mType,
-    OpAsmParser::UnresolvedOperand n, Type nType,
-    OpAsmParser::UnresolvedOperand k, Type kType) {
-  if (parser.resolveOperand(lhs, lhsType, result.operands) ||
-      parser.resolveOperand(rhs, rhsType, result.operands) ||
-      parser.resolveOperand(dst, dstType, result.operands)) {
-    return failure();
-  }
-  if (hasBias) {
-    if (parser.resolveOperand(bias, biasType, result.operands)) {
-      return failure();
-    }
-  }
-  if (parser.resolveOperand(m, mType, result.operands) ||
-      parser.resolveOperand(n, nType, result.operands) ||
-      parser.resolveOperand(k, kType, result.operands)) {
-    return failure();
-  }
-  return success();
-}
-
-inline void printMadSemanticClauses(OpAsmPrinter &printer, Operation *op,
-                                    bool allowTf32Mode) {
-  if (auto unitFlagMode = op->getAttrOfType<pto::MadUnitFlagModeAttr>(
-          "unit_flag_mode")) {
-    printer << " unit_flag("
-            << stringifyMadUnitFlagModeToken(unitFlagMode.getValue()) << ")";
-  }
-  if (op->hasAttr("disable_gemv")) {
-    printer << " disable_gemv";
-  }
-  if (auto satMode = op->getAttrOfType<pto::MadSatModeAttr>("sat_mode")) {
-    printer << ' ' << stringifyMadSatModeToken(satMode.getValue());
-  }
-  if (allowTf32Mode) {
-    if (auto tf32Mode = op->getAttrOfType<pto::Tf32ModeAttr>("tf32_mode")) {
-      printer << " tf32_mode(" << stringifyTf32ModeToken(tf32Mode.getValue())
-              << ")";
-    }
-  }
-  if (op->hasAttr("n_dir")) {
-    printer << " n_dir";
-  }
-}
-
-inline ArrayRef<StringRef> getMadSemanticElidedAttrs(bool allowTf32Mode) {
-  static constexpr StringRef kWithTf32[] = {"unit_flag_mode", "disable_gemv",
-                                            "sat_mode", "tf32_mode", "n_dir"};
-  static constexpr StringRef kWithoutTf32[] = {"unit_flag_mode",
-                                               "disable_gemv", "sat_mode",
-                                               "n_dir"};
-  return allowTf32Mode ? ArrayRef<StringRef>(kWithTf32)
-                       : ArrayRef<StringRef>(kWithoutTf32);
-}
-
-} // namespace mlir::pto::mad_detail
 
 template <typename OpT>
 [[maybe_unused]] static mlir::ParseResult
@@ -343,27 +174,97 @@ parseMadSemanticOpCommon(mlir::OpAsmParser &parser, mlir::OperationState &result
       parser.parseOperand(k)) {
     return mlir::failure();
   }
+  MadRuntimeFlagParseState flags;
+  if (mlir::failed(parseMadRuntimeFlagClauses(parser, flags))) {
+    return mlir::failure();
+  }
   mlir::NamedAttrList attrs;
-  if (mlir::failed(mlir::pto::mad_detail::parseMadSemanticClauses(
-          parser, attrs, parseTf32ModeClause))) {
+  if (mlir::failed(parseMadSemanticClauses(parser, attrs, parseTf32ModeClause))) {
     return mlir::failure();
   }
   if (parser.parseOptionalAttrDict(attrs) || parser.parseColon()) {
     return mlir::failure();
   }
   mlir::Type lhsType, rhsType, dstType, mType, nType, kType, biasType;
-  if (mlir::failed(mlir::pto::mad_detail::parseMadSemanticTypes(
+  if (mlir::failed(parseMadSemanticTypes(
           parser, hasBias, lhsType, rhsType, dstType, biasType, mType, nType,
-          kType))) {
+          kType, flags))) {
     return mlir::failure();
   }
   result.addAttributes(attrs);
-  if (mlir::failed(mlir::pto::mad_detail::resolveMadSemanticOperands(
-          parser, result, hasBias, lhs, lhsType, rhs, rhsType, dst, dstType,
-          bias, biasType, m, mType, n, nType, k, kType))) {
+  prefillMadOperandSegmentSizes(parser, result, hasBias, flags);
+  if (mlir::failed(resolveMadSemanticOperands(parser, result, hasBias, lhs,
+                                              lhsType, rhs, rhsType, dst,
+                                              dstType, bias, biasType, m, mType,
+                                              n, nType, k, kType))) {
     return mlir::failure();
   }
-  return mlir::success();
+  return resolveMadRuntimeFlagOperands(parser, result, flags);
+}
+
+template <typename OpT>
+static void printMadRuntimeFlagClauses(mlir::OpAsmPrinter &printer, OpT op) {
+  if (auto uf = op.getUnitFlagValue()) {
+    printer << " unit_flag_value(" << uf << ")";
+  }
+  if (auto acc = op.getAccInitValue()) {
+    printer << " acc_init(" << acc << ")";
+  }
+  if (auto gemv = op.getDisableGemvValue()) {
+    printer << " disable_gemv_value(" << gemv << ")";
+  }
+  if (auto bias = op.getBiasInitValue()) {
+    printer << " bias_init(" << bias << ")";
+  }
+}
+
+template <typename OpT>
+static void appendMadRuntimeFlagTypes(mlir::OpAsmPrinter &printer, OpT op) {
+  if (auto uf = op.getUnitFlagValue()) {
+    printer << ", " << uf.getType();
+  }
+  if (auto acc = op.getAccInitValue()) {
+    printer << ", " << acc.getType();
+  }
+  if (auto gemv = op.getDisableGemvValue()) {
+    printer << ", " << gemv.getType();
+  }
+  if (auto bias = op.getBiasInitValue()) {
+    printer << ", " << bias.getType();
+  }
+}
+
+template <typename OpT>
+static void printMadOperandSegmentSizesIfNeeded(mlir::OpAsmPrinter &printer,
+                                                OpT op) {
+  if (op->getAttr("operandSegmentSizes")) {
+    return;
+  }
+  bool any = op.getUnitFlagValue() || op.getAccInitValue() ||
+             op.getDisableGemvValue() || op.getBiasInitValue();
+  if (!any) {
+    return;
+  }
+  llvm::SmallVector<int32_t, 10> sizes;
+  auto push = [&sizes](mlir::Value v) { sizes.push_back(v ? 1 : 0); };
+  push(op.getLhs());
+  push(op.getRhs());
+  push(op.getDst());
+  if constexpr (std::is_same_v<OpT, mlir::pto::MadBiasOp> ||
+                std::is_same_v<OpT, mlir::pto::MadMxBiasOp>) {
+    push(op.getBias());
+  }
+  push(op.getM());
+  push(op.getN());
+  push(op.getK());
+  push(op.getUnitFlagValue());
+  push(op.getAccInitValue());
+  push(op.getDisableGemvValue());
+  push(op.getBiasInitValue());
+  printer << " {operandSegmentSizes = array<i32:";
+  llvm::interleave(
+      sizes, printer, [&printer](int32_t s) { printer << " " << s; }, ",");
+  printer << "}";
 }
 
 template <typename OpT>
@@ -371,12 +272,15 @@ static void printMadSemanticOpNoBias(mlir::OpAsmPrinter &printer, OpT op,
                                      bool allowTf32Mode) {
   printer << ' ' << op.getLhs() << ", " << op.getRhs() << ", " << op.getDst()
           << ", " << op.getM() << ", " << op.getN() << ", " << op.getK();
-  mlir::pto::mad_detail::printMadSemanticClauses(printer, op, allowTf32Mode);
+  printMadRuntimeFlagClauses(printer, op);
+  printMadSemanticClauses(printer, op, allowTf32Mode);
+  printMadOperandSegmentSizesIfNeeded(printer, op);
   printer.printOptionalAttrDict(op->getAttrs(),
-                                mlir::pto::mad_detail::getMadSemanticElidedAttrs(allowTf32Mode));
+                                getMadSemanticElidedAttrs(allowTf32Mode));
   printer << " : " << op.getLhs().getType() << ", " << op.getRhs().getType()
           << ", " << op.getDst().getType() << ", " << op.getM().getType()
           << ", " << op.getN().getType() << ", " << op.getK().getType();
+  appendMadRuntimeFlagTypes(printer, op);
 }
 
 template <typename OpT>
@@ -385,13 +289,16 @@ static void printMadSemanticOpWithBias(mlir::OpAsmPrinter &printer, OpT op,
   printer << ' ' << op.getLhs() << ", " << op.getRhs() << ", " << op.getDst()
           << ", " << op.getBias() << ", " << op.getM() << ", " << op.getN()
           << ", " << op.getK();
-  mlir::pto::mad_detail::printMadSemanticClauses(printer, op, allowTf32Mode);
+  printMadRuntimeFlagClauses(printer, op);
+  printMadSemanticClauses(printer, op, allowTf32Mode);
+  printMadOperandSegmentSizesIfNeeded(printer, op);
   printer.printOptionalAttrDict(op->getAttrs(),
-                                mlir::pto::mad_detail::getMadSemanticElidedAttrs(allowTf32Mode));
+                                getMadSemanticElidedAttrs(allowTf32Mode));
   printer << " : " << op.getLhs().getType() << ", " << op.getRhs().getType()
           << ", " << op.getDst().getType() << ", " << op.getBias().getType()
           << ", " << op.getM().getType() << ", " << op.getN().getType()
           << ", " << op.getK().getType();
+  appendMadRuntimeFlagTypes(printer, op);
 }
 
 // Batch7: Mad 家族共用 tf32_mode 读取 + 语义校验
@@ -402,10 +309,13 @@ static mlir::LogicalResult verifyMadSemanticWithTf32(OpTy op) {
           op->template getAttrOfType<mlir::pto::Tf32ModeAttr>("tf32_mode")) {
     tf32Mode = tf32ModeAttr.getValue();
   }
-  return mlir::pto::mad_detail::verifyMadSemanticClauses(op, op.getLhs().getType(),
+  return verifyMadSemanticClauses(op, op.getLhs().getType(),
                                   op.getRhs().getType(), op.getDst().getType(),
                                   std::nullopt, tf32Mode, op.getSatMode(),
                                   op->hasAttr("n_dir"));
 }
+
+
+} // namespace mlir::pto::mad_detail
 
 #endif // PTO_IR_VPTO_MAD_INTERNAL_H

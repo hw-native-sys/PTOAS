@@ -12,6 +12,7 @@
 
 using namespace mlir;
 using namespace mlir::pto;
+using namespace mlir::pto::mad_detail;
 
 void MadOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
@@ -19,6 +20,11 @@ void MadOp::getEffects(
   effects.emplace_back(MemoryEffects::Read::get(), &getLhsMutable());
   effects.emplace_back(MemoryEffects::Read::get(), &getRhsMutable());
   effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable());
+  if (getAccInitValue()) {
+    // Runtime acc-init may select the accumulate path (flag 0), which reads
+    // the existing accumulator; model dst as read+write conservatively.
+    effects.emplace_back(MemoryEffects::Read::get(), &getDstMutable());
+  }
 }
 
 LogicalResult MadOp::verify() { return verifyMadSemanticWithTf32(*this); }

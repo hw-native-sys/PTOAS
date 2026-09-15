@@ -1,0 +1,49 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software and is distributed under the terms and conditions
+// of CANN Open Software License Agreement Version 2.0 (the "License"). You may not
+// use this file except in compliance with the License. You may obtain a copy of the
+// License at https://gitcode.com/cann/pto-isa/blob/master/LICENSE.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-before=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=SEMANTIC
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - 2>&1 | FileCheck %s --check-prefix=EXPAND
+
+// Runtime unit_flag / acc_init / disable_gemv_value / bias_init operands must
+// (a) parse and print through the custom assembly and (b) pack into the xt
+// operand of a single mad_raw -- no scf.if branching, one guard per mad.
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @mad_runtime_flags(
+      %lhs: !pto.ptr<f32, l0a>,
+      %rhs: !pto.ptr<f32, l0b>,
+      %dst: !pto.ptr<f32, l0c>,
+      %bias: !pto.ptr<f32, bt>) attributes {pto.kernel} {
+    %c16 = arith.constant 16 : i64
+    %uf = arith.constant 2 : i32
+    %acc = arith.constant false
+    %gemv = arith.constant true
+    %binit = arith.constant false
+    pto.mad %lhs, %rhs, %dst, %c16, %c16, %c16 unit_flag_value(%uf) acc_init(%acc) disable_gemv_value(%gemv) bias_init(%binit)
+      : !pto.ptr<f32, l0a>, !pto.ptr<f32, l0b>, !pto.ptr<f32, l0c>, i64, i64, i64, i32, i1, i1, i1
+    pto.mad_acc %lhs, %rhs, %dst, %c16, %c16, %c16 unit_flag_value(%uf) acc_init(%acc)
+      : !pto.ptr<f32, l0a>, !pto.ptr<f32, l0b>, !pto.ptr<f32, l0c>, i64, i64, i64, i32, i1
+    pto.mad_bias %lhs, %rhs, %dst, %bias, %c16, %c16, %c16 unit_flag_value(%uf) bias_init(%binit)
+      : !pto.ptr<f32, l0a>, !pto.ptr<f32, l0b>, !pto.ptr<f32, l0c>, !pto.ptr<f32, bt>, i64, i64, i64, i32, i1
+    return
+  }
+}
+
+// SEMANTIC-LABEL: func.func @mad_runtime_flags(
+// SEMANTIC: pto.mad {{.*}} unit_flag_value({{.*}}) acc_init({{.*}}) disable_gemv_value({{.*}}) bias_init({{.*}})
+// SEMANTIC: pto.mad_acc {{.*}} unit_flag_value({{.*}}) acc_init({{.*}})
+// SEMANTIC: pto.mad_bias {{.*}} unit_flag_value({{.*}}) bias_init({{.*}})
+
+// EXPAND-LABEL: func.func @mad_runtime_flags(
+// One hoisted CTRL configuration is shared by all three mads; the runtime
+// flags ride inside each xt immediate, so no scf.if is emitted.
+// EXPAND-NOT: scf.if
+// EXPAND: pto.get_ctrl
+// EXPAND: pto.set_ctrl
+// EXPAND-COUNT-2: pto.mad_raw
+// EXPAND: pto.mad_bias_raw
+// EXPAND: pto.set_ctrl
+// EXPAND-NOT: scf.if

@@ -161,7 +161,19 @@ def PTO_MadSemanticOpInterface : OpInterface<"MadSemanticOpInterface"> {
       "::mlir::Attribute", "getTf32ModeAttr">,
     InterfaceMethod<"Return true if n_dir is set.",
       "bool", "getNDir", (ins), [{}],
-      /*defaultImplementation=*/[{ return $_op.getNDir(); }]>
+      /*defaultImplementation=*/[{ return $_op.getNDir(); }]>,
+    InterfaceMethod<"Return the runtime unit_flag operand, or null.",
+      "::mlir::Value", "getUnitFlagValueOrNull", (ins), [{}],
+      /*defaultImplementation=*/[{ return $_op.getUnitFlagValue(); }]>,
+    InterfaceMethod<"Return the runtime acc-init operand, or null.",
+      "::mlir::Value", "getAccInitValueOrNull", (ins), [{}],
+      /*defaultImplementation=*/[{ return $_op.getAccInitValue(); }]>,
+    InterfaceMethod<"Return the runtime disable-gemv operand, or null.",
+      "::mlir::Value", "getDisableGemvValueOrNull", (ins), [{}],
+      /*defaultImplementation=*/[{ return $_op.getDisableGemvValue(); }]>,
+    InterfaceMethod<"Return the runtime bias-init operand, or null.",
+      "::mlir::Value", "getBiasInitValueOrNull", (ins), [{}],
+      /*defaultImplementation=*/[{ return $_op.getBiasInitValue(); }]>
   ];
 }
 
