@@ -12007,6 +12007,9 @@ struct OneToNVMIExtIOpPattern : OneToNOpConversionPattern<OpT> {
 //     Lowering shape: NOSAT keeps/bitcasts the source carrier; SAT emits vcvt
 //     into the logical-element vector whose live results occupy the requested
 //     strided lanes.
+//   - deinterleaved factor 2 -> contiguous lane_stride = 2
+//     Example: 32 -> 8 lane_stride=2.
+//     Lowering shape: emit P0/P2 vcvt for the two source parts, then merge.
 //
 // Group-slots logical layouts
 //   - slots = 1 preserves the layout for 2x/4x narrowing.
@@ -12276,8 +12279,18 @@ struct OneToNVMITruncIOpPattern : OneToNOpConversionPattern<VMITruncIOp> {
       return success();
     }
 
-    if ((factor != 2 && factor != 4) ||
-        sourceParts.size() != resultTypes.size() * factor)
+    if (factor != 2 && factor != 4)
+      return rewriter.notifyMatchFailure(
+          op, "unsupported physical trunci source/result width relation");
+
+    int64_t resultLaneStride = resultLayout && resultLayout.isContiguous()
+                                   ? resultLayout.getLaneStride()
+                                   : 1;
+    if (resultLaneStride <= 0 || factor % resultLaneStride != 0)
+      return rewriter.notifyMatchFailure(
+          op, "unsupported physical trunci result lane stride");
+    int64_t sourceFactor = factor / resultLaneStride;
+    if (sourceParts.size() != resultTypes.size() * sourceFactor)
       return rewriter.notifyMatchFailure(
           op, "unsupported physical trunci source/result arity relation");
 
@@ -12306,14 +12319,16 @@ struct OneToNVMITruncIOpPattern : OneToNOpConversionPattern<VMITruncIOp> {
          resultIndex < resultCount; ++resultIndex) {
       Type resultType = resultTypes[resultIndex];
       SmallVector<Value> partials;
-      partials.reserve(parts.size());
-      for (int64_t partIndex = 0; partIndex < factor; ++partIndex) {
-        Value sourcePart = sourceParts[resultIndex * factor + partIndex];
+      partials.reserve(sourceFactor);
+      for (int64_t partIndex = 0; partIndex < sourceFactor; ++partIndex) {
+        Value sourcePart =
+            sourceParts[resultIndex * sourceFactor + partIndex];
         partials.push_back(
             rewriter
                 .create<VcvtOp>(op.getLoc(), resultType, sourcePart,
                                 *sourceMask, /*rnd=*/nullptr, sat,
-                                rewriter.getStringAttr(parts[partIndex]))
+                                rewriter.getStringAttr(
+                                    parts[partIndex * resultLaneStride]))
                 .getResult());
       }
 

@@ -1,0 +1,31 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
+
+module {
+  func.func @vmi_to_vpto_trunci_deint2_lane_stride2(
+      %wide: !pto.vmi.vreg<128xui32, #pto.vmi.layout<deinterleaved = 2>>)
+      -> !pto.vreg<256xui8> {
+    %narrow = pto.vmi.trunci %wide {saturate = "SAT"}
+        : !pto.vmi.vreg<128xui32, #pto.vmi.layout<deinterleaved = 2>>
+        -> !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous, lane_stride = 2>>
+    %p = "pto.vmi.unpack"(%narrow)
+        : (!pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous, lane_stride = 2>>)
+        -> !pto.vreg<256xui8>
+    return %p : !pto.vreg<256xui8>
+  }
+}
+
+// CHECK-LABEL: func.func @vmi_to_vpto_trunci_deint2_lane_stride2(
+// CHECK: %[[P0:.*]] = pto.vcvt {{.*}} {part = "P0", sat = "SAT"} : !pto.vreg<64xui32>, !pto.mask<b32> -> !pto.vreg<256xui8>
+// CHECK: %[[P2:.*]] = pto.vcvt {{.*}} {part = "P2", sat = "SAT"} : !pto.vreg<64xui32>, !pto.mask<b32> -> !pto.vreg<256xui8>
+// CHECK: pto.vor %[[P0]], %[[P2]], {{.*}} : !pto.vreg<256xui8>, !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<256xui8>
+// CHECK-NOT: pto.vmi.
+// CHECK-NOT: !pto.vmi.
+// CHECK-NOT: unrealized_conversion_cast
