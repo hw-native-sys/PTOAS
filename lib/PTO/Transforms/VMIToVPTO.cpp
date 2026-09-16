@@ -11042,8 +11042,7 @@ struct OneToNVMIGroupBroadcastOpPattern
         resultTypes[1] == sourcePartType;
     if (isF32G4ToF32x128) {
       MLIRContext *ctx = rewriter.getContext();
-      auto indexElementType = IntegerType::get(
-          ctx, 32, IntegerType::SignednessSemantics::Unsigned);
+      auto indexElementType = IntegerType::get(ctx, 32);
       auto indexType =
           VRegType::get(ctx, sourcePartType.getElementCount(), indexElementType);
       FailureOr<Value> selector01 = createGroupSlotIndexVector(
