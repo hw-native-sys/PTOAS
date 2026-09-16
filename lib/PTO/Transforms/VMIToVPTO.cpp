@@ -6266,13 +6266,21 @@ struct OneToNVMILoadOpPattern : OneToNOpConversionPattern<VMILoadOp> {
       return success();
     }
 
-    FailureOr<int64_t> lanesPerPart = verifyFullOrSafeReadVRegChunks(
-        op, resultVMIType, op.getSource(), op.getOffset(), rewriter);
-    if (failed(lanesPerPart))
-      return failure();
-
     VMILayoutAttr contiguousLayout =
         VMILayoutAttr::getContiguous(rewriter.getContext());
+    FailureOr<int64_t> lanesPerPart = verifyFullOrSafeReadVRegChunks(
+        op, resultVMIType, op.getSource(), op.getOffset(), rewriter);
+    if (failed(lanesPerPart) && resultLayout &&
+        resultLayout.isDeinterleaved() &&
+        (resultLayout.getFactor() == 2 || resultLayout.getFactor() == 4)) {
+      auto contiguousVMIType = VMIVRegType::get(
+          rewriter.getContext(), resultVMIType.getElementCount(),
+          resultVMIType.getElementType(), contiguousLayout);
+      lanesPerPart = verifyFullOrSafeReadVRegChunks(
+          op, contiguousVMIType, op.getSource(), op.getOffset(), rewriter);
+    }
+    if (failed(lanesPerPart))
+      return failure();
     FailureOr<SmallVector<Type>> maybeContiguousTypes =
         getConvertedVRegTypesWithLayout(resultVMIType, contiguousLayout,
                                         *this->getTypeConverter());
