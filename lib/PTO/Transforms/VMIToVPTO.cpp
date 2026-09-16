@@ -11009,6 +11009,8 @@ private:
   ;
 };
 
+static bool isF32Group4ToF32x128Broadcast(VMIGroupBroadcastOp op);
+
 struct OneToNVMIGroupBroadcastOpPattern
     : OneToNOpConversionPattern<VMIGroupBroadcastOp> {
   using OneToNOpConversionPattern<VMIGroupBroadcastOp>::OneToNOpConversionPattern;
@@ -11025,9 +11027,52 @@ struct OneToNVMIGroupBroadcastOpPattern
       return failure();
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
     SmallVector<Value> results;
+    int64_t numGroups = op.getNumGroupsAttr().getInt();
+
+    // f32 group=4 -> dense f32x128 is the per-block amax broadcast shape.
+    // ASC lowers the equivalent operation as two 64-lane result chunks:
+    //   [g0 x32, g1 x32] and [g2 x32, g3 x32].
+    // materialize each chunk with vselr from the group-slot source part.
+    auto sourcePartType = sourceParts.size() == 1
+                              ? dyn_cast<VRegType>(sourceParts.front().getType())
+                              : VRegType{};
+    bool isF32G4ToF32x128 =
+        isF32Group4ToF32x128Broadcast(op) && sourcePartType &&
+        resultTypes.size() == 2 && resultTypes[0] == sourcePartType &&
+        resultTypes[1] == sourcePartType;
+    if (isF32G4ToF32x128) {
+      MLIRContext *ctx = rewriter.getContext();
+      auto indexElementType = IntegerType::get(
+          ctx, 32, IntegerType::SignednessSemantics::Unsigned);
+      auto indexType =
+          VRegType::get(ctx, sourcePartType.getElementCount(), indexElementType);
+      FailureOr<Value> selector01 = createGroupSlotIndexVector(
+          op.getLoc(), indexType, /*groupSize=*/32, /*baseGroupSlot=*/0,
+          rewriter, /*slotLaneStride=*/1);
+      FailureOr<Value> selector23 = createGroupSlotIndexVector(
+          op.getLoc(), indexType, /*groupSize=*/32, /*baseGroupSlot=*/2,
+          rewriter, /*slotLaneStride=*/1);
+      if (failed(selector01) || failed(selector23))
+        return rewriter.notifyMatchFailure(
+            op, "failed to build f32 group=4 broadcast selectors");
+      results.push_back(
+          rewriter
+              .create<VselrOp>(op.getLoc(), resultTypes[0], sourceParts.front(),
+                               *selector01)
+              .getResult());
+      results.push_back(
+          rewriter
+              .create<VselrOp>(op.getLoc(), resultTypes[1], sourceParts.front(),
+                               *selector23)
+              .getResult());
+      replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                       *this->getTypeConverter());
+      return success();
+    }
+
     if (failed(lowerGroupBroadcastParts(
             op, sourceParts, sourceVMIType, resultVMIType, resultTypes,
-            op.getNumGroupsAttr().getInt(), rewriter, results)))
+            numGroups, rewriter, results)))
       return failure();
 
     replaceOpWithFlatConvertedValues(rewriter, op, results,
@@ -13913,6 +13958,16 @@ checkSupportedGroupReduceShape(OpTy op, std::string *reason = nullptr) {
   return failure();
 }
 
+static bool isF32Group4ToF32x128Broadcast(VMIGroupBroadcastOp op) {
+  auto sourceType = cast<VMIVRegType>(op.getSource().getType());
+  auto resultType = cast<VMIVRegType>(op.getResult().getType());
+  return op.getNumGroupsAttr().getInt() == 4 &&
+         sourceType.getElementCount() == 4 &&
+         resultType.getElementCount() == 128 &&
+         sourceType.getElementType().isF32() &&
+         resultType.getElementType().isF32();
+}
+
 LogicalResult checkSupportedGroupBroadcastShape(
     VMIGroupBroadcastOp op,
     std::string *reason = nullptr) {
@@ -13933,6 +13988,8 @@ LogicalResult checkSupportedGroupBroadcastShape(
   VMILayoutAttr resultLayout = resultType.getLayoutAttr();
   if (!sourceLayout || !resultLayout)
     return fail("requires assigned source/result layouts");
+  if (isF32Group4ToF32x128Broadcast(op))
+    return success();
   int64_t numGroups = op.getNumGroupsAttr().getInt();
   if (numGroups <= 0)
     return fail("requires positive num_groups");
