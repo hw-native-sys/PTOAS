@@ -8800,6 +8800,108 @@ struct OneToNVMIMaskedStoreOpPattern
   }
 };
 
+// Materialize a contiguous BRC result by broadcasting each logical group
+// independently and combining adjacent groups with a lane prefix mask.  This
+// is the dense analogue of ASC's two BRC loads plus vsel for one 64-lane
+// physical part.  The existing direct BRC path covers the case where each
+// physical result part contains a whole number of groups; this path covers
+// the complementary case where a part contains two groups (for example,
+// 128xf32 with group=4, i.e. 32 lanes per group).
+static LogicalResult lowerGroupBroadcastBRCPerGroup(
+    Operation *op, Value source, Value offset, Value sourceGroupStride,
+    VMIVRegType resultVMIType,
+    const VMIGroupBroadcastLoadLayoutFact &layoutFact, StringRef brcDist,
+    TypeRange resultTypes, int64_t numGroups, TypeConverter &typeConverter,
+    OneToNPatternRewriter &rewriter) {
+  VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
+  if (!resultLayout || !resultLayout.isContiguous() ||
+      resultLayout.getLaneStride() != 1)
+    return rewriter.notifyMatchFailure(
+        op, "per-group BRC lowering requires a dense contiguous result");
+
+  int64_t lanesPerPart = layoutFact.lanesPerPart;
+  int64_t groupSize = layoutFact.groupSize;
+  if (lanesPerPart <= 0 || groupSize <= 0 || groupSize >= lanesPerPart ||
+      lanesPerPart % groupSize != 0)
+    return rewriter.notifyMatchFailure(
+        op, "per-group BRC lowering requires an evenly split physical part");
+
+  int64_t groupsPerPart = lanesPerPart / groupSize;
+  if (groupsPerPart != 2)
+    return rewriter.notifyMatchFailure(
+        op, "per-group BRC lowering supports exactly two groups per part");
+
+  if (resultTypes.empty() ||
+      resultVMIType.getElementCount() !=
+          static_cast<int64_t>(resultTypes.size()) * lanesPerPart)
+    return rewriter.notifyMatchFailure(
+        op, "per-group BRC lowering requires full physical result parts");
+
+  auto firstResultType = dyn_cast<VRegType>(resultTypes.front());
+  if (!firstResultType ||
+      firstResultType.getElementCount() != lanesPerPart ||
+      llvm::any_of(resultTypes, [&](Type type) {
+        auto vregType = dyn_cast<VRegType>(type);
+        return !vregType ||
+               vregType.getElementCount() != lanesPerPart ||
+               vregType.getElementType() != firstResultType.getElementType();
+      }))
+    return rewriter.notifyMatchFailure(
+        op, "per-group BRC lowering requires uniform physical result parts");
+
+  FailureOr<MaskType> maskType =
+      getMaskTypeForVReg(firstResultType, rewriter.getContext());
+  if (failed(maskType))
+    return rewriter.notifyMatchFailure(
+        op, "per-group BRC lowering cannot form a physical lane mask");
+  std::string maskPattern =
+      (Twine("PAT_VL") + Twine(static_cast<uint64_t>(groupSize))).str();
+  FailureOr<Value> groupMask =
+      createPrefixMask(op->getLoc(), *maskType, maskPattern, rewriter);
+  if (failed(groupMask))
+    return rewriter.notifyMatchFailure(
+        op, "per-group BRC lowering cannot materialize the group lane mask");
+
+  SmallVector<Value> groupLoads;
+  groupLoads.reserve(numGroups);
+  for (int64_t group = 0; group < numGroups; ++group) {
+    Value groupOffset = createGroupChunkOffset(
+        op->getLoc(), offset, sourceGroupStride, group,
+        /*inGroupLaneOffset=*/0, rewriter);
+    groupLoads.push_back(rewriter
+                             .create<VldsOp>(op->getLoc(), firstResultType,
+                                             /*updated_base=*/Type{}, source,
+                                             groupOffset,
+                                             rewriter.getStringAttr(brcDist))
+                             .getResult());
+  }
+
+  SmallVector<Value> results;
+  results.reserve(resultTypes.size());
+  for (auto [part, resultType] : llvm::enumerate(resultTypes)) {
+    int64_t laneBase = static_cast<int64_t>(part) * lanesPerPart;
+    if (laneBase % groupSize != 0)
+      return rewriter.notifyMatchFailure(
+          op, "per-group BRC lowering requires part-aligned groups");
+    int64_t firstGroup = laneBase / groupSize;
+    int64_t lastGroup = (laneBase + lanesPerPart - 1) / groupSize;
+    if (firstGroup < 0 || lastGroup >= numGroups)
+      return rewriter.notifyMatchFailure(
+          op, "per-group BRC lowering group range is out of bounds");
+    if (firstGroup != lastGroup - 1)
+      return rewriter.notifyMatchFailure(
+          op, "per-group BRC lowering expected two adjacent groups");
+    results.push_back(rewriter
+                          .create<VselOp>(op->getLoc(), resultType,
+                                          groupLoads[firstGroup],
+                                          groupLoads[lastGroup], *groupMask)
+                          .getResult());
+  }
+
+  replaceOpWithFlatConvertedValues(rewriter, op, results, typeConverter);
+  return success();
+}
+
 struct OneToNVMIGroupBroadcastLoadOpPattern
     : OneToNOpConversionPattern<VMIGroupBroadcastLoadOp> {
   using OneToNOpConversionPattern<VMIGroupBroadcastLoadOp>::OneToNOpConversionPattern;
@@ -8851,12 +8953,12 @@ struct OneToNVMIGroupBroadcastLoadOpPattern
       return std::nullopt;
     };
 
+    std::optional<StringRef> brcDist = getBRCDist();
     bool canUseDirectBRC = false;
     if (
         succeeded(directFact) &&
         directFact->kind == VMIGroupBroadcastLoadDirectKind::BRC &&
         !resultTypes.empty()) {
-      std::optional<StringRef> brcDist = getBRCDist();
       auto firstType = dyn_cast<VRegType>(resultTypes.front());
       canUseDirectBRC =
           brcDist && firstType &&
@@ -8865,10 +8967,24 @@ struct OneToNVMIGroupBroadcastLoadOpPattern
               firstType, VPTOMemoryOpFamily::Load, *brcDist);
     }
 
+    if (succeeded(directFact) && succeeded(loadFact) && brcDist &&
+        directFact->kind == VMIGroupBroadcastLoadDirectKind::BRC &&
+        canUseDirectBRC && loadFact->groupSize < loadFact->lanesPerPart &&
+        loadFact->groupSize > 0 &&
+        loadFact->lanesPerPart % loadFact->groupSize == 0 &&
+        loadFact->lanesPerPart / loadFact->groupSize == 2) {
+      if (succeeded(lowerGroupBroadcastBRCPerGroup(
+              op, *source, *offset, *sourceGroupStride, resultVMIType,
+              *loadFact, *brcDist, resultTypes, numGroups,
+              *this->getTypeConverter(), rewriter)))
+        return success();
+    }
+
     if (
         succeeded(directFact) &&
         directFact->kind == VMIGroupBroadcastLoadDirectKind::BRC &&
-        canUseDirectBRC) {
+        canUseDirectBRC && numGroups > 0 &&
+        static_cast<int64_t>(resultTypes.size()) % numGroups == 0) {
       if (numGroups <= 0 ||
           static_cast<int64_t>(resultTypes.size()) % numGroups != 0) {
         return rewriter.notifyMatchFailure(
@@ -8881,7 +8997,6 @@ struct OneToNVMIGroupBroadcastLoadOpPattern
       // when their logical group size is only one full part.
       int64_t chunksPerGroup =
           static_cast<int64_t>(resultTypes.size()) / numGroups;
-      std::optional<StringRef> brcDist = getBRCDist();
       if (!brcDist)
         return rewriter.notifyMatchFailure(
             op, "group_broadcast_load BRC lowering requires b8/b16/b32 "

@@ -512,6 +512,12 @@ static constexpr GroupBroadcastLoadDirectPattern
          memContiguous(), d(2)},
         {VMIGroupBroadcastLoadDirectKind::E2B, G<8>(), gb(4), bits<16, 32>(),
          memContiguous(), d(4)},
+        // Half-part groups can be materialized by one BRC load per logical
+        // group followed by a lane-prefix select.  This keeps BRC loads on
+        // their natural element alignment instead of forcing a 32B-aligned
+        // vsldb base.
+        {VMIGroupBroadcastLoadDirectKind::BRC, anyG(), gb(4),
+         bits<8, 16, 32>(), memAny(), c()},
         {VMIGroupBroadcastLoadDirectKind::BRC, anyG(), gbFull(),
          bits<8, 16, 32>(), memAny(), c()},
         // Scalar BRC can be emitted once per physical result chunk, so its
