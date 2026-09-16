@@ -50,6 +50,10 @@ struct PhysicalAction {
   SmallVector<unsigned, mlir::pto::kValue4> inputs;
   std::string tag;
   SmallVector<PhysicalValue, mlir::pto::kValue4> results;
+  // The consumed or produced operation already realizes this layout change in
+  // its own lowering, so the action only carries the physical values and is
+  // not a layout rearrangement of the plan.
+  bool absorbed = false;
 };
 
 static Region *getDynamicScope(Operation *op) {
@@ -101,6 +105,85 @@ static bool isFullPhysicalShape(VMIVRegType type) {
   return succeeded(lanes) && *lanes > 0 && type.getElementCount() % *lanes == 0;
 }
 
+// A load realizes a deinterleaved layout in its own lowering through the
+// "DINTLV" distribution mode of pto.vldsx2, so its physical results already
+// hold the even and odd parts of the data.  Such a value does not have to be
+// interleaved back into one carrier to feed an element-type conversion, which
+// reads the part it converts by selecting even and odd lanes.  Materializing
+// the layout for that consumer is therefore not a rearrangement of the plan:
+// it still has to produce the physical values the consumer sees, but it is not
+// charged.
+static bool realizesDeinterleavedPartsDirectly(Value value,
+                                              VMILayoutAttr layout) {
+  Operation *producer = value ? value.getDefiningOp() : nullptr;
+  if (!producer || !layout || !layout.isDeinterleaved()) {
+    return false;
+  }
+  auto type = dyn_cast<VMIVRegType>(value.getType());
+  if (!type) {
+    return false;
+  }
+  auto arity = getArity(type, layout);
+  auto contiguousArity =
+      getArity(type, VMILayoutAttr::getContiguous(type.getContext()));
+  bool knownArity = succeeded(arity) && succeeded(contiguousArity);
+  if (!knownArity) {
+    return false;
+  }
+  if (*arity <= 0) {
+    return false;
+  }
+  bool isDeinterleaveLoad = isa<VMIDeinterleaveLoadOp>(producer);
+  if (isDeinterleaveLoad) {
+    return true;
+  }
+  // Mirror the direct dense-split load shapes that avoid an explicit
+  // deinterleave action in buildLoad.
+  bool isDenseSplitLoad = isa<VMILoadOp>(producer) &&
+                          isFullPhysicalShape(type) &&
+                          *arity <= *contiguousArity;
+  if (!isDenseSplitLoad) {
+    return false;
+  }
+  int64_t factor = layout.getFactor();
+  return factor != 0 && *arity % factor == 0;
+}
+
+// A conversion that writes a lane-strided carrier places each converted
+// element in a byte lane of the packed result, so it selects the source part it
+// converts from with the same part attribute and reads the deinterleaved parts
+// directly.
+static bool packsLaneStridedCarrier(Operation *op, const VMILayoutPlan &plan) {
+  if (!op) {
+    return false;
+  }
+  for (Value result : op->getResults()) {
+    auto type = dyn_cast<VMIVRegType>(result.getType());
+    if (!type) {
+      continue;
+    }
+    auto assigned = plan.valueLayouts.find(result);
+    VMILayoutAttr layout = assigned == plan.valueLayouts.end()
+                               ? type.getLayoutAttr()
+                               : assigned->second;
+    bool laneStridedCarrier = layout && layout.isContiguous() &&
+                              layout.getLaneStride() > 1;
+    if (laneStridedCarrier) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool absorbsMaterializedLayout(OpOperand &operand,
+                                      VMILayoutAttr sourceLayout,
+                                      const VMILayoutPlan &plan) {
+  Operation *consumer = operand.getOwner();
+  return isVMILayoutCastOp(consumer) &&
+         packsLaneStridedCarrier(consumer, plan) &&
+         realizesDeinterleavedPartsDirectly(operand.get(), sourceLayout);
+}
+
 class PhysicalGraph {
 public:
   LogicalResult addIntrinsicRearrangementCost(int64_t cost) {
@@ -120,6 +203,11 @@ public:
     return inputs;
   }
 
+  // While set, the actions created for a materialization belong to a layout
+  // change that the operation consuming it realizes in its own lowering.
+  void setAbsorbing(bool value) { absorbing = value; }
+  bool isAbsorbing() const { return absorbing; }
+
   SmallVector<PhysicalValue, mlir::pto::kValue4>
   addAction(PhysicalActionKind kind, Region *scope,
             ArrayRef<PhysicalValue> inputs, StringRef tag,
@@ -133,6 +221,7 @@ public:
     action.scope = scope;
     action.inputs = std::move(inputIds);
     action.tag = tag.str();
+    action.absorbed = absorbing;
     for (unsigned result = 0; result < resultCount; ++result) {
       action.results.push_back(PhysicalValue{nextValueId++});
     }
@@ -144,19 +233,36 @@ public:
     VMILayoutScopeCost cost;
     cost.total = intrinsicRearrangementCost;
     for (const PhysicalAction &action : actions) {
+      if (action.absorbed) {
+        continue;
+      }
       // Native memory traffic and semantic compute are not layout-conversion
       // costs.  Only actions that materialize a physical rearrangement (or a
       // merge used by one) contribute to the static solver objective.
       switch (action.kind) {
       case PhysicalActionKind::MemoryRead:
+        ++cost.memoryReads;
+        continue;
       case PhysicalActionKind::MemoryWrite:
+        ++cost.memoryWrites;
+        continue;
       case PhysicalActionKind::Semantic:
+        ++cost.semantics;
         continue;
       case PhysicalActionKind::Interleave:
+        ++cost.interleaves;
+        break;
       case PhysicalActionKind::Deinterleave:
+        ++cost.deinterleaves;
+        break;
       case PhysicalActionKind::Unpack:
+        ++cost.unpacks;
+        break;
       case PhysicalActionKind::Pack:
+        ++cost.packs;
+        break;
       case PhysicalActionKind::Merge:
+        ++cost.merges;
         break;
       }
       if (cost.total == std::numeric_limits<int64_t>::max()) {
@@ -171,6 +277,7 @@ private:
   SmallVector<PhysicalAction, mlir::pto::kValue16> actions;
   unsigned nextValueId = 1;
   int64_t intrinsicRearrangementCost = 0;
+  bool absorbing = false;
 };
 
 struct PhysicalStateStorage {
@@ -365,21 +472,33 @@ private:
     }
     if (layout != targetLayout) {
       Block *block = operand.getOwner()->getBlock();
-      for (const PhysicalStateStorage::SharedMaterialization &shared :
-           sharedMaterializations) {
-        if (shared.source == operand.get() &&
-            shared.sourceLayout == layout &&
-            shared.resultLayout == targetLayout && shared.block == block) {
-          return shared.result;
+      bool absorbsLayout = absorbsMaterializedLayout(operand, layout, plan);
+      // An absorbed materialization belongs to this consumer alone, so it is
+      // neither read from nor written to the shared materialization cache.
+      if (!absorbsLayout) {
+        for (const PhysicalStateStorage::SharedMaterialization &shared :
+             sharedMaterializations) {
+          bool sameMaterialization = shared.source == operand.get() &&
+                                     shared.sourceLayout == layout &&
+                                     shared.resultLayout == targetLayout &&
+                                     shared.block == block;
+          if (sameMaterialization) {
+            return shared.result;
+          }
         }
       }
+      bool previousAbsorbing = graph.isAbsorbing();
+      graph.setAbsorbing(absorbsLayout);
       auto result = materialize(operand.get(), *source, layout, targetLayout,
                                 operand.getOwner());
+      graph.setAbsorbing(previousAbsorbing);
       if (failed(result)) {
         return failure();
       }
-      sharedMaterializations.push_back(
-          {operand.get(), layout, targetLayout, block, *result});
+      if (!absorbsLayout) {
+        sharedMaterializations.push_back(
+            {operand.get(), layout, targetLayout, block, *result});
+      }
       return result;
     }
     auto result = materialize(operand.get(), *source, layout, targetLayout,
@@ -1219,7 +1338,10 @@ private:
     if (isVMILayoutCastOp(op)) {
       return buildCast(op, relation);
     }
-    if (isVMISameLayoutOp(op)) {
+    // vexpdif is not a same-layout op when a narrower source widens to even
+    // and odd f32 parts, but its physical graph is still built port by port.
+    bool portByPortGraph = isVMISameLayoutOp(op) || isa<VMIVexpdifOp>(op);
+    if (portByPortGraph) {
       return buildSameLayoutOp(op, relation);
     }
     return failure();

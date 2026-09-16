@@ -28,6 +28,10 @@ struct VMILoadLayoutFact {
   VMILayoutAttr resultLayout;
 };
 
+struct VMIGroupIotaLayoutFact {
+  VMILayoutAttr resultLayout;
+};
+
 enum class VMIDeinterleaveLoadLayoutPort {
   Low,
   High,
@@ -235,6 +239,10 @@ public:
   getLoadLayoutFacts(VMIVRegType resultType,
                      std::string *reason = nullptr) const;
 
+  FailureOr<SmallVector<VMIGroupIotaLayoutFact, mlir::pto::kValue4>>
+  getGroupIotaLayoutFacts(VMIVRegType resultType,
+                          std::string *reason = nullptr) const;
+
   FailureOr<VMILoadLayoutFact>
   getLoadLayoutFact(VMIVRegType resultType,
                     std::string *reason = nullptr) const;
@@ -434,6 +442,21 @@ public:
   getReduceLayoutFactForLayouts(VMIVRegType sourceType, VMIMaskType maskType,
                                 VMIVRegType resultType,
                                 std::string *reason = nullptr) const;
+
+  /// Returns failure when a contiguous source value does not fill its physical
+  /// chunks, so its padding lanes cannot be told apart from real data.  The
+  /// reduce family and the compress legality check share this rule; the reason
+  /// is a neutral requirement fragment because each op family prefixes its own
+  /// subject rather than borrowing the other's wording.
+  LogicalResult checkSourceFillsPhysicalChunks(VMIVRegType sourceType,
+                                               std::string *reason = nullptr) const;
+
+  /// Returns true when the scalar broadcast load path can read this element
+  /// width.  A slots=1 group slot holds one group value that a consumer
+  /// broadcasts, so it materializes as one scalar broadcast load per slot.
+  /// The planner and the lowering both gate on this predicate, so keep the
+  /// element width rule in this single definition.
+  static bool isScalarBroadcastLoadElementType(Type elementType);
 
   FailureOr<SmallVector<VMIGroupReduceLayoutFact, mlir::pto::kValue4>>
   getGroupReduceLayoutFactsForLayout(VMIVRegType sourceType, int64_t numGroups,

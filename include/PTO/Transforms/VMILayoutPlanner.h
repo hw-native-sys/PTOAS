@@ -122,9 +122,13 @@ bool isVMILayoutCastOp(Operation *op);
 
 class VMILayoutRelationProvider {
 public:
+  /// Enumerates the legal layout relations of one op.  When enumeration fails,
+  /// p reason receives the support model's explanation of why no relation
+  /// applies, so callers can report that instead of a generic sentence.
   FailureOr<SmallVector<VMILayoutOpRelation, mlir::pto::kValue4>>
   enumerateRelations(Operation *op,
-                     ArrayRef<VMILayoutAttr> polymorphicLayouts = {}) const;
+                     ArrayRef<VMILayoutAttr> polymorphicLayouts = {},
+                     std::string *reason = nullptr) const;
 };
 
 class VMILayoutStructuralEdgeProvider {

@@ -2517,13 +2517,24 @@ struct LayoutSolver {
       SmallVector<Type> results;
       FunctionType functionType = func.getFunctionType();
       for (Type type : functionType.getResults()) {
+        // A result layout or mask granularity that the input already declares
+        // is an explicit ABI contract and must survive layout assignment.
+        // Only an unannotated result falls back to the contiguous boundary,
+        // which is the same rule the planner applies through
+        // getABIBoundaryLayout for an unannotated function result.
+        VMILayoutAttr declared = getExplicitLayout(type);
         if (auto vregType = dyn_cast<VMIVRegType>(type)) {
-          results.push_back(VMIVRegType::get(ctx, vregType.getElementCount(),
-                                             vregType.getElementType(),
-                                             getContiguousLayout()));
+          results.push_back(VMIVRegType::get(
+              ctx, vregType.getElementCount(), vregType.getElementType(),
+              declared ? declared : getContiguousLayout()));
         } else if (auto maskType = dyn_cast<VMIMaskType>(type)) {
-          results.push_back(VMIMaskType::get(ctx, maskType.getElementCount(),
-                                             "b32", getContiguousLayout()));
+          StringRef granularity = maskType.getGranularity();
+          if (!VMIMaskType::isConcreteGranularity(granularity)) {
+            granularity = "b32";
+          }
+          results.push_back(VMIMaskType::get(
+              ctx, maskType.getElementCount(), granularity,
+              declared ? declared : getContiguousLayout()));
         } else {
           results.push_back(type);
         }

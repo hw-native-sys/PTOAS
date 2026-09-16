@@ -18,13 +18,14 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 
-#include "llvm/ADT/SmallBitVector.h"
 #include "llvm/ADT/Hashing.h"
+#include "llvm/ADT/SmallBitVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/Support/Debug.h"
 
 #include <limits>
+#include <optional>
 #include <string>
 
 using namespace mlir;
@@ -111,7 +112,7 @@ LogicalResult VMILayoutRelationConstraintState::unite(Value lhs, Value rhs) {
 }
 
 LogicalResult VMILayoutRelationConstraintState::assign(Value value,
-                                                        VMILayoutAttr layout) {
+                                                       VMILayoutAttr layout) {
   if (!value || !layout || !parent.count(value)) {
     return success();
   }
@@ -120,8 +121,9 @@ LogicalResult VMILayoutRelationConstraintState::assign(Value value,
   return inserted || it->second == layout ? success() : failure();
 }
 
-LogicalResult VMILayoutRelationConstraintState::accept(
-    const VMILayoutOpRelation &relation, const VMILayoutPlan &plan) {
+LogicalResult
+VMILayoutRelationConstraintState::accept(const VMILayoutOpRelation &relation,
+                                         const VMILayoutPlan &plan) {
   (void)plan;
   for (const VMILayoutEqualityConstraint &equality : relation.equalities) {
     if (failed(unite(equality.source, equality.destination))) {
@@ -217,9 +219,8 @@ static VMILayoutAttr getPortLayout(const VMILayoutOpRelation &relation,
 
 static VMILayoutAttr getUseLayout(const VMILayoutOpRelation &relation,
                                   OpOperand &use) {
-  if (VMILayoutAttr layout =
-          getPortLayout(relation, VMILayoutPortKind::Operand,
-                        use.getOperandNumber())) {
+  if (VMILayoutAttr layout = getPortLayout(relation, VMILayoutPortKind::Operand,
+                                           use.getOperandNumber())) {
     return layout;
   }
   for (const VMILayoutRelationEndpoint &endpoint : relation.endpoints) {
@@ -232,9 +233,8 @@ static VMILayoutAttr getUseLayout(const VMILayoutOpRelation &relation,
 
 static VMILayoutAttr getResultLayout(const VMILayoutOpRelation &relation,
                                      OpResult result) {
-  if (VMILayoutAttr layout =
-          getPortLayout(relation, VMILayoutPortKind::Result,
-                        result.getResultNumber())) {
+  if (VMILayoutAttr layout = getPortLayout(relation, VMILayoutPortKind::Result,
+                                           result.getResultNumber())) {
     return layout;
   }
   for (const VMILayoutRelationEndpoint &endpoint : relation.endpoints) {
@@ -314,7 +314,31 @@ static bool scopeCostsEqual(const VMILayoutScopeCost &lhs,
   return lhs.total == rhs.total;
 }
 
-static unsigned countMaterializations(const VMILayoutPlan &plan) {
+// A memory access and an element-type cast realize a layout change through
+// their own lowering: the access carries a lane-strided layout in its
+// distribution mode, and the cast rewrites every element anyway.  A lane-stride
+// or a conversion that only such an operation consumes therefore costs nothing
+// extra.  A layout cast is *not* in this set: an explicit ensure_layout has to
+// move the lanes it converts.
+static bool absorbsLayoutInOwnLowering(Operation *op) {
+  if (!op) {
+    return false;
+  }
+  // isVMILayoutCastOp covers the element-type conversions (extend, truncate,
+  // float <-> integer).
+  if (isVMILayoutCastOp(op)) {
+    return true;
+  }
+  return isa<VMIBitcastOp, VMIVinterpretCastOp, VMICvtOp, VMILoadOp,
+             VMIMaskedLoadOp, VMIDeinterleaveLoadOp, VMIGroupLoadOp,
+             VMIGroupSlotLoadOp, VMIGroupBroadcastLoadOp, VMIStrideLoadOp,
+             VMIExpandLoadOp, VMIvLoadOp, VMIStoreOp, VMIMaskedStoreOp,
+             VMIInterleaveStoreOp, VMIGroupStoreOp, VMIStrideStoreOp,
+             VMICompressStoreOp, VMIvStoreOp>(op);
+}
+
+[[maybe_unused]] static unsigned
+countMaterializations(const VMILayoutPlan &plan) {
   unsigned count = 0;
   for (const auto &[operand, useLayout] : plan.useLayouts) {
     if (!operand) {
@@ -329,32 +353,133 @@ static unsigned countMaterializations(const VMILayoutPlan &plan) {
   return count;
 }
 
+// Fewer lane-strided values is better, but only where the compute chain has to
+// carry them: a lane-strided layout packs a wider carrier into fewer registers
+// and is free on a load, a store, or an element-type cast, yet a plain compute
+// op that receives it has to keep splitting it back out.  Counting the layouts
+// that a memory access or a type cast already absorbs would contradict the
+// per-operation layout preferences instead of refining them.
+static unsigned
+countLaneStrideLayouts(const VMILayoutPlan &plan) {
+  unsigned count = 0;
+  for (const auto &[value, layout] : plan.valueLayouts) {
+    if (!layout || !layout.hasLaneStride()) {
+      continue;
+    }
+    if (absorbsLayoutInOwnLowering(value.getDefiningOp())) {
+      continue;
+    }
+    bool consumedByCompute = false;
+    for (OpOperand &use : value.getUses()) {
+      if (!absorbsLayoutInOwnLowering(use.getOwner())) {
+        consumedByCompute = true;
+        break;
+      }
+    }
+    if (consumedByCompute) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+// Data merges are the plan's Merge and Interleave actions: both rejoin data
+// that a layout spread over separate registers.  Fewer of them is better.
+// Layout decision hierarchy.  Two candidates are only compared here when
+// their layout-conversion cost is equal (scopeCostsEqual), so no tie-break key
+// can override a cheaper layout conversion.  Within one cost the keys apply in
+// this order:
+//
+//   1. total (layer 1) - PhysicalGraph::getCost(): one unit per Interleave,
+//      Deinterleave, Unpack, Pack or Merge action the lowering has to
+//      materialize.  A rearrangement that a memory access already realizes
+//      through its distribution mode, or that a type cast realizes through its
+//      part selection, is marked absorbed and is not charged at all.
+//   2. data couplings - Merge + Interleave actions.  A "vor" merge and a
+//      "vintlv" interleave both join data that a layout spread over separate
+//      registers, so either counts once: two plans that only pick a different
+//      joining operation tie here and fall through.
+//   3. compute lane-strides - lane-strided values a compute operation has to
+//      carry.  Loads, stores and type casts absorb their own lane-strides, so
+//      only the ones a compute op must split back out are counted.
+//   4. lane-stride weight - the sum of the lane strides of every lane-strided
+//      value, absorbed ones included.  A wider stride packs more elements into
+//      one carrier and splits the stream more finely, so lane_stride = 4 costs
+//      more than = 2; fewer wins.
+//   5. preference penalty - the per-operation layout preferences.  They rank
+//      below both lane-stride keys because the tables only describe what a
+//      single operation prefers, not what the whole plan pays.
+//   6. materialization position - sum of the topological positions of the
+//      plan's conversions; materializing later is better.
+//
+// Layer 2: data couplings.  A Merge ("vor") and an Interleave ("vintlv") are
+// both points where data that a layout spread over separate registers is
+// joined again, so either counts once.  Two plans that only pick a different
+// joining op therefore tie here and fall through to the next layer.
+static int64_t countDataCouplings(const VMILayoutPhysicalState &state) {
+  VMILayoutScopeCost cost = getVMILayoutPhysicalCost(state);
+  return cost.merges + cost.interleaves;
+}
+
+// Layer 4: the overall lane-stride count, i.e. every lane-strided value in the
+// plan including the ones a memory access or a type cast absorbs.  The
+// per-operation preference tables rank above it; it only separates plans those
+// tables cannot distinguish, and then fewer lane-strided values win.
+static unsigned countLaneStrideWeight(const VMILayoutPlan &plan) {
+  unsigned weight = 0;
+  for (const auto &[value, layout] : plan.valueLayouts) {
+    (void)value;
+    if (layout && layout.hasLaneStride()) {
+      weight += layout.getLaneStride();
+    }
+  }
+  return weight;
+}
+
 static bool tieBreaksStrictlyBefore(const FrontierEntry &lhs,
-                                      const FrontierEntry &rhs) {
-  unsigned lhsMaterializations = countMaterializations(lhs.plan);
-  unsigned rhsMaterializations = countMaterializations(rhs.plan);
-  if (lhsMaterializations != rhsMaterializations) {
-    return lhsMaterializations < rhsMaterializations;
+                                    const FrontierEntry &rhs) {
+  int64_t lhsCouplings = countDataCouplings(lhs.physicalState);
+  int64_t rhsCouplings = countDataCouplings(rhs.physicalState);
+  if (lhsCouplings != rhsCouplings) {
+    return lhsCouplings < rhsCouplings;
+  }
+  unsigned lhsLaneStrides = countLaneStrideLayouts(lhs.plan);
+  unsigned rhsLaneStrides = countLaneStrideLayouts(rhs.plan);
+  if (lhsLaneStrides != rhsLaneStrides) {
+    return lhsLaneStrides < rhsLaneStrides;
+  }
+  unsigned lhsAllLaneStrides = countLaneStrideWeight(lhs.plan);
+  unsigned rhsAllLaneStrides = countLaneStrideWeight(rhs.plan);
+  if (lhsAllLaneStrides != rhsAllLaneStrides) {
+    return lhsAllLaneStrides < rhsAllLaneStrides;
   }
   if (lhs.preferencePenalty != rhs.preferencePenalty) {
     return lhs.preferencePenalty < rhs.preferencePenalty;
   }
-  return lhs.materializationPositionScore >
-         rhs.materializationPositionScore;
+  return lhs.materializationPositionScore > rhs.materializationPositionScore;
 }
 
 static bool tieBreaksLessOrEqual(const FrontierEntry &lhs,
                                  const FrontierEntry &rhs) {
-  unsigned lhsMaterializations = countMaterializations(lhs.plan);
-  unsigned rhsMaterializations = countMaterializations(rhs.plan);
-  if (lhsMaterializations != rhsMaterializations) {
-    return lhsMaterializations < rhsMaterializations;
+  int64_t lhsCouplings = countDataCouplings(lhs.physicalState);
+  int64_t rhsCouplings = countDataCouplings(rhs.physicalState);
+  if (lhsCouplings != rhsCouplings) {
+    return lhsCouplings < rhsCouplings;
+  }
+  unsigned lhsLaneStrides = countLaneStrideLayouts(lhs.plan);
+  unsigned rhsLaneStrides = countLaneStrideLayouts(rhs.plan);
+  if (lhsLaneStrides != rhsLaneStrides) {
+    return lhsLaneStrides < rhsLaneStrides;
+  }
+  unsigned lhsAllLaneStrides = countLaneStrideWeight(lhs.plan);
+  unsigned rhsAllLaneStrides = countLaneStrideWeight(rhs.plan);
+  if (lhsAllLaneStrides != rhsAllLaneStrides) {
+    return lhsAllLaneStrides < rhsAllLaneStrides;
   }
   if (lhs.preferencePenalty != rhs.preferencePenalty) {
     return lhs.preferencePenalty < rhs.preferencePenalty;
   }
-  return lhs.materializationPositionScore >=
-         rhs.materializationPositionScore;
+  return lhs.materializationPositionScore >= rhs.materializationPositionScore;
 }
 
 class FrontierConflictSolver {
@@ -416,7 +541,8 @@ public:
       }
       bool valid = true;
       for (unsigned opIndex : group.opIndices) {
-        if (opIndex >= ops.size() || components[opIndex] != components[firstOp]) {
+        if (opIndex >= ops.size() ||
+            components[opIndex] != components[firstOp]) {
           valid = false;
           break;
         }
@@ -426,7 +552,14 @@ public:
       }
       for (auto [member, opIndex] : llvm::enumerate(group.opIndices)) {
         if (opIndex >= ops.size() || opDecisionGroups[opIndex] != -1 ||
-            group.memberRelationIndices[member].empty()) {
+            group.memberRelationIndices[member].empty() ||
+            group.memberRelationIndices[member].size() !=
+                group.memberRelationIndices.front().size() ||
+            llvm::any_of(group.memberRelationIndices[member],
+                         [&](unsigned relationIndex) {
+                           return relationIndex >=
+                                  ops[opIndex].relations.size();
+                         })) {
           valid = false;
           break;
         }
@@ -464,19 +597,39 @@ public:
     for (auto [position, opIndex] : llvm::enumerate(*order)) {
       topologicalPositions[opIndex] = position;
     }
+    // The pilot merges pending group choices only to find a legal upper bound.
+    // The exact pass retains them and prunes only partial plans already above
+    // it.
+    transitions = 0;
+    costUpperBound.reset();
+    auto pilot = solveOrdered(state, *order, false);
+    if (succeeded(pilot)) {
+      auto pilotCost = evaluateFullPlanCost(*pilot);
+      if (succeeded(pilotCost)) {
+        costUpperBound = pilotCost->total;
+      }
+    }
+    transitions = 0;
+    return solveOrdered(state, *order, true);
+  }
+
+private:
+  FailureOr<VMILayoutPlan> solveOrdered(const SolverState &state,
+                                        ArrayRef<unsigned> order,
+                                        bool preservePendingDecisionGroups) {
     SmallVector<FrontierEntry, mlir::pto::kValue8> frontier;
     frontier.emplace_back();
     frontier.back().constraints = initialConstraints;
     if (failed(frontier.back().constraints.materialize(frontier.back().plan))) {
       return failure();
     }
-    for (auto [position, opIndex] : llvm::enumerate(*order)) {
+    for (auto [position, opIndex] : llvm::enumerate(order)) {
       SmallVector<Operation *, mlir::pto::kValue16> remainingOps;
-      for (unsigned remaining : llvm::drop_begin(*order, position + 1)) {
+      for (unsigned remaining : llvm::drop_begin(order, position + 1)) {
         remainingOps.push_back(ops[remaining].op);
       }
-      auto next =
-          extend(frontier, opIndex, state.domains[opIndex], remainingOps);
+      auto next = extend(frontier, opIndex, state.domains[opIndex],
+                         remainingOps, preservePendingDecisionGroups);
       if (failed(next)) {
         LLVM_DEBUG(llvm::dbgs()
                    << "layout frontier failed at " << ops[opIndex].op->getName()
@@ -525,7 +678,6 @@ public:
     return result;
   }
 
-private:
   bool hasValidInput() const {
     if (!initialConstraints.isValid() || opIndices.size() != ops.size()) {
       return false;
@@ -678,7 +830,8 @@ private:
 
   FailureOr<SmallVector<unsigned, mlir::pto::kValue16>>
   getTopologicalOrder() const {
-    SmallVector<unsigned, mlir::pto::kValue16> indegrees(ops.size(), 0);
+    SmallVector<SmallVector<unsigned, mlir::pto::kValue4>, mlir::pto::kValue16>
+        predecessors(ops.size());
     SmallVector<SmallVector<unsigned, mlir::pto::kValue4>, mlir::pto::kValue16>
         successors(ops.size());
     auto addDependency = [&](unsigned producer, unsigned consumer) {
@@ -686,8 +839,8 @@ private:
           llvm::is_contained(successors[producer], consumer)) {
         return;
       }
-      ++indegrees[consumer];
       successors[producer].push_back(consumer);
+      predecessors[consumer].push_back(producer);
     };
     for (auto [consumerIndex, solverOp] : llvm::enumerate(ops)) {
       SmallPtrSet<Operation *, mlir::pto::kValue4> producers;
@@ -715,21 +868,46 @@ private:
         }
       }
     }
-    SmallVector<unsigned, mlir::pto::kValue16> ready;
-    for (auto [index, indegree] : llvm::enumerate(indegrees)) {
-      if (indegree == 0) {
-        ready.push_back(index);
+    enum class VisitState { Unvisited, Active, Finished };
+    SmallVector<unsigned, mlir::pto::kValue16> order;
+    SmallVector<VisitState, mlir::pto::kValue16> states(ops.size(),
+                                                        VisitState::Unvisited);
+    auto visit = [&](unsigned root) {
+      if (states[root] == VisitState::Finished) {
+        return success();
+      }
+      SmallVector<std::pair<unsigned, unsigned>, mlir::pto::kValue16> stack;
+      states[root] = VisitState::Active;
+      stack.emplace_back(root, 0);
+      while (!stack.empty()) {
+        auto &[current, nextPredecessor] = stack.back();
+        if (nextPredecessor < predecessors[current].size()) {
+          unsigned predecessor = predecessors[current][nextPredecessor++];
+          if (states[predecessor] == VisitState::Active) {
+            return failure();
+          }
+          if (states[predecessor] == VisitState::Unvisited) {
+            states[predecessor] = VisitState::Active;
+            stack.emplace_back(predecessor, 0);
+          }
+          continue;
+        }
+        states[current] = VisitState::Finished;
+        order.push_back(current);
+        stack.pop_back();
+      }
+      return success();
+    };
+    // Traverse backwards from consumers so each producer cone is closed by its
+    // relation factor before unrelated roots multiply the live frontier.
+    for (unsigned index = 0; index < ops.size(); ++index) {
+      if (successors[index].empty() && failed(visit(index))) {
+        return failure();
       }
     }
-    SmallVector<unsigned, mlir::pto::kValue16> order;
-    while (!ready.empty()) {
-      unsigned current = ready.front();
-      ready.erase(ready.begin());
-      order.push_back(current);
-      for (unsigned successor : successors[current]) {
-        if (--indegrees[successor] == 0) {
-          ready.push_back(successor);
-        }
+    for (unsigned index = 0; index < ops.size(); ++index) {
+      if (failed(visit(index))) {
+        return failure();
       }
     }
     if (order.size() != ops.size()) {
@@ -801,6 +979,24 @@ private:
     return score;
   }
 
+  std::string
+  getDecisionContinuationKey(const FrontierEntry &entry,
+                             const llvm::SmallBitVector &liveGroups) const {
+    std::string key;
+    llvm::raw_string_ostream stream(key);
+    for (unsigned groupIndex = 0; groupIndex < options.decisionGroups.size();
+         ++groupIndex) {
+      auto selected = entry.selectedDecisionGroups.find(groupIndex);
+      if (selected == entry.selectedDecisionGroups.end()) {
+        continue;
+      }
+      if (liveGroups.test(groupIndex)) {
+        stream << groupIndex << '=' << selected->second << ';';
+      }
+    }
+    return key;
+  }
+
   static void insertPareto(
       FrontierEntry candidate, StringRef key,
       llvm::StringMap<SmallVector<FrontierEntry, mlir::pto::kValue2>> &groups) {
@@ -826,27 +1022,40 @@ private:
 
   FailureOr<SmallVector<FrontierEntry, mlir::pto::kValue8>>
   extend(ArrayRef<FrontierEntry> frontier, unsigned opIndex,
-         const llvm::SmallBitVector &domain,
-         ArrayRef<Operation *> remainingOps) {
+         const llvm::SmallBitVector &domain, ArrayRef<Operation *> remainingOps,
+         bool preservePendingDecisionGroups) {
     llvm::StringMap<SmallVector<FrontierEntry, mlir::pto::kValue2>> groups;
     SmallVector<std::string, mlir::pto::kValue8> groupOrder;
-    for (const FrontierEntry &entry : frontier) {
-      unsigned groupIndex = opDecisionGroups.empty()
-                                ? std::numeric_limits<unsigned>::max()
-                                : static_cast<unsigned>(opDecisionGroups[opIndex]);
-      int memberIndex = -1;
-      if (groupIndex != std::numeric_limits<unsigned>::max()) {
-        memberIndex = llvm::find(options.decisionGroups[groupIndex].opIndices,
-                                 opIndex) -
-                      options.decisionGroups[groupIndex].opIndices.begin();
+    llvm::SmallBitVector liveDecisionGroups(options.decisionGroups.size());
+    if (preservePendingDecisionGroups) {
+      for (Operation *remainingOp : remainingOps) {
+        auto opIndexIt = opIndices.find(remainingOp);
+        if (opIndexIt == opIndices.end()) {
+          continue;
+        }
+        int groupIndex = opDecisionGroups[opIndexIt->second];
+        if (groupIndex >= 0) {
+          liveDecisionGroups.set(static_cast<unsigned>(groupIndex));
+        }
       }
+    }
+    unsigned groupIndex =
+        opDecisionGroups.empty()
+            ? std::numeric_limits<unsigned>::max()
+            : static_cast<unsigned>(opDecisionGroups[opIndex]);
+    int memberIndex = -1;
+    if (groupIndex != std::numeric_limits<unsigned>::max()) {
+      memberIndex =
+          llvm::find(options.decisionGroups[groupIndex].opIndices, opIndex) -
+          options.decisionGroups[groupIndex].opIndices.begin();
+    }
+    for (const FrontierEntry &entry : frontier) {
       SmallVector<unsigned, mlir::pto::kValue4> candidates;
-      if (memberIndex >= 0 &&
-          entry.selectedDecisionGroups.count(groupIndex)) {
+      if (memberIndex >= 0 && entry.selectedDecisionGroups.count(groupIndex)) {
         unsigned selected = entry.selectedDecisionGroups.lookup(groupIndex);
         if (selected < options.decisionGroups[groupIndex]
-                          .memberRelationIndices[memberIndex]
-                          .size()) {
+                           .memberRelationIndices[memberIndex]
+                           .size()) {
           unsigned mapped = options.decisionGroups[groupIndex]
                                 .memberRelationIndices[memberIndex][selected];
           if (domain.test(mapped)) {
@@ -856,8 +1065,8 @@ private:
       } else if (memberIndex >= 0) {
         for (unsigned selected = 0;
              selected < options.decisionGroups[groupIndex]
-                             .memberRelationIndices[memberIndex]
-                             .size();
+                            .memberRelationIndices[memberIndex]
+                            .size();
              ++selected) {
           unsigned mapped = options.decisionGroups[groupIndex]
                                 .memberRelationIndices[memberIndex][selected];
@@ -883,23 +1092,22 @@ private:
             !candidate.selectedDecisionGroups.count(groupIndex)) {
           unsigned selected = 0;
           while (selected < options.decisionGroups[groupIndex]
-                                  .memberRelationIndices[memberIndex]
-                                  .size() &&
+                                .memberRelationIndices[memberIndex]
+                                .size() &&
                  options.decisionGroups[groupIndex]
                          .memberRelationIndices[memberIndex][selected] !=
                      relationIndex) {
             ++selected;
           }
           if (selected == options.decisionGroups[groupIndex]
-                                  .memberRelationIndices[memberIndex]
-                                  .size()) {
+                              .memberRelationIndices[memberIndex]
+                              .size()) {
             continue;
           }
           candidate.selectedDecisionGroups[groupIndex] = selected;
         }
-        if (relation.preferencePenalty >
-            std::numeric_limits<uint64_t>::max() -
-                candidate.preferencePenalty) {
+        if (relation.preferencePenalty > std::numeric_limits<uint64_t>::max() -
+                                             candidate.preferencePenalty) {
           return failure();
         }
         candidate.preferencePenalty += relation.preferencePenalty;
@@ -925,6 +1133,11 @@ private:
           continue;
         }
         candidate.physicalState = std::move(*physicalState);
+        if (costUpperBound &&
+            getVMILayoutPhysicalCost(candidate.physicalState).total >
+                *costUpperBound) {
+          continue;
+        }
         auto key =
             getVMILayoutContinuationKey(candidate.physicalState, remainingOps);
         if (failed(key)) {
@@ -934,7 +1147,12 @@ private:
         if (failed(constraintKey)) {
           return failure();
         }
-        std::string combinedKey = *key + "|constraints=" + *constraintKey;
+        std::string combinedKey = *key;
+        if (preservePendingDecisionGroups) {
+          combinedKey += "|decisions=" + getDecisionContinuationKey(
+                                             candidate, liveDecisionGroups);
+        }
+        combinedKey += "|constraints=" + *constraintKey;
         if (!groups.contains(combinedKey)) {
           groupOrder.push_back(combinedKey);
         }
@@ -977,6 +1195,7 @@ private:
   SmallVector<int, mlir::pto::kValue8> opDecisionGroups;
   SmallVector<unsigned, mlir::pto::kValue8> topologicalPositions;
   VMILayoutRelationConstraintState initialConstraints;
+  std::optional<int64_t> costUpperBound;
   unsigned transitions = 0;
 };
 

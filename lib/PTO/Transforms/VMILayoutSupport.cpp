@@ -684,6 +684,11 @@ static constexpr DenseMemoryLayoutPattern kDenseStoreLayoutPatterns[] = {
     {bits<8>(), ls(4), N<64>(), /*preferred=*/true},
     {bits<8>(), ls(2), N<128>(), /*preferred=*/true},
     {bits<16>(), ls(2), N<64>(), /*preferred=*/true},
+    // A value that fits one carrier register has no room for a wider lane
+    // stride, so its preferred store layout is the plain contiguous one.
+    {bits<8>(), c(), N<256>(), /*preferred=*/true},
+    {bits<16>(), c(), N<128>(), /*preferred=*/true},
+    {bits<32>(), c(), N<64>(), /*preferred=*/true},
     {bits<8, 16, 32>(), ls(2)},
     {bits<8>(), ls(4)},
     {bits<8, 16, 32>(), d(2)},
@@ -1438,21 +1443,42 @@ FailureOr<VMIReduceLayoutFact> VMILayoutSupport::getReduceLayoutFactForLayouts(
     return fail("reduce requires contiguous source, mask, and result layouts");
   }
 
-  // The legacy vc* lowering consumes complete physical source chunks.  A
-  // contiguous value whose element count does not fill its 256-byte register
-  // therefore cannot be lowered without introducing padding lanes into the
-  // reduction.  Keep this legality check in the shared support query so the
-  // planner never advertises a relation that lowering must reject.
+  // The legacy vc* lowering consumes complete physical source chunks, so a
+  // contiguous value whose element count leaves padding lanes cannot be
+  // reduced without folding those padding lanes into the result.  The rule
+  // lives in the shared support query so the planner never advertises a
+  // relation that lowering must reject; only the wording below is
+  // reduce-specific.
+  std::string chunkReason;
+  if (failed(checkSourceFillsPhysicalChunks(sourceType, &chunkReason))) {
+    return fail(Twine("reduce requires ") + chunkReason);
+  }
+  return VMIReduceLayoutFact{sourceLayout, maskLayout, resultLayout};
+}
+
+bool VMILayoutSupport::isScalarBroadcastLoadElementType(Type elementType) {
+  unsigned elementBits = pto::getPTOStorageElemBitWidth(elementType);
+  return elementBits == 8 || elementBits == 16 || elementBits == 32;
+}
+
+LogicalResult
+VMILayoutSupport::checkSourceFillsPhysicalChunks(VMIVRegType sourceType,
+                                                 std::string *reason) const {
+  auto fail = [&](const Twine &message) -> LogicalResult {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
   FailureOr<int64_t> lanesPerPart =
       getDataLanesPerPart(sourceType.getElementType());
   if (failed(lanesPerPart) || *lanesPerPart <= 0) {
-    return fail("reduce requires known physical source chunk width");
+    return fail("known physical source chunk width");
   }
   if (sourceType.getElementCount() % *lanesPerPart != 0) {
-    return fail("reduce requires source element count to fill complete "
-                "physical chunks");
+    return fail("source element count to fill complete physical chunks");
   }
-  return VMIReduceLayoutFact{sourceLayout, maskLayout, resultLayout};
+  return success();
 }
 
 FailureOr<SmallVector<VMIGroupReduceLayoutFact, mlir::pto::kValue4>>
@@ -2805,6 +2831,30 @@ VMILayoutSupport::getLoadLayoutFacts(VMIVRegType resultType,
   return facts;
 }
 
+FailureOr<SmallVector<VMIGroupIotaLayoutFact, mlir::pto::kValue4>>
+VMILayoutSupport::getGroupIotaLayoutFacts(VMIVRegType resultType,
+                                          std::string *reason) const {
+  auto fail = [&](const Twine &message)
+      -> FailureOr<SmallVector<VMIGroupIotaLayoutFact, 4>> {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+
+  // group_iota is the internal lowering of grouped vci.  Its physical
+  // producer is the contiguous vci instruction; non-contiguous consumers are
+  // represented by an explicit ensure_layout edge.
+  VMILayoutAttr contiguous =
+      VMILayoutAttr::getContiguous(resultType.getContext());
+  if (VMILayoutAttr explicitLayout = resultType.getLayoutAttr();
+      explicitLayout && explicitLayout != contiguous) {
+    return fail("group_iota directly produces only contiguous layout");
+  }
+  return SmallVector<VMIGroupIotaLayoutFact, 4>{
+      VMIGroupIotaLayoutFact{contiguous}};
+}
+
 FailureOr<VMIDeinterleaveLoadLayoutFact>
 VMILayoutSupport::getPreferredDeinterleaveLoadLayoutFact(
     VMIVRegType valueType, std::string *reason) const {
@@ -3341,24 +3391,16 @@ FailureOr<VMIGroupSlotLayoutFact> VMILayoutSupport::getGroupSlotLoadLayoutFact(
                   "source_group_stride");
     }
   } else if (layout.getSlots() == 1 && sourceGroupStride) {
-    unsigned elementBits =
-        pto::getPTOStorageElemBitWidth(resultType.getElementType());
-    if (elementBits == 0 || 256 % elementBits != 0) {
-      return fail("slots=1 group_slot_load requires supported element width");
+    if (!isScalarBroadcastLoadElementType(resultType.getElementType())) {
+      return fail("slots=1 group_slot_load requires an 8/16/32-bit element "
+                  "type so each slot can be read by a scalar broadcast load");
     }
-    int64_t alignedStrideElems = 256 / elementBits;
-    // A single-group slot is consumed by scalar BRC. Its one element is
-    // loaded through the scalar broadcast path, which has no 32B alignment
-    // requirement on the group stride.
-    bool scalarBroadcast = numGroups == 1 && stride && *stride == 1;
-    if (!scalarBroadcast &&
-        (!stride || *stride <= 0 || *stride % alignedStrideElems != 0)) {
-      return fail(Twine("slots=1 group_slot_load currently lowers as one "
-                        "lane-0 vsldb per group and requires constant "
-                        "positive source_group_stride divisible by ") +
-                  Twine(alignedStrideElems) +
-                  " elements for 32B load alignment; packed or unaligned "
-                  "scalar load lowering is not implemented");
+    // Each slot is read from its own element address, so the group stride has
+    // to be a known positive constant.  A scalar broadcast load has no 32B
+    // block-alignment requirement, so no divisibility rule applies here.
+    if (!stride || *stride <= 0) {
+      return fail("slots=1 group_slot_load requires constant positive "
+                  "source_group_stride");
     }
   }
 

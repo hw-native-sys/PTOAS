@@ -792,6 +792,20 @@ rememberGroupReduceRelationLayouts(VMIVRegType sourceType, int64_t numGroups,
   }
 }
 
+/// Reports an op for which no legal layout relation could be enumerated.  The
+/// support model usually knows exactly why (a shape table row, an alignment
+/// rule, or a lowering capability), so surface that reason when there is one
+/// instead of a generic sentence that hides it.
+static void reportMissingRelation(Operation *op, const std::string &reason) {
+  if (!reason.empty()) {
+    op->emitError() << kVMIDiagUnsupportedPrefix << reason;
+    return;
+  }
+  op->emitError() << kVMIDiagUnsupportedPrefix
+                  << "no legal VMI layout relation is registered for "
+                  << op->getName();
+}
+
 static FailureOr<SmallVector<VMILayoutSolverOp, mlir::pto::kValue8>>
 buildPlannerOps(ArrayRef<Operation *> ops) {
   VMILayoutRelationProvider provider;
@@ -857,7 +871,8 @@ buildPlannerOps(ArrayRef<Operation *> ops) {
         layouts.push_back(preferred->lhsLayout);
       }
     }
-    auto relations = provider.enumerateRelations(op, layouts);
+    std::string relationReason;
+    auto relations = provider.enumerateRelations(op, layouts, &relationReason);
     if (failed(relations) || relations->empty()) {
       VMILayoutSupport supports;
       if (auto groupSlot = dyn_cast<VMIGroupSlotLoadOp>(op)) {
@@ -945,21 +960,30 @@ buildPlannerOps(ArrayRef<Operation *> ops) {
           continue;
         }
       }
+      reportMissingRelation(op, relationReason);
       return failure();
     }
     rememberRelationLayouts(*relations, layouts);
   }
   if (layouts.empty()) {
+    if (!ops.empty()) {
+      ops.front()->emitError() << kVMIDiagUnsupportedPrefix
+                               << "no candidate VMI layout is available for "
+                                  "this component";
+    }
     return failure();
   }
   for (Operation *op : ops) {
     if (isVMILayoutStructuralOp(op) && !isVMILayoutABIBoundaryOp(op)) {
       continue;
     }
-    auto relations = provider.enumerateRelations(op, layouts);
+    std::string relationReason;
+    auto relations = provider.enumerateRelations(op, layouts, &relationReason);
     if (failed(relations)) {
-      auto preferredRelations = provider.enumerateRelations(op);
+      auto preferredRelations = provider.enumerateRelations(op, {},
+                                                            &relationReason);
       if (failed(preferredRelations) || preferredRelations->empty()) {
+        reportMissingRelation(op, relationReason);
         return failure();
       }
       relations = std::move(preferredRelations);
@@ -968,15 +992,14 @@ buildPlannerOps(ArrayRef<Operation *> ops) {
       // Some table-backed producers (notably group_slot_load) have a single
       // preferred relation that is independent of the component candidate
       // pool.  Preserve that relation when candidate filtering has no rows.
-      auto preferredRelations = provider.enumerateRelations(op);
+      auto preferredRelations = provider.enumerateRelations(op, {},
+                                                            &relationReason);
       if (succeeded(preferredRelations) && !preferredRelations->empty()) {
         relations = std::move(preferredRelations);
       }
     }
     if (failed(relations) || relations->empty()) {
-      op->emitError() << kVMIDiagUnsupportedPrefix
-                      << "no legal VMI layout relation is registered for "
-                      << op->getName();
+      reportMissingRelation(op, relationReason);
       return failure();
     }
     llvm::erase_if(*relations, [](const VMILayoutOpRelation &relation) {
@@ -1029,11 +1052,76 @@ solveComponent(ArrayRef<Operation *> component,
   if (failed(plan)) {
     LLVM_DEBUG(llvm::dbgs() << "layout planner: solver failed component ops="
                             << ops->size() << "\n");
+    // The relation graph was built, so the search itself found no complete
+    // assignment.  Report that here: buildPlannerOps failures already emitted
+    // their own, more specific diagnostic.
+    if (!component.empty()) {
+      component.front()->emitError()
+          << kVMIDiagLayoutContractPrefix
+          << "no complete legal VMI layout plan exists for this component";
+    }
     return failure();
   }
   LLVM_DEBUG(llvm::dbgs() << "layout planner: solved component ops="
                           << ops->size() << "\n");
   return plan;
+}
+
+// Candidate layouts for an operation whose layout-bearing ports have to agree.
+// The planner normally supplies the domain; when it does not, fall back to the
+// layouts spelled on the operation itself so relation enumeration does not
+// depend on which caller supplied the domain.
+static void
+appendSameLayoutCandidates(Operation *op,
+                           ArrayRef<VMILayoutAttr> polymorphicLayouts,
+                           SmallVectorImpl<VMILayoutAttr> &candidates) {
+  candidates.append(polymorphicLayouts.begin(), polymorphicLayouts.end());
+  if (!candidates.empty()) {
+    return;
+  }
+  for (Type type : op->getOperandTypes()) {
+    if (VMILayoutAttr layout = getExplicitLayout(type);
+        layout && !llvm::is_contained(candidates, layout)) {
+      candidates.push_back(layout);
+    }
+  }
+  for (Type type : op->getResultTypes()) {
+    if (VMILayoutAttr layout = getExplicitLayout(type);
+        layout && !llvm::is_contained(candidates, layout)) {
+      candidates.push_back(layout);
+    }
+  }
+}
+
+static void appendSameLayoutRelations(
+    Operation *op, ArrayRef<VMILayoutAttr> candidates,
+    const VMILayoutSupport &supports,
+    SmallVectorImpl<VMILayoutOpRelation> &relations,
+    std::string *reason = nullptr) {
+  for (VMILayoutAttr layout : candidates) {
+    if (!layout) {
+      continue;
+    }
+    if (failed(supports.getSameLayoutRelationSupport(op, layout, reason))) {
+      continue;
+    }
+    VMILayoutOpRelation relation;
+    relation.op = op;
+    for (OpOperand &operand : op->getOpOperands()) {
+      if (isLayoutType(operand.get().getType())) {
+        relation.ports.push_back(
+            operandPort(operand.getOperandNumber(), layout));
+      }
+    }
+    for (OpResult result : op->getResults()) {
+      if (isLayoutType(result.getType())) {
+        relation.ports.push_back(resultPort(result.getResultNumber(), layout));
+      }
+    }
+    if (!relation.ports.empty()) {
+      appendReachableUniqueRelation(relations, std::move(relation), supports);
+    }
+  }
 }
 
 } // namespace
@@ -1051,8 +1139,7 @@ bool mlir::pto::isVMISameLayoutOp(Operation *op) {
              VMIVdivOp, VMIVminOp, VMIVmaxOp, VMIVnegOp, VMIVabsOp, VMIVsqrtOp,
              VMIVexpOp, VMIVlnOp, VMIVreluOp, VMIVandOp, VMIVorOp, VMIVxorOp,
              VMIVshlOp, VMIVshrOp, VMIVnotOp, VMIVcmpOp, VMIVcmpsOp, VMIvSelOp,
-             VMIVexpdifOp, VMIVaxpyOp, VMIVlreluOp, VMIVpreluOp, VMIVmulaOp>(
-      op);
+             VMIVaxpyOp, VMIVlreluOp, VMIVpreluOp, VMIVmulaOp>(op);
 }
 
 bool mlir::pto::isVMILayoutCastOp(Operation *op) {
@@ -1062,7 +1149,8 @@ bool mlir::pto::isVMILayoutCastOp(Operation *op) {
 
 FailureOr<SmallVector<VMILayoutOpRelation, mlir::pto::kValue4>>
 VMILayoutRelationProvider::enumerateRelations(
-    Operation *op, ArrayRef<VMILayoutAttr> polymorphicLayouts) const {
+    Operation *op, ArrayRef<VMILayoutAttr> polymorphicLayouts,
+    std::string *reason) const {
   if (!op) {
     return failure();
   }
@@ -1713,8 +1801,19 @@ VMILayoutRelationProvider::enumerateRelations(
       if (succeeded(supports.getGroupSlotLoadLayoutFact(
               typed, load.getSourceGroupStride(),
               load.getNumGroupsAttr().getInt()))) {
+        // slots=8 reads a whole group per block load, while slots=1 needs one
+        // scalar broadcast load per slot.  Both are legal for a unit stride,
+        // so prefer the fewer-part form and keep slots=1 available for the
+        // strides that slots=8 rejects.
         appendReachableUniqueRelation(
-            relations, VMILayoutOpRelation{op, {resultPort(0, layout)}, true},
+            relations,
+            VMILayoutOpRelation{op,
+                                {resultPort(0, layout)},
+                                /*directProducer=*/true,
+                                /*intrinsicRearrangementCost=*/0,
+                                /*preferencePenalty=*/layout.getSlots() == 1
+                                    ? 1U
+                                    : 0U},
             supports);
       }
     }
@@ -2056,8 +2155,8 @@ VMILayoutRelationProvider::enumerateRelations(
     auto resultType = cast<VMIVRegType>(vselr.getResult().getType());
     bool assigned = sourceType.getLayoutAttr() && indexType.getLayoutAttr() &&
                     resultType.getLayoutAttr();
-    auto fact = assigned ? supports.getVselrLayoutFact(vselr)
-                         : supports.getPreferredVselrLayoutFact(vselr);
+    auto fact = assigned ? supports.getVselrLayoutFact(vselr, reason)
+                         : supports.getPreferredVselrLayoutFact(vselr, reason);
     if (failed(fact)) {
       return failure();
     }
@@ -2105,6 +2204,23 @@ VMILayoutRelationProvider::enumerateRelations(
 
   if (isa<VMIConstantOp, VMIBroadcastOp, VMIIotaOp, VMIGroupIotaOp, VMIVciOp,
           VMIVbrcOp>(op)) {
+    if (auto groupIota = dyn_cast<VMIGroupIotaOp>(op)) {
+      auto resultType = dyn_cast<VMIVRegType>(groupIota.getResult().getType());
+      if (!resultType) {
+        return failure();
+      }
+      auto facts = supports.getGroupIotaLayoutFacts(resultType);
+      if (failed(facts)) {
+        return failure();
+      }
+      for (const VMIGroupIotaLayoutFact &fact : *facts) {
+        appendReachableUniqueRelation(
+            relations,
+            VMILayoutOpRelation{op, {resultPort(0, fact.resultLayout)}, true},
+            supports);
+      }
+      return relations;
+    }
     SmallVector<VMILayoutAttr, mlir::pto::kValue4> producerLayouts;
     if (auto resultType = dyn_cast<VMIVRegType>(op->getResult(0).getType());
         resultType && resultType.getLayoutAttr()) {
@@ -2391,53 +2507,82 @@ VMILayoutRelationProvider::enumerateRelations(
     return relations;
   }
 
+  if (auto vexpdif = dyn_cast<VMIVexpdifOp>(op)) {
+    auto sourceType = dyn_cast<VMIVRegType>(vexpdif.getX().getType());
+    auto resultType = dyn_cast<VMIVRegType>(vexpdif.getResult().getType());
+    if (!sourceType || !resultType) {
+      return failure();
+    }
+
+    SmallVector<VMILayoutAttr, mlir::pto::kValue4> candidates;
+    auto addCandidate = [&](VMILayoutAttr layout) {
+      if (layout && !llvm::is_contained(candidates, layout)) {
+        candidates.push_back(layout);
+      }
+    };
+    for (Type type : op->getOperandTypes()) {
+      addCandidate(getExplicitLayout(type));
+    }
+    for (Type type : op->getResultTypes()) {
+      addCandidate(getExplicitLayout(type));
+    }
+    addCandidate(VMILayoutAttr::getContiguous(op->getContext()));
+    for (VMILayoutAttr layout : polymorphicLayouts) {
+      addCandidate(layout);
+    }
+
+    // An f32 source keeps one layout across the data, the predicate and the
+    // result.  A narrower source widens, and the physical result parts are the
+    // even and the odd lanes of the source, so the result layout has to come
+    // from the widening relation table exactly like a widening cast.
+    if (sourceType.getElementType().isF32()) {
+      appendSameLayoutRelations(op, candidates, supports, relations);
+    } else {
+      auto preferred =
+          supports.getPreferredCastLayoutFact(sourceType, resultType);
+      for (VMILayoutAttr layout : candidates) {
+        for (VMICastLayoutPort port :
+             {VMICastLayoutPort::Source, VMICastLayoutPort::Result}) {
+          auto facts = supports.getCastLayoutFactsForLayout(
+              sourceType, resultType, port, layout);
+          if (failed(facts)) {
+            continue;
+          }
+          for (const VMICastLayoutFact &fact : *facts) {
+            uint64_t preferencePenalty =
+                succeeded(preferred) &&
+                        (fact.sourceLayout != preferred->sourceLayout ||
+                         fact.resultLayout != preferred->resultLayout)
+                    ? 1
+                    : 0;
+            appendReachableUniqueRelation(
+                relations,
+                VMILayoutOpRelation{op,
+                                    {operandPort(0, fact.sourceLayout),
+                                     operandPort(1, fact.sourceLayout),
+                                     operandPort(2, fact.sourceLayout),
+                                     resultPort(0, fact.resultLayout)},
+                                    /*directProducer=*/false,
+                                    fact.intrinsicRearrangementCost,
+                                    preferencePenalty},
+                supports);
+          }
+        }
+      }
+    }
+    return relations.empty()
+               ? FailureOr<SmallVector<VMILayoutOpRelation,
+                                       mlir::pto::kValue4>>(failure())
+               : FailureOr<SmallVector<VMILayoutOpRelation,
+                                       mlir::pto::kValue4>>(
+                     std::move(relations));
+  }
+
   if (isVMISameLayoutOp(op)) {
     SmallVector<VMILayoutAttr, mlir::pto::kValue4> sameLayoutCandidates;
-    sameLayoutCandidates.append(polymorphicLayouts.begin(),
-                                polymorphicLayouts.end());
-    if (sameLayoutCandidates.empty()) {
-      // The normal planner entry point does not provide a candidate domain.
-      // For an explicitly typed operation, derive the only meaningful
-      // candidate from its layout-bearing ports instead of making relation
-      // enumeration depend on which caller supplied the domain.
-      for (Type type : op->getOperandTypes()) {
-        if (VMILayoutAttr layout = getExplicitLayout(type);
-            layout && !llvm::is_contained(sameLayoutCandidates, layout)) {
-          sameLayoutCandidates.push_back(layout);
-        }
-      }
-      for (Type type : op->getResultTypes()) {
-        if (VMILayoutAttr layout = getExplicitLayout(type);
-            layout && !llvm::is_contained(sameLayoutCandidates, layout)) {
-          sameLayoutCandidates.push_back(layout);
-        }
-      }
-    }
-    for (VMILayoutAttr layout : sameLayoutCandidates) {
-      if (!layout) {
-        continue;
-      }
-      if (failed(supports.getSameLayoutRelationSupport(op, layout))) {
-        continue;
-      }
-      VMILayoutOpRelation relation;
-      relation.op = op;
-      for (OpOperand &operand : op->getOpOperands()) {
-        if (isLayoutType(operand.get().getType())) {
-          relation.ports.push_back(
-              operandPort(operand.getOperandNumber(), layout));
-        }
-      }
-      for (OpResult result : op->getResults()) {
-        if (isLayoutType(result.getType())) {
-          relation.ports.push_back(
-              resultPort(result.getResultNumber(), layout));
-        }
-      }
-      if (!relation.ports.empty()) {
-        appendReachableUniqueRelation(relations, std::move(relation), supports);
-      }
-    }
+    appendSameLayoutCandidates(op, polymorphicLayouts, sameLayoutCandidates);
+    appendSameLayoutRelations(op, sameLayoutCandidates, supports, relations,
+                              reason);
     if (!relations.empty()) {
       return relations;
     }
@@ -2516,12 +2661,6 @@ mlir::pto::selectCostedVMILayoutPlans(Operation *scope,
     if (failed(plan)) {
       LLVM_DEBUG(llvm::dbgs()
                  << "layout planner: component has no complete legal plan\n");
-      Operation *anchor = component.empty() ? nullptr : component.front();
-      if (anchor) {
-        anchor->emitError()
-            << kVMIDiagLayoutContractPrefix
-            << "no complete legal VMI layout plan exists for this component";
-      }
       return failure();
     }
     result.plans.push_back(std::move(*plan));

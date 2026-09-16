@@ -1527,6 +1527,32 @@ def VPTOCombineReductions
   let dependentDialects = ["mlir::pto::PTODialect"];
 }
 
+def VPTOPack4StoreMaskNormalize
+    : Pass<"vpto-normalize-packed-store-mask", "ModuleOp"> {
+  let summary = "Normalize packed 4-bit store predicates to their byte granular spelling";
+  let description = [{
+    Rewrites the predicate of a `pto.vsts` operation that stores 4-bit packed
+    values with the `PK4_B32` distribution from the 32-bit granular spelling
+    into the byte granular spelling that covers exactly the same bytes.
+
+    Run this immediately after VMI-to-VPTO lowering. The lowering describes a
+    PK4_B32 store with a b32 predicate whose lanes are the 32-bit store groups,
+    but the A5 model executes such a store at full rate only when the predicate
+    is byte granular: four consecutive b8 lanes hold the four bytes of one
+    32-bit group. A static b32 prefix of N lanes therefore becomes a static b8
+    prefix of 4*N lanes (`PAT_VL64` becomes `PAT_ALL`, `PAT_VL32` becomes
+    `PAT_VL128`, and so on), and `pto.pbitcast` reinterprets the result back
+    to the b32 mask type of the store distribution.
+
+    Only a b32 mask that is directly produced by a static `pto.pset_b32`
+    prefix with a byte granular spelling is rewritten. Runtime `pto.plt_b32`
+    predicates, patterns without a legal byte spelling such as `PAT_VL3`,
+    non-packed element types, and non-PK4_B32 stores keep their original form.
+  }];
+  let constructor = "mlir::pto::createVPTOPack4StoreMaskNormalizePass()";
+  let dependentDialects = ["mlir::pto::PTODialect"];
+}
+
 def VPTOMaskSimplify
     : Pass<"vpto-mask-simplify", "ModuleOp"> {
   let summary = "Simplify provably redundant VPTO mask transformations";

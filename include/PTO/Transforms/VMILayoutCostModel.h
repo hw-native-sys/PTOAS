@@ -25,6 +25,20 @@ namespace mlir::pto {
 
 struct VMILayoutScopeCost {
   int64_t total = 0;
+  // Number of Merge actions in the plan.  These are the "vor"/"por" merges
+  // that join two rearranged halves.
+  int64_t merges = 0;
+  // Per-kind action counts, kept for diagnostics and for the tie-break layers.
+  int64_t memoryReads = 0;
+  int64_t memoryWrites = 0;
+  int64_t semantics = 0;
+  int64_t deinterleaves = 0;
+  int64_t unpacks = 0;
+  int64_t packs = 0;
+  // Number of Interleave actions in the plan.  An interleave ("vintlv") also
+  // rejoins data that a layout spread over separate registers, so the solver
+  // counts it together with a merge.
+  int64_t interleaves = 0;
 };
 
 class VMILayoutPhysicalState {

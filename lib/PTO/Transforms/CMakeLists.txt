@@ -45,6 +45,7 @@ add_mlir_dialect_library(PTOTransforms
   VPTOPtrNormalize.cpp
   VPTOPtrCastCleanup.cpp
   VPTOCombineReductions.cpp
+  VPTOPack4StoreMaskNormalize.cpp
   VPTOOptimizeVcvt.cpp
   VPTOMaskSimplify.cpp
   VPTOExpandWrapperOps.cpp

@@ -3289,6 +3289,12 @@ static LogicalResult runVPTOBackendPipeline(OwningOpRef<ModuleOp> &module,
   kernelModulePM.addPass(std::make_unique<ApplySIMTEntryNoInlinePass>());
   kernelModulePM.addPass(createInlinerPass());
   appendVMISemanticPipeline(kernelModulePM);
+  // The packed 4-bit store predicate is a model and dialect compatibility
+  // concern rather than a property of the VMI mapping, so it is normalized by a
+  // dedicated pass immediately after the lowering instead of inside it.
+  // Rewriting afterwards also keeps this spelling usable as a standalone pass
+  // whenever a test only needs the post-lowering form.
+  kernelModulePM.addPass(pto::createVPTOPack4StoreMaskNormalizePass());
   prepareVPTOForEmission(pm);
   if (failed(applyConfiguredPassManagerCLOptions(
           pm, "VPTO unified emission pipeline")))
