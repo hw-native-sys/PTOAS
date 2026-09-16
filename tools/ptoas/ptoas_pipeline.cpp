@@ -693,6 +693,23 @@ static bool getEffectiveVPTOSchedulerRematerialization(
   return vptoSchedulerRemat;
 }
 
+// Materialize the minimal hardware CTRL accesses from MAD ctrl_state_guard
+// requirements after the scheduler and every transform that can move or
+// duplicate CTRL users; emission validation then rejects guard leftovers.
+// SoftOps are materialized only after all VPTO optimization and layout
+// decisions.  The materializer creates a temporary func.call; inline it
+// immediately so the final legality check sees the actual VPTO sequence.
+static void appendVPTOSoftLibMaterialization(OpPassManager &kernelModulePM) {
+  kernelModulePM.addPass(pto::createPTOExpandSoftLibPass());
+  kernelModulePM.addPass(pto::createPTOInlineLibCallPass());
+}
+
+static void appendVPTOCtrlStateMaterialization(OpPassManager &kernelModulePM) {
+  kernelModulePM.addNestedPass<func::FuncOp>(
+      pto::createVPTOOptimizeCtrlStatePass());
+  kernelModulePM.addPass(pto::createPTOValidateVPTOEmissionIRPass());
+}
+
 static void prepareVPTOForEmission(PassManager &pm,
                                    VPTOSchedulerCLIMode schedulerMode,
                                    bool rematerialize) {
@@ -703,14 +720,11 @@ static void prepareVPTOForEmission(PassManager &pm,
   // programming frameworks may still produce pto.barrier(PIPE_V) from generic
   // storage-sync constructs, so run sync-to-pipe legalization here and let the
   // backend checks catch any illegal barrier that still leaks through.
-  kernelModulePM.addNestedPass<func::FuncOp>(
-      pto::createLoweringSyncToPipePass());
+  kernelModulePM.addNestedPass<func::FuncOp>(pto::createLoweringSyncToPipePass());
   // Persistent fragment loops must be fully unrolled before fragment
   // analysis/materialization; promote them ahead of the unroll pass.
-  kernelModulePM.addNestedPass<func::FuncOp>(
-      pto::createPTOPromotePersistentFragmentLoopsPass());
-  kernelModulePM.addNestedPass<func::FuncOp>(
-      pto::createPTOUnrollLoopsPass());
+  kernelModulePM.addNestedPass<func::FuncOp>(pto::createPTOPromotePersistentFragmentLoopsPass());
+  kernelModulePM.addNestedPass<func::FuncOp>(pto::createPTOUnrollLoopsPass());
   kernelModulePM.addPass(createSCCPPass());
   kernelModulePM.addPass(createCanonicalizerPass());
   kernelModulePM.addPass(createCSEPass());
@@ -736,15 +750,10 @@ static void prepareVPTOForEmission(PassManager &pm,
   kernelModulePM.addNestedPass<func::FuncOp>(
       pto::createVPTOGuardedLICMPass());
   kernelModulePM.addPass(createLoopInvariantCodeMotionPass());
-  kernelModulePM.addNestedPass<func::FuncOp>(
-      pto::createPTONarrowVPTOLoopCountersPass());
+  kernelModulePM.addNestedPass<func::FuncOp>(pto::createPTONarrowVPTOLoopCountersPass());
   kernelModulePM.addPass(createCanonicalizerPass());
   kernelModulePM.addPass(createCSEPass());
-  // SoftOps are materialized only after all VPTO optimization and layout
-  // decisions.  The materializer creates a temporary func.call; inline it
-  // immediately so the final legality check sees the actual VPTO sequence.
-  kernelModulePM.addPass(pto::createPTOExpandSoftLibPass());
-  kernelModulePM.addPass(pto::createPTOInlineLibCallPass());
+  appendVPTOSoftLibMaterialization(kernelModulePM);
   kernelModulePM.addPass(createCanonicalizerPass());
   kernelModulePM.addPass(createCSEPass());
   // Reconstruct the optimized reduction tree before scheduling so the
@@ -759,7 +768,7 @@ static void prepareVPTOForEmission(PassManager &pm,
     schedulerOptions.rematerialize = rematerialize;
     kernelModulePM.addPass(pto::createVPTOSchedulerPass(schedulerOptions));
   }
-  kernelModulePM.addPass(pto::createPTOValidateVPTOEmissionIRPass());
+  appendVPTOCtrlStateMaterialization(kernelModulePM);
 }
 
 static void appendA5VPTOPostLoweringFusionPipeline(OpPassManager &kernelModulePM) {
